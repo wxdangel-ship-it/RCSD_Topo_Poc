@@ -1,0 +1,2 @@
+module,path,status,doc_surface,recommended_action,notes
+_template,modules/_template,template-artifact,template-ready,copy-and-concretize,not-a-business-module

@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+
+# Virtualenv
+.venv/
+
+# Packaging
+*.egg-info/
+build/
+dist/
+
+# Pytest
+.pytest_cache/
+
+# IDE
+.idea/
+
+# Generated outputs
+outputs/

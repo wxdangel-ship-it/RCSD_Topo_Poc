@@ -1,0 +1,12 @@
+run:
+  run_id: "2026-03-18_example"
+  output_dir: "outputs/${run.run_id}"
+
+provider:
+  type: "file_patch"
+  data_root: "${DATA_ROOT}"
+  patch_manifest: "configs/patch_list.json"
+
+modules: {}
+
+# Concrete RCSD module IDs will be added after separate module kickoff tasks.

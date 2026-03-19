@@ -32,6 +32,8 @@
   - 文件格式：`Shp` 或 `GeoJSON`
 - 当前补充口径
   - `mainnodeid` 是语义路口聚合主依据；为空值、缺失、`0`、空字符串时，以当前 `Node.id` 为主
+  - 若多个 Node 共享同一 `mainnodeid`，Step1 当前按一个语义路口处理；进入 / 退出这些 Node 的 `Road` 也按该语义路口统一并口
+  - 复合路口组内只有 `id == mainnodeid` 的代表节点属性当前被视为有效属性来源
   - `direction` 中 `0` 与 `1` 当前都按双方向处理
   - 输入 CRS 统一归一化至 `3857`，字段统一做归一化处理
   - 当前异常处理口径为报异常，但不中断其它处理
@@ -62,9 +64,17 @@
   - 可显式传 `--run-id`
   - 或显式传 `--out-root`
 - 当前输出：每个策略目录下生成 `seed_nodes`、`terminate_nodes`、`pair_nodes`、`pair_links`、`pair_support_roads`、`pair_table.csv`、`pair_summary.json`、审计 JSON
+- 当前 Step1 输出口径补充：
+  - `seed_nodes` / `terminate_nodes` / `pair_nodes` 当前按语义路口输出，不再直接按物理 Node 输出
+  - 审查输出会补充 `representative_node_id`、`member_node_ids`、`member_node_count`
+  - `pair_support_roads` 会同时保留物理端点与聚合后的语义端点字段，便于核对复合路口并口效果
 - 当前输出目标：便于在 QGIS 中叠加审查与做策略对比
 - 当前切片输出：默认按 `XS / S / M` 生成多档 GeoJSON 切片，供后续 Step1 / Step2 分级验证
-- 当前切片执行建议：先单独跑 `XS`，若时间与质量都可接受，再继续 `S / M`
+- 当前切片输出口径补充：
+  - 切片当前按 `mainnodeid` 聚合后的语义路口做 core 选择，而不是按物理 Node 单独裁切
+  - 切片输出仍保留物理 `roads.geojson` 与 `nodes.geojson`，以便后续 Step1 / Step2 复用
+  - 默认 profile 已扩展为 `XXS / XS / S / M`
+- 当前切片执行建议：先单独跑 `XXS` 做冒烟，再跑 `XS`；若时间与质量都可接受，再继续 `S / M`
 - 当前性能口径补充：
   - Step1 已做一轮原型级性能优化
   - `search_audit.json` 当前采用“事件计数 + 样本事件”模式，而非全量搜索事件明细

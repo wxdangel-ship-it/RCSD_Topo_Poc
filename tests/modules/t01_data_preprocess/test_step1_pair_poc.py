@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 from rcsd_topo_poc.cli import main
 from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc
@@ -16,15 +17,27 @@ def _write_geojson(path: Path, *, features: list[dict]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _node_feature(node_id: int, x: float, y: float, *, kind: int = 4, grade: int = 1, closed_con: int = 2) -> dict:
+def _node_feature(
+    node_id: int,
+    x: float,
+    y: float,
+    *,
+    kind: int = 4,
+    grade: int = 1,
+    closed_con: int = 2,
+    mainnodeid: Optional[int] = None,
+) -> dict:
+    properties = {
+        "id": node_id,
+        "kind": kind,
+        "grade": grade,
+        "closed_con": closed_con,
+    }
+    if mainnodeid is not None:
+        properties["mainnodeid"] = mainnodeid
     return {
         "type": "Feature",
-        "properties": {
-            "id": node_id,
-            "kind": kind,
-            "grade": grade,
-            "closed_con": closed_con,
-        },
+        "properties": properties,
         "geometry": {"type": "Point", "coordinates": [x, y]},
     }
 
@@ -70,6 +83,25 @@ def _build_dataset(base_dir: Path) -> tuple[Path, Path]:
 
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _build_compound_intersection_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "compound_roads.geojson"
+    node_path = base_dir / "compound_nodes.geojson"
+
+    node_features = [
+        _node_feature(1, 0.0, 0.0, grade=1),
+        _node_feature(100, 0.02, 0.0, grade=1, closed_con=2),
+        _node_feature(101, 0.0205, 0.0005, kind=0, grade=9, closed_con=1, mainnodeid=100),
+    ]
+    road_features = [
+        _road_feature("r1_101", 1, 101, 0, [[0.0, 0.0], [0.0205, 0.0005]]),
+        _road_feature("r100_101_internal", 100, 101, 0, [[0.02, 0.0], [0.0205, 0.0005]]),
+    ]
+
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
 
 
 def test_step1_pair_poc_generates_strategy_outputs(tmp_path: Path) -> None:
@@ -240,3 +272,52 @@ def test_through_seed_is_pruned_from_pair_search(tmp_path: Path) -> None:
     assert summary["seed_count"] == 7
     assert summary["search_seed_count"] == 6
     assert summary["through_seed_pruned_count"] == 1
+
+
+def test_mainnodeid_group_is_handled_as_one_semantic_intersection(tmp_path: Path) -> None:
+    road_path, node_path = _build_compound_intersection_dataset(tmp_path)
+    out_root = tmp_path / "outputs"
+
+    rc = main(
+        [
+            "t01-step1-pair-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            "configs/t01_data_preprocess/step1_pair_s2.json",
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+
+    pair_table = (out_root / "S2" / "pair_table.csv").read_text(encoding="utf-8")
+    pair_summary = _load_json(out_root / "S2" / "pair_summary.json")
+    rule_audit = _load_json(out_root / "S2" / "rule_audit.json")
+    search_audit = _load_json(out_root / "S2" / "search_audit.json")
+    pair_nodes = _load_json(out_root / "S2" / "pair_nodes.geojson")
+
+    assert "S2:1__100" in pair_table
+    assert pair_summary["pair_count"] == 1
+    assert pair_summary["total_nodes"] == 2
+    assert pair_summary["total_physical_nodes"] == 3
+
+    grouped_node = next(row for row in rule_audit if row["semantic_node_id"] == "100")
+    assert grouped_node["representative_node_id"] == "100"
+    assert grouped_node["member_node_count"] == 2
+    assert grouped_node["seed_match"] is True
+    assert grouped_node["terminate_match"] is True
+
+    pair_node_props = next(
+        feature["properties"] for feature in pair_nodes["features"] if feature["properties"]["semantic_node_id"] == "100"
+    )
+    assert pair_node_props["semantic_node_id"] == "100"
+    assert pair_node_props["representative_node_id"] == "100"
+    assert pair_node_props["member_node_count"] == 2
+
+    event_names = {event["event"] for event in search_audit["graph_events"]}
+    assert "semantic_intersection_grouped" in event_names
+    assert "internal_semantic_road" in event_names

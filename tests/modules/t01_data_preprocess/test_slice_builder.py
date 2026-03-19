@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 from rcsd_topo_poc.cli import main
 
@@ -15,10 +16,13 @@ def _write_geojson(path: Path, *, features: list[dict]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _node_feature(node_id: int, x: float, y: float) -> dict:
+def _node_feature(node_id: int, x: float, y: float, *, mainnodeid: Optional[int] = None) -> dict:
+    properties = {"id": node_id, "kind": 4, "grade": 1, "closed_con": 2}
+    if mainnodeid is not None:
+        properties["mainnodeid"] = mainnodeid
     return {
         "type": "Feature",
-        "properties": {"id": node_id, "kind": 4, "grade": 1, "closed_con": 2},
+        "properties": properties,
         "geometry": {"type": "Point", "coordinates": [x, y]},
     }
 
@@ -64,6 +68,7 @@ def _write_profile_config(path: Path) -> None:
         json.dumps(
             {
                 "profiles": [
+                    {"profile_id": "XXS", "target_core_node_count": 2, "description": "xxs"},
                     {"profile_id": "XS", "target_core_node_count": 4, "description": "xs"},
                     {"profile_id": "S", "target_core_node_count": 8, "description": "s"},
                 ]
@@ -77,6 +82,27 @@ def _write_profile_config(path: Path) -> None:
 
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _build_compound_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "compound_roads.geojson"
+    node_path = base_dir / "compound_nodes.geojson"
+
+    node_features = [
+        _node_feature(100, 0.0, 0.0),
+        _node_feature(101, 0.0001, 0.0001, mainnodeid=100),
+        _node_feature(200, 0.01, 0.0),
+        _node_feature(300, 1.0, 1.0),
+    ]
+    road_features = [
+        _road_feature("r_100_101", 100, 101, [[0.0, 0.0], [0.0001, 0.0001]]),
+        _road_feature("r_101_200", 101, 200, [[0.0001, 0.0001], [0.01, 0.0]]),
+        _road_feature("r_200_300", 200, 300, [[0.01, 0.0], [1.0, 1.0]]),
+    ]
+
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
 
 
 def test_build_validation_slices_generates_multiple_profiles(tmp_path: Path) -> None:
@@ -111,10 +137,12 @@ def test_build_validation_slices_generates_multiple_profiles(tmp_path: Path) -> 
     s_summary = _load_json(out_root / "S" / "slice_summary.json")
 
     assert manifest["source_node_count"] == 16
+    assert manifest["source_semantic_node_count"] == 16
     assert manifest["source_road_count"] == 24
     assert xs_summary["output_node_count"] >= xs_summary["core_node_count"]
     assert s_summary["output_node_count"] >= s_summary["core_node_count"]
     assert xs_summary["output_node_count"] <= s_summary["output_node_count"]
+    assert xs_summary["output_semantic_node_count"] <= s_summary["output_semantic_node_count"]
 
 
 def test_build_validation_slices_can_filter_profiles(tmp_path: Path) -> None:
@@ -142,3 +170,47 @@ def test_build_validation_slices_can_filter_profiles(tmp_path: Path) -> None:
     assert rc == 0
     assert (out_root / "XS" / "roads.geojson").is_file()
     assert not (out_root / "S").exists()
+
+
+def test_build_validation_slices_uses_semantic_intersection_groups_and_center_override(tmp_path: Path) -> None:
+    road_path, node_path = _build_compound_dataset(tmp_path)
+    profile_config = tmp_path / "slice_profiles.json"
+    out_root = tmp_path / "slice_outputs"
+    _write_profile_config(profile_config)
+
+    rc = main(
+        [
+            "t01-build-validation-slices",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--profile-config",
+            str(profile_config),
+            "--profile-id",
+            "XXS",
+            "--center-x",
+            "0.0001",
+            "--center-y",
+            "0.0001",
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+    summary = _load_json(out_root / "XXS" / "slice_summary.json")
+    manifest = _load_json(out_root / "slice_manifest.json")
+    nodes_doc = _load_json(out_root / "XXS" / "nodes.geojson")
+    roads_doc = _load_json(out_root / "XXS" / "roads.geojson")
+
+    node_ids = sorted(str(feature["properties"]["id"]) for feature in nodes_doc["features"])
+    road_ids = sorted(str(feature["properties"]["id"]) for feature in roads_doc["features"])
+
+    assert manifest["anchor_semantic_node_id"] == "100"
+    assert summary["anchor_semantic_node_id"] == "100"
+    assert summary["core_semantic_node_count"] == 2
+    assert summary["output_semantic_node_count"] == 3
+    assert summary["output_physical_node_count"] == 4
+    assert node_ids == ["100", "101", "200", "300"]
+    assert road_ids == ["r_100_101", "r_101_200", "r_200_300"]

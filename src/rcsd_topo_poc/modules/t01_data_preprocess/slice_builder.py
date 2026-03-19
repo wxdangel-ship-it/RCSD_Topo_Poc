@@ -32,6 +32,17 @@ DEFAULT_PROFILE_CONFIG_RELATIVE_PATH = Path("configs") / "t01_data_preprocess" /
 @dataclass(frozen=True)
 class SliceNode:
     node_id: str
+    mainnodeid: Optional[str]
+    x: float
+    y: float
+    properties: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SliceSemanticNode:
+    semantic_node_id: str
+    representative_node_id: str
+    member_node_ids: Tuple[str, ...]
     x: float
     y: float
     properties: Dict[str, Any]
@@ -125,7 +136,18 @@ def _normalize_id(value: Any) -> Optional[str]:
     normalized = _normalize_scalar(value)
     if normalized is None:
         return None
+    if isinstance(normalized, int):
+        return str(normalized)
+    if isinstance(normalized, float) and normalized.is_integer():
+        return str(int(normalized))
     return str(normalized)
+
+
+def _normalize_mainnodeid(value: Any) -> Optional[str]:
+    normalized = _normalize_id(value)
+    if normalized in {None, "0"}:
+        return None
+    return normalized
 
 
 def _sort_key(value: str) -> Tuple[int, Union[int, str]]:
@@ -166,6 +188,7 @@ def _prepare_nodes(raw_features: List[Dict[str, Any]]) -> Dict[str, SliceNode]:
 
         nodes[node_id] = SliceNode(
             node_id=node_id,
+            mainnodeid=_normalize_mainnodeid(properties.get("mainnodeid")),
             x=float(geometry.x),
             y=float(geometry.y),
             properties=dict(properties),
@@ -205,6 +228,7 @@ def _load_shapefile_nodes_fast(
 
         nodes[node_id] = SliceNode(
             node_id=node_id,
+            mainnodeid=_normalize_mainnodeid(properties.get("mainnodeid")),
             x=float(x),
             y=float(y),
             properties=properties,
@@ -234,6 +258,40 @@ def _prepare_roads(raw_features: List[Dict[str, Any]]) -> List[SliceRoad]:
             )
         )
     return roads
+
+
+def _build_semantic_nodes(nodes: Dict[str, SliceNode]) -> Tuple[Dict[str, SliceSemanticNode], Dict[str, str], int]:
+    group_members: Dict[str, List[str]] = {}
+    for node in nodes.values():
+        semantic_node_id = node.mainnodeid or node.node_id
+        group_members.setdefault(semantic_node_id, []).append(node.node_id)
+
+    semantic_nodes: Dict[str, SliceSemanticNode] = {}
+    physical_to_semantic: Dict[str, str] = {}
+    representative_fallback_count = 0
+
+    for semantic_node_id, member_node_ids in group_members.items():
+        sorted_member_ids = tuple(sorted(member_node_ids, key=_sort_key))
+        for member_node_id in sorted_member_ids:
+            physical_to_semantic[member_node_id] = semantic_node_id
+
+        representative_node = nodes.get(semantic_node_id)
+        if representative_node is None or representative_node.node_id not in sorted_member_ids:
+            representative_node = nodes[sorted_member_ids[0]]
+            representative_fallback_count += 1
+
+        mean_x = sum(nodes[node_id].x for node_id in sorted_member_ids) / len(sorted_member_ids)
+        mean_y = sum(nodes[node_id].y for node_id in sorted_member_ids) / len(sorted_member_ids)
+        semantic_nodes[semantic_node_id] = SliceSemanticNode(
+            semantic_node_id=semantic_node_id,
+            representative_node_id=representative_node.node_id,
+            member_node_ids=sorted_member_ids,
+            x=mean_x,
+            y=mean_y,
+            properties=dict(representative_node.properties),
+        )
+
+    return semantic_nodes, physical_to_semantic, representative_fallback_count
 
 
 def _load_shapefile_road_headers(
@@ -329,29 +387,48 @@ def _filter_profiles(profiles: List[SliceProfile], selected_profile_ids: Optiona
     return filtered
 
 
-def _select_anchor_node_id(nodes: Dict[str, SliceNode]) -> str:
-    centroid_x = sum(node.x for node in nodes.values()) / len(nodes)
-    centroid_y = sum(node.y for node in nodes.values()) / len(nodes)
-    best_node_id = min(
-        nodes,
+def _resolve_reference_point(
+    semantic_nodes: Dict[str, SliceSemanticNode],
+    *,
+    center_x: Optional[float],
+    center_y: Optional[float],
+) -> Tuple[float, float]:
+    if center_x is not None and center_y is not None:
+        return center_x, center_y
+
+    centroid_x = sum(node.x for node in semantic_nodes.values()) / len(semantic_nodes)
+    centroid_y = sum(node.y for node in semantic_nodes.values()) / len(semantic_nodes)
+    return centroid_x, centroid_y
+
+
+def _select_anchor_semantic_node_id(
+    semantic_nodes: Dict[str, SliceSemanticNode],
+    *,
+    reference_x: float,
+    reference_y: float,
+) -> str:
+    return min(
+        semantic_nodes,
         key=lambda node_id: (
-            (nodes[node_id].x - centroid_x) ** 2 + (nodes[node_id].y - centroid_y) ** 2,
+            (semantic_nodes[node_id].x - reference_x) ** 2 + (semantic_nodes[node_id].y - reference_y) ** 2,
             _sort_key(node_id),
         ),
     )
-    return best_node_id
 
 
-def _rank_nodes_by_distance(nodes: Dict[str, SliceNode], anchor_node_id: str) -> List[str]:
-    anchor = nodes[anchor_node_id]
-    ranked = sorted(
-        nodes,
+def _rank_semantic_nodes_by_distance(
+    semantic_nodes: Dict[str, SliceSemanticNode],
+    *,
+    reference_x: float,
+    reference_y: float,
+) -> List[str]:
+    return sorted(
+        semantic_nodes,
         key=lambda node_id: (
-            (nodes[node_id].x - anchor.x) ** 2 + (nodes[node_id].y - anchor.y) ** 2,
+            (semantic_nodes[node_id].x - reference_x) ** 2 + (semantic_nodes[node_id].y - reference_y) ** 2,
             _sort_key(node_id),
         ),
     )
-    return ranked
 
 
 def _node_feature(node: SliceNode) -> Dict[str, Any]:
@@ -365,17 +442,22 @@ def _road_feature(road: SliceRoad) -> Dict[str, Any]:
 def _write_profile_slice(
     *,
     profile: SliceProfile,
-    nodes: Dict[str, SliceNode],
-    core_node_ids: set[str],
+    physical_nodes: Dict[str, SliceNode],
+    semantic_nodes: Dict[str, SliceSemanticNode],
+    core_semantic_node_ids: set[str],
+    output_semantic_node_ids: set[str],
     selected_roads: List[SliceRoad],
     selected_node_ids: List[str],
     out_dir: Path,
     run_id: str,
-    anchor_node_id: str,
+    anchor_semantic_node_id: str,
+    reference_x: float,
+    reference_y: float,
     source_road_path: Union[str, Path],
     source_node_path: Union[str, Path],
-    closure_added_node_count: int,
+    closure_added_semantic_node_count: int,
     orphan_ref_count: int,
+    representative_fallback_count: int,
 ) -> SliceResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     selected_road_ids = sorted([road.road_id for road in selected_roads], key=_sort_key)
@@ -384,14 +466,14 @@ def _write_profile_slice(
     nodes_path = out_dir / "nodes.geojson"
     summary_path = out_dir / "slice_summary.json"
 
-    write_geojson(nodes_path, [_node_feature(nodes[node_id]) for node_id in selected_node_ids])
+    write_geojson(nodes_path, [_node_feature(physical_nodes[node_id]) for node_id in selected_node_ids])
     write_geojson(roads_path, [_road_feature(road) for road in sorted(selected_roads, key=lambda road: _sort_key(road.road_id))])
 
-    anchor_node = nodes[anchor_node_id]
-    minx = min(nodes[node_id].x for node_id in selected_node_ids)
-    miny = min(nodes[node_id].y for node_id in selected_node_ids)
-    maxx = max(nodes[node_id].x for node_id in selected_node_ids)
-    maxy = max(nodes[node_id].y for node_id in selected_node_ids)
+    anchor_semantic_node = semantic_nodes[anchor_semantic_node_id]
+    minx = min(physical_nodes[node_id].x for node_id in selected_node_ids)
+    miny = min(physical_nodes[node_id].y for node_id in selected_node_ids)
+    maxx = max(physical_nodes[node_id].x for node_id in selected_node_ids)
+    maxy = max(physical_nodes[node_id].y for node_id in selected_node_ids)
 
     summary = {
         "run_id": run_id,
@@ -399,15 +481,23 @@ def _write_profile_slice(
         "description": profile.description,
         "source_road_path": str(Path(source_road_path)),
         "source_node_path": str(Path(source_node_path)),
-        "anchor_node_id": anchor_node_id,
-        "anchor_point_3857": {"x": anchor_node.x, "y": anchor_node.y},
+        "anchor_semantic_node_id": anchor_semantic_node_id,
+        "anchor_representative_node_id": anchor_semantic_node.representative_node_id,
+        "anchor_point_3857": {"x": reference_x, "y": reference_y},
+        "anchor_semantic_point_3857": {"x": anchor_semantic_node.x, "y": anchor_semantic_node.y},
         "target_core_node_count": profile.target_core_node_count,
-        "core_node_count": len(core_node_ids),
+        "core_node_count": len(core_semantic_node_ids),
+        "core_semantic_node_count": len(core_semantic_node_ids),
         "output_node_count": len(selected_node_ids),
+        "output_physical_node_count": len(selected_node_ids),
+        "output_semantic_node_count": len(output_semantic_node_ids),
         "output_road_count": len(selected_roads),
-        "closure_added_node_count": closure_added_node_count,
+        "closure_added_node_count": closure_added_semantic_node_count,
+        "closure_added_semantic_node_count": closure_added_semantic_node_count,
         "orphan_ref_count": orphan_ref_count,
+        "representative_fallback_count": representative_fallback_count,
         "selected_node_ids_preview": selected_node_ids[:20],
+        "selected_semantic_node_ids_preview": sorted(output_semantic_node_ids, key=_sort_key)[:20],
         "selected_road_ids_preview": selected_road_ids[:20],
         "bounds_3857": {"minx": minx, "miny": miny, "maxx": maxx, "maxy": maxy},
         "output_files": [roads_path.name, nodes_path.name, summary_path.name],
@@ -419,92 +509,138 @@ def _write_profile_slice(
 def _build_profile_slice(
     *,
     profile: SliceProfile,
-    ranked_node_ids: List[str],
-    nodes: Dict[str, SliceNode],
+    ranked_semantic_node_ids: List[str],
+    physical_nodes: Dict[str, SliceNode],
+    semantic_nodes: Dict[str, SliceSemanticNode],
+    physical_to_semantic: Dict[str, str],
     roads: List[SliceRoad],
     out_dir: Path,
     run_id: str,
-    anchor_node_id: str,
+    anchor_semantic_node_id: str,
+    reference_x: float,
+    reference_y: float,
     source_road_path: Union[str, Path],
     source_node_path: Union[str, Path],
+    representative_fallback_count: int,
 ) -> SliceResult:
-    target_count = min(profile.target_core_node_count, len(ranked_node_ids))
-    core_node_ids = set(ranked_node_ids[:target_count])
-    output_node_ids = set(core_node_ids)
-    selected_roads: List[SliceRoad] = []
+    target_count = min(profile.target_core_node_count, len(ranked_semantic_node_ids))
+    core_semantic_node_ids = set(ranked_semantic_node_ids[:target_count])
+    output_semantic_node_ids = set(core_semantic_node_ids)
+    selected_road_ids: set[str] = set()
     orphan_ref_count = 0
-    closure_added_node_count = 0
+    closure_added_semantic_node_count = 0
 
     for road in roads:
-        touches_core = road.snodeid in core_node_ids or road.enodeid in core_node_ids
+        semantic_snode_id = None if road.snodeid is None else physical_to_semantic.get(road.snodeid)
+        semantic_enode_id = None if road.enodeid is None else physical_to_semantic.get(road.enodeid)
+        touches_core = semantic_snode_id in core_semantic_node_ids or semantic_enode_id in core_semantic_node_ids
         if not touches_core:
             continue
 
-        selected_roads.append(road)
-        for endpoint_node_id in (road.snodeid, road.enodeid):
-            if endpoint_node_id is None:
+        selected_road_ids.add(road.road_id)
+        for endpoint_semantic_node_id, endpoint_node_id in (
+            (semantic_snode_id, road.snodeid),
+            (semantic_enode_id, road.enodeid),
+        ):
+            if endpoint_node_id is None or endpoint_semantic_node_id is None:
                 orphan_ref_count += 1
                 continue
-            if endpoint_node_id in nodes:
-                if endpoint_node_id not in output_node_ids:
-                    output_node_ids.add(endpoint_node_id)
-                    closure_added_node_count += 1
-            else:
-                orphan_ref_count += 1
+
+            if endpoint_semantic_node_id not in output_semantic_node_ids:
+                output_semantic_node_ids.add(endpoint_semantic_node_id)
+                closure_added_semantic_node_count += 1
+
+    selected_roads = [
+        road
+        for road in roads
+        if road.road_id in selected_road_ids
+        or (
+            (None if road.snodeid is None else physical_to_semantic.get(road.snodeid)) in output_semantic_node_ids
+            and (None if road.enodeid is None else physical_to_semantic.get(road.enodeid)) in output_semantic_node_ids
+        )
+    ]
+
+    selected_node_ids = sorted(
+        {
+            member_node_id
+            for semantic_node_id in output_semantic_node_ids
+            for member_node_id in semantic_nodes[semantic_node_id].member_node_ids
+        },
+        key=_sort_key,
+    )
 
     return _write_profile_slice(
         profile=profile,
-        nodes=nodes,
-        core_node_ids=core_node_ids,
+        physical_nodes=physical_nodes,
+        semantic_nodes=semantic_nodes,
+        core_semantic_node_ids=core_semantic_node_ids,
+        output_semantic_node_ids=output_semantic_node_ids,
         selected_roads=selected_roads,
-        selected_node_ids=sorted(output_node_ids, key=_sort_key),
+        selected_node_ids=selected_node_ids,
         out_dir=out_dir,
         run_id=run_id,
-        anchor_node_id=anchor_node_id,
+        anchor_semantic_node_id=anchor_semantic_node_id,
+        reference_x=reference_x,
+        reference_y=reference_y,
         source_road_path=source_road_path,
         source_node_path=source_node_path,
-        closure_added_node_count=closure_added_node_count,
+        closure_added_semantic_node_count=closure_added_semantic_node_count,
         orphan_ref_count=orphan_ref_count,
+        representative_fallback_count=representative_fallback_count,
     )
 
 
 def _build_profile_slice_from_shapefile_headers(
     *,
     profile: SliceProfile,
-    ranked_node_ids: List[str],
-    nodes: Dict[str, SliceNode],
+    ranked_semantic_node_ids: List[str],
+    physical_nodes: Dict[str, SliceNode],
+    semantic_nodes: Dict[str, SliceSemanticNode],
+    physical_to_semantic: Dict[str, str],
     road_headers: List[SliceRoadHeader],
     road_path: Union[str, Path],
     road_source_crs: CRS,
     out_dir: Path,
     run_id: str,
-    anchor_node_id: str,
+    anchor_semantic_node_id: str,
+    reference_x: float,
+    reference_y: float,
     source_road_path: Union[str, Path],
     source_node_path: Union[str, Path],
+    representative_fallback_count: int,
 ) -> SliceResult:
-    target_count = min(profile.target_core_node_count, len(ranked_node_ids))
-    core_node_ids = set(ranked_node_ids[:target_count])
-    output_node_ids = set(core_node_ids)
+    target_count = min(profile.target_core_node_count, len(ranked_semantic_node_ids))
+    core_semantic_node_ids = set(ranked_semantic_node_ids[:target_count])
+    output_semantic_node_ids = set(core_semantic_node_ids)
     selected_headers: Dict[int, SliceRoadHeader] = {}
     orphan_ref_count = 0
-    closure_added_node_count = 0
+    closure_added_semantic_node_count = 0
 
     for header in road_headers:
-        touches_core = header.snodeid in core_node_ids or header.enodeid in core_node_ids
+        semantic_snode_id = None if header.snodeid is None else physical_to_semantic.get(header.snodeid)
+        semantic_enode_id = None if header.enodeid is None else physical_to_semantic.get(header.enodeid)
+        touches_core = semantic_snode_id in core_semantic_node_ids or semantic_enode_id in core_semantic_node_ids
         if not touches_core:
             continue
 
         selected_headers[header.record_index] = header
-        for endpoint_node_id in (header.snodeid, header.enodeid):
-            if endpoint_node_id is None:
+        for endpoint_semantic_node_id, endpoint_node_id in (
+            (semantic_snode_id, header.snodeid),
+            (semantic_enode_id, header.enodeid),
+        ):
+            if endpoint_node_id is None or endpoint_semantic_node_id is None:
                 orphan_ref_count += 1
                 continue
-            if endpoint_node_id in nodes:
-                if endpoint_node_id not in output_node_ids:
-                    output_node_ids.add(endpoint_node_id)
-                    closure_added_node_count += 1
-            else:
-                orphan_ref_count += 1
+
+            if endpoint_semantic_node_id not in output_semantic_node_ids:
+                output_semantic_node_ids.add(endpoint_semantic_node_id)
+                closure_added_semantic_node_count += 1
+
+    for header in road_headers:
+        semantic_snode_id = None if header.snodeid is None else physical_to_semantic.get(header.snodeid)
+        semantic_enode_id = None if header.enodeid is None else physical_to_semantic.get(header.enodeid)
+        if semantic_snode_id in output_semantic_node_ids and semantic_enode_id in output_semantic_node_ids:
+            selected_headers[header.record_index] = header
 
     print(
         f"[slice] materializing road geometries for profile {profile.profile_id}: selected_roads={len(selected_headers)} ...",
@@ -517,17 +653,29 @@ def _build_profile_slice_from_shapefile_headers(
     )
     return _write_profile_slice(
         profile=profile,
-        nodes=nodes,
-        core_node_ids=core_node_ids,
+        physical_nodes=physical_nodes,
+        semantic_nodes=semantic_nodes,
+        core_semantic_node_ids=core_semantic_node_ids,
+        output_semantic_node_ids=output_semantic_node_ids,
         selected_roads=selected_roads,
-        selected_node_ids=sorted(output_node_ids, key=_sort_key),
+        selected_node_ids=sorted(
+            {
+                member_node_id
+                for semantic_node_id in output_semantic_node_ids
+                for member_node_id in semantic_nodes[semantic_node_id].member_node_ids
+            },
+            key=_sort_key,
+        ),
         out_dir=out_dir,
         run_id=run_id,
-        anchor_node_id=anchor_node_id,
+        anchor_semantic_node_id=anchor_semantic_node_id,
+        reference_x=reference_x,
+        reference_y=reference_y,
         source_road_path=source_road_path,
         source_node_path=source_node_path,
-        closure_added_node_count=closure_added_node_count,
+        closure_added_semantic_node_count=closure_added_semantic_node_count,
         orphan_ref_count=orphan_ref_count,
+        representative_fallback_count=representative_fallback_count,
     )
 
 
@@ -543,12 +691,16 @@ def build_validation_slices(
     road_crs: Optional[str] = None,
     node_layer: Optional[str] = None,
     node_crs: Optional[str] = None,
+    center_x: Optional[float] = None,
+    center_y: Optional[float] = None,
 ) -> List[SliceResult]:
     build_started_at = perf_counter()
+    if (center_x is None) != (center_y is None):
+        raise ValueError("center_x and center_y must be provided together.")
     node_path_obj = Path(node_path)
     if node_path_obj.suffix.lower() == ".shp":
         print("[slice] loading node layer (fast shapefile path)...", flush=True)
-        nodes = _load_shapefile_nodes_fast(node_path, crs_override=node_crs)
+        physical_nodes = _load_shapefile_nodes_fast(node_path, crs_override=node_crs)
     else:
         print("[slice] loading node layer...", flush=True)
         node_layer_result = read_vector_layer(node_path, layer_name=node_layer, crs_override=node_crs)
@@ -559,13 +711,30 @@ def build_validation_slices(
         if validation_issues:
             raise ValueError("; ".join(validation_issues))
 
-        nodes = _prepare_nodes(raw_node_features)
-        if not nodes:
+        physical_nodes = _prepare_nodes(raw_node_features)
+        if not physical_nodes:
             raise ValueError("No valid node features were loaded for slice building.")
 
+    semantic_nodes, physical_to_semantic, representative_fallback_count = _build_semantic_nodes(physical_nodes)
+    if not semantic_nodes:
+        raise ValueError("No valid semantic nodes were built for slice building.")
+
     profiles = _filter_profiles(_load_profiles(profile_config_path), selected_profile_ids)
-    anchor_node_id = _select_anchor_node_id(nodes)
-    ranked_node_ids = _rank_nodes_by_distance(nodes, anchor_node_id)
+    reference_x, reference_y = _resolve_reference_point(
+        semantic_nodes,
+        center_x=center_x,
+        center_y=center_y,
+    )
+    anchor_semantic_node_id = _select_anchor_semantic_node_id(
+        semantic_nodes,
+        reference_x=reference_x,
+        reference_y=reference_y,
+    )
+    ranked_semantic_node_ids = _rank_semantic_nodes_by_distance(
+        semantic_nodes,
+        reference_x=reference_x,
+        reference_y=reference_y,
+    )
 
     resolved_run_id = Path(out_root).name if run_id is None else run_id
     results: List[SliceResult] = []
@@ -577,7 +746,7 @@ def build_validation_slices(
         road_headers, road_source_crs = _load_shapefile_road_headers(road_path, crs_override=road_crs)
         source_road_count = len(road_headers)
         print(
-            f"[slice] source loaded: nodes={len(nodes)}, roads={source_road_count}, anchor_node_id={anchor_node_id}, profiles={','.join(profile.profile_id for profile in profiles)}",
+            f"[slice] source loaded: physical_nodes={len(physical_nodes)}, semantic_nodes={len(semantic_nodes)}, roads={source_road_count}, anchor_semantic_node_id={anchor_semantic_node_id}, profiles={','.join(profile.profile_id for profile in profiles)}",
             flush=True,
         )
         for profile in profiles:
@@ -588,20 +757,25 @@ def build_validation_slices(
             )
             result = _build_profile_slice_from_shapefile_headers(
                 profile=profile,
-                ranked_node_ids=ranked_node_ids,
-                nodes=nodes,
+                ranked_semantic_node_ids=ranked_semantic_node_ids,
+                physical_nodes=physical_nodes,
+                semantic_nodes=semantic_nodes,
+                physical_to_semantic=physical_to_semantic,
                 road_headers=road_headers,
                 road_path=road_path,
                 road_source_crs=road_source_crs,
                 out_dir=Path(out_root) / profile.profile_id,
                 run_id=resolved_run_id,
-                anchor_node_id=anchor_node_id,
+                anchor_semantic_node_id=anchor_semantic_node_id,
+                reference_x=reference_x,
+                reference_y=reference_y,
                 source_road_path=road_path,
                 source_node_path=node_path,
+                representative_fallback_count=representative_fallback_count,
             )
             results.append(result)
             print(
-                f"[slice] profile {profile.profile_id} done in {perf_counter() - profile_started_at:.1f}s: output_nodes={result.summary['output_node_count']}, output_roads={result.summary['output_road_count']}",
+                f"[slice] profile {profile.profile_id} done in {perf_counter() - profile_started_at:.1f}s: output_physical_nodes={result.summary['output_physical_node_count']}, output_semantic_nodes={result.summary['output_semantic_node_count']}, output_roads={result.summary['output_road_count']}",
                 flush=True,
             )
     else:
@@ -616,7 +790,7 @@ def build_validation_slices(
         roads = _prepare_roads(raw_road_features)
         source_road_count = len(roads)
         print(
-            f"[slice] source loaded: nodes={len(nodes)}, roads={source_road_count}, anchor_node_id={anchor_node_id}, profiles={','.join(profile.profile_id for profile in profiles)}",
+            f"[slice] source loaded: physical_nodes={len(physical_nodes)}, semantic_nodes={len(semantic_nodes)}, roads={source_road_count}, anchor_semantic_node_id={anchor_semantic_node_id}, profiles={','.join(profile.profile_id for profile in profiles)}",
             flush=True,
         )
         for profile in profiles:
@@ -627,18 +801,23 @@ def build_validation_slices(
             )
             result = _build_profile_slice(
                 profile=profile,
-                ranked_node_ids=ranked_node_ids,
-                nodes=nodes,
+                ranked_semantic_node_ids=ranked_semantic_node_ids,
+                physical_nodes=physical_nodes,
+                semantic_nodes=semantic_nodes,
+                physical_to_semantic=physical_to_semantic,
                 roads=roads,
                 out_dir=Path(out_root) / profile.profile_id,
                 run_id=resolved_run_id,
-                anchor_node_id=anchor_node_id,
+                anchor_semantic_node_id=anchor_semantic_node_id,
+                reference_x=reference_x,
+                reference_y=reference_y,
                 source_road_path=road_path,
                 source_node_path=node_path,
+                representative_fallback_count=representative_fallback_count,
             )
             results.append(result)
             print(
-                f"[slice] profile {profile.profile_id} done in {perf_counter() - profile_started_at:.1f}s: output_nodes={result.summary['output_node_count']}, output_roads={result.summary['output_road_count']}",
+                f"[slice] profile {profile.profile_id} done in {perf_counter() - profile_started_at:.1f}s: output_physical_nodes={result.summary['output_physical_node_count']}, output_semantic_nodes={result.summary['output_semantic_node_count']}, output_roads={result.summary['output_road_count']}",
                 flush=True,
             )
 
@@ -649,8 +828,13 @@ def build_validation_slices(
         "source_road_path": str(Path(road_path)),
         "source_node_path": str(Path(node_path)),
         "source_road_count": source_road_count,
-        "source_node_count": len(nodes),
-        "anchor_node_id": anchor_node_id,
+        "source_node_count": len(physical_nodes),
+        "source_physical_node_count": len(physical_nodes),
+        "source_semantic_node_count": len(semantic_nodes),
+        "anchor_semantic_node_id": anchor_semantic_node_id,
+        "anchor_representative_node_id": semantic_nodes[anchor_semantic_node_id].representative_node_id,
+        "anchor_point_3857": {"x": reference_x, "y": reference_y},
+        "representative_fallback_count": representative_fallback_count,
         "profiles": [result.summary for result in results],
     }
     write_json(Path(out_root) / "slice_manifest.json", manifest)
@@ -672,6 +856,8 @@ def run_slice_builder_cli(args: argparse.Namespace) -> int:
         out_root=resolved_out_root,
         selected_profile_ids=args.profile_id,
         run_id=resolved_run_id,
+        center_x=args.center_x,
+        center_y=args.center_y,
     )
 
     payload = {

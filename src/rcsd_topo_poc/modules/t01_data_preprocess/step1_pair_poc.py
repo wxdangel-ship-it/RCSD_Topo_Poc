@@ -23,6 +23,7 @@ SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE = 100
 @dataclass(frozen=True)
 class NodeRecord:
     node_id: str
+    mainnodeid: Optional[str]
     kind: Optional[int]
     grade: Optional[int]
     closed_con: Optional[int]
@@ -60,6 +61,18 @@ class StrategySpec:
 class RuleEvaluation:
     matched: bool
     reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SemanticNodeRecord:
+    semantic_node_id: str
+    representative_node_id: str
+    member_node_ids: tuple[str, ...]
+    kind: Optional[int]
+    grade: Optional[int]
+    closed_con: Optional[int]
+    geometry: BaseGeometry
+    raw_properties: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -154,6 +167,10 @@ def _normalize_id(value: Any) -> Optional[str]:
     normalized = _normalize_scalar(value)
     if normalized is None:
         return None
+    if isinstance(normalized, int):
+        return str(normalized)
+    if isinstance(normalized, float) and normalized.is_integer():
+        return str(int(normalized))
     return str(normalized)
 
 
@@ -168,6 +185,13 @@ def _coerce_int(value: Any) -> Optional[int]:
     if isinstance(normalized, float):
         return int(normalized)
     return int(str(normalized), 10)
+
+
+def _normalize_mainnodeid(value: Any) -> Optional[str]:
+    normalized = _normalize_id(value)
+    if normalized in {None, "0"}:
+        return None
+    return normalized
 
 
 def _sort_key(value: str) -> Tuple[int, Union[int, str]]:
@@ -264,8 +288,11 @@ def _prepare_nodes(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             )
             continue
 
+        mainnodeid = _normalize_mainnodeid(props.get("mainnodeid"))
+
         nodes[node_id] = NodeRecord(
             node_id=node_id,
+            mainnodeid=mainnodeid,
             kind=kind,
             grade=grade,
             closed_con=closed_con,
@@ -273,6 +300,60 @@ def _prepare_nodes(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             raw_properties=dict(props),
         )
     return nodes
+
+
+def _build_semantic_nodes(
+    physical_nodes: dict[str, NodeRecord],
+    audit_events: list[dict[str, Any]],
+) -> tuple[dict[str, SemanticNodeRecord], dict[str, str]]:
+    group_members: dict[str, list[str]] = defaultdict(list)
+    for node in physical_nodes.values():
+        semantic_node_id = node.mainnodeid or node.node_id
+        group_members[semantic_node_id].append(node.node_id)
+
+    semantic_nodes: dict[str, SemanticNodeRecord] = {}
+    physical_to_semantic: dict[str, str] = {}
+
+    for semantic_node_id, member_node_ids in group_members.items():
+        sorted_member_ids = tuple(sorted(member_node_ids, key=_sort_key))
+        for member_node_id in sorted_member_ids:
+            physical_to_semantic[member_node_id] = semantic_node_id
+
+        representative_node = physical_nodes.get(semantic_node_id)
+        if representative_node is None or representative_node.node_id not in sorted_member_ids:
+            representative_node = physical_nodes[sorted_member_ids[0]]
+            audit_events.append(
+                {
+                    "event": "mainnodeid_representative_fallback",
+                    "semantic_node_id": semantic_node_id,
+                    "representative_node_id": representative_node.node_id,
+                    "member_node_ids": list(sorted_member_ids),
+                    "message": "Semantic intersection representative node is missing or not part of the member set; falling back to the first member node.",
+                }
+            )
+        elif len(sorted_member_ids) > 1:
+            audit_events.append(
+                {
+                    "event": "semantic_intersection_grouped",
+                    "semantic_node_id": semantic_node_id,
+                    "representative_node_id": representative_node.node_id,
+                    "member_node_ids": list(sorted_member_ids),
+                    "message": "mainnodeid group is handled as one semantic intersection in Step1.",
+                }
+            )
+
+        semantic_nodes[semantic_node_id] = SemanticNodeRecord(
+            semantic_node_id=semantic_node_id,
+            representative_node_id=representative_node.node_id,
+            member_node_ids=sorted_member_ids,
+            kind=representative_node.kind,
+            grade=representative_node.grade,
+            closed_con=representative_node.closed_con,
+            geometry=representative_node.geometry,
+            raw_properties=dict(representative_node.raw_properties),
+        )
+
+    return semantic_nodes, physical_to_semantic
 
 
 def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[str, Any]]) -> dict[str, RoadRecord]:
@@ -342,7 +423,7 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
     return roads
 
 
-def _evaluate_rule(node: NodeRecord, rule: RuleSpec) -> RuleEvaluation:
+def _evaluate_rule(node: Union[NodeRecord, SemanticNodeRecord], rule: RuleSpec) -> RuleEvaluation:
     reasons: list[str] = []
     for bit_index in rule.kind_bits_all:
         if not _bit_enabled(node.kind, bit_index):
@@ -356,7 +437,8 @@ def _evaluate_rule(node: NodeRecord, rule: RuleSpec) -> RuleEvaluation:
 
 
 def _build_graph(
-    nodes: dict[str, NodeRecord],
+    physical_nodes: dict[str, NodeRecord],
+    physical_to_semantic: dict[str, str],
     roads: dict[str, RoadRecord],
     audit_events: list[dict[str, Any]],
 ) -> tuple[dict[str, tuple[TraversalEdge, ...]], dict[str, tuple[TraversalEdge, ...]], dict[str, int], int]:
@@ -367,26 +449,46 @@ def _build_graph(
     orphan_ref_count = 0
 
     for road in roads.values():
-        endpoints = []
-        for endpoint_label, node_id in (("snodeid", road.snodeid), ("enodeid", road.enodeid)):
-            if node_id not in nodes:
+        resolved_endpoints: list[tuple[str, str, str]] = []
+        for endpoint_label, physical_node_id in (("snodeid", road.snodeid), ("enodeid", road.enodeid)):
+            if physical_node_id not in physical_nodes:
                 orphan_ref_count += 1
                 audit_events.append(
                     {
                         "event": "orphan_ref",
                         "road_id": road.road_id,
                         "endpoint": endpoint_label,
-                        "node_id": node_id,
+                        "node_id": physical_node_id,
                         "message": "Road endpoint cannot be resolved to node.id",
                     }
                 )
             else:
-                endpoints.append(node_id)
+                resolved_endpoints.append(
+                    (
+                        endpoint_label,
+                        physical_node_id,
+                        physical_to_semantic.get(physical_node_id, physical_node_id),
+                    )
+                )
 
-        if len(endpoints) != 2:
+        if len(resolved_endpoints) != 2:
             continue
 
-        a_node, b_node = road.snodeid, road.enodeid
+        a_node = resolved_endpoints[0][2]
+        b_node = resolved_endpoints[1][2]
+        if a_node == b_node:
+            audit_events.append(
+                {
+                    "event": "internal_semantic_road",
+                    "road_id": road.road_id,
+                    "semantic_node_id": a_node,
+                    "physical_snodeid": road.snodeid,
+                    "physical_enodeid": road.enodeid,
+                    "message": "Road stays within one semantic intersection after mainnodeid aggregation; Step1 graph ignores it as an external channel edge.",
+                }
+            )
+            continue
+
         road_degree[a_node] += 1
         road_degree[b_node] += 1
         undirected[a_node].append(TraversalEdge(road.road_id, a_node, b_node))
@@ -639,25 +741,40 @@ def _compact_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _road_feature(road: RoadRecord, *, pair_ids: list[str], strategy_id: str) -> dict[str, Any]:
+def _road_feature(
+    road: RoadRecord,
+    *,
+    pair_ids: list[str],
+    strategy_id: str,
+    semantic_snode_id: Optional[str] = None,
+    semantic_enode_id: Optional[str] = None,
+) -> dict[str, Any]:
     return {
         "geometry": road.geometry,
         "properties": {
             "road_id": road.road_id,
             "strategy_id": strategy_id,
             "pair_ids": ";".join(sorted(pair_ids)),
+            "physical_snodeid": road.snodeid,
+            "physical_enodeid": road.enodeid,
+            "semantic_snode_id": semantic_snode_id,
+            "semantic_enodeid": semantic_enode_id,
         },
     }
 
 
 def _node_feature(
-    node: NodeRecord,
+    node: SemanticNodeRecord,
     *,
     strategy_id: str,
     extra_props: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     properties = {
-        "node_id": node.node_id,
+        "node_id": node.semantic_node_id,
+        "semantic_node_id": node.semantic_node_id,
+        "representative_node_id": node.representative_node_id,
+        "member_node_ids": ";".join(node.member_node_ids),
+        "member_node_count": len(node.member_node_ids),
         "kind": node.kind,
         "grade": node.grade,
         "closed_con": node.closed_con,
@@ -673,7 +790,9 @@ def _write_strategy_outputs(
     *,
     strategy: StrategySpec,
     run_id: str,
-    nodes: dict[str, NodeRecord],
+    semantic_nodes: dict[str, SemanticNodeRecord],
+    physical_nodes: dict[str, NodeRecord],
+    physical_to_semantic: dict[str, str],
     roads: dict[str, RoadRecord],
     seed_eval: dict[str, RuleEvaluation],
     terminate_eval: dict[str, RuleEvaluation],
@@ -687,7 +806,10 @@ def _write_strategy_outputs(
 ) -> Step1StrategyResult:
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    seed_ids = sorted([node_id for node_id, eval_result in seed_eval.items() if eval_result.matched], key=_sort_key)
+    seed_ids = sorted(
+        [node_id for node_id, eval_result in seed_eval.items() if eval_result.matched],
+        key=_sort_key,
+    )
     terminate_ids = sorted(
         [node_id for node_id, eval_result in terminate_eval.items() if eval_result.matched],
         key=_sort_key,
@@ -703,10 +825,13 @@ def _write_strategy_outputs(
     rule_audit_path = out_dir / "rule_audit.json"
     search_audit_path = out_dir / "search_audit.json"
 
-    write_geojson(seed_nodes_path, [_node_feature(nodes[node_id], strategy_id=strategy.strategy_id) for node_id in seed_ids])
+    write_geojson(
+        seed_nodes_path,
+        [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in seed_ids],
+    )
     write_geojson(
         terminate_nodes_path,
-        [_node_feature(nodes[node_id], strategy_id=strategy.strategy_id) for node_id in terminate_ids],
+        [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in terminate_ids],
     )
 
     pair_node_features: list[dict[str, Any]] = []
@@ -723,7 +848,7 @@ def _write_strategy_outputs(
             pair_node_seen.add(key)
             pair_node_features.append(
                 _node_feature(
-                    nodes[node_id],
+                    semantic_nodes[node_id],
                     strategy_id=strategy.strategy_id,
                     extra_props={"pair_id": pair.pair_id, "role": role},
                 )
@@ -733,14 +858,16 @@ def _write_strategy_outputs(
             {
                 "geometry": LineString(
                     [
-                        (nodes[pair.a_node_id].geometry.x, nodes[pair.a_node_id].geometry.y),
-                        (nodes[pair.b_node_id].geometry.x, nodes[pair.b_node_id].geometry.y),
+                        (semantic_nodes[pair.a_node_id].geometry.x, semantic_nodes[pair.a_node_id].geometry.y),
+                        (semantic_nodes[pair.b_node_id].geometry.x, semantic_nodes[pair.b_node_id].geometry.y),
                     ]
                 ),
                 "properties": {
                     "pair_id": pair.pair_id,
                     "a_node_id": pair.a_node_id,
                     "b_node_id": pair.b_node_id,
+                    "a_representative_node_id": semantic_nodes[pair.a_node_id].representative_node_id,
+                    "b_representative_node_id": semantic_nodes[pair.b_node_id].representative_node_id,
                     "strategy_id": pair.strategy_id,
                     "reverse_confirmed": pair.reverse_confirmed,
                 },
@@ -775,7 +902,13 @@ def _write_strategy_outputs(
     write_geojson(
         pair_support_roads_path,
         [
-            _road_feature(roads[road_id], pair_ids=pair_ids, strategy_id=strategy.strategy_id)
+            _road_feature(
+                roads[road_id],
+                pair_ids=pair_ids,
+                strategy_id=strategy.strategy_id,
+                semantic_snode_id=physical_to_semantic.get(roads[road_id].snodeid),
+                semantic_enode_id=physical_to_semantic.get(roads[road_id].enodeid),
+            )
             for road_id, pair_ids in sorted(support_road_pairs.items(), key=lambda item: _sort_key(item[0]))
             if road_id in roads
         ],
@@ -787,10 +920,14 @@ def _write_strategy_outputs(
     )
 
     rule_audit_rows = []
-    for node_id, node in sorted(nodes.items(), key=lambda item: _sort_key(item[0])):
+    for node_id, node in sorted(semantic_nodes.items(), key=lambda item: _sort_key(item[0])):
         rule_audit_rows.append(
             {
                 "node_id": node_id,
+                "semantic_node_id": node.semantic_node_id,
+                "representative_node_id": node.representative_node_id,
+                "member_node_ids": list(node.member_node_ids),
+                "member_node_count": len(node.member_node_ids),
                 "strategy_id": strategy.strategy_id,
                 "seed_match": seed_eval[node_id].matched,
                 "seed_reasons": list(seed_eval[node_id].reasons),
@@ -824,7 +961,9 @@ def _write_strategy_outputs(
         "out_root": str(out_dir.parent.resolve()),
         "strategy_out_dir": str(out_dir.resolve()),
         "description": strategy.description,
-        "total_nodes": len(nodes),
+        "total_nodes": len(semantic_nodes),
+        "total_semantic_nodes": len(semantic_nodes),
+        "total_physical_nodes": len(physical_nodes),
         "seed_count": len(seed_ids),
         "search_seed_count": search_seed_count,
         "through_seed_pruned_count": through_seed_pruned_count,
@@ -889,9 +1028,15 @@ def run_step1_pair_poc(
     if validation_issues:
         raise ValueError("; ".join(validation_issues))
 
-    nodes = _prepare_nodes(raw_node_features, graph_audit_events)
+    physical_nodes = _prepare_nodes(raw_node_features, graph_audit_events)
     roads = _prepare_roads(raw_road_features, graph_audit_events)
-    directed, blocked, road_degree, orphan_ref_count = _build_graph(nodes, roads, graph_audit_events)
+    semantic_nodes, physical_to_semantic = _build_semantic_nodes(physical_nodes, graph_audit_events)
+    directed, blocked, road_degree, orphan_ref_count = _build_graph(
+        physical_nodes,
+        physical_to_semantic,
+        roads,
+        graph_audit_events,
+    )
 
     results: list[Step1StrategyResult] = []
     comparison_summary: list[dict[str, Any]] = []
@@ -899,8 +1044,12 @@ def run_step1_pair_poc(
 
     for strategy_path in strategy_config_paths:
         strategy = _load_strategy(strategy_path)
-        seed_eval = {node_id: _evaluate_rule(node, strategy.seed_rule) for node_id, node in nodes.items()}
-        terminate_eval = {node_id: _evaluate_rule(node, strategy.terminate_rule) for node_id, node in nodes.items()}
+        seed_eval = {
+            node_id: _evaluate_rule(node, strategy.seed_rule) for node_id, node in semantic_nodes.items()
+        }
+        terminate_eval = {
+            node_id: _evaluate_rule(node, strategy.terminate_rule) for node_id, node in semantic_nodes.items()
+        }
         seed_ids = [node_id for node_id, eval_result in seed_eval.items() if eval_result.matched]
         through_node_ids = {
             node_id
@@ -942,7 +1091,9 @@ def run_step1_pair_poc(
             strategy_out_dir,
             strategy=strategy,
             run_id=resolved_run_id,
-            nodes=nodes,
+            semantic_nodes=semantic_nodes,
+            physical_nodes=physical_nodes,
+            physical_to_semantic=physical_to_semantic,
             roads=roads,
             seed_eval=seed_eval,
             terminate_eval=terminate_eval,

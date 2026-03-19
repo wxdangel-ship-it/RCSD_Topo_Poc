@@ -1,6 +1,11 @@
 {
   "profiles": [
     {
+      "profile_id": "XXS",
+      "target_core_node_count": 500,
+      "description": "超小冒烟切片，优先用于围绕指定中心点做快速结构验证与脚本冒烟。"
+    },
+    {
       "profile_id": "XS",
       "target_core_node_count": 2000,
       "description": "最小审查切片，优先用于验证输出结构、QGIS 叠加与基础业务差异。"

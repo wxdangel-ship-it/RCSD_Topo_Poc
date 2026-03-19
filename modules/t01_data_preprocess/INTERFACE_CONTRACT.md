@@ -27,6 +27,7 @@
 - Step1 原型当前实际强依赖字段：
   - Road：`id`、`snodeid`、`enodeid`、`direction`
   - Node：`id`、`kind`、`grade`、`closed_con`
+  - Node：若存在 `mainnodeid`，Step1 当前已按其做语义路口聚合；若不存在，则按 `Node.id` 自身成口处理
 
 ## 3. 已确认事实：Road 输入契约
 
@@ -148,7 +149,10 @@
 - `mainnodeid` 是当前语义路口聚合的主依据。
 - 若 `mainnodeid` 有具体值，则所有 `mainnodeid` 相同的 Node 构成一个有语义的路口。
 - 若 `mainnodeid` 为空值、缺失、`0` 或空字符串，则当前 Node 自身构成一个有语义的路口，并以该 `Node.id` 为主。
-- 上述 `mainnodeid` 语义当前是输入契约与语义约束，不代表最终切分算法已经确定。
+- 当前补充口径：复合路口内进入 / 退出的 `Road`，在 Step1 当前原型中一并按聚合后的语义路口处理。
+- 当前补充口径：若一组 Node 共享同一 `mainnodeid`，则当前只有 `id == mainnodeid` 的代表节点属性被视为该语义路口的有效属性来源。
+- 当前补充口径：若 `mainnodeid` 指向的代表节点缺失，当前口径为记录异常并退化到组内首个成员节点承载属性，但不静默忽略该问题。
+- 上述 `mainnodeid` 语义当前已落地到 Step1 图构建与规则判定；但这不代表 Step2 / Step3 最终算法已经定稿。
 
 ## 6. 已确认事实：输入归一化与非阻断处理
 
@@ -206,16 +210,20 @@
   - 切片输出仅服务于后续 Step1 / Step2 的分级验证
   - 当前切片输出不等于最终生产输入分发机制
   - 当前切片输出按不同等级 profile 分目录落仓，供人工挑选与后续手工存放
+  - 当前切片选 core 的对象已从物理 `Node` 调整为按 `mainnodeid` 聚合后的语义路口
+  - 当前切片会保留所选语义路口对应的全部物理 Node，以及这些语义路口之间相关的物理 Road
 - 当前默认输出根目录：`outputs/_work/t01_validation_slices/<run_id>`
 - 默认 `run_id` 规则：`t01_validation_slices_YYYYMMDD_HHMMSS`
 - 当前默认 profile：
+  - `XXS`
   - `XS`
   - `S`
   - `M`
 - 当前补充执行口径：
   - 默认可一次输出全部 profile
-  - 若验证时间不可接受，可显式只跑指定 profile（如仅 `XS`）
-  - 当前推荐先跑 `XS`，确认切片质量后再决定是否继续 `S / M`
+  - 若验证时间不可接受，可显式只跑指定 profile（如仅 `XXS` 或 `XS`）
+  - 当前推荐先跑 `XXS` 做冒烟，再跑 `XS`；确认切片质量后再决定是否继续 `S / M`
+  - 可显式传入 `center_x / center_y`（EPSG:3857）以围绕指定中心点做语义切片排序
 - 当前每个 profile 至少输出：
   - `roads.geojson`
   - `nodes.geojson`
@@ -227,11 +235,11 @@
 
 | 输出文件 | 当前形态 | 当前用途 | 备注 |
 |---|---|---|---|
-| `seed_nodes.geojson` | 点图层 | 查看策略下纳入种子集合的节点 | 审查型输出 |
-| `terminate_nodes.geojson` | 点图层 | 查看策略下纳入终止集合的节点 | 审查型输出 |
-| `pair_nodes.geojson` | 点图层 | 查看最终参与 Pair 的节点与角色 | 至少含 `node_id`、`pair_id`、`role` |
-| `pair_links.geojson` | 线图层 | 直接在 QGIS 上查看 Pair 关系 | 当前为审查辅助直连线，不代表最终 Segment 几何 |
-| `pair_support_roads.geojson` | 线图层 | 查看 Pair 搜索相关支撑 Road | 文件名显式带 `support`，避免误解为 Step2 正式结果 |
+| `seed_nodes.geojson` | 点图层 | 查看策略下纳入种子集合的语义路口 | 当前 `node_id` 表示语义路口 ID，补充 `representative_node_id` 与 `member_node_ids` |
+| `terminate_nodes.geojson` | 点图层 | 查看策略下纳入终止集合的语义路口 | 当前 `node_id` 表示语义路口 ID，补充 `representative_node_id` 与 `member_node_ids` |
+| `pair_nodes.geojson` | 点图层 | 查看最终参与 Pair 的语义路口与角色 | 至少含 `node_id`、`pair_id`、`role`，并补充代表节点与成员节点信息 |
+| `pair_links.geojson` | 线图层 | 直接在 QGIS 上查看 Pair 关系 | 当前为语义路口代表点之间的审查辅助直连线，不代表最终 Segment 几何 |
+| `pair_support_roads.geojson` | 线图层 | 查看 Pair 搜索相关支撑 Road | 额外补充物理端点与语义端点 ID；文件名显式带 `support`，避免误解为 Step2 正式结果 |
 | `pair_table.csv` | 表格 | 查看 Pair 级结果与简要支撑信息 | 审查 / 调试用途 |
 | `pair_summary.json` | 摘要 | 查看策略级计数与异常摘要 | 审查 / 对比用途 |
 | `rule_audit.json` | JSON | 查看节点级 seed / terminate 规则命中情况 | 审计辅助 |
@@ -299,9 +307,13 @@ outputs/_work/t01_validation_slices/<run_id>/
   - `search_seed_count`
   - `through_seed_pruned_count`
   - `search_event_sample_limit_per_type`
+  - `total_semantic_nodes`
+  - `total_physical_nodes`
 - 其中：
   - `search_seed_count` 表示实际进入 Pair 搜索的 seed 数量
   - `through_seed_pruned_count` 表示命中 seed rule 但因同时属于 through 节点而未进入搜索的数量
+  - `total_semantic_nodes` 表示按 `mainnodeid` 聚合后的语义路口总数
+  - `total_physical_nodes` 表示原始物理 Node 总数
 - 当前理解是：
   - through 节点在当前 Step1 对称确认规则下不构成最终 Pair 终点
   - 因而该类 seed 可在不改变当前 Pair 语义的前提下作为性能剪枝对象

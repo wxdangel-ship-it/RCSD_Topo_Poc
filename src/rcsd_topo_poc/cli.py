@@ -168,6 +168,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="append",
         help="Optional profile id filter. Repeat to run multiple profiles, e.g. --profile-id XS --profile-id S.",
     )
+    p_slice.add_argument("--center-x", type=float, help="Optional center x in EPSG:3857 for semantic slice ranking.")
+    p_slice.add_argument("--center-y", type=float, help="Optional center y in EPSG:3857 for semantic slice ranking.")
     p_slice.add_argument(
         "--run-id",
         help="Optional run id. If omitted, use t01_validation_slices_YYYYMMDD_HHMMSS.",

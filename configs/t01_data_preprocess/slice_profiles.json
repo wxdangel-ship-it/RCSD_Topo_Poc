@@ -1,6 +1,11 @@
 {
   "profiles": [
     {
+      "profile_id": "XXXS",
+      "target_core_node_count": 100,
+      "description": "极小冒烟切片，优先用于围绕指定中心点做最快速的结构联调与外网 smoke 验证。"
+    },
+    {
       "profile_id": "XXS",
       "target_core_node_count": 500,
       "description": "超小冒烟切片，优先用于围绕指定中心点做快速结构验证与脚本冒烟。"

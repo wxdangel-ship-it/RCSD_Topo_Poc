@@ -68,6 +68,7 @@ def _write_profile_config(path: Path) -> None:
         json.dumps(
             {
                 "profiles": [
+                    {"profile_id": "XXXS", "target_core_node_count": 1, "description": "xxxs"},
                     {"profile_id": "XXS", "target_core_node_count": 2, "description": "xxs"},
                     {"profile_id": "XS", "target_core_node_count": 4, "description": "xs"},
                     {"profile_id": "S", "target_core_node_count": 8, "description": "s"},
@@ -126,22 +127,30 @@ def test_build_validation_slices_generates_multiple_profiles(tmp_path: Path) -> 
     )
 
     assert rc == 0
-    for profile_id in ("XS", "S"):
+    for profile_id in ("XXXS", "XXS", "XS", "S"):
         profile_dir = out_root / profile_id
         assert (profile_dir / "roads.geojson").is_file()
         assert (profile_dir / "nodes.geojson").is_file()
         assert (profile_dir / "slice_summary.json").is_file()
 
     manifest = _load_json(out_root / "slice_manifest.json")
+    xxxs_summary = _load_json(out_root / "XXXS" / "slice_summary.json")
+    xxs_summary = _load_json(out_root / "XXS" / "slice_summary.json")
     xs_summary = _load_json(out_root / "XS" / "slice_summary.json")
     s_summary = _load_json(out_root / "S" / "slice_summary.json")
 
     assert manifest["source_node_count"] == 16
     assert manifest["source_semantic_node_count"] == 16
     assert manifest["source_road_count"] == 24
+    assert xxxs_summary["output_node_count"] >= xxxs_summary["core_node_count"]
+    assert xxs_summary["output_node_count"] >= xxs_summary["core_node_count"]
     assert xs_summary["output_node_count"] >= xs_summary["core_node_count"]
     assert s_summary["output_node_count"] >= s_summary["core_node_count"]
+    assert xxxs_summary["output_node_count"] <= xxs_summary["output_node_count"]
+    assert xxs_summary["output_node_count"] <= xs_summary["output_node_count"]
     assert xs_summary["output_node_count"] <= s_summary["output_node_count"]
+    assert xxxs_summary["output_semantic_node_count"] <= xxs_summary["output_semantic_node_count"]
+    assert xxs_summary["output_semantic_node_count"] <= xs_summary["output_semantic_node_count"]
     assert xs_summary["output_semantic_node_count"] <= s_summary["output_semantic_node_count"]
 
 
@@ -161,14 +170,15 @@ def test_build_validation_slices_can_filter_profiles(tmp_path: Path) -> None:
             "--profile-config",
             str(profile_config),
             "--profile-id",
-            "XS",
+            "XXXS",
             "--out-root",
             str(out_root),
         ]
     )
 
     assert rc == 0
-    assert (out_root / "XS" / "roads.geojson").is_file()
+    assert (out_root / "XXXS" / "roads.geojson").is_file()
+    assert not (out_root / "XXS").exists()
     assert not (out_root / "S").exists()
 
 

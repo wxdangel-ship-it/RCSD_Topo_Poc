@@ -69,12 +69,12 @@
   - 审查输出会补充 `representative_node_id`、`member_node_ids`、`member_node_count`
   - `pair_support_roads` 会同时保留物理端点与聚合后的语义端点字段，便于核对复合路口并口效果
 - 当前输出目标：便于在 QGIS 中叠加审查与做策略对比
-- 当前切片输出：默认按 `XS / S / M` 生成多档 GeoJSON 切片，供后续 Step1 / Step2 分级验证
+- 当前切片输出：默认按 `XXXS / XXS / XS / S / M` 生成多档 GeoJSON 切片，供后续 Step1 / Step2 分级验证
 - 当前切片输出口径补充：
   - 切片当前按 `mainnodeid` 聚合后的语义路口做 core 选择，而不是按物理 Node 单独裁切
   - 切片输出仍保留物理 `roads.geojson` 与 `nodes.geojson`，以便后续 Step1 / Step2 复用
-  - 默认 profile 已扩展为 `XXS / XS / S / M`
-- 当前切片执行建议：先单独跑 `XXS` 做冒烟，再跑 `XS`；若时间与质量都可接受，再继续 `S / M`
+  - 默认 profile 已扩展为 `XXXS / XXS / XS / S / M`
+- 当前切片执行建议：先单独跑 `XXXS` 做极小冒烟，再跑 `XXS`；若质量与覆盖仍不够，再继续 `XS / S / M`
 - 当前性能口径补充：
   - Step1 已做一轮原型级性能优化
   - `search_audit.json` 当前采用“事件计数 + 样本事件”模式，而非全量搜索事件明细

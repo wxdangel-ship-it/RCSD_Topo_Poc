@@ -215,14 +215,15 @@
 - 当前默认输出根目录：`outputs/_work/t01_validation_slices/<run_id>`
 - 默认 `run_id` 规则：`t01_validation_slices_YYYYMMDD_HHMMSS`
 - 当前默认 profile：
+  - `XXXS`
   - `XXS`
   - `XS`
   - `S`
   - `M`
 - 当前补充执行口径：
   - 默认可一次输出全部 profile
-  - 若验证时间不可接受，可显式只跑指定 profile（如仅 `XXS` 或 `XS`）
-  - 当前推荐先跑 `XXS` 做冒烟，再跑 `XS`；确认切片质量后再决定是否继续 `S / M`
+  - 若验证时间不可接受，可显式只跑指定 profile（如仅 `XXXS`、`XXS` 或 `XS`）
+  - 当前推荐先跑 `XXXS` 做极小冒烟，再跑 `XXS`；确认切片质量后再决定是否继续 `XS / S / M`
   - 可显式传入 `center_x / center_y`（EPSG:3857）以围绕指定中心点做语义切片排序
 - 当前每个 profile 至少输出：
   - `roads.geojson`
@@ -270,6 +271,14 @@
 
 ```text
 outputs/_work/t01_validation_slices/<run_id>/
+  XXXS/
+    roads.geojson
+    nodes.geojson
+    slice_summary.json
+  XXS/
+    roads.geojson
+    nodes.geojson
+    slice_summary.json
   XS/
     roads.geojson
     nodes.geojson

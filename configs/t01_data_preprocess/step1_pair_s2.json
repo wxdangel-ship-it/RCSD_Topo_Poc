@@ -1,6 +1,6 @@
 {
   "strategy_id": "S2",
-  "description": "较收敛：kind 含 bit2，closed_con in {2,3}，grade=1。",
+  "description": "Tighter rule: seed/terminate by kind(bit2)+closed_con+grade=1; through degree excludes formway bit7 before checking degree=2.",
   "seed_rule": {
     "kind_bits_all": [2],
     "closed_con_in": [2, 3],
@@ -12,6 +12,7 @@
     "grade_eq": 1
   },
   "through_node_rule": {
-    "incident_road_degree_eq": 2
+    "incident_road_degree_eq": 2,
+    "incident_degree_exclude_formway_bits_any": [7]
   }
 }

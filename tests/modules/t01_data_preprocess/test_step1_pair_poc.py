@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import Optional
@@ -42,7 +43,15 @@ def _node_feature(
     }
 
 
-def _road_feature(road_id: str, snodeid: int, enodeid: int, direction: int, coords: list[list[float]]) -> dict:
+def _road_feature(
+    road_id: str,
+    snodeid: int,
+    enodeid: int,
+    direction: int,
+    coords: list[list[float]],
+    *,
+    formway: int = 0,
+) -> dict:
     return {
         "type": "Feature",
         "properties": {
@@ -50,6 +59,7 @@ def _road_feature(road_id: str, snodeid: int, enodeid: int, direction: int, coor
             "snodeid": snodeid,
             "enodeid": enodeid,
             "direction": direction,
+            "formway": formway,
         },
         "geometry": {"type": "LineString", "coordinates": coords},
     }
@@ -85,6 +95,11 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _write_strategy(path: Path, payload: dict) -> Path:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
 def _build_compound_intersection_dataset(base_dir: Path) -> tuple[Path, Path]:
     road_path = base_dir / "compound_roads.geojson"
     node_path = base_dir / "compound_nodes.geojson"
@@ -97,6 +112,29 @@ def _build_compound_intersection_dataset(base_dir: Path) -> tuple[Path, Path]:
     road_features = [
         _road_feature("r1_101", 1, 101, 0, [[0.0, 0.0], [0.0205, 0.0005]]),
         _road_feature("r100_101_internal", 100, 101, 0, [[0.02, 0.0], [0.0205, 0.0005]]),
+    ]
+
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
+def _build_formway_turn_lane_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "formway_roads.geojson"
+    node_path = base_dir / "formway_nodes.geojson"
+
+    node_features = [
+        _node_feature(10, 0.0, 0.0),
+        _node_feature(20, 0.01, 0.0),
+        _node_feature(30, 0.02, 0.0),
+        _node_feature(40, 0.01, 0.01, kind=0, grade=0, closed_con=0),
+        _node_feature(50, 0.01, -0.01, kind=0, grade=0, closed_con=0),
+    ]
+    road_features = [
+        _road_feature("r10_20", 10, 20, 0, [[0.0, 0.0], [0.01, 0.0]]),
+        _road_feature("r20_30", 20, 30, 0, [[0.01, 0.0], [0.02, 0.0]]),
+        _road_feature("r20_40_right_turn", 20, 40, 0, [[0.01, 0.0], [0.01, 0.01]], formway=128),
+        _road_feature("r50_20_right_turn", 50, 20, 0, [[0.01, -0.01], [0.01, 0.0]], formway=128),
     ]
 
     _write_geojson(road_path, features=road_features)
@@ -321,3 +359,56 @@ def test_mainnodeid_group_is_handled_as_one_semantic_intersection(tmp_path: Path
     event_names = {event["event"] for event in search_audit["graph_events"]}
     assert "semantic_intersection_grouped" in event_names
     assert "internal_semantic_road" in event_names
+
+
+def test_formway_right_turn_lane_is_excluded_from_through_degree(tmp_path: Path) -> None:
+    road_path, node_path = _build_formway_turn_lane_dataset(tmp_path)
+    out_root = tmp_path / "outputs"
+    strategy_path = _write_strategy(
+        tmp_path / "formway_strategy.json",
+        {
+            "strategy_id": "Sx",
+            "description": "Seed/terminate use kind+grade+closed_con; through degree excludes right-turn-only roads.",
+            "seed_rule": {
+                "kind_bits_all": [2],
+                "closed_con_in": [2, 3],
+                "grade_eq": 1,
+            },
+            "terminate_rule": {
+                "kind_bits_all": [2],
+                "closed_con_in": [2, 3],
+                "grade_eq": 1,
+            },
+            "through_node_rule": {
+                "incident_road_degree_eq": 2,
+                "incident_degree_exclude_formway_bits_any": [7],
+            },
+        },
+    )
+
+    rc = main(
+        [
+            "t01-step1-pair-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+
+    pair_rows = list(csv.DictReader((out_root / "Sx" / "pair_table.csv").open("r", encoding="utf-8-sig")))
+    summary = _load_json(out_root / "Sx" / "pair_summary.json")
+
+    assert len(pair_rows) == 1
+    assert pair_rows[0]["pair_id"] == "Sx:10__30"
+    support_info = json.loads(pair_rows[0]["support_info"])
+    assert support_info["through_node_ids"] == ["20"]
+    assert summary["pair_count"] == 1
+    assert summary["search_seed_count"] == 2
+    assert summary["through_seed_pruned_count"] == 1

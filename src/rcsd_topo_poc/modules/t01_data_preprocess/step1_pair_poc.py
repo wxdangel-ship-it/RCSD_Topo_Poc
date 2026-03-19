@@ -14,7 +14,7 @@ from shapely.geometry.base import BaseGeometry
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer, write_csv, write_geojson, write_json
 
 
-REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction")
+REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction", "formway")
 REQUIRED_NODE_FIELDS = ("id", "kind", "grade", "closed_con")
 DEFAULT_RUN_ID_PREFIX = "t01_step1_pair_poc_"
 SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE = 100
@@ -37,6 +37,7 @@ class RoadRecord:
     snodeid: str
     enodeid: str
     direction: int
+    formway: Optional[int]
     geometry: BaseGeometry
     raw_properties: dict[str, Any]
 
@@ -49,12 +50,18 @@ class RuleSpec:
 
 
 @dataclass(frozen=True)
+class ThroughRuleSpec:
+    incident_road_degree_eq: Optional[int] = 2
+    incident_degree_exclude_formway_bits_any: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
 class StrategySpec:
     strategy_id: str
     description: str
     seed_rule: RuleSpec
     terminate_rule: RuleSpec
-    through_incident_road_degree: int = 2
+    through_rule: ThroughRuleSpec = ThroughRuleSpec()
 
 
 @dataclass(frozen=True)
@@ -223,7 +230,16 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
         description=str(doc.get("description") or ""),
         seed_rule=_load_rule(doc["seed_rule"]),
         terminate_rule=_load_rule(doc["terminate_rule"]),
-        through_incident_road_degree=int(through_payload.get("incident_road_degree_eq", 2)),
+        through_rule=ThroughRuleSpec(
+            incident_road_degree_eq=(
+                None
+                if through_payload.get("incident_road_degree_eq") is None
+                else int(through_payload["incident_road_degree_eq"])
+            ),
+            incident_degree_exclude_formway_bits_any=tuple(
+                int(v) for v in through_payload.get("incident_degree_exclude_formway_bits_any", [])
+            ),
+        ),
     )
 
 
@@ -388,6 +404,7 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
 
         try:
             direction = _coerce_int(props.get("direction"))
+            formway = _coerce_int(props.get("formway"))
         except ValueError as exc:
             audit_events.append(
                 {
@@ -417,6 +434,7 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             snodeid=snodeid,
             enodeid=enodeid,
             direction=direction,
+            formway=formway,
             geometry=geometry,
             raw_properties=dict(props),
         )
@@ -567,6 +585,53 @@ def _build_candidate_from_parents(
         path_road_ids=path_road_ids,
         through_node_ids=through_path_node_ids,
     )
+
+
+def _matches_through_rule(
+    *,
+    road_degree: int,
+    through_rule: ThroughRuleSpec,
+) -> bool:
+    if (
+        through_rule.incident_road_degree_eq is not None
+        and road_degree == through_rule.incident_road_degree_eq
+    ):
+        return True
+
+    return False
+
+
+def _road_matches_any_formway_bit(road: RoadRecord, bits: tuple[int, ...]) -> bool:
+    if not bits or road.formway is None:
+        return False
+    return any(_bit_enabled(road.formway, bit_index) for bit_index in bits)
+
+
+def _build_incident_road_degree(
+    *,
+    roads: dict[str, RoadRecord],
+    physical_nodes: dict[str, NodeRecord],
+    physical_to_semantic: dict[str, str],
+    through_rule: ThroughRuleSpec,
+) -> dict[str, int]:
+    incident_road_degree: dict[str, int] = defaultdict(int)
+
+    for road in roads.values():
+        if _road_matches_any_formway_bit(road, through_rule.incident_degree_exclude_formway_bits_any):
+            continue
+
+        if road.snodeid not in physical_nodes or road.enodeid not in physical_nodes:
+            continue
+
+        a_node = physical_to_semantic.get(road.snodeid, road.snodeid)
+        b_node = physical_to_semantic.get(road.enodeid, road.enodeid)
+        if a_node == b_node:
+            continue
+
+        incident_road_degree[a_node] += 1
+        incident_road_degree[b_node] += 1
+
+    return dict(incident_road_degree)
 
 
 def _search_from_seed(
@@ -1031,7 +1096,7 @@ def run_step1_pair_poc(
     physical_nodes = _prepare_nodes(raw_node_features, graph_audit_events)
     roads = _prepare_roads(raw_road_features, graph_audit_events)
     semantic_nodes, physical_to_semantic = _build_semantic_nodes(physical_nodes, graph_audit_events)
-    directed, blocked, road_degree, orphan_ref_count = _build_graph(
+    directed, blocked, _road_degree, orphan_ref_count = _build_graph(
         physical_nodes,
         physical_to_semantic,
         roads,
@@ -1051,10 +1116,19 @@ def run_step1_pair_poc(
             node_id: _evaluate_rule(node, strategy.terminate_rule) for node_id, node in semantic_nodes.items()
         }
         seed_ids = [node_id for node_id, eval_result in seed_eval.items() if eval_result.matched]
+        incident_road_degree = _build_incident_road_degree(
+            roads=roads,
+            physical_nodes=physical_nodes,
+            physical_to_semantic=physical_to_semantic,
+            through_rule=strategy.through_rule,
+        )
         through_node_ids = {
             node_id
-            for node_id, degree in road_degree.items()
-            if degree == strategy.through_incident_road_degree
+            for node_id in semantic_nodes
+            if _matches_through_rule(
+                road_degree=incident_road_degree.get(node_id, 0),
+                through_rule=strategy.through_rule,
+            )
         }
         search_seed_ids = [node_id for node_id in seed_ids if node_id not in through_node_ids]
         through_seed_pruned_count = len(seed_ids) - len(search_seed_ids)

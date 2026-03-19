@@ -60,6 +60,11 @@
   - 或显式传 `--out-root`
 - 当前输出：每个策略目录下生成 `seed_nodes`、`terminate_nodes`、`pair_nodes`、`pair_links`、`pair_support_roads`、`pair_table.csv`、`pair_summary.json`、审计 JSON
 - 当前输出目标：便于在 QGIS 中叠加审查与做策略对比
+- 当前性能口径补充：
+  - Step1 已做一轮原型级性能优化
+  - `search_audit.json` 当前采用“事件计数 + 样本事件”模式，而非全量搜索事件明细
+  - `pair_summary.json` 当前会补充 `search_seed_count` 与 `through_seed_pruned_count`，用于解释实际搜索规模
+  - 该口径用于降低大图运行时的内存与输出体量压力
 
 ## 7. 待确认决策点
 

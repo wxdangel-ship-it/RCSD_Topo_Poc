@@ -204,7 +204,7 @@
 | `pair_table.csv` | 表格 | 查看 Pair 级结果与简要支撑信息 | 审查 / 调试用途 |
 | `pair_summary.json` | 摘要 | 查看策略级计数与异常摘要 | 审查 / 对比用途 |
 | `rule_audit.json` | JSON | 查看节点级 seed / terminate 规则命中情况 | 审计辅助 |
-| `search_audit.json` | JSON | 查看搜索过程中的 through、方向阻断、反向确认失败等事件 | 审计辅助 |
+| `search_audit.json` | JSON | 查看搜索过程中的 through、方向阻断、反向确认失败等事件 | 当前采用“事件计数 + 样本事件”模式，避免大图下审计体量失控 |
 
 ### 9.3 Step1 当前输出目录结构
 
@@ -224,6 +224,36 @@
   S2/
     ...
 ```
+
+### 9.4 Step1 当前审计输出补充口径
+
+- `search_audit.json` 当前保留：
+  - `search_event_counts`
+  - `search_events`
+  - `search_event_sample_limit_per_type`
+  - `graph_events`
+- 其中 `search_events` 当前明确是采样事件，不承诺保留全量搜索事件明细。
+- 当前这样设计的原因是：
+  - Step1 仍是原型，但需要支持较大样本的可审查运行
+  - 需避免因全量搜索事件落盘而明显放大内存与输出体量
+- 因此当前审计口径为：
+  - 计数用于摘要与对比
+  - 样本用于排障与可解释审查
+  - 若后续需要全量事件审计，需单独确认其体量、性能与落盘策略
+
+### 9.5 Step1 当前摘要输出补充口径
+
+- `pair_summary.json` 当前除基础计数字段外，额外允许包含：
+  - `search_seed_count`
+  - `through_seed_pruned_count`
+  - `search_event_sample_limit_per_type`
+- 其中：
+  - `search_seed_count` 表示实际进入 Pair 搜索的 seed 数量
+  - `through_seed_pruned_count` 表示命中 seed rule 但因同时属于 through 节点而未进入搜索的数量
+- 当前理解是：
+  - through 节点在当前 Step1 对称确认规则下不构成最终 Pair 终点
+  - 因而该类 seed 可在不改变当前 Pair 语义的前提下作为性能剪枝对象
+- 该口径当前仅服务于 Step1 原型性能优化，不代表 Step2 / Step3 规则已定稿
 
 ## 10. 当前不纳入范围：当前失败与审计契约
 

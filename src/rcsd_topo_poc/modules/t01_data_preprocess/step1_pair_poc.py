@@ -17,6 +17,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
 REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction")
 REQUIRED_NODE_FIELDS = ("id", "kind", "grade", "closed_con")
 DEFAULT_RUN_ID_PREFIX = "t01_step1_pair_poc_"
+SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE = 100
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,8 @@ class SearchCandidate:
 class SearchResult:
     start_node_id: str
     candidates: dict[str, SearchCandidate]
-    events: list[dict[str, Any]]
+    event_counts: dict[str, int]
+    event_samples: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -347,7 +349,7 @@ def _evaluate_rule(node: NodeRecord, rule: RuleSpec) -> RuleEvaluation:
             reasons.append(f"kind_missing_bit_{bit_index}")
     if rule.grade_eq is not None and node.grade != rule.grade_eq:
         reasons.append(f"grade_not_eq_{rule.grade_eq}")
-    if rule.closed_con_in and node.closed_con not in set(rule.closed_con_in):
+    if rule.closed_con_in and node.closed_con not in rule.closed_con_in:
         joined = "_".join(str(v) for v in rule.closed_con_in)
         reasons.append(f"closed_con_not_in_{joined}")
     return RuleEvaluation(matched=not reasons, reasons=tuple(reasons))
@@ -357,10 +359,11 @@ def _build_graph(
     nodes: dict[str, NodeRecord],
     roads: dict[str, RoadRecord],
     audit_events: list[dict[str, Any]],
-) -> tuple[dict[str, list[TraversalEdge]], dict[str, list[TraversalEdge]], dict[str, set[str]], int]:
-    directed: dict[str, list[TraversalEdge]] = defaultdict(list)
+) -> tuple[dict[str, tuple[TraversalEdge, ...]], dict[str, tuple[TraversalEdge, ...]], dict[str, int], int]:
+    directed_lists: dict[str, list[TraversalEdge]] = defaultdict(list)
+    directed_lookup: dict[str, set[tuple[str, str]]] = defaultdict(set)
     undirected: dict[str, list[TraversalEdge]] = defaultdict(list)
-    incident_roads: dict[str, set[str]] = defaultdict(set)
+    road_degree: dict[str, int] = defaultdict(int)
     orphan_ref_count = 0
 
     for road in roads.values():
@@ -384,124 +387,188 @@ def _build_graph(
             continue
 
         a_node, b_node = road.snodeid, road.enodeid
-        incident_roads[a_node].add(road.road_id)
-        incident_roads[b_node].add(road.road_id)
+        road_degree[a_node] += 1
+        road_degree[b_node] += 1
         undirected[a_node].append(TraversalEdge(road.road_id, a_node, b_node))
         undirected[b_node].append(TraversalEdge(road.road_id, b_node, a_node))
 
         if road.direction in {0, 1, 2}:
-            directed[a_node].append(TraversalEdge(road.road_id, a_node, b_node))
+            directed_lists[a_node].append(TraversalEdge(road.road_id, a_node, b_node))
+            directed_lookup[a_node].add((road.road_id, b_node))
         if road.direction in {0, 1, 3}:
-            directed[b_node].append(TraversalEdge(road.road_id, b_node, a_node))
+            directed_lists[b_node].append(TraversalEdge(road.road_id, b_node, a_node))
+            directed_lookup[b_node].add((road.road_id, a_node))
 
-    return directed, undirected, incident_roads, orphan_ref_count
+    directed = {node_id: tuple(edges) for node_id, edges in directed_lists.items()}
+    blocked = {
+        node_id: tuple(
+            edge for edge in edges if (edge.road_id, edge.to_node) not in directed_lookup.get(node_id, set())
+        )
+        for node_id, edges in undirected.items()
+    }
+    blocked = {node_id: edges for node_id, edges in blocked.items() if edges}
+    return directed, blocked, dict(road_degree), orphan_ref_count
 
 
-def _is_through_node(
-    node_id: str,
+def _append_capped_event_sample(
+    event_samples: list[dict[str, Any]],
+    sample_counts: dict[str, int],
+    payload: dict[str, Any],
+) -> None:
+    event_name = str(payload["event"])
+    if sample_counts.get(event_name, 0) >= SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE:
+        return
+    event_samples.append(payload)
+    sample_counts[event_name] = sample_counts.get(event_name, 0) + 1
+
+
+def _record_search_event(
+    event_counts: dict[str, int],
+    event_samples: list[dict[str, Any]],
+    sample_counts: dict[str, int],
+    payload: dict[str, Any],
+) -> None:
+    event_name = str(payload["event"])
+    event_counts[event_name] = event_counts.get(event_name, 0) + 1
+    _append_capped_event_sample(event_samples, sample_counts, payload)
+
+
+def _build_candidate_from_parents(
     *,
     start_node_id: str,
-    strategy: StrategySpec,
-    incident_roads: dict[str, set[str]],
-) -> bool:
-    if node_id == start_node_id:
-        return False
-    return len(incident_roads.get(node_id, set())) == strategy.through_incident_road_degree
+    terminal_node_id: str,
+    parent_node_ids: dict[str, Optional[str]],
+    parent_road_ids: dict[str, str],
+    through_node_ids: set[str],
+) -> SearchCandidate:
+    reverse_node_ids: list[str] = [terminal_node_id]
+    reverse_road_ids: list[str] = []
+    current_node_id = terminal_node_id
+
+    while current_node_id != start_node_id:
+        parent_node_id = parent_node_ids.get(current_node_id)
+        road_id = parent_road_ids.get(current_node_id)
+        if parent_node_id is None or road_id is None:
+            raise ValueError(
+                f"Cannot reconstruct path from '{start_node_id}' to '{terminal_node_id}' due to missing parent state."
+            )
+        reverse_road_ids.append(road_id)
+        current_node_id = parent_node_id
+        reverse_node_ids.append(current_node_id)
+
+    path_node_ids = tuple(reversed(reverse_node_ids))
+    path_road_ids = tuple(reversed(reverse_road_ids))
+    through_path_node_ids = tuple(node_id for node_id in path_node_ids[1:-1] if node_id in through_node_ids)
+    return SearchCandidate(
+        terminal_node_id=terminal_node_id,
+        path_node_ids=path_node_ids,
+        path_road_ids=path_road_ids,
+        through_node_ids=through_path_node_ids,
+    )
 
 
 def _search_from_seed(
     start_node_id: str,
     *,
-    strategy: StrategySpec,
-    directed: dict[str, list[TraversalEdge]],
-    undirected: dict[str, list[TraversalEdge]],
-    incident_roads: dict[str, set[str]],
+    directed: dict[str, tuple[TraversalEdge, ...]],
+    blocked: dict[str, tuple[TraversalEdge, ...]],
+    through_node_ids: set[str],
     seed_eval: dict[str, RuleEvaluation],
     terminate_eval: dict[str, RuleEvaluation],
 ) -> SearchResult:
-    queue: deque[tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = deque(
-        [(start_node_id, (start_node_id,), tuple(), tuple())]
-    )
+    queue: deque[str] = deque([start_node_id])
     visited = {start_node_id}
+    parent_node_ids: dict[str, Optional[str]] = {start_node_id: None}
+    parent_road_ids: dict[str, str] = {}
     candidates: dict[str, SearchCandidate] = {}
-    events: list[dict[str, Any]] = []
-    blocked_seen: set[tuple[str, str, str]] = set()
+    event_counts: dict[str, int] = {}
+    event_samples: list[dict[str, Any]] = []
+    sample_counts: dict[str, int] = {}
 
     while queue:
-        current_node_id, path_node_ids, path_road_ids, through_node_ids = queue.popleft()
-        outgoing_edges = directed.get(current_node_id, [])
-        outgoing_keys = {(edge.road_id, edge.to_node) for edge in outgoing_edges}
+        current_node_id = queue.popleft()
 
-        for edge in undirected.get(current_node_id, []):
-            blocked_key = (current_node_id, edge.road_id, edge.to_node)
-            if (edge.road_id, edge.to_node) not in outgoing_keys and blocked_key not in blocked_seen:
-                blocked_seen.add(blocked_key)
-                events.append(
-                    {
-                        "event": "direction_blocked",
-                        "seed_node_id": start_node_id,
-                        "from_node_id": current_node_id,
-                        "to_node_id": edge.to_node,
-                        "road_id": edge.road_id,
-                    }
-                )
+        for edge in blocked.get(current_node_id, ()):
+            _record_search_event(
+                event_counts,
+                event_samples,
+                sample_counts,
+                {
+                    "event": "direction_blocked",
+                    "seed_node_id": start_node_id,
+                    "from_node_id": current_node_id,
+                    "to_node_id": edge.to_node,
+                    "road_id": edge.road_id,
+                },
+            )
 
-        for edge in outgoing_edges:
+        for edge in directed.get(current_node_id, ()):
             next_node_id = edge.to_node
             if next_node_id in visited:
                 continue
 
             visited.add(next_node_id)
-            next_path_node_ids = (*path_node_ids, next_node_id)
-            next_path_road_ids = (*path_road_ids, edge.road_id)
+            parent_node_ids[next_node_id] = current_node_id
+            parent_road_ids[next_node_id] = edge.road_id
             terminate_ok = terminate_eval[next_node_id].matched
             seed_ok = seed_eval[next_node_id].matched
-            through_node = _is_through_node(
-                next_node_id,
-                start_node_id=start_node_id,
-                strategy=strategy,
-                incident_roads=incident_roads,
-            )
+            through_node = next_node_id != start_node_id and next_node_id in through_node_ids
 
             if through_node:
-                next_through = (*through_node_ids, next_node_id)
-                events.append(
+                _record_search_event(
+                    event_counts,
+                    event_samples,
+                    sample_counts,
                     {
                         "event": "through_continue",
                         "seed_node_id": start_node_id,
                         "node_id": next_node_id,
                         "road_id": edge.road_id,
-                    }
+                    },
                 )
-                queue.append((next_node_id, next_path_node_ids, next_path_road_ids, next_through))
+                queue.append(next_node_id)
                 continue
 
             if terminate_ok:
                 if seed_ok and next_node_id != start_node_id:
-                    candidates[next_node_id] = SearchCandidate(
+                    candidates[next_node_id] = _build_candidate_from_parents(
+                        start_node_id=start_node_id,
                         terminal_node_id=next_node_id,
-                        path_node_ids=tuple(next_path_node_ids),
-                        path_road_ids=tuple(next_path_road_ids),
-                        through_node_ids=tuple(through_node_ids),
+                        parent_node_ids=parent_node_ids,
+                        parent_road_ids=parent_road_ids,
+                        through_node_ids=through_node_ids,
                     )
                 else:
-                    events.append(
+                    _record_search_event(
+                        event_counts,
+                        event_samples,
+                        sample_counts,
                         {
                             "event": "terminal_not_seed",
                             "seed_node_id": start_node_id,
                             "node_id": next_node_id,
                             "terminate_reasons": list(terminate_eval[next_node_id].reasons),
                             "seed_reasons": list(seed_eval[next_node_id].reasons),
-                        }
+                        },
                     )
                 continue
 
-            queue.append((next_node_id, next_path_node_ids, next_path_road_ids, through_node_ids))
+            queue.append(next_node_id)
 
     if not candidates:
-        events.append({"event": "no_terminal_hit", "seed_node_id": start_node_id})
+        _record_search_event(
+            event_counts,
+            event_samples,
+            sample_counts,
+            {"event": "no_terminal_hit", "seed_node_id": start_node_id},
+        )
 
-    return SearchResult(start_node_id=start_node_id, candidates=candidates, events=events)
+    return SearchResult(
+        start_node_id=start_node_id,
+        candidates=candidates,
+        event_counts=event_counts,
+        event_samples=event_samples,
+    )
 
 
 def _pair_id(strategy_id: str, a_node_id: str, b_node_id: str) -> str:
@@ -512,7 +579,9 @@ def _pair_id(strategy_id: str, a_node_id: str, b_node_id: str) -> str:
 def _build_pair_records(
     strategy: StrategySpec,
     search_results: dict[str, SearchResult],
-    audit_events: list[dict[str, Any]],
+    event_counts: dict[str, int],
+    event_samples: list[dict[str, Any]],
+    sample_counts: dict[str, int],
 ) -> list[PairRecord]:
     pairs: dict[str, PairRecord] = {}
     for start_node_id, search_result in search_results.items():
@@ -520,13 +589,16 @@ def _build_pair_records(
             reverse_result = search_results.get(terminal_node_id)
             reverse_candidate = None if reverse_result is None else reverse_result.candidates.get(start_node_id)
             if reverse_candidate is None:
-                audit_events.append(
+                _record_search_event(
+                    event_counts,
+                    event_samples,
+                    sample_counts,
                     {
                         "event": "reverse_confirm_fail",
                         "strategy_id": strategy.strategy_id,
                         "a_node_id": start_node_id,
                         "b_node_id": terminal_node_id,
-                    }
+                    },
                 )
                 continue
 
@@ -606,9 +678,12 @@ def _write_strategy_outputs(
     seed_eval: dict[str, RuleEvaluation],
     terminate_eval: dict[str, RuleEvaluation],
     pairs: list[PairRecord],
-    search_events: list[dict[str, Any]],
+    search_event_counts: dict[str, int],
+    search_event_samples: list[dict[str, Any]],
     graph_audit_events: list[dict[str, Any]],
     orphan_ref_count: int,
+    search_seed_count: int,
+    through_seed_pruned_count: int,
 ) -> Step1StrategyResult:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -728,12 +803,20 @@ def _write_strategy_outputs(
         )
 
     write_json(rule_audit_path, rule_audit_rows)
-    write_json(search_audit_path, {"search_events": search_events, "graph_events": graph_audit_events})
+    write_json(
+        search_audit_path,
+        {
+            "search_event_counts": dict(sorted(search_event_counts.items())),
+            "search_events": search_event_samples,
+            "search_event_sample_limit_per_type": SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE,
+            "graph_events": graph_audit_events,
+        },
+    )
 
-    reverse_confirm_fail_count = sum(1 for event in search_events if event["event"] == "reverse_confirm_fail")
-    no_terminal_hit_count = sum(1 for event in search_events if event["event"] == "no_terminal_hit")
-    through_pass_count = sum(1 for event in search_events if event["event"] == "through_continue")
-    direction_block_count = sum(1 for event in search_events if event["event"] == "direction_blocked")
+    reverse_confirm_fail_count = search_event_counts.get("reverse_confirm_fail", 0)
+    no_terminal_hit_count = search_event_counts.get("no_terminal_hit", 0)
+    through_pass_count = search_event_counts.get("through_continue", 0)
+    direction_block_count = search_event_counts.get("direction_blocked", 0)
 
     pair_summary = {
         "strategy_id": strategy.strategy_id,
@@ -743,6 +826,8 @@ def _write_strategy_outputs(
         "description": strategy.description,
         "total_nodes": len(nodes),
         "seed_count": len(seed_ids),
+        "search_seed_count": search_seed_count,
+        "through_seed_pruned_count": through_seed_pruned_count,
         "terminate_count": len(terminate_ids),
         "pair_count": len(pairs),
         "reverse_confirm_fail_count": reverse_confirm_fail_count,
@@ -750,6 +835,7 @@ def _write_strategy_outputs(
         "through_pass_count": through_pass_count,
         "orphan_ref_count": orphan_ref_count,
         "direction_block_count": direction_block_count,
+        "search_event_sample_limit_per_type": SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE,
         "output_files": [
             seed_nodes_path.name,
             terminate_nodes_path.name,
@@ -805,7 +891,7 @@ def run_step1_pair_poc(
 
     nodes = _prepare_nodes(raw_node_features, graph_audit_events)
     roads = _prepare_roads(raw_road_features, graph_audit_events)
-    directed, undirected, incident_roads, orphan_ref_count = _build_graph(nodes, roads, graph_audit_events)
+    directed, blocked, road_degree, orphan_ref_count = _build_graph(nodes, roads, graph_audit_events)
 
     results: list[Step1StrategyResult] = []
     comparison_summary: list[dict[str, Any]] = []
@@ -816,25 +902,41 @@ def run_step1_pair_poc(
         seed_eval = {node_id: _evaluate_rule(node, strategy.seed_rule) for node_id, node in nodes.items()}
         terminate_eval = {node_id: _evaluate_rule(node, strategy.terminate_rule) for node_id, node in nodes.items()}
         seed_ids = [node_id for node_id, eval_result in seed_eval.items() if eval_result.matched]
+        through_node_ids = {
+            node_id
+            for node_id, degree in road_degree.items()
+            if degree == strategy.through_incident_road_degree
+        }
+        search_seed_ids = [node_id for node_id in seed_ids if node_id not in through_node_ids]
+        through_seed_pruned_count = len(seed_ids) - len(search_seed_ids)
 
-        search_results = {
-            seed_id: _search_from_seed(
+        search_results: dict[str, SearchResult] = {}
+        search_event_counts: dict[str, int] = {}
+        search_event_samples: list[dict[str, Any]] = []
+        search_event_sample_counts: dict[str, int] = {}
+
+        for seed_id in search_seed_ids:
+            search_result = _search_from_seed(
                 seed_id,
-                strategy=strategy,
                 directed=directed,
-                undirected=undirected,
-                incident_roads=incident_roads,
+                blocked=blocked,
+                through_node_ids=through_node_ids,
                 seed_eval=seed_eval,
                 terminate_eval=terminate_eval,
             )
-            for seed_id in seed_ids
-        }
+            search_results[seed_id] = search_result
+            for event_name, count in search_result.event_counts.items():
+                search_event_counts[event_name] = search_event_counts.get(event_name, 0) + count
+            for payload in search_result.event_samples:
+                _append_capped_event_sample(search_event_samples, search_event_sample_counts, payload)
 
-        search_events: list[dict[str, Any]] = []
-        for result in search_results.values():
-            search_events.extend(result.events)
-
-        pairs = _build_pair_records(strategy, search_results, search_events)
+        pairs = _build_pair_records(
+            strategy,
+            search_results,
+            search_event_counts,
+            search_event_samples,
+            search_event_sample_counts,
+        )
         strategy_out_dir = Path(out_root) / strategy.strategy_id
         strategy_result = _write_strategy_outputs(
             strategy_out_dir,
@@ -845,9 +947,12 @@ def run_step1_pair_poc(
             seed_eval=seed_eval,
             terminate_eval=terminate_eval,
             pairs=pairs,
-            search_events=search_events,
+            search_event_counts=search_event_counts,
+            search_event_samples=search_event_samples,
             graph_audit_events=graph_audit_events,
             orphan_ref_count=orphan_ref_count,
+            search_seed_count=len(search_seed_ids),
+            through_seed_pruned_count=through_seed_pruned_count,
         )
         results.append(strategy_result)
         comparison_summary.append(strategy_result.pair_summary)

@@ -122,7 +122,8 @@ def _json_compatible(value: Any) -> Any:
 def write_json(path: Union[str, Path], payload: Any) -> None:
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(_json_compatible(payload), ensure_ascii=False, indent=2), encoding="utf-8")
+    with out_path.open("w", encoding="utf-8") as fp:
+        json.dump(_json_compatible(payload), fp, ensure_ascii=False, separators=(",", ":"))
 
 
 def write_csv(path: Union[str, Path], rows: Iterable[dict[str, Any]], fieldnames: list[str]) -> None:
@@ -156,4 +157,5 @@ def write_geojson(path: Union[str, Path], features: Iterable[dict[str, Any]]) ->
         "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
         "features": feature_items,
     }
-    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    with out_path.open("w", encoding="utf-8") as fp:
+        json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"))

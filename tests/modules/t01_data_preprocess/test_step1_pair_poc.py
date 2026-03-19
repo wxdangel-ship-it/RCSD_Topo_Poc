@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from rcsd_topo_poc.cli import main
+from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc
 
 
 def _write_geojson(path: Path, *, features: list[dict]) -> None:
@@ -183,3 +184,59 @@ def test_default_out_root_uses_standard_run_id(monkeypatch, tmp_path: Path) -> N
     default_out_root = repo_like_root / "outputs" / "_work" / "t01_step1_pair_poc" / run_id
     assert (default_out_root / "strategy_comparison.json").is_file()
     assert (default_out_root / "S1" / "pair_summary.json").is_file()
+
+
+def test_search_audit_uses_counts_and_capped_samples(monkeypatch, tmp_path: Path) -> None:
+    road_path, node_path = _build_dataset(tmp_path)
+    out_root = tmp_path / "outputs"
+    monkeypatch.setattr(step1_pair_poc, "SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE", 1)
+
+    rc = main(
+        [
+            "t01-step1-pair-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            "configs/t01_data_preprocess/step1_pair_s1.json",
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+    audit = _load_json(out_root / "S1" / "search_audit.json")
+    summary = _load_json(out_root / "S1" / "pair_summary.json")
+
+    assert audit["search_event_counts"]["through_continue"] >= 1
+    assert audit["search_event_counts"]["reverse_confirm_fail"] >= 1
+    assert audit["search_event_sample_limit_per_type"] == 1
+    assert len([event for event in audit["search_events"] if event["event"] == "through_continue"]) <= 1
+    assert summary["search_event_sample_limit_per_type"] == 1
+
+
+def test_through_seed_is_pruned_from_pair_search(tmp_path: Path) -> None:
+    road_path, node_path = _build_dataset(tmp_path)
+    out_root = tmp_path / "outputs"
+
+    rc = main(
+        [
+            "t01-step1-pair-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            "configs/t01_data_preprocess/step1_pair_s1.json",
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+    summary = _load_json(out_root / "S1" / "pair_summary.json")
+
+    assert summary["seed_count"] == 7
+    assert summary["search_seed_count"] == 6
+    assert summary["through_seed_pruned_count"] == 1

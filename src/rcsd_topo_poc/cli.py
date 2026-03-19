@@ -100,6 +100,12 @@ def _cmd_t01_step1_pair_poc(args: argparse.Namespace) -> int:
     return run_step1_pair_poc_cli(args)
 
 
+def _cmd_t01_build_validation_slices(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.slice_builder import run_slice_builder_cli
+
+    return run_slice_builder_cli(args)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="rcsd_topo_poc")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -142,6 +148,30 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional output root override. If omitted, write to outputs/_work/t01_step1_pair_poc/<run_id>.",
     )
     p_t01.set_defaults(func=_cmd_t01_step1_pair_poc)
+
+    p_slice = sub.add_parser(
+        "t01-build-validation-slices",
+        help="Build T01 validation slice outputs for later Step1/Step2 review runs.",
+    )
+    p_slice.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
+    p_slice.add_argument("--road-layer", help="Optional road layer name.")
+    p_slice.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_slice.add_argument("--node-path", required=True, help="Path to Node Shp/GeoJSON.")
+    p_slice.add_argument("--node-layer", help="Optional node layer name.")
+    p_slice.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_slice.add_argument(
+        "--profile-config",
+        help="Optional slice profile config path. If omitted, use configs/t01_data_preprocess/slice_profiles.json.",
+    )
+    p_slice.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_validation_slices_YYYYMMDD_HHMMSS.",
+    )
+    p_slice.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_validation_slices/<run_id>.",
+    )
+    p_slice.set_defaults(func=_cmd_t01_build_validation_slices)
 
     args = parser.parse_args(argv)
     try:

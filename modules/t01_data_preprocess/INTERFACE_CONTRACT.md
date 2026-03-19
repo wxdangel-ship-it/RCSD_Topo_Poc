@@ -191,6 +191,31 @@
 - 默认 `run_id` 生成规则：`t01_step1_pair_poc_YYYYMMDD_HHMMSS`
 - 若用户显式指定 `out_root`，则以显式指定值为准
 - 若用户显式指定 `run_id` 但未指定 `out_root`，则默认输出根目录变为 `outputs/_work/t01_step1_pair_poc/<显式 run_id>`
+- 当前补充执行契约：
+  - 执行辅助日志默认归档到 `<out_root>/logs/`
+  - 包括但不限于：bootstrap / run / summary 日志
+  - 不应再将执行辅助日志散落到仓库外的工作盘根目录
+  - 若为首次 clone 且仓库目录尚不存在，可先写入临时目录（如 `/tmp`）；clone 成功后应转存到 `<out_root>/logs/`
+
+### 9.1A Step1 前置切片输出契约
+
+- 状态：`Validation Slice Output Draft v0`
+- 当前说明：
+  - 切片输出仅服务于后续 Step1 / Step2 的分级验证
+  - 当前切片输出不等于最终生产输入分发机制
+  - 当前切片输出按不同等级 profile 分目录落仓，供人工挑选与后续手工存放
+- 当前默认输出根目录：`outputs/_work/t01_validation_slices/<run_id>`
+- 默认 `run_id` 规则：`t01_validation_slices_YYYYMMDD_HHMMSS`
+- 当前默认 profile：
+  - `XS`
+  - `S`
+  - `M`
+- 当前每个 profile 至少输出：
+  - `roads.geojson`
+  - `nodes.geojson`
+  - `slice_summary.json`
+- 当前切片总清单文件：
+  - `slice_manifest.json`
 
 ### 9.2 Step1 当前审查型输出
 
@@ -210,6 +235,10 @@
 
 ```text
 <out_root>/
+  logs/
+    bootstrap.log
+    run.log
+    summary.log
   strategy_comparison.json
   S1/
     seed_nodes.geojson
@@ -223,6 +252,23 @@
     search_audit.json
   S2/
     ...
+```
+
+```text
+outputs/_work/t01_validation_slices/<run_id>/
+  XS/
+    roads.geojson
+    nodes.geojson
+    slice_summary.json
+  S/
+    roads.geojson
+    nodes.geojson
+    slice_summary.json
+  M/
+    roads.geojson
+    nodes.geojson
+    slice_summary.json
+  slice_manifest.json
 ```
 
 ### 9.4 Step1 当前审计输出补充口径

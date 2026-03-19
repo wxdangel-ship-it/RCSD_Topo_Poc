@@ -48,6 +48,7 @@
 ## 6. 已确认事实：运行与输出概览
 
 - 当前入口：`python -m rcsd_topo_poc t01-step1-pair-poc`
+- 当前切片入口：`python -m rcsd_topo_poc t01-build-validation-slices`
 - 最小输入：
   - `--road-path`
   - `--node-path`
@@ -55,11 +56,14 @@
 - 默认无需显式传 `--out-root`
 - 默认 `run_id` 规则：`t01_step1_pair_poc_YYYYMMDD_HHMMSS`
 - 默认输出目录：`outputs/_work/t01_step1_pair_poc/<run_id>`
+- 默认执行辅助日志目录：`outputs/_work/t01_step1_pair_poc/<run_id>/logs`
+- 默认切片输出目录：`outputs/_work/t01_validation_slices/<run_id>`
 - 若需要覆盖默认规则：
   - 可显式传 `--run-id`
   - 或显式传 `--out-root`
 - 当前输出：每个策略目录下生成 `seed_nodes`、`terminate_nodes`、`pair_nodes`、`pair_links`、`pair_support_roads`、`pair_table.csv`、`pair_summary.json`、审计 JSON
 - 当前输出目标：便于在 QGIS 中叠加审查与做策略对比
+- 当前切片输出：默认按 `XS / S / M` 生成多档 GeoJSON 切片，供后续 Step1 / Step2 分级验证
 - 当前性能口径补充：
   - Step1 已做一轮原型级性能优化
   - `search_audit.json` 当前采用“事件计数 + 样本事件”模式，而非全量搜索事件明细

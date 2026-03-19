@@ -1,0 +1,19 @@
+{
+  "profiles": [
+    {
+      "profile_id": "XS",
+      "target_core_node_count": 2000,
+      "description": "最小审查切片，优先用于验证输出结构、QGIS 叠加与基础业务差异。"
+    },
+    {
+      "profile_id": "S",
+      "target_core_node_count": 5000,
+      "description": "中小规模审查切片，用于比较策略差异与初步观察性能。"
+    },
+    {
+      "profile_id": "M",
+      "target_core_node_count": 10000,
+      "description": "较大规模审查切片，用于进入更接近真实规模的 Step1/Step2 验证。"
+    }
+  ]
+}

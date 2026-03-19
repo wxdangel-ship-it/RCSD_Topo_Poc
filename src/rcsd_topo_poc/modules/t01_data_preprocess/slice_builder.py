@@ -9,11 +9,12 @@ from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import shapefile
-from pyproj import CRS
-from shapely.geometry import shape
+from pyproj import CRS, Transformer
+from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    TARGET_CRS,
     _resolve_shapefile_crs,
     _transform_geometry,
     read_vector_layer,
@@ -31,7 +32,8 @@ DEFAULT_PROFILE_CONFIG_RELATIVE_PATH = Path("configs") / "t01_data_preprocess" /
 @dataclass(frozen=True)
 class SliceNode:
     node_id: str
-    geometry: BaseGeometry
+    x: float
+    y: float
     properties: Dict[str, Any]
 
 
@@ -164,8 +166,48 @@ def _prepare_nodes(raw_features: List[Dict[str, Any]]) -> Dict[str, SliceNode]:
 
         nodes[node_id] = SliceNode(
             node_id=node_id,
-            geometry=geometry,
+            x=float(geometry.x),
+            y=float(geometry.y),
             properties=dict(properties),
+        )
+    return nodes
+
+
+def _load_shapefile_nodes_fast(
+    path: Union[str, Path],
+    *,
+    crs_override: Optional[str] = None,
+) -> Dict[str, SliceNode]:
+    node_path = Path(path)
+    source_crs, _ = _resolve_shapefile_crs(node_path, crs_override)
+    transformer = None if source_crs == TARGET_CRS else Transformer.from_crs(source_crs, TARGET_CRS, always_xy=True)
+
+    reader = shapefile.Reader(str(node_path))
+    field_names = [field[0] for field in reader.fields[1:]]
+    missing = [field for field in REQUIRED_NODE_FIELDS if field not in field_names]
+    if missing:
+        raise ValueError(f"node layer missing required fields: {', '.join(sorted(missing))}")
+
+    nodes: Dict[str, SliceNode] = {}
+    for index, shape_record in enumerate(reader.iterShapeRecords()):
+        shape_obj = shape_record.shape
+        if shape_obj.shapeTypeName.upper() != "POINT":
+            raise ValueError(f"node feature[{index}] expected Point but got {shape_obj.shapeTypeName}")
+
+        properties = dict(zip(field_names, list(shape_record.record)))
+        node_id = _normalize_id(properties.get("id"))
+        if node_id is None:
+            raise ValueError(f"node feature[{index}] has null/empty id after normalization")
+
+        x, y = shape_obj.points[0]
+        if transformer is not None:
+            x, y = transformer.transform(x, y)
+
+        nodes[node_id] = SliceNode(
+            node_id=node_id,
+            x=float(x),
+            y=float(y),
+            properties=properties,
         )
     return nodes
 
@@ -288,12 +330,12 @@ def _filter_profiles(profiles: List[SliceProfile], selected_profile_ids: Optiona
 
 
 def _select_anchor_node_id(nodes: Dict[str, SliceNode]) -> str:
-    centroid_x = sum(node.geometry.x for node in nodes.values()) / len(nodes)
-    centroid_y = sum(node.geometry.y for node in nodes.values()) / len(nodes)
+    centroid_x = sum(node.x for node in nodes.values()) / len(nodes)
+    centroid_y = sum(node.y for node in nodes.values()) / len(nodes)
     best_node_id = min(
         nodes,
         key=lambda node_id: (
-            (nodes[node_id].geometry.x - centroid_x) ** 2 + (nodes[node_id].geometry.y - centroid_y) ** 2,
+            (nodes[node_id].x - centroid_x) ** 2 + (nodes[node_id].y - centroid_y) ** 2,
             _sort_key(node_id),
         ),
     )
@@ -301,11 +343,11 @@ def _select_anchor_node_id(nodes: Dict[str, SliceNode]) -> str:
 
 
 def _rank_nodes_by_distance(nodes: Dict[str, SliceNode], anchor_node_id: str) -> List[str]:
-    anchor = nodes[anchor_node_id].geometry
+    anchor = nodes[anchor_node_id]
     ranked = sorted(
         nodes,
         key=lambda node_id: (
-            (nodes[node_id].geometry.x - anchor.x) ** 2 + (nodes[node_id].geometry.y - anchor.y) ** 2,
+            (nodes[node_id].x - anchor.x) ** 2 + (nodes[node_id].y - anchor.y) ** 2,
             _sort_key(node_id),
         ),
     )
@@ -313,7 +355,7 @@ def _rank_nodes_by_distance(nodes: Dict[str, SliceNode], anchor_node_id: str) ->
 
 
 def _node_feature(node: SliceNode) -> Dict[str, Any]:
-    return {"geometry": node.geometry, "properties": dict(node.properties)}
+    return {"geometry": Point(node.x, node.y), "properties": dict(node.properties)}
 
 
 def _road_feature(road: SliceRoad) -> Dict[str, Any]:
@@ -345,12 +387,11 @@ def _write_profile_slice(
     write_geojson(nodes_path, [_node_feature(nodes[node_id]) for node_id in selected_node_ids])
     write_geojson(roads_path, [_road_feature(road) for road in sorted(selected_roads, key=lambda road: _sort_key(road.road_id))])
 
-    anchor_geometry = nodes[anchor_node_id].geometry
-    bounds = [nodes[node_id].geometry.bounds for node_id in selected_node_ids]
-    minx = min(bound[0] for bound in bounds)
-    miny = min(bound[1] for bound in bounds)
-    maxx = max(bound[2] for bound in bounds)
-    maxy = max(bound[3] for bound in bounds)
+    anchor_node = nodes[anchor_node_id]
+    minx = min(nodes[node_id].x for node_id in selected_node_ids)
+    miny = min(nodes[node_id].y for node_id in selected_node_ids)
+    maxx = max(nodes[node_id].x for node_id in selected_node_ids)
+    maxy = max(nodes[node_id].y for node_id in selected_node_ids)
 
     summary = {
         "run_id": run_id,
@@ -359,7 +400,7 @@ def _write_profile_slice(
         "source_road_path": str(Path(source_road_path)),
         "source_node_path": str(Path(source_node_path)),
         "anchor_node_id": anchor_node_id,
-        "anchor_point_3857": {"x": anchor_geometry.x, "y": anchor_geometry.y},
+        "anchor_point_3857": {"x": anchor_node.x, "y": anchor_node.y},
         "target_core_node_count": profile.target_core_node_count,
         "core_node_count": len(core_node_ids),
         "output_node_count": len(selected_node_ids),
@@ -504,18 +545,24 @@ def build_validation_slices(
     node_crs: Optional[str] = None,
 ) -> List[SliceResult]:
     build_started_at = perf_counter()
-    print("[slice] loading node layer...", flush=True)
-    node_layer_result = read_vector_layer(node_path, layer_name=node_layer, crs_override=node_crs)
-    raw_node_features = [
-        {"properties": feature.properties, "geometry": feature.geometry} for feature in node_layer_result.features
-    ]
-    validation_issues = _validate_required_fields(raw_node_features, REQUIRED_NODE_FIELDS, layer_label="node")
-    if validation_issues:
-        raise ValueError("; ".join(validation_issues))
+    node_path_obj = Path(node_path)
+    if node_path_obj.suffix.lower() == ".shp":
+        print("[slice] loading node layer (fast shapefile path)...", flush=True)
+        nodes = _load_shapefile_nodes_fast(node_path, crs_override=node_crs)
+    else:
+        print("[slice] loading node layer...", flush=True)
+        node_layer_result = read_vector_layer(node_path, layer_name=node_layer, crs_override=node_crs)
+        raw_node_features = [
+            {"properties": feature.properties, "geometry": feature.geometry} for feature in node_layer_result.features
+        ]
+        validation_issues = _validate_required_fields(raw_node_features, REQUIRED_NODE_FIELDS, layer_label="node")
+        if validation_issues:
+            raise ValueError("; ".join(validation_issues))
 
-    nodes = _prepare_nodes(raw_node_features)
-    if not nodes:
-        raise ValueError("No valid node features were loaded for slice building.")
+        nodes = _prepare_nodes(raw_node_features)
+        if not nodes:
+            raise ValueError("No valid node features were loaded for slice building.")
+
     profiles = _filter_profiles(_load_profiles(profile_config_path), selected_profile_ids)
     anchor_node_id = _select_anchor_node_id(nodes)
     ranked_node_ids = _rank_nodes_by_distance(nodes, anchor_node_id)

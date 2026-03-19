@@ -4,7 +4,7 @@ import csv
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional, Union
 
 import shapefile
 from pyproj import CRS, Transformer
@@ -29,7 +29,7 @@ class LayerReadResult:
     crs_source: str
 
 
-def _resolve_geojson_crs(doc: dict[str, Any], crs_override: str | None) -> tuple[CRS, str]:
+def _resolve_geojson_crs(doc: dict[str, Any], crs_override: Optional[str]) -> tuple[CRS, str]:
     if crs_override:
         return CRS.from_user_input(crs_override), "override"
 
@@ -43,7 +43,7 @@ def _resolve_geojson_crs(doc: dict[str, Any], crs_override: str | None) -> tuple
     return CRS.from_epsg(4326), "geojson-default"
 
 
-def _resolve_shapefile_crs(path: Path, crs_override: str | None) -> tuple[CRS, str]:
+def _resolve_shapefile_crs(path: Path, crs_override: Optional[str]) -> tuple[CRS, str]:
     if crs_override:
         return CRS.from_user_input(crs_override), "override"
 
@@ -65,10 +65,10 @@ def _transform_geometry(geometry: BaseGeometry, source_crs: CRS) -> BaseGeometry
 
 
 def read_vector_layer(
-    path: str | Path,
+    path: Union[str, Path],
     *,
-    layer_name: str | None = None,
-    crs_override: str | None = None,
+    layer_name: Optional[str] = None,
+    crs_override: Optional[str] = None,
 ) -> LayerReadResult:
     del layer_name  # Reserved for future multi-layer support.
 
@@ -119,13 +119,13 @@ def _json_compatible(value: Any) -> Any:
     return value
 
 
-def write_json(path: str | Path, payload: Any) -> None:
+def write_json(path: Union[str, Path], payload: Any) -> None:
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(_json_compatible(payload), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def write_csv(path: str | Path, rows: Iterable[dict[str, Any]], fieldnames: list[str]) -> None:
+def write_csv(path: Union[str, Path], rows: Iterable[dict[str, Any]], fieldnames: list[str]) -> None:
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8", newline="") as fp:
@@ -135,7 +135,7 @@ def write_csv(path: str | Path, rows: Iterable[dict[str, Any]], fieldnames: list
             writer.writerow({key: _json_compatible(row.get(key)) for key in fieldnames})
 
 
-def write_geojson(path: str | Path, features: Iterable[dict[str, Any]]) -> None:
+def write_geojson(path: Union[str, Path], features: Iterable[dict[str, Any]]) -> None:
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Tuple, Union
 
 from shapely.geometry import LineString
 from shapely.geometry.base import BaseGeometry
@@ -22,9 +22,9 @@ DEFAULT_RUN_ID_PREFIX = "t01_step1_pair_poc_"
 @dataclass(frozen=True)
 class NodeRecord:
     node_id: str
-    kind: int | None
-    grade: int | None
-    closed_con: int | None
+    kind: Optional[int]
+    grade: Optional[int]
+    closed_con: Optional[int]
     geometry: BaseGeometry
     raw_properties: dict[str, Any]
 
@@ -42,7 +42,7 @@ class RoadRecord:
 @dataclass(frozen=True)
 class RuleSpec:
     kind_bits_all: tuple[int, ...]
-    grade_eq: int | None
+    grade_eq: Optional[int]
     closed_con_in: tuple[int, ...]
 
 
@@ -107,7 +107,7 @@ class Step1StrategyResult:
     output_files: list[str]
 
 
-def _find_repo_root(start: Path) -> Path | None:
+def _find_repo_root(start: Path) -> Optional[Path]:
     current = start.resolve()
     for candidate in [current, *current.parents]:
         if (candidate / "SPEC.md").is_file() and (candidate / "docs").is_dir():
@@ -115,16 +115,16 @@ def _find_repo_root(start: Path) -> Path | None:
     return None
 
 
-def _build_default_run_id(now: datetime | None = None) -> str:
+def _build_default_run_id(now: Optional[datetime] = None) -> str:
     current = datetime.now() if now is None else now
     return f"{DEFAULT_RUN_ID_PREFIX}{current.strftime('%Y%m%d_%H%M%S')}"
 
 
 def _resolve_out_root(
     *,
-    out_root: str | Path | None,
-    run_id: str | None,
-    cwd: Path | None = None,
+    out_root: Optional[Union[str, Path]],
+    run_id: Optional[str],
+    cwd: Optional[Path] = None,
 ) -> tuple[Path, str]:
     resolved_run_id = run_id or _build_default_run_id()
     if out_root is not None:
@@ -148,14 +148,14 @@ def _normalize_scalar(value: Any) -> Any:
     return value
 
 
-def _normalize_id(value: Any) -> str | None:
+def _normalize_id(value: Any) -> Optional[str]:
     normalized = _normalize_scalar(value)
     if normalized is None:
         return None
     return str(normalized)
 
 
-def _coerce_int(value: Any) -> int | None:
+def _coerce_int(value: Any) -> Optional[int]:
     normalized = _normalize_scalar(value)
     if normalized is None:
         return None
@@ -168,20 +168,20 @@ def _coerce_int(value: Any) -> int | None:
     return int(str(normalized), 10)
 
 
-def _sort_key(value: str) -> tuple[int, int | str]:
+def _sort_key(value: str) -> Tuple[int, Union[int, str]]:
     try:
         return (0, int(value))
     except ValueError:
         return (1, value)
 
 
-def _bit_enabled(value: int | None, bit_index: int) -> bool:
+def _bit_enabled(value: Optional[int], bit_index: int) -> bool:
     if value is None:
         return False
     return bool(value & (1 << bit_index))
 
 
-def _load_strategy(path: str | Path) -> StrategySpec:
+def _load_strategy(path: Union[str, Path]) -> StrategySpec:
     doc = json.loads(Path(path).read_text(encoding="utf-8"))
 
     def _load_rule(payload: dict[str, Any]) -> RuleSpec:
@@ -578,7 +578,12 @@ def _road_feature(road: RoadRecord, *, pair_ids: list[str], strategy_id: str) ->
     }
 
 
-def _node_feature(node: NodeRecord, *, strategy_id: str, extra_props: dict[str, Any] | None = None) -> dict[str, Any]:
+def _node_feature(
+    node: NodeRecord,
+    *,
+    strategy_id: str,
+    extra_props: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     properties = {
         "node_id": node.node_id,
         "kind": node.kind,
@@ -771,15 +776,15 @@ def _write_strategy_outputs(
 
 def run_step1_pair_poc(
     *,
-    road_path: str | Path,
-    node_path: str | Path,
-    strategy_config_paths: list[str | Path],
-    out_root: str | Path,
-    run_id: str | None = None,
-    road_layer: str | None = None,
-    road_crs: str | None = None,
-    node_layer: str | None = None,
-    node_crs: str | None = None,
+    road_path: Union[str, Path],
+    node_path: Union[str, Path],
+    strategy_config_paths: list[Union[str, Path]],
+    out_root: Union[str, Path],
+    run_id: Optional[str] = None,
+    road_layer: Optional[str] = None,
+    road_crs: Optional[str] = None,
+    node_layer: Optional[str] = None,
+    node_crs: Optional[str] = None,
 ) -> list[Step1StrategyResult]:
     graph_audit_events: list[dict[str, Any]] = []
 

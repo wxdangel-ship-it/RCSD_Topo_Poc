@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 from rcsd_topo_poc.protocol.text_lint import lint_text
 from rcsd_topo_poc.protocol.text_qc_bundle import build_demo_bundle, qc_bundle_template
@@ -18,7 +19,7 @@ REQUIRED_DOCS = [
 ]
 
 
-def _find_repo_root(start: Path) -> Path | None:
+def _find_repo_root(start: Path) -> Optional[Path]:
     p = start.resolve()
     for candidate in [p, *p.parents]:
         if (candidate / "SPEC.md").is_file() and (candidate / "docs").is_dir():
@@ -99,7 +100,7 @@ def _cmd_t01_step1_pair_poc(args: argparse.Namespace) -> int:
     return run_step1_pair_poc_cli(args)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="rcsd_topo_poc")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

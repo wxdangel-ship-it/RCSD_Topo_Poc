@@ -8,9 +8,18 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import shapefile
+from pyproj import CRS
+from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    _resolve_shapefile_crs,
+    _transform_geometry,
+    read_vector_layer,
+    write_geojson,
+    write_json,
+)
 
 
 REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction")
@@ -32,6 +41,15 @@ class SliceRoad:
     snodeid: Optional[str]
     enodeid: Optional[str]
     geometry: BaseGeometry
+    properties: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SliceRoadHeader:
+    record_index: int
+    road_id: str
+    snodeid: Optional[str]
+    enodeid: Optional[str]
     properties: Dict[str, Any]
 
 
@@ -176,6 +194,69 @@ def _prepare_roads(raw_features: List[Dict[str, Any]]) -> List[SliceRoad]:
     return roads
 
 
+def _load_shapefile_road_headers(
+    path: Union[str, Path],
+    *,
+    crs_override: Optional[str] = None,
+) -> Tuple[List[SliceRoadHeader], CRS]:
+    road_path = Path(path)
+    source_crs, _ = _resolve_shapefile_crs(road_path, crs_override)
+    reader = shapefile.Reader(str(road_path))
+    field_names = [field[0] for field in reader.fields[1:]]
+    missing = [field for field in REQUIRED_ROAD_FIELDS if field not in field_names]
+    if missing:
+        raise ValueError(f"road layer missing required fields: {', '.join(sorted(missing))}")
+
+    headers: List[SliceRoadHeader] = []
+    for index, record in enumerate(reader.iterRecords()):
+        properties = dict(zip(field_names, list(record)))
+        road_id = _normalize_id(properties.get("id"))
+        if road_id is None:
+            raise ValueError(f"road feature[{index}] has null/empty id after normalization")
+        headers.append(
+            SliceRoadHeader(
+                record_index=index,
+                road_id=road_id,
+                snodeid=_normalize_id(properties.get("snodeid")),
+                enodeid=_normalize_id(properties.get("enodeid")),
+                properties=properties,
+            )
+        )
+    return headers, source_crs
+
+
+def _materialize_selected_shapefile_roads(
+    path: Union[str, Path],
+    *,
+    source_crs: CRS,
+    selected_headers: Dict[int, SliceRoadHeader],
+) -> List[SliceRoad]:
+    if not selected_headers:
+        return []
+
+    reader = shapefile.Reader(str(path))
+    roads: List[SliceRoad] = []
+    for index, shp in enumerate(reader.iterShapes()):
+        header = selected_headers.get(index)
+        if header is None:
+            continue
+
+        geometry = _transform_geometry(shape(shp.__geo_interface__), source_crs)
+        if geometry.geom_type not in {"LineString", "MultiLineString"}:
+            raise ValueError(f"road feature[{index}] expected LineString/MultiLineString but got {geometry.geom_type}")
+
+        roads.append(
+            SliceRoad(
+                road_id=header.road_id,
+                snodeid=header.snodeid,
+                enodeid=header.enodeid,
+                geometry=geometry,
+                properties=dict(header.properties),
+            )
+        )
+    return roads
+
+
 def _load_profiles(path: Union[str, Path]) -> List[SliceProfile]:
     doc = json.loads(Path(path).read_text(encoding="utf-8"))
     profiles: List[SliceProfile] = []
@@ -239,45 +320,22 @@ def _road_feature(road: SliceRoad) -> Dict[str, Any]:
     return {"geometry": road.geometry, "properties": dict(road.properties)}
 
 
-def _build_profile_slice(
+def _write_profile_slice(
     *,
     profile: SliceProfile,
-    ranked_node_ids: List[str],
     nodes: Dict[str, SliceNode],
-    roads: List[SliceRoad],
+    core_node_ids: set[str],
+    selected_roads: List[SliceRoad],
+    selected_node_ids: List[str],
     out_dir: Path,
     run_id: str,
     anchor_node_id: str,
     source_road_path: Union[str, Path],
     source_node_path: Union[str, Path],
+    closure_added_node_count: int,
+    orphan_ref_count: int,
 ) -> SliceResult:
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    target_count = min(profile.target_core_node_count, len(ranked_node_ids))
-    core_node_ids = set(ranked_node_ids[:target_count])
-    output_node_ids = set(core_node_ids)
-    selected_roads: List[SliceRoad] = []
-    orphan_ref_count = 0
-    closure_added_node_count = 0
-
-    for road in roads:
-        touches_core = road.snodeid in core_node_ids or road.enodeid in core_node_ids
-        if not touches_core:
-            continue
-
-        selected_roads.append(road)
-        for endpoint_node_id in (road.snodeid, road.enodeid):
-            if endpoint_node_id is None:
-                orphan_ref_count += 1
-                continue
-            if endpoint_node_id in nodes:
-                if endpoint_node_id not in output_node_ids:
-                    output_node_ids.add(endpoint_node_id)
-                    closure_added_node_count += 1
-            else:
-                orphan_ref_count += 1
-
-    selected_node_ids = sorted(output_node_ids, key=_sort_key)
     selected_road_ids = sorted([road.road_id for road in selected_roads], key=_sort_key)
 
     roads_path = out_dir / "roads.geojson"
@@ -317,6 +375,121 @@ def _build_profile_slice(
     return SliceResult(profile=profile, output_dir=out_dir, summary=summary)
 
 
+def _build_profile_slice(
+    *,
+    profile: SliceProfile,
+    ranked_node_ids: List[str],
+    nodes: Dict[str, SliceNode],
+    roads: List[SliceRoad],
+    out_dir: Path,
+    run_id: str,
+    anchor_node_id: str,
+    source_road_path: Union[str, Path],
+    source_node_path: Union[str, Path],
+) -> SliceResult:
+    target_count = min(profile.target_core_node_count, len(ranked_node_ids))
+    core_node_ids = set(ranked_node_ids[:target_count])
+    output_node_ids = set(core_node_ids)
+    selected_roads: List[SliceRoad] = []
+    orphan_ref_count = 0
+    closure_added_node_count = 0
+
+    for road in roads:
+        touches_core = road.snodeid in core_node_ids or road.enodeid in core_node_ids
+        if not touches_core:
+            continue
+
+        selected_roads.append(road)
+        for endpoint_node_id in (road.snodeid, road.enodeid):
+            if endpoint_node_id is None:
+                orphan_ref_count += 1
+                continue
+            if endpoint_node_id in nodes:
+                if endpoint_node_id not in output_node_ids:
+                    output_node_ids.add(endpoint_node_id)
+                    closure_added_node_count += 1
+            else:
+                orphan_ref_count += 1
+
+    return _write_profile_slice(
+        profile=profile,
+        nodes=nodes,
+        core_node_ids=core_node_ids,
+        selected_roads=selected_roads,
+        selected_node_ids=sorted(output_node_ids, key=_sort_key),
+        out_dir=out_dir,
+        run_id=run_id,
+        anchor_node_id=anchor_node_id,
+        source_road_path=source_road_path,
+        source_node_path=source_node_path,
+        closure_added_node_count=closure_added_node_count,
+        orphan_ref_count=orphan_ref_count,
+    )
+
+
+def _build_profile_slice_from_shapefile_headers(
+    *,
+    profile: SliceProfile,
+    ranked_node_ids: List[str],
+    nodes: Dict[str, SliceNode],
+    road_headers: List[SliceRoadHeader],
+    road_path: Union[str, Path],
+    road_source_crs: CRS,
+    out_dir: Path,
+    run_id: str,
+    anchor_node_id: str,
+    source_road_path: Union[str, Path],
+    source_node_path: Union[str, Path],
+) -> SliceResult:
+    target_count = min(profile.target_core_node_count, len(ranked_node_ids))
+    core_node_ids = set(ranked_node_ids[:target_count])
+    output_node_ids = set(core_node_ids)
+    selected_headers: Dict[int, SliceRoadHeader] = {}
+    orphan_ref_count = 0
+    closure_added_node_count = 0
+
+    for header in road_headers:
+        touches_core = header.snodeid in core_node_ids or header.enodeid in core_node_ids
+        if not touches_core:
+            continue
+
+        selected_headers[header.record_index] = header
+        for endpoint_node_id in (header.snodeid, header.enodeid):
+            if endpoint_node_id is None:
+                orphan_ref_count += 1
+                continue
+            if endpoint_node_id in nodes:
+                if endpoint_node_id not in output_node_ids:
+                    output_node_ids.add(endpoint_node_id)
+                    closure_added_node_count += 1
+            else:
+                orphan_ref_count += 1
+
+    print(
+        f"[slice] materializing road geometries for profile {profile.profile_id}: selected_roads={len(selected_headers)} ...",
+        flush=True,
+    )
+    selected_roads = _materialize_selected_shapefile_roads(
+        road_path,
+        source_crs=road_source_crs,
+        selected_headers=selected_headers,
+    )
+    return _write_profile_slice(
+        profile=profile,
+        nodes=nodes,
+        core_node_ids=core_node_ids,
+        selected_roads=selected_roads,
+        selected_node_ids=sorted(output_node_ids, key=_sort_key),
+        out_dir=out_dir,
+        run_id=run_id,
+        anchor_node_id=anchor_node_id,
+        source_road_path=source_road_path,
+        source_node_path=source_node_path,
+        closure_added_node_count=closure_added_node_count,
+        orphan_ref_count=orphan_ref_count,
+    )
+
+
 def build_validation_slices(
     *,
     road_path: Union[str, Path],
@@ -331,59 +504,96 @@ def build_validation_slices(
     node_crs: Optional[str] = None,
 ) -> List[SliceResult]:
     build_started_at = perf_counter()
-    print("[slice] loading road layer...", flush=True)
-    road_layer_result = read_vector_layer(road_path, layer_name=road_layer, crs_override=road_crs)
     print("[slice] loading node layer...", flush=True)
     node_layer_result = read_vector_layer(node_path, layer_name=node_layer, crs_override=node_crs)
-
-    raw_road_features = [
-        {"properties": feature.properties, "geometry": feature.geometry} for feature in road_layer_result.features
-    ]
     raw_node_features = [
         {"properties": feature.properties, "geometry": feature.geometry} for feature in node_layer_result.features
     ]
-
-    validation_issues = _validate_required_fields(raw_road_features, REQUIRED_ROAD_FIELDS, layer_label="road")
-    validation_issues += _validate_required_fields(raw_node_features, REQUIRED_NODE_FIELDS, layer_label="node")
+    validation_issues = _validate_required_fields(raw_node_features, REQUIRED_NODE_FIELDS, layer_label="node")
     if validation_issues:
         raise ValueError("; ".join(validation_issues))
 
     nodes = _prepare_nodes(raw_node_features)
     if not nodes:
         raise ValueError("No valid node features were loaded for slice building.")
-    roads = _prepare_roads(raw_road_features)
     profiles = _filter_profiles(_load_profiles(profile_config_path), selected_profile_ids)
     anchor_node_id = _select_anchor_node_id(nodes)
     ranked_node_ids = _rank_nodes_by_distance(nodes, anchor_node_id)
-    print(
-        f"[slice] source loaded: nodes={len(nodes)}, roads={len(roads)}, anchor_node_id={anchor_node_id}, profiles={','.join(profile.profile_id for profile in profiles)}",
-        flush=True,
-    )
 
     resolved_run_id = Path(out_root).name if run_id is None else run_id
     results: List[SliceResult] = []
-    for profile in profiles:
-        profile_started_at = perf_counter()
+    source_road_count = 0
+    road_path_obj = Path(road_path)
+
+    if road_path_obj.suffix.lower() == ".shp":
+        print("[slice] loading road headers...", flush=True)
+        road_headers, road_source_crs = _load_shapefile_road_headers(road_path, crs_override=road_crs)
+        source_road_count = len(road_headers)
         print(
-            f"[slice] building profile {profile.profile_id} with target_core_node_count={profile.target_core_node_count} ...",
+            f"[slice] source loaded: nodes={len(nodes)}, roads={source_road_count}, anchor_node_id={anchor_node_id}, profiles={','.join(profile.profile_id for profile in profiles)}",
             flush=True,
         )
-        result = _build_profile_slice(
-            profile=profile,
-            ranked_node_ids=ranked_node_ids,
-            nodes=nodes,
-            roads=roads,
-            out_dir=Path(out_root) / profile.profile_id,
-            run_id=resolved_run_id,
-            anchor_node_id=anchor_node_id,
-            source_road_path=road_path,
-            source_node_path=node_path,
-        )
-        results.append(result)
+        for profile in profiles:
+            profile_started_at = perf_counter()
+            print(
+                f"[slice] building profile {profile.profile_id} with target_core_node_count={profile.target_core_node_count} ...",
+                flush=True,
+            )
+            result = _build_profile_slice_from_shapefile_headers(
+                profile=profile,
+                ranked_node_ids=ranked_node_ids,
+                nodes=nodes,
+                road_headers=road_headers,
+                road_path=road_path,
+                road_source_crs=road_source_crs,
+                out_dir=Path(out_root) / profile.profile_id,
+                run_id=resolved_run_id,
+                anchor_node_id=anchor_node_id,
+                source_road_path=road_path,
+                source_node_path=node_path,
+            )
+            results.append(result)
+            print(
+                f"[slice] profile {profile.profile_id} done in {perf_counter() - profile_started_at:.1f}s: output_nodes={result.summary['output_node_count']}, output_roads={result.summary['output_road_count']}",
+                flush=True,
+            )
+    else:
+        print("[slice] loading road layer...", flush=True)
+        road_layer_result = read_vector_layer(road_path, layer_name=road_layer, crs_override=road_crs)
+        raw_road_features = [
+            {"properties": feature.properties, "geometry": feature.geometry} for feature in road_layer_result.features
+        ]
+        validation_issues = _validate_required_fields(raw_road_features, REQUIRED_ROAD_FIELDS, layer_label="road")
+        if validation_issues:
+            raise ValueError("; ".join(validation_issues))
+        roads = _prepare_roads(raw_road_features)
+        source_road_count = len(roads)
         print(
-            f"[slice] profile {profile.profile_id} done in {perf_counter() - profile_started_at:.1f}s: output_nodes={result.summary['output_node_count']}, output_roads={result.summary['output_road_count']}",
+            f"[slice] source loaded: nodes={len(nodes)}, roads={source_road_count}, anchor_node_id={anchor_node_id}, profiles={','.join(profile.profile_id for profile in profiles)}",
             flush=True,
         )
+        for profile in profiles:
+            profile_started_at = perf_counter()
+            print(
+                f"[slice] building profile {profile.profile_id} with target_core_node_count={profile.target_core_node_count} ...",
+                flush=True,
+            )
+            result = _build_profile_slice(
+                profile=profile,
+                ranked_node_ids=ranked_node_ids,
+                nodes=nodes,
+                roads=roads,
+                out_dir=Path(out_root) / profile.profile_id,
+                run_id=resolved_run_id,
+                anchor_node_id=anchor_node_id,
+                source_road_path=road_path,
+                source_node_path=node_path,
+            )
+            results.append(result)
+            print(
+                f"[slice] profile {profile.profile_id} done in {perf_counter() - profile_started_at:.1f}s: output_nodes={result.summary['output_node_count']}, output_roads={result.summary['output_road_count']}",
+                flush=True,
+            )
 
     manifest = {
         "run_id": resolved_run_id,
@@ -391,7 +601,7 @@ def build_validation_slices(
         "profile_config_path": str(Path(profile_config_path)),
         "source_road_path": str(Path(road_path)),
         "source_node_path": str(Path(node_path)),
-        "source_road_count": len(roads),
+        "source_road_count": source_road_count,
         "source_node_count": len(nodes),
         "anchor_node_id": anchor_node_id,
         "profiles": [result.summary for result in results],

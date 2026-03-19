@@ -26,6 +26,8 @@
 
 ## 运行约束
 
-- 项目工作目录默认位于 Windows `E:` 盘。
+- 内网与外网默认执行环境均为 WSL。
+- 项目工作目录默认使用 WSL 路径，例如 `/mnt/e/Work/RCSD_Topo_Poc`。
+- 若收到 Windows 路径输入，应先转换为对应的 WSL 路径再继续。
 - 运行输出目录写入 `outputs/_work/`。
 - 文本回传必须符合 `TEXT_QC_BUNDLE` 粘贴性约束。

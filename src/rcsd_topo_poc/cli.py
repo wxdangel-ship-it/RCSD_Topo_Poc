@@ -93,6 +93,12 @@ def _cmd_lint_text(args: argparse.Namespace) -> int:
     return 2
 
 
+def _cmd_t01_step1_pair_poc(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import run_step1_pair_poc_cli
+
+    return run_step1_pair_poc_cli(args)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="rcsd_topo_poc")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -109,6 +115,32 @@ def main(argv: list[str] | None = None) -> int:
     p_lint = sub.add_parser("lint-text", help="Check text pasteability (size/lines/long lines).")
     p_lint.add_argument("--text", help="Text to lint (if omitted, read stdin).")
     p_lint.set_defaults(func=_cmd_lint_text)
+
+    p_t01 = sub.add_parser(
+        "t01-step1-pair-poc",
+        help="Run T01 Step1 Pair prototype and write QGIS-reviewable outputs.",
+    )
+    p_t01.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
+    p_t01.add_argument("--road-layer", help="Optional road layer name.")
+    p_t01.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_t01.add_argument("--node-path", required=True, help="Path to Node Shp/GeoJSON.")
+    p_t01.add_argument("--node-layer", help="Optional node layer name.")
+    p_t01.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_t01.add_argument(
+        "--strategy-config",
+        action="append",
+        required=True,
+        help="Strategy config path. Repeat the option to run multiple strategies.",
+    )
+    p_t01.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_step1_pair_poc_YYYYMMDD_HHMMSS.",
+    )
+    p_t01.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_step1_pair_poc/<run_id>.",
+    )
+    p_t01.set_defaults(func=_cmd_t01_step1_pair_poc)
 
     args = parser.parse_args(argv)
     try:

@@ -6,7 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "rcsd-topo-poc"
 version = "0.0.0"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+  "pyproj>=3.7",
+  "pyshp>=3.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]

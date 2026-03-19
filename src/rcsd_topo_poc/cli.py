@@ -164,6 +164,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional slice profile config path. If omitted, use configs/t01_data_preprocess/slice_profiles.json.",
     )
     p_slice.add_argument(
+        "--profile-id",
+        action="append",
+        help="Optional profile id filter. Repeat to run multiple profiles, e.g. --profile-id XS --profile-id S.",
+    )
+    p_slice.add_argument(
         "--run-id",
         help="Optional run id. If omitted, use t01_validation_slices_YYYYMMDD_HHMMSS.",
     )

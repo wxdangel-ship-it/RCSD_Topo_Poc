@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from shapely.geometry.base import BaseGeometry
@@ -191,6 +192,20 @@ def _load_profiles(path: Union[str, Path]) -> List[SliceProfile]:
     return profiles
 
 
+def _filter_profiles(profiles: List[SliceProfile], selected_profile_ids: Optional[List[str]]) -> List[SliceProfile]:
+    if not selected_profile_ids:
+        return profiles
+
+    selected = {profile_id.strip() for profile_id in selected_profile_ids if profile_id and profile_id.strip()}
+    filtered = [profile for profile in profiles if profile.profile_id in selected]
+    missing = sorted(selected - {profile.profile_id for profile in filtered})
+    if missing:
+        raise ValueError(f"Unknown profile_id(s): {', '.join(missing)}")
+    if not filtered:
+        raise ValueError("No slice profiles selected.")
+    return filtered
+
+
 def _select_anchor_node_id(nodes: Dict[str, SliceNode]) -> str:
     centroid_x = sum(node.geometry.x for node in nodes.values()) / len(nodes)
     centroid_y = sum(node.geometry.y for node in nodes.values()) / len(nodes)
@@ -308,13 +323,17 @@ def build_validation_slices(
     node_path: Union[str, Path],
     profile_config_path: Union[str, Path],
     out_root: Union[str, Path],
+    selected_profile_ids: Optional[List[str]] = None,
     run_id: Optional[str] = None,
     road_layer: Optional[str] = None,
     road_crs: Optional[str] = None,
     node_layer: Optional[str] = None,
     node_crs: Optional[str] = None,
 ) -> List[SliceResult]:
+    build_started_at = perf_counter()
+    print("[slice] loading road layer...", flush=True)
     road_layer_result = read_vector_layer(road_path, layer_name=road_layer, crs_override=road_crs)
+    print("[slice] loading node layer...", flush=True)
     node_layer_result = read_vector_layer(node_path, layer_name=node_layer, crs_override=node_crs)
 
     raw_road_features = [
@@ -333,13 +352,22 @@ def build_validation_slices(
     if not nodes:
         raise ValueError("No valid node features were loaded for slice building.")
     roads = _prepare_roads(raw_road_features)
-    profiles = _load_profiles(profile_config_path)
+    profiles = _filter_profiles(_load_profiles(profile_config_path), selected_profile_ids)
     anchor_node_id = _select_anchor_node_id(nodes)
     ranked_node_ids = _rank_nodes_by_distance(nodes, anchor_node_id)
+    print(
+        f"[slice] source loaded: nodes={len(nodes)}, roads={len(roads)}, anchor_node_id={anchor_node_id}, profiles={','.join(profile.profile_id for profile in profiles)}",
+        flush=True,
+    )
 
     resolved_run_id = Path(out_root).name if run_id is None else run_id
     results: List[SliceResult] = []
     for profile in profiles:
+        profile_started_at = perf_counter()
+        print(
+            f"[slice] building profile {profile.profile_id} with target_core_node_count={profile.target_core_node_count} ...",
+            flush=True,
+        )
         result = _build_profile_slice(
             profile=profile,
             ranked_node_ids=ranked_node_ids,
@@ -352,6 +380,10 @@ def build_validation_slices(
             source_node_path=node_path,
         )
         results.append(result)
+        print(
+            f"[slice] profile {profile.profile_id} done in {perf_counter() - profile_started_at:.1f}s: output_nodes={result.summary['output_node_count']}, output_roads={result.summary['output_road_count']}",
+            flush=True,
+        )
 
     manifest = {
         "run_id": resolved_run_id,
@@ -365,6 +397,7 @@ def build_validation_slices(
         "profiles": [result.summary for result in results],
     }
     write_json(Path(out_root) / "slice_manifest.json", manifest)
+    print(f"[slice] all profiles done in {perf_counter() - build_started_at:.1f}s", flush=True)
     return results
 
 
@@ -380,6 +413,7 @@ def run_slice_builder_cli(args: argparse.Namespace) -> int:
         node_crs=args.node_crs,
         profile_config_path=profile_config_path,
         out_root=resolved_out_root,
+        selected_profile_ids=args.profile_id,
         run_id=resolved_run_id,
     )
 

@@ -115,3 +115,30 @@ def test_build_validation_slices_generates_multiple_profiles(tmp_path: Path) -> 
     assert xs_summary["output_node_count"] >= xs_summary["core_node_count"]
     assert s_summary["output_node_count"] >= s_summary["core_node_count"]
     assert xs_summary["output_node_count"] <= s_summary["output_node_count"]
+
+
+def test_build_validation_slices_can_filter_profiles(tmp_path: Path) -> None:
+    road_path, node_path = _build_dataset(tmp_path)
+    profile_config = tmp_path / "slice_profiles.json"
+    out_root = tmp_path / "slice_outputs"
+    _write_profile_config(profile_config)
+
+    rc = main(
+        [
+            "t01-build-validation-slices",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--profile-config",
+            str(profile_config),
+            "--profile-id",
+            "XS",
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+    assert (out_root / "XS" / "roads.geojson").is_file()
+    assert not (out_root / "S").exists()

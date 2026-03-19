@@ -1,42 +1,65 @@
-# T01 数据预处理文档阶段任务
+# T01 数据预处理任务清单
 
 ## 1. 当前任务状态
 
-- 状态：`Step1 Pair POC In Progress`
-- 当前说明：本轮允许进入 Step1 顶层 Pair 原型研发，但不得扩展到 Step2 / Step3 最终实现
+- 状态：`Step2 Segment POC In Progress`
+- 当前说明：
+  - 允许实现 Step2 原型
+  - 允许修正 Step1 语义
+  - 不得越界到多轮闭环、T 型完整复核、单向 Segment 终局实现
 
-## 2. 已确认事实：已完成项
+## 2. 本轮已确认任务
 
-- 已建立 T01 的规格链与模块文档骨架。
-- 已明确 Step1 原型只依赖 `Road.id / snodeid / enodeid / direction` 与 `Node.id / kind / grade / closed_con`。
-- 已明确 Step1 需要支持 `S1 / S2` 两套策略、through 继续追溯和反向确认。
+### 2.1 文档任务
 
-## 3. 当前理解/归纳：当前任务说明
+- 更新 `spec.md`
+- 更新 `plan.md`
+- 更新 `tasks.md`
+- 更新模块级 `INTERFACE_CONTRACT.md`
+- 更新模块级 `README.md`
+- 必要时同步 `architecture/overview.md`
 
-- 本轮任务属于“Step1 Pair 原型任务”，目标是先建立可运行、可审查、可解释的原型底座。
-- 本轮完成并不代表 T01 已经进入 Step2 / Step3 的最终实现，也不代表业务规则已经定稿。
-- 任务完成口径以“原型可运行、两套策略可输出、QGIS 可审查”为准。
+### 2.2 Step1 任务
 
-## 4. 已确认事实：本轮编码任务
+- 将 Step1 口径统一改为 `pair_candidates`
+- 保留 seed / terminate / through / 双向确认能力
+- 输出 candidate 审查图层与表格
 
-- 实现 Road / Node 数据读取与最小必要校验。
-- 实现方向约束下的基础路网图与 BFS Pair 搜索。
-- 实现 seed rule / terminate rule 独立配置。
-- 实现 through 节点继续追溯规则。
-- 实现反向确认与 Pair 去重。
-- 实现审查型输出与最小审计摘要。
-- 实现最小测试 / synthetic smoke 验证。
+### 2.3 Step2 任务
 
-## 5. 当前不纳入范围：未完成且禁止自动推进项
+- 读取 / 串接 Step1 `pair_candidates`
+- 生成 candidate channel
+- 回溯裁枝通往其他 terminate node 的分支
+- 识别 trunk
+- 构建 segment
+- 产出 validated / rejected 结果与审计图层
 
-- Step2 最终 Segment 提取规则定稿。
-- Step3 最终路口重赋值规则定稿。
-- 最终生产输出定义。
-- 最终失败口径和最终审计契约。
-- 任何超出 Step1 的额外业务字段扩展。
+### 2.4 验证任务
 
-## 6. 待确认决策点：后续更新前置条件
+- 补最小 pytest 覆盖
+- 在外网 `XXXS` 上完成实际验证
+- 整理 Step1 candidate 与 Step2 validated 差异摘要
 
-- 上述未完成事项都必须待用户后续确认后再更新。
-- 若未获得新的已确认事实，不得把推测扩写成规则。
-- 若后续要进入 Step2 / Step3，必须先补齐输出契约、失败契约与审计契约草案。
+## 3. 本轮最小测试覆盖
+
+- candidate 与 validated 显式分离
+- only_clockwise_loop 拒绝
+- branch_leads_to_other_terminate 裁枝
+- disconnected_after_prune 拒绝
+- trunk 与 segment 不等价
+- left_turn_only_polluted_trunk 或 `formway_unreliable_warning`
+
+## 4. 当前不纳入范围
+
+- 多轮双向 Segment 工作图剥离闭环
+- T 型路口轮间复核完整实现
+- 单向 Segment 阶段
+- trunk 冲突最终优先级策略
+- 最终生产出参封板
+
+## 5. 待确认事项
+
+1. 当前 `only_clockwise_loop` 是否全部视为最终 reject
+2. `shared_trunk_conflict` 后续是保守 reject 还是延迟分配
+3. `formway bit8` 是否足以从原型规则升级为生产强规则
+4. 候选通道的局部扩张边界是否还要再收紧

@@ -2,153 +2,210 @@
 
 ## 1. 文档状态
 
-- 状态：`Draft / Clarification Round 1`
-- 当前阶段：需求澄清期
-- 当前用途：为 T01 建立首轮业务规格草案与问题清单
-- 当前限制：本文件只沉淀已确认事实与待确认问题，不进入实现设计和编码阶段
+- 状态：`Draft / Step2 Segment POC`
+- 当前阶段：允许编码与外网验证的原型研发阶段
+- 当前用途：固化 T01 当前已确认的 Step1 / Step2 业务语义、原型边界与审查输出
+- 当前限制：本文件描述的是当前 POC 口径，不是最终生产规则封板
 
-## 2. 已确认事实：模块背景
+## 2. 当前范围
 
 - 模块名：`T01`
 - 模块定位：数据预处理模块
-- 当前优先需求：
-  - 路段提取
-  - 路口类型重新赋值
-- 当前仓库背景：
-  - 仓库级正式目标仍是治理基线与模块文档启动
-  - T01 当前仅建立初始模块文档框架与规格占位框架
-  - 当前文档落仓不等于项目级生命周期已将 T01 认定为正式 `Active` 模块
+- 当前主线能力：
+  - Step1：`pair_candidates`
+  - Step2：candidate validation + segment construction
+- 当前验证要求：
+  - 必须可输出 QGIS 可直接审查的图层
+  - 必须在外网测试数据 `XXXS` 上完成实际运行验证
 
-## 3. 当前理解/归纳：当前业务问题陈述
+## 3. 已确认输入
 
-- 当前 draft 认知下，业务希望先把交叉路口之间的 `Road` 提取为“两个路口之间的路段”。
-- 当前 draft 认知下，业务还希望识别当前路段上单侧通往其他方向，或进入路段上单侧的路口，并据此支撑后续“T 型路口 / 分歧路口 / 合流路口”的类型重赋值讨论。
-- 当前理解仅用于澄清需求，不代表最终算法、最终产物形态、最终失败口径已经确定。
-- 当前阶段建立该预处理文档框架的目的，是先把输入事实、职责边界和待确认问题落仓，避免后续直接跳入实现。
+### 3.1 Road
 
-## 4. 已确认事实：当前已确认输入
-
-### 4.1 Road
-
-- 业务含义：道路数据图层
+- 图层含义：道路数据图层
 - 几何类型：`LineString`
 - 文件格式：`Shp` 或 `GeoJSON`
-- 路径与图层名：由参数传入
-- 当前已知关键字段：
+- 当前核心字段：
   - `id`
   - `snodeid`
   - `enodeid`
   - `direction`
-  - `road_kind`
-  - `roadtype`
   - `formway`
 
-### 4.2 Node
+### 3.2 Node
 
-- 业务含义：Node 数据图层
+- 图层含义：节点数据图层
 - 几何类型：`Point`
 - 文件格式：`Shp` 或 `GeoJSON`
-- 路径与图层名：由参数传入
-- 当前已知关键字段：
+- 当前核心字段：
   - `id`
   - `kind`
   - `grade`
   - `closed_con`
   - `mainnodeid`
 
-### 4.3 已确认输入语义与处理前提
+### 3.3 当前输入处理前提
 
-- `mainnodeid` 是当前语义路口聚合的主依据。
-- 当 `mainnodeid` 为空值、缺失、`0` 或空字符串时，认为当前 Node 自身就是语义路口，并以该 Node 的 `id` 为主。
-- 若多个 Node 共享同一 `mainnodeid`，则当前按一个复合语义路口处理；这些 Node 上进入 / 退出的 `Road` 也一并视为该语义路口的进出通道。
-- 当前补充口径：复合路口组内只有 `id == mainnodeid` 的代表节点属性被视为该语义路口的有效属性来源。
-- `direction` 中 `0` 与 `1` 当前都视为双方向。
-- 输入数据进入处理前，CRS 统一归一化至 `3857`。
-- 输入字段在处理前统一做归一化。
-- 若 `snodeid` / `enodeid` 引用了不存在的 `Node.id`，当前口径为报异常，但不中断其它对象处理。
-- 对输入唯一性、空值、编码、多部件几何、几何异常等问题，当前口径为发现问题时报异常，但不中断其它处理。
+- 输入 CRS 统一归一化到 `EPSG:3857`
+- `mainnodeid` 仍是当前语义路口聚合主依据
+- `direction=0/1` 当前仍按双向处理
+- 未正式启用字段不得因局部样本或人工真值直接升级为强规则
+- `Road.formway` 当前已正式启用，但仅限：
+  - Step1：`bit7` 可用于 through incident degree 裁剪
+  - Step2：`bit8` 可用于左转专用道审计 / 排除
 
-## 5. 已确认事实：Step1 顶层 Pair 原型范围
+## 4. Step1 语义
 
-### 5.1 Step1 当前目标
+### 4.1 Step1 负责什么
 
-- Step1 当前只做“顶层 Pair 构建”原型。
-- Step1 的目标是识别普通双向通行通道上的顶层关系，作为后续 Segment 骨架的上层锚点对。
-- Step1 当前产出的是“可审查、可解释、可迭代”的原型结果，不是最终生产算法。
-- 若输入存在复合路口，Step1 当前原型已先按 `mainnodeid` 聚合为语义路口，再进行 seed / terminate 判定与 Pair 搜索。
+- 基于 seed / terminate 规则筛选候选语义路口
+- 在语义路口图上执行 BFS 搜索
+- through 节点继续追溯
+- A→B / B→A 双向确认
 
-### 5.2 Step1 当前成立条件
+### 4.2 Step1 输出什么
 
-- 从合法种子点 `A` 出发，按当前规则做 BFS 搜索；当前 `A / B` 的判定对象是语义路口，而不是单个物理 Node。
-- 搜索到满足终止条件的叶节点 `B`。
-- `B` 同时也必须满足合法种子点条件。
-- 再从 `B` 按相同规则反向搜索，能够搜索回 `A`。
-- 通过后，`A-B` 构成当前顶层 Pair。
+- Step1 输出的是 `pair_candidates`
+- 当前 `pair_candidates` 的成立条件仍是：
+  - `A` 能搜索到 `B`
+  - `B` 也能反向搜索到 `A`
+- Step1 输出不能默认视为“最终有效 Pair”
+- Step1 不负责最终 Pair 有效性确认
 
-### 5.3 Step1 当前 through 节点继续追溯规则
+### 4.3 Step1 当前审查输出
 
-- 两根 `Road` 间如果只有两度链接，不视为路口终止，继续追溯。
-- 若 through 发生在复合路口组内部，Step1 当前原型会先把组内内部道路折叠为同一个语义路口，不再把组内物理节点错判为外部 through / terminal。
-- 这类 through 节点当前只服务于 Step1 Pair 搜索，不直接代表 Step2 的最终 Segment 切分结论。
-- through 规则必须显式可解释，不允许写成隐式黑箱逻辑。
+- `seed_nodes.*`
+- `terminate_nodes.*`
+- `pair_candidates.*`
+- `pair_links_candidates.*`
+- `pair_candidate_nodes.*`
+- `pair_support_roads.*`
+- `rule_audit.json`
+- `search_audit.json`
+- `pair_summary.json`
 
-### 5.4 Step1 当前策略 S1 / S2 的业务意义
+说明：
 
-- `S1`：
-  - `kind` 包含 `bit2`
-  - `closed_con in {2, 3}`
-  - 当前业务意义：提供较宽松的种子/终止候选视角，用于扩大 Pair 审查面。
-- `S2`：
-  - `kind` 包含 `bit2`
-  - `closed_con in {2, 3}`
-  - `grade = 1`
-  - 当前业务意义：提供较收敛的候选视角，用于与 `S1` 做结果对比。
-- 当前阶段不判断 `S1 / S2` 哪个最终正确，只要求两套结果均可独立运行并输出，供后续业务比较。
+- 当前仍保留 `pair_nodes.geojson` / `pair_links.geojson` / `pair_table.csv` 兼容别名
+- 但语义口径以 `pair_candidates` 为准
 
-## 6. 当前理解/归纳：当前已确认职责边界（仅初稿）
+## 5. Step2 语义
 
-- 当前初步理解，T01 负责把“输入数据事实”和“预处理需求澄清”先收口到统一文档面。
-- 当前初步理解，T01 后续可能承载多个预处理需求，本轮只聚焦：
-  - Step1 顶层 Pair 原型研发
-- 当前初步理解，T01 的职责边界至少会涉及：
-  - 理解并约束 Step1 当前实际使用的 Road / Node 输入契约
-  - 基于路网图做 Pair 搜索与反向确认
-  - 产出可供 QGIS 审查的原型结果
-- 当前初步理解，T01 在本轮不负责：
-  - 固化 Step2 最终 Segment 提取规则
-  - 固化 Step3 最终路口重赋值规则
-  - 固化最终质量验收口径
+### 5.1 Step2 定位
 
-## 7. 当前不纳入范围：当前明确不做的内容
+**Step2 = pair candidate validation + segment construction**
 
-- 不定义最终算法流程、最终实现步骤或技术选型。
-- 不定义最终输出图层名、最终输出字段名、最终 CLI 参数。
-- 不定义最终 QC 指标、最终验收阈值或最终失败判定标准。
-- 不把 `roadtype`、`formway` 写成当前强依赖规则。
-- 不把 `mainnodeid` 的聚合语义直接写成算法结论。
-- 不把 Step1 原型结果包装成最终生产方案。
-- 不进入 Step2 / Step3 最终实现。
+也就是：
 
-## 8. 待确认决策点
+- Step2 不只是“从 Pair 提 Road”
+- Step2 首先要验证：某个 Step1 `pair_candidate(A,B)` 是否能形成合法 Segment
+- 只有通过验证的 candidate，才进入：
+  - `validated_pair`
+  - `trunk`
+  - `segment`
 
-1. 路段提取的边界，是否以“有语义的路口”作为唯一切分边界，还是还需要引入其它打断条件？
-2. 路口类型重新赋值的目标标签集合是否固定为“T 型 / 分歧 / 合流”，还是还包含其它类型？
-3. “当前路段上单侧通往其他方向”具体是以拓扑连接数量、几何方向还是属性方向作为判定依据？
-4. 路口类型重赋值是针对 `Node`、针对 `mainnodeid` 聚合后的语义路口，还是两者都需要产出？
-5. `road_kind=1` 的封闭式道路在路段提取与路口识别中是纳入、过滤还是单独处理？
-6. `roadtype`、`formway` 在当前数据中有效性无法保障；后续是否允许把它们作为弱参考条件，若允许，启用门槛是什么？
-7. 对唯一性、空值、编码、多部件几何、几何异常等非阻断问题，异常分类、记录粒度与汇总方式如何定义？
-8. 多部件几何、零长度线、重复点、相交但未打断等几何异常是否只记录异常，还是还需要补充统一修复 / 跳过规则？
-9. 字段归一化的范围、优先级和标准化映射规则需要细化到什么程度？
-10. T 型 / 分歧 / 合流的优先级、互斥关系和冲突解决顺序是否存在既定业务规则？
-11. T01 的下游消费者是谁，后续是供人工核验、其它模块消费，还是两者都要兼顾？
-12. 非阻断异常的审计输出是否需要稳定结构化产物，若需要，最小字段集是什么？
+### 5.2 Step2 当前 POC 流程
 
-## 9. 下一步澄清主题
+1. 消费 Step1 `pair_candidates`
+2. 为每个 candidate 生成候选通道子图
+3. 对通往其他 terminate node 的分支执行回溯裁枝
+4. 在裁枝后子图上识别 trunk
+5. 对 candidate 执行 validated / rejected 判定
+6. 围绕 trunk 收敛完整 segment
 
-- 输出成果：Step1 审查型输出如何与未来 Step2 正式 Segment 输出解耦。
-- 失败口径：非阻断异常的分类、记录方式、汇总方式，以及未来是否存在必须阻断的问题。
-- 重赋值规则：T 型、分歧、合流等类型的判定依据、优先级与冲突处理。
-- 路段提取边界条件：路口边界、打断点、方向影响、封闭道路影响。
-- 输入归一化细则：字段归一化范围、异常分类、非阻断处理的审计粒度。
-- 上下游接口假设：输入前置清洗假设、下游消费形式、是否需要稳定审计输出。
+### 5.3 候选通道
+
+- 候选通道的起点是 Step1 支撑路径
+- 在当前 POC 中，会沿支撑路径局部扩张附属分支 / 回环
+- 若分支最终通往其他 terminate node，必须保留审计信息，供后续裁枝
+
+### 5.4 分支回溯裁枝
+
+- 若候选集合中的某条分支最终通往其他 terminate node，且该 terminate node 不是当前 Pair 的 `B`
+- 则该分支不属于当前 `A-B Segment`
+- 必须从附属路口处执行回溯迭代裁枝
+- 裁枝痕迹必须显式输出到 `branch_cut_roads.*`
+
+### 5.5 主干定义
+
+- 主干不是 Segment 本身
+- 当前 trunk 定义为：
+  - `A→B` 与 `B→A` 构成的逆时针最小回环道路集合
+- 当前左舵国家业务口径下：
+  - 只有满足逆时针闭环的 trunk 才能通过验证
+
+### 5.6 左转专用道
+
+- 即使某条 Road 参与最小回环，若其业务属性为左转专用道，则不得直接进入 trunk
+- 当前通过 `formway bit8` 识别左转专用道
+- 但数据有效性可能不足，因此必须支持可配置模式：
+  - `strict`
+  - `audit_only`
+  - `off`
+
+### 5.7 Segment 与 trunk 的关系
+
+- `segment != trunk`
+- trunk 只是 Segment 的骨架
+- 完整 Segment 是围绕 trunk 保留下来的、仍服务于当前 `A-B` 的完整通道子图
+
+### 5.8 validated / rejected
+
+当前 candidate 至少在以下情况下会被拒绝：
+
+- `invalid_candidate_boundary`
+- `disconnected_after_prune`
+- `no_valid_trunk`
+- `only_clockwise_loop`
+- `left_turn_only_polluted_trunk`
+- `shared_trunk_conflict`
+
+当前 candidate 通过验证后，会输出：
+
+- `validated_pairs.*`
+- `pair_links_validated.*`
+- `trunk_roads.*`
+- `segment_roads.*`
+
+## 6. 当前原型输出
+
+### 6.1 Step1
+
+- `pair_candidates.csv`
+- `pair_links_candidates.geojson`
+- `pair_candidate_nodes.geojson`
+- `pair_support_roads.geojson`
+
+### 6.2 Step2
+
+- `validated_pairs.csv`
+- `rejected_pair_candidates.csv`
+- `pair_links_validated.geojson`
+- `trunk_roads.geojson`
+- `segment_roads.geojson`
+- `branch_cut_roads.geojson`
+- `pair_candidate_channel.geojson`
+- `pair_validation_table.csv`
+- `segment_summary.json`
+- `working_graph_debug.geojson`
+
+说明：
+
+- 上述输出属于当前原型审查输出
+- 不代表最终生产出参已经封板
+
+## 7. 当前不纳入范围
+
+- 多轮双向 Segment 全流程闭环
+- T 型路口轮间复核完整实现
+- 单向 Segment 阶段
+- Step2 生产规则封板
+- trunk 归属冲突的最终最优分配策略
+- `formway` 通用规则引擎
+
+## 8. 当前待确认问题
+
+1. `only_clockwise_loop` 在实际业务上是否一律拒绝，还是后续需要引入更细的几何 / 方向复核
+2. `shared_trunk_conflict` 在最终方案中是直接拒绝、延后归属，还是需要引入更稳定的 pair 排序策略
+3. `formway bit8` 的数据质量是否足以从 POC 审计规则升级为生产强规则
+4. 候选通道的局部扩张边界，后续是否需要引入更强的层级 / 方位 / 通道宽度约束

@@ -100,6 +100,12 @@ def _cmd_t01_step1_pair_poc(args: argparse.Namespace) -> int:
     return run_step1_pair_poc_cli(args)
 
 
+def _cmd_t01_step2_segment_poc(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc_cli
+
+    return run_step2_segment_poc_cli(args)
+
+
 def _cmd_t01_build_validation_slices(args: argparse.Namespace) -> int:
     from rcsd_topo_poc.modules.t01_data_preprocess.slice_builder import run_slice_builder_cli
 
@@ -125,7 +131,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_t01 = sub.add_parser(
         "t01-step1-pair-poc",
-        help="Run T01 Step1 Pair prototype and write QGIS-reviewable outputs.",
+        help="Run T01 Step1 pair-candidate prototype and write QGIS-reviewable outputs.",
     )
     p_t01.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
     p_t01.add_argument("--road-layer", help="Optional road layer name.")
@@ -148,6 +154,44 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional output root override. If omitted, write to outputs/_work/t01_step1_pair_poc/<run_id>.",
     )
     p_t01.set_defaults(func=_cmd_t01_step1_pair_poc)
+
+    p_t02 = sub.add_parser(
+        "t01-step2-segment-poc",
+        help="Run T01 Step2 Segment POC: validate pair candidates and build reviewable segment outputs.",
+    )
+    p_t02.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
+    p_t02.add_argument("--road-layer", help="Optional road layer name.")
+    p_t02.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_t02.add_argument("--node-path", required=True, help="Path to Node Shp/GeoJSON.")
+    p_t02.add_argument("--node-layer", help="Optional node layer name.")
+    p_t02.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_t02.add_argument(
+        "--strategy-config",
+        action="append",
+        required=True,
+        help="Step1 strategy config path. Repeat the option to run multiple strategies.",
+    )
+    p_t02.add_argument(
+        "--formway-mode",
+        choices=["strict", "audit_only", "off"],
+        default="strict",
+        help="How Step2 should treat left-turn-only roads when validating trunk roads.",
+    )
+    p_t02.add_argument(
+        "--left-turn-formway-bit",
+        type=int,
+        default=8,
+        help="formway bit index used as left-turn-only lane indicator. Default: 8.",
+    )
+    p_t02.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_step2_segment_poc_YYYYMMDD_HHMMSS.",
+    )
+    p_t02.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_step2_segment_poc/<run_id>.",
+    )
+    p_t02.set_defaults(func=_cmd_t01_step2_segment_poc)
 
     p_slice = sub.add_parser(
         "t01-build-validation-slices",

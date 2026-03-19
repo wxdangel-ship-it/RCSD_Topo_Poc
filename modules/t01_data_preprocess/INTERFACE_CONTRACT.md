@@ -2,345 +2,135 @@
 
 ## 1. 文档状态
 
-- 状态：`Input Contract Draft v0`
-- 当前阶段：需求澄清期 / 文档初始化期
-- 当前用途：固化 T01 当前已确认输入事实与输入语义约束
-- 当前限制：输出契约、失败契约与审计契约暂不定稿
+- 状态：`POC Contract Draft`
+- 当前阶段：`Step1 Pair Candidate + Step2 Segment POC`
+- 当前用途：固化 T01 当前原型阶段的输入、输出与审计契约
+- 当前限制：下述输出契约属于原型审查输出，不是最终生产出参封板
 
-## 2. 已确认事实：模块当前输入契约概述
+## 2. 输入契约
 
-- 模块 ID：`t01_data_preprocess`
-- 模块定位：数据预处理模块
-- 当前优先议题：
-  - 路段提取
-  - 路口类型重新赋值
-- 当前已确认输入对象：
-  - `Road` 线要素图层
-  - `Node` 点要素图层
-- 当前支持格式：
-  - `Shp`
-  - `GeoJSON`
-- 当前输入路径与图层名：由参数传入
-- 当前输入归一化要求：
-  - CRS 统一归一化至 `3857`
-  - 字段统一做归一化处理
-- Step1 原型当前实际强依赖字段：
-  - Road：`id`、`snodeid`、`enodeid`、`direction`、`formway`
-  - Node：`id`、`kind`、`grade`、`closed_con`
-  - Node：若存在 `mainnodeid`，Step1 当前已按其做语义路口聚合；若不存在，则按 `Node.id` 自身成口处理
-  - Road：若策略的 `through_node_rule` 显式配置 `incident_degree_exclude_formway_bits_any`，则 Step1 会先排除命中这些 `formway` 位的 Road，再计算语义节点的 through incident degree
+### 2.1 Road
 
-## 3. 已确认事实：Road 输入契约
-
-### 3.1 数据角色
-
-- 数据角色：道路数据图层
+- 支持格式：`Shp` / `GeoJSON`
 - 几何类型：`LineString`
-- 支持格式：`Shp`、`GeoJSON`
-- 路径 / 图层名：由参数传入
+- 当前强依赖字段：
+  - `id`
+  - `snodeid`
+  - `enodeid`
+  - `direction`
+  - `formway`
 
-### 3.2 字段表
+### 2.2 Node
 
-| 字段名 | 类型 | 是否必需 | 语义 | 当前可信度 / 注意事项 |
-|---|---|---|---|---|
-| `id` | 待确认 | 是 | 道路数据唯一标识 | 当前作为关键标识字段使用；具体类型待确认 |
-| `snodeid` | 待确认 | 是 | 道路起点对应的 `nodeid` | 应与 `Node.id` 建立关联；缺失引用时当前口径为报异常但不中断其它处理 |
-| `enodeid` | 待确认 | 是 | 道路终点对应的 `nodeid` | 应与 `Node.id` 建立关联；缺失引用时当前口径为报异常但不中断其它处理 |
-| `direction` | 待确认 | 是 | 道路方向编码 | 枚举定义已知；`0` 与 `1` 当前均按双方向处理 |
-| `road_kind` | 待确认 | 是 | 道路类别编码 | 枚举定义已知；后续是否参与强规则待确认 |
-| `roadtype` | 待确认 | 否 | 道路类型位编码 | 当前数据有效性无法保障；当前仅作为输入事实，不作为强规则 |
-| `formway` | 待确认 | 是 | 道路形态位编码 | 已正式启用；当前已确认可参与 Step1 through incident degree 的道路裁剪 |
-
-### 3.3 `direction` 枚举定义
-
-| 取值 | 当前语义 | 当前说明 |
-|---|---|---|
-| `0` | 双方向 | 当前按双方向处理 |
-| `1` | 双方向 | 当前按双方向处理 |
-| `2` | 顺行 | 起点 -> 终点 |
-| `3` | 逆行 | 终点 -> 起点 |
-
-### 3.4 `road_kind` 枚举定义
-
-| 取值 | 当前语义 | 当前说明 |
-|---|---|---|
-| `0` | 未观察 | 当前可视为低等级道路 |
-| `1` | 封闭式道路 | 是否参与路段提取与重赋值规则待确认 |
-| `2` | 普通道路 | 当前仅作为输入事实 |
-| `3` | 低等级道路 | 当前仅作为输入事实 |
-
-### 3.5 `roadtype` 位语义
-
-| 位 / 取值 | 当前语义 | 当前说明 |
-|---|---|---|
-| `0` | 未调查 | 当前仅表示未调查 |
-| `bit0` | 高架上 | 当前数据有效性无法保障 |
-| `bit1` | 高架下路面（高架下辅路） | 当前数据有效性无法保障 |
-| `bit2` | 隧道 | 当前数据有效性无法保障 |
-| `bit3` | 环岛 | 当前数据有效性无法保障 |
-| `bit4` | 收费站 | 当前数据有效性无法保障 |
-| `bit6` | 桥梁 | 当前数据有效性无法保障 |
-
-### 3.6 `formway` 位语义
-
-| 位 / 取值 | 当前语义 | 当前说明 |
-|---|---|---|
-| `0` | 未调查 | 当前仅表示未调查 |
-| `bit5` | 主辅单向连接路 | 当前数据有效性无法保障 |
-| `bit6` | 主辅双向连接路 | 当前数据有效性无法保障 |
-| `bit7` | 右转专用道 | 已确认可用于 Step1 through incident degree 裁剪；命中该位的 Road 可按策略排除出 incident degree 统计 |
-| `bit8` | 左转专用道 | 当前数据有效性无法保障 |
-| `bit10` | 掉头专用道 | 当前数据有效性无法保障 |
-
-## 4. 已确认事实：Node 输入契约
-
-### 4.1 数据角色
-
-- 数据角色：Node 数据图层
+- 支持格式：`Shp` / `GeoJSON`
 - 几何类型：`Point`
-- 支持格式：`Shp`、`GeoJSON`
-- 路径 / 图层名：由参数传入
+- 当前强依赖字段：
+  - `id`
+  - `kind`
+  - `grade`
+  - `closed_con`
+- 当前语义聚合字段：
+  - `mainnodeid`
 
-### 4.2 字段表
+### 2.3 输入处理前提
 
-| 字段名 | 类型 | 是否必需 | 语义 | 当前可信度 / 注意事项 |
-|---|---|---|---|---|
-| `id` | 待确认 | 是 | Node 数据唯一标识 | 当前作为关键标识字段使用；具体类型待确认 |
-| `kind` | 待确认 | 是 | 节点类型位编码 | 位语义已知；后续是否可作为强规则待确认 |
-| `grade` | 待确认 | 否 | 节点等级 | 枚举定义已知；具体使用方式待确认 |
-| `closed_con` | 待确认 | 否 | 封闭道路连接类型 | 枚举定义已知；具体使用方式待确认 |
-| `mainnodeid` | 待确认 | 否 | 语义路口聚合标识 | 当前作为语义路口聚合主依据；空值、缺失、`0`、空字符串时以当前 `Node.id` 为主 |
+- 输入统一归一化到 `EPSG:3857`
+- `mainnodeid` 为空、缺失、`0` 或空字符串时，回退到 `Node.id`
+- `direction=0/1` 当前按双向处理
+- 未正式启用字段不得因局部样本直接升级为强规则
 
-### 4.3 `kind` 位语义
+## 3. formway 当前启用口径
 
-| 位 / 取值 | 当前语义 | 当前说明 |
-|---|---|---|
-| `0` | 未观察 | 当前仅表示未观察 |
-| `bit0` | 无属性 | 当前仅作为输入事实 |
-| `bit2` | 交叉路口点 | 当前仅作为输入事实 |
-| `bit3` | 道路 merge 点 | 当前仅作为输入事实 |
-| `bit4` | 道路 split 点 | 当前仅作为输入事实 |
-| `bit5` | 城市边界点 | 当前仅作为输入事实 |
-| `bit11` | T 形贯穿路口 | 当前仅作为输入事实 |
-| `bit12` | 超长打断 | 当前仅作为输入事实 |
-| `bit13` | 自相交打断 | 当前仅作为输入事实 |
+### 3.1 Step1
 
-### 4.4 `grade` 枚举定义
+- `formway bit7 = 右转专用道`
+- 当前可用于 Step1 through incident degree 裁剪
 
-| 取值 | 当前语义 | 当前说明 |
-|---|---|---|
-| `0` | 未观察 | 当前仅表示未观察 |
-| `1` | 0 级路口 | 当前仅作为输入事实 |
-| `2` | 1 级路口 | 当前仅作为输入事实 |
-| `3` | 2 级路口 | 当前仅作为输入事实 |
+### 3.2 Step2
 
-### 4.5 `closed_con` 枚举定义
+- `formway bit8 = 左转专用道`
+- 当前只用于 trunk 识别阶段
+- 必须通过可配置模式启用：
+  - `strict`
+  - `audit_only`
+  - `off`
 
-| 取值 | 当前语义 | 当前说明 |
-|---|---|---|
-| `0` | 未观察 | 当前仅表示未观察 |
-| `1` | 全封闭道路 | 当前仅作为输入事实 |
-| `2` | 开放道路 | 当前仅作为输入事实 |
-| `3` | 部分连接封闭道路 | 当前仅作为输入事实 |
+## 4. Step1 输出契约
 
-## 5. 已确认事实：语义约束
+### 4.1 语义
 
-- `Road.snodeid` 与 `Road.enodeid` 应引用 `Node.id`，用于表达道路两端与节点的关联关系。
-- 若 `Road.snodeid` / `Road.enodeid` 引用了不存在的 `Node.id`，当前口径为报异常，但不中断其它对象处理。
-- `mainnodeid` 是当前语义路口聚合的主依据。
-- 若 `mainnodeid` 有具体值，则所有 `mainnodeid` 相同的 Node 构成一个有语义的路口。
-- 若 `mainnodeid` 为空值、缺失、`0` 或空字符串，则当前 Node 自身构成一个有语义的路口，并以该 `Node.id` 为主。
-- 当前补充口径：复合路口内进入 / 退出的 `Road`，在 Step1 当前原型中一并按聚合后的语义路口处理。
-- 当前补充口径：若一组 Node 共享同一 `mainnodeid`，则当前只有 `id == mainnodeid` 的代表节点属性被视为该语义路口的有效属性来源。
-- 当前补充口径：若 `mainnodeid` 指向的代表节点缺失，当前口径为记录异常并退化到组内首个成员节点承载属性，但不静默忽略该问题。
-- 上述 `mainnodeid` 语义当前已落地到 Step1 图构建与规则判定；但这不代表 Step2 / Step3 最终算法已经定稿。
-- 当前补充约束：未正式启用的字段，不得因局部样本或人工真值而被直接提升为 Step1 强规则；若样本现象与既有语义冲突，必须先回到数据分析并与调用方确认。
+- Step1 输出的是 `pair_candidates`
+- Step1 不负责最终 Pair 有效性确认
+- Step1 输出不能默认视为最终有效 Pair
 
-## 6. 已确认事实：输入归一化与非阻断处理
+### 4.2 当前输出文件
 
-- Road / Node 输入在处理前统一做 CRS 归一化，目标 CRS 为 `3857`。
-- 输入字段在处理前统一做归一化处理。
-- 对唯一性、空值、编码、多部件几何、几何异常等输入问题，当前口径为发现问题时报异常，但不中断其它处理。
+- `seed_nodes.geojson`
+- `terminate_nodes.geojson`
+- `pair_candidates.csv`
+- `pair_candidate_nodes.geojson`
+- `pair_links_candidates.geojson`
+- `pair_support_roads.geojson`
+- `pair_summary.json`
+- `rule_audit.json`
+- `search_audit.json`
 
-## 7. 当前理解/归纳：字段启用与低可信说明
+### 4.3 兼容别名
 
-- `roadtype` 当前数据有效性无法保障。
-- `formway` 已正式启用，但当前仅确认：
-  - 字段本身可作为 Step1 强依赖输入
-  - `bit7=右转专用道` 可参与 through incident degree 裁剪
-- `formway` 的其它位当前仍属于低可信语义，未确认前不得自行扩展为强规则。
-- 后续若业务希望继续扩展 `roadtype` 或 `formway` 参与规则判断，必须先补充：
-  - 字段可信度确认
-  - 缺失值口径
-  - 与主规则的优先级关系
+- 当前仍保留：
+  - `pair_nodes.geojson`
+  - `pair_links.geojson`
+  - `pair_table.csv`
+- 这些文件仅用于兼容既有审查脚本
+- 语义解释仍以 `pair_candidates` 为准
 
-## 8. 待确认决策点：待确认的输入契约项
+## 5. Step2 输出契约草案
 
-- 多部件几何、零长度线、重复点、相交但未打断等异常的分类口径是否需要更细化。
-- 空值与编码异常的记录粒度、汇总维度和审计字段如何定义。
-- 字段归一化的具体范围、字段映射规则和优先级是否需要固化。
-- `id`、`snodeid`、`enodeid`、`mainnodeid` 的唯一性 / 一致性校验方式如何定义。
-- 非阻断异常是否存在阈值或升级为阻断的条件。
-- `road_kind`、`kind`、`grade`、`closed_con` 后续是否会进入强规则。
+### 5.1 语义
 
-## 9. 当前不纳入范围：当前输出契约
+- Step2 = pair candidate validation + segment construction
+- Step2 先判断 candidate 是否能够形成合法 Segment
+- 只有通过验证的 candidate 才成为 `validated_pair`
 
-- 状态：`Step1 审查型输出草案；不是最终生产输出契约`
-- 当前说明：
-  - Step1 当前输出面向 QGIS 审查
-  - Step1 当前输出不代表 Step2 最终 Segment 结果
-  - 除非调用方显式指定 `out_root`，否则默认写入 `outputs/_work/t01_step1_pair_poc/<run_id>`
-  - 默认 `run_id` 规则固定为：`t01_step1_pair_poc_YYYYMMDD_HHMMSS`
-  - 对应 shell 约定写法为：`run_id="t01_step1_pair_poc_$(date +%Y%m%d_%H%M%S)"`
+### 5.2 当前原型输出
 
-### 9.1 Step1 默认输出根目录规则
+- `validated_pairs.csv`
+- `rejected_pair_candidates.csv`
+- `pair_links_validated.geojson`
+- `trunk_roads.geojson`
+- `segment_roads.geojson`
+- `branch_cut_roads.geojson`
+- `pair_candidate_channel.geojson`
+- `pair_validation_table.csv`
+- `segment_summary.json`
+- `working_graph_debug.geojson`
 
-- 默认输出根目录：`outputs/_work/t01_step1_pair_poc/<run_id>`
-- 默认 `run_id` 生成规则：`t01_step1_pair_poc_YYYYMMDD_HHMMSS`
-- 若用户显式指定 `out_root`，则以显式指定值为准
-- 若用户显式指定 `run_id` 但未指定 `out_root`，则默认输出根目录变为 `outputs/_work/t01_step1_pair_poc/<显式 run_id>`
-- 当前补充执行契约：
-  - 执行辅助日志默认归档到 `<out_root>/logs/`
-  - 包括但不限于：bootstrap / run / summary 日志
-  - 不应再将执行辅助日志散落到仓库外的工作盘根目录
-  - 若为首次 clone 且仓库目录尚不存在，可先写入临时目录（如 `/tmp`）；clone 成功后应转存到 `<out_root>/logs/`
-  - 若内网仓库已就位且已完成依赖安装，后续默认只执行“当前分支下拉”命令，不再重复提供初始化命令
-  - 初始化命令当前仅用于首次 clone、环境重建或仓库损坏后的恢复
+### 5.3 当前拒绝原因口径
 
-### 9.1A Step1 前置切片输出契约
+- `invalid_candidate_boundary`
+- `disconnected_after_prune`
+- `no_valid_trunk`
+- `only_clockwise_loop`
+- `left_turn_only_polluted_trunk`
+- `shared_trunk_conflict`
+- `formway_unreliable_warning`
 
-- 状态：`Validation Slice Output Draft v0`
-- 当前说明：
-  - 切片输出仅服务于后续 Step1 / Step2 的分级验证
-  - 当前切片输出不等于最终生产输入分发机制
-  - 当前切片输出按不同等级 profile 分目录落仓，供人工挑选与后续手工存放
-  - 当前切片选 core 的对象已从物理 `Node` 调整为按 `mainnodeid` 聚合后的语义路口
-  - 当前切片会保留所选语义路口对应的全部物理 Node，以及这些语义路口之间相关的物理 Road
-- 当前默认输出根目录：`outputs/_work/t01_validation_slices/<run_id>`
-- 默认 `run_id` 规则：`t01_validation_slices_YYYYMMDD_HHMMSS`
-- 当前默认 profile：
-  - `XXXS`
-  - `XXS`
-  - `XS`
-  - `S`
-  - `M`
-- 当前补充执行口径：
-  - 默认可一次输出全部 profile
-  - 若验证时间不可接受，可显式只跑指定 profile（如仅 `XXXS`、`XXS` 或 `XS`）
-  - 当前推荐先跑 `XXXS` 做极小冒烟，再跑 `XXS`；确认切片质量后再决定是否继续 `XS / S / M`
-  - 可显式传入 `center_x / center_y`（EPSG:3857）以围绕指定中心点做语义切片排序
-- 当前每个 profile 至少输出：
-  - `roads.geojson`
-  - `nodes.geojson`
-  - `slice_summary.json`
-- 当前切片总清单文件：
-  - `slice_manifest.json`
+说明：
 
-### 9.2 Step1 当前审查型输出
+- `formway_unreliable_warning` 当前是 warning，不必然单独构成 reject
+- reject / warning 最终是否封板，后续仍需业务确认
 
-| 输出文件 | 当前形态 | 当前用途 | 备注 |
-|---|---|---|---|
-| `seed_nodes.geojson` | 点图层 | 查看策略下纳入种子集合的语义路口 | 当前 `node_id` 表示语义路口 ID，补充 `representative_node_id` 与 `member_node_ids` |
-| `terminate_nodes.geojson` | 点图层 | 查看策略下纳入终止集合的语义路口 | 当前 `node_id` 表示语义路口 ID，补充 `representative_node_id` 与 `member_node_ids` |
-| `pair_nodes.geojson` | 点图层 | 查看最终参与 Pair 的语义路口与角色 | 至少含 `node_id`、`pair_id`、`role`，并补充代表节点与成员节点信息 |
-| `pair_links.geojson` | 线图层 | 直接在 QGIS 上查看 Pair 关系 | 当前为语义路口代表点之间的审查辅助直连线，不代表最终 Segment 几何 |
-| `pair_support_roads.geojson` | 线图层 | 查看 Pair 搜索相关支撑 Road | 额外补充物理端点与语义端点 ID；文件名显式带 `support`，避免误解为 Step2 正式结果 |
-| `pair_table.csv` | 表格 | 查看 Pair 级结果与简要支撑信息 | 审查 / 调试用途 |
-| `pair_summary.json` | 摘要 | 查看策略级计数与异常摘要 | 审查 / 对比用途 |
-| `rule_audit.json` | JSON | 查看节点级 seed / terminate 规则命中情况 | 审计辅助 |
-| `search_audit.json` | JSON | 查看搜索过程中的 through、方向阻断、反向确认失败等事件 | 当前采用“事件计数 + 样本事件”模式，避免大图下审计体量失控 |
+## 6. 审计与调试契约
 
-### 9.3 Step1 当前输出目录结构
+- 所有关键拒绝原因必须在 `pair_validation_table.csv` 中显式可见
+- 分支回溯裁剪痕迹必须落到 `branch_cut_roads.geojson`
+- candidate / trunk / segment 的工作图过程必须可通过 `working_graph_debug.geojson` 回放
+- 当前 `pair_summary.json` 与 `segment_summary.json` 都属于审查摘要，不是最终统计口径封板
 
-```text
-<out_root>/
-  logs/
-    bootstrap.log
-    run.log
-    summary.log
-  strategy_comparison.json
-  S1/
-    seed_nodes.geojson
-    terminate_nodes.geojson
-    pair_nodes.geojson
-    pair_links.geojson
-    pair_support_roads.geojson
-    pair_table.csv
-    pair_summary.json
-    rule_audit.json
-    search_audit.json
-  S2/
-    ...
-```
+## 7. 当前不承诺内容
 
-```text
-outputs/_work/t01_validation_slices/<run_id>/
-  XXXS/
-    roads.geojson
-    nodes.geojson
-    slice_summary.json
-  XXS/
-    roads.geojson
-    nodes.geojson
-    slice_summary.json
-  XS/
-    roads.geojson
-    nodes.geojson
-    slice_summary.json
-  S/
-    roads.geojson
-    nodes.geojson
-    slice_summary.json
-  M/
-    roads.geojson
-    nodes.geojson
-    slice_summary.json
-  slice_manifest.json
-```
-
-### 9.4 Step1 当前审计输出补充口径
-
-- `search_audit.json` 当前保留：
-  - `search_event_counts`
-  - `search_events`
-  - `search_event_sample_limit_per_type`
-  - `graph_events`
-- 其中 `search_events` 当前明确是采样事件，不承诺保留全量搜索事件明细。
-- 当前这样设计的原因是：
-  - Step1 仍是原型，但需要支持较大样本的可审查运行
-  - 需避免因全量搜索事件落盘而明显放大内存与输出体量
-- 因此当前审计口径为：
-  - 计数用于摘要与对比
-  - 样本用于排障与可解释审查
-  - 若后续需要全量事件审计，需单独确认其体量、性能与落盘策略
-
-### 9.5 Step1 当前摘要输出补充口径
-
-- `pair_summary.json` 当前除基础计数字段外，额外允许包含：
-  - `search_seed_count`
-  - `through_seed_pruned_count`
-  - `search_event_sample_limit_per_type`
-  - `total_semantic_nodes`
-  - `total_physical_nodes`
-- 其中：
-  - `search_seed_count` 表示实际进入 Pair 搜索的 seed 数量
-  - `through_seed_pruned_count` 表示命中 seed rule 但因同时属于 through 节点而未进入搜索的数量
-  - `total_semantic_nodes` 表示按 `mainnodeid` 聚合后的语义路口总数
-  - `total_physical_nodes` 表示原始物理 Node 总数
-- 当前理解是：
-  - through 节点在当前 Step1 对称确认规则下不构成最终 Pair 终点
-  - 因而该类 seed 可在不改变当前 Pair 语义的前提下作为性能剪枝对象
-  - 当前 through 识别允许先按策略排除特定 `formway` 位对应的 Road，再判断 incident road degree
-- 该口径当前仅服务于 Step1 原型性能优化，不代表 Step2 / Step3 规则已定稿
-
-## 10. 当前不纳入范围：当前失败与审计契约
-
-- 状态：`部分口径已确认，整体仍待后续需求确认，不在本轮定稿`
-- 已确认事实：
-  - `snodeid` / `enodeid` 缺失 `Node.id` 引用时，报异常，但不中断其它处理
-  - 其它输入问题当前口径为报异常，但不中断其它处理
-- 待确认决策点：
-  - 最终失败分级
-  - 最终审计记录格式
-  - 异常汇总方式与稳定审计字段
-  - 是否存在必须阻断的异常类型
+- 多轮工作图剥离闭环
+- T 型路口轮间复核完整实现
+- 单向 Segment 输出契约
+- trunk 冲突最终归属策略
+- 生产级字段稳定性承诺

@@ -167,6 +167,9 @@ def test_step1_pair_poc_generates_strategy_outputs(tmp_path: Path) -> None:
         strategy_dir = out_root / strategy_id
         assert (strategy_dir / "seed_nodes.geojson").is_file()
         assert (strategy_dir / "terminate_nodes.geojson").is_file()
+        assert (strategy_dir / "pair_candidate_nodes.geojson").is_file()
+        assert (strategy_dir / "pair_links_candidates.geojson").is_file()
+        assert (strategy_dir / "pair_candidates.csv").is_file()
         assert (strategy_dir / "pair_nodes.geojson").is_file()
         assert (strategy_dir / "pair_links.geojson").is_file()
         assert (strategy_dir / "pair_support_roads.geojson").is_file()

@@ -1,47 +1,64 @@
-# T01 数据预处理文档阶段计划
+# T01 数据预处理阶段计划
 
-## 1. 当前阶段说明
+## 1. 当前阶段
 
-- 当前阶段：`Step1 Pair POC`
-- 当前状态：允许进入 Step1 原型研发，但不得越界到 Step2 / Step3 最终实现
-- 当前目标：完成顶层 Pair 原型、策略对比输出和 QGIS 审查结果
+- 当前阶段：`Step2 Segment POC`
+- 当前状态：允许编码、测试与外网 `XXXS` 实跑
+- 当前目标：
+  - 把 Step1 语义改为 `pair_candidates`
+  - 实现 Step2 candidate validation + segment construction 原型
+  - 产出 QGIS 可审查结果
 
-## 2. 已确认事实：本阶段目标
+## 2. 本轮要完成的事项
 
-- 更新 T01 文档，使其进入 Step1 Pair 原型研发状态。
-- 完成 Step1 Pair 原型代码与最小可运行入口。
-- 支持 `S1 / S2` 两套策略配置并分别产出结果。
-- 产出面向 QGIS 审查的种子/终止/Pair 结果与摘要。
-- 为后续 Step2 继续细化保留基础能力，但不进入 Step2 定稿。
+### 2.1 语义调整
 
-## 3. 当前理解/归纳：本阶段执行原则
+- Step1 不再被描述为“最终有效 Pair 产出”
+- Step1 只负责：
+  - seed / terminate 规则筛选
+  - BFS 搜索
+  - through 继续追溯
+  - 双向确认
+- Step1 输出统一口径为：
+  - `pair_candidates`
 
-- 本阶段的计划对象是“Step1 原型研发动作”，不是最终生产方案定稿。
-- 当前计划的核心价值是先把 Pair 搜索、策略对比、审查输出和可解释审计跑通。
-- 当前计划只允许实现 Step1 当前已确认事实；未确认内容必须继续标注为 `待确认` 或 `当前不纳入`。
+### 2.2 Step2 原型实现
 
-## 4. 当前不纳入范围：本阶段非目标
+- 消费 Step1 `pair_candidates`
+- 实现 candidate channel 生成
+- 实现分支回溯裁枝
+- 实现 trunk 识别
+- 实现 validated / rejected 判定
+- 围绕 trunk 收敛 segment
+- 输出 trunk / segment / branch_cut / validation table / summary
 
-- 不进入 Step2 最终 Segment 提取规则定稿。
-- 不进入 Step3 最终路口重赋值规则定稿。
-- 不擅自补完更多业务字段或主判据。
-- 不做大而全框架重构、UI、服务化或数据库化。
-- 不把 Step1 审查型输出误写成最终生产输出。
+### 2.3 外网验证
 
-## 5. 待确认决策点：进入下一阶段前需确认的事项
+- 定位并使用外网 `XXXS`
+- 完整跑通：
+  - Step1 candidate
+  - Step2 validation + segment construction
+- 形成独立运行目录与差异摘要
 
-- 路段提取的切分边界与边界优先级。
-- 路口类型重赋值的目标对象与类型集合。
-- `road_kind`、`roadtype`、`formway` 在业务规则中的角色强弱。
-- 输入异常与失败口径的分级、记录粒度与汇总方式。
-- 字段归一化的具体规则与范围。
-- Step2 / Step3 的最终输出成果形态与最小属性集。
-- 上下游接口稳定假设与交付对象。
+## 3. 本轮执行原则
 
-## 6. 进入未来编码阶段前的门禁条件
+- 本轮是原型研发，不是生产规则封板
+- 优先复用现有 `src/`、`tests/`、`outputs/_work/`、`python -m rcsd_topo_poc` 风格
+- candidate / validated 必须显式区分
+- trunk / segment 必须显式区分
+- 不做 silent fix，所有关键拒绝原因必须可审计
 
-- `spec.md`、`plan.md`、`tasks.md`、`AGENTS.md`、`INTERFACE_CONTRACT.md`、`README.md` 达成基线一致。
-- 已确认事实、当前理解、待确认决策点、当前不纳入范围四类信息分层清楚且无冲突。
-- Step1 原型已可运行，且 QGIS 审查输出可生成。
-- 输出契约、失败契约、审计契约至少达到 Step1 可评审草案状态。
-- 用户明确批准从“需求澄清 / 文档深化”升级到“实现设计或编码阶段”。
+## 4. 本轮不做的事项
+
+- 多轮双向 Segment 全流程闭环
+- T 型路口轮间复核完整实现
+- 单向 Segment 阶段
+- trunk 冲突最终归属策略封板
+- Step2 最终生产输出定稿
+
+## 5. 当前风险与待确认点
+
+- `only_clockwise_loop` 的业务处理口径，后续可能还需要更细确认
+- `shared_trunk_conflict` 当前仍是保守拒绝，后续可能需要更稳的 pair 排序 / 归属策略
+- `formway bit8` 当前只适合原型阶段显式审计 / 可配置排除
+- 候选通道扩张边界当前仍是 POC 级实现，后续可能需要进一步收紧

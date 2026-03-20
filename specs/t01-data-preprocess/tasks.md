@@ -1,61 +1,51 @@
 # T01 任务清单
 
 ## 1. 当前轮次
-- 名称：`Step5A/Step5B staged residual graph segment construction`
-- 性质：POC / 双阶段 residual graph 编排与统一回写
+- 名称：`hierarchical boundary fix before poc closeout`
+- 性质：POC visual audit 问题修复与 case 级审计补强
 
 ## 2. 本轮编码任务
 
-### 2.1 Step5A 输入编排
-- [x] 从 Step4 refreshed `nodes.geojson / roads.geojson` 读取输入
-- [x] 剔除历史已有非空 `segmentid` 的 road
-- [x] 按 Step5A 节点规则生成 seed / terminate
+### 2.1 Step4 / Step5 层级边界修复
+- [x] 新增历史 validated pair 端点 mainnode 收集逻辑
+- [x] 为当前轮构建 cumulative hard-stop boundary set
+- [x] 在 pair candidate 搜索阶段接入历史边界阻断
+- [x] 在 `segment_body` component 收敛阶段接入历史边界阻断
+- [x] 为 Step4 输出 `historical_boundary_nodes.geojson`
+- [x] 为 Step5 输出 `historical_boundary_nodes.geojson`
+- [x] 明确并实现：`mainnodeid = NULL` 的单点语义路口若命中当前轮输入规则，必须进入 `seed / terminate` 且不得再被当前轮 `through` 吞掉
 
-### 2.2 Step5A 构段
-- [x] 复用现有 pair / segment 内核运行 `STEP5A`
-- [x] 输出 Step5A candidate / validated / rejected / trunk / segment_body / residual
+### 2.2 Step4 错误构出修复
+- [x] 复现 `STEP4:792579__55225234`
+- [x] 修复其跨越 `763111` 的错误行为
+- [x] 输出 case 级证据，证明该 case 已被历史边界中断
 
-### 2.3 Step5B 输入编排
-- [x] 在 Step5A 工作图基础上剔除 Step5A 新 `segment_body` road
-- [x] 不刷新属性，直接使用原始 Step4 refreshed `grade_2 / kind_2 / closed_con`
-- [x] 按 Step5B 节点规则生成 residual graph 上的 seed / terminate
+### 2.3 Step2 / Step4 未构出 case 审计
+- [x] 审计 `784901__502866811`
+- [x] 审计 `785324__502866811`
+- [x] 审计 `784901__40237259`
+- [x] 审计 `788837__784901`
+- [x] 审计 `40237227__785217`
+- [x] 审计 `55225313__785217`
+- [x] 生成 `target_case_audit.json`
 
-### 2.4 Step5B 构段
-- [x] 复用现有 pair / segment 内核运行 `STEP5B`
-- [x] 输出 Step5B candidate / validated / rejected / trunk / segment_body / residual
+### 2.4 Step5 视觉问题收敛
+- [x] 让 Step5A / Step5B terminate / hard-stop 纳入历史高等级边界
+- [x] 保持 Step5A / Step5B 之间不刷新属性
+- [x] 确认旧的错误跨级 through/terminate 结果不再进入 merged validated
 
-### 2.5 Step5 merged 与统一刷新
-- [x] 合并 Step5A / Step5B validated pair
-- [x] 合并 Step5A / Step5B segment_body / residual 审查图层
-- [x] 统一刷新 Node：
-  - 端点保持当前值
-  - 单一 segment 内部 `-1 / 1`
-  - 右转专用道侧向 `3 / 1`
-  - 多进多出 `3 / 2048`
-- [x] 统一刷新 Road：
-  - 历史已有值保持不动
-  - 本轮新 segment_body road 写入 `s_grade = "0-2双"`
+### 2.5 外网验证
+- [x] 重跑外网 `XXXS` Step4
+- [x] 重跑外网 `XXXS` Step5
+- [x] 复核 target cases 的最新状态
 
-### 2.6 输出与审计
-- [x] 输出 `step5_summary.json`
-- [x] 输出 `step5_mainnode_refresh_table.csv`
-- [x] 输出 `nodes_step5_refreshed.geojson / roads_step5_refreshed.geojson`
-- [x] 同时保留链式输入同名文件 `nodes.geojson / roads.geojson`
-
-### 2.7 测试与验证
-- [x] 补最小 pytest 覆盖 Step5A / Step5B 双阶段编排
-- [x] 覆盖 Step5A 新 segment road 不参与 Step5B
-- [x] 覆盖 Step5A / Step5B 之间不刷新属性
-- [x] 覆盖 Step5 输出 `3 / 2048` 只作为未来 Step6 候选
-- [x] 在外网 `XXXS` 上完成实跑
-
-## 3. 本轮待确认项
-- [ ] Step5B 仍可能重新遇到 Step5A pair 端点在 residual graph 上残留的情况；后续是否需要额外竞争抑制，还需要结合更大切片确认
-- [ ] `through_collapsed_corridor` 在多轮场景下是否继续保留为正式 trunk 模式，需要后续业务确认
+## 3. 当前待确认项
+- [ ] `784901__502866811` 在 Step2 中仍为 `candidate -> no_valid_trunk`，后续是否需要专门扩展 trunk 规则，需要业务确认
+- [ ] Step4 中若某端点在 residual graph 上被 `through` 消化，是否应继续保守不构出，还是在未来轮次专门提级处理，仍需确认
+- [ ] Step5A 在 `XXXS` 上当前没有 validated pair，这是否符合优先轮业务预期，仍需确认
 
 ## 4. 明确不在本轮实现
+- [ ] POC closeout / baseline handoff
 - [ ] 启动 Step6
+- [ ] 多轮一键执行总编排收尾
 - [ ] 重写 Step1 / Step2 核心算法
-- [ ] 完整 Step3 语义归并
-- [ ] 多轮闭环
-- [ ] 单向 Segment 阶段

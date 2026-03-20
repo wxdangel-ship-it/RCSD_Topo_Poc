@@ -22,12 +22,14 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _coerce_int, _find_repo_root, _normalize_id, _sort_key
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
 from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import (
+    _collect_validated_boundary_mainnodes,
     _current_closed_con,
     _current_grade_2,
     _current_kind_2,
     _current_segmentid,
     _parse_segment_body_assignments,
     _read_csv_rows,
+    _write_boundary_node_outputs,
 )
 
 
@@ -132,6 +134,7 @@ def _build_phase_inputs(
     active_road_ids: set[str],
     out_root: Path,
     base_match: Callable[[Optional[int], Optional[int]], bool],
+    hard_stop_node_ids: set[str],
 ) -> PhaseInputArtifacts:
     node_by_id = {node.node_id: node for node in nodes}
     groups: dict[str, list[str]] = {}
@@ -156,6 +159,8 @@ def _build_phase_inputs(
             continue
         grade_2 = _current_grade_2(representative)
         kind_2 = _current_kind_2(representative)
+        if mainnode_id in hard_stop_node_ids:
+            continue
         if not base_match(grade_2, kind_2):
             continue
         input_mainnode_ids.add(mainnode_id)
@@ -166,10 +171,12 @@ def _build_phase_inputs(
     working_node_features: list[dict[str, Any]] = []
     for node in nodes:
         props = dict(node.properties)
+        is_historical_boundary = node.semantic_node_id in hard_stop_node_ids
         is_eligible = node.semantic_node_id in eligible_mainnode_ids
         props["grade"] = 1 if is_eligible else 0
         props["kind"] = 4 if is_eligible else 0
         props[f"{phase_lower}_input_eligible"] = is_eligible
+        props[f"{phase_lower}_historical_boundary"] = is_historical_boundary
         props[f"{phase_lower}_input_grade_2"] = _current_grade_2(node)
         props[f"{phase_lower}_input_kind_2"] = _current_kind_2(node)
         props[f"{phase_lower}_input_closed_con"] = _current_closed_con(node)
@@ -198,6 +205,7 @@ def _build_phase_inputs(
                 "incident_degree_exclude_formway_bits_any": [7],
                 "disallow_seed_terminate_nodes": True,
             },
+            "hard_stop_node_ids": sorted(hard_stop_node_ids, key=_sort_key),
         },
     )
 
@@ -620,11 +628,19 @@ def run_step5_staged_residual_graph(
 
     nodes, _, _ = _load_nodes(node_path, layer_name=node_layer, crs_override=node_crs)
     roads, _ = _load_roads(road_path, layer_name=road_layer, crs_override=road_crs)
+    input_parent = Path(node_path).resolve().parent
 
     preserved_snapshots = _preserve_previous_stage_snapshots(
         node_path=node_path,
         road_path=road_path,
         out_root=resolved_out_root,
+    )
+    historical_boundary_ids, historical_boundary_source_map = _collect_validated_boundary_mainnodes(
+        base_dir=input_parent,
+        source_specs=(
+            ("S2", ("S2/validated_pairs.csv",)),
+            ("STEP4", ("STEP4/validated_pairs.csv", "step4_validated_pairs.csv")),
+        ),
     )
 
     historical_segment_road_ids = {road.road_id for road in roads if _current_segmentid(road)}
@@ -636,6 +652,7 @@ def run_step5_staged_residual_graph(
         active_road_ids=active_road_ids_step5a,
         out_root=resolved_out_root,
         base_match=_step5a_base_match,
+        hard_stop_node_ids=historical_boundary_ids,
     )
     phase_a = _run_phase(
         phase_input=step5a_input,
@@ -643,6 +660,24 @@ def run_step5_staged_residual_graph(
         run_id=resolved_run_id,
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
+    )
+
+    step5a_boundary_ids = {
+        node_id
+        for row in phase_a.validated_rows
+        for node_id in (_normalize_id(row.get("a_node_id")), _normalize_id(row.get("b_node_id")))
+        if node_id is not None
+    }
+    step5b_hard_stop_node_ids = set(historical_boundary_ids) | step5a_boundary_ids
+    combined_boundary_source_map: dict[str, tuple[str, ...]] = dict(historical_boundary_source_map)
+    for node_id in sorted(step5a_boundary_ids, key=_sort_key):
+        tags = set(combined_boundary_source_map.get(node_id, ()))
+        tags.add("STEP5A")
+        combined_boundary_source_map[node_id] = tuple(sorted(tags, key=_sort_key))
+    _write_boundary_node_outputs(
+        out_root=resolved_out_root,
+        nodes=nodes,
+        boundary_source_map=combined_boundary_source_map,
     )
 
     active_road_ids_step5b = set(active_road_ids_step5a) - set(phase_a.road_to_segmentid)
@@ -653,6 +688,7 @@ def run_step5_staged_residual_graph(
         active_road_ids=active_road_ids_step5b,
         out_root=resolved_out_root,
         base_match=_step5b_base_match,
+        hard_stop_node_ids=step5b_hard_stop_node_ids,
     )
     phase_b = _run_phase(
         phase_input=step5b_input,
@@ -707,6 +743,8 @@ def run_step5_staged_residual_graph(
     refreshed_summary["step5b_candidate_pair_count"] = phase_b.candidate_pair_count
     refreshed_summary["step5b_rejected_pair_count"] = phase_b.rejected_pair_count
     refreshed_summary["step5_merged_validated_pair_count"] = len(merged_validated_rows)
+    refreshed_summary["historical_boundary_node_count"] = len(historical_boundary_ids)
+    refreshed_summary["step5b_hard_stop_node_count"] = len(step5b_hard_stop_node_ids)
     write_json(artifacts.summary_path, refreshed_summary)
     return Step5Artifacts(
         out_root=artifacts.out_root,

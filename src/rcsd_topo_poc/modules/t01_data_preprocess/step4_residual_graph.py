@@ -32,6 +32,14 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step
 DEFAULT_RUN_ID_PREFIX = "t01_step4_residual_graph_"
 STEP4_NEW_SEGMENT_GRADE = "0-1\u53cc"
 STEP4_STRATEGY_ID = "STEP4"
+STEP4_TARGET_CASES = (
+    "785324__502866811",
+    "784901__40237259",
+    "788837__784901",
+    "40237227__785217",
+    "55225313__785217",
+    "792579__55225234",
+)
 
 
 @dataclass(frozen=True)
@@ -70,6 +78,166 @@ def _resolve_out_root(
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as fp:
         return list(csv.DictReader(fp))
+
+
+def _collect_validated_boundary_mainnodes(
+    *,
+    base_dir: Path,
+    source_specs: tuple[tuple[str, tuple[str, ...]], ...],
+) -> tuple[set[str], dict[str, tuple[str, ...]]]:
+    source_map: dict[str, set[str]] = {}
+    for source_name, relative_paths in source_specs:
+        for relative_path in relative_paths:
+            path = base_dir / relative_path
+            if not path.is_file():
+                continue
+            for row in _read_csv_rows(path):
+                for key in ("a_node_id", "b_node_id"):
+                    node_id = _normalize_id(row.get(key))
+                    if node_id is None:
+                        continue
+                    source_map.setdefault(node_id, set()).add(source_name)
+            break
+    return set(source_map), {node_id: tuple(sorted(tags, key=_sort_key)) for node_id, tags in source_map.items()}
+
+
+def _write_boundary_node_outputs(
+    *,
+    out_root: Path,
+    nodes: list[NodeFeatureRecord],
+    boundary_source_map: dict[str, tuple[str, ...]],
+) -> Optional[Path]:
+    if not boundary_source_map:
+        return None
+
+    features: list[dict[str, Any]] = []
+    seen_mainnodes: set[str] = set()
+    for node in nodes:
+        mainnode_id = node.semantic_node_id
+        if mainnode_id not in boundary_source_map or mainnode_id in seen_mainnodes:
+            continue
+        seen_mainnodes.add(mainnode_id)
+        props = dict(node.properties)
+        props["mainnode_id"] = mainnode_id
+        props["boundary_sources"] = list(boundary_source_map[mainnode_id])
+        features.append({"properties": props, "geometry": node.geometry})
+
+    out_path = out_root / "historical_boundary_nodes.geojson"
+    write_geojson(out_path, features)
+    return out_path
+
+
+def _build_target_case_audit(
+    *,
+    out_root: Path,
+    target_cases: tuple[str, ...],
+    candidate_rows: list[dict[str, str]],
+    validation_rows: list[dict[str, str]],
+    nodes: list[NodeFeatureRecord],
+    rule_audit_rows: list[dict[str, Any]],
+    search_audit: dict[str, Any],
+) -> Path:
+    candidate_map = {str(row["pair_id"]).split(":", 1)[1]: row for row in candidate_rows}
+    validation_map = {str(row["pair_id"]).split(":", 1)[1]: row for row in validation_rows}
+    node_by_id = {node.node_id: node for node in nodes}
+    rule_audit_by_node_id = {_normalize_id(row.get("node_id")): row for row in rule_audit_rows}
+    search_events = list(search_audit.get("search_events") or [])
+    search_started_node_ids = {
+        _normalize_id(event.get("seed_node_id"))
+        for event in search_events
+        if _normalize_id(event.get("seed_node_id")) is not None
+    }
+
+    payload: dict[str, Any] = {"cases": []}
+    for case_id in target_cases:
+        a_node_id, b_node_id = case_id.split("__", 1)
+        case_payload: dict[str, Any] = {
+            "case_id": case_id,
+            "candidate_generated": case_id in candidate_map,
+            "validated_status": None,
+            "reject_reason": None,
+            "endpoint_a_exists": a_node_id in node_by_id,
+            "endpoint_b_exists": b_node_id in node_by_id,
+            "endpoint_a_input_eligible": False,
+            "endpoint_b_input_eligible": False,
+            "endpoint_a_historical_boundary": False,
+            "endpoint_b_historical_boundary": False,
+            "endpoint_a_seed_match": False,
+            "endpoint_b_seed_match": False,
+            "endpoint_a_terminate_match": False,
+            "endpoint_b_terminate_match": False,
+            "endpoint_a_search_started": False,
+            "endpoint_b_search_started": False,
+        }
+        if a_node_id in node_by_id:
+            node = node_by_id[a_node_id]
+            case_payload["endpoint_a_input_eligible"] = bool(node.properties.get("step4_input_eligible"))
+            case_payload["endpoint_a_historical_boundary"] = bool(
+                node.properties.get("step4_historical_boundary")
+            )
+            case_payload["endpoint_a_grade_2"] = _current_grade_2(node)
+            case_payload["endpoint_a_kind_2"] = _current_kind_2(node)
+            case_payload["endpoint_a_closed_con"] = _current_closed_con(node)
+            case_payload["endpoint_a_search_started"] = a_node_id in search_started_node_ids
+        if b_node_id in node_by_id:
+            node = node_by_id[b_node_id]
+            case_payload["endpoint_b_input_eligible"] = bool(node.properties.get("step4_input_eligible"))
+            case_payload["endpoint_b_historical_boundary"] = bool(
+                node.properties.get("step4_historical_boundary")
+            )
+            case_payload["endpoint_b_grade_2"] = _current_grade_2(node)
+            case_payload["endpoint_b_kind_2"] = _current_kind_2(node)
+            case_payload["endpoint_b_closed_con"] = _current_closed_con(node)
+            case_payload["endpoint_b_search_started"] = b_node_id in search_started_node_ids
+
+        if a_node_id in rule_audit_by_node_id:
+            row = rule_audit_by_node_id[a_node_id]
+            case_payload["endpoint_a_seed_match"] = bool(row.get("seed_match"))
+            case_payload["endpoint_a_terminate_match"] = bool(row.get("terminate_match"))
+            case_payload["endpoint_a_seed_reasons"] = row.get("seed_reasons") or []
+            case_payload["endpoint_a_terminate_reasons"] = row.get("terminate_reasons") or []
+        if b_node_id in rule_audit_by_node_id:
+            row = rule_audit_by_node_id[b_node_id]
+            case_payload["endpoint_b_seed_match"] = bool(row.get("seed_match"))
+            case_payload["endpoint_b_terminate_match"] = bool(row.get("terminate_match"))
+            case_payload["endpoint_b_seed_reasons"] = row.get("seed_reasons") or []
+            case_payload["endpoint_b_terminate_reasons"] = row.get("terminate_reasons") or []
+
+        if case_id in validation_map:
+            row = validation_map[case_id]
+            case_payload["validated_status"] = row.get("validated_status")
+            case_payload["reject_reason"] = row.get("reject_reason")
+            support_info = row.get("support_info")
+            case_payload["support_info"] = json.loads(support_info) if support_info else {}
+        elif case_id in candidate_map:
+            case_payload["validated_status"] = "candidate_only"
+            support_info = candidate_map[case_id].get("support_info")
+            case_payload["support_info"] = json.loads(support_info) if support_info else {}
+        else:
+            relevant_events = [
+                event
+                for event in search_events
+                if _normalize_id(event.get("seed_node_id")) in {a_node_id, b_node_id}
+            ]
+            hard_stop_events = [event for event in relevant_events if event.get("event") == "hard_stop_boundary"]
+            case_payload["search_event_sample"] = relevant_events[:12]
+            if not case_payload["endpoint_a_seed_match"] or not case_payload["endpoint_b_seed_match"]:
+                case_payload["missing_reason"] = "endpoint_not_in_step4_input_rule"
+            elif not case_payload["endpoint_a_search_started"] or not case_payload["endpoint_b_search_started"]:
+                case_payload["missing_reason"] = "endpoint_consumed_as_through_or_disconnected"
+            elif hard_stop_events:
+                case_payload["missing_reason"] = "blocked_by_historical_boundary_in_search"
+                case_payload["historical_boundary_events"] = hard_stop_events
+            elif case_payload["endpoint_a_historical_boundary"] or case_payload["endpoint_b_historical_boundary"]:
+                case_payload["missing_reason"] = "historical_boundary_endpoint_blocked"
+            else:
+                case_payload["missing_reason"] = "not_reached_in_candidate_search"
+
+        payload["cases"].append(case_payload)
+
+    out_path = out_root / "target_case_audit.json"
+    write_json(out_path, payload)
+    return out_path
 
 
 def _parse_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
@@ -137,6 +305,7 @@ def _build_step4_inputs(
     nodes: list[NodeFeatureRecord],
     roads: list[RoadFeatureRecord],
     out_root: Path,
+    historical_boundary_ids: set[str],
 ) -> tuple[Path, Path, Path, dict[str, Any]]:
     groups: dict[str, list[str]] = {}
     node_by_id = {node.node_id: node for node in nodes}
@@ -153,6 +322,8 @@ def _build_step4_inputs(
         grade_2 = _current_grade_2(representative)
         kind_2 = _current_kind_2(representative)
         closed_con = _current_closed_con(representative)
+        if mainnode_id in historical_boundary_ids:
+            continue
         if grade_2 in {1, 2} and kind_2 in {4, 2048}:
             input_mainnode_candidate_count += 1
             if closed_con in {1, 2}:
@@ -168,7 +339,8 @@ def _build_step4_inputs(
         grade_2 = _current_grade_2(node)
         kind_2 = _current_kind_2(node)
         closed_con = _current_closed_con(node)
-        if grade_2 in {1, 2} and kind_2 in {4, 2048} and closed_con in {1, 2}:
+        is_historical_boundary = node.semantic_node_id in historical_boundary_ids
+        if not is_historical_boundary and grade_2 in {1, 2} and kind_2 in {4, 2048} and closed_con in {1, 2}:
             props["grade"] = 1
             props["kind"] = 4
             props["step4_input_eligible"] = True
@@ -176,6 +348,7 @@ def _build_step4_inputs(
             props["grade"] = 0
             props["kind"] = 0
             props["step4_input_eligible"] = False
+        props["step4_historical_boundary"] = is_historical_boundary
         props["step4_input_grade_2"] = grade_2
         props["step4_input_kind_2"] = kind_2
         props["step4_input_closed_con"] = closed_con
@@ -204,7 +377,12 @@ def _build_step4_inputs(
             "description": "Step4 residual graph segment construction using refreshed grade_2/kind_2/closed_con.",
             "seed_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [1, 2]},
             "terminate_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [1, 2]},
-            "through_node_rule": {"incident_road_degree_eq": 2, "incident_degree_exclude_formway_bits_any": [7]},
+            "through_node_rule": {
+                "incident_road_degree_eq": 2,
+                "incident_degree_exclude_formway_bits_any": [7],
+                "disallow_null_mainnode_singleton_seed_terminate_nodes": True,
+            },
+            "hard_stop_node_ids": sorted(historical_boundary_ids, key=_sort_key),
         },
     )
 
@@ -217,6 +395,7 @@ def _build_step4_inputs(
             "input_seed_count": input_seed_count,
             "input_terminate_count": input_terminate_count,
             "input_closed_con_filtered_out_count": input_closed_con_filtered_out_count,
+            "historical_boundary_node_count": len(historical_boundary_ids),
             "removed_existing_segment_road_count": removed_existing_segment_road_count,
             "working_graph_road_count": working_graph_road_count,
             "mainnode_representative_fallback_count": representative_fallback_count,
@@ -522,11 +701,17 @@ def run_step4_residual_graph(
 
     nodes, _, _ = _load_nodes(node_path, layer_name=node_layer, crs_override=node_crs)
     roads, _ = _load_roads(road_path, layer_name=road_layer, crs_override=road_crs)
+    input_parent = Path(node_path).resolve().parent
+    historical_boundary_ids, historical_boundary_source_map = _collect_validated_boundary_mainnodes(
+        base_dir=input_parent,
+        source_specs=(("S2", ("S2/validated_pairs.csv",)),),
+    )
 
     working_nodes_path, working_roads_path, strategy_path, input_audit = _build_step4_inputs(
         nodes=nodes,
         roads=roads,
         out_root=resolved_out_root,
+        historical_boundary_ids=historical_boundary_ids,
     )
 
     step4_results = run_step2_segment_poc(
@@ -548,9 +733,28 @@ def run_step4_residual_graph(
         road_path=road_path,
         out_root=resolved_out_root,
     )
+    _write_boundary_node_outputs(
+        out_root=resolved_out_root,
+        nodes=nodes,
+        boundary_source_map=historical_boundary_source_map,
+    )
 
     validated_pairs = _read_csv_rows(step4_dir / "validated_pairs.csv")
+    candidate_rows = _read_csv_rows(step4_dir / "pair_candidates.csv")
+    validation_rows = _read_csv_rows(step4_dir / "pair_validation_table.csv")
+    working_nodes, _, _ = _load_nodes(working_nodes_path)
+    rule_audit_rows = json.loads((step4_dir / "rule_audit.json").read_text(encoding="utf-8"))
+    search_audit = json.loads((step4_dir / "search_audit.json").read_text(encoding="utf-8"))
     new_road_to_segmentid, _pair_endpoints = _parse_segment_body_assignments(step4_dir / "segment_body_roads.geojson")
+    _build_target_case_audit(
+        out_root=resolved_out_root,
+        target_cases=STEP4_TARGET_CASES,
+        candidate_rows=candidate_rows,
+        validation_rows=validation_rows,
+        nodes=working_nodes,
+        rule_audit_rows=rule_audit_rows,
+        search_audit=search_audit,
+    )
 
     return _refresh_after_step4(
         nodes=nodes,

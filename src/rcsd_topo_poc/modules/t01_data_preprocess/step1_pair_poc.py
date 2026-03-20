@@ -54,6 +54,7 @@ class ThroughRuleSpec:
     incident_road_degree_eq: Optional[int] = 2
     incident_degree_exclude_formway_bits_any: tuple[int, ...] = ()
     disallow_seed_terminate_nodes: bool = False
+    disallow_null_mainnode_singleton_seed_terminate_nodes: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class StrategySpec:
     seed_rule: RuleSpec
     terminate_rule: RuleSpec
     through_rule: ThroughRuleSpec = ThroughRuleSpec()
+    hard_stop_node_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -269,6 +271,19 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
                 int(v) for v in through_payload.get("incident_degree_exclude_formway_bits_any", [])
             ),
             disallow_seed_terminate_nodes=bool(through_payload.get("disallow_seed_terminate_nodes", False)),
+            disallow_null_mainnode_singleton_seed_terminate_nodes=bool(
+                through_payload.get("disallow_null_mainnode_singleton_seed_terminate_nodes", False)
+            ),
+        ),
+        hard_stop_node_ids=tuple(
+            sorted(
+                (
+                    node_id
+                    for node_id in (_normalize_id(value) for value in doc.get("hard_stop_node_ids", []))
+                    if node_id is not None
+                ),
+                key=_sort_key,
+            )
         ),
     )
 
@@ -637,6 +652,12 @@ def _road_matches_any_formway_bit(road: RoadRecord, bits: tuple[int, ...]) -> bo
     return any(_bit_enabled(road.formway, bit_index) for bit_index in bits)
 
 
+def _is_null_mainnode_singleton_semantic_node(node: SemanticNodeRecord) -> bool:
+    if len(node.member_node_ids) != 1:
+        return False
+    return _normalize_mainnodeid(node.raw_properties.get("mainnodeid")) is None
+
+
 def _build_incident_road_degree(
     *,
     roads: dict[str, RoadRecord],
@@ -670,6 +691,7 @@ def _search_from_seed(
     directed: dict[str, tuple[TraversalEdge, ...]],
     blocked: dict[str, tuple[TraversalEdge, ...]],
     through_node_ids: set[str],
+    hard_stop_node_ids: set[str],
     seed_eval: dict[str, RuleEvaluation],
     terminate_eval: dict[str, RuleEvaluation],
 ) -> SearchResult:
@@ -710,6 +732,21 @@ def _search_from_seed(
             terminate_ok = terminate_eval[next_node_id].matched
             seed_ok = seed_eval[next_node_id].matched
             through_node = next_node_id != start_node_id and next_node_id in through_node_ids
+            hard_stop_node = next_node_id != start_node_id and next_node_id in hard_stop_node_ids
+
+            if hard_stop_node:
+                _record_search_event(
+                    event_counts,
+                    event_samples,
+                    sample_counts,
+                    {
+                        "event": "hard_stop_boundary",
+                        "seed_node_id": start_node_id,
+                        "node_id": next_node_id,
+                        "road_id": edge.road_id,
+                    },
+                )
+                continue
 
             if through_node:
                 _record_search_event(
@@ -915,7 +952,19 @@ def run_step1_strategy(
     if strategy.through_rule.disallow_seed_terminate_nodes:
         through_node_ids -= set(seed_ids)
         through_node_ids -= set(terminate_ids)
-    search_seed_ids = [node_id for node_id in seed_ids if node_id not in through_node_ids]
+    if strategy.through_rule.disallow_null_mainnode_singleton_seed_terminate_nodes:
+        protected_singleton_ids = {
+            node_id
+            for node_id in set(seed_ids) | set(terminate_ids)
+            if node_id in context.semantic_nodes
+            and _is_null_mainnode_singleton_semantic_node(context.semantic_nodes[node_id])
+        }
+        through_node_ids -= protected_singleton_ids
+    hard_stop_node_ids = set(strategy.hard_stop_node_ids)
+    through_node_ids -= hard_stop_node_ids
+    search_seed_ids = [
+        node_id for node_id in seed_ids if node_id not in through_node_ids and node_id not in hard_stop_node_ids
+    ]
     through_seed_pruned_count = len(seed_ids) - len(search_seed_ids)
 
     search_results: dict[str, SearchResult] = {}
@@ -929,6 +978,7 @@ def run_step1_strategy(
             directed=context.directed,
             blocked=context.blocked,
             through_node_ids=through_node_ids,
+            hard_stop_node_ids=hard_stop_node_ids,
             seed_eval=seed_eval,
             terminate_eval=terminate_eval,
         )

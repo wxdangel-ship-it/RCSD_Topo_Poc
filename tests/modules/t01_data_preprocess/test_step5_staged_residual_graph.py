@@ -146,9 +146,9 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert summary["step5a_terminate_count"] == 2
     assert summary["step5a_validated_pair_count"] == 1
     assert summary["step5a_new_segment_road_count"] == 6
-    assert summary["step5b_input_node_count"] == 4
-    assert summary["step5b_seed_count"] == 4
-    assert summary["step5b_terminate_count"] == 4
+    assert summary["step5b_input_node_count"] == 2
+    assert summary["step5b_seed_count"] == 2
+    assert summary["step5b_terminate_count"] == 2
     assert summary["step5b_validated_pair_count"] == 1
     assert summary["step5b_new_segment_road_count"] == 6
     assert summary["step5_removed_historical_segment_road_count"] == 1
@@ -180,6 +180,10 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert {"a14", "a43", "a32", "a21", "a46", "a62"}.isdisjoint(step5b_working_road_ids)
     step5b_working_nodes = _load_geojson(artifacts.out_root / "step5b_working_nodes.geojson")
     step5b_node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in step5b_working_nodes["features"]}
+    assert step5b_node_props["10"]["step5b_historical_boundary"] is True
+    assert step5b_node_props["30"]["step5b_historical_boundary"] is True
+    assert step5b_node_props["10"]["step5b_input_eligible"] is False
+    assert step5b_node_props["30"]["step5b_input_eligible"] is False
     assert step5b_node_props["501"]["step5b_input_eligible"] is False
 
     roads_doc = _load_geojson(artifacts.refreshed_roads_path)

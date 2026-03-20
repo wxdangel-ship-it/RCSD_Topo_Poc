@@ -196,7 +196,7 @@ def _build_candidate_channel(
     pair: PairRecord,
     *,
     undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
-    terminate_ids: set[str],
+    boundary_node_ids: set[str],
 ) -> tuple[set[str], set[str]]:
     protected = {pair.a_node_id, pair.b_node_id}
     support_node_ids = set(pair.forward_path_node_ids) | set(pair.reverse_path_node_ids)
@@ -217,7 +217,7 @@ def _build_candidate_channel(
             while True:
                 if current_node_id in support_node_ids:
                     break
-                if current_node_id in terminate_ids and current_node_id not in protected:
+                if current_node_id in boundary_node_ids and current_node_id not in protected:
                     boundary_terminate_ids.add(current_node_id)
                     break
 
@@ -444,6 +444,7 @@ def _prune_candidate_channel(
     candidate_road_ids: set[str],
     road_endpoints: dict[str, tuple[str, str]],
     terminate_ids: set[str],
+    hard_stop_node_ids: set[str],
 ) -> tuple[set[str], list[dict[str, Any]], bool]:
     protected = {pair.a_node_id, pair.b_node_id}
     remaining_road_ids = set(candidate_road_ids)
@@ -464,11 +465,12 @@ def _prune_candidate_channel(
 
         road_id = next(road_id for road_id in incident.get(node_id, set()) if road_id in remaining_road_ids)
         other_node_id = _other_endpoint(road_id, node_id, road_endpoints)
-        cut_reason = (
-            "branch_leads_to_other_terminate"
-            if node_id in terminate_ids and node_id not in protected
-            else "branch_backtrack_prune"
-        )
+        if node_id in hard_stop_node_ids and node_id not in protected:
+            cut_reason = "branch_leads_to_historical_boundary"
+        elif node_id in terminate_ids and node_id not in protected:
+            cut_reason = "branch_leads_to_other_terminate"
+        else:
+            cut_reason = "branch_backtrack_prune"
         branch_cut_infos.append(
             {
                 "road_id": road_id,
@@ -635,6 +637,21 @@ def _refine_segment_roads(
     return tuple(sorted(final_road_ids, key=_sort_key)), segment_cut_infos
 
 
+def _collect_internal_boundary_nodes(
+    pair: PairRecord,
+    *,
+    candidate: TrunkCandidate,
+    hard_stop_node_ids: set[str],
+) -> tuple[str, ...]:
+    if not hard_stop_node_ids:
+        return ()
+    internal_nodes = (set(candidate.forward_path.node_ids[1:-1]) | set(candidate.reverse_path.node_ids[1:-1])) - {
+        pair.a_node_id,
+        pair.b_node_id,
+    }
+    return tuple(sorted((node_id for node_id in internal_nodes if node_id in hard_stop_node_ids), key=_sort_key))
+
+
 def _component_to_dict(component: NonTrunkComponent) -> dict[str, Any]:
     return {
         "component_id": component.component_id,
@@ -662,6 +679,8 @@ def _tighten_validated_segment_components(
 ) -> list[PairValidationResult]:
     pair_lookup = {pair.pair_id: pair for pair in execution.pair_candidates}
     terminate_ids = set(execution.terminate_ids)
+    hard_stop_node_ids = set(execution.strategy.hard_stop_node_ids)
+    boundary_node_ids = terminate_ids | hard_stop_node_ids
     validated_trunk_owner_by_road = {
         road_id: validation.pair_id
         for validation in validations
@@ -720,8 +739,9 @@ def _tighten_validated_segment_components(
         for component_index, (component_road_ids, component_node_ids) in enumerate(components, start=1):
             component_road_id_set = set(component_road_ids)
             terminate_node_ids = tuple(
-                sorted((set(component_node_ids) & (terminate_ids - {pair.a_node_id, pair.b_node_id})), key=_sort_key)
+                sorted((set(component_node_ids) & (boundary_node_ids - {pair.a_node_id, pair.b_node_id})), key=_sort_key)
             )
+            hits_historical_boundary = bool(set(terminate_node_ids) & hard_stop_node_ids)
             conflicting_pair_ids = tuple(
                 sorted(
                     {
@@ -748,7 +768,10 @@ def _tighten_validated_segment_components(
             moved_to_branch_cut = False
             decision_reason = "weak_rule_residual"
 
-            if hits_other_terminate:
+            if hits_historical_boundary:
+                moved_to_branch_cut = True
+                decision_reason = "hits_historical_boundary"
+            elif hits_other_terminate:
                 moved_to_branch_cut = True
                 decision_reason = "hits_other_terminate"
             elif contains_other_validated_trunk:
@@ -1840,6 +1863,8 @@ def _validate_pair_candidates(
     left_turn_formway_bit: int,
 ) -> list[PairValidationResult]:
     terminate_ids = set(execution.terminate_ids)
+    hard_stop_node_ids = set(execution.strategy.hard_stop_node_ids)
+    boundary_node_ids = terminate_ids | hard_stop_node_ids
     used_trunk_road_ids: dict[str, str] = {}
     provisional_results: list[PairValidationResult] = []
 
@@ -1847,7 +1872,7 @@ def _validate_pair_candidates(
         candidate_road_ids, boundary_terminate_ids = _build_candidate_channel(
             pair,
             undirected_adjacency=undirected_adjacency,
-            terminate_ids=terminate_ids,
+            boundary_node_ids=boundary_node_ids,
         )
 
         if not candidate_road_ids:
@@ -1882,6 +1907,7 @@ def _validate_pair_candidates(
             candidate_road_ids=candidate_road_ids,
             road_endpoints=road_endpoints,
             terminate_ids=terminate_ids,
+            hard_stop_node_ids=hard_stop_node_ids,
         )
         if disconnected_after_prune:
             provisional_results.append(
@@ -1951,6 +1977,44 @@ def _validate_pair_candidates(
                         "branch_cut_infos": branch_cut_infos,
                         "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
                         "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                    },
+                )
+            )
+            continue
+
+        internal_boundary_node_ids = _collect_internal_boundary_nodes(
+            pair,
+            candidate=trunk_candidate,
+            hard_stop_node_ids=hard_stop_node_ids,
+        )
+        if internal_boundary_node_ids:
+            provisional_results.append(
+                PairValidationResult(
+                    pair_id=pair.pair_id,
+                    a_node_id=pair.a_node_id,
+                    b_node_id=pair.b_node_id,
+                    candidate_status="candidate",
+                    validated_status="rejected",
+                    reject_reason="historical_boundary_blocked",
+                    trunk_mode="none",
+                    trunk_found=False,
+                    counterclockwise_ok=False,
+                    left_turn_excluded_mode=formway_mode,
+                    warning_codes=warning_codes,
+                    candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
+                    pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
+                    trunk_road_ids=(),
+                    segment_road_ids=(),
+                    residual_road_ids=(),
+                    branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
+                    boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
+                    transition_same_dir_blocked=False,
+                    support_info={
+                        "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                        "branch_cut_infos": branch_cut_infos,
+                        "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                        "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                        "historical_boundary_node_ids": list(internal_boundary_node_ids),
                     },
                 )
             )

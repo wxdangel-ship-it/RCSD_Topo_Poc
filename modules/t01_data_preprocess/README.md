@@ -1,101 +1,85 @@
 # T01 数据预处理模块
 
-## 1. 当前阶段
+## 当前状态
+- 当前阶段：`Step5A/Step5B staged residual graph segment construction`
+- 当前定位：
+  - Step1：只发现 `pair_candidates`
+  - Step2：对 candidate 做 `validated / rejected`，并输出 `trunk / segment_body / step3_residual`
+  - Step4：基于上一轮 refreshed `Node / Road` 做 residual graph 构建
+  - Step5：在 Step4 refreshed 基础上拆成 `Step5A / Step5B` 两阶段构建，并统一刷新 `Node / Road`
+- 当前限制：
+  - 仍属于 POC / 原型收敛
+  - `Step6` 尚未启动
 
-- 当前模块阶段：`Step1 Pair Candidate + Step2 Segment POC`
-- 当前定位：可运行、可审查、可解释的原型研发
-- 当前不是：
-  - 最终生产规则封板
-  - 多轮闭环实现
-  - 单向 Segment 终局实现
+## 当前能力
 
-## 2. 当前能力
+### Step5A
+- 读取 Step4 refreshed `nodes.geojson / roads.geojson`
+- 剔除历史已有非空 `segmentid` 的 road
+- 优先处理：
+  - `grade_2 in {1,2}` 的交叉 / T 型路口
+  - `grade_2 = 3, kind_2 = 4` 的交叉路口
 
-### 2.1 Step1
+### Step5B
+- 基于 Step5A residual graph
+- 再剔除 Step5A 新 `segment_body` road
+- 在 residual graph 上对所有剩余双向路口做收尾构段
 
-- 基于 seed / terminate 规则筛选语义路口
-- 在语义路口图上执行 BFS 搜索
-- 支持 through 节点继续追溯
-- 支持双向确认
-- 输出的是 `pair_candidates`
+### Step5 merged / refreshed
+- 合并 Step5A / Step5B validated pair 与 segment 结果
+- 统一刷新：
+  - Node：`grade_2 / kind_2`
+  - Road：`s_grade / segmentid`
 
-### 2.2 Step2
+## 运行入口
 
-- 对 `pair_candidates` 做 validation
-- 生成 candidate channel
-- 回溯裁掉通往其他 terminate node 的分支
-- 识别 trunk
-- 构建 segment
-- 输出 `validated_pairs` / `rejected_pair_candidates` / `trunk_roads` / `segment_roads`
-
-## 3. 当前运行入口
-
-### 3.1 Step1
-
+### Step4
 ```bash
-python -m rcsd_topo_poc t01-step1-pair-poc \
-  --road-path <road.shp|geojson> \
-  --node-path <node.shp|geojson> \
-  --strategy-config <strategy.json> \
+python -m rcsd_topo_poc t01-step4-residual-graph \
+  --road-path <step4_input_roads.geojson> \
+  --node-path <step4_input_nodes.geojson> \
   --out-root <out_root>
 ```
 
-### 3.2 Step2
-
+### Step5
 ```bash
-python -m rcsd_topo_poc t01-step2-segment-poc \
-  --road-path <road.shp|geojson> \
-  --node-path <node.shp|geojson> \
-  --strategy-config <strategy.json> \
-  --formway-mode strict \
+python -m rcsd_topo_poc t01-step5-staged-residual-graph \
+  --road-path <step4_refreshed_roads.geojson> \
+  --node-path <step4_refreshed_nodes.geojson> \
   --out-root <out_root>
 ```
 
-## 4. 当前主要产物
+## 当前输出
 
-### 4.1 Step1 candidate 审查产物
+### Step5A
+- `step5a_pair_candidates.*`
+- `step5a_validated_pairs.*`
+- `step5a_rejected_pairs.*`
+- `step5a_trunk_roads.*`
+- `step5a_segment_body_roads.*`
+- `step5a_residual_roads.*`
 
-- `pair_candidates.csv`
-- `pair_links_candidates.geojson`
-- `pair_candidate_nodes.geojson`
-- `pair_support_roads.geojson`
-- `pair_summary.json`
-- `rule_audit.json`
-- `search_audit.json`
+### Step5B
+- `step5b_pair_candidates.*`
+- `step5b_validated_pairs.*`
+- `step5b_rejected_pairs.*`
+- `step5b_trunk_roads.*`
+- `step5b_segment_body_roads.*`
+- `step5b_residual_roads.*`
 
-### 4.2 Step2 validated / rejected 审查产物
+### Step5 merged
+- `step5_validated_pairs_merged.*`
+- `step5_segment_body_roads_merged.*`
+- `step5_residual_roads_merged.*`
 
-- `validated_pairs.csv`
-- `rejected_pair_candidates.csv`
-- `pair_links_validated.geojson`
-- `trunk_roads.geojson`
-- `segment_roads.geojson`
-- `branch_cut_roads.geojson`
-- `pair_candidate_channel.geojson`
-- `pair_validation_table.csv`
-- `segment_summary.json`
-- `working_graph_debug.geojson`
+### Step5 refreshed 基础文件
+- `nodes.geojson`
+- `roads.geojson`
+- `nodes_step5_refreshed.geojson`
+- `roads_step5_refreshed.geojson`
+- `step5_summary.json`
+- `step5_mainnode_refresh_table.csv`
 
-## 5. QGIS 审查建议
-
-当前推荐同时打开：
-
-- 原始 `roads.geojson` / `nodes.geojson`
-- `pair_links_candidates.geojson`
-- `pair_links_validated.geojson`
-- `trunk_roads.geojson`
-- `segment_roads.geojson`
-- `branch_cut_roads.geojson`
-
-这样可以直接对比：
-
-- Step1 候选关系
-- Step2 最终通过关系
-- trunk 与 segment 的差异
-- 被裁掉的分支
-
-## 6. 当前已知限制
-
-- trunk 归属冲突当前仍按保守 reject 处理
-- `formway bit8` 只做可配置原型规则，不代表生产数据质量已确认
-- 多轮工作图剥离语义当前只预留，不做完整实现
+## 后续使用建议
+- 未来 `Step6` 默认从 Step5 输出目录中的 refreshed `nodes.geojson / roads.geojson` 继续启动
+- 历史已有非空 `segmentid` 的 road，后续轮次默认不再参与工作图构建

@@ -1,64 +1,58 @@
-# T01 数据预处理阶段计划
+# T01 计划
 
 ## 1. 当前阶段
+- 阶段名：`Step5A/Step5B staged residual graph segment construction`
+- 阶段目标：
+  - 基于 Step4 refreshed `Node / Road` 启动 `Step5A / Step5B`
+  - Step5A 先处理优先级更高的一批双向路口
+  - Step5B 在 Step5A residual graph 上完成剩余双向路口收尾
+  - 两阶段完成后统一刷新 `grade_2 / kind_2 / s_grade / segmentid`
 
-- 当前阶段：`Step2 Segment POC`
-- 当前状态：允许编码、测试与外网 `XXXS` 实跑
-- 当前目标：
-  - 把 Step1 语义改为 `pair_candidates`
-  - 实现 Step2 candidate validation + segment construction 原型
-  - 产出 QGIS 可审查结果
+## 2. 本轮要做
+- 新增明确的 `Step5` 编排入口
+- Step5A 使用：
+  - `closed_con in {1,2}`
+  - `kind_2 in {4,2048} and grade_2 in {1,2}`
+  - 或 `kind_2 = 4 and grade_2 = 3`
+- Step5B 使用：
+  - Step5A residual graph
+  - `closed_con in {1,2}`
+  - `kind_2 in {4,2048}`
+  - `grade_2 in {1,2,3}`
+- Step5A 与 Step5B 之间只剔除新 `segment_body` road，不刷新属性
+- 统一输出 Step5A / Step5B / merged / refreshed 结果
+- 在外网 `XXXS` 上完成实跑
 
-## 2. 本轮要完成的事项
+## 3. 本轮不做
+- 不启动 `Step6`
+- 不重写 Step1 / Step2 核心算法
+- 不实现完整 Step3
+- 不推进多轮闭环
+- 不推进单向 Segment 阶段
 
-### 2.1 语义调整
+## 4. 本轮交付
+- 文档更新：
+  - `spec.md`
+  - `tasks.md`
+  - `INTERFACE_CONTRACT.md`
+  - `README.md`
+  - `architecture/overview.md`
+- 代码更新：
+  - `Step5A / Step5B` staged residual graph 编排器
+  - Step5 merged 输出
+  - Step5 完成后的 Node / Road 统一刷新
+- 审查输出：
+  - `step5a_*`
+  - `step5b_*`
+  - `step5_*_merged`
+  - `step5_summary.json`
+  - `step5_mainnode_refresh_table.csv`
 
-- Step1 不再被描述为“最终有效 Pair 产出”
-- Step1 只负责：
-  - seed / terminate 规则筛选
-  - BFS 搜索
-  - through 继续追溯
-  - 双向确认
-- Step1 输出统一口径为：
-  - `pair_candidates`
-
-### 2.2 Step2 原型实现
-
-- 消费 Step1 `pair_candidates`
-- 实现 candidate channel 生成
-- 实现分支回溯裁枝
-- 实现 trunk 识别
-- 实现 validated / rejected 判定
-- 围绕 trunk 收敛 segment
-- 输出 trunk / segment / branch_cut / validation table / summary
-
-### 2.3 外网验证
-
-- 定位并使用外网 `XXXS`
-- 完整跑通：
-  - Step1 candidate
-  - Step2 validation + segment construction
-- 形成独立运行目录与差异摘要
-
-## 3. 本轮执行原则
-
-- 本轮是原型研发，不是生产规则封板
-- 优先复用现有 `src/`、`tests/`、`outputs/_work/`、`python -m rcsd_topo_poc` 风格
-- candidate / validated 必须显式区分
-- trunk / segment 必须显式区分
-- 不做 silent fix，所有关键拒绝原因必须可审计
-
-## 4. 本轮不做的事项
-
-- 多轮双向 Segment 全流程闭环
-- T 型路口轮间复核完整实现
-- 单向 Segment 阶段
-- trunk 冲突最终归属策略封板
-- Step2 最终生产输出定稿
-
-## 5. 当前风险与待确认点
-
-- `only_clockwise_loop` 的业务处理口径，后续可能还需要更细确认
-- `shared_trunk_conflict` 当前仍是保守拒绝，后续可能需要更稳的 pair 排序 / 归属策略
-- `formway bit8` 当前只适合原型阶段显式审计 / 可配置排除
-- 候选通道扩张边界当前仍是 POC 级实现，后续可能需要进一步收紧
+## 5. 验证准则
+- Step5A / Step5B 输入节点集合符合定义
+- Step5A 与 Step5B 之间未刷新属性
+- Step5B 工作图确实去掉历史已有 segment road 与 Step5A 新 segment road
+- 本轮新 road 被写为：
+  - `s_grade = "0-2双"`
+  - `segmentid = "A_B"`
+- 新刷出的 `grade_2 = 3, kind_2 = 2048` 只作为未来 Step6 候选输入

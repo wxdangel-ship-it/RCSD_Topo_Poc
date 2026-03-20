@@ -1,65 +1,61 @@
-# T01 数据预处理任务清单
+# T01 任务清单
 
-## 1. 当前任务状态
+## 1. 当前轮次
+- 名称：`Step5A/Step5B staged residual graph segment construction`
+- 性质：POC / 双阶段 residual graph 编排与统一回写
 
-- 状态：`Step2 Segment POC In Progress`
-- 当前说明：
-  - 允许实现 Step2 原型
-  - 允许修正 Step1 语义
-  - 不得越界到多轮闭环、T 型完整复核、单向 Segment 终局实现
+## 2. 本轮编码任务
 
-## 2. 本轮已确认任务
+### 2.1 Step5A 输入编排
+- [x] 从 Step4 refreshed `nodes.geojson / roads.geojson` 读取输入
+- [x] 剔除历史已有非空 `segmentid` 的 road
+- [x] 按 Step5A 节点规则生成 seed / terminate
 
-### 2.1 文档任务
+### 2.2 Step5A 构段
+- [x] 复用现有 pair / segment 内核运行 `STEP5A`
+- [x] 输出 Step5A candidate / validated / rejected / trunk / segment_body / residual
 
-- 更新 `spec.md`
-- 更新 `plan.md`
-- 更新 `tasks.md`
-- 更新模块级 `INTERFACE_CONTRACT.md`
-- 更新模块级 `README.md`
-- 必要时同步 `architecture/overview.md`
+### 2.3 Step5B 输入编排
+- [x] 在 Step5A 工作图基础上剔除 Step5A 新 `segment_body` road
+- [x] 不刷新属性，直接使用原始 Step4 refreshed `grade_2 / kind_2 / closed_con`
+- [x] 按 Step5B 节点规则生成 residual graph 上的 seed / terminate
 
-### 2.2 Step1 任务
+### 2.4 Step5B 构段
+- [x] 复用现有 pair / segment 内核运行 `STEP5B`
+- [x] 输出 Step5B candidate / validated / rejected / trunk / segment_body / residual
 
-- 将 Step1 口径统一改为 `pair_candidates`
-- 保留 seed / terminate / through / 双向确认能力
-- 输出 candidate 审查图层与表格
+### 2.5 Step5 merged 与统一刷新
+- [x] 合并 Step5A / Step5B validated pair
+- [x] 合并 Step5A / Step5B segment_body / residual 审查图层
+- [x] 统一刷新 Node：
+  - 端点保持当前值
+  - 单一 segment 内部 `-1 / 1`
+  - 右转专用道侧向 `3 / 1`
+  - 多进多出 `3 / 2048`
+- [x] 统一刷新 Road：
+  - 历史已有值保持不动
+  - 本轮新 segment_body road 写入 `s_grade = "0-2双"`
 
-### 2.3 Step2 任务
+### 2.6 输出与审计
+- [x] 输出 `step5_summary.json`
+- [x] 输出 `step5_mainnode_refresh_table.csv`
+- [x] 输出 `nodes_step5_refreshed.geojson / roads_step5_refreshed.geojson`
+- [x] 同时保留链式输入同名文件 `nodes.geojson / roads.geojson`
 
-- 读取 / 串接 Step1 `pair_candidates`
-- 生成 candidate channel
-- 回溯裁枝通往其他 terminate node 的分支
-- 识别 trunk
-- 构建 segment
-- 产出 validated / rejected 结果与审计图层
+### 2.7 测试与验证
+- [x] 补最小 pytest 覆盖 Step5A / Step5B 双阶段编排
+- [x] 覆盖 Step5A 新 segment road 不参与 Step5B
+- [x] 覆盖 Step5A / Step5B 之间不刷新属性
+- [x] 覆盖 Step5 输出 `3 / 2048` 只作为未来 Step6 候选
+- [x] 在外网 `XXXS` 上完成实跑
 
-### 2.4 验证任务
+## 3. 本轮待确认项
+- [ ] Step5B 仍可能重新遇到 Step5A pair 端点在 residual graph 上残留的情况；后续是否需要额外竞争抑制，还需要结合更大切片确认
+- [ ] `through_collapsed_corridor` 在多轮场景下是否继续保留为正式 trunk 模式，需要后续业务确认
 
-- 补最小 pytest 覆盖
-- 在外网 `XXXS` 上完成实际验证
-- 整理 Step1 candidate 与 Step2 validated 差异摘要
-
-## 3. 本轮最小测试覆盖
-
-- candidate 与 validated 显式分离
-- only_clockwise_loop 拒绝
-- branch_leads_to_other_terminate 裁枝
-- disconnected_after_prune 拒绝
-- trunk 与 segment 不等价
-- left_turn_only_polluted_trunk 或 `formway_unreliable_warning`
-
-## 4. 当前不纳入范围
-
-- 多轮双向 Segment 工作图剥离闭环
-- T 型路口轮间复核完整实现
-- 单向 Segment 阶段
-- trunk 冲突最终优先级策略
-- 最终生产出参封板
-
-## 5. 待确认事项
-
-1. 当前 `only_clockwise_loop` 是否全部视为最终 reject
-2. `shared_trunk_conflict` 后续是保守 reject 还是延迟分配
-3. `formway bit8` 是否足以从原型规则升级为生产强规则
-4. 候选通道的局部扩张边界是否还要再收紧
+## 4. 明确不在本轮实现
+- [ ] 启动 Step6
+- [ ] 重写 Step1 / Step2 核心算法
+- [ ] 完整 Step3 语义归并
+- [ ] 多轮闭环
+- [ ] 单向 Segment 阶段

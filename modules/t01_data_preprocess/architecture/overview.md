@@ -1,34 +1,52 @@
-# T01 高层概览
+# T01 架构概览
 
-## 1. 当前定位
+## 1. 当前分层
+- Step1：`pair_candidates`
+- Step2：`validated / rejected + trunk + segment_body + step3_residual`
+- Step4：基于上一轮 refreshed `Node / Road` 的 residual graph 新一轮构建
+- Step5：基于 Step4 refreshed 输入的 `Step5A / Step5B` 双阶段 residual graph 构建
+- Step6：未来轮次，尚未启动
 
-- T01 是 `RCSD_Topo_Poc` 中的数据预处理模块
-- 当前已经进入可编码的原型研发阶段
-- 当前主线是：
-  - Step1：`pair_candidates`
-  - Step2：candidate validation + segment construction
+## 2. 当前职责边界
 
-## 2. 当前处理对象
+### Step1
+- 负责候选发现
+- 不负责最终有效 pair 确认
 
-- 上游输入：
-  - `Road` 线图层
-  - `Node` 点图层
-- 当前核心处理语义：
-  - 通过 `mainnodeid` 聚合语义路口
-  - 在语义路口图上做 candidate 搜索与 validation
+### Step2
+- 负责 pair candidate validation
+- 负责 trunk / pair_backbone 识别
+- 负责把 pair-specific road body 收敛为 `segment_body`
+- 负责把边界模糊结构挂入 `step3_residual`
 
-## 3. 当前产物定位
+### Step4
+- 负责消费上一轮 refreshed 输入
+- 负责在 residual graph 上继续构建
+- 负责刷新 `grade_2 / kind_2 / s_grade / segmentid`
 
-- Step1 产物用于表达“拓扑候选关系”
-- Step2 产物用于表达“当前 POC 规则下通过验证的 segment”
-- 所有产物都优先服务于：
-  - QGIS 审查
-  - 原型迭代
-  - 规则澄清
+### Step5
+- 负责在 Step4 refreshed 输入上拆成 `Step5A / Step5B`
+- `Step5A` 先跑优先轮
+- `Step5B` 在 residual graph 上跑收尾轮
+- 两阶段完成后统一刷新 `Node / Road`
 
-## 4. 当前边界
+### Step6
+- 未来负责消费 Step5 输出继续构建
+- 不在本轮实现范围内
 
-- 当前不进入多轮 Segment 闭环
-- 当前不进入 T 型路口轮间复核完整实现
-- 当前不进入单向 Segment 阶段
-- 当前不宣称生产规则已经封板
+## 3. 当前主流程
+- 原始 Node / Road
+- 第一轮 Step1 + Step2
+- 第一轮 refresh
+- Step4 residual graph 构建
+- Step4 refreshed `nodes.geojson / roads.geojson`
+- Step5A：
+  - 去掉历史已有 segment road
+  - 跑优先轮
+- Step5B：
+  - 再去掉 Step5A 新 segment road
+  - 跑收尾轮
+- Step5 merged / refreshed：
+  - 合并 validated pair / segment
+  - 统一刷新 `grade_2 / kind_2 / s_grade / segmentid`
+- 未来 Step6 再消费 Step5 refreshed 输出继续推进

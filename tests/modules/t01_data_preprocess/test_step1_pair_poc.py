@@ -142,6 +142,25 @@ def _build_formway_turn_lane_dataset(base_dir: Path) -> tuple[Path, Path]:
     return road_path, node_path
 
 
+def _build_force_terminate_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "force_terminate_roads.geojson"
+    node_path = base_dir / "force_terminate_nodes.geojson"
+
+    node_features = [
+        _node_feature(1, 0.0, 0.0, grade=2, closed_con=2),
+        _node_feature(2, 0.01, 0.0, grade=2, closed_con=2),
+        _node_feature(3, 0.02, 0.0, grade=2, closed_con=2),
+    ]
+    road_features = [
+        _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [0.01, 0.0]]),
+        _road_feature("r23", 2, 3, 0, [[0.01, 0.0], [0.02, 0.0]]),
+    ]
+
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
 def test_step1_pair_poc_generates_strategy_outputs(tmp_path: Path) -> None:
     road_path, node_path = _build_dataset(tmp_path)
     out_root = tmp_path / "outputs"
@@ -202,6 +221,47 @@ def test_through_node_does_not_terminate_early(tmp_path: Path) -> None:
     assert "S1:1__3" in pair_table
     assert "S1:1__2" not in pair_table
     assert summary["through_pass_count"] >= 1
+
+
+def test_eligible_seed_terminate_node_can_be_forced_not_through(tmp_path: Path) -> None:
+    road_path, node_path = _build_force_terminate_dataset(tmp_path)
+    out_root = tmp_path / "outputs_force_terminate"
+    strategy_path = _write_strategy(
+        tmp_path / "step1_force_terminate.json",
+        {
+            "strategy_id": "S_FORCE",
+            "description": "Do not traverse through eligible terminate nodes.",
+            "seed_rule": {"kind_bits_all": [2], "grade_eq": 2, "closed_con_in": [2]},
+            "terminate_rule": {"kind_bits_all": [2], "grade_eq": 2, "closed_con_in": [2]},
+            "through_node_rule": {
+                "incident_road_degree_eq": 2,
+                "disallow_seed_terminate_nodes": True,
+            },
+        },
+    )
+
+    rc = main(
+        [
+            "t01-step1-pair-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+    pair_table = (out_root / "S_FORCE" / "pair_table.csv").read_text(encoding="utf-8")
+    summary = _load_json(out_root / "S_FORCE" / "pair_summary.json")
+
+    assert "S_FORCE:1__2" in pair_table
+    assert "S_FORCE:2__3" in pair_table
+    assert "S_FORCE:1__3" not in pair_table
+    assert summary["through_seed_pruned_count"] == 0
 
 
 def test_reverse_confirmation_is_required(tmp_path: Path) -> None:

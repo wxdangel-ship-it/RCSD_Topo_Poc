@@ -1,136 +1,158 @@
 # T01 - INTERFACE_CONTRACT
 
 ## 1. 文档状态
-
 - 状态：`POC Contract Draft`
-- 当前阶段：`Step1 Pair Candidate + Step2 Segment POC`
-- 当前用途：固化 T01 当前原型阶段的输入、输出与审计契约
-- 当前限制：下述输出契约属于原型审查输出，不是最终生产出参封板
+- 当前阶段：`Step5A/Step5B staged residual graph segment construction`
+- 用途：固化当前原型阶段的输入、输出与审计契约
 
 ## 2. 输入契约
 
-### 2.1 Road
-
+### 2.1 Road 输入
 - 支持格式：`Shp` / `GeoJSON`
 - 几何类型：`LineString`
-- 当前强依赖字段：
+- 强依赖字段：
   - `id`
   - `snodeid`
   - `enodeid`
   - `direction`
   - `formway`
+- 多轮输入依赖字段：
+  - `s_grade`
+  - `segmentid`
 
-### 2.2 Node
-
+### 2.2 Node 输入
 - 支持格式：`Shp` / `GeoJSON`
 - 几何类型：`Point`
-- 当前强依赖字段：
+- 强依赖字段：
   - `id`
   - `kind`
   - `grade`
   - `closed_con`
-- 当前语义聚合字段：
   - `mainnodeid`
+- 多轮输入依赖字段：
+  - `grade_2`
+  - `kind_2`
 
-### 2.3 输入处理前提
+### 2.3 Step5A 输入契约
+- 使用 Step4 refreshed `Node / Road`
+- 工作图剔除历史已有非空 `segmentid` 的 road
+- seed / terminate 条件：
+  - `closed_con in {1,2}`
+  - 且
+    - `kind_2 in {4,2048}` 且 `grade_2 in {1,2}`
+    - 或 `kind_2 = 4` 且 `grade_2 = 3`
 
-- 输入统一归一化到 `EPSG:3857`
-- `mainnodeid` 为空、缺失、`0` 或空字符串时，回退到 `Node.id`
-- `direction=0/1` 当前按双向处理
-- 未正式启用字段不得因局部样本直接升级为强规则
+### 2.4 Step5B 输入契约
+- 使用 Step5A residual graph
+- 工作图继续剔除 Step5A 新 `segment_body` road
+- 不刷新属性
+- seed / terminate 条件：
+  - `closed_con in {1,2}`
+  - `kind_2 in {4,2048}`
+  - `grade_2 in {1,2,3}`
 
-## 3. formway 当前启用口径
+### 2.5 formway 当前启用口径
+- `bit7 = 右转专用道`
+  - through incident degree 可用于压缩
+  - Node 刷新规则 3 可用于判定“其余全是右转专用道”
+- `bit8 = 左转专用道`
+  - trunk 审计与排除
 
-### 3.1 Step1
+## 3. Step1 / Step2 基线输出契约
+- Step1 输出：`pair_candidates`
+- Step2 输出：`validated / rejected + trunk + segment_body + step3_residual`
 
-- `formway bit7 = 右转专用道`
-- 当前可用于 Step1 through incident degree 裁剪
+## 4. Step5A / Step5B 输出契约
 
-### 3.2 Step2
+### 4.1 Step5A
+- `step5a_pair_candidates.*`
+- `step5a_validated_pairs.*`
+- `step5a_rejected_pairs.*`
+- `step5a_trunk_roads.*`
+- `step5a_segment_body_roads.*`
+- `step5a_residual_roads.*`
 
-- `formway bit8 = 左转专用道`
-- 当前只用于 trunk 识别阶段
-- 必须通过可配置模式启用：
-  - `strict`
-  - `audit_only`
-  - `off`
+### 4.2 Step5B
+- `step5b_pair_candidates.*`
+- `step5b_validated_pairs.*`
+- `step5b_rejected_pairs.*`
+- `step5b_trunk_roads.*`
+- `step5b_segment_body_roads.*`
+- `step5b_residual_roads.*`
 
-## 4. Step1 输出契约
+### 4.3 Step5 merged
+- `step5_validated_pairs_merged.*`
+- `step5_segment_body_roads_merged.*`
+- `step5_residual_roads_merged.*`
 
-### 4.1 语义
+## 5. Step5 refreshed 输出契约
 
-- Step1 输出的是 `pair_candidates`
-- Step1 不负责最终 Pair 有效性确认
-- Step1 输出不能默认视为最终有效 Pair
-
-### 4.2 当前输出文件
-
-- `seed_nodes.geojson`
-- `terminate_nodes.geojson`
-- `pair_candidates.csv`
-- `pair_candidate_nodes.geojson`
-- `pair_links_candidates.geojson`
-- `pair_support_roads.geojson`
-- `pair_summary.json`
-- `rule_audit.json`
-- `search_audit.json`
-
-### 4.3 兼容别名
-
-- 当前仍保留：
-  - `pair_nodes.geojson`
-  - `pair_links.geojson`
-  - `pair_table.csv`
-- 这些文件仅用于兼容既有审查脚本
-- 语义解释仍以 `pair_candidates` 为准
-
-## 5. Step2 输出契约草案
-
-### 5.1 语义
-
-- Step2 = pair candidate validation + segment construction
-- Step2 先判断 candidate 是否能够形成合法 Segment
-- 只有通过验证的 candidate 才成为 `validated_pair`
-
-### 5.2 当前原型输出
-
-- `validated_pairs.csv`
-- `rejected_pair_candidates.csv`
-- `pair_links_validated.geojson`
-- `trunk_roads.geojson`
-- `segment_roads.geojson`
-- `branch_cut_roads.geojson`
-- `pair_candidate_channel.geojson`
-- `pair_validation_table.csv`
-- `segment_summary.json`
-- `working_graph_debug.geojson`
-
-### 5.3 当前拒绝原因口径
-
-- `invalid_candidate_boundary`
-- `disconnected_after_prune`
-- `no_valid_trunk`
-- `only_clockwise_loop`
-- `left_turn_only_polluted_trunk`
-- `shared_trunk_conflict`
-- `formway_unreliable_warning`
+### 5.1 Node 输出字段
+- `grade_2`
+- `kind_2`
 
 说明：
+- 基于 Step5A + Step5B 的 validated pair 并集和累计 `segmentid` 结果回写
+- 原始 `grade / kind` 不覆盖
+- 只对 mainnode 记录做业务改写
+- subnode 保持输入值
 
-- `formway_unreliable_warning` 当前是 warning，不必然单独构成 reject
-- reject / warning 最终是否封板，后续仍需业务确认
+### 5.2 Road 输出字段
+- `s_grade`
+- `segmentid`
 
-## 6. 审计与调试契约
+说明：
+- 历史已有非空 `segmentid / s_grade` 保持原值
+- 本轮新 `segment_body` road 写入：
+  - `s_grade = "0-2双"`
+  - `segmentid = "A_B"`
 
-- 所有关键拒绝原因必须在 `pair_validation_table.csv` 中显式可见
-- 分支回溯裁剪痕迹必须落到 `branch_cut_roads.geojson`
-- candidate / trunk / segment 的工作图过程必须可通过 `working_graph_debug.geojson` 回放
-- 当前 `pair_summary.json` 与 `segment_summary.json` 都属于审查摘要，不是最终统计口径封板
+### 5.3 Step5 refreshed 输出文件
+- `nodes.geojson`
+- `roads.geojson`
+- `nodes_step5_refreshed.geojson`
+- `roads_step5_refreshed.geojson`
+- `step5_summary.json`
+- `step5_mainnode_refresh_table.csv`
 
-## 7. 当前不承诺内容
+### 5.4 step5_summary 最少字段
+- `step5a_input_node_count`
+- `step5a_seed_count`
+- `step5a_terminate_count`
+- `step5a_validated_pair_count`
+- `step5a_new_segment_road_count`
+- `step5b_input_node_count`
+- `step5b_seed_count`
+- `step5b_terminate_count`
+- `step5b_validated_pair_count`
+- `step5b_new_segment_road_count`
+- `step5_removed_historical_segment_road_count`
+- `step5_removed_step5a_segment_road_count`
+- `step5_total_new_segment_road_count`
+- `node_rule_keep_pair_count`
+- `node_rule_single_segment_count`
+- `node_rule_right_turn_only_count`
+- `node_rule_new_t_count`
+- `multi_segment_mainnode_kept_count`
 
-- 多轮工作图剥离闭环
-- T 型路口轮间复核完整实现
+### 5.5 step5_mainnode_refresh_table 最少字段
+- `mainnode_id`
+- `participates_in_step5a_pair`
+- `participates_in_step5b_pair`
+- `current_grade_2`
+- `current_kind_2`
+- `current_closed_con`
+- `new_grade_2`
+- `new_kind_2`
+- `unique_segmentid_count`
+- `nonsegment_road_count`
+- `nonsegment_all_right_turn_only`
+- `nonsegment_has_in`
+- `nonsegment_has_out`
+- `applied_rule`
+
+## 6. 当前不承诺内容
+- 完整 Step3 语义修正
+- Step6 构建契约
+- 多轮闭环
 - 单向 Segment 输出契约
-- trunk 冲突最终归属策略
-- 生产级字段稳定性承诺

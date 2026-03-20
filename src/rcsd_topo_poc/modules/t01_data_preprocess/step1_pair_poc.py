@@ -53,6 +53,7 @@ class RuleSpec:
 class ThroughRuleSpec:
     incident_road_degree_eq: Optional[int] = 2
     incident_degree_exclude_formway_bits_any: tuple[int, ...] = ()
+    disallow_seed_terminate_nodes: bool = False
 
 
 @dataclass(frozen=True)
@@ -267,6 +268,7 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
             incident_degree_exclude_formway_bits_any=tuple(
                 int(v) for v in through_payload.get("incident_degree_exclude_formway_bits_any", [])
             ),
+            disallow_seed_terminate_nodes=bool(through_payload.get("disallow_seed_terminate_nodes", False)),
         ),
     )
 
@@ -910,6 +912,9 @@ def run_step1_strategy(
             through_rule=strategy.through_rule,
         )
     }
+    if strategy.through_rule.disallow_seed_terminate_nodes:
+        through_node_ids -= set(seed_ids)
+        through_node_ids -= set(terminate_ids)
     search_seed_ids = [node_id for node_id in seed_ids if node_id not in through_node_ids]
     through_seed_pruned_count = len(seed_ids) - len(search_seed_ids)
 

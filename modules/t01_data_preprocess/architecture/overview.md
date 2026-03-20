@@ -1,56 +1,62 @@
 # T01 架构概览
 
-## 1. 当前分层
-- Step1：`pair_candidates`
-- Step2：`validated / rejected + trunk + segment_body + step3_residual`
-- Step4：基于上一轮 refreshed `Node / Road` 的 residual graph 新一轮构建
-- Step5：基于 Step4 refreshed 输入的 `Step5A / Step5B / Step5C` 三阶段 residual graph 构建
-- Step6：未来轮次，尚未启动
+## 1. 当前 accepted architecture
+- 首轮：
+  - Step1 发现 `pair_candidates`
+  - Step2 完成 `validated / rejected + trunk + segment_body + step3_residual`
+- 首轮刷新：
+  - 输出 refreshed `nodes.geojson / roads.geojson`
+- residual graph 外层轮次：
+  - Step4：基于 refreshed 输入继续构段并刷新
+  - Step5A / Step5B / Step5C：基于 Step4 refreshed 输入继续 staged residual graph 构段
 
-## 2. 当前职责边界
+## 2. 核心设计原则
+- Step1 只做候选发现，不做最终有效性确认
+- Step2 的 `segment_body` 只表达 pair-specific road body
+- 后续轮次不回到原始全量图，而是在 residual graph 上继续推进
+- 已有非空 `segmentid` 的 road 从后续轮次工作图剔除
+- 更低等级轮次必须在更高等级历史路口中断
+- trunk 与最小闭环以语义路口为单元，不只依赖纯几何闭环
+
+## 3. 当前 accepted 轮次职责
 
 ### Step1
-- 负责候选发现
-- 不负责最终有效 pair 确认
+- 负责 `pair_candidates`
 
 ### Step2
-- 负责 pair candidate validation
-- 负责 trunk / pair_backbone 识别
-- 负责把 pair-specific road body 收敛为 `segment_body`
-- 负责把边界模糊结构挂入 `step3_residual`
+- 负责：
+  - validated / rejected
+  - trunk
+  - segment_body
+  - step3_residual
 
 ### Step4
-- 负责消费上一轮 refreshed 输入
-- 负责在 residual graph 上继续构建
-- 负责刷新 `grade_2 / kind_2 / s_grade / segmentid`
+- 负责：
+  - 消费 refreshed `Node / Road`
+  - 在 residual graph 上继续构段
+  - 刷新 `grade_2 / kind_2 / s_grade / segmentid`
 
-### Step5
-- 负责在 Step4 refreshed 输入上拆成 `Step5A / Step5B / Step5C`
-- `Step5A` 先跑优先轮
-- `Step5B` 在 residual graph 上跑收尾轮
-- `Step5C` 在 residual graph 上将 `kind_2=1` 纳入补充构段
+### Step5A / Step5B / Step5C
+- Step5A：
+  - 优先轮
+- Step5B：
+  - residual graph 上所有剩余双向路口收尾轮
+- Step5C：
+  - residual graph 上将 `kind_2=1` 纳入后的补充轮
 - 三阶段完成后统一刷新 `Node / Road`
 
-### Step6
-- 未来负责消费 Step5 输出继续构建
-- 不在本轮实现范围内
+## 4. 当前 accepted baseline
+- 推荐输入基线：
+  - 最新一轮 refreshed `nodes.geojson / roads.geojson`
+- 推荐输出基线：
+  - Step5 refreshed `nodes.geojson / roads.geojson`
+  - 对应 Step5 merged 审计结果
 
-## 3. 当前主流程
-- 原始 Node / Road
-- 第一轮 Step1 + Step2
-- 第一轮 refresh
-- Step4 residual graph 构建
-- Step4 refreshed `nodes.geojson / roads.geojson`
-- Step5A：
-  - 去掉历史已有 segment road
-  - 跑优先轮
-- Step5B：
-  - 再去掉 Step5A 新 segment road
-  - 跑收尾轮
-- Step5C：
-  - 再去掉 Step5B 新 segment road
-  - 跑 `kind_2 in {1,4,2048}` 的补充轮
-- Step5 merged / refreshed：
-  - 合并 validated pair / segment
-  - 统一刷新 `grade_2 / kind_2 / s_grade / segmentid`
-- 未来 Step6 再消费 Step5 refreshed 输出继续推进
+## 5. 后续正式模块完整构建
+- 当前 POC 已结束，后续将从 accepted baseline 继续
+- 未来完整构建至少包括：
+  - Step6
+  - 单向 Segment
+  - Step3 完整语义归并
+  - 完整多轮闭环治理
+  - 统一编排入口

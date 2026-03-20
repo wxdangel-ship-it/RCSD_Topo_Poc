@@ -1,46 +1,46 @@
 # T01 数据预处理模块
 
 ## 当前状态
-- 当前阶段：`Step5A/Step5B/Step5C staged residual graph segment construction`
-- 当前定位：
+- 当前状态：`POC 已结束，accepted baseline 已固化`
+- 当前模块定位：
   - Step1：只发现 `pair_candidates`
-  - Step2：做 `validated / rejected / trunk / segment_body / step3_residual`
-  - Step4：在 Step2 基线刷新结果上做 residual graph 构建
-  - Step5：在 Step4 刷新结果上做 `Step5A / Step5B / Step5C` staged residual graph 构建
-- 当前仍处于 POC 收敛阶段，尚未进入 closeout
+  - Step2：完成首轮 `validated / rejected / trunk / segment_body / step3_residual`
+  - Step4：在 refreshed 基线上做 residual graph 外层轮次扩展
+  - Step5：在 Step4 refreshed 基线上做 `Step5A / Step5B / Step5C`
+- 后续工作将转入正式模块完整构建
 
-## 当前已修复基线
+## 当前 accepted baseline
 - Step2 `segment_body` 已收紧为 pair-specific road body
 - 右转专用道误纳入问题已修复
 - `791711` 的 T 型双向退出误追溯已修复
-- Step4 / Step5 已引入历史高等级边界 mainnode 终止逻辑
-- Step2 已补齐双向 road 语义：
-  - `direction = 0 / 1` 视为两条方向相反的可通行 road
-  - 在 trunk / 最小闭环判定中，镜像往返同一组双向 road 可直接构成合法最小闭环
-  - 在 trunk / 最小闭环判定中，若正反通道局部共享双向 road，且共享段均以相反方向被通行，则该“分合混合通道”仍属于合法最小闭环
-  - trunk 以语义路口为单元判定闭环；若正反路径在 semantic-node-group 层面闭合，即使物理几何不开环，也可成立
-  - 该语义同时支持 `mainnode group` 路口与 `mainnodeid = NULL` 的单 node 路口
-  - 该口径不额外引入新的 trunk 业务类型
+- trunk 语义已补齐：
+  - 双向 road 视为两条方向相反的可通行 road
+  - split-merge 分合混合通道可成立
+  - semantic-node-group closure 可成立
+- Step4 / Step5 已纳入历史高等级边界 mainnode
+- `mainnodeid = NULL` 单点路口按独立语义路口处理
+- residual graph 已成为后续轮次正式工作方式
 
-## 当前已知 visual audit 修复重点
-- Step4 错误 case `792579__55225234` 过去会穿越 `763111`
-- 当前要求：
-  - 更低等级轮次必须在更高等级历史路口中断
-  - pair 搜索与 segment 收敛都必须使用同一套历史边界
-  - 历史高等级端点不能只做 `hard-stop`，还必须回注入当前轮 `seed / terminate`
-  - 命中历史边界时，应“记为 terminal candidate 后停止继续穿越”
-  - 对 Step4 / Step5，凡是命中当前轮 `seed / terminate` 的节点，不得再作为当前轮 `through_node`
-- 额外约束：
-  - `mainnodeid = NULL` 的单点路口，其语义路口 ID 取自身 `id`
-  - 若它命中当前轮输入规则，则必须作为合法语义路口进入 `seed / terminate`
-  - 且当前轮不得再把它作为 `through_node`
-- Step5 边界补充口径：
-  - `S2 + Step4` 历史端点会回注入 Step5A / Step5B / Step5C 的 `seed / terminate`
-  - `Step5A` 当轮新端点对 Step5B 只做 `hard-stop`，不回注入 Step5B `seed / terminate`
-  - `Step5A / Step5B` 当轮新端点对 Step5C 只做 `hard-stop`，不回注入 Step5C `seed / terminate`
-- closeout 之前，优先继续修 visual audit 问题，不做 baseline handoff
+## 当前推荐入口
 
-## 运行入口
+### 首轮
+```bash
+python -m rcsd_topo_poc t01-step2-segment-poc \
+  --road-path <roads.geojson> \
+  --node-path <nodes.geojson> \
+  --strategy-config <step1_pair_s2.json> \
+  --formway-mode strict \
+  --out-root <out_root>
+```
+
+### 首轮刷新
+```bash
+python -m rcsd_topo_poc t01-s2-refresh-node-road \
+  --road-path <roads.geojson> \
+  --node-path <nodes.geojson> \
+  --s2-path <step2_run_root> \
+  --out-root <out_root>
+```
 
 ### Step4
 ```bash
@@ -58,34 +58,52 @@ python -m rcsd_topo_poc t01-step5-staged-residual-graph \
   --out-root <out_root>
 ```
 
-## 关键输出
+说明：
+- 当前真正推荐的 repo 级入口仍是 `python -m rcsd_topo_poc`
+- 上述四个子命令是 T01 当前 accepted baseline 的推荐运行链路
+- 历史实验入口可保留，但不再作为当前主入口说明
 
-### Step4
-- `step4_pair_candidates.*`
-- `step4_validated_pairs.*`
-- `step4_rejected_pairs.*`
-- `step4_trunk_roads.*`
-- `step4_segment_body_roads.*`
-- `step4_residual_roads.*`
-- `historical_boundary_nodes.geojson`
-- `target_case_audit.json`
-- refreshed `nodes.geojson / roads.geojson`
+## 当前推荐输入基线
+- 后续轮次与后续模块构建，推荐直接消费：
+  - 最新一轮 refreshed `nodes.geojson`
+  - 最新一轮 refreshed `roads.geojson`
+- 若需要继续多轮构段：
+  - road 中已有非空 `segmentid` 的对象在工作图中剔除
+  - 使用 residual graph 继续推进
 
-### Step5A / Step5B / Step5C
-- `step5a_*`
-- `step5b_*`
-- `step5c_*`
-- `step5_validated_pairs_merged.*`
-- `step5_segment_body_roads_merged.*`
-- `step5_residual_roads_merged.*`
-- `historical_boundary_nodes.geojson`
-- refreshed `nodes.geojson / roads.geojson`
+## 当前推荐输出基线
+- 当前推荐输出基线为：
+  - Step5 refreshed `nodes.geojson`
+  - Step5 refreshed `roads.geojson`
+- 推荐同时保留对应审计结果：
+  - `step5_validated_pairs_merged.*`
+  - `step5_segment_body_roads_merged.*`
+  - `step5_residual_roads_merged.*`
+  - `historical_boundary_nodes.*`
+  - `step5_summary.json`
 
-## 使用说明
-- 后续轮次默认继续消费最新一轮输出目录中的 `nodes.geojson / roads.geojson`
-- 历史已有非空 `segmentid` 的 road 在更低等级轮次中默认从工作图剔除
-- 若需要 visual audit，请优先叠加：
+## 当前推荐审计材料
+- 首轮：
+  - `pair_validation_table.csv`
+  - `segment_summary.json`
+- Step4：
   - `historical_boundary_nodes.geojson`
-  - `*_pair_links_validated.geojson`
-  - `*_segment_body_roads*.geojson`
-  - `*_residual_roads*.geojson`
+  - `target_case_audit.json`
+  - `step4_pair_validation_table.csv`
+- Step5：
+  - `step5_validated_pairs_merged.csv`
+  - `step5_mainnode_refresh_table.csv`
+  - `step5_summary.json`
+
+## 后续正式模块完整构建从哪里继续
+- 从当前 accepted baseline 继续
+- 具体起点为：
+  - 最新一轮 Step5 refreshed `nodes.geojson / roads.geojson`
+  - 已固化的 Step1 / Step2 / Step4 / Step5 业务语义
+- 后续正式构建待办：
+  - Step6
+  - 单向 Segment
+  - Step3 完整语义归并
+  - 完整多轮闭环治理
+  - 统一编排入口
+  - 更完整的测试 / 回归 / 验收体系

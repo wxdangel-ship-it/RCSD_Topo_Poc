@@ -1,56 +1,49 @@
 # T01 计划
 
 ## 1. 当前阶段
-- 阶段名：`Step5A/Step5B/Step5C staged residual graph segment construction`
+- 阶段名：`POC closeout and baseline handoff`
 - 阶段目标：
-  - 在现有 Step5 staged residual graph 编排中新增 `Step5C`
-  - 让 `kind_2=1` 节点在 Step5C residual graph 上进入构段
-  - 保持 Step5A / Step5B / Step5C 之间不刷新属性
-  - 在外网 `XXXS` 上验证三阶段 merged 与 refreshed 结果
-  - 暂不进入 Step6、分支收尾与 baseline handoff
+  - 固化当前分支已验证通过的 accepted baseline
+  - 完成业务语义与代码实现的文档对齐
+  - 结束 POC 试验阶段
+  - 为正式模块完整构建准备稳定输入基线、轮次语义与推荐入口
 
-## 2. 本轮要做
-- 在 Step5 编排中新增 `Step5C`
-- Step5C 输入集合改为：
-  - `closed_con in {1,2}`
-  - `grade_2 in {1,2,3}`
-  - `kind_2 in {1,4,2048}`
-- 补齐 trunk 全局语义：
-  - trunk 闭环以语义路口为单元
-  - `semantic-node-group closure` 也可成立
-  - 不再把“纯几何不开环”作为唯一拒绝条件
-- Step5C 工作图继续剔除：
-  - 历史已有 `segmentid` road
-  - `Step5A` 新 `segment_body` road
-  - `Step5B` 新 `segment_body` road
-- 保持 Step5A / Step5B / Step5C 之间不刷新属性，三阶段完成后统一刷新
-- 保持历史边界规则：
-  - `S2 + Step4` 仍回注入 Step5C `seed / terminate`
-  - `Step5A / Step5B` 当轮新端点仅用于 Step5C `hard-stop`
-- 在外网 `XXXS` 上重跑 Step5 并输出新的审查结果
+## 2. 本轮完成内容
+- 完成 Step1 / Step2 / Step4 / Step5 accepted 语义整理
+- 完成以下关键语义固化：
+  - Step1 仅输出 `pair_candidates`
+  - Step2 `segment_body` 只表达 pair-specific road body
+  - Step2 三条强规则与 mirrored bidirectional case
+  - 右转专用道误纳入修复
+  - `791711` T 型双向退出误追溯修复
+  - 层级边界 / 历史高等级边界
+  - `mainnodeid = NULL` 单点路口语义
+  - residual graph 多轮构段语义
+  - Step4 / Step5A / Step5B / Step5C 输入与工作图约束
+  - trunk 的双向 road、split-merge、semantic-node-group closure 语义
+- 完成 POC 收尾文档与 handoff 文档
 
-## 3. 本轮不做
-- 不做 POC closeout / baseline handoff
-- 不启动 Step6
-- 不做多轮总编排一键执行收尾
-- 不重写 Step1 / Step2 主算法
+## 3. 当前推荐基线
+- 推荐输入基线：
+  - 最新一轮 refreshed `nodes.geojson`
+  - 最新一轮 refreshed `roads.geojson`
+- 推荐工作方式：
+  - residual graph 多轮构段
+- 推荐结果基线：
+  - Step5 refreshed `nodes.geojson / roads.geojson`
+  - 对应 Step5 merged 审计输出
 
-## 4. 本轮交付
-- 文档更新：
-  - `spec.md`
-  - `plan.md`
-  - `tasks.md`
-  - `INTERFACE_CONTRACT.md`
-  - `README.md`
-- 代码更新：
-  - Step5 三阶段编排（A/B/C）
-  - Step5C 输入规则与 merged/refreshed 输出
-- 外网 `XXXS` 新结果：
-  - Step5 审查目录
-  - Step5C / merged 审查结果
+## 4. 当前不再继续扩展的 POC 内容
+- 不再继续新增新的试验轮次
+- 不再继续扩大 POC 业务目标
+- 不再继续追加与 accepted baseline 无关的试验性口径
 
-## 5. 验证准则
-- Step5A / Step5B / Step5C 之间不刷新属性
-- Step5C 输入集合准确纳入 `kind_2=1`
-- Step5C 工作图不包含历史已成段 road，也不包含 Step5A / Step5B 新 segment road
-- Step5 merged / refreshed 结果正确累积三阶段产物
+## 5. 后续转入正式模块完整构建
+- 后续工作将从当前 accepted baseline 继续
+- 正式模块完整构建待办至少包括：
+  - Step6
+  - 单向 Segment
+  - Step3 完整语义归并
+  - 完整多轮闭环治理
+  - 统一编排入口
+  - 更完整的测试 / 回归 / 验收体系

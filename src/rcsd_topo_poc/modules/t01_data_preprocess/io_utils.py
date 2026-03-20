@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Optional, Union
 
@@ -60,8 +61,13 @@ def _transform_geometry(geometry: BaseGeometry, source_crs: CRS) -> BaseGeometry
     if source_crs == TARGET_CRS:
         return geometry
 
-    transformer = Transformer.from_crs(source_crs, TARGET_CRS, always_xy=True)
+    transformer = _get_transformer(source_crs.to_string())
     return shapely_transform(transformer.transform, geometry)
+
+
+@lru_cache(maxsize=16)
+def _get_transformer(source_crs_text: str) -> Transformer:
+    return Transformer.from_crs(CRS.from_user_input(source_crs_text), TARGET_CRS, always_xy=True)
 
 
 def read_vector_layer(

@@ -1145,6 +1145,7 @@ def write_step1_candidate_outputs(
     orphan_ref_count: int,
     search_seed_count: int,
     through_seed_pruned_count: int,
+    debug: bool = True,
 ) -> Step1StrategyResult:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1164,14 +1165,15 @@ def write_step1_candidate_outputs(
     rule_audit_path = out_dir / "rule_audit.json"
     search_audit_path = out_dir / "search_audit.json"
 
-    write_geojson(
-        seed_nodes_path,
-        [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in seed_ids],
-    )
-    write_geojson(
-        terminate_nodes_path,
-        [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in terminate_ids],
-    )
+    if debug:
+        write_geojson(
+            seed_nodes_path,
+            [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in seed_ids],
+        )
+        write_geojson(
+            terminate_nodes_path,
+            [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in terminate_ids],
+        )
 
     pair_node_features: list[dict[str, Any]] = []
     pair_link_features: list[dict[str, Any]] = []
@@ -1238,34 +1240,36 @@ def write_step1_candidate_outputs(
             }
         )
 
-    write_geojson(pair_candidate_nodes_path, pair_node_features)
-    write_geojson(pair_links_candidates_path, pair_link_features)
-    write_geojson(
-        pair_support_roads_path,
-        [
-            _road_feature(
-                roads[road_id],
-                pair_ids=pair_ids,
-                strategy_id=strategy.strategy_id,
-                semantic_snode_id=physical_to_semantic.get(roads[road_id].snodeid),
-                semantic_enode_id=physical_to_semantic.get(roads[road_id].enodeid),
-            )
-            for road_id, pair_ids in sorted(support_road_pairs.items(), key=lambda item: _sort_key(item[0]))
-            if road_id in roads
-        ],
-    )
+    if debug:
+        write_geojson(pair_candidate_nodes_path, pair_node_features)
+        write_geojson(pair_links_candidates_path, pair_link_features)
+        write_geojson(
+            pair_support_roads_path,
+            [
+                _road_feature(
+                    roads[road_id],
+                    pair_ids=pair_ids,
+                    strategy_id=strategy.strategy_id,
+                    semantic_snode_id=physical_to_semantic.get(roads[road_id].snodeid),
+                    semantic_enode_id=physical_to_semantic.get(roads[road_id].enodeid),
+                )
+                for road_id, pair_ids in sorted(support_road_pairs.items(), key=lambda item: _sort_key(item[0]))
+                if road_id in roads
+            ],
+        )
     write_csv(
         pair_candidates_path,
         pair_table_rows,
         ["pair_id", "a_node_id", "b_node_id", "strategy_id", "candidate_status", "reverse_confirmed", "support_info"],
     )
-    write_geojson(out_dir / "pair_nodes.geojson", pair_node_features)
-    write_geojson(out_dir / "pair_links.geojson", pair_link_features)
-    write_csv(
-        out_dir / "pair_table.csv",
-        pair_table_rows,
-        ["pair_id", "a_node_id", "b_node_id", "strategy_id", "candidate_status", "reverse_confirmed", "support_info"],
-    )
+    if debug:
+        write_geojson(out_dir / "pair_nodes.geojson", pair_node_features)
+        write_geojson(out_dir / "pair_links.geojson", pair_link_features)
+        write_csv(
+            out_dir / "pair_table.csv",
+            pair_table_rows,
+            ["pair_id", "a_node_id", "b_node_id", "strategy_id", "candidate_status", "reverse_confirmed", "support_info"],
+        )
 
     rule_audit_rows = []
     for node_id, node in sorted(semantic_nodes.items(), key=lambda item: _sort_key(item[0])):
@@ -1287,16 +1291,17 @@ def write_step1_candidate_outputs(
             }
         )
 
-    write_json(rule_audit_path, rule_audit_rows)
-    write_json(
-        search_audit_path,
-        {
-            "search_event_counts": dict(sorted(search_event_counts.items())),
-            "search_events": search_event_samples,
-            "search_event_sample_limit_per_type": SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE,
-            "graph_events": graph_audit_events,
-        },
-    )
+    if debug:
+        write_json(rule_audit_path, rule_audit_rows)
+        write_json(
+            search_audit_path,
+            {
+                "search_event_counts": dict(sorted(search_event_counts.items())),
+                "search_events": search_event_samples,
+                "search_event_sample_limit_per_type": SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE,
+                "graph_events": graph_audit_events,
+            },
+        )
 
     reverse_confirm_fail_count = search_event_counts.get("reverse_confirm_fail", 0)
     no_terminal_hit_count = search_event_counts.get("no_terminal_hit", 0)
@@ -1325,20 +1330,28 @@ def write_step1_candidate_outputs(
         "orphan_ref_count": orphan_ref_count,
         "direction_block_count": direction_block_count,
         "search_event_sample_limit_per_type": SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE,
-        "output_files": [
-            seed_nodes_path.name,
-            terminate_nodes_path.name,
-            pair_candidate_nodes_path.name,
-            pair_links_candidates_path.name,
-            pair_support_roads_path.name,
-            pair_candidates_path.name,
-            pair_summary_path.name,
-            rule_audit_path.name,
-            search_audit_path.name,
-            "pair_nodes.geojson",
-            "pair_links.geojson",
-            "pair_table.csv",
-        ],
+        "debug": debug,
+        "output_files": (
+            [
+                pair_candidates_path.name,
+                pair_summary_path.name,
+            ]
+            if not debug
+            else [
+                seed_nodes_path.name,
+                terminate_nodes_path.name,
+                pair_candidate_nodes_path.name,
+                pair_links_candidates_path.name,
+                pair_support_roads_path.name,
+                pair_candidates_path.name,
+                pair_summary_path.name,
+                rule_audit_path.name,
+                search_audit_path.name,
+                "pair_nodes.geojson",
+                "pair_links.geojson",
+                "pair_table.csv",
+            ]
+        ),
     }
     write_json(pair_summary_path, pair_summary)
 

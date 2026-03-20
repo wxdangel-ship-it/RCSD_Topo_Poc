@@ -301,7 +301,7 @@ def _write_outputs(
     road_output_name: str,
     summary: dict[str, Any],
     mainnode_rows: list[dict[str, Any]],
-    preserved_s2_dir: Path,
+    preserved_s2_dir: Optional[Path],
 ) -> RefreshArtifacts:
     nodes_path = out_root / node_output_name
     roads_path = out_root / road_output_name
@@ -366,13 +366,16 @@ def refresh_s2_baseline(
     node_crs: Optional[str] = None,
     out_root: Optional[Union[str, Path]] = None,
     run_id: Optional[str] = None,
+    debug: bool = True,
 ) -> RefreshArtifacts:
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
 
     s2_dir = _resolve_s2_dir(s2_path)
-    preserved_s2_dir = resolved_out_root / "S2"
-    shutil.copytree(s2_dir, preserved_s2_dir, dirs_exist_ok=True)
+    preserved_s2_dir: Optional[Path] = None
+    if debug:
+        preserved_s2_dir = resolved_out_root / "S2"
+        shutil.copytree(s2_dir, preserved_s2_dir, dirs_exist_ok=True)
     validated_pairs_path = s2_dir / "validated_pairs.csv"
     segment_body_path = s2_dir / "segment_body_roads.geojson"
 
@@ -541,7 +544,8 @@ def refresh_s2_baseline(
         "subnode_kept_init_count": subnode_kept_init_count,
         "mainnode_representative_fallback_count": representative_fallback_count,
         "validated_pair_ids": sorted(validated_pair_ids, key=_sort_key),
-        "preserved_s2_dir": str(preserved_s2_dir),
+        "preserved_s2_dir": str(preserved_s2_dir) if preserved_s2_dir is not None else None,
+        "debug": debug,
     }
 
     return _write_outputs(
@@ -569,5 +573,6 @@ def run_s2_baseline_refresh_cli(args: argparse.Namespace) -> int:
         node_crs=args.node_crs,
         out_root=args.out_root,
         run_id=args.run_id,
+        debug=args.debug,
     )
     return 0

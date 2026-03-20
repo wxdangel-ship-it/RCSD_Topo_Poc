@@ -1604,6 +1604,7 @@ def _write_step2_outputs(
     context: Step1GraphContext,
     validations: list[PairValidationResult],
     formway_mode: str,
+    debug: bool,
 ) -> Step2StrategyResult:
     validated_rows: list[dict[str, Any]] = []
     rejected_rows: list[dict[str, Any]] = []
@@ -1922,18 +1923,9 @@ def _write_step2_outputs(
         rejected_rows,
         ["pair_id", "a_node_id", "b_node_id", "reject_reason", "warning_codes", "conflict_pair_id"],
     )
-    write_geojson(pair_links_validated_path, validated_link_features)
     write_geojson(trunk_roads_path, trunk_features)
     write_geojson(segment_body_roads_path, segment_body_features)
     write_geojson(step3_residual_roads_path, step3_residual_features)
-    write_geojson(segment_roads_path, segment_body_features)
-    write_geojson(trunk_road_members_path, trunk_member_features)
-    write_geojson(segment_body_road_members_path, segment_body_member_features)
-    write_geojson(step3_residual_road_members_path, step3_residual_member_features)
-    write_geojson(segment_road_members_path, segment_body_member_features)
-    write_geojson(branch_cut_roads_path, branch_cut_features)
-    write_geojson(candidate_channel_path, candidate_channel_features)
-    write_geojson(working_graph_debug_path, working_graph_debug_features)
     write_csv(
         validation_table_path,
         validation_rows,
@@ -1974,25 +1966,40 @@ def _write_step2_outputs(
         "disconnected_after_prune_count": disconnected_after_prune_count,
         "shared_trunk_conflict_count": shared_trunk_conflict_count,
         "formway_warning_count": formway_warning_count,
+        "debug": debug,
         "output_files": [
             validated_pairs_path.name,
             rejected_pairs_path.name,
-            pair_links_validated_path.name,
             trunk_roads_path.name,
             segment_body_roads_path.name,
             step3_residual_roads_path.name,
-            segment_roads_path.name,
-            trunk_road_members_path.name,
-            segment_body_road_members_path.name,
-            step3_residual_road_members_path.name,
-            segment_road_members_path.name,
-            branch_cut_roads_path.name,
-            candidate_channel_path.name,
             validation_table_path.name,
-            working_graph_debug_path.name,
             segment_summary_path.name,
         ],
     }
+    if debug:
+        write_geojson(pair_links_validated_path, validated_link_features)
+        write_geojson(segment_roads_path, segment_body_features)
+        write_geojson(trunk_road_members_path, trunk_member_features)
+        write_geojson(segment_body_road_members_path, segment_body_member_features)
+        write_geojson(step3_residual_road_members_path, step3_residual_member_features)
+        write_geojson(segment_road_members_path, segment_body_member_features)
+        write_geojson(branch_cut_roads_path, branch_cut_features)
+        write_geojson(candidate_channel_path, candidate_channel_features)
+        write_geojson(working_graph_debug_path, working_graph_debug_features)
+        segment_summary["output_files"].extend(
+            [
+                pair_links_validated_path.name,
+                segment_roads_path.name,
+                trunk_road_members_path.name,
+                segment_body_road_members_path.name,
+                step3_residual_road_members_path.name,
+                segment_road_members_path.name,
+                branch_cut_roads_path.name,
+                candidate_channel_path.name,
+                working_graph_debug_path.name,
+            ]
+        )
     write_json(segment_summary_path, segment_summary)
 
     return Step2StrategyResult(
@@ -2291,6 +2298,7 @@ def run_step2_segment_poc(
     node_crs: Optional[str] = None,
     formway_mode: str = "strict",
     left_turn_formway_bit: int = LEFT_TURN_FORMWAY_BIT,
+    debug: bool = True,
 ) -> list[Step2StrategyResult]:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
@@ -2331,6 +2339,7 @@ def run_step2_segment_poc(
             orphan_ref_count=context.orphan_ref_count,
             search_seed_count=len(execution.search_seed_ids),
             through_seed_pruned_count=execution.through_seed_pruned_count,
+            debug=debug,
         )
 
         validations = _validate_pair_candidates(
@@ -2348,6 +2357,7 @@ def run_step2_segment_poc(
             context=context,
             validations=validations,
             formway_mode=formway_mode,
+            debug=debug,
         )
         results.append(step2_result)
         comparison_summary.append(step2_result.segment_summary)

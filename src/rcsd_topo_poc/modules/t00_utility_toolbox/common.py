@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,6 +19,8 @@ from shapely.ops import transform as shapely_transform
 
 TARGET_CRS = CRS.from_epsg(3857)
 DEFAULT_GEOJSON_CRS = CRS.from_epsg(4326)
+WEB_MERCATOR_MAX_ABS = 20037508.342789244
+GEOGRAPHIC_RANGE_TOLERANCE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -105,12 +108,62 @@ def _get_transformer(source_crs_text: str) -> Transformer:
     return Transformer.from_crs(CRS.from_user_input(source_crs_text), TARGET_CRS, always_xy=True)
 
 
-def transform_geometry_to_3857(geometry: BaseGeometry, source_crs: CRS) -> BaseGeometry:
-    if source_crs == TARGET_CRS:
+def _finite_bounds(geometry: BaseGeometry | None, *, stage: str) -> tuple[float, float, float, float] | None:
+    if geometry is None or geometry.is_empty:
+        return None
+
+    bounds = tuple(float(value) for value in geometry.bounds)
+    if not all(math.isfinite(value) for value in bounds):
+        raise ValueError(f"{stage} produced non-finite geometry bounds: {bounds}")
+    return bounds
+
+
+def _ensure_source_geometry_matches_crs(geometry: BaseGeometry, source_crs: CRS) -> None:
+    bounds = _finite_bounds(geometry, stage=f"source geometry for {source_crs.to_string()}")
+    if bounds is None or not source_crs.is_geographic:
+        return
+
+    min_x, min_y, max_x, max_y = bounds
+    if (
+        min_x < -180.0 - GEOGRAPHIC_RANGE_TOLERANCE
+        or max_x > 180.0 + GEOGRAPHIC_RANGE_TOLERANCE
+        or min_y < -90.0 - GEOGRAPHIC_RANGE_TOLERANCE
+        or max_y > 90.0 + GEOGRAPHIC_RANGE_TOLERANCE
+    ):
+        raise ValueError(
+            "source geometry bounds "
+            f"{bounds} exceed the valid lon/lat range for geographic CRS {source_crs.to_string()}; "
+            "likely missing or incorrect CRS metadata"
+        )
+
+
+def _ensure_geometry_in_3857_extent(geometry: BaseGeometry | None, *, stage: str) -> BaseGeometry | None:
+    bounds = _finite_bounds(geometry, stage=stage)
+    if bounds is None:
         return geometry
 
+    min_x, min_y, max_x, max_y = bounds
+    limit = WEB_MERCATOR_MAX_ABS + 1.0
+    if min_x < -limit or max_x > limit or min_y < -limit or max_y > limit:
+        raise ValueError(f"{stage} produced geometry outside the valid EPSG:3857 extent: {bounds}")
+    return geometry
+
+
+def transform_geometry_to_3857(geometry: BaseGeometry, source_crs: CRS) -> BaseGeometry:
+    _ensure_source_geometry_matches_crs(geometry, source_crs)
+
+    if source_crs == TARGET_CRS:
+        return _ensure_geometry_in_3857_extent(
+            geometry,
+            stage="source geometry already declared as EPSG:3857",
+        )
+
     transformer = _get_transformer(source_crs.to_string())
-    return shapely_transform(transformer.transform, geometry)
+    transformed = shapely_transform(transformer.transform, geometry)
+    return _ensure_geometry_in_3857_extent(
+        transformed,
+        stage=f"geometry transformed from {source_crs.to_string()} to {TARGET_CRS.to_string()}",
+    )
 
 
 def read_geojson_features(path: Path, *, default_crs_text: Optional[str]) -> GeoJsonReadResult:
@@ -163,6 +216,7 @@ def minimal_repair(geometry: BaseGeometry | None) -> BaseGeometry | None:
     candidate = extract_polygonal(geometry)
     if candidate is None:
         return None
+    candidate = _ensure_geometry_in_3857_extent(candidate, stage="polygonal geometry before repair")
     if candidate.is_valid:
         return candidate
 
@@ -170,6 +224,9 @@ def minimal_repair(geometry: BaseGeometry | None) -> BaseGeometry | None:
         candidate = extract_polygonal(make_valid(candidate))
     except Exception:
         candidate = None
+
+    if candidate is not None:
+        candidate = _ensure_geometry_in_3857_extent(candidate, stage="polygonal geometry after make_valid")
 
     if candidate is not None and candidate.is_valid:
         return candidate
@@ -182,7 +239,11 @@ def minimal_repair(geometry: BaseGeometry | None) -> BaseGeometry | None:
     except Exception:
         candidate = None
 
-    if candidate is None or candidate.is_empty or not candidate.is_valid:
+    if candidate is None:
+        return None
+
+    candidate = _ensure_geometry_in_3857_extent(candidate, stage="polygonal geometry after buffer(0)")
+    if candidate.is_empty or not candidate.is_valid:
         return None
     return candidate
 
@@ -205,9 +266,10 @@ def polygon_part_count(geometry: BaseGeometry | None) -> int:
 
 
 def geometry_bounds(geometry: BaseGeometry | None) -> list[float] | None:
-    if geometry is None or geometry.is_empty:
+    bounds = _finite_bounds(geometry, stage="summary geometry")
+    if bounds is None:
         return None
-    return [float(value) for value in geometry.bounds]
+    return list(bounds)
 
 
 def _json_compatible(value: Any) -> Any:
@@ -225,7 +287,7 @@ def _json_compatible(value: Any) -> Any:
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fp:
-        json.dump(_json_compatible(payload), fp, ensure_ascii=False, indent=2)
+        json.dump(_json_compatible(payload), fp, ensure_ascii=False, indent=2, allow_nan=False)
 
 
 def write_geojson(path: Path, features: Iterable[dict[str, Any]]) -> None:
@@ -248,4 +310,4 @@ def write_geojson(path: Path, features: Iterable[dict[str, Any]]) -> None:
         "features": feature_items,
     }
     with path.open("w", encoding="utf-8") as fp:
-        json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"))
+        json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"), allow_nan=False)

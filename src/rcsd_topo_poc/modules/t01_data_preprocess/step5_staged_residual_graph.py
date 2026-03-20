@@ -15,6 +15,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     NodeFeatureRecord,
     RoadFeatureRecord,
     _build_mainnode_groups,
+    _load_nodes_and_roads,
     _load_nodes,
     _load_roads,
     _road_flow_flags_for_group,
@@ -668,8 +669,14 @@ def run_step5_staged_residual_graph(
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
 
-    nodes, _, _ = _load_nodes(node_path, layer_name=node_layer, crs_override=node_crs)
-    roads, _ = _load_roads(road_path, layer_name=road_layer, crs_override=road_crs)
+    (nodes, _, _), (roads, _) = _load_nodes_and_roads(
+        node_path=node_path,
+        road_path=road_path,
+        node_layer=node_layer,
+        node_crs=node_crs,
+        road_layer=road_layer,
+        road_crs=road_crs,
+    )
     input_parent = Path(node_path).resolve().parent
 
     preserved_snapshots: dict[str, str] = {}

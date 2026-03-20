@@ -203,3 +203,17 @@
   - Step5 refreshed `nodes.geojson / roads.geojson`
   - Skill v1.0.0 官方 `nodes.geojson / roads.geojson`
   - 对应 freeze compare PASS 报告
+
+## 12. 官方 runner 的性能与内存边界
+- 官方 `t01-run-skill-v1` 当前默认 `debug=true`
+- 默认保留分阶段中间结果，优先服务大规模验证前的 case 审计与视觉排查
+- 如需减少无意义 I/O，可显式使用 `--no-debug`
+- 当前已纳入的执行层优化：
+  - Step1 / Step2 / refresh / Step4 / Step5 固定 2 worker 并行输入读取
+  - 阶段级 `gc.collect()` 回收
+  - 阶段级 `tracemalloc` 峰值内存记录
+  - `debug=false` 时的临时 stage 目录
+- 当前未纳入的能力：
+  - 完整全内存流水线
+  - 核心 pair / trunk / validated 决策层并发
+- 因此 Skill v1.0.0 已具备可控 I/O 和基础内存治理，但尚不是完整的大规模执行引擎终态

@@ -21,8 +21,11 @@
 - [x] 内网测试三件套契约写入模块文档
 
 ## 2. 当前正式版构建任务
-- [x] 收敛默认 `debug=false` 输出
+- [x] 官方 runner 默认 `debug=true`，保留中间结果以支持验证与审计
+- [x] 提供显式 `--no-debug` 低 I/O 模式
 - [x] 以 temp stage 目录减少默认无意义 I/O
+- [x] Step1 / Step2 / refresh / Step4 / Step5 输入图层固定 2 worker 并行读取
+- [x] 增加阶段级 GC 回收与 `tracemalloc` 峰值统计
 - [x] 对 XXXS freeze baseline 做 compare PASS 校验
 - [x] 输出性能 before / after / compare 产物
 - [ ] 完成 repo 级治理文档与正式模块状态同步

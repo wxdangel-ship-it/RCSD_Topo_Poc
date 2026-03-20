@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -113,6 +114,33 @@ def read_vector_layer(
         return LayerReadResult(features=features, source_crs=source_crs, crs_source=crs_source)
 
     raise ValueError(f"Unsupported vector format for '{layer_path}'. Expected Shp or GeoJSON.")
+
+
+def read_vector_layers_parallel(
+    *,
+    first_path: Union[str, Path],
+    second_path: Union[str, Path],
+    first_layer: Optional[str] = None,
+    second_layer: Optional[str] = None,
+    first_crs: Optional[str] = None,
+    second_crs: Optional[str] = None,
+    max_workers: int = 2,
+) -> tuple[LayerReadResult, LayerReadResult]:
+    # Two independent vector-layer reads can safely share a small fixed pool.
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="t01-io") as executor:
+        future_first = executor.submit(
+            read_vector_layer,
+            first_path,
+            layer_name=first_layer,
+            crs_override=first_crs,
+        )
+        future_second = executor.submit(
+            read_vector_layer,
+            second_path,
+            layer_name=second_layer,
+            crs_override=second_crs,
+        )
+        return future_first.result(), future_second.result()
 
 
 def _json_compatible(value: Any) -> Any:

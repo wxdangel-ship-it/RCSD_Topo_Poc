@@ -361,7 +361,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_skill = sub.add_parser(
         "t01-run-skill-v1",
-        help="Run the accepted Step1-Step5 T01 skill pipeline end-to-end with minimal default I/O.",
+        help="Run the accepted Step1-Step5 T01 skill pipeline end-to-end with the official debug-aware runner.",
     )
     p_skill.add_argument("--road-path", required=True, help="Path to input Road Shp/GeoJSON.")
     p_skill.add_argument("--road-layer", help="Optional road layer name.")
@@ -394,7 +394,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_skill_v1/<run_id>.",
     )
-    _add_debug_flag(p_skill, default=False)
+    _add_debug_flag(p_skill, default=True)
     p_skill.set_defaults(func=_cmd_t01_run_skill_v1)
 
     p_compare = sub.add_parser(

@@ -15,13 +15,13 @@
 python -m rcsd_topo_poc t01-run-skill-v1 \
   --road-path <road_path> \
   --node-path <node_path> \
-  --out-root <out_root> \
-  --no-debug
+  --out-root <out_root>
 ```
 
 说明：
-- 默认 `--no-debug`
-- 默认只输出最终结果与轻量审计包
+- 默认 `debug=true`
+- 默认保留分阶段中间结果，便于大规模验证前的 case 审计
+- 如需减少无意义 I/O，请显式使用 `--no-debug`
 - 可通过 `--compare-freeze-dir` 与 freeze baseline 做 PASS / FAIL 对比
 
 ### freeze compare
@@ -49,6 +49,19 @@ python -m rcsd_topo_poc t01-compare-freeze \
 - `debug=true`
   - 额外保留分阶段 `step2 / refresh / step4 / step5` 审计层与中间结果
 - `debug` 不改变最终业务逻辑
+
+## 当前性能与内存治理边界
+- 当前正式优化已纳入：
+  - Step1 / Step2 / refresh / Step4 / Step5 的固定 2 worker 并行输入读取
+  - 官方 runner 的阶段级 `gc.collect()` 回收
+  - 阶段级 `tracemalloc` 峰值内存记录
+  - `debug=false` 时使用临时 stage 目录，减少最终目录的无意义持久化 I/O
+- 当前尚未纳入：
+  - 完整全内存流水线
+  - 核心 pair / trunk / validated 决策层的并发执行
+- 因此大规模运行建议：
+  - 需要完整审计时使用默认 `debug=true`
+  - 需要降低 I/O 压力时显式使用 `--no-debug`
 
 ## 当前 freeze baseline
 - 当前 Skill v1.0.0 效果基线：

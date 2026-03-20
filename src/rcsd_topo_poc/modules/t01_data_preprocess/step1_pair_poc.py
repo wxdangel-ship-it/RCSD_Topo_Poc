@@ -11,7 +11,13 @@ from typing import Any, Optional, Tuple, Union
 from shapely.geometry import LineString
 from shapely.geometry.base import BaseGeometry
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer, write_csv, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    read_vector_layer,
+    read_vector_layers_parallel,
+    write_csv,
+    write_geojson,
+    write_json,
+)
 
 
 REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction", "formway")
@@ -935,8 +941,14 @@ def build_step1_graph_context(
 ) -> Step1GraphContext:
     graph_audit_events: list[dict[str, Any]] = []
 
-    road_layer_result = read_vector_layer(road_path, layer_name=road_layer, crs_override=road_crs)
-    node_layer_result = read_vector_layer(node_path, layer_name=node_layer, crs_override=node_crs)
+    road_layer_result, node_layer_result = read_vector_layers_parallel(
+        first_path=road_path,
+        second_path=node_path,
+        first_layer=road_layer,
+        second_layer=node_layer,
+        first_crs=road_crs,
+        second_crs=node_crs,
+    )
 
     raw_road_features = [
         {"properties": feature.properties, "geometry": feature.geometry} for feature in road_layer_result.features

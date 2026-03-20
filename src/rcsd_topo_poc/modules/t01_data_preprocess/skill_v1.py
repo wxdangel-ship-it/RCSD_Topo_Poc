@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import shutil
 import tempfile
 import time
+import tracemalloc
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, TypeVar, Union
 
 from rcsd_topo_poc.modules.t01_data_preprocess.freeze_compare import (
     compare_skill_v1_bundle,
@@ -23,6 +25,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step5_staged_residual_graph impor
 
 DEFAULT_RUN_ID_PREFIX = "t01_skill_v1_"
 SKILL_VERSION = "1.0.0"
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -64,10 +67,58 @@ def _write_summary_md(*, out_path: Path, summary: dict[str, Any]) -> None:
         "",
     ]
     for stage in summary["stages"]:
-        lines.append(f"- {stage['name']}: `{stage['wall_time_sec']:.6f}` sec")
+        peak_mb = stage.get("python_tracemalloc_peak_bytes", 0) / (1024 * 1024)
+        lines.append(
+            f"- {stage['name']}: `{stage['wall_time_sec']:.6f}` sec; "
+            f"peak_python_mem=`{peak_mb:.3f}` MiB; "
+            f"gc_collected=`{stage.get('gc_collected_objects_after_stage', 0)}`"
+        )
     if summary.get("freeze_compare_status"):
         lines.extend(["", "## Freeze Compare", "", f"- status: `{summary['freeze_compare_status']}`"])
+    if summary.get("memory_management"):
+        lines.extend(
+            [
+                "",
+                "## Memory Management",
+                "",
+                f"- debug_default_enabled: `{summary['memory_management']['debug_default_enabled']}`",
+                f"- stage_gc_after_run: `{summary['memory_management']['stage_gc_after_run']}`",
+                f"- bounded_parallel_load_workers: `{summary['memory_management']['bounded_parallel_load_workers']}`",
+                (
+                    f"- uses_temp_stage_root_when_debug_false: "
+                    f"`{summary['memory_management']['uses_temp_stage_root_when_debug_false']}`"
+                ),
+                (
+                    f"- deep_full_in_memory_pipeline: "
+                    f"`{summary['memory_management']['deep_full_in_memory_pipeline']}`"
+                ),
+            ]
+        )
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _run_stage(
+    *,
+    name: str,
+    stage_timings: list[dict[str, Any]],
+    action: Callable[[], T],
+) -> T:
+    tracemalloc.start()
+    started = time.perf_counter()
+    result = action()
+    wall_time = time.perf_counter() - started
+    _current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    gc_collected = gc.collect()
+    stage_timings.append(
+        {
+            "name": name,
+            "wall_time_sec": wall_time,
+            "python_tracemalloc_peak_bytes": peak,
+            "gc_collected_objects_after_stage": gc_collected,
+        }
+    )
+    return result
 
 
 def run_t01_skill_v1(
@@ -83,7 +134,7 @@ def run_t01_skill_v1(
     strategy_config_path: Optional[Union[str, Path]] = None,
     formway_mode: str = "strict",
     left_turn_formway_bit: int = 8,
-    debug: bool = False,
+    debug: bool = True,
     compare_freeze_dir: Optional[Union[str, Path]] = None,
 ) -> SkillV1Artifacts:
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
@@ -108,64 +159,72 @@ def run_t01_skill_v1(
 
     try:
         step2_root = stage_root / "step2"
-        step2_started = time.perf_counter()
-        run_step2_segment_poc(
-            road_path=road_path,
-            node_path=node_path,
-            strategy_config_paths=[strategy_config_path],
-            out_root=step2_root,
-            run_id=resolved_run_id,
-            road_layer=road_layer,
-            road_crs=road_crs,
-            node_layer=node_layer,
-            node_crs=node_crs,
-            formway_mode=formway_mode,
-            left_turn_formway_bit=left_turn_formway_bit,
-            debug=debug,
+        _run_stage(
+            name="step2",
+            stage_timings=stage_timings,
+            action=lambda: run_step2_segment_poc(
+                road_path=road_path,
+                node_path=node_path,
+                strategy_config_paths=[strategy_config_path],
+                out_root=step2_root,
+                run_id=resolved_run_id,
+                road_layer=road_layer,
+                road_crs=road_crs,
+                node_layer=node_layer,
+                node_crs=node_crs,
+                formway_mode=formway_mode,
+                left_turn_formway_bit=left_turn_formway_bit,
+                debug=debug,
+            ),
         )
-        stage_timings.append({"name": "step2", "wall_time_sec": time.perf_counter() - step2_started})
 
         refresh_root = stage_root / "refresh"
-        refresh_started = time.perf_counter()
-        refresh_artifacts = refresh_s2_baseline(
-            road_path=road_path,
-            node_path=node_path,
-            s2_path=step2_root,
-            out_root=refresh_root,
-            run_id=resolved_run_id,
-            road_layer=road_layer,
-            road_crs=road_crs,
-            node_layer=node_layer,
-            node_crs=node_crs,
-            debug=debug,
+        refresh_artifacts = _run_stage(
+            name="refresh",
+            stage_timings=stage_timings,
+            action=lambda: refresh_s2_baseline(
+                road_path=road_path,
+                node_path=node_path,
+                s2_path=step2_root,
+                out_root=refresh_root,
+                run_id=resolved_run_id,
+                road_layer=road_layer,
+                road_crs=road_crs,
+                node_layer=node_layer,
+                node_crs=node_crs,
+                debug=debug,
+            ),
         )
-        stage_timings.append({"name": "refresh", "wall_time_sec": time.perf_counter() - refresh_started})
 
         step4_root = stage_root / "step4"
-        step4_started = time.perf_counter()
-        step4_artifacts = run_step4_residual_graph(
-            road_path=refresh_artifacts.roads_path,
-            node_path=refresh_artifacts.nodes_path,
-            out_root=step4_root,
-            run_id=resolved_run_id,
-            formway_mode=formway_mode,
-            left_turn_formway_bit=left_turn_formway_bit,
-            debug=debug,
+        step4_artifacts = _run_stage(
+            name="step4",
+            stage_timings=stage_timings,
+            action=lambda: run_step4_residual_graph(
+                road_path=refresh_artifacts.roads_path,
+                node_path=refresh_artifacts.nodes_path,
+                out_root=step4_root,
+                run_id=resolved_run_id,
+                formway_mode=formway_mode,
+                left_turn_formway_bit=left_turn_formway_bit,
+                debug=debug,
+            ),
         )
-        stage_timings.append({"name": "step4", "wall_time_sec": time.perf_counter() - step4_started})
 
         step5_root = stage_root / "step5"
-        step5_started = time.perf_counter()
-        step5_artifacts = run_step5_staged_residual_graph(
-            road_path=step4_artifacts.refreshed_roads_path,
-            node_path=step4_artifacts.refreshed_nodes_path,
-            out_root=step5_root,
-            run_id=resolved_run_id,
-            formway_mode=formway_mode,
-            left_turn_formway_bit=left_turn_formway_bit,
-            debug=debug,
+        step5_artifacts = _run_stage(
+            name="step5",
+            stage_timings=stage_timings,
+            action=lambda: run_step5_staged_residual_graph(
+                road_path=step4_artifacts.refreshed_roads_path,
+                node_path=step4_artifacts.refreshed_nodes_path,
+                out_root=step5_root,
+                run_id=resolved_run_id,
+                formway_mode=formway_mode,
+                left_turn_formway_bit=left_turn_formway_bit,
+                debug=debug,
+            ),
         )
-        stage_timings.append({"name": "step5", "wall_time_sec": time.perf_counter() - step5_started})
 
         final_nodes_path = resolved_out_root / "nodes.geojson"
         final_roads_path = resolved_out_root / "roads.geojson"
@@ -205,6 +264,13 @@ def run_t01_skill_v1(
             "bundle_manifest_path": bundle_info["manifest_path"],
             "bundle_summary_path": bundle_info["summary_path"],
             "freeze_compare_status": freeze_compare_status,
+            "memory_management": {
+                "debug_default_enabled": True,
+                "stage_gc_after_run": True,
+                "bounded_parallel_load_workers": 2,
+                "uses_temp_stage_root_when_debug_false": True,
+                "deep_full_in_memory_pipeline": False,
+            },
         }
         summary_path = resolved_out_root / "t01_skill_v1_summary.json"
         summary_md_path = resolved_out_root / "t01_skill_v1_summary.md"

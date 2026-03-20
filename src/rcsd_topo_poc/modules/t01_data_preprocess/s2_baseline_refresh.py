@@ -5,6 +5,7 @@ import csv
 import json
 import shutil
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -269,6 +270,25 @@ def _load_roads(
     return ordered_records, by_id
 
 
+def _load_nodes_and_roads(
+    *,
+    node_path: Union[str, Path],
+    road_path: Union[str, Path],
+    node_layer: Optional[str] = None,
+    node_crs: Optional[str] = None,
+    road_layer: Optional[str] = None,
+    road_crs: Optional[str] = None,
+) -> tuple[
+    tuple[list[NodeFeatureRecord], dict[str, NodeFeatureRecord], dict[str, list[str]]],
+    tuple[list[RoadFeatureRecord], dict[str, RoadFeatureRecord]],
+]:
+    # Node / Road 读取互不依赖，使用固定 2 worker 并发即可减少大文件加载等待时间。
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="t01-load") as executor:
+        future_nodes = executor.submit(_load_nodes, node_path, layer_name=node_layer, crs_override=node_crs)
+        future_roads = executor.submit(_load_roads, road_path, layer_name=road_layer, crs_override=road_crs)
+        return future_nodes.result(), future_roads.result()
+
+
 def _road_flow_flags_for_group(road: RoadFeatureRecord, member_node_ids: set[str]) -> tuple[bool, bool]:
     touches_snode = road.snodeid in member_node_ids
     touches_enode = road.enodeid in member_node_ids
@@ -394,8 +414,14 @@ def refresh_s2_baseline(
 
     validated_pairs = _load_validated_pairs(validated_pairs_path)
     road_to_segmentid, pair_endpoints_from_segment = _load_segment_body_assignments(segment_body_path)
-    road_records, road_by_id = _load_roads(road_path, layer_name=road_layer, crs_override=road_crs)
-    node_records, node_by_id, raw_groups = _load_nodes(node_path, layer_name=node_layer, crs_override=node_crs)
+    (node_records, node_by_id, raw_groups), (road_records, road_by_id) = _load_nodes_and_roads(
+        node_path=node_path,
+        road_path=road_path,
+        node_layer=node_layer,
+        node_crs=node_crs,
+        road_layer=road_layer,
+        road_crs=road_crs,
+    )
     mainnode_groups, representative_fallback_count = _build_mainnode_groups(node_by_id, raw_groups)
 
     missing_roads = sorted(set(road_to_segmentid) - set(road_by_id), key=_sort_key)

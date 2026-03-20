@@ -133,7 +133,7 @@
 
 ## 7. 官方 end-to-end 契约
 - 官方入口：`t01-run-skill-v1`
-- 默认 `debug=false`
+- 默认 `debug=true`
 - 默认输出：
   - 最终 refreshed `nodes.geojson`
   - 最终 refreshed `roads.geojson`
@@ -141,8 +141,19 @@
   - 当前轻量 bundle
   - 指定 compare 时的 `freeze_compare_report.*`
 - `debug=true` 时，保留分阶段中间结果
+- `debug=false` 时，stage 目录使用临时目录串联，不改变最终业务结果
 
-## 8. Freeze compare 契约
+## 8. 性能 / 内存 / 并发边界
+- 当前正式纳入的优化：
+  - Step1 / Step2 / refresh / Step4 / Step5 输入图层使用固定 2 worker 并行读取
+  - 官方 runner 在每个阶段后执行 `gc.collect()`
+  - 官方 runner 记录阶段级 `tracemalloc` 峰值内存
+  - `debug=false` 时只保留最终结果与轻量审计包
+- 当前未纳入的能力：
+  - 完整全内存流水线
+  - pair / trunk / validated 核心业务决策层的并发执行
+
+## 9. Freeze compare 契约
 - 对比入口：`t01-compare-freeze`
 - 当前冻结基线：
   - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs/`
@@ -156,7 +167,7 @@
   - 全部一致：`PASS`
   - 任一不一致：`FAIL`
 
-## 9. 内网测试交付契约
+## 10. 内网测试交付契约
 - 进入内网测试时，默认交付：
   1. 当前分支内网下拉命令
   2. 可直接执行的内网脚本

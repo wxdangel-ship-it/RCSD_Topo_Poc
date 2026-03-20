@@ -23,10 +23,15 @@
   - `t01-s2-refresh-node-road`
   - `t01-step4-residual-graph`
   - `t01-step5-staged-residual-graph`
-- `debug=false`
-  - 默认只保留最终结果与轻量审计包
 - `debug=true`
+  - 官方默认值
   - 保留分阶段中间层
+- `debug=false`
+  - 用于减少无意义 I/O
+- 当前性能边界：
+  - 固定 2 worker 输入读取
+  - 阶段级 GC 与 `tracemalloc` 统计
+  - 仍未进入完整全内存流水线
 
 ## 4. baseline freeze 审计闭环
 - 当前 Skill v1.0.0 效果基线为 XXXS freeze baseline

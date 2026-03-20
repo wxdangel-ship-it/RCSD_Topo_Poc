@@ -1,0 +1,10 @@
+{
+  "skill_version": "1.0.0",
+  "mode": "candidate",
+  "freeze_label": "T01 Skill v1.0.0 XXXS semantic fix candidate",
+  "validated_pair_count": 46,
+  "segment_body_membership_count": 153,
+  "trunk_membership_count": 153,
+  "refreshed_nodes_sha256": "ca1a921e14d4db0902fc4a069e7fd0b7fc076fe391dcdceca2fbb6c4bd60b46e",
+  "refreshed_roads_sha256": "71492f67e46732a33b66a30ed7145ab1d6dc43859c360a16106e12cc592389d7"
+}

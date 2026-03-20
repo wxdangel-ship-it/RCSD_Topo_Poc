@@ -9,6 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from rcsd_topo_poc.modules.t01_data_preprocess.endpoint_pool import (
+    build_endpoint_pool_source_map,
+    collect_endpoint_pool_mainnodes,
+    write_endpoint_pool_outputs,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     RIGHT_TURN_FORMWAY_BIT,
@@ -22,12 +27,22 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     _road_flow_flags_for_group,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
+    SemanticNodeRecord,
     _coerce_int,
     _find_repo_root,
     _normalize_id,
     _sort_key,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
+from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
+    ACTIVE_CLOSED_CON_VALUES,
+    WORKING_NODE_FIELDS,
+    WORKING_ROAD_FIELDS,
+    is_active_closed_con,
+    is_allowed_road_kind,
+    is_full_through_or_t_kind,
+    is_roundabout_mainnode_kind,
+)
 
 
 DEFAULT_RUN_ID_PREFIX = "t01_step4_residual_graph_"
@@ -79,27 +94,6 @@ def _resolve_out_root(
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as fp:
         return list(csv.DictReader(fp))
-
-
-def _collect_validated_boundary_mainnodes(
-    *,
-    base_dir: Path,
-    source_specs: tuple[tuple[str, tuple[str, ...]], ...],
-) -> tuple[set[str], dict[str, tuple[str, ...]]]:
-    source_map: dict[str, set[str]] = {}
-    for source_name, relative_paths in source_specs:
-        for relative_path in relative_paths:
-            path = base_dir / relative_path
-            if not path.is_file():
-                continue
-            for row in _read_csv_rows(path):
-                for key in ("a_node_id", "b_node_id"):
-                    node_id = _normalize_id(row.get(key))
-                    if node_id is None:
-                        continue
-                    source_map.setdefault(node_id, set()).add(source_name)
-            break
-    return set(source_map), {node_id: tuple(sorted(tags, key=_sort_key)) for node_id, tags in source_map.items()}
 
 
 def _write_boundary_node_outputs(
@@ -290,17 +284,11 @@ def _parse_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[st
 
 
 def _current_grade_2(node: NodeFeatureRecord) -> Optional[int]:
-    grade_2 = _coerce_int(node.properties.get("grade_2"))
-    if grade_2 is not None:
-        return grade_2
-    return node.grade
+    return _coerce_int(node.properties.get("grade_2"))
 
 
 def _current_kind_2(node: NodeFeatureRecord) -> Optional[int]:
-    kind_2 = _coerce_int(node.properties.get("kind_2"))
-    if kind_2 is not None:
-        return kind_2
-    return node.kind
+    return _coerce_int(node.properties.get("kind_2"))
 
 
 def _current_closed_con(node: NodeFeatureRecord) -> Optional[int]:
@@ -311,14 +299,34 @@ def _current_segmentid(road: RoadFeatureRecord) -> Optional[str]:
     return _normalize_id(road.properties.get("segmentid"))
 
 
+def _require_working_layers(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    stage_label: str,
+) -> None:
+    issues: list[str] = []
+    for index, node in enumerate(nodes):
+        missing = [field for field in WORKING_NODE_FIELDS if field not in node.properties]
+        if missing:
+            issues.append(f"{stage_label} node feature[{index}] missing working fields: {', '.join(missing)}")
+    for index, road in enumerate(roads):
+        missing = [field for field in WORKING_ROAD_FIELDS if field not in road.properties]
+        if missing:
+            issues.append(f"{stage_label} road feature[{index}] missing working fields: {', '.join(missing)}")
+    if issues:
+        raise ValueError("; ".join(issues))
+
+
 def _build_step4_inputs(
     *,
     nodes: list[NodeFeatureRecord],
     roads: list[RoadFeatureRecord],
     out_root: Path,
     historical_boundary_ids: set[str],
+    historical_boundary_source_map: dict[str, tuple[str, ...]],
     debug: bool,
-) -> tuple[Path, Path, Path, dict[str, Any]]:
+) -> tuple[Path, Path, Path, dict[str, Any], dict[str, tuple[str, ...]]]:
     groups: dict[str, list[str]] = {}
     node_by_id = {node.node_id: node for node in nodes}
     for node in nodes:
@@ -335,14 +343,15 @@ def _build_step4_inputs(
         kind_2 = _current_kind_2(representative)
         closed_con = _current_closed_con(representative)
         is_historical_boundary = mainnode_id in historical_boundary_ids
-        if is_historical_boundary or (grade_2 in {1, 2} and kind_2 in {4, 2048}):
+        if is_historical_boundary or (grade_2 in {1, 2} and is_full_through_or_t_kind(kind_2)):
             input_mainnode_candidate_count += 1
-            if is_historical_boundary or closed_con in {1, 2}:
+            if is_historical_boundary or is_active_closed_con(closed_con):
                 input_seed_count += 1
             else:
                 input_closed_con_filtered_out_count += 1
 
     input_terminate_count = input_seed_count
+    endpoint_pool_ids: set[str] = set()
 
     working_node_features: list[dict[str, Any]] = []
     for node in nodes:
@@ -352,16 +361,13 @@ def _build_step4_inputs(
         closed_con = _current_closed_con(node)
         is_historical_boundary = node.semantic_node_id in historical_boundary_ids
         is_eligible = is_historical_boundary or (
-            grade_2 in {1, 2} and kind_2 in {4, 2048} and closed_con in {1, 2}
+            grade_2 in {1, 2} and is_full_through_or_t_kind(kind_2) and is_active_closed_con(closed_con)
         )
         if is_eligible:
-            props["grade"] = 1
-            props["kind"] = 4
-            props["step4_input_eligible"] = True
-        else:
-            props["grade"] = 0
-            props["kind"] = 0
-            props["step4_input_eligible"] = False
+            endpoint_pool_ids.add(node.semantic_node_id)
+        props["grade_2"] = 1 if is_eligible else 0
+        props["kind_2"] = 4 if is_eligible else 0
+        props["step4_input_eligible"] = is_eligible
         props["step4_historical_boundary"] = is_historical_boundary
         props["step4_input_grade_2"] = grade_2
         props["step4_input_kind_2"] = kind_2
@@ -369,11 +375,15 @@ def _build_step4_inputs(
         working_node_features.append({"properties": props, "geometry": node.geometry})
 
     removed_existing_segment_road_count = 0
+    removed_closed_road_count = 0
     working_road_features: list[dict[str, Any]] = []
     for road in roads:
         current_segmentid = _current_segmentid(road)
         if current_segmentid:
             removed_existing_segment_road_count += 1
+            continue
+        if not is_allowed_road_kind(road.road_kind):
+            removed_closed_road_count += 1
             continue
         working_road_features.append({"properties": dict(road.properties), "geometry": road.geometry})
 
@@ -381,16 +391,45 @@ def _build_step4_inputs(
     working_nodes_path = out_root / "step4_working_nodes.geojson"
     working_roads_path = out_root / "step4_working_roads.geojson"
     strategy_path = out_root / "step4_strategy.json"
+    step4_stage_dir = out_root / STEP4_STRATEGY_ID
+    step4_stage_dir.mkdir(parents=True, exist_ok=True)
+    semantic_nodes: dict[str, SemanticNodeRecord] = {}
+    for mainnode_id, group in mainnode_groups.items():
+        representative = node_by_id[group.representative_node_id]
+        semantic_nodes[mainnode_id] = SemanticNodeRecord(
+            semantic_node_id=mainnode_id,
+            representative_node_id=group.representative_node_id,
+            member_node_ids=tuple(group.member_node_ids),
+            geometry=representative.geometry,
+            raw_kind=_coerce_int(representative.properties.get("kind")),
+            raw_grade=_coerce_int(representative.properties.get("grade")),
+            kind_2=_current_kind_2(representative),
+            grade_2=_current_grade_2(representative),
+            closed_con=_current_closed_con(representative),
+            raw_properties=dict(representative.properties),
+        )
+    endpoint_pool_source_map = build_endpoint_pool_source_map(
+        node_ids=endpoint_pool_ids,
+        stage_id=STEP4_STRATEGY_ID,
+        previous_source_map=historical_boundary_source_map,
+    )
 
     write_geojson(working_nodes_path, working_node_features)
     write_geojson(working_roads_path, working_road_features)
+    write_endpoint_pool_outputs(
+        out_dir=step4_stage_dir,
+        source_map=endpoint_pool_source_map,
+        stage_id=STEP4_STRATEGY_ID,
+        semantic_nodes=semantic_nodes,
+        debug=debug,
+    )
     write_json(
         strategy_path,
         {
             "strategy_id": STEP4_STRATEGY_ID,
             "description": "Step4 residual graph segment construction using refreshed grade_2/kind_2/closed_con.",
-            "seed_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [1, 2]},
-            "terminate_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [1, 2]},
+            "seed_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
+            "terminate_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
             "through_node_rule": {
                 "incident_road_degree_eq": 2,
                 "incident_degree_exclude_formway_bits_any": [7],
@@ -413,10 +452,13 @@ def _build_step4_inputs(
             "input_terminate_count": input_terminate_count,
             "input_closed_con_filtered_out_count": input_closed_con_filtered_out_count,
             "historical_boundary_node_count": len(historical_boundary_ids),
+            "endpoint_pool_node_count": len(endpoint_pool_ids),
             "removed_existing_segment_road_count": removed_existing_segment_road_count,
+            "removed_closed_road_count": removed_closed_road_count,
             "working_graph_road_count": working_graph_road_count,
             "mainnode_representative_fallback_count": representative_fallback_count,
         },
+        endpoint_pool_source_map,
     )
 
 
@@ -628,7 +670,9 @@ def _refresh_after_step4(
         new_grade_2 = current_grade_2
         new_kind_2 = current_kind_2
         applied_rule = "keep_current"
-        if mainnode_id in validated_endpoint_ids:
+        if is_roundabout_mainnode_kind(current_kind_2):
+            applied_rule = "protected_roundabout_mainnode"
+        elif mainnode_id in validated_endpoint_ids:
             applied_rule = "keep_step4_pair_endpoint"
             node_rule_keep_pair_count += 1
         elif unique_segmentid_count > 1:
@@ -737,17 +781,19 @@ def run_step4_residual_graph(
         road_layer=road_layer,
         road_crs=road_crs,
     )
+    _require_working_layers(nodes=nodes, roads=roads, stage_label="Step4")
     input_parent = Path(node_path).resolve().parent
-    historical_boundary_ids, historical_boundary_source_map = _collect_validated_boundary_mainnodes(
+    historical_boundary_ids, historical_boundary_source_map = collect_endpoint_pool_mainnodes(
         base_dir=input_parent,
-        source_specs=(("S2", ("S2/validated_pairs.csv",)),),
+        source_specs=(("S2", ("S2/endpoint_pool.csv", "S2/validated_pairs.csv")),),
     )
 
-    working_nodes_path, working_roads_path, strategy_path, input_audit = _build_step4_inputs(
+    working_nodes_path, working_roads_path, strategy_path, input_audit, _endpoint_pool_source_map = _build_step4_inputs(
         nodes=nodes,
         roads=roads,
         out_root=resolved_out_root,
         historical_boundary_ids=historical_boundary_ids,
+        historical_boundary_source_map=historical_boundary_source_map,
         debug=debug,
     )
 
@@ -760,6 +806,7 @@ def run_step4_residual_graph(
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
         debug=debug,
+        assume_working_layers=True,
     )
     if len(step4_results) != 1:
         raise ValueError(f"Expected one Step4 strategy result, got {len(step4_results)}.")

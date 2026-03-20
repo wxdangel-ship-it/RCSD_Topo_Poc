@@ -21,6 +21,11 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _find_repo_
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
 from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import run_step4_residual_graph
 from rcsd_topo_poc.modules.t01_data_preprocess.step5_staged_residual_graph import run_step5_staged_residual_graph
+from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
+    MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
+    MAX_SIDE_ACCESS_DISTANCE_M,
+    initialize_working_layers,
+)
 
 
 DEFAULT_RUN_ID_PREFIX = "t01_skill_v1_"
@@ -214,7 +219,71 @@ def _write_summary_md(*, out_path: Path, summary: dict[str, Any]) -> None:
             lines.append(f"- perf_json_path: `{summary['perf_json_path']}`")
         if summary.get("perf_markers_path"):
             lines.append(f"- perf_markers_path: `{summary['perf_markers_path']}`")
+        if summary.get("distance_gate_scope_check_path"):
+            lines.append(f"- distance_gate_scope_check_path: `{summary['distance_gate_scope_check_path']}`")
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _read_json_if_exists(path: Path) -> Optional[dict[str, Any]]:
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _stage_gate_hook_status(summary_doc: Optional[dict[str, Any]]) -> tuple[bool, bool]:
+    if not summary_doc:
+        return False, False
+    dual_hooked = summary_doc.get("dual_carriageway_separation_gate_limit_m") == MAX_DUAL_CARRIAGEWAY_SEPARATION_M
+    side_hooked = summary_doc.get("side_access_distance_gate_limit_m") == MAX_SIDE_ACCESS_DISTANCE_M
+    return bool(dual_hooked), bool(side_hooked)
+
+
+def _write_distance_gate_scope_check(
+    *,
+    out_root: Path,
+    step2_root: Path,
+    step4_root: Path,
+    step5_root: Path,
+) -> Path:
+    step2_summary = _read_json_if_exists(step2_root / "S2" / "segment_summary.json")
+    step4_summary = _read_json_if_exists(step4_root / "STEP4" / "segment_summary.json")
+    step5a_summary = _read_json_if_exists(step5_root / "STEP5A" / "segment_summary.json")
+    step5b_summary = _read_json_if_exists(step5_root / "STEP5B" / "segment_summary.json")
+    step5c_summary = _read_json_if_exists(step5_root / "STEP5C" / "segment_summary.json")
+
+    step2_dual, step2_side = _stage_gate_hook_status(step2_summary)
+    step4_dual, step4_side = _stage_gate_hook_status(step4_summary)
+    step5a_dual, step5a_side = _stage_gate_hook_status(step5a_summary)
+    step5b_dual, step5b_side = _stage_gate_hook_status(step5b_summary)
+    step5c_dual, step5c_side = _stage_gate_hook_status(step5c_summary)
+
+    payload = {
+        "skill_version": SKILL_VERSION,
+        "dual_gate_limit_m": MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
+        "side_gate_limit_m": MAX_SIDE_ACCESS_DISTANCE_M,
+        "implementation_note": "Step4 and Step5 staged phases reuse the shared Step2 bidirectional segment kernel.",
+        "step2_dual_gate_hooked": step2_dual,
+        "step2_side_gate_hooked": step2_side,
+        "step4_dual_gate_hooked": step4_dual,
+        "step4_side_gate_hooked": step4_side,
+        "step5a_dual_gate_hooked": step5a_dual,
+        "step5a_side_gate_hooked": step5a_side,
+        "step5b_dual_gate_hooked": step5b_dual,
+        "step5b_side_gate_hooked": step5b_side,
+        "step5c_present": step5c_summary is not None,
+        "step5c_dual_gate_hooked": step5c_dual,
+        "step5c_side_gate_hooked": step5c_side,
+        "summary_paths": {
+            "step2": str((step2_root / "S2" / "segment_summary.json").resolve()),
+            "step4": str((step4_root / "STEP4" / "segment_summary.json").resolve()),
+            "step5a": str((step5_root / "STEP5A" / "segment_summary.json").resolve()),
+            "step5b": str((step5_root / "STEP5B" / "segment_summary.json").resolve()),
+            "step5c": str((step5_root / "STEP5C" / "segment_summary.json").resolve()),
+        },
+    }
+    out_path = out_root / "distance_gate_scope_check.json"
+    _write_json_doc(out_path, payload)
+    return out_path
 
 
 def _write_perf_md(*, out_path: Path, run_id: str, debug: bool, stages: list[dict[str, Any]], total_wall_time_sec: float) -> None:
@@ -402,7 +471,7 @@ def run_t01_skill_v1(
     stage_timings: list[dict[str, Any]] = []
     completed_stage_names: list[str] = []
     total_started = time.perf_counter()
-    total_stages = 5 + (1 if compare_freeze_dir is not None else 0)
+    total_stages = 6 + (1 if compare_freeze_dir is not None else 0)
     _write_progress_snapshot(
         out_path=progress_path,
         run_id=resolved_run_id,
@@ -433,9 +502,9 @@ def run_t01_skill_v1(
         stage_root = Path(temp_ctx.name)
 
     try:
-        step2_root = stage_root / "step2"
-        _run_stage(
-            name="step2",
+        bootstrap_root = stage_root / "bootstrap"
+        bootstrap_artifacts = _run_stage(
+            name="bootstrap",
             run_id=resolved_run_id,
             stage_index=1,
             total_stages=total_stages,
@@ -443,24 +512,52 @@ def run_t01_skill_v1(
             progress_path=progress_path,
             perf_markers_path=perf_markers_path,
             completed_stage_names=completed_stage_names,
-            action=lambda: run_step2_segment_poc(
+            action=lambda: initialize_working_layers(
                 road_path=road_path,
                 node_path=node_path,
-                strategy_config_paths=[strategy_config_path],
-                out_root=step2_root,
-                run_id=resolved_run_id,
+                out_root=bootstrap_root,
                 road_layer=road_layer,
                 road_crs=road_crs,
                 node_layer=node_layer,
                 node_crs=node_crs,
+                debug=debug,
+                progress_callback=_make_stage_subprogress_callback(
+                    run_id=resolved_run_id,
+                    stage_name="bootstrap",
+                    stage_index=1,
+                    total_stages=total_stages,
+                    progress_path=progress_path,
+                    perf_markers_path=perf_markers_path,
+                    completed_stage_names=completed_stage_names,
+                ),
+            ),
+        )
+
+        step2_root = stage_root / "step2"
+        _run_stage(
+            name="step2",
+            run_id=resolved_run_id,
+            stage_index=2,
+            total_stages=total_stages,
+            stage_timings=stage_timings,
+            progress_path=progress_path,
+            perf_markers_path=perf_markers_path,
+            completed_stage_names=completed_stage_names,
+            action=lambda: run_step2_segment_poc(
+                road_path=bootstrap_artifacts.roads_path,
+                node_path=bootstrap_artifacts.nodes_path,
+                strategy_config_paths=[strategy_config_path],
+                out_root=step2_root,
+                run_id=resolved_run_id,
                 formway_mode=formway_mode,
                 left_turn_formway_bit=left_turn_formway_bit,
                 debug=debug,
                 retain_validation_details=False,
+                assume_working_layers=True,
                 progress_callback=_make_stage_subprogress_callback(
                     run_id=resolved_run_id,
                     stage_name="step2",
-                    stage_index=1,
+                    stage_index=2,
                     total_stages=total_stages,
                     progress_path=progress_path,
                     perf_markers_path=perf_markers_path,
@@ -473,23 +570,20 @@ def run_t01_skill_v1(
         refresh_artifacts = _run_stage(
             name="refresh",
             run_id=resolved_run_id,
-            stage_index=2,
+            stage_index=3,
             total_stages=total_stages,
             stage_timings=stage_timings,
             progress_path=progress_path,
             perf_markers_path=perf_markers_path,
             completed_stage_names=completed_stage_names,
             action=lambda: refresh_s2_baseline(
-                road_path=road_path,
-                node_path=node_path,
+                road_path=bootstrap_artifacts.roads_path,
+                node_path=bootstrap_artifacts.nodes_path,
                 s2_path=step2_root,
                 out_root=refresh_root,
                 run_id=resolved_run_id,
-                road_layer=road_layer,
-                road_crs=road_crs,
-                node_layer=node_layer,
-                node_crs=node_crs,
                 debug=debug,
+                assume_working_layers=True,
             ),
         )
 
@@ -497,7 +591,7 @@ def run_t01_skill_v1(
         step4_artifacts = _run_stage(
             name="step4",
             run_id=resolved_run_id,
-            stage_index=3,
+            stage_index=4,
             total_stages=total_stages,
             stage_timings=stage_timings,
             progress_path=progress_path,
@@ -518,7 +612,7 @@ def run_t01_skill_v1(
         step5_artifacts = _run_stage(
             name="step5",
             run_id=resolved_run_id,
-            stage_index=4,
+            stage_index=5,
             total_stages=total_stages,
             stage_timings=stage_timings,
             progress_path=progress_path,
@@ -540,7 +634,7 @@ def run_t01_skill_v1(
         bundle_info = _run_stage(
             name="finalize_bundle",
             run_id=resolved_run_id,
-            stage_index=5,
+            stage_index=6,
             total_stages=total_stages,
             stage_timings=stage_timings,
             progress_path=progress_path,
@@ -557,13 +651,19 @@ def run_t01_skill_v1(
                 final_roads_path=final_roads_path,
             ),
         )
+        distance_gate_scope_check_path = _write_distance_gate_scope_check(
+            out_root=resolved_out_root,
+            step2_root=step2_root,
+            step4_root=step4_root,
+            step5_root=step5_root,
+        )
 
         freeze_compare_status: Optional[str] = None
         if compare_freeze_dir is not None:
             freeze_compare_status = _run_stage(
                 name="freeze_compare",
                 run_id=resolved_run_id,
-                stage_index=6,
+                stage_index=7,
                 total_stages=total_stages,
                 stage_timings=stage_timings,
                 progress_path=progress_path,
@@ -583,6 +683,8 @@ def run_t01_skill_v1(
             "debug": debug,
             "input_node_path": str(Path(node_path).resolve()),
             "input_road_path": str(Path(road_path).resolve()),
+            "bootstrap_nodes_path": str(bootstrap_artifacts.nodes_path.resolve()),
+            "bootstrap_roads_path": str(bootstrap_artifacts.roads_path.resolve()),
             "strategy_config_path": str(Path(strategy_config_path).resolve()),
             "stages": stage_timings,
             "total_wall_time_sec": total_wall_time_sec,
@@ -590,6 +692,7 @@ def run_t01_skill_v1(
             "final_roads_path": str(final_roads_path.resolve()),
             "bundle_manifest_path": bundle_info["manifest_path"],
             "bundle_summary_path": bundle_info["summary_path"],
+            "distance_gate_scope_check_path": str(distance_gate_scope_check_path.resolve()),
             "freeze_compare_status": freeze_compare_status,
             "progress_path": str(progress_path.resolve()),
             "perf_json_path": str(perf_json_path.resolve()),

@@ -15,6 +15,10 @@ from shapely.geometry import LineString, MultiLineString
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge
 
+from rcsd_topo_poc.modules.t01_data_preprocess.endpoint_pool import (
+    build_endpoint_pool_source_map,
+    write_endpoint_pool_outputs,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     PairRecord,
@@ -32,6 +36,12 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     build_step1_graph_context,
     run_step1_strategy,
     write_step1_candidate_outputs,
+)
+from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
+    MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
+    MAX_SIDE_ACCESS_DISTANCE_M,
+    initialize_working_layers,
+    is_allowed_road_kind,
 )
 
 
@@ -56,6 +66,7 @@ class TrunkCandidate:
     signed_area: float
     total_length: float
     left_turn_road_ids: tuple[str, ...]
+    max_dual_carriageway_separation_m: float
     is_through_collapsed_corridor: bool = False
     is_bidirectional_minimal_loop: bool = False
     is_semantic_node_group_closure: bool = False
@@ -105,6 +116,8 @@ class NonTrunkComponent:
     conflicting_pair_ids: tuple[str, ...]
     blocked_by_transition_same_dir: bool
     transition_block_infos: tuple[dict[str, Any], ...]
+    side_access_distance_m: Optional[float]
+    side_access_gate_passed: bool
     kept_as_segment_body: bool
     moved_to_step3_residual: bool
     moved_to_branch_cut: bool
@@ -175,6 +188,41 @@ def _geometry_coords(geometry: BaseGeometry) -> list[tuple[float, float]]:
     return coords
 
 
+def _line_geometry_from_coords(coords: list[tuple[float, float]]) -> Optional[BaseGeometry]:
+    if len(coords) < 2:
+        return None
+    return LineString(coords)
+
+
+def _line_geometry_from_road_ids(
+    road_ids: tuple[str, ...],
+    *,
+    roads: dict[str, RoadRecord],
+) -> Optional[BaseGeometry]:
+    parts: list[LineString] = []
+    for road_id in road_ids:
+        coords = _geometry_coords(roads[road_id].geometry)
+        if len(coords) < 2:
+            continue
+        parts.append(LineString(coords))
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    return MultiLineString(parts)
+
+
+def _max_nearest_distance_m(
+    source_geometry: Optional[BaseGeometry],
+    target_geometry: Optional[BaseGeometry],
+) -> Optional[float]:
+    if source_geometry is None or target_geometry is None:
+        return None
+    if source_geometry.is_empty or target_geometry.is_empty:
+        return None
+    return float(source_geometry.hausdorff_distance(target_geometry))
+
+
 def _build_semantic_endpoints(
     context: Step1GraphContext,
 ) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[TraversalEdge, ...]]]:
@@ -182,6 +230,8 @@ def _build_semantic_endpoints(
     undirected_lists: dict[str, list[TraversalEdge]] = defaultdict(list)
 
     for road in context.roads.values():
+        if not is_allowed_road_kind(road.road_kind):
+            continue
         if road.snodeid not in context.physical_nodes or road.enodeid not in context.physical_nodes:
             continue
 
@@ -680,6 +730,8 @@ def _component_to_dict(component: NonTrunkComponent) -> dict[str, Any]:
         "conflicting_pair_ids": list(component.conflicting_pair_ids),
         "blocked_by_transition_same_dir": component.blocked_by_transition_same_dir,
         "transition_block_infos": list(component.transition_block_infos),
+        "side_access_distance_m": component.side_access_distance_m,
+        "side_access_gate_passed": component.side_access_gate_passed,
         "kept_as_segment_body": component.kept_as_segment_body,
         "moved_to_step3_residual": component.moved_to_step3_residual,
         "moved_to_branch_cut": component.moved_to_branch_cut,
@@ -725,6 +777,7 @@ def _tighten_validated_segment_components(
 
         trunk_road_id_set = set(validation.trunk_road_ids)
         pruned_road_id_set = set(validation.pruned_road_ids)
+        trunk_geometry = _line_geometry_from_road_ids(validation.trunk_road_ids, roads=context.roads)
 
         if validation.trunk_mode == "through_collapsed_corridor":
             body_candidate_road_ids = set(validation.trunk_road_ids)
@@ -779,6 +832,11 @@ def _tighten_validated_segment_components(
             hits_other_terminate = bool(terminate_node_ids)
             contains_other_validated_trunk = bool(conflicting_pair_ids)
             blocked_by_transition_same_dir = bool(transition_block_infos)
+            component_geometry = _line_geometry_from_road_ids(component_road_ids, roads=context.roads)
+            side_access_distance_m = _max_nearest_distance_m(component_geometry, trunk_geometry)
+            side_access_gate_passed = (
+                side_access_distance_m is None or side_access_distance_m <= MAX_SIDE_ACCESS_DISTANCE_M
+            )
 
             kept_as_segment_body = False
             moved_to_step3_residual = False
@@ -798,6 +856,9 @@ def _tighten_validated_segment_components(
                 moved_to_step3_residual = True
                 transition_same_dir_blocked = True
                 decision_reason = "transition_same_dir_block"
+            elif component_road_id_set.issubset(body_candidate_non_trunk_road_ids) and not side_access_gate_passed:
+                moved_to_step3_residual = True
+                decision_reason = "side_access_distance_exceeded"
             elif component_road_id_set.issubset(body_candidate_non_trunk_road_ids):
                 kept_as_segment_body = True
                 decision_reason = "segment_body"
@@ -823,6 +884,8 @@ def _tighten_validated_segment_components(
                 conflicting_pair_ids=conflicting_pair_ids,
                 blocked_by_transition_same_dir=blocked_by_transition_same_dir,
                 transition_block_infos=transition_block_infos,
+                side_access_distance_m=side_access_distance_m,
+                side_access_gate_passed=side_access_gate_passed,
                 kept_as_segment_body=kept_as_segment_body,
                 moved_to_step3_residual=moved_to_step3_residual,
                 moved_to_branch_cut=moved_to_branch_cut,
@@ -843,6 +906,8 @@ def _tighten_validated_segment_components(
                             "blocked_by_transition_same_dir": blocked_by_transition_same_dir,
                             "conflicting_pair_ids": list(conflicting_pair_ids),
                             "terminate_node_ids": list(terminate_node_ids),
+                            "side_access_distance_m": side_access_distance_m,
+                            "side_access_gate_passed": side_access_gate_passed,
                             "hint_cut_reasons": sorted(refine_cut_reason_by_road.get(road_id, set()), key=_sort_key),
                         }
                     )
@@ -1288,6 +1353,9 @@ def _collect_trunk_candidates(
             reverse_coords = _path_coords(reverse_path, roads=roads, road_endpoints=road_endpoints)
             if not ring_coords or not reverse_coords:
                 continue
+            forward_geometry = _line_geometry_from_coords(ring_coords)
+            reverse_geometry = _line_geometry_from_coords(reverse_coords)
+            max_dual_carriageway_separation_m = _max_nearest_distance_m(forward_geometry, reverse_geometry) or 0.0
             ring_coords.extend(reverse_coords[1:])
 
             signed_area = _signed_ring_area(ring_coords)
@@ -1311,6 +1379,7 @@ def _collect_trunk_candidates(
                 signed_area=signed_area,
                 total_length=forward_path.total_length + reverse_path.total_length,
                 left_turn_road_ids=left_turn_road_ids,
+                max_dual_carriageway_separation_m=max_dual_carriageway_separation_m,
                 is_bidirectional_minimal_loop=is_bidirectional_minimal_loop,
                 is_semantic_node_group_closure=is_semantic_node_group_closure,
             )
@@ -1323,6 +1392,34 @@ def _collect_trunk_candidates(
     return counterclockwise_candidates, clockwise_only_found
 
 
+def _split_dual_separation_candidates(
+    candidates: list[TrunkCandidate],
+) -> tuple[list[TrunkCandidate], list[TrunkCandidate]]:
+    passed: list[TrunkCandidate] = []
+    failed: list[TrunkCandidate] = []
+    for candidate in candidates:
+        if candidate.max_dual_carriageway_separation_m <= MAX_DUAL_CARRIAGEWAY_SEPARATION_M:
+            passed.append(candidate)
+        else:
+            failed.append(candidate)
+    return passed, failed
+
+
+def _best_dual_separation_failure(candidates: list[TrunkCandidate]) -> Optional[TrunkCandidate]:
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: (item.max_dual_carriageway_separation_m, item.total_length))
+
+
+def _dual_separation_support_info(candidate: Optional[TrunkCandidate]) -> dict[str, Any]:
+    return {
+        "dual_carriageway_separation_gate_limit_m": MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
+        "dual_carriageway_max_separation_m": (
+            None if candidate is None else candidate.max_dual_carriageway_separation_m
+        ),
+    }
+
+
 def _evaluate_trunk(
     pair: PairRecord,
     *,
@@ -1332,9 +1429,10 @@ def _evaluate_trunk(
     through_rule: ThroughRuleSpec,
     formway_mode: str,
     left_turn_formway_bit: int,
-) -> tuple[Optional[TrunkCandidate], Optional[str], tuple[str, ...]]:
+) -> tuple[Optional[TrunkCandidate], Optional[str], tuple[str, ...], dict[str, Any]]:
     collapsed_candidate: Optional[TrunkCandidate] = None
     collapsed_warnings: tuple[str, ...] = ()
+    collapsed_failed_candidate: Optional[TrunkCandidate] = None
     if pair.through_node_ids:
         collapsed_candidate, collapsed_warnings = _evaluate_through_collapsed_corridor(
             pair,
@@ -1345,6 +1443,13 @@ def _evaluate_trunk(
             formway_mode=formway_mode,
             left_turn_formway_bit=left_turn_formway_bit,
         )
+        if (
+            collapsed_candidate is not None
+            and collapsed_candidate.max_dual_carriageway_separation_m > MAX_DUAL_CARRIAGEWAY_SEPARATION_M
+        ):
+            collapsed_failed_candidate = collapsed_candidate
+            collapsed_candidate = None
+            collapsed_warnings = ("dual_carriageway_separation_exceeded",)
 
     base_adjacency = _build_filtered_directed_adjacency(
         context,
@@ -1400,28 +1505,41 @@ def _evaluate_trunk(
             left_turn_formway_bit=left_turn_formway_bit,
             allow_bidirectional_overlap=True,
         )
+        strict_passed_candidates, strict_failed_candidates = _split_dual_separation_candidates(strict_candidates)
+        base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(base_candidates)
         if collapsed_candidate is not None:
-            return collapsed_candidate, None, collapsed_warnings
-        if strict_candidates:
-            return strict_candidates[0], None, ()
-        if base_candidates:
-            return None, "left_turn_only_polluted_trunk", ()
+            return collapsed_candidate, None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
+        if strict_passed_candidates:
+            return strict_passed_candidates[0], None, (), _dual_separation_support_info(strict_passed_candidates[0])
+        if base_passed_candidates:
+            return None, "left_turn_only_polluted_trunk", (), _dual_separation_support_info(base_passed_candidates[0])
+        if strict_failed_candidates or base_failed_candidates or collapsed_failed_candidate is not None:
+            failure_candidate = _best_dual_separation_failure(
+                strict_failed_candidates or base_failed_candidates or ([collapsed_failed_candidate] if collapsed_failed_candidate else [])
+            )
+            return None, "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(failure_candidate)
         if strict_clockwise_only or base_clockwise_only:
-            return None, "only_clockwise_loop", ()
-        return None, "no_valid_trunk", ()
+            return None, "only_clockwise_loop", (), _dual_separation_support_info(None)
+        return None, "no_valid_trunk", (), _dual_separation_support_info(None)
 
     if collapsed_candidate is not None:
-        return collapsed_candidate, None, collapsed_warnings
-    if not base_candidates:
+        return collapsed_candidate, None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
+    base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(base_candidates)
+    if not base_passed_candidates:
+        if base_failed_candidates or collapsed_failed_candidate is not None:
+            failure_candidate = _best_dual_separation_failure(
+                base_failed_candidates or ([collapsed_failed_candidate] if collapsed_failed_candidate else [])
+            )
+            return None, "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(failure_candidate)
         if base_clockwise_only:
-            return None, "only_clockwise_loop", ()
-        return None, "no_valid_trunk", ()
+            return None, "only_clockwise_loop", (), _dual_separation_support_info(None)
+        return None, "no_valid_trunk", (), _dual_separation_support_info(None)
 
     warnings: tuple[str, ...] = ()
-    chosen = base_candidates[0]
+    chosen = base_passed_candidates[0]
     if formway_mode == "audit_only" and chosen.left_turn_road_ids:
         warnings = ("formway_unreliable_warning",)
-    return chosen, None, warnings
+    return chosen, None, warnings, _dual_separation_support_info(chosen)
 
 
 def _evaluate_through_collapsed_corridor(
@@ -1518,6 +1636,7 @@ def _evaluate_through_collapsed_corridor(
             signed_area=0.0,
             total_length=forward_path.total_length + reverse_path.total_length,
             left_turn_road_ids=left_turn_road_ids,
+            max_dual_carriageway_separation_m=0.0,
             is_through_collapsed_corridor=True,
         ),
         warnings,
@@ -1617,6 +1736,7 @@ def _write_step2_outputs(
     run_id: str,
     context: Step1GraphContext,
     validations: list[PairValidationResult],
+    endpoint_pool_source_map: dict[str, tuple[str, ...]],
     formway_mode: str,
     debug: bool,
     retain_validation_details: bool,
@@ -1640,12 +1760,14 @@ def _write_step2_outputs(
     left_turn_trunk_reject_count = 0
     disconnected_after_prune_count = 0
     shared_trunk_conflict_count = 0
+    dual_carriageway_separation_reject_count = 0
     formway_warning_count = 0
     branch_cut_component_keys: set[tuple[str, str]] = set()
     other_terminate_cut_keys: set[tuple[str, str]] = set()
     other_trunk_conflict_keys: set[tuple[str, str]] = set()
     transition_same_dir_block_keys: set[tuple[str, str]] = set()
     residual_component_keys: set[tuple[str, str]] = set()
+    side_access_distance_block_keys: set[tuple[str, str]] = set()
 
     for validation in validations:
         support_info = dict(validation.support_info)
@@ -1718,6 +1840,8 @@ def _write_step2_outputs(
             disconnected_after_prune_count += 1
         if validation.reject_reason == "shared_trunk_conflict":
             shared_trunk_conflict_count += 1
+        if validation.reject_reason == "dual_carriageway_separation_exceeded":
+            dual_carriageway_separation_reject_count += 1
         if "formway_unreliable_warning" in validation.warning_codes:
             formway_warning_count += 1
 
@@ -1737,6 +1861,8 @@ def _write_step2_outputs(
             component_key = (validation.pair_id, str(component_info.get("component_id", "")))
             if component_info.get("moved_to_step3_residual"):
                 residual_component_keys.add(component_key)
+            if component_info.get("decision_reason") == "side_access_distance_exceeded":
+                side_access_distance_block_keys.add(component_key)
             if component_info.get("blocked_by_transition_same_dir"):
                 transition_same_dir_block_keys.add(component_key)
 
@@ -1754,6 +1880,7 @@ def _write_step2_outputs(
                     "trunk_mode": validation.trunk_mode,
                     "warning_codes": list(validation.warning_codes),
                     "left_turn_excluded_mode": validation.left_turn_excluded_mode,
+                    "dual_carriageway_max_separation_m": support_info.get("dual_carriageway_max_separation_m"),
                 },
             )
             if trunk_feature is not None:
@@ -1918,6 +2045,13 @@ def _write_step2_outputs(
     validation_table_path = out_dir / "pair_validation_table.csv"
     working_graph_debug_path = out_dir / "working_graph_debug.geojson"
     segment_summary_path = out_dir / "segment_summary.json"
+    endpoint_pool_csv_path, endpoint_pool_summary_path, endpoint_pool_nodes_path = write_endpoint_pool_outputs(
+        out_dir=out_dir,
+        source_map=endpoint_pool_source_map,
+        stage_id=strategy.strategy_id,
+        semantic_nodes=context.semantic_nodes,
+        debug=debug,
+    )
 
     write_csv(
         validated_pairs_path,
@@ -1980,9 +2114,15 @@ def _write_step2_outputs(
         "prune_branch_count": total_branch_cut_count,
         "disconnected_after_prune_count": disconnected_after_prune_count,
         "shared_trunk_conflict_count": shared_trunk_conflict_count,
+        "dual_carriageway_separation_reject_count": dual_carriageway_separation_reject_count,
+        "side_access_distance_block_count": len(side_access_distance_block_keys),
+        "dual_carriageway_separation_gate_limit_m": MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
+        "side_access_distance_gate_limit_m": MAX_SIDE_ACCESS_DISTANCE_M,
         "formway_warning_count": formway_warning_count,
         "debug": debug,
         "output_files": [
+            endpoint_pool_csv_path.name,
+            endpoint_pool_summary_path.name,
             validated_pairs_path.name,
             rejected_pairs_path.name,
             trunk_roads_path.name,
@@ -2002,19 +2142,20 @@ def _write_step2_outputs(
         write_geojson(branch_cut_roads_path, branch_cut_features)
         write_geojson(candidate_channel_path, candidate_channel_features)
         write_geojson(working_graph_debug_path, working_graph_debug_features)
-        segment_summary["output_files"].extend(
-            [
-                pair_links_validated_path.name,
-                segment_roads_path.name,
-                trunk_road_members_path.name,
-                segment_body_road_members_path.name,
-                step3_residual_road_members_path.name,
-                segment_road_members_path.name,
-                branch_cut_roads_path.name,
-                candidate_channel_path.name,
-                working_graph_debug_path.name,
-            ]
-        )
+        debug_output_files = [
+            pair_links_validated_path.name,
+            segment_roads_path.name,
+            trunk_road_members_path.name,
+            segment_body_road_members_path.name,
+            step3_residual_road_members_path.name,
+            segment_road_members_path.name,
+            branch_cut_roads_path.name,
+            candidate_channel_path.name,
+            working_graph_debug_path.name,
+        ]
+        if endpoint_pool_nodes_path is not None:
+            debug_output_files.append(endpoint_pool_nodes_path.name)
+        segment_summary["output_files"].extend(debug_output_files)
     write_json(segment_summary_path, segment_summary)
 
     return Step2StrategyResult(
@@ -2113,7 +2254,7 @@ def _validate_pair_candidates(
             )
             continue
 
-        trunk_candidate, reject_reason, warning_codes = _evaluate_trunk(
+        trunk_candidate, reject_reason, warning_codes, trunk_gate_info = _evaluate_trunk(
             pair,
             context=context,
             pruned_road_ids=pruned_road_ids,
@@ -2149,6 +2290,7 @@ def _validate_pair_candidates(
                         "branch_cut_infos": branch_cut_infos,
                         "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
                         "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                        **trunk_gate_info,
                     },
                 )
             )
@@ -2242,6 +2384,7 @@ def _validate_pair_candidates(
                         "trunk_mode": trunk_mode,
                         "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
                         "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
+                        **trunk_gate_info,
                         "segment_body_candidate_road_ids": list(segment_road_ids),
                         "segment_body_candidate_cut_infos": segment_cut_infos,
                     },
@@ -2285,6 +2428,7 @@ def _validate_pair_candidates(
                     "trunk_mode": trunk_mode,
                     "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
                     "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
+                    **trunk_gate_info,
                     "segment_body_candidate_road_ids": list(segment_road_ids),
                     "segment_body_candidate_cut_infos": segment_cut_infos,
                     "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
@@ -2316,20 +2460,33 @@ def run_step2_segment_poc(
     debug: bool = True,
     retain_validation_details: bool = True,
     progress_callback: Optional[Step2ProgressCallback] = None,
+    assume_working_layers: bool = False,
 ) -> list[Step2StrategyResult]:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
 
     resolved_out_root = Path(out_root)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
+    working_road_path = road_path
+    working_node_path = node_path
+    if not assume_working_layers:
+        bootstrap_artifacts = initialize_working_layers(
+            road_path=road_path,
+            node_path=node_path,
+            out_root=resolved_out_root / "_bootstrap",
+            road_layer=road_layer,
+            road_crs=road_crs,
+            node_layer=node_layer,
+            node_crs=node_crs,
+            debug=debug,
+            progress_callback=lambda event, payload: _emit_progress(progress_callback, event, **payload),
+        )
+        working_road_path = bootstrap_artifacts.roads_path
+        working_node_path = bootstrap_artifacts.nodes_path
     _emit_progress(progress_callback, "context_build_started")
     context = build_step1_graph_context(
-        road_path=road_path,
-        node_path=node_path,
-        road_layer=road_layer,
-        road_crs=road_crs,
-        node_layer=node_layer,
-        node_crs=node_crs,
+        road_path=working_road_path,
+        node_path=working_node_path,
     )
     _emit_progress(
         progress_callback,
@@ -2417,6 +2574,10 @@ def run_step2_segment_poc(
             formway_mode=formway_mode,
             left_turn_formway_bit=left_turn_formway_bit,
         )
+        endpoint_pool_source_map = build_endpoint_pool_source_map(
+            node_ids=set(execution.seed_ids) | set(execution.terminate_ids),
+            stage_id=strategy.strategy_id,
+        )
         validated_pair_count = sum(1 for item in validations if item.validated_status == "validated")
         rejected_pair_count = len(validations) - validated_pair_count
         _emit_progress(
@@ -2435,6 +2596,7 @@ def run_step2_segment_poc(
             run_id=resolved_run_id,
             context=context,
             validations=validations,
+            endpoint_pool_source_map=endpoint_pool_source_map,
             formway_mode=formway_mode,
             debug=debug,
             retain_validation_details=retain_validation_details,

@@ -4,6 +4,7 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
@@ -45,6 +46,7 @@ def _road_feature(
     coords: list[list[float]],
     *,
     formway: int = 0,
+    road_kind: int = 0,
     segmentid: str | None = None,
     s_grade: str | None = None,
 ) -> dict:
@@ -56,6 +58,7 @@ def _road_feature(
             "enodeid": enodeid,
             "direction": direction,
             "formway": formway,
+            "road_kind": road_kind,
             "segmentid": segmentid,
             "s_grade": s_grade,
         },
@@ -87,7 +90,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
         [
             _node_feature(1, 0.0, 0.0, grade_2=2, kind_2=2048, closed_con=2),
             _node_feature(2, 1.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
-            _node_feature(3, 2.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(3, 2.0, 0.0, grade_2=1, kind_2=64, closed_con=2),
             _node_feature(4, 1.0, -1.0, grade_2=0, kind_2=0, closed_con=0),
             _node_feature(5, 1.0, 2.0, grade_2=0, kind_2=0, closed_con=0),
             _node_feature(6, 1.2, 0.0, grade_2=0, kind_2=0, closed_con=0),
@@ -113,6 +116,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
             _road_feature("r62", 6, 2, 0, [[1.2, 0.0], [1.0, 1.0]]),
             _road_feature("r17", 1, 7, 0, [[0.0, 0.0], [-1.0, 0.0]]),
             _road_feature("r83", 8, 3, 0, [[3.0, 0.0], [2.0, 0.0]]),
+            _road_feature("closed1", 7, 8, 0, [[-1.0, 0.0], [3.0, 0.0]], road_kind=1),
             _road_feature("old1", 500, 501, 0, [[8.0, 0.0], [9.0, 0.0]], segmentid="old_pair", s_grade="0-0\u53cc"),
             _road_feature("tin", 502, 501, 2, [[8.0, 1.0], [9.0, 0.0]]),
             _road_feature("tout", 501, 503, 2, [[9.0, 0.0], [10.0, 1.0]]),
@@ -132,14 +136,16 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     assert summary["input_terminate_count"] == 2
     assert summary["input_closed_con_filtered_out_count"] == 1
     assert summary["removed_existing_segment_road_count"] == 1
+    assert summary["removed_closed_road_count"] == 1
     assert summary["working_graph_road_count"] == 11
     assert summary["step4_candidate_pair_count"] == 1
     assert summary["step4_validated_pair_count"] == 1
     assert summary["step4_new_segment_road_count"] == 6
-    assert summary["node_rule_keep_pair_count"] == 2
+    assert summary["node_rule_keep_pair_count"] == 1
     assert summary["node_rule_new_t_count"] >= 1
 
     assert (artifacts.out_root / "STEP4").is_dir()
+    assert (artifacts.out_root / "STEP4" / "endpoint_pool.csv").is_file()
     assert (artifacts.out_root / "step4_pair_candidates.csv").is_file()
     assert (artifacts.out_root / "step4_validated_pairs.csv").is_file()
     assert (artifacts.out_root / "step4_segment_body_roads.geojson").is_file()
@@ -152,6 +158,10 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
 
     validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
     assert [row["pair_id"] for row in validated_rows] == ["STEP4:1__3"]
+    working_nodes_doc = _load_geojson(artifacts.out_root / "step4_working_nodes.geojson")
+    working_node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in working_nodes_doc["features"]}
+    assert working_node_props["3"]["step4_input_kind_2"] == 64
+    assert working_node_props["3"]["step4_input_eligible"] is True
 
     roads_doc = _load_geojson(artifacts.refreshed_roads_path)
     road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
@@ -163,6 +173,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     assert road_props["r25"]["segmentid"] in {None, ""}
     assert road_props["r17"]["segmentid"] in {None, ""}
     assert road_props["r83"]["segmentid"] in {None, ""}
+    assert road_props["closed1"]["segmentid"] in {None, ""}
     assert road_props["tin"]["segmentid"] in {None, ""}
     assert road_props["tout"]["segmentid"] in {None, ""}
 
@@ -171,7 +182,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     assert node_props["1"]["grade_2"] == 2
     assert node_props["1"]["kind_2"] == 2048
     assert node_props["3"]["grade_2"] == 1
-    assert node_props["3"]["kind_2"] == 4
+    assert node_props["3"]["kind_2"] == 64
     assert node_props["501"]["grade_2"] == 3
     assert node_props["501"]["kind_2"] == 2048
     assert node_props["300"]["grade_2"] == 1
@@ -179,6 +190,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
 
     mainnode_rows = {row["mainnode_id"]: row for row in _load_csv_rows(artifacts.mainnode_table_path)}
     assert mainnode_rows["1"]["applied_rule"] == "keep_step4_pair_endpoint"
+    assert mainnode_rows["3"]["applied_rule"] == "protected_roundabout_mainnode"
     assert mainnode_rows["501"]["applied_rule"] == "new_t_like"
     assert mainnode_rows["300"]["applied_rule"] == "keep_current"
 
@@ -188,8 +200,8 @@ def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path:
     input_dir.mkdir()
     s2_dir = input_dir / "S2"
     s2_dir.mkdir()
-    (s2_dir / "validated_pairs.csv").write_text(
-        "pair_id,a_node_id,b_node_id\nS2:300__999,300,999\n",
+    (s2_dir / "endpoint_pool.csv").write_text(
+        "node_id,source_tags\n300,S2\n999,S2\n",
         encoding="utf-8",
     )
 
@@ -232,3 +244,37 @@ def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path:
 
     validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
     assert {row["pair_id"] for row in validated_rows} == {"STEP4:1__300"}
+
+
+def test_step4_requires_initialized_working_layers(tmp_path: Path) -> None:
+    node_path = tmp_path / "raw_nodes.geojson"
+    road_path = tmp_path / "raw_roads.geojson"
+
+    write_geojson(
+        node_path,
+        [
+            {
+                "type": "Feature",
+                "properties": {"id": 1, "kind": 4, "grade": 1, "closed_con": 2},
+                "geometry": Point(0.0, 0.0),
+            }
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            {
+                "type": "Feature",
+                "properties": {"id": "r1", "snodeid": 1, "enodeid": 1, "direction": 2, "formway": 0},
+                "geometry": LineString([(0.0, 0.0), (0.1, 0.0)]),
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="missing working fields"):
+        run_step4_residual_graph(
+            road_path=road_path,
+            node_path=node_path,
+            out_root=tmp_path / "out_invalid",
+            run_id="step4_invalid",
+        )

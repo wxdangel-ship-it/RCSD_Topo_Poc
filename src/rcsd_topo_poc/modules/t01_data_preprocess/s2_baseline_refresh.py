@@ -22,6 +22,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     _normalize_mainnodeid,
     _sort_key,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import initialize_working_layers, is_roundabout_mainnode_kind
 
 
 DEFAULT_RUN_ID_PREFIX = "t01_s2_refresh_node_road_"
@@ -47,6 +48,7 @@ class RoadFeatureRecord:
     enodeid: str
     direction: int
     formway: Optional[int]
+    road_kind: Optional[int]
     properties: dict[str, Any]
     geometry: BaseGeometry
 
@@ -261,6 +263,7 @@ def _load_roads(
             enodeid=enodeid,
             direction=direction,
             formway=_coerce_int(props.get("formway")),
+            road_kind=_coerce_int(props.get("road_kind")),
             properties=props,
             geometry=feature.geometry,
         )
@@ -308,6 +311,14 @@ def _road_flow_flags_for_group(road: RoadFeatureRecord, member_node_ids: set[str
         return touches_snode, touches_enode
 
     return False, False
+
+
+def _current_node_grade_2(node: NodeFeatureRecord) -> Optional[int]:
+    return _coerce_int(node.properties.get("grade_2"))
+
+
+def _current_node_kind_2(node: NodeFeatureRecord) -> Optional[int]:
+    return _coerce_int(node.properties.get("kind_2"))
 
 
 def _write_outputs(
@@ -399,9 +410,25 @@ def refresh_s2_baseline(
     out_root: Optional[Union[str, Path]] = None,
     run_id: Optional[str] = None,
     debug: bool = True,
+    assume_working_layers: bool = False,
 ) -> RefreshArtifacts:
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
+    working_road_path = road_path
+    working_node_path = node_path
+    if not assume_working_layers:
+        bootstrap_artifacts = initialize_working_layers(
+            road_path=road_path,
+            node_path=node_path,
+            out_root=resolved_out_root / "_bootstrap",
+            road_layer=road_layer,
+            road_crs=road_crs,
+            node_layer=node_layer,
+            node_crs=node_crs,
+            debug=debug,
+        )
+        working_road_path = bootstrap_artifacts.roads_path
+        working_node_path = bootstrap_artifacts.nodes_path
 
     s2_dir = _resolve_s2_dir(s2_path)
     preserved_s2_dir = _materialize_s2_boundary_snapshot(
@@ -415,12 +442,8 @@ def refresh_s2_baseline(
     validated_pairs = _load_validated_pairs(validated_pairs_path)
     road_to_segmentid, pair_endpoints_from_segment = _load_segment_body_assignments(segment_body_path)
     (node_records, node_by_id, raw_groups), (road_records, road_by_id) = _load_nodes_and_roads(
-        node_path=node_path,
-        road_path=road_path,
-        node_layer=node_layer,
-        node_crs=node_crs,
-        road_layer=road_layer,
-        road_crs=road_crs,
+        node_path=working_node_path,
+        road_path=working_road_path,
     )
     mainnode_groups, representative_fallback_count = _build_mainnode_groups(node_by_id, raw_groups)
 
@@ -453,8 +476,9 @@ def refresh_s2_baseline(
     road_properties_map: dict[str, dict[str, Any]] = {}
     for road in road_records:
         props = dict(road.properties)
-        segmentid = road_to_segmentid.get(road.road_id)
-        props["s_grade"] = SEGMENT_GRADE_VALUE if segmentid is not None else None
+        existing_segmentid = _normalize_id(props.get("segmentid"))
+        segmentid = road_to_segmentid.get(road.road_id, existing_segmentid)
+        props["s_grade"] = SEGMENT_GRADE_VALUE if road.road_id in road_to_segmentid else props.get("s_grade")
         props["segmentid"] = segmentid
         road_properties_map[road.road_id] = props
 
@@ -471,8 +495,8 @@ def refresh_s2_baseline(
     node_properties_map: dict[str, dict[str, Any]] = {}
     for node in node_records:
         props = dict(node.properties)
-        props["grade_2"] = node.grade
-        props["kind_2"] = node.kind
+        props["grade_2"] = _current_node_grade_2(node)
+        props["kind_2"] = _current_node_kind_2(node)
         node_properties_map[node.node_id] = props
 
     mainnode_pair_endpoint_count = 0
@@ -511,13 +535,16 @@ def refresh_s2_baseline(
             nonsegment_has_in = nonsegment_has_in or has_in
             nonsegment_has_out = nonsegment_has_out or has_out
 
-        grade_2 = group.grade_old
-        kind_2 = group.kind_old
+        representative_props_current = node_properties_map[group.representative_node_id]
+        current_grade_2 = _coerce_int(representative_props_current.get("grade_2"))
+        current_kind_2 = _coerce_int(representative_props_current.get("kind_2"))
+        grade_2 = current_grade_2
+        kind_2 = current_kind_2
         applied_rule = "keep_init"
 
-        if mainnode_id in validated_endpoint_ids:
-            grade_2 = 1
-            kind_2 = 4
+        if is_roundabout_mainnode_kind(current_kind_2):
+            applied_rule = "protected_roundabout_mainnode"
+        elif mainnode_id in validated_endpoint_ids:
             applied_rule = "validated_pair_endpoint"
             mainnode_pair_endpoint_count += 1
         elif unique_segmentid_count > 1:

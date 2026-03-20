@@ -8,12 +8,15 @@ from shapely.geometry import LineString
 
 from rcsd_topo_poc.cli import main
 from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc, step2_segment_poc
+from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import initialize_working_layers
 
 
 def _write_geojson(path: Path, *, features: list[dict]) -> None:
     payload = {
         "type": "FeatureCollection",
-        "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+        # Step2 distance gates work in projected meters. Keep synthetic fixtures in EPSG:3857
+        # so 50m thresholds are exercised on realistic units instead of projected degrees.
+        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
         "features": features,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -47,6 +50,7 @@ def _road_feature(
     coords: list[list[float]],
     *,
     formway: int = 0,
+    road_kind: int = 0,
 ) -> dict:
     return {
         "type": "Feature",
@@ -56,6 +60,7 @@ def _road_feature(
             "enodeid": enodeid,
             "direction": direction,
             "formway": formway,
+            "road_kind": road_kind,
         },
         "geometry": {"type": "LineString", "coordinates": coords},
     }
@@ -119,16 +124,26 @@ def _minimal_context(
     )
 
 
-def _road_record(road_id: str, snodeid: str, enodeid: str) -> step1_pair_poc.RoadRecord:
-    base = float(sum(ord(ch) for ch in road_id) % 17)
+def _road_record(
+    road_id: str,
+    snodeid: str,
+    enodeid: str,
+    *,
+    coords: tuple[tuple[float, float], tuple[float, float]] | None = None,
+    road_kind: int = 0,
+) -> step1_pair_poc.RoadRecord:
+    if coords is None:
+        base = float(sum(ord(ch) for ch in road_id) % 17)
+        coords = ((base, 0.0), (base + 0.5, 1.0))
     return step1_pair_poc.RoadRecord(
         road_id=road_id,
         snodeid=snodeid,
         enodeid=enodeid,
         direction=0,
         formway=0,
-        geometry=LineString([(base, 0.0), (base + 0.5, 1.0)]),
-        raw_properties={},
+        road_kind=road_kind,
+        geometry=LineString(list(coords)),
+        raw_properties={"road_kind": road_kind},
     )
 
 
@@ -408,6 +423,28 @@ def _build_bridge_cycle_dataset(base_dir: Path) -> tuple[Path, Path]:
     return road_path, node_path
 
 
+def _build_dual_separation_exceeded_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "roads.geojson"
+    node_path = base_dir / "nodes.geojson"
+    node_features = [
+        _node_feature(1, 0.0, 0.0),
+        _node_feature(2, 10.0, 0.0, kind=0, grade=0, closed_con=0),
+        _node_feature(3, 20.0, 0.0),
+        _node_feature(4, 20.0, 120.0, kind=0, grade=0, closed_con=0),
+        _node_feature(5, 0.0, 120.0, kind=0, grade=0, closed_con=0),
+    ]
+    road_features = [
+        _road_feature("r12", 1, 2, 2, [[0.0, 0.0], [10.0, 0.0]]),
+        _road_feature("r23", 2, 3, 2, [[10.0, 0.0], [20.0, 0.0]]),
+        _road_feature("r34", 3, 4, 2, [[20.0, 0.0], [20.0, 120.0]]),
+        _road_feature("r45", 4, 5, 2, [[20.0, 120.0], [0.0, 120.0]]),
+        _road_feature("r51", 5, 1, 2, [[0.0, 120.0], [0.0, 0.0]]),
+    ]
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
 def test_step2_segment_poc_validates_and_prunes_counterclockwise_segment(tmp_path: Path) -> None:
     road_path, node_path = _build_counterclockwise_dataset(tmp_path)
     strategy_path = _write_strategy(tmp_path / "step2_strategy.json")
@@ -439,6 +476,7 @@ def test_step2_segment_poc_validates_and_prunes_counterclockwise_segment(tmp_pat
     residual = _load_json(out_root / "S2X" / "step3_residual_roads.geojson")
     trunk_members = _load_json(out_root / "S2X" / "trunk_road_members.geojson")
     segment_members = _load_json(out_root / "S2X" / "segment_body_road_members.geojson")
+    endpoint_pool_rows = _read_csv_rows(out_root / "S2X" / "endpoint_pool.csv")
 
     assert [row["pair_id"] for row in candidate_rows] == ["S2X:1__3"]
     assert [row["pair_id"] for row in validated_rows] == ["S2X:1__3"]
@@ -462,6 +500,41 @@ def test_step2_segment_poc_validates_and_prunes_counterclockwise_segment(tmp_pat
     segment_member_ids = {feature["properties"]["road_id"] for feature in segment_members["features"]}
     assert trunk_member_ids == {"r14", "r43", "r32", "r21"}
     assert segment_member_ids == {"r14", "r43", "r32", "r21", "r46", "r62"}
+    assert [row["node_id"] for row in endpoint_pool_rows] == ["1", "3", "5"]
+
+
+def test_step2_rejects_dual_carriageway_separation_over_50m(tmp_path: Path) -> None:
+    road_path, node_path = _build_dual_separation_exceeded_dataset(tmp_path)
+    strategy_path = _write_strategy(tmp_path / "step2_strategy.json")
+    out_root = tmp_path / "outputs"
+
+    rc = main(
+        [
+            "t01-step2-segment-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+
+    validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
+    summary = _load_json(out_root / "S2X" / "segment_summary.json")
+
+    assert len(validation_rows) == 1
+    assert validation_rows[0]["validated_status"] == "rejected"
+    assert validation_rows[0]["reject_reason"] == "dual_carriageway_separation_exceeded"
+    support_info = json.loads(validation_rows[0]["support_info"])
+    assert support_info["dual_carriageway_separation_gate_limit_m"] == 50.0
+    assert support_info["dual_carriageway_max_separation_m"] > 50.0
+    assert summary["dual_carriageway_separation_reject_count"] == 1
+    assert summary["dual_carriageway_separation_gate_limit_m"] == 50.0
 
 
 def test_step2_rejects_clockwise_only_candidate(tmp_path: Path) -> None:
@@ -562,7 +635,15 @@ def test_step2_segment_excludes_step1_formway_branches(tmp_path: Path) -> None:
 def test_step2_segment_prunes_bridge_connected_side_cycle(tmp_path: Path) -> None:
     road_path, node_path = _build_bridge_cycle_dataset(tmp_path)
     strategy = step1_pair_poc._load_strategy(_write_strategy(tmp_path / "step2_strategy.json"))
-    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    bootstrap = initialize_working_layers(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=tmp_path / "working_bridge_cycle",
+    )
+    context = step1_pair_poc.build_step1_graph_context(
+        road_path=bootstrap.roads_path,
+        node_path=bootstrap.nodes_path,
+    )
     execution = step1_pair_poc.run_step1_strategy(context, strategy)
     road_endpoints, _ = step2_segment_poc._build_semantic_endpoints(context)
 
@@ -778,7 +859,15 @@ def test_step2_validates_semantic_node_group_closure_loop(tmp_path: Path) -> Non
 def test_step2_rejects_disconnected_after_prune(monkeypatch, tmp_path: Path) -> None:
     road_path, node_path = _build_disconnected_cycle_dataset(tmp_path)
     strategy_path = _write_strategy(tmp_path / "step2_strategy.json")
-    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    bootstrap = initialize_working_layers(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=tmp_path / "working_disconnected_cycle",
+    )
+    context = step1_pair_poc.build_step1_graph_context(
+        road_path=bootstrap.roads_path,
+        node_path=bootstrap.nodes_path,
+    )
     strategy = step1_pair_poc._load_strategy(strategy_path)
     execution = step1_pair_poc.run_step1_strategy(context, strategy)
     road_endpoints, undirected_adjacency = step2_segment_poc._build_semantic_endpoints(context)
@@ -838,6 +927,46 @@ def test_step2_moves_weak_component_to_step3_residual() -> None:
     component_info = current.support_info["non_trunk_components"][0]
     assert component_info["moved_to_step3_residual"] is True
     assert component_info["decision_reason"] == "weak_rule_residual"
+
+
+def test_step2_side_access_distance_gate_moves_far_component_to_residual() -> None:
+    roads = [
+        _road_record("r12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
+        _road_record("r23", "2", "3", coords=((10.0, 0.0), (20.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((10.0, 0.0), (10.0, 80.0))),
+        _road_record("ra3", "A", "3", coords=((10.0, 80.0), (20.0, 0.0))),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("r12", "r23"))
+    execution = _minimal_execution([pair_current])
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [
+            _validation_result(
+                "S2X:1__3",
+                "1",
+                "3",
+                pruned_road_ids=("r12", "r23", "r2a", "ra3"),
+                trunk_road_ids=("r12", "r23"),
+                segment_road_ids=("r12", "r23", "r2a", "ra3"),
+            )
+        ],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    assert set(current.segment_road_ids) == {"r12", "r23"}
+    assert set(current.residual_road_ids) == {"r2a", "ra3"}
+    component_info = current.support_info["non_trunk_components"][0]
+    assert component_info["decision_reason"] == "side_access_distance_exceeded"
+    assert component_info["side_access_gate_passed"] is False
+    assert component_info["side_access_distance_m"] > 50.0
+    residual_info = current.support_info["step3_residual_infos"][0]
+    assert residual_info["side_access_gate_passed"] is False
+    assert residual_info["side_access_distance_m"] > 50.0
 
 
 def test_step2_component_with_other_validated_trunk_is_cut_from_segment_body() -> None:
@@ -1015,6 +1144,7 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
         run_id,
         context,
         validations,
+        endpoint_pool_source_map,
         formway_mode,
         debug,
         retain_validation_details,
@@ -1041,6 +1171,7 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
         strategy_config_paths=[tmp_path / "strategy.json"],
         out_root=out_root,
         retain_validation_details=False,
+        assume_working_layers=True,
         progress_callback=lambda event, payload: progress_events.append((event, payload)),
     )
 
@@ -1060,3 +1191,4 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
     ]
     comparison_summary = _load_json(out_root / "strategy_comparison.json")
     assert comparison_summary[0]["strategy_id"] == "S2X"
+    assert comparison_summary[0]["validated_pair_count"] == 1

@@ -1,55 +1,42 @@
 # 005 - Performance Baseline And Optimization
 
 ## 1. 性能基线背景
-- 优化前链路以分阶段输出目录为主
-- 默认会保留大量中间产物，I/O 开销明显
-- 主要热点集中在：
-  - GeoJSON 写盘
-  - `json.dump`
-  - Step2 / Step4 / Step5 输出层
-
-## 2. 主要优化
-- 为 Step1 / Step2 / refresh / Step4 / Step5 增加统一 `debug` 开关
-- 官方 `t01-run-skill-v1` 默认 `debug=true`，便于冻结基线复核和大规模验证前的 case 审计
-- 需要降低无意义 I/O 时，可显式使用 `--no-debug`
-- 官方 `t01-run-skill-v1` 以 temp stage 目录串联 Step2 / Step3 / Step4 / Step5
-- 默认仅保留最终结果与轻量审计包
-- refresh / Step4 在 `debug=false` 下仍保留最小边界快照，保证层级边界逻辑不丢失
-- Step1 / Step2 / refresh / Step4 / Step5 输入图层采用固定 `2` worker 并行读取
-- 官方 runner 在每个阶段后执行 `gc.collect()`
-- 官方 runner 记录每个阶段的 `tracemalloc` 峰值内存
-- 官方 runner 在 stdout 输出阶段级进度，并落盘：
+- official runner 已提供：
+  - 阶段级进度输出
   - `t01_skill_v1_progress.json`
   - `t01_skill_v1_perf.json`
   - `t01_skill_v1_perf.md`
   - `t01_skill_v1_perf_markers.jsonl`
+- 当前主要热点仍集中在：
+  - Step2 搜索与验证
+  - 中间结果写盘
+  - staged residual graph 的阶段间串联
 
-## 3. 优化结论
-- 当前优化未改变 accepted baseline 业务结果
-- 通过 XXXS freeze compare 已验证结果一致
-- 在 `--no-debug` 低 I/O 模式下，官方 runner 的总 wall time 与分阶段耗时明显下降
-- 当前仍未完成的更深层优化是：
-  - 彻底去掉 Step4 / Step5 内部对临时文件输入的依赖
-  - 在图构建与属性回写层进一步做内存级复用
-  - 引入超大数据量下的分块 / 低内存执行策略
-  - 设计不破坏结果稳定性的并发执行模型
+## 2. 已落地优化
+- 引入 official end-to-end runner
+- 统一 `debug` 行为
+- 增加阶段级 perf marker 与 progress marker
+- 基础输入层支持并行读图
+- runner 在阶段之间执行 `gc.collect()` 并记录 `tracemalloc`
 
-## 4. 当前 before / after 摘要
-- 说明：
-  - 以下时间是 XXXS 上的参考测量值，不是冻结契约
-  - `debug=true` 默认模式会比 `--no-debug` 低 I/O 模式更慢
-  - 真正的结果一致性契约由 freeze compare 决定，而不是 wall time 数值
-- before：
-  - `outputs/_work/t01_perf_audit/t01_perf_audit_20260320_133048_before/perf_before.json`
-  - total wall time：`8.434640` sec
-- after：
-  - `outputs/_work/t01_perf_audit/t01_perf_audit_20260320_154500_after/perf_after.json`
-  - total wall time：`0.307849` sec（`--no-debug` 低 I/O 模式）
-- compare：
-  - `outputs/_work/t01_perf_audit/t01_perf_audit_20260320_154500_after/perf_compare.md`
-  - freeze compare：`PASS`
+## 3. working bootstrap 前移的架构影响
+- working Nodes / Roads 已前移到模块开始阶段
+- `grade_2 / kind_2 / s_grade / segmentid` 从模块开始即存在
+- 这一步的主要收益是：
+  - 明确后续 Step1-Step5 全部操作 working layers
+  - 为未来 preprocess 留出正式容器
+  - 避免后续阶段再重复承担“首次引入运行期字段”的职责
+
+## 4. 本轮 roundabout preprocessing 的影响
+- 环岛预处理接在 working bootstrap 之后
+- 它主要是结构和语义能力扩展，不是纯性能优化
+- 当前实现的原则是：
+  - 基于共享 node 的拓扑连通聚合
+  - 审计输出仅在 `debug=true` 下保留详细层
+  - `debug=false` 时保留 summary，避免无意义中间 I/O
+- 本轮没有把环岛能力伪装成性能优化收益
 
 ## 5. 当前结论
-- Skill v1.0.0 已具备可接受的执行层性能优化与基础内存治理
-- 当前默认模式优先保障 debug 审计可见性，不以最小 I/O 为默认目标
-- 进一步的深层内存化重构应作为正式模块完整构建任务推进
+- 当前性能治理已具备官方 runner、进度打点、阶段级内存/时间审计
+- working bootstrap 与 roundabout preprocessing 已有稳定挂点
+- 更深层的 low-memory / large-scale runtime 治理仍是后续待办

@@ -1,0 +1,19 @@
+{
+  "skill_version": "1.0.0",
+  "mode": "candidate",
+  "freeze_label": "T01 Skill v1.0.0 XXXS semantic fix candidate",
+  "generated_at": "2026-03-20T21:28:00",
+  "source_paths": {
+    "current_bundle_dir": "E:\\Work\\RCSD_Topo_Poc\\outputs\\_work\\t01_regression\\t01_regression_20260320_closedcon_roadkind_fix\\current",
+    "compare_report_json": "E:\\Work\\RCSD_Topo_Poc\\outputs\\_work\\t01_regression\\t01_regression_20260320_closedcon_roadkind_fix\\freeze_compare_report.json"
+  },
+  "artifacts": {
+    "validated_pairs": "validated_pairs_candidate.csv",
+    "segment_body_membership": "segment_body_membership_candidate.csv",
+    "trunk_membership": "trunk_membership_candidate.csv",
+    "refreshed_nodes_hash": "refreshed_nodes_hash.json",
+    "refreshed_roads_hash": "refreshed_roads_hash.json",
+    "summary": "FREEZE_SUMMARY.json",
+    "diff_from_v1_0_0": "FREEZE_DIFF_FROM_V1.0.0.md"
+  }
+}

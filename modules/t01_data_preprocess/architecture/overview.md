@@ -1,42 +1,31 @@
-# T01 架构概览
+# T01 Architecture Overview
 
-## 1. 当前 accepted architecture
-- 官方 Step1-Step5 口径：
-  1. Step1：候选 Pair 发现
-  2. Step2：首轮 validated / trunk / segment_body 构建
-  3. Step3：语义修正与 refreshed Node / Road 更新
-  4. Step4：基于 residual graph 的下一轮构段
-  5. Step5：`Step5A / Step5B / Step5C` staged residual graph 收尾并统一刷新
+## 当前模块级源事实入口
+- 本目录当前已按模板结构补齐。
+- 推荐阅读顺序：
+  1. [00-current-state-research.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/00-current-state-research.md)
+  2. [01-introduction-and-goals.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/01-introduction-and-goals.md)
+  3. [02-constraints.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/02-constraints.md)
+  4. [03-context-and-scope.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/03-context-and-scope.md)
+  5. [04-solution-strategy.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/04-solution-strategy.md)
+  6. [05-building-block-view.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/05-building-block-view.md)
+  7. [10-quality-requirements.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/10-quality-requirements.md)
+  8. [11-risks-and-technical-debt.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/11-risks-and-technical-debt.md)
+  9. [12-glossary.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/12-glossary.md)
+  10. [INTERFACE_CONTRACT.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md)
 
-## 2. 关键设计原则
-- Step1 只做候选发现，不做最终有效性确认
-- Step2 的 `segment_body` 只表达 pair-specific road body
-- trunk 以语义路口为单元，支持双向 road、split-merge、semantic-node-group closure
-- 后续轮次不回到原始全量图，而是在 refreshed + residual graph 上继续推进
-- 历史高等级边界同时作用于 pair 搜索与 segment 收敛
+## 当前概览
+- 当前模块内 accepted baseline 已形成：
+  - working-layer bootstrap
+  - roundabout preprocessing
+  - Step1-Step5 residual graph 双向路段构建
+  - staged runner 全量 endpoint pool 滚动
+  - 三样例活动基线冻结
+- 当前 repo 级治理文档尚未把 `t01_data_preprocess` 登记为正式 Active 模块，因此本目录采用“模块内 accepted baseline / repo 级未激活”的表述，不擅自改写仓库级生命周期状态。
 
-## 3. 官方入口与调试层
-- 官方入口：
-  - `t01-run-skill-v1`
-- 分步入口：
-  - `t01-step2-segment-poc`
-  - `t01-s2-refresh-node-road`
-  - `t01-step4-residual-graph`
-  - `t01-step5-staged-residual-graph`
-- `debug=true`
-  - 官方默认值
-  - 保留分阶段中间层
-- `debug=false`
-  - 用于减少无意义 I/O
-- 当前性能边界：
-  - 固定 2 worker 输入读取
-  - 阶段级 GC 与 `tracemalloc` 统计
-  - 仍未进入完整全内存流水线
-
-## 4. baseline freeze 审计闭环
-- 当前 Skill v1.0.0 效果基线为 XXXS freeze baseline
-- 仓库内轻量包：
-  - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs/`
-- compare 入口：
-  - `t01-compare-freeze`
-- 结果不一致默认视为回退或显式变更
+## 当前活动基线
+- [t01_skill_active_three_sample_suite](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/baselines/t01_skill_active_three_sample_suite)
+- 样例：
+  - `XXXS`
+  - `XXXS2`
+  - `XXXS3`

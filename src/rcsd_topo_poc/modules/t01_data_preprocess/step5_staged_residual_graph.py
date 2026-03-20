@@ -9,6 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
+from rcsd_topo_poc.modules.t01_data_preprocess.endpoint_pool import (
+    build_endpoint_pool_source_map,
+    collect_endpoint_pool_mainnodes,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     RIGHT_TURN_FORMWAY_BIT,
@@ -23,7 +27,6 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _coerce_int, _find_repo_root, _normalize_id, _sort_key
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
 from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import (
-    _collect_validated_boundary_mainnodes,
     _current_closed_con,
     _current_grade_2,
     _current_kind_2,
@@ -31,6 +34,16 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import (
     _parse_segment_body_assignments,
     _read_csv_rows,
     _write_boundary_node_outputs,
+)
+from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
+    ACTIVE_CLOSED_CON_VALUES,
+    WORKING_NODE_FIELDS,
+    WORKING_ROAD_FIELDS,
+    is_active_closed_con,
+    is_allowed_road_kind,
+    is_full_through_kind,
+    is_full_through_or_t_kind,
+    is_roundabout_mainnode_kind,
 )
 
 
@@ -52,6 +65,8 @@ class PhaseInputArtifacts:
     terminate_count: int
     working_graph_road_count: int
     active_road_ids: tuple[str, ...]
+    endpoint_pool_ids: tuple[str, ...]
+    endpoint_pool_source_map: dict[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -102,15 +117,18 @@ def _resolve_out_root(
 
 
 def _step5a_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
-    return ((kind_2 in {4, 2048} and grade_2 in {1, 2}) or (kind_2 == 4 and grade_2 == 3))
+    return (
+        (is_full_through_or_t_kind(kind_2) and grade_2 in {1, 2})
+        or (is_full_through_kind(kind_2) and grade_2 == 3)
+    )
 
 
 def _step5b_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
-    return kind_2 in {4, 2048} and grade_2 in {1, 2, 3}
+    return is_full_through_or_t_kind(kind_2) and grade_2 in {1, 2, 3}
 
 
 def _step5c_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
-    return kind_2 in {1, 4, 2048} and grade_2 in {1, 2, 3}
+    return (kind_2 == 1 or is_full_through_or_t_kind(kind_2)) and grade_2 in {1, 2, 3}
 
 
 def _build_group_to_road_ids(
@@ -141,6 +159,7 @@ def _build_phase_inputs(
     out_root: Path,
     base_match: Callable[[Optional[int], Optional[int]], bool],
     historical_seed_node_ids: set[str],
+    historical_seed_source_map: dict[str, tuple[str, ...]],
     hard_stop_node_ids: set[str],
 ) -> PhaseInputArtifacts:
     node_by_id = {node.node_id: node for node in nodes}
@@ -172,7 +191,7 @@ def _build_phase_inputs(
         if not is_historical_seed and not base_match(grade_2, kind_2):
             continue
         input_mainnode_ids.add(mainnode_id)
-        if is_historical_seed or _current_closed_con(representative) in {1, 2}:
+        if is_historical_seed or is_active_closed_con(_current_closed_con(representative)):
             eligible_mainnode_ids.add(mainnode_id)
 
     phase_lower = phase_id.lower()
@@ -181,8 +200,8 @@ def _build_phase_inputs(
         props = dict(node.properties)
         is_historical_boundary = node.semantic_node_id in hard_stop_node_ids
         is_eligible = node.semantic_node_id in eligible_mainnode_ids
-        props["grade"] = 1 if is_eligible else 0
-        props["kind"] = 4 if is_eligible else 0
+        props["grade_2"] = 1 if is_eligible else 0
+        props["kind_2"] = 4 if is_eligible else 0
         props[f"{phase_lower}_input_eligible"] = is_eligible
         props[f"{phase_lower}_historical_boundary"] = is_historical_boundary
         props[f"{phase_lower}_input_grade_2"] = _current_grade_2(node)
@@ -201,13 +220,18 @@ def _build_phase_inputs(
     strategy_path = out_root / f"{phase_lower}_strategy.json"
     write_geojson(working_nodes_path, working_node_features)
     write_geojson(working_roads_path, working_road_features)
+    endpoint_pool_source_map = build_endpoint_pool_source_map(
+        node_ids=eligible_mainnode_ids,
+        stage_id=phase_id,
+        previous_source_map=historical_seed_source_map,
+    )
     write_json(
         strategy_path,
         {
             "strategy_id": phase_id,
             "description": f"{phase_id} staged residual graph segment construction.",
-            "seed_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [1, 2]},
-            "terminate_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [1, 2]},
+            "seed_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
+            "terminate_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
             "through_node_rule": {
                 "incident_road_degree_eq": 2,
                 "incident_degree_exclude_formway_bits_any": [7],
@@ -230,7 +254,28 @@ def _build_phase_inputs(
         terminate_count=len(eligible_mainnode_ids),
         working_graph_road_count=len(active_road_ids_ordered),
         active_road_ids=active_road_ids_ordered,
+        endpoint_pool_ids=tuple(sorted(eligible_mainnode_ids, key=_sort_key)),
+        endpoint_pool_source_map=endpoint_pool_source_map,
     )
+
+
+def _require_working_layers(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    stage_label: str,
+) -> None:
+    issues: list[str] = []
+    for index, node in enumerate(nodes):
+        missing = [field for field in WORKING_NODE_FIELDS if field not in node.properties]
+        if missing:
+            issues.append(f"{stage_label} node feature[{index}] missing working fields: {', '.join(missing)}")
+    for index, road in enumerate(roads):
+        missing = [field for field in WORKING_ROAD_FIELDS if field not in road.properties]
+        if missing:
+            issues.append(f"{stage_label} road feature[{index}] missing working fields: {', '.join(missing)}")
+    if issues:
+        raise ValueError("; ".join(issues))
 
 
 def _copy_phase_review_outputs(*, phase_dir: Path, out_root: Path, prefix: str) -> None:
@@ -346,6 +391,7 @@ def _run_phase(
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
         debug=debug,
+        assume_working_layers=True,
     )
     phase_dir = out_root / phase_input.phase_id
     phase_lower = phase_input.phase_id.lower()
@@ -555,7 +601,9 @@ def _refresh_after_step5(
         new_grade_2 = current_grade_2
         new_kind_2 = current_kind_2
         applied_rule = "keep_current"
-        if mainnode_id in all_endpoint_ids:
+        if is_roundabout_mainnode_kind(current_kind_2):
+            applied_rule = "protected_roundabout_mainnode"
+        elif mainnode_id in all_endpoint_ids:
             applied_rule = "keep_step5_pair_endpoint"
             node_rule_keep_pair_count += 1
         elif unique_segmentid_count > 1:
@@ -677,6 +725,7 @@ def run_step5_staged_residual_graph(
         road_layer=road_layer,
         road_crs=road_crs,
     )
+    _require_working_layers(nodes=nodes, roads=roads, stage_label="Step5")
     input_parent = Path(node_path).resolve().parent
 
     preserved_snapshots: dict[str, str] = {}
@@ -686,16 +735,20 @@ def run_step5_staged_residual_graph(
             road_path=road_path,
             out_root=resolved_out_root,
         )
-    historical_boundary_ids, historical_boundary_source_map = _collect_validated_boundary_mainnodes(
+    historical_boundary_ids, historical_boundary_source_map = collect_endpoint_pool_mainnodes(
         base_dir=input_parent,
         source_specs=(
-            ("S2", ("S2/validated_pairs.csv",)),
-            ("STEP4", ("STEP4/validated_pairs.csv", "step4_validated_pairs.csv")),
+            ("S2", ("S2/endpoint_pool.csv", "S2/validated_pairs.csv")),
+            ("STEP4", ("STEP4/endpoint_pool.csv", "step4_endpoint_pool.csv", "STEP4/validated_pairs.csv", "step4_validated_pairs.csv")),
         ),
     )
 
     historical_segment_road_ids = {road.road_id for road in roads if _current_segmentid(road)}
-    active_road_ids_step5a = {road.road_id for road in roads if road.road_id not in historical_segment_road_ids}
+    active_road_ids_step5a = {
+        road.road_id
+        for road in roads
+        if road.road_id not in historical_segment_road_ids and is_allowed_road_kind(road.road_kind)
+    }
     step5a_input = _build_phase_inputs(
         phase_id=STEP5A_STRATEGY_ID,
         nodes=nodes,
@@ -704,6 +757,7 @@ def run_step5_staged_residual_graph(
         out_root=resolved_out_root,
         base_match=_step5a_base_match,
         historical_seed_node_ids=historical_boundary_ids,
+        historical_seed_source_map=historical_boundary_source_map,
         hard_stop_node_ids=historical_boundary_ids,
     )
     phase_a = _run_phase(
@@ -714,19 +768,9 @@ def run_step5_staged_residual_graph(
         left_turn_formway_bit=left_turn_formway_bit,
         debug=debug,
     )
-
-    step5a_boundary_ids = {
-        node_id
-        for row in phase_a.validated_rows
-        for node_id in (_normalize_id(row.get("a_node_id")), _normalize_id(row.get("b_node_id")))
-        if node_id is not None
-    }
-    step5b_hard_stop_node_ids = set(historical_boundary_ids) | step5a_boundary_ids
-    combined_boundary_source_map: dict[str, tuple[str, ...]] = dict(historical_boundary_source_map)
-    for node_id in sorted(step5a_boundary_ids, key=_sort_key):
-        tags = set(combined_boundary_source_map.get(node_id, ()))
-        tags.add("STEP5A")
-        combined_boundary_source_map[node_id] = tuple(sorted(tags, key=_sort_key))
+    step5b_historical_seed_node_ids = set(step5a_input.endpoint_pool_ids)
+    step5b_hard_stop_node_ids = set(step5a_input.endpoint_pool_ids)
+    combined_boundary_source_map = dict(step5a_input.endpoint_pool_source_map)
     if debug:
         _write_boundary_node_outputs(
             out_root=resolved_out_root,
@@ -742,7 +786,8 @@ def run_step5_staged_residual_graph(
         active_road_ids=active_road_ids_step5b,
         out_root=resolved_out_root,
         base_match=_step5b_base_match,
-        historical_seed_node_ids=historical_boundary_ids,
+        historical_seed_node_ids=step5b_historical_seed_node_ids,
+        historical_seed_source_map=combined_boundary_source_map,
         hard_stop_node_ids=step5b_hard_stop_node_ids,
     )
     phase_b = _run_phase(
@@ -754,17 +799,9 @@ def run_step5_staged_residual_graph(
         debug=debug,
     )
 
-    step5b_boundary_ids = {
-        node_id
-        for row in phase_b.validated_rows
-        for node_id in (_normalize_id(row.get("a_node_id")), _normalize_id(row.get("b_node_id")))
-        if node_id is not None
-    }
-    step5c_hard_stop_node_ids = set(step5b_hard_stop_node_ids) | step5b_boundary_ids
-    for node_id in sorted(step5b_boundary_ids, key=_sort_key):
-        tags = set(combined_boundary_source_map.get(node_id, ()))
-        tags.add("STEP5B")
-        combined_boundary_source_map[node_id] = tuple(sorted(tags, key=_sort_key))
+    step5c_historical_seed_node_ids = set(step5b_input.endpoint_pool_ids)
+    step5c_hard_stop_node_ids = set(step5b_input.endpoint_pool_ids)
+    combined_boundary_source_map = dict(step5b_input.endpoint_pool_source_map)
     if debug:
         _write_boundary_node_outputs(
             out_root=resolved_out_root,
@@ -780,7 +817,8 @@ def run_step5_staged_residual_graph(
         active_road_ids=active_road_ids_step5c,
         out_root=resolved_out_root,
         base_match=_step5c_base_match,
-        historical_seed_node_ids=historical_boundary_ids,
+        historical_seed_node_ids=step5c_historical_seed_node_ids,
+        historical_seed_source_map=combined_boundary_source_map,
         hard_stop_node_ids=step5c_hard_stop_node_ids,
     )
     phase_c = _run_phase(

@@ -231,3 +231,128 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
     assert mainnode_rows["4"]["applied_rule"] == "right_turn_only_side"
     assert mainnode_rows["5"]["applied_rule"] == "t_like"
     assert mainnode_rows["6"]["applied_rule"] == "multi_segment_kept_init"
+
+
+def test_refresh_s2_baseline_keeps_roundabout_mainnode_protected(tmp_path: Path) -> None:
+    node_path = tmp_path / "working_nodes.geojson"
+    road_path = tmp_path / "working_roads.geojson"
+    s2_dir = tmp_path / "baseline_roundabout" / "S2"
+    out_root = tmp_path / "out_roundabout"
+    s2_dir.mkdir(parents=True)
+
+    write_geojson(
+        node_path,
+        [
+            {
+                "properties": {
+                    "id": 50,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 64,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                    "mainnodeid": 50,
+                },
+                "geometry": Point(0.0, 0.0),
+            },
+            {
+                "properties": {
+                    "id": 51,
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 0,
+                    "grade_2": 0,
+                    "closed_con": 2,
+                    "mainnodeid": 50,
+                },
+                "geometry": Point(0.1, 0.0),
+            },
+            {
+                "properties": {
+                    "id": 60,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": Point(1.0, 0.0),
+            },
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            {
+                "properties": {
+                    "id": "r_roundabout_segment",
+                    "snodeid": 51,
+                    "enodeid": 60,
+                    "direction": 2,
+                    "formway": 0,
+                    "s_grade": None,
+                    "segmentid": None,
+                },
+                "geometry": LineString([(0.1, 0.0), (1.0, 0.0)]),
+            }
+        ],
+    )
+
+    write_csv(
+        s2_dir / "validated_pairs.csv",
+        [
+            {
+                "pair_id": "S2:50__60",
+                "a_node_id": "50",
+                "b_node_id": "60",
+                "trunk_mode": "counterclockwise_loop",
+                "left_turn_excluded_mode": "strict",
+                "warning_codes": "",
+                "segment_body_road_count": "1",
+                "residual_road_count": "0",
+            }
+        ],
+        [
+            "pair_id",
+            "a_node_id",
+            "b_node_id",
+            "trunk_mode",
+            "left_turn_excluded_mode",
+            "warning_codes",
+            "segment_body_road_count",
+            "residual_road_count",
+        ],
+    )
+    write_geojson(
+        s2_dir / "segment_body_roads.geojson",
+        [
+            {
+                "properties": {
+                    "pair_id": "S2:50__60",
+                    "a_node_id": "50",
+                    "b_node_id": "60",
+                    "validated_status": "validated",
+                    "road_ids": ["r_roundabout_segment"],
+                    "road_ids_text": "r_roundabout_segment",
+                },
+                "geometry": MultiLineString([LineString([(0.1, 0.0), (1.0, 0.0)])]),
+            }
+        ],
+    )
+
+    artifacts = refresh_s2_baseline(
+        road_path=road_path,
+        node_path=node_path,
+        s2_path=tmp_path / "baseline_roundabout",
+        out_root=out_root,
+        run_id="refresh_roundabout_case",
+        assume_working_layers=True,
+    )
+
+    nodes_doc = _load_geojson(artifacts.nodes_path)
+    node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
+    assert node_props["50"]["grade_2"] == 1
+    assert node_props["50"]["kind_2"] == 64
+
+    mainnode_rows = {row["mainnode_id"]: row for row in _csv_rows(artifacts.mainnode_table_path)}
+    assert mainnode_rows["50"]["applied_rule"] == "protected_roundabout_mainnode"

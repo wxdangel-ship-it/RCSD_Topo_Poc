@@ -18,10 +18,14 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     write_geojson,
     write_json,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
+    initialize_working_layers,
+    is_allowed_road_kind,
+)
 
 
 REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction", "formway")
-REQUIRED_NODE_FIELDS = ("id", "kind", "grade", "closed_con")
+REQUIRED_NODE_FIELDS = ("id", "kind", "grade", "kind_2", "grade_2", "closed_con")
 DEFAULT_RUN_ID_PREFIX = "t01_step1_pair_poc_"
 SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE = 100
 
@@ -30,8 +34,10 @@ SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE = 100
 class NodeRecord:
     node_id: str
     mainnodeid: Optional[str]
-    kind: Optional[int]
-    grade: Optional[int]
+    raw_kind: Optional[int]
+    raw_grade: Optional[int]
+    kind_2: Optional[int]
+    grade_2: Optional[int]
     closed_con: Optional[int]
     geometry: BaseGeometry
     raw_properties: dict[str, Any]
@@ -44,6 +50,7 @@ class RoadRecord:
     enodeid: str
     direction: int
     formway: Optional[int]
+    road_kind: Optional[int]
     geometry: BaseGeometry
     raw_properties: dict[str, Any]
 
@@ -53,6 +60,7 @@ class RuleSpec:
     kind_bits_all: tuple[int, ...]
     grade_eq: Optional[int]
     closed_con_in: tuple[int, ...]
+    kind_bits_any: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -86,8 +94,10 @@ class SemanticNodeRecord:
     semantic_node_id: str
     representative_node_id: str
     member_node_ids: tuple[str, ...]
-    kind: Optional[int]
-    grade: Optional[int]
+    raw_kind: Optional[int]
+    raw_grade: Optional[int]
+    kind_2: Optional[int]
+    grade_2: Optional[int]
     closed_con: Optional[int]
     geometry: BaseGeometry
     raw_properties: dict[str, Any]
@@ -259,6 +269,7 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
     def _load_rule(payload: dict[str, Any]) -> RuleSpec:
         return RuleSpec(
             kind_bits_all=tuple(int(v) for v in payload.get("kind_bits_all", [])),
+            kind_bits_any=tuple(int(v) for v in payload.get("kind_bits_any", [])),
             grade_eq=None if payload.get("grade_eq") is None else int(payload["grade_eq"]),
             closed_con_in=tuple(int(v) for v in payload.get("closed_con_in", [])),
         )
@@ -362,8 +373,10 @@ def _prepare_nodes(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             continue
 
         try:
-            kind = _coerce_int(props.get("kind"))
-            grade = _coerce_int(props.get("grade"))
+            raw_kind = _coerce_int(props.get("kind"))
+            raw_grade = _coerce_int(props.get("grade"))
+            kind_2 = _coerce_int(props.get("kind_2"))
+            grade_2 = _coerce_int(props.get("grade_2"))
             closed_con = _coerce_int(props.get("closed_con"))
         except ValueError as exc:
             audit_events.append(
@@ -382,8 +395,10 @@ def _prepare_nodes(raw_features: list[dict[str, Any]], audit_events: list[dict[s
         nodes[node_id] = NodeRecord(
             node_id=node_id,
             mainnodeid=mainnodeid,
-            kind=kind,
-            grade=grade,
+            raw_kind=raw_kind,
+            raw_grade=raw_grade,
+            kind_2=kind_2,
+            grade_2=grade_2,
             closed_con=closed_con,
             geometry=geometry,
             raw_properties=dict(props),
@@ -435,8 +450,10 @@ def _build_semantic_nodes(
             semantic_node_id=semantic_node_id,
             representative_node_id=representative_node.node_id,
             member_node_ids=sorted_member_ids,
-            kind=representative_node.kind,
-            grade=representative_node.grade,
+            raw_kind=representative_node.raw_kind,
+            raw_grade=representative_node.raw_grade,
+            kind_2=representative_node.kind_2,
+            grade_2=representative_node.grade_2,
             closed_con=representative_node.closed_con,
             geometry=representative_node.geometry,
             raw_properties=dict(representative_node.raw_properties),
@@ -478,6 +495,7 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
         try:
             direction = _coerce_int(props.get("direction"))
             formway = _coerce_int(props.get("formway"))
+            road_kind = _coerce_int(props.get("road_kind"))
         except ValueError as exc:
             audit_events.append(
                 {
@@ -508,6 +526,7 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             enodeid=enodeid,
             direction=direction,
             formway=formway,
+            road_kind=road_kind,
             geometry=geometry,
             raw_properties=dict(props),
         )
@@ -517,9 +536,12 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
 def _evaluate_rule(node: Union[NodeRecord, SemanticNodeRecord], rule: RuleSpec) -> RuleEvaluation:
     reasons: list[str] = []
     for bit_index in rule.kind_bits_all:
-        if not _bit_enabled(node.kind, bit_index):
+        if not _bit_enabled(node.kind_2, bit_index):
             reasons.append(f"kind_missing_bit_{bit_index}")
-    if rule.grade_eq is not None and node.grade != rule.grade_eq:
+    if rule.kind_bits_any and not any(_bit_enabled(node.kind_2, bit_index) for bit_index in rule.kind_bits_any):
+        joined = "_".join(str(v) for v in rule.kind_bits_any)
+        reasons.append(f"kind_missing_any_bits_{joined}")
+    if rule.grade_eq is not None and node.grade_2 != rule.grade_eq:
         reasons.append(f"grade_not_eq_{rule.grade_eq}")
     if rule.closed_con_in and node.closed_con not in rule.closed_con_in:
         joined = "_".join(str(v) for v in rule.closed_con_in)
@@ -540,6 +562,17 @@ def _build_graph(
     orphan_ref_count = 0
 
     for road in roads.values():
+        if not is_allowed_road_kind(road.road_kind):
+            audit_events.append(
+                {
+                    "event": "road_kind_excluded",
+                    "road_id": road.road_id,
+                    "road_kind": road.road_kind,
+                    "message": "Closed road_kind=1 is excluded from the current bidirectional working graph.",
+                }
+            )
+            continue
+
         resolved_endpoints: list[tuple[str, str, str]] = []
         for endpoint_label, physical_node_id in (("snodeid", road.snodeid), ("enodeid", road.enodeid)):
             if physical_node_id not in physical_nodes:
@@ -1129,8 +1162,12 @@ def _node_feature(
         "representative_node_id": node.representative_node_id,
         "member_node_ids": ";".join(node.member_node_ids),
         "member_node_count": len(node.member_node_ids),
-        "kind": node.kind,
-        "grade": node.grade,
+        "kind": node.kind_2,
+        "grade": node.grade_2,
+        "raw_kind": node.raw_kind,
+        "raw_grade": node.raw_grade,
+        "kind_2": node.kind_2,
+        "grade_2": node.grade_2,
         "closed_con": node.closed_con,
         "strategy_id": strategy_id,
     }
@@ -1297,8 +1334,12 @@ def write_step1_candidate_outputs(
                 "seed_reasons": list(seed_eval[node_id].reasons),
                 "terminate_match": terminate_eval[node_id].matched,
                 "terminate_reasons": list(terminate_eval[node_id].reasons),
-                "kind": node.kind,
-                "grade": node.grade,
+                "kind": node.kind_2,
+                "grade": node.grade_2,
+                "raw_kind": node.raw_kind,
+                "raw_grade": node.raw_grade,
+                "kind_2": node.kind_2,
+                "grade_2": node.grade_2,
                 "closed_con": node.closed_con,
             }
         )
@@ -1389,24 +1430,39 @@ def run_step1_pair_poc(
     node_layer: Optional[str] = None,
     node_crs: Optional[str] = None,
     debug: bool = True,
+    assume_working_layers: bool = False,
 ) -> list[Step1StrategyResult]:
+    resolved_out_root = Path(out_root)
+    working_road_path = road_path
+    working_node_path = node_path
+    if not assume_working_layers:
+        bootstrap_dir = resolved_out_root / "_bootstrap"
+        bootstrap_artifacts = initialize_working_layers(
+            road_path=road_path,
+            node_path=node_path,
+            out_root=bootstrap_dir,
+            road_layer=road_layer,
+            road_crs=road_crs,
+            node_layer=node_layer,
+            node_crs=node_crs,
+            debug=debug,
+        )
+        working_road_path = bootstrap_artifacts.roads_path
+        working_node_path = bootstrap_artifacts.nodes_path
+
     context = build_step1_graph_context(
-        road_path=road_path,
-        node_path=node_path,
-        road_layer=road_layer,
-        road_crs=road_crs,
-        node_layer=node_layer,
-        node_crs=node_crs,
+        road_path=working_road_path,
+        node_path=working_node_path,
     )
 
     results: list[Step1StrategyResult] = []
     comparison_summary: list[dict[str, Any]] = []
-    resolved_run_id = Path(out_root).name if run_id is None else run_id
+    resolved_run_id = resolved_out_root.name if run_id is None else run_id
 
     for strategy_path in strategy_config_paths:
         strategy = _load_strategy(strategy_path)
         execution = run_step1_strategy(context, strategy)
-        strategy_out_dir = Path(out_root) / strategy.strategy_id
+        strategy_out_dir = resolved_out_root / strategy.strategy_id
         strategy_result = write_step1_candidate_outputs(
             strategy_out_dir,
             strategy=strategy,

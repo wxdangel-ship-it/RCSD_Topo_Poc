@@ -1148,6 +1148,7 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
         formway_mode,
         debug,
         retain_validation_details,
+        progress_callback=None,
     ) -> step2_segment_poc.Step2StrategyResult:
         out_dir.mkdir(parents=True, exist_ok=True)
         return step2_segment_poc.Step2StrategyResult(

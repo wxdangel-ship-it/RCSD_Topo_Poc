@@ -9,7 +9,7 @@ from datetime import datetime
 from heapq import heappop, heappush
 from itertools import count
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Iterable, Optional, Union
 
 from shapely.geometry import LineString, MultiLineString
 from shapely.geometry.base import BaseGeometry
@@ -1729,6 +1729,81 @@ def _pair_multiline_feature(
     return {"geometry": MultiLineString(parts), "properties": properties}
 
 
+def _iter_candidate_channel_features(
+    *,
+    context: Step1GraphContext,
+    validations: Iterable[PairValidationResult],
+    strategy_id: str,
+) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        for road_id in validation.candidate_channel_road_ids:
+            yield _road_feature(
+                context.roads[road_id],
+                pair_id=validation.pair_id,
+                strategy_id=strategy_id,
+                layer_role="candidate_channel",
+            )
+
+
+def _iter_working_graph_debug_features(
+    *,
+    context: Step1GraphContext,
+    validations: Iterable[PairValidationResult],
+    strategy_id: str,
+) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        support_info = dict(validation.support_info)
+        branch_cut_infos = list(support_info.get("branch_cut_infos", []))
+        residual_infos = list(support_info.get("step3_residual_infos", []))
+
+        for road_id in validation.candidate_channel_road_ids:
+            yield _road_feature(
+                context.roads[road_id],
+                pair_id=validation.pair_id,
+                strategy_id=strategy_id,
+                layer_role="working_graph",
+                extra_props={"debug_stage": "candidate_channel"},
+            )
+
+        for branch_cut_info in branch_cut_infos:
+            branch_cut_props = {key: value for key, value in branch_cut_info.items() if key != "road_id"}
+            yield _road_feature(
+                context.roads[branch_cut_info["road_id"]],
+                pair_id=validation.pair_id,
+                strategy_id=strategy_id,
+                layer_role="working_graph",
+                extra_props={"debug_stage": "branch_cut", **branch_cut_props},
+            )
+
+        for road_id in validation.trunk_road_ids:
+            yield _road_feature(
+                context.roads[road_id],
+                pair_id=validation.pair_id,
+                strategy_id=strategy_id,
+                layer_role="working_graph",
+                extra_props={"debug_stage": "trunk"},
+            )
+
+        for road_id in validation.segment_road_ids:
+            yield _road_feature(
+                context.roads[road_id],
+                pair_id=validation.pair_id,
+                strategy_id=strategy_id,
+                layer_role="working_graph",
+                extra_props={"debug_stage": "segment_body"},
+            )
+
+        for residual_info in residual_infos:
+            residual_props = {key: value for key, value in residual_info.items() if key != "road_id"}
+            yield _road_feature(
+                context.roads[residual_info["road_id"]],
+                pair_id=validation.pair_id,
+                strategy_id=strategy_id,
+                layer_role="working_graph",
+                extra_props={"debug_stage": "step3_residual", **residual_props},
+            )
+
+
 def _write_step2_outputs(
     out_dir: Path,
     *,
@@ -1740,12 +1815,12 @@ def _write_step2_outputs(
     formway_mode: str,
     debug: bool,
     retain_validation_details: bool,
+    progress_callback: Optional[Step2ProgressCallback] = None,
 ) -> Step2StrategyResult:
     validated_rows: list[dict[str, Any]] = []
     rejected_rows: list[dict[str, Any]] = []
     validation_rows: list[dict[str, Any]] = []
     validated_link_features: list[dict[str, Any]] = []
-    candidate_channel_features: list[dict[str, Any]] = []
     trunk_features: list[dict[str, Any]] = []
     segment_body_features: list[dict[str, Any]] = []
     step3_residual_features: list[dict[str, Any]] = []
@@ -1753,7 +1828,6 @@ def _write_step2_outputs(
     segment_body_member_features: list[dict[str, Any]] = []
     step3_residual_member_features: list[dict[str, Any]] = []
     branch_cut_features: list[dict[str, Any]] = []
-    working_graph_debug_features: list[dict[str, Any]] = []
 
     total_branch_cut_count = 0
     clockwise_reject_count = 0
@@ -1922,26 +1996,6 @@ def _write_step2_outputs(
             if residual_feature is not None:
                 step3_residual_features.append(residual_feature)
 
-        for road_id in validation.candidate_channel_road_ids:
-            road = context.roads[road_id]
-            candidate_channel_features.append(
-                _road_feature(
-                    road,
-                    pair_id=validation.pair_id,
-                    strategy_id=strategy.strategy_id,
-                    layer_role="candidate_channel",
-                )
-            )
-            working_graph_debug_features.append(
-                _road_feature(
-                    road,
-                    pair_id=validation.pair_id,
-                    strategy_id=strategy.strategy_id,
-                    layer_role="working_graph",
-                    extra_props={"debug_stage": "candidate_channel"},
-                )
-            )
-
         for branch_cut_info in branch_cut_infos:
             road = context.roads[branch_cut_info["road_id"]]
             branch_cut_props = {key: value for key, value in branch_cut_info.items() if key != "road_id"}
@@ -1952,15 +2006,6 @@ def _write_step2_outputs(
                     strategy_id=strategy.strategy_id,
                     layer_role="branch_cut",
                     extra_props=branch_cut_props,
-                )
-            )
-            working_graph_debug_features.append(
-                _road_feature(
-                    road,
-                    pair_id=validation.pair_id,
-                    strategy_id=strategy.strategy_id,
-                    layer_role="working_graph",
-                    extra_props={"debug_stage": "branch_cut", **branch_cut_props},
                 )
             )
 
@@ -1975,15 +2020,6 @@ def _write_step2_outputs(
                         layer_role="trunk_member",
                     )
                 )
-            working_graph_debug_features.append(
-                _road_feature(
-                    road,
-                    pair_id=validation.pair_id,
-                    strategy_id=strategy.strategy_id,
-                    layer_role="working_graph",
-                    extra_props={"debug_stage": "trunk"},
-                )
-            )
 
         for road_id in validation.segment_road_ids:
             road = context.roads[road_id]
@@ -1996,15 +2032,6 @@ def _write_step2_outputs(
                         layer_role="segment_body_member",
                     )
                 )
-            working_graph_debug_features.append(
-                _road_feature(
-                    road,
-                    pair_id=validation.pair_id,
-                    strategy_id=strategy.strategy_id,
-                    layer_role="working_graph",
-                    extra_props={"debug_stage": "segment_body"},
-                )
-            )
 
         for residual_info in residual_infos:
             road = context.roads[residual_info["road_id"]]
@@ -2019,15 +2046,6 @@ def _write_step2_outputs(
                         extra_props=residual_props,
                     )
                 )
-            working_graph_debug_features.append(
-                _road_feature(
-                    road,
-                    pair_id=validation.pair_id,
-                    strategy_id=strategy.strategy_id,
-                    layer_role="working_graph",
-                    extra_props={"debug_stage": "step3_residual", **residual_props},
-                )
-            )
 
     validated_pairs_path = out_dir / "validated_pairs.csv"
     rejected_pairs_path = out_dir / "rejected_pair_candidates.csv"
@@ -2140,8 +2158,44 @@ def _write_step2_outputs(
         write_geojson(step3_residual_road_members_path, step3_residual_member_features)
         write_geojson(segment_road_members_path, segment_body_member_features)
         write_geojson(branch_cut_roads_path, branch_cut_features)
-        write_geojson(candidate_channel_path, candidate_channel_features)
-        write_geojson(working_graph_debug_path, working_graph_debug_features)
+        _emit_progress(
+            progress_callback,
+            "candidate_channel_write_started",
+            output_file=candidate_channel_path.name,
+            validation_count=len(validations),
+        )
+        write_geojson(
+            candidate_channel_path,
+            _iter_candidate_channel_features(
+                context=context,
+                validations=validations,
+                strategy_id=strategy.strategy_id,
+            ),
+        )
+        _emit_progress(
+            progress_callback,
+            "candidate_channel_write_completed",
+            output_file=candidate_channel_path.name,
+        )
+        _emit_progress(
+            progress_callback,
+            "working_graph_debug_write_started",
+            output_file=working_graph_debug_path.name,
+            validation_count=len(validations),
+        )
+        write_geojson(
+            working_graph_debug_path,
+            _iter_working_graph_debug_features(
+                context=context,
+                validations=validations,
+                strategy_id=strategy.strategy_id,
+            ),
+        )
+        _emit_progress(
+            progress_callback,
+            "working_graph_debug_write_completed",
+            output_file=working_graph_debug_path.name,
+        )
         debug_output_files = [
             pair_links_validated_path.name,
             segment_roads_path.name,
@@ -2600,6 +2654,7 @@ def run_step2_segment_poc(
             formway_mode=formway_mode,
             debug=debug,
             retain_validation_details=retain_validation_details,
+            progress_callback=progress_callback,
         )
         _emit_progress(
             progress_callback,

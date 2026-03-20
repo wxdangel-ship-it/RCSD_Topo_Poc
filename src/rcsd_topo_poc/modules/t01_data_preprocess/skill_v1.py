@@ -68,6 +68,7 @@ def _format_progress_details(payload: dict[str, Any]) -> str:
         "candidate_pair_count",
         "validated_pair_count",
         "rejected_pair_count",
+        "validation_count",
         "search_seed_count",
         "terminate_count",
         "road_count",
@@ -75,6 +76,7 @@ def _format_progress_details(payload: dict[str, Any]) -> str:
         "semantic_node_count",
         "semantic_endpoint_road_count",
         "undirected_node_count",
+        "output_file",
         "gc_collected_objects",
     )
     parts: list[str] = []

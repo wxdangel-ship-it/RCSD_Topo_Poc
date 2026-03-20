@@ -173,23 +173,22 @@ def write_csv(path: Union[str, Path], rows: Iterable[dict[str, Any]], fieldnames
 def write_geojson(path: Union[str, Path], features: Iterable[dict[str, Any]]) -> None:
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as fp:
+        fp.write('{"type":"FeatureCollection","name":')
+        json.dump(out_path.stem, fp, ensure_ascii=False, separators=(",", ":"))
+        fp.write(',"crs":{"type":"name","properties":{"name":"EPSG:3857"}},"features":[')
 
-    feature_items = []
-    for feature in features:
-        geometry = feature.get("geometry")
-        feature_items.append(
-            {
+        first = True
+        for feature in features:
+            geometry = feature.get("geometry")
+            feature_payload = {
                 "type": "Feature",
                 "properties": _json_compatible(feature.get("properties") or {}),
                 "geometry": mapping(geometry) if geometry is not None else None,
             }
-        )
+            if not first:
+                fp.write(",")
+            json.dump(feature_payload, fp, ensure_ascii=False, separators=(",", ":"))
+            first = False
 
-    payload = {
-        "type": "FeatureCollection",
-        "name": out_path.stem,
-        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
-        "features": feature_items,
-    }
-    with out_path.open("w", encoding="utf-8") as fp:
-        json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"))
+        fp.write("]}")

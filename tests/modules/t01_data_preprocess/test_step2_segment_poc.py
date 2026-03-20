@@ -283,6 +283,21 @@ def _build_through_collapsed_corridor_dataset(base_dir: Path) -> tuple[Path, Pat
     return road_path, node_path
 
 
+def _build_bidirectional_minimal_loop_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "roads.geojson"
+    node_path = base_dir / "nodes.geojson"
+    node_features = [
+        _node_feature(1, 0.0, 0.0),
+        _node_feature(2, 1.0, 0.0),
+    ]
+    road_features = [
+        _road_feature("r12", 1, 2, 1, [[0.0, 0.0], [1.0, 0.0]]),
+    ]
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
 def _build_disconnected_cycle_dataset(base_dir: Path) -> tuple[Path, Path]:
     road_path, node_path = _build_counterclockwise_dataset(base_dir)
     node_doc = _load_json(node_path)
@@ -556,6 +571,42 @@ def test_step2_validates_through_collapsed_corridor_candidate(tmp_path: Path) ->
     assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r12", "r23"}
     assert set(segment_body["features"][0]["properties"]["road_ids"]) == {"r12", "r23"}
     assert residual["features"] == []
+
+
+def test_step2_validates_bidirectional_direct_road_as_minimal_loop(tmp_path: Path) -> None:
+    road_path, node_path = _build_bidirectional_minimal_loop_dataset(tmp_path)
+    strategy_path = _write_strategy(tmp_path / "step2_strategy.json")
+    out_root = tmp_path / "outputs"
+
+    rc = main(
+        [
+            "t01-step2-segment-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+
+    validated_rows = _read_csv_rows(out_root / "S2X" / "validated_pairs.csv")
+    validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
+    trunk = _load_json(out_root / "S2X" / "trunk_roads.geojson")
+    segment_body = _load_json(out_root / "S2X" / "segment_body_roads.geojson")
+
+    assert [row["pair_id"] for row in validated_rows] == ["S2X:1__2"]
+    assert validation_rows[0]["validated_status"] == "validated"
+    assert validation_rows[0]["trunk_mode"] == "counterclockwise_loop"
+    assert validation_rows[0]["counterclockwise_ok"] == "True"
+    support_info = json.loads(validation_rows[0]["support_info"])
+    assert support_info["bidirectional_minimal_loop"] is True
+    assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r12"}
+    assert set(segment_body["features"][0]["properties"]["road_ids"]) == {"r12"}
 
 
 def test_step2_rejects_disconnected_after_prune(monkeypatch, tmp_path: Path) -> None:

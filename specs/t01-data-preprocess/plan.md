@@ -5,11 +5,15 @@
 - 阶段目标：
   - 修复 visual audit 暴露的 Step2 / Step4 / Step5 问题
   - 在 Step4 / Step5 中补齐层级边界硬停止逻辑
+  - 在 Step2 trunk 判定中补齐双向 road 的最小闭环语义
   - 对指定 target cases 输出 case 级审计证据
   - 暂不进入分支收尾与 baseline handoff
 
 ## 2. 本轮要做
 - 在 Step4 / Step5 中引入累计历史边界 mainnode 集合
+- 在 Step2 trunk 判定中落实：
+  - `direction = 0 / 1` 视为两条方向相反的可通行 road
+  - 镜像往返同一组双向 road 可构成合法最小闭环
 - 让历史边界同时作用于：
   - pair candidate 搜索阶段
   - `segment_body` 收敛阶段

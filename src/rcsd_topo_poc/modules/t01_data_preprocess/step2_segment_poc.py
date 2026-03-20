@@ -55,6 +55,8 @@ class TrunkCandidate:
     signed_area: float
     total_length: float
     left_turn_road_ids: tuple[str, ...]
+    is_through_collapsed_corridor: bool = False
+    is_bidirectional_minimal_loop: bool = False
 
 
 @dataclass(frozen=True)
@@ -1106,6 +1108,31 @@ def _signed_ring_area(coords: list[tuple[float, float]]) -> float:
     return twice_area / 2.0
 
 
+def _is_bidirectional_minimal_loop_candidate(
+    *,
+    forward_path: DirectedPath,
+    reverse_path: DirectedPath,
+    roads: dict[str, RoadRecord],
+) -> bool:
+    if not forward_path.road_ids:
+        return False
+    if forward_path.node_ids != tuple(reversed(reverse_path.node_ids)):
+        return False
+    if forward_path.road_ids != tuple(reversed(reverse_path.road_ids)):
+        return False
+    return all(roads[road_id].direction in {0, 1} for road_id in forward_path.road_ids)
+
+
+def _trunk_candidate_mode(candidate: TrunkCandidate) -> str:
+    if candidate.is_through_collapsed_corridor:
+        return "through_collapsed_corridor"
+    return "counterclockwise_loop"
+
+
+def _trunk_candidate_counterclockwise_ok(candidate: TrunkCandidate) -> bool:
+    return candidate.is_bidirectional_minimal_loop or candidate.signed_area > 1e-6
+
+
 def _collect_trunk_candidates(
     *,
     forward_paths: list[DirectedPath],
@@ -1113,6 +1140,7 @@ def _collect_trunk_candidates(
     roads: dict[str, RoadRecord],
     road_endpoints: dict[str, tuple[str, str]],
     left_turn_formway_bit: int,
+    allow_bidirectional_overlap: bool = False,
 ) -> tuple[list[TrunkCandidate], bool]:
     counterclockwise_candidates: list[TrunkCandidate] = []
     clockwise_only_found = False
@@ -1122,8 +1150,17 @@ def _collect_trunk_candidates(
             combined_road_ids = tuple(
                 sorted(set(forward_path.road_ids + reverse_path.road_ids), key=_sort_key)
             )
+            is_bidirectional_minimal_loop = False
             if len(combined_road_ids) != len(forward_path.road_ids) + len(reverse_path.road_ids):
-                continue
+                if not allow_bidirectional_overlap:
+                    continue
+                is_bidirectional_minimal_loop = _is_bidirectional_minimal_loop_candidate(
+                    forward_path=forward_path,
+                    reverse_path=reverse_path,
+                    roads=roads,
+                )
+                if not is_bidirectional_minimal_loop:
+                    continue
 
             ring_coords = _path_coords(forward_path, roads=roads, road_endpoints=road_endpoints)
             reverse_coords = _path_coords(reverse_path, roads=roads, road_endpoints=road_endpoints)
@@ -1132,7 +1169,7 @@ def _collect_trunk_candidates(
             ring_coords.extend(reverse_coords[1:])
 
             signed_area = _signed_ring_area(ring_coords)
-            if abs(signed_area) <= 1e-6:
+            if abs(signed_area) <= 1e-6 and not is_bidirectional_minimal_loop:
                 continue
 
             left_turn_road_ids = tuple(
@@ -1147,8 +1184,9 @@ def _collect_trunk_candidates(
                 signed_area=signed_area,
                 total_length=forward_path.total_length + reverse_path.total_length,
                 left_turn_road_ids=left_turn_road_ids,
+                is_bidirectional_minimal_loop=is_bidirectional_minimal_loop,
             )
-            if signed_area > 0:
+            if signed_area > 0 or is_bidirectional_minimal_loop:
                 counterclockwise_candidates.append(candidate)
             else:
                 clockwise_only_found = True
@@ -1191,6 +1229,7 @@ def _evaluate_trunk(
         roads=context.roads,
         road_endpoints=road_endpoints,
         left_turn_formway_bit=left_turn_formway_bit,
+        allow_bidirectional_overlap=not pair.through_node_ids,
     )
 
     if formway_mode == "strict":
@@ -1218,6 +1257,7 @@ def _evaluate_trunk(
             roads=context.roads,
             road_endpoints=road_endpoints,
             left_turn_formway_bit=left_turn_formway_bit,
+            allow_bidirectional_overlap=not pair.through_node_ids,
         )
         if strict_candidates:
             return strict_candidates[0], None, ()
@@ -1355,6 +1395,7 @@ def _evaluate_through_collapsed_corridor(
             signed_area=0.0,
             total_length=forward_path.total_length + reverse_path.total_length,
             left_turn_road_ids=left_turn_road_ids,
+            is_through_collapsed_corridor=True,
         ),
         warnings,
     )
@@ -2020,7 +2061,7 @@ def _validate_pair_candidates(
             )
             continue
 
-        trunk_mode = "through_collapsed_corridor" if abs(trunk_candidate.signed_area) <= 1e-6 else "counterclockwise_loop"
+        trunk_mode = _trunk_candidate_mode(trunk_candidate)
         if trunk_mode == "through_collapsed_corridor":
             segment_road_ids = trunk_candidate.road_ids
             segment_cut_infos: list[dict[str, Any]] = []
@@ -2050,7 +2091,7 @@ def _validate_pair_candidates(
                     reject_reason="shared_trunk_conflict",
                     trunk_mode=trunk_mode,
                     trunk_found=True,
-                    counterclockwise_ok=abs(trunk_candidate.signed_area) > 1e-6,
+                    counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
                     left_turn_excluded_mode=formway_mode,
                     warning_codes=warning_codes,
                     candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
@@ -2068,6 +2109,7 @@ def _validate_pair_candidates(
                         "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
                         "trunk_signed_area": trunk_candidate.signed_area,
                         "trunk_mode": trunk_mode,
+                        "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
                         "segment_body_candidate_road_ids": list(segment_road_ids),
                         "segment_body_candidate_cut_infos": segment_cut_infos,
                     },
@@ -2089,7 +2131,7 @@ def _validate_pair_candidates(
                 reject_reason=None,
                 trunk_mode=trunk_mode,
                 trunk_found=True,
-                counterclockwise_ok=abs(trunk_candidate.signed_area) > 1e-6,
+                counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
                 left_turn_excluded_mode=formway_mode,
                 warning_codes=warning_codes,
                 candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
@@ -2109,6 +2151,7 @@ def _validate_pair_candidates(
                     "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
                     "trunk_signed_area": trunk_candidate.signed_area,
                     "trunk_mode": trunk_mode,
+                    "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
                     "segment_body_candidate_road_ids": list(segment_road_ids),
                     "segment_body_candidate_cut_infos": segment_cut_infos,
                     "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),

@@ -58,6 +58,13 @@
 - `bit8 = 左转专用道`
   - trunk 审计与排除
 
+### 2.6 direction 当前语义口径
+- `direction = 0 / 1`：
+  - 视为两条方向相反的可通行 road
+  - 在 pair candidate 搜索中允许双向通行
+  - 在 trunk / 最小闭环判定中，若正反路径完全镜像地复用同一组双向 road，则该镜像往返可直接视为合法最小闭环
+- 该口径属于既有方向语义的一部分，不单独引入新的业务 trunk 类型
+
 ## 3. Step1 / Step2 基线输出契约
 - Step1 输出：`pair_candidates`
 - Step2 输出：`validated / rejected + trunk + segment_body + step3_residual`

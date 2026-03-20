@@ -36,6 +36,9 @@
   - `step3_residual`
 - `segment_body` 只表达当前 validated pair 的 pair-specific road body
 - 右转专用道误纳入与 `791711` T 型双向退出误追溯问题已完成修复，不得回退
+- `direction = 0 / 1` 的双向 road，在当前语义体系中视为两条方向相反的可通行 road
+- 因此在 trunk / 最小闭环判定中，若 `A -> B` 与 `B -> A` 完全镜像地复用同一组双向 road，则该镜像往返本身就是合法最小闭环
+- 这不是新的 trunk 类型，而是现有方向语义在最小闭环判定中的直接落实
 
 ## 4. 层级边界规则
 
@@ -137,7 +140,6 @@
   - `step5_mainnode_refresh_table.csv`
 
 ## 8. 当前轮次待解决问题
-- `784901__502866811`：Step2 已进入 candidate，但仍因 `no_valid_trunk` 未构出
 - Step4 target cases 需要保留 case 级审计证据，不能只给总括性解释
 - Step5 在引入历史边界后已去掉错误跨级穿越，但仍需继续视觉审查，不得提前进入 closeout
 

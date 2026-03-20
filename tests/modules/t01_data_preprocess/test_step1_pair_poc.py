@@ -51,6 +51,7 @@ def _road_feature(
     coords: list[list[float]],
     *,
     formway: int = 0,
+    road_kind: int = 0,
 ) -> dict:
     return {
         "type": "Feature",
@@ -60,6 +61,7 @@ def _road_feature(
             "enodeid": enodeid,
             "direction": direction,
             "formway": formway,
+            "road_kind": road_kind,
         },
         "geometry": {"type": "LineString", "coordinates": coords},
     }
@@ -576,3 +578,260 @@ def test_formway_right_turn_lane_is_excluded_from_through_degree(tmp_path: Path)
     assert summary["pair_count"] == 1
     assert summary["search_seed_count"] == 2
     assert summary["through_seed_pruned_count"] == 1
+
+
+def test_step1_business_filter_uses_grade_2_kind_2(tmp_path: Path) -> None:
+    road_path = tmp_path / "working_roads.geojson"
+    node_path = tmp_path / "working_nodes.geojson"
+    strategy_path = _write_strategy(
+        tmp_path / "working_strategy.json",
+        {
+            "strategy_id": "S_WORKING",
+            "description": "Step1 should use grade_2/kind_2 instead of raw grade/kind.",
+            "seed_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2]},
+            "terminate_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2]},
+        },
+    )
+
+    _write_geojson(
+        node_path,
+        features=[
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 1,
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 2,
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.01, 0.0]},
+            },
+        ],
+    )
+    _write_geojson(
+        road_path,
+        features=[
+            _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [0.01, 0.0]]),
+        ],
+    )
+
+    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    strategy = step1_pair_poc._load_strategy(strategy_path)
+    execution = step1_pair_poc.run_step1_strategy(context, strategy)
+
+    assert execution.seed_ids == ["1", "2"]
+    assert execution.terminate_ids == ["1", "2"]
+
+
+def test_step1_business_filter_excludes_closed_con_1(tmp_path: Path) -> None:
+    road_path = tmp_path / "closed_con_roads.geojson"
+    node_path = tmp_path / "closed_con_nodes.geojson"
+    strategy_path = _write_strategy(
+        tmp_path / "closed_con_strategy.json",
+        {
+            "strategy_id": "S_CLOSED",
+            "description": "Step1 should exclude closed_con=1 from current bidirectional inputs.",
+            "seed_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2, 3]},
+            "terminate_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2, 3]},
+        },
+    )
+
+    _write_geojson(
+        node_path,
+        features=[
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 1,
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 1,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 2,
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.01, 0.0]},
+            },
+        ],
+    )
+    _write_geojson(road_path, features=[_road_feature("r12", 1, 2, 0, [[0.0, 0.0], [0.01, 0.0]])])
+
+    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    strategy = step1_pair_poc._load_strategy(strategy_path)
+    execution = step1_pair_poc.run_step1_strategy(context, strategy)
+
+    assert execution.seed_ids == ["2"]
+    assert execution.terminate_ids == ["2"]
+
+
+def test_step1_business_filter_accepts_closed_con_3(tmp_path: Path) -> None:
+    road_path = tmp_path / "closed_con3_roads.geojson"
+    node_path = tmp_path / "closed_con3_nodes.geojson"
+    strategy_path = _write_strategy(
+        tmp_path / "closed_con3_strategy.json",
+        {
+            "strategy_id": "S_CLOSED3",
+            "description": "Step1 should accept closed_con=3 for current bidirectional inputs.",
+            "seed_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2, 3]},
+            "terminate_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2, 3]},
+        },
+    )
+
+    _write_geojson(
+        node_path,
+        features=[
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 1,
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 3,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 2,
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.01, 0.0]},
+            },
+        ],
+    )
+    _write_geojson(road_path, features=[_road_feature("r12", 1, 2, 0, [[0.0, 0.0], [0.01, 0.0]])])
+
+    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    strategy = step1_pair_poc._load_strategy(strategy_path)
+    execution = step1_pair_poc.run_step1_strategy(context, strategy)
+
+    assert execution.seed_ids == ["1", "2"]
+    assert execution.terminate_ids == ["1", "2"]
+
+
+def test_step1_working_graph_excludes_road_kind_1(tmp_path: Path) -> None:
+    road_path = tmp_path / "road_kind_roads.geojson"
+    node_path = tmp_path / "road_kind_nodes.geojson"
+    strategy_path = _write_strategy(
+        tmp_path / "road_kind_strategy.json",
+        {
+            "strategy_id": "S_ROAD_KIND",
+            "description": "Closed road_kind=1 should not participate in current bidirectional graph.",
+            "seed_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2, 3]},
+            "terminate_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2, 3]},
+        },
+    )
+
+    _write_geojson(
+        node_path,
+        features=[
+            {
+                "type": "Feature",
+                "properties": {"id": 1, "kind": 0, "grade": 0, "kind_2": 4, "grade_2": 1, "closed_con": 2},
+                "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+            },
+            {
+                "type": "Feature",
+                "properties": {"id": 2, "kind": 0, "grade": 0, "kind_2": 4, "grade_2": 1, "closed_con": 2},
+                "geometry": {"type": "Point", "coordinates": [0.01, 0.0]},
+            },
+        ],
+    )
+    _write_geojson(
+        road_path,
+        features=[_road_feature("r12", 1, 2, 0, [[0.0, 0.0], [0.01, 0.0]], road_kind=1)],
+    )
+
+    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    strategy = step1_pair_poc._load_strategy(strategy_path)
+    execution = step1_pair_poc.run_step1_strategy(context, strategy)
+
+    assert execution.pair_candidates == []
+    assert any(event["event"] == "road_kind_excluded" for event in context.graph_audit_events)
+
+
+def test_step1_full_through_filter_accepts_roundabout_kind_64(tmp_path: Path) -> None:
+    road_path = tmp_path / "roundabout_roads.geojson"
+    node_path = tmp_path / "roundabout_nodes.geojson"
+    strategy_path = _write_strategy(
+        tmp_path / "roundabout_strategy.json",
+        {
+            "strategy_id": "S_ROUNDABOUT",
+            "description": "Roundabout semantic nodes should participate as full-through intersections.",
+            "seed_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": [2, 3]},
+            "terminate_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": [2, 3]},
+        },
+    )
+
+    _write_geojson(
+        node_path,
+        features=[
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 1,
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 64,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 2,
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 64,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.01, 0.0]},
+            },
+        ],
+    )
+    _write_geojson(
+        road_path,
+        features=[_road_feature("r12", 1, 2, 0, [[0.0, 0.0], [0.01, 0.0]])],
+    )
+
+    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    strategy = step1_pair_poc._load_strategy(strategy_path)
+    execution = step1_pair_poc.run_step1_strategy(context, strategy)
+
+    assert execution.seed_ids == ["1", "2"]
+    assert execution.terminate_ids == ["1", "2"]

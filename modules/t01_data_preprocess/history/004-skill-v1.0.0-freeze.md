@@ -1,35 +1,36 @@
 # 004 - Skill v1.0.0 Freeze
 
 ## 1. 背景
-- T01 在当前分支完成了 accepted baseline 收敛
-- 已有人工确认通过的 XXXS 效果结果
-- 需要将其固化为 Skill v1.0.0 的效果基线
+- 该文档记录的是 T01 早期以 `XXXS` 单样例建立 `Skill v1.0.0` freeze baseline 的历史过程。
+- 这份单样例 freeze 曾作为最初的效果基线，用于约束后续 POC 收束和正式化阶段。
 
-## 2. 冻结范围
+## 2. 原冻结范围
 - 输入基线：
-  - XXXS `roads.geojson`
-  - XXXS `nodes.geojson`
+  - `XXXS/roads.geojson`
+  - `XXXS/nodes.geojson`
 - 输出基线：
-  - 官方最终 refreshed `nodes.geojson / roads.geojson`
+  - 最终 refreshed `nodes.geojson / roads.geojson`
   - validated pair 列表
   - segment_body membership
   - trunk membership
-  - 关键 summary 与 hash
+  - summary / hash
 
-## 3. 冻结组织
-- 完整 freeze run 保留在 `outputs/_freeze/`
-- 仓库内轻量审计包保留在：
-  - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs/`
-- 当前本地完整 freeze run 目录：
+## 3. 原冻结组织
+- 完整 freeze run：
   - `outputs/_freeze/t01_skill_v1_0_xxxs_20260320_154500/`
-- 当前用于 compare 的官方 run：
-  - `outputs/_work/t01_skill_v1/t01_skill_v1_20260320_154500_xxxs_verify/`
+- 仓库内轻量审计包：
+  - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs/`
 
-## 4. 用途
-- 作为 T01 Skill v1.0.0 的效果基线
-- 作为后续性能优化与代码重构的结果对照标准
-- 当前 compare 结果：`PASS`
+## 4. 当前状态
+- 该单样例 freeze 现已转为归档历史。
+- 当前活动基线已经切换为三样例套件，见：
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_three_sample_suite/`
+- 切换原因：
+  - 已完成用户批准的业务语义修正
+  - 已对 `XXXS / XXXS2 / XXXS3` 完成目视确认
+  - 需要用三组样例共同约束后续性能优化与结果一致性
 
-## 5. 解除或更新条件
-- 默认不允许更新 freeze baseline
-- 只有在用户明确认可业务变更后，才允许重建并替换该 baseline
+## 5. 当前用途
+- 保留为历史追溯材料。
+- 用于解释早期单样例 freeze 与当前活动基线之间的差异来源。
+- 不再作为后续性能优化和实现调整的当前对齐对象。

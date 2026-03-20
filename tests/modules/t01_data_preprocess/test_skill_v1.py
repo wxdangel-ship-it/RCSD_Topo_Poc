@@ -20,13 +20,24 @@ def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) 
     _write_text(node_path, "{}")
     _write_text(strategy_path, "{}")
 
+    def _fake_bootstrap(**kwargs):
+        nodes = tmp_path / "bootstrap" / "nodes.geojson"
+        roads = tmp_path / "bootstrap" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        callback = kwargs["progress_callback"]
+        callback("working_layers_initialized", {"road_feature_count": 1, "node_feature_count": 1})
+        return SimpleNamespace(nodes_path=nodes, roads_path=roads, summary={})
+
     def _fake_step2(**kwargs):
         callback = kwargs["progress_callback"]
+        assert kwargs["assume_working_layers"] is True
         callback("candidate_search_completed", {"strategy_id": "S2", "candidate_pair_count": 3})
         callback("validation_completed", {"strategy_id": "S2", "validated_pair_count": 2, "rejected_pair_count": 1})
         return []
 
     def _fake_refresh(**kwargs):
+        assert kwargs["assume_working_layers"] is True
         nodes = tmp_path / "refresh" / "nodes.geojson"
         roads = tmp_path / "refresh" / "roads.geojson"
         _write_text(nodes, "{}")
@@ -61,6 +72,7 @@ def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) 
             "summary_path": str(summary_path.resolve()),
         }
 
+    monkeypatch.setattr(skill_v1, "initialize_working_layers", _fake_bootstrap)
     monkeypatch.setattr(skill_v1, "run_step2_segment_poc", _fake_step2)
     monkeypatch.setattr(skill_v1, "refresh_s2_baseline", _fake_refresh)
     monkeypatch.setattr(skill_v1, "run_step4_residual_graph", _fake_step4)
@@ -82,8 +94,55 @@ def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) 
         for line in (artifacts.out_root / "t01_skill_v1_perf_markers.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+    scope_check = json.loads((artifacts.out_root / "distance_gate_scope_check.json").read_text(encoding="utf-8"))
 
     assert progress["status"] == "completed"
     subprogress_events = [item for item in markers if item["event"] == "stage_subprogress"]
+    assert any(item["stage_name"] == "bootstrap" for item in subprogress_events)
     assert any(item["stage_name"] == "step2" for item in subprogress_events)
     assert any(item["substage_event"] == "validation_completed" for item in subprogress_events)
+    assert scope_check["step5c_present"] is False
+
+
+def test_write_distance_gate_scope_check_marks_step2_step4_step5_as_hooked(tmp_path: Path) -> None:
+    step2_root = tmp_path / "step2"
+    step4_root = tmp_path / "step4"
+    step5_root = tmp_path / "step5"
+    (step2_root / "S2").mkdir(parents=True)
+    (step4_root / "STEP4").mkdir(parents=True)
+    (step5_root / "STEP5A").mkdir(parents=True)
+    (step5_root / "STEP5B").mkdir(parents=True)
+    (step5_root / "STEP5C").mkdir(parents=True)
+
+    summary_doc = {
+        "dual_carriageway_separation_gate_limit_m": 50.0,
+        "side_access_distance_gate_limit_m": 50.0,
+    }
+    for path in (
+        step2_root / "S2" / "segment_summary.json",
+        step4_root / "STEP4" / "segment_summary.json",
+        step5_root / "STEP5A" / "segment_summary.json",
+        step5_root / "STEP5B" / "segment_summary.json",
+        step5_root / "STEP5C" / "segment_summary.json",
+    ):
+        path.write_text(json.dumps(summary_doc, ensure_ascii=False), encoding="utf-8")
+
+    out_path = skill_v1._write_distance_gate_scope_check(
+        out_root=tmp_path,
+        step2_root=step2_root,
+        step4_root=step4_root,
+        step5_root=step5_root,
+    )
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+
+    assert payload["step2_dual_gate_hooked"] is True
+    assert payload["step2_side_gate_hooked"] is True
+    assert payload["step4_dual_gate_hooked"] is True
+    assert payload["step4_side_gate_hooked"] is True
+    assert payload["step5a_dual_gate_hooked"] is True
+    assert payload["step5a_side_gate_hooked"] is True
+    assert payload["step5b_dual_gate_hooked"] is True
+    assert payload["step5b_side_gate_hooked"] is True
+    assert payload["step5c_present"] is True
+    assert payload["step5c_dual_gate_hooked"] is True
+    assert payload["step5c_side_gate_hooked"] is True

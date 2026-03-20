@@ -1,0 +1,54 @@
+{
+  "suite_name": "t01_skill_active_three_sample_suite",
+  "status": "ACTIVE",
+  "generated_at": "2026-03-20T23:00:52",
+  "description": "Current active freeze baseline suite after user-approved semantic fixes and visual confirmation.",
+  "samples": {
+    "XXXS": {
+      "freeze_dir": "E:\\Work\\RCSD_Topo_Poc\\modules\\t01_data_preprocess\\baselines\\t01_skill_active_three_sample_suite\\XXXS",
+      "source_run_dir": "E:\\Work\\RCSD_Topo_Poc\\outputs\\_work\\t01_skill_eval\\t01_skill_eval_20260320_xxxs_endpoint_pool_fix",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS",
+        "validated_pair_count": 46,
+        "segment_body_membership_count": 153,
+        "trunk_membership_count": 153,
+        "refreshed_nodes_sha256": "ca1a921e14d4db0902fc4a069e7fd0b7fc076fe391dcdceca2fbb6c4bd60b46e",
+        "refreshed_roads_sha256": "71492f67e46732a33b66a30ed7145ab1d6dc43859c360a16106e12cc592389d7"
+      }
+    },
+    "XXXS2": {
+      "freeze_dir": "E:\\Work\\RCSD_Topo_Poc\\modules\\t01_data_preprocess\\baselines\\t01_skill_active_three_sample_suite\\XXXS2",
+      "source_run_dir": "E:\\Work\\RCSD_Topo_Poc\\outputs\\_work\\t01_skill_eval\\t01_skill_eval_20260320_xxxs2_endpoint_pool_fix",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS2",
+        "validated_pair_count": 39,
+        "segment_body_membership_count": 81,
+        "trunk_membership_count": 81,
+        "refreshed_nodes_sha256": "247284aedac0d8d8bffc893d897103722b3335699f3d8a3133c8efe71207a566",
+        "refreshed_roads_sha256": "a4377a0c6f9e8e2677255baf90564e2195c625f94de21bf0c929ab574240f014"
+      }
+    },
+    "XXXS3": {
+      "freeze_dir": "E:\\Work\\RCSD_Topo_Poc\\modules\\t01_data_preprocess\\baselines\\t01_skill_active_three_sample_suite\\XXXS3",
+      "source_run_dir": "E:\\Work\\RCSD_Topo_Poc\\outputs\\_work\\t01_skill_eval\\t01_skill_eval_20260320_xxxs3_endpoint_pool_fix",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS3",
+        "validated_pair_count": 35,
+        "segment_body_membership_count": 103,
+        "trunk_membership_count": 103,
+        "refreshed_nodes_sha256": "01c7686f3b1cbbeeec34ebfc16676d2845906d99fe97bbed359c962467af2355",
+        "refreshed_roads_sha256": "d418c6079140a33627f523f344f1d7ecdc963a63382d789c5e98659d8220b863"
+      }
+    }
+  },
+  "archive_note": {
+    "archived_single_sample_baseline": "E:\\Work\\RCSD_Topo_Poc\\modules\\t01_data_preprocess\\baselines\\t01_skill_v1_0_xxxs",
+    "reason": "Replaced as active baseline by the three-sample suite after user visual confirmation on XXXS/XXXS2/XXXS3."
+  }
+}

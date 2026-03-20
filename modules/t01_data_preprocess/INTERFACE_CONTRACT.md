@@ -1,55 +1,114 @@
 # T01 - INTERFACE_CONTRACT
 
 ## 1. 文档状态
-- 状态：`accepted baseline contract / Skill v1.0.0`
-- 用途：固化当前输入约束、输出契约、分阶段关系与 freeze compare 约束
+- 状态：`accepted baseline contract / current active baseline`
+- 用途：固化当前 working layer、环岛预处理、Step1-Step5 输入约束、distance gate、活动基线 compare 契约
 
-## 2. 基础输入契约
+## 2. Raw input layer
+- Road 支持：`Shp` / `GeoJSON`
+- Node 支持：`Shp` / `GeoJSON`
+- raw input 必须保留：
+  - Node：`kind`、`grade`、`closed_con`
+  - Road：原始 road 字段集合，包含 `road_kind`、`roadtype` 等
+- raw input 不允许被后续业务覆盖写入
 
-### 2.1 Road
-- 支持：`Shp` / `GeoJSON`
-- 必要字段：
+## 3. Working Nodes / Roads
+
+### 3.1 Working Nodes
+- 模块开始即生成 working nodes
+- 必备字段：
+  - `id`
+  - `mainnodeid`
+  - `closed_con`
+  - `grade`
+  - `kind`
+  - `grade_2`
+  - `kind_2`
+- 初始化规则：
+  - `grade_2 = grade`
+  - `kind_2 = kind`
+
+### 3.2 Working Roads
+- 模块开始即生成 working roads
+- 必备字段：
   - `id`
   - `snodeid`
   - `enodeid`
   - `direction`
   - `formway`
-- 多轮依赖字段：
-  - `segmentid`
+  - `roadtype`
+  - `road_kind`
   - `s_grade`
+  - `segmentid`
+- 初始化规则：
+  - `s_grade = null`
+  - `segmentid = null`
 
-### 2.2 Node
-- 支持：`Shp` / `GeoJSON`
-- 必要字段：
-  - `id`
-  - `kind`
-  - `grade`
-  - `closed_con`
-  - `mainnodeid`
-- 多轮依赖字段：
+## 4. 环岛语义
+- 环岛 road 识别：
+  - 字段：`roadtype`
+  - 位判定：`bit3 = 8`
+- 聚合方式：
+  - 仅按共享 node 的拓扑连通关系聚组
+- 每组输出规则：
+  - 最小 node id 为 `mainnode`
+  - `mainnode`：`grade_2 = 1`、`kind_2 = 64`
+  - `member node`：`grade_2 = 0`、`kind_2 = 0`
+  - 全组 `mainnodeid` 刷为该 `mainnode`
+- 环岛 `mainnode` 保护：
+  - 后续 generic refresh 必须跳过
+  - 保持 `grade_2 = 1`、`kind_2 = 64`
+
+## 5. 正式业务字段
+- Step1 / Step2 / Step4 / Step5A / Step5B / Step5C 一律操作 working layers
+- 后续业务判断统一基于：
   - `grade_2`
   - `kind_2`
+  - `closed_con`
+  - `segmentid`
+  - `s_grade`
+- raw `grade / kind` 只允许用于：
+  - bootstrap 初始化
+  - 审计 / 展示 / 回报
+  - 测试夹具
 
-### 2.3 语义路口
-- `mainnodeid` 有值时，该值是语义路口 ID
-- `mainnodeid` 为空时，node 自身 `id` 是语义路口 ID
-- `mainnodeid = NULL` 的单点路口仍是合法 mainnode
+## 6. 当前正式输入约束
 
-## 3. trunk / direction 契约
-- `direction = 0 / 1` 的双向 road 视为两条方向相反的可通行 road
-- trunk 以语义路口为单元，不只依赖纯几何闭环
-- 当前 trunk 支持：
-  - 双向直连镜像最小闭环
-  - split-merge 混合通道
-  - semantic-node-group closure
+### 6.1 node
+- 当前双向道路构段场景统一要求：
+  - `closed_con in {2,3}`
+- 适用范围：
+  - seed / terminate
+  - boundary / hard-stop
+  - 当前轮合法输入节点
+  - residual graph 下一轮输入节点
 
-## 4. Step1 / Step2 契约
+### 6.2 road
+- 当前双向道路构段场景统一要求：
+  - `road_kind != 1`
+- 适用范围：
+  - working graph
+  - pair candidate 搜索图
+  - trunk validation
+  - segment 收敛
+  - residual graph 后续轮次工作图
 
-### 4.1 Step1
+## 7. 全通路口输入扩容
+- `kind_2 = 4`：交叉路口
+- `kind_2 = 64`：环岛 `mainnode`
+- `kind_2 = 2048`：T 型路口
+- 凡属“全通路口”语义位置，必须接受：
+  - `kind_2 in {4,64}`
+- 凡属“交叉 + 环岛 + T”语义位置，必须接受：
+  - `kind_2 in {4,64,2048}`
+
+## 8. Step1-Step5 阶段契约
+
+### 8.1 Step1
 - 输出：`pair_candidates`
 - 不代表最终有效 pair
 
-### 4.2 Step2
+### 8.2 Step2
 - 输出：
   - `validated_pairs`
   - `rejected_pair_candidates`
@@ -59,122 +118,100 @@
   - `pair_validation_table`
   - `segment_summary.json`
 - `segment_body_roads` 只表达当前 validated pair 的 pair-specific road body
-- Step2 强规则 A / B / C 固化
+- 同时输出首轮全量 `endpoint_pool.csv`
 
-## 5. refreshed Node / Road 契约
+### 8.3 Step3
+- 刷新 working Nodes / Roads
+- 将首轮构段结果写入 `grade_2 / kind_2 / segmentid / s_grade`
 
-### 5.1 Node
-- 输出字段：
-  - `grade_2`
-  - `kind_2`
-- 语义：
-  - 当前滚动语义字段
-  - 原始 `grade / kind` 不覆盖
-- 刷新优先级遵循 accepted baseline
-
-### 5.2 Road
-- 输出字段：
-  - `segmentid`
-  - `s_grade`
-- 已有非空 `segmentid / s_grade` 的 road 后续轮次保持原值不动
-
-## 6. Step4 / Step5 staged 契约
-
-### 6.1 Step4
-- 输入：
-  - refreshed `nodes.geojson / roads.geojson`
+### 8.4 Step4
+- 输入必须已包含 working fields
+- 缺失 `grade_2 / kind_2 / s_grade / segmentid` 时 fail fast
+- 输入筛选：
   - `grade_2 in {1,2}`
-  - `kind_2 in {4,2048}`
-  - `closed_con in {1,2}`
-- 工作图：
-  - 剔除已有非空 `segmentid` 的 road
-- 历史边界：
-  - `S2` 端点并入 `seed / terminate / hard-stop`
-- 输出：
-  - `step4_*`
-  - refreshed `nodes.geojson / roads.geojson`
+  - `kind_2 in {4,64,2048}`
+  - `closed_con in {2,3}`
+- 工作图剔除：
+  - 已有非空 `segmentid` 的 road
+  - `road_kind = 1` 的 road
+- Step4 消费 `Step2` 的全量 endpoint pool
 
-### 6.2 Step5A
-- 输入：
-  - `closed_con in {1,2}`
+### 8.5 Step5A
+- 输入筛选：
+  - `closed_con in {2,3}`
   - 且：
-    - `kind_2 in {4,2048}` 且 `grade_2 in {1,2}`
-    - 或 `kind_2 = 4` 且 `grade_2 = 3`
-- 工作图：
-  - 剔除历史 `segmentid` road
-- 历史边界：
-  - `S2 + Step4`
+    - `kind_2 in {4,64,2048}` 且 `grade_2 in {1,2}`
+    - 或 `kind_2 in {4,64}` 且 `grade_2 = 3`
+- Step5A 消费 `Step4` 的全量 endpoint pool
 
-### 6.3 Step5B
-- 在 Step5A residual graph 上运行
-- 输入：
-  - `closed_con in {1,2}`
-  - `kind_2 in {4,2048}`
+### 8.6 Step5B
+- 输入筛选：
+  - `closed_con in {2,3}`
+  - `kind_2 in {4,64,2048}`
   - `grade_2 in {1,2,3}`
-- 只剔除 Step5A 新 `segment_body` road
-- 不刷新属性
-- `S2 + Step4` 历史边界并入 `seed / terminate`
-- Step5A 新端点只做 `hard-stop`
+- Step5B 消费 `Step5A` 的全量 endpoint pool
+- 当前轮新增合法端点并入同一 endpoint pool
+- 端点仍保持 `hard-stop`
 
-### 6.4 Step5C
-- 在 Step5B residual graph 上运行
-- 输入：
-  - `closed_con in {1,2}`
-  - `kind_2 in {1,4,2048}`
+### 8.7 Step5C
+- 输入筛选：
+  - `closed_con in {2,3}`
+  - `kind_2 in {1,4,64,2048}`
   - `grade_2 in {1,2,3}`
-- 只剔除 Step5B 新 `segment_body` road
-- 不刷新属性
-- `S2 + Step4` 历史边界并入 `seed / terminate`
-- Step5A / Step5B 新端点只做 `hard-stop`
+- Step5C 消费 `Step5B` 的全量 endpoint pool
+- 当前轮新增合法端点并入同一 endpoint pool
+- 端点仍保持 `hard-stop`
 
-### 6.5 Step5 统一刷新
-- Step5A / Step5B / Step5C 结束后统一刷新：
-  - `grade_2 / kind_2 / s_grade / segmentid`
+### 8.8 staged runner 统一行为
+- `force_seed / force_terminate / hard-stop` 统一基于滚动 endpoint pool
+- 传递顺序：
+  - `Step4 <- Step2 endpoint pool`
+  - `Step5A <- Step4 endpoint pool`
+  - `Step5B <- Step5A endpoint pool`
+  - `Step5C <- Step5B endpoint pool`
+- endpoint pool 传递的是全量 `seed / terminate` 端点池，不是只传 validated pair 端点
+- 若某端点在当前 working graph 上已无剩余可用 road，会自然退出下一轮
 
-## 7. 官方 end-to-end 契约
-- 官方入口：`t01-run-skill-v1`
-- 默认 `debug=true`
-- 默认输出：
-  - 最终 refreshed `nodes.geojson`
-  - 最终 refreshed `roads.geojson`
-  - `t01_skill_v1_summary.*`
-  - `t01_skill_v1_progress.json`
-  - `t01_skill_v1_perf.json`
-  - `t01_skill_v1_perf.md`
-  - `t01_skill_v1_perf_markers.jsonl`
-  - 当前轻量 bundle
-  - 指定 compare 时的 `freeze_compare_report.*`
-- `debug=true` 时，保留分阶段中间结果
-- `debug=false` 时，stage 目录使用临时目录串联，不改变最终业务结果
-- 官方 runner 必须在 stdout 输出阶段级 `START / DONE / FAIL` 进度信息
+## 9. 距离 gate 契约
+- 以下 trunk / segment 提取约束在 `Step2 / Step4 / Step5A / Step5B / Step5C` 共享。
 
-## 8. 性能 / 内存 / 并发边界
-- 当前正式纳入的优化：
-  - Step1 / Step2 / refresh / Step4 / Step5 输入图层使用固定 2 worker 并行读取
-  - 官方 runner 在每个阶段后执行 `gc.collect()`
-  - 官方 runner 记录阶段级 `tracemalloc` 峰值内存
-  - `debug=false` 时只保留最终结果与轻量审计包
-- 当前未纳入的能力：
-  - 完整全内存流水线
-  - pair / trunk / validated 核心业务决策层的并发执行
+### 9.1 trunk / 最小闭环 gate
+- 常量：`MAX_DUAL_CARRIAGEWAY_SEPARATION_M = 50.0`
+- 用途：限制上下行最大垂距
+- 结果：
+  - 超限时拒绝理由：`dual_carriageway_separation_exceeded`
+  - 审计字段：`dual_carriageway_max_separation_m`
 
-## 9. Freeze compare 契约
-- 对比入口：`t01-compare-freeze`
-- 当前冻结基线：
+### 9.2 side component / 旁路 gate
+- 常量：`MAX_SIDE_ACCESS_DISTANCE_M = 50.0`
+- 用途：限制旁路并入主路段时的最大侧向距离
+- 结果：
+  - 超限时 residual 原因：`side_access_distance_exceeded`
+  - 审计字段：`side_access_distance_m`
+
+## 10. 最终输出契约
+- official runner 最终输出：
+  - `nodes.geojson`
+  - `roads.geojson`
+  - `validated_pairs_skill_v1.csv`
+  - `segment_body_membership_skill_v1.csv`
+  - `trunk_membership_skill_v1.csv`
+  - `skill_v1_manifest.json`
+  - `skill_v1_summary.json`
+
+## 11. 活动基线 compare 契约
+- 当前活动基线为三样例套件：
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_three_sample_suite/XXXS/`
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_three_sample_suite/XXXS2/`
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_three_sample_suite/XXXS3/`
+- 逐样例 compare 仍使用官方入口：
+  - `python -m rcsd_topo_poc t01-compare-freeze`
+- compare 时应将对应样例 current run 与同名 freeze 子目录逐一对比。
+- 后续性能优化、结构重构或规则调整，只要任一样例不一致，都必须先由用户复核后再决策。
+
+## 12. 历史归档基线
+- 旧单样例 baseline：
   - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs/`
-- 对比范围至少包括：
-  - validated pair
-  - segment_body membership
-  - trunk membership
-  - refreshed nodes hash
-  - refreshed roads hash
-- 判定：
-  - 全部一致：`PASS`
-  - 任一不一致：`FAIL`
-
-## 10. 内网测试交付契约
-- 进入内网测试时，默认交付：
-  1. 当前分支内网下拉命令
-  2. 可直接执行的内网脚本
-  3. 可直接执行的关键信息回传命令
-- 在上下文已充分时，这三项命令必须可直接执行
+- 旧语义修正 candidate：
+  - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs_semantic_fix_candidate/`
+- 上述目录保留为历史追溯材料，不再作为当前活动基线。

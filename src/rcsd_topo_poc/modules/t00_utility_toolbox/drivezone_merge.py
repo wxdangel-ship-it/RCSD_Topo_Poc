@@ -33,7 +33,6 @@ class DriveZoneMergeConfig:
     default_input_crs_text: str = "EPSG:4326"
     buffer_distance_meters: float = 5.0
     patch_simplify_tolerance_meters: float = 0.5
-    global_simplify_tolerance_meters: float = 0.5
     output_name: str = "DriveZone.geojson"
     run_id: str | None = None
 
@@ -45,6 +44,19 @@ def _error_counter(patch_results: list[dict[str, Any]]) -> dict[str, int]:
         if reason:
             counter[reason] += 1
     return dict(counter)
+
+
+def _aggregate_bounds(geometries: list[Any]) -> list[float] | None:
+    bounds_values = [geometry_bounds(geometry) for geometry in geometries]
+    bounds_values = [bounds for bounds in bounds_values if bounds is not None]
+    if not bounds_values:
+        return None
+
+    min_x = min(bounds[0] for bounds in bounds_values)
+    min_y = min(bounds[1] for bounds in bounds_values)
+    max_x = max(bounds[2] for bounds in bounds_values)
+    max_y = max(bounds[3] for bounds in bounds_values)
+    return [float(min_x), float(min_y), float(max_x), float(max_y)]
 
 
 def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
@@ -67,14 +79,14 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
         announce(logger, f"[Stage 1/4] Discover patch directories. total_patch_count={total_patch_count}")
 
         patch_results: list[dict[str, Any]] = []
-        processed_geometries = []
+        processed_items: list[dict[str, Any]] = []
         input_found_count = 0
         processed_patch_count = 0
         skip_missing_count = 0
         skip_error_count = 0
         total_input_feature_count = 0
 
-        announce(logger, "[Stage 2/4] Preprocess per-patch DriveZone and collect merged geometries.")
+        announce(logger, "[Stage 2/4] Preprocess per-patch DriveZone and collect patch-level outputs.")
         for index, patch_dir in enumerate(patch_dirs, start=1):
             patch_id = patch_dir.name
             input_path = patch_dir / "Vector" / "DriveZone.geojson"
@@ -128,7 +140,12 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
                 if simplified_geometry is None:
                     raise ValueError("single-patch simplify produced no valid polygonal geometry")
 
-                processed_geometries.append(simplified_geometry)
+                processed_items.append(
+                    {
+                        "patch_id": patch_id,
+                        "geometry": simplified_geometry,
+                    }
+                )
                 processed_patch_count += 1
                 patch_results.append(
                     {
@@ -166,21 +183,22 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
                     f"[Patch {index}/{total_patch_count}] patch_id={patch_id} skip_error reason={exc}",
                 )
 
-        announce(logger, "[Stage 3/4] Merge per-patch DriveZone outputs into the global result.")
+        announce(logger, "[Stage 3/4] Aggregate per-patch DriveZone outputs into the global file.")
         output_features: list[dict[str, Any]] = []
         output_polygon_count = 0
         output_area_m2 = 0.0
         output_bounds = None
-        if processed_geometries:
-            global_geometry = minimal_repair(unary_union(processed_geometries))
-            if global_geometry is not None:
-                global_geometry = simplify_polygonal(global_geometry, config.global_simplify_tolerance_meters)
-
-            if global_geometry is not None:
-                output_features = [{"properties": {}, "geometry": global_geometry}]
-                output_polygon_count = polygon_part_count(global_geometry)
-                output_area_m2 = float(global_geometry.area)
-                output_bounds = geometry_bounds(global_geometry)
+        if processed_items:
+            output_features = [
+                {
+                    "properties": {},
+                    "geometry": item["geometry"],
+                }
+                for item in processed_items
+            ]
+            output_polygon_count = sum(polygon_part_count(item["geometry"]) for item in processed_items)
+            output_area_m2 = sum(float(item["geometry"].area) for item in processed_items)
+            output_bounds = _aggregate_bounds([item["geometry"] for item in processed_items])
 
         write_geojson(output_path, output_features)
 
@@ -204,7 +222,6 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
             "output_bounds_3857": output_bounds,
             "buffer_distance_meters": config.buffer_distance_meters,
             "patch_simplify_tolerance_meters": config.patch_simplify_tolerance_meters,
-            "global_simplify_tolerance_meters": config.global_simplify_tolerance_meters,
             "error_reason_summary": _error_counter(patch_results),
             "patch_results": patch_results,
         }

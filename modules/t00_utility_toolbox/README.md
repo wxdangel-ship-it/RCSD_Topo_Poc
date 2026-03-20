@@ -16,13 +16,13 @@
 当前包含三个工具：
 
 - Tool1：Patch 数据整理脚本
-- Tool2：全量 DriveZone 的预处理与合并
+- Tool2：全量 DriveZone 的预处理与汇总输出
 - Tool3：全量 Intersection 的预处理与汇总
 
 一句话描述：
 
 - Tool1：基于全量 Patch 矢量目录初始化统一 Patch 目录骨架，并将源 Patch 文件归位到目标 `Vector/` 目录
-- Tool2：对所有 Patch 的 `DriveZone.geojson` 做 3857 预处理、单 Patch 合并和全量合并，输出全局 `DriveZone.geojson`
+- Tool2：对所有 Patch 的 `DriveZone.geojson` 做 3857 预处理、单 Patch 合并，并将各 Patch 结果汇总到全局 `DriveZone.geojson`
 - Tool3：对所有 Patch 的 `Intersection.geojson` 做 3857 预处理和逐要素简化，保留属性并新增 `patchid` 后汇总为全局 `Intersection.geojson`
 
 ## 模块状态

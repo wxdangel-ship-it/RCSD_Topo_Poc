@@ -28,7 +28,7 @@
 当前纳入 Tool1 / Tool2 / Tool3：
 
 - Tool1：Patch 数据整理脚本
-- Tool2：全量 DriveZone 的预处理与合并
+- Tool2：全量 DriveZone 的预处理与汇总输出
 - Tool3：全量 Intersection 的预处理与汇总
 
 未经过新的规格确认，不得擅自补入 Tool4 及以上工具。

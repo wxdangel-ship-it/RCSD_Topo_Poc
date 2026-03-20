@@ -11,7 +11,6 @@ PATCH_ALL_ROOT = Path("/mnt/d/TestData/POC_Data/patch_all")
 DEFAULT_INPUT_CRS = "EPSG:4326"
 BUFFER_DISTANCE_METERS = 5.0
 PATCH_SIMPLIFY_TOLERANCE_METERS = 0.5
-GLOBAL_SIMPLIFY_TOLERANCE_METERS = 0.5
 
 
 def _find_repo_root(start: Path) -> Path | None:
@@ -41,7 +40,6 @@ def main() -> int:
                 default_input_crs_text=DEFAULT_INPUT_CRS,
                 buffer_distance_meters=BUFFER_DISTANCE_METERS,
                 patch_simplify_tolerance_meters=PATCH_SIMPLIFY_TOLERANCE_METERS,
-                global_simplify_tolerance_meters=GLOBAL_SIMPLIFY_TOLERANCE_METERS,
             )
         )
     except Exception as exc:

@@ -3,7 +3,7 @@
 ## 1. 本轮实现任务
 
 - [x] 盘点现有 T00 / Tool1 的目录、入口、日志和文档位置
-- [x] 在现有 T00 风格下实现 Tool2 `DriveZone` 预处理与全量合并
+- [x] 在现有 T00 风格下实现 Tool2 `DriveZone` 预处理与汇总输出
 - [x] 在现有 T00 风格下实现 Tool3 `Intersection` 预处理与全量汇总
 - [x] 为 Tool2 / Tool3 补最小共享底层工具，避免重复实现
 - [x] 为 Tool2 / Tool3 提供阶段级和 Patch 级进度输出

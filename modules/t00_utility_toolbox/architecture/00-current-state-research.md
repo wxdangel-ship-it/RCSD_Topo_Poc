@@ -18,7 +18,7 @@
 - `T00` 是项目内工具集合模块，不是 Skill，也不是正式业务生产模块
 - 当前已纳入 Tool1 / Tool2 / Tool3
 - Tool1 负责 `patch_all` 骨架和 `Vector/` 归位
-- Tool2 负责全局 `DriveZone` 预处理与合并
+- Tool2 负责全局 `DriveZone` 预处理与汇总输出
 - Tool3 负责全局 `Intersection` 预处理与汇总
 - Tool2 / Tool3 沿用 Tool1 的“固定脚本 + `src` 模块 + 根目录日志摘要”风格
 

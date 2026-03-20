@@ -10,7 +10,7 @@
 - Tool1 / Tool2 / Tool3 的规格、契约与执行边界
 - Patch 目录骨架初始化
 - `Vector/` 数据归位
-- 全局 `DriveZone` 预处理与合并
+- 全局 `DriveZone` 预处理与汇总输出
 - 全局 `Intersection` 预处理与汇总
 - Patch 级异常不中断全量的处理口径
 - 目标根目录日志与摘要的最小语义

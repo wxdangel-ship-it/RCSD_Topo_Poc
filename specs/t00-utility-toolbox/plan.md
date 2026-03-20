@@ -27,7 +27,7 @@ T00 当前文档分为两层：
 建议顺序固定为：
 
 1. Tool1：先建立 `patch_all` 骨架与 `Vector/` 归位
-2. Tool2：基于统一 `patch_all/<PatchID>/Vector/DriveZone.geojson` 做全量合并
+2. Tool2：基于统一 `patch_all/<PatchID>/Vector/DriveZone.geojson` 做单 Patch 预处理并汇总输出
 3. Tool3：基于统一 `patch_all/<PatchID>/Vector/Intersection.geojson` 做全量汇总
 
 这样可以保持数据入口一致，避免 Tool2 / Tool3 直接绕过 Tool1 的路径整理规则。
@@ -35,7 +35,7 @@ T00 当前文档分为两层：
 ## 4. 各工具实现边界
 
 - Tool1：只负责目录骨架初始化和 `Vector/` 数据归位
-- Tool2：只负责单 Patch `DriveZone` 预处理、全量合并和全局输出
+- Tool2：只负责单 Patch `DriveZone` 预处理、汇总输出和全局文件落仓
 - Tool3：只负责单 Patch `Intersection` 预处理、全量汇总和全局输出
 
 三者共用统一的 `Vector/`、`3857`、最小修复、拓扑保持简化、删除旧输出再重建和进度输出口径。

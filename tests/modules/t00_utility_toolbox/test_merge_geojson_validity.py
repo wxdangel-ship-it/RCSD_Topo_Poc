@@ -86,6 +86,47 @@ def test_drivezone_merge_skips_missing_crs_patch_with_out_of_range_lonlat_bounds
     assert "missing or incorrect CRS metadata" in summary["patch_results"][0]["error_reason"]
 
 
+def test_drivezone_merge_aggregates_patch_outputs_without_global_dissolve(tmp_path: Path) -> None:
+    patch_all_root = tmp_path / "patch_all"
+
+    _write_polygon_feature_collection(
+        patch_all_root / "1101" / "Vector" / "DriveZone.geojson",
+        [
+            [116.30, 39.90],
+            [116.301, 39.90],
+            [116.301, 39.901],
+            [116.30, 39.901],
+            [116.30, 39.90],
+        ],
+    )
+    _write_polygon_feature_collection(
+        patch_all_root / "1102" / "Vector" / "DriveZone.geojson",
+        [
+            [116.80, 39.90],
+            [116.801, 39.90],
+            [116.801, 39.901],
+            [116.80, 39.901],
+            [116.80, 39.90],
+        ],
+    )
+
+    summary = run_drivezone_merge(
+        DriveZoneMergeConfig(
+            patch_all_root=patch_all_root,
+            run_id="test_drivezone_aggregate_output",
+        )
+    )
+
+    output_doc = json.loads((patch_all_root / "DriveZone.geojson").read_text(encoding="utf-8"))
+
+    assert summary["processed_patch_count"] == 2
+    assert summary["skip_error_count"] == 0
+    assert summary["output_feature_count"] == 2
+    assert len(output_doc["features"]) == 2
+    assert all(feature["geometry"]["type"] in {"Polygon", "MultiPolygon"} for feature in output_doc["features"])
+    assert summary["output_bounds_3857"] is not None
+
+
 def test_intersection_merge_skips_missing_crs_patch_with_out_of_range_lonlat_bounds(tmp_path: Path) -> None:
     patch_all_root = tmp_path / "patch_all"
 

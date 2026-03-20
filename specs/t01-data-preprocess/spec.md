@@ -61,6 +61,10 @@
   1. pair candidate BFS 搜索阶段
   2. `segment_body` 候选通道 / component 收敛阶段
 - 不能只挡住 pair，不挡 segment
+- 对 Step4 / Step5 这类 residual graph 轮次，凡是命中当前轮 `seed / terminate` 的节点，一律不得再作为当前轮 `through_node`
+- 即：
+  - 当前轮合法端点必须真正作为端点参与搜索
+  - 不能再出现“命中当前轮输入规则，但被 through 吞掉、无法作为 search seed 启动”的情况
 
 ## 5. `mainnodeid = NULL` 单点路口规则
 - 若 node 的 `mainnodeid = NULL`，则该 node 自身 `id` 即为语义路口 ID

@@ -146,6 +146,9 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     assert (artifacts.out_root / "S2" / "sentinel.txt").read_text(encoding="utf-8") == "keep"
     assert artifacts.refreshed_nodes_path.name == "nodes.geojson"
     assert artifacts.refreshed_roads_path.name == "roads.geojson"
+    strategy_doc = json.loads((artifacts.out_root / "step4_strategy.json").read_text(encoding="utf-8"))
+    assert strategy_doc["through_node_rule"]["disallow_seed_terminate_nodes"] is True
+    assert strategy_doc["through_node_rule"]["disallow_null_mainnode_singleton_seed_terminate_nodes"] is True
 
     validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
     assert [row["pair_id"] for row in validated_rows] == ["STEP4:1__3"]

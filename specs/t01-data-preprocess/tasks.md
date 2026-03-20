@@ -13,6 +13,7 @@
 - [x] 在 `segment_body` component 收敛阶段接入历史边界阻断
 - [x] 为 Step4 输出 `historical_boundary_nodes.geojson`
 - [x] 为 Step5 输出 `historical_boundary_nodes.geojson`
+- [x] 明确并实现：Step4 / Step5 中，凡是命中当前轮 `seed / terminate` 的节点，一律不得再被当前轮 `through` 吞掉
 - [x] 明确并实现：`mainnodeid = NULL` 的单点语义路口若命中当前轮输入规则，必须进入 `seed / terminate` 且不得再被当前轮 `through` 吞掉
 
 ### 2.2 Step4 错误构出修复

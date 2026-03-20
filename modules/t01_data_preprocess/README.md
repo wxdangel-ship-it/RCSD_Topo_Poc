@@ -24,6 +24,7 @@
 - 当前要求：
   - 更低等级轮次必须在更高等级历史路口中断
   - pair 搜索与 segment 收敛都必须使用同一套历史边界
+  - 对 Step4 / Step5，凡是命中当前轮 `seed / terminate` 的节点，不得再作为当前轮 `through_node`
 - 额外约束：
   - `mainnodeid = NULL` 的单点路口，其语义路口 ID 取自身 `id`
   - 若它命中当前轮输入规则，则必须作为合法语义路口进入 `seed / terminate`

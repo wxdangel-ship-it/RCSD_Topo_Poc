@@ -380,6 +380,7 @@ def _build_step4_inputs(
             "through_node_rule": {
                 "incident_road_degree_eq": 2,
                 "incident_degree_exclude_formway_bits_any": [7],
+                "disallow_seed_terminate_nodes": True,
                 "disallow_null_mainnode_singleton_seed_terminate_nodes": True,
             },
             "hard_stop_node_ids": sorted(historical_boundary_ids, key=_sort_key),

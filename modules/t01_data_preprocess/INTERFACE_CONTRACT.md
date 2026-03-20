@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 - 状态：`POC Contract Draft`
-- 当前阶段：`Step5A/Step5B staged residual graph segment construction`
+- 当前阶段：`Step5A/Step5B/Step5C staged residual graph segment construction`
 - 用途：固化当前原型阶段的输入、输出与审计契约
 
 ## 2. 输入契约
@@ -72,19 +72,39 @@
   - `Step5A` validated pair 端点 mainnode
   - 但这些 Step5A 当轮新端点不回注入 Step5B `seed / terminate`
 
-### 2.5 formway 当前启用口径
+### 2.5 Step5C 输入契约
+- 使用 Step5B residual graph
+- 工作图继续剔除 Step5B 新 `segment_body` road
+- 不刷新属性
+- seed / terminate 条件：
+  - `closed_con in {1,2}`
+  - `kind_2 in {1,4,2048}`
+  - `grade_2 in {1,2,3}`
+- 另外并入历史高等级端点：
+  - `S2 + Step4` validated pair 端点 mainnode
+  - 通过 `force_seed_node_ids / force_terminate_node_ids` 显式注入
+- Step5C 的 `hard_stop_node_ids` 还会额外包含：
+  - `Step5A + Step5B` validated pair 端点 mainnode
+  - 但这些 Step5A / Step5B 当轮新端点不回注入 Step5C `seed / terminate`
+
+### 2.6 formway 当前启用口径
 - `bit7 = 右转专用道`
   - through incident degree 可用于压缩
   - Node 刷新规则 3 可用于判定“其余全是右转专用道”
 - `bit8 = 左转专用道`
   - trunk 审计与排除
 
-### 2.6 direction 当前语义口径
+### 2.7 direction 当前语义口径
 - `direction = 0 / 1`：
   - 视为两条方向相反的可通行 road
   - 在 pair candidate 搜索中允许双向通行
   - 在 trunk / 最小闭环判定中，若正反路径完全镜像地复用同一组双向 road，则该镜像往返可直接视为合法最小闭环
   - 在 trunk / 最小闭环判定中，若正反路径局部共享双向 road，且共享段在两条路径中均以相反方向被通行，则该共享段可视为同一合法最小闭环的一部分
+- `trunk` 的闭环语义以语义路口为单元：
+  - 支持 `mainnodeid` 聚合后的 semantic node group
+  - 也支持 `mainnodeid = NULL` 的单 node 路口
+- 若正反路径在语义路口层面的有向图已经形成闭环，则即使因为同一 semantic node group 内不同 member node 的物理坐标差异导致几何不开环，
+  也不得仅以“纯几何未闭合”为由拒绝 trunk
 - 该口径属于既有方向语义的一部分，不单独引入新的业务 trunk 类型
 
 ## 3. Step1 / Step2 基线输出契约
@@ -97,7 +117,7 @@
   - 历史高等级边界端点可作为当前轮 seed/terminate
   - 命中历史边界时，应作为 terminal candidate 收口并停止继续穿越
 
-## 4. Step5A / Step5B 输出契约
+## 4. Step5A / Step5B / Step5C 输出契约
 
 ### 4.1 Step5A
 - `step5a_pair_candidates.*`
@@ -115,7 +135,15 @@
 - `step5b_segment_body_roads.*`
 - `step5b_residual_roads.*`
 
-### 4.3 Step5 merged
+### 4.3 Step5C
+- `step5c_pair_candidates.*`
+- `step5c_validated_pairs.*`
+- `step5c_rejected_pairs.*`
+- `step5c_trunk_roads.*`
+- `step5c_segment_body_roads.*`
+- `step5c_residual_roads.*`
+
+### 4.4 Step5 merged
 - `step5_validated_pairs_merged.*`
 - `step5_segment_body_roads_merged.*`
 - `step5_residual_roads_merged.*`
@@ -127,7 +155,7 @@
 - `kind_2`
 
 说明：
-- 基于 Step5A + Step5B 的 validated pair 并集和累计 `segmentid` 结果回写
+- 基于 Step5A + Step5B + Step5C 的 validated pair 并集和累计 `segmentid` 结果回写
 - 原始 `grade / kind` 不覆盖
 - 只对 mainnode 记录做业务改写
 - subnode 保持输入值
@@ -161,8 +189,14 @@
 - `step5b_terminate_count`
 - `step5b_validated_pair_count`
 - `step5b_new_segment_road_count`
+- `step5c_input_node_count`
+- `step5c_seed_count`
+- `step5c_terminate_count`
+- `step5c_validated_pair_count`
+- `step5c_new_segment_road_count`
 - `step5_removed_historical_segment_road_count`
 - `step5_removed_step5a_segment_road_count`
+- `step5_removed_step5b_segment_road_count`
 - `step5_total_new_segment_road_count`
 - `node_rule_keep_pair_count`
 - `node_rule_single_segment_count`
@@ -174,6 +208,7 @@
 - `mainnode_id`
 - `participates_in_step5a_pair`
 - `participates_in_step5b_pair`
+- `participates_in_step5c_pair`
 - `current_grade_2`
 - `current_kind_2`
 - `current_closed_con`

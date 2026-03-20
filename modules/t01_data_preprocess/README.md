@@ -1,12 +1,12 @@
 # T01 数据预处理模块
 
 ## 当前状态
-- 当前阶段：`hierarchical boundary fix before poc closeout`
+- 当前阶段：`Step5A/Step5B/Step5C staged residual graph segment construction`
 - 当前定位：
   - Step1：只发现 `pair_candidates`
   - Step2：做 `validated / rejected / trunk / segment_body / step3_residual`
   - Step4：在 Step2 基线刷新结果上做 residual graph 构建
-  - Step5：在 Step4 刷新结果上做 `Step5A / Step5B` staged residual graph 构建
+  - Step5：在 Step4 刷新结果上做 `Step5A / Step5B / Step5C` staged residual graph 构建
 - 当前仍处于 POC 收敛阶段，尚未进入 closeout
 
 ## 当前已修复基线
@@ -18,6 +18,8 @@
   - `direction = 0 / 1` 视为两条方向相反的可通行 road
   - 在 trunk / 最小闭环判定中，镜像往返同一组双向 road 可直接构成合法最小闭环
   - 在 trunk / 最小闭环判定中，若正反通道局部共享双向 road，且共享段均以相反方向被通行，则该“分合混合通道”仍属于合法最小闭环
+  - trunk 以语义路口为单元判定闭环；若正反路径在 semantic-node-group 层面闭合，即使物理几何不开环，也可成立
+  - 该语义同时支持 `mainnode group` 路口与 `mainnodeid = NULL` 的单 node 路口
   - 该口径不额外引入新的 trunk 业务类型
 
 ## 当前已知 visual audit 修复重点
@@ -33,8 +35,9 @@
   - 若它命中当前轮输入规则，则必须作为合法语义路口进入 `seed / terminate`
   - 且当前轮不得再把它作为 `through_node`
 - Step5 边界补充口径：
-  - `S2 + Step4` 历史端点会回注入 Step5A / Step5B 的 `seed / terminate`
+  - `S2 + Step4` 历史端点会回注入 Step5A / Step5B / Step5C 的 `seed / terminate`
   - `Step5A` 当轮新端点对 Step5B 只做 `hard-stop`，不回注入 Step5B `seed / terminate`
+  - `Step5A / Step5B` 当轮新端点对 Step5C 只做 `hard-stop`，不回注入 Step5C `seed / terminate`
 - closeout 之前，优先继续修 visual audit 问题，不做 baseline handoff
 
 ## 运行入口
@@ -68,9 +71,10 @@ python -m rcsd_topo_poc t01-step5-staged-residual-graph \
 - `target_case_audit.json`
 - refreshed `nodes.geojson / roads.geojson`
 
-### Step5A / Step5B
+### Step5A / Step5B / Step5C
 - `step5a_*`
 - `step5b_*`
+- `step5c_*`
 - `step5_validated_pairs_merged.*`
 - `step5_segment_body_roads_merged.*`
 - `step5_residual_roads_merged.*`

@@ -36,6 +36,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import (
 DEFAULT_RUN_ID_PREFIX = "t01_step5_staged_residual_graph_"
 STEP5A_STRATEGY_ID = "STEP5A"
 STEP5B_STRATEGY_ID = "STEP5B"
+STEP5C_STRATEGY_ID = "STEP5C"
 STEP5_NEW_SEGMENT_GRADE = "0-2\u53cc"
 
 
@@ -105,6 +106,10 @@ def _step5a_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
 
 def _step5b_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
     return kind_2 in {4, 2048} and grade_2 in {1, 2, 3}
+
+
+def _step5c_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
+    return kind_2 in {1, 4, 2048} and grade_2 in {1, 2, 3}
 
 
 def _build_group_to_road_ids(
@@ -387,6 +392,7 @@ def _write_refreshed_outputs(
             "representative_node_id",
             "participates_in_step5a_pair",
             "participates_in_step5b_pair",
+            "participates_in_step5c_pair",
             "current_grade_2",
             "current_kind_2",
             "current_closed_con",
@@ -418,12 +424,15 @@ def _refresh_after_step5(
     roads: list[RoadFeatureRecord],
     phase_a: PhaseRunArtifacts,
     phase_b: PhaseRunArtifacts,
+    phase_c: PhaseRunArtifacts,
     out_root: Path,
     preserved_snapshots: dict[str, str],
     step5a_input: PhaseInputArtifacts,
     step5b_input: PhaseInputArtifacts,
+    step5c_input: PhaseInputArtifacts,
     removed_historical_segment_road_count: int,
     removed_step5a_segment_road_count: int,
+    removed_step5b_segment_road_count: int,
 ) -> Step5Artifacts:
     node_by_id = {node.node_id: node for node in nodes}
     road_by_id = {road.road_id: road for road in roads}
@@ -435,9 +444,10 @@ def _refresh_after_step5(
         node_id: group.mainnode_id for group in mainnode_groups.values() for node_id in group.member_node_ids
     }
 
-    all_validated_rows = list(phase_a.validated_rows) + list(phase_b.validated_rows)
+    all_validated_rows = list(phase_a.validated_rows) + list(phase_b.validated_rows) + list(phase_c.validated_rows)
     step5a_endpoint_ids: set[str] = set()
     step5b_endpoint_ids: set[str] = set()
+    step5c_endpoint_ids: set[str] = set()
     all_endpoint_ids: set[str] = set()
     for row in phase_a.validated_rows:
         for key in ("a_node_id", "b_node_id"):
@@ -451,9 +461,22 @@ def _refresh_after_step5(
             if value is not None:
                 step5b_endpoint_ids.add(value)
                 all_endpoint_ids.add(value)
+    for row in phase_c.validated_rows:
+        for key in ("a_node_id", "b_node_id"):
+            value = _normalize_id(row.get(key))
+            if value is not None:
+                step5c_endpoint_ids.add(value)
+                all_endpoint_ids.add(value)
 
     new_road_to_segmentid = dict(phase_a.road_to_segmentid)
     for road_id, segmentid in phase_b.road_to_segmentid.items():
+        existing = new_road_to_segmentid.get(road_id)
+        if existing is not None and existing != segmentid:
+            raise ValueError(
+                f"Road '{road_id}' is assigned to multiple Step5 segment ids: '{existing}' and '{segmentid}'."
+            )
+        new_road_to_segmentid[road_id] = segmentid
+    for road_id, segmentid in phase_c.road_to_segmentid.items():
         existing = new_road_to_segmentid.get(road_id)
         if existing is not None and existing != segmentid:
             raise ValueError(
@@ -559,6 +582,7 @@ def _refresh_after_step5(
                 "representative_node_id": group.representative_node_id,
                 "participates_in_step5a_pair": mainnode_id in step5a_endpoint_ids,
                 "participates_in_step5b_pair": mainnode_id in step5b_endpoint_ids,
+                "participates_in_step5c_pair": mainnode_id in step5c_endpoint_ids,
                 "current_grade_2": current_grade_2,
                 "current_kind_2": current_kind_2,
                 "current_closed_con": current_closed_con,
@@ -589,8 +613,14 @@ def _refresh_after_step5(
         "step5b_terminate_count": step5b_input.terminate_count,
         "step5b_validated_pair_count": phase_b.validated_pair_count,
         "step5b_new_segment_road_count": phase_b.new_segment_road_count,
+        "step5c_input_node_count": step5c_input.input_node_count,
+        "step5c_seed_count": step5c_input.seed_count,
+        "step5c_terminate_count": step5c_input.terminate_count,
+        "step5c_validated_pair_count": phase_c.validated_pair_count,
+        "step5c_new_segment_road_count": phase_c.new_segment_road_count,
         "step5_removed_historical_segment_road_count": removed_historical_segment_road_count,
         "step5_removed_step5a_segment_road_count": removed_step5a_segment_road_count,
+        "step5_removed_step5b_segment_road_count": removed_step5b_segment_road_count,
         "step5_total_new_segment_road_count": len(new_road_to_segmentid),
         "node_rule_keep_pair_count": node_rule_keep_pair_count,
         "node_rule_single_segment_count": node_rule_single_segment_count,
@@ -704,19 +734,67 @@ def run_step5_staged_residual_graph(
         left_turn_formway_bit=left_turn_formway_bit,
     )
 
+    step5b_boundary_ids = {
+        node_id
+        for row in phase_b.validated_rows
+        for node_id in (_normalize_id(row.get("a_node_id")), _normalize_id(row.get("b_node_id")))
+        if node_id is not None
+    }
+    step5c_hard_stop_node_ids = set(step5b_hard_stop_node_ids) | step5b_boundary_ids
+    for node_id in sorted(step5b_boundary_ids, key=_sort_key):
+        tags = set(combined_boundary_source_map.get(node_id, ()))
+        tags.add("STEP5B")
+        combined_boundary_source_map[node_id] = tuple(sorted(tags, key=_sort_key))
+    _write_boundary_node_outputs(
+        out_root=resolved_out_root,
+        nodes=nodes,
+        boundary_source_map=combined_boundary_source_map,
+    )
+
+    active_road_ids_step5c = set(active_road_ids_step5b) - set(phase_b.road_to_segmentid)
+    step5c_input = _build_phase_inputs(
+        phase_id=STEP5C_STRATEGY_ID,
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids_step5c,
+        out_root=resolved_out_root,
+        base_match=_step5c_base_match,
+        historical_seed_node_ids=historical_boundary_ids,
+        hard_stop_node_ids=step5c_hard_stop_node_ids,
+    )
+    phase_c = _run_phase(
+        phase_input=step5c_input,
+        out_root=resolved_out_root,
+        run_id=resolved_run_id,
+        formway_mode=formway_mode,
+        left_turn_formway_bit=left_turn_formway_bit,
+    )
+
     merged_validated_rows = _write_merged_validated_pairs(
-        phase_rows=[("STEP5A", phase_a.validated_rows), ("STEP5B", phase_b.validated_rows)],
+        phase_rows=[
+            ("STEP5A", phase_a.validated_rows),
+            ("STEP5B", phase_b.validated_rows),
+            ("STEP5C", phase_c.validated_rows),
+        ],
         out_path=resolved_out_root / "step5_validated_pairs_merged.csv",
     )
     _write_merged_geojson(
-        paths=[phase_a.phase_dir / "segment_body_roads.geojson", phase_b.phase_dir / "segment_body_roads.geojson"],
+        paths=[
+            phase_a.phase_dir / "segment_body_roads.geojson",
+            phase_b.phase_dir / "segment_body_roads.geojson",
+            phase_c.phase_dir / "segment_body_roads.geojson",
+        ],
         out_path=resolved_out_root / "step5_segment_body_roads_merged.geojson",
-        phase_labels=["STEP5A", "STEP5B"],
+        phase_labels=["STEP5A", "STEP5B", "STEP5C"],
     )
     _write_merged_geojson(
-        paths=[phase_a.phase_dir / "step3_residual_roads.geojson", phase_b.phase_dir / "step3_residual_roads.geojson"],
+        paths=[
+            phase_a.phase_dir / "step3_residual_roads.geojson",
+            phase_b.phase_dir / "step3_residual_roads.geojson",
+            phase_c.phase_dir / "step3_residual_roads.geojson",
+        ],
         out_path=resolved_out_root / "step5_residual_roads_merged.geojson",
-        phase_labels=["STEP5A", "STEP5B"],
+        phase_labels=["STEP5A", "STEP5B", "STEP5C"],
     )
     write_json(
         resolved_out_root / "strategy_comparison.json",
@@ -725,6 +803,7 @@ def run_step5_staged_residual_graph(
             "strategies": [
                 {"strategy_id": phase_a.phase_id, **phase_a.segment_summary},
                 {"strategy_id": phase_b.phase_id, **phase_b.segment_summary},
+                {"strategy_id": phase_c.phase_id, **phase_c.segment_summary},
             ],
         },
     )
@@ -734,12 +813,15 @@ def run_step5_staged_residual_graph(
         roads=roads,
         phase_a=phase_a,
         phase_b=phase_b,
+        phase_c=phase_c,
         out_root=resolved_out_root,
         preserved_snapshots=preserved_snapshots,
         step5a_input=step5a_input,
         step5b_input=step5b_input,
+        step5c_input=step5c_input,
         removed_historical_segment_road_count=len(historical_segment_road_ids),
         removed_step5a_segment_road_count=len(phase_a.road_to_segmentid),
+        removed_step5b_segment_road_count=len(phase_b.road_to_segmentid),
     )
     refreshed_summary = dict(artifacts.summary)
     refreshed_summary["input_node_path"] = str(Path(node_path))
@@ -748,9 +830,12 @@ def run_step5_staged_residual_graph(
     refreshed_summary["step5a_rejected_pair_count"] = phase_a.rejected_pair_count
     refreshed_summary["step5b_candidate_pair_count"] = phase_b.candidate_pair_count
     refreshed_summary["step5b_rejected_pair_count"] = phase_b.rejected_pair_count
+    refreshed_summary["step5c_candidate_pair_count"] = phase_c.candidate_pair_count
+    refreshed_summary["step5c_rejected_pair_count"] = phase_c.rejected_pair_count
     refreshed_summary["step5_merged_validated_pair_count"] = len(merged_validated_rows)
     refreshed_summary["historical_boundary_node_count"] = len(historical_boundary_ids)
     refreshed_summary["step5b_hard_stop_node_count"] = len(step5b_hard_stop_node_ids)
+    refreshed_summary["step5c_hard_stop_node_count"] = len(step5c_hard_stop_node_ids)
     write_json(artifacts.summary_path, refreshed_summary)
     return Step5Artifacts(
         out_root=artifacts.out_root,

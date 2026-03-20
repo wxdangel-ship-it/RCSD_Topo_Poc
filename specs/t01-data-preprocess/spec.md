@@ -16,9 +16,9 @@
   - 结束后再次刷新 `grade_2 / kind_2 / s_grade / segmentid`
 - Step5：
   - 基于 Step4 refreshed `Node / Road`
-  - 拆分为 `Step5A / Step5B`
-  - Step5A 与 Step5B 之间只剔除新 `segment_body` road，不刷新属性
-  - Step5A + Step5B 完成后统一刷新 `Node / Road`
+  - 拆分为 `Step5A / Step5B / Step5C`
+  - Step5A、Step5B 与 Step5C 之间只剔除更早阶段新 `segment_body` road，不刷新属性
+  - Step5A + Step5B + Step5C 完成后统一刷新 `Node / Road`
 - Step6：
   - 尚未启动
 
@@ -39,10 +39,18 @@
 - `direction = 0 / 1` 的双向 road，在当前语义体系中视为两条方向相反的可通行 road
 - 因此在 trunk / 最小闭环判定中，不仅“`A -> B` 与 `B -> A` 完全镜像复用同一组双向 road”属于合法最小闭环；
   还包括“正反通道在局部先分再合、合后再分，且共享段仅通过双向 road 反向复用”的合法组合
+- trunk 的闭环语义以“语义路口 / semantic-node-group”为单元，而不是只看物理几何是否首尾严格闭合
+- 因此若正反路径在语义路口层面已经形成合法闭环，即使因 `mainnode group` 内不同 member node 的物理坐标差异导致几何不开环，
+  也应视为合法 trunk
+- 该口径同样适用于：
+  - `mainnodeid` 聚合后的多 node 路口
+  - `mainnodeid = NULL` 的单 node 路口
 - 操作化口径：
   - 若正反路径共享的 road 全部为双向 road
   - 且这些共享 road 在两条路径中均以相反方向被通行
   - 则该共享段视为同一合法最小闭环的一部分，而不是 trunk 判定的冲突
+- 若正反路径在语义路口层面的有向图满足闭环连通与进出平衡，则即使物理几何面积无法形成有效闭环，
+  仍可按 `semantic-node-group closure` 视为 trunk 成立
 - 这不是新的 trunk 类型，而是现有方向语义在最小闭环判定中的直接落实
 
 ## 4. 层级边界规则
@@ -72,6 +80,10 @@
   - `hard-stop boundary` 取自已完成的 `S2 + Step4 + Step5A` validated pair 端点 mainnode
   - 但回注入 `seed / terminate` 的历史端点仅取 `S2 + Step4`
   - `Step5A` 当轮新端点只用于 Step5B `hard-stop`，不回注入 Step5B `seed / terminate`
+- Step5C：
+  - `hard-stop boundary` 取自已完成的 `S2 + Step4 + Step5A + Step5B` validated pair 端点 mainnode
+  - 但回注入 `seed / terminate` 的历史端点仍仅取 `S2 + Step4`
+  - `Step5A / Step5B` 当轮新端点只用于 Step5C `hard-stop`，不回注入 Step5C `seed / terminate`
 
 ### 4.3 作用范围
 - 该边界规则必须同时作用于：
@@ -140,14 +152,28 @@
   - 仅作为 Step5B `hard-stop boundary`
   - 不回注入 Step5B `seed / terminate`
 
-### 6.3 Step5A / Step5B 关系
+### 6.3 Step5C 输入集合
+- 在 Step5B residual graph 上
+- 对所有满足以下条件的剩余路口继续做补充构段：
+  - `closed_con in {1,2}`
+  - `kind_2 in {1,4,2048}`
+  - `grade_2 in {1,2,3}`
+- Step5C `seed / terminate` 还需额外并入：
+  - 来自 `S2 + Step4` 的历史高等级边界端点 mainnode
+- Step5A / Step5B 当轮新端点：
+  - 仅作为 Step5C `hard-stop boundary`
+  - 不回注入 Step5C `seed / terminate`
+
+### 6.4 Step5A / Step5B / Step5C 关系
 - Step5A 是优先轮
 - Step5B 是 residual graph 上所有剩余双向路口的收尾轮
-- Step5A 与 Step5B 之间：
+- Step5C 是 residual graph 上将 `kind_2=1` 纳入后的补充轮
+- Step5A、Step5B 与 Step5C 之间：
   - 只剔除 Step5A 新 `segment_body` road
+  - 继续只剔除 Step5B 新 `segment_body` road
   - 不刷新 `grade_2 / kind_2 / s_grade / segmentid`
 
-### 6.4 Step5 输出
+### 6.5 Step5 输出
 - Step5A：
   - `step5a_pair_candidates.*`
   - `step5a_validated_pairs.*`
@@ -162,6 +188,13 @@
   - `step5b_trunk_roads.*`
   - `step5b_segment_body_roads.*`
   - `step5b_residual_roads.*`
+- Step5C：
+  - `step5c_pair_candidates.*`
+  - `step5c_validated_pairs.*`
+  - `step5c_rejected_pairs.*`
+  - `step5c_trunk_roads.*`
+  - `step5c_segment_body_roads.*`
+  - `step5c_residual_roads.*`
 - merged：
   - `step5_validated_pairs_merged.*`
   - `step5_segment_body_roads_merged.*`

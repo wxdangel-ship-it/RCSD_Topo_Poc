@@ -1,36 +1,33 @@
 # T01 计划
 
 ## 1. 当前阶段
-- 阶段名：`hierarchical boundary fix before poc closeout`
+- 阶段名：`Step5A/Step5B/Step5C staged residual graph segment construction`
 - 阶段目标：
-  - 修复 visual audit 暴露的 Step2 / Step4 / Step5 问题
-  - 在 Step4 / Step5 中补齐层级边界硬停止逻辑
-  - 在 Step2 trunk 判定中补齐双向 road 的最小闭环语义
-  - 对指定 target cases 输出 case 级审计证据
-  - 暂不进入分支收尾与 baseline handoff
+  - 在现有 Step5 staged residual graph 编排中新增 `Step5C`
+  - 让 `kind_2=1` 节点在 Step5C residual graph 上进入构段
+  - 保持 Step5A / Step5B / Step5C 之间不刷新属性
+  - 在外网 `XXXS` 上验证三阶段 merged 与 refreshed 结果
+  - 暂不进入 Step6、分支收尾与 baseline handoff
 
 ## 2. 本轮要做
-- 在 Step4 / Step5 中引入累计历史边界 mainnode 集合
-- 在 Step2 trunk 判定中落实：
-  - `direction = 0 / 1` 视为两条方向相反的可通行 road
-  - 镜像往返同一组双向 road 可构成合法最小闭环
-  - 正反路径局部共享双向 road、且共享段以相反方向通行时，也应视为同一合法最小闭环的一部分
-- 让历史边界同时作用于：
-  - pair candidate 搜索阶段
-  - `segment_body` 收敛阶段
-- 让历史边界同时进入当前轮 `seed / terminate`，而不是只做 `hard-stop`
-- 对 Step5B 明确区分：
-  - `S2 + Step4` 历史端点会回注入 `seed / terminate`
-  - `Step5A` 当轮新端点只做 `hard-stop`
-- 对以下 case 做定点审计与修复：
-  - Step2：`784901__502866811`
-  - Step4：`785324__502866811`
-  - Step4：`784901__40237259`
-  - Step4：`788837__784901`
-  - Step4：`40237227__785217`
-  - Step4：`55225313__785217`
-  - Step4 错误 case：`792579__55225234`
-- 在外网 `XXXS` 上重跑 Step4 / Step5 并输出新的审查结果
+- 在 Step5 编排中新增 `Step5C`
+- Step5C 输入集合改为：
+  - `closed_con in {1,2}`
+  - `grade_2 in {1,2,3}`
+  - `kind_2 in {1,4,2048}`
+- 补齐 trunk 全局语义：
+  - trunk 闭环以语义路口为单元
+  - `semantic-node-group closure` 也可成立
+  - 不再把“纯几何不开环”作为唯一拒绝条件
+- Step5C 工作图继续剔除：
+  - 历史已有 `segmentid` road
+  - `Step5A` 新 `segment_body` road
+  - `Step5B` 新 `segment_body` road
+- 保持 Step5A / Step5B / Step5C 之间不刷新属性，三阶段完成后统一刷新
+- 保持历史边界规则：
+  - `S2 + Step4` 仍回注入 Step5C `seed / terminate`
+  - `Step5A / Step5B` 当轮新端点仅用于 Step5C `hard-stop`
+- 在外网 `XXXS` 上重跑 Step5 并输出新的审查结果
 
 ## 3. 本轮不做
 - 不做 POC closeout / baseline handoff
@@ -41,19 +38,19 @@
 ## 4. 本轮交付
 - 文档更新：
   - `spec.md`
+  - `plan.md`
   - `tasks.md`
+  - `INTERFACE_CONTRACT.md`
   - `README.md`
 - 代码更新：
-  - Step4 / Step5 层级边界逻辑
-  - case 级审计输出
-  - `historical_boundary_nodes.*`
+  - Step5 三阶段编排（A/B/C）
+  - Step5C 输入规则与 merged/refreshed 输出
 - 外网 `XXXS` 新结果：
-  - Step4 审查目录
   - Step5 审查目录
-  - `target_case_audit.json`
+  - Step5C / merged 审查结果
 
 ## 5. 验证准则
-- `STEP4:792579__55225234` 不再错误穿越 `763111`
-- Step5A / Step5B 的 terminate / hard-stop 已纳入历史高等级边界
-- target cases 全部给出“已修复 / 未修复但原因明确”的结果
-- 已通过的 tighten 修复不回退
+- Step5A / Step5B / Step5C 之间不刷新属性
+- Step5C 输入集合准确纳入 `kind_2=1`
+- Step5C 工作图不包含历史已成段 road，也不包含 Step5A / Step5B 新 segment road
+- Step5 merged / refreshed 结果正确累积三阶段产物

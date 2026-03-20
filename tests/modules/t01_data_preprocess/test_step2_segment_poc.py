@@ -27,10 +27,14 @@ def _node_feature(
     kind: int = 4,
     grade: int = 1,
     closed_con: int = 2,
+    mainnodeid: int | None = None,
 ) -> dict:
+    properties = {"id": node_id, "kind": kind, "grade": grade, "closed_con": closed_con}
+    if mainnodeid is not None:
+        properties["mainnodeid"] = mainnodeid
     return {
         "type": "Feature",
-        "properties": {"id": node_id, "kind": kind, "grade": grade, "closed_con": closed_con},
+        "properties": properties,
         "geometry": {"type": "Point", "coordinates": [x, y]},
     }
 
@@ -332,6 +336,23 @@ def _build_bidirectional_overlap_with_through_dataset(base_dir: Path) -> tuple[P
         _road_feature("r34", 3, 4, 1, [[2.0, 0.0], [3.0, 0.0]]),
         _road_feature("r35", 3, 5, 2, [[2.0, 0.0], [2.0, -0.5]]),
         _road_feature("r51", 5, 1, 2, [[2.0, -0.5], [0.0, 0.0]]),
+    ]
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
+def _build_semantic_group_closure_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "roads.geojson"
+    node_path = base_dir / "nodes.geojson"
+    node_features = [
+        _node_feature(1, 0.0, 0.0),
+        _node_feature(2, 1.0, 1.0, kind=0, grade=0, closed_con=0, mainnodeid=3),
+        _node_feature(3, 1.0, -1.0),
+    ]
+    road_features = [
+        _road_feature("r12", 1, 2, 2, [[0.0, 0.0], [1.0, 1.0]]),
+        _road_feature("r31", 3, 1, 2, [[1.0, -1.0], [0.0, 0.0]]),
     ]
     _write_geojson(road_path, features=road_features)
     _write_geojson(node_path, features=node_features)
@@ -713,6 +734,45 @@ def test_step2_validates_bidirectional_overlap_loop_with_through_nodes(tmp_path:
     support_info = json.loads(validation_rows[0]["support_info"])
     assert support_info["bidirectional_minimal_loop"] is True
     assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r12", "r23", "r34", "r35", "r51"}
+
+
+def test_step2_validates_semantic_node_group_closure_loop(tmp_path: Path) -> None:
+    road_path, node_path = _build_semantic_group_closure_dataset(tmp_path)
+    strategy_path = _write_strategy(tmp_path / "step2_strategy.json")
+    out_root = tmp_path / "outputs"
+
+    rc = main(
+        [
+            "t01-step2-segment-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--formway-mode",
+            "strict",
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+    strategy_root = out_root / "S2X"
+    validated_rows = _read_csv_rows(strategy_root / "validated_pairs.csv")
+    validation_rows = _read_csv_rows(strategy_root / "pair_validation_table.csv")
+    trunk = _load_json(strategy_root / "trunk_roads.geojson")
+    segment_body = _load_json(strategy_root / "segment_body_roads.geojson")
+
+    assert [row["pair_id"] for row in validated_rows] == ["S2X:1__3"]
+    assert validation_rows[0]["validated_status"] == "validated"
+    assert validation_rows[0]["trunk_mode"] == "counterclockwise_loop"
+    assert validation_rows[0]["counterclockwise_ok"] == "True"
+    support_info = json.loads(validation_rows[0]["support_info"])
+    assert support_info["bidirectional_minimal_loop"] is False
+    assert support_info["semantic_node_group_closure"] is True
+    assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r12", "r31"}
+    assert set(segment_body["features"][0]["properties"]["road_ids"]) == {"r12", "r31"}
 
 
 def test_step2_rejects_disconnected_after_prune(monkeypatch, tmp_path: Path) -> None:

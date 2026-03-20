@@ -303,7 +303,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_step5 = sub.add_parser(
         "t01-step5-staged-residual-graph",
-        help="Run Step5A/Step5B staged residual-graph segment construction on Step4 refreshed inputs.",
+        help="Run Step5A/Step5B/Step5C staged residual-graph segment construction on Step4 refreshed inputs.",
     )
     p_step5.add_argument("--road-path", required=True, help="Path to Step4 refreshed Road Shp/GeoJSON.")
     p_step5.add_argument("--road-layer", help="Optional road layer name.")

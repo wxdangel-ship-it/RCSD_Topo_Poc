@@ -1,62 +1,52 @@
 # T01 任务清单
 
 ## 1. 当前轮次
-- 名称：`hierarchical boundary fix before poc closeout`
-- 性质：POC visual audit 问题修复与 case 级审计补强
+- 名称：`Step5A/Step5B/Step5C staged residual graph segment construction`
+- 性质：在现有 Step5 staged residual graph 上扩展第三阶段并完成统一刷新
 
 ## 2. 本轮编码任务
 
-### 2.1 Step4 / Step5 层级边界修复
-- [x] 新增历史 validated pair 端点 mainnode 收集逻辑
-- [x] 为当前轮构建 cumulative hard-stop boundary set
-- [x] 在 pair candidate 搜索阶段接入历史边界阻断
-- [x] 在 `segment_body` component 收敛阶段接入历史边界阻断
-- [x] 为 Step4 输出 `historical_boundary_nodes.geojson`
-- [x] 为 Step5 输出 `historical_boundary_nodes.geojson`
-- [x] 明确并实现：历史高等级边界端点同时进入当前轮 `seed / terminate`
-- [x] 明确并实现：命中历史边界时，搜索需“记为 terminal candidate 后停止继续穿越”
-- [x] 明确并实现：Step4 / Step5 中，凡是命中当前轮 `seed / terminate` 的节点，一律不得再被当前轮 `through` 吞掉
-- [x] 明确并实现：`mainnodeid = NULL` 的单点语义路口若命中当前轮输入规则，必须进入 `seed / terminate` 且不得再被当前轮 `through` 吞掉
+### 2.1 Step5C 编排扩展
+- [x] 在 Step5 内部新增 `Step5C`
+- [x] 保持单一 Step5 入口，不新增额外外层执行入口
+- [x] 保持 Step5A / Step5B / Step5C 之间不刷新属性
+- [x] 让 Step5C 工作图继续剔除：
+  - 历史已有 `segmentid` road
+  - `Step5A` 新 `segment_body` road
+  - `Step5B` 新 `segment_body` road
 
-### 2.2 Step4 错误构出修复
-- [x] 复现 `STEP4:792579__55225234`
-- [x] 修复其跨越 `763111` 的错误行为
-- [x] 输出 case 级证据，证明该 case 已被历史边界中断
+### 2.2 Step5C 输入规则
+- [x] 实现 Step5C 输入集合：
+  - `closed_con in {1,2}`
+  - `grade_2 in {1,2,3}`
+  - `kind_2 in {1,4,2048}`
+- [x] 保持历史边界回注入口径：
+  - `S2 + Step4` 端点进入 Step5C `seed / terminate`
+  - `Step5A / Step5B` 当轮新端点仅进入 Step5C `hard-stop`
 
-### 2.3 Step2 / Step4 未构出 case 审计
-- [x] 审计 `784901__502866811`
-- [x] 审计 `785324__502866811`
-- [x] 审计 `784901__40237259`
-- [x] 审计 `788837__784901`
-- [x] 审计 `40237227__785217`
-- [x] 审计 `55225313__785217`
-- [x] 生成 `target_case_audit.json`
+### 2.3 Step5 输出与刷新
+- [x] 输出 `step5c_*` 审查结果
+- [x] 让 merged 结果同时合并 `Step5A / Step5B / Step5C`
+- [x] 让 Step5 refreshed `Node / Road` 同时累计三阶段结果
+- [x] 保持本轮新 `segment_body` road 写入：
+  - `s_grade = "0-2双"`
+  - `segmentid = "A_B"`
 
-### 2.4 Step5 视觉问题收敛
-- [x] 让 Step5A / Step5B terminate / hard-stop 纳入历史高等级边界
-- [x] 让 Step5A / Step5B 的历史高等级边界同时回注入 `seed / terminate`
-- [x] 区分 Step5B 两类边界：
-  - `S2 + Step4` 历史端点：`seed / terminate + hard-stop`
-  - `Step5A` 当轮新端点：仅 `hard-stop`
-- [x] 保持 Step5A / Step5B 之间不刷新属性
-- [x] 确认旧的错误跨级 through/terminate 结果不再进入 merged validated
-
-### 2.5 外网验证
-- [x] 重跑外网 `XXXS` Step4
+### 2.4 外网验证
 - [x] 重跑外网 `XXXS` Step5
-- [x] 复核 target cases 的最新状态
+- [x] 验证 Step5C 可接收 `kind_2=1` 节点
+- [x] 验证 merged / refreshed 结果包含 Step5C 贡献
+
+### 2.5 trunk 全局语义修复
+- [x] 将 trunk 判定从“纯几何闭环”扩展为“semantic-node-group closure 也可成立”
+- [x] 明确 trunk 以语义路口为单元，支持 `mainnode group` 与 `mainnodeid = NULL` 单 node 路口
+- [x] 补充 synthetic case，覆盖“语义闭合但物理几何不开环”的合法 trunk
 
 ## 3. 当前待确认项
-- [ ] Step4 中若某端点在 residual graph 上被 `through` 消化，是否应继续保守不构出，还是在未来轮次专门提级处理，仍需确认
-- [ ] Step5A 在 `XXXS` 上当前没有 validated pair，这是否符合优先轮业务预期，仍需确认
+- [ ] Step5C 是否还需要在未来继续细分优先轮 / 收尾轮，当前先不拆阶段
+- [ ] `kind_2=1` 节点在更大切片上的命中比例与误检风险，仍需继续验证
 
-## 4. 本轮补充修复
-- [x] 明确并实现：`direction = 0 / 1` 的双向 road 视为两条方向相反的可通行 road
-- [x] 明确并实现：正反路径镜像复用同一组双向 road 时，可直接构成 Step2 最小闭环 trunk
-- [x] 明确并实现：正反路径局部共享双向 road、且共享段以相反方向通行时，仍可构成合法最小闭环 trunk
-- [x] 复核 `784901__502866811`，不再因“只有一条双向 road”被误判为 `no_valid_trunk`
-
-## 5. 明确不在本轮实现
+## 4. 明确不在本轮实现
 - [ ] POC closeout / baseline handoff
 - [ ] 启动 Step6
 - [ ] 多轮一键执行总编排收尾

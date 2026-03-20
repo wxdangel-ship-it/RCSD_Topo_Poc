@@ -105,6 +105,13 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
             _node_feature(501, 21.0, 0.0, grade_2=0, kind_2=0, closed_con=2),
             _node_feature(502, 20.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
             _node_feature(503, 22.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(210, 30.0, 0.0, grade_2=2, kind_2=1, closed_con=2),
+            _node_feature(220, 31.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(230, 32.0, 0.0, grade_2=3, kind_2=1, closed_con=2),
+            _node_feature(240, 31.0, -1.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(260, 31.2, 0.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(270, 29.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(280, 33.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
         ],
     )
 
@@ -130,6 +137,14 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
             _road_feature("old1", 500, 501, 0, [[20.0, 0.0], [21.0, 0.0]], segmentid="old_pair", s_grade="0-1\u53cc"),
             _road_feature("tin", 502, 501, 2, [[20.0, 1.0], [21.0, 0.0]]),
             _road_feature("tout", 501, 503, 2, [[21.0, 0.0], [22.0, 1.0]]),
+            _road_feature("c14", 210, 240, 2, [[30.0, 0.0], [31.0, -1.0]]),
+            _road_feature("c43", 240, 230, 2, [[31.0, -1.0], [32.0, 0.0]]),
+            _road_feature("c32", 230, 220, 2, [[32.0, 0.0], [31.0, 1.0]]),
+            _road_feature("c21", 220, 210, 2, [[31.0, 1.0], [30.0, 0.0]]),
+            _road_feature("c46", 240, 260, 0, [[31.0, -1.0], [31.2, 0.0]]),
+            _road_feature("c62", 260, 220, 0, [[31.2, 0.0], [31.0, 1.0]]),
+            _road_feature("c10x", 210, 270, 0, [[30.0, 0.0], [29.0, 0.0]]),
+            _road_feature("c30x", 280, 230, 0, [[33.0, 0.0], [32.0, 0.0]]),
         ],
     )
 
@@ -151,29 +166,40 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert summary["step5b_terminate_count"] == 2
     assert summary["step5b_validated_pair_count"] == 1
     assert summary["step5b_new_segment_road_count"] == 6
+    assert summary["step5c_input_node_count"] == 2
+    assert summary["step5c_seed_count"] == 2
+    assert summary["step5c_terminate_count"] == 2
+    assert summary["step5c_validated_pair_count"] == 1
+    assert summary["step5c_new_segment_road_count"] == 6
     assert summary["step5_removed_historical_segment_road_count"] == 1
     assert summary["step5_removed_step5a_segment_road_count"] == 6
-    assert summary["step5_total_new_segment_road_count"] == 12
-    assert summary["node_rule_keep_pair_count"] == 4
+    assert summary["step5_removed_step5b_segment_road_count"] == 6
+    assert summary["step5_total_new_segment_road_count"] == 18
+    assert summary["node_rule_keep_pair_count"] == 6
     assert summary["node_rule_new_t_count"] >= 1
 
     assert (artifacts.out_root / "S2" / "sentinel.txt").read_text(encoding="utf-8") == "s2"
     assert (artifacts.out_root / "STEP4" / "sentinel.txt").read_text(encoding="utf-8") == "step4"
     assert (artifacts.out_root / "STEP5A").is_dir()
     assert (artifacts.out_root / "STEP5B").is_dir()
+    assert (artifacts.out_root / "STEP5C").is_dir()
     assert artifacts.refreshed_nodes_alias_path.name == "nodes_step5_refreshed.geojson"
     assert artifacts.refreshed_roads_alias_path.name == "roads_step5_refreshed.geojson"
     step5a_strategy = json.loads((artifacts.out_root / "step5a_strategy.json").read_text(encoding="utf-8"))
     step5b_strategy = json.loads((artifacts.out_root / "step5b_strategy.json").read_text(encoding="utf-8"))
+    step5c_strategy = json.loads((artifacts.out_root / "step5c_strategy.json").read_text(encoding="utf-8"))
     assert step5a_strategy["through_node_rule"]["disallow_seed_terminate_nodes"] is True
     assert step5b_strategy["through_node_rule"]["disallow_seed_terminate_nodes"] is True
+    assert step5c_strategy["through_node_rule"]["disallow_seed_terminate_nodes"] is True
 
     step5a_rows = _load_csv_rows(artifacts.out_root / "step5a_validated_pairs.csv")
     step5b_rows = _load_csv_rows(artifacts.out_root / "step5b_validated_pairs.csv")
+    step5c_rows = _load_csv_rows(artifacts.out_root / "step5c_validated_pairs.csv")
     merged_rows = _load_csv_rows(artifacts.out_root / "step5_validated_pairs_merged.csv")
     assert [row["pair_id"] for row in step5a_rows] == ["STEP5A:10__30"]
     assert [row["pair_id"] for row in step5b_rows] == ["STEP5B:110__130"]
-    assert {row["pair_id"] for row in merged_rows} == {"STEP5A:10__30", "STEP5B:110__130"}
+    assert [row["pair_id"] for row in step5c_rows] == ["STEP5C:210__230"]
+    assert {row["pair_id"] for row in merged_rows} == {"STEP5A:10__30", "STEP5B:110__130", "STEP5C:210__230"}
 
     step5b_working_roads = _load_geojson(artifacts.out_root / "step5b_working_roads.geojson")
     step5b_working_road_ids = {str(feature["properties"]["id"]) for feature in step5b_working_roads["features"]}
@@ -186,6 +212,20 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert step5b_node_props["30"]["step5b_input_eligible"] is False
     assert step5b_node_props["501"]["step5b_input_eligible"] is False
 
+    step5c_working_roads = _load_geojson(artifacts.out_root / "step5c_working_roads.geojson")
+    step5c_working_road_ids = {str(feature["properties"]["id"]) for feature in step5c_working_roads["features"]}
+    assert {"a14", "a43", "a32", "a21", "a46", "a62", "b14", "b43", "b32", "b21", "b46", "b62"}.isdisjoint(
+        step5c_working_road_ids
+    )
+    step5c_working_nodes = _load_geojson(artifacts.out_root / "step5c_working_nodes.geojson")
+    step5c_node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in step5c_working_nodes["features"]}
+    assert step5c_node_props["210"]["step5c_input_eligible"] is True
+    assert step5c_node_props["230"]["step5c_input_eligible"] is True
+    assert step5c_node_props["10"]["step5c_input_eligible"] is False
+    assert step5c_node_props["110"]["step5c_input_eligible"] is False
+    assert step5c_node_props["10"]["step5c_historical_boundary"] is True
+    assert step5c_node_props["110"]["step5c_historical_boundary"] is True
+
     roads_doc = _load_geojson(artifacts.refreshed_roads_path)
     road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
     for road_id in ["a14", "a43", "a32", "a21", "a46", "a62"]:
@@ -193,6 +233,9 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
         assert road_props[road_id]["s_grade"] == "0-2\u53cc"
     for road_id in ["b14", "b43", "b32", "b21", "b46", "b62"]:
         assert road_props[road_id]["segmentid"] == "110_130"
+        assert road_props[road_id]["s_grade"] == "0-2\u53cc"
+    for road_id in ["c14", "c43", "c32", "c21", "c46", "c62"]:
+        assert road_props[road_id]["segmentid"] == "210_230"
         assert road_props[road_id]["s_grade"] == "0-2\u53cc"
     assert road_props["old1"]["segmentid"] == "old_pair"
     assert road_props["old1"]["s_grade"] == "0-1\u53cc"
@@ -209,12 +252,17 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert node_props["110"]["kind_2"] == 2048
     assert node_props["130"]["grade_2"] == 3
     assert node_props["130"]["kind_2"] == 2048
+    assert node_props["210"]["grade_2"] == 2
+    assert node_props["210"]["kind_2"] == 1
+    assert node_props["230"]["grade_2"] == 3
+    assert node_props["230"]["kind_2"] == 1
     assert node_props["501"]["grade_2"] == 3
     assert node_props["501"]["kind_2"] == 2048
 
     mainnode_rows = {row["mainnode_id"]: row for row in _load_csv_rows(artifacts.mainnode_table_path)}
     assert mainnode_rows["10"]["applied_rule"] == "keep_step5_pair_endpoint"
     assert mainnode_rows["110"]["applied_rule"] == "keep_step5_pair_endpoint"
+    assert mainnode_rows["210"]["applied_rule"] == "keep_step5_pair_endpoint"
     assert mainnode_rows["501"]["applied_rule"] == "new_t_like"
 
 

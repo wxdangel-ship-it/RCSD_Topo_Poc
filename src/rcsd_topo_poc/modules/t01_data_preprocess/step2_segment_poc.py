@@ -57,6 +57,7 @@ class TrunkCandidate:
     left_turn_road_ids: tuple[str, ...]
     is_through_collapsed_corridor: bool = False
     is_bidirectional_minimal_loop: bool = False
+    is_semantic_node_group_closure: bool = False
 
 
 @dataclass(frozen=True)
@@ -1182,6 +1183,49 @@ def _is_bidirectional_minimal_loop_candidate(
     return visited == active_nodes
 
 
+def _is_semantic_node_group_loop_candidate(
+    *,
+    forward_path: DirectedPath,
+    reverse_path: DirectedPath,
+) -> bool:
+    if not forward_path.road_ids or not reverse_path.road_ids:
+        return False
+
+    forward_edges = _path_oriented_edges(forward_path)
+    reverse_edges = _path_oriented_edges(reverse_path)
+    if not forward_edges or not reverse_edges:
+        return False
+    if set(forward_edges) & set(reverse_edges):
+        return False
+
+    indegree: dict[str, int] = defaultdict(int)
+    outdegree: dict[str, int] = defaultdict(int)
+    weak_adjacency: dict[str, set[str]] = defaultdict(set)
+    active_nodes: set[str] = set()
+    for _, from_node_id, to_node_id in forward_edges + reverse_edges:
+        active_nodes.add(from_node_id)
+        active_nodes.add(to_node_id)
+        outdegree[from_node_id] += 1
+        indegree[to_node_id] += 1
+        weak_adjacency[from_node_id].add(to_node_id)
+        weak_adjacency[to_node_id].add(from_node_id)
+
+    if len(active_nodes) < 2:
+        return False
+    if any(indegree[node_id] != outdegree[node_id] for node_id in active_nodes):
+        return False
+
+    queue: deque[str] = deque([next(iter(active_nodes))])
+    visited: set[str] = set()
+    while queue:
+        node_id = queue.popleft()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        queue.extend(neighbor for neighbor in weak_adjacency.get(node_id, ()) if neighbor not in visited)
+    return visited == active_nodes
+
+
 def _trunk_candidate_mode(candidate: TrunkCandidate) -> str:
     if candidate.is_through_collapsed_corridor:
         return "through_collapsed_corridor"
@@ -1189,7 +1233,11 @@ def _trunk_candidate_mode(candidate: TrunkCandidate) -> str:
 
 
 def _trunk_candidate_counterclockwise_ok(candidate: TrunkCandidate) -> bool:
-    return candidate.is_bidirectional_minimal_loop or candidate.signed_area > 1e-6
+    return (
+        candidate.is_bidirectional_minimal_loop
+        or candidate.is_semantic_node_group_closure
+        or candidate.signed_area > 1e-6
+    )
 
 
 def _collect_trunk_candidates(
@@ -1210,6 +1258,7 @@ def _collect_trunk_candidates(
                 sorted(set(forward_path.road_ids + reverse_path.road_ids), key=_sort_key)
             )
             is_bidirectional_minimal_loop = False
+            is_semantic_node_group_closure = False
             if len(combined_road_ids) != len(forward_path.road_ids) + len(reverse_path.road_ids):
                 if not allow_bidirectional_overlap:
                     continue
@@ -1229,7 +1278,12 @@ def _collect_trunk_candidates(
 
             signed_area = _signed_ring_area(ring_coords)
             if abs(signed_area) <= 1e-6 and not is_bidirectional_minimal_loop:
-                continue
+                is_semantic_node_group_closure = _is_semantic_node_group_loop_candidate(
+                    forward_path=forward_path,
+                    reverse_path=reverse_path,
+                )
+                if not is_semantic_node_group_closure:
+                    continue
 
             left_turn_road_ids = tuple(
                 road_id
@@ -1244,8 +1298,9 @@ def _collect_trunk_candidates(
                 total_length=forward_path.total_length + reverse_path.total_length,
                 left_turn_road_ids=left_turn_road_ids,
                 is_bidirectional_minimal_loop=is_bidirectional_minimal_loop,
+                is_semantic_node_group_closure=is_semantic_node_group_closure,
             )
-            if signed_area > 0 or is_bidirectional_minimal_loop:
+            if signed_area > 0 or is_bidirectional_minimal_loop or is_semantic_node_group_closure:
                 counterclockwise_candidates.append(candidate)
             else:
                 clockwise_only_found = True
@@ -2164,6 +2219,7 @@ def _validate_pair_candidates(
                         "trunk_signed_area": trunk_candidate.signed_area,
                         "trunk_mode": trunk_mode,
                         "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
+                        "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
                         "segment_body_candidate_road_ids": list(segment_road_ids),
                         "segment_body_candidate_cut_infos": segment_cut_infos,
                     },
@@ -2206,6 +2262,7 @@ def _validate_pair_candidates(
                     "trunk_signed_area": trunk_candidate.signed_area,
                     "trunk_mode": trunk_mode,
                     "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
+                    "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
                     "segment_body_candidate_road_ids": list(segment_road_ids),
                     "segment_body_candidate_cut_infos": segment_cut_infos,
                     "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),

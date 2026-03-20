@@ -18,6 +18,11 @@
 - Step1 / Step2 / refresh / Step4 / Step5 输入图层采用固定 `2` worker 并行读取
 - 官方 runner 在每个阶段后执行 `gc.collect()`
 - 官方 runner 记录每个阶段的 `tracemalloc` 峰值内存
+- 官方 runner 在 stdout 输出阶段级进度，并落盘：
+  - `t01_skill_v1_progress.json`
+  - `t01_skill_v1_perf.json`
+  - `t01_skill_v1_perf.md`
+  - `t01_skill_v1_perf_markers.jsonl`
 
 ## 3. 优化结论
 - 当前优化未改变 accepted baseline 业务结果

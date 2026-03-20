@@ -23,6 +23,11 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
 - 默认保留分阶段中间结果，便于大规模验证前的 case 审计
 - 如需减少无意义 I/O，请显式使用 `--no-debug`
 - 可通过 `--compare-freeze-dir` 与 freeze baseline 做 PASS / FAIL 对比
+- 运行时会在命令行输出阶段进度，并生成：
+  - `t01_skill_v1_progress.json`
+  - `t01_skill_v1_perf.json`
+  - `t01_skill_v1_perf.md`
+  - `t01_skill_v1_perf_markers.jsonl`
 
 ### freeze compare
 ```bash

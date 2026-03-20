@@ -138,10 +138,15 @@
   - 最终 refreshed `nodes.geojson`
   - 最终 refreshed `roads.geojson`
   - `t01_skill_v1_summary.*`
+  - `t01_skill_v1_progress.json`
+  - `t01_skill_v1_perf.json`
+  - `t01_skill_v1_perf.md`
+  - `t01_skill_v1_perf_markers.jsonl`
   - 当前轻量 bundle
   - 指定 compare 时的 `freeze_compare_report.*`
 - `debug=true` 时，保留分阶段中间结果
 - `debug=false` 时，stage 目录使用临时目录串联，不改变最终业务结果
+- 官方 runner 必须在 stdout 输出阶段级 `START / DONE / FAIL` 进度信息
 
 ## 8. 性能 / 内存 / 并发边界
 - 当前正式纳入的优化：

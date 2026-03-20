@@ -13,6 +13,8 @@
 - [x] 在 `segment_body` component 收敛阶段接入历史边界阻断
 - [x] 为 Step4 输出 `historical_boundary_nodes.geojson`
 - [x] 为 Step5 输出 `historical_boundary_nodes.geojson`
+- [x] 明确并实现：历史高等级边界端点同时进入当前轮 `seed / terminate`
+- [x] 明确并实现：命中历史边界时，搜索需“记为 terminal candidate 后停止继续穿越”
 - [x] 明确并实现：Step4 / Step5 中，凡是命中当前轮 `seed / terminate` 的节点，一律不得再被当前轮 `through` 吞掉
 - [x] 明确并实现：`mainnodeid = NULL` 的单点语义路口若命中当前轮输入规则，必须进入 `seed / terminate` 且不得再被当前轮 `through` 吞掉
 
@@ -32,6 +34,10 @@
 
 ### 2.4 Step5 视觉问题收敛
 - [x] 让 Step5A / Step5B terminate / hard-stop 纳入历史高等级边界
+- [x] 让 Step5A / Step5B 的历史高等级边界同时回注入 `seed / terminate`
+- [x] 区分 Step5B 两类边界：
+  - `S2 + Step4` 历史端点：`seed / terminate + hard-stop`
+  - `Step5A` 当轮新端点：仅 `hard-stop`
 - [x] 保持 Step5A / Step5B 之间不刷新属性
 - [x] 确认旧的错误跨级 through/terminate 结果不再进入 merged validated
 

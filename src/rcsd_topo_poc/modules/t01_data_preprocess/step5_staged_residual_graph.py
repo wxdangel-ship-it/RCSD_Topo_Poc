@@ -134,6 +134,7 @@ def _build_phase_inputs(
     active_road_ids: set[str],
     out_root: Path,
     base_match: Callable[[Optional[int], Optional[int]], bool],
+    historical_seed_node_ids: set[str],
     hard_stop_node_ids: set[str],
 ) -> PhaseInputArtifacts:
     node_by_id = {node.node_id: node for node in nodes}
@@ -159,12 +160,13 @@ def _build_phase_inputs(
             continue
         grade_2 = _current_grade_2(representative)
         kind_2 = _current_kind_2(representative)
-        if mainnode_id in hard_stop_node_ids:
+        is_historical_seed = mainnode_id in historical_seed_node_ids
+        if mainnode_id in hard_stop_node_ids and not is_historical_seed:
             continue
-        if not base_match(grade_2, kind_2):
+        if not is_historical_seed and not base_match(grade_2, kind_2):
             continue
         input_mainnode_ids.add(mainnode_id)
-        if _current_closed_con(representative) in {1, 2}:
+        if is_historical_seed or _current_closed_con(representative) in {1, 2}:
             eligible_mainnode_ids.add(mainnode_id)
 
     phase_lower = phase_id.lower()
@@ -205,6 +207,8 @@ def _build_phase_inputs(
                 "incident_degree_exclude_formway_bits_any": [7],
                 "disallow_seed_terminate_nodes": True,
             },
+            "force_seed_node_ids": sorted(historical_seed_node_ids, key=_sort_key),
+            "force_terminate_node_ids": sorted(historical_seed_node_ids, key=_sort_key),
             "hard_stop_node_ids": sorted(hard_stop_node_ids, key=_sort_key),
         },
     )
@@ -652,6 +656,7 @@ def run_step5_staged_residual_graph(
         active_road_ids=active_road_ids_step5a,
         out_root=resolved_out_root,
         base_match=_step5a_base_match,
+        historical_seed_node_ids=historical_boundary_ids,
         hard_stop_node_ids=historical_boundary_ids,
     )
     phase_a = _run_phase(
@@ -688,6 +693,7 @@ def run_step5_staged_residual_graph(
         active_road_ids=active_road_ids_step5b,
         out_root=resolved_out_root,
         base_match=_step5b_base_match,
+        historical_seed_node_ids=historical_boundary_ids,
         hard_stop_node_ids=step5b_hard_stop_node_ids,
     )
     phase_b = _run_phase(

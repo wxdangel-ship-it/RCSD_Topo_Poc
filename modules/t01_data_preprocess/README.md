@@ -24,11 +24,16 @@
 - 当前要求：
   - 更低等级轮次必须在更高等级历史路口中断
   - pair 搜索与 segment 收敛都必须使用同一套历史边界
+  - 历史高等级端点不能只做 `hard-stop`，还必须回注入当前轮 `seed / terminate`
+  - 命中历史边界时，应“记为 terminal candidate 后停止继续穿越”
   - 对 Step4 / Step5，凡是命中当前轮 `seed / terminate` 的节点，不得再作为当前轮 `through_node`
 - 额外约束：
   - `mainnodeid = NULL` 的单点路口，其语义路口 ID 取自身 `id`
   - 若它命中当前轮输入规则，则必须作为合法语义路口进入 `seed / terminate`
   - 且当前轮不得再把它作为 `through_node`
+- Step5 边界补充口径：
+  - `S2 + Step4` 历史端点会回注入 Step5A / Step5B 的 `seed / terminate`
+  - `Step5A` 当轮新端点对 Step5B 只做 `hard-stop`，不回注入 Step5B `seed / terminate`
 - closeout 之前，优先继续修 visual audit 问题，不做 baseline handoff
 
 ## 运行入口

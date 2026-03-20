@@ -33,6 +33,17 @@
   - `grade_2`
   - `kind_2`
 
+### 2.2A Step4 / Step5 层级边界附加契约
+- 更低等级轮次的历史高等级边界端点 mainnode，必须同时具备三重语义：
+  - 当前轮 `seed`
+  - 当前轮 `terminate`
+  - 当前轮 `hard-stop`
+- 这些历史端点通过 `force_seed_node_ids / force_terminate_node_ids` 注入搜索内核
+- 搜索命中这类历史端点时，必须：
+  - 记为 terminal candidate
+  - 停止继续穿越边界另一侧
+- 不允许只把历史边界当作“只阻断、不成对”的 stop
+
 ### 2.3 Step5A 输入契约
 - 使用 Step4 refreshed `Node / Road`
 - 工作图剔除历史已有非空 `segmentid` 的 road
@@ -41,6 +52,10 @@
   - 且
     - `kind_2 in {4,2048}` 且 `grade_2 in {1,2}`
     - 或 `kind_2 = 4` 且 `grade_2 = 3`
+- 另外并入历史高等级端点：
+  - `S2 + Step4` validated pair 端点 mainnode
+  - 通过 `force_seed_node_ids / force_terminate_node_ids` 显式注入
+  - 同时这些节点仍保留在 `hard_stop_node_ids`
 
 ### 2.4 Step5B 输入契约
 - 使用 Step5A residual graph
@@ -50,6 +65,12 @@
   - `closed_con in {1,2}`
   - `kind_2 in {4,2048}`
   - `grade_2 in {1,2,3}`
+- 另外并入历史高等级端点：
+  - `S2 + Step4` validated pair 端点 mainnode
+  - 通过 `force_seed_node_ids / force_terminate_node_ids` 显式注入
+- Step5B 的 `hard_stop_node_ids` 还会额外包含：
+  - `Step5A` validated pair 端点 mainnode
+  - 但这些 Step5A 当轮新端点不回注入 Step5B `seed / terminate`
 
 ### 2.5 formway 当前启用口径
 - `bit7 = 右转专用道`
@@ -68,6 +89,12 @@
 ## 3. Step1 / Step2 基线输出契约
 - Step1 输出：`pair_candidates`
 - Step2 输出：`validated / rejected + trunk + segment_body + step3_residual`
+- Step1 搜索内核当前支持：
+  - `force_seed_node_ids`
+  - `force_terminate_node_ids`
+- 语义要求：
+  - 历史高等级边界端点可作为当前轮 seed/terminate
+  - 命中历史边界时，应作为 terminal candidate 收口并停止继续穿越
 
 ## 4. Step5A / Step5B 输出契约
 

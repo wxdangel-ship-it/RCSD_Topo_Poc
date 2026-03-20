@@ -17,6 +17,10 @@
 - 让历史边界同时作用于：
   - pair candidate 搜索阶段
   - `segment_body` 收敛阶段
+- 让历史边界同时进入当前轮 `seed / terminate`，而不是只做 `hard-stop`
+- 对 Step5B 明确区分：
+  - `S2 + Step4` 历史端点会回注入 `seed / terminate`
+  - `Step5A` 当轮新端点只做 `hard-stop`
 - 对以下 case 做定点审计与修复：
   - Step2：`784901__502866811`
   - Step4：`785324__502866811`

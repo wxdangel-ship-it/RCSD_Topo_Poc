@@ -181,3 +181,54 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     assert mainnode_rows["1"]["applied_rule"] == "keep_step4_pair_endpoint"
     assert mainnode_rows["501"]["applied_rule"] == "new_t_like"
     assert mainnode_rows["300"]["applied_rule"] == "keep_current"
+
+
+def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input_hist"
+    input_dir.mkdir()
+    s2_dir = input_dir / "S2"
+    s2_dir.mkdir()
+    (s2_dir / "validated_pairs.csv").write_text(
+        "pair_id,a_node_id,b_node_id\nS2:300__999,300,999\n",
+        encoding="utf-8",
+    )
+
+    node_path = input_dir / "nodes.geojson"
+    road_path = input_dir / "roads.geojson"
+    out_root = tmp_path / "out_hist"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, grade_2=2, kind_2=2048, closed_con=2),
+            _node_feature(2, 1.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(300, 2.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [1.0, 0.0]]),
+            _road_feature("r23", 2, 300, 0, [[1.0, 0.0], [2.0, 0.0]]),
+        ],
+    )
+
+    artifacts = run_step4_residual_graph(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=out_root,
+        run_id="step4_hist_seed",
+    )
+
+    strategy_doc = json.loads((artifacts.out_root / "step4_strategy.json").read_text(encoding="utf-8"))
+    assert strategy_doc["force_seed_node_ids"] == ["300", "999"]
+    assert strategy_doc["force_terminate_node_ids"] == ["300", "999"]
+    assert strategy_doc["hard_stop_node_ids"] == ["300", "999"]
+
+    working_nodes = _load_geojson(artifacts.out_root / "step4_working_nodes.geojson")
+    working_props = {str(feature["properties"]["id"]): feature["properties"] for feature in working_nodes["features"]}
+    assert working_props["300"]["step4_input_eligible"] is True
+    assert working_props["300"]["step4_historical_boundary"] is True
+
+    validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
+    assert {row["pair_id"] for row in validated_rows} == {"STEP4:1__300"}

@@ -64,6 +64,8 @@ class StrategySpec:
     seed_rule: RuleSpec
     terminate_rule: RuleSpec
     through_rule: ThroughRuleSpec = ThroughRuleSpec()
+    force_seed_node_ids: tuple[str, ...] = ()
+    force_terminate_node_ids: tuple[str, ...] = ()
     hard_stop_node_ids: tuple[str, ...] = ()
 
 
@@ -274,6 +276,26 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
             disallow_null_mainnode_singleton_seed_terminate_nodes=bool(
                 through_payload.get("disallow_null_mainnode_singleton_seed_terminate_nodes", False)
             ),
+        ),
+        force_seed_node_ids=tuple(
+            sorted(
+                (
+                    node_id
+                    for node_id in (_normalize_id(value) for value in doc.get("force_seed_node_ids", []))
+                    if node_id is not None
+                ),
+                key=_sort_key,
+            )
+        ),
+        force_terminate_node_ids=tuple(
+            sorted(
+                (
+                    node_id
+                    for node_id in (_normalize_id(value) for value in doc.get("force_terminate_node_ids", []))
+                    if node_id is not None
+                ),
+                key=_sort_key,
+            )
         ),
         hard_stop_node_ids=tuple(
             sorted(
@@ -746,6 +768,39 @@ def _search_from_seed(
                         "road_id": edge.road_id,
                     },
                 )
+                if terminate_ok:
+                    if seed_ok and next_node_id != start_node_id:
+                        candidates[next_node_id] = _build_candidate_from_parents(
+                            start_node_id=start_node_id,
+                            terminal_node_id=next_node_id,
+                            parent_node_ids=parent_node_ids,
+                            parent_road_ids=parent_road_ids,
+                            through_node_ids=through_node_ids,
+                        )
+                        _record_search_event(
+                            event_counts,
+                            event_samples,
+                            sample_counts,
+                            {
+                                "event": "hard_stop_terminal_candidate",
+                                "seed_node_id": start_node_id,
+                                "node_id": next_node_id,
+                                "road_id": edge.road_id,
+                            },
+                        )
+                    else:
+                        _record_search_event(
+                            event_counts,
+                            event_samples,
+                            sample_counts,
+                            {
+                                "event": "hard_stop_terminal_not_seed",
+                                "seed_node_id": start_node_id,
+                                "node_id": next_node_id,
+                                "terminate_reasons": list(terminate_eval[next_node_id].reasons),
+                                "seed_reasons": list(seed_eval[next_node_id].reasons),
+                            },
+                        )
                 continue
 
             if through_node:
@@ -927,6 +982,20 @@ def run_step1_strategy(
     terminate_eval = {
         node_id: _evaluate_rule(node, strategy.terminate_rule) for node_id, node in context.semantic_nodes.items()
     }
+    for node_id in strategy.force_seed_node_ids:
+        if node_id not in context.semantic_nodes:
+            continue
+        existing = seed_eval[node_id]
+        if existing.matched:
+            continue
+        seed_eval[node_id] = RuleEvaluation(matched=True, reasons=existing.reasons + ("forced_seed",))
+    for node_id in strategy.force_terminate_node_ids:
+        if node_id not in context.semantic_nodes:
+            continue
+        existing = terminate_eval[node_id]
+        if existing.matched:
+            continue
+        terminate_eval[node_id] = RuleEvaluation(matched=True, reasons=existing.reasons + ("forced_terminate",))
     seed_ids = sorted(
         [node_id for node_id, eval_result in seed_eval.items() if eval_result.matched],
         key=_sort_key,
@@ -962,9 +1031,7 @@ def run_step1_strategy(
         through_node_ids -= protected_singleton_ids
     hard_stop_node_ids = set(strategy.hard_stop_node_ids)
     through_node_ids -= hard_stop_node_ids
-    search_seed_ids = [
-        node_id for node_id in seed_ids if node_id not in through_node_ids and node_id not in hard_stop_node_ids
-    ]
+    search_seed_ids = [node_id for node_id in seed_ids if node_id not in through_node_ids]
     through_seed_pruned_count = len(seed_ids) - len(search_seed_ids)
 
     search_results: dict[str, SearchResult] = {}

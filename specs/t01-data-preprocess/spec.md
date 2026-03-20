@@ -44,17 +44,29 @@
 
 ### 4.1 规则定义
 - 更低等级轮次构段，必须在更高等级历史路口处中断
-- 当前轮的 `terminate / hard-stop` 口径必须包含：
+- 当前轮的 `seed / terminate / hard-stop` 口径必须同时考虑：
   - 当前轮自身 `seed / terminate`
   - 更高等级历史轮次 validated pair 的端点 mainnode
+- 这些历史高等级端点对当前轮而言具有三重语义：
+  - 可作为当前轮 `seed`
+  - 可作为当前轮 `terminate`
+  - 同时也是当前轮 `hard-stop boundary`
+- 命中历史边界时的正确行为是：
+  - 记为当前轮 terminal candidate
+  - 然后停止继续穿越该节点另一侧
+- 不允许仅把历史边界当作“只阻断、不成对”的黑箱 stop
 
 ### 4.2 当前实现
 - Step4：
   - 历史边界取自已完成的 `S2` validated pair 端点 mainnode
+  - 这些端点会显式注入 `force_seed_node_ids / force_terminate_node_ids`
 - Step5A：
   - 历史边界取自已完成的 `S2 + Step4` validated pair 端点 mainnode
+  - 这些端点会显式注入 `force_seed_node_ids / force_terminate_node_ids`
 - Step5B：
-  - 历史边界取自已完成的 `S2 + Step4 + Step5A` validated pair 端点 mainnode
+  - `hard-stop boundary` 取自已完成的 `S2 + Step4 + Step5A` validated pair 端点 mainnode
+  - 但回注入 `seed / terminate` 的历史端点仅取 `S2 + Step4`
+  - `Step5A` 当轮新端点只用于 Step5B `hard-stop`，不回注入 Step5B `seed / terminate`
 
 ### 4.3 作用范围
 - 该边界规则必须同时作用于：
@@ -65,6 +77,9 @@
 - 即：
   - 当前轮合法端点必须真正作为端点参与搜索
   - 不能再出现“命中当前轮输入规则，但被 through 吞掉、无法作为 search seed 启动”的情况
+- 该约束同样适用于回注入的历史高等级端点：
+  - 历史端点一旦进入当前轮 `seed / terminate`
+  - 也不得再被当前轮 `through_node` 吞掉
 
 ## 5. `mainnodeid = NULL` 单点路口规则
 - 若 node 的 `mainnodeid = NULL`，则该 node 自身 `id` 即为语义路口 ID
@@ -81,6 +96,9 @@
   - `grade_2`
   - `kind_2`
   - `closed_con`
+- 当前轮 `seed / terminate` 由两部分并集构成：
+  - 当前轮按 `grade_2 / kind_2 / closed_con` 命中的节点
+  - 来自更高等级已完成轮次的历史边界端点 mainnode
 - 工作图剔除：
   - 历史已有非空 `segmentid` 的 road
 
@@ -102,6 +120,8 @@
 - 且满足以下任一：
   - `kind_2 in {4,2048}` 且 `grade_2 in {1,2}`
   - `kind_2 = 4` 且 `grade_2 = 3`
+- Step5A `seed / terminate` 还需额外并入：
+  - 来自 `S2 + Step4` 的历史高等级边界端点 mainnode
 
 ### 6.2 Step5B 输入集合
 - 在 Step5A residual graph 上
@@ -109,6 +129,11 @@
   - `closed_con in {1,2}`
   - `kind_2 in {4,2048}`
   - `grade_2 in {1,2,3}`
+- Step5B `seed / terminate` 还需额外并入：
+  - 来自 `S2 + Step4` 的历史高等级边界端点 mainnode
+- Step5A 当轮新端点：
+  - 仅作为 Step5B `hard-stop boundary`
+  - 不回注入 Step5B `seed / terminate`
 
 ### 6.3 Step5A / Step5B 关系
 - Step5A 是优先轮

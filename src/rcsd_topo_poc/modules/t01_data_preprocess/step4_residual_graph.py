@@ -151,11 +151,21 @@ def _build_target_case_audit(
     payload: dict[str, Any] = {"cases": []}
     for case_id in target_cases:
         a_node_id, b_node_id = case_id.split("__", 1)
+        reverse_case_id = f"{b_node_id}__{a_node_id}"
+        matched_case_id = case_id
+        if (
+            case_id not in validation_map
+            and case_id not in candidate_map
+            and (reverse_case_id in validation_map or reverse_case_id in candidate_map)
+        ):
+            matched_case_id = reverse_case_id
         case_payload: dict[str, Any] = {
             "case_id": case_id,
-            "candidate_generated": case_id in candidate_map,
+            "candidate_generated": matched_case_id in candidate_map or matched_case_id in validation_map,
             "validated_status": None,
             "reject_reason": None,
+            "matched_pair_id": matched_case_id if matched_case_id != case_id else case_id,
+            "matched_reversed_pair": matched_case_id != case_id,
             "endpoint_a_exists": a_node_id in node_by_id,
             "endpoint_b_exists": b_node_id in node_by_id,
             "endpoint_a_input_eligible": False,
@@ -203,15 +213,15 @@ def _build_target_case_audit(
             case_payload["endpoint_b_seed_reasons"] = row.get("seed_reasons") or []
             case_payload["endpoint_b_terminate_reasons"] = row.get("terminate_reasons") or []
 
-        if case_id in validation_map:
-            row = validation_map[case_id]
+        if matched_case_id in validation_map:
+            row = validation_map[matched_case_id]
             case_payload["validated_status"] = row.get("validated_status")
             case_payload["reject_reason"] = row.get("reject_reason")
             support_info = row.get("support_info")
             case_payload["support_info"] = json.loads(support_info) if support_info else {}
-        elif case_id in candidate_map:
+        elif matched_case_id in candidate_map:
             case_payload["validated_status"] = "candidate_only"
-            support_info = candidate_map[case_id].get("support_info")
+            support_info = candidate_map[matched_case_id].get("support_info")
             case_payload["support_info"] = json.loads(support_info) if support_info else {}
         else:
             relevant_events = [
@@ -322,11 +332,10 @@ def _build_step4_inputs(
         grade_2 = _current_grade_2(representative)
         kind_2 = _current_kind_2(representative)
         closed_con = _current_closed_con(representative)
-        if mainnode_id in historical_boundary_ids:
-            continue
-        if grade_2 in {1, 2} and kind_2 in {4, 2048}:
+        is_historical_boundary = mainnode_id in historical_boundary_ids
+        if is_historical_boundary or (grade_2 in {1, 2} and kind_2 in {4, 2048}):
             input_mainnode_candidate_count += 1
-            if closed_con in {1, 2}:
+            if is_historical_boundary or closed_con in {1, 2}:
                 input_seed_count += 1
             else:
                 input_closed_con_filtered_out_count += 1
@@ -340,7 +349,10 @@ def _build_step4_inputs(
         kind_2 = _current_kind_2(node)
         closed_con = _current_closed_con(node)
         is_historical_boundary = node.semantic_node_id in historical_boundary_ids
-        if not is_historical_boundary and grade_2 in {1, 2} and kind_2 in {4, 2048} and closed_con in {1, 2}:
+        is_eligible = is_historical_boundary or (
+            grade_2 in {1, 2} and kind_2 in {4, 2048} and closed_con in {1, 2}
+        )
+        if is_eligible:
             props["grade"] = 1
             props["kind"] = 4
             props["step4_input_eligible"] = True
@@ -383,6 +395,8 @@ def _build_step4_inputs(
                 "disallow_seed_terminate_nodes": True,
                 "disallow_null_mainnode_singleton_seed_terminate_nodes": True,
             },
+            "force_seed_node_ids": sorted(historical_boundary_ids, key=_sort_key),
+            "force_terminate_node_ids": sorted(historical_boundary_ids, key=_sort_key),
             "hard_stop_node_ids": sorted(historical_boundary_ids, key=_sort_key),
         },
     )

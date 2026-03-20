@@ -1108,19 +1108,78 @@ def _signed_ring_area(coords: list[tuple[float, float]]) -> float:
     return twice_area / 2.0
 
 
+def _path_oriented_edges(path: DirectedPath) -> tuple[tuple[str, str, str], ...]:
+    if len(path.node_ids) != len(path.road_ids) + 1:
+        return ()
+    return tuple(
+        (road_id, path.node_ids[index], path.node_ids[index + 1])
+        for index, road_id in enumerate(path.road_ids)
+    )
+
+
 def _is_bidirectional_minimal_loop_candidate(
     *,
     forward_path: DirectedPath,
     reverse_path: DirectedPath,
     roads: dict[str, RoadRecord],
 ) -> bool:
-    if not forward_path.road_ids:
+    if not forward_path.road_ids or not reverse_path.road_ids:
         return False
-    if forward_path.node_ids != tuple(reversed(reverse_path.node_ids)):
+
+    forward_edges = _path_oriented_edges(forward_path)
+    reverse_edges = _path_oriented_edges(reverse_path)
+    if not forward_edges or not reverse_edges:
         return False
-    if forward_path.road_ids != tuple(reversed(reverse_path.road_ids)):
+
+    shared_road_ids = set(forward_path.road_ids) & set(reverse_path.road_ids)
+    if not shared_road_ids:
         return False
-    return all(roads[road_id].direction in {0, 1} for road_id in forward_path.road_ids)
+    if any(roads[road_id].direction not in {0, 1} for road_id in shared_road_ids):
+        return False
+    if set(forward_edges) & set(reverse_edges):
+        return False
+
+    forward_orientations: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    reverse_orientations: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    for road_id, from_node_id, to_node_id in forward_edges:
+        forward_orientations[road_id].add((from_node_id, to_node_id))
+    for road_id, from_node_id, to_node_id in reverse_edges:
+        reverse_orientations[road_id].add((from_node_id, to_node_id))
+
+    for road_id in shared_road_ids:
+        if len(forward_orientations[road_id]) != 1 or len(reverse_orientations[road_id]) != 1:
+            return False
+        ((forward_from, forward_to),) = tuple(forward_orientations[road_id])
+        ((reverse_from, reverse_to),) = tuple(reverse_orientations[road_id])
+        if (forward_from, forward_to) != (reverse_to, reverse_from):
+            return False
+
+    indegree: dict[str, int] = defaultdict(int)
+    outdegree: dict[str, int] = defaultdict(int)
+    weak_adjacency: dict[str, set[str]] = defaultdict(set)
+    active_nodes: set[str] = set()
+    for _, from_node_id, to_node_id in forward_edges + reverse_edges:
+        active_nodes.add(from_node_id)
+        active_nodes.add(to_node_id)
+        outdegree[from_node_id] += 1
+        indegree[to_node_id] += 1
+        weak_adjacency[from_node_id].add(to_node_id)
+        weak_adjacency[to_node_id].add(from_node_id)
+
+    if not active_nodes:
+        return False
+    if any(indegree[node_id] != outdegree[node_id] for node_id in active_nodes):
+        return False
+
+    queue: deque[str] = deque([next(iter(active_nodes))])
+    visited: set[str] = set()
+    while queue:
+        node_id = queue.popleft()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        queue.extend(neighbor for neighbor in weak_adjacency.get(node_id, ()) if neighbor not in visited)
+    return visited == active_nodes
 
 
 def _trunk_candidate_mode(candidate: TrunkCandidate) -> str:
@@ -1205,6 +1264,19 @@ def _evaluate_trunk(
     formway_mode: str,
     left_turn_formway_bit: int,
 ) -> tuple[Optional[TrunkCandidate], Optional[str], tuple[str, ...]]:
+    collapsed_candidate: Optional[TrunkCandidate] = None
+    collapsed_warnings: tuple[str, ...] = ()
+    if pair.through_node_ids:
+        collapsed_candidate, collapsed_warnings = _evaluate_through_collapsed_corridor(
+            pair,
+            context=context,
+            pruned_road_ids=pruned_road_ids,
+            road_endpoints=road_endpoints,
+            through_rule=through_rule,
+            formway_mode=formway_mode,
+            left_turn_formway_bit=left_turn_formway_bit,
+        )
+
     base_adjacency = _build_filtered_directed_adjacency(
         context,
         allowed_road_ids=pruned_road_ids,
@@ -1229,7 +1301,7 @@ def _evaluate_trunk(
         roads=context.roads,
         road_endpoints=road_endpoints,
         left_turn_formway_bit=left_turn_formway_bit,
-        allow_bidirectional_overlap=not pair.through_node_ids,
+        allow_bidirectional_overlap=True,
     )
 
     if formway_mode == "strict":
@@ -1257,39 +1329,21 @@ def _evaluate_trunk(
             roads=context.roads,
             road_endpoints=road_endpoints,
             left_turn_formway_bit=left_turn_formway_bit,
-            allow_bidirectional_overlap=not pair.through_node_ids,
+            allow_bidirectional_overlap=True,
         )
+        if collapsed_candidate is not None:
+            return collapsed_candidate, None, collapsed_warnings
         if strict_candidates:
             return strict_candidates[0], None, ()
         if base_candidates:
             return None, "left_turn_only_polluted_trunk", ()
-        collapsed_candidate, collapsed_warnings = _evaluate_through_collapsed_corridor(
-            pair,
-            context=context,
-            pruned_road_ids=pruned_road_ids,
-            road_endpoints=road_endpoints,
-            through_rule=through_rule,
-            formway_mode=formway_mode,
-            left_turn_formway_bit=left_turn_formway_bit,
-        )
-        if collapsed_candidate is not None:
-            return collapsed_candidate, None, collapsed_warnings
         if strict_clockwise_only or base_clockwise_only:
             return None, "only_clockwise_loop", ()
         return None, "no_valid_trunk", ()
 
+    if collapsed_candidate is not None:
+        return collapsed_candidate, None, collapsed_warnings
     if not base_candidates:
-        collapsed_candidate, collapsed_warnings = _evaluate_through_collapsed_corridor(
-            pair,
-            context=context,
-            pruned_road_ids=pruned_road_ids,
-            road_endpoints=road_endpoints,
-            through_rule=through_rule,
-            formway_mode=formway_mode,
-            left_turn_formway_bit=left_turn_formway_bit,
-        )
-        if collapsed_candidate is not None:
-            return collapsed_candidate, None, collapsed_warnings
         if base_clockwise_only:
             return None, "only_clockwise_loop", ()
         return None, "no_valid_trunk", ()

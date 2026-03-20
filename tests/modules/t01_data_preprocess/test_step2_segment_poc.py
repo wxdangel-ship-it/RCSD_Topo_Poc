@@ -298,6 +298,46 @@ def _build_bidirectional_minimal_loop_dataset(base_dir: Path) -> tuple[Path, Pat
     return road_path, node_path
 
 
+def _build_bidirectional_overlap_loop_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "roads.geojson"
+    node_path = base_dir / "nodes.geojson"
+    node_features = [
+        _node_feature(1, 0.0, 0.0),
+        _node_feature(2, 1.0, 0.0, kind=0, grade=0, closed_con=0),
+        _node_feature(3, 2.0, 0.0),
+    ]
+    road_features = [
+        _road_feature("r12", 1, 2, 1, [[0.0, 0.0], [1.0, 0.0]]),
+        _road_feature("r23", 2, 3, 2, [[1.0, 0.0], [2.0, 0.5]]),
+        _road_feature("r32", 3, 2, 2, [[2.0, 0.0], [1.0, -0.5]]),
+    ]
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
+def _build_bidirectional_overlap_with_through_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "roads.geojson"
+    node_path = base_dir / "nodes.geojson"
+    node_features = [
+        _node_feature(1, 0.0, 0.0),
+        _node_feature(2, 1.0, 0.5, kind=0, grade=0, closed_con=0),
+        _node_feature(3, 2.0, 0.0, kind=0, grade=0, closed_con=0),
+        _node_feature(4, 3.0, 0.0),
+        _node_feature(5, 2.0, -0.5, kind=0, grade=0, closed_con=0),
+    ]
+    road_features = [
+        _road_feature("r12", 1, 2, 2, [[0.0, 0.0], [1.0, 0.5]]),
+        _road_feature("r23", 2, 3, 2, [[1.0, 0.5], [2.0, 0.0]]),
+        _road_feature("r34", 3, 4, 1, [[2.0, 0.0], [3.0, 0.0]]),
+        _road_feature("r35", 3, 5, 2, [[2.0, 0.0], [2.0, -0.5]]),
+        _road_feature("r51", 5, 1, 2, [[2.0, -0.5], [0.0, 0.0]]),
+    ]
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
 def _build_disconnected_cycle_dataset(base_dir: Path) -> tuple[Path, Path]:
     road_path, node_path = _build_counterclockwise_dataset(base_dir)
     node_doc = _load_json(node_path)
@@ -607,6 +647,72 @@ def test_step2_validates_bidirectional_direct_road_as_minimal_loop(tmp_path: Pat
     assert support_info["bidirectional_minimal_loop"] is True
     assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r12"}
     assert set(segment_body["features"][0]["properties"]["road_ids"]) == {"r12"}
+
+
+def test_step2_validates_bidirectional_overlap_loop_as_minimal_loop(tmp_path: Path) -> None:
+    road_path, node_path = _build_bidirectional_overlap_loop_dataset(tmp_path)
+    strategy_path = _write_strategy(tmp_path / "step2_strategy.json")
+    out_root = tmp_path / "outputs"
+
+    rc = main(
+        [
+            "t01-step2-segment-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+
+    validated_rows = _read_csv_rows(out_root / "S2X" / "validated_pairs.csv")
+    validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
+    trunk = _load_json(out_root / "S2X" / "trunk_roads.geojson")
+
+    assert [row["pair_id"] for row in validated_rows] == ["S2X:1__3"]
+    assert validation_rows[0]["validated_status"] == "validated"
+    assert validation_rows[0]["trunk_mode"] == "counterclockwise_loop"
+    support_info = json.loads(validation_rows[0]["support_info"])
+    assert support_info["bidirectional_minimal_loop"] is True
+    assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r12", "r23", "r32"}
+
+
+def test_step2_validates_bidirectional_overlap_loop_with_through_nodes(tmp_path: Path) -> None:
+    road_path, node_path = _build_bidirectional_overlap_with_through_dataset(tmp_path)
+    strategy_path = _write_strategy(tmp_path / "step2_strategy.json")
+    out_root = tmp_path / "outputs"
+
+    rc = main(
+        [
+            "t01-step2-segment-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+
+    validated_rows = _read_csv_rows(out_root / "S2X" / "validated_pairs.csv")
+    validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
+    trunk = _load_json(out_root / "S2X" / "trunk_roads.geojson")
+
+    assert [row["pair_id"] for row in validated_rows] == ["S2X:1__4"]
+    assert validation_rows[0]["validated_status"] == "validated"
+    assert validation_rows[0]["trunk_mode"] == "counterclockwise_loop"
+    support_info = json.loads(validation_rows[0]["support_info"])
+    assert support_info["bidirectional_minimal_loop"] is True
+    assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r12", "r23", "r34", "r35", "r51"}
 
 
 def test_step2_rejects_disconnected_after_prune(monkeypatch, tmp_path: Path) -> None:

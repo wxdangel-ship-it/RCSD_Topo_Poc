@@ -2380,6 +2380,7 @@ def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
         run_id=resolved_run_id,
         formway_mode=args.formway_mode,
         left_turn_formway_bit=args.left_turn_formway_bit,
+        debug=args.debug,
     )
 
     payload = {

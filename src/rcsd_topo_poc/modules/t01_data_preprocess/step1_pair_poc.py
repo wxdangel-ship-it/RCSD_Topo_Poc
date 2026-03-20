@@ -1376,6 +1376,7 @@ def run_step1_pair_poc(
     road_crs: Optional[str] = None,
     node_layer: Optional[str] = None,
     node_crs: Optional[str] = None,
+    debug: bool = True,
 ) -> list[Step1StrategyResult]:
     context = build_step1_graph_context(
         road_path=road_path,
@@ -1411,6 +1412,7 @@ def run_step1_pair_poc(
             orphan_ref_count=context.orphan_ref_count,
             search_seed_count=len(execution.search_seed_ids),
             through_seed_pruned_count=execution.through_seed_pruned_count,
+            debug=debug,
         )
         results.append(strategy_result)
         comparison_summary.append(strategy_result.pair_summary)
@@ -1431,6 +1433,7 @@ def run_step1_pair_poc_cli(args: argparse.Namespace) -> int:
         strategy_config_paths=list(args.strategy_config),
         out_root=resolved_out_root,
         run_id=resolved_run_id,
+        debug=args.debug,
     )
 
     payload = {

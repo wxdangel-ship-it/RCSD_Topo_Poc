@@ -65,7 +65,7 @@ class RefreshArtifacts:
     roads_path: Path
     summary_path: Path
     mainnode_table_path: Path
-    preserved_s2_dir: Path
+    preserved_s2_dir: Optional[Path]
     summary: dict[str, Any]
 
 
@@ -355,6 +355,18 @@ def _write_outputs(
     )
 
 
+def _materialize_s2_boundary_snapshot(*, source_s2_dir: Path, target_s2_dir: Path, debug: bool) -> Path:
+    target_s2_dir.mkdir(parents=True, exist_ok=True)
+    if debug:
+        shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
+        return target_s2_dir
+
+    validated_pairs_path = source_s2_dir / "validated_pairs.csv"
+    if validated_pairs_path.is_file():
+        shutil.copy2(validated_pairs_path, target_s2_dir / "validated_pairs.csv")
+    return target_s2_dir
+
+
 def refresh_s2_baseline(
     *,
     road_path: Union[str, Path],
@@ -372,10 +384,11 @@ def refresh_s2_baseline(
     resolved_out_root.mkdir(parents=True, exist_ok=True)
 
     s2_dir = _resolve_s2_dir(s2_path)
-    preserved_s2_dir: Optional[Path] = None
-    if debug:
-        preserved_s2_dir = resolved_out_root / "S2"
-        shutil.copytree(s2_dir, preserved_s2_dir, dirs_exist_ok=True)
+    preserved_s2_dir = _materialize_s2_boundary_snapshot(
+        source_s2_dir=s2_dir,
+        target_s2_dir=resolved_out_root / "S2",
+        debug=debug,
+    )
     validated_pairs_path = s2_dir / "validated_pairs.csv"
     segment_body_path = s2_dir / "segment_body_roads.geojson"
 

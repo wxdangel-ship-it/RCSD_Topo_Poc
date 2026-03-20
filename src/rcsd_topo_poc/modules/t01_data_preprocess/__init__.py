@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 __all__ = [
+    "freeze_compare",
     "io_utils",
     "step1_pair_poc",
     "step2_segment_poc",
     "s2_baseline_refresh",
     "step4_residual_graph",
     "step5_staged_residual_graph",
+    "skill_v1",
 ]

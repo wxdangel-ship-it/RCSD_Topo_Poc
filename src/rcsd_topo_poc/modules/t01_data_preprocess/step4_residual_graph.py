@@ -438,7 +438,13 @@ def _copy_step4_review_outputs(step4_dir: Path, out_root: Path) -> None:
             shutil.copy2(source, out_root / target_name)
 
 
-def _preserve_previous_s2_snapshot(*, node_path: Union[str, Path], road_path: Union[str, Path], out_root: Path) -> Optional[Path]:
+def _preserve_previous_s2_snapshot(
+    *,
+    node_path: Union[str, Path],
+    road_path: Union[str, Path],
+    out_root: Path,
+    debug: bool,
+) -> Optional[Path]:
     node_parent = Path(node_path).resolve().parent
     road_parent = Path(road_path).resolve().parent
     if node_parent != road_parent:
@@ -449,7 +455,13 @@ def _preserve_previous_s2_snapshot(*, node_path: Union[str, Path], road_path: Un
         return None
 
     target_s2_dir = out_root / "S2"
-    shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
+    target_s2_dir.mkdir(parents=True, exist_ok=True)
+    if debug:
+        shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
+    else:
+        validated_pairs_path = source_s2_dir / "validated_pairs.csv"
+        if validated_pairs_path.is_file():
+            shutil.copy2(validated_pairs_path, target_s2_dir / "validated_pairs.csv")
     return target_s2_dir
 
 
@@ -746,14 +758,14 @@ def run_step4_residual_graph(
         raise ValueError(f"Expected one Step4 strategy result, got {len(step4_results)}.")
 
     step4_dir = resolved_out_root / STEP4_STRATEGY_ID
-    preserved_prev_s2_dir: Optional[Path] = None
+    preserved_prev_s2_dir = _preserve_previous_s2_snapshot(
+        node_path=node_path,
+        road_path=road_path,
+        out_root=resolved_out_root,
+        debug=debug,
+    )
     if debug:
         _copy_step4_review_outputs(step4_dir, resolved_out_root)
-        preserved_prev_s2_dir = _preserve_previous_s2_snapshot(
-            node_path=node_path,
-            road_path=road_path,
-            out_root=resolved_out_root,
-        )
         _write_boundary_node_outputs(
             out_root=resolved_out_root,
             nodes=nodes,

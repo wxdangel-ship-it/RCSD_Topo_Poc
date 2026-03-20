@@ -1,29 +1,34 @@
 # T00 Utility Toolbox 任务清单
 
-## 1. 本轮文档任务
+## 1. 本轮实现任务
 
-- [x] 建立 `specs/t00-utility-toolbox/spec.md`
-- [x] 建立 `specs/t00-utility-toolbox/plan.md`
-- [x] 建立 `specs/t00-utility-toolbox/tasks.md`
-- [x] 建立 `modules/t00_utility_toolbox/README.md`
-- [x] 建立 `modules/t00_utility_toolbox/AGENTS.md`
-- [x] 建立 `modules/t00_utility_toolbox/INTERFACE_CONTRACT.md`
-- [x] 按项目级模块启动标准补建 `modules/t00_utility_toolbox/architecture/*`
-- [x] 对 T00 定位、Tool1 范围、覆盖策略、异常语义、摘要口径做文档一致性检查
-- [x] 落仓 Tool1 内网固定执行脚本与 `src/` 实现
-- [x] 补录新增执行入口到 `docs/repository-metadata/entrypoint-registry.md`
+- [x] 盘点现有 T00 / Tool1 的目录、入口、日志和文档位置
+- [x] 在现有 T00 风格下实现 Tool2 `DriveZone` 预处理与全量合并
+- [x] 在现有 T00 风格下实现 Tool3 `Intersection` 预处理与全量汇总
+- [x] 为 Tool2 / Tool3 补最小共享底层工具，避免重复实现
+- [x] 为 Tool2 / Tool3 提供阶段级和 Patch 级进度输出
+- [x] 更新 T00 的 `README / AGENTS / INTERFACE_CONTRACT`
+- [x] 更新 T00 的 `spec / plan / tasks`
+- [x] 修正 T00 `architecture/*` 中与 Tool1-only 状态冲突的源事实
+- [x] 补录新增执行入口到入口注册表
 
-## 2. 下一阶段编码前任务
+## 2. 后续待办
 
-- [ ] 在内网真实数据环境执行 Tool1 固定脚本
-- [ ] 基于真实执行结果复核摘要字段与失败诊断是否足够
-- [ ] 仅在真实运行暴露缺口时补最小实现调整
-- [ ] 待 T01 完成后统一下拉 GitHub
+- [ ] 在真实 `D:\TestData\POC_Data\patch_all` 数据路径上跑通 Tool2
+- [ ] 在真实 `D:\TestData\POC_Data\patch_all` 数据路径上跑通 Tool3
+- [ ] 基于真实运行结果复核缺失输入和异常 Patch 的统计摘要
+- [ ] 若真实数据暴露 CRS 缺口，再仅做最小必要参数调整
 
-## 3. 本轮不做
+## 3. 推荐实现顺序
 
-- [x] 不写测试
-- [x] 不扩展 Tool2+
-- [x] 不做数据验证实验
-- [x] 不创建 `history/000-bootstrap.md`
-- [x] 不补充未确认的复杂输出格式或 manifest 机制
+1. Tool1
+2. Tool2
+3. Tool3
+
+## 4. 本轮不做
+
+- [x] 不返工 Tool1 业务逻辑
+- [x] 不扩展 Tool4+
+- [x] 不做复杂基线治理
+- [x] 不强制持久化 Tool2 / Tool3 的单 Patch 中间结果
+- [x] 不因为未来扩展而提前搭重型框架

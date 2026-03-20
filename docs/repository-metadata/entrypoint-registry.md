@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前共识别 `4` 个执行入口文件
+- 当前共识别 `6` 个执行入口文件
 - 分布概览：
-  - repo 级 / 工具级：`4`
+  - repo 级 / 工具级：`6`
 
 ## 3. 当前已识别入口清单
 
@@ -18,6 +18,8 @@
 | `agent_enter.sh` | `scripts/agent_enter.sh` | repo 级 | 进入仓库后的标准握手辅助 | `active` | 否 |
 | `python -m rcsd_topo_poc` | `src/rcsd_topo_poc/__main__.py` | repo 级 | 仓库级 Python 包入口 | `active` | 否 |
 | `t00_tool1_patch_directory_bootstrap.py` | `scripts/t00_tool1_patch_directory_bootstrap.py` | repo 级 | T00 Tool1 内网固定执行脚本 | `active` | 否 |
+| `t00_tool2_drivezone_merge.py` | `scripts/t00_tool2_drivezone_merge.py` | repo 级 | T00 Tool2 全量 DriveZone 预处理与合并 | `active` | 否 |
+| `t00_tool3_intersection_merge.py` | `scripts/t00_tool3_intersection_merge.py` | repo 级 | T00 Tool3 全量 Intersection 预处理与汇总 | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

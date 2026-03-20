@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 from collections import defaultdict, deque
 from dataclasses import dataclass, replace
@@ -8,7 +9,7 @@ from datetime import datetime
 from heapq import heappop, heappush
 from itertools import count
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from shapely.geometry import LineString, MultiLineString
 from shapely.geometry.base import BaseGeometry
@@ -110,6 +111,9 @@ class NonTrunkComponent:
     decision_reason: str
 
 
+Step2ProgressCallback = Callable[[str, dict[str, Any]], None]
+
+
 def _build_default_run_id(now: Optional[datetime] = None) -> str:
     current = datetime.now() if now is None else now
     return f"{DEFAULT_RUN_ID_PREFIX}{current.strftime('%Y%m%d_%H%M%S')}"
@@ -134,6 +138,16 @@ def _resolve_out_root(
 
 def _compact_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _emit_progress(
+    progress_callback: Optional[Step2ProgressCallback],
+    event: str,
+    **payload: Any,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(event, payload)
 
 
 def _geometry_length(geometry: BaseGeometry) -> float:
@@ -1605,6 +1619,7 @@ def _write_step2_outputs(
     validations: list[PairValidationResult],
     formway_mode: str,
     debug: bool,
+    retain_validation_details: bool,
 ) -> Step2StrategyResult:
     validated_rows: list[dict[str, Any]] = []
     rejected_rows: list[dict[str, Any]] = []
@@ -2006,7 +2021,7 @@ def _write_step2_outputs(
         strategy=strategy,
         segment_summary=segment_summary,
         output_files=[str(path) for path in sorted(out_dir.iterdir()) if path.is_file()],
-        validations=validations,
+        validations=validations if retain_validation_details else [],
     )
 
 
@@ -2299,10 +2314,15 @@ def run_step2_segment_poc(
     formway_mode: str = "strict",
     left_turn_formway_bit: int = LEFT_TURN_FORMWAY_BIT,
     debug: bool = True,
+    retain_validation_details: bool = True,
+    progress_callback: Optional[Step2ProgressCallback] = None,
 ) -> list[Step2StrategyResult]:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
 
+    resolved_out_root = Path(out_root)
+    resolved_out_root.mkdir(parents=True, exist_ok=True)
+    _emit_progress(progress_callback, "context_build_started")
     context = build_step1_graph_context(
         road_path=road_path,
         node_path=node_path,
@@ -2311,16 +2331,55 @@ def run_step2_segment_poc(
         node_layer=node_layer,
         node_crs=node_crs,
     )
+    _emit_progress(
+        progress_callback,
+        "context_build_completed",
+        road_count=len(context.roads),
+        physical_node_count=len(context.physical_nodes),
+        semantic_node_count=len(context.semantic_nodes),
+        orphan_ref_count=context.orphan_ref_count,
+    )
     road_endpoints, undirected_adjacency = _build_semantic_endpoints(context)
+    _emit_progress(
+        progress_callback,
+        "semantic_endpoints_completed",
+        semantic_endpoint_road_count=len(road_endpoints),
+        undirected_node_count=len(undirected_adjacency),
+    )
 
     results: list[Step2StrategyResult] = []
     comparison_summary: list[dict[str, Any]] = []
-    resolved_run_id = Path(out_root).name if run_id is None else run_id
+    resolved_run_id = resolved_out_root.name if run_id is None else run_id
+    strategy_count = len(strategy_config_paths)
 
-    for strategy_path in strategy_config_paths:
+    for strategy_index, strategy_path in enumerate(strategy_config_paths, start=1):
+        _emit_progress(
+            progress_callback,
+            "strategy_started",
+            strategy_index=strategy_index,
+            strategy_count=strategy_count,
+            strategy_path=str(strategy_path),
+        )
         strategy = _load_strategy(strategy_path)
+        _emit_progress(
+            progress_callback,
+            "strategy_loaded",
+            strategy_index=strategy_index,
+            strategy_count=strategy_count,
+            strategy_id=strategy.strategy_id,
+        )
         execution = run_step1_strategy(context, strategy)
-        strategy_out_dir = Path(out_root) / strategy.strategy_id
+        _emit_progress(
+            progress_callback,
+            "candidate_search_completed",
+            strategy_index=strategy_index,
+            strategy_count=strategy_count,
+            strategy_id=strategy.strategy_id,
+            candidate_pair_count=len(execution.pair_candidates),
+            search_seed_count=len(execution.search_seed_ids),
+            terminate_count=len(execution.terminate_ids),
+        )
+        strategy_out_dir = resolved_out_root / strategy.strategy_id
 
         write_step1_candidate_outputs(
             strategy_out_dir,
@@ -2341,6 +2400,14 @@ def run_step2_segment_poc(
             through_seed_pruned_count=execution.through_seed_pruned_count,
             debug=debug,
         )
+        _emit_progress(
+            progress_callback,
+            "candidate_outputs_written",
+            strategy_index=strategy_index,
+            strategy_count=strategy_count,
+            strategy_id=strategy.strategy_id,
+            output_dir=str(strategy_out_dir.resolve()),
+        )
 
         validations = _validate_pair_candidates(
             execution,
@@ -2350,6 +2417,18 @@ def run_step2_segment_poc(
             formway_mode=formway_mode,
             left_turn_formway_bit=left_turn_formway_bit,
         )
+        validated_pair_count = sum(1 for item in validations if item.validated_status == "validated")
+        rejected_pair_count = len(validations) - validated_pair_count
+        _emit_progress(
+            progress_callback,
+            "validation_completed",
+            strategy_index=strategy_index,
+            strategy_count=strategy_count,
+            strategy_id=strategy.strategy_id,
+            candidate_pair_count=len(validations),
+            validated_pair_count=validated_pair_count,
+            rejected_pair_count=rejected_pair_count,
+        )
         step2_result = _write_step2_outputs(
             strategy_out_dir,
             strategy=strategy,
@@ -2358,11 +2437,40 @@ def run_step2_segment_poc(
             validations=validations,
             formway_mode=formway_mode,
             debug=debug,
+            retain_validation_details=retain_validation_details,
+        )
+        _emit_progress(
+            progress_callback,
+            "step2_outputs_written",
+            strategy_index=strategy_index,
+            strategy_count=strategy_count,
+            strategy_id=strategy.strategy_id,
+            output_dir=str(strategy_out_dir.resolve()),
+            segment_summary=step2_result.segment_summary,
+            retained_validation_details=retain_validation_details,
         )
         results.append(step2_result)
         comparison_summary.append(step2_result.segment_summary)
+        del execution
+        del validations
+        gc_collected = gc.collect()
+        _emit_progress(
+            progress_callback,
+            "strategy_memory_released",
+            strategy_index=strategy_index,
+            strategy_count=strategy_count,
+            strategy_id=strategy.strategy_id,
+            gc_collected_objects=gc_collected,
+            retained_validation_details=retain_validation_details,
+        )
 
-    write_json(Path(out_root) / "strategy_comparison.json", comparison_summary)
+    write_json(resolved_out_root / "strategy_comparison.json", comparison_summary)
+    _emit_progress(
+        progress_callback,
+        "comparison_summary_written",
+        strategy_count=strategy_count,
+        strategy_comparison_path=str((resolved_out_root / "strategy_comparison.json").resolve()),
+    )
     return results
 
 

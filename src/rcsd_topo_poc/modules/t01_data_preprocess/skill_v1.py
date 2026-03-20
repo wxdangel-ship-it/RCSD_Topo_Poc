@@ -55,6 +55,74 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
+def _format_progress_details(payload: dict[str, Any]) -> str:
+    detail_keys = (
+        "strategy_id",
+        "strategy_index",
+        "strategy_count",
+        "candidate_pair_count",
+        "validated_pair_count",
+        "rejected_pair_count",
+        "search_seed_count",
+        "terminate_count",
+        "road_count",
+        "physical_node_count",
+        "semantic_node_count",
+        "semantic_endpoint_road_count",
+        "undirected_node_count",
+        "gc_collected_objects",
+    )
+    parts: list[str] = []
+    for key in detail_keys:
+        if key not in payload:
+            continue
+        parts.append(f"{key}={payload[key]}")
+    return " ".join(parts)
+
+
+def _make_stage_subprogress_callback(
+    *,
+    run_id: str,
+    stage_name: str,
+    stage_index: int,
+    total_stages: int,
+    progress_path: Path,
+    perf_markers_path: Path,
+    completed_stage_names: list[str],
+) -> Callable[[str, dict[str, Any]], None]:
+    def _callback(event: str, payload: dict[str, Any]) -> None:
+        details = _format_progress_details(payload)
+        message = f"Stage {stage_name} {event}."
+        if details:
+            message = f"{message} {details}"
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=run_id,
+            status="running",
+            total_stages=total_stages,
+            completed_stage_names=completed_stage_names,
+            current_stage=stage_name,
+            message=message,
+        )
+        _append_jsonl(
+            perf_markers_path,
+            {
+                "event": "stage_subprogress",
+                "at": _now_text(),
+                "run_id": run_id,
+                "stage_index": stage_index,
+                "total_stages": total_stages,
+                "stage_name": stage_name,
+                "substage_event": event,
+                "payload": payload,
+            },
+        )
+        suffix = f" {details}" if details else ""
+        _print_progress(f"[{stage_index}/{total_stages}] {stage_name}:{event}{suffix}")
+
+    return _callback
+
+
 def _write_progress_snapshot(
     *,
     out_path: Path,
@@ -388,6 +456,16 @@ def run_t01_skill_v1(
                 formway_mode=formway_mode,
                 left_turn_formway_bit=left_turn_formway_bit,
                 debug=debug,
+                retain_validation_details=False,
+                progress_callback=_make_stage_subprogress_callback(
+                    run_id=resolved_run_id,
+                    stage_name="step2",
+                    stage_index=1,
+                    total_stages=total_stages,
+                    progress_path=progress_path,
+                    perf_markers_path=perf_markers_path,
+                    completed_stage_names=completed_stage_names,
+                ),
             ),
         )
 
@@ -523,6 +601,8 @@ def run_t01_skill_v1(
                 "bounded_parallel_load_workers": 2,
                 "uses_temp_stage_root_when_debug_false": True,
                 "deep_full_in_memory_pipeline": False,
+                "step2_internal_progress_enabled": True,
+                "step2_retains_validation_details_in_runner": False,
             },
         }
         summary_path = resolved_out_root / "t01_skill_v1_summary.json"

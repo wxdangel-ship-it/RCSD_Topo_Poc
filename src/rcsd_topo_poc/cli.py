@@ -132,6 +132,27 @@ def _cmd_t01_step5_staged_residual_graph(args: argparse.Namespace) -> int:
     return run_step5_staged_residual_graph_cli(args)
 
 
+def _cmd_t01_run_skill_v1(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.skill_v1 import run_t01_skill_v1_cli
+
+    return run_t01_skill_v1_cli(args)
+
+
+def _cmd_t01_compare_freeze(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.freeze_compare import run_compare_t01_freeze_cli
+
+    return run_compare_t01_freeze_cli(args)
+
+
+def _add_debug_flag(parser: argparse.ArgumentParser, *, default: bool) -> None:
+    parser.add_argument(
+        "--debug",
+        action=argparse.BooleanOptionalAction,
+        default=default,
+        help="Whether to preserve step-by-step intermediate outputs. Does not change final business results.",
+    )
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="rcsd_topo_poc")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -173,6 +194,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_step1_pair_poc/<run_id>.",
     )
+    _add_debug_flag(p_t01, default=True)
     p_t01.set_defaults(func=_cmd_t01_step1_pair_poc)
 
     p_t02 = sub.add_parser(
@@ -211,6 +233,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_step2_segment_poc/<run_id>.",
     )
+    _add_debug_flag(p_t02, default=True)
     p_t02.set_defaults(func=_cmd_t01_step2_segment_poc)
 
     p_slice = sub.add_parser(
@@ -267,6 +290,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_s2_refresh_node_road/<run_id>.",
     )
+    _add_debug_flag(p_refresh, default=True)
     p_refresh.set_defaults(func=_cmd_t01_s2_refresh_node_road)
 
     p_step4 = sub.add_parser(
@@ -299,6 +323,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_step4_residual_graph/<run_id>.",
     )
+    _add_debug_flag(p_step4, default=True)
     p_step4.set_defaults(func=_cmd_t01_step4_residual_graph)
 
     p_step5 = sub.add_parser(
@@ -331,7 +356,62 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_step5_staged_residual_graph/<run_id>.",
     )
+    _add_debug_flag(p_step5, default=True)
     p_step5.set_defaults(func=_cmd_t01_step5_staged_residual_graph)
+
+    p_skill = sub.add_parser(
+        "t01-run-skill-v1",
+        help="Run the accepted Step1-Step5 T01 skill pipeline end-to-end with the official debug-aware runner.",
+    )
+    p_skill.add_argument("--road-path", required=True, help="Path to input Road Shp/GeoJSON.")
+    p_skill.add_argument("--road-layer", help="Optional road layer name.")
+    p_skill.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_skill.add_argument("--node-path", required=True, help="Path to input Node Shp/GeoJSON.")
+    p_skill.add_argument("--node-layer", help="Optional node layer name.")
+    p_skill.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_skill.add_argument(
+        "--strategy-config",
+        help="Optional Step1/Step2 strategy config path. If omitted, use configs/t01_data_preprocess/step1_pair_s2.json.",
+    )
+    p_skill.add_argument(
+        "--formway-mode",
+        choices=["strict", "audit_only", "off"],
+        default="strict",
+        help="How T01 Skill v1 should treat left-turn-only roads when validating trunk roads.",
+    )
+    p_skill.add_argument(
+        "--left-turn-formway-bit",
+        type=int,
+        default=8,
+        help="formway bit index used as left-turn-only lane indicator. Default: 8.",
+    )
+    p_skill.add_argument("--compare-freeze-dir", help="Optional frozen baseline package directory for PASS/FAIL compare.")
+    p_skill.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_skill_v1_YYYYMMDD_HHMMSS.",
+    )
+    p_skill.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_skill_v1/<run_id>.",
+    )
+    _add_debug_flag(p_skill, default=True)
+    p_skill.set_defaults(func=_cmd_t01_run_skill_v1)
+
+    p_compare = sub.add_parser(
+        "t01-compare-freeze",
+        help="Compare a T01 Skill v1 current run output with the frozen XXXS baseline package.",
+    )
+    p_compare.add_argument("--current-dir", required=True, help="Directory of current T01 Skill v1 run output.")
+    p_compare.add_argument("--freeze-dir", required=True, help="Directory of frozen baseline audit package.")
+    p_compare.add_argument(
+        "--run-id",
+        help="Optional compare run id. If omitted, use t01_compare_freeze_YYYYMMDD_HHMMSS.",
+    )
+    p_compare.add_argument(
+        "--out-root",
+        help="Optional compare output root override. If omitted, write to outputs/_work/t01_compare_freeze/<run_id>.",
+    )
+    p_compare.set_defaults(func=_cmd_t01_compare_freeze)
 
     args = parser.parse_args(argv)
     try:

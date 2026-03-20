@@ -1,66 +1,63 @@
 # T01 - AGENTS
 
-## 1. 模块定位
-
+## 1. 模块状态
 - 模块 ID：`t01_data_preprocess`
-- 模块名称：`T01`
-- 模块定位：RCSD 场景中的数据预处理模块文档入口
-- 当前优先议题：
-  - 路段提取
-  - 路口类型重新赋值
+- 当前状态：`accepted baseline / Skill v1.0.0 formalization`
+- 当前 accepted 范围：
+  - Step1：`pair_candidates`
+  - Step2：`validated / rejected / trunk / segment_body / step3_residual`
+  - Step4：基于 refreshed `Node / Road` 的 residual graph 轮次
+  - Step5：`Step5A / Step5B / Step5C`
 
-## 2. 已确认事实：当前阶段范围
+## 2. 持续有效的模块约束
+- 不得回退当前 accepted baseline 的业务语义
+- 后续轮次默认消费 refreshed `nodes.geojson / roads.geojson`
+- 已有非空 `segmentid` 的 road 在后续轮次工作图中剔除
+- 历史高等级边界 mainnode 必须同时作用于：
+  - pair 搜索
+  - segment 收敛
+- `mainnodeid = NULL` 的 node 仍是合法语义路口
+- trunk 以语义路口为单元，支持：
+  - 双向 road 镜像最小闭环
+  - split-merge 混合通道
+  - semantic-node-group closure
 
-- 当前阶段处于需求澄清期与文档初始化期。
-- 当前版本只建立初始模块文档框架与规格占位框架。
-- 当前文档落仓不等于项目级生命周期已将 T01 认定为正式 `Active` 模块。
-- 当前模块文档面只服务于：
-  - 已确认输入事实落仓
-  - 需求澄清支撑
-  - 待确认问题收口
+## 3. Freeze baseline guardrails
+- 当前 Skill v1.0.0 效果基线为：
+  - `XXXS`
+  - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs/`
+- 后续迭代若与该 freeze baseline 不一致，默认视为回退或显式变更
+- 未经用户明确认可，不得更新 freeze baseline
+- 任何性能优化不得通过改变 accepted 业务结果换取速度
 
-## 3. 当前理解/归纳：当前允许处理的内容
+## 4. 官方入口与 debug 约束
+- 官方推荐入口：
+  - `python -m rcsd_topo_poc t01-run-skill-v1`
+- 分步入口：
+  - `t01-step2-segment-poc`
+  - `t01-s2-refresh-node-road`
+  - `t01-step4-residual-graph`
+  - `t01-step5-staged-residual-graph`
+- `debug=true`：
+  - 官方默认值
+  - 保留分阶段中间结果与审计层
+- 适用于冻结基线复核、case 排查与视觉审查
+- `debug=false`：
+  - 用于减少无意义 I/O 和最终目录体积
+- `debug` 只影响中间输出，不得影响最终业务结果
+- 官方 runner 必须可见地输出阶段级执行进度，并同步产出结构化 perf checkpoint 文件
+- 当前允许的性能优化边界：
+  - 固定小并发读取输入图层
+  - 阶段级内存回收与峰值记录
+  - `debug=false` 下的临时 stage 目录
+- 当前未纳入正式语义的能力：
+  - 完整全内存流水线
+  - 核心业务决策层并发
 
-- 允许更新本模块目录下的文档文件，包括：
-  - `AGENTS.md`
-  - `INTERFACE_CONTRACT.md`
-  - `README.md`
-  - `architecture/*`
-  - `history/*`
-- 允许围绕当前已确认的 Road / Node 输入事实补充文档说明。
-- 允许围绕“路段提取 / 路口类型重新赋值”补充需求澄清问题。
-- 允许把未确认信息整理为 `待确认决策点`，但不得写成已确认规则。
-
-## 4. 当前不纳入范围：当前禁止处理的内容
-
-- 禁止擅自编码或创建任何 `src/` 下业务实现。
-- 禁止擅自定义算法、技术方案、处理流程或执行入口。
-- 禁止擅自补完输出契约、失败契约、审计契约的最终内容。
-- 禁止擅自扩展未确认字段、未确认指标或未确认上下游假设。
-- 禁止在模块根目录新增 `SKILL.md`。
-
-## 5. 已确认事实：文档写作规则
-
-- 所有文档默认使用中文。
-- 参数、代码、命令、路径、模块标识、配置键、接口字段可保留英文。
-- 文档中必须显式区分：
-  - 已确认事实
-  - 当前理解/归纳
-  - 待确认决策点
-  - 当前不纳入范围
-- `roadtype`、`formway` 当前只能写为低可信输入事实，不得写成强依赖条件。
-- `mainnodeid` 聚合语义当前只能写为输入语义约束或语义假设，不得写成算法结论。
-
-## 6. 待确认决策点：升级条件
-
-- 若要从当前文档初始化阶段升级到文档深化阶段，必须有新的已确认业务事实进入仓库。
-- 若要从文档阶段升级到实现设计或编码阶段，必须满足：
-  - 用户明确批准
-  - `spec / plan / tasks / AGENTS / INTERFACE_CONTRACT / README` 达成基线一致
-  - 输出契约、失败契约、审计契约至少具备可评审草案
-
-## 7. 当前不纳入范围：默认执行边界
-
-- 当前不要求运行入口说明，因为模块尚未进入实现。
-- 当前不要求实现验证，因为本轮没有实现工件。
-- 如发现与 repo root `AGENTS.md`、`SPEC.md` 或项目级架构文档冲突，必须先停止并汇报。
+## 5. 内网测试交付契约
+- 进入内网测试阶段时，默认交付三件套：
+  1. 当前 GitHub 版本内网下拉命令
+  2. 可直接执行的内网运行脚本
+  3. 可直接执行的关键信息回传命令
+- 若用户已提供足够路径与版本信息，这三件套必须可直接执行，不得要求用户再手工替换参数
+- 回传内容较少时直接命令行输出；内容较多时输出摘要文本

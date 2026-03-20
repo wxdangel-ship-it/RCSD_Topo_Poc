@@ -15,6 +15,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     NodeFeatureRecord,
     RoadFeatureRecord,
     _build_mainnode_groups,
+    _load_nodes_and_roads,
     _load_nodes,
     _load_roads,
     _road_flow_flags_for_group,
@@ -265,11 +266,15 @@ def _write_merged_geojson(*, paths: list[Path], out_path: Path, phase_labels: li
         if crs is None:
             crs = payload.get("crs")
         for feature in payload.get("features", []):
-            copied = json.loads(json.dumps(feature, ensure_ascii=False))
-            props = dict(copied.get("properties") or {})
+            props = dict(feature.get("properties") or {})
             props["step5_phase"] = phase_label
-            copied["properties"] = props
-            merged_features.append(copied)
+            merged_features.append(
+                {
+                    "type": "Feature",
+                    "geometry": feature.get("geometry"),
+                    "properties": props,
+                }
+            )
 
     write_json(
         out_path,
@@ -330,6 +335,7 @@ def _run_phase(
     run_id: str,
     formway_mode: str,
     left_turn_formway_bit: int,
+    debug: bool,
 ) -> PhaseRunArtifacts:
     run_step2_segment_poc(
         road_path=phase_input.working_roads_path,
@@ -339,10 +345,12 @@ def _run_phase(
         run_id=run_id,
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
+        debug=debug,
     )
     phase_dir = out_root / phase_input.phase_id
     phase_lower = phase_input.phase_id.lower()
-    _copy_phase_review_outputs(phase_dir=phase_dir, out_root=out_root, prefix=phase_lower)
+    if debug:
+        _copy_phase_review_outputs(phase_dir=phase_dir, out_root=out_root, prefix=phase_lower)
     validated_rows = _read_csv_rows(phase_dir / "validated_pairs.csv")
     road_to_segmentid, _ = _parse_segment_body_assignments(phase_dir / "segment_body_roads.geojson")
     segment_summary = _load_geojson_doc(phase_dir / "segment_summary.json")
@@ -653,6 +661,7 @@ def run_step5_staged_residual_graph(
     node_crs: Optional[str] = None,
     formway_mode: str = "strict",
     left_turn_formway_bit: int = 8,
+    debug: bool = True,
 ) -> Step5Artifacts:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
@@ -660,15 +669,23 @@ def run_step5_staged_residual_graph(
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
 
-    nodes, _, _ = _load_nodes(node_path, layer_name=node_layer, crs_override=node_crs)
-    roads, _ = _load_roads(road_path, layer_name=road_layer, crs_override=road_crs)
-    input_parent = Path(node_path).resolve().parent
-
-    preserved_snapshots = _preserve_previous_stage_snapshots(
+    (nodes, _, _), (roads, _) = _load_nodes_and_roads(
         node_path=node_path,
         road_path=road_path,
-        out_root=resolved_out_root,
+        node_layer=node_layer,
+        node_crs=node_crs,
+        road_layer=road_layer,
+        road_crs=road_crs,
     )
+    input_parent = Path(node_path).resolve().parent
+
+    preserved_snapshots: dict[str, str] = {}
+    if debug:
+        preserved_snapshots = _preserve_previous_stage_snapshots(
+            node_path=node_path,
+            road_path=road_path,
+            out_root=resolved_out_root,
+        )
     historical_boundary_ids, historical_boundary_source_map = _collect_validated_boundary_mainnodes(
         base_dir=input_parent,
         source_specs=(
@@ -695,6 +712,7 @@ def run_step5_staged_residual_graph(
         run_id=resolved_run_id,
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
+        debug=debug,
     )
 
     step5a_boundary_ids = {
@@ -709,11 +727,12 @@ def run_step5_staged_residual_graph(
         tags = set(combined_boundary_source_map.get(node_id, ()))
         tags.add("STEP5A")
         combined_boundary_source_map[node_id] = tuple(sorted(tags, key=_sort_key))
-    _write_boundary_node_outputs(
-        out_root=resolved_out_root,
-        nodes=nodes,
-        boundary_source_map=combined_boundary_source_map,
-    )
+    if debug:
+        _write_boundary_node_outputs(
+            out_root=resolved_out_root,
+            nodes=nodes,
+            boundary_source_map=combined_boundary_source_map,
+        )
 
     active_road_ids_step5b = set(active_road_ids_step5a) - set(phase_a.road_to_segmentid)
     step5b_input = _build_phase_inputs(
@@ -732,6 +751,7 @@ def run_step5_staged_residual_graph(
         run_id=resolved_run_id,
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
+        debug=debug,
     )
 
     step5b_boundary_ids = {
@@ -745,11 +765,12 @@ def run_step5_staged_residual_graph(
         tags = set(combined_boundary_source_map.get(node_id, ()))
         tags.add("STEP5B")
         combined_boundary_source_map[node_id] = tuple(sorted(tags, key=_sort_key))
-    _write_boundary_node_outputs(
-        out_root=resolved_out_root,
-        nodes=nodes,
-        boundary_source_map=combined_boundary_source_map,
-    )
+    if debug:
+        _write_boundary_node_outputs(
+            out_root=resolved_out_root,
+            nodes=nodes,
+            boundary_source_map=combined_boundary_source_map,
+        )
 
     active_road_ids_step5c = set(active_road_ids_step5b) - set(phase_b.road_to_segmentid)
     step5c_input = _build_phase_inputs(
@@ -768,6 +789,7 @@ def run_step5_staged_residual_graph(
         run_id=resolved_run_id,
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
+        debug=debug,
     )
 
     merged_validated_rows = _write_merged_validated_pairs(
@@ -778,35 +800,36 @@ def run_step5_staged_residual_graph(
         ],
         out_path=resolved_out_root / "step5_validated_pairs_merged.csv",
     )
-    _write_merged_geojson(
-        paths=[
-            phase_a.phase_dir / "segment_body_roads.geojson",
-            phase_b.phase_dir / "segment_body_roads.geojson",
-            phase_c.phase_dir / "segment_body_roads.geojson",
-        ],
-        out_path=resolved_out_root / "step5_segment_body_roads_merged.geojson",
-        phase_labels=["STEP5A", "STEP5B", "STEP5C"],
-    )
-    _write_merged_geojson(
-        paths=[
-            phase_a.phase_dir / "step3_residual_roads.geojson",
-            phase_b.phase_dir / "step3_residual_roads.geojson",
-            phase_c.phase_dir / "step3_residual_roads.geojson",
-        ],
-        out_path=resolved_out_root / "step5_residual_roads_merged.geojson",
-        phase_labels=["STEP5A", "STEP5B", "STEP5C"],
-    )
-    write_json(
-        resolved_out_root / "strategy_comparison.json",
-        {
-            "run_id": resolved_run_id,
-            "strategies": [
-                {"strategy_id": phase_a.phase_id, **phase_a.segment_summary},
-                {"strategy_id": phase_b.phase_id, **phase_b.segment_summary},
-                {"strategy_id": phase_c.phase_id, **phase_c.segment_summary},
+    if debug:
+        _write_merged_geojson(
+            paths=[
+                phase_a.phase_dir / "segment_body_roads.geojson",
+                phase_b.phase_dir / "segment_body_roads.geojson",
+                phase_c.phase_dir / "segment_body_roads.geojson",
             ],
-        },
-    )
+            out_path=resolved_out_root / "step5_segment_body_roads_merged.geojson",
+            phase_labels=["STEP5A", "STEP5B", "STEP5C"],
+        )
+        _write_merged_geojson(
+            paths=[
+                phase_a.phase_dir / "step3_residual_roads.geojson",
+                phase_b.phase_dir / "step3_residual_roads.geojson",
+                phase_c.phase_dir / "step3_residual_roads.geojson",
+            ],
+            out_path=resolved_out_root / "step5_residual_roads_merged.geojson",
+            phase_labels=["STEP5A", "STEP5B", "STEP5C"],
+        )
+        write_json(
+            resolved_out_root / "strategy_comparison.json",
+            {
+                "run_id": resolved_run_id,
+                "strategies": [
+                    {"strategy_id": phase_a.phase_id, **phase_a.segment_summary},
+                    {"strategy_id": phase_b.phase_id, **phase_b.segment_summary},
+                    {"strategy_id": phase_c.phase_id, **phase_c.segment_summary},
+                ],
+            },
+        )
 
     artifacts = _refresh_after_step5(
         nodes=nodes,
@@ -836,6 +859,7 @@ def run_step5_staged_residual_graph(
     refreshed_summary["historical_boundary_node_count"] = len(historical_boundary_ids)
     refreshed_summary["step5b_hard_stop_node_count"] = len(step5b_hard_stop_node_ids)
     refreshed_summary["step5c_hard_stop_node_count"] = len(step5c_hard_stop_node_ids)
+    refreshed_summary["debug"] = debug
     write_json(artifacts.summary_path, refreshed_summary)
     return Step5Artifacts(
         out_root=artifacts.out_root,
@@ -861,5 +885,6 @@ def run_step5_staged_residual_graph_cli(args: argparse.Namespace) -> int:
         node_crs=args.node_crs,
         formway_mode=args.formway_mode,
         left_turn_formway_bit=args.left_turn_formway_bit,
+        debug=args.debug,
     )
     return 0

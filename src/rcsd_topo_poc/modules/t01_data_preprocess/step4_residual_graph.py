@@ -16,6 +16,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     NodeFeatureRecord,
     RoadFeatureRecord,
     _build_mainnode_groups,
+    _load_nodes_and_roads,
     _load_nodes,
     _load_roads,
     _road_flow_flags_for_group,
@@ -316,6 +317,7 @@ def _build_step4_inputs(
     roads: list[RoadFeatureRecord],
     out_root: Path,
     historical_boundary_ids: set[str],
+    debug: bool,
 ) -> tuple[Path, Path, Path, dict[str, Any]]:
     groups: dict[str, list[str]] = {}
     node_by_id = {node.node_id: node for node in nodes}
@@ -437,7 +439,13 @@ def _copy_step4_review_outputs(step4_dir: Path, out_root: Path) -> None:
             shutil.copy2(source, out_root / target_name)
 
 
-def _preserve_previous_s2_snapshot(*, node_path: Union[str, Path], road_path: Union[str, Path], out_root: Path) -> Optional[Path]:
+def _preserve_previous_s2_snapshot(
+    *,
+    node_path: Union[str, Path],
+    road_path: Union[str, Path],
+    out_root: Path,
+    debug: bool,
+) -> Optional[Path]:
     node_parent = Path(node_path).resolve().parent
     road_parent = Path(road_path).resolve().parent
     if node_parent != road_parent:
@@ -448,7 +456,13 @@ def _preserve_previous_s2_snapshot(*, node_path: Union[str, Path], road_path: Un
         return None
 
     target_s2_dir = out_root / "S2"
-    shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
+    target_s2_dir.mkdir(parents=True, exist_ok=True)
+    if debug:
+        shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
+    else:
+        validated_pairs_path = source_s2_dir / "validated_pairs.csv"
+        if validated_pairs_path.is_file():
+            shutil.copy2(validated_pairs_path, target_s2_dir / "validated_pairs.csv")
     return target_s2_dir
 
 
@@ -707,6 +721,7 @@ def run_step4_residual_graph(
     node_crs: Optional[str] = None,
     formway_mode: str = "strict",
     left_turn_formway_bit: int = 8,
+    debug: bool = True,
 ) -> Step4Artifacts:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
@@ -714,8 +729,14 @@ def run_step4_residual_graph(
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
 
-    nodes, _, _ = _load_nodes(node_path, layer_name=node_layer, crs_override=node_crs)
-    roads, _ = _load_roads(road_path, layer_name=road_layer, crs_override=road_crs)
+    (nodes, _, _), (roads, _) = _load_nodes_and_roads(
+        node_path=node_path,
+        road_path=road_path,
+        node_layer=node_layer,
+        node_crs=node_crs,
+        road_layer=road_layer,
+        road_crs=road_crs,
+    )
     input_parent = Path(node_path).resolve().parent
     historical_boundary_ids, historical_boundary_source_map = _collect_validated_boundary_mainnodes(
         base_dir=input_parent,
@@ -727,6 +748,7 @@ def run_step4_residual_graph(
         roads=roads,
         out_root=resolved_out_root,
         historical_boundary_ids=historical_boundary_ids,
+        debug=debug,
     )
 
     step4_results = run_step2_segment_poc(
@@ -737,41 +759,45 @@ def run_step4_residual_graph(
         run_id=resolved_run_id,
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
+        debug=debug,
     )
     if len(step4_results) != 1:
         raise ValueError(f"Expected one Step4 strategy result, got {len(step4_results)}.")
 
     step4_dir = resolved_out_root / STEP4_STRATEGY_ID
-    _copy_step4_review_outputs(step4_dir, resolved_out_root)
     preserved_prev_s2_dir = _preserve_previous_s2_snapshot(
         node_path=node_path,
         road_path=road_path,
         out_root=resolved_out_root,
+        debug=debug,
     )
-    _write_boundary_node_outputs(
-        out_root=resolved_out_root,
-        nodes=nodes,
-        boundary_source_map=historical_boundary_source_map,
-    )
+    if debug:
+        _copy_step4_review_outputs(step4_dir, resolved_out_root)
+        _write_boundary_node_outputs(
+            out_root=resolved_out_root,
+            nodes=nodes,
+            boundary_source_map=historical_boundary_source_map,
+        )
 
     validated_pairs = _read_csv_rows(step4_dir / "validated_pairs.csv")
-    candidate_rows = _read_csv_rows(step4_dir / "pair_candidates.csv")
-    validation_rows = _read_csv_rows(step4_dir / "pair_validation_table.csv")
-    working_nodes, _, _ = _load_nodes(working_nodes_path)
-    rule_audit_rows = json.loads((step4_dir / "rule_audit.json").read_text(encoding="utf-8"))
-    search_audit = json.loads((step4_dir / "search_audit.json").read_text(encoding="utf-8"))
     new_road_to_segmentid, _pair_endpoints = _parse_segment_body_assignments(step4_dir / "segment_body_roads.geojson")
-    _build_target_case_audit(
-        out_root=resolved_out_root,
-        target_cases=STEP4_TARGET_CASES,
-        candidate_rows=candidate_rows,
-        validation_rows=validation_rows,
-        nodes=working_nodes,
-        rule_audit_rows=rule_audit_rows,
-        search_audit=search_audit,
-    )
+    if debug:
+        candidate_rows = _read_csv_rows(step4_dir / "pair_candidates.csv")
+        validation_rows = _read_csv_rows(step4_dir / "pair_validation_table.csv")
+        working_nodes, _, _ = _load_nodes(working_nodes_path)
+        rule_audit_rows = json.loads((step4_dir / "rule_audit.json").read_text(encoding="utf-8"))
+        search_audit = json.loads((step4_dir / "search_audit.json").read_text(encoding="utf-8"))
+        _build_target_case_audit(
+            out_root=resolved_out_root,
+            target_cases=STEP4_TARGET_CASES,
+            candidate_rows=candidate_rows,
+            validation_rows=validation_rows,
+            nodes=working_nodes,
+            rule_audit_rows=rule_audit_rows,
+            search_audit=search_audit,
+        )
 
-    return _refresh_after_step4(
+    artifacts = _refresh_after_step4(
         nodes=nodes,
         roads=roads,
         step4_validated_pairs=validated_pairs,
@@ -784,6 +810,18 @@ def run_step4_residual_graph(
         node_output_name=Path(node_path).name,
         road_output_name=Path(road_path).name,
         preserved_prev_s2_dir=preserved_prev_s2_dir,
+    )
+    refreshed_summary = dict(artifacts.summary)
+    refreshed_summary["debug"] = debug
+    write_json(artifacts.summary_path, refreshed_summary)
+    return Step4Artifacts(
+        out_root=artifacts.out_root,
+        step4_dir=artifacts.step4_dir,
+        refreshed_nodes_path=artifacts.refreshed_nodes_path,
+        refreshed_roads_path=artifacts.refreshed_roads_path,
+        summary_path=artifacts.summary_path,
+        mainnode_table_path=artifacts.mainnode_table_path,
+        summary=refreshed_summary,
     )
 
 
@@ -799,5 +837,6 @@ def run_step4_residual_graph_cli(args: argparse.Namespace) -> int:
         node_crs=args.node_crs,
         formway_mode=args.formway_mode,
         left_turn_formway_bit=args.left_turn_formway_bit,
+        debug=args.debug,
     )
     return 0

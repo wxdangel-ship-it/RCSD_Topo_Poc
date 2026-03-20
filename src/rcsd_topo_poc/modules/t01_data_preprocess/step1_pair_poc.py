@@ -11,7 +11,13 @@ from typing import Any, Optional, Tuple, Union
 from shapely.geometry import LineString
 from shapely.geometry.base import BaseGeometry
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer, write_csv, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    read_vector_layer,
+    read_vector_layers_parallel,
+    write_csv,
+    write_geojson,
+    write_json,
+)
 
 
 REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction", "formway")
@@ -935,8 +941,14 @@ def build_step1_graph_context(
 ) -> Step1GraphContext:
     graph_audit_events: list[dict[str, Any]] = []
 
-    road_layer_result = read_vector_layer(road_path, layer_name=road_layer, crs_override=road_crs)
-    node_layer_result = read_vector_layer(node_path, layer_name=node_layer, crs_override=node_crs)
+    road_layer_result, node_layer_result = read_vector_layers_parallel(
+        first_path=road_path,
+        second_path=node_path,
+        first_layer=road_layer,
+        second_layer=node_layer,
+        first_crs=road_crs,
+        second_crs=node_crs,
+    )
 
     raw_road_features = [
         {"properties": feature.properties, "geometry": feature.geometry} for feature in road_layer_result.features
@@ -1145,6 +1157,7 @@ def write_step1_candidate_outputs(
     orphan_ref_count: int,
     search_seed_count: int,
     through_seed_pruned_count: int,
+    debug: bool = True,
 ) -> Step1StrategyResult:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1164,14 +1177,15 @@ def write_step1_candidate_outputs(
     rule_audit_path = out_dir / "rule_audit.json"
     search_audit_path = out_dir / "search_audit.json"
 
-    write_geojson(
-        seed_nodes_path,
-        [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in seed_ids],
-    )
-    write_geojson(
-        terminate_nodes_path,
-        [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in terminate_ids],
-    )
+    if debug:
+        write_geojson(
+            seed_nodes_path,
+            [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in seed_ids],
+        )
+        write_geojson(
+            terminate_nodes_path,
+            [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in terminate_ids],
+        )
 
     pair_node_features: list[dict[str, Any]] = []
     pair_link_features: list[dict[str, Any]] = []
@@ -1238,34 +1252,36 @@ def write_step1_candidate_outputs(
             }
         )
 
-    write_geojson(pair_candidate_nodes_path, pair_node_features)
-    write_geojson(pair_links_candidates_path, pair_link_features)
-    write_geojson(
-        pair_support_roads_path,
-        [
-            _road_feature(
-                roads[road_id],
-                pair_ids=pair_ids,
-                strategy_id=strategy.strategy_id,
-                semantic_snode_id=physical_to_semantic.get(roads[road_id].snodeid),
-                semantic_enode_id=physical_to_semantic.get(roads[road_id].enodeid),
-            )
-            for road_id, pair_ids in sorted(support_road_pairs.items(), key=lambda item: _sort_key(item[0]))
-            if road_id in roads
-        ],
-    )
+    if debug:
+        write_geojson(pair_candidate_nodes_path, pair_node_features)
+        write_geojson(pair_links_candidates_path, pair_link_features)
+        write_geojson(
+            pair_support_roads_path,
+            [
+                _road_feature(
+                    roads[road_id],
+                    pair_ids=pair_ids,
+                    strategy_id=strategy.strategy_id,
+                    semantic_snode_id=physical_to_semantic.get(roads[road_id].snodeid),
+                    semantic_enode_id=physical_to_semantic.get(roads[road_id].enodeid),
+                )
+                for road_id, pair_ids in sorted(support_road_pairs.items(), key=lambda item: _sort_key(item[0]))
+                if road_id in roads
+            ],
+        )
     write_csv(
         pair_candidates_path,
         pair_table_rows,
         ["pair_id", "a_node_id", "b_node_id", "strategy_id", "candidate_status", "reverse_confirmed", "support_info"],
     )
-    write_geojson(out_dir / "pair_nodes.geojson", pair_node_features)
-    write_geojson(out_dir / "pair_links.geojson", pair_link_features)
-    write_csv(
-        out_dir / "pair_table.csv",
-        pair_table_rows,
-        ["pair_id", "a_node_id", "b_node_id", "strategy_id", "candidate_status", "reverse_confirmed", "support_info"],
-    )
+    if debug:
+        write_geojson(out_dir / "pair_nodes.geojson", pair_node_features)
+        write_geojson(out_dir / "pair_links.geojson", pair_link_features)
+        write_csv(
+            out_dir / "pair_table.csv",
+            pair_table_rows,
+            ["pair_id", "a_node_id", "b_node_id", "strategy_id", "candidate_status", "reverse_confirmed", "support_info"],
+        )
 
     rule_audit_rows = []
     for node_id, node in sorted(semantic_nodes.items(), key=lambda item: _sort_key(item[0])):
@@ -1287,16 +1303,17 @@ def write_step1_candidate_outputs(
             }
         )
 
-    write_json(rule_audit_path, rule_audit_rows)
-    write_json(
-        search_audit_path,
-        {
-            "search_event_counts": dict(sorted(search_event_counts.items())),
-            "search_events": search_event_samples,
-            "search_event_sample_limit_per_type": SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE,
-            "graph_events": graph_audit_events,
-        },
-    )
+    if debug:
+        write_json(rule_audit_path, rule_audit_rows)
+        write_json(
+            search_audit_path,
+            {
+                "search_event_counts": dict(sorted(search_event_counts.items())),
+                "search_events": search_event_samples,
+                "search_event_sample_limit_per_type": SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE,
+                "graph_events": graph_audit_events,
+            },
+        )
 
     reverse_confirm_fail_count = search_event_counts.get("reverse_confirm_fail", 0)
     no_terminal_hit_count = search_event_counts.get("no_terminal_hit", 0)
@@ -1325,20 +1342,28 @@ def write_step1_candidate_outputs(
         "orphan_ref_count": orphan_ref_count,
         "direction_block_count": direction_block_count,
         "search_event_sample_limit_per_type": SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE,
-        "output_files": [
-            seed_nodes_path.name,
-            terminate_nodes_path.name,
-            pair_candidate_nodes_path.name,
-            pair_links_candidates_path.name,
-            pair_support_roads_path.name,
-            pair_candidates_path.name,
-            pair_summary_path.name,
-            rule_audit_path.name,
-            search_audit_path.name,
-            "pair_nodes.geojson",
-            "pair_links.geojson",
-            "pair_table.csv",
-        ],
+        "debug": debug,
+        "output_files": (
+            [
+                pair_candidates_path.name,
+                pair_summary_path.name,
+            ]
+            if not debug
+            else [
+                seed_nodes_path.name,
+                terminate_nodes_path.name,
+                pair_candidate_nodes_path.name,
+                pair_links_candidates_path.name,
+                pair_support_roads_path.name,
+                pair_candidates_path.name,
+                pair_summary_path.name,
+                rule_audit_path.name,
+                search_audit_path.name,
+                "pair_nodes.geojson",
+                "pair_links.geojson",
+                "pair_table.csv",
+            ]
+        ),
     }
     write_json(pair_summary_path, pair_summary)
 
@@ -1363,6 +1388,7 @@ def run_step1_pair_poc(
     road_crs: Optional[str] = None,
     node_layer: Optional[str] = None,
     node_crs: Optional[str] = None,
+    debug: bool = True,
 ) -> list[Step1StrategyResult]:
     context = build_step1_graph_context(
         road_path=road_path,
@@ -1398,6 +1424,7 @@ def run_step1_pair_poc(
             orphan_ref_count=context.orphan_ref_count,
             search_seed_count=len(execution.search_seed_ids),
             through_seed_pruned_count=execution.through_seed_pruned_count,
+            debug=debug,
         )
         results.append(strategy_result)
         comparison_summary.append(strategy_result.pair_summary)
@@ -1418,6 +1445,7 @@ def run_step1_pair_poc_cli(args: argparse.Namespace) -> int:
         strategy_config_paths=list(args.strategy_config),
         out_root=resolved_out_root,
         run_id=resolved_run_id,
+        debug=args.debug,
     )
 
     payload = {

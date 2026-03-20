@@ -1,109 +1,112 @@
 # T01 数据预处理模块
 
 ## 当前状态
-- 当前状态：`POC 已结束，accepted baseline 已固化`
-- 当前模块定位：
-  - Step1：只发现 `pair_candidates`
-  - Step2：完成首轮 `validated / rejected / trunk / segment_body / step3_residual`
-  - Step4：在 refreshed 基线上做 residual graph 外层轮次扩展
-  - Step5：在 Step4 refreshed 基线上做 `Step5A / Step5B / Step5C`
-- 后续工作将转入正式模块完整构建
+- 当前版本：`T01 Skill v1.0.0`
+- 当前状态：`accepted baseline / baseline freeze ready`
+- 当前官方主方案：
+  - 官方 Step1-Step5 口径
+  - residual graph 多轮构段
+  - XXXS freeze baseline 审计闭环
 
-## 当前 accepted baseline
-- Step2 `segment_body` 已收紧为 pair-specific road body
-- 右转专用道误纳入问题已修复
-- `791711` 的 T 型双向退出误追溯已修复
-- trunk 语义已补齐：
-  - 双向 road 视为两条方向相反的可通行 road
-  - split-merge 分合混合通道可成立
-  - semantic-node-group closure 可成立
-- Step4 / Step5 已纳入历史高等级边界 mainnode
-- `mainnodeid = NULL` 单点路口按独立语义路口处理
-- residual graph 已成为后续轮次正式工作方式
+## 官方推荐入口
 
-## 当前推荐入口
-
-### 首轮
+### 官方 end-to-end
 ```bash
-python -m rcsd_topo_poc t01-step2-segment-poc \
-  --road-path <roads.geojson> \
-  --node-path <nodes.geojson> \
-  --strategy-config <step1_pair_s2.json> \
-  --formway-mode strict \
-  --out-root <out_root>
-```
-
-### 首轮刷新
-```bash
-python -m rcsd_topo_poc t01-s2-refresh-node-road \
-  --road-path <roads.geojson> \
-  --node-path <nodes.geojson> \
-  --s2-path <step2_run_root> \
-  --out-root <out_root>
-```
-
-### Step4
-```bash
-python -m rcsd_topo_poc t01-step4-residual-graph \
-  --road-path <step4_input_roads.geojson> \
-  --node-path <step4_input_nodes.geojson> \
-  --out-root <out_root>
-```
-
-### Step5
-```bash
-python -m rcsd_topo_poc t01-step5-staged-residual-graph \
-  --road-path <step4_refreshed_roads.geojson> \
-  --node-path <step4_refreshed_nodes.geojson> \
+python -m rcsd_topo_poc t01-run-skill-v1 \
+  --road-path <road_path> \
+  --node-path <node_path> \
   --out-root <out_root>
 ```
 
 说明：
-- 当前真正推荐的 repo 级入口仍是 `python -m rcsd_topo_poc`
-- 上述四个子命令是 T01 当前 accepted baseline 的推荐运行链路
-- 历史实验入口可保留，但不再作为当前主入口说明
+- 默认 `debug=true`
+- 默认保留分阶段中间结果，便于大规模验证前的 case 审计
+- 如需减少无意义 I/O，请显式使用 `--no-debug`
+- 可通过 `--compare-freeze-dir` 与 freeze baseline 做 PASS / FAIL 对比
+- 运行时会在命令行输出阶段进度，并生成：
+  - `t01_skill_v1_progress.json`
+  - `t01_skill_v1_perf.json`
+  - `t01_skill_v1_perf.md`
+  - `t01_skill_v1_perf_markers.jsonl`
 
-## 当前推荐输入基线
-- 后续轮次与后续模块构建，推荐直接消费：
-  - 最新一轮 refreshed `nodes.geojson`
-  - 最新一轮 refreshed `roads.geojson`
-- 若需要继续多轮构段：
-  - road 中已有非空 `segmentid` 的对象在工作图中剔除
-  - 使用 residual graph 继续推进
+### freeze compare
+```bash
+python -m rcsd_topo_poc t01-compare-freeze \
+  --current-dir <current_skill_run_dir> \
+  --freeze-dir modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs
+```
 
-## 当前推荐输出基线
-- 当前推荐输出基线为：
-  - Step5 refreshed `nodes.geojson`
-  - Step5 refreshed `roads.geojson`
-- 推荐同时保留对应审计结果：
-  - `step5_validated_pairs_merged.*`
-  - `step5_segment_body_roads_merged.*`
-  - `step5_residual_roads_merged.*`
-  - `historical_boundary_nodes.*`
-  - `step5_summary.json`
+## 分步入口
+- `python -m rcsd_topo_poc t01-step2-segment-poc`
+- `python -m rcsd_topo_poc t01-s2-refresh-node-road`
+- `python -m rcsd_topo_poc t01-step4-residual-graph`
+- `python -m rcsd_topo_poc t01-step5-staged-residual-graph`
 
-## 当前推荐审计材料
-- 首轮：
-  - `pair_validation_table.csv`
-  - `segment_summary.json`
-- Step4：
-  - `historical_boundary_nodes.geojson`
-  - `target_case_audit.json`
-  - `step4_pair_validation_table.csv`
-- Step5：
-  - `step5_validated_pairs_merged.csv`
-  - `step5_mainnode_refresh_table.csv`
-  - `step5_summary.json`
+用途：
+- 面向调试 / 审计 / case 级排查
+- 不再作为正式运行时的默认主入口
+
+## debug 开关
+- `debug=false`
+  - 只保留最终 `nodes.geojson / roads.geojson`
+  - 保留 `t01_skill_v1_summary.*`
+  - 保留轻量 freeze compare / bundle 产物
+- `debug=true`
+  - 额外保留分阶段 `step2 / refresh / step4 / step5` 审计层与中间结果
+- `debug` 不改变最终业务逻辑
+
+## 当前性能与内存治理边界
+- 当前正式优化已纳入：
+  - Step1 / Step2 / refresh / Step4 / Step5 的固定 2 worker 并行输入读取
+  - 官方 runner 的阶段级 `gc.collect()` 回收
+  - 阶段级 `tracemalloc` 峰值内存记录
+  - `debug=false` 时使用临时 stage 目录，减少最终目录的无意义持久化 I/O
+- 当前尚未纳入：
+  - 完整全内存流水线
+  - 核心 pair / trunk / validated 决策层的并发执行
+- 因此大规模运行建议：
+  - 需要完整审计时使用默认 `debug=true`
+  - 需要降低 I/O 压力时显式使用 `--no-debug`
+
+## 当前 freeze baseline
+- 当前 Skill v1.0.0 效果基线：
+  - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs/`
+- 该目录保存可提交的轻量审计包：
+  - `FREEZE_MANIFEST.json`
+  - `FREEZE_SUMMARY.json`
+  - `FREEZE_COMPARE_RULES.md`
+  - `validated_pairs_baseline.csv`
+  - `segment_body_membership_baseline.csv`
+  - `trunk_membership_baseline.csv`
+  - `refreshed_nodes_hash.json`
+  - `refreshed_roads_hash.json`
+
+约束：
+- 后续任何迭代与该 freeze baseline 不一致时，默认视为回退或显式变更
+- 未经用户明确认可，不得更新该 baseline
+
+## 当前推荐输入 / 输出基线
+- 推荐输入基线：
+  - 原始 `Node / Road`
+  - 或最新一轮 refreshed `nodes.geojson / roads.geojson`
+- 推荐输出基线：
+  - 官方 end-to-end 输出的 `nodes.geojson / roads.geojson`
+  - 对应 `freeze_compare_report.*`
+  - 对应 `skill_v1_manifest.json / skill_v1_summary.json`
 
 ## 后续正式模块完整构建从哪里继续
-- 从当前 accepted baseline 继续
-- 具体起点为：
-  - 最新一轮 Step5 refreshed `nodes.geojson / roads.geojson`
-  - 已固化的 Step1 / Step2 / Step4 / Step5 业务语义
-- 后续正式构建待办：
+- 以当前 Skill v1.0.0 accepted baseline 为起点
+- 后续重点：
   - Step6
   - 单向 Segment
   - Step3 完整语义归并
   - 完整多轮闭环治理
-  - 统一编排入口
-  - 更完整的测试 / 回归 / 验收体系
+  - 更深层内存化编排
+  - 更完整回归 / 验收体系
+
+## 内网测试协作约定
+- 进入内网测试阶段时，默认交付三件套：
+  1. GitHub 内网下拉命令
+  2. 可直接执行的内网脚本
+  3. 可直接执行的关键信息回传命令
+- 在用户已提供足够上下文的情况下，不再要求用户手工修改脚本参数

@@ -1,49 +1,66 @@
 # T01 计划
 
 ## 1. 当前阶段
-- 阶段名：`POC closeout and baseline handoff`
+- 阶段名：`Step2 large-scale bottleneck remediation and runtime observability`
 - 阶段目标：
-  - 固化当前分支已验证通过的 accepted baseline
-  - 完成业务语义与代码实现的文档对齐
-  - 结束 POC 试验阶段
-  - 为正式模块完整构建准备稳定输入基线、轮次语义与推荐入口
+  - 在不改变 accepted baseline 业务结果的前提下，降低 A200 级全量数据运行阻力。
+  - 补齐官方 end-to-end runner 的运行期可观测性。
+  - 为后续大规模验证与问题排查建立稳定、可解释的性能审计基线。
 
-## 2. 本轮完成内容
-- 完成 Step1 / Step2 / Step4 / Step5 accepted 语义整理
-- 完成以下关键语义固化：
-  - Step1 仅输出 `pair_candidates`
-  - Step2 `segment_body` 只表达 pair-specific road body
-  - Step2 三条强规则与 mirrored bidirectional case
-  - 右转专用道误纳入修复
-  - `791711` T 型双向退出误追溯修复
-  - 层级边界 / 历史高等级边界
-  - `mainnodeid = NULL` 单点路口语义
-  - residual graph 多轮构段语义
-  - Step4 / Step5A / Step5B / Step5C 输入与工作图约束
-  - trunk 的双向 road、split-merge、semantic-node-group closure 语义
-- 完成 POC 收尾文档与 handoff 文档
+## 2. 当前问题画像
+- A200 全量运行时，官方 runner 能持续高 CPU 运行，但当前主要瓶颈集中在 `Step2`。
+- 当前只有阶段级进度时，命令行会长时间停留在 `START step2`，无法判断是否正常推进。
+- `debug=true` 默认模式下，全量运行容易触发明显内存压力与长时间等待。
+- 当前优化已经减少了一部分无意义 I/O，但尚未达到“可安心做大规模验证”的程度。
 
-## 3. 当前推荐基线
-- 推荐输入基线：
-  - 最新一轮 refreshed `nodes.geojson`
-  - 最新一轮 refreshed `roads.geojson`
-- 推荐工作方式：
-  - residual graph 多轮构段
-- 推荐结果基线：
-  - Step5 refreshed `nodes.geojson / roads.geojson`
-  - 对应 Step5 merged 审计输出
+## 3. 本轮治理主线
+- 补齐官方 runner 的运行期可观测性：
+  - 命令行阶段进度
+  - Step2 内部子阶段进度
+  - 结构化 progress / perf checkpoint
+- 收敛已经落地的执行层优化：
+  - 固定小并发输入读取
+  - 阶段级 `gc.collect()` 与 `tracemalloc`
+  - `debug=false` 时的临时 stage 目录
+- 推进 Step2 瓶颈治理：
+  - Step2 内部更细粒度 perf 打点
+  - Step2 的第一版 low-memory 策略
+  - A200 级别可接受的资源占用上限
 
-## 4. 当前不再继续扩展的 POC 内容
-- 不再继续新增新的试验轮次
-- 不再继续扩大 POC 业务目标
-- 不再继续追加与 accepted baseline 无关的试验性口径
+## 4. 当前已完成
+- 官方 runner 默认 `debug=true`。
+- 官方 runner 已支持：
+  - 阶段级 `START / DONE / FAIL` 命令行进度
+  - `t01_skill_v1_progress.json`
+  - `t01_skill_v1_perf.json`
+  - `t01_skill_v1_perf.md`
+  - `t01_skill_v1_perf_markers.jsonl`
+- Step1 / Step2 / refresh / Step4 / Step5 输入读取已切换为固定 `2` worker 受控并行。
+- 官方 runner 已补齐阶段级 `gc.collect()` 与 `tracemalloc` 峰值记录。
+- 外网 `XXXS` 已验证：
+  - 默认 debug 模式结果正确
+  - `--no-debug` 低 I/O 模式结果正确
+  - freeze compare 保持 `PASS`
 
-## 5. 后续转入正式模块完整构建
-- 后续工作将从当前 accepted baseline 继续
-- 正式模块完整构建待办至少包括：
-  - Step6
-  - 单向 Segment
-  - Step3 完整语义归并
-  - 完整多轮闭环治理
-  - 统一编排入口
-  - 更完整的测试 / 回归 / 验收体系
+## 5. 当前未完成
+- Step2 内部子阶段进度仍未补齐。
+- A200 全量下的内存压力治理仍未完成。
+- 当前仍未形成完整的 low-memory 执行模式。
+- 当前仍未进入完整全内存流水线。
+- 当前仍未引入核心 pair / trunk / validated 决策层并发。
+
+## 6. 当前边界
+- 不改变 accepted baseline 的业务语义与冻结结果。
+- 不通过减少必要校验来换速度。
+- 不通过修改 freeze baseline 掩盖结果漂移。
+- 不将“完整全内存化”误表述为已完成。
+- 不将“业务决策层并发”误表述为已完成。
+
+## 7. 下一步
+- 在 Step2 内部补齐更细的 progress checkpoint。
+- 明确 Step2 的热点子阶段与对象峰值位置。
+- 设计并实现第一版 low-memory 策略。
+- 在 `XXXS` 与 `A200` 上分别验证：
+  - 结果不回退
+  - 进度可见性提升
+  - 资源占用和耗时得到改善

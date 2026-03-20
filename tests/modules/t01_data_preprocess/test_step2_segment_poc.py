@@ -972,3 +972,91 @@ def test_step2_transition_mirrored_bidirectional_component_moves_to_residual() -
     component_info = current.support_info["non_trunk_components"][0]
     assert component_info["blocked_by_transition_same_dir"] is True
     assert component_info["decision_reason"] == "transition_same_dir_block"
+
+
+def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_details(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    out_root = tmp_path / "step2_run"
+    strategy = _minimal_strategy("S2X")
+    context = _minimal_context([_road_record("r1", "A", "B")])
+    execution = _minimal_execution(
+        [_pair_record("PAIR_A_B", "A", "B", ("r1",), strategy_id="S2X")],
+        terminate_ids=["A", "B"],
+        strategy_id="S2X",
+    )
+    validations = [
+        _validation_result(
+            "PAIR_A_B",
+            "A",
+            "B",
+            pruned_road_ids=("r1",),
+            trunk_road_ids=("r1",),
+            segment_road_ids=("r1",),
+        )
+    ]
+
+    monkeypatch.setattr(step2_segment_poc, "build_step1_graph_context", lambda **_: context)
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_build_semantic_endpoints",
+        lambda _context: ({"r1": ("A", "B")}, {"A": (), "B": ()}),
+    )
+    monkeypatch.setattr(step2_segment_poc, "_load_strategy", lambda _path: strategy)
+    monkeypatch.setattr(step2_segment_poc, "run_step1_strategy", lambda _context, _strategy: execution)
+    monkeypatch.setattr(step2_segment_poc, "write_step1_candidate_outputs", lambda *args, **kwargs: None)
+    monkeypatch.setattr(step2_segment_poc, "_validate_pair_candidates", lambda *args, **kwargs: validations)
+
+    def _fake_write_step2_outputs(
+        out_dir: Path,
+        *,
+        strategy,
+        run_id,
+        context,
+        validations,
+        formway_mode,
+        debug,
+        retain_validation_details,
+    ) -> step2_segment_poc.Step2StrategyResult:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return step2_segment_poc.Step2StrategyResult(
+            strategy=strategy,
+            segment_summary={
+                "strategy_id": strategy.strategy_id,
+                "candidate_pair_count": 1,
+                "validated_pair_count": 1,
+                "rejected_pair_count": 0,
+            },
+            output_files=[],
+            validations=validations if retain_validation_details else [],
+        )
+
+    monkeypatch.setattr(step2_segment_poc, "_write_step2_outputs", _fake_write_step2_outputs)
+
+    progress_events: list[tuple[str, dict[str, object]]] = []
+    results = step2_segment_poc.run_step2_segment_poc(
+        road_path=tmp_path / "roads.geojson",
+        node_path=tmp_path / "nodes.geojson",
+        strategy_config_paths=[tmp_path / "strategy.json"],
+        out_root=out_root,
+        retain_validation_details=False,
+        progress_callback=lambda event, payload: progress_events.append((event, payload)),
+    )
+
+    assert results[0].validations == []
+    assert [event for event, _ in progress_events] == [
+        "context_build_started",
+        "context_build_completed",
+        "semantic_endpoints_completed",
+        "strategy_started",
+        "strategy_loaded",
+        "candidate_search_completed",
+        "candidate_outputs_written",
+        "validation_completed",
+        "step2_outputs_written",
+        "strategy_memory_released",
+        "comparison_summary_written",
+    ]
+    comparison_summary = _load_json(out_root / "strategy_comparison.json")
+    assert comparison_summary[0]["strategy_id"] == "S2X"

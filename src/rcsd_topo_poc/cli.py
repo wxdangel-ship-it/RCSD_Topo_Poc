@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 from rcsd_topo_poc.protocol.text_lint import lint_text
 from rcsd_topo_poc.protocol.text_qc_bundle import build_demo_bundle, qc_bundle_template
@@ -18,7 +19,7 @@ REQUIRED_DOCS = [
 ]
 
 
-def _find_repo_root(start: Path) -> Path | None:
+def _find_repo_root(start: Path) -> Optional[Path]:
     p = start.resolve()
     for candidate in [p, *p.parents]:
         if (candidate / "SPEC.md").is_file() and (candidate / "docs").is_dir():
@@ -93,7 +94,45 @@ def _cmd_lint_text(args: argparse.Namespace) -> int:
     return 2
 
 
-def main(argv: list[str] | None = None) -> int:
+def _cmd_t01_step1_pair_poc(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import run_step1_pair_poc_cli
+
+    return run_step1_pair_poc_cli(args)
+
+
+def _cmd_t01_step2_segment_poc(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc_cli
+
+    return run_step2_segment_poc_cli(args)
+
+
+def _cmd_t01_build_validation_slices(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.slice_builder import run_slice_builder_cli
+
+    return run_slice_builder_cli(args)
+
+
+def _cmd_t01_s2_refresh_node_road(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import run_s2_baseline_refresh_cli
+
+    return run_s2_baseline_refresh_cli(args)
+
+
+def _cmd_t01_step4_residual_graph(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import run_step4_residual_graph_cli
+
+    return run_step4_residual_graph_cli(args)
+
+
+def _cmd_t01_step5_staged_residual_graph(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.step5_staged_residual_graph import (
+        run_step5_staged_residual_graph_cli,
+    )
+
+    return run_step5_staged_residual_graph_cli(args)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="rcsd_topo_poc")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -109,6 +148,190 @@ def main(argv: list[str] | None = None) -> int:
     p_lint = sub.add_parser("lint-text", help="Check text pasteability (size/lines/long lines).")
     p_lint.add_argument("--text", help="Text to lint (if omitted, read stdin).")
     p_lint.set_defaults(func=_cmd_lint_text)
+
+    p_t01 = sub.add_parser(
+        "t01-step1-pair-poc",
+        help="Run T01 Step1 pair-candidate prototype and write QGIS-reviewable outputs.",
+    )
+    p_t01.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
+    p_t01.add_argument("--road-layer", help="Optional road layer name.")
+    p_t01.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_t01.add_argument("--node-path", required=True, help="Path to Node Shp/GeoJSON.")
+    p_t01.add_argument("--node-layer", help="Optional node layer name.")
+    p_t01.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_t01.add_argument(
+        "--strategy-config",
+        action="append",
+        required=True,
+        help="Strategy config path. Repeat the option to run multiple strategies.",
+    )
+    p_t01.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_step1_pair_poc_YYYYMMDD_HHMMSS.",
+    )
+    p_t01.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_step1_pair_poc/<run_id>.",
+    )
+    p_t01.set_defaults(func=_cmd_t01_step1_pair_poc)
+
+    p_t02 = sub.add_parser(
+        "t01-step2-segment-poc",
+        help="Run T01 Step2 Segment POC: validate pair candidates and build reviewable segment outputs.",
+    )
+    p_t02.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
+    p_t02.add_argument("--road-layer", help="Optional road layer name.")
+    p_t02.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_t02.add_argument("--node-path", required=True, help="Path to Node Shp/GeoJSON.")
+    p_t02.add_argument("--node-layer", help="Optional node layer name.")
+    p_t02.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_t02.add_argument(
+        "--strategy-config",
+        action="append",
+        required=True,
+        help="Step1 strategy config path. Repeat the option to run multiple strategies.",
+    )
+    p_t02.add_argument(
+        "--formway-mode",
+        choices=["strict", "audit_only", "off"],
+        default="strict",
+        help="How Step2 should treat left-turn-only roads when validating trunk roads.",
+    )
+    p_t02.add_argument(
+        "--left-turn-formway-bit",
+        type=int,
+        default=8,
+        help="formway bit index used as left-turn-only lane indicator. Default: 8.",
+    )
+    p_t02.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_step2_segment_poc_YYYYMMDD_HHMMSS.",
+    )
+    p_t02.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_step2_segment_poc/<run_id>.",
+    )
+    p_t02.set_defaults(func=_cmd_t01_step2_segment_poc)
+
+    p_slice = sub.add_parser(
+        "t01-build-validation-slices",
+        help="Build T01 validation slice outputs for later Step1/Step2 review runs.",
+    )
+    p_slice.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
+    p_slice.add_argument("--road-layer", help="Optional road layer name.")
+    p_slice.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_slice.add_argument("--node-path", required=True, help="Path to Node Shp/GeoJSON.")
+    p_slice.add_argument("--node-layer", help="Optional node layer name.")
+    p_slice.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_slice.add_argument(
+        "--profile-config",
+        help="Optional slice profile config path. If omitted, use configs/t01_data_preprocess/slice_profiles.json.",
+    )
+    p_slice.add_argument(
+        "--profile-id",
+        action="append",
+        help="Optional profile id filter. Repeat to run multiple profiles, e.g. --profile-id XS --profile-id S.",
+    )
+    p_slice.add_argument("--center-x", type=float, help="Optional center x in EPSG:3857 for semantic slice ranking.")
+    p_slice.add_argument("--center-y", type=float, help="Optional center y in EPSG:3857 for semantic slice ranking.")
+    p_slice.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_validation_slices_YYYYMMDD_HHMMSS.",
+    )
+    p_slice.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_validation_slices/<run_id>.",
+    )
+    p_slice.set_defaults(func=_cmd_t01_build_validation_slices)
+
+    p_refresh = sub.add_parser(
+        "t01-s2-refresh-node-road",
+        help="Refresh Node/Road derived fields from the passed Step2 S2 baseline outputs.",
+    )
+    p_refresh.add_argument("--road-path", required=True, help="Path to original Road Shp/GeoJSON.")
+    p_refresh.add_argument("--road-layer", help="Optional road layer name.")
+    p_refresh.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_refresh.add_argument("--node-path", required=True, help="Path to original Node Shp/GeoJSON.")
+    p_refresh.add_argument("--node-layer", help="Optional node layer name.")
+    p_refresh.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_refresh.add_argument(
+        "--s2-path",
+        required=True,
+        help="Path to the passed Step2 S2 baseline. Can point to the run root or directly to the S2 directory.",
+    )
+    p_refresh.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_s2_refresh_node_road_YYYYMMDD_HHMMSS.",
+    )
+    p_refresh.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_s2_refresh_node_road/<run_id>.",
+    )
+    p_refresh.set_defaults(func=_cmd_t01_s2_refresh_node_road)
+
+    p_step4 = sub.add_parser(
+        "t01-step4-residual-graph",
+        help="Run Step4 residual-graph segment construction on refreshed Node/Road inputs.",
+    )
+    p_step4.add_argument("--road-path", required=True, help="Path to refreshed Road Shp/GeoJSON.")
+    p_step4.add_argument("--road-layer", help="Optional road layer name.")
+    p_step4.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_step4.add_argument("--node-path", required=True, help="Path to refreshed Node Shp/GeoJSON.")
+    p_step4.add_argument("--node-layer", help="Optional node layer name.")
+    p_step4.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_step4.add_argument(
+        "--formway-mode",
+        choices=["strict", "audit_only", "off"],
+        default="strict",
+        help="How Step4 should treat left-turn-only roads when validating trunk roads.",
+    )
+    p_step4.add_argument(
+        "--left-turn-formway-bit",
+        type=int,
+        default=8,
+        help="formway bit index used as left-turn-only lane indicator. Default: 8.",
+    )
+    p_step4.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_step4_residual_graph_YYYYMMDD_HHMMSS.",
+    )
+    p_step4.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_step4_residual_graph/<run_id>.",
+    )
+    p_step4.set_defaults(func=_cmd_t01_step4_residual_graph)
+
+    p_step5 = sub.add_parser(
+        "t01-step5-staged-residual-graph",
+        help="Run Step5A/Step5B/Step5C staged residual-graph segment construction on Step4 refreshed inputs.",
+    )
+    p_step5.add_argument("--road-path", required=True, help="Path to Step4 refreshed Road Shp/GeoJSON.")
+    p_step5.add_argument("--road-layer", help="Optional road layer name.")
+    p_step5.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_step5.add_argument("--node-path", required=True, help="Path to Step4 refreshed Node Shp/GeoJSON.")
+    p_step5.add_argument("--node-layer", help="Optional node layer name.")
+    p_step5.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_step5.add_argument(
+        "--formway-mode",
+        choices=["strict", "audit_only", "off"],
+        default="strict",
+        help="How Step5 should treat left-turn-only roads when validating trunk roads.",
+    )
+    p_step5.add_argument(
+        "--left-turn-formway-bit",
+        type=int,
+        default=8,
+        help="formway bit index used as left-turn-only lane indicator. Default: 8.",
+    )
+    p_step5.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_step5_staged_residual_graph_YYYYMMDD_HHMMSS.",
+    )
+    p_step5.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_step5_staged_residual_graph/<run_id>.",
+    )
+    p_step5.set_defaults(func=_cmd_t01_step5_staged_residual_graph)
 
     args = parser.parse_args(argv)
     try:

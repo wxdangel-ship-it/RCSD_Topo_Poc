@@ -94,7 +94,9 @@
 ### 4.3 工程与协作约束
 
 - 项目内文档默认中文。
-- 项目工作目录默认位于 Windows `E:` 盘。
+- 内网与外网默认执行环境均为 WSL。
+- 项目工作目录默认使用 WSL 路径，例如 `/mnt/e/Work/RCSD_Topo_Poc`。
+- 若上游输入或任务书给出 Windows 路径，应先转换为对应的 WSL 路径再执行。
 - 文档在 `modules/<module>/`，实现代码在 `src/rcsd_topo_poc/modules/<module>/`。
 - 运行输出写入 `outputs/_work/`，不把输出目录当工作区。
 

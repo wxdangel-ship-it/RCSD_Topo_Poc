@@ -1,25 +1,27 @@
 # T01 计划
 
 ## 当前阶段
-- `正式版业务语义修正`
+- `性能审计与首轮结构优化`
 
 ## 本轮目标
-1. 统一 node 输入约束为 `closed_con in {2,3}`
-2. 统一排除 `road_kind = 1` 的封闭式道路
-3. 在 trunk / 最小闭环 validation 中加入 `50m` 上下行最大垂距 gate
-4. 在 side component / 旁路吸收中加入 `50m` 侧向距离 gate
-5. 运行 `XXXS` 官方回归并产出 freeze compare 审计结果
+1. 基于当前活动三样例基线与 A200 运行结果，审计 `Step2 / Step4 / Step5` 的主要性能瓶颈。
+2. 固化当前已识别热点：
+   - `Step2` validated 流程中的重复 `_refine_segment_roads(...)`
+   - trunk validation 中按 pair 重复全图扫描 `context.directed`
+3. 在不改变当前活动基线结果的前提下，实施最小必要优化并补充防回退测试。
+4. 用 `XXXS / XXXS2 / XXXS3` 重新跑官方入口并逐样例 compare，确认结果与活动基线一致。
+5. 形成一份可继续扩展的性能审计记录，明确下一轮优先项。
 
 ## 本轮边界
-- 不新增新的构段轮次
-- 不引入新的环岛特例业务逻辑
-- 不更新现有 freeze baseline
-- 若与现有 freeze 不一致，只生成 candidate baseline 包与差异报告
+- 不改当前业务语义，不改 staged runner 轮次口径。
+- 不更新当前活动三样例基线。
+- 不在本轮做新的大规模 in-memory pipeline 重构。
+- 不新增新的官方入口脚本。
 
 ## 实施顺序
-1. 梳理并统一 `closed_con` / `road_kind` 业务使用点
-2. 将两个 `50m` gate 接入 Step2 trunk / segment 收敛路径
-3. 补充静态审计文档与契约文档
-4. 运行 pytest
-5. 运行 `XXXS` 官方入口 + freeze compare
-6. 如有差异，生成 freeze candidate 包
+1. 读取当前 A200 `debug / no-debug` perf 结果，定位阶段级热点。
+2. 梳理 `Step2` 内核中的重复计算和全图扫描路径。
+3. 实施最小必要优化，并确保 `Step2 / Step4 / Step5` 统一受益。
+4. 补充性能与防回退测试。
+5. 运行三样例官方入口和逐样例 compare。
+6. 记录性能审计结论、当前收益与下一轮建议。

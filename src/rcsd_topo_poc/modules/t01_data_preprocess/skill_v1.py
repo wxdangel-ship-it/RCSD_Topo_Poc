@@ -170,7 +170,7 @@ def _resolve_out_root(*, out_root: Optional[Union[str, Path]], run_id: Optional[
     repo_root = _find_repo_root(Path.cwd() if cwd is None else cwd)
     if repo_root is None:
         raise ValueError("Cannot infer default out_root because repo root was not found; please pass --out-root.")
-    return repo_root / "outputs" / "_work" / "t01_skill_v1" / resolved_run_id, resolved_run_id
+    return repo_root / "outputs" / "_work" / "t01_skill_eval" / resolved_run_id, resolved_run_id
 
 
 def _write_summary_md(*, out_path: Path, summary: dict[str, Any]) -> None:
@@ -223,6 +223,8 @@ def _write_summary_md(*, out_path: Path, summary: dict[str, Any]) -> None:
             lines.append(f"- perf_markers_path: `{summary['perf_markers_path']}`")
         if summary.get("distance_gate_scope_check_path"):
             lines.append(f"- distance_gate_scope_check_path: `{summary['distance_gate_scope_check_path']}`")
+        if summary.get("all_stage_segment_roads_path"):
+            lines.append(f"- all_stage_segment_roads_path: `{summary['all_stage_segment_roads_path']}`")
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -285,6 +287,36 @@ def _write_distance_gate_scope_check(
     }
     out_path = out_root / "distance_gate_scope_check.json"
     _write_json_doc(out_path, payload)
+    return out_path
+
+
+def _write_all_stage_segment_roads_dir(
+    *,
+    out_root: Path,
+    step2_root: Path,
+    step4_root: Path,
+    step5_root: Path,
+) -> Path:
+    stage_sources = [
+        ("Step2", step2_root / "S2" / "segment_body_roads.geojson"),
+        ("Step4", step4_root / "STEP4" / "segment_body_roads.geojson"),
+        ("Step5A", step5_root / "STEP5A" / "segment_body_roads.geojson"),
+        ("Step5B", step5_root / "STEP5B" / "segment_body_roads.geojson"),
+        ("Step5C", step5_root / "STEP5C" / "segment_body_roads.geojson"),
+    ]
+
+    out_path = out_root / "all_stage_segment_roads"
+    if out_path.exists():
+        if out_path.is_dir():
+            shutil.rmtree(out_path)
+        else:
+            out_path.unlink()
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    for stage_name, source_path in stage_sources:
+        if not source_path.exists():
+            continue
+        shutil.copy2(source_path, out_path / f"{stage_name}_{source_path.name}")
     return out_path
 
 
@@ -694,6 +726,7 @@ def run_t01_skill_v1(
             "final_roads_path": str(final_roads_path.resolve()),
             "bundle_manifest_path": bundle_info["manifest_path"],
             "bundle_summary_path": bundle_info["summary_path"],
+            "all_stage_segment_roads_path": bundle_info.get("all_stage_segment_roads_path"),
             "distance_gate_scope_check_path": str(distance_gate_scope_check_path.resolve()),
             "freeze_compare_status": freeze_compare_status,
             "progress_path": str(progress_path.resolve()),
@@ -781,7 +814,13 @@ def _finalize_bundle(
 ) -> dict[str, str]:
     shutil.copy2(refreshed_nodes_path, final_nodes_path)
     shutil.copy2(refreshed_roads_path, final_roads_path)
-    return write_skill_v1_bundle(
+    all_stage_segment_roads_path = _write_all_stage_segment_roads_dir(
+        out_root=resolved_out_root,
+        step2_root=step2_root,
+        step4_root=step4_root,
+        step5_root=step5_root,
+    )
+    bundle_info = write_skill_v1_bundle(
         out_dir=resolved_out_root,
         step2_dir=step2_root / "S2",
         step4_dir=step4_root,
@@ -791,6 +830,8 @@ def _finalize_bundle(
         mode="current",
         skill_version=SKILL_VERSION,
     )
+    bundle_info["all_stage_segment_roads_path"] = str(all_stage_segment_roads_path.resolve())
+    return bundle_info
 
 
 def run_t01_skill_v1_cli(args: argparse.Namespace) -> int:

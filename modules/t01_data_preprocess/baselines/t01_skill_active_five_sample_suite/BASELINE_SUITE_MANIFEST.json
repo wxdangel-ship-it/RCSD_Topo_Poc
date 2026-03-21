@@ -1,0 +1,82 @@
+{
+  "suite_name": "t01_skill_active_five_sample_suite",
+  "status": "ACTIVE",
+  "generated_at": "2026-03-21T23:46:06",
+  "description": "Current active freeze baseline suite after user visual confirmation on XXXS/XXXS2/XXXS3/XXXS4/XXXS5.",
+  "samples": {
+    "XXXS": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260321_xxxs_step5c_adaptive_compare_v2",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS",
+        "validated_pair_count": 46,
+        "segment_body_membership_count": 153,
+        "trunk_membership_count": 153,
+        "refreshed_nodes_sha256": "b6b8e7f3049db32b3802c7fe383c42e05a8fb249690badbb59edca53d032cb94",
+        "refreshed_roads_sha256": "71492f67e46732a33b66a30ed7145ab1d6dc43859c360a16106e12cc592389d7"
+      }
+    },
+    "XXXS2": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS2",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260321_xxxs2_step5c_adaptive_compare_v2",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS2",
+        "validated_pair_count": 39,
+        "segment_body_membership_count": 81,
+        "trunk_membership_count": 81,
+        "refreshed_nodes_sha256": "3b4abc6fa4d1fa8af78246db9ac9ac55a6013070678dc080dddc4002335ce4b0",
+        "refreshed_roads_sha256": "a4377a0c6f9e8e2677255baf90564e2195c625f94de21bf0c929ab574240f014"
+      }
+    },
+    "XXXS3": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS3",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260321_xxxs3_step5c_adaptive_compare_v2",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS3",
+        "validated_pair_count": 35,
+        "segment_body_membership_count": 103,
+        "trunk_membership_count": 103,
+        "refreshed_nodes_sha256": "425c4ed680d42b35e5832785be698ac8732bc610220265d8f1ea2af13de08268",
+        "refreshed_roads_sha256": "d418c6079140a33627f523f344f1d7ecdc963a63382d789c5e98659d8220b863"
+      }
+    },
+    "XXXS4": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS4",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260321_xxxs4_step5c_adaptive_compare_v2",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS4",
+        "validated_pair_count": 42,
+        "segment_body_membership_count": 104,
+        "trunk_membership_count": 100,
+        "refreshed_nodes_sha256": "1108c526b4c1ca35098bf240893166ed8ea9c4831496798f823f69bc95637727",
+        "refreshed_roads_sha256": "7a9bc356625e35d1b7631a857a23fd5ababa323c04913585ee330cd06107647d"
+      }
+    },
+    "XXXS5": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS5",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260321_xxxs5_step5c_adaptive_v2",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS5",
+        "validated_pair_count": 56,
+        "segment_body_membership_count": 104,
+        "trunk_membership_count": 103,
+        "refreshed_nodes_sha256": "72d53bf996f6ccd52df4e303dae4f69f757c99cce1016501128e95f6f20820ad",
+        "refreshed_roads_sha256": "b85d7a2e9ef21d96e81d7748c2f5da517ebcbf71718815ae34f788f5359c46fb"
+      }
+    }
+  },
+  "archive_note": {
+    "archived_active_suite": "/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/baselines/t01_skill_active_four_sample_suite",
+    "reason": "Replaced as active baseline by the five-sample suite after user visual confirmation on XXXS/XXXS2/XXXS3/XXXS4/XXXS5."
+  }
+}

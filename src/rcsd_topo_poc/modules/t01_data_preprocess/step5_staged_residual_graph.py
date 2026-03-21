@@ -52,6 +52,19 @@ STEP5A_STRATEGY_ID = "STEP5A"
 STEP5B_STRATEGY_ID = "STEP5B"
 STEP5C_STRATEGY_ID = "STEP5C"
 STEP5_NEW_SEGMENT_GRADE = "0-2\u53cc"
+STEP5C_TARGET_A_NODE_ID = "997356"
+STEP5C_TARGET_B_NODE_ID = "39546395"
+STEP5C_TARGET_PAIR_ID = f"{STEP5C_STRATEGY_ID}:{STEP5C_TARGET_A_NODE_ID}__{STEP5C_TARGET_B_NODE_ID}"
+STEP5C_ROLLING_ENDPOINT_POOL_CSV = "step5c_rolling_endpoint_pool.csv"
+STEP5C_ROLLING_ENDPOINT_POOL_GEOJSON = "step5c_rolling_endpoint_pool.geojson"
+STEP5C_PROTECTED_HARD_STOPS_CSV = "step5c_protected_hard_stops.csv"
+STEP5C_PROTECTED_HARD_STOPS_GEOJSON = "step5c_protected_hard_stops.geojson"
+STEP5C_DEMOTABLE_ENDPOINTS_CSV = "step5c_demotable_endpoints.csv"
+STEP5C_DEMOTABLE_ENDPOINTS_GEOJSON = "step5c_demotable_endpoints.geojson"
+STEP5C_ACTUAL_BARRIERS_CSV = "step5c_actual_barriers.csv"
+STEP5C_ACTUAL_BARRIERS_GEOJSON = "step5c_actual_barriers.geojson"
+STEP5C_ENDPOINT_DEMOTE_AUDIT_JSON = "step5c_endpoint_demote_audit.json"
+STEP5C_TARGET_PAIR_AUDIT_JSON = "target_pair_audit_997356__39546395.json"
 
 
 @dataclass(frozen=True)
@@ -67,6 +80,9 @@ class PhaseInputArtifacts:
     active_road_ids: tuple[str, ...]
     endpoint_pool_ids: tuple[str, ...]
     endpoint_pool_source_map: dict[str, tuple[str, ...]]
+    actual_barrier_ids: tuple[str, ...] = ()
+    protected_hard_stop_ids: tuple[str, ...] = ()
+    demoted_endpoint_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -92,6 +108,17 @@ class Step5Artifacts:
     summary_path: Path
     mainnode_table_path: Path
     summary: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class Step5CAdaptiveContext:
+    rolling_endpoint_pool_ids: tuple[str, ...]
+    current_input_candidate_ids: tuple[str, ...]
+    protected_hard_stop_ids: tuple[str, ...]
+    demotable_endpoint_ids: tuple[str, ...]
+    actual_terminate_barrier_ids: tuple[str, ...]
+    endpoint_source_map: dict[str, tuple[str, ...]]
+    demote_audit_rows: tuple[dict[str, Any], ...]
 
 
 def _build_default_run_id(now: Optional[datetime] = None) -> str:
@@ -148,6 +175,470 @@ def _build_group_to_road_ids(
         if enode_group is not None:
             group_to_road_ids.setdefault(enode_group, set()).add(road.road_id)
     return group_to_road_ids
+
+
+def _build_active_semantic_state(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+) -> tuple[
+    dict[str, NodeFeatureRecord],
+    dict[str, Any],
+    dict[str, set[str]],
+    dict[str, int],
+    dict[str, set[str]],
+]:
+    node_by_id = {node.node_id: node for node in nodes}
+    groups: dict[str, list[str]] = {}
+    for node in nodes:
+        groups.setdefault(node.semantic_node_id, []).append(node.node_id)
+    mainnode_groups, _ = _build_mainnode_groups(node_by_id, groups)
+    physical_to_semantic = {
+        node_id: group.mainnode_id for group in mainnode_groups.values() for node_id in group.member_node_ids
+    }
+    group_to_road_ids = _build_group_to_road_ids(
+        roads=roads,
+        active_road_ids=active_road_ids,
+        physical_to_semantic=physical_to_semantic,
+    )
+    incident_degree: dict[str, int] = {}
+    distinct_neighbor_groups: dict[str, set[str]] = {}
+    for road in roads:
+        if road.road_id not in active_road_ids:
+            continue
+        snode_group = physical_to_semantic.get(road.snodeid)
+        enode_group = physical_to_semantic.get(road.enodeid)
+        if snode_group is None or enode_group is None or snode_group == enode_group:
+            continue
+        incident_degree[snode_group] = incident_degree.get(snode_group, 0) + 1
+        incident_degree[enode_group] = incident_degree.get(enode_group, 0) + 1
+        distinct_neighbor_groups.setdefault(snode_group, set()).add(enode_group)
+        distinct_neighbor_groups.setdefault(enode_group, set()).add(snode_group)
+    return node_by_id, mainnode_groups, group_to_road_ids, incident_degree, distinct_neighbor_groups
+
+
+def _is_step5c_current_input_candidate(node: NodeFeatureRecord) -> bool:
+    grade_2 = _current_grade_2(node)
+    kind_2 = _current_kind_2(node)
+    return (
+        is_active_closed_con(_current_closed_con(node))
+        and kind_2 in {4, 64, 2048}
+        and grade_2 in {1, 2, 3}
+    )
+
+
+def collect_rolling_endpoint_pool(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+    historical_seed_node_ids: set[str],
+    historical_seed_source_map: dict[str, tuple[str, ...]],
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, tuple[str, ...]]]:
+    node_by_id, mainnode_groups, group_to_road_ids, _, _ = _build_active_semantic_state(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+    )
+    current_input_candidate_ids: set[str] = set()
+    for mainnode_id in sorted(mainnode_groups, key=_sort_key):
+        if not group_to_road_ids.get(mainnode_id):
+            continue
+        representative = node_by_id[mainnode_groups[mainnode_id].representative_node_id]
+        if _is_step5c_current_input_candidate(representative):
+            current_input_candidate_ids.add(mainnode_id)
+
+    rolling_endpoint_pool_ids = set(historical_seed_node_ids) | current_input_candidate_ids
+    endpoint_source_map: dict[str, tuple[str, ...]] = {}
+    for node_id in sorted(rolling_endpoint_pool_ids, key=_sort_key):
+        tags = set(historical_seed_source_map.get(node_id, ()))
+        if node_id in historical_seed_node_ids and not tags:
+            tags.add("historical_endpoint")
+        if node_id in current_input_candidate_ids:
+            tags.add("STEP5C_CURRENT_INPUT")
+        endpoint_source_map[node_id] = tuple(sorted(tags, key=_sort_key))
+
+    return (
+        tuple(sorted(rolling_endpoint_pool_ids, key=_sort_key)),
+        tuple(sorted(current_input_candidate_ids, key=_sort_key)),
+        endpoint_source_map,
+    )
+
+
+def collect_protected_hard_stop_set(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+) -> tuple[str, ...]:
+    node_by_id, mainnode_groups, group_to_road_ids, _, _ = _build_active_semantic_state(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+    )
+    protected_ids: set[str] = set()
+    for mainnode_id in sorted(mainnode_groups, key=_sort_key):
+        if not group_to_road_ids.get(mainnode_id):
+            continue
+        representative = node_by_id[mainnode_groups[mainnode_id].representative_node_id]
+        if is_active_closed_con(_current_closed_con(representative)) and is_roundabout_mainnode_kind(
+            _current_kind_2(representative)
+        ):
+            protected_ids.add(mainnode_id)
+    return tuple(sorted(protected_ids, key=_sort_key))
+
+
+def evaluate_demotable_endpoint_candidates(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+    rolling_endpoint_pool_ids: tuple[str, ...],
+    current_input_candidate_ids: tuple[str, ...],
+    historical_seed_node_ids: set[str],
+    protected_hard_stop_ids: tuple[str, ...],
+    endpoint_source_map: dict[str, tuple[str, ...]],
+) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...]]:
+    _, mainnode_groups, group_to_road_ids, incident_degree, distinct_neighbor_groups = _build_active_semantic_state(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+    )
+    active_mainnode_ids = {mainnode_id for mainnode_id, road_ids in group_to_road_ids.items() if road_ids}
+    current_input_candidate_set = set(current_input_candidate_ids)
+    protected_hard_stop_set = set(protected_hard_stop_ids)
+
+    demotable_ids: set[str] = set()
+    audit_rows: list[dict[str, Any]] = []
+    for node_id in sorted(rolling_endpoint_pool_ids, key=_sort_key):
+        semantic_incident_degree = incident_degree.get(node_id, 0) if node_id in active_mainnode_ids else 0
+        distinct_neighbor_group_count = (
+            len(distinct_neighbor_groups.get(node_id, set())) if node_id in active_mainnode_ids else 0
+        )
+        is_protected = node_id in protected_hard_stop_set
+        demoted = False
+        if is_protected:
+            reason = "protected_roundabout"
+        elif semantic_incident_degree == 2 and distinct_neighbor_group_count == 2:
+            demoted = True
+            reason = "demoted_residual_degree_eq_2_distinct_two_neighbors"
+            demotable_ids.add(node_id)
+        elif semantic_incident_degree < 2:
+            reason = "residual_degree_lt_2_boundary"
+        elif semantic_incident_degree > 2:
+            reason = "residual_degree_gt_2_branching"
+        else:
+            reason = "residual_degree_eq_2_but_not_distinct_two_neighbors"
+        audit_rows.append(
+            {
+                "node_id": node_id,
+                "is_historical_endpoint": node_id in historical_seed_node_ids,
+                "is_current_input_candidate": node_id in current_input_candidate_set,
+                "is_protected_hard_stop": is_protected,
+                "semantic_incident_degree": semantic_incident_degree,
+                "distinct_neighbor_group_count": distinct_neighbor_group_count,
+                "demoted": demoted,
+                "reason": reason,
+                "source_tags": list(endpoint_source_map.get(node_id, ())),
+                "present_in_current_residual_graph": node_id in active_mainnode_ids and node_id in mainnode_groups,
+            }
+        )
+    return tuple(sorted(demotable_ids, key=_sort_key)), tuple(audit_rows)
+
+
+def collect_actual_terminate_barriers(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+    protected_hard_stop_ids: tuple[str, ...],
+    demote_audit_rows: tuple[dict[str, Any], ...],
+) -> tuple[str, ...]:
+    _, _, group_to_road_ids, _, _ = _build_active_semantic_state(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+    )
+    active_mainnode_ids = {mainnode_id for mainnode_id, road_ids in group_to_road_ids.items() if road_ids}
+    actual_barrier_ids = set(protected_hard_stop_ids) & active_mainnode_ids
+    for row in demote_audit_rows:
+        node_id = str(row["node_id"])
+        if node_id not in active_mainnode_ids:
+            continue
+        if not bool(row["demoted"]):
+            actual_barrier_ids.add(node_id)
+    return tuple(sorted(actual_barrier_ids, key=_sort_key))
+
+
+def _build_step5c_adaptive_context(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+    historical_seed_node_ids: set[str],
+    historical_seed_source_map: dict[str, tuple[str, ...]],
+) -> Step5CAdaptiveContext:
+    rolling_endpoint_pool_ids, current_input_candidate_ids, endpoint_source_map = collect_rolling_endpoint_pool(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+        historical_seed_node_ids=historical_seed_node_ids,
+        historical_seed_source_map=historical_seed_source_map,
+    )
+    protected_hard_stop_ids = collect_protected_hard_stop_set(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+    )
+    demotable_endpoint_ids, demote_audit_rows = evaluate_demotable_endpoint_candidates(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+        rolling_endpoint_pool_ids=rolling_endpoint_pool_ids,
+        current_input_candidate_ids=current_input_candidate_ids,
+        historical_seed_node_ids=historical_seed_node_ids,
+        protected_hard_stop_ids=protected_hard_stop_ids,
+        endpoint_source_map=endpoint_source_map,
+    )
+    actual_terminate_barrier_ids = collect_actual_terminate_barriers(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+        protected_hard_stop_ids=protected_hard_stop_ids,
+        demote_audit_rows=demote_audit_rows,
+    )
+    return Step5CAdaptiveContext(
+        rolling_endpoint_pool_ids=rolling_endpoint_pool_ids,
+        current_input_candidate_ids=current_input_candidate_ids,
+        protected_hard_stop_ids=protected_hard_stop_ids,
+        demotable_endpoint_ids=demotable_endpoint_ids,
+        actual_terminate_barrier_ids=actual_terminate_barrier_ids,
+        endpoint_source_map=endpoint_source_map,
+        demote_audit_rows=demote_audit_rows,
+    )
+
+
+def _step5c_audit_rows_by_node_id(
+    adaptive_context: Step5CAdaptiveContext,
+) -> dict[str, dict[str, Any]]:
+    rows = {str(row["node_id"]): dict(row) for row in adaptive_context.demote_audit_rows}
+    for node_id in adaptive_context.protected_hard_stop_ids:
+        rows.setdefault(
+            node_id,
+            {
+                "node_id": node_id,
+                "is_historical_endpoint": False,
+                "is_current_input_candidate": False,
+                "is_protected_hard_stop": True,
+                "semantic_incident_degree": 0,
+                "distinct_neighbor_group_count": 0,
+                "demoted": False,
+                "reason": "protected_roundabout",
+                "source_tags": list(adaptive_context.endpoint_source_map.get(node_id, ())),
+                "present_in_current_residual_graph": True,
+            },
+        )
+    return rows
+
+
+def _write_named_node_set_outputs(
+    *,
+    out_dir: Path,
+    csv_name: str,
+    geojson_name: str,
+    node_ids: tuple[str, ...],
+    nodes: list[NodeFeatureRecord],
+    audit_rows_by_node_id: dict[str, dict[str, Any]],
+) -> tuple[Path, Path]:
+    node_by_id = {node.node_id: node for node in nodes}
+    groups: dict[str, list[str]] = {}
+    for node in nodes:
+        groups.setdefault(node.semantic_node_id, []).append(node.node_id)
+    mainnode_groups, _ = _build_mainnode_groups(node_by_id, groups)
+
+    csv_rows: list[dict[str, Any]] = []
+    features: list[dict[str, Any]] = []
+    for node_id in sorted(node_ids, key=_sort_key):
+        audit_row = dict(audit_rows_by_node_id.get(node_id, {"node_id": node_id, "source_tags": []}))
+        audit_row["source_tags"] = ";".join(str(value) for value in audit_row.get("source_tags", []))
+        csv_rows.append(audit_row)
+        group = mainnode_groups.get(node_id)
+        if group is None:
+            continue
+        representative = node_by_id[group.representative_node_id]
+        feature_props = dict(audit_rows_by_node_id.get(node_id, {"node_id": node_id}))
+        feature_props["source_tags"] = list(feature_props.get("source_tags", []))
+        feature_props["representative_node_id"] = group.representative_node_id
+        feature_props["member_node_ids"] = list(group.member_node_ids)
+        feature_props["kind_2"] = _current_kind_2(representative)
+        feature_props["grade_2"] = _current_grade_2(representative)
+        feature_props["closed_con"] = _current_closed_con(representative)
+        features.append({"properties": feature_props, "geometry": representative.geometry})
+
+    csv_path = out_dir / csv_name
+    geojson_path = out_dir / geojson_name
+    write_csv(
+        csv_path,
+        csv_rows,
+        [
+            "node_id",
+            "is_historical_endpoint",
+            "is_current_input_candidate",
+            "is_protected_hard_stop",
+            "semantic_incident_degree",
+            "distinct_neighbor_group_count",
+            "demoted",
+            "reason",
+            "source_tags",
+            "present_in_current_residual_graph",
+        ],
+    )
+    write_geojson(geojson_path, features)
+    return csv_path, geojson_path
+
+
+def write_step5c_barrier_audit_outputs(
+    *,
+    phase_dir: Path,
+    nodes: list[NodeFeatureRecord],
+    adaptive_context: Step5CAdaptiveContext,
+) -> dict[str, str]:
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    audit_rows_by_node_id = _step5c_audit_rows_by_node_id(adaptive_context)
+    rolling_csv_path, rolling_geojson_path = _write_named_node_set_outputs(
+        out_dir=phase_dir,
+        csv_name=STEP5C_ROLLING_ENDPOINT_POOL_CSV,
+        geojson_name=STEP5C_ROLLING_ENDPOINT_POOL_GEOJSON,
+        node_ids=adaptive_context.rolling_endpoint_pool_ids,
+        nodes=nodes,
+        audit_rows_by_node_id=audit_rows_by_node_id,
+    )
+    protected_csv_path, protected_geojson_path = _write_named_node_set_outputs(
+        out_dir=phase_dir,
+        csv_name=STEP5C_PROTECTED_HARD_STOPS_CSV,
+        geojson_name=STEP5C_PROTECTED_HARD_STOPS_GEOJSON,
+        node_ids=adaptive_context.protected_hard_stop_ids,
+        nodes=nodes,
+        audit_rows_by_node_id=audit_rows_by_node_id,
+    )
+    demotable_csv_path, demotable_geojson_path = _write_named_node_set_outputs(
+        out_dir=phase_dir,
+        csv_name=STEP5C_DEMOTABLE_ENDPOINTS_CSV,
+        geojson_name=STEP5C_DEMOTABLE_ENDPOINTS_GEOJSON,
+        node_ids=adaptive_context.demotable_endpoint_ids,
+        nodes=nodes,
+        audit_rows_by_node_id=audit_rows_by_node_id,
+    )
+    actual_csv_path, actual_geojson_path = _write_named_node_set_outputs(
+        out_dir=phase_dir,
+        csv_name=STEP5C_ACTUAL_BARRIERS_CSV,
+        geojson_name=STEP5C_ACTUAL_BARRIERS_GEOJSON,
+        node_ids=adaptive_context.actual_terminate_barrier_ids,
+        nodes=nodes,
+        audit_rows_by_node_id=audit_rows_by_node_id,
+    )
+    demote_audit_path = phase_dir / STEP5C_ENDPOINT_DEMOTE_AUDIT_JSON
+    write_json(
+        demote_audit_path,
+        {
+            "rolling_endpoint_pool_ids": list(adaptive_context.rolling_endpoint_pool_ids),
+            "current_input_candidate_ids": list(adaptive_context.current_input_candidate_ids),
+            "protected_hard_stop_ids": list(adaptive_context.protected_hard_stop_ids),
+            "demotable_endpoint_ids": list(adaptive_context.demotable_endpoint_ids),
+            "actual_terminate_barrier_ids": list(adaptive_context.actual_terminate_barrier_ids),
+            "rows": list(adaptive_context.demote_audit_rows),
+        },
+    )
+    return {
+        "rolling_endpoint_pool_csv": str(rolling_csv_path.resolve()),
+        "rolling_endpoint_pool_geojson": str(rolling_geojson_path.resolve()),
+        "protected_hard_stops_csv": str(protected_csv_path.resolve()),
+        "protected_hard_stops_geojson": str(protected_geojson_path.resolve()),
+        "demotable_endpoints_csv": str(demotable_csv_path.resolve()),
+        "demotable_endpoints_geojson": str(demotable_geojson_path.resolve()),
+        "actual_barriers_csv": str(actual_csv_path.resolve()),
+        "actual_barriers_geojson": str(actual_geojson_path.resolve()),
+        "endpoint_demote_audit_json": str(demote_audit_path.resolve()),
+    }
+
+
+def _write_step5c_target_pair_audit(
+    *,
+    phase_dir: Path,
+    adaptive_context: Step5CAdaptiveContext,
+) -> Path:
+    candidate_rows = _read_csv_rows(phase_dir / "pair_candidates.csv") if (phase_dir / "pair_candidates.csv").is_file() else []
+    validated_rows = _read_csv_rows(phase_dir / "validated_pairs.csv") if (phase_dir / "validated_pairs.csv").is_file() else []
+    validation_rows = _read_csv_rows(phase_dir / "pair_validation_table.csv") if (phase_dir / "pair_validation_table.csv").is_file() else []
+    search_audit = (
+        json.loads((phase_dir / "search_audit.json").read_text(encoding="utf-8"))
+        if (phase_dir / "search_audit.json").is_file()
+        else {}
+    )
+    target_candidate = next((row for row in candidate_rows if row.get("pair_id") == STEP5C_TARGET_PAIR_ID), None)
+    target_validated = next((row for row in validated_rows if row.get("pair_id") == STEP5C_TARGET_PAIR_ID), None)
+    target_validation_row = next((row for row in validation_rows if row.get("pair_id") == STEP5C_TARGET_PAIR_ID), None)
+    actual_barrier_ids = set(adaptive_context.actual_terminate_barrier_ids)
+    blocking_barrier_node_ids: set[str] = set()
+    for event in search_audit.get("search_events") or []:
+        event_name = str(event.get("event") or "")
+        seed_node_id = _normalize_id(event.get("seed_node_id"))
+        node_id = _normalize_id(event.get("node_id"))
+        if seed_node_id not in {STEP5C_TARGET_A_NODE_ID, STEP5C_TARGET_B_NODE_ID}:
+            continue
+        if node_id is None or node_id not in actual_barrier_ids:
+            continue
+        if event_name in {"hard_stop_boundary", "hard_stop_terminal_candidate", "hard_stop_terminal_not_seed"}:
+            blocking_barrier_node_ids.add(node_id)
+
+    reverse_confirm_events = [
+        event
+        for event in (search_audit.get("search_events") or [])
+        if str(event.get("event") or "") == "reverse_confirm_fail"
+        and (
+            {_normalize_id(event.get("a_node_id")), _normalize_id(event.get("b_node_id"))}
+            == {STEP5C_TARGET_A_NODE_ID, STEP5C_TARGET_B_NODE_ID}
+            or {_normalize_id(event.get("a_node_id")), _normalize_id(event.get("b_node_id"))}
+            == {"1026960", "1029576"}
+        )
+    ]
+
+    if target_validated is not None:
+        remaining_blocker_type = "none"
+        remaining_blocker_detail: Any = ""
+    elif blocking_barrier_node_ids:
+        remaining_blocker_type = "actual_barrier"
+        remaining_blocker_detail = sorted(blocking_barrier_node_ids, key=_sort_key)
+    elif target_validation_row is not None and str(target_validation_row.get("reject_reason") or ""):
+        reject_reason = str(target_validation_row.get("reject_reason") or "")
+        if "dual_carriageway" in reject_reason or "side_access" in reject_reason:
+            remaining_blocker_type = "50m_gate"
+        else:
+            remaining_blocker_type = "validation_reject"
+        remaining_blocker_detail = reject_reason
+    elif reverse_confirm_events:
+        remaining_blocker_type = "reverse_confirm"
+        remaining_blocker_detail = reverse_confirm_events
+    else:
+        remaining_blocker_type = "search_no_terminal"
+        remaining_blocker_detail = ""
+
+    out_path = phase_dir / STEP5C_TARGET_PAIR_AUDIT_JSON
+    write_json(
+        out_path,
+        {
+            "target_pair_id": STEP5C_TARGET_PAIR_ID,
+            "entered_step5c_candidate": target_candidate is not None,
+            "entered_step5c_validated": target_validated is not None,
+            "blocked_by_actual_barrier": bool(blocking_barrier_node_ids),
+            "blocking_barrier_node_ids": sorted(blocking_barrier_node_ids, key=_sort_key),
+            "remaining_blocker_type": remaining_blocker_type,
+            "remaining_blocker_detail": remaining_blocker_detail,
+            "terminate_rigidity_cleared": not bool(blocking_barrier_node_ids),
+        },
+    )
+    return out_path
 
 
 def _build_phase_inputs(
@@ -256,6 +747,104 @@ def _build_phase_inputs(
         active_road_ids=active_road_ids_ordered,
         endpoint_pool_ids=tuple(sorted(eligible_mainnode_ids, key=_sort_key)),
         endpoint_pool_source_map=endpoint_pool_source_map,
+    )
+
+
+def _build_step5c_adaptive_phase_inputs(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+    out_root: Path,
+    historical_seed_node_ids: set[str],
+    historical_seed_source_map: dict[str, tuple[str, ...]],
+) -> tuple[PhaseInputArtifacts, Step5CAdaptiveContext]:
+    adaptive_context = _build_step5c_adaptive_context(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+        historical_seed_node_ids=historical_seed_node_ids,
+        historical_seed_source_map=historical_seed_source_map,
+    )
+    phase_lower = STEP5C_STRATEGY_ID.lower()
+    reason_by_node_id = {str(row["node_id"]): str(row["reason"]) for row in adaptive_context.demote_audit_rows}
+    historical_seed_set = set(historical_seed_node_ids)
+    current_input_candidate_set = set(adaptive_context.current_input_candidate_ids)
+    protected_hard_stop_set = set(adaptive_context.protected_hard_stop_ids)
+    demotable_endpoint_set = set(adaptive_context.demotable_endpoint_ids)
+    actual_barrier_set = set(adaptive_context.actual_terminate_barrier_ids)
+
+    working_node_features: list[dict[str, Any]] = []
+    for node in nodes:
+        props = dict(node.properties)
+        semantic_node_id = node.semantic_node_id
+        props[f"{phase_lower}_input_eligible"] = semantic_node_id in set(adaptive_context.rolling_endpoint_pool_ids)
+        props[f"{phase_lower}_historical_boundary"] = semantic_node_id in actual_barrier_set
+        props[f"{phase_lower}_input_grade_2"] = _current_grade_2(node)
+        props[f"{phase_lower}_input_kind_2"] = _current_kind_2(node)
+        props[f"{phase_lower}_input_closed_con"] = _current_closed_con(node)
+        props["step5c_in_rolling_pool"] = semantic_node_id in set(adaptive_context.rolling_endpoint_pool_ids)
+        props["step5c_is_current_input_candidate"] = semantic_node_id in current_input_candidate_set
+        props["step5c_is_historical_endpoint"] = semantic_node_id in historical_seed_set
+        props["step5c_is_protected_hard_stop"] = semantic_node_id in protected_hard_stop_set
+        props["step5c_is_demotable_endpoint"] = semantic_node_id in demotable_endpoint_set
+        props["step5c_is_actual_barrier"] = semantic_node_id in actual_barrier_set
+        props["step5c_endpoint_reason"] = reason_by_node_id.get(
+            semantic_node_id,
+            "not_in_rolling_pool",
+        )
+        working_node_features.append({"properties": props, "geometry": node.geometry})
+
+    working_road_features = [
+        {"properties": dict(road.properties), "geometry": road.geometry}
+        for road in roads
+        if road.road_id in active_road_ids
+    ]
+
+    working_nodes_path = out_root / f"{phase_lower}_working_nodes.geojson"
+    working_roads_path = out_root / f"{phase_lower}_working_roads.geojson"
+    strategy_path = out_root / f"{phase_lower}_strategy.json"
+    write_geojson(working_nodes_path, working_node_features)
+    write_geojson(working_roads_path, working_road_features)
+    write_json(
+        strategy_path,
+        {
+            "strategy_id": STEP5C_STRATEGY_ID,
+            "description": f"{STEP5C_STRATEGY_ID} staged residual graph adaptive barrier fallback.",
+            "seed_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
+            "terminate_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
+            "through_node_rule": {
+                "incident_road_degree_eq": 2,
+                "incident_degree_exclude_formway_bits_any": [7],
+                "disallow_seed_terminate_nodes": True,
+                "retain_seed_node_ids_as_through_node_ids": list(adaptive_context.demotable_endpoint_ids),
+                "allow_seed_search_when_through": True,
+            },
+            "force_seed_node_ids": list(adaptive_context.rolling_endpoint_pool_ids),
+            "force_terminate_node_ids": list(adaptive_context.actual_terminate_barrier_ids),
+            "hard_stop_node_ids": list(adaptive_context.protected_hard_stop_ids),
+        },
+    )
+
+    active_road_ids_ordered = tuple(sorted(active_road_ids, key=_sort_key))
+    return (
+        PhaseInputArtifacts(
+            phase_id=STEP5C_STRATEGY_ID,
+            working_nodes_path=working_nodes_path,
+            working_roads_path=working_roads_path,
+            strategy_path=strategy_path,
+            input_node_count=len(adaptive_context.rolling_endpoint_pool_ids),
+            seed_count=len(adaptive_context.rolling_endpoint_pool_ids),
+            terminate_count=len(adaptive_context.actual_terminate_barrier_ids),
+            working_graph_road_count=len(active_road_ids_ordered),
+            active_road_ids=active_road_ids_ordered,
+            endpoint_pool_ids=adaptive_context.rolling_endpoint_pool_ids,
+            endpoint_pool_source_map=adaptive_context.endpoint_source_map,
+            actual_barrier_ids=adaptive_context.actual_terminate_barrier_ids,
+            protected_hard_stop_ids=adaptive_context.protected_hard_stop_ids,
+            demoted_endpoint_ids=adaptive_context.demotable_endpoint_ids,
+        ),
+        adaptive_context,
     )
 
 
@@ -800,7 +1389,6 @@ def run_step5_staged_residual_graph(
     )
 
     step5c_historical_seed_node_ids = set(step5b_input.endpoint_pool_ids)
-    step5c_hard_stop_node_ids = set(step5b_input.endpoint_pool_ids)
     combined_boundary_source_map = dict(step5b_input.endpoint_pool_source_map)
     if debug:
         _write_boundary_node_outputs(
@@ -810,16 +1398,13 @@ def run_step5_staged_residual_graph(
         )
 
     active_road_ids_step5c = set(active_road_ids_step5b) - set(phase_b.road_to_segmentid)
-    step5c_input = _build_phase_inputs(
-        phase_id=STEP5C_STRATEGY_ID,
+    step5c_input, step5c_adaptive_context = _build_step5c_adaptive_phase_inputs(
         nodes=nodes,
         roads=roads,
         active_road_ids=active_road_ids_step5c,
         out_root=resolved_out_root,
-        base_match=_step5c_base_match,
         historical_seed_node_ids=step5c_historical_seed_node_ids,
         historical_seed_source_map=combined_boundary_source_map,
-        hard_stop_node_ids=step5c_hard_stop_node_ids,
     )
     phase_c = _run_phase(
         phase_input=step5c_input,
@@ -828,6 +1413,15 @@ def run_step5_staged_residual_graph(
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
         debug=debug,
+    )
+    step5c_barrier_audit_paths = write_step5c_barrier_audit_outputs(
+        phase_dir=phase_c.phase_dir,
+        nodes=nodes,
+        adaptive_context=step5c_adaptive_context,
+    )
+    step5c_target_pair_audit_path = _write_step5c_target_pair_audit(
+        phase_dir=phase_c.phase_dir,
+        adaptive_context=step5c_adaptive_context,
     )
 
     merged_validated_rows = _write_merged_validated_pairs(
@@ -896,7 +1490,17 @@ def run_step5_staged_residual_graph(
     refreshed_summary["step5_merged_validated_pair_count"] = len(merged_validated_rows)
     refreshed_summary["historical_boundary_node_count"] = len(historical_boundary_ids)
     refreshed_summary["step5b_hard_stop_node_count"] = len(step5b_hard_stop_node_ids)
-    refreshed_summary["step5c_hard_stop_node_count"] = len(step5c_hard_stop_node_ids)
+    refreshed_summary["step5c_hard_stop_node_count"] = len(step5c_input.protected_hard_stop_ids)
+    refreshed_summary["step5c_rolling_endpoint_pool_count"] = len(step5c_input.endpoint_pool_ids)
+    refreshed_summary["step5c_protected_hard_stop_count"] = len(step5c_input.protected_hard_stop_ids)
+    refreshed_summary["step5c_demoted_endpoint_count"] = len(step5c_input.demoted_endpoint_ids)
+    refreshed_summary["step5c_actual_barrier_count"] = len(step5c_input.actual_barrier_ids)
+    refreshed_summary["step5c_rolling_endpoint_pool_path"] = step5c_barrier_audit_paths["rolling_endpoint_pool_csv"]
+    refreshed_summary["step5c_protected_hard_stops_path"] = step5c_barrier_audit_paths["protected_hard_stops_csv"]
+    refreshed_summary["step5c_demotable_endpoints_path"] = step5c_barrier_audit_paths["demotable_endpoints_csv"]
+    refreshed_summary["step5c_actual_barriers_path"] = step5c_barrier_audit_paths["actual_barriers_csv"]
+    refreshed_summary["step5c_endpoint_demote_audit_path"] = step5c_barrier_audit_paths["endpoint_demote_audit_json"]
+    refreshed_summary["step5c_target_pair_audit_path"] = str(step5c_target_pair_audit_path.resolve())
     refreshed_summary["debug"] = debug
     write_json(artifacts.summary_path, refreshed_summary)
     return Step5Artifacts(

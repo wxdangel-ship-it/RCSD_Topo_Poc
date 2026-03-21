@@ -20,12 +20,14 @@
   - roundabout preprocessing
   - Step1-Step5 residual graph 双向路段构建
   - staged runner 全量 endpoint pool 滚动
-  - 三样例活动基线冻结
+  - 五样例活动基线冻结
 - 当前 repo 级治理文档尚未把 `t01_data_preprocess` 登记为正式 Active 模块，因此本目录采用“模块内 accepted baseline / repo 级未激活”的表述，不擅自改写仓库级生命周期状态。
 
 ## 当前活动基线
-- [t01_skill_active_three_sample_suite](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/baselines/t01_skill_active_three_sample_suite)
+- [t01_skill_active_five_sample_suite](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite)
 - 样例：
   - `XXXS`
   - `XXXS2`
   - `XXXS3`
+  - `XXXS4`
+  - `XXXS5`

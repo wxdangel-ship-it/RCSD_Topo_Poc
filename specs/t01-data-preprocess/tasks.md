@@ -5,20 +5,30 @@
 - [x] 后续业务判断统一切换到 `grade_2 / kind_2`
 - [x] 环岛预处理接入 working bootstrap
 - [x] 环岛 mainnode 保护接入 generic refresh
-- [x] `XXXS` Skill v1.0 freeze baseline 已建立
+- [x] 活动 freeze baseline 已切换到五样例套件：
+  - `XXXS`
+  - `XXXS2`
+  - `XXXS3`
+  - `XXXS4`
+  - `XXXS5`
 
 ## 本轮任务
-- [x] 审计当前 A200 `debug / no-debug` 阶段级性能瓶颈
-- [x] 确认 `Step2` validated 流程存在重复 `_refine_segment_roads(...)`
-- [x] 确认 trunk validation 中存在按 pair 重复全图扫描 `context.directed`
-- [x] 去除 validated 流程中的重复 `_refine_segment_roads(...)`
-- [x] 将 trunk validation 的 directed adjacency 构造改为仅遍历 `allowed_road_ids`
-- [x] 保持 `Step2 / Step4 / Step5` 共用同一优化后的双向构段内核
-- [x] 补充性能防回退测试
-- [x] 完成 `XXXS / XXXS2 / XXXS3` 官方回归与逐样例 baseline compare
+- [x] 将 `Step5C` 定位为 final fallback 轮，不改 `Step5A / Step5B` strict 语义
+- [x] 实现 `Step5C rolling endpoint pool`
+- [x] 实现 `Step5C protected hard-stop set`，当前只保留环岛 mainnode
+- [x] 实现 `Step5C demotable endpoint set`
+- [x] 实现 `Step5C actual terminate barrier` 重判
+- [x] 追加 `Step5C` 三集合审计输出与 `endpoint_demote_audit`
+- [x] 追加 `target_pair_audit_997356__39546395.json`
+- [x] 补充 `Step5C helper / staged integration / Step1 through` 防回退测试
+- [x] 重跑 `XXXS5` 并确认 `997356__39546395` 的新状态
+- [x] 将 `XXXS5` 冻结入活动基线
+- [x] 重跑 `XXXS / XXXS2 / XXXS3 / XXXS4 / XXXS5` freeze compare，确认与活动 baseline 一致
+
+## 定点验收
+- `XXXS5 / 997356__39546395`
+  - 理想目标：在 `Step5C` 成功进入 candidate / validated / segment
+  - 可接受目标：若仍未构出，必须证明剩余阻塞已不再属于 terminate rigidity
 
 ## 后续待办
-- [ ] 在内网 A200 上复测本轮性能优化后的 `debug / no-debug` 差异
-- [ ] 继续收敛 `Step2` 主计算热点，优先评估 path enumeration / validation 内核
-- [ ] 评估 `Step4 / Step5` staged runner 的 working-layer I/O 是否需要进一步降本
-- [ ] 继续补充更完整的 GIS 视觉验收与 case 审计能力
+- [ ] 评估是否需要把 `Step5C adaptive barrier` 审计 helper 再抽到共享层

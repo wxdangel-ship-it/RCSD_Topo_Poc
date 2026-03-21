@@ -69,6 +69,8 @@ class ThroughRuleSpec:
     incident_degree_exclude_formway_bits_any: tuple[int, ...] = ()
     disallow_seed_terminate_nodes: bool = False
     disallow_null_mainnode_singleton_seed_terminate_nodes: bool = False
+    retain_seed_node_ids_as_through_node_ids: tuple[str, ...] = ()
+    allow_seed_search_when_through: bool = False
 
 
 @dataclass(frozen=True)
@@ -250,6 +252,13 @@ def _normalize_mainnodeid(value: Any) -> Optional[str]:
     return normalized
 
 
+def _resolve_working_mainnodeid(props: dict[str, Any]) -> Optional[str]:
+    working_mainnodeid = _normalize_mainnodeid(props.get("working_mainnodeid"))
+    if working_mainnodeid is not None:
+        return working_mainnodeid
+    return _normalize_mainnodeid(props.get("mainnodeid"))
+
+
 def _sort_key(value: str) -> Tuple[int, Union[int, str]]:
     try:
         return (0, int(value))
@@ -293,6 +302,20 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
             disallow_null_mainnode_singleton_seed_terminate_nodes=bool(
                 through_payload.get("disallow_null_mainnode_singleton_seed_terminate_nodes", False)
             ),
+            retain_seed_node_ids_as_through_node_ids=tuple(
+                sorted(
+                    (
+                        node_id
+                        for node_id in (
+                            _normalize_id(value)
+                            for value in through_payload.get("retain_seed_node_ids_as_through_node_ids", [])
+                        )
+                        if node_id is not None
+                    ),
+                    key=_sort_key,
+                )
+            ),
+            allow_seed_search_when_through=bool(through_payload.get("allow_seed_search_when_through", False)),
         ),
         force_seed_node_ids=tuple(
             sorted(
@@ -390,7 +413,7 @@ def _prepare_nodes(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             )
             continue
 
-        mainnodeid = _normalize_mainnodeid(props.get("mainnodeid"))
+        mainnodeid = _resolve_working_mainnodeid(props)
 
         nodes[node_id] = NodeRecord(
             node_id=node_id,
@@ -1066,6 +1089,7 @@ def run_step1_strategy(
     if strategy.through_rule.disallow_seed_terminate_nodes:
         through_node_ids -= set(seed_ids)
         through_node_ids -= set(terminate_ids)
+        through_node_ids |= set(strategy.through_rule.retain_seed_node_ids_as_through_node_ids) & set(seed_ids)
     if strategy.through_rule.disallow_null_mainnode_singleton_seed_terminate_nodes:
         protected_singleton_ids = {
             node_id
@@ -1076,7 +1100,10 @@ def run_step1_strategy(
         through_node_ids -= protected_singleton_ids
     hard_stop_node_ids = set(strategy.hard_stop_node_ids)
     through_node_ids -= hard_stop_node_ids
-    search_seed_ids = [node_id for node_id in seed_ids if node_id not in through_node_ids]
+    if strategy.through_rule.allow_seed_search_when_through:
+        search_seed_ids = list(seed_ids)
+    else:
+        search_seed_ids = [node_id for node_id in seed_ids if node_id not in through_node_ids]
     through_seed_pruned_count = len(seed_ids) - len(search_seed_ids)
 
     search_results: dict[str, SearchResult] = {}
@@ -1157,18 +1184,14 @@ def _node_feature(
     extra_props: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     properties = {
+        **dict(node.raw_properties),
         "node_id": node.semantic_node_id,
         "semantic_node_id": node.semantic_node_id,
         "representative_node_id": node.representative_node_id,
         "member_node_ids": ";".join(node.member_node_ids),
         "member_node_count": len(node.member_node_ids),
-        "kind": node.kind_2,
-        "grade": node.grade_2,
         "raw_kind": node.raw_kind,
         "raw_grade": node.raw_grade,
-        "kind_2": node.kind_2,
-        "grade_2": node.grade_2,
-        "closed_con": node.closed_con,
         "strategy_id": strategy_id,
     }
     if extra_props:
@@ -1334,8 +1357,8 @@ def write_step1_candidate_outputs(
                 "seed_reasons": list(seed_eval[node_id].reasons),
                 "terminate_match": terminate_eval[node_id].matched,
                 "terminate_reasons": list(terminate_eval[node_id].reasons),
-                "kind": node.kind_2,
-                "grade": node.grade_2,
+                "kind": node.raw_kind,
+                "grade": node.raw_grade,
                 "raw_kind": node.raw_kind,
                 "raw_grade": node.raw_grade,
                 "kind_2": node.kind_2,

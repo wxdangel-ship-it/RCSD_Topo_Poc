@@ -16,6 +16,7 @@
   - node：`closed_con in {2,3}`
   - road：`road_kind != 1`
 - `raw grade / kind` 只保留为原始输入、审计和展示字段，不再参与后续业务筛选。
+- `raw mainnodeid` 若输入存在，必须在最终输出中保持原值；运行期 `mainnode` 语义使用新增字段 `working_mainnodeid`。
 
 ## 3. 模块开始阶段
 
@@ -24,6 +25,7 @@
 - working nodes 初始化：
   - `grade_2 = grade`
   - `kind_2 = kind`
+  - `working_mainnodeid = mainnodeid`
 - working roads 初始化：
   - `s_grade = null`
   - `segmentid = null`
@@ -41,7 +43,7 @@
   - 组内其他 node 写为：
     - `grade_2 = 0`
     - `kind_2 = 0`
-  - 全组 `mainnodeid` 刷为该 `mainnode`
+  - 全组 `working_mainnodeid` 刷为该 `mainnode`
 - 环岛 `mainnode` 是受保护语义路口，后续 generic node refresh 必须跳过，不能被改写成其他路口类型。
 
 ## 4. 官方 Step1-Step5 映射
@@ -94,7 +96,35 @@
   - 历史高等级边界 `mainnode` 进入 `terminate`
   - 同时也进入 `hard-stop`
 
-### 5.5 关键实现方案与约束
+### 5.5 Step1-Step3 seed / terminate 审计表
+
+| 轮次 | seed 输入条件 | terminate 输入条件 | 备注 |
+| --- | --- | --- | --- |
+| Step1 / `S1` | `closed_con in {2,3}` 且 `kind_2 in {4,64}` | `closed_con in {2,3}` 且 `kind_2 in {4,64}` | `S1` 不把 T 型路口作为 terminate |
+| Step1 / `S2` | `closed_con in {2,3}` 且 `kind_2 in {4,64}` 且 `grade_2 = 1` | `closed_con in {2,3}` 且 `kind_2 in {4,64}` 且 `grade_2 = 1` | 用于当前 official 主线；T 型路口不是 Step1 terminate |
+| Step2 | 不新增 seed / terminate；直接消费 Step1 `pair_candidates` | 不新增 terminate | Step2 只做 validated / rejected / trunk / segment_body / residual 正式判定 |
+| Step3 | 不做 pair 搜索 | 不做 pair 搜索 | 只刷新 working Nodes / Roads |
+
+### 5.6 Step2 的 T 型路口旁路候选策略
+- T 型路口当前不是 Step1 terminate；pair 搜索不因命中 T 型路口而直接终止。
+- `XXXS` 审计表明：需要限制“从主 Segment 内部路口继续吞入内部挂接网”的行为，但不能误伤合法的单侧旁路系统。
+- 当前待收敛候选策略应按以下语义理解：
+  - 判定对象仅限 `Step2` 的 `non_trunk_component -> segment_body` 收口，不改变 `Step1` 的 `seed / terminate`
+  - 对每个主 Segment 内部 support node，先识别当前 trunk / support path 在该点的本地主通行 `I` 向
+  - 只有不属于该 `I` 向延续的 incident road，才视为侧向 branch 候选
+  - 允许保留的 side subgraph 可以包含：
+    - 多条单向平行侧路
+    - 这些单向侧路之间的短小连接路
+    但整体必须仍然表达“从主 Segment 侧向挂出并最终回到主 Segment 的单侧旁路系统”
+  - 单侧旁路的分支必须与当前 Segment 该侧的通行方向一致；反方向 branch 不能保留
+  - 若 component 借内部路口的 `I` 向再次串联多个内部路口，形成内部挂接网，而不是侧向旁路系统，则不能进入当前 pair 的 `segment_body`，应转入 `step3_residual`
+- 当前不应将以下简化条件直接固化为正式全局硬规则：
+  - 仅凭 `one_way_parallel`
+  - 仅凭 `attachment_node_ids` 全部命中内部 T 型 support node
+  - 仅凭 `attachment_node_ids` 个数或“简单路径”图论形态
+- 在活动三样例与外网补充样例共同收敛前，该项仅作为候选策略记录，不进入 accepted baseline 契约。
+
+### 5.7 关键实现方案与约束
 - Step1 只输出 `pair_candidates`，不代表最终有效 pair。
 - Step2 是首轮正式判定内核：
   - `final segment` 只表达当前 validated pair 的 pair-specific road body
@@ -217,31 +247,57 @@
 
 #### 业务目标
 - Step5C 是当前 staged runner 的最终兜底轮。
-- 目标是在不破坏历史边界和已有 segment 的前提下，把前面轮次仍未构出的合法双向段尽可能收口。
+- 目标是在不破坏已有 segment、50m gates 与正式输入过滤的前提下，把前面轮次仍未构出的合法双向段尽可能收口。
+- `Step5C` 的核心修正是：不再把历史 endpoint 机械等同为 `terminate + hard-stop`，而是基于当前 residual graph 重新判定 actual barrier。
 
 #### 完成任务
 - 在最终 residual graph 上执行最后一轮双向 pair / trunk / segment_body 判定
 - 输出 Step5C 结果，并进入统一 refresh
 
 #### 种子点筛选条件
-- Step5C 种子点来自：
-  - `Step5B` 滚动下来的全量 endpoint pool
-  - 当前 Step5C 新增满足输入规则的节点
-- Step5C 节点输入约束：
-  - `closed_con in {2,3}`
-  - `kind_2 in {1,4,64,2048}`
-  - `grade_2 in {1,2,3}`
+- Step5C 引入 3 个中间集合和 1 个最终集合：
+  - `rolling endpoint pool`
+  - `protected hard-stop set`
+  - `demotable endpoint set`
+  - `actual terminate barriers`
+- `rolling endpoint pool`：
+  - 历史来源：
+    - `Step5B` 滚动下来的历史 endpoint mainnode
+  - 当前 residual graph 来源：
+    - `closed_con in {2,3}`
+    - `kind_2 in {4,64,2048}`
+    - `grade_2 in {1,2,3}`
+  - 约束：
+    - `kind_2 = 1` 不能仅因当前字段条件进入 pool
+    - 若 `kind_2 = 1` 节点留在 pool，只能因历史 endpoint 身份继续保留
 
 #### 终止节点筛选条件
-- Step5C terminate 与 seed 继续使用同一 endpoint pool。
-- 历史边界、滚动端点和当前轮合法端点都可作为最终兜底端点。
-- 这些端点仍然同时保留 `hard-stop`，不允许被继续穿越。
+- `protected hard-stop set`：
+  - 当前先只保护高置信对象：
+    - 环岛 mainnode（`kind_2 = 64` 且 `closed_con in {2,3}`）
+- `demotable endpoint set`：
+  - 从 `rolling endpoint pool - protected hard-stop set` 中产生
+  - 必须结合当前 `Step5C residual graph` 的 semantic-node-group 结构判定
+  - 当前最小正式判据：
+    - `semantic incident degree == 2`
+    - `distinct neighbor semantic groups == 2`
+- `actual terminate barriers`：
+  - `protected hard-stop set`
+  - 加上当前 residual graph 上未被 demote、仍保持真实 barrier 语义的 endpoint
+- `Step5C` 中：
+  - `rolling endpoint pool` 继续可作为 seed 候选来源
+  - `protected hard-stop set` 命中时必须停止穿越
+  - `demotable endpoint set` 命中时不再强制 terminate / hard-stop，允许继续作为 through 穿过
+  - 实际 terminate 语义由 `actual terminate barriers` 统一决定
 
 #### 关键实现方案与约束
 - Step5C 不是局部兜底，而是承接 Step2 -> Step4 -> Step5A -> Step5B 全链路滚动下来的 endpoint pool。
 - 该阶段仍使用统一的：
   - trunk / 最小闭环 50m gate
   - side component 50m gate
+- `Step5A / Step5B` 保持 strict：
+  - 仍按滚动 endpoint pool 刚性继承 `seed / terminate / hard-stop`
+  - 本轮 adaptive barrier 语义不回灌到 `Step5A / Step5B`
 - Step5A / Step5B / Step5C 之间：
   - 只剔除已构成的 `segment_body` road
   - 不刷新属性
@@ -266,7 +322,8 @@
 ### 8.2 业务含义
 - `nodes.geojson`
   - 表达当前 working node 语义结果
-  - 其中 `grade_2 / kind_2 / mainnodeid` 已被逐轮更新
+  - 其中 `grade_2 / kind_2 / working_mainnodeid` 为运行期结果
+  - raw `mainnodeid` 保持输入原值不变
 - `roads.geojson`
   - 表达当前 working road 语义结果
   - 其中 `segmentid / s_grade` 表示 road 已归属到哪个双向路段
@@ -279,15 +336,19 @@
 
 ## 9. 当前活动基线冻结
 - 当前活动基线不再是旧的单样例 `XXXS freeze`。
-- 当前活动基线已经切换为三样例套件：
-  - `modules/t01_data_preprocess/baselines/t01_skill_active_three_sample_suite/XXXS/`
-  - `modules/t01_data_preprocess/baselines/t01_skill_active_three_sample_suite/XXXS2/`
-  - `modules/t01_data_preprocess/baselines/t01_skill_active_three_sample_suite/XXXS3/`
-- 三组样例的业务定位：
+- 当前活动基线已经切换为五样例套件：
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS/`
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS2/`
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS3/`
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS4/`
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS5/`
+- 五组样例的业务定位：
   - `XXXS`：通用冒烟
   - `XXXS2`：重点覆盖上下行 / 侧向距离 gate
   - `XXXS3`：重点覆盖环岛预处理
-- 后续性能优化、结构重构或实现调整，必须同时对齐这三组活动基线。
+  - `XXXS4`：重点覆盖侧向平行路 / 分歧合流 corridor
+  - `XXXS5`：重点覆盖 `Step5C final fallback` 长 corridor 兜底构段
+- 后续性能优化、结构重构或实现调整，必须同时对齐这五组活动基线。
 - 任一样例结果与当前活动基线不一致，默认都需要用户复核后再决策是否接受变更。
 
 ## 10. 历史归档基线
@@ -305,10 +366,12 @@
 - `debug=true` 会显著增加导出与审计 I/O 成本，但不改变最终业务结果。
 
 ### 11.2 当前正式性能约束
-- 所有后续性能优化都必须同时对齐当前活动三样例基线：
+- 所有后续性能优化都必须同时对齐当前活动五样例基线：
   - `XXXS`
   - `XXXS2`
   - `XXXS3`
+  - `XXXS4`
+  - `XXXS5`
 - 若任一样例结果与活动基线不一致，必须先产出差异审计，再由用户确认是否接受。
 - 性能优化不得通过修改当前 accepted 业务语义换取速度。
 

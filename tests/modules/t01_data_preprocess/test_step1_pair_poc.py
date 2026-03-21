@@ -367,6 +367,66 @@ def test_hard_stop_boundary_can_still_act_as_seed_and_terminal(tmp_path: Path) -
     assert search_audit["search_event_counts"]["hard_stop_terminal_candidate"] >= 1
 
 
+def test_force_seed_node_can_remain_seed_and_through_when_explicitly_allowed(tmp_path: Path) -> None:
+    road_path = tmp_path / "roads_force_seed_through.geojson"
+    node_path = tmp_path / "nodes_force_seed_through.geojson"
+    out_root = tmp_path / "outputs_force_seed_through"
+    _write_geojson(
+        node_path,
+        features=[
+            _node_feature(1, 0.0, 0.0, grade=1),
+            _node_feature(2, 0.01, 0.0, kind=0, grade=0),
+            _node_feature(3, 0.02, 0.0, grade=1),
+        ],
+    )
+    _write_geojson(
+        road_path,
+        features=[
+            _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [0.01, 0.0]]),
+            _road_feature("r23", 2, 3, 0, [[0.01, 0.0], [0.02, 0.0]]),
+        ],
+    )
+    strategy_path = _write_strategy(
+        tmp_path / "step1_force_seed_through.json",
+        {
+            "strategy_id": "S_FORCE_THROUGH",
+            "description": "Forced seed nodes may still act as through nodes when explicitly allowlisted.",
+            "seed_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2]},
+            "terminate_rule": {"kind_bits_all": [2], "grade_eq": 1, "closed_con_in": [2]},
+            "through_node_rule": {
+                "incident_road_degree_eq": 2,
+                "disallow_seed_terminate_nodes": True,
+                "retain_seed_node_ids_as_through_node_ids": ["2"],
+                "allow_seed_search_when_through": True,
+            },
+            "force_seed_node_ids": ["2"],
+        },
+    )
+
+    rc = main(
+        [
+            "t01-step1-pair-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+    pair_table = (out_root / "S_FORCE_THROUGH" / "pair_table.csv").read_text(encoding="utf-8")
+    summary = _load_json(out_root / "S_FORCE_THROUGH" / "pair_summary.json")
+
+    assert "S_FORCE_THROUGH:1__3" in pair_table
+    assert summary["seed_count"] == 3
+    assert summary["search_seed_count"] == 3
+    assert summary["through_seed_pruned_count"] == 0
+
+
 def test_reverse_confirmation_is_required(tmp_path: Path) -> None:
     road_path, node_path = _build_dataset(tmp_path)
     out_root = tmp_path / "outputs"
@@ -521,6 +581,10 @@ def test_mainnodeid_group_is_handled_as_one_semantic_intersection(tmp_path: Path
     assert pair_node_props["semantic_node_id"] == "100"
     assert pair_node_props["representative_node_id"] == "100"
     assert pair_node_props["member_node_count"] == 2
+    assert "mainnodeid" not in pair_node_props
+    assert pair_node_props["working_mainnodeid"] is None
+    assert pair_node_props["kind"] == 4
+    assert pair_node_props["grade"] == 1
 
     event_names = {event["event"] for event in search_audit["graph_events"]}
     assert "semantic_intersection_grouped" in event_names
@@ -635,6 +699,38 @@ def test_step1_business_filter_uses_grade_2_kind_2(tmp_path: Path) -> None:
 
     assert execution.seed_ids == ["1", "2"]
     assert execution.terminate_ids == ["1", "2"]
+
+    out_root = tmp_path / "step1_outputs"
+    step1_pair_poc.write_step1_candidate_outputs(
+        out_root,
+        strategy=strategy,
+        run_id="test_step1_business_filter_uses_grade_2_kind_2",
+        semantic_nodes=context.semantic_nodes,
+        physical_nodes=context.physical_nodes,
+        physical_to_semantic=context.physical_to_semantic,
+        roads=context.roads,
+        seed_eval=execution.seed_eval,
+        terminate_eval=execution.terminate_eval,
+        pairs=execution.pair_candidates,
+        search_event_counts=execution.search_event_counts,
+        search_event_samples=execution.search_event_samples,
+        graph_audit_events=context.graph_audit_events,
+        orphan_ref_count=context.orphan_ref_count,
+        search_seed_count=len(execution.search_seed_ids),
+        through_seed_pruned_count=execution.through_seed_pruned_count,
+        debug=True,
+    )
+    pair_nodes = _load_json(out_root / "pair_nodes.geojson")
+    pair_node_props = next(
+        feature["properties"] for feature in pair_nodes["features"] if feature["properties"]["semantic_node_id"] == "1"
+    )
+
+    assert pair_node_props["kind"] == 0
+    assert pair_node_props["grade"] == 0
+    assert pair_node_props["raw_kind"] == 0
+    assert pair_node_props["raw_grade"] == 0
+    assert pair_node_props["kind_2"] == 4
+    assert pair_node_props["grade_2"] == 1
 
 
 def test_step1_business_filter_excludes_closed_con_1(tmp_path: Path) -> None:

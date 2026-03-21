@@ -1,27 +1,33 @@
 # T01 计划
 
 ## 当前阶段
-- `性能审计与首轮结构优化`
+- `Step5C adaptive barrier fallback fix`
 
 ## 本轮目标
-1. 基于当前活动三样例基线与 A200 运行结果，审计 `Step2 / Step4 / Step5` 的主要性能瓶颈。
-2. 固化当前已识别热点：
-   - `Step2` validated 流程中的重复 `_refine_segment_roads(...)`
-   - trunk validation 中按 pair 重复全图扫描 `context.directed`
-3. 在不改变当前活动基线结果的前提下，实施最小必要优化并补充防回退测试。
-4. 用 `XXXS / XXXS2 / XXXS3` 重新跑官方入口并逐样例 compare，确认结果与活动基线一致。
-5. 形成一份可继续扩展的性能审计记录，明确下一轮优先项。
+1. 将 `Step5C` 从“历史 endpoint 机械继承 = terminate + hard-stop”修正为 adaptive barrier fallback。
+2. 在 `Step5C` 内显式实现：
+   - `rolling endpoint pool`
+   - `protected hard-stop set`
+   - `demotable endpoint set`
+   - `actual terminate barriers`
+3. 保持 `Step5A / Step5B` strict，不把 adaptive barrier 语义回灌到更早 staged 轮次。
+4. 用 `XXXS5` 定点验证 `997356__39546395`，至少把阻塞原因从 terminate rigidity 推进到真实剩余阻塞。
+5. 对当前活动 freeze baseline 的 `XXXS` 做 compare；若不一致，只输出差异报告，不更新 freeze。
+6. 若 `XXXS5` 通过目视确认，则将其冻结入新的活动五样例套件，并逐样例 compare 验证。
 
 ## 本轮边界
-- 不改当前业务语义，不改 staged runner 轮次口径。
-- 不更新当前活动三样例基线。
-- 不在本轮做新的大规模 in-memory pipeline 重构。
-- 不新增新的官方入口脚本。
+- 不重写 `Step2`、`Step4`、`Step5A`、`Step5B` 主逻辑。
+- 不放松 50m trunk / side gates。
+- 不放松当前双向构段输入过滤：
+  - `closed_con in {2,3}`
+  - `road_kind != 1`
+- 不把 `kind_2 = 1` 作为 `Step5C` current-input 字段筛选条件直接放开。
+- 不 silently 更新当前活动五样例 freeze baseline。
 
 ## 实施顺序
-1. 读取当前 A200 `debug / no-debug` perf 结果，定位阶段级热点。
-2. 梳理 `Step2` 内核中的重复计算和全图扫描路径。
-3. 实施最小必要优化，并确保 `Step2 / Step4 / Step5` 统一受益。
-4. 补充性能与防回退测试。
-5. 运行三样例官方入口和逐样例 compare。
-6. 记录性能审计结论、当前收益与下一轮建议。
+1. 在 `Step5C` staged runner 内补齐 adaptive barrier 三集合 helper 与审计输出。
+2. 调整 `Step5C` phase input，解耦 `rolling endpoint pool` 与 `actual terminate barrier`。
+3. 同步修正 `Step1` 搜索内核，使已 demote 的 rolling endpoint 可继续作为 through，而不是仅因 seed 身份被卡死。
+4. 补充 `Step5C helper / staged integration / Step1 through` 防回退测试。
+5. 更新 `spec / plan / tasks / README / INTERFACE_CONTRACT / history` 文档。
+6. 重跑 `XXXS5` 做定点审计，并对活动五样例套件逐样例 compare。

@@ -50,9 +50,11 @@ def main() -> int:
 
     print(f"run_id={summary['run_id']}")
     print(f"total_patch_count={summary['total_patch_count']}")
-    print(f"processed_patch_count={summary['processed_patch_count']}")
+    print(f"input_found_count={summary['input_found_count']}")
+    print(f"fixed_output_count={summary['fixed_output_count']}")
     print(f"skip_missing_count={summary['skip_missing_count']}")
     print(f"skip_error_count={summary['skip_error_count']}")
+    print(f"global_merge_input_count={summary['global_merge_input_count']}")
     print(f"output_path={summary['output_path']}")
     print(f"log_path={summary['log_path']}")
     print(f"summary_path={summary['summary_path']}")

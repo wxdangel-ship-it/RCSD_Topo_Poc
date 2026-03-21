@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import shapefile
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -103,9 +104,13 @@ def resolve_geojson_crs(doc: dict[str, Any], default_crs_text: Optional[str]) ->
     return DEFAULT_GEOJSON_CRS, "geojson-default"
 
 
-@lru_cache(maxsize=16)
-def _get_transformer(source_crs_text: str) -> Transformer:
-    return Transformer.from_crs(CRS.from_user_input(source_crs_text), TARGET_CRS, always_xy=True)
+@lru_cache(maxsize=64)
+def _get_transformer(source_crs_text: str, target_crs_text: str) -> Transformer:
+    return Transformer.from_crs(
+        CRS.from_user_input(source_crs_text),
+        CRS.from_user_input(target_crs_text),
+        always_xy=True,
+    )
 
 
 def _finite_bounds(geometry: BaseGeometry | None, *, stage: str) -> tuple[float, float, float, float] | None:
@@ -137,9 +142,17 @@ def _ensure_source_geometry_matches_crs(geometry: BaseGeometry, source_crs: CRS)
         )
 
 
-def _ensure_geometry_in_3857_extent(geometry: BaseGeometry | None, *, stage: str) -> BaseGeometry | None:
+def _ensure_geometry_in_target_extent(
+    geometry: BaseGeometry | None,
+    *,
+    target_crs: CRS,
+    stage: str,
+) -> BaseGeometry | None:
     bounds = _finite_bounds(geometry, stage=stage)
     if bounds is None:
+        return geometry
+
+    if target_crs != TARGET_CRS:
         return geometry
 
     min_x, min_y, max_x, max_y = bounds
@@ -149,35 +162,89 @@ def _ensure_geometry_in_3857_extent(geometry: BaseGeometry | None, *, stage: str
     return geometry
 
 
-def transform_geometry_to_3857(geometry: BaseGeometry, source_crs: CRS) -> BaseGeometry:
+def transform_geometry_to_target(geometry: BaseGeometry, source_crs: CRS, target_crs: CRS) -> BaseGeometry:
     _ensure_source_geometry_matches_crs(geometry, source_crs)
 
-    if source_crs == TARGET_CRS:
-        return _ensure_geometry_in_3857_extent(
+    if source_crs == target_crs:
+        return _ensure_geometry_in_target_extent(
             geometry,
-            stage="source geometry already declared as EPSG:3857",
+            target_crs=target_crs,
+            stage=f"source geometry already declared as {target_crs.to_string()}",
         )
 
-    transformer = _get_transformer(source_crs.to_string())
+    transformer = _get_transformer(source_crs.to_string(), target_crs.to_string())
     transformed = shapely_transform(transformer.transform, geometry)
-    return _ensure_geometry_in_3857_extent(
+    return _ensure_geometry_in_target_extent(
         transformed,
-        stage=f"geometry transformed from {source_crs.to_string()} to {TARGET_CRS.to_string()}",
+        target_crs=target_crs,
+        stage=f"geometry transformed from {source_crs.to_string()} to {target_crs.to_string()}",
     )
 
 
-def read_geojson_features(path: Path, *, default_crs_text: Optional[str]) -> GeoJsonReadResult:
+def transform_geometry_to_3857(geometry: BaseGeometry, source_crs: CRS) -> BaseGeometry:
+    return transform_geometry_to_target(geometry, source_crs, TARGET_CRS)
+
+
+def read_geojson_features(
+    path: Path,
+    *,
+    default_crs_text: Optional[str],
+    target_crs_text: Optional[str] = None,
+) -> GeoJsonReadResult:
     doc = json.loads(path.read_text(encoding="utf-8"))
     source_crs, crs_source = resolve_geojson_crs(doc, default_crs_text)
+    target_crs = TARGET_CRS if target_crs_text is None else CRS.from_user_input(target_crs_text)
     features: list[GeoJsonFeature] = []
     for feature in doc.get("features", []):
         geometry_payload = feature.get("geometry")
         if geometry_payload is None:
             continue
-        geometry = transform_geometry_to_3857(shape(geometry_payload), source_crs)
+        geometry = transform_geometry_to_target(shape(geometry_payload), source_crs, target_crs)
         features.append(
             GeoJsonFeature(
                 properties=dict(feature.get("properties") or {}),
+                geometry=geometry,
+            )
+        )
+
+    return GeoJsonReadResult(features=features, source_crs=source_crs, crs_source=crs_source)
+
+
+def resolve_shapefile_crs(path: Path, default_crs_text: Optional[str]) -> tuple[CRS, str]:
+    prj_path = path.with_suffix(".prj")
+    if prj_path.is_file():
+        prj_text = prj_path.read_text(encoding="utf-8", errors="ignore").strip()
+        if prj_text:
+            return CRS.from_wkt(prj_text), "shapefile.prj"
+
+    if default_crs_text:
+        return CRS.from_user_input(default_crs_text), "default"
+
+    raise ValueError(f"CRS not found for shapefile and no default CRS configured: {path}")
+
+
+def read_shapefile_features(
+    path: Path,
+    *,
+    default_crs_text: Optional[str],
+    target_crs_text: Optional[str] = None,
+) -> GeoJsonReadResult:
+    source_crs, crs_source = resolve_shapefile_crs(path, default_crs_text)
+    target_crs = TARGET_CRS if target_crs_text is None else CRS.from_user_input(target_crs_text)
+    reader = shapefile.Reader(str(path))
+    field_names = [field[0] for field in reader.fields[1:]]
+
+    features: list[GeoJsonFeature] = []
+    for shape_record in reader.iterShapeRecords():
+        geometry_payload = shape_record.shape.__geo_interface__
+        geometry = transform_geometry_to_target(shape(geometry_payload), source_crs, target_crs)
+        properties = {
+            field_names[index]: shape_record.record[index]
+            for index in range(len(field_names))
+        }
+        features.append(
+            GeoJsonFeature(
+                properties=properties,
                 geometry=geometry,
             )
         )
@@ -216,7 +283,11 @@ def minimal_repair(geometry: BaseGeometry | None) -> BaseGeometry | None:
     candidate = extract_polygonal(geometry)
     if candidate is None:
         return None
-    candidate = _ensure_geometry_in_3857_extent(candidate, stage="polygonal geometry before repair")
+    candidate = _ensure_geometry_in_target_extent(
+        candidate,
+        target_crs=TARGET_CRS,
+        stage="polygonal geometry before repair",
+    )
     if candidate.is_valid:
         return candidate
 
@@ -226,7 +297,11 @@ def minimal_repair(geometry: BaseGeometry | None) -> BaseGeometry | None:
         candidate = None
 
     if candidate is not None:
-        candidate = _ensure_geometry_in_3857_extent(candidate, stage="polygonal geometry after make_valid")
+        candidate = _ensure_geometry_in_target_extent(
+            candidate,
+            target_crs=TARGET_CRS,
+            stage="polygonal geometry after make_valid",
+        )
 
     if candidate is not None and candidate.is_valid:
         return candidate
@@ -242,7 +317,11 @@ def minimal_repair(geometry: BaseGeometry | None) -> BaseGeometry | None:
     if candidate is None:
         return None
 
-    candidate = _ensure_geometry_in_3857_extent(candidate, stage="polygonal geometry after buffer(0)")
+    candidate = _ensure_geometry_in_target_extent(
+        candidate,
+        target_crs=TARGET_CRS,
+        stage="polygonal geometry after buffer(0)",
+    )
     if candidate.is_empty or not candidate.is_valid:
         return None
     return candidate
@@ -272,6 +351,28 @@ def geometry_bounds(geometry: BaseGeometry | None) -> list[float] | None:
     return list(bounds)
 
 
+def aggregate_bounds(geometries: Iterable[BaseGeometry]) -> list[float] | None:
+    bounds_values = [geometry_bounds(geometry) for geometry in geometries]
+    bounds_values = [bounds for bounds in bounds_values if bounds is not None]
+    if not bounds_values:
+        return None
+
+    min_x = min(bounds[0] for bounds in bounds_values)
+    min_y = min(bounds[1] for bounds in bounds_values)
+    max_x = max(bounds[2] for bounds in bounds_values)
+    max_y = max(bounds[3] for bounds in bounds_values)
+    return [float(min_x), float(min_y), float(max_x), float(max_y)]
+
+
+def resolve_case_insensitive_field_name(properties: dict[str, Any], candidates: Iterable[str]) -> str | None:
+    lower_map = {str(key).lower(): str(key) for key in properties.keys()}
+    for candidate in candidates:
+        resolved = lower_map.get(candidate.lower())
+        if resolved is not None:
+            return resolved
+    return None
+
+
 def _json_compatible(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _json_compatible(item) for key, item in value.items()}
@@ -290,7 +391,7 @@ def write_json(path: Path, payload: Any) -> None:
         json.dump(_json_compatible(payload), fp, ensure_ascii=False, indent=2, allow_nan=False)
 
 
-def write_geojson(path: Path, features: Iterable[dict[str, Any]]) -> None:
+def write_geojson(path: Path, features: Iterable[dict[str, Any]], *, crs_text: str | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     feature_items = []
     for feature in features:
@@ -306,7 +407,7 @@ def write_geojson(path: Path, features: Iterable[dict[str, Any]]) -> None:
     payload = {
         "type": "FeatureCollection",
         "name": path.stem,
-        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+        "crs": {"type": "name", "properties": {"name": crs_text or TARGET_CRS.to_string()}},
         "features": feature_items,
     }
     with path.open("w", encoding="utf-8") as fp:

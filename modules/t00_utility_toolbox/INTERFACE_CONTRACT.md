@@ -5,33 +5,29 @@
 - 模块 ID：`t00_utility_toolbox`
 - 模块名称：`T00 Utility Toolbox`
 - 当前工具：
-  - Tool1 `Patch 数据整理脚本`
-  - Tool2 `全量 DriveZone 的预处理与合并`
-  - Tool3 `全量 Intersection 的预处理与汇总`
+  - Tool1 `Patch 数据整理`
+  - Tool2 `DriveZone per-patch fix + 全局 merge`
+  - Tool3 `Intersection 逐 Patch 预处理与汇总`
+  - Tool4 `A200 road 增加 patch_id`
+  - Tool5 `A200 road 增加 SW 原始 kind`
 
-本文件用于固化 T00 当前稳定的输入、输出、覆盖、跳过与摘要语义。实现细节可继续补足，但不得偏离本契约。
+本文件用于固化 `T00` 当前稳定的输入、输出、覆盖、跳过与摘要语义。
 
 ## 2. 通用约束
 
 - 路径口径：Patch 子目录统一使用 `Vector/`
-- CRS 口径：所有几何处理统一在 `EPSG:3857`
-- 修复口径：允许最小修复，仅用于保证流程可执行；修复失败则跳过并记录异常
+- CRS 口径：Tool2 / Tool3 统一 `EPSG:3857`；Tool4 / Tool5 通过 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
+- 修复口径：只允许最小修复；修复失败则跳过并记录异常
 - 压缩口径：统一为拓扑保持的几何简化
 - 覆盖口径：旧输出已存在时先删除再重建
-- 执行体验：命令行输出至少包含当前工具开始/结束、当前阶段、Patch 进度和最终统计
+- 执行体验：命令行必须输出工具开始/结束、阶段级和 Patch / 记录级进度
 
 ## 3. Tool1 契约
 
-### 3.1 输入
+### 3.1 输入与输出
 
-- 源目录（Windows）：`D:\TestData\POC_Data\数据整理\vectors`
-- 源目录（WSL）：`/mnt/d/TestData/POC_Data/数据整理/vectors`
-- `PatchID` 识别方式：一级子目录名；目录名必须为纯数字
-
-### 3.2 输出
-
-- 目标根目录（Windows）：`D:\TestData\POC_Data\patch_all`
-- 目标根目录（WSL）：`/mnt/d/TestData/POC_Data/patch_all`
+- 源目录：`D:\TestData\POC_Data\数据整理\vectors`
+- 目标根目录：`D:\TestData\POC_Data\patch_all`
 - 正式输出：
 
 ```text
@@ -41,54 +37,57 @@
   Traj/
 ```
 
-### 3.3 覆盖、异常与摘要
+### 3.2 覆盖、异常与摘要
 
 - 复跑时只清空目标 `<PatchID>/Vector/`
 - 源 Patch 异常时跳过并记失败，不中断全量
-- 摘要最少包含：
+- 摘要至少包含：
   - `total_patch_count`
   - `success_count`
   - `failure_count`
   - `skip_count`
   - 每个 Patch 的文件拷贝数
   - 异常原因
-- 固定统计关系：
-  - `success_count + failure_count = total_patch_count`
-  - `skip_count` 是 `failure_count` 的子类统计
+- `skip_count` 是 `failure_count` 的子类统计
 
 ## 4. Tool2 契约
 
 ### 4.1 输入与输出
 
-- 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone.geojson`
-- 正式输出：`D:\TestData\POC_Data\patch_all\DriveZone.geojson`
-- 输出坐标必须真实为 `EPSG:3857`
+- 单 Patch 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone.geojson`
+- 单 Patch fix 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone_fix.geojson`
+- 全局输出：`D:\TestData\POC_Data\patch_all\DriveZone.geojson`
+- 输出 CRS：`EPSG:3857`
 
 ### 4.2 单 Patch 处理
 
-- 读取单个 Patch 的 `DriveZone.geojson`
-- 若输入 CRS 非 `3857`，先重投影到 `3857`
-- 允许最小限度几何修复；失败则跳过该 Patch 并记异常
-- 对单 Patch 面进行合并
-- 合并后执行 `+5m / -5m`
-- 再做一次拓扑保持的几何简化
+- 读取 `DriveZone.geojson`
+- 必要时投影到 `3857`
+- 最小修复
+- 单 Patch 面合并
+- `+5m / -5m`
+- 单 Patch 拓扑保持简化
+- 写出 `DriveZone_fix.geojson`
 
 ### 4.3 全量处理
 
-- 将所有单 Patch 的处理结果再做一次全量面合并
-- 全量合并完成后，再进行一次拓扑保持的几何简化
-- 输出一个全局 `DriveZone.geojson`
+- 收集所有成功生成的 `DriveZone_fix.geojson`
+- 基于这些 fix 结果做全量面合并
+- 全量合并后再做一次拓扑保持简化
+- 写出根目录全局 `DriveZone.geojson`
 
 ### 4.4 覆盖、缺失输入与摘要
 
-- 旧输出已存在时先删除再重建
-- 缺失 `DriveZone.geojson` 时按 `warning / skip` 处理，不影响全量继续执行
-- 摘要最少包含：
+- 已存在 `DriveZone_fix.geojson` 时先删除再重建
+- 已存在根目录 `DriveZone.geojson` 时先删除再重建
+- 缺失 `DriveZone.geojson` 按 `warning / skip` 处理，不中断全量
+- 摘要至少包含：
   - `total_patch_count`
   - `input_found_count`
-  - `processed_patch_count`
+  - `fixed_output_count`
   - `skip_missing_count`
   - `skip_error_count`
+  - `global_merge_input_count`
   - 输出要素统计
   - 异常原因摘要
 
@@ -97,57 +96,96 @@
 ### 5.1 输入与输出
 
 - 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\Intersection.geojson`
-- 正式输出：`D:\TestData\POC_Data\patch_all\Intersection.geojson`
-- 输出坐标必须真实为 `EPSG:3857`
+- 输出：`D:\TestData\POC_Data\patch_all\Intersection.geojson`
+- 输出 CRS：`EPSG:3857`
 
-### 5.2 单 Patch 处理
+### 5.2 处理语义
 
-- 读取单个 Patch 的 `Intersection.geojson`
-- 若输入 CRS 非 `3857`，先重投影到 `3857`
-- 允许最小限度几何修复；失败则跳过该 Patch 并记异常
-- 对每个面对象做拓扑保持的几何简化
-- 保留原始属性，并新增 `patchid`
+- 单 Patch 内逐要素做拓扑保持简化
+- 保留原始属性并新增 `patchid`
+- 全量阶段只汇总，不做面合并
+- 缺失输入按 `warning / skip` 处理
 
-### 5.3 全量处理
+## 6. Tool4 契约
 
-- 将所有 Patch 下处理后的 `Intersection` 要素汇总到一个文件
-- 不做面合并
-- 输出一个全局 `Intersection.geojson`
+### 6.1 输入与输出
 
-### 5.4 覆盖、缺失输入、属性与摘要
+- 输入一：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road.shp`
+- 输入二：`D:\TestData\POC_Data\first_layer_road_net_v1_patch\rc_patch_road.shp`
+- 正式输出：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road_patch.geojson`
+- 异常输出：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road_patch_unmatched.geojson`
+- 输出 CRS：`TARGET_EPSG`，默认 `3857`
 
-- 旧输出已存在时先删除再重建
-- 缺失 `Intersection.geojson` 时按 `warning / skip` 处理，不影响全量继续执行
-- 原始属性默认保留
-- `patchid` 冲突时应采用最小破坏策略，并在摘要中说明
-- 摘要最少包含：
-  - `total_patch_count`
-  - `input_found_count`
-  - `processed_patch_count`
-  - `skip_missing_count`
-  - `skip_error_count`
-  - 输出要素统计
-  - 异常原因摘要
+### 6.2 关联契约
 
-## 6. 持久化输出边界
+- 关联规则：`A200_road.id = rc_patch_road.road_id`
+- 字段读取需兼容大小写差异
+- 输出字段统一命名为 `patch_id`
+- 同一 `road_id` 多次出现但 `patch_id` 一致，可视为一致重复
+- 同一 `road_id` 对应多个不同 `patch_id` 时，必须记为冲突异常
 
-- Tool1：Patch 骨架与 `Vector/` 归位是正式输出
-- Tool2：根目录全局 `DriveZone.geojson` 是正式输出
+### 6.3 摘要契约
+
+- 摘要至少包含：
+  - `total_a200_count`
+  - `matched_count`
+  - `unmatched_count`
+  - `duplicate_road_id_count`
+  - `conflicting_patch_id_count`
+  - 输出路径
+  - 异常说明
+
+## 7. Tool5 契约
+
+### 7.1 输入与输出
+
+- 输入一：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road_patch.geojson`
+- 输入二：`D:\TestData\POC_Data\first_layer_road_net_v0\SW\A200-2025M12-road.geojson`
+- 输出：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road_patch_kind.geojson`
+- 输出 CRS：`TARGET_EPSG`，默认 `3857`
+
+### 7.2 处理契约
+
+- 每条 `A200_road_patch` 在目标 CRS 下构建 `1m` Buffer
+- 用空间索引查找被 Buffer 完全包含的 SW 线要素
+- 读取 SW `Kind`
+- 按 `"|"` 拆分、去重、重组
+- 输出字段统一命名为 `kind`
+- 若没有匹配到 SW road，`kind` 置空，记入 `unmatched_kind_count`
+
+### 7.3 摘要契约
+
+- 摘要至少包含：
+  - `total_a200_patch_count`
+  - `sw_feature_count`
+  - `matched_kind_count`
+  - `unmatched_kind_count`
+  - `empty_kind_count`
+  - 输出路径
+  - 异常说明
+  - 使用的空间谓词
+
+## 8. 持久化输出边界
+
+- Tool1：`patch_all` 目录骨架与 `Vector/` 归位是正式输出
+- Tool2：per-patch `DriveZone_fix.geojson` 与根目录全局 `DriveZone.geojson` 都是正式输出
 - Tool3：根目录全局 `Intersection.geojson` 是正式输出
-- Tool2 / Tool3 的单 Patch 处理中间结果默认不是契约级正式输出
+- Tool4：`A200_road_patch.geojson` 与 `A200_road_patch_unmatched.geojson` 是正式输出
+- Tool5：`A200_road_patch_kind.geojson` 是正式输出
 
-## 7. 非范围契约
+## 9. 非范围契约
 
 当前不承诺以下能力：
 
-- Tool4+
+- Tool6+
+- Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
-- 强制持久化 Tool2 / Tool3 的单 Patch 中间结果
-- 超出最小修复边界的人工推断式修复
+- 重型产线编排
+- 超出当前需求的中间产物正式化治理
 
-## 8. 后续实现注意事项
+## 10. 后续实现注意事项
 
-- 参数名、日志文件名和具体 CLI 形式可继续在脚本中补足
-- GeoJSON 缺失 CRS 时，允许通过脚本头部配置默认 CRS，但不得在实现中静默猜测
-- 任何新增能力若触及非范围项，必须先更新规格文档并重新评审
+- 参数名、日志文件名和具体 CLI 形式可继续在脚本层补足
+- 但不得偏离当前契约语义
+- 若新增能力触及非范围项，必须先更新规格与契约

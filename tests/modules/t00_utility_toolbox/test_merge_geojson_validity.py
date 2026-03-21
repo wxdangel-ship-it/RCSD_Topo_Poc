@@ -71,19 +71,70 @@ def test_drivezone_merge_skips_missing_crs_patch_with_out_of_range_lonlat_bounds
         )
     )
 
+    fixed_output_path = patch_all_root / "1002" / "Vector" / "DriveZone_fix.geojson"
     output_path = patch_all_root / "DriveZone.geojson"
     output_text = output_path.read_text(encoding="utf-8")
     output_doc = json.loads(output_text)
+    fixed_output_doc = json.loads(fixed_output_path.read_text(encoding="utf-8"))
 
     assert summary["processed_patch_count"] == 1
+    assert summary["fixed_output_count"] == 1
+    assert summary["global_merge_input_count"] == 1
     assert summary["skip_error_count"] == 1
     assert summary["output_feature_count"] == 1
     assert "Infinity" not in output_text
     assert "NaN" not in output_text
     assert output_doc["type"] == "FeatureCollection"
     assert output_doc["crs"]["properties"]["name"] == "EPSG:3857"
+    assert fixed_output_doc["type"] == "FeatureCollection"
+    assert fixed_output_doc["crs"]["properties"]["name"] == "EPSG:3857"
     assert summary["patch_results"][0]["status"] == "skip_error"
     assert "missing or incorrect CRS metadata" in summary["patch_results"][0]["error_reason"]
+
+
+def test_drivezone_merge_writes_fix_outputs_before_global_merge(tmp_path: Path) -> None:
+    patch_all_root = tmp_path / "patch_all"
+
+    _write_polygon_feature_collection(
+        patch_all_root / "3001" / "Vector" / "DriveZone.geojson",
+        [
+            [116.30, 39.90],
+            [116.302, 39.90],
+            [116.302, 39.902],
+            [116.30, 39.902],
+            [116.30, 39.90],
+        ],
+    )
+    _write_polygon_feature_collection(
+        patch_all_root / "3002" / "Vector" / "DriveZone.geojson",
+        [
+            [116.305, 39.905],
+            [116.307, 39.905],
+            [116.307, 39.907],
+            [116.305, 39.907],
+            [116.305, 39.905],
+        ],
+    )
+
+    summary = run_drivezone_merge(
+        DriveZoneMergeConfig(
+            patch_all_root=patch_all_root,
+            run_id="test_drivezone_fix_outputs",
+        )
+    )
+
+    fix_3001 = patch_all_root / "3001" / "Vector" / "DriveZone_fix.geojson"
+    fix_3002 = patch_all_root / "3002" / "Vector" / "DriveZone_fix.geojson"
+    global_output = patch_all_root / "DriveZone.geojson"
+
+    assert fix_3001.is_file()
+    assert fix_3002.is_file()
+    assert global_output.is_file()
+    assert summary["processed_patch_count"] == 2
+    assert summary["fixed_output_count"] == 2
+    assert summary["global_merge_input_count"] == 2
+    assert summary["output_feature_count"] == 1
+    assert summary["output_bounds_3857"] is not None
 
 
 def test_intersection_merge_skips_missing_crs_patch_with_out_of_range_lonlat_bounds(tmp_path: Path) -> None:

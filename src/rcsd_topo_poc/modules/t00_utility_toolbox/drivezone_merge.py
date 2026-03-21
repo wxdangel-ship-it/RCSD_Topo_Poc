@@ -8,11 +8,12 @@ from typing import Any
 from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
+    TARGET_CRS,
+    aggregate_bounds,
     announce,
     build_logger,
     build_run_id,
     close_logger,
-    geometry_bounds,
     list_patch_dirs,
     minimal_repair,
     polygon_part_count,
@@ -67,18 +68,20 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
         announce(logger, f"[Stage 1/4] Discover patch directories. total_patch_count={total_patch_count}")
 
         patch_results: list[dict[str, Any]] = []
-        processed_geometries = []
         input_found_count = 0
         processed_patch_count = 0
+        fixed_output_count = 0
         skip_missing_count = 0
         skip_error_count = 0
         total_input_feature_count = 0
 
-        announce(logger, "[Stage 2/4] Preprocess per-patch DriveZone and collect merged geometries.")
+        announce(logger, "[Stage 2/4] Preprocess per-patch DriveZone and write DriveZone_fix.geojson.")
         for index, patch_dir in enumerate(patch_dirs, start=1):
             patch_id = patch_dir.name
             input_path = patch_dir / "Vector" / "DriveZone.geojson"
+            fixed_output_path = patch_dir / "Vector" / "DriveZone_fix.geojson"
             announce(logger, f"[Patch {index}/{total_patch_count}] patch_id={patch_id} start")
+            remove_existing_output(fixed_output_path)
 
             if not input_path.is_file():
                 skip_missing_count += 1
@@ -87,6 +90,7 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
                         "patch_id": patch_id,
                         "status": "skip_missing",
                         "input_path": str(input_path),
+                        "fixed_output_path": str(fixed_output_path),
                         "input_feature_count": 0,
                         "output_polygon_count": 0,
                         "output_area_m2": 0.0,
@@ -128,13 +132,18 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
                 if simplified_geometry is None:
                     raise ValueError("single-patch simplify produced no valid polygonal geometry")
 
-                processed_geometries.append(simplified_geometry)
+                write_geojson(
+                    fixed_output_path,
+                    [{"properties": {}, "geometry": simplified_geometry}],
+                )
                 processed_patch_count += 1
+                fixed_output_count += 1
                 patch_results.append(
                     {
                         "patch_id": patch_id,
                         "status": "processed",
                         "input_path": str(input_path),
+                        "fixed_output_path": str(fixed_output_path),
                         "input_feature_count": len(read_result.features),
                         "source_crs": read_result.source_crs.to_string(),
                         "crs_source": read_result.crs_source,
@@ -155,6 +164,7 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
                         "patch_id": patch_id,
                         "status": "skip_error",
                         "input_path": str(input_path),
+                        "fixed_output_path": str(fixed_output_path),
                         "input_feature_count": 0,
                         "output_polygon_count": 0,
                         "output_area_m2": 0.0,
@@ -166,13 +176,41 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
                     f"[Patch {index}/{total_patch_count}] patch_id={patch_id} skip_error reason={exc}",
                 )
 
-        announce(logger, "[Stage 3/4] Merge per-patch DriveZone outputs into the global result.")
+        announce(logger, "[Stage 3/4] Merge per-patch DriveZone_fix outputs into the global result.")
         output_features: list[dict[str, Any]] = []
         output_polygon_count = 0
         output_area_m2 = 0.0
         output_bounds = None
-        if processed_geometries:
-            global_geometry = minimal_repair(unary_union(processed_geometries))
+        global_merge_input_count = 0
+        global_merge_geometries = []
+        for item in patch_results:
+            if item.get("status") != "processed":
+                continue
+
+            fixed_output_path = Path(item["fixed_output_path"])
+            if not fixed_output_path.is_file():
+                announce(logger, f"missing fixed output for global merge: patch_id={item['patch_id']}")
+                continue
+
+            read_result = read_geojson_features(
+                fixed_output_path,
+                default_crs_text=TARGET_CRS.to_string(),
+            )
+            polygon_geometries = []
+            for feature in read_result.features:
+                repaired = minimal_repair(feature.geometry)
+                if repaired is not None:
+                    polygon_geometries.append(repaired)
+
+            if not polygon_geometries:
+                announce(logger, f"global merge skip empty fixed output: patch_id={item['patch_id']}")
+                continue
+
+            global_merge_geometries.extend(polygon_geometries)
+            global_merge_input_count += 1
+
+        if global_merge_geometries:
+            global_geometry = minimal_repair(unary_union(global_merge_geometries))
             if global_geometry is not None:
                 global_geometry = simplify_polygonal(global_geometry, config.global_simplify_tolerance_meters)
 
@@ -180,7 +218,7 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
                 output_features = [{"properties": {}, "geometry": global_geometry}]
                 output_polygon_count = polygon_part_count(global_geometry)
                 output_area_m2 = float(global_geometry.area)
-                output_bounds = geometry_bounds(global_geometry)
+                output_bounds = aggregate_bounds([global_geometry])
 
         write_geojson(output_path, output_features)
 
@@ -195,8 +233,10 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
             "total_patch_count": total_patch_count,
             "input_found_count": input_found_count,
             "processed_patch_count": processed_patch_count,
+            "fixed_output_count": fixed_output_count,
             "skip_missing_count": skip_missing_count,
             "skip_error_count": skip_error_count,
+            "global_merge_input_count": global_merge_input_count,
             "total_input_feature_count": total_input_feature_count,
             "output_feature_count": len(output_features),
             "output_polygon_count": output_polygon_count,
@@ -212,8 +252,9 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
         announce(
             logger,
             "Tool2 DriveZone merge finished. "
-            f"processed_patch_count={processed_patch_count} skip_missing_count={skip_missing_count} "
-            f"skip_error_count={skip_error_count} output_feature_count={len(output_features)}",
+            f"fixed_output_count={fixed_output_count} global_merge_input_count={global_merge_input_count} "
+            f"skip_missing_count={skip_missing_count} skip_error_count={skip_error_count} "
+            f"output_feature_count={len(output_features)}",
         )
         return summary
     finally:

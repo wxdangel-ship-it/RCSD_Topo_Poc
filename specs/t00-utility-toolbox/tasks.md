@@ -1,34 +1,38 @@
 # T00 Utility Toolbox 任务清单
 
-## 1. 本轮实现任务
+## 1. 本轮编码任务
 
-- [x] 盘点现有 T00 / Tool1 的目录、入口、日志和文档位置
-- [x] 在现有 T00 风格下实现 Tool2 `DriveZone` 预处理与全量合并
-- [x] 在现有 T00 风格下实现 Tool3 `Intersection` 预处理与全量汇总
-- [x] 为 Tool2 / Tool3 补最小共享底层工具，避免重复实现
-- [x] 为 Tool2 / Tool3 提供阶段级和 Patch 级进度输出
-- [x] 更新 T00 的 `README / AGENTS / INTERFACE_CONTRACT`
-- [x] 更新 T00 的 `spec / plan / tasks`
-- [x] 修正 T00 `architecture/*` 中与 Tool1-only 状态冲突的源事实
-- [x] 补录新增执行入口到入口注册表
+- [x] 盘点现有 T00 / Tool1 / Tool2 结构与脚本入口
+- [x] 修正 Tool2 为 per-patch `DriveZone_fix.geojson` + 根目录全局 `DriveZone.geojson`
+- [x] 新增 Tool4：`A200_road_patch.geojson`
+- [x] 新增 Tool4 unmatched 输出：`A200_road_patch_unmatched.geojson`
+- [x] 新增 Tool5：`A200_road_patch_kind.geojson`
+- [x] 为 Tool2 / Tool4 / Tool5 补共享 CRS、字段兼容、摘要写出和进度打印能力
+- [x] 更新 `README / AGENTS / INTERFACE_CONTRACT`
+- [x] 更新 `spec / plan / tasks`
+- [x] 更新 T00 architecture 与入口注册表中的最小必要源事实
+- [x] 增加定向测试并做语法 / 单测验证
 
-## 2. 后续待办
+## 2. 内网验证前任务
 
-- [ ] 在真实 `D:\TestData\POC_Data\patch_all` 数据路径上跑通 Tool2
-- [ ] 在真实 `D:\TestData\POC_Data\patch_all` 数据路径上跑通 Tool3
-- [ ] 基于真实运行结果复核缺失输入和异常 Patch 的统计摘要
-- [ ] 若真实数据暴露 CRS 缺口，再仅做最小必要参数调整
+- [ ] 在真实 `D:\TestData\POC_Data\patch_all` 路径运行 Tool2
+- [ ] 在真实 `D:\TestData\POC_Data\first_layer_road_net_v0` / `v1_patch` 路径运行 Tool4
+- [ ] 在真实 `D:\TestData\POC_Data\first_layer_road_net_v0` 路径运行 Tool5
+- [ ] 复核 Tool2 per-patch fix 输出数量与摘要一致
+- [ ] 复核 Tool4 unmatched / conflict 统计
+- [ ] 复核 Tool5 `kind` 拆分、去重、重组是否符合规则
 
-## 3. 推荐实现顺序
+## 3. 推荐执行顺序
 
-1. Tool1
-2. Tool2
-3. Tool3
+1. Tool2
+2. Tool4
+3. Tool5
 
 ## 4. 本轮不做
 
 - [x] 不返工 Tool1 业务逻辑
-- [x] 不扩展 Tool4+
-- [x] 不做复杂基线治理
-- [x] 不强制持久化 Tool2 / Tool3 的单 Patch 中间结果
-- [x] 不因为未来扩展而提前搭重型框架
+- [x] 不重写 Tool3
+- [x] 不扩展 Tool6+
+- [x] 不新增重型框架
+- [x] 不引入复杂 manifest / 数据库治理
+- [x] 不修改与 T00 无关的业务模块

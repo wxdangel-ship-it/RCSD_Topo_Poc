@@ -296,3 +296,28 @@
 - 旧语义修正候选 freeze 继续保留为历史候选：
   - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs_semantic_fix_candidate/`
 - 它们不再作为当前活动基线，但仍可用于追溯差异来源。
+
+## 11. 当前性能口径
+
+### 11.1 当前已知阶段级热点
+- A200 全量运行下，`Step2` 是当前绝对主瓶颈。
+- `Step4` 与 `Step5` 次之，但二者当前仍明显受同一双向构段内核影响。
+- `debug=true` 会显著增加导出与审计 I/O 成本，但不改变最终业务结果。
+
+### 11.2 当前正式性能约束
+- 所有后续性能优化都必须同时对齐当前活动三样例基线：
+  - `XXXS`
+  - `XXXS2`
+  - `XXXS3`
+- 若任一样例结果与活动基线不一致，必须先产出差异审计，再由用户确认是否接受。
+- 性能优化不得通过修改当前 accepted 业务语义换取速度。
+
+### 11.3 当前首轮已落地优化
+- `Step2` validated 流程复用首轮已算出的 `segment_body_candidate_road_ids / cut_infos`，不再在 tighten 阶段重复 `_refine_segment_roads(...)`。
+- trunk validation 构建 directed adjacency 时，不再按 pair 全量扫描 `context.directed`，而是仅遍历当前 `allowed_road_ids`。
+- 以上优化自动作用于复用同一双向构段内核的：
+  - `Step2`
+  - `Step4`
+  - `Step5A`
+  - `Step5B`
+  - `Step5C`

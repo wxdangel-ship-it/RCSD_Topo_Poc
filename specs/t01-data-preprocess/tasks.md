@@ -8,16 +8,17 @@
 - [x] `XXXS` Skill v1.0 freeze baseline 已建立
 
 ## 本轮任务
-- [x] 统一 node 输入约束为 `closed_con in {2,3}`
-- [x] 统一排除 `road_kind = 1` 的封闭式道路
-- [x] 接入 `MAX_DUAL_CARRIAGEWAY_SEPARATION_M = 50.0`
-- [x] 接入 `MAX_SIDE_ACCESS_DISTANCE_M = 50.0`
-- [x] 补充 `closed_con / road_kind` 使用审计文档
-- [x] 补充 distance gate 集成文档
-- [x] 完成 `XXXS` 官方回归与 freeze compare
-- [ ] 若与现有 freeze 不一致，生成 candidate baseline 包并等待确认
+- [x] 审计当前 A200 `debug / no-debug` 阶段级性能瓶颈
+- [x] 确认 `Step2` validated 流程存在重复 `_refine_segment_roads(...)`
+- [x] 确认 trunk validation 中存在按 pair 重复全图扫描 `context.directed`
+- [x] 去除 validated 流程中的重复 `_refine_segment_roads(...)`
+- [x] 将 trunk validation 的 directed adjacency 构造改为仅遍历 `allowed_road_ids`
+- [x] 保持 `Step2 / Step4 / Step5` 共用同一优化后的双向构段内核
+- [x] 补充性能防回退测试
+- [x] 完成 `XXXS / XXXS2 / XXXS3` 官方回归与逐样例 baseline compare
 
 ## 后续待办
-- [ ] 根据本轮 compare 结果决定是否更新 freeze baseline
-- [ ] 继续完善大规模运行时的 low-memory / perf 收敛
+- [ ] 在内网 A200 上复测本轮性能优化后的 `debug / no-debug` 差异
+- [ ] 继续收敛 `Step2` 主计算热点，优先评估 path enumeration / validation 内核
+- [ ] 评估 `Step4 / Step5` staged runner 的 working-layer I/O 是否需要进一步降本
 - [ ] 继续补充更完整的 GIS 视觉验收与 case 审计能力

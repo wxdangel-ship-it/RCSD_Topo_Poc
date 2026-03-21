@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from shapely.geometry import LineString
@@ -967,6 +968,74 @@ def test_step2_side_access_distance_gate_moves_far_component_to_residual() -> No
     residual_info = current.support_info["step3_residual_infos"][0]
     assert residual_info["side_access_gate_passed"] is False
     assert residual_info["side_access_distance_m"] > 50.0
+
+
+def test_step2_tighten_reuses_precomputed_segment_candidates(monkeypatch) -> None:
+    roads = [
+        _road_record("r12", "1", "2"),
+        _road_record("r23", "2", "3"),
+        _road_record("r34", "3", "4"),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("r12", "r23"))
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("r12", "r23", "r34"),
+            trunk_road_ids=("r12", "r23"),
+            segment_road_ids=("r12", "r23", "r34"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["r12", "r23", "r34"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    def _fail_refine(*args, **kwargs):
+        raise AssertionError("_refine_segment_roads should not be recomputed when support_info already has candidates")
+
+    monkeypatch.setattr(step2_segment_poc, "_refine_segment_roads", _fail_refine)
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    assert tightened[0].segment_road_ids == ("r12", "r23", "r34")
+
+
+def test_step2_build_filtered_directed_adjacency_uses_allowed_road_subset() -> None:
+    roads = {
+        "r12": _road_record("r12", "1", "2"),
+        "r23": _road_record("r23", "2", "3"),
+        "r34": _road_record("r34", "3", "4"),
+    }
+    roads["r23"] = replace(roads["r23"], direction=2)
+    roads["r34"] = replace(roads["r34"], direction=3)
+    road_endpoints = {
+        "r12": ("1", "2"),
+        "r23": ("2", "3"),
+        "r34": ("3", "4"),
+    }
+
+    adjacency = step2_segment_poc._build_filtered_directed_adjacency(
+        roads,
+        road_endpoints=road_endpoints,
+        allowed_road_ids={"r12", "r23", "r34"},
+        exclude_left_turn=False,
+        left_turn_formway_bit=8,
+    )
+
+    assert [edge.road_id for edge in adjacency["1"]] == ["r12"]
+    assert [edge.road_id for edge in adjacency["2"]] == ["r12", "r23"]
+    assert "3" not in adjacency
+    assert [edge.road_id for edge in adjacency["4"]] == ["r34"]
 
 
 def test_step2_component_with_other_validated_trunk_is_cut_from_segment_body() -> None:

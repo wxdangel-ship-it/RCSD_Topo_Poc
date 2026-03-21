@@ -782,6 +782,11 @@ def _tighten_validated_segment_components(
         if validation.trunk_mode == "through_collapsed_corridor":
             body_candidate_road_ids = set(validation.trunk_road_ids)
             refine_cut_infos: list[dict[str, Any]] = []
+        elif "segment_body_candidate_road_ids" in support_info:
+            body_candidate_road_ids = {
+                str(road_id) for road_id in support_info.get("segment_body_candidate_road_ids", [])
+            }
+            refine_cut_infos = [dict(info) for info in support_info.get("segment_body_candidate_cut_infos", [])]
         else:
             body_candidate_road_ids, refine_cut_infos = _refine_segment_roads(
                 pair,
@@ -950,23 +955,28 @@ def _tighten_validated_segment_components(
 
 
 def _build_filtered_directed_adjacency(
-    context: Step1GraphContext,
+    roads: dict[str, RoadRecord],
     *,
+    road_endpoints: dict[str, tuple[str, str]],
     allowed_road_ids: set[str],
     exclude_left_turn: bool,
     left_turn_formway_bit: int,
 ) -> dict[str, tuple[TraversalEdge, ...]]:
     filtered_lists: dict[str, list[TraversalEdge]] = defaultdict(list)
-    for node_id, edges in context.directed.items():
-        for edge in edges:
-            if edge.road_id not in allowed_road_ids:
-                continue
-            road = context.roads.get(edge.road_id)
-            if road is None:
-                continue
-            if exclude_left_turn and _road_matches_formway_bit(road, left_turn_formway_bit):
-                continue
-            filtered_lists[node_id].append(edge)
+    for road_id in sorted(allowed_road_ids, key=_sort_key):
+        endpoints = road_endpoints.get(road_id)
+        if endpoints is None:
+            continue
+        road = roads.get(road_id)
+        if road is None:
+            continue
+        if exclude_left_turn and _road_matches_formway_bit(road, left_turn_formway_bit):
+            continue
+        snode_id, enode_id = endpoints
+        if road.direction in {0, 1, 2}:
+            filtered_lists[snode_id].append(TraversalEdge(road_id, snode_id, enode_id))
+        if road.direction in {0, 1, 3}:
+            filtered_lists[enode_id].append(TraversalEdge(road_id, enode_id, snode_id))
     return {node_id: tuple(edges) for node_id, edges in filtered_lists.items()}
 
 
@@ -1452,7 +1462,8 @@ def _evaluate_trunk(
             collapsed_warnings = ("dual_carriageway_separation_exceeded",)
 
     base_adjacency = _build_filtered_directed_adjacency(
-        context,
+        context.roads,
+        road_endpoints=road_endpoints,
         allowed_road_ids=pruned_road_ids,
         exclude_left_turn=False,
         left_turn_formway_bit=left_turn_formway_bit,
@@ -1480,7 +1491,8 @@ def _evaluate_trunk(
 
     if formway_mode == "strict":
         strict_adjacency = _build_filtered_directed_adjacency(
-            context,
+            context.roads,
+            road_endpoints=road_endpoints,
             allowed_road_ids=pruned_road_ids,
             exclude_left_turn=True,
             left_turn_formway_bit=left_turn_formway_bit,
@@ -1594,7 +1606,8 @@ def _evaluate_through_collapsed_corridor(
             warnings = ("formway_unreliable_warning",)
 
     support_adjacency = _build_filtered_directed_adjacency(
-        context,
+        context.roads,
+        road_endpoints=road_endpoints,
         allowed_road_ids=set(filtered_support_road_ids),
         exclude_left_turn=formway_mode == "strict",
         left_turn_formway_bit=left_turn_formway_bit,

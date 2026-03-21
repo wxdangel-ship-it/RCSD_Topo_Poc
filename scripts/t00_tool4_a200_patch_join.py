@@ -62,11 +62,12 @@ def main() -> int:
     print(f"unmatched_count={summary['unmatched_count']}")
     print(f"duplicate_road_id_count={summary['duplicate_road_id_count']}")
     print(f"conflicting_patch_id_count={summary['conflicting_patch_id_count']}")
+    print(f"multi_patch_assignment_count={summary['multi_patch_assignment_count']}")
     print(f"output_path={summary['output_path']}")
     print(f"unmatched_output_path={summary['unmatched_output_path']}")
     print(f"log_path={summary['log_path']}")
     print(f"summary_path={summary['summary_path']}")
-    return 0 if summary["unmatched_count"] == 0 and summary["conflicting_patch_id_count"] == 0 else 1
+    return 0 if summary["unmatched_count"] == 0 else 1
 
 
 if __name__ == "__main__":

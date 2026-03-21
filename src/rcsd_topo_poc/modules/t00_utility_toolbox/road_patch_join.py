@@ -68,6 +68,10 @@ def _should_report_progress(index: int, total: int, interval: int = PROGRESS_INT
     return index == 1 or index == total or index % interval == 0
 
 
+def _patch_id_sort_key(value: str) -> tuple[int, int | str]:
+    return (0, int(value)) if value.isdigit() else (1, value)
+
+
 def _reason_counter(features: list[dict[str, Any]]) -> dict[str, int]:
     counter = Counter()
     for feature in features:
@@ -157,6 +161,7 @@ def run_road_patch_join(config: RoadPatchJoinConfig) -> dict[str, Any]:
         announce(logger, "[Stage 3/4] Join patch_id back to A200_road.")
         matched_features: list[dict[str, Any]] = []
         unmatched_features: list[dict[str, Any]] = []
+        multi_patch_assignment_count = 0
 
         for index, feature in enumerate(a200_result.features, start=1):
             properties = dict(feature.properties)
@@ -169,11 +174,11 @@ def run_road_patch_join(config: RoadPatchJoinConfig) -> dict[str, Any]:
                 entry = rc_mapping.get(road_key)
                 if entry is None:
                     unmatched_reason = "no rc_patch_road match"
-                elif len(entry["patch_values"]) > 1:
-                    unmatched_reason = "conflicting patch_id candidates"
-                    properties["conflicting_patch_ids"] = "|".join(sorted(entry["patch_values"].keys()))
                 else:
-                    properties["patch_id"] = next(iter(entry["patch_values"].values()))
+                    patch_id_values = sorted(entry["patch_values"].keys(), key=_patch_id_sort_key)
+                    properties["patch_id"] = ",".join(patch_id_values)
+                    if len(patch_id_values) > 1:
+                        multi_patch_assignment_count += 1
 
             if unmatched_reason is None:
                 matched_features.append(
@@ -220,6 +225,7 @@ def run_road_patch_join(config: RoadPatchJoinConfig) -> dict[str, Any]:
             "unmatched_count": len(unmatched_features),
             "duplicate_road_id_count": duplicate_road_id_count,
             "conflicting_patch_id_count": conflicting_patch_id_count,
+            "multi_patch_assignment_count": multi_patch_assignment_count,
             "invalid_rc_count": invalid_rc_count,
             "matched_output_bounds": aggregate_bounds(feature["geometry"] for feature in matched_features),
             "unmatched_output_bounds": aggregate_bounds(feature["geometry"] for feature in unmatched_features),
@@ -230,7 +236,8 @@ def run_road_patch_join(config: RoadPatchJoinConfig) -> dict[str, Any]:
             logger,
             "Tool4 road patch join finished. "
             f"matched_count={summary['matched_count']} unmatched_count={summary['unmatched_count']} "
-            f"duplicate_road_id_count={duplicate_road_id_count} conflicting_patch_id_count={conflicting_patch_id_count}",
+            f"duplicate_road_id_count={duplicate_road_id_count} conflicting_patch_id_count={conflicting_patch_id_count} "
+            f"multi_patch_assignment_count={multi_patch_assignment_count}",
         )
         return summary
     finally:

@@ -31,7 +31,8 @@ class RoadKindEnrichConfig:
     sw_input_path: Path
     output_path: Path
     target_epsg: int = 3857
-    default_input_crs_text: str | None = None
+    a200_patch_default_crs_text: str | None = None
+    sw_default_crs_text: str | None = "EPSG:4326"
     buffer_distance_meters: float = 1.0
     spatial_predicate: str = "covers"
     run_id: str | None = None
@@ -110,12 +111,12 @@ def run_road_kind_enrich(config: RoadKindEnrichConfig) -> dict[str, Any]:
 
         a200_result = read_geojson_features(
             a200_patch_input_path,
-            default_crs_text=config.default_input_crs_text,
+            default_crs_text=config.a200_patch_default_crs_text,
             target_crs_text=target_crs_text,
         )
         sw_result = read_geojson_features(
             sw_input_path,
-            default_crs_text=config.default_input_crs_text,
+            default_crs_text=config.sw_default_crs_text,
             target_crs_text=target_crs_text,
         )
 
@@ -198,6 +199,8 @@ def run_road_kind_enrich(config: RoadKindEnrichConfig) -> dict[str, Any]:
             "kind_field": sw_kind_field,
             "spatial_predicate": config.spatial_predicate,
             "buffer_distance_meters": config.buffer_distance_meters,
+            "a200_patch_default_crs_text": config.a200_patch_default_crs_text,
+            "sw_default_crs_text": config.sw_default_crs_text,
             "total_a200_patch_count": total_a200_patch_count,
             "sw_feature_count": sw_feature_count,
             "matched_kind_count": matched_kind_count,

@@ -9,15 +9,15 @@
 - `T00` 不是 Skill
 - `T00` 不是业务生产模块
 - `T00` 不直接产出 RCSD 业务要素
-- `T00` 为项目内部工具提供统一落仓位置、固定脚本入口和轻量治理边界
+- `T00` 为项目内工具提供统一落仓位置、固定脚本入口和轻量治理边界
 
 ## 当前收录工具
 
 - Tool1：整理全量 Patch 矢量目录并初始化统一 `patch_all` 骨架
 - Tool2：对每个 Patch 的 `DriveZone` 生成 `DriveZone_fix.geojson`，再合并为根目录全局 `DriveZone.geojson`
 - Tool3：对全量 `Intersection` 做逐 Patch 预处理后汇总输出
-- Tool4：按 `A200_road.id = rc_patch_road.road_id` 给一层路网写入 `patch_id`
-- Tool5：基于 Tool4 输出与 SW 原始路网给一层路网写入原始 `kind`
+- Tool4：按 `A200_road.id = rc_patch_road.road_id` 给一层路网写入 `patch_id`；若存在 overlap，对多个 `patch_id` 用逗号拼接
+- Tool5：基于 Tool4 输出与 SW 原始路网给一层路网写入原始 `kind`；其中 `A200_road_patch` 按 `3857` 处理，SW 默认按 `4326` 读取后统一投到 `3857`
 
 ## 模块状态
 
@@ -26,7 +26,7 @@
 - Tool1 已完成
 - Tool2 已切换到修正版输出语义
 - Tool3 维持既有实现
-- Tool4 / Tool5 为本轮新增工具
+- Tool4 / Tool5 已支持 overlap patch_id 与分输入 CRS 口径
 
 `history/*` 仍不是当前轮次硬门禁。
 
@@ -39,6 +39,7 @@
 - Patch 子目录统一使用 `Vector/`
 - Tool2 / Tool3 几何处理统一在 `EPSG:3857`
 - Tool4 / Tool5 通过脚本头部 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
+- Tool5 对 `A200_road_patch` 与 SW 允许分别配置默认 CRS
 - “压缩”统一解释为拓扑保持的几何简化
 - 输出已存在时先删除再重建
 - 命令行执行过程中必须提供阶段级与 Patch / 记录级进度输出

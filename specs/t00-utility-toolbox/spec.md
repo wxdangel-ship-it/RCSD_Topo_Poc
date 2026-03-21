@@ -38,6 +38,9 @@
 - Tool2 默认目标 CRS 固定为 `EPSG:3857`
 - Tool3 当前沿用既有 `EPSG:3857` 口径
 - Tool4 / Tool5 在脚本顶部显式设置 `TARGET_EPSG`，默认值为 `3857`
+- Tool5 的两类输入默认 CRS 分别独立配置：
+  - `A200_road_patch` 默认 `EPSG:3857`
+  - SW 原始路网默认 `EPSG:4326`
 - 输入若非目标 CRS，先重投影到目标 CRS
 - 允许最小限度几何修复，仅用于保证流程可执行
 - 不做复杂人工推断式修复
@@ -177,7 +180,7 @@
 
 ### 8.1 目标
 
-基于 `A200_road` 与 `rc_patch_road` 的 road 级属性关联，为一层路网增加 `patch_id`，并输出无法关联或存在冲突的异常结果。
+基于 `A200_road` 与 `rc_patch_road` 的 road 级属性关联，为一层路网增加 `patch_id`，并输出无法关联的异常结果。
 
 ### 8.2 输入与输出
 
@@ -197,8 +200,10 @@
   - 正常唯一匹配
   - 无匹配
   - 重复但 `patch_id` 一致
-  - 重复且 `patch_id` 冲突
-- 若同一 `road_id` 对应多个不同 `patch_id`，不得 silently 取一个，必须纳入异常并写入冲突摘要
+  - overlap 导致同一 `road_id` 对应多个不同 `patch_id`
+- overlap 情况下，不再把该 road 记为 unmatched
+- overlap 情况下，`patch_id` 记录多个值，并按逗号 `,` 拼接
+- unmatched 只用于无匹配或缺失关键关联值
 
 ### 8.4 摘要要求
 
@@ -208,6 +213,7 @@
   - `unmatched_count`
   - `duplicate_road_id_count`
   - `conflicting_patch_id_count`
+  - `multi_patch_assignment_count`
   - 输出路径
   - 异常说明
 
@@ -227,13 +233,15 @@
 ### 9.3 处理流程
 
 1. 读取 Tool4 输出与 SW 原始路网
-2. 若输入不是 `TARGET_EPSG`，先统一投影
-3. 对每条 `A200_road_patch` 构建 `1m` 缓冲
-4. 使用空间索引查找被缓冲区包含的 SW 线要素
-5. 读取 SW 的 `Kind`
-6. 按单个道路种别拆分 `"|"`
-7. 去重后按 `"|"` 重新拼接
-8. 在输出中新增 `kind`
+2. `A200_road_patch` 默认按 `3857` 读取
+3. SW 原始路网默认按 `4326` 读取
+4. 将两者统一投影到 `TARGET_EPSG=3857`
+5. 对每条 `A200_road_patch` 构建 `1m` 缓冲
+6. 使用空间索引查找被缓冲区包含的 SW 线要素
+7. 读取 SW 的 `Kind`
+8. 按单个道路种别拆分 `"|"`
+9. 去重后按 `"|"` 重新拼接
+10. 在输出中新增 `kind`
 
 ### 9.4 约束与摘要
 
@@ -271,7 +279,7 @@
 
 - 必须防止 `T00` 从内部工具集合扩张为业务生产模块
 - Tool2 的 per-patch fix 与全局输出都要可复跑，避免旧输出残留干扰
-- Tool4 必须明确冲突 `road_id`，不能静默吞掉多值映射
+- Tool4 的 overlap `patch_id` 必须显式保留，不得 silently 丢弃
 - Tool5 必须以空间索引和稳定谓词保证性能与语义一致
 - 对缺失 CRS 的输入，只允许用脚本头部明确配置的默认 CRS，不得静默猜测
 

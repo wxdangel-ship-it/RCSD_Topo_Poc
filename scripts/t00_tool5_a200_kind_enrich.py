@@ -15,7 +15,8 @@ SW_INPUT_PATH = Path("/mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2
 OUTPUT_PATH = Path("/mnt/d/TestData/POC_Data/first_layer_road_net_v0/A200_road_patch_kind.geojson")
 
 TARGET_EPSG = 3857
-DEFAULT_INPUT_CRS = f"EPSG:{TARGET_EPSG}"
+A200_PATCH_DEFAULT_CRS = f"EPSG:{TARGET_EPSG}"
+SW_DEFAULT_CRS = "EPSG:4326"
 BUFFER_DISTANCE_METERS = 1.0
 SPATIAL_PREDICATE = "covers"
 
@@ -47,7 +48,8 @@ def main() -> int:
                 sw_input_path=SW_INPUT_PATH,
                 output_path=OUTPUT_PATH,
                 target_epsg=TARGET_EPSG,
-                default_input_crs_text=DEFAULT_INPUT_CRS,
+                a200_patch_default_crs_text=A200_PATCH_DEFAULT_CRS,
+                sw_default_crs_text=SW_DEFAULT_CRS,
                 buffer_distance_meters=BUFFER_DISTANCE_METERS,
                 spatial_predicate=SPATIAL_PREDICATE,
             )

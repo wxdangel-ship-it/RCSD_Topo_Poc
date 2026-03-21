@@ -17,6 +17,10 @@
 
 - 路径口径：Patch 子目录统一使用 `Vector/`
 - CRS 口径：Tool2 / Tool3 统一 `EPSG:3857`；Tool4 / Tool5 通过 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
+- Tool5 输入 CRS 口径：
+  - `A200_road_patch` 默认按 `EPSG:3857`
+  - SW 原始路网默认按 `EPSG:4326`
+  - 两者统一投影到 `TARGET_EPSG` 后再处理
 - 修复口径：只允许最小修复；修复失败则跳过并记录异常
 - 压缩口径：统一为拓扑保持的几何简化
 - 覆盖口径：旧输出已存在时先删除再重建
@@ -122,7 +126,9 @@
 - 字段读取需兼容大小写差异
 - 输出字段统一命名为 `patch_id`
 - 同一 `road_id` 多次出现但 `patch_id` 一致，可视为一致重复
-- 同一 `road_id` 对应多个不同 `patch_id` 时，必须记为冲突异常
+- 同一 `road_id` 对应多个不同 `patch_id` 时，不再视为 unmatched
+- overlap 情况下，`patch_id` 记录多个值，按逗号 `,` 拼接
+- unmatched 只用于无法关联 `road_id` 或缺失关键关联值的记录
 
 ### 6.3 摘要契约
 
@@ -132,6 +138,7 @@
   - `unmatched_count`
   - `duplicate_road_id_count`
   - `conflicting_patch_id_count`
+  - `multi_patch_assignment_count`
   - 输出路径
   - 异常说明
 
@@ -146,6 +153,9 @@
 
 ### 7.2 处理契约
 
+- `A200_road_patch` 默认按 `EPSG:3857`
+- SW 原始路网默认按 `EPSG:4326`
+- 两者统一投影到 `TARGET_EPSG` 后处理
 - 每条 `A200_road_patch` 在目标 CRS 下构建 `1m` Buffer
 - 用空间索引查找被 Buffer 完全包含的 SW 线要素
 - 读取 SW `Kind`

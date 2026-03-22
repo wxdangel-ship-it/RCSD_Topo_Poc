@@ -12,6 +12,9 @@
 - 基于最新 Step1–Step5C 成果，聚合生成 `segment.geojson`
 - 输出被 Segment 完全内含的 `inner_nodes.geojson`
 - 输出需人工评估的 `segment_error.geojson`
+- 并按错误类型拆分：
+  - `segment_error_s_grade_conflict.geojson`
+  - `segment_error_grade_kind_conflict.geojson`
 - 提供 `segment_summary.json / segment_build_table.csv / inner_nodes_summary.json` 便于审计
 
 ## 图层定义
@@ -35,6 +38,13 @@
 - 记录需人工评估的异常 Segment
 - 当前至少承载：
   - `s_grade = "0-0双"`，但中间 `junc_nodes` 仍出现 `grade_2 = 1 且 kind_2 = 4`
+  - 同一 `segmentid` 下出现多值 `s_grade`
+
+### segment_error_s_grade_conflict.geojson
+- 仅承载 `error_type = s_grade_conflict`
+
+### segment_error_grade_kind_conflict.geojson
+- 仅承载 `error_type = grade_kind_conflict`
 
 ## junc_nodes / inner_nodes 划分原则
 - 语义路口统一按：
@@ -57,13 +67,19 @@
 ### 规则 2：0-0双 中间路口约束
 - 若 segment 最终 `s_grade = "0-0双"`
 - 且其 `junc_nodes` 出现 `grade_2 = 1 且 kind_2 = 4`
-- 则输出到 `segment_error.geojson`
+- 则输出到：
+  - `segment_error.geojson`
+  - `segment_error_grade_kind_conflict.geojson`
 
 ## 当前未覆盖内容
 - 不回改 `Step1–Step5C` 主逻辑
 - 不在 `Step6` 中重新做构段搜索
 - 不在 `Step6` 中引入新的 seed / terminate / barrier 语义
 - 同一 `segmentid` 下 `s_grade` 多值冲突当前降级为 `segment_error.geojson` 审计：
+- 同一 `segmentid` 下 `s_grade` 多值冲突当前降级为错误审计：
   - `segment.geojson` 中按 `0-0双 > 0-1双 > 0-2双` 记录高等级值
+  - 同时输出到：
+    - `segment_error.geojson`
+    - `segment_error_s_grade_conflict.geojson`
   - 保留完整冲突值清单
   - 不在 `Step6` 内修复上游错误

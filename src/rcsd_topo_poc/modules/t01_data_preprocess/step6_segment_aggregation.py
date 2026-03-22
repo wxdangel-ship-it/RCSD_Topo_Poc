@@ -30,6 +30,10 @@ STEP6_SEGMENT_GRADE_VALUE = "0-0双"
 STEP6_ERROR_TYPE_S_GRADE_CONFLICT = "s_grade_conflict"
 STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT = "grade_kind_conflict"
 STEP6_S_GRADE_PRIORITY_ORDER = ("0-0双", "0-1双", "0-2双")
+STEP6_ERROR_LAYER_FILENAMES = {
+    STEP6_ERROR_TYPE_S_GRADE_CONFLICT: "segment_error_s_grade_conflict.geojson",
+    STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT: "segment_error_grade_kind_conflict.geojson",
+}
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,7 @@ class Step6Artifacts:
     segment_path: Path
     inner_nodes_path: Path
     segment_error_path: Path
+    error_layer_paths: dict[str, Path]
     segment_summary_path: Path
     segment_build_table_path: Path
     inner_nodes_summary_path: Path
@@ -374,6 +379,10 @@ def run_step6_segment_aggregation(
     segment_path = resolved_out_root / "segment.geojson"
     inner_nodes_path = resolved_out_root / "inner_nodes.geojson"
     segment_error_path = resolved_out_root / "segment_error.geojson"
+    error_layer_paths = {
+        error_type: resolved_out_root / filename
+        for error_type, filename in STEP6_ERROR_LAYER_FILENAMES.items()
+    }
     segment_summary_path = resolved_out_root / "segment_summary.json"
     segment_build_table_path = resolved_out_root / "segment_build_table.csv"
     inner_nodes_summary_path = resolved_out_root / "inner_nodes_summary.json"
@@ -396,6 +405,9 @@ def run_step6_segment_aggregation(
 
     segment_error_records = [record for record in segment_records if record.error_type is not None]
     write_geojson(segment_error_path, (_segment_error_feature(record) for record in segment_error_records))
+    for error_type, error_path in error_layer_paths.items():
+        matching_records = [record for record in segment_error_records if record.error_type == error_type]
+        write_geojson(error_path, (_segment_error_feature(record) for record in matching_records))
 
     segment_summary = {
         "run_id": resolved_run_id,
@@ -410,10 +422,14 @@ def run_step6_segment_aggregation(
         "s_grade_conflict_count": sum(
             1 for record in segment_records if record.error_type == STEP6_ERROR_TYPE_S_GRADE_CONFLICT
         ),
+        "grade_kind_conflict_count": sum(
+            1 for record in segment_records if record.error_type == STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT
+        ),
         "output_files": [
             segment_path.name,
             inner_nodes_path.name,
             segment_error_path.name,
+            *[path.name for path in error_layer_paths.values()],
             segment_summary_path.name,
             segment_build_table_path.name,
             inner_nodes_summary_path.name,
@@ -468,6 +484,7 @@ def run_step6_segment_aggregation(
         segment_path=segment_path,
         inner_nodes_path=inner_nodes_path,
         segment_error_path=segment_error_path,
+        error_layer_paths=error_layer_paths,
         segment_summary_path=segment_summary_path,
         segment_build_table_path=segment_build_table_path,
         inner_nodes_summary_path=inner_nodes_summary_path,

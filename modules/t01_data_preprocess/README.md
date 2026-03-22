@@ -224,6 +224,8 @@ python -m rcsd_topo_poc t01-step6-segment-aggregation-poc \
 - `segment.geojson`
 - `inner_nodes.geojson`
 - `segment_error.geojson`
+- `segment_error_s_grade_conflict.geojson`
+- `segment_error_grade_kind_conflict.geojson`
 - `segment_summary.json`
 - `segment_build_table.csv`
 - `inner_nodes_summary.json`
@@ -240,4 +242,10 @@ python -m rcsd_topo_poc t01-step6-segment-aggregation-poc \
 
 ### Step6 反查规则
 - 若 segment 两端 `pair_nodes` 的 `grade_2` 均为 `1`，则将该 segment 的 `s_grade` 轻调整为 `"0-0双"`
-- 若最终 `s_grade = "0-0双"` 且其中间 `junc_nodes` 出现 `grade_2 = 1 且 kind_2 = 4`，则输出到 `segment_error.geojson`
+- `segment_error.geojson` 是 Step6 的总错误图层
+- 若最终 `s_grade = "0-0双"` 且其中间 `junc_nodes` 出现 `grade_2 = 1 且 kind_2 = 4`，则同步输出到：
+  - `segment_error.geojson`
+  - `segment_error_grade_kind_conflict.geojson`
+- 若同一 `segmentid` 下出现多个 `s_grade`，则按 `0-0双 > 0-1双 > 0-2双` 选高等级写入 `segment.geojson`，并同步输出到：
+  - `segment_error.geojson`
+  - `segment_error_s_grade_conflict.geojson`

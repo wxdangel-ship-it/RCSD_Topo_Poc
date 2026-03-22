@@ -416,6 +416,7 @@
   - `s_grade` 应在同一 `segmentid` 内唯一；若出现多值，`Step6` 不做 silent fallback：
     - 按当前已接受优先级 `0-0双 > 0-1双 > 0-2双` 选择 `segment.geojson` 的 `s_grade`
     - 同时输出到 `segment_error.geojson`
+    - 若属于 `s_grade` 多值冲突，还必须同步输出到 `segment_error_s_grade_conflict.geojson`
     - 并记录 `s_grade` 冲突审计信息与被选中的高等级值
   - `pair_nodes` 顺序严格按 `segmentid` 的基础端点顺序输出：
     - `A_B -> A,B`
@@ -448,11 +449,14 @@
     - `grade_2 = 1`
     - 且 `kind_2 = 4`
   - 则该 segment 必须输出到 `segment_error.geojson` 供人工评估
+  - 同时必须同步输出到 `segment_error_grade_kind_conflict.geojson`
 
 ### 12.7 审计输出
 - `segment.geojson`
 - `inner_nodes.geojson`
 - `segment_error.geojson`
+- `segment_error_s_grade_conflict.geojson`
+- `segment_error_grade_kind_conflict.geojson`
 - `segment_summary.json`
 - `segment_build_table.csv`
 - `inner_nodes_summary.json`

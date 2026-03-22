@@ -146,6 +146,11 @@ def test_step6_builds_segment_inner_nodes_and_error_outputs(tmp_path: Path) -> N
     assert error_props["id"] == "1_4"
     assert error_props["error_type"] == "grade_kind_conflict"
     assert "3" in error_props["error_desc"]
+    grade_kind_doc = _load_geojson(artifacts.error_layer_paths["grade_kind_conflict"])
+    assert len(grade_kind_doc["features"]) == 1
+    assert grade_kind_doc["features"][0]["properties"]["error_type"] == "grade_kind_conflict"
+    s_grade_conflict_doc = _load_geojson(artifacts.error_layer_paths["s_grade_conflict"])
+    assert len(s_grade_conflict_doc["features"]) == 0
 
 
 def test_step6_pair_nodes_follow_segmentid_order(tmp_path: Path) -> None:
@@ -217,8 +222,14 @@ def test_step6_degrades_when_segment_contains_multiple_s_grades(tmp_path: Path) 
     assert error_props["new_s_grade"] == "0-0双"
     assert error_props["flag_s_grade_conflict"] is True
     assert "selected highest priority='0-0双'" in error_props["error_desc"]
+    s_grade_conflict_doc = _load_geojson(artifacts.error_layer_paths["s_grade_conflict"])
+    assert len(s_grade_conflict_doc["features"]) == 1
+    assert s_grade_conflict_doc["features"][0]["properties"]["error_type"] == "s_grade_conflict"
+    grade_kind_doc = _load_geojson(artifacts.error_layer_paths["grade_kind_conflict"])
+    assert len(grade_kind_doc["features"]) == 0
 
     build_rows = artifacts.segment_build_table_path.read_text(encoding="utf-8")
     assert "s_grade_conflict" in build_rows
     assert artifacts.summary["segment_error_count"] == 1
     assert artifacts.summary["s_grade_conflict_count"] == 1
+    assert artifacts.summary["grade_kind_conflict_count"] == 0

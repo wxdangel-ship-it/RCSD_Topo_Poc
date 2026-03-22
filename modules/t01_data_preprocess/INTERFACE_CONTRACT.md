@@ -393,6 +393,10 @@
     - `roads`
     - `error_type`
     - `error_desc`
+- `segment_error_s_grade_conflict.geojson`
+  - 仅记录 `error_type = s_grade_conflict`
+- `segment_error_grade_kind_conflict.geojson`
+  - 仅记录 `error_type = grade_kind_conflict`
 
 ### 13.4 junc_nodes / inner_nodes 划分
 - 若某语义路口关联的全部允许 road 都属于当前 segment：
@@ -420,6 +424,7 @@
     - `segment_error_count`
     - `s_grade_adjusted_count`
     - `s_grade_conflict_count`
+    - `grade_kind_conflict_count`
 - `segment_build_table.csv`
   - 至少包含：
     - `segmentid`

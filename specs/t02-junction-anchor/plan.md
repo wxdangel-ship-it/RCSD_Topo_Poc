@@ -1,6 +1,8 @@
 # T02 文档先行计划
 
-## 1. 当前阶段
+> 本文件是 T02 stage1 初始基线的变更计划工件。当前正式模块运行与契约以 `modules/t02_junction_anchor/*` 为准。
+
+## 1. 当前阶段（历史变更上下文）
 
 - 当前阶段：`requirements baseline bootstrap`
 - 工作方式：文档先行

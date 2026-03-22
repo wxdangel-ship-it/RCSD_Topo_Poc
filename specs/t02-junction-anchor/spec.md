@@ -1,11 +1,13 @@
 # T02 路口锚定模块规格
 
+> 本文件是 T02 stage1 初始基线的变更工件。当前正式模块长期真相以 `modules/t02_junction_anchor/architecture/*` 与 `modules/t02_junction_anchor/INTERFACE_CONTRACT.md` 为准。
+
 ## 1. 文档定位
 
 - 文档类型：需求基线规格
 - 模块 ID：`t02_junction_anchor`
-- 当前状态：`requirements baseline / document-first`
-- 本轮目标：只固化 T02 需求基线文档，不进入实现
+- 当前状态：`baseline change artifact / completed`
+- 本文件作用：保留 T02 stage1 初始需求冻结轨迹，不替代当前正式模块文档面
 
 ## 2. 模块业务定位
 

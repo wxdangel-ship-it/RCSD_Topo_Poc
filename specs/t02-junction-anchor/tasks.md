@@ -1,5 +1,7 @@
 # T02 任务清单
 
+> 本文件是 T02 stage1 初始基线的变更任务工件。当前正式模块状态以 `modules/t02_junction_anchor/*` 与项目级治理文档为准。
+
 ## 1. 本轮文档任务 checklist
 
 - [x] 建立 `specs/t02-junction-anchor/spec.md`

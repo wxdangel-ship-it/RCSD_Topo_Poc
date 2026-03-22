@@ -2,15 +2,22 @@
 
 ## 范围
 
-- 盘点日期：2026-03-18
-- 目的：说明当前仓库业务模块现状与模板资产状态
+- 盘点日期：2026-03-22
+- 目的：说明当前仓库正式业务模块现状、模块文档面状态与模板资产状态
 
 ## 当前正式生命周期结论
 
-- `Active`：无
+- `Active`：
+  - `t02_junction_anchor`
 - `Historical Reference`：无
 - `Retired`：无
 - `Support Retained`：无
+
+## 当前 Active 模块
+
+| 模块 ID | 路径 | 当前正式范围 | 当前文档面状态 | 当前实现状态 | 备注 |
+|---|---|---|---|---|---|
+| `t02_junction_anchor` | `modules/t02_junction_anchor` | stage1 `DriveZone / has_evd gate` | 已补齐标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | stage1 已实现，stage2 未实现 | T01 是其上游事实源之一，但不在本轮做 repo 级生命周期重分类 |
 
 ## 特殊模板资产
 
@@ -20,6 +27,7 @@
 
 ## 当前结论
 
-1. 当前仓库还没有正式业务模块。
-2. 当前最重要的模块级资产是 `modules/_template/`。
-3. 后续任何 RCSD 模块都应先按模板建立文档契约，再进入实现阶段。
+1. 当前仓库已登记正式业务模块 `t02_junction_anchor`。
+2. `_template` 仍是后续新模块启动模板，不属于业务模块生命周期对象。
+3. 后续任何新增 RCSD 模块仍应先按模板建立文档契约，再进入实现阶段。
+4. 未在本盘点中登记的模块目录，不自动视为 repo 级正式业务模块。

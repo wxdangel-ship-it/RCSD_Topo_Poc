@@ -76,6 +76,12 @@ def _format_progress_details(payload: dict[str, Any]) -> str:
         "validation_count",
         "pair_id",
         "phase",
+        "validated_status",
+        "reject_reason",
+        "trunk_found",
+        "candidate_road_count",
+        "pruned_road_count",
+        "segment_road_count",
         "candidate_pair_count",
         "validated_pair_count",
         "rejected_pair_count",
@@ -371,6 +377,7 @@ def _run_stage(
     perf_markers_path: Path,
     completed_stage_names: list[str],
     action: Callable[[], T],
+    profile_memory: bool = True,
 ) -> T:
     _print_progress(f"[{stage_index}/{total_stages}] START {name}")
     _write_progress_snapshot(
@@ -393,14 +400,18 @@ def _run_stage(
             "stage_name": name,
         },
     )
-    tracemalloc.start()
+    if profile_memory:
+        tracemalloc.start()
     started = time.perf_counter()
     try:
         result = action()
     except Exception as exc:
         wall_time = time.perf_counter() - started
-        _current, peak = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
+        if profile_memory:
+            _current, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+        else:
+            peak = 0
         gc_collected = gc.collect()
         stage_record = {
             "name": name,
@@ -445,8 +456,11 @@ def _run_stage(
         raise
 
     wall_time = time.perf_counter() - started
-    _current, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    if profile_memory:
+        _current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+    else:
+        peak = 0
     gc_collected = gc.collect()
     stage_record = {
         "name": name,
@@ -561,6 +575,7 @@ def run_t01_skill_v1(
             progress_path=progress_path,
             perf_markers_path=perf_markers_path,
             completed_stage_names=completed_stage_names,
+            profile_memory=debug,
             action=lambda: initialize_working_layers(
                 road_path=road_path,
                 node_path=node_path,
@@ -592,6 +607,7 @@ def run_t01_skill_v1(
             progress_path=progress_path,
             perf_markers_path=perf_markers_path,
             completed_stage_names=completed_stage_names,
+            profile_memory=debug,
             action=lambda: run_step2_segment_poc(
                 road_path=bootstrap_artifacts.roads_path,
                 node_path=bootstrap_artifacts.nodes_path,
@@ -625,6 +641,7 @@ def run_t01_skill_v1(
             progress_path=progress_path,
             perf_markers_path=perf_markers_path,
             completed_stage_names=completed_stage_names,
+            profile_memory=debug,
             action=lambda: refresh_s2_baseline(
                 road_path=bootstrap_artifacts.roads_path,
                 node_path=bootstrap_artifacts.nodes_path,
@@ -646,6 +663,7 @@ def run_t01_skill_v1(
             progress_path=progress_path,
             perf_markers_path=perf_markers_path,
             completed_stage_names=completed_stage_names,
+            profile_memory=debug,
             action=lambda: run_step4_residual_graph(
                 road_path=refresh_artifacts.roads_path,
                 node_path=refresh_artifacts.nodes_path,
@@ -667,6 +685,7 @@ def run_t01_skill_v1(
             progress_path=progress_path,
             perf_markers_path=perf_markers_path,
             completed_stage_names=completed_stage_names,
+            profile_memory=debug,
             action=lambda: run_step5_staged_residual_graph(
                 road_path=step4_artifacts.refreshed_roads_path,
                 node_path=step4_artifacts.refreshed_nodes_path,
@@ -689,6 +708,7 @@ def run_t01_skill_v1(
             progress_path=progress_path,
             perf_markers_path=perf_markers_path,
             completed_stage_names=completed_stage_names,
+            profile_memory=debug,
             action=lambda: _finalize_bundle(
                 resolved_out_root=resolved_out_root,
                 step2_root=step2_root,
@@ -721,6 +741,7 @@ def run_t01_skill_v1(
                 progress_path=progress_path,
                 perf_markers_path=perf_markers_path,
                 completed_stage_names=completed_stage_names,
+                profile_memory=debug,
                 action=lambda: compare_skill_v1_bundle(
                     current_dir=resolved_out_root,
                     freeze_dir=compare_freeze_dir,

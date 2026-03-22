@@ -157,6 +157,37 @@ def test_stage_subprogress_callback_can_skip_perf_and_stdout(tmp_path: Path, cap
     assert capsys.readouterr().out == ""
 
 
+def test_run_stage_can_disable_tracemalloc_for_release(tmp_path: Path) -> None:
+    progress_path = tmp_path / "progress.json"
+    perf_markers_path = tmp_path / "perf_markers.jsonl"
+    stage_timings: list[dict[str, object]] = []
+    completed_stage_names: list[str] = []
+
+    result = skill_v1._run_stage(
+        name="step2",
+        run_id="run-test",
+        stage_index=2,
+        total_stages=6,
+        stage_timings=stage_timings,
+        progress_path=progress_path,
+        perf_markers_path=perf_markers_path,
+        completed_stage_names=completed_stage_names,
+        action=lambda: {"status": "ok"},
+        profile_memory=False,
+    )
+
+    assert result == {"status": "ok"}
+    assert completed_stage_names == ["step2"]
+    assert stage_timings[0]["python_tracemalloc_peak_bytes"] == 0
+    markers = [
+        json.loads(line)
+        for line in perf_markers_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert markers[-1]["event"] == "stage_completed"
+    assert markers[-1]["python_tracemalloc_peak_bytes"] == 0
+
+
 def test_resolve_out_root_defaults_to_t01_skill_eval(tmp_path: Path, monkeypatch) -> None:
     repo_root = tmp_path / "repo"
     repo_root.mkdir(parents=True)

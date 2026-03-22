@@ -1047,6 +1047,89 @@ def test_step2_rejects_disconnected_after_prune(monkeypatch, tmp_path: Path) -> 
     assert validations[0].reject_reason == "disconnected_after_prune"
 
 
+def test_step2_validation_emits_pair_phase_markers(monkeypatch) -> None:
+    pair = _pair_record("S2X:10__20", "10", "20", ("r1020",))
+    execution = _minimal_execution([pair])
+    roads = [_road_record("r1020", "10", "20")]
+    context = _minimal_context(roads)
+    road_endpoints = {"r1020": ("10", "20")}
+    undirected_adjacency = {
+        "10": (step1_pair_poc.TraversalEdge("r1020", "10", "20"),),
+        "20": (step1_pair_poc.TraversalEdge("r1020", "20", "10"),),
+    }
+
+    trunk_candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(("10", "20"), ("r1020",), 1.0),
+        reverse_path=step2_segment_poc.DirectedPath(("20", "10"), ("r1020",), 1.0),
+        road_ids=("r1020",),
+        signed_area=1.0,
+        total_length=2.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=0.0,
+    )
+
+    monkeypatch.setattr(step2_segment_poc, "_build_candidate_channel", lambda *args, **kwargs: ({"r1020"}, set()))
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_prune_candidate_channel",
+        lambda *args, **kwargs: ({"r1020"}, [], False),
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_evaluate_trunk",
+        lambda *args, **kwargs: (trunk_candidate, None, (), {}),
+    )
+    monkeypatch.setattr(step2_segment_poc, "_collect_internal_boundary_nodes", lambda *args, **kwargs: ())
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_build_segment_body_candidate_channel",
+        lambda *args, **kwargs: {"r1020"},
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_refine_segment_roads",
+        lambda *args, **kwargs: (("r1020",), []),
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_tighten_validated_segment_components",
+        lambda provisional_results, **kwargs: provisional_results,
+    )
+
+    progress_events: list[tuple[str, dict[str, object]]] = []
+    validations = step2_segment_poc._validate_pair_candidates(
+        execution,
+        context=context,
+        road_endpoints=road_endpoints,
+        undirected_adjacency=undirected_adjacency,
+        formway_mode="strict",
+        left_turn_formway_bit=8,
+        progress_callback=lambda event, payload: progress_events.append((event, payload)),
+    )
+
+    assert len(validations) == 1
+    phases = [
+        payload["phase"]
+        for event, payload in progress_events
+        if event == "validation_pair_state"
+    ]
+    assert phases == [
+        "validation_pair_started",
+        "validation_pair_started",
+        "candidate_channel_built",
+        "prune_completed",
+        "trunk_evaluated",
+        "segment_body_started",
+        "segment_body_completed",
+        "result_appended",
+    ]
+    assert [event for event, _ in progress_events if event in {"validation_started", "validation_tighten_started", "validation_tighten_completed"}] == [
+        "validation_started",
+        "validation_tighten_started",
+        "validation_tighten_completed",
+    ]
+
+
 def test_step2_moves_weak_component_to_step3_residual() -> None:
     roads = [
         _road_record("r12", "1", "2"),
@@ -1812,10 +1895,21 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
     out_root = tmp_path / "step2_run"
     strategy = _minimal_strategy("S2X")
     context = _minimal_context([_road_record("r1", "A", "B")])
-    execution = _minimal_execution(
-        [_pair_record("PAIR_A_B", "A", "B", ("r1",), strategy_id="S2X")],
-        terminate_ids=["A", "B"],
-        strategy_id="S2X",
+    execution = replace(
+        _minimal_execution(
+            [_pair_record("PAIR_A_B", "A", "B", ("r1",), strategy_id="S2X")],
+            terminate_ids=["A", "B"],
+            strategy_id="S2X",
+        ),
+        seed_eval={"A": "seed"},
+        terminate_eval={"B": "terminate"},
+        seed_ids=["A", "B"],
+        through_node_ids={"X"},
+        search_seed_ids=["A"],
+        through_seed_pruned_count=7,
+        search_results={"PAIR_A_B": "heavy"},
+        search_event_counts={"expanded": 3},
+        search_event_samples=[{"event": "expanded"}],
     )
     validations = [
         _validation_result(
@@ -1829,6 +1923,7 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
     ]
 
     monkeypatch.setattr(step2_segment_poc, "build_step1_graph_context", lambda **_: context)
+    captured_execution: dict[str, step1_pair_poc.Step1StrategyExecution] = {}
     monkeypatch.setattr(
         step2_segment_poc,
         "_build_semantic_endpoints",
@@ -1838,6 +1933,7 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
     monkeypatch.setattr(step2_segment_poc, "run_step1_strategy", lambda _context, _strategy: execution)
     monkeypatch.setattr(step2_segment_poc, "write_step1_candidate_outputs", lambda *args, **kwargs: None)
     def _fake_validate_pair_candidates(*args, **kwargs):
+        captured_execution["value"] = args[0]
         callback = kwargs["progress_callback"]
         callback("validation_started", {"validation_count": 1})
         callback(
@@ -1906,6 +2002,17 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
     )
 
     assert results[0].validations == []
+    assert captured_execution["value"].pair_candidates == execution.pair_candidates
+    assert captured_execution["value"].seed_ids == execution.seed_ids
+    assert captured_execution["value"].terminate_ids == execution.terminate_ids
+    assert captured_execution["value"].seed_eval == {}
+    assert captured_execution["value"].terminate_eval == {}
+    assert captured_execution["value"].through_node_ids == set()
+    assert captured_execution["value"].search_seed_ids == []
+    assert captured_execution["value"].through_seed_pruned_count == 0
+    assert captured_execution["value"].search_results == {}
+    assert captured_execution["value"].search_event_counts == {}
+    assert captured_execution["value"].search_event_samples == []
     assert [event for event, _ in progress_events] == [
         "context_build_started",
         "context_build_completed",
@@ -1927,3 +2034,60 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
     comparison_summary = _load_json(out_root / "strategy_comparison.json")
     assert comparison_summary[0]["strategy_id"] == "S2X"
     assert comparison_summary[0]["validated_pair_count"] == 1
+
+
+def test_write_step2_outputs_streams_release_outputs_without_buffering_lists(tmp_path: Path) -> None:
+    out_dir = tmp_path / "step2_outputs"
+    strategy = _minimal_strategy("S2X")
+    roads = [
+        _road_record("r1", "A", "B"),
+        _road_record("r2", "B", "C"),
+    ]
+    context = _minimal_context(roads)
+    validations = [
+        _validation_result(
+            "PAIR_A_B",
+            "A",
+            "B",
+            pruned_road_ids=("r1",),
+            trunk_road_ids=("r1",),
+            segment_road_ids=("r1",),
+        ),
+        _validation_result(
+            "PAIR_B_C",
+            "B",
+            "C",
+            pruned_road_ids=("r2",),
+            trunk_road_ids=(),
+            segment_road_ids=(),
+            validated_status="rejected",
+        ),
+    ]
+
+    result = step2_segment_poc._write_step2_outputs(
+        out_dir,
+        strategy=strategy,
+        run_id="run-test",
+        context=context,
+        validations=validations,
+        endpoint_pool_source_map={},
+        formway_mode="strict",
+        debug=False,
+        retain_validation_details=False,
+    )
+
+    summary = _load_json(out_dir / "segment_summary.json")
+    validated_rows = _read_csv_rows(out_dir / "validated_pairs.csv")
+    rejected_rows = _read_csv_rows(out_dir / "rejected_pair_candidates.csv")
+    validation_rows = _read_csv_rows(out_dir / "pair_validation_table.csv")
+
+    assert summary["candidate_pair_count"] == 2
+    assert summary["validated_pair_count"] == 1
+    assert summary["rejected_pair_count"] == 1
+    assert [row["pair_id"] for row in validated_rows] == ["PAIR_A_B"]
+    assert [row["pair_id"] for row in rejected_rows] == ["PAIR_B_C"]
+    assert [row["pair_id"] for row in validation_rows] == ["PAIR_A_B", "PAIR_B_C"]
+    assert result.validations == []
+    assert (out_dir / "trunk_roads.geojson").is_file()
+    assert (out_dir / "segment_body_roads.geojson").is_file()
+    assert (out_dir / "step3_residual_roads.geojson").is_file()

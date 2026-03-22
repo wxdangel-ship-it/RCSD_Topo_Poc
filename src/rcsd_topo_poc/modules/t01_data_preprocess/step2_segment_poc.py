@@ -52,6 +52,7 @@ MAX_PATHS_PER_DIRECTION = 12
 MAX_PATH_DEPTH = 64
 SIDE_ACCESS_SAMPLE_STEP_M = MAX_SIDE_ACCESS_DISTANCE_M / 2.0
 VALIDATION_PROGRESS_CHECKPOINT_INTERVAL = 100
+VALIDATION_PHASE_TRACE_PAIR_LIMIT = 50
 
 
 @dataclass(frozen=True)
@@ -2227,31 +2228,23 @@ def _iter_working_graph_debug_features(
             )
 
 
-def _write_step2_outputs(
-    out_dir: Path,
-    *,
-    strategy: StrategySpec,
-    run_id: str,
-    context: Step1GraphContext,
-    validations: list[PairValidationResult],
-    endpoint_pool_source_map: dict[str, tuple[str, ...]],
-    formway_mode: str,
-    debug: bool,
-    retain_validation_details: bool,
-    progress_callback: Optional[Step2ProgressCallback] = None,
-) -> Step2StrategyResult:
-    validated_rows: list[dict[str, Any]] = []
-    rejected_rows: list[dict[str, Any]] = []
-    validation_rows: list[dict[str, Any]] = []
-    validated_link_features: list[dict[str, Any]] = []
-    trunk_features: list[dict[str, Any]] = []
-    segment_body_features: list[dict[str, Any]] = []
-    step3_residual_features: list[dict[str, Any]] = []
-    trunk_member_features: list[dict[str, Any]] = []
-    segment_body_member_features: list[dict[str, Any]] = []
-    step3_residual_member_features: list[dict[str, Any]] = []
-    branch_cut_features: list[dict[str, Any]] = []
+def _compact_execution_for_validation(execution: Step1StrategyExecution) -> Step1StrategyExecution:
+    return replace(
+        execution,
+        seed_eval={},
+        terminate_eval={},
+        through_node_ids=set(),
+        search_seed_ids=[],
+        through_seed_pruned_count=0,
+        search_results={},
+        search_event_counts={},
+        search_event_samples=[],
+    )
 
+
+def _collect_validation_summary(validations: list[PairValidationResult]) -> dict[str, Any]:
+    validated_pair_count = 0
+    rejected_pair_count = 0
     total_branch_cut_count = 0
     clockwise_reject_count = 0
     left_turn_trunk_reject_count = 0
@@ -2267,67 +2260,10 @@ def _write_step2_outputs(
     side_access_distance_block_keys: set[tuple[str, str]] = set()
 
     for validation in validations:
-        support_info = dict(validation.support_info)
-        branch_cut_infos = list(support_info.get("branch_cut_infos", []))
-        residual_infos = list(support_info.get("step3_residual_infos", []))
-        component_infos = list(support_info.get("non_trunk_components", []))
-        validation_rows.append(
-            {
-                "pair_id": validation.pair_id,
-                "a_node_id": validation.a_node_id,
-                "b_node_id": validation.b_node_id,
-                "candidate_status": validation.candidate_status,
-                "validated_status": validation.validated_status,
-                "reject_reason": validation.reject_reason or "",
-                "trunk_mode": validation.trunk_mode,
-                "trunk_found": validation.trunk_found,
-                "counterclockwise_ok": validation.counterclockwise_ok,
-                "segment_body_road_count": len(validation.segment_road_ids),
-                "residual_road_count": len(validation.residual_road_ids),
-                "transition_same_dir_blocked": validation.transition_same_dir_blocked,
-                "left_turn_excluded_mode": validation.left_turn_excluded_mode,
-                "support_info": _compact_json(support_info),
-            }
-        )
-
         if validation.validated_status == "validated":
-            validated_rows.append(
-                {
-                    "pair_id": validation.pair_id,
-                    "a_node_id": validation.a_node_id,
-                    "b_node_id": validation.b_node_id,
-                    "trunk_mode": validation.trunk_mode,
-                    "left_turn_excluded_mode": validation.left_turn_excluded_mode,
-                    "warning_codes": ";".join(validation.warning_codes),
-                    "segment_body_road_count": len(validation.segment_road_ids),
-                    "residual_road_count": len(validation.residual_road_ids),
-                }
-            )
-            validated_link_features.append(
-                _line_feature(
-                    a_node=context.semantic_nodes[validation.a_node_id],
-                    b_node=context.semantic_nodes[validation.b_node_id],
-                    properties={
-                        "pair_id": validation.pair_id,
-                        "a_node_id": validation.a_node_id,
-                        "b_node_id": validation.b_node_id,
-                        "strategy_id": strategy.strategy_id,
-                        "validated_status": validation.validated_status,
-                        "trunk_mode": validation.trunk_mode,
-                    },
-                )
-            )
+            validated_pair_count += 1
         else:
-            rejected_rows.append(
-                {
-                    "pair_id": validation.pair_id,
-                    "a_node_id": validation.a_node_id,
-                    "b_node_id": validation.b_node_id,
-                    "reject_reason": validation.reject_reason or "",
-                    "warning_codes": ";".join(validation.warning_codes),
-                    "conflict_pair_id": validation.conflict_pair_id or "",
-                }
-            )
+            rejected_pair_count += 1
 
         if validation.reject_reason == "only_clockwise_loop":
             clockwise_reject_count += 1
@@ -2342,11 +2278,15 @@ def _write_step2_outputs(
         if "formway_unreliable_warning" in validation.warning_codes:
             formway_warning_count += 1
 
+        branch_cut_infos = validation.support_info.get("branch_cut_infos", ())
         total_branch_cut_count += len(branch_cut_infos)
         for branch_cut_info in branch_cut_infos:
             cut_key = (
                 validation.pair_id,
-                str(branch_cut_info.get("component_id") or f"{branch_cut_info.get('cut_reason')}::{branch_cut_info.get('road_id')}"),
+                str(
+                    branch_cut_info.get("component_id")
+                    or f"{branch_cut_info.get('cut_reason')}::{branch_cut_info.get('road_id')}"
+                ),
             )
             branch_cut_component_keys.add(cut_key)
             if branch_cut_info.get("cut_reason") in {"hits_other_terminate", "branch_leads_to_other_terminate"}:
@@ -2354,7 +2294,7 @@ def _write_step2_outputs(
             if branch_cut_info.get("cut_reason") == "contains_other_validated_trunk":
                 other_trunk_conflict_keys.add(cut_key)
 
-        for component_info in component_infos:
+        for component_info in validation.support_info.get("non_trunk_components", ()):
             component_key = (validation.pair_id, str(component_info.get("component_id", "")))
             if component_info.get("moved_to_step3_residual"):
                 residual_component_keys.add(component_key)
@@ -2363,112 +2303,258 @@ def _write_step2_outputs(
             if component_info.get("blocked_by_transition_same_dir"):
                 transition_same_dir_block_keys.add(component_key)
 
+    return {
+        "candidate_pair_count": len(validations),
+        "validated_pair_count": validated_pair_count,
+        "rejected_pair_count": rejected_pair_count,
+        "branch_cut_component_count": len(branch_cut_component_keys),
+        "other_terminate_cut_count": len(other_terminate_cut_keys),
+        "other_trunk_conflict_count": len(other_trunk_conflict_keys),
+        "transition_same_dir_block_count": len(transition_same_dir_block_keys),
+        "residual_component_count": len(residual_component_keys),
+        "clockwise_reject_count": clockwise_reject_count,
+        "left_turn_trunk_reject_count": left_turn_trunk_reject_count,
+        "prune_branch_count": total_branch_cut_count,
+        "disconnected_after_prune_count": disconnected_after_prune_count,
+        "shared_trunk_conflict_count": shared_trunk_conflict_count,
+        "dual_carriageway_separation_reject_count": dual_carriageway_separation_reject_count,
+        "side_access_distance_block_count": len(side_access_distance_block_keys),
+        "formway_warning_count": formway_warning_count,
+    }
+
+
+def _iter_validation_rows(validations: list[PairValidationResult]) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        yield {
+            "pair_id": validation.pair_id,
+            "a_node_id": validation.a_node_id,
+            "b_node_id": validation.b_node_id,
+            "candidate_status": validation.candidate_status,
+            "validated_status": validation.validated_status,
+            "reject_reason": validation.reject_reason or "",
+            "trunk_mode": validation.trunk_mode,
+            "trunk_found": validation.trunk_found,
+            "counterclockwise_ok": validation.counterclockwise_ok,
+            "segment_body_road_count": len(validation.segment_road_ids),
+            "residual_road_count": len(validation.residual_road_ids),
+            "transition_same_dir_blocked": validation.transition_same_dir_blocked,
+            "left_turn_excluded_mode": validation.left_turn_excluded_mode,
+            "support_info": _compact_json(dict(validation.support_info)),
+        }
+
+
+def _iter_validated_rows(validations: list[PairValidationResult]) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        if validation.validated_status != "validated":
+            continue
+        yield {
+            "pair_id": validation.pair_id,
+            "a_node_id": validation.a_node_id,
+            "b_node_id": validation.b_node_id,
+            "trunk_mode": validation.trunk_mode,
+            "left_turn_excluded_mode": validation.left_turn_excluded_mode,
+            "warning_codes": ";".join(validation.warning_codes),
+            "segment_body_road_count": len(validation.segment_road_ids),
+            "residual_road_count": len(validation.residual_road_ids),
+        }
+
+
+def _iter_rejected_rows(validations: list[PairValidationResult]) -> Iterable[dict[str, Any]]:
+    for validation in validations:
         if validation.validated_status == "validated":
-            trunk_feature = _pair_multiline_feature(
-                context=context,
-                pair_id=validation.pair_id,
-                a_node_id=validation.a_node_id,
-                b_node_id=validation.b_node_id,
-                strategy_id=strategy.strategy_id,
-                layer_role="trunk",
-                road_ids=validation.trunk_road_ids,
-                extra_props={
-                    "validated_status": validation.validated_status,
-                    "trunk_mode": validation.trunk_mode,
-                    "warning_codes": list(validation.warning_codes),
-                    "left_turn_excluded_mode": validation.left_turn_excluded_mode,
-                    "dual_carriageway_max_separation_m": support_info.get("dual_carriageway_max_separation_m"),
-                },
-            )
-            if trunk_feature is not None:
-                trunk_features.append(trunk_feature)
+            continue
+        yield {
+            "pair_id": validation.pair_id,
+            "a_node_id": validation.a_node_id,
+            "b_node_id": validation.b_node_id,
+            "reject_reason": validation.reject_reason or "",
+            "warning_codes": ";".join(validation.warning_codes),
+            "conflict_pair_id": validation.conflict_pair_id or "",
+        }
 
-            segment_body_feature = _pair_multiline_feature(
-                context=context,
-                pair_id=validation.pair_id,
-                a_node_id=validation.a_node_id,
-                b_node_id=validation.b_node_id,
-                strategy_id=strategy.strategy_id,
-                layer_role="segment_body",
-                road_ids=validation.segment_road_ids,
-                extra_props={
-                    "validated_status": validation.validated_status,
-                    "trunk_mode": validation.trunk_mode,
-                    "warning_codes": list(validation.warning_codes),
-                    "left_turn_excluded_mode": validation.left_turn_excluded_mode,
-                },
-            )
-            if segment_body_feature is not None:
-                segment_body_features.append(segment_body_feature)
 
-            residual_feature = _pair_multiline_feature(
-                context=context,
-                pair_id=validation.pair_id,
-                a_node_id=validation.a_node_id,
-                b_node_id=validation.b_node_id,
-                strategy_id=strategy.strategy_id,
-                layer_role="step3_residual",
-                road_ids=validation.residual_road_ids,
-                extra_props={
-                    "validated_status": validation.validated_status,
-                    "trunk_mode": validation.trunk_mode,
-                    "warning_codes": list(validation.warning_codes),
-                    "left_turn_excluded_mode": validation.left_turn_excluded_mode,
-                },
-            )
-            if residual_feature is not None:
-                step3_residual_features.append(residual_feature)
+def _iter_validated_link_features(
+    *,
+    context: Step1GraphContext,
+    validations: list[PairValidationResult],
+    strategy_id: str,
+) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        if validation.validated_status != "validated":
+            continue
+        yield _line_feature(
+            a_node=context.semantic_nodes[validation.a_node_id],
+            b_node=context.semantic_nodes[validation.b_node_id],
+            properties={
+                "pair_id": validation.pair_id,
+                "a_node_id": validation.a_node_id,
+                "b_node_id": validation.b_node_id,
+                "strategy_id": strategy_id,
+                "validated_status": validation.validated_status,
+                "trunk_mode": validation.trunk_mode,
+            },
+        )
 
-        for branch_cut_info in branch_cut_infos:
-            road = context.roads[branch_cut_info["road_id"]]
+
+def _iter_trunk_features(
+    *,
+    context: Step1GraphContext,
+    validations: list[PairValidationResult],
+    strategy_id: str,
+) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        if validation.validated_status != "validated":
+            continue
+        feature = _pair_multiline_feature(
+            context=context,
+            pair_id=validation.pair_id,
+            a_node_id=validation.a_node_id,
+            b_node_id=validation.b_node_id,
+            strategy_id=strategy_id,
+            layer_role="trunk",
+            road_ids=validation.trunk_road_ids,
+            extra_props={
+                "validated_status": validation.validated_status,
+                "trunk_mode": validation.trunk_mode,
+                "warning_codes": list(validation.warning_codes),
+                "left_turn_excluded_mode": validation.left_turn_excluded_mode,
+                "dual_carriageway_max_separation_m": validation.support_info.get(
+                    "dual_carriageway_max_separation_m"
+                ),
+            },
+        )
+        if feature is not None:
+            yield feature
+
+
+def _iter_segment_body_features(
+    *,
+    context: Step1GraphContext,
+    validations: list[PairValidationResult],
+    strategy_id: str,
+) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        if validation.validated_status != "validated":
+            continue
+        feature = _pair_multiline_feature(
+            context=context,
+            pair_id=validation.pair_id,
+            a_node_id=validation.a_node_id,
+            b_node_id=validation.b_node_id,
+            strategy_id=strategy_id,
+            layer_role="segment_body",
+            road_ids=validation.segment_road_ids,
+            extra_props={
+                "validated_status": validation.validated_status,
+                "trunk_mode": validation.trunk_mode,
+                "warning_codes": list(validation.warning_codes),
+                "left_turn_excluded_mode": validation.left_turn_excluded_mode,
+            },
+        )
+        if feature is not None:
+            yield feature
+
+
+def _iter_step3_residual_features(
+    *,
+    context: Step1GraphContext,
+    validations: list[PairValidationResult],
+    strategy_id: str,
+) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        if validation.validated_status != "validated":
+            continue
+        feature = _pair_multiline_feature(
+            context=context,
+            pair_id=validation.pair_id,
+            a_node_id=validation.a_node_id,
+            b_node_id=validation.b_node_id,
+            strategy_id=strategy_id,
+            layer_role="step3_residual",
+            road_ids=validation.residual_road_ids,
+            extra_props={
+                "validated_status": validation.validated_status,
+                "trunk_mode": validation.trunk_mode,
+                "warning_codes": list(validation.warning_codes),
+                "left_turn_excluded_mode": validation.left_turn_excluded_mode,
+            },
+        )
+        if feature is not None:
+            yield feature
+
+
+def _iter_branch_cut_features(
+    *,
+    context: Step1GraphContext,
+    validations: list[PairValidationResult],
+    strategy_id: str,
+) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        for branch_cut_info in validation.support_info.get("branch_cut_infos", ()):
             branch_cut_props = {key: value for key, value in branch_cut_info.items() if key != "road_id"}
-            branch_cut_features.append(
-                _road_feature(
-                    road,
-                    pair_id=validation.pair_id,
-                    strategy_id=strategy.strategy_id,
-                    layer_role="branch_cut",
-                    extra_props=branch_cut_props,
-                )
+            yield _road_feature(
+                context.roads[branch_cut_info["road_id"]],
+                pair_id=validation.pair_id,
+                strategy_id=strategy_id,
+                layer_role="branch_cut",
+                extra_props=branch_cut_props,
             )
 
-        for road_id in validation.trunk_road_ids:
-            road = context.roads[road_id]
-            if validation.validated_status == "validated":
-                trunk_member_features.append(
-                    _road_feature(
-                        road,
-                        pair_id=validation.pair_id,
-                        strategy_id=strategy.strategy_id,
-                        layer_role="trunk_member",
-                    )
-                )
 
-        for road_id in validation.segment_road_ids:
-            road = context.roads[road_id]
-            if validation.validated_status == "validated":
-                segment_body_member_features.append(
-                    _road_feature(
-                        road,
-                        pair_id=validation.pair_id,
-                        strategy_id=strategy.strategy_id,
-                        layer_role="segment_body_member",
-                    )
-                )
+def _iter_member_features(
+    *,
+    context: Step1GraphContext,
+    validations: list[PairValidationResult],
+    strategy_id: str,
+    layer_role: str,
+    road_ids_getter: Callable[[PairValidationResult], Iterable[str]],
+) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        if validation.validated_status != "validated":
+            continue
+        for road_id in road_ids_getter(validation):
+            yield _road_feature(
+                context.roads[road_id],
+                pair_id=validation.pair_id,
+                strategy_id=strategy_id,
+                layer_role=layer_role,
+            )
 
-        for residual_info in residual_infos:
-            road = context.roads[residual_info["road_id"]]
+
+def _iter_step3_residual_member_features(
+    *,
+    context: Step1GraphContext,
+    validations: list[PairValidationResult],
+    strategy_id: str,
+) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        if validation.validated_status != "validated":
+            continue
+        for residual_info in validation.support_info.get("step3_residual_infos", ()):
             residual_props = {key: value for key, value in residual_info.items() if key != "road_id"}
-            if validation.validated_status == "validated":
-                step3_residual_member_features.append(
-                    _road_feature(
-                        road,
-                        pair_id=validation.pair_id,
-                        strategy_id=strategy.strategy_id,
-                        layer_role="step3_residual_member",
-                        extra_props=residual_props,
-                    )
-                )
+            yield _road_feature(
+                context.roads[residual_info["road_id"]],
+                pair_id=validation.pair_id,
+                strategy_id=strategy_id,
+                layer_role="step3_residual_member",
+                extra_props=residual_props,
+            )
+
+
+def _write_step2_outputs(
+    out_dir: Path,
+    *,
+    strategy: StrategySpec,
+    run_id: str,
+    context: Step1GraphContext,
+    validations: list[PairValidationResult],
+    endpoint_pool_source_map: dict[str, tuple[str, ...]],
+    formway_mode: str,
+    debug: bool,
+    retain_validation_details: bool,
+    progress_callback: Optional[Step2ProgressCallback] = None,
+) -> Step2StrategyResult:
+    validation_summary = _collect_validation_summary(validations)
 
     validated_pairs_path = out_dir / "validated_pairs.csv"
     rejected_pairs_path = out_dir / "rejected_pair_candidates.csv"
@@ -2496,7 +2582,7 @@ def _write_step2_outputs(
 
     write_csv(
         validated_pairs_path,
-        validated_rows,
+        _iter_validated_rows(validations),
         [
             "pair_id",
             "a_node_id",
@@ -2510,15 +2596,24 @@ def _write_step2_outputs(
     )
     write_csv(
         rejected_pairs_path,
-        rejected_rows,
+        _iter_rejected_rows(validations),
         ["pair_id", "a_node_id", "b_node_id", "reject_reason", "warning_codes", "conflict_pair_id"],
     )
-    write_geojson(trunk_roads_path, trunk_features)
-    write_geojson(segment_body_roads_path, segment_body_features)
-    write_geojson(step3_residual_roads_path, step3_residual_features)
+    write_geojson(
+        trunk_roads_path,
+        _iter_trunk_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
+    )
+    write_geojson(
+        segment_body_roads_path,
+        _iter_segment_body_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
+    )
+    write_geojson(
+        step3_residual_roads_path,
+        _iter_step3_residual_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
+    )
     write_csv(
         validation_table_path,
-        validation_rows,
+        _iter_validation_rows(validations),
         [
             "pair_id",
             "a_node_id",
@@ -2542,24 +2637,9 @@ def _write_step2_outputs(
         "run_id": run_id,
         "strategy_out_dir": str(out_dir.resolve()),
         "formway_mode": formway_mode,
-        "candidate_pair_count": len(validations),
-        "validated_pair_count": len(validated_rows),
-        "rejected_pair_count": len(rejected_rows),
-        "branch_cut_component_count": len(branch_cut_component_keys),
-        "other_terminate_cut_count": len(other_terminate_cut_keys),
-        "other_trunk_conflict_count": len(other_trunk_conflict_keys),
-        "transition_same_dir_block_count": len(transition_same_dir_block_keys),
-        "residual_component_count": len(residual_component_keys),
-        "clockwise_reject_count": clockwise_reject_count,
-        "left_turn_trunk_reject_count": left_turn_trunk_reject_count,
-        "prune_branch_count": total_branch_cut_count,
-        "disconnected_after_prune_count": disconnected_after_prune_count,
-        "shared_trunk_conflict_count": shared_trunk_conflict_count,
-        "dual_carriageway_separation_reject_count": dual_carriageway_separation_reject_count,
-        "side_access_distance_block_count": len(side_access_distance_block_keys),
+        **validation_summary,
         "dual_carriageway_separation_gate_limit_m": MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
         "side_access_distance_gate_limit_m": MAX_SIDE_ACCESS_DISTANCE_M,
-        "formway_warning_count": formway_warning_count,
         "debug": debug,
         "output_files": [
             endpoint_pool_csv_path.name,
@@ -2574,13 +2654,64 @@ def _write_step2_outputs(
         ],
     }
     if debug:
-        write_geojson(pair_links_validated_path, validated_link_features)
-        write_geojson(segment_roads_path, segment_body_features)
-        write_geojson(trunk_road_members_path, trunk_member_features)
-        write_geojson(segment_body_road_members_path, segment_body_member_features)
-        write_geojson(step3_residual_road_members_path, step3_residual_member_features)
-        write_geojson(segment_road_members_path, segment_body_member_features)
-        write_geojson(branch_cut_roads_path, branch_cut_features)
+        write_geojson(
+            pair_links_validated_path,
+            _iter_validated_link_features(
+                context=context,
+                validations=validations,
+                strategy_id=strategy.strategy_id,
+            ),
+        )
+        write_geojson(
+            segment_roads_path,
+            _iter_segment_body_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
+        )
+        write_geojson(
+            trunk_road_members_path,
+            _iter_member_features(
+                context=context,
+                validations=validations,
+                strategy_id=strategy.strategy_id,
+                layer_role="trunk_member",
+                road_ids_getter=lambda validation: validation.trunk_road_ids,
+            ),
+        )
+        write_geojson(
+            segment_body_road_members_path,
+            _iter_member_features(
+                context=context,
+                validations=validations,
+                strategy_id=strategy.strategy_id,
+                layer_role="segment_body_member",
+                road_ids_getter=lambda validation: validation.segment_road_ids,
+            ),
+        )
+        write_geojson(
+            step3_residual_road_members_path,
+            _iter_step3_residual_member_features(
+                context=context,
+                validations=validations,
+                strategy_id=strategy.strategy_id,
+            ),
+        )
+        write_geojson(
+            segment_road_members_path,
+            _iter_member_features(
+                context=context,
+                validations=validations,
+                strategy_id=strategy.strategy_id,
+                layer_role="segment_body_member",
+                road_ids_getter=lambda validation: validation.segment_road_ids,
+            ),
+        )
+        write_geojson(
+            branch_cut_roads_path,
+            _iter_branch_cut_features(
+                context=context,
+                validations=validations,
+                strategy_id=strategy.strategy_id,
+            ),
+        )
         _emit_progress(
             progress_callback,
             "candidate_channel_write_started",
@@ -2662,36 +2793,73 @@ def _validate_pair_candidates(
 
     _emit_progress(progress_callback, "validation_started", validation_count=validation_count)
 
-    for pair_index, pair in enumerate(execution.pair_candidates, start=1):
-        pair_progress_payload = {
+    def _emit_validation_pair_phase(
+        *,
+        pair_index: int,
+        pair: PairRecord,
+        phase: str,
+        checkpoint: bool = False,
+        **extra_payload: Any,
+    ) -> None:
+        payload = {
             "pair_index": pair_index,
             "validation_count": validation_count,
             "pair_id": pair.pair_id,
             "a_node_id": pair.a_node_id,
             "b_node_id": pair.b_node_id,
-            "phase": "validation_pair_started",
+            "phase": phase,
+            **extra_payload,
         }
+        perf_trace_enabled = pair_index <= VALIDATION_PHASE_TRACE_PAIR_LIMIT
         _emit_progress(
             progress_callback,
             "validation_pair_state",
-            **pair_progress_payload,
-            _perf_log=False,
+            **payload,
+            _perf_log=perf_trace_enabled,
             _stdout_log=False,
+        )
+        if checkpoint:
+            _emit_progress(progress_callback, "validation_pair_checkpoint", **payload)
+
+    for pair_index, pair in enumerate(execution.pair_candidates, start=1):
+        _emit_validation_pair_phase(
+            pair_index=pair_index,
+            pair=pair,
+            phase="validation_pair_started",
         )
         if (
             pair_index == 1
             or pair_index == validation_count
             or pair_index % VALIDATION_PROGRESS_CHECKPOINT_INTERVAL == 0
         ):
-            _emit_progress(progress_callback, "validation_pair_checkpoint", **pair_progress_payload)
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="validation_pair_started",
+                checkpoint=True,
+            )
 
         candidate_road_ids, boundary_terminate_ids = _build_candidate_channel(
             pair,
             undirected_adjacency=undirected_adjacency,
             boundary_node_ids=boundary_node_ids,
         )
+        _emit_validation_pair_phase(
+            pair_index=pair_index,
+            pair=pair,
+            phase="candidate_channel_built",
+            candidate_road_count=len(candidate_road_ids),
+        )
 
         if not candidate_road_ids:
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="result_appended",
+                validated_status="rejected",
+                reject_reason="invalid_candidate_boundary",
+                trunk_found=False,
+            )
             provisional_results.append(
                 PairValidationResult(
                     pair_id=pair.pair_id,
@@ -2725,7 +2893,22 @@ def _validate_pair_candidates(
             terminate_ids=terminate_ids,
             hard_stop_node_ids=hard_stop_node_ids,
         )
+        _emit_validation_pair_phase(
+            pair_index=pair_index,
+            pair=pair,
+            phase="prune_completed",
+            candidate_road_count=len(candidate_road_ids),
+            pruned_road_count=len(pruned_road_ids),
+        )
         if disconnected_after_prune:
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="result_appended",
+                validated_status="rejected",
+                reject_reason="disconnected_after_prune",
+                trunk_found=False,
+            )
             provisional_results.append(
                 PairValidationResult(
                     pair_id=pair.pair_id,
@@ -2766,7 +2949,23 @@ def _validate_pair_candidates(
             formway_mode=formway_mode,
             left_turn_formway_bit=left_turn_formway_bit,
         )
+        _emit_validation_pair_phase(
+            pair_index=pair_index,
+            pair=pair,
+            phase="trunk_evaluated",
+            validated_status="validated" if trunk_candidate is not None else "rejected",
+            reject_reason="" if reject_reason is None else reject_reason,
+            trunk_found=trunk_candidate is not None,
+        )
         if trunk_candidate is None:
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="result_appended",
+                validated_status="rejected",
+                reject_reason="" if reject_reason is None else reject_reason,
+                trunk_found=False,
+            )
             provisional_results.append(
                 PairValidationResult(
                     pair_id=pair.pair_id,
@@ -2805,6 +3004,14 @@ def _validate_pair_candidates(
             hard_stop_node_ids=hard_stop_node_ids,
         )
         if internal_boundary_node_ids:
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="result_appended",
+                validated_status="rejected",
+                reject_reason="historical_boundary_blocked",
+                trunk_found=False,
+            )
             provisional_results.append(
                 PairValidationResult(
                     pair_id=pair.pair_id,
@@ -2842,6 +3049,12 @@ def _validate_pair_candidates(
             segment_road_ids = trunk_candidate.road_ids
             segment_cut_infos: list[dict[str, Any]] = []
         else:
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="segment_body_started",
+                trunk_found=True,
+            )
             segment_candidate_road_ids = _build_segment_body_candidate_channel(
                 pair,
                 trunk_road_ids=trunk_candidate.road_ids,
@@ -2857,6 +3070,13 @@ def _validate_pair_candidates(
                 trunk_road_ids=trunk_candidate.road_ids,
                 through_rule=execution.strategy.through_rule,
             )
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="segment_body_completed",
+                segment_road_count=len(segment_road_ids),
+                trunk_found=True,
+            )
 
         conflict_pair_id = None
         for road_id in trunk_candidate.road_ids:
@@ -2864,6 +3084,15 @@ def _validate_pair_candidates(
                 conflict_pair_id = used_trunk_road_ids[road_id]
                 break
         if conflict_pair_id is not None:
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="result_appended",
+                validated_status="rejected",
+                reject_reason="shared_trunk_conflict",
+                trunk_found=True,
+                segment_road_count=len(segment_road_ids),
+            )
             provisional_results.append(
                 PairValidationResult(
                     pair_id=pair.pair_id,
@@ -2906,6 +3135,15 @@ def _validate_pair_candidates(
         for road_id in trunk_candidate.road_ids:
             used_trunk_road_ids[road_id] = pair.pair_id
 
+        _emit_validation_pair_phase(
+            pair_index=pair_index,
+            pair=pair,
+            phase="result_appended",
+            validated_status="validated",
+            reject_reason="",
+            trunk_found=True,
+            segment_road_count=len(segment_road_ids),
+        )
         provisional_results.append(
             PairValidationResult(
                 pair_id=pair.pair_id,
@@ -3092,6 +3330,8 @@ def run_step2_segment_poc(
             output_dir=str(strategy_out_dir.resolve()),
         )
 
+        execution = _compact_execution_for_validation(execution)
+        gc.collect()
         validations = _validate_pair_candidates(
             execution,
             context=context,

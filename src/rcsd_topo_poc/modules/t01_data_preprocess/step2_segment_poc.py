@@ -51,6 +51,7 @@ LEFT_TURN_FORMWAY_BIT = 8
 MAX_PATHS_PER_DIRECTION = 12
 MAX_PATH_DEPTH = 64
 SIDE_ACCESS_SAMPLE_STEP_M = MAX_SIDE_ACCESS_DISTANCE_M / 2.0
+VALIDATION_PROGRESS_CHECKPOINT_INTERVAL = 100
 
 
 @dataclass(frozen=True)
@@ -2650,14 +2651,40 @@ def _validate_pair_candidates(
     undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
     formway_mode: str,
     left_turn_formway_bit: int,
+    progress_callback: Optional[Step2ProgressCallback] = None,
 ) -> list[PairValidationResult]:
     terminate_ids = set(execution.terminate_ids)
     hard_stop_node_ids = set(execution.strategy.hard_stop_node_ids)
     boundary_node_ids = terminate_ids | hard_stop_node_ids
     used_trunk_road_ids: dict[str, str] = {}
     provisional_results: list[PairValidationResult] = []
+    validation_count = len(execution.pair_candidates)
 
-    for pair in execution.pair_candidates:
+    _emit_progress(progress_callback, "validation_started", validation_count=validation_count)
+
+    for pair_index, pair in enumerate(execution.pair_candidates, start=1):
+        pair_progress_payload = {
+            "pair_index": pair_index,
+            "validation_count": validation_count,
+            "pair_id": pair.pair_id,
+            "a_node_id": pair.a_node_id,
+            "b_node_id": pair.b_node_id,
+            "phase": "validation_pair_started",
+        }
+        _emit_progress(
+            progress_callback,
+            "validation_pair_state",
+            **pair_progress_payload,
+            _perf_log=False,
+            _stdout_log=False,
+        )
+        if (
+            pair_index == 1
+            or pair_index == validation_count
+            or pair_index % VALIDATION_PROGRESS_CHECKPOINT_INTERVAL == 0
+        ):
+            _emit_progress(progress_callback, "validation_pair_checkpoint", **pair_progress_payload)
+
         candidate_road_ids, boundary_terminate_ids = _build_candidate_channel(
             pair,
             undirected_adjacency=undirected_adjacency,
@@ -2919,12 +2946,28 @@ def _validate_pair_candidates(
             )
         )
 
-    return _tighten_validated_segment_components(
+    provisional_validated_pair_count = sum(
+        1 for item in provisional_results if item.validated_status == "validated"
+    )
+    _emit_progress(
+        progress_callback,
+        "validation_tighten_started",
+        validation_count=validation_count,
+        validated_pair_count=provisional_validated_pair_count,
+    )
+    tightened = _tighten_validated_segment_components(
         provisional_results,
         execution=execution,
         context=context,
         road_endpoints=road_endpoints,
     )
+    _emit_progress(
+        progress_callback,
+        "validation_tighten_completed",
+        validation_count=len(tightened),
+        validated_pair_count=sum(1 for item in tightened if item.validated_status == "validated"),
+    )
+    return tightened
 
 
 def run_step2_segment_poc(
@@ -3056,6 +3099,7 @@ def run_step2_segment_poc(
             undirected_adjacency=undirected_adjacency,
             formway_mode=formway_mode,
             left_turn_formway_bit=left_turn_formway_bit,
+            progress_callback=progress_callback,
         )
         endpoint_pool_source_map = build_endpoint_pool_source_map(
             node_ids=set(execution.seed_ids) | set(execution.terminate_ids),

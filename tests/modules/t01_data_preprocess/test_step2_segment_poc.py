@@ -1837,7 +1837,34 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
     monkeypatch.setattr(step2_segment_poc, "_load_strategy", lambda _path: strategy)
     monkeypatch.setattr(step2_segment_poc, "run_step1_strategy", lambda _context, _strategy: execution)
     monkeypatch.setattr(step2_segment_poc, "write_step1_candidate_outputs", lambda *args, **kwargs: None)
-    monkeypatch.setattr(step2_segment_poc, "_validate_pair_candidates", lambda *args, **kwargs: validations)
+    def _fake_validate_pair_candidates(*args, **kwargs):
+        callback = kwargs["progress_callback"]
+        callback("validation_started", {"validation_count": 1})
+        callback(
+            "validation_pair_state",
+            {
+                "pair_index": 1,
+                "validation_count": 1,
+                "pair_id": "S2X:10__20",
+                "phase": "validation_pair_started",
+                "_perf_log": False,
+                "_stdout_log": False,
+            },
+        )
+        callback(
+            "validation_pair_checkpoint",
+            {
+                "pair_index": 1,
+                "validation_count": 1,
+                "pair_id": "S2X:10__20",
+                "phase": "validation_pair_started",
+            },
+        )
+        callback("validation_tighten_started", {"validation_count": 1, "validated_pair_count": 1})
+        callback("validation_tighten_completed", {"validation_count": 1, "validated_pair_count": 1})
+        return validations
+
+    monkeypatch.setattr(step2_segment_poc, "_validate_pair_candidates", _fake_validate_pair_candidates)
 
     def _fake_write_step2_outputs(
         out_dir: Path,
@@ -1887,6 +1914,11 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
         "strategy_loaded",
         "candidate_search_completed",
         "candidate_outputs_written",
+        "validation_started",
+        "validation_pair_state",
+        "validation_pair_checkpoint",
+        "validation_tighten_started",
+        "validation_tighten_completed",
         "validation_completed",
         "step2_outputs_written",
         "strategy_memory_released",

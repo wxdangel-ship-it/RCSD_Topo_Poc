@@ -72,10 +72,13 @@ def _format_progress_details(payload: dict[str, Any]) -> str:
         "strategy_id",
         "strategy_index",
         "strategy_count",
+        "pair_index",
+        "validation_count",
+        "pair_id",
+        "phase",
         "candidate_pair_count",
         "validated_pair_count",
         "rejected_pair_count",
-        "validation_count",
         "search_seed_count",
         "terminate_count",
         "road_count",
@@ -105,7 +108,10 @@ def _make_stage_subprogress_callback(
     completed_stage_names: list[str],
 ) -> Callable[[str, dict[str, Any]], None]:
     def _callback(event: str, payload: dict[str, Any]) -> None:
-        details = _format_progress_details(payload)
+        control_payload = dict(payload)
+        perf_log = bool(control_payload.pop("_perf_log", True))
+        stdout_log = bool(control_payload.pop("_stdout_log", True))
+        details = _format_progress_details(control_payload)
         message = f"Stage {stage_name} {event}."
         if details:
             message = f"{message} {details}"
@@ -118,21 +124,23 @@ def _make_stage_subprogress_callback(
             current_stage=stage_name,
             message=message,
         )
-        _append_jsonl(
-            perf_markers_path,
-            {
-                "event": "stage_subprogress",
-                "at": _now_text(),
-                "run_id": run_id,
-                "stage_index": stage_index,
-                "total_stages": total_stages,
-                "stage_name": stage_name,
-                "substage_event": event,
-                "payload": payload,
-            },
-        )
-        suffix = f" {details}" if details else ""
-        _print_progress(f"[{stage_index}/{total_stages}] {stage_name}:{event}{suffix}")
+        if perf_log:
+            _append_jsonl(
+                perf_markers_path,
+                {
+                    "event": "stage_subprogress",
+                    "at": _now_text(),
+                    "run_id": run_id,
+                    "stage_index": stage_index,
+                    "total_stages": total_stages,
+                    "stage_name": stage_name,
+                    "substage_event": event,
+                    "payload": control_payload,
+                },
+            )
+        if stdout_log:
+            suffix = f" {details}" if details else ""
+            _print_progress(f"[{stage_index}/{total_stages}] {stage_name}:{event}{suffix}")
 
     return _callback
 

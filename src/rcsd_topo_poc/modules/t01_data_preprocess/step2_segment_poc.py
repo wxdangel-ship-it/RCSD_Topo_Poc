@@ -8,10 +8,11 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from heapq import heappop, heappush
 from itertools import count
+from math import ceil, hypot
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Union
 
-from shapely.geometry import LineString, MultiLineString
+from shapely.geometry import LineString, MultiLineString, Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge
 
@@ -49,6 +50,7 @@ DEFAULT_RUN_ID_PREFIX = "t01_step2_segment_poc_"
 LEFT_TURN_FORMWAY_BIT = 8
 MAX_PATHS_PER_DIRECTION = 12
 MAX_PATH_DEPTH = 64
+SIDE_ACCESS_SAMPLE_STEP_M = MAX_SIDE_ACCESS_DISTANCE_M / 2.0
 
 
 @dataclass(frozen=True)
@@ -110,12 +112,20 @@ class NonTrunkComponent:
     component_id: str
     road_ids: tuple[str, ...]
     node_ids: tuple[str, ...]
+    attachment_node_ids: tuple[str, ...]
+    internal_support_attachment_node_ids: tuple[str, ...]
+    internal_t_support_attachment_node_ids: tuple[str, ...]
+    attachment_flow_status: str
+    attachment_direction_labels: tuple[str, ...]
+    parallel_corridor_directionality: str
+    parallel_corridor_directions: tuple[str, ...]
     hits_other_terminate: bool
     terminate_node_ids: tuple[str, ...]
     contains_other_validated_trunk: bool
     conflicting_pair_ids: tuple[str, ...]
     blocked_by_transition_same_dir: bool
     transition_block_infos: tuple[dict[str, Any], ...]
+    side_access_metric: str
     side_access_distance_m: Optional[float]
     side_access_gate_passed: bool
     kept_as_segment_body: bool
@@ -223,6 +233,61 @@ def _max_nearest_distance_m(
     return float(source_geometry.hausdorff_distance(target_geometry))
 
 
+def _iter_sample_points(geometry: Optional[BaseGeometry]) -> Iterable[Point]:
+    if geometry is None or geometry.is_empty:
+        return
+
+    if isinstance(geometry, LineString):
+        parts = (geometry,)
+    elif isinstance(geometry, MultiLineString):
+        parts = tuple(part for part in geometry.geoms if not part.is_empty)
+    else:
+        return
+
+    for part in parts:
+        coords = _geometry_coords(part)
+        if len(coords) < 2:
+            continue
+        for start, end in zip(coords, coords[1:]):
+            dx = end[0] - start[0]
+            dy = end[1] - start[1]
+            segment_length = hypot(dx, dy)
+            if segment_length <= 0.0:
+                continue
+            sample_count = max(3, ceil(segment_length / SIDE_ACCESS_SAMPLE_STEP_M) + 1)
+            for sample_index in range(sample_count):
+                fraction = sample_index / (sample_count - 1)
+                yield Point(start[0] + dx * fraction, start[1] + dy * fraction)
+
+
+def _max_sampled_distance_m(
+    source_geometry: Optional[BaseGeometry],
+    target_geometry: Optional[BaseGeometry],
+) -> Optional[float]:
+    if source_geometry is None or target_geometry is None:
+        return None
+    if source_geometry.is_empty or target_geometry.is_empty:
+        return None
+
+    max_distance_m: Optional[float] = None
+    for sample_point in _iter_sample_points(source_geometry):
+        distance_m = float(sample_point.distance(target_geometry))
+        if max_distance_m is None or distance_m > max_distance_m:
+            max_distance_m = distance_m
+    return max_distance_m
+
+
+def _collect_road_node_ids(
+    road_ids: Iterable[str],
+    *,
+    road_endpoints: dict[str, tuple[str, str]],
+) -> set[str]:
+    node_ids: set[str] = set()
+    for road_id in road_ids:
+        node_ids.update(road_endpoints.get(road_id, ()))
+    return node_ids
+
+
 def _build_semantic_endpoints(
     context: Step1GraphContext,
 ) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[TraversalEdge, ...]]]:
@@ -304,6 +369,52 @@ def _build_candidate_channel(
                 current_node_id = next_edge.to_node
 
     return candidate_road_ids, boundary_terminate_ids
+
+
+def _build_segment_body_candidate_channel(
+    pair: PairRecord,
+    *,
+    trunk_road_ids: tuple[str, ...],
+    undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
+    boundary_node_ids: set[str],
+    road_endpoints: dict[str, tuple[str, str]],
+) -> set[str]:
+    protected = {pair.a_node_id, pair.b_node_id}
+    start_node_ids = _collect_road_node_ids(trunk_road_ids, road_endpoints=road_endpoints)
+    candidate_road_ids: set[str] = set(trunk_road_ids)
+
+    for start_node_id in sorted(start_node_ids, key=_sort_key):
+        for edge in undirected_adjacency.get(start_node_id, ()):
+            if edge.road_id in candidate_road_ids:
+                continue
+
+            queue: deque[TraversalEdge] = deque([edge])
+            while queue:
+                current_edge = queue.popleft()
+                if current_edge.road_id in candidate_road_ids:
+                    continue
+
+                candidate_road_ids.add(current_edge.road_id)
+                current_node_id = current_edge.to_node
+                if current_node_id in boundary_node_ids and current_node_id not in protected:
+                    continue
+
+                for next_edge in undirected_adjacency.get(current_node_id, ()):
+                    if next_edge.road_id in candidate_road_ids:
+                        continue
+                    queue.append(next_edge)
+
+    non_trunk_candidate_road_ids = candidate_road_ids - set(trunk_road_ids)
+    retained_non_trunk_road_ids: set[str] = set()
+    for component_road_ids, component_node_ids in _collect_components(
+        non_trunk_candidate_road_ids,
+        road_endpoints=road_endpoints,
+    ):
+        attachment_node_ids = set(component_node_ids) & start_node_ids
+        if len(attachment_node_ids) >= 2:
+            retained_non_trunk_road_ids.update(component_road_ids)
+
+    return set(trunk_road_ids) | retained_non_trunk_road_ids
 
 
 def _build_incident_map(
@@ -392,6 +503,32 @@ def _path_exists_undirected(
         current_node_id = queue.popleft()
         for road_id in incident.get(current_node_id, set()):
             next_node_id = _other_endpoint(road_id, current_node_id, road_endpoints)
+            if next_node_id == end_node_id:
+                return True
+            if next_node_id in visited:
+                continue
+            visited.add(next_node_id)
+            queue.append(next_node_id)
+
+    return False
+
+
+def _path_exists_directed(
+    start_node_id: str,
+    end_node_id: str,
+    *,
+    adjacency: dict[str, tuple[TraversalEdge, ...]],
+) -> bool:
+    if start_node_id == end_node_id:
+        return True
+
+    queue: deque[str] = deque([start_node_id])
+    visited = {start_node_id}
+
+    while queue:
+        current_node_id = queue.popleft()
+        for edge in adjacency.get(current_node_id, ()):
+            next_node_id = edge.to_node
             if next_node_id == end_node_id:
                 return True
             if next_node_id in visited:
@@ -724,12 +861,20 @@ def _component_to_dict(component: NonTrunkComponent) -> dict[str, Any]:
         "component_id": component.component_id,
         "road_ids": list(component.road_ids),
         "node_ids": list(component.node_ids),
+        "attachment_node_ids": list(component.attachment_node_ids),
+        "internal_support_attachment_node_ids": list(component.internal_support_attachment_node_ids),
+        "internal_t_support_attachment_node_ids": list(component.internal_t_support_attachment_node_ids),
+        "attachment_flow_status": component.attachment_flow_status,
+        "attachment_direction_labels": list(component.attachment_direction_labels),
+        "parallel_corridor_directionality": component.parallel_corridor_directionality,
+        "parallel_corridor_directions": list(component.parallel_corridor_directions),
         "hits_other_terminate": component.hits_other_terminate,
         "terminate_node_ids": list(component.terminate_node_ids),
         "contains_other_validated_trunk": component.contains_other_validated_trunk,
         "conflicting_pair_ids": list(component.conflicting_pair_ids),
         "blocked_by_transition_same_dir": component.blocked_by_transition_same_dir,
         "transition_block_infos": list(component.transition_block_infos),
+        "side_access_metric": component.side_access_metric,
         "side_access_distance_m": component.side_access_distance_m,
         "side_access_gate_passed": component.side_access_gate_passed,
         "kept_as_segment_body": component.kept_as_segment_body,
@@ -756,6 +901,18 @@ def _tighten_validated_segment_components(
         if validation.validated_status == "validated"
         for road_id in validation.trunk_road_ids
     }
+    validated_internal_support_owners_by_node: dict[str, set[str]] = defaultdict(set)
+    for validation in validations:
+        if validation.validated_status != "validated":
+            continue
+        pair = pair_lookup.get(validation.pair_id)
+        if pair is None:
+            continue
+        internal_support_node_ids = (
+            set(pair.forward_path_node_ids[1:-1]) | set(pair.reverse_path_node_ids[1:-1])
+        ) - {pair.a_node_id, pair.b_node_id}
+        for node_id in internal_support_node_ids:
+            validated_internal_support_owners_by_node[node_id].add(validation.pair_id)
     direction_support_index = _build_direction_support_index(context)
 
     tightened: list[PairValidationResult] = []
@@ -776,6 +933,32 @@ def _tighten_validated_segment_components(
         branch_cut_seen = {(info.get("road_id"), info.get("cut_reason")) for info in branch_cut_infos}
 
         trunk_road_id_set = set(validation.trunk_road_ids)
+        trunk_node_id_set = _collect_road_node_ids(validation.trunk_road_ids, road_endpoints=road_endpoints)
+        internal_support_node_ids = tuple(
+            sorted(
+                (
+                    (set(pair.forward_path_node_ids[1:-1]) | set(pair.reverse_path_node_ids[1:-1]))
+                    - {pair.a_node_id, pair.b_node_id}
+                ),
+                key=_sort_key,
+            )
+        )
+        internal_support_node_id_set = set(internal_support_node_ids)
+        internal_t_support_node_ids = tuple(
+            sorted(
+                (
+                    node_id
+                    for node_id in (
+                        (set(pair.forward_path_node_ids[1:-1]) | set(pair.reverse_path_node_ids[1:-1]))
+                        - {pair.a_node_id, pair.b_node_id}
+                    )
+                    if node_id in context.semantic_nodes
+                    and _bit_enabled(context.semantic_nodes[node_id].kind_2, 11)
+                ),
+                key=_sort_key,
+            )
+        )
+        internal_t_support_node_id_set = set(internal_t_support_node_ids)
         pruned_road_id_set = set(validation.pruned_road_ids)
         trunk_geometry = _line_geometry_from_road_ids(validation.trunk_road_ids, roads=context.roads)
 
@@ -805,13 +988,36 @@ def _tighten_validated_segment_components(
             road_id = str(info["road_id"])
             refine_cut_reason_by_road[road_id].add(str(info["cut_reason"]))
 
-        non_trunk_road_ids = pruned_road_id_set - trunk_road_id_set
+        pruned_non_trunk_road_ids = pruned_road_id_set - trunk_road_id_set
+        refined_out_non_trunk_road_ids = pruned_non_trunk_road_ids - body_candidate_non_trunk_road_ids
         segment_body_non_trunk_road_ids: set[str] = set()
         residual_road_ids: set[str] = set()
         transition_same_dir_blocked = False
 
-        components = _collect_components(non_trunk_road_ids, road_endpoints=road_endpoints)
-        for component_index, (component_road_ids, component_node_ids) in enumerate(components, start=1):
+        component_queue: deque[tuple[tuple[str, ...], tuple[str, ...], bool]] = deque(
+            [
+                (*component, True)
+                for component in _collect_components(
+                    set(body_candidate_non_trunk_road_ids),
+                    road_endpoints=road_endpoints,
+                )
+            ]
+            + [
+                (*component, False)
+                for component in _collect_components(
+                    refined_out_non_trunk_road_ids,
+                    road_endpoints=road_endpoints,
+                )
+            ]
+        )
+        component_index = 0
+        while component_queue:
+            component_road_ids, component_node_ids, component_is_body_candidate = component_queue.popleft()
+            if not component_road_ids:
+                continue
+
+            component_index += 1
+            component_id = f"{validation.pair_id}:C{component_index}"
             component_road_id_set = set(component_road_ids)
             terminate_node_ids = tuple(
                 sorted((set(component_node_ids) & (boundary_node_ids - {pair.a_node_id, pair.b_node_id})), key=_sort_key)
@@ -827,6 +1033,81 @@ def _tighten_validated_segment_components(
                     key=_sort_key,
                 )
             )
+            conflicting_road_ids = {
+                road_id
+                for road_id in component_road_ids
+                if road_id in validated_trunk_owner_by_road and validated_trunk_owner_by_road[road_id] != validation.pair_id
+            }
+            support_barrier_node_ids = tuple(
+                sorted(
+                    (
+                        node_id
+                        for node_id in set(component_node_ids)
+                        if any(
+                            owner_pair_id != validation.pair_id
+                            for owner_pair_id in validated_internal_support_owners_by_node.get(node_id, set())
+                        )
+                    ),
+                    key=_sort_key,
+                )
+            )
+            support_barrier_road_ids = {
+                road_id
+                for road_id in component_road_ids
+                if set(road_endpoints.get(road_id, ())) & set(support_barrier_node_ids)
+            }
+            terminate_cut_road_ids = {
+                road_id
+                for road_id in component_road_ids
+                if set(road_endpoints.get(road_id, ())) & set(terminate_node_ids)
+            }
+            blocker_road_ids = terminate_cut_road_ids | conflicting_road_ids | support_barrier_road_ids
+            if blocker_road_ids:
+                for road_id in sorted(blocker_road_ids, key=_sort_key):
+                    road_node_ids = set(road_endpoints.get(road_id, ()))
+                    touched_terminate_node_ids = tuple(
+                        sorted(road_node_ids & set(terminate_node_ids), key=_sort_key)
+                    )
+                    touched_support_barrier_node_ids = tuple(
+                        sorted(road_node_ids & set(support_barrier_node_ids), key=_sort_key)
+                    )
+                    if touched_terminate_node_ids:
+                        cut_reason = (
+                            "hits_historical_boundary"
+                            if set(touched_terminate_node_ids) & hard_stop_node_ids
+                            else "hits_other_terminate"
+                        )
+                    elif touched_support_barrier_node_ids:
+                        cut_reason = "hits_other_validated_support_node"
+                    else:
+                        cut_reason = "contains_other_validated_trunk"
+                    key = (road_id, cut_reason)
+                    if key in branch_cut_seen:
+                        continue
+                    branch_cut_infos.append(
+                        {
+                            "road_id": road_id,
+                            "cut_reason": cut_reason,
+                            "component_id": component_id,
+                            "conflicting_pair_ids": list(conflicting_pair_ids),
+                            "terminate_node_ids": list(terminate_node_ids),
+                            "support_barrier_node_ids": list(support_barrier_node_ids),
+                        }
+                    )
+                    branch_cut_seen.add(key)
+
+                remaining_component_road_ids = component_road_id_set - blocker_road_ids
+                if remaining_component_road_ids:
+                    component_queue.extendleft(
+                        [
+                            (*component, component_is_body_candidate)
+                            for component in reversed(
+                                _collect_components(remaining_component_road_ids, road_endpoints=road_endpoints)
+                            )
+                        ]
+                    )
+                continue
+
             transition_block_infos = _collect_transition_same_dir_block_infos(
                 component_road_ids=component_road_ids,
                 component_node_ids=component_node_ids,
@@ -834,14 +1115,47 @@ def _tighten_validated_segment_components(
                 road_endpoints=road_endpoints,
                 direction_support_index=direction_support_index,
             )
+            attachment_node_ids = tuple(sorted((set(component_node_ids) & trunk_node_id_set), key=_sort_key))
+            internal_support_attachment_node_ids = tuple(
+                sorted((set(attachment_node_ids) & internal_support_node_id_set), key=_sort_key)
+            )
+            internal_t_support_attachment_node_ids = tuple(
+                sorted((set(attachment_node_ids) & internal_t_support_node_id_set), key=_sort_key)
+            )
+            component_directed_adjacency = _build_filtered_directed_adjacency(
+                context.roads,
+                road_endpoints=road_endpoints,
+                allowed_road_ids=component_road_id_set,
+                exclude_left_turn=False,
+                left_turn_formway_bit=LEFT_TURN_FORMWAY_BIT,
+            )
+            component_direction_support_index = _build_direction_support_index_from_adjacency(
+                component_directed_adjacency
+            )
+            attachment_flow_status, attachment_direction_labels = _classify_attachment_flow_status(
+                component_road_ids=component_road_ids,
+                attachment_node_ids=attachment_node_ids,
+                road_endpoints=road_endpoints,
+                direction_support_index=component_direction_support_index,
+            )
+            parallel_corridor_directionality, parallel_corridor_directions = _classify_parallel_corridor_directionality(
+                attachment_node_ids=attachment_node_ids,
+                directed_adjacency=component_directed_adjacency,
+            )
             hits_other_terminate = bool(terminate_node_ids)
             contains_other_validated_trunk = bool(conflicting_pair_ids)
             blocked_by_transition_same_dir = bool(transition_block_infos)
             component_geometry = _line_geometry_from_road_ids(component_road_ids, roads=context.roads)
-            side_access_distance_m = _max_nearest_distance_m(component_geometry, trunk_geometry)
-            side_access_gate_passed = (
-                side_access_distance_m is None or side_access_distance_m <= MAX_SIDE_ACCESS_DISTANCE_M
-            )
+            side_access_metric = "component_to_trunk_sampled"
+            side_access_distance_m = _max_sampled_distance_m(component_geometry, trunk_geometry)
+            if len(attachment_node_ids) < 2:
+                side_access_gate_passed = False
+                side_access_failure_reason = "side_access_attachment_insufficient"
+            else:
+                side_access_gate_passed = (
+                    side_access_distance_m is None or side_access_distance_m <= MAX_SIDE_ACCESS_DISTANCE_M
+                )
+                side_access_failure_reason = "side_access_distance_exceeded"
 
             kept_as_segment_body = False
             moved_to_step3_residual = False
@@ -857,14 +1171,28 @@ def _tighten_validated_segment_components(
             elif contains_other_validated_trunk:
                 moved_to_branch_cut = True
                 decision_reason = "contains_other_validated_trunk"
+            elif component_is_body_candidate and parallel_corridor_directionality == "bidirectional_parallel":
+                moved_to_step3_residual = True
+                decision_reason = "bidirectional_parallel_corridor"
+            elif component_is_body_candidate and attachment_flow_status != "single_departure_return":
+                moved_to_step3_residual = True
+                decision_reason = attachment_flow_status
+            elif (
+                component_is_body_candidate
+                and parallel_corridor_directionality == "one_way_parallel"
+                and attachment_node_ids
+                and set(attachment_node_ids).issubset(internal_support_node_id_set)
+            ):
+                moved_to_step3_residual = True
+                decision_reason = "internal_support_one_way_parallel"
             elif blocked_by_transition_same_dir:
                 moved_to_step3_residual = True
                 transition_same_dir_blocked = True
                 decision_reason = "transition_same_dir_block"
-            elif component_road_id_set.issubset(body_candidate_non_trunk_road_ids) and not side_access_gate_passed:
+            elif component_is_body_candidate and not side_access_gate_passed:
                 moved_to_step3_residual = True
-                decision_reason = "side_access_distance_exceeded"
-            elif component_road_id_set.issubset(body_candidate_non_trunk_road_ids):
+                decision_reason = side_access_failure_reason
+            elif component_is_body_candidate:
                 kept_as_segment_body = True
                 decision_reason = "segment_body"
             else:
@@ -880,15 +1208,23 @@ def _tighten_validated_segment_components(
                     decision_reason = "weak_rule_residual"
 
             component = NonTrunkComponent(
-                component_id=f"{validation.pair_id}:C{component_index}",
+                component_id=component_id,
                 road_ids=component_road_ids,
                 node_ids=component_node_ids,
+                attachment_node_ids=attachment_node_ids,
+                internal_support_attachment_node_ids=internal_support_attachment_node_ids,
+                internal_t_support_attachment_node_ids=internal_t_support_attachment_node_ids,
+                attachment_flow_status=attachment_flow_status,
+                attachment_direction_labels=attachment_direction_labels,
+                parallel_corridor_directionality=parallel_corridor_directionality,
+                parallel_corridor_directions=parallel_corridor_directions,
                 hits_other_terminate=hits_other_terminate,
                 terminate_node_ids=terminate_node_ids,
                 contains_other_validated_trunk=contains_other_validated_trunk,
                 conflicting_pair_ids=conflicting_pair_ids,
                 blocked_by_transition_same_dir=blocked_by_transition_same_dir,
                 transition_block_infos=transition_block_infos,
+                side_access_metric=side_access_metric,
                 side_access_distance_m=side_access_distance_m,
                 side_access_gate_passed=side_access_gate_passed,
                 kept_as_segment_body=kept_as_segment_body,
@@ -983,8 +1319,14 @@ def _build_filtered_directed_adjacency(
 def _build_direction_support_index(
     context: Step1GraphContext,
 ) -> dict[str, dict[str, set[str]]]:
+    return _build_direction_support_index_from_adjacency(context.directed)
+
+
+def _build_direction_support_index_from_adjacency(
+    adjacency: dict[str, tuple[TraversalEdge, ...]],
+) -> dict[str, dict[str, set[str]]]:
     support_index: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for from_node_id, edges in context.directed.items():
+    for from_node_id, edges in adjacency.items():
         for edge in edges:
             support_index[from_node_id][edge.road_id].add("out")
             support_index[edge.to_node][edge.road_id].add("in")
@@ -1049,6 +1391,73 @@ def _collect_transition_same_dir_block_infos(
             )
 
     return tuple(block_infos)
+
+
+def _classify_parallel_corridor_directionality(
+    *,
+    attachment_node_ids: tuple[str, ...],
+    directed_adjacency: dict[str, tuple[TraversalEdge, ...]],
+) -> tuple[str, tuple[str, ...]]:
+    if len(attachment_node_ids) != 2:
+        return "not_applicable", ()
+    a_node_id, b_node_id = attachment_node_ids
+    directions: list[str] = []
+    if _path_exists_directed(a_node_id, b_node_id, adjacency=directed_adjacency):
+        directions.append(f"{a_node_id}->{b_node_id}")
+    if _path_exists_directed(b_node_id, a_node_id, adjacency=directed_adjacency):
+        directions.append(f"{b_node_id}->{a_node_id}")
+
+    if len(directions) == 2:
+        return "bidirectional_parallel", tuple(directions)
+    if len(directions) == 1:
+        return "one_way_parallel", tuple(directions)
+    return "no_directed_attachment_path", ()
+
+
+def _classify_attachment_flow_status(
+    *,
+    component_road_ids: tuple[str, ...],
+    attachment_node_ids: tuple[str, ...],
+    road_endpoints: dict[str, tuple[str, str]],
+    direction_support_index: dict[str, dict[str, set[str]]],
+) -> tuple[str, tuple[str, ...]]:
+    if len(attachment_node_ids) < 2:
+        return "side_access_attachment_insufficient", ()
+
+    direction_labels: list[str] = []
+    departure_count = 0
+    return_count = 0
+    ambiguous = False
+
+    component_road_id_set = set(component_road_ids)
+    for node_id in attachment_node_ids:
+        node_component_road_ids = sorted(
+            (road_id for road_id in component_road_id_set if node_id in road_endpoints.get(road_id, ())),
+            key=_sort_key,
+        )
+        node_dirs: set[str] = set()
+        for road_id in node_component_road_ids:
+            node_dirs.update(direction_support_index.get(node_id, {}).get(road_id, set()))
+        if node_dirs == {"out"}:
+            departure_count += 1
+            direction_labels.append(f"{node_id}:out")
+        elif node_dirs == {"in"}:
+            return_count += 1
+            direction_labels.append(f"{node_id}:in")
+        elif node_dirs == {"in", "out"}:
+            ambiguous = True
+            direction_labels.append(f"{node_id}:both")
+        else:
+            ambiguous = True
+            direction_labels.append(f"{node_id}:none")
+
+    if ambiguous:
+        return "single_side_attachment_flow_ambiguous", tuple(direction_labels)
+    if len(attachment_node_ids) != 2:
+        return "single_side_attachment_flow_not_two_attachments", tuple(direction_labels)
+    if departure_count != 1 or return_count != 1:
+        return "single_side_attachment_flow_direction_mismatch", tuple(direction_labels)
+    return "single_departure_return", tuple(direction_labels)
 
 
 def _enumerate_simple_paths(
@@ -2406,11 +2815,18 @@ def _validate_pair_candidates(
             segment_road_ids = trunk_candidate.road_ids
             segment_cut_infos: list[dict[str, Any]] = []
         else:
+            segment_candidate_road_ids = _build_segment_body_candidate_channel(
+                pair,
+                trunk_road_ids=trunk_candidate.road_ids,
+                undirected_adjacency=undirected_adjacency,
+                boundary_node_ids=boundary_node_ids,
+                road_endpoints=road_endpoints,
+            )
             segment_road_ids, segment_cut_infos = _refine_segment_roads(
                 pair,
                 context=context,
                 road_endpoints=road_endpoints,
-                pruned_road_ids=pruned_road_ids,
+                pruned_road_ids=segment_candidate_road_ids,
                 trunk_road_ids=trunk_candidate.road_ids,
                 through_rule=execution.strategy.through_rule,
             )

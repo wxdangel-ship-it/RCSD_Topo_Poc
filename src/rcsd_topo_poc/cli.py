@@ -182,10 +182,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t01-step1-pair-poc",
         help="Run T01 Step1 pair-candidate prototype and write QGIS-reviewable outputs.",
     )
-    p_t01.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
+    p_t01.add_argument("--road-path", required=True, help="Path to Road GeoJSON. Shapefile remains supported for compatibility.")
     p_t01.add_argument("--road-layer", help="Optional road layer name.")
     p_t01.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_t01.add_argument("--node-path", required=True, help="Path to Node Shp/GeoJSON.")
+    p_t01.add_argument("--node-path", required=True, help="Path to Node GeoJSON. Shapefile remains supported for compatibility.")
     p_t01.add_argument("--node-layer", help="Optional node layer name.")
     p_t01.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_t01.add_argument(
@@ -209,10 +209,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t01-step2-segment-poc",
         help="Run T01 Step2 Segment POC: validate pair candidates and build reviewable segment outputs.",
     )
-    p_t02.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
+    p_t02.add_argument("--road-path", required=True, help="Path to Road GeoJSON. Shapefile remains supported for compatibility.")
     p_t02.add_argument("--road-layer", help="Optional road layer name.")
     p_t02.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_t02.add_argument("--node-path", required=True, help="Path to Node Shp/GeoJSON.")
+    p_t02.add_argument("--node-path", required=True, help="Path to Node GeoJSON. Shapefile remains supported for compatibility.")
     p_t02.add_argument("--node-layer", help="Optional node layer name.")
     p_t02.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_t02.add_argument(
@@ -248,10 +248,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t01-build-validation-slices",
         help="Build T01 validation slice outputs for later Step1/Step2 review runs.",
     )
-    p_slice.add_argument("--road-path", required=True, help="Path to Road Shp/GeoJSON.")
+    p_slice.add_argument("--road-path", required=True, help="Path to Road GeoJSON. Shapefile remains supported for compatibility.")
     p_slice.add_argument("--road-layer", help="Optional road layer name.")
     p_slice.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_slice.add_argument("--node-path", required=True, help="Path to Node Shp/GeoJSON.")
+    p_slice.add_argument("--node-path", required=True, help="Path to Node GeoJSON. Shapefile remains supported for compatibility.")
     p_slice.add_argument("--node-layer", help="Optional node layer name.")
     p_slice.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_slice.add_argument(
@@ -279,10 +279,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t01-s2-refresh-node-road",
         help="Refresh Node/Road derived fields from the passed Step2 S2 baseline outputs.",
     )
-    p_refresh.add_argument("--road-path", required=True, help="Path to original Road Shp/GeoJSON.")
+    p_refresh.add_argument(
+        "--road-path",
+        required=True,
+        help="Path to original Road GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_refresh.add_argument("--road-layer", help="Optional road layer name.")
     p_refresh.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_refresh.add_argument("--node-path", required=True, help="Path to original Node Shp/GeoJSON.")
+    p_refresh.add_argument(
+        "--node-path",
+        required=True,
+        help="Path to original Node GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_refresh.add_argument("--node-layer", help="Optional node layer name.")
     p_refresh.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_refresh.add_argument(
@@ -305,10 +313,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t01-step4-residual-graph",
         help="Run Step4 residual-graph segment construction on refreshed Node/Road inputs.",
     )
-    p_step4.add_argument("--road-path", required=True, help="Path to refreshed Road Shp/GeoJSON.")
+    p_step4.add_argument(
+        "--road-path",
+        required=True,
+        help="Path to refreshed Road GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_step4.add_argument("--road-layer", help="Optional road layer name.")
     p_step4.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_step4.add_argument("--node-path", required=True, help="Path to refreshed Node Shp/GeoJSON.")
+    p_step4.add_argument(
+        "--node-path",
+        required=True,
+        help="Path to refreshed Node GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_step4.add_argument("--node-layer", help="Optional node layer name.")
     p_step4.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_step4.add_argument(
@@ -338,10 +354,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t01-step5-staged-residual-graph",
         help="Run Step5A/Step5B/Step5C staged residual-graph segment construction on Step4 refreshed inputs.",
     )
-    p_step5.add_argument("--road-path", required=True, help="Path to Step4 refreshed Road Shp/GeoJSON.")
+    p_step5.add_argument(
+        "--road-path",
+        required=True,
+        help="Path to Step4 refreshed Road GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_step5.add_argument("--road-layer", help="Optional road layer name.")
     p_step5.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_step5.add_argument("--node-path", required=True, help="Path to Step4 refreshed Node Shp/GeoJSON.")
+    p_step5.add_argument(
+        "--node-path",
+        required=True,
+        help="Path to Step4 refreshed Node GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_step5.add_argument("--node-layer", help="Optional node layer name.")
     p_step5.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_step5.add_argument(
@@ -369,12 +393,20 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_skill = sub.add_parser(
         "t01-run-skill-v1",
-        help="Run the accepted Step1-Step5 T01 skill pipeline end-to-end with the official debug-aware runner.",
+        help="Run the accepted Step1-Step6 T01 skill pipeline end-to-end with the official debug-aware runner.",
     )
-    p_skill.add_argument("--road-path", required=True, help="Path to input Road Shp/GeoJSON.")
+    p_skill.add_argument(
+        "--road-path",
+        required=True,
+        help="Path to input Road GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_skill.add_argument("--road-layer", help="Optional road layer name.")
     p_skill.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_skill.add_argument("--node-path", required=True, help="Path to input Node Shp/GeoJSON.")
+    p_skill.add_argument(
+        "--node-path",
+        required=True,
+        help="Path to input Node GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_skill.add_argument("--node-layer", help="Optional node layer name.")
     p_skill.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_skill.add_argument(
@@ -402,17 +434,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_skill_eval/<run_id>.",
     )
-    _add_debug_flag(p_skill, default=True)
+    _add_debug_flag(p_skill, default=False)
     p_skill.set_defaults(func=_cmd_t01_run_skill_v1)
 
     p_step6 = sub.add_parser(
         "t01-step6-segment-aggregation-poc",
-        help="Build segment.geojson, inner_nodes.geojson, and segment_error.geojson from refreshed Step1-Step5C outputs.",
+        help="Build segment.geojson, inner_nodes.geojson, and segment_error.geojson from refreshed Step1-Step6-aligned GeoJSON outputs.",
     )
-    p_step6.add_argument("--road-path", required=True, help="Path to refreshed Road Shp/GeoJSON.")
+    p_step6.add_argument(
+        "--road-path",
+        required=True,
+        help="Path to refreshed Road GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_step6.add_argument("--road-layer", help="Optional road layer name.")
     p_step6.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_step6.add_argument("--node-path", required=True, help="Path to refreshed Node Shp/GeoJSON.")
+    p_step6.add_argument(
+        "--node-path",
+        required=True,
+        help="Path to refreshed Node GeoJSON. Shapefile remains supported only for compatibility.",
+    )
     p_step6.add_argument("--node-layer", help="Optional node layer name.")
     p_step6.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_step6.add_argument(
@@ -423,7 +463,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_step6_segment_aggregation/<run_id>.",
     )
-    _add_debug_flag(p_step6, default=True)
+    _add_debug_flag(p_step6, default=False)
     p_step6.set_defaults(func=_cmd_t01_step6_segment_aggregation)
 
     p_compare = sub.add_parser(

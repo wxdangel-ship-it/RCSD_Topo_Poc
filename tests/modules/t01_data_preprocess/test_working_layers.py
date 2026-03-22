@@ -48,8 +48,9 @@ def test_initialize_working_layers_creates_runtime_fields(tmp_path: Path) -> Non
     assert node_props["1"]["kind_2"] == 4
     assert node_props["2"]["grade_2"] == 1
     assert node_props["2"]["kind_2"] == 2048
-    assert road_props["r1"]["s_grade"] is None
+    assert road_props["r1"]["sgrade"] is None
     assert road_props["r1"]["segmentid"] is None
+    assert "s_grade" not in road_props["r1"]
 
 
 def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_path: Path) -> None:
@@ -118,16 +119,22 @@ def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_p
     assert roundabout_summary["roundabout_member_node_count"] == 3
     assert node_props["10"]["grade_2"] == 1
     assert node_props["10"]["kind_2"] == 64
-    assert str(node_props["10"]["mainnodeid"]) == "10"
+    assert "mainnodeid" not in node_props["10"]
+    assert str(node_props["10"]["working_mainnodeid"]) == "10"
     assert node_props["11"]["grade_2"] == 0
     assert node_props["11"]["kind_2"] == 0
-    assert str(node_props["11"]["mainnodeid"]) == "10"
+    assert "mainnodeid" not in node_props["11"]
+    assert str(node_props["11"]["working_mainnodeid"]) == "10"
     assert node_props["12"]["grade_2"] == 0
     assert node_props["12"]["kind_2"] == 0
-    assert str(node_props["12"]["mainnodeid"]) == "10"
+    assert "mainnodeid" not in node_props["12"]
+    assert str(node_props["12"]["working_mainnodeid"]) == "10"
     assert node_props["20"]["grade_2"] == 1
     assert node_props["20"]["kind_2"] == 64
-    assert str(node_props["21"]["mainnodeid"]) == "20"
+    assert "mainnodeid" not in node_props["20"]
+    assert "mainnodeid" not in node_props["21"]
+    assert str(node_props["20"]["working_mainnodeid"]) == "20"
+    assert str(node_props["21"]["working_mainnodeid"]) == "20"
     assert (out_root / "roundabout_group_roads.geojson").is_file()
     assert (out_root / "roundabout_group_nodes.geojson").is_file()
     assert (out_root / "roundabout_mainnodes.geojson").is_file()

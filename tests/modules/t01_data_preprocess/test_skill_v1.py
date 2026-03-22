@@ -65,11 +65,23 @@ def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) 
         _write_text(final_roads_path, "{}")
         manifest_path = kwargs["resolved_out_root"] / "skill_v1_manifest.json"
         summary_path = kwargs["resolved_out_root"] / "skill_v1_bundle_summary.json"
+        segment_path = kwargs["resolved_out_root"] / "segment.geojson"
+        inner_nodes_path = kwargs["resolved_out_root"] / "inner_nodes.geojson"
+        segment_error_path = kwargs["resolved_out_root"] / "segment_error.geojson"
+        step6_summary_path = kwargs["resolved_out_root"] / "segment_summary.json"
         _write_text(manifest_path, "{}")
         _write_text(summary_path, "{}")
+        _write_text(segment_path, "{}")
+        _write_text(inner_nodes_path, "{}")
+        _write_text(segment_error_path, "{}")
+        _write_text(step6_summary_path, "{}")
         return {
             "manifest_path": str(manifest_path.resolve()),
             "summary_path": str(summary_path.resolve()),
+            "segment_path": str(segment_path.resolve()),
+            "inner_nodes_path": str(inner_nodes_path.resolve()),
+            "segment_error_path": str(segment_error_path.resolve()),
+            "step6_summary_path": str(step6_summary_path.resolve()),
         }
 
     monkeypatch.setattr(skill_v1, "initialize_working_layers", _fake_bootstrap)
@@ -89,6 +101,7 @@ def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) 
     )
 
     progress = json.loads((artifacts.out_root / "t01_skill_v1_progress.json").read_text(encoding="utf-8"))
+    summary = json.loads((artifacts.out_root / "t01_skill_v1_summary.json").read_text(encoding="utf-8"))
     markers = [
         json.loads(line)
         for line in (artifacts.out_root / "t01_skill_v1_perf_markers.jsonl").read_text(encoding="utf-8").splitlines()
@@ -101,6 +114,11 @@ def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) 
     assert any(item["stage_name"] == "bootstrap" for item in subprogress_events)
     assert any(item["stage_name"] == "step2" for item in subprogress_events)
     assert any(item["substage_event"] == "validation_completed" for item in subprogress_events)
+    assert any(stage["name"] == "step6" for stage in summary["stages"])
+    assert summary["memory_management"]["debug_default_enabled"] is False
+    assert summary["segment_geojson_path"].endswith("segment.geojson")
+    assert summary["inner_nodes_geojson_path"].endswith("inner_nodes.geojson")
+    assert summary["segment_error_geojson_path"].endswith("segment_error.geojson")
     assert scope_check["step5c_present"] is False
 
 

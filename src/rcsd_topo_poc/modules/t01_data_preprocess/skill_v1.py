@@ -21,6 +21,9 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _find_repo_
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
 from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import run_step4_residual_graph
 from rcsd_topo_poc.modules.t01_data_preprocess.step5_staged_residual_graph import run_step5_staged_residual_graph
+from rcsd_topo_poc.modules.t01_data_preprocess.step6_segment_aggregation import (
+    run_step6_segment_aggregation_from_records,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
     MAX_SIDE_ACCESS_DISTANCE_M,
@@ -666,7 +669,7 @@ def run_t01_skill_v1(
         final_nodes_path = resolved_out_root / "nodes.geojson"
         final_roads_path = resolved_out_root / "roads.geojson"
         bundle_info = _run_stage(
-            name="finalize_bundle",
+            name="step6",
             run_id=resolved_run_id,
             stage_index=6,
             total_stages=total_stages,
@@ -679,10 +682,13 @@ def run_t01_skill_v1(
                 step2_root=step2_root,
                 step4_root=step4_root,
                 step5_root=step5_root,
+                step5_artifacts=step5_artifacts,
                 refreshed_nodes_path=step5_artifacts.refreshed_nodes_path,
                 refreshed_roads_path=step5_artifacts.refreshed_roads_path,
                 final_nodes_path=final_nodes_path,
                 final_roads_path=final_roads_path,
+                run_id=resolved_run_id,
+                debug=debug,
             ),
         )
         distance_gate_scope_check_path = _write_distance_gate_scope_check(
@@ -727,6 +733,10 @@ def run_t01_skill_v1(
             "bundle_manifest_path": bundle_info["manifest_path"],
             "bundle_summary_path": bundle_info["summary_path"],
             "all_stage_segment_roads_path": bundle_info.get("all_stage_segment_roads_path"),
+            "segment_geojson_path": bundle_info.get("segment_path"),
+            "inner_nodes_geojson_path": bundle_info.get("inner_nodes_path"),
+            "segment_error_geojson_path": bundle_info.get("segment_error_path"),
+            "step6_segment_summary_path": bundle_info.get("step6_summary_path"),
             "distance_gate_scope_check_path": str(distance_gate_scope_check_path.resolve()),
             "freeze_compare_status": freeze_compare_status,
             "progress_path": str(progress_path.resolve()),
@@ -734,11 +744,14 @@ def run_t01_skill_v1(
             "perf_md_path": str(perf_md_path.resolve()),
             "perf_markers_path": str(perf_markers_path.resolve()),
             "memory_management": {
-                "debug_default_enabled": True,
+                "debug_default_enabled": False,
                 "stage_gc_after_run": True,
                 "bounded_parallel_load_workers": 2,
                 "uses_temp_stage_root_when_debug_false": True,
                 "deep_full_in_memory_pipeline": False,
+                "step6_reuses_step5_in_memory_records": True,
+                "step6_reuses_step5_mainnode_group_index": True,
+                "step5_alias_outputs_debug_only": True,
                 "step2_internal_progress_enabled": True,
                 "step2_retains_validation_details_in_runner": False,
             },
@@ -807,13 +820,29 @@ def _finalize_bundle(
     step2_root: Path,
     step4_root: Path,
     step5_root: Path,
+    step5_artifacts: Any,
     refreshed_nodes_path: Path,
     refreshed_roads_path: Path,
     final_nodes_path: Path,
     final_roads_path: Path,
+    run_id: str,
+    debug: bool,
 ) -> dict[str, str]:
     shutil.copy2(refreshed_nodes_path, final_nodes_path)
     shutil.copy2(refreshed_roads_path, final_roads_path)
+    step6_artifacts = run_step6_segment_aggregation_from_records(
+        nodes=list(step5_artifacts.step6_nodes),
+        roads=list(step5_artifacts.step6_roads),
+        node_properties_map=step5_artifacts.step6_node_properties_map,
+        road_properties_map=step5_artifacts.step6_road_properties_map,
+        mainnode_groups=step5_artifacts.step6_mainnode_groups,
+        group_to_allowed_road_ids=step5_artifacts.step6_group_to_allowed_road_ids,
+        node_path=final_nodes_path,
+        road_path=final_roads_path,
+        out_root=resolved_out_root,
+        run_id=run_id,
+        debug=debug,
+    )
     all_stage_segment_roads_path = _write_all_stage_segment_roads_dir(
         out_root=resolved_out_root,
         step2_root=step2_root,
@@ -831,6 +860,10 @@ def _finalize_bundle(
         skill_version=SKILL_VERSION,
     )
     bundle_info["all_stage_segment_roads_path"] = str(all_stage_segment_roads_path.resolve())
+    bundle_info["segment_path"] = str(step6_artifacts.segment_path.resolve())
+    bundle_info["inner_nodes_path"] = str(step6_artifacts.inner_nodes_path.resolve())
+    bundle_info["segment_error_path"] = str(step6_artifacts.segment_error_path.resolve())
+    bundle_info["step6_summary_path"] = str(step6_artifacts.segment_summary_path.resolve())
     return bundle_info
 
 

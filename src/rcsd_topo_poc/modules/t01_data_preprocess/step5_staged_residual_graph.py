@@ -39,11 +39,16 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     ACTIVE_CLOSED_CON_VALUES,
     WORKING_NODE_FIELDS,
     WORKING_ROAD_FIELDS,
+    canonicalize_road_working_properties,
+    get_road_segmentid,
+    get_road_sgrade,
     is_active_closed_con,
     is_allowed_road_kind,
     is_full_through_kind,
     is_full_through_or_t_kind,
     is_roundabout_mainnode_kind,
+    set_road_segmentid,
+    set_road_sgrade,
 )
 
 
@@ -104,11 +109,17 @@ class Step5Artifacts:
     out_root: Path
     refreshed_nodes_path: Path
     refreshed_roads_path: Path
-    refreshed_nodes_alias_path: Path
-    refreshed_roads_alias_path: Path
+    refreshed_nodes_alias_path: Optional[Path]
+    refreshed_roads_alias_path: Optional[Path]
     summary_path: Path
     mainnode_table_path: Path
     summary: dict[str, Any]
+    step6_nodes: tuple[NodeFeatureRecord, ...]
+    step6_roads: tuple[RoadFeatureRecord, ...]
+    step6_node_properties_map: dict[str, dict[str, Any]]
+    step6_road_properties_map: dict[str, dict[str, Any]]
+    step6_mainnode_groups: dict[str, Any]
+    step6_group_to_allowed_road_ids: dict[str, set[str]]
 
 
 @dataclass(frozen=True)
@@ -1017,6 +1028,9 @@ def _write_refreshed_outputs(
     out_root: Path,
     mainnode_rows: list[dict[str, Any]],
     summary: dict[str, Any],
+    mainnode_groups: dict[str, Any],
+    group_to_allowed_road_ids: dict[str, set[str]],
+    write_alias_outputs: bool,
 ) -> Step5Artifacts:
     refreshed_nodes_path = out_root / "nodes.geojson"
     refreshed_roads_path = out_root / "roads.geojson"
@@ -1030,8 +1044,12 @@ def _write_refreshed_outputs(
 
     write_geojson(refreshed_nodes_path, node_features)
     write_geojson(refreshed_roads_path, road_features)
-    write_geojson(refreshed_nodes_alias_path, node_features)
-    write_geojson(refreshed_roads_alias_path, road_features)
+    if write_alias_outputs:
+        write_geojson(refreshed_nodes_alias_path, node_features)
+        write_geojson(refreshed_roads_alias_path, road_features)
+    else:
+        refreshed_nodes_alias_path = None
+        refreshed_roads_alias_path = None
     write_json(summary_path, summary)
     write_csv(
         mainnode_table_path,
@@ -1064,6 +1082,12 @@ def _write_refreshed_outputs(
         summary_path=summary_path,
         mainnode_table_path=mainnode_table_path,
         summary=summary,
+        step6_nodes=tuple(nodes),
+        step6_roads=tuple(roads),
+        step6_node_properties_map={node_id: dict(props) for node_id, props in node_properties_map.items()},
+        step6_road_properties_map={road_id: dict(props) for road_id, props in road_properties_map.items()},
+        step6_mainnode_groups=mainnode_groups,
+        step6_group_to_allowed_road_ids={group_id: set(road_ids) for group_id, road_ids in group_to_allowed_road_ids.items()},
     )
 
 
@@ -1082,6 +1106,7 @@ def _refresh_after_step5(
     removed_historical_segment_road_count: int,
     removed_step5a_segment_road_count: int,
     removed_step5b_segment_road_count: int,
+    debug: bool,
 ) -> Step5Artifacts:
     node_by_id = {node.node_id: node for node in nodes}
     road_by_id = {road.road_id: road for road in roads}
@@ -1135,22 +1160,27 @@ def _refresh_after_step5(
 
     road_properties_map: dict[str, dict[str, Any]] = {}
     for road in roads:
-        props = dict(road.properties)
+        props = canonicalize_road_working_properties(road.properties)
         existing_segmentid = _current_segmentid(road)
         if existing_segmentid:
-            props["segmentid"] = existing_segmentid
-            props["s_grade"] = props.get("s_grade")
+            set_road_segmentid(props, existing_segmentid)
+            set_road_sgrade(props, get_road_sgrade(props))
         elif road.road_id in new_road_to_segmentid:
-            props["segmentid"] = new_road_to_segmentid[road.road_id]
-            props["s_grade"] = STEP5_NEW_SEGMENT_GRADE
+            set_road_segmentid(props, new_road_to_segmentid[road.road_id])
+            set_road_sgrade(props, STEP5_NEW_SEGMENT_GRADE)
         else:
-            props["segmentid"] = props.get("segmentid")
-            props["s_grade"] = props.get("s_grade")
+            set_road_segmentid(props, get_road_segmentid(props))
+            set_road_sgrade(props, get_road_sgrade(props))
         road_properties_map[road.road_id] = props
 
     group_to_road_ids = _build_group_to_road_ids(
         roads=roads,
         active_road_ids={road.road_id for road in roads},
+        physical_to_semantic=physical_to_semantic,
+    )
+    group_to_allowed_road_ids = _build_group_to_road_ids(
+        roads=roads,
+        active_road_ids={road.road_id for road in roads if is_allowed_road_kind(road.road_kind)},
         physical_to_semantic=physical_to_semantic,
     )
 
@@ -1289,6 +1319,9 @@ def _refresh_after_step5(
         out_root=out_root,
         mainnode_rows=mainnode_rows,
         summary=summary,
+        mainnode_groups=mainnode_groups,
+        group_to_allowed_road_ids=group_to_allowed_road_ids,
+        write_alias_outputs=debug,
     )
 
 
@@ -1495,6 +1528,7 @@ def run_step5_staged_residual_graph(
         removed_historical_segment_road_count=len(historical_segment_road_ids),
         removed_step5a_segment_road_count=len(phase_a.road_to_segmentid),
         removed_step5b_segment_road_count=len(phase_b.road_to_segmentid),
+        debug=debug,
     )
     refreshed_summary = dict(artifacts.summary)
     refreshed_summary["input_node_path"] = str(Path(node_path))
@@ -1530,6 +1564,12 @@ def run_step5_staged_residual_graph(
         summary_path=artifacts.summary_path,
         mainnode_table_path=artifacts.mainnode_table_path,
         summary=refreshed_summary,
+        step6_nodes=artifacts.step6_nodes,
+        step6_roads=artifacts.step6_roads,
+        step6_node_properties_map=artifacts.step6_node_properties_map,
+        step6_road_properties_map=artifacts.step6_road_properties_map,
+        step6_mainnode_groups=artifacts.step6_mainnode_groups,
+        step6_group_to_allowed_road_ids=artifacts.step6_group_to_allowed_road_ids,
     )
 
 

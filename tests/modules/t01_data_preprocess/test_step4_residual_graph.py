@@ -53,7 +53,7 @@ def _road_feature(
     formway: int = 0,
     road_kind: int = 0,
     segmentid: str | None = None,
-    s_grade: str | None = None,
+    sgrade: str | None = None,
 ) -> dict:
     return {
         "type": "Feature",
@@ -65,7 +65,7 @@ def _road_feature(
             "formway": formway,
             "road_kind": road_kind,
             "segmentid": segmentid,
-            "s_grade": s_grade,
+            "sgrade": sgrade,
         },
         "geometry": LineString(coords),
     }
@@ -122,7 +122,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
             _road_feature("r17", 1, 7, 0, [[0.0, 0.0], [-1.0, 0.0]]),
             _road_feature("r83", 8, 3, 0, [[3.0, 0.0], [2.0, 0.0]]),
             _road_feature("closed1", 7, 8, 0, [[-1.0, 0.0], [3.0, 0.0]], road_kind=1),
-            _road_feature("old1", 500, 501, 0, [[8.0, 0.0], [9.0, 0.0]], segmentid="old_pair", s_grade="0-0\u53cc"),
+            _road_feature("old1", 500, 501, 0, [[8.0, 0.0], [9.0, 0.0]], segmentid="old_pair", sgrade="0-0双"),
             _road_feature("tin", 502, 501, 2, [[8.0, 1.0], [9.0, 0.0]]),
             _road_feature("tout", 501, 503, 2, [[9.0, 0.0], [10.0, 1.0]]),
         ],
@@ -171,13 +171,13 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     roads_doc = _load_geojson(artifacts.refreshed_roads_path)
     road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
     for road_id in ["r14", "r43", "r32", "r21"]:
-        assert road_props[road_id]["s_grade"] == "0-1\u53cc"
+        assert road_props[road_id]["sgrade"] == "0-1双"
         assert road_props[road_id]["segmentid"] == "1_3"
     for road_id in ["r46", "r62"]:
         assert road_props[road_id]["segmentid"] in {None, ""}
-        assert road_props[road_id]["s_grade"] in {None, ""}
+        assert road_props[road_id]["sgrade"] in {None, ""}
     assert road_props["old1"]["segmentid"] == "old_pair"
-    assert road_props["old1"]["s_grade"] == "0-0\u53cc"
+    assert road_props["old1"]["sgrade"] == "0-0双"
     assert road_props["r25"]["segmentid"] in {None, ""}
     assert road_props["r17"]["segmentid"] in {None, ""}
     assert road_props["r83"]["segmentid"] in {None, ""}

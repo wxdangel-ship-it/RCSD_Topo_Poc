@@ -150,6 +150,13 @@ def _normalize_mainnodeid(value: Any) -> Optional[str]:
     return normalized
 
 
+def _resolve_working_mainnodeid(properties: Dict[str, Any]) -> Optional[str]:
+    working_mainnodeid = _normalize_mainnodeid(properties.get("working_mainnodeid"))
+    if working_mainnodeid is not None:
+        return working_mainnodeid
+    return _normalize_mainnodeid(properties.get("mainnodeid"))
+
+
 def _sort_key(value: str) -> Tuple[int, Union[int, str]]:
     try:
         return (0, int(value))
@@ -188,7 +195,7 @@ def _prepare_nodes(raw_features: List[Dict[str, Any]]) -> Dict[str, SliceNode]:
 
         nodes[node_id] = SliceNode(
             node_id=node_id,
-            mainnodeid=_normalize_mainnodeid(properties.get("mainnodeid")),
+            mainnodeid=_resolve_working_mainnodeid(properties),
             x=float(geometry.x),
             y=float(geometry.y),
             properties=dict(properties),
@@ -228,7 +235,7 @@ def _load_shapefile_nodes_fast(
 
         nodes[node_id] = SliceNode(
             node_id=node_id,
-            mainnodeid=_normalize_mainnodeid(properties.get("mainnodeid")),
+            mainnodeid=_resolve_working_mainnodeid(properties),
             x=float(x),
             y=float(y),
             properties=properties,

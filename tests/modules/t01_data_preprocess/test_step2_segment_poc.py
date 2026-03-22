@@ -5,7 +5,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.cli import main
 from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc, step2_segment_poc
@@ -112,16 +112,38 @@ def _minimal_context(
     roads: list[step1_pair_poc.RoadRecord],
     *,
     directed: dict[str, tuple[step1_pair_poc.TraversalEdge, ...]] | None = None,
+    semantic_nodes: dict[str, step1_pair_poc.SemanticNodeRecord] | None = None,
 ) -> step1_pair_poc.Step1GraphContext:
     return step1_pair_poc.Step1GraphContext(
         physical_nodes={},
         roads={road.road_id: road for road in roads},
-        semantic_nodes={},
+        semantic_nodes={} if semantic_nodes is None else semantic_nodes,
         physical_to_semantic={},
         directed={} if directed is None else directed,
         blocked={},
         orphan_ref_count=0,
         graph_audit_events=[],
+    )
+
+
+def _semantic_node_record(
+    node_id: str,
+    *,
+    kind_2: int,
+    grade_2: int = 1,
+    closed_con: int = 2,
+) -> step1_pair_poc.SemanticNodeRecord:
+    return step1_pair_poc.SemanticNodeRecord(
+        semantic_node_id=node_id,
+        representative_node_id=node_id,
+        member_node_ids=(node_id,),
+        raw_kind=kind_2,
+        raw_grade=grade_2,
+        kind_2=kind_2,
+        grade_2=grade_2,
+        closed_con=closed_con,
+        geometry=Point(0.0, 0.0),
+        raw_properties={"id": node_id, "kind_2": kind_2, "grade_2": grade_2, "closed_con": closed_con},
     )
 
 
@@ -131,6 +153,7 @@ def _road_record(
     enodeid: str,
     *,
     coords: tuple[tuple[float, float], tuple[float, float]] | None = None,
+    direction: int = 0,
     road_kind: int = 0,
 ) -> step1_pair_poc.RoadRecord:
     if coords is None:
@@ -140,7 +163,7 @@ def _road_record(
         road_id=road_id,
         snodeid=snodeid,
         enodeid=enodeid,
-        direction=0,
+        direction=direction,
         formway=0,
         road_kind=road_kind,
         geometry=LineString(list(coords)),
@@ -215,6 +238,135 @@ def _write_strategy(path: Path) -> Path:
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+def test_build_candidate_channel_stops_at_local_branching_corridor_for_trunk_search() -> None:
+    def _edge(road_id: str, from_node: str, to_node: str) -> step1_pair_poc.TraversalEdge:
+        return step1_pair_poc.TraversalEdge(road_id=road_id, from_node=from_node, to_node=to_node)
+
+    pair = step1_pair_poc.PairRecord(
+        pair_id="S2X:A__B",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "B"),
+        forward_path_road_ids=("trunk",),
+        reverse_path_node_ids=("B", "A"),
+        reverse_path_road_ids=("trunk",),
+        through_node_ids=(),
+    )
+    undirected_adjacency = {
+        "A": (_edge("trunk", "A", "B"), _edge("r1", "A", "N1")),
+        "B": (_edge("trunk", "B", "A"), _edge("r3", "B", "N2")),
+        "N1": (_edge("r1", "N1", "A"), _edge("r2", "N1", "N2"), _edge("b1", "N1", "X")),
+        "N2": (
+            _edge("r2", "N2", "N1"),
+            _edge("r3", "N2", "B"),
+            _edge("b2", "N2", "X"),
+            _edge("leaf", "N2", "L"),
+        ),
+        "X": (_edge("b1", "X", "N1"), _edge("b2", "X", "N2")),
+        "L": (_edge("leaf", "L", "N2"),),
+    }
+
+    candidate_road_ids, boundary_terminate_ids = step2_segment_poc._build_candidate_channel(
+        pair,
+        undirected_adjacency=undirected_adjacency,
+        boundary_node_ids=set(),
+    )
+
+    assert candidate_road_ids == {"trunk", "r1", "r3"}
+    assert boundary_terminate_ids == set()
+
+
+def test_build_segment_body_candidate_channel_continues_through_local_branching_corridor() -> None:
+    def _edge(road_id: str, from_node: str, to_node: str) -> step1_pair_poc.TraversalEdge:
+        return step1_pair_poc.TraversalEdge(road_id=road_id, from_node=from_node, to_node=to_node)
+
+    pair = step1_pair_poc.PairRecord(
+        pair_id="S2X:A__B",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "B"),
+        forward_path_road_ids=("trunk",),
+        reverse_path_node_ids=("B", "A"),
+        reverse_path_road_ids=("trunk",),
+        through_node_ids=(),
+    )
+    undirected_adjacency = {
+        "A": (_edge("trunk", "A", "B"), _edge("r1", "A", "N1")),
+        "B": (_edge("trunk", "B", "A"), _edge("r3", "B", "N2")),
+        "N1": (_edge("r1", "N1", "A"), _edge("r2", "N1", "N2"), _edge("b1", "N1", "X")),
+        "N2": (
+            _edge("r2", "N2", "N1"),
+            _edge("r3", "N2", "B"),
+            _edge("b2", "N2", "X"),
+            _edge("leaf", "N2", "L"),
+        ),
+        "X": (_edge("b1", "X", "N1"), _edge("b2", "X", "N2")),
+        "L": (_edge("leaf", "L", "N2"),),
+    }
+    road_endpoints = {
+        "trunk": ("A", "B"),
+        "r1": ("A", "N1"),
+        "r2": ("N1", "N2"),
+        "r3": ("N2", "B"),
+        "b1": ("N1", "X"),
+        "b2": ("N2", "X"),
+        "leaf": ("N2", "L"),
+    }
+
+    candidate_road_ids = step2_segment_poc._build_segment_body_candidate_channel(
+        pair,
+        trunk_road_ids=("trunk",),
+        undirected_adjacency=undirected_adjacency,
+        boundary_node_ids=set(),
+        road_endpoints=road_endpoints,
+    )
+
+    assert candidate_road_ids == {"trunk", "r1", "r2", "r3", "b1", "b2", "leaf"}
+
+
+def test_build_segment_body_candidate_channel_drops_single_attachment_branch_component() -> None:
+    def _edge(road_id: str, from_node: str, to_node: str) -> step1_pair_poc.TraversalEdge:
+        return step1_pair_poc.TraversalEdge(road_id=road_id, from_node=from_node, to_node=to_node)
+
+    pair = step1_pair_poc.PairRecord(
+        pair_id="S2X:A__B",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "B"),
+        forward_path_road_ids=("trunk",),
+        reverse_path_node_ids=("B", "A"),
+        reverse_path_road_ids=("trunk",),
+        through_node_ids=(),
+    )
+    undirected_adjacency = {
+        "A": (_edge("trunk", "A", "B"), _edge("spur1", "A", "N1")),
+        "B": (_edge("trunk", "B", "A"),),
+        "N1": (_edge("spur1", "N1", "A"), _edge("spur2", "N1", "N2")),
+        "N2": (_edge("spur2", "N2", "N1"),),
+    }
+    road_endpoints = {
+        "trunk": ("A", "B"),
+        "spur1": ("A", "N1"),
+        "spur2": ("N1", "N2"),
+    }
+
+    candidate_road_ids = step2_segment_poc._build_segment_body_candidate_channel(
+        pair,
+        trunk_road_ids=("trunk",),
+        undirected_adjacency=undirected_adjacency,
+        boundary_node_ids=set(),
+        road_endpoints=road_endpoints,
+    )
+
+    assert candidate_road_ids == {"trunk"}
 
 
 def _build_counterclockwise_dataset(base_dir: Path) -> tuple[Path, Path]:
@@ -488,19 +640,21 @@ def test_step2_segment_poc_validates_and_prunes_counterclockwise_segment(tmp_pat
     assert summary["prune_branch_count"] == 1
     assert summary["branch_cut_component_count"] == 1
     assert summary["other_terminate_cut_count"] == 1
-    assert summary["residual_component_count"] == 0
+    assert summary["residual_component_count"] == 1
     assert {feature["properties"]["road_id"] for feature in branch_cut["features"]} == {"r25"}
     assert len(trunk["features"]) == 1
     assert len(segment_body["features"]) == 1
-    assert residual["features"] == []
+    assert len(residual["features"]) == 1
     assert trunk["features"][0]["geometry"]["type"] == "MultiLineString"
     assert segment_body["features"][0]["geometry"]["type"] == "MultiLineString"
     assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r14", "r43", "r32", "r21"}
-    assert set(segment_body["features"][0]["properties"]["road_ids"]) == {"r14", "r43", "r32", "r21", "r46", "r62"}
+    assert set(segment_body["features"][0]["properties"]["road_ids"]) == {"r14", "r43", "r32", "r21"}
+    assert residual["features"][0]["geometry"]["type"] == "MultiLineString"
+    assert set(residual["features"][0]["properties"]["road_ids"]) == {"r46", "r62"}
     trunk_member_ids = {feature["properties"]["road_id"] for feature in trunk_members["features"]}
     segment_member_ids = {feature["properties"]["road_id"] for feature in segment_members["features"]}
     assert trunk_member_ids == {"r14", "r43", "r32", "r21"}
-    assert segment_member_ids == {"r14", "r43", "r32", "r21", "r46", "r62"}
+    assert segment_member_ids == {"r14", "r43", "r32", "r21"}
     assert [row["node_id"] for row in endpoint_pool_rows] == ["1", "3", "5"]
 
 
@@ -934,8 +1088,8 @@ def test_step2_side_access_distance_gate_moves_far_component_to_residual() -> No
     roads = [
         _road_record("r12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
         _road_record("r23", "2", "3", coords=((10.0, 0.0), (20.0, 0.0))),
-        _road_record("r2a", "2", "A", coords=((10.0, 0.0), (10.0, 80.0))),
-        _road_record("ra3", "A", "3", coords=((10.0, 80.0), (20.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((10.0, 0.0), (10.0, 80.0)), direction=2),
+        _road_record("ra3", "A", "3", coords=((10.0, 80.0), (20.0, 0.0)), direction=2),
     ]
     context = _minimal_context(roads)
     road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
@@ -968,6 +1122,482 @@ def test_step2_side_access_distance_gate_moves_far_component_to_residual() -> No
     residual_info = current.support_info["step3_residual_infos"][0]
     assert residual_info["side_access_gate_passed"] is False
     assert residual_info["side_access_distance_m"] > 50.0
+
+
+def test_step2_tighten_trims_other_terminate_roads_before_component_decision() -> None:
+    roads = [
+        _road_record("t12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
+        _road_record("t23", "2", "3", coords=((10.0, 0.0), (20.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((10.0, 0.0), (10.0, 10.0)), direction=2),
+        _road_record("rab", "A", "B", coords=((10.0, 10.0), (20.0, 10.0)), direction=2),
+        _road_record("rb3", "B", "3", coords=((20.0, 10.0), (20.0, 0.0)), direction=2),
+        _road_record("r2t", "2", "T", coords=((10.0, 0.0), (10.0, 20.0)), direction=2),
+        _road_record("rtb", "T", "B", coords=((10.0, 20.0), (20.0, 10.0)), direction=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("t12", "t23"))
+    execution = _minimal_execution([pair_current], terminate_ids=["T"])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("t12", "t23", "r2a", "rab", "rb3", "r2t", "rtb"),
+            trunk_road_ids=("t12", "t23"),
+            segment_road_ids=("t12", "t23", "r2a", "rab", "rb3", "r2t", "rtb"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["t12", "t23", "r2a", "rab", "rb3", "r2t", "rtb"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    assert set(current.segment_road_ids) == {"t12", "t23", "r2a", "rab", "rb3"}
+    assert set(current.residual_road_ids) == set()
+    branch_cut_infos = current.support_info["branch_cut_infos"]
+    assert {info["road_id"] for info in branch_cut_infos if info["cut_reason"] == "hits_other_terminate"} == {"r2t", "rtb"}
+    component_info = current.support_info["non_trunk_components"][0]
+    assert component_info["road_ids"] == ["r2a", "rab", "rb3"]
+    assert component_info["decision_reason"] == "segment_body"
+
+
+def test_step2_tighten_cuts_roads_hitting_other_validated_support_node() -> None:
+    roads = [
+        _road_record("t12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
+        _road_record("t23", "2", "3", coords=((10.0, 0.0), (20.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((10.0, 0.0), (10.0, 10.0)), direction=2),
+        _road_record("rab", "A", "B", coords=((10.0, 10.0), (20.0, 10.0)), direction=2),
+        _road_record("rb3", "B", "3", coords=((20.0, 10.0), (20.0, 0.0)), direction=2),
+        _road_record("bX", "B", "X", coords=((20.0, 10.0), (30.0, 10.0)), direction=2),
+        _road_record("xY", "X", "Y", coords=((30.0, 10.0), (40.0, 10.0)), direction=2),
+        _road_record("other_t1", "9", "X", coords=((30.0, 0.0), (30.0, 10.0)), direction=2),
+        _road_record("other_t2", "X", "11", coords=((30.0, 10.0), (30.0, 20.0)), direction=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("t12", "t23"))
+    pair_other = step1_pair_poc.PairRecord(
+        pair_id="S2X:9__11",
+        a_node_id="9",
+        b_node_id="11",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("9", "X", "11"),
+        forward_path_road_ids=("other_t1", "other_t2"),
+        reverse_path_node_ids=("11", "X", "9"),
+        reverse_path_road_ids=("other_t2", "other_t1"),
+        through_node_ids=("X",),
+    )
+    execution = _minimal_execution([pair_current, pair_other])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("t12", "t23", "r2a", "rab", "rb3", "bX", "xY"),
+            trunk_road_ids=("t12", "t23"),
+            segment_road_ids=("t12", "t23", "r2a", "rab", "rb3", "bX", "xY"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["t12", "t23", "r2a", "rab", "rb3", "bX", "xY"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+    other_validation = _validation_result(
+        "S2X:9__11",
+        "9",
+        "11",
+        pruned_road_ids=("other_t1", "other_t2"),
+        trunk_road_ids=("other_t1", "other_t2"),
+        segment_road_ids=("other_t1", "other_t2"),
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation, other_validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = next(item for item in tightened if item.pair_id == "S2X:1__3")
+    assert set(current.segment_road_ids) == {"t12", "t23", "r2a", "rab", "rb3"}
+    assert set(current.residual_road_ids) == set()
+    branch_cut_infos = current.support_info["branch_cut_infos"]
+    assert {info["road_id"] for info in branch_cut_infos if info["cut_reason"] == "hits_other_validated_support_node"} == {"bX", "xY"}
+    component_info = current.support_info["non_trunk_components"][0]
+    assert component_info["road_ids"] == ["r2a", "rab", "rb3"]
+    assert component_info["attachment_node_ids"] == ["2", "3"]
+    assert component_info["decision_reason"] == "segment_body"
+
+
+def test_step2_side_access_distance_gate_excludes_near_component_when_trunk_far_end_is_long() -> None:
+    roads = [
+        _road_record("r12", "1", "2", coords=((0.0, 0.0), (100.0, 0.0))),
+        _road_record("r23", "2", "3", coords=((100.0, 0.0), (200.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((100.0, 0.0), (100.0, 40.0))),
+        _road_record("rab", "A", "B", coords=((100.0, 40.0), (120.0, 40.0))),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("r12", "r23"))
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("r12", "r23", "r2a", "rab"),
+            trunk_road_ids=("r12", "r23"),
+            segment_road_ids=("r12", "r23", "r2a", "rab"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["r12", "r23", "r2a", "rab"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    assert set(current.segment_road_ids) == {"r12", "r23"}
+    assert set(current.residual_road_ids) == {"r2a", "rab"}
+    component_info = current.support_info["non_trunk_components"][0]
+    assert component_info["attachment_node_ids"] == ["2"]
+    assert component_info["side_access_metric"] == "component_to_trunk_sampled"
+    assert component_info["decision_reason"] == "side_access_attachment_insufficient"
+    assert component_info["side_access_gate_passed"] is False
+    assert component_info["side_access_distance_m"] <= 50.0
+
+
+def test_step2_side_access_distance_gate_keeps_two_attachment_side_corridor() -> None:
+    roads = [
+        _road_record("r12", "1", "2", coords=((0.0, 0.0), (100.0, 0.0))),
+        _road_record("r23", "2", "3", coords=((100.0, 0.0), (200.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((100.0, 0.0), (100.0, 40.0)), direction=2),
+        _road_record("rab", "A", "B", coords=((100.0, 40.0), (200.0, 40.0)), direction=2),
+        _road_record("rb3", "B", "3", coords=((200.0, 40.0), (200.0, 0.0)), direction=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("r12", "r23"))
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("r12", "r23", "r2a", "rab", "rb3"),
+            trunk_road_ids=("r12", "r23"),
+            segment_road_ids=("r12", "r23", "r2a", "rab", "rb3"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["r12", "r23", "r2a", "rab", "rb3"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    assert set(current.segment_road_ids) == {"r12", "r23", "r2a", "rab", "rb3"}
+    assert current.residual_road_ids == ()
+    component_info = current.support_info["non_trunk_components"][0]
+    assert component_info["attachment_node_ids"] == ["2", "3"]
+    assert component_info["side_access_metric"] == "component_to_trunk_sampled"
+    assert component_info["decision_reason"] == "segment_body"
+    assert component_info["side_access_gate_passed"] is True
+    assert component_info["side_access_distance_m"] <= 50.0
+
+
+def test_step2_keeps_one_way_parallel_corridor_as_segment_body() -> None:
+    roads = [
+        _road_record("t12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
+        _road_record("t23", "2", "3", coords=((10.0, 0.0), (20.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((10.0, 0.0), (10.0, 10.0)), direction=2),
+        _road_record("rab", "A", "B", coords=((10.0, 10.0), (20.0, 10.0)), direction=2),
+        _road_record("rb3", "B", "3", coords=((20.0, 10.0), (20.0, 0.0)), direction=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("t12", "t23"))
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("t12", "t23", "r2a", "rab", "rb3"),
+            trunk_road_ids=("t12", "t23"),
+            segment_road_ids=("t12", "t23", "r2a", "rab", "rb3"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["t12", "t23", "r2a", "rab", "rb3"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    component_info = current.support_info["non_trunk_components"][0]
+    assert set(current.segment_road_ids) == {"t12", "t23", "r2a", "rab", "rb3"}
+    assert component_info["parallel_corridor_directionality"] == "one_way_parallel"
+    assert component_info["parallel_corridor_directions"] == ["2->3"]
+    assert component_info["decision_reason"] == "segment_body"
+
+
+def test_step2_moves_one_way_parallel_corridor_attached_to_internal_t_support_nodes_to_residual() -> None:
+    roads = [
+        _road_record("t1", "1", "T1", coords=((0.0, 0.0), (10.0, 0.0))),
+        _road_record("t2", "T1", "T2", coords=((10.0, 0.0), (20.0, 0.0))),
+        _road_record("t3", "T2", "3", coords=((20.0, 0.0), (30.0, 0.0))),
+        _road_record("r1", "T1", "A", coords=((10.0, 0.0), (10.0, 10.0)), direction=2),
+        _road_record("r2", "A", "B", coords=((10.0, 10.0), (20.0, 10.0)), direction=2),
+        _road_record("r3", "B", "T2", coords=((20.0, 10.0), (20.0, 0.0)), direction=2),
+    ]
+    semantic_nodes = {
+        "1": _semantic_node_record("1", kind_2=4),
+        "T1": _semantic_node_record("T1", kind_2=2048, grade_2=2),
+        "T2": _semantic_node_record("T2", kind_2=2048, grade_2=3),
+        "3": _semantic_node_record("3", kind_2=4),
+        "A": _semantic_node_record("A", kind_2=0, grade_2=0),
+        "B": _semantic_node_record("B", kind_2=0, grade_2=0),
+    }
+    context = _minimal_context(roads, semantic_nodes=semantic_nodes)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = step1_pair_poc.PairRecord(
+        pair_id="S2X:1__3",
+        a_node_id="1",
+        b_node_id="3",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("1", "T1", "T2", "3"),
+        forward_path_road_ids=("t1", "t2", "t3"),
+        reverse_path_node_ids=("3", "T2", "T1", "1"),
+        reverse_path_road_ids=("t3", "t2", "t1"),
+        through_node_ids=("T1", "T2"),
+    )
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("t1", "t2", "t3", "r1", "r2", "r3"),
+            trunk_road_ids=("t1", "t2", "t3"),
+            segment_road_ids=("t1", "t2", "t3", "r1", "r2", "r3"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["t1", "t2", "t3", "r1", "r2", "r3"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    component_info = current.support_info["non_trunk_components"][0]
+    assert set(current.segment_road_ids) == {"t1", "t2", "t3"}
+    assert set(current.residual_road_ids) == {"r1", "r2", "r3"}
+    assert component_info["attachment_node_ids"] == ["T1", "T2"]
+    assert component_info["internal_support_attachment_node_ids"] == ["T1", "T2"]
+    assert component_info["internal_t_support_attachment_node_ids"] == ["T1", "T2"]
+    assert component_info["attachment_flow_status"] == "single_departure_return"
+    assert component_info["attachment_direction_labels"] == ["T1:out", "T2:in"]
+    assert component_info["parallel_corridor_directionality"] == "one_way_parallel"
+    assert component_info["decision_reason"] == "internal_support_one_way_parallel"
+
+
+def test_step2_keeps_braided_one_way_single_side_bypass_as_segment_body() -> None:
+    roads = [
+        _road_record("t12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
+        _road_record("t23", "2", "3", coords=((10.0, 0.0), (20.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((10.0, 0.0), (10.0, 8.0)), direction=2),
+        _road_record("ra3", "A", "3", coords=((10.0, 8.0), (20.0, 8.0)), direction=2),
+        _road_record("r2c", "2", "C", coords=((10.0, 0.0), (10.0, 14.0)), direction=2),
+        _road_record("rc3", "C", "3", coords=((10.0, 14.0), (20.0, 14.0)), direction=2),
+        _road_record("ac", "A", "C", coords=((15.0, 8.0), (15.0, 14.0)), direction=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("t12", "t23"))
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("t12", "t23", "r2a", "ra3", "r2c", "rc3", "ac"),
+            trunk_road_ids=("t12", "t23"),
+            segment_road_ids=("t12", "t23", "r2a", "ra3", "r2c", "rc3", "ac"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["t12", "t23", "r2a", "ra3", "r2c", "rc3", "ac"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    component_info = current.support_info["non_trunk_components"][0]
+    assert set(current.segment_road_ids) == {"t12", "t23", "r2a", "ra3", "r2c", "rc3", "ac"}
+    assert current.residual_road_ids == ()
+    assert component_info["attachment_node_ids"] == ["2", "3"]
+    assert component_info["attachment_flow_status"] == "single_departure_return"
+    assert component_info["attachment_direction_labels"] == ["2:out", "3:in"]
+    assert component_info["decision_reason"] == "segment_body"
+
+
+def test_step2_moves_multi_attachment_internal_network_to_residual() -> None:
+    roads = [
+        _road_record("t12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
+        _road_record("t23", "2", "3", coords=((10.0, 0.0), (20.0, 0.0))),
+        _road_record("t34", "3", "4", coords=((20.0, 0.0), (30.0, 0.0))),
+        _road_record("r2x", "2", "X", coords=((10.0, 0.0), (15.0, 10.0)), direction=2),
+        _road_record("rx3", "X", "3", coords=((15.0, 10.0), (20.0, 0.0)), direction=2),
+        _road_record("rx4", "X", "4", coords=((15.0, 10.0), (30.0, 0.0)), direction=2),
+    ]
+    semantic_nodes = {
+        "1": _semantic_node_record("1", kind_2=4),
+        "2": _semantic_node_record("2", kind_2=2048, grade_2=3),
+        "3": _semantic_node_record("3", kind_2=2048, grade_2=3),
+        "4": _semantic_node_record("4", kind_2=2048, grade_2=3),
+        "X": _semantic_node_record("X", kind_2=0, grade_2=0),
+    }
+    context = _minimal_context(roads, semantic_nodes=semantic_nodes)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = step1_pair_poc.PairRecord(
+        pair_id="S2X:1__4",
+        a_node_id="1",
+        b_node_id="4",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("1", "2", "3", "4"),
+        forward_path_road_ids=("t12", "t23", "t34"),
+        reverse_path_node_ids=("4", "3", "2", "1"),
+        reverse_path_road_ids=("t34", "t23", "t12"),
+        through_node_ids=("2", "3"),
+    )
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__4",
+            "1",
+            "4",
+            pruned_road_ids=("t12", "t23", "t34", "r2x", "rx3", "rx4"),
+            trunk_road_ids=("t12", "t23", "t34"),
+            segment_road_ids=("t12", "t23", "t34", "r2x", "rx3", "rx4"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["t12", "t23", "t34", "r2x", "rx3", "rx4"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    component_info = current.support_info["non_trunk_components"][0]
+    assert set(current.segment_road_ids) == {"t12", "t23", "t34"}
+    assert set(current.residual_road_ids) == {"r2x", "rx3", "rx4"}
+    assert component_info["attachment_node_ids"] == ["2", "3", "4"]
+    assert component_info["internal_support_attachment_node_ids"] == ["2", "3"]
+    assert component_info["attachment_flow_status"] == "single_side_attachment_flow_not_two_attachments"
+    assert component_info["attachment_direction_labels"] == ["2:out", "3:in", "4:in"]
+    assert component_info["decision_reason"] == "single_side_attachment_flow_not_two_attachments"
+
+
+def test_step2_moves_bidirectional_parallel_corridor_to_residual() -> None:
+    roads = [
+        _road_record("t12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
+        _road_record("t23", "2", "3", coords=((10.0, 0.0), (20.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((10.0, 0.0), (10.0, 10.0)), direction=2),
+        _road_record("ra3", "A", "3", coords=((10.0, 10.0), (20.0, 10.0)), direction=2),
+        _road_record("r3b", "3", "B", coords=((20.0, 0.0), (20.0, 15.0)), direction=2),
+        _road_record("rb2", "B", "2", coords=((20.0, 15.0), (10.0, 15.0)), direction=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("t12", "t23"))
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("t12", "t23", "r2a", "ra3", "r3b", "rb2"),
+            trunk_road_ids=("t12", "t23"),
+            segment_road_ids=("t12", "t23", "r2a", "ra3", "r3b", "rb2"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["t12", "t23", "r2a", "ra3", "r3b", "rb2"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    component_info = current.support_info["non_trunk_components"][0]
+    assert set(current.segment_road_ids) == {"t12", "t23"}
+    assert set(current.residual_road_ids) == {"r2a", "ra3", "r3b", "rb2"}
+    assert component_info["parallel_corridor_directionality"] == "bidirectional_parallel"
+    assert component_info["parallel_corridor_directions"] == ["2->3", "3->2"]
+    assert component_info["decision_reason"] == "bidirectional_parallel_corridor"
 
 
 def test_step2_tighten_reuses_precomputed_segment_candidates(monkeypatch) -> None:
@@ -1007,7 +1637,10 @@ def test_step2_tighten_reuses_precomputed_segment_candidates(monkeypatch) -> Non
         road_endpoints=road_endpoints,
     )
 
-    assert tightened[0].segment_road_ids == ("r12", "r23", "r34")
+    assert tightened[0].segment_road_ids == ("r12", "r23")
+    assert tightened[0].residual_road_ids == ("r34",)
+    component_info = tightened[0].support_info["non_trunk_components"][0]
+    assert component_info["decision_reason"] == "side_access_attachment_insufficient"
 
 
 def test_step2_build_filtered_directed_adjacency_uses_allowed_road_subset() -> None:
@@ -1077,11 +1710,11 @@ def test_step2_component_with_other_validated_trunk_is_cut_from_segment_body() -
 
     current = next(item for item in tightened if item.pair_id == "S2X:1__3")
     assert set(current.segment_road_ids) == {"r12", "r23"}
-    assert set(current.branch_cut_road_ids) == {"r34", "r45"}
-    assert current.residual_road_ids == ()
+    assert set(current.branch_cut_road_ids) == {"r45"}
+    assert set(current.residual_road_ids) == {"r34"}
     component_info = current.support_info["non_trunk_components"][0]
-    assert component_info["contains_other_validated_trunk"] is True
-    assert component_info["decision_reason"] == "contains_other_validated_trunk"
+    assert component_info["contains_other_validated_trunk"] is False
+    assert component_info["decision_reason"] == "weak_rule_residual"
 
 
 def test_step2_transition_same_dir_component_stops_expansion_and_moves_to_residual() -> None:

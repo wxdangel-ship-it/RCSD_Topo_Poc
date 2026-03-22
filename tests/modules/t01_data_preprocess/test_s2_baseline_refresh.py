@@ -193,7 +193,7 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
     summary = artifacts.summary
     assert summary["validated_pair_count"] == 2
     assert summary["segment_body_road_count"] == 7
-    assert summary["road_written_s_grade_count"] == 7
+    assert summary["road_written_sgrade_count"] == 7
     assert summary["road_written_segmentid_count"] == 7
     assert summary["mainnode_pair_endpoint_count"] == 4
     assert summary["mainnode_single_segment_non_intersection_count"] == 1
@@ -220,12 +220,12 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
 
     roads_doc = _load_geojson(artifacts.roads_path)
     road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
-    assert road_props["s1"]["s_grade"] == "0-0双"
+    assert road_props["s1"]["sgrade"] == "0-0双"
     assert road_props["s1"]["segmentid"] == "1_2"
     assert road_props["t1"]["segmentid"] == "7_8"
-    assert road_props["rt1"]["s_grade"] is None
+    assert road_props["rt1"]["sgrade"] is None
     assert road_props["rt1"]["segmentid"] is None
-    assert road_props["in1"]["s_grade"] is None
+    assert road_props["in1"]["sgrade"] is None
     assert road_props["in1"]["segmentid"] is None
 
     mainnode_rows = {row["mainnode_id"]: row for row in _csv_rows(artifacts.mainnode_table_path)}
@@ -327,7 +327,7 @@ def test_refresh_s2_baseline_keeps_roundabout_mainnode_protected(tmp_path: Path)
                     "enodeid": 60,
                     "direction": 2,
                     "formway": 0,
-                    "s_grade": None,
+                    "sgrade": None,
                     "segmentid": None,
                 },
                 "geometry": LineString([(0.1, 0.0), (1.0, 0.0)]),

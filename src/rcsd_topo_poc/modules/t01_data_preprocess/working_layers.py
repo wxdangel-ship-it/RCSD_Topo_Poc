@@ -14,8 +14,12 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
 )
 
 
-WORKING_NODE_FIELDS = ("grade_2", "kind_2")
-WORKING_ROAD_FIELDS = ("s_grade", "segmentid")
+WORKING_NODE_FIELDS = ("grade_2", "kind_2", "working_mainnodeid")
+WORKING_ROAD_FIELDS = ("sgrade", "segmentid")
+ROAD_S_GRADE_FIELD = "sgrade"
+LEGACY_ROAD_S_GRADE_FIELDS = ("s_grade",)
+ROAD_SEGMENTID_FIELD = "segmentid"
+LEGACY_ROAD_SEGMENTID_FIELDS = ("segment_id", "Segment_id")
 ACTIVE_CLOSED_CON_VALUES = frozenset({2, 3})
 EXCLUDED_ROAD_KIND_VALUE = 1
 MAX_DUAL_CARRIAGEWAY_SEPARATION_M = 50.0
@@ -85,6 +89,47 @@ def _normalize_nullable_text(value: Any) -> Optional[str]:
     return str(normalized)
 
 
+def get_road_sgrade(properties: dict[str, Any]) -> Optional[str]:
+    for field_name in (ROAD_S_GRADE_FIELD, *LEGACY_ROAD_S_GRADE_FIELDS):
+        if field_name in properties:
+            return _normalize_nullable_text(properties.get(field_name))
+    return None
+
+
+def has_road_sgrade_field(properties: dict[str, Any]) -> bool:
+    return any(field_name in properties for field_name in (ROAD_S_GRADE_FIELD, *LEGACY_ROAD_S_GRADE_FIELDS))
+
+
+def set_road_sgrade(properties: dict[str, Any], value: Any) -> None:
+    properties[ROAD_S_GRADE_FIELD] = _normalize_nullable_text(value)
+    for legacy_field in LEGACY_ROAD_S_GRADE_FIELDS:
+        properties.pop(legacy_field, None)
+
+
+def get_road_segmentid(properties: dict[str, Any]) -> Optional[str]:
+    for field_name in (ROAD_SEGMENTID_FIELD, *LEGACY_ROAD_SEGMENTID_FIELDS):
+        if field_name in properties:
+            return _normalize_nullable_text(properties.get(field_name))
+    return None
+
+
+def has_road_segmentid_field(properties: dict[str, Any]) -> bool:
+    return any(field_name in properties for field_name in (ROAD_SEGMENTID_FIELD, *LEGACY_ROAD_SEGMENTID_FIELDS))
+
+
+def set_road_segmentid(properties: dict[str, Any], value: Any) -> None:
+    properties[ROAD_SEGMENTID_FIELD] = _normalize_nullable_text(value)
+    for legacy_field in LEGACY_ROAD_SEGMENTID_FIELDS:
+        properties.pop(legacy_field, None)
+
+
+def canonicalize_road_working_properties(properties: dict[str, Any]) -> dict[str, Any]:
+    canonical = dict(properties)
+    set_road_sgrade(canonical, get_road_sgrade(canonical))
+    set_road_segmentid(canonical, get_road_segmentid(canonical))
+    return canonical
+
+
 def _sort_key(value: str) -> tuple[int, Union[int, str]]:
     try:
         return (0, int(value))
@@ -132,16 +177,19 @@ def _initialize_node_properties(props: dict[str, Any]) -> dict[str, Any]:
     initialized = dict(props)
     existing_grade_2 = _coerce_int(initialized.get("grade_2"))
     existing_kind_2 = _coerce_int(initialized.get("kind_2"))
+    existing_working_mainnodeid = _normalize_nullable_text(initialized.get("working_mainnodeid"))
     initialized["grade_2"] = existing_grade_2 if existing_grade_2 is not None else _coerce_int(initialized.get("grade"))
     initialized["kind_2"] = existing_kind_2 if existing_kind_2 is not None else _coerce_int(initialized.get("kind"))
+    initialized["working_mainnodeid"] = (
+        existing_working_mainnodeid
+        if existing_working_mainnodeid is not None
+        else _normalize_nullable_text(initialized.get("mainnodeid"))
+    )
     return initialized
 
 
 def _initialize_road_properties(props: dict[str, Any]) -> dict[str, Any]:
-    initialized = dict(props)
-    initialized["s_grade"] = _normalize_nullable_text(initialized.get("s_grade"))
-    initialized["segmentid"] = _normalize_nullable_text(initialized.get("segmentid"))
-    return initialized
+    return canonicalize_road_working_properties(props)
 
 
 def _empty_roundabout_summary(*, out_root: Path) -> dict[str, Any]:
@@ -383,7 +431,7 @@ def _apply_roundabout_preprocess(
                 index = node_index_by_id[node_id]
                 current_feature = node_features[index]
                 props = dict(current_feature["properties"])
-                props["mainnodeid"] = group.mainnode_id
+                props["working_mainnodeid"] = group.mainnode_id
                 if node_id == group.mainnode_id:
                     props["grade_2"] = 1
                     props["kind_2"] = ROUNDABOUT_KIND_VALUE
@@ -505,8 +553,12 @@ def initialize_working_layers(
         "road_feature_count": len(initialized_roads),
         "working_node_fields": list(WORKING_NODE_FIELDS),
         "working_road_fields": list(WORKING_ROAD_FIELDS),
-        "node_initialization_rule": {"grade_2": "grade", "kind_2": "kind"},
-        "road_initialization_rule": {"s_grade": None, "segmentid": None},
+        "node_initialization_rule": {
+            "grade_2": "grade",
+            "kind_2": "kind",
+            "working_mainnodeid": "mainnodeid",
+        },
+        "road_initialization_rule": {"sgrade": None, "segmentid": None},
         "intersection_preprocess_hook": "roundabout_preprocess_v1",
         "roundabout_summary_path": str(roundabout_summary_path.resolve()),
         "roundabout_summary": roundabout_summary,
@@ -548,7 +600,11 @@ def require_initialized_working_features(
 
     for index, feature in enumerate(road_features):
         properties = feature["properties"]
-        missing = [field for field in WORKING_ROAD_FIELDS if field not in properties]
+        missing: list[str] = []
+        if not has_road_sgrade_field(properties):
+            missing.append(ROAD_S_GRADE_FIELD)
+        if not has_road_segmentid_field(properties):
+            missing.append(ROAD_SEGMENTID_FIELD)
         if missing:
             issues.append(f"{stage_label} road feature[{index}] missing working fields: {', '.join(missing)}")
 

@@ -10,6 +10,11 @@ from typing import Any, Literal, Optional, Union
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _find_repo_root
+from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
+    ROAD_S_GRADE_FIELD,
+    get_road_segmentid,
+    get_road_sgrade,
+)
 
 
 CURRENT_MANIFEST_NAME = "skill_v1_manifest.json"
@@ -77,6 +82,134 @@ def _hash_payload(path: Path) -> dict[str, Any]:
         "path": str(path.resolve()),
         "size_bytes": path.stat().st_size,
         "sha256": _sha256_file(path),
+    }
+
+
+def _load_json_if_exists(path: Path) -> Optional[dict[str, Any]]:
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _canonical_json_bytes(payload: Any) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _canonicalize_geojson_feature(*, feature: dict[str, Any], kind: Literal["nodes", "roads"]) -> dict[str, Any]:
+    props = dict(feature.get("properties") or {})
+    if kind == "roads":
+        props[ROAD_S_GRADE_FIELD] = get_road_sgrade(props)
+        props["segmentid"] = get_road_segmentid(props)
+        props.pop("s_grade", None)
+        props.pop("segment_id", None)
+        props.pop("Segment_id", None)
+    else:
+        props.pop("s_grade", None)
+        props.pop(ROAD_S_GRADE_FIELD, None)
+        props.pop("segment_id", None)
+        props.pop("Segment_id", None)
+        props.pop("segmentid", None)
+    return {
+        "properties": props,
+        "geometry": feature.get("geometry"),
+    }
+
+
+def _semantic_geojson_hash(path: Path, *, kind: Literal["nodes", "roads"]) -> str:
+    doc = _load_geojson(path)
+    canonical_features = [
+        _canonicalize_geojson_feature(feature=feature, kind=kind)
+        for feature in doc.get("features", [])
+    ]
+    canonical_features.sort(
+        key=lambda feature: (
+            str((feature.get("properties") or {}).get("id") or ""),
+            json.dumps(feature.get("geometry"), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
+    )
+    payload = {
+        "type": "FeatureCollection",
+        "features": canonical_features,
+    }
+    return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+
+
+def _manifest_source_path_candidates(source_path: str) -> list[Path]:
+    candidates: list[Path] = []
+
+    def _append(candidate: Path) -> None:
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    _append(Path(str(source_path)))
+    normalized = str(source_path).replace("\\", "/")
+    if normalized.startswith("/mnt/"):
+        parts = normalized.split("/")
+        if len(parts) >= 4 and len(parts[2]) == 1:
+            drive_letter = parts[2].upper()
+            tail = "\\".join(parts[3:])
+            _append(Path(f"{drive_letter}:\\{tail}"))
+    elif len(normalized) >= 2 and normalized[1] == ":":
+        drive_letter = normalized[0].lower()
+        tail = normalized[2:].lstrip("/").replace("\\", "/")
+        _append(Path(f"/mnt/{drive_letter}/{tail}"))
+
+    return candidates
+
+
+def _resolve_manifest_source_path(bundle_dir: Path, *, mode: Literal["current", "baseline"], artifact_key: str) -> Optional[Path]:
+    manifest_path = bundle_dir / _artifact_name(mode, "manifest")
+    manifest = _load_json_if_exists(manifest_path)
+    if not manifest:
+        return None
+    source_paths = manifest.get("source_paths") or {}
+    source_path = source_paths.get(artifact_key)
+    if not source_path:
+        return None
+    for candidate in _manifest_source_path_candidates(str(source_path)):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _compare_hash_payloads(
+    *,
+    label: str,
+    kind: Literal["nodes", "roads"],
+    current_dir: Path,
+    freeze_dir: Path,
+    current_hash: dict[str, Any],
+    baseline_hash: dict[str, Any],
+) -> dict[str, Any]:
+    current_source = _resolve_manifest_source_path(current_dir, mode="current", artifact_key=f"refreshed_{kind}_path")
+    baseline_source = _resolve_manifest_source_path(freeze_dir, mode="baseline", artifact_key=f"refreshed_{kind}_path")
+    semantic_hash_match = False
+    semantic_compare_available = current_source is not None and baseline_source is not None
+    if semantic_compare_available:
+        semantic_hash_match = (
+            _semantic_geojson_hash(current_source, kind=kind) == _semantic_geojson_hash(baseline_source, kind=kind)
+        )
+
+    raw_hash_match = current_hash.get("sha256") == baseline_hash.get("sha256")
+    if raw_hash_match:
+        status = "PASS"
+        difference_type = None
+    elif semantic_compare_available and semantic_hash_match:
+        status = "SCHEMA_MIGRATION_DIFFERENCE"
+        difference_type = "schema_migration_difference"
+    else:
+        status = "FAIL"
+        difference_type = None
+
+    return {
+        "label": label,
+        "status": status,
+        "difference_type": difference_type,
+        "current_sha256": current_hash.get("sha256"),
+        "baseline_sha256": baseline_hash.get("sha256"),
+        "semantic_compare_available": semantic_compare_available,
+        "current_source_path": str(current_source.resolve()) if current_source is not None else None,
+        "baseline_source_path": str(baseline_source.resolve()) if baseline_source is not None else None,
     }
 
 
@@ -354,23 +487,30 @@ def compare_skill_v1_bundle(
         _compare_row_sets(current_rows=current_validated, baseline_rows=baseline_validated, label="validated_pairs"),
         _compare_row_sets(current_rows=current_segment, baseline_rows=baseline_segment, label="segment_body_membership"),
         _compare_row_sets(current_rows=current_trunk, baseline_rows=baseline_trunk, label="trunk_membership"),
-        {
-            "label": "refreshed_nodes_hash",
-            "status": "PASS" if current_nodes_hash.get("sha256") == baseline_nodes_hash.get("sha256") else "FAIL",
-            "current_sha256": current_nodes_hash.get("sha256"),
-            "baseline_sha256": baseline_nodes_hash.get("sha256"),
-        },
-        {
-            "label": "refreshed_roads_hash",
-            "status": "PASS" if current_roads_hash.get("sha256") == baseline_roads_hash.get("sha256") else "FAIL",
-            "current_sha256": current_roads_hash.get("sha256"),
-            "baseline_sha256": baseline_roads_hash.get("sha256"),
-        },
+        _compare_hash_payloads(
+            label="refreshed_nodes_hash",
+            kind="nodes",
+            current_dir=current_dir,
+            freeze_dir=freeze_dir,
+            current_hash=current_nodes_hash,
+            baseline_hash=baseline_nodes_hash,
+        ),
+        _compare_hash_payloads(
+            label="refreshed_roads_hash",
+            kind="roads",
+            current_dir=current_dir,
+            freeze_dir=freeze_dir,
+            current_hash=current_roads_hash,
+            baseline_hash=baseline_roads_hash,
+        ),
     ]
 
-    status = "PASS" if all(item["status"] == "PASS" for item in comparisons) else "FAIL"
+    has_fail = any(item["status"] == "FAIL" for item in comparisons)
+    has_schema_migration = any(item["status"] == "SCHEMA_MIGRATION_DIFFERENCE" for item in comparisons)
+    status = "FAIL" if has_fail else "PASS"
     report = {
         "status": status,
+        "schema_migration_only": has_schema_migration and not has_fail,
         "current_dir": str(current_dir.resolve()),
         "freeze_dir": str(freeze_dir.resolve()),
         "comparisons": comparisons,
@@ -399,6 +539,10 @@ def compare_skill_v1_bundle(
         else:
             md_lines.append(f"- current_sha256: `{item.get('current_sha256')}`")
             md_lines.append(f"- baseline_sha256: `{item.get('baseline_sha256')}`")
+            if item.get("difference_type"):
+                md_lines.append(f"- difference_type: `{item.get('difference_type')}`")
+            if item.get("semantic_compare_available") is not None:
+                md_lines.append(f"- semantic_compare_available: `{item.get('semantic_compare_available')}`")
         md_lines.append("")
     report_md_path.write_text("\n".join(md_lines), encoding="utf-8")
     report["report_json_path"] = str(report_json_path.resolve())

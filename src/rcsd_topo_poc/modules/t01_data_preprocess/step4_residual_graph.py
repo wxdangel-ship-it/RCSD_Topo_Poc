@@ -40,10 +40,15 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     ACTIVE_CLOSED_CON_VALUES,
     WORKING_NODE_FIELDS,
     WORKING_ROAD_FIELDS,
+    canonicalize_road_working_properties,
+    get_road_segmentid,
+    get_road_sgrade,
     is_active_closed_con,
     is_allowed_road_kind,
     is_full_through_or_t_kind,
     is_roundabout_mainnode_kind,
+    set_road_segmentid,
+    set_road_sgrade,
 )
 
 
@@ -316,7 +321,7 @@ def _current_closed_con(node: NodeFeatureRecord) -> Optional[int]:
 
 
 def _current_segmentid(road: RoadFeatureRecord) -> Optional[str]:
-    return _normalize_id(road.properties.get("segmentid"))
+    return _normalize_id(get_road_segmentid(road.properties))
 
 
 def _require_working_layers(
@@ -619,19 +624,19 @@ def _refresh_after_step4(
 
     road_properties_map: dict[str, dict[str, Any]] = {}
     for road in roads:
-        props = dict(road.properties)
+        props = canonicalize_road_working_properties(road.properties)
         existing_segmentid = _current_segmentid(road)
-        existing_s_grade = props.get("s_grade")
+        existing_sgrade = get_road_sgrade(props)
         new_segmentid = new_road_to_segmentid.get(road.road_id)
         if existing_segmentid:
-            props["segmentid"] = existing_segmentid
-            props["s_grade"] = existing_s_grade
+            set_road_segmentid(props, existing_segmentid)
+            set_road_sgrade(props, existing_sgrade)
         elif new_segmentid is not None:
-            props["segmentid"] = new_segmentid
-            props["s_grade"] = STEP4_NEW_SEGMENT_GRADE
+            set_road_segmentid(props, new_segmentid)
+            set_road_sgrade(props, STEP4_NEW_SEGMENT_GRADE)
         else:
-            props["segmentid"] = props.get("segmentid")
-            props["s_grade"] = props.get("s_grade")
+            set_road_segmentid(props, get_road_segmentid(props))
+            set_road_sgrade(props, get_road_sgrade(props))
         road_properties_map[road.road_id] = props
 
     group_to_road_ids: dict[str, set[str]] = {}

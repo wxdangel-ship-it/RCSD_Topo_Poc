@@ -21,6 +21,8 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _coerce_int
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     WORKING_NODE_FIELDS,
     WORKING_ROAD_FIELDS,
+    get_road_segmentid,
+    get_road_sgrade,
     is_allowed_road_kind,
 )
 
@@ -56,13 +58,13 @@ class SegmentRecord:
     pair_nodes: tuple[str, str]
     road_ids: tuple[str, ...]
     multiline: MultiLineString
-    s_grade_old: Optional[str]
-    s_grade_new: Optional[str]
+    sgrade_old: Optional[str]
+    sgrade_new: Optional[str]
     junc_nodes: tuple[str, ...]
     inner_group_ids: tuple[str, ...]
     adjusted: bool
     adjust_reason: Optional[str]
-    s_grade_conflict_values: tuple[str, ...]
+    sgrade_conflict_values: tuple[str, ...]
     error_type: Optional[str]
     error_desc: Optional[str]
 
@@ -102,14 +104,18 @@ def _require_working_layers(
     nodes: list[NodeFeatureRecord],
     roads: list[RoadFeatureRecord],
     stage_label: str,
+    node_properties_map: Optional[dict[str, dict[str, Any]]] = None,
+    road_properties_map: Optional[dict[str, dict[str, Any]]] = None,
 ) -> None:
     issues: list[str] = []
     for index, node in enumerate(nodes):
-        missing = [field for field in WORKING_NODE_FIELDS if field not in node.properties]
+        properties = node.properties if node_properties_map is None else node_properties_map.get(node.node_id, node.properties)
+        missing = [field for field in WORKING_NODE_FIELDS if field not in properties]
         if missing:
             issues.append(f"{stage_label} node feature[{index}] missing working fields: {', '.join(missing)}")
     for index, road in enumerate(roads):
-        missing = [field for field in WORKING_ROAD_FIELDS if field not in road.properties]
+        properties = road.properties if road_properties_map is None else road_properties_map.get(road.road_id, road.properties)
+        missing = [field for field in WORKING_ROAD_FIELDS if field not in properties]
         if missing:
             issues.append(f"{stage_label} road feature[{index}] missing working fields: {', '.join(missing)}")
     if issues:
@@ -174,11 +180,13 @@ def _build_group_to_allowed_road_ids(
     *,
     nodes: list[NodeFeatureRecord],
     roads: list[RoadFeatureRecord],
+    road_properties_map: Optional[dict[str, dict[str, Any]]] = None,
 ) -> dict[str, set[str]]:
     node_by_id = {node.node_id: node for node in nodes}
     group_to_allowed_road_ids: dict[str, set[str]] = defaultdict(set)
     for road in roads:
-        if not is_allowed_road_kind(road.road_kind):
+        current_props = road.properties if road_properties_map is None else road_properties_map.get(road.road_id, road.properties)
+        if not is_allowed_road_kind(_coerce_int(current_props.get("road_kind")) if "road_kind" in current_props else road.road_kind):
             continue
         for node_id in (road.snodeid, road.enodeid):
             node = node_by_id.get(node_id)
@@ -192,21 +200,32 @@ def _collect_segment_records(
     *,
     nodes: list[NodeFeatureRecord],
     roads: list[RoadFeatureRecord],
+    node_properties_map: Optional[dict[str, dict[str, Any]]] = None,
+    road_properties_map: Optional[dict[str, dict[str, Any]]] = None,
+    mainnode_groups: Optional[dict[str, MainnodeGroup]] = None,
+    group_to_allowed_road_ids: Optional[dict[str, set[str]]] = None,
 ) -> tuple[list[SegmentRecord], dict[str, list[NodeFeatureRecord]]]:
     node_by_id = {node.node_id: node for node in nodes}
     groups: dict[str, list[str]] = {}
     for node in nodes:
         groups.setdefault(node.semantic_node_id, []).append(node.node_id)
-    mainnode_groups, _ = _build_mainnode_groups(node_by_id, groups)
+    if mainnode_groups is None:
+        mainnode_groups, _ = _build_mainnode_groups(node_by_id, groups)
 
     roads_by_segment_id: dict[str, list[RoadFeatureRecord]] = defaultdict(list)
     for road in roads:
-        segment_id = _normalize_text(road.properties.get("segmentid"))
+        current_props = road.properties if road_properties_map is None else road_properties_map.get(road.road_id, road.properties)
+        segment_id = _normalize_text(get_road_segmentid(current_props))
         if segment_id is None:
             continue
         roads_by_segment_id[segment_id].append(road)
 
-    group_to_allowed_road_ids = _build_group_to_allowed_road_ids(nodes=nodes, roads=roads)
+    if group_to_allowed_road_ids is None:
+        group_to_allowed_road_ids = _build_group_to_allowed_road_ids(
+            nodes=nodes,
+            roads=roads,
+            road_properties_map=road_properties_map,
+        )
     inner_nodes_by_segment: dict[str, list[NodeFeatureRecord]] = defaultdict(list)
     segment_records: list[SegmentRecord] = []
 
@@ -215,28 +234,30 @@ def _collect_segment_records(
         pair_nodes = _parse_segment_pair_nodes(segment_id)
         road_ids = tuple(sorted({road.road_id for road in segment_roads}, key=_sort_key))
 
-        s_grade_values = {
-            _normalize_text(road.properties.get("s_grade"))
+        sgrade_values = {
+            _normalize_text(
+                get_road_sgrade(road.properties if road_properties_map is None else road_properties_map.get(road.road_id, road.properties))
+            )
             for road in segment_roads
         }
-        s_grade_conflict_values = tuple(sorted(_display_optional_value(value) for value in s_grade_values))
-        if len(s_grade_values) == 1:
-            s_grade_old = next(iter(s_grade_values))
-            s_grade_new = s_grade_old
+        sgrade_conflict_values = tuple(sorted(_display_optional_value(value) for value in sgrade_values))
+        if len(sgrade_values) == 1:
+            sgrade_old = next(iter(sgrade_values))
+            sgrade_new = sgrade_old
             adjusted = False
             adjust_reason = None
             error_type: Optional[str] = None
             error_desc: Optional[str] = None
         else:
-            s_grade_old = _join_optional_values(s_grade_conflict_values)
-            s_grade_new = _resolve_highest_s_grade(s_grade_conflict_values)
+            sgrade_old = _join_optional_values(sgrade_conflict_values)
+            sgrade_new = _resolve_highest_s_grade(sgrade_conflict_values)
             adjusted = False
             adjust_reason = None
             error_type = STEP6_ERROR_TYPE_S_GRADE_CONFLICT
             error_desc = (
-                "segment contains multiple s_grade values: "
-                + ",".join(s_grade_conflict_values)
-                + f"; selected highest priority='{_display_optional_value(s_grade_new)}'"
+                "segment contains multiple sgrade values: "
+                + ",".join(sgrade_conflict_values)
+                + f"; selected highest priority='{_display_optional_value(sgrade_new)}'"
             )
 
         flattened_lines: list[LineString] = []
@@ -272,26 +293,36 @@ def _collect_segment_records(
             if group is None:
                 raise ValueError(f"Step6 segment '{segment_id}' endpoint '{pair_node_id}' does not exist in node groups.")
             representative = node_by_id[group.representative_node_id]
-            pair_grade_values.append(_current_grade_2(representative))
+            current_node_props = (
+                representative.properties
+                if node_properties_map is None
+                else node_properties_map.get(representative.node_id, representative.properties)
+            )
+            pair_grade_values.append(_coerce_int(current_node_props.get("grade_2")))
 
-        if error_type is None and pair_grade_values == [1, 1] and s_grade_old != STEP6_SEGMENT_GRADE_VALUE:
+        if error_type is None and pair_grade_values == [1, 1] and sgrade_old != STEP6_SEGMENT_GRADE_VALUE:
             adjusted = True
-            s_grade_new = STEP6_SEGMENT_GRADE_VALUE
+            sgrade_new = STEP6_SEGMENT_GRADE_VALUE
             adjust_reason = "both_pair_nodes_grade_2_eq_1"
 
-        if s_grade_new == STEP6_SEGMENT_GRADE_VALUE:
+        if sgrade_new == STEP6_SEGMENT_GRADE_VALUE:
             conflicting_nodes: list[str] = []
             for semantic_node_id in junc_nodes:
                 group = mainnode_groups.get(semantic_node_id)
                 if group is None:
                     continue
                 representative = node_by_id[group.representative_node_id]
-                if _current_grade_2(representative) == 1 and _current_kind_2(representative) == 4:
+                current_node_props = (
+                    representative.properties
+                    if node_properties_map is None
+                    else node_properties_map.get(representative.node_id, representative.properties)
+                )
+                if _coerce_int(current_node_props.get("grade_2")) == 1 and _coerce_int(current_node_props.get("kind_2")) == 4:
                     conflicting_nodes.append(semantic_node_id)
             if conflicting_nodes:
                 error_type = STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT
                 error_desc = (
-                    "s_grade='0-0双' segment contains junc_nodes with grade_2=1 and kind_2=4: "
+                    "sgrade='0-0双' segment contains junc_nodes with grade_2=1 and kind_2=4: "
                     + ",".join(conflicting_nodes)
                 )
 
@@ -301,13 +332,13 @@ def _collect_segment_records(
                 pair_nodes=pair_nodes,
                 road_ids=road_ids,
                 multiline=multiline,
-                s_grade_old=s_grade_old,
-                s_grade_new=s_grade_new,
+                sgrade_old=sgrade_old,
+                sgrade_new=sgrade_new,
                 junc_nodes=tuple(sorted(set(junc_nodes), key=_sort_key)),
                 inner_group_ids=tuple(sorted(set(inner_group_ids), key=_sort_key)),
                 adjusted=adjusted,
                 adjust_reason=adjust_reason,
-                s_grade_conflict_values=s_grade_conflict_values,
+                sgrade_conflict_values=sgrade_conflict_values,
                 error_type=error_type,
                 error_desc=error_desc,
             )
@@ -320,7 +351,7 @@ def _segment_feature(record: SegmentRecord) -> dict[str, Any]:
     return {
         "properties": {
             "id": record.segment_id,
-            "s_grade": record.s_grade_new,
+            "sgrade": record.sgrade_new,
             "pair_nodes": _join_ids(record.pair_nodes),
             "junc_nodes": _join_ids(record.junc_nodes),
             "roads": _join_ids(record.road_ids),
@@ -333,15 +364,15 @@ def _segment_error_feature(record: SegmentRecord) -> dict[str, Any]:
     return {
         "properties": {
             "id": record.segment_id,
-            "s_grade": record.s_grade_new,
+            "sgrade": record.sgrade_new,
             "pair_nodes": _join_ids(record.pair_nodes),
             "junc_nodes": _join_ids(record.junc_nodes),
             "roads": _join_ids(record.road_ids),
             "error_type": record.error_type,
             "error_desc": record.error_desc,
-            "old_s_grade": record.s_grade_old,
-            "new_s_grade": record.s_grade_new,
-            "s_grade_conflict_values": _join_ids(record.s_grade_conflict_values),
+            "old_sgrade": record.sgrade_old,
+            "new_sgrade": record.sgrade_new,
+            "sgrade_conflict_values": _join_ids(record.sgrade_conflict_values),
             "flag_s_grade_conflict": record.error_type == STEP6_ERROR_TYPE_S_GRADE_CONFLICT,
             "flag_grade_kind_conflict": record.error_type == STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT,
         },
@@ -349,32 +380,18 @@ def _segment_error_feature(record: SegmentRecord) -> dict[str, Any]:
     }
 
 
-def run_step6_segment_aggregation(
+def _write_step6_outputs(
     *,
-    road_path: Union[str, Path],
-    node_path: Union[str, Path],
-    out_root: Union[str, Path],
-    run_id: Optional[str] = None,
-    road_layer: Optional[str] = None,
-    road_crs: Optional[str] = None,
-    node_layer: Optional[str] = None,
-    node_crs: Optional[str] = None,
-    debug: bool = True,
+    segment_records: list[SegmentRecord],
+    inner_nodes_by_segment: dict[str, list[NodeFeatureRecord]],
+    out_root: Path,
+    run_id: str,
+    input_node_path: Union[str, Path],
+    input_road_path: Union[str, Path],
+    debug: bool,
 ) -> Step6Artifacts:
-    resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
-    resolved_out_root.mkdir(parents=True, exist_ok=True)
-
-    (nodes, _, _), (roads, _) = _load_nodes_and_roads(
-        node_path=node_path,
-        road_path=road_path,
-        node_layer=node_layer,
-        node_crs=node_crs,
-        road_layer=road_layer,
-        road_crs=road_crs,
-    )
-    _require_working_layers(nodes=nodes, roads=roads, stage_label="Step6")
-
-    segment_records, inner_nodes_by_segment = _collect_segment_records(nodes=nodes, roads=roads)
+    resolved_out_root = out_root
+    resolved_run_id = run_id
 
     segment_path = resolved_out_root / "segment.geojson"
     inner_nodes_path = resolved_out_root / "inner_nodes.geojson"
@@ -412,14 +429,14 @@ def run_step6_segment_aggregation(
     segment_summary = {
         "run_id": resolved_run_id,
         "debug": debug,
-        "input_node_path": str(Path(node_path)),
-        "input_road_path": str(Path(road_path)),
+        "input_node_path": str(Path(input_node_path)),
+        "input_road_path": str(Path(input_road_path)),
         "segment_count": len(segment_records),
         "segment_with_junc_count": sum(1 for record in segment_records if record.junc_nodes),
         "segment_with_inner_nodes_count": sum(1 for record in segment_records if record.inner_group_ids),
         "segment_error_count": len(segment_error_records),
-        "s_grade_adjusted_count": sum(1 for record in segment_records if record.adjusted),
-        "s_grade_conflict_count": sum(
+        "sgrade_adjusted_count": sum(1 for record in segment_records if record.adjusted),
+        "sgrade_conflict_count": sum(
             1 for record in segment_records if record.error_type == STEP6_ERROR_TYPE_S_GRADE_CONFLICT
         ),
         "grade_kind_conflict_count": sum(
@@ -444,9 +461,9 @@ def run_step6_segment_aggregation(
             "pair_nodes": _join_ids(record.pair_nodes),
             "junc_nodes": _join_ids(record.junc_nodes),
             "road_ids": _join_ids(record.road_ids),
-            "s_grade_old": record.s_grade_old,
-            "s_grade_new": record.s_grade_new,
-            "s_grade_conflict_values": _join_ids(record.s_grade_conflict_values),
+            "sgrade_old": record.sgrade_old,
+            "sgrade_new": record.sgrade_new,
+            "sgrade_conflict_values": _join_ids(record.sgrade_conflict_values),
             "adjust_reason": record.adjust_reason,
             "error_type": record.error_type,
             "has_error": record.error_type is not None,
@@ -462,9 +479,9 @@ def run_step6_segment_aggregation(
             "pair_nodes",
             "junc_nodes",
             "road_ids",
-            "s_grade_old",
-            "s_grade_new",
-            "s_grade_conflict_values",
+            "sgrade_old",
+            "sgrade_new",
+            "sgrade_conflict_values",
             "adjust_reason",
             "error_type",
             "has_error",
@@ -490,6 +507,80 @@ def run_step6_segment_aggregation(
         inner_nodes_summary_path=inner_nodes_summary_path,
         summary=segment_summary,
         inner_nodes_summary=inner_nodes_summary,
+    )
+
+
+def run_step6_segment_aggregation_from_records(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    out_root: Union[str, Path],
+    node_path: Union[str, Path],
+    road_path: Union[str, Path],
+    run_id: Optional[str] = None,
+    debug: bool = True,
+    node_properties_map: Optional[dict[str, dict[str, Any]]] = None,
+    road_properties_map: Optional[dict[str, dict[str, Any]]] = None,
+    mainnode_groups: Optional[dict[str, MainnodeGroup]] = None,
+    group_to_allowed_road_ids: Optional[dict[str, set[str]]] = None,
+) -> Step6Artifacts:
+    resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
+    resolved_out_root.mkdir(parents=True, exist_ok=True)
+
+    _require_working_layers(
+        nodes=nodes,
+        roads=roads,
+        stage_label="Step6",
+        node_properties_map=node_properties_map,
+        road_properties_map=road_properties_map,
+    )
+    segment_records, inner_nodes_by_segment = _collect_segment_records(
+        nodes=nodes,
+        roads=roads,
+        node_properties_map=node_properties_map,
+        road_properties_map=road_properties_map,
+        mainnode_groups=mainnode_groups,
+        group_to_allowed_road_ids=group_to_allowed_road_ids,
+    )
+    return _write_step6_outputs(
+        segment_records=segment_records,
+        inner_nodes_by_segment=inner_nodes_by_segment,
+        out_root=resolved_out_root,
+        run_id=resolved_run_id,
+        input_node_path=node_path,
+        input_road_path=road_path,
+        debug=debug,
+    )
+
+
+def run_step6_segment_aggregation(
+    *,
+    road_path: Union[str, Path],
+    node_path: Union[str, Path],
+    out_root: Union[str, Path],
+    run_id: Optional[str] = None,
+    road_layer: Optional[str] = None,
+    road_crs: Optional[str] = None,
+    node_layer: Optional[str] = None,
+    node_crs: Optional[str] = None,
+    debug: bool = True,
+) -> Step6Artifacts:
+    (nodes, _, _), (roads, _) = _load_nodes_and_roads(
+        node_path=node_path,
+        road_path=road_path,
+        node_layer=node_layer,
+        node_crs=node_crs,
+        road_layer=road_layer,
+        road_crs=road_crs,
+    )
+    return run_step6_segment_aggregation_from_records(
+        nodes=nodes,
+        roads=roads,
+        out_root=out_root,
+        node_path=node_path,
+        road_path=road_path,
+        run_id=run_id,
+        debug=debug,
     )
 
 

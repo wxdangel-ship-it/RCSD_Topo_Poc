@@ -22,7 +22,15 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     _normalize_mainnodeid,
     _sort_key,
 )
-from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import initialize_working_layers, is_roundabout_mainnode_kind
+from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
+    canonicalize_road_working_properties,
+    get_road_segmentid,
+    get_road_sgrade,
+    initialize_working_layers,
+    is_roundabout_mainnode_kind,
+    set_road_segmentid,
+    set_road_sgrade,
+)
 
 
 DEFAULT_RUN_ID_PREFIX = "t01_s2_refresh_node_road_"
@@ -247,7 +255,7 @@ def _load_nodes(
     groups: dict[str, list[str]] = defaultdict(list)
 
     for feature in result.features:
-        props = dict(feature.properties)
+        props = canonicalize_road_working_properties(dict(feature.properties))
         node_id = _normalize_id(props.get("id"))
         if node_id is None:
             raise ValueError("Node feature is missing required field 'id'.")
@@ -532,11 +540,11 @@ def refresh_s2_baseline(
 
     road_properties_map: dict[str, dict[str, Any]] = {}
     for road in road_records:
-        props = dict(road.properties)
-        existing_segmentid = _normalize_id(props.get("segmentid"))
+        props = canonicalize_road_working_properties(road.properties)
+        existing_segmentid = _normalize_id(get_road_segmentid(props))
         segmentid = road_to_segmentid.get(road.road_id, existing_segmentid)
-        props["s_grade"] = SEGMENT_GRADE_VALUE if road.road_id in road_to_segmentid else props.get("s_grade")
-        props["segmentid"] = segmentid
+        set_road_sgrade(props, SEGMENT_GRADE_VALUE if road.road_id in road_to_segmentid else get_road_sgrade(props))
+        set_road_segmentid(props, segmentid)
         road_properties_map[road.road_id] = props
 
     physical_to_semantic = {node_id: group.mainnode_id for group in mainnode_groups.values() for node_id in group.member_node_ids}
@@ -656,7 +664,7 @@ def refresh_s2_baseline(
         "node_input_path": str(Path(node_path)),
         "validated_pair_count": len(validated_pairs),
         "segment_body_road_count": segment_body_road_count,
-        "road_written_s_grade_count": sum(1 for props in road_properties_map.values() if props["s_grade"] is not None),
+        "road_written_sgrade_count": sum(1 for props in road_properties_map.values() if props["sgrade"] is not None),
         "road_written_segmentid_count": sum(1 for props in road_properties_map.values() if props["segmentid"] is not None),
         "mainnode_total_count": len(mainnode_groups),
         "mainnode_pair_endpoint_count": mainnode_pair_endpoint_count,

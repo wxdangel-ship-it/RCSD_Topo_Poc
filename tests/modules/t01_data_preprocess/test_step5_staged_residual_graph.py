@@ -55,7 +55,7 @@ def _road_feature(
     *,
     formway: int = 0,
     segmentid: str | None = None,
-    s_grade: str | None = None,
+    sgrade: str | None = None,
 ) -> dict:
     return {
         "type": "Feature",
@@ -66,7 +66,7 @@ def _road_feature(
             "direction": direction,
             "formway": formway,
             "segmentid": segmentid,
-            "s_grade": s_grade,
+            "sgrade": sgrade,
         },
         "geometry": LineString(coords),
     }
@@ -175,7 +175,7 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
             _road_feature("b62", 160, 120, 0, [[11.2, 0.0], [11.0, 1.0]]),
             _road_feature("b10x", 110, 170, 0, [[10.0, 0.0], [9.0, 0.0]]),
             _road_feature("b30x", 180, 130, 0, [[13.0, 0.0], [12.0, 0.0]]),
-            _road_feature("old1", 500, 501, 0, [[20.0, 0.0], [21.0, 0.0]], segmentid="old_pair", s_grade="0-1\u53cc"),
+            _road_feature("old1", 500, 501, 0, [[20.0, 0.0], [21.0, 0.0]], segmentid="old_pair", sgrade="0-1双"),
             _road_feature("tin", 502, 501, 2, [[20.0, 1.0], [21.0, 0.0]]),
             _road_feature("tout", 501, 503, 2, [[21.0, 0.0], [22.0, 1.0]]),
             _road_feature("c14", 210, 240, 2, [[30.0, 0.0], [31.0, -1.0]]),
@@ -306,24 +306,24 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
     for road_id in ["a14", "a43", "a32", "a21"]:
         assert road_props[road_id]["segmentid"] == "10_30"
-        assert road_props[road_id]["s_grade"] == "0-2\u53cc"
+        assert road_props[road_id]["sgrade"] == "0-2双"
     for road_id in ["a46", "a62"]:
         assert road_props[road_id]["segmentid"] in {None, ""}
-        assert road_props[road_id]["s_grade"] in {None, ""}
+        assert road_props[road_id]["sgrade"] in {None, ""}
     for road_id in ["b14", "b43", "b32", "b21"]:
         assert road_props[road_id]["segmentid"] == "110_130"
-        assert road_props[road_id]["s_grade"] == "0-2\u53cc"
+        assert road_props[road_id]["sgrade"] == "0-2双"
     for road_id in ["b46", "b62"]:
         assert road_props[road_id]["segmentid"] in {None, ""}
-        assert road_props[road_id]["s_grade"] in {None, ""}
+        assert road_props[road_id]["sgrade"] in {None, ""}
     for road_id in ["c14", "c43", "c32", "c21"]:
         assert road_props[road_id]["segmentid"] in {None, ""}
-        assert road_props[road_id]["s_grade"] in {None, ""}
+        assert road_props[road_id]["sgrade"] in {None, ""}
     for road_id in ["c46", "c62"]:
         assert road_props[road_id]["segmentid"] in {None, ""}
-        assert road_props[road_id]["s_grade"] in {None, ""}
+        assert road_props[road_id]["sgrade"] in {None, ""}
     assert road_props["old1"]["segmentid"] == "old_pair"
-    assert road_props["old1"]["s_grade"] == "0-1\u53cc"
+    assert road_props["old1"]["sgrade"] == "0-1双"
     assert road_props["tin"]["segmentid"] in {None, ""}
     assert road_props["tout"]["segmentid"] in {None, ""}
 

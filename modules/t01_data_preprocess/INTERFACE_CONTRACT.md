@@ -26,7 +26,8 @@
   - `grade_2 = grade`
   - `kind_2 = kind`
   - `working_mainnodeid = mainnodeid`
-- `mainnodeid` 保持原始输入值，运行期主节点语义统一写入 `working_mainnodeid`
+- 默认情况下，`mainnodeid` 保持原始输入值，运行期主节点语义统一写入 `working_mainnodeid`
+- 例外：在 `roundabout preprocessing` 中，聚合成环岛的一组 node 允许同步改写 `mainnodeid` 与 `working_mainnodeid`，统一指向环岛 `mainnode`
 
 ### 3.2 Working Roads
 - 必备字段：
@@ -66,6 +67,9 @@
 - 环岛 member node：
   - `grade_2 = 0`
   - `kind_2 = 0`
+- 环岛全组 node：
+  - `mainnodeid = roundabout mainnode`
+  - `working_mainnodeid = roundabout mainnode`
 - 环岛 `mainnode` 在后续 refresh 中受保护
 
 ## 6. Step1-Step5C accepted 契约

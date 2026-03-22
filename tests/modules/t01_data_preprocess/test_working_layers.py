@@ -61,10 +61,10 @@ def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_p
     write_geojson(
         node_path,
         [
-            {"properties": {"id": 10, "grade": 7, "kind": 7, "closed_con": 2}, "geometry": Point(0.0, 0.0)},
-            {"properties": {"id": 11, "grade": 7, "kind": 7, "closed_con": 2}, "geometry": Point(1.0, 0.0)},
+            {"properties": {"id": 10, "grade": 7, "kind": 7, "closed_con": 2, "mainnodeid": 999}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": 11, "grade": 7, "kind": 7, "closed_con": 2, "mainnodeid": 998}, "geometry": Point(1.0, 0.0)},
             {"properties": {"id": 12, "grade": 7, "kind": 7, "closed_con": 2}, "geometry": Point(2.0, 0.0)},
-            {"properties": {"id": 20, "grade": 8, "kind": 8, "closed_con": 2}, "geometry": Point(10.0, 0.0)},
+            {"properties": {"id": 20, "grade": 8, "kind": 8, "closed_con": 2, "mainnodeid": 997}, "geometry": Point(10.0, 0.0)},
             {"properties": {"id": 21, "grade": 8, "kind": 8, "closed_con": 2}, "geometry": Point(11.0, 0.0)},
         ],
     )
@@ -119,20 +119,20 @@ def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_p
     assert roundabout_summary["roundabout_member_node_count"] == 3
     assert node_props["10"]["grade_2"] == 1
     assert node_props["10"]["kind_2"] == 64
-    assert "mainnodeid" not in node_props["10"]
+    assert str(node_props["10"]["mainnodeid"]) == "10"
     assert str(node_props["10"]["working_mainnodeid"]) == "10"
     assert node_props["11"]["grade_2"] == 0
     assert node_props["11"]["kind_2"] == 0
-    assert "mainnodeid" not in node_props["11"]
+    assert str(node_props["11"]["mainnodeid"]) == "10"
     assert str(node_props["11"]["working_mainnodeid"]) == "10"
     assert node_props["12"]["grade_2"] == 0
     assert node_props["12"]["kind_2"] == 0
-    assert "mainnodeid" not in node_props["12"]
+    assert str(node_props["12"]["mainnodeid"]) == "10"
     assert str(node_props["12"]["working_mainnodeid"]) == "10"
     assert node_props["20"]["grade_2"] == 1
     assert node_props["20"]["kind_2"] == 64
-    assert "mainnodeid" not in node_props["20"]
-    assert "mainnodeid" not in node_props["21"]
+    assert str(node_props["20"]["mainnodeid"]) == "20"
+    assert str(node_props["21"]["mainnodeid"]) == "20"
     assert str(node_props["20"]["working_mainnodeid"]) == "20"
     assert str(node_props["21"]["working_mainnodeid"]) == "20"
     assert (out_root / "roundabout_group_roads.geojson").is_file()

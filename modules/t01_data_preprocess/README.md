@@ -43,6 +43,10 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
   - `grade_2`
   - `kind_2`
   - `working_mainnodeid`
+- 环岛预处理例外：
+  - 聚合成环岛的一组 node 会同步修正 `mainnodeid / working_mainnodeid`
+  - 环岛 `mainnode` 记为 `grade_2 = 1, kind_2 = 64`
+  - 环岛 member node 记为 `grade_2 = 0, kind_2 = 0`
 - road 侧正式输出字段：
   - `segmentid`
   - `sgrade`

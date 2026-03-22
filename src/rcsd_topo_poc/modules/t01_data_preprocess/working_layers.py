@@ -431,6 +431,7 @@ def _apply_roundabout_preprocess(
                 index = node_index_by_id[node_id]
                 current_feature = node_features[index]
                 props = dict(current_feature["properties"])
+                props["mainnodeid"] = group.mainnode_id
                 props["working_mainnodeid"] = group.mainnode_id
                 if node_id == group.mainnode_id:
                     props["grade_2"] = 1

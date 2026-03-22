@@ -32,6 +32,7 @@
   - `grade_2 = grade`
   - `kind_2 = kind`
   - `working_mainnodeid = mainnodeid`
+- 默认不改 raw `mainnodeid`；但在环岛预处理中，允许将聚合成环岛的一组 node 的 `mainnodeid / working_mainnodeid` 统一修正到环岛 `mainnode`
 - working road 初始化：
   - `sgrade = null`
   - `segmentid = null`
@@ -44,6 +45,9 @@
 - 环岛 member node 写成：
   - `grade_2 = 0`
   - `kind_2 = 0`
+- 环岛全组 node 同步写成：
+  - `mainnodeid = roundabout mainnode`
+  - `working_mainnodeid = roundabout mainnode`
 - 环岛 `mainnode` 在后续 refresh 中受保护。
 
 ## 4. Step1-Step5C accepted 业务口径

@@ -16,6 +16,7 @@
 ## 核心原则
 - official 输入统一为 GeoJSON。
 - working node 业务判断统一使用 `grade_2 / kind_2 / working_mainnodeid`。
+- 环岛预处理会把环岛全组 node 的 `mainnodeid / working_mainnodeid` 统一修正到环岛 `mainnode`。
 - working road 正式输出统一使用 `segmentid / sgrade`。
 - Step1-Step5C 负责 road-level 双向 Segment 构段。
 - Step6 负责 segment-level 聚合、`inner_nodes` 提取与 `segment_error` 审计。

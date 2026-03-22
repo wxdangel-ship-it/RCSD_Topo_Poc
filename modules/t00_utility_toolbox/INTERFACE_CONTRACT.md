@@ -10,19 +10,19 @@
   - Tool3 `Intersection 逐 Patch 预处理与汇总`
   - Tool4 `A200 road 增加 patch_id`
   - Tool5 `A200 road 增加 SW 原始 kind`
+  - Tool6 `A200_node shp 导出 nodes.geojson`
 
 本文件用于固化 `T00` 当前稳定的输入、输出、覆盖、跳过与摘要语义。
 
 ## 2. 通用约束
 
 - 路径口径：Patch 子目录统一使用 `Vector/`
-- CRS 口径：Tool2 / Tool3 统一 `EPSG:3857`；Tool4 / Tool5 通过 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
+- CRS 口径：Tool2 / Tool3 / Tool6 统一 `EPSG:3857`；Tool4 / Tool5 通过 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
 - Tool5 输入 CRS 口径：
   - `A200_road_patch` 默认按 `EPSG:3857`
   - SW 原始路网默认按 `EPSG:4326`
   - 两者统一投影到 `TARGET_EPSG` 后再处理
 - 修复口径：只允许最小修复；修复失败则跳过并记录异常
-- 压缩口径：统一为拓扑保持的几何简化
 - 覆盖口径：旧输出已存在时先删除再重建
 - 执行体验：命令行必须输出工具开始/结束、阶段级和 Patch / 记录级进度
 
@@ -52,149 +52,98 @@
   - `skip_count`
   - 每个 Patch 的文件拷贝数
   - 异常原因
-- `skip_count` 是 `failure_count` 的子类统计
 
 ## 4. Tool2 契约
-
-### 4.1 输入与输出
 
 - 单 Patch 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone.geojson`
 - 单 Patch fix 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone_fix.geojson`
 - 全局输出：`D:\TestData\POC_Data\patch_all\DriveZone.geojson`
 - 输出 CRS：`EPSG:3857`
 
-### 4.2 单 Patch 处理
-
-- 读取 `DriveZone.geojson`
-- 必要时投影到 `3857`
-- 最小修复
-- 单 Patch 面合并
-- `+5m / -5m`
-- 单 Patch 拓扑保持简化
-- 写出 `DriveZone_fix.geojson`
-
-### 4.3 全量处理
-
-- 收集所有成功生成的 `DriveZone_fix.geojson`
-- 基于这些 fix 结果做全量面合并
-- 全量合并后再做一次拓扑保持简化
-- 写出根目录全局 `DriveZone.geojson`
-
-### 4.4 覆盖、缺失输入与摘要
-
-- 已存在 `DriveZone_fix.geojson` 时先删除再重建
-- 已存在根目录 `DriveZone.geojson` 时先删除再重建
-- 缺失 `DriveZone.geojson` 按 `warning / skip` 处理，不中断全量
-- 摘要至少包含：
-  - `total_patch_count`
-  - `input_found_count`
-  - `fixed_output_count`
-  - `skip_missing_count`
-  - `skip_error_count`
-  - `global_merge_input_count`
-  - 输出要素统计
-  - 异常原因摘要
-
 ## 5. Tool3 契约
-
-### 5.1 输入与输出
 
 - 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\Intersection.geojson`
 - 输出：`D:\TestData\POC_Data\patch_all\Intersection.geojson`
 - 输出 CRS：`EPSG:3857`
-
-### 5.2 处理语义
-
 - 单 Patch 内逐要素做拓扑保持简化
-- 保留原始属性并新增 `patchid`
 - 全量阶段只汇总，不做面合并
-- 缺失输入按 `warning / skip` 处理
 
 ## 6. Tool4 契约
-
-### 6.1 输入与输出
 
 - 输入一：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road.shp`
 - 输入二：`D:\TestData\POC_Data\first_layer_road_net_v1_patch\rc_patch_road.shp`
 - 正式输出：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road_patch.geojson`
 - 异常输出：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road_patch_unmatched.geojson`
 - 输出 CRS：`TARGET_EPSG`，默认 `3857`
-
-### 6.2 关联契约
-
-- 关联规则：`A200_road.id = rc_patch_road.road_id`
-- 字段读取需兼容大小写差异
-- 输出字段统一命名为 `patch_id`
-- 同一 `road_id` 多次出现但 `patch_id` 一致，可视为一致重复
-- 同一 `road_id` 对应多个不同 `patch_id` 时，不再视为 unmatched
 - overlap 情况下，`patch_id` 记录多个值，按逗号 `,` 拼接
-- unmatched 只用于无法关联 `road_id` 或缺失关键关联值的记录
-
-### 6.3 摘要契约
-
-- 摘要至少包含：
-  - `total_a200_count`
-  - `matched_count`
-  - `unmatched_count`
-  - `duplicate_road_id_count`
-  - `conflicting_patch_id_count`
-  - `multi_patch_assignment_count`
-  - 输出路径
-  - 异常说明
 
 ## 7. Tool5 契约
-
-### 7.1 输入与输出
 
 - 输入一：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road_patch.geojson`
 - 输入二：`D:\TestData\POC_Data\first_layer_road_net_v0\SW\A200-2025M12-road.geojson`
 - 输出：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_road_patch_kind.geojson`
 - 输出 CRS：`TARGET_EPSG`，默认 `3857`
-
-### 7.2 处理契约
-
 - `A200_road_patch` 默认按 `EPSG:3857`
-- SW 原始路网默认按 `EPSG:4326`
-- 两者统一投影到 `TARGET_EPSG` 后处理
-- 每条 `A200_road_patch` 在目标 CRS 下构建 `1m` Buffer
-- 用空间索引查找被 Buffer 完全包含的 SW 线要素
-- 读取 SW `Kind`
-- 按 `"|"` 拆分、去重、重组
-- 输出字段统一命名为 `kind`
-- 若没有匹配到 SW road，`kind` 置空，记入 `unmatched_kind_count`
+- SW 默认按 `EPSG:4326`
+- 两者统一投影到 `TARGET_EPSG=3857` 后再做空间匹配
 
-### 7.3 摘要契约
+## 8. Tool6 契约
+
+### 8.1 输入与输出
+
+- 输入：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_node.shp`
+- 输出：`D:\TestData\POC_Data\first_layer_road_net_v0\nodes.geojson`
+- 输出 CRS：`EPSG:3857`
+
+### 8.2 处理契约
+
+- 读取 shp 并审计输入要素数、几何类型、字段列表、输入 CRS
+- 若输入 CRS 缺失，不得猜测，直接阻塞并写入摘要
+- 若输入 CRS 非 `3857`，先重投影到 `3857`
+- 保留原始属性
+- 允许最小限度几何修复，仅用于保证导出可执行
+- 修复失败或读写失败的要素记入摘要
+- 输出文件已存在时先删除再重建
+
+### 8.3 摘要契约
 
 - 摘要至少包含：
-  - `total_a200_patch_count`
-  - `sw_feature_count`
-  - `matched_kind_count`
-  - `unmatched_kind_count`
-  - `empty_kind_count`
-  - 输出路径
+  - `input_path`
+  - `output_path`
+  - `input_feature_count`
+  - `output_feature_count`
+  - `input_crs`
+  - `output_crs`
+  - `repaired_feature_count`
+  - `failed_feature_count`
+  - `field_names`
+  - `geometry_type_summary`
   - 异常说明
-  - 使用的空间谓词
+- 摘要需显式注明：
+  - Tool6 按项目要求输出 `EPSG:3857` GeoJSON
+  - 这是项目内约定输出，不保证严格标准 GeoJSON 互操作
 
-## 8. 持久化输出边界
+## 9. 持久化输出边界
 
 - Tool1：`patch_all` 目录骨架与 `Vector/` 归位是正式输出
 - Tool2：per-patch `DriveZone_fix.geojson` 与根目录全局 `DriveZone.geojson` 都是正式输出
 - Tool3：根目录全局 `Intersection.geojson` 是正式输出
 - Tool4：`A200_road_patch.geojson` 与 `A200_road_patch_unmatched.geojson` 是正式输出
 - Tool5：`A200_road_patch_kind.geojson` 是正式输出
+- Tool6：`nodes.geojson` 是正式输出
 
-## 9. 非范围契约
+## 10. 非范围契约
 
 当前不承诺以下能力：
 
-- Tool6+
+- Tool7+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
 - 重型产线编排
 - 超出当前需求的中间产物正式化治理
 
-## 10. 后续实现注意事项
+## 11. 后续实现注意事项
 
 - 参数名、日志文件名和具体 CLI 形式可继续在脚本层补足
 - 但不得偏离当前契约语义

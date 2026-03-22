@@ -18,6 +18,10 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.road_patch_join import (
     RoadPatchJoinConfig,
     run_road_patch_join,
 )
+from rcsd_topo_poc.modules.t00_utility_toolbox.shapefile_geojson_export import (
+    ShapefileGeoJsonExportConfig,
+    run_shapefile_geojson_export,
+)
 
 __all__ = [
     "PatchBootstrapConfig",
@@ -30,4 +34,6 @@ __all__ = [
     "run_road_patch_join",
     "RoadKindEnrichConfig",
     "run_road_kind_enrich",
+    "ShapefileGeoJsonExportConfig",
+    "run_shapefile_geojson_export",
 ]

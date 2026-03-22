@@ -16,19 +16,18 @@
 - Tool1：整理全量 Patch 矢量目录并初始化统一 `patch_all` 骨架
 - Tool2：对每个 Patch 的 `DriveZone` 生成 `DriveZone_fix.geojson`，再合并为根目录全局 `DriveZone.geojson`
 - Tool3：对全量 `Intersection` 做逐 Patch 预处理后汇总输出
-- Tool4：按 `A200_road.id = rc_patch_road.road_id` 给一层路网写入 `patch_id`；若存在 overlap，对多个 `patch_id` 用逗号拼接
-- Tool5：基于 Tool4 输出与 SW 原始路网给一层路网写入原始 `kind`；其中 `A200_road_patch` 按 `3857` 处理，SW 默认按 `4326` 读取后统一投到 `3857`
+- Tool4：按 `A200_road.id = rc_patch_road.road_id` 给一层路网写入 `patch_id`
+- Tool5：基于 Tool4 输出与 SW 原始路网给一层路网写入原始 `kind`
+- Tool6：将 `A200_node.shp` 导出为保留原始属性的 `nodes.geojson`
 
 ## 模块状态
 
 当前为直接增量实现状态：
 
 - Tool1 已完成
-- Tool2 已切换到修正版输出语义
+- Tool2 / Tool4 / Tool5 已完成前序增量调整
 - Tool3 维持既有实现
-- Tool4 / Tool5 已支持 overlap patch_id 与分输入 CRS 口径
-
-`history/*` 仍不是当前轮次硬门禁。
+- Tool6 为本轮新增导出工具
 
 ## 与业务模块的关系
 
@@ -37,12 +36,17 @@
 ## 统一规则摘要
 
 - Patch 子目录统一使用 `Vector/`
-- Tool2 / Tool3 几何处理统一在 `EPSG:3857`
+- Tool2 / Tool3 / Tool6 的几何处理统一在 `EPSG:3857`
 - Tool4 / Tool5 通过脚本头部 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
 - Tool5 对 `A200_road_patch` 与 SW 允许分别配置默认 CRS
-- “压缩”统一解释为拓扑保持的几何简化
 - 输出已存在时先删除再重建
 - 命令行执行过程中必须提供阶段级与 Patch / 记录级进度输出
+
+## Tool6 备注
+
+- Tool6 按项目当前要求输出 `EPSG:3857` 的 GeoJSON
+- 这是项目内约定输出，不以严格 RFC 7946 互操作为目标
+- Tool6 不做额外业务字段加工，不新增无关字段
 
 ## 文档入口
 
@@ -63,6 +67,7 @@ python3 scripts/t00_tool2_drivezone_merge.py
 python3 scripts/t00_tool3_intersection_merge.py
 python3 scripts/t00_tool4_a200_patch_join.py
 python3 scripts/t00_tool5_a200_kind_enrich.py
+python3 scripts/t00_tool6_node_export.py
 ```
 
 默认数据根位于：

@@ -327,6 +327,22 @@ def minimal_repair(geometry: BaseGeometry | None) -> BaseGeometry | None:
     return candidate
 
 
+def minimal_geometry_repair(geometry: BaseGeometry | None) -> BaseGeometry | None:
+    if geometry is None or geometry.is_empty:
+        return None
+    if geometry.is_valid:
+        return geometry
+
+    try:
+        candidate = make_valid(geometry)
+    except Exception:
+        return None
+
+    if candidate is None or candidate.is_empty or not candidate.is_valid:
+        return None
+    return candidate
+
+
 def simplify_polygonal(geometry: BaseGeometry | None, tolerance_meters: float) -> BaseGeometry | None:
     if geometry is None:
         return None

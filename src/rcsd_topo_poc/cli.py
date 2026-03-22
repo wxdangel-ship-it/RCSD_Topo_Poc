@@ -152,6 +152,14 @@ def _cmd_t01_compare_freeze(args: argparse.Namespace) -> int:
     return run_compare_t01_freeze_cli(args)
 
 
+def _cmd_t02_stage1_drivezone_gate(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t02_junction_anchor.stage1_drivezone_gate import (
+        run_t02_stage1_drivezone_gate_cli,
+    )
+
+    return run_t02_stage1_drivezone_gate_cli(args)
+
+
 def _add_debug_flag(parser: argparse.ArgumentParser, *, default: bool) -> None:
     parser.add_argument(
         "--debug",
@@ -481,6 +489,50 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional compare output root override. If omitted, write to outputs/_work/t01_compare_freeze/<run_id>.",
     )
     p_compare.set_defaults(func=_cmd_t01_compare_freeze)
+
+    p_t02_stage1 = sub.add_parser(
+        "t02-stage1-drivezone-gate",
+        help="Run T02 stage1 DriveZone/has_evd gate and write auditable node/segment outputs.",
+    )
+    p_t02_stage1.add_argument(
+        "--segment-path",
+        "--segment_path",
+        required=True,
+        dest="segment_path",
+        help="Path to T01 segment GeoJSON/Shapefile.",
+    )
+    p_t02_stage1.add_argument("--segment-layer", help="Optional segment layer name.")
+    p_t02_stage1.add_argument("--segment-crs", help="Optional segment CRS override, e.g. EPSG:4326.")
+    p_t02_stage1.add_argument(
+        "--nodes-path",
+        "--nodes_path",
+        required=True,
+        dest="nodes_path",
+        help="Path to T01 nodes GeoJSON/Shapefile.",
+    )
+    p_t02_stage1.add_argument("--nodes-layer", help="Optional nodes layer name.")
+    p_t02_stage1.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
+    p_t02_stage1.add_argument(
+        "--drivezone-path",
+        "--drivezone_path",
+        required=True,
+        dest="drivezone_path",
+        help="Path to DriveZone GeoJSON/Shapefile.",
+    )
+    p_t02_stage1.add_argument("--drivezone-layer", help="Optional DriveZone layer name.")
+    p_t02_stage1.add_argument("--drivezone-crs", help="Optional DriveZone CRS override, e.g. EPSG:4326.")
+    p_t02_stage1.add_argument(
+        "--out-root",
+        "--out-dir",
+        "--out_dir",
+        dest="out_root",
+        help="Optional output root override. If omitted, write to outputs/_work/t02_stage1_drivezone_gate/<run_id>.",
+    )
+    p_t02_stage1.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t02_stage1_drivezone_gate_YYYYMMDD_HHMMSS.",
+    )
+    p_t02_stage1.set_defaults(func=_cmd_t02_stage1_drivezone_gate)
 
     args = parser.parse_args(argv)
     try:

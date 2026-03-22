@@ -369,6 +369,51 @@ def test_build_segment_body_candidate_channel_drops_single_attachment_branch_com
     assert candidate_road_ids == {"trunk"}
 
 
+def test_build_segment_body_candidate_channel_respects_allowed_road_ids() -> None:
+    def _edge(road_id: str, from_node: str, to_node: str) -> step1_pair_poc.TraversalEdge:
+        return step1_pair_poc.TraversalEdge(road_id=road_id, from_node=from_node, to_node=to_node)
+
+    pair = step1_pair_poc.PairRecord(
+        pair_id="S2X:A__B",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "B"),
+        forward_path_road_ids=("trunk",),
+        reverse_path_node_ids=("B", "A"),
+        reverse_path_road_ids=("trunk",),
+        through_node_ids=(),
+    )
+    undirected_adjacency = {
+        "A": (_edge("trunk", "A", "B"), _edge("r1", "A", "N1")),
+        "B": (_edge("trunk", "B", "A"), _edge("r3", "B", "N2"), _edge("spill", "B", "Z1")),
+        "N1": (_edge("r1", "N1", "A"), _edge("r2", "N1", "N2")),
+        "N2": (_edge("r2", "N2", "N1"), _edge("r3", "N2", "B")),
+        "Z1": (_edge("spill", "Z1", "B"), _edge("spill2", "Z1", "Z2")),
+        "Z2": (_edge("spill2", "Z2", "Z1"),),
+    }
+    road_endpoints = {
+        "trunk": ("A", "B"),
+        "r1": ("A", "N1"),
+        "r2": ("N1", "N2"),
+        "r3": ("N2", "B"),
+        "spill": ("B", "Z1"),
+        "spill2": ("Z1", "Z2"),
+    }
+
+    candidate_road_ids = step2_segment_poc._build_segment_body_candidate_channel(
+        pair,
+        trunk_road_ids=("trunk",),
+        undirected_adjacency=undirected_adjacency,
+        boundary_node_ids=set(),
+        road_endpoints=road_endpoints,
+        allowed_road_ids={"trunk", "r1", "r2", "r3"},
+    )
+
+    assert candidate_road_ids == {"trunk", "r1", "r2", "r3"}
+
+
 def _build_counterclockwise_dataset(base_dir: Path) -> tuple[Path, Path]:
     road_path = base_dir / "roads.geojson"
     node_path = base_dir / "nodes.geojson"
@@ -1080,10 +1125,16 @@ def test_step2_validation_emits_pair_phase_markers(monkeypatch) -> None:
         lambda *args, **kwargs: (trunk_candidate, None, (), {}),
     )
     monkeypatch.setattr(step2_segment_poc, "_collect_internal_boundary_nodes", lambda *args, **kwargs: ())
+    captured_allowed_road_ids: dict[str, set[str]] = {}
+
+    def _fake_build_segment_body_candidate_channel(*args, **kwargs):
+        captured_allowed_road_ids["value"] = set(kwargs["allowed_road_ids"])
+        return {"r1020"}
+
     monkeypatch.setattr(
         step2_segment_poc,
         "_build_segment_body_candidate_channel",
-        lambda *args, **kwargs: {"r1020"},
+        _fake_build_segment_body_candidate_channel,
     )
     monkeypatch.setattr(
         step2_segment_poc,
@@ -1120,9 +1171,13 @@ def test_step2_validation_emits_pair_phase_markers(monkeypatch) -> None:
         "prune_completed",
         "trunk_evaluated",
         "segment_body_started",
+        "segment_body_candidate_channel_built",
+        "segment_body_refine_started",
+        "segment_body_refine_completed",
         "segment_body_completed",
         "result_appended",
     ]
+    assert captured_allowed_road_ids["value"] == {"r1020"}
     assert [event for event, _ in progress_events if event in {"validation_started", "validation_tighten_started", "validation_tighten_completed"}] == [
         "validation_started",
         "validation_tighten_started",

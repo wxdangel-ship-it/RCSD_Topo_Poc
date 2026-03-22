@@ -380,19 +380,25 @@ def _build_segment_body_candidate_channel(
     undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
     boundary_node_ids: set[str],
     road_endpoints: dict[str, tuple[str, str]],
+    allowed_road_ids: Optional[set[str]] = None,
 ) -> set[str]:
     protected = {pair.a_node_id, pair.b_node_id}
     start_node_ids = _collect_road_node_ids(trunk_road_ids, road_endpoints=road_endpoints)
     candidate_road_ids: set[str] = set(trunk_road_ids)
+    allowed_road_id_set = set(allowed_road_ids) if allowed_road_ids is not None else None
 
     for start_node_id in sorted(start_node_ids, key=_sort_key):
         for edge in undirected_adjacency.get(start_node_id, ()):
+            if allowed_road_id_set is not None and edge.road_id not in allowed_road_id_set:
+                continue
             if edge.road_id in candidate_road_ids:
                 continue
 
             queue: deque[TraversalEdge] = deque([edge])
             while queue:
                 current_edge = queue.popleft()
+                if allowed_road_id_set is not None and current_edge.road_id not in allowed_road_id_set:
+                    continue
                 if current_edge.road_id in candidate_road_ids:
                     continue
 
@@ -402,6 +408,8 @@ def _build_segment_body_candidate_channel(
                     continue
 
                 for next_edge in undirected_adjacency.get(current_node_id, ()):
+                    if allowed_road_id_set is not None and next_edge.road_id not in allowed_road_id_set:
+                        continue
                     if next_edge.road_id in candidate_road_ids:
                         continue
                     queue.append(next_edge)
@@ -3257,6 +3265,21 @@ def _validate_pair_candidates(
                 undirected_adjacency=undirected_adjacency,
                 boundary_node_ids=boundary_node_ids,
                 road_endpoints=road_endpoints,
+                allowed_road_ids=pruned_road_ids,
+            )
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="segment_body_candidate_channel_built",
+                candidate_road_count=len(segment_candidate_road_ids),
+                trunk_found=True,
+            )
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="segment_body_refine_started",
+                candidate_road_count=len(segment_candidate_road_ids),
+                trunk_found=True,
             )
             segment_road_ids, segment_cut_infos = _refine_segment_roads(
                 pair,
@@ -3265,6 +3288,14 @@ def _validate_pair_candidates(
                 pruned_road_ids=segment_candidate_road_ids,
                 trunk_road_ids=trunk_candidate.road_ids,
                 through_rule=execution.strategy.through_rule,
+            )
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="segment_body_refine_completed",
+                candidate_road_count=len(segment_candidate_road_ids),
+                segment_road_count=len(segment_road_ids),
+                trunk_found=True,
             )
             _emit_validation_pair_phase(
                 pair_index=pair_index,

@@ -380,19 +380,25 @@ def _build_segment_body_candidate_channel(
     undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
     boundary_node_ids: set[str],
     road_endpoints: dict[str, tuple[str, str]],
+    allowed_road_ids: Optional[set[str]] = None,
 ) -> set[str]:
     protected = {pair.a_node_id, pair.b_node_id}
     start_node_ids = _collect_road_node_ids(trunk_road_ids, road_endpoints=road_endpoints)
     candidate_road_ids: set[str] = set(trunk_road_ids)
+    allowed_road_id_set = set(allowed_road_ids) if allowed_road_ids is not None else None
 
     for start_node_id in sorted(start_node_ids, key=_sort_key):
         for edge in undirected_adjacency.get(start_node_id, ()):
+            if allowed_road_id_set is not None and edge.road_id not in allowed_road_id_set:
+                continue
             if edge.road_id in candidate_road_ids:
                 continue
 
             queue: deque[TraversalEdge] = deque([edge])
             while queue:
                 current_edge = queue.popleft()
+                if allowed_road_id_set is not None and current_edge.road_id not in allowed_road_id_set:
+                    continue
                 if current_edge.road_id in candidate_road_ids:
                     continue
 
@@ -402,6 +408,8 @@ def _build_segment_body_candidate_channel(
                     continue
 
                 for next_edge in undirected_adjacency.get(current_node_id, ()):
+                    if allowed_road_id_set is not None and next_edge.road_id not in allowed_road_id_set:
+                        continue
                     if next_edge.road_id in candidate_road_ids:
                         continue
                     queue.append(next_edge)
@@ -2242,6 +2250,181 @@ def _compact_execution_for_validation(execution: Step1StrategyExecution) -> Step
     )
 
 
+def _compact_branch_cut_info(info: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {
+        "road_id": info.get("road_id"),
+        "cut_reason": info.get("cut_reason"),
+    }
+    for key in (
+        "component_id",
+        "conflicting_pair_ids",
+        "terminate_node_ids",
+        "support_barrier_node_ids",
+    ):
+        value = info.get(key)
+        if value not in (None, (), [], {}):
+            compact[key] = value
+    return compact
+
+
+def _compact_component_info(info: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {
+        "component_id": info.get("component_id"),
+        "road_ids": info.get("road_ids", []),
+        "attachment_node_ids": info.get("attachment_node_ids", []),
+        "internal_support_attachment_node_ids": info.get(
+            "internal_support_attachment_node_ids",
+            [],
+        ),
+        "internal_t_support_attachment_node_ids": info.get(
+            "internal_t_support_attachment_node_ids",
+            [],
+        ),
+        "attachment_flow_status": info.get("attachment_flow_status"),
+        "attachment_direction_labels": info.get("attachment_direction_labels", []),
+        "parallel_corridor_directionality": info.get("parallel_corridor_directionality"),
+        "parallel_corridor_directions": info.get("parallel_corridor_directions", []),
+        "hits_other_terminate": bool(info.get("hits_other_terminate")),
+        "terminate_node_ids": info.get("terminate_node_ids", []),
+        "contains_other_validated_trunk": bool(info.get("contains_other_validated_trunk")),
+        "conflicting_pair_ids": info.get("conflicting_pair_ids", []),
+        "blocked_by_transition_same_dir": bool(info.get("blocked_by_transition_same_dir")),
+        "side_access_metric": info.get("side_access_metric"),
+        "side_access_distance_m": info.get("side_access_distance_m"),
+        "side_access_gate_passed": info.get("side_access_gate_passed"),
+        "kept_as_segment_body": bool(info.get("kept_as_segment_body")),
+        "moved_to_step3_residual": bool(info.get("moved_to_step3_residual")),
+        "moved_to_branch_cut": bool(info.get("moved_to_branch_cut")),
+        "decision_reason": info.get("decision_reason"),
+    }
+    if info.get("transition_block_infos"):
+        compact["transition_block_infos"] = info["transition_block_infos"]
+    return compact
+
+
+def _compact_residual_info(info: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {
+        "road_id": info.get("road_id"),
+        "component_id": info.get("component_id"),
+        "residual_reason": info.get("residual_reason"),
+        "blocked_by_transition_same_dir": bool(info.get("blocked_by_transition_same_dir")),
+        "conflicting_pair_ids": info.get("conflicting_pair_ids", []),
+        "terminate_node_ids": info.get("terminate_node_ids", []),
+        "side_access_distance_m": info.get("side_access_distance_m"),
+        "side_access_gate_passed": info.get("side_access_gate_passed"),
+    }
+    if info.get("hint_cut_reasons"):
+        compact["hint_cut_reasons"] = info["hint_cut_reasons"]
+    return compact
+
+
+def _compact_support_info_for_release(
+    support_info: dict[str, Any],
+    *,
+    keep_tighten_fields: bool,
+) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    passthrough_keys = (
+        "boundary_terminate_node_ids",
+        "historical_boundary_node_ids",
+        "trunk_signed_area",
+        "trunk_mode",
+        "bidirectional_minimal_loop",
+        "semantic_node_group_closure",
+        "dual_carriageway_separation_gate_limit_m",
+        "dual_carriageway_max_separation_m",
+    )
+    for key in passthrough_keys:
+        if key in support_info:
+            compact[key] = support_info[key]
+
+    branch_cut_infos = support_info.get("branch_cut_infos")
+    if branch_cut_infos:
+        compact["branch_cut_infos"] = [
+            _compact_branch_cut_info(dict(info)) for info in branch_cut_infos
+        ]
+
+    if keep_tighten_fields:
+        segment_candidate_road_ids = support_info.get("segment_body_candidate_road_ids")
+        if segment_candidate_road_ids:
+            compact["segment_body_candidate_road_ids"] = list(segment_candidate_road_ids)
+        segment_candidate_cut_infos = support_info.get("segment_body_candidate_cut_infos")
+        if segment_candidate_cut_infos:
+            compact["segment_body_candidate_cut_infos"] = [
+                _compact_branch_cut_info(dict(info)) for info in segment_candidate_cut_infos
+            ]
+    else:
+        component_infos = support_info.get("non_trunk_components")
+        if component_infos:
+            compact["non_trunk_components"] = [
+                _compact_component_info(dict(info)) for info in component_infos
+            ]
+        residual_infos = support_info.get("step3_residual_infos")
+        if residual_infos:
+            compact["step3_residual_infos"] = [
+                _compact_residual_info(dict(info)) for info in residual_infos
+            ]
+
+    return compact
+
+
+def _compact_validation_result_for_release(
+    validation: PairValidationResult,
+    *,
+    keep_tighten_fields: bool,
+) -> PairValidationResult:
+    support_info = _compact_support_info_for_release(
+        dict(validation.support_info),
+        keep_tighten_fields=keep_tighten_fields,
+    )
+    support_info.setdefault("candidate_channel_road_count", len(validation.candidate_channel_road_ids))
+    support_info.setdefault("pruned_road_count", len(validation.pruned_road_ids))
+    support_info.setdefault("trunk_road_count", len(validation.trunk_road_ids))
+    support_info.setdefault("segment_body_road_count", len(validation.segment_road_ids))
+    support_info.setdefault("residual_road_count", len(validation.residual_road_ids))
+    support_info.setdefault("branch_cut_road_count", len(validation.branch_cut_road_ids))
+    support_info.setdefault("boundary_terminate_node_count", len(validation.boundary_terminate_node_ids))
+
+    if keep_tighten_fields and validation.validated_status == "validated":
+        pruned_road_ids = validation.pruned_road_ids
+        trunk_road_ids = validation.trunk_road_ids
+        segment_road_ids: tuple[str, ...] = ()
+        residual_road_ids: tuple[str, ...] = ()
+    elif validation.validated_status == "validated":
+        pruned_road_ids = ()
+        trunk_road_ids = validation.trunk_road_ids
+        segment_road_ids = validation.segment_road_ids
+        residual_road_ids = validation.residual_road_ids
+    else:
+        pruned_road_ids = ()
+        trunk_road_ids = ()
+        segment_road_ids = ()
+        residual_road_ids = ()
+
+    return replace(
+        validation,
+        candidate_channel_road_ids=(),
+        pruned_road_ids=pruned_road_ids,
+        trunk_road_ids=trunk_road_ids,
+        segment_road_ids=segment_road_ids,
+        residual_road_ids=residual_road_ids,
+        branch_cut_road_ids=(),
+        boundary_terminate_node_ids=(),
+        support_info=support_info,
+    )
+
+
+def _validation_road_count(
+    road_ids: tuple[str, ...],
+    support_info: dict[str, Any],
+    count_key: str,
+) -> int:
+    value = support_info.get(count_key)
+    if value is None:
+        return len(road_ids)
+    return int(value)
+
+
 def _collect_validation_summary(validations: list[PairValidationResult]) -> dict[str, Any]:
     validated_pair_count = 0
     rejected_pair_count = 0
@@ -2335,8 +2518,16 @@ def _iter_validation_rows(validations: list[PairValidationResult]) -> Iterable[d
             "trunk_mode": validation.trunk_mode,
             "trunk_found": validation.trunk_found,
             "counterclockwise_ok": validation.counterclockwise_ok,
-            "segment_body_road_count": len(validation.segment_road_ids),
-            "residual_road_count": len(validation.residual_road_ids),
+            "segment_body_road_count": _validation_road_count(
+                validation.segment_road_ids,
+                validation.support_info,
+                "segment_body_road_count",
+            ),
+            "residual_road_count": _validation_road_count(
+                validation.residual_road_ids,
+                validation.support_info,
+                "residual_road_count",
+            ),
             "transition_same_dir_blocked": validation.transition_same_dir_blocked,
             "left_turn_excluded_mode": validation.left_turn_excluded_mode,
             "support_info": _compact_json(dict(validation.support_info)),
@@ -2354,8 +2545,16 @@ def _iter_validated_rows(validations: list[PairValidationResult]) -> Iterable[di
             "trunk_mode": validation.trunk_mode,
             "left_turn_excluded_mode": validation.left_turn_excluded_mode,
             "warning_codes": ";".join(validation.warning_codes),
-            "segment_body_road_count": len(validation.segment_road_ids),
-            "residual_road_count": len(validation.residual_road_ids),
+            "segment_body_road_count": _validation_road_count(
+                validation.segment_road_ids,
+                validation.support_info,
+                "segment_body_road_count",
+            ),
+            "residual_road_count": _validation_road_count(
+                validation.residual_road_ids,
+                validation.support_info,
+                "residual_road_count",
+            ),
         }
 
 
@@ -2782,6 +2981,7 @@ def _validate_pair_candidates(
     undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
     formway_mode: str,
     left_turn_formway_bit: int,
+    compact_release_payloads: bool = False,
     progress_callback: Optional[Step2ProgressCallback] = None,
 ) -> list[PairValidationResult]:
     terminate_ids = set(execution.terminate_ids)
@@ -2860,8 +3060,7 @@ def _validate_pair_candidates(
                 reject_reason="invalid_candidate_boundary",
                 trunk_found=False,
             )
-            provisional_results.append(
-                PairValidationResult(
+            result = PairValidationResult(
                     pair_id=pair.pair_id,
                     a_node_id=pair.a_node_id,
                     b_node_id=pair.b_node_id,
@@ -2883,7 +3082,9 @@ def _validate_pair_candidates(
                     transition_same_dir_blocked=False,
                     support_info={"boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key)},
                 )
-            )
+            if compact_release_payloads:
+                result = _compact_validation_result_for_release(result, keep_tighten_fields=False)
+            provisional_results.append(result)
             continue
 
         pruned_road_ids, branch_cut_infos, disconnected_after_prune = _prune_candidate_channel(
@@ -2909,8 +3110,7 @@ def _validate_pair_candidates(
                 reject_reason="disconnected_after_prune",
                 trunk_found=False,
             )
-            provisional_results.append(
-                PairValidationResult(
+            result = PairValidationResult(
                     pair_id=pair.pair_id,
                     a_node_id=pair.a_node_id,
                     b_node_id=pair.b_node_id,
@@ -2937,7 +3137,9 @@ def _validate_pair_candidates(
                         "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
                     },
                 )
-            )
+            if compact_release_payloads:
+                result = _compact_validation_result_for_release(result, keep_tighten_fields=False)
+            provisional_results.append(result)
             continue
 
         trunk_candidate, reject_reason, warning_codes, trunk_gate_info = _evaluate_trunk(
@@ -2966,8 +3168,7 @@ def _validate_pair_candidates(
                 reject_reason="" if reject_reason is None else reject_reason,
                 trunk_found=False,
             )
-            provisional_results.append(
-                PairValidationResult(
+            result = PairValidationResult(
                     pair_id=pair.pair_id,
                     a_node_id=pair.a_node_id,
                     b_node_id=pair.b_node_id,
@@ -2995,7 +3196,9 @@ def _validate_pair_candidates(
                         **trunk_gate_info,
                     },
                 )
-            )
+            if compact_release_payloads:
+                result = _compact_validation_result_for_release(result, keep_tighten_fields=False)
+            provisional_results.append(result)
             continue
 
         internal_boundary_node_ids = _collect_internal_boundary_nodes(
@@ -3012,8 +3215,7 @@ def _validate_pair_candidates(
                 reject_reason="historical_boundary_blocked",
                 trunk_found=False,
             )
-            provisional_results.append(
-                PairValidationResult(
+            result = PairValidationResult(
                     pair_id=pair.pair_id,
                     a_node_id=pair.a_node_id,
                     b_node_id=pair.b_node_id,
@@ -3041,7 +3243,9 @@ def _validate_pair_candidates(
                         "historical_boundary_node_ids": list(internal_boundary_node_ids),
                     },
                 )
-            )
+            if compact_release_payloads:
+                result = _compact_validation_result_for_release(result, keep_tighten_fields=False)
+            provisional_results.append(result)
             continue
 
         trunk_mode = _trunk_candidate_mode(trunk_candidate)
@@ -3061,6 +3265,21 @@ def _validate_pair_candidates(
                 undirected_adjacency=undirected_adjacency,
                 boundary_node_ids=boundary_node_ids,
                 road_endpoints=road_endpoints,
+                allowed_road_ids=pruned_road_ids,
+            )
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="segment_body_candidate_channel_built",
+                candidate_road_count=len(segment_candidate_road_ids),
+                trunk_found=True,
+            )
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="segment_body_refine_started",
+                candidate_road_count=len(segment_candidate_road_ids),
+                trunk_found=True,
             )
             segment_road_ids, segment_cut_infos = _refine_segment_roads(
                 pair,
@@ -3069,6 +3288,14 @@ def _validate_pair_candidates(
                 pruned_road_ids=segment_candidate_road_ids,
                 trunk_road_ids=trunk_candidate.road_ids,
                 through_rule=execution.strategy.through_rule,
+            )
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="segment_body_refine_completed",
+                candidate_road_count=len(segment_candidate_road_ids),
+                segment_road_count=len(segment_road_ids),
+                trunk_found=True,
             )
             _emit_validation_pair_phase(
                 pair_index=pair_index,
@@ -3093,8 +3320,7 @@ def _validate_pair_candidates(
                 trunk_found=True,
                 segment_road_count=len(segment_road_ids),
             )
-            provisional_results.append(
-                PairValidationResult(
+            result = PairValidationResult(
                     pair_id=pair.pair_id,
                     a_node_id=pair.a_node_id,
                     b_node_id=pair.b_node_id,
@@ -3129,7 +3355,9 @@ def _validate_pair_candidates(
                     },
                     conflict_pair_id=conflict_pair_id,
                 )
-            )
+            if compact_release_payloads:
+                result = _compact_validation_result_for_release(result, keep_tighten_fields=False)
+            provisional_results.append(result)
             continue
 
         for road_id in trunk_candidate.road_ids:
@@ -3144,8 +3372,7 @@ def _validate_pair_candidates(
             trunk_found=True,
             segment_road_count=len(segment_road_ids),
         )
-        provisional_results.append(
-            PairValidationResult(
+        result = PairValidationResult(
                 pair_id=pair.pair_id,
                 a_node_id=pair.a_node_id,
                 b_node_id=pair.b_node_id,
@@ -3182,7 +3409,9 @@ def _validate_pair_candidates(
                     "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
                 },
             )
-        )
+        if compact_release_payloads:
+            result = _compact_validation_result_for_release(result, keep_tighten_fields=True)
+        provisional_results.append(result)
 
     provisional_validated_pair_count = sum(
         1 for item in provisional_results if item.validated_status == "validated"
@@ -3193,12 +3422,29 @@ def _validate_pair_candidates(
         validation_count=validation_count,
         validated_pair_count=provisional_validated_pair_count,
     )
-    tightened = _tighten_validated_segment_components(
-        provisional_results,
-        execution=execution,
-        context=context,
-        road_endpoints=road_endpoints,
-    )
+    if provisional_validated_pair_count:
+        validated_results = [
+            item for item in provisional_results if item.validated_status == "validated"
+        ]
+        tightened_validated = _tighten_validated_segment_components(
+            validated_results,
+            execution=execution,
+            context=context,
+            road_endpoints=road_endpoints,
+        )
+        if compact_release_payloads:
+            tightened_validated = [
+                _compact_validation_result_for_release(item, keep_tighten_fields=False)
+                for item in tightened_validated
+            ]
+        tightened_by_pair_id = {item.pair_id: item for item in tightened_validated}
+    else:
+        tightened_by_pair_id = {}
+
+    tightened = [
+        tightened_by_pair_id.get(item.pair_id, item)
+        for item in provisional_results
+    ]
     _emit_progress(
         progress_callback,
         "validation_tighten_completed",
@@ -3332,6 +3578,7 @@ def run_step2_segment_poc(
 
         execution = _compact_execution_for_validation(execution)
         gc.collect()
+        compact_release_payloads = not debug and not retain_validation_details
         validations = _validate_pair_candidates(
             execution,
             context=context,
@@ -3339,6 +3586,7 @@ def run_step2_segment_poc(
             undirected_adjacency=undirected_adjacency,
             formway_mode=formway_mode,
             left_turn_formway_bit=left_turn_formway_bit,
+            compact_release_payloads=compact_release_payloads,
             progress_callback=progress_callback,
         )
         endpoint_pool_source_map = build_endpoint_pool_source_map(

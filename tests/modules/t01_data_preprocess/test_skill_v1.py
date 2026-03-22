@@ -157,6 +157,70 @@ def test_stage_subprogress_callback_can_skip_perf_and_stdout(tmp_path: Path, cap
     assert capsys.readouterr().out == ""
 
 
+def test_validation_pair_state_subprogress_is_throttled_in_progress_snapshot(tmp_path: Path, capsys) -> None:
+    progress_path = tmp_path / "progress.json"
+    perf_markers_path = tmp_path / "perf_markers.jsonl"
+    callback = skill_v1._make_stage_subprogress_callback(
+        run_id="run-test",
+        stage_name="step2",
+        stage_index=2,
+        total_stages=6,
+        progress_path=progress_path,
+        perf_markers_path=perf_markers_path,
+        completed_stage_names=["bootstrap"],
+    )
+
+    callback(
+        "validation_pair_state",
+        {
+            "pair_index": 51,
+            "validation_count": 23262,
+            "pair_id": "S2:10__20",
+            "phase": "candidate_channel_built",
+            "_perf_log": False,
+            "_stdout_log": False,
+        },
+    )
+
+    assert not progress_path.exists()
+    assert not perf_markers_path.exists()
+    assert capsys.readouterr().out == ""
+
+
+def test_validation_pair_checkpoint_no_longer_prints_stdout(tmp_path: Path, capsys) -> None:
+    progress_path = tmp_path / "progress.json"
+    perf_markers_path = tmp_path / "perf_markers.jsonl"
+    callback = skill_v1._make_stage_subprogress_callback(
+        run_id="run-test",
+        stage_name="step2",
+        stage_index=2,
+        total_stages=6,
+        progress_path=progress_path,
+        perf_markers_path=perf_markers_path,
+        completed_stage_names=["bootstrap"],
+    )
+
+    callback(
+        "validation_pair_checkpoint",
+        {
+            "pair_index": 100,
+            "validation_count": 23262,
+            "pair_id": "S2:10__20",
+            "phase": "validation_pair_started",
+        },
+    )
+
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    markers = [
+        json.loads(line)
+        for line in perf_markers_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert "pair_index=100" in progress["message"]
+    assert markers[-1]["substage_event"] == "validation_pair_checkpoint"
+    assert capsys.readouterr().out == ""
+
+
 def test_run_stage_can_disable_tracemalloc_for_release(tmp_path: Path) -> None:
     progress_path = tmp_path / "progress.json"
     perf_markers_path = tmp_path / "perf_markers.jsonl"

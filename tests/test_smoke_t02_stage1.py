@@ -76,11 +76,15 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
     )
 
     assert exit_code == 0
-    assert (outputs_dir / "nodes.geojson").is_file()
-    assert (outputs_dir / "segment.geojson").is_file()
-    assert (outputs_dir / "t02_stage1_summary.json").is_file()
-    assert (outputs_dir / "t02_stage1_audit.csv").is_file()
+    run_dir = outputs_dir / "smoke_case"
+    assert (run_dir / "nodes.geojson").is_file()
+    assert (run_dir / "segment.geojson").is_file()
+    assert (run_dir / "t02_stage1_summary.json").is_file()
+    assert (run_dir / "t02_stage1_audit.csv").is_file()
+    assert (run_dir / "t02_stage1_progress.json").is_file()
+    assert (run_dir / "t02_stage1_perf.json").is_file()
+    assert (run_dir / "t02_stage1_perf_markers.jsonl").is_file()
 
-    summary_doc = json.loads((outputs_dir / "t02_stage1_summary.json").read_text(encoding="utf-8"))
+    summary_doc = json.loads((run_dir / "t02_stage1_summary.json").read_text(encoding="utf-8"))
     assert summary_doc["success"] is True
     assert summary_doc["counts"]["segment_has_evd_count"] == 1

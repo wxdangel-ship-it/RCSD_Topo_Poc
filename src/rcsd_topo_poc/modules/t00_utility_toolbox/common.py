@@ -409,22 +409,24 @@ def write_json(path: Path, payload: Any) -> None:
 
 def write_geojson(path: Path, features: Iterable[dict[str, Any]], *, crs_text: str | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    feature_items = []
-    for feature in features:
-        geometry = feature.get("geometry")
-        feature_items.append(
-            {
+    with path.open("w", encoding="utf-8") as fp:
+        fp.write('{"type":"FeatureCollection","name":')
+        json.dump(path.stem, fp, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        fp.write(',"crs":{"type":"name","properties":{"name":')
+        json.dump(crs_text or TARGET_CRS.to_string(), fp, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        fp.write('}},"features":[')
+
+        first = True
+        for feature in features:
+            geometry = feature.get("geometry")
+            feature_payload = {
                 "type": "Feature",
                 "properties": _json_compatible(feature.get("properties") or {}),
                 "geometry": mapping(geometry) if geometry is not None else None,
             }
-        )
+            if not first:
+                fp.write(",")
+            json.dump(feature_payload, fp, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            first = False
 
-    payload = {
-        "type": "FeatureCollection",
-        "name": path.stem,
-        "crs": {"type": "name", "properties": {"name": crs_text or TARGET_CRS.to_string()}},
-        "features": feature_items,
-    }
-    with path.open("w", encoding="utf-8") as fp:
-        json.dump(payload, fp, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        fp.write("]}")

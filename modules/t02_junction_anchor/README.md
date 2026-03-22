@@ -1,60 +1,87 @@
-# T02 路口锚定模块
+# t02_junction_anchor
 
-> 本文件是 `t02_junction_anchor` 的操作者总览。长期源事实以 [spec.md](/mnt/e/Work/RCSD_Topo_Poc/specs/t02-junction-anchor/spec.md) 与 [INTERFACE_CONTRACT.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t02_junction_anchor/INTERFACE_CONTRACT.md) 为准。
+> 本文件是 `t02_junction_anchor` 的操作者总览与运行入口说明。长期源事实以 `architecture/*` 与 `INTERFACE_CONTRACT.md` 为准；如本文件与长期源事实表述不一致，以后者为准。
 
-## 1. 模块简介
+## 1. 模块定位
 
-- T02 面向双向 Segment 相关路口锚定。
-- 当前模块状态是：需求基线阶段 / 文档先行。
-- 当前聚焦阶段一 `DriveZone / has_evd gate`，不进入阶段二实现。
+- T02 是当前已登记的正式业务模块。
+- 当前正式实现范围是 stage1 `DriveZone / has_evd gate`。
+- 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础；stage2 锚定主逻辑仍处于占位与后续澄清阶段。
 
-## 2. 当前模块状态
+## 2. 官方运行入口
 
-- 已落仓：需求基线文档
-- 未启动：代码实现、测试实现、阶段二主逻辑、概率实现
+```bash
+python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
+```
 
-## 3. 与 T01 的依赖关系
+## 3. 常见运行方式
 
-- T01 是 T02 的上游事实源之一。
-- T02 当前依赖 T01 提供：
-  - `segment`
-  - `nodes`
-- T02 本轮只消费上游事实，不修改 T01 文档，也不反向重定义 T01 语义。
+```bash
+python -m rcsd_topo_poc t02-stage1-drivezone-gate \
+  --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.geojson \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/nodes.geojson \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.geojson \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate \
+  --run-id t02_stage1_run
+```
 
-## 4. 当前聚焦阶段一
+说明：
 
-- 阶段一目标：判断双向 Segment 相关路口是否“有有效资料”。
-- 阶段一正式输入：
-  - `segment`
-  - `nodes`
-  - `DriveZone.geojson`
-- stage1 实际输入字段冻结为：
-  - `segment.id / pair_nodes / junc_nodes`
-  - `nodes.id / mainnodeid`
-- `s_grade` 逻辑字段兼容读取 `s_grade / sgrade`。
-- 空间判定统一在 `EPSG:3857` 下进行。
-- 阶段一正式输出：
-  - `nodes.has_evd`
+- `segment` 与 `nodes` 应来自同一轮 T01 成果。
+- `DriveZone` 与 `nodes` 会在空间判定前统一到 `EPSG:3857`。
+- 官方默认工作输出根目录是 `outputs/_work/t02_stage1_drivezone_gate`。
+- 显式传入 `--out-root` 时，其语义也是“工作输出根目录”；最终运行目录固定为 `<out_root>/<run_id>`。
+
+## 4. 输出总览
+
+- `nodes.geojson`
+  - 继承输入 `nodes` 字段并新增 `has_evd`
+  - 只有代表 node 写 `yes/no`
+  - 输出 geometry 统一为 `EPSG:3857`
+- `segment.geojson`
+  - 继承输入 `segment` 字段并新增 `has_evd`
+  - 输出 geometry 统一为 `EPSG:3857`
+- `t02_stage1_summary.json`
+  - 汇总总计数与按 `s_grade` 分桶的 summary
+- `t02_stage1_audit.csv`
+- `t02_stage1_audit.json`
+  - 保留 `junction_nodes_not_found`、`representative_node_missing`、`no_target_junctions`、`missing_required_field`、`invalid_crs_or_unprojectable` 等异常或失败原因
+- `t02_stage1.log`
+  - 运行日志与关键计数摘要
+- `t02_stage1_progress.json`
+  - 当前阶段、阶段消息和累计计数
+- `t02_stage1_perf.json`
+  - 总耗时、阶段耗时和总体计数
+- `t02_stage1_perf_markers.jsonl`
+  - 阶段级性能标记流
+
+## 5. 文档阅读顺序
+
+1. `architecture/01-introduction-and-goals.md`
+2. `architecture/02-constraints.md`
+3. `architecture/04-solution-strategy.md`
+4. `architecture/05-building-block-view.md`
+5. `INTERFACE_CONTRACT.md`
+6. `architecture/10-quality-requirements.md`
+
+补充：
+
+- `architecture/overview.md` 用于快速总览和索引，不替代标准 architecture 文档组。
+- `history/*` 保留阶段演进记录，不替代当前正式源事实。
+- `specs/t02-junction-anchor/*` 是变更工件，不是长期模块真相主表面。
+
+## 6. 当前实现范围
+
+- 已实现：
+  - stage1 输入读取与严格字段校验
+  - `pair_nodes + junc_nodes` 解析与单 `segment` 去重
+  - `mainnodeid` 分组 / 单点兜底
+  - 代表 node `has_evd` 写值
   - `segment.has_evd`
   - `summary`
-  - 审计留痕
-
-## 5. 文档索引
-
-- 规格：[spec.md](/mnt/e/Work/RCSD_Topo_Poc/specs/t02-junction-anchor/spec.md)
-- 计划：[plan.md](/mnt/e/Work/RCSD_Topo_Poc/specs/t02-junction-anchor/plan.md)
-- 任务：[tasks.md](/mnt/e/Work/RCSD_Topo_Poc/specs/t02-junction-anchor/tasks.md)
-- 契约：[INTERFACE_CONTRACT.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t02_junction_anchor/INTERFACE_CONTRACT.md)
-- 模块约束：[AGENTS.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t02_junction_anchor/AGENTS.md)
-- 架构概览：[overview.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t02_junction_anchor/architecture/overview.md)
-- 启动记录：[000-bootstrap.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t02_junction_anchor/history/000-bootstrap.md)
-
-## 6. 后续阶段说明
-
-- 阶段二仍待澄清。
-- 阶段二当前只保留目标占位：
-  - 完成双向 Segment 相关路口锚定
-  - 产出锚定结果
-  - 产出概率 / 置信度类结果
-- 阶段二实现细节本轮不定义。
-- 环岛代表 node 规则当前仍继承 T01 既有逻辑，不在本轮扩写成 T02 新算法。
+  - `audit/log`
+- 未实现：
+  - stage2 锚定主逻辑
+  - 概率 / 置信度
+  - 环岛新规则
+  - 误伤捞回

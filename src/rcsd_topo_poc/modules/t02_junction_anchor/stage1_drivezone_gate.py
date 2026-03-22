@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
+import time
+import tracemalloc
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -11,6 +15,7 @@ from pyproj import CRS
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
+from shapely.prepared import prep
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     TARGET_CRS,
@@ -31,6 +36,10 @@ REASON_REPRESENTATIVE_NODE_MISSING = "representative_node_missing"
 REASON_NO_TARGET_JUNCTIONS = "no_target_junctions"
 REASON_MISSING_REQUIRED_FIELD = "missing_required_field"
 REASON_INVALID_CRS_OR_UNPROJECTABLE = "invalid_crs_or_unprojectable"
+
+NODE_PROGRESS_INTERVAL = 10_000
+SEGMENT_PROGRESS_INTERVAL = 5_000
+JUNCTION_PROGRESS_INTERVAL = 5_000
 
 
 class Stage1RunError(ValueError):
@@ -82,7 +91,56 @@ class Stage1Artifacts:
     audit_csv_path: Path
     audit_json_path: Path
     log_path: Path
+    progress_path: Path
+    perf_json_path: Path
+    perf_markers_path: Path
     summary: dict[str, Any]
+
+
+def _now_text() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fp:
+        fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _tracemalloc_stats() -> dict[str, int]:
+    if not tracemalloc.is_tracing():
+        return {
+            "python_tracemalloc_current_bytes": 0,
+            "python_tracemalloc_peak_bytes": 0,
+        }
+    current_bytes, peak_bytes = tracemalloc.get_traced_memory()
+    return {
+        "python_tracemalloc_current_bytes": current_bytes,
+        "python_tracemalloc_peak_bytes": peak_bytes,
+    }
+
+
+def _write_progress_snapshot(
+    *,
+    out_path: Path,
+    run_id: str,
+    status: str,
+    current_stage: str | None,
+    message: str,
+    counts: dict[str, Any],
+) -> None:
+    write_json(
+        out_path,
+        {
+            "run_id": run_id,
+            "status": status,
+            "updated_at": _now_text(),
+            "current_stage": current_stage,
+            "message": message,
+            "counts": counts,
+            **_tracemalloc_stats(),
+        },
+    )
 
 
 def _find_repo_root(start: Path) -> Optional[Path]:
@@ -101,7 +159,7 @@ def _resolve_out_root(
 ) -> tuple[Path, str]:
     resolved_run_id = run_id or build_run_id("t02_stage1_drivezone_gate")
     if out_root is not None:
-        return Path(out_root), resolved_run_id
+        return Path(out_root) / resolved_run_id, resolved_run_id
 
     repo_root = _find_repo_root(cwd or Path.cwd())
     if repo_root is None:
@@ -347,12 +405,55 @@ def _audit_row(
     }
 
 
+def _empty_bucket_summary() -> dict[str, dict[str, int]]:
+    return {
+        bucket: {
+            "segment_count": 0,
+            "segment_has_evd_count": 0,
+            "junction_count": 0,
+            "junction_has_evd_count": 0,
+        }
+        for bucket in KNOWN_S_GRADE_BUCKETS
+    }
+
+
+def _write_perf_snapshot(path: Path, payload: dict[str, Any]) -> None:
+    write_json(path, payload)
+
+
+def _record_perf_marker(
+    *,
+    out_path: Path,
+    run_id: str,
+    stage: str,
+    elapsed_sec: float,
+    counts: dict[str, Any],
+    note: str | None = None,
+) -> None:
+    marker = {
+        "event": "stage_marker",
+        "run_id": run_id,
+        "at": _now_text(),
+        "stage": stage,
+        "elapsed_sec": round(elapsed_sec, 6),
+        "counts": counts,
+        **_tracemalloc_stats(),
+    }
+    if note is not None:
+        marker["note"] = note
+    _append_jsonl(out_path, marker)
+
+
 def _write_failure_outputs(
     *,
     out_root: Path,
     run_id: str,
     audit_rows: list[dict[str, Any]],
     summary: dict[str, Any],
+    log_path: Path,
+    progress_path: Path,
+    perf_json_path: Path,
+    perf_markers_path: Path,
 ) -> Stage1Artifacts:
     audit_csv_path = out_root / "t02_stage1_audit.csv"
     audit_json_path = out_root / "t02_stage1_audit.json"
@@ -379,7 +480,10 @@ def _write_failure_outputs(
         summary_path=summary_path,
         audit_csv_path=audit_csv_path,
         audit_json_path=audit_json_path,
-        log_path=out_root / "t02_stage1.log",
+        log_path=log_path,
+        progress_path=progress_path,
+        perf_json_path=perf_json_path,
+        perf_markers_path=perf_markers_path,
         summary=summary,
     )
 
@@ -401,11 +505,65 @@ def run_t02_stage1_drivezone_gate(
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
     log_path = resolved_out_root / "t02_stage1.log"
+    progress_path = resolved_out_root / "t02_stage1_progress.json"
+    perf_json_path = resolved_out_root / "t02_stage1_perf.json"
+    perf_markers_path = resolved_out_root / "t02_stage1_perf_markers.jsonl"
     logger = build_logger(log_path, f"t02_stage1_drivezone_gate.{resolved_run_id}")
     audit_rows: list[dict[str, Any]] = []
+    stage_counts: dict[str, Any] = {
+        "segment_feature_count": 0,
+        "segment_has_evd_count": 0,
+        "node_feature_count": 0,
+        "valid_node_count": 0,
+        "representative_node_written_count": 0,
+        "junction_count": 0,
+        "junction_has_evd_count": 0,
+        "drivezone_feature_count": 0,
+        "audit_count": 0,
+    }
+    stage_timings: list[dict[str, Any]] = []
+    run_started_at = time.perf_counter()
+    started_tracemalloc = False
+
+    if not tracemalloc.is_tracing():
+        tracemalloc.start()
+        started_tracemalloc = True
+
+    def _snapshot(status: str, current_stage: str | None, message: str) -> None:
+        stage_counts["audit_count"] = len(audit_rows)
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status=status,
+            current_stage=current_stage,
+            message=message,
+            counts=dict(stage_counts),
+        )
+
+    def _mark_stage(stage_name: str, started_at: float, note: str | None = None) -> None:
+        elapsed_sec = time.perf_counter() - started_at
+        stage_record = {
+            "stage": stage_name,
+            "elapsed_sec": round(elapsed_sec, 6),
+            **_tracemalloc_stats(),
+        }
+        if note is not None:
+            stage_record["note"] = note
+        stage_timings.append(stage_record)
+        _record_perf_marker(
+            out_path=perf_markers_path,
+            run_id=resolved_run_id,
+            stage=stage_name,
+            elapsed_sec=elapsed_sec,
+            counts=dict(stage_counts),
+            note=note,
+        )
 
     try:
+        _snapshot("running", "bootstrap", "Stage1 bootstrap started.")
         announce(logger, f"[T02] stage1 start run_id={resolved_run_id}")
+
+        read_started_at = time.perf_counter()
         segment_layer_data = _read_vector_layer_strict(
             segment_path,
             layer_name=segment_layer,
@@ -425,6 +583,10 @@ def run_t02_stage1_drivezone_gate(
             allow_null_geometry=False,
         )
 
+        stage_counts["segment_feature_count"] = len(segment_layer_data.features)
+        stage_counts["node_feature_count"] = len(nodes_layer_data.features)
+        stage_counts["drivezone_feature_count"] = len(drivezone_layer_data.features)
+
         announce(
             logger,
             "[T02] loaded "
@@ -432,7 +594,10 @@ def run_t02_stage1_drivezone_gate(
             f"node_features={len(nodes_layer_data.features)} "
             f"drivezone_features={len(drivezone_layer_data.features)}",
         )
+        _snapshot("running", "inputs_loaded", "Input layers loaded and projected to EPSG:3857.")
+        _mark_stage("inputs_loaded", read_started_at)
 
+        drivezone_started_at = time.perf_counter()
         drivezone_geometries = [
             feature.geometry
             for feature in drivezone_layer_data.features
@@ -443,21 +608,25 @@ def run_t02_stage1_drivezone_gate(
                 REASON_MISSING_REQUIRED_FIELD,
                 "DriveZone layer has no non-empty geometry features after projection to EPSG:3857.",
             )
-        drivezone_union = unary_union(drivezone_geometries)
+        drivezone_union = drivezone_geometries[0] if len(drivezone_geometries) == 1 else unary_union(drivezone_geometries)
         if drivezone_union.is_empty:
             raise Stage1RunError(
                 REASON_MISSING_REQUIRED_FIELD,
                 "DriveZone union is empty after projection to EPSG:3857.",
             )
+        prepared_drivezone = prep(drivezone_union)
+        del drivezone_geometries
+        gc.collect()
+        announce(logger, "[T02] drivezone prepared target_crs=EPSG:3857")
+        _snapshot("running", "drivezone_prepared", "DriveZone geometry prepared.")
+        _mark_stage("drivezone_prepared", drivezone_started_at)
 
-        node_output_features: list[dict[str, Any]] = []
+        node_index_started_at = time.perf_counter()
         nodes_by_mainnodeid: dict[str, list[NodeRecord]] = {}
         singleton_nodes_by_id: dict[str, list[NodeRecord]] = {}
 
         for output_index, feature in enumerate(nodes_layer_data.features):
-            properties = dict(feature.properties)
-            properties["has_evd"] = None
-            node_output_features.append({"properties": properties, "geometry": feature.geometry})
+            feature.properties["has_evd"] = None
 
             missing_fields: list[str] = []
             if "id" not in feature.properties:
@@ -481,6 +650,7 @@ def run_t02_stage1_drivezone_gate(
                 )
                 continue
 
+            stage_counts["valid_node_count"] += 1
             record = NodeRecord(
                 feature_index=feature.feature_index,
                 output_index=output_index,
@@ -493,12 +663,30 @@ def run_t02_stage1_drivezone_gate(
             else:
                 singleton_nodes_by_id.setdefault(node_id, []).append(record)
 
-        segment_output_features: list[dict[str, Any]] = []
+            if (output_index + 1) % NODE_PROGRESS_INTERVAL == 0:
+                message = (
+                    f"Indexed node_features={output_index + 1}/{len(nodes_layer_data.features)} "
+                    f"valid_nodes={stage_counts['valid_node_count']}"
+                )
+                announce(logger, f"[T02] {message}")
+                _snapshot("running", "build_node_index", message)
+
+        announce(
+            logger,
+            "[T02] node index built "
+            f"valid_nodes={stage_counts['valid_node_count']} "
+            f"mainnode_groups={len(nodes_by_mainnodeid)} "
+            f"singleton_candidates={len(singleton_nodes_by_id)}",
+        )
+        _snapshot("running", "node_index_built", "Node index built.")
+        _mark_stage("node_index_built", node_index_started_at)
+
+        segment_scan_started_at = time.perf_counter()
         referenced_junctions: set[str] = set()
         segment_contexts: list[dict[str, Any]] = []
 
-        for feature in segment_layer_data.features:
-            properties = dict(feature.properties)
+        for output_index, feature in enumerate(segment_layer_data.features):
+            properties = feature.properties
             segment_id = _normalize_id(properties.get("id"))
             grade_field, grade_value = _segment_grade(properties)
             missing_fields: list[str] = []
@@ -522,10 +710,10 @@ def run_t02_stage1_drivezone_gate(
                 referenced_junctions.update(junction_ids)
 
             properties["has_evd"] = "no" if missing_fields else None
-            segment_output_features.append({"properties": properties, "geometry": feature.geometry})
             segment_contexts.append(
                 {
                     "feature_index": feature.feature_index,
+                    "output_index": output_index,
                     "segment_id": segment_id,
                     "s_grade": grade_value,
                     "junction_ids": junction_ids,
@@ -533,8 +721,28 @@ def run_t02_stage1_drivezone_gate(
                 }
             )
 
+            if (output_index + 1) % SEGMENT_PROGRESS_INTERVAL == 0:
+                message = (
+                    f"Scanned segment_features={output_index + 1}/{len(segment_layer_data.features)} "
+                    f"referenced_junctions={len(referenced_junctions)}"
+                )
+                announce(logger, f"[T02] {message}")
+                _snapshot("running", "scan_segments", message)
+
+        announce(
+            logger,
+            "[T02] segment scan built "
+            f"segment_contexts={len(segment_contexts)} "
+            f"referenced_junctions={len(referenced_junctions)}",
+        )
+        _snapshot("running", "segment_scan_done", "Segment contexts built.")
+        _mark_stage("segment_scan_done", segment_scan_started_at)
+
+        junction_gate_started_at = time.perf_counter()
         junction_results: dict[str, JunctionResult] = {}
-        for junction_id in sorted(referenced_junctions):
+        referenced_junction_ids = sorted(referenced_junctions)
+        stage_counts["junction_count"] = len(referenced_junction_ids)
+        for junction_index, junction_id in enumerate(referenced_junction_ids, start=1):
             group_nodes = nodes_by_mainnodeid.get(junction_id)
             if group_nodes:
                 representatives = [record for record in group_nodes if record.node_id == junction_id]
@@ -548,58 +756,80 @@ def run_t02_stage1_drivezone_gate(
                             f"junction_id='{junction_id}' matched mainnodeid group but no node with id == junction_id exists."
                         ),
                     )
-                    continue
-                representative = representatives[0]
-                value = "yes" if any(record.geometry.intersects(drivezone_union) for record in group_nodes) else "no"
-                node_output_features[representative.output_index]["properties"]["has_evd"] = value
-                junction_results[junction_id] = JunctionResult(
-                    junction_id=junction_id,
-                    has_evd=value,
-                    representative_output_index=representative.output_index,
-                    reason=None,
-                    detail=None,
+                else:
+                    representative = representatives[0]
+                    value = (
+                        "yes"
+                        if any(prepared_drivezone.intersects(record.geometry) for record in group_nodes)
+                        else "no"
+                    )
+                    nodes_layer_data.features[representative.output_index].properties["has_evd"] = value
+                    junction_results[junction_id] = JunctionResult(
+                        junction_id=junction_id,
+                        has_evd=value,
+                        representative_output_index=representative.output_index,
+                        reason=None,
+                        detail=None,
+                    )
+                    if value == "yes":
+                        stage_counts["junction_has_evd_count"] += 1
+            else:
+                singleton_candidates = singleton_nodes_by_id.get(junction_id) or []
+                if singleton_candidates:
+                    representative = singleton_candidates[0]
+                    value = "yes" if prepared_drivezone.intersects(representative.geometry) else "no"
+                    nodes_layer_data.features[representative.output_index].properties["has_evd"] = value
+                    junction_results[junction_id] = JunctionResult(
+                        junction_id=junction_id,
+                        has_evd=value,
+                        representative_output_index=representative.output_index,
+                        reason=None,
+                        detail=None,
+                    )
+                    if value == "yes":
+                        stage_counts["junction_has_evd_count"] += 1
+                else:
+                    junction_results[junction_id] = JunctionResult(
+                        junction_id=junction_id,
+                        has_evd="no",
+                        representative_output_index=None,
+                        reason=REASON_JUNCTION_NODES_NOT_FOUND,
+                        detail=f"junction_id='{junction_id}' has neither mainnodeid group nor singleton fallback node.",
+                    )
+
+            if junction_index % JUNCTION_PROGRESS_INTERVAL == 0:
+                message = (
+                    f"Processed junctions={junction_index}/{len(referenced_junction_ids)} "
+                    f"junction_has_evd_count={stage_counts['junction_has_evd_count']}"
                 )
-                continue
+                announce(logger, f"[T02] {message}")
+                _snapshot("running", "junction_gate", message)
 
-            singleton_candidates = singleton_nodes_by_id.get(junction_id) or []
-            if singleton_candidates:
-                representative = singleton_candidates[0]
-                value = "yes" if representative.geometry.intersects(drivezone_union) else "no"
-                node_output_features[representative.output_index]["properties"]["has_evd"] = value
-                junction_results[junction_id] = JunctionResult(
-                    junction_id=junction_id,
-                    has_evd=value,
-                    representative_output_index=representative.output_index,
-                    reason=None,
-                    detail=None,
-                )
-                continue
+        stage_counts["representative_node_written_count"] = sum(
+            1 for feature in nodes_layer_data.features if feature.properties.get("has_evd") in {"yes", "no"}
+        )
+        announce(
+            logger,
+            "[T02] junction gate completed "
+            f"junction_count={stage_counts['junction_count']} "
+            f"junction_has_evd_count={stage_counts['junction_has_evd_count']} "
+            f"representative_node_written_count={stage_counts['representative_node_written_count']}",
+        )
+        _snapshot("running", "junction_gate_done", "Junction gate completed.")
+        _mark_stage("junction_gate_done", junction_gate_started_at)
 
-            junction_results[junction_id] = JunctionResult(
-                junction_id=junction_id,
-                has_evd="no",
-                representative_output_index=None,
-                reason=REASON_JUNCTION_NODES_NOT_FOUND,
-                detail=f"junction_id='{junction_id}' has neither mainnodeid group nor singleton fallback node.",
-            )
-
-        bucket_summary: dict[str, dict[str, Any]] = {
-            bucket: {
-                "segment_count": 0,
-                "segment_has_evd_count": 0,
-                "junction_count": 0,
-                "junction_has_evd_count": 0,
-            }
-            for bucket in KNOWN_S_GRADE_BUCKETS
-        }
+        segment_finalize_started_at = time.perf_counter()
+        bucket_summary = _empty_bucket_summary()
         bucket_junction_sets: dict[str, set[str]] = {bucket: set() for bucket in KNOWN_S_GRADE_BUCKETS}
         bucket_yes_junction_sets: dict[str, set[str]] = {bucket: set() for bucket in KNOWN_S_GRADE_BUCKETS}
 
-        for output_index, context in enumerate(segment_contexts):
+        for context_index, context in enumerate(segment_contexts, start=1):
             segment_id = context["segment_id"]
             s_grade = context["s_grade"]
             missing_fields = context["missing_fields"]
             junction_ids = context["junction_ids"]
+            output_index = context["output_index"]
+            segment_properties = segment_layer_data.features[output_index].properties
 
             if missing_fields:
                 audit_rows.append(
@@ -615,7 +845,7 @@ def run_t02_stage1_drivezone_gate(
                     )
                 )
             elif not junction_ids:
-                segment_output_features[output_index]["properties"]["has_evd"] = "no"
+                segment_properties["has_evd"] = "no"
                 audit_rows.append(
                     _audit_row(
                         scope="segment",
@@ -627,7 +857,7 @@ def run_t02_stage1_drivezone_gate(
                 )
             else:
                 segment_has_evd = all(junction_results[junction_id].has_evd == "yes" for junction_id in junction_ids)
-                segment_output_features[output_index]["properties"]["has_evd"] = "yes" if segment_has_evd else "no"
+                segment_properties["has_evd"] = "yes" if segment_has_evd else "no"
                 for junction_id in junction_ids:
                     junction_result = junction_results[junction_id]
                     if junction_result.reason is None:
@@ -645,16 +875,37 @@ def run_t02_stage1_drivezone_gate(
 
             if s_grade in KNOWN_S_GRADE_BUCKETS:
                 bucket_summary[s_grade]["segment_count"] += 1
-                if segment_output_features[output_index]["properties"].get("has_evd") == "yes":
+                if segment_properties.get("has_evd") == "yes":
                     bucket_summary[s_grade]["segment_has_evd_count"] += 1
                 for junction_id in junction_ids:
                     bucket_junction_sets[s_grade].add(junction_id)
                     if junction_results[junction_id].has_evd == "yes":
                         bucket_yes_junction_sets[s_grade].add(junction_id)
 
+            if context_index % SEGMENT_PROGRESS_INTERVAL == 0:
+                message = (
+                    f"Finalized segments={context_index}/{len(segment_contexts)} "
+                    f"audit_count={len(audit_rows)}"
+                )
+                announce(logger, f"[T02] {message}")
+                _snapshot("running", "finalize_segments", message)
+
         for bucket in KNOWN_S_GRADE_BUCKETS:
             bucket_summary[bucket]["junction_count"] = len(bucket_junction_sets[bucket])
             bucket_summary[bucket]["junction_has_evd_count"] = len(bucket_yes_junction_sets[bucket])
+
+        stage_counts["segment_has_evd_count"] = sum(
+            1 for feature in segment_layer_data.features if feature.properties.get("has_evd") == "yes"
+        )
+        stage_counts["audit_count"] = len(audit_rows)
+        announce(
+            logger,
+            "[T02] segment finalize completed "
+            f"segment_has_evd_count={stage_counts['segment_has_evd_count']} "
+            f"audit_count={stage_counts['audit_count']}",
+        )
+        _snapshot("running", "segment_finalize_done", "Segment outputs and summary counters computed.")
+        _mark_stage("segment_finalize_done", segment_finalize_started_at)
 
         output_nodes_path = resolved_out_root / "nodes.geojson"
         output_segment_path = resolved_out_root / "segment.geojson"
@@ -662,8 +913,39 @@ def run_t02_stage1_drivezone_gate(
         audit_csv_path = resolved_out_root / "t02_stage1_audit.csv"
         audit_json_path = resolved_out_root / "t02_stage1_audit.json"
 
-        write_geojson(output_nodes_path, node_output_features, crs_text=TARGET_CRS.to_string())
-        write_geojson(output_segment_path, segment_output_features, crs_text=TARGET_CRS.to_string())
+        node_write_started_at = time.perf_counter()
+        write_geojson(
+            output_nodes_path,
+            (
+                {
+                    "properties": feature.properties,
+                    "geometry": feature.geometry,
+                }
+                for feature in nodes_layer_data.features
+            ),
+            crs_text=TARGET_CRS.to_string(),
+        )
+        announce(logger, f"[T02] nodes written path={output_nodes_path}")
+        _snapshot("running", "nodes_written", "nodes.geojson written.")
+        _mark_stage("nodes_written", node_write_started_at)
+
+        segment_write_started_at = time.perf_counter()
+        write_geojson(
+            output_segment_path,
+            (
+                {
+                    "properties": feature.properties,
+                    "geometry": feature.geometry,
+                }
+                for feature in segment_layer_data.features
+            ),
+            crs_text=TARGET_CRS.to_string(),
+        )
+        announce(logger, f"[T02] segment written path={output_segment_path}")
+        _snapshot("running", "segment_written", "segment.geojson written.")
+        _mark_stage("segment_written", segment_write_started_at)
+
+        audit_write_started_at = time.perf_counter()
         write_csv(
             audit_csv_path,
             audit_rows,
@@ -677,10 +959,8 @@ def run_t02_stage1_drivezone_gate(
                 "rows": audit_rows,
             },
         )
+        _mark_stage("audit_written", audit_write_started_at)
 
-        segment_has_evd_count = sum(
-            1 for feature in segment_output_features if feature["properties"].get("has_evd") == "yes"
-        )
         summary = {
             "run_id": resolved_run_id,
             "success": True,
@@ -693,17 +973,8 @@ def run_t02_stage1_drivezone_gate(
                 "nodes_crs_override": nodes_crs,
                 "drivezone_crs_override": drivezone_crs,
             },
-            "counts": {
-                "segment_feature_count": len(segment_output_features),
-                "segment_has_evd_count": segment_has_evd_count,
-                "node_feature_count": len(node_output_features),
-                "representative_node_written_count": sum(
-                    1 for feature in node_output_features if feature["properties"].get("has_evd") in {"yes", "no"}
-                ),
-                "junction_count": len(junction_results),
-                "junction_has_evd_count": sum(1 for item in junction_results.values() if item.has_evd == "yes"),
-                "audit_count": len(audit_rows),
-            },
+            "counts": dict(stage_counts),
+            "stage_timings": stage_timings,
             "summary_by_s_grade": bucket_summary,
             "output_files": [
                 output_nodes_path.name,
@@ -712,15 +983,32 @@ def run_t02_stage1_drivezone_gate(
                 audit_csv_path.name,
                 audit_json_path.name,
                 log_path.name,
+                progress_path.name,
+                perf_json_path.name,
+                perf_markers_path.name,
             ],
         }
+        _write_perf_snapshot(
+            perf_json_path,
+            {
+                "run_id": resolved_run_id,
+                "success": True,
+                "total_wall_time_sec": round(time.perf_counter() - run_started_at, 6),
+                "counts": dict(stage_counts),
+                "stage_timings": stage_timings,
+                "progress_path": str(progress_path),
+                "perf_markers_path": str(perf_markers_path),
+                **_tracemalloc_stats(),
+            },
+        )
         write_json(summary_path, summary)
+        _snapshot("succeeded", None, "Stage1 completed successfully.")
 
         announce(
             logger,
             "[T02] wrote outputs "
-            f"segment_has_evd_count={segment_has_evd_count} "
-            f"junction_count={len(junction_results)} "
+            f"segment_has_evd_count={stage_counts['segment_has_evd_count']} "
+            f"junction_count={stage_counts['junction_count']} "
             f"audit_count={len(audit_rows)} "
             f"out_root={resolved_out_root}",
         )
@@ -734,6 +1022,9 @@ def run_t02_stage1_drivezone_gate(
             audit_csv_path=audit_csv_path,
             audit_json_path=audit_json_path,
             log_path=log_path,
+            progress_path=progress_path,
+            perf_json_path=perf_json_path,
+            perf_markers_path=perf_markers_path,
             summary=summary,
         )
     except Stage1RunError as exc:
@@ -745,6 +1036,7 @@ def run_t02_stage1_drivezone_gate(
                 detail=exc.detail,
             )
         )
+        stage_counts["audit_count"] = len(audit_rows)
         summary = {
             "run_id": resolved_run_id,
             "success": False,
@@ -757,24 +1049,9 @@ def run_t02_stage1_drivezone_gate(
                 "nodes_crs_override": nodes_crs,
                 "drivezone_crs_override": drivezone_crs,
             },
-            "counts": {
-                "segment_feature_count": 0,
-                "segment_has_evd_count": 0,
-                "node_feature_count": 0,
-                "representative_node_written_count": 0,
-                "junction_count": 0,
-                "junction_has_evd_count": 0,
-                "audit_count": len(audit_rows),
-            },
-            "summary_by_s_grade": {
-                bucket: {
-                    "segment_count": 0,
-                    "segment_has_evd_count": 0,
-                    "junction_count": 0,
-                    "junction_has_evd_count": 0,
-                }
-                for bucket in KNOWN_S_GRADE_BUCKETS
-            },
+            "counts": dict(stage_counts),
+            "stage_timings": stage_timings,
+            "summary_by_s_grade": _empty_bucket_summary(),
             "fatal_error": {
                 "reason": exc.reason,
                 "detail": exc.detail,
@@ -784,16 +1061,51 @@ def run_t02_stage1_drivezone_gate(
                 "t02_stage1_audit.csv",
                 "t02_stage1_audit.json",
                 "t02_stage1.log",
+                "t02_stage1_progress.json",
+                "t02_stage1_perf.json",
+                "t02_stage1_perf_markers.jsonl",
             ],
         }
+        _snapshot("failed", None, f"Stage1 failed: {exc.reason}")
+        _record_perf_marker(
+            out_path=perf_markers_path,
+            run_id=resolved_run_id,
+            stage="failed",
+            elapsed_sec=time.perf_counter() - run_started_at,
+            counts=dict(stage_counts),
+            note=exc.reason,
+        )
+        _write_perf_snapshot(
+            perf_json_path,
+            {
+                "run_id": resolved_run_id,
+                "success": False,
+                "total_wall_time_sec": round(time.perf_counter() - run_started_at, 6),
+                "counts": dict(stage_counts),
+                "stage_timings": stage_timings,
+                "fatal_error": {
+                    "reason": exc.reason,
+                    "detail": exc.detail,
+                },
+                "progress_path": str(progress_path),
+                "perf_markers_path": str(perf_markers_path),
+                **_tracemalloc_stats(),
+            },
+        )
         announce(logger, f"[T02] stage1 failed reason={exc.reason} detail={exc.detail}")
         return _write_failure_outputs(
             out_root=resolved_out_root,
             run_id=resolved_run_id,
             audit_rows=audit_rows,
             summary=summary,
+            log_path=log_path,
+            progress_path=progress_path,
+            perf_json_path=perf_json_path,
+            perf_markers_path=perf_markers_path,
         )
     finally:
+        if started_tracemalloc:
+            tracemalloc.stop()
         close_logger(logger)
 
 

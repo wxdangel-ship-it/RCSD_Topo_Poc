@@ -82,6 +82,10 @@ def test_stage1_marks_representative_yes_and_segment_yes(tmp_path: Path) -> None
     )
 
     assert artifacts.success is True
+    assert artifacts.out_root == tmp_path / "out" / "yes_case"
+    assert artifacts.progress_path.is_file()
+    assert artifacts.perf_json_path.is_file()
+    assert artifacts.perf_markers_path.is_file()
     nodes_doc = _load_geojson(artifacts.nodes_path)
     segment_doc = _load_geojson(artifacts.segment_path)
 

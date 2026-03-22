@@ -1130,6 +1130,183 @@ def test_step2_validation_emits_pair_phase_markers(monkeypatch) -> None:
     ]
 
 
+def test_step2_compact_validation_result_for_release_drops_nonessential_payloads() -> None:
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("r12", "r23", "r34"),
+            trunk_road_ids=("r12", "r23"),
+            segment_road_ids=("r12", "r23", "r34"),
+        ),
+        candidate_channel_road_ids=("r12", "r23", "r34"),
+        branch_cut_road_ids=("r34",),
+        boundary_terminate_node_ids=("T1",),
+        support_info={
+            "boundary_terminate_node_ids": ["T1"],
+            "candidate_channel_road_ids": ["r12", "r23", "r34"],
+            "pruned_road_ids": ["r12", "r23", "r34"],
+            "forward_path_road_ids": ["r12", "r23"],
+            "reverse_path_road_ids": ["r23", "r12"],
+            "left_turn_road_ids": [],
+            "branch_cut_infos": [{"road_id": "r34", "cut_reason": "hits_other_terminate", "terminate_node_ids": ["T1"]}],
+            "segment_body_candidate_road_ids": ["r12", "r23", "r34"],
+            "segment_body_candidate_cut_infos": [{"road_id": "r34", "cut_reason": "segment_exclude_formway"}],
+            "trunk_signed_area": 1.0,
+        },
+    )
+
+    compact = step2_segment_poc._compact_validation_result_for_release(
+        validation,
+        keep_tighten_fields=True,
+    )
+
+    assert compact.candidate_channel_road_ids == ()
+    assert compact.pruned_road_ids == ("r12", "r23", "r34")
+    assert compact.trunk_road_ids == ("r12", "r23")
+    assert compact.segment_road_ids == ()
+    assert compact.branch_cut_road_ids == ()
+    assert compact.boundary_terminate_node_ids == ()
+    assert compact.support_info["candidate_channel_road_count"] == 3
+    assert compact.support_info["pruned_road_count"] == 3
+    assert compact.support_info["segment_body_candidate_road_ids"] == ["r12", "r23", "r34"]
+    assert compact.support_info["segment_body_candidate_cut_infos"] == [
+        {"road_id": "r34", "cut_reason": "segment_exclude_formway"}
+    ]
+    assert "forward_path_road_ids" not in compact.support_info
+    assert "reverse_path_road_ids" not in compact.support_info
+
+
+def test_step2_validation_compact_release_tightens_only_validated_subset(monkeypatch) -> None:
+    pair_validated = _pair_record("S2X:1__3", "1", "3", ("r12", "r23"))
+    pair_rejected = _pair_record("S2X:4__6", "4", "6", ("r45", "r56"))
+    execution = _minimal_execution([pair_validated, pair_rejected])
+    roads = [
+        _road_record("r12", "1", "2"),
+        _road_record("r23", "2", "3"),
+        _road_record("r45", "4", "5"),
+        _road_record("r56", "5", "6"),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {
+        "r12": ("1", "2"),
+        "r23": ("2", "3"),
+        "r45": ("4", "5"),
+        "r56": ("5", "6"),
+    }
+    undirected_adjacency = {
+        "1": (step1_pair_poc.TraversalEdge("r12", "1", "2"),),
+        "2": (
+            step1_pair_poc.TraversalEdge("r12", "2", "1"),
+            step1_pair_poc.TraversalEdge("r23", "2", "3"),
+        ),
+        "3": (step1_pair_poc.TraversalEdge("r23", "3", "2"),),
+        "4": (step1_pair_poc.TraversalEdge("r45", "4", "5"),),
+        "5": (
+            step1_pair_poc.TraversalEdge("r45", "5", "4"),
+            step1_pair_poc.TraversalEdge("r56", "5", "6"),
+        ),
+        "6": (step1_pair_poc.TraversalEdge("r56", "6", "5"),),
+    }
+
+    trunk_candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(("1", "2", "3"), ("r12", "r23"), 2.0),
+        reverse_path=step2_segment_poc.DirectedPath(("3", "2", "1"), ("r23", "r12"), 2.0),
+        road_ids=("r12", "r23"),
+        signed_area=1.0,
+        total_length=4.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=0.0,
+    )
+    tighten_inputs: list[list[step2_segment_poc.PairValidationResult]] = []
+
+    def _fake_build_candidate_channel(pair, **kwargs):
+        if pair.pair_id == pair_validated.pair_id:
+            return {"r12", "r23"}, set()
+        return {"r45", "r56"}, set()
+
+    def _fake_prune_candidate_channel(pair, **kwargs):
+        if pair.pair_id == pair_validated.pair_id:
+            return {"r12", "r23"}, [], False
+        return {"r45", "r56"}, [], False
+
+    def _fake_evaluate_trunk(pair, **kwargs):
+        if pair.pair_id == pair_validated.pair_id:
+            return (trunk_candidate, None, (), {})
+        return (None, "only_clockwise_loop", (), {})
+
+    def _fake_tighten(validations, **kwargs):
+        tighten_inputs.append(list(validations))
+        assert len(validations) == 1
+        current = validations[0]
+        return [
+            replace(
+                current,
+                segment_road_ids=("r12", "r23"),
+                residual_road_ids=(),
+                support_info={
+                    **current.support_info,
+                    "branch_cut_infos": [],
+                    "non_trunk_components": [],
+                    "step3_residual_infos": [],
+                    "segment_body_road_ids": ["r12", "r23"],
+                    "residual_road_ids": [],
+                },
+            )
+        ]
+
+    monkeypatch.setattr(step2_segment_poc, "_build_candidate_channel", _fake_build_candidate_channel)
+    monkeypatch.setattr(step2_segment_poc, "_prune_candidate_channel", _fake_prune_candidate_channel)
+    monkeypatch.setattr(step2_segment_poc, "_evaluate_trunk", _fake_evaluate_trunk)
+    monkeypatch.setattr(step2_segment_poc, "_collect_internal_boundary_nodes", lambda *args, **kwargs: ())
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_build_segment_body_candidate_channel",
+        lambda *args, **kwargs: {"r12", "r23"},
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_refine_segment_roads",
+        lambda *args, **kwargs: (("r12", "r23"), []),
+    )
+    monkeypatch.setattr(step2_segment_poc, "_tighten_validated_segment_components", _fake_tighten)
+
+    results = step2_segment_poc._validate_pair_candidates(
+        execution,
+        context=context,
+        road_endpoints=road_endpoints,
+        undirected_adjacency=undirected_adjacency,
+        formway_mode="strict",
+        left_turn_formway_bit=8,
+        compact_release_payloads=True,
+    )
+
+    assert [item.pair_id for item in results] == ["S2X:1__3", "S2X:4__6"]
+    assert len(tighten_inputs) == 1
+    tightened_input = tighten_inputs[0][0]
+    assert tightened_input.pair_id == "S2X:1__3"
+    assert tightened_input.candidate_channel_road_ids == ()
+    assert tightened_input.pruned_road_ids == ("r12", "r23")
+    assert tightened_input.trunk_road_ids == ("r12", "r23")
+    assert tightened_input.segment_road_ids == ()
+
+    final_validated = results[0]
+    assert final_validated.validated_status == "validated"
+    assert final_validated.segment_road_ids == ("r12", "r23")
+    assert final_validated.candidate_channel_road_ids == ()
+    assert final_validated.pruned_road_ids == ()
+    assert final_validated.support_info["segment_body_road_count"] == 2
+
+    final_rejected = results[1]
+    assert final_rejected.validated_status == "rejected"
+    assert final_rejected.candidate_channel_road_ids == ()
+    assert final_rejected.pruned_road_ids == ()
+    assert final_rejected.segment_road_ids == ()
+    assert final_rejected.support_info["candidate_channel_road_count"] == 2
+    assert final_rejected.support_info["pruned_road_count"] == 2
+
+
 def test_step2_moves_weak_component_to_step3_residual() -> None:
     roads = [
         _road_record("r12", "1", "2"),

@@ -230,7 +230,9 @@ python -m rcsd_topo_poc t01-step6-segment-aggregation-poc \
 
 ### Step6 语义
 - `pair_nodes`
-  - 由 `segmentid = A_B` 直接给出，顺序严格按 `A_B`
+  - 由 `segmentid` 的基础端点给出：
+    - `A_B -> A,B`
+    - `A_B_1 -> A,B`
 - `junc_nodes`
   - 记录仍向当前 segment 之外分支的语义路口
 - `inner_nodes`

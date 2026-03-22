@@ -365,6 +365,10 @@
 - `working_mainnodeid` 有值时，作为 Step6 语义路口 ID。
 - `working_mainnodeid` 为空时，回退使用 node 自身 `id`。
 - `pair_nodes / junc_nodes / inner_nodes` 全部基于这一语义路口规则。
+- `segmentid` 当前允许两种形式：
+  - `A_B`
+  - `A_B_N`
+  其中 `_N` 表示同端点多组 Segment 的区分后缀；`pair_nodes` 仍按前两段 `A,B` 解释。
 
 ### 13.3 输出图层
 - `segment.geojson`

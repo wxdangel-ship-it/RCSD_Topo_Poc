@@ -41,6 +41,13 @@ class NodeFeatureRecord:
     geometry: BaseGeometry
 
 
+def _resolve_working_mainnodeid(properties: dict[str, Any]) -> Optional[str]:
+    working_mainnodeid = _normalize_mainnodeid(properties.get("working_mainnodeid"))
+    if working_mainnodeid is not None:
+        return working_mainnodeid
+    return _normalize_mainnodeid(properties.get("mainnodeid"))
+
+
 @dataclass(frozen=True)
 class RoadFeatureRecord:
     road_id: str
@@ -147,10 +154,50 @@ def _parse_road_ids(payload: Any, fallback_text: Any) -> tuple[str, ...]:
     return ()
 
 
+def _build_segmentid_base(a_node_id: str, b_node_id: str) -> str:
+    return f"{a_node_id}_{b_node_id}"
+
+
+def _segmentid_matches_base(segmentid: str, base_segmentid: str) -> bool:
+    if segmentid == base_segmentid:
+        return True
+    prefix = f"{base_segmentid}_"
+    if not segmentid.startswith(prefix):
+        return False
+    suffix = segmentid[len(prefix) :]
+    return suffix.isdigit()
+
+
+def _allocate_unique_segmentid(
+    *,
+    a_node_id: str,
+    b_node_id: str,
+    used_segmentids: set[str],
+    force_suffix: bool,
+) -> str:
+    base_segmentid = _build_segmentid_base(a_node_id, b_node_id)
+    has_family_conflict = force_suffix or any(
+        _segmentid_matches_base(segmentid, base_segmentid) for segmentid in used_segmentids
+    )
+    if not has_family_conflict and base_segmentid not in used_segmentids:
+        used_segmentids.add(base_segmentid)
+        return base_segmentid
+
+    suffix = 1
+    while True:
+        candidate = f"{base_segmentid}_{suffix}"
+        if candidate not in used_segmentids:
+            used_segmentids.add(candidate)
+            return candidate
+        suffix += 1
+
+
 def _load_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     road_to_segmentid: dict[str, str] = {}
     pair_endpoints: dict[str, tuple[str, str]] = {}
+    pending_rows: list[tuple[str, str, str, tuple[str, ...]]] = []
+    base_segmentid_counts: dict[str, int] = defaultdict(int)
 
     for feature in payload.get("features", []):
         props = dict(feature.get("properties") or {})
@@ -163,9 +210,19 @@ def _load_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[str
         if not pair_id or a_node_id is None or b_node_id is None:
             continue
 
-        segmentid = f"{a_node_id}_{b_node_id}"
-        pair_endpoints[pair_id] = (a_node_id, b_node_id)
         road_ids = _parse_road_ids(props.get("road_ids"), props.get("road_ids_text"))
+        pending_rows.append((pair_id, a_node_id, b_node_id, road_ids))
+        base_segmentid_counts[_build_segmentid_base(a_node_id, b_node_id)] += 1
+
+    used_segmentids: set[str] = set()
+    for pair_id, a_node_id, b_node_id, road_ids in pending_rows:
+        segmentid = _allocate_unique_segmentid(
+            a_node_id=a_node_id,
+            b_node_id=b_node_id,
+            used_segmentids=used_segmentids,
+            force_suffix=base_segmentid_counts[_build_segmentid_base(a_node_id, b_node_id)] > 1,
+        )
+        pair_endpoints[pair_id] = (a_node_id, b_node_id)
 
         for road_id in road_ids:
             existing = road_to_segmentid.get(road_id)
@@ -195,7 +252,7 @@ def _load_nodes(
         if node_id is None:
             raise ValueError("Node feature is missing required field 'id'.")
 
-        mainnodeid = _normalize_mainnodeid(props.get("mainnodeid"))
+        mainnodeid = _resolve_working_mainnodeid(props)
         semantic_node_id = mainnodeid or node_id
         record = NodeFeatureRecord(
             node_id=node_id,

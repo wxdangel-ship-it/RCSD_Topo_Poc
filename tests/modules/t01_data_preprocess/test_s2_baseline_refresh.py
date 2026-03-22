@@ -7,7 +7,10 @@ from pathlib import Path
 from shapely.geometry import LineString, MultiLineString, Point
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson
-from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import refresh_s2_baseline
+from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
+    _load_segment_body_assignments,
+    refresh_s2_baseline,
+)
 
 
 def _node_feature(
@@ -231,6 +234,40 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
     assert mainnode_rows["4"]["applied_rule"] == "right_turn_only_side"
     assert mainnode_rows["5"]["applied_rule"] == "t_like"
     assert mainnode_rows["6"]["applied_rule"] == "multi_segment_kept_init"
+
+
+def test_s2_segment_body_assignments_suffix_duplicate_endpoint_pairs(tmp_path: Path) -> None:
+    segment_body_path = tmp_path / "segment_body_roads.geojson"
+    write_geojson(
+        segment_body_path,
+        [
+            {
+                "properties": {
+                    "pair_id": "S2:1__3",
+                    "a_node_id": "1",
+                    "b_node_id": "3",
+                    "validated_status": "validated",
+                    "road_ids": ["r1"],
+                },
+                "geometry": MultiLineString([LineString([(0.0, 0.0), (1.0, 0.0)])]),
+            },
+            {
+                "properties": {
+                    "pair_id": "S2X:1__3",
+                    "a_node_id": "1",
+                    "b_node_id": "3",
+                    "validated_status": "validated",
+                    "road_ids": ["r2"],
+                },
+                "geometry": MultiLineString([LineString([(0.0, 1.0), (1.0, 1.0)])]),
+            },
+        ],
+    )
+
+    road_to_segmentid, _ = _load_segment_body_assignments(segment_body_path)
+
+    assert road_to_segmentid["r1"] == "1_3_1"
+    assert road_to_segmentid["r2"] == "1_3_2"
 
 
 def test_refresh_s2_baseline_keeps_roundabout_mainnode_protected(tmp_path: Path) -> None:

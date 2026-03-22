@@ -40,7 +40,9 @@
 - 语义路口统一按：
   - `working_mainnodeid` 有值时使用 `working_mainnodeid`
   - 否则使用 node 自身 `id`
-- `pair_nodes` 由 `segmentid = A_B` 直接给出，顺序按 `A_B`
+- `pair_nodes` 由 `segmentid` 的基础端点直接给出，顺序按基础端点：
+  - `A_B -> A,B`
+  - `A_B_1 -> A,B`
 - 对覆盖到的内部语义路口：
   - 若其全部允许 road 都在当前 segment 内，则归入 `inner_nodes`
   - 若仍有允许 road 指向当前 segment 之外，则归入 `junc_nodes`

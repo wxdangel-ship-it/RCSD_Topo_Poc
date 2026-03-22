@@ -130,9 +130,11 @@ def _segment_sort_key(segment_id: str) -> tuple[tuple[int, Any], ...]:
 
 def _parse_segment_pair_nodes(segment_id: str) -> tuple[str, str]:
     parts = [part.strip() for part in segment_id.split("_")]
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise ValueError(f"Step6 expects segmentid in 'A_B' form, got '{segment_id}'.")
-    return parts[0], parts[1]
+    if len(parts) == 2 and parts[0] and parts[1]:
+        return parts[0], parts[1]
+    if len(parts) == 3 and parts[0] and parts[1] and parts[2].isdigit():
+        return parts[0], parts[1]
+    raise ValueError(f"Step6 expects segmentid in 'A_B' or 'A_B_N' form, got '{segment_id}'.")
 
 
 def _flatten_lines(geometry: Any) -> list[LineString]:

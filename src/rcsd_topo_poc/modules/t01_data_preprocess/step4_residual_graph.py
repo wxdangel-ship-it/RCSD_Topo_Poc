@@ -20,6 +20,8 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     MainnodeGroup,
     NodeFeatureRecord,
     RoadFeatureRecord,
+    _allocate_unique_segmentid,
+    _build_segmentid_base,
     _build_mainnode_groups,
     _load_nodes_and_roads,
     _load_nodes,
@@ -245,10 +247,16 @@ def _build_target_case_audit(
     return out_path
 
 
-def _parse_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+def _parse_segment_body_assignments(
+    path: Path,
+    *,
+    reserved_segmentids: Optional[set[str]] = None,
+) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     road_to_segmentid: dict[str, str] = {}
     pair_endpoints: dict[str, tuple[str, str]] = {}
+    pending_rows: list[tuple[str, str, str, tuple[str, ...]]] = []
+    base_segmentid_counts: dict[str, int] = {}
 
     for feature in payload.get("features", []):
         props = dict(feature.get("properties") or {})
@@ -261,8 +269,6 @@ def _parse_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[st
         if pair_id == "" or a_node_id is None or b_node_id is None:
             continue
 
-        segmentid = f"{a_node_id}_{b_node_id}"
-        pair_endpoints[pair_id] = (a_node_id, b_node_id)
         road_ids_payload = props.get("road_ids")
         road_ids_text = props.get("road_ids_text")
         if isinstance(road_ids_payload, list):
@@ -271,6 +277,20 @@ def _parse_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[st
             road_ids = tuple(road_id for road_id in (_normalize_id(value) for value in road_ids_text.split(",")) if road_id)
         else:
             road_ids = ()
+        pending_rows.append((pair_id, a_node_id, b_node_id, road_ids))
+        base_segmentid = _build_segmentid_base(a_node_id, b_node_id)
+        base_segmentid_counts[base_segmentid] = base_segmentid_counts.get(base_segmentid, 0) + 1
+
+    used_segmentids = {segmentid for segmentid in (reserved_segmentids or set()) if segmentid}
+    for pair_id, a_node_id, b_node_id, road_ids in pending_rows:
+        base_segmentid = _build_segmentid_base(a_node_id, b_node_id)
+        segmentid = _allocate_unique_segmentid(
+            a_node_id=a_node_id,
+            b_node_id=b_node_id,
+            used_segmentids=used_segmentids,
+            force_suffix=base_segmentid_counts.get(base_segmentid, 0) > 1,
+        )
+        pair_endpoints[pair_id] = (a_node_id, b_node_id)
 
         for road_id in road_ids:
             existing = road_to_segmentid.get(road_id)
@@ -827,7 +847,16 @@ def run_step4_residual_graph(
         )
 
     validated_pairs = _read_csv_rows(step4_dir / "validated_pairs.csv")
-    new_road_to_segmentid, _pair_endpoints = _parse_segment_body_assignments(step4_dir / "segment_body_roads.geojson")
+    existing_segmentids = {
+        segmentid
+        for road in roads
+        for segmentid in (_current_segmentid(road),)
+        if segmentid is not None
+    }
+    new_road_to_segmentid, _pair_endpoints = _parse_segment_body_assignments(
+        step4_dir / "segment_body_roads.geojson",
+        reserved_segmentids=existing_segmentids,
+    )
     if debug:
         candidate_rows = _read_csv_rows(step4_dir / "pair_candidates.csv")
         validation_rows = _read_csv_rows(step4_dir / "pair_validation_table.csv")

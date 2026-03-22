@@ -95,6 +95,7 @@ class PhaseRunArtifacts:
     new_segment_road_count: int
     validated_rows: list[dict[str, str]]
     road_to_segmentid: dict[str, str]
+    assigned_segment_ids: tuple[str, ...]
     segment_summary: dict[str, Any]
 
 
@@ -970,6 +971,7 @@ def _run_phase(
     formway_mode: str,
     left_turn_formway_bit: int,
     debug: bool,
+    reserved_segmentids: Optional[set[str]] = None,
 ) -> PhaseRunArtifacts:
     run_step2_segment_poc(
         road_path=phase_input.working_roads_path,
@@ -987,7 +989,10 @@ def _run_phase(
     if debug:
         _copy_phase_review_outputs(phase_dir=phase_dir, out_root=out_root, prefix=phase_lower)
     validated_rows = _read_csv_rows(phase_dir / "validated_pairs.csv")
-    road_to_segmentid, _ = _parse_segment_body_assignments(phase_dir / "segment_body_roads.geojson")
+    road_to_segmentid, _ = _parse_segment_body_assignments(
+        phase_dir / "segment_body_roads.geojson",
+        reserved_segmentids=reserved_segmentids,
+    )
     segment_summary = _load_geojson_doc(phase_dir / "segment_summary.json")
     return PhaseRunArtifacts(
         phase_id=phase_input.phase_id,
@@ -998,6 +1003,7 @@ def _run_phase(
         new_segment_road_count=len(road_to_segmentid),
         validated_rows=validated_rows,
         road_to_segmentid=road_to_segmentid,
+        assigned_segment_ids=tuple(sorted(set(road_to_segmentid.values()), key=_sort_key)),
         segment_summary=segment_summary,
     )
 
@@ -1333,6 +1339,12 @@ def run_step5_staged_residual_graph(
     )
 
     historical_segment_road_ids = {road.road_id for road in roads if _current_segmentid(road)}
+    used_segmentids = {
+        segmentid
+        for road in roads
+        for segmentid in (_current_segmentid(road),)
+        if segmentid is not None
+    }
     active_road_ids_step5a = {
         road.road_id
         for road in roads
@@ -1356,7 +1368,9 @@ def run_step5_staged_residual_graph(
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
         debug=debug,
+        reserved_segmentids=used_segmentids,
     )
+    used_segmentids.update(phase_a.assigned_segment_ids)
     step5b_historical_seed_node_ids = set(step5a_input.endpoint_pool_ids)
     step5b_hard_stop_node_ids = set(step5a_input.endpoint_pool_ids)
     combined_boundary_source_map = dict(step5a_input.endpoint_pool_source_map)
@@ -1386,7 +1400,9 @@ def run_step5_staged_residual_graph(
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
         debug=debug,
+        reserved_segmentids=used_segmentids,
     )
+    used_segmentids.update(phase_b.assigned_segment_ids)
 
     step5c_historical_seed_node_ids = set(step5b_input.endpoint_pool_ids)
     combined_boundary_source_map = dict(step5b_input.endpoint_pool_source_map)
@@ -1413,7 +1429,9 @@ def run_step5_staged_residual_graph(
         formway_mode=formway_mode,
         left_turn_formway_bit=left_turn_formway_bit,
         debug=debug,
+        reserved_segmentids=used_segmentids,
     )
+    used_segmentids.update(phase_c.assigned_segment_ids)
     step5c_barrier_audit_paths = write_step5c_barrier_audit_outputs(
         phase_dir=phase_c.phase_dir,
         nodes=nodes,

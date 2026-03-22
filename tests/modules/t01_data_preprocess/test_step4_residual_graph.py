@@ -8,7 +8,10 @@ import pytest
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
-from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import run_step4_residual_graph
+from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import (
+    _parse_segment_body_assignments,
+    run_step4_residual_graph,
+)
 
 
 def _node_feature(
@@ -22,6 +25,7 @@ def _node_feature(
     kind_2: int,
     closed_con: int,
     mainnodeid: int | None = None,
+    working_mainnodeid: int | None = None,
 ) -> dict:
     return {
         "type": "Feature",
@@ -33,6 +37,7 @@ def _node_feature(
             "kind_2": kind_2,
             "closed_con": closed_con,
             "mainnodeid": mainnodeid,
+            "working_mainnodeid": working_mainnodeid,
         },
         "geometry": Point(x, y),
     }
@@ -140,7 +145,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     assert summary["working_graph_road_count"] == 11
     assert summary["step4_candidate_pair_count"] == 1
     assert summary["step4_validated_pair_count"] == 1
-    assert summary["step4_new_segment_road_count"] == 6
+    assert summary["step4_new_segment_road_count"] == 4
     assert summary["node_rule_keep_pair_count"] == 1
     assert summary["node_rule_new_t_count"] >= 1
 
@@ -165,9 +170,12 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
 
     roads_doc = _load_geojson(artifacts.refreshed_roads_path)
     road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
-    for road_id in ["r14", "r43", "r32", "r21", "r46", "r62"]:
+    for road_id in ["r14", "r43", "r32", "r21"]:
         assert road_props[road_id]["s_grade"] == "0-1\u53cc"
         assert road_props[road_id]["segmentid"] == "1_3"
+    for road_id in ["r46", "r62"]:
+        assert road_props[road_id]["segmentid"] in {None, ""}
+        assert road_props[road_id]["s_grade"] in {None, ""}
     assert road_props["old1"]["segmentid"] == "old_pair"
     assert road_props["old1"]["s_grade"] == "0-0\u53cc"
     assert road_props["r25"]["segmentid"] in {None, ""}
@@ -278,3 +286,30 @@ def test_step4_requires_initialized_working_layers(tmp_path: Path) -> None:
             out_root=tmp_path / "out_invalid",
             run_id="step4_invalid",
         )
+
+
+def test_step4_segment_body_assignments_suffix_when_colliding_with_existing_segmentid(tmp_path: Path) -> None:
+    segment_body_path = tmp_path / "segment_body_roads.geojson"
+    write_geojson(
+        segment_body_path,
+        [
+            {
+                "properties": {
+                    "pair_id": "STEP4:1__3",
+                    "a_node_id": "1",
+                    "b_node_id": "3",
+                    "validated_status": "validated",
+                    "road_ids": ["r1", "r2"],
+                },
+                "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
+            }
+        ],
+    )
+
+    road_to_segmentid, _ = _parse_segment_body_assignments(
+        segment_body_path,
+        reserved_segmentids={"1_3"},
+    )
+
+    assert road_to_segmentid["r1"] == "1_3_1"
+    assert road_to_segmentid["r2"] == "1_3_1"

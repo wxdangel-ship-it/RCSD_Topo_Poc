@@ -10,7 +10,9 @@ from shapely.geometry import LineString, Point
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import NodeFeatureRecord, RoadFeatureRecord
 from rcsd_topo_poc.modules.t01_data_preprocess.step5_staged_residual_graph import (
+    PhaseInputArtifacts,
     _build_step5c_adaptive_context,
+    _run_phase,
     run_step5_staged_residual_graph,
 )
 
@@ -491,3 +493,76 @@ def test_step5_requires_initialized_working_layers(tmp_path: Path) -> None:
             out_root=tmp_path / "out_invalid",
             run_id="step5_invalid",
         )
+
+
+def test_step5_run_phase_suffixes_when_reserved_segmentid_collides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out_root = tmp_path / "out"
+    phase_id = "STEP5A"
+    phase_dir = out_root / phase_id
+    phase_dir.mkdir(parents=True)
+
+    def _fake_run_step2_segment_poc(**_: object) -> list[object]:
+        (phase_dir / "validated_pairs.csv").write_text(
+            "pair_id,a_node_id,b_node_id\nSTEP5A:10__30,10,30\n",
+            encoding="utf-8",
+        )
+        write_geojson(
+            phase_dir / "segment_body_roads.geojson",
+            [
+                {
+                    "properties": {
+                        "pair_id": "STEP5A:10__30",
+                        "a_node_id": "10",
+                        "b_node_id": "30",
+                        "validated_status": "validated",
+                        "road_ids": ["r1", "r2"],
+                    },
+                    "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
+                }
+            ],
+        )
+        (phase_dir / "segment_summary.json").write_text(
+            json.dumps(
+                {
+                    "candidate_pair_count": 1,
+                    "validated_pair_count": 1,
+                    "rejected_pair_count": 0,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return [object()]
+
+    monkeypatch.setattr(
+        "rcsd_topo_poc.modules.t01_data_preprocess.step5_staged_residual_graph.run_step2_segment_poc",
+        _fake_run_step2_segment_poc,
+    )
+
+    phase_input = PhaseInputArtifacts(
+        phase_id=phase_id,
+        working_nodes_path=tmp_path / "nodes.geojson",
+        working_roads_path=tmp_path / "roads.geojson",
+        strategy_path=tmp_path / "strategy.json",
+        input_node_count=0,
+        seed_count=0,
+        terminate_count=0,
+        working_graph_road_count=0,
+        active_road_ids=(),
+        endpoint_pool_ids=(),
+        endpoint_pool_source_map={},
+    )
+
+    artifacts = _run_phase(
+        phase_input=phase_input,
+        out_root=out_root,
+        run_id="step5_suffix_case",
+        formway_mode="strict",
+        left_turn_formway_bit=8,
+        debug=False,
+        reserved_segmentids={"10_30"},
+    )
+
+    assert artifacts.road_to_segmentid["r1"] == "10_30_1"
+    assert artifacts.road_to_segmentid["r2"] == "10_30_1"
+    assert artifacts.assigned_segment_ids == ("10_30_1",)

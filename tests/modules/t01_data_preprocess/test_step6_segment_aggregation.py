@@ -162,7 +162,7 @@ def test_step6_pair_nodes_follow_segmentid_order(tmp_path: Path) -> None:
     write_geojson(
         road_path,
         [
-            _road_feature("r1", 1, 4, [(0.0, 0.0), (1.0, 0.0)], s_grade="0-1双", segmentid="4_1"),
+            _road_feature("r1", 1, 4, [(0.0, 0.0), (1.0, 0.0)], s_grade="0-1双", segmentid="4_1_2"),
         ],
     )
 

@@ -417,7 +417,9 @@
     - 按当前已接受优先级 `0-0双 > 0-1双 > 0-2双` 选择 `segment.geojson` 的 `s_grade`
     - 同时输出到 `segment_error.geojson`
     - 并记录 `s_grade` 冲突审计信息与被选中的高等级值
-  - `pair_nodes` 顺序严格按 `segmentid = A_B` 输出为 `A,B`
+  - `pair_nodes` 顺序严格按 `segmentid` 的基础端点顺序输出：
+    - `A_B -> A,B`
+    - `A_B_1 -> A,B`
   - `junc_nodes` 记录仍指向当前 segment 之外的语义路口
   - `roads` 记录该 segment 下所有 road id
 

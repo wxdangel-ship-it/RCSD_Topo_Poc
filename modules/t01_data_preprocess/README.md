@@ -201,3 +201,41 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
 - 外网补充样例审计记录：`modules/t01_data_preprocess/history/013-xxxs4-xxxs5-external-sample-audit.md`
 - Step2 平行 corridor 策略对齐记录：`modules/t01_data_preprocess/history/014-step2-parallel-corridor-strategy-alignment.md`
 - Step5C adaptive barrier fallback 记录：`modules/t01_data_preprocess/history/016-step5c-adaptive-barrier-fallback.md`
+
+## Step6 POC：segment 级聚合与语义反查
+- `Step6` 定位为 road-level `segmentid` 结果的下游聚合与语义审计模块。
+- 输入必须是最新 Step1–Step5C 产出的 refreshed：
+  - `nodes`
+  - `roads`
+- 统一使用：
+  - `grade_2`
+  - `kind_2`
+  - `working_mainnodeid`
+
+### 运行方式
+```bash
+python -m rcsd_topo_poc t01-step6-segment-aggregation-poc \
+  --node-path <latest_nodes.geojson> \
+  --road-path <latest_roads.geojson> \
+  --run-id <run_id>
+```
+
+### 正式输出
+- `segment.geojson`
+- `inner_nodes.geojson`
+- `segment_error.geojson`
+- `segment_summary.json`
+- `segment_build_table.csv`
+- `inner_nodes_summary.json`
+
+### Step6 语义
+- `pair_nodes`
+  - 由 `segmentid = A_B` 直接给出，顺序严格按 `A_B`
+- `junc_nodes`
+  - 记录仍向当前 segment 之外分支的语义路口
+- `inner_nodes`
+  - 记录被某个 segment 完全内含的 node，全量复制原字段，仅追加 `segmentid`
+
+### Step6 反查规则
+- 若 segment 两端 `pair_nodes` 的 `grade_2` 均为 `1`，则将该 segment 的 `s_grade` 轻调整为 `"0-0双"`
+- 若最终 `s_grade = "0-0双"` 且其中间 `junc_nodes` 出现 `grade_2 = 1 且 kind_2 = 4`，则输出到 `segment_error.geojson`

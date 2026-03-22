@@ -348,3 +348,82 @@
 - 旧语义修正 candidate：
   - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs_semantic_fix_candidate/`
 - 上述目录保留为历史追溯材料，不再作为当前活动基线。
+
+## 13. Step6 POC 契约
+
+### 13.1 输入
+- `Step6` 输入必须是最新 Step1–Step5C 产出的 refreshed：
+  - `nodes`
+  - `roads`
+- `Step6` 不回改 `Step1–Step5C` 主逻辑，不重新做构段搜索。
+- `Step6` 统一使用以下运行期字段：
+  - `grade_2`
+  - `kind_2`
+  - `working_mainnodeid`
+
+### 13.2 语义路口 ID
+- `working_mainnodeid` 有值时，作为 Step6 语义路口 ID。
+- `working_mainnodeid` 为空时，回退使用 node 自身 `id`。
+- `pair_nodes / junc_nodes / inner_nodes` 全部基于这一语义路口规则。
+
+### 13.3 输出图层
+- `segment.geojson`
+  - 每个非空 `segmentid` 只生成一条记录
+  - `geometry` 统一为 `MultiLineString`
+  - 字段至少包含：
+    - `id`
+    - `s_grade`
+    - `pair_nodes`
+    - `junc_nodes`
+    - `roads`
+- `inner_nodes.geojson`
+  - 复制被 segment 完全内含的 node 原始字段
+  - 允许额外追加 `segmentid`
+- `segment_error.geojson`
+  - 记录需人工评估的异常 segment
+  - 字段至少包含：
+    - `id`
+    - `s_grade`
+    - `pair_nodes`
+    - `junc_nodes`
+    - `roads`
+    - `error_type`
+    - `error_desc`
+
+### 13.4 junc_nodes / inner_nodes 划分
+- 若某语义路口关联的全部允许 road 都属于当前 segment：
+  - 该语义路口不进入 `junc_nodes`
+  - 该组内所有 node 完整复制到 `inner_nodes.geojson`
+- 若某语义路口仍有关联 road 指向当前 segment 之外：
+  - 该语义路口进入 `junc_nodes`
+- “允许 road”继续沿用当前 accepted 过滤：
+  - `road_kind != 1`
+
+### 13.5 segment 级轻调整与错误反查
+- 规则 1：若 segment 两端 `pair_nodes` 对应语义路口 `grade_2` 均为 `1`，且当前 `s_grade != "0-0双"`，则 Step6 将该 segment 的 `s_grade` 轻调整为 `"0-0双"`。
+- 规则 2：若最终 `s_grade = "0-0双"`，且其中间 `junc_nodes` 出现 `grade_2 = 1 且 kind_2 = 4`，则该 segment 输出到 `segment_error.geojson`。
+- 同一 `segmentid` 下若出现多个不同 `s_grade`，Step6 必须 fail fast，不得 silent fallback。
+
+### 13.6 审计输出
+- `segment_summary.json`
+  - 至少包含：
+    - `segment_count`
+    - `segment_with_junc_count`
+    - `segment_with_inner_nodes_count`
+    - `segment_error_count`
+    - `s_grade_adjusted_count`
+- `segment_build_table.csv`
+  - 至少包含：
+    - `segmentid`
+    - `road_count`
+    - `pair_nodes`
+    - `junc_nodes`
+    - `road_ids`
+    - `s_grade_old`
+    - `s_grade_new`
+    - `has_error`
+- `inner_nodes_summary.json`
+  - 至少包含：
+    - `inner_segment_count`
+    - `inner_mainnode_count`
+    - `inner_node_count`

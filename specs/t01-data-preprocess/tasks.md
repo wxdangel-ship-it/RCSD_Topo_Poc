@@ -32,3 +32,19 @@
 
 ## 后续待办
 - [ ] 评估是否需要把 `Step5C adaptive barrier` 审计 helper 再抽到共享层
+
+## Step6 POC
+- [x] 新增独立入口 `t01-step6-segment-aggregation-poc`
+- [x] 基于 latest refreshed `nodes / roads` 聚合输出：
+  - `segment.geojson`
+  - `inner_nodes.geojson`
+  - `segment_error.geojson`
+- [x] 输出 `segment_summary.json`
+- [x] 输出 `segment_build_table.csv`
+- [x] 输出 `inner_nodes_summary.json`
+- [x] `pair_nodes` 顺序严格对齐 `segmentid = A_B`
+- [x] `junc_nodes` 仅记录仍向当前 segment 外部分支的语义路口
+- [x] `inner_nodes` 完整复制被 segment 完全内含的 node 记录，并追加 `segmentid`
+- [x] 规则 1：两端 `grade_2 = 1` 时，segment 级 `s_grade` 轻调整为 `"0-0双"`
+- [x] 规则 2：`s_grade = "0-0双"` 且中间 `junc_nodes` 出现 `grade_2 = 1 且 kind_2 = 4` 时，输出到 `segment_error.geojson`
+- [x] `s_grade` 多值冲突时 fail fast，不做 silent fallback

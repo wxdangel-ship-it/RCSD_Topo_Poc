@@ -138,6 +138,14 @@ def _cmd_t01_run_skill_v1(args: argparse.Namespace) -> int:
     return run_t01_skill_v1_cli(args)
 
 
+def _cmd_t01_step6_segment_aggregation(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.step6_segment_aggregation import (
+        run_step6_segment_aggregation_cli,
+    )
+
+    return run_step6_segment_aggregation_cli(args)
+
+
 def _cmd_t01_compare_freeze(args: argparse.Namespace) -> int:
     from rcsd_topo_poc.modules.t01_data_preprocess.freeze_compare import run_compare_t01_freeze_cli
 
@@ -392,10 +400,31 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     p_skill.add_argument(
         "--out-root",
-        help="Optional output root override. If omitted, write to outputs/_work/t01_skill_v1/<run_id>.",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_skill_eval/<run_id>.",
     )
     _add_debug_flag(p_skill, default=True)
     p_skill.set_defaults(func=_cmd_t01_run_skill_v1)
+
+    p_step6 = sub.add_parser(
+        "t01-step6-segment-aggregation-poc",
+        help="Build segment.geojson, inner_nodes.geojson, and segment_error.geojson from refreshed Step1-Step5C outputs.",
+    )
+    p_step6.add_argument("--road-path", required=True, help="Path to refreshed Road Shp/GeoJSON.")
+    p_step6.add_argument("--road-layer", help="Optional road layer name.")
+    p_step6.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_step6.add_argument("--node-path", required=True, help="Path to refreshed Node Shp/GeoJSON.")
+    p_step6.add_argument("--node-layer", help="Optional node layer name.")
+    p_step6.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
+    p_step6.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_step6_segment_aggregation_YYYYMMDD_HHMMSS.",
+    )
+    p_step6.add_argument(
+        "--out-root",
+        help="Optional output root override. If omitted, write to outputs/_work/t01_step6_segment_aggregation/<run_id>.",
+    )
+    _add_debug_flag(p_step6, default=True)
+    p_step6.set_defaults(func=_cmd_t01_step6_segment_aggregation)
 
     p_compare = sub.add_parser(
         "t01-compare-freeze",

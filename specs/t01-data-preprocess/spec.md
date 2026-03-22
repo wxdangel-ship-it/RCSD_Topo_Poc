@@ -384,3 +384,70 @@
   - `Step5A`
   - `Step5B`
   - `Step5C`
+
+## 12. Step6 POC：segment 级聚合与语义反查
+
+### 12.1 定位
+- `Step6` 是 `Step1–Step5C` 之后的下游聚合与审计 POC。
+- 它只消费最新 refreshed `nodes / roads`，不回改 `Step1–Step5C` 主逻辑，也不重新做构段搜索。
+- 目标是把 road-level `segmentid` 结果聚合成 segment-level 要素，并输出可供 QGIS 审查的异常 segment。
+
+### 12.2 输入
+- 输入必须是最新 Step1–Step5C 产出的 refreshed：
+  - `nodes`
+  - `roads`
+- `Step6` 统一使用：
+  - `grade_2`
+  - `kind_2`
+  - `working_mainnodeid`
+- 不使用原始 `grade / kind` 做路口类型判断。
+
+### 12.3 语义路口规则
+- 语义路口 ID 一律按：
+  - `working_mainnodeid` 有值时使用 `working_mainnodeid`
+  - 否则使用 node 自身 `id`
+- `pair_nodes / junc_nodes / inner_nodes` 全部基于这一规则。
+
+### 12.4 segment 聚合输出
+- `segment.geojson`
+  - 每个非空 `roads.segmentid` 只生成一条记录
+  - `geometry` 统一输出 `MultiLineString`
+  - `id = segmentid`
+  - `s_grade` 必须在同一 `segmentid` 内唯一；若多值，`Step6` fail fast
+  - `pair_nodes` 顺序严格按 `segmentid = A_B` 输出为 `A,B`
+  - `junc_nodes` 记录仍指向当前 segment 之外的语义路口
+  - `roads` 记录该 segment 下所有 road id
+
+### 12.5 junc_nodes / inner_nodes
+- 对每个 segment，先收集其覆盖到的所有语义路口组，排除两端 `pair_nodes`。
+- 若某语义路口关联的全部允许 road 都属于当前 segment：
+  - 该语义路口不进入 `junc_nodes`
+  - 该组内所有 node 完整复制到 `inner_nodes.geojson`
+- 若某语义路口仍有关联 road 指向当前 segment 之外：
+  - 该语义路口进入 `junc_nodes`
+- 这里的“允许 road”继续沿用当前 accepted 过滤：
+  - `road_kind != 1`
+
+### 12.6 segment 级轻调整与错误反查
+- 规则 1：`s_grade` 轻调整
+  - 若某 segment 的两端 `pair_nodes` 对应语义路口 `grade_2` 均为 `1`
+  - 且当前 `s_grade != "0-0双"`
+  - 则 Step6 将该 segment 的 `s_grade` 轻调整为 `"0-0双"`
+  - 审计必须保留：
+    - `s_grade_old`
+    - `s_grade_new`
+    - `adjust_reason`
+- 规则 2：`0-0双` segment 中间路口类型约束
+  - 若某 segment 最终 `s_grade = "0-0双"`
+  - 且其 `junc_nodes` 中存在：
+    - `grade_2 = 1`
+    - 且 `kind_2 = 4`
+  - 则该 segment 必须输出到 `segment_error.geojson` 供人工评估
+
+### 12.7 审计输出
+- `segment.geojson`
+- `inner_nodes.geojson`
+- `segment_error.geojson`
+- `segment_summary.json`
+- `segment_build_table.csv`
+- `inner_nodes_summary.json`

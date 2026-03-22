@@ -31,3 +31,18 @@
 4. 补充 `Step5C helper / staged integration / Step1 through` 防回退测试。
 5. 更新 `spec / plan / tasks / README / INTERFACE_CONTRACT / history` 文档。
 6. 重跑 `XXXS5` 做定点审计，并对活动五样例套件逐样例 compare。
+
+## Step6 segment-level aggregation and semantic audit POC
+- 目标：消费最新 Step1–Step5C refreshed `nodes / roads`，聚合生成 `segment.geojson`、`inner_nodes.geojson`、`segment_error.geojson`。
+- 输入：人工显式传入 latest refreshed `nodes` / `roads`，不硬编码旧 run 目录。
+- 核心语义：
+  - segment 聚合只按非空 `roads.segmentid`
+  - 语义路口统一使用 `working_mainnodeid`，为空回退 node `id`
+  - `pair_nodes / junc_nodes / inner_nodes` 均基于语义路口组
+- 反查规则：
+  - 若两端 `pair_nodes` 的 `grade_2` 均为 `1`，则将 segment 级 `s_grade` 轻调整为 `"0-0双"`
+  - 若 `s_grade = "0-0双"` 的 segment 中间仍出现 `grade_2 = 1 且 kind_2 = 4` 的 `junc_nodes`，输出到 `segment_error.geojson`
+- 边界：
+  - 不回改 `Step1–Step5C`
+  - 不重新做构段搜索
+  - 不使用原始 `grade / kind`

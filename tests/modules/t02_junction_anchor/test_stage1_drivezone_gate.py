@@ -99,6 +99,12 @@ def test_stage1_marks_representative_yes_and_segment_yes(tmp_path: Path) -> None
         "junction_count": 1,
         "junction_has_evd_count": 1,
     }
+    assert artifacts.summary["summary_by_s_grade"]["all__d_sgrade"] == {
+        "segment_count": 1,
+        "segment_has_evd_count": 1,
+        "junction_count": 1,
+        "junction_has_evd_count": 1,
+    }
 
 
 def test_stage1_marks_representative_no_when_drivezone_misses(tmp_path: Path) -> None:
@@ -243,6 +249,100 @@ def test_stage1_supports_s_grade_compatibility(tmp_path: Path) -> None:
 
     assert artifacts.summary["summary_by_s_grade"]["0-0双"]["segment_has_evd_count"] == 1
     assert artifacts.summary["summary_by_s_grade"]["0-2双"]["segment_has_evd_count"] == 0
+    assert artifacts.summary["summary_by_s_grade"]["all__d_sgrade"] == {
+        "segment_count": 2,
+        "segment_has_evd_count": 1,
+        "junction_count": 2,
+        "junction_has_evd_count": 1,
+    }
+
+
+def test_stage1_outputs_all_d_sgrade_with_unique_junction_count(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.geojson"
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+
+    write_geojson(
+        segment_path,
+        [
+            _segment_feature("seg-1", pair_nodes="1,2", junc_nodes="", s_grade="0-0双"),
+            _segment_feature("seg-2", pair_nodes="1", junc_nodes="", s_grade="0-1双"),
+            _segment_feature("seg-3", pair_nodes="3", junc_nodes="", s_grade=""),
+        ],
+    )
+    write_geojson(
+        nodes_path,
+        [
+            _node_feature(1, 0.0, 0.0, mainnodeid=None),
+            _node_feature(2, 10.0, 10.0, mainnodeid=None),
+            _node_feature(3, 0.5, 0.0, mainnodeid=None),
+        ],
+    )
+    write_geojson(drivezone_path, [_drivezone_feature(-1.0, -1.0, 1.0, 1.0)])
+
+    artifacts = run_t02_stage1_drivezone_gate(
+        segment_path=segment_path,
+        nodes_path=nodes_path,
+        drivezone_path=drivezone_path,
+        out_root=tmp_path / "out",
+        run_id="all_d_sgrade_case",
+    )
+
+    assert artifacts.summary["summary_by_s_grade"]["0-0双"] == {
+        "segment_count": 1,
+        "segment_has_evd_count": 0,
+        "junction_count": 2,
+        "junction_has_evd_count": 1,
+    }
+    assert artifacts.summary["summary_by_s_grade"]["0-1双"] == {
+        "segment_count": 1,
+        "segment_has_evd_count": 1,
+        "junction_count": 1,
+        "junction_has_evd_count": 1,
+    }
+    assert artifacts.summary["summary_by_s_grade"]["all__d_sgrade"] == {
+        "segment_count": 2,
+        "segment_has_evd_count": 1,
+        "junction_count": 2,
+        "junction_has_evd_count": 1,
+    }
+
+
+def test_stage1_outputs_zeroed_all_d_sgrade_when_all_segment_grades_are_empty(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.geojson"
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+
+    write_geojson(
+        segment_path,
+        [
+            _segment_feature("seg-1", pair_nodes="1", junc_nodes="", s_grade=""),
+            _segment_feature("seg-2", pair_nodes="2", junc_nodes="", s_grade=""),
+        ],
+    )
+    write_geojson(
+        nodes_path,
+        [
+            _node_feature(1, 0.0, 0.0, mainnodeid=None),
+            _node_feature(2, 10.0, 10.0, mainnodeid=None),
+        ],
+    )
+    write_geojson(drivezone_path, [_drivezone_feature(-1.0, -1.0, 1.0, 1.0)])
+
+    artifacts = run_t02_stage1_drivezone_gate(
+        segment_path=segment_path,
+        nodes_path=nodes_path,
+        drivezone_path=drivezone_path,
+        out_root=tmp_path / "out",
+        run_id="all_d_sgrade_zero_case",
+    )
+
+    assert artifacts.summary["summary_by_s_grade"]["all__d_sgrade"] == {
+        "segment_count": 0,
+        "segment_has_evd_count": 0,
+        "junction_count": 0,
+        "junction_has_evd_count": 0,
+    }
 
 
 def test_stage1_projects_nodes_and_drivezone_to_epsg_3857(tmp_path: Path) -> None:

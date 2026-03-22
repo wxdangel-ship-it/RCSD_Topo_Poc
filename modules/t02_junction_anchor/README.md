@@ -6,12 +6,17 @@
 
 - T02 是当前已登记的正式业务模块。
 - 当前正式实现范围是 stage1 `DriveZone / has_evd gate`。
-- 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础；stage2 锚定主逻辑仍处于占位与后续澄清阶段。
+- 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础。
+- 当前文档基线已覆盖 stage2 anchor recognition / anchor existence；当前代码已实现最小闭环，但尚未进入最终唯一锚定决策与概率阶段。
 
 ## 2. 官方运行入口
 
 ```bash
 python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
+```
+
+```bash
+python -m rcsd_topo_poc t02-stage2-anchor-recognition --help
 ```
 
 ## 3. 常见运行方式
@@ -42,7 +47,7 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   - 继承输入 `segment` 字段并新增 `has_evd`
   - 输出 geometry 统一为 `EPSG:3857`
 - `t02_stage1_summary.json`
-  - 汇总总计数与按 `s_grade` 分桶的 summary
+  - 汇总总计数、按 `s_grade` 分桶的 summary，以及 `all__d_sgrade`
 - `t02_stage1_audit.csv`
 - `t02_stage1_audit.json`
   - 保留 `junction_nodes_not_found`、`representative_node_missing`、`no_target_junctions`、`missing_required_field`、`invalid_crs_or_unprojectable` 等异常或失败原因
@@ -54,6 +59,11 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   - 总耗时、阶段耗时和总体计数
 - `t02_stage1_perf_markers.jsonl`
   - 阶段级性能标记流
+
+说明：
+
+- stage1 业务 summary 的分桶继续按 `0-0双 / 0-1双 / 0-2双` 统计。
+- stage1 在分桶之外补充 `all__d_sgrade`，表示所有 `s_grade` 非空的 `segment` 总汇总。
 
 ## 5. 文档阅读顺序
 
@@ -80,8 +90,14 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   - `segment.has_evd`
   - `summary`
   - `audit/log`
+- 已实现：
+  - stage2 新增输入 `RCSDIntersection.geojson`
+  - `nodes.is_anchor`
+  - `yes / no / fail1 / fail2 / null`
+  - `node_error_1 / node_error_2`
+  - `fail2` 优先于 `fail1`
 - 未实现：
-  - stage2 锚定主逻辑
+  - 最终唯一锚定决策闭环
   - 概率 / 置信度
   - 环岛新规则
   - 误伤捞回

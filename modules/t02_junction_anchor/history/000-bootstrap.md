@@ -22,15 +22,18 @@
 ## 3. 为什么本轮只固化 Stage1
 
 - Stage1 的业务目标已经收敛为“DriveZone / has_evd gate”。
+- 本轮补丁进一步冻结了 stage1 `all__d_sgrade` 总汇总，以及 stage2 anchor recognition / anchor existence 的文档基线。
 - Stage2 的最终锚定、候选机制、几何表达、概率 / 置信度实现目前都未冻结。
 - 若在当前阶段提前补写 Stage2 细节，会把待确认内容误写成稳定契约。
 
 ## 4. 本轮有意延后的内容
 
 - Stage2 锚定主逻辑
+- Stage2 最终唯一锚定决策闭环
 - 锚定结果字段
 - 锚定几何表达
 - 候选生成机制
+- 候选排序
 - 概率 / 置信度实现
 - 误伤捞回机制
 
@@ -57,10 +60,15 @@
   - `segment.id / pair_nodes / junc_nodes`
   - `nodes.id / mainnodeid`
 - `s_grade` 逻辑字段兼容读取 `s_grade / sgrade`，正式分桶值冻结为 `0-0双 / 0-1双 / 0-2双`。
+- stage1 `summary` 新增 `all__d_sgrade`，统计所有 `s_grade` 非空的 `segment`。
 - 代表 node 规则冻结为：
   - 正常场景按 `id = junction_id`
   - 环岛当前继承 T01 逻辑
 - 空目标路口 `segment` 明确记为 `has_evd = no` 且 `reason = no_target_junctions`。
 - 空间判定统一在 `EPSG:3857` 下进行。
+- stage2 新增输入为 `RCSDIntersection.geojson`。
+- `nodes.is_anchor` 只写代表 node，枚举冻结为 `yes / no / fail1 / fail2 / null`。
+- `node_error_1 -> fail1`，`node_error_2 -> fail2`，且 `fail2` 优先于 `fail1`。
+- stage2 当前定位为 anchor recognition / anchor existence，而不是最终概率型锚定闭环。
 - T01 歧义已在 T02 文档中记录，但未改动 T01 文档。
-- 本轮后已可进入 stage1 编码任务书准备。
+- 本轮后已可进入阶段一补充汇总与阶段二 anchor recognition 的实现任务书准备。

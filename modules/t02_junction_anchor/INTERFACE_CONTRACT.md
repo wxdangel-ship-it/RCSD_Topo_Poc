@@ -13,13 +13,16 @@
   - 为双向 Segment 相关路口锚定提供稳定、可审计的下游模块基础
 - 当前正式范围：
   - stage1 `DriveZone / has_evd gate`
+  - stage2 anchor recognition / anchor existence 最小闭环
   - 消费 T01 `segment` 与 `nodes`
+  - 消费 `DriveZone.geojson` 与 `RCSDIntersection.geojson`
   - 产出 `nodes.has_evd`、`segment.has_evd`、`summary`、`audit/log`
 - 当前不在正式范围：
-  - stage2 锚定主逻辑
   - 最终锚定结果与几何表达
   - 候选生成 / 候选打分
   - 概率 / 置信度实现
+  - 最终唯一锚定决策闭环
+  - 候选概率校准
   - 误伤捞回
   - 环岛新业务规则
 
@@ -30,6 +33,7 @@
 - `segment`
 - `nodes`
 - `DriveZone.geojson`
+- `RCSDIntersection.geojson`（stage2 anchor recognition 基线输入）
 
 ### 2.2 可选输入兼容参数
 
@@ -58,7 +62,8 @@
   - `mainnodeid`
   - 可用 geometry
 - `DriveZone` 必须具备可用于“落入或边界接触”判断的面状 geometry。
-- `nodes` 与 `DriveZone` 在空间判定前必须统一到 `EPSG:3857`。
+- `RCSDIntersection` 必须具备可用于“落入或边界接触”判断的面状 geometry。
+- `nodes`、`DriveZone` 与 `RCSDIntersection` 在空间判定前必须统一到 `EPSG:3857`。
 - 当前实现为保持输出一致性，也会将 `segment` 输出 geometry 统一写到 `EPSG:3857`。
 
 ### 2.4 实际输入字段冻结
@@ -110,6 +115,45 @@
 - `summary`：
   - 仅按 `0-0双 / 0-1双 / 0-2双` 分桶
   - 桶内路口按唯一 ID 统计，不按 `segment-路口` 展开重复计数
+  - 同时补充总汇总项 `all__d_sgrade`
+  - `all__d_sgrade` 统计所有 `s_grade` 非空的 `segment`
+  - `all__d_sgrade` 与单桶保持相同统计项与统计口径
+
+### 2.6 Stage2 处理基线
+
+- 阶段二当前业务定位冻结为：双向 Segment 相关路口的 anchor recognition / anchor existence。
+- 阶段二仅处理 `has_evd = yes` 的路口组。
+- `has_evd != yes` 的组不进入 stage2，代表 node 的 `is_anchor = null`。
+- `nodes` 全表新增字段：
+  - `is_anchor`
+- `is_anchor` 只对代表 node 写值；同组其它从属 node 与非代表 node 保持 `null`。
+- `is_anchor` 允许值冻结为：
+  - `yes`
+  - `no`
+  - `fail1`
+  - `fail2`
+  - `null`
+- 阶段二使用 `RCSDIntersection.geojson` 做路口面判定。
+- 与 stage1 一致，边界接触也算成功。
+- 阶段二空间处理同样统一在 `EPSG:3857` 下进行。
+- 若目标 `junction` 组（仅限 `has_evd = yes`）任一 node 落入或接触任一 `RCSDIntersection` 面：
+  - 该组代表 node 进入命中态
+  - 但仍需继续检查 `fail1 / fail2`
+- 若该组所有 node 均未落入任何 `RCSDIntersection` 面：
+  - 该组代表 node 的 `is_anchor = no`
+- `node_error_1`：
+  - 同一组 node 落入两个不同的 `RCSDIntersection` 面
+  - 该组代表 node 的 `is_anchor = fail1`
+  - 需同时保留 GeoJSON 与审计表
+- `node_error_2`：
+  - 一个 `RCSDIntersection` 面对应不止一组 node
+  - 这些组对应代表 node 的 `is_anchor = fail2`
+  - 需同时保留 GeoJSON 与审计表
+- 优先级冻结为：
+  - `fail2` 优先于 `fail1`
+  - 若同一组同时命中 `node_error_1` 与 `node_error_2`
+  - 则代表 node 的 `is_anchor = fail2`
+  - 同时仍保留相应审计输出
 
 ## 3. Outputs
 
@@ -148,10 +192,17 @@ outputs/_work/t02_stage1_drivezone_gate
 
 - 继承输入 `nodes` properties
 - 新增字段：`has_evd`
+- 阶段二文档基线新增字段：`is_anchor`
 - 值域：`yes / no / null`
 - 只有代表 node 写 `yes/no`
 - 非代表 node 保持 `null`
 - 输出 geometry CRS：`EPSG:3857`
+
+说明：
+
+- `has_evd` 是 stage1 gate 字段。
+- `is_anchor` 是 stage2 anchor recognition 字段。
+- `is_anchor` 业务值域冻结为 `yes / no / fail1 / fail2 / null`。
 
 #### `segment.geojson`
 
@@ -175,6 +226,12 @@ outputs/_work/t02_stage1_drivezone_gate
   - `segment_has_evd_count`
   - `junction_count`
   - `junction_has_evd_count`
+- 除 `0-0双 / 0-1双 / 0-2双` 外，还需包含：
+  - `all__d_sgrade`
+- `all__d_sgrade` 的统计含义是：
+  - 所有 `s_grade` 非空的 `segment`
+  - 路口按唯一路口 ID 计数
+  - 不按 `segment-路口` 展开重复计数
 
 #### `t02_stage1_audit.csv / t02_stage1_audit.json`
 
@@ -191,6 +248,22 @@ outputs/_work/t02_stage1_drivezone_gate
   - `no_target_junctions`
   - `missing_required_field`
   - `invalid_crs_or_unprojectable`
+
+#### stage2 逻辑错误输出
+
+- `node_error_1`
+  - 逻辑含义：同一组 node 落入两个不同的 `RCSDIntersection` 面
+  - 对应代表 node 的 `is_anchor = fail1`
+  - 输出形态必须同时保留：
+    - GeoJSON
+    - 审计表
+- `node_error_2`
+  - 逻辑含义：一个 `RCSDIntersection` 面对应不止一组 node
+  - 对应代表 node 的 `is_anchor = fail2`
+  - 输出形态必须同时保留：
+    - GeoJSON
+    - 审计表
+- 具体文件命名与最小字段集待后续实现任务书确认。
 
 #### `t02_stage1.log`
 
@@ -234,6 +307,7 @@ outputs/_work/t02_stage1_drivezone_gate
 
 ```bash
 python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
+python -m rcsd_topo_poc t02-stage2-anchor-recognition --help
 ```
 
 ### 4.2 程序内入口
@@ -265,6 +339,7 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
 
 - 所有输入兼容都必须显式声明；不能猜字段、猜 CRS、猜 fallback。
 - stage1 当前没有业务阈值参数，也不开放 stage2 相关参数。
+- stage2 当前已实现最小必要参数，不补写最终锚定决策参数。
 - 本文件只固化长期参数类别与语义，不复制完整 CLI 参数表。
 
 ## 6. Examples
@@ -283,4 +358,6 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
 1. 官方入口可稳定产出 `nodes.geojson`、`segment.geojson`、`summary`、`audit`、`log`。
 2. `has_evd` 保持 `yes/no/null` 业务语义，不偷换为布尔值或 `0/1`。
 3. 缺字段、缺 CRS、代表 node 缺失、路口组缺失、空目标路口等情形都可被诊断。
-4. stage2 字段、概率/置信度与环岛新规则未泄漏进当前正式契约。
+4. `summary` 已覆盖 `0-0双 / 0-1双 / 0-2双` 与 `all__d_sgrade`。
+5. `is_anchor`、`node_error_1`、`node_error_2` 与 `fail2 > fail1` 优先级已冻结并已落地最小闭环实现。
+6. stage2 当前仍未扩写为最终唯一锚定决策闭环，概率/置信度与环岛新规则未泄漏进当前正式契约。

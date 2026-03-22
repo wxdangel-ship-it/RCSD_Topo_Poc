@@ -28,9 +28,17 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     write_json,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
+from rcsd_topo_poc.modules.t02_junction_anchor.shared import (
+    T02RunError,
+    audit_row as shared_audit_row,
+    normalize_id as shared_normalize_id,
+    read_vector_layer_strict as shared_read_vector_layer_strict,
+    resolve_junction_group as shared_resolve_junction_group,
+)
 
 
 KNOWN_S_GRADE_BUCKETS = ("0-0双", "0-1双", "0-2双")
+ALL_D_SGRADE_BUCKET = "all__d_sgrade"
 REASON_JUNCTION_NODES_NOT_FOUND = "junction_nodes_not_found"
 REASON_REPRESENTATIVE_NODE_MISSING = "representative_node_missing"
 REASON_NO_TARGET_JUNCTIONS = "no_target_junctions"
@@ -42,11 +50,8 @@ SEGMENT_PROGRESS_INTERVAL = 5_000
 JUNCTION_PROGRESS_INTERVAL = 5_000
 
 
-class Stage1RunError(ValueError):
-    def __init__(self, reason: str, detail: str) -> None:
-        super().__init__(detail)
-        self.reason = reason
-        self.detail = detail
+class Stage1RunError(T02RunError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -171,22 +176,7 @@ def _resolve_out_root(
 
 
 def _normalize_id(value: Any) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return str(value)
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        if value.is_integer():
-            return str(int(value))
-        return str(value)
-    text = str(value).strip()
-    if not text:
-        return None
-    if text.lower() in {"null", "none", "nan"}:
-        return None
-    return text
+    return shared_normalize_id(value)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -276,73 +266,12 @@ def _read_vector_layer_strict(
     crs_override: Optional[str] = None,
     allow_null_geometry: bool,
 ) -> LoadedLayer:
-    del layer_name
-    layer_path = Path(path)
-    if not layer_path.is_file():
-        raise Stage1RunError(
-            REASON_MISSING_REQUIRED_FIELD,
-            f"Input layer does not exist: {layer_path}",
-        )
-
-    suffix = layer_path.suffix.lower()
-    if suffix in {".geojson", ".json"}:
-        doc = _load_json(layer_path)
-        source_crs, crs_source = _resolve_geojson_crs_strict(doc, crs_override)
-        features: list[LoadedFeature] = []
-        for feature_index, feature in enumerate(doc.get("features", [])):
-            geometry_payload = feature.get("geometry")
-            if geometry_payload is None and not allow_null_geometry:
-                raise Stage1RunError(
-                    REASON_MISSING_REQUIRED_FIELD,
-                    f"{layer_path} feature[{feature_index}] is missing geometry.",
-                )
-            geometry = None if geometry_payload is None else _transform_geometry(
-                shape(geometry_payload),
-                source_crs=source_crs,
-                layer_label=str(layer_path),
-                feature_index=feature_index,
-            )
-            features.append(
-                LoadedFeature(
-                    feature_index=feature_index,
-                    properties=dict(feature.get("properties") or {}),
-                    geometry=geometry,
-                )
-            )
-        return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
-
-    if suffix == ".shp":
-        source_crs, crs_source = _resolve_shapefile_crs_strict(layer_path, crs_override)
-        try:
-            reader = shapefile.Reader(str(layer_path))
-        except Exception as exc:
-            raise Stage1RunError(
-                REASON_INVALID_CRS_OR_UNPROJECTABLE,
-                f"Failed to read shapefile '{layer_path}': {exc}",
-            ) from exc
-
-        field_names = [field[0] for field in reader.fields[1:]]
-        features = []
-        for feature_index, shape_record in enumerate(reader.iterShapeRecords()):
-            geometry_payload = shape_record.shape.__geo_interface__
-            geometry = _transform_geometry(
-                shape(geometry_payload),
-                source_crs=source_crs,
-                layer_label=str(layer_path),
-                feature_index=feature_index,
-            )
-            features.append(
-                LoadedFeature(
-                    feature_index=feature_index,
-                    properties=dict(zip(field_names, list(shape_record.record))),
-                    geometry=geometry,
-                )
-            )
-        return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
-
-    raise Stage1RunError(
-        REASON_MISSING_REQUIRED_FIELD,
-        f"Unsupported vector format for '{layer_path}'. Expected GeoJSON or Shapefile.",
+    return shared_read_vector_layer_strict(
+        path,
+        layer_name=layer_name,
+        crs_override=crs_override,
+        allow_null_geometry=allow_null_geometry,
+        error_cls=Stage1RunError,
     )
 
 
@@ -395,14 +324,14 @@ def _audit_row(
     segment_id: str | None = None,
     junction_id: str | None = None,
 ) -> dict[str, Any]:
-    return {
-        "scope": scope,
-        "segment_id": segment_id,
-        "junction_id": junction_id,
-        "status": status,
-        "reason": reason,
-        "detail": detail,
-    }
+    return shared_audit_row(
+        scope=scope,
+        status=status,
+        reason=reason,
+        detail=detail,
+        segment_id=segment_id,
+        junction_id=junction_id,
+    )
 
 
 def _empty_bucket_summary() -> dict[str, dict[str, int]]:
@@ -413,7 +342,7 @@ def _empty_bucket_summary() -> dict[str, dict[str, int]]:
             "junction_count": 0,
             "junction_has_evd_count": 0,
         }
-        for bucket in KNOWN_S_GRADE_BUCKETS
+        for bucket in (*KNOWN_S_GRADE_BUCKETS, ALL_D_SGRADE_BUCKET)
     }
 
 
@@ -743,59 +672,35 @@ def run_t02_stage1_drivezone_gate(
         referenced_junction_ids = sorted(referenced_junctions)
         stage_counts["junction_count"] = len(referenced_junction_ids)
         for junction_index, junction_id in enumerate(referenced_junction_ids, start=1):
-            group_nodes = nodes_by_mainnodeid.get(junction_id)
-            if group_nodes:
-                representatives = [record for record in group_nodes if record.node_id == junction_id]
-                if not representatives:
-                    junction_results[junction_id] = JunctionResult(
-                        junction_id=junction_id,
-                        has_evd="no",
-                        representative_output_index=None,
-                        reason=REASON_REPRESENTATIVE_NODE_MISSING,
-                        detail=(
-                            f"junction_id='{junction_id}' matched mainnodeid group but no node with id == junction_id exists."
-                        ),
-                    )
-                else:
-                    representative = representatives[0]
-                    value = (
-                        "yes"
-                        if any(prepared_drivezone.intersects(record.geometry) for record in group_nodes)
-                        else "no"
-                    )
-                    nodes_layer_data.features[representative.output_index].properties["has_evd"] = value
-                    junction_results[junction_id] = JunctionResult(
-                        junction_id=junction_id,
-                        has_evd=value,
-                        representative_output_index=representative.output_index,
-                        reason=None,
-                        detail=None,
-                    )
-                    if value == "yes":
-                        stage_counts["junction_has_evd_count"] += 1
+            resolved_group = shared_resolve_junction_group(
+                junction_id,
+                nodes_by_mainnodeid=nodes_by_mainnodeid,
+                singleton_nodes_by_id=singleton_nodes_by_id,
+                representative_missing_reason=REASON_REPRESENTATIVE_NODE_MISSING,
+                junction_not_found_reason=REASON_JUNCTION_NODES_NOT_FOUND,
+            )
+            if resolved_group.reason is not None or resolved_group.representative is None:
+                junction_results[junction_id] = JunctionResult(
+                    junction_id=junction_id,
+                    has_evd="no",
+                    representative_output_index=None,
+                    reason=resolved_group.reason,
+                    detail=resolved_group.detail,
+                )
             else:
-                singleton_candidates = singleton_nodes_by_id.get(junction_id) or []
-                if singleton_candidates:
-                    representative = singleton_candidates[0]
-                    value = "yes" if prepared_drivezone.intersects(representative.geometry) else "no"
-                    nodes_layer_data.features[representative.output_index].properties["has_evd"] = value
-                    junction_results[junction_id] = JunctionResult(
-                        junction_id=junction_id,
-                        has_evd=value,
-                        representative_output_index=representative.output_index,
-                        reason=None,
-                        detail=None,
-                    )
-                    if value == "yes":
-                        stage_counts["junction_has_evd_count"] += 1
-                else:
-                    junction_results[junction_id] = JunctionResult(
-                        junction_id=junction_id,
-                        has_evd="no",
-                        representative_output_index=None,
-                        reason=REASON_JUNCTION_NODES_NOT_FOUND,
-                        detail=f"junction_id='{junction_id}' has neither mainnodeid group nor singleton fallback node.",
-                    )
+                representative = resolved_group.representative
+                group_nodes = resolved_group.group_nodes
+                value = "yes" if any(prepared_drivezone.intersects(record.geometry) for record in group_nodes) else "no"
+                nodes_layer_data.features[representative.output_index].properties["has_evd"] = value
+                junction_results[junction_id] = JunctionResult(
+                    junction_id=junction_id,
+                    has_evd=value,
+                    representative_output_index=representative.output_index,
+                    reason=None,
+                    detail=None,
+                )
+                if value == "yes":
+                    stage_counts["junction_has_evd_count"] += 1
 
             if junction_index % JUNCTION_PROGRESS_INTERVAL == 0:
                 message = (
@@ -820,8 +725,9 @@ def run_t02_stage1_drivezone_gate(
 
         segment_finalize_started_at = time.perf_counter()
         bucket_summary = _empty_bucket_summary()
-        bucket_junction_sets: dict[str, set[str]] = {bucket: set() for bucket in KNOWN_S_GRADE_BUCKETS}
-        bucket_yes_junction_sets: dict[str, set[str]] = {bucket: set() for bucket in KNOWN_S_GRADE_BUCKETS}
+        bucket_keys = tuple(bucket_summary)
+        bucket_junction_sets: dict[str, set[str]] = {bucket: set() for bucket in bucket_keys}
+        bucket_yes_junction_sets: dict[str, set[str]] = {bucket: set() for bucket in bucket_keys}
 
         for context_index, context in enumerate(segment_contexts, start=1):
             segment_id = context["segment_id"]
@@ -882,6 +788,15 @@ def run_t02_stage1_drivezone_gate(
                     if junction_results[junction_id].has_evd == "yes":
                         bucket_yes_junction_sets[s_grade].add(junction_id)
 
+            if s_grade is not None:
+                bucket_summary[ALL_D_SGRADE_BUCKET]["segment_count"] += 1
+                if segment_properties.get("has_evd") == "yes":
+                    bucket_summary[ALL_D_SGRADE_BUCKET]["segment_has_evd_count"] += 1
+                for junction_id in junction_ids:
+                    bucket_junction_sets[ALL_D_SGRADE_BUCKET].add(junction_id)
+                    if junction_results[junction_id].has_evd == "yes":
+                        bucket_yes_junction_sets[ALL_D_SGRADE_BUCKET].add(junction_id)
+
             if context_index % SEGMENT_PROGRESS_INTERVAL == 0:
                 message = (
                     f"Finalized segments={context_index}/{len(segment_contexts)} "
@@ -890,7 +805,7 @@ def run_t02_stage1_drivezone_gate(
                 announce(logger, f"[T02] {message}")
                 _snapshot("running", "finalize_segments", message)
 
-        for bucket in KNOWN_S_GRADE_BUCKETS:
+        for bucket in bucket_keys:
             bucket_summary[bucket]["junction_count"] = len(bucket_junction_sets[bucket])
             bucket_summary[bucket]["junction_has_evd_count"] = len(bucket_yes_junction_sets[bucket])
 

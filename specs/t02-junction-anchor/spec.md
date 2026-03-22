@@ -34,9 +34,10 @@
 
 ### 4.2 阶段二：锚定主逻辑
 
-- 阶段二目标占位：完成双向 Segment 相关路口锚定。
-- 阶段二最终需要产出锚定结果，以及概率 / 置信度类结果。
-- 当前未定义阶段二的算法、字段、候选生成、几何表达或概率实现。
+- 阶段二当前冻结的业务定位是：双向 Segment 相关路口的 anchor recognition / anchor existence。
+- 阶段二不是最终概率型锚定决策闭环。
+- 阶段二当前不定义成果概率 / 置信度、不定义最终锚定几何、不扩写候选生成与候选排序机制。
+- 阶段二当前只冻结输入、状态枚举、错误态与阶段边界；不在本轮扩写成最终锚定算法。
 - 本轮不进入阶段二实现。
 
 ## 5. 阶段一正式需求基线
@@ -181,12 +182,24 @@
   - 涉及多少路口
   - 多少路口有资料
   - 多少 Segment 有资料
+- 同时补充一条新的总汇总项：
+  - `all__d_sgrade`
+  - 业务含义：统计所有 `s_grade` 非空的 `segment`
+  - 统计项与单桶保持一致：
+    - `segment_count`
+    - `junction_count`
+    - `junction_has_evd_count`
+    - `segment_has_evd_count`
 
 统计规则：
 
 - 每个桶内，对“路口 ID”按唯一值计数。
 - 不按 Segment 展开重复计数同一桶内重复路口。
 - 同一个路口若出现在不同 `s_grade` 桶内，可分别计入对应桶。
+- `all__d_sgrade` 与单桶保持同一统计口径：
+  - 仅统计 `s_grade` 非空的 `segment`
+  - 路口按唯一路口 ID 计数
+  - 不按 `segment-路口` 展开重复计数
 
 说明：
 
@@ -217,20 +230,85 @@
 - “找不到路口组”属于业务结果中的 `no`，不是可静默跳过的成功。
 - 缺失必需输入、缺失必需字段、CRS 不可判定等问题，属于执行前或执行中的显式失败，不得降格为业务 `no`。
 
-## 6. 阶段一非范围
+### 5.15 阶段二输入与业务定位
+
+- 阶段二新增输入：
+  - `RCSDIntersection.geojson`
+- 阶段二当前只处理 `has_evd = yes` 的路口组。
+- `has_evd != yes` 的路口组不进入 stage2 anchor 判定。
+- 对上述未进入 stage2 的组，`is_anchor` 保持 `null`。
+
+### 5.16 阶段二新增字段
+
+- `nodes` 全表新增字段：
+  - `is_anchor`
+- 写值规则：
+  - 只对代表 node 写值
+  - 同组其它从属 node 保持 `null`
+  - 非代表 node 不重复写值
+- `is_anchor` 允许值冻结为：
+  - `yes`
+  - `no`
+  - `fail1`
+  - `fail2`
+  - `null`
+
+### 5.17 阶段二空间判定与 anchor recognition 规则
+
+- 阶段二使用 `RCSDIntersection.geojson` 做路口面判定。
+- 与 stage1 一致，边界接触也算成功。
+- 阶段二空间处理同样统一在 `EPSG:3857` 下进行。
+- 本轮不扩写缺失 CRS 的修复策略。
+- 对目标 `junction` 组，仅限 `has_evd = yes`：
+  1. 若组内任一 node 落入或接触任一 `RCSDIntersection` 面，则代表 node 进入“命中态”，但仍需继续检查 `fail1 / fail2`
+  2. 若组内所有 node 均未落入任何 `RCSDIntersection` 面，则代表 node 的 `is_anchor = no`
+
+### 5.18 阶段二错误态、审计输出与优先级
+
+- 错误态 1：`node_error_1`
+  - 若同一组 node 落入两个不同的 `RCSDIntersection` 面
+  - 则该组代表 node 的 `is_anchor = fail1`
+  - 同时输出到 `node_error_1`
+  - `node_error_1` 需要同时保留：
+    - GeoJSON
+    - 审计表
+- 错误态 2：`node_error_2`
+  - 反向从 `RCSDIntersection` 面包含选择 node 时，若一个面对应不止一组 node
+  - 则这些组对应代表 node 的 `is_anchor = fail2`
+  - 同时输出到 `node_error_2`
+  - `node_error_2` 需要同时保留：
+    - GeoJSON
+    - 审计表
+- `is_anchor` 业务含义冻结为：
+  - `yes`：`has_evd = yes`，且该组命中且仅稳定对应一个 `RCSDIntersection` 面，未触发错误态
+  - `no`：`has_evd = yes`，但未命中任何 `RCSDIntersection` 面
+  - `fail1`：该组命中两个不同的 `RCSDIntersection` 面
+  - `fail2`：一个 `RCSDIntersection` 面对应不止一组 node
+  - `null`：非代表 node，或 `has_evd != yes` 的组
+- 优先级冻结为：
+  - `fail2` 优先于 `fail1`
+  - 若同一组同时命中 `node_error_1` 与 `node_error_2`
+  - 则代表 node 的 `is_anchor = fail2`
+  - 同时仍保留相应审计输出
+
+## 6. 当前非范围
 
 - 不输出最终锚定结果
 - 不定义锚定几何表达
 - 不定义候选生成机制
 - 不定义成果概率 / 置信度实现
 - 不做误伤捞回
-- 不进入阶段二锚定主逻辑实现
+- 不做最终唯一锚定决策闭环
+- 不做候选排序
+- 不做候选概率校准
+- 不新增环岛独立新规则
+- 不扩写 stage2 之外的后续阶段算法
 
 ## 7. 当前已确认事项
 
 - T02 总目标是双向 Segment 相关路口锚定。
 - 当前采用“阶段一 gate、阶段二 anchoring”的两阶段推进。
-- 当前只有阶段一形成稳定需求基线。
+- 当前阶段一实现基线已冻结，阶段二 anchor recognition 文档基线也已冻结。
 - 阶段一正式输入为 `segment`、`nodes`、`DriveZone.geojson`。
 - stage1 实际输入字段冻结为：
   - `segment.id / pair_nodes / junc_nodes`
@@ -242,6 +320,14 @@
 - 空目标路口 `segment` 明确记为 `has_evd = no`，并写 `reason = no_target_junctions`。
 - 空间判定统一在 `EPSG:3857` 下进行。
 - `summary` 在单桶内按唯一路口 ID 统计，不做按 Segment 的重复展开计数。
+- stage1 `summary` 在分桶之外补充 `all__d_sgrade` 总汇总项。
+- 阶段二新增输入为 `RCSDIntersection.geojson`。
+- 阶段二当前定位冻结为 anchor recognition / anchor existence，而不是最终概率型锚定闭环。
+- `nodes.is_anchor` 只对代表 node 写值，枚举冻结为 `yes / no / fail1 / fail2 / null`。
+- 阶段二仅处理 `has_evd = yes` 的路口组；其它组 `is_anchor = null`。
+- `node_error_1 -> fail1`，`node_error_2 -> fail2`，且 `fail2` 优先于 `fail1`。
+- 阶段二边界接触算成功，空间判定同样统一到 `EPSG:3857`。
+- 阶段二当前不涉及成果概率 / 置信度实现。
 
 ## 8. 剩余待确认项 / 非阻断风险 / 上游依赖
 
@@ -265,10 +351,15 @@
 - 当前只冻结了“空间判定统一到 `EPSG:3857`”。
 - 若输入缺失 CRS，当前视为依赖上游数据质量或后续任务书明确，不在本轮自造修复策略。
 
+### 8.4 阶段二错误输出的稳定文件命名与最小审计字段
+
+- 当前已冻结 `node_error_1` 与 `node_error_2` 必须同时保留 GeoJSON 与审计表。
+- 具体文件命名、最小字段集与稳定落盘形态，待后续实现任务书确认。
+
 ## 9. 进入编码前的门禁
 
 - 先完成本规格、模块契约与 README 的一致性复核。
-- 本轮后，stage1 文档基线已可进入编码任务书准备。
+- 本轮后，stage1 汇总补丁与 stage2 anchor recognition 文档基线已可进入对应实现任务书准备。
 - 未经用户明确允许，不进入阶段二。
 - 未经用户明确允许，不定义概率 / 置信度实现。
 - 未明确失败留痕对象与最小审计字段前，不进入阶段一实现。

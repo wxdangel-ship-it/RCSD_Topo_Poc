@@ -88,3 +88,9 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
     summary_doc = json.loads((run_dir / "t02_stage1_summary.json").read_text(encoding="utf-8"))
     assert summary_doc["success"] is True
     assert summary_doc["counts"]["segment_has_evd_count"] == 1
+    assert summary_doc["summary_by_s_grade"]["all__d_sgrade"] == {
+        "segment_count": 1,
+        "segment_has_evd_count": 1,
+        "junction_count": 1,
+        "junction_has_evd_count": 1,
+    }

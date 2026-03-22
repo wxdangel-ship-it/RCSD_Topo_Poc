@@ -331,6 +331,7 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
     assert node_props["10"]["grade_2"] == 2
     assert node_props["10"]["kind_2"] == 2048
+    assert "working_mainnodeid" not in node_props["10"]
     assert node_props["30"]["grade_2"] == 1
     assert node_props["30"]["kind_2"] == 64
     assert node_props["110"]["grade_2"] == 3

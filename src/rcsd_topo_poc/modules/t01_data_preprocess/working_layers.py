@@ -15,6 +15,8 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
 
 
 WORKING_NODE_FIELDS = ("grade_2", "kind_2", "working_mainnodeid")
+PERSISTED_NODE_WORKING_FIELDS = ("grade_2", "kind_2")
+PUBLIC_NODE_HIDDEN_FIELDS = ("working_mainnodeid",)
 WORKING_ROAD_FIELDS = ("sgrade", "segmentid")
 ROAD_S_GRADE_FIELD = "sgrade"
 LEGACY_ROAD_S_GRADE_FIELDS = ("s_grade",)
@@ -190,6 +192,13 @@ def _initialize_node_properties(props: dict[str, Any]) -> dict[str, Any]:
 
 def _initialize_road_properties(props: dict[str, Any]) -> dict[str, Any]:
     return canonicalize_road_working_properties(props)
+
+
+def sanitize_public_node_properties(properties: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(properties)
+    for field_name in PUBLIC_NODE_HIDDEN_FIELDS:
+        sanitized.pop(field_name, None)
+    return sanitized
 
 
 def _empty_roundabout_summary(*, out_root: Path) -> dict[str, Any]:
@@ -368,7 +377,7 @@ def _write_roundabout_audits(
 
         for node_id in group.node_ids:
             feature = node_feature_by_id[node_id]
-            props = dict(feature["properties"])
+            props = sanitize_public_node_properties(dict(feature["properties"]))
             props["group_id"] = group.group_id
             props["mainnode_id"] = group.mainnode_id
             props["is_mainnode"] = node_id == group.mainnode_id
@@ -427,12 +436,14 @@ def _apply_roundabout_preprocess(
             for index, feature in enumerate(node_features)
         }
         for group in groups:
+            mainnode_index = node_index_by_id[group.mainnode_id]
+            mainnode_value = node_features[mainnode_index]["properties"].get("id", group.mainnode_id)
             for node_id in group.node_ids:
                 index = node_index_by_id[node_id]
                 current_feature = node_features[index]
                 props = dict(current_feature["properties"])
-                props["mainnodeid"] = group.mainnode_id
-                props["working_mainnodeid"] = group.mainnode_id
+                props["mainnodeid"] = mainnode_value
+                props["working_mainnodeid"] = mainnode_value
                 if node_id == group.mainnode_id:
                     props["grade_2"] = 1
                     props["kind_2"] = ROUNDABOUT_KIND_VALUE
@@ -553,6 +564,7 @@ def initialize_working_layers(
         "node_feature_count": len(initialized_nodes),
         "road_feature_count": len(initialized_roads),
         "working_node_fields": list(WORKING_NODE_FIELDS),
+        "persisted_node_working_fields": list(PERSISTED_NODE_WORKING_FIELDS),
         "working_road_fields": list(WORKING_ROAD_FIELDS),
         "node_initialization_rule": {
             "grade_2": "grade",
@@ -595,7 +607,7 @@ def require_initialized_working_features(
     issues: list[str] = []
     for index, feature in enumerate(node_features):
         properties = feature["properties"]
-        missing = [field for field in WORKING_NODE_FIELDS if field not in properties]
+        missing = [field for field in PERSISTED_NODE_WORKING_FIELDS if field not in properties]
         if missing:
             issues.append(f"{stage_label} node feature[{index}] missing working fields: {', '.join(missing)}")
 

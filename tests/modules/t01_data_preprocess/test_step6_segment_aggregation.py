@@ -139,6 +139,7 @@ def test_step6_builds_segment_inner_nodes_and_error_outputs(tmp_path: Path) -> N
         assert feature["properties"]["segmentid"] == "1_4"
         assert "grade_2" in feature["properties"]
         assert "kind_2" in feature["properties"]
+        assert "working_mainnodeid" not in feature["properties"]
 
     segment_error_doc = _load_geojson(artifacts.segment_error_path)
     assert len(segment_error_doc["features"]) == 1

@@ -12,10 +12,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional, TypeVar, Union
 
+from shapely.geometry import shape
+
 from rcsd_topo_poc.modules.t01_data_preprocess.freeze_compare import (
     compare_skill_v1_bundle,
     write_skill_v1_bundle,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import refresh_s2_baseline
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _find_repo_root
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
@@ -28,6 +31,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
     MAX_SIDE_ACCESS_DISTANCE_M,
     initialize_working_layers,
+    sanitize_public_node_properties,
 )
 
 
@@ -828,7 +832,17 @@ def _finalize_bundle(
     run_id: str,
     debug: bool,
 ) -> dict[str, str]:
-    shutil.copy2(refreshed_nodes_path, final_nodes_path)
+    refreshed_nodes_doc = json.loads(Path(refreshed_nodes_path).read_text(encoding="utf-8"))
+    write_geojson(
+        final_nodes_path,
+        (
+            {
+                "properties": sanitize_public_node_properties(dict(feature.get("properties") or {})),
+                "geometry": shape(feature["geometry"]) if feature.get("geometry") is not None else None,
+            }
+            for feature in refreshed_nodes_doc.get("features", [])
+        ),
+    )
     shutil.copy2(refreshed_roads_path, final_roads_path)
     step6_artifacts = run_step6_segment_aggregation_from_records(
         nodes=list(step5_artifacts.step6_nodes),

@@ -24,6 +24,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     get_road_segmentid,
     get_road_sgrade,
     is_allowed_road_kind,
+    sanitize_public_node_properties,
 )
 
 
@@ -110,7 +111,7 @@ def _require_working_layers(
     issues: list[str] = []
     for index, node in enumerate(nodes):
         properties = node.properties if node_properties_map is None else node_properties_map.get(node.node_id, node.properties)
-        missing = [field for field in WORKING_NODE_FIELDS if field not in properties]
+        missing = [field for field in WORKING_NODE_FIELDS if field != "working_mainnodeid" and field not in properties]
         if missing:
             issues.append(f"{stage_label} node feature[{index}] missing working fields: {', '.join(missing)}")
     for index, road in enumerate(roads):
@@ -415,7 +416,7 @@ def _write_step6_outputs(
         inner_segment_ids.add(segment_id)
         for node in inner_nodes:
             inner_group_ids_all.add(node.semantic_node_id)
-            props = dict(node.properties)
+            props = sanitize_public_node_properties(dict(node.properties))
             props["segmentid"] = segment_id
             inner_node_features.append({"properties": props, "geometry": node.geometry})
     write_geojson(inner_nodes_path, inner_node_features)

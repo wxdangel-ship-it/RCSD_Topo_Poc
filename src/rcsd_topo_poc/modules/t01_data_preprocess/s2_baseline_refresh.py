@@ -28,6 +28,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     get_road_sgrade,
     initialize_working_layers,
     is_roundabout_mainnode_kind,
+    sanitize_public_node_properties,
     set_road_segmentid,
     set_road_sgrade,
 )
@@ -407,7 +408,7 @@ def _write_outputs(
     write_geojson(
         nodes_path,
         [
-            {"properties": node_properties_map[record.node_id], "geometry": record.geometry}
+            {"properties": sanitize_public_node_properties(node_properties_map[record.node_id]), "geometry": record.geometry}
             for record in node_records
         ],
     )

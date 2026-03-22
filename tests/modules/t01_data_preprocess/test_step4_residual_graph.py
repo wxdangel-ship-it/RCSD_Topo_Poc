@@ -189,6 +189,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
     assert node_props["1"]["grade_2"] == 2
     assert node_props["1"]["kind_2"] == 2048
+    assert "working_mainnodeid" not in node_props["1"]
     assert node_props["3"]["grade_2"] == 1
     assert node_props["3"]["kind_2"] == 64
     assert node_props["501"]["grade_2"] == 3

@@ -23,6 +23,7 @@
   - `segmentid`
   - `sgrade`
 - `s_grade`、`segment_id`、`Segment_id` 仅允许在读取兼容层中被识别，不再作为新输出正式字段。
+- 对外公开 node 图层不显式输出 `working_mainnodeid`；该字段保留为内部 working 语义字段。
 
 ## 3. 开始阶段
 
@@ -32,6 +33,7 @@
   - `grade_2 = grade`
   - `kind_2 = kind`
   - `working_mainnodeid = mainnodeid`
+- `working_mainnodeid` 作为内部 working 语义字段继续维护并供后续步骤优先使用
 - 默认不改 raw `mainnodeid`；但在环岛预处理中，允许将聚合成环岛的一组 node 的 `mainnodeid / working_mainnodeid` 统一修正到环岛 `mainnode`
 - working road 初始化：
   - `sgrade = null`
@@ -49,6 +51,7 @@
   - `mainnodeid = roundabout mainnode`
   - `working_mainnodeid = roundabout mainnode`
 - 环岛 `mainnode` 在后续 refresh 中受保护。
+- 环岛是当前唯一允许显式修正公开 `mainnodeid` 的场景。
 
 ## 4. Step1-Step5C accepted 业务口径
 - Step1 只输出 `pair_candidates`。
@@ -75,8 +78,9 @@
 
 ### 5.2 语义路口规则
 - Step6 所有语义路口判断统一使用：
-  - `working_mainnodeid` 有值时用 `working_mainnodeid`
-  - 否则回退 node 自身 `id`
+  - official runner 内存态优先使用 `working_mainnodeid`
+  - 公开 `nodes.geojson` 中若未显式带出 `working_mainnodeid`，则回退 `mainnodeid`
+  - 再为空时回退 node 自身 `id`
 - Step6 不使用 raw `grade / kind` 做路口类型判断。
 
 ### 5.3 Step6 输出
@@ -100,6 +104,7 @@
   - `A_B_N -> A,B`
 - `junc_nodes` 记录仍向当前 Segment 之外分支的语义路口。
 - 若某语义路口的全部允许 road 都属于当前 Segment，则该路口不写入 `junc_nodes`，而是把该组全部 node 完整复制到 `inner_nodes.geojson`，仅附加 `segmentid` 追溯字段。
+- `inner_nodes.geojson` 不显式输出 `working_mainnodeid`。
 
 ### 5.5 Segment 级规则
 - 规则 1：若 `pair_nodes` 两端语义路口 `grade_2` 均为 `1`，且当前 `sgrade != "0-0双"`，则 Step6 将该 Segment 的 `sgrade` 轻调整为 `"0-0双"`。

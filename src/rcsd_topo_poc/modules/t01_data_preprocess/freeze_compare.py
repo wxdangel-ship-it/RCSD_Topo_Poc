@@ -109,6 +109,7 @@ def _canonicalize_geojson_feature(*, feature: dict[str, Any], kind: Literal["nod
         props.pop("segment_id", None)
         props.pop("Segment_id", None)
         props.pop("segmentid", None)
+        props.pop("working_mainnodeid", None)
     return {
         "properties": props,
         "geometry": feature.get("geometry"),

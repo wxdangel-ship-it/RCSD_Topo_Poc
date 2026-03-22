@@ -26,6 +26,8 @@
   - `grade_2 = grade`
   - `kind_2 = kind`
   - `working_mainnodeid = mainnodeid`
+- `working_mainnodeid` 是内部 working 语义字段，运行期继续维护并优先供 Step1-Step6 使用
+- 对外公开 `nodes.geojson` / `inner_nodes.geojson` 不显式输出 `working_mainnodeid`
 - 默认情况下，`mainnodeid` 保持原始输入值，运行期主节点语义统一写入 `working_mainnodeid`
 - 例外：在 `roundabout preprocessing` 中，聚合成环岛的一组 node 允许同步改写 `mainnodeid` 与 `working_mainnodeid`，统一指向环岛 `mainnode`
 
@@ -53,6 +55,11 @@
   - node：`grade_2 / kind_2 / closed_con / working_mainnodeid`
   - road：`segmentid / sgrade / road_kind`
 - raw `grade / kind` 只保留输入、展示与审计作用。
+- 对外公开 node 图层正式持久化字段为：
+  - `mainnodeid`
+  - `grade_2`
+  - `kind_2`
+  - `closed_con`
 
 ## 5. 开始阶段
 
@@ -71,6 +78,7 @@
   - `mainnodeid = roundabout mainnode`
   - `working_mainnodeid = roundabout mainnode`
 - 环岛 `mainnode` 在后续 refresh 中受保护
+- 环岛修正是当前唯一允许显式改写公开 `mainnodeid` 的场景
 
 ## 6. Step1-Step5C accepted 契约
 - Step1：只输出 `pair_candidates`
@@ -125,7 +133,8 @@
 ### 8.1 输入
 - latest refreshed `nodes.geojson / roads.geojson`
 - Step6 不重新做构段搜索
-- Step6 使用 `working_mainnodeid`，为空时回退 node `id`
+- official runner 中，Step6 优先复用 Step5 内存态 `working_mainnodeid`
+- standalone 从公开 `nodes.geojson` 读取时，若未显式带出 `working_mainnodeid`，则回退 `mainnodeid`，再为空时回退 node `id`
 
 ### 8.2 输出
 - `segment.geojson`
@@ -150,6 +159,7 @@
 - `inner_nodes.geojson`
   - 完整复制被某个 Segment 完全内含的 node 原字段
   - 仅追加 `segmentid`
+  - 不显式输出 `working_mainnodeid`
 - `segment_error.geojson`
   - 总错误图层
 - `segment_error_s_grade_conflict.geojson`
@@ -175,6 +185,7 @@
 - `trunk_membership_skill_v1.csv`
 - `skill_v1_manifest.json`
 - `skill_v1_summary.json`
+- 对外公开 node 图层不显式输出 `working_mainnodeid`
 
 ## 10. freeze compare 契约
 - compare 重点仍是业务结果一致性：

@@ -207,6 +207,7 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
     node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
     assert node_props["1"]["grade_2"] == 1
     assert node_props["1"]["kind_2"] == 4
+    assert "working_mainnodeid" not in node_props["1"]
     assert node_props["101"]["grade_2"] == 0
     assert node_props["101"]["kind_2"] == 0
     assert node_props["3"]["grade_2"] == -1
@@ -390,6 +391,7 @@ def test_refresh_s2_baseline_keeps_roundabout_mainnode_protected(tmp_path: Path)
     node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
     assert node_props["50"]["grade_2"] == 1
     assert node_props["50"]["kind_2"] == 64
+    assert "working_mainnodeid" not in node_props["50"]
 
     mainnode_rows = {row["mainnode_id"]: row for row in _csv_rows(artifacts.mainnode_table_path)}
     assert mainnode_rows["50"]["applied_rule"] == "protected_roundabout_mainnode"

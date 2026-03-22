@@ -119,10 +119,12 @@ def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_p
     assert roundabout_summary["roundabout_member_node_count"] == 3
     assert node_props["10"]["grade_2"] == 1
     assert node_props["10"]["kind_2"] == 64
+    assert isinstance(node_props["10"]["mainnodeid"], int)
     assert str(node_props["10"]["mainnodeid"]) == "10"
     assert str(node_props["10"]["working_mainnodeid"]) == "10"
     assert node_props["11"]["grade_2"] == 0
     assert node_props["11"]["kind_2"] == 0
+    assert isinstance(node_props["11"]["mainnodeid"], int)
     assert str(node_props["11"]["mainnodeid"]) == "10"
     assert str(node_props["11"]["working_mainnodeid"]) == "10"
     assert node_props["12"]["grade_2"] == 0
@@ -131,6 +133,7 @@ def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_p
     assert str(node_props["12"]["working_mainnodeid"]) == "10"
     assert node_props["20"]["grade_2"] == 1
     assert node_props["20"]["kind_2"] == 64
+    assert isinstance(node_props["20"]["mainnodeid"], int)
     assert str(node_props["20"]["mainnodeid"]) == "20"
     assert str(node_props["21"]["mainnodeid"]) == "20"
     assert str(node_props["20"]["working_mainnodeid"]) == "20"

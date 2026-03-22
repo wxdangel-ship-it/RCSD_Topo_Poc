@@ -47,6 +47,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     is_full_through_kind,
     is_full_through_or_t_kind,
     is_roundabout_mainnode_kind,
+    sanitize_public_node_properties,
     set_road_segmentid,
     set_road_sgrade,
 )
@@ -868,7 +869,7 @@ def _require_working_layers(
 ) -> None:
     issues: list[str] = []
     for index, node in enumerate(nodes):
-        missing = [field for field in WORKING_NODE_FIELDS if field not in node.properties]
+        missing = [field for field in WORKING_NODE_FIELDS if field != "working_mainnodeid" and field not in node.properties]
         if missing:
             issues.append(f"{stage_label} node feature[{index}] missing working fields: {', '.join(missing)}")
     for index, road in enumerate(roads):
@@ -1039,7 +1040,10 @@ def _write_refreshed_outputs(
     summary_path = out_root / "step5_summary.json"
     mainnode_table_path = out_root / "step5_mainnode_refresh_table.csv"
 
-    node_features = [{"properties": node_properties_map[node.node_id], "geometry": node.geometry} for node in nodes]
+    node_features = [
+        {"properties": sanitize_public_node_properties(node_properties_map[node.node_id]), "geometry": node.geometry}
+        for node in nodes
+    ]
     road_features = [{"properties": road_properties_map[road.road_id], "geometry": road.geometry} for road in roads]
 
     write_geojson(refreshed_nodes_path, node_features)

@@ -43,6 +43,7 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
   - `grade_2`
   - `kind_2`
   - `working_mainnodeid`
+- `working_mainnodeid` 作为内部 working 语义字段继续维护并优先供 Step1-Step6 使用，但不在公开 `nodes.geojson` / `inner_nodes.geojson` 中显式输出
 - 环岛预处理例外：
   - 聚合成环岛的一组 node 会同步修正 `mainnodeid / working_mainnodeid`
   - 环岛 `mainnode` 记为 `grade_2 = 1, kind_2 = 64`
@@ -77,6 +78,7 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
   - `segment_summary.json`
   - `segment_build_table.csv`
   - `inner_nodes_summary.json`
+- Step6 standalone 从公开 `nodes.geojson` 读取时，若未显式带出 `working_mainnodeid`，则回退使用修正后的 `mainnodeid`。
 - Step6 在 official runner 中复用 Step5 的内存态结果，不重新独立跑一套 `nodes / roads` 读取、`mainnode` 分组和邻接构建。
 
 ## 当前 accepted 约束

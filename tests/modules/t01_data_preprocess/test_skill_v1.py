@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from shapely.geometry import Point
+
 from rcsd_topo_poc.modules.t01_data_preprocess import skill_v1
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -226,3 +229,82 @@ def test_write_all_stage_segment_roads_dir_copies_stage_prefixed_files(tmp_path:
     ]
     payload = json.loads((out_path / "Step5B_segment_body_roads.geojson").read_text(encoding="utf-8"))
     assert payload["features"][0]["properties"]["pair_id"] == "STEP5B:50__60"
+
+
+def test_finalize_bundle_hides_working_mainnodeid_in_public_nodes(tmp_path: Path, monkeypatch) -> None:
+    refreshed_nodes_path = tmp_path / "step5" / "nodes.geojson"
+    refreshed_roads_path = tmp_path / "step5" / "roads.geojson"
+    final_nodes_path = tmp_path / "final" / "nodes.geojson"
+    final_roads_path = tmp_path / "final" / "roads.geojson"
+    refreshed_nodes_path.parent.mkdir(parents=True, exist_ok=True)
+    refreshed_roads_path.parent.mkdir(parents=True, exist_ok=True)
+
+    write_geojson(
+        refreshed_nodes_path,
+        [
+            {
+                "properties": {
+                    "id": 10,
+                    "mainnodeid": 10,
+                    "working_mainnodeid": 10,
+                    "grade_2": 1,
+                    "kind_2": 64,
+                    "closed_con": 2,
+                },
+                "geometry": Point(0.0, 0.0),
+            }
+        ],
+    )
+    _write_text(
+        refreshed_roads_path,
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [],
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    monkeypatch.setattr(
+        skill_v1,
+        "run_step6_segment_aggregation_from_records",
+        lambda **kwargs: SimpleNamespace(
+            segment_path=tmp_path / "segment.geojson",
+            inner_nodes_path=tmp_path / "inner_nodes.geojson",
+            segment_error_path=tmp_path / "segment_error.geojson",
+            segment_summary_path=tmp_path / "segment_summary.json",
+        ),
+    )
+    monkeypatch.setattr(skill_v1, "_write_all_stage_segment_roads_dir", lambda **kwargs: tmp_path / "all_stage_segment_roads")
+    monkeypatch.setattr(
+        skill_v1,
+        "write_skill_v1_bundle",
+        lambda **kwargs: {"manifest_path": str((tmp_path / "manifest.json").resolve())},
+    )
+
+    skill_v1._finalize_bundle(
+        resolved_out_root=tmp_path,
+        step2_root=tmp_path / "step2",
+        step4_root=tmp_path / "step4",
+        step5_root=tmp_path / "step5",
+        step5_artifacts=SimpleNamespace(
+            step6_nodes=[],
+            step6_roads=[],
+            step6_node_properties_map={},
+            step6_road_properties_map={},
+            step6_mainnode_groups={},
+            step6_group_to_allowed_road_ids={},
+        ),
+        refreshed_nodes_path=refreshed_nodes_path,
+        refreshed_roads_path=refreshed_roads_path,
+        final_nodes_path=final_nodes_path,
+        final_roads_path=final_roads_path,
+        run_id="t01_skill_v1_test",
+        debug=False,
+    )
+
+    final_nodes_doc = json.loads(final_nodes_path.read_text(encoding="utf-8"))
+    props = final_nodes_doc["features"][0]["properties"]
+    assert props["mainnodeid"] == 10
+    assert "working_mainnodeid" not in props

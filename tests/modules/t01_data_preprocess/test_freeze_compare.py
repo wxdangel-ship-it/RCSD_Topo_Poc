@@ -213,3 +213,91 @@ def test_compare_skill_v1_bundle_resolves_wsl_paths_from_freeze_manifest(tmp_pat
     assert comparison_by_label["refreshed_nodes_hash"]["semantic_compare_available"] is True
     assert comparison_by_label["refreshed_nodes_hash"]["status"] == "SCHEMA_MIGRATION_DIFFERENCE"
     assert comparison_by_label["refreshed_roads_hash"]["status"] == "SCHEMA_MIGRATION_DIFFERENCE"
+
+
+def test_compare_skill_v1_bundle_treats_working_mainnodeid_hidden_as_schema_migration(tmp_path: Path) -> None:
+    current_dir = tmp_path / "current"
+    freeze_dir = tmp_path / "freeze"
+    out_dir = tmp_path / "compare"
+    current_dir.mkdir()
+    freeze_dir.mkdir()
+
+    for bundle_dir, validated_name, segment_name, trunk_name in (
+        (
+            current_dir,
+            "validated_pairs_skill_v1.csv",
+            "segment_body_membership_skill_v1.csv",
+            "trunk_membership_skill_v1.csv",
+        ),
+        (
+            freeze_dir,
+            "validated_pairs_baseline.csv",
+            "segment_body_membership_baseline.csv",
+            "trunk_membership_baseline.csv",
+        ),
+    ):
+        write_csv(bundle_dir / validated_name, [], ["stage", "pair_id", "a_node_id", "b_node_id", "trunk_mode", "left_turn_excluded_mode", "segment_body_road_count", "residual_road_count"])
+        write_csv(bundle_dir / segment_name, [], ["stage", "pair_id", "road_id", "layer_role", "trunk_mode"])
+        write_csv(bundle_dir / trunk_name, [], ["stage", "pair_id", "road_id", "layer_role", "trunk_mode"])
+
+    current_nodes = tmp_path / "current_nodes.geojson"
+    baseline_nodes = tmp_path / "baseline_nodes.geojson"
+    shared_roads = tmp_path / "roads.geojson"
+
+    write_geojson(
+        current_nodes,
+        [{"properties": {"id": 1, "grade_2": 1, "kind_2": 64, "mainnodeid": 1}, "geometry": Point(0.0, 0.0)}],
+    )
+    write_geojson(
+        baseline_nodes,
+        [
+            {
+                "properties": {
+                    "id": 1,
+                    "grade_2": 1,
+                    "kind_2": 64,
+                    "mainnodeid": 1,
+                    "working_mainnodeid": 1,
+                },
+                "geometry": Point(0.0, 0.0),
+            }
+        ],
+    )
+    write_geojson(
+        shared_roads,
+        [{"properties": {"id": "r1", "segmentid": None, "sgrade": None}, "geometry": LineString([(0.0, 0.0), (1.0, 0.0)])}],
+    )
+
+    write_json(
+        current_dir / "skill_v1_manifest.json",
+        {
+            "source_paths": {
+                "refreshed_nodes_path": str(current_nodes.resolve()),
+                "refreshed_roads_path": str(shared_roads.resolve()),
+            }
+        },
+    )
+    write_json(
+        freeze_dir / "FREEZE_MANIFEST.json",
+        {
+            "source_paths": {
+                "refreshed_nodes_path": str(baseline_nodes.resolve()),
+                "refreshed_roads_path": str(shared_roads.resolve()),
+            }
+        },
+    )
+    write_json(current_dir / "skill_v1_summary.json", {"run_id": "current"})
+    write_json(freeze_dir / "FREEZE_SUMMARY.json", {"freeze_label": "baseline"})
+
+    _write_hash(current_dir / "refreshed_nodes_hash.json", "current-nodes-raw")
+    _write_hash(freeze_dir / "refreshed_nodes_hash.json", "baseline-nodes-raw")
+    _write_hash(current_dir / "refreshed_roads_hash.json", "shared-roads")
+    _write_hash(freeze_dir / "refreshed_roads_hash.json", "shared-roads")
+
+    report = compare_skill_v1_bundle(current_dir=current_dir, freeze_dir=freeze_dir, out_dir=out_dir)
+    comparison_by_label = {item["label"]: item for item in report["comparisons"]}
+
+    assert report["status"] == "PASS"
+    assert report["schema_migration_only"] is True
+    assert comparison_by_label["refreshed_nodes_hash"]["status"] == "SCHEMA_MIGRATION_DIFFERENCE"
+    assert comparison_by_label["refreshed_roads_hash"]["status"] == "PASS"

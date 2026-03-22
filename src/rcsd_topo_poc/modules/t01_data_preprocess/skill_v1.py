@@ -37,6 +37,8 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
 
 DEFAULT_RUN_ID_PREFIX = "t01_skill_v1_"
 SKILL_VERSION = "1.0.0"
+VALIDATION_PROGRESS_TRACE_PAIR_LIMIT = 50
+VALIDATION_PROGRESS_CHECKPOINT_INTERVAL = 100
 T = TypeVar("T")
 
 
@@ -103,6 +105,28 @@ def _format_progress_details(payload: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _should_write_subprogress_snapshot(event: str, payload: dict[str, Any]) -> bool:
+    if event != "validation_pair_state":
+        return True
+    pair_index = payload.get("pair_index")
+    validation_count = payload.get("validation_count")
+    if not isinstance(pair_index, int):
+        return True
+    if pair_index <= VALIDATION_PROGRESS_TRACE_PAIR_LIMIT:
+        return True
+    if isinstance(validation_count, int) and pair_index == validation_count:
+        return True
+    return pair_index % VALIDATION_PROGRESS_CHECKPOINT_INTERVAL == 0
+
+
+def _should_stdout_subprogress(event: str, payload: dict[str, Any], default: bool) -> bool:
+    if not default:
+        return False
+    if event in {"validation_pair_state", "validation_pair_checkpoint"}:
+        return False
+    return True
+
+
 def _make_stage_subprogress_callback(
     *,
     run_id: str,
@@ -116,20 +140,25 @@ def _make_stage_subprogress_callback(
     def _callback(event: str, payload: dict[str, Any]) -> None:
         control_payload = dict(payload)
         perf_log = bool(control_payload.pop("_perf_log", True))
-        stdout_log = bool(control_payload.pop("_stdout_log", True))
+        stdout_log = _should_stdout_subprogress(
+            event,
+            control_payload,
+            bool(control_payload.pop("_stdout_log", True)),
+        )
         details = _format_progress_details(control_payload)
         message = f"Stage {stage_name} {event}."
         if details:
             message = f"{message} {details}"
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=run_id,
-            status="running",
-            total_stages=total_stages,
-            completed_stage_names=completed_stage_names,
-            current_stage=stage_name,
-            message=message,
-        )
+        if _should_write_subprogress_snapshot(event, control_payload):
+            _write_progress_snapshot(
+                out_path=progress_path,
+                run_id=run_id,
+                status="running",
+                total_stages=total_stages,
+                completed_stage_names=completed_stage_names,
+                current_stage=stage_name,
+                message=message,
+            )
         if perf_log:
             _append_jsonl(
                 perf_markers_path,

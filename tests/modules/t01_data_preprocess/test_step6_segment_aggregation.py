@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from shapely.geometry import LineString, MultiLineString, Point
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
@@ -118,6 +117,7 @@ def test_step6_builds_segment_inner_nodes_and_error_outputs(tmp_path: Path) -> N
     assert artifacts.summary["segment_with_inner_nodes_count"] == 1
     assert artifacts.summary["segment_error_count"] == 1
     assert artifacts.summary["s_grade_adjusted_count"] == 1
+    assert artifacts.summary["s_grade_conflict_count"] == 0
     assert artifacts.inner_nodes_summary["inner_segment_count"] == 1
     assert artifacts.inner_nodes_summary["inner_mainnode_count"] == 1
     assert artifacts.inner_nodes_summary["inner_node_count"] == 2
@@ -177,7 +177,7 @@ def test_step6_pair_nodes_follow_segmentid_order(tmp_path: Path) -> None:
     assert segment_doc["features"][0]["properties"]["pair_nodes"] == "4,1"
 
 
-def test_step6_fails_when_segment_contains_multiple_s_grades(tmp_path: Path) -> None:
+def test_step6_degrades_when_segment_contains_multiple_s_grades(tmp_path: Path) -> None:
     node_path = tmp_path / "nodes.geojson"
     road_path = tmp_path / "roads.geojson"
 
@@ -197,10 +197,28 @@ def test_step6_fails_when_segment_contains_multiple_s_grades(tmp_path: Path) -> 
         ],
     )
 
-    with pytest.raises(ValueError, match="multiple s_grade values"):
-        run_step6_segment_aggregation(
-            road_path=road_path,
-            node_path=node_path,
-            out_root=tmp_path / "out",
-            run_id="s_grade_conflict_case",
-        )
+    artifacts = run_step6_segment_aggregation(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=tmp_path / "out",
+        run_id="s_grade_conflict_case",
+    )
+
+    segment_doc = _load_geojson(artifacts.segment_path)
+    segment_props = segment_doc["features"][0]["properties"]
+    assert segment_props["id"] == "1_3"
+    assert segment_props["s_grade"] == "0-0双"
+
+    error_doc = _load_geojson(artifacts.segment_error_path)
+    assert len(error_doc["features"]) == 1
+    error_props = error_doc["features"][0]["properties"]
+    assert error_props["error_type"] == "s_grade_conflict"
+    assert error_props["old_s_grade"] == "0-0双,0-1双"
+    assert error_props["new_s_grade"] == "0-0双"
+    assert error_props["flag_s_grade_conflict"] is True
+    assert "selected highest priority='0-0双'" in error_props["error_desc"]
+
+    build_rows = artifacts.segment_build_table_path.read_text(encoding="utf-8")
+    assert "s_grade_conflict" in build_rows
+    assert artifacts.summary["segment_error_count"] == 1
+    assert artifacts.summary["s_grade_conflict_count"] == 1

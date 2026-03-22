@@ -402,7 +402,10 @@
 ### 13.5 segment 级轻调整与错误反查
 - 规则 1：若 segment 两端 `pair_nodes` 对应语义路口 `grade_2` 均为 `1`，且当前 `s_grade != "0-0双"`，则 Step6 将该 segment 的 `s_grade` 轻调整为 `"0-0双"`。
 - 规则 2：若最终 `s_grade = "0-0双"`，且其中间 `junc_nodes` 出现 `grade_2 = 1 且 kind_2 = 4`，则该 segment 输出到 `segment_error.geojson`。
-- 同一 `segmentid` 下若出现多个不同 `s_grade`，Step6 必须 fail fast，不得 silent fallback。
+- 同一 `segmentid` 下若出现多个不同 `s_grade`，Step6 不做 silent fallback：
+  - 按当前已接受优先级 `0-0双 > 0-1双 > 0-2双` 选择 `segment.geojson` 的 `s_grade`
+  - 同时必须写入 `segment_error.geojson`
+  - 并在 `segment_summary.json` / `segment_build_table.csv` 中记录 `s_grade` 冲突审计信息与被选中的高等级值。
 
 ### 13.6 审计输出
 - `segment_summary.json`
@@ -412,6 +415,7 @@
     - `segment_with_inner_nodes_count`
     - `segment_error_count`
     - `s_grade_adjusted_count`
+    - `s_grade_conflict_count`
 - `segment_build_table.csv`
   - 至少包含：
     - `segmentid`
@@ -421,6 +425,8 @@
     - `road_ids`
     - `s_grade_old`
     - `s_grade_new`
+    - `s_grade_conflict_values`
+    - `error_type`
     - `has_error`
 - `inner_nodes_summary.json`
   - 至少包含：

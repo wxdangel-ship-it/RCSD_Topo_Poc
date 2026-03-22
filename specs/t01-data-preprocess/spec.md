@@ -413,7 +413,10 @@
   - 每个非空 `roads.segmentid` 只生成一条记录
   - `geometry` 统一输出 `MultiLineString`
   - `id = segmentid`
-  - `s_grade` 必须在同一 `segmentid` 内唯一；若多值，`Step6` fail fast
+  - `s_grade` 应在同一 `segmentid` 内唯一；若出现多值，`Step6` 不做 silent fallback：
+    - 按当前已接受优先级 `0-0双 > 0-1双 > 0-2双` 选择 `segment.geojson` 的 `s_grade`
+    - 同时输出到 `segment_error.geojson`
+    - 并记录 `s_grade` 冲突审计信息与被选中的高等级值
   - `pair_nodes` 顺序严格按 `segmentid = A_B` 输出为 `A,B`
   - `junc_nodes` 记录仍指向当前 segment 之外的语义路口
   - `roads` 记录该 segment 下所有 road id

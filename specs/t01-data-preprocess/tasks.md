@@ -47,4 +47,4 @@
 - [x] `inner_nodes` 完整复制被 segment 完全内含的 node 记录，并追加 `segmentid`
 - [x] 规则 1：两端 `grade_2 = 1` 时，segment 级 `s_grade` 轻调整为 `"0-0双"`
 - [x] 规则 2：`s_grade = "0-0双"` 且中间 `junc_nodes` 出现 `grade_2 = 1 且 kind_2 = 4` 时，输出到 `segment_error.geojson`
-- [x] `s_grade` 多值冲突时 fail fast，不做 silent fallback
+- [x] `s_grade` 多值冲突时按 `0-0双 > 0-1双 > 0-2双` 选高等级，同时记录到 `segment_error.geojson`

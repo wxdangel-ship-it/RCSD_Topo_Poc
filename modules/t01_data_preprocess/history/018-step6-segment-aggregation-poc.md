@@ -61,4 +61,7 @@
 - 不回改 `Step1–Step5C` 主逻辑
 - 不在 `Step6` 中重新做构段搜索
 - 不在 `Step6` 中引入新的 seed / terminate / barrier 语义
-- 同一 `segmentid` 下 `s_grade` 多值冲突当前直接 fail fast，不做自动修复
+- 同一 `segmentid` 下 `s_grade` 多值冲突当前降级为 `segment_error.geojson` 审计：
+  - `segment.geojson` 中按 `0-0双 > 0-1双 > 0-2双` 记录高等级值
+  - 保留完整冲突值清单
+  - 不在 `Step6` 内修复上游错误

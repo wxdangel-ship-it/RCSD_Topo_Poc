@@ -27,7 +27,9 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
 
 DEFAULT_RUN_ID_PREFIX = "t01_step6_segment_aggregation_"
 STEP6_SEGMENT_GRADE_VALUE = "0-0双"
+STEP6_ERROR_TYPE_S_GRADE_CONFLICT = "s_grade_conflict"
 STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT = "grade_kind_conflict"
+STEP6_S_GRADE_PRIORITY_ORDER = ("0-0双", "0-1双", "0-2双")
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,7 @@ class SegmentRecord:
     inner_group_ids: tuple[str, ...]
     adjusted: bool
     adjust_reason: Optional[str]
+    s_grade_conflict_values: tuple[str, ...]
     error_type: Optional[str]
     error_desc: Optional[str]
 
@@ -117,6 +120,10 @@ def _normalize_text(value: Any) -> Optional[str]:
     return str(value)
 
 
+def _display_optional_value(value: Optional[str]) -> str:
+    return "null" if value is None else value
+
+
 def _segment_sort_key(segment_id: str) -> tuple[tuple[int, Any], ...]:
     return tuple(_sort_key(part) for part in segment_id.split("_"))
 
@@ -138,6 +145,22 @@ def _flatten_lines(geometry: Any) -> list[LineString]:
 
 def _join_ids(values: tuple[str, ...]) -> str:
     return ",".join(values)
+
+
+def _join_optional_values(values: tuple[str, ...]) -> Optional[str]:
+    if not values:
+        return None
+    return ",".join(values)
+
+
+def _resolve_highest_s_grade(values: tuple[str, ...]) -> Optional[str]:
+    if not values:
+        return None
+    priority_map = {value: index for index, value in enumerate(STEP6_S_GRADE_PRIORITY_ORDER)}
+    known_values = [value for value in values if value in priority_map]
+    if known_values:
+        return min(known_values, key=lambda value: priority_map[value])
+    return sorted(values, key=_sort_key)[0]
 
 
 def _build_group_to_allowed_road_ids(
@@ -189,11 +212,25 @@ def _collect_segment_records(
             _normalize_text(road.properties.get("s_grade"))
             for road in segment_roads
         }
-        if len(s_grade_values) != 1:
-            raise ValueError(
-                f"Step6 found multiple s_grade values under segmentid '{segment_id}': {sorted(str(value) for value in s_grade_values)}"
+        s_grade_conflict_values = tuple(sorted(_display_optional_value(value) for value in s_grade_values))
+        if len(s_grade_values) == 1:
+            s_grade_old = next(iter(s_grade_values))
+            s_grade_new = s_grade_old
+            adjusted = False
+            adjust_reason = None
+            error_type: Optional[str] = None
+            error_desc: Optional[str] = None
+        else:
+            s_grade_old = _join_optional_values(s_grade_conflict_values)
+            s_grade_new = _resolve_highest_s_grade(s_grade_conflict_values)
+            adjusted = False
+            adjust_reason = None
+            error_type = STEP6_ERROR_TYPE_S_GRADE_CONFLICT
+            error_desc = (
+                "segment contains multiple s_grade values: "
+                + ",".join(s_grade_conflict_values)
+                + f"; selected highest priority='{_display_optional_value(s_grade_new)}'"
             )
-        s_grade_old = next(iter(s_grade_values))
 
         flattened_lines: list[LineString] = []
         covered_group_ids: set[str] = set()
@@ -230,16 +267,11 @@ def _collect_segment_records(
             representative = node_by_id[group.representative_node_id]
             pair_grade_values.append(_current_grade_2(representative))
 
-        adjusted = False
-        adjust_reason: Optional[str] = None
-        s_grade_new = s_grade_old
-        if pair_grade_values == [1, 1] and s_grade_old != STEP6_SEGMENT_GRADE_VALUE:
+        if error_type is None and pair_grade_values == [1, 1] and s_grade_old != STEP6_SEGMENT_GRADE_VALUE:
             adjusted = True
             s_grade_new = STEP6_SEGMENT_GRADE_VALUE
             adjust_reason = "both_pair_nodes_grade_2_eq_1"
 
-        error_type: Optional[str] = None
-        error_desc: Optional[str] = None
         if s_grade_new == STEP6_SEGMENT_GRADE_VALUE:
             conflicting_nodes: list[str] = []
             for semantic_node_id in junc_nodes:
@@ -268,6 +300,7 @@ def _collect_segment_records(
                 inner_group_ids=tuple(sorted(set(inner_group_ids), key=_sort_key)),
                 adjusted=adjusted,
                 adjust_reason=adjust_reason,
+                s_grade_conflict_values=s_grade_conflict_values,
                 error_type=error_type,
                 error_desc=error_desc,
             )
@@ -301,6 +334,8 @@ def _segment_error_feature(record: SegmentRecord) -> dict[str, Any]:
             "error_desc": record.error_desc,
             "old_s_grade": record.s_grade_old,
             "new_s_grade": record.s_grade_new,
+            "s_grade_conflict_values": _join_ids(record.s_grade_conflict_values),
+            "flag_s_grade_conflict": record.error_type == STEP6_ERROR_TYPE_S_GRADE_CONFLICT,
             "flag_grade_kind_conflict": record.error_type == STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT,
         },
         "geometry": record.multiline,
@@ -370,6 +405,9 @@ def run_step6_segment_aggregation(
         "segment_with_inner_nodes_count": sum(1 for record in segment_records if record.inner_group_ids),
         "segment_error_count": len(segment_error_records),
         "s_grade_adjusted_count": sum(1 for record in segment_records if record.adjusted),
+        "s_grade_conflict_count": sum(
+            1 for record in segment_records if record.error_type == STEP6_ERROR_TYPE_S_GRADE_CONFLICT
+        ),
         "output_files": [
             segment_path.name,
             inner_nodes_path.name,
@@ -390,7 +428,9 @@ def run_step6_segment_aggregation(
             "road_ids": _join_ids(record.road_ids),
             "s_grade_old": record.s_grade_old,
             "s_grade_new": record.s_grade_new,
+            "s_grade_conflict_values": _join_ids(record.s_grade_conflict_values),
             "adjust_reason": record.adjust_reason,
+            "error_type": record.error_type,
             "has_error": record.error_type is not None,
         }
         for record in segment_records
@@ -406,7 +446,9 @@ def run_step6_segment_aggregation(
             "road_ids",
             "s_grade_old",
             "s_grade_new",
+            "s_grade_conflict_values",
             "adjust_reason",
+            "error_type",
             "has_error",
         ],
     )

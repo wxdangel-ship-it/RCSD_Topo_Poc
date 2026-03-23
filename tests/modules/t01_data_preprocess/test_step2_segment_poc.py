@@ -8,7 +8,7 @@ from pathlib import Path
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.cli import main
-from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc, step2_segment_poc
+from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc, step2_arbitration, step2_segment_poc
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import initialize_working_layers
 
 
@@ -131,19 +131,34 @@ def _semantic_node_record(
     *,
     kind_2: int,
     grade_2: int = 1,
+    raw_kind: int | None = None,
+    raw_grade: int | None = None,
     closed_con: int = 2,
+    cross_flag: int = 0,
+    mainnodeid: str | None = None,
 ) -> step1_pair_poc.SemanticNodeRecord:
+    raw_properties = {
+        "id": node_id,
+        "kind": kind_2 if raw_kind is None else raw_kind,
+        "grade": grade_2 if raw_grade is None else raw_grade,
+        "kind_2": kind_2,
+        "grade_2": grade_2,
+        "closed_con": closed_con,
+        "cross_flag": cross_flag,
+    }
+    if mainnodeid is not None:
+        raw_properties["mainnodeid"] = mainnodeid
     return step1_pair_poc.SemanticNodeRecord(
         semantic_node_id=node_id,
         representative_node_id=node_id,
         member_node_ids=(node_id,),
-        raw_kind=kind_2,
-        raw_grade=grade_2,
+        raw_kind=kind_2 if raw_kind is None else raw_kind,
+        raw_grade=grade_2 if raw_grade is None else raw_grade,
         kind_2=kind_2,
         grade_2=grade_2,
         closed_con=closed_con,
         geometry=Point(0.0, 0.0),
-        raw_properties={"id": node_id, "kind_2": kind_2, "grade_2": grade_2, "closed_con": closed_con},
+        raw_properties=raw_properties,
     )
 
 
@@ -225,6 +240,53 @@ def _validation_result(
         transition_same_dir_blocked=False,
         support_info={"branch_cut_infos": []},
         conflict_pair_id=None,
+    )
+
+
+def _arbitration_option(
+    option_id: str,
+    pair_id: str,
+    a_node_id: str,
+    b_node_id: str,
+    *,
+    trunk_road_ids: tuple[str, ...],
+    pruned_road_ids: tuple[str, ...] | None = None,
+    segment_candidate_road_ids: tuple[str, ...] | None = None,
+    segment_road_ids: tuple[str, ...] | None = None,
+    forward_path_road_ids: tuple[str, ...] | None = None,
+    support_info_overrides: dict[str, Any] | None = None,
+) -> step2_arbitration.PairArbitrationOption:
+    if pruned_road_ids is None:
+        pruned_road_ids = trunk_road_ids
+    if segment_candidate_road_ids is None:
+        segment_candidate_road_ids = pruned_road_ids
+    if segment_road_ids is None:
+        segment_road_ids = trunk_road_ids
+    if forward_path_road_ids is None:
+        forward_path_road_ids = trunk_road_ids
+    support_info = {
+        "forward_path_road_ids": list(forward_path_road_ids),
+        "trunk_signed_area": 0.0,
+    }
+    if support_info_overrides:
+        support_info.update(support_info_overrides)
+    return step2_arbitration.PairArbitrationOption(
+        option_id=option_id,
+        pair_id=pair_id,
+        a_node_id=a_node_id,
+        b_node_id=b_node_id,
+        trunk_mode="counterclockwise_loop",
+        counterclockwise_ok=True,
+        warning_codes=(),
+        candidate_channel_road_ids=pruned_road_ids,
+        pruned_road_ids=pruned_road_ids,
+        trunk_road_ids=trunk_road_ids,
+        segment_candidate_road_ids=segment_candidate_road_ids,
+        segment_road_ids=segment_road_ids,
+        branch_cut_road_ids=(),
+        boundary_terminate_node_ids=(),
+        transition_same_dir_blocked=False,
+        support_info=support_info,
     )
 
 
@@ -412,6 +474,72 @@ def test_build_segment_body_candidate_channel_respects_allowed_road_ids() -> Non
     )
 
     assert candidate_road_ids == {"trunk", "r1", "r2", "r3"}
+
+
+def test_expand_segment_body_allowed_road_ids_recovers_local_bridge_component() -> None:
+    def _edge(road_id: str, from_node: str, to_node: str) -> step1_pair_poc.TraversalEdge:
+        return step1_pair_poc.TraversalEdge(road_id=road_id, from_node=from_node, to_node=to_node)
+
+    undirected_adjacency = {
+        "A": (_edge("trunk", "A", "B"), _edge("r1", "A", "N1")),
+        "B": (_edge("trunk", "B", "A"), _edge("r3", "B", "N2")),
+        "N1": (_edge("r1", "N1", "A"), _edge("r2", "N1", "N2")),
+        "N2": (
+            _edge("r2", "N2", "N1"),
+            _edge("r3", "N2", "B"),
+            _edge("leaf", "N2", "L"),
+        ),
+        "L": (_edge("leaf", "L", "N2"),),
+    }
+    road_endpoints = {
+        "trunk": ("A", "B"),
+        "r1": ("A", "N1"),
+        "r2": ("N1", "N2"),
+        "r3": ("N2", "B"),
+        "leaf": ("N2", "L"),
+    }
+
+    allowed_road_ids = step2_segment_poc._expand_segment_body_allowed_road_ids(
+        pruned_road_ids={"trunk"},
+        branch_cut_infos=[
+            {"road_id": "r1", "cut_reason": "branch_backtrack_prune", "from_node_id": "N1", "to_node_id": "A"},
+            {"road_id": "r3", "cut_reason": "branch_backtrack_prune", "from_node_id": "N2", "to_node_id": "B"},
+        ],
+        undirected_adjacency=undirected_adjacency,
+        boundary_node_ids=set(),
+        road_endpoints=road_endpoints,
+    )
+
+    assert allowed_road_ids == {"trunk", "r1", "r2", "r3"}
+
+
+def test_alternative_trunk_only_road_ids_returns_roads_unique_to_other_choices() -> None:
+    candidate_direct = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(node_ids=("A", "B"), road_ids=("direct",), total_length=1.0),
+        reverse_path=step2_segment_poc.DirectedPath(node_ids=("B", "A"), road_ids=("direct",), total_length=1.0),
+        road_ids=("direct",),
+        signed_area=0.0,
+        total_length=2.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=0.0,
+        is_bidirectional_minimal_loop=True,
+    )
+    candidate_loop = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(node_ids=("A", "C", "B"), road_ids=("up", "cross"), total_length=2.0),
+        reverse_path=step2_segment_poc.DirectedPath(node_ids=("B", "A"), road_ids=("direct",), total_length=1.0),
+        road_ids=("cross", "direct", "up"),
+        signed_area=5.0,
+        total_length=3.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=0.0,
+    )
+    trunk_choices = [
+        step2_segment_poc._TrunkEvaluationChoice(candidate=candidate_direct, warning_codes=(), support_info={}),
+        step2_segment_poc._TrunkEvaluationChoice(candidate=candidate_loop, warning_codes=(), support_info={}),
+    ]
+
+    assert step2_segment_poc._alternative_trunk_only_road_ids(trunk_choices, current_choice_index=0) == {"cross", "up"}
+    assert step2_segment_poc._alternative_trunk_only_road_ids(trunk_choices, current_choice_index=1) == set()
 
 
 def _build_counterclockwise_dataset(base_dir: Path) -> tuple[Path, Path]:
@@ -1128,7 +1256,8 @@ def test_step2_validation_emits_pair_phase_markers(monkeypatch) -> None:
     captured_allowed_road_ids: dict[str, set[str]] = {}
 
     def _fake_build_segment_body_candidate_channel(*args, **kwargs):
-        captured_allowed_road_ids["value"] = set(kwargs["allowed_road_ids"])
+        allowed_road_ids = kwargs["allowed_road_ids"]
+        captured_allowed_road_ids["value"] = None if allowed_road_ids is None else set(allowed_road_ids)
         return {"r1020"}
 
     monkeypatch.setattr(
@@ -1286,10 +1415,15 @@ def test_step2_validation_compact_release_tightens_only_validated_subset(monkeyp
             return {"r12", "r23"}, [], False
         return {"r45", "r56"}, [], False
 
-    def _fake_evaluate_trunk(pair, **kwargs):
+    def _fake_evaluate_trunk_choices(pair, **kwargs):
         if pair.pair_id == pair_validated.pair_id:
-            return (trunk_candidate, None, (), {})
-        return (None, "only_clockwise_loop", (), {})
+            return (
+                [step2_segment_poc._TrunkEvaluationChoice(trunk_candidate, (), {})],
+                None,
+                (),
+                {},
+            )
+        return ([], "only_clockwise_loop", (), {})
 
     def _fake_tighten(validations, **kwargs):
         tighten_inputs.append(list(validations))
@@ -1313,7 +1447,7 @@ def test_step2_validation_compact_release_tightens_only_validated_subset(monkeyp
 
     monkeypatch.setattr(step2_segment_poc, "_build_candidate_channel", _fake_build_candidate_channel)
     monkeypatch.setattr(step2_segment_poc, "_prune_candidate_channel", _fake_prune_candidate_channel)
-    monkeypatch.setattr(step2_segment_poc, "_evaluate_trunk", _fake_evaluate_trunk)
+    monkeypatch.setattr(step2_segment_poc, "_evaluate_trunk_choices", _fake_evaluate_trunk_choices)
     monkeypatch.setattr(step2_segment_poc, "_collect_internal_boundary_nodes", lambda *args, **kwargs: ())
     monkeypatch.setattr(
         step2_segment_poc,
@@ -1690,6 +1824,51 @@ def test_step2_keeps_one_way_parallel_corridor_as_segment_body() -> None:
     assert component_info["decision_reason"] == "segment_body"
 
 
+def test_step2_moves_side_corridor_with_bidirectional_connector_to_residual() -> None:
+    roads = [
+        _road_record("t12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
+        _road_record("t23", "2", "3", coords=((10.0, 0.0), (20.0, 0.0))),
+        _road_record("r2a", "2", "A", coords=((10.0, 0.0), (10.0, 10.0)), direction=2),
+        _road_record("rab", "A", "B", coords=((10.0, 10.0), (20.0, 10.0)), direction=0),
+        _road_record("rb3", "B", "3", coords=((20.0, 10.0), (20.0, 0.0)), direction=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("t12", "t23"))
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("t12", "t23", "r2a", "rab", "rb3"),
+            trunk_road_ids=("t12", "t23"),
+            segment_road_ids=("t12", "t23", "r2a", "rab", "rb3"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "segment_body_candidate_road_ids": ["t12", "t23", "r2a", "rab", "rb3"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    component_info = current.support_info["non_trunk_components"][0]
+    assert set(current.segment_road_ids) == {"t12", "t23"}
+    assert set(current.residual_road_ids) == {"r2a", "rab", "rb3"}
+    assert component_info["component_directionality"] == "mixed_with_bidirectional"
+    assert component_info["bidirectional_road_ids"] == ["rab"]
+    assert component_info["parallel_corridor_directionality"] == "one_way_parallel"
+    assert component_info["decision_reason"] == "contains_bidirectional_side_road"
+
+
 def test_step2_moves_one_way_parallel_corridor_attached_to_internal_t_support_nodes_to_residual() -> None:
     roads = [
         _road_record("t1", "1", "T1", coords=((0.0, 0.0), (10.0, 0.0))),
@@ -1983,6 +2162,37 @@ def test_step2_build_filtered_directed_adjacency_uses_allowed_road_subset() -> N
     assert [edge.road_id for edge in adjacency["1"]] == ["r12"]
     assert [edge.road_id for edge in adjacency["2"]] == ["r12", "r23"]
     assert "3" not in adjacency
+    assert [edge.road_id for edge in adjacency["4"]] == ["r34"]
+
+
+def test_step2_build_filtered_directed_adjacency_excludes_formway_bits_any() -> None:
+    roads = {
+        "r12": _road_record("r12", "1", "2"),
+        "r23": replace(
+            _road_record("r23", "2", "3", direction=2),
+            formway=128,
+            raw_properties={"road_kind": 0, "formway": 128},
+        ),
+        "r34": _road_record("r34", "3", "4"),
+    }
+    road_endpoints = {
+        "r12": ("1", "2"),
+        "r23": ("2", "3"),
+        "r34": ("3", "4"),
+    }
+
+    adjacency = step2_segment_poc._build_filtered_directed_adjacency(
+        roads,
+        road_endpoints=road_endpoints,
+        allowed_road_ids={"r12", "r23", "r34"},
+        exclude_left_turn=False,
+        left_turn_formway_bit=8,
+        exclude_formway_bits_any=(7,),
+    )
+
+    assert [edge.road_id for edge in adjacency["1"]] == ["r12"]
+    assert [edge.road_id for edge in adjacency["2"]] == ["r12"]
+    assert [edge.road_id for edge in adjacency["3"]] == ["r34"]
     assert [edge.road_id for edge in adjacency["4"]] == ["r34"]
 
 
@@ -2323,3 +2533,1115 @@ def test_write_step2_outputs_streams_release_outputs_without_buffering_lists(tmp
     assert (out_dir / "trunk_roads.geojson").is_file()
     assert (out_dir / "segment_body_roads.geojson").is_file()
     assert (out_dir / "step3_residual_roads.geojson").is_file()
+
+
+def test_same_stage_arbitration_uses_exact_solver_for_single_option_large_component() -> None:
+    options_by_pair: dict[str, list[step2_arbitration.PairArbitrationOption]] = {
+        "S2:1019883__1026500": [
+            _arbitration_option(
+                "S2:1019883__1026500::opt_01",
+                "S2:1019883__1026500",
+                "1019883",
+                "1026500",
+                trunk_road_ids=("road_left", "shared_1"),
+                pruned_road_ids=("road_left", "shared_1"),
+                segment_candidate_road_ids=("road_left", "shared_1"),
+                segment_road_ids=("road_left",),
+            )
+        ],
+        "S2:1026500__1026503": [
+            _arbitration_option(
+                "S2:1026500__1026503::opt_03",
+                "S2:1026500__1026503",
+                "1026500",
+                "1026503",
+                trunk_road_ids=("shared_1", "shared_2"),
+                pruned_road_ids=("shared_1", "shared_2"),
+                segment_candidate_road_ids=("shared_1", "shared_2"),
+                segment_road_ids=("shared_1", "shared_2"),
+            )
+        ],
+    }
+    road_to_node_ids = {
+        "road_left": ("1019883", "1026500"),
+        "shared_1": ("1026500", "500588029"),
+        "shared_2": ("500588029", "1026503"),
+    }
+    road_lengths = {road_id: 1.0 for road_id in road_to_node_ids}
+    for index in range(3, 12):
+        pair_id = f"S2:filler_{index:02d}"
+        road_id = f"filler_{index:02d}"
+        options_by_pair[pair_id] = [
+            _arbitration_option(
+                f"{pair_id}::opt_01",
+                pair_id,
+                f"FN{index}",
+                f"GN{index}",
+                trunk_road_ids=(road_id,),
+                pruned_road_ids=(road_id,),
+                segment_candidate_road_ids=(road_id,),
+                segment_road_ids=(road_id,),
+            )
+        ]
+        road_to_node_ids[road_id] = (f"FN{index}", f"GN{index}")
+        road_lengths[road_id] = 1.0
+
+    outcome = step2_arbitration.arbitrate_pair_options(
+        options_by_pair=options_by_pair,
+        single_pair_illegal_pair_ids=set(),
+        road_lengths=road_lengths,
+        road_to_node_ids=road_to_node_ids,
+        weak_endpoint_node_ids=set(),
+        boundary_node_ids=set(),
+        semantic_conflict_node_ids=set(),
+        strong_anchor_node_ids={"500588029"},
+    )
+
+    decision_by_pair_id = {decision.pair_id: decision for decision in outcome.decisions}
+    assert decision_by_pair_id["S2:1026500__1026503"].arbitration_status == "win"
+    assert decision_by_pair_id["S2:1026500__1026503"].strong_anchor_win_count == 1
+    assert decision_by_pair_id["S2:1019883__1026500"].arbitration_status == "lose"
+    assert "S2:1019883__1026500" not in outcome.selected_options_by_pair_id
+    assert outcome.selected_options_by_pair_id["S2:1026500__1026503"].option_id == "S2:1026500__1026503::opt_03"
+    assert outcome.components[0].strong_anchor_node_ids == ("500588029",)
+    assert outcome.components[0].fallback_greedy_used is False
+    assert outcome.components[0].exact_solver_used is True
+
+
+def test_same_stage_arbitration_strong_anchor_exact_solver_keeps_additional_non_conflicting_pair() -> None:
+    options_by_pair: dict[str, list[step2_arbitration.PairArbitrationOption]] = {
+        "PAIR_A_B": [
+            _arbitration_option(
+                "PAIR_A_B::opt_01",
+                "PAIR_A_B",
+                "A",
+                "B",
+                trunk_road_ids=("shared_1", "shared_2"),
+                pruned_road_ids=("shared_1", "shared_2"),
+                segment_candidate_road_ids=("shared_1", "shared_2"),
+                segment_road_ids=("shared_1", "shared_2"),
+            )
+        ],
+        "PAIR_C_D": [
+            _arbitration_option(
+                "PAIR_C_D::opt_01",
+                "PAIR_C_D",
+                "C",
+                "D",
+                trunk_road_ids=("left_only", "shared_1"),
+                pruned_road_ids=("left_only", "shared_1"),
+                segment_candidate_road_ids=("left_only", "shared_1"),
+                segment_road_ids=("left_only",),
+            )
+        ],
+        "PAIR_E_F": [
+            _arbitration_option(
+                "PAIR_E_F::opt_01",
+                "PAIR_E_F",
+                "E",
+                "F",
+                trunk_road_ids=("independent",),
+                pruned_road_ids=("independent",),
+                segment_candidate_road_ids=("independent",),
+                segment_road_ids=("independent",),
+            )
+        ],
+    }
+    road_to_node_ids = {
+        "shared_1": ("B", "500588029"),
+        "shared_2": ("500588029", "A2"),
+        "left_only": ("C", "D"),
+        "independent": ("E", "F"),
+    }
+    road_lengths = {road_id: 1.0 for road_id in road_to_node_ids}
+
+    outcome = step2_arbitration.arbitrate_pair_options(
+        options_by_pair=options_by_pair,
+        single_pair_illegal_pair_ids=set(),
+        road_lengths=road_lengths,
+        road_to_node_ids=road_to_node_ids,
+        weak_endpoint_node_ids=set(),
+        boundary_node_ids=set(),
+        semantic_conflict_node_ids=set(),
+        strong_anchor_node_ids={"500588029"},
+    )
+
+    assert set(outcome.selected_options_by_pair_id) == {"PAIR_A_B", "PAIR_E_F"}
+    component = next(component for component in outcome.components if component.component_id == "component_0001")
+    assert component.exact_solver_used is True
+    assert component.fallback_greedy_used is False
+
+
+def test_same_stage_arbitration_keeps_first_option_for_single_pair_component() -> None:
+    options_by_pair = {
+        "PAIR_A_B": [
+            _arbitration_option(
+                "PAIR_A_B::opt_01",
+                "PAIR_A_B",
+                "A",
+                "B",
+                trunk_road_ids=("shortcut",),
+                pruned_road_ids=("shortcut",),
+                segment_candidate_road_ids=("shortcut",),
+                segment_road_ids=("shortcut",),
+            ),
+            _arbitration_option(
+                "PAIR_A_B::opt_02",
+                "PAIR_A_B",
+                "A",
+                "B",
+                trunk_road_ids=("left", "right"),
+                pruned_road_ids=("left", "right"),
+                segment_candidate_road_ids=("left", "right"),
+                segment_road_ids=("left", "right"),
+            ),
+        ],
+    }
+    road_to_node_ids = {
+        "shortcut": ("A", "B"),
+        "left": ("A", "X"),
+        "right": ("X", "B"),
+    }
+    road_lengths = {"shortcut": 1.0, "left": 1.0, "right": 1.0}
+
+    outcome = step2_arbitration.arbitrate_pair_options(
+        options_by_pair=options_by_pair,
+        single_pair_illegal_pair_ids=set(),
+        road_lengths=road_lengths,
+        road_to_node_ids=road_to_node_ids,
+        weak_endpoint_node_ids=set(),
+        boundary_node_ids=set(),
+        semantic_conflict_node_ids=set(),
+        strong_anchor_node_ids=set(),
+    )
+
+    assert outcome.selected_options_by_pair_id["PAIR_A_B"].option_id == "PAIR_A_B::opt_01"
+
+
+def test_same_stage_arbitration_keeps_two_direct_fanout_pairs_when_direct_options_do_not_overlap() -> None:
+    options_by_pair = {
+        "PAIR_74_75": [
+            _arbitration_option(
+                "PAIR_74_75::opt_01",
+                "PAIR_74_75",
+                "61250174",
+                "61250175",
+                trunk_road_ids=("9097534",),
+                pruned_road_ids=("9097534", "9097544", "9097547"),
+                segment_candidate_road_ids=("9097534", "9097544", "9097547"),
+                segment_road_ids=("9097534",),
+            ),
+            _arbitration_option(
+                "PAIR_74_75::opt_02",
+                "PAIR_74_75",
+                "61250174",
+                "61250175",
+                trunk_road_ids=("9097544", "9097547", "9097534"),
+                pruned_road_ids=("9097534", "9097544", "9097547"),
+                segment_candidate_road_ids=("9097534", "9097544", "9097547"),
+                segment_road_ids=("9097534", "9097544", "9097547"),
+                forward_path_road_ids=("9097544", "9097547"),
+            ),
+        ],
+        "PAIR_74_76": [
+            _arbitration_option(
+                "PAIR_74_76::opt_01",
+                "PAIR_74_76",
+                "61250174",
+                "61250176",
+                trunk_road_ids=("9097544",),
+                pruned_road_ids=("9097534", "9097544", "9097547"),
+                segment_candidate_road_ids=("9097534", "9097544", "9097547"),
+                segment_road_ids=("9097544",),
+            ),
+            _arbitration_option(
+                "PAIR_74_76::opt_02",
+                "PAIR_74_76",
+                "61250174",
+                "61250176",
+                trunk_road_ids=("9097544", "9097547", "9097534"),
+                pruned_road_ids=("9097534", "9097544", "9097547"),
+                segment_candidate_road_ids=("9097534", "9097544", "9097547"),
+                segment_road_ids=("9097534", "9097544", "9097547"),
+                forward_path_road_ids=("9097544",),
+            ),
+        ],
+    }
+    road_to_node_ids = {
+        "9097534": ("61250174", "61250175"),
+        "9097544": ("61250176", "61250174"),
+        "9097547": ("61250176", "61250175"),
+    }
+    road_lengths = {road_id: 1.0 for road_id in road_to_node_ids}
+
+    outcome = step2_arbitration.arbitrate_pair_options(
+        options_by_pair=options_by_pair,
+        single_pair_illegal_pair_ids=set(),
+        road_lengths=road_lengths,
+        road_to_node_ids=road_to_node_ids,
+        weak_endpoint_node_ids=set(),
+        boundary_node_ids={"61250175", "61250176", "61250177"},
+        semantic_conflict_node_ids={"61250175", "61250176", "61250177"},
+        strong_anchor_node_ids=set(),
+    )
+
+    assert outcome.selected_options_by_pair_id["PAIR_74_75"].option_id == "PAIR_74_75::opt_01"
+    assert outcome.selected_options_by_pair_id["PAIR_74_76"].option_id == "PAIR_74_76::opt_01"
+
+
+def test_pair_conflicts_ignore_weak_corridor_overlap_that_does_not_dominate_trunk() -> None:
+    options_by_pair = {
+        "PAIR_A_B": [
+            _arbitration_option(
+                "PAIR_A_B::opt_01",
+                "PAIR_A_B",
+                "A",
+                "B",
+                trunk_road_ids=("t1", "t2", "t3", "t4"),
+                pruned_road_ids=("t1", "t2", "t3", "t4"),
+                segment_candidate_road_ids=("t1", "t2", "t3", "t4"),
+                segment_road_ids=("t1", "t2", "t3", "t4"),
+            )
+        ],
+        "PAIR_C_D": [
+            _arbitration_option(
+                "PAIR_C_D::opt_01",
+                "PAIR_C_D",
+                "C",
+                "D",
+                trunk_road_ids=("u1", "u2", "u3", "u4"),
+                pruned_road_ids=("u1", "u2", "u3", "u4", "t1"),
+                segment_candidate_road_ids=("u1", "u2", "u3", "u4", "t1"),
+                segment_road_ids=("u1", "u2", "u3", "u4"),
+            )
+        ],
+    }
+
+    conflict_records, adjacency = step2_arbitration._build_pair_conflicts(options_by_pair)
+
+    assert conflict_records == []
+    assert adjacency["PAIR_A_B"] == set()
+    assert adjacency["PAIR_C_D"] == set()
+
+
+def test_pair_conflicts_ignore_asymmetric_corridor_overlap_without_mutual_trunk_ownership() -> None:
+    options_by_pair = {
+        "PAIR_MAIN": [
+            _arbitration_option(
+                "PAIR_MAIN::opt_01",
+                "PAIR_MAIN",
+                "A",
+                "B",
+                trunk_road_ids=("shared_1", "shared_2"),
+                pruned_road_ids=("shared_1", "shared_2"),
+                segment_candidate_road_ids=("shared_1", "shared_2"),
+                segment_road_ids=("shared_1", "shared_2"),
+            )
+        ],
+        "PAIR_LOOP": [
+            _arbitration_option(
+                "PAIR_LOOP::opt_01",
+                "PAIR_LOOP",
+                "A",
+                "C",
+                trunk_road_ids=("loop_1", "loop_2", "loop_3", "loop_4"),
+                pruned_road_ids=("loop_1", "loop_2", "loop_3", "loop_4", "shared_1", "shared_2"),
+                segment_candidate_road_ids=("loop_1", "loop_2", "loop_3", "loop_4", "shared_1", "shared_2"),
+                segment_road_ids=("loop_1", "loop_2", "loop_3", "loop_4"),
+            )
+        ],
+    }
+
+    conflict_records, adjacency = step2_arbitration._build_pair_conflicts(options_by_pair)
+
+    assert conflict_records == []
+    assert adjacency["PAIR_MAIN"] == set()
+    assert adjacency["PAIR_LOOP"] == set()
+
+
+def test_pair_conflicts_ignore_exact_half_mutual_trunk_overlap() -> None:
+    options_by_pair = {
+        "PAIR_LONG": [
+            _arbitration_option(
+                "PAIR_LONG::opt_01",
+                "PAIR_LONG",
+                "A",
+                "B",
+                trunk_road_ids=("long_1", "long_2", "long_3", "long_4"),
+                pruned_road_ids=("long_1", "long_2", "long_3", "long_4", "short_1", "short_2"),
+                segment_candidate_road_ids=("long_1", "long_2", "long_3", "long_4", "short_1", "short_2"),
+                segment_road_ids=("long_1", "long_2"),
+            )
+        ],
+        "PAIR_SHORT": [
+            _arbitration_option(
+                "PAIR_SHORT::opt_01",
+                "PAIR_SHORT",
+                "C",
+                "D",
+                trunk_road_ids=("short_1", "short_2", "branch_1", "branch_2"),
+                pruned_road_ids=("short_1", "short_2", "branch_1", "branch_2", "long_1", "long_2"),
+                segment_candidate_road_ids=("short_1", "short_2", "branch_1", "branch_2", "long_1", "long_2"),
+                segment_road_ids=("branch_1", "branch_2"),
+            )
+        ],
+    }
+
+    conflict_records, adjacency = step2_arbitration._build_pair_conflicts(options_by_pair)
+    option_conflicts = step2_arbitration._build_option_conflicts(
+        ("PAIR_LONG", "PAIR_SHORT"),
+        options_by_pair=options_by_pair,
+    )
+
+    assert conflict_records == []
+    assert adjacency["PAIR_LONG"] == set()
+    assert adjacency["PAIR_SHORT"] == set()
+    assert option_conflicts == {}
+
+
+def test_pair_conflicts_ignore_pure_segment_body_overlap_without_trunk_or_mutual_corridor() -> None:
+    options_by_pair = {
+        "PAIR_SHORT": [
+            _arbitration_option(
+                "PAIR_SHORT::opt_01",
+                "PAIR_SHORT",
+                "A",
+                "B",
+                trunk_road_ids=("short_1", "short_2", "short_3"),
+                pruned_road_ids=("short_1", "short_2", "short_3", "anchor_side_1", "anchor_side_2"),
+                segment_candidate_road_ids=("short_1", "short_2", "short_3", "anchor_side_1", "anchor_side_2"),
+                segment_road_ids=("short_1", "short_2", "short_3"),
+            )
+        ],
+        "PAIR_LONG": [
+            _arbitration_option(
+                "PAIR_LONG::opt_01",
+                "PAIR_LONG",
+                "A",
+                "C",
+                trunk_road_ids=("long_1", "long_2", "long_3", "long_4", "long_5", "anchor_side_1"),
+                pruned_road_ids=(
+                    "long_1",
+                    "long_2",
+                    "long_3",
+                    "long_4",
+                    "long_5",
+                    "anchor_side_1",
+                    "anchor_side_2",
+                    "short_1",
+                    "short_2",
+                    "short_3",
+                ),
+                segment_candidate_road_ids=(
+                    "long_1",
+                    "long_2",
+                    "long_3",
+                    "long_4",
+                    "long_5",
+                    "anchor_side_1",
+                    "anchor_side_2",
+                    "short_1",
+                    "short_2",
+                    "short_3",
+                ),
+                segment_road_ids=(
+                    "long_1",
+                    "long_2",
+                    "long_3",
+                    "long_4",
+                    "long_5",
+                    "anchor_side_1",
+                    "anchor_side_2",
+                    "short_1",
+                    "short_2",
+                    "short_3",
+                ),
+            )
+        ],
+    }
+    road_to_node_ids = {
+        "short_1": ("A", "J1"),
+        "short_2": ("J1", "J2"),
+        "short_3": ("J2", "B"),
+        "anchor_side_1": ("J2", "ANCHOR"),
+        "anchor_side_2": ("ANCHOR", "S1"),
+        "long_1": ("A", "L1"),
+        "long_2": ("L1", "L2"),
+        "long_3": ("L2", "L3"),
+        "long_4": ("L3", "L4"),
+        "long_5": ("L4", "C"),
+    }
+
+    conflict_records, adjacency = step2_arbitration._build_pair_conflicts(
+        options_by_pair,
+        road_to_node_ids=road_to_node_ids,
+        strong_anchor_node_ids={"ANCHOR"},
+    )
+    option_conflicts = step2_arbitration._build_option_conflicts(
+        ("PAIR_LONG", "PAIR_SHORT"),
+        options_by_pair=options_by_pair,
+    )
+
+    assert conflict_records == []
+    assert adjacency["PAIR_SHORT"] == set()
+    assert adjacency["PAIR_LONG"] == set()
+    assert option_conflicts == {}
+
+
+def test_pair_conflicts_ignore_serial_segment_overlap_without_shared_trunk_or_strong_anchor() -> None:
+    options_by_pair = {
+        "PAIR_LEFT": [
+            _arbitration_option(
+                "PAIR_LEFT::opt_01",
+                "PAIR_LEFT",
+                "1020120",
+                "1020121",
+                trunk_road_ids=("66969787",),
+                pruned_road_ids=("1084543", "617354887", "66969787"),
+                segment_candidate_road_ids=("1084543", "617354887", "66969787"),
+                segment_road_ids=("1084543", "617354887", "66969787"),
+            )
+        ],
+        "PAIR_RIGHT": [
+            _arbitration_option(
+                "PAIR_RIGHT::opt_01",
+                "PAIR_RIGHT",
+                "1020121",
+                "1035968",
+                trunk_road_ids=("617354887",),
+                pruned_road_ids=("1084543", "617354887", "66969787"),
+                segment_candidate_road_ids=("1084543", "617354887", "66969787"),
+                segment_road_ids=("1084543", "617354887", "66969787"),
+            )
+        ],
+    }
+    road_to_node_ids = {
+        "66969787": ("1020120", "1020121"),
+        "617354887": ("1020121", "1035968"),
+        "1084543": ("1020120", "1035968"),
+    }
+
+    conflict_records, adjacency = step2_arbitration._build_pair_conflicts(
+        options_by_pair,
+        road_to_node_ids=road_to_node_ids,
+        strong_anchor_node_ids=set(),
+    )
+    option_conflicts = step2_arbitration._build_option_conflicts(
+        ("PAIR_LEFT", "PAIR_RIGHT"),
+        options_by_pair=options_by_pair,
+        road_to_node_ids=road_to_node_ids,
+        strong_anchor_node_ids=set(),
+    )
+
+    assert conflict_records == []
+    assert adjacency["PAIR_LEFT"] == set()
+    assert adjacency["PAIR_RIGHT"] == set()
+    assert option_conflicts == {}
+
+
+def test_pair_conflicts_ignore_single_shared_trunk_connector_without_key_corridor() -> None:
+    options_by_pair = {
+        "PAIR_MAIN": [
+            _arbitration_option(
+                "PAIR_MAIN::opt_01",
+                "PAIR_MAIN",
+                "A",
+                "B",
+                trunk_road_ids=("main_1", "main_2", "connector"),
+                pruned_road_ids=("main_1", "main_2", "connector", "side_1", "side_2"),
+                segment_candidate_road_ids=("main_1", "main_2", "connector", "side_1", "side_2"),
+                segment_road_ids=("main_1", "main_2", "connector", "side_1", "side_2"),
+            )
+        ],
+        "PAIR_BRANCH": [
+            _arbitration_option(
+                "PAIR_BRANCH::opt_01",
+                "PAIR_BRANCH",
+                "A",
+                "C",
+                trunk_road_ids=("connector", "branch_1", "branch_2"),
+                pruned_road_ids=("connector", "branch_1", "branch_2", "side_1", "side_2"),
+                segment_candidate_road_ids=("connector", "branch_1", "branch_2", "side_1", "side_2"),
+                segment_road_ids=("connector", "branch_1", "branch_2", "side_1", "side_2"),
+            )
+        ],
+    }
+
+    road_to_node_ids = {
+        "main_1": ("A", "M1"),
+        "main_2": ("M1", "B"),
+        "connector": ("M1", "ANCHOR"),
+        "side_1": ("ANCHOR", "S1"),
+        "side_2": ("S1", "S2"),
+        "branch_1": ("ANCHOR", "B1"),
+        "branch_2": ("B1", "C"),
+    }
+
+    conflict_records, adjacency = step2_arbitration._build_pair_conflicts(
+        options_by_pair,
+        road_to_node_ids=road_to_node_ids,
+        strong_anchor_node_ids={"ANCHOR"},
+    )
+
+    assert conflict_records == []
+    assert adjacency["PAIR_MAIN"] == set()
+    assert adjacency["PAIR_BRANCH"] == set()
+
+
+def test_pair_conflicts_keep_single_shared_trunk_connector_when_touching_tjunction_anchor() -> None:
+    options_by_pair = {
+        "PAIR_MAIN": [
+            _arbitration_option(
+                "PAIR_MAIN::opt_01",
+                "PAIR_MAIN",
+                "A",
+                "B",
+                trunk_road_ids=("main_1", "main_2", "connector"),
+                pruned_road_ids=("main_1", "main_2", "connector", "side_1", "side_2"),
+                segment_candidate_road_ids=("main_1", "main_2", "connector", "side_1", "side_2"),
+                segment_road_ids=("main_1", "main_2", "connector", "side_1", "side_2"),
+            )
+        ],
+        "PAIR_BRANCH": [
+            _arbitration_option(
+                "PAIR_BRANCH::opt_01",
+                "PAIR_BRANCH",
+                "A",
+                "C",
+                trunk_road_ids=("connector", "branch_1", "branch_2"),
+                pruned_road_ids=("connector", "branch_1", "branch_2", "side_1", "side_2"),
+                segment_candidate_road_ids=("connector", "branch_1", "branch_2", "side_1", "side_2"),
+                segment_road_ids=("connector", "branch_1", "branch_2", "side_1", "side_2"),
+                support_info_overrides={"bidirectional_minimal_loop": True},
+            )
+        ],
+    }
+
+    road_to_node_ids = {
+        "main_1": ("A", "M1"),
+        "main_2": ("M1", "B"),
+        "connector": ("M1", "ANCHOR"),
+        "side_1": ("ANCHOR", "S1"),
+        "side_2": ("S1", "S2"),
+        "branch_1": ("ANCHOR", "B1"),
+        "branch_2": ("B1", "C"),
+    }
+
+    conflict_records, adjacency = step2_arbitration._build_pair_conflicts(
+        options_by_pair,
+        road_to_node_ids=road_to_node_ids,
+        strong_anchor_node_ids={"ANCHOR"},
+        tjunction_anchor_node_ids={"ANCHOR"},
+    )
+
+    assert len(conflict_records) == 1
+    assert conflict_records[0].conflict_types == ("trunk_overlap", "segment_body_overlap")
+    assert adjacency["PAIR_MAIN"] == {"PAIR_BRANCH"}
+    assert adjacency["PAIR_BRANCH"] == {"PAIR_MAIN"}
+
+
+def test_pair_conflicts_ignore_single_shared_trunk_between_tjunction_and_other_strong_anchor() -> None:
+    options_by_pair = {
+        "PAIR_MAIN": [
+            _arbitration_option(
+                "PAIR_MAIN::opt_01",
+                "PAIR_MAIN",
+                "A",
+                "B",
+                trunk_road_ids=("left_1", "connector", "left_2"),
+                pruned_road_ids=("left_1", "connector", "left_2"),
+                segment_candidate_road_ids=("left_1", "connector", "left_2"),
+                segment_road_ids=("left_1", "connector", "left_2"),
+                support_info_overrides={"bidirectional_minimal_loop": True},
+            )
+        ],
+        "PAIR_BRANCH": [
+            _arbitration_option(
+                "PAIR_BRANCH::opt_01",
+                "PAIR_BRANCH",
+                "A",
+                "C",
+                trunk_road_ids=("right_1", "connector", "right_2"),
+                pruned_road_ids=("right_1", "connector", "right_2"),
+                segment_candidate_road_ids=("right_1", "connector", "right_2"),
+                segment_road_ids=("right_1", "connector", "right_2"),
+            )
+        ],
+    }
+
+    road_to_node_ids = {
+        "left_1": ("A", "STRONG"),
+        "connector": ("STRONG", "TJ"),
+        "left_2": ("TJ", "B"),
+        "right_1": ("A", "STRONG"),
+        "right_2": ("TJ", "C"),
+    }
+
+    conflict_records, adjacency = step2_arbitration._build_pair_conflicts(
+        options_by_pair,
+        road_to_node_ids=road_to_node_ids,
+        strong_anchor_node_ids={"STRONG", "TJ"},
+        tjunction_anchor_node_ids={"TJ"},
+    )
+
+    assert conflict_records == []
+    assert adjacency["PAIR_MAIN"] == set()
+    assert adjacency["PAIR_BRANCH"] == set()
+
+
+def test_pair_conflicts_keep_single_shared_trunk_when_not_touching_strong_anchor() -> None:
+    options_by_pair = {
+        "PAIR_LEFT": [
+            _arbitration_option(
+                "PAIR_LEFT::opt_01",
+                "PAIR_LEFT",
+                "A",
+                "B",
+                trunk_road_ids=("shared", "left_1", "left_2"),
+                pruned_road_ids=("shared", "left_1", "left_2"),
+                segment_candidate_road_ids=("shared", "left_1", "left_2"),
+                segment_road_ids=("shared", "left_1", "left_2"),
+            )
+        ],
+        "PAIR_RIGHT": [
+            _arbitration_option(
+                "PAIR_RIGHT::opt_01",
+                "PAIR_RIGHT",
+                "A",
+                "C",
+                trunk_road_ids=("shared", "right_1", "right_2"),
+                pruned_road_ids=("shared", "right_1", "right_2"),
+                segment_candidate_road_ids=("shared", "right_1", "right_2"),
+                segment_road_ids=("shared", "right_1", "right_2"),
+            )
+        ],
+    }
+    road_to_node_ids = {
+        "shared": ("J1", "J2"),
+        "left_1": ("A", "J1"),
+        "left_2": ("J2", "B"),
+        "right_1": ("A", "J1"),
+        "right_2": ("J2", "C"),
+    }
+
+    conflict_records, adjacency = step2_arbitration._build_pair_conflicts(
+        options_by_pair,
+        road_to_node_ids=road_to_node_ids,
+        strong_anchor_node_ids={"ANCHOR"},
+    )
+
+    assert len(conflict_records) == 1
+    assert conflict_records[0].conflict_types == ("trunk_overlap", "segment_body_overlap")
+    assert adjacency["PAIR_LEFT"] == {"PAIR_RIGHT"}
+    assert adjacency["PAIR_RIGHT"] == {"PAIR_LEFT"}
+
+
+def test_tjunction_vertical_tracking_gate_blocks_bidirectional_loop_with_weak_connectors() -> None:
+    pair = step1_pair_poc.PairRecord(
+        pair_id="PAIR_TJ",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "SUPPORT", "WEAK_1", "WEAK_2", "B"),
+        forward_path_road_ids=("r1", "r2", "r3", "r4"),
+        reverse_path_node_ids=("B", "WEAK_3", "WEAK_1", "SUPPORT", "A"),
+        reverse_path_road_ids=("r5", "r6", "r2", "r1"),
+        through_node_ids=("WEAK_2", "WEAK_3"),
+    )
+    candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.forward_path_node_ids,
+            road_ids=pair.forward_path_road_ids,
+            total_length=40.0,
+        ),
+        reverse_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.reverse_path_node_ids,
+            road_ids=pair.reverse_path_road_ids,
+            total_length=38.0,
+        ),
+        road_ids=("r1", "r2", "r3", "r4", "r5", "r6"),
+        signed_area=100.0,
+        total_length=78.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=10.0,
+        is_bidirectional_minimal_loop=True,
+    )
+    context = _minimal_context(
+        [],
+        semantic_nodes={
+            "SUPPORT": _semantic_node_record("SUPPORT", kind_2=2048, grade_2=3, cross_flag=2),
+            "WEAK_1": _semantic_node_record("WEAK_1", kind_2=1, grade_2=3, cross_flag=0),
+            "WEAK_2": _semantic_node_record("WEAK_2", kind_2=1, grade_2=3, cross_flag=0),
+            "WEAK_3": _semantic_node_record("WEAK_3", kind_2=1, grade_2=3, cross_flag=0),
+        },
+    )
+
+    gate_info = step2_segment_poc._tjunction_vertical_tracking_gate_info(
+        pair,
+        candidate=candidate,
+        context=context,
+    )
+
+    assert gate_info is not None
+    assert gate_info["t_junction_vertical_tracking_blocked"] is True
+    assert gate_info["t_junction_support_anchor_node_ids"] == ["SUPPORT"]
+    assert gate_info["t_junction_weak_connector_node_ids"] == ["WEAK_1", "WEAK_2", "WEAK_3"]
+
+
+def test_tjunction_vertical_tracking_gate_ignores_kind4_support_anchor() -> None:
+    pair = step1_pair_poc.PairRecord(
+        pair_id="PAIR_TJ_KIND4",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "SUPPORT", "WEAK_1", "WEAK_2", "B"),
+        forward_path_road_ids=("r1", "r2", "r3", "r4"),
+        reverse_path_node_ids=("B", "WEAK_3", "WEAK_1", "SUPPORT", "A"),
+        reverse_path_road_ids=("r5", "r6", "r2", "r1"),
+        through_node_ids=("WEAK_2", "WEAK_3"),
+    )
+    candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.forward_path_node_ids,
+            road_ids=pair.forward_path_road_ids,
+            total_length=40.0,
+        ),
+        reverse_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.reverse_path_node_ids,
+            road_ids=pair.reverse_path_road_ids,
+            total_length=38.0,
+        ),
+        road_ids=("r1", "r2", "r3", "r4", "r5", "r6"),
+        signed_area=100.0,
+        total_length=78.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=10.0,
+        is_bidirectional_minimal_loop=True,
+    )
+    context = _minimal_context(
+        [],
+        semantic_nodes={
+            "SUPPORT": _semantic_node_record("SUPPORT", kind_2=4, grade_2=3, cross_flag=2),
+            "WEAK_1": _semantic_node_record("WEAK_1", kind_2=1, grade_2=3, cross_flag=0),
+            "WEAK_2": _semantic_node_record("WEAK_2", kind_2=1, grade_2=3, cross_flag=0),
+            "WEAK_3": _semantic_node_record("WEAK_3", kind_2=1, grade_2=3, cross_flag=0),
+        },
+    )
+
+    gate_info = step2_segment_poc._tjunction_vertical_tracking_gate_info(
+        pair,
+        candidate=candidate,
+        context=context,
+    )
+
+    assert gate_info is None
+
+
+def test_tjunction_vertical_tracking_gate_keeps_major_corridor_competition() -> None:
+    pair = step1_pair_poc.PairRecord(
+        pair_id="PAIR_CORRIDOR",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "ANCHOR_1", "ANCHOR_2", "B"),
+        forward_path_road_ids=("r1", "r2", "r3"),
+        reverse_path_node_ids=("B", "ANCHOR_2", "ANCHOR_1", "A"),
+        reverse_path_road_ids=("r4", "r5", "r6"),
+        through_node_ids=(),
+    )
+    candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.forward_path_node_ids,
+            road_ids=pair.forward_path_road_ids,
+            total_length=30.0,
+        ),
+        reverse_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.reverse_path_node_ids,
+            road_ids=pair.reverse_path_road_ids,
+            total_length=28.0,
+        ),
+        road_ids=("r1", "r2", "r3", "r4", "r5", "r6"),
+        signed_area=120.0,
+        total_length=58.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=8.0,
+        is_bidirectional_minimal_loop=True,
+    )
+    context = _minimal_context(
+        [],
+        semantic_nodes={
+            "ANCHOR_1": _semantic_node_record("ANCHOR_1", kind_2=4, grade_2=3, cross_flag=2, mainnodeid="ANCHOR_1"),
+            "ANCHOR_2": _semantic_node_record("ANCHOR_2", kind_2=4, grade_2=3, cross_flag=3, mainnodeid="ANCHOR_2"),
+        },
+    )
+
+    gate_info = step2_segment_poc._tjunction_vertical_tracking_gate_info(
+        pair,
+        candidate=candidate,
+        context=context,
+    )
+
+    assert gate_info is None
+
+
+def test_tjunction_vertical_tracking_gate_falls_back_to_raw_kind_for_refreshed_nodes() -> None:
+    pair = step1_pair_poc.PairRecord(
+        pair_id="PAIR_TJ_REFRESH",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="STEP4",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "SUPPORT", "WEAK_1", "WEAK_2", "B"),
+        forward_path_road_ids=("r1", "r2", "r3", "r4"),
+        reverse_path_node_ids=("B", "WEAK_3", "WEAK_1", "SUPPORT", "A"),
+        reverse_path_road_ids=("r5", "r6", "r2", "r1"),
+        through_node_ids=("WEAK_2", "WEAK_3"),
+    )
+    candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.forward_path_node_ids,
+            road_ids=pair.forward_path_road_ids,
+            total_length=40.0,
+        ),
+        reverse_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.reverse_path_node_ids,
+            road_ids=pair.reverse_path_road_ids,
+            total_length=38.0,
+        ),
+        road_ids=("r1", "r2", "r3", "r4", "r5", "r6"),
+        signed_area=100.0,
+        total_length=78.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=10.0,
+        is_bidirectional_minimal_loop=True,
+    )
+    context = _minimal_context(
+        [],
+        semantic_nodes={
+            "SUPPORT": _semantic_node_record(
+                "SUPPORT",
+                kind_2=0,
+                raw_kind=2048,
+                grade_2=0,
+                raw_grade=3,
+                cross_flag=2,
+            ),
+            "WEAK_1": _semantic_node_record(
+                "WEAK_1",
+                kind_2=0,
+                raw_kind=1,
+                grade_2=0,
+                raw_grade=3,
+                cross_flag=0,
+            ),
+            "WEAK_2": _semantic_node_record(
+                "WEAK_2",
+                kind_2=0,
+                raw_kind=1,
+                grade_2=0,
+                raw_grade=3,
+                cross_flag=0,
+            ),
+            "WEAK_3": _semantic_node_record(
+                "WEAK_3",
+                kind_2=0,
+                raw_kind=1,
+                grade_2=0,
+                raw_grade=3,
+                cross_flag=0,
+            ),
+        },
+    )
+
+    gate_info = step2_segment_poc._tjunction_vertical_tracking_gate_info(
+        pair,
+        candidate=candidate,
+        context=context,
+    )
+
+    assert gate_info is not None
+    assert gate_info["t_junction_vertical_tracking_blocked"] is True
+    assert gate_info["t_junction_support_anchor_node_ids"] == ["SUPPORT"]
+    assert gate_info["t_junction_weak_connector_node_ids"] == ["WEAK_1", "WEAK_2", "WEAK_3"]
+
+
+def test_bidirectional_side_bypass_gate_blocks_large_mixed_kind_loop() -> None:
+    pair = step1_pair_poc.PairRecord(
+        pair_id="PAIR_BYPASS",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "HG_1", "HG_2", "WEAK", "MID", "B"),
+        forward_path_road_ids=("r1", "r2", "r3", "r4", "r5"),
+        reverse_path_node_ids=("B", "HG_3", "HG_4", "WEAK", "TAIL", "A"),
+        reverse_path_road_ids=("r6", "r7", "r8", "r9", "r10"),
+        through_node_ids=(),
+    )
+    candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.forward_path_node_ids,
+            road_ids=pair.forward_path_road_ids,
+            total_length=60.0,
+        ),
+        reverse_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.reverse_path_node_ids,
+            road_ids=pair.reverse_path_road_ids,
+            total_length=59.0,
+        ),
+        road_ids=("r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"),
+        signed_area=180.0,
+        total_length=119.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=6.0,
+        is_bidirectional_minimal_loop=True,
+    )
+    roads = [
+        _road_record("r1", "A", "HG_1", road_kind=3),
+        _road_record("r2", "HG_1", "HG_2", road_kind=3),
+        _road_record("r3", "HG_2", "WEAK", road_kind=3),
+        _road_record("r4", "WEAK", "MID", road_kind=2),
+        _road_record("r5", "MID", "B", road_kind=2),
+        _road_record("r6", "B", "HG_3", road_kind=2),
+        _road_record("r7", "HG_3", "HG_4", road_kind=3),
+        _road_record("r8", "HG_4", "WEAK", road_kind=3),
+        _road_record("r9", "WEAK", "TAIL", road_kind=2),
+        _road_record("r10", "TAIL", "A", road_kind=2),
+    ]
+    context = _minimal_context(
+        roads,
+        semantic_nodes={
+            "HG_1": _semantic_node_record("HG_1", kind_2=4, grade_2=3, cross_flag=2),
+            "HG_2": _semantic_node_record("HG_2", kind_2=4, grade_2=3, cross_flag=2),
+            "HG_3": _semantic_node_record("HG_3", kind_2=4, grade_2=3, cross_flag=2),
+            "HG_4": _semantic_node_record("HG_4", kind_2=4, grade_2=3, cross_flag=2),
+            "WEAK": _semantic_node_record("WEAK", kind_2=1, grade_2=3, cross_flag=0),
+            "MID": _semantic_node_record("MID", kind_2=0, grade_2=0),
+            "TAIL": _semantic_node_record("TAIL", kind_2=0, grade_2=0),
+        },
+    )
+
+    gate_info = step2_segment_poc._bidirectional_side_bypass_gate_info(
+        pair,
+        candidate=candidate,
+        context=context,
+    )
+
+    assert gate_info is not None
+    assert gate_info["bidirectional_side_bypass_blocked"] is True
+    assert gate_info["bidirectional_side_bypass_high_grade_node_ids"] == ["HG_1", "HG_2", "HG_3", "HG_4"]
+    assert gate_info["bidirectional_side_bypass_weak_connector_node_ids"] == ["WEAK"]
+
+
+def test_bidirectional_side_bypass_gate_keeps_small_minimal_loop() -> None:
+    pair = step1_pair_poc.PairRecord(
+        pair_id="PAIR_SMALL_LOOP",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "MID", "B"),
+        forward_path_road_ids=("r1", "r2"),
+        reverse_path_node_ids=("B", "MID", "A"),
+        reverse_path_road_ids=("r3", "r4"),
+        through_node_ids=(),
+    )
+    candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.forward_path_node_ids,
+            road_ids=pair.forward_path_road_ids,
+            total_length=20.0,
+        ),
+        reverse_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.reverse_path_node_ids,
+            road_ids=pair.reverse_path_road_ids,
+            total_length=19.0,
+        ),
+        road_ids=("r1", "r2", "r3", "r4"),
+        signed_area=90.0,
+        total_length=39.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=4.0,
+        is_bidirectional_minimal_loop=True,
+    )
+    roads = [
+        _road_record("r1", "A", "MID", road_kind=2),
+        _road_record("r2", "MID", "B", road_kind=2),
+        _road_record("r3", "B", "MID", road_kind=2),
+        _road_record("r4", "MID", "A", road_kind=2),
+    ]
+    context = _minimal_context(
+        roads,
+        semantic_nodes={
+            "MID": _semantic_node_record("MID", kind_2=1, grade_2=1, cross_flag=0),
+        },
+    )
+
+    gate_info = step2_segment_poc._bidirectional_side_bypass_gate_info(
+        pair,
+        candidate=candidate,
+        context=context,
+    )
+
+    assert gate_info is None
+
+
+def test_pair_arbitration_rows_and_component_payload_include_strong_anchor_fields() -> None:
+    validation = replace(
+        _validation_result(
+            "PAIR_A_B",
+            "A",
+            "B",
+            pruned_road_ids=("r1",),
+            trunk_road_ids=("r1",),
+            segment_road_ids=("r1",),
+        ),
+        single_pair_legal=True,
+        arbitration_status="win",
+        arbitration_component_id="component_0001",
+        arbitration_option_id="PAIR_A_B::opt_01",
+    )
+    outcome = step2_arbitration.PairArbitrationOutcome(
+        selected_options_by_pair_id={},
+        decisions=[
+            step2_arbitration.PairArbitrationDecision(
+                pair_id="PAIR_A_B",
+                component_id="component_0001",
+                single_pair_legal=True,
+                arbitration_status="win",
+                endpoint_boundary_penalty=0,
+                strong_anchor_win_count=1,
+                corridor_naturalness_score=1,
+                contested_trunk_coverage_count=2,
+                contested_trunk_coverage_ratio=1.0,
+                internal_endpoint_penalty=0,
+                body_connectivity_support=12.5,
+                semantic_conflict_penalty=0,
+                lose_reason="",
+                selected_option_id="PAIR_A_B::opt_01",
+            )
+        ],
+        conflict_records=[],
+        components=[
+            step2_arbitration.ConflictComponentSummary(
+                component_id="component_0001",
+                pair_ids=("PAIR_A_B", "PAIR_C_D"),
+                contested_road_ids=("r1", "r2"),
+                strong_anchor_node_ids=("500588029",),
+                exact_solver_used=True,
+                fallback_greedy_used=False,
+                selected_option_ids=("PAIR_A_B::opt_01",),
+            )
+        ],
+    )
+
+    rows = list(step2_segment_poc._iter_pair_arbitration_rows([validation], outcome))
+    payload = step2_segment_poc._pair_conflict_components_payload(outcome)
+
+    assert rows[0]["strong_anchor_win_count"] == 1
+    assert rows[0]["contested_trunk_coverage_count"] == 2
+    assert payload[0]["strong_anchor_node_ids"] == ["500588029"]
+    assert payload[0]["component_size"] == 2

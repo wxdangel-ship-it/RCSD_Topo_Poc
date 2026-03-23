@@ -27,6 +27,9 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _coerce_int, _find_repo_root, _normalize_id, _sort_key
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
 from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import (
+    _filter_active_road_ids_excluding_right_turn,
+    _identify_right_turn_only_side_pseudojunction_ids,
+    _filter_right_turn_only_side_boundary_ids,
     _current_closed_con,
     _current_grade_2,
     _current_kind_2,
@@ -168,7 +171,7 @@ def _step5b_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
 
 
 def _step5c_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
-    return (kind_2 == 1 or is_full_through_or_t_kind(kind_2)) and grade_2 in {1, 2, 3}
+    return is_full_through_or_t_kind(kind_2) and grade_2 in {1, 2, 3}
 
 
 def _build_group_to_road_ids(
@@ -248,7 +251,9 @@ def collect_rolling_endpoint_pool(
     active_road_ids: set[str],
     historical_seed_node_ids: set[str],
     historical_seed_source_map: dict[str, tuple[str, ...]],
+    excluded_node_ids: set[str] | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, tuple[str, ...]]]:
+    excluded_node_ids = set(excluded_node_ids or ())
     node_by_id, mainnode_groups, group_to_road_ids, _, _ = _build_active_semantic_state(
         nodes=nodes,
         roads=roads,
@@ -256,13 +261,15 @@ def collect_rolling_endpoint_pool(
     )
     current_input_candidate_ids: set[str] = set()
     for mainnode_id in sorted(mainnode_groups, key=_sort_key):
+        if mainnode_id in excluded_node_ids:
+            continue
         if not group_to_road_ids.get(mainnode_id):
             continue
         representative = node_by_id[mainnode_groups[mainnode_id].representative_node_id]
         if _is_step5c_current_input_candidate(representative):
             current_input_candidate_ids.add(mainnode_id)
 
-    rolling_endpoint_pool_ids = set(historical_seed_node_ids) | current_input_candidate_ids
+    rolling_endpoint_pool_ids = (set(historical_seed_node_ids) - excluded_node_ids) | current_input_candidate_ids
     endpoint_source_map: dict[str, tuple[str, ...]] = {}
     for node_id in sorted(rolling_endpoint_pool_ids, key=_sort_key):
         tags = set(historical_seed_source_map.get(node_id, ()))
@@ -391,6 +398,7 @@ def _build_step5c_adaptive_context(
     active_road_ids: set[str],
     historical_seed_node_ids: set[str],
     historical_seed_source_map: dict[str, tuple[str, ...]],
+    excluded_node_ids: set[str] | None = None,
 ) -> Step5CAdaptiveContext:
     rolling_endpoint_pool_ids, current_input_candidate_ids, endpoint_source_map = collect_rolling_endpoint_pool(
         nodes=nodes,
@@ -398,6 +406,7 @@ def _build_step5c_adaptive_context(
         active_road_ids=active_road_ids,
         historical_seed_node_ids=historical_seed_node_ids,
         historical_seed_source_map=historical_seed_source_map,
+        excluded_node_ids=excluded_node_ids,
     )
     protected_hard_stop_ids = collect_protected_hard_stop_set(
         nodes=nodes,
@@ -660,6 +669,7 @@ def _build_phase_inputs(
     nodes: list[NodeFeatureRecord],
     roads: list[RoadFeatureRecord],
     active_road_ids: set[str],
+    pseudo_junction_ids: set[str],
     out_root: Path,
     base_match: Callable[[Optional[int], Optional[int]], bool],
     historical_seed_node_ids: set[str],
@@ -690,6 +700,8 @@ def _build_phase_inputs(
         grade_2 = _current_grade_2(representative)
         kind_2 = _current_kind_2(representative)
         is_historical_seed = mainnode_id in historical_seed_node_ids
+        if mainnode_id in pseudo_junction_ids and not is_historical_seed:
+            continue
         if mainnode_id in hard_stop_node_ids and not is_historical_seed:
             continue
         if not is_historical_seed and not base_match(grade_2, kind_2):
@@ -703,7 +715,7 @@ def _build_phase_inputs(
     for node in nodes:
         props = dict(node.properties)
         is_historical_boundary = node.semantic_node_id in hard_stop_node_ids
-        is_eligible = node.semantic_node_id in eligible_mainnode_ids
+        is_eligible = node.semantic_node_id in eligible_mainnode_ids and node.semantic_node_id not in pseudo_junction_ids
         props["grade_2"] = 1 if is_eligible else 0
         props["kind_2"] = 4 if is_eligible else 0
         props[f"{phase_lower}_input_eligible"] = is_eligible
@@ -771,6 +783,7 @@ def _build_step5c_adaptive_phase_inputs(
     out_root: Path,
     historical_seed_node_ids: set[str],
     historical_seed_source_map: dict[str, tuple[str, ...]],
+    pseudo_junction_ids: set[str],
 ) -> tuple[PhaseInputArtifacts, Step5CAdaptiveContext]:
     adaptive_context = _build_step5c_adaptive_context(
         nodes=nodes,
@@ -778,6 +791,7 @@ def _build_step5c_adaptive_phase_inputs(
         active_road_ids=active_road_ids,
         historical_seed_node_ids=historical_seed_node_ids,
         historical_seed_source_map=historical_seed_source_map,
+        excluded_node_ids=pseudo_junction_ids,
     )
     phase_lower = STEP5C_STRATEGY_ID.lower()
     reason_by_node_id = {str(row["node_id"]): str(row["reason"]) for row in adaptive_context.demote_audit_rows}
@@ -1382,16 +1396,32 @@ def run_step5_staged_residual_graph(
         for segmentid in (_current_segmentid(road),)
         if segmentid is not None
     }
-    active_road_ids_step5a = {
+    active_road_ids_step5a_raw = {
         road.road_id
         for road in roads
         if road.road_id not in historical_segment_road_ids and is_allowed_road_kind(road.road_kind)
     }
+    step5a_pseudo_junction_ids = _identify_right_turn_only_side_pseudojunction_ids(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids_step5a_raw,
+    )
+    active_road_ids_step5a = _filter_active_road_ids_excluding_right_turn(
+        roads=roads,
+        active_road_ids=active_road_ids_step5a_raw,
+    )
+    historical_boundary_ids, _demoted_step5a_boundary_ids = _filter_right_turn_only_side_boundary_ids(
+        nodes=nodes,
+        roads=roads,
+        boundary_ids=historical_boundary_ids,
+        active_road_ids=active_road_ids_step5a_raw,
+    )
     step5a_input = _build_phase_inputs(
         phase_id=STEP5A_STRATEGY_ID,
         nodes=nodes,
         roads=roads,
         active_road_ids=active_road_ids_step5a,
+        pseudo_junction_ids=step5a_pseudo_junction_ids,
         out_root=resolved_out_root,
         base_match=_step5a_base_match,
         historical_seed_node_ids=historical_boundary_ids,
@@ -1409,7 +1439,6 @@ def run_step5_staged_residual_graph(
     )
     used_segmentids.update(phase_a.assigned_segment_ids)
     step5b_historical_seed_node_ids = set(step5a_input.endpoint_pool_ids)
-    step5b_hard_stop_node_ids = set(step5a_input.endpoint_pool_ids)
     combined_boundary_source_map = dict(step5a_input.endpoint_pool_source_map)
     if debug:
         _write_boundary_node_outputs(
@@ -1418,12 +1447,29 @@ def run_step5_staged_residual_graph(
             boundary_source_map=combined_boundary_source_map,
         )
 
-    active_road_ids_step5b = set(active_road_ids_step5a) - set(phase_a.road_to_segmentid)
+    active_road_ids_step5b_raw = set(active_road_ids_step5a_raw) - set(phase_a.road_to_segmentid)
+    step5b_pseudo_junction_ids = _identify_right_turn_only_side_pseudojunction_ids(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids_step5b_raw,
+    )
+    active_road_ids_step5b = _filter_active_road_ids_excluding_right_turn(
+        roads=roads,
+        active_road_ids=active_road_ids_step5b_raw,
+    )
+    step5b_historical_seed_node_ids, _demoted_step5b_boundary_ids = _filter_right_turn_only_side_boundary_ids(
+        nodes=nodes,
+        roads=roads,
+        boundary_ids=step5b_historical_seed_node_ids,
+        active_road_ids=active_road_ids_step5b_raw,
+    )
+    step5b_hard_stop_node_ids = set(step5b_historical_seed_node_ids)
     step5b_input = _build_phase_inputs(
         phase_id=STEP5B_STRATEGY_ID,
         nodes=nodes,
         roads=roads,
         active_road_ids=active_road_ids_step5b,
+        pseudo_junction_ids=step5b_pseudo_junction_ids,
         out_root=resolved_out_root,
         base_match=_step5b_base_match,
         historical_seed_node_ids=step5b_historical_seed_node_ids,
@@ -1450,7 +1496,22 @@ def run_step5_staged_residual_graph(
             boundary_source_map=combined_boundary_source_map,
         )
 
-    active_road_ids_step5c = set(active_road_ids_step5b) - set(phase_b.road_to_segmentid)
+    active_road_ids_step5c_raw = set(active_road_ids_step5b_raw) - set(phase_b.road_to_segmentid)
+    step5c_pseudo_junction_ids = _identify_right_turn_only_side_pseudojunction_ids(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids_step5c_raw,
+    )
+    active_road_ids_step5c = _filter_active_road_ids_excluding_right_turn(
+        roads=roads,
+        active_road_ids=active_road_ids_step5c_raw,
+    )
+    step5c_historical_seed_node_ids, _demoted_step5c_boundary_ids = _filter_right_turn_only_side_boundary_ids(
+        nodes=nodes,
+        roads=roads,
+        boundary_ids=step5c_historical_seed_node_ids,
+        active_road_ids=active_road_ids_step5c_raw,
+    )
     step5c_input, step5c_adaptive_context = _build_step5c_adaptive_phase_inputs(
         nodes=nodes,
         roads=roads,
@@ -1458,6 +1519,7 @@ def run_step5_staged_residual_graph(
         out_root=resolved_out_root,
         historical_seed_node_ids=step5c_historical_seed_node_ids,
         historical_seed_source_map=combined_boundary_source_map,
+        pseudo_junction_ids=step5c_pseudo_junction_ids,
     )
     phase_c = _run_phase(
         phase_input=step5c_input,

@@ -65,9 +65,24 @@
 - 当前双向构段统一前置过滤：
   - node：`closed_con in {2,3}`
   - road：`road_kind != 1`
+- 右转专用道约束：
+  - `formway bit7` 的右转专用道不进入 Step1-Step5 的 Segment 构建图
+  - 若节点去除右转专用道后不再构成真实路口，则该节点不得作为构段路口、through 路口或 residual graph boundary
+  - 因而不得以“挂接右转专用道的路口仍是 through 硬切断点”作为业务规则
+  - `kind_2 = 1` 若仅由右转专用道挂接产生，不得作为正式路口进入构段
 - 当前双向构段统一 gate：
   - `MAX_DUAL_CARRIAGEWAY_SEPARATION_M = 50.0`
   - `MAX_SIDE_ACCESS_DISTANCE_M = 50.0`
+- Step2 单侧旁路系统的保留口径：
+  - 只允许“单向且与主路平行”的 side corridor / bypass system 继续留在 `segment_body`
+  - 若 non-trunk component 含任意双向 side road，即使 attachment flow 与 parallel corridor 其余指标满足，也不得视为合法单侧旁路
+  - 此类 component 统一转入 `step3_residual`
+- Step2 / Step4 / Step5 全阶段 T 型路口前置门禁：
+  - 若某个 trunk candidate 属于 `bidirectional_minimal_loop`
+  - 且内部路径表现为“弱 connector node 串接 + 内部 T-support / support anchor 闭合”
+  - 则该 pair 在 `single-pair validation` 直接以 `t_junction_vertical_tracking_blocked` 拒绝
+  - 只要该 T 型路口不是 segment 起点 / 终点，该规则在 Step2 / Step4 / Step5A / Step5B / Step5C 都必须生效
+  - 该类 pair 不进入 same-stage pair arbitration，也不得在后续阶段重新构出
 
 ## 5. Step6 正式纳入后的定义
 
@@ -158,3 +173,48 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
   - Step6 复用 Step5 已构建的 `mainnode_groups`
   - Step6 复用 Step5 已构建的 `group_to_allowed_road_ids`
   - Step5 的别名 refreshed 输出仅在 `debug=true` 下保留
+
+## 9. Step2 同阶段合法 pair 冲突仲裁
+
+### 9.1 业务定义
+- 单 pair 通过 Step2 硬合法性校验，只能说明其自身合法，不代表其在同阶段 corridor 竞争中一定应被最终保留。
+- Step2 当前新增 same-stage pair arbitration：先收集单 pair 合法候选，再在同阶段 conflict component 内做仲裁，最后才固化 `validated_pairs_final / segment_body / step3_residual`。
+
+### 9.2 conflict component
+- 若两个合法 pair 在以下任一层面发生竞争，则视为冲突：
+  - `trunk_road_ids` overlap
+  - `segment_body candidate / segment_body` overlap
+  - 关键 corridor roads overlap
+- Step2 先构建 pair-level conflict graph，再按连通分量提取 `conflict components`。
+- 仲裁仅在每个 component 内局部进行，不引入全局网络级优化器。
+
+### 9.3 仲裁对象
+- 仲裁对象不是裸 `pair_id`，而是：
+  - `single-pair legal pair`
+  - 加上其 `trunk / segment_body candidate` 组合
+- 也就是说，最终保留结果同时考虑：
+  - pair 是否合法
+  - corridor 是否更自然地归属于该 pair
+  - 该 pair 对最终 `segment_body` 的支撑是否更完整
+
+### 9.4 当前优选维度
+- `contested_trunk_coverage_count / contested_trunk_coverage_ratio`
+- `endpoint_boundary_penalty`
+- `internal_endpoint_penalty`
+- `body_connectivity_support`
+- `semantic_conflict_penalty`
+- `strong_anchor_win_count`
+- 若仍打平，再使用稳定可复现的 tie-break（当前实现使用稳定字典序）
+
+### 9.5 solver 口径
+- 小型 component 使用 exact 组合搜索。
+- 大型 component 可降级为 fallback greedy，但必须在审计中显式记录：
+  - `exact_solver_used`
+  - `fallback_greedy_used`
+- 当前仲裁目标是显著摆脱“固定顺序先到先得”，而不是一次性引入全局最优求解器。
+
+### 9.6 XXXS7 作为定点样例
+- `S2:1019883__1026500`
+- `S2:1026500__1026503`
+- `500588029`
+- 该组样例用于验证：在两个 pair 均合法时，Step2 能否表达“`500588029` 更自然归属于 `1026500__1026503`”。

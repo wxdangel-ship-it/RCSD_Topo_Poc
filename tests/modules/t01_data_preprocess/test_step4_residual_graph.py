@@ -255,6 +255,102 @@ def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path:
     assert {row["pair_id"] for row in validated_rows} == {"STEP4:1__300"}
 
 
+def test_step4_does_not_keep_kind1_pseudojunction_boundary_created_only_by_right_turn_lane(
+    tmp_path: Path,
+) -> None:
+    input_dir = tmp_path / "input_kind1"
+    input_dir.mkdir()
+    s2_dir = input_dir / "S2"
+    s2_dir.mkdir()
+    (s2_dir / "endpoint_pool.csv").write_text(
+        "node_id,source_tags\n2,S2\n",
+        encoding="utf-8",
+    )
+
+    node_path = input_dir / "nodes.geojson"
+    road_path = input_dir / "roads.geojson"
+    out_root = tmp_path / "out_kind1"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, grade_2=2, kind_2=2048, closed_con=2),
+            _node_feature(2, 1.0, 0.0, grade_2=3, kind_2=1, closed_con=2),
+            _node_feature(3, 2.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(4, 1.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [1.0, 0.0]]),
+            _road_feature("r23", 2, 3, 0, [[1.0, 0.0], [2.0, 0.0]]),
+            _road_feature("r24_right_turn", 2, 4, 0, [[1.0, 0.0], [1.0, 1.0]], formway=128),
+        ],
+    )
+
+    artifacts = run_step4_residual_graph(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=out_root,
+        run_id="step4_kind1_pseudojunction",
+    )
+
+    strategy_doc = json.loads((artifacts.out_root / "step4_strategy.json").read_text(encoding="utf-8"))
+    assert strategy_doc["force_seed_node_ids"] == []
+    assert strategy_doc["force_terminate_node_ids"] == []
+    assert strategy_doc["hard_stop_node_ids"] == []
+
+    working_roads = _load_geojson(artifacts.out_root / "step4_working_roads.geojson")
+    working_road_ids = {str(feature["properties"]["id"]) for feature in working_roads["features"]}
+    assert "r24_right_turn" not in working_road_ids
+
+    validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
+    assert {row["pair_id"] for row in validated_rows} == {"STEP4:1__3"}
+
+
+def test_step4_does_not_keep_kind4_pseudojunction_created_only_by_right_turn_lane(
+    tmp_path: Path,
+) -> None:
+    input_dir = tmp_path / "input_kind4"
+    input_dir.mkdir()
+    node_path = input_dir / "nodes.geojson"
+    road_path = input_dir / "roads.geojson"
+    out_root = tmp_path / "out_kind4"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(2, 1.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(3, 2.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(4, 1.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [1.0, 0.0]]),
+            _road_feature("r23", 2, 3, 0, [[1.0, 0.0], [2.0, 0.0]]),
+            _road_feature("r24_right_turn", 2, 4, 0, [[1.0, 0.0], [1.0, 1.0]], formway=128),
+        ],
+    )
+
+    artifacts = run_step4_residual_graph(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=out_root,
+        run_id="step4_kind4_pseudojunction",
+    )
+
+    working_nodes = _load_geojson(artifacts.out_root / "step4_working_nodes.geojson")
+    node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in working_nodes["features"]}
+    assert node_props["2"]["step4_input_eligible"] is False
+
+    validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
+    assert {row["pair_id"] for row in validated_rows} == {"STEP4:1__3"}
+
+
 def test_step4_requires_initialized_working_layers(tmp_path: Path) -> None:
     node_path = tmp_path / "raw_nodes.geojson"
     road_path = tmp_path / "raw_roads.geojson"

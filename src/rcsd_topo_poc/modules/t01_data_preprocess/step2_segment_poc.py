@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import inspect
 import json
 from collections import defaultdict, deque
 from dataclasses import dataclass, replace
@@ -21,6 +22,12 @@ from rcsd_topo_poc.modules.t01_data_preprocess.endpoint_pool import (
     write_endpoint_pool_outputs,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.step2_arbitration import (
+    PairArbitrationDecision,
+    PairArbitrationOption,
+    PairArbitrationOutcome,
+    arbitrate_pair_options,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     PairRecord,
     RoadRecord,
@@ -99,6 +106,11 @@ class PairValidationResult:
     transition_same_dir_blocked: bool
     support_info: dict[str, Any]
     conflict_pair_id: Optional[str] = None
+    single_pair_legal: bool = False
+    arbitration_status: str = "unresolved"
+    arbitration_component_id: str = ""
+    arbitration_option_id: Optional[str] = None
+    lose_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -110,6 +122,13 @@ class Step2StrategyResult:
 
 
 @dataclass(frozen=True)
+class _TrunkEvaluationChoice:
+    candidate: TrunkCandidate
+    warning_codes: tuple[str, ...]
+    support_info: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class NonTrunkComponent:
     component_id: str
     road_ids: tuple[str, ...]
@@ -117,6 +136,8 @@ class NonTrunkComponent:
     attachment_node_ids: tuple[str, ...]
     internal_support_attachment_node_ids: tuple[str, ...]
     internal_t_support_attachment_node_ids: tuple[str, ...]
+    component_directionality: str
+    bidirectional_road_ids: tuple[str, ...]
     attachment_flow_status: str
     attachment_direction_labels: tuple[str, ...]
     parallel_corridor_directionality: str
@@ -425,6 +446,97 @@ def _build_segment_body_candidate_channel(
             retained_non_trunk_road_ids.update(component_road_ids)
 
     return set(trunk_road_ids) | retained_non_trunk_road_ids
+
+
+def _expand_segment_body_allowed_road_ids(
+    *,
+    pruned_road_ids: set[str],
+    branch_cut_infos: list[dict[str, Any]],
+    undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
+    boundary_node_ids: set[str],
+    road_endpoints: dict[str, tuple[str, str]],
+) -> set[str]:
+    """Recover local bridge roads between branch-backtrack-pruned fragments.
+
+    Trunk search intentionally keeps a narrow candidate channel, and prune may
+    cut side-corridor attachments as backtracking leaves. For segment_body
+    recovery we only stitch short local bridge components between those pruned
+    branch anchors, while avoiding an unrestricted walk over the whole graph.
+    """
+
+    allowed_road_ids = set(pruned_road_ids)
+    backtrack_infos = [
+        info
+        for info in branch_cut_infos
+        if str(info.get("cut_reason", "")) == "branch_backtrack_prune" and info.get("road_id") in road_endpoints
+    ]
+    if not backtrack_infos:
+        return allowed_road_ids
+
+    normalized_backtrack_infos = [
+        (
+            str(info["road_id"]),
+            str(info["from_node_id"]),
+            str(info["to_node_id"]),
+        )
+        for info in backtrack_infos
+        if info.get("from_node_id") and info.get("to_node_id")
+    ]
+    if len(normalized_backtrack_infos) < 2:
+        return allowed_road_ids
+
+    max_bridge_depth = 6
+    outer_anchor_node_ids = {anchor_node_id for _, anchor_node_id, _ in normalized_backtrack_infos}
+    branch_anchor_road_ids = {road_id for road_id, _, _ in normalized_backtrack_infos}
+
+    for index, (start_anchor_road_id, start_node_id, start_attach_node_id) in enumerate(normalized_backtrack_infos):
+        for end_anchor_road_id, end_node_id, end_attach_node_id in normalized_backtrack_infos[index + 1 :]:
+            if start_attach_node_id == end_attach_node_id:
+                continue
+            queue: deque[tuple[str, tuple[str, ...], tuple[str, ...]]] = deque(
+                [(start_node_id, (), (start_node_id,))]
+            )
+            visited_states: set[tuple[str, int]] = {(start_node_id, 0)}
+            bridge_path_road_ids: Optional[tuple[str, ...]] = None
+
+            while queue:
+                current_node_id, road_path, node_path = queue.popleft()
+                if len(road_path) >= max_bridge_depth:
+                    continue
+
+                for edge in undirected_adjacency.get(current_node_id, ()):
+                    road_id = edge.road_id
+                    if road_id in allowed_road_ids:
+                        continue
+                    if road_id in branch_anchor_road_ids:
+                        continue
+                    next_node_id = edge.to_node
+                    if next_node_id in node_path:
+                        continue
+                    if next_node_id in boundary_node_ids and next_node_id not in {start_node_id, end_node_id}:
+                        continue
+                    if next_node_id in outer_anchor_node_ids and next_node_id not in {start_node_id, end_node_id}:
+                        continue
+
+                    next_road_path = (*road_path, road_id)
+                    if next_node_id == end_node_id:
+                        bridge_path_road_ids = next_road_path
+                        break
+
+                    state = (next_node_id, len(next_road_path))
+                    if state in visited_states:
+                        continue
+                    visited_states.add(state)
+                    queue.append((next_node_id, next_road_path, (*node_path, next_node_id)))
+
+                if bridge_path_road_ids is not None:
+                    break
+
+            if bridge_path_road_ids:
+                allowed_road_ids.update((start_anchor_road_id, end_anchor_road_id))
+                allowed_road_ids.update(bridge_path_road_ids)
+
+    return allowed_road_ids
 
 
 def _build_incident_map(
@@ -874,6 +986,8 @@ def _component_to_dict(component: NonTrunkComponent) -> dict[str, Any]:
         "attachment_node_ids": list(component.attachment_node_ids),
         "internal_support_attachment_node_ids": list(component.internal_support_attachment_node_ids),
         "internal_t_support_attachment_node_ids": list(component.internal_t_support_attachment_node_ids),
+        "component_directionality": component.component_directionality,
+        "bidirectional_road_ids": list(component.bidirectional_road_ids),
         "attachment_flow_status": component.attachment_flow_status,
         "attachment_direction_labels": list(component.attachment_direction_labels),
         "parallel_corridor_directionality": component.parallel_corridor_directionality,
@@ -1142,6 +1256,10 @@ def _tighten_validated_segment_components(
             component_direction_support_index = _build_direction_support_index_from_adjacency(
                 component_directed_adjacency
             )
+            component_directionality, bidirectional_road_ids = _classify_component_directionality(
+                component_road_ids,
+                roads=context.roads,
+            )
             attachment_flow_status, attachment_direction_labels = _classify_attachment_flow_status(
                 component_road_ids=component_road_ids,
                 attachment_node_ids=attachment_node_ids,
@@ -1181,6 +1299,13 @@ def _tighten_validated_segment_components(
             elif contains_other_validated_trunk:
                 moved_to_branch_cut = True
                 decision_reason = "contains_other_validated_trunk"
+            elif (
+                component_is_body_candidate
+                and len(attachment_node_ids) >= 2
+                and component_directionality != "one_way_only"
+            ):
+                moved_to_step3_residual = True
+                decision_reason = "contains_bidirectional_side_road"
             elif component_is_body_candidate and parallel_corridor_directionality == "bidirectional_parallel":
                 moved_to_step3_residual = True
                 decision_reason = "bidirectional_parallel_corridor"
@@ -1224,6 +1349,8 @@ def _tighten_validated_segment_components(
                 attachment_node_ids=attachment_node_ids,
                 internal_support_attachment_node_ids=internal_support_attachment_node_ids,
                 internal_t_support_attachment_node_ids=internal_t_support_attachment_node_ids,
+                component_directionality=component_directionality,
+                bidirectional_road_ids=bidirectional_road_ids,
                 attachment_flow_status=attachment_flow_status,
                 attachment_direction_labels=attachment_direction_labels,
                 parallel_corridor_directionality=parallel_corridor_directionality,
@@ -1307,6 +1434,7 @@ def _build_filtered_directed_adjacency(
     allowed_road_ids: set[str],
     exclude_left_turn: bool,
     left_turn_formway_bit: int,
+    exclude_formway_bits_any: tuple[int, ...] = (),
 ) -> dict[str, tuple[TraversalEdge, ...]]:
     filtered_lists: dict[str, list[TraversalEdge]] = defaultdict(list)
     for road_id in sorted(allowed_road_ids, key=_sort_key):
@@ -1317,6 +1445,8 @@ def _build_filtered_directed_adjacency(
         if road is None:
             continue
         if exclude_left_turn and _road_matches_formway_bit(road, left_turn_formway_bit):
+            continue
+        if exclude_formway_bits_any and _road_matches_any_formway_bits(road, exclude_formway_bits_any):
             continue
         snode_id, enode_id = endpoints
         if road.direction in {0, 1, 2}:
@@ -1344,6 +1474,30 @@ def _build_direction_support_index_from_adjacency(
         node_id: {road_id: set(directions) for road_id, directions in road_map.items()}
         for node_id, road_map in support_index.items()
     }
+
+
+def _classify_component_directionality(
+    component_road_ids: tuple[str, ...],
+    *,
+    roads: dict[str, RoadRecord],
+) -> tuple[str, tuple[str, ...]]:
+    bidirectional_road_ids = tuple(
+        sorted(
+            (
+                road_id
+                for road_id in component_road_ids
+                if road_id in roads and roads[road_id].direction in {0, 1}
+            ),
+            key=_sort_key,
+        )
+    )
+    if not component_road_ids:
+        return "empty_component", ()
+    if not bidirectional_road_ids:
+        return "one_way_only", ()
+    if len(bidirectional_road_ids) == len(component_road_ids):
+        return "bidirectional_only", bidirectional_road_ids
+    return "mixed_with_bidirectional", bidirectional_road_ids
 
 
 def _collect_transition_same_dir_block_infos(
@@ -1849,7 +2003,157 @@ def _dual_separation_support_info(candidate: Optional[TrunkCandidate]) -> dict[s
     }
 
 
-def _evaluate_trunk(
+def _tjunction_node_kind(node: SemanticNodeRecord) -> int:
+    kind_2 = int(getattr(node, "kind_2", 0) or 0)
+    if kind_2 > 0:
+        return kind_2
+    raw_kind = int(node.raw_properties.get("kind") or node.raw_kind or 0)
+    return raw_kind
+
+
+def _semantic_node_grade(node: SemanticNodeRecord) -> int:
+    grade_2 = int(getattr(node, "grade_2", 0) or 0)
+    if grade_2 > 0:
+        return grade_2
+    raw_grade = int(node.raw_properties.get("grade") or node.raw_grade or 0)
+    return raw_grade
+
+
+def _is_tjunction_weak_connector_node(node: SemanticNodeRecord) -> bool:
+    mainnodeid = node.raw_properties.get("mainnodeid")
+    cross_flag = int(node.raw_properties.get("cross_flag") or 0)
+    node_kind = _tjunction_node_kind(node)
+    return mainnodeid in {None, ""} and len(node.member_node_ids) == 1 and node_kind == 1 and cross_flag == 0
+
+
+def _is_tjunction_support_anchor_node(node: SemanticNodeRecord) -> bool:
+    cross_flag = int(node.raw_properties.get("cross_flag") or 0)
+    node_kind = _tjunction_node_kind(node)
+    return node_kind == 2048 and cross_flag >= 2
+
+
+def _tjunction_vertical_tracking_gate_info(
+    pair: PairRecord,
+    *,
+    candidate: TrunkCandidate,
+    context: Step1GraphContext,
+) -> Optional[dict[str, Any]]:
+    if not candidate.is_bidirectional_minimal_loop:
+        return None
+    if not pair.through_node_ids:
+        return None
+
+    internal_node_ids = (
+        set(candidate.forward_path.node_ids[1:-1]) | set(candidate.reverse_path.node_ids[1:-1])
+    ) - {pair.a_node_id, pair.b_node_id}
+    if not internal_node_ids:
+        return None
+
+    weak_connector_node_ids: list[str] = []
+    support_anchor_node_ids: list[str] = []
+    for node_id in sorted(internal_node_ids, key=_sort_key):
+        node = context.semantic_nodes.get(node_id)
+        if node is None:
+            continue
+        if _is_tjunction_weak_connector_node(node):
+            weak_connector_node_ids.append(node_id)
+        if _is_tjunction_support_anchor_node(node):
+            support_anchor_node_ids.append(node_id)
+
+    if len(weak_connector_node_ids) < 2 or not support_anchor_node_ids:
+        return None
+
+    return {
+        **_dual_separation_support_info(candidate),
+        "t_junction_vertical_tracking_blocked": True,
+        "t_junction_support_anchor_node_ids": support_anchor_node_ids,
+        "t_junction_weak_connector_node_ids": weak_connector_node_ids,
+        "t_junction_through_node_ids": list(pair.through_node_ids),
+    }
+
+
+def _split_tjunction_vertical_tracking_candidates(
+    pair: PairRecord,
+    *,
+    candidates: list[TrunkCandidate],
+    context: Step1GraphContext,
+) -> tuple[list[TrunkCandidate], list[tuple[TrunkCandidate, dict[str, Any]]]]:
+    kept: list[TrunkCandidate] = []
+    blocked: list[tuple[TrunkCandidate, dict[str, Any]]] = []
+    for candidate in candidates:
+        gate_info = _tjunction_vertical_tracking_gate_info(pair, candidate=candidate, context=context)
+        if gate_info is None:
+            kept.append(candidate)
+        else:
+            blocked.append((candidate, gate_info))
+    return kept, blocked
+
+
+def _bidirectional_side_bypass_gate_info(
+    pair: PairRecord,
+    *,
+    candidate: TrunkCandidate,
+    context: Step1GraphContext,
+) -> Optional[dict[str, Any]]:
+    if not candidate.is_bidirectional_minimal_loop:
+        return None
+    if len(candidate.road_ids) < 6:
+        return None
+
+    road_kinds = {int(context.roads[road_id].road_kind or 0) for road_id in candidate.road_ids}
+    if 2 not in road_kinds or not any(road_kind >= 3 for road_kind in road_kinds):
+        return None
+
+    internal_node_ids = (
+        set(candidate.forward_path.node_ids[1:-1]) | set(candidate.reverse_path.node_ids[1:-1])
+    ) - {pair.a_node_id, pair.b_node_id}
+    if not internal_node_ids:
+        return None
+
+    high_grade_support_node_ids: list[str] = []
+    weak_connector_node_ids: list[str] = []
+    for node_id in sorted(internal_node_ids, key=_sort_key):
+        node = context.semantic_nodes.get(node_id)
+        if node is None:
+            continue
+        node_kind = _tjunction_node_kind(node)
+        node_grade = _semantic_node_grade(node)
+        if node_kind == 1 and node_grade >= 2:
+            weak_connector_node_ids.append(node_id)
+            continue
+        if node_kind in {4, 64, 2048} and node_grade >= 2:
+            high_grade_support_node_ids.append(node_id)
+
+    if len(high_grade_support_node_ids) < 3 or len(weak_connector_node_ids) < 1:
+        return None
+
+    return {
+        **_dual_separation_support_info(candidate),
+        "bidirectional_side_bypass_blocked": True,
+        "bidirectional_side_bypass_high_grade_node_ids": high_grade_support_node_ids,
+        "bidirectional_side_bypass_weak_connector_node_ids": weak_connector_node_ids,
+        "bidirectional_side_bypass_road_kind_mix": sorted(road_kinds),
+    }
+
+
+def _split_bidirectional_side_bypass_candidates(
+    pair: PairRecord,
+    *,
+    candidates: list[TrunkCandidate],
+    context: Step1GraphContext,
+) -> tuple[list[TrunkCandidate], list[tuple[TrunkCandidate, dict[str, Any]]]]:
+    kept: list[TrunkCandidate] = []
+    blocked: list[tuple[TrunkCandidate, dict[str, Any]]] = []
+    for candidate in candidates:
+        gate_info = _bidirectional_side_bypass_gate_info(pair, candidate=candidate, context=context)
+        if gate_info is None:
+            kept.append(candidate)
+        else:
+            blocked.append((candidate, gate_info))
+    return kept, blocked
+
+
+def _evaluate_trunk_choices(
     pair: PairRecord,
     *,
     context: Step1GraphContext,
@@ -1858,7 +2162,7 @@ def _evaluate_trunk(
     through_rule: ThroughRuleSpec,
     formway_mode: str,
     left_turn_formway_bit: int,
-) -> tuple[Optional[TrunkCandidate], Optional[str], tuple[str, ...], dict[str, Any]]:
+) -> tuple[list[_TrunkEvaluationChoice], Optional[str], tuple[str, ...], dict[str, Any]]:
     collapsed_candidate: Optional[TrunkCandidate] = None
     collapsed_warnings: tuple[str, ...] = ()
     collapsed_failed_candidate: Optional[TrunkCandidate] = None
@@ -1886,6 +2190,7 @@ def _evaluate_trunk(
         allowed_road_ids=pruned_road_ids,
         exclude_left_turn=False,
         left_turn_formway_bit=left_turn_formway_bit,
+        exclude_formway_bits_any=through_rule.incident_degree_exclude_formway_bits_any,
     )
     base_forward_paths = _enumerate_simple_paths(
         adjacency=base_adjacency,
@@ -1915,6 +2220,7 @@ def _evaluate_trunk(
             allowed_road_ids=pruned_road_ids,
             exclude_left_turn=True,
             left_turn_formway_bit=left_turn_formway_bit,
+            exclude_formway_bits_any=through_rule.incident_degree_exclude_formway_bits_any,
         )
         strict_forward_paths = _enumerate_simple_paths(
             adjacency=strict_adjacency,
@@ -1938,39 +2244,173 @@ def _evaluate_trunk(
         )
         strict_passed_candidates, strict_failed_candidates = _split_dual_separation_candidates(strict_candidates)
         base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(base_candidates)
+        strict_passed_candidates, strict_blocked_candidates = _split_tjunction_vertical_tracking_candidates(
+            pair,
+            candidates=strict_passed_candidates,
+            context=context,
+        )
+        strict_passed_candidates, strict_side_bypass_blocked_candidates = _split_bidirectional_side_bypass_candidates(
+            pair,
+            candidates=strict_passed_candidates,
+            context=context,
+        )
+        base_passed_candidates, base_blocked_candidates = _split_tjunction_vertical_tracking_candidates(
+            pair,
+            candidates=base_passed_candidates,
+            context=context,
+        )
+        base_passed_candidates, base_side_bypass_blocked_candidates = _split_bidirectional_side_bypass_candidates(
+            pair,
+            candidates=base_passed_candidates,
+            context=context,
+        )
         if collapsed_candidate is not None:
-            return collapsed_candidate, None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
+            return [
+                _TrunkEvaluationChoice(
+                    candidate=collapsed_candidate,
+                    warning_codes=collapsed_warnings,
+                    support_info=_dual_separation_support_info(collapsed_candidate),
+                )
+            ], None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
         if strict_passed_candidates:
-            return strict_passed_candidates[0], None, (), _dual_separation_support_info(strict_passed_candidates[0])
+            choices = [
+                _TrunkEvaluationChoice(
+                    candidate=candidate,
+                    warning_codes=(),
+                    support_info=_dual_separation_support_info(candidate),
+                )
+                for candidate in strict_passed_candidates
+            ]
+            return choices, None, (), choices[0].support_info
         if base_passed_candidates:
-            return None, "left_turn_only_polluted_trunk", (), _dual_separation_support_info(base_passed_candidates[0])
+            return [], "left_turn_only_polluted_trunk", (), _dual_separation_support_info(base_passed_candidates[0])
+        if strict_blocked_candidates or base_blocked_candidates:
+            blocked_candidate, blocked_gate_info = min(
+                strict_blocked_candidates or base_blocked_candidates,
+                key=lambda item: (item[0].total_length, len(item[0].road_ids)),
+            )
+            return [], "t_junction_vertical_tracking_blocked", (), {
+                **_dual_separation_support_info(blocked_candidate),
+                **blocked_gate_info,
+            }
+        if strict_side_bypass_blocked_candidates or base_side_bypass_blocked_candidates:
+            blocked_candidate, blocked_gate_info = min(
+                strict_side_bypass_blocked_candidates or base_side_bypass_blocked_candidates,
+                key=lambda item: (item[0].total_length, len(item[0].road_ids)),
+            )
+            return [], "bidirectional_side_bypass_blocked", (), {
+                **_dual_separation_support_info(blocked_candidate),
+                **blocked_gate_info,
+            }
         if strict_failed_candidates or base_failed_candidates or collapsed_failed_candidate is not None:
             failure_candidate = _best_dual_separation_failure(
                 strict_failed_candidates or base_failed_candidates or ([collapsed_failed_candidate] if collapsed_failed_candidate else [])
             )
-            return None, "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(failure_candidate)
+            return [], "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(failure_candidate)
         if strict_clockwise_only or base_clockwise_only:
-            return None, "only_clockwise_loop", (), _dual_separation_support_info(None)
-        return None, "no_valid_trunk", (), _dual_separation_support_info(None)
+            return [], "only_clockwise_loop", (), _dual_separation_support_info(None)
+        return [], "no_valid_trunk", (), _dual_separation_support_info(None)
 
     if collapsed_candidate is not None:
-        return collapsed_candidate, None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
+        return [
+            _TrunkEvaluationChoice(
+                candidate=collapsed_candidate,
+                warning_codes=collapsed_warnings,
+                support_info=_dual_separation_support_info(collapsed_candidate),
+            )
+        ], None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
     base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(base_candidates)
+    base_passed_candidates, base_blocked_candidates = _split_tjunction_vertical_tracking_candidates(
+        pair,
+        candidates=base_passed_candidates,
+        context=context,
+    )
+    base_passed_candidates, base_side_bypass_blocked_candidates = _split_bidirectional_side_bypass_candidates(
+        pair,
+        candidates=base_passed_candidates,
+        context=context,
+    )
     if not base_passed_candidates:
+        if base_blocked_candidates:
+            blocked_candidate, blocked_gate_info = min(
+                base_blocked_candidates,
+                key=lambda item: (item[0].total_length, len(item[0].road_ids)),
+            )
+            return [], "t_junction_vertical_tracking_blocked", (), {
+                **_dual_separation_support_info(blocked_candidate),
+                **blocked_gate_info,
+            }
+        if base_side_bypass_blocked_candidates:
+            blocked_candidate, blocked_gate_info = min(
+                base_side_bypass_blocked_candidates,
+                key=lambda item: (item[0].total_length, len(item[0].road_ids)),
+            )
+            return [], "bidirectional_side_bypass_blocked", (), {
+                **_dual_separation_support_info(blocked_candidate),
+                **blocked_gate_info,
+            }
         if base_failed_candidates or collapsed_failed_candidate is not None:
             failure_candidate = _best_dual_separation_failure(
                 base_failed_candidates or ([collapsed_failed_candidate] if collapsed_failed_candidate else [])
             )
-            return None, "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(failure_candidate)
+            return [], "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(failure_candidate)
         if base_clockwise_only:
-            return None, "only_clockwise_loop", (), _dual_separation_support_info(None)
-        return None, "no_valid_trunk", (), _dual_separation_support_info(None)
+            return [], "only_clockwise_loop", (), _dual_separation_support_info(None)
+        return [], "no_valid_trunk", (), _dual_separation_support_info(None)
 
     warnings: tuple[str, ...] = ()
-    chosen = base_passed_candidates[0]
-    if formway_mode == "audit_only" and chosen.left_turn_road_ids:
-        warnings = ("formway_unreliable_warning",)
-    return chosen, None, warnings, _dual_separation_support_info(chosen)
+    choices = [
+        _TrunkEvaluationChoice(
+            candidate=candidate,
+            warning_codes=("formway_unreliable_warning",) if formway_mode == "audit_only" and candidate.left_turn_road_ids else (),
+            support_info=_dual_separation_support_info(candidate),
+        )
+        for candidate in base_passed_candidates
+    ]
+    if choices:
+        warnings = choices[0].warning_codes
+    return choices, None, warnings, choices[0].support_info
+
+
+def _evaluate_trunk(
+    pair: PairRecord,
+    *,
+    context: Step1GraphContext,
+    pruned_road_ids: set[str],
+    road_endpoints: dict[str, tuple[str, str]],
+    through_rule: ThroughRuleSpec,
+    formway_mode: str,
+    left_turn_formway_bit: int,
+) -> tuple[Optional[TrunkCandidate], Optional[str], tuple[str, ...], dict[str, Any]]:
+    choices, reject_reason, warning_codes, support_info = _evaluate_trunk_choices(
+        pair,
+        context=context,
+        pruned_road_ids=pruned_road_ids,
+        road_endpoints=road_endpoints,
+        through_rule=through_rule,
+        formway_mode=formway_mode,
+        left_turn_formway_bit=left_turn_formway_bit,
+    )
+    if not choices:
+        return None, reject_reason, warning_codes, support_info
+    first_choice = choices[0]
+    return first_choice.candidate, reject_reason, first_choice.warning_codes, first_choice.support_info
+
+
+def _alternative_trunk_only_road_ids(
+    trunk_choices: list[_TrunkEvaluationChoice],
+    *,
+    current_choice_index: int,
+) -> set[str]:
+    if len(trunk_choices) <= 1:
+        return set()
+    current_road_ids = set(trunk_choices[current_choice_index].candidate.road_ids)
+    alternative_road_ids: set[str] = set()
+    for index, choice in enumerate(trunk_choices):
+        if index == current_choice_index:
+            continue
+        alternative_road_ids.update(choice.candidate.road_ids)
+    return alternative_road_ids - current_road_ids
 
 
 def _evaluate_through_collapsed_corridor(
@@ -2030,6 +2470,7 @@ def _evaluate_through_collapsed_corridor(
         allowed_road_ids=set(filtered_support_road_ids),
         exclude_left_turn=formway_mode == "strict",
         left_turn_formway_bit=left_turn_formway_bit,
+        exclude_formway_bits_any=through_rule.incident_degree_exclude_formway_bits_any,
     )
     forward_paths = _enumerate_simple_paths(
         adjacency=support_adjacency,
@@ -2280,6 +2721,8 @@ def _compact_component_info(info: dict[str, Any]) -> dict[str, Any]:
             "internal_t_support_attachment_node_ids",
             [],
         ),
+        "component_directionality": info.get("component_directionality"),
+        "bidirectional_road_ids": info.get("bidirectional_road_ids", []),
         "attachment_flow_status": info.get("attachment_flow_status"),
         "attachment_direction_labels": info.get("attachment_direction_labels", []),
         "parallel_corridor_directionality": info.get("parallel_corridor_directionality"),
@@ -2411,6 +2854,161 @@ def _compact_validation_result_for_release(
         branch_cut_road_ids=(),
         boundary_terminate_node_ids=(),
         support_info=support_info,
+    )
+
+
+def _road_length_index(context: Step1GraphContext) -> dict[str, float]:
+    return {
+        road_id: _geometry_length(road.geometry)
+        for road_id, road in context.roads.items()
+    }
+
+
+def _road_node_index(road_endpoints: dict[str, tuple[str, str]]) -> dict[str, tuple[str, str]]:
+    return dict(road_endpoints)
+
+
+def _arbitration_boundary_node_ids(
+    execution: Step1StrategyExecution,
+    *,
+    hard_stop_node_ids: set[str],
+) -> set[str]:
+    return set(execution.seed_ids) | set(execution.terminate_ids) | set(hard_stop_node_ids)
+
+
+def _arbitration_semantic_conflict_node_ids(context: Step1GraphContext) -> set[str]:
+    result: set[str] = set()
+    for semantic_node_id, node in context.semantic_nodes.items():
+        if node.kind_2 in {4, 64, 2048} and node.grade_2 in {1, 2, 3}:
+            result.add(semantic_node_id)
+    return result
+
+
+def _arbitration_strong_anchor_node_ids(context: Step1GraphContext) -> set[str]:
+    result: set[str] = set()
+    for semantic_node_id, node in context.semantic_nodes.items():
+        if node.kind_2 in {4, 64, 2048} and node.grade_2 >= 2:
+            result.add(semantic_node_id)
+    return result
+
+
+def _arbitration_tjunction_anchor_node_ids(context: Step1GraphContext) -> set[str]:
+    result: set[str] = set()
+    for semantic_node_id, node in context.semantic_nodes.items():
+        if _is_tjunction_support_anchor_node(node):
+            result.add(semantic_node_id)
+    return result
+
+
+def _arbitration_weak_endpoint_node_ids(context: Step1GraphContext) -> set[str]:
+    result: set[str] = set()
+    for semantic_node_id, node in context.semantic_nodes.items():
+        mainnodeid = node.raw_properties.get("mainnodeid")
+        if mainnodeid in {None, ""} and len(node.member_node_ids) == 1:
+            result.add(semantic_node_id)
+    return result
+
+
+def _pair_validation_from_option(
+    option: PairArbitrationOption,
+    *,
+    decision: PairArbitrationDecision,
+    conflict_pair_id: Optional[str],
+    left_turn_excluded_mode: str,
+    compact_release_payloads: bool,
+) -> PairValidationResult:
+    support_info = dict(option.support_info)
+    support_info["arbitration"] = {
+        "component_id": decision.component_id,
+        "status": decision.arbitration_status,
+        "selected_option_id": decision.selected_option_id,
+        "endpoint_boundary_penalty": decision.endpoint_boundary_penalty,
+        "strong_anchor_win_count": decision.strong_anchor_win_count,
+        "corridor_naturalness_score": decision.corridor_naturalness_score,
+        "contested_trunk_coverage_count": decision.contested_trunk_coverage_count,
+        "contested_trunk_coverage_ratio": decision.contested_trunk_coverage_ratio,
+        "internal_endpoint_penalty": decision.internal_endpoint_penalty,
+        "body_connectivity_support": decision.body_connectivity_support,
+        "semantic_conflict_penalty": decision.semantic_conflict_penalty,
+        "lose_reason": decision.lose_reason,
+    }
+    result = PairValidationResult(
+        pair_id=option.pair_id,
+        a_node_id=option.a_node_id,
+        b_node_id=option.b_node_id,
+        candidate_status="candidate",
+        validated_status="validated" if decision.arbitration_status == "win" else "rejected",
+        reject_reason=None if decision.arbitration_status == "win" else decision.lose_reason,
+        trunk_mode=option.trunk_mode,
+        trunk_found=True,
+        counterclockwise_ok=option.counterclockwise_ok,
+        left_turn_excluded_mode=left_turn_excluded_mode,
+        warning_codes=option.warning_codes,
+        candidate_channel_road_ids=option.candidate_channel_road_ids,
+        pruned_road_ids=option.pruned_road_ids,
+        trunk_road_ids=option.trunk_road_ids,
+        segment_road_ids=option.segment_road_ids if decision.arbitration_status == "win" else (),
+        residual_road_ids=(),
+        branch_cut_road_ids=option.branch_cut_road_ids,
+        boundary_terminate_node_ids=option.boundary_terminate_node_ids,
+        transition_same_dir_blocked=option.transition_same_dir_blocked,
+        support_info=support_info,
+        conflict_pair_id=conflict_pair_id,
+        single_pair_legal=True,
+        arbitration_status=decision.arbitration_status,
+        arbitration_component_id=decision.component_id,
+        arbitration_option_id=decision.selected_option_id,
+        lose_reason=decision.lose_reason,
+    )
+    if compact_release_payloads:
+        result = _compact_validation_result_for_release(
+            result,
+            keep_tighten_fields=decision.arbitration_status == "win",
+        )
+    return result
+
+
+def _single_pair_illegal_validation(
+    validation: PairValidationResult,
+    *,
+    decision: PairArbitrationDecision,
+    compact_release_payloads: bool,
+) -> PairValidationResult:
+    current = replace(
+        validation,
+        single_pair_legal=False,
+        arbitration_status="lose",
+        arbitration_component_id="",
+        arbitration_option_id=None,
+        lose_reason=decision.lose_reason,
+    )
+    support_info = dict(current.support_info)
+    support_info["arbitration"] = {
+        "component_id": "",
+        "status": "lose",
+        "selected_option_id": None,
+        "endpoint_boundary_penalty": 0,
+        "strong_anchor_win_count": 0,
+        "corridor_naturalness_score": 0,
+        "contested_trunk_coverage_count": 0,
+        "contested_trunk_coverage_ratio": 0.0,
+        "internal_endpoint_penalty": 0,
+        "body_connectivity_support": 0.0,
+        "semantic_conflict_penalty": 0,
+        "lose_reason": decision.lose_reason,
+    }
+    current = replace(current, support_info=support_info)
+    if compact_release_payloads:
+        current = _compact_validation_result_for_release(current, keep_tighten_fields=False)
+    return current
+
+
+def _empty_pair_arbitration_outcome() -> PairArbitrationOutcome:
+    return PairArbitrationOutcome(
+        selected_options_by_pair_id={},
+        decisions=[],
+        conflict_records=[],
+        components=[],
     )
 
 
@@ -2740,6 +3338,177 @@ def _iter_step3_residual_member_features(
             )
 
 
+def _iter_validated_final_rows(validations: list[PairValidationResult]) -> Iterable[dict[str, Any]]:
+    for validation in validations:
+        yield {
+            "pair_id": validation.pair_id,
+            "a_node_id": validation.a_node_id,
+            "b_node_id": validation.b_node_id,
+            "single_pair_legal": validation.single_pair_legal,
+            "arbitration_status": validation.arbitration_status,
+            "validated_status": validation.validated_status,
+            "lose_reason": validation.lose_reason,
+            "trunk_mode": validation.trunk_mode,
+            "segment_body_road_count": _validation_road_count(
+                validation.segment_road_ids,
+                validation.support_info,
+                "segment_body_road_count",
+            ),
+            "residual_road_count": _validation_road_count(
+                validation.residual_road_ids,
+                validation.support_info,
+                "residual_road_count",
+            ),
+        }
+
+
+def _iter_pair_conflict_rows(arbitration_outcome: PairArbitrationOutcome) -> Iterable[dict[str, Any]]:
+    for record in arbitration_outcome.conflict_records:
+        for conflict_type in record.conflict_types:
+            yield {
+                "pair_id": record.pair_id,
+                "conflict_pair_id": record.conflict_pair_id,
+                "conflict_type": conflict_type,
+                "shared_road_count": len(record.shared_road_ids),
+                "shared_trunk_road_count": len(record.shared_trunk_road_ids),
+            }
+
+
+def _pair_conflict_components_payload(arbitration_outcome: PairArbitrationOutcome) -> list[dict[str, Any]]:
+    return [
+        {
+            "component_id": component.component_id,
+            "pair_ids": list(component.pair_ids),
+            "component_size": len(component.pair_ids),
+            "contested_road_ids": list(component.contested_road_ids),
+            "strong_anchor_node_ids": list(component.strong_anchor_node_ids),
+            "exact_solver_used": component.exact_solver_used,
+            "fallback_greedy_used": component.fallback_greedy_used,
+            "selected_option_ids": list(component.selected_option_ids),
+        }
+        for component in arbitration_outcome.components
+    ]
+
+
+def _iter_pair_arbitration_rows(
+    validations: list[PairValidationResult],
+    arbitration_outcome: PairArbitrationOutcome,
+) -> Iterable[dict[str, Any]]:
+    validation_by_pair_id = {validation.pair_id: validation for validation in validations}
+    for decision in arbitration_outcome.decisions:
+        validation = validation_by_pair_id.get(decision.pair_id)
+        if validation is None:
+            continue
+        yield {
+            "pair_id": decision.pair_id,
+            "component_id": decision.component_id,
+            "single_pair_legal": decision.single_pair_legal,
+            "arbitration_status": decision.arbitration_status,
+            "endpoint_boundary_penalty": decision.endpoint_boundary_penalty,
+            "strong_anchor_win_count": decision.strong_anchor_win_count,
+            "corridor_naturalness_score": decision.corridor_naturalness_score,
+            "contested_trunk_coverage_count": decision.contested_trunk_coverage_count,
+            "contested_trunk_coverage_ratio": decision.contested_trunk_coverage_ratio,
+            "internal_endpoint_penalty": decision.internal_endpoint_penalty,
+            "body_connectivity_support": decision.body_connectivity_support,
+            "semantic_conflict_penalty": decision.semantic_conflict_penalty,
+            "lose_reason": decision.lose_reason,
+        }
+
+
+def _iter_corridor_conflict_features(
+    *,
+    context: Step1GraphContext,
+    arbitration_outcome: PairArbitrationOutcome,
+    strategy_id: str,
+) -> Iterable[dict[str, Any]]:
+    pair_ids_by_component_id = {
+        component.component_id: component.pair_ids
+        for component in arbitration_outcome.components
+    }
+    for component in arbitration_outcome.components:
+        for road_id in component.contested_road_ids:
+            road = context.roads.get(road_id)
+            if road is None:
+                continue
+            yield _road_feature(
+                road,
+                pair_id="|".join(component.pair_ids),
+                strategy_id=strategy_id,
+                layer_role="corridor_conflict",
+                extra_props={
+                    "component_id": component.component_id,
+                    "pair_ids": list(pair_ids_by_component_id[component.component_id]),
+                    "road_id": road_id,
+                },
+            )
+
+
+def _build_target_conflict_audit_xxxs7(
+    *,
+    validations: list[PairValidationResult],
+    arbitration_outcome: PairArbitrationOutcome,
+    road_to_node_ids: dict[str, tuple[str, str]],
+) -> dict[str, Any]:
+    target_pair_ids = ("S2:1019883__1026500", "S2:1026500__1026503")
+    target_anchor_node_id = "500588029"
+    validation_by_pair_id = {validation.pair_id: validation for validation in validations}
+    decision_by_pair_id = {decision.pair_id: decision for decision in arbitration_outcome.decisions}
+    pair_entries: dict[str, Any] = {}
+    for pair_id in target_pair_ids:
+        validation = validation_by_pair_id.get(pair_id)
+        decision = decision_by_pair_id.get(pair_id)
+        if validation is None or decision is None:
+            pair_entries[pair_id] = {"present": False}
+            continue
+        arbitration_info = validation.support_info.get("arbitration", {})
+        pair_entries[pair_id] = {
+            "present": True,
+            "single_pair_legal": validation.single_pair_legal,
+            "arbitration_status": validation.arbitration_status,
+            "validated_status": validation.validated_status,
+            "lose_reason": validation.lose_reason,
+            "component_id": validation.arbitration_component_id,
+            "selected_option_id": validation.arbitration_option_id,
+            "endpoint_boundary_penalty": arbitration_info.get("endpoint_boundary_penalty", 0),
+            "strong_anchor_win_count": arbitration_info.get("strong_anchor_win_count", 0),
+            "corridor_naturalness_score": arbitration_info.get("corridor_naturalness_score", 0),
+            "contested_trunk_coverage_count": arbitration_info.get("contested_trunk_coverage_count", 0),
+            "contested_trunk_coverage_ratio": arbitration_info.get("contested_trunk_coverage_ratio", 0.0),
+            "internal_endpoint_penalty": arbitration_info.get("internal_endpoint_penalty", 0),
+            "body_connectivity_support": arbitration_info.get("body_connectivity_support", 0.0),
+            "semantic_conflict_penalty": arbitration_info.get("semantic_conflict_penalty", 0),
+        }
+
+    anchor_owner_pair_ids: list[str] = []
+    for validation in validations:
+        if validation.validated_status != "validated":
+            continue
+        candidate_road_ids = set(validation.support_info.get("segment_body_candidate_road_ids", ()))
+        road_ids = (
+            set(validation.trunk_road_ids)
+            | set(validation.segment_road_ids)
+            | set(validation.pruned_road_ids)
+            | candidate_road_ids
+        )
+        node_ids: set[str] = set()
+        for road_id in road_ids:
+            endpoints = road_to_node_ids.get(road_id)
+            if endpoints is None:
+                continue
+            node_ids.update(endpoints)
+        if target_anchor_node_id in node_ids:
+            anchor_owner_pair_ids.append(validation.pair_id)
+
+    return {
+        "target_pair_ids": list(target_pair_ids),
+        "target_anchor_node_id": target_anchor_node_id,
+        "pairs": pair_entries,
+        "anchor_owner_pair_ids": anchor_owner_pair_ids,
+        "target_anchor_winner_pair_ids": anchor_owner_pair_ids,
+    }
+
+
 def _write_step2_outputs(
     out_dir: Path,
     *,
@@ -2747,12 +3516,18 @@ def _write_step2_outputs(
     run_id: str,
     context: Step1GraphContext,
     validations: list[PairValidationResult],
+    arbitration_outcome: Optional[PairArbitrationOutcome] = None,
+    road_to_node_ids: Optional[dict[str, tuple[str, str]]] = None,
     endpoint_pool_source_map: dict[str, tuple[str, ...]],
     formway_mode: str,
     debug: bool,
     retain_validation_details: bool,
     progress_callback: Optional[Step2ProgressCallback] = None,
 ) -> Step2StrategyResult:
+    if arbitration_outcome is None:
+        arbitration_outcome = _empty_pair_arbitration_outcome()
+    if road_to_node_ids is None:
+        road_to_node_ids = {}
     validation_summary = _collect_validation_summary(validations)
 
     validated_pairs_path = out_dir / "validated_pairs.csv"
@@ -2769,6 +3544,12 @@ def _write_step2_outputs(
     branch_cut_roads_path = out_dir / "branch_cut_roads.geojson"
     candidate_channel_path = out_dir / "pair_candidate_channel.geojson"
     validation_table_path = out_dir / "pair_validation_table.csv"
+    validated_pairs_final_path = out_dir / "validated_pairs_final.csv"
+    pair_conflict_table_path = out_dir / "pair_conflict_table.csv"
+    pair_conflict_components_path = out_dir / "pair_conflict_components.json"
+    pair_arbitration_table_path = out_dir / "pair_arbitration_table.csv"
+    corridor_conflict_roads_path = out_dir / "corridor_conflict_roads.geojson"
+    target_conflict_audit_path = out_dir / "target_conflict_audit_xxxs7.json"
     working_graph_debug_path = out_dir / "working_graph_debug.geojson"
     segment_summary_path = out_dir / "segment_summary.json"
     endpoint_pool_csv_path, endpoint_pool_summary_path, endpoint_pool_nodes_path = write_endpoint_pool_outputs(
@@ -2798,6 +3579,50 @@ def _write_step2_outputs(
         _iter_rejected_rows(validations),
         ["pair_id", "a_node_id", "b_node_id", "reject_reason", "warning_codes", "conflict_pair_id"],
     )
+    write_csv(
+        validated_pairs_final_path,
+        _iter_validated_final_rows(validations),
+        [
+            "pair_id",
+            "a_node_id",
+            "b_node_id",
+            "single_pair_legal",
+            "arbitration_status",
+            "validated_status",
+            "lose_reason",
+            "trunk_mode",
+            "segment_body_road_count",
+            "residual_road_count",
+        ],
+    )
+    write_csv(
+        pair_conflict_table_path,
+        _iter_pair_conflict_rows(arbitration_outcome),
+        ["pair_id", "conflict_pair_id", "conflict_type", "shared_road_count", "shared_trunk_road_count"],
+    )
+    write_json(
+        pair_conflict_components_path,
+        _pair_conflict_components_payload(arbitration_outcome),
+    )
+    write_csv(
+        pair_arbitration_table_path,
+        _iter_pair_arbitration_rows(validations, arbitration_outcome),
+        [
+            "pair_id",
+            "component_id",
+            "single_pair_legal",
+            "arbitration_status",
+            "endpoint_boundary_penalty",
+            "strong_anchor_win_count",
+            "corridor_naturalness_score",
+            "contested_trunk_coverage_count",
+            "contested_trunk_coverage_ratio",
+            "internal_endpoint_penalty",
+            "body_connectivity_support",
+            "semantic_conflict_penalty",
+            "lose_reason",
+        ],
+    )
     write_geojson(
         trunk_roads_path,
         _iter_trunk_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
@@ -2809,6 +3634,14 @@ def _write_step2_outputs(
     write_geojson(
         step3_residual_roads_path,
         _iter_step3_residual_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
+    )
+    write_geojson(
+        corridor_conflict_roads_path,
+        _iter_corridor_conflict_features(
+            context=context,
+            arbitration_outcome=arbitration_outcome,
+            strategy_id=strategy.strategy_id,
+        ),
     )
     write_csv(
         validation_table_path,
@@ -2830,6 +3663,14 @@ def _write_step2_outputs(
             "support_info",
         ],
     )
+    write_json(
+        target_conflict_audit_path,
+        _build_target_conflict_audit_xxxs7(
+            validations=validations,
+            arbitration_outcome=arbitration_outcome,
+            road_to_node_ids=road_to_node_ids,
+        ),
+    )
 
     segment_summary = {
         "strategy_id": strategy.strategy_id,
@@ -2837,6 +3678,16 @@ def _write_step2_outputs(
         "strategy_out_dir": str(out_dir.resolve()),
         "formway_mode": formway_mode,
         **validation_summary,
+        "conflict_component_count": len(arbitration_outcome.components),
+        "arbitration_winner_count": sum(
+            1 for item in arbitration_outcome.decisions if item.arbitration_status == "win"
+        ),
+        "arbitration_loser_count": sum(
+            1 for item in arbitration_outcome.decisions if item.arbitration_status == "lose"
+        ),
+        "arbitration_fallback_component_count": sum(
+            1 for item in arbitration_outcome.components if item.fallback_greedy_used
+        ),
         "dual_carriageway_separation_gate_limit_m": MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
         "side_access_distance_gate_limit_m": MAX_SIDE_ACCESS_DISTANCE_M,
         "debug": debug,
@@ -2845,10 +3696,16 @@ def _write_step2_outputs(
             endpoint_pool_summary_path.name,
             validated_pairs_path.name,
             rejected_pairs_path.name,
+            validated_pairs_final_path.name,
+            pair_conflict_table_path.name,
+            pair_conflict_components_path.name,
+            pair_arbitration_table_path.name,
             trunk_roads_path.name,
             segment_body_roads_path.name,
             step3_residual_roads_path.name,
+            corridor_conflict_roads_path.name,
             validation_table_path.name,
+            target_conflict_audit_path.name,
             segment_summary_path.name,
         ],
     }
@@ -2973,7 +3830,7 @@ def _write_step2_outputs(
     )
 
 
-def _validate_pair_candidates(
+def _validate_pair_candidates_greedy(
     execution: Step1StrategyExecution,
     *,
     context: Step1GraphContext,
@@ -3259,13 +4116,20 @@ def _validate_pair_candidates(
                 phase="segment_body_started",
                 trunk_found=True,
             )
+            segment_body_allowed_road_ids = _expand_segment_body_allowed_road_ids(
+                pruned_road_ids=pruned_road_ids,
+                branch_cut_infos=branch_cut_infos,
+                undirected_adjacency=undirected_adjacency,
+                boundary_node_ids=boundary_node_ids,
+                road_endpoints=road_endpoints,
+            )
             segment_candidate_road_ids = _build_segment_body_candidate_channel(
                 pair,
                 trunk_road_ids=trunk_candidate.road_ids,
                 undirected_adjacency=undirected_adjacency,
                 boundary_node_ids=boundary_node_ids,
                 road_endpoints=road_endpoints,
-                allowed_road_ids=pruned_road_ids,
+                allowed_road_ids=segment_body_allowed_road_ids,
             )
             _emit_validation_pair_phase(
                 pair_index=pair_index,
@@ -3454,6 +4318,531 @@ def _validate_pair_candidates(
     return tightened
 
 
+def _validate_pair_candidates(
+    execution: Step1StrategyExecution,
+    *,
+    context: Step1GraphContext,
+    road_endpoints: dict[str, tuple[str, str]],
+    undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
+    formway_mode: str,
+    left_turn_formway_bit: int,
+    compact_release_payloads: bool = False,
+    progress_callback: Optional[Step2ProgressCallback] = None,
+    return_arbitration_outcome: bool = False,
+) -> Union[list[PairValidationResult], tuple[list[PairValidationResult], PairArbitrationOutcome]]:
+    terminate_ids = set(execution.terminate_ids)
+    hard_stop_node_ids = set(execution.strategy.hard_stop_node_ids)
+    boundary_node_ids = terminate_ids | hard_stop_node_ids
+    validation_count = len(execution.pair_candidates)
+    road_lengths = _road_length_index(context)
+    road_to_node_ids = _road_node_index(road_endpoints)
+    arbitration_boundary_node_ids = _arbitration_boundary_node_ids(
+        execution,
+        hard_stop_node_ids=hard_stop_node_ids,
+    )
+    weak_endpoint_node_ids = _arbitration_weak_endpoint_node_ids(context)
+    semantic_conflict_node_ids = _arbitration_semantic_conflict_node_ids(context)
+    strong_anchor_node_ids = _arbitration_strong_anchor_node_ids(context)
+    tjunction_anchor_node_ids = _arbitration_tjunction_anchor_node_ids(context)
+
+    _emit_progress(progress_callback, "validation_started", validation_count=validation_count)
+
+    def _emit_validation_pair_phase(
+        *,
+        pair_index: int,
+        pair: PairRecord,
+        phase: str,
+        checkpoint: bool = False,
+        **extra_payload: Any,
+    ) -> None:
+        payload = {
+            "pair_index": pair_index,
+            "validation_count": validation_count,
+            "pair_id": pair.pair_id,
+            "a_node_id": pair.a_node_id,
+            "b_node_id": pair.b_node_id,
+            "phase": phase,
+            **extra_payload,
+        }
+        perf_trace_enabled = pair_index <= VALIDATION_PHASE_TRACE_PAIR_LIMIT
+        _emit_progress(
+            progress_callback,
+            "validation_pair_state",
+            **payload,
+            _perf_log=perf_trace_enabled,
+            _stdout_log=False,
+        )
+        if checkpoint:
+            _emit_progress(progress_callback, "validation_pair_checkpoint", **payload)
+
+    illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
+    options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
+
+    for pair_index, pair in enumerate(execution.pair_candidates, start=1):
+        _emit_validation_pair_phase(
+            pair_index=pair_index,
+            pair=pair,
+            phase="validation_pair_started",
+        )
+        if (
+            pair_index == 1
+            or pair_index == validation_count
+            or pair_index % VALIDATION_PROGRESS_CHECKPOINT_INTERVAL == 0
+        ):
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="validation_pair_started",
+                checkpoint=True,
+            )
+
+        candidate_road_ids, boundary_terminate_ids = _build_candidate_channel(
+            pair,
+            undirected_adjacency=undirected_adjacency,
+            boundary_node_ids=boundary_node_ids,
+        )
+        _emit_validation_pair_phase(
+            pair_index=pair_index,
+            pair=pair,
+            phase="candidate_channel_built",
+            candidate_road_count=len(candidate_road_ids),
+        )
+
+        if not candidate_road_ids:
+            illegal_validations_by_pair_id[pair.pair_id] = PairValidationResult(
+                pair_id=pair.pair_id,
+                a_node_id=pair.a_node_id,
+                b_node_id=pair.b_node_id,
+                candidate_status="candidate",
+                validated_status="rejected",
+                reject_reason="invalid_candidate_boundary",
+                trunk_mode="none",
+                trunk_found=False,
+                counterclockwise_ok=False,
+                left_turn_excluded_mode=formway_mode,
+                warning_codes=(),
+                candidate_channel_road_ids=(),
+                pruned_road_ids=(),
+                trunk_road_ids=(),
+                segment_road_ids=(),
+                residual_road_ids=(),
+                branch_cut_road_ids=(),
+                boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
+                transition_same_dir_blocked=False,
+                support_info={"boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key)},
+            )
+            continue
+
+        pruned_road_ids, branch_cut_infos, disconnected_after_prune = _prune_candidate_channel(
+            pair,
+            candidate_road_ids=candidate_road_ids,
+            road_endpoints=road_endpoints,
+            terminate_ids=terminate_ids,
+            hard_stop_node_ids=hard_stop_node_ids,
+        )
+        _emit_validation_pair_phase(
+            pair_index=pair_index,
+            pair=pair,
+            phase="prune_completed",
+            candidate_road_count=len(candidate_road_ids),
+            pruned_road_count=len(pruned_road_ids),
+        )
+        if disconnected_after_prune:
+            illegal_validations_by_pair_id[pair.pair_id] = PairValidationResult(
+                pair_id=pair.pair_id,
+                a_node_id=pair.a_node_id,
+                b_node_id=pair.b_node_id,
+                candidate_status="candidate",
+                validated_status="rejected",
+                reject_reason="disconnected_after_prune",
+                trunk_mode="none",
+                trunk_found=False,
+                counterclockwise_ok=False,
+                left_turn_excluded_mode=formway_mode,
+                warning_codes=(),
+                candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
+                pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
+                trunk_road_ids=(),
+                segment_road_ids=(),
+                residual_road_ids=(),
+                branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
+                boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
+                transition_same_dir_blocked=False,
+                support_info={
+                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                    "branch_cut_infos": branch_cut_infos,
+                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                },
+            )
+            continue
+
+        trunk_choices, reject_reason, warning_codes, trunk_gate_info = _evaluate_trunk_choices(
+            pair,
+            context=context,
+            pruned_road_ids=pruned_road_ids,
+            road_endpoints=road_endpoints,
+            through_rule=execution.strategy.through_rule,
+            formway_mode=formway_mode,
+            left_turn_formway_bit=left_turn_formway_bit,
+        )
+        _emit_validation_pair_phase(
+            pair_index=pair_index,
+            pair=pair,
+            phase="trunk_evaluated",
+            validated_status="validated" if trunk_choices else "rejected",
+            reject_reason="" if reject_reason is None else reject_reason,
+            trunk_found=bool(trunk_choices),
+        )
+        if not trunk_choices:
+            illegal_validations_by_pair_id[pair.pair_id] = PairValidationResult(
+                pair_id=pair.pair_id,
+                a_node_id=pair.a_node_id,
+                b_node_id=pair.b_node_id,
+                candidate_status="candidate",
+                validated_status="rejected",
+                reject_reason=reject_reason,
+                trunk_mode="none",
+                trunk_found=False,
+                counterclockwise_ok=False,
+                left_turn_excluded_mode=formway_mode,
+                warning_codes=warning_codes,
+                candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
+                pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
+                trunk_road_ids=(),
+                segment_road_ids=(),
+                residual_road_ids=(),
+                branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
+                boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
+                transition_same_dir_blocked=False,
+                support_info={
+                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                    "branch_cut_infos": branch_cut_infos,
+                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                    **trunk_gate_info,
+                },
+            )
+            continue
+
+        pair_options: list[PairArbitrationOption] = []
+        pair_fallback_validation: Optional[PairValidationResult] = None
+
+        for zero_based_option_index, choice in enumerate(trunk_choices):
+            option_index = zero_based_option_index + 1
+            trunk_candidate = choice.candidate
+            option_id = f"{pair.pair_id}::opt_{option_index:02d}"
+            alternative_trunk_only_road_ids = _alternative_trunk_only_road_ids(
+                trunk_choices,
+                current_choice_index=zero_based_option_index,
+            )
+            internal_boundary_node_ids = _collect_internal_boundary_nodes(
+                pair,
+                candidate=trunk_candidate,
+                hard_stop_node_ids=hard_stop_node_ids,
+            )
+            if internal_boundary_node_ids:
+                pair_fallback_validation = PairValidationResult(
+                    pair_id=pair.pair_id,
+                    a_node_id=pair.a_node_id,
+                    b_node_id=pair.b_node_id,
+                    candidate_status="candidate",
+                    validated_status="rejected",
+                    reject_reason="historical_boundary_blocked",
+                    trunk_mode="none",
+                    trunk_found=False,
+                    counterclockwise_ok=False,
+                    left_turn_excluded_mode=formway_mode,
+                    warning_codes=choice.warning_codes,
+                    candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
+                    pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
+                    trunk_road_ids=(),
+                    segment_road_ids=(),
+                    residual_road_ids=(),
+                    branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
+                    boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
+                    transition_same_dir_blocked=False,
+                    support_info={
+                        "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                        "branch_cut_infos": branch_cut_infos,
+                        "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                        "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                        "historical_boundary_node_ids": list(internal_boundary_node_ids),
+                    },
+                )
+                continue
+
+            trunk_mode = _trunk_candidate_mode(trunk_candidate)
+            if trunk_mode == "through_collapsed_corridor":
+                segment_candidate_road_ids = trunk_candidate.road_ids
+                segment_road_ids = trunk_candidate.road_ids
+                segment_cut_infos: list[dict[str, Any]] = []
+            else:
+                _emit_validation_pair_phase(
+                    pair_index=pair_index,
+                    pair=pair,
+                    phase="segment_body_started",
+                    trunk_found=True,
+                    option_id=option_id,
+                )
+                segment_body_allowed_road_ids = _expand_segment_body_allowed_road_ids(
+                    pruned_road_ids=pruned_road_ids,
+                    branch_cut_infos=branch_cut_infos,
+                    undirected_adjacency=undirected_adjacency,
+                    boundary_node_ids=boundary_node_ids,
+                    road_endpoints=road_endpoints,
+                )
+                if alternative_trunk_only_road_ids:
+                    segment_body_allowed_road_ids -= alternative_trunk_only_road_ids
+                segment_candidate_road_ids = _build_segment_body_candidate_channel(
+                    pair,
+                    trunk_road_ids=trunk_candidate.road_ids,
+                    undirected_adjacency=undirected_adjacency,
+                    boundary_node_ids=boundary_node_ids,
+                    road_endpoints=road_endpoints,
+                    allowed_road_ids=segment_body_allowed_road_ids,
+                )
+                _emit_validation_pair_phase(
+                    pair_index=pair_index,
+                    pair=pair,
+                    phase="segment_body_candidate_channel_built",
+                    candidate_road_count=len(segment_candidate_road_ids),
+                    trunk_found=True,
+                    option_id=option_id,
+                )
+                _emit_validation_pair_phase(
+                    pair_index=pair_index,
+                    pair=pair,
+                    phase="segment_body_refine_started",
+                    candidate_road_count=len(segment_candidate_road_ids),
+                    trunk_found=True,
+                    option_id=option_id,
+                )
+                segment_road_ids, segment_cut_infos = _refine_segment_roads(
+                    pair,
+                    context=context,
+                    road_endpoints=road_endpoints,
+                    pruned_road_ids=segment_candidate_road_ids,
+                    trunk_road_ids=trunk_candidate.road_ids,
+                    through_rule=execution.strategy.through_rule,
+                )
+                _emit_validation_pair_phase(
+                    pair_index=pair_index,
+                    pair=pair,
+                    phase="segment_body_refine_completed",
+                    candidate_road_count=len(segment_candidate_road_ids),
+                    segment_road_count=len(segment_road_ids),
+                    trunk_found=True,
+                    option_id=option_id,
+                )
+                _emit_validation_pair_phase(
+                    pair_index=pair_index,
+                    pair=pair,
+                    phase="segment_body_completed",
+                    segment_road_count=len(segment_road_ids),
+                    trunk_found=True,
+                    option_id=option_id,
+                )
+
+            support_info = {
+                "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                "branch_cut_infos": branch_cut_infos,
+                "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
+                "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
+                "trunk_signed_area": trunk_candidate.signed_area,
+                "trunk_mode": trunk_mode,
+                "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
+                "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
+                **choice.support_info,
+                **trunk_gate_info,
+                "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
+                "segment_body_candidate_road_ids": list(segment_candidate_road_ids),
+                "segment_body_candidate_cut_infos": segment_cut_infos,
+                "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
+            }
+            pair_options.append(
+                PairArbitrationOption(
+                    option_id=option_id,
+                    pair_id=pair.pair_id,
+                    a_node_id=pair.a_node_id,
+                    b_node_id=pair.b_node_id,
+                    trunk_mode=trunk_mode,
+                    counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
+                    warning_codes=choice.warning_codes,
+                    candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
+                    pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
+                    trunk_road_ids=trunk_candidate.road_ids,
+                    segment_candidate_road_ids=tuple(sorted(segment_candidate_road_ids, key=_sort_key)),
+                    segment_road_ids=tuple(sorted(segment_road_ids, key=_sort_key)),
+                    branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
+                    boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
+                    transition_same_dir_blocked=False,
+                    support_info=support_info,
+                )
+            )
+
+        if pair_options:
+            options_by_pair_id[pair.pair_id] = pair_options
+            continue
+
+        if pair_fallback_validation is None:
+            pair_fallback_validation = PairValidationResult(
+                pair_id=pair.pair_id,
+                a_node_id=pair.a_node_id,
+                b_node_id=pair.b_node_id,
+                candidate_status="candidate",
+                validated_status="rejected",
+                reject_reason="no_valid_segment_body_option",
+                trunk_mode="none",
+                trunk_found=False,
+                counterclockwise_ok=False,
+                left_turn_excluded_mode=formway_mode,
+                warning_codes=warning_codes,
+                candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
+                pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
+                trunk_road_ids=(),
+                segment_road_ids=(),
+                residual_road_ids=(),
+                branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
+                boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
+                transition_same_dir_blocked=False,
+                support_info={
+                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                    "branch_cut_infos": branch_cut_infos,
+                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                },
+            )
+        illegal_validations_by_pair_id[pair.pair_id] = pair_fallback_validation
+
+    _emit_progress(
+        progress_callback,
+        "same_stage_arbitration_started",
+        legal_pair_count=len(options_by_pair_id),
+        illegal_pair_count=len(illegal_validations_by_pair_id),
+    )
+    arbitration_outcome = arbitrate_pair_options(
+        options_by_pair=options_by_pair_id,
+        single_pair_illegal_pair_ids=set(illegal_validations_by_pair_id),
+        road_lengths=road_lengths,
+        road_to_node_ids=road_to_node_ids,
+        weak_endpoint_node_ids=weak_endpoint_node_ids,
+        boundary_node_ids=arbitration_boundary_node_ids,
+        semantic_conflict_node_ids=semantic_conflict_node_ids,
+        strong_anchor_node_ids=strong_anchor_node_ids,
+        tjunction_anchor_node_ids=tjunction_anchor_node_ids,
+    )
+    _emit_progress(
+        progress_callback,
+        "same_stage_arbitration_completed",
+        component_count=len(arbitration_outcome.components),
+        winner_count=len(arbitration_outcome.selected_options_by_pair_id),
+        loser_count=sum(1 for item in arbitration_outcome.decisions if item.arbitration_status == "lose"),
+    )
+
+    decision_by_pair_id = {decision.pair_id: decision for decision in arbitration_outcome.decisions}
+    option_by_id = {
+        option.option_id: option
+        for options in options_by_pair_id.values()
+        for option in options
+    }
+    winning_pair_ids = {
+        decision.pair_id
+        for decision in arbitration_outcome.decisions
+        if decision.arbitration_status == "win"
+    }
+    conflict_pair_ids_by_loser: dict[str, str] = {}
+    for record in arbitration_outcome.conflict_records:
+        left_wins = record.pair_id in winning_pair_ids
+        right_wins = record.conflict_pair_id in winning_pair_ids
+        if left_wins and not right_wins:
+            conflict_pair_ids_by_loser.setdefault(record.conflict_pair_id, record.pair_id)
+        elif right_wins and not left_wins:
+            conflict_pair_ids_by_loser.setdefault(record.pair_id, record.conflict_pair_id)
+
+    provisional_results_by_pair_id: dict[str, PairValidationResult] = {}
+    for pair_index, pair in enumerate(execution.pair_candidates, start=1):
+        decision = decision_by_pair_id[pair.pair_id]
+        if pair.pair_id in options_by_pair_id:
+            selected_option = option_by_id[decision.selected_option_id or options_by_pair_id[pair.pair_id][0].option_id]
+            result = _pair_validation_from_option(
+                selected_option,
+                decision=decision,
+                conflict_pair_id=conflict_pair_ids_by_loser.get(pair.pair_id),
+                left_turn_excluded_mode=formway_mode,
+                compact_release_payloads=compact_release_payloads,
+            )
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="result_appended",
+                validated_status=result.validated_status,
+                reject_reason="" if result.reject_reason is None else result.reject_reason,
+                trunk_found=result.trunk_found,
+                segment_road_count=_validation_road_count(
+                    result.segment_road_ids,
+                    result.support_info,
+                    "segment_body_road_count",
+                ),
+            )
+            provisional_results_by_pair_id[pair.pair_id] = result
+        else:
+            result = _single_pair_illegal_validation(
+                illegal_validations_by_pair_id[pair.pair_id],
+                decision=decision,
+                compact_release_payloads=compact_release_payloads,
+            )
+            _emit_validation_pair_phase(
+                pair_index=pair_index,
+                pair=pair,
+                phase="result_appended",
+                validated_status=result.validated_status,
+                reject_reason="" if result.reject_reason is None else result.reject_reason,
+                trunk_found=result.trunk_found,
+            )
+            provisional_results_by_pair_id[pair.pair_id] = result
+
+    provisional_results = [provisional_results_by_pair_id[pair.pair_id] for pair in execution.pair_candidates]
+    provisional_validated_pair_count = sum(
+        1 for item in provisional_results if item.validated_status == "validated"
+    )
+    _emit_progress(
+        progress_callback,
+        "validation_tighten_started",
+        validation_count=validation_count,
+        validated_pair_count=provisional_validated_pair_count,
+    )
+    if provisional_validated_pair_count:
+        validated_results = [item for item in provisional_results if item.validated_status == "validated"]
+        tightened_validated = _tighten_validated_segment_components(
+            validated_results,
+            execution=execution,
+            context=context,
+            road_endpoints=road_endpoints,
+        )
+        if compact_release_payloads:
+            tightened_validated = [
+                _compact_validation_result_for_release(item, keep_tighten_fields=False)
+                for item in tightened_validated
+            ]
+        tightened_by_pair_id = {item.pair_id: item for item in tightened_validated}
+    else:
+        tightened_by_pair_id = {}
+
+    tightened = [tightened_by_pair_id.get(item.pair_id, item) for item in provisional_results]
+    _emit_progress(
+        progress_callback,
+        "validation_tighten_completed",
+        validation_count=len(tightened),
+        validated_pair_count=sum(1 for item in tightened if item.validated_status == "validated"),
+    )
+    if return_arbitration_outcome:
+        return tightened, arbitration_outcome
+    return tightened
+
+
 def run_step2_segment_poc(
     *,
     road_path: Union[str, Path],
@@ -3579,7 +4968,7 @@ def run_step2_segment_poc(
         execution = _compact_execution_for_validation(execution)
         gc.collect()
         compact_release_payloads = not debug and not retain_validation_details
-        validations = _validate_pair_candidates(
+        validation_result = _validate_pair_candidates(
             execution,
             context=context,
             road_endpoints=road_endpoints,
@@ -3588,7 +4977,13 @@ def run_step2_segment_poc(
             left_turn_formway_bit=left_turn_formway_bit,
             compact_release_payloads=compact_release_payloads,
             progress_callback=progress_callback,
+            return_arbitration_outcome=True,
         )
+        if isinstance(validation_result, tuple):
+            validations, arbitration_outcome = validation_result
+        else:
+            validations = validation_result
+            arbitration_outcome = _empty_pair_arbitration_outcome()
         endpoint_pool_source_map = build_endpoint_pool_source_map(
             node_ids=set(execution.seed_ids) | set(execution.terminate_ids),
             stage_id=strategy.strategy_id,
@@ -3605,17 +5000,24 @@ def run_step2_segment_poc(
             validated_pair_count=validated_pair_count,
             rejected_pair_count=rejected_pair_count,
         )
+        write_outputs_kwargs = {
+            "strategy": strategy,
+            "run_id": resolved_run_id,
+            "context": context,
+            "validations": validations,
+            "endpoint_pool_source_map": endpoint_pool_source_map,
+            "formway_mode": formway_mode,
+            "debug": debug,
+            "retain_validation_details": retain_validation_details,
+            "progress_callback": progress_callback,
+        }
+        if "road_to_node_ids" in inspect.signature(_write_step2_outputs).parameters:
+            write_outputs_kwargs["road_to_node_ids"] = road_endpoints
+        if "arbitration_outcome" in inspect.signature(_write_step2_outputs).parameters:
+            write_outputs_kwargs["arbitration_outcome"] = arbitration_outcome
         step2_result = _write_step2_outputs(
             strategy_out_dir,
-            strategy=strategy,
-            run_id=resolved_run_id,
-            context=context,
-            validations=validations,
-            endpoint_pool_source_map=endpoint_pool_source_map,
-            formway_mode=formway_mode,
-            debug=debug,
-            retain_validation_details=retain_validation_details,
-            progress_callback=progress_callback,
+            **write_outputs_kwargs,
         )
         _emit_progress(
             progress_callback,
@@ -3631,6 +5033,7 @@ def run_step2_segment_poc(
         comparison_summary.append(step2_result.segment_summary)
         del execution
         del validations
+        del arbitration_outcome
         gc_collected = gc.collect()
         _emit_progress(
             progress_callback,

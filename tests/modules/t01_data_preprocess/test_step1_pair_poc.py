@@ -144,6 +144,27 @@ def _build_formway_turn_lane_dataset(base_dir: Path) -> tuple[Path, Path]:
     return road_path, node_path
 
 
+def _build_formway_terminal_exclusion_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "formway_terminal_roads.geojson"
+    node_path = base_dir / "formway_terminal_nodes.geojson"
+
+    node_features = [
+        _node_feature(10, 0.0, 0.0),
+        _node_feature(20, 0.01, 0.0, kind=0, grade=0, closed_con=0),
+        _node_feature(30, 0.02, 0.0),
+        _node_feature(40, 0.01, 0.01),
+    ]
+    road_features = [
+        _road_feature("r10_20", 10, 20, 0, [[0.0, 0.0], [0.01, 0.0]]),
+        _road_feature("r20_30", 20, 30, 0, [[0.01, 0.0], [0.02, 0.0]]),
+        _road_feature("r20_40_right_turn", 20, 40, 0, [[0.01, 0.0], [0.01, 0.01]], formway=128),
+    ]
+
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
 def _build_force_terminate_dataset(base_dir: Path) -> tuple[Path, Path]:
     road_path = base_dir / "force_terminate_roads.geojson"
     node_path = base_dir / "force_terminate_nodes.geojson"
@@ -642,6 +663,52 @@ def test_formway_right_turn_lane_is_excluded_from_through_degree(tmp_path: Path)
     assert summary["pair_count"] == 1
     assert summary["search_seed_count"] == 2
     assert summary["through_seed_pruned_count"] == 1
+
+
+def test_formway_right_turn_lane_is_excluded_from_pair_graph_search(tmp_path: Path) -> None:
+    road_path, node_path = _build_formway_terminal_exclusion_dataset(tmp_path)
+    out_root = tmp_path / "outputs_formway_graph"
+    strategy_path = _write_strategy(
+        tmp_path / "formway_graph_strategy.json",
+        {
+            "strategy_id": "Sx",
+            "description": "Right-turn-only roads should not participate in pair graph search.",
+            "seed_rule": {
+                "kind_bits_all": [2],
+                "closed_con_in": [2, 3],
+                "grade_eq": 1,
+            },
+            "terminate_rule": {
+                "kind_bits_all": [2],
+                "closed_con_in": [2, 3],
+                "grade_eq": 1,
+            },
+            "through_node_rule": {
+                "incident_road_degree_eq": 2,
+                "incident_degree_exclude_formway_bits_any": [7],
+            },
+        },
+    )
+
+    rc = main(
+        [
+            "t01-step1-pair-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+    pair_rows = list(csv.DictReader((out_root / "Sx" / "pair_table.csv").open("r", encoding="utf-8-sig")))
+    pair_ids = {row["pair_id"] for row in pair_rows}
+    assert pair_ids == {"Sx:10__30"}
+    assert "Sx:10__40" not in pair_ids
 
 
 def test_step1_business_filter_uses_grade_2_kind_2(tmp_path: Path) -> None:

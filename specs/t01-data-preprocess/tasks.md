@@ -1,38 +1,38 @@
 # T01 任务清单
 
 ## 已接受基础
-- [x] working bootstrap 已前移到模块开始阶段
-- [x] roundabout preprocessing 已纳入正式预处理
 - [x] Step1 只输出 `pair_candidates`
 - [x] Step2 输出 `validated / rejected / trunk / segment_body / step3_residual`
-- [x] Step4 / Step5A / Step5B / Step5C staged residual graph 语义已固化
-- [x] Step5C adaptive barrier fallback 已纳入 accepted baseline
-- [x] Step6 的 `segment / inner_nodes / segment_error` 语义已确认
+- [x] Step4 / Step5A / Step5B / Step5C accepted 语义继续保持
+- [x] Step6 已正式纳入 official end-to-end
+- [x] 双向道路前置过滤仍保持：
+  - node: `closed_con in {2,3}`
+  - road: `road_kind != 1`
+- [x] 50m gates 仍保持共享：
+  - `MAX_DUAL_CARRIAGEWAY_SEPARATION_M = 50.0`
+  - `MAX_SIDE_ACCESS_DISTANCE_M = 50.0`
 
 ## 本轮任务
-- [x] input schema migration：官方输入统一到 GeoJSON
-- [x] road output schema migration：正式输出统一到 `sgrade / segmentid`
-- [x] Step6 formal integration：official runner 现在正式跑到 Step6
-- [x] performance optimization：Step6 复用 Step5 records / mainnode_groups / allowed-road 索引
-- [x] freeze regression：compare 支持 schema migration difference，不把 `s_grade -> sgrade` 误判为业务回退
+- [x] 在 Step2 中新增 same-stage pair arbitration 阶段
+- [x] 识别合法 pair 的 pair-level conflict graph 与 conflict components
+- [x] 在 conflict component 内补充组合仲裁，不再由 pair 固定顺序直接决定最终保留
+- [x] 输出 `pair_conflict_table.csv`
+- [x] 输出 `pair_conflict_components.json`
+- [x] 输出 `pair_arbitration_table.csv`
+- [x] 输出 `corridor_conflict_roads.geojson`
+- [x] 输出 `validated_pairs_final.csv`
+- [x] 输出 `target_conflict_audit_xxxs7.json`
 
-## Step6 正式输出
-- [x] `segment.geojson`
-- [x] `inner_nodes.geojson`
-- [x] `segment_error.geojson`
-- [x] `segment_error_s_grade_conflict.geojson`
-- [x] `segment_error_grade_kind_conflict.geojson`
-- [x] `segment_summary.json`
-- [x] `segment_build_table.csv`
-- [x] `inner_nodes_summary.json`
-
-## Step6 规则
-- [x] 规则 1：两端 `pair_nodes` 的 `grade_2` 均为 `1` 时，将 segment 级 `sgrade` 轻调整为 `"0-0双"`
-- [x] 规则 2：最终 `sgrade = "0-0双"` 且中间 `junc_nodes` 出现 `grade_2 = 1 且 kind_2 = 4` 时，输出到 `segment_error.geojson` 与 `segment_error_grade_kind_conflict.geojson`
-- [x] `sgrade` 多值冲突时按 `0-0双 > 0-1双 > 0-2双` 选高等级，并同时输出到 `segment_error.geojson` 与 `segment_error_s_grade_conflict.geojson`
+## 定点验收
+- [x] `XXXS7`：
+  - `S2:1019883__1026500`
+  - `S2:1026500__1026503`
+  - `500588029`
+  已进入同阶段仲裁审计
+- [x] `XXXS7` corridor 归属不再由 pair 顺序直接决定
+- [x] `XXXS7` 当前实现已将 `500588029` 归属给 `S2:1026500__1026503`
 
 ## 回归要求
-- [x] GeoJSON 输入官方入口可跑通
-- [x] 新输出 roads 仅正式写 `sgrade / segmentid`
-- [x] `debug=false` 的 official runner 可直接产出 Step6 结果
-- [x] `XXXS` official compare 已回归验证
+- [x] Step2 单 pair 合法性前半段保持不变
+- [x] XXXS freeze compare 已重新执行
+- [x] 若存在差异，仅输出 compare 结果，不自动更新 freeze baseline

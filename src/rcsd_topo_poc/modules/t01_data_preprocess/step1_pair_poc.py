@@ -577,6 +577,8 @@ def _build_graph(
     physical_to_semantic: dict[str, str],
     roads: dict[str, RoadRecord],
     audit_events: list[dict[str, Any]],
+    *,
+    excluded_formway_bits_any: tuple[int, ...] = (),
 ) -> tuple[dict[str, tuple[TraversalEdge, ...]], dict[str, tuple[TraversalEdge, ...]], dict[str, int], int]:
     directed_lists: dict[str, list[TraversalEdge]] = defaultdict(list)
     directed_lookup: dict[str, set[tuple[str, str]]] = defaultdict(set)
@@ -592,6 +594,17 @@ def _build_graph(
                     "road_id": road.road_id,
                     "road_kind": road.road_kind,
                     "message": "Closed road_kind=1 is excluded from the current bidirectional working graph.",
+                }
+            )
+            continue
+        if _road_matches_any_formway_bit(road, excluded_formway_bits_any):
+            audit_events.append(
+                {
+                    "event": "road_formway_excluded",
+                    "road_id": road.road_id,
+                    "formway": road.formway,
+                    "excluded_formway_bits_any": list(excluded_formway_bits_any),
+                    "message": "Road is excluded from the current pair graph because it matches through-rule formway exclusion bits.",
                 }
             )
             continue
@@ -1044,6 +1057,13 @@ def run_step1_strategy(
     context: Step1GraphContext,
     strategy: StrategySpec,
 ) -> Step1StrategyExecution:
+    strategy_directed, strategy_blocked, _strategy_road_degree, _ = _build_graph(
+        context.physical_nodes,
+        context.physical_to_semantic,
+        context.roads,
+        [],
+        excluded_formway_bits_any=strategy.through_rule.incident_degree_exclude_formway_bits_any,
+    )
     seed_eval = {
         node_id: _evaluate_rule(node, strategy.seed_rule) for node_id, node in context.semantic_nodes.items()
     }
@@ -1114,8 +1134,8 @@ def run_step1_strategy(
     for seed_id in search_seed_ids:
         search_result = _search_from_seed(
             seed_id,
-            directed=context.directed,
-            blocked=context.blocked,
+            directed=strategy_directed,
+            blocked=strategy_blocked,
             through_node_ids=through_node_ids,
             hard_stop_node_ids=hard_stop_node_ids,
             seed_eval=seed_eval,

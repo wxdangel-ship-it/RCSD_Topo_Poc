@@ -39,6 +39,16 @@ from rcsd_topo_poc.modules.t02_junction_anchor.shared import (
 
 KNOWN_S_GRADE_BUCKETS = ("0-0双", "0-1双", "0-2双")
 ALL_D_SGRADE_BUCKET = "all__d_sgrade"
+KIND_SUMMARY_BUCKET_4_64 = "kind_4_64"
+KIND_SUMMARY_BUCKET_2048 = "kind_2048"
+KIND_SUMMARY_BUCKET_8_16 = "kind_8_16"
+KIND_BUCKET_BY_VALUE = {
+    "4": KIND_SUMMARY_BUCKET_4_64,
+    "64": KIND_SUMMARY_BUCKET_4_64,
+    "2048": KIND_SUMMARY_BUCKET_2048,
+    "8": KIND_SUMMARY_BUCKET_8_16,
+    "16": KIND_SUMMARY_BUCKET_8_16,
+}
 REASON_JUNCTION_NODES_NOT_FOUND = "junction_nodes_not_found"
 REASON_REPRESENTATIVE_NODE_MISSING = "representative_node_missing"
 REASON_NO_TARGET_JUNCTIONS = "no_target_junctions"
@@ -343,6 +353,23 @@ def _empty_bucket_summary() -> dict[str, dict[str, int]]:
             "junction_has_evd_count": 0,
         }
         for bucket in (*KNOWN_S_GRADE_BUCKETS, ALL_D_SGRADE_BUCKET)
+    }
+
+
+def _empty_kind_summary() -> dict[str, dict[str, int]]:
+    return {
+        KIND_SUMMARY_BUCKET_4_64: {
+            "junction_count": 0,
+            "junction_has_evd_count": 0,
+        },
+        KIND_SUMMARY_BUCKET_2048: {
+            "junction_count": 0,
+            "junction_has_evd_count": 0,
+        },
+        KIND_SUMMARY_BUCKET_8_16: {
+            "junction_count": 0,
+            "junction_has_evd_count": 0,
+        },
     }
 
 
@@ -809,6 +836,26 @@ def run_t02_stage1_drivezone_gate(
             bucket_summary[bucket]["junction_count"] = len(bucket_junction_sets[bucket])
             bucket_summary[bucket]["junction_has_evd_count"] = len(bucket_yes_junction_sets[bucket])
 
+        kind_summary = _empty_kind_summary()
+        kind_unclassified_junction_count = 0
+        for junction_id in referenced_junction_ids:
+            junction_result = junction_results[junction_id]
+            representative_output_index = junction_result.representative_output_index
+            if representative_output_index is None:
+                kind_unclassified_junction_count += 1
+                continue
+
+            representative_properties = nodes_layer_data.features[representative_output_index].properties
+            kind_value = _normalize_id(representative_properties.get("kind"))
+            kind_bucket = KIND_BUCKET_BY_VALUE.get(kind_value or "")
+            if kind_bucket is None:
+                kind_unclassified_junction_count += 1
+                continue
+
+            kind_summary[kind_bucket]["junction_count"] += 1
+            if junction_result.has_evd == "yes":
+                kind_summary[kind_bucket]["junction_has_evd_count"] += 1
+
         stage_counts["segment_has_evd_count"] = sum(
             1 for feature in segment_layer_data.features if feature.properties.get("has_evd") == "yes"
         )
@@ -818,6 +865,12 @@ def run_t02_stage1_drivezone_gate(
             "[T02] segment finalize completed "
             f"segment_has_evd_count={stage_counts['segment_has_evd_count']} "
             f"audit_count={stage_counts['audit_count']}",
+        )
+        announce(
+            logger,
+            "[T02] kind summary completed "
+            f"classified_junctions={sum(bucket['junction_count'] for bucket in kind_summary.values())} "
+            f"unclassified_junctions={kind_unclassified_junction_count}",
         )
         _snapshot("running", "segment_finalize_done", "Segment outputs and summary counters computed.")
         _mark_stage("segment_finalize_done", segment_finalize_started_at)
@@ -891,6 +944,7 @@ def run_t02_stage1_drivezone_gate(
             "counts": dict(stage_counts),
             "stage_timings": stage_timings,
             "summary_by_s_grade": bucket_summary,
+            "summary_by_kind": kind_summary,
             "output_files": [
                 output_nodes_path.name,
                 output_segment_path.name,
@@ -967,6 +1021,7 @@ def run_t02_stage1_drivezone_gate(
             "counts": dict(stage_counts),
             "stage_timings": stage_timings,
             "summary_by_s_grade": _empty_bucket_summary(),
+            "summary_by_kind": _empty_kind_summary(),
             "fatal_error": {
                 "reason": exc.reason,
                 "detail": exc.detail,

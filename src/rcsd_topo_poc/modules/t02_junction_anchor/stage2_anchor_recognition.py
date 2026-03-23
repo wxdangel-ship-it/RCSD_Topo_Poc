@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from shapely.prepared import prep
+from shapely.strtree import STRtree
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     TARGET_CRS,
@@ -59,7 +59,7 @@ class Stage2RunError(T02RunError):
 class IntersectionRecord:
     feature_index: int
     intersection_id: str
-    prepared_geometry: Any
+    geometry: Any
 
 
 @dataclass(frozen=True)
@@ -298,6 +298,7 @@ def run_t02_stage2_anchor_recognition(
         "valid_node_count": 0,
         "candidate_junction_count": 0,
         "stage2_candidate_group_count": 0,
+        "stage2_candidate_node_count": 0,
         "intersection_feature_count": 0,
         "anchor_yes_count": 0,
         "anchor_no_count": 0,
@@ -384,7 +385,7 @@ def run_t02_stage2_anchor_recognition(
                 IntersectionRecord(
                     feature_index=feature.feature_index,
                     intersection_id=_intersection_identity(feature.properties, feature.feature_index),
-                    prepared_geometry=prep(feature.geometry),
+                    geometry=feature.geometry,
                 )
             )
         if not intersection_records:
@@ -392,7 +393,12 @@ def run_t02_stage2_anchor_recognition(
                 REASON_MISSING_REQUIRED_FIELD,
                 "RCSDIntersection layer has no non-empty geometry features after projection to EPSG:3857.",
             )
-        announce(logger, "[T02] intersections prepared target_crs=EPSG:3857")
+        intersection_tree = STRtree([record.geometry for record in intersection_records])
+        announce(
+            logger,
+            "[T02] intersections prepared "
+            f"target_crs=EPSG:3857 index_size={len(intersection_records)}",
+        )
         _snapshot("running", "intersections_prepared", "RCSDIntersection geometries prepared.")
         _mark_stage("intersections_prepared", intersection_prepare_started_at)
 
@@ -468,6 +474,7 @@ def run_t02_stage2_anchor_recognition(
         error2_feature_indexes: set[int] = set()
         error1_feature_metadata: dict[int, dict[str, Any]] = {}
         error2_feature_metadata: dict[int, dict[str, Any]] = {}
+        node_hit_cache: dict[int, tuple[str, ...]] = {}
         for junction_index, junction_id in enumerate(candidate_junction_ids, start=1):
             resolved_group = resolve_junction_group(
                 junction_id,
@@ -515,10 +522,17 @@ def run_t02_stage2_anchor_recognition(
             stage_counts["stage2_candidate_group_count"] += 1
             hit_intersection_ids: set[str] = set()
             for record in resolved_group.group_nodes:
-                for intersection in intersection_records:
-                    if intersection.prepared_geometry.intersects(record.geometry):
-                        hit_intersection_ids.add(intersection.intersection_id)
-                        intersection_to_junctions.setdefault(intersection.intersection_id, set()).add(junction_id)
+                cached_hit_ids = node_hit_cache.get(record.output_index)
+                if cached_hit_ids is None:
+                    stage_counts["stage2_candidate_node_count"] += 1
+                    candidate_indexes = intersection_tree.query(record.geometry, predicate="intersects")
+                    cached_hit_ids = tuple(
+                        sorted({intersection_records[int(index)].intersection_id for index in candidate_indexes})
+                    )
+                    node_hit_cache[record.output_index] = cached_hit_ids
+                for intersection_id in cached_hit_ids:
+                    hit_intersection_ids.add(intersection_id)
+                    intersection_to_junctions.setdefault(intersection_id, set()).add(junction_id)
 
             sorted_hit_intersection_ids = sorted(hit_intersection_ids)
             provisional_state = "no"
@@ -562,7 +576,8 @@ def run_t02_stage2_anchor_recognition(
             if junction_index % JUNCTION_PROGRESS_INTERVAL == 0:
                 message = (
                     f"Processed candidate_groups={junction_index}/{len(candidate_junction_ids)} "
-                    f"stage2_candidate_groups={stage_counts['stage2_candidate_group_count']}"
+                    f"stage2_candidate_groups={stage_counts['stage2_candidate_group_count']} "
+                    f"stage2_candidate_nodes={stage_counts['stage2_candidate_node_count']}"
                 )
                 announce(logger, f"[T02] {message}")
                 _snapshot("running", "anchor_scan", message)
@@ -571,7 +586,8 @@ def run_t02_stage2_anchor_recognition(
             logger,
             "[T02] anchor scan completed "
             f"candidate_junctions={stage_counts['candidate_junction_count']} "
-            f"stage2_candidate_groups={stage_counts['stage2_candidate_group_count']}",
+            f"stage2_candidate_groups={stage_counts['stage2_candidate_group_count']} "
+            f"stage2_candidate_nodes={stage_counts['stage2_candidate_node_count']}",
         )
         _snapshot("running", "anchor_scan_done", "Anchor scan completed.")
         _mark_stage("anchor_scan_done", anchor_scan_started_at)

@@ -547,6 +547,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Run T02 stage2 anchor recognition on stage1 node outputs and RCSDIntersection inputs.",
     )
     p_t02_stage2.add_argument(
+        "--segment-path",
+        "--segment_path",
+        required=True,
+        dest="segment_path",
+        help="Path to T01/T02 segment GeoJSON/Shapefile used for stage2 summary.",
+    )
+    p_t02_stage2.add_argument("--segment-crs", help="Optional segment CRS override, e.g. EPSG:4326.")
+    p_t02_stage2.add_argument(
         "--nodes-path",
         "--nodes_path",
         required=True,

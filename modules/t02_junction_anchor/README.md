@@ -30,6 +30,15 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   --run-id t02_stage1_run
 ```
 
+```bash
+python -m rcsd_topo_poc t02-stage2-anchor-recognition \
+  --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.geojson \
+  --nodes-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate/t02_stage1_run/nodes.geojson \
+  --intersection-path /mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.geojson \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage2_anchor_recognition \
+  --run-id t02_stage2_run
+```
+
 说明：
 
 - `segment` 与 `nodes` 应来自同一轮 T01 成果。
@@ -48,6 +57,12 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   - 输出 geometry 统一为 `EPSG:3857`
 - `t02_stage1_summary.json`
   - 汇总总计数、按 `s_grade` 分桶的 summary、`all__d_sgrade`，以及按代表 node.`kind_2 / grade_2` 分级的 `summary_by_kind_grade`
+- `t02_stage2_summary.json`
+  - 汇总 stage2 的两组锚定 summary：
+    - `anchor_summary_by_s_grade`
+    - `anchor_summary_by_kind_grade`
+  - “资料”只认 `has_evd = yes`
+  - “锚定”只认 `is_anchor = yes`
 - `t02_stage1_audit.csv`
 - `t02_stage1_audit.json`
   - 保留 `junction_nodes_not_found`、`representative_node_missing`、`no_target_junctions`、`missing_required_field`、`invalid_crs_or_unprojectable` 等异常或失败原因
@@ -93,10 +108,12 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   - `audit/log`
 - 已实现：
   - stage2 新增输入 `RCSDIntersection.geojson`
+  - stage2 summary 读取 `segment`
   - `nodes.is_anchor`
   - `yes / no / fail1 / fail2 / null`
   - `node_error_1 / node_error_2`
   - `fail2` 优先于 `fail1`
+  - `t02_stage2_summary.json`
 - 未实现：
   - 最终唯一锚定决策闭环
   - 概率 / 置信度

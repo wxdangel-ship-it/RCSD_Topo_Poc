@@ -42,6 +42,7 @@ def test_t02_stage2_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> No
     captured: dict[str, object] = {}
 
     def _fake_cmd(args) -> int:
+        captured["segment_path"] = args.segment_path
         captured["nodes_path"] = args.nodes_path
         captured["intersection_path"] = args.intersection_path
         captured["out_root"] = args.out_root
@@ -52,6 +53,8 @@ def test_t02_stage2_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> No
     exit_code = cli.main(
         [
             "t02-stage2-anchor-recognition",
+            "--segment_path",
+            str(tmp_path / "segment.geojson"),
             "--nodes_path",
             str(tmp_path / "nodes.geojson"),
             "--intersection_path",
@@ -62,6 +65,7 @@ def test_t02_stage2_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> No
     )
 
     assert exit_code == 0
+    assert captured["segment_path"] == str(tmp_path / "segment.geojson")
     assert captured["nodes_path"] == str(tmp_path / "nodes.geojson")
     assert captured["intersection_path"] == str(tmp_path / "intersection.geojson")
     assert captured["out_root"] == str(tmp_path / "out")

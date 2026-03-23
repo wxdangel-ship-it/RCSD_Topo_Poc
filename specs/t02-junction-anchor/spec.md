@@ -303,6 +303,31 @@
   - 则代表 node 的 `is_anchor = fail2`
   - 同时仍保留相应审计输出
 
+### 5.19 阶段二 summary 基线
+
+- 阶段二新增 `t02_stage2_summary.json`。
+- 语义冻结：
+  - “资料” = `has_evd = yes`
+  - “锚定” = `is_anchor = yes`
+  - `fail1 / fail2 / no / null` 都不计为“被锚定”
+- 阶段二按 `segment.s_grade` 输出 `anchor_summary_by_s_grade`：
+  - 固定 bucket：`0-0双 / 0-1双 / 0-2双 / all__d_sgrade`
+  - 每个 bucket 至少统计：
+    - `total_segment_count`
+    - `pair_nodes_all_anchor_segment_count`
+    - `pair_and_junc_nodes_all_anchor_segment_count`
+  - `pair_nodes_all_anchor_segment_count` 仅检查单个 `segment` 去重后的 `pair_nodes` 集合，集合必须非空且全部 `is_anchor = yes`
+  - `pair_and_junc_nodes_all_anchor_segment_count` 检查单个 `segment` 去重后的 `pair_nodes + junc_nodes` 并集，并集必须非空且全部 `is_anchor = yes`
+  - `all__d_sgrade` 统计所有 `s_grade` 非空的 `segment`
+- 阶段二按代表 node.`kind_2 / grade_2` 输出 `anchor_summary_by_kind_grade`：
+  - 固定 bucket：`kind2_4_64_grade2_1 / kind2_4_64_grade2_0_2_3 / kind2_2048 / kind2_8_16`
+  - 每个 bucket 至少统计：
+    - `evidence_junction_count`
+    - `anchored_junction_count`
+  - 仅统计 `has_evd = yes` 的目标路口
+  - `anchored_junction_count` 仅统计 `is_anchor = yes` 的路口
+  - 代表 node 无法确定、`kind_2 / grade_2` 缺失或未落入四类时，不新增正式 bucket，仅记录未分类数量提示
+
 ## 6. 当前非范围
 
 - 不输出最终锚定结果

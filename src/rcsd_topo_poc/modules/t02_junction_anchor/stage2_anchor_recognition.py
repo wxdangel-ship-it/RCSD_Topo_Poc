@@ -40,6 +40,12 @@ REASON_INVALID_CRS_OR_UNPROJECTABLE = "invalid_crs_or_unprojectable"
 
 NODE_PROGRESS_INTERVAL = 10_000
 JUNCTION_PROGRESS_INTERVAL = 5_000
+KNOWN_S_GRADE_BUCKETS = ("0-0双", "0-1双", "0-2双")
+ALL_D_SGRADE_BUCKET = "all__d_sgrade"
+KIND_GRADE_BUCKET_4_64_1 = "kind2_4_64_grade2_1"
+KIND_GRADE_BUCKET_4_64_0_2_3 = "kind2_4_64_grade2_0_2_3"
+KIND_GRADE_BUCKET_2048 = "kind2_2048"
+KIND_GRADE_BUCKET_8_16 = "kind2_8_16"
 
 INTERSECTION_ID_FIELDS = (
     "id",
@@ -74,10 +80,19 @@ class AnchorGroupResult:
 
 
 @dataclass(frozen=True)
+class SegmentSummaryContext:
+    segment_id: str
+    s_grade: str | None
+    pair_junction_ids: list[str]
+    pair_and_junc_junction_ids: list[str]
+
+
+@dataclass(frozen=True)
 class Stage2Artifacts:
     success: bool
     out_root: Path
     nodes_path: Path | None
+    summary_path: Path
     node_error_1_path: Path
     node_error_1_audit_csv_path: Path
     node_error_1_audit_json_path: Path
@@ -264,12 +279,112 @@ def _write_error_outputs(
     )
 
 
+def _parse_junction_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        if stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                parsed = json.loads(stripped)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, list):
+                return [item for item in (normalize_id(item) for item in parsed) if item is not None]
+        return [item for item in (normalize_id(part) for part in stripped.split(",")) if item is not None]
+    if isinstance(value, (list, tuple, set)):
+        return [item for item in (normalize_id(part) for part in value) if item is not None]
+    normalized = normalize_id(value)
+    return [] if normalized is None else [normalized]
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
+def _segment_grade(properties: dict[str, Any]) -> tuple[str | None, str | None]:
+    if "s_grade" in properties:
+        return "s_grade", normalize_id(properties.get("s_grade"))
+    if "sgrade" in properties:
+        return "sgrade", normalize_id(properties.get("sgrade"))
+    return None, None
+
+
+def _empty_anchor_s_grade_summary() -> dict[str, dict[str, int]]:
+    return {
+        bucket: {
+            "total_segment_count": 0,
+            "pair_nodes_all_anchor_segment_count": 0,
+            "pair_and_junc_nodes_all_anchor_segment_count": 0,
+        }
+        for bucket in (*KNOWN_S_GRADE_BUCKETS, ALL_D_SGRADE_BUCKET)
+    }
+
+
+def _empty_anchor_kind_grade_summary() -> dict[str, dict[str, int]]:
+    return {
+        KIND_GRADE_BUCKET_4_64_1: {
+            "evidence_junction_count": 0,
+            "anchored_junction_count": 0,
+        },
+        KIND_GRADE_BUCKET_4_64_0_2_3: {
+            "evidence_junction_count": 0,
+            "anchored_junction_count": 0,
+        },
+        KIND_GRADE_BUCKET_2048: {
+            "evidence_junction_count": 0,
+            "anchored_junction_count": 0,
+        },
+        KIND_GRADE_BUCKET_8_16: {
+            "evidence_junction_count": 0,
+            "anchored_junction_count": 0,
+        },
+    }
+
+
+def _kind_grade_bucket(kind_2_value: str | None, grade_2_value: str | None) -> str | None:
+    if kind_2_value in {"4", "64"} and grade_2_value == "1":
+        return KIND_GRADE_BUCKET_4_64_1
+    if kind_2_value in {"4", "64"} and grade_2_value in {"0", "2", "3"}:
+        return KIND_GRADE_BUCKET_4_64_0_2_3
+    if kind_2_value == "2048":
+        return KIND_GRADE_BUCKET_2048
+    if kind_2_value in {"8", "16"}:
+        return KIND_GRADE_BUCKET_8_16
+    return None
+
+
+def _read_segment_features(
+    path: Union[str, Path],
+    *,
+    crs_override: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    layer = read_vector_layer_strict(
+        path,
+        crs_override=crs_override,
+        allow_null_geometry=True,
+        error_cls=Stage2RunError,
+    )
+    return [feature.properties for feature in layer.features]
+
+
 def run_t02_stage2_anchor_recognition(
     *,
+    segment_path: Union[str, Path],
     nodes_path: Union[str, Path],
     intersection_path: Union[str, Path],
     out_root: Optional[Union[str, Path]] = None,
     run_id: Optional[str] = None,
+    segment_crs: Optional[str] = None,
     nodes_layer: Optional[str] = None,
     nodes_crs: Optional[str] = None,
     intersection_layer: Optional[str] = None,
@@ -281,6 +396,7 @@ def run_t02_stage2_anchor_recognition(
     progress_path = resolved_out_root / "t02_stage2_progress.json"
     perf_json_path = resolved_out_root / "t02_stage2_perf.json"
     perf_markers_path = resolved_out_root / "t02_stage2_perf_markers.jsonl"
+    summary_path = resolved_out_root / "t02_stage2_summary.json"
     nodes_output_path = resolved_out_root / "nodes.geojson"
     node_error_1_path = resolved_out_root / "node_error_1.geojson"
     node_error_1_audit_csv_path = resolved_out_root / "node_error_1_audit.csv"
@@ -295,6 +411,7 @@ def run_t02_stage2_anchor_recognition(
     audit_rows: list[dict[str, Any]] = []
     stage_counts: dict[str, Any] = {
         "node_feature_count": 0,
+        "segment_feature_count": 0,
         "valid_node_count": 0,
         "candidate_junction_count": 0,
         "stage2_candidate_group_count": 0,
@@ -304,6 +421,10 @@ def run_t02_stage2_anchor_recognition(
         "anchor_no_count": 0,
         "anchor_fail1_count": 0,
         "anchor_fail2_count": 0,
+        "kind_grade_evidence_junction_count": 0,
+        "kind_grade_anchored_junction_count": 0,
+        "kind_grade_unclassified_junction_count": 0,
+        "unknown_s_grade_segment_count": 0,
         "node_error_1_group_count": 0,
         "node_error_2_group_count": 0,
         "audit_count": 0,
@@ -674,6 +795,134 @@ def run_t02_stage2_anchor_recognition(
         _snapshot("running", "anchor_finalize_done", "Anchor states finalized.")
         _mark_stage("anchor_finalize_done", finalize_started_at)
 
+        summary_started_at = time.perf_counter()
+        final_anchor_state_by_junction: dict[str, str | None] = {}
+        anchor_summary_by_kind_grade = _empty_anchor_kind_grade_summary()
+        evidence_junction_ids: set[str] = set()
+        anchored_junction_ids: set[str] = set()
+        kind_grade_unclassified_junction_count = 0
+
+        segment_read_started_at = time.perf_counter()
+        segment_feature_properties = _read_segment_features(segment_path, crs_override=segment_crs)
+        stage_counts["segment_feature_count"] = len(segment_feature_properties)
+        announce(
+            logger,
+            "[T02] loaded segment summary inputs "
+            f"segment_features={stage_counts['segment_feature_count']}",
+        )
+        _snapshot("running", "segment_inputs_loaded", "Segment inputs loaded for stage2 summary.")
+        _mark_stage("segment_inputs_loaded", segment_read_started_at)
+
+        referenced_junction_ids: set[str] = set()
+        segment_contexts: list[SegmentSummaryContext] = []
+        for feature_index, properties in enumerate(segment_feature_properties):
+            missing_fields: list[str] = []
+            segment_id = normalize_id(properties.get("id"))
+            if segment_id is None:
+                missing_fields.append("id")
+            if "pair_nodes" not in properties:
+                missing_fields.append("pair_nodes")
+            if "junc_nodes" not in properties:
+                missing_fields.append("junc_nodes")
+            _, s_grade = _segment_grade(properties)
+            if "s_grade" not in properties and "sgrade" not in properties:
+                missing_fields.append("s_grade|sgrade")
+            if missing_fields:
+                audit_rows.append(
+                    audit_row(
+                        scope="segment",
+                        status="error",
+                        reason=REASON_MISSING_REQUIRED_FIELD,
+                        detail=(
+                            f"segment feature[{feature_index}] missing required fields: {','.join(missing_fields)}"
+                        ),
+                        segment_id=segment_id,
+                    )
+                )
+                continue
+
+            pair_junction_ids = _dedupe_preserve_order(_parse_junction_values(properties.get("pair_nodes")))
+            pair_and_junc_junction_ids = _dedupe_preserve_order(
+                pair_junction_ids + _parse_junction_values(properties.get("junc_nodes"))
+            )
+            referenced_junction_ids.update(pair_and_junc_junction_ids)
+            segment_contexts.append(
+                SegmentSummaryContext(
+                    segment_id=segment_id,
+                    s_grade=s_grade,
+                    pair_junction_ids=pair_junction_ids,
+                    pair_and_junc_junction_ids=pair_and_junc_junction_ids,
+                )
+            )
+
+        for junction_id, group_result in group_results.items():
+            if not group_result.participates or group_result.representative_output_index is None:
+                final_anchor_state_by_junction[junction_id] = None
+                continue
+            representative_properties = nodes_layer_data.features[group_result.representative_output_index].properties
+            final_anchor_state_by_junction[junction_id] = representative_properties.get("is_anchor")
+
+        for junction_id in sorted(referenced_junction_ids):
+            group_result = group_results.get(junction_id)
+            if group_result is None or group_result.representative_output_index is None:
+                kind_grade_unclassified_junction_count += 1
+                continue
+            representative_properties = nodes_layer_data.features[group_result.representative_output_index].properties
+            representative_has_evd = normalize_id(representative_properties.get("has_evd"))
+            if representative_has_evd != "yes":
+                continue
+            kind_2_value = normalize_id(representative_properties.get("kind_2"))
+            grade_2_value = normalize_id(representative_properties.get("grade_2"))
+            bucket = _kind_grade_bucket(kind_2_value, grade_2_value)
+            if bucket is None:
+                kind_grade_unclassified_junction_count += 1
+                continue
+            anchor_summary_by_kind_grade[bucket]["evidence_junction_count"] += 1
+            evidence_junction_ids.add(junction_id)
+            if final_anchor_state_by_junction.get(junction_id) == "yes":
+                anchor_summary_by_kind_grade[bucket]["anchored_junction_count"] += 1
+                anchored_junction_ids.add(junction_id)
+
+        anchor_summary_by_s_grade = _empty_anchor_s_grade_summary()
+
+        def _all_anchor(junction_ids: list[str]) -> bool:
+            return bool(junction_ids) and all(final_anchor_state_by_junction.get(junction_id) == "yes" for junction_id in junction_ids)
+
+        for context in segment_contexts:
+            s_grade = context.s_grade
+            pair_all_anchor = _all_anchor(context.pair_junction_ids)
+            pair_and_junc_all_anchor = _all_anchor(context.pair_and_junc_junction_ids)
+
+            if s_grade in KNOWN_S_GRADE_BUCKETS:
+                anchor_summary_by_s_grade[s_grade]["total_segment_count"] += 1
+                if pair_all_anchor:
+                    anchor_summary_by_s_grade[s_grade]["pair_nodes_all_anchor_segment_count"] += 1
+                if pair_and_junc_all_anchor:
+                    anchor_summary_by_s_grade[s_grade]["pair_and_junc_nodes_all_anchor_segment_count"] += 1
+            elif s_grade is not None:
+                stage_counts["unknown_s_grade_segment_count"] += 1
+
+            if s_grade is not None:
+                anchor_summary_by_s_grade[ALL_D_SGRADE_BUCKET]["total_segment_count"] += 1
+                if pair_all_anchor:
+                    anchor_summary_by_s_grade[ALL_D_SGRADE_BUCKET]["pair_nodes_all_anchor_segment_count"] += 1
+                if pair_and_junc_all_anchor:
+                    anchor_summary_by_s_grade[ALL_D_SGRADE_BUCKET]["pair_and_junc_nodes_all_anchor_segment_count"] += 1
+
+        stage_counts["kind_grade_evidence_junction_count"] = len(evidence_junction_ids)
+        stage_counts["kind_grade_anchored_junction_count"] = len(anchored_junction_ids)
+        stage_counts["kind_grade_unclassified_junction_count"] = kind_grade_unclassified_junction_count
+        announce(
+            logger,
+            "[T02] summary prepared "
+            f"evidence_junction_count={stage_counts['kind_grade_evidence_junction_count']} "
+            f"anchored_junction_count={stage_counts['kind_grade_anchored_junction_count']} "
+            f"unclassified_kind_grade_junction_count={stage_counts['kind_grade_unclassified_junction_count']} "
+            f"unknown_s_grade_segment_count={stage_counts['unknown_s_grade_segment_count']}",
+        )
+        _snapshot("running", "summary_prepared", "Stage2 summary prepared.")
+        _mark_stage("summary_prepared", summary_started_at)
+
         node_write_started_at = time.perf_counter()
         write_geojson(
             nodes_output_path,
@@ -728,6 +977,58 @@ def run_t02_stage2_anchor_recognition(
         _snapshot("running", "error_outputs_written", "Error outputs written.")
         _mark_stage("error_outputs_written", error_write_started_at)
 
+        summary_write_started_at = time.perf_counter()
+        write_json(
+            summary_path,
+            {
+                "run_id": resolved_run_id,
+                "success": True,
+                "target_crs": TARGET_CRS.to_string(),
+                "inputs": {
+                    "segment_path": str(Path(segment_path)),
+                    "nodes_path": str(Path(nodes_path)),
+                    "intersection_path": str(Path(intersection_path)),
+                    "segment_crs_override": segment_crs,
+                    "nodes_crs_override": nodes_crs,
+                    "intersection_crs_override": intersection_crs,
+                },
+                "counts": {
+                    "segment_feature_count": stage_counts["segment_feature_count"],
+                    "candidate_junction_count": stage_counts["candidate_junction_count"],
+                    "stage2_candidate_group_count": stage_counts["stage2_candidate_group_count"],
+                    "anchor_yes_count": stage_counts["anchor_yes_count"],
+                    "anchor_no_count": stage_counts["anchor_no_count"],
+                    "anchor_fail1_count": stage_counts["anchor_fail1_count"],
+                    "anchor_fail2_count": stage_counts["anchor_fail2_count"],
+                    "evidence_junction_count": stage_counts["kind_grade_evidence_junction_count"],
+                    "anchored_junction_count": stage_counts["kind_grade_anchored_junction_count"],
+                    "unclassified_kind_grade_junction_count": stage_counts["kind_grade_unclassified_junction_count"],
+                    "unknown_s_grade_segment_count": stage_counts["unknown_s_grade_segment_count"],
+                },
+                "anchor_summary_by_s_grade": anchor_summary_by_s_grade,
+                "anchor_summary_by_kind_grade": anchor_summary_by_kind_grade,
+                "output_files": [
+                    summary_path.name,
+                    nodes_output_path.name,
+                    node_error_1_path.name,
+                    node_error_1_audit_csv_path.name,
+                    node_error_1_audit_json_path.name,
+                    node_error_2_path.name,
+                    node_error_2_audit_csv_path.name,
+                    node_error_2_audit_json_path.name,
+                    audit_csv_path.name,
+                    audit_json_path.name,
+                    log_path.name,
+                    progress_path.name,
+                    perf_json_path.name,
+                    perf_markers_path.name,
+                ],
+            },
+        )
+        announce(logger, f"[T02] summary written path={summary_path}")
+        _snapshot("running", "summary_written", "Stage2 summary written.")
+        _mark_stage("summary_written", summary_write_started_at)
+
         _write_perf_snapshot(
             perf_json_path,
             {
@@ -735,14 +1036,17 @@ def run_t02_stage2_anchor_recognition(
                 "success": True,
                 "target_crs": TARGET_CRS.to_string(),
                 "inputs": {
+                    "segment_path": str(Path(segment_path)),
                     "nodes_path": str(Path(nodes_path)),
                     "intersection_path": str(Path(intersection_path)),
+                    "segment_crs_override": segment_crs,
                     "nodes_crs_override": nodes_crs,
                     "intersection_crs_override": intersection_crs,
                 },
                 "counts": dict(stage_counts),
                 "stage_timings": stage_timings,
                 "output_files": [
+                    summary_path.name,
                     nodes_output_path.name,
                     node_error_1_path.name,
                     node_error_1_audit_csv_path.name,
@@ -777,6 +1081,7 @@ def run_t02_stage2_anchor_recognition(
             success=True,
             out_root=resolved_out_root,
             nodes_path=nodes_output_path,
+            summary_path=summary_path,
             node_error_1_path=node_error_1_path,
             node_error_1_audit_csv_path=node_error_1_audit_csv_path,
             node_error_1_audit_json_path=node_error_1_audit_json_path,
@@ -864,6 +1169,7 @@ def run_t02_stage2_anchor_recognition(
             success=False,
             out_root=resolved_out_root,
             nodes_path=None,
+            summary_path=summary_path,
             node_error_1_path=node_error_1_path,
             node_error_1_audit_csv_path=node_error_1_audit_csv_path,
             node_error_1_audit_json_path=node_error_1_audit_json_path,
@@ -885,10 +1191,12 @@ def run_t02_stage2_anchor_recognition(
 
 def run_t02_stage2_anchor_recognition_cli(args: argparse.Namespace) -> int:
     artifacts = run_t02_stage2_anchor_recognition(
+        segment_path=args.segment_path,
         nodes_path=args.nodes_path,
         intersection_path=args.intersection_path,
         out_root=args.out_root,
         run_id=args.run_id,
+        segment_crs=args.segment_crs,
         nodes_layer=args.nodes_layer,
         nodes_crs=args.nodes_crs,
         intersection_layer=args.intersection_layer,

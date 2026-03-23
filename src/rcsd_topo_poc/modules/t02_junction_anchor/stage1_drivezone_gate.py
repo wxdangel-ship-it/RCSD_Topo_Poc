@@ -39,16 +39,10 @@ from rcsd_topo_poc.modules.t02_junction_anchor.shared import (
 
 KNOWN_S_GRADE_BUCKETS = ("0-0双", "0-1双", "0-2双")
 ALL_D_SGRADE_BUCKET = "all__d_sgrade"
-KIND_SUMMARY_BUCKET_4_64 = "kind_4_64"
-KIND_SUMMARY_BUCKET_2048 = "kind_2048"
-KIND_SUMMARY_BUCKET_8_16 = "kind_8_16"
-KIND_BUCKET_BY_VALUE = {
-    "4": KIND_SUMMARY_BUCKET_4_64,
-    "64": KIND_SUMMARY_BUCKET_4_64,
-    "2048": KIND_SUMMARY_BUCKET_2048,
-    "8": KIND_SUMMARY_BUCKET_8_16,
-    "16": KIND_SUMMARY_BUCKET_8_16,
-}
+KIND_GRADE_BUCKET_4_64_1 = "kind2_4_64_grade2_1"
+KIND_GRADE_BUCKET_4_64_0_2_3 = "kind2_4_64_grade2_0_2_3"
+KIND_GRADE_BUCKET_2048 = "kind2_2048"
+KIND_GRADE_BUCKET_8_16 = "kind2_8_16"
 REASON_JUNCTION_NODES_NOT_FOUND = "junction_nodes_not_found"
 REASON_REPRESENTATIVE_NODE_MISSING = "representative_node_missing"
 REASON_NO_TARGET_JUNCTIONS = "no_target_junctions"
@@ -356,21 +350,37 @@ def _empty_bucket_summary() -> dict[str, dict[str, int]]:
     }
 
 
-def _empty_kind_summary() -> dict[str, dict[str, int]]:
+def _empty_kind_grade_summary() -> dict[str, dict[str, int]]:
     return {
-        KIND_SUMMARY_BUCKET_4_64: {
+        KIND_GRADE_BUCKET_4_64_1: {
             "junction_count": 0,
             "junction_has_evd_count": 0,
         },
-        KIND_SUMMARY_BUCKET_2048: {
+        KIND_GRADE_BUCKET_4_64_0_2_3: {
             "junction_count": 0,
             "junction_has_evd_count": 0,
         },
-        KIND_SUMMARY_BUCKET_8_16: {
+        KIND_GRADE_BUCKET_2048: {
+            "junction_count": 0,
+            "junction_has_evd_count": 0,
+        },
+        KIND_GRADE_BUCKET_8_16: {
             "junction_count": 0,
             "junction_has_evd_count": 0,
         },
     }
+
+
+def _kind_grade_bucket(kind_2_value: str | None, grade_2_value: str | None) -> str | None:
+    if kind_2_value in {"4", "64"} and grade_2_value == "1":
+        return KIND_GRADE_BUCKET_4_64_1
+    if kind_2_value in {"4", "64"} and grade_2_value in {"0", "2", "3"}:
+        return KIND_GRADE_BUCKET_4_64_0_2_3
+    if kind_2_value == "2048":
+        return KIND_GRADE_BUCKET_2048
+    if kind_2_value in {"8", "16"}:
+        return KIND_GRADE_BUCKET_8_16
+    return None
 
 
 def _write_perf_snapshot(path: Path, payload: dict[str, Any]) -> None:
@@ -836,25 +846,26 @@ def run_t02_stage1_drivezone_gate(
             bucket_summary[bucket]["junction_count"] = len(bucket_junction_sets[bucket])
             bucket_summary[bucket]["junction_has_evd_count"] = len(bucket_yes_junction_sets[bucket])
 
-        kind_summary = _empty_kind_summary()
-        kind_unclassified_junction_count = 0
+        kind_grade_summary = _empty_kind_grade_summary()
+        kind_grade_unclassified_junction_count = 0
         for junction_id in referenced_junction_ids:
             junction_result = junction_results[junction_id]
             representative_output_index = junction_result.representative_output_index
             if representative_output_index is None:
-                kind_unclassified_junction_count += 1
+                kind_grade_unclassified_junction_count += 1
                 continue
 
             representative_properties = nodes_layer_data.features[representative_output_index].properties
-            kind_value = _normalize_id(representative_properties.get("kind"))
-            kind_bucket = KIND_BUCKET_BY_VALUE.get(kind_value or "")
-            if kind_bucket is None:
-                kind_unclassified_junction_count += 1
+            kind_2_value = _normalize_id(representative_properties.get("kind_2"))
+            grade_2_value = _normalize_id(representative_properties.get("grade_2"))
+            kind_grade_bucket = _kind_grade_bucket(kind_2_value, grade_2_value)
+            if kind_grade_bucket is None:
+                kind_grade_unclassified_junction_count += 1
                 continue
 
-            kind_summary[kind_bucket]["junction_count"] += 1
+            kind_grade_summary[kind_grade_bucket]["junction_count"] += 1
             if junction_result.has_evd == "yes":
-                kind_summary[kind_bucket]["junction_has_evd_count"] += 1
+                kind_grade_summary[kind_grade_bucket]["junction_has_evd_count"] += 1
 
         stage_counts["segment_has_evd_count"] = sum(
             1 for feature in segment_layer_data.features if feature.properties.get("has_evd") == "yes"
@@ -868,9 +879,9 @@ def run_t02_stage1_drivezone_gate(
         )
         announce(
             logger,
-            "[T02] kind summary completed "
-            f"classified_junctions={sum(bucket['junction_count'] for bucket in kind_summary.values())} "
-            f"unclassified_junctions={kind_unclassified_junction_count}",
+            "[T02] kind_grade summary completed "
+            f"classified_junctions={sum(bucket['junction_count'] for bucket in kind_grade_summary.values())} "
+            f"unclassified_junctions={kind_grade_unclassified_junction_count}",
         )
         _snapshot("running", "segment_finalize_done", "Segment outputs and summary counters computed.")
         _mark_stage("segment_finalize_done", segment_finalize_started_at)
@@ -944,7 +955,7 @@ def run_t02_stage1_drivezone_gate(
             "counts": dict(stage_counts),
             "stage_timings": stage_timings,
             "summary_by_s_grade": bucket_summary,
-            "summary_by_kind": kind_summary,
+            "summary_by_kind_grade": kind_grade_summary,
             "output_files": [
                 output_nodes_path.name,
                 output_segment_path.name,
@@ -1021,7 +1032,7 @@ def run_t02_stage1_drivezone_gate(
             "counts": dict(stage_counts),
             "stage_timings": stage_timings,
             "summary_by_s_grade": _empty_bucket_summary(),
-            "summary_by_kind": _empty_kind_summary(),
+            "summary_by_kind_grade": _empty_kind_grade_summary(),
             "fatal_error": {
                 "reason": exc.reason,
                 "detail": exc.detail,

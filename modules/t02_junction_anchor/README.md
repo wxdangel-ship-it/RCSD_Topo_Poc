@@ -47,7 +47,7 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   - 继承输入 `segment` 字段并新增 `has_evd`
   - 输出 geometry 统一为 `EPSG:3857`
 - `t02_stage1_summary.json`
-  - 汇总总计数、按 `s_grade` 分桶的 summary、`all__d_sgrade`，以及按代表 node.kind 分级的 `summary_by_kind`
+  - 汇总总计数、按 `s_grade` 分桶的 summary、`all__d_sgrade`，以及按代表 node.`kind_2 / grade_2` 分级的 `summary_by_kind_grade`
 - `t02_stage1_audit.csv`
 - `t02_stage1_audit.json`
   - 保留 `junction_nodes_not_found`、`representative_node_missing`、`no_target_junctions`、`missing_required_field`、`invalid_crs_or_unprojectable` 等异常或失败原因
@@ -64,7 +64,7 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
 
 - stage1 业务 summary 的分桶继续按 `0-0双 / 0-1双 / 0-2双` 统计。
 - stage1 在分桶之外补充 `all__d_sgrade`，表示所有 `s_grade` 非空的 `segment` 总汇总。
-- stage1 同时补充 `summary_by_kind`，固定输出 `kind_4_64 / kind_2048 / kind_8_16` 三个 bucket，并按目标路口唯一 `junction_id` 统计 `junction_count / junction_has_evd_count`。
+- stage1 同时补充 `summary_by_kind_grade`，固定输出 `kind2_4_64_grade2_1 / kind2_4_64_grade2_0_2_3 / kind2_2048 / kind2_8_16` 四个 bucket，并按目标路口唯一 `junction_id` 统计 `junction_count / junction_has_evd_count`。
 
 ## 5. 文档阅读顺序
 

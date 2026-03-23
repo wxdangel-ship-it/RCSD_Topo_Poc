@@ -200,17 +200,18 @@
   - 仅统计 `s_grade` 非空的 `segment`
   - 路口按唯一路口 ID 计数
   - 不按 `segment-路口` 展开重复计数
-- 在现有 `summary_by_s_grade` 之外，并存新增 `summary_by_kind`：
-  - 固定 bucket：`kind_4_64`、`kind_2048`、`kind_8_16`
+- 在现有 `summary_by_s_grade` 之外，并存新增 `summary_by_kind_grade`：
+  - 固定 bucket：`kind2_4_64_grade2_1`、`kind2_4_64_grade2_0_2_3`、`kind2_2048`、`kind2_8_16`
   - 统计对象是阶段一目标路口全集，按 `junction_id` 唯一值计数
-  - kind 取值以代表 node 的 `kind` 为准
+  - 分类依据以代表 node 的 `kind_2 / grade_2` 为准
   - 每个 bucket 至少统计：
     - `junction_count`
     - `junction_has_evd_count`
-  - `kind in {4, 64}` 归入 `kind_4_64`
-  - `kind = 2048` 归入 `kind_2048`
-  - `kind in {8, 16}` 归入 `kind_8_16`
-  - 代表 node 无法确定、`kind` 缺失或 `kind` 不在上述范围内时，不新增正式 bucket，仅记录未分类数量提示
+  - `kind_2 in {4, 64} and grade_2 = 1` 归入 `kind2_4_64_grade2_1`
+  - `kind_2 in {4, 64} and grade_2 in {0, 2, 3}` 归入 `kind2_4_64_grade2_0_2_3`
+  - `kind_2 = 2048` 归入 `kind2_2048`
+  - `kind_2 in {8, 16}` 归入 `kind2_8_16`
+  - 代表 node 无法确定、`kind_2 / grade_2` 缺失或不落入上述四类时，不新增正式 bucket，仅记录未分类数量提示
 
 说明：
 

@@ -220,7 +220,7 @@ outputs/_work/t02_stage1_drivezone_gate
   - `inputs`
   - `counts`
   - `summary_by_s_grade`
-  - `summary_by_kind`
+  - `summary_by_kind_grade`
   - `output_files`
 - `summary_by_s_grade` 每桶至少包含：
   - `segment_count`
@@ -233,19 +233,21 @@ outputs/_work/t02_stage1_drivezone_gate
   - 所有 `s_grade` 非空的 `segment`
   - 路口按唯一路口 ID 计数
   - 不按 `segment-路口` 展开重复计数
-- `summary_by_kind` 固定包含：
-  - `kind_4_64`
-  - `kind_2048`
-  - `kind_8_16`
-- `summary_by_kind` 每个 bucket 至少包含：
+- `summary_by_kind_grade` 固定包含：
+  - `kind2_4_64_grade2_1`
+  - `kind2_4_64_grade2_0_2_3`
+  - `kind2_2048`
+  - `kind2_8_16`
+- `summary_by_kind_grade` 每个 bucket 至少包含：
   - `junction_count`
   - `junction_has_evd_count`
-- `summary_by_kind` 的统计对象是阶段一目标路口全集，按 `junction_id` 唯一值计数。
-- kind 取值以代表 node 的 `kind` 为准：
-  - `kind in {4, 64}` -> `kind_4_64`
-  - `kind = 2048` -> `kind_2048`
-  - `kind in {8, 16}` -> `kind_8_16`
-- 代表 node 无法确定、`kind` 缺失或 `kind` 不在上述集合时，不新增正式 bucket，仅输出未分类数量提示。
+- `summary_by_kind_grade` 的统计对象是阶段一目标路口全集，按 `junction_id` 唯一值计数。
+- 分类依据以代表 node 的 `kind_2 / grade_2` 为准：
+  - `kind_2 in {4, 64} and grade_2 = 1` -> `kind2_4_64_grade2_1`
+  - `kind_2 in {4, 64} and grade_2 in {0, 2, 3}` -> `kind2_4_64_grade2_0_2_3`
+  - `kind_2 = 2048` -> `kind2_2048`
+  - `kind_2 in {8, 16}` -> `kind2_8_16`
+- 代表 node 无法确定、`kind_2 / grade_2` 缺失或不落入上述四类时，不新增正式 bucket，仅输出未分类数量提示。
 
 #### `t02_stage1_audit.csv / t02_stage1_audit.json`
 

@@ -42,7 +42,7 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
         nodes_path,
         [
             {
-                "properties": {"id": 1, "mainnodeid": None, "kind": 4},
+                "properties": {"id": 1, "mainnodeid": None, "kind_2": 4, "grade_2": 1},
                 "geometry": Point(0.0, 0.0),
             }
         ],
@@ -94,16 +94,20 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
         "junction_count": 1,
         "junction_has_evd_count": 1,
     }
-    assert summary_doc["summary_by_kind"] == {
-        "kind_4_64": {
+    assert summary_doc["summary_by_kind_grade"] == {
+        "kind2_4_64_grade2_1": {
             "junction_count": 1,
             "junction_has_evd_count": 1,
         },
-        "kind_2048": {
+        "kind2_4_64_grade2_0_2_3": {
             "junction_count": 0,
             "junction_has_evd_count": 0,
         },
-        "kind_8_16": {
+        "kind2_2048": {
+            "junction_count": 0,
+            "junction_has_evd_count": 0,
+        },
+        "kind2_8_16": {
             "junction_count": 0,
             "junction_has_evd_count": 0,
         },

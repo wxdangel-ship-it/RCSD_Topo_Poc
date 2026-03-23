@@ -23,14 +23,17 @@ def _node_feature(
     y: float,
     *,
     mainnodeid: int | None,
-    kind: int | None = None,
+    kind_2: int | None = None,
+    grade_2: int | None = None,
 ) -> dict:
     properties = {
         "id": node_id,
         "mainnodeid": mainnodeid,
     }
-    if kind is not None:
-        properties["kind"] = kind
+    if kind_2 is not None:
+        properties["kind_2"] = kind_2
+    if grade_2 is not None:
+        properties["grade_2"] = grade_2
     return {
         "properties": properties,
         "geometry": Point(x, y),
@@ -359,7 +362,7 @@ def test_stage1_outputs_zeroed_all_d_sgrade_when_all_segment_grades_are_empty(tm
     }
 
 
-def test_stage1_outputs_summary_by_kind_with_unique_junction_counts(tmp_path: Path) -> None:
+def test_stage1_outputs_summary_by_kind_grade_with_unique_junction_counts(tmp_path: Path) -> None:
     segment_path = tmp_path / "segment.geojson"
     nodes_path = tmp_path / "nodes.geojson"
     drivezone_path = tmp_path / "drivezone.geojson"
@@ -376,10 +379,11 @@ def test_stage1_outputs_summary_by_kind_with_unique_junction_counts(tmp_path: Pa
     write_geojson(
         nodes_path,
         [
-            _node_feature(1, 0.0, 0.0, mainnodeid=None, kind=4),
-            _node_feature(2, 10.0, 10.0, mainnodeid=None, kind=2048),
-            _node_feature(3, 0.5, 0.0, mainnodeid=None, kind=16),
-            _node_feature(4, 0.25, 0.0, mainnodeid=None, kind=32),
+            _node_feature(1, 0.0, 0.0, mainnodeid=None, kind_2=4, grade_2=1),
+            _node_feature(2, 10.0, 10.0, mainnodeid=None, kind_2=4, grade_2=2),
+            _node_feature(3, 0.5, 0.0, mainnodeid=None, kind_2=2048, grade_2=3),
+            _node_feature(4, 0.25, 0.0, mainnodeid=None, kind_2=16, grade_2=0),
+            _node_feature(5, 20.0, 20.0, mainnodeid=None, kind_2=32, grade_2=1),
         ],
     )
     write_geojson(drivezone_path, [_drivezone_feature(-1.0, -1.0, 1.0, 1.0)])
@@ -416,18 +420,78 @@ def test_stage1_outputs_summary_by_kind_with_unique_junction_counts(tmp_path: Pa
         "junction_count": 4,
         "junction_has_evd_count": 3,
     }
-    assert artifacts.summary["summary_by_kind"] == {
-        "kind_4_64": {
+    assert artifacts.summary["summary_by_kind_grade"] == {
+        "kind2_4_64_grade2_1": {
             "junction_count": 1,
             "junction_has_evd_count": 1,
         },
-        "kind_2048": {
+        "kind2_4_64_grade2_0_2_3": {
             "junction_count": 1,
             "junction_has_evd_count": 0,
         },
-        "kind_8_16": {
+        "kind2_2048": {
             "junction_count": 1,
             "junction_has_evd_count": 1,
+        },
+        "kind2_8_16": {
+            "junction_count": 1,
+            "junction_has_evd_count": 1,
+        },
+    }
+
+
+def test_stage1_excludes_missing_or_out_of_range_kind_grade_from_formal_buckets(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.geojson"
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+    bucket_0_0, _, _ = KNOWN_S_GRADE_BUCKETS
+
+    write_geojson(
+        segment_path,
+        [
+            _segment_feature("seg-1", pair_nodes="1,2,3", junc_nodes="", s_grade=bucket_0_0),
+        ],
+    )
+    write_geojson(
+        nodes_path,
+        [
+            _node_feature(1, 0.0, 0.0, mainnodeid=None, kind_2=4, grade_2=1),
+            _node_feature(2, 0.25, 0.0, mainnodeid=None, kind_2=4),
+            _node_feature(3, 0.5, 0.0, mainnodeid=None, kind_2=32, grade_2=1),
+        ],
+    )
+    write_geojson(drivezone_path, [_drivezone_feature(-1.0, -1.0, 1.0, 1.0)])
+
+    artifacts = run_t02_stage1_drivezone_gate(
+        segment_path=segment_path,
+        nodes_path=nodes_path,
+        drivezone_path=drivezone_path,
+        out_root=tmp_path / "out",
+        run_id="kind_grade_unclassified_case",
+    )
+
+    assert artifacts.summary["summary_by_s_grade"][bucket_0_0] == {
+        "segment_count": 1,
+        "segment_has_evd_count": 1,
+        "junction_count": 3,
+        "junction_has_evd_count": 3,
+    }
+    assert artifacts.summary["summary_by_kind_grade"] == {
+        "kind2_4_64_grade2_1": {
+            "junction_count": 1,
+            "junction_has_evd_count": 1,
+        },
+        "kind2_4_64_grade2_0_2_3": {
+            "junction_count": 0,
+            "junction_has_evd_count": 0,
+        },
+        "kind2_2048": {
+            "junction_count": 0,
+            "junction_has_evd_count": 0,
+        },
+        "kind2_8_16": {
+            "junction_count": 0,
+            "junction_has_evd_count": 0,
         },
     }
 

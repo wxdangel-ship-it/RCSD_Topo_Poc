@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import sqlite3
 import time
 import tracemalloc
 from collections import deque
@@ -16,7 +18,7 @@ import ijson
 import numpy as np
 import shapefile
 from pyproj import CRS
-from shapely import intersects_xy
+from shapely import from_wkb, intersects_xy
 from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon, box, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge, unary_union
@@ -58,6 +60,8 @@ MAIN_AXIS_ANGLE_TOLERANCE_DEG = 35.0
 BRANCH_MATCH_TOLERANCE_DEG = 30.0
 RAY_GAP_STEPS = 3
 RAY_SAMPLE_STEP_MULTIPLIER = 0.5
+SPATIAL_CACHE_VERSION = "v1"
+POC_SPATIAL_CACHE_DIR = Path(__file__).resolve().parents[4] / "outputs" / "_work" / "t02_poc_spatial_cache"
 
 REASON_MISSING_REQUIRED_FIELD = "missing_required_field"
 REASON_INVALID_CRS_OR_UNPROJECTABLE = "invalid_crs_or_unprojectable"
@@ -459,6 +463,264 @@ def _geometry_payload_bounds(geometry_payload: dict[str, Any] | None) -> tuple[f
     return (bounds[0], bounds[1], bounds[2], bounds[3])
 
 
+def _spatial_cache_path_for(layer_path: Path, *, crs_override: str | None) -> Path:
+    cache_key = f"{layer_path.resolve()}|{crs_override or ''}|{SPATIAL_CACHE_VERSION}"
+    digest = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:16]
+    filename = f"{layer_path.stem}_{digest}.sqlite"
+    return POC_SPATIAL_CACHE_DIR / filename
+
+
+def _spatial_cache_signature(layer_path: Path, *, crs_override: str | None) -> dict[str, str]:
+    stat = layer_path.stat()
+    return {
+        "version": SPATIAL_CACHE_VERSION,
+        "source_path": str(layer_path.resolve()),
+        "source_size": str(stat.st_size),
+        "source_mtime_ns": str(stat.st_mtime_ns),
+        "crs_override": crs_override or "",
+    }
+
+
+def _read_spatial_cache_meta(conn: sqlite3.Connection) -> dict[str, str]:
+    try:
+        rows = conn.execute("SELECT key, value FROM meta").fetchall()
+    except sqlite3.Error:
+        return {}
+    return {str(key): str(value) for key, value in rows}
+
+
+def _spatial_cache_is_valid(cache_path: Path, *, layer_path: Path, crs_override: str | None) -> bool:
+    if not cache_path.is_file():
+        return False
+    try:
+        conn = sqlite3.connect(str(cache_path))
+        try:
+            meta = _read_spatial_cache_meta(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+    return meta == _spatial_cache_signature(layer_path, crs_override=crs_override)
+
+
+def _create_spatial_cache_schema(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA journal_mode=OFF")
+    conn.execute("PRAGMA synchronous=OFF")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute(
+        """
+        CREATE TABLE features (
+            fid INTEGER PRIMARY KEY,
+            feature_index INTEGER NOT NULL,
+            properties_json TEXT NOT NULL,
+            geometry_wkb BLOB NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE VIRTUAL TABLE spatial_index USING rtree(fid, minx, maxx, miny, maxy)")
+
+
+def _write_spatial_cache_meta(conn: sqlite3.Connection, *, layer_path: Path, crs_override: str | None) -> None:
+    meta = _spatial_cache_signature(layer_path, crs_override=crs_override)
+    conn.executemany(
+        "INSERT INTO meta(key, value) VALUES(?, ?)",
+        [(key, value) for key, value in meta.items()],
+    )
+
+
+def _build_spatial_cache(
+    layer_path: Path,
+    *,
+    layer_name: str | None,
+    crs_override: str | None,
+    allow_null_geometry: bool,
+    progress_label: str | None,
+    progress_every: int,
+    progress_callback: Callable[[str, int, int], None] | None,
+) -> Path:
+    cache_path = _spatial_cache_path_for(layer_path, crs_override=crs_override)
+    temp_path = cache_path.with_suffix(f"{cache_path.suffix}.tmp")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    if temp_path.exists():
+        temp_path.unlink()
+
+    def _report(scanned_count: int, indexed_count: int) -> None:
+        if progress_label and progress_callback:
+            progress_callback(f"{progress_label}_cache_build", scanned_count, indexed_count)
+
+    try:
+        conn = sqlite3.connect(str(temp_path))
+        try:
+            _create_spatial_cache_schema(conn)
+            indexed_count = 0
+            scanned_count = 0
+
+            suffix = layer_path.suffix.lower()
+            if suffix in {".geojson", ".json"}:
+                source_crs, _crs_source = _resolve_geojson_crs_streaming(layer_path, crs_override)
+                for feature_index, feature in _iter_geojson_feature_items(layer_path):
+                    scanned_count = feature_index + 1
+                    if scanned_count % progress_every == 0:
+                        _report(scanned_count, indexed_count)
+                    geometry_payload = feature.get("geometry")
+                    if geometry_payload is None:
+                        if not allow_null_geometry:
+                            raise VirtualIntersectionPocError(
+                                REASON_MISSING_REQUIRED_FIELD,
+                                f"{layer_path} feature[{feature_index}] is missing geometry.",
+                            )
+                        continue
+                    geometry = _transform_geometry(
+                        shape(geometry_payload),
+                        source_crs=source_crs,
+                        layer_label=str(layer_path),
+                        feature_index=feature_index,
+                        error_cls=VirtualIntersectionPocError,
+                    )
+                    if geometry.is_empty:
+                        continue
+                    properties = dict(feature.get("properties") or {})
+                    min_x, min_y, max_x, max_y = geometry.bounds
+                    fid = feature_index
+                    conn.execute(
+                        "INSERT INTO features(fid, feature_index, properties_json, geometry_wkb) VALUES(?, ?, ?, ?)",
+                        (
+                            fid,
+                            feature_index,
+                            json.dumps(properties, ensure_ascii=False, separators=(",", ":")),
+                            sqlite3.Binary(geometry.wkb),
+                        ),
+                    )
+                    conn.execute(
+                        "INSERT INTO spatial_index(fid, minx, maxx, miny, maxy) VALUES(?, ?, ?, ?, ?)",
+                        (fid, min_x, max_x, min_y, max_y),
+                    )
+                    indexed_count += 1
+            elif suffix == ".shp":
+                source_crs, _crs_source = _resolve_shapefile_crs_strict(
+                    layer_path,
+                    crs_override,
+                    error_cls=VirtualIntersectionPocError,
+                )
+                reader = shapefile.Reader(str(layer_path))
+                field_names = [field[0] for field in reader.fields[1:]]
+                for feature_index, shape_record in enumerate(reader.iterShapeRecords()):
+                    scanned_count = feature_index + 1
+                    if scanned_count % progress_every == 0:
+                        _report(scanned_count, indexed_count)
+                    geometry_payload = shape_record.shape.__geo_interface__
+                    geometry = _transform_geometry(
+                        shape(geometry_payload),
+                        source_crs=source_crs,
+                        layer_label=str(layer_path),
+                        feature_index=feature_index,
+                        error_cls=VirtualIntersectionPocError,
+                    )
+                    if geometry.is_empty:
+                        continue
+                    properties = dict(zip(field_names, list(shape_record.record)))
+                    min_x, min_y, max_x, max_y = geometry.bounds
+                    fid = feature_index
+                    conn.execute(
+                        "INSERT INTO features(fid, feature_index, properties_json, geometry_wkb) VALUES(?, ?, ?, ?)",
+                        (
+                            fid,
+                            feature_index,
+                            json.dumps(properties, ensure_ascii=False, separators=(",", ":")),
+                            sqlite3.Binary(geometry.wkb),
+                        ),
+                    )
+                    conn.execute(
+                        "INSERT INTO spatial_index(fid, minx, maxx, miny, maxy) VALUES(?, ?, ?, ?, ?)",
+                        (fid, min_x, max_x, min_y, max_y),
+                    )
+                    indexed_count += 1
+            else:
+                raise VirtualIntersectionPocError(
+                    REASON_INVALID_CRS_OR_UNPROJECTABLE,
+                    f"Spatial cache is not supported for '{layer_path.suffix}' inputs.",
+                )
+
+            _report(scanned_count, indexed_count)
+            _write_spatial_cache_meta(conn, layer_path=layer_path, crs_override=crs_override)
+            conn.commit()
+        finally:
+            conn.close()
+        temp_path.replace(cache_path)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+    return cache_path
+
+
+def _load_layer_filtered_from_spatial_cache(
+    layer_path: Path,
+    *,
+    layer_name: str | None,
+    crs_override: str | None,
+    allow_null_geometry: bool,
+    query_geometry: BaseGeometry,
+    property_predicate: Callable[[dict[str, Any]], bool] | None,
+    progress_label: str | None,
+    progress_every: int,
+    progress_callback: Callable[[str, int, int], None] | None,
+) -> LoadedLayer:
+    cache_path = _spatial_cache_path_for(layer_path, crs_override=crs_override)
+    if not _spatial_cache_is_valid(cache_path, layer_path=layer_path, crs_override=crs_override):
+        cache_path = _build_spatial_cache(
+            layer_path,
+            layer_name=layer_name,
+            crs_override=crs_override,
+            allow_null_geometry=allow_null_geometry,
+            progress_label=progress_label,
+            progress_every=progress_every,
+            progress_callback=progress_callback,
+        )
+
+    query_min_x, query_min_y, query_max_x, query_max_y = (float(v) for v in query_geometry.bounds)
+    try:
+        conn = sqlite3.connect(str(cache_path))
+        rows = conn.execute(
+            """
+            SELECT f.feature_index, f.properties_json, f.geometry_wkb
+            FROM spatial_index idx
+            JOIN features f ON f.fid = idx.fid
+            WHERE idx.maxx >= ? AND idx.minx <= ? AND idx.maxy >= ? AND idx.miny <= ?
+            ORDER BY f.feature_index
+            """,
+            (query_min_x, query_max_x, query_min_y, query_max_y),
+        )
+        features: list[LoadedFeature] = []
+        scanned_count = 0
+        matched_count = 0
+        for feature_index, properties_json, geometry_wkb in rows:
+            scanned_count += 1
+            if progress_label and progress_callback and scanned_count % progress_every == 0:
+                progress_callback(f"{progress_label}_cache_query", scanned_count, matched_count)
+            properties = dict(json.loads(properties_json))
+            if property_predicate is not None and not property_predicate(properties):
+                continue
+            geometry = from_wkb(bytes(geometry_wkb))
+            if not geometry.intersects(query_geometry):
+                continue
+            features.append(LoadedFeature(feature_index=int(feature_index), properties=properties, geometry=geometry))
+            matched_count += 1
+        if progress_label and progress_callback:
+            progress_callback(f"{progress_label}_cache_query", scanned_count, matched_count)
+    except sqlite3.Error as exc:
+        raise VirtualIntersectionPocError(
+            REASON_INVALID_CRS_OR_UNPROJECTABLE,
+            f"Failed to query spatial cache for '{layer_path}': {exc}",
+        ) from exc
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+    return LoadedLayer(features=features, source_crs=TARGET_CRS, crs_source="spatial_cache_target_crs")
+
+
 def _load_layer_filtered(
     path: Union[str, Path],
     *,
@@ -476,6 +738,19 @@ def _load_layer_filtered(
         raise VirtualIntersectionPocError(REASON_MISSING_REQUIRED_FIELD, f"Input layer does not exist: {layer_path}")
 
     suffix = layer_path.suffix.lower()
+    if query_geometry is not None and suffix in {".geojson", ".json", ".shp"}:
+        return _load_layer_filtered_from_spatial_cache(
+            layer_path,
+            layer_name=layer_name,
+            crs_override=crs_override,
+            allow_null_geometry=allow_null_geometry,
+            query_geometry=query_geometry,
+            property_predicate=property_predicate,
+            progress_label=progress_label,
+            progress_every=progress_every,
+            progress_callback=progress_callback,
+        )
+
     if suffix in {".geojson", ".json"}:
         source_crs, crs_source = _resolve_geojson_crs_streaming(layer_path, crs_override)
         source_query_bounds: tuple[float, float, float, float] | None = None
@@ -1295,16 +1570,31 @@ def run_t02_virtual_intersection_poc(
     def report_local_scan(layer_label: str, scanned_count: int, matched_count: int) -> None:
         counts[f"{layer_label}_scanned_count"] = scanned_count
         counts[f"{layer_label}_matched_count"] = matched_count
+        if layer_label.endswith("_cache_build"):
+            base_label = layer_label[: -len("_cache_build")]
+            current_stage = f"building_{base_label}_spatial_cache"
+            message = f"Building spatial cache for {base_label}: scanned={scanned_count}, indexed={matched_count}."
+            log_line = f"[T02-POC] building spatial cache {base_label} scanned={scanned_count} indexed={matched_count}"
+        elif layer_label.endswith("_cache_query"):
+            base_label = layer_label[: -len("_cache_query")]
+            current_stage = f"querying_{base_label}_spatial_cache"
+            message = f"Querying spatial cache for {base_label}: candidates={scanned_count}, matched={matched_count}."
+            log_line = f"[T02-POC] querying spatial cache {base_label} candidates={scanned_count} matched={matched_count}"
+        else:
+            base_label = layer_label
+            current_stage = f"scanning_{base_label}"
+            message = f"Scanning {base_label}: scanned={scanned_count}, matched={matched_count}."
+            log_line = f"[T02-POC] scanning {base_label} scanned={scanned_count} matched={matched_count}"
         announce(
             logger,
-            f"[T02-POC] scanning {layer_label} scanned={scanned_count} matched={matched_count}",
+            log_line,
         )
         _write_progress_snapshot(
             out_path=progress_path,
             run_id=resolved_run_id,
             status="running",
-            current_stage=f"scanning_{layer_label}",
-            message=f"Scanning {layer_label}: scanned={scanned_count}, matched={matched_count}.",
+            current_stage=current_stage,
+            message=message,
             counts=counts,
         )
 

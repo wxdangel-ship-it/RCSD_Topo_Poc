@@ -11,9 +11,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, TypeVar, Union
 
+import ijson
 import numpy as np
+import shapefile
+from pyproj import CRS
 from shapely import intersects_xy
-from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon, box
+from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon, box, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge, unary_union
 
@@ -33,6 +36,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage1_drivezone_gate import (
     _normalize_id,
     _read_vector_layer_strict,
 )
+from rcsd_topo_poc.modules.t02_junction_anchor.shared import _resolve_shapefile_crs_strict, _transform_geometry
 
 
 T = TypeVar("T")
@@ -348,6 +352,138 @@ def _load_layer(
         if hasattr(exc, "reason") and hasattr(exc, "detail"):
             raise VirtualIntersectionPocError(getattr(exc, "reason"), getattr(exc, "detail")) from exc
         raise VirtualIntersectionPocError(REASON_INVALID_CRS_OR_UNPROJECTABLE, str(exc)) from exc
+
+
+def _resolve_geojson_crs_streaming(path: Path, crs_override: Optional[str]) -> tuple[CRS, str]:
+    if crs_override:
+        try:
+            return CRS.from_user_input(crs_override), "override"
+        except Exception as exc:
+            raise VirtualIntersectionPocError(
+                REASON_INVALID_CRS_OR_UNPROJECTABLE,
+                f"Invalid CRS override '{crs_override}': {exc}",
+            ) from exc
+
+    try:
+        with path.open("rb") as fp:
+            for prefix, event, value in ijson.parse(fp):
+                if prefix == "crs.properties.name" and event in {"string", "number"}:
+                    try:
+                        return CRS.from_user_input(str(value)), "geojson.crs"
+                    except Exception as exc:
+                        raise VirtualIntersectionPocError(
+                            REASON_INVALID_CRS_OR_UNPROJECTABLE,
+                            f"Invalid GeoJSON CRS '{value}' in '{path}': {exc}",
+                        ) from exc
+                if prefix == "features" and event == "start_array":
+                    break
+    except VirtualIntersectionPocError:
+        raise
+    except Exception as exc:
+        raise VirtualIntersectionPocError(
+            REASON_INVALID_CRS_OR_UNPROJECTABLE,
+            f"Failed to read GeoJSON CRS from '{path}': {exc}",
+        ) from exc
+
+    raise VirtualIntersectionPocError(
+        REASON_INVALID_CRS_OR_UNPROJECTABLE,
+        f"GeoJSON '{path}' is missing CRS metadata and no CRS override was provided.",
+    )
+
+
+def _iter_geojson_feature_items(path: Path) -> Iterable[tuple[int, dict[str, Any]]]:
+    try:
+        with path.open("rb") as fp:
+            for feature_index, feature in enumerate(ijson.items(fp, "features.item")):
+                yield feature_index, feature
+    except Exception as exc:
+        raise VirtualIntersectionPocError(
+            REASON_INVALID_CRS_OR_UNPROJECTABLE,
+            f"Failed to stream GeoJSON features from '{path}': {exc}",
+        ) from exc
+
+
+def _load_layer_filtered(
+    path: Union[str, Path],
+    *,
+    layer_name: Optional[str],
+    crs_override: Optional[str],
+    allow_null_geometry: bool,
+    query_geometry: BaseGeometry | None = None,
+    property_predicate: Callable[[dict[str, Any]], bool] | None = None,
+) -> LoadedLayer:
+    layer_path = Path(path)
+    if not layer_path.is_file():
+        raise VirtualIntersectionPocError(REASON_MISSING_REQUIRED_FIELD, f"Input layer does not exist: {layer_path}")
+
+    suffix = layer_path.suffix.lower()
+    if suffix in {".geojson", ".json"}:
+        source_crs, crs_source = _resolve_geojson_crs_streaming(layer_path, crs_override)
+        features: list[LoadedFeature] = []
+        for feature_index, feature in _iter_geojson_feature_items(layer_path):
+            properties = dict(feature.get("properties") or {})
+            if property_predicate is not None and not property_predicate(properties):
+                continue
+            geometry_payload = feature.get("geometry")
+            if geometry_payload is None:
+                if not allow_null_geometry:
+                    raise VirtualIntersectionPocError(
+                        REASON_MISSING_REQUIRED_FIELD,
+                        f"{layer_path} feature[{feature_index}] is missing geometry.",
+                    )
+                geometry = None
+            else:
+                geometry = _transform_geometry(
+                    shape(geometry_payload),
+                    source_crs=source_crs,
+                    layer_label=str(layer_path),
+                    feature_index=feature_index,
+                    error_cls=VirtualIntersectionPocError,
+                )
+            if query_geometry is not None and geometry is not None and not geometry.intersects(query_geometry):
+                continue
+            features.append(LoadedFeature(feature_index=feature_index, properties=properties, geometry=geometry))
+        return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
+
+    if suffix == ".shp":
+        source_crs, crs_source = _resolve_shapefile_crs_strict(
+            layer_path,
+            crs_override,
+            error_cls=VirtualIntersectionPocError,
+        )
+        try:
+            reader = shapefile.Reader(str(layer_path))
+        except Exception as exc:
+            raise VirtualIntersectionPocError(
+                REASON_INVALID_CRS_OR_UNPROJECTABLE,
+                f"Failed to read shapefile '{layer_path}': {exc}",
+            ) from exc
+
+        field_names = [field[0] for field in reader.fields[1:]]
+        features: list[LoadedFeature] = []
+        for feature_index, shape_record in enumerate(reader.iterShapeRecords()):
+            properties = dict(zip(field_names, list(shape_record.record)))
+            if property_predicate is not None and not property_predicate(properties):
+                continue
+            geometry_payload = shape_record.shape.__geo_interface__
+            geometry = _transform_geometry(
+                shape(geometry_payload),
+                source_crs=source_crs,
+                layer_label=str(layer_path),
+                feature_index=feature_index,
+                error_cls=VirtualIntersectionPocError,
+            )
+            if query_geometry is not None and not geometry.intersects(query_geometry):
+                continue
+            features.append(LoadedFeature(feature_index=feature_index, properties=properties, geometry=geometry))
+        return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
+
+    return _load_layer(
+        path,
+        layer_name=layer_name,
+        crs_override=crs_override,
+        allow_null_geometry=allow_null_geometry,
+    )
 
 
 def _linearize(geometry: BaseGeometry) -> LineString:
@@ -1080,55 +1216,21 @@ def run_t02_virtual_intersection_poc(
         if normalized_mainnodeid is None:
             raise VirtualIntersectionPocError(REASON_MAINNODEID_NOT_FOUND, "mainnodeid is empty.")
 
-        nodes_layer_data = _load_layer(nodes_path, layer_name=nodes_layer, crs_override=nodes_crs, allow_null_geometry=False)
-        roads_layer_data = _load_layer(roads_path, layer_name=roads_layer, crs_override=roads_crs, allow_null_geometry=False)
-        drivezone_layer_data = _load_layer(
-            drivezone_path,
-            layer_name=drivezone_layer,
-            crs_override=drivezone_crs,
-            allow_null_geometry=False,
-        )
-        rcsdroad_layer_data = _load_layer(
-            rcsdroad_path,
-            layer_name=rcsdroad_layer,
-            crs_override=rcsdroad_crs,
-            allow_null_geometry=False,
-        )
-        rcsdnode_layer_data = _load_layer(
-            rcsdnode_path,
-            layer_name=rcsdnode_layer,
-            crs_override=rcsdnode_crs,
-            allow_null_geometry=False,
-        )
-        parsed_nodes = _parse_nodes(nodes_layer_data, require_anchor_fields=True)
-        parsed_roads = _parse_roads(roads_layer_data, label="roads")
-        parsed_rc_roads = _parse_roads(rcsdroad_layer_data, label="RCSDRoad")
-        parsed_rc_nodes = _parse_rc_nodes(rcsdnode_layer_data)
-        counts["node_feature_count"] = len(parsed_nodes)
-        counts["road_feature_count"] = len(parsed_roads)
-        counts["drivezone_feature_count"] = len(drivezone_layer_data.features)
-        counts["rcsdroad_feature_count"] = len(parsed_rc_roads)
-        counts["rcsdnode_feature_count"] = len(parsed_rc_nodes)
-        announce(
-            logger,
-            (
-                "[T02-POC] loaded "
-                f"nodes={counts['node_feature_count']} roads={counts['road_feature_count']} "
-                f"drivezone={counts['drivezone_feature_count']} rcsdroad={counts['rcsdroad_feature_count']} "
-                f"rcsdnode={counts['rcsdnode_feature_count']}"
-            ),
-        )
-        record_stage("inputs_loaded")
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
-            status="running",
-            current_stage="inputs_loaded",
-            message="Loaded all POC inputs.",
-            counts=counts,
-        )
+        def _target_group_match(properties: dict[str, Any]) -> bool:
+            node_id = _normalize_id(properties.get("id"))
+            group_id = _normalize_id(properties.get("mainnodeid"))
+            return group_id == normalized_mainnodeid or (group_id is None and node_id == normalized_mainnodeid)
 
-        representative_node, group_nodes = _resolve_group(mainnodeid=normalized_mainnodeid, nodes=parsed_nodes)
+        target_nodes_layer_data = _load_layer_filtered(
+            nodes_path,
+            layer_name=nodes_layer,
+            crs_override=nodes_crs,
+            allow_null_geometry=False,
+            property_predicate=_target_group_match,
+        )
+        target_group_nodes = _parse_nodes(target_nodes_layer_data, require_anchor_fields=True)
+        counts["target_group_candidate_count"] = len(target_group_nodes)
+        representative_node, group_nodes = _resolve_group(mainnodeid=normalized_mainnodeid, nodes=target_group_nodes)
         if representative_node.has_evd != "yes" or representative_node.is_anchor != "no" or representative_node.kind_2 not in ALLOWED_KIND_2_VALUES:
             raise VirtualIntersectionPocError(
                 REASON_MAINNODEID_OUT_OF_SCOPE,
@@ -1140,21 +1242,95 @@ def run_t02_virtual_intersection_poc(
             )
 
         patch_query = representative_node.geometry.buffer(buffer_m)
-        local_nodes = _query_local_features(parsed_nodes, patch_query, lambda item: item.geometry)
-        local_roads = _query_local_features(parsed_roads, patch_query, lambda item: item.geometry)
-        local_drivezone_features = _query_local_features(
-            [feature for feature in drivezone_layer_data.features if feature.geometry is not None],
-            patch_query,
-            lambda item: item.geometry or GeometryCollection(),
+        announce(
+            logger,
+            (
+                "[T02-POC] target resolved "
+                f"mainnodeid={normalized_mainnodeid} target_group_candidates={counts['target_group_candidate_count']} "
+                f"buffer_m={buffer_m}"
+            ),
         )
-        local_rc_roads = _query_local_features(parsed_rc_roads, patch_query, lambda item: item.geometry)
-        local_rc_nodes = _query_local_features(parsed_rc_nodes, patch_query, lambda item: item.geometry)
+        record_stage("target_group_resolved")
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="target_group_resolved",
+            message="Resolved target representative node and local buffer.",
+            counts=counts,
+        )
+
+        local_nodes_layer_data = _load_layer_filtered(
+            nodes_path,
+            layer_name=nodes_layer,
+            crs_override=nodes_crs,
+            allow_null_geometry=False,
+            query_geometry=patch_query,
+        )
+        roads_layer_data = _load_layer_filtered(
+            roads_path,
+            layer_name=roads_layer,
+            crs_override=roads_crs,
+            allow_null_geometry=False,
+            query_geometry=patch_query,
+        )
+        drivezone_layer_data = _load_layer_filtered(
+            drivezone_path,
+            layer_name=drivezone_layer,
+            crs_override=drivezone_crs,
+            allow_null_geometry=False,
+            query_geometry=patch_query,
+        )
+        rcsdroad_layer_data = _load_layer_filtered(
+            rcsdroad_path,
+            layer_name=rcsdroad_layer,
+            crs_override=rcsdroad_crs,
+            allow_null_geometry=False,
+            query_geometry=patch_query,
+        )
+        rcsdnode_layer_data = _load_layer_filtered(
+            rcsdnode_path,
+            layer_name=rcsdnode_layer,
+            crs_override=rcsdnode_crs,
+            allow_null_geometry=False,
+            query_geometry=patch_query,
+        )
+        parsed_roads = _parse_roads(roads_layer_data, label="roads")
+        parsed_rc_roads = _parse_roads(rcsdroad_layer_data, label="RCSDRoad")
+        parsed_rc_nodes = _parse_rc_nodes(rcsdnode_layer_data)
+        counts["node_feature_count"] = len(local_nodes_layer_data.features)
+        counts["road_feature_count"] = len(parsed_roads)
+        counts["drivezone_feature_count"] = len(drivezone_layer_data.features)
+        counts["rcsdroad_feature_count"] = len(parsed_rc_roads)
+        counts["rcsdnode_feature_count"] = len(parsed_rc_nodes)
+        announce(
+            logger,
+            (
+                "[T02-POC] local inputs loaded "
+                f"nodes={counts['node_feature_count']} roads={counts['road_feature_count']} "
+                f"drivezone={counts['drivezone_feature_count']} rcsdroad={counts['rcsdroad_feature_count']} "
+                f"rcsdnode={counts['rcsdnode_feature_count']}"
+            ),
+        )
+        record_stage("inputs_loaded")
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="inputs_loaded",
+            message="Loaded local POC inputs around the target junction.",
+            counts=counts,
+        )
+        local_roads = parsed_roads
+        local_drivezone_features = [feature for feature in drivezone_layer_data.features if feature.geometry is not None]
+        local_rc_roads = parsed_rc_roads
+        local_rc_nodes = parsed_rc_nodes
         if not local_drivezone_features:
             raise VirtualIntersectionPocError(
                 REASON_MISSING_REQUIRED_FIELD,
                 f"mainnodeid='{normalized_mainnodeid}' local buffer has no DriveZone coverage.",
             )
-        counts["local_node_count"] = len(local_nodes)
+        counts["local_node_count"] = len(local_nodes_layer_data.features)
         counts["local_road_count"] = len(local_roads)
         counts["local_drivezone_feature_count"] = len(local_drivezone_features)
         counts["local_rcsdroad_count"] = len(local_rc_roads)

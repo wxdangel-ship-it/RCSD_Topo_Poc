@@ -14,7 +14,7 @@
 ## 当前收录工具
 
 - Tool1：整理全量 Patch 矢量目录并初始化统一 `patch_all` 骨架
-- Tool2：对每个 Patch 的 `DriveZone` 生成 `DriveZone_fix.geojson`，再合并为根目录全局 `DriveZone.geojson`
+- Tool2：对每个 Patch 的 `DriveZone` 生成 `DriveZone_fix.geojson`，再汇总为根目录 `DriveZone.geojson`
 - Tool3：对全量 `Intersection` 做逐 Patch 预处理后汇总输出
 - Tool4：按 `A200_road.id = rc_patch_road.road_id` 给一层路网写入 `patch_id`
 - Tool5：基于 Tool4 输出与 SW 原始路网给一层路网写入原始 `kind`
@@ -37,6 +37,7 @@
 
 - Patch 子目录统一使用 `Vector/`
 - Tool2 / Tool3 / Tool6 的几何处理统一在 `EPSG:3857`
+- Tool2 单 Patch 膨胀 / 腐蚀参数默认 `1m`
 - Tool4 / Tool5 通过脚本头部 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
 - Tool5 对 `A200_road_patch` 与 SW 允许分别配置默认 CRS
 - 输出已存在时先删除再重建

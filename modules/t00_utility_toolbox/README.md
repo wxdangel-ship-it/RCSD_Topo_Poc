@@ -19,6 +19,7 @@
 - Tool4：按 `A200_road.id = rc_patch_road.road_id` 给一层路网写入 `patch_id`
 - Tool5：基于 Tool4 输出与 SW 原始路网给一层路网写入原始 `kind`
 - Tool6：将 `A200_node.shp` 导出为保留原始属性的 `nodes.geojson`
+- Tool7：将指定目录下顶层 `GeoJSON` 批量导出为同名 `GPKG`
 
 ## 模块状态
 
@@ -28,6 +29,7 @@
 - Tool2 / Tool4 / Tool5 已完成前序增量调整
 - Tool3 维持既有实现
 - Tool6 为本轮新增导出工具
+- Tool7 为目录参数驱动的批量格式转换工具
 
 ## 与业务模块的关系
 
@@ -39,6 +41,7 @@
 - Tool2 / Tool3 / Tool6 的几何处理统一在 `EPSG:3857`
 - Tool4 / Tool5 通过脚本头部 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
 - Tool5 对 `A200_road_patch` 与 SW 允许分别配置默认 CRS
+- Tool7 是经批准的参数驱动例外，目录通过脚本参数给定，且只扫描顶层 `.geojson`
 - 输出已存在时先删除再重建
 - 命令行执行过程中必须提供阶段级与 Patch / 记录级进度输出
 
@@ -47,6 +50,12 @@
 - Tool6 按项目当前要求输出 `EPSG:3857` 的 GeoJSON
 - 这是项目内约定输出，不以严格 RFC 7946 互操作为目标
 - Tool6 不做额外业务字段加工，不新增无关字段
+
+## Tool7 备注
+
+- Tool7 将指定目录下的顶层 `.geojson` 逐个转换成同目录同名 `.gpkg`
+- Tool7 不递归子目录
+- Tool7 默认沿用 GeoJSON 自身 CRS；若 GeoJSON 缺失 `crs` 元数据，则按仓库现有口径默认视为 `EPSG:4326`
 
 ## 文档入口
 
@@ -68,6 +77,7 @@ python3 scripts/t00_tool3_intersection_merge.py
 python3 scripts/t00_tool4_a200_patch_join.py
 python3 scripts/t00_tool5_a200_kind_enrich.py
 python3 scripts/t00_tool6_node_export.py
+python3 scripts/t00_tool7_geojson_to_gpkg.py /mnt/d/TestData/POC_Data/some_directory
 ```
 
 默认数据根位于：

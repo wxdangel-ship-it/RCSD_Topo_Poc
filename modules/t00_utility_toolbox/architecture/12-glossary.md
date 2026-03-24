@@ -6,7 +6,9 @@
 - `Tool4`：A200 road 增加 `patch_id` 工具
 - `Tool5`：A200 road 增加 SW 原始 `kind` 工具
 - `Tool6`：A200 node shp 导出 GeoJSON 工具
+- `Tool7`：目录级 GeoJSON 批量转 GPKG 工具
 - `patch_all`：Tool1 产出的统一 Patch 目录根
 - `patch_id`：Tool4 写入一层路网的 Patch 标识字段
 - `kind`：Tool5 写入一层路网的 SW 原始种别字段
 - `nodes.geojson`：Tool6 输出的节点 GeoJSON 文件
+- `.gpkg`：Tool7 为每个顶层 GeoJSON 生成的同名 GeoPackage 文件

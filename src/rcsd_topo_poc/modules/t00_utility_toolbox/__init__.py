@@ -22,6 +22,10 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.shapefile_geojson_export import (
     ShapefileGeoJsonExportConfig,
     run_shapefile_geojson_export,
 )
+from rcsd_topo_poc.modules.t00_utility_toolbox.geojson_to_gpkg_export import (
+    GeoJsonToGpkgDirectoryConfig,
+    run_geojson_to_gpkg_directory_export,
+)
 
 __all__ = [
     "PatchBootstrapConfig",
@@ -36,4 +40,6 @@ __all__ = [
     "run_road_kind_enrich",
     "ShapefileGeoJsonExportConfig",
     "run_shapefile_geojson_export",
+    "GeoJsonToGpkgDirectoryConfig",
+    "run_geojson_to_gpkg_directory_export",
 ]

@@ -5,7 +5,7 @@
 - 模块 ID：`t00_utility_toolbox`
 - 模块名称：`T00 Utility Toolbox`
 - 模块角色：项目内工具集合模块
-- 当前承接 Tool1 至 Tool6 的固定脚本和共享底层能力
+- 当前承接 Tool1 至 Tool7 的固定脚本和共享底层能力
 
 ## 2. 开工前先读
 
@@ -25,7 +25,7 @@
 
 ## 4. 当前范围
 
-当前正式范围是 Tool1 至 Tool6：
+当前正式范围是 Tool1 至 Tool7：
 
 - Tool1：Patch 数据整理
 - Tool2：DriveZone per-patch fix + 全局 merge
@@ -33,17 +33,18 @@
 - Tool4：A200 road 增加 `patch_id`
 - Tool5：A200 road 增加 SW 原始 `kind`
 - Tool6：A200 node shp 导出 GeoJSON
+- Tool7：目录级 GeoJSON 批量转 GPKG
 
 ## 5. 文档优先原则
 
 - 新工具进入 `T00` 前，先补规格与契约
-- Tool2 至 Tool6 的修改必须以 `spec.md` 和 `INTERFACE_CONTRACT.md` 为准
+- Tool2 至 Tool7 的修改必须以 `spec.md` 和 `INTERFACE_CONTRACT.md` 为准
 - `README.md` 只承担入口说明，不替代长期源事实
 
 ## 6. 禁止事项
 
 - 不得把 `T00` 演化成业务生产模块
-- 不得未经确认擅自扩展 Tool1 至 Tool6 的范围
+- 不得未经确认擅自扩展 Tool1 至 Tool7 的范围
 - 不得绕过 `spec` 直接编码扩写
 - 不得引入复杂 manifest、数据库落仓或重型产线编排
 - 不得在模块根目录新增 `SKILL.md`
@@ -54,6 +55,7 @@
 - Tool2 / Tool3 / Tool6 的几何处理统一在 `EPSG:3857`
 - Tool4 / Tool5 通过脚本头部 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
 - Tool5 允许对不同输入分别设置默认 CRS
+- Tool7 为批准后的参数驱动例外，但仅允许接收目录参数
 - “压缩”统一等于拓扑保持的几何简化
 - 允许最小几何修复，但不允许复杂推断修复
 - 所有输出已存在时先删除再重建
@@ -67,6 +69,7 @@
 - Tool4：固定脚本 + 属性关联 + unmatched 输出
 - Tool5：固定脚本 + 空间索引 + `kind` 去重重组
 - Tool6：固定脚本 + shp 元数据审计 + GeoJSON 导出 + 日志摘要
+- Tool7：固定脚本 + 顶层目录扫描 + GeoJSON/GPKG 批量转换 + 日志摘要
 
 ## 9. 扩展门禁
 

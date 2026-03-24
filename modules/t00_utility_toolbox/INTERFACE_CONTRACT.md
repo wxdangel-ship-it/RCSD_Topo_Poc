@@ -11,6 +11,7 @@
   - Tool4 `A200 road 增加 patch_id`
   - Tool5 `A200 road 增加 SW 原始 kind`
   - Tool6 `A200_node shp 导出 nodes.geojson`
+  - Tool7 `目录级 GeoJSON 批量转 GPKG`
 
 本文件用于固化 `T00` 当前稳定的输入、输出、覆盖、跳过与摘要语义。
 
@@ -22,9 +23,12 @@
   - `A200_road_patch` 默认按 `EPSG:3857`
   - SW 原始路网默认按 `EPSG:4326`
   - 两者统一投影到 `TARGET_EPSG` 后再处理
+- Tool7 输入 CRS 口径：
+  - 优先读取 GeoJSON `crs`
+  - 若缺失 `crs`，默认按 `EPSG:4326`
 - 修复口径：只允许最小修复；修复失败则跳过并记录异常
 - 覆盖口径：旧输出已存在时先删除再重建
-- 执行体验：命令行必须输出工具开始/结束、阶段级和 Patch / 记录级进度
+- 执行体验：命令行必须输出工具开始/结束、阶段级和 Patch / 记录级进度；Tool7 允许目录参数驱动
 
 ## 3. Tool1 契约
 
@@ -131,19 +135,40 @@
 - Tool4：`A200_road_patch.geojson` 与 `A200_road_patch_unmatched.geojson` 是正式输出
 - Tool5：`A200_road_patch_kind.geojson` 是正式输出
 - Tool6：`nodes.geojson` 是正式输出
+- Tool7：指定目录下与每个 `.geojson` 同名的 `.gpkg` 是正式输出
 
-## 10. 非范围契约
+## 10. Tool7 契约
+
+- 输入：脚本参数给定的目录路径
+- 扫描范围：仅目录顶层 `.geojson` 文件，不递归子目录
+- 输出：每个输入 GeoJSON 在同目录生成一个同名 `.gpkg`
+- 输出格式：`GPKG`
+- 图层命名：默认使用输入文件 stem 的安全化结果
+- 保留原始属性；若字段名与 `fid/geom` 等 GPKG 保留列冲突，可做最小重命名并写入摘要
+- 几何口径：允许最小修复；修复失败的要素记入文件级摘要
+- 覆盖口径：已存在同名 `.gpkg` 时先删除再重建
+- 摘要至少包含：
+  - `directory_path`
+  - `geojson_file_count`
+  - `converted_file_count`
+  - `failed_file_count`
+  - `total_input_feature_count`
+  - `total_output_feature_count`
+  - `file_results`
+  - `error_reason_summary`
+
+## 11. 非范围契约
 
 当前不承诺以下能力：
 
-- Tool7+
+- Tool8+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
 - 重型产线编排
 - 超出当前需求的中间产物正式化治理
 
-## 11. 后续实现注意事项
+## 12. 后续实现注意事项
 
 - 参数名、日志文件名和具体 CLI 形式可继续在脚本层补足
 - 但不得偏离当前契约语义

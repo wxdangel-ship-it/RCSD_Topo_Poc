@@ -24,7 +24,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     build_run_id,
     close_logger,
     transform_geometry_to_target,
-    write_geojson,
+    write_vector,
     write_json,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
@@ -886,14 +886,14 @@ def run_t02_stage1_drivezone_gate(
         _snapshot("running", "segment_finalize_done", "Segment outputs and summary counters computed.")
         _mark_stage("segment_finalize_done", segment_finalize_started_at)
 
-        output_nodes_path = resolved_out_root / "nodes.geojson"
-        output_segment_path = resolved_out_root / "segment.geojson"
+        output_nodes_path = resolved_out_root / "nodes.gpkg"
+        output_segment_path = resolved_out_root / "segment.gpkg"
         summary_path = resolved_out_root / "t02_stage1_summary.json"
         audit_csv_path = resolved_out_root / "t02_stage1_audit.csv"
         audit_json_path = resolved_out_root / "t02_stage1_audit.json"
 
         node_write_started_at = time.perf_counter()
-        write_geojson(
+        write_vector(
             output_nodes_path,
             (
                 {
@@ -905,11 +905,11 @@ def run_t02_stage1_drivezone_gate(
             crs_text=TARGET_CRS.to_string(),
         )
         announce(logger, f"[T02] nodes written path={output_nodes_path}")
-        _snapshot("running", "nodes_written", "nodes.geojson written.")
+        _snapshot("running", "nodes_written", "nodes.gpkg written.")
         _mark_stage("nodes_written", node_write_started_at)
 
         segment_write_started_at = time.perf_counter()
-        write_geojson(
+        write_vector(
             output_segment_path,
             (
                 {
@@ -921,7 +921,7 @@ def run_t02_stage1_drivezone_gate(
             crs_text=TARGET_CRS.to_string(),
         )
         announce(logger, f"[T02] segment written path={output_segment_path}")
-        _snapshot("running", "segment_written", "segment.geojson written.")
+        _snapshot("running", "segment_written", "segment.gpkg written.")
         _mark_stage("segment_written", segment_write_started_at)
 
         audit_write_started_at = time.perf_counter()

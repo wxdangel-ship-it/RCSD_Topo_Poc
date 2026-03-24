@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import fiona
 from shapely.geometry import LineString, Point, Polygon
 
-from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_geojson
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_geojson, write_vector
 from rcsd_topo_poc.modules.t02_junction_anchor.stage1_drivezone_gate import (
     ALL_D_SGRADE_BUCKET,
     KNOWN_S_GRADE_BUCKETS,
@@ -14,7 +15,21 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage1_drivezone_gate import (
 
 
 def _load_geojson(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    if path.suffix.lower() in {".geojson", ".json"}:
+        return json.loads(path.read_text(encoding="utf-8"))
+    with fiona.open(path) as src:
+        return {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": dict(feature["properties"]),
+                    "geometry": feature["geometry"],
+                }
+                for feature in src
+            ],
+        }
 
 
 def _node_feature(
@@ -527,4 +542,47 @@ def test_stage1_projects_nodes_and_drivezone_to_epsg_3857(tmp_path: Path) -> Non
 
     nodes_doc = _load_geojson(artifacts.nodes_path)
     assert nodes_doc["crs"]["properties"]["name"] == "EPSG:3857"
+    assert nodes_doc["features"][0]["properties"]["has_evd"] == "yes"
+
+
+def test_stage1_prefers_same_name_gpkg_inputs_over_geojson(tmp_path: Path) -> None:
+    segment_geojson_path = tmp_path / "segment.geojson"
+    nodes_geojson_path = tmp_path / "nodes.geojson"
+    drivezone_geojson_path = tmp_path / "drivezone.geojson"
+
+    write_geojson(segment_geojson_path, [_segment_feature("seg-1", pair_nodes="1", junc_nodes="")])
+    write_geojson(
+        nodes_geojson_path,
+        [_node_feature(1, 50.0, 50.0, mainnodeid=None)],
+    )
+    write_geojson(
+        drivezone_geojson_path,
+        [_drivezone_feature(49.0, 49.0, 51.0, 51.0)],
+    )
+
+    write_vector(
+        tmp_path / "segment.gpkg",
+        [_segment_feature("seg-1", pair_nodes="1", junc_nodes="")],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        tmp_path / "nodes.gpkg",
+        [_node_feature(1, 0.0, 0.0, mainnodeid=None)],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        tmp_path / "drivezone.gpkg",
+        [_drivezone_feature(-1.0, -1.0, 1.0, 1.0)],
+        crs_text="EPSG:3857",
+    )
+
+    artifacts = run_t02_stage1_drivezone_gate(
+        segment_path=segment_geojson_path,
+        nodes_path=nodes_geojson_path,
+        drivezone_path=drivezone_geojson_path,
+        out_root=tmp_path / "out",
+        run_id="prefer_gpkg_case",
+    )
+
+    nodes_doc = _load_geojson(artifacts.nodes_path)
     assert nodes_doc["features"][0]["properties"]["has_evd"] == "yes"

@@ -21,20 +21,20 @@ def test_t02_stage1_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> No
         [
             "t02-stage1-drivezone-gate",
             "--segment_path",
-            str(tmp_path / "segment.geojson"),
+            str(tmp_path / "segment.gpkg"),
             "--nodes_path",
-            str(tmp_path / "nodes.geojson"),
+            str(tmp_path / "nodes.gpkg"),
             "--drivezone_path",
-            str(tmp_path / "drivezone.geojson"),
+            str(tmp_path / "drivezone.gpkg"),
             "--out_dir",
             str(tmp_path / "out"),
         ]
     )
 
     assert exit_code == 0
-    assert captured["segment_path"] == str(tmp_path / "segment.geojson")
-    assert captured["nodes_path"] == str(tmp_path / "nodes.geojson")
-    assert captured["drivezone_path"] == str(tmp_path / "drivezone.geojson")
+    assert captured["segment_path"] == str(tmp_path / "segment.gpkg")
+    assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
+    assert captured["drivezone_path"] == str(tmp_path / "drivezone.gpkg")
     assert captured["out_root"] == str(tmp_path / "out")
 
 
@@ -54,20 +54,20 @@ def test_t02_stage2_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> No
         [
             "t02-stage2-anchor-recognition",
             "--segment_path",
-            str(tmp_path / "segment.geojson"),
+            str(tmp_path / "segment.gpkg"),
             "--nodes_path",
-            str(tmp_path / "nodes.geojson"),
+            str(tmp_path / "nodes.gpkg"),
             "--intersection_path",
-            str(tmp_path / "intersection.geojson"),
+            str(tmp_path / "intersection.gpkg"),
             "--out_dir",
             str(tmp_path / "out"),
         ]
     )
 
     assert exit_code == 0
-    assert captured["segment_path"] == str(tmp_path / "segment.geojson")
-    assert captured["nodes_path"] == str(tmp_path / "nodes.geojson")
-    assert captured["intersection_path"] == str(tmp_path / "intersection.geojson")
+    assert captured["segment_path"] == str(tmp_path / "segment.gpkg")
+    assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
+    assert captured["intersection_path"] == str(tmp_path / "intersection.gpkg")
     assert captured["out_root"] == str(tmp_path / "out")
 
 
@@ -91,15 +91,15 @@ def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp
         [
             "t02-virtual-intersection-poc",
             "--nodes_path",
-            str(tmp_path / "nodes.geojson"),
+            str(tmp_path / "nodes.gpkg"),
             "--roads_path",
-            str(tmp_path / "roads.geojson"),
+            str(tmp_path / "roads.gpkg"),
             "--drivezone_path",
-            str(tmp_path / "drivezone.geojson"),
+            str(tmp_path / "drivezone.gpkg"),
             "--rcsdroad_path",
-            str(tmp_path / "rcsdroad.geojson"),
+            str(tmp_path / "rcsdroad.gpkg"),
             "--rcsdnode_path",
-            str(tmp_path / "rcsdnode.geojson"),
+            str(tmp_path / "rcsdnode.gpkg"),
             "--mainnodeid",
             "100",
             "--out_dir",
@@ -110,11 +110,81 @@ def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp
     )
 
     assert exit_code == 0
-    assert captured["nodes_path"] == str(tmp_path / "nodes.geojson")
-    assert captured["roads_path"] == str(tmp_path / "roads.geojson")
-    assert captured["drivezone_path"] == str(tmp_path / "drivezone.geojson")
-    assert captured["rcsdroad_path"] == str(tmp_path / "rcsdroad.geojson")
-    assert captured["rcsdnode_path"] == str(tmp_path / "rcsdnode.geojson")
+    assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
+    assert captured["roads_path"] == str(tmp_path / "roads.gpkg")
+    assert captured["drivezone_path"] == str(tmp_path / "drivezone.gpkg")
+    assert captured["rcsdroad_path"] == str(tmp_path / "rcsdroad.gpkg")
+    assert captured["rcsdnode_path"] == str(tmp_path / "rcsdnode.gpkg")
     assert captured["mainnodeid"] == "100"
     assert captured["out_root"] == str(tmp_path / "out")
     assert captured["buffer_m"] == 120.0
+
+
+def test_t02_export_text_bundle_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_cmd(args) -> int:
+        captured["nodes_path"] = args.nodes_path
+        captured["roads_path"] = args.roads_path
+        captured["drivezone_path"] = args.drivezone_path
+        captured["rcsdroad_path"] = args.rcsdroad_path
+        captured["rcsdnode_path"] = args.rcsdnode_path
+        captured["mainnodeid"] = args.mainnodeid
+        captured["out_txt"] = args.out_txt
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_t02_export_text_bundle", _fake_cmd)
+
+    exit_code = cli.main(
+        [
+            "t02-export-text-bundle",
+            "--nodes_path",
+            str(tmp_path / "nodes.gpkg"),
+            "--roads_path",
+            str(tmp_path / "roads.gpkg"),
+            "--drivezone_path",
+            str(tmp_path / "drivezone.gpkg"),
+            "--rcsdroad_path",
+            str(tmp_path / "rcsdroad.gpkg"),
+            "--rcsdnode_path",
+            str(tmp_path / "rcsdnode.gpkg"),
+            "--mainnodeid",
+            "100",
+            "--out_txt",
+            str(tmp_path / "bundle.txt"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
+    assert captured["roads_path"] == str(tmp_path / "roads.gpkg")
+    assert captured["drivezone_path"] == str(tmp_path / "drivezone.gpkg")
+    assert captured["rcsdroad_path"] == str(tmp_path / "rcsdroad.gpkg")
+    assert captured["rcsdnode_path"] == str(tmp_path / "rcsdnode.gpkg")
+    assert captured["mainnodeid"] == "100"
+    assert captured["out_txt"] == str(tmp_path / "bundle.txt")
+
+
+def test_t02_decode_text_bundle_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_cmd(args) -> int:
+        captured["bundle_txt"] = args.bundle_txt
+        captured["out_dir"] = args.out_dir
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_t02_decode_text_bundle", _fake_cmd)
+
+    exit_code = cli.main(
+        [
+            "t02-decode-text-bundle",
+            "--bundle_txt",
+            str(tmp_path / "bundle.txt"),
+            "--out_dir",
+            str(tmp_path / "decoded"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["bundle_txt"] == str(tmp_path / "bundle.txt")
+    assert captured["out_dir"] == str(tmp_path / "decoded")

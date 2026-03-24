@@ -14,11 +14,12 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 
 
 @pytest.mark.smoke
-def test_smoke_t02_virtual_intersection_poc() -> None:
+def test_smoke_t02_text_bundle_roundtrip() -> None:
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    root = Path("outputs/_work/smoke_t02_virtual_intersection_poc") / f"{run_id}_{os.getpid()}"
+    root = Path("outputs/_work/smoke_t02_text_bundle") / f"{run_id}_{os.getpid()}"
     inputs_dir = root / "inputs"
     outputs_dir = root / "run"
+    decoded_dir = root / "decoded"
     inputs_dir.mkdir(parents=True, exist_ok=True)
 
     nodes_path = inputs_dir / "nodes.gpkg"
@@ -26,6 +27,7 @@ def test_smoke_t02_virtual_intersection_poc() -> None:
     drivezone_path = inputs_dir / "drivezone.gpkg"
     rcsdroad_path = inputs_dir / "rcsdroad.gpkg"
     rcsdnode_path = inputs_dir / "rcsdnode.gpkg"
+    bundle_path = outputs_dir / "smoke_case.txt"
 
     write_vector(
         nodes_path,
@@ -69,7 +71,6 @@ def test_smoke_t02_virtual_intersection_poc() -> None:
             {"properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 55.0)])},
             {"properties": {"id": "rc_south", "snodeid": "902", "enodeid": "100", "direction": 2}, "geometry": LineString([(0.0, -55.0), (0.0, 0.0)])},
             {"properties": {"id": "rc_east", "snodeid": "100", "enodeid": "903", "direction": 2}, "geometry": LineString([(0.0, 0.0), (45.0, 0.0)])},
-            {"properties": {"id": "rc_west", "snodeid": "904", "enodeid": "100", "direction": 2}, "geometry": LineString([(-18.0, 0.0), (0.0, 0.0)])},
         ],
         crs_text="EPSG:3857",
     )
@@ -80,14 +81,13 @@ def test_smoke_t02_virtual_intersection_poc() -> None:
             {"properties": {"id": "901", "mainnodeid": None}, "geometry": Point(0.0, 55.0)},
             {"properties": {"id": "902", "mainnodeid": None}, "geometry": Point(0.0, -55.0)},
             {"properties": {"id": "903", "mainnodeid": None}, "geometry": Point(45.0, 0.0)},
-            {"properties": {"id": "904", "mainnodeid": None}, "geometry": Point(-18.0, 0.0)},
         ],
         crs_text="EPSG:3857",
     )
 
-    exit_code = cli.main(
+    export_exit_code = cli.main(
         [
-            "t02-virtual-intersection-poc",
+            "t02-export-text-bundle",
             "--nodes-path",
             str(nodes_path),
             "--roads-path",
@@ -100,25 +100,36 @@ def test_smoke_t02_virtual_intersection_poc() -> None:
             str(rcsdnode_path),
             "--mainnodeid",
             "100",
-            "--out-root",
-            str(outputs_dir),
-            "--run-id",
-            "smoke_case",
+            "--out-txt",
+            str(bundle_path),
         ]
     )
+    assert export_exit_code == 0
+    assert bundle_path.is_file()
+    assert bundle_path.stat().st_size <= 300 * 1024
 
-    assert exit_code == 0
-    run_dir = outputs_dir / "smoke_case"
-    assert (run_dir / "virtual_intersection_polygon.gpkg").is_file()
-    assert (run_dir / "branch_evidence.json").is_file()
-    assert (run_dir / "branch_evidence.gpkg").is_file()
-    assert (run_dir / "associated_rcsdroad.gpkg").is_file()
-    assert (run_dir / "associated_rcsdnode.gpkg").is_file()
-    assert (run_dir / "t02_virtual_intersection_poc_status.json").is_file()
-    assert (run_dir / "t02_virtual_intersection_poc_audit.json").is_file()
-    assert (run_dir / "t02_virtual_intersection_poc_progress.json").is_file()
-    assert (run_dir / "t02_virtual_intersection_poc_perf.json").is_file()
+    decode_exit_code = cli.main(
+        [
+            "t02-decode-text-bundle",
+            "--bundle-txt",
+            str(bundle_path),
+            "--out-dir",
+            str(decoded_dir),
+        ]
+    )
+    assert decode_exit_code == 0
 
-    status_doc = json.loads((run_dir / "t02_virtual_intersection_poc_status.json").read_text(encoding="utf-8"))
-    assert status_doc["success"] is True
-    assert status_doc["status"] == "stable"
+    manifest_path = decoded_dir / "manifest.json"
+    size_report_path = decoded_dir / "size_report.json"
+    assert manifest_path.is_file()
+    assert size_report_path.is_file()
+    assert (decoded_dir / "drivezone_mask.png").is_file()
+    assert (decoded_dir / "nodes.gpkg").is_file()
+    assert (decoded_dir / "roads.gpkg").is_file()
+    assert (decoded_dir / "rcsdroad.gpkg").is_file()
+    assert (decoded_dir / "rcsdnode.gpkg").is_file()
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    size_report = json.loads(size_report_path.read_text(encoding="utf-8"))
+    assert manifest["mainnodeid"] == "100"
+    assert size_report["within_limit"] is True

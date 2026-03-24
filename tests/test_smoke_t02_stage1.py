@@ -9,7 +9,7 @@ import pytest
 from shapely.geometry import LineString, Point, Polygon
 
 from rcsd_topo_poc import cli
-from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_geojson
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 
 
 @pytest.mark.smoke
@@ -20,11 +20,11 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
     outputs_dir = root / "run"
     inputs_dir.mkdir(parents=True, exist_ok=True)
 
-    segment_path = inputs_dir / "segment.geojson"
-    nodes_path = inputs_dir / "nodes.geojson"
-    drivezone_path = inputs_dir / "drivezone.geojson"
+    segment_path = inputs_dir / "segment.gpkg"
+    nodes_path = inputs_dir / "nodes.gpkg"
+    drivezone_path = inputs_dir / "drivezone.gpkg"
 
-    write_geojson(
+    write_vector(
         segment_path,
         [
             {
@@ -37,8 +37,9 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
                 "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
             }
         ],
+        crs_text="EPSG:3857",
     )
-    write_geojson(
+    write_vector(
         nodes_path,
         [
             {
@@ -46,8 +47,9 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
                 "geometry": Point(0.0, 0.0),
             }
         ],
+        crs_text="EPSG:3857",
     )
-    write_geojson(
+    write_vector(
         drivezone_path,
         [
             {
@@ -57,6 +59,7 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
                 ),
             }
         ],
+        crs_text="EPSG:3857",
     )
 
     exit_code = cli.main(
@@ -77,8 +80,8 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
 
     assert exit_code == 0
     run_dir = outputs_dir / "smoke_case"
-    assert (run_dir / "nodes.geojson").is_file()
-    assert (run_dir / "segment.geojson").is_file()
+    assert (run_dir / "nodes.gpkg").is_file()
+    assert (run_dir / "segment.gpkg").is_file()
     assert (run_dir / "t02_stage1_summary.json").is_file()
     assert (run_dir / "t02_stage1_audit.csv").is_file()
     assert (run_dir / "t02_stage1_progress.json").is_file()

@@ -5,12 +5,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Union
 
+import fiona
 import shapefile
 from pyproj import CRS
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
 
-from rcsd_topo_poc.modules.t00_utility_toolbox.common import TARGET_CRS, transform_geometry_to_target
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
+    GEOPACKAGE_SUFFIXES,
+    TARGET_CRS,
+    prefer_vector_input_path,
+    transform_geometry_to_target,
+)
 
 
 class T02RunError(ValueError):
@@ -174,6 +180,65 @@ def _resolve_shapefile_crs_strict(
     )
 
 
+def _resolve_geopackage_layer_name(
+    path: Path,
+    layer_name: Optional[str],
+    *,
+    error_cls: type[T02RunError],
+) -> str:
+    if layer_name:
+        return layer_name
+    try:
+        layers = list(fiona.listlayers(str(path)))
+    except Exception as exc:
+        raise error_cls(
+            "missing_required_field",
+            f"Failed to inspect GeoPackage layers for '{path}': {exc}",
+        ) from exc
+    if not layers:
+        raise error_cls("missing_required_field", f"GeoPackage '{path}' has no layers.")
+    if len(layers) == 1:
+        return layers[0]
+    if path.stem in layers:
+        return path.stem
+    raise error_cls(
+        "missing_required_field",
+        f"GeoPackage '{path}' has multiple layers {layers}; layer name is required.",
+    )
+
+
+def _resolve_geopackage_crs_strict(
+    path: Path,
+    layer_name: str,
+    crs_override: Optional[str],
+    *,
+    error_cls: type[T02RunError],
+) -> tuple[CRS, str]:
+    if crs_override:
+        try:
+            return CRS.from_user_input(crs_override), "override"
+        except Exception as exc:
+            raise error_cls(
+                "invalid_crs_or_unprojectable",
+                f"Invalid CRS override '{crs_override}': {exc}",
+            ) from exc
+    try:
+        with fiona.open(str(path), layer=layer_name) as src:
+            if src.crs_wkt:
+                return CRS.from_wkt(src.crs_wkt), "gpkg.crs_wkt"
+            if src.crs:
+                return CRS.from_user_input(src.crs), "gpkg.crs"
+    except Exception as exc:
+        raise error_cls(
+            "invalid_crs_or_unprojectable",
+            f"Failed to open GeoPackage '{path}' layer '{layer_name}': {exc}",
+        ) from exc
+    raise error_cls(
+        "invalid_crs_or_unprojectable",
+        f"GeoPackage '{path}' layer '{layer_name}' has no CRS and no CRS override was provided.",
+    )
+
+
 def _transform_geometry(
     geometry: BaseGeometry | None,
     *,
@@ -201,8 +266,7 @@ def read_vector_layer_strict(
     allow_null_geometry: bool,
     error_cls: type[T02RunError] = T02RunError,
 ) -> LoadedLayer:
-    del layer_name
-    layer_path = Path(path)
+    layer_path = prefer_vector_input_path(Path(path))
     if not layer_path.is_file():
         raise error_cls(
             "missing_required_field",
@@ -267,9 +331,50 @@ def read_vector_layer_strict(
             )
         return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
 
+    if suffix in GEOPACKAGE_SUFFIXES:
+        resolved_layer_name = _resolve_geopackage_layer_name(layer_path, layer_name, error_cls=error_cls)
+        source_crs, crs_source = _resolve_geopackage_crs_strict(
+            layer_path,
+            resolved_layer_name,
+            crs_override,
+            error_cls=error_cls,
+        )
+        try:
+            with fiona.open(str(layer_path), layer=resolved_layer_name) as src:
+                features: list[LoadedFeature] = []
+                for feature_index, feature in enumerate(src):
+                    geometry_payload = feature.get("geometry")
+                    if geometry_payload is None and not allow_null_geometry:
+                        raise error_cls(
+                            "missing_required_field",
+                            f"{layer_path} layer '{resolved_layer_name}' feature[{feature_index}] is missing geometry.",
+                        )
+                    geometry = None if geometry_payload is None else _transform_geometry(
+                        shape(geometry_payload),
+                        source_crs=source_crs,
+                        layer_label=f"{layer_path}:{resolved_layer_name}",
+                        feature_index=feature_index,
+                        error_cls=error_cls,
+                    )
+                    features.append(
+                        LoadedFeature(
+                            feature_index=feature_index,
+                            properties=dict(feature.get("properties") or {}),
+                            geometry=geometry,
+                        )
+                    )
+        except T02RunError:
+            raise
+        except Exception as exc:
+            raise error_cls(
+                "invalid_crs_or_unprojectable",
+                f"Failed to read GeoPackage '{layer_path}' layer '{resolved_layer_name}': {exc}",
+            ) from exc
+        return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
+
     raise error_cls(
         "missing_required_field",
-        f"Unsupported vector format for '{layer_path}'. Expected GeoJSON or Shapefile.",
+        f"Unsupported vector format for '{layer_path}'. Expected GeoJSON, Shapefile, or GeoPackage.",
     )
 
 

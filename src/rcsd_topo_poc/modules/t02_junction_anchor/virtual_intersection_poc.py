@@ -16,6 +16,7 @@ from typing import Any, Callable, Iterable, Optional, TypeVar, Union
 
 import ijson
 import numpy as np
+import fiona
 import shapefile
 from pyproj import CRS
 from shapely import from_wkb, intersects_xy
@@ -24,13 +25,15 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge, unary_union
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
+    GEOPACKAGE_SUFFIXES,
     TARGET_CRS,
     announce,
     build_logger,
     build_run_id,
     close_logger,
+    prefer_vector_input_path,
     transform_geometry_to_target,
-    write_geojson,
+    write_vector,
     write_json,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
@@ -40,7 +43,12 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage1_drivezone_gate import (
     _normalize_id,
     _read_vector_layer_strict,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.shared import _resolve_shapefile_crs_strict, _transform_geometry
+from rcsd_topo_poc.modules.t02_junction_anchor.shared import (
+    _resolve_geopackage_crs_strict,
+    _resolve_geopackage_layer_name,
+    _resolve_shapefile_crs_strict,
+    _transform_geometry,
+)
 
 
 T = TypeVar("T")
@@ -733,7 +741,7 @@ def _load_layer_filtered(
     progress_every: int = 5000,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> LoadedLayer:
-    layer_path = Path(path)
+    layer_path = prefer_vector_input_path(Path(path))
     if not layer_path.is_file():
         raise VirtualIntersectionPocError(REASON_MISSING_REQUIRED_FIELD, f"Input layer does not exist: {layer_path}")
 
@@ -844,8 +852,72 @@ def _load_layer_filtered(
             progress_callback(progress_label, scanned_count, matched_count)
         return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
 
+    if suffix in GEOPACKAGE_SUFFIXES:
+        resolved_layer_name = _resolve_geopackage_layer_name(
+            layer_path,
+            layer_name,
+            error_cls=VirtualIntersectionPocError,
+        )
+        source_crs, crs_source = _resolve_geopackage_crs_strict(
+            layer_path,
+            resolved_layer_name,
+            crs_override,
+            error_cls=VirtualIntersectionPocError,
+        )
+        source_query_bounds: tuple[float, float, float, float] | None = None
+        if query_geometry is not None:
+            source_query_geometry = transform_geometry_to_target(query_geometry, TARGET_CRS, source_crs)
+            source_query_bounds = tuple(float(v) for v in source_query_geometry.bounds)
+        features: list[LoadedFeature] = []
+        matched_count = 0
+        scanned_count = 0
+        try:
+            with fiona.open(str(layer_path), layer=resolved_layer_name) as src:
+                iterator = src.items(bbox=source_query_bounds) if source_query_bounds is not None else enumerate(src)
+                for item in iterator:
+                    if source_query_bounds is not None:
+                        feature_index, feature = item
+                    else:
+                        feature_index, feature = item
+                    scanned_count += 1
+                    properties = dict(feature.get("properties") or {})
+                    if progress_label and progress_callback and scanned_count % progress_every == 0:
+                        progress_callback(progress_label, scanned_count, matched_count)
+                    if property_predicate is not None and not property_predicate(properties):
+                        continue
+                    geometry_payload = feature.get("geometry")
+                    if geometry_payload is None:
+                        if not allow_null_geometry:
+                            raise VirtualIntersectionPocError(
+                                REASON_MISSING_REQUIRED_FIELD,
+                                f"{layer_path} layer '{resolved_layer_name}' feature[{feature_index}] is missing geometry.",
+                            )
+                        geometry = None
+                    else:
+                        geometry = _transform_geometry(
+                            shape(geometry_payload),
+                            source_crs=source_crs,
+                            layer_label=f"{layer_path}:{resolved_layer_name}",
+                            feature_index=int(feature_index),
+                            error_cls=VirtualIntersectionPocError,
+                        )
+                    if query_geometry is not None and geometry is not None and not geometry.intersects(query_geometry):
+                        continue
+                    features.append(LoadedFeature(feature_index=int(feature_index), properties=properties, geometry=geometry))
+                    matched_count += 1
+        except VirtualIntersectionPocError:
+            raise
+        except Exception as exc:
+            raise VirtualIntersectionPocError(
+                REASON_INVALID_CRS_OR_UNPROJECTABLE,
+                f"Failed to read GeoPackage '{layer_path}' layer '{resolved_layer_name}': {exc}",
+            ) from exc
+        if progress_label and progress_callback:
+            progress_callback(progress_label, scanned_count, matched_count)
+        return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
+
     return _load_layer(
-        path,
+        layer_path,
         layer_name=layer_name,
         crs_override=crs_override,
         allow_null_geometry=allow_null_geometry,
@@ -1458,13 +1530,13 @@ def _branch_feature(
 
 def _write_association_outputs(
     *,
-    geojson_path: Path,
+    vector_path: Path,
     audit_csv_path: Path,
     audit_json_path: Path,
     features: list[dict[str, Any]],
     audits: list[dict[str, Any]],
 ) -> None:
-    write_geojson(geojson_path, features)
+    write_vector(vector_path, features)
     write_csv(audit_csv_path, audits, fieldnames=ASSOCIATION_AUDIT_FIELDNAMES)
     write_json(audit_json_path, audits)
 
@@ -1511,13 +1583,13 @@ def run_t02_virtual_intersection_poc(
     out_root_path, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
     out_root_path.mkdir(parents=True, exist_ok=True)
 
-    virtual_polygon_path = out_root_path / "virtual_intersection_polygon.geojson"
+    virtual_polygon_path = out_root_path / "virtual_intersection_polygon.gpkg"
     branch_evidence_json_path = out_root_path / "branch_evidence.json"
-    branch_evidence_geojson_path = out_root_path / "branch_evidence.geojson"
-    associated_rcsdroad_path = out_root_path / "associated_rcsdroad.geojson"
+    branch_evidence_geojson_path = out_root_path / "branch_evidence.gpkg"
+    associated_rcsdroad_path = out_root_path / "associated_rcsdroad.gpkg"
     associated_rcsdroad_audit_csv_path = out_root_path / "associated_rcsdroad_audit.csv"
     associated_rcsdroad_audit_json_path = out_root_path / "associated_rcsdroad_audit.json"
-    associated_rcsdnode_path = out_root_path / "associated_rcsdnode.geojson"
+    associated_rcsdnode_path = out_root_path / "associated_rcsdnode.gpkg"
     associated_rcsdnode_audit_csv_path = out_root_path / "associated_rcsdnode_audit.csv"
     associated_rcsdnode_audit_json_path = out_root_path / "associated_rcsdnode_audit.json"
     status_path = out_root_path / "t02_virtual_intersection_poc_status.json"
@@ -2095,7 +2167,7 @@ def run_t02_virtual_intersection_poc(
         if status == STATUS_STABLE and not associated_rcsdroad_features:
             status = STATUS_SURFACE_ONLY
 
-        write_geojson(
+        write_vector(
             virtual_polygon_path,
             [
                 {
@@ -2121,16 +2193,16 @@ def run_t02_virtual_intersection_poc(
                 "excluded_negative_rc_groups": sorted(negative_rc_groups),
             },
         )
-        write_geojson(branch_evidence_geojson_path, branch_features)
+        write_vector(branch_evidence_geojson_path, branch_features)
         _write_association_outputs(
-            geojson_path=associated_rcsdroad_path,
+            vector_path=associated_rcsdroad_path,
             audit_csv_path=associated_rcsdroad_audit_csv_path,
             audit_json_path=associated_rcsdroad_audit_json_path,
             features=associated_rcsdroad_features,
             audits=road_association_audits,
         )
         _write_association_outputs(
-            geojson_path=associated_rcsdnode_path,
+            vector_path=associated_rcsdnode_path,
             audit_csv_path=associated_rcsdnode_audit_csv_path,
             audit_json_path=associated_rcsdnode_audit_json_path,
             features=associated_rcsdnode_features,

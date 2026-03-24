@@ -5,11 +5,27 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import fiona
 import pytest
 from shapely.geometry import Point, Polygon
 
 from rcsd_topo_poc import cli
-from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_geojson
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
+
+
+def _load_vector_doc(path: Path) -> dict:
+    with fiona.open(path) as src:
+        return {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": dict(feature["properties"]),
+                    "geometry": feature["geometry"],
+                }
+                for feature in src
+            ],
+        }
 
 
 @pytest.mark.smoke
@@ -20,11 +36,11 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
     outputs_dir = root / "run"
     inputs_dir.mkdir(parents=True, exist_ok=True)
 
-    segment_path = inputs_dir / "segment.geojson"
-    nodes_path = inputs_dir / "nodes.geojson"
-    intersection_path = inputs_dir / "intersection.geojson"
+    segment_path = inputs_dir / "segment.gpkg"
+    nodes_path = inputs_dir / "nodes.gpkg"
+    intersection_path = inputs_dir / "intersection.gpkg"
 
-    write_geojson(
+    write_vector(
         segment_path,
         [
             {
@@ -32,8 +48,9 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
                 "geometry": None,
             }
         ],
+        crs_text="EPSG:3857",
     )
-    write_geojson(
+    write_vector(
         nodes_path,
         [
             {
@@ -49,8 +66,9 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
                 "geometry": Point(10.0, 0.1),
             },
         ],
+        crs_text="EPSG:3857",
     )
-    write_geojson(
+    write_vector(
         intersection_path,
         [
             {
@@ -66,6 +84,7 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
                 ),
             },
         ],
+        crs_text="EPSG:3857",
     )
 
     exit_code = cli.main(
@@ -87,11 +106,11 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
     assert exit_code == 0
     run_dir = outputs_dir / "smoke_case"
     assert (run_dir / "t02_stage2_summary.json").is_file()
-    assert (run_dir / "nodes.geojson").is_file()
-    assert (run_dir / "node_error_1.geojson").is_file()
+    assert (run_dir / "nodes.gpkg").is_file()
+    assert (run_dir / "node_error_1.gpkg").is_file()
     assert (run_dir / "node_error_1_audit.csv").is_file()
     assert (run_dir / "node_error_1_audit.json").is_file()
-    assert (run_dir / "node_error_2.geojson").is_file()
+    assert (run_dir / "node_error_2.gpkg").is_file()
     assert (run_dir / "node_error_2_audit.csv").is_file()
     assert (run_dir / "node_error_2_audit.json").is_file()
     assert (run_dir / "t02_stage2_audit.csv").is_file()
@@ -100,7 +119,7 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
     assert (run_dir / "t02_stage2_perf.json").is_file()
     assert (run_dir / "t02_stage2_perf_markers.jsonl").is_file()
 
-    nodes_doc = json.loads((run_dir / "nodes.geojson").read_text(encoding="utf-8"))
+    nodes_doc = _load_vector_doc(run_dir / "nodes.gpkg")
     node_props_by_id = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
     assert node_props_by_id["1"]["is_anchor"] == "fail2"
     assert node_props_by_id["2"]["is_anchor"] == "fail2"

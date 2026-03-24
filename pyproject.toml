@@ -7,6 +7,7 @@ name = "rcsd-topo-poc"
 version = "0.0.0"
 requires-python = ">=3.9"
 dependencies = [
+  "numpy>=1.26,<3",
   "pyproj>=3.6,<3.7",
   "pyshp>=3.0",
   "shapely>=2.0,<3",

@@ -14,6 +14,15 @@
 python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
 ```
 
+补充：
+
+```bash
+python -m rcsd_topo_poc t02-virtual-intersection-poc --help
+```
+
+- `t02-virtual-intersection-poc` 是当前为单 `mainnodeid` 虚拟路口面验证新增的实验性 POC 入口
+- 它不重算 stage1 `has_evd`，也不替代当前正式的 stage1 基线
+
 ## 3. 常见运行方式
 
 ```bash
@@ -23,6 +32,20 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.geojson \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate \
   --run-id t02_stage1_run
+```
+
+POC 示例：
+
+```bash
+python -m rcsd_topo_poc t02-virtual-intersection-poc \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.geojson \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.geojson \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.geojson \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.geojson \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.geojson \
+  --mainnodeid 100 \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc \
+  --run-id t02_virtual_intersection_demo
 ```
 
 说明：
@@ -54,6 +77,27 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   - 总耗时、阶段耗时和总体计数
 - `t02_stage1_perf_markers.jsonl`
   - 阶段级性能标记流
+- `virtual_intersection_polygon.geojson`
+  - 单 `mainnodeid` POC 生成的虚拟路口面
+- `branch_evidence.json`
+- `branch_evidence.geojson`
+  - 分支方向、证据等级、是否纳入虚拟面和 RC 方向组映射
+- `associated_rcsdroad.geojson`
+- `associated_rcsdroad_audit.csv`
+- `associated_rcsdroad_audit.json`
+  - 已关联与未关联的 RCSDRoad 结果及审计
+- `associated_rcsdnode.geojson`
+- `associated_rcsdnode_audit.csv`
+- `associated_rcsdnode_audit.json`
+  - 已关联与未关联的 RCSDNode 结果及审计
+- `t02_virtual_intersection_poc_status.json`
+- `t02_virtual_intersection_poc_audit.csv`
+- `t02_virtual_intersection_poc_audit.json`
+- `t02_virtual_intersection_poc.log`
+- `t02_virtual_intersection_poc_progress.json`
+- `t02_virtual_intersection_poc_perf.json`
+- `t02_virtual_intersection_poc_perf_markers.jsonl`
+  - 单 `mainnodeid` POC 的状态、风险、审计与性能输出
 
 ## 5. 文档阅读顺序
 
@@ -80,8 +124,11 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   - `segment.has_evd`
   - `summary`
   - `audit/log`
+  - 单 `mainnodeid` 虚拟路口面 POC
+  - 基于 DriveZone / roads / RCSDRoad / RCSDNode 的局部 patch、分支证据和 RC 关联输出
 - 未实现：
   - stage2 锚定主逻辑
   - 概率 / 置信度
   - 环岛新规则
   - 误伤捞回
+  - 全量虚拟路口面批处理

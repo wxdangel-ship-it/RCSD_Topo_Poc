@@ -236,11 +236,24 @@ outputs/_work/t02_stage1_drivezone_gate
 python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
 ```
 
-### 4.2 程序内入口
+### 4.2 实验性 POC 入口
+
+```bash
+python -m rcsd_topo_poc t02-virtual-intersection-poc --help
+```
+
+- `t02-virtual-intersection-poc` 只处理单个 `mainnodeid`
+- 当前定位是实验性 POC，不替代正式 stage1 基线
+- 该入口直接消费带 `has_evd / is_anchor` 的 `nodes`，不会在入口内部重算 stage1 / stage2 主逻辑
+
+### 4.3 程序内入口
 
 - [stage1_drivezone_gate.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/stage1_drivezone_gate.py)
   - `run_t02_stage1_drivezone_gate(...)`
   - `run_t02_stage1_drivezone_gate_cli(args)`
+- `src/rcsd_topo_poc/modules/t02_junction_anchor/virtual_intersection_poc.py`
+  - `run_t02_virtual_intersection_poc(...)`
+  - `run_t02_virtual_intersection_poc_cli(args)`
 
 ## 5. Params
 
@@ -261,7 +274,27 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
   - `out_root`
   - `run_id`
 
-### 5.2 参数原则
+### 5.2 实验性 POC 参数
+
+- 必选输入：
+  - `nodes_path`
+  - `roads_path`
+  - `drivezone_path`
+  - `rcsdroad_path`
+  - `rcsdnode_path`
+  - `mainnodeid`
+- 可选兼容：
+  - `nodes_layer / roads_layer / drivezone_layer / rcsdroad_layer / rcsdnode_layer`
+  - `nodes_crs / roads_crs / drivezone_crs / rcsdroad_crs / rcsdnode_crs`
+- 可选 patch 控制：
+  - `buffer_m`
+  - `patch_size_m`
+  - `resolution_m`
+- 输出控制：
+  - `out_root`
+  - `run_id`
+
+### 5.3 参数原则
 
 - 所有输入兼容都必须显式声明；不能猜字段、猜 CRS、猜 fallback。
 - stage1 当前没有业务阈值参数，也不开放 stage2 相关参数。
@@ -277,6 +310,26 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate \
   --run-id t02_stage1_run
 ```
+
+```bash
+python -m rcsd_topo_poc t02-virtual-intersection-poc \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.geojson \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.geojson \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.geojson \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.geojson \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.geojson \
+  --mainnodeid 100 \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc \
+  --run-id t02_virtual_intersection_demo
+```
+
+### 6.1 实验性 POC 输入前提
+
+- `nodes` 必须包含：`id / mainnodeid / has_evd / is_anchor / kind_2 / grade_2`
+- `roads` 与 `RCSDRoad` 当前只依赖：`id / snodeid / enodeid / direction`
+- `RCSDNode` 必须包含：`id / mainnodeid`
+- `mainnodeid` 对应代表 node 必须满足：`has_evd = yes`、`is_anchor = no`、`kind_2 in {4, 2048}`
+- `RCSDRoad / RCSDNode` 在局部 patch 内若不落在 `DriveZone` 上，入口必须失败并输出审计
 
 ## 7. Acceptance
 

@@ -160,6 +160,14 @@ def _cmd_t02_stage1_drivezone_gate(args: argparse.Namespace) -> int:
     return run_t02_stage1_drivezone_gate_cli(args)
 
 
+def _cmd_t02_virtual_intersection_poc(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
+        run_t02_virtual_intersection_poc_cli,
+    )
+
+    return run_t02_virtual_intersection_poc_cli(args)
+
+
 def _add_debug_flag(parser: argparse.ArgumentParser, *, default: bool) -> None:
     parser.add_argument(
         "--debug",
@@ -533,6 +541,57 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional run id. If omitted, use t02_stage1_drivezone_gate_YYYYMMDD_HHMMSS.",
     )
     p_t02_stage1.set_defaults(func=_cmd_t02_stage1_drivezone_gate)
+
+    p_t02_poc = sub.add_parser(
+        "t02-virtual-intersection-poc",
+        help="Run single-mainnodeid T02 virtual intersection POC with DriveZone and RC constraints.",
+    )
+    p_t02_poc.add_argument("--nodes-path", "--nodes_path", required=True, dest="nodes_path", help="Path to nodes GeoJSON/Shapefile.")
+    p_t02_poc.add_argument("--nodes-layer", help="Optional nodes layer name.")
+    p_t02_poc.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
+    p_t02_poc.add_argument("--roads-path", "--roads_path", required=True, dest="roads_path", help="Path to roads GeoJSON/Shapefile.")
+    p_t02_poc.add_argument("--roads-layer", help="Optional roads layer name.")
+    p_t02_poc.add_argument("--roads-crs", help="Optional roads CRS override, e.g. EPSG:4326.")
+    p_t02_poc.add_argument(
+        "--drivezone-path",
+        "--drivezone_path",
+        required=True,
+        dest="drivezone_path",
+        help="Path to DriveZone GeoJSON/Shapefile.",
+    )
+    p_t02_poc.add_argument("--drivezone-layer", help="Optional DriveZone layer name.")
+    p_t02_poc.add_argument("--drivezone-crs", help="Optional DriveZone CRS override, e.g. EPSG:4326.")
+    p_t02_poc.add_argument(
+        "--rcsdroad-path",
+        "--rcsdroad_path",
+        required=True,
+        dest="rcsdroad_path",
+        help="Path to RCSDRoad GeoJSON/Shapefile.",
+    )
+    p_t02_poc.add_argument("--rcsdroad-layer", help="Optional RCSDRoad layer name.")
+    p_t02_poc.add_argument("--rcsdroad-crs", help="Optional RCSDRoad CRS override, e.g. EPSG:4326.")
+    p_t02_poc.add_argument(
+        "--rcsdnode-path",
+        "--rcsdnode_path",
+        required=True,
+        dest="rcsdnode_path",
+        help="Path to RCSDNode GeoJSON/Shapefile.",
+    )
+    p_t02_poc.add_argument("--rcsdnode-layer", help="Optional RCSDNode layer name.")
+    p_t02_poc.add_argument("--rcsdnode-crs", help="Optional RCSDNode CRS override, e.g. EPSG:4326.")
+    p_t02_poc.add_argument("--mainnodeid", required=True, help="Single target mainnodeid for this POC run.")
+    p_t02_poc.add_argument(
+        "--out-root",
+        "--out-dir",
+        "--out_dir",
+        dest="out_root",
+        help="Optional output root override. If omitted, write to outputs/_work/t02_virtual_intersection_poc/<run_id>.",
+    )
+    p_t02_poc.add_argument("--run-id", help="Optional run id. If omitted, use t02_virtual_intersection_poc_YYYYMMDD_HHMMSS.")
+    p_t02_poc.add_argument("--buffer-m", type=float, default=100.0, help="Local query buffer in meters. Default: 100.")
+    p_t02_poc.add_argument("--patch-size-m", type=float, default=200.0, help="North-up patch size in meters. Default: 200.")
+    p_t02_poc.add_argument("--resolution-m", type=float, default=0.2, help="Raster resolution in meters. Default: 0.2.")
+    p_t02_poc.set_defaults(func=_cmd_t02_virtual_intersection_poc)
 
     args = parser.parse_args(argv)
     try:

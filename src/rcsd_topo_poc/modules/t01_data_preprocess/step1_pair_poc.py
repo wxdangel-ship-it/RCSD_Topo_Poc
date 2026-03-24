@@ -61,6 +61,8 @@ class RuleSpec:
     grade_eq: Optional[int]
     closed_con_in: tuple[int, ...]
     kind_bits_any: tuple[int, ...] = ()
+    kind_values_in: tuple[int, ...] = ()
+    grade_in: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,8 @@ class StrategySpec:
     force_seed_node_ids: tuple[str, ...] = ()
     force_terminate_node_ids: tuple[str, ...] = ()
     hard_stop_node_ids: tuple[str, ...] = ()
+    explicit_seed_node_ids: tuple[str, ...] = ()
+    explicit_terminate_node_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -279,7 +283,9 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
         return RuleSpec(
             kind_bits_all=tuple(int(v) for v in payload.get("kind_bits_all", [])),
             kind_bits_any=tuple(int(v) for v in payload.get("kind_bits_any", [])),
+            kind_values_in=tuple(int(v) for v in payload.get("kind_values_in", [])),
             grade_eq=None if payload.get("grade_eq") is None else int(payload["grade_eq"]),
+            grade_in=tuple(int(v) for v in payload.get("grade_in", [])),
             closed_con_in=tuple(int(v) for v in payload.get("closed_con_in", [])),
         )
 
@@ -342,6 +348,26 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
                 (
                     node_id
                     for node_id in (_normalize_id(value) for value in doc.get("hard_stop_node_ids", []))
+                    if node_id is not None
+                ),
+                key=_sort_key,
+            )
+        ),
+        explicit_seed_node_ids=tuple(
+            sorted(
+                (
+                    node_id
+                    for node_id in (_normalize_id(value) for value in doc.get("explicit_seed_node_ids", []))
+                    if node_id is not None
+                ),
+                key=_sort_key,
+            )
+        ),
+        explicit_terminate_node_ids=tuple(
+            sorted(
+                (
+                    node_id
+                    for node_id in (_normalize_id(value) for value in doc.get("explicit_terminate_node_ids", []))
                     if node_id is not None
                 ),
                 key=_sort_key,
@@ -564,12 +590,36 @@ def _evaluate_rule(node: Union[NodeRecord, SemanticNodeRecord], rule: RuleSpec) 
     if rule.kind_bits_any and not any(_bit_enabled(node.kind_2, bit_index) for bit_index in rule.kind_bits_any):
         joined = "_".join(str(v) for v in rule.kind_bits_any)
         reasons.append(f"kind_missing_any_bits_{joined}")
+    if rule.kind_values_in and node.kind_2 not in rule.kind_values_in:
+        joined = "_".join(str(v) for v in rule.kind_values_in)
+        reasons.append(f"kind_not_in_{joined}")
     if rule.grade_eq is not None and node.grade_2 != rule.grade_eq:
         reasons.append(f"grade_not_eq_{rule.grade_eq}")
+    if rule.grade_in and node.grade_2 not in rule.grade_in:
+        joined = "_".join(str(v) for v in rule.grade_in)
+        reasons.append(f"grade_not_in_{joined}")
     if rule.closed_con_in and node.closed_con not in rule.closed_con_in:
         joined = "_".join(str(v) for v in rule.closed_con_in)
         reasons.append(f"closed_con_not_in_{joined}")
     return RuleEvaluation(matched=not reasons, reasons=tuple(reasons))
+
+
+def _restrict_eval_to_explicit_node_ids(
+    eval_map: dict[str, RuleEvaluation],
+    explicit_node_ids: tuple[str, ...],
+    *,
+    reason_tag: str,
+) -> dict[str, RuleEvaluation]:
+    explicit_ids = set(explicit_node_ids)
+    restricted: dict[str, RuleEvaluation] = {}
+    for node_id, eval_result in eval_map.items():
+        if node_id in explicit_ids:
+            reasons = eval_result.reasons + (f"explicit_{reason_tag}",)
+            restricted[node_id] = RuleEvaluation(matched=True, reasons=reasons)
+        else:
+            reasons = eval_result.reasons + (f"not_in_explicit_{reason_tag}",)
+            restricted[node_id] = RuleEvaluation(matched=False, reasons=reasons)
+    return restricted
 
 
 def _build_graph(
@@ -577,6 +627,8 @@ def _build_graph(
     physical_to_semantic: dict[str, str],
     roads: dict[str, RoadRecord],
     audit_events: list[dict[str, Any]],
+    *,
+    excluded_formway_bits_any: tuple[int, ...] = (),
 ) -> tuple[dict[str, tuple[TraversalEdge, ...]], dict[str, tuple[TraversalEdge, ...]], dict[str, int], int]:
     directed_lists: dict[str, list[TraversalEdge]] = defaultdict(list)
     directed_lookup: dict[str, set[tuple[str, str]]] = defaultdict(set)
@@ -592,6 +644,17 @@ def _build_graph(
                     "road_id": road.road_id,
                     "road_kind": road.road_kind,
                     "message": "Closed road_kind=1 is excluded from the current bidirectional working graph.",
+                }
+            )
+            continue
+        if _road_matches_any_formway_bit(road, excluded_formway_bits_any):
+            audit_events.append(
+                {
+                    "event": "road_formway_excluded",
+                    "road_id": road.road_id,
+                    "formway": road.formway,
+                    "excluded_formway_bits_any": list(excluded_formway_bits_any),
+                    "message": "Road is excluded from the current pair graph because it matches through-rule formway exclusion bits.",
                 }
             )
             continue
@@ -765,7 +828,6 @@ def _build_incident_road_degree(
 
         incident_road_degree[a_node] += 1
         incident_road_degree[b_node] += 1
-
     return dict(incident_road_degree)
 
 
@@ -862,7 +924,7 @@ def _search_from_seed(
                                 "terminate_reasons": list(terminate_eval[next_node_id].reasons),
                                 "seed_reasons": list(seed_eval[next_node_id].reasons),
                             },
-                        )
+                )
                 continue
 
             if through_node:
@@ -1044,6 +1106,13 @@ def run_step1_strategy(
     context: Step1GraphContext,
     strategy: StrategySpec,
 ) -> Step1StrategyExecution:
+    strategy_directed, strategy_blocked, _strategy_road_degree, _ = _build_graph(
+        context.physical_nodes,
+        context.physical_to_semantic,
+        context.roads,
+        [],
+        excluded_formway_bits_any=strategy.through_rule.incident_degree_exclude_formway_bits_any,
+    )
     seed_eval = {
         node_id: _evaluate_rule(node, strategy.seed_rule) for node_id, node in context.semantic_nodes.items()
     }
@@ -1064,6 +1133,18 @@ def run_step1_strategy(
         if existing.matched:
             continue
         terminate_eval[node_id] = RuleEvaluation(matched=True, reasons=existing.reasons + ("forced_terminate",))
+    if strategy.explicit_seed_node_ids:
+        seed_eval = _restrict_eval_to_explicit_node_ids(
+            seed_eval,
+            tuple(node_id for node_id in strategy.explicit_seed_node_ids if node_id in context.semantic_nodes),
+            reason_tag="seed",
+        )
+    if strategy.explicit_terminate_node_ids:
+        terminate_eval = _restrict_eval_to_explicit_node_ids(
+            terminate_eval,
+            tuple(node_id for node_id in strategy.explicit_terminate_node_ids if node_id in context.semantic_nodes),
+            reason_tag="terminate",
+        )
     seed_ids = sorted(
         [node_id for node_id, eval_result in seed_eval.items() if eval_result.matched],
         key=_sort_key,
@@ -1114,8 +1195,8 @@ def run_step1_strategy(
     for seed_id in search_seed_ids:
         search_result = _search_from_seed(
             seed_id,
-            directed=context.directed,
-            blocked=context.blocked,
+            directed=strategy_directed,
+            blocked=strategy_blocked,
             through_node_ids=through_node_ids,
             hard_stop_node_ids=hard_stop_node_ids,
             seed_eval=seed_eval,

@@ -13,6 +13,10 @@
 - raw field 保真：
   - raw `mainnodeid` 必须保持输入原值
   - 运行期 `mainnode` 语义改写到新增字段 `working_mainnodeid`
+- 右转专用道口径：
+  - 挂接右转专用道的节点，不应被表述为“through 的硬切断点”
+  - 正确口径是：若去除右转专用道后该节点不构成真实路口，则该节点不应作为构段路口
+  - 右转专用道自身不参与 Segment 构建
 - `Step2` 搜索分层：
   - trunk candidate search 保持窄口径
   - `segment_body` candidate search 可在局部分叉处继续展开
@@ -23,10 +27,15 @@
   - 若 component 触到其他已验证 pair 的内部 support node，对应 road 不能直接并入当前 pair
 
 ## 已落地修复
+- Step1 图搜索新增 `incident_degree_exclude_formway_bits_any=[7]` 约束，右转专用道不参与 pair graph / through 搜索
+- Step4 / Step5 对“仅由右转专用道挂接形成的 pseudo junction”做统一降级，不再保留为 boundary / endpoint
 - raw `mainnodeid` 保真，working 语义迁移到 `working_mainnodeid`
 - `Step2` trunk search 与 `segment_body` expansion 分离
 - 新增 `hits_other_validated_support_node` barrier
 - 新增 `parallel_corridor_directionality` 审计字段
+- 新增 side component `component_directionality / bidirectional_road_ids` 审计字段
+- 明确：合法“单侧旁路系统”只允许由单向平行侧路构成；包含双向 side road 的 component 一律转 `step3_residual`
+- 新增全阶段前置门禁：若 trunk candidate 属于 `bidirectional_minimal_loop`，且内部路径呈“弱 connector node 串接 + 内部 T-support / support anchor 闭合”，则该 pair 在 `single-pair validation` 直接以 `t_junction_vertical_tracking_blocked` 拒绝；该规则对 Step2 / Step4 / Step5A / Step5B / Step5C 全部生效，不再允许后续阶段重新构出同一路径
 
 ## 当前验证状态
 - 定向单测：
@@ -62,6 +71,7 @@
   - 允许保留的 side subgraph 可以包含：
     - 多条单向平行侧路
     - 这些单向侧路之间的短小连接路
+  - 但这些 side roads 本身不得是双向 road；若 component 含双向 side road，则不再视为合法单侧旁路
   - 但整体必须仍然表达“从主 Segment 侧向挂出并最终回到主 Segment 的单侧旁路系统”
   - 单侧旁路的 branch 必须与当前 Segment 该侧通行方向一致；反方向 branch 不能保留
   - 若 component 借内部路口的 `I` 向再次串联多个内部路口，形成内部挂接网，而不是单侧旁路系统，则应转入 `step3_residual`

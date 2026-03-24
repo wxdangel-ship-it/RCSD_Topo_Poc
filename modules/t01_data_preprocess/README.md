@@ -1,15 +1,39 @@
 # T01 数据预处理模块
 
-## 当前状态
-- 当前版本：`T01 Skill v1.0.0`
-- 官方完整流程：`working bootstrap -> roundabout preprocessing -> Step1 -> Step2 -> Step3(refresh) -> Step4 -> Step5A -> Step5B -> Step5C -> Step6`
-- Step6 已正式纳入 official end-to-end，不再是附加 POC
+## 模块定位
+- 面向非封闭式双向道路场景的双向 Segment 构建模块。
+- 正式流程：
+  - `working bootstrap -> roundabout preprocessing -> Step1 -> Step2 -> Step3 -> Step4 -> Step5A -> Step5B -> Step5C -> Step6`
+- Step6 已正式纳入 official end-to-end，不再是额外 POC。
 
 ## 官方输入
-- 官方推荐输入统一为 GeoJSON：
-  - `nodes.geojson`
-  - `roads.geojson`
-- Shapefile 仅保留兼容层，不再作为官方示例命令。
+- `nodes.geojson`
+- `roads.geojson`
+
+## 当前 accepted 约束摘要
+- node 输入：
+  - `closed_con in {2,3}`
+- road 输入：
+  - `road_kind != 1`
+  - `formway != 128`
+- 后续业务判断统一使用：
+  - `grade_2`
+  - `kind_2`
+- 原始 `grade / kind` 仅保留为输入信息，不再作为后续业务判断依据。
+
+## 关键业务口径
+- 环岛预处理在模块开始阶段完成，环岛 `mainnode` 统一写成：
+  - `grade_2 = 1`
+  - `kind_2 = 64`
+- 全局共享：
+  - `50m` 双线路段最小闭环垂距门控
+  - `50m` 侧向并入距离门控
+- T 型路口竖向阻断规则：
+  - 仅对应 `kind_2 = 2048`
+  - 只要不是当前 segment 的起点 / 终点，在 `Step2 / Step4 / Step5*` 中都禁止内部竖向追溯
+- 右转专用道：
+  - `formway bit7 / 128` 的 road 不参与 Segment 构建
+  - 去掉右转专用道后不成真实路口的节点，不得作为构段路口
 
 ## 官方入口
 
@@ -29,31 +53,7 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
 - `python -m rcsd_topo_poc t01-step5-staged-residual-graph`
 - `python -m rcsd_topo_poc t01-step6-segment-aggregation-poc`
 
-## debug 行为
-- `debug=false`
-  - 只保留最终必要结果
-  - official runner 仍会跑到 Step6
-  - 避免写出过多大体量中间层
-- `debug=true`
-  - 输出 Step1-Step6 的中间审计层与调试图层
-  - 保留 Step5 的 alias refreshed 输出和更丰富的审计文件
-
-## 正式业务字段
-- node 侧正式字段：
-  - `grade_2`
-  - `kind_2`
-  - `working_mainnodeid`
-- `working_mainnodeid` 作为内部 working 语义字段继续维护并优先供 Step1-Step6 使用，但不在公开 `nodes.geojson` / `inner_nodes.geojson` 中显式输出
-- 环岛预处理例外：
-  - 聚合成环岛的一组 node 会同步修正 `mainnodeid / working_mainnodeid`
-  - 环岛 `mainnode` 记为 `grade_2 = 1, kind_2 = 64`
-  - 环岛 member node 记为 `grade_2 = 0, kind_2 = 0`
-- road 侧正式输出字段：
-  - `segmentid`
-  - `sgrade`
-- `s_grade`、`segment_id`、`Segment_id` 仅在读取兼容层中被识别。
-
-## official end-to-end 最终输出
+## 正式输出
 - `nodes.geojson`
 - `roads.geojson`
 - `segment.geojson`
@@ -67,38 +67,15 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
 - `skill_v1_manifest.json`
 - `skill_v1_summary.json`
 
-## Step6 定位
-- Step6 把 road-level `segmentid` 结果聚合为 segment-level 图层。
-- Step6 输出：
-  - `segment.geojson`
-  - `inner_nodes.geojson`
-  - `segment_error.geojson`
-  - `segment_error_s_grade_conflict.geojson`
-  - `segment_error_grade_kind_conflict.geojson`
-  - `segment_summary.json`
-  - `segment_build_table.csv`
-  - `inner_nodes_summary.json`
-- Step6 standalone 从公开 `nodes.geojson` 读取时，若未显式带出 `working_mainnodeid`，则回退使用修正后的 `mainnodeid`。
-- Step6 在 official runner 中复用 Step5 的内存态结果，不重新独立跑一套 `nodes / roads` 读取、`mainnode` 分组和邻接构建。
-
-## 当前 accepted 约束
-- 双向构段前置过滤：
-  - node：`closed_con in {2,3}`
-  - road：`road_kind != 1`
-- 统一 50m gates：
-  - `MAX_DUAL_CARRIAGEWAY_SEPARATION_M = 50.0`
-  - `MAX_SIDE_ACCESS_DISTANCE_M = 50.0`
-- Step5A / Step5B 保持 strict
-- Step5C 使用 adaptive barrier fallback
-
-## 当前活动 baseline
-- `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS/`
-- `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS2/`
-- `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS3/`
-- `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS4/`
-- `modules/t01_data_preprocess/baselines/t01_skill_active_five_sample_suite/XXXS5/`
-
 ## 文档索引
-- 规格：[spec.md](/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/spec.md)
-- 契约：[INTERFACE_CONTRACT.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md)
-- 架构概览：[overview.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/overview.md)
+- 主规格：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/spec.md`
+- 计划：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/plan.md`
+- 任务：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/tasks.md`
+- 契约：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
+
+## 临时样例基线
+- `XXXS*` 的临时最终 Segment 基线仅用于迭代过程中的非回退检查。
+- 不覆盖 accepted baseline。
+- 记录位置：
+  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_BASELINE_MANIFEST.json`
+  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_REVIEW.md`

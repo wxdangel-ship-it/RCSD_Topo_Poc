@@ -1,0 +1,93 @@
+{
+  "suite_name": "t01_skill_temp_segment_review_suite",
+  "status": "TEMPORARY",
+  "focus": "final_segment_only",
+  "generated_at": "2026-03-24",
+  "description": "Temporary XXXS sample suite built from current specbatch_v1 runs. Compare only final Segment outputs; do not overwrite accepted baseline.",
+  "samples": {
+    "XXXS": {
+      "run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260324_xxxs_specbatch_v1",
+      "reference_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260323_xxxs_current_check_v1",
+      "segment_count": 46,
+      "segment_signature_sha256": "917cc89ea3f1ff9840c3a8d35777b830bb1dec6aa0e51f09065a96507c7ed9e0",
+      "review_status": "PASS_LOCKED",
+      "review_basis": "matches accepted current_check_v1 final Segment",
+      "notes": [
+        "batch A 2026-03-24: xxxs_batchA_guard_v2 no longer crashes in Step4",
+        "batch A 2026-03-24: still differs from temp baseline in the 40237137/55225270/74463926 three-node component",
+        "user temporarily accepted continuing under the revised baseline-document conflict"
+      ]
+    },
+    "XXXS2": {
+      "run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260324_xxxs2_specbatch_v1",
+      "reference_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260323_xxxs2_right_turn_boundary_check",
+      "segment_count": 38,
+      "segment_signature_sha256": "08b3969f051f68b808f6a496061de753158aa4e321fcef77383c5679aa15a638",
+      "review_status": "PASS_LOCKED",
+      "review_basis": "matches accepted right_turn_boundary_check final Segment",
+      "notes": []
+    },
+    "XXXS3": {
+      "run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260324_xxxs3_specbatch_v1",
+      "reference_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260323_xxxs3_current_check_v1",
+      "segment_count": 35,
+      "segment_signature_sha256": "86759aeb017ed2579241397bc8595a601bd9e26b2152c933f9be68f0f1d0f0d9",
+      "review_status": "PASS_LOCKED",
+      "review_basis": "matches accepted current_check_v1 final Segment",
+      "notes": []
+    },
+    "XXXS4": {
+      "run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260324_xxxs4_specbatch_v1",
+      "reference_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260323_xxxs4_current_check_v1",
+      "segment_count": 42,
+      "segment_signature_sha256": "3614dcc2c9eb39e51d93889ab7b7d641d96c60938dc4b53d376f0a3947417d8e",
+      "review_status": "PASS_LOCKED",
+      "review_basis": "matches accepted current_check_v1 final Segment",
+      "notes": []
+    },
+    "XXXS5": {
+      "run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260324_xxxs5_specbatch_v1",
+      "reference_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260323_xxxs5_specfix_v2",
+      "segment_count": 55,
+      "segment_signature_sha256": "dfce5f68f1cf111ae374ec3e00235650f94d26183385c151a511d205d5d9b44a",
+      "review_status": "FAIL_TARGET",
+      "review_basis": "identical to previously known failing specfix_v2 final Segment",
+      "notes": [
+        "user reported side bypass > 50m issue in XXXS5",
+        "current run no longer contains segmentid 39546457_47130796, but final Segment set is unchanged versus the known failing run"
+      ]
+    },
+    "XXXS6": {
+      "run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260324_xxxs6_specbatch_v1",
+      "reference_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260323_xxxs6_dupfix_regression_v2",
+      "segment_count": 39,
+      "segment_signature_sha256": "4eb91aad78bb344ed94799396dbd244759368eca60ebc7a4bf540ceb9ca697a2",
+      "review_status": "PASS_LOCKED",
+      "review_basis": "user visually accepted specbatch_v1 final Segment",
+      "notes": [
+        "batch A 2026-03-24: xxxs6_batchA_guard_v2 remains identical to temp baseline final Segment"
+      ]
+    },
+    "XXXS7": {
+      "run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260324_xxxs7_specbatch_v1",
+      "reference_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260323_xxxs7_specfix_v2",
+      "segment_count": 80,
+      "segment_signature_sha256": "0a0e2f1dbd58e57d38f2084c472b3aeee4e971e0835717907d58d253eda8d9d3",
+      "review_status": "FAIL_TARGET",
+      "review_basis": "identical to previously known failing specfix_v2 final Segment",
+      "notes": [
+        "user reported bidirectional bypass issue in XXXS7",
+        "current run still matches the previously failing final Segment layout while preserving 1026500_1026503"
+      ]
+    },
+    "XXXS8": {
+      "run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260324_xxxs8_specbatch_v1",
+      "reference_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_skill_eval/t01_skill_v1_20260323_xxxs8_dupfix_regression_v2",
+      "segment_count": 52,
+      "segment_signature_sha256": "dd2a9c3696312efe4a9b9da701640f95f95f0f693a150a56a22066e93386ad35",
+      "review_status": "PASS_LOCKED",
+      "review_basis": "matches accepted dupfix_regression_v2 final Segment",
+      "notes": []
+    }
+  }
+}

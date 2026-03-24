@@ -167,6 +167,13 @@ def _cmd_t02_virtual_intersection_poc(args: argparse.Namespace) -> int:
 
     return run_t02_virtual_intersection_poc_cli(args)
 
+def _cmd_t02_stage2_anchor_recognition(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t02_junction_anchor.stage2_anchor_recognition import (
+        run_t02_stage2_anchor_recognition_cli,
+    )
+
+    return run_t02_stage2_anchor_recognition_cli(args)
+
 
 def _add_debug_flag(parser: argparse.ArgumentParser, *, default: bool) -> None:
     parser.add_argument(
@@ -541,6 +548,49 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional run id. If omitted, use t02_stage1_drivezone_gate_YYYYMMDD_HHMMSS.",
     )
     p_t02_stage1.set_defaults(func=_cmd_t02_stage1_drivezone_gate)
+
+    p_t02_stage2 = sub.add_parser(
+        "t02-stage2-anchor-recognition",
+        help="Run T02 stage2 anchor recognition on stage1 node outputs and RCSDIntersection inputs.",
+    )
+    p_t02_stage2.add_argument(
+        "--segment-path",
+        "--segment_path",
+        required=True,
+        dest="segment_path",
+        help="Path to T01/T02 segment GeoJSON/Shapefile used for stage2 summary.",
+    )
+    p_t02_stage2.add_argument("--segment-crs", help="Optional segment CRS override, e.g. EPSG:4326.")
+    p_t02_stage2.add_argument(
+        "--nodes-path",
+        "--nodes_path",
+        required=True,
+        dest="nodes_path",
+        help="Path to T02 stage1 nodes GeoJSON/Shapefile.",
+    )
+    p_t02_stage2.add_argument("--nodes-layer", help="Optional nodes layer name.")
+    p_t02_stage2.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
+    p_t02_stage2.add_argument(
+        "--intersection-path",
+        "--intersection_path",
+        required=True,
+        dest="intersection_path",
+        help="Path to RCSDIntersection GeoJSON/Shapefile.",
+    )
+    p_t02_stage2.add_argument("--intersection-layer", help="Optional RCSDIntersection layer name.")
+    p_t02_stage2.add_argument("--intersection-crs", help="Optional RCSDIntersection CRS override, e.g. EPSG:4326.")
+    p_t02_stage2.add_argument(
+        "--out-root",
+        "--out-dir",
+        "--out_dir",
+        dest="out_root",
+        help="Optional output root override. If omitted, write to outputs/_work/t02_stage2_anchor_recognition/<run_id>.",
+    )
+    p_t02_stage2.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t02_stage2_anchor_recognition_YYYYMMDD_HHMMSS.",
+    )
+    p_t02_stage2.set_defaults(func=_cmd_t02_stage2_anchor_recognition)
 
     p_t02_poc = sub.add_parser(
         "t02-virtual-intersection-poc",

@@ -1,26 +1,56 @@
 # T01 计划
 
 ## 当前阶段
-- `formal flow consolidation with Step6 integration`
+- `temporary final-segment baseline governance`
+- `implementation-audit driven repair`
+- `formal baseline documentation cleanup`
 
-## 本轮目标
-1. 将官方输入契约统一到 GeoJSON。
-2. 将 roads 正式输出字段统一到 `sgrade / segmentid`。
-3. 将 Step6 从独立 POC 正式纳入 official end-to-end。
-4. 减少 Step6 与 Step1-Step5C 之间的重复读取、重复分组、重复邻接计算与重复写盘。
-5. 更新 freeze compare，使其区分 schema migration difference 与真实业务回退。
-6. 完成 `XXXS` 官方回归并给出结果解释。
+## 当前目标
+1. 维护 `XXXS*` 临时最终 Segment 基线，只用于回归闸门，不覆盖 accepted baseline。
+2. 按审计结果拆批整改实现，而不是继续混修样例问题。
+3. 将正式文档收敛到当前修订版 accepted baseline。
 
-## 本轮边界
-- 不改 accepted 的 Step1-Step5C 业务语义。
-- 不放松 `closed_con in {2,3}`、`road_kind != 1`、50m gates。
-- 不重新设计 residual graph staged runner。
-- 不 silently 更新 freeze baseline。
+## 临时基线状态
+
+### PASS_LOCKED
+- `XXXS`
+- `XXXS2`
+- `XXXS3`
+- `XXXS4`
+- `XXXS6`
+- `XXXS8`
+
+### FAIL_TARGET
+- `XXXS5`
+- `XXXS7`
+
+### 说明
+- `XXXS` 当前带有一处已记录的临时接受差异，后续如需重新打开，必须单独立项，不与当前批次混修。
+- 临时基线记录落在：
+  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_BASELINE_MANIFEST.json`
+  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_REVIEW.md`
 
 ## 实施顺序
-1. 调整 working road schema：`s_grade -> sgrade`，保留读取兼容。
-2. 统一 CLI / README / 契约文档的 GeoJSON 官方输入口径。
-3. 将 Step6 接到 official `t01-run-skill-v1` 的最终阶段。
-4. 在 official runner 中复用 Step5 的内存态 records 和分组索引。
-5. 更新 freeze compare 的 schema migration 兼容。
-6. 运行定向测试与 `XXXS` 官方回归，确认业务结果不回退。
+1. 先以临时基线做最终 Segment 非回退闸门。
+2. 按审计结果分批整改实现：
+   - 批次 A：`Step4 / Step5A / Step5B` 不得压扁当前 `grade_2 / kind_2`
+   - 批次 B：`Step5A / Step5B / Step5C` 改为逐轮 refresh 后再进入下一轮
+   - 批次 C：去掉 `Step2` 对 raw `grade / kind` 的业务 fallback
+   - 批次 D：补齐 `formway = 128` 在 Step6 的一致过滤
+3. 每一批完成后，都必须：
+   - 对 `PASS_LOCKED` 做最终 Segment 非回退检查
+   - 记录 `FAIL_TARGET` 前后差异
+4. 业务输出稳定后，再继续结构整改与文档收口。
+
+## 文档清理落点
+- 主规格：`spec.md`
+- 计划与批次：`plan.md`
+- 执行清单：`tasks.md`
+- 模块说明：`modules/t01_data_preprocess/README.md`
+- 模块契约：`modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
+
+## 边界
+- 不自动更新 freeze baseline。
+- 不把临时最终 Segment 基线误写成 accepted baseline。
+- 不通过 silent fix 掩盖问题。
+- 架构整改优先抽取共性模块与压缩超大文件职责，不顺手扩大为新的业务算法开发。

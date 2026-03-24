@@ -242,6 +242,10 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert step5b_strategy["force_terminate_node_ids"] == [row["node_id"] for row in step5a_endpoint_pool_rows]
     assert step5c_strategy["force_seed_node_ids"] == [row["node_id"] for row in step5b_endpoint_pool_rows]
     assert step5c_strategy["force_terminate_node_ids"] == [row["node_id"] for row in step5b_endpoint_pool_rows]
+    assert step5a_strategy["explicit_seed_node_ids"] == [row["node_id"] for row in step5a_endpoint_pool_rows]
+    assert step5a_strategy["explicit_terminate_node_ids"] == [row["node_id"] for row in step5a_endpoint_pool_rows]
+    assert step5b_strategy["explicit_seed_node_ids"] == [row["node_id"] for row in step5b_endpoint_pool_rows]
+    assert step5b_strategy["explicit_terminate_node_ids"] == [row["node_id"] for row in step5b_endpoint_pool_rows]
     assert step5c_strategy["hard_stop_node_ids"] == ["30"]
     assert step5c_strategy["through_node_rule"]["retain_seed_node_ids_as_through_node_ids"] == []
     assert step5c_strategy["through_node_rule"]["allow_seed_search_when_through"] is True
@@ -266,6 +270,8 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert step5b_node_props["10"]["step5b_input_eligible"] is True
     assert step5b_node_props["30"]["step5b_input_eligible"] is True
     assert step5b_node_props["501"]["step5b_input_eligible"] is False
+    assert step5b_node_props["110"]["grade_2"] == 3
+    assert step5b_node_props["110"]["kind_2"] == 2048
 
     step5c_working_roads = _load_geojson(artifacts.out_root / "step5c_working_roads.geojson")
     step5c_working_road_ids = {str(feature["properties"]["id"]) for feature in step5c_working_roads["features"]}
@@ -446,14 +452,123 @@ def test_step5_historical_boundary_is_injected_into_step5a_seed_and_terminate(tm
     assert step5a_strategy["force_seed_node_ids"] == ["300", "999"]
     assert step5a_strategy["force_terminate_node_ids"] == ["300", "999"]
     assert step5a_strategy["hard_stop_node_ids"] == ["300", "999"]
+    assert step5a_strategy["explicit_seed_node_ids"] == ["110", "300"]
+    assert step5a_strategy["explicit_terminate_node_ids"] == ["110", "300"]
 
     step5a_working_nodes = _load_geojson(artifacts.out_root / "step5a_working_nodes.geojson")
     step5a_node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in step5a_working_nodes["features"]}
     assert step5a_node_props["300"]["step5a_input_eligible"] is True
     assert step5a_node_props["300"]["step5a_historical_boundary"] is True
+    assert step5a_node_props["300"]["grade_2"] == 0
+    assert step5a_node_props["300"]["kind_2"] == 0
 
     step5a_rows = _load_csv_rows(artifacts.out_root / "step5a_validated_pairs.csv")
     assert {row["pair_id"] for row in step5a_rows} == {"STEP5A:110__300"}
+
+
+def test_step5_does_not_keep_kind1_pseudojunction_boundary_created_only_by_right_turn_lane(
+    tmp_path: Path,
+) -> None:
+    input_dir = tmp_path / "input_kind1"
+    input_dir.mkdir()
+    s2_dir = input_dir / "S2"
+    step4_dir = input_dir / "STEP4"
+    s2_dir.mkdir()
+    step4_dir.mkdir()
+    (s2_dir / "endpoint_pool.csv").write_text(
+        "node_id,source_tags\n2,S2\n",
+        encoding="utf-8",
+    )
+
+    node_path = input_dir / "nodes.geojson"
+    road_path = input_dir / "roads.geojson"
+    out_root = tmp_path / "out_kind1"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, grade_2=2, kind_2=2048, closed_con=2),
+            _node_feature(2, 1.0, 0.0, grade_2=3, kind_2=1, closed_con=2),
+            _node_feature(3, 2.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(4, 1.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [1.0, 0.0]]),
+            _road_feature("r23", 2, 3, 0, [[1.0, 0.0], [2.0, 0.0]]),
+            _road_feature("r24_right_turn", 2, 4, 0, [[1.0, 0.0], [1.0, 1.0]], formway=128),
+        ],
+    )
+
+    artifacts = run_step5_staged_residual_graph(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=out_root,
+        run_id="step5_kind1_pseudojunction",
+    )
+
+    step5a_strategy = json.loads((artifacts.out_root / "step5a_strategy.json").read_text(encoding="utf-8"))
+    assert step5a_strategy["force_seed_node_ids"] == []
+    assert step5a_strategy["force_terminate_node_ids"] == []
+    assert step5a_strategy["hard_stop_node_ids"] == []
+    assert step5a_strategy["explicit_seed_node_ids"] == ["1", "3"]
+    assert step5a_strategy["explicit_terminate_node_ids"] == ["1", "3"]
+
+    step5a_working_roads = _load_geojson(artifacts.out_root / "step5a_working_roads.geojson")
+    step5a_road_ids = {str(feature["properties"]["id"]) for feature in step5a_working_roads["features"]}
+    assert "r24_right_turn" not in step5a_road_ids
+
+    step5a_rows = _load_csv_rows(artifacts.out_root / "step5a_validated_pairs.csv")
+    assert {row["pair_id"] for row in step5a_rows} == {"STEP5A:1__3"}
+
+
+def test_step5_does_not_keep_kind4_pseudojunction_created_only_by_right_turn_lane(
+    tmp_path: Path,
+) -> None:
+    input_dir = tmp_path / "input_kind4"
+    input_dir.mkdir()
+    (input_dir / "S2").mkdir()
+    (input_dir / "STEP4").mkdir()
+
+    node_path = input_dir / "nodes.geojson"
+    road_path = input_dir / "roads.geojson"
+    out_root = tmp_path / "out_kind4"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(2, 1.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(3, 2.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(4, 1.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [1.0, 0.0]]),
+            _road_feature("r23", 2, 3, 0, [[1.0, 0.0], [2.0, 0.0]]),
+            _road_feature("r24_right_turn", 2, 4, 0, [[1.0, 0.0], [1.0, 1.0]], formway=128),
+        ],
+    )
+
+    artifacts = run_step5_staged_residual_graph(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=out_root,
+        run_id="step5_kind4_pseudojunction",
+    )
+
+    step5a_working_nodes = _load_geojson(artifacts.out_root / "step5a_working_nodes.geojson")
+    node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in step5a_working_nodes["features"]}
+    assert node_props["2"]["step5a_input_eligible"] is False
+    assert node_props["2"]["grade_2"] == 1
+    assert node_props["2"]["kind_2"] == 4
+
+    step5a_rows = _load_csv_rows(artifacts.out_root / "step5a_validated_pairs.csv")
+    assert {row["pair_id"] for row in step5a_rows} == {"STEP5A:1__3"}
 
 
 def test_step5_requires_initialized_working_layers(tmp_path: Path) -> None:

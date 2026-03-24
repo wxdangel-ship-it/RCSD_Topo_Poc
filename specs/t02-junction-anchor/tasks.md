@@ -17,7 +17,7 @@
 
 - [x] T02 总目标是双向 Segment 相关路口锚定
 - [x] 当前采用两阶段推进：阶段一 gate，阶段二 anchoring
-- [x] 当前只对阶段一形成稳定需求基线
+- [x] 当前已冻结 stage1 实现基线与 stage2 anchor recognition 文档基线
 - [x] 阶段一正式输入：`segment`、`nodes`、`DriveZone.geojson`
 - [x] stage1 实际输入字段冻结为 `segment.id / pair_nodes / junc_nodes`
 - [x] stage1 实际输入字段冻结为 `nodes.id / mainnodeid`
@@ -38,15 +38,27 @@
 - [x] 找不到路口组时必须写 `reason = junction_nodes_not_found`
 - [x] `segment.has_evd` 采用严格全满足规则
 - [x] `summary` 按 `s_grade` 分桶，桶内按唯一路口 ID 统计
+- [x] `summary` 新增总汇总项 `all__d_sgrade`，统计所有 `s_grade` 非空的 `segment`
+- [x] stage2 新增输入 `RCSDIntersection.geojson`
+- [x] stage2 当前定位冻结为 anchor recognition / anchor existence，而不是最终概率型锚定闭环
+- [x] `nodes.is_anchor` 只写代表 node，其余同组 node 保持 `null`
+- [x] `is_anchor` 枚举冻结为 `yes / no / fail1 / fail2 / null`
+- [x] stage2 仅处理 `has_evd = yes` 的路口组，其它组 `is_anchor = null`
+- [x] stage2 与 stage1 一样采用 `EPSG:3857` 空间判定，RCSDIntersection 边界接触算成功
+- [x] `node_error_1 -> fail1`
+- [x] `node_error_2 -> fail2`
+- [x] `fail2` 优先于 `fail1`
+- [x] stage2 当前不涉及成果概率 / 置信度实现
 - [x] 阶段一非范围已明确写入文档
 
 ## 3. 待确认项 checklist
 
 - [ ] Deferred：`pair_nodes` 历史示例尾缀 `_N` vs `_1` 的正式说明是否需要单独补充
 - [ ] Deferred：阶段一审计留痕的稳定文件形态与最小字段集
+- [ ] Deferred：阶段二 `node_error_1 / node_error_2` 的稳定文件命名与最小审计字段集
 - [ ] Deferred：环岛代表 node 的后续独立闭环规则
 - [ ] Deferred：缺失 CRS 的上游数据质量兜底方式
-- [ ] Deferred：阶段二锚定结果与概率 / 置信度输出定义
+- [ ] Deferred：最终唯一锚定决策、候选排序与概率 / 置信度输出定义
 
 ## 4. 后续编码前置条件 checklist
 
@@ -55,14 +67,18 @@
 - [x] 明确代表 node 规则与环岛继承约束
 - [x] 明确空目标路口 `segment` 口径
 - [x] 明确 `EPSG:3857` 空间判定口径
+- [x] 明确 `all__d_sgrade` 总汇总统计口径
+- [x] 明确 stage2 `RCSDIntersection` 输入、`is_anchor` 状态枚举与错误态优先级
 - [ ] 明确阶段一审计落盘契约
+- [ ] 明确阶段二错误输出落盘契约
 - [ ] 形成阶段一编码任务书
+- [ ] 形成阶段二 anchor recognition 编码任务书
 - [ ] 获得用户明确允许后再进入实现
 
 ## 5. 明确 blocked / deferred 的任务
 
-- Blocked：无。本轮后已可进入 stage1 编码任务书准备。
-- Deferred：阶段二 anchoring 主逻辑
+- Blocked：无。本轮后已可进入阶段一补充汇总与阶段二 anchor recognition 的实现任务书准备。
+- Deferred：阶段二最终唯一锚定决策闭环
 - Deferred：成果概率 / 置信度实现
 - Deferred：误伤捞回
 
@@ -70,6 +86,7 @@
 
 - [ ] 阶段一代码实现
 - [ ] 阶段二代码实现
+- [ ] 阶段二最终锚定决策实现
 - [ ] 概率 / 置信度实现
 - [ ] 新运行入口
 - [ ] 测试代码补充

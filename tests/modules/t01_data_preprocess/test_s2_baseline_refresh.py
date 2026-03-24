@@ -138,6 +138,18 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
             "residual_road_count",
         ],
     )
+    write_csv(
+        s2_dir / "endpoint_pool.csv",
+        [
+            {"node_id": "1", "source_tags": "S2"},
+            {"node_id": "2", "source_tags": "S2"},
+        ],
+        ["node_id", "source_tags"],
+    )
+    (s2_dir / "endpoint_pool_summary.json").write_text(
+        json.dumps({"stage_id": "S2", "endpoint_pool_count": 2}, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     write_geojson(
         s2_dir / "segment_body_roads.geojson",
@@ -189,6 +201,8 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
     assert artifacts.roads_path.name == "roads.geojson"
     assert artifacts.preserved_s2_dir.name == "S2"
     assert (artifacts.preserved_s2_dir / "validated_pairs.csv").is_file()
+    assert (artifacts.preserved_s2_dir / "endpoint_pool.csv").is_file()
+    assert (artifacts.preserved_s2_dir / "endpoint_pool_summary.json").is_file()
 
     summary = artifacts.summary
     assert summary["validated_pair_count"] == 2

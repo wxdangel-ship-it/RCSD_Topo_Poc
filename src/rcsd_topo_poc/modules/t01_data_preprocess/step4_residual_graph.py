@@ -325,6 +325,145 @@ def _current_segmentid(road: RoadFeatureRecord) -> Optional[str]:
     return _normalize_id(get_road_segmentid(road.properties))
 
 
+def _is_right_turn_only_road(road: RoadFeatureRecord) -> bool:
+    formway = _coerce_int(road.properties.get("formway")) or 0
+    return bool(formway & (1 << RIGHT_TURN_FORMWAY_BIT))
+
+
+def _filter_active_road_ids_excluding_right_turn(
+    *,
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+) -> set[str]:
+    road_by_id = {road.road_id: road for road in roads}
+    return {
+        road_id
+        for road_id in active_road_ids
+        if road_id in road_by_id and not _is_right_turn_only_road(road_by_id[road_id])
+    }
+
+
+def _identify_right_turn_only_side_pseudojunction_ids(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+) -> set[str]:
+    node_by_id = {node.node_id: node for node in nodes}
+    groups: dict[str, list[str]] = {}
+    for node in nodes:
+        groups.setdefault(node.semantic_node_id, []).append(node.node_id)
+    mainnode_groups, _ = _build_mainnode_groups(node_by_id, groups)
+    physical_to_semantic = {
+        node_id: group.mainnode_id for group in mainnode_groups.values() for node_id in group.member_node_ids
+    }
+    filtered_road_ids = _filter_active_road_ids_excluding_right_turn(roads=roads, active_road_ids=active_road_ids)
+    _, _, filtered_group_to_road_ids, filtered_distinct_neighbor_groups = _build_active_mainnode_topology(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=filtered_road_ids,
+    )
+    right_turn_attached_mainnode_ids: set[str] = set()
+    for road in roads:
+        if road.road_id not in active_road_ids or not _is_right_turn_only_road(road):
+            continue
+        snode_group = physical_to_semantic.get(road.snodeid)
+        enode_group = physical_to_semantic.get(road.enodeid)
+        if snode_group is not None:
+            right_turn_attached_mainnode_ids.add(snode_group)
+        if enode_group is not None:
+            right_turn_attached_mainnode_ids.add(enode_group)
+
+    pseudo_ids: set[str] = set()
+    for mainnode_id in right_turn_attached_mainnode_ids:
+        remaining_group_road_ids = filtered_group_to_road_ids.get(mainnode_id, set())
+        if not remaining_group_road_ids:
+            pseudo_ids.add(mainnode_id)
+            continue
+        if len(filtered_distinct_neighbor_groups.get(mainnode_id, set())) <= 2:
+            pseudo_ids.add(mainnode_id)
+    return pseudo_ids
+
+
+def _build_active_mainnode_topology(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    active_road_ids: set[str],
+) -> tuple[
+    dict[str, NodeFeatureRecord],
+    dict[str, MainnodeGroup],
+    dict[str, set[str]],
+    dict[str, set[str]],
+]:
+    node_by_id = {node.node_id: node for node in nodes}
+    groups: dict[str, list[str]] = {}
+    for node in nodes:
+        groups.setdefault(node.semantic_node_id, []).append(node.node_id)
+    mainnode_groups, _ = _build_mainnode_groups(node_by_id, groups)
+    physical_to_semantic = {
+        node_id: group.mainnode_id for group in mainnode_groups.values() for node_id in group.member_node_ids
+    }
+    group_to_road_ids: dict[str, set[str]] = {}
+    distinct_neighbor_groups: dict[str, set[str]] = {}
+    for road in roads:
+        if road.road_id not in active_road_ids:
+            continue
+        snode_group = physical_to_semantic.get(road.snodeid)
+        enode_group = physical_to_semantic.get(road.enodeid)
+        if snode_group is not None:
+            group_to_road_ids.setdefault(snode_group, set()).add(road.road_id)
+        if enode_group is not None:
+            group_to_road_ids.setdefault(enode_group, set()).add(road.road_id)
+        if snode_group is None or enode_group is None or snode_group == enode_group:
+            continue
+        distinct_neighbor_groups.setdefault(snode_group, set()).add(enode_group)
+        distinct_neighbor_groups.setdefault(enode_group, set()).add(snode_group)
+    return node_by_id, mainnode_groups, group_to_road_ids, distinct_neighbor_groups
+
+
+def _filter_right_turn_only_side_boundary_ids(
+    *,
+    nodes: list[NodeFeatureRecord],
+    roads: list[RoadFeatureRecord],
+    boundary_ids: set[str],
+    active_road_ids: set[str],
+) -> tuple[set[str], set[str]]:
+    pseudo_junction_ids = _identify_right_turn_only_side_pseudojunction_ids(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=active_road_ids,
+    )
+    filtered_road_ids = _filter_active_road_ids_excluding_right_turn(roads=roads, active_road_ids=active_road_ids)
+    node_by_id, mainnode_groups, group_to_road_ids, distinct_neighbor_groups = _build_active_mainnode_topology(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=filtered_road_ids,
+    )
+    kept_ids: set[str] = set()
+    demoted_ids: set[str] = set()
+    for node_id in boundary_ids:
+        group = mainnode_groups.get(node_id)
+        if group is None:
+            kept_ids.add(node_id)
+            continue
+        if node_id in pseudo_junction_ids:
+            demoted_ids.add(node_id)
+            continue
+        representative = node_by_id[group.representative_node_id]
+        if _current_kind_2(representative) != 1:
+            kept_ids.add(node_id)
+            continue
+        if len(distinct_neighbor_groups.get(node_id, set())) <= 2:
+            demoted_ids.add(node_id)
+            continue
+        if not group_to_road_ids.get(node_id):
+            demoted_ids.add(node_id)
+            continue
+        kept_ids.add(node_id)
+    return kept_ids, demoted_ids
+
+
 def _require_working_layers(
     *,
     nodes: list[NodeFeatureRecord],
@@ -353,6 +492,20 @@ def _build_step4_inputs(
     historical_boundary_source_map: dict[str, tuple[str, ...]],
     debug: bool,
 ) -> tuple[Path, Path, Path, dict[str, Any], dict[str, tuple[str, ...]]]:
+    initial_active_road_ids = {
+        road.road_id for road in roads if _current_segmentid(road) is None and is_allowed_road_kind(road.road_kind)
+    }
+    pseudo_junction_ids = _identify_right_turn_only_side_pseudojunction_ids(
+        nodes=nodes,
+        roads=roads,
+        active_road_ids=initial_active_road_ids,
+    )
+    historical_boundary_ids, demoted_right_turn_boundary_ids = _filter_right_turn_only_side_boundary_ids(
+        nodes=nodes,
+        roads=roads,
+        boundary_ids=historical_boundary_ids,
+        active_road_ids=initial_active_road_ids,
+    )
     groups: dict[str, list[str]] = {}
     node_by_id = {node.node_id: node for node in nodes}
     for node in nodes:
@@ -369,6 +522,8 @@ def _build_step4_inputs(
         kind_2 = _current_kind_2(representative)
         closed_con = _current_closed_con(representative)
         is_historical_boundary = mainnode_id in historical_boundary_ids
+        if mainnode_id in pseudo_junction_ids and not is_historical_boundary:
+            continue
         if is_historical_boundary or (grade_2 in {1, 2} and is_full_through_or_t_kind(kind_2)):
             input_mainnode_candidate_count += 1
             if is_historical_boundary or is_active_closed_con(closed_con):
@@ -386,13 +541,16 @@ def _build_step4_inputs(
         kind_2 = _current_kind_2(node)
         closed_con = _current_closed_con(node)
         is_historical_boundary = node.semantic_node_id in historical_boundary_ids
-        is_eligible = is_historical_boundary or (
+        is_eligible = node.semantic_node_id not in pseudo_junction_ids and (
+            is_historical_boundary
+            or (
             grade_2 in {1, 2} and is_full_through_or_t_kind(kind_2) and is_active_closed_con(closed_con)
+            )
         )
         if is_eligible:
             endpoint_pool_ids.add(node.semantic_node_id)
-        props["grade_2"] = 1 if is_eligible else 0
-        props["kind_2"] = 4 if is_eligible else 0
+        props["grade_2"] = grade_2
+        props["kind_2"] = kind_2
         props["step4_input_eligible"] = is_eligible
         props["step4_historical_boundary"] = is_historical_boundary
         props["step4_input_grade_2"] = grade_2
@@ -402,6 +560,7 @@ def _build_step4_inputs(
 
     removed_existing_segment_road_count = 0
     removed_closed_road_count = 0
+    removed_right_turn_only_road_count = 0
     working_road_features: list[dict[str, Any]] = []
     for road in roads:
         current_segmentid = _current_segmentid(road)
@@ -410,6 +569,9 @@ def _build_step4_inputs(
             continue
         if not is_allowed_road_kind(road.road_kind):
             removed_closed_road_count += 1
+            continue
+        if _is_right_turn_only_road(road):
+            removed_right_turn_only_road_count += 1
             continue
         working_road_features.append({"properties": dict(road.properties), "geometry": road.geometry})
 
@@ -454,14 +616,24 @@ def _build_step4_inputs(
         {
             "strategy_id": STEP4_STRATEGY_ID,
             "description": "Step4 residual graph segment construction using refreshed grade_2/kind_2/closed_con.",
-            "seed_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
-            "terminate_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
+            "seed_rule": {
+                "kind_values_in": [4, 64, 2048],
+                "grade_in": [1, 2],
+                "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES),
+            },
+            "terminate_rule": {
+                "kind_values_in": [4, 64, 2048],
+                "grade_in": [1, 2],
+                "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES),
+            },
             "through_node_rule": {
                 "incident_road_degree_eq": 2,
                 "incident_degree_exclude_formway_bits_any": [7],
                 "disallow_seed_terminate_nodes": True,
                 "disallow_null_mainnode_singleton_seed_terminate_nodes": True,
             },
+            "explicit_seed_node_ids": sorted(endpoint_pool_ids, key=_sort_key),
+            "explicit_terminate_node_ids": sorted(endpoint_pool_ids, key=_sort_key),
             "force_seed_node_ids": sorted(historical_boundary_ids, key=_sort_key),
             "force_terminate_node_ids": sorted(historical_boundary_ids, key=_sort_key),
             "hard_stop_node_ids": sorted(historical_boundary_ids, key=_sort_key),
@@ -478,9 +650,12 @@ def _build_step4_inputs(
             "input_terminate_count": input_terminate_count,
             "input_closed_con_filtered_out_count": input_closed_con_filtered_out_count,
             "historical_boundary_node_count": len(historical_boundary_ids),
+            "demoted_right_turn_only_boundary_node_count": len(demoted_right_turn_boundary_ids),
+            "right_turn_only_side_pseudojunction_count": len(pseudo_junction_ids),
             "endpoint_pool_node_count": len(endpoint_pool_ids),
             "removed_existing_segment_road_count": removed_existing_segment_road_count,
             "removed_closed_road_count": removed_closed_road_count,
+            "removed_right_turn_only_road_count": removed_right_turn_only_road_count,
             "working_graph_road_count": working_graph_road_count,
             "mainnode_representative_fallback_count": representative_fallback_count,
         },
@@ -528,9 +703,10 @@ def _preserve_previous_s2_snapshot(
     if debug:
         shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
     else:
-        validated_pairs_path = source_s2_dir / "validated_pairs.csv"
-        if validated_pairs_path.is_file():
-            shutil.copy2(validated_pairs_path, target_s2_dir / "validated_pairs.csv")
+        for filename in ("validated_pairs.csv", "endpoint_pool.csv", "endpoint_pool_summary.json"):
+            source_path = source_s2_dir / filename
+            if source_path.is_file():
+                shutil.copy2(source_path, target_s2_dir / filename)
     return target_s2_dir
 
 

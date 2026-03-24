@@ -6,7 +6,8 @@
 
 - T02 是当前已登记的正式业务模块。
 - 当前正式实现范围是 stage1 `DriveZone / has_evd gate`。
-- 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础；stage2 锚定主逻辑仍处于占位与后续澄清阶段。
+- 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础。
+- 当前文档基线已覆盖 stage2 anchor recognition / anchor existence；当前代码已实现最小闭环，但尚未进入最终唯一锚定决策与概率阶段。
 
 ## 2. 官方运行入口
 
@@ -14,15 +15,16 @@
 python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
 ```
 
-补充：
+```bash
+python -m rcsd_topo_poc t02-stage2-anchor-recognition --help
+```
 
 ```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc --help
 ```
 
 - `t02-virtual-intersection-poc` 是当前为单 `mainnodeid` 虚拟路口面验证新增的实验性 POC 入口
-- 它不重算 stage1 `has_evd`，也不替代当前正式的 stage1 基线
-
+- 它不重算 stage1 `has_evd`，也不替代当前正式的 stage1 / stage2 基线
 ## 3. 常见运行方式
 
 ```bash
@@ -32,6 +34,15 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.geojson \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate \
   --run-id t02_stage1_run
+```
+
+```bash
+python -m rcsd_topo_poc t02-stage2-anchor-recognition \
+  --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.geojson \
+  --nodes-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate/t02_stage1_run/nodes.geojson \
+  --intersection-path /mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.geojson \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage2_anchor_recognition \
+  --run-id t02_stage2_run
 ```
 
 POC 示例：
@@ -65,7 +76,13 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   - 继承输入 `segment` 字段并新增 `has_evd`
   - 输出 geometry 统一为 `EPSG:3857`
 - `t02_stage1_summary.json`
-  - 汇总总计数与按 `s_grade` 分桶的 summary
+  - 汇总总计数、按 `s_grade` 分桶的 summary、`all__d_sgrade`，以及按代表 node.`kind_2 / grade_2` 分级的 `summary_by_kind_grade`
+- `t02_stage2_summary.json`
+  - 汇总 stage2 的两组锚定 summary：
+    - `anchor_summary_by_s_grade`
+    - `anchor_summary_by_kind_grade`
+  - “资料”只认 `has_evd = yes`
+  - “锚定”只认 `is_anchor = yes`
 - `t02_stage1_audit.csv`
 - `t02_stage1_audit.json`
   - 保留 `junction_nodes_not_found`、`representative_node_missing`、`no_target_junctions`、`missing_required_field`、`invalid_crs_or_unprojectable` 等异常或失败原因
@@ -99,6 +116,12 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
 - `t02_virtual_intersection_poc_perf_markers.jsonl`
   - 单 `mainnodeid` POC 的状态、风险、审计与性能输出
 
+说明：
+
+- stage1 业务 summary 的分桶继续按 `0-0双 / 0-1双 / 0-2双` 统计。
+- stage1 在分桶之外补充 `all__d_sgrade`，表示所有 `s_grade` 非空的 `segment` 总汇总。
+- stage1 同时补充 `summary_by_kind_grade`，固定输出 `kind2_4_64_grade2_1 / kind2_4_64_grade2_0_2_3 / kind2_2048 / kind2_8_16` 四个 bucket，并按目标路口唯一 `junction_id` 统计 `junction_count / junction_has_evd_count`。
+
 ## 5. 文档阅读顺序
 
 1. `architecture/01-introduction-and-goals.md`
@@ -124,10 +147,18 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   - `segment.has_evd`
   - `summary`
   - `audit/log`
+- 已实现：
+  - stage2 新增输入 `RCSDIntersection.geojson`
+  - stage2 summary 读取 `segment`
+  - `nodes.is_anchor`
+  - `yes / no / fail1 / fail2 / null`
+  - `node_error_1 / node_error_2`
+  - `fail2` 优先于 `fail1`
+  - `t02_stage2_summary.json`
   - 单 `mainnodeid` 虚拟路口面 POC
   - 基于 DriveZone / roads / RCSDRoad / RCSDNode 的局部 patch、分支证据和 RC 关联输出
 - 未实现：
-  - stage2 锚定主逻辑
+  - 最终唯一锚定决策闭环
   - 概率 / 置信度
   - 环岛新规则
   - 误伤捞回

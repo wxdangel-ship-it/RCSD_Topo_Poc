@@ -8,7 +8,7 @@ from shapely.geometry import LineString, MultiLineString
 from shapely.ops import linemerge
 
 from rcsd_topo_poc.modules.t01_data_preprocess.endpoint_pool import write_endpoint_pool_outputs
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json, write_vecto
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     RoadRecord,
     SemanticNodeRecord,
@@ -723,25 +723,25 @@ def _write_step2_outputs_bundle(
 
     validated_pairs_path = out_dir / "validated_pairs.csv"
     rejected_pairs_path = out_dir / "rejected_pair_candidates.csv"
-    pair_links_validated_path = out_dir / "pair_links_validated.geojson"
-    trunk_roads_path = out_dir / "trunk_roads.geojson"
-    segment_body_roads_path = out_dir / "segment_body_roads.geojson"
-    step3_residual_roads_path = out_dir / "step3_residual_roads.geojson"
-    segment_roads_path = out_dir / "segment_roads.geojson"
-    trunk_road_members_path = out_dir / "trunk_road_members.geojson"
-    segment_body_road_members_path = out_dir / "segment_body_road_members.geojson"
-    step3_residual_road_members_path = out_dir / "step3_residual_road_members.geojson"
-    segment_road_members_path = out_dir / "segment_road_members.geojson"
-    branch_cut_roads_path = out_dir / "branch_cut_roads.geojson"
-    candidate_channel_path = out_dir / "pair_candidate_channel.geojson"
+    pair_links_validated_path = out_dir / "pair_links_validated.gpkg"
+    trunk_roads_path = out_dir / "trunk_roads.gpkg"
+    segment_body_roads_path = out_dir / "segment_body_roads.gpkg"
+    step3_residual_roads_path = out_dir / "step3_residual_roads.gpkg"
+    segment_roads_path = out_dir / "segment_roads.gpkg"
+    trunk_road_members_path = out_dir / "trunk_road_members.gpkg"
+    segment_body_road_members_path = out_dir / "segment_body_road_members.gpkg"
+    step3_residual_road_members_path = out_dir / "step3_residual_road_members.gpkg"
+    segment_road_members_path = out_dir / "segment_road_members.gpkg"
+    branch_cut_roads_path = out_dir / "branch_cut_roads.gpkg"
+    candidate_channel_path = out_dir / "pair_candidate_channel.gpkg"
     validation_table_path = out_dir / "pair_validation_table.csv"
     validated_pairs_final_path = out_dir / "validated_pairs_final.csv"
     pair_conflict_table_path = out_dir / "pair_conflict_table.csv"
     pair_conflict_components_path = out_dir / "pair_conflict_components.json"
     pair_arbitration_table_path = out_dir / "pair_arbitration_table.csv"
-    corridor_conflict_roads_path = out_dir / "corridor_conflict_roads.geojson"
+    corridor_conflict_roads_path = out_dir / "corridor_conflict_roads.gpkg"
     target_conflict_audit_path = out_dir / "target_conflict_audit_xxxs7.json"
-    working_graph_debug_path = out_dir / "working_graph_debug.geojson"
+    working_graph_debug_path = out_dir / "working_graph_debug.gpkg"
     segment_summary_path = out_dir / "segment_summary.json"
     endpoint_pool_csv_path, endpoint_pool_summary_path, endpoint_pool_nodes_path = write_endpoint_pool_outputs(
         out_dir=out_dir,
@@ -812,19 +812,19 @@ def _write_step2_outputs_bundle(
             "lose_reason",
         ],
     )
-    write_geojson(
+    write_vector(
         trunk_roads_path,
         _iter_trunk_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
     )
-    write_geojson(
+    write_vector(
         segment_body_roads_path,
         _iter_segment_body_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
     )
-    write_geojson(
+    write_vector(
         step3_residual_roads_path,
         _iter_step3_residual_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
     )
-    write_geojson(
+    write_vector(
         corridor_conflict_roads_path,
         _iter_corridor_conflict_features(
             context=context,
@@ -899,7 +899,7 @@ def _write_step2_outputs_bundle(
         ],
     }
     if debug:
-        write_geojson(
+        write_vector(
             pair_links_validated_path,
             _iter_validated_link_features(
                 context=context,
@@ -907,11 +907,11 @@ def _write_step2_outputs_bundle(
                 strategy_id=strategy.strategy_id,
             ),
         )
-        write_geojson(
+        write_vector(
             segment_roads_path,
             _iter_segment_body_features(context=context, validations=validations, strategy_id=strategy.strategy_id),
         )
-        write_geojson(
+        write_vector(
             trunk_road_members_path,
             _iter_member_features(
                 context=context,
@@ -921,7 +921,7 @@ def _write_step2_outputs_bundle(
                 road_ids_getter=lambda validation: validation.trunk_road_ids,
             ),
         )
-        write_geojson(
+        write_vector(
             segment_body_road_members_path,
             _iter_member_features(
                 context=context,
@@ -931,7 +931,7 @@ def _write_step2_outputs_bundle(
                 road_ids_getter=lambda validation: validation.segment_road_ids,
             ),
         )
-        write_geojson(
+        write_vector(
             step3_residual_road_members_path,
             _iter_step3_residual_member_features(
                 context=context,
@@ -939,7 +939,7 @@ def _write_step2_outputs_bundle(
                 strategy_id=strategy.strategy_id,
             ),
         )
-        write_geojson(
+        write_vector(
             segment_road_members_path,
             _iter_member_features(
                 context=context,
@@ -949,7 +949,7 @@ def _write_step2_outputs_bundle(
                 road_ids_getter=lambda validation: validation.segment_road_ids,
             ),
         )
-        write_geojson(
+        write_vector(
             branch_cut_roads_path,
             _iter_branch_cut_features(
                 context=context,
@@ -963,7 +963,7 @@ def _write_step2_outputs_bundle(
             output_file=candidate_channel_path.name,
             validation_count=len(validations),
         )
-        write_geojson(
+        write_vector(
             candidate_channel_path,
             _iter_candidate_channel_features(
                 context=context,
@@ -982,7 +982,7 @@ def _write_step2_outputs_bundle(
             output_file=working_graph_debug_path.name,
             validation_count=len(validations),
         )
-        write_geojson(
+        write_vector(
             working_graph_debug_path,
             _iter_working_graph_debug_features(
                 context=context,

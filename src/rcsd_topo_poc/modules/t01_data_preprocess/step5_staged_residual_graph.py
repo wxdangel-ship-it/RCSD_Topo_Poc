@@ -13,7 +13,13 @@ from rcsd_topo_poc.modules.t01_data_preprocess.endpoint_pool import (
     build_endpoint_pool_source_map,
     collect_endpoint_pool_mainnodes,
 )
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    first_existing_vector_path,
+    load_vector_feature_collection,
+    write_csv,
+    write_json,
+    write_vector,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     RIGHT_TURN_FORMWAY_BIT,
     NodeFeatureRecord,
@@ -65,13 +71,13 @@ STEP5C_TARGET_A_NODE_ID = "997356"
 STEP5C_TARGET_B_NODE_ID = "39546395"
 STEP5C_TARGET_PAIR_ID = f"{STEP5C_STRATEGY_ID}:{STEP5C_TARGET_A_NODE_ID}__{STEP5C_TARGET_B_NODE_ID}"
 STEP5C_ROLLING_ENDPOINT_POOL_CSV = "step5c_rolling_endpoint_pool.csv"
-STEP5C_ROLLING_ENDPOINT_POOL_GEOJSON = "step5c_rolling_endpoint_pool.geojson"
+STEP5C_ROLLING_ENDPOINT_POOL_GEOJSON = "step5c_rolling_endpoint_pool.gpkg"
 STEP5C_PROTECTED_HARD_STOPS_CSV = "step5c_protected_hard_stops.csv"
-STEP5C_PROTECTED_HARD_STOPS_GEOJSON = "step5c_protected_hard_stops.geojson"
+STEP5C_PROTECTED_HARD_STOPS_GEOJSON = "step5c_protected_hard_stops.gpkg"
 STEP5C_DEMOTABLE_ENDPOINTS_CSV = "step5c_demotable_endpoints.csv"
-STEP5C_DEMOTABLE_ENDPOINTS_GEOJSON = "step5c_demotable_endpoints.geojson"
+STEP5C_DEMOTABLE_ENDPOINTS_GEOJSON = "step5c_demotable_endpoints.gpkg"
 STEP5C_ACTUAL_BARRIERS_CSV = "step5c_actual_barriers.csv"
-STEP5C_ACTUAL_BARRIERS_GEOJSON = "step5c_actual_barriers.geojson"
+STEP5C_ACTUAL_BARRIERS_GEOJSON = "step5c_actual_barriers.gpkg"
 STEP5C_ENDPOINT_DEMOTE_AUDIT_JSON = "step5c_endpoint_demote_audit.json"
 STEP5C_TARGET_PAIR_AUDIT_JSON = "target_pair_audit_997356__39546395.json"
 
@@ -516,7 +522,7 @@ def _write_named_node_set_outputs(
             "present_in_current_residual_graph",
         ],
     )
-    write_geojson(geojson_path, features)
+    write_vector(geojson_path, features)
     return csv_path, geojson_path
 
 
@@ -731,11 +737,11 @@ def _build_phase_inputs(
         if road.road_id in active_road_ids
     ]
 
-    working_nodes_path = out_root / f"{phase_lower}_working_nodes.geojson"
-    working_roads_path = out_root / f"{phase_lower}_working_roads.geojson"
+    working_nodes_path = out_root / f"{phase_lower}_working_nodes.gpkg"
+    working_roads_path = out_root / f"{phase_lower}_working_roads.gpkg"
     strategy_path = out_root / f"{phase_lower}_strategy.json"
-    write_geojson(working_nodes_path, working_node_features)
-    write_geojson(working_roads_path, working_road_features)
+    write_vector(working_nodes_path, working_node_features)
+    write_vector(working_roads_path, working_road_features)
     endpoint_pool_source_map = build_endpoint_pool_source_map(
         node_ids=eligible_mainnode_ids,
         stage_id=phase_id,
@@ -854,11 +860,11 @@ def _build_step5c_adaptive_phase_inputs(
         if road.road_id in active_road_ids
     ]
 
-    working_nodes_path = out_root / f"{phase_lower}_working_nodes.geojson"
-    working_roads_path = out_root / f"{phase_lower}_working_roads.geojson"
+    working_nodes_path = out_root / f"{phase_lower}_working_nodes.gpkg"
+    working_roads_path = out_root / f"{phase_lower}_working_roads.gpkg"
     strategy_path = out_root / f"{phase_lower}_strategy.json"
-    write_geojson(working_nodes_path, working_node_features)
-    write_geojson(working_roads_path, working_road_features)
+    write_vector(working_nodes_path, working_node_features)
+    write_vector(working_roads_path, working_road_features)
     write_json(
         strategy_path,
         {
@@ -925,21 +931,23 @@ def _copy_phase_review_outputs(*, phase_dir: Path, out_root: Path, prefix: str) 
         "pair_candidates.csv": f"{prefix}_pair_candidates.csv",
         "validated_pairs.csv": f"{prefix}_validated_pairs.csv",
         "rejected_pair_candidates.csv": f"{prefix}_rejected_pairs.csv",
-        "pair_links_candidates.geojson": f"{prefix}_pair_links_candidates.geojson",
-        "pair_links_validated.geojson": f"{prefix}_pair_links_validated.geojson",
+        "pair_links_candidates.gpkg": f"{prefix}_pair_links_candidates.gpkg",
+        "pair_links_validated.gpkg": f"{prefix}_pair_links_validated.gpkg",
         "pair_validation_table.csv": f"{prefix}_pair_validation_table.csv",
-        "trunk_roads.geojson": f"{prefix}_trunk_roads.geojson",
-        "segment_body_roads.geojson": f"{prefix}_segment_body_roads.geojson",
-        "step3_residual_roads.geojson": f"{prefix}_residual_roads.geojson",
-        "branch_cut_roads.geojson": f"{prefix}_branch_cut_roads.geojson",
+        "trunk_roads.gpkg": f"{prefix}_trunk_roads.gpkg",
+        "segment_body_roads.gpkg": f"{prefix}_segment_body_roads.gpkg",
+        "step3_residual_roads.gpkg": f"{prefix}_residual_roads.gpkg",
+        "branch_cut_roads.gpkg": f"{prefix}_branch_cut_roads.gpkg",
     }
     for source_name, target_name in mapping.items():
-        source = phase_dir / source_name
-        if source.exists():
+        source = first_existing_vector_path(phase_dir, source_name) if source_name.endswith(".gpkg") else phase_dir / source_name
+        if source is not None and source.exists():
             shutil.copy2(source, out_root / target_name)
 
 
 def _load_geojson_doc(path: Path) -> dict[str, Any]:
+    if path.suffix.lower() in {".gpkg", ".gpkt"}:
+        return load_vector_feature_collection(path)
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -963,13 +971,15 @@ def _write_merged_geojson(*, paths: list[Path], out_path: Path, phase_labels: li
                 }
             )
 
-    write_json(
+    write_vector(
         out_path,
-        {
-            "type": "FeatureCollection",
-            "crs": crs or {"type": "name", "properties": {"name": "EPSG:3857"}},
-            "features": merged_features,
-        },
+        (
+            {
+                "properties": dict(feature.get("properties") or {}),
+                "geometry": feature.get("geometry"),
+            }
+            for feature in merged_features
+        ),
     )
 
 
@@ -1041,8 +1051,11 @@ def _run_phase(
     if debug:
         _copy_phase_review_outputs(phase_dir=phase_dir, out_root=out_root, prefix=phase_lower)
     validated_rows = _read_csv_rows(phase_dir / "validated_pairs.csv")
+    segment_body_path = first_existing_vector_path(phase_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson")
+    if segment_body_path is None:
+        raise ValueError(f"Step5 phase segment body output is missing under '{phase_dir}'.")
     road_to_segmentid, _ = _parse_segment_body_assignments(
-        phase_dir / "segment_body_roads.geojson",
+        segment_body_path,
         reserved_segmentids=reserved_segmentids,
     )
     segment_summary = _load_geojson_doc(phase_dir / "segment_summary.json")
@@ -1073,10 +1086,10 @@ def _write_refreshed_outputs(
     group_to_allowed_road_ids: dict[str, set[str]],
     write_alias_outputs: bool,
 ) -> Step5Artifacts:
-    refreshed_nodes_path = out_root / "nodes.geojson"
-    refreshed_roads_path = out_root / "roads.geojson"
-    refreshed_nodes_alias_path = out_root / "nodes_step5_refreshed.geojson"
-    refreshed_roads_alias_path = out_root / "roads_step5_refreshed.geojson"
+    refreshed_nodes_path = out_root / "nodes.gpkg"
+    refreshed_roads_path = out_root / "roads.gpkg"
+    refreshed_nodes_alias_path = out_root / "nodes_step5_refreshed.gpkg"
+    refreshed_roads_alias_path = out_root / "roads_step5_refreshed.gpkg"
     summary_path = out_root / "step5_summary.json"
     mainnode_table_path = out_root / "step5_mainnode_refresh_table.csv"
 
@@ -1086,11 +1099,11 @@ def _write_refreshed_outputs(
     ]
     road_features = [{"properties": road_properties_map[road.road_id], "geometry": road.geometry} for road in roads]
 
-    write_geojson(refreshed_nodes_path, node_features)
-    write_geojson(refreshed_roads_path, road_features)
+    write_vector(refreshed_nodes_path, node_features)
+    write_vector(refreshed_roads_path, road_features)
     if write_alias_outputs:
-        write_geojson(refreshed_nodes_alias_path, node_features)
-        write_geojson(refreshed_roads_alias_path, road_features)
+        write_vector(refreshed_nodes_alias_path, node_features)
+        write_vector(refreshed_roads_alias_path, road_features)
     else:
         refreshed_nodes_alias_path = None
         refreshed_roads_alias_path = None
@@ -1578,20 +1591,20 @@ def run_step5_staged_residual_graph(
     if debug:
         _write_merged_geojson(
             paths=[
-                phase_a.phase_dir / "segment_body_roads.geojson",
-                phase_b.phase_dir / "segment_body_roads.geojson",
-                phase_c.phase_dir / "segment_body_roads.geojson",
+                first_existing_vector_path(phase_a.phase_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson") or phase_a.phase_dir / "segment_body_roads.gpkg",
+                first_existing_vector_path(phase_b.phase_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson") or phase_b.phase_dir / "segment_body_roads.gpkg",
+                first_existing_vector_path(phase_c.phase_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson") or phase_c.phase_dir / "segment_body_roads.gpkg",
             ],
-            out_path=resolved_out_root / "step5_segment_body_roads_merged.geojson",
+            out_path=resolved_out_root / "step5_segment_body_roads_merged.gpkg",
             phase_labels=["STEP5A", "STEP5B", "STEP5C"],
         )
         _write_merged_geojson(
             paths=[
-                phase_a.phase_dir / "step3_residual_roads.geojson",
-                phase_b.phase_dir / "step3_residual_roads.geojson",
-                phase_c.phase_dir / "step3_residual_roads.geojson",
+                first_existing_vector_path(phase_a.phase_dir, "step3_residual_roads.gpkg", "step3_residual_roads.geojson") or phase_a.phase_dir / "step3_residual_roads.gpkg",
+                first_existing_vector_path(phase_b.phase_dir, "step3_residual_roads.gpkg", "step3_residual_roads.geojson") or phase_b.phase_dir / "step3_residual_roads.gpkg",
+                first_existing_vector_path(phase_c.phase_dir, "step3_residual_roads.gpkg", "step3_residual_roads.geojson") or phase_c.phase_dir / "step3_residual_roads.gpkg",
             ],
-            out_path=resolved_out_root / "step5_residual_roads_merged.geojson",
+            out_path=resolved_out_root / "step5_residual_roads_merged.gpkg",
             phase_labels=["STEP5A", "STEP5B", "STEP5C"],
         )
         write_json(

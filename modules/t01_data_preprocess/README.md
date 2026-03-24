@@ -7,8 +7,13 @@
 - Step6 已正式纳入 official end-to-end，不再是额外 POC。
 
 ## 官方输入
-- `nodes.geojson`
-- `roads.geojson`
+- 官方矢量输入文件名：
+  - `nodes.gpkg`
+  - `roads.gpkg`
+- 兼容读取：
+  - 同名 `GeoPackage(.gpkg)` 优先
+  - 历史 `.gpkt` 仅兼容读取
+  - `GeoJSON(.geojson/.json)` 与 `Shapefile(.shp)` 继续兼容
 
 ## 当前 accepted 约束摘要
 - node 输入：
@@ -40,8 +45,8 @@
 ### official end-to-end
 ```bash
 python -m rcsd_topo_poc t01-run-skill-v1 \
-  --road-path <roads.geojson> \
-  --node-path <nodes.geojson> \
+  --road-path <roads.gpkg> \
+  --node-path <nodes.gpkg> \
   --out-root <out_root>
 ```
 
@@ -54,18 +59,24 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
 - `python -m rcsd_topo_poc t01-step6-segment-aggregation-poc`
 
 ## 正式输出
-- `nodes.geojson`
-- `roads.geojson`
-- `segment.geojson`
-- `inner_nodes.geojson`
-- `segment_error.geojson`
-- `segment_error_s_grade_conflict.geojson`
-- `segment_error_grade_kind_conflict.geojson`
+- `nodes.gpkg`
+- `roads.gpkg`
+- `segment.gpkg`
+- `inner_nodes.gpkg`
+- `segment_error.gpkg`
+- `segment_error_s_grade_conflict.gpkg`
+- `segment_error_grade_kind_conflict.gpkg`
 - `validated_pairs_skill_v1.csv`
 - `segment_body_membership_skill_v1.csv`
 - `trunk_membership_skill_v1.csv`
 - `skill_v1_manifest.json`
 - `skill_v1_summary.json`
+
+说明：
+- `slice_builder` 是当前唯一默认双写 `GeoJSON + GPKG` 的入口：
+  - `nodes.geojson` + `nodes.gpkg`
+  - `roads.geojson` + `roads.gpkg`
+- 其余官方阶段矢量输出默认统一为 `.gpkg`。
 
 ## 文档索引
 - 架构总览：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/overview.md`

@@ -1,65 +1,63 @@
 # T01 任务清单
 
-## 已确认基线
-- [x] Step1 只输出 `pair_candidates`
-- [x] Step2 输出 `validated / rejected / trunk / segment_body / step3_residual`
-- [x] Step6 已纳入 official end-to-end
-- [x] working layers 初始化已前置
-- [x] 环岛预处理已纳入开始阶段
-- [x] 全局 50m 双线 / 侧向并入 gate 已固化
-- [x] 右转专用道误纳入问题已关闭
-- [x] T 型路口竖向阻断规则已上提为统一约束
+## 本轮排工
+- [x] 以 spec-kit 方式为 T01 数据格式迁移立项
+- [x] 切出独立执行分支
+- [x] 明确本轮只处理 I/O 格式迁移，不处理业务算法语义调整
 
-## 临时最终 Segment 基线
-- [x] 建立 `XXXS-XXXS8` 临时最终 Segment 基线
-- [x] 更新 `XXXS6` 为 `PASS_LOCKED`
-- [x] 当前分组：
-  - `PASS_LOCKED`: `XXXS / XXXS2 / XXXS3 / XXXS4 / XXXS6 / XXXS8`
-  - `FAIL_TARGET`: `XXXS5 / XXXS7`
-- [x] 将当前状态写入：
-  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_BASELINE_MANIFEST.json`
-  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_REVIEW.md`
+## 批次 A：共享 I/O 层
+- [x] 在 T01 共享 I/O 层增加 `GeoPackage(.gpkg)` 读取能力
+- [x] 保留历史 `.gpkt` 兼容读取
+- [x] 保留现有 `GeoJSON` / `Shapefile` 兼容读取
+- [x] 增加同名输入优先解析规则：
+  - `.gpkg`
+  - `.gpkt`
+  - 原始传入路径
+- [x] 在共享 I/O 层提供统一的 `GeoPackage(.gpkg)` 写出能力
 
-## 当前实现整改批次
-- [ ] 批次 A：修正 `Step4 / Step5A / Step5B` 对当前 `grade_2 / kind_2` 的压扁
-- [ ] 批次 B：引入 `Step5A / Step5B / Step5C` 逐轮 refresh
-- [ ] 批次 C：去掉 `Step2` 对 raw `grade / kind` 的业务 fallback
-- [ ] 批次 D：补齐 `formway = 128` 在 Step6 的一致过滤
+## 批次 B：阶段输出迁移
+- [x] `step1_pair_poc` 官方矢量输出迁移为 `.gpkg`
+- [x] `step2_segment_poc` / `step2_output_utils` 官方矢量输出迁移为 `.gpkg`
+- [x] `s2_baseline_refresh` 官方矢量输出迁移为 `.gpkg`
+- [x] `step4_residual_graph` 官方矢量输出迁移为 `.gpkg`
+- [x] `step5_staged_residual_graph` 官方矢量输出迁移为 `.gpkg`
+- [x] `step6_segment_aggregation` 官方矢量输出迁移为 `.gpkg`
+- [x] `skill_v1` 官方输出中的 `nodes / roads / segment / inner_nodes / segment_error*` 迁移为 `.gpkg`
 
-## 样例问题
-- [ ] 修复 `XXXS5`
-  - 问题口径：`Segment 39546457_47130796` 含超过 `50m` 的旁路分支
-- [ ] 修复 `XXXS7`
-  - 问题口径：`Segment 1013672_612642212` 含双向旁路
-  - 约束：从 `Step1-Step5` 整体评估，不得只打局部补丁
-- [x] 保持 `XXXS7 / Segment 1026500_1026503` 正确构成
-- [x] 保持首次已修 duplicate-road case 不回退
+## 批次 C：裁剪数据双写
+- [x] `slice_builder` 同时输出 `nodes.geojson` 与 `nodes.gpkg`
+- [x] `slice_builder` 同时输出 `roads.geojson` 与 `roads.gpkg`
+- [x] `slice_summary.json` 中补充双格式产物说明
 
-## 非回退要求
-- [ ] 每个整改批次完成后，对以下样例逐一验证最终 Segment 不回退：
+## 批次 D：消费侧与辅助工具
+- [x] `freeze_compare` 兼容消费 `.gpkg` 与历史 `.geojson`
+- [x] `s2_baseline_refresh` 兼容读取 `.gpkg` 阶段产物
+- [x] CLI 帮助文本改为 `GeoPackage(.gpkg)` 官方口径
+- [x] 更新 T01 单元测试与 smoke tests
+
+## 批次 E：正式文档迁移
+- [x] 更新 `modules/t01_data_preprocess/architecture/overview.md`
+- [x] 更新 `modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
+- [x] 更新 `modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
+- [x] 更新 `modules/t01_data_preprocess/README.md`
+- [x] 在文档中明确：
+  - 同名 `.gpkg` 优先读取
+  - 历史 `.gpkt` 仅兼容读取
+  - `slice_builder` 为唯一默认双写 `GeoJSON + GPKG` 的入口
+
+## 非回退与验收
+- [x] 每个实现批次完成后，运行相关单元测试
+- [x] 每个实现批次完成后，验证 T01 CLI smoke 路径
+- [x] 对 `PASS_LOCKED` 样例逐一验证最终 Segment 不回退：
   - `XXXS`
   - `XXXS2`
   - `XXXS3`
   - `XXXS4`
   - `XXXS6`
   - `XXXS8`
-- [ ] 对 `FAIL_TARGET` 记录修复前后差异快照
-
-## 架构整改
-- [x] 第一轮拆出 `step2_release_utils.py`
-- [x] 第一轮拆出 `step2_output_utils.py`
-- [x] 第二轮拆出 `step2_trunk_utils.py`
-- [x] 第三轮拆出 `step2_validation_utils.py`
-- [x] `step2_segment_poc.py` 已降到 `< 100 KB`
-- [ ] 继续收敛 `step2_segment_poc.py` 的 `segment_body / tighten / orchestration` 职责
-
-## 文档清理
-- [x] 将正式 baseline 主承载迁回 `modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
-- [x] 将 `specs/t01-data-preprocess/spec.md` 收回为 spec-kit 治理文档
-- [x] 更新 `modules/t01_data_preprocess/architecture/overview.md`
-- [x] 更新 `plan.md`
-- [x] 更新 `tasks.md`
-- [x] 更新 `modules/t01_data_preprocess/README.md`
-- [x] 更新 `modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
-- [x] 更新 `modules/t01_data_preprocess/architecture/*` 的关键分解文档
-- [x] 完成文档落点复核并输出清理说明
+- [x] 对 `FAIL_TARGET` 记录迁移前后差异快照：
+  - `XXXS5`
+  - `XXXS7`
+- [x] 完成本地 `XXXS1-XXXS8` 的 `GeoJSON -> GPKG` 转换
+- [x] 完成本地 `XXXS1-XXXS8` 的 `GeoJSON` 输入 vs `GPKG` 输入一致性比对
+- [ ] 在样例未重新人工确认前，不更新 freeze baseline

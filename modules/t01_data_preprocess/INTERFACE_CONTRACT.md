@@ -11,8 +11,12 @@
 
 ## 2. 官方输入契约
 - 官方输入：
-  - `nodes.geojson`
-  - `roads.geojson`
+  - `nodes.gpkg`
+  - `roads.gpkg`
+- 兼容读取：
+  - 同名 `GeoPackage(.gpkg)` 优先
+  - 历史 `.gpkt` 仅兼容读取
+  - `GeoJSON(.geojson/.json)` 与 `Shapefile(.shp)` 继续兼容
 - node 输入约束：
   - `closed_con in {2,3}`
 - road 输入约束：
@@ -187,16 +191,16 @@
 ## 6. Step6 契约
 
 ### 6.1 输入
-- 最新 refreshed `nodes.geojson`
-- 最新 refreshed `roads.geojson`
+- 最新 refreshed `nodes.gpkg`
+- 最新 refreshed `roads.gpkg`
 
 ### 6.2 输出
-- `segment.geojson`
-- `inner_nodes.geojson`
-- `segment_error.geojson`
+- `segment.gpkg`
+- `inner_nodes.gpkg`
+- `segment_error.gpkg`
 
 ### 6.3 聚合字段
-- `segment.geojson`
+- `segment.gpkg`
   - `id = segmentid`
   - `geometry = MultiLineString`
   - `sgrade`
@@ -206,7 +210,7 @@
 - `pair_nodes`
   - 按 `segmentid` 中 `A_B` 顺序解析
   - 若端点 `mainnodeid` 为空，则回退该 node 自身 `id`
-- `inner_nodes.geojson`
+- `inner_nodes.gpkg`
   - 复制被单一 Segment 完整内含的语义路口所有 node
 
 ### 6.4 Step6 规则

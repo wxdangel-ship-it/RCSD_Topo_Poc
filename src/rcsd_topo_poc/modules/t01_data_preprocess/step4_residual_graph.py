@@ -14,7 +14,13 @@ from rcsd_topo_poc.modules.t01_data_preprocess.endpoint_pool import (
     collect_endpoint_pool_mainnodes,
     write_endpoint_pool_outputs,
 )
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    first_existing_vector_path,
+    load_vector_feature_collection,
+    write_csv,
+    write_json,
+    write_vector,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     RIGHT_TURN_FORMWAY_BIT,
     MainnodeGroup,
@@ -125,8 +131,8 @@ def _write_boundary_node_outputs(
         props["boundary_sources"] = list(boundary_source_map[mainnode_id])
         features.append({"properties": props, "geometry": node.geometry})
 
-    out_path = out_root / "historical_boundary_nodes.geojson"
-    write_geojson(out_path, features)
+    out_path = out_root / "historical_boundary_nodes.gpkg"
+    write_vector(out_path, features)
     return out_path
 
 
@@ -258,7 +264,7 @@ def _parse_segment_body_assignments(
     *,
     reserved_segmentids: Optional[set[str]] = None,
 ) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = load_vector_feature_collection(path)
     road_to_segmentid: dict[str, str] = {}
     pair_endpoints: dict[str, tuple[str, str]] = {}
     pending_rows: list[tuple[str, str, str, tuple[str, ...]]] = []
@@ -576,8 +582,8 @@ def _build_step4_inputs(
         working_road_features.append({"properties": dict(road.properties), "geometry": road.geometry})
 
     working_graph_road_count = len(working_road_features)
-    working_nodes_path = out_root / "step4_working_nodes.geojson"
-    working_roads_path = out_root / "step4_working_roads.geojson"
+    working_nodes_path = out_root / "step4_working_nodes.gpkg"
+    working_roads_path = out_root / "step4_working_roads.gpkg"
     strategy_path = out_root / "step4_strategy.json"
     step4_stage_dir = out_root / STEP4_STRATEGY_ID
     step4_stage_dir.mkdir(parents=True, exist_ok=True)
@@ -602,8 +608,8 @@ def _build_step4_inputs(
         previous_source_map=historical_boundary_source_map,
     )
 
-    write_geojson(working_nodes_path, working_node_features)
-    write_geojson(working_roads_path, working_road_features)
+    write_vector(working_nodes_path, working_node_features)
+    write_vector(working_roads_path, working_road_features)
     write_endpoint_pool_outputs(
         out_dir=step4_stage_dir,
         source_map=endpoint_pool_source_map,
@@ -668,17 +674,17 @@ def _copy_step4_review_outputs(step4_dir: Path, out_root: Path) -> None:
         "pair_candidates.csv": "step4_pair_candidates.csv",
         "validated_pairs.csv": "step4_validated_pairs.csv",
         "rejected_pair_candidates.csv": "step4_rejected_pairs.csv",
-        "pair_links_candidates.geojson": "step4_pair_links_candidates.geojson",
-        "pair_links_validated.geojson": "step4_pair_links_validated.geojson",
+        "pair_links_candidates.gpkg": "step4_pair_links_candidates.gpkg",
+        "pair_links_validated.gpkg": "step4_pair_links_validated.gpkg",
         "pair_validation_table.csv": "step4_pair_validation_table.csv",
-        "trunk_roads.geojson": "step4_trunk_roads.geojson",
-        "segment_body_roads.geojson": "step4_segment_body_roads.geojson",
-        "step3_residual_roads.geojson": "step4_residual_roads.geojson",
-        "branch_cut_roads.geojson": "step4_branch_cut_roads.geojson",
+        "trunk_roads.gpkg": "step4_trunk_roads.gpkg",
+        "segment_body_roads.gpkg": "step4_segment_body_roads.gpkg",
+        "step3_residual_roads.gpkg": "step4_residual_roads.gpkg",
+        "branch_cut_roads.gpkg": "step4_branch_cut_roads.gpkg",
     }
     for source_name, target_name in mapping.items():
-        source = step4_dir / source_name
-        if source.exists():
+        source = first_existing_vector_path(step4_dir, source_name) if source_name.endswith(".gpkg") else step4_dir / source_name
+        if source is not None and source.exists():
             shutil.copy2(source, out_root / target_name)
 
 
@@ -707,7 +713,7 @@ def _preserve_previous_s2_snapshot(
             source_path = source_s2_dir / filename
             if source_path.is_file():
                 shutil.copy2(source_path, target_s2_dir / filename)
-    return target_s2_dir
+    return target_s2_di
 
 
 def _write_step4_refreshed_outputs(
@@ -727,11 +733,11 @@ def _write_step4_refreshed_outputs(
     summary_path = out_root / "step4_summary.json"
     mainnode_table_path = out_root / "step4_mainnode_refresh_table.csv"
 
-    write_geojson(
+    write_vector(
         refreshed_nodes_path,
         [{"properties": sanitize_public_node_properties(node_properties_map[node.node_id]), "geometry": node.geometry} for node in nodes],
     )
-    write_geojson(
+    write_vector(
         refreshed_roads_path,
         [{"properties": road_properties_map[road.road_id], "geometry": road.geometry} for road in roads],
     )
@@ -1035,8 +1041,11 @@ def run_step4_residual_graph(
         for segmentid in (_current_segmentid(road),)
         if segmentid is not None
     }
+    segment_body_path = first_existing_vector_path(step4_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson")
+    if segment_body_path is None:
+        raise ValueError(f"Step4 segment body output is missing under '{step4_dir}'.")
     new_road_to_segmentid, _pair_endpoints = _parse_segment_body_assignments(
-        step4_dir / "segment_body_roads.geojson",
+        segment_body_path,
         reserved_segmentids=existing_segmentids,
     )
     if debug:
@@ -1065,8 +1074,8 @@ def run_step4_residual_graph(
         input_audit=input_audit,
         input_node_path=node_path,
         input_road_path=road_path,
-        node_output_name=Path(node_path).name,
-        road_output_name=Path(road_path).name,
+        node_output_name="nodes.gpkg",
+        road_output_name="roads.gpkg",
         preserved_prev_s2_dir=preserved_prev_s2_dir,
     )
     refreshed_summary = dict(artifacts.summary)

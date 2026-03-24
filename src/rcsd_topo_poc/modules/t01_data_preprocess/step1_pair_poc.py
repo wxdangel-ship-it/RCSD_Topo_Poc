@@ -15,8 +15,8 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     read_vector_layer,
     read_vector_layers_parallel,
     write_csv,
-    write_geojson,
     write_json,
+    write_vector,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     initialize_working_layers,
@@ -77,8 +77,8 @@ class ThroughRuleSpec:
 
 @dataclass(frozen=True)
 class StrategySpec:
-    strategy_id: str
-    description: str
+    strategy_id: st
+    description: st
     seed_rule: RuleSpec
     terminate_rule: RuleSpec
     through_rule: ThroughRuleSpec = ThroughRuleSpec()
@@ -1308,22 +1308,22 @@ def write_step1_candidate_outputs(
         key=_sort_key,
     )
 
-    seed_nodes_path = out_dir / "seed_nodes.geojson"
-    terminate_nodes_path = out_dir / "terminate_nodes.geojson"
-    pair_candidate_nodes_path = out_dir / "pair_candidate_nodes.geojson"
-    pair_links_candidates_path = out_dir / "pair_links_candidates.geojson"
-    pair_support_roads_path = out_dir / "pair_support_roads.geojson"
+    seed_nodes_path = out_dir / "seed_nodes.gpkg"
+    terminate_nodes_path = out_dir / "terminate_nodes.gpkg"
+    pair_candidate_nodes_path = out_dir / "pair_candidate_nodes.gpkg"
+    pair_links_candidates_path = out_dir / "pair_links_candidates.gpkg"
+    pair_support_roads_path = out_dir / "pair_support_roads.gpkg"
     pair_candidates_path = out_dir / "pair_candidates.csv"
     pair_summary_path = out_dir / "pair_summary.json"
     rule_audit_path = out_dir / "rule_audit.json"
     search_audit_path = out_dir / "search_audit.json"
 
     if debug:
-        write_geojson(
+        write_vector(
             seed_nodes_path,
             [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in seed_ids],
         )
-        write_geojson(
+        write_vector(
             terminate_nodes_path,
             [_node_feature(semantic_nodes[node_id], strategy_id=strategy.strategy_id) for node_id in terminate_ids],
         )
@@ -1394,9 +1394,9 @@ def write_step1_candidate_outputs(
         )
 
     if debug:
-        write_geojson(pair_candidate_nodes_path, pair_node_features)
-        write_geojson(pair_links_candidates_path, pair_link_features)
-        write_geojson(
+        write_vector(pair_candidate_nodes_path, pair_node_features)
+        write_vector(pair_links_candidates_path, pair_link_features)
+        write_vector(
             pair_support_roads_path,
             [
                 _road_feature(
@@ -1416,8 +1416,8 @@ def write_step1_candidate_outputs(
         ["pair_id", "a_node_id", "b_node_id", "strategy_id", "candidate_status", "reverse_confirmed", "support_info"],
     )
     if debug:
-        write_geojson(out_dir / "pair_nodes.geojson", pair_node_features)
-        write_geojson(out_dir / "pair_links.geojson", pair_link_features)
+        write_vector(out_dir / "pair_nodes.gpkg", pair_node_features)
+        write_vector(out_dir / "pair_links.gpkg", pair_link_features)
         write_csv(
             out_dir / "pair_table.csv",
             pair_table_rows,
@@ -1504,8 +1504,8 @@ def write_step1_candidate_outputs(
                 pair_summary_path.name,
                 rule_audit_path.name,
                 search_audit_path.name,
-                "pair_nodes.geojson",
-                "pair_links.geojson",
+                "pair_nodes.gpkg",
+                "pair_links.gpkg",
                 "pair_table.csv",
             ]
         ),

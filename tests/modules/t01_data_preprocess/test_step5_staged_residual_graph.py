@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 from shapely.geometry import LineString, Point
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    load_vector_feature_collection,
+    write_geojson,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import NodeFeatureRecord, RoadFeatureRecord
 from rcsd_topo_poc.modules.t01_data_preprocess.step5_staged_residual_graph import (
     PhaseInputArtifacts,
@@ -78,7 +81,7 @@ def _load_csv_rows(path: Path) -> list[dict[str, str]]:
 
 
 def _load_geojson(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_vector_feature_collection(path)
 
 
 def _node_record(feature: dict) -> NodeFeatureRecord:
@@ -228,8 +231,8 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert (artifacts.out_root / "STEP5A").is_dir()
     assert (artifacts.out_root / "STEP5B").is_dir()
     assert (artifacts.out_root / "STEP5C").is_dir()
-    assert artifacts.refreshed_nodes_alias_path.name == "nodes_step5_refreshed.geojson"
-    assert artifacts.refreshed_roads_alias_path.name == "roads_step5_refreshed.geojson"
+    assert artifacts.refreshed_nodes_alias_path.name == "nodes_step5_refreshed.gpkg"
+    assert artifacts.refreshed_roads_alias_path.name == "roads_step5_refreshed.gpkg"
     step5a_strategy = json.loads((artifacts.out_root / "step5a_strategy.json").read_text(encoding="utf-8"))
     step5b_strategy = json.loads((artifacts.out_root / "step5b_strategy.json").read_text(encoding="utf-8"))
     step5c_strategy = json.loads((artifacts.out_root / "step5c_strategy.json").read_text(encoding="utf-8"))
@@ -260,10 +263,10 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert step5c_rows == []
     assert {row["pair_id"] for row in merged_rows} == {"STEP5A:10__30", "STEP5B:110__130"}
 
-    step5b_working_roads = _load_geojson(artifacts.out_root / "step5b_working_roads.geojson")
+    step5b_working_roads = _load_geojson(artifacts.out_root / "step5b_working_roads.gpkg")
     step5b_working_road_ids = {str(feature["properties"]["id"]) for feature in step5b_working_roads["features"]}
     assert {"a14", "a43", "a32", "a21"}.isdisjoint(step5b_working_road_ids)
-    step5b_working_nodes = _load_geojson(artifacts.out_root / "step5b_working_nodes.geojson")
+    step5b_working_nodes = _load_geojson(artifacts.out_root / "step5b_working_nodes.gpkg")
     step5b_node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in step5b_working_nodes["features"]}
     assert step5b_node_props["10"]["step5b_historical_boundary"] is True
     assert step5b_node_props["30"]["step5b_historical_boundary"] is True
@@ -273,12 +276,12 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert step5b_node_props["110"]["grade_2"] == 3
     assert step5b_node_props["110"]["kind_2"] == 2048
 
-    step5c_working_roads = _load_geojson(artifacts.out_root / "step5c_working_roads.geojson")
+    step5c_working_roads = _load_geojson(artifacts.out_root / "step5c_working_roads.gpkg")
     step5c_working_road_ids = {str(feature["properties"]["id"]) for feature in step5c_working_roads["features"]}
     assert {"a14", "a43", "a32", "a21", "b14", "b43", "b32", "b21"}.isdisjoint(
         step5c_working_road_ids
     )
-    step5c_working_nodes = _load_geojson(artifacts.out_root / "step5c_working_nodes.geojson")
+    step5c_working_nodes = _load_geojson(artifacts.out_root / "step5c_working_nodes.gpkg")
     step5c_node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in step5c_working_nodes["features"]}
     assert step5c_node_props["210"]["step5c_input_eligible"] is False
     assert step5c_node_props["230"]["step5c_input_eligible"] is False
@@ -455,7 +458,7 @@ def test_step5_historical_boundary_is_injected_into_step5a_seed_and_terminate(tm
     assert step5a_strategy["explicit_seed_node_ids"] == ["110", "300"]
     assert step5a_strategy["explicit_terminate_node_ids"] == ["110", "300"]
 
-    step5a_working_nodes = _load_geojson(artifacts.out_root / "step5a_working_nodes.geojson")
+    step5a_working_nodes = _load_geojson(artifacts.out_root / "step5a_working_nodes.gpkg")
     step5a_node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in step5a_working_nodes["features"]}
     assert step5a_node_props["300"]["step5a_input_eligible"] is True
     assert step5a_node_props["300"]["step5a_historical_boundary"] is True
@@ -516,7 +519,7 @@ def test_step5_does_not_keep_kind1_pseudojunction_boundary_created_only_by_right
     assert step5a_strategy["explicit_seed_node_ids"] == ["1", "3"]
     assert step5a_strategy["explicit_terminate_node_ids"] == ["1", "3"]
 
-    step5a_working_roads = _load_geojson(artifacts.out_root / "step5a_working_roads.geojson")
+    step5a_working_roads = _load_geojson(artifacts.out_root / "step5a_working_roads.gpkg")
     step5a_road_ids = {str(feature["properties"]["id"]) for feature in step5a_working_roads["features"]}
     assert "r24_right_turn" not in step5a_road_ids
 
@@ -561,7 +564,7 @@ def test_step5_does_not_keep_kind4_pseudojunction_created_only_by_right_turn_lan
         run_id="step5_kind4_pseudojunction",
     )
 
-    step5a_working_nodes = _load_geojson(artifacts.out_root / "step5a_working_nodes.geojson")
+    step5a_working_nodes = _load_geojson(artifacts.out_root / "step5a_working_nodes.gpkg")
     node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in step5a_working_nodes["features"]}
     assert node_props["2"]["step5a_input_eligible"] is False
     assert node_props["2"]["grade_2"] == 1

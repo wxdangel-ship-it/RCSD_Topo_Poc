@@ -9,8 +9,8 @@ from typing import Any, Callable, Optional, Union
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     read_vector_layers_parallel,
     write_csv,
-    write_geojson,
     write_json,
+    write_vector,
 )
 
 
@@ -45,8 +45,8 @@ class WorkingLayerArtifacts:
 
 @dataclass(frozen=True)
 class RoundaboutGroup:
-    group_id: str
-    mainnode_id: str
+    group_id: st
+    mainnode_id: st
     road_ids: tuple[str, ...]
     node_ids: tuple[str, ...]
 
@@ -395,9 +395,9 @@ def _write_roundabout_audits(
             }
         )
 
-    write_geojson(out_root / "roundabout_group_roads.geojson", group_road_features)
-    write_geojson(out_root / "roundabout_group_nodes.geojson", group_node_features)
-    write_geojson(out_root / "roundabout_mainnodes.geojson", mainnode_features)
+    write_vector(out_root / "roundabout_group_roads.gpkg", group_road_features)
+    write_vector(out_root / "roundabout_group_nodes.gpkg", group_node_features)
+    write_vector(out_root / "roundabout_mainnodes.gpkg", mainnode_features)
     write_csv(
         out_root / "roundabout_group_table.csv",
         group_table_rows,
@@ -497,8 +497,8 @@ def initialize_working_layers(
     road_crs: Optional[str] = None,
     node_layer: Optional[str] = None,
     node_crs: Optional[str] = None,
-    node_output_name: str = "nodes.geojson",
-    road_output_name: str = "roads.geojson",
+    node_output_name: str = "nodes.gpkg",
+    road_output_name: str = "roads.gpkg",
     summary_name: str = "working_layers_summary.json",
     debug: bool = True,
     progress_callback: Optional[WorkingLayerProgressCallback] = None,
@@ -554,8 +554,8 @@ def initialize_working_layers(
     roads_path = resolved_out_root / road_output_name
     summary_path = resolved_out_root / summary_name
 
-    write_geojson(nodes_path, initialized_nodes)
-    write_geojson(roads_path, initialized_roads)
+    write_vector(nodes_path, initialized_nodes)
+    write_vector(roads_path, initialized_roads)
 
     summary = {
         "out_root": str(resolved_out_root.resolve()),

@@ -5,7 +5,10 @@ from pathlib import Path
 
 from shapely.geometry import LineString, Point
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    load_vector_feature_collection,
+    write_geojson,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import initialize_working_layers
 
 
@@ -39,8 +42,8 @@ def test_initialize_working_layers_creates_runtime_fields(tmp_path: Path) -> Non
 
     artifacts = initialize_working_layers(road_path=road_path, node_path=node_path, out_root=out_root)
 
-    nodes_doc = json.loads(artifacts.nodes_path.read_text(encoding="utf-8"))
-    roads_doc = json.loads(artifacts.roads_path.read_text(encoding="utf-8"))
+    nodes_doc = load_vector_feature_collection(artifacts.nodes_path)
+    roads_doc = load_vector_feature_collection(artifacts.roads_path)
     node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
     road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
 
@@ -109,7 +112,7 @@ def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_p
 
     artifacts = initialize_working_layers(road_path=road_path, node_path=node_path, out_root=out_root, debug=True)
 
-    nodes_doc = json.loads(artifacts.nodes_path.read_text(encoding="utf-8"))
+    nodes_doc = load_vector_feature_collection(artifacts.nodes_path)
     node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
     roundabout_summary = json.loads(artifacts.roundabout_summary_path.read_text(encoding="utf-8"))
 
@@ -138,7 +141,7 @@ def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_p
     assert str(node_props["21"]["mainnodeid"]) == "20"
     assert str(node_props["20"]["working_mainnodeid"]) == "20"
     assert str(node_props["21"]["working_mainnodeid"]) == "20"
-    assert (out_root / "roundabout_group_roads.geojson").is_file()
-    assert (out_root / "roundabout_group_nodes.geojson").is_file()
-    assert (out_root / "roundabout_mainnodes.geojson").is_file()
+    assert (out_root / "roundabout_group_roads.gpkg").is_file()
+    assert (out_root / "roundabout_group_nodes.gpkg").is_file()
+    assert (out_root / "roundabout_mainnodes.gpkg").is_file()
     assert (out_root / "roundabout_group_table.csv").is_file()

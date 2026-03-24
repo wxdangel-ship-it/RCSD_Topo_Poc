@@ -16,8 +16,12 @@
 ## 3. 官方输入与前置约束
 
 ### 3.1 官方输入
-- `nodes.geojson`
-- `roads.geojson`
+- `nodes.gpkg`
+- `roads.gpkg`
+- 兼容读取：
+  - 同名 `GeoPackage(.gpkg)` 优先
+  - 历史 `.gpkt` 仅兼容读取
+  - `GeoJSON(.geojson/.json)` 与 `Shapefile(.shp)` 继续兼容
 
 ### 3.2 输入约束
 - 当前模块仅处理双向道路路段构建，不覆盖封闭式道路场景。
@@ -320,15 +324,15 @@
 ## 12. 阶段六：Step6
 
 ### 12.1 输入
-- 最新的 refreshed `nodes.geojson`
-- 最新的 refreshed `roads.geojson`
+- 最新的 refreshed `nodes.gpkg`
+- 最新的 refreshed `roads.gpkg`
 
 ### 12.2 输出
-- `segment.geojson`
-- `inner_nodes.geojson`
-- `segment_error.geojson`
+- `segment.gpkg`
+- `inner_nodes.gpkg`
+- `segment_error.gpkg`
 
-### 12.3 segment.geojson
+### 12.3 segment.gpkg
 - `id`：与 `roads.segmentid` 相同
 - `geometry`：该 Segment 下所有 road 构成的 `MultiLineString`
 - `sgrade`：与 `roads.sgrade` 对应
@@ -345,9 +349,9 @@
   - Segment 下所有 road 的 `id`
   - 以逗号隔开
 
-### 12.4 inner_nodes.geojson
+### 12.4 inner_nodes.gpkg
 - 若某语义路口的所有分支 road 都在同一个 Segment 内，则该路口不进入 `junc_nodes`。
-- 该路口内所有 node 完整复制到 `inner_nodes.geojson`。
+- 该路口内所有 node 完整复制到 `inner_nodes.gpkg`。
 
 ### 12.5 Step6 规则
 - 规则1：
@@ -356,7 +360,7 @@
   - 对所有 `sgrade = 0-0双` 的 Segment，其 `junc_nodes` 下的所有路口类型都不能为：
     - `grade_2 = 1`
     - 且 `kind_2 = 4`
-  - 若存在，则输出到 `segment_error.geojson`
+  - 若存在，则输出到 `segment_error.gpkg`
 
 ## 13. 当前已固化内容
 - Step1 只输出 `pair_candidates`
@@ -388,7 +392,7 @@
 - 若实现与本文档冲突，需先说明文档歧义，再由用户拍板。
 - 未经允许，不修改已固化的 T01 accepted baseline。
 - 后续 T02 / T03 等模块消费 T01 结果时，默认以：
-  - refreshed `nodes.geojson`
-  - refreshed `roads.geojson`
-  - `segment.geojson`
+  - refreshed `nodes.gpkg`
+  - refreshed `roads.gpkg`
+  - `segment.gpkg`
   作为标准输入理解基础。

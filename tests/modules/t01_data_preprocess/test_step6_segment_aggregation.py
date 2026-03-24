@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from shapely.geometry import LineString, MultiLineString, Point
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    load_vector_feature_collection,
+    write_geojson,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.step6_segment_aggregation import run_step6_segment_aggregation
 
 
@@ -76,7 +78,7 @@ def _road_feature(
 
 
 def _load_geojson(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_vector_feature_collection(path)
 
 
 def test_step6_builds_segment_inner_nodes_and_error_outputs(tmp_path: Path) -> None:

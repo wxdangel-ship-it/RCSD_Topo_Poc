@@ -9,6 +9,7 @@ from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.cli import main
 from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc, step2_arbitration, step2_segment_poc
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import load_vector_feature_collection
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import initialize_working_layers
 
 
@@ -68,6 +69,19 @@ def _road_feature(
 
 
 def _load_json(path: Path) -> dict:
+    if path.suffix.lower() in {".gpkg", ".gpkt"}:
+        doc = load_vector_feature_collection(path)
+        for feature in doc.get("features", []):
+            props = feature.get("properties") or {}
+            road_ids = props.get("road_ids")
+            if isinstance(road_ids, str):
+                try:
+                    parsed = json.loads(road_ids)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, list):
+                    props["road_ids"] = parsed
+        return doc
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -804,12 +818,12 @@ def test_step2_segment_poc_validates_and_prunes_counterclockwise_segment(tmp_pat
     validated_rows = _read_csv_rows(out_root / "S2X" / "validated_pairs.csv")
     validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
     summary = _load_json(out_root / "S2X" / "segment_summary.json")
-    branch_cut = _load_json(out_root / "S2X" / "branch_cut_roads.geojson")
-    trunk = _load_json(out_root / "S2X" / "trunk_roads.geojson")
-    segment_body = _load_json(out_root / "S2X" / "segment_body_roads.geojson")
-    residual = _load_json(out_root / "S2X" / "step3_residual_roads.geojson")
-    trunk_members = _load_json(out_root / "S2X" / "trunk_road_members.geojson")
-    segment_members = _load_json(out_root / "S2X" / "segment_body_road_members.geojson")
+    branch_cut = _load_json(out_root / "S2X" / "branch_cut_roads.gpkg")
+    trunk = _load_json(out_root / "S2X" / "trunk_roads.gpkg")
+    segment_body = _load_json(out_root / "S2X" / "segment_body_roads.gpkg")
+    residual = _load_json(out_root / "S2X" / "step3_residual_roads.gpkg")
+    trunk_members = _load_json(out_root / "S2X" / "trunk_road_members.gpkg")
+    segment_members = _load_json(out_root / "S2X" / "segment_body_road_members.gpkg")
     endpoint_pool_rows = _read_csv_rows(out_root / "S2X" / "endpoint_pool.csv")
 
     assert [row["pair_id"] for row in candidate_rows] == ["S2X:1__3"]
@@ -951,9 +965,9 @@ def test_step2_segment_excludes_step1_formway_branches(tmp_path: Path) -> None:
     assert rc == 0
 
     validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
-    segment_body = _load_json(out_root / "S2X" / "segment_body_roads.geojson")
-    residual = _load_json(out_root / "S2X" / "step3_residual_roads.geojson")
-    branch_cut = _load_json(out_root / "S2X" / "branch_cut_roads.geojson")
+    segment_body = _load_json(out_root / "S2X" / "segment_body_roads.gpkg")
+    residual = _load_json(out_root / "S2X" / "step3_residual_roads.gpkg")
+    branch_cut = _load_json(out_root / "S2X" / "branch_cut_roads.gpkg")
 
     assert validation_rows[0]["validated_status"] == "validated"
     assert validation_rows[0]["segment_body_road_count"] == "4"
@@ -1037,9 +1051,9 @@ def test_step2_validates_through_collapsed_corridor_candidate(tmp_path: Path) ->
 
     validated_rows = _read_csv_rows(out_root / "S2X" / "validated_pairs.csv")
     validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
-    trunk = _load_json(out_root / "S2X" / "trunk_roads.geojson")
-    segment_body = _load_json(out_root / "S2X" / "segment_body_roads.geojson")
-    residual = _load_json(out_root / "S2X" / "step3_residual_roads.geojson")
+    trunk = _load_json(out_root / "S2X" / "trunk_roads.gpkg")
+    segment_body = _load_json(out_root / "S2X" / "segment_body_roads.gpkg")
+    residual = _load_json(out_root / "S2X" / "step3_residual_roads.gpkg")
 
     assert [row["pair_id"] for row in validated_rows] == ["S2X:1__3"]
     assert validated_rows[0]["trunk_mode"] == "through_collapsed_corridor"
@@ -1074,8 +1088,8 @@ def test_step2_validates_bidirectional_direct_road_as_minimal_loop(tmp_path: Pat
 
     validated_rows = _read_csv_rows(out_root / "S2X" / "validated_pairs.csv")
     validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
-    trunk = _load_json(out_root / "S2X" / "trunk_roads.geojson")
-    segment_body = _load_json(out_root / "S2X" / "segment_body_roads.geojson")
+    trunk = _load_json(out_root / "S2X" / "trunk_roads.gpkg")
+    segment_body = _load_json(out_root / "S2X" / "segment_body_roads.gpkg")
 
     assert [row["pair_id"] for row in validated_rows] == ["S2X:1__2"]
     assert validation_rows[0]["validated_status"] == "validated"
@@ -1110,7 +1124,7 @@ def test_step2_validates_bidirectional_overlap_loop_as_minimal_loop(tmp_path: Pa
 
     validated_rows = _read_csv_rows(out_root / "S2X" / "validated_pairs.csv")
     validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
-    trunk = _load_json(out_root / "S2X" / "trunk_roads.geojson")
+    trunk = _load_json(out_root / "S2X" / "trunk_roads.gpkg")
 
     assert [row["pair_id"] for row in validated_rows] == ["S2X:1__3"]
     assert validation_rows[0]["validated_status"] == "validated"
@@ -1143,7 +1157,7 @@ def test_step2_validates_bidirectional_overlap_loop_with_through_nodes(tmp_path:
 
     validated_rows = _read_csv_rows(out_root / "S2X" / "validated_pairs.csv")
     validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
-    trunk = _load_json(out_root / "S2X" / "trunk_roads.geojson")
+    trunk = _load_json(out_root / "S2X" / "trunk_roads.gpkg")
 
     assert [row["pair_id"] for row in validated_rows] == ["S2X:1__4"]
     assert validation_rows[0]["validated_status"] == "validated"
@@ -1178,8 +1192,8 @@ def test_step2_validates_semantic_node_group_closure_loop(tmp_path: Path) -> Non
     strategy_root = out_root / "S2X"
     validated_rows = _read_csv_rows(strategy_root / "validated_pairs.csv")
     validation_rows = _read_csv_rows(strategy_root / "pair_validation_table.csv")
-    trunk = _load_json(strategy_root / "trunk_roads.geojson")
-    segment_body = _load_json(strategy_root / "segment_body_roads.geojson")
+    trunk = _load_json(strategy_root / "trunk_roads.gpkg")
+    segment_body = _load_json(strategy_root / "segment_body_roads.gpkg")
 
     assert [row["pair_id"] for row in validated_rows] == ["S2X:1__3"]
     assert validation_rows[0]["validated_status"] == "validated"
@@ -2538,9 +2552,9 @@ def test_write_step2_outputs_streams_release_outputs_without_buffering_lists(tmp
     assert [row["pair_id"] for row in rejected_rows] == ["PAIR_B_C"]
     assert [row["pair_id"] for row in validation_rows] == ["PAIR_A_B", "PAIR_B_C"]
     assert result.validations == []
-    assert (out_dir / "trunk_roads.geojson").is_file()
-    assert (out_dir / "segment_body_roads.geojson").is_file()
-    assert (out_dir / "step3_residual_roads.geojson").is_file()
+    assert (out_dir / "trunk_roads.gpkg").is_file()
+    assert (out_dir / "segment_body_roads.gpkg").is_file()
+    assert (out_dir / "step3_residual_roads.gpkg").is_file()
 
 
 def test_same_stage_arbitration_uses_exact_solver_for_single_option_large_component() -> None:

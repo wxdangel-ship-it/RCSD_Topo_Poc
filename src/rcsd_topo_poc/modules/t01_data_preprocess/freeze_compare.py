@@ -8,7 +8,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    first_existing_vector_path,
+    load_vector_feature_collection,
+    write_csv,
+    write_json,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _find_repo_root
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     ROAD_S_GRADE_FIELD,
@@ -65,7 +70,7 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
 
 
 def _load_geojson(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_vector_feature_collection(path)
 
 
 def _sha256_file(path: Path) -> str:
@@ -324,13 +329,14 @@ def write_skill_v1_bundle(
     refreshed_roads_path = Path(refreshed_roads_path)
 
     validated_rows = _validated_pair_rows(step2_dir, step4_dir, step5_dir)
-    segment_body_rows = _membership_rows(step2_dir / "segment_body_roads.geojson", stage="Step2", layer_role="segment_body")
+    step2_segment_body_path = first_existing_vector_path(step2_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson")
+    segment_body_rows = _membership_rows(step2_segment_body_path or step2_dir / "missing.gpkg", stage="Step2", layer_role="segment_body")
     segment_body_rows += _membership_rows(
-        _first_existing(step4_dir, "step4_segment_body_roads.geojson", "STEP4/segment_body_roads.geojson") or step4_dir / "missing.geojson",
+        first_existing_vector_path(step4_dir, "step4_segment_body_roads.gpkg", "step4_segment_body_roads.geojson", "STEP4/segment_body_roads.gpkg", "STEP4/segment_body_roads.geojson") or step4_dir / "missing.gpkg",
         stage="Step4",
         layer_role="segment_body",
     )
-    step5_merged_segment_path = _first_existing(step5_dir, "step5_segment_body_roads_merged.geojson")
+    step5_merged_segment_path = first_existing_vector_path(step5_dir, "step5_segment_body_roads_merged.gpkg", "step5_segment_body_roads_merged.geojson")
     if step5_merged_segment_path is not None:
         segment_body_rows += _membership_rows(
             step5_merged_segment_path,
@@ -340,39 +346,40 @@ def write_skill_v1_bundle(
         )
     else:
         segment_body_rows += _membership_rows(
-            _first_existing(step5_dir, "step5a_segment_body_roads.geojson", "STEP5A/segment_body_roads.geojson") or step5_dir / "missing.geojson",
+            first_existing_vector_path(step5_dir, "step5a_segment_body_roads.gpkg", "step5a_segment_body_roads.geojson", "STEP5A/segment_body_roads.gpkg", "STEP5A/segment_body_roads.geojson") or step5_dir / "missing.gpkg",
             stage="Step5A",
             layer_role="segment_body",
         )
         segment_body_rows += _membership_rows(
-            _first_existing(step5_dir, "step5b_segment_body_roads.geojson", "STEP5B/segment_body_roads.geojson") or step5_dir / "missing.geojson",
+            first_existing_vector_path(step5_dir, "step5b_segment_body_roads.gpkg", "step5b_segment_body_roads.geojson", "STEP5B/segment_body_roads.gpkg", "STEP5B/segment_body_roads.geojson") or step5_dir / "missing.gpkg",
             stage="Step5B",
             layer_role="segment_body",
         )
         segment_body_rows += _membership_rows(
-            _first_existing(step5_dir, "step5c_segment_body_roads.geojson", "STEP5C/segment_body_roads.geojson") or step5_dir / "missing.geojson",
+            first_existing_vector_path(step5_dir, "step5c_segment_body_roads.gpkg", "step5c_segment_body_roads.geojson", "STEP5C/segment_body_roads.gpkg", "STEP5C/segment_body_roads.geojson") or step5_dir / "missing.gpkg",
             stage="Step5C",
             layer_role="segment_body",
         )
 
-    trunk_rows = _membership_rows(step2_dir / "trunk_roads.geojson", stage="Step2", layer_role="trunk")
+    step2_trunk_path = first_existing_vector_path(step2_dir, "trunk_roads.gpkg", "trunk_roads.geojson")
+    trunk_rows = _membership_rows(step2_trunk_path or step2_dir / "missing.gpkg", stage="Step2", layer_role="trunk")
     trunk_rows += _membership_rows(
-        _first_existing(step4_dir, "step4_trunk_roads.geojson", "STEP4/trunk_roads.geojson") or step4_dir / "missing.geojson",
+        first_existing_vector_path(step4_dir, "step4_trunk_roads.gpkg", "step4_trunk_roads.geojson", "STEP4/trunk_roads.gpkg", "STEP4/trunk_roads.geojson") or step4_dir / "missing.gpkg",
         stage="Step4",
         layer_role="trunk",
     )
     trunk_rows += _membership_rows(
-        _first_existing(step5_dir, "step5a_trunk_roads.geojson", "STEP5A/trunk_roads.geojson") or step5_dir / "missing.geojson",
+        first_existing_vector_path(step5_dir, "step5a_trunk_roads.gpkg", "step5a_trunk_roads.geojson", "STEP5A/trunk_roads.gpkg", "STEP5A/trunk_roads.geojson") or step5_dir / "missing.gpkg",
         stage="Step5A",
         layer_role="trunk",
     )
     trunk_rows += _membership_rows(
-        _first_existing(step5_dir, "step5b_trunk_roads.geojson", "STEP5B/trunk_roads.geojson") or step5_dir / "missing.geojson",
+        first_existing_vector_path(step5_dir, "step5b_trunk_roads.gpkg", "step5b_trunk_roads.geojson", "STEP5B/trunk_roads.gpkg", "STEP5B/trunk_roads.geojson") or step5_dir / "missing.gpkg",
         stage="Step5B",
         layer_role="trunk",
     )
     trunk_rows += _membership_rows(
-        _first_existing(step5_dir, "step5c_trunk_roads.geojson", "STEP5C/trunk_roads.geojson") or step5_dir / "missing.geojson",
+        first_existing_vector_path(step5_dir, "step5c_trunk_roads.gpkg", "step5c_trunk_roads.geojson", "STEP5C/trunk_roads.gpkg", "STEP5C/trunk_roads.geojson") or step5_dir / "missing.gpkg",
         stage="Step5C",
         layer_role="trunk",
     )

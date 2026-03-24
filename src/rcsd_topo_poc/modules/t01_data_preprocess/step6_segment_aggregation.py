@@ -16,7 +16,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     _build_mainnode_groups,
     _load_nodes_and_roads,
 )
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json, write_vecto
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _coerce_int, _find_repo_root, _sort_key
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     WORKING_NODE_FIELDS,
@@ -34,8 +34,8 @@ STEP6_ERROR_TYPE_S_GRADE_CONFLICT = "s_grade_conflict"
 STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT = "grade_kind_conflict"
 STEP6_S_GRADE_PRIORITY_ORDER = ("0-0双", "0-1双", "0-2双")
 STEP6_ERROR_LAYER_FILENAMES = {
-    STEP6_ERROR_TYPE_S_GRADE_CONFLICT: "segment_error_s_grade_conflict.geojson",
-    STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT: "segment_error_grade_kind_conflict.geojson",
+    STEP6_ERROR_TYPE_S_GRADE_CONFLICT: "segment_error_s_grade_conflict.gpkg",
+    STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT: "segment_error_grade_kind_conflict.gpkg",
 }
 
 
@@ -55,7 +55,7 @@ class Step6Artifacts:
 
 @dataclass(frozen=True)
 class SegmentRecord:
-    segment_id: str
+    segment_id: st
     pair_nodes: tuple[str, str]
     road_ids: tuple[str, ...]
     multiline: MultiLineString
@@ -394,9 +394,9 @@ def _write_step6_outputs(
     resolved_out_root = out_root
     resolved_run_id = run_id
 
-    segment_path = resolved_out_root / "segment.geojson"
-    inner_nodes_path = resolved_out_root / "inner_nodes.geojson"
-    segment_error_path = resolved_out_root / "segment_error.geojson"
+    segment_path = resolved_out_root / "segment.gpkg"
+    inner_nodes_path = resolved_out_root / "inner_nodes.gpkg"
+    segment_error_path = resolved_out_root / "segment_error.gpkg"
     error_layer_paths = {
         error_type: resolved_out_root / filename
         for error_type, filename in STEP6_ERROR_LAYER_FILENAMES.items()
@@ -405,7 +405,7 @@ def _write_step6_outputs(
     segment_build_table_path = resolved_out_root / "segment_build_table.csv"
     inner_nodes_summary_path = resolved_out_root / "inner_nodes_summary.json"
 
-    write_geojson(segment_path, (_segment_feature(record) for record in segment_records))
+    write_vector(segment_path, (_segment_feature(record) for record in segment_records))
 
     inner_node_features: list[dict[str, Any]] = []
     inner_group_ids_all: set[str] = set()
@@ -419,13 +419,13 @@ def _write_step6_outputs(
             props = sanitize_public_node_properties(dict(node.properties))
             props["segmentid"] = segment_id
             inner_node_features.append({"properties": props, "geometry": node.geometry})
-    write_geojson(inner_nodes_path, inner_node_features)
+    write_vector(inner_nodes_path, inner_node_features)
 
     segment_error_records = [record for record in segment_records if record.error_type is not None]
-    write_geojson(segment_error_path, (_segment_error_feature(record) for record in segment_error_records))
+    write_vector(segment_error_path, (_segment_error_feature(record) for record in segment_error_records))
     for error_type, error_path in error_layer_paths.items():
         matching_records = [record for record in segment_error_records if record.error_type == error_type]
-        write_geojson(error_path, (_segment_error_feature(record) for record in matching_records))
+        write_vector(error_path, (_segment_error_feature(record) for record in matching_records))
 
     segment_summary = {
         "run_id": resolved_run_id,

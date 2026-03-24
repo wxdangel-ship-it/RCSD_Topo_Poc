@@ -4,13 +4,13 @@ import csv
 from pathlib import Path
 from typing import Optional
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json, write_vecto
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import SemanticNodeRecord, _sort_key
 
 
 ENDPOINT_POOL_CSV_NAME = "endpoint_pool.csv"
 ENDPOINT_POOL_SUMMARY_NAME = "endpoint_pool_summary.json"
-ENDPOINT_POOL_NODES_NAME = "endpoint_pool_nodes.geojson"
+ENDPOINT_POOL_NODES_NAME = "endpoint_pool_nodes.gpkg"
 
 
 def build_endpoint_pool_source_map(
@@ -114,6 +114,6 @@ def write_endpoint_pool_outputs(
                 }
             )
         geojson_path = out_dir / ENDPOINT_POOL_NODES_NAME
-        write_geojson(geojson_path, features)
+        write_vector(geojson_path, features)
 
     return csv_path, summary_path, geojson_path

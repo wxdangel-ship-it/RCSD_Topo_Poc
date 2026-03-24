@@ -6,7 +6,11 @@ from pathlib import Path
 
 from shapely.geometry import LineString, MultiLineString, Point
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    load_vector_feature_collection,
+    write_csv,
+    write_geojson,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     _load_segment_body_assignments,
     refresh_s2_baseline,
@@ -54,7 +58,7 @@ def _road_feature(
 
 
 def _load_geojson(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_vector_feature_collection(path)
 
 
 def _csv_rows(path: Path) -> list[dict[str, str]]:
@@ -197,8 +201,8 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
         run_id="refresh_case",
     )
 
-    assert artifacts.nodes_path.name == "nodes.geojson"
-    assert artifacts.roads_path.name == "roads.geojson"
+    assert artifacts.nodes_path.name == "nodes.gpkg"
+    assert artifacts.roads_path.name == "roads.gpkg"
     assert artifacts.preserved_s2_dir.name == "S2"
     assert (artifacts.preserved_s2_dir / "validated_pairs.csv").is_file()
     assert (artifacts.preserved_s2_dir / "endpoint_pool.csv").is_file()

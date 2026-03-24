@@ -18,7 +18,11 @@ from rcsd_topo_poc.modules.t01_data_preprocess.freeze_compare import (
     compare_skill_v1_bundle,
     write_skill_v1_bundle,
 )
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    first_existing_vector_path,
+    load_vector_feature_collection,
+    write_vector,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import refresh_s2_baseline
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _find_repo_root
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
@@ -348,11 +352,11 @@ def _write_all_stage_segment_roads_dir(
     step5_root: Path,
 ) -> Path:
     stage_sources = [
-        ("Step2", step2_root / "S2" / "segment_body_roads.geojson"),
-        ("Step4", step4_root / "STEP4" / "segment_body_roads.geojson"),
-        ("Step5A", step5_root / "STEP5A" / "segment_body_roads.geojson"),
-        ("Step5B", step5_root / "STEP5B" / "segment_body_roads.geojson"),
-        ("Step5C", step5_root / "STEP5C" / "segment_body_roads.geojson"),
+        ("Step2", first_existing_vector_path(step2_root / "S2", "segment_body_roads.gpkg", "segment_body_roads.geojson")),
+        ("Step4", first_existing_vector_path(step4_root / "STEP4", "segment_body_roads.gpkg", "segment_body_roads.geojson")),
+        ("Step5A", first_existing_vector_path(step5_root / "STEP5A", "segment_body_roads.gpkg", "segment_body_roads.geojson")),
+        ("Step5B", first_existing_vector_path(step5_root / "STEP5B", "segment_body_roads.gpkg", "segment_body_roads.geojson")),
+        ("Step5C", first_existing_vector_path(step5_root / "STEP5C", "segment_body_roads.gpkg", "segment_body_roads.geojson")),
     ]
 
     out_path = out_root / "all_stage_segment_roads"
@@ -364,7 +368,7 @@ def _write_all_stage_segment_roads_dir(
     out_path.mkdir(parents=True, exist_ok=True)
 
     for stage_name, source_path in stage_sources:
-        if not source_path.exists():
+        if source_path is None or not source_path.exists():
             continue
         shutil.copy2(source_path, out_path / f"{stage_name}_{source_path.name}")
     return out_path
@@ -726,8 +730,8 @@ def run_t01_skill_v1(
             ),
         )
 
-        final_nodes_path = resolved_out_root / "nodes.geojson"
-        final_roads_path = resolved_out_root / "roads.geojson"
+        final_nodes_path = resolved_out_root / "nodes.gpkg"
+        final_roads_path = resolved_out_root / "roads.gpkg"
         bundle_info = _run_stage(
             name="step6",
             run_id=resolved_run_id,
@@ -795,6 +799,9 @@ def run_t01_skill_v1(
             "bundle_manifest_path": bundle_info["manifest_path"],
             "bundle_summary_path": bundle_info["summary_path"],
             "all_stage_segment_roads_path": bundle_info.get("all_stage_segment_roads_path"),
+            "segment_path": bundle_info.get("segment_path"),
+            "inner_nodes_path": bundle_info.get("inner_nodes_path"),
+            "segment_error_path": bundle_info.get("segment_error_path"),
             "segment_geojson_path": bundle_info.get("segment_path"),
             "inner_nodes_geojson_path": bundle_info.get("inner_nodes_path"),
             "segment_error_geojson_path": bundle_info.get("segment_error_path"),
@@ -890,8 +897,8 @@ def _finalize_bundle(
     run_id: str,
     debug: bool,
 ) -> dict[str, str]:
-    refreshed_nodes_doc = json.loads(Path(refreshed_nodes_path).read_text(encoding="utf-8"))
-    write_geojson(
+    refreshed_nodes_doc = load_vector_feature_collection(refreshed_nodes_path)
+    write_vector(
         final_nodes_path,
         (
             {

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from rcsd_topo_poc.cli import main
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import load_vector_feature_collection
 from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc
 
 
@@ -94,6 +95,8 @@ def _build_dataset(base_dir: Path) -> tuple[Path, Path]:
 
 
 def _load_json(path: Path) -> dict:
+    if path.suffix.lower() in {".gpkg", ".gpkt"}:
+        return load_vector_feature_collection(path)
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -226,14 +229,14 @@ def test_step1_pair_poc_generates_strategy_outputs(tmp_path: Path) -> None:
     assert rc == 0
     for strategy_id in ("S1", "S2"):
         strategy_dir = out_root / strategy_id
-        assert (strategy_dir / "seed_nodes.geojson").is_file()
-        assert (strategy_dir / "terminate_nodes.geojson").is_file()
-        assert (strategy_dir / "pair_candidate_nodes.geojson").is_file()
-        assert (strategy_dir / "pair_links_candidates.geojson").is_file()
+        assert (strategy_dir / "seed_nodes.gpkg").is_file()
+        assert (strategy_dir / "terminate_nodes.gpkg").is_file()
+        assert (strategy_dir / "pair_candidate_nodes.gpkg").is_file()
+        assert (strategy_dir / "pair_links_candidates.gpkg").is_file()
         assert (strategy_dir / "pair_candidates.csv").is_file()
-        assert (strategy_dir / "pair_nodes.geojson").is_file()
-        assert (strategy_dir / "pair_links.geojson").is_file()
-        assert (strategy_dir / "pair_support_roads.geojson").is_file()
+        assert (strategy_dir / "pair_nodes.gpkg").is_file()
+        assert (strategy_dir / "pair_links.gpkg").is_file()
+        assert (strategy_dir / "pair_support_roads.gpkg").is_file()
         assert (strategy_dir / "pair_summary.json").is_file()
         assert (strategy_dir / "pair_table.csv").is_file()
 
@@ -583,7 +586,7 @@ def test_mainnodeid_group_is_handled_as_one_semantic_intersection(tmp_path: Path
     pair_summary = _load_json(out_root / "S2" / "pair_summary.json")
     rule_audit = _load_json(out_root / "S2" / "rule_audit.json")
     search_audit = _load_json(out_root / "S2" / "search_audit.json")
-    pair_nodes = _load_json(out_root / "S2" / "pair_nodes.geojson")
+    pair_nodes = _load_json(out_root / "S2" / "pair_nodes.gpkg")
 
     assert "S2:1__100" in pair_table
     assert pair_summary["pair_count"] == 1
@@ -602,7 +605,7 @@ def test_mainnodeid_group_is_handled_as_one_semantic_intersection(tmp_path: Path
     assert pair_node_props["semantic_node_id"] == "100"
     assert pair_node_props["representative_node_id"] == "100"
     assert pair_node_props["member_node_count"] == 2
-    assert "mainnodeid" not in pair_node_props
+    assert pair_node_props["mainnodeid"] is None
     assert pair_node_props["working_mainnodeid"] is None
     assert pair_node_props["kind"] == 4
     assert pair_node_props["grade"] == 1
@@ -787,7 +790,7 @@ def test_step1_business_filter_uses_grade_2_kind_2(tmp_path: Path) -> None:
         through_seed_pruned_count=execution.through_seed_pruned_count,
         debug=True,
     )
-    pair_nodes = _load_json(out_root / "pair_nodes.geojson")
+    pair_nodes = _load_json(out_root / "pair_nodes.gpkg")
     pair_node_props = next(
         feature["properties"] for feature in pair_nodes["features"] if feature["properties"]["semantic_node_id"] == "1"
     )

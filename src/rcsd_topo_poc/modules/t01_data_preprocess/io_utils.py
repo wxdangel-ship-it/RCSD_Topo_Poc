@@ -2,20 +2,30 @@ from __future__ import annotations
 
 import csv
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecuto
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Optional, Union
 
+import fiona
 import shapefile
-from pyproj import CRS, Transformer
+from pyproj import CRS, Transforme
 from shapely.geometry import mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform as shapely_transform
 
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
+    GEOPACKAGE_SUFFIXES,
+    prefer_vector_input_path,
+    write_vector as _write_vector,
+)
+
 
 TARGET_CRS = CRS.from_epsg(3857)
+OFFICIAL_VECTOR_SUFFIX = ".gpkg"
+GEOJSON_SUFFIXES = {".geojson", ".json"}
+VECTOR_SUFFIXES = GEOJSON_SUFFIXES | GEOPACKAGE_SUFFIXES | {".shp"}
 
 
 @dataclass(frozen=True)
@@ -28,7 +38,7 @@ class LayerFeature:
 class LayerReadResult:
     features: list[LayerFeature]
     source_crs: CRS
-    crs_source: str
+    crs_source: st
 
 
 def _resolve_geojson_crs(doc: dict[str, Any], crs_override: Optional[str]) -> tuple[CRS, str]:
@@ -58,6 +68,40 @@ def _resolve_shapefile_crs(path: Path, crs_override: Optional[str]) -> tuple[CRS
     )
 
 
+def _resolve_geopackage_layer_name(path: Path, layer_name: Optional[str]) -> str:
+    if layer_name:
+        return layer_name
+
+    try:
+        layers = list(fiona.listlayers(str(path)))
+    except Exception as exc:
+        raise ValueError(f"Failed to inspect GeoPackage layers for '{path}': {exc}") from exc
+
+    if not layers:
+        raise ValueError(f"GeoPackage '{path}' has no layers.")
+    if len(layers) == 1:
+        return layers[0]
+    if path.stem in layers:
+        return path.stem
+    raise ValueError(f"GeoPackage '{path}' has multiple layers {layers}; layer name is required.")
+
+
+def _resolve_geopackage_crs(path: Path, layer_name: str, crs_override: Optional[str]) -> tuple[CRS, str]:
+    if crs_override:
+        return CRS.from_user_input(crs_override), "override"
+
+    try:
+        with fiona.open(str(path), layer=layer_name) as src:
+            if src.crs_wkt:
+                return CRS.from_wkt(src.crs_wkt), "gpkg.crs_wkt"
+            if src.crs:
+                return CRS.from_user_input(src.crs), "gpkg.crs"
+    except Exception as exc:
+        raise ValueError(f"Failed to open GeoPackage '{path}' layer '{layer_name}': {exc}") from exc
+
+    raise ValueError(f"GeoPackage '{path}' layer '{layer_name}' has no CRS and no CRS override was provided.")
+
+
 def _transform_geometry(geometry: BaseGeometry, source_crs: CRS) -> BaseGeometry:
     if source_crs == TARGET_CRS:
         return geometry
@@ -77,12 +121,13 @@ def read_vector_layer(
     layer_name: Optional[str] = None,
     crs_override: Optional[str] = None,
 ) -> LayerReadResult:
-    del layer_name  # Reserved for future multi-layer support.
-
-    layer_path = Path(path)
+    layer_path = prefer_vector_input_path(Path(path))
     suffix = layer_path.suffix.lower()
 
-    if suffix in {".geojson", ".json"}:
+    if not layer_path.is_file():
+        raise ValueError(f"Input layer does not exist: {layer_path}")
+
+    if suffix in GEOJSON_SUFFIXES:
         doc = json.loads(layer_path.read_text(encoding="utf-8"))
         source_crs, crs_source = _resolve_geojson_crs(doc, crs_override)
         features: list[LayerFeature] = []
@@ -113,7 +158,27 @@ def read_vector_layer(
             )
         return LayerReadResult(features=features, source_crs=source_crs, crs_source=crs_source)
 
-    raise ValueError(f"Unsupported vector format for '{layer_path}'. Expected Shp or GeoJSON.")
+    if suffix in GEOPACKAGE_SUFFIXES:
+        resolved_layer_name = _resolve_geopackage_layer_name(layer_path, layer_name)
+        source_crs, crs_source = _resolve_geopackage_crs(layer_path, resolved_layer_name, crs_override)
+        features = []
+        try:
+            with fiona.open(str(layer_path), layer=resolved_layer_name) as src:
+                for feature in src:
+                    geometry_payload = feature.get("geometry")
+                    if geometry_payload is None:
+                        continue
+                    features.append(
+                        LayerFeature(
+                            properties=dict(feature.get("properties") or {}),
+                            geometry=_transform_geometry(shape(geometry_payload), source_crs),
+                        )
+                    )
+        except Exception as exc:
+            raise ValueError(f"Failed to read GeoPackage '{layer_path}' layer '{resolved_layer_name}': {exc}") from exc
+        return LayerReadResult(features=features, source_crs=source_crs, crs_source=crs_source)
+
+    raise ValueError(f"Unsupported vector format for '{layer_path}'. Expected Shp, GeoJSON, or GeoPackage.")
 
 
 def read_vector_layers_parallel(
@@ -192,3 +257,61 @@ def write_geojson(path: Union[str, Path], features: Iterable[dict[str, Any]]) ->
             first = False
 
         fp.write("]}")
+
+
+def write_vector(path: Union[str, Path], features: Iterable[dict[str, Any]], *, layer_name: Optional[str] = None) -> None:
+    _write_vector(
+        Path(path),
+        features,
+        crs_text=TARGET_CRS.to_string(),
+        layer_name=layer_name,
+    )
+
+
+def replace_vector_suffix(value: Union[str, Path], suffix: str = OFFICIAL_VECTOR_SUFFIX) -> str:
+    path = Path(str(value))
+    if path.suffix.lower() in VECTOR_SUFFIXES:
+        return str(path.with_suffix(suffix))
+    return str(path.with_name(path.name + suffix))
+
+
+def first_existing_vector_path(base_dir: Union[str, Path], *relative_paths: str) -> Optional[Path]:
+    root = Path(base_dir)
+    for relative_path in relative_paths:
+        candidate = root / relative_path
+        candidates = [candidate]
+        if candidate.suffix.lower() in VECTOR_SUFFIXES:
+            stem = candidate.with_suffix("")
+            candidates = [
+                stem.with_suffix(".gpkg"),
+                stem.with_suffix(".gpkt"),
+                stem.with_suffix(".geojson"),
+                stem.with_suffix(".json"),
+                stem.with_suffix(".shp"),
+            ]
+        for resolved in candidates:
+            if resolved.is_file():
+                return resolved
+    return None
+
+
+def load_vector_feature_collection(
+    path: Union[str, Path],
+    *,
+    layer_name: Optional[str] = None,
+    crs_override: Optional[str] = None,
+) -> dict[str, Any]:
+    result = read_vector_layer(path, layer_name=layer_name, crs_override=crs_override)
+    return {
+        "type": "FeatureCollection",
+        "name": Path(path).stem,
+        "crs": {"type": "name", "properties": {"name": TARGET_CRS.to_string()}},
+        "features": [
+            {
+                "type": "Feature",
+                "properties": _json_compatible(feature.properties),
+                "geometry": mapping(feature.geometry) if feature.geometry is not None else None,
+            }
+            for feature in result.features
+        ],
+    }

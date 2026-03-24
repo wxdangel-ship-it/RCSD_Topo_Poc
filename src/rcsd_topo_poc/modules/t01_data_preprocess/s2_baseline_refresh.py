@@ -5,7 +5,7 @@ import csv
 import json
 import shutil
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecuto
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +13,14 @@ from typing import Any, Optional, Union
 
 from shapely.geometry.base import BaseGeometry
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer, write_csv, write_geojson, write_json
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    first_existing_vector_path,
+    load_vector_feature_collection,
+    read_vector_layer,
+    write_csv,
+    write_json,
+    write_vector,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     _bit_enabled,
     _coerce_int,
@@ -41,9 +48,9 @@ SEGMENT_GRADE_VALUE = "0-0\u53cc"
 
 @dataclass(frozen=True)
 class NodeFeatureRecord:
-    node_id: str
+    node_id: st
     mainnodeid: Optional[str]
-    semantic_node_id: str
+    semantic_node_id: st
     grade: Optional[int]
     kind: Optional[int]
     properties: dict[str, Any]
@@ -59,9 +66,9 @@ def _resolve_working_mainnodeid(properties: dict[str, Any]) -> Optional[str]:
 
 @dataclass(frozen=True)
 class RoadFeatureRecord:
-    road_id: str
-    snodeid: str
-    enodeid: str
+    road_id: st
+    snodeid: st
+    enodeid: st
     direction: int
     formway: Optional[int]
     road_kind: Optional[int]
@@ -71,8 +78,8 @@ class RoadFeatureRecord:
 
 @dataclass(frozen=True)
 class MainnodeGroup:
-    mainnode_id: str
-    representative_node_id: str
+    mainnode_id: st
+    representative_node_id: st
     member_node_ids: tuple[str, ...]
     grade_old: Optional[int]
     kind_old: Optional[int]
@@ -113,19 +120,19 @@ def _resolve_out_root(
 def _resolve_s2_dir(path: Union[str, Path]) -> Path:
     candidate = Path(path)
     direct_validated = candidate / "validated_pairs.csv"
-    direct_segment = candidate / "segment_body_roads.geojson"
+    direct_segment = first_existing_vector_path(candidate, "segment_body_roads.gpkg", "segment_body_roads.geojson")
     if direct_validated.is_file() and direct_segment.is_file():
         return candidate
 
     nested = candidate / "S2"
     nested_validated = nested / "validated_pairs.csv"
-    nested_segment = nested / "segment_body_roads.geojson"
+    nested_segment = first_existing_vector_path(nested, "segment_body_roads.gpkg", "segment_body_roads.geojson")
     if nested_validated.is_file() and nested_segment.is_file():
         return nested
 
     raise ValueError(
         f"Could not resolve S2 baseline directory from '{candidate}'. "
-        "Expected validated_pairs.csv and segment_body_roads.geojson either directly under the path or under path/S2."
+        "Expected validated_pairs.csv and segment_body_roads.gpkg/.geojson either directly under the path or under path/S2."
     )
 
 
@@ -202,7 +209,7 @@ def _allocate_unique_segmentid(
 
 
 def _load_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = load_vector_feature_collection(path)
     road_to_segmentid: dict[str, str] = {}
     pair_endpoints: dict[str, tuple[str, str]] = {}
     pending_rows: list[tuple[str, str, str, tuple[str, ...]]] = []
@@ -405,14 +412,14 @@ def _write_outputs(
     summary_path = out_root / "refresh_summary.json"
     mainnode_table_path = out_root / "mainnode_refresh_table.csv"
 
-    write_geojson(
+    write_vector(
         nodes_path,
         [
             {"properties": sanitize_public_node_properties(node_properties_map[record.node_id]), "geometry": record.geometry}
             for record in node_records
         ],
     )
-    write_geojson(
+    write_vector(
         roads_path,
         [
             {"properties": road_properties_map[record.road_id], "geometry": record.geometry}
@@ -456,13 +463,13 @@ def _materialize_s2_boundary_snapshot(*, source_s2_dir: Path, target_s2_dir: Pat
     target_s2_dir.mkdir(parents=True, exist_ok=True)
     if debug:
         shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
-        return target_s2_dir
+        return target_s2_di
 
     for filename in ("validated_pairs.csv", "endpoint_pool.csv", "endpoint_pool_summary.json"):
         source_path = source_s2_dir / filename
         if source_path.is_file():
             shutil.copy2(source_path, target_s2_dir / filename)
-    return target_s2_dir
+    return target_s2_di
 
 
 def refresh_s2_baseline(
@@ -504,7 +511,9 @@ def refresh_s2_baseline(
         debug=debug,
     )
     validated_pairs_path = s2_dir / "validated_pairs.csv"
-    segment_body_path = s2_dir / "segment_body_roads.geojson"
+    segment_body_path = first_existing_vector_path(s2_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson")
+    if segment_body_path is None:
+        raise ValueError(f"Could not find segment_body_roads output under '{s2_dir}'.")
 
     validated_pairs = _load_validated_pairs(validated_pairs_path)
     road_to_segmentid, pair_endpoints_from_segment = _load_segment_body_assignments(segment_body_path)
@@ -687,8 +696,8 @@ def refresh_s2_baseline(
         node_properties_map=node_properties_map,
         road_properties_map=road_properties_map,
         out_root=resolved_out_root,
-        node_output_name=Path(node_path).name,
-        road_output_name=Path(road_path).name,
+        node_output_name="nodes.gpkg",
+        road_output_name="roads.gpkg",
         summary=summary,
         mainnode_rows=mainnode_rows,
         preserved_s2_dir=preserved_s2_dir,

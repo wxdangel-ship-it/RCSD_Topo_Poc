@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 from shapely.geometry import LineString, Point
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    load_vector_feature_collection,
+    write_geojson,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import (
     _parse_segment_body_assignments,
     run_step4_residual_graph,
@@ -77,7 +80,7 @@ def _load_csv_rows(path: Path) -> list[dict[str, str]]:
 
 
 def _load_geojson(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_vector_feature_collection(path)
 
 
 def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_path: Path) -> None:
@@ -153,10 +156,10 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     assert (artifacts.out_root / "STEP4" / "endpoint_pool.csv").is_file()
     assert (artifacts.out_root / "step4_pair_candidates.csv").is_file()
     assert (artifacts.out_root / "step4_validated_pairs.csv").is_file()
-    assert (artifacts.out_root / "step4_segment_body_roads.geojson").is_file()
+    assert (artifacts.out_root / "step4_segment_body_roads.gpkg").is_file()
     assert (artifacts.out_root / "S2" / "sentinel.txt").read_text(encoding="utf-8") == "keep"
-    assert artifacts.refreshed_nodes_path.name == "nodes.geojson"
-    assert artifacts.refreshed_roads_path.name == "roads.geojson"
+    assert artifacts.refreshed_nodes_path.name == "nodes.gpkg"
+    assert artifacts.refreshed_roads_path.name == "roads.gpkg"
     strategy_doc = json.loads((artifacts.out_root / "step4_strategy.json").read_text(encoding="utf-8"))
     assert strategy_doc["through_node_rule"]["disallow_seed_terminate_nodes"] is True
     assert strategy_doc["through_node_rule"]["disallow_null_mainnode_singleton_seed_terminate_nodes"] is True
@@ -165,7 +168,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
 
     validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
     assert [row["pair_id"] for row in validated_rows] == ["STEP4:1__3"]
-    working_nodes_doc = _load_geojson(artifacts.out_root / "step4_working_nodes.geojson")
+    working_nodes_doc = _load_geojson(artifacts.out_root / "step4_working_nodes.gpkg")
     working_node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in working_nodes_doc["features"]}
     assert working_node_props["3"]["step4_input_kind_2"] == 64
     assert working_node_props["3"]["step4_input_eligible"] is True
@@ -255,7 +258,7 @@ def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path:
     assert strategy_doc["explicit_seed_node_ids"] == ["1", "300"]
     assert strategy_doc["explicit_terminate_node_ids"] == ["1", "300"]
 
-    working_nodes = _load_geojson(artifacts.out_root / "step4_working_nodes.geojson")
+    working_nodes = _load_geojson(artifacts.out_root / "step4_working_nodes.gpkg")
     working_props = {str(feature["properties"]["id"]): feature["properties"] for feature in working_nodes["features"]}
     assert working_props["300"]["step4_input_eligible"] is True
     assert working_props["300"]["step4_historical_boundary"] is True
@@ -316,7 +319,7 @@ def test_step4_does_not_keep_kind1_pseudojunction_boundary_created_only_by_right
     assert strategy_doc["explicit_seed_node_ids"] == ["1", "3"]
     assert strategy_doc["explicit_terminate_node_ids"] == ["1", "3"]
 
-    working_roads = _load_geojson(artifacts.out_root / "step4_working_roads.geojson")
+    working_roads = _load_geojson(artifacts.out_root / "step4_working_roads.gpkg")
     working_road_ids = {str(feature["properties"]["id"]) for feature in working_roads["features"]}
     assert "r24_right_turn" not in working_road_ids
 
@@ -358,7 +361,7 @@ def test_step4_does_not_keep_kind4_pseudojunction_created_only_by_right_turn_lan
         run_id="step4_kind4_pseudojunction",
     )
 
-    working_nodes = _load_geojson(artifacts.out_root / "step4_working_nodes.geojson")
+    working_nodes = _load_geojson(artifacts.out_root / "step4_working_nodes.gpkg")
     node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in working_nodes["features"]}
     assert node_props["2"]["step4_input_eligible"] is False
     assert node_props["2"]["grade_2"] == 1

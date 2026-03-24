@@ -9,7 +9,7 @@
 - `specs/t01-data-preprocess/` 仅承载当前治理轮次的 spec-kit 文档，不再作为 accepted baseline 主承载。
 
 ## 当前 accepted architecture
-- `raw GeoJSON input`
+- `raw vector input`
 - `working bootstrap`
 - `roundabout preprocessing`
 - `Step1`
@@ -22,9 +22,11 @@
 - `Step6`
 
 ## 关键原则
-- 官方输入统一为 `nodes.geojson / roads.geojson`。
+- 官方矢量输入统一为 `nodes.gpkg / roads.gpkg`。
+- 同名输入并存时统一优先 `GeoPackage(.gpkg)`；历史 `.gpkt` 仅兼容读取。
 - working node 业务判断统一使用 `grade_2 / kind_2`。
 - working road 正式输出统一使用 `segmentid / sgrade`。
+- 除 `slice_builder` 外，官方矢量输出统一为 `.gpkg`。
 - 环岛预处理位于 Step1 前，并将环岛 `mainnode` 固化为：
   - `grade_2 = 1`
   - `kind_2 = 64`

@@ -5,11 +5,11 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from time import perf_counter
+from time import perf_counte
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import shapefile
-from pyproj import CRS, Transformer
+from pyproj import CRS, Transforme
 from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
 
@@ -20,6 +20,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     read_vector_layer,
     write_geojson,
     write_json,
+    write_vector,
 )
 
 
@@ -31,7 +32,7 @@ DEFAULT_PROFILE_CONFIG_RELATIVE_PATH = Path("configs") / "t01_data_preprocess" /
 
 @dataclass(frozen=True)
 class SliceNode:
-    node_id: str
+    node_id: st
     mainnodeid: Optional[str]
     x: float
     y: float
@@ -40,8 +41,8 @@ class SliceNode:
 
 @dataclass(frozen=True)
 class SliceSemanticNode:
-    semantic_node_id: str
-    representative_node_id: str
+    semantic_node_id: st
+    representative_node_id: st
     member_node_ids: Tuple[str, ...]
     x: float
     y: float
@@ -50,7 +51,7 @@ class SliceSemanticNode:
 
 @dataclass(frozen=True)
 class SliceRoad:
-    road_id: str
+    road_id: st
     snodeid: Optional[str]
     enodeid: Optional[str]
     geometry: BaseGeometry
@@ -60,7 +61,7 @@ class SliceRoad:
 @dataclass(frozen=True)
 class SliceRoadHeader:
     record_index: int
-    road_id: str
+    road_id: st
     snodeid: Optional[str]
     enodeid: Optional[str]
     properties: Dict[str, Any]
@@ -68,9 +69,9 @@ class SliceRoadHeader:
 
 @dataclass(frozen=True)
 class SliceProfile:
-    profile_id: str
+    profile_id: st
     target_core_node_count: int
-    description: str
+    description: st
 
 
 @dataclass(frozen=True)
@@ -471,10 +472,17 @@ def _write_profile_slice(
 
     roads_path = out_dir / "roads.geojson"
     nodes_path = out_dir / "nodes.geojson"
+    roads_gpkg_path = out_dir / "roads.gpkg"
+    nodes_gpkg_path = out_dir / "nodes.gpkg"
     summary_path = out_dir / "slice_summary.json"
 
-    write_geojson(nodes_path, [_node_feature(physical_nodes[node_id]) for node_id in selected_node_ids])
-    write_geojson(roads_path, [_road_feature(road) for road in sorted(selected_roads, key=lambda road: _sort_key(road.road_id))])
+    node_features = [_node_feature(physical_nodes[node_id]) for node_id in selected_node_ids]
+    road_features = [_road_feature(road) for road in sorted(selected_roads, key=lambda road: _sort_key(road.road_id))]
+
+    write_geojson(nodes_path, node_features)
+    write_geojson(roads_path, road_features)
+    write_vector(nodes_gpkg_path, node_features)
+    write_vector(roads_gpkg_path, road_features)
 
     anchor_semantic_node = semantic_nodes[anchor_semantic_node_id]
     minx = min(physical_nodes[node_id].x for node_id in selected_node_ids)
@@ -507,7 +515,7 @@ def _write_profile_slice(
         "selected_semantic_node_ids_preview": sorted(output_semantic_node_ids, key=_sort_key)[:20],
         "selected_road_ids_preview": selected_road_ids[:20],
         "bounds_3857": {"minx": minx, "miny": miny, "maxx": maxx, "maxy": maxy},
-        "output_files": [roads_path.name, nodes_path.name, summary_path.name],
+        "output_files": [roads_path.name, nodes_path.name, roads_gpkg_path.name, nodes_gpkg_path.name, summary_path.name],
     }
     write_json(summary_path, summary)
     return SliceResult(profile=profile, output_dir=out_dir, summary=summary)
@@ -630,7 +638,7 @@ def _build_profile_slice_from_shapefile_headers(
         if not touches_core:
             continue
 
-        selected_headers[header.record_index] = header
+        selected_headers[header.record_index] = heade
         for endpoint_semantic_node_id, endpoint_node_id in (
             (semantic_snode_id, header.snodeid),
             (semantic_enode_id, header.enodeid),
@@ -647,7 +655,7 @@ def _build_profile_slice_from_shapefile_headers(
         semantic_snode_id = None if header.snodeid is None else physical_to_semantic.get(header.snodeid)
         semantic_enode_id = None if header.enodeid is None else physical_to_semantic.get(header.enodeid)
         if semantic_snode_id in output_semantic_node_ids and semantic_enode_id in output_semantic_node_ids:
-            selected_headers[header.record_index] = header
+            selected_headers[header.record_index] = heade
 
     print(
         f"[slice] materializing road geometries for profile {profile.profile_id}: selected_roads={len(selected_headers)} ...",

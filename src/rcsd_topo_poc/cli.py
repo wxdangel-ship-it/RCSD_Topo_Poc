@@ -218,10 +218,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t01-step1-pair-poc",
         help="Run T01 Step1 pair-candidate prototype and write QGIS-reviewable outputs.",
     )
-    p_t01.add_argument("--road-path", required=True, help="Path to Road GeoJSON. Shapefile remains supported for compatibility.")
+    p_t01.add_argument("--road-path", required=True, help="Path to Road GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_t01.add_argument("--road-layer", help="Optional road layer name.")
     p_t01.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_t01.add_argument("--node-path", required=True, help="Path to Node GeoJSON. Shapefile remains supported for compatibility.")
+    p_t01.add_argument("--node-path", required=True, help="Path to Node GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_t01.add_argument("--node-layer", help="Optional node layer name.")
     p_t01.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_t01.add_argument(
@@ -245,10 +245,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t01-step2-segment-poc",
         help="Run T01 Step2 Segment POC: validate pair candidates and build reviewable segment outputs.",
     )
-    p_t02.add_argument("--road-path", required=True, help="Path to Road GeoJSON. Shapefile remains supported for compatibility.")
+    p_t02.add_argument("--road-path", required=True, help="Path to Road GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_t02.add_argument("--road-layer", help="Optional road layer name.")
     p_t02.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_t02.add_argument("--node-path", required=True, help="Path to Node GeoJSON. Shapefile remains supported for compatibility.")
+    p_t02.add_argument("--node-path", required=True, help="Path to Node GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_t02.add_argument("--node-layer", help="Optional node layer name.")
     p_t02.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_t02.add_argument(
@@ -284,10 +284,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t01-build-validation-slices",
         help="Build T01 validation slice outputs for later Step1/Step2 review runs.",
     )
-    p_slice.add_argument("--road-path", required=True, help="Path to Road GeoJSON. Shapefile remains supported for compatibility.")
+    p_slice.add_argument("--road-path", required=True, help="Path to Road GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_slice.add_argument("--road-layer", help="Optional road layer name.")
     p_slice.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
-    p_slice.add_argument("--node-path", required=True, help="Path to Node GeoJSON. Shapefile remains supported for compatibility.")
+    p_slice.add_argument("--node-path", required=True, help="Path to Node GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_slice.add_argument("--node-layer", help="Optional node layer name.")
     p_slice.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_slice.add_argument(
@@ -318,14 +318,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_refresh.add_argument(
         "--road-path",
         required=True,
-        help="Path to original Road GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to original Road GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_refresh.add_argument("--road-layer", help="Optional road layer name.")
     p_refresh.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_refresh.add_argument(
         "--node-path",
         required=True,
-        help="Path to original Node GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to original Node GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_refresh.add_argument("--node-layer", help="Optional node layer name.")
     p_refresh.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
@@ -352,14 +352,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_step4.add_argument(
         "--road-path",
         required=True,
-        help="Path to refreshed Road GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to refreshed Road GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_step4.add_argument("--road-layer", help="Optional road layer name.")
     p_step4.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_step4.add_argument(
         "--node-path",
         required=True,
-        help="Path to refreshed Node GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to refreshed Node GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_step4.add_argument("--node-layer", help="Optional node layer name.")
     p_step4.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
@@ -393,14 +393,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_step5.add_argument(
         "--road-path",
         required=True,
-        help="Path to Step4 refreshed Road GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to Step4 refreshed Road GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_step5.add_argument("--road-layer", help="Optional road layer name.")
     p_step5.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_step5.add_argument(
         "--node-path",
         required=True,
-        help="Path to Step4 refreshed Node GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to Step4 refreshed Node GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_step5.add_argument("--node-layer", help="Optional node layer name.")
     p_step5.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
@@ -434,14 +434,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_skill.add_argument(
         "--road-path",
         required=True,
-        help="Path to input Road GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to input Road GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_skill.add_argument("--road-layer", help="Optional road layer name.")
     p_skill.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_skill.add_argument(
         "--node-path",
         required=True,
-        help="Path to input Node GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to input Node GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_skill.add_argument("--node-layer", help="Optional node layer name.")
     p_skill.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")
@@ -475,19 +475,19 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_step6 = sub.add_parser(
         "t01-step6-segment-aggregation-poc",
-        help="Build segment.geojson, inner_nodes.geojson, and segment_error.geojson from refreshed Step1-Step6-aligned GeoJSON outputs.",
+        help="Build segment.gpkg, inner_nodes.gpkg, and segment_error.gpkg from refreshed Step1-Step6-aligned vector outputs.",
     )
     p_step6.add_argument(
         "--road-path",
         required=True,
-        help="Path to refreshed Road GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to refreshed Road GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_step6.add_argument("--road-layer", help="Optional road layer name.")
     p_step6.add_argument("--road-crs", help="Optional CRS override, e.g. EPSG:4326.")
     p_step6.add_argument(
         "--node-path",
         required=True,
-        help="Path to refreshed Node GeoJSON. Shapefile remains supported only for compatibility.",
+        help="Path to refreshed Node GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_step6.add_argument("--node-layer", help="Optional node layer name.")
     p_step6.add_argument("--node-crs", help="Optional CRS override, e.g. EPSG:4326.")

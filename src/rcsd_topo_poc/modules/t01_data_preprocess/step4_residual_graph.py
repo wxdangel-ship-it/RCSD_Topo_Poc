@@ -549,8 +549,8 @@ def _build_step4_inputs(
         )
         if is_eligible:
             endpoint_pool_ids.add(node.semantic_node_id)
-        props["grade_2"] = 1 if is_eligible else 0
-        props["kind_2"] = 4 if is_eligible else 0
+        props["grade_2"] = grade_2
+        props["kind_2"] = kind_2
         props["step4_input_eligible"] = is_eligible
         props["step4_historical_boundary"] = is_historical_boundary
         props["step4_input_grade_2"] = grade_2
@@ -616,14 +616,24 @@ def _build_step4_inputs(
         {
             "strategy_id": STEP4_STRATEGY_ID,
             "description": "Step4 residual graph segment construction using refreshed grade_2/kind_2/closed_con.",
-            "seed_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
-            "terminate_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
+            "seed_rule": {
+                "kind_values_in": [4, 64, 2048],
+                "grade_in": [1, 2],
+                "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES),
+            },
+            "terminate_rule": {
+                "kind_values_in": [4, 64, 2048],
+                "grade_in": [1, 2],
+                "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES),
+            },
             "through_node_rule": {
                 "incident_road_degree_eq": 2,
                 "incident_degree_exclude_formway_bits_any": [7],
                 "disallow_seed_terminate_nodes": True,
                 "disallow_null_mainnode_singleton_seed_terminate_nodes": True,
             },
+            "explicit_seed_node_ids": sorted(endpoint_pool_ids, key=_sort_key),
+            "explicit_terminate_node_ids": sorted(endpoint_pool_ids, key=_sort_key),
             "force_seed_node_ids": sorted(historical_boundary_ids, key=_sort_key),
             "force_terminate_node_ids": sorted(historical_boundary_ids, key=_sort_key),
             "hard_stop_node_ids": sorted(historical_boundary_ids, key=_sort_key),
@@ -693,9 +703,10 @@ def _preserve_previous_s2_snapshot(
     if debug:
         shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
     else:
-        validated_pairs_path = source_s2_dir / "validated_pairs.csv"
-        if validated_pairs_path.is_file():
-            shutil.copy2(validated_pairs_path, target_s2_dir / "validated_pairs.csv")
+        for filename in ("validated_pairs.csv", "endpoint_pool.csv", "endpoint_pool_summary.json"):
+            source_path = source_s2_dir / filename
+            if source_path.is_file():
+                shutil.copy2(source_path, target_s2_dir / filename)
     return target_s2_dir
 
 

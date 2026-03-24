@@ -458,9 +458,10 @@ def _materialize_s2_boundary_snapshot(*, source_s2_dir: Path, target_s2_dir: Pat
         shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
         return target_s2_dir
 
-    validated_pairs_path = source_s2_dir / "validated_pairs.csv"
-    if validated_pairs_path.is_file():
-        shutil.copy2(validated_pairs_path, target_s2_dir / "validated_pairs.csv")
+    for filename in ("validated_pairs.csv", "endpoint_pool.csv", "endpoint_pool_summary.json"):
+        source_path = source_s2_dir / filename
+        if source_path.is_file():
+            shutil.copy2(source_path, target_s2_dir / filename)
     return target_s2_dir
 
 

@@ -1,26 +1,56 @@
 # T01 计划
 
 ## 当前阶段
-- `step2 same-stage pair arbitration repair`
+- `temporary final-segment baseline governance`
+- `implementation-audit driven repair`
+- `formal baseline documentation cleanup`
 
-## 本轮目标
-1. 在 Step2 单 pair 合法性验证之后、final `validated_pairs / segment_body` 固化之前，新增 same-stage pair arbitration 阶段。
-2. 显式识别同阶段合法 pair 的 conflict components，不再让最终保留结果由固定顺序直接决定。
-3. 在局部 conflict component 内，根据 corridor 归属、内部端点惩罚、body 支撑与语义冲突等指标，选择更合理的一组 winners。
-4. 产出可审计的 conflict / arbitration 中间结果，并完成 `XXXS7` 定点验证。
-5. 完成 `XXXS` freeze compare 回归，但不自动更新 freeze baseline。
+## 当前目标
+1. 维护 `XXXS*` 临时最终 Segment 基线，只用于回归闸门，不覆盖 accepted baseline。
+2. 按审计结果拆批整改实现，而不是继续混修样例问题。
+3. 将正式文档收敛到当前修订版 accepted baseline。
 
-## 本轮边界
-- 不修改 Step1 `pair_candidates` 语义。
-- 不修改 Step4 / Step5A / Step5B / Step5C 当前 accepted 语义。
-- 不引入全局网络级优化器，仅在 Step2 / S2 同阶段冲突簇内做局部仲裁。
-- 不 silent fix，不 silent 更新 freeze baseline。
+## 临时基线状态
+
+### PASS_LOCKED
+- `XXXS`
+- `XXXS2`
+- `XXXS3`
+- `XXXS4`
+- `XXXS6`
+- `XXXS8`
+
+### FAIL_TARGET
+- `XXXS5`
+- `XXXS7`
+
+### 说明
+- `XXXS` 当前带有一处已记录的临时接受差异，后续如需重新打开，必须单独立项，不与当前批次混修。
+- 临时基线记录落在：
+  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_BASELINE_MANIFEST.json`
+  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_REVIEW.md`
 
 ## 实施顺序
-1. 保留 Step1 输出与 Step2 单 pair 验证前半段。
-2. 在 Step2 中补充 pair-level conflict graph 与 conflict component 识别。
-3. 为合法 pair + trunk/segment_body candidate 计算仲裁指标。
-4. 对小型 component 做 exact 组合搜索；对大型 component 做 fallback greedy，并审计记录 fallback。
-5. 用仲裁 winners 重新固化 Step2 final `validated_pairs / segment_body / step3_residual`。
-6. 输出 conflict / arbitration 审计文件，并以 `XXXS7` 做定点验收。
-7. 完成 `XXXS` freeze compare 回归并保留差异报告。
+1. 先以临时基线做最终 Segment 非回退闸门。
+2. 按审计结果分批整改实现：
+   - 批次 A：`Step4 / Step5A / Step5B` 不得压扁当前 `grade_2 / kind_2`
+   - 批次 B：`Step5A / Step5B / Step5C` 改为逐轮 refresh 后再进入下一轮
+   - 批次 C：去掉 `Step2` 对 raw `grade / kind` 的业务 fallback
+   - 批次 D：补齐 `formway = 128` 在 Step6 的一致过滤
+3. 每一批完成后，都必须：
+   - 对 `PASS_LOCKED` 做最终 Segment 非回退检查
+   - 记录 `FAIL_TARGET` 前后差异
+4. 业务输出稳定后，再继续结构整改与文档收口。
+
+## 文档清理落点
+- 主规格：`spec.md`
+- 计划与批次：`plan.md`
+- 执行清单：`tasks.md`
+- 模块说明：`modules/t01_data_preprocess/README.md`
+- 模块契约：`modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
+
+## 边界
+- 不自动更新 freeze baseline。
+- 不把临时最终 Segment 基线误写成 accepted baseline。
+- 不通过 silent fix 掩盖问题。
+- 架构整改优先抽取共性模块与压缩超大文件职责，不顺手扩大为新的业务算法开发。

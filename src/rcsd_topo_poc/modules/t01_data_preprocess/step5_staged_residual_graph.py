@@ -716,8 +716,8 @@ def _build_phase_inputs(
         props = dict(node.properties)
         is_historical_boundary = node.semantic_node_id in hard_stop_node_ids
         is_eligible = node.semantic_node_id in eligible_mainnode_ids and node.semantic_node_id not in pseudo_junction_ids
-        props["grade_2"] = 1 if is_eligible else 0
-        props["kind_2"] = 4 if is_eligible else 0
+        props["grade_2"] = _current_grade_2(node)
+        props["kind_2"] = _current_kind_2(node)
         props[f"{phase_lower}_input_eligible"] = is_eligible
         props[f"{phase_lower}_historical_boundary"] = is_historical_boundary
         props[f"{phase_lower}_input_grade_2"] = _current_grade_2(node)
@@ -746,13 +746,39 @@ def _build_phase_inputs(
         {
             "strategy_id": phase_id,
             "description": f"{phase_id} staged residual graph segment construction.",
-            "seed_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
-            "terminate_rule": {"kind_bits_any": [2, 6], "grade_eq": 1, "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES)},
+            "seed_rule": (
+                {
+                    "kind_values_in": [4, 64, 2048],
+                    "grade_in": [1, 2, 3],
+                    "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES),
+                }
+                if phase_id != STEP5A_STRATEGY_ID
+                else {
+                    "kind_values_in": [4, 64, 2048],
+                    "grade_eq": 9999,
+                    "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES),
+                }
+            ),
+            "terminate_rule": (
+                {
+                    "kind_values_in": [4, 64, 2048],
+                    "grade_in": [1, 2, 3],
+                    "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES),
+                }
+                if phase_id != STEP5A_STRATEGY_ID
+                else {
+                    "kind_values_in": [4, 64, 2048],
+                    "grade_eq": 9999,
+                    "closed_con_in": sorted(ACTIVE_CLOSED_CON_VALUES),
+                }
+            ),
             "through_node_rule": {
                 "incident_road_degree_eq": 2,
                 "incident_degree_exclude_formway_bits_any": [7],
                 "disallow_seed_terminate_nodes": True,
             },
+            "explicit_seed_node_ids": sorted(eligible_mainnode_ids, key=_sort_key),
+            "explicit_terminate_node_ids": sorted(eligible_mainnode_ids, key=_sort_key),
             "force_seed_node_ids": sorted(historical_seed_node_ids, key=_sort_key),
             "force_terminate_node_ids": sorted(historical_seed_node_ids, key=_sort_key),
             "hard_stop_node_ids": sorted(hard_stop_node_ids, key=_sort_key),

@@ -47,6 +47,7 @@ class PairArbitrationMetrics:
     corridor_naturalness_score: int
     contested_trunk_coverage_count: int
     contested_trunk_coverage_ratio: float
+    pair_support_expansion_penalty: int
     internal_endpoint_penalty: int
     body_connectivity_support: float
     semantic_conflict_penalty: int
@@ -63,6 +64,7 @@ class PairArbitrationDecision:
     corridor_naturalness_score: int
     contested_trunk_coverage_count: int
     contested_trunk_coverage_ratio: float
+    pair_support_expansion_penalty: int
     internal_endpoint_penalty: int
     body_connectivity_support: float
     semantic_conflict_penalty: int
@@ -129,12 +131,46 @@ def _is_weak_support_overlap(
     road_to_node_ids: Optional[dict[str, tuple[str, str]]] = None,
     strong_anchor_node_ids: Optional[set[str]] = None,
     tjunction_anchor_node_ids: Optional[set[str]] = None,
+    pair_endpoint_node_ids: Optional[set[str]] = None,
 ) -> bool:
     if shared_corridor_road_ids:
         return False
     if len(shared_trunk_road_ids) != 1:
         return False
     if not road_to_node_ids or not strong_anchor_node_ids:
+        return False
+    shared_trunk_endpoint_anchor_node_ids: set[str] = set()
+    shared_trunk_endpoint_tjunction_anchor_node_ids: set[str] = set()
+    if pair_endpoint_node_ids:
+        for road_id in shared_trunk_road_ids:
+            endpoints = road_to_node_ids.get(road_id)
+            if endpoints is None:
+                continue
+            endpoint_node_ids = set(endpoints)
+            shared_trunk_endpoint_anchor_node_ids.update(endpoint_node_ids & strong_anchor_node_ids)
+            if tjunction_anchor_node_ids:
+                shared_trunk_endpoint_tjunction_anchor_node_ids.update(
+                    endpoint_node_ids & tjunction_anchor_node_ids
+                )
+            if endpoint_node_ids & pair_endpoint_node_ids:
+                return False
+    else:
+        for road_id in shared_trunk_road_ids:
+            endpoints = road_to_node_ids.get(road_id)
+            if endpoints is None:
+                continue
+            endpoint_node_ids = set(endpoints)
+            shared_trunk_endpoint_anchor_node_ids.update(endpoint_node_ids & strong_anchor_node_ids)
+            if tjunction_anchor_node_ids:
+                shared_trunk_endpoint_tjunction_anchor_node_ids.update(
+                    endpoint_node_ids & tjunction_anchor_node_ids
+                )
+    if len(shared_trunk_endpoint_anchor_node_ids) == 1:
+        pass
+    elif not (
+        len(shared_trunk_endpoint_anchor_node_ids) == 2
+        and len(shared_trunk_endpoint_tjunction_anchor_node_ids) == 1
+    ):
         return False
     touched_anchor_node_ids: set[str] = set()
     for road_id in shared_road_ids:
@@ -296,6 +332,12 @@ def _build_pair_conflicts(
                 road_to_node_ids=road_to_node_ids,
                 strong_anchor_node_ids=strong_anchor_node_ids,
                 tjunction_anchor_node_ids=tjunction_anchor_node_ids,
+                pair_endpoint_node_ids={
+                    left_options[0].a_node_id,
+                    left_options[0].b_node_id,
+                    right_options[0].a_node_id,
+                    right_options[0].b_node_id,
+                },
             ) and not preserve_tjunction_conflict:
                 continue
 
@@ -375,6 +417,25 @@ def _option_internal_node_ids(
     return node_ids
 
 
+def _option_pair_support_road_ids(option: PairArbitrationOption) -> set[str]:
+    explicit_pair_support_road_ids = {
+        str(road_id)
+        for road_id in option.support_info.get("pair_support_road_ids", ())
+        if str(road_id)
+    }
+    if explicit_pair_support_road_ids:
+        return explicit_pair_support_road_ids
+
+    return {
+        str(road_id)
+        for road_id in (
+            tuple(option.support_info.get("forward_path_road_ids", ()))
+            + tuple(option.support_info.get("reverse_path_road_ids", ()))
+        )
+        if str(road_id)
+    }
+
+
 def _option_metrics(
     option: PairArbitrationOption,
     *,
@@ -391,6 +452,8 @@ def _option_metrics(
         if not contested_road_ids
         else contested_trunk_coverage_count / float(len(contested_road_ids))
     )
+    pair_support_road_ids = _option_pair_support_road_ids(option)
+    pair_support_expansion_penalty = len(set(option.trunk_road_ids) - pair_support_road_ids)
     endpoint_boundary_penalty = int(option.a_node_id in weak_endpoint_node_ids) + int(
         option.b_node_id in weak_endpoint_node_ids
     )
@@ -406,6 +469,7 @@ def _option_metrics(
         corridor_naturalness_score=corridor_naturalness_score,
         contested_trunk_coverage_count=contested_trunk_coverage_count,
         contested_trunk_coverage_ratio=contested_trunk_coverage_ratio,
+        pair_support_expansion_penalty=pair_support_expansion_penalty,
         internal_endpoint_penalty=internal_endpoint_penalty,
         body_connectivity_support=body_connectivity_support,
         semantic_conflict_penalty=semantic_conflict_penalty,
@@ -512,6 +576,7 @@ def _anchor_priority_key(
         _anchor_balance(option, anchor_node_id=anchor_node_id, road_to_node_ids=road_to_node_ids),
         float(-metrics.endpoint_boundary_penalty),
         float(-metrics.internal_endpoint_penalty),
+        float(-metrics.pair_support_expansion_penalty),
         float(metrics.contested_trunk_coverage_count),
         float(-len(option.trunk_road_ids)),
         float(-trunk_total_length),
@@ -569,6 +634,7 @@ def _option_priority_key(
         float(metrics.contested_trunk_coverage_count),
         metrics.contested_trunk_coverage_ratio,
         float(metrics.strong_anchor_win_count),
+        float(-metrics.pair_support_expansion_penalty),
         float(-metrics.endpoint_boundary_penalty),
         float(-metrics.internal_endpoint_penalty),
         metrics.body_connectivity_support,
@@ -590,6 +656,7 @@ def _selection_score(
     corridor_naturalness = 0
     contested_count = 0
     contested_ratio = 0.0
+    pair_support_expansion_penalty = 0
     internal_penalty = 0
     body_support = 0.0
     semantic_penalty = 0
@@ -600,6 +667,7 @@ def _selection_score(
         corridor_naturalness += metrics.corridor_naturalness_score
         contested_count += metrics.contested_trunk_coverage_count
         contested_ratio += metrics.contested_trunk_coverage_ratio
+        pair_support_expansion_penalty += metrics.pair_support_expansion_penalty
         internal_penalty += metrics.internal_endpoint_penalty
         body_support += metrics.body_connectivity_support
         semantic_penalty += metrics.semantic_conflict_penalty
@@ -608,6 +676,7 @@ def _selection_score(
             float(contested_count),
             contested_ratio,
             float(strong_anchor_wins),
+            float(-pair_support_expansion_penalty),
             float(-endpoint_penalty),
             float(-internal_penalty),
             body_support,
@@ -617,6 +686,7 @@ def _selection_score(
         )
     return (
         float(len(option_ids)),
+        float(-pair_support_expansion_penalty),
         float(-endpoint_penalty),
         float(-internal_penalty),
         float(-semantic_penalty),
@@ -850,6 +920,12 @@ def _build_option_conflicts(
                 road_to_node_ids=road_to_node_ids,
                 strong_anchor_node_ids=strong_anchor_node_ids,
                 tjunction_anchor_node_ids=tjunction_anchor_node_ids,
+                pair_endpoint_node_ids={
+                    option.a_node_id,
+                    option.b_node_id,
+                    other_option.a_node_id,
+                    other_option.b_node_id,
+                },
             ) and not preserve_tjunction_conflict:
                 continue
             option_conflicts[option.option_id].add(other_option.option_id)
@@ -877,6 +953,7 @@ def _build_decision(
         corridor_naturalness_score=metrics.corridor_naturalness_score,
         contested_trunk_coverage_count=metrics.contested_trunk_coverage_count,
         contested_trunk_coverage_ratio=metrics.contested_trunk_coverage_ratio,
+        pair_support_expansion_penalty=metrics.pair_support_expansion_penalty,
         internal_endpoint_penalty=metrics.internal_endpoint_penalty,
         body_connectivity_support=metrics.body_connectivity_support,
         semantic_conflict_penalty=metrics.semantic_conflict_penalty,
@@ -897,6 +974,8 @@ def _infer_lose_reason(
         return "endpoint_boundary_penalty_higher"
     if losing_metrics.strong_anchor_win_count < winning_metrics.strong_anchor_win_count:
         return "corridor_ownership_weaker"
+    if losing_metrics.pair_support_expansion_penalty > winning_metrics.pair_support_expansion_penalty:
+        return "pair_support_expansion_higher"
     if losing_metrics.corridor_naturalness_score < winning_metrics.corridor_naturalness_score:
         return "corridor_naturalness_weaker"
     if losing_metrics.internal_endpoint_penalty > winning_metrics.internal_endpoint_penalty:
@@ -1101,6 +1180,7 @@ def arbitrate_pair_options(
                     corridor_naturalness_score=0,
                     contested_trunk_coverage_count=0,
                     contested_trunk_coverage_ratio=0.0,
+                    pair_support_expansion_penalty=0,
                     internal_endpoint_penalty=0,
                     body_connectivity_support=0.0,
                     semantic_conflict_penalty=0,

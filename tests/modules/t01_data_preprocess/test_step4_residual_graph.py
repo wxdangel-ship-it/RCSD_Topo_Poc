@@ -160,6 +160,8 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     strategy_doc = json.loads((artifacts.out_root / "step4_strategy.json").read_text(encoding="utf-8"))
     assert strategy_doc["through_node_rule"]["disallow_seed_terminate_nodes"] is True
     assert strategy_doc["through_node_rule"]["disallow_null_mainnode_singleton_seed_terminate_nodes"] is True
+    assert strategy_doc["seed_rule"]["kind_values_in"] == [4, 64, 2048]
+    assert strategy_doc["seed_rule"]["grade_in"] == [1, 2]
 
     validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
     assert [row["pair_id"] for row in validated_rows] == ["STEP4:1__3"]
@@ -167,6 +169,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     working_node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in working_nodes_doc["features"]}
     assert working_node_props["3"]["step4_input_kind_2"] == 64
     assert working_node_props["3"]["step4_input_eligible"] is True
+    assert working_node_props["3"]["kind_2"] == 64
 
     roads_doc = _load_geojson(artifacts.refreshed_roads_path)
     road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
@@ -213,6 +216,10 @@ def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path:
         "node_id,source_tags\n300,S2\n999,S2\n",
         encoding="utf-8",
     )
+    (s2_dir / "endpoint_pool_summary.json").write_text(
+        json.dumps({"stage_id": "S2", "endpoint_pool_count": 2}, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     node_path = input_dir / "nodes.geojson"
     road_path = input_dir / "roads.geojson"
@@ -245,14 +252,20 @@ def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path:
     assert strategy_doc["force_seed_node_ids"] == ["300", "999"]
     assert strategy_doc["force_terminate_node_ids"] == ["300", "999"]
     assert strategy_doc["hard_stop_node_ids"] == ["300", "999"]
+    assert strategy_doc["explicit_seed_node_ids"] == ["1", "300"]
+    assert strategy_doc["explicit_terminate_node_ids"] == ["1", "300"]
 
     working_nodes = _load_geojson(artifacts.out_root / "step4_working_nodes.geojson")
     working_props = {str(feature["properties"]["id"]): feature["properties"] for feature in working_nodes["features"]}
     assert working_props["300"]["step4_input_eligible"] is True
     assert working_props["300"]["step4_historical_boundary"] is True
+    assert working_props["300"]["grade_2"] == 0
+    assert working_props["300"]["kind_2"] == 0
 
     validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
     assert {row["pair_id"] for row in validated_rows} == {"STEP4:1__300"}
+    assert (artifacts.out_root / "S2" / "endpoint_pool.csv").is_file()
+    assert (artifacts.out_root / "S2" / "endpoint_pool_summary.json").is_file()
 
 
 def test_step4_does_not_keep_kind1_pseudojunction_boundary_created_only_by_right_turn_lane(
@@ -300,6 +313,8 @@ def test_step4_does_not_keep_kind1_pseudojunction_boundary_created_only_by_right
     assert strategy_doc["force_seed_node_ids"] == []
     assert strategy_doc["force_terminate_node_ids"] == []
     assert strategy_doc["hard_stop_node_ids"] == []
+    assert strategy_doc["explicit_seed_node_ids"] == ["1", "3"]
+    assert strategy_doc["explicit_terminate_node_ids"] == ["1", "3"]
 
     working_roads = _load_geojson(artifacts.out_root / "step4_working_roads.geojson")
     working_road_ids = {str(feature["properties"]["id"]) for feature in working_roads["features"]}
@@ -346,6 +361,8 @@ def test_step4_does_not_keep_kind4_pseudojunction_created_only_by_right_turn_lan
     working_nodes = _load_geojson(artifacts.out_root / "step4_working_nodes.geojson")
     node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in working_nodes["features"]}
     assert node_props["2"]["step4_input_eligible"] is False
+    assert node_props["2"]["grade_2"] == 1
+    assert node_props["2"]["kind_2"] == 4
 
     validated_rows = _load_csv_rows(artifacts.out_root / "step4_validated_pairs.csv")
     assert {row["pair_id"] for row in validated_rows} == {"STEP4:1__3"}

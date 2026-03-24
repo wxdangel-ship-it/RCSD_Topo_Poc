@@ -167,6 +167,19 @@ def _cmd_t02_virtual_intersection_poc(args: argparse.Namespace) -> int:
 
     return run_t02_virtual_intersection_poc_cli(args)
 
+
+def _cmd_t02_export_text_bundle(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t02_junction_anchor.text_bundle import run_t02_export_text_bundle_cli
+
+    return run_t02_export_text_bundle_cli(args)
+
+
+def _cmd_t02_decode_text_bundle(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t02_junction_anchor.text_bundle import run_t02_decode_text_bundle_cli
+
+    return run_t02_decode_text_bundle_cli(args)
+
+
 def _cmd_t02_stage2_anchor_recognition(args: argparse.Namespace) -> int:
     from rcsd_topo_poc.modules.t02_junction_anchor.stage2_anchor_recognition import (
         run_t02_stage2_anchor_recognition_cli,
@@ -514,7 +527,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--segment_path",
         required=True,
         dest="segment_path",
-        help="Path to T01 segment GeoJSON/Shapefile.",
+        help="Path to T01 segment GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_t02_stage1.add_argument("--segment-layer", help="Optional segment layer name.")
     p_t02_stage1.add_argument("--segment-crs", help="Optional segment CRS override, e.g. EPSG:4326.")
@@ -523,7 +536,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--nodes_path",
         required=True,
         dest="nodes_path",
-        help="Path to T01 nodes GeoJSON/Shapefile.",
+        help="Path to T01 nodes GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_t02_stage1.add_argument("--nodes-layer", help="Optional nodes layer name.")
     p_t02_stage1.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
@@ -532,7 +545,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--drivezone_path",
         required=True,
         dest="drivezone_path",
-        help="Path to DriveZone GeoJSON/Shapefile.",
+        help="Path to DriveZone GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_t02_stage1.add_argument("--drivezone-layer", help="Optional DriveZone layer name.")
     p_t02_stage1.add_argument("--drivezone-crs", help="Optional DriveZone CRS override, e.g. EPSG:4326.")
@@ -558,7 +571,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--segment_path",
         required=True,
         dest="segment_path",
-        help="Path to T01/T02 segment GeoJSON/Shapefile used for stage2 summary.",
+        help="Path to T01/T02 segment GeoPackage/GeoJSON/Shapefile used for stage2 summary. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_t02_stage2.add_argument("--segment-crs", help="Optional segment CRS override, e.g. EPSG:4326.")
     p_t02_stage2.add_argument(
@@ -566,7 +579,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--nodes_path",
         required=True,
         dest="nodes_path",
-        help="Path to T02 stage1 nodes GeoJSON/Shapefile.",
+        help="Path to T02 stage1 nodes GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_t02_stage2.add_argument("--nodes-layer", help="Optional nodes layer name.")
     p_t02_stage2.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
@@ -575,7 +588,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--intersection_path",
         required=True,
         dest="intersection_path",
-        help="Path to RCSDIntersection GeoJSON/Shapefile.",
+        help="Path to RCSDIntersection GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_t02_stage2.add_argument("--intersection-layer", help="Optional RCSDIntersection layer name.")
     p_t02_stage2.add_argument("--intersection-crs", help="Optional RCSDIntersection CRS override, e.g. EPSG:4326.")
@@ -596,10 +609,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "t02-virtual-intersection-poc",
         help="Run single-mainnodeid T02 virtual intersection POC with DriveZone and RC constraints.",
     )
-    p_t02_poc.add_argument("--nodes-path", "--nodes_path", required=True, dest="nodes_path", help="Path to nodes GeoJSON/Shapefile.")
+    p_t02_poc.add_argument("--nodes-path", "--nodes_path", required=True, dest="nodes_path", help="Path to nodes GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_t02_poc.add_argument("--nodes-layer", help="Optional nodes layer name.")
     p_t02_poc.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
-    p_t02_poc.add_argument("--roads-path", "--roads_path", required=True, dest="roads_path", help="Path to roads GeoJSON/Shapefile.")
+    p_t02_poc.add_argument("--roads-path", "--roads_path", required=True, dest="roads_path", help="Path to roads GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_t02_poc.add_argument("--roads-layer", help="Optional roads layer name.")
     p_t02_poc.add_argument("--roads-crs", help="Optional roads CRS override, e.g. EPSG:4326.")
     p_t02_poc.add_argument(
@@ -607,7 +620,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--drivezone_path",
         required=True,
         dest="drivezone_path",
-        help="Path to DriveZone GeoJSON/Shapefile.",
+        help="Path to DriveZone GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_t02_poc.add_argument("--drivezone-layer", help="Optional DriveZone layer name.")
     p_t02_poc.add_argument("--drivezone-crs", help="Optional DriveZone CRS override, e.g. EPSG:4326.")
@@ -616,7 +629,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--rcsdroad_path",
         required=True,
         dest="rcsdroad_path",
-        help="Path to RCSDRoad GeoJSON/Shapefile.",
+        help="Path to RCSDRoad GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_t02_poc.add_argument("--rcsdroad-layer", help="Optional RCSDRoad layer name.")
     p_t02_poc.add_argument("--rcsdroad-crs", help="Optional RCSDRoad CRS override, e.g. EPSG:4326.")
@@ -625,7 +638,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--rcsdnode_path",
         required=True,
         dest="rcsdnode_path",
-        help="Path to RCSDNode GeoJSON/Shapefile.",
+        help="Path to RCSDNode GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
     )
     p_t02_poc.add_argument("--rcsdnode-layer", help="Optional RCSDNode layer name.")
     p_t02_poc.add_argument("--rcsdnode-crs", help="Optional RCSDNode CRS override, e.g. EPSG:4326.")
@@ -642,6 +655,58 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_t02_poc.add_argument("--patch-size-m", type=float, default=200.0, help="North-up patch size in meters. Default: 200.")
     p_t02_poc.add_argument("--resolution-m", type=float, default=0.2, help="Raster resolution in meters. Default: 0.2.")
     p_t02_poc.set_defaults(func=_cmd_t02_virtual_intersection_poc)
+
+    p_t02_export = sub.add_parser(
+        "t02-export-text-bundle",
+        help="Export a single-mainnodeid T02 text bundle for external reproduction.",
+    )
+    p_t02_export.add_argument("--nodes-path", "--nodes_path", required=True, dest="nodes_path", help="Path to nodes GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
+    p_t02_export.add_argument("--nodes-layer", help="Optional nodes layer name.")
+    p_t02_export.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
+    p_t02_export.add_argument("--roads-path", "--roads_path", required=True, dest="roads_path", help="Path to roads GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
+    p_t02_export.add_argument("--roads-layer", help="Optional roads layer name.")
+    p_t02_export.add_argument("--roads-crs", help="Optional roads CRS override, e.g. EPSG:4326.")
+    p_t02_export.add_argument(
+        "--drivezone-path",
+        "--drivezone_path",
+        required=True,
+        dest="drivezone_path",
+        help="Path to DriveZone GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_export.add_argument("--drivezone-layer", help="Optional DriveZone layer name.")
+    p_t02_export.add_argument("--drivezone-crs", help="Optional DriveZone CRS override, e.g. EPSG:4326.")
+    p_t02_export.add_argument(
+        "--rcsdroad-path",
+        "--rcsdroad_path",
+        required=True,
+        dest="rcsdroad_path",
+        help="Path to RCSDRoad GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_export.add_argument("--rcsdroad-layer", help="Optional RCSDRoad layer name.")
+    p_t02_export.add_argument("--rcsdroad-crs", help="Optional RCSDRoad CRS override, e.g. EPSG:4326.")
+    p_t02_export.add_argument(
+        "--rcsdnode-path",
+        "--rcsdnode_path",
+        required=True,
+        dest="rcsdnode_path",
+        help="Path to RCSDNode GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_export.add_argument("--rcsdnode-layer", help="Optional RCSDNode layer name.")
+    p_t02_export.add_argument("--rcsdnode-crs", help="Optional RCSDNode CRS override, e.g. EPSG:4326.")
+    p_t02_export.add_argument("--mainnodeid", required=True, help="Single target mainnodeid for the text bundle.")
+    p_t02_export.add_argument("--out-txt", "--out_txt", required=True, dest="out_txt", help="Single text bundle output path.")
+    p_t02_export.add_argument("--buffer-m", type=float, default=100.0, help="Local query buffer in meters. Default: 100.")
+    p_t02_export.add_argument("--patch-size-m", type=float, default=200.0, help="North-up patch size in meters. Default: 200.")
+    p_t02_export.add_argument("--resolution-m", type=float, default=0.2, help="Raster resolution in meters. Default: 0.2.")
+    p_t02_export.set_defaults(func=_cmd_t02_export_text_bundle)
+
+    p_t02_decode = sub.add_parser(
+        "t02-decode-text-bundle",
+        help="Decode a single-mainnodeid T02 text bundle into a local directory.",
+    )
+    p_t02_decode.add_argument("--bundle-txt", "--bundle_txt", required=True, dest="bundle_txt", help="Input bundle txt path.")
+    p_t02_decode.add_argument("--out-dir", "--out_dir", required=True, dest="out_dir", help="Output directory for decoded bundle files.")
+    p_t02_decode.set_defaults(func=_cmd_t02_decode_text_bundle)
 
     args = parser.parse_args(argv)
     try:

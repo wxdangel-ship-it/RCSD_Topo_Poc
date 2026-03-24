@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+import fiona
 from pyproj import CRS, Transformer
 from shapely import make_valid
 from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, mapping, shape
@@ -22,6 +23,7 @@ TARGET_CRS = CRS.from_epsg(3857)
 DEFAULT_GEOJSON_CRS = CRS.from_epsg(4326)
 WEB_MERCATOR_MAX_ABS = 20037508.342789244
 GEOGRAPHIC_RANGE_TOLERANCE = 1e-9
+GEOPACKAGE_SUFFIXES = {".gpkg", ".gpkt"}
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,18 @@ def list_patch_dirs(patch_all_root: Path) -> list[Path]:
 def remove_existing_output(path: Path) -> None:
     if path.exists():
         path.unlink()
+
+
+def prefer_vector_input_path(path: Path) -> Path:
+    resolved = Path(path)
+    suffix = resolved.suffix.lower()
+    if suffix in GEOPACKAGE_SUFFIXES:
+        return resolved
+    for candidate_suffix in (".gpkg", ".gpkt"):
+        candidate = resolved.with_suffix(candidate_suffix)
+        if candidate.is_file():
+            return candidate
+    return resolved
 
 
 def build_logger(log_path: Path, logger_name: str) -> logging.Logger:
@@ -401,6 +415,70 @@ def _json_compatible(value: Any) -> Any:
     return value
 
 
+def _vector_property_value(value: Any) -> Any:
+    value = _json_compatible(value)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def _vector_property_type(value: Any) -> str:
+    if value is None:
+        return "str"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    return "str"
+
+
+def _prepare_vector_records(features: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    prepared: list[dict[str, Any]] = []
+    for feature in features:
+        geometry = feature.get("geometry")
+        properties = {
+            str(key): _vector_property_value(value)
+            for key, value in (feature.get("properties") or {}).items()
+        }
+        prepared.append({"properties": properties, "geometry": geometry})
+    return prepared
+
+
+def _vector_geometry_payload(geometry: Any) -> Any:
+    if geometry is None:
+        return None
+    if isinstance(geometry, dict):
+        return geometry
+    return mapping(geometry)
+
+
+def _build_fiona_schema(records: list[dict[str, Any]]) -> dict[str, Any]:
+    field_order: list[str] = []
+    field_types: dict[str, str] = {}
+    for record in records:
+        for key, value in record["properties"].items():
+            if key not in field_order:
+                field_order.append(key)
+            if key not in field_types and value is not None:
+                field_types[key] = _vector_property_type(value)
+    for key in field_order:
+        field_types.setdefault(key, "str")
+    return {
+        "geometry": "Unknown",
+        "properties": {key: field_types[key] for key in field_order},
+    }
+
+
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fp:
@@ -422,7 +500,7 @@ def write_geojson(path: Path, features: Iterable[dict[str, Any]], *, crs_text: s
             feature_payload = {
                 "type": "Feature",
                 "properties": _json_compatible(feature.get("properties") or {}),
-                "geometry": mapping(geometry) if geometry is not None else None,
+                "geometry": _vector_geometry_payload(geometry),
             }
             if not first:
                 fp.write(",")
@@ -430,3 +508,46 @@ def write_geojson(path: Path, features: Iterable[dict[str, Any]], *, crs_text: s
             first = False
 
         fp.write("]}")
+
+
+def write_vector(
+    path: Path,
+    features: Iterable[dict[str, Any]],
+    *,
+    crs_text: str | None = None,
+    layer_name: str | None = None,
+) -> None:
+    output_path = Path(path)
+    suffix = output_path.suffix.lower()
+    if suffix in {".geojson", ".json"}:
+        write_geojson(output_path, features, crs_text=crs_text)
+        return
+    if suffix not in GEOPACKAGE_SUFFIXES:
+        raise ValueError(f"Unsupported vector output format for '{output_path}'. Expected GeoJSON or GeoPackage.")
+
+    records = _prepare_vector_records(features)
+    schema = _build_fiona_schema(records)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    remove_existing_output(output_path)
+    open_kwargs: dict[str, Any] = {
+        "mode": "w",
+        "driver": "GPKG",
+        "layer": layer_name or output_path.stem,
+        "schema": schema,
+        "encoding": "utf-8",
+    }
+    if crs_text is not None:
+        open_kwargs["crs"] = crs_text
+    with fiona.open(str(output_path), **open_kwargs) as sink:
+        schema_property_names = list(schema["properties"].keys())
+        for record in records:
+            sink.write(
+                {
+                    "type": "Feature",
+                    "properties": {
+                        key: record["properties"].get(key)
+                        for key in schema_property_names
+                    },
+                    "geometry": _vector_geometry_payload(record["geometry"]),
+                }
+            )

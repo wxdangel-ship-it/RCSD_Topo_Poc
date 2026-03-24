@@ -23,24 +23,35 @@ python -m rcsd_topo_poc t02-stage2-anchor-recognition --help
 python -m rcsd_topo_poc t02-virtual-intersection-poc --help
 ```
 
+```bash
+python -m rcsd_topo_poc t02-export-text-bundle --help
+```
+
+```bash
+python -m rcsd_topo_poc t02-decode-text-bundle --help
+```
+
 - `t02-virtual-intersection-poc` 是当前为单 `mainnodeid` 虚拟路口面验证新增的实验性 POC 入口
 - 它不重算 stage1 `has_evd`，也不替代当前正式的 stage1 / stage2 基线
+- `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 `mainnodeid` 文本证据包导出与解包，服务于外网实验复现
+- T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
+- T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
 ## 3. 常见运行方式
 
 ```bash
 python -m rcsd_topo_poc t02-stage1-drivezone-gate \
-  --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.geojson \
-  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/nodes.geojson \
-  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.geojson \
+  --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/nodes.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate \
   --run-id t02_stage1_run
 ```
 
 ```bash
 python -m rcsd_topo_poc t02-stage2-anchor-recognition \
-  --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.geojson \
-  --nodes-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate/t02_stage1_run/nodes.geojson \
-  --intersection-path /mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.geojson \
+  --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --nodes-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate/t02_stage1_run/nodes.gpkg \
+  --intersection-path /mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.gpkg \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage2_anchor_recognition \
   --run-id t02_stage2_run
 ```
@@ -49,14 +60,31 @@ POC 示例：
 
 ```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc \
-  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.geojson \
-  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.geojson \
-  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.geojson \
-  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.geojson \
-  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.geojson \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.gpkg \
   --mainnodeid 100 \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc \
   --run-id t02_virtual_intersection_demo
+```
+
+```bash
+python -m rcsd_topo_poc t02-export-text-bundle \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
+  --mainnodeid 765003 \
+  --out-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt
+```
+
+```bash
+python -m rcsd_topo_poc t02-decode-text-bundle \
+  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt \
+  --out-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003_decoded
 ```
 
 说明：
@@ -68,11 +96,11 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
 
 ## 4. 输出总览
 
-- `nodes.geojson`
+- `nodes.gpkg`
   - 继承输入 `nodes` 字段并新增 `has_evd`
   - 只有代表 node 写 `yes/no`
   - 输出 geometry 统一为 `EPSG:3857`
-- `segment.geojson`
+- `segment.gpkg`
   - 继承输入 `segment` 字段并新增 `has_evd`
   - 输出 geometry 统一为 `EPSG:3857`
 - `t02_stage1_summary.json`
@@ -94,16 +122,16 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   - 总耗时、阶段耗时和总体计数
 - `t02_stage1_perf_markers.jsonl`
   - 阶段级性能标记流
-- `virtual_intersection_polygon.geojson`
+- `virtual_intersection_polygon.gpkg`
   - 单 `mainnodeid` POC 生成的虚拟路口面
 - `branch_evidence.json`
-- `branch_evidence.geojson`
+- `branch_evidence.gpkg`
   - 分支方向、证据等级、是否纳入虚拟面和 RC 方向组映射
-- `associated_rcsdroad.geojson`
+- `associated_rcsdroad.gpkg`
 - `associated_rcsdroad_audit.csv`
 - `associated_rcsdroad_audit.json`
   - 已关联与未关联的 RCSDRoad 结果及审计
-- `associated_rcsdnode.geojson`
+- `associated_rcsdnode.gpkg`
 - `associated_rcsdnode_audit.csv`
 - `associated_rcsdnode_audit.json`
   - 已关联与未关联的 RCSDNode 结果及审计
@@ -115,6 +143,10 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
 - `t02_virtual_intersection_poc_perf.json`
 - `t02_virtual_intersection_poc_perf_markers.jsonl`
   - 单 `mainnodeid` POC 的状态、风险、审计与性能输出
+- `t02_single_case_bundle.txt`
+  - 单 `mainnodeid` 文本证据包
+- 内含 `manifest.json`、`drivezone_mask.png`、`nodes.gpkg`、`roads.gpkg`、`rcsdroad.gpkg`、`rcsdnode.gpkg`、`size_report.json`
+  - 导出时强制检查最终文本体积 `<= 300KB`；超限时失败并输出体积分析报告
 
 说明：
 
@@ -148,7 +180,7 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   - `summary`
   - `audit/log`
 - 已实现：
-  - stage2 新增输入 `RCSDIntersection.geojson`
+- stage2 新增输入 `RCSDIntersection`
   - stage2 summary 读取 `segment`
   - `nodes.is_anchor`
   - `yes / no / fail1 / fail2 / null`
@@ -157,6 +189,7 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   - `t02_stage2_summary.json`
   - 单 `mainnodeid` 虚拟路口面 POC
   - 基于 DriveZone / roads / RCSDRoad / RCSDNode 的局部 patch、分支证据和 RC 关联输出
+  - 单 `mainnodeid` 文本证据包导出与解包
 - 未实现：
   - 最终唯一锚定决策闭环
   - 概率 / 置信度

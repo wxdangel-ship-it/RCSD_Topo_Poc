@@ -15,7 +15,7 @@
   - stage1 `DriveZone / has_evd gate`
   - stage2 anchor recognition / anchor existence 最小闭环
   - 消费 T01 `segment` 与 `nodes`
-  - 消费 `DriveZone.geojson` 与 `RCSDIntersection.geojson`
+- 消费 `DriveZone` 与 `RCSDIntersection`
   - 产出 `nodes.has_evd`、`segment.has_evd`、`summary`、`audit/log`
 - 当前不在正式范围：
   - 最终锚定结果与几何表达
@@ -32,8 +32,8 @@
 
 - `segment`
 - `nodes`
-- `DriveZone.geojson`
-- `RCSDIntersection.geojson`（stage2 anchor recognition 基线输入）
+- `DriveZone`
+- `RCSDIntersection`（stage2 anchor recognition 基线输入）
 
 ### 2.2 可选输入兼容参数
 
@@ -46,6 +46,8 @@
 
 说明：
 
+- 输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取。
+- 若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`。
 - 对 GeoJSON，若源文件缺失 CRS，则必须显式传入对应 CRS override，否则执行失败。
 - 对 Shapefile，若无 `.prj`，也必须显式传入对应 CRS override，否则执行失败。
 
@@ -139,7 +141,7 @@
   - `fail1`
   - `fail2`
   - `null`
-- 阶段二使用 `RCSDIntersection.geojson` 做路口面判定。
+- 阶段二使用 `RCSDIntersection` 做路口面判定。
 - 与 stage1 一致，边界接触也算成功。
 - 阶段二空间处理同样统一在 `EPSG:3857` 下进行。
 - 若目标 `junction` 组（仅限 `has_evd = yes`）任一 node 落入或接触任一 `RCSDIntersection` 面：
@@ -150,11 +152,11 @@
 - `node_error_1`：
   - 同一组 node 落入两个不同的 `RCSDIntersection` 面
   - 该组代表 node 的 `is_anchor = fail1`
-  - 需同时保留 GeoJSON 与审计表
+- 需同时保留 GeoPackage(.gpkg) 与审计表
 - `node_error_2`：
   - 一个 `RCSDIntersection` 面对应不止一组 node
   - 这些组对应代表 node 的 `is_anchor = fail2`
-  - 需同时保留 GeoJSON 与审计表
+- 需同时保留 GeoPackage(.gpkg) 与审计表
 - 优先级冻结为：
   - `fail2` 优先于 `fail1`
   - 若同一组同时命中 `node_error_1` 与 `node_error_2`
@@ -182,8 +184,8 @@ outputs/_work/t02_stage1_drivezone_gate
 
 ### 3.2 正式输出文件
 
-- `nodes.geojson`
-- `segment.geojson`
+- `nodes.gpkg`
+- `segment.gpkg`
 - `t02_stage1_summary.json`
 - `t02_stage1_audit.csv`
 - `t02_stage1_audit.json`
@@ -194,7 +196,7 @@ outputs/_work/t02_stage1_drivezone_gate
 
 ### 3.3 输出语义
 
-#### `nodes.geojson`
+#### `nodes.gpkg`
 
 - 继承输入 `nodes` properties
 - 新增字段：`has_evd`
@@ -210,7 +212,7 @@ outputs/_work/t02_stage1_drivezone_gate
 - `is_anchor` 是 stage2 anchor recognition 字段。
 - `is_anchor` 业务值域冻结为 `yes / no / fail1 / fail2 / null`。
 
-#### `segment.geojson`
+#### `segment.gpkg`
 
 - 继承输入 `segment` properties
 - 新增字段：`has_evd`
@@ -277,13 +279,13 @@ outputs/_work/t02_stage1_drivezone_gate
   - 逻辑含义：同一组 node 落入两个不同的 `RCSDIntersection` 面
   - 对应代表 node 的 `is_anchor = fail1`
   - 输出形态必须同时保留：
-    - GeoJSON
+    - GeoPackage(.gpkg)
     - 审计表
 - `node_error_2`
   - 逻辑含义：一个 `RCSDIntersection` 面对应不止一组 node
   - 对应代表 node 的 `is_anchor = fail2`
   - 输出形态必须同时保留：
-    - GeoJSON
+    - GeoPackage(.gpkg)
     - 审计表
 - 具体文件命名与最小字段集待后续实现任务书确认。
 
@@ -449,23 +451,40 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc --help
 
 ```bash
 python -m rcsd_topo_poc t02-stage1-drivezone-gate \
-  --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.geojson \
-  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/nodes.geojson \
-  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.geojson \
+  --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/nodes.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage1_drivezone_gate \
   --run-id t02_stage1_run
 ```
 
 ```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc \
-  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.geojson \
-  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.geojson \
-  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.geojson \
-  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.geojson \
-  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.geojson \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.gpkg \
   --mainnodeid 100 \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc \
   --run-id t02_virtual_intersection_demo
+```
+
+```bash
+python -m rcsd_topo_poc t02-export-text-bundle \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
+  --mainnodeid 765003 \
+  --out-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt
+```
+
+```bash
+python -m rcsd_topo_poc t02-decode-text-bundle \
+  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt \
+  --out-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003_decoded
 ```
 
 ### 6.1 实验性 POC 输入前提
@@ -476,11 +495,29 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
 - `mainnodeid` 对应代表 node 必须满足：`has_evd = yes`、`is_anchor = no`、`kind_2 in {4, 2048}`
 - `RCSDRoad / RCSDNode` 在局部 patch 内若不落在 `DriveZone` 上，入口必须失败并输出审计
 
+### 6.2 单 mainnodeid 文本证据包
+
+- `t02-export-text-bundle` 只处理单个 `mainnodeid`
+- 导出端输入路径全部通过命令行提供：`nodes / roads / DriveZone / RCSDRoad / RCSDNode`
+- 导出结果是单个纯文本文件，默认逻辑内容至少包含：
+  - `manifest.json`
+  - `drivezone_mask.png`
+- `nodes.gpkg`
+- `roads.gpkg`
+- `rcsdroad.gpkg`
+- `rcsdnode.gpkg`
+  - `size_report.json`
+- 打包流程固定为“局部裁剪 -> 压缩归档 -> 文本编码”，不允许直接明文拼接大段原始矢量文本
+- 最终 bundle 文本体积必须 `<= 300KB`
+- 若超限，入口必须失败退出，并输出体积分析 `size_report`
+- `t02-decode-text-bundle` 负责校验 bundle 头尾标识、版本与 checksum，并恢复等价目录结构
+
 ## 7. Acceptance
 
-1. 官方入口可稳定产出 `nodes.geojson`、`segment.geojson`、`summary`、`audit`、`log`。
+1. 官方入口可稳定产出 `nodes.gpkg`、`segment.gpkg`、`summary`、`audit`、`log`。
 2. `has_evd` 保持 `yes/no/null` 业务语义，不偷换为布尔值或 `0/1`。
 3. 缺字段、缺 CRS、代表 node 缺失、路口组缺失、空目标路口等情形都可被诊断。
 4. `summary` 已覆盖 `0-0双 / 0-1双 / 0-2双` 与 `all__d_sgrade`。
 5. `is_anchor`、`node_error_1`、`node_error_2` 与 `fail2 > fail1` 优先级已冻结并已落地最小闭环实现。
 6. stage2 当前仍未扩写为最终唯一锚定决策闭环，概率/置信度与环岛新规则未泄漏进当前正式契约。
+7. 单 `mainnodeid` 文本证据包已具备“导出 + 解包”最小闭环，且 bundle 体积受 `300KB` 上限约束。

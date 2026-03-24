@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import fiona
 from shapely.geometry import Point, Polygon
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_geojson
@@ -12,7 +13,21 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage2_anchor_recognition import 
 
 
 def _load_geojson(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    if path.suffix.lower() in {".geojson", ".json"}:
+        return json.loads(path.read_text(encoding="utf-8"))
+    with fiona.open(path) as src:
+        return {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": dict(feature["properties"]),
+                    "geometry": feature["geometry"],
+                }
+                for feature in src
+            ],
+        }
 
 
 def _load_json(path: Path) -> dict:

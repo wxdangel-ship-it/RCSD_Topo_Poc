@@ -46,7 +46,7 @@
 
 - `segment` 图层，来自 T01。
 - `nodes` 图层，来自 T01。
-- `DriveZone.geojson`，表示所有有资料区域的路面范围。
+- `DriveZone`，表示所有有资料区域的路面范围；当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`，历史 `.gpkt` 后缀仅做兼容读取；同名时优先 `GeoPackage`
 
 ### 5.2 实际输入字段冻结
 
@@ -245,7 +245,7 @@
 ### 5.15 阶段二输入与业务定位
 
 - 阶段二新增输入：
-  - `RCSDIntersection.geojson`
+- `RCSDIntersection`
 - 阶段二当前只处理 `has_evd = yes` 的路口组。
 - `has_evd != yes` 的路口组不进入 stage2 anchor 判定。
 - 对上述未进入 stage2 的组，`is_anchor` 保持 `null`。
@@ -267,7 +267,7 @@
 
 ### 5.17 阶段二空间判定与 anchor recognition 规则
 
-- 阶段二使用 `RCSDIntersection.geojson` 做路口面判定。
+- 阶段二使用 `RCSDIntersection` 做路口面判定。
 - 与 stage1 一致，边界接触也算成功。
 - 阶段二空间处理同样统一在 `EPSG:3857` 下进行。
 - 本轮不扩写缺失 CRS 的修复策略。
@@ -282,14 +282,14 @@
   - 则该组代表 node 的 `is_anchor = fail1`
   - 同时输出到 `node_error_1`
   - `node_error_1` 需要同时保留：
-    - GeoJSON
+- GeoPackage(.gpkg)
     - 审计表
 - 错误态 2：`node_error_2`
   - 反向从 `RCSDIntersection` 面包含选择 node 时，若一个面对应不止一组 node
   - 则这些组对应代表 node 的 `is_anchor = fail2`
   - 同时输出到 `node_error_2`
   - `node_error_2` 需要同时保留：
-    - GeoJSON
+- GeoPackage(.gpkg)
     - 审计表
 - `is_anchor` 业务含义冻结为：
   - `yes`：`has_evd = yes`，且该组命中且仅稳定对应一个 `RCSDIntersection` 面，未触发错误态
@@ -346,7 +346,7 @@
 - T02 总目标是双向 Segment 相关路口锚定。
 - 当前采用“阶段一 gate、阶段二 anchoring”的两阶段推进。
 - 当前阶段一实现基线已冻结，阶段二 anchor recognition 文档基线也已冻结。
-- 阶段一正式输入为 `segment`、`nodes`、`DriveZone.geojson`。
+- 阶段一正式输入为 `segment`、`nodes`、`DriveZone`。
 - stage1 实际输入字段冻结为：
   - `segment.id / pair_nodes / junc_nodes`
   - `nodes.id / mainnodeid`
@@ -358,13 +358,17 @@
 - 空间判定统一在 `EPSG:3857` 下进行。
 - `summary` 在单桶内按唯一路口 ID 统计，不做按 Segment 的重复展开计数。
 - stage1 `summary` 在分桶之外补充 `all__d_sgrade` 总汇总项。
-- 阶段二新增输入为 `RCSDIntersection.geojson`。
+- 阶段二新增输入为 `RCSDIntersection`。
 - 阶段二当前定位冻结为 anchor recognition / anchor existence，而不是最终概率型锚定闭环。
 - `nodes.is_anchor` 只对代表 node 写值，枚举冻结为 `yes / no / fail1 / fail2 / null`。
 - 阶段二仅处理 `has_evd = yes` 的路口组；其它组 `is_anchor = null`。
 - `node_error_1 -> fail1`，`node_error_2 -> fail2`，且 `fail2` 优先于 `fail1`。
 - 阶段二边界接触算成功，空间判定同样统一到 `EPSG:3857`。
 - 阶段二当前不涉及成果概率 / 置信度实现。
+- 已新增单 `mainnodeid` 文本证据包能力，用于局部裁剪 `nodes / roads / DriveZone / RCSDRoad / RCSDNode` 并导出单个 txt。
+- 文本证据包只服务于外网实验复现，不替代正式产线输入。
+- 文本证据包默认逻辑内容至少包含 `manifest.json`、`drivezone_mask.png`、`nodes.gpkg`、`roads.gpkg`、`rcsdroad.gpkg`、`rcsdnode.gpkg`、`size_report.json`。
+- 文本证据包固定采用“压缩归档 + 文本编码”方案，最终体积必须 `<= 300KB`；超限时必须失败并输出体积分析报告。
 
 ## 8. 剩余待确认项 / 非阻断风险 / 上游依赖
 
@@ -390,7 +394,7 @@
 
 ### 8.4 阶段二错误输出的稳定文件命名与最小审计字段
 
-- 当前已冻结 `node_error_1` 与 `node_error_2` 必须同时保留 GeoJSON 与审计表。
+- 当前已冻结 `node_error_1` 与 `node_error_2` 必须同时保留 GeoPackage(.gpkg) 与审计表。
 - 具体文件命名、最小字段集与稳定落盘形态，待后续实现任务书确认。
 
 ## 9. 进入编码前的门禁

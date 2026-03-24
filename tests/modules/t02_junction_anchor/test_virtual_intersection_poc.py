@@ -3,11 +3,28 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import fiona
 from shapely.geometry import LineString, Point, box, shape
 from shapely.ops import unary_union
 
-from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_geojson
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import run_t02_virtual_intersection_poc
+
+
+def _load_vector_doc(path: Path) -> dict:
+    with fiona.open(path) as src:
+        return {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": dict(feature["properties"]),
+                    "geometry": feature["geometry"],
+                }
+                for feature in src
+            ],
+        }
 
 
 def _write_poc_inputs(
@@ -28,13 +45,13 @@ def _write_poc_inputs(
     if representative_overrides:
         representative_props.update(representative_overrides)
 
-    nodes_path = tmp_path / "nodes.geojson"
-    roads_path = tmp_path / "roads.geojson"
-    drivezone_path = tmp_path / "drivezone.geojson"
-    rcsdroad_path = tmp_path / "rcsdroad.geojson"
-    rcsdnode_path = tmp_path / "rcsdnode.geojson"
+    nodes_path = tmp_path / "nodes.gpkg"
+    roads_path = tmp_path / "roads.gpkg"
+    drivezone_path = tmp_path / "drivezone.gpkg"
+    rcsdroad_path = tmp_path / "rcsdroad.gpkg"
+    rcsdnode_path = tmp_path / "rcsdnode.gpkg"
 
-    write_geojson(
+    write_vector(
         nodes_path,
         [
             {
@@ -42,9 +59,10 @@ def _write_poc_inputs(
                 "geometry": Point(0.0, 0.0),
             }
         ],
+        crs_text="EPSG:3857",
     )
 
-    write_geojson(
+    write_vector(
         roads_path,
         [
             {
@@ -60,6 +78,7 @@ def _write_poc_inputs(
                 "geometry": LineString([(0.0, 0.0), (55.0, 0.0)]),
             },
         ],
+        crs_text="EPSG:3857",
     )
 
     drivezone_geometry = unary_union(
@@ -69,13 +88,14 @@ def _write_poc_inputs(
             box(-25.0, -8.0, 0.0, 8.0),
         ]
     )
-    write_geojson(
+    write_vector(
         drivezone_path,
         [{"properties": {"name": "dz"}, "geometry": drivezone_geometry}],
+        crs_text="EPSG:3857",
     )
 
     west_geometry = LineString([(-18.0, 0.0), (0.0, 0.0)]) if rc_west_inside else LineString([(-40.0, 30.0), (-20.0, 30.0)])
-    write_geojson(
+    write_vector(
         rcsdroad_path,
         [
             {
@@ -95,6 +115,7 @@ def _write_poc_inputs(
                 "geometry": west_geometry,
             },
         ],
+        crs_text="EPSG:3857",
     )
 
     rcsdnode_features = [
@@ -105,7 +126,7 @@ def _write_poc_inputs(
     ]
     if include_rc_group:
         rcsdnode_features.insert(0, {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": Point(0.0, 0.0)})
-    write_geojson(rcsdnode_path, rcsdnode_features)
+    write_vector(rcsdnode_path, rcsdnode_features, crs_text="EPSG:3857")
 
     return {
         "nodes_path": nodes_path,
@@ -137,7 +158,7 @@ def test_virtual_intersection_poc_generates_polygon_branch_evidence_and_rc_assoc
     artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
     assert artifacts.success is True
 
-    polygon_doc = json.loads(artifacts.virtual_polygon_path.read_text(encoding="utf-8"))
+    polygon_doc = _load_vector_doc(artifacts.virtual_polygon_path)
     polygon = shape(polygon_doc["features"][0]["geometry"])
     assert polygon.area > 100.0
 
@@ -150,12 +171,12 @@ def test_virtual_intersection_poc_generates_polygon_branch_evidence_and_rc_assoc
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
     assert status_doc["status"] == "stable"
 
-    associated_roads_doc = json.loads(artifacts.associated_rcsdroad_path.read_text(encoding="utf-8"))
+    associated_roads_doc = _load_vector_doc(artifacts.associated_rcsdroad_path)
     associated_road_ids = {feature["properties"]["id"] for feature in associated_roads_doc["features"]}
     assert {"rc_north", "rc_south", "rc_east"} <= associated_road_ids
     assert "rc_west" not in associated_road_ids
 
-    associated_nodes_doc = json.loads(artifacts.associated_rcsdnode_path.read_text(encoding="utf-8"))
+    associated_nodes_doc = _load_vector_doc(artifacts.associated_rcsdnode_path)
     associated_node_ids = {feature["properties"]["id"] for feature in associated_nodes_doc["features"]}
     assert {"100", "901", "902", "903"} <= associated_node_ids
 

@@ -17,7 +17,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     build_logger,
     build_run_id,
     close_logger,
-    write_geojson,
+    write_vector,
     write_json,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
@@ -233,7 +233,7 @@ def _error_audit_row(
 
 def _write_error_outputs(
     *,
-    geojson_path: Path,
+    vector_path: Path,
     audit_csv_path: Path,
     audit_json_path: Path,
     nodes_features: list[Any],
@@ -242,8 +242,8 @@ def _write_error_outputs(
     audit_rows: list[dict[str, Any]],
     run_id: str,
 ) -> None:
-    write_geojson(
-        geojson_path,
+    write_vector(
+        vector_path,
         (
             {
                 "properties": {
@@ -397,11 +397,11 @@ def run_t02_stage2_anchor_recognition(
     perf_json_path = resolved_out_root / "t02_stage2_perf.json"
     perf_markers_path = resolved_out_root / "t02_stage2_perf_markers.jsonl"
     summary_path = resolved_out_root / "t02_stage2_summary.json"
-    nodes_output_path = resolved_out_root / "nodes.geojson"
-    node_error_1_path = resolved_out_root / "node_error_1.geojson"
+    nodes_output_path = resolved_out_root / "nodes.gpkg"
+    node_error_1_path = resolved_out_root / "node_error_1.gpkg"
     node_error_1_audit_csv_path = resolved_out_root / "node_error_1_audit.csv"
     node_error_1_audit_json_path = resolved_out_root / "node_error_1_audit.json"
-    node_error_2_path = resolved_out_root / "node_error_2.geojson"
+    node_error_2_path = resolved_out_root / "node_error_2.gpkg"
     node_error_2_audit_csv_path = resolved_out_root / "node_error_2_audit.csv"
     node_error_2_audit_json_path = resolved_out_root / "node_error_2_audit.json"
     audit_csv_path = resolved_out_root / "t02_stage2_audit.csv"
@@ -924,7 +924,7 @@ def run_t02_stage2_anchor_recognition(
         _mark_stage("summary_prepared", summary_started_at)
 
         node_write_started_at = time.perf_counter()
-        write_geojson(
+        write_vector(
             nodes_output_path,
             (
                 {
@@ -936,12 +936,12 @@ def run_t02_stage2_anchor_recognition(
             crs_text=TARGET_CRS.to_string(),
         )
         announce(logger, f"[T02] nodes written path={nodes_output_path}")
-        _snapshot("running", "nodes_written", "nodes.geojson written.")
+        _snapshot("running", "nodes_written", "nodes.gpkg written.")
         _mark_stage("nodes_written", node_write_started_at)
 
         error_write_started_at = time.perf_counter()
         _write_error_outputs(
-            geojson_path=node_error_1_path,
+            vector_path=node_error_1_path,
             audit_csv_path=node_error_1_audit_csv_path,
             audit_json_path=node_error_1_audit_json_path,
             nodes_features=nodes_layer_data.features,
@@ -951,7 +951,7 @@ def run_t02_stage2_anchor_recognition(
             run_id=resolved_run_id,
         )
         _write_error_outputs(
-            geojson_path=node_error_2_path,
+            vector_path=node_error_2_path,
             audit_csv_path=node_error_2_audit_csv_path,
             audit_json_path=node_error_2_audit_json_path,
             nodes_features=nodes_layer_data.features,
@@ -1106,7 +1106,7 @@ def run_t02_stage2_anchor_recognition(
         )
         stage_counts["audit_count"] = len(audit_rows)
         _write_error_outputs(
-            geojson_path=node_error_1_path,
+            vector_path=node_error_1_path,
             audit_csv_path=node_error_1_audit_csv_path,
             audit_json_path=node_error_1_audit_json_path,
             nodes_features=[],
@@ -1116,7 +1116,7 @@ def run_t02_stage2_anchor_recognition(
             run_id=resolved_run_id,
         )
         _write_error_outputs(
-            geojson_path=node_error_2_path,
+            vector_path=node_error_2_path,
             audit_csv_path=node_error_2_audit_csv_path,
             audit_json_path=node_error_2_audit_json_path,
             nodes_features=[],

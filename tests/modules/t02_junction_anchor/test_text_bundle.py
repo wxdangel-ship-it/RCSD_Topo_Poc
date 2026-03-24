@@ -9,8 +9,15 @@ from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t02_junction_anchor.text_bundle import (
+    LEGACY_TEXT_BUNDLE_CHECKSUM,
+    LEGACY_TEXT_BUNDLE_END_PAYLOAD,
+    LEGACY_TEXT_BUNDLE_META,
+    LEGACY_TEXT_BUNDLE_PAYLOAD,
     TEXT_BUNDLE_BEGIN,
+    TEXT_BUNDLE_CHECKSUM,
     TEXT_BUNDLE_END,
+    TEXT_BUNDLE_PAYLOAD,
+    TEXT_BUNDLE_META,
     REQUIRED_BUNDLE_FILES,
     run_t02_decode_text_bundle,
     run_t02_export_text_bundle,
@@ -124,6 +131,10 @@ def test_export_text_bundle_roundtrip_restores_required_files(tmp_path: Path) ->
     bundle_text = bundle_path.read_text(encoding="utf-8")
     assert bundle_text.startswith(TEXT_BUNDLE_BEGIN)
     assert TEXT_BUNDLE_END in bundle_text
+    assert f"\n{TEXT_BUNDLE_META}" in bundle_text
+    assert f"\n{TEXT_BUNDLE_PAYLOAD}\n" in bundle_text
+    assert f"\n{TEXT_BUNDLE_CHECKSUM}" in bundle_text
+    assert "END_PAYLOAD" not in bundle_text
 
     decode_dir = tmp_path / "decoded"
     decode_artifacts = run_t02_decode_text_bundle(bundle_txt=bundle_path, out_dir=decode_dir)
@@ -144,9 +155,51 @@ def test_export_text_bundle_roundtrip_restores_required_files(tmp_path: Path) ->
     assert png_header == b"\x89PNG\r\n\x1a\n"
 
     assert _vector_feature_count(decode_dir / "nodes.gpkg") >= 1
+    assert _vector_feature_count(decode_dir / "drivezone.gpkg") >= 1
     assert _vector_feature_count(decode_dir / "roads.gpkg") >= 1
     assert _vector_feature_count(decode_dir / "rcsdroad.gpkg") >= 1
     assert _vector_feature_count(decode_dir / "rcsdnode.gpkg") >= 1
+
+
+def test_decode_text_bundle_defaults_to_bundle_stem_directory(tmp_path: Path) -> None:
+    paths = _write_bundle_inputs(tmp_path)
+    bundle_path = tmp_path / "765003.txt"
+    artifacts = run_t02_export_text_bundle(mainnodeid="100", out_txt=bundle_path, **paths)
+    assert artifacts.success is True
+
+    decode_artifacts = run_t02_decode_text_bundle(bundle_txt=bundle_path)
+    assert decode_artifacts.success is True
+    assert decode_artifacts.out_dir == tmp_path / "765003"
+    for name in REQUIRED_BUNDLE_FILES:
+        assert (decode_artifacts.out_dir / name).is_file()
+
+
+def test_decode_text_bundle_accepts_legacy_wrapper_format(tmp_path: Path) -> None:
+    paths = _write_bundle_inputs(tmp_path)
+    bundle_path = tmp_path / "case.txt"
+    artifacts = run_t02_export_text_bundle(mainnodeid="100", out_txt=bundle_path, **paths)
+    assert artifacts.success is True
+
+    bundle_lines = bundle_path.read_text(encoding="utf-8").splitlines()
+    checksum_index = next(index for index, line in enumerate(bundle_lines) if line.startswith(TEXT_BUNDLE_CHECKSUM))
+
+    legacy_lines = []
+    for index, line in enumerate(bundle_lines):
+        if index == 1 and line.startswith(TEXT_BUNDLE_META):
+            legacy_lines.append(LEGACY_TEXT_BUNDLE_META + line[len(TEXT_BUNDLE_META) :])
+        elif line == TEXT_BUNDLE_PAYLOAD:
+            legacy_lines.append(LEGACY_TEXT_BUNDLE_PAYLOAD)
+        elif line.startswith(TEXT_BUNDLE_CHECKSUM):
+            legacy_lines.append(LEGACY_TEXT_BUNDLE_CHECKSUM + line[len(TEXT_BUNDLE_CHECKSUM) :])
+        else:
+            legacy_lines.append(line)
+        if index == checksum_index - 1:
+            legacy_lines.append(LEGACY_TEXT_BUNDLE_END_PAYLOAD)
+
+    bundle_path.write_text("\n".join(legacy_lines) + "\n", encoding="utf-8")
+    decode_artifacts = run_t02_decode_text_bundle(bundle_txt=bundle_path)
+    assert decode_artifacts.success is True
+    assert (decode_artifacts.out_dir / "manifest.json").is_file()
 
 
 def test_export_text_bundle_fails_with_size_report_when_limit_exceeded(tmp_path: Path) -> None:

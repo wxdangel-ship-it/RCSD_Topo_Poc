@@ -19,7 +19,6 @@ def test_smoke_t02_text_bundle_roundtrip() -> None:
     root = Path("outputs/_work/smoke_t02_text_bundle") / f"{run_id}_{os.getpid()}"
     inputs_dir = root / "inputs"
     outputs_dir = root / "run"
-    decoded_dir = root / "decoded"
     inputs_dir.mkdir(parents=True, exist_ok=True)
 
     nodes_path = inputs_dir / "nodes.gpkg"
@@ -113,17 +112,17 @@ def test_smoke_t02_text_bundle_roundtrip() -> None:
             "t02-decode-text-bundle",
             "--bundle-txt",
             str(bundle_path),
-            "--out-dir",
-            str(decoded_dir),
         ]
     )
     assert decode_exit_code == 0
+    decoded_dir = outputs_dir / "smoke_case"
 
     manifest_path = decoded_dir / "manifest.json"
     size_report_path = decoded_dir / "size_report.json"
     assert manifest_path.is_file()
     assert size_report_path.is_file()
     assert (decoded_dir / "drivezone_mask.png").is_file()
+    assert (decoded_dir / "drivezone.gpkg").is_file()
     assert (decoded_dir / "nodes.gpkg").is_file()
     assert (decoded_dir / "roads.gpkg").is_file()
     assert (decoded_dir / "rcsdroad.gpkg").is_file()

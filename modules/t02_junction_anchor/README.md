@@ -83,8 +83,7 @@ python -m rcsd_topo_poc t02-export-text-bundle \
 
 ```bash
 python -m rcsd_topo_poc t02-decode-text-bundle \
-  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt \
-  --out-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003_decoded
+  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt
 ```
 
 说明：
@@ -145,7 +144,8 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - 单 `mainnodeid` POC 的状态、风险、审计与性能输出
 - `t02_single_case_bundle.txt`
   - 单 `mainnodeid` 文本证据包
-- 内含 `manifest.json`、`drivezone_mask.png`、`nodes.gpkg`、`roads.gpkg`、`rcsdroad.gpkg`、`rcsdnode.gpkg`、`size_report.json`
+- 内含 `manifest.json`、`drivezone_mask.png`、`drivezone.gpkg`、`nodes.gpkg`、`roads.gpkg`、`rcsdroad.gpkg`、`rcsdnode.gpkg`、`size_report.json`
+- `t02-decode-text-bundle` 默认解包到与 bundle 同目录、且以 bundle 文件名为目录名的子目录；例如 `case_765003.txt -> case_765003/`
   - 导出时强制检查最终文本体积 `<= 300KB`；超限时失败并输出体积分析报告
 
 说明：

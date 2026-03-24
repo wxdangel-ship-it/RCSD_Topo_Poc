@@ -188,3 +188,26 @@ def test_t02_decode_text_bundle_cli_accepts_expected_args(monkeypatch, tmp_path:
     assert exit_code == 0
     assert captured["bundle_txt"] == str(tmp_path / "bundle.txt")
     assert captured["out_dir"] == str(tmp_path / "decoded")
+
+
+def test_t02_decode_text_bundle_cli_allows_default_output_dir(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_cmd(args) -> int:
+        captured["bundle_txt"] = args.bundle_txt
+        captured["out_dir"] = args.out_dir
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_t02_decode_text_bundle", _fake_cmd)
+
+    exit_code = cli.main(
+        [
+            "t02-decode-text-bundle",
+            "--bundle_txt",
+            str(tmp_path / "765003.txt"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["bundle_txt"] == str(tmp_path / "765003.txt")
+    assert captured["out_dir"] is None

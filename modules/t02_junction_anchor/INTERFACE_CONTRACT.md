@@ -483,8 +483,7 @@ python -m rcsd_topo_poc t02-export-text-bundle \
 
 ```bash
 python -m rcsd_topo_poc t02-decode-text-bundle \
-  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt \
-  --out-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003_decoded
+  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt
 ```
 
 ### 6.1 实验性 POC 输入前提
@@ -502,6 +501,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - 导出结果是单个纯文本文件，默认逻辑内容至少包含：
   - `manifest.json`
   - `drivezone_mask.png`
+  - `drivezone.gpkg`
 - `nodes.gpkg`
 - `roads.gpkg`
 - `rcsdroad.gpkg`
@@ -510,7 +510,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - 打包流程固定为“局部裁剪 -> 压缩归档 -> 文本编码”，不允许直接明文拼接大段原始矢量文本
 - 最终 bundle 文本体积必须 `<= 300KB`
 - 若超限，入口必须失败退出，并输出体积分析 `size_report`
-- `t02-decode-text-bundle` 负责校验 bundle 头尾标识、版本与 checksum，并恢复等价目录结构
+- `t02-decode-text-bundle` 负责校验 bundle 头尾标识、版本与 checksum，并恢复等价目录结构；未显式传入 `--out-dir` 时，默认解包到与 bundle 同目录、且以 bundle 文件名为目录名的子目录
 
 ## 7. Acceptance
 

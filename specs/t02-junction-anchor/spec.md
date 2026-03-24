@@ -367,7 +367,7 @@
 - 阶段二当前不涉及成果概率 / 置信度实现。
 - 已新增单 `mainnodeid` 文本证据包能力，用于局部裁剪 `nodes / roads / DriveZone / RCSDRoad / RCSDNode` 并导出单个 txt。
 - 文本证据包只服务于外网实验复现，不替代正式产线输入。
-- 文本证据包默认逻辑内容至少包含 `manifest.json`、`drivezone_mask.png`、`nodes.gpkg`、`roads.gpkg`、`rcsdroad.gpkg`、`rcsdnode.gpkg`、`size_report.json`。
+- 文本证据包默认逻辑内容至少包含 `manifest.json`、`drivezone_mask.png`、`drivezone.gpkg`、`nodes.gpkg`、`roads.gpkg`、`rcsdroad.gpkg`、`rcsdnode.gpkg`、`size_report.json`。
 - 文本证据包固定采用“压缩归档 + 文本编码”方案，最终体积必须 `<= 300KB`；超限时必须失败并输出体积分析报告。
 
 ## 8. 剩余待确认项 / 非阻断风险 / 上游依赖

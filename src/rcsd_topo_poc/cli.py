@@ -705,7 +705,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Decode a single-mainnodeid T02 text bundle into a local directory.",
     )
     p_t02_decode.add_argument("--bundle-txt", "--bundle_txt", required=True, dest="bundle_txt", help="Input bundle txt path.")
-    p_t02_decode.add_argument("--out-dir", "--out_dir", required=True, dest="out_dir", help="Output directory for decoded bundle files.")
+    p_t02_decode.add_argument("--out-dir", "--out_dir", dest="out_dir", help="Optional output directory for decoded bundle files. If omitted, use a sibling directory named after the bundle file.")
     p_t02_decode.set_defaults(func=_cmd_t02_decode_text_bundle)
 
     args = parser.parse_args(argv)

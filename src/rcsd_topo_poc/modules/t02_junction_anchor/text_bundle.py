@@ -36,13 +36,17 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
 TEXT_BUNDLE_VERSION = "1"
 TEXT_BUNDLE_LIMIT_BYTES = 300 * 1024
 TEXT_BUNDLE_BEGIN = "BEGIN_T02_BUNDLE"
-TEXT_BUNDLE_PAYLOAD = "PAYLOAD"
-TEXT_BUNDLE_END_PAYLOAD = "END_PAYLOAD"
-TEXT_BUNDLE_META = "META "
-TEXT_BUNDLE_CHECKSUM = "CHECKSUM "
+TEXT_BUNDLE_PAYLOAD = "payload:"
+TEXT_BUNDLE_META = "meta: "
+TEXT_BUNDLE_CHECKSUM = "checksum: "
 TEXT_BUNDLE_END = "END_T02_BUNDLE"
 TEXT_BUNDLE_LINE_WIDTH = 120
 LOCAL_COORD_DECIMALS = 1
+
+LEGACY_TEXT_BUNDLE_PAYLOAD = "PAYLOAD"
+LEGACY_TEXT_BUNDLE_END_PAYLOAD = "END_PAYLOAD"
+LEGACY_TEXT_BUNDLE_META = "META "
+LEGACY_TEXT_BUNDLE_CHECKSUM = "CHECKSUM "
 
 NODE_FIELDS = ("id", "mainnodeid", "has_evd", "is_anchor", "kind_2", "grade_2")
 ROAD_FIELDS = ("id", "direction", "snodeid", "enodeid")
@@ -50,6 +54,7 @@ RCSDNODE_FIELDS = ("id", "mainnodeid")
 REQUIRED_BUNDLE_FILES = (
     "manifest.json",
     "drivezone_mask.png",
+    "drivezone.gpkg",
     "nodes.gpkg",
     "roads.gpkg",
     "rcsdroad.gpkg",
@@ -210,7 +215,6 @@ def _build_bundle_text(*, meta: dict[str, Any], payload_bytes: bytes) -> tuple[s
         TEXT_BUNDLE_META + json.dumps(meta, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
         TEXT_BUNDLE_PAYLOAD,
         _wrap_payload_text(payload_text),
-        TEXT_BUNDLE_END_PAYLOAD,
         TEXT_BUNDLE_CHECKSUM + checksum,
         TEXT_BUNDLE_END,
         "",
@@ -243,6 +247,7 @@ def _build_size_report(
 
 def _prepare_bundle_files(
     *,
+    drivezone_features: list[dict[str, Any]],
     nodes_features: list[dict[str, Any]],
     roads_features: list[dict[str, Any]],
     rcsdroad_features: list[dict[str, Any]],
@@ -253,6 +258,7 @@ def _prepare_bundle_files(
 ) -> dict[str, bytes]:
     files = {
         "drivezone_mask.png": drivezone_mask_png,
+        "drivezone.gpkg": _vector_file_bytes("drivezone.gpkg", drivezone_features),
         "nodes.gpkg": _vector_file_bytes("nodes.gpkg", nodes_features),
         "roads.gpkg": _vector_file_bytes("roads.gpkg", roads_features),
         "rcsdroad.gpkg": _vector_file_bytes("rcsdroad.gpkg", rcsdroad_features),
@@ -264,36 +270,65 @@ def _prepare_bundle_files(
     return files
 
 
-def _parse_text_bundle(bundle_text: str) -> tuple[dict[str, Any], bytes, str]:
-    lines = bundle_text.splitlines()
-    if not lines or lines[0].strip() != TEXT_BUNDLE_BEGIN:
-        raise TextBundleError("invalid_bundle_format", "Bundle header not found.")
-
+def _parse_current_text_bundle(lines: list[str]) -> tuple[dict[str, Any], bytes, str]:
     try:
-        meta_line = next(line for line in lines if line.startswith(TEXT_BUNDLE_META))
-        payload_start = lines.index(TEXT_BUNDLE_PAYLOAD)
-        payload_end = lines.index(TEXT_BUNDLE_END_PAYLOAD)
-        checksum_line = next(line for line in lines if line.startswith(TEXT_BUNDLE_CHECKSUM))
+        meta_index = next(index for index, line in enumerate(lines) if line.startswith(TEXT_BUNDLE_META))
+        payload_index = next(index for index, line in enumerate(lines) if line.strip() == TEXT_BUNDLE_PAYLOAD)
+        checksum_index = next(index for index, line in enumerate(lines) if line.startswith(TEXT_BUNDLE_CHECKSUM))
+        end_index = next(index for index, line in enumerate(lines) if line.strip() == TEXT_BUNDLE_END)
+    except StopIteration as exc:
+        raise TextBundleError("invalid_bundle_format", "Bundle markers are incomplete.") from exc
+
+    if not (meta_index < payload_index < checksum_index < end_index):
+        raise TextBundleError("invalid_bundle_format", "Bundle section order is invalid.")
+
+    meta = json.loads(lines[meta_index][len(TEXT_BUNDLE_META) :])
+    payload_text = "".join(lines[payload_index + 1 : checksum_index]).strip()
+    if not payload_text:
+        raise TextBundleError("invalid_bundle_format", "Bundle payload is empty.")
+    payload_bytes = base64.b85decode(payload_text.encode("ascii"))
+    checksum = lines[checksum_index][len(TEXT_BUNDLE_CHECKSUM) :].strip()
+    if hashlib.sha256(payload_bytes).hexdigest() != checksum:
+        raise TextBundleError("checksum_mismatch", "Bundle payload checksum validation failed.")
+    return meta, payload_bytes, checksum
+
+
+def _parse_legacy_text_bundle(lines: list[str]) -> tuple[dict[str, Any], bytes, str]:
+    try:
+        meta_line = next(line for line in lines if line.startswith(LEGACY_TEXT_BUNDLE_META))
+        payload_start = lines.index(LEGACY_TEXT_BUNDLE_PAYLOAD)
+        payload_end = lines.index(LEGACY_TEXT_BUNDLE_END_PAYLOAD)
+        checksum_line = next(line for line in lines if line.startswith(LEGACY_TEXT_BUNDLE_CHECKSUM))
         end_line = next(line for line in lines if line.strip() == TEXT_BUNDLE_END)
     except StopIteration as exc:
         raise TextBundleError("invalid_bundle_format", "Bundle markers are incomplete.") from exc
 
     if payload_end <= payload_start:
         raise TextBundleError("invalid_bundle_format", "Bundle payload section is malformed.")
-    if lines.index(TEXT_BUNDLE_END_PAYLOAD) >= lines.index(TEXT_BUNDLE_END):
+    if lines.index(LEGACY_TEXT_BUNDLE_END_PAYLOAD) >= lines.index(TEXT_BUNDLE_END):
         raise TextBundleError("invalid_bundle_format", "Bundle footer order is invalid.")
 
-    meta = json.loads(meta_line[len(TEXT_BUNDLE_META) :])
+    meta = json.loads(meta_line[len(LEGACY_TEXT_BUNDLE_META) :])
     payload_text = "".join(lines[payload_start + 1 : payload_end]).strip()
     if not payload_text:
         raise TextBundleError("invalid_bundle_format", "Bundle payload is empty.")
     payload_bytes = base64.b85decode(payload_text.encode("ascii"))
-    checksum = checksum_line[len(TEXT_BUNDLE_CHECKSUM) :].strip()
+    checksum = checksum_line[len(LEGACY_TEXT_BUNDLE_CHECKSUM) :].strip()
     if hashlib.sha256(payload_bytes).hexdigest() != checksum:
         raise TextBundleError("checksum_mismatch", "Bundle payload checksum validation failed.")
     if not end_line:
         raise TextBundleError("invalid_bundle_format", "Bundle footer not found.")
     return meta, payload_bytes, checksum
+
+
+def _parse_text_bundle(bundle_text: str) -> tuple[dict[str, Any], bytes, str]:
+    lines = bundle_text.splitlines()
+    if not lines or lines[0].strip() != TEXT_BUNDLE_BEGIN:
+        raise TextBundleError("invalid_bundle_format", "Bundle header not found.")
+
+    if any(line.startswith(TEXT_BUNDLE_META) for line in lines) and any(line.strip() == TEXT_BUNDLE_PAYLOAD for line in lines):
+        return _parse_current_text_bundle(lines)
+    return _parse_legacy_text_bundle(lines)
 
 
 def _resolve_target_nodes(
@@ -419,6 +454,17 @@ def run_t02_export_text_bundle(
         drivezone_mask = _rasterize_geometries(grid, [drivezone_union])
         drivezone_mask_png = _mask_png_bytes(drivezone_mask)
 
+        drivezone_features = []
+        for feature in local_drivezone_layer.features:
+            drivezone_features.append(
+                _local_feature(
+                    properties=dict(feature.properties),
+                    geometry=feature.geometry,
+                    origin_x=origin_x,
+                    origin_y=origin_y,
+                )
+            )
+
         nodes_features = []
         for feature in local_nodes_layer.features:
             nodes_features.append(
@@ -517,6 +563,7 @@ def run_t02_export_text_bundle(
         bundle_size_bytes = 0
         for _ in range(3):
             files = _prepare_bundle_files(
+                drivezone_features=drivezone_features,
                 nodes_features=nodes_features,
                 roads_features=roads_features,
                 rcsdroad_features=rcsdroad_features,
@@ -593,12 +640,12 @@ def run_t02_export_text_bundle(
 def run_t02_decode_text_bundle(
     *,
     bundle_txt: Union[str, Path],
-    out_dir: Union[str, Path],
+    out_dir: Union[str, Path, None] = None,
 ) -> TextBundleDecodeArtifacts:
     bundle_path = Path(bundle_txt)
     if not bundle_path.is_file():
         raise TextBundleError("bundle_not_found", f"Bundle text file does not exist: {bundle_path}")
-    out_dir_path = Path(out_dir)
+    out_dir_path = Path(out_dir) if out_dir is not None else bundle_path.with_suffix("")
     out_dir_path.mkdir(parents=True, exist_ok=True)
 
     meta, payload_bytes, checksum = _parse_text_bundle(bundle_path.read_text(encoding="utf-8"))

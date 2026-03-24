@@ -8,6 +8,7 @@ import tracemalloc
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
+from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, TypeVar, Union
 
@@ -26,6 +27,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     build_logger,
     build_run_id,
     close_logger,
+    transform_geometry_to_target,
     write_geojson,
     write_json,
 )
@@ -403,6 +405,60 @@ def _iter_geojson_feature_items(path: Path) -> Iterable[tuple[int, dict[str, Any
         ) from exc
 
 
+def _bounds_intersect(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
+    left_min_x, left_min_y, left_max_x, left_max_y = left
+    right_min_x, right_min_y, right_max_x, right_max_y = right
+    return not (
+        left_max_x < right_min_x
+        or left_min_x > right_max_x
+        or left_max_y < right_min_y
+        or left_min_y > right_max_y
+    )
+
+
+def _update_bounds_from_coordinates(
+    coordinates: Any,
+    current_bounds: list[float] | None = None,
+) -> list[float] | None:
+    if coordinates is None:
+        return current_bounds
+    if isinstance(coordinates, (list, tuple)):
+        if len(coordinates) >= 2 and isinstance(coordinates[0], Real) and isinstance(coordinates[1], Real):
+            x = float(coordinates[0])
+            y = float(coordinates[1])
+            if current_bounds is None:
+                return [x, y, x, y]
+            current_bounds[0] = min(current_bounds[0], x)
+            current_bounds[1] = min(current_bounds[1], y)
+            current_bounds[2] = max(current_bounds[2], x)
+            current_bounds[3] = max(current_bounds[3], y)
+            return current_bounds
+        for item in coordinates:
+            current_bounds = _update_bounds_from_coordinates(item, current_bounds)
+    return current_bounds
+
+
+def _geometry_payload_bounds(geometry_payload: dict[str, Any] | None) -> tuple[float, float, float, float] | None:
+    if not isinstance(geometry_payload, dict):
+        return None
+    bounds = _update_bounds_from_coordinates(geometry_payload.get("coordinates"))
+    if bounds is None and geometry_payload.get("type") == "GeometryCollection":
+        for item in geometry_payload.get("geometries") or []:
+            item_bounds = _geometry_payload_bounds(item)
+            if item_bounds is None:
+                continue
+            if bounds is None:
+                bounds = list(item_bounds)
+            else:
+                bounds[0] = min(bounds[0], item_bounds[0])
+                bounds[1] = min(bounds[1], item_bounds[1])
+                bounds[2] = max(bounds[2], item_bounds[2])
+                bounds[3] = max(bounds[3], item_bounds[3])
+    if bounds is None:
+        return None
+    return (bounds[0], bounds[1], bounds[2], bounds[3])
+
+
 def _load_layer_filtered(
     path: Union[str, Path],
     *,
@@ -411,6 +467,9 @@ def _load_layer_filtered(
     allow_null_geometry: bool,
     query_geometry: BaseGeometry | None = None,
     property_predicate: Callable[[dict[str, Any]], bool] | None = None,
+    progress_label: str | None = None,
+    progress_every: int = 5000,
+    progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> LoadedLayer:
     layer_path = Path(path)
     if not layer_path.is_file():
@@ -419,9 +478,18 @@ def _load_layer_filtered(
     suffix = layer_path.suffix.lower()
     if suffix in {".geojson", ".json"}:
         source_crs, crs_source = _resolve_geojson_crs_streaming(layer_path, crs_override)
+        source_query_bounds: tuple[float, float, float, float] | None = None
+        if query_geometry is not None:
+            source_query_geometry = transform_geometry_to_target(query_geometry, TARGET_CRS, source_crs)
+            source_query_bounds = tuple(float(v) for v in source_query_geometry.bounds)
         features: list[LoadedFeature] = []
+        matched_count = 0
+        scanned_count = 0
         for feature_index, feature in _iter_geojson_feature_items(layer_path):
+            scanned_count = feature_index + 1
             properties = dict(feature.get("properties") or {})
+            if progress_label and progress_callback and scanned_count % progress_every == 0:
+                progress_callback(progress_label, scanned_count, matched_count)
             if property_predicate is not None and not property_predicate(properties):
                 continue
             geometry_payload = feature.get("geometry")
@@ -433,6 +501,10 @@ def _load_layer_filtered(
                     )
                 geometry = None
             else:
+                if source_query_bounds is not None:
+                    raw_bounds = _geometry_payload_bounds(geometry_payload)
+                    if raw_bounds is not None and not _bounds_intersect(raw_bounds, source_query_bounds):
+                        continue
                 geometry = _transform_geometry(
                     shape(geometry_payload),
                     source_crs=source_crs,
@@ -443,6 +515,9 @@ def _load_layer_filtered(
             if query_geometry is not None and geometry is not None and not geometry.intersects(query_geometry):
                 continue
             features.append(LoadedFeature(feature_index=feature_index, properties=properties, geometry=geometry))
+            matched_count += 1
+        if progress_label and progress_callback:
+            progress_callback(progress_label, scanned_count, matched_count)
         return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
 
     if suffix == ".shp":
@@ -451,6 +526,10 @@ def _load_layer_filtered(
             crs_override,
             error_cls=VirtualIntersectionPocError,
         )
+        source_query_bounds: tuple[float, float, float, float] | None = None
+        if query_geometry is not None:
+            source_query_geometry = transform_geometry_to_target(query_geometry, TARGET_CRS, source_crs)
+            source_query_bounds = tuple(float(v) for v in source_query_geometry.bounds)
         try:
             reader = shapefile.Reader(str(layer_path))
         except Exception as exc:
@@ -461,10 +540,19 @@ def _load_layer_filtered(
 
         field_names = [field[0] for field in reader.fields[1:]]
         features: list[LoadedFeature] = []
+        matched_count = 0
+        scanned_count = 0
         for feature_index, shape_record in enumerate(reader.iterShapeRecords()):
+            scanned_count = feature_index + 1
             properties = dict(zip(field_names, list(shape_record.record)))
+            if progress_label and progress_callback and scanned_count % progress_every == 0:
+                progress_callback(progress_label, scanned_count, matched_count)
             if property_predicate is not None and not property_predicate(properties):
                 continue
+            if source_query_bounds is not None:
+                raw_bounds = tuple(float(value) for value in shape_record.shape.bbox)
+                if len(raw_bounds) == 4 and not _bounds_intersect(raw_bounds, source_query_bounds):
+                    continue
             geometry_payload = shape_record.shape.__geo_interface__
             geometry = _transform_geometry(
                 shape(geometry_payload),
@@ -476,6 +564,9 @@ def _load_layer_filtered(
             if query_geometry is not None and not geometry.intersects(query_geometry):
                 continue
             features.append(LoadedFeature(feature_index=feature_index, properties=properties, geometry=geometry))
+            matched_count += 1
+        if progress_label and progress_callback:
+            progress_callback(progress_label, scanned_count, matched_count)
         return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
 
     return _load_layer(
@@ -1201,6 +1292,22 @@ def run_t02_virtual_intersection_poc(
         )
         stage_started_at = time.perf_counter()
 
+    def report_local_scan(layer_label: str, scanned_count: int, matched_count: int) -> None:
+        counts[f"{layer_label}_scanned_count"] = scanned_count
+        counts[f"{layer_label}_matched_count"] = matched_count
+        announce(
+            logger,
+            f"[T02-POC] scanning {layer_label} scanned={scanned_count} matched={matched_count}",
+        )
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage=f"scanning_{layer_label}",
+            message=f"Scanning {layer_label}: scanned={scanned_count}, matched={matched_count}.",
+            counts=counts,
+        )
+
     _write_progress_snapshot(
         out_path=progress_path,
         run_id=resolved_run_id,
@@ -1260,49 +1367,137 @@ def run_t02_virtual_intersection_poc(
             counts=counts,
         )
 
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="loading_local_inputs",
+            message="Loading local POC inputs around the target junction.",
+            counts=counts,
+        )
+
         local_nodes_layer_data = _load_layer_filtered(
             nodes_path,
             layer_name=nodes_layer,
             crs_override=nodes_crs,
             allow_null_geometry=False,
             query_geometry=patch_query,
+            progress_label="local_nodes",
+            progress_callback=report_local_scan,
         )
+        counts["node_feature_count"] = len(local_nodes_layer_data.features)
+        announce(
+            logger,
+            f"[T02-POC] local nodes loaded matched={counts['node_feature_count']}",
+        )
+        record_stage("local_nodes_loaded")
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="local_nodes_loaded",
+            message="Loaded local nodes around the target junction.",
+            counts=counts,
+        )
+
         roads_layer_data = _load_layer_filtered(
             roads_path,
             layer_name=roads_layer,
             crs_override=roads_crs,
             allow_null_geometry=False,
             query_geometry=patch_query,
+            progress_label="roads",
+            progress_callback=report_local_scan,
         )
+        parsed_roads = _parse_roads(roads_layer_data, label="roads")
+        counts["road_feature_count"] = len(parsed_roads)
+        announce(
+            logger,
+            f"[T02-POC] local roads loaded matched={counts['road_feature_count']}",
+        )
+        record_stage("local_roads_loaded")
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="local_roads_loaded",
+            message="Loaded local roads around the target junction.",
+            counts=counts,
+        )
+
         drivezone_layer_data = _load_layer_filtered(
             drivezone_path,
             layer_name=drivezone_layer,
             crs_override=drivezone_crs,
             allow_null_geometry=False,
             query_geometry=patch_query,
+            progress_label="drivezone",
+            progress_callback=report_local_scan,
         )
+        counts["drivezone_feature_count"] = len(drivezone_layer_data.features)
+        announce(
+            logger,
+            f"[T02-POC] local drivezone loaded matched={counts['drivezone_feature_count']}",
+        )
+        record_stage("local_drivezone_loaded")
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="local_drivezone_loaded",
+            message="Loaded local DriveZone coverage around the target junction.",
+            counts=counts,
+        )
+
         rcsdroad_layer_data = _load_layer_filtered(
             rcsdroad_path,
             layer_name=rcsdroad_layer,
             crs_override=rcsdroad_crs,
             allow_null_geometry=False,
             query_geometry=patch_query,
+            progress_label="rcsdroad",
+            progress_callback=report_local_scan,
         )
+        parsed_rc_roads = _parse_roads(rcsdroad_layer_data, label="RCSDRoad")
+        counts["rcsdroad_feature_count"] = len(parsed_rc_roads)
+        announce(
+            logger,
+            f"[T02-POC] local rcsdroad loaded matched={counts['rcsdroad_feature_count']}",
+        )
+        record_stage("local_rcsdroad_loaded")
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="local_rcsdroad_loaded",
+            message="Loaded local RCSDRoad coverage around the target junction.",
+            counts=counts,
+        )
+
         rcsdnode_layer_data = _load_layer_filtered(
             rcsdnode_path,
             layer_name=rcsdnode_layer,
             crs_override=rcsdnode_crs,
             allow_null_geometry=False,
             query_geometry=patch_query,
+            progress_label="rcsdnode",
+            progress_callback=report_local_scan,
         )
-        parsed_roads = _parse_roads(roads_layer_data, label="roads")
-        parsed_rc_roads = _parse_roads(rcsdroad_layer_data, label="RCSDRoad")
         parsed_rc_nodes = _parse_rc_nodes(rcsdnode_layer_data)
-        counts["node_feature_count"] = len(local_nodes_layer_data.features)
-        counts["road_feature_count"] = len(parsed_roads)
-        counts["drivezone_feature_count"] = len(drivezone_layer_data.features)
-        counts["rcsdroad_feature_count"] = len(parsed_rc_roads)
         counts["rcsdnode_feature_count"] = len(parsed_rc_nodes)
+        announce(
+            logger,
+            f"[T02-POC] local rcsdnode loaded matched={counts['rcsdnode_feature_count']}",
+        )
+        record_stage("local_rcsdnode_loaded")
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="local_rcsdnode_loaded",
+            message="Loaded local RCSDNode coverage around the target junction.",
+            counts=counts,
+        )
         announce(
             logger,
             (

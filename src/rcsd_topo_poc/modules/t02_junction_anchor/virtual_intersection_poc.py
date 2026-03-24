@@ -66,6 +66,7 @@ MAIN_BRANCH_HALF_WIDTH_M = 10.0
 SIDE_BRANCH_HALF_WIDTH_M = 7.0
 MAIN_AXIS_ANGLE_TOLERANCE_DEG = 35.0
 BRANCH_MATCH_TOLERANCE_DEG = 30.0
+RC_BRANCH_PROXIMITY_M = 18.0
 RAY_GAP_STEPS = 3
 RAY_SAMPLE_STEP_MULTIPLIER = 0.5
 SPATIAL_CACHE_VERSION = "v1"
@@ -1305,6 +1306,47 @@ def _branch_candidate_from_road(
     }
 
 
+def _branch_candidate_from_center_proximity(
+    road: ParsedRoad,
+    *,
+    center: Point,
+    drivezone_union: BaseGeometry,
+    max_distance_m: float,
+) -> dict[str, Any] | None:
+    line = _linearize(road.geometry)
+    if line.distance(center) > max_distance_m:
+        return None
+
+    coords = list(line.coords)
+    if len(coords) < 2:
+        return None
+
+    start = coords[0]
+    end = coords[-1]
+    start_distance = center.distance(Point(start))
+    end_distance = center.distance(Point(end))
+    if start_distance <= end_distance:
+        anchor = start
+        away = coords[1]
+    else:
+        anchor = end
+        away = coords[-2]
+
+    vector = (away[0] - anchor[0], away[1] - anchor[1])
+    if math.hypot(vector[0], vector[1]) == 0.0:
+        return None
+
+    return {
+        "road_id": road.road_id,
+        "angle_deg": _vector_to_angle_deg(_normalize_vector(vector)),
+        "vector": _normalize_vector(vector),
+        "road_support_m": float(road.geometry.intersection(drivezone_union).length),
+        "has_incoming_support": True,
+        "has_outgoing_support": True,
+        "geometry": road.geometry,
+    }
+
+
 def _cluster_branch_candidates(
     candidates: list[dict[str, Any]],
     *,
@@ -1447,17 +1489,44 @@ def _build_positive_negative_rc_groups(
     road_branches: list[BranchEvidence],
     rc_branches: list[BranchEvidence],
     risks: list[str],
+    has_rc_group_nodes: bool,
 ) -> tuple[set[str], set[str]]:
     rc_branch_by_id = {branch.branch_id: branch for branch in rc_branches}
     positive: set[str] = set()
     negative: set[str] = set()
+
+    side_branches = [branch for branch in road_branches if not branch.is_main_direction and branch.selected_for_polygon]
+    if kind_2 == 2048 and not has_rc_group_nodes:
+        candidates: list[tuple[float, str, str]] = []
+        for branch in road_branches:
+            if not branch.selected_for_polygon:
+                continue
+            for rc_group_id in branch.rcsdroad_ids:
+                rc_branch = rc_branch_by_id[rc_group_id]
+                score = rc_branch.road_support_m + branch.drivezone_support_m + branch.rc_support_m
+                if not branch.is_main_direction:
+                    score += 5.0
+                candidates.append((score, branch.branch_id, rc_group_id))
+        candidates.sort(reverse=True)
+        if candidates:
+            best_score = candidates[0][0]
+            best_group = candidates[0][2]
+            positive.add(best_group)
+            if len(candidates) >= 2:
+                second_score = candidates[1][0]
+                if second_score >= max(best_score * 0.95, best_score - 3.0):
+                    if STATUS_AMBIGUOUS_RC_MATCH not in risks:
+                        risks.append(STATUS_AMBIGUOUS_RC_MATCH)
+            for _, _, rc_group_id in candidates:
+                if rc_group_id not in positive:
+                    negative.add(rc_group_id)
+        return positive, negative
 
     for branch in road_branches:
         if branch.is_main_direction:
             for rc_group_id in branch.rcsdroad_ids:
                 positive.add(rc_group_id)
 
-    side_branches = [branch for branch in road_branches if not branch.is_main_direction and branch.selected_for_polygon]
     if kind_2 == 2048:
         candidates: list[tuple[float, str, str]] = []
         for branch in side_branches:
@@ -1526,6 +1595,18 @@ def _branch_feature(
         "properties": _branch_to_json(branch),
         "geometry": _branch_ray_geometry(center, angle_deg=branch.angle_deg, length_m=max(length_m, 1.0)),
     }
+
+
+def _polygon_branch_length_m(branch: BranchEvidence) -> float:
+    if branch.is_main_direction:
+        hard_cap = 42.0 if branch.evidence_level == "arm_full_rc" else 30.0
+        return max(10.0, min(branch.drivezone_support_m, hard_cap))
+
+    if branch.evidence_level == "arm_full_rc":
+        return max(8.0, min(branch.drivezone_support_m, 26.0))
+    if branch.evidence_level == "arm_partial":
+        return max(6.0, min(branch.drivezone_support_m, 14.0))
+    return 0.0
 
 
 def _write_association_outputs(
@@ -1972,14 +2053,29 @@ def run_t02_virtual_intersection_poc(
 
         rc_member_node_ids = {node.node_id for node in rc_group_nodes}
         incident_rc_roads = [road for road in local_rc_roads if road.snodeid in rc_member_node_ids or road.enodeid in rc_member_node_ids]
-        rc_candidates = [
-            candidate
-            for candidate in (
-                _branch_candidate_from_road(road, member_node_ids=rc_member_node_ids, drivezone_union=drivezone_union)
-                for road in incident_rc_roads
-            )
-            if candidate is not None
-        ]
+        if incident_rc_roads:
+            rc_candidates = [
+                candidate
+                for candidate in (
+                    _branch_candidate_from_road(road, member_node_ids=rc_member_node_ids, drivezone_union=drivezone_union)
+                    for road in incident_rc_roads
+                )
+                if candidate is not None
+            ]
+        else:
+            rc_candidates = [
+                candidate
+                for candidate in (
+                    _branch_candidate_from_center_proximity(
+                        road,
+                        center=representative_node.geometry,
+                        drivezone_union=drivezone_union,
+                        max_distance_m=RC_BRANCH_PROXIMITY_M,
+                    )
+                    for road in local_rc_roads
+                )
+                if candidate is not None
+            ]
         rc_branches = _cluster_branch_candidates(
             rc_candidates,
             branch_type="rc_group",
@@ -2043,6 +2139,7 @@ def run_t02_virtual_intersection_poc(
             road_branches=road_branches,
             rc_branches=rc_branches,
             risks=risks,
+            has_rc_group_nodes=bool(rc_group_nodes),
         )
         if rc_branches and not positive_rc_groups:
             risks.append(STATUS_NO_VALID_RC_CONNECTION)
@@ -2054,7 +2151,14 @@ def run_t02_virtual_intersection_poc(
         positive_rc_road_ids: set[str] = set()
         negative_rc_road_ids: set[str] = set()
         for group_id in positive_rc_groups:
-            positive_rc_road_ids.update(rc_branch_by_id[group_id].road_ids)
+            group_road_ids = rc_branch_by_id[group_id].road_ids
+            group_roads = [road for road in local_rc_roads if road.road_id in group_road_ids]
+            if not group_roads:
+                continue
+            closest_distance = min(road.geometry.distance(representative_node.geometry) for road in group_roads)
+            for road in group_roads:
+                if road.geometry.distance(representative_node.geometry) <= closest_distance + 2.0:
+                    positive_rc_road_ids.add(road.road_id)
         for group_id in negative_rc_groups:
             negative_rc_road_ids.update(rc_branch_by_id[group_id].road_ids)
 
@@ -2065,7 +2169,17 @@ def run_t02_virtual_intersection_poc(
         polygon_mask = core_mask.copy()
         branch_features: list[dict[str, Any]] = []
         for branch in road_branches:
-            max_length = max(branch.drivezone_support_m, branch.road_support_m, 8.0)
+            max_length = _polygon_branch_length_m(branch)
+            if max_length <= 0.0:
+                branch.polygon_length_m = 0.0
+                branch_features.append(
+                    _branch_feature(
+                        branch=branch,
+                        center=representative_node.geometry,
+                        length_m=8.0,
+                    )
+                )
+                continue
             half_width = MAIN_BRANCH_HALF_WIDTH_M if branch.is_main_direction else SIDE_BRANCH_HALF_WIDTH_M
             corridor_geometry = _branch_ray_geometry(
                 representative_node.geometry,

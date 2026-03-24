@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from concurrent.futures import ThreadPoolExecuto
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -10,7 +10,7 @@ from typing import Any, Iterable, Optional, Union
 
 import fiona
 import shapefile
-from pyproj import CRS, Transforme
+from pyproj import CRS, Transformer
 from shapely.geometry import mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform as shapely_transform
@@ -38,7 +38,7 @@ class LayerFeature:
 class LayerReadResult:
     features: list[LayerFeature]
     source_crs: CRS
-    crs_source: st
+    crs_source: str
 
 
 def _resolve_geojson_crs(doc: dict[str, Any], crs_override: Optional[str]) -> tuple[CRS, str]:

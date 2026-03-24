@@ -189,9 +189,13 @@ def test_virtual_intersection_poc_errors_when_rc_outside_drivezone(tmp_path: Pat
     assert audit_doc[0]["reason"] == "rc_outside_drivezone"
 
 
-def test_virtual_intersection_poc_without_rc_group_returns_surface_only(tmp_path: Path) -> None:
+def test_virtual_intersection_poc_without_rc_group_still_associates_rc_roads(tmp_path: Path) -> None:
     paths = _write_poc_inputs(tmp_path, include_rc_group=False)
     artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
     assert artifacts.success is True
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
-    assert status_doc["status"] in {"surface_only", "no_valid_rc_connection"}
+    assert status_doc["status"] in {"stable", "ambiguous_rc_match"}
+
+    associated_roads_doc = _load_vector_doc(artifacts.associated_rcsdroad_path)
+    associated_road_ids = {feature["properties"]["id"] for feature in associated_roads_doc["features"]}
+    assert associated_road_ids

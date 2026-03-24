@@ -68,10 +68,11 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
 - `skill_v1_summary.json`
 
 ## 文档索引
-- 主规格：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/spec.md`
-- 计划：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/plan.md`
-- 任务：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/tasks.md`
+- 架构总览：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/overview.md`
+- accepted baseline：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
 - 契约：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
+- spec-kit 计划：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/plan.md`
+- spec-kit 任务：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/tasks.md`
 
 ## 临时样例基线
 - `XXXS*` 的临时最终 Segment 基线仅用于迭代过程中的非回退检查。

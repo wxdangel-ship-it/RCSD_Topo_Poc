@@ -54,9 +54,12 @@
 - [ ] 继续收敛 `step2_segment_poc.py` 的 `segment_body / tighten / orchestration` 职责
 
 ## 文档清理
-- [x] 将正式 baseline 主承载收敛到 `spec.md`
+- [x] 将正式 baseline 主承载迁回 `modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
+- [x] 将 `specs/t01-data-preprocess/spec.md` 收回为 spec-kit 治理文档
+- [x] 更新 `modules/t01_data_preprocess/architecture/overview.md`
 - [x] 更新 `plan.md`
 - [x] 更新 `tasks.md`
 - [x] 更新 `modules/t01_data_preprocess/README.md`
 - [x] 更新 `modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
-- [ ] 完成文档落点复核并输出清理说明
+- [x] 更新 `modules/t01_data_preprocess/architecture/*` 的关键分解文档
+- [x] 完成文档落点复核并输出清理说明

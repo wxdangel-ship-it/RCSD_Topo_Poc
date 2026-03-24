@@ -1,34 +1,29 @@
 # 01 引言与目标
 
-## 状态
-- 当前状态：`模块级架构说明（基于当前 accepted baseline）`
-- 来源依据：
-  - [spec.md](/E:/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/spec.md)
-  - [INTERFACE_CONTRACT.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md)
-  - 当前三组活动基线结果
+## 文档状态
+- 状态：`模块级架构说明`
+- 当前正式业务 baseline 主体见：
+  - [06-accepted-baseline.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md)
+  - [INTERFACE_CONTRACT.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md)
 
-## 当前正式定位
+## 模块定位
 - 模块路径：`modules/t01_data_preprocess`
-- 当前角色：
-  - 对普通道路网络中，从高等级到低等级，逐级提取双向联通的路段
-- 下游关系：
-  - 为后续关键路口锚定和路段构建打基础
+- 角色：
+  - 在非封闭式双向道路场景中，逐阶段构建双向 Segment
+  - 为后续 Segment 聚合与更高层拓扑分析提供稳定输入
 
 ## 模块目标
-`t01_data_preprocess` 的长期目标是：
+1. 在普通道路网络上稳定提取双向 Segment。
+2. 通过 staged residual graph 从高等级逐轮扩展到更低等级。
+3. 在构段过程中滚动刷新 `grade_2 / kind_2` 当前语义。
+4. 在 Step6 形成可审计的 Segment 聚合输出。
 
-1. 在普通道路网络上稳定提取双向路段，并形成可追溯的 working graph 结果
-2. 以 staged residual graph 方式逐轮向更低等级扩展构段
-3. 为后续关键路口锚定、路段构建和更多道路语义扩展提供稳定底座
-
-## 文档目标
-本模块的最小正式文档面当前由以下文件共同组成：
-
+## 文档边界
 - `architecture/*`
-- [INTERFACE_CONTRACT.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md)
-- [README.md](/E:/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/README.md)
-
-建议在后续正式激活为 repo 级模块后再进一步补充：
-
-- repo 级模块登记
-- 更正式的 review / release summary
+  - 承载模块级源事实与 accepted baseline
+- `INTERFACE_CONTRACT.md`
+  - 承载字段与阶段输入输出契约摘要
+- `README.md`
+  - 承载使用说明、入口与文档索引
+- `specs/t01-data-preprocess/*`
+  - 承载本轮治理/整改的 spec-kit 过程文档，不作为 steady-state baseline 正本

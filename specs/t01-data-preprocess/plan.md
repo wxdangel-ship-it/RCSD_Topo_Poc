@@ -43,11 +43,14 @@
 4. 业务输出稳定后，再继续结构整改与文档收口。
 
 ## 文档清理落点
-- 主规格：`spec.md`
-- 计划与批次：`plan.md`
-- 执行清单：`tasks.md`
-- 模块说明：`modules/t01_data_preprocess/README.md`
+- accepted baseline 主体：`modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
+- 架构索引：`modules/t01_data_preprocess/architecture/overview.md`
 - 模块契约：`modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
+- 模块说明：`modules/t01_data_preprocess/README.md`
+- spec-kit 计划与过程文档：
+  - `spec.md`
+  - `plan.md`
+  - `tasks.md`
 
 ## 边界
 - 不自动更新 freeze baseline。

@@ -1,31 +1,35 @@
 # 02 约束
 
-## 状态
-- 当前状态：`模块级约束说明`
-- 来源依据：
-  - 仓库级执行规则
-  - 当前 working-layer / staged-runner accepted 语义
-
-## 全局约束
-- 当前模块只处理普通道路上的双向路段构建。
+## 全局业务约束
+- 当前模块仅处理非封闭式双向道路场景。
 - 当前不覆盖：
-  - 封闭式道路的路段提取
-  - 普通道路上的单向路段提取
-- 当前正式输入约束：
-  - node：`closed_con in {2,3}`
-  - road：`road_kind != 1`
+  - 封闭式道路场景
+  - 单向 Segment
+
+## 输入约束
+- node：
+  - `closed_con in {2,3}`
+- road：
+  - `road_kind != 1`
+  - `formway != 128`
+
+## 字段启用约束
 - 后续业务判断统一使用：
   - `grade_2`
   - `kind_2`
-- raw `grade / kind` 只保留为初始化、审计和展示字段。
-- 统一距离门控：
+- raw `grade / kind` 仅保留为输入信息与审计信息。
+
+## 统一构段约束
+- `Step2 / Step4 / Step5A / Step5B / Step5C` 共享：
   - `MAX_DUAL_CARRIAGEWAY_SEPARATION_M = 50.0`
   - `MAX_SIDE_ACCESS_DISTANCE_M = 50.0`
-- 以上 50m gate 适用于当前所有双向构段阶段：
-  - `Step2 / Step4 / Step5A / Step5B / Step5C`
+- T 型路口竖向阻断规则：
+  - 仅对应 `kind_2 = 2048`
+  - 不对应 `kind_2 = 4`
+- 更低等级构段不得跨越更高等级历史边界语义路口。
 
-## 协作约束
-- 模块根目录不放 `SKILL.md`
-- 模块长期真相优先沉淀到 `architecture/*` 与 `INTERFACE_CONTRACT.md`
-- 新的活动基线不得 silent 覆盖
-- 后续性能优化只要与当前三样例活动基线不一致，都必须先由用户复核
+## 治理约束
+- 模块级 steady-state 源事实沉淀在：
+  - `architecture/*`
+  - `INTERFACE_CONTRACT.md`
+- `specs/` 不再承载正式业务 baseline 正文。

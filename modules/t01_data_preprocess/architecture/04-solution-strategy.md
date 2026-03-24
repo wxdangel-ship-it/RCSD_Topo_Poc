@@ -1,30 +1,32 @@
 # 04 方案策略
 
-## 状态
-- 当前状态：`模块级方案策略说明`
-- 来源依据：
-  - official runner
-  - staged residual graph 实现
-  - 三样例活动基线
+## 主流程
+1. 建立 working `nodes / roads`
+2. 执行环岛预处理
+3. 通过 `Step1 / Step2 / Step3` 完成首轮构段与 refresh
+4. 通过 `Step4 / Step5A / Step5B / Step5C` 在 residual graph 上逐轮扩展
+5. 通过 `Step6` 形成 Segment 聚合与合理性反查
 
-## 主策略
-1. 模块开始先建立 working Nodes / Roads，并执行环岛预处理
-2. 首轮通过 Step1 / Step2 / Step3 完成高等级双向路段提取与 refresh
-3. 通过 Step4 / Step5A / Step5B / Step5C 在 residual graph 上继续逐轮向低等级扩展
+## 当前 accepted 策略重点
+- Step1 仅输出 `pair_candidates`
+- Step2 输出：
+  - `validated / rejected`
+  - `trunk`
+  - `segment_body`
+  - `step3_residual`
+- final segment 只表达 pair-specific road body
+- Step4 与 Step5 各子阶段继续基于当前 refreshed `grade_2 / kind_2` 输入
+- Step5A / Step5B / Step5C 按顺序执行，并在每个子阶段后立即 refresh
+- Step5C 使用 adaptive barrier fallback，Step5A / Step5B 仍保持严格 terminate 逻辑
+- Step6 只消费最新 refreshed 结果，不重新做构段搜索
 
-## 降级与失败策略
-- 失败条件：
-  - working fields 缺失
-  - freeze compare 不一致
-  - 关键样例结果回退
-- 降级方式：
-  - 保留历史归档基线，不直接覆盖活动基线
-  - 仅生成 candidate 或差异报告，等待用户确认
-- 诊断要求：
-  - `debug=true` 时输出 bootstrap / roundabout / step2 / step4 / step5 审计层
-  - 对 trunk gate、side gate 和 endpoint pool 滚动提供可追溯产物
+## same-stage arbitration
+- Step2 先完成 single-pair validation。
+- 对 single-pair legal 的 pair 进入 same-stage pair arbitration。
+- arbitration 只在 pair-level conflict component 内部进行。
+- 目标是避免“固定顺序先到先得”直接决定 contested corridor 归属。
 
 ## 文档策略
-- 稳定阶段链属于 `architecture/*`
-- 参数类别、输出文件和验收标准由 `INTERFACE_CONTRACT.md` 承担
-- `README.md` 提供简版运行说明
+- accepted baseline 正文收敛到 `architecture/06-accepted-baseline.md`
+- `INTERFACE_CONTRACT.md` 只保留对外契约摘要
+- `README.md` 只保留入口、说明和索引

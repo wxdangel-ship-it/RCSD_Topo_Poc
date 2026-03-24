@@ -6,7 +6,7 @@
   - 固化 T01 working layers、阶段输入输出、正式字段约束与 Step6 聚合契约
   - 作为模块级 source of truth 摘要
 - 主业务规格以：
-  - `/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/spec.md`
+  - `/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
   为准
 
 ## 2. 官方输入契约

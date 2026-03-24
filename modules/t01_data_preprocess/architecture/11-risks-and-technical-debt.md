@@ -1,20 +1,26 @@
 # 11 风险与技术债
 
-## 当前主要风险
-- repo 级治理文档尚未把 `t01_data_preprocess` 正式登记为 Active 模块，存在“模块内 accepted baseline 已形成，但仓库级状态未同步”的治理差口。
-- `step2_segment_poc.py` 当前体量已超过仓库建议阈值，后续继续演进存在结构债风险。
-- 当前三样例活动基线虽然已覆盖通用、距离 gate、环岛三类场景，但仍不是完整生产规模验证。
-- A200 全量运行下，`Step2` validated 主计算仍是当前最大性能瓶颈；`Step4 / Step5` 也仍明显受 staged runner 写盘与同一内核约束。
+## 当前业务风险
+- `XXXS5`
+  - `Segment 39546457_47130796` 仍存在“旁路分支超过 50m”问题
+- `XXXS7`
+  - `Segment 1013672_612642212` 仍存在“双向旁路”问题
+- 这两个问题仍是当前最明确的未关闭业务问题。
 
-## 当前可接受技术债
-- 旧单样例 freeze 和旧 semantic-fix candidate 仍保留为历史目录。
-- `architecture/overview.md` 同时承担目录索引与概览说明，后续若模块正式激活，可再进一步细化。
-- 当前 official runner 在 `debug=false` 下仍依赖 staged working-layer 写盘，不是深度全内存流水线。
+## 当前实现风险
+- 审计中已确认的 4 个整改批次尚未完成：
+  - 批次 A：`Step4 / Step5A / Step5B` 语义压扁
+  - 批次 B：`Step5A / Step5B / Step5C` 未逐轮 refresh
+  - 批次 C：`Step2` raw `grade / kind` fallback
+  - 批次 D：Step6 缺少 `formway = 128` 一致过滤
 
-## 后续缓解方式
-- 后续若正式启动模块治理，应同步补 repo 级模块清单与 doc inventory。
-- 在不破坏当前活动基线的前提下，逐步拆分超大源码文件。
-- 后续性能优化必须持续对齐三样例活动基线。
-- 下一轮性能优化优先继续审计：
-  - `Step2` path enumeration / trunk validation
-  - `Step4 / Step5` staged runner working-layer I/O
+## 性能风险
+- 全量运行下，`Step2 same-stage pair arbitration` 仍存在 option retention / 局部热点 pair 造成耗时和内存压力的风险。
+
+## 结构债
+- `step2_segment_poc.py` 已降到 `< 100 KB`，但 `segment_body / tighten / orchestration` 职责仍偏重。
+- 文档曾出现 accepted baseline 错落到 `specs/` 的问题，现已纠正，但后续仍需保持角色边界清晰。
+
+## 当前缓解方式
+- 以 `PASS_LOCKED / FAIL_TARGET` 的临时最终 Segment 基线套件做非回退闸门。
+- 架构整改与业务整改分批执行，不混修。

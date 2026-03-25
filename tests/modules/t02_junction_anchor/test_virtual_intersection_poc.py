@@ -10,9 +10,12 @@ from shapely.ops import unary_union
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     BranchEvidence,
+    ParsedNode,
     ParsedRoad,
+    _build_polygon_support_from_association,
     _has_structural_side_branch,
     _select_positive_rc_road_ids,
+    _status_from_risks,
     run_t02_virtual_intersection_poc,
 )
 
@@ -268,6 +271,44 @@ def _write_compound_center_inputs(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+def _write_support_decoupling_inputs(tmp_path: Path) -> dict[str, Path]:
+    paths = _write_poc_inputs(tmp_path, include_rc_group=False)
+
+    write_vector(
+        paths["rcsdroad_path"],
+        [
+            {
+                "properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2},
+                "geometry": LineString([(0.0, 0.0), (0.0, 55.0)]),
+            },
+            {
+                "properties": {"id": "rc_south", "snodeid": "902", "enodeid": "100", "direction": 2},
+                "geometry": LineString([(0.0, -55.0), (0.0, 0.0)]),
+            },
+            {
+                "properties": {"id": "rc_east_primary", "snodeid": "100", "enodeid": "905", "direction": 2},
+                "geometry": LineString([(0.0, 0.0), (20.0, 0.0)]),
+            },
+            {
+                "properties": {"id": "rc_east_secondary", "snodeid": "905", "enodeid": "906", "direction": 2},
+                "geometry": LineString([(20.0, 0.0), (44.0, 0.0)]),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        paths["rcsdnode_path"],
+        [
+            {"properties": {"id": "901", "mainnodeid": None}, "geometry": Point(0.0, 55.0)},
+            {"properties": {"id": "902", "mainnodeid": None}, "geometry": Point(0.0, -55.0)},
+            {"properties": {"id": "905", "mainnodeid": None}, "geometry": Point(20.0, 0.0)},
+            {"properties": {"id": "906", "mainnodeid": None}, "geometry": Point(44.0, 0.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    return paths
+
+
 def test_virtual_intersection_poc_fails_when_mainnodeid_missing(tmp_path: Path) -> None:
     paths = _write_poc_inputs(tmp_path)
     artifacts = run_t02_virtual_intersection_poc(mainnodeid="missing", out_root=tmp_path / "out", **paths)
@@ -402,6 +443,178 @@ def test_virtual_intersection_poc_uses_compound_center_when_short_link_neighbor_
 
     audit_doc = json.loads(artifacts.audit_json_path.read_text(encoding="utf-8"))
     assert any(row["reason"] == "compound_center_applied" for row in audit_doc)
+
+    polygon_doc = _load_vector_doc(artifacts.virtual_polygon_path)
+    polygon = shape(polygon_doc["features"][0]["geometry"])
+    assert polygon.buffer(0.5).covers(Point(0.0, 0.0))
+
+
+def test_virtual_intersection_poc_polygon_support_can_expand_beyond_conservative_association(tmp_path: Path) -> None:
+    paths = _write_support_decoupling_inputs(tmp_path)
+    artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
+    assert artifacts.success is True
+
+    associated_roads_doc = _load_vector_doc(artifacts.associated_rcsdroad_path)
+    associated_road_ids = {feature["properties"]["id"] for feature in associated_roads_doc["features"]}
+    assert "rc_east_secondary" not in associated_road_ids
+
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["counts"]["polygon_support_rcsdroad_count"] >= status_doc["counts"]["associated_rcsdroad_count"]
+
+    polygon_doc = _load_vector_doc(artifacts.virtual_polygon_path)
+    polygon = shape(polygon_doc["features"][0]["geometry"])
+    assert polygon.buffer(0.5).covers(Point(10.0, 0.0))
+
+
+def test_status_from_risks_marks_node_component_conflict_before_stable() -> None:
+    assert _status_from_risks(["node_component_conflict"], has_associated_roads=True) == "node_component_conflict"
+
+
+def test_build_polygon_support_from_association_clears_orphan_support_nodes() -> None:
+    group_nodes = [
+        ParsedNode(
+            feature_index=0,
+            properties={},
+            geometry=Point(0.0, 0.0),
+            node_id="100",
+            mainnodeid="100",
+            has_evd="yes",
+            is_anchor="no",
+            kind_2=2048,
+            grade_2=1,
+        )
+    ]
+    local_rc_nodes = [
+        ParsedNode(0, {}, Point(80.0, 0.0), "901", None, None, None, None, None),
+        ParsedNode(1, {}, Point(140.0, 0.0), "902", None, None, None, None, None),
+    ]
+    local_rc_roads = [
+        ParsedRoad(0, {}, LineString([(80.0, 0.0), (140.0, 0.0)]), "rc_far", "901", "902", 2),
+    ]
+
+    support_road_ids, support_node_ids, orphan_positive_support = _build_polygon_support_from_association(
+        positive_rc_road_ids={"rc_far"},
+        base_support_node_ids=set(),
+        excluded_rc_road_ids=set(),
+        local_rc_roads=local_rc_roads,
+        local_rc_nodes=local_rc_nodes,
+        group_nodes=group_nodes,
+    )
+
+    assert orphan_positive_support is True
+    assert support_road_ids == set()
+    assert support_node_ids == set()
+
+
+def test_build_polygon_support_from_association_skips_extension_when_positive_road_lacks_both_local_endpoints() -> None:
+    group_nodes = [
+        ParsedNode(
+            feature_index=0,
+            properties={},
+            geometry=Point(0.0, 0.0),
+            node_id="100",
+            mainnodeid="100",
+            has_evd="yes",
+            is_anchor="no",
+            kind_2=2048,
+            grade_2=1,
+        )
+    ]
+    local_rc_nodes = [
+        ParsedNode(0, {}, Point(8.0, 0.0), "near", None, None, None, None, None),
+        ParsedNode(1, {}, Point(24.0, 0.0), "ext", None, None, None, None, None),
+    ]
+    local_rc_roads = [
+        ParsedRoad(0, {}, LineString([(60.0, 0.0), (8.0, 0.0)]), "rc_main", "far_missing", "near", 2),
+        ParsedRoad(1, {}, LineString([(8.0, 0.0), (24.0, 0.0)]), "rc_ext", "near", "ext", 2),
+    ]
+
+    support_road_ids, support_node_ids, orphan_positive_support = _build_polygon_support_from_association(
+        positive_rc_road_ids={"rc_main"},
+        base_support_node_ids=set(),
+        excluded_rc_road_ids=set(),
+        local_rc_roads=local_rc_roads,
+        local_rc_nodes=local_rc_nodes,
+        group_nodes=group_nodes,
+    )
+
+    assert orphan_positive_support is False
+    assert support_road_ids == {"rc_main"}
+    assert "rc_ext" not in support_road_ids
+    assert support_node_ids == {"near"}
+
+
+def test_build_polygon_support_from_association_filters_far_endpoint_nodes() -> None:
+    group_nodes = [
+        ParsedNode(
+            feature_index=0,
+            properties={},
+            geometry=Point(0.0, 0.0),
+            node_id="100",
+            mainnodeid="100",
+            has_evd="yes",
+            is_anchor="no",
+            kind_2=2048,
+            grade_2=1,
+        )
+    ]
+    local_rc_nodes = [
+        ParsedNode(0, {}, Point(18.0, 0.0), "near", None, None, None, None, None),
+        ParsedNode(1, {}, Point(48.0, 0.0), "far", None, None, None, None, None),
+    ]
+    local_rc_roads = [
+        ParsedRoad(0, {}, LineString([(18.0, 0.0), (48.0, 0.0)]), "rc_main", "near", "far", 2),
+    ]
+
+    support_road_ids, support_node_ids, orphan_positive_support = _build_polygon_support_from_association(
+        positive_rc_road_ids={"rc_main"},
+        base_support_node_ids=set(),
+        excluded_rc_road_ids=set(),
+        local_rc_roads=local_rc_roads,
+        local_rc_nodes=local_rc_nodes,
+        group_nodes=group_nodes,
+    )
+
+    assert orphan_positive_support is False
+    assert support_road_ids == {"rc_main"}
+    assert support_node_ids == {"near"}
+
+
+def test_build_polygon_support_from_association_allows_single_sided_local_connector() -> None:
+    group_nodes = [
+        ParsedNode(
+            feature_index=0,
+            properties={},
+            geometry=Point(0.0, 0.0),
+            node_id="100",
+            mainnodeid="100",
+            has_evd="yes",
+            is_anchor="no",
+            kind_2=2048,
+            grade_2=1,
+        )
+    ]
+    local_rc_nodes = [
+        ParsedNode(0, {}, Point(8.0, 0.0), "near", None, None, None, None, None),
+        ParsedNode(1, {}, Point(4.0, 9.0), "branch_tip", None, None, None, None, None),
+    ]
+    local_rc_roads = [
+        ParsedRoad(0, {}, LineString([(50.0, -40.0), (8.0, 0.0)]), "rc_main", "far_missing", "near", 2),
+        ParsedRoad(1, {}, LineString([(8.0, 0.0), (4.0, 9.0)]), "rc_branch", "near", "branch_tip", 2),
+    ]
+
+    support_road_ids, support_node_ids, orphan_positive_support = _build_polygon_support_from_association(
+        positive_rc_road_ids={"rc_main"},
+        base_support_node_ids=set(),
+        excluded_rc_road_ids=set(),
+        local_rc_roads=local_rc_roads,
+        local_rc_nodes=local_rc_nodes,
+        group_nodes=group_nodes,
+    )
+
+    assert orphan_positive_support is False
+    assert support_road_ids == {"rc_main", "rc_branch"}
+    assert support_node_ids == {"near", "branch_tip"}
 
 
 def test_virtual_intersection_poc_writes_debug_rendered_map_when_enabled(tmp_path: Path) -> None:

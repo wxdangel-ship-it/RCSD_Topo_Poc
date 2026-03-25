@@ -654,6 +654,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_t02_poc.add_argument("--buffer-m", type=float, default=100.0, help="Local query buffer in meters. Default: 100.")
     p_t02_poc.add_argument("--patch-size-m", type=float, default=200.0, help="North-up patch size in meters. Default: 200.")
     p_t02_poc.add_argument("--resolution-m", type=float, default=0.2, help="Raster resolution in meters. Default: 0.2.")
+    _add_debug_flag(p_t02_poc, default=False)
     p_t02_poc.set_defaults(func=_cmd_t02_virtual_intersection_poc)
 
     p_t02_export = sub.add_parser(

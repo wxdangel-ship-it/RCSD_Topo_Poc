@@ -57,7 +57,18 @@ def _write_poc_inputs(
             {
                 "properties": representative_props,
                 "geometry": Point(0.0, 0.0),
-            }
+            },
+            {
+                "properties": {
+                    "id": "101",
+                    "mainnodeid": "100",
+                    "has_evd": "yes",
+                    "is_anchor": representative_props["is_anchor"],
+                    "kind_2": representative_props["kind_2"],
+                    "grade_2": representative_props["grade_2"],
+                },
+                "geometry": Point(6.0, 2.0),
+            },
         ],
         crs_text="EPSG:3857",
     )
@@ -161,6 +172,11 @@ def test_virtual_intersection_poc_generates_polygon_branch_evidence_and_rc_assoc
     polygon_doc = _load_vector_doc(artifacts.virtual_polygon_path)
     polygon = shape(polygon_doc["features"][0]["geometry"])
     assert polygon.area > 100.0
+    assert polygon.area / polygon.convex_hull.area > 0.65
+    assert polygon.buffer(0.5).covers(Point(6.0, 2.0))
+    assert polygon.buffer(0.5).covers(Point(0.0, 55.0))
+    assert polygon.buffer(0.5).covers(Point(0.0, -55.0))
+    assert polygon.buffer(0.5).covers(Point(45.0, 0.0))
 
     branch_doc = json.loads(artifacts.branch_evidence_json_path.read_text(encoding="utf-8"))
     road_branches = branch_doc["branches"]
@@ -199,3 +215,17 @@ def test_virtual_intersection_poc_without_rc_group_still_associates_rc_roads(tmp
     associated_roads_doc = _load_vector_doc(artifacts.associated_rcsdroad_path)
     associated_road_ids = {feature["properties"]["id"] for feature in associated_roads_doc["features"]}
     assert associated_road_ids
+
+
+def test_virtual_intersection_poc_writes_debug_rendered_map_when_enabled(tmp_path: Path) -> None:
+    paths = _write_poc_inputs(tmp_path)
+    artifacts = run_t02_virtual_intersection_poc(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        debug=True,
+        **paths,
+    )
+    assert artifacts.success is True
+    assert artifacts.rendered_map_path is not None
+    assert artifacts.rendered_map_path.is_file()
+    assert artifacts.rendered_map_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")

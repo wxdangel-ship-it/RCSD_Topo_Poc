@@ -5,8 +5,10 @@ import hashlib
 import json
 import math
 import sqlite3
+import struct
 import time
 import tracemalloc
+import zlib
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -62,11 +64,23 @@ ROAD_BUFFER_M = 3.5
 RC_ROAD_BUFFER_M = 3.5
 NODE_SEED_RADIUS_M = 6.0
 RC_NODE_SEED_RADIUS_M = 2.0
-MAIN_BRANCH_HALF_WIDTH_M = 10.0
-SIDE_BRANCH_HALF_WIDTH_M = 7.0
+MAIN_BRANCH_HALF_WIDTH_M = 7.0
+SIDE_BRANCH_HALF_WIDTH_M = 5.0
 MAIN_AXIS_ANGLE_TOLERANCE_DEG = 35.0
 BRANCH_MATCH_TOLERANCE_DEG = 30.0
 RC_BRANCH_PROXIMITY_M = 18.0
+POLYGON_CORE_RADIUS_M = 7.0
+POLYGON_TIP_BUFFER_M = 5.0
+POLYGON_RC_NODE_BUFFER_M = 4.0
+POLYGON_SUPPORT_SMOOTH_M = 1.5
+POLYGON_LOCAL_RC_NODE_DISTANCE_M = 20.0
+POLYGON_LOCAL_RC_SEGMENT_EXTENSION_M = 14.0
+POLYGON_LOCAL_RC_EXCLUSION_EXTENSION_M = 18.0
+POLYGON_GROUP_NODE_BUFFER_M = 1.0
+POLYGON_GROUP_NODE_REINCLUDE_M = 1.6
+POLYGON_COMPACT_RC_ENDPOINT_MIN_DISTANCE_M = 20.0
+POLYGON_COMPACT_RC_ENDPOINT_MAX_DISTANCE_M = 45.0
+POLYGON_COMPACT_RC_MAX_LENGTH_M = 80.0
 RAY_GAP_STEPS = 3
 RAY_SAMPLE_STEP_MULTIPLIER = 0.5
 SPATIAL_CACHE_VERSION = "v1"
@@ -203,6 +217,7 @@ class VirtualIntersectionArtifacts:
     progress_path: Path
     perf_json_path: Path
     perf_markers_path: Path
+    rendered_map_path: Path | None = None
 
 
 def _now_text() -> str:
@@ -1240,6 +1255,138 @@ def _mask_to_geometry(mask: np.ndarray, grid: GridSpec) -> BaseGeometry:
     return merged.buffer(0)
 
 
+def _png_chunk(chunk_type: bytes, payload: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(payload))
+        + chunk_type
+        + payload
+        + struct.pack(">I", zlib.crc32(chunk_type + payload) & 0xFFFFFFFF)
+    )
+
+
+def _write_png_rgba(path: Path, rgba: np.ndarray) -> None:
+    if rgba.dtype != np.uint8:
+        raise ValueError("PNG image must be uint8.")
+    if rgba.ndim != 3 or rgba.shape[2] != 4:
+        raise ValueError("PNG image must have shape [height, width, 4].")
+    height, width, _channels = rgba.shape
+    raw_rows = b"".join(b"\x00" + rgba[row_index].tobytes() for row_index in range(height))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", zlib.compress(raw_rows, level=9))
+        + _png_chunk(b"IEND", b"")
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png_bytes)
+
+
+def _blend_mask(
+    image: np.ndarray,
+    mask: np.ndarray,
+    *,
+    color: tuple[int, int, int],
+    alpha: float,
+) -> None:
+    if not mask.any():
+        return
+    alpha_value = max(0.0, min(1.0, alpha))
+    if alpha_value <= 0.0:
+        return
+    base = image[mask, :3].astype(np.float32)
+    color_array = np.array(color, dtype=np.float32)
+    image[mask, :3] = np.clip(base * (1.0 - alpha_value) + color_array * alpha_value, 0.0, 255.0).astype(np.uint8)
+    image[mask, 3] = 255
+
+
+def _write_debug_rendered_map(
+    *,
+    out_path: Path,
+    grid: GridSpec,
+    drivezone_mask: np.ndarray,
+    road_mask: np.ndarray,
+    rc_road_mask: np.ndarray,
+    polygon_geometry: BaseGeometry,
+    representative_node: ParsedNode,
+    group_nodes: list[ParsedNode],
+    local_nodes: list[ParsedNode],
+    local_rc_nodes: list[ParsedNode],
+    local_rc_roads: list[ParsedRoad],
+    selected_rc_roads: list[ParsedRoad],
+    selected_rc_node_ids: set[str],
+    excluded_rc_road_ids: set[str],
+) -> None:
+    image = np.full((grid.height, grid.width, 4), 255, dtype=np.uint8)
+    image[..., 3] = 255
+
+    polygon_mask = _rasterize_geometries(grid, [polygon_geometry]) & drivezone_mask
+    selected_rc_road_mask = _rasterize_geometries(
+        grid,
+        [
+            road.geometry.buffer(max(grid.resolution_m * 2.0, 0.8), cap_style=2, join_style=2)
+            for road in selected_rc_roads
+        ],
+    )
+    excluded_rc_road_mask = _rasterize_geometries(
+        grid,
+        [
+            road.geometry.buffer(max(grid.resolution_m * 2.0, 0.8), cap_style=2, join_style=2)
+            for road in local_rc_roads
+            if road.road_id in excluded_rc_road_ids
+        ],
+    )
+    group_node_ids = {node.node_id for node in group_nodes}
+    node_marker_radius_m = max(grid.resolution_m * 4.0, 1.3)
+    rc_node_marker_radius_m = max(grid.resolution_m * 3.5, 1.1)
+    group_node_mask = _rasterize_geometries(
+        grid,
+        [node.geometry.buffer(node_marker_radius_m) for node in group_nodes],
+    )
+    other_node_mask = _rasterize_geometries(
+        grid,
+        [
+            node.geometry.buffer(node_marker_radius_m)
+            for node in local_nodes
+            if node.node_id not in group_node_ids
+        ],
+    )
+    selected_rc_node_mask = _rasterize_geometries(
+        grid,
+        [
+            node.geometry.buffer(rc_node_marker_radius_m)
+            for node in local_rc_nodes
+            if node.node_id in selected_rc_node_ids
+        ],
+    )
+    other_rc_node_mask = _rasterize_geometries(
+        grid,
+        [
+            node.geometry.buffer(rc_node_marker_radius_m)
+            for node in local_rc_nodes
+            if node.node_id not in selected_rc_node_ids
+        ],
+    )
+    representative_mask = _rasterize_geometries(
+        grid,
+        [representative_node.geometry.buffer(max(grid.resolution_m * 4.5, 1.5))],
+    )
+
+    _blend_mask(image, drivezone_mask, color=(243, 239, 224), alpha=1.0)
+    _blend_mask(image, road_mask, color=(138, 160, 255), alpha=0.45)
+    _blend_mask(image, rc_road_mask, color=(153, 153, 153), alpha=0.30)
+    _blend_mask(image, excluded_rc_road_mask, color=(121, 57, 57), alpha=0.55)
+    _blend_mask(image, polygon_mask, color=(255, 179, 71), alpha=0.60)
+    _blend_mask(image, selected_rc_road_mask, color=(214, 69, 69), alpha=0.85)
+    _blend_mask(image, other_rc_node_mask, color=(108, 117, 125), alpha=0.80)
+    _blend_mask(image, selected_rc_node_mask, color=(193, 18, 31), alpha=0.95)
+    _blend_mask(image, other_node_mask, color=(38, 38, 38), alpha=0.92)
+    _blend_mask(image, group_node_mask, color=(31, 119, 180), alpha=0.95)
+    _blend_mask(image, representative_mask, color=(14, 53, 94), alpha=1.0)
+
+    _write_png_rgba(out_path, image)
+
+
 def _vector_to_angle_deg(vector: tuple[float, float]) -> float:
     return (math.degrees(math.atan2(vector[1], vector[0])) + 360.0) % 360.0
 
@@ -1599,14 +1746,22 @@ def _branch_feature(
 
 def _polygon_branch_length_m(branch: BranchEvidence) -> float:
     if branch.is_main_direction:
-        hard_cap = 42.0 if branch.evidence_level == "arm_full_rc" else 30.0
-        return max(10.0, min(branch.drivezone_support_m, hard_cap))
+        hard_cap = 20.0 if branch.evidence_level == "arm_full_rc" else 16.0
+        return max(8.0, min(branch.drivezone_support_m, hard_cap))
 
     if branch.evidence_level == "arm_full_rc":
-        return max(8.0, min(branch.drivezone_support_m, 26.0))
-    if branch.evidence_level == "arm_partial":
         return max(6.0, min(branch.drivezone_support_m, 14.0))
+    if branch.evidence_level == "arm_partial":
+        return max(5.0, min(branch.drivezone_support_m, 8.0))
     return 0.0
+
+
+def _point_along_branch(center: Point, *, angle_deg: float, distance_m: float) -> Point:
+    radians = math.radians(angle_deg)
+    return Point(
+        center.x + math.cos(radians) * distance_m,
+        center.y + math.sin(radians) * distance_m,
+    )
 
 
 def _write_association_outputs(
@@ -1657,6 +1812,7 @@ def run_t02_virtual_intersection_poc(
     buffer_m: float = DEFAULT_PATCH_BUFFER_M,
     patch_size_m: float = DEFAULT_PATCH_SIZE_M,
     resolution_m: float = DEFAULT_RESOLUTION_M,
+    debug: bool = False,
 ) -> VirtualIntersectionArtifacts:
     tracemalloc.start()
     started_at = time.perf_counter()
@@ -1680,6 +1836,7 @@ def run_t02_virtual_intersection_poc(
     progress_path = out_root_path / "t02_virtual_intersection_poc_progress.json"
     perf_json_path = out_root_path / "t02_virtual_intersection_poc_perf.json"
     perf_markers_path = out_root_path / "t02_virtual_intersection_poc_perf_markers.jsonl"
+    rendered_map_path = out_root_path / "_rendered_maps" / f"{_normalize_id(mainnodeid) or 'unknown'}.png"
 
     logger = build_logger(log_path, f"t02_virtual_intersection_poc_{resolved_run_id}")
     counts: dict[str, Any] = {
@@ -1828,6 +1985,7 @@ def run_t02_virtual_intersection_poc(
             progress_label="local_nodes",
             progress_callback=report_local_scan,
         )
+        local_nodes = _parse_nodes(local_nodes_layer_data, require_anchor_fields=False)
         counts["node_feature_count"] = len(local_nodes_layer_data.features)
         announce(
             logger,
@@ -2148,8 +2306,10 @@ def run_t02_virtual_intersection_poc(
             branch.conflict_excluded = branch.branch_id in negative_rc_groups
 
         rc_branch_by_id = {branch.branch_id: branch for branch in rc_branches}
+        rc_node_by_id = {node.node_id: node for node in local_rc_nodes}
         positive_rc_road_ids: set[str] = set()
         negative_rc_road_ids: set[str] = set()
+        polygon_excluded_rc_road_ids: set[str] = set()
         for group_id in positive_rc_groups:
             group_road_ids = rc_branch_by_id[group_id].road_ids
             group_roads = [road for road in local_rc_roads if road.road_id in group_road_ids]
@@ -2159,14 +2319,83 @@ def run_t02_virtual_intersection_poc(
             for road in group_roads:
                 if road.geometry.distance(representative_node.geometry) <= closest_distance + 2.0:
                     positive_rc_road_ids.add(road.road_id)
+                else:
+                    polygon_excluded_rc_road_ids.add(road.road_id)
         for group_id in negative_rc_groups:
             negative_rc_road_ids.update(rc_branch_by_id[group_id].road_ids)
+        polygon_excluded_rc_road_ids.update(negative_rc_road_ids)
 
-        core_mask = _rasterize_geometries(
-            grid,
-            [representative_node.geometry.buffer(NODE_SEED_RADIUS_M * 1.5)],
-        ) & drivezone_mask
-        polygon_mask = core_mask.copy()
+        candidate_selected_rc_node_ids: set[str] = {node.node_id for node in rc_group_nodes}
+        compact_endpoint_node_ids: set[str] = set()
+        for road in local_rc_roads:
+            if road.road_id in positive_rc_road_ids:
+                line = _linearize(road.geometry)
+                coords = list(line.coords)
+                endpoint_infos = [
+                    (road.snodeid, Point(coords[0])),
+                    (road.enodeid, Point(coords[-1])),
+                ]
+                endpoint_distances = [point.distance(representative_node.geometry) for _, point in endpoint_infos]
+                road_compact_endpoint_ids: list[str] = []
+                for node_id, endpoint_point in endpoint_infos:
+                    rc_node = rc_node_by_id.get(node_id)
+                    if rc_node is None:
+                        continue
+                    if bool(rc_group_nodes):
+                        candidate_selected_rc_node_ids.add(node_id)
+                    elif (
+                        line.length <= POLYGON_COMPACT_RC_MAX_LENGTH_M
+                        and POLYGON_COMPACT_RC_ENDPOINT_MIN_DISTANCE_M
+                        <= endpoint_point.distance(representative_node.geometry)
+                        <= POLYGON_COMPACT_RC_ENDPOINT_MAX_DISTANCE_M
+                    ):
+                        road_compact_endpoint_ids.append(node_id)
+                if (
+                    not rc_group_nodes
+                    and line.length <= POLYGON_COMPACT_RC_MAX_LENGTH_M
+                    and min(endpoint_distances) >= POLYGON_COMPACT_RC_ENDPOINT_MIN_DISTANCE_M
+                    and max(endpoint_distances) <= POLYGON_COMPACT_RC_ENDPOINT_MAX_DISTANCE_M
+                    and len(road_compact_endpoint_ids) >= 2
+                ):
+                    compact_endpoint_node_ids.update(road_compact_endpoint_ids)
+        candidate_selected_rc_node_ids.update(compact_endpoint_node_ids)
+
+        core_geometry = representative_node.geometry.buffer(POLYGON_CORE_RADIUS_M).intersection(drivezone_union)
+        core_mask = _rasterize_geometries(grid, [core_geometry]) & drivezone_mask
+        support_geometries: list[BaseGeometry] = [core_geometry]
+        group_node_buffers = [
+            node.geometry.buffer(POLYGON_GROUP_NODE_BUFFER_M).intersection(drivezone_union)
+            for node in group_nodes
+            if node.node_id != representative_node.node_id
+        ]
+        group_node_reinclude_geometries = [
+            unary_union(
+                [
+                    node.geometry.buffer(POLYGON_GROUP_NODE_REINCLUDE_M),
+                    LineString(
+                        [
+                            (float(representative_node.geometry.x), float(representative_node.geometry.y)),
+                            (float(node.geometry.x), float(node.geometry.y)),
+                        ]
+                    ).buffer(POLYGON_GROUP_NODE_REINCLUDE_M * 0.5, cap_style=1, join_style=1),
+                ]
+            ).intersection(drivezone_union)
+            for node in group_nodes
+            if node.node_id != representative_node.node_id
+        ]
+        group_node_connectors = [
+            LineString(
+                [
+                    (float(representative_node.geometry.x), float(representative_node.geometry.y)),
+                    (float(node.geometry.x), float(node.geometry.y)),
+                ]
+            ).buffer(POLYGON_GROUP_NODE_BUFFER_M * 0.75, cap_style=1, join_style=1).intersection(drivezone_union)
+            for node in group_nodes
+            if node.node_id != representative_node.node_id
+        ]
+        group_node_mask = _rasterize_geometries(grid, group_node_buffers) & drivezone_mask if group_node_buffers else np.zeros_like(core_mask, dtype=bool)
+        support_geometries.extend(geometry for geometry in group_node_buffers if not geometry.is_empty)
+        support_geometries.extend(geometry for geometry in group_node_connectors if not geometry.is_empty)
         branch_features: list[dict[str, Any]] = []
         for branch in road_branches:
             max_length = _polygon_branch_length_m(branch)
@@ -2181,14 +2410,29 @@ def run_t02_virtual_intersection_poc(
                 )
                 continue
             half_width = MAIN_BRANCH_HALF_WIDTH_M if branch.is_main_direction else SIDE_BRANCH_HALF_WIDTH_M
-            corridor_geometry = _branch_ray_geometry(
+            branch_has_any_rc_group = bool(branch.rcsdroad_ids)
+            connector_length = min(
+                max_length,
+                14.0 if branch.is_main_direction else 8.0,
+            )
+            connector_geometry = _branch_ray_geometry(
                 representative_node.geometry,
                 angle_deg=branch.angle_deg,
-                length_m=max_length,
-            ).buffer(half_width, cap_style=2, join_style=2)
-            corridor_mask = _rasterize_geometries(grid, [corridor_geometry]) & drivezone_mask
+                length_m=connector_length,
+            ).buffer(half_width * 0.95, cap_style=2, join_style=2).intersection(drivezone_union)
+            tip_geometry = GeometryCollection()
+            if not branch_has_any_rc_group:
+                tip_point = _point_along_branch(
+                    representative_node.geometry,
+                    angle_deg=branch.angle_deg,
+                    distance_m=max_length,
+                )
+                tip_geometry = tip_point.buffer(max(POLYGON_TIP_BUFFER_M, half_width * 0.8)).intersection(drivezone_union)
             if branch.selected_for_polygon:
-                polygon_mask |= corridor_mask
+                if not connector_geometry.is_empty:
+                    support_geometries.append(connector_geometry)
+                if not tip_geometry.is_empty:
+                    support_geometries.append(tip_geometry)
             branch.polygon_length_m = max_length
             branch_features.append(
                 _branch_feature(
@@ -2198,39 +2442,157 @@ def run_t02_virtual_intersection_poc(
                 )
             )
 
-        if positive_rc_road_ids:
-            positive_rc_geometries = [
-                road.geometry.buffer(RC_ROAD_BUFFER_M, cap_style=2, join_style=2)
-                for road in local_rc_roads
-                if road.road_id in positive_rc_road_ids
-            ]
-            if positive_rc_geometries:
-                polygon_mask |= _rasterize_geometries(grid, positive_rc_geometries) & drivezone_mask
-        if negative_rc_road_ids:
-            negative_rc_geometries = [
-                road.geometry.buffer(RC_ROAD_BUFFER_M, cap_style=2, join_style=2)
-                for road in local_rc_roads
-                if road.road_id in negative_rc_road_ids
-            ]
-            if negative_rc_geometries:
-                polygon_mask &= ~_rasterize_geometries(grid, negative_rc_geometries)
+        selected_rc_node_buffers = [
+            node.geometry.buffer(POLYGON_RC_NODE_BUFFER_M).intersection(drivezone_union)
+            for node in local_rc_nodes
+            if node.node_id in candidate_selected_rc_node_ids
+        ]
+        support_geometries.extend(geometry for geometry in selected_rc_node_buffers if not geometry.is_empty)
+        positive_anchor_geometries: list[BaseGeometry] = [core_geometry]
+        positive_anchor_geometries.extend(group_node_buffers)
+        positive_anchor_geometries.extend(group_node_connectors)
+        positive_anchor_geometries.extend(selected_rc_node_buffers)
+        positive_anchor_zone = unary_union([geometry for geometry in positive_anchor_geometries if not geometry.is_empty])
 
-        polygon_mask &= drivezone_mask
+        positive_rc_geometries: list[BaseGeometry] = []
+        local_positive_clip = representative_node.geometry.buffer(POLYGON_LOCAL_RC_SEGMENT_EXTENSION_M)
+        if positive_rc_road_ids:
+            if rc_group_nodes:
+                positive_anchor_zone = positive_anchor_zone.buffer(
+                    POLYGON_SUPPORT_SMOOTH_M
+                )
+            for road in local_rc_roads:
+                if road.road_id not in positive_rc_road_ids:
+                    continue
+                local_geometry = road.geometry.intersection(local_positive_clip)
+                if local_geometry.is_empty:
+                    continue
+                if rc_group_nodes:
+                    positive_geometry = road.geometry.buffer(
+                        RC_ROAD_BUFFER_M,
+                        cap_style=2,
+                        join_style=2,
+                    ).intersection(positive_anchor_zone)
+                else:
+                    positive_geometry = local_geometry.buffer(
+                        RC_ROAD_BUFFER_M * 0.9,
+                        cap_style=2,
+                        join_style=2,
+                    ).intersection(drivezone_union)
+                if not positive_geometry.is_empty:
+                    positive_rc_geometries.append(positive_geometry)
+            if positive_rc_geometries:
+                support_geometries.extend(geometry for geometry in positive_rc_geometries if not geometry.is_empty)
+        support_geometries = [geometry for geometry in support_geometries if geometry is not None and not geometry.is_empty]
+        support_union = unary_union(support_geometries) if support_geometries else core_geometry
+        candidate_polygon_geometry = support_union.buffer(POLYGON_SUPPORT_SMOOTH_M, join_style=1)
+        if selected_rc_node_buffers and (rc_group_nodes or compact_endpoint_node_ids):
+            endpoint_hull = unary_union([core_geometry, *selected_rc_node_buffers]).convex_hull.buffer(
+                POLYGON_SUPPORT_SMOOTH_M * 0.75,
+                join_style=1,
+            )
+            candidate_polygon_geometry = unary_union([candidate_polygon_geometry, endpoint_hull])
+        candidate_polygon_geometry = candidate_polygon_geometry.intersection(drivezone_union)
+        if candidate_polygon_geometry.is_empty:
+            candidate_polygon_geometry = core_geometry
+
+        polygon_mask = _rasterize_geometries(grid, [candidate_polygon_geometry]) & drivezone_mask
+        group_node_reinclude_mask = (
+            _rasterize_geometries(grid, group_node_reinclude_geometries) & drivezone_mask
+            if group_node_reinclude_geometries
+            else np.zeros_like(polygon_mask, dtype=bool)
+        )
+        if polygon_excluded_rc_road_ids:
+            local_exclusion_clip = representative_node.geometry.buffer(POLYGON_LOCAL_RC_EXCLUSION_EXTENSION_M)
+            exclusion_geometries = []
+            for road in local_rc_roads:
+                if road.road_id not in polygon_excluded_rc_road_ids:
+                    continue
+                local_geometry = road.geometry.intersection(local_exclusion_clip)
+                if local_geometry.is_empty:
+                    continue
+                exclusion_geometry = local_geometry.buffer(
+                    RC_ROAD_BUFFER_M * 1.35,
+                    cap_style=2,
+                    join_style=2,
+                ).intersection(drivezone_union)
+                if not exclusion_geometry.is_empty:
+                    exclusion_geometries.append(exclusion_geometry)
+            if exclusion_geometries:
+                exclusion_mask = _rasterize_geometries(grid, exclusion_geometries)
+                polygon_mask &= ~exclusion_mask
         polygon_mask = _binary_close(polygon_mask, iterations=1)
+        polygon_mask |= group_node_reinclude_mask
         polygon_mask = _extract_seed_component(polygon_mask, core_mask | node_seed_mask | rc_node_seed_mask)
         if not polygon_mask.any():
             polygon_mask = core_mask
         virtual_polygon_geometry = _mask_to_geometry(polygon_mask, grid)
+        if not virtual_polygon_geometry.is_empty:
+            virtual_polygon_geometry = (
+                virtual_polygon_geometry.buffer(POLYGON_SUPPORT_SMOOTH_M, join_style=1)
+                .buffer(-POLYGON_SUPPORT_SMOOTH_M * 0.5, join_style=1)
+                .intersection(drivezone_union)
+            )
         if virtual_polygon_geometry.is_empty:
             virtual_polygon_geometry = representative_node.geometry.buffer(12.0).intersection(drivezone_union)
+        if polygon_excluded_rc_road_ids:
+            final_local_exclusion_clip = representative_node.geometry.buffer(POLYGON_LOCAL_RC_EXCLUSION_EXTENSION_M)
+            final_exclusion_geometries = []
+            for road in local_rc_roads:
+                if road.road_id not in polygon_excluded_rc_road_ids:
+                    continue
+                local_geometry = road.geometry.intersection(final_local_exclusion_clip)
+                if local_geometry.is_empty:
+                    continue
+                exclusion_geometry = local_geometry.buffer(
+                    RC_ROAD_BUFFER_M * 1.35,
+                    cap_style=2,
+                    join_style=2,
+                ).intersection(drivezone_union)
+                if not exclusion_geometry.is_empty:
+                    final_exclusion_geometries.append(exclusion_geometry)
+            if final_exclusion_geometries:
+                virtual_polygon_geometry = virtual_polygon_geometry.difference(unary_union(final_exclusion_geometries))
+                if group_node_reinclude_geometries:
+                    virtual_polygon_geometry = unary_union([virtual_polygon_geometry, *group_node_reinclude_geometries]).intersection(drivezone_union)
+                if not virtual_polygon_geometry.is_empty:
+                    virtual_polygon_geometry = virtual_polygon_geometry.buffer(0)
         record_stage("virtual_polygon_built")
         selected_rc_roads = [
             road
             for road in local_rc_roads
             if road.road_id in positive_rc_road_ids and road.geometry.intersects(virtual_polygon_geometry)
         ]
+        selected_rc_node_ids: set[str] = {node.node_id for node in rc_group_nodes}
+        for road in selected_rc_roads:
+            selected_rc_node_ids.add(road.snodeid)
+            selected_rc_node_ids.add(road.enodeid)
         if not selected_rc_roads and positive_rc_road_ids and STATUS_NO_VALID_RC_CONNECTION not in risks:
             risks.append(STATUS_NO_VALID_RC_CONNECTION)
+
+        debug_rendered_map_written = False
+        if debug:
+            try:
+                _write_debug_rendered_map(
+                    out_path=rendered_map_path,
+                    grid=grid,
+                    drivezone_mask=drivezone_mask,
+                    road_mask=road_mask,
+                    rc_road_mask=rc_road_mask,
+                    polygon_geometry=virtual_polygon_geometry,
+                    representative_node=representative_node,
+                    group_nodes=group_nodes,
+                    local_nodes=local_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    selected_rc_roads=selected_rc_roads,
+                    selected_rc_node_ids=selected_rc_node_ids,
+                    excluded_rc_road_ids=polygon_excluded_rc_road_ids,
+                )
+                debug_rendered_map_written = True
+                announce(logger, f"[T02-POC] wrote debug rendered map path={rendered_map_path}")
+            except Exception as exc:
+                announce(logger, f"[T02-POC] debug rendered map skipped reason={type(exc).__name__}: {exc}")
 
         associated_rcsdroad_features: list[dict[str, Any]] = []
         for road in local_rc_roads:
@@ -2253,10 +2615,6 @@ def run_t02_virtual_intersection_poc(
             if selected:
                 associated_rcsdroad_features.append({"properties": dict(road.properties), "geometry": road.geometry})
 
-        selected_rc_node_ids: set[str] = {node.node_id for node in rc_group_nodes}
-        for road in selected_rc_roads:
-            selected_rc_node_ids.add(road.snodeid)
-            selected_rc_node_ids.add(road.enodeid)
         associated_rcsdnode_features: list[dict[str, Any]] = []
         for node in local_rc_nodes:
             selected = node.node_id in selected_rc_node_ids
@@ -2352,6 +2710,7 @@ def run_t02_virtual_intersection_poc(
                     "associated_rcsdnode": str(associated_rcsdnode_path),
                     "audit_csv": str(audit_csv_path),
                     "audit_json": str(audit_json_path),
+                    "rendered_map_png": str(rendered_map_path) if debug_rendered_map_written else None,
                 },
             },
         )
@@ -2403,6 +2762,7 @@ def run_t02_virtual_intersection_poc(
             progress_path=progress_path,
             perf_json_path=perf_json_path,
             perf_markers_path=perf_markers_path,
+            rendered_map_path=rendered_map_path if debug_rendered_map_written else None,
         )
     except VirtualIntersectionPocError as exc:
         audit_rows.append(
@@ -2470,6 +2830,7 @@ def run_t02_virtual_intersection_poc(
             progress_path=progress_path,
             perf_json_path=perf_json_path,
             perf_markers_path=perf_markers_path,
+            rendered_map_path=None,
         )
     finally:
         close_logger(logger)
@@ -2499,6 +2860,7 @@ def run_t02_virtual_intersection_poc_cli(args: argparse.Namespace) -> int:
         buffer_m=args.buffer_m,
         patch_size_m=args.patch_size_m,
         resolution_m=args.resolution_m,
+        debug=args.debug,
     )
     if artifacts.success:
         print(f"T02 virtual intersection POC outputs written to: {artifacts.out_root}")

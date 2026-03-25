@@ -33,8 +33,11 @@
 
 ## 必守边界
 
-- 当前已实现 stage1 `DriveZone / has_evd gate` 与 stage2 `anchor recognition / anchor existence` 最小闭环。
-- 单 `mainnodeid` 虚拟路口与文本证据包当前属于受控实验入口，不等于正式批处理方案。
+- 当前已实现 stage1 `DriveZone / has_evd gate`、stage2 `anchor recognition / anchor existence` 与 stage3 `virtual intersection anchoring` baseline。
+- `t02-virtual-intersection-poc` 当前是 stage3 baseline 入口：
+  - 默认 `case-package`
+  - 可切换 `--input-mode full-input`
+- 单 `mainnodeid` 文本证据包当前是 stage3 复核与外部复现支撑工具，不等于新的业务阶段或正式产线批处理方案。
 - 最终唯一锚定决策、概率 / 置信度、误伤捞回、环岛新规则都不在当前正式实现范围。
 - `mainnode` 可作为业务概念名，但 stage1 正式输入字段只能是 `mainnodeid`。
 - `working_mainnodeid` 不得作为 stage1 正式输入字段写回契约或强规则。
@@ -50,5 +53,5 @@
 ## 相邻模块关系
 
 - T01 是 T02 的上游事实源之一，当前提供 `segment` 与 `nodes`。
-- T02 当前是 T01 之后的 gate + anchor recognition 基线模块，不承担最终概率型锚定决策。
+- T02 当前是 T01 之后的 stage1 / stage2 / stage3 baseline 模块，不承担最终概率型锚定决策。
 - 若发现 T01 文档、T02 契约与现实现有冲突，先停下并汇报，再决定如何调整。

@@ -226,7 +226,7 @@
 - full-input 是当前正式 baseline 入口，用于：
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别未锚定且有资料的路口
-- 代表 node 的受控实验前提：
+- 代表 node 的 stage3 baseline 前提：
   - `has_evd = yes`
   - `kind_2 in {4, 2048}`
   - 非 `review_mode` 下，`is_anchor = no`
@@ -600,7 +600,7 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
 python -m rcsd_topo_poc t02-stage2-anchor-recognition --help
 ```
 
-### 4.2 实验性 POC 入口
+### 4.2 Stage3 与支撑入口
 
 ```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc --help
@@ -653,7 +653,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
   - `out_root`
   - `run_id`
 
-### 5.2 实验性 POC 参数
+### 5.2 Stage3 参数
 
 - 必选输入：
   - `nodes_path`
@@ -739,7 +739,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt
 ```
 
-### 6.1 实验性 POC 输入前提
+### 6.1 Stage3 输入前提
 
 - `nodes` 必须包含：`id / mainnodeid / has_evd / is_anchor / kind_2 / grade_2`
 - `roads` 与 `RCSDRoad` 当前只依赖：`id / snodeid / enodeid / direction`

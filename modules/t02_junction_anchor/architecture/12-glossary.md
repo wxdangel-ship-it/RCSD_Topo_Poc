@@ -7,7 +7,9 @@
 - `DriveZone gate`：判断某个 junction group 是否拥有有效资料区域的 stage1 规则。
 - `has_evd`：当前阶段的资料存在性业务结果，值域为 `yes / no / null`。
 - `anchor recognition / anchor existence`：stage2 基于 `RCSDIntersection` 判定代表 node 是否命中稳定锚点的最小闭环。
-- `virtual intersection POC`：单 `mainnodeid` 的局部虚拟路口面实验入口，用于复核 own-group nodes、RC 局部组件与路口面的一致性。
+- `virtual intersection anchoring`：T02 stage3，对“有资料但未锚定”的路口构造虚拟路口面，并将其锚定到 own-group nodes、RCSDNode 与 RCSDRoad 局部组件。
+- `case-package`：stage3 的基线回归输入模式，每个 case 自带完整局部输入。
+- `full-input`：stage3 的完整数据输入模式，统一承接指定 `mainnodeid` 与自动识别候选两类业务诉求。
 - `polygon-support`：用于支撑虚拟路口面几何的局部 RC 组件集合；允许比最终 association 更完整。
 - `association`：最终写入 `associated_rcsdroad.gpkg / associated_rcsdnode.gpkg` 的保守 RC 关联结果。
 - `must-cover own-group nodes`：当前 `mainnodeid` 组内 node 必须被虚拟路口面覆盖的硬约束。

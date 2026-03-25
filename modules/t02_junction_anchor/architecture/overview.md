@@ -18,17 +18,19 @@
 
 - stage1：`DriveZone / has_evd gate`
 - stage2：`anchor recognition / anchor existence`（最小闭环已实现）
-- 受控实验：单 `mainnodeid` 虚拟路口面与文本证据包
+- stage3：`virtual intersection anchoring`
+- 支撑工具：单 `mainnodeid` 文本证据包
 
 ## 当前主原则
 
-- T02 当前是正式模块；当前正式闭环覆盖 stage1 与 stage2，单 `mainnodeid` 虚拟路口与文本证据包属于受控实验入口。
+- T02 当前是正式模块；当前正式 baseline 闭环覆盖 stage1、stage2 与 stage3。
 - stage1 负责资料存在性 gate，并在 `summary` 中输出分桶统计与 `all__d_sgrade` 总汇总。
 - stage2 当前已落地 `RCSDIntersection`、`is_anchor`、`fail1/fail2` 与阶段边界的最小实现闭环，不等于最终锚定闭环。
-- 单 `mainnodeid` 虚拟路口面只属于受控实验入口，不等于正式批处理方案。
+- stage3 负责虚拟路口面锚定，当前官方入口统一为 `t02-virtual-intersection-poc`。
+- 文本证据包只承担 stage3 复核与外部复现支撑，不构成新的业务阶段。
 - 长期模块真相以 `architecture/*` 与 `INTERFACE_CONTRACT.md` 为准。
 - `README.md` 只承担操作者入口说明。
-- `specs/t02-junction-anchor/*` 是变更工件，不替代长期模块真相。
+- `specs/t02-junction-anchor/*` 与 `specs/t02-virtual-intersection-batch-poc/*` 是变更工件，不替代长期模块真相。
 
 ## 推荐阅读顺序
 

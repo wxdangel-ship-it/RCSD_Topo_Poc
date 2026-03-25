@@ -8,9 +8,11 @@
 - 当前正式实现范围包括：
   - stage1 `DriveZone / has_evd gate`
   - stage2 `anchor recognition / anchor existence`
+  - stage3 `virtual intersection anchoring`
 - 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础。
-- 单 `mainnodeid` 虚拟路口面与文本证据包当前属于受控实验入口。
-- 当前代码已实现最小闭环，但尚未进入最终唯一锚定决策、概率阶段与全量批处理。
+- `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口。
+- 单 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑工具保留。
+- 当前代码已实现最小闭环，但尚未进入最终唯一锚定决策、概率阶段与正式产线级全量批处理。
 
 ## 2. 官方运行入口
 
@@ -34,12 +36,17 @@ python -m rcsd_topo_poc t02-export-text-bundle --help
 python -m rcsd_topo_poc t02-decode-text-bundle --help
 ```
 
-- `t02-virtual-intersection-poc` 是当前为单 `mainnodeid` 虚拟路口面验证新增的实验性 POC 入口
-- 它不重算 stage1 `has_evd`，也不替代当前正式的 stage1 / stage2 基线
-- `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 `mainnodeid` 文本证据包导出与解包，服务于外网实验复现
+- `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口
+- 默认 `case-package` 模式保持既有单 `mainnodeid` baseline 回归能力
+- 显式 `--input-mode full-input` 时，统一承接：
+  - 完整数据 + 指定 `mainnodeid`
+  - 完整数据 + 自动识别“有资料但未锚定”的路口
+- 它不重算 stage1 `has_evd` 或 stage2 `is_anchor`，而是直接消费其结果字段
+- `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 `mainnodeid` 文本证据包导出与解包，服务于 stage3 复核与外部复现
 - T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
 - T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
-- 当前虚拟路口 POC 的默认验收基线是标准 case-package 输入；共享大图层直连运行涉及额外 CRS / layer / 预裁剪问题，不建议混入算法验收
+- `case-package` 是 stage3 baseline regression 入口，不允许回退
+- `full-input` 是 stage3 完整数据 baseline 入口；共享大图层直连运行必须先满足正确 layer / CRS / 预裁剪与 preflight 约束
 ## 3. 常见运行方式
 
 ```bash
@@ -60,7 +67,7 @@ python -m rcsd_topo_poc t02-stage2-anchor-recognition \
   --run-id t02_stage2_run
 ```
 
-POC 示例：
+stage3 示例：
 
 ```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc \
@@ -73,6 +80,21 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc \
   --debug-render-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc_debug/_rendered_maps \
   --run-id t02_virtual_intersection_demo
+```
+
+```bash
+python -m rcsd_topo_poc t02-virtual-intersection-poc \
+  --input-mode full-input \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
+  --max-cases 100 \
+  --workers 4 \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_full_input \
+  --run-id t02_virtual_intersection_full_input_demo \
+  --debug
 ```
 
 ```bash
@@ -130,7 +152,11 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - `t02_stage1_perf_markers.jsonl`
   - 阶段级性能标记流
 - `virtual_intersection_polygon.gpkg`
-  - 单 `mainnodeid` POC 生成的虚拟路口面
+  - stage3 单 case 生成的虚拟路口面
+- `virtual_intersection_polygons.gpkg`
+  - stage3 full-input 模式汇总生成的批次虚拟路口面图层
+- `_rendered_maps/`
+  - stage3 批次 render 目录
 - `branch_evidence.json`
 - `branch_evidence.gpkg`
   - 分支方向、证据等级、是否纳入虚拟面和 RC 方向组映射
@@ -182,7 +208,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 
 - `architecture/overview.md` 用于快速总览和索引，不替代标准 architecture 文档组。
 - `history/*` 保留阶段演进记录，不替代当前正式源事实。
-- `specs/t02-junction-anchor/*` 是变更工件，不是长期模块真相主表面。
+- `specs/t02-junction-anchor/*` 与 `specs/t02-virtual-intersection-batch-poc/*` 是变更工件，不是长期模块真相主表面。
 
 ## 6. 当前实现范围
 
@@ -202,12 +228,14 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - `node_error_1 / node_error_2`
   - `fail2` 优先于 `fail1`
   - `t02_stage2_summary.json`
-  - 单 `mainnodeid` 虚拟路口面 POC
+  - stage3 `virtual intersection anchoring`
+  - `t02-virtual-intersection-poc` 的 `case-package` 与 `full-input` 两种模式
   - 基于 DriveZone / roads / RCSDRoad / RCSDNode 的局部 patch、分支证据和 RC 关联输出
+  - full-input 的 `preflight / summary / perf_summary / virtual_intersection_polygons.gpkg / _rendered_maps`
   - 单 `mainnodeid` 文本证据包导出与解包
 - 未实现：
   - 最终唯一锚定决策闭环
   - 概率 / 置信度
   - 环岛新规则
   - 误伤捞回
-  - 全量虚拟路口面批处理
+  - 正式产线级全量虚拟路口面批处理

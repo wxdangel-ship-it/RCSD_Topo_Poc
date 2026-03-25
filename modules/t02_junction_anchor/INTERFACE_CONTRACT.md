@@ -14,11 +14,14 @@
 - 当前正式范围：
   - stage1 `DriveZone / has_evd gate`
   - stage2 anchor recognition / anchor existence 最小闭环
-  - 单 `mainnodeid` 虚拟路口面与文本证据包受控实验入口
-  - `t02-virtual-intersection-poc --input-mode full-input` 统一全量输入受控实验入口
+  - stage3 `virtual intersection anchoring` baseline
+  - `t02-virtual-intersection-poc` baseline 入口：
+    - 默认 `case-package`
+    - 可显式切换 `--input-mode full-input`
+  - 单 `mainnodeid` 文本证据包支撑入口
   - 消费 T01 `segment` 与 `nodes`
   - 消费 `DriveZone`、`RCSDIntersection`、`roads`、`RCSDRoad`、`RCSDNode`
-  - 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit/log` 与受控实验产物
+  - 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit/log` 与 stage3 产物
 - 当前不在正式范围：
   - 最终唯一锚定决策闭环
   - 正式产线级全量虚拟路口批处理
@@ -165,15 +168,38 @@
 - 则代表 node 的 `is_anchor = fail2`
 - 同时仍保留相应审计输出
 
-### 2.7 单 `mainnodeid` 虚拟路口 POC 输入与前提
+### 2.6A T02 阶段串联
 
-- 必选输入：
+- 当前 T02 基线流程固定为：
+  1. stage1：`DriveZone / has_evd gate`
+  2. stage2：`anchor recognition / anchor existence`
+  3. stage3：`virtual intersection anchoring`
+- stage3 不重算 stage1 / stage2：
+  - 直接消费已带 `has_evd / is_anchor / kind_2 / grade_2` 的 `nodes`
+- stage3 当前默认处理目标为：
+  - `has_evd = yes`
+  - `is_anchor = no`
+  - `kind_2 in {4, 2048}`
+- stage3 之后可按需调用文本证据包入口做单 case 外部复现，但文本证据包不是新的业务阶段。
+
+### 2.7 Stage3 虚拟路口锚定 baseline 输入与前提
+
+- `case-package` 模式必选输入：
   - `nodes`
   - `roads`
   - `DriveZone`
   - `RCSDRoad`
   - `RCSDNode`
   - `mainnodeid`
+- `full-input` 模式必选输入：
+  - `nodes`
+  - `roads`
+  - `DriveZone`
+  - `RCSDRoad`
+  - `RCSDNode`
+- `full-input` 模式中：
+  - 传 `mainnodeid` 时执行单点验证
+  - 不传 `mainnodeid` 时自动识别 stage3 候选
 - 可选兼容参数：
   - `nodes_layer / roads_layer / drivezone_layer / rcsdroad_layer / rcsdnode_layer`
   - `nodes_crs / roads_crs / drivezone_crs / rcsdroad_crs / rcsdnode_crs`
@@ -196,16 +222,22 @@
 - `RCSDNode` 必须包含：
   - `id`
   - `mainnodeid`
-- 当前默认验收基线使用标准 case-package 输入；共享大图层直连运行涉及额外 layer / CRS / 局部裁剪问题，不作为当前算法验收基线。
+- case-package 是 baseline regression 入口，不允许回退。
+- full-input 是当前正式 baseline 入口，用于：
+  - 完整数据 + 指定 `mainnodeid`
+  - 完整数据 + 自动识别未锚定且有资料的路口
 - 代表 node 的受控实验前提：
   - `has_evd = yes`
   - `kind_2 in {4, 2048}`
   - 非 `review_mode` 下，`is_anchor = no`
 - 所有空间处理必须统一到 `EPSG:3857`；不得以隐式默认 CRS 掩盖数据问题。
 
-### 2.8 单 `mainnodeid` 虚拟路口 POC 处理契约
+### 2.8 Stage3 虚拟路口锚定 baseline 处理契约
 
-- 入口只处理单个 `mainnodeid`。
+- `case-package` 模式只处理单个 `mainnodeid`。
+- `full-input` 模式统一两类业务诉求：
+  - 完整数据 + 指定 `mainnodeid`
+  - 完整数据 + 自动识别候选
 - 当前路口组 own-group nodes 必须纳入 polygon，不能只作为分析输入。
 - `associated_rcsdroad.gpkg / associated_rcsdnode.gpkg` 与 `polygon-support` 允许解耦：
   - association 可以保守
@@ -236,6 +268,7 @@
 - full-input 模式支持：
   - `max_cases`：限制自动识别后最多处理的候选数量
   - `workers`：并行 case worker 数量
+- `workers` 只能改变调度性能，不得改变语义结果；批次汇总必须保持稳定排序和可复现。
 - full-input 模式必须先输出 `preflight.json`，至少记录：
   - `path`
   - `layer`
@@ -472,7 +505,7 @@ outputs/_work/t02_stage1_drivezone_gate
   - `elapsed_sec`
   - `counts`
 
-#### 单 `mainnodeid` 虚拟路口 POC 输出
+#### Stage3 单 case 输出
 
 - `virtual_intersection_polygon.gpkg`
   - 单 `mainnodeid` 生成的虚拟路口面
@@ -504,7 +537,7 @@ outputs/_work/t02_stage1_drivezone_gate
   - 正式结果目录仍固定为 `<out_root>/<run_id>`
   - debug render 批次目录固定为批次根目录 `_rendered_maps/`
 
-#### full-input 统一入口根目录输出
+#### Stage3 full-input 根目录输出
 
 - 根目录仍固定为 `<out_root>/<run_id>`
 - `cases/<mainnodeid>/...`
@@ -536,7 +569,7 @@ outputs/_work/t02_stage1_drivezone_gate
   - `rcsdnode.gpkg`
   - `size_report.json`
 
-#### 单 `mainnodeid` 虚拟路口 POC 状态与失败口径
+#### Stage3 状态与失败口径
 
 - 稳定状态枚举：
   - `stable`
@@ -575,12 +608,12 @@ python -m rcsd_topo_poc t02-export-text-bundle --help
 python -m rcsd_topo_poc t02-decode-text-bundle --help
 ```
 
-- `t02-virtual-intersection-poc` 只处理单个 `mainnodeid`
-- 默认 `input_mode = case-package`，保持既有单 `mainnodeid` baseline 行为不回退
-- `--input-mode full-input` 打开统一全量输入入口：
+- `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口
+- 默认 `input_mode = case-package`，保持既有 case-package baseline 行为不回退
+- `--input-mode full-input` 打开统一全量输入 baseline：
   - 传 `--mainnodeid`：完整数据 + 指定路口
   - 不传 `--mainnodeid`：完整数据 + 自动识别候选
-- 当前定位是实验性 POC，不替代正式 stage1 基线
+- 不重算 stage1 / stage2，只消费其结果字段
 - 该入口直接消费带 `has_evd / is_anchor` 的 `nodes`，不会在入口内部重算 stage1 / stage2 主逻辑
 
 ### 4.3 程序内入口
@@ -676,6 +709,21 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
 ```
 
 ```bash
+python -m rcsd_topo_poc t02-virtual-intersection-poc \
+  --input-mode full-input \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
+  --max-cases 100 \
+  --workers 4 \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_full_input \
+  --run-id t02_virtual_intersection_full_input_demo \
+  --debug
+```
+
+```bash
 python -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
@@ -726,6 +774,6 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 4. `summary` 已覆盖 `0-0双 / 0-1双 / 0-2双` 与 `all__d_sgrade`。
 5. `is_anchor`、`node_error_1`、`node_error_2` 与 `fail2 > fail1` 优先级已冻结并已落地最小闭环实现。
 6. stage2 当前仍未扩写为最终唯一锚定决策闭环，概率/置信度与环岛新规则未泄漏进当前正式契约。
-7. 单 `mainnodeid` 虚拟路口 POC 已具备局部 patch、RC 关联、polygon-support、状态与 debug render 的最小闭环。
+7. stage3 `virtual intersection anchoring` 已纳入当前 baseline，并具备 case-package 与 full-input 两种运行模式。
 8. `polygon-support` 与最终 association 已允许解耦；own-group nodes must-cover 与 support validation 已进入契约。
-9. 单 `mainnodeid` 文本证据包已具备“导出 + 解包”最小闭环，且 bundle 体积受 `300KB` 上限约束。
+9. 单 `mainnodeid` 文本证据包已具备“导出 + 解包”最小闭环，当前作为 stage3 复核与外部复现支撑工具保留，且 bundle 体积受 `300KB` 上限约束。

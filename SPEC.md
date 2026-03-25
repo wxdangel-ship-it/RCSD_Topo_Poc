@@ -34,7 +34,7 @@
 - 建立 RCSD-neutral 的 `TEXT_QC_BUNDLE` 协议、粘贴性守卫与基础测试
 - 建立 `modules/_template/`，用于后续任何新模块的标准启动
 - 让已登记正式模块的文档面、实现入口与测试面保持一致
-- 让已登记正式模块的 stage1、stage2 与受控实验入口保持边界清晰、可审计、可复现
+- 让已登记正式模块的 stage1、stage2、stage3 baseline 与支撑工具入口保持边界清晰、可审计、可复现
 
 ### 2.2 当前阶段明确不做
 
@@ -55,7 +55,8 @@
 - 基础测试与 smoke 模式
 - 已登记正式模块 `t02_junction_anchor` 的 stage1 `DriveZone / has_evd gate`
 - 已登记正式模块 `t02_junction_anchor` 的 stage2 `anchor recognition / anchor existence` 最小闭环
-- `t02_junction_anchor` 的单 `mainnodeid` 虚拟路口面 POC 与文本证据包实验入口
+- `t02_junction_anchor` 的 stage3 `virtual intersection anchoring` baseline
+- `t02_junction_anchor` 的单 `mainnodeid` 文本证据包支撑入口
 
 ### 3.2 当前非目标（不包含）
 
@@ -162,7 +163,7 @@
 - 默认测试框架为 `pytest`。
 - 允许定义 `smoke` marker，约束其只写 `outputs/_work/`。
 - 共享协议与粘贴性守卫必须有可执行测试。
-- 当前阶段要求已登记正式模块的 stage1 / stage2 / 受控实验入口具备最小单测与 smoke。
+- 当前阶段要求已登记正式模块的 stage1 / stage2 / stage3 baseline 与必要支撑入口具备最小单测与 smoke。
 
 ---
 
@@ -170,5 +171,6 @@
 
 - RCSD 当前已从纯骨架阶段进入“工程治理 + 正式业务模块并行”阶段。
 - 当前已登记正式业务模块：`t02_junction_anchor`。
-- `t02_junction_anchor` 当前已具备 stage1、stage2 与单 `mainnodeid` 受控实验入口的最小闭环。
+- `t02_junction_anchor` 当前已具备 stage1、stage2、stage3 `virtual intersection anchoring` baseline 的最小闭环。
+- 单 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑工具保留。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

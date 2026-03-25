@@ -161,6 +161,17 @@ def _cmd_t02_stage1_drivezone_gate(args: argparse.Namespace) -> int:
 
 
 def _cmd_t02_virtual_intersection_poc(args: argparse.Namespace) -> int:
+    if args.input_mode == "full-input":
+        from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_full_input_poc import (
+            run_t02_virtual_intersection_full_input_poc_cli,
+        )
+
+        return run_t02_virtual_intersection_full_input_poc_cli(args)
+
+    if not args.mainnodeid:
+        print("--mainnodeid is required when --input-mode case-package.", file=sys.stderr)
+        return 2
+
     from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
         run_t02_virtual_intersection_poc_cli,
     )
@@ -607,7 +618,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_t02_poc = sub.add_parser(
         "t02-virtual-intersection-poc",
-        help="Run single-mainnodeid T02 virtual intersection POC with DriveZone and RC constraints.",
+        help="Run T02 virtual intersection POC in case-package mode or unified full-input mode.",
+    )
+    p_t02_poc.add_argument(
+        "--input-mode",
+        choices=("case-package", "full-input"),
+        default="case-package",
+        help="case-package keeps existing single-mainnodeid baseline behavior; full-input unifies shared full-data specified-mainnodeid and auto-discovery modes.",
     )
     p_t02_poc.add_argument("--nodes-path", "--nodes_path", required=True, dest="nodes_path", help="Path to nodes GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_t02_poc.add_argument("--nodes-layer", help="Optional nodes layer name.")
@@ -642,7 +659,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     p_t02_poc.add_argument("--rcsdnode-layer", help="Optional RCSDNode layer name.")
     p_t02_poc.add_argument("--rcsdnode-crs", help="Optional RCSDNode CRS override, e.g. EPSG:4326.")
-    p_t02_poc.add_argument("--mainnodeid", required=True, help="Single target mainnodeid for this POC run.")
+    p_t02_poc.add_argument(
+        "--mainnodeid",
+        help="Single target mainnodeid. Required in case-package mode; optional in full-input mode where omission triggers auto-discovery.",
+    )
     p_t02_poc.add_argument(
         "--out-root",
         "--out-dir",
@@ -651,6 +671,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional output root override. If omitted, write to outputs/_work/t02_virtual_intersection_poc/<run_id>.",
     )
     p_t02_poc.add_argument("--run-id", help="Optional run id. If omitted, use t02_virtual_intersection_poc_YYYYMMDD_HHMMSS.")
+    p_t02_poc.add_argument(
+        "--max-cases",
+        type=int,
+        help="Full-input mode only. Maximum number of auto-discovered mainnodeids to process after stable sorting.",
+    )
+    p_t02_poc.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Full-input mode only. Number of parallel case workers. Default: 1.",
+    )
     p_t02_poc.add_argument("--buffer-m", type=float, default=100.0, help="Local query buffer in meters. Default: 100.")
     p_t02_poc.add_argument("--patch-size-m", type=float, default=200.0, help="North-up patch size in meters. Default: 200.")
     p_t02_poc.add_argument("--resolution-m", type=float, default=0.2, help="Raster resolution in meters. Default: 0.2.")

@@ -75,6 +75,7 @@ def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp
     captured: dict[str, object] = {}
 
     def _fake_cmd(args) -> int:
+        captured["input_mode"] = args.input_mode
         captured["nodes_path"] = args.nodes_path
         captured["roads_path"] = args.roads_path
         captured["drivezone_path"] = args.drivezone_path
@@ -82,6 +83,8 @@ def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp
         captured["rcsdnode_path"] = args.rcsdnode_path
         captured["mainnodeid"] = args.mainnodeid
         captured["out_root"] = args.out_root
+        captured["max_cases"] = args.max_cases
+        captured["workers"] = args.workers
         captured["buffer_m"] = args.buffer_m
         captured["debug"] = args.debug
         captured["debug_render_root"] = args.debug_render_root
@@ -117,6 +120,7 @@ def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp
     )
 
     assert exit_code == 0
+    assert captured["input_mode"] == "case-package"
     assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
     assert captured["roads_path"] == str(tmp_path / "roads.gpkg")
     assert captured["drivezone_path"] == str(tmp_path / "drivezone.gpkg")
@@ -124,10 +128,57 @@ def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp
     assert captured["rcsdnode_path"] == str(tmp_path / "rcsdnode.gpkg")
     assert captured["mainnodeid"] == "100"
     assert captured["out_root"] == str(tmp_path / "out")
+    assert captured["max_cases"] is None
+    assert captured["workers"] == 1
     assert captured["buffer_m"] == 120.0
     assert captured["debug"] is True
     assert captured["debug_render_root"] == str(tmp_path / "renders")
     assert captured["review_mode"] is True
+
+
+def test_t02_virtual_intersection_poc_cli_accepts_full_input_mode_args(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_cmd(args) -> int:
+        captured["input_mode"] = args.input_mode
+        captured["mainnodeid"] = args.mainnodeid
+        captured["max_cases"] = args.max_cases
+        captured["workers"] = args.workers
+        captured["out_root"] = args.out_root
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_t02_virtual_intersection_poc", _fake_cmd)
+
+    exit_code = cli.main(
+        [
+            "t02-virtual-intersection-poc",
+            "--input-mode",
+            "full-input",
+            "--nodes_path",
+            str(tmp_path / "nodes.gpkg"),
+            "--roads_path",
+            str(tmp_path / "roads.gpkg"),
+            "--drivezone_path",
+            str(tmp_path / "drivezone.gpkg"),
+            "--rcsdroad_path",
+            str(tmp_path / "rcsdroad.gpkg"),
+            "--rcsdnode_path",
+            str(tmp_path / "rcsdnode.gpkg"),
+            "--max-cases",
+            "8",
+            "--workers",
+            "3",
+            "--out_dir",
+            str(tmp_path / "out"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["input_mode"] == "full-input"
+    assert captured["mainnodeid"] is None
+    assert captured["max_cases"] == 8
+    assert captured["workers"] == 3
+    assert captured["out_root"] == str(tmp_path / "out")
 
 
 def test_t02_export_text_bundle_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> None:

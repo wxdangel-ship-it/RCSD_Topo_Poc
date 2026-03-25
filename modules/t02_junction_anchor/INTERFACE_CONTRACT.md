@@ -15,12 +15,13 @@
   - stage1 `DriveZone / has_evd gate`
   - stage2 anchor recognition / anchor existence 最小闭环
   - 单 `mainnodeid` 虚拟路口面与文本证据包受控实验入口
+  - `t02-virtual-intersection-poc --input-mode full-input` 统一全量输入受控实验入口
   - 消费 T01 `segment` 与 `nodes`
   - 消费 `DriveZone`、`RCSDIntersection`、`roads`、`RCSDRoad`、`RCSDNode`
   - 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit/log` 与受控实验产物
 - 当前不在正式范围：
   - 最终唯一锚定决策闭环
-  - 全量虚拟路口批处理
+  - 正式产线级全量虚拟路口批处理
   - 候选生成 / 候选打分
   - 概率 / 置信度实现
   - 候选概率校准
@@ -218,6 +219,31 @@
   - 可绕过代表 node `is_anchor` gate
   - 可将 RC outside DriveZone 从硬失败改成风险记录 + 软排除
   - 不改变正式契约的默认边界
+
+### 2.9 full-input 统一入口附加契约
+
+- `t02-virtual-intersection-poc --input-mode full-input` 统一以下两类诉求：
+  - 完整数据入口 + 指定 `mainnodeid`
+  - 完整数据入口 + 自动识别候选 `mainnodeid`
+- full-input 模式下：
+  - 传 `mainnodeid` 时执行单点验证
+  - 不传 `mainnodeid` 时，从完整 `nodes` 自动识别候选
+- 自动识别候选当前冻结为：
+  - 代表 node
+  - `has_evd = yes`
+  - `is_anchor = no`
+  - `kind_2 in {4, 2048}`
+- full-input 模式支持：
+  - `max_cases`：限制自动识别后最多处理的候选数量
+  - `workers`：并行 case worker 数量
+- full-input 模式必须先输出 `preflight.json`，至少记录：
+  - `path`
+  - `layer`
+  - `feature_count`
+  - `source_crs`
+  - `crs_source`
+  - `bounds`
+- full-input 模式不得用硬编码 `EPSG:3857` 覆盖全量输入 CRS；必须优先读取输入自带 CRS，multi-layer GeoPackage 不能静默猜层。
 
 ## 3. Outputs
 
@@ -478,6 +504,24 @@ outputs/_work/t02_stage1_drivezone_gate
   - 正式结果目录仍固定为 `<out_root>/<run_id>`
   - debug render 批次目录固定为批次根目录 `_rendered_maps/`
 
+#### full-input 统一入口根目录输出
+
+- 根目录仍固定为 `<out_root>/<run_id>`
+- `cases/<mainnodeid>/...`
+  - 保留单 case worker 原始输出，便于审计与回溯
+- `virtual_intersection_polygons.gpkg`
+  - 汇总本批成功生成的虚拟路口面
+- `_rendered_maps/`
+  - 汇总本批 render PNG，便于集中目视复核
+- `preflight.json`
+  - 记录 full-input 图层路径、layer、feature_count、CRS 与 bounds
+- `summary.json`
+  - 记录模式、候选发现、selected/skipped case 列表、逐 case 状态与输出路径
+- `perf_summary.json`
+  - 记录批次级 wall time 汇总与逐 case 耗时
+- `t02_virtual_intersection_full_input_poc.log`
+- `t02_virtual_intersection_full_input_poc_progress.json`
+
 #### 单 `mainnodeid` 文本证据包
 
 - `t02_single_case_bundle.txt`
@@ -532,6 +576,10 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
 ```
 
 - `t02-virtual-intersection-poc` 只处理单个 `mainnodeid`
+- 默认 `input_mode = case-package`，保持既有单 `mainnodeid` baseline 行为不回退
+- `--input-mode full-input` 打开统一全量输入入口：
+  - 传 `--mainnodeid`：完整数据 + 指定路口
+  - 不传 `--mainnodeid`：完整数据 + 自动识别候选
 - 当前定位是实验性 POC，不替代正式 stage1 基线
 - 该入口直接消费带 `has_evd / is_anchor` 的 `nodes`，不会在入口内部重算 stage1 / stage2 主逻辑
 
@@ -546,6 +594,9 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
 - `src/rcsd_topo_poc/modules/t02_junction_anchor/virtual_intersection_poc.py`
   - `run_t02_virtual_intersection_poc(...)`
   - `run_t02_virtual_intersection_poc_cli(args)`
+- [virtual_intersection_full_input_poc.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/virtual_intersection_full_input_poc.py)
+  - `run_t02_virtual_intersection_full_input_poc(...)`
+  - `run_t02_virtual_intersection_full_input_poc_cli(args)`
 - [text_bundle.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/text_bundle.py)
   - `run_t02_export_text_bundle(...)`
   - `run_t02_decode_text_bundle(...)`

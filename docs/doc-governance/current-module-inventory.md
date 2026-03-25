@@ -17,7 +17,7 @@
 
 | 模块 ID | 路径 | 当前正式范围 | 当前文档面状态 | 当前实现状态 | 备注 |
 |---|---|---|---|---|---|
-| `t02_junction_anchor` | `modules/t02_junction_anchor` | stage1 `DriveZone / has_evd gate` | 已补齐标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | stage1 已实现，stage2 未实现 | T01 是其上游事实源之一，但不在本轮做 repo 级生命周期重分类 |
+| `t02_junction_anchor` | `modules/t02_junction_anchor` | stage1 `DriveZone / has_evd gate` + stage2 `anchor recognition / anchor existence`；单 `mainnodeid` 虚拟路口 / 文本证据包为受控实验入口 | 已补齐标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | stage1 / stage2 已实现；单 `mainnodeid` 虚拟路口与文本证据包已形成最小实验闭环 | T01 是其上游事实源之一；最终唯一锚定决策与全量批处理仍未进入当前正式范围 |
 
 ## 特殊模板资产
 

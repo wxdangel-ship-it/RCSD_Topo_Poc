@@ -5,9 +5,12 @@
 ## 1. 模块定位
 
 - T02 是当前已登记的正式业务模块。
-- 当前正式实现范围是 stage1 `DriveZone / has_evd gate`。
+- 当前正式实现范围包括：
+  - stage1 `DriveZone / has_evd gate`
+  - stage2 `anchor recognition / anchor existence`
 - 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础。
-- 当前文档基线已覆盖 stage2 anchor recognition / anchor existence；当前代码已实现最小闭环，但尚未进入最终唯一锚定决策与概率阶段。
+- 单 `mainnodeid` 虚拟路口面与文本证据包当前属于受控实验入口。
+- 当前代码已实现最小闭环，但尚未进入最终唯一锚定决策、概率阶段与全量批处理。
 
 ## 2. 官方运行入口
 
@@ -36,6 +39,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
 - `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 `mainnodeid` 文本证据包导出与解包，服务于外网实验复现
 - T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
 - T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
+- 当前虚拟路口 POC 的默认验收基线是标准 case-package 输入；共享大图层直连运行涉及额外 CRS / layer / 预裁剪问题，不建议混入算法验收
 ## 3. 常见运行方式
 
 ```bash
@@ -146,6 +150,13 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - `t02_virtual_intersection_poc_perf.json`
 - `t02_virtual_intersection_poc_perf_markers.jsonl`
   - 单 `mainnodeid` POC 的状态、风险、审计与性能输出
+- 当前典型状态包括：
+  - `stable`
+  - `surface_only`
+  - `weak_branch_support`
+  - `ambiguous_rc_match`
+  - `no_valid_rc_connection`
+  - `node_component_conflict`
 - `t02_single_case_bundle.txt`
   - 单 `mainnodeid` 文本证据包
 - 内含 `manifest.json`、`drivezone_mask.png`、`drivezone.gpkg`、`nodes.gpkg`、`roads.gpkg`、`rcsdroad.gpkg`、`rcsdnode.gpkg`、`size_report.json`
@@ -183,8 +194,8 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - `segment.has_evd`
   - `summary`
   - `audit/log`
-- 已实现：
-- stage2 新增输入 `RCSDIntersection`
+- 补充已实现：
+  - stage2 新增输入 `RCSDIntersection`
   - stage2 summary 读取 `segment`
   - `nodes.is_anchor`
   - `yes / no / fail1 / fail2 / null`

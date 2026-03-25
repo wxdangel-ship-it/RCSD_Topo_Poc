@@ -27,8 +27,8 @@
 | 路径 | 当前角色 | 主要属性 | 说明 |
 |---|---|---|---|
 | `modules/t02_junction_anchor/architecture/*` | T02 模块长期架构真相 | `source_of_truth` | T02 正式模块的长期文档主表面 |
-| `modules/t02_junction_anchor/INTERFACE_CONTRACT.md` | T02 稳定契约面 | `source_of_truth` | 固化 stage1 输入、输出、入口、参数类别与验收标准 |
-| `modules/t02_junction_anchor/README.md` | T02 操作者入口 | `operator_guide` | 说明官方运行入口、常见运行方式与关键产物 |
+| `modules/t02_junction_anchor/INTERFACE_CONTRACT.md` | T02 稳定契约面 | `source_of_truth` | 固化 stage1、stage2 与单 `mainnodeid` 受控实验入口的输入、输出、入口、参数类别与验收标准 |
+| `modules/t02_junction_anchor/README.md` | T02 操作者入口 | `operator_guide` | 说明官方运行入口、受控实验入口、常见运行方式与关键产物 |
 | `modules/t02_junction_anchor/AGENTS.md` | T02 durable guidance | `durable_guidance` | 只保留模块级执行边界与协作规则 |
 | `modules/t02_junction_anchor/history/*` | T02 模块级历史材料 | `history` | 记录 bootstrap 与后续演进轨迹 |
 | `specs/t02-junction-anchor/*` | T02 变更工件 | `active_change_artifact` | 记录本轮与前序轮次的变更规格，不替代长期模块真相 |

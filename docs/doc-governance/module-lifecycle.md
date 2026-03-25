@@ -33,7 +33,7 @@
 
 | 模块 ID | 路径 | 当前正式范围 | 当前状态 |
 |---|---|---|---|
-| `t02_junction_anchor` | `modules/t02_junction_anchor` | `DriveZone / has_evd gate` | `stage1 active` |
+| `t02_junction_anchor` | `modules/t02_junction_anchor` | `DriveZone / has_evd gate` + `anchor recognition / anchor existence`；单 `mainnodeid` 虚拟路口 / 文本证据包为受控实验入口 | `stage1/stage2 active, experimental poc active` |
 
 ### Retired
 
@@ -50,7 +50,8 @@
 说明：
 
 - 未在本表登记的模块目录，不自动视为当前正式治理对象。
-- `t02_junction_anchor` 当前正式范围只到 stage1；stage2 仍处于占位和后续澄清阶段。
+- `t02_junction_anchor` 当前已具备 stage1 与 stage2 的最小实现闭环。
+- 单 `mainnodeid` 虚拟路口面与文本证据包当前属于受控实验入口，不等于最终唯一锚定决策闭环。
 
 ## 4. 模板目录说明
 

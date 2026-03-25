@@ -12,7 +12,9 @@
 
 - 模块路径：`modules/t02_junction_anchor`
 - 当前角色：
-  - 面向双向 Segment 相关路口的 stage1 资料存在性 gate 模块
+  - 面向双向 Segment 相关路口的 stage1 `DriveZone / has_evd gate`
+  - 面向资料命中路口的 stage2 `anchor recognition / anchor existence`
+  - 面向单 `mainnodeid` 复核场景的虚拟路口面与文本证据包受控实验入口
 - 上游关系：
   - 依赖 T01 提供 `segment` 与 `nodes`
 - 下游关系：
@@ -24,7 +26,8 @@
 
 1. 为双向 Segment 相关路口锚定提供稳定的 stage1 gate 与后续 stage2 落点
 2. 将“是否有有效资料”和“如何完成最终锚定”拆成清晰、可治理的两阶段
-3. 保持输出可审计、可复现、可 smoke，而不是把异常和歧义藏进黑箱逻辑
+3. 为单 `mainnodeid` 复核场景提供可解释的局部虚拟路口面、RC 关联与文本证据包
+4. 保持输出可审计、可复现、可 smoke，而不是把异常和歧义藏进黑箱逻辑
 
 ## 文档目标
 

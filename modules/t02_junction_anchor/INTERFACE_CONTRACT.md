@@ -14,14 +14,15 @@
 - 当前正式范围：
   - stage1 `DriveZone / has_evd gate`
   - stage2 anchor recognition / anchor existence 最小闭环
+  - 单 `mainnodeid` 虚拟路口面与文本证据包受控实验入口
   - 消费 T01 `segment` 与 `nodes`
-- 消费 `DriveZone` 与 `RCSDIntersection`
-  - 产出 `nodes.has_evd`、`segment.has_evd`、`summary`、`audit/log`
+  - 消费 `DriveZone`、`RCSDIntersection`、`roads`、`RCSDRoad`、`RCSDNode`
+  - 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit/log` 与受控实验产物
 - 当前不在正式范围：
-  - 最终锚定结果与几何表达
+  - 最终唯一锚定决策闭环
+  - 全量虚拟路口批处理
   - 候选生成 / 候选打分
   - 概率 / 置信度实现
-  - 最终唯一锚定决策闭环
   - 候选概率校准
   - 误伤捞回
   - 环岛新业务规则
@@ -159,9 +160,64 @@
 - 需同时保留 GeoPackage(.gpkg) 与审计表
 - 优先级冻结为：
   - `fail2` 优先于 `fail1`
-  - 若同一组同时命中 `node_error_1` 与 `node_error_2`
-  - 则代表 node 的 `is_anchor = fail2`
-  - 同时仍保留相应审计输出
+- 若同一组同时命中 `node_error_1` 与 `node_error_2`
+- 则代表 node 的 `is_anchor = fail2`
+- 同时仍保留相应审计输出
+
+### 2.7 单 `mainnodeid` 虚拟路口 POC 输入与前提
+
+- 必选输入：
+  - `nodes`
+  - `roads`
+  - `DriveZone`
+  - `RCSDRoad`
+  - `RCSDNode`
+  - `mainnodeid`
+- 可选兼容参数：
+  - `nodes_layer / roads_layer / drivezone_layer / rcsdroad_layer / rcsdnode_layer`
+  - `nodes_crs / roads_crs / drivezone_crs / rcsdroad_crs / rcsdnode_crs`
+- 可选 patch 参数：
+  - `buffer_m`
+  - `patch_size_m`
+  - `resolution_m`
+- `nodes` 必须包含：
+  - `id`
+  - `mainnodeid`
+  - `has_evd`
+  - `is_anchor`
+  - `kind_2`
+  - `grade_2`
+- `roads` 与 `RCSDRoad` 当前正式依赖：
+  - `id`
+  - `snodeid`
+  - `enodeid`
+  - `direction`
+- `RCSDNode` 必须包含：
+  - `id`
+  - `mainnodeid`
+- 当前默认验收基线使用标准 case-package 输入；共享大图层直连运行涉及额外 layer / CRS / 局部裁剪问题，不作为当前算法验收基线。
+- 代表 node 的受控实验前提：
+  - `has_evd = yes`
+  - `kind_2 in {4, 2048}`
+  - 非 `review_mode` 下，`is_anchor = no`
+- 所有空间处理必须统一到 `EPSG:3857`；不得以隐式默认 CRS 掩盖数据问题。
+
+### 2.8 单 `mainnodeid` 虚拟路口 POC 处理契约
+
+- 入口只处理单个 `mainnodeid`。
+- 当前路口组 own-group nodes 必须纳入 polygon，不能只作为分析输入。
+- `associated_rcsdroad.gpkg / associated_rcsdnode.gpkg` 与 `polygon-support` 允许解耦：
+  - association 可以保守
+  - `polygon-support` 可以保留更完整的局部 RC 连通组件
+- 若 RC 不存在与 roads 同方向的有效局部分支，不得拿其它横向或直行 RC 组件替代。
+- 最终 polygon 必须通过 support validation：
+  - own-group nodes 必须被覆盖
+  - `polygon-support` 中声明的 RCSDNode / RCSDRoad 必须被合理覆盖
+- 对 nodes 与 RCSD 拓扑无法同时满足的场景，必须明确失败或风险标记，不得 silent fix。
+- `review_mode` 仅用于分析和人工复核：
+  - 可绕过代表 node `is_anchor` gate
+  - 可将 RC outside DriveZone 从硬失败改成风险记录 + 软排除
+  - 不改变正式契约的默认边界
 
 ## 3. Outputs
 
@@ -193,6 +249,23 @@ outputs/_work/t02_stage1_drivezone_gate
 - `t02_stage1_progress.json`
 - `t02_stage1_perf.json`
 - `t02_stage1_perf_markers.jsonl`
+- `virtual_intersection_polygon.gpkg`
+- `branch_evidence.json`
+- `branch_evidence.gpkg`
+- `associated_rcsdroad.gpkg`
+- `associated_rcsdroad_audit.csv`
+- `associated_rcsdroad_audit.json`
+- `associated_rcsdnode.gpkg`
+- `associated_rcsdnode_audit.csv`
+- `associated_rcsdnode_audit.json`
+- `t02_virtual_intersection_poc_status.json`
+- `t02_virtual_intersection_poc_audit.csv`
+- `t02_virtual_intersection_poc_audit.json`
+- `t02_virtual_intersection_poc.log`
+- `t02_virtual_intersection_poc_progress.json`
+- `t02_virtual_intersection_poc_perf.json`
+- `t02_virtual_intersection_poc_perf_markers.jsonl`
+- `t02_single_case_bundle.txt`
 
 ### 3.3 输出语义
 
@@ -373,6 +446,74 @@ outputs/_work/t02_stage1_drivezone_gate
   - `elapsed_sec`
   - `counts`
 
+#### 单 `mainnodeid` 虚拟路口 POC 输出
+
+- `virtual_intersection_polygon.gpkg`
+  - 单 `mainnodeid` 生成的虚拟路口面
+- `branch_evidence.json / branch_evidence.gpkg`
+  - 分支方向、证据强弱、是否纳入 polygon 与 RC 分组
+- `associated_rcsdroad.gpkg / associated_rcsdnode.gpkg`
+  - 保守 association 结果
+- `associated_rcsdroad_audit.csv / .json`
+- `associated_rcsdnode_audit.csv / .json`
+  - RC 关联审计
+- `t02_virtual_intersection_poc_status.json`
+  - 顶层至少包含：
+    - `success`
+    - `status`
+    - `mainnodeid`
+    - `review_mode`
+    - `inputs`
+    - `counts`
+    - `risks`
+    - `output_files`
+- `t02_virtual_intersection_poc_audit.csv / .json`
+  - 单 case 审计
+- `t02_virtual_intersection_poc.log`
+- `t02_virtual_intersection_poc_progress.json`
+- `t02_virtual_intersection_poc_perf.json`
+- `t02_virtual_intersection_poc_perf_markers.jsonl`
+  - 运行、进度与性能输出
+- `debug` 开启时：
+  - 正式结果目录仍固定为 `<out_root>/<run_id>`
+  - debug render 批次目录固定为批次根目录 `_rendered_maps/`
+
+#### 单 `mainnodeid` 文本证据包
+
+- `t02_single_case_bundle.txt`
+  - 单 `mainnodeid` 文本证据包
+- 内含最少文件：
+  - `manifest.json`
+  - `drivezone_mask.png`
+  - `drivezone.gpkg`
+  - `nodes.gpkg`
+  - `roads.gpkg`
+  - `rcsdroad.gpkg`
+  - `rcsdnode.gpkg`
+  - `size_report.json`
+
+#### 单 `mainnodeid` 虚拟路口 POC 状态与失败口径
+
+- 稳定状态枚举：
+  - `stable`
+  - `surface_only`
+  - `weak_branch_support`
+  - `ambiguous_rc_match`
+  - `no_valid_rc_connection`
+  - `node_component_conflict`
+- review 风险枚举：
+  - `review_anchor_gate_bypassed`
+  - `review_rc_outside_drivezone_excluded`
+- 明确失败原因至少包含：
+  - `anchor_support_conflict`
+  - `missing_required_field`
+  - `invalid_crs_or_unprojectable`
+  - `representative_node_missing`
+  - `mainnodeid_not_found`
+  - `mainnodeid_out_of_scope`
+  - `main_direction_unstable`
+  - `rc_outside_drivezone`
+
 ## 4. EntryPoints
 
 ### 4.1 官方入口
@@ -386,6 +527,8 @@ python -m rcsd_topo_poc t02-stage2-anchor-recognition --help
 
 ```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc --help
+python -m rcsd_topo_poc t02-export-text-bundle --help
+python -m rcsd_topo_poc t02-decode-text-bundle --help
 ```
 
 - `t02-virtual-intersection-poc` 只处理单个 `mainnodeid`
@@ -397,9 +540,15 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc --help
 - [stage1_drivezone_gate.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/stage1_drivezone_gate.py)
   - `run_t02_stage1_drivezone_gate(...)`
   - `run_t02_stage1_drivezone_gate_cli(args)`
+- [stage2_anchor_recognition.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/stage2_anchor_recognition.py)
+  - `run_t02_stage2_anchor_recognition(...)`
+  - `run_t02_stage2_anchor_recognition_cli(args)`
 - `src/rcsd_topo_poc/modules/t02_junction_anchor/virtual_intersection_poc.py`
   - `run_t02_virtual_intersection_poc(...)`
   - `run_t02_virtual_intersection_poc_cli(args)`
+- [text_bundle.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/text_bundle.py)
+  - `run_t02_export_text_bundle(...)`
+  - `run_t02_decode_text_bundle(...)`
 
 ## 5. Params
 
@@ -439,6 +588,10 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc --help
 - 输出控制：
   - `out_root`
   - `run_id`
+- 复核辅助：
+  - `debug`
+  - `debug_render_root`
+  - `review_mode`
 
 ### 5.3 参数原则
 
@@ -492,8 +645,9 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - `nodes` 必须包含：`id / mainnodeid / has_evd / is_anchor / kind_2 / grade_2`
 - `roads` 与 `RCSDRoad` 当前只依赖：`id / snodeid / enodeid / direction`
 - `RCSDNode` 必须包含：`id / mainnodeid`
-- `mainnodeid` 对应代表 node 必须满足：`has_evd = yes`、`is_anchor = no`、`kind_2 in {4, 2048}`
-- `RCSDRoad / RCSDNode` 在局部 patch 内若不落在 `DriveZone` 上，入口必须失败并输出审计
+- `mainnodeid` 对应代表 node 默认必须满足：`has_evd = yes`、`is_anchor = no`、`kind_2 in {4, 2048}`
+- `review_mode` 下可绕过 `is_anchor = no` gate，并将 RC outside DriveZone 从硬失败降为风险记录 + 软排除
+- 当前验收基线推荐使用标准 case-package 输入，不建议把共享大图层直连运行与算法验收混在一起
 
 ### 6.2 单 mainnodeid 文本证据包
 
@@ -521,4 +675,6 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 4. `summary` 已覆盖 `0-0双 / 0-1双 / 0-2双` 与 `all__d_sgrade`。
 5. `is_anchor`、`node_error_1`、`node_error_2` 与 `fail2 > fail1` 优先级已冻结并已落地最小闭环实现。
 6. stage2 当前仍未扩写为最终唯一锚定决策闭环，概率/置信度与环岛新规则未泄漏进当前正式契约。
-7. 单 `mainnodeid` 文本证据包已具备“导出 + 解包”最小闭环，且 bundle 体积受 `300KB` 上限约束。
+7. 单 `mainnodeid` 虚拟路口 POC 已具备局部 patch、RC 关联、polygon-support、状态与 debug render 的最小闭环。
+8. `polygon-support` 与最终 association 已允许解耦；own-group nodes must-cover 与 support validation 已进入契约。
+9. 单 `mainnodeid` 文本证据包已具备“导出 + 解包”最小闭环，且 bundle 体积受 `300KB` 上限约束。

@@ -1,3 +1,3 @@
 module,path,status,doc_surface,recommended_action,notes
 _template,modules/_template,template-artifact,template-ready,copy-and-concretize,not-a-business-module
-t02_junction_anchor,modules/t02_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,stage1-active-stage2-placeholder
+t02_junction_anchor,modules/t02_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,stage1-stage2-active-plus-experimental-single-mainnodeid-poc

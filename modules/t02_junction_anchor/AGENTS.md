@@ -33,9 +33,9 @@
 
 ## 必守边界
 
-- 当前正式实现范围只到 stage1 `DriveZone / has_evd gate`。
-- stage2 当前只冻结 anchor recognition / anchor existence 的文档基线，不代表已经进入实现。
-- stage2 锚定主逻辑、最终唯一锚定决策、概率 / 置信度、误伤捞回、环岛新规则都不在当前正式实现范围。
+- 当前已实现 stage1 `DriveZone / has_evd gate` 与 stage2 `anchor recognition / anchor existence` 最小闭环。
+- 单 `mainnodeid` 虚拟路口与文本证据包当前属于受控实验入口，不等于正式批处理方案。
+- 最终唯一锚定决策、概率 / 置信度、误伤捞回、环岛新规则都不在当前正式实现范围。
 - `mainnode` 可作为业务概念名，但 stage1 正式输入字段只能是 `mainnodeid`。
 - `working_mainnodeid` 不得作为 stage1 正式输入字段写回契约或强规则。
 - `s_grade` 逻辑字段只允许显式兼容 `s_grade / sgrade`。

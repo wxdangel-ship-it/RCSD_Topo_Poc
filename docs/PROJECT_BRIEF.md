@@ -10,6 +10,7 @@
 - 新模块启动模板
 - 基础测试与 smoke 模式
 - 已登记正式模块的文档契约与实现收口
+- 已登记正式模块的 stage1、stage2 与受控实验入口边界对齐
 
 ## 2. 当前范围
 
@@ -18,6 +19,7 @@
 - 建立 `modules/_template/` 作为后续模块统一起点
 - 保持当前输入数据组织方式与 `Highway_Topo_Poc` 一致
 - 维护当前已登记正式模块 `t02_junction_anchor`
+- 对齐 `t02_junction_anchor` 当前已存在的 stage1、stage2 与单 `mainnodeid` 受控实验入口
 
 ## 3. 当前非目标
 
@@ -28,6 +30,7 @@
 ## 4. 当前结构性结论
 
 - 当前已登记正式业务模块：`t02_junction_anchor`
+- `t02_junction_anchor` 当前已具备 stage1、stage2 与受控实验入口的最小实现闭环
 - `_template` 仅是模板目录，不属于模块生命周期盘点对象
 - 模块根目录不放 `SKILL.md`
 - 标准 Skill 统一放 repo root `.agents/skills/`

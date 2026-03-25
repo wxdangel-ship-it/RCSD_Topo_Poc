@@ -67,6 +67,7 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.gpkg \
   --mainnodeid 100 \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc \
+  --debug-render-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc_debug/_rendered_maps \
   --run-id t02_virtual_intersection_demo
 ```
 
@@ -94,6 +95,9 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - 显式传入 `--out-root` 时，其语义也是“工作输出根目录”；最终运行目录固定为 `<out_root>/<run_id>`。
 
 ## 4. 输出总览
+
+补充：
+- `--debug-render-root` 仅控制 debug 叠图 PNG 的批次归档位置，不改变正式运行目录 `<out_root>/<run_id>`。
 
 - `nodes.gpkg`
   - 继承输入 `nodes` 字段并新增 `has_evd`

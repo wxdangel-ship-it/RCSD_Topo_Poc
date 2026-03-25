@@ -654,6 +654,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_t02_poc.add_argument("--buffer-m", type=float, default=100.0, help="Local query buffer in meters. Default: 100.")
     p_t02_poc.add_argument("--patch-size-m", type=float, default=200.0, help="North-up patch size in meters. Default: 200.")
     p_t02_poc.add_argument("--resolution-m", type=float, default=0.2, help="Raster resolution in meters. Default: 0.2.")
+    p_t02_poc.add_argument(
+        "--debug-render-root",
+        help="Optional debug render output root. When set with --debug, all rendered PNGs are written under this directory instead of the default sibling _rendered_maps folder.",
+    )
+    p_t02_poc.add_argument(
+        "--review-mode",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Review-only mode for case analysis. Keeps strict defaults unless enabled, then bypasses anchor gate and soft-excludes RC features outside DriveZone.",
+    )
     _add_debug_flag(p_t02_poc, default=False)
     p_t02_poc.set_defaults(func=_cmd_t02_virtual_intersection_poc)
 

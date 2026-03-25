@@ -467,6 +467,7 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.gpkg \
   --mainnodeid 100 \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc \
+  --debug-render-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc_debug/_rendered_maps \
   --run-id t02_virtual_intersection_demo
 ```
 

@@ -84,6 +84,8 @@ def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp
         captured["out_root"] = args.out_root
         captured["buffer_m"] = args.buffer_m
         captured["debug"] = args.debug
+        captured["debug_render_root"] = args.debug_render_root
+        captured["review_mode"] = args.review_mode
         return 0
 
     monkeypatch.setattr(cli, "_cmd_t02_virtual_intersection_poc", _fake_cmd)
@@ -107,6 +109,9 @@ def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp
             str(tmp_path / "out"),
             "--buffer-m",
             "120",
+            "--debug-render-root",
+            str(tmp_path / "renders"),
+            "--review-mode",
             "--debug",
         ]
     )
@@ -121,6 +126,8 @@ def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp
     assert captured["out_root"] == str(tmp_path / "out")
     assert captured["buffer_m"] == 120.0
     assert captured["debug"] is True
+    assert captured["debug_render_root"] == str(tmp_path / "renders")
+    assert captured["review_mode"] is True
 
 
 def test_t02_export_text_bundle_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> None:

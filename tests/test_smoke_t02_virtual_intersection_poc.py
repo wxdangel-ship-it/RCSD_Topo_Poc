@@ -119,7 +119,7 @@ def test_smoke_t02_virtual_intersection_poc() -> None:
     assert (run_dir / "t02_virtual_intersection_poc_audit.json").is_file()
     assert (run_dir / "t02_virtual_intersection_poc_progress.json").is_file()
     assert (run_dir / "t02_virtual_intersection_poc_perf.json").is_file()
-    assert (run_dir / "_rendered_maps" / "100.png").is_file()
+    assert (outputs_dir / "_rendered_maps" / "100.png").is_file()
 
     status_doc = json.loads((run_dir / "t02_virtual_intersection_poc_status.json").read_text(encoding="utf-8"))
     assert status_doc["success"] is True

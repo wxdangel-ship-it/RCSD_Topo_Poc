@@ -165,7 +165,7 @@ def _pair_validation_from_option(
         arbitration_option_id=decision.selected_option_id,
         lose_reason=decision.lose_reason,
     )
-    if compact_release_payloads:
+    if compact_release_payloads and decision.arbitration_status != "win":
         result = _compact_validation_result_for_release(
             result,
             keep_tighten_fields=decision.arbitration_status == "win",

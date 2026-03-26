@@ -805,6 +805,93 @@ def _selection_score(
     )
 
 
+def _selection_totals_zero() -> tuple[int, int, int, int, int, int, float, int, int, float, int, int]:
+    return (0, 0, 0, 0, 0, 0, 0.0, 0, 0, 0.0, 0, 0)
+
+
+def _selection_totals_add(
+    totals: tuple[int, int, int, int, int, int, float, int, int, float, int, int],
+    metrics: PairArbitrationMetrics,
+) -> tuple[int, int, int, int, int, int, float, int, int, float, int, int]:
+    (
+        endpoint_grade_major,
+        endpoint_grade_minor,
+        endpoint_penalty,
+        strong_anchor_wins,
+        corridor_naturalness,
+        contested_count,
+        contested_ratio,
+        pair_support_expansion_penalty,
+        internal_penalty,
+        body_support,
+        semantic_penalty,
+        option_count,
+    ) = totals
+    return (
+        endpoint_grade_major + metrics.endpoint_grade_priority_major,
+        endpoint_grade_minor + metrics.endpoint_grade_priority_minor,
+        endpoint_penalty + metrics.endpoint_boundary_penalty,
+        strong_anchor_wins + metrics.strong_anchor_win_count,
+        corridor_naturalness + metrics.corridor_naturalness_score,
+        contested_count + metrics.contested_trunk_coverage_count,
+        contested_ratio + metrics.contested_trunk_coverage_ratio,
+        pair_support_expansion_penalty + metrics.pair_support_expansion_penalty,
+        internal_penalty + metrics.internal_endpoint_penalty,
+        body_support + metrics.body_connectivity_support,
+        semantic_penalty + metrics.semantic_conflict_penalty,
+        option_count + 1,
+    )
+
+
+def _selection_score_from_totals(
+    totals: tuple[int, int, int, int, int, int, float, int, int, float, int, int],
+    *,
+    strong_anchor_priority_enabled: bool,
+) -> tuple[float, ...]:
+    (
+        endpoint_grade_major,
+        endpoint_grade_minor,
+        endpoint_penalty,
+        strong_anchor_wins,
+        corridor_naturalness,
+        contested_count,
+        contested_ratio,
+        pair_support_expansion_penalty,
+        internal_penalty,
+        body_support,
+        semantic_penalty,
+        option_count,
+    ) = totals
+    if strong_anchor_priority_enabled:
+        return (
+            float(endpoint_grade_major),
+            float(endpoint_grade_minor),
+            float(contested_count),
+            contested_ratio,
+            float(strong_anchor_wins),
+            float(-pair_support_expansion_penalty),
+            float(-endpoint_penalty),
+            float(-internal_penalty),
+            body_support,
+            float(-semantic_penalty),
+            float(corridor_naturalness),
+            float(option_count),
+        )
+    return (
+        float(endpoint_grade_major),
+        float(endpoint_grade_minor),
+        float(option_count),
+        float(-pair_support_expansion_penalty),
+        float(-endpoint_penalty),
+        float(-internal_penalty),
+        float(-semantic_penalty),
+        float(contested_count),
+        contested_ratio,
+        body_support,
+        float(corridor_naturalness),
+    )
+
+
 def _prefer_subset_dominated_same_pair_options(
     pair_options: list[PairArbitrationOption],
     *,
@@ -892,17 +979,53 @@ def _solve_component_exact(
     strong_anchor_priority_enabled: bool,
 ) -> dict[str, PairArbitrationOption]:
     pair_order = tuple(sorted(component_pair_ids, key=lambda pair_id: (len(options_by_pair[pair_id]), pair_id)))
+    option_by_id = {
+        option.option_id: option
+        for pair_id in component_pair_ids
+        for option in options_by_pair[pair_id]
+    }
+    option_bit_by_id = {
+        option_id: 1 << index
+        for index, option_id in enumerate(sorted(option_by_id))
+    }
+    option_priority_sort_key = {
+        option_id: (
+            _option_priority_key(option_by_id[option_id], metrics_by_option_id[option_id]),
+            tuple(-ord(char) for char in option_id),
+        )
+        for option_id in option_by_id
+    }
+    sorted_options_by_pair = {
+        pair_id: tuple(
+            sorted(
+                options_by_pair[pair_id],
+                key=lambda option: option_priority_sort_key[option.option_id],
+                reverse=True,
+            )
+        )
+        for pair_id in pair_order
+    }
+    option_block_mask_by_id = {
+        option_id: option_bit_by_id[option_id]
+        | sum((option_bit_by_id[other_id] for other_id in option_conflicts.get(option_id, set())), 0)
+        for option_id in option_by_id
+    }
+
     best_signature: Optional[tuple[str, ...]] = None
     best_score: Optional[tuple[float, ...]] = None
     best_option_ids: tuple[str, ...] = ()
 
-    def _search(index: int, selected_option_ids: tuple[str, ...], blocked_option_ids: set[str]) -> None:
+    def _search(
+        index: int,
+        selected_option_ids: tuple[str, ...],
+        blocked_mask: int,
+        selection_totals: tuple[int, int, int, int, int, int, float, int, int, float, int, int],
+    ) -> None:
         nonlocal best_signature, best_score, best_option_ids
         if index >= len(pair_order):
             signature = tuple(sorted(selected_option_ids))
-            score = _selection_score(
-                signature,
-                metrics_by_option_id=metrics_by_option_id,
+            score = _selection_score_from_totals(
+                selection_totals,
                 strong_anchor_priority_enabled=strong_anchor_priority_enabled,
             )
             if _is_better_selection(
@@ -917,31 +1040,21 @@ def _solve_component_exact(
             return
 
         pair_id = pair_order[index]
-        _search(index + 1, selected_option_ids, blocked_option_ids)
+        _search(index + 1, selected_option_ids, blocked_mask, selection_totals)
 
-        options = sorted(
-            options_by_pair[pair_id],
-            key=lambda option: (
-                _option_priority_key(option, metrics_by_option_id[option.option_id]),
-                tuple(-ord(char) for char in option.option_id),
-            ),
-            reverse=True,
-        )
-        for option in options:
-            if option.option_id in blocked_option_ids:
+        for option in sorted_options_by_pair[pair_id]:
+            option_bit = option_bit_by_id[option.option_id]
+            if blocked_mask & option_bit:
                 continue
-            next_blocked = set(blocked_option_ids)
-            next_blocked.add(option.option_id)
-            next_blocked.update(option_conflicts.get(option.option_id, set()))
-            _search(index + 1, selected_option_ids + (option.option_id,), next_blocked)
+            _search(
+                index + 1,
+                selected_option_ids + (option.option_id,),
+                blocked_mask | option_block_mask_by_id[option.option_id],
+                _selection_totals_add(selection_totals, metrics_by_option_id[option.option_id]),
+            )
 
-    _search(0, (), set())
+    _search(0, (), 0, _selection_totals_zero())
 
-    option_by_id = {
-        option.option_id: option
-        for pair_id in component_pair_ids
-        for option in options_by_pair[pair_id]
-    }
     return {option_by_id[option_id].pair_id: option_by_id[option_id] for option_id in best_option_ids}
 
 

@@ -1650,10 +1650,10 @@ def test_step2_validation_compact_release_tightens_only_validated_subset(monkeyp
     assert len(tighten_inputs) == 1
     tightened_input = tighten_inputs[0][0]
     assert tightened_input.pair_id == "S2X:1__3"
-    assert tightened_input.candidate_channel_road_ids == ()
+    assert tightened_input.candidate_channel_road_ids == ("r12", "r23")
     assert tightened_input.pruned_road_ids == ("r12", "r23")
     assert tightened_input.trunk_road_ids == ("r12", "r23")
-    assert tightened_input.segment_road_ids == ()
+    assert tightened_input.segment_road_ids == ("r12", "r23")
 
     final_validated = results[0]
     assert final_validated.validated_status == "validated"
@@ -2770,6 +2770,94 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
     comparison_summary = _load_json(out_root / "strategy_comparison.json")
     assert comparison_summary[0]["strategy_id"] == "S2X"
     assert comparison_summary[0]["validated_pair_count"] == 1
+
+
+def test_pair_validation_from_option_keeps_winner_full_until_tighten() -> None:
+    option = _arbitration_option(
+        "PAIR_A_B::opt_01",
+        "PAIR_A_B",
+        "A",
+        "B",
+        trunk_road_ids=("r1",),
+        pruned_road_ids=("r1", "r2"),
+        segment_candidate_road_ids=("r1", "r2"),
+        segment_road_ids=("r1", "r2"),
+        support_info_overrides={
+            "segment_body_candidate_road_ids": ["r1", "r2"],
+            "non_trunk_components": [
+                {
+                    "component_id": "PAIR_A_B:C1",
+                    "road_ids": ["r2"],
+                    "attachment_node_ids": ["X", "Y"],
+                    "internal_support_attachment_node_ids": ["X", "Y"],
+                    "internal_t_support_attachment_node_ids": [],
+                    "component_directionality": "bidirectional_only",
+                    "bidirectional_road_ids": ["r2"],
+                    "attachment_flow_status": "single_departure_return",
+                    "attachment_direction_labels": ["X:both", "Y:both"],
+                    "parallel_corridor_directionality": "bidirectional_parallel",
+                    "parallel_corridor_directions": ["X->Y", "Y->X"],
+                    "hits_other_terminate": False,
+                    "terminate_node_ids": [],
+                    "contains_other_validated_trunk": False,
+                    "conflicting_pair_ids": [],
+                    "blocked_by_transition_same_dir": False,
+                    "transition_block_infos": [],
+                    "side_access_metric": "component_to_trunk_sampled",
+                    "side_access_distance_m": 10.0,
+                    "side_access_gate_passed": True,
+                    "kept_as_segment_body": False,
+                    "moved_to_step3_residual": True,
+                    "moved_to_branch_cut": False,
+                    "decision_reason": "contains_bidirectional_side_road",
+                }
+            ],
+            "step3_residual_infos": [
+                {
+                    "road_id": "r2",
+                    "component_id": "PAIR_A_B:C1",
+                    "residual_reason": "contains_bidirectional_side_road",
+                    "blocked_by_transition_same_dir": False,
+                    "conflicting_pair_ids": [],
+                    "terminate_node_ids": [],
+                    "side_access_distance_m": 10.0,
+                    "side_access_gate_passed": True,
+                    "hint_cut_reasons": [],
+                }
+            ],
+        },
+    )
+    decision = step2_arbitration.PairArbitrationDecision(
+        pair_id="PAIR_A_B",
+        component_id="component_0001",
+        single_pair_legal=True,
+        arbitration_status="win",
+        endpoint_boundary_penalty=0,
+        strong_anchor_win_count=0,
+        corridor_naturalness_score=0,
+        contested_trunk_coverage_count=0,
+        contested_trunk_coverage_ratio=0.0,
+        pair_support_expansion_penalty=0,
+        internal_endpoint_penalty=0,
+        body_connectivity_support=1.0,
+        semantic_conflict_penalty=0,
+        lose_reason="",
+        selected_option_id=option.option_id,
+    )
+
+    result = step2_validation_utils._pair_validation_from_option(
+        option,
+        decision=decision,
+        conflict_pair_id=None,
+        left_turn_excluded_mode="strict",
+        compact_release_payloads=True,
+    )
+
+    assert result.candidate_channel_road_ids == ("r1", "r2")
+    assert result.segment_road_ids == ("r1", "r2")
+    assert result.support_info["segment_body_candidate_road_ids"] == ["r1", "r2"]
+    assert result.support_info["non_trunk_components"][0]["road_ids"] == ["r2"]
+    assert result.support_info["step3_residual_infos"][0]["road_id"] == "r2"
 
 
 def test_write_step2_outputs_streams_release_outputs_without_buffering_lists(tmp_path: Path) -> None:

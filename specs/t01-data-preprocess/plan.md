@@ -1,16 +1,22 @@
 # T01 计划
 
 ## 当前阶段
-- `step 1 doc consistency audit on main`
-- `step 2 workspace cleanup pending`
-- `step 3 Step2 performance/memory audit pending`
-- `step 4 Step2 optimization pending`
+- `step 1 doc consistency audit on main completed`
+- `step 2 workspace cleanup completed`
+- `step 3 Step2 performance/memory audit completed`
+- `step 4 Step2 optimization implemented on branch`
 
 ## 当前目标
 1. 先把最新已合入的 T01 代码行为回写到正式需求基线文档。
 2. 在文档提交后清理本地脏数据，恢复本地/远端一致。
 3. 独立审计 Step2 的性能、内存与死机风险热点。
 4. 再切分支做 Step2 优化，确保业务结果与当前人工验收基线一致。
+
+## 当前状态
+- `main` 上的文档一致性审计、提交与清理已完成。
+- `codex/t01-step2-perf-opt` 上已完成 Step2 性能 / 内存审计与首轮优化实现。
+- 主要优化点已收敛到 exact arbitration solver 的递归/排序/冲突集合开销。
+- 当前分支的 `XXXS1-8` 已与 accepted baseline 对齐，业务效果无回退。
 
 ## 实施批次
 
@@ -34,11 +40,18 @@
 - 识别 Step2 的高耗时路径、峰值内存热点与潜在 O(N^2)+ 组件。
 - 输出内网死机风险的可解释分析。
 - 形成优化点清单与优先级。
+- 当前审计结论：
+  - exact arbitration solver 是主要 CPU 热点
+  - 大量重复排序、集合复制与终局 score 重算是首要优化对象
+  - `debug=False` 的 release compaction 不能早于 tighten，否则会改变业务结果
 
 ### 批次 E：Step2 优化实现
 - 在独立分支上实施 Step2 优化。
 - 优先优化性能 / 内存，不改变 accepted baseline 业务语义。
 - 通过 `XXXS1-8` 与相关单测回归确认无业务回退。
+- 当前实现结论：
+  - exact solver 已改为预排序 + bitmask conflict + 增量 score 汇总
+  - `debug=False` 路径的过早 compaction 已修正为 tighten 后再 release compaction
 
 ## 依赖与风险
 - 当前工作区存在与 T01 无关的脏数据，main 收口前必须避免误提交。

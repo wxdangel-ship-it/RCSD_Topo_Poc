@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Optional
 
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json, write_vecto
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json, write_vector
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import SemanticNodeRecord, _sort_key
 
 

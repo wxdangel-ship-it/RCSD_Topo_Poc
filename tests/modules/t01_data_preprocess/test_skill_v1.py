@@ -125,6 +125,94 @@ def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) 
     assert scope_check["step5c_present"] is False
 
 
+def test_skill_v1_runner_can_isolate_suite_case_outputs_under_run_id(tmp_path: Path, monkeypatch) -> None:
+    road_path = tmp_path / "roads.geojson"
+    node_path = tmp_path / "nodes.geojson"
+    strategy_path = tmp_path / "strategy.json"
+    _write_text(road_path, "{}")
+    _write_text(node_path, "{}")
+    _write_text(strategy_path, "{}")
+
+    def _fake_bootstrap(**kwargs):
+        nodes = tmp_path / "bootstrap_suite" / "nodes.geojson"
+        roads = tmp_path / "bootstrap_suite" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        return SimpleNamespace(nodes_path=nodes, roads_path=roads, summary={})
+
+    def _fake_step2(**kwargs):
+        return []
+
+    def _fake_refresh(**kwargs):
+        nodes = tmp_path / "refresh_suite" / "nodes.geojson"
+        roads = tmp_path / "refresh_suite" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        return SimpleNamespace(nodes_path=nodes, roads_path=roads)
+
+    def _fake_step4(**kwargs):
+        nodes = tmp_path / "step4_suite" / "nodes.geojson"
+        roads = tmp_path / "step4_suite" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        return SimpleNamespace(refreshed_nodes_path=nodes, refreshed_roads_path=roads)
+
+    def _fake_step5(**kwargs):
+        nodes = tmp_path / "step5_suite" / "nodes.geojson"
+        roads = tmp_path / "step5_suite" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        return SimpleNamespace(refreshed_nodes_path=nodes, refreshed_roads_path=roads)
+
+    def _fake_finalize_bundle(**kwargs):
+        resolved_out_root = kwargs["resolved_out_root"]
+        _write_text(kwargs["final_nodes_path"], "{}")
+        _write_text(kwargs["final_roads_path"], "{}")
+        manifest_path = resolved_out_root / "skill_v1_manifest.json"
+        summary_path = resolved_out_root / "skill_v1_bundle_summary.json"
+        segment_path = resolved_out_root / "segment.geojson"
+        inner_nodes_path = resolved_out_root / "inner_nodes.geojson"
+        segment_error_path = resolved_out_root / "segment_error.geojson"
+        step6_summary_path = resolved_out_root / "segment_summary.json"
+        _write_text(manifest_path, "{}")
+        _write_text(summary_path, "{}")
+        _write_text(segment_path, "{}")
+        _write_text(inner_nodes_path, "{}")
+        _write_text(segment_error_path, "{}")
+        _write_text(step6_summary_path, "{}")
+        return {
+            "manifest_path": str(manifest_path.resolve()),
+            "summary_path": str(summary_path.resolve()),
+            "segment_path": str(segment_path.resolve()),
+            "inner_nodes_path": str(inner_nodes_path.resolve()),
+            "segment_error_path": str(segment_error_path.resolve()),
+            "step6_summary_path": str(step6_summary_path.resolve()),
+        }
+
+    monkeypatch.setattr(skill_v1, "initialize_working_layers", _fake_bootstrap)
+    monkeypatch.setattr(skill_v1, "run_step2_segment_poc", _fake_step2)
+    monkeypatch.setattr(skill_v1, "refresh_s2_baseline", _fake_refresh)
+    monkeypatch.setattr(skill_v1, "run_step4_residual_graph", _fake_step4)
+    monkeypatch.setattr(skill_v1, "run_step5_staged_residual_graph", _fake_step5)
+    monkeypatch.setattr(skill_v1, "_finalize_bundle", _fake_finalize_bundle)
+
+    suite_root = tmp_path / "suite_root"
+    artifacts = skill_v1.run_t01_skill_v1(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=suite_root,
+        run_id="XXXS7",
+        per_run_subdir=True,
+        strategy_config_path=strategy_path,
+        debug=True,
+    )
+
+    assert artifacts.out_root == suite_root / "XXXS7"
+    assert (suite_root / "XXXS7" / "t01_skill_v1_progress.json").is_file()
+    assert (suite_root / "XXXS7" / "t01_skill_v1_summary.json").is_file()
+    assert not (suite_root / "t01_skill_v1_progress.json").exists()
+
+
 def test_stage_subprogress_callback_can_skip_perf_and_stdout(tmp_path: Path, capsys) -> None:
     progress_path = tmp_path / "progress.json"
     perf_markers_path = tmp_path / "perf_markers.jsonl"

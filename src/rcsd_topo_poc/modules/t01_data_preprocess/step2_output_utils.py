@@ -8,7 +8,7 @@ from shapely.geometry import LineString, MultiLineString
 from shapely.ops import linemerge
 
 from rcsd_topo_poc.modules.t01_data_preprocess.endpoint_pool import write_endpoint_pool_outputs
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json, write_vecto
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json, write_vector
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     RoadRecord,
     SemanticNodeRecord,

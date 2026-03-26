@@ -90,7 +90,8 @@ def _arbitration_semantic_conflict_node_ids(context: Step1GraphContext) -> set[s
 def _arbitration_strong_anchor_node_ids(context: Step1GraphContext) -> set[str]:
     result: set[str] = set()
     for semantic_node_id, node in context.semantic_nodes.items():
-        if node.kind_2 in {4, 64, 2048} and node.grade_2 >= 2:
+        cross_flag = int(node.raw_properties.get("cross_flag") or 0)
+        if node.kind_2 in {4, 64, 2048} and node.grade_2 >= 2 and cross_flag >= 3:
             result.add(semantic_node_id)
     return result
 

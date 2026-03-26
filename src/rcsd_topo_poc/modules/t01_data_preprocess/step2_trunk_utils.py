@@ -31,6 +31,7 @@ LEFT_TURN_FORMWAY_BIT = 8
 MAX_PATHS_PER_DIRECTION = 12
 MAX_PATH_DEPTH = 64
 SIDE_ACCESS_SAMPLE_STEP_M = MAX_SIDE_ACCESS_DISTANCE_M / 2.0
+STEP5C_STRATEGY_ID = "STEP5C"
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class TrunkCandidate:
     left_turn_road_ids: tuple[str, ...]
     max_dual_carriageway_separation_m: float
     is_through_collapsed_corridor: bool = False
+    is_mirrored_one_sided_corridor: bool = False
     is_bidirectional_minimal_loop: bool = False
     is_semantic_node_group_closure: bool = False
 
@@ -664,9 +666,412 @@ def _is_semantic_node_group_loop_candidate(
     return visited == active_nodes
 
 
+def _collapsed_candidate_undirected_adjacency(
+    candidate: TrunkCandidate,
+) -> dict[str, set[str]]:
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for path in (candidate.forward_path, candidate.reverse_path):
+        if len(path.node_ids) != len(path.road_ids) + 1:
+            continue
+        for from_node_id, to_node_id in zip(path.node_ids, path.node_ids[1:]):
+            if from_node_id == to_node_id:
+                continue
+            adjacency[from_node_id].add(to_node_id)
+            adjacency[to_node_id].add(from_node_id)
+    return {node_id: set(neighbors) for node_id, neighbors in adjacency.items()}
+
+
+def _minimal_trunk_chain_gate_info(
+    pair: PairRecord,
+    *,
+    candidate: TrunkCandidate,
+) -> Optional[dict[str, Any]]:
+    if candidate.is_bidirectional_minimal_loop:
+        return None
+
+    adjacency = _collapsed_candidate_undirected_adjacency(candidate)
+    if not adjacency:
+        return None
+
+    active_node_ids = set(adjacency)
+    queue: deque[str] = deque([next(iter(active_node_ids))])
+    visited: set[str] = set()
+    while queue:
+        node_id = queue.popleft()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        queue.extend(neighbor for neighbor in adjacency.get(node_id, ()) if neighbor not in visited)
+
+    endpoint_node_ids = sorted((node_id for node_id, neighbors in adjacency.items() if len(neighbors) == 1), key=_sort_key)
+    branching_node_ids = sorted((node_id for node_id, neighbors in adjacency.items() if len(neighbors) > 2), key=_sort_key)
+
+    topology_kind = "other"
+    if visited != active_node_ids:
+        topology_kind = "disconnected"
+    elif branching_node_ids:
+        topology_kind = "branching"
+    elif len(endpoint_node_ids) == 0:
+        topology_kind = "cycle"
+    elif len(endpoint_node_ids) == 2:
+        topology_kind = "path"
+
+    if topology_kind == "cycle":
+        return None
+    if topology_kind == "path" and set(endpoint_node_ids) == {pair.a_node_id, pair.b_node_id}:
+        return None
+
+    return {
+        **_dual_separation_support_info(candidate),
+        "minimal_trunk_chain_blocked": True,
+        "minimal_trunk_chain_topology_kind": topology_kind,
+        "minimal_trunk_chain_endpoint_node_ids": endpoint_node_ids,
+        "minimal_trunk_chain_branching_node_ids": branching_node_ids,
+        "minimal_trunk_chain_active_node_ids": sorted(active_node_ids, key=_sort_key),
+        "minimal_trunk_chain_node_degrees": {
+            node_id: len(adjacency[node_id]) for node_id in sorted(adjacency, key=_sort_key)
+        },
+    }
+
+
+def _bidirectional_minimal_loop_extra_branch_gate_info(
+    pair: PairRecord,
+    *,
+    candidate: TrunkCandidate,
+    candidate_road_ids: set[str],
+    road_endpoints: dict[str, tuple[str, str]],
+) -> Optional[dict[str, Any]]:
+    if not candidate.is_bidirectional_minimal_loop:
+        return None
+
+    internal_node_ids = (
+        set(candidate.forward_path.node_ids[1:-1]) | set(candidate.reverse_path.node_ids[1:-1])
+    ) - {pair.a_node_id, pair.b_node_id}
+    if not internal_node_ids:
+        return None
+
+    candidate_road_id_set = set(candidate.road_ids)
+    extra_branch_road_infos: list[dict[str, Any]] = []
+    for road_id in sorted(candidate_road_ids - candidate_road_id_set, key=_sort_key):
+        endpoints = road_endpoints.get(road_id)
+        if endpoints is None:
+            continue
+        touched_internal_node_ids = sorted(set(endpoints) & internal_node_ids, key=_sort_key)
+        if not touched_internal_node_ids:
+            continue
+        extra_branch_road_infos.append(
+            {
+                "road_id": road_id,
+                "from_node_id": endpoints[0],
+                "to_node_id": endpoints[1],
+                "touched_internal_node_ids": touched_internal_node_ids,
+            }
+        )
+
+    if not extra_branch_road_infos:
+        return None
+
+    return {
+        **_dual_separation_support_info(candidate),
+        "bidirectional_minimal_loop_extra_branch_blocked": True,
+        "bidirectional_minimal_loop_internal_node_ids": sorted(internal_node_ids, key=_sort_key),
+        "bidirectional_minimal_loop_extra_branch_infos": extra_branch_road_infos,
+    }
+
+
+def _bidirectional_minimal_loop_lasso_gate_info(
+    pair: PairRecord,
+    *,
+    candidate: TrunkCandidate,
+) -> Optional[dict[str, Any]]:
+    if not candidate.is_bidirectional_minimal_loop:
+        return None
+
+    adjacency = _collapsed_candidate_undirected_adjacency(candidate)
+    if not adjacency:
+        return None
+
+    active_node_ids = set(adjacency)
+    queue: deque[str] = deque([next(iter(active_node_ids))])
+    visited: set[str] = set()
+    while queue:
+        node_id = queue.popleft()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        queue.extend(neighbor for neighbor in adjacency.get(node_id, ()) if neighbor not in visited)
+    if visited != active_node_ids:
+        return None
+
+    degree_by_node = {node_id: len(neighbors) for node_id, neighbors in adjacency.items()}
+    if any(degree not in {1, 2, 3} for degree in degree_by_node.values()):
+        return None
+
+    leaf_node_ids = sorted((node_id for node_id, degree in degree_by_node.items() if degree == 1), key=_sort_key)
+    branching_node_ids = sorted((node_id for node_id, degree in degree_by_node.items() if degree == 3), key=_sort_key)
+    if len(leaf_node_ids) != 1 or len(branching_node_ids) != 1:
+        return None
+
+    leaf_node_id = leaf_node_ids[0]
+    if leaf_node_id not in {pair.a_node_id, pair.b_node_id}:
+        return None
+    other_endpoint_node_id = pair.b_node_id if leaf_node_id == pair.a_node_id else pair.a_node_id
+    if degree_by_node.get(other_endpoint_node_id) != 2:
+        return None
+
+    remaining_node_ids = active_node_ids - {leaf_node_id}
+    if len(remaining_node_ids) < 3:
+        return None
+
+    remaining_adjacency = {
+        node_id: {neighbor for neighbor in neighbors if neighbor != leaf_node_id}
+        for node_id, neighbors in adjacency.items()
+        if node_id != leaf_node_id
+    }
+    if any(len(remaining_adjacency[node_id]) != 2 for node_id in remaining_node_ids):
+        return None
+
+    remaining_queue: deque[str] = deque([next(iter(remaining_node_ids))])
+    remaining_visited: set[str] = set()
+    while remaining_queue:
+        node_id = remaining_queue.popleft()
+        if node_id in remaining_visited:
+            continue
+        remaining_visited.add(node_id)
+        remaining_queue.extend(
+            neighbor for neighbor in remaining_adjacency.get(node_id, ()) if neighbor not in remaining_visited
+        )
+    if remaining_visited != remaining_node_ids:
+        return None
+
+    return {
+        **_dual_separation_support_info(candidate),
+        "bidirectional_minimal_loop_lasso_blocked": True,
+        "bidirectional_minimal_loop_lasso_leaf_node_id": leaf_node_id,
+        "bidirectional_minimal_loop_lasso_branching_node_ids": branching_node_ids,
+        "bidirectional_minimal_loop_lasso_node_degrees": {
+            node_id: degree_by_node[node_id] for node_id in sorted(degree_by_node, key=_sort_key)
+        },
+    }
+
+
+def _counterclockwise_mixed_kind_wedge_gate_info(
+    pair: PairRecord,
+    *,
+    candidate: TrunkCandidate,
+    context: Step1GraphContext,
+) -> Optional[dict[str, Any]]:
+    if candidate.is_bidirectional_minimal_loop or candidate.is_semantic_node_group_closure:
+        return None
+    if len(candidate.road_ids) != 3:
+        return None
+
+    path_lengths = sorted((len(candidate.forward_path.road_ids), len(candidate.reverse_path.road_ids)))
+    if path_lengths != [1, 2]:
+        return None
+
+    short_path = candidate.forward_path if len(candidate.forward_path.road_ids) == 1 else candidate.reverse_path
+    long_path = candidate.reverse_path if short_path is candidate.forward_path else candidate.forward_path
+    if len(long_path.node_ids) != 3 or len(set(long_path.node_ids[1:-1])) != 1:
+        return None
+
+    short_road_id = short_path.road_ids[0]
+    short_road = context.roads.get(short_road_id)
+    if short_road is None:
+        return None
+    short_kind = int(short_road.road_kind or 0)
+    if short_kind < 3:
+        return None
+
+    long_road_ids = tuple(long_path.road_ids)
+    long_road_kinds = []
+    for road_id in long_road_ids:
+        road = context.roads.get(road_id)
+        if road is None:
+            return None
+        long_road_kinds.append(int(road.road_kind or 0))
+    if set(long_road_kinds) != {2}:
+        return None
+
+    internal_node_id = long_path.node_ids[1]
+    return {
+        **_dual_separation_support_info(candidate),
+        "counterclockwise_mixed_kind_wedge_blocked": True,
+        "counterclockwise_mixed_kind_wedge_direct_road_id": short_road_id,
+        "counterclockwise_mixed_kind_wedge_direct_road_kind": short_kind,
+        "counterclockwise_mixed_kind_wedge_detour_road_ids": list(long_road_ids),
+        "counterclockwise_mixed_kind_wedge_detour_road_kinds": long_road_kinds,
+        "counterclockwise_mixed_kind_wedge_internal_node_id": internal_node_id,
+    }
+
+
+def _prefer_bidirectional_minimal_loop_candidates(
+    candidates: list[TrunkCandidate],
+) -> list[TrunkCandidate]:
+    preferred = [candidate for candidate in candidates if candidate.is_bidirectional_minimal_loop]
+    return preferred if preferred else candidates
+
+
+def _is_same_endpoint_direct_bidirectional_candidate(
+    pair: PairRecord,
+    *,
+    candidate: TrunkCandidate,
+    roads: dict[str, RoadRecord],
+) -> bool:
+    if pair.through_node_ids:
+        return False
+    if not candidate.is_bidirectional_minimal_loop or len(candidate.road_ids) != 1:
+        return False
+    if len(pair.forward_path_road_ids) != 1 or tuple(pair.forward_path_road_ids) != tuple(pair.reverse_path_road_ids):
+        return False
+
+    road_id = pair.forward_path_road_ids[0]
+    road = roads.get(road_id)
+    if road is None or road.direction not in {0, 1}:
+        return False
+    if candidate.road_ids != (road_id,):
+        return False
+    return candidate.forward_path.road_ids == (road_id,) and candidate.reverse_path.road_ids == (road_id,)
+
+
+def _prefer_same_endpoint_direct_bidirectional_candidates(
+    pair: PairRecord,
+    *,
+    candidates: list[TrunkCandidate],
+    roads: dict[str, RoadRecord],
+) -> list[TrunkCandidate]:
+    preferred = [
+        candidate
+        for candidate in candidates
+        if _is_same_endpoint_direct_bidirectional_candidate(pair, candidate=candidate, roads=roads)
+    ]
+    return preferred if preferred else candidates
+
+
+def _prefer_pair_support_aligned_minimal_candidates(
+    pair: PairRecord,
+    *,
+    candidates: list[TrunkCandidate],
+) -> list[TrunkCandidate]:
+    if len(candidates) <= 1:
+        return candidates
+
+    pair_support_road_ids = set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids)
+    if not pair_support_road_ids or len(pair_support_road_ids) > 4:
+        return candidates
+
+    overlap_counts = {
+        id(candidate): len(set(candidate.road_ids) & pair_support_road_ids)
+        for candidate in candidates
+    }
+    max_overlap_count = max(overlap_counts.values(), default=0)
+    aligned_candidates = [
+        candidate for candidate in candidates if overlap_counts.get(id(candidate), 0) == max_overlap_count
+    ]
+    base_candidates = aligned_candidates if max_overlap_count > 0 else candidates
+    min_road_count = min(len(candidate.road_ids) for candidate in base_candidates)
+    preferred = [candidate for candidate in base_candidates if len(candidate.road_ids) == min_road_count]
+    return preferred if preferred else candidates
+
+
+def _dedupe_trunk_candidates(
+    candidates: list[TrunkCandidate],
+) -> list[TrunkCandidate]:
+    seen_keys: set[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = set()
+    deduped: list[TrunkCandidate] = []
+    for candidate in candidates:
+        key = (
+            tuple(candidate.forward_path.road_ids),
+            tuple(candidate.reverse_path.road_ids),
+            tuple(candidate.road_ids),
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _pair_support_seed_candidates(
+    pair: PairRecord,
+    *,
+    roads: dict[str, RoadRecord],
+    road_endpoints: dict[str, tuple[str, str]],
+    pruned_road_ids: set[str],
+    left_turn_formway_bit: int,
+) -> list[TrunkCandidate]:
+    pair_support_road_ids = set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids)
+    if (
+        pair.through_node_ids
+        or not pair_support_road_ids
+        or len(pair_support_road_ids) > 4
+        or not pair_support_road_ids <= pruned_road_ids
+    ):
+        return []
+    if len(pair.forward_path_node_ids) != len(pair.forward_path_road_ids) + 1:
+        return []
+    if len(pair.reverse_path_node_ids) != len(pair.reverse_path_road_ids) + 1:
+        return []
+    if not (set(pair.forward_path_node_ids[1:-1]) & set(pair.reverse_path_node_ids[1:-1])):
+        return []
+
+    def _build_seed_path(node_ids: tuple[str, ...], road_ids: tuple[str, ...]) -> Optional[DirectedPath]:
+        total_length = 0.0
+        for road_id in road_ids:
+            road = roads.get(road_id)
+            if road is None:
+                return None
+            total_length += _geometry_length(road.geometry)
+        return DirectedPath(node_ids=node_ids, road_ids=road_ids, total_length=total_length)
+
+    forward_path = _build_seed_path(pair.forward_path_node_ids, pair.forward_path_road_ids)
+    reverse_path = _build_seed_path(pair.reverse_path_node_ids, pair.reverse_path_road_ids)
+    if forward_path is None or reverse_path is None:
+        return []
+
+    is_bidirectional_minimal_loop = False
+    if set(forward_path.road_ids) & set(reverse_path.road_ids):
+        is_bidirectional_minimal_loop = _is_bidirectional_minimal_loop_candidate(
+            forward_path=forward_path,
+            reverse_path=reverse_path,
+            roads=roads,
+        )
+    is_semantic_node_group_closure = _is_semantic_node_group_loop_candidate(
+        forward_path=forward_path,
+        reverse_path=reverse_path,
+    )
+    if not is_bidirectional_minimal_loop and not is_semantic_node_group_closure:
+        return []
+
+    left_turn_road_ids = tuple(
+        road_id
+        for road_id in tuple(sorted(pair_support_road_ids, key=_sort_key))
+        if _road_matches_formway_bit(roads[road_id], left_turn_formway_bit)
+    )
+    if left_turn_road_ids:
+        return []
+    forward_geometry = _line_geometry_from_road_ids(forward_path.road_ids, roads=roads)
+    reverse_geometry = _line_geometry_from_road_ids(reverse_path.road_ids, roads=roads)
+    return [
+        TrunkCandidate(
+            forward_path=forward_path,
+            reverse_path=reverse_path,
+            road_ids=tuple(sorted(pair_support_road_ids, key=_sort_key)),
+            signed_area=0.0,
+            total_length=forward_path.total_length + reverse_path.total_length,
+            left_turn_road_ids=left_turn_road_ids,
+            max_dual_carriageway_separation_m=_max_nearest_distance_m(forward_geometry, reverse_geometry) or 0.0,
+            is_bidirectional_minimal_loop=is_bidirectional_minimal_loop,
+            is_semantic_node_group_closure=is_semantic_node_group_closure,
+        )
+    ]
+
+
 def _trunk_candidate_mode(candidate: TrunkCandidate) -> str:
     if candidate.is_through_collapsed_corridor:
         return "through_collapsed_corridor"
+    if candidate.is_mirrored_one_sided_corridor:
+        return "mirrored_one_sided_corridor"
     return "counterclockwise_loop"
 
 
@@ -988,6 +1393,78 @@ def _split_bidirectional_side_bypass_candidates(
     return kept, blocked
 
 
+def _split_minimal_trunk_chain_candidates(
+    pair: PairRecord,
+    *,
+    candidates: list[TrunkCandidate],
+) -> tuple[list[TrunkCandidate], list[tuple[TrunkCandidate, dict[str, Any]]]]:
+    kept: list[TrunkCandidate] = []
+    blocked: list[tuple[TrunkCandidate, dict[str, Any]]] = []
+    for candidate in candidates:
+        gate_info = _minimal_trunk_chain_gate_info(pair, candidate=candidate)
+        if gate_info is None:
+            kept.append(candidate)
+        else:
+            blocked.append((candidate, gate_info))
+    return kept, blocked
+
+
+def _split_bidirectional_minimal_loop_extra_branch_candidates(
+    pair: PairRecord,
+    *,
+    candidates: list[TrunkCandidate],
+    candidate_road_ids: set[str],
+    road_endpoints: dict[str, tuple[str, str]],
+) -> tuple[list[TrunkCandidate], list[tuple[TrunkCandidate, dict[str, Any]]]]:
+    kept: list[TrunkCandidate] = []
+    blocked: list[tuple[TrunkCandidate, dict[str, Any]]] = []
+    for candidate in candidates:
+        gate_info = _bidirectional_minimal_loop_extra_branch_gate_info(
+            pair,
+            candidate=candidate,
+            candidate_road_ids=candidate_road_ids,
+            road_endpoints=road_endpoints,
+        )
+        if gate_info is None:
+            kept.append(candidate)
+        else:
+            blocked.append((candidate, gate_info))
+    return kept, blocked
+
+
+def _split_bidirectional_minimal_loop_lasso_candidates(
+    pair: PairRecord,
+    *,
+    candidates: list[TrunkCandidate],
+) -> tuple[list[TrunkCandidate], list[tuple[TrunkCandidate, dict[str, Any]]]]:
+    kept: list[TrunkCandidate] = []
+    blocked: list[tuple[TrunkCandidate, dict[str, Any]]] = []
+    for candidate in candidates:
+        gate_info = _bidirectional_minimal_loop_lasso_gate_info(pair, candidate=candidate)
+        if gate_info is None:
+            kept.append(candidate)
+        else:
+            blocked.append((candidate, gate_info))
+    return kept, blocked
+
+
+def _split_counterclockwise_mixed_kind_wedge_candidates(
+    pair: PairRecord,
+    *,
+    candidates: list[TrunkCandidate],
+    context: Step1GraphContext,
+) -> tuple[list[TrunkCandidate], list[tuple[TrunkCandidate, dict[str, Any]]]]:
+    kept: list[TrunkCandidate] = []
+    blocked: list[tuple[TrunkCandidate, dict[str, Any]]] = []
+    for candidate in candidates:
+        gate_info = _counterclockwise_mixed_kind_wedge_gate_info(pair, candidate=candidate, context=context)
+        if gate_info is None:
+            kept.append(candidate)
+        else:
+            blocked.append((candidate, gate_info))
+    return kept, blocked
+
+
 def _split_minimal_loop_long_branch_candidates(
     pair: PairRecord,
     *,
@@ -1049,6 +1526,18 @@ def _evaluate_trunk_choices(
             collapsed_failed_candidate = collapsed_candidate
             collapsed_candidate = None
             collapsed_warnings = ("dual_carriageway_separation_exceeded",)
+    mirrored_candidate: Optional[TrunkCandidate] = None
+    mirrored_warnings: tuple[str, ...] = ()
+    if collapsed_candidate is None:
+        mirrored_candidate, mirrored_warnings = _evaluate_step5c_mirrored_one_sided_corridor(
+            pair,
+            context=context,
+            pruned_road_ids=pruned_road_ids,
+            road_endpoints=road_endpoints,
+            through_rule=through_rule,
+            formway_mode=formway_mode,
+            left_turn_formway_bit=left_turn_formway_bit,
+        )
 
     base_adjacency = _build_filtered_directed_adjacency(
         context.roads,
@@ -1077,6 +1566,16 @@ def _evaluate_trunk_choices(
         road_endpoints=road_endpoints,
         left_turn_formway_bit=left_turn_formway_bit,
         allow_bidirectional_overlap=True,
+    )
+    base_candidates = _dedupe_trunk_candidates(
+        _pair_support_seed_candidates(
+            pair,
+            roads=context.roads,
+            road_endpoints=road_endpoints,
+            pruned_road_ids=pruned_road_ids,
+            left_turn_formway_bit=left_turn_formway_bit,
+        )
+        + base_candidates
     )
 
     if formway_mode == "strict":
@@ -1110,43 +1609,43 @@ def _evaluate_trunk_choices(
         )
         strict_passed_candidates, strict_failed_candidates = _split_dual_separation_candidates(strict_candidates)
         base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(base_candidates)
-        strict_passed_candidates, strict_blocked_candidates = _split_tjunction_vertical_tracking_candidates(
+        strict_passed_candidates = _prefer_same_endpoint_direct_bidirectional_candidates(
+            pair,
+            candidates=strict_passed_candidates,
+            roads=context.roads,
+        )
+        strict_passed_candidates = _prefer_pair_support_aligned_minimal_candidates(
+            pair,
+            candidates=strict_passed_candidates,
+        )
+        base_passed_candidates = _prefer_same_endpoint_direct_bidirectional_candidates(
+            pair,
+            candidates=base_passed_candidates,
+            roads=context.roads,
+        )
+        base_passed_candidates = _prefer_pair_support_aligned_minimal_candidates(
+            pair,
+            candidates=base_passed_candidates,
+        )
+        strict_passed_candidates = _prefer_bidirectional_minimal_loop_candidates(strict_passed_candidates)
+        base_passed_candidates = _prefer_bidirectional_minimal_loop_candidates(base_passed_candidates)
+        strict_passed_candidates, strict_lasso_blocked = _split_bidirectional_minimal_loop_lasso_candidates(
+            pair,
+            candidates=strict_passed_candidates,
+        )
+        base_passed_candidates, base_lasso_blocked = _split_bidirectional_minimal_loop_lasso_candidates(
+            pair,
+            candidates=base_passed_candidates,
+        )
+        strict_passed_candidates, strict_mixed_kind_wedge_blocked = _split_counterclockwise_mixed_kind_wedge_candidates(
             pair,
             candidates=strict_passed_candidates,
             context=context,
         )
-        strict_passed_candidates, strict_side_bypass_blocked_candidates = _split_bidirectional_side_bypass_candidates(
-            pair,
-            candidates=strict_passed_candidates,
-            context=context,
-        )
-        strict_passed_candidates, strict_long_branch_blocked_candidates = _split_minimal_loop_long_branch_candidates(
-            pair,
-            candidates=strict_passed_candidates,
-            candidate_road_ids=candidate_road_ids,
-            pruned_road_ids=pruned_road_ids,
-            branch_cut_infos=branch_cut_infos,
-            context=context,
-            road_endpoints=road_endpoints,
-        )
-        base_passed_candidates, base_blocked_candidates = _split_tjunction_vertical_tracking_candidates(
+        base_passed_candidates, base_mixed_kind_wedge_blocked = _split_counterclockwise_mixed_kind_wedge_candidates(
             pair,
             candidates=base_passed_candidates,
             context=context,
-        )
-        base_passed_candidates, base_side_bypass_blocked_candidates = _split_bidirectional_side_bypass_candidates(
-            pair,
-            candidates=base_passed_candidates,
-            context=context,
-        )
-        base_passed_candidates, base_long_branch_blocked_candidates = _split_minimal_loop_long_branch_candidates(
-            pair,
-            candidates=base_passed_candidates,
-            candidate_road_ids=candidate_road_ids,
-            pruned_road_ids=pruned_road_ids,
-            branch_cut_infos=branch_cut_infos,
-            context=context,
-            road_endpoints=road_endpoints,
         )
         if collapsed_candidate is not None:
             return [
@@ -1156,6 +1655,14 @@ def _evaluate_trunk_choices(
                     support_info=_dual_separation_support_info(collapsed_candidate),
                 )
             ], None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
+        if mirrored_candidate is not None:
+            return [
+                _TrunkEvaluationChoice(
+                    candidate=mirrored_candidate,
+                    warning_codes=mirrored_warnings,
+                    support_info=_dual_separation_support_info(mirrored_candidate),
+                )
+            ], None, mirrored_warnings, _dual_separation_support_info(mirrored_candidate)
         if strict_passed_candidates:
             choices = [
                 _TrunkEvaluationChoice(
@@ -1168,33 +1675,12 @@ def _evaluate_trunk_choices(
             return choices, None, (), choices[0].support_info
         if base_passed_candidates:
             return [], "left_turn_only_polluted_trunk", (), _dual_separation_support_info(base_passed_candidates[0])
-        if strict_blocked_candidates or base_blocked_candidates:
-            blocked_candidate, blocked_gate_info = min(
-                strict_blocked_candidates or base_blocked_candidates,
-                key=lambda item: (item[0].total_length, len(item[0].road_ids)),
-            )
-            return [], "t_junction_vertical_tracking_blocked", (), {
-                **_dual_separation_support_info(blocked_candidate),
-                **blocked_gate_info,
-            }
-        if strict_side_bypass_blocked_candidates or base_side_bypass_blocked_candidates:
-            blocked_candidate, blocked_gate_info = min(
-                strict_side_bypass_blocked_candidates or base_side_bypass_blocked_candidates,
-                key=lambda item: (item[0].total_length, len(item[0].road_ids)),
-            )
-            return [], "bidirectional_side_bypass_blocked", (), {
-                **_dual_separation_support_info(blocked_candidate),
-                **blocked_gate_info,
-            }
-        if strict_long_branch_blocked_candidates or base_long_branch_blocked_candidates:
-            blocked_candidate, blocked_gate_info = min(
-                strict_long_branch_blocked_candidates or base_long_branch_blocked_candidates,
-                key=lambda item: (item[0].total_length, len(item[0].road_ids)),
-            )
-            return [], "side_bypass_branch_distance_exceeded", (), {
-                **_dual_separation_support_info(blocked_candidate),
-                **blocked_gate_info,
-            }
+        if strict_lasso_blocked or base_lasso_blocked:
+            support_info = (strict_lasso_blocked or base_lasso_blocked)[0][1]
+            return [], "bidirectional_minimal_loop_lasso", (), support_info
+        if strict_mixed_kind_wedge_blocked or base_mixed_kind_wedge_blocked:
+            support_info = (strict_mixed_kind_wedge_blocked or base_mixed_kind_wedge_blocked)[0][1]
+            return [], "counterclockwise_mixed_kind_wedge", (), support_info
         if strict_failed_candidates or base_failed_candidates or collapsed_failed_candidate is not None:
             failure_candidate = _best_dual_separation_failure(
                 strict_failed_candidates
@@ -1214,36 +1700,39 @@ def _evaluate_trunk_choices(
                 support_info=_dual_separation_support_info(collapsed_candidate),
             )
         ], None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
+    if mirrored_candidate is not None:
+        return [
+            _TrunkEvaluationChoice(
+                candidate=mirrored_candidate,
+                warning_codes=mirrored_warnings,
+                support_info=_dual_separation_support_info(mirrored_candidate),
+            )
+        ], None, mirrored_warnings, _dual_separation_support_info(mirrored_candidate)
     base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(base_candidates)
-    base_passed_candidates, base_blocked_candidates = _split_tjunction_vertical_tracking_candidates(
+    base_passed_candidates = _prefer_same_endpoint_direct_bidirectional_candidates(
         pair,
         candidates=base_passed_candidates,
-        context=context,
+        roads=context.roads,
     )
-    base_passed_candidates, base_side_bypass_blocked_candidates = _split_bidirectional_side_bypass_candidates(
+    base_passed_candidates = _prefer_pair_support_aligned_minimal_candidates(
+        pair,
+        candidates=base_passed_candidates,
+    )
+    base_passed_candidates = _prefer_bidirectional_minimal_loop_candidates(base_passed_candidates)
+    base_passed_candidates, base_lasso_blocked = _split_bidirectional_minimal_loop_lasso_candidates(
+        pair,
+        candidates=base_passed_candidates,
+    )
+    base_passed_candidates, base_mixed_kind_wedge_blocked = _split_counterclockwise_mixed_kind_wedge_candidates(
         pair,
         candidates=base_passed_candidates,
         context=context,
     )
     if not base_passed_candidates:
-        if base_blocked_candidates:
-            blocked_candidate, blocked_gate_info = min(
-                base_blocked_candidates,
-                key=lambda item: (item[0].total_length, len(item[0].road_ids)),
-            )
-            return [], "t_junction_vertical_tracking_blocked", (), {
-                **_dual_separation_support_info(blocked_candidate),
-                **blocked_gate_info,
-            }
-        if base_side_bypass_blocked_candidates:
-            blocked_candidate, blocked_gate_info = min(
-                base_side_bypass_blocked_candidates,
-                key=lambda item: (item[0].total_length, len(item[0].road_ids)),
-            )
-            return [], "bidirectional_side_bypass_blocked", (), {
-                **_dual_separation_support_info(blocked_candidate),
-                **blocked_gate_info,
-            }
+        if base_lasso_blocked:
+            return [], "bidirectional_minimal_loop_lasso", (), base_lasso_blocked[0][1]
+        if base_mixed_kind_wedge_blocked:
+            return [], "counterclockwise_mixed_kind_wedge", (), base_mixed_kind_wedge_blocked[0][1]
         if base_failed_candidates or collapsed_failed_candidate is not None:
             failure_candidate = _best_dual_separation_failure(
                 base_failed_candidates or ([collapsed_failed_candidate] if collapsed_failed_candidate else [])
@@ -1409,6 +1898,120 @@ def _evaluate_through_collapsed_corridor(
             ),
             max_dual_carriageway_separation_m=0.0,
             is_through_collapsed_corridor=True,
+        ),
+        warnings,
+    )
+
+
+def _evaluate_step5c_mirrored_one_sided_corridor(
+    pair: PairRecord,
+    *,
+    context: Step1GraphContext,
+    pruned_road_ids: set[str],
+    road_endpoints: dict[str, tuple[str, str]],
+    through_rule: ThroughRuleSpec,
+    formway_mode: str,
+    left_turn_formway_bit: int,
+) -> tuple[Optional[TrunkCandidate], tuple[str, ...]]:
+    if pair.strategy_id != STEP5C_STRATEGY_ID:
+        return None, ()
+    if not pair.used_mirrored_reverse_confirm_fallback:
+        return None, ()
+    if not pair.through_node_ids:
+        return None, ()
+    if through_rule.incident_road_degree_eq is None:
+        return None, ()
+
+    support_road_ids = tuple(sorted(set(pair.forward_path_road_ids + pair.reverse_path_road_ids), key=_sort_key))
+    if not support_road_ids:
+        return None, ()
+    if any(road_id not in pruned_road_ids for road_id in support_road_ids):
+        return None, ()
+    if pair.forward_path_node_ids != tuple(reversed(pair.reverse_path_node_ids)):
+        return None, ()
+    if pair.forward_path_road_ids != tuple(reversed(pair.reverse_path_road_ids)):
+        return None, ()
+
+    for node_id in pair.through_node_ids:
+        retained_degree = 0
+        for road_id in pruned_road_ids:
+            endpoints = road_endpoints.get(road_id)
+            if endpoints is None or node_id not in endpoints:
+                continue
+            road = context.roads[road_id]
+            if _road_matches_any_formway_bits(road, through_rule.incident_degree_exclude_formway_bits_any):
+                continue
+            retained_degree += 1
+        if retained_degree != through_rule.incident_road_degree_eq:
+            return None, ()
+
+    if formway_mode == "strict":
+        if any(_road_matches_formway_bit(context.roads[road_id], left_turn_formway_bit) for road_id in support_road_ids):
+            return None, ()
+        filtered_support_road_ids = support_road_ids
+        warnings: tuple[str, ...] = ()
+    else:
+        filtered_support_road_ids = support_road_ids
+        warnings = ()
+        if formway_mode == "audit_only" and any(
+            _road_matches_formway_bit(context.roads[road_id], left_turn_formway_bit) for road_id in support_road_ids
+        ):
+            warnings = ("formway_unreliable_warning",)
+
+    support_adjacency = _build_filtered_directed_adjacency(
+        context.roads,
+        road_endpoints=road_endpoints,
+        allowed_road_ids=set(filtered_support_road_ids),
+        exclude_left_turn=formway_mode == "strict",
+        left_turn_formway_bit=left_turn_formway_bit,
+        exclude_formway_bits_any=through_rule.incident_degree_exclude_formway_bits_any,
+    )
+    forward_paths = _enumerate_simple_paths(
+        adjacency=support_adjacency,
+        roads=context.roads,
+        start_node_id=pair.a_node_id,
+        end_node_id=pair.b_node_id,
+        max_paths=1,
+        max_depth=max(4, len(pair.forward_path_node_ids) + 1),
+    )
+    reverse_paths = _enumerate_simple_paths(
+        adjacency=support_adjacency,
+        roads=context.roads,
+        start_node_id=pair.b_node_id,
+        end_node_id=pair.a_node_id,
+        max_paths=1,
+        max_depth=max(4, len(pair.reverse_path_node_ids) + 1),
+    )
+    if not forward_paths and not reverse_paths:
+        return None, ()
+    actual_path = forward_paths[0] if forward_paths else reverse_paths[0]
+    if tuple(sorted(set(actual_path.road_ids), key=_sort_key)) != support_road_ids:
+        return None, ()
+    forward_path = DirectedPath(
+        node_ids=tuple(pair.forward_path_node_ids),
+        road_ids=tuple(pair.forward_path_road_ids),
+        total_length=actual_path.total_length,
+    )
+    reverse_path = DirectedPath(
+        node_ids=tuple(pair.reverse_path_node_ids),
+        road_ids=tuple(pair.reverse_path_road_ids),
+        total_length=actual_path.total_length,
+    )
+
+    return (
+        TrunkCandidate(
+            forward_path=forward_path,
+            reverse_path=reverse_path,
+            road_ids=support_road_ids,
+            signed_area=0.0,
+            total_length=forward_path.total_length + reverse_path.total_length,
+            left_turn_road_ids=tuple(
+                road_id
+                for road_id in support_road_ids
+                if _road_matches_formway_bit(context.roads[road_id], left_turn_formway_bit)
+            ),
+            max_dual_carriageway_separation_m=0.0,
+            is_mirrored_one_sided_corridor=True,
         ),
         warnings,
     )

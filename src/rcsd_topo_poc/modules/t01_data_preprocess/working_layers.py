@@ -4,6 +4,7 @@ import json
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Optional, Union
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
@@ -11,6 +12,10 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     write_csv,
     write_json,
     write_vector,
+)
+from rcsd_topo_poc.modules.t01_data_preprocess.refresh_node_retyping import (
+    evaluate_mainnode_bootstrap_retype,
+    summarize_mainnode_retype_topology,
 )
 
 
@@ -488,6 +493,155 @@ def _apply_intersection_preprocess_hook(
     )
 
 
+def _apply_bootstrap_node_retyping(
+    *,
+    node_features: list[dict[str, Any]],
+    road_features: list[dict[str, Any]],
+    out_root: Path,
+    debug: bool,
+    progress_callback: Optional[WorkingLayerProgressCallback],
+) -> tuple[list[dict[str, Any]], Path | None, dict[str, Any]]:
+    _emit_progress(progress_callback, "bootstrap_node_retyping_started")
+    node_index_by_id: dict[str, int] = {}
+    physical_to_semantic: dict[str, str] = {}
+    semantic_members: dict[str, list[str]] = defaultdict(list)
+    for index, feature in enumerate(node_features):
+        props = feature["properties"]
+        node_id = _normalize_id(props.get("id"))
+        if node_id is None:
+            raise ValueError("Working node feature is missing required field 'id'.")
+        node_index_by_id[node_id] = index
+        semantic_node_id = _normalize_nullable_text(props.get("working_mainnodeid")) or _normalize_nullable_text(props.get("mainnodeid")) or node_id
+        physical_to_semantic[node_id] = semantic_node_id
+        semantic_members[semantic_node_id].append(node_id)
+
+    road_records: list[SimpleNamespace] = []
+    road_properties_map: dict[str, dict[str, Any]] = {}
+    for feature in road_features:
+        props = canonicalize_road_working_properties(feature["properties"])
+        road_id = _normalize_id(props.get("id"))
+        snodeid = _normalize_id(props.get("snodeid"))
+        enodeid = _normalize_id(props.get("enodeid"))
+        if road_id is None or snodeid is None or enodeid is None:
+            raise ValueError("Working road feature is missing id/snodeid/enodeid.")
+        road_properties_map[road_id] = props
+        road_records.append(
+            SimpleNamespace(
+                road_id=road_id,
+                snodeid=snodeid,
+                enodeid=enodeid,
+                direction=_coerce_int(props.get("direction")),
+                formway=_coerce_int(props.get("formway")),
+            )
+        )
+
+    road_index_by_member: dict[str, list[SimpleNamespace]] = defaultdict(list)
+    for road in road_records:
+        road_index_by_member[road.snodeid].append(road)
+        road_index_by_member[road.enodeid].append(road)
+    bootstrap_node_properties_map = {
+        node_id: dict(node_features[index]["properties"])
+        for node_id, index in node_index_by_id.items()
+    }
+
+    retyped_count = 0
+    audit_rows: list[dict[str, Any]] = []
+    for semantic_node_id in sorted(semantic_members, key=_sort_key):
+        member_node_ids = tuple(sorted(semantic_members[semantic_node_id], key=_sort_key))
+        representative_node_id = semantic_node_id if semantic_node_id in node_index_by_id else member_node_ids[0]
+        representative_props = dict(node_features[node_index_by_id[representative_node_id]]["properties"])
+        current_grade_2 = _coerce_int(representative_props.get("grade_2"))
+        current_kind_2 = _coerce_int(representative_props.get("kind_2"))
+
+        member_id_set = set(member_node_ids)
+        associated_roads: list[SimpleNamespace] = []
+        seen_road_ids: set[str] = set()
+        for member_node_id in member_node_ids:
+            for road in road_index_by_member.get(member_node_id, []):
+                if road.road_id in seen_road_ids:
+                    continue
+                touches_snode = road.snodeid in member_id_set
+                touches_enode = road.enodeid in member_id_set
+                if touches_snode == touches_enode:
+                    continue
+                seen_road_ids.add(road.road_id)
+                associated_roads.append(road)
+
+        topology = summarize_mainnode_retype_topology(
+            member_node_ids=member_node_ids,
+            associated_roads=associated_roads,
+            road_properties_map=road_properties_map,
+            physical_to_semantic=physical_to_semantic,
+            right_turn_formway_bit=7,
+            node_properties_map=bootstrap_node_properties_map,
+        )
+        decision = evaluate_mainnode_bootstrap_retype(
+            current_grade_2=current_grade_2,
+            current_kind_2=current_kind_2,
+            topology=topology,
+        )
+        if decision is not None:
+            representative_props["grade_2"] = decision.grade_2
+            representative_props["kind_2"] = decision.kind_2
+            node_features[node_index_by_id[representative_node_id]] = {
+                "properties": representative_props,
+                "geometry": node_features[node_index_by_id[representative_node_id]]["geometry"],
+            }
+            retyped_count += 1
+
+        if debug:
+            audit_rows.append(
+                {
+                    "semantic_node_id": semantic_node_id,
+                    "representative_node_id": representative_node_id,
+                    "current_grade_2": current_grade_2,
+                    "current_kind_2": current_kind_2,
+                    "new_grade_2": current_grade_2 if decision is None else decision.grade_2,
+                    "new_kind_2": current_kind_2 if decision is None else decision.kind_2,
+                    "neighbor_family_count": topology.total_neighbor_family_count,
+                    "segment_neighbor_family_count": topology.segment_neighbor_family_count,
+                    "residual_neighbor_family_count": topology.residual_neighbor_family_count,
+                    "simple_residual_neighbor_family_count": topology.simple_residual_neighbor_family_count,
+                    "neighbor_family_rows_json": list(topology.family_rows),
+                    "applied_rule": "keep_current" if decision is None else decision.applied_rule,
+                }
+            )
+
+    audit_path: Path | None = None
+    if debug:
+        audit_path = out_root / "bootstrap_node_retype_table.csv"
+        write_csv(
+            audit_path,
+            audit_rows,
+            [
+                "semantic_node_id",
+                "representative_node_id",
+                "current_grade_2",
+                "current_kind_2",
+                "new_grade_2",
+                "new_kind_2",
+                "neighbor_family_count",
+                "segment_neighbor_family_count",
+                "residual_neighbor_family_count",
+                "simple_residual_neighbor_family_count",
+                "neighbor_family_rows_json",
+                "applied_rule",
+            ],
+        )
+
+    summary = {
+        "bootstrap_retyped_node_count": retyped_count,
+        "bootstrap_retype_rule": "grade1_kind4_strict_t_to_grade2_kind2048",
+        "bootstrap_retype_audit_path": None if audit_path is None else str(audit_path.resolve()),
+    }
+    _emit_progress(
+        progress_callback,
+        "bootstrap_node_retyping_completed",
+        bootstrap_retyped_node_count=retyped_count,
+    )
+    return node_features, audit_path, summary
+
+
 def initialize_working_layers(
     *,
     road_path: Union[str, Path],
@@ -543,6 +697,13 @@ def initialize_working_layers(
         debug=debug,
         progress_callback=progress_callback,
     )
+    initialized_nodes, bootstrap_retype_audit_path, bootstrap_retype_summary = _apply_bootstrap_node_retyping(
+        node_features=initialized_nodes,
+        road_features=initialized_roads,
+        out_root=resolved_out_root,
+        debug=debug,
+        progress_callback=progress_callback,
+    )
     _emit_progress(
         progress_callback,
         "working_layers_initialized",
@@ -575,6 +736,8 @@ def initialize_working_layers(
         "intersection_preprocess_hook": "roundabout_preprocess_v1",
         "roundabout_summary_path": str(roundabout_summary_path.resolve()),
         "roundabout_summary": roundabout_summary,
+        "bootstrap_retype_summary": bootstrap_retype_summary,
+        "bootstrap_retype_audit_path": None if bootstrap_retype_audit_path is None else str(bootstrap_retype_audit_path.resolve()),
         "nodes_path": str(nodes_path.resolve()),
         "roads_path": str(roads_path.resolve()),
         "debug": debug,

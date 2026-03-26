@@ -145,3 +145,43 @@ def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_p
     assert (out_root / "roundabout_group_nodes.gpkg").is_file()
     assert (out_root / "roundabout_mainnodes.gpkg").is_file()
     assert (out_root / "roundabout_group_table.csv").is_file()
+
+
+def test_initialize_working_layers_pre_s2_retypes_strict_t_mistag(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+    out_root = tmp_path / "working"
+
+    write_geojson(
+        node_path,
+        [
+            {"properties": {"id": 997356, "grade": 1, "kind": 4, "closed_con": 2}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": 1019769, "grade": 1, "kind": 4, "closed_con": 2, "mainnodeid": 1019769}, "geometry": Point(1.0, 0.0)},
+            {"properties": {"id": 1030080, "grade": 0, "kind": 0, "closed_con": 0, "mainnodeid": 1019769}, "geometry": Point(1.0, 1.0)},
+            {"properties": {"id": 1030081, "grade": 1, "kind": 4, "closed_con": 2}, "geometry": Point(2.0, 0.0)},
+            {"properties": {"id": 1030077, "grade": 0, "kind": 0, "closed_con": 0, "mainnodeid": 1030081}, "geometry": Point(2.0, 1.0)},
+            {"properties": {"id": 1035968, "grade": 3, "kind": 2048, "closed_con": 2}, "geometry": Point(1.0, 2.0)},
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            {"properties": {"id": "side_in", "snodeid": 997356, "enodeid": 1019769, "direction": 2, "formway": 0}, "geometry": LineString([(0.0, 0.0), (1.0, 0.0)])},
+            {"properties": {"id": "main_out", "snodeid": 1019769, "enodeid": 1030081, "direction": 2, "formway": 0}, "geometry": LineString([(1.0, 0.0), (2.0, 0.0)])},
+            {"properties": {"id": "main_in", "snodeid": 1030077, "enodeid": 1030080, "direction": 2, "formway": 0}, "geometry": LineString([(2.0, 1.0), (1.0, 1.0)])},
+            {"properties": {"id": "side_out", "snodeid": 1030080, "enodeid": 1035968, "direction": 2, "formway": 0}, "geometry": LineString([(1.0, 1.0), (1.0, 2.0)])},
+        ],
+    )
+
+    artifacts = initialize_working_layers(road_path=road_path, node_path=node_path, out_root=out_root, debug=True)
+
+    nodes_doc = load_vector_feature_collection(artifacts.nodes_path)
+    node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+
+    assert node_props["1019769"]["grade_2"] == 2
+    assert node_props["1019769"]["kind_2"] == 2048
+    assert node_props["1030080"]["grade_2"] == 0
+    assert node_props["1030080"]["kind_2"] == 0
+    assert summary["bootstrap_retype_summary"]["bootstrap_retyped_node_count"] == 1
+    assert (out_root / "bootstrap_node_retype_table.csv").is_file()

@@ -220,7 +220,7 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert summary["step5_removed_step5b_segment_road_count"] == 4
     assert summary["step5_total_new_segment_road_count"] == 8
     assert summary["node_rule_keep_pair_count"] == 3
-    assert summary["node_rule_new_t_count"] >= 1
+    assert summary["node_rule_new_t_count"] == 0
     assert summary["step5c_rolling_endpoint_pool_count"] == 4
     assert summary["step5c_protected_hard_stop_count"] == 1
     assert summary["step5c_demoted_endpoint_count"] == 0
@@ -351,15 +351,15 @@ def test_step5_staged_residual_graph_runs_two_phases_and_refreshes_once(tmp_path
     assert node_props["210"]["kind_2"] == 1
     assert node_props["230"]["grade_2"] == 3
     assert node_props["230"]["kind_2"] == 1
-    assert node_props["501"]["grade_2"] == 3
-    assert node_props["501"]["kind_2"] == 2048
+    assert node_props["501"]["grade_2"] == 0
+    assert node_props["501"]["kind_2"] == 0
 
     mainnode_rows = {row["mainnode_id"]: row for row in _load_csv_rows(artifacts.mainnode_table_path)}
     assert mainnode_rows["10"]["applied_rule"] == "keep_step5_pair_endpoint"
     assert mainnode_rows["30"]["applied_rule"] == "protected_roundabout_mainnode"
     assert mainnode_rows["110"]["applied_rule"] == "keep_step5_pair_endpoint"
     assert mainnode_rows["210"]["applied_rule"] == "keep_current"
-    assert mainnode_rows["501"]["applied_rule"] == "new_t_like"
+    assert mainnode_rows["501"]["applied_rule"] == "keep_current"
 
 
 def test_step5c_adaptive_context_keeps_historical_kind1_only_by_history_and_demotes_degree2_nodes() -> None:

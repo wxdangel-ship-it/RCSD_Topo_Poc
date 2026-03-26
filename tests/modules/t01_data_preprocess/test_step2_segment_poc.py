@@ -8,7 +8,13 @@ from pathlib import Path
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.cli import main
-from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc, step2_arbitration, step2_segment_poc
+from rcsd_topo_poc.modules.t01_data_preprocess import (
+    step1_pair_poc,
+    step2_arbitration,
+    step2_segment_poc,
+    step2_trunk_utils,
+    step2_validation_utils,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import load_vector_feature_collection
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import initialize_working_layers
 
@@ -650,6 +656,25 @@ def _build_through_collapsed_corridor_dataset(base_dir: Path) -> tuple[Path, Pat
     return road_path, node_path
 
 
+def _build_step5c_mirrored_one_sided_corridor_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "roads.geojson"
+    node_path = base_dir / "nodes.geojson"
+    node_features = [
+        _node_feature(1, 0.0, 0.0),
+        _node_feature(2, 1.0, 0.0, kind=0, grade=0, closed_con=0),
+        _node_feature(3, 2.0, 0.0, kind=0, grade=0, closed_con=0),
+        _node_feature(4, 3.0, 0.0),
+    ]
+    road_features = [
+        _road_feature("r12", 1, 2, 2, [[0.0, 0.0], [1.0, 0.0]]),
+        _road_feature("r23", 2, 3, 2, [[1.0, 0.0], [2.0, 0.0]]),
+        _road_feature("r34", 3, 4, 2, [[2.0, 0.0], [3.0, 0.0]]),
+    ]
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
 def _build_bidirectional_minimal_loop_dataset(base_dir: Path) -> tuple[Path, Path]:
     road_path = base_dir / "roads.geojson"
     node_path = base_dir / "nodes.geojson"
@@ -1065,6 +1090,64 @@ def test_step2_validates_through_collapsed_corridor_candidate(tmp_path: Path) ->
     assert residual["features"] == []
 
 
+def test_step2_validates_step5c_mirrored_one_sided_corridor_candidate(tmp_path: Path) -> None:
+    road_path, node_path = _build_step5c_mirrored_one_sided_corridor_dataset(tmp_path)
+    strategy_path = tmp_path / "step5c_strategy.json"
+    strategy_path.write_text(
+        json.dumps(
+            {
+                "strategy_id": "STEP5C",
+                "description": "Synthetic Step5C strategy with mirrored reverse-confirm fallback corridor.",
+                "seed_rule": {"kind_bits_all": [2], "closed_con_in": [2, 3], "grade_eq": 1},
+                "terminate_rule": {"kind_bits_all": [2], "closed_con_in": [2, 3], "grade_eq": 1},
+                "allow_mirrored_one_sided_reverse_confirm_for_force_terminate_nodes": True,
+                "through_node_rule": {
+                    "incident_road_degree_eq": 2,
+                    "incident_degree_exclude_formway_bits_any": [7],
+                    "disallow_seed_terminate_nodes": True,
+                },
+                "force_seed_node_ids": [1, 4],
+                "force_terminate_node_ids": [1, 4],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    out_root = tmp_path / "outputs"
+
+    rc = main(
+        [
+            "t01-step2-segment-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+
+    validated_rows = _read_csv_rows(out_root / "STEP5C" / "validated_pairs.csv")
+    validation_rows = _read_csv_rows(out_root / "STEP5C" / "pair_validation_table.csv")
+    trunk = _load_json(out_root / "STEP5C" / "trunk_roads.gpkg")
+    segment_body = _load_json(out_root / "STEP5C" / "segment_body_roads.gpkg")
+    residual = _load_json(out_root / "STEP5C" / "step3_residual_roads.gpkg")
+
+    assert [row["pair_id"] for row in validated_rows] == ["STEP5C:1__4"]
+    assert validated_rows[0]["trunk_mode"] == "mirrored_one_sided_corridor"
+    assert validation_rows[0]["validated_status"] == "validated"
+    assert validation_rows[0]["trunk_mode"] == "mirrored_one_sided_corridor"
+    assert validation_rows[0]["counterclockwise_ok"] == "False"
+    assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r12", "r23", "r34"}
+    assert set(segment_body["features"][0]["properties"]["road_ids"]) == {"r12", "r23", "r34"}
+    assert residual["features"] == []
+
+
 def test_step2_validates_bidirectional_direct_road_as_minimal_loop(tmp_path: Path) -> None:
     road_path, node_path = _build_bidirectional_minimal_loop_dataset(tmp_path)
     strategy_path = _write_strategy(tmp_path / "step2_strategy.json")
@@ -1155,16 +1238,19 @@ def test_step2_validates_bidirectional_overlap_loop_with_through_nodes(tmp_path:
 
     assert rc == 0
 
-    validated_rows = _read_csv_rows(out_root / "S2X" / "validated_pairs.csv")
     validation_rows = _read_csv_rows(out_root / "S2X" / "pair_validation_table.csv")
-    trunk = _load_json(out_root / "S2X" / "trunk_roads.gpkg")
+    rejected_rows = _read_csv_rows(out_root / "S2X" / "rejected_pair_candidates.csv")
+    summary = _load_json(out_root / "S2X" / "segment_summary.json")
 
-    assert [row["pair_id"] for row in validated_rows] == ["S2X:1__4"]
-    assert validation_rows[0]["validated_status"] == "validated"
-    assert validation_rows[0]["trunk_mode"] == "counterclockwise_loop"
+    assert len(validation_rows) == 1
+    assert validation_rows[0]["validated_status"] == "rejected"
+    assert validation_rows[0]["reject_reason"] == "bidirectional_minimal_loop_lasso"
     support_info = json.loads(validation_rows[0]["support_info"])
-    assert support_info["bidirectional_minimal_loop"] is True
-    assert set(trunk["features"][0]["properties"]["road_ids"]) == {"r12", "r23", "r34", "r35", "r51"}
+    assert support_info["bidirectional_minimal_loop_lasso_blocked"] is True
+    assert support_info["bidirectional_minimal_loop_lasso_leaf_node_id"] == "4"
+    assert rejected_rows[0]["reject_reason"] == "bidirectional_minimal_loop_lasso"
+    assert summary["validated_pair_count"] == 0
+    assert summary["rejected_pair_count"] == 1
 
 
 def test_step2_validates_semantic_node_group_closure_loop(tmp_path: Path) -> None:
@@ -1334,6 +1420,73 @@ def test_step2_validation_emits_pair_phase_markers(monkeypatch) -> None:
         "validation_tighten_started",
         "validation_tighten_completed",
     ]
+
+
+def test_step2_rejects_trunk_when_current_boundary_terminate_becomes_internal_node(monkeypatch) -> None:
+    pair = _pair_record("S2X:A__B", "A", "B", ("rAT", "rTB"))
+    execution = _minimal_execution([pair], terminate_ids=["T1"])
+    roads = [
+        _road_record("rAT", "A", "T1"),
+        _road_record("rTB", "T1", "B"),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {
+        "rAT": ("A", "T1"),
+        "rTB": ("T1", "B"),
+    }
+    undirected_adjacency = {
+        "A": (step1_pair_poc.TraversalEdge("rAT", "A", "T1"),),
+        "T1": (
+            step1_pair_poc.TraversalEdge("rAT", "T1", "A"),
+            step1_pair_poc.TraversalEdge("rTB", "T1", "B"),
+        ),
+        "B": (step1_pair_poc.TraversalEdge("rTB", "B", "T1"),),
+    }
+    trunk_candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(("A", "T1", "B"), ("rAT", "rTB"), 2.0),
+        reverse_path=step2_segment_poc.DirectedPath(("B", "T1", "A"), ("rTB", "rAT"), 2.0),
+        road_ids=("rAT", "rTB"),
+        signed_area=1.0,
+        total_length=4.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=0.0,
+    )
+
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_build_candidate_channel",
+        lambda *args, **kwargs: ({"rAT", "rTB"}, {"T1"}),
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_prune_candidate_channel",
+        lambda *args, **kwargs: ({"rAT", "rTB"}, [], False),
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_evaluate_trunk_choices",
+        lambda *args, **kwargs: (
+            [step2_segment_poc._TrunkEvaluationChoice(trunk_candidate, (), {})],
+            None,
+            (),
+            {},
+        ),
+    )
+
+    results = step2_segment_poc._validate_pair_candidates(
+        execution,
+        context=context,
+        road_endpoints=road_endpoints,
+        undirected_adjacency=undirected_adjacency,
+        formway_mode="strict",
+        left_turn_formway_bit=8,
+    )
+
+    assert len(results) == 1
+    assert results[0].validated_status == "rejected"
+    assert results[0].reject_reason == "current_terminate_blocked"
+    assert results[0].support_info["current_terminate_node_ids"] == ["T1"]
+    assert results[0].boundary_terminate_node_ids == ("T1",)
 
 
 def test_step2_compact_validation_result_for_release_drops_nonessential_payloads() -> None:
@@ -1846,6 +1999,48 @@ def test_step2_keeps_one_way_parallel_corridor_as_segment_body() -> None:
     assert component_info["decision_reason"] == "segment_body"
 
 
+def test_step2_moves_same_endpoint_one_way_parallel_closure_to_residual() -> None:
+    roads = [
+        _road_record("t13", "1", "3", coords=((0.0, 0.0), (20.0, 0.0)), direction=1),
+        _road_record("s31", "3", "1", coords=((20.0, 10.0), (0.0, 10.0)), direction=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = _pair_record("S2X:1__3", "1", "3", ("t13",))
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__3",
+            "1",
+            "3",
+            pruned_road_ids=("t13", "s31"),
+            trunk_road_ids=("t13",),
+            segment_road_ids=("t13", "s31"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "bidirectional_minimal_loop": True,
+            "segment_body_candidate_road_ids": ["t13", "s31"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    component_info = current.support_info["non_trunk_components"][0]
+    assert set(current.segment_road_ids) == {"t13"}
+    assert set(current.residual_road_ids) == {"s31"}
+    assert component_info["attachment_node_ids"] == ["1", "3"]
+    assert component_info["parallel_corridor_directionality"] == "one_way_parallel"
+    assert component_info["decision_reason"] == "same_endpoint_parallel_closure"
+
+
 def test_step2_moves_side_corridor_with_bidirectional_connector_to_residual() -> None:
     roads = [
         _road_record("t12", "1", "2", coords=((0.0, 0.0), (10.0, 0.0))),
@@ -1957,6 +2152,83 @@ def test_step2_moves_one_way_parallel_corridor_attached_to_internal_t_support_no
     assert component_info["attachment_direction_labels"] == ["T1:out", "T2:in"]
     assert component_info["parallel_corridor_directionality"] == "one_way_parallel"
     assert component_info["decision_reason"] == "internal_support_one_way_parallel"
+
+
+def test_step2_swaps_internal_one_way_parallel_twin_into_trunk() -> None:
+    roads = [
+        _road_record("f14", "1", "4", coords=((0.0, 0.0), (30.0, 0.0)), direction=2),
+        _road_record("r4a", "4", "A", coords=((30.0, 10.0), (20.0, 10.0)), direction=2),
+        _road_record("tab", "A", "B", coords=((20.0, 10.0), (10.0, 10.0)), direction=1),
+        _road_record("sab", "A", "B", coords=((20.0, 12.0), (10.0, 12.0)), direction=2),
+        _road_record("rb1", "B", "1", coords=((10.0, 10.0), (0.0, 10.0)), direction=2),
+    ]
+    semantic_nodes = {
+        "1": _semantic_node_record("1", kind_2=4),
+        "4": _semantic_node_record("4", kind_2=4),
+        "A": _semantic_node_record("A", kind_2=4),
+        "B": _semantic_node_record("B", kind_2=2048, grade_2=3),
+    }
+    context = _minimal_context(roads, semantic_nodes=semantic_nodes)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pair_current = step1_pair_poc.PairRecord(
+        pair_id="S2X:1__4",
+        a_node_id="1",
+        b_node_id="4",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("1", "4"),
+        forward_path_road_ids=("f14",),
+        reverse_path_node_ids=("4", "A", "B", "1"),
+        reverse_path_road_ids=("r4a", "tab", "rb1"),
+        through_node_ids=("A", "B"),
+    )
+    execution = _minimal_execution([pair_current])
+    validation = replace(
+        _validation_result(
+            "S2X:1__4",
+            "1",
+            "4",
+            pruned_road_ids=("f14", "r4a", "tab", "sab", "rb1"),
+            trunk_road_ids=("f14", "r4a", "tab", "rb1"),
+            segment_road_ids=("f14", "r4a", "tab", "sab", "rb1"),
+        ),
+        support_info={
+            "branch_cut_infos": [],
+            "pair_support_road_ids": ["f14", "r4a", "tab", "rb1"],
+            "forward_path_road_ids": ["f14"],
+            "reverse_path_road_ids": ["r4a", "tab", "rb1"],
+            "segment_body_candidate_road_ids": ["f14", "r4a", "tab", "sab", "rb1"],
+            "segment_body_candidate_cut_infos": [],
+        },
+    )
+
+    tightened = step2_segment_poc._tighten_validated_segment_components(
+        [validation],
+        execution=execution,
+        context=context,
+        road_endpoints=road_endpoints,
+    )
+
+    current = tightened[0]
+    assert set(current.trunk_road_ids) == {"f14", "r4a", "sab", "rb1"}
+    assert set(current.segment_road_ids) == {"f14", "r4a", "sab", "rb1"}
+    assert set(current.residual_road_ids) == {"tab"}
+    assert current.support_info["forward_path_road_ids"] == ["f14"]
+    assert current.support_info["reverse_path_road_ids"] == ["r4a", "sab", "rb1"]
+    assert current.support_info["pair_support_road_ids"] == ["f14", "r4a", "sab", "rb1"]
+    assert current.support_info["internal_parallel_trunk_swap_infos"] == [
+        {
+            "decision_reason": "internal_support_parallel_twin_swap",
+            "pair_id": "S2X:1__4",
+            "attachment_node_ids": ["A", "B"],
+            "replaced_trunk_road_id": "tab",
+            "promoted_parallel_road_id": "sab",
+        }
+    ]
+    component_info = current.support_info["non_trunk_components"][0]
+    assert component_info["road_ids"] == ["tab"]
+    assert component_info["attachment_node_ids"] == ["A", "B"]
+    assert component_info["decision_reason"] == "contains_bidirectional_side_road"
 
 
 def test_step2_keeps_braided_one_way_single_side_bypass_as_segment_body() -> None:
@@ -2628,6 +2900,71 @@ def test_same_stage_arbitration_uses_exact_solver_for_single_option_large_compon
     assert outcome.components[0].strong_anchor_node_ids == ("500588029",)
     assert outcome.components[0].fallback_greedy_used is False
     assert outcome.components[0].exact_solver_used is True
+
+
+def test_same_stage_arbitration_prefers_higher_endpoint_grade_priority() -> None:
+    options_by_pair: dict[str, list[step2_arbitration.PairArbitrationOption]] = {
+        "PAIR_HIGH": [
+            _arbitration_option(
+                "PAIR_HIGH::opt_01",
+                "PAIR_HIGH",
+                "A",
+                "B",
+                trunk_road_ids=("shared",),
+                pruned_road_ids=("shared",),
+                segment_candidate_road_ids=("shared",),
+                segment_road_ids=("shared",),
+                support_info_overrides={"endpoint_priority_grades": [3, 2]},
+            )
+        ],
+        "PAIR_LOW": [
+            _arbitration_option(
+                "PAIR_LOW::opt_01",
+                "PAIR_LOW",
+                "C",
+                "D",
+                trunk_road_ids=("shared",),
+                pruned_road_ids=("shared",),
+                segment_candidate_road_ids=("shared",),
+                segment_road_ids=("shared",),
+                support_info_overrides={"endpoint_priority_grades": [2, 2]},
+            )
+        ],
+    }
+    outcome = step2_arbitration.arbitrate_pair_options(
+        options_by_pair=options_by_pair,
+        single_pair_illegal_pair_ids=set(),
+        road_lengths={"shared": 10.0},
+        road_to_node_ids={"shared": ("N1", "N2")},
+        weak_endpoint_node_ids=set(),
+        boundary_node_ids=set(),
+        semantic_conflict_node_ids=set(),
+        strong_anchor_node_ids=set(),
+    )
+
+    decision_by_pair_id = {decision.pair_id: decision for decision in outcome.decisions}
+    assert decision_by_pair_id["PAIR_HIGH"].arbitration_status == "win"
+    assert decision_by_pair_id["PAIR_LOW"].arbitration_status == "lose"
+    assert decision_by_pair_id["PAIR_LOW"].lose_reason == "endpoint_grade_priority_lower"
+    assert outcome.selected_options_by_pair_id["PAIR_HIGH"].option_id == "PAIR_HIGH::opt_01"
+
+
+def test_arbitration_strong_anchor_node_ids_requires_cross_flag_three() -> None:
+    context = _minimal_context(
+        [],
+        semantic_nodes={
+            "KEEP_2048": _semantic_node_record("KEEP_2048", kind_2=2048, grade_2=2, cross_flag=3),
+            "KEEP_4": _semantic_node_record("KEEP_4", kind_2=4, grade_2=3, cross_flag=3),
+            "DROP_LOW_CROSS": _semantic_node_record("DROP_LOW_CROSS", kind_2=4, grade_2=3, cross_flag=2),
+            "DROP_LOW_GRADE": _semantic_node_record("DROP_LOW_GRADE", kind_2=4, grade_2=1, cross_flag=3),
+            "DROP_OTHER_KIND": _semantic_node_record("DROP_OTHER_KIND", kind_2=1, grade_2=3, cross_flag=3),
+        },
+    )
+
+    assert step2_validation_utils._arbitration_strong_anchor_node_ids(context) == {
+        "KEEP_2048",
+        "KEEP_4",
+    }
 
 
 def test_same_stage_arbitration_strong_anchor_exact_solver_keeps_additional_non_conflicting_pair() -> None:
@@ -3799,6 +4136,345 @@ def test_bidirectional_side_bypass_gate_keeps_small_minimal_loop() -> None:
     )
 
     assert gate_info is None
+
+
+def test_minimal_trunk_chain_gate_blocks_lasso_candidate() -> None:
+    pair = _pair_record("PAIR_LASSO", "A", "B", ())
+    candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(
+            node_ids=("A", "P", "Q", "R", "B"),
+            road_ids=("r1", "r2", "r3", "r4"),
+            total_length=40.0,
+        ),
+        reverse_path=step2_segment_poc.DirectedPath(
+            node_ids=("B", "Q", "S", "A"),
+            road_ids=("r5", "r6", "r7"),
+            total_length=30.0,
+        ),
+        road_ids=("r1", "r2", "r3", "r4", "r5", "r6", "r7"),
+        signed_area=120.0,
+        total_length=70.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=6.0,
+    )
+
+    gate_info = step2_segment_poc._minimal_trunk_chain_gate_info(pair, candidate=candidate)
+
+    assert gate_info is not None
+    assert gate_info["minimal_trunk_chain_blocked"] is True
+    assert gate_info["minimal_trunk_chain_topology_kind"] == "branching"
+    assert gate_info["minimal_trunk_chain_branching_node_ids"] == ["Q"]
+
+
+def test_minimal_trunk_chain_gate_keeps_small_loop_collapsing_to_path() -> None:
+    pair = _pair_record("PAIR_SMALL_LOOP_CHAIN", "A", "B", ())
+    candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(
+            node_ids=("A", "MID", "B"),
+            road_ids=("r1", "r2"),
+            total_length=20.0,
+        ),
+        reverse_path=step2_segment_poc.DirectedPath(
+            node_ids=("B", "MID", "A"),
+            road_ids=("r3", "r4"),
+            total_length=19.0,
+        ),
+        road_ids=("r1", "r2", "r3", "r4"),
+        signed_area=90.0,
+        total_length=39.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=4.0,
+    )
+
+    gate_info = step2_segment_poc._minimal_trunk_chain_gate_info(pair, candidate=candidate)
+
+    assert gate_info is None
+
+
+def test_bidirectional_minimal_loop_extra_branch_gate_blocks_internal_spur() -> None:
+    pair = step1_pair_poc.PairRecord(
+        pair_id="PAIR_BIDIR_EXTRA_BRANCH",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "UP", "MERGE", "B"),
+        forward_path_road_ids=("r1", "r2", "r3"),
+        reverse_path_node_ids=("B", "MERGE", "LOW", "A"),
+        reverse_path_road_ids=("r3", "r4", "r5"),
+        through_node_ids=(),
+    )
+    candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.forward_path_node_ids,
+            road_ids=pair.forward_path_road_ids,
+            total_length=30.0,
+        ),
+        reverse_path=step2_segment_poc.DirectedPath(
+            node_ids=pair.reverse_path_node_ids,
+            road_ids=pair.reverse_path_road_ids,
+            total_length=29.0,
+        ),
+        road_ids=("r1", "r2", "r3", "r4", "r5"),
+        signed_area=80.0,
+        total_length=59.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=6.0,
+        is_bidirectional_minimal_loop=True,
+    )
+
+    gate_info = step2_segment_poc._bidirectional_minimal_loop_extra_branch_gate_info(
+        pair,
+        candidate=candidate,
+        candidate_road_ids={"r1", "r2", "r3", "r4", "r5", "spur"},
+        road_endpoints={
+            "r1": ("A", "UP"),
+            "r2": ("UP", "MERGE"),
+            "r3": ("MERGE", "B"),
+            "r4": ("MERGE", "LOW"),
+            "r5": ("LOW", "A"),
+            "spur": ("MERGE", "X"),
+        },
+    )
+
+    assert gate_info is not None
+    assert gate_info["bidirectional_minimal_loop_extra_branch_blocked"] is True
+    assert gate_info["bidirectional_minimal_loop_internal_node_ids"] == ["LOW", "MERGE", "UP"]
+    assert gate_info["bidirectional_minimal_loop_extra_branch_infos"] == [
+        {
+            "road_id": "spur",
+            "from_node_id": "MERGE",
+            "to_node_id": "X",
+            "touched_internal_node_ids": ["MERGE"],
+        }
+    ]
+
+
+def test_evaluate_trunk_choices_prefers_bidirectional_minimal_loop_over_triangle_detour() -> None:
+    pair = _pair_record("PAIR_DIRECT_BIDIR", "A", "B", ())
+    roads = [
+        _road_record("direct", "A", "B", direction=1, coords=((0.0, 0.0), (2.0, 0.0)), road_kind=2),
+        _road_record("bc", "B", "C", direction=2, coords=((2.0, 0.0), (1.0, 1.0)), road_kind=2),
+        _road_record("ca", "C", "A", direction=2, coords=((1.0, 1.0), (0.0, 0.0)), road_kind=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+
+    choices, reject_reason, warnings, _ = step2_segment_poc._evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids={"direct", "bc", "ca"},
+        pruned_road_ids={"direct", "bc", "ca"},
+        branch_cut_infos=[],
+        road_endpoints=road_endpoints,
+        through_rule=_minimal_strategy().through_rule,
+        formway_mode="strict",
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert reject_reason is None
+    assert warnings == ()
+    assert [choice.candidate.road_ids for choice in choices] == [("direct",)]
+    assert choices[0].candidate.is_bidirectional_minimal_loop is True
+
+
+def test_evaluate_trunk_choices_prefers_same_endpoint_direct_bidirectional_over_expanded_loop() -> None:
+    pair = _pair_record("PAIR_DIRECT_BIDIR_EXPANDED", "A", "B", ("direct",))
+    roads = [
+        _road_record("direct", "A", "B", direction=1, coords=((0.0, 0.0), (2.0, 0.0)), road_kind=2),
+        _road_record("ac", "A", "C", direction=2, coords=((0.0, 0.0), (1.0, 1.0)), road_kind=2),
+        _road_record("cb", "C", "B", direction=1, coords=((1.0, 1.0), (2.0, 0.0)), road_kind=2),
+        _road_record("ca", "C", "A", direction=2, coords=((1.0, 1.0), (0.0, 0.0)), road_kind=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+
+    choices, reject_reason, warnings, _ = step2_segment_poc._evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids={"direct", "ac", "cb", "ca"},
+        pruned_road_ids={"direct", "ac", "cb", "ca"},
+        branch_cut_infos=[],
+        road_endpoints=road_endpoints,
+        through_rule=_minimal_strategy().through_rule,
+        formway_mode="strict",
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert reject_reason is None
+    assert warnings == ()
+    assert [choice.candidate.road_ids for choice in choices] == [("direct",)]
+    assert choices[0].candidate.is_bidirectional_minimal_loop is True
+
+
+def test_pair_support_seed_candidates_keep_compact_local_bidirectional_loop() -> None:
+    pair = step1_pair_poc.PairRecord(
+        pair_id="PAIR_SUPPORT_SEED",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "MID", "B"),
+        forward_path_road_ids=("f1", "f2"),
+        reverse_path_node_ids=("B", "MID", "A"),
+        reverse_path_road_ids=("r1", "r2"),
+        through_node_ids=(),
+    )
+    roads = [
+        _road_record("f1", "A", "MID", direction=2, coords=((0.0, 0.0), (1.0, -1.0)), road_kind=2),
+        _road_record("f2", "MID", "B", direction=2, coords=((1.0, -1.0), (2.0, 0.0)), road_kind=2),
+        _road_record("r1", "B", "MID", direction=2, coords=((2.0, 0.0), (1.0, 1.0)), road_kind=2),
+        _road_record("r2", "MID", "A", direction=2, coords=((1.0, 1.0), (0.0, 0.0)), road_kind=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+
+    candidates = step2_trunk_utils._pair_support_seed_candidates(
+        pair,
+        roads=context.roads,
+        road_endpoints=road_endpoints,
+        pruned_road_ids={"f1", "f2", "r1", "r2"},
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].road_ids == ("f1", "f2", "r1", "r2")
+    assert candidates[0].is_bidirectional_minimal_loop is False
+
+
+def test_evaluate_trunk_choices_rejects_bidirectional_minimal_loop_lasso_with_internal_extra_branch() -> None:
+    pair = step1_pair_poc.PairRecord(
+        pair_id="PAIR_BIDIR_BRANCH",
+        a_node_id="A",
+        b_node_id="B",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("A", "UP", "MERGE", "B"),
+        forward_path_road_ids=("r1", "r2", "r3"),
+        reverse_path_node_ids=("B", "MERGE", "LOW", "A"),
+        reverse_path_road_ids=("r3", "r4", "r5"),
+        through_node_ids=(),
+    )
+    roads = [
+        _road_record("r1", "A", "UP", direction=2, coords=((0.0, 0.0), (1.0, 1.0)), road_kind=2),
+        _road_record("r2", "UP", "MERGE", direction=2, coords=((1.0, 1.0), (2.0, 1.0)), road_kind=2),
+        _road_record("r3", "MERGE", "B", direction=1, coords=((2.0, 1.0), (3.0, 0.0)), road_kind=2),
+        _road_record("r4", "MERGE", "LOW", direction=2, coords=((2.0, 1.0), (1.0, -1.0)), road_kind=2),
+        _road_record("r5", "LOW", "A", direction=2, coords=((1.0, -1.0), (0.0, 0.0)), road_kind=2),
+        _road_record("spur", "MERGE", "X", direction=2, coords=((2.0, 1.0), (2.0, 2.0)), road_kind=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+
+    choices, reject_reason, warnings, support_info = step2_segment_poc._evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids={"r1", "r2", "r3", "r4", "r5", "spur"},
+        pruned_road_ids={"r1", "r2", "r3", "r4", "r5", "spur"},
+        branch_cut_infos=[],
+        road_endpoints=road_endpoints,
+        through_rule=_minimal_strategy().through_rule,
+        formway_mode="strict",
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert choices == []
+    assert reject_reason == "bidirectional_minimal_loop_lasso"
+    assert warnings == ()
+    assert support_info["bidirectional_minimal_loop_lasso_blocked"] is True
+    assert support_info["bidirectional_minimal_loop_lasso_leaf_node_id"] == "B"
+    assert support_info["bidirectional_minimal_loop_lasso_branching_node_ids"] == ["MERGE"]
+
+
+def test_evaluate_trunk_choices_keeps_counterclockwise_loop_with_branching_internal_node() -> None:
+    pair = _pair_record("PAIR_BRANCHING_LOOP", "A", "B", ())
+    roads = [
+        _road_record("r1", "A", "P", direction=2, coords=((0.0, 0.0), (0.0, -1.0)), road_kind=2),
+        _road_record("r2", "P", "Q", direction=2, coords=((0.0, -1.0), (1.0, -1.0)), road_kind=2),
+        _road_record("r3", "Q", "B", direction=2, coords=((1.0, -1.0), (2.0, 0.0)), road_kind=2),
+        _road_record("r4", "B", "Q", direction=2, coords=((2.0, 0.0), (1.0, -1.0)), road_kind=2),
+        _road_record("r5", "Q", "R", direction=2, coords=((1.0, -1.0), (1.0, 1.0)), road_kind=2),
+        _road_record("r6", "R", "A", direction=2, coords=((1.0, 1.0), (0.0, 0.0)), road_kind=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+
+    choices, reject_reason, warnings, _ = step2_segment_poc._evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids={"r1", "r2", "r3", "r4", "r5", "r6"},
+        pruned_road_ids={"r1", "r2", "r3", "r4", "r5", "r6"},
+        branch_cut_infos=[],
+        road_endpoints=road_endpoints,
+        through_rule=_minimal_strategy().through_rule,
+        formway_mode="strict",
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert reject_reason is None
+    assert warnings == ()
+    assert choices
+    assert choices[0].candidate.is_bidirectional_minimal_loop is False
+    assert choices[0].candidate.road_ids == ("r1", "r2", "r3", "r4", "r5", "r6")
+
+
+def test_evaluate_trunk_choices_rejects_mixed_kind_wedge_counterclockwise_loop() -> None:
+    pair = _pair_record("PAIR_MIXED_KIND_WEDGE", "A", "B", ())
+    roads = [
+        _road_record("direct", "A", "B", direction=2, coords=((0.0, 0.0), (0.0, 10.0)), road_kind=3),
+        _road_record("detour_1", "B", "MID", direction=2, coords=((0.0, 10.0), (-3.0, 6.0)), road_kind=2),
+        _road_record("detour_2", "MID", "A", direction=2, coords=((-3.0, 6.0), (0.0, 0.0)), road_kind=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+
+    choices, reject_reason, warnings, support_info = step2_segment_poc._evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids={"direct", "detour_1", "detour_2"},
+        pruned_road_ids={"direct", "detour_1", "detour_2"},
+        branch_cut_infos=[],
+        road_endpoints=road_endpoints,
+        through_rule=_minimal_strategy().through_rule,
+        formway_mode="strict",
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert choices == []
+    assert reject_reason == "counterclockwise_mixed_kind_wedge"
+    assert warnings == ()
+    assert support_info["counterclockwise_mixed_kind_wedge_blocked"] is True
+    assert support_info["counterclockwise_mixed_kind_wedge_direct_road_id"] == "direct"
+    assert support_info["counterclockwise_mixed_kind_wedge_detour_road_ids"] == ["detour_1", "detour_2"]
+
+
+def test_evaluate_trunk_choices_keeps_all_kind2_three_road_counterclockwise_loop() -> None:
+    pair = _pair_record("PAIR_ALL_KIND2_WEDGE", "A", "B", ())
+    roads = [
+        _road_record("direct", "A", "B", direction=2, coords=((0.0, 0.0), (0.0, 10.0)), road_kind=2),
+        _road_record("detour_1", "B", "MID", direction=2, coords=((0.0, 10.0), (-3.0, 6.0)), road_kind=2),
+        _road_record("detour_2", "MID", "A", direction=2, coords=((-3.0, 6.0), (0.0, 0.0)), road_kind=2),
+    ]
+    context = _minimal_context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+
+    choices, reject_reason, warnings, _ = step2_segment_poc._evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids={"direct", "detour_1", "detour_2"},
+        pruned_road_ids={"direct", "detour_1", "detour_2"},
+        branch_cut_infos=[],
+        road_endpoints=road_endpoints,
+        through_rule=_minimal_strategy().through_rule,
+        formway_mode="strict",
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert reject_reason is None
+    assert warnings == ()
+    assert choices
+    assert choices[0].candidate.road_ids == ("detour_1", "detour_2", "direct")
+    assert choices[0].candidate.is_bidirectional_minimal_loop is False
 
 
 def test_bidirectional_side_bypass_gate_blocks_four_road_mixed_loop_with_weak_connector() -> None:

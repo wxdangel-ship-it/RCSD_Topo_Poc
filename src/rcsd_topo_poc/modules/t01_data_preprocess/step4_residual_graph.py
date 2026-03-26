@@ -21,6 +21,10 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     write_json,
     write_vector,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.refresh_node_retyping import (
+    evaluate_mainnode_refresh_retype,
+    summarize_mainnode_retype_topology,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     RIGHT_TURN_FORMWAY_BIT,
     MainnodeGroup,
@@ -713,7 +717,7 @@ def _preserve_previous_s2_snapshot(
             source_path = source_s2_dir / filename
             if source_path.is_file():
                 shutil.copy2(source_path, target_s2_dir / filename)
-    return target_s2_di
+    return target_s2_dir
 
 
 def _write_step4_refreshed_outputs(
@@ -759,6 +763,11 @@ def _write_step4_refreshed_outputs(
             "nonsegment_all_right_turn_only",
             "nonsegment_has_in",
             "nonsegment_has_out",
+            "neighbor_family_count",
+            "segment_neighbor_family_count",
+            "residual_neighbor_family_count",
+            "simple_residual_neighbor_family_count",
+            "neighbor_family_rows_json",
             "applied_rule",
         ],
     )
@@ -839,7 +848,8 @@ def _refresh_after_step4(
     node_rule_keep_pair_count = 0
     node_rule_single_segment_count = 0
     node_rule_right_turn_only_count = 0
-    node_rule_new_t_count = 0
+    node_rule_retyped_grade2_kind2048_count = 0
+    node_rule_retyped_grade2_kind4_count = 0
     multi_segment_mainnode_kept_count = 0
 
     mainnode_rows: list[dict[str, Any]] = []
@@ -874,6 +884,14 @@ def _refresh_after_step4(
             has_in, has_out = _road_flow_flags_for_group(road, member_id_set)
             nonsegment_has_in = nonsegment_has_in or has_in
             nonsegment_has_out = nonsegment_has_out or has_out
+        topology = summarize_mainnode_retype_topology(
+            member_node_ids=group.member_node_ids,
+            associated_roads=associated_roads,
+            road_properties_map=road_properties_map,
+            physical_to_semantic=physical_to_semantic,
+            right_turn_formway_bit=RIGHT_TURN_FORMWAY_BIT,
+            node_properties_map=node_properties_map,
+        )
 
         new_grade_2 = current_grade_2
         new_kind_2 = current_kind_2
@@ -899,10 +917,19 @@ def _refresh_after_step4(
             applied_rule = "right_turn_only_side"
             node_rule_right_turn_only_count += 1
         elif unique_segmentid_count == 1 and nonsegment_road_count > 0 and nonsegment_has_in and nonsegment_has_out:
-            new_grade_2 = 3
-            new_kind_2 = 2048
-            applied_rule = "new_t_like"
-            node_rule_new_t_count += 1
+            retype_decision = evaluate_mainnode_refresh_retype(
+                current_grade_2=current_grade_2,
+                current_kind_2=current_kind_2,
+                topology=topology,
+            )
+            if retype_decision is not None:
+                new_grade_2 = retype_decision.grade_2
+                new_kind_2 = retype_decision.kind_2
+                applied_rule = retype_decision.applied_rule
+                if new_kind_2 == 2048:
+                    node_rule_retyped_grade2_kind2048_count += 1
+                else:
+                    node_rule_retyped_grade2_kind4_count += 1
 
         rep_props = dict(node_properties_map[group.representative_node_id])
         rep_props["grade_2"] = new_grade_2
@@ -924,6 +951,11 @@ def _refresh_after_step4(
                 "nonsegment_all_right_turn_only": nonsegment_all_right_turn_only,
                 "nonsegment_has_in": nonsegment_has_in,
                 "nonsegment_has_out": nonsegment_has_out,
+                "neighbor_family_count": topology.total_neighbor_family_count,
+                "segment_neighbor_family_count": topology.segment_neighbor_family_count,
+                "residual_neighbor_family_count": topology.residual_neighbor_family_count,
+                "simple_residual_neighbor_family_count": topology.simple_residual_neighbor_family_count,
+                "neighbor_family_rows_json": json.dumps(list(topology.family_rows), ensure_ascii=False, sort_keys=True),
                 "applied_rule": applied_rule,
             }
         )
@@ -943,7 +975,9 @@ def _refresh_after_step4(
         "node_rule_keep_pair_count": node_rule_keep_pair_count,
         "node_rule_single_segment_count": node_rule_single_segment_count,
         "node_rule_right_turn_only_count": node_rule_right_turn_only_count,
-        "node_rule_new_t_count": node_rule_new_t_count,
+        "node_rule_new_t_count": node_rule_retyped_grade2_kind2048_count,
+        "node_rule_retyped_grade2_kind2048_count": node_rule_retyped_grade2_kind2048_count,
+        "node_rule_retyped_grade2_kind4_count": node_rule_retyped_grade2_kind4_count,
         "multi_segment_mainnode_kept_count": multi_segment_mainnode_kept_count,
         "mainnode_representative_fallback_count": representative_fallback_count,
     }

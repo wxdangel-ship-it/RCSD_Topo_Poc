@@ -150,7 +150,7 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     assert summary["step4_validated_pair_count"] == 1
     assert summary["step4_new_segment_road_count"] == 4
     assert summary["node_rule_keep_pair_count"] == 1
-    assert summary["node_rule_new_t_count"] >= 1
+    assert summary["node_rule_new_t_count"] == 0
 
     assert (artifacts.out_root / "STEP4").is_dir()
     assert (artifacts.out_root / "STEP4" / "endpoint_pool.csv").is_file()
@@ -198,15 +198,15 @@ def test_step4_residual_graph_constructs_new_segments_and_refreshes_fields(tmp_p
     assert "working_mainnodeid" not in node_props["1"]
     assert node_props["3"]["grade_2"] == 1
     assert node_props["3"]["kind_2"] == 64
-    assert node_props["501"]["grade_2"] == 3
-    assert node_props["501"]["kind_2"] == 2048
+    assert node_props["501"]["grade_2"] == 0
+    assert node_props["501"]["kind_2"] == 0
     assert node_props["300"]["grade_2"] == 1
     assert node_props["300"]["kind_2"] == 4
 
     mainnode_rows = {row["mainnode_id"]: row for row in _load_csv_rows(artifacts.mainnode_table_path)}
     assert mainnode_rows["1"]["applied_rule"] == "keep_step4_pair_endpoint"
     assert mainnode_rows["3"]["applied_rule"] == "protected_roundabout_mainnode"
-    assert mainnode_rows["501"]["applied_rule"] == "new_t_like"
+    assert mainnode_rows["501"]["applied_rule"] == "keep_current"
     assert mainnode_rows["300"]["applied_rule"] == "keep_current"
 
 

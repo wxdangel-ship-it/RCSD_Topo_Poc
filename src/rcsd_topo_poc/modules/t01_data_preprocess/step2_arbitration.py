@@ -42,6 +42,8 @@ class PairConflictRecord:
 
 @dataclass(frozen=True)
 class PairArbitrationMetrics:
+    endpoint_grade_priority_major: int
+    endpoint_grade_priority_minor: int
     endpoint_boundary_penalty: int
     strong_anchor_win_count: int
     corridor_naturalness_score: int
@@ -404,10 +406,11 @@ def _option_internal_node_ids(
     option: PairArbitrationOption,
     *,
     road_to_node_ids: dict[str, tuple[str, str]],
+    road_ids: Optional[tuple[str, ...]] = None,
 ) -> set[str]:
     node_ids: set[str] = set()
-    road_ids = option.segment_candidate_road_ids or option.pruned_road_ids or option.trunk_road_ids
-    for road_id in road_ids:
+    selected_road_ids = road_ids or option.segment_candidate_road_ids or option.pruned_road_ids or option.trunk_road_ids
+    for road_id in selected_road_ids:
         endpoints = road_to_node_ids.get(road_id)
         if endpoints is None:
             continue
@@ -436,6 +439,17 @@ def _option_pair_support_road_ids(option: PairArbitrationOption) -> set[str]:
     }
 
 
+def _option_endpoint_priority_grades(option: PairArbitrationOption) -> tuple[int, int]:
+    raw_value = option.support_info.get("endpoint_priority_grades", ())
+    if not isinstance(raw_value, (list, tuple)):
+        return (0, 0)
+    grades = [int(value or 0) for value in raw_value[:2]]
+    while len(grades) < 2:
+        grades.append(0)
+    grades.sort(reverse=True)
+    return grades[0], grades[1]
+
+
 def _option_metrics(
     option: PairArbitrationOption,
     *,
@@ -446,12 +460,7 @@ def _option_metrics(
     boundary_node_ids: set[str],
     semantic_conflict_node_ids: set[str],
 ) -> PairArbitrationMetrics:
-    contested_trunk_coverage_count = len(set(option.trunk_road_ids) & contested_road_ids)
-    contested_trunk_coverage_ratio = (
-        0.0
-        if not contested_road_ids
-        else contested_trunk_coverage_count / float(len(contested_road_ids))
-    )
+    endpoint_grade_priority_major, endpoint_grade_priority_minor = _option_endpoint_priority_grades(option)
     pair_support_road_ids = _option_pair_support_road_ids(option)
     pair_support_expansion_penalty = len(set(option.trunk_road_ids) - pair_support_road_ids)
     endpoint_boundary_penalty = int(option.a_node_id in weak_endpoint_node_ids) + int(
@@ -460,10 +469,26 @@ def _option_metrics(
     corridor_naturalness_score = 1 if float(option.support_info.get("trunk_signed_area", 0.0)) > 1e-6 else 0
     internal_node_ids = _option_internal_node_ids(option, road_to_node_ids=road_to_node_ids)
     internal_endpoint_penalty = len(internal_node_ids & boundary_node_ids)
+    contested_trunk_coverage_count = len(set(option.trunk_road_ids) & contested_road_ids)
+    if (
+        pair_support_expansion_penalty > 0
+        and internal_endpoint_penalty > 0
+        and contested_trunk_coverage_count > 0
+    ):
+        # Down-rank over-extended contested options that both swallow a boundary
+        # node and pull in extra roads beyond the pair's direct support.
+        contested_trunk_coverage_count -= 1
+    contested_trunk_coverage_ratio = (
+        0.0
+        if not contested_road_ids
+        else contested_trunk_coverage_count / float(len(contested_road_ids))
+    )
     semantic_conflict_penalty = len(internal_node_ids & semantic_conflict_node_ids)
     support_road_ids = option.segment_road_ids or option.trunk_road_ids
     body_connectivity_support = float(sum(road_lengths.get(road_id, 0.0) for road_id in support_road_ids))
     return PairArbitrationMetrics(
+        endpoint_grade_priority_major=endpoint_grade_priority_major,
+        endpoint_grade_priority_minor=endpoint_grade_priority_minor,
         endpoint_boundary_penalty=endpoint_boundary_penalty,
         strong_anchor_win_count=0,
         corridor_naturalness_score=corridor_naturalness_score,
@@ -504,12 +529,69 @@ def _component_strong_anchor_node_ids(
     return component_anchor_node_ids
 
 
+def _prefer_pair_support_aligned_minimal_options(
+    pair_options: list[PairArbitrationOption],
+    *,
+    road_to_node_ids: dict[str, tuple[str, str]],
+    strong_anchor_node_ids: set[str],
+) -> list[PairArbitrationOption]:
+    if len(pair_options) <= 1 or not strong_anchor_node_ids:
+        return pair_options
+
+    anchor_touching_options = [
+        option
+        for option in pair_options
+        if _option_internal_node_ids(
+            option,
+            road_to_node_ids=road_to_node_ids,
+            road_ids=_option_anchor_relevant_road_ids(option),
+        )
+        & strong_anchor_node_ids
+    ]
+    if not anchor_touching_options:
+        return pair_options
+
+    pair_support_road_ids: set[str] = set()
+    for option in anchor_touching_options:
+        pair_support_road_ids = _option_pair_support_road_ids(option)
+        if pair_support_road_ids:
+            break
+    overlap_counts = {
+        option.option_id: len(set(option.trunk_road_ids) & _option_pair_support_road_ids(option))
+        for option in anchor_touching_options
+    }
+    compact_pair_support_scope = 0 < len(pair_support_road_ids) <= 4
+    if compact_pair_support_scope:
+        max_overlap_count = max(overlap_counts.values(), default=0)
+        if max_overlap_count > 0:
+            base_options = [
+                option
+                for option in anchor_touching_options
+                if overlap_counts.get(option.option_id, 0) == max_overlap_count
+            ]
+        else:
+            base_options = anchor_touching_options
+    else:
+        aligned_options = [
+            option for option in anchor_touching_options if overlap_counts.get(option.option_id, 0) > 0
+        ]
+        base_options = aligned_options if aligned_options else anchor_touching_options
+    min_trunk_road_count = min(len(option.trunk_road_ids) for option in base_options)
+    preferred = [
+        option for option in base_options if len(option.trunk_road_ids) == min_trunk_road_count
+    ]
+    return preferred if preferred else pair_options
+
+
 def _ordered_trunk_node_ids(
     option: PairArbitrationOption,
     *,
     road_to_node_ids: dict[str, tuple[str, str]],
+    road_ids: Optional[tuple[str, ...]] = None,
 ) -> tuple[str, ...]:
-    ordered_road_ids = tuple(str(road_id) for road_id in option.support_info.get("forward_path_road_ids", ()))
+    ordered_road_ids = road_ids
+    if ordered_road_ids is None:
+        ordered_road_ids = tuple(str(road_id) for road_id in option.support_info.get("forward_path_road_ids", ()))
     if not ordered_road_ids:
         ordered_road_ids = option.trunk_road_ids
     if not ordered_road_ids:
@@ -541,13 +623,27 @@ def _ordered_trunk_node_ids(
     return tuple(ordered_node_ids)
 
 
+def _option_anchor_relevant_road_ids(option: PairArbitrationOption) -> tuple[str, ...]:
+    pair_support_road_ids = _option_pair_support_road_ids(option)
+    if not pair_support_road_ids:
+        return option.trunk_road_ids
+    support_trunk_road_ids = tuple(
+        road_id for road_id in option.trunk_road_ids if road_id in pair_support_road_ids
+    )
+    return support_trunk_road_ids or option.trunk_road_ids
+
+
 def _anchor_balance(
     option: PairArbitrationOption,
     *,
     anchor_node_id: str,
     road_to_node_ids: dict[str, tuple[str, str]],
 ) -> float:
-    ordered_node_ids = _ordered_trunk_node_ids(option, road_to_node_ids=road_to_node_ids)
+    ordered_node_ids = _ordered_trunk_node_ids(
+        option,
+        road_to_node_ids=road_to_node_ids,
+        road_ids=_option_anchor_relevant_road_ids(option),
+    )
     if not ordered_node_ids:
         return 0.0
 
@@ -574,6 +670,8 @@ def _anchor_priority_key(
     trunk_total_length = float(sum(road_lengths.get(road_id, 0.0) for road_id in option.trunk_road_ids))
     return (
         _anchor_balance(option, anchor_node_id=anchor_node_id, road_to_node_ids=road_to_node_ids),
+        float(metrics.endpoint_grade_priority_major),
+        float(metrics.endpoint_grade_priority_minor),
         float(-metrics.endpoint_boundary_penalty),
         float(-metrics.internal_endpoint_penalty),
         float(-metrics.pair_support_expansion_penalty),
@@ -631,6 +729,8 @@ def _option_priority_key(
     metrics: PairArbitrationMetrics,
 ) -> tuple[float, ...]:
     return (
+        float(metrics.endpoint_grade_priority_major),
+        float(metrics.endpoint_grade_priority_minor),
         float(metrics.contested_trunk_coverage_count),
         metrics.contested_trunk_coverage_ratio,
         float(metrics.strong_anchor_win_count),
@@ -651,6 +751,8 @@ def _selection_score(
     metrics_by_option_id: dict[str, PairArbitrationMetrics],
     strong_anchor_priority_enabled: bool,
 ) -> tuple[float, ...]:
+    endpoint_grade_major = 0
+    endpoint_grade_minor = 0
     endpoint_penalty = 0
     strong_anchor_wins = 0
     corridor_naturalness = 0
@@ -662,6 +764,8 @@ def _selection_score(
     semantic_penalty = 0
     for option_id in option_ids:
         metrics = metrics_by_option_id[option_id]
+        endpoint_grade_major += metrics.endpoint_grade_priority_major
+        endpoint_grade_minor += metrics.endpoint_grade_priority_minor
         endpoint_penalty += metrics.endpoint_boundary_penalty
         strong_anchor_wins += metrics.strong_anchor_win_count
         corridor_naturalness += metrics.corridor_naturalness_score
@@ -673,6 +777,8 @@ def _selection_score(
         semantic_penalty += metrics.semantic_conflict_penalty
     if strong_anchor_priority_enabled:
         return (
+            float(endpoint_grade_major),
+            float(endpoint_grade_minor),
             float(contested_count),
             contested_ratio,
             float(strong_anchor_wins),
@@ -685,6 +791,8 @@ def _selection_score(
             float(len(option_ids)),
         )
     return (
+        float(endpoint_grade_major),
+        float(endpoint_grade_minor),
         float(len(option_ids)),
         float(-pair_support_expansion_penalty),
         float(-endpoint_penalty),
@@ -695,6 +803,49 @@ def _selection_score(
         body_support,
         float(corridor_naturalness),
     )
+
+
+def _prefer_subset_dominated_same_pair_options(
+    pair_options: list[PairArbitrationOption],
+    *,
+    metrics_by_option_id: dict[str, PairArbitrationMetrics],
+) -> list[PairArbitrationOption]:
+    if len(pair_options) <= 1:
+        return pair_options
+
+    pruned_options: list[PairArbitrationOption] = []
+    for option in pair_options:
+        option_metrics = metrics_by_option_id.get(option.option_id)
+        option_trunk_road_ids = set(option.trunk_road_ids)
+        if option_metrics is None or not option_trunk_road_ids:
+            pruned_options.append(option)
+            continue
+
+        dominated = False
+        for other in pair_options:
+            if other.option_id == option.option_id:
+                continue
+            other_metrics = metrics_by_option_id.get(other.option_id)
+            other_trunk_road_ids = set(other.trunk_road_ids)
+            if other_metrics is None or not other_trunk_road_ids:
+                continue
+            if not other_trunk_road_ids < option_trunk_road_ids:
+                continue
+            if other_metrics.endpoint_boundary_penalty > option_metrics.endpoint_boundary_penalty:
+                continue
+            if other_metrics.internal_endpoint_penalty > option_metrics.internal_endpoint_penalty:
+                continue
+            if other_metrics.semantic_conflict_penalty > option_metrics.semantic_conflict_penalty:
+                continue
+            if other_metrics.pair_support_expansion_penalty >= option_metrics.pair_support_expansion_penalty:
+                continue
+            dominated = True
+            break
+
+        if not dominated:
+            pruned_options.append(option)
+
+    return pruned_options if pruned_options else pair_options
 
 
 def _should_use_exact_solver(
@@ -970,6 +1121,14 @@ def _infer_lose_reason(
 ) -> str:
     if fallback_greedy_used:
         return "component_solver_fallback_lost"
+    if (
+        losing_metrics.endpoint_grade_priority_major < winning_metrics.endpoint_grade_priority_major
+        or (
+            losing_metrics.endpoint_grade_priority_major == winning_metrics.endpoint_grade_priority_major
+            and losing_metrics.endpoint_grade_priority_minor < winning_metrics.endpoint_grade_priority_minor
+        )
+    ):
+        return "endpoint_grade_priority_lower"
     if losing_metrics.endpoint_boundary_penalty > winning_metrics.endpoint_boundary_penalty:
         return "endpoint_boundary_penalty_higher"
     if losing_metrics.strong_anchor_win_count < winning_metrics.strong_anchor_win_count:
@@ -1023,21 +1182,51 @@ def arbitrate_pair_options(
             road_to_node_ids=road_to_node_ids,
             strong_anchor_node_ids=strong_anchor_node_ids,
         )
+        component_options_by_pair = dict(options_by_pair)
+        if component_strong_anchor_node_ids:
+            component_options_by_pair.update(
+                {
+                    pair_id: _prefer_pair_support_aligned_minimal_options(
+                        options_by_pair[pair_id],
+                        road_to_node_ids=road_to_node_ids,
+                        strong_anchor_node_ids=component_strong_anchor_node_ids,
+                    )
+                    for pair_id in component_pair_ids
+                }
+            )
         metrics_by_option_id: dict[str, PairArbitrationMetrics] = {}
+
+        def _rebuild_metrics() -> tuple[set[str], dict[str, PairArbitrationMetrics]]:
+            refreshed_contested_road_ids = _component_contested_road_ids(component_pair_ids, component_options_by_pair)
+            refreshed_metrics_by_option_id: dict[str, PairArbitrationMetrics] = {}
+            for rebuilt_pair_id in component_pair_ids:
+                for rebuilt_option in component_options_by_pair[rebuilt_pair_id]:
+                    refreshed_metrics_by_option_id[rebuilt_option.option_id] = _option_metrics(
+                        rebuilt_option,
+                        contested_road_ids=refreshed_contested_road_ids,
+                        road_lengths=road_lengths,
+                        road_to_node_ids=road_to_node_ids,
+                        weak_endpoint_node_ids=weak_endpoint_node_ids,
+                        boundary_node_ids=boundary_node_ids,
+                        semantic_conflict_node_ids=semantic_conflict_node_ids,
+                    )
+            return refreshed_contested_road_ids, refreshed_metrics_by_option_id
+
+        contested_road_ids, metrics_by_option_id = _rebuild_metrics()
+        subset_pruned = False
         for pair_id in component_pair_ids:
-            for option in options_by_pair[pair_id]:
-                metrics_by_option_id[option.option_id] = _option_metrics(
-                    option,
-                    contested_road_ids=contested_road_ids,
-                    road_lengths=road_lengths,
-                    road_to_node_ids=road_to_node_ids,
-                    weak_endpoint_node_ids=weak_endpoint_node_ids,
-                    boundary_node_ids=boundary_node_ids,
-                    semantic_conflict_node_ids=semantic_conflict_node_ids,
-                )
+            preferred_options = _prefer_subset_dominated_same_pair_options(
+                component_options_by_pair[pair_id],
+                metrics_by_option_id=metrics_by_option_id,
+            )
+            if len(preferred_options) != len(component_options_by_pair[pair_id]):
+                component_options_by_pair[pair_id] = preferred_options
+                subset_pruned = True
+        if subset_pruned:
+            contested_road_ids, metrics_by_option_id = _rebuild_metrics()
         strong_anchor_win_counts = _strong_anchor_win_counts(
             component_pair_ids,
-            options_by_pair=options_by_pair,
+            options_by_pair=component_options_by_pair,
             metrics_by_option_id=metrics_by_option_id,
             road_lengths=road_lengths,
             road_to_node_ids=road_to_node_ids,
@@ -1053,25 +1242,25 @@ def arbitrate_pair_options(
 
         option_conflicts = _build_option_conflicts(
             component_pair_ids,
-            options_by_pair=options_by_pair,
+            options_by_pair=component_options_by_pair,
             road_to_node_ids=road_to_node_ids,
             strong_anchor_node_ids=component_strong_anchor_node_ids,
             tjunction_anchor_node_ids=tjunction_anchor_node_ids,
         )
         use_exact_solver = _should_use_exact_solver(
             component_pair_ids,
-            options_by_pair=options_by_pair,
+            options_by_pair=component_options_by_pair,
         )
         if len(component_pair_ids) == 1:
             pair_id = component_pair_ids[0]
-            chosen_option = options_by_pair[pair_id][0]
+            chosen_option = component_options_by_pair[pair_id][0]
             component_selected = {pair_id: chosen_option}
             fallback_greedy_used = False
             exact_solver_used = False
         elif use_exact_solver:
             component_selected = _solve_component_exact(
                 component_pair_ids,
-                options_by_pair=options_by_pair,
+                options_by_pair=component_options_by_pair,
                 option_conflicts=option_conflicts,
                 metrics_by_option_id=metrics_by_option_id,
                 strong_anchor_priority_enabled=bool(component_strong_anchor_node_ids),
@@ -1081,13 +1270,13 @@ def arbitrate_pair_options(
         else:
             anchor_priority_selected = _solve_anchor_priority_subset(
                 component_pair_ids,
-                options_by_pair=options_by_pair,
+                options_by_pair=component_options_by_pair,
                 option_conflicts=option_conflicts,
                 metrics_by_option_id=metrics_by_option_id,
             )
             component_selected = _solve_component_greedy(
                 component_pair_ids,
-                options_by_pair=options_by_pair,
+                options_by_pair=component_options_by_pair,
                 option_conflicts=option_conflicts,
                 metrics_by_option_id=metrics_by_option_id,
                 initial_selected_options_by_pair_id=anchor_priority_selected,
@@ -1125,7 +1314,7 @@ def arbitrate_pair_options(
                 )
                 continue
 
-            candidate_options = options_by_pair[pair_id]
+            candidate_options = component_options_by_pair[pair_id]
             fallback_option = max(
                 candidate_options,
                 key=lambda option: (
@@ -1175,6 +1364,8 @@ def arbitrate_pair_options(
                 single_pair_legal=False,
                 arbitration_status="lose",
                 metrics=PairArbitrationMetrics(
+                    endpoint_grade_priority_major=0,
+                    endpoint_grade_priority_minor=0,
                     endpoint_boundary_penalty=0,
                     strong_anchor_win_count=0,
                     corridor_naturalness_score=0,

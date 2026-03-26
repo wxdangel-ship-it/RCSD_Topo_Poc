@@ -216,10 +216,19 @@ def _build_default_run_id(now: Optional[datetime] = None) -> str:
     return f"{DEFAULT_RUN_ID_PREFIX}{current.strftime('%Y%m%d_%H%M%S')}"
 
 
-def _resolve_out_root(*, out_root: Optional[Union[str, Path]], run_id: Optional[str], cwd: Optional[Path] = None) -> tuple[Path, str]:
+def _resolve_out_root(
+    *,
+    out_root: Optional[Union[str, Path]],
+    run_id: Optional[str],
+    cwd: Optional[Path] = None,
+    per_run_subdir: bool = False,
+) -> tuple[Path, str]:
     resolved_run_id = run_id or _build_default_run_id()
     if out_root is not None:
-        return Path(out_root), resolved_run_id
+        resolved_out_root = Path(out_root)
+        if per_run_subdir:
+            resolved_out_root = resolved_out_root / resolved_run_id
+        return resolved_out_root, resolved_run_id
 
     repo_root = _find_repo_root(Path.cwd() if cwd is None else cwd)
     if repo_root is None:
@@ -541,6 +550,7 @@ def run_t01_skill_v1(
     node_path: Union[str, Path],
     out_root: Optional[Union[str, Path]] = None,
     run_id: Optional[str] = None,
+    per_run_subdir: bool = False,
     road_layer: Optional[str] = None,
     road_crs: Optional[str] = None,
     node_layer: Optional[str] = None,
@@ -551,7 +561,11 @@ def run_t01_skill_v1(
     debug: bool = True,
     compare_freeze_dir: Optional[Union[str, Path]] = None,
 ) -> SkillV1Artifacts:
-    resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
+    resolved_out_root, resolved_run_id = _resolve_out_root(
+        out_root=out_root,
+        run_id=run_id,
+        per_run_subdir=per_run_subdir,
+    )
     resolved_out_root.mkdir(parents=True, exist_ok=True)
     progress_path = resolved_out_root / "t01_skill_v1_progress.json"
     perf_json_path = resolved_out_root / "t01_skill_v1_perf.json"
@@ -952,6 +966,7 @@ def run_t01_skill_v1_cli(args: argparse.Namespace) -> int:
         node_path=args.node_path,
         out_root=args.out_root,
         run_id=args.run_id,
+        per_run_subdir=getattr(args, "per_run_subdir", False),
         road_layer=args.road_layer,
         road_crs=args.road_crs,
         node_layer=args.node_layer,

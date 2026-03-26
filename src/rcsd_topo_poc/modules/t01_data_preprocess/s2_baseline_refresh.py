@@ -5,7 +5,7 @@ import csv
 import json
 import shutil
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecuto
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +20,10 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     write_csv,
     write_json,
     write_vector,
+)
+from rcsd_topo_poc.modules.t01_data_preprocess.refresh_node_retyping import (
+    evaluate_mainnode_refresh_retype,
+    summarize_mainnode_retype_topology,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     _bit_enabled,
@@ -441,6 +445,11 @@ def _write_outputs(
             "nonsegment_all_right_turn_only",
             "nonsegment_has_in",
             "nonsegment_has_out",
+            "neighbor_family_count",
+            "segment_neighbor_family_count",
+            "residual_neighbor_family_count",
+            "simple_residual_neighbor_family_count",
+            "neighbor_family_rows_json",
             "applied_rule",
             "grade_old",
             "kind_old",
@@ -463,13 +472,13 @@ def _materialize_s2_boundary_snapshot(*, source_s2_dir: Path, target_s2_dir: Pat
     target_s2_dir.mkdir(parents=True, exist_ok=True)
     if debug:
         shutil.copytree(source_s2_dir, target_s2_dir, dirs_exist_ok=True)
-        return target_s2_di
+        return target_s2_dir
 
     for filename in ("validated_pairs.csv", "endpoint_pool.csv", "endpoint_pool_summary.json"):
         source_path = source_s2_dir / filename
         if source_path.is_file():
             shutil.copy2(source_path, target_s2_dir / filename)
-    return target_s2_di
+    return target_s2_dir
 
 
 def refresh_s2_baseline(
@@ -578,7 +587,8 @@ def refresh_s2_baseline(
     mainnode_pair_endpoint_count = 0
     mainnode_single_segment_non_intersection_count = 0
     mainnode_right_turn_only_side_count = 0
-    mainnode_t_like_count = 0
+    mainnode_retyped_grade2_kind2048_count = 0
+    mainnode_retyped_grade2_kind4_count = 0
     multi_segment_mainnode_kept_init_count = 0
     subnode_kept_init_count = sum(max(0, len(group.member_node_ids) - 1) for group in mainnode_groups.values())
 
@@ -614,6 +624,14 @@ def refresh_s2_baseline(
         representative_props_current = node_properties_map[group.representative_node_id]
         current_grade_2 = _coerce_int(representative_props_current.get("grade_2"))
         current_kind_2 = _coerce_int(representative_props_current.get("kind_2"))
+        topology = summarize_mainnode_retype_topology(
+            member_node_ids=group.member_node_ids,
+            associated_roads=associated_roads,
+            road_properties_map=road_properties_map,
+            physical_to_semantic=physical_to_semantic,
+            right_turn_formway_bit=RIGHT_TURN_FORMWAY_BIT,
+            node_properties_map=node_properties_map,
+        )
         grade_2 = current_grade_2
         kind_2 = current_kind_2
         applied_rule = "keep_init"
@@ -637,10 +655,19 @@ def refresh_s2_baseline(
             applied_rule = "right_turn_only_side"
             mainnode_right_turn_only_side_count += 1
         elif unique_segmentid_count == 1 and nonsegment_road_count > 0 and nonsegment_has_in and nonsegment_has_out:
-            grade_2 = 2
-            kind_2 = 2048
-            applied_rule = "t_like"
-            mainnode_t_like_count += 1
+            retype_decision = evaluate_mainnode_refresh_retype(
+                current_grade_2=current_grade_2,
+                current_kind_2=current_kind_2,
+                topology=topology,
+            )
+            if retype_decision is not None:
+                grade_2 = retype_decision.grade_2
+                kind_2 = retype_decision.kind_2
+                applied_rule = retype_decision.applied_rule
+                if kind_2 == 2048:
+                    mainnode_retyped_grade2_kind2048_count += 1
+                else:
+                    mainnode_retyped_grade2_kind4_count += 1
 
         representative_props = dict(node_properties_map[group.representative_node_id])
         representative_props["grade_2"] = grade_2
@@ -659,6 +686,11 @@ def refresh_s2_baseline(
                 "nonsegment_all_right_turn_only": nonsegment_all_right_turn_only,
                 "nonsegment_has_in": nonsegment_has_in,
                 "nonsegment_has_out": nonsegment_has_out,
+                "neighbor_family_count": topology.total_neighbor_family_count,
+                "segment_neighbor_family_count": topology.segment_neighbor_family_count,
+                "residual_neighbor_family_count": topology.residual_neighbor_family_count,
+                "simple_residual_neighbor_family_count": topology.simple_residual_neighbor_family_count,
+                "neighbor_family_rows_json": json.dumps(list(topology.family_rows), ensure_ascii=False, sort_keys=True),
                 "applied_rule": applied_rule,
                 "grade_old": group.grade_old,
                 "kind_old": group.kind_old,
@@ -681,7 +713,9 @@ def refresh_s2_baseline(
         "mainnode_pair_endpoint_count": mainnode_pair_endpoint_count,
         "mainnode_single_segment_non_intersection_count": mainnode_single_segment_non_intersection_count,
         "mainnode_right_turn_only_side_count": mainnode_right_turn_only_side_count,
-        "mainnode_t_like_count": mainnode_t_like_count,
+        "mainnode_t_like_count": mainnode_retyped_grade2_kind2048_count,
+        "mainnode_retyped_grade2_kind2048_count": mainnode_retyped_grade2_kind2048_count,
+        "mainnode_retyped_grade2_kind4_count": mainnode_retyped_grade2_kind4_count,
         "multi_segment_mainnode_kept_init_count": multi_segment_mainnode_kept_init_count,
         "subnode_kept_init_count": subnode_kept_init_count,
         "mainnode_representative_fallback_count": representative_fallback_count,

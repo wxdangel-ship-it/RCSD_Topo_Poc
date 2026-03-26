@@ -82,6 +82,7 @@ class StrategySpec:
     seed_rule: RuleSpec
     terminate_rule: RuleSpec
     through_rule: ThroughRuleSpec = ThroughRuleSpec()
+    allow_mirrored_one_sided_reverse_confirm_for_force_terminate_nodes: bool = False
     force_seed_node_ids: tuple[str, ...] = ()
     force_terminate_node_ids: tuple[str, ...] = ()
     hard_stop_node_ids: tuple[str, ...] = ()
@@ -144,6 +145,7 @@ class PairRecord:
     reverse_path_node_ids: tuple[str, ...]
     reverse_path_road_ids: tuple[str, ...]
     through_node_ids: tuple[str, ...]
+    used_mirrored_reverse_confirm_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -322,6 +324,9 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
                 )
             ),
             allow_seed_search_when_through=bool(through_payload.get("allow_seed_search_when_through", False)),
+        ),
+        allow_mirrored_one_sided_reverse_confirm_for_force_terminate_nodes=bool(
+            doc.get("allow_mirrored_one_sided_reverse_confirm_for_force_terminate_nodes", False)
         ),
         force_seed_node_ids=tuple(
             sorted(
@@ -997,23 +1002,56 @@ def _build_pair_records(
     sample_counts: dict[str, int],
 ) -> list[PairRecord]:
     pairs: dict[str, PairRecord] = {}
+    force_terminate_node_ids = set(strategy.force_terminate_node_ids)
     for start_node_id, search_result in search_results.items():
         for terminal_node_id, candidate in search_result.candidates.items():
             reverse_result = search_results.get(terminal_node_id)
             reverse_candidate = None if reverse_result is None else reverse_result.candidates.get(start_node_id)
+            used_mirrored_reverse_confirm_fallback = False
             if reverse_candidate is None:
-                _record_search_event(
-                    event_counts,
-                    event_samples,
-                    sample_counts,
-                    {
-                        "event": "reverse_confirm_fail",
-                        "strategy_id": strategy.strategy_id,
-                        "a_node_id": start_node_id,
-                        "b_node_id": terminal_node_id,
-                    },
-                )
-                continue
+                if (
+                    strategy.allow_mirrored_one_sided_reverse_confirm_for_force_terminate_nodes
+                    and start_node_id in force_terminate_node_ids
+                    and terminal_node_id in force_terminate_node_ids
+                ):
+                    reversed_path_node_ids = tuple(reversed(candidate.path_node_ids))
+                    reversed_path_road_ids = tuple(reversed(candidate.path_road_ids))
+                    reversed_through_node_ids = tuple(
+                        node_id
+                        for node_id in reversed_path_node_ids[1:-1]
+                        if node_id in set(candidate.through_node_ids)
+                    )
+                    reverse_candidate = SearchCandidate(
+                        terminal_node_id=start_node_id,
+                        path_node_ids=reversed_path_node_ids,
+                        path_road_ids=reversed_path_road_ids,
+                        through_node_ids=reversed_through_node_ids,
+                    )
+                    used_mirrored_reverse_confirm_fallback = True
+                    _record_search_event(
+                        event_counts,
+                        event_samples,
+                        sample_counts,
+                        {
+                            "event": "reverse_confirm_fallback_mirrored",
+                            "strategy_id": strategy.strategy_id,
+                            "a_node_id": start_node_id,
+                            "b_node_id": terminal_node_id,
+                        },
+                    )
+                else:
+                    _record_search_event(
+                        event_counts,
+                        event_samples,
+                        sample_counts,
+                        {
+                            "event": "reverse_confirm_fail",
+                            "strategy_id": strategy.strategy_id,
+                            "a_node_id": start_node_id,
+                            "b_node_id": terminal_node_id,
+                        },
+                    )
+                    continue
 
             a_node_id, b_node_id = sorted((start_node_id, terminal_node_id), key=_sort_key)
             pair_id = _pair_id(strategy.strategy_id, a_node_id, b_node_id)
@@ -1043,6 +1081,7 @@ def _build_pair_records(
                         key=_sort_key,
                     )
                 ),
+                used_mirrored_reverse_confirm_fallback=used_mirrored_reverse_confirm_fallback,
             )
 
     return sorted(pairs.values(), key=lambda pair: (_sort_key(pair.a_node_id), _sort_key(pair.b_node_id)))

@@ -1,76 +1,79 @@
 # T01 计划
 
 ## 当前阶段
-- `spec-kit planning and implementation for GeoPackage I/O migration`
-- `implementation completed`
+- `step 1 doc consistency audit on main`
+- `step 2 workspace cleanup pending`
+- `step 3 Step2 performance/memory audit pending`
+- `step 4 Step2 optimization pending`
 
 ## 当前目标
-1. 为 T01 建立统一的 `GeoPackage` 输入/输出迁移计划。
-2. 先收敛共享 I/O 层与文件命名策略，再逐步替换各阶段入口与输出。
-3. 在迁移全过程中保持当前 accepted baseline 业务结果与样例审查口径稳定。
+1. 先把最新已合入的 T01 代码行为回写到正式需求基线文档。
+2. 在文档提交后清理本地脏数据，恢复本地/远端一致。
+3. 独立审计 Step2 的性能、内存与死机风险热点。
+4. 再切分支做 Step2 优化，确保业务结果与当前人工验收基线一致。
 
 ## 实施批次
 
-### 批次 A：共享 I/O 层统一
-- 在 T01 共享 I/O 层明确 `GeoPackage(.gpkg)`、历史 `.gpkt`、`GeoJSON`、`Shapefile` 的读取支持。
-- 引入同名输入优先解析规则：
-  - `.gpkg`
-  - `.gpkt`
-  - 调用方显式传入的原路径
-- 在共享 I/O 层集中提供矢量写出能力，避免各脚本各写各的文件后缀策略。
+### 批次 A：正式文档一致性审计
+- 审计 `overview / 06-accepted-baseline / INTERFACE_CONTRACT / README` 与当前代码的一致性。
+- 明确补入：
+  - `bootstrap node retyping`
+  - family-based `grade_2 / kind_2` refresh retyping
+  - 当前 working bootstrap 的阶段顺序
+- 清除旧的泛化 `2048` 刷新叙述。
 
-### 批次 B：官方输出切换
-- 将以下阶段/入口的官方矢量输出由 `.geojson` 切换为 `.gpkg`：
-  - `Step1`
-  - `Step2`
-  - `Step4`
-  - `Step5`
-  - `Step6`
-  - `Skill v1`
-  - `S2 baseline refresh`
-- CSV / JSON / Markdown 审计文件保持现状，不在本轮改格式。
+### 批次 B：spec-kit 过程文档重置
+- 将当前 `spec.md / plan.md / tasks.md` 从上一轮 `GeoPackage I/O migration` 主题切换到本轮“文档审计 + Step2 性能优化”主题。
+- 保留上一轮实现已完成的事实，但不再把其作为当前 spec-kit 主目标。
 
-### 批次 C：裁剪数据双写
-- `slice_builder` 继续保留 `.geojson`，以便快速目视与轻量 diff。
-- 同时新增同名 `.gpkg`，作为后续 T01/T02 级联与本地测试的正式矢量交付。
+### 批次 C：main 收口与工作区清理
+- 将文档一致性修订提交到 `main` 并推送。
+- 清理本地脏数据，确保本地 `main` 与 `origin/main` 一致。
 
-### 批次 D：消费侧与辅助工具对齐
-- 更新 `freeze_compare`、`baseline refresh`、CLI 帮助文本、测试夹具与 smoke case。
-- 保证新输出命名下，审计/非回退检查仍可跑通。
+### 批次 D：Step2 性能 / 内存审计
+- 识别 Step2 的高耗时路径、峰值内存热点与潜在 O(N^2)+ 组件。
+- 输出内网死机风险的可解释分析。
+- 形成优化点清单与优先级。
 
-### 批次 E：正式文档迁移
-- 在代码与测试稳定后，更新：
-  - `modules/t01_data_preprocess/architecture/*`
-  - `modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
-  - `modules/t01_data_preprocess/README.md`
-- 正式把 T01 的官方输入/输出口径迁移到 `GeoPackage(.gpkg)`。
+### 批次 E：Step2 优化实现
+- 在独立分支上实施 Step2 优化。
+- 优先优化性能 / 内存，不改变 accepted baseline 业务语义。
+- 通过 `XXXS1-8` 与相关单测回归确认无业务回退。
 
 ## 依赖与风险
-- `fiona` 已在仓库依赖中可用，本轮不新增新的重型 GIS 运行时依赖。
-- T01 现有 freeze/baseline 证据大量引用 `.geojson` 文件名；本轮不得批量重写历史证据，只能兼容消费。
-- `slice_builder` 是唯一明确要求双写的入口，其他阶段若继续额外保留 `.geojson`，必须有明确审计理由，不默认扩散。
-- 同名优先策略若散落在各模块实现，会放大维护成本；必须优先抽到共享 I/O 层。
+- 当前工作区存在与 T01 无关的脏数据，main 收口前必须避免误提交。
+- T01 文档当前最大的风险不是缺文档，而是“文档仍描述旧逻辑”，容易误导后续治理。
+- Step2 优化若直接改变 pair / trunk 仲裁策略，容易破坏已通过样例；性能优化必须优先聚焦结构与数据流，而非业务门控。
+- 内网死机历史说明 Step2 可能同时存在 CPU 与内存双重瓶颈，审计阶段不能只看耗时。
 
 ## 回归策略
-1. 每个实现批次完成后，先验证单元测试与 CLI smoke。
-2. 再对 `PASS_LOCKED` 样例做最终 Segment 非回退检查。
-3. 对 `FAIL_TARGET` 仅记录差异，不因格式迁移本身改写业务判定。
-4. 在样例未重新人工确认前，不更新 freeze baseline。
-5. 本轮实现已完成本地 `XXXS1-XXXS8` 的 `GeoJSON` 与 `GPKG` 输入一致性核对，最终 `segmentid -> road_ids` 对比无差异。
+1. 文档阶段：
+   - 以源码为准逐条审计正式文档
+   - 只提交文档与 spec-kit 过程文档
+2. 清理阶段：
+   - 确认 `git status --short` 为空
+   - 确认本地 `main` 与 `origin/main` 一致
+3. 性能审计阶段：
+   - 记录 Step2 热点函数、候选规模与中间对象体量
+   - 输出风险点与优化建议
+4. 优化阶段：
+   - 单测先行
+   - 再跑 `XXXS1-8`
+   - 以人工已通过样例为非回退基线
 
-## 文档清理落点
+## 文档落点
 - 过程文档：
   - `spec.md`
   - `plan.md`
   - `tasks.md`
-- 实现完成后再同步正式文档：
-  - `modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
+- 正式文档：
   - `modules/t01_data_preprocess/architecture/overview.md`
+  - `modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
   - `modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
   - `modules/t01_data_preprocess/README.md`
 
 ## 边界
 - 不新增执行入口脚本。
-- 不顺手推进 T01 业务算法整改。
+- 不顺手推进新的业务规则扩张。
 - 不自动刷新 freeze baseline。
-- 不改写历史 baseline / freeze / history 目录中的旧文件名与旧证据路径。
+- 文档阶段不混入 Step2 性能优化代码实现。

@@ -59,7 +59,11 @@
 ## 4. 预处理契约
 
 ### 4.1 环岛预处理
-- roundabout preprocessing 位于 bootstrap 之后、Step1 之前。
+- working bootstrap 的执行顺序为：
+  - working field 初始化
+  - roundabout preprocessing
+  - bootstrap node retyping
+  - 再进入 Step1
 - 环岛 `mainnode`：
   - `grade_2 = 1`
   - `kind_2 = 64`
@@ -69,7 +73,30 @@
 - 该组所有 node 的 `mainnodeid` 统一写为环岛 `mainnode`。
 - 环岛 `mainnode` 后续不参与 generic node 刷新。
 
-### 4.2 右转专用道契约
+### 4.2 bootstrap node retyping
+- 仅允许修改 working node 的：
+  - `grade_2`
+  - `kind_2`
+- 不修改原始：
+  - `grade`
+  - `kind`
+- 当前 bootstrap 只支持极窄的 strict-T 纠错：
+  - 当前节点为 `grade_2 = 1, kind_2 = 4`
+  - `total_neighbor_family_count = 3`
+  - `segment_neighbor_family_count = 0`
+  - `residual_neighbor_family_count = 3`
+  - 仅存在 `1` 个 through family，且其代表节点为 `grade_2 = 1, kind_2 = 4`
+  - 两个 side family 都必须是单 road family，且满足：
+    - 一个 side family 的代表节点为 `grade_2 = 1, kind_2 = 4`
+    - 一个 side family 的代表节点为 `kind_2 = 2048` 且 `grade_2 >= 2`
+- 命中时才允许：
+  - `grade_2 = 2`
+  - `kind_2 = 2048`
+- 当前 bootstrap 不做：
+  - `1/4 -> 2/4`
+  - `1/4 -> 3/2048`
+
+### 4.3 右转专用道契约
 - `formway = 128` 的 road 不得进入 Step1-Step5 的 Segment 构建图。
 - 去除右转专用道后若节点不再构成真实路口，则该节点不得作为：
   - `seed / terminate`
@@ -127,7 +154,13 @@
   1. 当前轮 validated pair 端点：保持当前值
   2. 所有 road 都在一个 segment 中：`grade_2 = -1, kind_2 = 1`
   3. 唯一 segment + 其余全是右转专用道：`grade_2 = 3, kind_2 = 1`
-  4. 唯一 segment + 其余非segment road 构成多进多出：`grade_2 = 2, kind_2 = 2048`
+  4. 唯一 segment + 其余非segment road 同时存在 `in/out` 时，执行 family-based retyping：
+     - 仅对当前 `grade_2 = 1, kind_2 = 4` 生效
+     - `total_neighbor_family_count = 3`
+     - `segment_neighbor_family_count = 1`
+     - `residual_neighbor_family_count = 2`
+     - 若两个 residual family 都是 `simple_residual_family`，则改为 `grade_2 = 2, kind_2 = 2048`
+     - 否则改为 `grade_2 = 2, kind_2 = 4`
   5. 否则保持当前值
 - Step2 新构成 road：
   - `sgrade = 0-0双`

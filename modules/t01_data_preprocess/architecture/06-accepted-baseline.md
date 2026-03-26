@@ -47,6 +47,11 @@
   - `grade_2`
   - `kind_2`
 - 原始 `grade / kind` 仅保留为原始输入信息，不再作为后续业务判断依据。
+- working bootstrap 的执行顺序为：
+  - 初始化 working fields
+  - 环岛预处理
+  - bootstrap node retyping
+  - 再进入 Step1 / Step2
 
 ## 4. 开始阶段预处理
 
@@ -68,6 +73,32 @@
 - Step1-Step5 中，原来使用 `kind_2 = 4` 作为全通路口输入的地方，均需纳入 `kind_2 = 64`。
 - 环岛 `mainnode` 后续不参与 generic node 刷新规则。
 - 环岛 `mainnode` 不被降级、不被改写为其他路口类型。
+
+### 4.3 bootstrap node retyping
+- 位于环岛预处理之后、Step1 之前。
+- 仅允许修正 working node 的：
+  - `grade_2`
+  - `kind_2`
+- 不改原始：
+  - `grade`
+  - `kind`
+- 当前仅支持极窄的严格 T 型纠错，不做泛化节点重分类。
+- 当前 bootstrap 纠错前提：
+  - 当前节点为 `grade_2 = 1, kind_2 = 4`
+  - 邻接总 family 数为 `3`
+  - `segment_neighbor_family_count = 0`
+  - `residual_neighbor_family_count = 3`
+  - 仅存在 `1` 个 `has_in + has_out` 的 through family
+  - 该 through family 的代表节点仍为 `grade_2 = 1, kind_2 = 4`
+  - 其余两个 side family 都必须是单 road family，且满足：
+    - 一个 side family 的代表节点为 `grade_2 = 1, kind_2 = 4`
+    - 另一个 side family 的代表节点为 `kind_2 = 2048` 且 `grade_2 >= 2`
+- 命中上述条件时，bootstrap 才允许将当前节点纠正为：
+  - `grade_2 = 2`
+  - `kind_2 = 2048`
+- bootstrap 阶段当前不做：
+  - `1/4 -> 2/4`
+  - `1/4 -> 3/2048`
 
 ## 5. 全局双向构段硬约束
 - 适用范围：
@@ -171,7 +202,13 @@
   1. 当前轮 validated pair 端点：保持当前值
   2. 所有 road 都在一个 segment 中：`grade_2 = -1, kind_2 = 1`
   3. 唯一 segment + 其余全是右转专用道：`grade_2 = 3, kind_2 = 1`
-  4. 唯一 segment + 其余非segment road 构成多进多出：`grade_2 = 2, kind_2 = 2048`
+  4. 唯一 segment + 其余非segment road 同时存在 `in/out` 时，进入 family-based retyping：
+     - 仅当当前节点为 `grade_2 = 1, kind_2 = 4`
+     - 且 `total_neighbor_family_count = 3`
+     - 且 `segment_neighbor_family_count = 1`
+     - 且 `residual_neighbor_family_count = 2`
+     - 若两个 residual family 都是 `simple_residual_family`，则纠正为 `grade_2 = 2, kind_2 = 2048`
+     - 否则纠正为 `grade_2 = 2, kind_2 = 4`
   5. 否则保持当前值
 - 环岛 `mainnode` 不参与 generic 刷新。
 
@@ -214,7 +251,7 @@
   1. 当前轮 validated pair 端点：保持当前值
   2. 所有 road 都在一个 segment 中：`grade_2 = -1, kind_2 = 1`
   3. 唯一 segment + 其余全是右转专用道：`grade_2 = 3, kind_2 = 1`
-  4. 唯一 segment + 其余非segment road 构成多进多出：`grade_2 = 3, kind_2 = 2048`
+  4. 唯一 segment + 其余非segment road 同时存在 `in/out` 时，执行与 Step3 相同的 family-based retyping
   5. 否则保持当前值
 - 环岛 `mainnode` 不参与 generic 刷新。
 - Step4 新构成 road：`sgrade = 0-1双`
@@ -376,6 +413,8 @@
 - historical higher-level boundary 语义已固化
 - working nodes / roads 初始化已前置
 - 环岛预处理已纳入开始阶段
+- bootstrap node retyping 已纳入开始阶段
+- family-based refresh retyping 已替代旧的 generic `t_like => 2048` 叙述
 - Step6 已纳入当前需求口径
 
 ## 14. 当前仍需继续验证 / 修正

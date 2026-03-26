@@ -12,6 +12,7 @@
 - `raw vector input`
 - `working bootstrap`
 - `roundabout preprocessing`
+- `bootstrap node retyping`
 - `Step1`
 - `Step2`
 - `Step3 refresh`
@@ -30,11 +31,20 @@
 - 环岛预处理位于 Step1 前，并将环岛 `mainnode` 固化为：
   - `grade_2 = 1`
   - `kind_2 = 64`
+- `bootstrap node retyping` 位于环岛预处理之后、Step1 之前。
+- `bootstrap node retyping` 只允许修正 `grade_2 / kind_2`，不改原始 `grade / kind`。
+- `bootstrap node retyping` 当前只支持极窄的严格 T 型纠错：
+  - `grade_2 = 1`
+  - `kind_2 = 4`
+  - 且命中 `strict_t_to_grade2_kind2048`
 - `formway = 128` 的右转专用道不参与 Step1-Step5 构段。
 - `Step2 / Step4 / Step5*` 共享：
   - `50m` 双线垂距 gate
   - `50m` 侧向并入 gate
   - `kind_2 = 2048` 的 T 型路口竖向阻断规则
+- Step3 / Step4 / Step5* 的节点刷新，不再使用泛化 `t_like => 2048` 口径，而是基于邻接 family 结构做：
+  - `1/4 -> 2/2048`
+  - 或 `1/4 -> 2/4`
 
 ## 文档分工
 - [01-introduction-and-goals.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/01-introduction-and-goals.md)

@@ -3,7 +3,7 @@
 ## 模块定位
 - 面向非封闭式双向道路场景的双向 Segment 构建模块。
 - 正式流程：
-  - `working bootstrap -> roundabout preprocessing -> Step1 -> Step2 -> Step3 -> Step4 -> Step5A -> Step5B -> Step5C -> Step6`
+  - `working bootstrap -> roundabout preprocessing -> bootstrap node retyping -> Step1 -> Step2 -> Step3 -> Step4 -> Step5A -> Step5B -> Step5C -> Step6`
 - Step6 已正式纳入 official end-to-end，不再是额外 POC。
 
 ## 官方输入
@@ -30,6 +30,14 @@
 - 环岛预处理在模块开始阶段完成，环岛 `mainnode` 统一写成：
   - `grade_2 = 1`
   - `kind_2 = 64`
+- `bootstrap node retyping` 位于环岛预处理之后、Step1 之前：
+  - 只修正 `grade_2 / kind_2`
+  - 不改原始 `grade / kind`
+  - 当前仅支持极窄的 strict-T 纠错：`1/4 -> 2/2048`
+- Step3 / Step4 / Step5* 的节点刷新已改为 family-based retyping：
+  - `1/4 -> 2/2048`
+  - 或 `1/4 -> 2/4`
+  - 不再使用旧的泛化 `t_like => 2048` 叙述
 - 全局共享：
   - `50m` 双线路段最小闭环垂距门控
   - `50m` 侧向并入距离门控

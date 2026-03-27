@@ -2672,6 +2672,7 @@ def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
             left_turn_formway_bit=args.left_turn_formway_bit,
             debug=args.debug,
             progress_callback=progress_callback,
+            assume_working_layers=bool(getattr(args, "assume_working_layers", False)),
             trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
             only_validation_pair_ids=list(getattr(args, "only_validation_pair_ids", None) or []),
             validation_pair_index_start=getattr(args, "validation_pair_index_start", None),

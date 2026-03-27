@@ -3021,6 +3021,7 @@ def test_step2_segment_poc_cli_writes_progress_and_perf_files(tmp_path: Path, mo
     out_root = tmp_path / "step2_cli_run"
 
     def _fake_run_step2_segment_poc(**kwargs):
+        assert kwargs["assume_working_layers"] is True
         callback = kwargs["progress_callback"]
         callback("validation_started", {"validation_count": 1})
         callback(
@@ -3073,6 +3074,7 @@ def test_step2_segment_poc_cli_writes_progress_and_perf_files(tmp_path: Path, mo
         only_validation_pair_ids=["PAIR_A_B"],
         validation_pair_index_start=1,
         validation_pair_index_end=1,
+        assume_working_layers=True,
     )
 
     exit_code = step2_segment_poc.run_step2_segment_poc_cli(args)

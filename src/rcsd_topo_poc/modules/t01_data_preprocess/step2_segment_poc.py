@@ -42,6 +42,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step2_validation_utils import (
     _validation_road_count,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_release_utils import (
+    _compact_branch_cut_info,
     _compact_option_for_validation_runtime,
     _compact_execution_for_validation,
     _compact_validation_result_for_release,
@@ -2166,29 +2167,46 @@ def _validate_pair_candidates(
                     option_id=option_id,
                 )
 
-            support_info = {
-                "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
-                "branch_cut_infos": branch_cut_infos,
-                "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
-                "pair_support_road_ids": sorted(
-                    set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
-                    key=_sort_key,
-                ),
-                "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
-                "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
-                "trunk_signed_area": trunk_candidate.signed_area,
-                "trunk_mode": trunk_mode,
-                "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
-                "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
-                "endpoint_priority_grades": list(endpoint_priority_grades),
-                **choice.support_info,
-                **trunk_gate_info,
-                "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
-                "segment_body_candidate_road_ids": list(segment_candidate_road_ids),
-                "segment_body_candidate_cut_infos": segment_cut_infos,
-                "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
-            }
+            if compact_release_payloads:
+                support_info = {
+                    "branch_cut_infos": [
+                        _compact_branch_cut_info(dict(info))
+                        for info in branch_cut_infos
+                    ],
+                    "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
+                    "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
+                    "trunk_signed_area": trunk_candidate.signed_area,
+                    "trunk_mode": trunk_mode,
+                    "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
+                    "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
+                    "endpoint_priority_grades": list(endpoint_priority_grades),
+                    **choice.support_info,
+                    **trunk_gate_info,
+                }
+            else:
+                support_info = {
+                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                    "branch_cut_infos": branch_cut_infos,
+                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                    "pair_support_road_ids": sorted(
+                        set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
+                        key=_sort_key,
+                    ),
+                    "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
+                    "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
+                    "trunk_signed_area": trunk_candidate.signed_area,
+                    "trunk_mode": trunk_mode,
+                    "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
+                    "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
+                    "endpoint_priority_grades": list(endpoint_priority_grades),
+                    **choice.support_info,
+                    **trunk_gate_info,
+                    "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
+                    "segment_body_candidate_road_ids": list(segment_candidate_road_ids),
+                    "segment_body_candidate_cut_infos": segment_cut_infos,
+                    "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
+                }
             pair_options.append(
                 PairArbitrationOption(
                     option_id=option_id,

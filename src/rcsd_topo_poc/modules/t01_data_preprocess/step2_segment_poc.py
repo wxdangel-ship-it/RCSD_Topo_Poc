@@ -45,6 +45,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step2_validation_utils import (
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_release_utils import (
     _compact_branch_cut_info,
     _compact_option_for_validation_runtime,
+    _compact_option_support_info_for_runtime,
     _compact_execution_for_validation,
     _compact_validation_result_for_release,
 )
@@ -224,6 +225,16 @@ def _write_pickle_doc(path: Path, payload: Any) -> None:
 def _read_pickle_doc(path: Path) -> Any:
     with path.open("rb") as fp:
         return pickle.load(fp)
+
+
+def _restore_validation_winner_option(
+    option: PairArbitrationOption,
+    *,
+    restore_payload: dict[str, Any],
+) -> PairArbitrationOption:
+    support_info = dict(option.support_info)
+    support_info.update(restore_payload.get("support_info_extras", {}))
+    return replace(option, support_info=support_info)
 
 
 def _format_cli_progress_details(payload: dict[str, Any]) -> str:
@@ -1859,8 +1870,10 @@ def _validate_pair_candidates(
 
     illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
     options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
+    winner_restore_payloads_by_option_id: dict[str, dict[str, Any]] = {}
     batch_illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
     batch_options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
+    batch_winner_restore_payloads_by_option_id: dict[str, dict[str, Any]] = {}
     spilled_batch_paths: list[Path] = []
     spill_validation_batches = (
         compact_release_payloads
@@ -1876,8 +1889,15 @@ def _validate_pair_candidates(
     def _store_pair_options(pair_id: str, pair_options: list[PairArbitrationOption]) -> None:
         batch_options_by_pair_id[pair_id] = pair_options
 
+    def _store_winner_restore_payload(option_id: str, restore_payload: dict[str, Any]) -> None:
+        batch_winner_restore_payloads_by_option_id[option_id] = restore_payload
+
     def _flush_validation_batch() -> None:
-        if not batch_illegal_validations_by_pair_id and not batch_options_by_pair_id:
+        if (
+            not batch_illegal_validations_by_pair_id
+            and not batch_options_by_pair_id
+            and not batch_winner_restore_payloads_by_option_id
+        ):
             return
         if compact_release_payloads:
             compact_illegal_validations_by_pair_id = {
@@ -1889,7 +1909,7 @@ def _validate_pair_candidates(
             }
             compact_options_by_pair_id = {
                 pair_id: [
-                    _compact_option_for_validation_runtime(option)
+                    option
                     for option in pair_options
                 ]
                 for pair_id, pair_options in batch_options_by_pair_id.items()
@@ -1905,14 +1925,17 @@ def _validate_pair_candidates(
                 {
                     "illegal_validations_by_pair_id": compact_illegal_validations_by_pair_id,
                     "options_by_pair_id": compact_options_by_pair_id,
+                    "winner_restore_payloads_by_option_id": dict(batch_winner_restore_payloads_by_option_id),
                 },
             )
             spilled_batch_paths.append(batch_path)
         else:
             illegal_validations_by_pair_id.update(compact_illegal_validations_by_pair_id)
             options_by_pair_id.update(compact_options_by_pair_id)
+            winner_restore_payloads_by_option_id.update(batch_winner_restore_payloads_by_option_id)
         batch_illegal_validations_by_pair_id.clear()
         batch_options_by_pair_id.clear()
+        batch_winner_restore_payloads_by_option_id.clear()
         if compact_release_payloads or spill_validation_batches:
             gc.collect()
 
@@ -2228,28 +2251,85 @@ def _validate_pair_candidates(
                     option_id=option_id,
                 )
 
+            sorted_candidate_road_ids = tuple(sorted(candidate_road_ids, key=_sort_key))
+            sorted_pruned_road_ids = tuple(sorted(pruned_road_ids, key=_sort_key))
+            sorted_segment_candidate_road_ids = tuple(sorted(segment_candidate_road_ids, key=_sort_key))
+            sorted_segment_road_ids = tuple(sorted(segment_road_ids, key=_sort_key))
+            sorted_branch_cut_road_ids = tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key))
+            sorted_boundary_terminate_node_ids = tuple(sorted(boundary_terminate_ids, key=_sort_key))
+
             if compact_release_payloads:
-                support_info = {
-                    "branch_cut_infos": [
-                        _compact_branch_cut_info(dict(info))
-                        for info in branch_cut_infos
-                    ],
-                    "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
-                    "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
-                    "trunk_signed_area": trunk_candidate.signed_area,
-                    "trunk_mode": trunk_mode,
-                    "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
-                    "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
-                    "endpoint_priority_grades": list(endpoint_priority_grades),
-                    **choice.support_info,
-                    **trunk_gate_info,
-                }
+                runtime_support_info = _compact_option_support_info_for_runtime(
+                    {
+                        "branch_cut_infos": [
+                            _compact_branch_cut_info(dict(info))
+                            for info in branch_cut_infos
+                        ],
+                        "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
+                        "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
+                        "trunk_signed_area": trunk_candidate.signed_area,
+                        "trunk_mode": trunk_mode,
+                        "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
+                        "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
+                        "endpoint_priority_grades": list(endpoint_priority_grades),
+                        **choice.support_info,
+                        **trunk_gate_info,
+                    },
+                    candidate_channel_road_count=len(sorted_candidate_road_ids),
+                    pruned_road_count=len(sorted_pruned_road_ids),
+                    trunk_road_count=len(trunk_candidate.road_ids),
+                    segment_body_candidate_road_count=len(sorted_segment_candidate_road_ids),
+                    segment_body_road_count=len(sorted_segment_road_ids),
+                    branch_cut_road_count=len(sorted_branch_cut_road_ids),
+                    boundary_terminate_node_count=len(sorted_boundary_terminate_node_ids),
+                )
+                pair_options.append(
+                    PairArbitrationOption(
+                        option_id=option_id,
+                        pair_id=pair.pair_id,
+                        a_node_id=pair.a_node_id,
+                        b_node_id=pair.b_node_id,
+                        trunk_mode=trunk_mode,
+                        counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
+                        warning_codes=choice.warning_codes,
+                        candidate_channel_road_ids=(),
+                        pruned_road_ids=sorted_pruned_road_ids,
+                        trunk_road_ids=trunk_candidate.road_ids,
+                        segment_candidate_road_ids=sorted_segment_candidate_road_ids,
+                        segment_road_ids=sorted_segment_road_ids,
+                        branch_cut_road_ids=(),
+                        boundary_terminate_node_ids=(),
+                        transition_same_dir_blocked=False,
+                        support_info=runtime_support_info,
+                    )
+                )
+                _store_winner_restore_payload(
+                    option_id,
+                    {
+                        "support_info_extras": {
+                            "boundary_terminate_node_ids": list(sorted_boundary_terminate_node_ids),
+                            "candidate_channel_road_ids": list(sorted_candidate_road_ids),
+                            "pruned_road_ids": list(sorted_pruned_road_ids),
+                            "pair_support_road_ids": sorted(
+                                set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
+                                key=_sort_key,
+                            ),
+                            "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
+                            "segment_body_candidate_road_ids": list(sorted_segment_candidate_road_ids),
+                            "segment_body_candidate_cut_infos": [
+                                _compact_branch_cut_info(dict(info))
+                                for info in segment_cut_infos
+                            ],
+                            "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
+                        },
+                    },
+                )
             else:
                 support_info = {
-                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                    "boundary_terminate_node_ids": list(sorted_boundary_terminate_node_ids),
                     "branch_cut_infos": branch_cut_infos,
-                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                    "candidate_channel_road_ids": list(sorted_candidate_road_ids),
+                    "pruned_road_ids": list(sorted_pruned_road_ids),
                     "pair_support_road_ids": sorted(
                         set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
                         key=_sort_key,
@@ -2264,30 +2344,30 @@ def _validate_pair_candidates(
                     **choice.support_info,
                     **trunk_gate_info,
                     "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
-                    "segment_body_candidate_road_ids": list(segment_candidate_road_ids),
+                    "segment_body_candidate_road_ids": list(sorted_segment_candidate_road_ids),
                     "segment_body_candidate_cut_infos": segment_cut_infos,
                     "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
                 }
-            pair_options.append(
-                PairArbitrationOption(
-                    option_id=option_id,
-                    pair_id=pair.pair_id,
-                    a_node_id=pair.a_node_id,
-                    b_node_id=pair.b_node_id,
-                    trunk_mode=trunk_mode,
-                    counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
-                    warning_codes=choice.warning_codes,
-                    candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
-                    pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
-                    trunk_road_ids=trunk_candidate.road_ids,
-                    segment_candidate_road_ids=tuple(sorted(segment_candidate_road_ids, key=_sort_key)),
-                    segment_road_ids=tuple(sorted(segment_road_ids, key=_sort_key)),
-                    branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
-                    boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
-                    transition_same_dir_blocked=False,
-                    support_info=support_info,
+                pair_options.append(
+                    PairArbitrationOption(
+                        option_id=option_id,
+                        pair_id=pair.pair_id,
+                        a_node_id=pair.a_node_id,
+                        b_node_id=pair.b_node_id,
+                        trunk_mode=trunk_mode,
+                        counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
+                        warning_codes=choice.warning_codes,
+                        candidate_channel_road_ids=sorted_candidate_road_ids,
+                        pruned_road_ids=sorted_pruned_road_ids,
+                        trunk_road_ids=trunk_candidate.road_ids,
+                        segment_candidate_road_ids=sorted_segment_candidate_road_ids,
+                        segment_road_ids=sorted_segment_road_ids,
+                        branch_cut_road_ids=sorted_branch_cut_road_ids,
+                        boundary_terminate_node_ids=sorted_boundary_terminate_node_ids,
+                        transition_same_dir_blocked=False,
+                        support_info=support_info,
+                    )
                 )
-            )
 
         if pair_options:
             _store_pair_options(pair.pair_id, pair_options)
@@ -2330,6 +2410,7 @@ def _validate_pair_candidates(
             payload = _read_pickle_doc(batch_path)
             illegal_validations_by_pair_id.update(payload["illegal_validations_by_pair_id"])
             options_by_pair_id.update(payload["options_by_pair_id"])
+            winner_restore_payloads_by_option_id.update(payload.get("winner_restore_payloads_by_option_id", {}))
         gc.collect()
 
     _emit_progress(
@@ -2383,6 +2464,13 @@ def _validate_pair_candidates(
                 for option in pair_options
                 if option.option_id == selected_option_id
             )
+            if compact_release_payloads and decision.arbitration_status == "win":
+                restore_payload = winner_restore_payloads_by_option_id.get(selected_option.option_id)
+                if restore_payload is not None:
+                    selected_option = _restore_validation_winner_option(
+                        selected_option,
+                        restore_payload=restore_payload,
+                    )
             result = _pair_validation_from_option(
                 selected_option,
                 decision=decision,
@@ -2420,6 +2508,7 @@ def _validate_pair_candidates(
         provisional_results.append(result)
     options_by_pair_id.clear()
     illegal_validations_by_pair_id.clear()
+    winner_restore_payloads_by_option_id.clear()
     provisional_validated_pair_count = sum(
         1 for item in provisional_results if item.validated_status == "validated"
     )

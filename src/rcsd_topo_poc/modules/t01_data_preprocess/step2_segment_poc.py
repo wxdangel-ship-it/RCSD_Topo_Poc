@@ -4,6 +4,7 @@ import argparse
 import gc
 import inspect
 import json
+import pickle
 from collections import defaultdict, deque
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -212,6 +213,17 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fp:
         fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _write_pickle_doc(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as fp:
+        pickle.dump(payload, fp, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _read_pickle_doc(path: Path) -> Any:
+    with path.open("rb") as fp:
+        return pickle.load(fp)
 
 
 def _format_cli_progress_details(payload: dict[str, Any]) -> str:
@@ -1794,6 +1806,7 @@ def _validate_pair_candidates(
     progress_callback: Optional[Step2ProgressCallback] = None,
     return_arbitration_outcome: bool = False,
     trace_validation_pair_ids: Optional[set[str]] = None,
+    validation_batch_spill_dir: Optional[Path] = None,
 ) -> Union[list[PairValidationResult], tuple[list[PairValidationResult], PairArbitrationOutcome]]:
     terminate_ids = set(execution.terminate_ids)
     hard_stop_node_ids = set(execution.strategy.hard_stop_node_ids)
@@ -1848,6 +1861,14 @@ def _validate_pair_candidates(
     options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
     batch_illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
     batch_options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
+    spilled_batch_paths: list[Path] = []
+    spill_validation_batches = (
+        compact_release_payloads
+        and validation_batch_spill_dir is not None
+        and validation_count > 0
+    )
+    if spill_validation_batches:
+        validation_batch_spill_dir.mkdir(parents=True, exist_ok=True)
 
     def _store_illegal_validation(validation: PairValidationResult) -> None:
         batch_illegal_validations_by_pair_id[validation.pair_id] = validation
@@ -1859,30 +1880,40 @@ def _validate_pair_candidates(
         if not batch_illegal_validations_by_pair_id and not batch_options_by_pair_id:
             return
         if compact_release_payloads:
-            illegal_validations_by_pair_id.update(
-                {
-                    pair_id: _compact_validation_result_for_release(
-                        validation,
-                        keep_tighten_fields=False,
-                    )
-                    for pair_id, validation in batch_illegal_validations_by_pair_id.items()
-                }
-            )
-            options_by_pair_id.update(
-                {
-                    pair_id: [
-                        _compact_option_for_validation_runtime(option)
-                        for option in pair_options
-                    ]
-                    for pair_id, pair_options in batch_options_by_pair_id.items()
-                }
-            )
+            compact_illegal_validations_by_pair_id = {
+                pair_id: _compact_validation_result_for_release(
+                    validation,
+                    keep_tighten_fields=False,
+                )
+                for pair_id, validation in batch_illegal_validations_by_pair_id.items()
+            }
+            compact_options_by_pair_id = {
+                pair_id: [
+                    _compact_option_for_validation_runtime(option)
+                    for option in pair_options
+                ]
+                for pair_id, pair_options in batch_options_by_pair_id.items()
+            }
         else:
-            illegal_validations_by_pair_id.update(batch_illegal_validations_by_pair_id)
-            options_by_pair_id.update(batch_options_by_pair_id)
+            compact_illegal_validations_by_pair_id = dict(batch_illegal_validations_by_pair_id)
+            compact_options_by_pair_id = dict(batch_options_by_pair_id)
+        if spill_validation_batches:
+            batch_index = len(spilled_batch_paths) + 1
+            batch_path = validation_batch_spill_dir / f"validation_batch_{batch_index:04d}.pkl"
+            _write_pickle_doc(
+                batch_path,
+                {
+                    "illegal_validations_by_pair_id": compact_illegal_validations_by_pair_id,
+                    "options_by_pair_id": compact_options_by_pair_id,
+                },
+            )
+            spilled_batch_paths.append(batch_path)
+        else:
+            illegal_validations_by_pair_id.update(compact_illegal_validations_by_pair_id)
+            options_by_pair_id.update(compact_options_by_pair_id)
         batch_illegal_validations_by_pair_id.clear()
         batch_options_by_pair_id.clear()
-        if compact_release_payloads:
+        if compact_release_payloads or spill_validation_batches:
             gc.collect()
 
     def _flush_validation_batch_if_needed(pair_index: int) -> None:
@@ -2294,6 +2325,12 @@ def _validate_pair_candidates(
         _flush_validation_batch_if_needed(pair_index)
 
     _flush_validation_batch()
+    if spill_validation_batches:
+        for batch_path in spilled_batch_paths:
+            payload = _read_pickle_doc(batch_path)
+            illegal_validations_by_pair_id.update(payload["illegal_validations_by_pair_id"])
+            options_by_pair_id.update(payload["options_by_pair_id"])
+        gc.collect()
 
     _emit_progress(
         progress_callback,
@@ -2604,6 +2641,11 @@ def run_step2_segment_poc(
             progress_callback=progress_callback,
             return_arbitration_outcome=True,
             trace_validation_pair_ids=trace_pair_ids,
+            validation_batch_spill_dir=(
+                strategy_out_dir / "_validation_batches"
+                if compact_release_payloads
+                else None
+            ),
         )
         if isinstance(validation_result, tuple):
             validations, arbitration_outcome = validation_result

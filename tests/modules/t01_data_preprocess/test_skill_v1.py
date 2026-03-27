@@ -362,7 +362,7 @@ def test_validation_pair_state_subprogress_is_throttled_in_progress_snapshot(tmp
     assert capsys.readouterr().out == ""
 
 
-def test_validation_pair_checkpoint_no_longer_prints_stdout(tmp_path: Path, capsys) -> None:
+def test_validation_pair_checkpoint_prints_stdout(tmp_path: Path, capsys) -> None:
     progress_path = tmp_path / "progress.json"
     perf_markers_path = tmp_path / "perf_markers.jsonl"
     callback = skill_v1._make_stage_subprogress_callback(
@@ -393,7 +393,9 @@ def test_validation_pair_checkpoint_no_longer_prints_stdout(tmp_path: Path, caps
     ]
     assert "pair_index=100" in progress["message"]
     assert markers[-1]["substage_event"] == "validation_pair_checkpoint"
-    assert capsys.readouterr().out == ""
+    stdout = capsys.readouterr().out
+    assert "step2:validation_pair_checkpoint" in stdout
+    assert "pair_index=100" in stdout
 
 
 def test_run_stage_can_disable_tracemalloc_for_release(tmp_path: Path) -> None:

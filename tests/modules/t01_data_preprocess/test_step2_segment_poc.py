@@ -1537,6 +1537,66 @@ def test_step2_compact_validation_result_for_release_drops_nonessential_payloads
     assert "reverse_path_road_ids" not in compact.support_info
 
 
+def test_step2_compact_option_for_validation_runtime_drops_duplicate_payloads() -> None:
+    option = step2_segment_poc.PairArbitrationOption(
+        option_id="S2X:1__3::opt_01",
+        pair_id="S2X:1__3",
+        a_node_id="1",
+        b_node_id="3",
+        trunk_mode="counterclockwise_loop",
+        counterclockwise_ok=True,
+        warning_codes=(),
+        candidate_channel_road_ids=("r12", "r23", "r34"),
+        pruned_road_ids=("r12", "r23", "r34"),
+        trunk_road_ids=("r12", "r23"),
+        segment_candidate_road_ids=("r12", "r23", "r34"),
+        segment_road_ids=("r12", "r23"),
+        branch_cut_road_ids=("r34",),
+        boundary_terminate_node_ids=("T1",),
+        transition_same_dir_blocked=False,
+        support_info={
+            "boundary_terminate_node_ids": ["T1"],
+            "candidate_channel_road_ids": ["r12", "r23", "r34"],
+            "pruned_road_ids": ["r12", "r23", "r34"],
+            "pair_support_road_ids": ["r12", "r23"],
+            "forward_path_road_ids": ["r12", "r23"],
+            "reverse_path_road_ids": ["r23", "r12"],
+            "segment_body_candidate_road_ids": ["r12", "r23", "r34"],
+            "segment_body_candidate_cut_infos": [{"road_id": "r34", "cut_reason": "segment_exclude_formway"}],
+            "left_turn_road_ids": [],
+            "branch_cut_infos": [{"road_id": "r34", "cut_reason": "hits_other_terminate", "terminate_node_ids": ["T1"]}],
+            "trunk_signed_area": 1.0,
+            "bidirectional_minimal_loop": True,
+            "semantic_node_group_closure": False,
+            "endpoint_priority_grades": [3, 2],
+        },
+    )
+
+    compact = step2_segment_poc._compact_option_for_validation_runtime(option)
+
+    assert compact.candidate_channel_road_ids == ("r12", "r23", "r34")
+    assert compact.pruned_road_ids == ("r12", "r23", "r34")
+    assert compact.segment_candidate_road_ids == ("r12", "r23", "r34")
+    assert compact.segment_road_ids == ("r12", "r23")
+    assert compact.support_info["candidate_channel_road_count"] == 3
+    assert compact.support_info["pruned_road_count"] == 3
+    assert compact.support_info["segment_body_candidate_road_count"] == 3
+    assert compact.support_info["segment_body_road_count"] == 2
+    assert compact.support_info["forward_path_road_ids"] == ["r12", "r23"]
+    assert compact.support_info["reverse_path_road_ids"] == ["r23", "r12"]
+    assert compact.support_info["pair_support_road_ids"] == ["r12", "r23"]
+    assert compact.support_info["segment_body_candidate_road_ids"] == ["r12", "r23", "r34"]
+    assert compact.support_info["segment_body_candidate_cut_infos"] == [
+        {"road_id": "r34", "cut_reason": "segment_exclude_formway"}
+    ]
+    assert compact.support_info["branch_cut_infos"] == [
+        {"road_id": "r34", "cut_reason": "hits_other_terminate", "terminate_node_ids": ["T1"]}
+    ]
+    assert "candidate_channel_road_ids" not in compact.support_info
+    assert "pruned_road_ids" not in compact.support_info
+    assert "left_turn_road_ids" not in compact.support_info
+
+
 def test_step2_validation_compact_release_tightens_only_validated_subset(monkeypatch) -> None:
     pair_validated = _pair_record("S2X:1__3", "1", "3", ("r12", "r23"))
     pair_rejected = _pair_record("S2X:4__6", "4", "6", ("r45", "r56"))

@@ -42,6 +42,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step2_validation_utils import (
     _validation_road_count,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_release_utils import (
+    _compact_option_for_validation_runtime,
     _compact_execution_for_validation,
     _compact_validation_result_for_release,
 )
@@ -1706,6 +1707,24 @@ def _validate_pair_candidates(
     illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
     options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
 
+    def _store_illegal_validation(validation: PairValidationResult) -> None:
+        current = validation
+        if compact_release_payloads:
+            current = _compact_validation_result_for_release(
+                current,
+                keep_tighten_fields=False,
+            )
+        illegal_validations_by_pair_id[current.pair_id] = current
+
+    def _store_pair_options(pair_id: str, pair_options: list[PairArbitrationOption]) -> None:
+        current_options = pair_options
+        if compact_release_payloads:
+            current_options = [
+                _compact_option_for_validation_runtime(option)
+                for option in pair_options
+            ]
+        options_by_pair_id[pair_id] = current_options
+
     for pair_index, pair in enumerate(execution.pair_candidates, start=1):
         _emit_validation_pair_phase(
             pair_index=pair_index,
@@ -1737,7 +1756,7 @@ def _validate_pair_candidates(
         )
 
         if not candidate_road_ids:
-            illegal_validations_by_pair_id[pair.pair_id] = PairValidationResult(
+            _store_illegal_validation(PairValidationResult(
                 pair_id=pair.pair_id,
                 a_node_id=pair.a_node_id,
                 b_node_id=pair.b_node_id,
@@ -1758,7 +1777,7 @@ def _validate_pair_candidates(
                 boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
                 transition_same_dir_blocked=False,
                 support_info={"boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key)},
-            )
+            ))
             continue
 
         pruned_road_ids, branch_cut_infos, disconnected_after_prune = _prune_candidate_channel(
@@ -1776,7 +1795,7 @@ def _validate_pair_candidates(
             pruned_road_count=len(pruned_road_ids),
         )
         if disconnected_after_prune:
-            illegal_validations_by_pair_id[pair.pair_id] = PairValidationResult(
+            _store_illegal_validation(PairValidationResult(
                 pair_id=pair.pair_id,
                 a_node_id=pair.a_node_id,
                 b_node_id=pair.b_node_id,
@@ -1802,7 +1821,7 @@ def _validate_pair_candidates(
                     "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
                     "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
                 },
-            )
+            ))
             continue
 
         trunk_choices, reject_reason, warning_codes, trunk_gate_info = _evaluate_trunk_choices(
@@ -1825,7 +1844,7 @@ def _validate_pair_candidates(
             trunk_found=bool(trunk_choices),
         )
         if not trunk_choices:
-            illegal_validations_by_pair_id[pair.pair_id] = PairValidationResult(
+            _store_illegal_validation(PairValidationResult(
                 pair_id=pair.pair_id,
                 a_node_id=pair.a_node_id,
                 b_node_id=pair.b_node_id,
@@ -1852,7 +1871,7 @@ def _validate_pair_candidates(
                     "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
                     **trunk_gate_info,
                 },
-            )
+            ))
             continue
 
         pair_options: list[PairArbitrationOption] = []
@@ -2056,7 +2075,7 @@ def _validate_pair_candidates(
             )
 
         if pair_options:
-            options_by_pair_id[pair.pair_id] = pair_options
+            _store_pair_options(pair.pair_id, pair_options)
             continue
 
         if pair_fallback_validation is None:
@@ -2087,7 +2106,7 @@ def _validate_pair_candidates(
                     "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
                 },
             )
-        illegal_validations_by_pair_id[pair.pair_id] = pair_fallback_validation
+        _store_illegal_validation(pair_fallback_validation)
 
     _emit_progress(
         progress_callback,

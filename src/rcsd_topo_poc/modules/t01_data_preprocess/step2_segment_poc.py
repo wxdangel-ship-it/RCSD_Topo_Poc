@@ -119,6 +119,7 @@ MAX_PATHS_PER_DIRECTION = 12
 MAX_PATH_DEPTH = 64
 SIDE_ACCESS_SAMPLE_STEP_M = MAX_SIDE_ACCESS_DISTANCE_M / 2.0
 VALIDATION_PROGRESS_CHECKPOINT_INTERVAL = 1000
+VALIDATION_BATCH_SIZE = 1000
 VALIDATION_PHASE_TRACE_PAIR_LIMIT = 50
 
 
@@ -1845,24 +1846,48 @@ def _validate_pair_candidates(
 
     illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
     options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
+    batch_illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
+    batch_options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
 
     def _store_illegal_validation(validation: PairValidationResult) -> None:
-        current = validation
-        if compact_release_payloads:
-            current = _compact_validation_result_for_release(
-                current,
-                keep_tighten_fields=False,
-            )
-        illegal_validations_by_pair_id[current.pair_id] = current
+        batch_illegal_validations_by_pair_id[validation.pair_id] = validation
 
     def _store_pair_options(pair_id: str, pair_options: list[PairArbitrationOption]) -> None:
-        current_options = pair_options
+        batch_options_by_pair_id[pair_id] = pair_options
+
+    def _flush_validation_batch() -> None:
+        if not batch_illegal_validations_by_pair_id and not batch_options_by_pair_id:
+            return
         if compact_release_payloads:
-            current_options = [
-                _compact_option_for_validation_runtime(option)
-                for option in pair_options
-            ]
-        options_by_pair_id[pair_id] = current_options
+            illegal_validations_by_pair_id.update(
+                {
+                    pair_id: _compact_validation_result_for_release(
+                        validation,
+                        keep_tighten_fields=False,
+                    )
+                    for pair_id, validation in batch_illegal_validations_by_pair_id.items()
+                }
+            )
+            options_by_pair_id.update(
+                {
+                    pair_id: [
+                        _compact_option_for_validation_runtime(option)
+                        for option in pair_options
+                    ]
+                    for pair_id, pair_options in batch_options_by_pair_id.items()
+                }
+            )
+        else:
+            illegal_validations_by_pair_id.update(batch_illegal_validations_by_pair_id)
+            options_by_pair_id.update(batch_options_by_pair_id)
+        batch_illegal_validations_by_pair_id.clear()
+        batch_options_by_pair_id.clear()
+        if compact_release_payloads:
+            gc.collect()
+
+    def _flush_validation_batch_if_needed(pair_index: int) -> None:
+        if pair_index == validation_count or pair_index % VALIDATION_BATCH_SIZE == 0:
+            _flush_validation_batch()
 
     for pair_index, pair in enumerate(execution.pair_candidates, start=1):
         _emit_validation_pair_phase(
@@ -1917,6 +1942,7 @@ def _validate_pair_candidates(
                 transition_same_dir_blocked=False,
                 support_info={"boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key)},
             ))
+            _flush_validation_batch_if_needed(pair_index)
             continue
 
         pruned_road_ids, branch_cut_infos, disconnected_after_prune = _prune_candidate_channel(
@@ -1961,6 +1987,7 @@ def _validate_pair_candidates(
                     "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
                 },
             ))
+            _flush_validation_batch_if_needed(pair_index)
             continue
 
         trunk_choices, reject_reason, warning_codes, trunk_gate_info = _evaluate_trunk_choices(
@@ -2011,6 +2038,7 @@ def _validate_pair_candidates(
                     **trunk_gate_info,
                 },
             ))
+            _flush_validation_batch_if_needed(pair_index)
             continue
 
         pair_options: list[PairArbitrationOption] = []
@@ -2232,37 +2260,40 @@ def _validate_pair_candidates(
 
         if pair_options:
             _store_pair_options(pair.pair_id, pair_options)
-            continue
+        else:
+            if pair_fallback_validation is None:
+                pair_fallback_validation = PairValidationResult(
+                    pair_id=pair.pair_id,
+                    a_node_id=pair.a_node_id,
+                    b_node_id=pair.b_node_id,
+                    candidate_status="candidate",
+                    validated_status="rejected",
+                    reject_reason="no_valid_segment_body_option",
+                    trunk_mode="none",
+                    trunk_found=False,
+                    counterclockwise_ok=False,
+                    left_turn_excluded_mode=formway_mode,
+                    warning_codes=warning_codes,
+                    candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
+                    pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
+                    trunk_road_ids=(),
+                    segment_road_ids=(),
+                    residual_road_ids=(),
+                    branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
+                    boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
+                    transition_same_dir_blocked=False,
+                    support_info={
+                        "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                        "branch_cut_infos": branch_cut_infos,
+                        "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                        "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                    },
+                )
+            _store_illegal_validation(pair_fallback_validation)
 
-        if pair_fallback_validation is None:
-            pair_fallback_validation = PairValidationResult(
-                pair_id=pair.pair_id,
-                a_node_id=pair.a_node_id,
-                b_node_id=pair.b_node_id,
-                candidate_status="candidate",
-                validated_status="rejected",
-                reject_reason="no_valid_segment_body_option",
-                trunk_mode="none",
-                trunk_found=False,
-                counterclockwise_ok=False,
-                left_turn_excluded_mode=formway_mode,
-                warning_codes=warning_codes,
-                candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
-                pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
-                trunk_road_ids=(),
-                segment_road_ids=(),
-                residual_road_ids=(),
-                branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
-                boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
-                transition_same_dir_blocked=False,
-                support_info={
-                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
-                    "branch_cut_infos": branch_cut_infos,
-                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
-                },
-            )
-        _store_illegal_validation(pair_fallback_validation)
+        _flush_validation_batch_if_needed(pair_index)
+
+    _flush_validation_batch()
 
     _emit_progress(
         progress_callback,

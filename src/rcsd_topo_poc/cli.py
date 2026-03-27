@@ -291,6 +291,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional Step2 validation pair_id trace filter. Repeat to trace multiple pairs in perf markers.",
     )
     p_t02.add_argument(
+        "--only-validation-pair",
+        action="append",
+        dest="only_validation_pair_ids",
+        help="Optional Step2 validation pair_id filter. Repeat to validate only selected pairs after full candidate search.",
+    )
+    p_t02.add_argument(
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_step2_segment_poc/<run_id>.",
     )

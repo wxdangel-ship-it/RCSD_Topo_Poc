@@ -2257,6 +2257,7 @@ def run_step2_segment_poc(
     progress_callback: Optional[Step2ProgressCallback] = None,
     assume_working_layers: bool = False,
     trace_validation_pair_ids: Optional[Iterable[str]] = None,
+    only_validation_pair_ids: Optional[Iterable[str]] = None,
 ) -> list[Step2StrategyResult]:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
@@ -2305,6 +2306,7 @@ def run_step2_segment_poc(
     resolved_run_id = resolved_out_root.name if run_id is None else run_id
     strategy_count = len(strategy_config_paths)
     trace_pair_ids = set(trace_validation_pair_ids or ())
+    only_pair_ids = set(only_validation_pair_ids or ())
 
     for strategy_index, strategy_path in enumerate(strategy_config_paths, start=1):
         _emit_progress(
@@ -2364,6 +2366,21 @@ def run_step2_segment_poc(
         )
 
         execution = _compact_execution_for_validation(execution)
+        if only_pair_ids:
+            filtered_pairs = [
+                pair for pair in execution.pair_candidates
+                if pair.pair_id in only_pair_ids
+            ]
+            _emit_progress(
+                progress_callback,
+                "validation_pair_filter_applied",
+                strategy_index=strategy_index,
+                strategy_count=strategy_count,
+                strategy_id=strategy.strategy_id,
+                requested_pair_count=len(only_pair_ids),
+                matched_pair_count=len(filtered_pairs),
+            )
+            execution = replace(execution, pair_candidates=filtered_pairs)
         gc.collect()
         compact_release_payloads = not debug and not retain_validation_details
         validation_result = _validate_pair_candidates(
@@ -2470,6 +2487,7 @@ def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
         left_turn_formway_bit=args.left_turn_formway_bit,
         debug=args.debug,
         trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
+        only_validation_pair_ids=list(getattr(args, "only_validation_pair_ids", None) or []),
     )
 
     payload = {

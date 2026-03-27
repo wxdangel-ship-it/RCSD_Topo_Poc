@@ -202,10 +202,12 @@ def _now_text() -> str:
 
 
 def _write_json_doc(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fp:
         fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -2602,6 +2604,7 @@ def run_step2_segment_poc(
 
 def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=args.out_root, run_id=args.run_id)
+    resolved_out_root.mkdir(parents=True, exist_ok=True)
     progress_callback, progress_path, perf_markers_path = _make_step2_cli_progress_callback(
         run_id=resolved_run_id,
         out_root=resolved_out_root,

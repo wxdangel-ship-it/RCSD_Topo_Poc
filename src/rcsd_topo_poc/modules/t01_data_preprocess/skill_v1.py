@@ -126,7 +126,7 @@ def _should_write_subprogress_snapshot(event: str, payload: dict[str, Any]) -> b
 def _should_stdout_subprogress(event: str, payload: dict[str, Any], default: bool) -> bool:
     if not default:
         return False
-    if event in {"validation_pair_state", "validation_pair_checkpoint"}:
+    if event == "validation_pair_state":
         return False
     return True
 

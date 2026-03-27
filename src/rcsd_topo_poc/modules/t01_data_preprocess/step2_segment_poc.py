@@ -2270,11 +2270,6 @@ def _validate_pair_candidates(
     )
 
     decision_by_pair_id = {decision.pair_id: decision for decision in arbitration_outcome.decisions}
-    option_by_id = {
-        option.option_id: option
-        for options in options_by_pair_id.values()
-        for option in options
-    }
     winning_pair_ids = {
         decision.pair_id
         for decision in arbitration_outcome.decisions
@@ -2289,11 +2284,17 @@ def _validate_pair_candidates(
         elif right_wins and not left_wins:
             conflict_pair_ids_by_loser.setdefault(record.pair_id, record.conflict_pair_id)
 
-    provisional_results_by_pair_id: dict[str, PairValidationResult] = {}
+    provisional_results: list[PairValidationResult] = []
     for pair_index, pair in enumerate(execution.pair_candidates, start=1):
         decision = decision_by_pair_id[pair.pair_id]
         if pair.pair_id in options_by_pair_id:
-            selected_option = option_by_id[decision.selected_option_id or options_by_pair_id[pair.pair_id][0].option_id]
+            pair_options = options_by_pair_id[pair.pair_id]
+            selected_option_id = decision.selected_option_id or pair_options[0].option_id
+            selected_option = next(
+                option
+                for option in pair_options
+                if option.option_id == selected_option_id
+            )
             result = _pair_validation_from_option(
                 selected_option,
                 decision=decision,
@@ -2314,7 +2315,6 @@ def _validate_pair_candidates(
                     "segment_body_road_count",
                 ),
             )
-            provisional_results_by_pair_id[pair.pair_id] = result
         else:
             result = _single_pair_illegal_validation(
                 illegal_validations_by_pair_id[pair.pair_id],
@@ -2329,9 +2329,9 @@ def _validate_pair_candidates(
                 reject_reason="" if result.reject_reason is None else result.reject_reason,
                 trunk_found=result.trunk_found,
             )
-            provisional_results_by_pair_id[pair.pair_id] = result
-
-    provisional_results = [provisional_results_by_pair_id[pair.pair_id] for pair in execution.pair_candidates]
+        provisional_results.append(result)
+    options_by_pair_id.clear()
+    illegal_validations_by_pair_id.clear()
     provisional_validated_pair_count = sum(
         1 for item in provisional_results if item.validated_status == "validated"
     )

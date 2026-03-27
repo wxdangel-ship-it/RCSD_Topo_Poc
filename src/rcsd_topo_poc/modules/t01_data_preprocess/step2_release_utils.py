@@ -210,7 +210,6 @@ def _compact_option_support_info_for_runtime(
 ) -> dict[str, Any]:
     compact: dict[str, Any] = {}
     passthrough_keys = (
-        "boundary_terminate_node_ids",
         "trunk_signed_area",
         "trunk_mode",
         "bidirectional_minimal_loop",
@@ -227,21 +226,10 @@ def _compact_option_support_info_for_runtime(
         compact["forward_path_road_ids"] = list(support_info["forward_path_road_ids"])
     if support_info.get("reverse_path_road_ids"):
         compact["reverse_path_road_ids"] = list(support_info["reverse_path_road_ids"])
-    if support_info.get("pair_support_road_ids"):
-        compact["pair_support_road_ids"] = list(support_info["pair_support_road_ids"])
     if support_info.get("branch_cut_infos"):
         compact["branch_cut_infos"] = [
             _compact_branch_cut_info(dict(info))
             for info in support_info["branch_cut_infos"]
-        ]
-    if support_info.get("segment_body_candidate_road_ids"):
-        compact["segment_body_candidate_road_ids"] = list(
-            support_info["segment_body_candidate_road_ids"]
-        )
-    if support_info.get("segment_body_candidate_cut_infos"):
-        compact["segment_body_candidate_cut_infos"] = [
-            _compact_branch_cut_info(dict(info))
-            for info in support_info["segment_body_candidate_cut_infos"]
         ]
     if support_info.get("internal_parallel_trunk_swap_infos"):
         compact["internal_parallel_trunk_swap_infos"] = list(
@@ -261,6 +249,7 @@ def _compact_option_support_info_for_runtime(
 def _compact_option_for_validation_runtime(option: PairArbitrationOption) -> PairArbitrationOption:
     return replace(
         option,
+        candidate_channel_road_ids=(),
         support_info=_compact_option_support_info_for_runtime(
             dict(option.support_info),
             candidate_channel_road_count=len(option.candidate_channel_road_ids),
@@ -271,4 +260,6 @@ def _compact_option_for_validation_runtime(option: PairArbitrationOption) -> Pai
             branch_cut_road_count=len(option.branch_cut_road_ids),
             boundary_terminate_node_count=len(option.boundary_terminate_node_ids),
         ),
+        branch_cut_road_ids=(),
+        boundary_terminate_node_ids=(),
     )

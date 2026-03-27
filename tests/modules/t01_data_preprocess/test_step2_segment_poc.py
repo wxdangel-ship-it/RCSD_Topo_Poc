@@ -2832,6 +2832,52 @@ def test_step2_segment_poc_emits_substage_progress_and_can_drop_validation_detai
     assert comparison_summary[0]["validated_pair_count"] == 1
 
 
+def test_step2_validation_trace_pair_forces_perf_log_beyond_default_limit(monkeypatch) -> None:
+    pair = _pair_record("PAIR_A_B", "A", "B", ("r1",))
+    execution = _minimal_execution([pair], terminate_ids=["A", "B"])
+    context = _minimal_context([_road_record("r1", "A", "B")])
+    road_endpoints = {"r1": ("A", "B")}
+    undirected_adjacency = {"A": (), "B": ()}
+
+    monkeypatch.setattr(step2_segment_poc, "VALIDATION_PHASE_TRACE_PAIR_LIMIT", 0)
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_build_candidate_channel",
+        lambda *args, **kwargs: (set(), set()),
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_tighten_validated_segment_components",
+        lambda provisional_results, **kwargs: provisional_results,
+    )
+
+    progress_events: list[tuple[str, dict[str, object]]] = []
+    results = step2_segment_poc._validate_pair_candidates(
+        execution,
+        context=context,
+        road_endpoints=road_endpoints,
+        undirected_adjacency=undirected_adjacency,
+        formway_mode="strict",
+        left_turn_formway_bit=8,
+        trace_validation_pair_ids={"PAIR_A_B"},
+        progress_callback=lambda event, payload: progress_events.append((event, payload)),
+    )
+
+    assert len(results) == 1
+    traced_states = [
+        payload
+        for event, payload in progress_events
+        if event == "validation_pair_state"
+    ]
+    assert [payload["phase"] for payload in traced_states] == [
+        "validation_pair_started",
+        "validation_pair_started",
+        "candidate_channel_built",
+        "result_appended",
+    ]
+    assert all(payload["_perf_log"] is True for payload in traced_states)
+
+
 def test_pair_validation_from_option_keeps_winner_full_until_tighten() -> None:
     option = _arbitration_option(
         "PAIR_A_B::opt_01",

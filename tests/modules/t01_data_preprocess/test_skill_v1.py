@@ -125,6 +125,93 @@ def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) 
     assert scope_check["step5c_present"] is False
 
 
+def test_skill_v1_passes_trace_validation_pair_ids_to_step2(tmp_path: Path, monkeypatch) -> None:
+    road_path = tmp_path / "roads.geojson"
+    node_path = tmp_path / "nodes.geojson"
+    strategy_path = tmp_path / "strategy.json"
+    _write_text(road_path, "{}")
+    _write_text(node_path, "{}")
+    _write_text(strategy_path, "{}")
+
+    def _fake_bootstrap(**kwargs):
+        nodes = tmp_path / "bootstrap_trace" / "nodes.geojson"
+        roads = tmp_path / "bootstrap_trace" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        return SimpleNamespace(nodes_path=nodes, roads_path=roads, summary={})
+
+    captured_step2_kwargs: dict[str, object] = {}
+
+    def _fake_step2(**kwargs):
+        captured_step2_kwargs.update(kwargs)
+        return []
+
+    def _fake_refresh(**kwargs):
+        nodes = tmp_path / "refresh_trace" / "nodes.geojson"
+        roads = tmp_path / "refresh_trace" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        return SimpleNamespace(nodes_path=nodes, roads_path=roads)
+
+    def _fake_step4(**kwargs):
+        nodes = tmp_path / "step4_trace" / "nodes.geojson"
+        roads = tmp_path / "step4_trace" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        return SimpleNamespace(refreshed_nodes_path=nodes, refreshed_roads_path=roads)
+
+    def _fake_step5(**kwargs):
+        nodes = tmp_path / "step5_trace" / "nodes.geojson"
+        roads = tmp_path / "step5_trace" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        return SimpleNamespace(refreshed_nodes_path=nodes, refreshed_roads_path=roads)
+
+    def _fake_finalize_bundle(**kwargs):
+        resolved_out_root = kwargs["resolved_out_root"]
+        _write_text(kwargs["final_nodes_path"], "{}")
+        _write_text(kwargs["final_roads_path"], "{}")
+        manifest_path = resolved_out_root / "skill_v1_manifest.json"
+        summary_path = resolved_out_root / "skill_v1_bundle_summary.json"
+        segment_path = resolved_out_root / "segment.geojson"
+        inner_nodes_path = resolved_out_root / "inner_nodes.geojson"
+        segment_error_path = resolved_out_root / "segment_error.geojson"
+        step6_summary_path = resolved_out_root / "segment_summary.json"
+        _write_text(manifest_path, "{}")
+        _write_text(summary_path, "{}")
+        _write_text(segment_path, "{}")
+        _write_text(inner_nodes_path, "{}")
+        _write_text(segment_error_path, "{}")
+        _write_text(step6_summary_path, "{}")
+        return {
+            "manifest_path": str(manifest_path.resolve()),
+            "summary_path": str(summary_path.resolve()),
+            "segment_path": str(segment_path.resolve()),
+            "inner_nodes_path": str(inner_nodes_path.resolve()),
+            "segment_error_path": str(segment_error_path.resolve()),
+            "step6_summary_path": str(step6_summary_path.resolve()),
+        }
+
+    monkeypatch.setattr(skill_v1, "initialize_working_layers", _fake_bootstrap)
+    monkeypatch.setattr(skill_v1, "run_step2_segment_poc", _fake_step2)
+    monkeypatch.setattr(skill_v1, "refresh_s2_baseline", _fake_refresh)
+    monkeypatch.setattr(skill_v1, "run_step4_residual_graph", _fake_step4)
+    monkeypatch.setattr(skill_v1, "run_step5_staged_residual_graph", _fake_step5)
+    monkeypatch.setattr(skill_v1, "_finalize_bundle", _fake_finalize_bundle)
+
+    skill_v1.run_t01_skill_v1(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=tmp_path / "run_trace",
+        run_id="t01_skill_v1_trace",
+        strategy_config_path=strategy_path,
+        debug=False,
+        trace_validation_pair_ids=["S2:866747__950704"],
+    )
+
+    assert captured_step2_kwargs["trace_validation_pair_ids"] == ["S2:866747__950704"]
+
+
 def test_skill_v1_runner_can_isolate_suite_case_outputs_under_run_id(tmp_path: Path, monkeypatch) -> None:
     road_path = tmp_path / "roads.geojson"
     node_path = tmp_path / "nodes.geojson"

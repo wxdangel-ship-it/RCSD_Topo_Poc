@@ -560,6 +560,7 @@ def run_t01_skill_v1(
     left_turn_formway_bit: int = 8,
     debug: bool = True,
     compare_freeze_dir: Optional[Union[str, Path]] = None,
+    trace_validation_pair_ids: Optional[list[str]] = None,
 ) -> SkillV1Artifacts:
     resolved_out_root, resolved_run_id = _resolve_out_root(
         out_root=out_root,
@@ -666,6 +667,7 @@ def run_t01_skill_v1(
                 debug=debug,
                 retain_validation_details=False,
                 assume_working_layers=True,
+                trace_validation_pair_ids=trace_validation_pair_ids,
                 progress_callback=_make_stage_subprogress_callback(
                     run_id=resolved_run_id,
                     stage_name="step2",
@@ -976,6 +978,7 @@ def run_t01_skill_v1_cli(args: argparse.Namespace) -> int:
         left_turn_formway_bit=args.left_turn_formway_bit,
         debug=args.debug,
         compare_freeze_dir=args.compare_freeze_dir,
+        trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
     )
     print(json.dumps({"out_root": str(artifacts.out_root.resolve()), **artifacts.summary}, ensure_ascii=False, indent=2))
     return 0

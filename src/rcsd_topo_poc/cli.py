@@ -285,6 +285,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional run id. If omitted, use t01_step2_segment_poc_YYYYMMDD_HHMMSS.",
     )
     p_t02.add_argument(
+        "--trace-validation-pair",
+        action="append",
+        dest="trace_validation_pair_ids",
+        help="Optional Step2 validation pair_id trace filter. Repeat to trace multiple pairs in perf markers.",
+    )
+    p_t02.add_argument(
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_step2_segment_poc/<run_id>.",
     )
@@ -476,6 +482,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_skill.add_argument(
         "--run-id",
         help="Optional run id. If omitted, use t01_skill_v1_YYYYMMDD_HHMMSS.",
+    )
+    p_skill.add_argument(
+        "--trace-validation-pair",
+        action="append",
+        dest="trace_validation_pair_ids",
+        help="Optional Step2 validation pair_id trace filter. Repeat to trace multiple pairs in perf markers.",
     )
     p_skill.add_argument(
         "--out-root",

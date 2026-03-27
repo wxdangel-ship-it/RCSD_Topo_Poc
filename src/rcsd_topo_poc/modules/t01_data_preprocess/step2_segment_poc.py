@@ -1658,6 +1658,7 @@ def _validate_pair_candidates(
     compact_release_payloads: bool = False,
     progress_callback: Optional[Step2ProgressCallback] = None,
     return_arbitration_outcome: bool = False,
+    trace_validation_pair_ids: Optional[set[str]] = None,
 ) -> Union[list[PairValidationResult], tuple[list[PairValidationResult], PairArbitrationOutcome]]:
     terminate_ids = set(execution.terminate_ids)
     hard_stop_node_ids = set(execution.strategy.hard_stop_node_ids)
@@ -1673,6 +1674,7 @@ def _validate_pair_candidates(
     semantic_conflict_node_ids = _arbitration_semantic_conflict_node_ids(context)
     strong_anchor_node_ids = _arbitration_strong_anchor_node_ids(context)
     tjunction_anchor_node_ids = _arbitration_tjunction_anchor_node_ids(context)
+    trace_pair_ids = set(trace_validation_pair_ids or ())
 
     _emit_progress(progress_callback, "validation_started", validation_count=validation_count)
 
@@ -1693,7 +1695,10 @@ def _validate_pair_candidates(
             "phase": phase,
             **extra_payload,
         }
-        perf_trace_enabled = pair_index <= VALIDATION_PHASE_TRACE_PAIR_LIMIT
+        perf_trace_enabled = (
+            pair.pair_id in trace_pair_ids
+            or pair_index <= VALIDATION_PHASE_TRACE_PAIR_LIMIT
+        )
         _emit_progress(
             progress_callback,
             "validation_pair_state",
@@ -2251,6 +2256,7 @@ def run_step2_segment_poc(
     retain_validation_details: bool = True,
     progress_callback: Optional[Step2ProgressCallback] = None,
     assume_working_layers: bool = False,
+    trace_validation_pair_ids: Optional[Iterable[str]] = None,
 ) -> list[Step2StrategyResult]:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
@@ -2298,6 +2304,7 @@ def run_step2_segment_poc(
     comparison_summary: list[dict[str, Any]] = []
     resolved_run_id = resolved_out_root.name if run_id is None else run_id
     strategy_count = len(strategy_config_paths)
+    trace_pair_ids = set(trace_validation_pair_ids or ())
 
     for strategy_index, strategy_path in enumerate(strategy_config_paths, start=1):
         _emit_progress(
@@ -2369,6 +2376,7 @@ def run_step2_segment_poc(
             compact_release_payloads=compact_release_payloads,
             progress_callback=progress_callback,
             return_arbitration_outcome=True,
+            trace_validation_pair_ids=trace_pair_ids,
         )
         if isinstance(validation_result, tuple):
             validations, arbitration_outcome = validation_result
@@ -2461,6 +2469,7 @@ def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
         formway_mode=args.formway_mode,
         left_turn_formway_bit=args.left_turn_formway_bit,
         debug=args.debug,
+        trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
     )
 
     payload = {

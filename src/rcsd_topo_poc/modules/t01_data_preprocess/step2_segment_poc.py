@@ -227,16 +227,6 @@ def _read_pickle_doc(path: Path) -> Any:
         return pickle.load(fp)
 
 
-def _restore_validation_winner_option(
-    option: PairArbitrationOption,
-    *,
-    restore_payload: dict[str, Any],
-) -> PairArbitrationOption:
-    support_info = dict(option.support_info)
-    support_info.update(restore_payload.get("support_info_extras", {}))
-    return replace(option, support_info=support_info)
-
-
 def _format_cli_progress_details(payload: dict[str, Any]) -> str:
     detail_keys = (
         "strategy_id",
@@ -363,6 +353,167 @@ def _emit_progress(
     if progress_callback is None:
         return
     progress_callback(event, payload)
+
+
+def _rebuild_full_validation_option(
+    pair: PairRecord,
+    *,
+    selected_option_id: str,
+    context: Step1GraphContext,
+    road_endpoints: dict[str, tuple[str, str]],
+    undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
+    terminate_ids: set[str],
+    hard_stop_node_ids: set[str],
+    boundary_node_ids: set[str],
+    through_rule: ThroughRuleSpec,
+    formway_mode: str,
+    left_turn_formway_bit: int,
+) -> PairArbitrationOption:
+    candidate_road_ids, boundary_terminate_ids = _build_candidate_channel(
+        pair,
+        undirected_adjacency=undirected_adjacency,
+        boundary_node_ids=boundary_node_ids,
+    )
+    if not candidate_road_ids:
+        raise RuntimeError(f"Selected Step2 option {selected_option_id} lost candidate channel during winner rebuild.")
+
+    pruned_road_ids, branch_cut_infos, disconnected_after_prune = _prune_candidate_channel(
+        pair,
+        candidate_road_ids=candidate_road_ids,
+        road_endpoints=road_endpoints,
+        terminate_ids=terminate_ids,
+        hard_stop_node_ids=hard_stop_node_ids,
+    )
+    if disconnected_after_prune:
+        raise RuntimeError(
+            f"Selected Step2 option {selected_option_id} became disconnected during winner rebuild."
+        )
+
+    trunk_choices, reject_reason, warning_codes, trunk_gate_info = _evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids=candidate_road_ids,
+        pruned_road_ids=pruned_road_ids,
+        branch_cut_infos=branch_cut_infos,
+        road_endpoints=road_endpoints,
+        through_rule=through_rule,
+        formway_mode=formway_mode,
+        left_turn_formway_bit=left_turn_formway_bit,
+    )
+    if not trunk_choices:
+        raise RuntimeError(
+            f"Selected Step2 option {selected_option_id} lost legal trunk choices during winner rebuild: {reject_reason}."
+        )
+
+    endpoint_priority_grades = _pair_endpoint_priority_grades(pair, context=context)
+    for zero_based_option_index, choice in enumerate(trunk_choices):
+        option_index = zero_based_option_index + 1
+        option_id = f"{pair.pair_id}::opt_{option_index:02d}"
+        trunk_candidate = choice.candidate
+        alternative_trunk_only_road_ids = _alternative_trunk_only_road_ids(
+            trunk_choices,
+            current_choice_index=zero_based_option_index,
+        )
+        internal_boundary_node_ids = _collect_internal_boundary_nodes(
+            pair,
+            candidate=trunk_candidate,
+            blocked_node_ids=hard_stop_node_ids,
+        )
+        if internal_boundary_node_ids:
+            continue
+
+        current_boundary_terminate_node_ids = _collect_internal_boundary_nodes(
+            pair,
+            candidate=trunk_candidate,
+            blocked_node_ids=boundary_terminate_ids - hard_stop_node_ids,
+        )
+        if current_boundary_terminate_node_ids:
+            continue
+
+        trunk_mode = _trunk_candidate_mode(trunk_candidate)
+        if trunk_mode in {"through_collapsed_corridor", "mirrored_one_sided_corridor"}:
+            segment_candidate_road_ids = trunk_candidate.road_ids
+            segment_road_ids = trunk_candidate.road_ids
+            segment_cut_infos: list[dict[str, Any]] = []
+        else:
+            segment_body_allowed_road_ids = _expand_segment_body_allowed_road_ids(
+                pruned_road_ids=pruned_road_ids,
+                branch_cut_infos=branch_cut_infos,
+                undirected_adjacency=undirected_adjacency,
+                boundary_node_ids=boundary_node_ids,
+                road_endpoints=road_endpoints,
+            )
+            if alternative_trunk_only_road_ids:
+                segment_body_allowed_road_ids -= alternative_trunk_only_road_ids
+            segment_candidate_road_ids = _build_segment_body_candidate_channel(
+                pair,
+                trunk_road_ids=trunk_candidate.road_ids,
+                undirected_adjacency=undirected_adjacency,
+                boundary_node_ids=boundary_node_ids,
+                road_endpoints=road_endpoints,
+                allowed_road_ids=segment_body_allowed_road_ids,
+            )
+            segment_road_ids, segment_cut_infos = _refine_segment_roads(
+                pair,
+                context=context,
+                road_endpoints=road_endpoints,
+                pruned_road_ids=segment_candidate_road_ids,
+                trunk_road_ids=trunk_candidate.road_ids,
+                through_rule=through_rule,
+            )
+
+        if option_id != selected_option_id:
+            continue
+
+        sorted_candidate_road_ids = tuple(sorted(candidate_road_ids, key=_sort_key))
+        sorted_pruned_road_ids = tuple(sorted(pruned_road_ids, key=_sort_key))
+        sorted_segment_candidate_road_ids = tuple(sorted(segment_candidate_road_ids, key=_sort_key))
+        sorted_segment_road_ids = tuple(sorted(segment_road_ids, key=_sort_key))
+        sorted_branch_cut_road_ids = tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key))
+        sorted_boundary_terminate_node_ids = tuple(sorted(boundary_terminate_ids, key=_sort_key))
+        support_info = {
+            "boundary_terminate_node_ids": list(sorted_boundary_terminate_node_ids),
+            "branch_cut_infos": branch_cut_infos,
+            "candidate_channel_road_ids": list(sorted_candidate_road_ids),
+            "pruned_road_ids": list(sorted_pruned_road_ids),
+            "pair_support_road_ids": sorted(
+                set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
+                key=_sort_key,
+            ),
+            "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
+            "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
+            "trunk_signed_area": trunk_candidate.signed_area,
+            "trunk_mode": trunk_mode,
+            "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
+            "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
+            "endpoint_priority_grades": list(endpoint_priority_grades),
+            **choice.support_info,
+            **trunk_gate_info,
+            "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
+            "segment_body_candidate_road_ids": list(sorted_segment_candidate_road_ids),
+            "segment_body_candidate_cut_infos": segment_cut_infos,
+            "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
+        }
+        return PairArbitrationOption(
+            option_id=option_id,
+            pair_id=pair.pair_id,
+            a_node_id=pair.a_node_id,
+            b_node_id=pair.b_node_id,
+            trunk_mode=trunk_mode,
+            counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
+            warning_codes=choice.warning_codes,
+            candidate_channel_road_ids=(),
+            pruned_road_ids=sorted_pruned_road_ids,
+            trunk_road_ids=trunk_candidate.road_ids,
+            segment_candidate_road_ids=sorted_segment_candidate_road_ids,
+            segment_road_ids=sorted_segment_road_ids,
+            branch_cut_road_ids=(),
+            boundary_terminate_node_ids=(),
+            transition_same_dir_blocked=False,
+            support_info=support_info,
+        )
+
+    raise RuntimeError(f"Selected Step2 option {selected_option_id} was not rebuilt from pair {pair.pair_id}.")
 
 
 
@@ -1870,10 +2021,8 @@ def _validate_pair_candidates(
 
     illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
     options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
-    winner_restore_payloads_by_option_id: dict[str, dict[str, Any]] = {}
     batch_illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
     batch_options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
-    batch_winner_restore_payloads_by_option_id: dict[str, dict[str, Any]] = {}
     spilled_batch_paths: list[Path] = []
     spill_validation_batches = (
         compact_release_payloads
@@ -1889,15 +2038,8 @@ def _validate_pair_candidates(
     def _store_pair_options(pair_id: str, pair_options: list[PairArbitrationOption]) -> None:
         batch_options_by_pair_id[pair_id] = pair_options
 
-    def _store_winner_restore_payload(option_id: str, restore_payload: dict[str, Any]) -> None:
-        batch_winner_restore_payloads_by_option_id[option_id] = restore_payload
-
     def _flush_validation_batch() -> None:
-        if (
-            not batch_illegal_validations_by_pair_id
-            and not batch_options_by_pair_id
-            and not batch_winner_restore_payloads_by_option_id
-        ):
+        if not batch_illegal_validations_by_pair_id and not batch_options_by_pair_id:
             return
         if compact_release_payloads:
             compact_illegal_validations_by_pair_id = {
@@ -1925,17 +2067,14 @@ def _validate_pair_candidates(
                 {
                     "illegal_validations_by_pair_id": compact_illegal_validations_by_pair_id,
                     "options_by_pair_id": compact_options_by_pair_id,
-                    "winner_restore_payloads_by_option_id": dict(batch_winner_restore_payloads_by_option_id),
                 },
             )
             spilled_batch_paths.append(batch_path)
         else:
             illegal_validations_by_pair_id.update(compact_illegal_validations_by_pair_id)
             options_by_pair_id.update(compact_options_by_pair_id)
-            winner_restore_payloads_by_option_id.update(batch_winner_restore_payloads_by_option_id)
         batch_illegal_validations_by_pair_id.clear()
         batch_options_by_pair_id.clear()
-        batch_winner_restore_payloads_by_option_id.clear()
         if compact_release_payloads or spill_validation_batches:
             gc.collect()
 
@@ -2303,27 +2442,6 @@ def _validate_pair_candidates(
                         support_info=runtime_support_info,
                     )
                 )
-                _store_winner_restore_payload(
-                    option_id,
-                    {
-                        "support_info_extras": {
-                            "boundary_terminate_node_ids": list(sorted_boundary_terminate_node_ids),
-                            "candidate_channel_road_ids": list(sorted_candidate_road_ids),
-                            "pruned_road_ids": list(sorted_pruned_road_ids),
-                            "pair_support_road_ids": sorted(
-                                set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
-                                key=_sort_key,
-                            ),
-                            "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
-                            "segment_body_candidate_road_ids": list(sorted_segment_candidate_road_ids),
-                            "segment_body_candidate_cut_infos": [
-                                _compact_branch_cut_info(dict(info))
-                                for info in segment_cut_infos
-                            ],
-                            "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
-                        },
-                    },
-                )
             else:
                 support_info = {
                     "boundary_terminate_node_ids": list(sorted_boundary_terminate_node_ids),
@@ -2410,7 +2528,6 @@ def _validate_pair_candidates(
             payload = _read_pickle_doc(batch_path)
             illegal_validations_by_pair_id.update(payload["illegal_validations_by_pair_id"])
             options_by_pair_id.update(payload["options_by_pair_id"])
-            winner_restore_payloads_by_option_id.update(payload.get("winner_restore_payloads_by_option_id", {}))
         gc.collect()
 
     _emit_progress(
@@ -2454,6 +2571,7 @@ def _validate_pair_candidates(
             conflict_pair_ids_by_loser.setdefault(record.pair_id, record.conflict_pair_id)
 
     provisional_results: list[PairValidationResult] = []
+    rebuilt_winner_option_by_pair_id: dict[str, PairArbitrationOption] = {}
     for pair_index, pair in enumerate(execution.pair_candidates, start=1):
         decision = decision_by_pair_id[pair.pair_id]
         if pair.pair_id in options_by_pair_id:
@@ -2465,12 +2583,23 @@ def _validate_pair_candidates(
                 if option.option_id == selected_option_id
             )
             if compact_release_payloads and decision.arbitration_status == "win":
-                restore_payload = winner_restore_payloads_by_option_id.get(selected_option.option_id)
-                if restore_payload is not None:
-                    selected_option = _restore_validation_winner_option(
-                        selected_option,
-                        restore_payload=restore_payload,
+                rebuilt_option = rebuilt_winner_option_by_pair_id.get(pair.pair_id)
+                if rebuilt_option is None:
+                    rebuilt_option = _rebuild_full_validation_option(
+                        pair,
+                        selected_option_id=selected_option_id,
+                        context=context,
+                        road_endpoints=road_endpoints,
+                        undirected_adjacency=undirected_adjacency,
+                        terminate_ids=terminate_ids,
+                        hard_stop_node_ids=hard_stop_node_ids,
+                        boundary_node_ids=boundary_node_ids,
+                        through_rule=execution.strategy.through_rule,
+                        formway_mode=formway_mode,
+                        left_turn_formway_bit=left_turn_formway_bit,
                     )
+                    rebuilt_winner_option_by_pair_id[pair.pair_id] = rebuilt_option
+                selected_option = rebuilt_option
             result = _pair_validation_from_option(
                 selected_option,
                 decision=decision,
@@ -2508,7 +2637,7 @@ def _validate_pair_candidates(
         provisional_results.append(result)
     options_by_pair_id.clear()
     illegal_validations_by_pair_id.clear()
-    winner_restore_payloads_by_option_id.clear()
+    rebuilt_winner_option_by_pair_id.clear()
     provisional_validated_pair_count = sum(
         1 for item in provisional_results if item.validated_status == "validated"
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 from dataclasses import replace
@@ -2915,6 +2916,77 @@ def test_step2_segment_poc_can_filter_validation_pairs_after_candidate_search(
     assert len(filter_events) == 1
     assert filter_events[0]["requested_pair_count"] == 1
     assert filter_events[0]["matched_pair_count"] == 1
+
+
+def test_step2_segment_poc_cli_writes_progress_and_perf_files(tmp_path: Path, monkeypatch) -> None:
+    out_root = tmp_path / "step2_cli_run"
+
+    def _fake_run_step2_segment_poc(**kwargs):
+        callback = kwargs["progress_callback"]
+        callback("validation_started", {"validation_count": 1})
+        callback(
+            "validation_pair_state",
+            {
+                "pair_index": 1,
+                "validation_count": 1,
+                "pair_id": "PAIR_A_B",
+                "phase": "validation_pair_started",
+            },
+        )
+        callback(
+            "validation_completed",
+            {
+                "strategy_id": "S2X",
+                "candidate_pair_count": 1,
+                "validated_pair_count": 1,
+                "rejected_pair_count": 0,
+            },
+        )
+        return [
+            step2_segment_poc.Step2StrategyResult(
+                strategy=_minimal_strategy("S2X"),
+                segment_summary={
+                    "candidate_pair_count": 1,
+                    "validated_pair_count": 1,
+                    "rejected_pair_count": 0,
+                },
+                output_files=[],
+                validations=[],
+            )
+        ]
+
+    monkeypatch.setattr(step2_segment_poc, "run_step2_segment_poc", _fake_run_step2_segment_poc)
+
+    args = argparse.Namespace(
+        road_path=tmp_path / "roads.gpkg",
+        road_layer=None,
+        road_crs=None,
+        node_path=tmp_path / "nodes.gpkg",
+        node_layer=None,
+        node_crs=None,
+        strategy_config=[tmp_path / "strategy.json"],
+        formway_mode="strict",
+        left_turn_formway_bit=8,
+        run_id="t01_step2_diag_test",
+        out_root=out_root,
+        debug=False,
+        trace_validation_pair_ids=["PAIR_A_B"],
+        only_validation_pair_ids=["PAIR_A_B"],
+    )
+
+    exit_code = step2_segment_poc.run_step2_segment_poc_cli(args)
+
+    assert exit_code == 0
+    progress = _load_json(out_root / "t01_step2_segment_poc_progress.json")
+    markers = [
+        json.loads(line)
+        for line in (out_root / "t01_step2_segment_poc_perf_markers.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert progress["status"] == "completed"
+    assert markers[0]["event"] == "step2_run_start"
+    assert any(item["event"] == "step2_subprogress" for item in markers)
+    assert markers[-1]["event"] == "step2_run_completed"
 
 
 def test_step2_validation_trace_pair_forces_perf_log_beyond_default_limit(monkeypatch) -> None:

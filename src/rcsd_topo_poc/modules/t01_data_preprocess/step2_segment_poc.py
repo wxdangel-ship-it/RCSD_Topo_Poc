@@ -197,6 +197,135 @@ def _compact_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _now_text() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _write_json_doc(path: Path, payload: Any) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as fp:
+        fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _format_cli_progress_details(payload: dict[str, Any]) -> str:
+    detail_keys = (
+        "strategy_id",
+        "strategy_index",
+        "strategy_count",
+        "pair_index",
+        "validation_count",
+        "pair_id",
+        "phase",
+        "validated_status",
+        "reject_reason",
+        "trunk_found",
+        "candidate_road_count",
+        "pruned_road_count",
+        "segment_road_count",
+        "candidate_pair_count",
+        "validated_pair_count",
+        "rejected_pair_count",
+        "search_seed_count",
+        "terminate_count",
+        "road_count",
+        "physical_node_count",
+        "semantic_node_count",
+        "semantic_endpoint_road_count",
+        "undirected_node_count",
+        "requested_pair_count",
+        "matched_pair_count",
+        "output_dir",
+        "gc_collected_objects",
+    )
+    parts: list[str] = []
+    for key in detail_keys:
+        if key not in payload:
+            continue
+        parts.append(f"{key}={payload[key]}")
+    return " ".join(parts)
+
+
+def _write_step2_cli_progress_snapshot(
+    *,
+    out_path: Path,
+    run_id: str,
+    status: str,
+    message: Optional[str],
+    current_event: Optional[str] = None,
+    failed_event: Optional[str] = None,
+) -> None:
+    _write_json_doc(
+        out_path,
+        {
+            "run_id": run_id,
+            "status": status,
+            "updated_at": _now_text(),
+            "current_event": current_event,
+            "failed_event": failed_event,
+            "message": message,
+        },
+    )
+
+
+def _make_step2_cli_progress_callback(
+    *,
+    run_id: str,
+    out_root: Path,
+) -> tuple[Step2ProgressCallback, Path, Path]:
+    progress_path = out_root / "t01_step2_segment_poc_progress.json"
+    perf_markers_path = out_root / "t01_step2_segment_poc_perf_markers.jsonl"
+
+    def _callback(event: str, payload: dict[str, Any]) -> None:
+        control_payload = dict(payload)
+        perf_log = bool(control_payload.pop("_perf_log", True))
+        stdout_log = bool(control_payload.pop("_stdout_log", True))
+        details = _format_cli_progress_details(control_payload)
+        message = f"Step2 {event}."
+        if details:
+            message = f"{message} {details}"
+        _write_step2_cli_progress_snapshot(
+            out_path=progress_path,
+            run_id=run_id,
+            status="running",
+            current_event=event,
+            message=message,
+        )
+        if perf_log:
+            _append_jsonl(
+                perf_markers_path,
+                {
+                    "event": "step2_subprogress",
+                    "at": _now_text(),
+                    "run_id": run_id,
+                    "substage_event": event,
+                    "payload": control_payload,
+                },
+            )
+        if stdout_log:
+            suffix = f" {details}" if details else ""
+            print(f"[{_now_text()}] step2:{event}{suffix}", flush=True)
+
+    _write_step2_cli_progress_snapshot(
+        out_path=progress_path,
+        run_id=run_id,
+        status="initializing",
+        current_event=None,
+        message="Step2 CLI initialized.",
+    )
+    _append_jsonl(
+        perf_markers_path,
+        {
+            "event": "step2_run_start",
+            "at": _now_text(),
+            "run_id": run_id,
+        },
+    )
+    return _callback, progress_path, perf_markers_path
+
+
 def _emit_progress(
     progress_callback: Optional[Step2ProgressCallback],
     event: str,
@@ -2473,26 +2602,53 @@ def run_step2_segment_poc(
 
 def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=args.out_root, run_id=args.run_id)
-    results = run_step2_segment_poc(
-        road_path=args.road_path,
-        road_layer=args.road_layer,
-        road_crs=args.road_crs,
-        node_path=args.node_path,
-        node_layer=args.node_layer,
-        node_crs=args.node_crs,
-        strategy_config_paths=list(args.strategy_config),
-        out_root=resolved_out_root,
+    progress_callback, progress_path, perf_markers_path = _make_step2_cli_progress_callback(
         run_id=resolved_run_id,
-        formway_mode=args.formway_mode,
-        left_turn_formway_bit=args.left_turn_formway_bit,
-        debug=args.debug,
-        trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
-        only_validation_pair_ids=list(getattr(args, "only_validation_pair_ids", None) or []),
+        out_root=resolved_out_root,
     )
+    try:
+        results = run_step2_segment_poc(
+            road_path=args.road_path,
+            road_layer=args.road_layer,
+            road_crs=args.road_crs,
+            node_path=args.node_path,
+            node_layer=args.node_layer,
+            node_crs=args.node_crs,
+            strategy_config_paths=list(args.strategy_config),
+            out_root=resolved_out_root,
+            run_id=resolved_run_id,
+            formway_mode=args.formway_mode,
+            left_turn_formway_bit=args.left_turn_formway_bit,
+            debug=args.debug,
+            progress_callback=progress_callback,
+            trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
+            only_validation_pair_ids=list(getattr(args, "only_validation_pair_ids", None) or []),
+        )
+    except Exception as exc:
+        _write_step2_cli_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="failed",
+            current_event=None,
+            failed_event="step2_failed",
+            message=str(exc),
+        )
+        _append_jsonl(
+            perf_markers_path,
+            {
+                "event": "step2_run_failed",
+                "at": _now_text(),
+                "run_id": resolved_run_id,
+                "error": str(exc),
+            },
+        )
+        raise
 
     payload = {
         "run_id": resolved_run_id,
         "out_root": str(resolved_out_root.resolve()),
+        "progress_path": str(progress_path.resolve()),
+        "perf_markers_path": str(perf_markers_path.resolve()),
         "strategies": [
             {
                 "strategy_id": result.strategy.strategy_id,
@@ -2504,5 +2660,21 @@ def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
             for result in results
         ],
     }
+    _write_step2_cli_progress_snapshot(
+        out_path=progress_path,
+        run_id=resolved_run_id,
+        status="completed",
+        current_event=None,
+        message="Step2 CLI completed.",
+    )
+    _append_jsonl(
+        perf_markers_path,
+        {
+            "event": "step2_run_completed",
+            "at": _now_text(),
+            "run_id": resolved_run_id,
+            "strategy_count": len(results),
+        },
+    )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0

@@ -2918,6 +2918,105 @@ def test_step2_segment_poc_can_filter_validation_pairs_after_candidate_search(
     assert filter_events[0]["matched_pair_count"] == 1
 
 
+def test_step2_segment_poc_can_filter_validation_pairs_by_index_range_and_pair_id_intersection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    out_root = tmp_path / "step2_filter_range_run"
+    strategy = _minimal_strategy("S2X")
+    context = _minimal_context(
+        [
+            _road_record("r1", "A", "B"),
+            _road_record("r2", "C", "D"),
+            _road_record("r3", "E", "F"),
+        ]
+    )
+    execution = _minimal_execution(
+        [
+            _pair_record("PAIR_A_B", "A", "B", ("r1",), strategy_id="S2X"),
+            _pair_record("PAIR_C_D", "C", "D", ("r2",), strategy_id="S2X"),
+            _pair_record("PAIR_E_F", "E", "F", ("r3",), strategy_id="S2X"),
+        ],
+        terminate_ids=["A", "B", "C", "D", "E", "F"],
+        strategy_id="S2X",
+    )
+
+    monkeypatch.setattr(step2_segment_poc, "build_step1_graph_context", lambda **_: context)
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_build_semantic_endpoints",
+        lambda _context: (
+            {"r1": ("A", "B"), "r2": ("C", "D"), "r3": ("E", "F")},
+            {"A": (), "B": (), "C": (), "D": (), "E": (), "F": ()},
+        ),
+    )
+    monkeypatch.setattr(step2_segment_poc, "_load_strategy", lambda _path: strategy)
+    monkeypatch.setattr(step2_segment_poc, "run_step1_strategy", lambda _context, _strategy: execution)
+    monkeypatch.setattr(step2_segment_poc, "write_step1_candidate_outputs", lambda *args, **kwargs: None)
+
+    captured_execution: dict[str, step1_pair_poc.Step1StrategyExecution] = {}
+
+    def _fake_validate_pair_candidates(*args, **kwargs):
+        captured_execution["value"] = args[0]
+        return []
+
+    monkeypatch.setattr(step2_segment_poc, "_validate_pair_candidates", _fake_validate_pair_candidates)
+
+    def _fake_write_step2_outputs(
+        out_dir: Path,
+        *,
+        strategy,
+        run_id,
+        context,
+        validations,
+        endpoint_pool_source_map,
+        formway_mode,
+        debug,
+        retain_validation_details,
+        progress_callback=None,
+    ) -> step2_segment_poc.Step2StrategyResult:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return step2_segment_poc.Step2StrategyResult(
+            strategy=strategy,
+            segment_summary={
+                "strategy_id": strategy.strategy_id,
+                "candidate_pair_count": 0,
+                "validated_pair_count": 0,
+                "rejected_pair_count": 0,
+            },
+            output_files=[],
+            validations=[],
+        )
+
+    monkeypatch.setattr(step2_segment_poc, "_write_step2_outputs", _fake_write_step2_outputs)
+
+    progress_events: list[tuple[str, dict[str, object]]] = []
+    step2_segment_poc.run_step2_segment_poc(
+        road_path=tmp_path / "roads.geojson",
+        node_path=tmp_path / "nodes.geojson",
+        strategy_config_paths=[tmp_path / "strategy.json"],
+        out_root=out_root,
+        retain_validation_details=False,
+        assume_working_layers=True,
+        only_validation_pair_ids=["PAIR_C_D", "PAIR_E_F"],
+        validation_pair_index_start=2,
+        validation_pair_index_end=2,
+        progress_callback=lambda event, payload: progress_events.append((event, payload)),
+    )
+
+    assert [pair.pair_id for pair in captured_execution["value"].pair_candidates] == ["PAIR_C_D"]
+    filter_events = [
+        payload
+        for event, payload in progress_events
+        if event == "validation_pair_filter_applied"
+    ]
+    assert len(filter_events) == 1
+    assert filter_events[0]["requested_pair_count"] == 2
+    assert filter_events[0]["requested_pair_index_start"] == 2
+    assert filter_events[0]["requested_pair_index_end"] == 2
+    assert filter_events[0]["matched_pair_count"] == 1
+
+
 def test_step2_segment_poc_cli_writes_progress_and_perf_files(tmp_path: Path, monkeypatch) -> None:
     out_root = tmp_path / "step2_cli_run"
 
@@ -2972,6 +3071,8 @@ def test_step2_segment_poc_cli_writes_progress_and_perf_files(tmp_path: Path, mo
         debug=False,
         trace_validation_pair_ids=["PAIR_A_B"],
         only_validation_pair_ids=["PAIR_A_B"],
+        validation_pair_index_start=1,
+        validation_pair_index_end=1,
     )
 
     exit_code = step2_segment_poc.run_step2_segment_poc_cli(args)

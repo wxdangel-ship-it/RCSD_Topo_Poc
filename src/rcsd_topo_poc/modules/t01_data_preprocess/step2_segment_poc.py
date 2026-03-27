@@ -239,6 +239,8 @@ def _format_cli_progress_details(payload: dict[str, Any]) -> str:
         "semantic_endpoint_road_count",
         "undirected_node_count",
         "requested_pair_count",
+        "requested_pair_index_start",
+        "requested_pair_index_end",
         "matched_pair_count",
         "output_dir",
         "gc_collected_objects",
@@ -2407,9 +2409,21 @@ def run_step2_segment_poc(
     assume_working_layers: bool = False,
     trace_validation_pair_ids: Optional[Iterable[str]] = None,
     only_validation_pair_ids: Optional[Iterable[str]] = None,
+    validation_pair_index_start: Optional[int] = None,
+    validation_pair_index_end: Optional[int] = None,
 ) -> list[Step2StrategyResult]:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
+    if validation_pair_index_start is not None and validation_pair_index_start < 1:
+        raise ValueError("validation_pair_index_start must be >= 1.")
+    if validation_pair_index_end is not None and validation_pair_index_end < 1:
+        raise ValueError("validation_pair_index_end must be >= 1.")
+    if (
+        validation_pair_index_start is not None
+        and validation_pair_index_end is not None
+        and validation_pair_index_start > validation_pair_index_end
+    ):
+        raise ValueError("validation_pair_index_start must be <= validation_pair_index_end.")
 
     resolved_out_root = Path(out_root)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
@@ -2456,6 +2470,9 @@ def run_step2_segment_poc(
     strategy_count = len(strategy_config_paths)
     trace_pair_ids = set(trace_validation_pair_ids or ())
     only_pair_ids = set(only_validation_pair_ids or ())
+    pair_index_range_enabled = (
+        validation_pair_index_start is not None or validation_pair_index_end is not None
+    )
 
     for strategy_index, strategy_path in enumerate(strategy_config_paths, start=1):
         _emit_progress(
@@ -2515,10 +2532,21 @@ def run_step2_segment_poc(
         )
 
         execution = _compact_execution_for_validation(execution)
-        if only_pair_ids:
+        if only_pair_ids or pair_index_range_enabled:
             filtered_pairs = [
-                pair for pair in execution.pair_candidates
-                if pair.pair_id in only_pair_ids
+                pair
+                for pair_index, pair in enumerate(execution.pair_candidates, start=1)
+                if (
+                    not only_pair_ids or pair.pair_id in only_pair_ids
+                )
+                and (
+                    validation_pair_index_start is None
+                    or pair_index >= validation_pair_index_start
+                )
+                and (
+                    validation_pair_index_end is None
+                    or pair_index <= validation_pair_index_end
+                )
             ]
             _emit_progress(
                 progress_callback,
@@ -2527,6 +2555,8 @@ def run_step2_segment_poc(
                 strategy_count=strategy_count,
                 strategy_id=strategy.strategy_id,
                 requested_pair_count=len(only_pair_ids),
+                requested_pair_index_start=validation_pair_index_start,
+                requested_pair_index_end=validation_pair_index_end,
                 matched_pair_count=len(filtered_pairs),
             )
             execution = replace(execution, pair_candidates=filtered_pairs)
@@ -2644,6 +2674,8 @@ def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
             progress_callback=progress_callback,
             trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
             only_validation_pair_ids=list(getattr(args, "only_validation_pair_ids", None) or []),
+            validation_pair_index_start=getattr(args, "validation_pair_index_start", None),
+            validation_pair_index_end=getattr(args, "validation_pair_index_end", None),
         )
     except Exception as exc:
         _write_step2_cli_progress_snapshot(

@@ -297,6 +297,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional Step2 validation pair_id filter. Repeat to validate only selected pairs after full candidate search.",
     )
     p_t02.add_argument(
+        "--validation-pair-index-start",
+        type=int,
+        help="Optional 1-based Step2 validation pair index start filter, applied after full candidate search.",
+    )
+    p_t02.add_argument(
+        "--validation-pair-index-end",
+        type=int,
+        help="Optional 1-based Step2 validation pair index end filter, applied after full candidate search.",
+    )
+    p_t02.add_argument(
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_step2_segment_poc/<run_id>.",
     )

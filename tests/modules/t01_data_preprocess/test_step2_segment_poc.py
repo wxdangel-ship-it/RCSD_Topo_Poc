@@ -1040,6 +1040,34 @@ def test_step2_segment_prunes_bridge_connected_side_cycle(tmp_path: Path) -> Non
     assert ("r97", "segment_disconnected_component_prune") in cut_reasons
 
 
+def test_collect_segment_path_road_ids_excludes_side_cycle_attached_at_articulation() -> None:
+    roads = [
+        _road_record("r12", "1", "2", coords=((0.0, 0.0), (1.0, 0.0))),
+        _road_record("r23", "2", "3", coords=((1.0, 0.0), (2.0, 0.0))),
+        _road_record("r24", "2", "4", coords=((1.0, 0.0), (1.5, 0.5))),
+        _road_record("r45", "4", "5", coords=((1.5, 0.5), (2.0, 1.0))),
+        _road_record("r52", "5", "2", coords=((2.0, 1.0), (1.0, 0.0))),
+    ]
+    context = _minimal_context(roads)
+    pair = _pair_record("S2X:1__3", "1", "3", ("r12", "r23"))
+    road_endpoints = {
+        "r12": ("1", "2"),
+        "r23": ("2", "3"),
+        "r24": ("2", "4"),
+        "r45": ("4", "5"),
+        "r52": ("5", "2"),
+    }
+
+    path_road_ids = step2_trunk_utils._collect_segment_path_road_ids(
+        pair,
+        context=context,
+        road_endpoints=road_endpoints,
+        allowed_road_ids=set(road_endpoints),
+    )
+
+    assert path_road_ids == {"r12", "r23"}
+
+
 def test_step2_validates_through_collapsed_corridor_candidate(tmp_path: Path) -> None:
     road_path, node_path = _build_through_collapsed_corridor_dataset(tmp_path)
     strategy_path = tmp_path / "step2_strategy.json"

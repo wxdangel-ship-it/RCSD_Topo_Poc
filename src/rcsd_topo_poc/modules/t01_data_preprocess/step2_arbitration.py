@@ -277,200 +277,6 @@ def _is_serial_terminal_triangle_overlap(
     return endpoint_node_ids <= touched_node_ids
 
 
-def _selected_option_decision_metrics(
-    option: PairArbitrationOption,
-    decision: PairArbitrationDecision,
-) -> PairArbitrationMetrics:
-    endpoint_grade_major, endpoint_grade_minor = _option_endpoint_priority_grades(option)
-    return PairArbitrationMetrics(
-        endpoint_grade_priority_major=endpoint_grade_major,
-        endpoint_grade_priority_minor=endpoint_grade_minor,
-        endpoint_boundary_penalty=decision.endpoint_boundary_penalty,
-        strong_anchor_win_count=decision.strong_anchor_win_count,
-        corridor_naturalness_score=decision.corridor_naturalness_score,
-        contested_trunk_coverage_count=decision.contested_trunk_coverage_count,
-        contested_trunk_coverage_ratio=decision.contested_trunk_coverage_ratio,
-        pair_support_expansion_penalty=decision.pair_support_expansion_penalty,
-        internal_endpoint_penalty=decision.internal_endpoint_penalty,
-        body_connectivity_support=decision.body_connectivity_support,
-        semantic_conflict_penalty=decision.semantic_conflict_penalty,
-    )
-
-
-def _build_selected_segment_overlap_components(
-    selected_options_by_pair_id: dict[str, PairArbitrationOption],
-) -> tuple[list[tuple[str, ...]], dict[tuple[str, str], set[str]]]:
-    road_to_pair_ids: dict[str, set[str]] = defaultdict(set)
-    for pair_id, option in selected_options_by_pair_id.items():
-        for road_id in option.segment_road_ids:
-            road_to_pair_ids[road_id].add(pair_id)
-
-    adjacency: dict[str, set[str]] = defaultdict(set)
-    shared_segment_road_ids_by_pair_pair: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for road_id, pair_ids in road_to_pair_ids.items():
-        ordered_pair_ids = sorted(pair_ids)
-        if len(ordered_pair_ids) <= 1:
-            continue
-        for index, pair_id in enumerate(ordered_pair_ids):
-            for other_pair_id in ordered_pair_ids[index + 1 :]:
-                adjacency[pair_id].add(other_pair_id)
-                adjacency[other_pair_id].add(pair_id)
-                shared_segment_road_ids_by_pair_pair[(pair_id, other_pair_id)].add(road_id)
-
-    if not adjacency:
-        return [], {}
-
-    pair_ids = sorted(adjacency)
-    components = _build_conflict_components(pair_ids, adjacency)
-    return components, shared_segment_road_ids_by_pair_pair
-
-
-def _resolve_selected_segment_body_overlaps(
-    outcome: PairArbitrationOutcome,
-) -> PairArbitrationOutcome:
-    selected_options_by_pair_id = dict(outcome.selected_options_by_pair_id)
-    duplicate_components, shared_segment_road_ids_by_pair_pair = _build_selected_segment_overlap_components(
-        selected_options_by_pair_id
-    )
-    if not duplicate_components:
-        return outcome
-
-    decision_by_pair_id = {decision.pair_id: decision for decision in outcome.decisions}
-    conflict_records = list(outcome.conflict_records)
-    components = list(outcome.components)
-    synthetic_component_index = 1
-
-    for duplicate_pair_ids in duplicate_components:
-        active_pair_ids = tuple(pair_id for pair_id in duplicate_pair_ids if pair_id in selected_options_by_pair_id)
-        if len(active_pair_ids) <= 1:
-            continue
-
-        component_options_by_pair = {
-            pair_id: [selected_options_by_pair_id[pair_id]]
-            for pair_id in active_pair_ids
-        }
-        metrics_by_option_id = {
-            selected_options_by_pair_id[pair_id].option_id: _selected_option_decision_metrics(
-                selected_options_by_pair_id[pair_id],
-                decision_by_pair_id[pair_id],
-            )
-            for pair_id in active_pair_ids
-        }
-        option_conflicts: dict[str, set[str]] = defaultdict(set)
-        contested_road_ids: set[str] = set()
-        for index, pair_id in enumerate(active_pair_ids):
-            left_option = selected_options_by_pair_id[pair_id]
-            for other_pair_id in active_pair_ids[index + 1 :]:
-                pair_key = (pair_id, other_pair_id) if pair_id < other_pair_id else (other_pair_id, pair_id)
-                shared_road_ids = shared_segment_road_ids_by_pair_pair.get(pair_key, set())
-                if not shared_road_ids:
-                    continue
-                right_option = selected_options_by_pair_id[other_pair_id]
-                option_conflicts[left_option.option_id].add(right_option.option_id)
-                option_conflicts[right_option.option_id].add(left_option.option_id)
-                contested_road_ids.update(shared_road_ids)
-
-        if not contested_road_ids:
-            continue
-
-        if len(active_pair_ids) <= EXACT_SINGLE_OPTION_COMPONENT_PAIR_LIMIT:
-            component_selected = _solve_component_exact(
-                active_pair_ids,
-                options_by_pair=component_options_by_pair,
-                option_conflicts=option_conflicts,
-                metrics_by_option_id=metrics_by_option_id,
-                strong_anchor_priority_enabled=False,
-            )
-            exact_solver_used = True
-            fallback_greedy_used = False
-        else:
-            component_selected = _solve_component_greedy(
-                active_pair_ids,
-                options_by_pair=component_options_by_pair,
-                option_conflicts=option_conflicts,
-                metrics_by_option_id=metrics_by_option_id,
-            )
-            exact_solver_used = False
-            fallback_greedy_used = True
-
-        synthetic_component_id = f"selected_segment_overlap_{synthetic_component_index:04d}"
-        synthetic_component_index += 1
-        components.append(
-            ConflictComponentSummary(
-                component_id=synthetic_component_id,
-                pair_ids=active_pair_ids,
-                contested_road_ids=_sorted_tuple(contested_road_ids),
-                strong_anchor_node_ids=(),
-                exact_solver_used=exact_solver_used,
-                fallback_greedy_used=fallback_greedy_used,
-                selected_option_ids=tuple(sorted(option.option_id for option in component_selected.values())),
-            )
-        )
-
-        retained_pair_ids = set(component_selected)
-        for pair_id in active_pair_ids:
-            decision = decision_by_pair_id[pair_id]
-            if pair_id in retained_pair_ids:
-                decision_by_pair_id[pair_id] = replace(
-                    decision,
-                    component_id=synthetic_component_id,
-                    selected_option_id=component_selected[pair_id].option_id,
-                )
-                continue
-
-            losing_option = selected_options_by_pair_id.pop(pair_id)
-            retained_conflict_pair_ids = [
-                other_pair_id
-                for other_pair_id in retained_pair_ids
-                if shared_segment_road_ids_by_pair_pair.get(
-                    (pair_id, other_pair_id) if pair_id < other_pair_id else (other_pair_id, pair_id),
-                    set(),
-                )
-            ]
-            strongest_winner_pair_id = max(
-                retained_conflict_pair_ids,
-                key=lambda current_pair_id: (
-                    _option_priority_key(
-                        selected_options_by_pair_id[current_pair_id],
-                        metrics_by_option_id[selected_options_by_pair_id[current_pair_id].option_id],
-                    ),
-                    tuple(-ord(char) for char in selected_options_by_pair_id[current_pair_id].option_id),
-                ),
-            )
-            shared_road_ids: set[str] = set()
-            for other_pair_id in retained_conflict_pair_ids:
-                shared_road_ids.update(
-                    shared_segment_road_ids_by_pair_pair.get(
-                        (pair_id, other_pair_id) if pair_id < other_pair_id else (other_pair_id, pair_id),
-                        set(),
-                    )
-                )
-            conflict_records.append(
-                PairConflictRecord(
-                    pair_id=pair_id,
-                    conflict_pair_id=strongest_winner_pair_id,
-                    conflict_types=("selected_segment_body_overlap",),
-                    shared_road_ids=_sorted_tuple(shared_road_ids),
-                    shared_trunk_road_ids=(),
-                )
-            )
-            decision_by_pair_id[pair_id] = replace(
-                decision,
-                component_id=synthetic_component_id,
-                arbitration_status="lose",
-                lose_reason="selected_segment_body_overlap",
-                selected_option_id=losing_option.option_id,
-            )
-
-    decisions = sorted(decision_by_pair_id.values(), key=lambda item: item.pair_id)
-    return PairArbitrationOutcome(
-        selected_options_by_pair_id=selected_options_by_pair_id,
-        decisions=decisions,
-        conflict_records=conflict_records,
-        components=components,
-    )
-
-
 def _build_pair_conflicts(
     options_by_pair: dict[str, list[PairArbitrationOption]],
     *,
@@ -1021,93 +827,6 @@ def _selection_score(
     )
 
 
-def _selection_totals_zero() -> tuple[int, int, int, int, int, int, float, int, int, float, int, int]:
-    return (0, 0, 0, 0, 0, 0, 0.0, 0, 0, 0.0, 0, 0)
-
-
-def _selection_totals_add(
-    totals: tuple[int, int, int, int, int, int, float, int, int, float, int, int],
-    metrics: PairArbitrationMetrics,
-) -> tuple[int, int, int, int, int, int, float, int, int, float, int, int]:
-    (
-        endpoint_grade_major,
-        endpoint_grade_minor,
-        endpoint_penalty,
-        strong_anchor_wins,
-        corridor_naturalness,
-        contested_count,
-        contested_ratio,
-        pair_support_expansion_penalty,
-        internal_penalty,
-        body_support,
-        semantic_penalty,
-        option_count,
-    ) = totals
-    return (
-        endpoint_grade_major + metrics.endpoint_grade_priority_major,
-        endpoint_grade_minor + metrics.endpoint_grade_priority_minor,
-        endpoint_penalty + metrics.endpoint_boundary_penalty,
-        strong_anchor_wins + metrics.strong_anchor_win_count,
-        corridor_naturalness + metrics.corridor_naturalness_score,
-        contested_count + metrics.contested_trunk_coverage_count,
-        contested_ratio + metrics.contested_trunk_coverage_ratio,
-        pair_support_expansion_penalty + metrics.pair_support_expansion_penalty,
-        internal_penalty + metrics.internal_endpoint_penalty,
-        body_support + metrics.body_connectivity_support,
-        semantic_penalty + metrics.semantic_conflict_penalty,
-        option_count + 1,
-    )
-
-
-def _selection_score_from_totals(
-    totals: tuple[int, int, int, int, int, int, float, int, int, float, int, int],
-    *,
-    strong_anchor_priority_enabled: bool,
-) -> tuple[float, ...]:
-    (
-        endpoint_grade_major,
-        endpoint_grade_minor,
-        endpoint_penalty,
-        strong_anchor_wins,
-        corridor_naturalness,
-        contested_count,
-        contested_ratio,
-        pair_support_expansion_penalty,
-        internal_penalty,
-        body_support,
-        semantic_penalty,
-        option_count,
-    ) = totals
-    if strong_anchor_priority_enabled:
-        return (
-            float(endpoint_grade_major),
-            float(endpoint_grade_minor),
-            float(contested_count),
-            contested_ratio,
-            float(strong_anchor_wins),
-            float(-pair_support_expansion_penalty),
-            float(-endpoint_penalty),
-            float(-internal_penalty),
-            body_support,
-            float(-semantic_penalty),
-            float(corridor_naturalness),
-            float(option_count),
-        )
-    return (
-        float(endpoint_grade_major),
-        float(endpoint_grade_minor),
-        float(option_count),
-        float(-pair_support_expansion_penalty),
-        float(-endpoint_penalty),
-        float(-internal_penalty),
-        float(-semantic_penalty),
-        float(contested_count),
-        contested_ratio,
-        body_support,
-        float(corridor_naturalness),
-    )
-
-
 def _prefer_subset_dominated_same_pair_options(
     pair_options: list[PairArbitrationOption],
     *,
@@ -1240,17 +959,13 @@ def _solve_component_exact(
     best_score: Optional[tuple[float, ...]] = None
     best_option_ids: tuple[str, ...] = ()
 
-    def _search(
-        index: int,
-        selected_option_ids: tuple[str, ...],
-        blocked_mask: int,
-        selection_totals: tuple[int, int, int, int, int, int, float, int, int, float, int, int],
-    ) -> None:
+    def _search(index: int, selected_option_ids: tuple[str, ...], blocked_option_ids: set[str]) -> None:
         nonlocal best_signature, best_score, best_option_ids
         if index >= len(pair_order):
             signature = tuple(sorted(selected_option_ids))
-            score = _selection_score_from_totals(
-                selection_totals,
+            score = _selection_score(
+                signature,
+                metrics_by_option_id=metrics_by_option_id,
                 strong_anchor_priority_enabled=strong_anchor_priority_enabled,
             )
             if _is_better_selection(
@@ -1265,21 +980,31 @@ def _solve_component_exact(
             return
 
         pair_id = pair_order[index]
-        _search(index + 1, selected_option_ids, blocked_mask, selection_totals)
+        _search(index + 1, selected_option_ids, blocked_option_ids)
 
-        for option in sorted_options_by_pair[pair_id]:
-            option_bit = option_bit_by_id[option.option_id]
-            if blocked_mask & option_bit:
+        options = sorted(
+            options_by_pair[pair_id],
+            key=lambda option: (
+                _option_priority_key(option, metrics_by_option_id[option.option_id]),
+                tuple(-ord(char) for char in option.option_id),
+            ),
+            reverse=True,
+        )
+        for option in options:
+            if option.option_id in blocked_option_ids:
                 continue
-            _search(
-                index + 1,
-                selected_option_ids + (option.option_id,),
-                blocked_mask | option_block_mask_by_id[option.option_id],
-                _selection_totals_add(selection_totals, metrics_by_option_id[option.option_id]),
-            )
+            next_blocked = set(blocked_option_ids)
+            next_blocked.add(option.option_id)
+            next_blocked.update(option_conflicts.get(option.option_id, set()))
+            _search(index + 1, selected_option_ids + (option.option_id,), next_blocked)
 
-    _search(0, (), 0, _selection_totals_zero())
+    _search(0, (), set())
 
+    option_by_id = {
+        option.option_id: option
+        for pair_id in component_pair_ids
+        for option in options_by_pair[pair_id]
+    }
     return {option_by_id[option_id].pair_id: option_by_id[option_id] for option_id in best_option_ids}
 
 
@@ -1790,10 +1515,9 @@ def arbitrate_pair_options(
         )
 
     decisions.sort(key=lambda item: item.pair_id)
-    outcome = PairArbitrationOutcome(
+    return PairArbitrationOutcome(
         selected_options_by_pair_id=selected_options_by_pair_id,
         decisions=decisions,
         conflict_records=conflict_records,
         components=component_summaries,
     )
-    return _resolve_selected_segment_body_overlaps(outcome)

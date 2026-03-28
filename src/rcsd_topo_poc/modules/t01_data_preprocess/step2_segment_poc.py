@@ -4,7 +4,6 @@ import argparse
 import gc
 import inspect
 import json
-import pickle
 from collections import defaultdict, deque
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -43,9 +42,6 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step2_validation_utils import (
     _validation_road_count,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_release_utils import (
-    _compact_branch_cut_info,
-    _compact_option_for_validation_runtime,
-    _compact_option_support_info_for_runtime,
     _compact_execution_for_validation,
     _compact_validation_result_for_release,
 )
@@ -120,8 +116,7 @@ LEFT_TURN_FORMWAY_BIT = 8
 MAX_PATHS_PER_DIRECTION = 12
 MAX_PATH_DEPTH = 64
 SIDE_ACCESS_SAMPLE_STEP_M = MAX_SIDE_ACCESS_DISTANCE_M / 2.0
-VALIDATION_PROGRESS_CHECKPOINT_INTERVAL = 1000
-VALIDATION_BATCH_SIZE = 1000
+VALIDATION_PROGRESS_CHECKPOINT_INTERVAL = 100
 VALIDATION_PHASE_TRACE_PAIR_LIMIT = 50
 
 
@@ -201,150 +196,6 @@ def _compact_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _now_text() -> str:
-    return datetime.now().isoformat(timespec="seconds")
-
-
-def _write_json_doc(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
-
-
-def _write_pickle_doc(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as fp:
-        pickle.dump(payload, fp, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-def _read_pickle_doc(path: Path) -> Any:
-    with path.open("rb") as fp:
-        return pickle.load(fp)
-
-
-def _format_cli_progress_details(payload: dict[str, Any]) -> str:
-    detail_keys = (
-        "strategy_id",
-        "strategy_index",
-        "strategy_count",
-        "pair_index",
-        "validation_count",
-        "pair_id",
-        "phase",
-        "validated_status",
-        "reject_reason",
-        "trunk_found",
-        "candidate_road_count",
-        "pruned_road_count",
-        "segment_road_count",
-        "candidate_pair_count",
-        "validated_pair_count",
-        "rejected_pair_count",
-        "search_seed_count",
-        "terminate_count",
-        "road_count",
-        "physical_node_count",
-        "semantic_node_count",
-        "semantic_endpoint_road_count",
-        "undirected_node_count",
-        "requested_pair_count",
-        "requested_pair_index_start",
-        "requested_pair_index_end",
-        "matched_pair_count",
-        "output_dir",
-        "gc_collected_objects",
-    )
-    parts: list[str] = []
-    for key in detail_keys:
-        if key not in payload:
-            continue
-        parts.append(f"{key}={payload[key]}")
-    return " ".join(parts)
-
-
-def _write_step2_cli_progress_snapshot(
-    *,
-    out_path: Path,
-    run_id: str,
-    status: str,
-    message: Optional[str],
-    current_event: Optional[str] = None,
-    failed_event: Optional[str] = None,
-) -> None:
-    _write_json_doc(
-        out_path,
-        {
-            "run_id": run_id,
-            "status": status,
-            "updated_at": _now_text(),
-            "current_event": current_event,
-            "failed_event": failed_event,
-            "message": message,
-        },
-    )
-
-
-def _make_step2_cli_progress_callback(
-    *,
-    run_id: str,
-    out_root: Path,
-) -> tuple[Step2ProgressCallback, Path, Path]:
-    progress_path = out_root / "t01_step2_segment_poc_progress.json"
-    perf_markers_path = out_root / "t01_step2_segment_poc_perf_markers.jsonl"
-
-    def _callback(event: str, payload: dict[str, Any]) -> None:
-        control_payload = dict(payload)
-        perf_log = bool(control_payload.pop("_perf_log", True))
-        stdout_log = bool(control_payload.pop("_stdout_log", True))
-        details = _format_cli_progress_details(control_payload)
-        message = f"Step2 {event}."
-        if details:
-            message = f"{message} {details}"
-        _write_step2_cli_progress_snapshot(
-            out_path=progress_path,
-            run_id=run_id,
-            status="running",
-            current_event=event,
-            message=message,
-        )
-        if perf_log:
-            _append_jsonl(
-                perf_markers_path,
-                {
-                    "event": "step2_subprogress",
-                    "at": _now_text(),
-                    "run_id": run_id,
-                    "substage_event": event,
-                    "payload": control_payload,
-                },
-            )
-        if stdout_log:
-            suffix = f" {details}" if details else ""
-            print(f"[{_now_text()}] step2:{event}{suffix}", flush=True)
-
-    _write_step2_cli_progress_snapshot(
-        out_path=progress_path,
-        run_id=run_id,
-        status="initializing",
-        current_event=None,
-        message="Step2 CLI initialized.",
-    )
-    _append_jsonl(
-        perf_markers_path,
-        {
-            "event": "step2_run_start",
-            "at": _now_text(),
-            "run_id": run_id,
-        },
-    )
-    return _callback, progress_path, perf_markers_path
-
-
 def _emit_progress(
     progress_callback: Optional[Step2ProgressCallback],
     event: str,
@@ -353,167 +204,6 @@ def _emit_progress(
     if progress_callback is None:
         return
     progress_callback(event, payload)
-
-
-def _rebuild_full_validation_option(
-    pair: PairRecord,
-    *,
-    selected_option_id: str,
-    context: Step1GraphContext,
-    road_endpoints: dict[str, tuple[str, str]],
-    undirected_adjacency: dict[str, tuple[TraversalEdge, ...]],
-    terminate_ids: set[str],
-    hard_stop_node_ids: set[str],
-    boundary_node_ids: set[str],
-    through_rule: ThroughRuleSpec,
-    formway_mode: str,
-    left_turn_formway_bit: int,
-) -> PairArbitrationOption:
-    candidate_road_ids, boundary_terminate_ids = _build_candidate_channel(
-        pair,
-        undirected_adjacency=undirected_adjacency,
-        boundary_node_ids=boundary_node_ids,
-    )
-    if not candidate_road_ids:
-        raise RuntimeError(f"Selected Step2 option {selected_option_id} lost candidate channel during winner rebuild.")
-
-    pruned_road_ids, branch_cut_infos, disconnected_after_prune = _prune_candidate_channel(
-        pair,
-        candidate_road_ids=candidate_road_ids,
-        road_endpoints=road_endpoints,
-        terminate_ids=terminate_ids,
-        hard_stop_node_ids=hard_stop_node_ids,
-    )
-    if disconnected_after_prune:
-        raise RuntimeError(
-            f"Selected Step2 option {selected_option_id} became disconnected during winner rebuild."
-        )
-
-    trunk_choices, reject_reason, warning_codes, trunk_gate_info = _evaluate_trunk_choices(
-        pair,
-        context=context,
-        candidate_road_ids=candidate_road_ids,
-        pruned_road_ids=pruned_road_ids,
-        branch_cut_infos=branch_cut_infos,
-        road_endpoints=road_endpoints,
-        through_rule=through_rule,
-        formway_mode=formway_mode,
-        left_turn_formway_bit=left_turn_formway_bit,
-    )
-    if not trunk_choices:
-        raise RuntimeError(
-            f"Selected Step2 option {selected_option_id} lost legal trunk choices during winner rebuild: {reject_reason}."
-        )
-
-    endpoint_priority_grades = _pair_endpoint_priority_grades(pair, context=context)
-    for zero_based_option_index, choice in enumerate(trunk_choices):
-        option_index = zero_based_option_index + 1
-        option_id = f"{pair.pair_id}::opt_{option_index:02d}"
-        trunk_candidate = choice.candidate
-        alternative_trunk_only_road_ids = _alternative_trunk_only_road_ids(
-            trunk_choices,
-            current_choice_index=zero_based_option_index,
-        )
-        internal_boundary_node_ids = _collect_internal_boundary_nodes(
-            pair,
-            candidate=trunk_candidate,
-            blocked_node_ids=hard_stop_node_ids,
-        )
-        if internal_boundary_node_ids:
-            continue
-
-        current_boundary_terminate_node_ids = _collect_internal_boundary_nodes(
-            pair,
-            candidate=trunk_candidate,
-            blocked_node_ids=boundary_terminate_ids - hard_stop_node_ids,
-        )
-        if current_boundary_terminate_node_ids:
-            continue
-
-        trunk_mode = _trunk_candidate_mode(trunk_candidate)
-        if trunk_mode in {"through_collapsed_corridor", "mirrored_one_sided_corridor"}:
-            segment_candidate_road_ids = trunk_candidate.road_ids
-            segment_road_ids = trunk_candidate.road_ids
-            segment_cut_infos: list[dict[str, Any]] = []
-        else:
-            segment_body_allowed_road_ids = _expand_segment_body_allowed_road_ids(
-                pruned_road_ids=pruned_road_ids,
-                branch_cut_infos=branch_cut_infos,
-                undirected_adjacency=undirected_adjacency,
-                boundary_node_ids=boundary_node_ids,
-                road_endpoints=road_endpoints,
-            )
-            if alternative_trunk_only_road_ids:
-                segment_body_allowed_road_ids -= alternative_trunk_only_road_ids
-            segment_candidate_road_ids = _build_segment_body_candidate_channel(
-                pair,
-                trunk_road_ids=trunk_candidate.road_ids,
-                undirected_adjacency=undirected_adjacency,
-                boundary_node_ids=boundary_node_ids,
-                road_endpoints=road_endpoints,
-                allowed_road_ids=segment_body_allowed_road_ids,
-            )
-            segment_road_ids, segment_cut_infos = _refine_segment_roads(
-                pair,
-                context=context,
-                road_endpoints=road_endpoints,
-                pruned_road_ids=segment_candidate_road_ids,
-                trunk_road_ids=trunk_candidate.road_ids,
-                through_rule=through_rule,
-            )
-
-        if option_id != selected_option_id:
-            continue
-
-        sorted_candidate_road_ids = tuple(sorted(candidate_road_ids, key=_sort_key))
-        sorted_pruned_road_ids = tuple(sorted(pruned_road_ids, key=_sort_key))
-        sorted_segment_candidate_road_ids = tuple(sorted(segment_candidate_road_ids, key=_sort_key))
-        sorted_segment_road_ids = tuple(sorted(segment_road_ids, key=_sort_key))
-        sorted_branch_cut_road_ids = tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key))
-        sorted_boundary_terminate_node_ids = tuple(sorted(boundary_terminate_ids, key=_sort_key))
-        support_info = {
-            "boundary_terminate_node_ids": list(sorted_boundary_terminate_node_ids),
-            "branch_cut_infos": branch_cut_infos,
-            "candidate_channel_road_ids": list(sorted_candidate_road_ids),
-            "pruned_road_ids": list(sorted_pruned_road_ids),
-            "pair_support_road_ids": sorted(
-                set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
-                key=_sort_key,
-            ),
-            "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
-            "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
-            "trunk_signed_area": trunk_candidate.signed_area,
-            "trunk_mode": trunk_mode,
-            "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
-            "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
-            "endpoint_priority_grades": list(endpoint_priority_grades),
-            **choice.support_info,
-            **trunk_gate_info,
-            "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
-            "segment_body_candidate_road_ids": list(sorted_segment_candidate_road_ids),
-            "segment_body_candidate_cut_infos": segment_cut_infos,
-            "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
-        }
-        return PairArbitrationOption(
-            option_id=option_id,
-            pair_id=pair.pair_id,
-            a_node_id=pair.a_node_id,
-            b_node_id=pair.b_node_id,
-            trunk_mode=trunk_mode,
-            counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
-            warning_codes=choice.warning_codes,
-            candidate_channel_road_ids=(),
-            pruned_road_ids=sorted_pruned_road_ids,
-            trunk_road_ids=trunk_candidate.road_ids,
-            segment_candidate_road_ids=sorted_segment_candidate_road_ids,
-            segment_road_ids=sorted_segment_road_ids,
-            branch_cut_road_ids=(),
-            boundary_terminate_node_ids=(),
-            transition_same_dir_blocked=False,
-            support_info=support_info,
-        )
-
-    raise RuntimeError(f"Selected Step2 option {selected_option_id} was not rebuilt from pair {pair.pair_id}.")
 
 
 
@@ -1967,8 +1657,6 @@ def _validate_pair_candidates(
     compact_release_payloads: bool = False,
     progress_callback: Optional[Step2ProgressCallback] = None,
     return_arbitration_outcome: bool = False,
-    trace_validation_pair_ids: Optional[set[str]] = None,
-    validation_batch_spill_dir: Optional[Path] = None,
 ) -> Union[list[PairValidationResult], tuple[list[PairValidationResult], PairArbitrationOutcome]]:
     terminate_ids = set(execution.terminate_ids)
     hard_stop_node_ids = set(execution.strategy.hard_stop_node_ids)
@@ -1984,7 +1672,6 @@ def _validate_pair_candidates(
     semantic_conflict_node_ids = _arbitration_semantic_conflict_node_ids(context)
     strong_anchor_node_ids = _arbitration_strong_anchor_node_ids(context)
     tjunction_anchor_node_ids = _arbitration_tjunction_anchor_node_ids(context)
-    trace_pair_ids = set(trace_validation_pair_ids or ())
 
     _emit_progress(progress_callback, "validation_started", validation_count=validation_count)
 
@@ -2005,10 +1692,7 @@ def _validate_pair_candidates(
             "phase": phase,
             **extra_payload,
         }
-        perf_trace_enabled = (
-            pair.pair_id in trace_pair_ids
-            or pair_index <= VALIDATION_PHASE_TRACE_PAIR_LIMIT
-        )
+        perf_trace_enabled = pair_index <= VALIDATION_PHASE_TRACE_PAIR_LIMIT
         _emit_progress(
             progress_callback,
             "validation_pair_state",
@@ -2021,94 +1705,6 @@ def _validate_pair_candidates(
 
     illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
     options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
-    batch_illegal_validations_by_pair_id: dict[str, PairValidationResult] = {}
-    batch_options_by_pair_id: dict[str, list[PairArbitrationOption]] = {}
-    spilled_batch_paths: list[Path] = []
-    spill_validation_batches = (
-        compact_release_payloads
-        and validation_batch_spill_dir is not None
-        and validation_count > 0
-    )
-    if spill_validation_batches:
-        validation_batch_spill_dir.mkdir(parents=True, exist_ok=True)
-
-    def _store_illegal_validation(validation: PairValidationResult) -> None:
-        batch_illegal_validations_by_pair_id[validation.pair_id] = validation
-
-    def _store_pair_options(pair_id: str, pair_options: list[PairArbitrationOption]) -> None:
-        batch_options_by_pair_id[pair_id] = pair_options
-
-    def _flush_validation_batch() -> None:
-        if not batch_illegal_validations_by_pair_id and not batch_options_by_pair_id:
-            return
-        pending_illegal_pair_count = len(batch_illegal_validations_by_pair_id)
-        pending_legal_pair_count = len(batch_options_by_pair_id)
-        pending_option_count = sum(len(pair_options) for pair_options in batch_options_by_pair_id.values())
-        next_batch_index = len(spilled_batch_paths) + 1
-        _emit_progress(
-            progress_callback,
-            "validation_batch_flush_started",
-            batch_index=next_batch_index,
-            pending_illegal_pair_count=pending_illegal_pair_count,
-            pending_legal_pair_count=pending_legal_pair_count,
-            pending_option_count=pending_option_count,
-        )
-        if compact_release_payloads:
-            compact_illegal_validations_by_pair_id = {
-                pair_id: _compact_validation_result_for_release(
-                    validation,
-                    keep_tighten_fields=False,
-                )
-                for pair_id, validation in batch_illegal_validations_by_pair_id.items()
-            }
-            compact_options_by_pair_id = {
-                pair_id: [
-                    option
-                    for option in pair_options
-                ]
-                for pair_id, pair_options in batch_options_by_pair_id.items()
-            }
-        else:
-            compact_illegal_validations_by_pair_id = dict(batch_illegal_validations_by_pair_id)
-            compact_options_by_pair_id = dict(batch_options_by_pair_id)
-        if spill_validation_batches:
-            batch_index = len(spilled_batch_paths) + 1
-            batch_path = validation_batch_spill_dir / f"validation_batch_{batch_index:04d}.pkl"
-            _write_pickle_doc(
-                batch_path,
-                {
-                    "illegal_validations_by_pair_id": compact_illegal_validations_by_pair_id,
-                    "options_by_pair_id": compact_options_by_pair_id,
-                },
-            )
-            spilled_batch_paths.append(batch_path)
-            _emit_progress(
-                progress_callback,
-                "validation_batch_spilled",
-                batch_index=batch_index,
-                spill_path=str(batch_path),
-                spilled_illegal_pair_count=len(compact_illegal_validations_by_pair_id),
-                spilled_legal_pair_count=len(compact_options_by_pair_id),
-            )
-        else:
-            illegal_validations_by_pair_id.update(compact_illegal_validations_by_pair_id)
-            options_by_pair_id.update(compact_options_by_pair_id)
-        batch_illegal_validations_by_pair_id.clear()
-        batch_options_by_pair_id.clear()
-        if compact_release_payloads or spill_validation_batches:
-            gc.collect()
-        _emit_progress(
-            progress_callback,
-            "validation_batch_flush_completed",
-            batch_index=next_batch_index,
-            total_spilled_batch_count=len(spilled_batch_paths),
-            resident_illegal_pair_count=len(illegal_validations_by_pair_id),
-            resident_legal_pair_count=len(options_by_pair_id),
-        )
-
-    def _flush_validation_batch_if_needed(pair_index: int) -> None:
-        if pair_index == validation_count or pair_index % VALIDATION_BATCH_SIZE == 0:
-            _flush_validation_batch()
 
     for pair_index, pair in enumerate(execution.pair_candidates, start=1):
         _emit_validation_pair_phase(
@@ -2141,7 +1737,7 @@ def _validate_pair_candidates(
         )
 
         if not candidate_road_ids:
-            _store_illegal_validation(PairValidationResult(
+            illegal_validations_by_pair_id[pair.pair_id] = PairValidationResult(
                 pair_id=pair.pair_id,
                 a_node_id=pair.a_node_id,
                 b_node_id=pair.b_node_id,
@@ -2162,8 +1758,7 @@ def _validate_pair_candidates(
                 boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
                 transition_same_dir_blocked=False,
                 support_info={"boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key)},
-            ))
-            _flush_validation_batch_if_needed(pair_index)
+            )
             continue
 
         pruned_road_ids, branch_cut_infos, disconnected_after_prune = _prune_candidate_channel(
@@ -2181,7 +1776,7 @@ def _validate_pair_candidates(
             pruned_road_count=len(pruned_road_ids),
         )
         if disconnected_after_prune:
-            _store_illegal_validation(PairValidationResult(
+            illegal_validations_by_pair_id[pair.pair_id] = PairValidationResult(
                 pair_id=pair.pair_id,
                 a_node_id=pair.a_node_id,
                 b_node_id=pair.b_node_id,
@@ -2207,8 +1802,7 @@ def _validate_pair_candidates(
                     "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
                     "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
                 },
-            ))
-            _flush_validation_batch_if_needed(pair_index)
+            )
             continue
 
         trunk_choices, reject_reason, warning_codes, trunk_gate_info = _evaluate_trunk_choices(
@@ -2231,7 +1825,7 @@ def _validate_pair_candidates(
             trunk_found=bool(trunk_choices),
         )
         if not trunk_choices:
-            _store_illegal_validation(PairValidationResult(
+            illegal_validations_by_pair_id[pair.pair_id] = PairValidationResult(
                 pair_id=pair.pair_id,
                 a_node_id=pair.a_node_id,
                 b_node_id=pair.b_node_id,
@@ -2258,8 +1852,7 @@ def _validate_pair_candidates(
                     "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
                     **trunk_gate_info,
                 },
-            ))
-            _flush_validation_batch_if_needed(pair_index)
+            )
             continue
 
         pair_options: list[PairArbitrationOption] = []
@@ -2418,157 +2011,83 @@ def _validate_pair_candidates(
                     option_id=option_id,
                 )
 
-            sorted_candidate_road_ids = tuple(sorted(candidate_road_ids, key=_sort_key))
-            sorted_pruned_road_ids = tuple(sorted(pruned_road_ids, key=_sort_key))
-            sorted_segment_candidate_road_ids = tuple(sorted(segment_candidate_road_ids, key=_sort_key))
-            sorted_segment_road_ids = tuple(sorted(segment_road_ids, key=_sort_key))
-            sorted_branch_cut_road_ids = tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key))
-            sorted_boundary_terminate_node_ids = tuple(sorted(boundary_terminate_ids, key=_sort_key))
-
-            if compact_release_payloads:
-                runtime_support_info = _compact_option_support_info_for_runtime(
-                    {
-                        "branch_cut_infos": [
-                            _compact_branch_cut_info(dict(info))
-                            for info in branch_cut_infos
-                        ],
-                        "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
-                        "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
-                        "trunk_signed_area": trunk_candidate.signed_area,
-                        "trunk_mode": trunk_mode,
-                        "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
-                        "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
-                        "endpoint_priority_grades": list(endpoint_priority_grades),
-                        **choice.support_info,
-                        **trunk_gate_info,
-                    },
-                    candidate_channel_road_count=len(sorted_candidate_road_ids),
-                    pruned_road_count=len(sorted_pruned_road_ids),
-                    trunk_road_count=len(trunk_candidate.road_ids),
-                    segment_body_candidate_road_count=len(sorted_segment_candidate_road_ids),
-                    segment_body_road_count=len(sorted_segment_road_ids),
-                    branch_cut_road_count=len(sorted_branch_cut_road_ids),
-                    boundary_terminate_node_count=len(sorted_boundary_terminate_node_ids),
-                )
-                pair_options.append(
-                    PairArbitrationOption(
-                        option_id=option_id,
-                        pair_id=pair.pair_id,
-                        a_node_id=pair.a_node_id,
-                        b_node_id=pair.b_node_id,
-                        trunk_mode=trunk_mode,
-                        counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
-                        warning_codes=choice.warning_codes,
-                        candidate_channel_road_ids=(),
-                        pruned_road_ids=sorted_pruned_road_ids,
-                        trunk_road_ids=trunk_candidate.road_ids,
-                        segment_candidate_road_ids=sorted_segment_candidate_road_ids,
-                        segment_road_ids=sorted_segment_road_ids,
-                        branch_cut_road_ids=(),
-                        boundary_terminate_node_ids=(),
-                        transition_same_dir_blocked=False,
-                        support_info=runtime_support_info,
-                    )
-                )
-            else:
-                support_info = {
-                    "boundary_terminate_node_ids": list(sorted_boundary_terminate_node_ids),
-                    "branch_cut_infos": branch_cut_infos,
-                    "candidate_channel_road_ids": list(sorted_candidate_road_ids),
-                    "pruned_road_ids": list(sorted_pruned_road_ids),
-                    "pair_support_road_ids": sorted(
-                        set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
-                        key=_sort_key,
-                    ),
-                    "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
-                    "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
-                    "trunk_signed_area": trunk_candidate.signed_area,
-                    "trunk_mode": trunk_mode,
-                    "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
-                    "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
-                    "endpoint_priority_grades": list(endpoint_priority_grades),
-                    **choice.support_info,
-                    **trunk_gate_info,
-                    "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
-                    "segment_body_candidate_road_ids": list(sorted_segment_candidate_road_ids),
-                    "segment_body_candidate_cut_infos": segment_cut_infos,
-                    "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
-                }
-                pair_options.append(
-                    PairArbitrationOption(
-                        option_id=option_id,
-                        pair_id=pair.pair_id,
-                        a_node_id=pair.a_node_id,
-                        b_node_id=pair.b_node_id,
-                        trunk_mode=trunk_mode,
-                        counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
-                        warning_codes=choice.warning_codes,
-                        candidate_channel_road_ids=sorted_candidate_road_ids,
-                        pruned_road_ids=sorted_pruned_road_ids,
-                        trunk_road_ids=trunk_candidate.road_ids,
-                        segment_candidate_road_ids=sorted_segment_candidate_road_ids,
-                        segment_road_ids=sorted_segment_road_ids,
-                        branch_cut_road_ids=sorted_branch_cut_road_ids,
-                        boundary_terminate_node_ids=sorted_boundary_terminate_node_ids,
-                        transition_same_dir_blocked=False,
-                        support_info=support_info,
-                    )
-                )
-
-        if pair_options:
-            _store_pair_options(pair.pair_id, pair_options)
-        else:
-            if pair_fallback_validation is None:
-                pair_fallback_validation = PairValidationResult(
+            support_info = {
+                "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                "branch_cut_infos": branch_cut_infos,
+                "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                "pair_support_road_ids": sorted(
+                    set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
+                    key=_sort_key,
+                ),
+                "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
+                "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
+                "trunk_signed_area": trunk_candidate.signed_area,
+                "trunk_mode": trunk_mode,
+                "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
+                "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
+                "endpoint_priority_grades": list(endpoint_priority_grades),
+                **choice.support_info,
+                **trunk_gate_info,
+                "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
+                "segment_body_candidate_road_ids": list(segment_candidate_road_ids),
+                "segment_body_candidate_cut_infos": segment_cut_infos,
+                "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
+            }
+            pair_options.append(
+                PairArbitrationOption(
+                    option_id=option_id,
                     pair_id=pair.pair_id,
                     a_node_id=pair.a_node_id,
                     b_node_id=pair.b_node_id,
-                    candidate_status="candidate",
-                    validated_status="rejected",
-                    reject_reason="no_valid_segment_body_option",
-                    trunk_mode="none",
-                    trunk_found=False,
-                    counterclockwise_ok=False,
-                    left_turn_excluded_mode=formway_mode,
-                    warning_codes=warning_codes,
+                    trunk_mode=trunk_mode,
+                    counterclockwise_ok=_trunk_candidate_counterclockwise_ok(trunk_candidate),
+                    warning_codes=choice.warning_codes,
                     candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
                     pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
-                    trunk_road_ids=(),
-                    segment_road_ids=(),
-                    residual_road_ids=(),
+                    trunk_road_ids=trunk_candidate.road_ids,
+                    segment_candidate_road_ids=tuple(sorted(segment_candidate_road_ids, key=_sort_key)),
+                    segment_road_ids=tuple(sorted(segment_road_ids, key=_sort_key)),
                     branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
                     boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
                     transition_same_dir_blocked=False,
-                    support_info={
-                        "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
-                        "branch_cut_infos": branch_cut_infos,
-                        "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                        "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
-                    },
+                    support_info=support_info,
                 )
-            _store_illegal_validation(pair_fallback_validation)
+            )
 
-        _flush_validation_batch_if_needed(pair_index)
+        if pair_options:
+            options_by_pair_id[pair.pair_id] = pair_options
+            continue
 
-    _flush_validation_batch()
-    if spill_validation_batches:
-        _emit_progress(
-            progress_callback,
-            "validation_batch_reload_started",
-            spilled_batch_count=len(spilled_batch_paths),
-        )
-        for batch_path in spilled_batch_paths:
-            payload = _read_pickle_doc(batch_path)
-            illegal_validations_by_pair_id.update(payload["illegal_validations_by_pair_id"])
-            options_by_pair_id.update(payload["options_by_pair_id"])
-        gc.collect()
-        _emit_progress(
-            progress_callback,
-            "validation_batch_reload_completed",
-            spilled_batch_count=len(spilled_batch_paths),
-            resident_illegal_pair_count=len(illegal_validations_by_pair_id),
-            resident_legal_pair_count=len(options_by_pair_id),
-        )
+        if pair_fallback_validation is None:
+            pair_fallback_validation = PairValidationResult(
+                pair_id=pair.pair_id,
+                a_node_id=pair.a_node_id,
+                b_node_id=pair.b_node_id,
+                candidate_status="candidate",
+                validated_status="rejected",
+                reject_reason="no_valid_segment_body_option",
+                trunk_mode="none",
+                trunk_found=False,
+                counterclockwise_ok=False,
+                left_turn_excluded_mode=formway_mode,
+                warning_codes=warning_codes,
+                candidate_channel_road_ids=tuple(sorted(candidate_road_ids, key=_sort_key)),
+                pruned_road_ids=tuple(sorted(pruned_road_ids, key=_sort_key)),
+                trunk_road_ids=(),
+                segment_road_ids=(),
+                residual_road_ids=(),
+                branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
+                boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
+                transition_same_dir_blocked=False,
+                support_info={
+                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                    "branch_cut_infos": branch_cut_infos,
+                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                },
+            )
+        illegal_validations_by_pair_id[pair.pair_id] = pair_fallback_validation
 
     _emit_progress(
         progress_callback,
@@ -2596,6 +2115,11 @@ def _validate_pair_candidates(
     )
 
     decision_by_pair_id = {decision.pair_id: decision for decision in arbitration_outcome.decisions}
+    option_by_id = {
+        option.option_id: option
+        for options in options_by_pair_id.values()
+        for option in options
+    }
     winning_pair_ids = {
         decision.pair_id
         for decision in arbitration_outcome.decisions
@@ -2610,36 +2134,11 @@ def _validate_pair_candidates(
         elif right_wins and not left_wins:
             conflict_pair_ids_by_loser.setdefault(record.pair_id, record.conflict_pair_id)
 
-    provisional_results: list[PairValidationResult] = []
-    rebuilt_winner_option_by_pair_id: dict[str, PairArbitrationOption] = {}
+    provisional_results_by_pair_id: dict[str, PairValidationResult] = {}
     for pair_index, pair in enumerate(execution.pair_candidates, start=1):
         decision = decision_by_pair_id[pair.pair_id]
         if pair.pair_id in options_by_pair_id:
-            pair_options = options_by_pair_id[pair.pair_id]
-            selected_option_id = decision.selected_option_id or pair_options[0].option_id
-            selected_option = next(
-                option
-                for option in pair_options
-                if option.option_id == selected_option_id
-            )
-            if compact_release_payloads and decision.arbitration_status == "win":
-                rebuilt_option = rebuilt_winner_option_by_pair_id.get(pair.pair_id)
-                if rebuilt_option is None:
-                    rebuilt_option = _rebuild_full_validation_option(
-                        pair,
-                        selected_option_id=selected_option_id,
-                        context=context,
-                        road_endpoints=road_endpoints,
-                        undirected_adjacency=undirected_adjacency,
-                        terminate_ids=terminate_ids,
-                        hard_stop_node_ids=hard_stop_node_ids,
-                        boundary_node_ids=boundary_node_ids,
-                        through_rule=execution.strategy.through_rule,
-                        formway_mode=formway_mode,
-                        left_turn_formway_bit=left_turn_formway_bit,
-                    )
-                    rebuilt_winner_option_by_pair_id[pair.pair_id] = rebuilt_option
-                selected_option = rebuilt_option
+            selected_option = option_by_id[decision.selected_option_id or options_by_pair_id[pair.pair_id][0].option_id]
             result = _pair_validation_from_option(
                 selected_option,
                 decision=decision,
@@ -2660,6 +2159,7 @@ def _validate_pair_candidates(
                     "segment_body_road_count",
                 ),
             )
+            provisional_results_by_pair_id[pair.pair_id] = result
         else:
             result = _single_pair_illegal_validation(
                 illegal_validations_by_pair_id[pair.pair_id],
@@ -2674,10 +2174,9 @@ def _validate_pair_candidates(
                 reject_reason="" if result.reject_reason is None else result.reject_reason,
                 trunk_found=result.trunk_found,
             )
-        provisional_results.append(result)
-    options_by_pair_id.clear()
-    illegal_validations_by_pair_id.clear()
-    rebuilt_winner_option_by_pair_id.clear()
+            provisional_results_by_pair_id[pair.pair_id] = result
+
+    provisional_results = [provisional_results_by_pair_id[pair.pair_id] for pair in execution.pair_candidates]
     provisional_validated_pair_count = sum(
         1 for item in provisional_results if item.validated_status == "validated"
     )
@@ -2738,23 +2237,9 @@ def run_step2_segment_poc(
     retain_validation_details: bool = True,
     progress_callback: Optional[Step2ProgressCallback] = None,
     assume_working_layers: bool = False,
-    trace_validation_pair_ids: Optional[Iterable[str]] = None,
-    only_validation_pair_ids: Optional[Iterable[str]] = None,
-    validation_pair_index_start: Optional[int] = None,
-    validation_pair_index_end: Optional[int] = None,
 ) -> list[Step2StrategyResult]:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
-    if validation_pair_index_start is not None and validation_pair_index_start < 1:
-        raise ValueError("validation_pair_index_start must be >= 1.")
-    if validation_pair_index_end is not None and validation_pair_index_end < 1:
-        raise ValueError("validation_pair_index_end must be >= 1.")
-    if (
-        validation_pair_index_start is not None
-        and validation_pair_index_end is not None
-        and validation_pair_index_start > validation_pair_index_end
-    ):
-        raise ValueError("validation_pair_index_start must be <= validation_pair_index_end.")
 
     resolved_out_root = Path(out_root)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
@@ -2799,11 +2284,6 @@ def run_step2_segment_poc(
     comparison_summary: list[dict[str, Any]] = []
     resolved_run_id = resolved_out_root.name if run_id is None else run_id
     strategy_count = len(strategy_config_paths)
-    trace_pair_ids = set(trace_validation_pair_ids or ())
-    only_pair_ids = set(only_validation_pair_ids or ())
-    pair_index_range_enabled = (
-        validation_pair_index_start is not None or validation_pair_index_end is not None
-    )
 
     for strategy_index, strategy_path in enumerate(strategy_config_paths, start=1):
         _emit_progress(
@@ -2863,34 +2343,6 @@ def run_step2_segment_poc(
         )
 
         execution = _compact_execution_for_validation(execution)
-        if only_pair_ids or pair_index_range_enabled:
-            filtered_pairs = [
-                pair
-                for pair_index, pair in enumerate(execution.pair_candidates, start=1)
-                if (
-                    not only_pair_ids or pair.pair_id in only_pair_ids
-                )
-                and (
-                    validation_pair_index_start is None
-                    or pair_index >= validation_pair_index_start
-                )
-                and (
-                    validation_pair_index_end is None
-                    or pair_index <= validation_pair_index_end
-                )
-            ]
-            _emit_progress(
-                progress_callback,
-                "validation_pair_filter_applied",
-                strategy_index=strategy_index,
-                strategy_count=strategy_count,
-                strategy_id=strategy.strategy_id,
-                requested_pair_count=len(only_pair_ids),
-                requested_pair_index_start=validation_pair_index_start,
-                requested_pair_index_end=validation_pair_index_end,
-                matched_pair_count=len(filtered_pairs),
-            )
-            execution = replace(execution, pair_candidates=filtered_pairs)
         gc.collect()
         compact_release_payloads = not debug and not retain_validation_details
         validation_result = _validate_pair_candidates(
@@ -2903,12 +2355,6 @@ def run_step2_segment_poc(
             compact_release_payloads=compact_release_payloads,
             progress_callback=progress_callback,
             return_arbitration_outcome=True,
-            trace_validation_pair_ids=trace_pair_ids,
-            validation_batch_spill_dir=(
-                strategy_out_dir / "_validation_batches"
-                if compact_release_payloads
-                else None
-            ),
         )
         if isinstance(validation_result, tuple):
             validations, arbitration_outcome = validation_result
@@ -2988,57 +2434,24 @@ def run_step2_segment_poc(
 
 def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=args.out_root, run_id=args.run_id)
-    resolved_out_root.mkdir(parents=True, exist_ok=True)
-    progress_callback, progress_path, perf_markers_path = _make_step2_cli_progress_callback(
-        run_id=resolved_run_id,
+    results = run_step2_segment_poc(
+        road_path=args.road_path,
+        road_layer=args.road_layer,
+        road_crs=args.road_crs,
+        node_path=args.node_path,
+        node_layer=args.node_layer,
+        node_crs=args.node_crs,
+        strategy_config_paths=list(args.strategy_config),
         out_root=resolved_out_root,
+        run_id=resolved_run_id,
+        formway_mode=args.formway_mode,
+        left_turn_formway_bit=args.left_turn_formway_bit,
+        debug=args.debug,
     )
-    try:
-        results = run_step2_segment_poc(
-            road_path=args.road_path,
-            road_layer=args.road_layer,
-            road_crs=args.road_crs,
-            node_path=args.node_path,
-            node_layer=args.node_layer,
-            node_crs=args.node_crs,
-            strategy_config_paths=list(args.strategy_config),
-            out_root=resolved_out_root,
-            run_id=resolved_run_id,
-            formway_mode=args.formway_mode,
-            left_turn_formway_bit=args.left_turn_formway_bit,
-            debug=args.debug,
-            progress_callback=progress_callback,
-            assume_working_layers=bool(getattr(args, "assume_working_layers", False)),
-            trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
-            only_validation_pair_ids=list(getattr(args, "only_validation_pair_ids", None) or []),
-            validation_pair_index_start=getattr(args, "validation_pair_index_start", None),
-            validation_pair_index_end=getattr(args, "validation_pair_index_end", None),
-        )
-    except Exception as exc:
-        _write_step2_cli_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
-            status="failed",
-            current_event=None,
-            failed_event="step2_failed",
-            message=str(exc),
-        )
-        _append_jsonl(
-            perf_markers_path,
-            {
-                "event": "step2_run_failed",
-                "at": _now_text(),
-                "run_id": resolved_run_id,
-                "error": str(exc),
-            },
-        )
-        raise
 
     payload = {
         "run_id": resolved_run_id,
         "out_root": str(resolved_out_root.resolve()),
-        "progress_path": str(progress_path.resolve()),
-        "perf_markers_path": str(perf_markers_path.resolve()),
         "strategies": [
             {
                 "strategy_id": result.strategy.strategy_id,
@@ -3050,21 +2463,5 @@ def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
             for result in results
         ],
     }
-    _write_step2_cli_progress_snapshot(
-        out_path=progress_path,
-        run_id=resolved_run_id,
-        status="completed",
-        current_event=None,
-        message="Step2 CLI completed.",
-    )
-    _append_jsonl(
-        perf_markers_path,
-        {
-            "event": "step2_run_completed",
-            "at": _now_text(),
-            "run_id": resolved_run_id,
-            "strategy_count": len(results),
-        },
-    )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0

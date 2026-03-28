@@ -2041,6 +2041,18 @@ def _validate_pair_candidates(
     def _flush_validation_batch() -> None:
         if not batch_illegal_validations_by_pair_id and not batch_options_by_pair_id:
             return
+        pending_illegal_pair_count = len(batch_illegal_validations_by_pair_id)
+        pending_legal_pair_count = len(batch_options_by_pair_id)
+        pending_option_count = sum(len(pair_options) for pair_options in batch_options_by_pair_id.values())
+        next_batch_index = len(spilled_batch_paths) + 1
+        _emit_progress(
+            progress_callback,
+            "validation_batch_flush_started",
+            batch_index=next_batch_index,
+            pending_illegal_pair_count=pending_illegal_pair_count,
+            pending_legal_pair_count=pending_legal_pair_count,
+            pending_option_count=pending_option_count,
+        )
         if compact_release_payloads:
             compact_illegal_validations_by_pair_id = {
                 pair_id: _compact_validation_result_for_release(
@@ -2070,6 +2082,14 @@ def _validate_pair_candidates(
                 },
             )
             spilled_batch_paths.append(batch_path)
+            _emit_progress(
+                progress_callback,
+                "validation_batch_spilled",
+                batch_index=batch_index,
+                spill_path=str(batch_path),
+                spilled_illegal_pair_count=len(compact_illegal_validations_by_pair_id),
+                spilled_legal_pair_count=len(compact_options_by_pair_id),
+            )
         else:
             illegal_validations_by_pair_id.update(compact_illegal_validations_by_pair_id)
             options_by_pair_id.update(compact_options_by_pair_id)
@@ -2077,6 +2097,14 @@ def _validate_pair_candidates(
         batch_options_by_pair_id.clear()
         if compact_release_payloads or spill_validation_batches:
             gc.collect()
+        _emit_progress(
+            progress_callback,
+            "validation_batch_flush_completed",
+            batch_index=next_batch_index,
+            total_spilled_batch_count=len(spilled_batch_paths),
+            resident_illegal_pair_count=len(illegal_validations_by_pair_id),
+            resident_legal_pair_count=len(options_by_pair_id),
+        )
 
     def _flush_validation_batch_if_needed(pair_index: int) -> None:
         if pair_index == validation_count or pair_index % VALIDATION_BATCH_SIZE == 0:
@@ -2524,11 +2552,23 @@ def _validate_pair_candidates(
 
     _flush_validation_batch()
     if spill_validation_batches:
+        _emit_progress(
+            progress_callback,
+            "validation_batch_reload_started",
+            spilled_batch_count=len(spilled_batch_paths),
+        )
         for batch_path in spilled_batch_paths:
             payload = _read_pickle_doc(batch_path)
             illegal_validations_by_pair_id.update(payload["illegal_validations_by_pair_id"])
             options_by_pair_id.update(payload["options_by_pair_id"])
         gc.collect()
+        _emit_progress(
+            progress_callback,
+            "validation_batch_reload_completed",
+            spilled_batch_count=len(spilled_batch_paths),
+            resident_illegal_pair_count=len(illegal_validations_by_pair_id),
+            resident_legal_pair_count=len(options_by_pair_id),
+        )
 
     _emit_progress(
         progress_callback,

@@ -1236,7 +1236,6 @@ def _solve_component_exact(
         | sum((option_bit_by_id[other_id] for other_id in option_conflicts.get(option_id, set())), 0)
         for option_id in option_by_id
     }
-
     best_signature: Optional[tuple[str, ...]] = None
     best_score: Optional[tuple[float, ...]] = None
     best_option_ids: tuple[str, ...] = ()
@@ -1442,6 +1441,8 @@ def _build_option_conflicts(
             strong_anchor_node_ids=strong_anchor_node_ids,
         ):
             continue
+        if not shared_trunk and not shared_corridor:
+            continue
         preserve_tjunction_conflict = _requires_tjunction_weak_support_conflict(
             option,
             other_option,
@@ -1452,8 +1453,6 @@ def _build_option_conflicts(
             tjunction_anchor_node_ids=tjunction_anchor_node_ids,
             strong_anchor_node_ids=strong_anchor_node_ids,
         )
-        if not shared_trunk and not shared_corridor:
-            continue
         if _is_weak_support_overlap(
             shared_trunk_road_ids=shared_trunk,
             shared_corridor_road_ids=shared_corridor,

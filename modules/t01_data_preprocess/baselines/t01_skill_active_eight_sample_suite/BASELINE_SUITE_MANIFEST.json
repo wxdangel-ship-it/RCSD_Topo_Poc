@@ -1,0 +1,146 @@
+{
+  "suite_name": "t01_skill_active_eight_sample_suite",
+  "status": "ACTIVE_ACCEPTED_BASELINE",
+  "generated_at": "2026-03-28T20:30:33",
+  "description": "Accepted eight-sample active baseline suite for XXXS1-8; final segment.gpkg equality is the business acceptance criterion.",
+  "accepted_reference_run_root": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_manual_review_suite_20260327_xxxs5_wedge_fix",
+  "acceptance_rule": "final_segment_gpkg_semantic_equality",
+  "samples": {
+    "XXXS1": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS1",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_manual_review_suite_20260327_xxxs5_wedge_fix/XXXS1",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS1",
+        "validated_pair_count": 47,
+        "segment_body_membership_count": 153,
+        "trunk_membership_count": 153,
+        "refreshed_nodes_sha256": "2ac515c67f60e5cfc6e71a0b4c9b90bfb6d7c52119bc109e8c1af6205bb3aaed",
+        "refreshed_roads_sha256": "e661bb13680148a1129c2b9de07a0749aec9de158a5a08b2781e851b7cc29184"
+      },
+      "segment_output_semantic_sha256": "824092a3357380c0206cd1a74e1e001fdb2eb81a51d57c1537ecfb67a4b823f7",
+      "self_compare_status": "PASS",
+      "self_compare_report_json": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS1/freeze_compare_report.json"
+    },
+    "XXXS2": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS2",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_manual_review_suite_20260327_xxxs5_wedge_fix/XXXS2",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS2",
+        "validated_pair_count": 38,
+        "segment_body_membership_count": 81,
+        "trunk_membership_count": 81,
+        "refreshed_nodes_sha256": "76071e63001d6d1e4396a6d4e45ce36041ba310218d53e574588da93c65a7b72",
+        "refreshed_roads_sha256": "26d21a5bd4a4f1ff7abe18cf511a220e8c008c21e4c7cda157115460233a6464"
+      },
+      "segment_output_semantic_sha256": "0fa929e579aa8506eb701ceb71ca744785b211f57edc932809186f7baefc920e",
+      "self_compare_status": "PASS",
+      "self_compare_report_json": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS2/freeze_compare_report.json"
+    },
+    "XXXS3": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS3",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_manual_review_suite_20260327_xxxs5_wedge_fix/XXXS3",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS3",
+        "validated_pair_count": 35,
+        "segment_body_membership_count": 103,
+        "trunk_membership_count": 103,
+        "refreshed_nodes_sha256": "0c9688e8c883146c3e2ef9380d1ea6c4ac61bdad8396a50f2071f939a19e934a",
+        "refreshed_roads_sha256": "6c8179f4d2cb0c313db887d82a02e2891167c06e5721cb299faf83d3542a852b"
+      },
+      "segment_output_semantic_sha256": "8741a35637b9e65dc01105a199bc98cd06963bdebb2df0efbc38c05a45a23b5a",
+      "self_compare_status": "PASS",
+      "self_compare_report_json": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS3/freeze_compare_report.json"
+    },
+    "XXXS4": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS4",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_manual_review_suite_20260327_xxxs5_wedge_fix/XXXS4",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS4",
+        "validated_pair_count": 42,
+        "segment_body_membership_count": 104,
+        "trunk_membership_count": 100,
+        "refreshed_nodes_sha256": "ae8dd72993e6c2c439aee46963101753d79472444573569429f4b8a7076a1591",
+        "refreshed_roads_sha256": "6d09a4901a36a06c5d5f9b2c0ae849473d6c8668970588d7dc34611fc2846454"
+      },
+      "segment_output_semantic_sha256": "d950d8cab99743843886b4818e0f86b957282d49052e552a0b7a4c1d997cd0c8",
+      "self_compare_status": "PASS",
+      "self_compare_report_json": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS4/freeze_compare_report.json"
+    },
+    "XXXS5": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS5",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_manual_review_suite_20260327_xxxs5_wedge_fix/XXXS5",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS5",
+        "validated_pair_count": 58,
+        "segment_body_membership_count": 99,
+        "trunk_membership_count": 99,
+        "refreshed_nodes_sha256": "d258c65e5d59b809cc256816573d1169dddad1cae2e0d3f7a226ff9b453fac3b",
+        "refreshed_roads_sha256": "c6d7dd4f9bb073e3fb8150dac4cf758a8b51e5f5b484678534d028656416c654"
+      },
+      "segment_output_semantic_sha256": "0a8e5b04b5a70e02a66e2d5b8deaff7d7abd663db8640f108aa63ad30a47c0c4",
+      "self_compare_status": "PASS",
+      "self_compare_report_json": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS5/freeze_compare_report.json"
+    },
+    "XXXS6": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS6",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_manual_review_suite_20260327_xxxs5_wedge_fix/XXXS6",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS6",
+        "validated_pair_count": 39,
+        "segment_body_membership_count": 78,
+        "trunk_membership_count": 78,
+        "refreshed_nodes_sha256": "21c68f51f8c3d976e983f6e7b0f29055467cc9489c8d1922def7d39d718973e1",
+        "refreshed_roads_sha256": "b5e60a1ea0089a280e69d781d2abc942509bf95cbdd0bfd4d73421268c98ed2d"
+      },
+      "segment_output_semantic_sha256": "86248a3b3aeaaf0269d50fd848d285b7b5d3da4a23941d5bdd6c8b92a91aa148",
+      "self_compare_status": "PASS",
+      "self_compare_report_json": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS6/freeze_compare_report.json"
+    },
+    "XXXS7": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS7",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_manual_review_suite_20260327_xxxs5_wedge_fix/XXXS7",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS7",
+        "validated_pair_count": 83,
+        "segment_body_membership_count": 185,
+        "trunk_membership_count": 185,
+        "refreshed_nodes_sha256": "0b2ba045818582c9dd58b97cf3641177404ffe6a66fe82e1e8ff47ff4dce74b6",
+        "refreshed_roads_sha256": "a59a5f558d4e38819700eae065fb10fc4a90364ce7a6db94b599b4dbe6c512e7"
+      },
+      "segment_output_semantic_sha256": "c08e5355a90909bcea4bd5c8d8695b573fc708ebe12d0a366fdae17ed815d95e",
+      "self_compare_status": "PASS",
+      "self_compare_report_json": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS7/freeze_compare_report.json"
+    },
+    "XXXS8": {
+      "freeze_dir": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS8",
+      "source_run_dir": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t01_manual_review_suite_20260327_xxxs5_wedge_fix/XXXS8",
+      "summary": {
+        "skill_version": "1.0.0",
+        "mode": "baseline",
+        "freeze_label": "ACTIVE_XXXS8",
+        "validated_pair_count": 52,
+        "segment_body_membership_count": 132,
+        "trunk_membership_count": 132,
+        "refreshed_nodes_sha256": "df3a83e352160631a2e04aac736f727cab0cb993fd192ca1e0b1580a7c58dba2",
+        "refreshed_roads_sha256": "28fee46b0dd7a1af6aaa224be09a4b30bb897bf959ad53137c436e8ee0f54dbe"
+      },
+      "segment_output_semantic_sha256": "1c84bafda0dec7dc300920fec7b889d017f98e8747e7247dcbee66f812eb241f",
+      "self_compare_status": "PASS",
+      "self_compare_report_json": "/mnt/e/Work/RCSD_Topo_Poc_xxxs1_fix/modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/XXXS8/freeze_compare_report.json"
+    }
+  }
+}

@@ -101,6 +101,10 @@ def _option_corridor_road_ids(option: PairArbitrationOption) -> set[str]:
     return set(option.pruned_road_ids) | set(option.segment_candidate_road_ids) | set(option.trunk_road_ids)
 
 
+def _option_conflict_relevant_road_ids(option: PairArbitrationOption) -> set[str]:
+    return _option_corridor_road_ids(option) | set(option.segment_road_ids)
+
+
 def _option_conflict_details(
     left: PairArbitrationOption,
     right: PairArbitrationOption,
@@ -283,10 +287,28 @@ def _build_pair_conflicts(
     pair_ids = sorted(options_by_pair)
     records: list[PairConflictRecord] = []
     adjacency: dict[str, set[str]] = {pair_id: set() for pair_id in pair_ids}
+    pair_order = {pair_id: index for index, pair_id in enumerate(pair_ids)}
+    pair_relevant_road_ids: dict[str, set[str]] = {
+        pair_id: {
+            road_id
+            for option in options_by_pair[pair_id]
+            for road_id in _option_conflict_relevant_road_ids(option)
+        }
+        for pair_id in pair_ids
+    }
+    road_to_pair_ids: dict[str, set[str]] = defaultdict(set)
+    for pair_id, road_ids in pair_relevant_road_ids.items():
+        for road_id in road_ids:
+            road_to_pair_ids[road_id].add(pair_id)
+    candidate_other_pair_ids_by_pair_id: dict[str, set[str]] = {pair_id: set() for pair_id in pair_ids}
+    for pair_group in road_to_pair_ids.values():
+        ordered_pair_ids = sorted(pair_group, key=lambda pair_id: pair_order[pair_id])
+        for index, pair_id in enumerate(ordered_pair_ids):
+            candidate_other_pair_ids_by_pair_id[pair_id].update(ordered_pair_ids[index + 1 :])
 
-    for index, pair_id in enumerate(pair_ids):
+    for pair_id in pair_ids:
         left_options = options_by_pair[pair_id]
-        for other_pair_id in pair_ids[index + 1 :]:
+        for other_pair_id in sorted(candidate_other_pair_ids_by_pair_id[pair_id], key=lambda current: pair_order[current]):
             right_options = options_by_pair[other_pair_id]
             shared_trunk_road_ids: set[str] = set()
             shared_segment_road_ids: set[str] = set()
@@ -1093,55 +1115,86 @@ def _build_option_conflicts(
         for pair_id in component_pair_ids
         for option in options_by_pair[pair_id]
     ]
-    for index, option in enumerate(component_options):
-        for other_option in component_options[index + 1 :]:
-            if option.pair_id == other_option.pair_id:
-                option_conflicts[option.option_id].add(other_option.option_id)
-                option_conflicts[other_option.option_id].add(option.option_id)
-                continue
-            shared_trunk, shared_segment, shared_corridor = _option_conflict_details(option, other_option)
-            if not shared_trunk and not shared_segment and not shared_corridor:
-                continue
-            shared_road_ids = shared_trunk | shared_segment | shared_corridor
-            candidate_shared_road_ids = _option_corridor_road_ids(option) & _option_corridor_road_ids(other_option)
-            if _is_serial_terminal_triangle_overlap(
-                option,
-                other_option,
-                shared_trunk_road_ids=shared_trunk,
-                candidate_shared_road_ids=candidate_shared_road_ids,
-                road_to_node_ids=road_to_node_ids,
-                strong_anchor_node_ids=strong_anchor_node_ids,
-            ):
-                continue
-            if not shared_trunk and not shared_corridor:
-                continue
-            preserve_tjunction_conflict = _requires_tjunction_weak_support_conflict(
-                option,
-                other_option,
-                shared_trunk_road_ids=shared_trunk,
-                shared_corridor_road_ids=shared_corridor,
-                shared_road_ids=candidate_shared_road_ids,
-                road_to_node_ids=road_to_node_ids,
-                tjunction_anchor_node_ids=tjunction_anchor_node_ids,
-                strong_anchor_node_ids=strong_anchor_node_ids,
-            )
-            if _is_weak_support_overlap(
-                shared_trunk_road_ids=shared_trunk,
-                shared_corridor_road_ids=shared_corridor,
-                shared_road_ids=shared_road_ids,
-                road_to_node_ids=road_to_node_ids,
-                strong_anchor_node_ids=strong_anchor_node_ids,
-                tjunction_anchor_node_ids=tjunction_anchor_node_ids,
-                pair_endpoint_node_ids={
-                    option.a_node_id,
-                    option.b_node_id,
-                    other_option.a_node_id,
-                    other_option.b_node_id,
-                },
-            ) and not preserve_tjunction_conflict:
-                continue
-            option_conflicts[option.option_id].add(other_option.option_id)
-            option_conflicts[other_option.option_id].add(option.option_id)
+    pair_options_by_pair_id = {
+        pair_id: list(options_by_pair[pair_id])
+        for pair_id in component_pair_ids
+    }
+    option_by_id = {option.option_id: option for option in component_options}
+    relevant_road_ids_by_option_id = {
+        option.option_id: _option_conflict_relevant_road_ids(option)
+        for option in component_options
+    }
+    road_to_option_ids: dict[str, set[str]] = defaultdict(set)
+    for option_id, road_ids in relevant_road_ids_by_option_id.items():
+        for road_id in road_ids:
+            road_to_option_ids[road_id].add(option_id)
+
+    candidate_option_id_pairs: set[tuple[str, str]] = set()
+    for pair_options in pair_options_by_pair_id.values():
+        option_ids = sorted(option.option_id for option in pair_options)
+        for index, option_id in enumerate(option_ids):
+            for other_option_id in option_ids[index + 1 :]:
+                candidate_option_id_pairs.add((option_id, other_option_id))
+                option_conflicts[option_id].add(other_option_id)
+                option_conflicts[other_option_id].add(option_id)
+
+    for option_group in road_to_option_ids.values():
+        ordered_option_ids = sorted(option_group)
+        for index, option_id in enumerate(ordered_option_ids):
+            left_option = option_by_id[option_id]
+            for other_option_id in ordered_option_ids[index + 1 :]:
+                if left_option.pair_id == option_by_id[other_option_id].pair_id:
+                    continue
+                candidate_option_id_pairs.add((option_id, other_option_id))
+
+    for option_id, other_option_id in sorted(candidate_option_id_pairs):
+        option = option_by_id[option_id]
+        other_option = option_by_id[other_option_id]
+        if option.pair_id == other_option.pair_id:
+            continue
+        shared_trunk, shared_segment, shared_corridor = _option_conflict_details(option, other_option)
+        if not shared_trunk and not shared_segment and not shared_corridor:
+            continue
+        shared_road_ids = shared_trunk | shared_segment | shared_corridor
+        candidate_shared_road_ids = _option_corridor_road_ids(option) & _option_corridor_road_ids(other_option)
+        if _is_serial_terminal_triangle_overlap(
+            option,
+            other_option,
+            shared_trunk_road_ids=shared_trunk,
+            candidate_shared_road_ids=candidate_shared_road_ids,
+            road_to_node_ids=road_to_node_ids,
+            strong_anchor_node_ids=strong_anchor_node_ids,
+        ):
+            continue
+        if not shared_trunk and not shared_corridor:
+            continue
+        preserve_tjunction_conflict = _requires_tjunction_weak_support_conflict(
+            option,
+            other_option,
+            shared_trunk_road_ids=shared_trunk,
+            shared_corridor_road_ids=shared_corridor,
+            shared_road_ids=candidate_shared_road_ids,
+            road_to_node_ids=road_to_node_ids,
+            tjunction_anchor_node_ids=tjunction_anchor_node_ids,
+            strong_anchor_node_ids=strong_anchor_node_ids,
+        )
+        if _is_weak_support_overlap(
+            shared_trunk_road_ids=shared_trunk,
+            shared_corridor_road_ids=shared_corridor,
+            shared_road_ids=shared_road_ids,
+            road_to_node_ids=road_to_node_ids,
+            strong_anchor_node_ids=strong_anchor_node_ids,
+            tjunction_anchor_node_ids=tjunction_anchor_node_ids,
+            pair_endpoint_node_ids={
+                option.a_node_id,
+                option.b_node_id,
+                other_option.a_node_id,
+                other_option.b_node_id,
+            },
+        ) and not preserve_tjunction_conflict:
+            continue
+        option_conflicts[option.option_id].add(other_option.option_id)
+        option_conflicts[other_option.option_id].add(option.option_id)
     return option_conflicts
 
 

@@ -1,0 +1,32 @@
+# T01 Skill Freeze Compare Report
+
+- status: `PASS`
+- current_dir: `E:\Work\RCSD_Topo_Poc\outputs\_work\t01_manual_review_suite_20260328_bb24202_regression\XXXS2`
+- freeze_dir: `E:\Work\RCSD_Topo_Poc\modules\t01_data_preprocess\baselines\t01_skill_test_eight_sample_suite\XXXS2`
+
+## validated_pairs
+- status: `PASS`
+- current_count: `38`
+- baseline_count: `38`
+
+## segment_body_membership
+- status: `PASS`
+- current_count: `81`
+- baseline_count: `81`
+
+## trunk_membership
+- status: `PASS`
+- current_count: `81`
+- baseline_count: `81`
+
+## refreshed_nodes_hash
+- status: `PASS`
+- current_sha256: `28b58b77e6d01f45fb10c604309ddbb9b080b8918026cae9adef4c9464aab0f1`
+- baseline_sha256: `28b58b77e6d01f45fb10c604309ddbb9b080b8918026cae9adef4c9464aab0f1`
+- semantic_compare_available: `True`
+
+## refreshed_roads_hash
+- status: `PASS`
+- current_sha256: `b9548afff236268a2600f0986fa9b3eae71a0af3de9b38f6a8d2108a0d9bafcd`
+- baseline_sha256: `b9548afff236268a2600f0986fa9b3eae71a0af3de9b38f6a8d2108a0d9bafcd`
+- semantic_compare_available: `True`

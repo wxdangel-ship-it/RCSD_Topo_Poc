@@ -1058,7 +1058,7 @@ def _run_phase(
     segment_body_path = first_existing_vector_path(phase_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson")
     if segment_body_path is None:
         raise ValueError(f"Step5 phase segment body output is missing under '{phase_dir}'.")
-    road_to_segmentid, _ = _parse_segment_body_assignments(
+    road_to_segmentid, _, _ = _parse_segment_body_assignments(
         segment_body_path,
         reserved_segmentids=reserved_segmentids,
     )

@@ -227,3 +227,128 @@ def test_prefer_subset_dominated_same_pair_options_drops_larger_superset_loop() 
     )
 
     assert [option.option_id for option in preferred] == ["MID::opt_01"]
+
+
+def test_solve_component_exact_keeps_tie_break_stable_when_scores_equal() -> None:
+    left_opt_01 = _option(
+        "LEFT::opt_01",
+        "LEFT",
+        "A",
+        "B",
+        trunk_road_ids=("l1",),
+        pair_support_road_ids=("l1",),
+    )
+    left_opt_02 = _option(
+        "LEFT::opt_02",
+        "LEFT",
+        "A",
+        "B",
+        trunk_road_ids=("l2",),
+        pair_support_road_ids=("l2",),
+    )
+    right_opt_01 = _option(
+        "RIGHT::opt_01",
+        "RIGHT",
+        "C",
+        "D",
+        trunk_road_ids=("r1",),
+        pair_support_road_ids=("r1",),
+    )
+    right_opt_02 = _option(
+        "RIGHT::opt_02",
+        "RIGHT",
+        "C",
+        "D",
+        trunk_road_ids=("r2",),
+        pair_support_road_ids=("r2",),
+    )
+
+    metrics = step2_arbitration.PairArbitrationMetrics(
+        endpoint_grade_priority_major=1,
+        endpoint_grade_priority_minor=1,
+        endpoint_boundary_penalty=0,
+        strong_anchor_win_count=0,
+        corridor_naturalness_score=0,
+        contested_trunk_coverage_count=0,
+        contested_trunk_coverage_ratio=0.0,
+        pair_support_expansion_penalty=0,
+        internal_endpoint_penalty=0,
+        body_connectivity_support=1.0,
+        semantic_conflict_penalty=0,
+    )
+
+    selected = step2_arbitration._solve_component_exact(
+        ("LEFT", "RIGHT"),
+        options_by_pair={
+            "LEFT": [left_opt_01, left_opt_02],
+            "RIGHT": [right_opt_01, right_opt_02],
+        },
+        option_conflicts={},
+        metrics_by_option_id={
+            left_opt_01.option_id: metrics,
+            left_opt_02.option_id: metrics,
+            right_opt_01.option_id: metrics,
+            right_opt_02.option_id: metrics,
+        },
+        strong_anchor_priority_enabled=False,
+    )
+
+    assert selected == {
+        "LEFT": left_opt_01,
+        "RIGHT": right_opt_01,
+    }
+
+
+def test_solve_component_exact_ignores_stale_conflict_option_ids() -> None:
+    left_opt_01 = _option(
+        "LEFT::opt_01",
+        "LEFT",
+        "A",
+        "B",
+        trunk_road_ids=("l1",),
+        pair_support_road_ids=("l1",),
+    )
+    right_opt_01 = _option(
+        "RIGHT::opt_01",
+        "RIGHT",
+        "C",
+        "D",
+        trunk_road_ids=("r1",),
+        pair_support_road_ids=("r1",),
+    )
+
+    metrics = step2_arbitration.PairArbitrationMetrics(
+        endpoint_grade_priority_major=1,
+        endpoint_grade_priority_minor=1,
+        endpoint_boundary_penalty=0,
+        strong_anchor_win_count=0,
+        corridor_naturalness_score=0,
+        contested_trunk_coverage_count=0,
+        contested_trunk_coverage_ratio=0.0,
+        pair_support_expansion_penalty=0,
+        internal_endpoint_penalty=0,
+        body_connectivity_support=1.0,
+        semantic_conflict_penalty=0,
+    )
+
+    selected = step2_arbitration._solve_component_exact(
+        ("LEFT", "RIGHT"),
+        options_by_pair={
+            "LEFT": [left_opt_01],
+            "RIGHT": [right_opt_01],
+        },
+        option_conflicts={
+            left_opt_01.option_id: {"STALE::opt_99"},
+            right_opt_01.option_id: set(),
+        },
+        metrics_by_option_id={
+            left_opt_01.option_id: metrics,
+            right_opt_01.option_id: metrics,
+        },
+        strong_anchor_priority_enabled=False,
+    )
+
+    assert selected == {
+        "LEFT": left_opt_01,
+        "RIGHT": right_opt_01,
+    }

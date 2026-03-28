@@ -892,6 +892,47 @@ def _solve_component_exact(
     strong_anchor_priority_enabled: bool,
 ) -> dict[str, PairArbitrationOption]:
     pair_order = tuple(sorted(component_pair_ids, key=lambda pair_id: (len(options_by_pair[pair_id]), pair_id)))
+    option_by_id = {
+        option.option_id: option
+        for pair_id in component_pair_ids
+        for option in options_by_pair[pair_id]
+    }
+    valid_option_ids = set(option_by_id)
+    option_conflicts = {
+        option_id: {
+            other_id
+            for other_id in conflicts
+            if other_id in valid_option_ids
+        }
+        for option_id, conflicts in option_conflicts.items()
+        if option_id in valid_option_ids
+    }
+    option_bit_by_id = {
+        option_id: 1 << index
+        for index, option_id in enumerate(sorted(option_by_id))
+    }
+    option_priority_sort_key = {
+        option_id: (
+            _option_priority_key(option_by_id[option_id], metrics_by_option_id[option_id]),
+            tuple(-ord(char) for char in option_id),
+        )
+        for option_id in option_by_id
+    }
+    sorted_options_by_pair = {
+        pair_id: tuple(
+            sorted(
+                options_by_pair[pair_id],
+                key=lambda option: option_priority_sort_key[option.option_id],
+                reverse=True,
+            )
+        )
+        for pair_id in pair_order
+    }
+    option_block_mask_by_id = {
+        option_id: option_bit_by_id[option_id]
+        | sum((option_bit_by_id[other_id] for other_id in option_conflicts.get(option_id, set())), 0)
+        for option_id in option_by_id
+    }
     best_signature: Optional[tuple[str, ...]] = None
     best_score: Optional[tuple[float, ...]] = None
     best_option_ids: tuple[str, ...] = ()
@@ -953,17 +994,33 @@ def _solve_component_greedy(
     metrics_by_option_id: dict[str, PairArbitrationMetrics],
     initial_selected_options_by_pair_id: Optional[dict[str, PairArbitrationOption]] = None,
 ) -> dict[str, PairArbitrationOption]:
+    valid_option_by_id = {
+        option.option_id: option
+        for pair_id in component_pair_ids
+        for option in options_by_pair[pair_id]
+    }
     selected_options_by_pair_id: dict[str, PairArbitrationOption] = (
-        {} if initial_selected_options_by_pair_id is None else dict(initial_selected_options_by_pair_id)
+        {}
+        if initial_selected_options_by_pair_id is None
+        else {
+            pair_id: option
+            for pair_id, option in initial_selected_options_by_pair_id.items()
+            if option.option_id in valid_option_by_id
+        }
     )
     blocked_option_ids: set[str] = set()
     for option in selected_options_by_pair_id.values():
         blocked_option_ids.add(option.option_id)
-        blocked_option_ids.update(option_conflicts.get(option.option_id, set()))
+        blocked_option_ids.update(
+            other_option_id
+            for other_option_id in option_conflicts.get(option.option_id, set())
+            if other_option_id in valid_option_by_id
+        )
     flattened_options = [
         option
         for pair_id in component_pair_ids
         for option in options_by_pair[pair_id]
+        if option.option_id in metrics_by_option_id
     ]
     flattened_options.sort(
         key=lambda option: (
@@ -994,7 +1051,11 @@ def _solve_anchor_priority_subset(
         sorted(
             pair_id
             for pair_id in component_pair_ids
-            if any(metrics_by_option_id[option.option_id].strong_anchor_win_count > 0 for option in options_by_pair[pair_id])
+            if any(
+                metrics_by_option_id.get(option.option_id) is not None
+                and metrics_by_option_id[option.option_id].strong_anchor_win_count > 0
+                for option in options_by_pair[pair_id]
+            )
         )
     )
     if not priority_pair_ids:
@@ -1224,6 +1285,16 @@ def arbitrate_pair_options(
                 subset_pruned = True
         if subset_pruned:
             contested_road_ids, metrics_by_option_id = _rebuild_metrics()
+        current_option_ids = {
+            option.option_id
+            for pair_id in component_pair_ids
+            for option in component_options_by_pair[pair_id]
+        }
+        metrics_by_option_id = {
+            option_id: metrics
+            for option_id, metrics in metrics_by_option_id.items()
+            if option_id in current_option_ids
+        }
         strong_anchor_win_counts = _strong_anchor_win_counts(
             component_pair_ids,
             options_by_pair=component_options_by_pair,
@@ -1247,6 +1318,15 @@ def arbitrate_pair_options(
             strong_anchor_node_ids=component_strong_anchor_node_ids,
             tjunction_anchor_node_ids=tjunction_anchor_node_ids,
         )
+        option_conflicts = {
+            option_id: {
+                other_id
+                for other_id in conflicts
+                if other_id in current_option_ids
+            }
+            for option_id, conflicts in option_conflicts.items()
+            if option_id in current_option_ids
+        }
         use_exact_solver = _should_use_exact_solver(
             component_pair_ids,
             options_by_pair=component_options_by_pair,

@@ -511,6 +511,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional Step2 validation pair_id trace filter. Repeat to trace multiple pairs in perf markers.",
     )
     p_skill.add_argument(
+        "--stop-after-step2-validation-pair-index",
+        type=int,
+        dest="stop_after_step2_validation_pair_index",
+        help=(
+            "Optional diagnostic stop point for the full Skill v1 runner. "
+            "Runs the normal full-data path through Step2 validation and stops cleanly "
+            "after validating pairs up to the specified 1-based index."
+        ),
+    )
+    p_skill.add_argument(
         "--out-root",
         help="Optional output root override. If omitted, write to outputs/_work/t01_skill_eval/<run_id>.",
     )

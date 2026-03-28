@@ -212,6 +212,68 @@ def test_skill_v1_passes_trace_validation_pair_ids_to_step2(tmp_path: Path, monk
     assert captured_step2_kwargs["trace_validation_pair_ids"] == ["S2:866747__950704"]
 
 
+def test_skill_v1_can_stop_cleanly_after_step2_validation_pair_index(tmp_path: Path, monkeypatch) -> None:
+    road_path = tmp_path / "roads.geojson"
+    node_path = tmp_path / "nodes.geojson"
+    strategy_path = tmp_path / "strategy.json"
+    _write_text(road_path, "{}")
+    _write_text(node_path, "{}")
+    _write_text(strategy_path, "{}")
+
+    def _fake_bootstrap(**kwargs):
+        nodes = tmp_path / "bootstrap_stop" / "nodes.geojson"
+        roads = tmp_path / "bootstrap_stop" / "roads.geojson"
+        _write_text(nodes, "{}")
+        _write_text(roads, "{}")
+        return SimpleNamespace(nodes_path=nodes, roads_path=roads, summary={})
+
+    captured_step2_kwargs: dict[str, object] = {}
+
+    def _fake_step2(**kwargs):
+        captured_step2_kwargs.update(kwargs)
+        step2_root = Path(kwargs["out_root"])
+        _write_text(step2_root / "S2" / "segment_summary.json", "{}")
+        callback = kwargs["progress_callback"]
+        callback("validation_completed", {"strategy_id": "S2", "validated_pair_count": 10, "rejected_pair_count": 0})
+        return []
+
+    def _unexpected_call(**_: object) -> object:
+        raise AssertionError("partial Step2 diagnostic run should not continue past Step2")
+
+    monkeypatch.setattr(skill_v1, "initialize_working_layers", _fake_bootstrap)
+    monkeypatch.setattr(skill_v1, "run_step2_segment_poc", _fake_step2)
+    monkeypatch.setattr(skill_v1, "refresh_s2_baseline", _unexpected_call)
+    monkeypatch.setattr(skill_v1, "run_step4_residual_graph", _unexpected_call)
+    monkeypatch.setattr(skill_v1, "run_step5_staged_residual_graph", _unexpected_call)
+    monkeypatch.setattr(skill_v1, "_finalize_bundle", _unexpected_call)
+
+    artifacts = skill_v1.run_t01_skill_v1(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=tmp_path / "run_partial",
+        run_id="t01_skill_v1_partial",
+        strategy_config_path=strategy_path,
+        debug=True,
+        stop_after_step2_validation_pair_index=2000,
+    )
+
+    progress = json.loads((artifacts.out_root / "t01_skill_v1_progress.json").read_text(encoding="utf-8"))
+    summary = json.loads((artifacts.out_root / "t01_skill_v1_summary.json").read_text(encoding="utf-8"))
+    markers = [
+        json.loads(line)
+        for line in (artifacts.out_root / "t01_skill_v1_perf_markers.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert captured_step2_kwargs["validation_pair_index_end"] == 2000
+    assert progress["status"] == "completed_partial"
+    assert summary["status"] == "completed_partial"
+    assert summary["stopped_after_stage"] == "step2"
+    assert summary["stopped_after_step2_validation_pair_index"] == 2000
+    assert Path(summary["partial_step2_root"]).is_dir()
+    assert any(item["event"] == "run_completed_partial" for item in markers)
+
+
 def test_skill_v1_runner_can_isolate_suite_case_outputs_under_run_id(tmp_path: Path, monkeypatch) -> None:
     road_path = tmp_path / "roads.geojson"
     node_path = tmp_path / "nodes.geojson"

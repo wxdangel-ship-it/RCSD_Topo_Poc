@@ -408,6 +408,69 @@ def _write_perf_md(*, out_path: Path, run_id: str, debug: bool, stages: list[dic
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_skill_terminal_outputs(
+    *,
+    resolved_out_root: Path,
+    resolved_run_id: str,
+    debug: bool,
+    total_stages: int,
+    stage_timings: list[dict[str, Any]],
+    total_wall_time_sec: float,
+    progress_path: Path,
+    perf_json_path: Path,
+    perf_md_path: Path,
+    perf_markers_path: Path,
+    completed_stage_names: list[str],
+    summary: dict[str, Any],
+    status: str,
+    message: str,
+    marker_event: str,
+    marker_payload: Optional[dict[str, Any]] = None,
+) -> tuple[Path, Path]:
+    summary_path = resolved_out_root / "t01_skill_v1_summary.json"
+    summary_md_path = resolved_out_root / "t01_skill_v1_summary.md"
+    _write_json_doc(summary_path, summary)
+    _write_json_doc(
+        perf_json_path,
+        {
+            "run_id": resolved_run_id,
+            "debug": debug,
+            "total_wall_time_sec": total_wall_time_sec,
+            "stages": stage_timings,
+            "freeze_compare_status": summary.get("freeze_compare_status"),
+            "status": status,
+        },
+    )
+    _write_summary_md(out_path=summary_md_path, summary=summary)
+    _write_perf_md(
+        out_path=perf_md_path,
+        run_id=resolved_run_id,
+        debug=debug,
+        stages=stage_timings,
+        total_wall_time_sec=total_wall_time_sec,
+    )
+    _write_progress_snapshot(
+        out_path=progress_path,
+        run_id=resolved_run_id,
+        status=status,
+        total_stages=total_stages,
+        completed_stage_names=completed_stage_names,
+        current_stage=None,
+        message=message,
+    )
+    _append_jsonl(
+        perf_markers_path,
+        {
+            "event": marker_event,
+            "at": _now_text(),
+            "run_id": resolved_run_id,
+            "total_wall_time_sec": total_wall_time_sec,
+            **(marker_payload or {}),
+        },
+    )
+    return summary_path, summary_md_path
+
+
 def _run_stage(
     *,
     name: str,
@@ -561,7 +624,13 @@ def run_t01_skill_v1(
     debug: bool = True,
     compare_freeze_dir: Optional[Union[str, Path]] = None,
     trace_validation_pair_ids: Optional[list[str]] = None,
+    stop_after_step2_validation_pair_index: Optional[int] = None,
 ) -> SkillV1Artifacts:
+    if (
+        stop_after_step2_validation_pair_index is not None
+        and stop_after_step2_validation_pair_index < 1
+    ):
+        raise ValueError("stop_after_step2_validation_pair_index must be >= 1.")
     resolved_out_root, resolved_run_id = _resolve_out_root(
         out_root=out_root,
         run_id=run_id,
@@ -668,6 +737,7 @@ def run_t01_skill_v1(
                 retain_validation_details=False,
                 assume_working_layers=True,
                 trace_validation_pair_ids=trace_validation_pair_ids,
+                validation_pair_index_end=stop_after_step2_validation_pair_index,
                 progress_callback=_make_stage_subprogress_callback(
                     run_id=resolved_run_id,
                     stage_name="step2",
@@ -679,6 +749,97 @@ def run_t01_skill_v1(
                 ),
             ),
         )
+
+        if stop_after_step2_validation_pair_index is not None:
+            total_wall_time_sec = time.perf_counter() - total_started
+            partial_step2_root = resolved_out_root / "step2_partial"
+            if partial_step2_root.exists():
+                shutil.rmtree(partial_step2_root)
+            shutil.copytree(step2_root, partial_step2_root)
+            summary = {
+                "run_id": resolved_run_id,
+                "skill_version": SKILL_VERSION,
+                "debug": debug,
+                "status": "completed_partial",
+                "stopped_early": True,
+                "stopped_after_stage": "step2",
+                "stopped_after_step2_validation_pair_index": stop_after_step2_validation_pair_index,
+                "input_node_path": str(Path(node_path).resolve()),
+                "input_road_path": str(Path(road_path).resolve()),
+                "bootstrap_nodes_path": str(bootstrap_artifacts.nodes_path.resolve()),
+                "bootstrap_roads_path": str(bootstrap_artifacts.roads_path.resolve()),
+                "strategy_config_path": str(Path(strategy_config_path).resolve()),
+                "stages": stage_timings,
+                "total_wall_time_sec": total_wall_time_sec,
+                "partial_step2_root": str(partial_step2_root.resolve()),
+                "final_nodes_path": None,
+                "final_roads_path": None,
+                "bundle_manifest_path": None,
+                "bundle_summary_path": None,
+                "all_stage_segment_roads_path": None,
+                "segment_path": None,
+                "inner_nodes_path": None,
+                "segment_error_path": None,
+                "segment_geojson_path": None,
+                "inner_nodes_geojson_path": None,
+                "segment_error_geojson_path": None,
+                "step6_segment_summary_path": None,
+                "distance_gate_scope_check_path": None,
+                "freeze_compare_status": None,
+                "progress_path": str(progress_path.resolve()),
+                "perf_json_path": str(perf_json_path.resolve()),
+                "perf_md_path": str(perf_md_path.resolve()),
+                "perf_markers_path": str(perf_markers_path.resolve()),
+                "memory_management": {
+                    "debug_default_enabled": False,
+                    "stage_gc_after_run": True,
+                    "bounded_parallel_load_workers": 2,
+                    "uses_temp_stage_root_when_debug_false": True,
+                    "deep_full_in_memory_pipeline": False,
+                    "step6_reuses_step5_in_memory_records": True,
+                    "step6_reuses_step5_mainnode_group_index": True,
+                    "step5_alias_outputs_debug_only": True,
+                    "step2_internal_progress_enabled": True,
+                    "step2_retains_validation_details_in_runner": False,
+                },
+            }
+            summary_path, summary_md_path = _write_skill_terminal_outputs(
+                resolved_out_root=resolved_out_root,
+                resolved_run_id=resolved_run_id,
+                debug=debug,
+                total_stages=total_stages,
+                stage_timings=stage_timings,
+                total_wall_time_sec=total_wall_time_sec,
+                progress_path=progress_path,
+                perf_json_path=perf_json_path,
+                perf_md_path=perf_md_path,
+                perf_markers_path=perf_markers_path,
+                completed_stage_names=completed_stage_names,
+                summary=summary,
+                status="completed_partial",
+                message=(
+                    "Skill v1 runner completed partially after Step2 validation pair "
+                    f"{stop_after_step2_validation_pair_index}."
+                ),
+                marker_event="run_completed_partial",
+                marker_payload={
+                    "stopped_after_stage": "step2",
+                    "stopped_after_step2_validation_pair_index": stop_after_step2_validation_pair_index,
+                },
+            )
+            _print_progress(
+                "RUN DONE PARTIAL "
+                f"run_id={resolved_run_id} total_wall={total_wall_time_sec:.3f}s "
+                f"stop_after_step2_validation_pair_index={stop_after_step2_validation_pair_index}"
+            )
+            return SkillV1Artifacts(
+                out_root=resolved_out_root,
+                nodes_path=Path(node_path).resolve(),
+                roads_path=Path(road_path).resolve(),
+                summary_path=summary_path,
+                summary_md_path=summary_md_path,
+                summary=summary,
+            )
 
         refresh_root = stage_root / "refresh"
         refresh_artifacts = _run_stage(
@@ -841,45 +1002,23 @@ def run_t01_skill_v1(
                 "step2_retains_validation_details_in_runner": False,
             },
         }
-        summary_path = resolved_out_root / "t01_skill_v1_summary.json"
-        summary_md_path = resolved_out_root / "t01_skill_v1_summary.md"
-        _write_json_doc(summary_path, summary)
-        _write_json_doc(
-            perf_json_path,
-            {
-                "run_id": resolved_run_id,
-                "debug": debug,
-                "total_wall_time_sec": total_wall_time_sec,
-                "stages": stage_timings,
-                "freeze_compare_status": freeze_compare_status,
-            },
-        )
-        _write_summary_md(out_path=summary_md_path, summary=summary)
-        _write_perf_md(
-            out_path=perf_md_path,
-            run_id=resolved_run_id,
+        summary_path, summary_md_path = _write_skill_terminal_outputs(
+            resolved_out_root=resolved_out_root,
+            resolved_run_id=resolved_run_id,
             debug=debug,
-            stages=stage_timings,
-            total_wall_time_sec=total_wall_time_sec,
-        )
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
-            status="completed",
             total_stages=total_stages,
+            stage_timings=stage_timings,
+            total_wall_time_sec=total_wall_time_sec,
+            progress_path=progress_path,
+            perf_json_path=perf_json_path,
+            perf_md_path=perf_md_path,
+            perf_markers_path=perf_markers_path,
             completed_stage_names=completed_stage_names,
-            current_stage=None,
+            summary=summary,
+            status="completed",
             message="Skill v1 runner completed.",
-        )
-        _append_jsonl(
-            perf_markers_path,
-            {
-                "event": "run_completed",
-                "at": _now_text(),
-                "run_id": resolved_run_id,
-                "total_wall_time_sec": total_wall_time_sec,
-                "freeze_compare_status": freeze_compare_status,
-            },
+            marker_event="run_completed",
+            marker_payload={"freeze_compare_status": freeze_compare_status},
         )
         _print_progress(
             f"RUN DONE run_id={resolved_run_id} total_wall={total_wall_time_sec:.3f}s "
@@ -979,6 +1118,11 @@ def run_t01_skill_v1_cli(args: argparse.Namespace) -> int:
         debug=args.debug,
         compare_freeze_dir=args.compare_freeze_dir,
         trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
+        stop_after_step2_validation_pair_index=getattr(
+            args,
+            "stop_after_step2_validation_pair_index",
+            None,
+        ),
     )
     print(json.dumps({"out_root": str(artifacts.out_root.resolve()), **artifacts.summary}, ensure_ascii=False, indent=2))
     return 0

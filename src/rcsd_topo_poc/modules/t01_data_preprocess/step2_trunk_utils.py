@@ -472,6 +472,129 @@ def _build_filtered_undirected_adjacency(
     return {node_id: tuple(edges) for node_id, edges in adjacency_lists.items()}
 
 
+def _collect_road_ids_on_any_simple_path(
+    *,
+    start_node_id: str,
+    end_node_id: str,
+    road_endpoints: dict[str, tuple[str, str]],
+    allowed_road_ids: set[str],
+) -> set[str]:
+    """Return roads that lie on at least one simple undirected path between terminals.
+
+    The previous implementation enumerated many simple paths directly, which can
+    explode on dense segment-body candidates. Here we instead decompose the
+    undirected graph into vertex-biconnected edge components and keep only the
+    components that sit on the block-cut-tree path between the two terminals.
+    This preserves the "road belongs to some simple a-b path" semantics while
+    avoiding exponential path enumeration.
+    """
+
+    if start_node_id == end_node_id or not allowed_road_ids:
+        return set()
+
+    adjacency = _build_filtered_undirected_adjacency(
+        road_endpoints=road_endpoints,
+        allowed_road_ids=allowed_road_ids,
+    )
+    if start_node_id not in adjacency or end_node_id not in adjacency:
+        return set()
+
+    timer = count()
+    disc: dict[str, int] = {}
+    low: dict[str, int] = {}
+    edge_stack: list[tuple[str, str, str]] = []
+    component_road_ids: list[set[str]] = []
+    node_to_component_ids: dict[str, set[int]] = defaultdict(set)
+
+    def _flush_component(stop_road_id: Optional[str]) -> None:
+        component_nodes: set[str] = set()
+        component_roads: set[str] = set()
+        while edge_stack:
+            from_node_id, to_node_id, road_id = edge_stack.pop()
+            component_nodes.add(from_node_id)
+            component_nodes.add(to_node_id)
+            component_roads.add(road_id)
+            if stop_road_id is not None and road_id == stop_road_id:
+                break
+
+        if not component_roads:
+            return
+
+        component_id = len(component_road_ids)
+        component_road_ids.append(component_roads)
+        for node_id in component_nodes:
+            node_to_component_ids[node_id].add(component_id)
+
+    def _dfs(node_id: str, parent_road_id: Optional[str]) -> None:
+        disc[node_id] = next(timer)
+        low[node_id] = disc[node_id]
+
+        for edge in adjacency.get(node_id, ()):
+            next_node_id = edge.to_node
+            road_id = edge.road_id
+            if road_id == parent_road_id:
+                continue
+
+            if next_node_id not in disc:
+                edge_stack.append((node_id, next_node_id, road_id))
+                _dfs(next_node_id, road_id)
+                low[node_id] = min(low[node_id], low[next_node_id])
+                if low[next_node_id] >= disc[node_id]:
+                    _flush_component(road_id)
+                continue
+
+            if disc[next_node_id] < disc[node_id]:
+                edge_stack.append((node_id, next_node_id, road_id))
+                low[node_id] = min(low[node_id], disc[next_node_id])
+
+    for node_id in sorted(adjacency.keys(), key=_sort_key):
+        if node_id in disc:
+            continue
+        _dfs(node_id, None)
+        if edge_stack:
+            _flush_component(None)
+
+    start_token = f"node:{start_node_id}"
+    end_token = f"node:{end_node_id}"
+    if start_node_id not in node_to_component_ids or end_node_id not in node_to_component_ids:
+        return set()
+
+    block_cut_adjacency: dict[str, set[str]] = defaultdict(set)
+    for node_id, component_ids in node_to_component_ids.items():
+        node_token = f"node:{node_id}"
+        for component_id in component_ids:
+            component_token = f"component:{component_id}"
+            block_cut_adjacency[node_token].add(component_token)
+            block_cut_adjacency[component_token].add(node_token)
+
+    queue: deque[str] = deque([start_token])
+    parents: dict[str, Optional[str]] = {start_token: None}
+    while queue:
+        token = queue.popleft()
+        if token == end_token:
+            break
+        for next_token in sorted(block_cut_adjacency.get(token, ()), key=_sort_key):
+            if next_token in parents:
+                continue
+            parents[next_token] = token
+            queue.append(next_token)
+
+    if end_token not in parents:
+        return set()
+
+    selected_component_ids: set[int] = set()
+    current_token: Optional[str] = end_token
+    while current_token is not None:
+        if current_token.startswith("component:"):
+            selected_component_ids.add(int(current_token.split(":", 1)[1]))
+        current_token = parents[current_token]
+
+    selected_road_ids: set[str] = set()
+    for component_id in selected_component_ids:
+        selected_road_ids.update(component_road_ids[component_id])
+    return selected_road_ids
+
+
 def _collect_segment_path_road_ids(
     pair: PairRecord,
     *,
@@ -479,20 +602,13 @@ def _collect_segment_path_road_ids(
     road_endpoints: dict[str, tuple[str, str]],
     allowed_road_ids: set[str],
 ) -> set[str]:
-    adjacency = _build_filtered_undirected_adjacency(
+    _ = context
+    return _collect_road_ids_on_any_simple_path(
+        start_node_id=pair.a_node_id,
+        end_node_id=pair.b_node_id,
         road_endpoints=road_endpoints,
         allowed_road_ids=allowed_road_ids,
     )
-    paths = _enumerate_simple_paths(
-        adjacency=adjacency,
-        roads=context.roads,
-        start_node_id=pair.a_node_id,
-        end_node_id=pair.b_node_id,
-    )
-    path_road_ids: set[str] = set()
-    for path in paths:
-        path_road_ids.update(path.road_ids)
-    return path_road_ids
 
 
 def _oriented_road_coords(

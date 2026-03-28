@@ -33,9 +33,11 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     _allocate_unique_segmentid,
     _build_segmentid_base,
     _build_mainnode_groups,
+    _load_pair_overlap_priorities,
     _load_nodes_and_roads,
     _load_nodes,
     _load_roads,
+    _parse_road_ids,
     _road_flow_flags_for_group,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
@@ -267,12 +269,14 @@ def _parse_segment_body_assignments(
     path: Path,
     *,
     reserved_segmentids: Optional[set[str]] = None,
-) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+) -> tuple[dict[str, str], dict[str, tuple[str, str]], int]:
     payload = load_vector_feature_collection(path)
     road_to_segmentid: dict[str, str] = {}
     pair_endpoints: dict[str, tuple[str, str]] = {}
     pending_rows: list[tuple[str, str, str, tuple[str, ...]]] = []
     base_segmentid_counts: dict[str, int] = {}
+    pair_priority_by_pair_id: dict[str, tuple[Any, ...]] = {}
+    overlap_resolution_count = 0
 
     for feature in payload.get("features", []):
         props = dict(feature.get("properties") or {})
@@ -285,19 +289,13 @@ def _parse_segment_body_assignments(
         if pair_id == "" or a_node_id is None or b_node_id is None:
             continue
 
-        road_ids_payload = props.get("road_ids")
-        road_ids_text = props.get("road_ids_text")
-        if isinstance(road_ids_payload, list):
-            road_ids = tuple(road_id for road_id in (_normalize_id(value) for value in road_ids_payload) if road_id)
-        elif isinstance(road_ids_text, str) and road_ids_text.strip():
-            road_ids = tuple(road_id for road_id in (_normalize_id(value) for value in road_ids_text.split(",")) if road_id)
-        else:
-            road_ids = ()
+        road_ids = _parse_road_ids(props.get("road_ids"), props.get("road_ids_text"))
         pending_rows.append((pair_id, a_node_id, b_node_id, road_ids))
         base_segmentid = _build_segmentid_base(a_node_id, b_node_id)
         base_segmentid_counts[base_segmentid] = base_segmentid_counts.get(base_segmentid, 0) + 1
 
     used_segmentids = {segmentid for segmentid in (reserved_segmentids or set()) if segmentid}
+    road_claims: dict[str, list[tuple[str, str]]] = {}
     for pair_id, a_node_id, b_node_id, road_ids in pending_rows:
         base_segmentid = _build_segmentid_base(a_node_id, b_node_id)
         segmentid = _allocate_unique_segmentid(
@@ -309,14 +307,30 @@ def _parse_segment_body_assignments(
         pair_endpoints[pair_id] = (a_node_id, b_node_id)
 
         for road_id in road_ids:
-            existing = road_to_segmentid.get(road_id)
-            if existing is not None and existing != segmentid:
-                raise ValueError(
-                    f"Road '{road_id}' is assigned to multiple Step4 segment ids: '{existing}' and '{segmentid}'."
-                )
-            road_to_segmentid[road_id] = segmentid
+            road_claims.setdefault(road_id, []).append((pair_id, segmentid))
 
-    return road_to_segmentid, pair_endpoints
+    arbitration_table_path = path.parent / "pair_arbitration_table.csv"
+    if arbitration_table_path.is_file():
+        pair_priority_by_pair_id = _load_pair_overlap_priorities(path.parent)
+
+    for road_id, claims in road_claims.items():
+        if len(claims) == 1:
+            _, segmentid = claims[0]
+            road_to_segmentid[road_id] = segmentid
+            continue
+
+        winner_pair_id, winner_segmentid = max(
+            claims,
+            key=lambda claim: (
+                1 if claim[0] in pair_priority_by_pair_id else 0,
+                pair_priority_by_pair_id.get(claim[0], ()),
+                claim[0],
+            ),
+        )
+        road_to_segmentid[road_id] = winner_segmentid
+        overlap_resolution_count += 1
+
+    return road_to_segmentid, pair_endpoints, overlap_resolution_count
 
 
 def _current_grade_2(node: NodeFeatureRecord) -> Optional[int]:
@@ -789,6 +803,7 @@ def _refresh_after_step4(
     roads: list[RoadFeatureRecord],
     step4_validated_pairs: list[dict[str, str]],
     new_road_to_segmentid: dict[str, str],
+    overlap_resolution_count: int,
     out_root: Path,
     step4_dir: Path,
     input_audit: dict[str, Any],
@@ -972,6 +987,7 @@ def _refresh_after_step4(
         "step4_validated_pair_count": step4_segment_summary["validated_pair_count"],
         "step4_rejected_pair_count": step4_segment_summary["rejected_pair_count"],
         "step4_new_segment_road_count": len(new_road_to_segmentid),
+        "resolved_segment_body_overlap_road_count": overlap_resolution_count,
         "node_rule_keep_pair_count": node_rule_keep_pair_count,
         "node_rule_single_segment_count": node_rule_single_segment_count,
         "node_rule_right_turn_only_count": node_rule_right_turn_only_count,
@@ -1078,7 +1094,7 @@ def run_step4_residual_graph(
     segment_body_path = first_existing_vector_path(step4_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson")
     if segment_body_path is None:
         raise ValueError(f"Step4 segment body output is missing under '{step4_dir}'.")
-    new_road_to_segmentid, _pair_endpoints = _parse_segment_body_assignments(
+    new_road_to_segmentid, _pair_endpoints, overlap_resolution_count = _parse_segment_body_assignments(
         segment_body_path,
         reserved_segmentids=existing_segmentids,
     )
@@ -1103,6 +1119,7 @@ def run_step4_residual_graph(
         roads=roads,
         step4_validated_pairs=validated_pairs,
         new_road_to_segmentid=new_road_to_segmentid,
+        overlap_resolution_count=overlap_resolution_count,
         out_root=resolved_out_root,
         step4_dir=step4_dir,
         input_audit=input_audit,

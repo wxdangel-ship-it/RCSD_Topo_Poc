@@ -9,6 +9,7 @@ from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     load_vector_feature_collection,
+    write_csv,
     write_geojson,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import (
@@ -423,10 +424,98 @@ def test_step4_segment_body_assignments_suffix_when_colliding_with_existing_segm
         ],
     )
 
-    road_to_segmentid, _ = _parse_segment_body_assignments(
+    road_to_segmentid, _, overlap_resolution_count = _parse_segment_body_assignments(
         segment_body_path,
         reserved_segmentids={"1_3"},
     )
 
     assert road_to_segmentid["r1"] == "1_3_1"
     assert road_to_segmentid["r2"] == "1_3_1"
+    assert overlap_resolution_count == 0
+
+
+def test_step4_segment_body_assignments_resolve_duplicate_roads_by_pair_priority(tmp_path: Path) -> None:
+    step4_dir = tmp_path / "STEP4"
+    step4_dir.mkdir()
+    segment_body_path = step4_dir / "segment_body_roads.geojson"
+    write_geojson(
+        segment_body_path,
+        [
+            {
+                "properties": {
+                    "pair_id": "STEP4:1__3",
+                    "a_node_id": "1",
+                    "b_node_id": "3",
+                    "validated_status": "validated",
+                    "road_ids": ["r_shared", "r_a"],
+                },
+                "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
+            },
+            {
+                "properties": {
+                    "pair_id": "STEP4:5__7",
+                    "a_node_id": "5",
+                    "b_node_id": "7",
+                    "validated_status": "validated",
+                    "road_ids": ["r_shared", "r_b"],
+                },
+                "geometry": LineString([(0.0, 1.0), (1.0, 1.0)]),
+            },
+        ],
+    )
+    write_csv(
+        step4_dir / "pair_arbitration_table.csv",
+        [
+            {
+                "pair_id": "STEP4:1__3",
+                "single_pair_legal": True,
+                "arbitration_status": "win",
+                "endpoint_boundary_penalty": 1,
+                "strong_anchor_win_count": 0,
+                "corridor_naturalness_score": 0,
+                "contested_trunk_coverage_count": 0,
+                "contested_trunk_coverage_ratio": 0.0,
+                "pair_support_expansion_penalty": 1,
+                "internal_endpoint_penalty": 1,
+                "body_connectivity_support": 1.0,
+                "semantic_conflict_penalty": 1,
+            },
+            {
+                "pair_id": "STEP4:5__7",
+                "single_pair_legal": True,
+                "arbitration_status": "win",
+                "endpoint_boundary_penalty": 0,
+                "strong_anchor_win_count": 2,
+                "corridor_naturalness_score": 1,
+                "contested_trunk_coverage_count": 1,
+                "contested_trunk_coverage_ratio": 1.0,
+                "pair_support_expansion_penalty": 0,
+                "internal_endpoint_penalty": 0,
+                "body_connectivity_support": 10.0,
+                "semantic_conflict_penalty": 0,
+            },
+        ],
+        [
+            "pair_id",
+            "single_pair_legal",
+            "arbitration_status",
+            "endpoint_boundary_penalty",
+            "strong_anchor_win_count",
+            "corridor_naturalness_score",
+            "contested_trunk_coverage_count",
+            "contested_trunk_coverage_ratio",
+            "pair_support_expansion_penalty",
+            "internal_endpoint_penalty",
+            "body_connectivity_support",
+            "semantic_conflict_penalty",
+        ],
+    )
+
+    road_to_segmentid, pair_endpoints, overlap_resolution_count = _parse_segment_body_assignments(segment_body_path)
+
+    assert pair_endpoints["STEP4:1__3"] == ("1", "3")
+    assert pair_endpoints["STEP4:5__7"] == ("5", "7")
+    assert road_to_segmentid["r_shared"] == "5_7"
+    assert road_to_segmentid["r_a"] == "1_3"
+    assert road_to_segmentid["r_b"] == "5_7"
+    assert overlap_resolution_count == 1

@@ -2144,7 +2144,7 @@ def _validate_pair_candidates(
                 decision=decision,
                 conflict_pair_id=conflict_pair_ids_by_loser.get(pair.pair_id),
                 left_turn_excluded_mode=formway_mode,
-                compact_release_payloads=compact_release_payloads,
+                compact_release_payloads=False,
             )
             _emit_validation_pair_phase(
                 pair_index=pair_index,
@@ -2164,7 +2164,7 @@ def _validate_pair_candidates(
             result = _single_pair_illegal_validation(
                 illegal_validations_by_pair_id[pair.pair_id],
                 decision=decision,
-                compact_release_payloads=compact_release_payloads,
+                compact_release_payloads=False,
             )
             _emit_validation_pair_phase(
                 pair_index=pair_index,
@@ -2204,6 +2204,11 @@ def _validate_pair_candidates(
         tightened_by_pair_id = {}
 
     tightened = [tightened_by_pair_id.get(item.pair_id, item) for item in provisional_results]
+    if compact_release_payloads:
+        tightened = [
+            _compact_validation_result_for_release(item, keep_tighten_fields=False)
+            for item in tightened
+        ]
     _emit_progress(
         progress_callback,
         "validation_tighten_completed",

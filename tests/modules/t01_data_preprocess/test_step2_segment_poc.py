@@ -1650,10 +1650,10 @@ def test_step2_validation_compact_release_tightens_only_validated_subset(monkeyp
     assert len(tighten_inputs) == 1
     tightened_input = tighten_inputs[0][0]
     assert tightened_input.pair_id == "S2X:1__3"
-    assert tightened_input.candidate_channel_road_ids == ()
+    assert tightened_input.candidate_channel_road_ids == ("r12", "r23")
     assert tightened_input.pruned_road_ids == ("r12", "r23")
     assert tightened_input.trunk_road_ids == ("r12", "r23")
-    assert tightened_input.segment_road_ids == ()
+    assert tightened_input.segment_road_ids == ("r12", "r23")
 
     final_validated = results[0]
     assert final_validated.validated_status == "validated"
@@ -1669,6 +1669,121 @@ def test_step2_validation_compact_release_tightens_only_validated_subset(monkeyp
     assert final_rejected.segment_road_ids == ()
     assert final_rejected.support_info["candidate_channel_road_count"] == 2
     assert final_rejected.support_info["pruned_road_count"] == 2
+
+
+def test_step2_compact_release_keeps_parallel_twin_swap_semantics(monkeypatch) -> None:
+    roads = [
+        _road_record("f14", "1", "4", coords=((0.0, 0.0), (30.0, 0.0)), direction=2),
+        _road_record("r4a", "4", "A", coords=((30.0, 10.0), (20.0, 10.0)), direction=2),
+        _road_record("tab", "A", "B", coords=((20.0, 10.0), (10.0, 10.0)), direction=1),
+        _road_record("sab", "A", "B", coords=((20.0, 12.0), (10.0, 12.0)), direction=2),
+        _road_record("rb1", "B", "1", coords=((10.0, 10.0), (0.0, 10.0)), direction=2),
+    ]
+    semantic_nodes = {
+        "1": _semantic_node_record("1", kind_2=4),
+        "4": _semantic_node_record("4", kind_2=4),
+        "A": _semantic_node_record("A", kind_2=4),
+        "B": _semantic_node_record("B", kind_2=2048, grade_2=3),
+    }
+    context = _minimal_context(roads, semantic_nodes=semantic_nodes)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    undirected_adjacency = {
+        "1": (
+            step1_pair_poc.TraversalEdge("f14", "1", "4"),
+            step1_pair_poc.TraversalEdge("rb1", "1", "B"),
+        ),
+        "4": (
+            step1_pair_poc.TraversalEdge("f14", "4", "1"),
+            step1_pair_poc.TraversalEdge("r4a", "4", "A"),
+        ),
+        "A": (
+            step1_pair_poc.TraversalEdge("r4a", "A", "4"),
+            step1_pair_poc.TraversalEdge("tab", "A", "B"),
+            step1_pair_poc.TraversalEdge("sab", "A", "B"),
+        ),
+        "B": (
+            step1_pair_poc.TraversalEdge("tab", "B", "A"),
+            step1_pair_poc.TraversalEdge("sab", "B", "A"),
+            step1_pair_poc.TraversalEdge("rb1", "B", "1"),
+        ),
+    }
+    pair_current = step1_pair_poc.PairRecord(
+        pair_id="S2X:1__4",
+        a_node_id="1",
+        b_node_id="4",
+        strategy_id="S2X",
+        reverse_confirmed=True,
+        forward_path_node_ids=("1", "4"),
+        forward_path_road_ids=("f14",),
+        reverse_path_node_ids=("4", "A", "B", "1"),
+        reverse_path_road_ids=("r4a", "tab", "rb1"),
+        through_node_ids=("A", "B"),
+    )
+    execution = _minimal_execution([pair_current])
+    trunk_candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(("1", "4"), ("f14",), 30.0),
+        reverse_path=step2_segment_poc.DirectedPath(("4", "A", "B", "1"), ("r4a", "tab", "rb1"), 30.0),
+        road_ids=("f14", "r4a", "tab", "rb1"),
+        signed_area=1.0,
+        total_length=60.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=0.0,
+    )
+
+    def _fake_build_candidate_channel(pair, **kwargs):
+        assert pair.pair_id == "S2X:1__4"
+        return {"f14", "r4a", "tab", "sab", "rb1"}, set()
+
+    def _fake_prune_candidate_channel(pair, **kwargs):
+        return {"f14", "r4a", "tab", "sab", "rb1"}, [], False
+
+    def _fake_evaluate_trunk_choices(pair, **kwargs):
+        return (
+            [step2_segment_poc._TrunkEvaluationChoice(
+                trunk_candidate,
+                (),
+                {
+                    "branch_cut_infos": [],
+                    "pair_support_road_ids": ["f14", "r4a", "tab", "rb1"],
+                    "forward_path_road_ids": ["f14"],
+                    "reverse_path_road_ids": ["r4a", "tab", "rb1"],
+                },
+            )],
+            None,
+            (),
+            {},
+        )
+
+    monkeypatch.setattr(step2_segment_poc, "_build_candidate_channel", _fake_build_candidate_channel)
+    monkeypatch.setattr(step2_segment_poc, "_prune_candidate_channel", _fake_prune_candidate_channel)
+    monkeypatch.setattr(step2_segment_poc, "_evaluate_trunk_choices", _fake_evaluate_trunk_choices)
+    monkeypatch.setattr(step2_segment_poc, "_collect_internal_boundary_nodes", lambda *args, **kwargs: ())
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_build_segment_body_candidate_channel",
+        lambda *args, **kwargs: {"f14", "r4a", "tab", "sab", "rb1"},
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_refine_segment_roads",
+        lambda *args, **kwargs: (("f14", "r4a", "tab", "sab", "rb1"), []),
+    )
+
+    for compact_release_payloads in (False, True):
+        results = step2_segment_poc._validate_pair_candidates(
+            execution,
+            context=context,
+            road_endpoints=road_endpoints,
+            undirected_adjacency=undirected_adjacency,
+            formway_mode="strict",
+            left_turn_formway_bit=8,
+            compact_release_payloads=compact_release_payloads,
+        )
+        current = results[0]
+        assert set(current.trunk_road_ids) == {"f14", "r4a", "sab", "rb1"}
+        assert set(current.segment_road_ids) == {"f14", "r4a", "sab", "rb1"}
+        assert set(current.residual_road_ids) == {"tab"}
+
 
 
 def test_step2_moves_weak_component_to_step3_residual() -> None:

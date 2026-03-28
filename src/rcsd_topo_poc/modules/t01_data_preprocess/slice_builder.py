@@ -5,11 +5,11 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from time import perf_counte
+from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import shapefile
-from pyproj import CRS, Transforme
+from pyproj import CRS, Transformer
 from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
 
@@ -32,7 +32,7 @@ DEFAULT_PROFILE_CONFIG_RELATIVE_PATH = Path("configs") / "t01_data_preprocess" /
 
 @dataclass(frozen=True)
 class SliceNode:
-    node_id: st
+    node_id: str
     mainnodeid: Optional[str]
     x: float
     y: float
@@ -41,8 +41,8 @@ class SliceNode:
 
 @dataclass(frozen=True)
 class SliceSemanticNode:
-    semantic_node_id: st
-    representative_node_id: st
+    semantic_node_id: str
+    representative_node_id: str
     member_node_ids: Tuple[str, ...]
     x: float
     y: float
@@ -51,7 +51,7 @@ class SliceSemanticNode:
 
 @dataclass(frozen=True)
 class SliceRoad:
-    road_id: st
+    road_id: str
     snodeid: Optional[str]
     enodeid: Optional[str]
     geometry: BaseGeometry
@@ -61,7 +61,7 @@ class SliceRoad:
 @dataclass(frozen=True)
 class SliceRoadHeader:
     record_index: int
-    road_id: st
+    road_id: str
     snodeid: Optional[str]
     enodeid: Optional[str]
     properties: Dict[str, Any]
@@ -69,9 +69,9 @@ class SliceRoadHeader:
 
 @dataclass(frozen=True)
 class SliceProfile:
-    profile_id: st
+    profile_id: str
     target_core_node_count: int
-    description: st
+    description: str
 
 
 @dataclass(frozen=True)

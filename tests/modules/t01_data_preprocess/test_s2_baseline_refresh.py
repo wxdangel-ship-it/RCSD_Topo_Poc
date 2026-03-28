@@ -283,10 +283,94 @@ def test_s2_segment_body_assignments_suffix_duplicate_endpoint_pairs(tmp_path: P
         ],
     )
 
-    road_to_segmentid, _ = _load_segment_body_assignments(segment_body_path)
+    road_to_segmentid, _, overlap_resolution_count = _load_segment_body_assignments(segment_body_path)
 
     assert road_to_segmentid["r1"] == "1_3_1"
     assert road_to_segmentid["r2"] == "1_3_2"
+    assert overlap_resolution_count == 0
+
+
+def test_s2_segment_body_assignments_resolve_duplicate_roads_by_pair_priority(tmp_path: Path) -> None:
+    segment_body_path = tmp_path / "segment_body_roads.geojson"
+    write_geojson(
+        segment_body_path,
+        [
+            {
+                "properties": {
+                    "pair_id": "S2:1__2",
+                    "a_node_id": "1",
+                    "b_node_id": "2",
+                    "validated_status": "validated",
+                    "road_ids": ["r_shared", "r_a"],
+                },
+                "geometry": MultiLineString([LineString([(0.0, 0.0), (1.0, 0.0)])]),
+            },
+            {
+                "properties": {
+                    "pair_id": "S2:3__4",
+                    "a_node_id": "3",
+                    "b_node_id": "4",
+                    "validated_status": "validated",
+                    "road_ids": ["r_shared", "r_b"],
+                },
+                "geometry": MultiLineString([LineString([(0.0, 1.0), (1.0, 1.0)])]),
+            },
+        ],
+    )
+    write_csv(
+        tmp_path / "pair_arbitration_table.csv",
+        [
+            {
+                "pair_id": "S2:1__2",
+                "single_pair_legal": True,
+                "arbitration_status": "win",
+                "endpoint_boundary_penalty": 0,
+                "strong_anchor_win_count": 2,
+                "corridor_naturalness_score": 1,
+                "contested_trunk_coverage_count": 1,
+                "contested_trunk_coverage_ratio": 1.0,
+                "pair_support_expansion_penalty": 0,
+                "internal_endpoint_penalty": 0,
+                "body_connectivity_support": 10.0,
+                "semantic_conflict_penalty": 0,
+            },
+            {
+                "pair_id": "S2:3__4",
+                "single_pair_legal": True,
+                "arbitration_status": "win",
+                "endpoint_boundary_penalty": 1,
+                "strong_anchor_win_count": 0,
+                "corridor_naturalness_score": 0,
+                "contested_trunk_coverage_count": 0,
+                "contested_trunk_coverage_ratio": 0.0,
+                "pair_support_expansion_penalty": 1,
+                "internal_endpoint_penalty": 1,
+                "body_connectivity_support": 2.0,
+                "semantic_conflict_penalty": 1,
+            },
+        ],
+        [
+            "pair_id",
+            "single_pair_legal",
+            "arbitration_status",
+            "endpoint_boundary_penalty",
+            "strong_anchor_win_count",
+            "corridor_naturalness_score",
+            "contested_trunk_coverage_count",
+            "contested_trunk_coverage_ratio",
+            "pair_support_expansion_penalty",
+            "internal_endpoint_penalty",
+            "body_connectivity_support",
+            "semantic_conflict_penalty",
+        ],
+    )
+
+    road_to_segmentid, _, overlap_resolution_count = _load_segment_body_assignments(segment_body_path)
+
+    assert road_to_segmentid["r_shared"] == "1_2"
+    assert road_to_segmentid["r_a"] == "1_2"
+    assert road_to_segmentid["r_b"] == "3_4"
+    assert overlap_resolution_count == 1
 
 
 def test_refresh_s2_baseline_keeps_roundabout_mainnode_protected(tmp_path: Path) -> None:
@@ -413,3 +497,157 @@ def test_refresh_s2_baseline_keeps_roundabout_mainnode_protected(tmp_path: Path)
 
     mainnode_rows = {row["mainnode_id"]: row for row in _csv_rows(artifacts.mainnode_table_path)}
     assert mainnode_rows["50"]["applied_rule"] == "protected_roundabout_mainnode"
+
+
+def test_refresh_s2_baseline_resolves_duplicate_segment_body_road_ownership(tmp_path: Path) -> None:
+    node_path = tmp_path / "working_nodes.geojson"
+    road_path = tmp_path / "working_roads.geojson"
+    s2_dir = tmp_path / "baseline_overlap" / "S2"
+    out_root = tmp_path / "out_overlap"
+    s2_dir.mkdir(parents=True)
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind=4, grade=1),
+            _node_feature(2, 1.0, 0.0, kind=4, grade=1),
+            _node_feature(3, 0.0, 1.0, kind=4, grade=1),
+            _node_feature(4, 1.0, 1.0, kind=4, grade=1),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r_shared", 1, 2, x_offset=0.0),
+            _road_feature("r_a", 2, 1, x_offset=1.0),
+            _road_feature("r_b", 3, 4, x_offset=2.0),
+        ],
+    )
+    write_csv(
+        s2_dir / "validated_pairs.csv",
+        [
+            {
+                "pair_id": "S2:1__2",
+                "a_node_id": "1",
+                "b_node_id": "2",
+                "trunk_mode": "counterclockwise_loop",
+                "left_turn_excluded_mode": "strict",
+                "warning_codes": "",
+                "segment_body_road_count": "2",
+                "residual_road_count": "0",
+            },
+            {
+                "pair_id": "S2:3__4",
+                "a_node_id": "3",
+                "b_node_id": "4",
+                "trunk_mode": "counterclockwise_loop",
+                "left_turn_excluded_mode": "strict",
+                "warning_codes": "",
+                "segment_body_road_count": "2",
+                "residual_road_count": "0",
+            },
+        ],
+        [
+            "pair_id",
+            "a_node_id",
+            "b_node_id",
+            "trunk_mode",
+            "left_turn_excluded_mode",
+            "warning_codes",
+            "segment_body_road_count",
+            "residual_road_count",
+        ],
+    )
+    write_csv(
+        s2_dir / "pair_arbitration_table.csv",
+        [
+            {
+                "pair_id": "S2:1__2",
+                "single_pair_legal": True,
+                "arbitration_status": "win",
+                "endpoint_boundary_penalty": 0,
+                "strong_anchor_win_count": 2,
+                "corridor_naturalness_score": 1,
+                "contested_trunk_coverage_count": 1,
+                "contested_trunk_coverage_ratio": 1.0,
+                "pair_support_expansion_penalty": 0,
+                "internal_endpoint_penalty": 0,
+                "body_connectivity_support": 10.0,
+                "semantic_conflict_penalty": 0,
+                "lose_reason": "",
+            },
+            {
+                "pair_id": "S2:3__4",
+                "single_pair_legal": True,
+                "arbitration_status": "win",
+                "endpoint_boundary_penalty": 1,
+                "strong_anchor_win_count": 0,
+                "corridor_naturalness_score": 0,
+                "contested_trunk_coverage_count": 0,
+                "contested_trunk_coverage_ratio": 0.0,
+                "pair_support_expansion_penalty": 1,
+                "internal_endpoint_penalty": 1,
+                "body_connectivity_support": 2.0,
+                "semantic_conflict_penalty": 1,
+                "lose_reason": "road_overlap_lower_priority",
+            },
+        ],
+        [
+            "pair_id",
+            "single_pair_legal",
+            "arbitration_status",
+            "endpoint_boundary_penalty",
+            "strong_anchor_win_count",
+            "corridor_naturalness_score",
+            "contested_trunk_coverage_count",
+            "contested_trunk_coverage_ratio",
+            "pair_support_expansion_penalty",
+            "internal_endpoint_penalty",
+            "body_connectivity_support",
+            "semantic_conflict_penalty",
+            "lose_reason",
+        ],
+    )
+    write_geojson(
+        s2_dir / "segment_body_roads.geojson",
+        [
+            {
+                "properties": {
+                    "pair_id": "S2:1__2",
+                    "a_node_id": "1",
+                    "b_node_id": "2",
+                    "validated_status": "validated",
+                    "road_ids": ["r_shared", "r_a"],
+                    "road_ids_text": "r_shared,r_a",
+                },
+                "geometry": MultiLineString([LineString([(0.0, 0.0), (1.0, 0.0)])]),
+            },
+            {
+                "properties": {
+                    "pair_id": "S2:3__4",
+                    "a_node_id": "3",
+                    "b_node_id": "4",
+                    "validated_status": "validated",
+                    "road_ids": ["r_shared", "r_b"],
+                    "road_ids_text": "r_shared,r_b",
+                },
+                "geometry": MultiLineString([LineString([(0.0, 1.0), (1.0, 1.0)])]),
+            },
+        ],
+    )
+
+    artifacts = refresh_s2_baseline(
+        road_path=road_path,
+        node_path=node_path,
+        s2_path=tmp_path / "baseline_overlap",
+        out_root=out_root,
+        run_id="refresh_overlap_case",
+        assume_working_layers=True,
+    )
+
+    roads_doc = _load_geojson(artifacts.roads_path)
+    road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
+    assert road_props["r_shared"]["segmentid"] == "1_2"
+    assert road_props["r_a"]["segmentid"] == "1_2"
+    assert road_props["r_b"]["segmentid"] == "3_4"
+    assert artifacts.summary["resolved_segment_body_overlap_road_count"] == 1

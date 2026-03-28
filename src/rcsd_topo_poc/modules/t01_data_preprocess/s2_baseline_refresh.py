@@ -174,6 +174,53 @@ def _parse_road_ids(payload: Any, fallback_text: Any) -> tuple[str, ...]:
     return ()
 
 
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "t", "yes", "y"}
+
+
+def _coerce_float(value: Any) -> float:
+    if value in {None, ""}:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _pair_overlap_priority_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    arbitration_status = str(row.get("arbitration_status") or "").strip().lower()
+    return (
+        1 if _coerce_bool(row.get("single_pair_legal")) else 0,
+        1 if arbitration_status == "win" else 0,
+        _coerce_int(row.get("strong_anchor_win_count")),
+        _coerce_int(row.get("contested_trunk_coverage_count")),
+        _coerce_float(row.get("contested_trunk_coverage_ratio")),
+        -_coerce_int(row.get("pair_support_expansion_penalty")),
+        -_coerce_int(row.get("endpoint_boundary_penalty")),
+        -_coerce_int(row.get("internal_endpoint_penalty")),
+        _coerce_float(row.get("body_connectivity_support")),
+        -_coerce_int(row.get("semantic_conflict_penalty")),
+        _coerce_int(row.get("corridor_naturalness_score")),
+    )
+
+
+def _load_pair_overlap_priorities(s2_dir: Path) -> dict[str, tuple[Any, ...]]:
+    arbitration_table_path = s2_dir / "pair_arbitration_table.csv"
+    if not arbitration_table_path.is_file():
+        return {}
+
+    priorities: dict[str, tuple[Any, ...]] = {}
+    for row in _read_csv_rows(arbitration_table_path):
+        pair_id = str(row.get("pair_id") or "").strip()
+        if not pair_id:
+            continue
+        priorities[pair_id] = _pair_overlap_priority_key(row)
+    return priorities
+
+
 def _build_segmentid_base(a_node_id: str, b_node_id: str) -> str:
     return f"{a_node_id}_{b_node_id}"
 
@@ -212,12 +259,14 @@ def _allocate_unique_segmentid(
         suffix += 1
 
 
-def _load_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+def _load_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[str, tuple[str, str]], int]:
     payload = load_vector_feature_collection(path)
     road_to_segmentid: dict[str, str] = {}
     pair_endpoints: dict[str, tuple[str, str]] = {}
     pending_rows: list[tuple[str, str, str, tuple[str, ...]]] = []
     base_segmentid_counts: dict[str, int] = defaultdict(int)
+    pair_priority_by_pair_id: dict[str, tuple[Any, ...]] = {}
+    overlap_resolution_count = 0
 
     for feature in payload.get("features", []):
         props = dict(feature.get("properties") or {})
@@ -235,6 +284,7 @@ def _load_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[str
         base_segmentid_counts[_build_segmentid_base(a_node_id, b_node_id)] += 1
 
     used_segmentids: set[str] = set()
+    road_claims: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for pair_id, a_node_id, b_node_id, road_ids in pending_rows:
         segmentid = _allocate_unique_segmentid(
             a_node_id=a_node_id,
@@ -245,14 +295,30 @@ def _load_segment_body_assignments(path: Path) -> tuple[dict[str, str], dict[str
         pair_endpoints[pair_id] = (a_node_id, b_node_id)
 
         for road_id in road_ids:
-            existing = road_to_segmentid.get(road_id)
-            if existing is not None and existing != segmentid:
-                raise ValueError(
-                    f"Road '{road_id}' is assigned to multiple segment ids: '{existing}' and '{segmentid}'."
-                )
-            road_to_segmentid[road_id] = segmentid
+            road_claims[road_id].append((pair_id, segmentid))
 
-    return road_to_segmentid, pair_endpoints
+    arbitration_table_path = path.parent / "pair_arbitration_table.csv"
+    if arbitration_table_path.is_file():
+        pair_priority_by_pair_id = _load_pair_overlap_priorities(path.parent)
+
+    for road_id, claims in road_claims.items():
+        if len(claims) == 1:
+            _, segmentid = claims[0]
+            road_to_segmentid[road_id] = segmentid
+            continue
+
+        winner_pair_id, winner_segmentid = max(
+            claims,
+            key=lambda claim: (
+                1 if claim[0] in pair_priority_by_pair_id else 0,
+                pair_priority_by_pair_id.get(claim[0], ()),
+                claim[0],
+            ),
+        )
+        road_to_segmentid[road_id] = winner_segmentid
+        overlap_resolution_count += 1
+
+    return road_to_segmentid, pair_endpoints, overlap_resolution_count
 
 
 def _load_nodes(
@@ -525,7 +591,9 @@ def refresh_s2_baseline(
         raise ValueError(f"Could not find segment_body_roads output under '{s2_dir}'.")
 
     validated_pairs = _load_validated_pairs(validated_pairs_path)
-    road_to_segmentid, pair_endpoints_from_segment = _load_segment_body_assignments(segment_body_path)
+    road_to_segmentid, pair_endpoints_from_segment, overlap_resolution_count = _load_segment_body_assignments(
+        segment_body_path
+    )
     (node_records, node_by_id, raw_groups), (road_records, road_by_id) = _load_nodes_and_roads(
         node_path=working_node_path,
         road_path=working_road_path,
@@ -707,6 +775,7 @@ def refresh_s2_baseline(
         "node_input_path": str(Path(node_path)),
         "validated_pair_count": len(validated_pairs),
         "segment_body_road_count": segment_body_road_count,
+        "resolved_segment_body_overlap_road_count": overlap_resolution_count,
         "road_written_sgrade_count": sum(1 for props in road_properties_map.values() if props["sgrade"] is not None),
         "road_written_segmentid_count": sum(1 for props in road_properties_map.values() if props["segmentid"] is not None),
         "mainnode_total_count": len(mainnode_groups),

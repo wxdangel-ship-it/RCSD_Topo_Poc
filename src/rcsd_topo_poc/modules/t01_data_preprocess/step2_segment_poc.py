@@ -1656,6 +1656,7 @@ def _validate_pair_candidates(
     left_turn_formway_bit: int,
     compact_release_payloads: bool = False,
     progress_callback: Optional[Step2ProgressCallback] = None,
+    trace_validation_pair_ids: Optional[set[str]] = None,
     return_arbitration_outcome: bool = False,
 ) -> Union[list[PairValidationResult], tuple[list[PairValidationResult], PairArbitrationOutcome]]:
     terminate_ids = set(execution.terminate_ids)
@@ -1672,6 +1673,7 @@ def _validate_pair_candidates(
     semantic_conflict_node_ids = _arbitration_semantic_conflict_node_ids(context)
     strong_anchor_node_ids = _arbitration_strong_anchor_node_ids(context)
     tjunction_anchor_node_ids = _arbitration_tjunction_anchor_node_ids(context)
+    trace_pair_ids = set(trace_validation_pair_ids or ())
 
     _emit_progress(progress_callback, "validation_started", validation_count=validation_count)
 
@@ -1692,7 +1694,9 @@ def _validate_pair_candidates(
             "phase": phase,
             **extra_payload,
         }
-        perf_trace_enabled = pair_index <= VALIDATION_PHASE_TRACE_PAIR_LIMIT
+        perf_trace_enabled = (
+            pair_index <= VALIDATION_PHASE_TRACE_PAIR_LIMIT or pair.pair_id in trace_pair_ids
+        )
         _emit_progress(
             progress_callback,
             "validation_pair_state",
@@ -2237,9 +2241,23 @@ def run_step2_segment_poc(
     retain_validation_details: bool = True,
     progress_callback: Optional[Step2ProgressCallback] = None,
     assume_working_layers: bool = False,
+    trace_validation_pair_ids: Optional[Iterable[str]] = None,
+    only_validation_pair_ids: Optional[Iterable[str]] = None,
+    validation_pair_index_start: Optional[int] = None,
+    validation_pair_index_end: Optional[int] = None,
 ) -> list[Step2StrategyResult]:
     if formway_mode not in {"strict", "audit_only", "off"}:
         raise ValueError("formway_mode must be one of: strict, audit_only, off.")
+    if validation_pair_index_start is not None and validation_pair_index_start < 1:
+        raise ValueError("validation_pair_index_start must be >= 1.")
+    if validation_pair_index_end is not None and validation_pair_index_end < 1:
+        raise ValueError("validation_pair_index_end must be >= 1.")
+    if (
+        validation_pair_index_start is not None
+        and validation_pair_index_end is not None
+        and validation_pair_index_start > validation_pair_index_end
+    ):
+        raise ValueError("validation_pair_index_start must be <= validation_pair_index_end.")
 
     resolved_out_root = Path(out_root)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
@@ -2284,6 +2302,11 @@ def run_step2_segment_poc(
     comparison_summary: list[dict[str, Any]] = []
     resolved_run_id = resolved_out_root.name if run_id is None else run_id
     strategy_count = len(strategy_config_paths)
+    trace_pair_ids = set(trace_validation_pair_ids or ())
+    only_pair_ids = set(only_validation_pair_ids or ())
+    pair_index_range_enabled = (
+        validation_pair_index_start is not None or validation_pair_index_end is not None
+    )
 
     for strategy_index, strategy_path in enumerate(strategy_config_paths, start=1):
         _emit_progress(
@@ -2343,6 +2366,32 @@ def run_step2_segment_poc(
         )
 
         execution = _compact_execution_for_validation(execution)
+        if only_pair_ids or pair_index_range_enabled:
+            filtered_pairs = [
+                pair
+                for pair_index, pair in enumerate(execution.pair_candidates, start=1)
+                if (not only_pair_ids or pair.pair_id in only_pair_ids)
+                and (
+                    validation_pair_index_start is None
+                    or pair_index >= validation_pair_index_start
+                )
+                and (
+                    validation_pair_index_end is None
+                    or pair_index <= validation_pair_index_end
+                )
+            ]
+            _emit_progress(
+                progress_callback,
+                "validation_pair_filter_applied",
+                strategy_index=strategy_index,
+                strategy_count=strategy_count,
+                strategy_id=strategy.strategy_id,
+                requested_pair_count=len(only_pair_ids),
+                requested_pair_index_start=validation_pair_index_start,
+                requested_pair_index_end=validation_pair_index_end,
+                matched_pair_count=len(filtered_pairs),
+            )
+            execution = replace(execution, pair_candidates=filtered_pairs)
         gc.collect()
         compact_release_payloads = not debug and not retain_validation_details
         validation_result = _validate_pair_candidates(
@@ -2354,6 +2403,7 @@ def run_step2_segment_poc(
             left_turn_formway_bit=left_turn_formway_bit,
             compact_release_payloads=compact_release_payloads,
             progress_callback=progress_callback,
+            trace_validation_pair_ids=trace_pair_ids,
             return_arbitration_outcome=True,
         )
         if isinstance(validation_result, tuple):
@@ -2447,6 +2497,12 @@ def run_step2_segment_poc_cli(args: argparse.Namespace) -> int:
         formway_mode=args.formway_mode,
         left_turn_formway_bit=args.left_turn_formway_bit,
         debug=args.debug,
+        progress_callback=None,
+        assume_working_layers=bool(getattr(args, "assume_working_layers", False)),
+        trace_validation_pair_ids=list(getattr(args, "trace_validation_pair_ids", None) or []),
+        only_validation_pair_ids=list(getattr(args, "only_validation_pair_ids", None) or []),
+        validation_pair_index_start=getattr(args, "validation_pair_index_start", None),
+        validation_pair_index_end=getattr(args, "validation_pair_index_end", None),
     )
 
     payload = {

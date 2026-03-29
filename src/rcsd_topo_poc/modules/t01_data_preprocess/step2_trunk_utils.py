@@ -32,6 +32,7 @@ MAX_PATHS_PER_DIRECTION = 12
 MAX_PATH_DEPTH = 64
 SIDE_ACCESS_SAMPLE_STEP_M = MAX_SIDE_ACCESS_DISTANCE_M / 2.0
 STEP5C_STRATEGY_ID = "STEP5C"
+MAX_DIRECT_ONEWAY_TAIL_RELAXATION_M = 5.0
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,73 @@ def _max_sampled_distance_m(
         if max_distance_m is None or distance_m > max_distance_m:
             max_distance_m = distance_m
     return max_distance_m
+
+
+def _single_road_direct_oneway_pair_sampled_separation_m(
+    *,
+    forward_path: DirectedPath,
+    reverse_path: DirectedPath,
+    roads: dict[str, RoadRecord],
+) -> Optional[float]:
+    if len(forward_path.road_ids) != 1 or len(reverse_path.road_ids) != 1:
+        return None
+    if len(forward_path.node_ids) != 2 or len(reverse_path.node_ids) != 2:
+        return None
+    if forward_path.node_ids != tuple(reversed(reverse_path.node_ids)):
+        return None
+
+    forward_road_id = forward_path.road_ids[0]
+    reverse_road_id = reverse_path.road_ids[0]
+    if forward_road_id == reverse_road_id:
+        return None
+
+    forward_road = roads.get(forward_road_id)
+    reverse_road = roads.get(reverse_road_id)
+    if forward_road is None or reverse_road is None:
+        return None
+    if forward_road.direction in {0, 1} or reverse_road.direction in {0, 1}:
+        return None
+
+    forward_geometry = _line_geometry_from_road_ids((forward_road_id,), roads=roads)
+    reverse_geometry = _line_geometry_from_road_ids((reverse_road_id,), roads=roads)
+    if forward_geometry is None or reverse_geometry is None:
+        return None
+
+    forward_length = _geometry_length(forward_geometry)
+    reverse_length = _geometry_length(reverse_geometry)
+    if forward_length <= 0.0 or reverse_length <= 0.0:
+        return None
+
+    shorter_geometry, longer_geometry = (
+        (forward_geometry, reverse_geometry)
+        if forward_length <= reverse_length
+        else (reverse_geometry, forward_geometry)
+    )
+    return _max_sampled_distance_m(shorter_geometry, longer_geometry)
+
+
+def _dual_carriageway_separation_m(
+    *,
+    forward_path: DirectedPath,
+    reverse_path: DirectedPath,
+    roads: dict[str, RoadRecord],
+) -> float:
+    forward_geometry = _line_geometry_from_road_ids(forward_path.road_ids, roads=roads)
+    reverse_geometry = _line_geometry_from_road_ids(reverse_path.road_ids, roads=roads)
+    raw_distance_m = _max_nearest_distance_m(forward_geometry, reverse_geometry) or 0.0
+
+    special_case_distance_m = _single_road_direct_oneway_pair_sampled_separation_m(
+        forward_path=forward_path,
+        reverse_path=reverse_path,
+        roads=roads,
+    )
+    if (
+        special_case_distance_m is not None
+        and raw_distance_m - special_case_distance_m <= MAX_DIRECT_ONEWAY_TAIL_RELAXATION_M
+    ):
+        return special_case_distance_m
+
+    return raw_distance_m
 
 
 def _road_matches_formway_bit(road: RoadRecord, bit_index: int) -> bool:
@@ -1166,8 +1234,6 @@ def _pair_support_seed_candidates(
     )
     if left_turn_road_ids:
         return []
-    forward_geometry = _line_geometry_from_road_ids(forward_path.road_ids, roads=roads)
-    reverse_geometry = _line_geometry_from_road_ids(reverse_path.road_ids, roads=roads)
     return [
         TrunkCandidate(
             forward_path=forward_path,
@@ -1176,7 +1242,11 @@ def _pair_support_seed_candidates(
             signed_area=0.0,
             total_length=forward_path.total_length + reverse_path.total_length,
             left_turn_road_ids=left_turn_road_ids,
-            max_dual_carriageway_separation_m=_max_nearest_distance_m(forward_geometry, reverse_geometry) or 0.0,
+            max_dual_carriageway_separation_m=_dual_carriageway_separation_m(
+                forward_path=forward_path,
+                reverse_path=reverse_path,
+                roads=roads,
+            ),
             is_bidirectional_minimal_loop=is_bidirectional_minimal_loop,
             is_semantic_node_group_closure=is_semantic_node_group_closure,
         )
@@ -1233,9 +1303,11 @@ def _collect_trunk_candidates(
             reverse_coords = _path_coords(reverse_path, roads=roads, road_endpoints=road_endpoints)
             if not ring_coords or not reverse_coords:
                 continue
-            forward_geometry = _line_geometry_from_coords(ring_coords)
-            reverse_geometry = _line_geometry_from_coords(reverse_coords)
-            max_dual_carriageway_separation_m = _max_nearest_distance_m(forward_geometry, reverse_geometry) or 0.0
+            max_dual_carriageway_separation_m = _dual_carriageway_separation_m(
+                forward_path=forward_path,
+                reverse_path=reverse_path,
+                roads=roads,
+            )
             ring_coords.extend(reverse_coords[1:])
 
             signed_area = _signed_ring_area(ring_coords)
@@ -1745,6 +1817,16 @@ def _evaluate_trunk_choices(
         )
         strict_passed_candidates = _prefer_bidirectional_minimal_loop_candidates(strict_passed_candidates)
         base_passed_candidates = _prefer_bidirectional_minimal_loop_candidates(base_passed_candidates)
+        strict_passed_candidates, strict_tjunction_blocked = _split_tjunction_vertical_tracking_candidates(
+            pair,
+            candidates=strict_passed_candidates,
+            context=context,
+        )
+        base_passed_candidates, base_tjunction_blocked = _split_tjunction_vertical_tracking_candidates(
+            pair,
+            candidates=base_passed_candidates,
+            context=context,
+        )
         strict_passed_candidates, strict_lasso_blocked = _split_bidirectional_minimal_loop_lasso_candidates(
             pair,
             candidates=strict_passed_candidates,
@@ -1791,6 +1873,9 @@ def _evaluate_trunk_choices(
             return choices, None, (), choices[0].support_info
         if base_passed_candidates:
             return [], "left_turn_only_polluted_trunk", (), _dual_separation_support_info(base_passed_candidates[0])
+        if strict_tjunction_blocked or base_tjunction_blocked:
+            support_info = (strict_tjunction_blocked or base_tjunction_blocked)[0][1]
+            return [], "t_junction_vertical_tracking", (), support_info
         if strict_lasso_blocked or base_lasso_blocked:
             support_info = (strict_lasso_blocked or base_lasso_blocked)[0][1]
             return [], "bidirectional_minimal_loop_lasso", (), support_info
@@ -1835,6 +1920,11 @@ def _evaluate_trunk_choices(
         candidates=base_passed_candidates,
     )
     base_passed_candidates = _prefer_bidirectional_minimal_loop_candidates(base_passed_candidates)
+    base_passed_candidates, base_tjunction_blocked = _split_tjunction_vertical_tracking_candidates(
+        pair,
+        candidates=base_passed_candidates,
+        context=context,
+    )
     base_passed_candidates, base_lasso_blocked = _split_bidirectional_minimal_loop_lasso_candidates(
         pair,
         candidates=base_passed_candidates,
@@ -1845,6 +1935,8 @@ def _evaluate_trunk_choices(
         context=context,
     )
     if not base_passed_candidates:
+        if base_tjunction_blocked:
+            return [], "t_junction_vertical_tracking", (), base_tjunction_blocked[0][1]
         if base_lasso_blocked:
             return [], "bidirectional_minimal_loop_lasso", (), base_lasso_blocked[0][1]
         if base_mixed_kind_wedge_blocked:

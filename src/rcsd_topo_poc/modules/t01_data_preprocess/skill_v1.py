@@ -652,6 +652,9 @@ def run_t01_skill_v1(
     completed_stage_names: list[str] = []
     total_started = time.perf_counter()
     total_stages = 6 + (1 if compare_freeze_dir is not None else 0)
+    if perf_markers_path.exists():
+        perf_markers_path.unlink()
+
     _write_progress_snapshot(
         out_path=progress_path,
         run_id=resolved_run_id,
@@ -675,6 +678,11 @@ def run_t01_skill_v1(
 
     if debug:
         stage_root = resolved_out_root / "debug"
+        if stage_root.exists():
+            if stage_root.is_dir():
+                shutil.rmtree(stage_root)
+            else:
+                stage_root.unlink()
         stage_root.mkdir(parents=True, exist_ok=True)
         temp_ctx = None
     else:

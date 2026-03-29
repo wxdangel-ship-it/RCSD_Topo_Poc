@@ -1450,6 +1450,96 @@ def test_step2_validation_emits_pair_phase_markers(monkeypatch) -> None:
     ]
 
 
+def test_trace_validation_pair_ids_only_toggle_perf_log_without_changing_validations(monkeypatch) -> None:
+    pair = _pair_record("S2X:10__20", "10", "20", ("r1020",))
+    execution = _minimal_execution([pair])
+    roads = [_road_record("r1020", "10", "20")]
+    context = _minimal_context(roads)
+    road_endpoints = {"r1020": ("10", "20")}
+    undirected_adjacency = {
+        "10": (step1_pair_poc.TraversalEdge("r1020", "10", "20"),),
+        "20": (step1_pair_poc.TraversalEdge("r1020", "20", "10"),),
+    }
+
+    trunk_candidate = step2_segment_poc.TrunkCandidate(
+        forward_path=step2_segment_poc.DirectedPath(("10", "20"), ("r1020",), 1.0),
+        reverse_path=step2_segment_poc.DirectedPath(("20", "10"), ("r1020",), 1.0),
+        road_ids=("r1020",),
+        signed_area=1.0,
+        total_length=2.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=0.0,
+    )
+
+    monkeypatch.setattr(step2_segment_poc, "VALIDATION_PHASE_TRACE_PAIR_LIMIT", 0)
+    monkeypatch.setattr(step2_segment_poc, "_build_candidate_channel", lambda *args, **kwargs: ({"r1020"}, set()))
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_prune_candidate_channel",
+        lambda *args, **kwargs: ({"r1020"}, [], False),
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_evaluate_trunk",
+        lambda *args, **kwargs: (trunk_candidate, None, (), {}),
+    )
+    monkeypatch.setattr(step2_segment_poc, "_collect_internal_boundary_nodes", lambda *args, **kwargs: ())
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_build_segment_body_candidate_channel",
+        lambda *args, **kwargs: {"r1020"},
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_refine_segment_roads",
+        lambda *args, **kwargs: (("r1020",), []),
+    )
+    monkeypatch.setattr(
+        step2_segment_poc,
+        "_tighten_validated_segment_components",
+        lambda provisional_results, **kwargs: provisional_results,
+    )
+
+    progress_without_trace: list[tuple[str, dict[str, object]]] = []
+    validations_without_trace = step2_segment_poc._validate_pair_candidates(
+        execution,
+        context=context,
+        road_endpoints=road_endpoints,
+        undirected_adjacency=undirected_adjacency,
+        formway_mode="strict",
+        left_turn_formway_bit=8,
+        progress_callback=lambda event, payload: progress_without_trace.append((event, payload)),
+    )
+
+    progress_with_trace: list[tuple[str, dict[str, object]]] = []
+    validations_with_trace = step2_segment_poc._validate_pair_candidates(
+        execution,
+        context=context,
+        road_endpoints=road_endpoints,
+        undirected_adjacency=undirected_adjacency,
+        formway_mode="strict",
+        left_turn_formway_bit=8,
+        progress_callback=lambda event, payload: progress_with_trace.append((event, payload)),
+        trace_validation_pair_ids={pair.pair_id},
+    )
+
+    assert validations_without_trace == validations_with_trace
+    without_perf_flags = [
+        payload["_perf_log"]
+        for event, payload in progress_without_trace
+        if event == "validation_pair_state"
+    ]
+    with_perf_flags = [
+        payload["_perf_log"]
+        for event, payload in progress_with_trace
+        if event == "validation_pair_state"
+    ]
+    assert without_perf_flags
+    assert with_perf_flags
+    assert set(without_perf_flags) == {False}
+    assert set(with_perf_flags) == {True}
+
+
 def test_step2_rejects_trunk_when_current_boundary_terminate_becomes_internal_node(monkeypatch) -> None:
     pair = _pair_record("S2X:A__B", "A", "B", ("rAT", "rTB"))
     execution = _minimal_execution([pair], terminate_ids=["T1"])

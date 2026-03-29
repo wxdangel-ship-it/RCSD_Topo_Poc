@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import PairRecord
-from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import _prune_candidate_channel
+from rcsd_topo_poc.modules.t01_data_preprocess.step2_candidate_channel_utils import _prune_candidate_channel
 
 
 def test_prune_candidate_channel_keeps_unique_bridge_between_pair_endpoints() -> None:

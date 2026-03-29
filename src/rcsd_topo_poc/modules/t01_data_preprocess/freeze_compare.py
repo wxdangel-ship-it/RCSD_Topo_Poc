@@ -229,6 +229,14 @@ def _road_ids_from_props(props: dict[str, Any]) -> list[str]:
     return []
 
 
+def _normalize_membership_stage(stage: str) -> str:
+    return {
+        "STEP5A": "Step5A",
+        "STEP5B": "Step5B",
+        "STEP5C": "Step5C",
+    }.get(stage, stage)
+
+
 def _membership_rows(path: Path, *, stage: str, layer_role: str, prefer_feature_phase: bool = False) -> list[dict[str, str]]:
     if not path.is_file():
         return []
@@ -237,7 +245,8 @@ def _membership_rows(path: Path, *, stage: str, layer_role: str, prefer_feature_
         props = feature.get("properties", {})
         pair_id = str(props.get("pair_id") or "")
         trunk_mode = str(props.get("trunk_mode") or "")
-        row_stage = str(props.get("step5_phase") or stage) if prefer_feature_phase else stage
+        raw_stage = str(props.get("step5_phase") or stage) if prefer_feature_phase else stage
+        row_stage = _normalize_membership_stage(raw_stage)
         for road_id in _road_ids_from_props(props):
             rows.append(
                 {

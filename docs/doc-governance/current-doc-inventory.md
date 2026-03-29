@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 盘点日期：2026-03-22
+- 盘点日期：2026-03-29
 - 目的：说明当前主阅读路径、标准文档位置、正式模块文档面与模板入口
 
 ## 当前主入口文档
@@ -26,6 +26,12 @@
 
 | 路径 | 当前角色 | 主要属性 | 说明 |
 |---|---|---|---|
+| `modules/t01_data_preprocess/architecture/*` | T01 模块长期架构真相 | `source_of_truth` | T01 正式模块的长期文档主表面 |
+| `modules/t01_data_preprocess/INTERFACE_CONTRACT.md` | T01 稳定契约面 | `source_of_truth` | 固化 working bootstrap、Step1-Step6、freeze compare 与 debug/no-debug 契约 |
+| `modules/t01_data_preprocess/README.md` | T01 操作者入口 | `operator_guide` | 说明 official end-to-end、freeze compare、分步运行方式与关键产物 |
+| `modules/t01_data_preprocess/AGENTS.md` | T01 durable guidance | `durable_guidance` | 只保留模块级执行边界与协作规则 |
+| `modules/t01_data_preprocess/history/*` | T01 模块级历史材料 | `history` | 记录 baseline 演进、结构拆分与后续修正轨迹 |
+| `specs/t01-data-preprocess/*` | T01 变更工件 | `active_change_artifact` | 记录当前 active change 的计划与任务，不替代长期模块真相 |
 | `modules/t02_junction_anchor/architecture/*` | T02 模块长期架构真相 | `source_of_truth` | T02 正式模块的长期文档主表面 |
 | `modules/t02_junction_anchor/INTERFACE_CONTRACT.md` | T02 稳定契约面 | `source_of_truth` | 固化 stage1、stage2、stage3 baseline 与文本支撑入口的输入、输出、入口、参数类别与验收标准 |
 | `modules/t02_junction_anchor/README.md` | T02 操作者入口 | `operator_guide` | 说明 stage1 / stage2 / stage3 官方运行入口、文本支撑入口、常见运行方式与关键产物 |
@@ -53,7 +59,7 @@
 
 ## 当前结论
 
-1. 主阅读路径已经收口到项目级源事实、治理入口、结构元数据、T02 正式模块文档面与模块模板。
-2. 当前已存在正式业务模块文档面：`modules/t02_junction_anchor/*`。
+1. 主阅读路径已经收口到项目级源事实、治理入口、结构元数据、T01 / T02 正式模块文档面与模块模板。
+2. 当前已存在正式业务模块文档面：`modules/t01_data_preprocess/*` 与 `modules/t02_junction_anchor/*`。
 3. `_template` 继续承担新模块启动模板职责。
 4. 模块根目录不放 `SKILL.md` 的规则已经写回仓库级文档。

@@ -368,6 +368,8 @@
 - `segment.gpkg`
 - `inner_nodes.gpkg`
 - `segment_error.gpkg`
+- `segment_error_s_grade_conflict.gpkg`
+- `segment_error_grade_kind_conflict.gpkg`
 
 ### 12.3 segment.gpkg
 - `id`：与 `roads.segmentid` 相同
@@ -398,6 +400,9 @@
     - `grade_2 = 1`
     - 且 `kind_2 = 4`
   - 若存在，则输出到 `segment_error.gpkg`
+  - 并按错误类型拆分输出到：
+    - `segment_error_s_grade_conflict.gpkg`
+    - `segment_error_grade_kind_conflict.gpkg`
 
 ## 13. 当前已固化内容
 - Step1 只输出 `pair_candidates`

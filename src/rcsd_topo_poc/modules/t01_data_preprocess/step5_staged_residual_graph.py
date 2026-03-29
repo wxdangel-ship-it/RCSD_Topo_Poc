@@ -180,10 +180,6 @@ def _step5b_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
     return is_full_through_or_t_kind(kind_2) and grade_2 in {1, 2, 3}
 
 
-def _step5c_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
-    return is_full_through_or_t_kind(kind_2) and grade_2 in {1, 2, 3}
-
-
 def _build_group_to_road_ids(
     *,
     roads: list[RoadFeatureRecord],

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from shapely.geometry import LineString, Point
 
-from rcsd_topo_poc.modules.t01_data_preprocess.freeze_compare import compare_skill_v1_bundle
+from rcsd_topo_poc.modules.t01_data_preprocess.freeze_compare import _membership_rows, compare_skill_v1_bundle
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_geojson, write_json
 
 
@@ -28,6 +28,37 @@ def _to_wsl_path(path: Path) -> str:
         tail = resolved.as_posix().split(":/", 1)[1]
         return f"/mnt/{drive.lower()}/{tail}"
     return resolved.as_posix()
+
+
+def test_membership_rows_normalize_debug_step5_phase_labels(tmp_path: Path) -> None:
+    path = tmp_path / "step5_segment_body.geojson"
+    write_geojson(
+        path,
+        [
+            {
+                "properties": {
+                    "pair_id": "STEP5A:1__2",
+                    "road_ids": ["r1"],
+                    "step5_phase": "STEP5A",
+                    "trunk_mode": "counterclockwise_loop",
+                },
+                "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
+            },
+            {
+                "properties": {
+                    "pair_id": "STEP5B:3__4",
+                    "road_ids": ["r2"],
+                    "step5_phase": "STEP5B",
+                    "trunk_mode": "direct",
+                },
+                "geometry": LineString([(0.0, 1.0), (1.0, 1.0)]),
+            },
+        ],
+    )
+
+    rows = _membership_rows(path, stage="Step5", layer_role="segment_body", prefer_feature_phase=True)
+
+    assert [row["stage"] for row in rows] == ["Step5A", "Step5B"]
 
 
 def test_compare_skill_v1_bundle_treats_sgrade_schema_migration_as_non_regression(tmp_path: Path) -> None:

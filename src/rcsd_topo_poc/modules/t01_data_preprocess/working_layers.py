@@ -476,23 +476,6 @@ def _apply_roundabout_preprocess(
     return node_features, road_features, summary_path, roundabout_summary
 
 
-def _apply_intersection_preprocess_hook(
-    *,
-    node_features: list[dict[str, Any]],
-    road_features: list[dict[str, Any]],
-    out_root: Path,
-    debug: bool,
-    progress_callback: Optional[WorkingLayerProgressCallback],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Path, dict[str, Any]]:
-    return _apply_roundabout_preprocess(
-        node_features=node_features,
-        road_features=road_features,
-        out_root=out_root,
-        debug=debug,
-        progress_callback=progress_callback,
-    )
-
-
 def _apply_bootstrap_node_retyping(
     *,
     node_features: list[dict[str, Any]],
@@ -690,7 +673,7 @@ def initialize_working_layers(
         for feature in road_layer_result.features
     ]
 
-    initialized_nodes, initialized_roads, roundabout_summary_path, roundabout_summary = _apply_intersection_preprocess_hook(
+    initialized_nodes, initialized_roads, roundabout_summary_path, roundabout_summary = _apply_roundabout_preprocess(
         node_features=initialized_nodes,
         road_features=initialized_roads,
         out_root=resolved_out_root,

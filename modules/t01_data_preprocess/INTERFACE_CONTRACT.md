@@ -23,6 +23,38 @@
   - `road_kind != 1`
   - `formway != 128`
 
+## 2.1 官方 runner / 诊断契约
+- 官方 end-to-end 入口：
+  - `python -m rcsd_topo_poc t01-run-skill-v1`
+- 官方 freeze compare 入口：
+  - `python -m rcsd_topo_poc t01-compare-freeze`
+- debug 默认值：
+  - `t01-run-skill-v1` 与 `t01-step6-segment-aggregation-poc` 默认 `debug=false`
+  - `t01-step1-pair-poc / t01-step2-segment-poc / t01-s2-refresh-node-road / t01-step4-residual-graph / t01-step5-staged-residual-graph` 默认 `debug=true`
+- `debug` 只允许影响：
+  - 中间 stage 目录
+  - 审计图层
+  - progress / perf 诊断产物
+- `debug` 不得改变最终业务结果：
+  - `validated_pairs_skill_v1.csv`
+  - `segment_body_membership_skill_v1.csv`
+  - `trunk_membership_skill_v1.csv`
+  - `segment.gpkg`
+- `t01-run-skill-v1` 的稳定诊断产物：
+  - `t01_skill_v1_progress.json`
+  - `t01_skill_v1_perf.json`
+  - `t01_skill_v1_perf.md`
+  - `t01_skill_v1_perf_markers.jsonl`
+  - `distance_gate_scope_check.json`
+  - `all_stage_segment_roads/`
+- `trace_validation_pair_ids`：
+  - 仅作为 Step2 progress / perf trace 透传参数
+  - 不是业务输入
+  - 不得改变 candidate search、validated_pairs、segment_body、endpoint pool 与最终 `segment.gpkg` 语义
+- `stop_after_step2_validation_pair_index`：
+  - 仅用于 Skill v1 全链路诊断截停
+  - 不改变已执行阶段的业务语义
+
 ## 3. Working Layers
 
 ### 3.1 Working Nodes
@@ -231,6 +263,8 @@
 - `segment.gpkg`
 - `inner_nodes.gpkg`
 - `segment_error.gpkg`
+- `segment_error_s_grade_conflict.gpkg`
+- `segment_error_grade_kind_conflict.gpkg`
 
 ### 6.3 聚合字段
 - `segment.gpkg`
@@ -253,10 +287,25 @@
   - 对所有 `sgrade = 0-0双` 的 Segment，若其中间 `junc_nodes` 存在：
     - `grade_2 = 1`
     - 且 `kind_2 = 4`
-    则输出到 `segment_error.geojson`
+    则输出到 `segment_error.gpkg`
+- typed error layers：
+  - `segment_error_s_grade_conflict.gpkg` 仅包含 `sgrade` 冲突类记录
+  - `segment_error_grade_kind_conflict.gpkg` 仅包含 `grade/kind` 冲突类记录
 - Step6 对 `junc_nodes / inner_nodes / segment_error` 的判断，应与全局 `formway != 128` 约束保持一致。
 
-## 7. 文档与实现边界
+## 7. Freeze Compare 契约
+- 当前 active non-regression baseline：
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/`
+- freeze compare 的主判定对象：
+  - 最终 `segment.gpkg` 语义一致
+- 以下产物作为审计证据保留：
+  - `validated_pairs_skill_v1.csv`
+  - `segment_body_membership_skill_v1.csv`
+  - `trunk_membership_skill_v1.csv`
+  - refreshed `nodes / roads` hash
+- 未经用户明确认可，不得更新 active freeze baseline
+
+## 8. 文档与实现边界
 - 本契约只描述当前 accepted baseline 下的对外契约与阶段约束。
 - 临时样例基线与结构整改进度不写入本契约正文。
 - 若实现与本契约冲突，应先修实现或提交歧义说明，不得自行覆盖 accepted baseline。

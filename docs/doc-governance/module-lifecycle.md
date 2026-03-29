@@ -33,6 +33,7 @@
 
 | 模块 ID | 路径 | 当前正式范围 | 当前状态 |
 |---|---|---|---|
+| `t01_data_preprocess` | `modules/t01_data_preprocess` | working bootstrap + roundabout preprocessing + Step1-Step6 双向 Segment 构建 official end-to-end；active freeze compare 为 `t01_skill_active_eight_sample_suite` | `official end-to-end / freeze-compare baseline active` |
 | `t02_junction_anchor` | `modules/t02_junction_anchor` | `DriveZone / has_evd gate` + `anchor recognition / anchor existence` + `virtual intersection anchoring` baseline；文本证据包为 stage3 支撑入口 | `stage1/stage2/stage3 baseline active` |
 
 ### Retired
@@ -50,6 +51,7 @@
 说明：
 
 - 未在本表登记的模块目录，不自动视为当前正式治理对象。
+- `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 active freeze compare 的最小实现闭环。
 - `t02_junction_anchor` 当前已具备 stage1、stage2 与 stage3 的最小实现闭环。
 - stage3 `virtual intersection anchoring` 纳入当前 baseline，不等于最终唯一锚定决策闭环或正式产线闭环。
 - 单 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑入口保留。

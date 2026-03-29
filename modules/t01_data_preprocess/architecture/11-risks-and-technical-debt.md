@@ -18,7 +18,7 @@
 - 全量运行下，`Step2 same-stage pair arbitration` 仍存在 option retention / 局部热点 pair 造成耗时和内存压力的风险。
 
 ## 结构债
-- `step2_segment_poc.py` 已降到 `< 100 KB`，但 `segment_body / tighten / orchestration` 职责仍偏重。
+- `step2_segment_poc.py` 已通过抽离 `step2_graph_primitives.py`、`step2_runtime_utils.py`、`step2_support_utils.py` 与 `step2_candidate_channel_utils.py` 继续压低体量；但 `validation / tighten / orchestration` 主链职责仍然偏重。
 - 文档曾出现 accepted baseline 错落到 `specs/` 的问题，现已纠正，但后续仍需保持角色边界清晰。
 
 ## 当前缓解方式

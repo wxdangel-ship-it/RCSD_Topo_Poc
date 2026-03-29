@@ -33,8 +33,16 @@
 - [step2_output_utils.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step2_output_utils.py)
 - [step2_trunk_utils.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step2_trunk_utils.py)
 - [step2_validation_utils.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step2_validation_utils.py)
+- [step2_graph_primitives.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step2_graph_primitives.py)
+- [step2_runtime_utils.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step2_runtime_utils.py)
+- [step2_support_utils.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step2_support_utils.py)
+- [step2_candidate_channel_utils.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step2_candidate_channel_utils.py)
 - 当前职责边界：
-  - `step2_segment_poc.py` 聚焦 pair validation、segment_body、same-stage arbitration 编排
+  - `step2_segment_poc.py` 聚焦 pair validation、segment_body tighten、same-stage arbitration 与 CLI/runner 编排
+  - `step2_graph_primitives.py` 承担 undirected 连通性、component、bridge 检测等纯图算法 helper
+  - `step2_runtime_utils.py` 承担 run id、out_root、progress callback 等运行时 helper
+  - `step2_support_utils.py` 承担 shared support dataclass、semantic endpoint 与 output packaging helper
+  - `step2_candidate_channel_utils.py` 承担 candidate channel、branch prune 与 segment-body candidate/refine helper
   - 其余四个文件分别承担 release、输出、trunk 子域、validation 包装
 
 ## 聚合与审计

@@ -24,8 +24,8 @@
 
 ## 3. Freeze baseline guardrails
 - 当前 Skill v1.0.0 效果基线为：
-  - `XXXS`
-  - `modules/t01_data_preprocess/baselines/t01_skill_v1_0_xxxs/`
+  - `XXXS1-8`
+  - `modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/`
 - 后续迭代若与该 freeze baseline 不一致，默认视为回退或显式变更
 - 未经用户明确认可，不得更新 freeze baseline
 - 任何性能优化不得通过改变 accepted 业务结果换取速度
@@ -33,18 +33,27 @@
 ## 4. 官方入口与 debug 约束
 - 官方推荐入口：
   - `python -m rcsd_topo_poc t01-run-skill-v1`
+- 对比入口：
+  - `python -m rcsd_topo_poc t01-compare-freeze`
 - 分步入口：
+  - `t01-step1-pair-poc`
   - `t01-step2-segment-poc`
   - `t01-s2-refresh-node-road`
   - `t01-step4-residual-graph`
   - `t01-step5-staged-residual-graph`
+  - `t01-step6-segment-aggregation-poc`
+- 辅助诊断入口：
+  - `t01-build-validation-slices`
 - `debug=true`：
-  - 官方默认值
   - 保留分阶段中间结果与审计层
 - 适用于冻结基线复核、case 排查与视觉审查
 - `debug=false`：
   - 用于减少无意义 I/O 和最终目录体积
+- 默认值约束：
+  - `t01-run-skill-v1` 与 `t01-step6-segment-aggregation-poc` 默认 `debug=false`
+  - `t01-step1-pair-poc / t01-step2-segment-poc / t01-s2-refresh-node-road / t01-step4-residual-graph / t01-step5-staged-residual-graph` 默认 `debug=true`
 - `debug` 只影响中间输出，不得影响最终业务结果
+- `trace_validation_pair_ids` 与 `stop_after_step2_validation_pair_index` 仅用于诊断，不得进入业务判定语义
 - 官方 runner 必须可见地输出阶段级执行进度，并同步产出结构化 perf checkpoint 文件
 - 当前允许的性能优化边界：
   - 固定小并发读取输入图层

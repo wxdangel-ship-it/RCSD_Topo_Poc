@@ -1,3 +1,4 @@
 module,path,status,doc_surface,recommended_action,notes
 _template,modules/_template,template-artifact,template-ready,copy-and-concretize,not-a-business-module
+t01_data_preprocess,modules/t01_data_preprocess,active,formal-module-surface,keep-in-sync-with-implementation,official-end-to-end-plus-eight-sample-freeze-active
 t02_junction_anchor,modules/t02_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,stage1-stage2-active-plus-experimental-single-mainnodeid-poc

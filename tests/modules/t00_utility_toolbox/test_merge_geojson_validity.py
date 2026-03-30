@@ -86,8 +86,10 @@ def test_drivezone_merge_skips_missing_crs_patch_with_out_of_range_lonlat_bounds
     assert "NaN" not in output_text
     assert output_doc["type"] == "FeatureCollection"
     assert output_doc["crs"]["properties"]["name"] == "EPSG:3857"
+    assert output_doc["features"][0]["properties"]["patchid"] == "1002"
     assert fixed_output_doc["type"] == "FeatureCollection"
     assert fixed_output_doc["crs"]["properties"]["name"] == "EPSG:3857"
+    assert fixed_output_doc["features"][0]["properties"]["patchid"] == "1002"
     assert summary["patch_results"][0]["status"] == "skip_error"
     assert "missing or incorrect CRS metadata" in summary["patch_results"][0]["error_reason"]
 
@@ -133,8 +135,15 @@ def test_drivezone_merge_writes_fix_outputs_before_global_merge(tmp_path: Path) 
     assert summary["processed_patch_count"] == 2
     assert summary["fixed_output_count"] == 2
     assert summary["global_merge_input_count"] == 2
-    assert summary["output_feature_count"] == 1
+    assert summary["output_feature_count"] == 2
     assert summary["output_bounds_3857"] is not None
+
+    fix_3001_doc = json.loads(fix_3001.read_text(encoding="utf-8"))
+    fix_3002_doc = json.loads(fix_3002.read_text(encoding="utf-8"))
+    global_output_doc = json.loads(global_output.read_text(encoding="utf-8"))
+    assert fix_3001_doc["features"][0]["properties"]["patchid"] == "3001"
+    assert fix_3002_doc["features"][0]["properties"]["patchid"] == "3002"
+    assert {feature["properties"]["patchid"] for feature in global_output_doc["features"]} == {"3001", "3002"}
 
 
 def test_intersection_merge_skips_missing_crs_patch_with_out_of_range_lonlat_bounds(tmp_path: Path) -> None:

@@ -134,7 +134,7 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
 
                 write_geojson(
                     fixed_output_path,
-                    [{"properties": {}, "geometry": simplified_geometry}],
+                    [{"properties": {"patchid": patch_id}, "geometry": simplified_geometry}],
                 )
                 processed_patch_count += 1
                 fixed_output_count += 1
@@ -182,7 +182,7 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
         output_area_m2 = 0.0
         output_bounds = None
         global_merge_input_count = 0
-        global_merge_geometries = []
+        output_geometries = []
         for item in patch_results:
             if item.get("status") != "processed":
                 continue
@@ -206,19 +206,24 @@ def run_drivezone_merge(config: DriveZoneMergeConfig) -> dict[str, Any]:
                 announce(logger, f"global merge skip empty fixed output: patch_id={item['patch_id']}")
                 continue
 
-            global_merge_geometries.extend(polygon_geometries)
+            merged_geometry = minimal_repair(unary_union(polygon_geometries))
+            if merged_geometry is None:
+                announce(logger, f"global merge skip invalid fixed output: patch_id={item['patch_id']}")
+                continue
+
+            output_features.append(
+                {
+                    "properties": {"patchid": item["patch_id"]},
+                    "geometry": merged_geometry,
+                }
+            )
+            output_geometries.append(merged_geometry)
             global_merge_input_count += 1
 
-        if global_merge_geometries:
-            global_geometry = minimal_repair(unary_union(global_merge_geometries))
-            if global_geometry is not None:
-                global_geometry = simplify_polygonal(global_geometry, config.global_simplify_tolerance_meters)
-
-            if global_geometry is not None:
-                output_features = [{"properties": {}, "geometry": global_geometry}]
-                output_polygon_count = polygon_part_count(global_geometry)
-                output_area_m2 = float(global_geometry.area)
-                output_bounds = aggregate_bounds([global_geometry])
+        if output_geometries:
+            output_polygon_count = sum(polygon_part_count(geometry) for geometry in output_geometries)
+            output_area_m2 = float(sum(geometry.area for geometry in output_geometries))
+            output_bounds = aggregate_bounds(output_geometries)
 
         write_geojson(output_path, output_features)
 

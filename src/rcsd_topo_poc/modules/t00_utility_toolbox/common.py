@@ -11,7 +11,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-import fiona
 from pyproj import CRS, Transformer
 from shapely import make_valid
 from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, mapping, shape
@@ -462,6 +461,16 @@ def _vector_geometry_payload(geometry: Any) -> Any:
     return mapping(geometry)
 
 
+def _require_fiona() -> Any:
+    try:
+        import fiona
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "fiona is required only for GeoPackage export tools. Install fiona before writing .gpkg/.gpkt outputs."
+        ) from exc
+    return fiona
+
+
 def _build_fiona_schema(records: list[dict[str, Any]]) -> dict[str, Any]:
     field_order: list[str] = []
     field_types: dict[str, str] = {}
@@ -538,6 +547,7 @@ def write_vector(
     }
     if crs_text is not None:
         open_kwargs["crs"] = crs_text
+    fiona = _require_fiona()
     with fiona.open(str(output_path), **open_kwargs) as sink:
         schema_property_names = list(schema["properties"].keys())
         for record in records:

@@ -139,12 +139,17 @@
 - `segment` 在 stage2 只用于 summary 统计，不用于重算 `has_evd` 或 `is_anchor`。
 - `nodes` 全表新增字段：
   - `is_anchor`
-- `is_anchor` 只对代表 node 写值；同组其它从属 node 与非代表 node 保持 `null`。
+  - `anchor_reason`
+- `is_anchor` 与 `anchor_reason` 只对代表 node 写值；同组其它从属 node 与非代表 node 保持 `null`。
 - `is_anchor` 允许值冻结为：
   - `yes`
   - `no`
   - `fail1`
   - `fail2`
+  - `null`
+- `anchor_reason` 当前最小值域冻结为：
+  - `roundabout`
+  - `t`
   - `null`
 - 阶段二使用 `RCSDIntersection` 做路口面判定。
 - 与 stage1 一致，边界接触也算成功。
@@ -154,16 +159,34 @@
   - 但仍需继续检查 `fail1 / fail2`
 - 若该组所有 node 均未落入任何 `RCSDIntersection` 面：
   - 该组代表 node 的 `is_anchor = no`
+- 单节点组若落入多个 `RCSDIntersection` 面：
+  - 代表 node 的 `is_anchor = yes`
+  - `anchor_reason = null`
+  - 不输出 `node_error_1`
+- `kind_2 = 64` 且组内所有 node 均落入任意 `RCSDIntersection` 面：
+  - 代表 node 的 `is_anchor = yes`
+  - `anchor_reason = roundabout`
+  - 不输出 `node_error_1`
+- `kind_2 = 2048` 且组内所有 node 均落入任意 `RCSDIntersection` 面：
+  - 代表 node 的 `is_anchor = yes`
+  - `anchor_reason = t`
+  - 不输出 `node_error_1`
 - `node_error_1`：
-  - 同一组 node 落入两个不同的 `RCSDIntersection` 面
+  - 对未命中上述豁免规则的组，若同一组 node 落入两个不同的 `RCSDIntersection` 面
   - 该组代表 node 的 `is_anchor = fail1`
 - 需同时保留 GeoPackage(.gpkg) 与审计表
 - `node_error_2`：
-  - 一个 `RCSDIntersection` 面对应不止一组 node
-  - 这些组对应代表 node 的 `is_anchor = fail2`
+  - 用 `RCSDIntersection` 反向包含选择路口 node
+  - 若一个 `RCSDIntersection` 面对应不止一组 node，则先忽视代表 node `kind_2 = 1` 的组
+  - 过滤后若剩余组数大于 1，则这些组对应代表 node 的 `is_anchor = fail2`
+  - 过滤后若剩余组数仅为 1，则该面不再对该组触发 `node_error_2 / fail2`
 - 需同时保留 GeoPackage(.gpkg) 与审计表
 - 优先级冻结为：
   - `fail2` 优先于 `fail1`
+- 若同一组同时命中新豁免规则与 `node_error_2`
+- 则代表 node 的 `is_anchor = fail2`
+- `anchor_reason = null`
+- 同时仍保留相应 `node_error_2` 审计输出
 - 若同一组同时命中 `node_error_1` 与 `node_error_2`
 - 则代表 node 的 `is_anchor = fail2`
 - 同时仍保留相应审计输出
@@ -332,17 +355,19 @@ outputs/_work/t02_stage1_drivezone_gate
 
 - 继承输入 `nodes` properties
 - 新增字段：`has_evd`
-- 阶段二文档基线新增字段：`is_anchor`
-- 值域：`yes / no / null`
-- 只有代表 node 写 `yes/no`
+- 阶段二文档基线新增字段：`is_anchor`、`anchor_reason`
+- `is_anchor` 值域：`yes / no / fail1 / fail2 / null`
+- `anchor_reason` 当前最小值域：`roundabout / t / null`
+- 只有代表 node 写 `has_evd / is_anchor / anchor_reason`
 - 非代表 node 保持 `null`
 - 输出 geometry CRS：`EPSG:3857`
 
 说明：
 
 - `has_evd` 是 stage1 gate 字段。
-- `is_anchor` 是 stage2 anchor recognition 字段。
+- `is_anchor` 与 `anchor_reason` 是 stage2 anchor recognition 字段。
 - `is_anchor` 业务值域冻结为 `yes / no / fail1 / fail2 / null`。
+- `anchor_reason` 当前最小值域冻结为 `roundabout / t / null`。
 
 #### `segment.gpkg`
 

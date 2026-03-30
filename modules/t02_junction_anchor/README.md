@@ -126,8 +126,9 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - `--debug-render-root` 仅控制 debug 叠图 PNG 的批次归档位置，不改变正式运行目录 `<out_root>/<run_id>`。
 
 - `nodes.gpkg`
-  - 继承输入 `nodes` 字段并新增 `has_evd`
-  - 只有代表 node 写 `yes/no`
+  - 继承输入 `nodes` 字段并新增 `has_evd / is_anchor / anchor_reason`
+  - 只有代表 node 写 `has_evd / is_anchor / anchor_reason`
+  - `anchor_reason` 当前最小值域为 `roundabout / t / null`
   - 输出 geometry 统一为 `EPSG:3857`
 - `segment.gpkg`
   - 继承输入 `segment` 字段并新增 `has_evd`
@@ -224,9 +225,14 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - stage2 新增输入 `RCSDIntersection`
   - stage2 summary 读取 `segment`
   - `nodes.is_anchor`
-  - `yes / no / fail1 / fail2 / null`
+  - `nodes.anchor_reason`
+  - `is_anchor = yes / no / fail1 / fail2 / null`
+  - `anchor_reason = roundabout / t / null`
   - `node_error_1 / node_error_2`
-  - `fail2` 优先于 `fail1`
+  - 单节点多面命中、`kind_2 = 64` 全组命中、`kind_2 = 2048` 全组命中可从原 `fail1` 口径豁免为 `yes`
+  - 上述豁免场景不输出 `node_error_1`
+  - `node_error_2` 反向包含时先忽视代表 node `kind_2 = 1` 的组；过滤后仅当剩余组数大于 1 时才记 `fail2`
+  - `fail2` 仍优先于 `fail1` 与上述豁免
   - `t02_stage2_summary.json`
   - stage3 `virtual intersection anchoring`
   - `t02-virtual-intersection-poc` 的 `case-package` 与 `full-input` 两种模式

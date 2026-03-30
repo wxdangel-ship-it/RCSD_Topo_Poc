@@ -122,8 +122,11 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
     nodes_doc = _load_vector_doc(run_dir / "nodes.gpkg")
     node_props_by_id = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
     assert node_props_by_id["1"]["is_anchor"] == "fail2"
+    assert node_props_by_id["1"]["anchor_reason"] is None
     assert node_props_by_id["2"]["is_anchor"] == "fail2"
+    assert node_props_by_id["2"]["anchor_reason"] is None
     assert node_props_by_id["101"]["is_anchor"] is None
+    assert node_props_by_id["101"]["anchor_reason"] is None
 
     summary_doc = json.loads((run_dir / "t02_stage2_summary.json").read_text(encoding="utf-8"))
     assert summary_doc["anchor_summary_by_s_grade"]["0-0双"]["total_segment_count"] == 1

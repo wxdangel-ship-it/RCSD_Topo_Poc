@@ -146,8 +146,11 @@ def test_stage2_marks_representative_yes_for_single_hit(tmp_path: Path) -> None:
     nodes_doc = _load_geojson(artifacts.nodes_path)
     node_props_by_id = _node_props_by_id(nodes_doc)
     assert node_props_by_id["1"]["is_anchor"] == "yes"
+    assert node_props_by_id["1"]["anchor_reason"] is None
     assert node_props_by_id["101"]["is_anchor"] is None
+    assert node_props_by_id["101"]["anchor_reason"] is None
     assert node_props_by_id["9"]["is_anchor"] is None
+    assert node_props_by_id["9"]["anchor_reason"] is None
 
     assert _load_geojson(artifacts.node_error_1_path)["features"] == []
     assert _load_geojson(artifacts.node_error_2_path)["features"] == []
@@ -168,14 +171,16 @@ def test_stage2_marks_representative_no_when_no_intersection_hits(tmp_path: Path
     nodes_doc = _load_geojson(artifacts.nodes_path)
     node_props_by_id = _node_props_by_id(nodes_doc)
     assert node_props_by_id["1"]["is_anchor"] == "no"
+    assert node_props_by_id["1"]["anchor_reason"] is None
     assert node_props_by_id["101"]["is_anchor"] is None
+    assert node_props_by_id["101"]["anchor_reason"] is None
 
 
 def test_stage2_outputs_fail1_and_node_error_1(tmp_path: Path) -> None:
     artifacts = _run_case(
         tmp_path,
         nodes=[
-            _node_feature(1, 0.0, 0.0, mainnodeid=1, has_evd="yes", kind_2=2048, grade_2=1),
+            _node_feature(1, 0.0, 0.0, mainnodeid=1, has_evd="yes", kind_2=4, grade_2=1),
             _node_feature(101, 10.0, 0.0, mainnodeid=1, has_evd=None, kind_2=None, grade_2=None),
         ],
         intersections=[
@@ -189,7 +194,9 @@ def test_stage2_outputs_fail1_and_node_error_1(tmp_path: Path) -> None:
     nodes_doc = _load_geojson(artifacts.nodes_path)
     node_props_by_id = _node_props_by_id(nodes_doc)
     assert node_props_by_id["1"]["is_anchor"] == "fail1"
+    assert node_props_by_id["1"]["anchor_reason"] is None
     assert node_props_by_id["101"]["is_anchor"] is None
+    assert node_props_by_id["101"]["anchor_reason"] is None
 
     error1_doc = _load_geojson(artifacts.node_error_1_path)
     assert len(error1_doc["features"]) == 2
@@ -197,6 +204,79 @@ def test_stage2_outputs_fail1_and_node_error_1(tmp_path: Path) -> None:
     assert error1_audit["error_count"] == 1
     assert error1_audit["rows"][0]["reason"] == "multiple_intersections_for_group"
     assert error1_audit["rows"][0]["intersection_ids"] == ["feature_index:1", "intersection_id:A"]
+
+
+def test_stage2_single_node_multi_hit_marks_yes_without_node_error_1(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[_node_feature(1, 0.0, 0.0, mainnodeid=None, has_evd="yes", kind_2=4, grade_2=1)],
+        intersections=[
+            _intersection_feature(-0.5, -0.5, 0.5, 0.5, properties={"id": "A"}),
+            _intersection_feature(-1.0, -1.0, 1.0, 1.0, properties={"id": "B"}),
+        ],
+        segments=[_segment_feature("seg-1", pair_nodes="1", junc_nodes="")],
+        run_id="single_node_multi_hit_case",
+    )
+
+    node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
+    assert node_props_by_id["1"]["is_anchor"] == "yes"
+    assert node_props_by_id["1"]["anchor_reason"] is None
+
+    assert _load_geojson(artifacts.node_error_1_path)["features"] == []
+    assert _load_json(artifacts.node_error_1_audit_json_path)["error_count"] == 0
+    assert _load_geojson(artifacts.node_error_2_path)["features"] == []
+
+
+def test_stage2_roundabout_group_marks_yes_with_anchor_reason(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(1, 0.0, 0.0, mainnodeid=1, has_evd="yes", kind_2=64, grade_2=0),
+            _node_feature(101, 10.0, 0.0, mainnodeid=1, has_evd=None, kind_2=None, grade_2=None),
+        ],
+        intersections=[
+            _intersection_feature(-0.5, -0.5, 0.5, 0.5, properties={"id": "A"}),
+            _intersection_feature(9.5, -0.5, 10.5, 0.5, properties={"id": "B"}),
+        ],
+        segments=[_segment_feature("seg-1", pair_nodes="1", junc_nodes="")],
+        run_id="roundabout_case",
+    )
+
+    node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
+    assert node_props_by_id["1"]["is_anchor"] == "yes"
+    assert node_props_by_id["1"]["anchor_reason"] == "roundabout"
+    assert node_props_by_id["101"]["is_anchor"] is None
+    assert node_props_by_id["101"]["anchor_reason"] is None
+
+    assert _load_geojson(artifacts.node_error_1_path)["features"] == []
+    assert _load_json(artifacts.node_error_1_audit_json_path)["error_count"] == 0
+    assert _load_geojson(artifacts.node_error_2_path)["features"] == []
+
+
+def test_stage2_t_group_marks_yes_with_anchor_reason(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(1, 0.0, 0.0, mainnodeid=1, has_evd="yes", kind_2=2048, grade_2=1),
+            _node_feature(101, 10.0, 0.0, mainnodeid=1, has_evd=None, kind_2=None, grade_2=None),
+        ],
+        intersections=[
+            _intersection_feature(-0.5, -0.5, 0.5, 0.5, properties={"id": "A"}),
+            _intersection_feature(9.5, -0.5, 10.5, 0.5, properties={"id": "B"}),
+        ],
+        segments=[_segment_feature("seg-1", pair_nodes="1", junc_nodes="")],
+        run_id="t_case",
+    )
+
+    node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
+    assert node_props_by_id["1"]["is_anchor"] == "yes"
+    assert node_props_by_id["1"]["anchor_reason"] == "t"
+    assert node_props_by_id["101"]["is_anchor"] is None
+    assert node_props_by_id["101"]["anchor_reason"] is None
+
+    assert _load_geojson(artifacts.node_error_1_path)["features"] == []
+    assert _load_json(artifacts.node_error_1_audit_json_path)["error_count"] == 0
+    assert _load_geojson(artifacts.node_error_2_path)["features"] == []
 
 
 def test_stage2_outputs_fail2_and_node_error_2(tmp_path: Path) -> None:
@@ -214,7 +294,9 @@ def test_stage2_outputs_fail2_and_node_error_2(tmp_path: Path) -> None:
     nodes_doc = _load_geojson(artifacts.nodes_path)
     node_props_by_id = _node_props_by_id(nodes_doc)
     assert node_props_by_id["1"]["is_anchor"] == "fail2"
+    assert node_props_by_id["1"]["anchor_reason"] is None
     assert node_props_by_id["2"]["is_anchor"] == "fail2"
+    assert node_props_by_id["2"]["anchor_reason"] is None
 
     error2_doc = _load_geojson(artifacts.node_error_2_path)
     assert len(error2_doc["features"]) == 2
@@ -241,13 +323,95 @@ def test_stage2_fail2_overrides_fail1_and_keeps_both_error_outputs(tmp_path: Pat
 
     node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
     assert node_props_by_id["1"]["is_anchor"] == "fail2"
+    assert node_props_by_id["1"]["anchor_reason"] is None
     assert node_props_by_id["2"]["is_anchor"] == "fail2"
+    assert node_props_by_id["2"]["anchor_reason"] is None
     assert node_props_by_id["101"]["is_anchor"] is None
+    assert node_props_by_id["101"]["anchor_reason"] is None
 
     error1_ids = {str(feature["properties"]["id"]) for feature in _load_geojson(artifacts.node_error_1_path)["features"]}
     error2_ids = {str(feature["properties"]["id"]) for feature in _load_geojson(artifacts.node_error_2_path)["features"]}
     assert {"1", "101"}.issubset(error1_ids)
     assert {"1", "101"}.issubset(error2_ids)
+
+
+def test_stage2_fail2_ignores_kind2_1_when_single_group_remains(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(1, 0.0, 0.0, mainnodeid=None, has_evd="yes", kind_2=1, grade_2=1),
+            _node_feature(2, 0.2, 0.0, mainnodeid=None, has_evd="yes", kind_2=4, grade_2=1),
+        ],
+        intersections=[_intersection_feature(-1.0, -1.0, 1.0, 1.0, properties={"id": "A"})],
+        segments=[_segment_feature("seg-1", pair_nodes="1,2", junc_nodes="")],
+        run_id="fail2_ignore_kind1_single_remaining_case",
+    )
+
+    node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
+    assert node_props_by_id["1"]["is_anchor"] == "yes"
+    assert node_props_by_id["1"]["anchor_reason"] is None
+    assert node_props_by_id["2"]["is_anchor"] == "yes"
+    assert node_props_by_id["2"]["anchor_reason"] is None
+
+    assert _load_geojson(artifacts.node_error_2_path)["features"] == []
+    assert _load_json(artifacts.node_error_2_audit_json_path)["error_count"] == 0
+
+
+def test_stage2_fail2_excludes_kind2_1_groups_from_node_error_2(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(1, 0.0, 0.0, mainnodeid=None, has_evd="yes", kind_2=1, grade_2=1),
+            _node_feature(2, 0.2, 0.0, mainnodeid=None, has_evd="yes", kind_2=4, grade_2=1),
+            _node_feature(3, 0.4, 0.0, mainnodeid=None, has_evd="yes", kind_2=4, grade_2=1),
+        ],
+        intersections=[_intersection_feature(-1.0, -1.0, 1.0, 1.0, properties={"id": "A"})],
+        segments=[_segment_feature("seg-1", pair_nodes="1,2,3", junc_nodes="")],
+        run_id="fail2_ignore_kind1_multi_remaining_case",
+    )
+
+    node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
+    assert node_props_by_id["1"]["is_anchor"] == "yes"
+    assert node_props_by_id["1"]["anchor_reason"] is None
+    assert node_props_by_id["2"]["is_anchor"] == "fail2"
+    assert node_props_by_id["2"]["anchor_reason"] is None
+    assert node_props_by_id["3"]["is_anchor"] == "fail2"
+    assert node_props_by_id["3"]["anchor_reason"] is None
+
+    error2_ids = {str(feature["properties"]["id"]) for feature in _load_geojson(artifacts.node_error_2_path)["features"]}
+    assert error2_ids == {"2", "3"}
+    error2_audit = _load_json(artifacts.node_error_2_audit_json_path)
+    assert error2_audit["error_count"] == 2
+    assert all(row["reason"] == "intersection_shared_by_multiple_groups" for row in error2_audit["rows"])
+
+
+def test_stage2_fail2_overrides_t_anchor_reason_without_node_error_1(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(1, 0.0, 0.0, mainnodeid=1, has_evd="yes", kind_2=2048, grade_2=1),
+            _node_feature(101, 10.0, 0.0, mainnodeid=1, has_evd=None, kind_2=None, grade_2=None),
+            _node_feature(2, 0.2, 0.0, mainnodeid=2, has_evd="yes", kind_2=4, grade_2=1),
+        ],
+        intersections=[
+            _intersection_feature(-0.5, -0.5, 0.5, 0.5, properties={"id": "A"}),
+            _intersection_feature(9.5, -0.5, 10.5, 0.5, properties={"id": "B"}),
+        ],
+        segments=[_segment_feature("seg-1", pair_nodes="1,2", junc_nodes="")],
+        run_id="fail2_over_t_case",
+    )
+
+    node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
+    assert node_props_by_id["1"]["is_anchor"] == "fail2"
+    assert node_props_by_id["1"]["anchor_reason"] is None
+    assert node_props_by_id["2"]["is_anchor"] == "fail2"
+    assert node_props_by_id["2"]["anchor_reason"] is None
+    assert node_props_by_id["101"]["is_anchor"] is None
+    assert node_props_by_id["101"]["anchor_reason"] is None
+
+    assert _load_geojson(artifacts.node_error_1_path)["features"] == []
+    error2_ids = {str(feature["properties"]["id"]) for feature in _load_geojson(artifacts.node_error_2_path)["features"]}
+    assert {"1", "101", "2"}.issubset(error2_ids)
 
 
 def test_stage2_keeps_null_for_has_evd_not_yes_groups(tmp_path: Path) -> None:
@@ -264,7 +428,9 @@ def test_stage2_keeps_null_for_has_evd_not_yes_groups(tmp_path: Path) -> None:
 
     node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
     assert node_props_by_id["1"]["is_anchor"] is None
+    assert node_props_by_id["1"]["anchor_reason"] is None
     assert node_props_by_id["101"]["is_anchor"] is None
+    assert node_props_by_id["101"]["anchor_reason"] is None
     assert _load_geojson(artifacts.node_error_1_path)["features"] == []
     assert _load_geojson(artifacts.node_error_2_path)["features"] == []
 
@@ -280,6 +446,7 @@ def test_stage2_boundary_touch_counts_as_hit(tmp_path: Path) -> None:
 
     node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
     assert node_props_by_id["1"]["is_anchor"] == "yes"
+    assert node_props_by_id["1"]["anchor_reason"] is None
 
 
 def test_stage2_projects_nodes_and_intersections_to_epsg_3857(tmp_path: Path) -> None:
@@ -296,6 +463,7 @@ def test_stage2_projects_nodes_and_intersections_to_epsg_3857(tmp_path: Path) ->
     nodes_doc = _load_geojson(artifacts.nodes_path)
     assert nodes_doc["crs"]["properties"]["name"] == "EPSG:3857"
     assert _node_props_by_id(nodes_doc)["1"]["is_anchor"] == "yes"
+    assert _node_props_by_id(nodes_doc)["1"]["anchor_reason"] is None
 
 
 def test_stage2_audits_representative_node_missing(tmp_path: Path) -> None:
@@ -314,6 +482,7 @@ def test_stage2_audits_representative_node_missing(tmp_path: Path) -> None:
     assert any(row["reason"] == "representative_node_missing" and row["junction_id"] == "7" for row in audit_doc["rows"])
     nodes_doc = _load_geojson(artifacts.nodes_path)
     assert all(feature["properties"]["is_anchor"] is None for feature in nodes_doc["features"])
+    assert all(feature["properties"].get("anchor_reason") is None for feature in nodes_doc["features"])
 
 
 def test_stage2_outputs_anchor_summaries_without_changing_error_outputs(tmp_path: Path) -> None:
@@ -381,15 +550,15 @@ def test_stage2_outputs_anchor_summaries_without_changing_error_outputs(tmp_path
     }
     assert kind_grade_summary["kind2_2048"] == {
         "evidence_junction_count": 1,
-        "anchored_junction_count": 0,
+        "anchored_junction_count": 1,
     }
     assert kind_grade_summary["kind2_8_16"] == {
         "evidence_junction_count": 1,
         "anchored_junction_count": 0,
     }
     assert summary_doc["counts"]["evidence_junction_count"] == 4
-    assert summary_doc["counts"]["anchored_junction_count"] == 1
+    assert summary_doc["counts"]["anchored_junction_count"] == 2
     assert summary_doc["counts"]["unclassified_kind_grade_junction_count"] == 1
 
-    assert len(_load_geojson(artifacts.node_error_1_path)["features"]) == 2
+    assert len(_load_geojson(artifacts.node_error_1_path)["features"]) == 0
     assert len(_load_geojson(artifacts.node_error_2_path)["features"]) == 2

@@ -76,6 +76,7 @@ class AnchorGroupResult:
     group_nodes: list[NodeRecord]
     participates: bool
     provisional_state: str | None
+    provisional_anchor_reason: str | None
     intersection_ids: list[str]
 
 
@@ -529,6 +530,7 @@ def run_t02_stage2_anchor_recognition(
 
         for output_index, feature in enumerate(nodes_layer_data.features):
             feature.properties["is_anchor"] = None
+            feature.properties["anchor_reason"] = None
 
             missing_fields: list[str] = []
             if "id" not in feature.properties:
@@ -621,6 +623,7 @@ def run_t02_stage2_anchor_recognition(
                     group_nodes=list(resolved_group.group_nodes),
                     participates=False,
                     provisional_state=None,
+                    provisional_anchor_reason=None,
                     intersection_ids=[],
                 )
                 continue
@@ -636,12 +639,14 @@ def run_t02_stage2_anchor_recognition(
                     group_nodes=list(resolved_group.group_nodes),
                     participates=False,
                     provisional_state=None,
+                    provisional_anchor_reason=None,
                     intersection_ids=[],
                 )
                 continue
 
             stage_counts["stage2_candidate_group_count"] += 1
             hit_intersection_ids: set[str] = set()
+            every_group_node_hit = True
             for record in resolved_group.group_nodes:
                 cached_hit_ids = node_hit_cache.get(record.output_index)
                 if cached_hit_ids is None:
@@ -651,38 +656,50 @@ def run_t02_stage2_anchor_recognition(
                         sorted({intersection_records[int(index)].intersection_id for index in candidate_indexes})
                     )
                     node_hit_cache[record.output_index] = cached_hit_ids
+                if not cached_hit_ids:
+                    every_group_node_hit = False
                 for intersection_id in cached_hit_ids:
                     hit_intersection_ids.add(intersection_id)
                     intersection_to_junctions.setdefault(intersection_id, set()).add(junction_id)
 
             sorted_hit_intersection_ids = sorted(hit_intersection_ids)
+            representative_kind_2 = normalize_id(representative_properties.get("kind_2"))
+            provisional_anchor_reason = None
+            if representative_kind_2 == "64" and every_group_node_hit:
+                provisional_anchor_reason = "roundabout"
+            elif representative_kind_2 == "2048" and every_group_node_hit:
+                provisional_anchor_reason = "t"
+
             provisional_state = "no"
             if len(sorted_hit_intersection_ids) == 1:
                 provisional_state = "yes"
             elif len(sorted_hit_intersection_ids) > 1:
-                provisional_state = "fail1"
-                involved_node_ids = [record.node_id for record in resolved_group.group_nodes]
-                error1_rows.append(
-                    _error_audit_row(
-                        error_type="node_error_1",
-                        reason=REASON_MULTIPLE_INTERSECTIONS_FOR_GROUP,
-                        junction_id=junction_id,
-                        representative_node_id=representative.node_id,
-                        involved_node_ids=involved_node_ids,
-                        intersection_ids=sorted_hit_intersection_ids,
-                        detail="One junction group intersects more than one RCSDIntersection feature.",
+                if len(resolved_group.group_nodes) == 1 or provisional_anchor_reason is not None:
+                    provisional_state = "yes"
+                else:
+                    provisional_state = "fail1"
+                    involved_node_ids = [record.node_id for record in resolved_group.group_nodes]
+                    error1_rows.append(
+                        _error_audit_row(
+                            error_type="node_error_1",
+                            reason=REASON_MULTIPLE_INTERSECTIONS_FOR_GROUP,
+                            junction_id=junction_id,
+                            representative_node_id=representative.node_id,
+                            involved_node_ids=involved_node_ids,
+                            intersection_ids=sorted_hit_intersection_ids,
+                            detail="One junction group intersects more than one RCSDIntersection feature.",
+                        )
                     )
-                )
-                for record in resolved_group.group_nodes:
-                    error1_feature_indexes.add(record.output_index)
-                    error1_feature_metadata[record.output_index] = {
-                        "error_type": "node_error_1",
-                        "junction_id": junction_id,
-                        "representative_node_id": representative.node_id,
-                        "intersection_ids": sorted_hit_intersection_ids,
-                        "intersection_count": len(sorted_hit_intersection_ids),
-                        "group_size": len(involved_node_ids),
-                    }
+                    for record in resolved_group.group_nodes:
+                        error1_feature_indexes.add(record.output_index)
+                        error1_feature_metadata[record.output_index] = {
+                            "error_type": "node_error_1",
+                            "junction_id": junction_id,
+                            "representative_node_id": representative.node_id,
+                            "intersection_ids": sorted_hit_intersection_ids,
+                            "intersection_count": len(sorted_hit_intersection_ids),
+                            "group_size": len(involved_node_ids),
+                        }
 
             group_results[junction_id] = AnchorGroupResult(
                 junction_id=junction_id,
@@ -691,6 +708,7 @@ def run_t02_stage2_anchor_recognition(
                 group_nodes=list(resolved_group.group_nodes),
                 participates=True,
                 provisional_state=provisional_state,
+                provisional_anchor_reason=provisional_anchor_reason if provisional_state == "yes" else None,
                 intersection_ids=sorted_hit_intersection_ids,
             )
 
@@ -718,7 +736,19 @@ def run_t02_stage2_anchor_recognition(
         for intersection_id, junction_ids in intersection_to_junctions.items():
             if len(junction_ids) <= 1:
                 continue
-            for junction_id in junction_ids:
+            filtered_junction_ids: list[str] = []
+            for junction_id in sorted(junction_ids):
+                group_result = group_results.get(junction_id)
+                if group_result is None or not group_result.participates or group_result.representative_output_index is None:
+                    continue
+                representative_properties = nodes_layer_data.features[group_result.representative_output_index].properties
+                representative_kind_2 = normalize_id(representative_properties.get("kind_2"))
+                if representative_kind_2 == "1":
+                    continue
+                filtered_junction_ids.append(junction_id)
+            if len(filtered_junction_ids) <= 1:
+                continue
+            for junction_id in filtered_junction_ids:
                 junction_to_fail2_intersection_ids.setdefault(junction_id, set()).add(intersection_id)
 
         for junction_id, fail2_intersection_ids in sorted(junction_to_fail2_intersection_ids.items()):
@@ -764,15 +794,21 @@ def run_t02_stage2_anchor_recognition(
                 continue
             if junction_id in junction_to_fail2_intersection_ids:
                 final_state = "fail2"
+                final_anchor_reason = None
             elif group_result.provisional_state == "fail1":
                 final_state = "fail1"
+                final_anchor_reason = None
             elif group_result.provisional_state == "yes":
                 final_state = "yes"
+                final_anchor_reason = group_result.provisional_anchor_reason
             elif group_result.provisional_state == "no":
                 final_state = "no"
+                final_anchor_reason = None
             else:
                 final_state = None
+                final_anchor_reason = None
             nodes_layer_data.features[group_result.representative_output_index].properties["is_anchor"] = final_state
+            nodes_layer_data.features[group_result.representative_output_index].properties["anchor_reason"] = final_anchor_reason
             if final_state == "yes":
                 stage_counts["anchor_yes_count"] += 1
             elif final_state == "no":

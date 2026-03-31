@@ -13,31 +13,30 @@ echo "[RUN] REMOTE_NAME=$REMOTE_NAME"
 echo "[RUN] BRANCH=$BRANCH"
 
 if [[ -d "$REPO_DIR/.git" ]]; then
+  cd "$REPO_DIR"
   if [[ -n "$INTERNAL_GIT_URL" ]]; then
-    if git -C "$REPO_DIR" remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then
-      git -C "$REPO_DIR" remote set-url "$REMOTE_NAME" "$INTERNAL_GIT_URL"
+    if git remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then
+      git remote set-url "$REMOTE_NAME" "$INTERNAL_GIT_URL"
     else
-      git -C "$REPO_DIR" remote add "$REMOTE_NAME" "$INTERNAL_GIT_URL"
+      git remote add "$REMOTE_NAME" "$INTERNAL_GIT_URL"
     fi
   fi
 
-  git -C "$REPO_DIR" fetch "$REMOTE_NAME" "$BRANCH" --prune
-
-  if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-    git -C "$REPO_DIR" checkout "$BRANCH"
-  else
-    git -C "$REPO_DIR" checkout -B "$BRANCH" "$REMOTE_NAME/$BRANCH"
-  fi
-
-  git -C "$REPO_DIR" pull --ff-only "$REMOTE_NAME" "$BRANCH"
+  git fetch "$REMOTE_NAME"
+  git switch "$BRANCH" || git switch -c "$BRANCH" --track "$REMOTE_NAME/$BRANCH"
+  git pull --ff-only "$REMOTE_NAME" "$BRANCH"
 else
   if [[ -z "$INTERNAL_GIT_URL" ]]; then
     echo "[BLOCK] INTERNAL_GIT_URL is required for first clone." >&2
     exit 2
   fi
 
-  git clone --branch "$BRANCH" "$INTERNAL_GIT_URL" "$REPO_DIR"
+  git clone "$INTERNAL_GIT_URL" "$REPO_DIR"
+  cd "$REPO_DIR"
+  git fetch "$REMOTE_NAME"
+  git switch "$BRANCH" || git switch -c "$BRANCH" --track "$REMOTE_NAME/$BRANCH"
+  git pull --ff-only "$REMOTE_NAME" "$BRANCH"
 fi
 
-git -C "$REPO_DIR" rev-parse HEAD
-git -C "$REPO_DIR" status -sb
+git rev-parse HEAD
+git status -sb

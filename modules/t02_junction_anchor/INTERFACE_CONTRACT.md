@@ -3,6 +3,7 @@
 ## 定位
 
 - 本文件是 `t02_junction_anchor` 的稳定契约面。
+- 当前业务需求对齐与 accepted baseline 以 `architecture/06-accepted-baseline.md` 为准。
 - 模块目标、上下文、构件关系与风险说明以 `architecture/*` 为准。
 - `README.md` 只承担操作者入口职责，不替代长期源事实。
 
@@ -19,6 +20,7 @@
     - 默认 `case-package`
     - 可显式切换 `--input-mode full-input`
   - 单 `mainnodeid` 文本证据包支撑入口
+  - 独立离线修复工具 `t02-fix-node-error-2`
   - 消费 T01 `segment` 与 `nodes`
   - 消费 `DriveZone`、`RCSDIntersection`、`roads`、`RCSDRoad`、`RCSDNode`
   - 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit/log` 与 stage3 产物

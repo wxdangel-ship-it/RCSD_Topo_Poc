@@ -19,11 +19,12 @@
 - stage1：`DriveZone / has_evd gate`
 - stage2：`anchor recognition / anchor existence`（最小闭环已实现）
 - stage3：`virtual intersection anchoring`
-- 支撑工具：单 `mainnodeid` 文本证据包
+- 支撑工具：单 `mainnodeid` 文本证据包、`t02-fix-node-error-2`
 
 ## 当前主原则
 
 - T02 当前是正式模块；当前正式 baseline 闭环覆盖 stage1、stage2 与 stage3。
+- `06-accepted-baseline.md` 是当前 T02 模块需求对齐与 accepted baseline 主文档。
 - stage1 负责资料存在性 gate，并在 `summary` 中输出分桶统计与 `all__d_sgrade` 总汇总。
 - stage2 当前已落地 `RCSDIntersection`、`is_anchor`、`fail1/fail2` 与阶段边界的最小实现闭环，不等于最终锚定闭环。
 - stage3 负责虚拟路口面锚定，当前官方入口统一为 `t02-virtual-intersection-poc`。
@@ -34,9 +35,10 @@
 
 ## 推荐阅读顺序
 
-1. `01-introduction-and-goals.md`
-2. `02-constraints.md`
-3. `04-solution-strategy.md`
-4. `05-building-block-view.md`
-5. `INTERFACE_CONTRACT.md`
-6. `10-quality-requirements.md`
+1. `06-accepted-baseline.md`
+2. `01-introduction-and-goals.md`
+3. `02-constraints.md`
+4. `04-solution-strategy.md`
+5. `05-building-block-view.md`
+6. `INTERFACE_CONTRACT.md`
+7. `10-quality-requirements.md`

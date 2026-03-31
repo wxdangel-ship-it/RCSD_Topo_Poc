@@ -1,6 +1,6 @@
 # t02_junction_anchor
 
-> 本文件是 `t02_junction_anchor` 的操作者总览与运行入口说明。长期源事实以 `architecture/*` 与 `INTERFACE_CONTRACT.md` 为准；如本文件与长期源事实表述不一致，以后者为准。
+> 本文件是 `t02_junction_anchor` 的操作者总览与运行入口说明。当前业务需求对齐与 accepted baseline 以 `architecture/06-accepted-baseline.md` 为准，稳定输入/输出/入口契约以 `INTERFACE_CONTRACT.md` 为准；如本文件与长期源事实表述不一致，以后者为准。
 
 ## 1. 模块定位
 
@@ -220,16 +220,18 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 
 ## 5. 文档阅读顺序
 
-1. `architecture/01-introduction-and-goals.md`
-2. `architecture/02-constraints.md`
-3. `architecture/04-solution-strategy.md`
-4. `architecture/05-building-block-view.md`
-5. `INTERFACE_CONTRACT.md`
-6. `architecture/10-quality-requirements.md`
+1. `architecture/06-accepted-baseline.md`
+2. `architecture/01-introduction-and-goals.md`
+3. `architecture/02-constraints.md`
+4. `architecture/04-solution-strategy.md`
+5. `architecture/05-building-block-view.md`
+6. `INTERFACE_CONTRACT.md`
+7. `architecture/10-quality-requirements.md`
 
 补充：
 
 - `architecture/overview.md` 用于快速总览和索引，不替代标准 architecture 文档组。
+- `architecture/06-accepted-baseline.md` 是当前 T02 模块需求对齐与 accepted baseline 主文档。
 - `history/*` 保留阶段演进记录，不替代当前正式源事实。
 - `specs/t02-junction-anchor/*` 与 `specs/t02-virtual-intersection-batch-poc/*` 是变更工件，不是长期模块真相主表面。
 

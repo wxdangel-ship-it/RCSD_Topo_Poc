@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Default remote URL frozen from the user's confirmed WSL pull command.
 REPO_DIR="${REPO_DIR:-${1:-/mnt/d/Work/RCSD_Topo_Poc}}"
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 BRANCH="${BRANCH:-main}"
-INTERNAL_GIT_URL="${INTERNAL_GIT_URL:-${2:-}}"
+INTERNAL_GIT_URL="${INTERNAL_GIT_URL:-${2:-https://github.com/wxdangel-ship-it/RCSD_Topo_Poc.git}}"
 
 mkdir -p "$(dirname "$REPO_DIR")"
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import fiona
@@ -112,6 +113,102 @@ def _write_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+def _write_multi_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
+    nodes_path = tmp_path / "nodes.gpkg"
+    roads_path = tmp_path / "roads.gpkg"
+    drivezone_path = tmp_path / "drivezone.gpkg"
+    rcsdroad_path = tmp_path / "rcsdroad.gpkg"
+    rcsdnode_path = tmp_path / "rcsdnode.gpkg"
+
+    write_vector(
+        nodes_path,
+        [
+            {
+                "properties": {"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 2048, "grade_2": 1},
+                "geometry": Point(0.0, 0.0),
+            },
+            {
+                "properties": {"id": "101", "mainnodeid": "100", "has_evd": None, "is_anchor": None, "kind_2": 2048, "grade_2": 1},
+                "geometry": Point(6.0, 0.0),
+            },
+            {
+                "properties": {"id": "200", "mainnodeid": "200", "has_evd": "yes", "is_anchor": "no", "kind_2": 2048, "grade_2": 1},
+                "geometry": Point(220.0, 0.0),
+            },
+            {
+                "properties": {"id": "201", "mainnodeid": "200", "has_evd": None, "is_anchor": None, "kind_2": 2048, "grade_2": 1},
+                "geometry": Point(226.0, 0.0),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        roads_path,
+        [
+            {"properties": {"id": "road_north_100", "snodeid": "100", "enodeid": "2001", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 60.0)])},
+            {"properties": {"id": "road_south_100", "snodeid": "3001", "enodeid": "100", "direction": 2}, "geometry": LineString([(0.0, -60.0), (0.0, 0.0)])},
+            {"properties": {"id": "road_east_100", "snodeid": "100", "enodeid": "4001", "direction": 2}, "geometry": LineString([(0.0, 0.0), (55.0, 0.0)])},
+            {"properties": {"id": "road_north_200", "snodeid": "200", "enodeid": "2002", "direction": 2}, "geometry": LineString([(220.0, 0.0), (220.0, 60.0)])},
+            {"properties": {"id": "road_south_200", "snodeid": "3002", "enodeid": "200", "direction": 2}, "geometry": LineString([(220.0, -60.0), (220.0, 0.0)])},
+            {"properties": {"id": "road_east_200", "snodeid": "200", "enodeid": "4002", "direction": 2}, "geometry": LineString([(220.0, 0.0), (275.0, 0.0)])},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        drivezone_path,
+        [
+            {
+                "properties": {"name": "dz"},
+                "geometry": unary_union(
+                    [
+                        box(-12.0, -70.0, 12.0, 70.0),
+                        box(0.0, -12.0, 75.0, 12.0),
+                        box(-25.0, -8.0, 0.0, 8.0),
+                        box(208.0, -70.0, 232.0, 70.0),
+                        box(220.0, -12.0, 295.0, 12.0),
+                        box(195.0, -8.0, 220.0, 8.0),
+                    ]
+                ),
+            }
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        rcsdroad_path,
+        [
+            {"properties": {"id": "rc_north_100", "snodeid": "100", "enodeid": "901", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 55.0)])},
+            {"properties": {"id": "rc_south_100", "snodeid": "902", "enodeid": "100", "direction": 2}, "geometry": LineString([(0.0, -55.0), (0.0, 0.0)])},
+            {"properties": {"id": "rc_east_100", "snodeid": "100", "enodeid": "903", "direction": 2}, "geometry": LineString([(0.0, 0.0), (45.0, 0.0)])},
+            {"properties": {"id": "rc_north_200", "snodeid": "200", "enodeid": "911", "direction": 2}, "geometry": LineString([(220.0, 0.0), (220.0, 55.0)])},
+            {"properties": {"id": "rc_south_200", "snodeid": "912", "enodeid": "200", "direction": 2}, "geometry": LineString([(220.0, -55.0), (220.0, 0.0)])},
+            {"properties": {"id": "rc_east_200", "snodeid": "200", "enodeid": "913", "direction": 2}, "geometry": LineString([(220.0, 0.0), (265.0, 0.0)])},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        rcsdnode_path,
+        [
+            {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": "901", "mainnodeid": None}, "geometry": Point(0.0, 55.0)},
+            {"properties": {"id": "902", "mainnodeid": None}, "geometry": Point(0.0, -55.0)},
+            {"properties": {"id": "903", "mainnodeid": None}, "geometry": Point(45.0, 0.0)},
+            {"properties": {"id": "200", "mainnodeid": "200"}, "geometry": Point(220.0, 0.0)},
+            {"properties": {"id": "911", "mainnodeid": None}, "geometry": Point(220.0, 55.0)},
+            {"properties": {"id": "912", "mainnodeid": None}, "geometry": Point(220.0, -55.0)},
+            {"properties": {"id": "913", "mainnodeid": None}, "geometry": Point(265.0, 0.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+
+    return {
+        "nodes_path": nodes_path,
+        "roads_path": roads_path,
+        "drivezone_path": drivezone_path,
+        "rcsdroad_path": rcsdroad_path,
+        "rcsdnode_path": rcsdnode_path,
+    }
+
+
 def test_export_text_bundle_fails_when_mainnodeid_missing(tmp_path: Path) -> None:
     paths = _write_bundle_inputs(tmp_path)
     artifacts = run_t02_export_text_bundle(mainnodeid="missing", out_txt=tmp_path / "case.txt", **paths)
@@ -172,6 +269,41 @@ def test_decode_text_bundle_defaults_to_bundle_stem_directory(tmp_path: Path) ->
     assert decode_artifacts.out_dir == tmp_path / "765003"
     for name in REQUIRED_BUNDLE_FILES:
         assert (decode_artifacts.out_dir / name).is_file()
+
+
+def test_export_text_bundle_roundtrip_supports_multiple_mainnodeids(tmp_path: Path) -> None:
+    paths = _write_multi_bundle_inputs(tmp_path)
+    bundle_path = tmp_path / "multi_case.txt"
+    artifacts = run_t02_export_text_bundle(mainnodeid=["100", "200"], out_txt=bundle_path, **paths)
+    assert artifacts.success is True
+    assert bundle_path.is_file()
+
+    decode_root = tmp_path / "decode_here"
+    decode_root.mkdir(parents=True, exist_ok=True)
+    current_dir = Path.cwd()
+    try:
+        os.chdir(decode_root)
+        decode_artifacts = run_t02_decode_text_bundle(bundle_txt=bundle_path)
+    finally:
+        os.chdir(current_dir)
+
+    assert decode_artifacts.success is True
+    assert decode_artifacts.out_dir == decode_root
+    assert decode_artifacts.case_dirs == (decode_root / "100", decode_root / "200")
+
+    bundle_manifest_path = decode_root / "multi_case.bundle_manifest.json"
+    assert bundle_manifest_path.is_file()
+    bundle_manifest = json.loads(bundle_manifest_path.read_text(encoding="utf-8"))
+    assert bundle_manifest["bundle_mode"] == "multi_case"
+    assert bundle_manifest["mainnodeids"] == ["100", "200"]
+
+    for case_id in ("100", "200"):
+        case_dir = decode_root / case_id
+        for name in REQUIRED_BUNDLE_FILES:
+            assert (case_dir / name).is_file()
+        case_manifest = json.loads((case_dir / "manifest.json").read_text(encoding="utf-8"))
+        assert case_manifest["bundle_mode"] == "single_case"
+        assert case_manifest["mainnodeid"] == case_id
 
 
 def test_decode_text_bundle_accepts_legacy_wrapper_format(tmp_path: Path) -> None:

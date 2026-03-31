@@ -267,7 +267,44 @@ def test_t02_export_text_bundle_cli_accepts_expected_args(monkeypatch, tmp_path:
     assert captured["drivezone_path"] == str(tmp_path / "drivezone.gpkg")
     assert captured["rcsdroad_path"] == str(tmp_path / "rcsdroad.gpkg")
     assert captured["rcsdnode_path"] == str(tmp_path / "rcsdnode.gpkg")
-    assert captured["mainnodeid"] == "100"
+    assert captured["mainnodeid"] == ["100"]
+    assert captured["out_txt"] == str(tmp_path / "bundle.txt")
+
+
+def test_t02_export_text_bundle_cli_accepts_multiple_mainnodeids(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_cmd(args) -> int:
+        captured["mainnodeid"] = args.mainnodeid
+        captured["out_txt"] = args.out_txt
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_t02_export_text_bundle", _fake_cmd)
+
+    exit_code = cli.main(
+        [
+            "t02-export-text-bundle",
+            "--nodes_path",
+            str(tmp_path / "nodes.gpkg"),
+            "--roads_path",
+            str(tmp_path / "roads.gpkg"),
+            "--drivezone_path",
+            str(tmp_path / "drivezone.gpkg"),
+            "--rcsdroad_path",
+            str(tmp_path / "rcsdroad.gpkg"),
+            "--rcsdnode_path",
+            str(tmp_path / "rcsdnode.gpkg"),
+            "--mainnodeid",
+            "100",
+            "200",
+            "300",
+            "--out_txt",
+            str(tmp_path / "bundle.txt"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["mainnodeid"] == ["100", "200", "300"]
     assert captured["out_txt"] == str(tmp_path / "bundle.txt")
 
 

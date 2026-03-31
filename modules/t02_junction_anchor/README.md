@@ -11,7 +11,7 @@
   - stage3 `virtual intersection anchoring`
 - 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础。
 - `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口。
-- 单 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑工具保留。
+- 单 / 多 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑工具保留。
 - 当前代码已实现最小闭环，但尚未进入最终唯一锚定决策、概率阶段与正式产线级全量批处理。
 
 ## 2. 官方运行入口
@@ -47,7 +47,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
   - 完整数据 + 自动识别“有资料但未锚定”的路口
 - 它不重算 stage1 `has_evd` 或 stage2 `is_anchor`，而是直接消费其结果字段
 - `t02-fix-node-error-2` 是独立离线修复工具，只消费 `node_error_2 / nodes / roads / RCSDIntersection` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json`；它不属于 stage 主流程
-- `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 `mainnodeid` 文本证据包导出与解包，服务于 stage3 复核与外部复现
+- `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 / 多 `mainnodeid` 文本证据包导出与解包，服务于 stage3 复核与外部复现
 - T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
 - T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
 - `case-package` 是 stage3 baseline regression 入口，不允许回退
@@ -164,8 +164,25 @@ python -m rcsd_topo_poc t02-export-text-bundle \
 ```
 
 ```bash
+python -m rcsd_topo_poc t02-export-text-bundle \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
+  --mainnodeid 765003 765154 922217 \
+  --out-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/cases_pack.txt
+```
+
+```bash
 python -m rcsd_topo_poc t02-decode-text-bundle \
   --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt
+```
+
+```bash
+cd /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle
+python -m rcsd_topo_poc t02-decode-text-bundle \
+  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/cases_pack.txt
 ```
 
 说明：
@@ -247,8 +264,12 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - `node_component_conflict`
 - `t02_single_case_bundle.txt`
   - 单 `mainnodeid` 文本证据包
+- `t02_multi_case_bundle.txt`
+  - 多 `mainnodeid` 文本证据包；解包后会在目标目录下生成多个 `<mainnodeid>/` case 目录
 - 内含 `manifest.json`、`drivezone_mask.png`、`drivezone.gpkg`、`nodes.gpkg`、`roads.gpkg`、`rcsdroad.gpkg`、`rcsdnode.gpkg`、`size_report.json`
-- `t02-decode-text-bundle` 默认解包到与 bundle 同目录、且以 bundle 文件名为目录名的子目录；例如 `case_765003.txt -> case_765003/`
+- `t02-decode-text-bundle` 未显式传入 `--out-dir` 时：
+  - 单 case bundle 默认解包到与 bundle 同目录、且以 bundle 文件名为目录名的子目录；例如 `case_765003.txt -> case_765003/`
+  - 多 case bundle 默认解包到当前工作目录，并展开为多个 `<mainnodeid>/` case 目录
   - 导出时强制检查最终文本体积 `<= 300KB`；超限时失败并输出体积分析报告
 
 说明：
@@ -301,7 +322,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - `t02-virtual-intersection-poc` 的 `case-package` 与 `full-input` 两种模式
   - 基于 DriveZone / roads / RCSDRoad / RCSDNode 的局部 patch、分支证据和 RC 关联输出
   - full-input 的 `preflight / summary / perf_summary / virtual_intersection_polygons.gpkg / _rendered_maps`
-  - 单 `mainnodeid` 文本证据包导出与解包
+  - 单 / 多 `mainnodeid` 文本证据包导出与解包
 - 独立工具补充已实现：
   - `t02-fix-node-error-2` 独立离线修复工具
   - 按 `RCSDIntersection` 面反选 `node_error_2` 候选组

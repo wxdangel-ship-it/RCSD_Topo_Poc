@@ -19,7 +19,7 @@
   - `t02-virtual-intersection-poc` baseline 入口：
     - 默认 `case-package`
     - 可显式切换 `--input-mode full-input`
-  - 单 `mainnodeid` 文本证据包支撑入口
+  - 单 / 多 `mainnodeid` 文本证据包支撑入口
   - 独立离线修复工具 `t02-fix-node-error-2`
   - 消费 T01 `segment` 与 `nodes`
   - 消费 `DriveZone`、`RCSDIntersection`、`roads`、`RCSDRoad`、`RCSDNode`
@@ -582,10 +582,12 @@ outputs/_work/t02_stage1_drivezone_gate
 - `t02_virtual_intersection_full_input_poc.log`
 - `t02_virtual_intersection_full_input_poc_progress.json`
 
-#### 单 `mainnodeid` 文本证据包
+#### 单 / 多 `mainnodeid` 文本证据包
 
 - `t02_single_case_bundle.txt`
   - 单 `mainnodeid` 文本证据包
+- `t02_multi_case_bundle.txt`
+  - 多 `mainnodeid` 文本证据包；解包后按 `<mainnodeid>/` 展开多个 case 目录
 - 内含最少文件：
   - `manifest.json`
   - `drivezone_mask.png`
@@ -762,8 +764,25 @@ python -m rcsd_topo_poc t02-export-text-bundle \
 ```
 
 ```bash
+python -m rcsd_topo_poc t02-export-text-bundle \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
+  --mainnodeid 765003 765154 922217 \
+  --out-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/cases_pack.txt
+```
+
+```bash
 python -m rcsd_topo_poc t02-decode-text-bundle \
   --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt
+```
+
+```bash
+cd /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle
+python -m rcsd_topo_poc t02-decode-text-bundle \
+  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/cases_pack.txt
 ```
 
 ### 6.1 Stage3 输入前提
@@ -775,9 +794,9 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - `review_mode` 下可绕过 `is_anchor = no` gate，并将 RC outside DriveZone 从硬失败降为风险记录 + 软排除
 - 当前验收基线推荐使用标准 case-package 输入，不建议把共享大图层直连运行与算法验收混在一起
 
-### 6.2 单 mainnodeid 文本证据包
+### 6.2 单 / 多 mainnodeid 文本证据包
 
-- `t02-export-text-bundle` 只处理单个 `mainnodeid`
+- `t02-export-text-bundle` 可一次处理单个或多个 `mainnodeid`
 - 导出端输入路径全部通过命令行提供：`nodes / roads / DriveZone / RCSDRoad / RCSDNode`
 - 导出结果是单个纯文本文件，默认逻辑内容至少包含：
   - `manifest.json`
@@ -791,7 +810,10 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - 打包流程固定为“局部裁剪 -> 压缩归档 -> 文本编码”，不允许直接明文拼接大段原始矢量文本
 - 最终 bundle 文本体积必须 `<= 300KB`
 - 若超限，入口必须失败退出，并输出体积分析 `size_report`
-- `t02-decode-text-bundle` 负责校验 bundle 头尾标识、版本与 checksum，并恢复等价目录结构；未显式传入 `--out-dir` 时，默认解包到与 bundle 同目录、且以 bundle 文件名为目录名的子目录
+- `t02-decode-text-bundle` 负责校验 bundle 头尾标识、版本与 checksum，并恢复等价目录结构
+- 未显式传入 `--out-dir` 时：
+  - 单 case bundle 默认解包到与 bundle 同目录、且以 bundle 文件名为目录名的子目录
+  - 多 case bundle 默认解包到当前工作目录，并展开为多个 `<mainnodeid>/` case 目录
 
 ## 7. Acceptance
 
@@ -803,4 +825,4 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 6. stage2 当前仍未扩写为最终唯一锚定决策闭环，概率/置信度与环岛新规则未泄漏进当前正式契约。
 7. stage3 `virtual intersection anchoring` 已纳入当前 baseline，并具备 case-package 与 full-input 两种运行模式。
 8. `polygon-support` 与最终 association 已允许解耦；own-group nodes must-cover 与 support validation 已进入契约。
-9. 单 `mainnodeid` 文本证据包已具备“导出 + 解包”最小闭环，当前作为 stage3 复核与外部复现支撑工具保留，且 bundle 体积受 `300KB` 上限约束。
+9. 单 / 多 `mainnodeid` 文本证据包已具备“导出 + 解包”最小闭环，当前作为 stage3 复核与外部复现支撑工具保留，且 bundle 体积受 `300KB` 上限约束。

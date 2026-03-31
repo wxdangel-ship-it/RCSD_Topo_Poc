@@ -811,7 +811,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_t02_export = sub.add_parser(
         "t02-export-text-bundle",
-        help="Export a single-mainnodeid T02 text bundle for external reproduction.",
+        help="Export a single- or multi-mainnodeid T02 text bundle for external reproduction.",
     )
     p_t02_export.add_argument("--nodes-path", "--nodes_path", required=True, dest="nodes_path", help="Path to nodes GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.")
     p_t02_export.add_argument("--nodes-layer", help="Optional nodes layer name.")
@@ -846,7 +846,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     p_t02_export.add_argument("--rcsdnode-layer", help="Optional RCSDNode layer name.")
     p_t02_export.add_argument("--rcsdnode-crs", help="Optional RCSDNode CRS override, e.g. EPSG:4326.")
-    p_t02_export.add_argument("--mainnodeid", required=True, help="Single target mainnodeid for the text bundle.")
+    p_t02_export.add_argument("--mainnodeid", required=True, nargs="+", help="One or more target mainnodeids for the text bundle.")
     p_t02_export.add_argument("--out-txt", "--out_txt", required=True, dest="out_txt", help="Single text bundle output path.")
     p_t02_export.add_argument("--buffer-m", type=float, default=100.0, help="Local query buffer in meters. Default: 100.")
     p_t02_export.add_argument("--patch-size-m", type=float, default=200.0, help="North-up patch size in meters. Default: 200.")
@@ -855,10 +855,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_t02_decode = sub.add_parser(
         "t02-decode-text-bundle",
-        help="Decode a single-mainnodeid T02 text bundle into a local directory.",
+        help="Decode a single- or multi-mainnodeid T02 text bundle into local directories.",
     )
     p_t02_decode.add_argument("--bundle-txt", "--bundle_txt", required=True, dest="bundle_txt", help="Input bundle txt path.")
-    p_t02_decode.add_argument("--out-dir", "--out_dir", dest="out_dir", help="Optional output directory for decoded bundle files. If omitted, use a sibling directory named after the bundle file.")
+    p_t02_decode.add_argument("--out-dir", "--out_dir", dest="out_dir", help="Optional output directory for decoded bundle files. If omitted, single-case bundles decode to a sibling directory named after the bundle file, while multi-case bundles decode into the current working directory.")
     p_t02_decode.set_defaults(func=_cmd_t02_decode_text_bundle)
 
     args = parser.parse_args(argv)

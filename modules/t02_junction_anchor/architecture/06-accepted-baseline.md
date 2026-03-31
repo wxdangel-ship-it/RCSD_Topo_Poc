@@ -24,7 +24,7 @@
 - stage2：`anchor recognition / anchor existence`
 - stage3：`virtual intersection anchoring`
 - 独立支撑入口：
-  - 单 `mainnodeid` 文本证据包
+  - 单 / 多 `mainnodeid` 文本证据包
   - `t02-fix-node-error-2` 离线修复工具
 
 说明：
@@ -68,7 +68,7 @@
   - `DriveZone.gpkg`
   - `RCSDRoad.gpkg`
   - `RCSDNode.gpkg`
-  - `mainnodeid`
+  - `mainnodeid`（单个或多个）
 
 ### 4.4 当前输入兼容口径
 - 输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`。
@@ -275,7 +275,9 @@
 ## 9. 独立支撑入口
 
 ### 9.1 文本证据包
-- `t02-export-text-bundle / t02-decode-text-bundle` 只服务于单 `mainnodeid` 复核、外部复现和回传。
+- `t02-export-text-bundle / t02-decode-text-bundle` 服务于单 / 多 `mainnodeid` 复核、外部复现和回传。
+- 单 case bundle 保持原有 flat 目录结构；多 case bundle 解包后按 `<mainnodeid>/` 展开多个测试用例目录。
+- 未显式传入 `--out-dir` 时，多 case bundle 默认解包到当前工作目录。
 - 文本证据包不构成新的业务阶段，不改写 stage1 / stage2 / stage3 主流程。
 - 导出时继续要求最终文本体积 `<= 300KB`。
 

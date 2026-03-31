@@ -34,6 +34,8 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
 
 
 TEXT_BUNDLE_VERSION = "1"
+TEXT_BUNDLE_MODE_SINGLE = "single_case"
+TEXT_BUNDLE_MODE_MULTI = "multi_case"
 TEXT_BUNDLE_LIMIT_BYTES = 300 * 1024
 TEXT_BUNDLE_BEGIN = "BEGIN_T02_BUNDLE"
 TEXT_BUNDLE_PAYLOAD = "payload:"
@@ -85,6 +87,7 @@ class TextBundleDecodeArtifacts:
     success: bool
     out_dir: Path
     manifest_path: Path
+    case_dirs: tuple[Path, ...] = ()
 
 
 def _now_text() -> str:
@@ -356,7 +359,36 @@ def _resolve_target_nodes(
     return _resolve_group(mainnodeid=normalized_mainnodeid, nodes=target_group_nodes)
 
 
-def run_t02_export_text_bundle(
+def _normalize_mainnodeids(value: Union[str, int, Iterable[Union[str, int]], None]) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (str, int, float)):
+        raw_values: list[Union[str, int, float]] = [value]
+    else:
+        raw_values = list(value)
+
+    normalized_values: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        normalized_value = _normalize_id(raw_value)
+        if normalized_value is None or normalized_value in seen:
+            continue
+        seen.add(normalized_value)
+        normalized_values.append(normalized_value)
+    return normalized_values
+
+
+def _extract_bundle_files(bundle_path: Path) -> dict[str, bytes]:
+    _meta, payload_bytes, _checksum = _parse_text_bundle(bundle_path.read_text(encoding="utf-8"))
+    with zipfile.ZipFile(io.BytesIO(payload_bytes), "r") as zf:
+        names = set(zf.namelist())
+        missing = [name for name in REQUIRED_BUNDLE_FILES if name not in names]
+        if missing:
+            raise TextBundleError("bundle_missing_files", f"Bundle is missing required files: {','.join(missing)}")
+        return {name: zf.read(name) for name in REQUIRED_BUNDLE_FILES}
+
+
+def _run_t02_export_single_text_bundle(
     *,
     nodes_path: Union[str, Path],
     roads_path: Union[str, Path],
@@ -511,6 +543,7 @@ def run_t02_export_text_bundle(
 
         manifest = {
             "bundle_version": TEXT_BUNDLE_VERSION,
+            "bundle_mode": TEXT_BUNDLE_MODE_SINGLE,
             "mainnodeid": normalized_mainnodeid,
             "epsg": TARGET_CRS.to_epsg(),
             "buffer_m": buffer_m,
@@ -581,6 +614,7 @@ def run_t02_export_text_bundle(
             payload_bytes, per_file_compressed = _zip_bytes(files)
             meta = {
                 "bundle_version": TEXT_BUNDLE_VERSION,
+                "bundle_mode": TEXT_BUNDLE_MODE_SINGLE,
                 "mainnodeid": normalized_mainnodeid,
                 "archive_format": "zip",
                 "encoding": "base85",
@@ -637,6 +671,198 @@ def run_t02_export_text_bundle(
         )
 
 
+def run_t02_export_text_bundle(
+    *,
+    nodes_path: Union[str, Path],
+    roads_path: Union[str, Path],
+    drivezone_path: Union[str, Path],
+    rcsdroad_path: Union[str, Path],
+    rcsdnode_path: Union[str, Path],
+    mainnodeid: Union[str, int, Iterable[Union[str, int]], None],
+    out_txt: Union[str, Path],
+    nodes_layer: Optional[str] = None,
+    roads_layer: Optional[str] = None,
+    drivezone_layer: Optional[str] = None,
+    rcsdroad_layer: Optional[str] = None,
+    rcsdnode_layer: Optional[str] = None,
+    nodes_crs: Optional[str] = None,
+    roads_crs: Optional[str] = None,
+    drivezone_crs: Optional[str] = None,
+    rcsdroad_crs: Optional[str] = None,
+    rcsdnode_crs: Optional[str] = None,
+    buffer_m: float = 100.0,
+    patch_size_m: float = 200.0,
+    resolution_m: float = 0.2,
+    max_text_size_bytes: int = TEXT_BUNDLE_LIMIT_BYTES,
+) -> TextBundleExportArtifacts:
+    normalized_mainnodeids = _normalize_mainnodeids(mainnodeid)
+    out_txt_path = Path(out_txt)
+    if not normalized_mainnodeids:
+        return TextBundleExportArtifacts(
+            success=False,
+            bundle_txt_path=out_txt_path,
+            size_report_path=None,
+            bundle_size_bytes=0,
+            failure_reason="mainnodeid_not_found",
+            failure_detail="mainnodeid is empty.",
+        )
+
+    if len(normalized_mainnodeids) == 1:
+        return _run_t02_export_single_text_bundle(
+            nodes_path=nodes_path,
+            roads_path=roads_path,
+            drivezone_path=drivezone_path,
+            rcsdroad_path=rcsdroad_path,
+            rcsdnode_path=rcsdnode_path,
+            mainnodeid=normalized_mainnodeids[0],
+            out_txt=out_txt,
+            nodes_layer=nodes_layer,
+            roads_layer=roads_layer,
+            drivezone_layer=drivezone_layer,
+            rcsdroad_layer=rcsdroad_layer,
+            rcsdnode_layer=rcsdnode_layer,
+            nodes_crs=nodes_crs,
+            roads_crs=roads_crs,
+            drivezone_crs=drivezone_crs,
+            rcsdroad_crs=rcsdroad_crs,
+            rcsdnode_crs=rcsdnode_crs,
+            buffer_m=buffer_m,
+            patch_size_m=patch_size_m,
+            resolution_m=resolution_m,
+            max_text_size_bytes=max_text_size_bytes,
+        )
+
+    out_txt_path.parent.mkdir(parents=True, exist_ok=True)
+    if out_txt_path.exists():
+        out_txt_path.unlink()
+    size_report_path = _out_txt_size_report_path(out_txt_path)
+    if size_report_path.exists():
+        size_report_path.unlink()
+
+    try:
+        case_archive_files: dict[str, bytes] = {}
+        for normalized_mainnodeid in normalized_mainnodeids:
+            with tempfile.TemporaryDirectory() as temp_dir_text:
+                temp_bundle_path = Path(temp_dir_text) / f"{normalized_mainnodeid}.txt"
+                artifacts = _run_t02_export_single_text_bundle(
+                    nodes_path=nodes_path,
+                    roads_path=roads_path,
+                    drivezone_path=drivezone_path,
+                    rcsdroad_path=rcsdroad_path,
+                    rcsdnode_path=rcsdnode_path,
+                    mainnodeid=normalized_mainnodeid,
+                    out_txt=temp_bundle_path,
+                    nodes_layer=nodes_layer,
+                    roads_layer=roads_layer,
+                    drivezone_layer=drivezone_layer,
+                    rcsdroad_layer=rcsdroad_layer,
+                    rcsdnode_layer=rcsdnode_layer,
+                    nodes_crs=nodes_crs,
+                    roads_crs=roads_crs,
+                    drivezone_crs=drivezone_crs,
+                    rcsdroad_crs=rcsdroad_crs,
+                    rcsdnode_crs=rcsdnode_crs,
+                    buffer_m=buffer_m,
+                    patch_size_m=patch_size_m,
+                    resolution_m=resolution_m,
+                    max_text_size_bytes=max_text_size_bytes,
+                )
+                if not artifacts.success:
+                    detail = artifacts.failure_detail or artifacts.failure_reason or "bundle export failed"
+                    return TextBundleExportArtifacts(
+                        success=False,
+                        bundle_txt_path=out_txt_path,
+                        size_report_path=None,
+                        bundle_size_bytes=0,
+                        failure_reason=artifacts.failure_reason,
+                        failure_detail=f"mainnodeid='{normalized_mainnodeid}': {detail}",
+                    )
+                for name, content in _extract_bundle_files(temp_bundle_path).items():
+                    case_archive_files[f"{normalized_mainnodeid}/{name}"] = content
+
+        manifest = {
+            "bundle_version": TEXT_BUNDLE_VERSION,
+            "bundle_mode": TEXT_BUNDLE_MODE_MULTI,
+            "mainnodeids": normalized_mainnodeids,
+            "case_count": len(normalized_mainnodeids),
+            "file_list": [],
+            "checksum": {},
+            "encoder_info": {
+                "archive_format": "zip",
+                "compression": "deflate",
+                "text_encoding": "base85",
+                "line_width": TEXT_BUNDLE_LINE_WIDTH,
+                "max_text_size_bytes": max_text_size_bytes,
+                "vector_format": "GeoPackage",
+            },
+            "created_at": _now_text(),
+        }
+
+        size_report: dict[str, Any] | None = None
+        bundle_text = ""
+        bundle_size_bytes = 0
+        for _ in range(3):
+            files = dict(case_archive_files)
+            manifest["checksum"] = {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}
+            manifest["file_list"] = ["manifest.json", *sorted(files)]
+            files["manifest.json"] = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            payload_bytes, per_file_compressed = _zip_bytes(files)
+            meta = {
+                "bundle_version": TEXT_BUNDLE_VERSION,
+                "bundle_mode": TEXT_BUNDLE_MODE_MULTI,
+                "mainnodeids": normalized_mainnodeids,
+                "archive_format": "zip",
+                "encoding": "base85",
+                "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
+                "created_at": _now_text(),
+            }
+            bundle_text, bundle_size_bytes = _build_bundle_text(meta=meta, payload_bytes=payload_bytes)
+            next_size_report = _build_size_report(
+                total_text_size_bytes=bundle_size_bytes,
+                payload_size_bytes=len(payload_bytes),
+                per_file_raw_size_bytes={name: len(content) for name, content in files.items()},
+                per_file_compressed_size_bytes=per_file_compressed,
+                limit_bytes=max_text_size_bytes,
+            )
+            if next_size_report == size_report:
+                break
+            size_report = next_size_report
+
+        assert size_report is not None
+        if bundle_size_bytes > max_text_size_bytes:
+            size_report_path.write_text(json.dumps(size_report, ensure_ascii=False, indent=2), encoding="utf-8")
+            return TextBundleExportArtifacts(
+                success=False,
+                bundle_txt_path=out_txt_path,
+                size_report_path=size_report_path,
+                bundle_size_bytes=bundle_size_bytes,
+                failure_reason="bundle_too_large",
+                failure_detail=(
+                    f"Bundle text size {bundle_size_bytes} exceeds limit {max_text_size_bytes}. "
+                    f"See {size_report_path} for size analysis."
+                ),
+            )
+
+        out_txt_path.write_text(bundle_text, encoding="utf-8")
+        return TextBundleExportArtifacts(
+            success=True,
+            bundle_txt_path=out_txt_path,
+            size_report_path=None,
+            bundle_size_bytes=bundle_size_bytes,
+        )
+    except (TextBundleError, VirtualIntersectionPocError) as exc:
+        reason = getattr(exc, "reason", "bundle_export_failed")
+        detail = getattr(exc, "detail", str(exc))
+        return TextBundleExportArtifacts(
+            success=False,
+            bundle_txt_path=out_txt_path,
+            size_report_path=size_report_path if size_report_path.exists() else None,
+            bundle_size_bytes=0,
+            failure_reason=reason,
+            failure_detail=detail,
+        )
+
+
 def run_t02_decode_text_bundle(
     *,
     bundle_txt: Union[str, Path],
@@ -645,21 +871,17 @@ def run_t02_decode_text_bundle(
     bundle_path = Path(bundle_txt)
     if not bundle_path.is_file():
         raise TextBundleError("bundle_not_found", f"Bundle text file does not exist: {bundle_path}")
-    out_dir_path = Path(out_dir) if out_dir is not None else bundle_path.with_suffix("")
-    out_dir_path.mkdir(parents=True, exist_ok=True)
-
     meta, payload_bytes, checksum = _parse_text_bundle(bundle_path.read_text(encoding="utf-8"))
     if str(meta.get("bundle_version")) != TEXT_BUNDLE_VERSION:
         raise TextBundleError(
             "bundle_version_mismatch",
             f"Unsupported bundle version '{meta.get('bundle_version')}'. Expected '{TEXT_BUNDLE_VERSION}'.",
         )
+    bundle_mode = str(meta.get("bundle_mode") or TEXT_BUNDLE_MODE_SINGLE)
+    out_dir_path = Path(out_dir) if out_dir is not None else (Path.cwd() if bundle_mode == TEXT_BUNDLE_MODE_MULTI else bundle_path.with_suffix(""))
+    out_dir_path.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(io.BytesIO(payload_bytes), "r") as zf:
-        names = set(zf.namelist())
-        missing = [name for name in REQUIRED_BUNDLE_FILES if name not in names]
-        if missing:
-            raise TextBundleError("bundle_missing_files", f"Bundle is missing required files: {','.join(missing)}")
         with tempfile.TemporaryDirectory() as temp_dir_text:
             temp_dir = Path(temp_dir_text)
             zf.extractall(temp_dir)
@@ -670,6 +892,7 @@ def run_t02_decode_text_bundle(
                     "bundle_version_mismatch",
                     f"Manifest bundle version '{manifest.get('bundle_version')}' is not supported.",
                 )
+            manifest_bundle_mode = str(manifest.get("bundle_mode") or TEXT_BUNDLE_MODE_SINGLE)
             checksums = manifest.get("checksum") or {}
             for name, expected_checksum in checksums.items():
                 file_path = temp_dir / name
@@ -678,6 +901,44 @@ def run_t02_decode_text_bundle(
                 actual_checksum = hashlib.sha256(file_path.read_bytes()).hexdigest()
                 if actual_checksum != expected_checksum:
                     raise TextBundleError("checksum_mismatch", f"Checksum mismatch for {name}.")
+            if manifest_bundle_mode == TEXT_BUNDLE_MODE_MULTI:
+                case_ids = _normalize_mainnodeids(manifest.get("mainnodeids"))
+                if not case_ids:
+                    raise TextBundleError("bundle_missing_files", "Multi-case bundle manifest is missing mainnodeids.")
+                for case_id in case_ids:
+                    case_dir = temp_dir / case_id
+                    if not case_dir.is_dir():
+                        raise TextBundleError("bundle_missing_files", f"Bundle is missing case directory: {case_id}")
+                    missing = [name for name in REQUIRED_BUNDLE_FILES if not (case_dir / name).is_file()]
+                    if missing:
+                        raise TextBundleError("bundle_missing_files", f"Case '{case_id}' is missing required files: {','.join(missing)}")
+
+                manifest_out_path = out_dir_path / f"{bundle_path.stem}.bundle_manifest.json"
+                if manifest_out_path.exists():
+                    manifest_out_path.unlink()
+                manifest_out_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+                case_dirs: list[Path] = []
+                for case_id in case_ids:
+                    source_dir = temp_dir / case_id
+                    target_dir = out_dir_path / case_id
+                    if target_dir.exists():
+                        shutil.rmtree(target_dir)
+                    shutil.move(str(source_dir), str(target_dir))
+                    case_dirs.append(target_dir)
+
+                _ = checksum
+                return TextBundleDecodeArtifacts(
+                    success=True,
+                    out_dir=out_dir_path,
+                    manifest_path=manifest_out_path,
+                    case_dirs=tuple(case_dirs),
+                )
+
+            names = set(zf.namelist())
+            missing = [name for name in REQUIRED_BUNDLE_FILES if name not in names]
+            if missing:
+                raise TextBundleError("bundle_missing_files", f"Bundle is missing required files: {','.join(missing)}")
             for child in temp_dir.iterdir():
                 target_path = out_dir_path / child.name
                 if target_path.exists():
@@ -692,6 +953,7 @@ def run_t02_decode_text_bundle(
         success=True,
         out_dir=out_dir_path,
         manifest_path=out_dir_path / "manifest.json",
+        case_dirs=(out_dir_path,),
     )
 
 
@@ -731,4 +993,6 @@ def run_t02_export_text_bundle_cli(args: argparse.Namespace) -> int:
 def run_t02_decode_text_bundle_cli(args: argparse.Namespace) -> int:
     artifacts = run_t02_decode_text_bundle(bundle_txt=args.bundle_txt, out_dir=args.out_dir)
     print(f"T02 text bundle decoded to: {artifacts.out_dir}")
+    if artifacts.case_dirs:
+        print(f"case_count={len(artifacts.case_dirs)}")
     return 0

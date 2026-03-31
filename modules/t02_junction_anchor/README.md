@@ -121,6 +121,26 @@ bash scripts/t02_run_stage3_full_input_8workers.sh
 - `ROADS_PATH / DRIVEZONE_PATH / RCSDROAD_PATH / RCSDNODE_PATH` 应为与该批次空间范围一致、CRS 可正确识别的全量输入。
 - 包装脚本只是复用官方入口 `python -m rcsd_topo_poc t02-virtual-intersection-poc --input-mode full-input`，不会引入新的业务语义。
 
+内网 8 线程全量运行脚本：
+
+```bash
+bash scripts/t02_run_stage3_internal_full_input_8workers.sh
+```
+
+说明：
+
+- 默认内网路径冻结为：
+  - `NODES_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg`
+  - `ROADS_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg`
+  - `DRIVEZONE_PATH=/mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg`
+  - `RCSDROAD_PATH=/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg`
+  - `RCSDNODE_PATH=/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg`
+- 默认 `WORKERS=8`，默认开启 `--debug`。
+- 所有目视检查 PNG 统一输出到：
+  - `<OUT_ROOT>/<RUN_ID>/visual_checks/`
+- 如需限量试跑，可额外传：
+  - `MAX_CASES=100 bash scripts/t02_run_stage3_internal_full_input_8workers.sh`
+
 ```bash
 python -m rcsd_topo_poc t02-fix-node-error-2 \
   --node-error2-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02_Fix/node_error_2.gpkg \

@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前共识别 `25` 个执行入口文件
+- 当前共识别 `26` 个执行入口文件
 - 分布概览：
-  - repo 级 / 工具级：`23`
+  - repo 级 / 工具级：`24`
 
 ## 3. 当前已识别入口清单
 
@@ -30,6 +30,7 @@
 | `t01-compare-freeze` | `src/rcsd_topo_poc/cli.py` | repo 级 | T01 freeze compare 入口 | `active` | 否 |
 | `t02-stage1-drivezone-gate` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 stage1 DriveZone / has_evd gate 入口 | `active` | 否 |
 | `t02-virtual-intersection-poc` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 stage3 虚拟路口锚定 baseline 入口（`case-package` + `full-input`） | `active` | 否 |
+| `t02-fix-node-error-2` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 `node_error_2` 独立离线修复工具，输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json` | `active` | 否 |
 | `t02-export-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 单 mainnodeid 文本证据包导出入口 | `active` | 否 |
 | `t02-decode-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 单 mainnodeid 文本证据包解包入口 | `active` | 否 |
 | `t00_tool1_patch_directory_bootstrap.py` | `scripts/t00_tool1_patch_directory_bootstrap.py` | repo 级 | T00 Tool1 固定脚本 | `active` | 否 |

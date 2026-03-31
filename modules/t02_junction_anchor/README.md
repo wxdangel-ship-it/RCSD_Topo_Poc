@@ -33,6 +33,10 @@ python -m rcsd_topo_poc t02-export-text-bundle --help
 ```
 
 ```bash
+python -m rcsd_topo_poc t02-fix-node-error-2 --help
+```
+
+```bash
 python -m rcsd_topo_poc t02-decode-text-bundle --help
 ```
 
@@ -42,6 +46,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别“有资料但未锚定”的路口
 - 它不重算 stage1 `has_evd` 或 stage2 `is_anchor`，而是直接消费其结果字段
+- `t02-fix-node-error-2` 是独立离线修复工具，只消费 `node_error_2 / nodes / roads / RCSDIntersection` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json`；它不属于 stage 主流程
 - `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 `mainnodeid` 文本证据包导出与解包，服务于 stage3 复核与外部复现
 - T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
 - T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
@@ -95,6 +100,17 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_full_input \
   --run-id t02_virtual_intersection_full_input_demo \
   --debug
+```
+
+```bash
+python -m rcsd_topo_poc t02-fix-node-error-2 \
+  --node-error2-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02_Fix/node_error_2.gpkg \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02_Fix/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02_Fix/roads.gpkg \
+  --intersection-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02_Fix/RCSDIntersection.gpkg \
+  --nodes-fix-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02_Fix/nodes_fix.gpkg \
+  --roads-fix-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02_Fix/roads_fix.gpkg \
+  --report-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02_Fix/fix_report.json
 ```
 
 ```bash
@@ -152,6 +168,12 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - 总耗时、阶段耗时和总体计数
 - `t02_stage1_perf_markers.jsonl`
   - 阶段级性能标记流
+- `nodes_fix.gpkg`
+  - `t02-fix-node-error-2` 的修复后完整 nodes 输出
+- `roads_fix.gpkg`
+  - `t02-fix-node-error-2` 的修复后完整 roads 输出
+- `fix_report.json`
+  - `t02-fix-node-error-2` 的独立审计输出，记录候选组、忽视的 `kind_2 = 1` 组、合并结果、删除 roads 与 skip reason
 - `virtual_intersection_polygon.gpkg`
   - stage3 单 case 生成的虚拟路口面
 - `virtual_intersection_polygons.gpkg`
@@ -239,6 +261,11 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - 基于 DriveZone / roads / RCSDRoad / RCSDNode 的局部 patch、分支证据和 RC 关联输出
   - full-input 的 `preflight / summary / perf_summary / virtual_intersection_polygons.gpkg / _rendered_maps`
   - 单 `mainnodeid` 文本证据包导出与解包
+- 独立工具补充已实现：
+  - `t02-fix-node-error-2` 独立离线修复工具
+  - 按 `RCSDIntersection` 面反选 `node_error_2` 候选组
+  - `kind_2 = 1` 组忽视但仍作为连通阻断候选
+  - 基于 roads 拓扑的组间连通判定与 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json` 输出
 - 未实现：
   - 最终唯一锚定决策闭环
   - 概率 / 置信度

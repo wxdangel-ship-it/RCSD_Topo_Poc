@@ -71,6 +71,51 @@ def test_t02_stage2_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> No
     assert captured["out_root"] == str(tmp_path / "out")
 
 
+def test_t02_fix_node_error_2_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_cmd(args) -> int:
+        captured["node_error2_path"] = args.node_error2_path
+        captured["nodes_path"] = args.nodes_path
+        captured["roads_path"] = args.roads_path
+        captured["intersection_path"] = args.intersection_path
+        captured["nodes_fix_path"] = args.nodes_fix_path
+        captured["roads_fix_path"] = args.roads_fix_path
+        captured["report_path"] = args.report_path
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_t02_fix_node_error_2", _fake_cmd)
+
+    exit_code = cli.main(
+        [
+            "t02-fix-node-error-2",
+            "--node_error2_path",
+            str(tmp_path / "node_error_2.gpkg"),
+            "--nodes_path",
+            str(tmp_path / "nodes.gpkg"),
+            "--roads_path",
+            str(tmp_path / "roads.gpkg"),
+            "--intersection_path",
+            str(tmp_path / "intersection.gpkg"),
+            "--nodes_fix_path",
+            str(tmp_path / "nodes_fix.gpkg"),
+            "--roads_fix_path",
+            str(tmp_path / "roads_fix.gpkg"),
+            "--report_path",
+            str(tmp_path / "fix_report.json"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["node_error2_path"] == str(tmp_path / "node_error_2.gpkg")
+    assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
+    assert captured["roads_path"] == str(tmp_path / "roads.gpkg")
+    assert captured["intersection_path"] == str(tmp_path / "intersection.gpkg")
+    assert captured["nodes_fix_path"] == str(tmp_path / "nodes_fix.gpkg")
+    assert captured["roads_fix_path"] == str(tmp_path / "roads_fix.gpkg")
+    assert captured["report_path"] == str(tmp_path / "fix_report.json")
+
+
 def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 

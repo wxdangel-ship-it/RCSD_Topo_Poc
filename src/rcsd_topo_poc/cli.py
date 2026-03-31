@@ -199,6 +199,12 @@ def _cmd_t02_stage2_anchor_recognition(args: argparse.Namespace) -> int:
     return run_t02_stage2_anchor_recognition_cli(args)
 
 
+def _cmd_t02_fix_node_error_2(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t02_junction_anchor.fix_node_error_2 import run_t02_fix_node_error_2_cli
+
+    return run_t02_fix_node_error_2_cli(args)
+
+
 def _add_debug_flag(parser: argparse.ArgumentParser, *, default: bool) -> None:
     parser.add_argument(
         "--debug",
@@ -658,6 +664,68 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional run id. If omitted, use t02_stage2_anchor_recognition_YYYYMMDD_HHMMSS.",
     )
     p_t02_stage2.set_defaults(func=_cmd_t02_stage2_anchor_recognition)
+
+    p_t02_fix_node_error_2 = sub.add_parser(
+        "t02-fix-node-error-2",
+        help="Run the standalone T02 node_error_2 offline repair tool and write nodes_fix/roads_fix outputs.",
+    )
+    p_t02_fix_node_error_2.add_argument(
+        "--node-error2-path",
+        "--node_error2_path",
+        required=True,
+        dest="node_error2_path",
+        help="Path to node_error_2 GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_fix_node_error_2.add_argument("--node-error2-layer", "--node_error2_layer", dest="node_error2_layer", help="Optional node_error_2 layer name.")
+    p_t02_fix_node_error_2.add_argument("--node-error2-crs", "--node_error2_crs", dest="node_error2_crs", help="Optional node_error_2 CRS override, e.g. EPSG:4326.")
+    p_t02_fix_node_error_2.add_argument(
+        "--nodes-path",
+        "--nodes_path",
+        required=True,
+        dest="nodes_path",
+        help="Path to nodes GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_fix_node_error_2.add_argument("--nodes-layer", help="Optional nodes layer name.")
+    p_t02_fix_node_error_2.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
+    p_t02_fix_node_error_2.add_argument(
+        "--roads-path",
+        "--roads_path",
+        required=True,
+        dest="roads_path",
+        help="Path to roads GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_fix_node_error_2.add_argument("--roads-layer", help="Optional roads layer name.")
+    p_t02_fix_node_error_2.add_argument("--roads-crs", help="Optional roads CRS override, e.g. EPSG:4326.")
+    p_t02_fix_node_error_2.add_argument(
+        "--intersection-path",
+        "--intersection_path",
+        required=True,
+        dest="intersection_path",
+        help="Path to RCSDIntersection GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_fix_node_error_2.add_argument("--intersection-layer", help="Optional RCSDIntersection layer name.")
+    p_t02_fix_node_error_2.add_argument("--intersection-crs", help="Optional RCSDIntersection CRS override, e.g. EPSG:4326.")
+    p_t02_fix_node_error_2.add_argument(
+        "--nodes-fix-path",
+        "--nodes_fix_path",
+        required=True,
+        dest="nodes_fix_path",
+        help="Output path for repaired nodes GeoPackage.",
+    )
+    p_t02_fix_node_error_2.add_argument(
+        "--roads-fix-path",
+        "--roads_fix_path",
+        required=True,
+        dest="roads_fix_path",
+        help="Output path for repaired roads GeoPackage.",
+    )
+    p_t02_fix_node_error_2.add_argument(
+        "--report-path",
+        "--report_path",
+        dest="report_path",
+        help="Optional audit JSON output path. Defaults to sibling fix_report.json next to nodes_fix.",
+    )
+    p_t02_fix_node_error_2.set_defaults(func=_cmd_t02_fix_node_error_2)
 
     p_t02_poc = sub.add_parser(
         "t02-virtual-intersection-poc",

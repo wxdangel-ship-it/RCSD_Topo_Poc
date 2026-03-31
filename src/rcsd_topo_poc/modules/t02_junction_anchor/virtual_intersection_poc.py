@@ -69,6 +69,7 @@ SIDE_BRANCH_HALF_WIDTH_M = 5.0
 MAIN_AXIS_ANGLE_TOLERANCE_DEG = 35.0
 BRANCH_MATCH_TOLERANCE_DEG = 30.0
 RC_BRANCH_PROXIMITY_M = 18.0
+RC_OUTSIDE_DRIVEZONE_IGNORE_MARGIN_M = 25.0
 POLYGON_CORE_RADIUS_M = 7.0
 POLYGON_TIP_BUFFER_M = 5.0
 POLYGON_RC_NODE_BUFFER_M = 4.0
@@ -245,6 +246,11 @@ class VirtualIntersectionArtifacts:
     perf_json_path: Path
     perf_markers_path: Path
     rendered_map_path: Path | None = None
+    virtual_polygon_feature: dict[str, Any] | None = None
+    status_doc: dict[str, Any] | None = None
+    perf_doc: dict[str, Any] | None = None
+    associated_rcsdroad_ids: tuple[str, ...] | None = None
+    associated_rcsdnode_ids: tuple[str, ...] | None = None
 
 
 def _now_text() -> str:
@@ -1342,7 +1348,10 @@ def _write_debug_rendered_map(
     selected_rc_roads: list[ParsedRoad],
     selected_rc_node_ids: set[str],
     excluded_rc_road_ids: set[str],
+    excluded_rc_node_ids: set[str] | None = None,
+    failure_reason: str | None = None,
 ) -> None:
+    excluded_rc_node_ids = excluded_rc_node_ids or set()
     image = np.full((grid.height, grid.width, 4), 255, dtype=np.uint8)
     image[..., 3] = 255
 
@@ -1399,12 +1408,20 @@ def _write_debug_rendered_map(
             if node.node_id in selected_rc_node_ids
         ],
     )
+    excluded_rc_node_mask = _rasterize_geometries(
+        grid,
+        [
+            node.geometry.buffer(node_display_buffer_m)
+            for node in local_rc_nodes
+            if node.node_id in excluded_rc_node_ids
+        ],
+    )
     other_rc_node_mask = _rasterize_geometries(
         grid,
         [
             node.geometry.buffer(node_display_buffer_m)
             for node in local_rc_nodes
-            if node.node_id not in selected_rc_node_ids
+            if node.node_id not in selected_rc_node_ids and node.node_id not in excluded_rc_node_ids
         ],
     )
     representative_mask = _rasterize_geometries(
@@ -1422,11 +1439,87 @@ def _write_debug_rendered_map(
     _blend_mask(image, selected_rc_road_mask, color=(214, 69, 69), alpha=1.0)
     _blend_mask(image, other_rc_node_mask, color=(193, 18, 31), alpha=0.80)
     _blend_mask(image, selected_rc_node_mask, color=(193, 18, 31), alpha=0.95)
+    _blend_mask(image, excluded_rc_node_mask, color=(138, 28, 42), alpha=0.95)
     _blend_mask(image, other_node_mask, color=(24, 24, 24), alpha=1.0)
     _blend_mask(image, group_node_mask, color=(24, 24, 24), alpha=1.0)
     _blend_mask(image, representative_mask, color=(0, 0, 0), alpha=1.0)
+    if failure_reason is not None:
+        failure_mask = np.ones((grid.height, grid.width), dtype=bool)
+        border_px = max(2, int(round(4.0 / grid.resolution_m)))
+        border_mask = np.zeros((grid.height, grid.width), dtype=bool)
+        border_mask[:border_px, :] = True
+        border_mask[-border_px:, :] = True
+        border_mask[:, :border_px] = True
+        border_mask[:, -border_px:] = True
+        _blend_mask(image, failure_mask, color=(208, 43, 43), alpha=0.18)
+        _blend_mask(image, border_mask, color=(144, 0, 0), alpha=1.0)
 
     _write_png_rgba(out_path, image)
+
+
+def _build_debug_focus_geometry(
+    *,
+    representative_node: ParsedNode,
+    group_nodes: list[ParsedNode],
+    resolution_m: float,
+    extra_geometries: Iterable[BaseGeometry] = (),
+) -> BaseGeometry:
+    focus_radius_m = max(3.0, resolution_m * 10.0)
+    focus_geometries: list[BaseGeometry] = [
+        representative_node.geometry.buffer(focus_radius_m),
+        *[node.geometry.buffer(focus_radius_m) for node in group_nodes],
+        *[
+            geometry.buffer(max(1.0, resolution_m * 4.0))
+            for geometry in extra_geometries
+            if geometry is not None and not geometry.is_empty
+        ],
+    ]
+    if not focus_geometries:
+        return representative_node.geometry.buffer(focus_radius_m)
+    return unary_union(focus_geometries)
+
+
+def _write_failure_debug_rendered_map(
+    *,
+    out_path: Path,
+    representative_node: ParsedNode,
+    group_nodes: list[ParsedNode],
+    local_nodes: list[ParsedNode],
+    local_roads: list[ParsedRoad],
+    local_rc_nodes: list[ParsedNode],
+    local_rc_roads: list[ParsedRoad],
+    drivezone_union: BaseGeometry,
+    patch_size_m: float,
+    resolution_m: float,
+    failure_reason: str,
+    excluded_rc_road_ids: set[str] | None = None,
+    excluded_rc_node_ids: set[str] | None = None,
+    extra_highlight_geometries: Iterable[BaseGeometry] = (),
+) -> None:
+    grid = _build_grid(representative_node.geometry, patch_size_m=patch_size_m, resolution_m=resolution_m)
+    drivezone_mask = _rasterize_geometries(grid, [drivezone_union]) if not drivezone_union.is_empty else np.zeros((grid.height, grid.width), dtype=bool)
+    _write_debug_rendered_map(
+        out_path=out_path,
+        grid=grid,
+        drivezone_mask=drivezone_mask,
+        polygon_geometry=_build_debug_focus_geometry(
+            representative_node=representative_node,
+            group_nodes=group_nodes,
+            resolution_m=resolution_m,
+            extra_geometries=extra_highlight_geometries,
+        ),
+        representative_node=representative_node,
+        group_nodes=group_nodes,
+        local_nodes=local_nodes,
+        local_roads=local_roads,
+        local_rc_nodes=local_rc_nodes,
+        local_rc_roads=local_rc_roads,
+        selected_rc_roads=[],
+        selected_rc_node_ids=set(),
+        excluded_rc_road_ids=excluded_rc_road_ids or set(),
+        excluded_rc_node_ids=excluded_rc_node_ids or set(),
+        failure_reason=failure_reason,
+    )
 
 
 def _vector_to_angle_deg(vector: tuple[float, float]) -> float:
@@ -1778,6 +1871,16 @@ def _covered_by_drivezone(geometry: BaseGeometry, drivezone_union: BaseGeometry)
     return drivezone_union.buffer(tolerance).covers(geometry)
 
 
+def _is_rc_drivezone_validation_relevant(
+    *,
+    geometry: BaseGeometry,
+    center: Point,
+    buffer_m: float,
+) -> bool:
+    relevance_radius_m = max(RC_BRANCH_PROXIMITY_M, buffer_m - RC_OUTSIDE_DRIVEZONE_IGNORE_MARGIN_M)
+    return geometry.distance(center) <= relevance_radius_m
+
+
 def _build_positive_negative_rc_groups(
     *,
     kind_2: int,
@@ -1792,7 +1895,7 @@ def _build_positive_negative_rc_groups(
 
     side_branches = [branch for branch in road_branches if not branch.is_main_direction and branch.selected_for_polygon]
     if kind_2 == 2048 and not has_rc_group_nodes:
-        candidates: list[tuple[float, str, str]] = []
+        candidates: dict[str, tuple[float, str]] = {}
         for branch in road_branches:
             if not branch.selected_for_polygon:
                 continue
@@ -1801,18 +1904,23 @@ def _build_positive_negative_rc_groups(
                 score = rc_branch.road_support_m + branch.drivezone_support_m + branch.rc_support_m
                 if not branch.is_main_direction:
                     score += 5.0
-                candidates.append((score, branch.branch_id, rc_group_id))
-        candidates.sort(reverse=True)
-        if candidates:
-            best_score = candidates[0][0]
-            best_group = candidates[0][2]
+                current = candidates.get(rc_group_id)
+                if current is None or score > current[0]:
+                    candidates[rc_group_id] = (score, branch.branch_id)
+        ranked_candidates = sorted(
+            ((score, branch_id, rc_group_id) for rc_group_id, (score, branch_id) in candidates.items()),
+            reverse=True,
+        )
+        if ranked_candidates:
+            best_score = ranked_candidates[0][0]
+            best_group = ranked_candidates[0][2]
             positive.add(best_group)
-            if len(candidates) >= 2:
-                second_score = candidates[1][0]
+            if len(ranked_candidates) >= 2:
+                second_score = ranked_candidates[1][0]
                 if second_score >= max(best_score * 0.95, best_score - 3.0):
                     if STATUS_AMBIGUOUS_RC_MATCH not in risks:
                         risks.append(STATUS_AMBIGUOUS_RC_MATCH)
-            for _, _, rc_group_id in candidates:
+            for _, _, rc_group_id in ranked_candidates:
                 if rc_group_id not in positive:
                     negative.add(rc_group_id)
         return positive, negative
@@ -2567,6 +2675,8 @@ def run_t02_virtual_intersection_poc(
     road_association_audits: list[dict[str, Any]] = []
     node_association_audits: list[dict[str, Any]] = []
     risks: list[str] = []
+    normalized_mainnodeid = _normalize_id(mainnodeid)
+    debug_rendered_map_written = False
 
     def record_stage(stage_name: str, *, note: str | None = None) -> None:
         nonlocal stage_started_at
@@ -2630,7 +2740,6 @@ def run_t02_virtual_intersection_poc(
     announce(logger, f"[T02-POC] start run_id={resolved_run_id}")
 
     try:
-        normalized_mainnodeid = _normalize_id(mainnodeid)
         if normalized_mainnodeid is None:
             raise VirtualIntersectionPocError(REASON_MAINNODEID_NOT_FOUND, "mainnodeid is empty.")
 
@@ -2649,8 +2758,9 @@ def run_t02_virtual_intersection_poc(
         target_group_nodes = _parse_nodes(target_nodes_layer_data, require_anchor_fields=True)
         counts["target_group_candidate_count"] = len(target_group_nodes)
         representative_node, group_nodes = _resolve_group(mainnodeid=normalized_mainnodeid, nodes=target_group_nodes)
+        out_of_scope_error: VirtualIntersectionPocError | None = None
         if representative_node.has_evd != "yes" or representative_node.kind_2 not in ALLOWED_KIND_2_VALUES:
-            raise VirtualIntersectionPocError(
+            out_of_scope_error = VirtualIntersectionPocError(
                 REASON_MAINNODEID_OUT_OF_SCOPE,
                 (
                     f"mainnodeid='{normalized_mainnodeid}' is out of scope: "
@@ -2658,32 +2768,8 @@ def run_t02_virtual_intersection_poc(
                     f"kind_2={representative_node.kind_2}."
                 ),
             )
-        if representative_node.is_anchor != "no":
-            if review_mode:
-                if STATUS_REVIEW_ANCHOR_GATE_BYPASSED not in risks:
-                    risks.append(STATUS_REVIEW_ANCHOR_GATE_BYPASSED)
-                audit_rows.append(
-                    _audit_row(
-                        scope="virtual_intersection_poc",
-                        status="warning",
-                        reason=STATUS_REVIEW_ANCHOR_GATE_BYPASSED,
-                        detail=(
-                            f"review_mode bypassed is_anchor gate for representative node "
-                            f"id='{representative_node.node_id}' with is_anchor={representative_node.is_anchor}."
-                        ),
-                        mainnodeid=normalized_mainnodeid,
-                        feature_id=representative_node.node_id,
-                    )
-                )
-            else:
-                raise VirtualIntersectionPocError(
-                    REASON_MAINNODEID_OUT_OF_SCOPE,
-                    (
-                        f"mainnodeid='{normalized_mainnodeid}' is out of scope: "
-                        f"has_evd={representative_node.has_evd}, is_anchor={representative_node.is_anchor}, "
-                        f"kind_2={representative_node.kind_2}."
-                    ),
-                )
+        if out_of_scope_error is not None and not debug:
+            raise out_of_scope_error
 
         patch_query = representative_node.geometry.buffer(buffer_m)
         announce(
@@ -2870,16 +2956,53 @@ def run_t02_virtual_intersection_poc(
         counts["local_rcsdnode_count"] = len(local_rc_nodes)
 
         drivezone_union = unary_union([feature.geometry for feature in local_drivezone_features if feature.geometry is not None])
+        if out_of_scope_error is not None:
+            if debug:
+                try:
+                    _write_failure_debug_rendered_map(
+                        out_path=rendered_map_path,
+                        representative_node=representative_node,
+                        group_nodes=group_nodes,
+                        local_nodes=local_nodes,
+                        local_roads=local_roads,
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        drivezone_union=drivezone_union,
+                        patch_size_m=patch_size_m,
+                        resolution_m=resolution_m,
+                        failure_reason=out_of_scope_error.reason,
+                    )
+                    debug_rendered_map_written = True
+                    announce(
+                        logger,
+                        (
+                            "[T02-POC] wrote failure debug rendered map "
+                            f"path={rendered_map_path} reason={out_of_scope_error.reason}"
+                        ),
+                    )
+                except Exception as exc:
+                    announce(logger, f"[T02-POC] failure debug rendered map skipped reason={type(exc).__name__}: {exc}")
+            raise out_of_scope_error
         invalid_rc_road_ids: set[str] = set()
         invalid_rc_node_ids: set[str] = set()
+        rc_outside_drivezone_error: VirtualIntersectionPocError | None = None
         for rc_road in local_rc_roads:
             if _covered_by_drivezone(rc_road.geometry, drivezone_union):
                 continue
+            if not _is_rc_drivezone_validation_relevant(
+                geometry=rc_road.geometry,
+                center=representative_node.geometry,
+                buffer_m=buffer_m,
+            ):
+                continue
             if not review_mode:
-                raise VirtualIntersectionPocError(
-                    REASON_RC_OUTSIDE_DRIVEZONE,
-                    f"RCSDRoad id='{rc_road.road_id}' is not fully covered by DriveZone within the local patch.",
-                )
+                invalid_rc_road_ids.add(rc_road.road_id)
+                if rc_outside_drivezone_error is None:
+                    rc_outside_drivezone_error = VirtualIntersectionPocError(
+                        REASON_RC_OUTSIDE_DRIVEZONE,
+                        f"RCSDRoad id='{rc_road.road_id}' is not fully covered by DriveZone within the local patch.",
+                    )
+                continue
             invalid_rc_road_ids.add(rc_road.road_id)
             audit_rows.append(
                 _audit_row(
@@ -2897,11 +3020,20 @@ def run_t02_virtual_intersection_poc(
         for rc_node in local_rc_nodes:
             if _covered_by_drivezone(rc_node.geometry.buffer(max(resolution_m, 0.2)), drivezone_union):
                 continue
+            if not _is_rc_drivezone_validation_relevant(
+                geometry=rc_node.geometry,
+                center=representative_node.geometry,
+                buffer_m=buffer_m,
+            ):
+                continue
             if not review_mode:
-                raise VirtualIntersectionPocError(
-                    REASON_RC_OUTSIDE_DRIVEZONE,
-                    f"RCSDNode id='{rc_node.node_id}' is not covered by DriveZone within the local patch.",
-                )
+                invalid_rc_node_ids.add(rc_node.node_id)
+                if rc_outside_drivezone_error is None:
+                    rc_outside_drivezone_error = VirtualIntersectionPocError(
+                        REASON_RC_OUTSIDE_DRIVEZONE,
+                        f"RCSDNode id='{rc_node.node_id}' is not covered by DriveZone within the local patch.",
+                    )
+                continue
             invalid_rc_node_ids.add(rc_node.node_id)
             audit_rows.append(
                 _audit_row(
@@ -2916,6 +3048,39 @@ def run_t02_virtual_intersection_poc(
                     feature_id=rc_node.node_id,
                 )
             )
+        if rc_outside_drivezone_error is not None:
+            if debug:
+                try:
+                    _write_failure_debug_rendered_map(
+                        out_path=rendered_map_path,
+                        representative_node=representative_node,
+                        group_nodes=group_nodes,
+                        local_nodes=local_nodes,
+                        local_roads=local_roads,
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        drivezone_union=drivezone_union,
+                        patch_size_m=patch_size_m,
+                        resolution_m=resolution_m,
+                        failure_reason=rc_outside_drivezone_error.reason,
+                        excluded_rc_road_ids=invalid_rc_road_ids,
+                        excluded_rc_node_ids=invalid_rc_node_ids,
+                        extra_highlight_geometries=[
+                            *[road.geometry for road in local_rc_roads if road.road_id in invalid_rc_road_ids],
+                            *[node.geometry for node in local_rc_nodes if node.node_id in invalid_rc_node_ids],
+                        ],
+                    )
+                    debug_rendered_map_written = True
+                    announce(
+                        logger,
+                        (
+                            "[T02-POC] wrote failure debug rendered map "
+                            f"path={rendered_map_path} reason={rc_outside_drivezone_error.reason}"
+                        ),
+                    )
+                except Exception as exc:
+                    announce(logger, f"[T02-POC] failure debug rendered map skipped reason={type(exc).__name__}: {exc}")
+            raise rc_outside_drivezone_error
         if invalid_rc_road_ids or invalid_rc_node_ids:
             if STATUS_REVIEW_RC_OUTSIDE_DRIVEZONE_EXCLUDED not in risks:
                 risks.append(STATUS_REVIEW_RC_OUTSIDE_DRIVEZONE_EXCLUDED)
@@ -3544,7 +3709,6 @@ def run_t02_virtual_intersection_poc(
         if not selected_rc_roads and positive_rc_road_ids and STATUS_NO_VALID_RC_CONNECTION not in risks:
             risks.append(STATUS_NO_VALID_RC_CONNECTION)
 
-        debug_rendered_map_written = False
         if debug:
             try:
                 _write_debug_rendered_map(
@@ -3612,21 +3776,17 @@ def run_t02_virtual_intersection_poc(
         if status == STATUS_STABLE and not associated_rcsdroad_features:
             status = STATUS_SURFACE_ONLY
 
-        write_vector(
-            virtual_polygon_path,
-            [
-                {
-                    "properties": {
-                        "mainnodeid": normalized_mainnodeid,
-                        "status": status,
-                        "representative_node_id": representative_node.node_id,
-                        "kind_2": representative_node.kind_2,
-                        "grade_2": representative_node.grade_2,
-                    },
-                    "geometry": virtual_polygon_geometry,
-                }
-            ],
-        )
+        virtual_polygon_feature = {
+            "properties": {
+                "mainnodeid": normalized_mainnodeid,
+                "status": status,
+                "representative_node_id": representative_node.node_id,
+                "kind_2": representative_node.kind_2,
+                "grade_2": representative_node.grade_2,
+            },
+            "geometry": virtual_polygon_geometry,
+        }
+        write_vector(virtual_polygon_path, [virtual_polygon_feature])
         write_json(
             branch_evidence_json_path,
             {
@@ -3656,38 +3816,36 @@ def run_t02_virtual_intersection_poc(
         write_csv(audit_csv_path, audit_rows, fieldnames=AUDIT_FIELDNAMES)
         write_json(audit_json_path, audit_rows)
         counts["audit_count"] = len(audit_rows)
-        write_json(
-            status_path,
-            {
-                "run_id": resolved_run_id,
-                "success": True,
-                "mainnodeid": normalized_mainnodeid,
-                "representative_node_id": representative_node.node_id,
-                "kind_2": representative_node.kind_2,
-                "grade_2": representative_node.grade_2,
-                "status": status,
-                "risks": risks,
-                "counts": counts,
-                "review_mode": review_mode,
-                "patch": {
-                    "buffer_m": buffer_m,
-                    "patch_size_m": patch_size_m,
-                    "resolution_m": resolution_m,
-                },
-                "selected_positive_rc_groups": sorted(positive_rc_groups),
-                "excluded_negative_rc_groups": sorted(negative_rc_groups),
-                "output_files": {
-                    "virtual_intersection_polygon": str(virtual_polygon_path),
-                    "branch_evidence_json": str(branch_evidence_json_path),
-                    "branch_evidence_geojson": str(branch_evidence_geojson_path),
-                    "associated_rcsdroad": str(associated_rcsdroad_path),
-                    "associated_rcsdnode": str(associated_rcsdnode_path),
-                    "audit_csv": str(audit_csv_path),
-                    "audit_json": str(audit_json_path),
-                    "rendered_map_png": str(rendered_map_path) if debug_rendered_map_written else None,
-                },
+        status_doc = {
+            "run_id": resolved_run_id,
+            "success": True,
+            "mainnodeid": normalized_mainnodeid,
+            "representative_node_id": representative_node.node_id,
+            "kind_2": representative_node.kind_2,
+            "grade_2": representative_node.grade_2,
+            "status": status,
+            "risks": risks,
+            "counts": counts,
+            "review_mode": review_mode,
+            "patch": {
+                "buffer_m": buffer_m,
+                "patch_size_m": patch_size_m,
+                "resolution_m": resolution_m,
             },
-        )
+            "selected_positive_rc_groups": sorted(positive_rc_groups),
+            "excluded_negative_rc_groups": sorted(negative_rc_groups),
+            "output_files": {
+                "virtual_intersection_polygon": str(virtual_polygon_path),
+                "branch_evidence_json": str(branch_evidence_json_path),
+                "branch_evidence_geojson": str(branch_evidence_geojson_path),
+                "associated_rcsdroad": str(associated_rcsdroad_path),
+                "associated_rcsdnode": str(associated_rcsdnode_path),
+                "audit_csv": str(audit_csv_path),
+                "audit_json": str(audit_json_path),
+                "rendered_map_png": str(rendered_map_path) if debug_rendered_map_written else None,
+            },
+        }
+        write_json(status_path, status_doc)
         announce(
             logger,
             (
@@ -3706,17 +3864,15 @@ def run_t02_virtual_intersection_poc(
         )
         record_stage("outputs_written")
         total_wall_time_sec = time.perf_counter() - started_at
-        write_json(
-            perf_json_path,
-            {
-                "run_id": resolved_run_id,
-                "success": True,
-                "total_wall_time_sec": round(total_wall_time_sec, 6),
-                "counts": counts,
-                "stage_timings": stage_timings,
-                **_tracemalloc_stats(),
-            },
-        )
+        perf_doc = {
+            "run_id": resolved_run_id,
+            "success": True,
+            "total_wall_time_sec": round(total_wall_time_sec, 6),
+            "counts": counts,
+            "stage_timings": stage_timings,
+            **_tracemalloc_stats(),
+        }
+        write_json(perf_json_path, perf_doc)
         return VirtualIntersectionArtifacts(
             success=True,
             out_root=out_root_path,
@@ -3737,6 +3893,19 @@ def run_t02_virtual_intersection_poc(
             perf_json_path=perf_json_path,
             perf_markers_path=perf_markers_path,
             rendered_map_path=rendered_map_path if debug_rendered_map_written else None,
+            virtual_polygon_feature=virtual_polygon_feature,
+            status_doc=status_doc,
+            perf_doc=perf_doc,
+            associated_rcsdroad_ids=tuple(
+                str(feature["properties"].get("id"))
+                for feature in associated_rcsdroad_features
+                if feature["properties"].get("id") is not None
+            ),
+            associated_rcsdnode_ids=tuple(
+                str(feature["properties"].get("id"))
+                for feature in associated_rcsdnode_features
+                if feature["properties"].get("id") is not None
+            ),
         )
     except VirtualIntersectionPocError as exc:
         audit_rows.append(
@@ -3760,31 +3929,30 @@ def run_t02_virtual_intersection_poc(
         )
         write_csv(audit_csv_path, audit_rows, fieldnames=AUDIT_FIELDNAMES)
         write_json(audit_json_path, audit_rows)
-        write_json(
-            status_path,
-            {
-                "run_id": resolved_run_id,
-                "success": False,
-                "mainnodeid": _normalize_id(mainnodeid),
-                "status": exc.reason,
-                "risks": [exc.reason],
-                "detail": exc.detail,
-                "counts": counts,
-                "review_mode": review_mode,
+        status_doc = {
+            "run_id": resolved_run_id,
+            "success": False,
+            "mainnodeid": normalized_mainnodeid,
+            "status": exc.reason,
+            "risks": [exc.reason],
+            "detail": exc.detail,
+            "counts": counts,
+            "review_mode": review_mode,
+            "output_files": {
+                "rendered_map_png": str(rendered_map_path) if debug_rendered_map_written else None,
             },
-        )
+        }
+        write_json(status_path, status_doc)
         total_wall_time_sec = time.perf_counter() - started_at
-        write_json(
-            perf_json_path,
-            {
-                "run_id": resolved_run_id,
-                "success": False,
-                "total_wall_time_sec": round(total_wall_time_sec, 6),
-                "counts": counts,
-                "stage_timings": stage_timings,
-                **_tracemalloc_stats(),
-            },
-        )
+        perf_doc = {
+            "run_id": resolved_run_id,
+            "success": False,
+            "total_wall_time_sec": round(total_wall_time_sec, 6),
+            "counts": counts,
+            "stage_timings": stage_timings,
+            **_tracemalloc_stats(),
+        }
+        write_json(perf_json_path, perf_doc)
         announce(logger, f"[T02-POC] failed reason={exc.reason} detail={exc.detail}")
         return VirtualIntersectionArtifacts(
             success=False,
@@ -3805,7 +3973,11 @@ def run_t02_virtual_intersection_poc(
             progress_path=progress_path,
             perf_json_path=perf_json_path,
             perf_markers_path=perf_markers_path,
-            rendered_map_path=None,
+            rendered_map_path=rendered_map_path if debug_rendered_map_written else None,
+            status_doc=status_doc,
+            perf_doc=perf_doc,
+            associated_rcsdroad_ids=(),
+            associated_rcsdnode_ids=(),
         )
     finally:
         close_logger(logger)

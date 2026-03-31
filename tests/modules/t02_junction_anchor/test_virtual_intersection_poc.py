@@ -12,6 +12,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     BranchEvidence,
     ParsedNode,
     ParsedRoad,
+    _build_positive_negative_rc_groups,
     _build_polygon_support_from_association,
     _has_structural_side_branch,
     _select_positive_rc_road_ids,
@@ -42,6 +43,7 @@ def _write_poc_inputs(
     representative_overrides: dict[str, object] | None = None,
     rc_west_inside: bool = True,
     include_rc_group: bool = True,
+    include_far_outside_rc: bool = False,
 ) -> dict[str, Path]:
     representative_props = {
         "id": "100",
@@ -115,28 +117,32 @@ def _write_poc_inputs(
     )
 
     west_geometry = LineString([(-18.0, 0.0), (0.0, 0.0)]) if rc_west_inside else LineString([(-40.0, 30.0), (-20.0, 30.0)])
-    write_vector(
-        rcsdroad_path,
-        [
+    rcsdroad_features = [
+        {
+            "properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2},
+            "geometry": LineString([(0.0, 0.0), (0.0, 55.0)]),
+        },
+        {
+            "properties": {"id": "rc_south", "snodeid": "902", "enodeid": "100", "direction": 2},
+            "geometry": LineString([(0.0, -55.0), (0.0, 0.0)]),
+        },
+        {
+            "properties": {"id": "rc_east", "snodeid": "100", "enodeid": "903", "direction": 2},
+            "geometry": LineString([(0.0, 0.0), (45.0, 0.0)]),
+        },
+        {
+            "properties": {"id": "rc_west", "snodeid": "904", "enodeid": "100", "direction": 2},
+            "geometry": west_geometry,
+        },
+    ]
+    if include_far_outside_rc:
+        rcsdroad_features.append(
             {
-                "properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2},
-                "geometry": LineString([(0.0, 0.0), (0.0, 55.0)]),
-            },
-            {
-                "properties": {"id": "rc_south", "snodeid": "902", "enodeid": "100", "direction": 2},
-                "geometry": LineString([(0.0, -55.0), (0.0, 0.0)]),
-            },
-            {
-                "properties": {"id": "rc_east", "snodeid": "100", "enodeid": "903", "direction": 2},
-                "geometry": LineString([(0.0, 0.0), (45.0, 0.0)]),
-            },
-            {
-                "properties": {"id": "rc_west", "snodeid": "904", "enodeid": "100", "direction": 2},
-                "geometry": west_geometry,
-            },
-        ],
-        crs_text="EPSG:3857",
-    )
+                "properties": {"id": "rc_far_noise", "snodeid": "907", "enodeid": "908", "direction": 2},
+                "geometry": LineString([(82.0, 5.0), (94.0, 20.0)]),
+            }
+        )
+    write_vector(rcsdroad_path, rcsdroad_features, crs_text="EPSG:3857")
 
     rcsdnode_features = [
         {"properties": {"id": "901", "mainnodeid": None}, "geometry": Point(0.0, 55.0)},
@@ -144,6 +150,13 @@ def _write_poc_inputs(
         {"properties": {"id": "903", "mainnodeid": None}, "geometry": Point(45.0, 0.0)},
         {"properties": {"id": "904", "mainnodeid": None}, "geometry": Point(-18.0 if rc_west_inside else -40.0, 0.0 if rc_west_inside else 30.0)},
     ]
+    if include_far_outside_rc:
+        rcsdnode_features.extend(
+            [
+                {"properties": {"id": "907", "mainnodeid": None}, "geometry": Point(82.0, 5.0)},
+                {"properties": {"id": "908", "mainnodeid": None}, "geometry": Point(94.0, 20.0)},
+            ]
+        )
     if include_rc_group:
         rcsdnode_features.insert(0, {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": Point(0.0, 0.0)})
     write_vector(rcsdnode_path, rcsdnode_features, crs_text="EPSG:3857")
@@ -318,25 +331,39 @@ def test_virtual_intersection_poc_fails_when_mainnodeid_missing(tmp_path: Path) 
 
 
 def test_virtual_intersection_poc_fails_when_target_out_of_scope(tmp_path: Path) -> None:
-    paths = _write_poc_inputs(tmp_path, representative_overrides={"is_anchor": "yes"})
+    paths = _write_poc_inputs(tmp_path, representative_overrides={"kind_2": 1})
     artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
     assert artifacts.success is False
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
     assert status_doc["status"] == "mainnodeid_out_of_scope"
 
 
-def test_virtual_intersection_poc_review_mode_bypasses_anchor_gate(tmp_path: Path) -> None:
-    paths = _write_poc_inputs(tmp_path, representative_overrides={"is_anchor": "yes"})
+def test_virtual_intersection_poc_writes_debug_render_for_target_out_of_scope_failure(tmp_path: Path) -> None:
+    paths = _write_poc_inputs(tmp_path, representative_overrides={"kind_2": 1})
+    render_root = tmp_path / "batch_renders"
     artifacts = run_t02_virtual_intersection_poc(
         mainnodeid="100",
         out_root=tmp_path / "out",
-        review_mode=True,
+        debug=True,
+        debug_render_root=render_root,
         **paths,
     )
-    assert artifacts.success is True
+    assert artifacts.success is False
+    assert artifacts.rendered_map_path == render_root / "100.png"
+    assert artifacts.rendered_map_path.is_file()
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
-    assert status_doc["review_mode"] is True
-    assert "review_anchor_gate_bypassed" in status_doc["risks"]
+    assert status_doc["status"] == "mainnodeid_out_of_scope"
+    assert status_doc["output_files"]["rendered_map_png"] == str(render_root / "100.png")
+
+
+def test_virtual_intersection_poc_accepts_existing_anchor_status_for_explicit_case(tmp_path: Path) -> None:
+    for anchor_status in ("yes", "fail1"):
+        paths = _write_poc_inputs(tmp_path / anchor_status, representative_overrides={"is_anchor": anchor_status})
+        artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
+        assert artifacts.success is True
+        status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+        assert status_doc["status"] == "stable"
+        assert status_doc["risks"] == []
 
 
 def test_virtual_intersection_poc_generates_polygon_branch_evidence_and_rc_associations(tmp_path: Path) -> None:
@@ -395,6 +422,24 @@ def test_virtual_intersection_poc_errors_when_rc_outside_drivezone(tmp_path: Pat
     assert audit_doc[0]["reason"] == "rc_outside_drivezone"
 
 
+def test_virtual_intersection_poc_writes_debug_render_for_rc_outside_drivezone_failure(tmp_path: Path) -> None:
+    paths = _write_poc_inputs(tmp_path, rc_west_inside=False)
+    render_root = tmp_path / "batch_renders"
+    artifacts = run_t02_virtual_intersection_poc(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        debug=True,
+        debug_render_root=render_root,
+        **paths,
+    )
+    assert artifacts.success is False
+    assert artifacts.rendered_map_path == render_root / "100.png"
+    assert artifacts.rendered_map_path.is_file()
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["status"] == "rc_outside_drivezone"
+    assert status_doc["output_files"]["rendered_map_png"] == str(render_root / "100.png")
+
+
 def test_virtual_intersection_poc_review_mode_soft_excludes_rc_outside_drivezone(tmp_path: Path) -> None:
     paths = _write_poc_inputs(tmp_path, rc_west_inside=False)
     artifacts = run_t02_virtual_intersection_poc(
@@ -415,6 +460,19 @@ def test_virtual_intersection_poc_review_mode_soft_excludes_rc_outside_drivezone
     associated_roads_doc = _load_vector_doc(artifacts.associated_rcsdroad_path)
     associated_road_ids = {feature["properties"]["id"] for feature in associated_roads_doc["features"]}
     assert "rc_west" not in associated_road_ids
+
+
+def test_virtual_intersection_poc_ignores_far_rc_outside_drivezone_noise(tmp_path: Path) -> None:
+    paths = _write_poc_inputs(tmp_path, include_far_outside_rc=True)
+    artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["status"] == "stable"
+    assert status_doc["risks"] == []
+
+    associated_roads_doc = _load_vector_doc(artifacts.associated_rcsdroad_path)
+    associated_road_ids = {feature["properties"]["id"] for feature in associated_roads_doc["features"]}
+    assert "rc_far_noise" not in associated_road_ids
 
 
 def test_virtual_intersection_poc_without_rc_group_still_associates_rc_roads(tmp_path: Path) -> None:
@@ -468,6 +526,48 @@ def test_virtual_intersection_poc_polygon_support_can_expand_beyond_conservative
 
 def test_status_from_risks_marks_node_component_conflict_before_stable() -> None:
     assert _status_from_risks(["node_component_conflict"], has_associated_roads=True) == "node_component_conflict"
+
+
+def test_build_positive_negative_rc_groups_deduplicates_same_group_top_candidates() -> None:
+    road_branches = [
+        BranchEvidence(
+            branch_id="road_1",
+            angle_deg=210.0,
+            branch_type="road",
+            is_main_direction=True,
+            selected_for_polygon=True,
+            drivezone_support_m=100.0,
+            rc_support_m=100.0,
+        ),
+        BranchEvidence(
+            branch_id="road_2",
+            angle_deg=30.0,
+            branch_type="road",
+            is_main_direction=True,
+            selected_for_polygon=True,
+            drivezone_support_m=100.0,
+            rc_support_m=100.0,
+        ),
+    ]
+    road_branches[0].rcsdroad_ids = ["rc_group_1", "rc_group_2"]
+    road_branches[1].rcsdroad_ids = ["rc_group_1", "rc_group_2"]
+    rc_branches = [
+        BranchEvidence(branch_id="rc_group_1", angle_deg=30.0, branch_type="rc_group", road_support_m=91.119),
+        BranchEvidence(branch_id="rc_group_2", angle_deg=208.0, branch_type="rc_group", road_support_m=359.034),
+    ]
+    risks: list[str] = []
+
+    positive, negative = _build_positive_negative_rc_groups(
+        kind_2=2048,
+        road_branches=road_branches,
+        rc_branches=rc_branches,
+        risks=risks,
+        has_rc_group_nodes=False,
+    )
+
+    assert positive == {"rc_group_2"}
+    assert negative == {"rc_group_1"}
+    assert "ambiguous_rc_match" not in risks
 
 
 def test_build_polygon_support_from_association_clears_orphan_support_nodes() -> None:

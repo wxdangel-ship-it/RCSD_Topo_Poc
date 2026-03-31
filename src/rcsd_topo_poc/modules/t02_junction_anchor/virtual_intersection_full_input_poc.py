@@ -293,14 +293,26 @@ def _run_case_job(job: dict[str, Any]) -> dict[str, Any]:
     case_dir = Path(job["out_root"]) / case_id
     try:
         artifacts = run_t02_virtual_intersection_poc(**job)
-        status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
-        perf_doc = json.loads(artifacts.perf_json_path.read_text(encoding="utf-8"))
-        polygon_feature = _read_polygon_feature(artifacts.virtual_polygon_path)
+        status_doc = artifacts.status_doc
+        if status_doc is None:
+            status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+        perf_doc = artifacts.perf_doc
+        if perf_doc is None:
+            perf_doc = json.loads(artifacts.perf_json_path.read_text(encoding="utf-8"))
+        polygon_feature = artifacts.virtual_polygon_feature
+        if polygon_feature is None:
+            polygon_feature = _read_polygon_feature(artifacts.virtual_polygon_path)
         polygon_area_m2 = None
         polygon_bounds = None
         if polygon_feature is not None and polygon_feature["geometry"] is not None:
             polygon_area_m2 = round(float(polygon_feature["geometry"].area), 3)
             polygon_bounds = [round(float(value), 3) for value in polygon_feature["geometry"].bounds]
+        associated_rcsdroad_ids = artifacts.associated_rcsdroad_ids
+        if associated_rcsdroad_ids is None:
+            associated_rcsdroad_ids = tuple(_read_ids(artifacts.associated_rcsdroad_path))
+        associated_rcsdnode_ids = artifacts.associated_rcsdnode_ids
+        if associated_rcsdnode_ids is None:
+            associated_rcsdnode_ids = tuple(_read_ids(artifacts.associated_rcsdnode_path))
         return {
             "case_id": case_id,
             "success": bool(status_doc.get("success")),
@@ -314,8 +326,9 @@ def _run_case_job(job: dict[str, Any]) -> dict[str, Any]:
             "case_dir": str(case_dir),
             "rendered_map_png": str(artifacts.rendered_map_path) if artifacts.rendered_map_path and artifacts.rendered_map_path.is_file() else None,
             "virtual_polygon_path": str(artifacts.virtual_polygon_path),
-            "associated_rcsdroad_ids": _read_ids(artifacts.associated_rcsdroad_path),
-            "associated_rcsdnode_ids": _read_ids(artifacts.associated_rcsdnode_path),
+            "polygon_feature": polygon_feature,
+            "associated_rcsdroad_ids": list(associated_rcsdroad_ids),
+            "associated_rcsdnode_ids": list(associated_rcsdnode_ids),
             "polygon_area_m2": polygon_area_m2,
             "polygon_bounds": polygon_bounds,
         }
@@ -334,6 +347,7 @@ def _run_case_job(job: dict[str, Any]) -> dict[str, Any]:
             "case_dir": str(case_dir),
             "rendered_map_png": None,
             "virtual_polygon_path": str(case_dir / "virtual_intersection_polygon.gpkg"),
+            "polygon_feature": None,
             "associated_rcsdroad_ids": [],
             "associated_rcsdnode_ids": [],
             "polygon_area_m2": None,
@@ -341,12 +355,12 @@ def _run_case_job(job: dict[str, Any]) -> dict[str, Any]:
         }
 
 
-def _collect_polygon_features(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _collect_polygon_features(rows: list[dict[str, Any]], polygon_feature_cache: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     features: list[dict[str, Any]] = []
     for row in rows:
         if not row.get("success"):
             continue
-        polygon_feature = _read_polygon_feature(Path(str(row["virtual_polygon_path"])))
+        polygon_feature = polygon_feature_cache.get(str(row["case_id"]))
         if polygon_feature is None or polygon_feature["geometry"] is None:
             continue
         properties = dict(polygon_feature["properties"])
@@ -516,6 +530,7 @@ def run_t02_virtual_intersection_full_input_poc(
         }
 
         rows: list[dict[str, Any]] = []
+        polygon_feature_cache: dict[str, dict[str, Any]] = {}
         if workers == 1 or len(selected_case_ids) <= 1:
             for case_id in selected_case_ids:
                 row = _run_case_job(
@@ -526,6 +541,9 @@ def run_t02_virtual_intersection_full_input_poc(
                         shared_args=shared_job_args,
                     )
                 )
+                polygon_feature = row.pop("polygon_feature", None)
+                if row.get("success") and polygon_feature is not None:
+                    polygon_feature_cache[case_id] = polygon_feature
                 rows.append(row)
                 counts["completed_case_count"] = len(rows)
                 counts["success_case_count"] = sum(1 for item in rows if item.get("success"))
@@ -551,7 +569,12 @@ def run_t02_virtual_intersection_full_input_poc(
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="t02_virtual_intersection") as executor:
                 future_to_case_id = {executor.submit(_run_case_job, job): str(job["mainnodeid"]) for job in jobs}
                 for future in as_completed(future_to_case_id):
-                    rows.append(future.result())
+                    row = future.result()
+                    case_id = str(row["case_id"])
+                    polygon_feature = row.pop("polygon_feature", None)
+                    if row.get("success") and polygon_feature is not None:
+                        polygon_feature_cache[case_id] = polygon_feature
+                    rows.append(row)
                     counts["completed_case_count"] = len(rows)
                     counts["success_case_count"] = sum(1 for item in rows if item.get("success"))
                     counts["failed_case_count"] = counts["completed_case_count"] - counts["success_case_count"]
@@ -565,7 +588,7 @@ def run_t02_virtual_intersection_full_input_poc(
                     )
 
         rows = sorted(rows, key=lambda item: sort_patch_key(str(item["case_id"])))
-        polygon_features = _collect_polygon_features(rows)
+        polygon_features = _collect_polygon_features(rows, polygon_feature_cache)
         write_vector(polygons_path, polygon_features, crs_text=TARGET_CRS.to_string())
 
         summary = {

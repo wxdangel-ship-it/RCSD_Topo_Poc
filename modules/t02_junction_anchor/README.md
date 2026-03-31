@@ -90,17 +90,36 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
 ```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --input-mode full-input \
-  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
   --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
   --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
   --max-cases 100 \
-  --workers 4 \
+  --workers 8 \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_full_input \
   --run-id t02_virtual_intersection_full_input_demo \
   --debug
 ```
+
+全量自动发现包装脚本：
+
+```bash
+NODES_PATH=/mnt/e/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.gpkg \
+ROADS_PATH=/mnt/e/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+DRIVEZONE_PATH=/mnt/e/TestData/POC_Data/patch_all/DriveZone.gpkg \
+RCSDROAD_PATH=/mnt/e/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+RCSDNODE_PATH=/mnt/e/TestData/POC_Data/RC4/RCSDNode.gpkg \
+WORKERS=8 \
+bash scripts/t02_run_stage3_full_input_8workers.sh
+```
+
+说明：
+
+- 全量 `full-input` 自动发现只处理符合 Stage3 baseline 的代表 node：`has_evd = yes`、`is_anchor = no`、`kind_2 in {4, 2048}`。
+- `NODES_PATH` 应指向 stage2 已完成字段补齐的 `nodes.gpkg`，至少具备：`id / mainnodeid / has_evd / is_anchor / kind_2 / grade_2`。
+- `ROADS_PATH / DRIVEZONE_PATH / RCSDROAD_PATH / RCSDNODE_PATH` 应为与该批次空间范围一致、CRS 可正确识别的全量输入。
+- 包装脚本只是复用官方入口 `python -m rcsd_topo_poc t02-virtual-intersection-poc --input-mode full-input`，不会引入新的业务语义。
 
 ```bash
 python -m rcsd_topo_poc t02-fix-node-error-2 \

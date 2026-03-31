@@ -301,3 +301,39 @@ def test_fix_node_error_2_allows_degree2_transition_nodes(tmp_path: Path) -> Non
     assert report["rows"][0]["status"] == "merged"
     assert _load_properties_by_id(nodes_fix_path)["20"]["mainnodeid"] == "10"
     assert set(_load_ids(roads_fix_path)) == {"r-1", "r-2", "r-3"}
+
+
+def test_fix_node_error_2_supports_nodes_kind_grade_schema(tmp_path: Path) -> None:
+    nodes = [
+        {
+            "properties": {"id": "10", "mainnodeid": "10", "kind": 64, "grade": 2, "subnodeid": None},
+            "geometry": Point(0.0, 0.0),
+        },
+        {
+            "properties": {"id": "20", "mainnodeid": "20", "kind": 2048, "grade": 1, "subnodeid": None},
+            "geometry": Point(10.0, 0.0),
+        },
+    ]
+    roads = [_road("r-1", "10", "20", [(0.0, 0.0), (10.0, 0.0)])]
+    error_nodes = [
+        _error_node("10", "10", 0.0, 0.0),
+        _error_node("20", "20", 10.0, 0.0),
+    ]
+    intersections = [_intersection("A")]
+
+    _, _, _, nodes_fix_path, roads_fix_path, report_path = _run_tool(
+        tmp_path,
+        nodes=nodes,
+        roads=roads,
+        error_nodes=error_nodes,
+        intersections=intersections,
+    )
+
+    nodes_fix = _load_properties_by_id(nodes_fix_path)
+    assert nodes_fix["10"]["kind"] == 4
+    assert nodes_fix["10"]["grade"] == 1
+    assert nodes_fix["20"]["mainnodeid"] == "10"
+    assert _load_ids(roads_fix_path) == []
+    report = _load_report(report_path)
+    assert report["schema"]["nodes_kind_field"] == "kind"
+    assert report["schema"]["nodes_grade_field"] == "grade"

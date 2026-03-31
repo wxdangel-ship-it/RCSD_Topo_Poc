@@ -78,6 +78,7 @@ class ErrorNodeRecord:
     feature_index: int
     node_id: str
     junction_id: str
+    properties: dict[str, Any]
     geometry: Any
 
 
@@ -120,6 +121,25 @@ def _serialize_feature(feature: Any) -> dict[str, Any]:
     }
 
 
+def _resolve_nodes_metric_fields(nodes_layer_data: Any) -> tuple[str, str]:
+    available_fields: set[str] = set()
+    for feature in nodes_layer_data.features:
+        available_fields.update(feature.properties.keys())
+    if "subnodeid" not in available_fields:
+        raise FixNodeError2RunError(
+            REASON_MISSING_REQUIRED_FIELD,
+            "nodes layer is missing required field 'subnodeid'.",
+        )
+    kind_field = "kind_2" if "kind_2" in available_fields else "kind" if "kind" in available_fields else None
+    grade_field = "grade_2" if "grade_2" in available_fields else "grade" if "grade" in available_fields else None
+    if kind_field is None or grade_field is None:
+        raise FixNodeError2RunError(
+            REASON_MISSING_REQUIRED_FIELD,
+            "nodes layer must provide either kind_2/grade_2 or kind/grade fields.",
+        )
+    return kind_field, grade_field
+
+
 def _grade_for_merge(groups: list[CandidateGroup], *, chosen_group: CandidateGroup) -> Any:
     representative_grades = [normalize_id(group.representative_grade_2) for group in groups]
     if "1" in representative_grades:
@@ -134,7 +154,12 @@ def _grade_for_merge(groups: list[CandidateGroup], *, chosen_group: CandidateGro
     return chosen_value
 
 
-def _build_node_indexes(nodes_layer_data: Any) -> tuple[
+def _build_node_indexes(
+    nodes_layer_data: Any,
+    *,
+    kind_field: str,
+    grade_field: str,
+) -> tuple[
     dict[str, list[NodeRecord]],
     dict[str, list[NodeRecord]],
     dict[str, int],
@@ -149,7 +174,7 @@ def _build_node_indexes(nodes_layer_data: Any) -> tuple[
 
     for output_index, feature in enumerate(nodes_layer_data.features):
         missing_fields: list[str] = []
-        for field in ("id", "mainnodeid", "kind_2", "grade_2", "subnodeid"):
+        for field in ("id", "mainnodeid", kind_field, grade_field, "subnodeid"):
             if field not in feature.properties:
                 missing_fields.append(field)
         node_id = normalize_id(feature.properties.get("id"))
@@ -174,7 +199,7 @@ def _build_node_indexes(nodes_layer_data: Any) -> tuple[
         node_output_index_by_id[node_id] = output_index
         semantic_group_id_by_node_id[node_id] = group_id
         if node_id == group_id:
-            representative_kind_2_by_group_id[group_id] = normalize_id(feature.properties.get("kind_2"))
+            representative_kind_2_by_group_id[group_id] = normalize_id(feature.properties.get(kind_field))
         if mainnodeid is not None:
             nodes_by_mainnodeid.setdefault(mainnodeid, []).append(record)
         else:
@@ -264,6 +289,7 @@ def _parse_error_nodes(node_error2_layer_data: Any) -> tuple[list[ErrorNodeRecor
                 feature_index=feature_index,
                 node_id=node_id,
                 junction_id=junction_id,
+                properties=dict(feature.properties),
                 geometry=feature.geometry,
             )
         )
@@ -278,6 +304,8 @@ def _resolve_candidate_groups(
     nodes_layer_data: Any,
     nodes_by_mainnodeid: dict[str, list[NodeRecord]],
     singleton_nodes_by_id: dict[str, list[NodeRecord]],
+    kind_field: str,
+    grade_field: str,
 ) -> tuple[list[CandidateGroup], list[str]]:
     groups: list[CandidateGroup] = []
     failures: list[str] = []
@@ -298,8 +326,8 @@ def _resolve_candidate_groups(
                 junction_id=junction_id,
                 representative_output_index=resolved.representative.output_index,
                 representative_node_id=resolved.representative.node_id,
-                representative_kind_2=normalize_id(representative_properties.get("kind_2")),
-                representative_grade_2=normalize_id(representative_properties.get("grade_2")),
+                representative_kind_2=normalize_id(representative_properties.get(kind_field)),
+                representative_grade_2=normalize_id(representative_properties.get(grade_field)),
                 group_nodes=list(resolved.group_nodes),
             )
         )
@@ -400,13 +428,14 @@ def run_t02_fix_node_error_2(
         error_cls=FixNodeError2RunError,
     )
 
+    kind_field, grade_field = _resolve_nodes_metric_fields(nodes_layer_data)
     (
         nodes_by_mainnodeid,
         singleton_nodes_by_id,
         node_output_index_by_id,
         semantic_group_id_by_node_id,
         representative_kind_2_by_group_id,
-    ) = _build_node_indexes(nodes_layer_data)
+    ) = _build_node_indexes(nodes_layer_data, kind_field=kind_field, grade_field=grade_field)
     roads, adjacency, degree_by_node_id = _parse_roads(roads_layer_data)
     intersections, _intersection_tree = _parse_intersections(intersection_layer_data)
     error_nodes, error_node_tree = _parse_error_nodes(node_error2_layer_data)
@@ -453,6 +482,8 @@ def run_t02_fix_node_error_2(
             nodes_layer_data=nodes_layer_data,
             nodes_by_mainnodeid=nodes_by_mainnodeid,
             singleton_nodes_by_id=singleton_nodes_by_id,
+            kind_field=kind_field,
+            grade_field=grade_field,
         )
         if failed_group_ids:
             row["skip_reason"] = SKIP_GROUP_RESOLUTION_FAILED
@@ -524,16 +555,16 @@ def run_t02_fix_node_error_2(
         chosen_output_index = node_output_index_by_id[chosen_group.representative_node_id]
         chosen_properties = nodes_layer_data.features[chosen_output_index].properties
         chosen_properties["mainnodeid"] = chosen_mainnodeid
-        chosen_properties["kind_2"] = 4
-        chosen_properties["grade_2"] = new_grade
+        chosen_properties[kind_field] = 4
+        chosen_properties[grade_field] = new_grade
         chosen_properties["subnodeid"] = ",".join(subnode_ids) if subnode_ids else None
 
         for node_id in subnode_ids:
             output_index = node_output_index_by_id[node_id]
             props = nodes_layer_data.features[output_index].properties
             props["mainnodeid"] = chosen_mainnodeid
-            props["kind_2"] = 0
-            props["grade_2"] = 0
+            props[kind_field] = 0
+            props[grade_field] = 0
             props["subnodeid"] = None
 
         deleted_road_ids = _build_deleted_road_ids(
@@ -568,6 +599,10 @@ def run_t02_fix_node_error_2(
             "output_files": {
                 "nodes_fix_path": str(nodes_fix_path),
                 "roads_fix_path": str(roads_fix_path),
+            },
+            "schema": {
+                "nodes_kind_field": kind_field,
+                "nodes_grade_field": grade_field,
             },
             "counts": {
                 "node_error_2_feature_count": len(error_nodes),

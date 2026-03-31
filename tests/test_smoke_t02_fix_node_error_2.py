@@ -57,19 +57,19 @@ def test_smoke_t02_fix_node_error_2() -> None:
         nodes_path,
         [
             {
-                "properties": {"id": "10", "mainnodeid": "10", "kind_2": 64, "grade_2": 2, "subnodeid": None},
+                "properties": {"id": "10", "mainnodeid": "10", "kind": 64, "grade": 2, "subnodeid": None},
                 "geometry": Point(0.0, 0.0),
             },
             {
-                "properties": {"id": "11", "mainnodeid": "10", "kind_2": 0, "grade_2": 0, "subnodeid": None},
+                "properties": {"id": "11", "mainnodeid": "10", "kind": 0, "grade": 0, "subnodeid": None},
                 "geometry": Point(2.0, 0.0),
             },
             {
-                "properties": {"id": "20", "mainnodeid": "20", "kind_2": 2048, "grade_2": 1, "subnodeid": None},
+                "properties": {"id": "20", "mainnodeid": "20", "kind": 2048, "grade": 1, "subnodeid": None},
                 "geometry": Point(10.0, 0.0),
             },
             {
-                "properties": {"id": "21", "mainnodeid": "20", "kind_2": 0, "grade_2": 0, "subnodeid": None},
+                "properties": {"id": "21", "mainnodeid": "20", "kind": 0, "grade": 0, "subnodeid": None},
                 "geometry": Point(12.0, 0.0),
             },
         ],
@@ -126,8 +126,8 @@ def test_smoke_t02_fix_node_error_2() -> None:
     assert report_path.is_file()
 
     nodes_fix = _load_properties_by_id(nodes_fix_path)
-    assert nodes_fix["10"]["kind_2"] == 4
-    assert nodes_fix["10"]["grade_2"] == 1
+    assert nodes_fix["10"]["kind"] == 4
+    assert nodes_fix["10"]["grade"] == 1
     assert nodes_fix["10"]["subnodeid"] == "11,20,21"
     assert nodes_fix["20"]["mainnodeid"] == "10"
     assert _load_ids(roads_fix_path) == []

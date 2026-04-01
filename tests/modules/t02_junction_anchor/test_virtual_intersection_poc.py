@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import fiona
-from shapely.geometry import LineString, Point, box, shape
+from shapely.geometry import LineString, Point, Polygon, box, shape
 from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
@@ -12,9 +12,17 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     BranchEvidence,
     ParsedNode,
     ParsedRoad,
+    _branch_has_minimal_local_road_touch,
+    _branch_has_positive_rc_gap,
+    _branch_has_local_road_mouth,
+    _branch_uses_rc_tip_suppression,
     _build_positive_negative_rc_groups,
     _build_polygon_support_from_association,
     _has_structural_side_branch,
+    _max_selected_side_branch_covered_length_m,
+    _polygon_branch_length_m,
+    _regularize_virtual_polygon_geometry,
+    _rc_gap_branch_polygon_length_m,
     _select_positive_rc_road_ids,
     _status_from_risks,
     run_t02_virtual_intersection_poc,
@@ -528,6 +536,62 @@ def test_status_from_risks_marks_node_component_conflict_before_stable() -> None
     assert _status_from_risks(["node_component_conflict"], has_associated_roads=True) == "node_component_conflict"
 
 
+def test_max_selected_side_branch_covered_length_ignores_main_and_edge_only_branches() -> None:
+    polygon = box(-6.0, -6.0, 12.0, 6.0)
+    local_roads = [
+        ParsedRoad(0, {}, LineString([(0.0, 0.0), (0.0, 40.0)]), "main_1", "100", "200", 2),
+        ParsedRoad(1, {}, LineString([(0.0, 0.0), (0.0, -40.0)]), "main_2", "300", "100", 2),
+        ParsedRoad(2, {}, LineString([(0.0, 0.0), (20.0, 0.0)]), "side_selected", "100", "400", 2),
+        ParsedRoad(3, {}, LineString([(0.0, 0.0), (-20.0, 0.0)]), "side_edge_only", "500", "100", 2),
+    ]
+    road_branches = [
+        BranchEvidence(
+            branch_id="road_1",
+            angle_deg=90.0,
+            branch_type="road",
+            road_ids=["main_1"],
+            is_main_direction=True,
+            selected_for_polygon=True,
+            evidence_level="arm_full_rc",
+        ),
+        BranchEvidence(
+            branch_id="road_2",
+            angle_deg=270.0,
+            branch_type="road",
+            road_ids=["main_2"],
+            is_main_direction=True,
+            selected_for_polygon=True,
+            evidence_level="arm_full_rc",
+        ),
+        BranchEvidence(
+            branch_id="road_3",
+            angle_deg=0.0,
+            branch_type="road",
+            road_ids=["side_selected"],
+            is_main_direction=False,
+            selected_for_polygon=True,
+            evidence_level="arm_partial",
+        ),
+        BranchEvidence(
+            branch_id="road_4",
+            angle_deg=180.0,
+            branch_type="road",
+            road_ids=["side_edge_only"],
+            is_main_direction=False,
+            selected_for_polygon=True,
+            evidence_level="edge_only",
+        ),
+    ]
+
+    covered_length_m = _max_selected_side_branch_covered_length_m(
+        polygon_geometry=polygon,
+        road_branches=road_branches,
+        local_roads=local_roads,
+    )
+
+    assert round(covered_length_m, 3) == 12.0
+
+
 def test_build_positive_negative_rc_groups_deduplicates_same_group_top_candidates() -> None:
     road_branches = [
         BranchEvidence(
@@ -731,6 +795,50 @@ def test_virtual_intersection_poc_writes_debug_rendered_map_when_enabled(tmp_pat
     assert artifacts.rendered_map_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_virtual_intersection_poc_keeps_no_valid_rc_connection_as_success_when_polygon_exists(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _write_poc_inputs(tmp_path)
+
+    monkeypatch.setattr(
+        "rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc._select_positive_rc_road_ids",
+        lambda **_: ({"missing_rc"}, set(), set()),
+    )
+    monkeypatch.setattr(
+        "rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc._build_polygon_support_from_association",
+        lambda **_: (set(), set(), False),
+    )
+
+    artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", debug=True, **paths)
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["status"] == "no_valid_rc_connection"
+
+
+def test_virtual_intersection_poc_can_soft_exclude_outside_rc_when_only_rc_gap_remains(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _write_poc_inputs(tmp_path, rc_west_inside=False)
+
+    monkeypatch.setattr(
+        "rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc._select_positive_rc_road_ids",
+        lambda **_: ({"missing_rc"}, set(), set()),
+    )
+    monkeypatch.setattr(
+        "rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc._build_polygon_support_from_association",
+        lambda **_: (set(), set(), False),
+    )
+
+    artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", debug=True, **paths)
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["status"] == "no_valid_rc_connection"
+
+
 def test_has_structural_side_branch_requires_real_side_support() -> None:
     weak_side = BranchEvidence(
         branch_id="road_3",
@@ -916,3 +1024,226 @@ def test_select_positive_rc_road_ids_prefers_proximal_terminal_spur_over_distal_
     assert positive_ids == {"selected"}
     assert adjacent_ids == {"proximal_spur"}
     assert "distal_spur" in excluded_ids
+
+
+def test_branch_uses_rc_tip_suppression_requires_supported_positive_group() -> None:
+    branch = BranchEvidence(
+        branch_id="road_side",
+        angle_deg=90.0,
+        branch_type="road",
+        rcsdroad_ids=["rc_group_1"],
+    )
+    rc_branch = BranchEvidence(
+        branch_id="rc_group_1",
+        angle_deg=90.0,
+        branch_type="rc_group",
+        road_ids=["rc_1", "rc_2"],
+    )
+
+    assert _branch_uses_rc_tip_suppression(
+        branch=branch,
+        positive_rc_groups={"rc_group_1"},
+        negative_rc_groups=set(),
+        rc_branch_by_id={"rc_group_1": rc_branch},
+        polygon_support_rc_road_ids=set(),
+    ) is False
+
+    assert _branch_uses_rc_tip_suppression(
+        branch=branch,
+        positive_rc_groups={"rc_group_1"},
+        negative_rc_groups=set(),
+        rc_branch_by_id={"rc_group_1": rc_branch},
+        polygon_support_rc_road_ids={"rc_2"},
+    ) is True
+
+
+def test_branch_uses_rc_tip_suppression_keeps_negative_group_suppressed() -> None:
+    branch = BranchEvidence(
+        branch_id="road_side",
+        angle_deg=90.0,
+        branch_type="road",
+        rcsdroad_ids=["rc_group_1"],
+    )
+    rc_branch = BranchEvidence(
+        branch_id="rc_group_1",
+        angle_deg=90.0,
+        branch_type="rc_group",
+        road_ids=["rc_1"],
+    )
+
+    assert _branch_uses_rc_tip_suppression(
+        branch=branch,
+        positive_rc_groups=set(),
+        negative_rc_groups={"rc_group_1"},
+        rc_branch_by_id={"rc_group_1": rc_branch},
+        polygon_support_rc_road_ids=set(),
+    ) is True
+
+
+def test_branch_has_positive_rc_gap_requires_positive_group_without_supported_roads() -> None:
+    branch = BranchEvidence(
+        branch_id="road_side",
+        angle_deg=90.0,
+        branch_type="road",
+        rcsdroad_ids=["rc_group_1"],
+    )
+    rc_branch = BranchEvidence(
+        branch_id="rc_group_1",
+        angle_deg=90.0,
+        branch_type="rc_group",
+        road_ids=["rc_1", "rc_2"],
+    )
+
+    assert _branch_has_positive_rc_gap(
+        branch=branch,
+        positive_rc_groups={"rc_group_1"},
+        negative_rc_groups=set(),
+        rc_branch_by_id={"rc_group_1": rc_branch},
+        polygon_support_rc_road_ids=set(),
+    ) is True
+
+    assert _branch_has_positive_rc_gap(
+        branch=branch,
+        positive_rc_groups={"rc_group_1"},
+        negative_rc_groups=set(),
+        rc_branch_by_id={"rc_group_1": rc_branch},
+        polygon_support_rc_road_ids={"rc_1"},
+    ) is False
+
+    assert _branch_has_positive_rc_gap(
+        branch=branch,
+        positive_rc_groups={"rc_group_1"},
+        negative_rc_groups={"rc_group_1"},
+        rc_branch_by_id={"rc_group_1": rc_branch},
+        polygon_support_rc_road_ids=set(),
+    ) is False
+
+
+def test_rc_gap_branch_polygon_length_supports_partial_and_edge_only_side_branches() -> None:
+    partial_branch = BranchEvidence(
+        branch_id="road_partial",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        evidence_level="arm_partial",
+        drivezone_support_m=19.5,
+        road_support_m=15.0,
+    )
+    edge_branch = BranchEvidence(
+        branch_id="road_edge",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        evidence_level="edge_only",
+        drivezone_support_m=7.5,
+        road_support_m=7.5,
+    )
+
+    assert _rc_gap_branch_polygon_length_m(partial_branch) == 12.0
+    assert _rc_gap_branch_polygon_length_m(edge_branch) == 6.0
+
+
+def test_branch_has_local_road_mouth_detects_small_edge_only_side_branch_without_rc_group() -> None:
+    local_mouth = BranchEvidence(
+        branch_id="road_edge",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        evidence_level="edge_only",
+        rcsdroad_ids=[],
+        drivezone_support_m=7.5,
+        road_support_m=7.5,
+    )
+    weak_edge = BranchEvidence(
+        branch_id="road_weak",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        evidence_level="edge_only",
+        rcsdroad_ids=[],
+        drivezone_support_m=2.0,
+        road_support_m=2.0,
+    )
+    rc_backed_edge = BranchEvidence(
+        branch_id="road_rc_backed",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        evidence_level="edge_only",
+        rcsdroad_ids=[],
+        drivezone_support_m=7.5,
+        road_support_m=7.5,
+        rc_support_m=9.0,
+    )
+
+    assert _branch_has_local_road_mouth(local_mouth) is True
+    assert _branch_has_local_road_mouth(weak_edge) is False
+    assert _branch_has_local_road_mouth(rc_backed_edge) is False
+
+
+def test_branch_has_minimal_local_road_touch_detects_small_rc_gap_side_branch() -> None:
+    weak_edge = BranchEvidence(
+        branch_id="road_weak",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        evidence_level="edge_only",
+        rcsdroad_ids=[],
+        drivezone_support_m=2.3,
+        road_support_m=2.3,
+        rc_support_m=1.9,
+    )
+    stronger_edge = BranchEvidence(
+        branch_id="road_stronger",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        evidence_level="edge_only",
+        rcsdroad_ids=[],
+        drivezone_support_m=3.3,
+        road_support_m=3.4,
+        rc_support_m=2.8,
+    )
+
+    assert _branch_has_minimal_local_road_touch(weak_edge) is True
+    assert _branch_has_minimal_local_road_touch(stronger_edge) is False
+
+
+def test_polygon_branch_length_keeps_selected_partial_side_branch_from_being_overcompressed() -> None:
+    branch = BranchEvidence(
+        branch_id="road_side",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        selected_for_polygon=True,
+        evidence_level="arm_partial",
+        rcsdroad_ids=[],
+        drivezone_support_m=24.1,
+        road_support_m=15.6,
+        rc_support_m=0.0,
+    )
+
+    assert _polygon_branch_length_m(branch) == 10.0
+
+
+def test_regularize_virtual_polygon_geometry_keeps_single_seeded_component_without_holes() -> None:
+    seeded = box(0.0, 0.0, 6.0, 6.0)
+    detached = box(20.0, 0.0, 24.0, 4.0)
+    holed = Polygon(
+        seeded.exterior.coords,
+        [box(1.0, 1.0, 2.0, 2.0).exterior.coords],
+    )
+    geometry = unary_union([holed, detached])
+    drivezone = box(-5.0, -5.0, 30.0, 10.0)
+    seed_geometry = box(0.0, 0.0, 1.0, 1.0)
+
+    regularized = _regularize_virtual_polygon_geometry(
+        geometry=geometry,
+        drivezone_union=drivezone,
+        seed_geometry=seed_geometry,
+    )
+
+    assert regularized.geom_type == "Polygon"
+    assert len(regularized.interiors) == 0
+    assert regularized.intersects(seed_geometry)
+    assert not regularized.intersects(detached)

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import struct
+import zlib
 from pathlib import Path
 from unittest.mock import patch
 
 import fiona
+import numpy as np
 from shapely.geometry import LineString, Point, box, shape
 from shapely.ops import unary_union
 
@@ -29,6 +32,35 @@ def _load_vector_doc(path: Path) -> dict:
                 for feature in src
             ],
         }
+
+
+def _read_png_rgba(path: Path) -> np.ndarray:
+    png_bytes = path.read_bytes()
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    offset = 8
+    width = None
+    height = None
+    idat_parts: list[bytes] = []
+    while offset < len(png_bytes):
+        chunk_length = struct.unpack(">I", png_bytes[offset : offset + 4])[0]
+        chunk_type = png_bytes[offset + 4 : offset + 8]
+        payload = png_bytes[offset + 8 : offset + 8 + chunk_length]
+        offset += 12 + chunk_length
+        if chunk_type == b"IHDR":
+            width, height = struct.unpack(">II", payload[:8])
+        elif chunk_type == b"IDAT":
+            idat_parts.append(payload)
+        elif chunk_type == b"IEND":
+            break
+    assert width is not None and height is not None
+    raw_rows = zlib.decompress(b"".join(idat_parts))
+    row_size = 1 + width * 4
+    image = np.zeros((height, width, 4), dtype=np.uint8)
+    for row_index in range(height):
+        row = raw_rows[row_index * row_size : (row_index + 1) * row_size]
+        assert row[0] == 0
+        image[row_index] = np.frombuffer(row[1:], dtype=np.uint8).reshape((width, 4))
+    return image
 
 
 def _shift_xy(coords: list[tuple[float, float]], dx: float, dy: float = 0.0) -> list[tuple[float, float]]:
@@ -322,6 +354,56 @@ def test_full_input_poc_writes_exception_summary_and_case_events(tmp_path: Path)
     assert any(item["case_id"] == "200" for item in exception_summary["failed_cases"])
     case_events = artifacts.case_events_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(case_events) == 2
+
+
+def test_full_input_poc_marks_unsuccessful_rendered_map_as_failure_style(tmp_path: Path) -> None:
+    paths = _write_full_input_fixture(tmp_path, include_second_case=False)
+
+    def _fake_run_case_job(job: dict[str, object]) -> dict[str, object]:
+        render_path = Path(str(job["debug_render_root"])) / "100.png"
+        single_case_module._write_png_rgba(render_path, np.full((32, 32, 4), 255, dtype=np.uint8))
+        return {
+            "case_id": "100",
+            "success": False,
+            "flow_success": True,
+            "acceptance_class": "review_required",
+            "acceptance_reason": "synthetic_review_required",
+            "status": "surface_only",
+            "risks": ["surface_only"],
+            "detail": None,
+            "representative_node_id": "100",
+            "kind_2": 2048,
+            "grade_2": 1,
+            "counts": {},
+            "total_wall_time_sec": 0.1,
+            "python_tracemalloc_current_bytes": None,
+            "python_tracemalloc_peak_bytes": None,
+            "case_dir": str(Path(str(job["out_root"])) / "100"),
+            "rendered_map_png": str(render_path),
+            "virtual_polygon_path": str(Path(str(job["out_root"])) / "100" / "virtual_intersection_polygon.gpkg"),
+            "polygon_feature": None,
+            "associated_rcsdroad_ids": [],
+            "associated_rcsdnode_ids": [],
+            "polygon_area_m2": None,
+            "polygon_bounds": None,
+        }
+
+    with patch.object(full_input_module, "_run_case_job", _fake_run_case_job):
+        artifacts = run_t02_virtual_intersection_full_input_poc(
+            mainnodeid="100",
+            out_root=tmp_path / "out",
+            run_id="failure_render_overlay",
+            debug=True,
+            workers=1,
+            **paths,
+        )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["success_count"] == 0
+    render_path = artifacts.rendered_maps_root / "100.png"
+    assert render_path.is_file()
+    image = _read_png_rgba(render_path)
+    assert tuple(image[0, 0]) == (144, 0, 0, 255)
 
 
 def test_full_input_poc_writes_crash_report_on_top_level_failure(tmp_path: Path) -> None:

@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import resource
+import struct
 import time
+import zlib
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -12,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import fiona
+import numpy as np
 from pyproj import CRS
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
@@ -46,6 +49,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _load_layer_filtered,
     _parse_nodes,
     _resolve_geojson_crs_streaming,
+    _write_png_rgba,
     run_t02_virtual_intersection_poc,
 )
 
@@ -90,6 +94,57 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fp:
         fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _read_png_rgba(path: Path) -> np.ndarray:
+    png_bytes = path.read_bytes()
+    if not png_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError(f"Unsupported PNG header: {path}")
+    offset = 8
+    width = None
+    height = None
+    idat_parts: list[bytes] = []
+    while offset < len(png_bytes):
+        chunk_length = struct.unpack(">I", png_bytes[offset : offset + 4])[0]
+        chunk_type = png_bytes[offset + 4 : offset + 8]
+        payload = png_bytes[offset + 8 : offset + 8 + chunk_length]
+        offset += 12 + chunk_length
+        if chunk_type == b"IHDR":
+            width, height = struct.unpack(">II", payload[:8])
+        elif chunk_type == b"IDAT":
+            idat_parts.append(payload)
+        elif chunk_type == b"IEND":
+            break
+    if width is None or height is None:
+        raise ValueError(f"Missing IHDR chunk: {path}")
+    raw_rows = zlib.decompress(b"".join(idat_parts))
+    row_size = 1 + width * 4
+    image = np.zeros((height, width, 4), dtype=np.uint8)
+    for row_index in range(height):
+        row = raw_rows[row_index * row_size : (row_index + 1) * row_size]
+        if not row or row[0] != 0:
+            raise ValueError(f"Unsupported PNG filter row in {path}")
+        image[row_index] = np.frombuffer(row[1:], dtype=np.uint8).reshape((width, 4))
+    return image
+
+
+def _ensure_failure_styled_render(path: str | Path | None) -> None:
+    if path is None:
+        return
+    render_path = Path(path)
+    if not render_path.is_file():
+        return
+    image = _read_png_rgba(render_path)
+    base = image[..., :3].astype(np.float32)
+    failure_color = np.array((208, 43, 43), dtype=np.float32)
+    image[..., :3] = np.clip(base * 0.82 + failure_color * 0.18, 0.0, 255.0).astype(np.uint8)
+    image[..., 3] = 255
+    border_px = max(8, min(image.shape[0], image.shape[1]) // 40)
+    image[:border_px, :, :3] = np.array((144, 0, 0), dtype=np.uint8)
+    image[-border_px:, :, :3] = np.array((144, 0, 0), dtype=np.uint8)
+    image[:, :border_px, :3] = np.array((144, 0, 0), dtype=np.uint8)
+    image[:, -border_px:, :3] = np.array((144, 0, 0), dtype=np.uint8)
+    _write_png_rgba(render_path, image)
 
 
 def _process_memory_stats() -> dict[str, int | None]:
@@ -726,6 +781,11 @@ def run_t02_virtual_intersection_full_input_poc(
         polygon_feature = row.pop("polygon_feature", None)
         if row.get("success") and polygon_feature is not None:
             polygon_feature_cache[case_id] = polygon_feature
+        if not row.get("success"):
+            try:
+                _ensure_failure_styled_render(row.get("rendered_map_png"))
+            except Exception as exc:
+                announce(logger, f"[T02-FULL-POC] failure style overlay skipped case_id={case_id} reason={type(exc).__name__}: {exc}")
         rows.append(row)
         counts["completed_case_count"] = len(rows)
         counts["success_case_count"] = sum(1 for item in rows if item.get("success"))

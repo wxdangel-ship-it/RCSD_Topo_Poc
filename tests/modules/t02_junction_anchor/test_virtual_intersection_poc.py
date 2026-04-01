@@ -36,6 +36,8 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     run_t02_virtual_intersection_poc,
 )
 
+CASE_PACKAGE_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor")
+
 
 def _load_vector_doc(path: Path) -> dict:
     with fiona.open(path) as src:
@@ -367,6 +369,46 @@ def _write_support_decoupling_inputs(tmp_path: Path) -> dict[str, Path]:
     return paths
 
 
+def _load_case_package_inputs(case_id: str) -> dict[str, Path]:
+    case_dir = CASE_PACKAGE_ROOT / case_id
+    return {
+        "nodes_path": case_dir / "nodes.gpkg",
+        "roads_path": case_dir / "roads.gpkg",
+        "drivezone_path": case_dir / "drivezone.gpkg",
+        "rcsdroad_path": case_dir / "rcsdroad.gpkg",
+        "rcsdnode_path": case_dir / "rcsdnode.gpkg",
+    }
+
+
+def _run_case_package_case(tmp_path: Path, case_id: str) -> tuple[object, dict, Path]:
+    render_root = tmp_path / "renders"
+    artifacts = run_t02_virtual_intersection_poc(
+        mainnodeid=case_id,
+        out_root=tmp_path / "out",
+        debug=True,
+        debug_render_root=render_root,
+        **_load_case_package_inputs(case_id),
+    )
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    return artifacts, status_doc, render_root
+
+
+def _load_case_nodes_by_id(case_id: str) -> dict[str, Point]:
+    doc = _load_vector_doc(CASE_PACKAGE_ROOT / case_id / "nodes.gpkg")
+    return {
+        str(feature["properties"]["id"]): shape(feature["geometry"])
+        for feature in doc["features"]
+    }
+
+
+def _load_case_roads_by_id(case_id: str) -> dict[str, LineString]:
+    doc = _load_vector_doc(CASE_PACKAGE_ROOT / case_id / "roads.gpkg")
+    return {
+        str(feature["properties"]["id"]): shape(feature["geometry"])
+        for feature in doc["features"]
+    }
+
+
 def test_virtual_intersection_poc_fails_when_mainnodeid_missing(tmp_path: Path) -> None:
     paths = _write_poc_inputs(tmp_path)
     artifacts = run_t02_virtual_intersection_poc(mainnodeid="missing", out_root=tmp_path / "out", **paths)
@@ -531,6 +573,99 @@ def test_virtual_intersection_poc_writes_failure_styled_render_when_effect_not_a
     assert tuple(image[0, 0]) == (144, 0, 0, 255)
 
 
+def test_case_package_698330_accepts_effect_success(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "698330")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "accepted"
+    assert artifacts.rendered_map_path is not None
+    assert artifacts.rendered_map_path.is_file()
+
+
+def test_case_package_699885_accepts_effect_success(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "699885")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "accepted"
+    assert artifacts.rendered_map_path is not None
+    assert artifacts.rendered_map_path.is_file()
+
+
+def test_case_package_705817_accepts_effect_success(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "705817")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "accepted"
+    assert artifacts.rendered_map_path is not None
+    assert artifacts.rendered_map_path.is_file()
+
+
+def test_case_package_706389_preserves_t_mouth_rc_and_node_associations(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "706389")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "accepted"
+    assert artifacts.rendered_map_path is not None
+    assert artifacts.rendered_map_path.is_file()
+
+    branch_doc = json.loads(artifacts.branch_evidence_json_path.read_text(encoding="utf-8"))
+    road_3 = next(item for item in branch_doc["branches"] if item["branch_id"] == "road_3")
+    assert road_3["selected_for_polygon"] is True
+    assert road_3["rcsdroad_ids"] == ["rc_group_4"]
+    assert status_doc["counts"]["associated_rcsdroad_count"] >= 2
+    assert status_doc["counts"]["associated_rcsdnode_count"] >= 3
+
+
+def test_case_package_707324_accepts_surface_only_when_local_rcsd_data_is_absent(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "707324")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "surface_only"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "surface_only_without_any_local_rcsd_data"
+
+
+def test_case_package_724123_excludes_neighboring_foreign_junction_node(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "724123")
+    assert artifacts.success is True
+    assert status_doc["acceptance_class"] == "accepted"
+
+    polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
+    nodes = _load_case_nodes_by_id("724123")
+    assert polygon.buffer(0.5).covers(nodes["724123"])
+    assert polygon.buffer(0.01).contains(nodes["723406"]) is False
+
+
+def test_case_package_761318_does_not_extend_into_foreign_opposite_road(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "761318")
+    assert artifacts.success is True
+    assert status_doc["acceptance_class"] == "accepted"
+
+    polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
+    nodes = _load_case_nodes_by_id("761318")
+    roads = _load_case_roads_by_id("761318")
+    assert polygon.buffer(0.5).covers(nodes["761318"])
+    assert polygon.buffer(0.01).contains(nodes["602263258"]) is False
+    assert polygon.intersection(roads["605422519"]).length < 1.0
+
+
+def test_case_package_769081_excludes_foreign_mainnode_group_nearby_junction(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "769081")
+    assert artifacts.success is True
+    assert status_doc["acceptance_class"] == "accepted"
+
+    polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
+    nodes = _load_case_nodes_by_id("769081")
+    assert polygon.buffer(0.5).covers(nodes["769081"])
+    assert polygon.buffer(0.01).contains(nodes["522217406"]) is False
+    assert polygon.buffer(0.01).contains(nodes["56439996"]) is False
+
+
 def test_virtual_intersection_poc_ignores_far_rc_outside_drivezone_noise(tmp_path: Path) -> None:
     paths = _write_poc_inputs(tmp_path, include_far_outside_rc=True)
     artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
@@ -605,7 +740,21 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         max_nonmain_branch_polygon_length_m=0.0,
         associated_rc_road_count=1,
         polygon_support_rc_road_count=1,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=1,
+        local_rc_node_count=1,
     ) == (True, "accepted", "stable")
+    assert _effect_success_acceptance(
+        status="surface_only",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=0.0,
+        associated_rc_road_count=0,
+        polygon_support_rc_road_count=0,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=0,
+        local_rc_node_count=0,
+    ) == (True, "accepted", "surface_only_without_any_local_rcsd_data")
     assert _effect_success_acceptance(
         status="no_valid_rc_connection",
         review_mode=False,
@@ -613,6 +762,9 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         max_nonmain_branch_polygon_length_m=0.0,
         associated_rc_road_count=0,
         polygon_support_rc_road_count=0,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=0,
+        local_rc_node_count=0,
     ) == (False, "review_required", "rc_gap_without_substantive_nonmain_branch_coverage")
     assert _effect_success_acceptance(
         status="no_valid_rc_connection",
@@ -621,6 +773,9 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         max_nonmain_branch_polygon_length_m=4.0,
         associated_rc_road_count=0,
         polygon_support_rc_road_count=0,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=0,
+        local_rc_node_count=0,
     ) == (True, "accepted", "rc_gap_with_nonmain_branch_polygon_coverage")
     assert _effect_success_acceptance(
         status="node_component_conflict",
@@ -629,6 +784,9 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         max_nonmain_branch_polygon_length_m=14.0,
         associated_rc_road_count=2,
         polygon_support_rc_road_count=2,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=2,
+        local_rc_node_count=2,
     ) == (True, "accepted", "node_component_conflict_with_strong_rc_supported_side_coverage")
     assert _effect_success_acceptance(
         status="node_component_conflict",
@@ -637,6 +795,9 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         max_nonmain_branch_polygon_length_m=14.0,
         associated_rc_road_count=2,
         polygon_support_rc_road_count=2,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=2,
+        local_rc_node_count=2,
     ) == (False, "review_required", "review_required_status:node_component_conflict")
     assert _effect_success_acceptance(
         status="stable",
@@ -645,6 +806,9 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         max_nonmain_branch_polygon_length_m=0.0,
         associated_rc_road_count=1,
         polygon_support_rc_road_count=1,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=1,
+        local_rc_node_count=1,
     ) == (False, "review_required", "review_mode")
 
 

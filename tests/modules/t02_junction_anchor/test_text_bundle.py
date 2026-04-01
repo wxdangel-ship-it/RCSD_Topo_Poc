@@ -30,6 +30,16 @@ def _vector_feature_count(path: Path) -> int:
         return len(src)
 
 
+def _vector_bounds(path: Path) -> tuple[float, float, float, float]:
+    with fiona.open(path) as src:
+        return tuple(float(value) for value in src.bounds)
+
+
+def _vector_has_crs(path: Path) -> bool:
+    with fiona.open(path) as src:
+        return bool(src.crs) or bool(src.crs_wkt)
+
+
 def _write_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
     nodes_path = tmp_path / "nodes.gpkg"
     roads_path = tmp_path / "roads.gpkg"
@@ -256,6 +266,13 @@ def test_export_text_bundle_roundtrip_restores_required_files(tmp_path: Path) ->
     assert _vector_feature_count(decode_dir / "roads.gpkg") >= 1
     assert _vector_feature_count(decode_dir / "rcsdroad.gpkg") >= 1
     assert _vector_feature_count(decode_dir / "rcsdnode.gpkg") >= 1
+    assert _vector_has_crs(decode_dir / "nodes.gpkg")
+    assert _vector_has_crs(decode_dir / "roads.gpkg")
+    assert _vector_bounds(decode_dir / "nodes.gpkg") == (0.0, 0.0, 6.0, 0.0)
+
+    decoded_manifest = json.loads((decode_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert decoded_manifest["decoded_output"]["vector_crs"] == "EPSG:3857"
+    assert decoded_manifest["decoded_output"]["vector_coordinates"] == "absolute_epsg3857"
 
 
 def test_decode_text_bundle_defaults_to_bundle_stem_directory(tmp_path: Path) -> None:
@@ -304,6 +321,11 @@ def test_export_text_bundle_roundtrip_supports_multiple_mainnodeids(tmp_path: Pa
         case_manifest = json.loads((case_dir / "manifest.json").read_text(encoding="utf-8"))
         assert case_manifest["bundle_mode"] == "single_case"
         assert case_manifest["mainnodeid"] == case_id
+        assert case_manifest["decoded_output"]["vector_crs"] == "EPSG:3857"
+        assert _vector_has_crs(case_dir / "nodes.gpkg")
+
+    assert _vector_bounds(decode_root / "100" / "nodes.gpkg") == (0.0, 0.0, 6.0, 0.0)
+    assert _vector_bounds(decode_root / "200" / "nodes.gpkg") == (220.0, 0.0, 226.0, 0.0)
 
 
 def test_decode_text_bundle_accepts_legacy_wrapper_format(tmp_path: Path) -> None:

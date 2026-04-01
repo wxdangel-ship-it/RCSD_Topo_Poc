@@ -566,6 +566,9 @@ def _run_case_job(job: dict[str, Any]) -> dict[str, Any]:
         return {
             "case_id": case_id,
             "success": bool(status_doc.get("success")),
+            "flow_success": bool(status_doc.get("flow_success", status_doc.get("success"))),
+            "acceptance_class": status_doc.get("acceptance_class"),
+            "acceptance_reason": status_doc.get("acceptance_reason"),
             "status": status_doc.get("status"),
             "risks": list(status_doc.get("risks") or []),
             "detail": status_doc.get("detail"),
@@ -589,6 +592,9 @@ def _run_case_job(job: dict[str, Any]) -> dict[str, Any]:
         return {
             "case_id": case_id,
             "success": False,
+            "flow_success": False,
+            "acceptance_class": "rejected",
+            "acceptance_reason": "worker_exception",
             "status": "worker_exception",
             "risks": ["worker_exception"],
             "detail": f"{type(exc).__name__}: {exc}",

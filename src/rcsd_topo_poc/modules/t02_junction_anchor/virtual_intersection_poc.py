@@ -2158,18 +2158,36 @@ def _rc_gap_branch_polygon_length_m(branch: BranchEvidence) -> float:
 
 
 def _local_road_mouth_polygon_length_m(branch: BranchEvidence) -> float:
+    if (
+        branch.road_support_m >= 12.0
+        and branch.drivezone_support_m < 6.0
+        and branch.rc_support_m < 4.0
+    ):
+        local_support_m = max(branch.drivezone_support_m, min(branch.road_support_m, 10.0))
+        return max(7.0, min(local_support_m, 10.0))
     local_support_m = max(branch.drivezone_support_m, min(branch.road_support_m, 8.0))
     return max(6.0, min(local_support_m, 8.0))
 
 
 def _branch_has_local_road_mouth(branch: BranchEvidence) -> bool:
+    if (
+        branch.is_main_direction
+        or branch.evidence_level != "edge_only"
+        or bool(branch.rcsdroad_ids)
+        or branch.rc_support_m >= 7.0
+    ):
+        return False
+
+    if branch.drivezone_support_m >= 6.0 and branch.road_support_m >= 6.0:
+        return True
+
     return (
-        not branch.is_main_direction
-        and branch.evidence_level == "edge_only"
-        and not branch.rcsdroad_ids
-        and branch.rc_support_m < 7.0
-        and branch.drivezone_support_m >= 6.0
-        and branch.road_support_m >= 6.0
+        branch.road_support_m >= 12.0
+        and branch.rc_support_m < 4.0
+        and (
+            branch.drivezone_support_m >= 4.0
+            or (branch.drivezone_support_m >= 1.0 and branch.rc_support_m < 2.0)
+        )
     )
 
 
@@ -2188,6 +2206,43 @@ def _branch_has_minimal_local_road_touch(branch: BranchEvidence) -> bool:
 def _minimal_local_road_touch_polygon_length_m(branch: BranchEvidence) -> float:
     local_support_m = max(branch.drivezone_support_m, min(branch.road_support_m, 4.5))
     return max(4.0, min(local_support_m, 4.5))
+
+
+def _branch_prefers_compact_local_support(
+    branch: BranchEvidence,
+    *,
+    branch_has_local_road_mouth: bool,
+    branch_has_minimal_local_road_touch: bool,
+) -> bool:
+    if branch.rcsdroad_ids:
+        return False
+    if branch_has_local_road_mouth or branch_has_minimal_local_road_touch:
+        return True
+    if (
+        branch.selected_for_polygon
+        and branch.evidence_level == "arm_partial"
+        and branch.road_support_m >= 40.0
+        and branch.drivezone_support_m >= 40.0
+    ):
+        return False
+    return branch.selected_for_polygon
+
+
+def _can_soft_exclude_outside_rc(
+    *,
+    status: str,
+    selected_rc_road_count: int,
+    polygon_support_rc_road_count: int,
+    max_selected_side_branch_covered_length_m: float,
+) -> bool:
+    if status == STATUS_NO_VALID_RC_CONNECTION:
+        return True
+    return (
+        status in {STATUS_STABLE, STATUS_SURFACE_ONLY, STATUS_NODE_COMPONENT_CONFLICT}
+        and selected_rc_road_count >= 2
+        and polygon_support_rc_road_count >= 2
+        and max_selected_side_branch_covered_length_m >= 12.0
+    )
 
 
 def _build_local_branch_mouth_fan_geometry(
@@ -2279,8 +2334,13 @@ def _polygon_branch_length_m(branch: BranchEvidence) -> float:
         and branch.evidence_level == "arm_partial"
         and branch.rc_support_m < 6.0
     ):
-        local_support_m = max(branch.drivezone_support_m, min(branch.road_support_m, 12.0))
-        return max(7.0, min(local_support_m, 10.0))
+        local_support_m = max(branch.drivezone_support_m, min(branch.road_support_m, 14.0))
+        hard_cap = (
+            14.0
+            if branch.drivezone_support_m >= 40.0 and branch.road_support_m >= 40.0
+            else 10.0
+        )
+        return max(7.0, min(local_support_m, hard_cap))
 
     if (
         not branch.is_main_direction
@@ -2849,6 +2909,52 @@ def _max_selected_side_branch_covered_length_m(
             if covered_length_m > max_covered_length_m:
                 max_covered_length_m = float(covered_length_m)
     return max_covered_length_m
+
+
+def _max_nonmain_branch_polygon_length_m(*, road_branches: list[BranchEvidence]) -> float:
+    max_polygon_length_m = 0.0
+    for branch in road_branches:
+        if branch.is_main_direction:
+            continue
+        polygon_length_m = float(branch.polygon_length_m or 0.0)
+        if polygon_length_m > max_polygon_length_m:
+            max_polygon_length_m = polygon_length_m
+    return max_polygon_length_m
+
+
+def _effect_success_acceptance(
+    *,
+    status: str,
+    review_mode: bool,
+    max_selected_side_branch_covered_length_m: float,
+    max_nonmain_branch_polygon_length_m: float,
+    associated_rc_road_count: int,
+    polygon_support_rc_road_count: int,
+) -> tuple[bool, str, str]:
+    if review_mode:
+        return False, "review_required", "review_mode"
+    if status == STATUS_STABLE:
+        return True, "accepted", "stable"
+    if status == STATUS_NO_VALID_RC_CONNECTION:
+        if max_nonmain_branch_polygon_length_m >= 4.0:
+            return True, "accepted", "rc_gap_with_nonmain_branch_polygon_coverage"
+        return False, "review_required", "rc_gap_without_substantive_nonmain_branch_coverage"
+    if status == STATUS_NODE_COMPONENT_CONFLICT:
+        if (
+            polygon_support_rc_road_count >= 2
+            and associated_rc_road_count >= 2
+            and max_selected_side_branch_covered_length_m >= 12.0
+            and max_nonmain_branch_polygon_length_m >= 10.0
+        ):
+            return True, "accepted", "node_component_conflict_with_strong_rc_supported_side_coverage"
+        return False, "review_required", f"review_required_status:{status}"
+    if status in {
+        STATUS_SURFACE_ONLY,
+        STATUS_WEAK_BRANCH_SUPPORT,
+        STATUS_AMBIGUOUS_RC_MATCH,
+    }:
+        return False, "review_required", f"review_required_status:{status}"
+    return False, "rejected", f"rejected_status:{status}"
 
 
 def run_t02_virtual_intersection_poc(
@@ -3708,7 +3814,11 @@ def run_t02_virtual_intersection_poc(
                         for geometry in branch_road_geometries
                         if geometry is not None and not geometry.is_empty
                     )
-                    compact_local_branch_support = bool(branch_selected_geometries) and not branch.rcsdroad_ids
+                    compact_local_branch_support = bool(branch_selected_geometries) and _branch_prefers_compact_local_support(
+                        branch,
+                        branch_has_local_road_mouth=branch_has_local_road_mouth,
+                        branch_has_minimal_local_road_touch=branch_has_minimal_local_road_touch,
+                    )
                     if compact_local_branch_support:
                         mouth_fan_geometry = _build_local_branch_mouth_fan_geometry(
                             center=analysis_center,
@@ -4069,8 +4179,15 @@ def run_t02_virtual_intersection_poc(
             road_branches=road_branches,
             local_roads=local_roads,
         )
+        max_nonmain_branch_polygon_length_m = _max_nonmain_branch_polygon_length_m(
+            road_branches=road_branches,
+        )
         counts["max_selected_side_branch_covered_length_m"] = round(
             max_selected_side_branch_covered_length_m,
+            3,
+        )
+        counts["max_nonmain_branch_polygon_length_m"] = round(
+            max_nonmain_branch_polygon_length_m,
             3,
         )
 
@@ -4140,10 +4257,28 @@ def run_t02_virtual_intersection_poc(
         status = _status_from_risks(risks, has_associated_roads=bool(associated_rcsdroad_features))
         if status == STATUS_STABLE and not associated_rcsdroad_features:
             status = STATUS_SURFACE_ONLY
+        effect_success, acceptance_class, acceptance_reason = _effect_success_acceptance(
+            status=status,
+            review_mode=review_mode,
+            max_selected_side_branch_covered_length_m=max_selected_side_branch_covered_length_m,
+            max_nonmain_branch_polygon_length_m=max_nonmain_branch_polygon_length_m,
+            associated_rc_road_count=len(associated_rcsdroad_features),
+            polygon_support_rc_road_count=len(polygon_support_rc_road_ids),
+        )
+        can_soft_exclude_outside_rc = (
+            rc_outside_drivezone_error is not None
+            and not review_mode
+            and _can_soft_exclude_outside_rc(
+                status=status,
+                selected_rc_road_count=len(selected_rc_roads),
+                polygon_support_rc_road_count=len(polygon_support_rc_road_ids),
+                max_selected_side_branch_covered_length_m=max_selected_side_branch_covered_length_m,
+            )
+        )
         if (
             rc_outside_drivezone_error is not None
             and not review_mode
-            and status != STATUS_NO_VALID_RC_CONNECTION
+            and not can_soft_exclude_outside_rc
         ):
             if debug and not debug_rendered_map_written:
                 try:
@@ -4166,7 +4301,7 @@ def run_t02_virtual_intersection_poc(
                 except Exception as exc:
                     announce(logger, f"[T02-POC] failure debug rendered map skipped reason={type(exc).__name__}: {exc}")
             raise rc_outside_drivezone_error
-        if rc_outside_drivezone_error is not None and not review_mode:
+        if can_soft_exclude_outside_rc:
             for road_id in sorted(invalid_rc_road_ids):
                 audit_rows.append(
                     _audit_row(
@@ -4238,7 +4373,10 @@ def run_t02_virtual_intersection_poc(
         counts["audit_count"] = len(audit_rows)
         status_doc = {
             "run_id": resolved_run_id,
-            "success": True,
+            "success": effect_success,
+            "flow_success": True,
+            "acceptance_class": acceptance_class,
+            "acceptance_reason": acceptance_reason,
             "mainnodeid": normalized_mainnodeid,
             "representative_node_id": representative_node.node_id,
             "kind_2": representative_node.kind_2,
@@ -4277,16 +4415,23 @@ def run_t02_virtual_intersection_poc(
         _write_progress_snapshot(
             out_path=progress_path,
             run_id=resolved_run_id,
-            status="success",
+            status="success" if effect_success else "completed_with_review_required_result",
             current_stage="complete",
-            message="T02 virtual intersection POC completed.",
+            message=(
+                "T02 virtual intersection POC completed and accepted."
+                if effect_success
+                else "T02 virtual intersection POC completed but requires review before acceptance."
+            ),
             counts=counts,
         )
         record_stage("outputs_written")
         total_wall_time_sec = time.perf_counter() - started_at
         perf_doc = {
             "run_id": resolved_run_id,
-            "success": True,
+            "success": effect_success,
+            "flow_success": True,
+            "acceptance_class": acceptance_class,
+            "acceptance_reason": acceptance_reason,
             "total_wall_time_sec": round(total_wall_time_sec, 6),
             "counts": counts,
             "stage_timings": stage_timings,
@@ -4294,7 +4439,7 @@ def run_t02_virtual_intersection_poc(
         }
         write_json(perf_json_path, perf_doc)
         return VirtualIntersectionArtifacts(
-            success=True,
+            success=effect_success,
             out_root=out_root_path,
             virtual_polygon_path=virtual_polygon_path,
             branch_evidence_json_path=branch_evidence_json_path,
@@ -4352,6 +4497,9 @@ def run_t02_virtual_intersection_poc(
         status_doc = {
             "run_id": resolved_run_id,
             "success": False,
+            "flow_success": False,
+            "acceptance_class": "rejected",
+            "acceptance_reason": exc.reason,
             "mainnodeid": normalized_mainnodeid,
             "status": exc.reason,
             "risks": [exc.reason],
@@ -4367,6 +4515,9 @@ def run_t02_virtual_intersection_poc(
         perf_doc = {
             "run_id": resolved_run_id,
             "success": False,
+            "flow_success": False,
+            "acceptance_class": "rejected",
+            "acceptance_reason": exc.reason,
             "total_wall_time_sec": round(total_wall_time_sec, 6),
             "counts": counts,
             "stage_timings": stage_timings,

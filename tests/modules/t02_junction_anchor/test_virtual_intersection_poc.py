@@ -12,13 +12,18 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     BranchEvidence,
     ParsedNode,
     ParsedRoad,
+    _branch_prefers_compact_local_support,
+    _can_soft_exclude_outside_rc,
     _branch_has_minimal_local_road_touch,
     _branch_has_positive_rc_gap,
     _branch_has_local_road_mouth,
     _branch_uses_rc_tip_suppression,
     _build_positive_negative_rc_groups,
     _build_polygon_support_from_association,
+    _effect_success_acceptance,
     _has_structural_side_branch,
+    _local_road_mouth_polygon_length_m,
+    _max_nonmain_branch_polygon_length_m,
     _max_selected_side_branch_covered_length_m,
     _polygon_branch_length_m,
     _regularize_virtual_polygon_geometry,
@@ -456,8 +461,10 @@ def test_virtual_intersection_poc_review_mode_soft_excludes_rc_outside_drivezone
         review_mode=True,
         **paths,
     )
-    assert artifacts.success is True
+    assert artifacts.success is False
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "review_required"
     assert status_doc["review_mode"] is True
     assert "review_rc_outside_drivezone_excluded" in status_doc["risks"]
     assert status_doc["counts"]["review_excluded_rcsdroad_count"] >= 1
@@ -486,9 +493,9 @@ def test_virtual_intersection_poc_ignores_far_rc_outside_drivezone_noise(tmp_pat
 def test_virtual_intersection_poc_without_rc_group_still_associates_rc_roads(tmp_path: Path) -> None:
     paths = _write_poc_inputs(tmp_path, include_rc_group=False)
     artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
-    assert artifacts.success is True
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
     assert status_doc["status"] in {"stable", "ambiguous_rc_match"}
+    assert artifacts.success is (status_doc["status"] == "stable")
 
     associated_roads_doc = _load_vector_doc(artifacts.associated_rcsdroad_path)
     associated_road_ids = {feature["properties"]["id"] for feature in associated_roads_doc["features"]}
@@ -498,10 +505,10 @@ def test_virtual_intersection_poc_without_rc_group_still_associates_rc_roads(tmp
 def test_virtual_intersection_poc_uses_compound_center_when_short_link_neighbor_forms_main_axis(tmp_path: Path) -> None:
     paths = _write_compound_center_inputs(tmp_path)
     artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
-    assert artifacts.success is True
 
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
     assert status_doc["status"] in {"stable", "surface_only"}
+    assert artifacts.success is (status_doc["status"] == "stable")
 
     branch_doc = json.loads(artifacts.branch_evidence_json_path.read_text(encoding="utf-8"))
     road_branches = branch_doc["branches"]
@@ -534,6 +541,57 @@ def test_virtual_intersection_poc_polygon_support_can_expand_beyond_conservative
 
 def test_status_from_risks_marks_node_component_conflict_before_stable() -> None:
     assert _status_from_risks(["node_component_conflict"], has_associated_roads=True) == "node_component_conflict"
+
+
+def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_gap_under_review() -> None:
+    assert _effect_success_acceptance(
+        status="stable",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=0.0,
+        associated_rc_road_count=1,
+        polygon_support_rc_road_count=1,
+    ) == (True, "accepted", "stable")
+    assert _effect_success_acceptance(
+        status="no_valid_rc_connection",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=0.0,
+        associated_rc_road_count=0,
+        polygon_support_rc_road_count=0,
+    ) == (False, "review_required", "rc_gap_without_substantive_nonmain_branch_coverage")
+    assert _effect_success_acceptance(
+        status="no_valid_rc_connection",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=4.0,
+        associated_rc_road_count=0,
+        polygon_support_rc_road_count=0,
+    ) == (True, "accepted", "rc_gap_with_nonmain_branch_polygon_coverage")
+    assert _effect_success_acceptance(
+        status="node_component_conflict",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=19.0,
+        max_nonmain_branch_polygon_length_m=14.0,
+        associated_rc_road_count=2,
+        polygon_support_rc_road_count=2,
+    ) == (True, "accepted", "node_component_conflict_with_strong_rc_supported_side_coverage")
+    assert _effect_success_acceptance(
+        status="node_component_conflict",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=8.0,
+        max_nonmain_branch_polygon_length_m=14.0,
+        associated_rc_road_count=2,
+        polygon_support_rc_road_count=2,
+    ) == (False, "review_required", "review_required_status:node_component_conflict")
+    assert _effect_success_acceptance(
+        status="stable",
+        review_mode=True,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=0.0,
+        associated_rc_road_count=1,
+        polygon_support_rc_road_count=1,
+    ) == (False, "review_required", "review_mode")
 
 
 def test_max_selected_side_branch_covered_length_ignores_main_and_edge_only_branches() -> None:
@@ -590,6 +648,38 @@ def test_max_selected_side_branch_covered_length_ignores_main_and_edge_only_bran
     )
 
     assert round(covered_length_m, 3) == 12.0
+
+
+def test_max_nonmain_branch_polygon_length_includes_edge_only_nonmain_coverage() -> None:
+    road_branches = [
+        BranchEvidence(
+            branch_id="road_1",
+            angle_deg=90.0,
+            branch_type="road",
+            is_main_direction=True,
+            polygon_length_m=18.0,
+        ),
+        BranchEvidence(
+            branch_id="road_2",
+            angle_deg=0.0,
+            branch_type="road",
+            is_main_direction=False,
+            selected_for_polygon=False,
+            evidence_level="edge_only",
+            polygon_length_m=7.544,
+        ),
+        BranchEvidence(
+            branch_id="road_3",
+            angle_deg=180.0,
+            branch_type="road",
+            is_main_direction=False,
+            selected_for_polygon=True,
+            evidence_level="arm_partial",
+            polygon_length_m=10.0,
+        ),
+    ]
+
+    assert _max_nonmain_branch_polygon_length_m(road_branches=road_branches) == 10.0
 
 
 def test_build_positive_negative_rc_groups_deduplicates_same_group_top_candidates() -> None:
@@ -795,7 +885,7 @@ def test_virtual_intersection_poc_writes_debug_rendered_map_when_enabled(tmp_pat
     assert artifacts.rendered_map_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_virtual_intersection_poc_keeps_no_valid_rc_connection_as_success_when_polygon_exists(
+def test_virtual_intersection_poc_accepts_no_valid_rc_connection_when_polygon_preserves_nonmain_branch_coverage(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -814,10 +904,13 @@ def test_virtual_intersection_poc_keeps_no_valid_rc_connection_as_success_when_p
 
     assert artifacts.success is True
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "rc_gap_with_nonmain_branch_polygon_coverage"
     assert status_doc["status"] == "no_valid_rc_connection"
 
 
-def test_virtual_intersection_poc_can_soft_exclude_outside_rc_when_only_rc_gap_remains(
+def test_virtual_intersection_poc_can_soft_exclude_outside_rc_and_accept_when_nonmain_branch_coverage_remains(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -836,6 +929,9 @@ def test_virtual_intersection_poc_can_soft_exclude_outside_rc_when_only_rc_gap_r
 
     assert artifacts.success is True
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "rc_gap_with_nonmain_branch_polygon_coverage"
     assert status_doc["status"] == "no_valid_rc_connection"
 
 
@@ -1154,6 +1250,28 @@ def test_branch_has_local_road_mouth_detects_small_edge_only_side_branch_without
         drivezone_support_m=7.5,
         road_support_m=7.5,
     )
+    low_drivezone_but_clear_mouth = BranchEvidence(
+        branch_id="road_low_drivezone",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        evidence_level="edge_only",
+        rcsdroad_ids=[],
+        drivezone_support_m=1.1,
+        road_support_m=21.0,
+        rc_support_m=1.3,
+    )
+    moderate_drivezone_local_mouth = BranchEvidence(
+        branch_id="road_moderate_drivezone",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        evidence_level="edge_only",
+        rcsdroad_ids=[],
+        drivezone_support_m=4.7,
+        road_support_m=17.0,
+        rc_support_m=3.1,
+    )
     weak_edge = BranchEvidence(
         branch_id="road_weak",
         angle_deg=90.0,
@@ -1177,8 +1295,12 @@ def test_branch_has_local_road_mouth_detects_small_edge_only_side_branch_without
     )
 
     assert _branch_has_local_road_mouth(local_mouth) is True
+    assert _branch_has_local_road_mouth(low_drivezone_but_clear_mouth) is True
+    assert _branch_has_local_road_mouth(moderate_drivezone_local_mouth) is True
     assert _branch_has_local_road_mouth(weak_edge) is False
     assert _branch_has_local_road_mouth(rc_backed_edge) is False
+    assert _local_road_mouth_polygon_length_m(low_drivezone_but_clear_mouth) == 10.0
+    assert _local_road_mouth_polygon_length_m(moderate_drivezone_local_mouth) == 10.0
 
 
 def test_branch_has_minimal_local_road_touch_detects_small_rc_gap_side_branch() -> None:
@@ -1224,6 +1346,88 @@ def test_polygon_branch_length_keeps_selected_partial_side_branch_from_being_ove
     )
 
     assert _polygon_branch_length_m(branch) == 10.0
+
+
+def test_polygon_branch_length_expands_strong_selected_partial_side_branch_without_rc() -> None:
+    branch = BranchEvidence(
+        branch_id="road_side_strong",
+        angle_deg=180.0,
+        branch_type="road",
+        is_main_direction=False,
+        selected_for_polygon=True,
+        evidence_level="arm_partial",
+        rcsdroad_ids=[],
+        drivezone_support_m=100.0,
+        road_support_m=231.0,
+        rc_support_m=3.8,
+    )
+
+    assert _polygon_branch_length_m(branch) == 14.0
+
+
+def test_branch_prefers_compact_local_support_only_for_weak_local_mouths() -> None:
+    weak_local_mouth = BranchEvidence(
+        branch_id="road_edge",
+        angle_deg=90.0,
+        branch_type="road",
+        is_main_direction=False,
+        selected_for_polygon=False,
+        evidence_level="edge_only",
+        rcsdroad_ids=[],
+        drivezone_support_m=4.7,
+        road_support_m=17.0,
+        rc_support_m=3.1,
+    )
+    strong_partial_branch = BranchEvidence(
+        branch_id="road_partial",
+        angle_deg=180.0,
+        branch_type="road",
+        is_main_direction=False,
+        selected_for_polygon=True,
+        evidence_level="arm_partial",
+        rcsdroad_ids=[],
+        drivezone_support_m=100.0,
+        road_support_m=231.0,
+        rc_support_m=3.8,
+    )
+
+    assert _branch_prefers_compact_local_support(
+        weak_local_mouth,
+        branch_has_local_road_mouth=True,
+        branch_has_minimal_local_road_touch=False,
+    ) is True
+    assert _branch_prefers_compact_local_support(
+        strong_partial_branch,
+        branch_has_local_road_mouth=False,
+        branch_has_minimal_local_road_touch=False,
+    ) is False
+
+
+def test_can_soft_exclude_outside_rc_only_when_remaining_polygon_evidence_is_strong() -> None:
+    assert _can_soft_exclude_outside_rc(
+        status="no_valid_rc_connection",
+        selected_rc_road_count=0,
+        polygon_support_rc_road_count=0,
+        max_selected_side_branch_covered_length_m=0.0,
+    ) is True
+    assert _can_soft_exclude_outside_rc(
+        status="node_component_conflict",
+        selected_rc_road_count=2,
+        polygon_support_rc_road_count=2,
+        max_selected_side_branch_covered_length_m=19.984,
+    ) is True
+    assert _can_soft_exclude_outside_rc(
+        status="stable",
+        selected_rc_road_count=1,
+        polygon_support_rc_road_count=1,
+        max_selected_side_branch_covered_length_m=20.168,
+    ) is False
+    assert _can_soft_exclude_outside_rc(
+        status="stable",
+        selected_rc_road_count=0,
+        polygon_support_rc_road_count=0,
+        max_selected_side_branch_covered_length_m=0.0,
+    ) is False
 
 
 def test_regularize_virtual_polygon_geometry_keeps_single_seeded_component_without_holes() -> None:

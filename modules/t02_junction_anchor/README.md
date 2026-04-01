@@ -189,6 +189,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 
 - `segment` 与 `nodes` 应来自同一轮 T01 成果。
 - `DriveZone` 与 `nodes` 会在空间判定前统一到 `EPSG:3857`。
+- `t02-decode-text-bundle` 解包后的 `nodes.gpkg / roads.gpkg / drivezone.gpkg / rcsdroad.gpkg / rcsdnode.gpkg` 会恢复为绝对 `EPSG:3857` 坐标并写入 CRS，可直接作为 Stage3 case-package 输入，无需再额外传 CRS override。
 - 官方默认工作输出根目录是 `outputs/_work/t02_stage1_drivezone_gate`。
 - 显式传入 `--out-root` 时，其语义也是“工作输出根目录”；最终运行目录固定为 `<out_root>/<run_id>`。
 

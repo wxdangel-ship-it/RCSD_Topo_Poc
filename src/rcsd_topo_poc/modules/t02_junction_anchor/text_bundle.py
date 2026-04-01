@@ -16,7 +16,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional, Union
 
+import fiona
 import numpy as np
+from shapely.affinity import translate
 from shapely.geometry import GeometryCollection, MultiLineString, MultiPoint, MultiPolygon, Point, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
@@ -62,6 +64,13 @@ REQUIRED_BUNDLE_FILES = (
     "rcsdroad.gpkg",
     "rcsdnode.gpkg",
     "size_report.json",
+)
+VECTOR_BUNDLE_FILES = (
+    "drivezone.gpkg",
+    "nodes.gpkg",
+    "roads.gpkg",
+    "rcsdroad.gpkg",
+    "rcsdnode.gpkg",
 )
 
 
@@ -386,6 +395,79 @@ def _extract_bundle_files(bundle_path: Path) -> dict[str, bytes]:
         if missing:
             raise TextBundleError("bundle_missing_files", f"Bundle is missing required files: {','.join(missing)}")
         return {name: zf.read(name) for name in REQUIRED_BUNDLE_FILES}
+
+
+def _resolve_manifest_local_origin(manifest: dict[str, Any]) -> tuple[float, float]:
+    local_origin = manifest.get("local_origin")
+    if not isinstance(local_origin, dict):
+        raise TextBundleError("bundle_missing_files", "Bundle manifest is missing local_origin.")
+    try:
+        origin_x = float(local_origin["x_epsg3857"])
+        origin_y = float(local_origin["y_epsg3857"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise TextBundleError("bundle_missing_files", "Bundle manifest local_origin is incomplete.") from exc
+    return origin_x, origin_y
+
+
+def _restore_local_vector_file_to_target_crs(
+    *,
+    source_path: Path,
+    target_path: Path,
+    origin_x: float,
+    origin_y: float,
+) -> None:
+    restored_features: list[dict[str, Any]] = []
+    with fiona.open(source_path) as src:
+        for feature in src:
+            geometry_payload = feature.get("geometry")
+            geometry = None if geometry_payload is None else translate(shape(geometry_payload), xoff=origin_x, yoff=origin_y)
+            restored_features.append(
+                {
+                    "properties": dict(feature.get("properties") or {}),
+                    "geometry": geometry,
+                }
+            )
+    write_vector(
+        target_path,
+        restored_features,
+        crs_text=TARGET_CRS.to_string(),
+        layer_name=target_path.stem,
+    )
+
+
+def _restore_decoded_case_dir(
+    *,
+    source_dir: Path,
+    target_dir: Path,
+) -> None:
+    manifest_path = source_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    origin_x, origin_y = _resolve_manifest_local_origin(manifest)
+
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    for name in REQUIRED_BUNDLE_FILES:
+        source_path = source_dir / name
+        target_path = target_dir / name
+        if name in VECTOR_BUNDLE_FILES:
+            _restore_local_vector_file_to_target_crs(
+                source_path=source_path,
+                target_path=target_path,
+                origin_x=origin_x,
+                origin_y=origin_y,
+            )
+            continue
+        shutil.copy2(source_path, target_path)
+
+    manifest["decoded_output"] = {
+        "vector_coordinates": "absolute_epsg3857",
+        "vector_crs": TARGET_CRS.to_string(),
+        "bundle_internal_vectors_localized": True,
+        "decoded_at": _now_text(),
+    }
+    (target_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _run_t02_export_single_text_bundle(
@@ -922,9 +1004,7 @@ def run_t02_decode_text_bundle(
                 for case_id in case_ids:
                     source_dir = temp_dir / case_id
                     target_dir = out_dir_path / case_id
-                    if target_dir.exists():
-                        shutil.rmtree(target_dir)
-                    shutil.move(str(source_dir), str(target_dir))
+                    _restore_decoded_case_dir(source_dir=source_dir, target_dir=target_dir)
                     case_dirs.append(target_dir)
 
                 _ = checksum
@@ -939,14 +1019,7 @@ def run_t02_decode_text_bundle(
             missing = [name for name in REQUIRED_BUNDLE_FILES if name not in names]
             if missing:
                 raise TextBundleError("bundle_missing_files", f"Bundle is missing required files: {','.join(missing)}")
-            for child in temp_dir.iterdir():
-                target_path = out_dir_path / child.name
-                if target_path.exists():
-                    if target_path.is_dir():
-                        shutil.rmtree(target_path)
-                    else:
-                        target_path.unlink()
-                shutil.move(str(child), str(target_path))
+            _restore_decoded_case_dir(source_dir=temp_dir, target_dir=out_dir_path)
 
     _ = checksum
     return TextBundleDecodeArtifacts(

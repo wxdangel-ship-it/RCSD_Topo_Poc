@@ -811,6 +811,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 - 最终 bundle 文本体积必须 `<= 300KB`
 - 若超限，入口必须失败退出，并输出体积分析 `size_report`
 - `t02-decode-text-bundle` 负责校验 bundle 头尾标识、版本与 checksum，并恢复等价目录结构
+- 解包后的 `nodes.gpkg / roads.gpkg / drivezone.gpkg / rcsdroad.gpkg / rcsdnode.gpkg` 必须恢复为绝对 `EPSG:3857` 坐标并写入 CRS，保证 Stage3 case-package 可直接运行
 - 未显式传入 `--out-dir` 时：
   - 单 case bundle 默认解包到与 bundle 同目录、且以 bundle 文件名为目录名的子目录
   - 多 case bundle 默认解包到当前工作目录，并展开为多个 `<mainnodeid>/` case 目录

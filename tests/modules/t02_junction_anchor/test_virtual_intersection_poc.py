@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import struct
+import zlib
 from pathlib import Path
 
 import fiona
+import numpy as np
 from shapely.geometry import LineString, Point, Polygon, box, shape
 from shapely.ops import unary_union
 
@@ -48,6 +51,35 @@ def _load_vector_doc(path: Path) -> dict:
                 for feature in src
             ],
         }
+
+
+def _read_png_rgba(path: Path) -> np.ndarray:
+    png_bytes = path.read_bytes()
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    offset = 8
+    width = None
+    height = None
+    idat_parts: list[bytes] = []
+    while offset < len(png_bytes):
+        chunk_length = struct.unpack(">I", png_bytes[offset : offset + 4])[0]
+        chunk_type = png_bytes[offset + 4 : offset + 8]
+        payload = png_bytes[offset + 8 : offset + 8 + chunk_length]
+        offset += 12 + chunk_length
+        if chunk_type == b"IHDR":
+            width, height = struct.unpack(">II", payload[:8])
+        elif chunk_type == b"IDAT":
+            idat_parts.append(payload)
+        elif chunk_type == b"IEND":
+            break
+    assert width is not None and height is not None
+    raw_rows = zlib.decompress(b"".join(idat_parts))
+    row_size = 1 + width * 4
+    image = np.zeros((height, width, 4), dtype=np.uint8)
+    for row_index in range(height):
+        row = raw_rows[row_index * row_size : (row_index + 1) * row_size]
+        assert row[0] == 0
+        image[row_index] = np.frombuffer(row[1:], dtype=np.uint8).reshape((width, 4))
+    return image
 
 
 def _write_poc_inputs(
@@ -475,6 +507,28 @@ def test_virtual_intersection_poc_review_mode_soft_excludes_rc_outside_drivezone
     associated_roads_doc = _load_vector_doc(artifacts.associated_rcsdroad_path)
     associated_road_ids = {feature["properties"]["id"] for feature in associated_roads_doc["features"]}
     assert "rc_west" not in associated_road_ids
+
+
+def test_virtual_intersection_poc_writes_failure_styled_render_when_effect_not_accepted(tmp_path: Path) -> None:
+    paths = _write_poc_inputs(tmp_path, rc_west_inside=False)
+    render_root = tmp_path / "batch_renders"
+    artifacts = run_t02_virtual_intersection_poc(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        debug=True,
+        debug_render_root=render_root,
+        review_mode=True,
+        **paths,
+    )
+    assert artifacts.success is False
+    assert artifacts.rendered_map_path == render_root / "100.png"
+    assert artifacts.rendered_map_path.is_file()
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["flow_success"] is True
+    assert status_doc["success"] is False
+    assert status_doc["acceptance_class"] == "review_required"
+    image = _read_png_rgba(artifacts.rendered_map_path)
+    assert tuple(image[0, 0]) == (144, 0, 0, 255)
 
 
 def test_virtual_intersection_poc_ignores_far_rc_outside_drivezone_noise(tmp_path: Path) -> None:

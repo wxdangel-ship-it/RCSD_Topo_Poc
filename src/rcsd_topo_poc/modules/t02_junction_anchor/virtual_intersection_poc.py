@@ -4371,6 +4371,35 @@ def run_t02_virtual_intersection_poc(
         write_csv(audit_csv_path, audit_rows, fieldnames=AUDIT_FIELDNAMES)
         write_json(audit_json_path, audit_rows)
         counts["audit_count"] = len(audit_rows)
+        if debug and not effect_success:
+            try:
+                _write_debug_rendered_map(
+                    out_path=rendered_map_path,
+                    grid=grid,
+                    drivezone_mask=drivezone_mask,
+                    polygon_geometry=virtual_polygon_geometry,
+                    representative_node=representative_node,
+                    group_nodes=group_nodes,
+                    local_nodes=local_nodes,
+                    local_roads=local_roads,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    selected_rc_roads=selected_rc_roads,
+                    selected_rc_node_ids=selected_rc_node_ids,
+                    excluded_rc_road_ids=polygon_excluded_rc_road_ids,
+                    excluded_rc_node_ids=invalid_rc_node_ids,
+                    failure_reason=acceptance_reason or status,
+                )
+                debug_rendered_map_written = True
+                announce(
+                    logger,
+                    (
+                        "[T02-POC] rewrote debug rendered map with failure overlay "
+                        f"path={rendered_map_path} reason={acceptance_reason or status}"
+                    ),
+                )
+            except Exception as exc:
+                announce(logger, f"[T02-POC] failure overlay debug rendered map skipped reason={type(exc).__name__}: {exc}")
         status_doc = {
             "run_id": resolved_run_id,
             "success": effect_success,

@@ -2877,8 +2877,12 @@ def run_t02_virtual_intersection_poc(
     debug: bool = False,
     debug_render_root: Optional[Union[str, Path]] = None,
     review_mode: bool = False,
+    trace_memory: bool = True,
+    layer_loader: Callable[..., LoadedLayer] | None = None,
+    target_group_loader: Callable[[str], LoadedLayer] | None = None,
 ) -> VirtualIntersectionArtifacts:
-    tracemalloc.start()
+    if trace_memory:
+        tracemalloc.start()
     started_at = time.perf_counter()
 
     out_root_path, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
@@ -2928,6 +2932,7 @@ def run_t02_virtual_intersection_poc(
     risks: list[str] = []
     normalized_mainnodeid = _normalize_id(mainnodeid)
     debug_rendered_map_written = False
+    load_layer_filtered = layer_loader or _load_layer_filtered
 
     def record_stage(stage_name: str, *, note: str | None = None) -> None:
         nonlocal stage_started_at
@@ -2999,13 +3004,16 @@ def run_t02_virtual_intersection_poc(
             group_id = _normalize_id(properties.get("mainnodeid"))
             return group_id == normalized_mainnodeid or (group_id is None and node_id == normalized_mainnodeid)
 
-        target_nodes_layer_data = _load_layer_filtered(
-            nodes_path,
-            layer_name=nodes_layer,
-            crs_override=nodes_crs,
-            allow_null_geometry=False,
-            property_predicate=_target_group_match,
-        )
+        if target_group_loader is not None:
+            target_nodes_layer_data = target_group_loader(normalized_mainnodeid)
+        else:
+            target_nodes_layer_data = load_layer_filtered(
+                nodes_path,
+                layer_name=nodes_layer,
+                crs_override=nodes_crs,
+                allow_null_geometry=False,
+                property_predicate=_target_group_match,
+            )
         target_group_nodes = _parse_nodes(target_nodes_layer_data, require_anchor_fields=True)
         counts["target_group_candidate_count"] = len(target_group_nodes)
         representative_node, group_nodes = _resolve_group(mainnodeid=normalized_mainnodeid, nodes=target_group_nodes)
@@ -3050,7 +3058,7 @@ def run_t02_virtual_intersection_poc(
             counts=counts,
         )
 
-        local_nodes_layer_data = _load_layer_filtered(
+        local_nodes_layer_data = load_layer_filtered(
             nodes_path,
             layer_name=nodes_layer,
             crs_override=nodes_crs,
@@ -3075,7 +3083,7 @@ def run_t02_virtual_intersection_poc(
             counts=counts,
         )
 
-        roads_layer_data = _load_layer_filtered(
+        roads_layer_data = load_layer_filtered(
             roads_path,
             layer_name=roads_layer,
             crs_override=roads_crs,
@@ -3100,7 +3108,7 @@ def run_t02_virtual_intersection_poc(
             counts=counts,
         )
 
-        drivezone_layer_data = _load_layer_filtered(
+        drivezone_layer_data = load_layer_filtered(
             drivezone_path,
             layer_name=drivezone_layer,
             crs_override=drivezone_crs,
@@ -3124,7 +3132,7 @@ def run_t02_virtual_intersection_poc(
             counts=counts,
         )
 
-        rcsdroad_layer_data = _load_layer_filtered(
+        rcsdroad_layer_data = load_layer_filtered(
             rcsdroad_path,
             layer_name=rcsdroad_layer,
             crs_override=rcsdroad_crs,
@@ -3149,7 +3157,7 @@ def run_t02_virtual_intersection_poc(
             counts=counts,
         )
 
-        rcsdnode_layer_data = _load_layer_filtered(
+        rcsdnode_layer_data = load_layer_filtered(
             rcsdnode_path,
             layer_name=rcsdnode_layer,
             crs_override=rcsdnode_crs,
@@ -4393,7 +4401,8 @@ def run_t02_virtual_intersection_poc(
         )
     finally:
         close_logger(logger)
-        tracemalloc.stop()
+        if trace_memory:
+            tracemalloc.stop()
 
 
 def run_t02_virtual_intersection_poc_cli(args: argparse.Namespace) -> int:

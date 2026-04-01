@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import resource
 import time
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import fiona
 from pyproj import CRS
 from shapely.geometry import shape
+from shapely.geometry.base import BaseGeometry
+from shapely.strtree import STRtree
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     GEOPACKAGE_SUFFIXES,
@@ -25,6 +29,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     write_json,
     write_vector,
 )
+from rcsd_topo_poc.modules.t02_junction_anchor.stage1_drivezone_gate import LoadedFeature, LoadedLayer
 from rcsd_topo_poc.modules.t02_junction_anchor.shared import (
     find_repo_root,
     normalize_id,
@@ -62,10 +67,255 @@ class VirtualIntersectionFullInputArtifacts:
     log_path: Path
     progress_path: Path
     rendered_maps_root: Path
+    case_events_path: Path | None = None
+    exception_summary_path: Path | None = None
+    crash_report_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class _SharedLayerHandle:
+    label: str
+    features: tuple[LoadedFeature, ...]
+    geometry_feature_positions: tuple[int, ...]
+    tree: STRtree | None
+    group_members_by_mainnodeid: dict[str, tuple[int, ...]] | None = None
+    orphan_members_by_nodeid: dict[str, tuple[int, ...]] | None = None
 
 
 def _now_text() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fp:
+        fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _process_memory_stats() -> dict[str, int | None]:
+    current_rss_bytes = None
+    status_path = Path("/proc/self/status")
+    if status_path.is_file():
+        try:
+            for line in status_path.read_text(encoding="utf-8").splitlines():
+                if not line.startswith("VmRSS:"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 2:
+                    current_rss_bytes = int(parts[1]) * 1024
+                break
+        except Exception:
+            current_rss_bytes = None
+
+    peak_rss_bytes = None
+    try:
+        peak_rss_kb = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        if peak_rss_kb > 0:
+            peak_rss_bytes = peak_rss_kb * 1024
+    except Exception:
+        peak_rss_bytes = None
+
+    return {
+        "process_current_rss_bytes": current_rss_bytes,
+        "process_peak_rss_bytes": peak_rss_bytes,
+    }
+
+
+def _filter_properties(properties: dict[str, Any], allowed_fields: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        field_name: properties.get(field_name)
+        for field_name in allowed_fields
+        if field_name in properties
+    }
+
+
+def _build_shared_layer_handle(
+    *,
+    label: str,
+    path: str | Path,
+    layer_name: str | None,
+    crs_override: str | None,
+    allow_null_geometry: bool,
+    allowed_fields: tuple[str, ...],
+) -> _SharedLayerHandle:
+    layer = _load_layer_filtered(
+        path,
+        layer_name=layer_name,
+        crs_override=crs_override,
+        allow_null_geometry=allow_null_geometry,
+    )
+    features: list[LoadedFeature] = []
+    geometry_feature_positions: list[int] = []
+    geometries: list[BaseGeometry] = []
+    group_members_by_mainnodeid: defaultdict[str, list[int]] | None = None
+    orphan_members_by_nodeid: defaultdict[str, list[int]] | None = None
+    if label == "nodes":
+        group_members_by_mainnodeid = defaultdict(list)
+        orphan_members_by_nodeid = defaultdict(list)
+
+    for feature in layer.features:
+        filtered_feature = LoadedFeature(
+            feature_index=feature.feature_index,
+            properties=_filter_properties(feature.properties, allowed_fields),
+            geometry=feature.geometry,
+        )
+        feature_position = len(features)
+        features.append(filtered_feature)
+        if filtered_feature.geometry is not None and not filtered_feature.geometry.is_empty:
+            geometry_feature_positions.append(feature_position)
+            geometries.append(filtered_feature.geometry)
+        if label == "nodes":
+            node_id = normalize_id(filtered_feature.properties.get("id"))
+            mainnodeid = normalize_id(filtered_feature.properties.get("mainnodeid"))
+            if mainnodeid is not None:
+                group_members_by_mainnodeid[mainnodeid].append(feature_position)
+            elif node_id is not None:
+                orphan_members_by_nodeid[node_id].append(feature_position)
+
+    return _SharedLayerHandle(
+        label=label,
+        features=tuple(features),
+        geometry_feature_positions=tuple(geometry_feature_positions),
+        tree=STRtree(geometries) if geometries else None,
+        group_members_by_mainnodeid=(
+            {key: tuple(value) for key, value in group_members_by_mainnodeid.items()}
+            if group_members_by_mainnodeid is not None
+            else None
+        ),
+        orphan_members_by_nodeid=(
+            {key: tuple(value) for key, value in orphan_members_by_nodeid.items()}
+            if orphan_members_by_nodeid is not None
+            else None
+        ),
+    )
+
+
+def _loaded_layer_from_features(features: list[LoadedFeature]) -> LoadedLayer:
+    return LoadedLayer(features=features, source_crs=TARGET_CRS, crs_source="shared_memory_target_crs")
+
+
+def _shared_query_layer(
+    handle: _SharedLayerHandle,
+    *,
+    query_geometry: BaseGeometry | None,
+    property_predicate: Callable[[dict[str, Any]], bool] | None,
+    allow_null_geometry: bool,
+) -> LoadedLayer:
+    if query_geometry is None:
+        matched_features = [
+            feature
+            for feature in handle.features
+            if property_predicate is None or property_predicate(feature.properties)
+        ]
+        return _loaded_layer_from_features(sorted(matched_features, key=lambda item: item.feature_index))
+
+    feature_positions: list[int]
+    if handle.tree is None:
+        feature_positions = list(range(len(handle.features)))
+    else:
+        feature_positions = [
+            handle.geometry_feature_positions[int(tree_index)]
+            for tree_index in handle.tree.query(query_geometry)
+        ]
+
+    matched_features: list[LoadedFeature] = []
+    seen_positions: set[int] = set()
+    for feature_position in feature_positions:
+        if feature_position in seen_positions:
+            continue
+        seen_positions.add(feature_position)
+        feature = handle.features[feature_position]
+        if property_predicate is not None and not property_predicate(feature.properties):
+            continue
+        if feature.geometry is None:
+            if not allow_null_geometry:
+                raise VirtualIntersectionPocError(
+                    REASON_MISSING_REQUIRED_FIELD,
+                    f"shared layer '{handle.label}' contains feature[{feature.feature_index}] without geometry.",
+                )
+            matched_features.append(feature)
+            continue
+        if not feature.geometry.intersects(query_geometry):
+            continue
+        matched_features.append(feature)
+    matched_features.sort(key=lambda item: item.feature_index)
+    return _loaded_layer_from_features(matched_features)
+
+
+def _load_target_group_from_shared_nodes(handle: _SharedLayerHandle, mainnodeid: str) -> LoadedLayer:
+    group_positions = list((handle.group_members_by_mainnodeid or {}).get(mainnodeid, ()))
+    group_positions.extend((handle.orphan_members_by_nodeid or {}).get(mainnodeid, ()))
+    features = [handle.features[position] for position in sorted(set(group_positions))]
+    return _loaded_layer_from_features(features)
+
+
+def _discover_candidate_mainnodeids_from_shared_nodes(handle: _SharedLayerHandle) -> list[str]:
+    candidate_mainnodeids: list[str] = []
+    for feature in handle.features:
+        properties = feature.properties
+        if not _is_auto_candidate(properties):
+            continue
+        normalized_mainnodeid = normalize_id(properties.get("mainnodeid")) or normalize_id(properties.get("id"))
+        if normalized_mainnodeid is None:
+            continue
+        candidate_mainnodeids.append(normalized_mainnodeid)
+    return sorted(set(candidate_mainnodeids), key=sort_patch_key)
+
+
+def _build_shared_layer_loader(
+    handles: dict[str, _SharedLayerHandle],
+) -> Callable[..., LoadedLayer]:
+    def _loader(
+        path: str | Path,
+        *,
+        layer_name: str | None,
+        crs_override: str | None,
+        allow_null_geometry: bool,
+        query_geometry: BaseGeometry | None = None,
+        property_predicate: Callable[[dict[str, Any]], bool] | None = None,
+        progress_label: str | None = None,
+        progress_every: int = 5000,
+        progress_callback: Callable[[str, int, int], None] | None = None,
+    ) -> LoadedLayer:
+        del layer_name, crs_override, progress_label, progress_every, progress_callback
+        resolved_path = str(prefer_vector_input_path(Path(path)).resolve())
+        handle = handles.get(resolved_path)
+        if handle is None:
+            raise VirtualIntersectionPocError(
+                REASON_MISSING_REQUIRED_FIELD,
+                f"Missing shared layer handle for '{path}'.",
+            )
+        return _shared_query_layer(
+            handle,
+            query_geometry=query_geometry,
+            property_predicate=property_predicate,
+            allow_null_geometry=allow_null_geometry,
+        )
+
+    return _loader
+
+
+def _write_exception_summary(path: Path, rows: list[dict[str, Any]], *, crashed: dict[str, Any] | None = None) -> None:
+    failed_rows = [row for row in rows if not row.get("success")]
+    status_counter = Counter(str(row.get("status") or "unknown") for row in failed_rows)
+    summary = {
+        "updated_at": _now_text(),
+        "failed_case_count": len(failed_rows),
+        "status_counts": dict(sorted(status_counter.items())),
+        "worker_exception_count": sum(1 for row in failed_rows if row.get("status") == "worker_exception"),
+        "failed_cases": [
+            {
+                "case_id": row.get("case_id"),
+                "status": row.get("status"),
+                "detail": row.get("detail"),
+                "total_wall_time_sec": row.get("total_wall_time_sec"),
+            }
+            for row in failed_rows
+        ],
+        "crashed": crashed,
+        **_process_memory_stats(),
+    }
+    write_json(path, summary)
 
 
 def _resolve_out_root(*, out_root: str | Path | None, run_id: str | None, cwd: Path | None = None) -> tuple[Path, str]:
@@ -318,11 +568,14 @@ def _run_case_job(job: dict[str, Any]) -> dict[str, Any]:
             "success": bool(status_doc.get("success")),
             "status": status_doc.get("status"),
             "risks": list(status_doc.get("risks") or []),
+            "detail": status_doc.get("detail"),
             "representative_node_id": status_doc.get("representative_node_id"),
             "kind_2": status_doc.get("kind_2"),
             "grade_2": status_doc.get("grade_2"),
             "counts": dict(status_doc.get("counts") or {}),
             "total_wall_time_sec": perf_doc.get("total_wall_time_sec"),
+            "python_tracemalloc_current_bytes": perf_doc.get("python_tracemalloc_current_bytes"),
+            "python_tracemalloc_peak_bytes": perf_doc.get("python_tracemalloc_peak_bytes"),
             "case_dir": str(case_dir),
             "rendered_map_png": str(artifacts.rendered_map_path) if artifacts.rendered_map_path and artifacts.rendered_map_path.is_file() else None,
             "virtual_polygon_path": str(artifacts.virtual_polygon_path),
@@ -344,6 +597,8 @@ def _run_case_job(job: dict[str, Any]) -> dict[str, Any]:
             "grade_2": None,
             "counts": {},
             "total_wall_time_sec": None,
+            "python_tracemalloc_current_bytes": None,
+            "python_tracemalloc_peak_bytes": None,
             "case_dir": str(case_dir),
             "rendered_map_png": None,
             "virtual_polygon_path": str(case_dir / "virtual_intersection_polygon.gpkg"),
@@ -374,6 +629,15 @@ def _collect_polygon_features(rows: list[dict[str, Any]], polygon_feature_cache:
         )
         features.append({"properties": properties, "geometry": polygon_feature["geometry"]})
     return features
+
+
+SHARED_LAYER_PROPERTY_FIELDS: dict[str, tuple[str, ...]] = {
+    "nodes": ("id", "mainnodeid", "has_evd", "is_anchor", "kind_2", "grade_2"),
+    "roads": ("id", "snodeid", "enodeid", "direction"),
+    "drivezone": ("name", "id"),
+    "rcsdroad": ("id", "snodeid", "enodeid", "direction"),
+    "rcsdnode": ("id", "mainnodeid"),
+}
 
 
 def run_t02_virtual_intersection_full_input_poc(
@@ -424,6 +688,9 @@ def run_t02_virtual_intersection_full_input_poc(
     polygons_path = out_root_path / "virtual_intersection_polygons.gpkg"
     log_path = out_root_path / "t02_virtual_intersection_full_input_poc.log"
     progress_path = out_root_path / "t02_virtual_intersection_full_input_poc_progress.json"
+    case_events_path = out_root_path / "case_events.jsonl"
+    exception_summary_path = out_root_path / "exception_summary.json"
+    crash_report_path = out_root_path / "crash_report.json"
 
     counts: dict[str, Any] = {
         "selected_case_count": 0,
@@ -433,6 +700,54 @@ def run_t02_virtual_intersection_full_input_poc(
     }
     logger = build_logger(log_path, f"t02_virtual_intersection_full_input_poc_{resolved_run_id}")
     success = False
+    preflight: dict[str, Any] = {}
+    normalized_mainnodeid = normalize_id(mainnodeid)
+    mode = "specified_mainnodeid" if normalized_mainnodeid is not None else "auto_discovery"
+    discovered_case_ids: list[str] = []
+    selected_case_ids: list[str] = []
+    skipped_case_ids: list[str] = []
+    rows: list[dict[str, Any]] = []
+    polygon_feature_cache: dict[str, dict[str, Any]] = {}
+    shared_memory_summary: dict[str, Any] = {
+        "enabled": False,
+        "node_group_lookup": False,
+        "shared_local_layer_query": False,
+        "layers": {},
+    }
+
+    def _record_case_result(row: dict[str, Any]) -> None:
+        case_id = str(row["case_id"])
+        polygon_feature = row.pop("polygon_feature", None)
+        if row.get("success") and polygon_feature is not None:
+            polygon_feature_cache[case_id] = polygon_feature
+        rows.append(row)
+        counts["completed_case_count"] = len(rows)
+        counts["success_case_count"] = sum(1 for item in rows if item.get("success"))
+        counts["failed_case_count"] = counts["completed_case_count"] - counts["success_case_count"]
+        _append_jsonl(
+            case_events_path,
+            {
+                "event": "case_completed",
+                "at": _now_text(),
+                "case_id": case_id,
+                "success": bool(row.get("success")),
+                "status": row.get("status"),
+                "detail": row.get("detail"),
+                "total_wall_time_sec": row.get("total_wall_time_sec"),
+                "python_tracemalloc_peak_bytes": row.get("python_tracemalloc_peak_bytes"),
+                "counts": counts,
+                **_process_memory_stats(),
+            },
+        )
+        _write_exception_summary(exception_summary_path, rows)
+        _write_progress(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="case_execution",
+            counts=counts,
+            message=f"Completed case {case_id}.",
+        )
 
     try:
         _write_progress(
@@ -463,9 +778,29 @@ def run_t02_virtual_intersection_full_input_poc(
         write_json(preflight_path, preflight)
         announce(logger, f"[T02-FULL-POC] preflight written path={preflight_path}")
 
-        normalized_mainnodeid = normalize_id(mainnodeid)
-        mode = "specified_mainnodeid" if normalized_mainnodeid is not None else "auto_discovery"
-        discovered_case_ids: list[str] = []
+        _write_progress(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="shared_memory_preload",
+            counts=counts,
+            message="Preloading shared nodes index for full-input execution.",
+        )
+        preload_started_at = time.perf_counter()
+        shared_nodes_handle = _build_shared_layer_handle(
+            label="nodes",
+            path=nodes_path,
+            layer_name=nodes_layer,
+            crs_override=nodes_crs,
+            allow_null_geometry=False,
+            allowed_fields=SHARED_LAYER_PROPERTY_FIELDS["nodes"],
+        )
+        shared_memory_summary["enabled"] = True
+        shared_memory_summary["node_group_lookup"] = True
+        shared_memory_summary["layers"]["nodes"] = {
+            "feature_count": len(shared_nodes_handle.features),
+        }
+
         if normalized_mainnodeid is not None:
             selected_case_ids = [normalized_mainnodeid]
         else:
@@ -475,19 +810,45 @@ def run_t02_virtual_intersection_full_input_poc(
                 status="running",
                 current_stage="candidate_discovery",
                 counts=counts,
-                message="Discovering candidate mainnodeids from full nodes input.",
+                message="Discovering candidate mainnodeids from shared nodes input.",
             )
-            discovered_case_ids = _discover_candidate_mainnodeids(
-                nodes_path=nodes_path,
-                nodes_layer=nodes_layer,
-                nodes_crs=nodes_crs,
-            )
+            discovered_case_ids = _discover_candidate_mainnodeids_from_shared_nodes(shared_nodes_handle)
             selected_case_ids = discovered_case_ids[:max_cases] if max_cases is not None else discovered_case_ids
 
         skipped_case_ids = discovered_case_ids[len(selected_case_ids) :] if discovered_case_ids else []
         counts["discovered_case_count"] = len(discovered_case_ids)
         counts["selected_case_count"] = len(selected_case_ids)
         counts["skipped_case_count"] = len(skipped_case_ids)
+
+        target_group_loader = lambda case_id: _load_target_group_from_shared_nodes(shared_nodes_handle, case_id)
+        shared_layer_loader = None
+        if len(selected_case_ids) > 1:
+            shared_layer_handles: dict[str, _SharedLayerHandle] = {
+                str(prefer_vector_input_path(Path(nodes_path)).resolve()): shared_nodes_handle,
+            }
+            for label, path, layer_name, crs_override in (
+                ("roads", roads_path, roads_layer, roads_crs),
+                ("drivezone", drivezone_path, drivezone_layer, drivezone_crs),
+                ("rcsdroad", rcsdroad_path, rcsdroad_layer, rcsdroad_crs),
+                ("rcsdnode", rcsdnode_path, rcsdnode_layer, rcsdnode_crs),
+            ):
+                shared_handle = _build_shared_layer_handle(
+                    label=label,
+                    path=path,
+                    layer_name=layer_name,
+                    crs_override=crs_override,
+                    allow_null_geometry=False,
+                    allowed_fields=SHARED_LAYER_PROPERTY_FIELDS[label],
+                )
+                shared_layer_handles[str(prefer_vector_input_path(Path(path)).resolve())] = shared_handle
+                shared_memory_summary["layers"][label] = {
+                    "feature_count": len(shared_handle.features),
+                }
+            shared_layer_loader = _build_shared_layer_loader(shared_layer_handles)
+            shared_memory_summary["shared_local_layer_query"] = True
+
+        shared_memory_summary["preload_wall_time_sec"] = round(time.perf_counter() - preload_started_at, 6)
+        shared_memory_summary.update(_process_memory_stats())
 
         announce(
             logger,
@@ -527,34 +888,22 @@ def run_t02_virtual_intersection_full_input_poc(
             "resolution_m": resolution_m,
             "debug": debug,
             "review_mode": review_mode,
+            "trace_memory": False,
+            "layer_loader": shared_layer_loader,
+            "target_group_loader": target_group_loader,
         }
 
-        rows: list[dict[str, Any]] = []
-        polygon_feature_cache: dict[str, dict[str, Any]] = {}
         if workers == 1 or len(selected_case_ids) <= 1:
             for case_id in selected_case_ids:
-                row = _run_case_job(
+                _record_case_result(
+                    _run_case_job(
                     _case_job_payload(
                         mainnodeid=case_id,
                         cases_root=cases_root,
                         rendered_maps_root=rendered_maps_root,
                         shared_args=shared_job_args,
                     )
-                )
-                polygon_feature = row.pop("polygon_feature", None)
-                if row.get("success") and polygon_feature is not None:
-                    polygon_feature_cache[case_id] = polygon_feature
-                rows.append(row)
-                counts["completed_case_count"] = len(rows)
-                counts["success_case_count"] = sum(1 for item in rows if item.get("success"))
-                counts["failed_case_count"] = counts["completed_case_count"] - counts["success_case_count"]
-                _write_progress(
-                    out_path=progress_path,
-                    run_id=resolved_run_id,
-                    status="running",
-                    current_stage="case_execution",
-                    counts=counts,
-                    message=f"Completed case {case_id}.",
+                    )
                 )
         else:
             jobs = [
@@ -569,23 +918,7 @@ def run_t02_virtual_intersection_full_input_poc(
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="t02_virtual_intersection") as executor:
                 future_to_case_id = {executor.submit(_run_case_job, job): str(job["mainnodeid"]) for job in jobs}
                 for future in as_completed(future_to_case_id):
-                    row = future.result()
-                    case_id = str(row["case_id"])
-                    polygon_feature = row.pop("polygon_feature", None)
-                    if row.get("success") and polygon_feature is not None:
-                        polygon_feature_cache[case_id] = polygon_feature
-                    rows.append(row)
-                    counts["completed_case_count"] = len(rows)
-                    counts["success_case_count"] = sum(1 for item in rows if item.get("success"))
-                    counts["failed_case_count"] = counts["completed_case_count"] - counts["success_case_count"]
-                    _write_progress(
-                        out_path=progress_path,
-                        run_id=resolved_run_id,
-                        status="running",
-                        current_stage="case_execution",
-                        counts=counts,
-                        message=f"Completed case {future_to_case_id[future]}.",
-                    )
+                    _record_case_result(future.result())
 
         rows = sorted(rows, key=lambda item: sort_patch_key(str(item["case_id"])))
         polygon_features = _collect_polygon_features(rows, polygon_feature_cache)
@@ -604,6 +937,7 @@ def run_t02_virtual_intersection_full_input_poc(
                 "virtual_intersection_polygons": str(polygons_path),
             },
             "preflight": preflight,
+            "shared_memory": shared_memory_summary,
             "selected_case_ids": selected_case_ids,
             "discovered_case_ids": discovered_case_ids,
             "skipped_case_ids": skipped_case_ids,
@@ -615,6 +949,11 @@ def run_t02_virtual_intersection_full_input_poc(
         write_json(summary_path, summary)
 
         perf_values = [item["total_wall_time_sec"] for item in rows if isinstance(item.get("total_wall_time_sec"), (int, float))]
+        tracemalloc_peaks = [
+            item["python_tracemalloc_peak_bytes"]
+            for item in rows
+            if isinstance(item.get("python_tracemalloc_peak_bytes"), int)
+        ]
         perf_summary = {
             "run_id": resolved_run_id,
             "run_root": str(out_root_path),
@@ -623,16 +962,21 @@ def run_t02_virtual_intersection_full_input_poc(
             "average_total_wall_time_sec": round(sum(perf_values) / len(perf_values), 6) if perf_values else None,
             "min_total_wall_time_sec": round(min(perf_values), 6) if perf_values else None,
             "max_total_wall_time_sec": round(max(perf_values), 6) if perf_values else None,
+            "max_case_python_tracemalloc_peak_bytes": max(tracemalloc_peaks) if tracemalloc_peaks else None,
             "total_wall_time_sec": round(time.perf_counter() - started_at, 6),
+            "shared_memory": shared_memory_summary,
+            **_process_memory_stats(),
             "rows": [
                 {
                     "case_id": item["case_id"],
                     "total_wall_time_sec": item.get("total_wall_time_sec"),
+                    "python_tracemalloc_peak_bytes": item.get("python_tracemalloc_peak_bytes"),
                 }
                 for item in rows
             ],
         }
         write_json(perf_summary_path, perf_summary)
+        _write_exception_summary(exception_summary_path, rows)
 
         success = all(bool(item.get("success")) for item in rows)
         _write_progress(
@@ -653,6 +997,76 @@ def run_t02_virtual_intersection_full_input_poc(
                 f"out_root={out_root_path}"
             ),
         )
+    except Exception as exc:
+        success = False
+        crash_report = {
+            "run_id": resolved_run_id,
+            "updated_at": _now_text(),
+            "error_type": type(exc).__name__,
+            "detail": str(exc),
+            "counts": counts,
+            "selected_case_ids": selected_case_ids,
+            "completed_case_ids": [str(item.get("case_id")) for item in rows],
+            **_process_memory_stats(),
+        }
+        write_json(crash_report_path, crash_report)
+        _write_exception_summary(exception_summary_path, rows, crashed=crash_report)
+        write_json(
+            summary_path,
+            {
+                "run_id": resolved_run_id,
+                "mode": mode,
+                "review_mode": review_mode,
+                "workers": workers,
+                "max_cases": max_cases,
+                "run_root": str(out_root_path),
+                "structure": {
+                    "cases_dir": str(cases_root),
+                    "rendered_maps_dir": str(rendered_maps_root),
+                    "virtual_intersection_polygons": str(polygons_path),
+                },
+                "preflight": preflight,
+                "shared_memory": shared_memory_summary,
+                "selected_case_ids": selected_case_ids,
+                "discovered_case_ids": discovered_case_ids,
+                "skipped_case_ids": skipped_case_ids,
+                "case_count": len(rows),
+                "success_count": sum(1 for item in rows if item.get("success")),
+                "failed_count": sum(1 for item in rows if not item.get("success")),
+                "rows": sorted(rows, key=lambda item: sort_patch_key(str(item["case_id"]))),
+                "crashed": crash_report,
+            },
+        )
+        write_json(
+            perf_summary_path,
+            {
+                "run_id": resolved_run_id,
+                "run_root": str(out_root_path),
+                "case_count": len(rows),
+                "workers": workers,
+                "total_wall_time_sec": round(time.perf_counter() - started_at, 6),
+                "shared_memory": shared_memory_summary,
+                "crashed": crash_report,
+                **_process_memory_stats(),
+                "rows": [
+                    {
+                        "case_id": item["case_id"],
+                        "total_wall_time_sec": item.get("total_wall_time_sec"),
+                        "python_tracemalloc_peak_bytes": item.get("python_tracemalloc_peak_bytes"),
+                    }
+                    for item in sorted(rows, key=lambda item: sort_patch_key(str(item["case_id"])))
+                ],
+            },
+        )
+        _write_progress(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="failed",
+            current_stage="crashed",
+            counts=counts,
+            message=f"{type(exc).__name__}: {exc}",
+        )
+        announce(logger, f"[T02-FULL-POC] crashed type={type(exc).__name__} detail={exc}")
     finally:
         close_logger(logger)
 
@@ -666,6 +1080,9 @@ def run_t02_virtual_intersection_full_input_poc(
         log_path=log_path,
         progress_path=progress_path,
         rendered_maps_root=rendered_maps_root,
+        case_events_path=case_events_path,
+        exception_summary_path=exception_summary_path,
+        crash_report_path=crash_report_path,
     )
 
 

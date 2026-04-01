@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import fiona
 from shapely.geometry import LineString, Point, box, shape
@@ -9,6 +10,7 @@ from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 import rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_full_input_poc as full_input_module
+import rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc as single_case_module
 from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_full_input_poc import (
     run_t02_virtual_intersection_full_input_poc,
 )
@@ -207,7 +209,7 @@ def test_full_input_poc_explicit_mainnodeid_writes_unified_outputs(tmp_path: Pat
     assert Path(feature["properties"]["source_case_dir"]).name == "100"
 
 
-def test_full_input_poc_reuses_case_outputs_for_summary_output(tmp_path: Path, monkeypatch) -> None:
+def test_full_input_poc_reuses_case_outputs_for_summary_output(tmp_path: Path) -> None:
     paths = _write_full_input_fixture(tmp_path, include_second_case=False)
     polygon_read_count = 0
     id_read_count = 0
@@ -230,16 +232,15 @@ def test_full_input_poc_reuses_case_outputs_for_summary_output(tmp_path: Path, m
             raise AssertionError(f"unexpected case-level JSON read: {self}")
         return original_path_read_text(self, *args, **kwargs)
 
-    monkeypatch.setattr(full_input_module, "_read_polygon_feature", _counting_read_polygon_feature)
-    monkeypatch.setattr(full_input_module, "_read_ids", _counting_read_ids)
-    monkeypatch.setattr(Path, "read_text", _guarded_read_text)
-
-    artifacts = run_t02_virtual_intersection_full_input_poc(
-        mainnodeid="100",
-        out_root=tmp_path / "out",
-        run_id="read_once",
-        **paths,
-    )
+    with patch.object(full_input_module, "_read_polygon_feature", _counting_read_polygon_feature), patch.object(
+        full_input_module, "_read_ids", _counting_read_ids
+    ), patch.object(Path, "read_text", _guarded_read_text):
+        artifacts = run_t02_virtual_intersection_full_input_poc(
+            mainnodeid="100",
+            out_root=tmp_path / "out",
+            run_id="read_once",
+            **paths,
+        )
 
     assert artifacts.success is True
     assert polygon_read_count == 0
@@ -267,6 +268,83 @@ def test_full_input_poc_auto_discovers_candidates_and_applies_max_cases(tmp_path
     assert summary["case_count"] == 1
     assert (artifacts.out_root / "cases" / "100" / "virtual_intersection_polygon.gpkg").is_file()
     assert not (artifacts.out_root / "cases" / "200").exists()
+
+
+def test_full_input_poc_preloads_shared_layers_once_for_multi_case_runs(tmp_path: Path) -> None:
+    paths = _write_full_input_fixture(tmp_path, include_second_case=True)
+    load_count = 0
+    original_full_input_load = full_input_module._load_layer_filtered
+    original_single_case_load = single_case_module._load_layer_filtered
+
+    def _counting_load(*args, **kwargs):
+        nonlocal load_count
+        load_count += 1
+        return original_full_input_load(*args, **kwargs)
+
+    with patch.object(full_input_module, "_load_layer_filtered", _counting_load), patch.object(
+        single_case_module, "_load_layer_filtered", _counting_load
+    ):
+        artifacts = run_t02_virtual_intersection_full_input_poc(
+            out_root=tmp_path / "out",
+            run_id="shared_preload",
+            workers=2,
+            **paths,
+        )
+
+    assert artifacts.success is True
+    assert load_count == 5
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["shared_memory"]["enabled"] is True
+    assert summary["shared_memory"]["shared_local_layer_query"] is True
+
+
+def test_full_input_poc_writes_exception_summary_and_case_events(tmp_path: Path) -> None:
+    paths = _write_full_input_fixture(tmp_path, include_second_case=True)
+    original_run = full_input_module.run_t02_virtual_intersection_poc
+
+    def _patched_run(**kwargs):
+        if str(kwargs["mainnodeid"]) == "200":
+            raise RuntimeError("boom case 200")
+        return original_run(**kwargs)
+
+    with patch.object(full_input_module, "run_t02_virtual_intersection_poc", _patched_run):
+        artifacts = run_t02_virtual_intersection_full_input_poc(
+            out_root=tmp_path / "out",
+            run_id="worker_exception",
+            workers=2,
+            **paths,
+        )
+
+    assert artifacts.success is False
+    exception_summary = json.loads(artifacts.exception_summary_path.read_text(encoding="utf-8"))
+    assert exception_summary["worker_exception_count"] == 1
+    assert exception_summary["status_counts"]["worker_exception"] == 1
+    assert any(item["case_id"] == "200" for item in exception_summary["failed_cases"])
+    case_events = artifacts.case_events_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(case_events) == 2
+
+
+def test_full_input_poc_writes_crash_report_on_top_level_failure(tmp_path: Path) -> None:
+    paths = _write_full_input_fixture(tmp_path, include_second_case=False)
+    original_write_vector = full_input_module.write_vector
+
+    def _patched_write_vector(path, *args, **kwargs):
+        if Path(path).name == "virtual_intersection_polygons.gpkg":
+            raise RuntimeError("boom aggregate write")
+        return original_write_vector(path, *args, **kwargs)
+
+    with patch.object(full_input_module, "write_vector", _patched_write_vector):
+        artifacts = run_t02_virtual_intersection_full_input_poc(
+            mainnodeid="100",
+            out_root=tmp_path / "out",
+            run_id="crash_report",
+            **paths,
+        )
+
+    assert artifacts.success is False
+    crash_report = json.loads(artifacts.crash_report_path.read_text(encoding="utf-8"))
+    assert crash_report["error_type"] == "RuntimeError"
+    assert "boom aggregate write" in crash_report["detail"]
 
 
 def test_full_input_poc_parallel_results_are_deterministic(tmp_path: Path) -> None:

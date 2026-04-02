@@ -33,6 +33,7 @@
 ## 4. 官方入口与 debug 约束
 - 官方推荐入口：
   - `python -m rcsd_topo_poc t01-run-skill-v1`
+  - `python -m rcsd_topo_poc t01-continue-oneway-segment`
 - 对比入口：
   - `python -m rcsd_topo_poc t01-compare-freeze`
 - 分步入口：
@@ -50,7 +51,7 @@
 - `debug=false`：
   - 用于减少无意义 I/O 和最终目录体积
 - 默认值约束：
-  - `t01-run-skill-v1` 与 `t01-step6-segment-aggregation-poc` 默认 `debug=false`
+  - `t01-run-skill-v1`、`t01-continue-oneway-segment` 与 `t01-step6-segment-aggregation-poc` 默认 `debug=false`
   - `t01-step1-pair-poc / t01-step2-segment-poc / t01-s2-refresh-node-road / t01-step4-residual-graph / t01-step5-staged-residual-graph` 默认 `debug=true`
 - `debug` 只影响中间输出，不得影响最终业务结果
 - `trace_validation_pair_ids` 与 `stop_after_step2_validation_pair_index` 仅用于诊断，不得进入业务判定语义

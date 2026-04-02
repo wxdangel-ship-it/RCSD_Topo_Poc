@@ -138,6 +138,12 @@ def _cmd_t01_run_skill_v1(args: argparse.Namespace) -> int:
     return run_t01_skill_v1_cli(args)
 
 
+def _cmd_t01_continue_oneway_segment(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t01_data_preprocess.skill_v1 import run_t01_skill_v1_continue_oneway_cli
+
+    return run_t01_skill_v1_continue_oneway_cli(args)
+
+
 def _cmd_t01_step6_segment_aggregation(args: argparse.Namespace) -> int:
     from rcsd_topo_poc.modules.t01_data_preprocess.step6_segment_aggregation import (
         run_step6_segment_aggregation_cli,
@@ -532,6 +538,36 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     _add_debug_flag(p_skill, default=False)
     p_skill.set_defaults(func=_cmd_t01_run_skill_v1)
+
+    p_continue_oneway = sub.add_parser(
+        "t01-continue-oneway-segment",
+        help="Continue from an existing Step5 refreshed output directory and run only oneway completion plus Step6.",
+    )
+    p_continue_oneway.add_argument(
+        "--continue-from-dir",
+        required=True,
+        help=(
+            "Path to a previous T01 Skill v1 debug out_root containing debug/step5, a direct debug dir with step2/step4/step5, "
+            "or a direct Step5 refreshed output dir that already has Step5 markers plus nodes.gpkg/roads.gpkg."
+        ),
+    )
+    p_continue_oneway.add_argument(
+        "--compare-freeze-dir",
+        help=(
+            "Optional frozen baseline package directory for PASS/FAIL compare. "
+            "Only valid when --continue-from-dir points to a previous full Skill v1 out_root."
+        ),
+    )
+    p_continue_oneway.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t01_skill_v1_YYYYMMDD_HHMMSS.",
+    )
+    p_continue_oneway.add_argument(
+        "--out-root",
+        help="Output directory for continuation results. Must not overlap the continuation source directory.",
+    )
+    _add_debug_flag(p_continue_oneway, default=False)
+    p_continue_oneway.set_defaults(func=_cmd_t01_continue_oneway_segment)
 
     p_step6 = sub.add_parser(
         "t01-step6-segment-aggregation-poc",

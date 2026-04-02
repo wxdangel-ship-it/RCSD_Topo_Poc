@@ -58,6 +58,21 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
   --out-root <out_root>
 ```
 
+### oneway continuation
+```bash
+python -m rcsd_topo_poc t01-continue-oneway-segment \
+  --continue-from-dir <previous_skill_out_root_or_step5_dir> \
+  --out-root <out_root>
+```
+
+说明：
+- `--continue-from-dir` 支持三种输入：
+  - 上一轮 `t01-run-skill-v1` 的完整输出目录，且其中包含 `debug/step5/`
+  - 直接的 `debug/` 目录，且其中包含 `step2/step4/step5/`
+  - 直接的 `Step5` refreshed 输出目录，且其中包含 Step5 marker 与 `nodes.gpkg/roads.gpkg`
+- continuation 模式只复用上一阶段结果并继续执行 `oneway + Step6`，不重跑 `Step1-Step5`。
+- `--out-root` 必须指向新的结果目录，不能与 `--continue-from-dir` 或其解析出的 `Step5` 目录重叠。
+
 ### 分步 / 调试入口
 - `python -m rcsd_topo_poc t01-step1-pair-poc`
 - `python -m rcsd_topo_poc t01-step2-segment-poc`

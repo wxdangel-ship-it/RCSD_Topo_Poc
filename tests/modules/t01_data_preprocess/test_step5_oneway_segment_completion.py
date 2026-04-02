@@ -10,12 +10,10 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     load_vector_feature_collection,
     write_geojson,
 )
-from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
-    RIGHT_TURN_FORMWAY_BIT,
-    _build_mainnode_groups,
-    _load_nodes_and_roads,
-)
+from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import RIGHT_TURN_FORMWAY_BIT
 from rcsd_topo_poc.modules.t01_data_preprocess.step5_oneway_segment_completion import (
+    build_step5_input_artifacts_from_refreshed_paths,
+    load_step5_input_artifacts_from_dir,
     run_step5_oneway_segment_completion,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step6_segment_aggregation import (
@@ -75,27 +73,11 @@ def _road_feature(
 
 
 def _build_step5_artifacts(node_path: Path, road_path: Path) -> SimpleNamespace:
-    (nodes, node_by_id, groups), (roads, _) = _load_nodes_and_roads(node_path=node_path, road_path=road_path)
-    mainnode_groups, _ = _build_mainnode_groups(node_by_id, groups)
-    physical_to_semantic = {
-        member_node_id: mainnode_id
-        for mainnode_id, group in mainnode_groups.items()
-        for member_node_id in group.member_node_ids
-    }
-    group_to_allowed_road_ids: dict[str, set[str]] = {}
-    for road in roads:
-        for node_id in (road.snodeid, road.enodeid):
-            group_id = physical_to_semantic[node_id]
-            group_to_allowed_road_ids.setdefault(group_id, set()).add(road.road_id)
     return SimpleNamespace(
-        refreshed_nodes_path=node_path,
-        refreshed_roads_path=road_path,
-        step6_nodes=tuple(nodes),
-        step6_roads=tuple(roads),
-        step6_node_properties_map={node.node_id: dict(node.properties) for node in nodes},
-        step6_road_properties_map={road.road_id: dict(road.properties) for road in roads},
-        step6_mainnode_groups=mainnode_groups,
-        step6_group_to_allowed_road_ids=group_to_allowed_road_ids,
+        **build_step5_input_artifacts_from_refreshed_paths(
+            node_path=node_path,
+            road_path=road_path,
+        ).__dict__
     )
 
 
@@ -107,6 +89,41 @@ def _road_props_by_id(path: Path) -> dict[str, dict]:
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as fp:
         return list(csv.DictReader(fp))
+
+
+def _write_step5_markers(root: Path) -> None:
+    (root / "step5_summary.json").write_text("{}", encoding="utf-8")
+
+
+def test_load_step5_input_artifacts_from_dir_supports_direct_and_alias_outputs(tmp_path: Path) -> None:
+    direct_root = tmp_path / "direct_step5"
+    alias_root = tmp_path / "alias_step5"
+    direct_root.mkdir()
+    alias_root.mkdir()
+
+    node_features = [
+        _node_feature(1, 0.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+        _node_feature(2, 1.0, 0.0, kind_2=4, grade_2=1, closed_con=3),
+    ]
+    road_features = [
+        _road_feature("r1", 1, 2, [(0.0, 0.0), (1.0, 0.0)]),
+    ]
+    write_geojson(direct_root / "nodes.geojson", node_features)
+    write_geojson(direct_root / "roads.geojson", road_features)
+    write_geojson(alias_root / "nodes_step5_refreshed.geojson", node_features)
+    write_geojson(alias_root / "roads_step5_refreshed.geojson", road_features)
+    _write_step5_markers(direct_root)
+    _write_step5_markers(alias_root)
+
+    direct_artifacts = load_step5_input_artifacts_from_dir(direct_root)
+    alias_artifacts = load_step5_input_artifacts_from_dir(alias_root)
+
+    assert direct_artifacts.refreshed_nodes_path.name == "nodes.geojson"
+    assert direct_artifacts.refreshed_roads_path.name == "roads.geojson"
+    assert alias_artifacts.refreshed_nodes_path.name == "nodes_step5_refreshed.geojson"
+    assert alias_artifacts.refreshed_roads_path.name == "roads_step5_refreshed.geojson"
+    assert tuple(road.road_id for road in direct_artifacts.step6_roads) == ("r1",)
+    assert tuple(road.road_id for road in alias_artifacts.step6_roads) == ("r1",)
 
 
 def test_oneway_completion_builds_three_phase_segments_and_excludes_formway_128_from_residual(tmp_path: Path) -> None:

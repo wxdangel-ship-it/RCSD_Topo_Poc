@@ -26,10 +26,12 @@
 ## 2.1 官方 runner / 诊断契约
 - 官方 end-to-end 入口：
   - `python -m rcsd_topo_poc t01-run-skill-v1`
+- 官方 continuation 入口：
+  - `python -m rcsd_topo_poc t01-continue-oneway-segment`
 - 官方 freeze compare 入口：
   - `python -m rcsd_topo_poc t01-compare-freeze`
 - debug 默认值：
-  - `t01-run-skill-v1` 与 `t01-step6-segment-aggregation-poc` 默认 `debug=false`
+  - `t01-run-skill-v1`、`t01-continue-oneway-segment` 与 `t01-step6-segment-aggregation-poc` 默认 `debug=false`
   - `t01-step1-pair-poc / t01-step2-segment-poc / t01-s2-refresh-node-road / t01-step4-residual-graph / t01-step5-staged-residual-graph` 默认 `debug=true`
 - `debug` 只允许影响：
   - 中间 stage 目录
@@ -54,6 +56,16 @@
 - `stop_after_step2_validation_pair_index`：
   - 仅用于 Skill v1 全链路诊断截停
   - 不改变已执行阶段的业务语义
+
+- `t01-continue-oneway-segment`：
+  - `--continue-from-dir` 允许三类输入：
+    - 之前完整 `t01-run-skill-v1` out_root，且包含 `debug/step5/`
+    - 直接的 `debug/` 目录，且同时含 `step2/step4/step5/`
+    - 直接的 `Step5` refreshed 输出目录，且包含 Step5 marker 与 `nodes.gpkg/roads.gpkg`
+  - continuation 模式只执行 `oneway + Step6`
+  - 不回退重跑 `Step1-Step5`
+  - `--out-root` 必须是新的结果目录，不得与 source dir 或解析出的 `Step5` stage dir 重叠
+  - `--compare-freeze-dir` 仅在输入是完整 `Skill v1` out_root 或完整 `debug/` 目录且同时含 `step2/step4/step5/` 时允许使用
 
 ## 3. Working Layers
 

@@ -15,6 +15,15 @@ from typing import Any, Callable, Optional, TypeVar, Union
 from shapely.geometry import shape
 
 from rcsd_topo_poc.modules.t01_data_preprocess.freeze_compare import (
+    CURRENT_MANIFEST_NAME,
+    CURRENT_NODES_HASH_NAME,
+    CURRENT_ROADS_HASH_NAME,
+    CURRENT_SEGMENT_BODY_NAME,
+    CURRENT_SUMMARY_NAME,
+    CURRENT_TRUNK_NAME,
+    CURRENT_VALIDATED_NAME,
+    _hash_payload,
+    _read_csv_rows,
     compare_skill_v1_bundle,
     write_skill_v1_bundle,
 )
@@ -27,7 +36,10 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import refres
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _find_repo_root
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
 from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import run_step4_residual_graph
-from rcsd_topo_poc.modules.t01_data_preprocess.step5_oneway_segment_completion import run_step5_oneway_segment_completion
+from rcsd_topo_poc.modules.t01_data_preprocess.step5_oneway_segment_completion import (
+    load_step5_input_artifacts_from_dir,
+    run_step5_oneway_segment_completion,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.step5_staged_residual_graph import run_step5_staged_residual_graph
 from rcsd_topo_poc.modules.t01_data_preprocess.step6_segment_aggregation import (
     run_step6_segment_aggregation_from_records,
@@ -55,6 +67,18 @@ class SkillV1Artifacts:
     summary_path: Path
     summary_md_path: Path
     summary: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _OnewayContinuationContext:
+    source_dir: Path
+    stage_root: Path
+    refreshed_nodes_path: Path
+    refreshed_roads_path: Path
+    step5_artifacts: Any
+    step2_root: Optional[Path]
+    step4_root: Optional[Path]
+    step5_root: Optional[Path]
 
 
 def _now_text() -> str:
@@ -235,6 +259,85 @@ def _resolve_out_root(
     if repo_root is None:
         raise ValueError("Cannot infer default out_root because repo root was not found; please pass --out-root.")
     return repo_root / "outputs" / "_work" / "t01_skill_eval" / resolved_run_id, resolved_run_id
+
+
+def _resolve_oneway_continuation_bundle_roots(
+    *,
+    source_dir: Path,
+    stage_root: Path,
+) -> tuple[Optional[Path], Optional[Path], Optional[Path]]:
+    candidate_context_roots: list[Path] = []
+    for candidate_root in (source_dir / "debug", source_dir, stage_root.parent):
+        if candidate_root in candidate_context_roots:
+            continue
+        candidate_context_roots.append(candidate_root)
+
+    for context_root in candidate_context_roots:
+        step2_root = context_root / "step2"
+        step4_root = context_root / "step4"
+        step5_root = context_root / "step5"
+        if step2_root.is_dir() and step4_root.is_dir() and step5_root.is_dir():
+            return step2_root, step4_root, step5_root
+    return None, None, None
+
+
+def _resolve_oneway_continuation_context(continue_from_dir: Union[str, Path]) -> _OnewayContinuationContext:
+    resolved_source_dir = Path(continue_from_dir)
+    candidate_stage_roots: list[Path] = []
+    for stage_root in (
+        resolved_source_dir / "debug" / "step5",
+        resolved_source_dir / "step5",
+        resolved_source_dir,
+    ):
+        if stage_root in candidate_stage_roots:
+            continue
+        candidate_stage_roots.append(stage_root)
+
+    last_error: Optional[Exception] = None
+    for stage_root in candidate_stage_roots:
+        try:
+            step5_artifacts = load_step5_input_artifacts_from_dir(stage_root)
+            step2_root, step4_root, step5_root = _resolve_oneway_continuation_bundle_roots(
+                source_dir=resolved_source_dir,
+                stage_root=stage_root,
+            )
+            return _OnewayContinuationContext(
+                source_dir=resolved_source_dir,
+                stage_root=stage_root,
+                refreshed_nodes_path=step5_artifacts.refreshed_nodes_path,
+                refreshed_roads_path=step5_artifacts.refreshed_roads_path,
+                step5_artifacts=step5_artifacts,
+                step2_root=step2_root,
+                step4_root=step4_root,
+                step5_root=step5_root,
+            )
+        except ValueError as exc:
+            last_error = exc
+    detail = f": {last_error}" if last_error is not None else "."
+    raise ValueError(
+        "Cannot continue oneway segment build from the provided directory. Expected either "
+        "a previous Skill v1 debug out_root containing debug/step5, "
+        "a direct debug directory containing step2/step4/step5, "
+        "or a direct Step5 refreshed output directory containing Step5 markers plus nodes/roads outputs"
+        f"{detail}"
+    )
+
+
+def _paths_overlap(left: Union[str, Path], right: Union[str, Path]) -> bool:
+    left_path = Path(left).resolve()
+    right_path = Path(right).resolve()
+    if left_path == right_path:
+        return True
+    try:
+        left_path.relative_to(right_path)
+        return True
+    except ValueError:
+        pass
+    try:
+        right_path.relative_to(left_path)
+        return True
+    except ValueError:
+        return False
 
 
 def _write_summary_md(*, out_path: Path, summary: dict[str, Any]) -> None:
@@ -617,8 +720,9 @@ def _run_stage(
 
 def run_t01_skill_v1(
     *,
-    road_path: Union[str, Path],
-    node_path: Union[str, Path],
+    road_path: Optional[Union[str, Path]] = None,
+    node_path: Optional[Union[str, Path]] = None,
+    continue_from_dir: Optional[Union[str, Path]] = None,
     out_root: Optional[Union[str, Path]] = None,
     run_id: Optional[str] = None,
     per_run_subdir: bool = False,
@@ -629,7 +733,7 @@ def run_t01_skill_v1(
     strategy_config_path: Optional[Union[str, Path]] = None,
     formway_mode: str = "strict",
     left_turn_formway_bit: int = 8,
-    debug: bool = True,
+    debug: bool = False,
     compare_freeze_dir: Optional[Union[str, Path]] = None,
     trace_validation_pair_ids: Optional[list[str]] = None,
     stop_after_step2_validation_pair_index: Optional[int] = None,
@@ -639,6 +743,12 @@ def run_t01_skill_v1(
         and stop_after_step2_validation_pair_index < 1
     ):
         raise ValueError("stop_after_step2_validation_pair_index must be >= 1.")
+    if continue_from_dir is not None and stop_after_step2_validation_pair_index is not None:
+        raise ValueError("continue_from_dir does not support stop_after_step2_validation_pair_index.")
+    if continue_from_dir is not None and trace_validation_pair_ids:
+        raise ValueError("continue_from_dir does not support trace_validation_pair_ids.")
+    if continue_from_dir is None and (road_path is None or node_path is None):
+        raise ValueError("run_t01_skill_v1 requires road_path/node_path unless continue_from_dir is provided.")
     resolved_out_root, resolved_run_id = _resolve_out_root(
         out_root=out_root,
         run_id=run_id,
@@ -650,7 +760,7 @@ def run_t01_skill_v1(
     perf_md_path = resolved_out_root / "t01_skill_v1_perf.md"
     perf_markers_path = resolved_out_root / "t01_skill_v1_perf_markers.jsonl"
 
-    if strategy_config_path is None:
+    if continue_from_dir is None and strategy_config_path is None:
         repo_root = _find_repo_root(resolved_out_root)
         if repo_root is None:
             raise ValueError("Cannot infer default strategy config because repo root was not found.")
@@ -659,7 +769,7 @@ def run_t01_skill_v1(
     stage_timings: list[dict[str, Any]] = []
     completed_stage_names: list[str] = []
     total_started = time.perf_counter()
-    total_stages = 7 + (1 if compare_freeze_dir is not None else 0)
+    total_stages = (3 if continue_from_dir is not None else 7) + (1 if compare_freeze_dir is not None else 0)
     if perf_markers_path.exists():
         perf_markers_path.unlink()
 
@@ -698,6 +808,190 @@ def run_t01_skill_v1(
         stage_root = Path(temp_ctx.name)
 
     try:
+        if continue_from_dir is not None:
+            continuation_context = _run_stage(
+                name="continue_load",
+                run_id=resolved_run_id,
+                stage_index=1,
+                total_stages=total_stages,
+                stage_timings=stage_timings,
+                progress_path=progress_path,
+                perf_markers_path=perf_markers_path,
+                completed_stage_names=completed_stage_names,
+                profile_memory=debug,
+                action=lambda: _resolve_oneway_continuation_context(continue_from_dir),
+            )
+
+            oneway_root = stage_root / "oneway"
+            oneway_artifacts = _run_stage(
+                name="oneway",
+                run_id=resolved_run_id,
+                stage_index=2,
+                total_stages=total_stages,
+                stage_timings=stage_timings,
+                progress_path=progress_path,
+                perf_markers_path=perf_markers_path,
+                completed_stage_names=completed_stage_names,
+                profile_memory=debug,
+                action=lambda: run_step5_oneway_segment_completion(
+                    step5_artifacts=continuation_context.step5_artifacts,
+                    out_root=oneway_root,
+                    run_id=resolved_run_id,
+                    debug=debug,
+                ),
+            )
+
+            final_nodes_path = resolved_out_root / "nodes.gpkg"
+            final_roads_path = resolved_out_root / "roads.gpkg"
+            bundle_info = _run_stage(
+                name="step6",
+                run_id=resolved_run_id,
+                stage_index=3,
+                total_stages=total_stages,
+                stage_timings=stage_timings,
+                progress_path=progress_path,
+                perf_markers_path=perf_markers_path,
+                completed_stage_names=completed_stage_names,
+                profile_memory=debug,
+                action=lambda: _finalize_continuation_bundle(
+                    resolved_out_root=resolved_out_root,
+                    continuation_context=continuation_context,
+                    step5_artifacts=oneway_artifacts,
+                    refreshed_nodes_path=oneway_artifacts.refreshed_nodes_path,
+                    refreshed_roads_path=oneway_artifacts.refreshed_roads_path,
+                    final_nodes_path=final_nodes_path,
+                    final_roads_path=final_roads_path,
+                    run_id=resolved_run_id,
+                    debug=debug,
+                    oneway_root=oneway_root,
+                ),
+            )
+
+            distance_gate_scope_check_path = None
+            if (
+                continuation_context.step2_root is not None
+                and continuation_context.step4_root is not None
+                and continuation_context.step5_root is not None
+            ):
+                distance_gate_scope_check_path = _write_distance_gate_scope_check(
+                    out_root=resolved_out_root,
+                    step2_root=continuation_context.step2_root,
+                    step4_root=continuation_context.step4_root,
+                    step5_root=continuation_context.step5_root,
+                )
+            else:
+                copied_scope_check = _copy_if_exists(
+                    source_path=continuation_context.source_dir / "distance_gate_scope_check.json",
+                    target_path=resolved_out_root / "distance_gate_scope_check.json",
+                )
+                if copied_scope_check is not None:
+                    distance_gate_scope_check_path = copied_scope_check
+
+            freeze_compare_status: Optional[str] = None
+            if compare_freeze_dir is not None:
+                if bundle_info.get("manifest_path") is None:
+                    raise ValueError(
+                        "compare_freeze_dir in continuation mode requires a previous full Skill v1 output root "
+                        "or copied Skill v1 bundle exports in continue_from_dir."
+                    )
+                freeze_compare_status = _run_stage(
+                    name="freeze_compare",
+                    run_id=resolved_run_id,
+                    stage_index=4,
+                    total_stages=total_stages,
+                    stage_timings=stage_timings,
+                    progress_path=progress_path,
+                    perf_markers_path=perf_markers_path,
+                    completed_stage_names=completed_stage_names,
+                    profile_memory=debug,
+                    action=lambda: compare_skill_v1_bundle(
+                        current_dir=resolved_out_root,
+                        freeze_dir=compare_freeze_dir,
+                        out_dir=resolved_out_root,
+                    )["status"],
+                )
+
+            total_wall_time_sec = time.perf_counter() - total_started
+            summary = {
+                "run_id": resolved_run_id,
+                "skill_version": SKILL_VERSION,
+                "debug": debug,
+                "continued_from_dir": str(continuation_context.source_dir.resolve()),
+                "continued_from_stage_root": str(continuation_context.stage_root.resolve()),
+                "input_node_path": str(continuation_context.refreshed_nodes_path.resolve()),
+                "input_road_path": str(continuation_context.refreshed_roads_path.resolve()),
+                "bootstrap_nodes_path": None,
+                "bootstrap_roads_path": None,
+                "strategy_config_path": None,
+                "stages": stage_timings,
+                "total_wall_time_sec": total_wall_time_sec,
+                "final_nodes_path": str(final_nodes_path.resolve()),
+                "final_roads_path": str(final_roads_path.resolve()),
+                "bundle_manifest_path": bundle_info.get("manifest_path"),
+                "bundle_summary_path": bundle_info.get("summary_path"),
+                "all_stage_segment_roads_path": bundle_info.get("all_stage_segment_roads_path"),
+                "segment_path": bundle_info.get("segment_path"),
+                "inner_nodes_path": bundle_info.get("inner_nodes_path"),
+                "segment_error_path": bundle_info.get("segment_error_path"),
+                "segment_geojson_path": str(first_existing_vector_path(resolved_out_root, "segment.gpkg", "segment.geojson").resolve()) if first_existing_vector_path(resolved_out_root, "segment.gpkg", "segment.geojson") is not None else None,
+                "inner_nodes_geojson_path": str(first_existing_vector_path(resolved_out_root, "inner_nodes.gpkg", "inner_nodes.geojson").resolve()) if first_existing_vector_path(resolved_out_root, "inner_nodes.gpkg", "inner_nodes.geojson") is not None else None,
+                "segment_error_geojson_path": str(first_existing_vector_path(resolved_out_root, "segment_error.gpkg", "segment_error.geojson").resolve()) if first_existing_vector_path(resolved_out_root, "segment_error.gpkg", "segment_error.geojson") is not None else None,
+                "step6_segment_summary_path": bundle_info.get("step6_summary_path"),
+                "oneway_segment_summary_path": bundle_info.get("oneway_segment_summary_path"),
+                "unsegmented_roads_path": bundle_info.get("unsegmented_roads_path"),
+                "unsegmented_roads_csv_path": bundle_info.get("unsegmented_roads_csv_path"),
+                "unsegmented_roads_summary_path": bundle_info.get("unsegmented_roads_summary_path"),
+                "distance_gate_scope_check_path": str(distance_gate_scope_check_path.resolve()) if distance_gate_scope_check_path is not None else None,
+                "freeze_compare_status": freeze_compare_status,
+                "progress_path": str(progress_path.resolve()),
+                "perf_json_path": str(perf_json_path.resolve()),
+                "perf_md_path": str(perf_md_path.resolve()),
+                "perf_markers_path": str(perf_markers_path.resolve()),
+                "memory_management": {
+                    "debug_default_enabled": False,
+                    "stage_gc_after_run": True,
+                    "bounded_parallel_load_workers": 2,
+                    "uses_temp_stage_root_when_debug_false": True,
+                    "deep_full_in_memory_pipeline": False,
+                    "step6_reuses_step5_in_memory_records": True,
+                    "step6_reuses_step5_mainnode_group_index": True,
+                    "step5_alias_outputs_debug_only": True,
+                    "step2_internal_progress_enabled": False,
+                    "step2_retains_validation_details_in_runner": False,
+                    "continuation_reuses_previous_refreshed_outputs": True,
+                },
+            }
+            summary_path, summary_md_path = _write_skill_terminal_outputs(
+                resolved_out_root=resolved_out_root,
+                resolved_run_id=resolved_run_id,
+                debug=debug,
+                total_stages=total_stages,
+                stage_timings=stage_timings,
+                total_wall_time_sec=total_wall_time_sec,
+                progress_path=progress_path,
+                perf_json_path=perf_json_path,
+                perf_md_path=perf_md_path,
+                perf_markers_path=perf_markers_path,
+                completed_stage_names=completed_stage_names,
+                summary=summary,
+                status="completed",
+                message="Skill v1 continuation run completed.",
+                marker_event="run_completed",
+                marker_payload={"freeze_compare_status": freeze_compare_status},
+            )
+            _print_progress(
+                f"RUN DONE run_id={resolved_run_id} total_wall={total_wall_time_sec:.3f}s "
+                f"freeze_compare={freeze_compare_status or 'SKIPPED'}"
+            )
+            return SkillV1Artifacts(
+                out_root=resolved_out_root,
+                nodes_path=final_nodes_path.resolve(),
+                roads_path=final_roads_path.resolve(),
+                summary_path=summary_path,
+                summary_md_path=summary_md_path,
+                summary=summary,
+            )
+
         bootstrap_root = stage_root / "bootstrap"
         bootstrap_artifacts = _run_stage(
             name="bootstrap",
@@ -1172,6 +1466,341 @@ def _finalize_bundle(
     bundle_info["unsegmented_roads_csv_path"] = str((resolved_out_root / "unsegmented_roads.csv").resolve()) if (resolved_out_root / "unsegmented_roads.csv").exists() else None
     bundle_info["unsegmented_roads_summary_path"] = str((resolved_out_root / "unsegmented_roads_summary.json").resolve()) if (resolved_out_root / "unsegmented_roads_summary.json").exists() else None
     return bundle_info
+
+
+def _finalize_oneway_continue_outputs(
+    *,
+    resolved_out_root: Path,
+    step5_artifacts: Any,
+    refreshed_nodes_path: Path,
+    refreshed_roads_path: Path,
+    final_nodes_path: Path,
+    final_roads_path: Path,
+    run_id: str,
+    debug: bool,
+    oneway_root: Optional[Path] = None,
+) -> dict[str, Optional[str]]:
+    refreshed_nodes_doc = load_vector_feature_collection(refreshed_nodes_path)
+    write_vector(
+        final_nodes_path,
+        (
+            {
+                "properties": sanitize_public_node_properties(dict(feature.get("properties") or {})),
+                "geometry": shape(feature["geometry"]) if feature.get("geometry") is not None else None,
+            }
+            for feature in refreshed_nodes_doc.get("features", [])
+        ),
+    )
+    shutil.copy2(refreshed_roads_path, final_roads_path)
+    step6_artifacts = run_step6_segment_aggregation_from_records(
+        nodes=list(step5_artifacts.step6_nodes),
+        roads=list(step5_artifacts.step6_roads),
+        node_properties_map=step5_artifacts.step6_node_properties_map,
+        road_properties_map=step5_artifacts.step6_road_properties_map,
+        mainnode_groups=step5_artifacts.step6_mainnode_groups,
+        group_to_allowed_road_ids=step5_artifacts.step6_group_to_allowed_road_ids,
+        node_path=final_nodes_path,
+        road_path=final_roads_path,
+        out_root=resolved_out_root,
+        run_id=run_id,
+        debug=debug,
+    )
+    if oneway_root is not None:
+        for filename in (
+            "oneway_segment_summary.json",
+            "oneway_segment_build_table.csv",
+            "oneway_segment_roads.gpkg",
+            "unsegmented_roads.gpkg",
+            "unsegmented_roads.csv",
+            "unsegmented_roads_summary.json",
+        ):
+            source_path = oneway_root / filename
+            if not source_path.exists():
+                continue
+            target_path = resolved_out_root / filename
+            if source_path.resolve() != target_path.resolve():
+                shutil.copy2(source_path, target_path)
+    return {
+        "manifest_path": None,
+        "summary_path": None,
+        "all_stage_segment_roads_path": None,
+        "segment_path": str(step6_artifacts.segment_path.resolve()),
+        "inner_nodes_path": str(step6_artifacts.inner_nodes_path.resolve()),
+        "segment_error_path": str(step6_artifacts.segment_error_path.resolve()),
+        "step6_summary_path": str(step6_artifacts.segment_summary_path.resolve()),
+        "freeze_compare_nodes_source_path": str(Path(refreshed_nodes_path).resolve()),
+        "freeze_compare_roads_source_path": str(Path(refreshed_roads_path).resolve()),
+        "oneway_segment_summary_path": str((resolved_out_root / "oneway_segment_summary.json").resolve()) if (resolved_out_root / "oneway_segment_summary.json").exists() else None,
+        "unsegmented_roads_path": str((resolved_out_root / "unsegmented_roads.gpkg").resolve()) if (resolved_out_root / "unsegmented_roads.gpkg").exists() else None,
+        "unsegmented_roads_csv_path": str((resolved_out_root / "unsegmented_roads.csv").resolve()) if (resolved_out_root / "unsegmented_roads.csv").exists() else None,
+        "unsegmented_roads_summary_path": str((resolved_out_root / "unsegmented_roads_summary.json").resolve()) if (resolved_out_root / "unsegmented_roads_summary.json").exists() else None,
+    }
+
+
+def run_t01_skill_v1_continue_oneway(
+    *,
+    continue_from_dir: Union[str, Path],
+    out_root: Optional[Union[str, Path]] = None,
+    run_id: Optional[str] = None,
+    per_run_subdir: bool = False,
+    debug: bool = True,
+    compare_freeze_dir: Optional[Union[str, Path]] = None,
+) -> SkillV1Artifacts:
+    resolved_out_root, resolved_run_id = _resolve_out_root(
+        out_root=out_root,
+        run_id=run_id,
+        per_run_subdir=per_run_subdir,
+    )
+    resolved_continue_from_dir = Path(continue_from_dir)
+    continuation_context = _resolve_oneway_continuation_context(resolved_continue_from_dir)
+    can_write_bundle = (
+        continuation_context.step2_root is not None
+        and continuation_context.step4_root is not None
+        and continuation_context.step5_root is not None
+    )
+    if compare_freeze_dir is not None and not can_write_bundle:
+        raise ValueError(
+            "--compare-freeze-dir requires --continue-from-dir to point at a previous full Skill v1 out_root "
+            "or debug directory that contains step2/, step4/, and step5/."
+        )
+    if _paths_overlap(resolved_out_root, continuation_context.source_dir) or _paths_overlap(
+        resolved_out_root,
+        continuation_context.stage_root,
+    ):
+        raise ValueError(
+            "--out-root must not overlap --continue-from-dir or the resolved Step5 stage directory. "
+            "Use a new output directory for continuation results."
+        )
+
+    resolved_out_root.mkdir(parents=True, exist_ok=True)
+    progress_path = resolved_out_root / "t01_skill_v1_progress.json"
+    perf_json_path = resolved_out_root / "t01_skill_v1_perf.json"
+    perf_md_path = resolved_out_root / "t01_skill_v1_perf.md"
+    perf_markers_path = resolved_out_root / "t01_skill_v1_perf_markers.jsonl"
+
+    stage_timings: list[dict[str, Any]] = []
+    completed_stage_names: list[str] = []
+    total_started = time.perf_counter()
+    total_stages = 2 + (1 if compare_freeze_dir is not None else 0)
+    if perf_markers_path.exists():
+        perf_markers_path.unlink()
+
+    _write_progress_snapshot(
+        out_path=progress_path,
+        run_id=resolved_run_id,
+        status="initializing",
+        total_stages=total_stages,
+        completed_stage_names=completed_stage_names,
+        current_stage=None,
+        message="Skill v1 oneway continuation runner initialized.",
+    )
+    _append_jsonl(
+        perf_markers_path,
+        {
+            "event": "run_start",
+            "at": _now_text(),
+            "run_id": resolved_run_id,
+            "debug": debug,
+            "total_stages": total_stages,
+            "continuation_mode": True,
+            "continue_from_dir": str(continuation_context.source_dir.resolve()),
+        },
+    )
+    _print_progress(
+        f"RUN START run_id={resolved_run_id} debug={debug} total_stages={total_stages} "
+        f"continuation_source={continuation_context.stage_root}"
+    )
+
+    if debug:
+        stage_root = resolved_out_root / "debug"
+        if stage_root.exists():
+            if stage_root.is_dir():
+                shutil.rmtree(stage_root)
+            else:
+                stage_root.unlink()
+        stage_root.mkdir(parents=True, exist_ok=True)
+        temp_ctx = None
+    else:
+        temp_ctx = tempfile.TemporaryDirectory(prefix=f"{resolved_run_id}_")
+        stage_root = Path(temp_ctx.name)
+
+    try:
+        oneway_root = stage_root / "oneway"
+        oneway_artifacts = _run_stage(
+            name="oneway",
+            run_id=resolved_run_id,
+            stage_index=1,
+            total_stages=total_stages,
+            stage_timings=stage_timings,
+            progress_path=progress_path,
+            perf_markers_path=perf_markers_path,
+            completed_stage_names=completed_stage_names,
+            profile_memory=debug,
+            action=lambda: run_step5_oneway_segment_completion(
+                step5_artifacts=continuation_context.step5_artifacts,
+                out_root=oneway_root,
+                run_id=resolved_run_id,
+                debug=debug,
+            ),
+        )
+
+        final_nodes_path = resolved_out_root / "nodes.gpkg"
+        final_roads_path = resolved_out_root / "roads.gpkg"
+        if can_write_bundle:
+            bundle_action = lambda: _finalize_bundle(
+                resolved_out_root=resolved_out_root,
+                step2_root=continuation_context.step2_root,
+                step4_root=continuation_context.step4_root,
+                step5_root=continuation_context.step5_root,
+                step5_artifacts=oneway_artifacts,
+                refreshed_nodes_path=oneway_artifacts.refreshed_nodes_path,
+                refreshed_roads_path=oneway_artifacts.refreshed_roads_path,
+                final_nodes_path=final_nodes_path,
+                final_roads_path=final_roads_path,
+                run_id=resolved_run_id,
+                debug=debug,
+                oneway_root=oneway_root,
+                freeze_compare_nodes_path=continuation_context.refreshed_nodes_path,
+                freeze_compare_roads_path=continuation_context.refreshed_roads_path,
+            )
+        else:
+            bundle_action = lambda: _finalize_oneway_continue_outputs(
+                resolved_out_root=resolved_out_root,
+                step5_artifacts=oneway_artifacts,
+                refreshed_nodes_path=oneway_artifacts.refreshed_nodes_path,
+                refreshed_roads_path=oneway_artifacts.refreshed_roads_path,
+                final_nodes_path=final_nodes_path,
+                final_roads_path=final_roads_path,
+                run_id=resolved_run_id,
+                debug=debug,
+                oneway_root=oneway_root,
+            )
+
+        bundle_info = _run_stage(
+            name="step6",
+            run_id=resolved_run_id,
+            stage_index=2,
+            total_stages=total_stages,
+            stage_timings=stage_timings,
+            progress_path=progress_path,
+            perf_markers_path=perf_markers_path,
+            completed_stage_names=completed_stage_names,
+            profile_memory=debug,
+            action=bundle_action,
+        )
+
+        freeze_compare_status: Optional[str] = None
+        if compare_freeze_dir is not None:
+            freeze_compare_status = _run_stage(
+                name="freeze_compare",
+                run_id=resolved_run_id,
+                stage_index=3,
+                total_stages=total_stages,
+                stage_timings=stage_timings,
+                progress_path=progress_path,
+                perf_markers_path=perf_markers_path,
+                completed_stage_names=completed_stage_names,
+                profile_memory=debug,
+                action=lambda: compare_skill_v1_bundle(
+                    current_dir=resolved_out_root,
+                    freeze_dir=compare_freeze_dir,
+                    out_dir=resolved_out_root,
+                )["status"],
+            )
+
+        total_wall_time_sec = time.perf_counter() - total_started
+        summary = {
+            "run_id": resolved_run_id,
+            "skill_version": SKILL_VERSION,
+            "debug": debug,
+            "continuation_mode": True,
+            "continue_from_dir": str(continuation_context.source_dir.resolve()),
+            "continue_from_stage_root": str(continuation_context.stage_root.resolve()),
+            "input_node_path": str(continuation_context.refreshed_nodes_path.resolve()),
+            "input_road_path": str(continuation_context.refreshed_roads_path.resolve()),
+            "stages": stage_timings,
+            "total_wall_time_sec": total_wall_time_sec,
+            "final_nodes_path": str(final_nodes_path.resolve()),
+            "final_roads_path": str(final_roads_path.resolve()),
+            "bundle_manifest_path": bundle_info.get("manifest_path"),
+            "bundle_summary_path": bundle_info.get("summary_path"),
+            "all_stage_segment_roads_path": bundle_info.get("all_stage_segment_roads_path"),
+            "segment_path": bundle_info.get("segment_path"),
+            "inner_nodes_path": bundle_info.get("inner_nodes_path"),
+            "segment_error_path": bundle_info.get("segment_error_path"),
+            "segment_geojson_path": bundle_info.get("segment_path"),
+            "inner_nodes_geojson_path": bundle_info.get("inner_nodes_path"),
+            "segment_error_geojson_path": bundle_info.get("segment_error_path"),
+            "step6_segment_summary_path": bundle_info.get("step6_summary_path"),
+            "oneway_segment_summary_path": bundle_info.get("oneway_segment_summary_path"),
+            "unsegmented_roads_path": bundle_info.get("unsegmented_roads_path"),
+            "unsegmented_roads_csv_path": bundle_info.get("unsegmented_roads_csv_path"),
+            "unsegmented_roads_summary_path": bundle_info.get("unsegmented_roads_summary_path"),
+            "distance_gate_scope_check_path": None,
+            "freeze_compare_status": freeze_compare_status,
+            "progress_path": str(progress_path.resolve()),
+            "perf_json_path": str(perf_json_path.resolve()),
+            "perf_md_path": str(perf_md_path.resolve()),
+            "perf_markers_path": str(perf_markers_path.resolve()),
+            "memory_management": {
+                "debug_default_enabled": False,
+                "stage_gc_after_run": True,
+                "bounded_parallel_load_workers": 2,
+                "uses_temp_stage_root_when_debug_false": True,
+                "deep_full_in_memory_pipeline": False,
+                "step1_to_step5_reused_from_previous_stage": True,
+                "continuation_source_has_full_bundle_context": can_write_bundle,
+            },
+        }
+        summary_path, summary_md_path = _write_skill_terminal_outputs(
+            resolved_out_root=resolved_out_root,
+            resolved_run_id=resolved_run_id,
+            debug=debug,
+            total_stages=total_stages,
+            stage_timings=stage_timings,
+            total_wall_time_sec=total_wall_time_sec,
+            progress_path=progress_path,
+            perf_json_path=perf_json_path,
+            perf_md_path=perf_md_path,
+            perf_markers_path=perf_markers_path,
+            completed_stage_names=completed_stage_names,
+            summary=summary,
+            status="completed",
+            message="Skill v1 oneway continuation runner completed.",
+            marker_event="run_completed",
+            marker_payload={
+                "continuation_mode": True,
+                "freeze_compare_status": freeze_compare_status,
+            },
+        )
+        _print_progress(
+            f"RUN DONE run_id={resolved_run_id} total_wall={total_wall_time_sec:.3f}s "
+            f"freeze_compare={freeze_compare_status or 'SKIPPED'}"
+        )
+        return SkillV1Artifacts(
+            out_root=resolved_out_root,
+            nodes_path=final_nodes_path.resolve(),
+            roads_path=final_roads_path.resolve(),
+            summary_path=summary_path,
+            summary_md_path=summary_md_path,
+            summary=summary,
+        )
+    finally:
+        if temp_ctx is not None:
+            temp_ctx.cleanup()
+
+
+def run_t01_skill_v1_continue_oneway_cli(args: argparse.Namespace) -> int:
+    artifacts = run_t01_skill_v1_continue_oneway(
+        continue_from_dir=args.continue_from_dir,
+        out_root=args.out_root,
+        run_id=args.run_id,
+        per_run_subdir=getattr(args, "per_run_subdir", False),
+        debug=args.debug,
+        compare_freeze_dir=args.compare_freeze_dir,
+    )
+    print(json.dumps({"out_root": str(artifacts.out_root.resolve()), **artifacts.summary}, ensure_ascii=False, indent=2))
+    return 0
 
 
 def run_t01_skill_v1_cli(args: argparse.Namespace) -> int:

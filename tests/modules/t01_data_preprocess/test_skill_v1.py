@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t01_data_preprocess import skill_v1
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_geojson
@@ -27,6 +27,10 @@ def _fake_oneway_passthrough(**kwargs):
         step6_mainnode_groups={},
         step6_group_to_allowed_road_ids={},
     )
+
+
+def _write_step5_markers(root: Path) -> None:
+    _write_text(root / "step5_summary.json", "{}")
 
 
 def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) -> None:
@@ -226,6 +230,385 @@ def test_skill_v1_passes_trace_validation_pair_ids_to_step2(tmp_path: Path, monk
     )
 
     assert captured_step2_kwargs["trace_validation_pair_ids"] == ["S2:866747__950704"]
+
+
+def test_skill_v1_continue_oneway_runner_reuses_previous_stage_outputs(tmp_path: Path, monkeypatch) -> None:
+    previous_root = tmp_path / "previous"
+    stage_root = previous_root / "debug" / "step5"
+    stage_root.mkdir(parents=True)
+
+    nodes_path = stage_root / "nodes.geojson"
+    roads_path = stage_root / "roads.geojson"
+    write_geojson(
+        nodes_path,
+        [
+            {
+                "properties": {
+                    "id": 1,
+                    "mainnodeid": 1,
+                    "working_mainnodeid": 1,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": Point(0.0, 0.0),
+            },
+            {
+                "properties": {
+                    "id": 2,
+                    "mainnodeid": 2,
+                    "working_mainnodeid": 2,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 3,
+                },
+                "geometry": Point(1.0, 0.0),
+            },
+        ],
+    )
+    write_geojson(
+        roads_path,
+        [
+            {
+                "properties": {
+                    "id": "r1",
+                    "snodeid": 1,
+                    "enodeid": 2,
+                    "direction": 2,
+                    "road_kind": 2,
+                    "formway": 0,
+                    "segmentid": None,
+                    "sgrade": None,
+                },
+                "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
+            },
+        ],
+    )
+    _write_step5_markers(stage_root)
+
+    continuation_context = skill_v1._resolve_oneway_continuation_context(previous_root)
+    captured: dict[str, object] = {}
+
+    def _fake_oneway(**kwargs):
+        captured["step5_artifacts"] = kwargs["step5_artifacts"]
+        return SimpleNamespace(
+            refreshed_nodes_path=kwargs["step5_artifacts"].refreshed_nodes_path,
+            refreshed_roads_path=kwargs["step5_artifacts"].refreshed_roads_path,
+            step6_nodes=(),
+            step6_roads=(),
+            step6_node_properties_map={},
+            step6_road_properties_map={},
+            step6_mainnode_groups={},
+            step6_group_to_allowed_road_ids={},
+        )
+
+    def _fake_finalize_continue(**kwargs):
+        _write_text(kwargs["final_nodes_path"], "{}")
+        _write_text(kwargs["final_roads_path"], "{}")
+        segment_path = kwargs["resolved_out_root"] / "segment.geojson"
+        inner_nodes_path = kwargs["resolved_out_root"] / "inner_nodes.geojson"
+        segment_error_path = kwargs["resolved_out_root"] / "segment_error.geojson"
+        step6_summary_path = kwargs["resolved_out_root"] / "segment_summary.json"
+        _write_text(segment_path, "{}")
+        _write_text(inner_nodes_path, "{}")
+        _write_text(segment_error_path, "{}")
+        _write_text(step6_summary_path, "{}")
+        return {
+            "manifest_path": None,
+            "summary_path": None,
+            "all_stage_segment_roads_path": None,
+            "segment_path": str(segment_path.resolve()),
+            "inner_nodes_path": str(inner_nodes_path.resolve()),
+            "segment_error_path": str(segment_error_path.resolve()),
+            "step6_summary_path": str(step6_summary_path.resolve()),
+            "freeze_compare_nodes_source_path": str(kwargs["refreshed_nodes_path"].resolve()),
+            "freeze_compare_roads_source_path": str(kwargs["refreshed_roads_path"].resolve()),
+            "oneway_segment_summary_path": None,
+            "unsegmented_roads_path": None,
+            "unsegmented_roads_csv_path": None,
+            "unsegmented_roads_summary_path": None,
+        }
+
+    monkeypatch.setattr(skill_v1, "run_step5_oneway_segment_completion", _fake_oneway)
+    monkeypatch.setattr(skill_v1, "_finalize_oneway_continue_outputs", _fake_finalize_continue)
+
+    artifacts = skill_v1.run_t01_skill_v1_continue_oneway(
+        continue_from_dir=previous_root,
+        out_root=tmp_path / "continue_run",
+        run_id="t01_skill_v1_continue",
+        debug=False,
+    )
+
+    assert captured["step5_artifacts"].refreshed_nodes_path == continuation_context.refreshed_nodes_path
+    assert artifacts.summary["continuation_mode"] is True
+    assert artifacts.summary["continue_from_stage_root"].endswith("/debug/step5")
+    assert artifacts.summary["bundle_manifest_path"] is None
+
+
+
+
+def test_skill_v1_continue_oneway_accepts_direct_debug_dir(tmp_path: Path, monkeypatch) -> None:
+    debug_root = tmp_path / "previous_debug"
+    stage_root = debug_root / "step5"
+    (debug_root / "step2").mkdir(parents=True)
+    (debug_root / "step4").mkdir(parents=True)
+    stage_root.mkdir(parents=True)
+
+    write_geojson(
+        stage_root / "nodes.geojson",
+        [
+            {
+                "properties": {
+                    "id": 1,
+                    "mainnodeid": 1,
+                    "working_mainnodeid": 1,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": Point(0.0, 0.0),
+            },
+            {
+                "properties": {
+                    "id": 2,
+                    "mainnodeid": 2,
+                    "working_mainnodeid": 2,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 3,
+                },
+                "geometry": Point(1.0, 0.0),
+            },
+        ],
+    )
+    write_geojson(
+        stage_root / "roads.geojson",
+        [
+            {
+                "properties": {
+                    "id": "r1",
+                    "snodeid": 1,
+                    "enodeid": 2,
+                    "direction": 2,
+                    "road_kind": 2,
+                    "formway": 0,
+                    "segmentid": None,
+                    "sgrade": None,
+                },
+                "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
+            },
+        ],
+    )
+    _write_step5_markers(stage_root)
+
+    captured: dict[str, object] = {}
+
+    def _fake_oneway(**kwargs):
+        captured["step5_artifacts"] = kwargs["step5_artifacts"]
+        return SimpleNamespace(
+            refreshed_nodes_path=kwargs["step5_artifacts"].refreshed_nodes_path,
+            refreshed_roads_path=kwargs["step5_artifacts"].refreshed_roads_path,
+            step6_nodes=(),
+            step6_roads=(),
+            step6_node_properties_map={},
+            step6_road_properties_map={},
+            step6_mainnode_groups={},
+            step6_group_to_allowed_road_ids={},
+        )
+
+    def _fake_finalize_bundle(**kwargs):
+        resolved_out_root = kwargs["resolved_out_root"]
+        _write_text(kwargs["final_nodes_path"], "{}")
+        _write_text(kwargs["final_roads_path"], "{}")
+        manifest_path = resolved_out_root / "skill_v1_manifest.json"
+        summary_path = resolved_out_root / "skill_v1_bundle_summary.json"
+        segment_path = resolved_out_root / "segment.geojson"
+        inner_nodes_path = resolved_out_root / "inner_nodes.geojson"
+        segment_error_path = resolved_out_root / "segment_error.geojson"
+        step6_summary_path = resolved_out_root / "segment_summary.json"
+        _write_text(manifest_path, "{}")
+        _write_text(summary_path, "{}")
+        _write_text(segment_path, "{}")
+        _write_text(inner_nodes_path, "{}")
+        _write_text(segment_error_path, "{}")
+        _write_text(step6_summary_path, "{}")
+        return {
+            "manifest_path": str(manifest_path.resolve()),
+            "summary_path": str(summary_path.resolve()),
+            "all_stage_segment_roads_path": None,
+            "segment_path": str(segment_path.resolve()),
+            "inner_nodes_path": str(inner_nodes_path.resolve()),
+            "segment_error_path": str(segment_error_path.resolve()),
+            "step6_summary_path": str(step6_summary_path.resolve()),
+            "freeze_compare_nodes_source_path": str(kwargs["freeze_compare_nodes_path"].resolve()),
+            "freeze_compare_roads_source_path": str(kwargs["freeze_compare_roads_path"].resolve()),
+            "oneway_segment_summary_path": None,
+            "unsegmented_roads_path": None,
+            "unsegmented_roads_csv_path": None,
+            "unsegmented_roads_summary_path": None,
+        }
+
+    monkeypatch.setattr(skill_v1, "run_step5_oneway_segment_completion", _fake_oneway)
+    monkeypatch.setattr(skill_v1, "_finalize_bundle", _fake_finalize_bundle)
+
+    artifacts = skill_v1.run_t01_skill_v1_continue_oneway(
+        continue_from_dir=debug_root,
+        out_root=tmp_path / "continue_run_from_debug",
+        run_id="t01_skill_v1_continue_from_debug",
+        debug=False,
+    )
+
+    assert captured["step5_artifacts"].refreshed_nodes_path == stage_root / "nodes.geojson"
+    assert artifacts.summary["continue_from_stage_root"].endswith("/step5")
+    assert artifacts.summary["bundle_manifest_path"].endswith("skill_v1_manifest.json")
+
+
+def test_skill_v1_continue_oneway_rejects_overlapping_out_root(tmp_path: Path) -> None:
+    previous_root = tmp_path / "previous"
+    stage_root = previous_root / "debug" / "step5"
+    stage_root.mkdir(parents=True)
+
+    write_geojson(
+        stage_root / "nodes.geojson",
+        [
+            {
+                "properties": {
+                    "id": 1,
+                    "mainnodeid": 1,
+                    "working_mainnodeid": 1,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": Point(0.0, 0.0),
+            },
+            {
+                "properties": {
+                    "id": 2,
+                    "mainnodeid": 2,
+                    "working_mainnodeid": 2,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 3,
+                },
+                "geometry": Point(1.0, 0.0),
+            },
+        ],
+    )
+    write_geojson(
+        stage_root / "roads.geojson",
+        [
+            {
+                "properties": {
+                    "id": "r1",
+                    "snodeid": 1,
+                    "enodeid": 2,
+                    "direction": 2,
+                    "road_kind": 2,
+                    "formway": 0,
+                    "segmentid": None,
+                    "sgrade": None,
+                },
+                "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
+            },
+        ],
+    )
+    _write_step5_markers(stage_root)
+
+    try:
+        skill_v1.run_t01_skill_v1_continue_oneway(
+            continue_from_dir=previous_root,
+            out_root=previous_root / "debug",
+            run_id="t01_skill_v1_continue_overlap",
+            debug=False,
+        )
+    except ValueError as exc:
+        assert "--out-root must not overlap" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for overlapping continuation out_root")
+
+def test_skill_v1_continue_oneway_requires_full_skill_root_for_freeze_compare(tmp_path: Path) -> None:
+    previous_root = tmp_path / "previous"
+    stage_root = previous_root / "step5"
+    stage_root.mkdir(parents=True)
+    compare_dir = tmp_path / "freeze"
+    compare_dir.mkdir()
+
+    write_geojson(
+        stage_root / "nodes.geojson",
+        [
+            {
+                "properties": {
+                    "id": 1,
+                    "mainnodeid": 1,
+                    "working_mainnodeid": 1,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": Point(0.0, 0.0),
+            },
+            {
+                "properties": {
+                    "id": 2,
+                    "mainnodeid": 2,
+                    "working_mainnodeid": 2,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 3,
+                },
+                "geometry": Point(1.0, 0.0),
+            },
+        ],
+    )
+    write_geojson(
+        stage_root / "roads.geojson",
+        [
+            {
+                "properties": {
+                    "id": "r1",
+                    "snodeid": 1,
+                    "enodeid": 2,
+                    "direction": 2,
+                    "road_kind": 2,
+                    "formway": 0,
+                    "segmentid": None,
+                    "sgrade": None,
+                },
+                "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
+            },
+        ],
+    )
+    _write_step5_markers(stage_root)
+
+    try:
+        skill_v1.run_t01_skill_v1_continue_oneway(
+            continue_from_dir=previous_root,
+            out_root=tmp_path / "continue_run",
+            run_id="t01_skill_v1_continue_compare",
+            debug=False,
+            compare_freeze_dir=compare_dir,
+        )
+    except ValueError as exc:
+        assert "--compare-freeze-dir requires --continue-from-dir" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for compare-freeze without full skill roots")
 
 
 def test_skill_v1_debug_rerun_cleans_stage_root_and_perf_markers(tmp_path: Path, monkeypatch) -> None:

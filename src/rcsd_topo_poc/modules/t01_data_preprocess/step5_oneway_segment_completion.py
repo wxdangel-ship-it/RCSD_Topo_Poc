@@ -10,6 +10,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
+    first_existing_vector_path,
     write_csv,
     write_json,
     write_vector,
@@ -21,6 +22,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     RoadFeatureRecord,
     _allocate_unique_segmentid,
     _build_mainnode_groups,
+    _load_nodes_and_roads,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     _coerce_int,
@@ -45,6 +47,10 @@ ONEWAY_SEGMENT_SUMMARY_NAME = "oneway_segment_summary.json"
 UNSEGMENTED_ROADS_PATH_NAME = "unsegmented_roads.gpkg"
 UNSEGMENTED_ROADS_CSV_NAME = "unsegmented_roads.csv"
 UNSEGMENTED_ROADS_SUMMARY_NAME = "unsegmented_roads_summary.json"
+STEP5_CONTINUATION_MARKER_NAMES = (
+    "step5_summary.json",
+    "step5_validated_pairs_merged.csv",
+)
 
 
 @dataclass(frozen=True)
@@ -87,6 +93,18 @@ class OnewaySegmentArtifacts:
     unsegmented_csv_path: Path
     unsegmented_summary_path: Path
     summary: dict[str, Any]
+    step6_nodes: tuple[NodeFeatureRecord, ...]
+    step6_roads: tuple[RoadFeatureRecord, ...]
+    step6_node_properties_map: dict[str, dict[str, Any]]
+    step6_road_properties_map: dict[str, dict[str, Any]]
+    step6_mainnode_groups: dict[str, MainnodeGroup]
+    step6_group_to_allowed_road_ids: dict[str, set[str]]
+
+
+@dataclass(frozen=True)
+class OnewayStep5InputArtifacts:
+    refreshed_nodes_path: Path
+    refreshed_roads_path: Path
     step6_nodes: tuple[NodeFeatureRecord, ...]
     step6_roads: tuple[RoadFeatureRecord, ...]
     step6_node_properties_map: dict[str, dict[str, Any]]
@@ -148,6 +166,73 @@ def _build_oneway_phase_specs() -> tuple[OnewayPhaseSpec, ...]:
             kind_values=frozenset({4, 8, 16, 64, 2048}),
             grade_values=frozenset({1, 2, 3}),
         ),
+    )
+
+
+def build_step5_input_artifacts_from_refreshed_paths(
+    *,
+    node_path: Union[str, Path],
+    road_path: Union[str, Path],
+) -> OnewayStep5InputArtifacts:
+    resolved_node_path = Path(node_path)
+    resolved_road_path = Path(road_path)
+    (nodes, node_by_id, groups), (roads, _) = _load_nodes_and_roads(
+        node_path=resolved_node_path,
+        road_path=resolved_road_path,
+    )
+    mainnode_groups, _ = _build_mainnode_groups(node_by_id, groups)
+    physical_to_semantic = _physical_to_semantic(mainnode_groups)
+    road_properties_map = {
+        road.road_id: canonicalize_road_working_properties(dict(road.properties))
+        for road in roads
+    }
+    group_to_allowed_road_ids = _build_group_to_allowed_road_ids(
+        roads=roads,
+        road_properties_map=road_properties_map,
+        physical_to_semantic=physical_to_semantic,
+    )
+    return OnewayStep5InputArtifacts(
+        refreshed_nodes_path=resolved_node_path,
+        refreshed_roads_path=resolved_road_path,
+        step6_nodes=tuple(nodes),
+        step6_roads=tuple(roads),
+        step6_node_properties_map={node.node_id: dict(node.properties) for node in nodes},
+        step6_road_properties_map=road_properties_map,
+        step6_mainnode_groups=mainnode_groups,
+        step6_group_to_allowed_road_ids=group_to_allowed_road_ids,
+    )
+
+
+def load_step5_input_artifacts_from_dir(input_dir: Union[str, Path]) -> OnewayStep5InputArtifacts:
+    resolved_input_dir = Path(input_dir)
+    has_step5_marker = any((resolved_input_dir / name).is_file() for name in STEP5_CONTINUATION_MARKER_NAMES)
+    node_path = first_existing_vector_path(
+        resolved_input_dir,
+        "nodes.gpkg",
+        "nodes.geojson",
+        "nodes_step5_refreshed.gpkg",
+        "nodes_step5_refreshed.geojson",
+    )
+    road_path = first_existing_vector_path(
+        resolved_input_dir,
+        "roads.gpkg",
+        "roads.geojson",
+        "roads_step5_refreshed.gpkg",
+        "roads_step5_refreshed.geojson",
+    )
+    if not has_step5_marker:
+        raise ValueError(
+            "Continuation input directory must be a Step5 refreshed output directory and contain "
+            f"at least one Step5 marker file {STEP5_CONTINUATION_MARKER_NAMES} (got '{resolved_input_dir}')."
+        )
+    if node_path is None or road_path is None:
+        raise ValueError(
+            "Continuation input directory must contain refreshed Step5 nodes/roads outputs "
+            f"(got '{resolved_input_dir}')."
+        )
+    return build_step5_input_artifacts_from_refreshed_paths(
+        node_path=node_path,
+        road_path=road_path,
     )
 
 

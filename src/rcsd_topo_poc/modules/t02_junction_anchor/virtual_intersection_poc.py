@@ -2309,6 +2309,17 @@ def _can_soft_exclude_outside_rc(
     ):
         return True
     if (
+        status == STATUS_STABLE
+        and negative_rc_group_count >= 1
+        and connected_rc_group_count >= 2
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and max_nonmain_branch_polygon_length_m <= 2.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m >= 10.0
+    ):
+        return True
+    if (
         status in {STATUS_STABLE, STATUS_SURFACE_ONLY, STATUS_NODE_COMPONENT_CONFLICT}
         and selected_rc_road_count >= 2
         and polygon_support_rc_road_count >= 2
@@ -3106,8 +3117,11 @@ def _effect_success_acceptance(
     min_invalid_rc_distance_to_center_m: float | None,
     local_rc_road_count: int,
     local_rc_node_count: int,
+    local_road_count: int,
+    local_node_count: int,
     connected_rc_group_count: int,
     nonmain_branch_connected_rc_group_count: int,
+    negative_rc_group_count: int,
 ) -> tuple[bool, str, str]:
     if review_mode:
         return False, "review_required", "review_mode"
@@ -3131,6 +3145,19 @@ def _effect_success_acceptance(
             and local_rc_node_count == 0
         ):
             return True, "accepted", "rc_gap_without_connected_local_rcsd_evidence"
+        if (
+            associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+            and connected_rc_group_count == 1
+            and nonmain_branch_connected_rc_group_count == 0
+            and local_rc_road_count <= 4
+            and local_rc_node_count <= 2
+            and local_road_count <= 4
+            and local_node_count <= 1
+            and max_selected_side_branch_covered_length_m == 0.0
+            and max_nonmain_branch_polygon_length_m == 0.0
+        ):
+            return True, "accepted", "rc_gap_with_compact_local_mouth_geometry"
         if max_nonmain_branch_polygon_length_m >= 4.0:
             return True, "accepted", "rc_gap_with_nonmain_branch_polygon_coverage"
         return False, "review_required", "rc_gap_without_substantive_nonmain_branch_coverage"
@@ -3163,6 +3190,16 @@ def _effect_success_acceptance(
             and max_nonmain_branch_polygon_length_m >= 8.0
         ):
             return True, "accepted", "ambiguous_main_rc_gap_with_nonmain_branch_polygon_coverage"
+        if (
+            associated_rc_road_count == 0
+            and polygon_support_rc_road_count <= 1
+            and connected_rc_group_count >= 2
+            and nonmain_branch_connected_rc_group_count <= 1
+            and negative_rc_group_count >= 1
+            and max_nonmain_branch_polygon_length_m >= 8.0
+            and max_selected_side_branch_covered_length_m <= 2.0
+        ):
+            return True, "accepted", "ambiguous_main_rc_gap_with_compact_polygon"
         return False, "review_required", f"review_required_status:{status}"
     return False, "rejected", f"rejected_status:{status}"
 
@@ -4592,8 +4629,11 @@ def run_t02_virtual_intersection_poc(
             min_invalid_rc_distance_to_center_m=min_invalid_rc_distance_to_center_m,
             local_rc_road_count=len(local_rc_roads),
             local_rc_node_count=len(local_rc_nodes),
+            local_road_count=len(local_roads),
+            local_node_count=len(local_nodes),
             connected_rc_group_count=len(connected_rc_group_ids),
             nonmain_branch_connected_rc_group_count=len(nonmain_branch_connected_rc_group_ids),
+            negative_rc_group_count=len(negative_rc_groups),
         )
         can_soft_exclude_outside_rc = (
             rc_outside_drivezone_error is not None

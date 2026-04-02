@@ -1,0 +1,72 @@
+{
+  "bundle_version": "1",
+  "bundle_mode": "single_case",
+  "mainnodeid": "912232",
+  "epsg": 3857,
+  "buffer_m": 100.0,
+  "patch_size_m": 200.0,
+  "resolution_m": 0.2,
+  "local_origin": {
+    "x_epsg3857": 12683339.001227165,
+    "y_epsg3857": 2592462.906990064
+  },
+  "transform": {
+    "type": "north_up_affine",
+    "local_to_epsg3857": {
+      "x_offset": 12683339.001227165,
+      "y_offset": 2592462.906990064,
+      "x_scale": 1.0,
+      "y_scale": 1.0
+    },
+    "raster": {
+      "width": 1000,
+      "height": 1000,
+      "resolution_m": 0.2,
+      "top_left_x_epsg3857": 12683339.001227165,
+      "top_left_y_epsg3857": 2592662.906990064
+    }
+  },
+  "file_list": [
+    "manifest.json",
+    "drivezone_mask.png",
+    "drivezone.gpkg",
+    "nodes.gpkg",
+    "roads.gpkg",
+    "rcsdroad.gpkg",
+    "rcsdnode.gpkg",
+    "size_report.json"
+  ],
+  "checksum": {
+    "drivezone_mask.png": "f0cc0be7ec5b99f6179a73594ff8e4190715ae9a495d6f699f8e5b92ee701113",
+    "drivezone.gpkg": "37bf436557ce1b365750704eb8999a53ea36c62d1e429eb4daccf52f3f7c851e",
+    "nodes.gpkg": "774bff3cbbe23be90fb29671bbd98d35bd0287e412a9b93dfca20ae511929159",
+    "roads.gpkg": "4d829e1df602ea9209ab7d6fda1ac2cdbef47418e7641f67b867bd97752c955c",
+    "rcsdroad.gpkg": "a0fed17623778d7b30a320754163b9248853a03c9787a9bd31aee26ebcd81cfa",
+    "rcsdnode.gpkg": "236e7fd736299143f61e35f476692518bd9262adf0eb195013a65b68330559b3",
+    "size_report.json": "373c4568588b7131262ad066912918320a75f3719304cdcf1e39585b4f66512e"
+  },
+  "encoder_info": {
+    "archive_format": "zip",
+    "compression": "deflate",
+    "text_encoding": "base85",
+    "line_width": 120,
+    "max_text_size_bytes": 307200,
+    "local_coord_decimals": 1,
+    "vector_format": "GeoPackage"
+  },
+  "feature_counts": {
+    "target_group_node_count": 1,
+    "nodes": 5,
+    "roads": 12,
+    "rcsdroad": 2,
+    "rcsdnode": 0,
+    "drivezone": 2
+  },
+  "created_at": "2026-04-02T17:47:52",
+  "decoded_output": {
+    "vector_coordinates": "absolute_epsg3857",
+    "vector_crs": "EPSG:3857",
+    "bundle_internal_vectors_localized": true,
+    "decoded_at": "2026-04-02T17:54:14"
+  }
+}

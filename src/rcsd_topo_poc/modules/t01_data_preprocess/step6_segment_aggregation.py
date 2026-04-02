@@ -32,7 +32,8 @@ DEFAULT_RUN_ID_PREFIX = "t01_step6_segment_aggregation_"
 STEP6_SEGMENT_GRADE_VALUE = "0-0双"
 STEP6_ERROR_TYPE_S_GRADE_CONFLICT = "s_grade_conflict"
 STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT = "grade_kind_conflict"
-STEP6_S_GRADE_PRIORITY_ORDER = ("0-0双", "0-1双", "0-2双")
+STEP6_ONEWAY_SEGMENT_GRADE_VALUES = ("0-0单", "0-1单", "0-2单")
+STEP6_S_GRADE_PRIORITY_ORDER = ("0-0双", "0-0单", "0-1双", "0-1单", "0-2双", "0-2单")
 STEP6_ERROR_LAYER_FILENAMES = {
     STEP6_ERROR_TYPE_S_GRADE_CONFLICT: "segment_error_s_grade_conflict.gpkg",
     STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT: "segment_error_grade_kind_conflict.gpkg",
@@ -242,6 +243,7 @@ def _collect_segment_records(
             for road in segment_roads
         }
         sgrade_conflict_values = tuple(sorted(_display_optional_value(value) for value in sgrade_values))
+        contains_oneway_sgrade = any(value in STEP6_ONEWAY_SEGMENT_GRADE_VALUES for value in sgrade_values if value is not None)
         if len(sgrade_values) == 1:
             sgrade_old = next(iter(sgrade_values))
             sgrade_new = sgrade_old
@@ -301,7 +303,7 @@ def _collect_segment_records(
             )
             pair_grade_values.append(_coerce_int(current_node_props.get("grade_2")))
 
-        if error_type is None and pair_grade_values == [1, 1] and sgrade_old != STEP6_SEGMENT_GRADE_VALUE:
+        if error_type is None and pair_grade_values == [1, 1] and sgrade_old != STEP6_SEGMENT_GRADE_VALUE and not contains_oneway_sgrade:
             adjusted = True
             sgrade_new = STEP6_SEGMENT_GRADE_VALUE
             adjust_reason = "both_pair_nodes_grade_2_eq_1"

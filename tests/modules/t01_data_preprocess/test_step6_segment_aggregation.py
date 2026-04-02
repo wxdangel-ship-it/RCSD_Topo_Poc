@@ -236,3 +236,37 @@ def test_step6_degrades_when_segment_contains_multiple_sgrades(tmp_path: Path) -
     assert artifacts.summary["segment_error_count"] == 1
     assert artifacts.summary["sgrade_conflict_count"] == 1
     assert artifacts.summary["grade_kind_conflict_count"] == 0
+
+
+def test_step6_keeps_oneway_grade_without_promoting_to_bidirectional(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(10, 0.0, 0.0, kind_2=8, grade_2=1, closed_con=3),
+            _node_feature(11, 1.0, 0.0, kind_2=0, grade_2=0, closed_con=0),
+            _node_feature(12, 2.0, 0.0, kind_2=8, grade_2=1, closed_con=3),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r1", 10, 11, [(0.0, 0.0), (1.0, 0.0)], sgrade="0-0单", segmentid="10_12"),
+            _road_feature("r2", 11, 12, [(1.0, 0.0), (2.0, 0.0)], sgrade="0-0单", segmentid="10_12"),
+        ],
+    )
+
+    artifacts = run_step6_segment_aggregation(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=tmp_path / "out",
+        run_id="oneway_grade_case",
+    )
+
+    segment_doc = _load_geojson(artifacts.segment_path)
+    segment_props = segment_doc["features"][0]["properties"]
+    assert segment_props["id"] == "10_12"
+    assert segment_props["sgrade"] == "0-0单"
+    assert artifacts.summary["sgrade_adjusted_count"] == 0

@@ -27,6 +27,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import refres
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _find_repo_root
 from rcsd_topo_poc.modules.t01_data_preprocess.step2_segment_poc import run_step2_segment_poc
 from rcsd_topo_poc.modules.t01_data_preprocess.step4_residual_graph import run_step4_residual_graph
+from rcsd_topo_poc.modules.t01_data_preprocess.step5_oneway_segment_completion import run_step5_oneway_segment_completion
 from rcsd_topo_poc.modules.t01_data_preprocess.step5_staged_residual_graph import run_step5_staged_residual_graph
 from rcsd_topo_poc.modules.t01_data_preprocess.step6_segment_aggregation import (
     run_step6_segment_aggregation_from_records,
@@ -288,6 +289,10 @@ def _write_summary_md(*, out_path: Path, summary: dict[str, Any]) -> None:
             lines.append(f"- distance_gate_scope_check_path: `{summary['distance_gate_scope_check_path']}`")
         if summary.get("all_stage_segment_roads_path"):
             lines.append(f"- all_stage_segment_roads_path: `{summary['all_stage_segment_roads_path']}`")
+        if summary.get("oneway_segment_summary_path"):
+            lines.append(f"- oneway_segment_summary_path: `{summary['oneway_segment_summary_path']}`")
+        if summary.get("unsegmented_roads_path"):
+            lines.append(f"- unsegmented_roads_path: `{summary['unsegmented_roads_path']}`")
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -359,6 +364,7 @@ def _write_all_stage_segment_roads_dir(
     step2_root: Path,
     step4_root: Path,
     step5_root: Path,
+    oneway_root: Optional[Path] = None,
 ) -> Path:
     stage_sources = [
         ("Step2", first_existing_vector_path(step2_root / "S2", "segment_body_roads.gpkg", "segment_body_roads.geojson")),
@@ -367,6 +373,8 @@ def _write_all_stage_segment_roads_dir(
         ("Step5B", first_existing_vector_path(step5_root / "STEP5B", "segment_body_roads.gpkg", "segment_body_roads.geojson")),
         ("Step5C", first_existing_vector_path(step5_root / "STEP5C", "segment_body_roads.gpkg", "segment_body_roads.geojson")),
     ]
+    if oneway_root is not None:
+        stage_sources.append(("Oneway", first_existing_vector_path(oneway_root, "oneway_segment_roads.gpkg", "oneway_segment_roads.geojson")))
 
     out_path = out_root / "all_stage_segment_roads"
     if out_path.exists():
@@ -651,7 +659,7 @@ def run_t01_skill_v1(
     stage_timings: list[dict[str, Any]] = []
     completed_stage_names: list[str] = []
     total_started = time.perf_counter()
-    total_stages = 6 + (1 if compare_freeze_dir is not None else 0)
+    total_stages = 7 + (1 if compare_freeze_dir is not None else 0)
     if perf_markers_path.exists():
         perf_markers_path.unlink()
 
@@ -792,6 +800,10 @@ def run_t01_skill_v1(
                 "inner_nodes_geojson_path": None,
                 "segment_error_geojson_path": None,
                 "step6_segment_summary_path": None,
+                "oneway_segment_summary_path": None,
+                "unsegmented_roads_path": None,
+                "unsegmented_roads_csv_path": None,
+                "unsegmented_roads_summary_path": None,
                 "distance_gate_scope_check_path": None,
                 "freeze_compare_status": None,
                 "progress_path": str(progress_path.resolve()),
@@ -915,12 +927,31 @@ def run_t01_skill_v1(
             ),
         )
 
+        oneway_root = stage_root / "oneway"
+        oneway_artifacts = _run_stage(
+            name="oneway",
+            run_id=resolved_run_id,
+            stage_index=6,
+            total_stages=total_stages,
+            stage_timings=stage_timings,
+            progress_path=progress_path,
+            perf_markers_path=perf_markers_path,
+            completed_stage_names=completed_stage_names,
+            profile_memory=debug,
+            action=lambda: run_step5_oneway_segment_completion(
+                step5_artifacts=step5_artifacts,
+                out_root=oneway_root,
+                run_id=resolved_run_id,
+                debug=debug,
+            ),
+        )
+
         final_nodes_path = resolved_out_root / "nodes.gpkg"
         final_roads_path = resolved_out_root / "roads.gpkg"
         bundle_info = _run_stage(
             name="step6",
             run_id=resolved_run_id,
-            stage_index=6,
+            stage_index=7,
             total_stages=total_stages,
             stage_timings=stage_timings,
             progress_path=progress_path,
@@ -932,13 +963,16 @@ def run_t01_skill_v1(
                 step2_root=step2_root,
                 step4_root=step4_root,
                 step5_root=step5_root,
-                step5_artifacts=step5_artifacts,
-                refreshed_nodes_path=step5_artifacts.refreshed_nodes_path,
-                refreshed_roads_path=step5_artifacts.refreshed_roads_path,
+                step5_artifacts=oneway_artifacts,
+                refreshed_nodes_path=oneway_artifacts.refreshed_nodes_path,
+                refreshed_roads_path=oneway_artifacts.refreshed_roads_path,
                 final_nodes_path=final_nodes_path,
                 final_roads_path=final_roads_path,
                 run_id=resolved_run_id,
                 debug=debug,
+                oneway_root=oneway_root,
+                freeze_compare_nodes_path=step5_artifacts.refreshed_nodes_path,
+                freeze_compare_roads_path=step5_artifacts.refreshed_roads_path,
             ),
         )
         distance_gate_scope_check_path = _write_distance_gate_scope_check(
@@ -953,7 +987,7 @@ def run_t01_skill_v1(
             freeze_compare_status = _run_stage(
                 name="freeze_compare",
                 run_id=resolved_run_id,
-                stage_index=7,
+                stage_index=8,
                 total_stages=total_stages,
                 stage_timings=stage_timings,
                 progress_path=progress_path,
@@ -991,6 +1025,10 @@ def run_t01_skill_v1(
             "inner_nodes_geojson_path": bundle_info.get("inner_nodes_path"),
             "segment_error_geojson_path": bundle_info.get("segment_error_path"),
             "step6_segment_summary_path": bundle_info.get("step6_summary_path"),
+            "oneway_segment_summary_path": bundle_info.get("oneway_segment_summary_path"),
+            "unsegmented_roads_path": bundle_info.get("unsegmented_roads_path"),
+            "unsegmented_roads_csv_path": bundle_info.get("unsegmented_roads_csv_path"),
+            "unsegmented_roads_summary_path": bundle_info.get("unsegmented_roads_summary_path"),
             "distance_gate_scope_check_path": str(distance_gate_scope_check_path.resolve()),
             "freeze_compare_status": freeze_compare_status,
             "progress_path": str(progress_path.resolve()),
@@ -1059,6 +1097,9 @@ def _finalize_bundle(
     final_roads_path: Path,
     run_id: str,
     debug: bool,
+    oneway_root: Optional[Path] = None,
+    freeze_compare_nodes_path: Optional[Path] = None,
+    freeze_compare_roads_path: Optional[Path] = None,
 ) -> dict[str, str]:
     refreshed_nodes_doc = load_vector_feature_collection(refreshed_nodes_path)
     write_vector(
@@ -1090,14 +1131,32 @@ def _finalize_bundle(
         step2_root=step2_root,
         step4_root=step4_root,
         step5_root=step5_root,
+        oneway_root=oneway_root,
     )
+    if oneway_root is not None:
+        for filename in (
+            "oneway_segment_summary.json",
+            "oneway_segment_build_table.csv",
+            "oneway_segment_roads.gpkg",
+            "unsegmented_roads.gpkg",
+            "unsegmented_roads.csv",
+            "unsegmented_roads_summary.json",
+        ):
+            source_path = oneway_root / filename
+            if not source_path.exists():
+                continue
+            target_path = resolved_out_root / filename
+            if source_path.resolve() != target_path.resolve():
+                shutil.copy2(source_path, target_path)
+    bundle_nodes_path = freeze_compare_nodes_path or final_nodes_path
+    bundle_roads_path = freeze_compare_roads_path or final_roads_path
     bundle_info = write_skill_v1_bundle(
         out_dir=resolved_out_root,
         step2_dir=step2_root / "S2",
         step4_dir=step4_root,
         step5_dir=step5_root,
-        refreshed_nodes_path=final_nodes_path,
-        refreshed_roads_path=final_roads_path,
+        refreshed_nodes_path=bundle_nodes_path,
+        refreshed_roads_path=bundle_roads_path,
         mode="current",
         skill_version=SKILL_VERSION,
     )
@@ -1106,6 +1165,12 @@ def _finalize_bundle(
     bundle_info["inner_nodes_path"] = str(step6_artifacts.inner_nodes_path.resolve())
     bundle_info["segment_error_path"] = str(step6_artifacts.segment_error_path.resolve())
     bundle_info["step6_summary_path"] = str(step6_artifacts.segment_summary_path.resolve())
+    bundle_info["freeze_compare_nodes_source_path"] = str(bundle_nodes_path.resolve())
+    bundle_info["freeze_compare_roads_source_path"] = str(bundle_roads_path.resolve())
+    bundle_info["oneway_segment_summary_path"] = str((resolved_out_root / "oneway_segment_summary.json").resolve()) if (resolved_out_root / "oneway_segment_summary.json").exists() else None
+    bundle_info["unsegmented_roads_path"] = str((resolved_out_root / "unsegmented_roads.gpkg").resolve()) if (resolved_out_root / "unsegmented_roads.gpkg").exists() else None
+    bundle_info["unsegmented_roads_csv_path"] = str((resolved_out_root / "unsegmented_roads.csv").resolve()) if (resolved_out_root / "unsegmented_roads.csv").exists() else None
+    bundle_info["unsegmented_roads_summary_path"] = str((resolved_out_root / "unsegmented_roads_summary.json").resolve()) if (resolved_out_root / "unsegmented_roads_summary.json").exists() else None
     return bundle_info
 
 

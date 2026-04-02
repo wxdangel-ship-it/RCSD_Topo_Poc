@@ -22,8 +22,10 @@
 - [step4_residual_graph.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step4_residual_graph.py)
 - [step5_staged_residual_graph.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step5_staged_residual_graph.py)
 - [endpoint_pool.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/endpoint_pool.py)
+- [step5_oneway_segment_completion.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step5_oneway_segment_completion.py)
 - 职责：
   - Step1-Step5 主流程
+  - Step5 后单向 Segment 补段
   - refresh
   - residual graph
   - endpoint pool / barrier 语义
@@ -52,3 +54,4 @@
 - 职责：
   - Step6 Segment 聚合
   - compare / slice / 审计辅助
+  - 单向补段启用后继续以 Step5 双向输出做 active baseline 守护

@@ -15,6 +15,20 @@ def _write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _fake_oneway_passthrough(**kwargs):
+    step5_artifacts = kwargs["step5_artifacts"]
+    return SimpleNamespace(
+        refreshed_nodes_path=step5_artifacts.refreshed_nodes_path,
+        refreshed_roads_path=step5_artifacts.refreshed_roads_path,
+        step6_nodes=(),
+        step6_roads=(),
+        step6_node_properties_map={},
+        step6_road_properties_map={},
+        step6_mainnode_groups={},
+        step6_group_to_allowed_road_ids={},
+    )
+
+
 def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) -> None:
     road_path = tmp_path / "roads.geojson"
     node_path = tmp_path / "nodes.geojson"
@@ -92,6 +106,7 @@ def test_skill_v1_runner_records_step2_subprogress(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(skill_v1, "refresh_s2_baseline", _fake_refresh)
     monkeypatch.setattr(skill_v1, "run_step4_residual_graph", _fake_step4)
     monkeypatch.setattr(skill_v1, "run_step5_staged_residual_graph", _fake_step5)
+    monkeypatch.setattr(skill_v1, "run_step5_oneway_segment_completion", _fake_oneway_passthrough)
     monkeypatch.setattr(skill_v1, "_finalize_bundle", _fake_finalize_bundle)
 
     artifacts = skill_v1.run_t01_skill_v1(
@@ -197,6 +212,7 @@ def test_skill_v1_passes_trace_validation_pair_ids_to_step2(tmp_path: Path, monk
     monkeypatch.setattr(skill_v1, "refresh_s2_baseline", _fake_refresh)
     monkeypatch.setattr(skill_v1, "run_step4_residual_graph", _fake_step4)
     monkeypatch.setattr(skill_v1, "run_step5_staged_residual_graph", _fake_step5)
+    monkeypatch.setattr(skill_v1, "run_step5_oneway_segment_completion", _fake_oneway_passthrough)
     monkeypatch.setattr(skill_v1, "_finalize_bundle", _fake_finalize_bundle)
 
     skill_v1.run_t01_skill_v1(
@@ -284,6 +300,7 @@ def test_skill_v1_debug_rerun_cleans_stage_root_and_perf_markers(tmp_path: Path,
     monkeypatch.setattr(skill_v1, "refresh_s2_baseline", _fake_refresh)
     monkeypatch.setattr(skill_v1, "run_step4_residual_graph", _fake_step4)
     monkeypatch.setattr(skill_v1, "run_step5_staged_residual_graph", _fake_step5)
+    monkeypatch.setattr(skill_v1, "run_step5_oneway_segment_completion", _fake_oneway_passthrough)
     monkeypatch.setattr(skill_v1, "_finalize_bundle", _fake_finalize_bundle)
 
     skill_v1.run_t01_skill_v1(
@@ -338,6 +355,7 @@ def test_skill_v1_can_stop_cleanly_after_step2_validation_pair_index(tmp_path: P
     monkeypatch.setattr(skill_v1, "refresh_s2_baseline", _unexpected_call)
     monkeypatch.setattr(skill_v1, "run_step4_residual_graph", _unexpected_call)
     monkeypatch.setattr(skill_v1, "run_step5_staged_residual_graph", _unexpected_call)
+    monkeypatch.setattr(skill_v1, "run_step5_oneway_segment_completion", _unexpected_call)
     monkeypatch.setattr(skill_v1, "_finalize_bundle", _unexpected_call)
 
     artifacts = skill_v1.run_t01_skill_v1(
@@ -436,6 +454,7 @@ def test_skill_v1_runner_can_isolate_suite_case_outputs_under_run_id(tmp_path: P
     monkeypatch.setattr(skill_v1, "refresh_s2_baseline", _fake_refresh)
     monkeypatch.setattr(skill_v1, "run_step4_residual_graph", _fake_step4)
     monkeypatch.setattr(skill_v1, "run_step5_staged_residual_graph", _fake_step5)
+    monkeypatch.setattr(skill_v1, "run_step5_oneway_segment_completion", _fake_oneway_passthrough)
     monkeypatch.setattr(skill_v1, "_finalize_bundle", _fake_finalize_bundle)
 
     suite_root = tmp_path / "suite_root"
@@ -736,10 +755,34 @@ def test_finalize_bundle_hides_working_mainnodeid_in_public_nodes(tmp_path: Path
         ),
     )
     monkeypatch.setattr(skill_v1, "_write_all_stage_segment_roads_dir", lambda **kwargs: tmp_path / "all_stage_segment_roads")
-    monkeypatch.setattr(
-        skill_v1,
-        "write_skill_v1_bundle",
-        lambda **kwargs: {"manifest_path": str((tmp_path / "manifest.json").resolve())},
+    captured_bundle_kwargs: dict[str, object] = {}
+
+    def _fake_write_skill_v1_bundle(**kwargs):
+        captured_bundle_kwargs.update(kwargs)
+        return {"manifest_path": str((tmp_path / "manifest.json").resolve())}
+
+    monkeypatch.setattr(skill_v1, "write_skill_v1_bundle", _fake_write_skill_v1_bundle)
+
+    freeze_compare_nodes_path = tmp_path / "freeze_compare" / "nodes.geojson"
+    freeze_compare_roads_path = tmp_path / "freeze_compare" / "roads.geojson"
+    write_geojson(
+        freeze_compare_nodes_path,
+        [
+            {
+                "properties": {"id": 10, "mainnodeid": 10},
+                "geometry": Point(0.0, 0.0),
+            }
+        ],
+    )
+    _write_text(
+        freeze_compare_roads_path,
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [],
+            },
+            ensure_ascii=False,
+        ),
     )
 
     skill_v1._finalize_bundle(
@@ -761,9 +804,13 @@ def test_finalize_bundle_hides_working_mainnodeid_in_public_nodes(tmp_path: Path
         final_roads_path=final_roads_path,
         run_id="t01_skill_v1_test",
         debug=False,
+        freeze_compare_nodes_path=freeze_compare_nodes_path,
+        freeze_compare_roads_path=freeze_compare_roads_path,
     )
 
     final_nodes_doc = json.loads(final_nodes_path.read_text(encoding="utf-8"))
     props = final_nodes_doc["features"][0]["properties"]
     assert props["mainnodeid"] == 10
     assert "working_mainnodeid" not in props
+    assert captured_bundle_kwargs["refreshed_nodes_path"] == freeze_compare_nodes_path
+    assert captured_bundle_kwargs["refreshed_roads_path"] == freeze_compare_roads_path

@@ -253,6 +253,44 @@
 - 新构成 road：
   - `sgrade = 0-2双`
 
+### 5.9 Step5 后单向补段
+- 执行位置：
+  - 在 `Step5C` refreshed `nodes / roads` 之后
+  - 在 `Step6` 聚合之前
+- 作用边界：
+  - 仅补齐仍未被双向 Segment 构成的单向 road
+  - 不回写 `Step2 / Step4 / Step5A / Step5B / Step5C` 的双向构段规则
+- 共享过滤：
+  - `road_kind != 1`
+  - `formway != 128`
+  - 右转专用道不参与
+  - 已有非空 `segmentid` 的 road 不再进入单向阶段
+- 业务判断统一使用：
+  - `kind_2`
+  - `grade_2`
+- through 规则：
+  - 二度链接节点不切段
+  - 非当前 terminate 的语义路口允许 through
+  - 仅在命中当前轮 terminate 时切段停止
+- 多分支延展：
+  - 当前节点未命中 terminate 时，候选前进 road 中仅选择与当前行进方向夹角最小的一条继续
+- 阶段定义：
+  - `0-0单`：`closed_con in {1,3}`、`kind_2 in {8,16}`、`grade_2 = 1`
+  - `0-1单`：`closed_con in {2,3}`、`kind_2 in {4,8,16,64,2048}`、`grade_2 in {1,2}`
+  - `0-2单`：`closed_con in {2,3}`、`kind_2 in {4,8,16,64,2048}`、`grade_2 in {1,2,3}`
+- 新构成 road：
+  - `sgrade = 0-0单 / 0-1单 / 0-2单`
+- 新增 runner 对外产物：
+  - `oneway_segment_roads.gpkg`
+  - `oneway_segment_build_table.csv`
+  - `oneway_segment_summary.json`
+  - `unsegmented_roads.gpkg`
+  - `unsegmented_roads.csv`
+  - `unsegmented_roads_summary.json`
+- `unsegmented_roads.*` 口径：
+  - 统计双向 + 单向全部阶段完成后仍未形成 Segment 的 road
+  - 必须排除 `formway = 128`
+
 ## 6. Step6 契约
 
 ### 6.1 输入
@@ -283,6 +321,7 @@
 ### 6.4 Step6 规则
 - 规则1：
   - 若某 Segment 两端路口 `grade_2` 都为 `1`，且 `sgrade != 0-0双`，则调整为 `0-0双`
+  - 但 `sgrade in {0-0单,0-1单,0-2单}` 的单向 Segment 不适用该提升规则
 - 规则2：
   - 对所有 `sgrade = 0-0双` 的 Segment，若其中间 `junc_nodes` 存在：
     - `grade_2 = 1`
@@ -296,13 +335,12 @@
 ## 7. Freeze Compare 契约
 - 当前 active non-regression baseline：
   - `modules/t01_data_preprocess/baselines/t01_skill_active_eight_sample_suite/`
-- freeze compare 的主判定对象：
-  - 最终 `segment.gpkg` 语义一致
-- 以下产物作为审计证据保留：
+- 在引入 Step5 后单向补段后，freeze compare 的主用途是守护既有双向 Segment accepted baseline：
   - `validated_pairs_skill_v1.csv`
   - `segment_body_membership_skill_v1.csv`
   - `trunk_membership_skill_v1.csv`
-  - refreshed `nodes / roads` hash
+  - Step5 结束时、进入单向补段之前的 refreshed `nodes / roads` hash
+- 最终运行目录中的 `nodes.gpkg / roads.gpkg / segment.gpkg` 可以包含新增单向 Segment 结果；这些结果不作为双向 baseline compare 的主判定对象。
 - 未经用户明确认可，不得更新 active freeze baseline
 
 ## 8. 文档与实现边界

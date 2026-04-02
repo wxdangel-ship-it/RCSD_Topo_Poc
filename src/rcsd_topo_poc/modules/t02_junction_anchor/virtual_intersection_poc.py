@@ -2273,8 +2273,18 @@ def _can_soft_exclude_outside_rc(
     selected_rc_road_count: int,
     polygon_support_rc_road_count: int,
     max_selected_side_branch_covered_length_m: float,
+    max_nonmain_branch_polygon_length_m: float,
     min_invalid_rc_distance_to_center_m: float | None,
+    connected_rc_group_count: int,
+    negative_rc_group_count: int,
 ) -> bool:
+    if (
+        status == STATUS_SURFACE_ONLY
+        and selected_rc_road_count == 0
+        and polygon_support_rc_road_count == 0
+        and connected_rc_group_count == 0
+    ):
+        return True
     if (
         selected_rc_road_count >= 2
         and polygon_support_rc_road_count >= 1
@@ -2289,6 +2299,14 @@ def _can_soft_exclude_outside_rc(
     ):
         return True
     if status == STATUS_NO_VALID_RC_CONNECTION:
+        return True
+    if (
+        status == STATUS_STABLE
+        and negative_rc_group_count >= 1
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and max_nonmain_branch_polygon_length_m >= 10.0
+    ):
         return True
     if (
         status in {STATUS_STABLE, STATUS_SURFACE_ONLY, STATUS_NODE_COMPONENT_CONFLICT}
@@ -3106,6 +3124,13 @@ def _effect_success_acceptance(
             return True, "accepted", "surface_only_without_connected_local_rcsd_evidence"
         return False, "review_required", f"review_required_status:{status}"
     if status == STATUS_NO_VALID_RC_CONNECTION:
+        if (
+            connected_rc_group_count == 0
+            and associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+            and local_rc_node_count == 0
+        ):
+            return True, "accepted", "rc_gap_without_connected_local_rcsd_evidence"
         if max_nonmain_branch_polygon_length_m >= 4.0:
             return True, "accepted", "rc_gap_with_nonmain_branch_polygon_coverage"
         return False, "review_required", "rc_gap_without_substantive_nonmain_branch_coverage"
@@ -4578,7 +4603,10 @@ def run_t02_virtual_intersection_poc(
                 selected_rc_road_count=len(selected_rc_roads),
                 polygon_support_rc_road_count=len(polygon_support_rc_road_ids),
                 max_selected_side_branch_covered_length_m=max_selected_side_branch_covered_length_m,
+                max_nonmain_branch_polygon_length_m=max_nonmain_branch_polygon_length_m,
                 min_invalid_rc_distance_to_center_m=min_invalid_rc_distance_to_center_m,
+                connected_rc_group_count=len(connected_rc_group_ids),
+                negative_rc_group_count=len(negative_rc_groups),
             )
         )
         if (

@@ -666,6 +666,48 @@ def test_case_package_769081_excludes_foreign_mainnode_group_nearby_junction(tmp
     assert polygon.buffer(0.01).contains(nodes["56439996"]) is False
 
 
+def test_case_package_698418_accepts_surface_only_without_connected_local_rcsd_evidence(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "698418")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "surface_only"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "surface_only_without_connected_local_rcsd_evidence"
+
+
+def test_case_package_705014_accepts_surface_only_without_connected_local_rcsd_evidence(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "705014")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "surface_only"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "surface_only_without_connected_local_rcsd_evidence"
+
+
+def test_case_package_709632_accepts_ambiguous_main_rc_gap_when_polygon_covers_nonmain_branch(
+    tmp_path: Path,
+) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "709632")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "ambiguous_rc_match"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "ambiguous_main_rc_gap_with_nonmain_branch_polygon_coverage"
+
+
+def test_case_package_758888_soft_excludes_remote_outside_rc_and_accepts(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "758888")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["status"] != "rc_outside_drivezone"
+    assert status_doc["acceptance_reason"] != "rc_outside_drivezone"
+
+
 def test_virtual_intersection_poc_ignores_far_rc_outside_drivezone_noise(tmp_path: Path) -> None:
     paths = _write_poc_inputs(tmp_path, include_far_outside_rc=True)
     artifacts = run_t02_virtual_intersection_poc(mainnodeid="100", out_root=tmp_path / "out", **paths)
@@ -743,6 +785,8 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         min_invalid_rc_distance_to_center_m=None,
         local_rc_road_count=1,
         local_rc_node_count=1,
+        connected_rc_group_count=1,
+        nonmain_branch_connected_rc_group_count=0,
     ) == (True, "accepted", "stable")
     assert _effect_success_acceptance(
         status="surface_only",
@@ -754,7 +798,22 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         min_invalid_rc_distance_to_center_m=None,
         local_rc_road_count=0,
         local_rc_node_count=0,
+        connected_rc_group_count=0,
+        nonmain_branch_connected_rc_group_count=0,
     ) == (True, "accepted", "surface_only_without_any_local_rcsd_data")
+    assert _effect_success_acceptance(
+        status="surface_only",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=0.0,
+        associated_rc_road_count=0,
+        polygon_support_rc_road_count=0,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=4,
+        local_rc_node_count=2,
+        connected_rc_group_count=0,
+        nonmain_branch_connected_rc_group_count=0,
+    ) == (True, "accepted", "surface_only_without_connected_local_rcsd_evidence")
     assert _effect_success_acceptance(
         status="no_valid_rc_connection",
         review_mode=False,
@@ -765,6 +824,8 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         min_invalid_rc_distance_to_center_m=None,
         local_rc_road_count=0,
         local_rc_node_count=0,
+        connected_rc_group_count=0,
+        nonmain_branch_connected_rc_group_count=0,
     ) == (False, "review_required", "rc_gap_without_substantive_nonmain_branch_coverage")
     assert _effect_success_acceptance(
         status="no_valid_rc_connection",
@@ -776,6 +837,8 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         min_invalid_rc_distance_to_center_m=None,
         local_rc_road_count=0,
         local_rc_node_count=0,
+        connected_rc_group_count=0,
+        nonmain_branch_connected_rc_group_count=0,
     ) == (True, "accepted", "rc_gap_with_nonmain_branch_polygon_coverage")
     assert _effect_success_acceptance(
         status="node_component_conflict",
@@ -787,6 +850,8 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         min_invalid_rc_distance_to_center_m=None,
         local_rc_road_count=2,
         local_rc_node_count=2,
+        connected_rc_group_count=2,
+        nonmain_branch_connected_rc_group_count=1,
     ) == (True, "accepted", "node_component_conflict_with_strong_rc_supported_side_coverage")
     assert _effect_success_acceptance(
         status="node_component_conflict",
@@ -798,7 +863,22 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         min_invalid_rc_distance_to_center_m=None,
         local_rc_road_count=2,
         local_rc_node_count=2,
+        connected_rc_group_count=2,
+        nonmain_branch_connected_rc_group_count=1,
     ) == (False, "review_required", "review_required_status:node_component_conflict")
+    assert _effect_success_acceptance(
+        status="ambiguous_rc_match",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=18.0,
+        max_nonmain_branch_polygon_length_m=10.0,
+        associated_rc_road_count=0,
+        polygon_support_rc_road_count=0,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=10,
+        local_rc_node_count=6,
+        connected_rc_group_count=2,
+        nonmain_branch_connected_rc_group_count=0,
+    ) == (True, "accepted", "ambiguous_main_rc_gap_with_nonmain_branch_polygon_coverage")
     assert _effect_success_acceptance(
         status="stable",
         review_mode=True,
@@ -809,7 +889,26 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         min_invalid_rc_distance_to_center_m=None,
         local_rc_road_count=1,
         local_rc_node_count=1,
+        connected_rc_group_count=1,
+        nonmain_branch_connected_rc_group_count=0,
     ) == (False, "review_required", "review_mode")
+
+
+def test_can_soft_exclude_outside_rc_accepts_remote_tail_but_rejects_near_center_conflict() -> None:
+    assert _can_soft_exclude_outside_rc(
+        status="stable",
+        selected_rc_road_count=1,
+        polygon_support_rc_road_count=1,
+        max_selected_side_branch_covered_length_m=9.8,
+        min_invalid_rc_distance_to_center_m=19.538,
+    ) is True
+    assert _can_soft_exclude_outside_rc(
+        status="stable",
+        selected_rc_road_count=1,
+        polygon_support_rc_road_count=1,
+        max_selected_side_branch_covered_length_m=7.954,
+        min_invalid_rc_distance_to_center_m=2.482,
+    ) is False
 
 
 def test_max_selected_side_branch_covered_length_ignores_main_and_edge_only_branches() -> None:

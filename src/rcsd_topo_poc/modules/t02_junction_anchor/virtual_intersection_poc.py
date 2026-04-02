@@ -71,6 +71,7 @@ BRANCH_MATCH_TOLERANCE_DEG = 30.0
 RC_BRANCH_PROXIMITY_M = 18.0
 RC_OUTSIDE_DRIVEZONE_IGNORE_MARGIN_M = 25.0
 RC_OUTSIDE_DRIVEZONE_RELEVANCE_MAX_DISTANCE_M = 50.0
+RC_OUTSIDE_DRIVEZONE_SOFT_EXCLUDE_MIN_DISTANCE_M = 18.0
 POLYGON_CORE_RADIUS_M = 7.0
 POLYGON_TIP_BUFFER_M = 5.0
 POLYGON_RC_NODE_BUFFER_M = 4.0
@@ -2284,7 +2285,7 @@ def _can_soft_exclude_outside_rc(
         (selected_rc_road_count + polygon_support_rc_road_count) >= 1
         and max_selected_side_branch_covered_length_m >= 7.0
         and min_invalid_rc_distance_to_center_m is not None
-        and min_invalid_rc_distance_to_center_m >= 20.0
+        and min_invalid_rc_distance_to_center_m >= RC_OUTSIDE_DRIVEZONE_SOFT_EXCLUDE_MIN_DISTANCE_M
     ):
         return True
     if status == STATUS_NO_VALID_RC_CONNECTION:
@@ -3087,6 +3088,8 @@ def _effect_success_acceptance(
     min_invalid_rc_distance_to_center_m: float | None,
     local_rc_road_count: int,
     local_rc_node_count: int,
+    connected_rc_group_count: int,
+    nonmain_branch_connected_rc_group_count: int,
 ) -> tuple[bool, str, str]:
     if review_mode:
         return False, "review_required", "review_mode"
@@ -3095,6 +3098,12 @@ def _effect_success_acceptance(
     if status == STATUS_SURFACE_ONLY:
         if local_rc_road_count == 0 and local_rc_node_count == 0:
             return True, "accepted", "surface_only_without_any_local_rcsd_data"
+        if (
+            connected_rc_group_count == 0
+            and associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+        ):
+            return True, "accepted", "surface_only_without_connected_local_rcsd_evidence"
         return False, "review_required", f"review_required_status:{status}"
     if status == STATUS_NO_VALID_RC_CONNECTION:
         if max_nonmain_branch_polygon_length_m >= 4.0:
@@ -3118,10 +3127,17 @@ def _effect_success_acceptance(
         ):
             return True, "accepted", "node_component_conflict_with_remote_outside_rc_gap"
         return False, "review_required", f"review_required_status:{status}"
-    if status in {
-        STATUS_WEAK_BRANCH_SUPPORT,
-        STATUS_AMBIGUOUS_RC_MATCH,
-    }:
+    if status == STATUS_WEAK_BRANCH_SUPPORT:
+        return False, "review_required", f"review_required_status:{status}"
+    if status == STATUS_AMBIGUOUS_RC_MATCH:
+        if (
+            associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+            and nonmain_branch_connected_rc_group_count == 0
+            and max_selected_side_branch_covered_length_m >= 10.0
+            and max_nonmain_branch_polygon_length_m >= 8.0
+        ):
+            return True, "accepted", "ambiguous_main_rc_gap_with_nonmain_branch_polygon_coverage"
         return False, "review_required", f"review_required_status:{status}"
     return False, "rejected", f"rejected_status:{status}"
 
@@ -4521,6 +4537,17 @@ def run_t02_virtual_intersection_poc(
         counts["associated_rcsdroad_count"] = len(associated_rcsdroad_features)
         counts["associated_rcsdnode_count"] = len(associated_rcsdnode_features)
         counts["risk_count"] = len(risks)
+        connected_rc_group_ids = {
+            rc_group_id
+            for branch in road_branches
+            for rc_group_id in branch.rcsdroad_ids
+        }
+        nonmain_branch_connected_rc_group_ids = {
+            rc_group_id
+            for branch in road_branches
+            if not branch.is_main_direction
+            for rc_group_id in branch.rcsdroad_ids
+        }
         if min_invalid_rc_distance_to_center_m is not None:
             counts["min_invalid_rc_distance_to_center_m"] = round(
                 min_invalid_rc_distance_to_center_m,
@@ -4540,6 +4567,8 @@ def run_t02_virtual_intersection_poc(
             min_invalid_rc_distance_to_center_m=min_invalid_rc_distance_to_center_m,
             local_rc_road_count=len(local_rc_roads),
             local_rc_node_count=len(local_rc_nodes),
+            connected_rc_group_count=len(connected_rc_group_ids),
+            nonmain_branch_connected_rc_group_count=len(nonmain_branch_connected_rc_group_ids),
         )
         can_soft_exclude_outside_rc = (
             rc_outside_drivezone_error is not None

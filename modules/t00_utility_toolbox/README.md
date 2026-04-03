@@ -20,6 +20,7 @@
 - Tool5：基于 Tool4 输出与 SW 原始路网给一层路网写入原始 `kind`
 - Tool6：将 `A200_node.shp` 导出为保留原始属性的 `nodes.geojson`
 - Tool7：将指定目录下顶层 `GeoJSON` 批量导出为同名 `GPKG`
+- Tool9：对全量 `DivStripZone` 做逐 Patch 预处理并汇总输出
 
 ## 模块状态
 
@@ -30,6 +31,7 @@
 - Tool3 维持既有实现
 - Tool6 为本轮新增导出工具
 - Tool7 为目录参数驱动的批量格式转换工具
+- Tool9 为新增 DivStripZone 预处理与汇总工具
 
 ## 与业务模块的关系
 
@@ -57,6 +59,12 @@
 - Tool7 不递归子目录
 - Tool7 默认沿用 GeoJSON 自身 CRS；若 GeoJSON 缺失 `crs` 元数据，则按仓库现有口径默认视为 `EPSG:4326`
 
+## Tool9 备注
+
+- Tool9 读取 `patch_all/<PatchID>/(Vector|vector)/DivStripZone.geojson`
+- 每个 Patch 输出 `DivStripZone_fix.geojson` 并写入 `patchid`
+- 根目录 `DivStripZone.geojson` 为逐 Patch 汇总结果，保留 `patchid`
+
 ## 文档入口
 
 - 规格基线：[`../../specs/t00-utility-toolbox/spec.md`](../../specs/t00-utility-toolbox/spec.md)
@@ -78,6 +86,7 @@ python3 scripts/t00_tool4_a200_patch_join.py
 python3 scripts/t00_tool5_a200_kind_enrich.py
 python3 scripts/t00_tool6_node_export.py
 python3 scripts/t00_tool7_geojson_to_gpkg.py /mnt/d/TestData/POC_Data/some_directory
+python3 scripts/t00_tool9_divstripzone_merge.py
 ```
 
 默认数据根位于：

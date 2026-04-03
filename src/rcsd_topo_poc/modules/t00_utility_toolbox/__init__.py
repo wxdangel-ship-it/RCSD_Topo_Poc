@@ -26,6 +26,10 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.geojson_to_gpkg_export import (
     GeoJsonToGpkgDirectoryConfig,
     run_geojson_to_gpkg_directory_export,
 )
+from rcsd_topo_poc.modules.t00_utility_toolbox.divstripzone_merge import (
+    DivStripZoneMergeConfig,
+    run_divstripzone_merge,
+)
 
 __all__ = [
     "PatchBootstrapConfig",
@@ -42,4 +46,6 @@ __all__ = [
     "run_shapefile_geojson_export",
     "GeoJsonToGpkgDirectoryConfig",
     "run_geojson_to_gpkg_directory_export",
+    "DivStripZoneMergeConfig",
+    "run_divstripzone_merge",
 ]

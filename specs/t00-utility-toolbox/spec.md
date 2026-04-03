@@ -16,7 +16,7 @@
 
 ## 3. 当前范围
 
-当前纳入范围为 Tool1 至 Tool7：
+当前纳入范围为 Tool1 至 Tool9：
 
 - Tool1：Patch 数据整理脚本
 - Tool2：全量 DriveZone 预处理与合并
@@ -25,6 +25,7 @@
 - Tool5：一层路网增加 SW 原始 `kind`
 - Tool6：shp 导出 GeoJSON 工具
 - Tool7：目录级 GeoJSON 批量转 GPKG 工具
+- Tool9：全量 DivStripZone 预处理与合并
 
 ## 4. 统一规则
 
@@ -163,11 +164,54 @@
   - `file_results`
   - `error_reason_summary`
 
-## 8. 非范围
+
+## 8. Tool9 需求基线
+
+### 8.1 目标
+
+- 对全量 `DivStripZone` 做逐 Patch 预处理并汇总输出
+- 生成 per-patch `DivStripZone_fix.geojson` 与根目录全量 `DivStripZone.geojson`
+- 输出 CRS 为 `EPSG:3857`
+
+### 8.2 输入与输出
+
+- 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\vector\DivStripZone.geojson`
+- 兼容输入：若存在 `Vector/DivStripZone.geojson` 允许读取
+- per-patch 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone_fix.geojson`
+- 全局输出：`D:\TestData\POC_Data\patch_all\DivStripZone.geojson`
+
+### 8.3 处理要求
+
+1. 读取每个 Patch 的 `DivStripZone.geojson`
+2. 若输入 CRS 非 `3857`，重投影到 `3857`
+3. 允许最小限度几何修复；修复失败则跳过并记录异常
+4. 单 Patch 内做面合并后写出 `DivStripZone_fix.geojson`
+5. 每个输出要素必须包含 `patchid` 字段
+6. 全量阶段将每个 Patch 的 fix 结果汇总到根目录 `DivStripZone.geojson`
+7. 输出已存在时先删除再重建
+
+### 8.4 日志、摘要与进度
+
+- 日志与摘要落在 `patch_all` 根目录
+- 命令行输出至少包含：
+  - Tool9 开始/结束
+  - 阶段级进度
+  - Patch 进度
+- 摘要至少包含：
+  - `total_patch_count`
+  - `input_found_count`
+  - `processed_patch_count`
+  - `fixed_output_count`
+  - `skip_missing_count`
+  - `skip_error_count`
+  - `global_merge_input_count`
+  - 输出要素统计与异常原因
+
+## 9. 非范围
 
 当前非范围包括：
 
-- Tool8+
+- Tool10+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
@@ -175,7 +219,7 @@
 - 为未来扩展提前搭重型框架
 - 对 Tool1 至 Tool5 的无关业务重构
 
-## 9. 风险与边界
+## 10. 风险与边界
 
 - 必须防止 `T00` 从内部工具集合扩张为业务生产模块
 - Tool6 若输入 CRS 缺失，必须明确阻塞，不得静默猜测
@@ -183,7 +227,7 @@
 - Tool7 允许目录参数驱动，但只能接收目录参数，不能顺手演化成复杂批处理框架
 - Tool7 若遇到字段名与 GPKG 保留列冲突，必须显式记录最小重命名映射
 
-## 10. 进入后续阶段的门禁
+## 11. 进入后续阶段的门禁
 
 满足以下条件后，可继续进入后续增量实现或扩展：
 

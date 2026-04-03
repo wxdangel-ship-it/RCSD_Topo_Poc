@@ -12,6 +12,7 @@
   - Tool5 `A200 road 增加 SW 原始 kind`
   - Tool6 `A200_node shp 导出 nodes.geojson`
   - Tool7 `目录级 GeoJSON 批量转 GPKG`
+  - Tool9 `DivStripZone 预处理与汇总输出`
 
 本文件用于固化 `T00` 当前稳定的输入、输出、覆盖、跳过与摘要语义。
 
@@ -157,18 +158,38 @@
   - `file_results`
   - `error_reason_summary`
 
-## 11. 非范围契约
+
+## 11. Tool9 契约
+
+- 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone.geojson`
+- 兼容输入：如存在 `vector/DivStripZone.geojson` 允许读取
+- per-patch 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone_fix.geojson`
+- 全局输出：`D:\TestData\POC_Data\patch_all\DivStripZone.geojson`
+- 输出 CRS：`EPSG:3857`
+- 每个输出要素必须包含 `patchid` 字段
+- 覆盖口径：已存在输出先删除再重建
+- 摘要至少包含：
+  - `total_patch_count`
+  - `input_found_count`
+  - `processed_patch_count`
+  - `fixed_output_count`
+  - `skip_missing_count`
+  - `skip_error_count`
+  - `global_merge_input_count`
+  - 输出要素统计与异常原因
+
+## 12. 非范围契约
 
 当前不承诺以下能力：
 
-- Tool8+
+- Tool10+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
 - 重型产线编排
 - 超出当前需求的中间产物正式化治理
 
-## 12. 后续实现注意事项
+## 13. 后续实现注意事项
 
 - 参数名、日志文件名和具体 CLI 形式可继续在脚本层补足
 - 但不得偏离当前契约语义

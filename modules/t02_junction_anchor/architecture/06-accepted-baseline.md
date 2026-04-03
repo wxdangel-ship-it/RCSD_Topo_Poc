@@ -7,6 +7,7 @@
   - 若实现与本文档冲突，应先视为实现待对齐，不得自行改写 accepted baseline。
   - 若 T01 上游事实、当前实现与本文档之间存在理解分歧，应先说明 T02 文档存在歧义，再由业务拍板。
   - `t02-fix-node-error-2` 与文本证据包是独立支撑入口，不改写 stage1 / stage2 / stage3 主阶段链。
+  - stage4 是独立并行成果，不写回 `nodes.is_anchor`，也不并入统一锚定结果。
 
 ## 2. 目标
 - 在 T01 `segment / nodes` 基础上，完成双向 Segment 相关路口的资料 gate、anchor recognition 与未锚定路口的虚拟路口面锚定。
@@ -17,12 +18,14 @@
   - `nodes.anchor_reason`
   - `segment.has_evd`
   - stage3 虚拟路口面与审计输出
+  - stage4 div/merge 虚拟路口面与关联审计输出
 - 保持输出可审计、可复现、可 smoke，而不是把异常、歧义与人工复核信息藏进黑箱逻辑。
 
 ## 3. 当前正式阶段链
 - stage1：`DriveZone / has_evd gate`
 - stage2：`anchor recognition / anchor existence`
 - stage3：`virtual intersection anchoring`
+- stage4：`diverge / merge virtual polygon`
 - 独立支撑入口：
   - 单 / 多 `mainnodeid` 文本证据包
   - `t02-fix-node-error-2` 离线修复工具
@@ -30,7 +33,7 @@
 说明：
 - stage3 已纳入当前正式 baseline。
 - 文本证据包与 `t02-fix-node-error-2` 不属于新的业务阶段。
-- 当前正式阶段链只包含 stage1 / stage2 / stage3，不包含最终唯一锚定决策闭环、概率阶段或正式产线级全量治理闭环。
+- 当前正式阶段链只包含 stage1 / stage2 / stage3 / stage4，不包含最终唯一锚定决策闭环、概率阶段或正式产线级全量治理闭环。
 
 ## 4. 当前有效输入
 
@@ -55,6 +58,15 @@
   - `RCSDRoad.gpkg`
   - `RCSDNode.gpkg`
   - `mainnodeid`（可选）
+
+### 4.3 stage4 官方输入
+
+- `nodes.gpkg`
+- `roads.gpkg`
+- `DriveZone.gpkg`
+- `RCSDRoad.gpkg`
+- `RCSDNode.gpkg`
+- `mainnodeid`
 
 ### 4.3 独立支撑工具输入
 - `t02-fix-node-error-2`：
@@ -113,6 +125,32 @@
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别“有资料但未锚定”的路口
 
+### 5.3 stage4 输入约束
+
+- `nodes` 必须包含：
+  - `id`
+  - `mainnodeid`
+  - `has_evd`
+  - `is_anchor`
+  - `kind_2`
+  - `grade_2`
+- `roads / RCSDRoad` 当前正式依赖：
+  - `id`
+  - `snodeid`
+  - `enodeid`
+  - `direction`
+- `RCSDNode` 当前正式依赖：
+  - `id`
+  - `mainnodeid`
+- `stage4` 候选口径冻结为：
+  - `has_evd = yes`
+  - `is_anchor = no`
+  - `kind_2 in {8, 16}`
+- `kind_2 = 8` 表示 merge（`2 in 1 out`）
+- `kind_2 = 16` 表示 diverge（`1 in 2 out`）
+- `stage4` 实现采用 stage3 的栅格策略主线，但不依赖 stage3 产物文件
+- `RCSDRoad` / `RCSDNode` 不在 `DriveZone` 上必须报异常，不允许 silent fix
+
 ### 5.3 语义字段约束
 - T02 当前正式业务字段为：
   - `has_evd`
@@ -133,6 +171,15 @@
   - `t`
   - `null`
 - `has_evd / is_anchor / anchor_reason` 只对代表 node 写值；非代表 node 保持 `null`。
+
+### 5.4 stage4 语义约束
+
+- stage4 是并行独立成果，不写回 `nodes.is_anchor`
+- stage4 的“前后区域范围”先按保守虚拟面处理：
+  - 事件核心区
+  - 选定分支组前后臂区
+- 若覆盖失败但输入完整，记 `review_required` 风险，不得 silent fix
+- 若 `mainnodeid` 关联不稳定、patch 无法形成主连通域、关键字段缺失或 CRS 无法统一到 `EPSG:3857`，必须报异常
 
 ## 6. 阶段一：stage1，DriveZone / has_evd gate
 
@@ -298,6 +345,27 @@
   - 若候选组之间通过 `roads` 连通，且路径不穿越其他语义路口，则可增编合并
   - 合并后更新 `nodes_fix`，并删除“组内且面内”的 `roads_fix` 目标 road
 - 它不重算 stage2，也不改写 `node_error_2` 的生成逻辑。
+
+## 10. 阶段四：stage4，diverge / merge virtual polygon
+
+### 10.1 目标
+- 处理 `has_evd = yes`、`is_anchor = no` 且 `kind_2 in {8, 16}` 的单个 `mainnodeid`。
+- 生成保守虚拟路口面，覆盖目标 `mainnodeid` 对应的 `RCSDNode` seed 与相关 node。
+
+### 10.2 当前业务规则
+- `kind_2 = 8` 归因为 merge（`2 in 1 out`）。
+- `kind_2 = 16` 归因为 diverge（`1 in 2 out`）。
+- stage4 采用 stage3 的栅格策略主线：
+  - patch + mask + 连通提取 + 回矢量 + 审计
+- stage4 不重写 `nodes.is_anchor`，也不并入统一锚定结果。
+
+### 10.3 当前正式输出语义
+- `stage4_virtual_polygon.gpkg`
+- `stage4_node_link.json`
+- `stage4_rcsdnode_link.json`
+- `stage4_audit.json`
+- 可选 `stage4_debug/`
+- `stage4_status.json`、`stage4_progress.json`、`stage4_perf.json`、`stage4_perf_markers.jsonl` 仍可作为运行态工件输出，但不属于当前 stage4 正式输出契约。
 
 ## 10. 当前已落地 / 已固化内容
 - stage1 `DriveZone / has_evd gate` 已正式落地。

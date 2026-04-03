@@ -211,6 +211,14 @@ def _cmd_t02_fix_node_error_2(args: argparse.Namespace) -> int:
     return run_t02_fix_node_error_2_cli(args)
 
 
+def _cmd_t02_stage4_divmerge_virtual_polygon(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t02_junction_anchor.stage4_divmerge_virtual_polygon import (
+        run_t02_stage4_divmerge_virtual_polygon_cli,
+    )
+
+    return run_t02_stage4_divmerge_virtual_polygon_cli(args)
+
+
 def _add_debug_flag(parser: argparse.ArgumentParser, *, default: bool) -> None:
     parser.add_argument(
         "--debug",
@@ -762,6 +770,74 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional audit JSON output path. Defaults to sibling fix_report.json next to nodes_fix.",
     )
     p_t02_fix_node_error_2.set_defaults(func=_cmd_t02_fix_node_error_2)
+
+    p_t02_stage4 = sub.add_parser(
+        "t02-stage4-divmerge-virtual-polygon",
+        help="Run T02 stage4 div/merge virtual polygon baseline and write independent polygon/link outputs.",
+    )
+    p_t02_stage4.add_argument(
+        "--nodes-path",
+        "--nodes_path",
+        required=True,
+        dest="nodes_path",
+        help="Path to T02 stage2 nodes GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_stage4.add_argument("--nodes-layer", help="Optional nodes layer name.")
+    p_t02_stage4.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
+    p_t02_stage4.add_argument(
+        "--roads-path",
+        "--roads_path",
+        required=True,
+        dest="roads_path",
+        help="Path to roads GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_stage4.add_argument("--roads-layer", help="Optional roads layer name.")
+    p_t02_stage4.add_argument("--roads-crs", help="Optional roads CRS override, e.g. EPSG:4326.")
+    p_t02_stage4.add_argument(
+        "--drivezone-path",
+        "--drivezone_path",
+        required=True,
+        dest="drivezone_path",
+        help="Path to DriveZone GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_stage4.add_argument("--drivezone-layer", help="Optional DriveZone layer name.")
+    p_t02_stage4.add_argument("--drivezone-crs", help="Optional DriveZone CRS override, e.g. EPSG:4326.")
+    p_t02_stage4.add_argument(
+        "--rcsdroad-path",
+        "--rcsdroad_path",
+        required=True,
+        dest="rcsdroad_path",
+        help="Path to RCSDRoad GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_stage4.add_argument("--rcsdroad-layer", help="Optional RCSDRoad layer name.")
+    p_t02_stage4.add_argument("--rcsdroad-crs", help="Optional RCSDRoad CRS override, e.g. EPSG:4326.")
+    p_t02_stage4.add_argument(
+        "--rcsdnode-path",
+        "--rcsdnode_path",
+        required=True,
+        dest="rcsdnode_path",
+        help="Path to RCSDNode GeoPackage/GeoJSON/Shapefile. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_stage4.add_argument("--rcsdnode-layer", help="Optional RCSDNode layer name.")
+    p_t02_stage4.add_argument("--rcsdnode-crs", help="Optional RCSDNode CRS override, e.g. EPSG:4326.")
+    p_t02_stage4.add_argument(
+        "--mainnodeid",
+        required=True,
+        help="Target mainnodeid for the Stage4 div/merge virtual polygon baseline.",
+    )
+    p_t02_stage4.add_argument(
+        "--out-root",
+        "--out-dir",
+        "--out_dir",
+        dest="out_root",
+        help="Optional output root override. If omitted, write to outputs/_work/t02_stage4_divmerge_virtual_polygon/<run_id>.",
+    )
+    p_t02_stage4.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t02_stage4_divmerge_virtual_polygon_YYYYMMDD_HHMMSS.",
+    )
+    _add_debug_flag(p_t02_stage4, default=False)
+    p_t02_stage4.set_defaults(func=_cmd_t02_stage4_divmerge_virtual_polygon)
 
     p_t02_poc = sub.add_parser(
         "t02-virtual-intersection-poc",

@@ -9,8 +9,10 @@
   - stage1 `DriveZone / has_evd gate`
   - stage2 `anchor recognition / anchor existence`
   - stage3 `virtual intersection anchoring`
+  - stage4 `diverge / merge virtual polygon`
 - 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础。
 - `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口。
+- `t02-stage4-divmerge-virtual-polygon` 是当前 stage4 独立入口，只输出虚拟路口面及关联审计，不回写 `nodes.is_anchor`。
 - 单 / 多 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑工具保留。
 - 当前代码已实现最小闭环，但尚未进入最终唯一锚定决策、概率阶段与正式产线级全量批处理。
 
@@ -40,6 +42,10 @@ python -m rcsd_topo_poc t02-fix-node-error-2 --help
 python -m rcsd_topo_poc t02-decode-text-bundle --help
 ```
 
+```bash
+python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
+```
+
 - `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口
 - 默认 `case-package` 模式保持既有单 `mainnodeid` baseline 回归能力
 - 显式 `--input-mode full-input` 时，统一承接：
@@ -48,6 +54,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
 - 它不重算 stage1 `has_evd` 或 stage2 `is_anchor`，而是直接消费其结果字段
 - `t02-fix-node-error-2` 是独立离线修复工具，只消费 `node_error_2 / nodes / roads / RCSDIntersection` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json`；它不属于 stage 主流程
 - `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 / 多 `mainnodeid` 文本证据包导出与解包，服务于 stage3 复核与外部复现
+- `t02-stage4-divmerge-virtual-polygon` 用于单 case 的 div/merge 虚拟路口面 baseline，输入为 `nodes / roads / DriveZone / RCSDRoad / RCSDNode / mainnodeid`
 - T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
 - T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
 - `case-package` 是 stage3 baseline regression 入口，不允许回退
@@ -85,6 +92,21 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc \
   --debug-render-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_virtual_intersection_poc_debug/_rendered_maps \
   --run-id t02_virtual_intersection_demo
+```
+
+stage4 示例：
+
+```bash
+python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.gpkg \
+  --mainnodeid 100 \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage4_divmerge_virtual_polygon \
+  --run-id t02_stage4_divmerge_demo \
+  --debug
 ```
 
 ```bash
@@ -235,6 +257,14 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - stage3 单 case 生成的虚拟路口面
 - `virtual_intersection_polygons.gpkg`
   - stage3 full-input 模式汇总生成的批次虚拟路口面图层
+- `stage4_virtual_polygon.gpkg`
+  - stage4 单 case 生成的 div/merge 虚拟路口面
+- `stage4_node_link.json`
+  - stage4 与 `nodes.mainnodeid` 的关联结果
+- `stage4_rcsdnode_link.json`
+  - stage4 与 `RCSDNode` seed / 相关 node 的关联结果
+- `stage4_audit.json`
+  - stage4 审计结果
 - `_rendered_maps/`
   - stage3 批次 render 目录
 - `branch_evidence.json`

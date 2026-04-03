@@ -16,6 +16,7 @@
   - stage1 `DriveZone / has_evd gate`
   - stage2 anchor recognition / anchor existence 最小闭环
   - stage3 `virtual intersection anchoring` baseline
+  - stage4 `diverge / merge virtual polygon` 独立成果
   - `t02-virtual-intersection-poc` baseline 入口：
     - 默认 `case-package`
     - 可显式切换 `--input-mode full-input`
@@ -24,6 +25,24 @@
   - 消费 T01 `segment` 与 `nodes`
   - 消费 `DriveZone`、`RCSDIntersection`、`roads`、`RCSDRoad`、`RCSDNode`
   - 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit/log` 与 stage3 产物
+- stage4 额外消费：
+  - `nodes`
+  - `roads`
+  - `DriveZone`
+  - `RCSDRoad`
+  - `RCSDNode`
+- stage4 仅处理代表 node 满足以下候选口径的单 case baseline：
+  - `has_evd = yes`
+  - `is_anchor = no`
+  - `kind_2 in {8, 16}`
+- stage4 当前语义归因冻结为：
+  - `kind_2 = 8` 表示 merge（`2 in 1 out`）
+  - `kind_2 = 16` 表示 diverge（`1 in 2 out`）
+- stage4 实现采用 stage3 的栅格策略主线：
+  - patch + mask + 连通提取 + 回矢量 + 审计
+- stage4 结果是独立并行成果：
+  - 不写回 `nodes.is_anchor`
+  - 不并入统一锚定结果
 - 当前不在正式范围：
   - 最终唯一锚定决策闭环
   - 正式产线级全量虚拟路口批处理
@@ -303,6 +322,40 @@
   - `bounds`
 - full-input 模式不得用硬编码 `EPSG:3857` 覆盖全量输入 CRS；必须优先读取输入自带 CRS，multi-layer GeoPackage 不能静默猜层。
 
+### 2.10 Stage4 div/merge 虚拟面契约
+
+- `t02-stage4-divmerge-virtual-polygon` 是当前 stage4 独立入口。
+- stage4 必选输入：
+  - `nodes`
+  - `roads`
+  - `DriveZone`
+  - `RCSDRoad`
+  - `RCSDNode`
+  - `mainnodeid`
+- stage4 当前只认字段：
+  - `nodes.id / nodes.mainnodeid / nodes.has_evd / nodes.is_anchor / nodes.kind_2 / nodes.grade_2`
+  - `roads.id / roads.snodeid / roads.enodeid / roads.direction`
+  - `RCSDRoad.id / RCSDRoad.snodeid / RCSDRoad.enodeid / RCSDRoad.direction`
+  - `RCSDNode.id / RCSDNode.mainnodeid`
+- stage4 正式输出：
+  - `stage4_virtual_polygon.gpkg`
+  - `stage4_node_link.json`
+  - `stage4_rcsdnode_link.json`
+  - `stage4_audit.json`
+  - 可选 `stage4_debug/`
+- stage4 运行态工件仍可输出：
+  - `stage4_status.json`
+  - `stage4_progress.json`
+  - `stage4_perf.json`
+  - `stage4_perf_markers.jsonl`
+- 这些运行态工件用于审计与性能追踪，不属于当前 stage4 正式契约输出。
+- stage4 成功态必须覆盖：
+  - 目标 `mainnodeid` 对应的 `RCSDNode` seed
+  - 与选定分支语义一致的相关 node
+- 若 `RCSDRoad` / `RCSDNode` 不在 `DriveZone` 上，必须报异常，不允许 silent fix。
+- 若覆盖失败但输入完整，记 `review_required` 风险，不得 silent fix。
+- 若 `mainnodeid` 关联不稳定、patch 无法形成主连通域、关键字段缺失或 CRS 无法统一到 `EPSG:3857`，必须报异常。
+
 ## 3. Outputs
 
 ### 3.1 官方输出目录
@@ -350,6 +403,10 @@ outputs/_work/t02_stage1_drivezone_gate
 - `t02_virtual_intersection_poc_perf.json`
 - `t02_virtual_intersection_poc_perf_markers.jsonl`
 - `t02_single_case_bundle.txt`
+- `stage4_virtual_polygon.gpkg`
+- `stage4_node_link.json`
+- `stage4_rcsdnode_link.json`
+- `stage4_audit.json`
 
 ### 3.3 输出语义
 
@@ -620,6 +677,21 @@ outputs/_work/t02_stage1_drivezone_gate
   - `main_direction_unstable`
   - `rc_outside_drivezone`
 
+#### Stage4 状态与失败口径
+
+- 成功态：
+  - `accepted`
+- 风险态：
+  - `review_required`
+- 明确失败原因至少包含：
+  - `missing_required_field`
+  - `invalid_crs_or_unprojectable`
+  - `mainnodeid_not_found`
+  - `mainnodeid_out_of_scope`
+  - `main_direction_unstable`
+  - `rcsd_outside_drivezone`
+- stage4 的 `status/progress/perf/perf_markers` 仍可输出为运行态工件，但不属于正式契约输出。
+
 ## 4. EntryPoints
 
 ### 4.1 官方入口
@@ -645,7 +717,17 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
 - 不重算 stage1 / stage2，只消费其结果字段
 - 该入口直接消费带 `has_evd / is_anchor` 的 `nodes`，不会在入口内部重算 stage1 / stage2 主逻辑
 
-### 4.3 程序内入口
+### 4.3 Stage4 独立入口
+
+```bash
+python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
+```
+
+- `t02-stage4-divmerge-virtual-polygon` 是当前 stage4 独立入口
+- 该入口只做单 case baseline，不进入 full-input 批处理
+- 该入口不重算 stage1 / stage2，也不写回 `nodes.is_anchor`
+
+### 4.4 程序内入口
 
 - [stage1_drivezone_gate.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/stage1_drivezone_gate.py)
   - `run_t02_stage1_drivezone_gate(...)`
@@ -662,6 +744,9 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
 - [text_bundle.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/text_bundle.py)
   - `run_t02_export_text_bundle(...)`
   - `run_t02_decode_text_bundle(...)`
+- [stage4_divmerge_virtual_polygon.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/stage4_divmerge_virtual_polygon.py)
+  - `run_t02_stage4_divmerge_virtual_polygon(...)`
+  - `run_t02_stage4_divmerge_virtual_polygon_cli(args)`
 
 ## 5. Params
 
@@ -698,6 +783,23 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
   - `buffer_m`
   - `patch_size_m`
   - `resolution_m`
+
+### 5.3 Stage4 参数
+
+- 必选输入：
+  - `nodes_path`
+  - `roads_path`
+  - `drivezone_path`
+  - `rcsdroad_path`
+  - `rcsdnode_path`
+  - `mainnodeid`
+- 可选兼容：
+  - `nodes_layer / roads_layer / drivezone_layer / rcsdroad_layer / rcsdnode_layer`
+  - `nodes_crs / roads_crs / drivezone_crs / rcsdroad_crs / rcsdnode_crs`
+- 可选输出控制：
+  - `out_root`
+  - `run_id`
+  - `debug`
 - 输出控制：
   - `out_root`
   - `run_id`

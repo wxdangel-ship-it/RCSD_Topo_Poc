@@ -2278,6 +2278,8 @@ def _can_soft_exclude_outside_rc(
     connected_rc_group_count: int,
     negative_rc_group_count: int,
     effective_local_rc_node_count: int | None = None,
+    local_road_count: int | None = None,
+    local_node_count: int | None = None,
 ) -> bool:
     if effective_local_rc_node_count is None:
         effective_local_rc_node_count = 0
@@ -2336,6 +2338,33 @@ def _can_soft_exclude_outside_rc(
         and polygon_support_rc_road_count >= 1
         and min_invalid_rc_distance_to_center_m is not None
         and min_invalid_rc_distance_to_center_m >= 10.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 3
+        and local_road_count <= 6
+        and connected_rc_group_count >= 2
+        and selected_rc_road_count >= 4
+        and polygon_support_rc_road_count >= 4
+        and max_nonmain_branch_polygon_length_m >= 4.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m >= 9.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and effective_local_rc_node_count == 0
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 1
+        and local_road_count <= 3
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and max_selected_side_branch_covered_length_m >= 12.0
+        and max_nonmain_branch_polygon_length_m >= 10.0
     ):
         return True
     return False
@@ -3160,6 +3189,9 @@ def _effect_success_acceptance(
     connected_rc_group_count: int,
     nonmain_branch_connected_rc_group_count: int,
     negative_rc_group_count: int,
+    positive_rc_group_count: int = 0,
+    road_branch_count: int | None = None,
+    has_structural_side_branch: bool = True,
 ) -> tuple[bool, str, str]:
     if effective_local_rc_node_count is None:
         effective_local_rc_node_count = local_rc_node_count
@@ -3205,6 +3237,32 @@ def _effect_success_acceptance(
             and max_nonmain_branch_polygon_length_m == 0.0
         ):
             return True, "accepted", "rc_gap_with_compact_local_mouth_geometry"
+        if (
+            associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+            and positive_rc_group_count == 0
+            and not has_structural_side_branch
+            and effective_local_rc_node_count <= 1
+            and local_road_count <= 9
+            and local_node_count <= 3
+            and max_selected_side_branch_covered_length_m == 0.0
+            and max_nonmain_branch_polygon_length_m == 0.0
+        ):
+            return True, "accepted", "rc_gap_with_compact_mainline_geometry"
+        if (
+            associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+            and positive_rc_group_count == 1
+            and connected_rc_group_count == 1
+            and road_branch_count is not None
+            and road_branch_count <= 2
+            and not has_structural_side_branch
+            and local_road_count <= 13
+            and local_node_count <= 6
+            and max_selected_side_branch_covered_length_m == 0.0
+            and max_nonmain_branch_polygon_length_m == 0.0
+        ):
+            return True, "accepted", "rc_gap_without_structural_side_branch"
         if max_nonmain_branch_polygon_length_m >= 4.0:
             return True, "accepted", "rc_gap_with_nonmain_branch_polygon_coverage"
         return False, "review_required", "rc_gap_without_substantive_nonmain_branch_coverage"
@@ -4679,6 +4737,7 @@ def run_t02_virtual_intersection_poc(
             for branch in road_branches
             for rc_group_id in branch.rcsdroad_ids
         }
+        has_structural_side_branch = _has_structural_side_branch(road_branches)
         nonmain_branch_connected_rc_group_ids = {
             rc_group_id
             for branch in road_branches
@@ -4710,6 +4769,9 @@ def run_t02_virtual_intersection_poc(
             connected_rc_group_count=len(connected_rc_group_ids),
             nonmain_branch_connected_rc_group_count=len(nonmain_branch_connected_rc_group_ids),
             negative_rc_group_count=len(negative_rc_groups),
+            positive_rc_group_count=len(positive_rc_groups),
+            road_branch_count=len(road_branches),
+            has_structural_side_branch=has_structural_side_branch,
         )
         can_soft_exclude_outside_rc = (
             rc_outside_drivezone_error is not None
@@ -4724,6 +4786,8 @@ def run_t02_virtual_intersection_poc(
                 connected_rc_group_count=len(connected_rc_group_ids),
                 negative_rc_group_count=len(negative_rc_groups),
                 effective_local_rc_node_count=effective_local_rc_node_count,
+                local_road_count=len(local_roads),
+                local_node_count=len(local_nodes),
             )
         )
         if (

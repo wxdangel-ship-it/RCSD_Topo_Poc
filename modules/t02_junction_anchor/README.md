@@ -115,6 +115,12 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
 bash scripts/t02_run_stage4_internal_full_input_8workers.sh
 ```
 
+内网 Stage4 监控脚本：
+
+```bash
+bash scripts/t02_watch_stage4_internal_full_input.sh
+```
+
 说明：
 
 - 自动发现只处理符合 Stage4 baseline 的代表 node：`has_evd = yes`、`is_anchor = no`、`kind_2 in {8, 16}`。
@@ -130,6 +136,12 @@ bash scripts/t02_run_stage4_internal_full_input_8workers.sh
   - `<OUT_ROOT>/<RUN_ID>/cases/<mainnodeid>/`
 - batch 汇总固定输出到：
   - `<OUT_ROOT>/<RUN_ID>/batch_summary.json`
+- 监控脚本默认盯住 `OUT_ROOT` 下最新批次；也可显式传：
+  - `RUN_ID=t02_stage4_divmerge_full_input_internal_20260403_120000 bash scripts/t02_watch_stage4_internal_full_input.sh`
+  - `RUN_ROOT=/mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage4_divmerge_full_input_internal/<RUN_ID> bash scripts/t02_watch_stage4_internal_full_input.sh`
+- 监控脚本默认每 `10s` 刷新一次，并在检测到 `batch_summary.json` 后自动停止。
+- 如只想打印一次当前状态，可传：
+  - `ONCE=1 bash scripts/t02_watch_stage4_internal_full_input.sh`
 - 当前 Stage4 baseline 尚未消费 `DivStripZone`，脚本仅冻结并校验该输入路径，供后续扩展继续使用。
 
 ```bash

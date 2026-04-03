@@ -170,24 +170,24 @@
 ### 8.1 目标
 
 - 对全量 `DivStripZone` 做逐 Patch 预处理并汇总输出
-- 生成 per-patch `DivStripZone_fix.geojson` 与根目录全量 `DivStripZone.geojson`
-- 输出 CRS 为 `EPSG:3857`
+- 生成 per-patch `DivStripZone_fix.gpkg` 与根目录全量 `DivStripZone.gpkg`
+- 输出 CRS 为 `EPSG:3857`，输出格式为 `GPKG`
 
 ### 8.2 输入与输出
 
 - 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\vector\DivStripZone.geojson`
 - 兼容输入：若存在 `Vector/DivStripZone.geojson` 允许读取
-- per-patch 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone_fix.geojson`
-- 全局输出：`D:\TestData\POC_Data\patch_all\DivStripZone.geojson`
+- per-patch 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone_fix.gpkg`
+- 全局输出：`D:\TestData\POC_Data\patch_all\DivStripZone.gpkg`
 
 ### 8.3 处理要求
 
 1. 读取每个 Patch 的 `DivStripZone.geojson`
 2. 若输入 CRS 非 `3857`，重投影到 `3857`
 3. 允许最小限度几何修复；修复失败则跳过并记录异常
-4. 单 Patch 内做面合并后写出 `DivStripZone_fix.geojson`
+4. 单 Patch 内做面合并后写出 `DivStripZone_fix.gpkg`
 5. 每个输出要素必须包含 `patchid` 字段
-6. 全量阶段将每个 Patch 的 fix 结果汇总到根目录 `DivStripZone.geojson`
+6. 全量阶段将每个 Patch 的 fix 结果汇总到根目录 `DivStripZone.gpkg`
 7. 输出已存在时先删除再重建
 
 ### 8.4 日志、摘要与进度

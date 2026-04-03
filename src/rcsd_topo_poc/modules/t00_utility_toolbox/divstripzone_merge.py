@@ -19,14 +19,14 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     polygon_part_count,
     read_geojson_features,
     remove_existing_output,
-    write_geojson,
     write_json,
+    write_vector,
 )
 
 
 RUN_ID_PREFIX = "t00_tool9_divstripzone_merge"
 INPUT_FILENAME = "DivStripZone.geojson"
-FIX_OUTPUT_FILENAME = "DivStripZone_fix.geojson"
+FIX_OUTPUT_FILENAME = "DivStripZone_fix.gpkg"
 VECTOR_DIR_CANDIDATES = ("Vector", "vector")
 
 
@@ -34,7 +34,7 @@ VECTOR_DIR_CANDIDATES = ("Vector", "vector")
 class DivStripZoneMergeConfig:
     patch_all_root: Path
     default_input_crs_text: str = "EPSG:4326"
-    output_name: str = "DivStripZone.geojson"
+    output_name: str = "DivStripZone.gpkg"
     run_id: str | None = None
 
 
@@ -80,6 +80,7 @@ def run_divstripzone_merge(config: DivStripZoneMergeConfig) -> dict[str, Any]:
         patch_results: list[dict[str, Any]] = []
         output_features: list[dict[str, Any]] = []
         output_geometries = []
+        per_patch_outputs: list[tuple[str, Any]] = []
         input_found_count = 0
         processed_patch_count = 0
         fixed_output_count = 0
@@ -87,7 +88,7 @@ def run_divstripzone_merge(config: DivStripZoneMergeConfig) -> dict[str, Any]:
         skip_error_count = 0
         total_input_feature_count = 0
 
-        announce(logger, "[Stage 2/4] Preprocess per-patch DivStripZone and write DivStripZone_fix.geojson.")
+        announce(logger, "[Stage 2/4] Preprocess per-patch DivStripZone and write DivStripZone_fix.gpkg.")
         for index, patch_dir in enumerate(patch_dirs, start=1):
             patch_id = patch_dir.name
             input_path, vector_dir = _resolve_input_path(patch_dir)
@@ -132,10 +133,12 @@ def run_divstripzone_merge(config: DivStripZoneMergeConfig) -> dict[str, Any]:
                 if merged_geometry is None:
                     raise ValueError("single-patch dissolve produced no valid polygonal geometry")
 
-                write_geojson(
+                write_vector(
                     fixed_output_path,
                     [{"properties": {"patchid": patch_id}, "geometry": merged_geometry}],
+                    crs_text=TARGET_CRS.to_string(),
                 )
+                per_patch_outputs.append((patch_id, merged_geometry))
                 processed_patch_count += 1
                 fixed_output_count += 1
                 patch_results.append(
@@ -182,37 +185,10 @@ def run_divstripzone_merge(config: DivStripZoneMergeConfig) -> dict[str, Any]:
         output_area_m2 = 0.0
         output_bounds = None
 
-        for item in patch_results:
-            if item.get("status") != "processed":
-                continue
-
-            fixed_output_path = Path(item["fixed_output_path"])
-            if not fixed_output_path.is_file():
-                announce(logger, f"missing fixed output for global merge: patch_id={item['patch_id']}")
-                continue
-
-            read_result = read_geojson_features(
-                fixed_output_path,
-                default_crs_text=TARGET_CRS.to_string(),
-            )
-            polygon_geometries = []
-            for feature in read_result.features:
-                repaired = minimal_repair(feature.geometry)
-                if repaired is not None:
-                    polygon_geometries.append(repaired)
-
-            if not polygon_geometries:
-                announce(logger, f"global merge skip empty fixed output: patch_id={item['patch_id']}")
-                continue
-
-            merged_geometry = minimal_repair(unary_union(polygon_geometries))
-            if merged_geometry is None:
-                announce(logger, f"global merge skip invalid fixed output: patch_id={item['patch_id']}")
-                continue
-
+        for patch_id, merged_geometry in per_patch_outputs:
             output_features.append(
                 {
-                    "properties": {"patchid": item["patch_id"]},
+                    "properties": {"patchid": patch_id},
                     "geometry": merged_geometry,
                 }
             )
@@ -224,7 +200,7 @@ def run_divstripzone_merge(config: DivStripZoneMergeConfig) -> dict[str, Any]:
             output_area_m2 = float(sum(geometry.area for geometry in output_geometries))
             output_bounds = aggregate_bounds(output_geometries)
 
-        write_geojson(output_path, output_features)
+        write_vector(output_path, output_features, crs_text=TARGET_CRS.to_string())
 
         announce(logger, "[Stage 4/4] Write summary and finish Tool9.")
         summary = {

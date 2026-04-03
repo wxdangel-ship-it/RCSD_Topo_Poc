@@ -63,13 +63,13 @@
 - 单 Patch 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone.geojson`
 - 单 Patch fix 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone_fix.geojson`
 - 全局输出：`D:\TestData\POC_Data\patch_all\DriveZone.geojson`
-- 输出 CRS：`EPSG:3857`
+- 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
 
 ## 5. Tool3 契约
 
 - 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\Intersection.geojson`
 - 输出：`D:\TestData\POC_Data\patch_all\Intersection.geojson`
-- 输出 CRS：`EPSG:3857`
+- 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
 - 单 Patch 内逐要素做拓扑保持简化
 - 全量阶段只汇总，不做面合并
 
@@ -98,7 +98,7 @@
 
 - 输入：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_node.shp`
 - 输出：`D:\TestData\POC_Data\first_layer_road_net_v0\nodes.geojson`
-- 输出 CRS：`EPSG:3857`
+- 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
 
 ### 8.2 处理契约
 
@@ -163,9 +163,9 @@
 
 - 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone.geojson`
 - 兼容输入：如存在 `vector/DivStripZone.geojson` 允许读取
-- per-patch 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone_fix.geojson`
-- 全局输出：`D:\TestData\POC_Data\patch_all\DivStripZone.geojson`
-- 输出 CRS：`EPSG:3857`
+- per-patch 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone_fix.gpkg`
+- 全局输出：`D:\TestData\POC_Data\patch_all\DivStripZone.gpkg`
+- 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
 - 每个输出要素必须包含 `patchid` 字段
 - 覆盖口径：已存在输出先删除再重建
 - 摘要至少包含：

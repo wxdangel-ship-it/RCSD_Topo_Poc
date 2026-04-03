@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import pytest
+
 from pathlib import Path
+
+pytest.importorskip("fiona", reason="fiona required for GPKT outputs")
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.divstripzone_merge import (
     DivStripZoneMergeConfig,
     run_divstripzone_merge,
 )
-
 
 def _write_polygon_feature_collection(
     path: Path,
@@ -35,7 +38,6 @@ def _write_polygon_feature_collection(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
-
 def test_divstripzone_merge_writes_patchid_for_vector_dir(tmp_path: Path) -> None:
     patch_all_root = tmp_path / "patch_all"
 
@@ -57,21 +59,30 @@ def test_divstripzone_merge_writes_patchid_for_vector_dir(tmp_path: Path) -> Non
         )
     )
 
-    fixed_output_path = patch_all_root / "1001" / "vector" / "DivStripZone_fix.geojson"
-    output_path = patch_all_root / "DivStripZone.geojson"
+    fixed_output_path = patch_all_root / "1001" / "vector" / "DivStripZone_fix.gpkg"
+    output_path = patch_all_root / "DivStripZone.gpkg"
 
-    fixed_doc = json.loads(fixed_output_path.read_text(encoding="utf-8"))
-    output_doc = json.loads(output_path.read_text(encoding="utf-8"))
+    import sqlite3
+
+    with sqlite3.connect(fixed_output_path) as conn:
+        row = conn.execute("SELECT table_name, srs_id FROM gpkg_contents").fetchone()
+        feature_count = conn.execute("SELECT COUNT(*) FROM DivStripZone_fix").fetchone()[0]
+        patchid_value = conn.execute("SELECT patchid FROM DivStripZone_fix").fetchone()[0]
+    with sqlite3.connect(output_path) as conn:
+        out_row = conn.execute("SELECT table_name, srs_id FROM gpkg_contents").fetchone()
+        out_count = conn.execute("SELECT COUNT(*) FROM DivStripZone").fetchone()[0]
+        out_patchid = conn.execute("SELECT patchid FROM DivStripZone").fetchone()[0]
 
     assert summary["processed_patch_count"] == 1
     assert summary["fixed_output_count"] == 1
     assert summary["global_merge_input_count"] == 1
     assert summary["output_feature_count"] == 1
-    assert fixed_doc["crs"]["properties"]["name"] == "EPSG:3857"
-    assert output_doc["crs"]["properties"]["name"] == "EPSG:3857"
-    assert fixed_doc["features"][0]["properties"]["patchid"] == "1001"
-    assert output_doc["features"][0]["properties"]["patchid"] == "1001"
-
+    assert row == ("DivStripZone_fix", 3857)
+    assert out_row == ("DivStripZone", 3857)
+    assert feature_count == 1
+    assert out_count == 1
+    assert patchid_value == "1001"
+    assert out_patchid == "1001"
 
 def test_divstripzone_merge_skips_bad_crs(tmp_path: Path) -> None:
     patch_all_root = tmp_path / "patch_all"

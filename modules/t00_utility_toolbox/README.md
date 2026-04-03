@@ -62,8 +62,8 @@
 ## Tool9 备注
 
 - Tool9 读取 `patch_all/<PatchID>/(Vector|vector)/DivStripZone.geojson`
-- 每个 Patch 输出 `DivStripZone_fix.geojson` 并写入 `patchid`
-- 根目录 `DivStripZone.geojson` 为逐 Patch 汇总结果，保留 `patchid`
+- 每个 Patch 输出 `DivStripZone_fix.gpkg` 并写入 `patchid`
+- 根目录 `DivStripZone.gpkg` 为逐 Patch 汇总结果，保留 `patchid`
 
 ## 文档入口
 

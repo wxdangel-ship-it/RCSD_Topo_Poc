@@ -152,12 +152,13 @@ echo "[RUN] SUMMARY_PATH=$SUMMARY_PATH"
 echo "[RUN] Eligible cases are auto-discovered from representative nodes where has_evd=yes, is_anchor=no, kind_2 in {8, 16}."
 echo "[INFO] DIVSTRIPZONE_PATH is frozen for internal Stage4 context, but the current Stage4 baseline does not consume it yet."
 
+CASE_IDS_TEXT="$(printf '%s\n' "${CASE_IDS[@]}")"
 CASE_IDS_JSON="$(
-  printf '%s\n' "${CASE_IDS[@]}" | PYTHON_BIN="$PYTHON_BIN" "$PYTHON_BIN" - <<'PY'
+  CASE_IDS_TEXT="$CASE_IDS_TEXT" "$PYTHON_BIN" - <<'PY'
 import json
-import sys
+import os
 
-print(json.dumps([line.strip() for line in sys.stdin if line.strip()], ensure_ascii=False))
+print(json.dumps([line.strip() for line in os.environ["CASE_IDS_TEXT"].splitlines() if line.strip()], ensure_ascii=False))
 PY
 )"
 

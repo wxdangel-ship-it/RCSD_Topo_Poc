@@ -99,7 +99,7 @@ def safe_mtime(path: Path) -> float:
         return 0.0
 
 
-def truncate(text: str | None, limit: int = 88) -> str:
+def truncate(text, limit=88):
     if not text:
         return "-"
     text = str(text).strip().replace("\n", " ")
@@ -114,7 +114,7 @@ cases_root = run_root / "cases"
 candidate_list_path = run_root / "candidate_mainnodeids.txt"
 summary_path = run_root / "batch_summary.json"
 
-candidate_ids: list[str] = []
+candidate_ids = []
 if candidate_list_path.is_file():
     candidate_ids = [line.strip() for line in candidate_list_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 

@@ -281,6 +281,7 @@ def test_t02_export_text_bundle_cli_accepts_expected_args(monkeypatch, tmp_path:
         captured["nodes_path"] = args.nodes_path
         captured["roads_path"] = args.roads_path
         captured["drivezone_path"] = args.drivezone_path
+        captured["divstripzone_path"] = args.divstripzone_path
         captured["rcsdroad_path"] = args.rcsdroad_path
         captured["rcsdnode_path"] = args.rcsdnode_path
         captured["mainnodeid"] = args.mainnodeid
@@ -298,6 +299,8 @@ def test_t02_export_text_bundle_cli_accepts_expected_args(monkeypatch, tmp_path:
             str(tmp_path / "roads.gpkg"),
             "--drivezone_path",
             str(tmp_path / "drivezone.gpkg"),
+            "--divstripzone_path",
+            str(tmp_path / "divstripzone.gpkg"),
             "--rcsdroad_path",
             str(tmp_path / "rcsdroad.gpkg"),
             "--rcsdnode_path",
@@ -313,6 +316,7 @@ def test_t02_export_text_bundle_cli_accepts_expected_args(monkeypatch, tmp_path:
     assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
     assert captured["roads_path"] == str(tmp_path / "roads.gpkg")
     assert captured["drivezone_path"] == str(tmp_path / "drivezone.gpkg")
+    assert captured["divstripzone_path"] == str(tmp_path / "divstripzone.gpkg")
     assert captured["rcsdroad_path"] == str(tmp_path / "rcsdroad.gpkg")
     assert captured["rcsdnode_path"] == str(tmp_path / "rcsdnode.gpkg")
     assert captured["mainnodeid"] == ["100"]

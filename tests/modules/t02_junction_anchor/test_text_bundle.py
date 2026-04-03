@@ -14,6 +14,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.text_bundle import (
     LEGACY_TEXT_BUNDLE_END_PAYLOAD,
     LEGACY_TEXT_BUNDLE_META,
     LEGACY_TEXT_BUNDLE_PAYLOAD,
+    OPTIONAL_BUNDLE_FILES,
     TEXT_BUNDLE_BEGIN,
     TEXT_BUNDLE_CHECKSUM,
     TEXT_BUNDLE_END,
@@ -44,6 +45,7 @@ def _write_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
     nodes_path = tmp_path / "nodes.gpkg"
     roads_path = tmp_path / "roads.gpkg"
     drivezone_path = tmp_path / "drivezone.gpkg"
+    divstripzone_path = tmp_path / "divstripzone.gpkg"
     rcsdroad_path = tmp_path / "rcsdroad.gpkg"
     rcsdnode_path = tmp_path / "rcsdnode.gpkg"
 
@@ -95,6 +97,16 @@ def _write_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         crs_text="EPSG:3857",
     )
     write_vector(
+        divstripzone_path,
+        [
+            {
+                "properties": {"patchid": "p1", "name": "divstrip"},
+                "geometry": box(-3.0, -4.0, 14.0, 4.0),
+            }
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
         rcsdroad_path,
         [
             {"properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 55.0)])},
@@ -118,6 +130,7 @@ def _write_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         "nodes_path": nodes_path,
         "roads_path": roads_path,
         "drivezone_path": drivezone_path,
+        "divstripzone_path": divstripzone_path,
         "rcsdroad_path": rcsdroad_path,
         "rcsdnode_path": rcsdnode_path,
     }
@@ -127,6 +140,7 @@ def _write_multi_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
     nodes_path = tmp_path / "nodes.gpkg"
     roads_path = tmp_path / "roads.gpkg"
     drivezone_path = tmp_path / "drivezone.gpkg"
+    divstripzone_path = tmp_path / "divstripzone.gpkg"
     rcsdroad_path = tmp_path / "rcsdroad.gpkg"
     rcsdnode_path = tmp_path / "rcsdnode.gpkg"
 
@@ -184,6 +198,14 @@ def _write_multi_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         crs_text="EPSG:3857",
     )
     write_vector(
+        divstripzone_path,
+        [
+            {"properties": {"patchid": "100", "name": "divstrip_100"}, "geometry": box(-3.0, -4.0, 14.0, 4.0)},
+            {"properties": {"patchid": "200", "name": "divstrip_200"}, "geometry": box(217.0, -4.0, 236.0, 4.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
         rcsdroad_path,
         [
             {"properties": {"id": "rc_north_100", "snodeid": "100", "enodeid": "901", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 55.0)])},
@@ -214,6 +236,7 @@ def _write_multi_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         "nodes_path": nodes_path,
         "roads_path": roads_path,
         "drivezone_path": drivezone_path,
+        "divstripzone_path": divstripzone_path,
         "rcsdroad_path": rcsdroad_path,
         "rcsdnode_path": rcsdnode_path,
     }
@@ -248,11 +271,13 @@ def test_export_text_bundle_roundtrip_restores_required_files(tmp_path: Path) ->
     assert decode_artifacts.success is True
     for name in REQUIRED_BUNDLE_FILES:
         assert (decode_dir / name).is_file()
+    assert (decode_dir / "divstripzone.gpkg").is_file()
 
     manifest = json.loads((decode_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["mainnodeid"] == "100"
     assert manifest["bundle_version"] == "1"
     assert set(REQUIRED_BUNDLE_FILES) <= set(manifest["file_list"])
+    assert "divstripzone.gpkg" in manifest["file_list"]
 
     size_report = json.loads((decode_dir / "size_report.json").read_text(encoding="utf-8"))
     assert size_report["within_limit"] is True
@@ -263,6 +288,7 @@ def test_export_text_bundle_roundtrip_restores_required_files(tmp_path: Path) ->
 
     assert _vector_feature_count(decode_dir / "nodes.gpkg") >= 1
     assert _vector_feature_count(decode_dir / "drivezone.gpkg") >= 1
+    assert _vector_feature_count(decode_dir / "divstripzone.gpkg") >= 1
     assert _vector_feature_count(decode_dir / "roads.gpkg") >= 1
     assert _vector_feature_count(decode_dir / "rcsdroad.gpkg") >= 1
     assert _vector_feature_count(decode_dir / "rcsdnode.gpkg") >= 1
@@ -286,6 +312,7 @@ def test_decode_text_bundle_defaults_to_bundle_stem_directory(tmp_path: Path) ->
     assert decode_artifacts.out_dir == tmp_path / "765003"
     for name in REQUIRED_BUNDLE_FILES:
         assert (decode_artifacts.out_dir / name).is_file()
+    assert (decode_artifacts.out_dir / "divstripzone.gpkg").is_file()
 
 
 def test_export_text_bundle_roundtrip_supports_multiple_mainnodeids(tmp_path: Path) -> None:
@@ -318,6 +345,7 @@ def test_export_text_bundle_roundtrip_supports_multiple_mainnodeids(tmp_path: Pa
         case_dir = decode_root / case_id
         for name in REQUIRED_BUNDLE_FILES:
             assert (case_dir / name).is_file()
+        assert (case_dir / "divstripzone.gpkg").is_file()
         case_manifest = json.loads((case_dir / "manifest.json").read_text(encoding="utf-8"))
         assert case_manifest["bundle_mode"] == "single_case"
         assert case_manifest["mainnodeid"] == case_id
@@ -372,4 +400,4 @@ def test_export_text_bundle_fails_with_size_report_when_limit_exceeded(tmp_path:
     report = json.loads(artifacts.size_report_path.read_text(encoding="utf-8"))
     assert report["within_limit"] is False
     assert report["total_text_size_bytes"] > 200
-    assert report["dominant_size_source"] in REQUIRED_BUNDLE_FILES
+    assert report["dominant_size_source"] in (*REQUIRED_BUNDLE_FILES, *OPTIONAL_BUNDLE_FILES)

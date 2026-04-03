@@ -24,6 +24,7 @@ def test_smoke_t02_text_bundle_roundtrip() -> None:
     nodes_path = inputs_dir / "nodes.gpkg"
     roads_path = inputs_dir / "roads.gpkg"
     drivezone_path = inputs_dir / "drivezone.gpkg"
+    divstripzone_path = inputs_dir / "divstripzone.gpkg"
     rcsdroad_path = inputs_dir / "rcsdroad.gpkg"
     rcsdnode_path = inputs_dir / "rcsdnode.gpkg"
     bundle_path = outputs_dir / "smoke_case.txt"
@@ -65,6 +66,16 @@ def test_smoke_t02_text_bundle_roundtrip() -> None:
         crs_text="EPSG:3857",
     )
     write_vector(
+        divstripzone_path,
+        [
+            {
+                "properties": {"patchid": "100", "name": "divstrip"},
+                "geometry": box(-3.0, -4.0, 14.0, 4.0),
+            }
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
         rcsdroad_path,
         [
             {"properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 55.0)])},
@@ -93,6 +104,8 @@ def test_smoke_t02_text_bundle_roundtrip() -> None:
             str(roads_path),
             "--drivezone-path",
             str(drivezone_path),
+            "--divstripzone_path",
+            str(divstripzone_path),
             "--rcsdroad-path",
             str(rcsdroad_path),
             "--rcsdnode-path",
@@ -123,6 +136,7 @@ def test_smoke_t02_text_bundle_roundtrip() -> None:
     assert size_report_path.is_file()
     assert (decoded_dir / "drivezone_mask.png").is_file()
     assert (decoded_dir / "drivezone.gpkg").is_file()
+    assert (decoded_dir / "divstripzone.gpkg").is_file()
     assert (decoded_dir / "nodes.gpkg").is_file()
     assert (decoded_dir / "roads.gpkg").is_file()
     assert (decoded_dir / "rcsdroad.gpkg").is_file()
@@ -131,4 +145,5 @@ def test_smoke_t02_text_bundle_roundtrip() -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     size_report = json.loads(size_report_path.read_text(encoding="utf-8"))
     assert manifest["mainnodeid"] == "100"
+    assert "divstripzone.gpkg" in manifest["file_list"]
     assert size_report["within_limit"] is True

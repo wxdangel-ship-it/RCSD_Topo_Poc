@@ -8,6 +8,7 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 NODES_PATH="${NODES_PATH:-/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg}"
 ROADS_PATH="${ROADS_PATH:-/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg}"
 DRIVEZONE_PATH="${DRIVEZONE_PATH:-/mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg}"
+DIVSTRIPZONE_PATH="${DIVSTRIPZONE_PATH:-/mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg}"
 RCSDROAD_PATH="${RCSDROAD_PATH:-/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg}"
 RCSDNODE_PATH="${RCSDNODE_PATH:-/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg}"
 
@@ -33,7 +34,7 @@ if [[ -z "$PYTHON_BIN" ]]; then
   fi
 fi
 
-for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH; do
+for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH DIVSTRIPZONE_PATH RCSDROAD_PATH RCSDNODE_PATH; do
   path_value="${!path_var}"
   if [[ ! -f "$path_value" ]]; then
     echo "[BLOCK] $path_var does not exist: $path_value" >&2
@@ -49,6 +50,7 @@ echo "[RUN] PYTHON_BIN=$PYTHON_BIN"
 echo "[RUN] NODES_PATH=$NODES_PATH"
 echo "[RUN] ROADS_PATH=$ROADS_PATH"
 echo "[RUN] DRIVEZONE_PATH=$DRIVEZONE_PATH"
+echo "[RUN] DIVSTRIPZONE_PATH=$DIVSTRIPZONE_PATH"
 echo "[RUN] RCSDROAD_PATH=$RCSDROAD_PATH"
 echo "[RUN] RCSDNODE_PATH=$RCSDNODE_PATH"
 echo "[RUN] OUT_TXT=$OUT_TXT"
@@ -58,6 +60,7 @@ PYTHONPATH=src "$PYTHON_BIN" -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path "$NODES_PATH" \
   --roads-path "$ROADS_PATH" \
   --drivezone-path "$DRIVEZONE_PATH" \
+  --divstripzone-path "$DIVSTRIPZONE_PATH" \
   --rcsdroad-path "$RCSDROAD_PATH" \
   --rcsdnode-path "$RCSDNODE_PATH" \
   --mainnodeid "${MAINNODEIDS[@]}" \

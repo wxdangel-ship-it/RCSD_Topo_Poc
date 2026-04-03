@@ -941,6 +941,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_t02_export.add_argument("--drivezone-layer", help="Optional DriveZone layer name.")
     p_t02_export.add_argument("--drivezone-crs", help="Optional DriveZone CRS override, e.g. EPSG:4326.")
     p_t02_export.add_argument(
+        "--divstripzone-path",
+        "--divstripzone_path",
+        dest="divstripzone_path",
+        help="Optional DivStripZone GeoPackage/GeoJSON/Shapefile to include in the text bundle. Same-name .gpkg is preferred; legacy .gpkt is still accepted.",
+    )
+    p_t02_export.add_argument("--divstripzone-layer", help="Optional DivStripZone layer name.")
+    p_t02_export.add_argument("--divstripzone-crs", help="Optional DivStripZone CRS override, e.g. EPSG:4326.")
+    p_t02_export.add_argument(
         "--rcsdroad-path",
         "--rcsdroad_path",
         required=True,

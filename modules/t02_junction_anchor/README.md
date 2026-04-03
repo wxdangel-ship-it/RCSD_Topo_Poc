@@ -109,6 +109,29 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
   --debug
 ```
 
+内网 Stage4 全量运行脚本：
+
+```bash
+bash scripts/t02_run_stage4_internal_full_input_8workers.sh
+```
+
+说明：
+
+- 自动发现只处理符合 Stage4 baseline 的代表 node：`has_evd = yes`、`is_anchor = no`、`kind_2 in {8, 16}`。
+- 默认内网路径冻结为：
+  - `NODES_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.gpkg`
+  - `ROADS_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg`
+  - `DRIVEZONE_PATH=/mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg`
+  - `DIVSTRIPZONE_PATH=/mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg`
+  - `RCSDROAD_PATH=/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg`
+  - `RCSDNODE_PATH=/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg`
+- 默认 `WORKERS=8`，按 case 并行调用单 case Stage4 入口。
+- 每个 case 输出目录固定为：
+  - `<OUT_ROOT>/<RUN_ID>/cases/<mainnodeid>/`
+- batch 汇总固定输出到：
+  - `<OUT_ROOT>/<RUN_ID>/batch_summary.json`
+- 当前 Stage4 baseline 尚未消费 `DivStripZone`，脚本仅冻结并校验该输入路径，供后续扩展继续使用。
+
 ```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --input-mode full-input \
@@ -179,6 +202,7 @@ python -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --divstripzone-path /mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg \
   --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
   --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
   --mainnodeid 765003 \
@@ -190,6 +214,7 @@ python -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --divstripzone-path /mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg \
   --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
   --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
   --mainnodeid 765003 765154 922217 \
@@ -211,7 +236,8 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 
 - `segment` 与 `nodes` 应来自同一轮 T01 成果。
 - `DriveZone` 与 `nodes` 会在空间判定前统一到 `EPSG:3857`。
-- `t02-decode-text-bundle` 解包后的 `nodes.gpkg / roads.gpkg / drivezone.gpkg / rcsdroad.gpkg / rcsdnode.gpkg` 会恢复为绝对 `EPSG:3857` 坐标并写入 CRS，可直接作为 Stage3 case-package 输入，无需再额外传 CRS override。
+- `t02-export-text-bundle` 支持可选携带 `DivStripZone`；显式传入 `--divstripzone-path` 时，bundle 与解包目录中会额外包含 `divstripzone.gpkg`。
+- `t02-decode-text-bundle` 解包后的 `nodes.gpkg / roads.gpkg / drivezone.gpkg / divstripzone.gpkg(若导出时提供) / rcsdroad.gpkg / rcsdnode.gpkg` 会恢复为绝对 `EPSG:3857` 坐标并写入 CRS，可直接作为 Stage3 / Stage4 case-package 输入，无需再额外传 CRS override。
 - 官方默认工作输出根目录是 `outputs/_work/t02_stage1_drivezone_gate`。
 - 显式传入 `--out-root` 时，其语义也是“工作输出根目录”；最终运行目录固定为 `<out_root>/<run_id>`。
 

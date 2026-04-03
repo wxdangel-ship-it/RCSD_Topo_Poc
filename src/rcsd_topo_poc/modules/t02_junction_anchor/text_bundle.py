@@ -65,8 +65,10 @@ REQUIRED_BUNDLE_FILES = (
     "rcsdnode.gpkg",
     "size_report.json",
 )
+OPTIONAL_BUNDLE_FILES = ("divstripzone.gpkg",)
 VECTOR_BUNDLE_FILES = (
     "drivezone.gpkg",
+    "divstripzone.gpkg",
     "nodes.gpkg",
     "roads.gpkg",
     "rcsdroad.gpkg",
@@ -260,6 +262,7 @@ def _build_size_report(
 def _prepare_bundle_files(
     *,
     drivezone_features: list[dict[str, Any]],
+    divstripzone_features: list[dict[str, Any]] | None,
     nodes_features: list[dict[str, Any]],
     roads_features: list[dict[str, Any]],
     rcsdroad_features: list[dict[str, Any]],
@@ -277,9 +280,27 @@ def _prepare_bundle_files(
         "rcsdnode.gpkg": _vector_file_bytes("rcsdnode.gpkg", rcsdnode_features),
         "manifest.json": json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"),
     }
+    if divstripzone_features is not None:
+        files["divstripzone.gpkg"] = _vector_file_bytes("divstripzone.gpkg", divstripzone_features)
     if size_report is not None:
         files["size_report.json"] = json.dumps(size_report, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return files
+
+
+def _bundle_file_list_from_manifest(
+    manifest: dict[str, Any],
+    *,
+    available_names: Iterable[str] | None = None,
+) -> tuple[str, ...]:
+    resolved = list(REQUIRED_BUNDLE_FILES)
+    optional_sources: set[str] = set(available_names or ())
+    manifest_file_list = manifest.get("file_list")
+    if isinstance(manifest_file_list, list):
+        optional_sources.update(str(name) for name in manifest_file_list)
+    for optional_name in OPTIONAL_BUNDLE_FILES:
+        if optional_name in optional_sources and optional_name not in resolved:
+            resolved.append(optional_name)
+    return tuple(resolved)
 
 
 def _parse_current_text_bundle(lines: list[str]) -> tuple[dict[str, Any], bytes, str]:
@@ -394,7 +415,12 @@ def _extract_bundle_files(bundle_path: Path) -> dict[str, bytes]:
         missing = [name for name in REQUIRED_BUNDLE_FILES if name not in names]
         if missing:
             raise TextBundleError("bundle_missing_files", f"Bundle is missing required files: {','.join(missing)}")
-        return {name: zf.read(name) for name in REQUIRED_BUNDLE_FILES}
+        manifest = json.loads(zf.read("manifest.json"))
+        bundle_files = _bundle_file_list_from_manifest(manifest, available_names=names)
+        missing_bundle_files = [name for name in bundle_files if name not in names]
+        if missing_bundle_files:
+            raise TextBundleError("bundle_missing_files", f"Bundle is missing required files: {','.join(missing_bundle_files)}")
+        return {name: zf.read(name) for name in bundle_files}
 
 
 def _resolve_manifest_local_origin(manifest: dict[str, Any]) -> tuple[float, float]:
@@ -443,12 +469,16 @@ def _restore_decoded_case_dir(
     manifest_path = source_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     origin_x, origin_y = _resolve_manifest_local_origin(manifest)
+    bundle_files = _bundle_file_list_from_manifest(
+        manifest,
+        available_names=[path.name for path in source_dir.iterdir() if path.is_file()],
+    )
 
     if target_dir.exists():
         shutil.rmtree(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    for name in REQUIRED_BUNDLE_FILES:
+    for name in bundle_files:
         source_path = source_dir / name
         target_path = target_dir / name
         if name in VECTOR_BUNDLE_FILES:
@@ -475,6 +505,7 @@ def _run_t02_export_single_text_bundle(
     nodes_path: Union[str, Path],
     roads_path: Union[str, Path],
     drivezone_path: Union[str, Path],
+    divstripzone_path: Union[str, Path, None],
     rcsdroad_path: Union[str, Path],
     rcsdnode_path: Union[str, Path],
     mainnodeid: Union[str, int],
@@ -482,11 +513,13 @@ def _run_t02_export_single_text_bundle(
     nodes_layer: Optional[str] = None,
     roads_layer: Optional[str] = None,
     drivezone_layer: Optional[str] = None,
+    divstripzone_layer: Optional[str] = None,
     rcsdroad_layer: Optional[str] = None,
     rcsdnode_layer: Optional[str] = None,
     nodes_crs: Optional[str] = None,
     roads_crs: Optional[str] = None,
     drivezone_crs: Optional[str] = None,
+    divstripzone_crs: Optional[str] = None,
     rcsdroad_crs: Optional[str] = None,
     rcsdnode_crs: Optional[str] = None,
     buffer_m: float = 100.0,
@@ -546,6 +579,15 @@ def _run_t02_export_single_text_bundle(
             allow_null_geometry=False,
             query_geometry=patch_query,
         )
+        local_divstripzone_layer = None
+        if divstripzone_path is not None:
+            local_divstripzone_layer = _load_layer_filtered(
+                divstripzone_path,
+                layer_name=divstripzone_layer,
+                crs_override=divstripzone_crs,
+                allow_null_geometry=False,
+                query_geometry=patch_query,
+            )
         local_rcsdroad_layer = _load_layer_filtered(
             rcsdroad_path,
             layer_name=rcsdroad_layer,
@@ -578,6 +620,19 @@ def _run_t02_export_single_text_bundle(
                     origin_y=origin_y,
                 )
             )
+
+        divstripzone_features: list[dict[str, Any]] | None = None
+        if local_divstripzone_layer is not None:
+            divstripzone_features = []
+            for feature in local_divstripzone_layer.features:
+                divstripzone_features.append(
+                    _local_feature(
+                        properties=dict(feature.properties),
+                        geometry=feature.geometry,
+                        origin_x=origin_x,
+                        origin_y=origin_y,
+                    )
+                )
 
         nodes_features = []
         for feature in local_nodes_layer.features:
@@ -623,6 +678,10 @@ def _run_t02_export_single_text_bundle(
                 )
             )
 
+        bundle_file_list = list(REQUIRED_BUNDLE_FILES)
+        if divstripzone_features is not None:
+            bundle_file_list.append("divstripzone.gpkg")
+
         manifest = {
             "bundle_version": TEXT_BUNDLE_VERSION,
             "bundle_mode": TEXT_BUNDLE_MODE_SINGLE,
@@ -651,7 +710,7 @@ def _run_t02_export_single_text_bundle(
                     "top_left_y_epsg3857": grid.max_y,
                 },
             },
-            "file_list": list(REQUIRED_BUNDLE_FILES),
+            "file_list": bundle_file_list,
             "checksum": {},
             "encoder_info": {
                 "archive_format": "zip",
@@ -669,6 +728,7 @@ def _run_t02_export_single_text_bundle(
                 "rcsdroad": len(rcsdroad_features),
                 "rcsdnode": len(rcsdnode_features),
                 "drivezone": len(local_drivezone_geometries),
+                "divstripzone": None if divstripzone_features is None else len(divstripzone_features),
             },
             "created_at": _now_text(),
         }
@@ -679,6 +739,7 @@ def _run_t02_export_single_text_bundle(
         for _ in range(3):
             files = _prepare_bundle_files(
                 drivezone_features=drivezone_features,
+                divstripzone_features=divstripzone_features,
                 nodes_features=nodes_features,
                 roads_features=roads_features,
                 rcsdroad_features=rcsdroad_features,
@@ -758,6 +819,7 @@ def run_t02_export_text_bundle(
     nodes_path: Union[str, Path],
     roads_path: Union[str, Path],
     drivezone_path: Union[str, Path],
+    divstripzone_path: Union[str, Path, None] = None,
     rcsdroad_path: Union[str, Path],
     rcsdnode_path: Union[str, Path],
     mainnodeid: Union[str, int, Iterable[Union[str, int]], None],
@@ -765,11 +827,13 @@ def run_t02_export_text_bundle(
     nodes_layer: Optional[str] = None,
     roads_layer: Optional[str] = None,
     drivezone_layer: Optional[str] = None,
+    divstripzone_layer: Optional[str] = None,
     rcsdroad_layer: Optional[str] = None,
     rcsdnode_layer: Optional[str] = None,
     nodes_crs: Optional[str] = None,
     roads_crs: Optional[str] = None,
     drivezone_crs: Optional[str] = None,
+    divstripzone_crs: Optional[str] = None,
     rcsdroad_crs: Optional[str] = None,
     rcsdnode_crs: Optional[str] = None,
     buffer_m: float = 100.0,
@@ -794,6 +858,7 @@ def run_t02_export_text_bundle(
             nodes_path=nodes_path,
             roads_path=roads_path,
             drivezone_path=drivezone_path,
+            divstripzone_path=divstripzone_path,
             rcsdroad_path=rcsdroad_path,
             rcsdnode_path=rcsdnode_path,
             mainnodeid=normalized_mainnodeids[0],
@@ -801,11 +866,13 @@ def run_t02_export_text_bundle(
             nodes_layer=nodes_layer,
             roads_layer=roads_layer,
             drivezone_layer=drivezone_layer,
+            divstripzone_layer=divstripzone_layer,
             rcsdroad_layer=rcsdroad_layer,
             rcsdnode_layer=rcsdnode_layer,
             nodes_crs=nodes_crs,
             roads_crs=roads_crs,
             drivezone_crs=drivezone_crs,
+            divstripzone_crs=divstripzone_crs,
             rcsdroad_crs=rcsdroad_crs,
             rcsdnode_crs=rcsdnode_crs,
             buffer_m=buffer_m,
@@ -830,6 +897,7 @@ def run_t02_export_text_bundle(
                     nodes_path=nodes_path,
                     roads_path=roads_path,
                     drivezone_path=drivezone_path,
+                    divstripzone_path=divstripzone_path,
                     rcsdroad_path=rcsdroad_path,
                     rcsdnode_path=rcsdnode_path,
                     mainnodeid=normalized_mainnodeid,
@@ -837,11 +905,13 @@ def run_t02_export_text_bundle(
                     nodes_layer=nodes_layer,
                     roads_layer=roads_layer,
                     drivezone_layer=drivezone_layer,
+                    divstripzone_layer=divstripzone_layer,
                     rcsdroad_layer=rcsdroad_layer,
                     rcsdnode_layer=rcsdnode_layer,
                     nodes_crs=nodes_crs,
                     roads_crs=roads_crs,
                     drivezone_crs=drivezone_crs,
+                    divstripzone_crs=divstripzone_crs,
                     rcsdroad_crs=rcsdroad_crs,
                     rcsdnode_crs=rcsdnode_crs,
                     buffer_m=buffer_m,
@@ -991,7 +1061,15 @@ def run_t02_decode_text_bundle(
                     case_dir = temp_dir / case_id
                     if not case_dir.is_dir():
                         raise TextBundleError("bundle_missing_files", f"Bundle is missing case directory: {case_id}")
-                    missing = [name for name in REQUIRED_BUNDLE_FILES if not (case_dir / name).is_file()]
+                    case_manifest_path = case_dir / "manifest.json"
+                    if not case_manifest_path.is_file():
+                        raise TextBundleError("bundle_missing_files", f"Case '{case_id}' is missing manifest.json.")
+                    case_manifest = json.loads(case_manifest_path.read_text(encoding="utf-8"))
+                    case_bundle_files = _bundle_file_list_from_manifest(
+                        case_manifest,
+                        available_names=[path.name for path in case_dir.iterdir() if path.is_file()],
+                    )
+                    missing = [name for name in case_bundle_files if not (case_dir / name).is_file()]
                     if missing:
                         raise TextBundleError("bundle_missing_files", f"Case '{case_id}' is missing required files: {','.join(missing)}")
 
@@ -1035,6 +1113,7 @@ def run_t02_export_text_bundle_cli(args: argparse.Namespace) -> int:
         nodes_path=args.nodes_path,
         roads_path=args.roads_path,
         drivezone_path=args.drivezone_path,
+        divstripzone_path=args.divstripzone_path,
         rcsdroad_path=args.rcsdroad_path,
         rcsdnode_path=args.rcsdnode_path,
         mainnodeid=args.mainnodeid,
@@ -1042,11 +1121,13 @@ def run_t02_export_text_bundle_cli(args: argparse.Namespace) -> int:
         nodes_layer=args.nodes_layer,
         roads_layer=args.roads_layer,
         drivezone_layer=args.drivezone_layer,
+        divstripzone_layer=args.divstripzone_layer,
         rcsdroad_layer=args.rcsdroad_layer,
         rcsdnode_layer=args.rcsdnode_layer,
         nodes_crs=args.nodes_crs,
         roads_crs=args.roads_crs,
         drivezone_crs=args.drivezone_crs,
+        divstripzone_crs=args.divstripzone_crs,
         rcsdroad_crs=args.rcsdroad_crs,
         rcsdnode_crs=args.rcsdnode_crs,
         buffer_m=args.buffer_m,

@@ -859,6 +859,7 @@ python -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --divstripzone-path /mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg \
   --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
   --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
   --mainnodeid 765003 \
@@ -870,6 +871,7 @@ python -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --divstripzone-path /mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg \
   --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
   --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
   --mainnodeid 765003 765154 922217 \
@@ -900,20 +902,23 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 
 - `t02-export-text-bundle` 可一次处理单个或多个 `mainnodeid`
 - 导出端输入路径全部通过命令行提供：`nodes / roads / DriveZone / RCSDRoad / RCSDNode`
+- `DivStripZone` 作为可选输入携带；仅当显式传入 `--divstripzone-path` 时写入证据包
 - 导出结果是单个纯文本文件，默认逻辑内容至少包含：
   - `manifest.json`
   - `drivezone_mask.png`
   - `drivezone.gpkg`
-- `nodes.gpkg`
-- `roads.gpkg`
-- `rcsdroad.gpkg`
-- `rcsdnode.gpkg`
+  - `nodes.gpkg`
+  - `roads.gpkg`
+  - `rcsdroad.gpkg`
+  - `rcsdnode.gpkg`
+- 若导出时显式提供 `DivStripZone`，bundle 与解包目录额外包含：
+  - `divstripzone.gpkg`
   - `size_report.json`
 - 打包流程固定为“局部裁剪 -> 压缩归档 -> 文本编码”，不允许直接明文拼接大段原始矢量文本
 - 最终 bundle 文本体积必须 `<= 300KB`
 - 若超限，入口必须失败退出，并输出体积分析 `size_report`
 - `t02-decode-text-bundle` 负责校验 bundle 头尾标识、版本与 checksum，并恢复等价目录结构
-- 解包后的 `nodes.gpkg / roads.gpkg / drivezone.gpkg / rcsdroad.gpkg / rcsdnode.gpkg` 必须恢复为绝对 `EPSG:3857` 坐标并写入 CRS，保证 Stage3 case-package 可直接运行
+- 解包后的 `nodes.gpkg / roads.gpkg / drivezone.gpkg / divstripzone.gpkg(若导出时提供) / rcsdroad.gpkg / rcsdnode.gpkg` 必须恢复为绝对 `EPSG:3857` 坐标并写入 CRS，保证 Stage3 / Stage4 case-package 可直接运行
 - 未显式传入 `--out-dir` 时：
   - 单 case bundle 默认解包到与 bundle 同目录、且以 bundle 文件名为目录名的子目录
   - 多 case bundle 默认解包到当前工作目录，并展开为多个 `<mainnodeid>/` case 目录

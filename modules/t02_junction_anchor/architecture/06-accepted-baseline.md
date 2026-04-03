@@ -325,6 +325,7 @@
 - `t02-export-text-bundle / t02-decode-text-bundle` 服务于单 / 多 `mainnodeid` 复核、外部复现和回传。
 - 单 case bundle 保持原有 flat 目录结构；多 case bundle 解包后按 `<mainnodeid>/` 展开多个测试用例目录。
 - 未显式传入 `--out-dir` 时，多 case bundle 默认解包到当前工作目录。
+- 文本证据包允许可选携带 `DivStripZone`，用于 Stage4 并行复核与 case 复现；未显式提供时保持旧 bundle 结构不变。
 - 文本证据包不构成新的业务阶段，不改写 stage1 / stage2 / stage3 主流程。
 - 导出时继续要求最终文本体积 `<= 300KB`。
 

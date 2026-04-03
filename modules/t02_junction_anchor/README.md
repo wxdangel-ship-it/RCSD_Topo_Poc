@@ -98,7 +98,7 @@ stage4 示例：
 
 ```bash
 python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
-  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.gpkg \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
   --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.gpkg \
@@ -125,7 +125,7 @@ bash scripts/t02_watch_stage4_internal_full_input.sh
 
 - 自动发现只处理符合 Stage4 baseline 的代表 node：`has_evd = yes`、`is_anchor = no`、`kind_2 in {8, 16}`。
 - 默认内网路径冻结为：
-  - `NODES_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.gpkg`
+  - `NODES_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg`
   - `ROADS_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg`
   - `DRIVEZONE_PATH=/mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg`
   - `DIVSTRIPZONE_PATH=/mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg`
@@ -142,6 +142,8 @@ bash scripts/t02_watch_stage4_internal_full_input.sh
 - 监控脚本默认每 `10s` 刷新一次，并在检测到 `batch_summary.json` 后自动停止。
 - 如只想打印一次当前状态，可传：
   - `ONCE=1 bash scripts/t02_watch_stage4_internal_full_input.sh`
+- 若你内网 `nodes.gpkg` 不在默认位置，也可临时覆盖：
+  - `NODES_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg bash scripts/t02_run_stage4_internal_full_input_8workers.sh`
 - 当前 Stage4 baseline 尚未消费 `DivStripZone`，脚本仅冻结并校验该输入路径，供后续扩展继续使用。
 
 ```bash

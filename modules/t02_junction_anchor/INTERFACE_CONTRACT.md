@@ -840,6 +840,19 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
 ```
 
 ```bash
+python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.gpkg \
+  --mainnodeid 100 \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage4_divmerge_virtual_polygon \
+  --run-id t02_stage4_divmerge_demo \
+  --debug
+```
+
+```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --input-mode full-input \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \

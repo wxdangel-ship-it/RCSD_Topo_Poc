@@ -35,6 +35,7 @@ def _write_fixture(
     tmp_path: Path,
     *,
     kind_2: int,
+    kind: int | None = None,
     divstrip_mode: str = "nearby_single",
     rcsdroad_outside_drivezone: bool = False,
     rcsdnode_outside_drivezone: bool = False,
@@ -56,6 +57,7 @@ def _write_fixture(
                     "mainnodeid": "100",
                     "has_evd": "yes",
                     "is_anchor": "no",
+                    "kind": kind,
                     "kind_2": kind_2,
                     "grade_2": 1,
                 },
@@ -67,6 +69,7 @@ def _write_fixture(
                     "mainnodeid": "100",
                     "has_evd": "yes",
                     "is_anchor": "no",
+                    "kind": kind,
                     "kind_2": kind_2,
                     "grade_2": 1,
                 },
@@ -410,6 +413,39 @@ def test_stage4_accepts_without_divstrip_input_by_falling_back_to_roads(tmp_path
     assert status_doc["divstrip"]["divstrip_nearby"] is False
     assert status_doc["divstrip"]["selection_mode"] == "roads_fallback"
     assert status_doc["divstrip"]["evidence_source"] == "drivezone+roads+rcsd+seed"
+
+
+def test_stage4_accepts_complex_kind_128_and_writes_rendered_map(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=128, kind=128, divstrip_mode="nearby_single")
+    rendered_root = tmp_path / "renders"
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="complex_kind_128",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+        debug=True,
+        debug_render_root=rendered_root,
+    )
+
+    assert artifacts.success is True
+    assert artifacts.rendered_map_path == rendered_root / "100.png"
+    assert artifacts.rendered_map_path.is_file()
+    assert (artifacts.out_root / "stage4_debug" / "100.png").is_file()
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["kind"] == 128
+    assert status_doc["source_kind"] == 128
+    assert status_doc["source_kind_2"] == 128
+    assert status_doc["kind_2"] == 16
+    assert status_doc["kind_resolution"]["complex_junction"] is True
+    assert status_doc["kind_resolution"]["kind_resolution_mode"] == "complex_branch_direction"
+    assert status_doc["kind_resolution"]["kind_resolution_ambiguous"] is False
+    assert status_doc["continuous_chain"]["is_in_continuous_chain"] is False
+    assert status_doc["output_files"]["rendered_map"] == str(rendered_root / "100.png")
 
 
 def test_stage4_marks_review_required_when_divstrip_has_ambiguous_components(tmp_path: Path) -> None:

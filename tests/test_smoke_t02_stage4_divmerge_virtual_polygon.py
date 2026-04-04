@@ -121,6 +121,8 @@ def test_smoke_t02_stage4_divmerge_virtual_polygon() -> None:
             str(outputs_dir),
             "--run-id",
             "smoke_case",
+            "--debug-render-root",
+            str(root / "visual_checks"),
             "--debug",
         ]
     )
@@ -132,6 +134,7 @@ def test_smoke_t02_stage4_divmerge_virtual_polygon() -> None:
     assert (run_dir / "stage4_rcsdnode_link.json").is_file()
     assert (run_dir / "stage4_audit.json").is_file()
     assert (run_dir / "stage4_debug" / "100.png").is_file()
+    assert (root / "visual_checks" / "100.png").is_file()
 
     status_doc = json.loads((run_dir / "stage4_status.json").read_text(encoding="utf-8"))
     assert status_doc["success"] is True
@@ -147,3 +150,4 @@ def test_smoke_t02_stage4_divmerge_virtual_polygon() -> None:
     assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_1"
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_rule"] == "merge_main_seed_on_post_trunk_le_20m"
     assert isinstance(status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"], bool)
+    assert status_doc["output_files"]["rendered_map"] == str(root / "visual_checks" / "100.png")

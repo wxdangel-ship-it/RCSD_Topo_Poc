@@ -28,6 +28,7 @@ RUN_ID="${RUN_ID:-t02_stage4_divmerge_full_input_internal_$(date +%Y%m%d_%H%M%S)
 WORKERS="${WORKERS:-8}"
 MAX_CASES="${MAX_CASES:-}"
 DEBUG_FLAG="${DEBUG_FLAG:---debug}"
+VISUAL_CHECK_DIR="${VISUAL_CHECK_DIR:-$OUT_ROOT/$RUN_ID/visual_checks}"
 FAIL_ON_NON_ACCEPTED="${FAIL_ON_NON_ACCEPTED:-0}"
 
 RUN_ROOT="$OUT_ROOT/$RUN_ID"
@@ -62,7 +63,7 @@ for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH
   fi
 done
 
-mkdir -p "$CASES_ROOT" "$CASE_LOG_ROOT"
+mkdir -p "$CASES_ROOT" "$CASE_LOG_ROOT" "$VISUAL_CHECK_DIR"
 cd "$REPO_DIR"
 
 mapfile -t CASE_IDS < <(
@@ -111,9 +112,18 @@ for feature in layer.features:
     mainnodeid = normalize_id(props.get("mainnodeid"))
     has_evd = normalize_id(props.get("has_evd"))
     is_anchor = normalize_id(props.get("is_anchor"))
+    kind = coerce_int(props.get("kind"))
     kind_2 = coerce_int(props.get("kind_2"))
     is_representative = (mainnodeid is not None and node_id == mainnodeid) or (mainnodeid is None and node_id is not None)
-    if is_representative and has_evd == "yes" and is_anchor == "no" and kind_2 in {8, 16}:
+    if (
+        is_representative
+        and has_evd == "yes"
+        and is_anchor == "no"
+        and (
+            kind_2 in {8, 16, 128}
+            or kind == 128
+        )
+    ):
         case_ids.append(mainnodeid or node_id)
 
 case_ids = sorted(set(case_ids), key=sort_patch_key)
@@ -128,7 +138,7 @@ PY
 
 if (( ${#CASE_IDS[@]} == 0 )); then
   echo "[BLOCK] No Stage4 eligible mainnodeids were found in NODES_PATH." >&2
-  echo "[TIP] Stage4 auto-discovery only keeps representative nodes where has_evd=yes, is_anchor=no, kind_2 in {8, 16}." >&2
+  echo "[TIP] Stage4 auto-discovery only keeps representative nodes where has_evd=yes, is_anchor=no, kind_2 in {8, 16, 128} or kind=128." >&2
   exit 3
 fi
 
@@ -147,9 +157,10 @@ echo "[RUN] RUN_ID=$RUN_ID"
 echo "[RUN] RUN_ROOT=$RUN_ROOT"
 echo "[RUN] WORKERS=$WORKERS"
 echo "[RUN] MAX_CASES=${MAX_CASES:-<all eligible cases>}"
+echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
 echo "[RUN] CANDIDATE_LIST_PATH=$CANDIDATE_LIST_PATH"
 echo "[RUN] SUMMARY_PATH=$SUMMARY_PATH"
-echo "[RUN] Eligible cases are auto-discovered from representative nodes where has_evd=yes, is_anchor=no, kind_2 in {8, 16}."
+echo "[RUN] Eligible cases are auto-discovered from representative nodes where has_evd=yes, is_anchor=no, kind_2 in {8, 16, 128} or kind=128."
 CASE_IDS_TEXT="$(printf '%s\n' "${CASE_IDS[@]}")"
 CASE_IDS_JSON="$(
   CASE_IDS_TEXT="$CASE_IDS_TEXT" "$PYTHON_BIN" - <<'PY'
@@ -183,6 +194,7 @@ RCSDNODE_CRS="$RCSDNODE_CRS" \
 CASES_ROOT="$CASES_ROOT" \
 CASE_LOG_ROOT="$CASE_LOG_ROOT" \
 SUMMARY_PATH="$SUMMARY_PATH" \
+VISUAL_CHECK_DIR="$VISUAL_CHECK_DIR" \
 CASE_IDS_JSON="$CASE_IDS_JSON" \
 WORKERS="$WORKERS" \
 DEBUG_FLAG="$DEBUG_FLAG" \
@@ -201,6 +213,7 @@ python_bin = os.environ["PYTHON_BIN"]
 cases_root = Path(os.environ["CASES_ROOT"])
 case_log_root = Path(os.environ["CASE_LOG_ROOT"])
 summary_path = Path(os.environ["SUMMARY_PATH"])
+visual_check_dir = Path(os.environ["VISUAL_CHECK_DIR"])
 case_ids = json.loads(os.environ["CASE_IDS_JSON"])
 workers = int(os.environ["WORKERS"])
 debug_enabled = os.environ.get("DEBUG_FLAG", "").strip() == "--debug"
@@ -251,6 +264,7 @@ def run_case(case_id):
     _append_optional_arg(cmd, "--rcsdnode-crs", os.environ.get("RCSDNODE_CRS", "").strip())
     if debug_enabled:
         cmd.append("--debug")
+        cmd.extend(["--debug-render-root", str(visual_check_dir)])
 
     env = os.environ.copy()
     env["PYTHONPATH"] = "src"
@@ -270,6 +284,7 @@ def run_case(case_id):
     status_doc = None
     if status_path.is_file():
         status_doc = json.loads(status_path.read_text(encoding="utf-8"))
+    rendered_map_path = visual_check_dir / f"{case_id}.png"
 
     return {
         "mainnodeid": case_id,
@@ -277,6 +292,7 @@ def run_case(case_id):
         "case_dir": str(case_dir),
         "case_log": str(case_log_path),
         "status_path": str(status_path),
+        "rendered_map_png": str(rendered_map_path) if rendered_map_path.is_file() else None,
         "status_doc": status_doc,
     }
 
@@ -321,6 +337,7 @@ summary_doc = {
             "case_dir": row["case_dir"],
             "case_log": row["case_log"],
             "status_path": row["status_path"],
+            "rendered_map_png": row["rendered_map_png"],
             "acceptance_class": (row["status_doc"] or {}).get("acceptance_class"),
             "acceptance_reason": (row["status_doc"] or {}).get("acceptance_reason"),
             "success": (row["status_doc"] or {}).get("success"),
@@ -342,6 +359,7 @@ set -e
 
 echo "[DONE] Stage4 full-input run root: $RUN_ROOT"
 echo "[DONE] Stage4 per-case outputs: $CASES_ROOT/<mainnodeid>/"
+echo "[DONE] Stage4 visual checks directory: $VISUAL_CHECK_DIR"
 echo "[DONE] Stage4 batch summary: $SUMMARY_PATH"
 
 if [[ "$FAIL_ON_NON_ACCEPTED" == "1" ]]; then

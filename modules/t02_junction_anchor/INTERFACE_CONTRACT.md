@@ -346,7 +346,7 @@
   - `DivStripZone`
   - 可缺省；缺省或局部无 nearby 命中时，允许降级到 `roads / RCSDRoad` 支撑面
 - stage4 当前只认字段：
-  - `nodes.id / nodes.mainnodeid / nodes.has_evd / nodes.is_anchor / nodes.kind_2 / nodes.grade_2`
+  - `nodes.id / nodes.mainnodeid / nodes.has_evd / nodes.is_anchor / nodes.kind / nodes.kind_2 / nodes.grade_2`
   - `roads.id / roads.snodeid / roads.enodeid / roads.direction`
   - `RCSDRoad.id / RCSDRoad.snodeid / RCSDRoad.enodeid / RCSDRoad.direction`
   - `RCSDNode.id / RCSDNode.mainnodeid`
@@ -356,6 +356,7 @@
   - `stage4_rcsdnode_link.json`
   - `stage4_audit.json`
   - 可选 `stage4_debug/`
+  - 可选 `_rendered_maps/<mainnodeid>.png` 或显式 `--debug-render-root` 下的同名 PNG
 - stage4 运行态工件仍可输出：
   - `stage4_status.json`
   - `stage4_progress.json`
@@ -369,6 +370,13 @@
   - `kind_2=16`：允许位于分歧前主干 `<=20m`
   - `kind_2=8`：允许位于合流后主干 `<=20m`
   - 超过 `20m`、方向错误或明显 off-trunk 时，不得记为 accepted/stable
+- stage4 当前业务范围包括：
+  - 原始 `kind_2 in {8, 16}` 的单分歧 / 单合流候选
+  - 经连续分歧 / 合流聚合工具生成的复杂路口主节点：`kind = 128` 或 `kind_2 = 128`
+- 对 `kind / kind_2 = 128` 的复杂路口主节点：
+  - stage4 必须先基于局部 branch 方向证据与 nearby `DivStripZone` 解析单次运行的 `operational kind_2`
+  - 解析结果仍只落到当前 stage4 的单事件语义：`8` 或 `16`
+  - 若解析证据不稳定，必须显式写入审计，不得 silent fix
 - stage4 必须正式读取 `DivStripZone` 的局部 patch；它是 stage4 在合法 `DriveZone` patch 内的一级局部选择标准：
   - nearby `DivStripZone` 优先决定分支裁决与虚拟面约束
   - `roads / RCSDRoad` 只在 `DivStripZone` 缺失或局部无可用 nearby 命中时作为降级支撑

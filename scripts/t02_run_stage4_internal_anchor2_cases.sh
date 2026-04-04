@@ -17,6 +17,7 @@ CASES_ROOT="$RUN_ROOT/cases"
 CASE_LOG_ROOT="$RUN_ROOT/case_logs"
 CANDIDATE_LIST_PATH="$RUN_ROOT/candidate_mainnodeids.txt"
 SUMMARY_PATH="$RUN_ROOT/batch_summary.json"
+VISUAL_CHECK_DIR="${VISUAL_CHECK_DIR:-$RUN_ROOT/visual_checks}"
 
 WORKERS="${WORKERS:-4}"
 DEBUG_FLAG="${DEBUG_FLAG:---debug}"
@@ -51,7 +52,7 @@ if [[ ! -d "$CASE_ROOT" ]]; then
   exit 2
 fi
 
-mkdir -p "$RUN_ROOT" "$DECODE_ROOT" "$CASES_ROOT" "$CASE_LOG_ROOT"
+mkdir -p "$RUN_ROOT" "$DECODE_ROOT" "$CASES_ROOT" "$CASE_LOG_ROOT" "$VISUAL_CHECK_DIR"
 cd "$REPO_DIR"
 
 mapfile -d '' BUNDLE_TXT_PATHS < <(find "$CASE_ROOT" -maxdepth 1 -type f -name "$BUNDLE_GLOB" -print0 | sort -z)
@@ -241,6 +242,7 @@ echo "[RUN] OUT_ROOT=$OUT_ROOT"
 echo "[RUN] RUN_ID=$RUN_ID"
 echo "[RUN] RUN_ROOT=$RUN_ROOT"
 echo "[RUN] WORKERS=$WORKERS"
+echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
 echo "[RUN] CANDIDATE_LIST_PATH=$CANDIDATE_LIST_PATH"
 echo "[RUN] SUMMARY_PATH=$SUMMARY_PATH"
 echo "[RUN] CASE_IDS=${CASE_IDS[*]}"
@@ -262,6 +264,7 @@ REPO_DIR="$REPO_DIR" \
 CASES_ROOT="$CASES_ROOT" \
 CASE_LOG_ROOT="$CASE_LOG_ROOT" \
 SUMMARY_PATH="$SUMMARY_PATH" \
+VISUAL_CHECK_DIR="$VISUAL_CHECK_DIR" \
 CASE_IDS_JSON="$CASE_IDS_JSON" \
 CASE_MAP_JSON="$CASE_MAP_JSON" \
 WORKERS="$WORKERS" \
@@ -281,6 +284,7 @@ python_bin = os.environ["PYTHON_BIN"]
 cases_root = Path(os.environ["CASES_ROOT"])
 case_log_root = Path(os.environ["CASE_LOG_ROOT"])
 summary_path = Path(os.environ["SUMMARY_PATH"])
+visual_check_dir = Path(os.environ["VISUAL_CHECK_DIR"])
 case_ids = json.loads(os.environ["CASE_IDS_JSON"])
 case_map = json.loads(os.environ["CASE_MAP_JSON"])
 workers = int(os.environ["WORKERS"])
@@ -326,7 +330,7 @@ def run_case(case_id):
     if divstrip_path.is_file():
       cmd.extend(["--divstripzone-path", str(divstrip_path)])
     if debug_enabled:
-        cmd.append("--debug")
+        cmd.extend(["--debug", "--debug-render-root", str(visual_check_dir)])
 
     env = os.environ.copy()
     env["PYTHONPATH"] = "src"
@@ -350,11 +354,13 @@ def run_case(case_id):
     status_doc = load_json(status_path)
     acceptance_class = str((status_doc or {}).get("acceptance_class") or "")
     acceptance_reason = str((status_doc or {}).get("acceptance_reason") or (status_doc or {}).get("status") or "")
+    rendered_map_path = visual_check_dir / f"{case_id}.png"
     return {
         "case_id": case_id,
         "input_dir": str(input_dir),
         "output_dir": str(output_dir),
         "log_path": str(case_log_path),
+        "rendered_map_png": str(rendered_map_path) if rendered_map_path.is_file() else "",
         "returncode": result.returncode,
         "status_path": str(status_path) if status_path.is_file() else "",
         "status_exists": status_doc is not None,
@@ -389,6 +395,7 @@ summary = {
     "run_root": str(summary_path.parent),
     "cases_root": str(cases_root),
     "case_log_root": str(case_log_root),
+    "visual_check_dir": str(visual_check_dir),
     "selected_case_count": len(case_ids),
     "completed_case_count": len(results),
     "accepted_case_count": accepted,
@@ -409,6 +416,7 @@ if [[ "$runner_rc" -ne 0 ]]; then
 fi
 
 echo "[DONE] Stage4 Anchor_2 batch summary: $SUMMARY_PATH"
+echo "[DONE] Stage4 Anchor_2 visual checks directory: $VISUAL_CHECK_DIR"
 if [[ "$FAIL_ON_NON_ACCEPTED" == "1" ]]; then
   SUMMARY_PATH="$SUMMARY_PATH" "$PYTHON_BIN" - <<'PY'
 import json

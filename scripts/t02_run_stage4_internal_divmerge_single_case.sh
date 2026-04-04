@@ -16,6 +16,7 @@ MAINNODEID="${MAINNODEID:-${1:-}}"
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t02_stage4_divmerge_virtual_polygon_internal}"
 RUN_ID="${RUN_ID:-t02_stage4_divmerge_internal_${MAINNODEID:-unknown}_$(date +%Y%m%d_%H%M%S)}"
 DEBUG_FLAG="${DEBUG_FLAG:---debug}"
+VISUAL_CHECK_DIR="${VISUAL_CHECK_DIR:-$OUT_ROOT/$RUN_ID/visual_checks}"
 
 if [[ -z "$PYTHON_BIN" ]]; then
   if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
@@ -38,7 +39,7 @@ for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH
   fi
 done
 
-mkdir -p "$OUT_ROOT"
+mkdir -p "$OUT_ROOT" "$VISUAL_CHECK_DIR"
 cd "$REPO_DIR"
 
 cmd=(
@@ -51,6 +52,7 @@ cmd=(
   --mainnodeid "$MAINNODEID"
   --out-root "$OUT_ROOT"
   --run-id "$RUN_ID"
+  --debug-render-root "$VISUAL_CHECK_DIR"
   "$DEBUG_FLAG"
 )
 if [[ -n "${DIVSTRIPZONE_PATH:-}" && -f "$DIVSTRIPZONE_PATH" ]]; then
@@ -70,6 +72,8 @@ echo "[RUN] RCSDROAD_PATH=$RCSDROAD_PATH"
 echo "[RUN] RCSDNODE_PATH=$RCSDNODE_PATH"
 echo "[RUN] OUT_ROOT=$OUT_ROOT"
 echo "[RUN] RUN_ID=$RUN_ID"
+echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
 PYTHONPATH=src "${cmd[@]}"
 
 echo "[DONE] Stage4 outputs: $OUT_ROOT/$RUN_ID"
+echo "[DONE] Stage4 visual checks directory: $VISUAL_CHECK_DIR"

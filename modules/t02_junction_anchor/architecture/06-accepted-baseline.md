@@ -398,12 +398,13 @@
 ## 10. 阶段四：stage4，diverge / merge virtual polygon
 
 ### 10.1 目标
-- 处理 `has_evd = yes`、`is_anchor = no` 且 `kind_2 in {8, 16}` 的单个 `mainnodeid`。
+- 处理 `has_evd = yes`、`is_anchor = no` 且 `kind_2 in {8, 16}`，以及 `kind / kind_2 = 128` 的复杂路口主节点 `mainnodeid`。
 - 生成保守虚拟路口面，覆盖目标 `mainnodeid` 对应的主 `RCSDNode` 与相关 node。
 
 ### 10.2 当前业务规则
 - `kind_2 = 8` 归因为 merge（`2 in 1 out`）。
 - `kind_2 = 16` 归因为 diverge（`1 in 2 out`）。
+- `kind / kind_2 = 128` 的复杂路口主节点允许进入 stage4；单次运行时先解析为当前 patch 上可解释的 `operational kind_2 = 8 / 16`，再沿现有 stage4 单事件链继续处理。
 - stage4 采用 stage3 的栅格策略主线：
   - patch + mask + 连通提取 + 回矢量 + 审计
 - stage4 对主 `RCSDNode` 应用主干有向容差：
@@ -419,6 +420,7 @@
 - `stage4_rcsdnode_link.json`
 - `stage4_audit.json`
 - 可选 `stage4_debug/`
+- 可选 `_rendered_maps/<mainnodeid>.png` 或显式 `--debug-render-root` 下的同名 PNG
 - `stage4_status.json`、`stage4_progress.json`、`stage4_perf.json`、`stage4_perf_markers.jsonl` 仍可作为运行态工件输出，但不属于当前 stage4 正式输出契约。
 
 ## 10. 当前已落地 / 已固化内容

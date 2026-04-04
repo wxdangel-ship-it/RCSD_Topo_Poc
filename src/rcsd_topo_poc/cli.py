@@ -896,6 +896,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--run-id",
         help="Optional run id. If omitted, use t02_stage4_divmerge_virtual_polygon_YYYYMMDD_HHMMSS.",
     )
+    p_t02_stage4.add_argument(
+        "--debug-render-root",
+        help="Optional debug render output root. When set with --debug, all rendered PNGs are written under this directory instead of the default sibling _rendered_maps folder.",
+    )
     _add_debug_flag(p_t02_stage4, default=False)
     p_t02_stage4.set_defaults(func=_cmd_t02_stage4_divmerge_virtual_polygon)
 

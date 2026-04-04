@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shutil
 import time
 import tracemalloc
 from dataclasses import dataclass
@@ -70,7 +71,9 @@ STATUS_DIVSTRIP_NOT_NEARBY = "divstrip_not_nearby"
 STATUS_DIVSTRIP_COMPONENT_AMBIGUOUS = "divstrip_component_ambiguous"
 STATUS_MULTIBRANCH_EVENT_AMBIGUOUS = "multibranch_event_ambiguous"
 STATUS_CONTINUOUS_CHAIN_REVIEW = "continuous_chain_review"
+STATUS_COMPLEX_KIND_AMBIGUOUS = "complex_kind_ambiguous"
 STAGE4_KIND_2_VALUES = {8, 16}
+COMPLEX_JUNCTION_KIND = 128
 DIVSTRIP_NEARBY_DISTANCE_M = 24.0
 DIVSTRIP_BRANCH_BUFFER_M = 6.0
 DIVSTRIP_EXCLUSION_BUFFER_M = 0.75
@@ -187,6 +190,7 @@ class Stage4Artifacts:
     perf_json_path: Path
     perf_markers_path: Path
     debug_dir: Path | None = None
+    rendered_map_path: Path | None = None
     status_doc: dict[str, Any] | None = None
     perf_doc: dict[str, Any] | None = None
 
@@ -198,6 +202,50 @@ def _cover_check(geometry, candidates: list[ParsedNode]) -> list[str]:
 
 def _selected_branch_score(branch) -> float:
     return float(branch.road_support_m + branch.drivezone_support_m + branch.rc_support_m)
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    text = str(value).strip()
+    if not text or text.lower() in {"null", "none", "nan"}:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        try:
+            parsed = float(text)
+        except ValueError:
+            return None
+        return int(parsed) if parsed.is_integer() else None
+
+
+def _node_source_kind(node: ParsedNode) -> int | None:
+    return _coerce_optional_int(node.properties.get("kind"))
+
+
+def _node_source_kind_2(node: ParsedNode) -> int | None:
+    return node.kind_2 if node.kind_2 is not None else _coerce_optional_int(node.properties.get("kind_2"))
+
+
+def _is_complex_stage4_node(node: ParsedNode) -> bool:
+    source_kind = _node_source_kind(node)
+    source_kind_2 = _node_source_kind_2(node)
+    return source_kind == COMPLEX_JUNCTION_KIND or source_kind_2 == COMPLEX_JUNCTION_KIND
+
+
+def _is_stage4_supported_node_kind(node: ParsedNode) -> bool:
+    source_kind = _node_source_kind(node)
+    source_kind_2 = _node_source_kind_2(node)
+    return (
+        source_kind_2 in STAGE4_KIND_2_VALUES
+        or source_kind == COMPLEX_JUNCTION_KIND
+        or source_kind_2 == COMPLEX_JUNCTION_KIND
+    )
 
 
 def _branch_angle_gap_deg(lhs, rhs) -> float:
@@ -827,23 +875,133 @@ def _is_stage4_representative(node: ParsedNode) -> bool:
     return (
         node.has_evd == "yes"
         and node.is_anchor == "no"
-        and node.kind_2 in STAGE4_KIND_2_VALUES
+        and _is_stage4_supported_node_kind(node)
         and normalize_id(node.node_id) == normalize_id(representative_id)
     )
+
+
+def _stage4_chain_kind_2(node: ParsedNode) -> int | None:
+    source_kind_2 = _node_source_kind_2(node)
+    return source_kind_2 if source_kind_2 in STAGE4_KIND_2_VALUES else None
+
+
+def _resolve_operational_kind_2(
+    *,
+    representative_node: ParsedNode,
+    road_branches,
+    main_branch_ids: set[str],
+    preferred_branch_ids: set[str],
+) -> dict[str, Any]:
+    source_kind = _node_source_kind(representative_node)
+    source_kind_2 = _node_source_kind_2(representative_node)
+    if source_kind_2 in STAGE4_KIND_2_VALUES:
+        return {
+            "source_kind": source_kind,
+            "source_kind_2": source_kind_2,
+            "operational_kind_2": int(source_kind_2),
+            "complex_junction": False,
+            "ambiguous": False,
+            "kind_resolution_mode": "direct_kind_2",
+            "merge_score": None,
+            "diverge_score": None,
+            "merge_hits": None,
+            "diverge_hits": None,
+        }
+
+    if source_kind != COMPLEX_JUNCTION_KIND and source_kind_2 != COMPLEX_JUNCTION_KIND:
+        raise Stage4RunError(
+            REASON_MAINNODEID_OUT_OF_SCOPE,
+            (
+                f"mainnodeid='{normalize_id(representative_node.mainnodeid or representative_node.node_id)}' "
+                f"has unsupported kind={source_kind}, kind_2={source_kind_2}."
+            ),
+        )
+
+    side_branches = [branch for branch in road_branches if branch.branch_id not in main_branch_ids]
+    merge_score = 0.0
+    diverge_score = 0.0
+    merge_hits = 0
+    diverge_hits = 0
+    merge_preferred_hits = 0
+    diverge_preferred_hits = 0
+    for branch in side_branches:
+        branch_score = max(1.0, _selected_branch_score(branch))
+        if branch.has_incoming_support:
+            merge_hits += 1
+            merge_score += branch_score
+            if branch.branch_id in preferred_branch_ids:
+                merge_preferred_hits += 1
+                merge_score += 100.0
+        if branch.has_outgoing_support:
+            diverge_hits += 1
+            diverge_score += branch_score
+            if branch.branch_id in preferred_branch_ids:
+                diverge_preferred_hits += 1
+                diverge_score += 100.0
+
+    if merge_score > diverge_score:
+        operational_kind_2 = 8
+    elif diverge_score > merge_score:
+        operational_kind_2 = 16
+    elif merge_hits > diverge_hits:
+        operational_kind_2 = 8
+    elif diverge_hits > merge_hits:
+        operational_kind_2 = 16
+    elif merge_preferred_hits > diverge_preferred_hits:
+        operational_kind_2 = 8
+    else:
+        operational_kind_2 = 16
+
+    ambiguous = (
+        not side_branches
+        or (
+            abs(merge_score - diverge_score) <= MULTIBRANCH_AMBIGUITY_SCORE_MARGIN
+            and merge_hits == diverge_hits
+            and merge_preferred_hits == diverge_preferred_hits
+        )
+    )
+    return {
+        "source_kind": source_kind,
+        "source_kind_2": source_kind_2,
+        "operational_kind_2": operational_kind_2,
+        "complex_junction": True,
+        "ambiguous": ambiguous,
+        "kind_resolution_mode": "complex_branch_direction",
+        "merge_score": round(merge_score, 3),
+        "diverge_score": round(diverge_score, 3),
+        "merge_hits": merge_hits,
+        "diverge_hits": diverge_hits,
+    }
 
 
 def _build_continuous_chain_context(
     *,
     representative_node: ParsedNode,
     local_nodes: list[ParsedNode],
+    enabled: bool = True,
 ) -> dict[str, Any]:
     representative_mainnodeid = normalize_id(representative_node.mainnodeid or representative_node.node_id)
+    if not enabled:
+        return {
+            "chain_component_id": representative_mainnodeid,
+            "related_mainnodeids": [],
+            "is_in_continuous_chain": False,
+            "chain_node_count": 1,
+            "chain_node_offset_m": None,
+            "sequential_ok": False,
+            "related_seed_nodes": [],
+        }
+
+    representative_chain_kind_2 = _stage4_chain_kind_2(representative_node)
     chain_candidates: list[tuple[ParsedNode, float]] = []
     for candidate in local_nodes:
         if not _is_stage4_representative(candidate):
             continue
         candidate_mainnodeid = normalize_id(candidate.mainnodeid or candidate.node_id)
         if candidate_mainnodeid == representative_mainnodeid:
+            continue
+        candidate_chain_kind_2 = _stage4_chain_kind_2(candidate)
+        if candidate_chain_kind_2 is None or representative_chain_kind_2 is None:
             continue
         offset_m = float(candidate.geometry.distance(representative_node.geometry))
         if offset_m <= CHAIN_NEARBY_DISTANCE_M:
@@ -853,7 +1011,7 @@ def _build_continuous_chain_context(
     related_mainnodeids = [normalize_id(candidate.mainnodeid or candidate.node_id) for candidate, _ in chain_candidates]
     nearest_offset_m = None if not chain_candidates else round(chain_candidates[0][1], 3)
     sequential_ok = any(
-        offset_m <= CHAIN_SEQUENCE_DISTANCE_M and candidate.kind_2 != representative_node.kind_2
+        offset_m <= CHAIN_SEQUENCE_DISTANCE_M and _stage4_chain_kind_2(candidate) != representative_chain_kind_2
         for candidate, offset_m in chain_candidates
     )
     chain_member_ids = [representative_mainnodeid, *related_mainnodeids]
@@ -892,6 +1050,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
     rcsdroad_crs: Optional[str] = None,
     rcsdnode_crs: Optional[str] = None,
     debug: bool = False,
+    debug_render_root: Optional[Union[str, Path]] = None,
     trace_memory: bool = True,
 ) -> Stage4Artifacts:
     if trace_memory and not tracemalloc.is_tracing():
@@ -912,6 +1071,12 @@ def run_t02_stage4_divmerge_virtual_polygon(
     perf_markers_path = out_root_path / "stage4_perf_markers.jsonl"
     debug_dir = out_root_path / "stage4_debug" if debug else None
     debug_render_path = debug_dir / f"{normalize_id(mainnodeid) or 'unknown'}.png" if debug_dir is not None else None
+    rendered_maps_root = (
+        Path(debug_render_root)
+        if debug_render_root is not None
+        else out_root_path.parent / "_rendered_maps"
+    )
+    rendered_map_path = rendered_maps_root / f"{normalize_id(mainnodeid) or 'unknown'}.png" if debug else None
 
     logger = build_logger(log_path, f"t02_stage4_divmerge_virtual_polygon.{resolved_run_id}")
     counts: dict[str, Any] = {
@@ -1019,15 +1184,21 @@ def run_t02_stage4_divmerge_virtual_polygon(
 
         target_group = _resolve_group(mainnodeid=mainnodeid_norm, nodes=nodes)
         representative_node, group_nodes = target_group
-        representative_kind_2 = representative_node.kind_2
+        representative_source_kind = _node_source_kind(representative_node)
+        representative_source_kind_2 = _node_source_kind_2(representative_node)
+        representative_kind_2 = representative_source_kind_2
         representative_grade_2 = representative_node.grade_2
-        if representative_node.has_evd != "yes" or representative_node.is_anchor != "no" or representative_kind_2 not in STAGE4_KIND_2_VALUES:
+        if (
+            representative_node.has_evd != "yes"
+            or representative_node.is_anchor != "no"
+            or not _is_stage4_supported_node_kind(representative_node)
+        ):
             raise Stage4RunError(
                 REASON_MAINNODEID_OUT_OF_SCOPE,
                 (
                     f"mainnodeid='{mainnodeid_norm}' is out of scope: "
                     f"has_evd={representative_node.has_evd}, is_anchor={representative_node.is_anchor}, "
-                    f"kind_2={representative_kind_2}."
+                    f"kind={representative_source_kind}, kind_2={representative_source_kind_2}."
                 ),
             )
 
@@ -1106,11 +1277,18 @@ def run_t02_stage4_divmerge_virtual_polygon(
             main_branch_ids=main_branch_ids,
         )
         preferred_branch_ids = set(divstrip_context["preferred_branch_ids"])
+        kind_resolution = _resolve_operational_kind_2(
+            representative_node=representative_node,
+            road_branches=road_branches,
+            main_branch_ids=main_branch_ids,
+            preferred_branch_ids=preferred_branch_ids,
+        )
+        operational_kind_2 = kind_resolution["operational_kind_2"]
         multibranch_context = _resolve_multibranch_context(
             road_branches=road_branches,
             main_branch_ids=main_branch_ids,
             preferred_branch_ids=preferred_branch_ids,
-            kind_2=representative_kind_2 or 0,
+            kind_2=operational_kind_2,
             local_roads=local_roads,
             member_node_ids=member_node_ids,
             drivezone_union=drivezone_union,
@@ -1119,10 +1297,11 @@ def run_t02_stage4_divmerge_virtual_polygon(
         chain_context = _build_continuous_chain_context(
             representative_node=representative_node,
             local_nodes=local_nodes,
+            enabled=not kind_resolution["complex_junction"],
         )
         forward_side_branches = _select_stage4_side_branches(
             road_branches,
-            kind_2=representative_kind_2 or 0,
+            kind_2=operational_kind_2,
             preferred_branch_ids=preferred_branch_ids,
         )
         forward_branch_ids = {branch.branch_id for branch in forward_side_branches}
@@ -1142,7 +1321,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
         if reverse_tip_attempted:
             reverse_side_branches = _select_reverse_tip_side_branches(
                 road_branches,
-                kind_2=representative_kind_2 or 0,
+                kind_2=operational_kind_2,
                 preferred_branch_ids=preferred_branch_ids,
             )
             position_source_reverse = "reverse_tip_divstrip" if ({branch.branch_id for branch in reverse_side_branches} & preferred_branch_ids) else "reverse_tip_roads"
@@ -1258,7 +1437,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             road_branches=road_branches,
             main_branch_ids=main_branch_ids,
             local_roads=local_roads,
-            kind_2=representative_kind_2 or 0,
+            kind_2=operational_kind_2,
             drivezone_union=drivezone_union,
         )
         polygon_geometry = primary_rcsdnode_tolerance["extended_polygon_geometry"]
@@ -1278,6 +1457,8 @@ def run_t02_stage4_divmerge_virtual_polygon(
             review_reasons.append(STATUS_DIVSTRIP_COMPONENT_AMBIGUOUS)
         if chain_context["is_in_continuous_chain"] and chain_context["sequential_ok"]:
             review_reasons.append(STATUS_CONTINUOUS_CHAIN_REVIEW)
+        if kind_resolution["ambiguous"]:
+            review_reasons.append(STATUS_COMPLEX_KIND_AMBIGUOUS)
         if coverage_missing_ids:
             review_reasons.append(REASON_COVERAGE_INCOMPLETE)
         acceptance_class = "accepted" if not review_reasons else "review_required"
@@ -1294,7 +1475,10 @@ def run_t02_stage4_divmerge_virtual_polygon(
         polygon_feature = {
             "properties": {
                 "mainnodeid": mainnodeid_norm,
-                "kind_2": representative_kind_2,
+                "kind": representative_source_kind,
+                "source_kind": representative_source_kind,
+                "source_kind_2": representative_source_kind_2,
+                "kind_2": operational_kind_2,
                 "grade_2": representative_grade_2,
                 "status": acceptance_reason,
                 "acceptance_class": acceptance_class,
@@ -1311,6 +1495,9 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "divstrip_component_count": int(divstrip_context["component_count"]),
                 "evidence_source": divstrip_context["evidence_source"],
                 "selection_mode": divstrip_context["selection_mode"],
+                "complex_junction": int(kind_resolution["complex_junction"]),
+                "kind_resolution_mode": kind_resolution["kind_resolution_mode"],
+                "kind_resolution_ambiguous": int(kind_resolution["ambiguous"]),
                 "multibranch_enabled": int(multibranch_context["enabled"]),
                 "multibranch_n": int(multibranch_context["n"]),
                 "event_candidate_count": int(multibranch_context["event_candidate_count"]),
@@ -1331,7 +1518,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
 
         node_link_doc = _make_link_doc(
             mainnodeid=mainnodeid_norm,
-            kind_2=representative_kind_2 or 0,
+            kind_2=operational_kind_2,
             grade_2=representative_grade_2,
             target_node_ids=[node.node_id for node in group_nodes],
             linked_node_ids=[node.node_id for node in group_nodes],
@@ -1341,6 +1528,11 @@ def run_t02_stage4_divmerge_virtual_polygon(
         )
         node_link_doc.update(
             {
+                "source_kind": representative_source_kind,
+                "source_kind_2": representative_source_kind_2,
+                "complex_junction": kind_resolution["complex_junction"],
+                "kind_resolution_mode": kind_resolution["kind_resolution_mode"],
+                "kind_resolution_ambiguous": kind_resolution["ambiguous"],
                 "multibranch_enabled": multibranch_context["enabled"],
                 "selected_event_branch_ids": selected_event_branch_ids,
                 "branches_used_count": len(selected_branch_ids),
@@ -1351,7 +1543,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
         )
         rcsdnode_link_doc = _make_link_doc(
             mainnodeid=mainnodeid_norm,
-            kind_2=representative_kind_2 or 0,
+            kind_2=operational_kind_2,
             grade_2=representative_grade_2,
             target_node_ids=[node.node_id for node in target_rc_nodes],
             linked_node_ids=sorted(selected_rcsdnode_ids),
@@ -1361,6 +1553,11 @@ def run_t02_stage4_divmerge_virtual_polygon(
         )
         rcsdnode_link_doc.update(
             {
+                "source_kind": representative_source_kind,
+                "source_kind_2": representative_source_kind_2,
+                "complex_junction": kind_resolution["complex_junction"],
+                "kind_resolution_mode": kind_resolution["kind_resolution_mode"],
+                "kind_resolution_ambiguous": kind_resolution["ambiguous"],
                 "multibranch_enabled": multibranch_context["enabled"],
                 "selected_event_branch_ids": selected_event_branch_ids,
                 "branches_used_count": len(selected_branch_ids),
@@ -1397,6 +1594,10 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 excluded_rc_node_ids={node.node_id for node in local_rcsd_nodes if node.node_id not in selected_rcsdnode_ids},
                 failure_reason=None if acceptance_class == "accepted" else acceptance_reason,
             )
+            if rendered_map_path is not None:
+                rendered_map_path.parent.mkdir(parents=True, exist_ok=True)
+                if rendered_map_path != debug_render_path:
+                    shutil.copy2(debug_render_path, rendered_map_path)
 
         status_doc = {
             "run_id": resolved_run_id,
@@ -1405,11 +1606,23 @@ def run_t02_stage4_divmerge_virtual_polygon(
             "acceptance_class": acceptance_class,
             "acceptance_reason": acceptance_reason,
             "mainnodeid": mainnodeid_norm,
-            "kind_2": representative_kind_2,
+            "kind": representative_source_kind,
+            "source_kind": representative_source_kind,
+            "source_kind_2": representative_source_kind_2,
+            "kind_2": operational_kind_2,
             "grade_2": representative_grade_2,
             "counts": counts,
             "coverage_missing_ids": coverage_missing_ids,
             "review_reasons": review_reasons,
+            "kind_resolution": {
+                "complex_junction": kind_resolution["complex_junction"],
+                "kind_resolution_mode": kind_resolution["kind_resolution_mode"],
+                "kind_resolution_ambiguous": kind_resolution["ambiguous"],
+                "merge_score": kind_resolution["merge_score"],
+                "diverge_score": kind_resolution["diverge_score"],
+                "merge_hits": kind_resolution["merge_hits"],
+                "diverge_hits": kind_resolution["diverge_hits"],
+            },
             "multibranch": {
                 "multibranch_enabled": multibranch_context["enabled"],
                 "multibranch_n": multibranch_context["n"],
@@ -1456,6 +1669,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "stage4_rcsdnode_link": str(rcsdnode_link_json_path),
                 "stage4_audit": str(audit_json_path),
                 "stage4_debug": str(debug_dir) if debug_dir is not None else None,
+                "rendered_map": str(rendered_map_path) if rendered_map_path is not None and rendered_map_path.is_file() else None,
             },
         }
         audit_rows.append(
@@ -1480,6 +1694,13 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "divstrip_component_selected": divstrip_context["selected_component_ids"],
                 "selection_mode": divstrip_context["selection_mode"],
                 "evidence_source": divstrip_context["evidence_source"],
+                "source_kind": representative_source_kind,
+                "source_kind_2": representative_source_kind_2,
+                "complex_junction": kind_resolution["complex_junction"],
+                "kind_resolution_mode": kind_resolution["kind_resolution_mode"],
+                "kind_resolution_ambiguous": kind_resolution["ambiguous"],
+                "merge_score": kind_resolution["merge_score"],
+                "diverge_score": kind_resolution["diverge_score"],
                 "trunk_branch_id": primary_rcsdnode_tolerance["trunk_branch_id"],
                 "rcsdnode_tolerance_rule": primary_rcsdnode_tolerance["rcsdnode_tolerance_rule"],
                 "rcsdnode_tolerance_applied": primary_rcsdnode_tolerance["rcsdnode_tolerance_applied"],
@@ -1543,6 +1764,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             perf_json_path=perf_json_path,
             perf_markers_path=perf_markers_path,
             debug_dir=debug_dir,
+            rendered_map_path=rendered_map_path if rendered_map_path is not None and rendered_map_path.is_file() else None,
             status_doc=status_doc,
             perf_doc=perf_doc,
         )
@@ -1566,6 +1788,9 @@ def run_t02_stage4_divmerge_virtual_polygon(
             "acceptance_class": "rejected",
             "acceptance_reason": exc.reason,
             "mainnodeid": normalize_id(mainnodeid),
+            "kind": representative_source_kind if "representative_source_kind" in locals() else None,
+            "source_kind": representative_source_kind if "representative_source_kind" in locals() else None,
+            "source_kind_2": representative_source_kind_2 if "representative_source_kind_2" in locals() else None,
             "status": exc.reason,
             "detail": exc.detail,
             "counts": counts,
@@ -1575,6 +1800,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "stage4_rcsdnode_link": str(rcsdnode_link_json_path),
                 "stage4_audit": str(audit_json_path),
                 "stage4_debug": str(debug_dir) if debug_dir is not None else None,
+                "rendered_map": str(rendered_map_path) if rendered_map_path is not None and rendered_map_path.is_file() else None,
             },
         }
         perf_doc = {
@@ -1604,6 +1830,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             perf_json_path=perf_json_path,
             perf_markers_path=perf_markers_path,
             debug_dir=debug_dir,
+            rendered_map_path=rendered_map_path if rendered_map_path is not None and rendered_map_path.is_file() else None,
             status_doc=status_doc,
             perf_doc=perf_doc,
         )
@@ -1637,5 +1864,6 @@ def run_t02_stage4_divmerge_virtual_polygon_cli(args: argparse.Namespace) -> int
         rcsdroad_crs=args.rcsdroad_crs,
         rcsdnode_crs=args.rcsdnode_crs,
         debug=args.debug,
+        debug_render_root=getattr(args, "debug_render_root", None),
     )
     return 0 if artifacts.success else 2

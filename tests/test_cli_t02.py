@@ -164,6 +164,7 @@ def test_t02_stage4_divmerge_virtual_polygon_cli_accepts_expected_args(monkeypat
         captured["mainnodeid"] = args.mainnodeid
         captured["out_root"] = args.out_root
         captured["debug"] = args.debug
+        captured["debug_render_root"] = args.debug_render_root
         return 0
 
     monkeypatch.setattr(cli, "_cmd_t02_stage4_divmerge_virtual_polygon", _fake_cmd)
@@ -187,6 +188,8 @@ def test_t02_stage4_divmerge_virtual_polygon_cli_accepts_expected_args(monkeypat
             "100",
             "--out_dir",
             str(tmp_path / "out"),
+            "--debug-render-root",
+            str(tmp_path / "renders"),
             "--debug",
         ]
     )
@@ -201,6 +204,7 @@ def test_t02_stage4_divmerge_virtual_polygon_cli_accepts_expected_args(monkeypat
     assert captured["mainnodeid"] == "100"
     assert captured["out_root"] == str(tmp_path / "out")
     assert captured["debug"] is True
+    assert captured["debug_render_root"] == str(tmp_path / "renders")
 
 
 def test_t02_stage4_divmerge_virtual_polygon_cli_allows_missing_divstrip(monkeypatch, tmp_path: Path) -> None:

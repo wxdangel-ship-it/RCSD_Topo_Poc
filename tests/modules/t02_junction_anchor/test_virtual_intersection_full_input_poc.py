@@ -330,16 +330,42 @@ def test_full_input_poc_preloads_shared_layers_once_for_multi_case_runs(tmp_path
     assert summary["shared_memory"]["shared_local_layer_query"] is True
 
 
+def test_full_input_poc_multi_case_batch_skips_case_progress_and_perf_markers(tmp_path: Path) -> None:
+    paths = _write_full_input_fixture(tmp_path, include_second_case=True)
+    artifacts = run_t02_virtual_intersection_full_input_poc(
+        out_root=tmp_path / "out",
+        run_id="batch_case_io_trimmed",
+        workers=2,
+        **paths,
+    )
+
+    assert artifacts.success is True
+    case_root = artifacts.out_root / "cases" / "100"
+    assert (case_root / "t02_virtual_intersection_poc_status.json").is_file()
+    assert (case_root / "t02_virtual_intersection_poc_perf.json").is_file()
+    assert not (case_root / "t02_virtual_intersection_poc_progress.json").exists()
+    assert not (case_root / "t02_virtual_intersection_poc_perf_markers.jsonl").exists()
+
+
 def test_full_input_poc_writes_exception_summary_and_case_events(tmp_path: Path) -> None:
     paths = _write_full_input_fixture(tmp_path, include_second_case=True)
     original_run = full_input_module.run_t02_virtual_intersection_poc
+    original_write_exception_summary = full_input_module._write_exception_summary
+    exception_summary_write_count = 0
 
     def _patched_run(**kwargs):
         if str(kwargs["mainnodeid"]) == "200":
             raise RuntimeError("boom case 200")
         return original_run(**kwargs)
 
-    with patch.object(full_input_module, "run_t02_virtual_intersection_poc", _patched_run):
+    def _counting_write_exception_summary(*args, **kwargs):
+        nonlocal exception_summary_write_count
+        exception_summary_write_count += 1
+        return original_write_exception_summary(*args, **kwargs)
+
+    with patch.object(full_input_module, "run_t02_virtual_intersection_poc", _patched_run), patch.object(
+        full_input_module, "_write_exception_summary", _counting_write_exception_summary
+    ):
         artifacts = run_t02_virtual_intersection_full_input_poc(
             out_root=tmp_path / "out",
             run_id="worker_exception",
@@ -354,6 +380,7 @@ def test_full_input_poc_writes_exception_summary_and_case_events(tmp_path: Path)
     assert any(item["case_id"] == "200" for item in exception_summary["failed_cases"])
     case_events = artifacts.case_events_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(case_events) == 2
+    assert exception_summary_write_count == 2
 
 
 def test_full_input_poc_marks_unsuccessful_rendered_map_as_failure_style(tmp_path: Path) -> None:

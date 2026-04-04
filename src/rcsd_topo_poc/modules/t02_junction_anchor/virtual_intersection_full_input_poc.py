@@ -58,6 +58,8 @@ DEFAULT_WORKERS = 1
 FULL_INPUT_MODE_NAME = "full-input"
 CASE_PACKAGE_MODE_NAME = "case-package"
 FULL_INPUT_RUN_PREFIX = "t02_virtual_intersection_full_input_poc"
+CASE_EXECUTION_PROGRESS_FLUSH_EVERY = 8
+CASE_EXECUTION_PROGRESS_FLUSH_INTERVAL_SEC = 2.0
 
 
 @dataclass(frozen=True)
@@ -741,7 +743,8 @@ def run_t02_virtual_intersection_full_input_poc(
     cases_root = out_root_path / "cases"
     rendered_maps_root = Path(debug_render_root) if debug_render_root is not None else out_root_path / "_rendered_maps"
     cases_root.mkdir(parents=True, exist_ok=True)
-    rendered_maps_root.mkdir(parents=True, exist_ok=True)
+    if debug:
+        rendered_maps_root.mkdir(parents=True, exist_ok=True)
 
     preflight_path = out_root_path / "preflight.json"
     summary_path = out_root_path / "summary.json"
@@ -769,6 +772,8 @@ def run_t02_virtual_intersection_full_input_poc(
     skipped_case_ids: list[str] = []
     rows: list[dict[str, Any]] = []
     polygon_feature_cache: dict[str, dict[str, Any]] = {}
+    last_case_progress_completed_count = 0
+    last_case_progress_written_at = 0.0
     shared_memory_summary: dict[str, Any] = {
         "enabled": False,
         "node_group_lookup": False,
@@ -776,20 +781,46 @@ def run_t02_virtual_intersection_full_input_poc(
         "layers": {},
     }
 
+    def _write_case_execution_progress(case_id: str, *, force: bool = False) -> None:
+        nonlocal last_case_progress_completed_count
+        nonlocal last_case_progress_written_at
+        completed_case_count = int(counts["completed_case_count"])
+        now = time.perf_counter()
+        if not force:
+            completed_delta = completed_case_count - last_case_progress_completed_count
+            elapsed_since_last = now - last_case_progress_written_at
+            if (
+                completed_delta < CASE_EXECUTION_PROGRESS_FLUSH_EVERY
+                and elapsed_since_last < CASE_EXECUTION_PROGRESS_FLUSH_INTERVAL_SEC
+            ):
+                return
+        _write_progress(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status="running",
+            current_stage="case_execution",
+            counts=counts,
+            message=f"Completed case {case_id}.",
+        )
+        last_case_progress_completed_count = completed_case_count
+        last_case_progress_written_at = now
+
     def _record_case_result(row: dict[str, Any]) -> None:
         case_id = str(row["case_id"])
         polygon_feature = row.pop("polygon_feature", None)
         if row.get("success") and polygon_feature is not None:
             polygon_feature_cache[case_id] = polygon_feature
-        if not row.get("success"):
+        if not row.get("success") and row.get("rendered_map_png"):
             try:
                 _ensure_failure_styled_render(row.get("rendered_map_png"))
             except Exception as exc:
                 announce(logger, f"[T02-FULL-POC] failure style overlay skipped case_id={case_id} reason={type(exc).__name__}: {exc}")
         rows.append(row)
-        counts["completed_case_count"] = len(rows)
-        counts["success_case_count"] = sum(1 for item in rows if item.get("success"))
-        counts["failed_case_count"] = counts["completed_case_count"] - counts["success_case_count"]
+        counts["completed_case_count"] += 1
+        if row.get("success"):
+            counts["success_case_count"] += 1
+        else:
+            counts["failed_case_count"] += 1
         _append_jsonl(
             case_events_path,
             {
@@ -805,15 +836,9 @@ def run_t02_virtual_intersection_full_input_poc(
                 **_process_memory_stats(),
             },
         )
-        _write_exception_summary(exception_summary_path, rows)
-        _write_progress(
-            out_path=progress_path,
-            run_id=resolved_run_id,
-            status="running",
-            current_stage="case_execution",
-            counts=counts,
-            message=f"Completed case {case_id}.",
-        )
+        if not row.get("success"):
+            _write_exception_summary(exception_summary_path, rows)
+        _write_case_execution_progress(case_id, force=not row.get("success"))
 
     try:
         _write_progress(
@@ -957,6 +982,8 @@ def run_t02_virtual_intersection_full_input_poc(
             "trace_memory": False,
             "layer_loader": shared_layer_loader,
             "target_group_loader": target_group_loader,
+            "write_run_progress": len(selected_case_ids) <= 1,
+            "write_perf_markers": len(selected_case_ids) <= 1,
         }
 
         if workers == 1 or len(selected_case_ids) <= 1:

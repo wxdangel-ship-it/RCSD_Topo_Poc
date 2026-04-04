@@ -1358,6 +1358,8 @@ def _write_debug_rendered_map(
     excluded_rc_road_ids: set[str],
     excluded_rc_node_ids: set[str] | None = None,
     failure_reason: str | None = None,
+    local_divstrip_geometries: Iterable[BaseGeometry] = (),
+    selected_divstrip_geometry: BaseGeometry | None = None,
 ) -> None:
     excluded_rc_node_ids = excluded_rc_node_ids or set()
     image = np.full((grid.height, grid.width, 4), 255, dtype=np.uint8)
@@ -1394,6 +1396,20 @@ def _write_debug_rendered_map(
             for road in local_rc_roads
             if road.road_id in excluded_rc_road_ids
         ],
+    )
+    divstrip_mask = _rasterize_geometries(
+        grid,
+        [
+            geometry
+            for geometry in local_divstrip_geometries
+            if geometry is not None and not geometry.is_empty
+        ],
+    )
+    selected_divstrip_mask = _rasterize_geometries(
+        grid,
+        []
+        if selected_divstrip_geometry is None or selected_divstrip_geometry.is_empty
+        else [selected_divstrip_geometry],
     )
     group_node_ids = {node.node_id for node in group_nodes}
     group_node_mask = _rasterize_geometries(
@@ -1440,7 +1456,9 @@ def _write_debug_rendered_map(
 
     _blend_mask(image, drivezone_mask, color=(229, 220, 192), alpha=1.0)
     _blend_mask(image, drivezone_edge_mask, color=(190, 176, 132), alpha=1.0)
-    _blend_mask(image, polygon_mask, color=(255, 179, 71), alpha=0.60)
+    _blend_mask(image, divstrip_mask, color=(0, 157, 255), alpha=0.52)
+    _blend_mask(image, selected_divstrip_mask, color=(0, 71, 171), alpha=0.98)
+    _blend_mask(image, polygon_mask, color=(255, 140, 0), alpha=0.74)
     _blend_mask(image, road_mask, color=(24, 24, 24), alpha=1.0)
     _blend_mask(image, rc_road_mask, color=(193, 18, 31), alpha=1.0)
     _blend_mask(image, excluded_rc_road_mask, color=(138, 28, 42), alpha=1.0)
@@ -2469,6 +2487,25 @@ def _can_soft_exclude_outside_rc(
         return True
     if (
         status == STATUS_STABLE
+        and effective_local_rc_node_count == 0
+        and effective_associated_rc_node_count == 0
+        and associated_nonzero_mainnode_count == 0
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 2
+        and local_road_count <= 5
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and connected_rc_group_count <= 1
+        and negative_rc_group_count == 0
+        and max_selected_side_branch_covered_length_m >= 18.0
+        and max_nonmain_branch_polygon_length_m >= 12.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m <= 1.5
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
         and associated_nonzero_mainnode_count == 0
         and local_node_count is not None
         and local_road_count is not None
@@ -2503,6 +2540,25 @@ def _can_soft_exclude_outside_rc(
         return True
     if (
         status == STATUS_STABLE
+        and effective_local_rc_node_count >= 3
+        and effective_associated_rc_node_count >= 1
+        and associated_nonzero_mainnode_count >= 2
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 8
+        and local_road_count <= 15
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count == 0
+        and connected_rc_group_count <= 1
+        and negative_rc_group_count == 0
+        and max_selected_side_branch_covered_length_m >= 14.0
+        and max_nonmain_branch_polygon_length_m >= 10.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m <= 1.5
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
         and associated_nonzero_mainnode_count >= 1
         and local_node_count is not None
         and local_road_count is not None
@@ -2513,6 +2569,25 @@ def _can_soft_exclude_outside_rc(
         and connected_rc_group_count <= 2
         and negative_rc_group_count == 0
         and max_nonmain_branch_polygon_length_m >= 7.5
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and effective_local_rc_node_count >= 4
+        and effective_associated_rc_node_count >= 2
+        and associated_nonzero_mainnode_count >= 4
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 16
+        and local_road_count <= 28
+        and selected_rc_road_count >= 2
+        and polygon_support_rc_road_count == 0
+        and connected_rc_group_count <= 1
+        and negative_rc_group_count == 0
+        and max_selected_side_branch_covered_length_m == 0.0
+        and max_nonmain_branch_polygon_length_m >= 8.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m >= 15.0
     ):
         return True
     if (
@@ -3593,6 +3668,8 @@ def run_t02_virtual_intersection_poc(
     debug_render_root: Optional[Union[str, Path]] = None,
     review_mode: bool = False,
     trace_memory: bool = True,
+    write_run_progress: bool = True,
+    write_perf_markers: bool = True,
     layer_loader: Callable[..., LoadedLayer] | None = None,
     target_group_loader: Callable[[str], LoadedLayer] | None = None,
 ) -> VirtualIntersectionArtifacts:
@@ -3649,6 +3726,23 @@ def run_t02_virtual_intersection_poc(
     debug_rendered_map_written = False
     load_layer_filtered = layer_loader or _load_layer_filtered
 
+    def emit_progress_snapshot(
+        *,
+        status: str,
+        current_stage: str | None,
+        message: str,
+    ) -> None:
+        if not write_run_progress:
+            return
+        _write_progress_snapshot(
+            out_path=progress_path,
+            run_id=resolved_run_id,
+            status=status,
+            current_stage=current_stage,
+            message=message,
+            counts=counts,
+        )
+
     def record_stage(stage_name: str, *, note: str | None = None) -> None:
         nonlocal stage_started_at
         elapsed = time.perf_counter() - stage_started_at
@@ -3659,14 +3753,15 @@ def run_t02_virtual_intersection_poc(
                 **_tracemalloc_stats(),
             }
         )
-        _record_perf_marker(
-            out_path=perf_markers_path,
-            run_id=resolved_run_id,
-            stage=stage_name,
-            elapsed_sec=elapsed,
-            counts=counts,
-            note=note,
-        )
+        if write_perf_markers:
+            _record_perf_marker(
+                out_path=perf_markers_path,
+                run_id=resolved_run_id,
+                stage=stage_name,
+                elapsed_sec=elapsed,
+                counts=counts,
+                note=note,
+            )
         stage_started_at = time.perf_counter()
 
     def report_local_scan(layer_label: str, scanned_count: int, matched_count: int) -> None:
@@ -3691,22 +3786,16 @@ def run_t02_virtual_intersection_poc(
             logger,
             log_line,
         )
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage=current_stage,
             message=message,
-            counts=counts,
         )
 
-    _write_progress_snapshot(
-        out_path=progress_path,
-        run_id=resolved_run_id,
+    emit_progress_snapshot(
         status="running",
         current_stage="start",
         message="T02 virtual intersection POC started.",
-        counts=counts,
     )
     announce(logger, f"[T02-POC] start run_id={resolved_run_id}")
 
@@ -3755,22 +3844,16 @@ def run_t02_virtual_intersection_poc(
             ),
         )
         record_stage("target_group_resolved")
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage="target_group_resolved",
             message="Resolved target representative node and local buffer.",
-            counts=counts,
         )
 
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage="loading_local_inputs",
             message="Loading local POC inputs around the target junction.",
-            counts=counts,
         )
 
         local_nodes_layer_data = load_layer_filtered(
@@ -3789,13 +3872,10 @@ def run_t02_virtual_intersection_poc(
             f"[T02-POC] local nodes loaded matched={counts['node_feature_count']}",
         )
         record_stage("local_nodes_loaded")
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage="local_nodes_loaded",
             message="Loaded local nodes around the target junction.",
-            counts=counts,
         )
 
         roads_layer_data = load_layer_filtered(
@@ -3814,13 +3894,10 @@ def run_t02_virtual_intersection_poc(
             f"[T02-POC] local roads loaded matched={counts['road_feature_count']}",
         )
         record_stage("local_roads_loaded")
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage="local_roads_loaded",
             message="Loaded local roads around the target junction.",
-            counts=counts,
         )
 
         drivezone_layer_data = load_layer_filtered(
@@ -3838,13 +3915,10 @@ def run_t02_virtual_intersection_poc(
             f"[T02-POC] local drivezone loaded matched={counts['drivezone_feature_count']}",
         )
         record_stage("local_drivezone_loaded")
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage="local_drivezone_loaded",
             message="Loaded local DriveZone coverage around the target junction.",
-            counts=counts,
         )
 
         rcsdroad_layer_data = load_layer_filtered(
@@ -3863,13 +3937,10 @@ def run_t02_virtual_intersection_poc(
             f"[T02-POC] local rcsdroad loaded matched={counts['rcsdroad_feature_count']}",
         )
         record_stage("local_rcsdroad_loaded")
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage="local_rcsdroad_loaded",
             message="Loaded local RCSDRoad coverage around the target junction.",
-            counts=counts,
         )
 
         rcsdnode_layer_data = load_layer_filtered(
@@ -3888,13 +3959,10 @@ def run_t02_virtual_intersection_poc(
             f"[T02-POC] local rcsdnode loaded matched={counts['rcsdnode_feature_count']}",
         )
         record_stage("local_rcsdnode_loaded")
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage="local_rcsdnode_loaded",
             message="Loaded local RCSDNode coverage around the target junction.",
-            counts=counts,
         )
         announce(
             logger,
@@ -3906,13 +3974,10 @@ def run_t02_virtual_intersection_poc(
             ),
         )
         record_stage("inputs_loaded")
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage="inputs_loaded",
             message="Loaded local POC inputs around the target junction.",
-            counts=counts,
         )
         local_roads = parsed_roads
         local_drivezone_features = [feature for feature in drivezone_layer_data.features if feature.geometry is not None]
@@ -4134,13 +4199,10 @@ def run_t02_virtual_intersection_poc(
             )
 
         record_stage("local_patch_built")
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="running",
             current_stage="local_patch_built",
             message="Built local feature patch around target junction.",
-            counts=counts,
         )
 
         grid = _build_grid(analysis_center, patch_size_m=patch_size_m, resolution_m=resolution_m)
@@ -5243,9 +5305,7 @@ def run_t02_virtual_intersection_poc(
                 f"associated_rcsdnode_count={counts['associated_rcsdnode_count']} out_root={out_root_path}"
             ),
         )
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="success" if effect_success else "completed_with_review_required_result",
             current_stage="complete",
             message=(
@@ -5253,7 +5313,6 @@ def run_t02_virtual_intersection_poc(
                 if effect_success
                 else "T02 virtual intersection POC completed but requires review before acceptance."
             ),
-            counts=counts,
         )
         record_stage("outputs_written")
         total_wall_time_sec = time.perf_counter() - started_at
@@ -5315,13 +5374,10 @@ def run_t02_virtual_intersection_poc(
         )
         counts["audit_count"] = len(audit_rows)
         counts["risk_count"] = 1
-        _write_progress_snapshot(
-            out_path=progress_path,
-            run_id=resolved_run_id,
+        emit_progress_snapshot(
             status="failed",
             current_stage="failed",
             message=exc.detail,
-            counts=counts,
         )
         write_csv(audit_csv_path, audit_rows, fieldnames=AUDIT_FIELDNAMES)
         write_json(audit_json_path, audit_rows)

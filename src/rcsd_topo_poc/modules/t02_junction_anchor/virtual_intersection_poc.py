@@ -2278,6 +2278,8 @@ def _can_soft_exclude_outside_rc(
     connected_rc_group_count: int,
     negative_rc_group_count: int,
     effective_local_rc_node_count: int | None = None,
+    effective_associated_rc_node_count: int = 0,
+    associated_nonzero_mainnode_count: int = 0,
     local_road_count: int | None = None,
     local_node_count: int | None = None,
 ) -> bool:
@@ -2378,9 +2380,154 @@ def _can_soft_exclude_outside_rc(
         and polygon_support_rc_road_count >= 1
         and connected_rc_group_count <= 1
         and negative_rc_group_count == 0
+        and max_nonmain_branch_polygon_length_m == 0.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m >= 10.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and effective_local_rc_node_count >= 1
+        and effective_associated_rc_node_count >= 1
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 4
+        and local_road_count <= 8
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and connected_rc_group_count <= 1
+        and negative_rc_group_count == 0
         and max_nonmain_branch_polygon_length_m <= 2.0
         and min_invalid_rc_distance_to_center_m is not None
         and min_invalid_rc_distance_to_center_m >= 10.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and (effective_associated_rc_node_count >= 1 or associated_nonzero_mainnode_count >= 1)
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 7
+        and local_road_count <= 16
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and connected_rc_group_count <= 2
+        and max_nonmain_branch_polygon_length_m >= 8.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and associated_nonzero_mainnode_count >= 2
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 3
+        and local_road_count <= 6
+        and selected_rc_road_count >= 4
+        and polygon_support_rc_road_count >= 4
+        and connected_rc_group_count >= 2
+        and negative_rc_group_count == 0
+        and max_nonmain_branch_polygon_length_m == 0.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and effective_local_rc_node_count == 0
+        and effective_associated_rc_node_count == 0
+        and associated_nonzero_mainnode_count == 0
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 5
+        and local_road_count <= 10
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 2
+        and connected_rc_group_count <= 1
+        and negative_rc_group_count == 0
+        and max_selected_side_branch_covered_length_m <= 3.0
+        and max_nonmain_branch_polygon_length_m >= 10.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m >= 4.5
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and effective_local_rc_node_count == 0
+        and effective_associated_rc_node_count == 0
+        and associated_nonzero_mainnode_count == 0
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 5
+        and local_road_count <= 10
+        and selected_rc_road_count >= 2
+        and polygon_support_rc_road_count == 0
+        and connected_rc_group_count <= 1
+        and negative_rc_group_count == 0
+        and max_selected_side_branch_covered_length_m <= 3.0
+        and max_nonmain_branch_polygon_length_m >= 10.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m >= 4.5
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and associated_nonzero_mainnode_count == 0
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 11
+        and local_road_count <= 11
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and negative_rc_group_count >= 2
+        and max_selected_side_branch_covered_length_m >= 10.0
+        and max_nonmain_branch_polygon_length_m >= 8.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m >= 10.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and effective_local_rc_node_count == 0
+        and effective_associated_rc_node_count == 0
+        and associated_nonzero_mainnode_count == 0
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 4
+        and local_road_count <= 9
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and negative_rc_group_count == 0
+        and max_selected_side_branch_covered_length_m >= 20.0
+        and max_nonmain_branch_polygon_length_m >= 10.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m >= 6.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and associated_nonzero_mainnode_count >= 1
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 8
+        and local_road_count <= 16
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and connected_rc_group_count <= 2
+        and negative_rc_group_count == 0
+        and max_nonmain_branch_polygon_length_m >= 7.5
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and associated_nonzero_mainnode_count >= 2
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 7
+        and local_road_count <= 15
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count == 0
+        and connected_rc_group_count <= 1
+        and negative_rc_group_count == 0
+        and max_selected_side_branch_covered_length_m == 0.0
+        and max_nonmain_branch_polygon_length_m >= 7.5
     ):
         return True
     return False
@@ -3286,6 +3433,21 @@ def _effect_success_acceptance(
         if (
             associated_rc_road_count == 0
             and polygon_support_rc_road_count == 0
+            and positive_rc_group_count == 0
+            and road_branch_count is not None
+            and road_branch_count <= 3
+            and not has_structural_side_branch
+            and local_road_count <= 20
+            and local_node_count <= 12
+            and max_selected_side_branch_covered_length_m == 0.0
+            and max_nonmain_branch_polygon_length_m <= 8.0
+            and max_nonmain_edge_branch_road_support_m <= 6.5
+            and max_nonmain_edge_branch_rc_support_m <= 5.0
+        ):
+            return True, "accepted", "rc_gap_with_only_weak_unselected_edge_rc_groups"
+        if (
+            associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
             and positive_rc_group_count == 1
             and connected_rc_group_count == 1
             and road_branch_count is not None
@@ -3306,6 +3468,23 @@ def _effect_success_acceptance(
             and road_branch_count <= 3
             and not has_structural_side_branch
             and effective_local_rc_node_count <= 1
+            and local_road_count <= 10
+            and local_node_count <= 4
+            and max_selected_side_branch_covered_length_m == 0.0
+            and max_nonmain_branch_polygon_length_m == 0.0
+            and max_nonmain_edge_branch_road_support_m <= 40.0
+            and max_nonmain_edge_branch_rc_support_m <= 85.0
+        ):
+            return True, "accepted", "rc_gap_with_compact_edge_rc_tail"
+        if (
+            associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+            and positive_rc_group_count == 1
+            and connected_rc_group_count == 1
+            and road_branch_count is not None
+            and road_branch_count <= 3
+            and not has_structural_side_branch
+            and effective_local_rc_node_count <= 1
             and local_road_count <= 12
             and local_node_count <= 5
             and max_selected_side_branch_covered_length_m == 0.0
@@ -3314,6 +3493,21 @@ def _effect_success_acceptance(
             and max_nonmain_edge_branch_rc_support_m <= 60.0
         ):
             return True, "accepted", "rc_gap_with_single_weak_edge_side_branch"
+        if (
+            associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+            and positive_rc_group_count == 1
+            and connected_rc_group_count == 1
+            and road_branch_count is not None
+            and road_branch_count <= 3
+            and not has_structural_side_branch
+            and max_selected_side_branch_covered_length_m == 0.0
+            and max_nonmain_branch_polygon_length_m == 0.0
+            and max_nonmain_edge_branch_road_support_m >= 50.0
+            and max_nonmain_edge_branch_road_support_m <= 90.0
+            and max_nonmain_edge_branch_rc_support_m <= 5.0
+        ):
+            return True, "accepted", "rc_gap_with_long_weak_unselected_edge_branch"
         if max_nonmain_branch_polygon_length_m >= 4.0:
             return True, "accepted", "rc_gap_with_nonmain_branch_polygon_coverage"
         return False, "review_required", "rc_gap_without_substantive_nonmain_branch_coverage"
@@ -4795,6 +4989,29 @@ def run_t02_virtual_intersection_poc(
             )
         )
         counts["effective_local_rcsdnode_count"] = effective_local_rc_node_count
+        effective_associated_rc_node_count = sum(
+            1
+            for node in local_rc_nodes
+            if (
+                node.node_id in selected_rc_node_ids
+                or node.node_id in polygon_support_rc_node_ids
+            )
+            and _is_effective_rc_junction_node(
+                node=node,
+                local_rc_road_degree_by_node_id=local_rc_road_degree_by_node_id,
+            )
+        )
+        counts["effective_associated_rcsdnode_count"] = effective_associated_rc_node_count
+        associated_nonzero_mainnode_count = sum(
+            1
+            for node in local_rc_nodes
+            if (
+                node.node_id in selected_rc_node_ids
+                or node.node_id in polygon_support_rc_node_ids
+            )
+            and node.mainnodeid not in {None, "0"}
+        )
+        counts["associated_nonzero_mainnode_count"] = associated_nonzero_mainnode_count
         connected_rc_group_ids = {
             rc_group_id
             for branch in road_branches
@@ -4854,6 +5071,8 @@ def run_t02_virtual_intersection_poc(
                 connected_rc_group_count=len(connected_rc_group_ids),
                 negative_rc_group_count=len(negative_rc_groups),
                 effective_local_rc_node_count=effective_local_rc_node_count,
+                effective_associated_rc_node_count=effective_associated_rc_node_count,
+                associated_nonzero_mainnode_count=associated_nonzero_mainnode_count,
                 local_road_count=len(local_roads),
                 local_node_count=len(local_nodes),
             )

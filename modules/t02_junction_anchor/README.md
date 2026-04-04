@@ -356,9 +356,12 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 
 说明：
 
-- stage1 业务 summary 的分桶继续按 `0-0双 / 0-1双 / 0-2双` 统计。
+- stage1 正式候选边界已扩到 `semantic_junction_set ∪ segment_referenced_junction_set`。
+- stage1 业务 summary 的 `summary_by_s_grade` 继续按 `0-0双 / 0-1双 / 0-2双` 的 segment 视图统计。
 - stage1 在分桶之外补充 `all__d_sgrade`，表示所有 `s_grade` 非空的 `segment` 总汇总。
-- stage1 同时补充 `summary_by_kind_grade`，固定输出 `kind2_4_64_grade2_1 / kind2_4_64_grade2_0_2_3 / kind2_2048 / kind2_8_16` 四个 bucket，并按目标路口唯一 `junction_id` 统计 `junction_count / junction_has_evd_count`。
+- stage1 同时补充 `summary_by_kind_grade`，固定输出 `kind2_4_64_grade2_1 / kind2_4_64_grade2_0_2_3 / kind2_2048 / kind2_8_16` 四个 bucket，并按 `stage1_candidate_junction_set` 唯一 `junction_id` 统计 `junction_count / junction_has_evd_count`。
+- stage2 正式候选边界同样扩到 `semantic_junction_set ∪ segment_referenced_junction_set`，但 `summary_by_s_grade` 仍保持 segment 视图。
+- `kind_2 in {8,16}` 在 stage2 仍参与 `RCSDIntersection` 锚定判定；若满足 Stage2 标准，同样可记 `is_anchor = yes`，仅 `is_anchor = no` 的 case 继续进入 Stage4。
 
 ## 5. 文档阅读顺序
 
@@ -381,6 +384,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 
 - 已实现：
   - stage1 输入读取与严格字段校验
+  - `semantic_junction_set ∪ segment_referenced_junction_set` 候选扩展
   - `pair_nodes + junc_nodes` 解析与单 `segment` 去重
   - `mainnodeid` 分组 / 单点兜底
   - 代表 node `has_evd` 写值
@@ -399,6 +403,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - 上述豁免场景不输出 `node_error_1`
   - `node_error_2` 反向包含时先忽视代表 node `kind_2 = 1` 的组；过滤后仅当剩余组数大于 1 时才记 `fail2`
   - `fail2` 仍优先于 `fail1` 与上述豁免
+  - `kind_2 in {8,16}` 若满足 Stage2 标准，同样可直接写 `is_anchor = yes`
   - `t02_stage2_summary.json`
   - stage3 `virtual intersection anchoring`
   - `t02-virtual-intersection-poc` 的 `case-package` 与 `full-input` 两种模式

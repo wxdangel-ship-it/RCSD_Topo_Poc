@@ -12,10 +12,10 @@
 
 1. 通过统一 CLI 入口读取 `segment / nodes / DriveZone / RCSDIntersection`
 2. 对输入字段、CRS 与 geometry 做显式校验，不做隐式猜测
-3. 从 `pair_nodes + junc_nodes` 提取单 `segment` 的目标 junction 集合并去重
-4. 按 `mainnodeid` 分组 / 单点兜底组装 junction group
-5. 在 `EPSG:3857` 下对 junction group 与 `DriveZone` 做 stage1 gate
-6. 对 `has_evd = yes` 的组，用 `RCSDIntersection` 做 stage2 anchor recognition / anchor existence
+3. 从 `nodes` 全表组装 `semantic_junction_set`，同时保留 `pair_nodes + junc_nodes` 的 `segment_referenced_junction_set`
+4. 以 `semantic_junction_set ∪ segment_referenced_junction_set` 作为 stage1/stage2 正式候选边界，并按 `mainnodeid` 分组 / 单点兜底组装 junction group
+5. 在 `EPSG:3857` 下对 junction group 与 `DriveZone` 做 stage1 gate，并保持 `summary_by_s_grade` 的 segment 视图
+6. 对 `has_evd = yes` 的组，用 `RCSDIntersection` 做 stage2 anchor recognition / anchor existence；`kind_2 in {8,16}` 也按同一套标准判定，只有最终 `is_anchor = no` 的 case 才继续进入 stage4
 7. 对 stage2 后仍未锚定、但有资料的路口，进入 stage3 `virtual intersection anchoring`
 8. stage3 统一复用单 case worker，支持：
    - `case-package` baseline regression

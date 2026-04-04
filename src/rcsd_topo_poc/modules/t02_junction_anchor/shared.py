@@ -429,3 +429,21 @@ def resolve_junction_group(
         reason=junction_not_found_reason,
         detail=f"junction_id='{junction_id}' has neither mainnodeid group nor singleton fallback node.",
     )
+
+
+def collect_semantic_junction_ids(
+    *,
+    nodes_by_mainnodeid: dict[str, list[Any]],
+    singleton_nodes_by_id: dict[str, list[Any]],
+    nodes_features: list[Any],
+) -> list[str]:
+    semantic_junction_ids: list[str] = []
+    candidate_ids = sorted(set(nodes_by_mainnodeid.keys()) | set(singleton_nodes_by_id.keys()))
+    for junction_id in candidate_ids:
+        group_nodes = nodes_by_mainnodeid.get(junction_id) or singleton_nodes_by_id.get(junction_id) or []
+        if any(
+            normalize_id(nodes_features[getattr(record, "output_index")].properties.get("kind_2")) not in {None, "0"}
+            for record in group_nodes
+        ):
+            semantic_junction_ids.append(junction_id)
+    return semantic_junction_ids

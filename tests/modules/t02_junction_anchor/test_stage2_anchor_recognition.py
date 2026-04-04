@@ -435,6 +435,40 @@ def test_stage2_keeps_null_for_has_evd_not_yes_groups(tmp_path: Path) -> None:
     assert _load_geojson(artifacts.node_error_2_path)["features"] == []
 
 
+def test_stage2_accepts_semantic_only_divmerge_group_when_it_meets_anchor_rule(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(1, 0.0, 0.0, mainnodeid=1, has_evd="yes", kind_2=4, grade_2=1),
+            _node_feature(16, 20.0, 0.0, mainnodeid=None, has_evd="yes", kind_2=16, grade_2=0),
+        ],
+        intersections=[
+            _intersection_feature(-0.5, -0.5, 0.5, 0.5, properties={"id": "A"}),
+            _intersection_feature(19.5, -0.5, 20.5, 0.5, properties={"id": "B"}),
+        ],
+        segments=[_segment_feature("seg-1", pair_nodes="1", junc_nodes="")],
+        run_id="semantic_only_divmerge_stage4_defer_case",
+    )
+
+    nodes_doc = _load_geojson(artifacts.nodes_path)
+    node_props_by_id = _node_props_by_id(nodes_doc)
+    assert node_props_by_id["1"]["is_anchor"] == "yes"
+    assert node_props_by_id["16"]["is_anchor"] == "yes"
+    assert node_props_by_id["16"]["anchor_reason"] is None
+
+    audit_doc = _load_json(artifacts.audit_json_path)
+    assert not any(row["junction_id"] == "16" for row in audit_doc["rows"])
+    summary_doc = _load_json(artifacts.summary_path)
+    assert summary_doc["counts"]["segment_referenced_junction_count"] == 1
+    assert summary_doc["counts"]["semantic_candidate_junction_count"] == 2
+    assert summary_doc["counts"]["semantic_only_candidate_junction_count"] == 1
+    assert summary_doc["counts"]["stage2_anchor_domain_group_count"] == 2
+    assert summary_doc["anchor_summary_by_kind_grade"]["kind2_8_16"] == {
+        "evidence_junction_count": 1,
+        "anchored_junction_count": 1,
+    }
+
+
 def test_stage2_boundary_touch_counts_as_hit(tmp_path: Path) -> None:
     artifacts = _run_case(
         tmp_path,
@@ -516,6 +550,10 @@ def test_stage2_outputs_anchor_summaries_without_changing_error_outputs(tmp_path
     summary_doc = _load_json(artifacts.summary_path)
     assert "anchor_summary_by_s_grade" in summary_doc
     assert "anchor_summary_by_kind_grade" in summary_doc
+    nodes_doc = _load_geojson(artifacts.nodes_path)
+    node_props_by_id = _node_props_by_id(nodes_doc)
+    assert node_props_by_id["4"]["is_anchor"] == "fail2"
+    assert node_props_by_id["6"]["is_anchor"] == "fail2"
 
     s_grade_summary = summary_doc["anchor_summary_by_s_grade"]
     assert s_grade_summary["0-0双"] == {
@@ -553,10 +591,14 @@ def test_stage2_outputs_anchor_summaries_without_changing_error_outputs(tmp_path
         "anchored_junction_count": 1,
     }
     assert kind_grade_summary["kind2_8_16"] == {
-        "evidence_junction_count": 1,
+        "evidence_junction_count": 2,
         "anchored_junction_count": 0,
     }
-    assert summary_doc["counts"]["evidence_junction_count"] == 4
+    assert summary_doc["counts"]["segment_referenced_junction_count"] == 5
+    assert summary_doc["counts"]["semantic_candidate_junction_count"] == 5
+    assert summary_doc["counts"]["semantic_only_candidate_junction_count"] == 1
+    assert summary_doc["counts"]["stage2_anchor_domain_group_count"] == 6
+    assert summary_doc["counts"]["evidence_junction_count"] == 5
     assert summary_doc["counts"]["anchored_junction_count"] == 2
     assert summary_doc["counts"]["unclassified_kind_grade_junction_count"] == 1
 

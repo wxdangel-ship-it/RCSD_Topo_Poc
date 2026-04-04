@@ -25,6 +25,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.shared import (
     NodeRecord,
     T02RunError,
     audit_row,
+    collect_semantic_junction_ids,
     find_repo_root,
     normalize_id,
     read_vector_layer_strict,
@@ -413,9 +414,13 @@ def run_t02_stage2_anchor_recognition(
     stage_counts: dict[str, Any] = {
         "node_feature_count": 0,
         "segment_feature_count": 0,
+        "segment_referenced_junction_count": 0,
         "valid_node_count": 0,
+        "semantic_candidate_junction_count": 0,
+        "semantic_only_candidate_junction_count": 0,
         "candidate_junction_count": 0,
         "stage2_candidate_group_count": 0,
+        "stage2_anchor_domain_group_count": 0,
         "stage2_candidate_node_count": 0,
         "intersection_feature_count": 0,
         "anchor_yes_count": 0,
@@ -577,16 +582,79 @@ def run_t02_stage2_anchor_recognition(
                 announce(logger, f"[T02] {message}")
                 _snapshot("running", "build_node_index", message)
 
-        candidate_junction_ids = sorted(set(nodes_by_mainnodeid.keys()) | set(singleton_nodes_by_id.keys()))
+        semantic_candidate_junction_ids = collect_semantic_junction_ids(
+            nodes_by_mainnodeid=nodes_by_mainnodeid,
+            singleton_nodes_by_id=singleton_nodes_by_id,
+            nodes_features=nodes_layer_data.features,
+        )
+        stage_counts["semantic_candidate_junction_count"] = len(semantic_candidate_junction_ids)
+        segment_read_started_at = time.perf_counter()
+        segment_feature_properties = _read_segment_features(segment_path, crs_override=segment_crs)
+        stage_counts["segment_feature_count"] = len(segment_feature_properties)
+        referenced_junction_ids: set[str] = set()
+        segment_contexts: list[SegmentSummaryContext] = []
+        for feature_index, properties in enumerate(segment_feature_properties):
+            missing_fields: list[str] = []
+            segment_id = normalize_id(properties.get("id"))
+            if segment_id is None:
+                missing_fields.append("id")
+            if "pair_nodes" not in properties:
+                missing_fields.append("pair_nodes")
+            if "junc_nodes" not in properties:
+                missing_fields.append("junc_nodes")
+            _, s_grade = _segment_grade(properties)
+            if "s_grade" not in properties and "sgrade" not in properties:
+                missing_fields.append("s_grade|sgrade")
+            if missing_fields:
+                audit_rows.append(
+                    audit_row(
+                        scope="segment",
+                        status="error",
+                        reason=REASON_MISSING_REQUIRED_FIELD,
+                        detail=(
+                            f"segment feature[{feature_index}] missing required fields: {','.join(missing_fields)}"
+                        ),
+                        segment_id=segment_id,
+                    )
+                )
+                continue
+
+            pair_junction_ids = _dedupe_preserve_order(_parse_junction_values(properties.get("pair_nodes")))
+            pair_and_junc_junction_ids = _dedupe_preserve_order(
+                pair_junction_ids + _parse_junction_values(properties.get("junc_nodes"))
+            )
+            referenced_junction_ids.update(pair_and_junc_junction_ids)
+            segment_contexts.append(
+                SegmentSummaryContext(
+                    segment_id=segment_id,
+                    s_grade=s_grade,
+                    pair_junction_ids=pair_junction_ids,
+                    pair_and_junc_junction_ids=pair_and_junc_junction_ids,
+                )
+            )
+
+        stage_counts["segment_referenced_junction_count"] = len(referenced_junction_ids)
+        stage_counts["semantic_only_candidate_junction_count"] = len(
+            set(semantic_candidate_junction_ids) - referenced_junction_ids
+        )
+        candidate_junction_ids = sorted(set(semantic_candidate_junction_ids) | referenced_junction_ids)
         stage_counts["candidate_junction_count"] = len(candidate_junction_ids)
         announce(
             logger,
             "[T02] node index built "
             f"valid_nodes={stage_counts['valid_node_count']} "
+            f"semantic_candidate_junctions={stage_counts['semantic_candidate_junction_count']} "
             f"candidate_junctions={stage_counts['candidate_junction_count']}",
         )
-        _snapshot("running", "node_index_built", "Node index built.")
+        announce(
+            logger,
+            "[T02] loaded segment summary inputs "
+            f"segment_features={stage_counts['segment_feature_count']} "
+            f"segment_referenced_junctions={stage_counts['segment_referenced_junction_count']}",
+        )
+        _snapshot("running", "node_index_built", "Node index and segment summary inputs built.")
         _mark_stage("node_index_built", node_index_started_at)
+        _mark_stage("segment_inputs_loaded", segment_read_started_at)
 
         anchor_scan_started_at = time.perf_counter()
         group_results: dict[str, AnchorGroupResult] = {}
@@ -645,6 +713,8 @@ def run_t02_stage2_anchor_recognition(
                 continue
 
             stage_counts["stage2_candidate_group_count"] += 1
+            representative_kind_2 = normalize_id(representative_properties.get("kind_2"))
+            stage_counts["stage2_anchor_domain_group_count"] += 1
             hit_intersection_ids: set[str] = set()
             every_group_node_hit = True
             for record in resolved_group.group_nodes:
@@ -663,7 +733,6 @@ def run_t02_stage2_anchor_recognition(
                     intersection_to_junctions.setdefault(intersection_id, set()).add(junction_id)
 
             sorted_hit_intersection_ids = sorted(hit_intersection_ids)
-            representative_kind_2 = normalize_id(representative_properties.get("kind_2"))
             provisional_anchor_reason = None
             if representative_kind_2 == "64" and every_group_node_hit:
                 provisional_anchor_reason = "roundabout"
@@ -838,59 +907,6 @@ def run_t02_stage2_anchor_recognition(
         anchored_junction_ids: set[str] = set()
         kind_grade_unclassified_junction_count = 0
 
-        segment_read_started_at = time.perf_counter()
-        segment_feature_properties = _read_segment_features(segment_path, crs_override=segment_crs)
-        stage_counts["segment_feature_count"] = len(segment_feature_properties)
-        announce(
-            logger,
-            "[T02] loaded segment summary inputs "
-            f"segment_features={stage_counts['segment_feature_count']}",
-        )
-        _snapshot("running", "segment_inputs_loaded", "Segment inputs loaded for stage2 summary.")
-        _mark_stage("segment_inputs_loaded", segment_read_started_at)
-
-        referenced_junction_ids: set[str] = set()
-        segment_contexts: list[SegmentSummaryContext] = []
-        for feature_index, properties in enumerate(segment_feature_properties):
-            missing_fields: list[str] = []
-            segment_id = normalize_id(properties.get("id"))
-            if segment_id is None:
-                missing_fields.append("id")
-            if "pair_nodes" not in properties:
-                missing_fields.append("pair_nodes")
-            if "junc_nodes" not in properties:
-                missing_fields.append("junc_nodes")
-            _, s_grade = _segment_grade(properties)
-            if "s_grade" not in properties and "sgrade" not in properties:
-                missing_fields.append("s_grade|sgrade")
-            if missing_fields:
-                audit_rows.append(
-                    audit_row(
-                        scope="segment",
-                        status="error",
-                        reason=REASON_MISSING_REQUIRED_FIELD,
-                        detail=(
-                            f"segment feature[{feature_index}] missing required fields: {','.join(missing_fields)}"
-                        ),
-                        segment_id=segment_id,
-                    )
-                )
-                continue
-
-            pair_junction_ids = _dedupe_preserve_order(_parse_junction_values(properties.get("pair_nodes")))
-            pair_and_junc_junction_ids = _dedupe_preserve_order(
-                pair_junction_ids + _parse_junction_values(properties.get("junc_nodes"))
-            )
-            referenced_junction_ids.update(pair_and_junc_junction_ids)
-            segment_contexts.append(
-                SegmentSummaryContext(
-                    segment_id=segment_id,
-                    s_grade=s_grade,
-                    pair_junction_ids=pair_junction_ids,
-                    pair_and_junc_junction_ids=pair_and_junc_junction_ids,
-                )
-            )
-
         for junction_id, group_result in group_results.items():
             if not group_result.participates or group_result.representative_output_index is None:
                 final_anchor_state_by_junction[junction_id] = None
@@ -898,7 +914,7 @@ def run_t02_stage2_anchor_recognition(
             representative_properties = nodes_layer_data.features[group_result.representative_output_index].properties
             final_anchor_state_by_junction[junction_id] = representative_properties.get("is_anchor")
 
-        for junction_id in sorted(referenced_junction_ids):
+        for junction_id in candidate_junction_ids:
             group_result = group_results.get(junction_id)
             if group_result is None or group_result.representative_output_index is None:
                 kind_grade_unclassified_junction_count += 1
@@ -1030,8 +1046,12 @@ def run_t02_stage2_anchor_recognition(
                 },
                 "counts": {
                     "segment_feature_count": stage_counts["segment_feature_count"],
+                    "segment_referenced_junction_count": stage_counts["segment_referenced_junction_count"],
+                    "semantic_candidate_junction_count": stage_counts["semantic_candidate_junction_count"],
+                    "semantic_only_candidate_junction_count": stage_counts["semantic_only_candidate_junction_count"],
                     "candidate_junction_count": stage_counts["candidate_junction_count"],
                     "stage2_candidate_group_count": stage_counts["stage2_candidate_group_count"],
+                    "stage2_anchor_domain_group_count": stage_counts["stage2_anchor_domain_group_count"],
                     "anchor_yes_count": stage_counts["anchor_yes_count"],
                     "anchor_no_count": stage_counts["anchor_no_count"],
                     "anchor_fail1_count": stage_counts["anchor_fail1_count"],
@@ -1040,6 +1060,10 @@ def run_t02_stage2_anchor_recognition(
                     "anchored_junction_count": stage_counts["kind_grade_anchored_junction_count"],
                     "unclassified_kind_grade_junction_count": stage_counts["kind_grade_unclassified_junction_count"],
                     "unknown_s_grade_segment_count": stage_counts["unknown_s_grade_segment_count"],
+                },
+                "summary_scope": {
+                    "anchor_summary_by_s_grade": "segment_referenced_junction_set",
+                    "anchor_summary_by_kind_grade": "stage2_candidate_junction_set",
                 },
                 "anchor_summary_by_s_grade": anchor_summary_by_s_grade,
                 "anchor_summary_by_kind_grade": anchor_summary_by_kind_grade,

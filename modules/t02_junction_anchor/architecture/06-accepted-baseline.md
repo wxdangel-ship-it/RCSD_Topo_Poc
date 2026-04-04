@@ -193,7 +193,10 @@
 - 为 stage2 和 stage3 提供资料前置 gate。
 
 ### 6.2 当前业务规则
-- 只认 `pair_nodes + junc_nodes` 中出现的目标路口。
+- 正式候选边界改为：
+  - `semantic_junction_set`：从 `nodes` 全表按 `mainnodeid` 组和 singleton fallback 组装出的语义路口集合；组内存在 `kind_2` 非空且不为 `0` 的 node 即纳入
+  - `segment_referenced_junction_set`：`pair_nodes + junc_nodes` 去重后的 legacy 目标路口集合
+  - `stage1_candidate_junction_set = semantic_junction_set ∪ segment_referenced_junction_set`
 - 单 `segment` 内先解析、再去重，不按 `segment-路口` 重复计数。
 - 语义路口组装规则：
   1. 先查 `mainnodeid = J`
@@ -207,6 +210,8 @@
   - `segment.has_evd = no`
   - `reason = no_target_junctions`
 - 只有去重后的全部目标路口都为 `yes`，才记 `segment.has_evd = yes`。
+- `summary_by_s_grade` 继续只保留 segment 视图。
+- `summary_by_kind_grade` 改按 `stage1_candidate_junction_set` 统计。
 
 ### 6.3 stage1 当前正式输出语义
 - `nodes.gpkg`：继承输入 `nodes` 并新增 `has_evd`
@@ -229,7 +234,13 @@
 - 区分正常命中、未命中、同组多面冲突与一面多组冲突。
 
 ### 7.2 当前业务规则
+- 正式候选边界改为：
+  - `stage2_candidate_junction_set = semantic_junction_set ∪ segment_referenced_junction_set`
+  - 其中仅 `has_evd = yes` 的组进入 stage2 主判定域
 - `has_evd != yes` 的组不进入 stage2，代表 node `is_anchor = null`。
+- `kind_2 in {8, 16}` 的组同样进入 stage2 `RCSDIntersection` 锚定主判定：
+  - 若满足 stage2 锚定标准，同样可记 `is_anchor = yes`
+  - 仅当最终判为 `is_anchor = no` 时，才继续进入 stage4 div/merge
 - 若目标组任一 node 落入或接触任一 `RCSDIntersection` 面，则该组进入命中态，但仍需继续检查 `fail1 / fail2`。
 - 若组内所有 node 均未落入任何 `RCSDIntersection` 面，则代表 node `is_anchor = no`。
 - 单节点组若落入多个 `RCSDIntersection` 面：
@@ -266,6 +277,8 @@
 - `t02_stage2_summary.json`：
   - `anchor_summary_by_s_grade`
   - `anchor_summary_by_kind_grade`
+  - `anchor_summary_by_s_grade` 保持 segment 视图
+  - `anchor_summary_by_kind_grade` 改按 `stage2_candidate_junction_set` 统计
 - `t02_stage2_audit.json`
 - `t02_stage2_perf.json`
 

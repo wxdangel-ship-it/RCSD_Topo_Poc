@@ -65,6 +65,10 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
                 "properties": {"id": 101, "mainnodeid": 1, "has_evd": None, "kind_2": None, "grade_2": None},
                 "geometry": Point(10.0, 0.1),
             },
+            {
+                "properties": {"id": 16, "mainnodeid": None, "has_evd": "yes", "kind_2": 16, "grade_2": 0},
+                "geometry": Point(20.0, 0.0),
+            },
         ],
         crs_text="EPSG:3857",
     )
@@ -81,6 +85,12 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
                 "properties": {"id": "B"},
                 "geometry": Polygon(
                     [(9.5, -0.5), (10.5, -0.5), (10.5, 0.5), (9.5, 0.5), (9.5, -0.5)]
+                ),
+            },
+            {
+                "properties": {"id": "C"},
+                "geometry": Polygon(
+                    [(19.5, -0.5), (20.5, -0.5), (20.5, 0.5), (19.5, 0.5), (19.5, -0.5)]
                 ),
             },
         ],
@@ -127,9 +137,13 @@ def test_smoke_t02_stage2_anchor_recognition() -> None:
     assert node_props_by_id["2"]["anchor_reason"] is None
     assert node_props_by_id["101"]["is_anchor"] is None
     assert node_props_by_id["101"]["anchor_reason"] is None
+    assert node_props_by_id["16"]["is_anchor"] == "yes"
+    assert node_props_by_id["16"]["anchor_reason"] is None
 
     summary_doc = json.loads((run_dir / "t02_stage2_summary.json").read_text(encoding="utf-8"))
     assert summary_doc["anchor_summary_by_s_grade"]["0-0双"]["total_segment_count"] == 1
     assert summary_doc["anchor_summary_by_s_grade"]["0-0双"]["pair_nodes_all_anchor_segment_count"] == 0
     assert summary_doc["anchor_summary_by_kind_grade"]["kind2_4_64_grade2_1"]["evidence_junction_count"] == 1
     assert summary_doc["anchor_summary_by_kind_grade"]["kind2_4_64_grade2_1"]["anchored_junction_count"] == 0
+    assert summary_doc["anchor_summary_by_kind_grade"]["kind2_8_16"]["evidence_junction_count"] == 1
+    assert summary_doc["anchor_summary_by_kind_grade"]["kind2_8_16"]["anchored_junction_count"] == 1

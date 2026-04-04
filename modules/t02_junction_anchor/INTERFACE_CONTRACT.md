@@ -118,7 +118,9 @@
 ### 2.5 Stage1 处理契约
 
 - 路口来源：
-  - 只认 `pair_nodes` 与 `junc_nodes`
+  - `semantic_junction_set`：从 `nodes` 全表按 `mainnodeid` 组和 singleton fallback 组装出的语义路口集合；只要组内存在 `kind_2` 非空且不为 `0` 的 node，即视为语义候选
+  - `segment_referenced_junction_set`：`pair_nodes + junc_nodes` 去重后的 legacy 目标路口集合
+  - `stage1_candidate_junction_set = semantic_junction_set ∪ segment_referenced_junction_set`
 - 单 `segment` 去重：
   - 先解析 `pair_nodes + junc_nodes`
   - 再在单个 `segment` 内去重
@@ -141,16 +143,19 @@
 - `segment.has_evd`：
   - 只有去重后的全部目标路口都为 `yes`，才记 `yes`
 - `summary`：
-  - 仅按 `0-0双 / 0-1双 / 0-2双` 分桶
+  - `summary_by_s_grade` 仍只按 `0-0双 / 0-1双 / 0-2双` 的 segment 视图分桶
   - 桶内路口按唯一 ID 统计，不按 `segment-路口` 展开重复计数
   - 同时补充总汇总项 `all__d_sgrade`
   - `all__d_sgrade` 统计所有 `s_grade` 非空的 `segment`
   - `all__d_sgrade` 与单桶保持相同统计项与统计口径
+  - `summary_by_kind_grade` 改按 `stage1_candidate_junction_set` 统计
 
 ### 2.6 Stage2 处理基线
 
 - 阶段二当前业务定位冻结为：双向 Segment 相关路口的 anchor recognition / anchor existence。
-- 阶段二仅处理 `has_evd = yes` 的路口组。
+- 阶段二正式候选边界冻结为：
+  - `stage2_candidate_junction_set = semantic_junction_set ∪ segment_referenced_junction_set`
+  - 仅 `has_evd = yes` 的组进入 stage2 主判定域
 - `has_evd != yes` 的组不进入 stage2，代表 node 的 `is_anchor = null`。
 - 阶段二当前为补充 summary，正式读取：
   - `segment.id`
@@ -180,6 +185,9 @@
   - 但仍需继续检查 `fail1 / fail2`
 - 若该组所有 node 均未落入任何 `RCSDIntersection` 面：
   - 该组代表 node 的 `is_anchor = no`
+- `kind_2 in {8, 16}` 的组同样进入 stage2 锚定主判定：
+  - 若满足 stage2 锚定标准，同样可记 `is_anchor = yes`
+  - 仅当最终判为 `is_anchor = no` 时，才继续进入 stage4 div/merge
 - 单节点组若落入多个 `RCSDIntersection` 面：
   - 代表 node 的 `is_anchor = yes`
   - `anchor_reason = null`
@@ -490,7 +498,7 @@ outputs/_work/t02_stage1_drivezone_gate
 - `summary_by_kind_grade` 每个 bucket 至少包含：
   - `junction_count`
   - `junction_has_evd_count`
-- `summary_by_kind_grade` 的统计对象是阶段一目标路口全集，按 `junction_id` 唯一值计数。
+- `summary_by_kind_grade` 的统计对象是 `stage1_candidate_junction_set`，按 `junction_id` 唯一值计数。
 - 分类依据以代表 node 的 `kind_2 / grade_2` 为准：
   - `kind_2 in {4, 64} and grade_2 = 1` -> `kind2_4_64_grade2_1`
   - `kind_2 in {4, 64} and grade_2 in {0, 2, 3}` -> `kind2_4_64_grade2_0_2_3`
@@ -569,7 +577,7 @@ outputs/_work/t02_stage1_drivezone_gate
   - `evidence_junction_count`
   - `anchored_junction_count`
 - 分类与计数口径：
-  - 统计对象是阶段二目标路口的代表 node
+  - 统计对象是 `stage2_candidate_junction_set` 中代表 node 可解析的路口组
   - 只统计 `has_evd = yes` 的路口
   - `kind_2 in {4, 64} and grade_2 = 1` -> `kind2_4_64_grade2_1`
   - `kind_2 in {4, 64} and grade_2 in {0, 2, 3}` -> `kind2_4_64_grade2_0_2_3`

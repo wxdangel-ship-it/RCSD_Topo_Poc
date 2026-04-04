@@ -377,6 +377,58 @@ def test_stage1_outputs_zeroed_all_d_sgrade_when_all_segment_grades_are_empty(tm
     }
 
 
+def test_stage1_writes_has_evd_for_semantic_only_divmerge_representative(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.geojson"
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+
+    write_geojson(
+        segment_path,
+        [_segment_feature("seg-1", pair_nodes="1", junc_nodes="", s_grade="0-0双")],
+    )
+    write_geojson(
+        nodes_path,
+        [
+            _node_feature(1, 0.0, 0.0, mainnodeid=None, kind_2=4, grade_2=1),
+            _node_feature(16, 0.5, 0.0, mainnodeid=None, kind_2=16, grade_2=0),
+            _node_feature(200, 10.0, 10.0, mainnodeid=None),
+        ],
+    )
+    write_geojson(drivezone_path, [_drivezone_feature(-1.0, -1.0, 1.0, 1.0)])
+
+    artifacts = run_t02_stage1_drivezone_gate(
+        segment_path=segment_path,
+        nodes_path=nodes_path,
+        drivezone_path=drivezone_path,
+        out_root=tmp_path / "out",
+        run_id="semantic_only_divmerge_case",
+    )
+
+    nodes_doc = _load_geojson(artifacts.nodes_path)
+    node_props_by_id = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
+
+    assert node_props_by_id["1"]["has_evd"] == "yes"
+    assert node_props_by_id["16"]["has_evd"] == "yes"
+    assert node_props_by_id["200"]["has_evd"] is None
+    assert artifacts.summary["counts"]["segment_referenced_junction_count"] == 1
+    assert artifacts.summary["counts"]["semantic_candidate_junction_count"] == 2
+    assert artifacts.summary["counts"]["semantic_only_junction_count"] == 1
+    assert artifacts.summary["summary_by_s_grade"]["0-0双"] == {
+        "segment_count": 1,
+        "segment_has_evd_count": 1,
+        "junction_count": 1,
+        "junction_has_evd_count": 1,
+    }
+    assert artifacts.summary["summary_by_kind_grade"]["kind2_4_64_grade2_1"] == {
+        "junction_count": 1,
+        "junction_has_evd_count": 1,
+    }
+    assert artifacts.summary["summary_by_kind_grade"]["kind2_8_16"] == {
+        "junction_count": 1,
+        "junction_has_evd_count": 1,
+    }
+
+
 def test_stage1_outputs_summary_by_kind_grade_with_unique_junction_counts(tmp_path: Path) -> None:
     segment_path = tmp_path / "segment.geojson"
     nodes_path = tmp_path / "nodes.geojson"

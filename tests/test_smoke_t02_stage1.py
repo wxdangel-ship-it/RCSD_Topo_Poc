@@ -45,6 +45,10 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
             {
                 "properties": {"id": 1, "mainnodeid": None, "kind_2": 4, "grade_2": 1},
                 "geometry": Point(0.0, 0.0),
+            },
+            {
+                "properties": {"id": 16, "mainnodeid": None, "kind_2": 16, "grade_2": 0},
+                "geometry": Point(0.5, 0.0),
             }
         ],
         crs_text="EPSG:3857",
@@ -91,6 +95,8 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
     summary_doc = json.loads((run_dir / "t02_stage1_summary.json").read_text(encoding="utf-8"))
     assert summary_doc["success"] is True
     assert summary_doc["counts"]["segment_has_evd_count"] == 1
+    assert summary_doc["counts"]["semantic_candidate_junction_count"] == 2
+    assert summary_doc["counts"]["semantic_only_junction_count"] == 1
     assert summary_doc["summary_by_s_grade"]["all__d_sgrade"] == {
         "segment_count": 1,
         "segment_has_evd_count": 1,
@@ -111,7 +117,7 @@ def test_smoke_t02_stage1_drivezone_gate() -> None:
             "junction_has_evd_count": 0,
         },
         "kind2_8_16": {
-            "junction_count": 0,
-            "junction_has_evd_count": 0,
+            "junction_count": 1,
+            "junction_has_evd_count": 1,
         },
     }

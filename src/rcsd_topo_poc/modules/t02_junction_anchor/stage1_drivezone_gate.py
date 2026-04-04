@@ -31,6 +31,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
 from rcsd_topo_poc.modules.t02_junction_anchor.shared import (
     T02RunError,
     audit_row as shared_audit_row,
+    collect_semantic_junction_ids as shared_collect_semantic_junction_ids,
     normalize_id as shared_normalize_id,
     read_vector_layer_strict as shared_read_vector_layer_strict,
     resolve_junction_group as shared_resolve_junction_group,
@@ -478,12 +479,17 @@ def run_t02_stage1_drivezone_gate(
     audit_rows: list[dict[str, Any]] = []
     stage_counts: dict[str, Any] = {
         "segment_feature_count": 0,
+        "segment_referenced_junction_count": 0,
         "segment_has_evd_count": 0,
         "node_feature_count": 0,
         "valid_node_count": 0,
+        "semantic_candidate_junction_count": 0,
+        "semantic_only_junction_count": 0,
         "representative_node_written_count": 0,
         "junction_count": 0,
+        "evaluated_junction_count": 0,
         "junction_has_evd_count": 0,
+        "kind_grade_unclassified_junction_count": 0,
         "drivezone_feature_count": 0,
         "audit_count": 0,
     }
@@ -647,6 +653,13 @@ def run_t02_stage1_drivezone_gate(
         _snapshot("running", "node_index_built", "Node index built.")
         _mark_stage("node_index_built", node_index_started_at)
 
+        semantic_candidate_junction_ids = shared_collect_semantic_junction_ids(
+            nodes_by_mainnodeid=nodes_by_mainnodeid,
+            singleton_nodes_by_id=singleton_nodes_by_id,
+            nodes_features=nodes_layer_data.features,
+        )
+        stage_counts["semantic_candidate_junction_count"] = len(semantic_candidate_junction_ids)
+
         segment_scan_started_at = time.perf_counter()
         referenced_junctions: set[str] = set()
         segment_contexts: list[dict[str, Any]] = []
@@ -701,14 +714,17 @@ def run_t02_stage1_drivezone_gate(
             f"segment_contexts={len(segment_contexts)} "
             f"referenced_junctions={len(referenced_junctions)}",
         )
+        stage_counts["segment_referenced_junction_count"] = len(referenced_junctions)
+        stage_counts["semantic_only_junction_count"] = len(set(semantic_candidate_junction_ids) - referenced_junctions)
         _snapshot("running", "segment_scan_done", "Segment contexts built.")
         _mark_stage("segment_scan_done", segment_scan_started_at)
 
         junction_gate_started_at = time.perf_counter()
         junction_results: dict[str, JunctionResult] = {}
-        referenced_junction_ids = sorted(referenced_junctions)
-        stage_counts["junction_count"] = len(referenced_junction_ids)
-        for junction_index, junction_id in enumerate(referenced_junction_ids, start=1):
+        stage1_candidate_junction_ids = sorted(referenced_junctions | set(semantic_candidate_junction_ids))
+        stage_counts["junction_count"] = len(stage1_candidate_junction_ids)
+        stage_counts["evaluated_junction_count"] = len(stage1_candidate_junction_ids)
+        for junction_index, junction_id in enumerate(stage1_candidate_junction_ids, start=1):
             resolved_group = shared_resolve_junction_group(
                 junction_id,
                 nodes_by_mainnodeid=nodes_by_mainnodeid,
@@ -741,7 +757,7 @@ def run_t02_stage1_drivezone_gate(
 
             if junction_index % JUNCTION_PROGRESS_INTERVAL == 0:
                 message = (
-                    f"Processed junctions={junction_index}/{len(referenced_junction_ids)} "
+                    f"Processed junctions={junction_index}/{len(stage1_candidate_junction_ids)} "
                     f"junction_has_evd_count={stage_counts['junction_has_evd_count']}"
                 )
                 announce(logger, f"[T02] {message}")
@@ -848,7 +864,7 @@ def run_t02_stage1_drivezone_gate(
 
         kind_grade_summary = _empty_kind_grade_summary()
         kind_grade_unclassified_junction_count = 0
-        for junction_id in referenced_junction_ids:
+        for junction_id in stage1_candidate_junction_ids:
             junction_result = junction_results[junction_id]
             representative_output_index = junction_result.representative_output_index
             if representative_output_index is None:
@@ -867,6 +883,7 @@ def run_t02_stage1_drivezone_gate(
             if junction_result.has_evd == "yes":
                 kind_grade_summary[kind_grade_bucket]["junction_has_evd_count"] += 1
 
+        stage_counts["kind_grade_unclassified_junction_count"] = kind_grade_unclassified_junction_count
         stage_counts["segment_has_evd_count"] = sum(
             1 for feature in segment_layer_data.features if feature.properties.get("has_evd") == "yes"
         )
@@ -953,6 +970,10 @@ def run_t02_stage1_drivezone_gate(
                 "drivezone_crs_override": drivezone_crs,
             },
             "counts": dict(stage_counts),
+            "summary_scope": {
+                "summary_by_s_grade": "segment_referenced_junction_set",
+                "summary_by_kind_grade": "stage1_candidate_junction_set",
+            },
             "stage_timings": stage_timings,
             "summary_by_s_grade": bucket_summary,
             "summary_by_kind_grade": kind_grade_summary,

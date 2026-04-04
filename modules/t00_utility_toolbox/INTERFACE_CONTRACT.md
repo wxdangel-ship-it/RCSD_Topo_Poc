@@ -163,7 +163,7 @@
 
 - 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone.geojson`
 - 兼容输入：如存在 `vector/DivStripZone.geojson` 允许读取
-- per-patch 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone_fix.gpkg`
+- per-patch 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DivStripZone_fix.geojson`
 - 全局输出：`D:\TestData\POC_Data\patch_all\DivStripZone.gpkg`
 - 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
 - 每个输出要素必须包含 `patchid` 字段

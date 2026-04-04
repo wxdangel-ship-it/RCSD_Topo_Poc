@@ -19,6 +19,8 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     polygon_part_count,
     read_geojson_features,
     remove_existing_output,
+    simplify_polygonal,
+    write_geojson,
     write_json,
     write_vector,
 )
@@ -26,7 +28,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
 
 RUN_ID_PREFIX = "t00_tool9_divstripzone_merge"
 INPUT_FILENAME = "DivStripZone.geojson"
-FIX_OUTPUT_FILENAME = "DivStripZone_fix.gpkg"
+FIX_OUTPUT_FILENAME = "DivStripZone_fix.geojson"
 VECTOR_DIR_CANDIDATES = ("Vector", "vector")
 
 
@@ -35,6 +37,7 @@ class DivStripZoneMergeConfig:
     patch_all_root: Path
     default_input_crs_text: str = "EPSG:4326"
     output_name: str = "DivStripZone.gpkg"
+    simplify_tolerance_meters: float = 0.5
     run_id: str | None = None
 
 
@@ -88,7 +91,7 @@ def run_divstripzone_merge(config: DivStripZoneMergeConfig) -> dict[str, Any]:
         skip_error_count = 0
         total_input_feature_count = 0
 
-        announce(logger, "[Stage 2/4] Preprocess per-patch DivStripZone and write DivStripZone_fix.gpkg.")
+        announce(logger, "[Stage 2/4] Preprocess per-patch DivStripZone, simplify it, and write DivStripZone_fix.geojson.")
         for index, patch_dir in enumerate(patch_dirs, start=1):
             patch_id = patch_dir.name
             input_path, vector_dir = _resolve_input_path(patch_dir)
@@ -133,12 +136,16 @@ def run_divstripzone_merge(config: DivStripZoneMergeConfig) -> dict[str, Any]:
                 if merged_geometry is None:
                     raise ValueError("single-patch dissolve produced no valid polygonal geometry")
 
-                write_vector(
+                simplified_geometry = simplify_polygonal(merged_geometry, config.simplify_tolerance_meters)
+                if simplified_geometry is None:
+                    raise ValueError("single-patch simplify produced no valid polygonal geometry")
+
+                write_geojson(
                     fixed_output_path,
-                    [{"properties": {"patchid": patch_id}, "geometry": merged_geometry}],
+                    [{"properties": {"patchid": patch_id}, "geometry": simplified_geometry}],
                     crs_text=TARGET_CRS.to_string(),
                 )
-                per_patch_outputs.append((patch_id, merged_geometry))
+                per_patch_outputs.append((patch_id, simplified_geometry))
                 processed_patch_count += 1
                 fixed_output_count += 1
                 patch_results.append(
@@ -150,15 +157,15 @@ def run_divstripzone_merge(config: DivStripZoneMergeConfig) -> dict[str, Any]:
                         "input_feature_count": len(read_result.features),
                         "source_crs": read_result.source_crs.to_string(),
                         "crs_source": read_result.crs_source,
-                        "output_polygon_count": polygon_part_count(merged_geometry),
-                        "output_area_m2": float(merged_geometry.area),
+                        "output_polygon_count": polygon_part_count(simplified_geometry),
+                        "output_area_m2": float(simplified_geometry.area),
                         "error_reason": None,
                     }
                 )
                 announce(
                     logger,
                     f"[Patch {index}/{total_patch_count}] patch_id={patch_id} processed "
-                    f"input_feature_count={len(read_result.features)} output_polygon_count={polygon_part_count(merged_geometry)}",
+                    f"input_feature_count={len(read_result.features)} output_polygon_count={polygon_part_count(simplified_geometry)}",
                 )
             except Exception as exc:
                 skip_error_count += 1
@@ -222,6 +229,7 @@ def run_divstripzone_merge(config: DivStripZoneMergeConfig) -> dict[str, Any]:
             "output_polygon_count": output_polygon_count,
             "output_area_m2": output_area_m2,
             "output_bounds_3857": output_bounds,
+            "simplify_tolerance_meters": config.simplify_tolerance_meters,
             "error_reason_summary": _error_counter(patch_results),
             "patch_results": patch_results,
         }

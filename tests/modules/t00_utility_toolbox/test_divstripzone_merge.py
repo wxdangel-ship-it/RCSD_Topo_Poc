@@ -59,15 +59,13 @@ def test_divstripzone_merge_writes_patchid_for_vector_dir(tmp_path: Path) -> Non
         )
     )
 
-    fixed_output_path = patch_all_root / "1001" / "vector" / "DivStripZone_fix.gpkg"
+    fixed_output_path = patch_all_root / "1001" / "vector" / "DivStripZone_fix.geojson"
     output_path = patch_all_root / "DivStripZone.gpkg"
+
+    fixed_doc = json.loads(fixed_output_path.read_text(encoding="utf-8"))
 
     import sqlite3
 
-    with sqlite3.connect(fixed_output_path) as conn:
-        row = conn.execute("SELECT table_name, srs_id FROM gpkg_contents").fetchone()
-        feature_count = conn.execute("SELECT COUNT(*) FROM DivStripZone_fix").fetchone()[0]
-        patchid_value = conn.execute("SELECT patchid FROM DivStripZone_fix").fetchone()[0]
     with sqlite3.connect(output_path) as conn:
         out_row = conn.execute("SELECT table_name, srs_id FROM gpkg_contents").fetchone()
         out_count = conn.execute("SELECT COUNT(*) FROM DivStripZone").fetchone()[0]
@@ -77,12 +75,43 @@ def test_divstripzone_merge_writes_patchid_for_vector_dir(tmp_path: Path) -> Non
     assert summary["fixed_output_count"] == 1
     assert summary["global_merge_input_count"] == 1
     assert summary["output_feature_count"] == 1
-    assert row == ("DivStripZone_fix", 3857)
+    assert fixed_doc["crs"]["properties"]["name"] == "EPSG:3857"
+    assert fixed_doc["features"][0]["properties"]["patchid"] == "1001"
     assert out_row == ("DivStripZone", 3857)
-    assert feature_count == 1
     assert out_count == 1
-    assert patchid_value == "1001"
     assert out_patchid == "1001"
+
+
+def test_divstripzone_merge_simplifies_patch_output(tmp_path: Path) -> None:
+    patch_all_root = tmp_path / "patch_all"
+    coordinates = [
+        [12657000.0, 2545000.0],
+        [12657000.2, 2545000.0],
+        [12657000.4, 2545000.0],
+        [12657100.0, 2545000.0],
+        [12657100.0, 2545100.0],
+        [12657000.0, 2545100.0],
+        [12657000.0, 2545000.0],
+    ]
+
+    _write_polygon_feature_collection(
+        patch_all_root / "3001" / "Vector" / "DivStripZone.geojson",
+        coordinates,
+        crs_name="EPSG:3857",
+    )
+
+    run_divstripzone_merge(
+        DivStripZoneMergeConfig(
+            patch_all_root=patch_all_root,
+            simplify_tolerance_meters=1.0,
+            run_id="test_divstripzone_simplify",
+        )
+    )
+
+    fixed_output_path = patch_all_root / "3001" / "Vector" / "DivStripZone_fix.geojson"
+    fixed_doc = json.loads(fixed_output_path.read_text(encoding="utf-8"))
+    output_coordinates = fixed_doc["features"][0]["geometry"]["coordinates"][0]
+    assert len(output_coordinates) < len(coordinates)
 
 def test_divstripzone_merge_skips_bad_crs(tmp_path: Path) -> None:
     patch_all_root = tmp_path / "patch_all"

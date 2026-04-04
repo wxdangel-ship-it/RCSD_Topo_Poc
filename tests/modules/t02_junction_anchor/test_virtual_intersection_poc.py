@@ -842,6 +842,18 @@ def test_case_package_787133_accepts_compact_t_shape_after_soft_excluding_outsid
     assert status_doc["acceptance_reason"] == "stable"
 
 
+def test_case_package_854878_accepts_compact_single_group_core_after_soft_excluding_outside_rc_tail(
+    tmp_path: Path,
+) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "854878")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
+
+
 def test_case_package_948228_accepts_compact_mainline_rc_gap_without_selected_positive_rc(
     tmp_path: Path,
 ) -> None:
@@ -864,6 +876,54 @@ def test_case_package_917475_accepts_rc_gap_without_structural_side_branch(
     assert status_doc["status"] == "no_valid_rc_connection"
     assert status_doc["acceptance_class"] == "accepted"
     assert status_doc["acceptance_reason"] == "rc_gap_without_structural_side_branch"
+
+
+def test_case_package_47130796_accepts_compact_ambiguous_main_rc_gap_with_supported_polygon(
+    tmp_path: Path,
+) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "47130796")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "ambiguous_rc_match"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "ambiguous_main_rc_gap_with_compact_supported_polygon"
+
+
+def test_case_package_74192363_accepts_rc_gap_with_single_weak_edge_side_branch(
+    tmp_path: Path,
+) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "74192363")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "no_valid_rc_connection"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "rc_gap_with_single_weak_edge_side_branch"
+
+
+def test_case_package_74232960_accepts_compact_mainline_rc_gap(
+    tmp_path: Path,
+) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "74232960")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "no_valid_rc_connection"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "rc_gap_with_compact_mainline_geometry"
+
+
+def test_case_package_74419702_accepts_stable_core_after_soft_excluding_remote_outside_rc(
+    tmp_path: Path,
+) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "74419702")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
 
 
 def test_case_package_513244637_accepts_remote_outside_rc_when_only_degree2_rcsd_nodes_exist(
@@ -1098,6 +1158,28 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         has_structural_side_branch=False,
     ) == (True, "accepted", "rc_gap_without_structural_side_branch")
     assert _effect_success_acceptance(
+        status="no_valid_rc_connection",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=0.0,
+        associated_rc_road_count=0,
+        polygon_support_rc_road_count=0,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=14,
+        local_rc_node_count=11,
+        effective_local_rc_node_count=1,
+        local_road_count=12,
+        local_node_count=5,
+        connected_rc_group_count=1,
+        nonmain_branch_connected_rc_group_count=0,
+        negative_rc_group_count=0,
+        positive_rc_group_count=1,
+        road_branch_count=3,
+        has_structural_side_branch=False,
+        max_nonmain_edge_branch_road_support_m=16.473,
+        max_nonmain_edge_branch_rc_support_m=48.8,
+    ) == (True, "accepted", "rc_gap_with_single_weak_edge_side_branch")
+    assert _effect_success_acceptance(
         status="node_component_conflict",
         review_mode=False,
         max_selected_side_branch_covered_length_m=19.0,
@@ -1161,6 +1243,26 @@ def test_effect_success_acceptance_promotes_supported_gap_cases_and_keeps_weak_g
         nonmain_branch_connected_rc_group_count=1,
         negative_rc_group_count=2,
     ) == (True, "accepted", "ambiguous_main_rc_gap_with_compact_polygon")
+    assert _effect_success_acceptance(
+        status="ambiguous_rc_match",
+        review_mode=False,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=4.5,
+        associated_rc_road_count=1,
+        polygon_support_rc_road_count=1,
+        min_invalid_rc_distance_to_center_m=None,
+        local_rc_road_count=8,
+        local_rc_node_count=6,
+        effective_local_rc_node_count=0,
+        local_road_count=7,
+        local_node_count=3,
+        connected_rc_group_count=2,
+        nonmain_branch_connected_rc_group_count=0,
+        negative_rc_group_count=1,
+        positive_rc_group_count=1,
+        road_branch_count=3,
+        has_structural_side_branch=False,
+    ) == (True, "accepted", "ambiguous_main_rc_gap_with_compact_supported_polygon")
     assert _effect_success_acceptance(
         status="stable",
         review_mode=True,
@@ -1255,6 +1357,19 @@ def test_can_soft_exclude_outside_rc_accepts_remote_tail_but_rejects_near_center
         effective_local_rc_node_count=4,
         local_road_count=6,
         local_node_count=3,
+    ) is True
+    assert _can_soft_exclude_outside_rc(
+        status="stable",
+        selected_rc_road_count=4,
+        polygon_support_rc_road_count=4,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=0.0,
+        min_invalid_rc_distance_to_center_m=12.766,
+        connected_rc_group_count=2,
+        negative_rc_group_count=0,
+        effective_local_rc_node_count=6,
+        local_road_count=6,
+        local_node_count=2,
     ) is True
     assert _can_soft_exclude_outside_rc(
         status="stable",
@@ -2133,6 +2248,32 @@ def test_can_soft_exclude_outside_rc_only_when_remaining_polygon_evidence_is_str
         min_invalid_rc_distance_to_center_m=None,
         connected_rc_group_count=0,
         negative_rc_group_count=0,
+    ) is False
+    assert _can_soft_exclude_outside_rc(
+        status="stable",
+        selected_rc_road_count=1,
+        polygon_support_rc_road_count=1,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=0.0,
+        min_invalid_rc_distance_to_center_m=12.0,
+        connected_rc_group_count=1,
+        negative_rc_group_count=0,
+        effective_local_rc_node_count=1,
+        local_road_count=8,
+        local_node_count=4,
+    ) is True
+    assert _can_soft_exclude_outside_rc(
+        status="stable",
+        selected_rc_road_count=1,
+        polygon_support_rc_road_count=1,
+        max_selected_side_branch_covered_length_m=0.0,
+        max_nonmain_branch_polygon_length_m=0.0,
+        min_invalid_rc_distance_to_center_m=12.0,
+        connected_rc_group_count=1,
+        negative_rc_group_count=0,
+        effective_local_rc_node_count=0,
+        local_road_count=11,
+        local_node_count=5,
     ) is False
 
 

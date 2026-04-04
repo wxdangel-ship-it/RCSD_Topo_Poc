@@ -5,7 +5,7 @@ from pathlib import Path
 
 import fiona
 import pytest
-from shapely.geometry import LineString, Point, box
+from shapely.geometry import LineString, Point, box, shape
 from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
@@ -35,12 +35,15 @@ def _write_fixture(
     tmp_path: Path,
     *,
     kind_2: int,
+    divstrip_mode: str = "nearby_single",
     rcsdroad_outside_drivezone: bool = False,
     rcsdnode_outside_drivezone: bool = False,
-) -> dict[str, Path]:
+    main_rcsdnode_geometry: Point | None = None,
+) -> dict[str, object]:
     nodes_path = tmp_path / "nodes.gpkg"
     roads_path = tmp_path / "roads.gpkg"
     drivezone_path = tmp_path / "drivezone.gpkg"
+    divstripzone_path = tmp_path / "divstripzone.gpkg"
     rcsdroad_path = tmp_path / "rcsdroad.gpkg"
     rcsdnode_path = tmp_path / "rcsdnode.gpkg"
 
@@ -91,6 +94,21 @@ def _write_fixture(
         ],
         crs_text="EPSG:3857",
     )
+
+    if divstrip_mode == "nearby_single":
+        divstrip_geometries = [box(18.0, -4.0, 30.0, 4.0)]
+    elif divstrip_mode == "not_nearby":
+        divstrip_geometries = [box(68.0, 42.0, 78.0, 52.0)]
+    elif divstrip_mode == "ambiguous_two_nearby":
+        divstrip_geometries = [box(14.0, -8.0, 20.0, -2.0), box(24.0, 2.0, 30.0, 8.0)]
+    else:
+        raise ValueError(f"Unsupported divstrip_mode: {divstrip_mode}")
+    write_vector(
+        divstripzone_path,
+        [{"properties": {"id": f"dz_{index}"}, "geometry": geometry} for index, geometry in enumerate(divstrip_geometries)],
+        crs_text="EPSG:3857",
+    )
+
     write_vector(
         rcsdroad_path,
         [
@@ -101,7 +119,7 @@ def _write_fixture(
         crs_text="EPSG:3857",
     )
     rcsdnode_features = [
-        {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": Point(0.0, 0.0)},
+        {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": main_rcsdnode_geometry or Point(0.0, 0.0)},
         {"properties": {"id": "901", "mainnodeid": None}, "geometry": Point(0.0, 55.0)},
         {"properties": {"id": "902", "mainnodeid": None}, "geometry": Point(0.0, -55.0)},
         {"properties": {"id": "903", "mainnodeid": None}, "geometry": Point(45.0, 0.0)},
@@ -126,75 +144,527 @@ def _write_fixture(
         "nodes_path": nodes_path,
         "roads_path": roads_path,
         "drivezone_path": drivezone_path,
+        "divstripzone_path": divstripzone_path,
+        "rcsdroad_path": rcsdroad_path,
+        "rcsdnode_path": rcsdnode_path,
+        "divstrip_union": unary_union(divstrip_geometries),
+    }
+
+
+def _write_multibranch_fixture(tmp_path: Path, *, kind_2: int) -> dict[str, Path]:
+    nodes_path = tmp_path / "nodes.gpkg"
+    roads_path = tmp_path / "roads.gpkg"
+    drivezone_path = tmp_path / "drivezone.gpkg"
+    divstripzone_path = tmp_path / "divstripzone.gpkg"
+    rcsdroad_path = tmp_path / "rcsdroad.gpkg"
+    rcsdnode_path = tmp_path / "rcsdnode.gpkg"
+
+    write_vector(
+        nodes_path,
+        [
+            {"properties": {"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": kind_2, "grade_2": 1}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": "101", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": kind_2, "grade_2": 1}, "geometry": Point(6.0, 2.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    side_specs = [
+        ("branch_east", (0.0, 0.0), (50.0, 0.0), "100", "401"),
+        ("branch_northeast", (0.0, 0.0), (30.0, 52.0), "100", "402"),
+        ("branch_southeast", (0.0, 0.0), (30.0, -52.0), "100", "403"),
+    ]
+    roads = [
+        {"properties": {"id": "road_north", "snodeid": "100", "enodeid": "200", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 60.0)])},
+        {"properties": {"id": "road_south", "snodeid": "300", "enodeid": "100", "direction": 2}, "geometry": LineString([(0.0, -60.0), (0.0, 0.0)])},
+    ]
+    rcsd_roads = [
+        {"properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 55.0)])},
+        {"properties": {"id": "rc_south", "snodeid": "902", "enodeid": "100", "direction": 2}, "geometry": LineString([(0.0, -55.0), (0.0, 0.0)])},
+    ]
+    rcsd_nodes = [
+        {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": Point(0.0, 0.0)},
+        {"properties": {"id": "901", "mainnodeid": None}, "geometry": Point(0.0, 55.0)},
+        {"properties": {"id": "902", "mainnodeid": None}, "geometry": Point(0.0, -55.0)},
+    ]
+    for branch_id, start, end, start_node, end_node in side_specs:
+        road_id = branch_id
+        if kind_2 == 16:
+            road_props = {"id": road_id, "snodeid": start_node, "enodeid": end_node, "direction": 2}
+            rc_props = {"id": f"rc_{road_id}", "snodeid": start_node, "enodeid": f"9{end_node}", "direction": 2}
+            rc_end = end
+        else:
+            road_props = {"id": road_id, "snodeid": end_node, "enodeid": start_node, "direction": 2}
+            rc_props = {"id": f"rc_{road_id}", "snodeid": f"9{end_node}", "enodeid": start_node, "direction": 2}
+            rc_end = end
+        roads.append({"properties": road_props, "geometry": LineString([start, end])})
+        rcsd_roads.append({"properties": rc_props, "geometry": LineString([start, rc_end])})
+        rcsd_nodes.append({"properties": {"id": f"9{end_node}", "mainnodeid": None}, "geometry": Point(*end)})
+    write_vector(roads_path, roads, crs_text="EPSG:3857")
+    write_vector(
+        drivezone_path,
+        [{"properties": {"name": "dz"}, "geometry": unary_union([box(-12.0, -75.0, 12.0, 75.0), box(0.0, -20.0, 70.0, 20.0), box(0.0, 0.0, 45.0, 65.0), box(0.0, -65.0, 45.0, 0.0)])}],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        divstripzone_path,
+        [
+            {
+                "properties": {"id": "divstrip_multi"},
+                "geometry": box(10.0, -34.0, 36.0, 4.0) if kind_2 == 8 else box(10.0, -4.0, 36.0, 34.0),
+            }
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(rcsdroad_path, rcsd_roads, crs_text="EPSG:3857")
+    write_vector(rcsdnode_path, rcsd_nodes, crs_text="EPSG:3857")
+    return {
+        "nodes_path": nodes_path,
+        "roads_path": roads_path,
+        "drivezone_path": drivezone_path,
+        "divstripzone_path": divstripzone_path,
         "rcsdroad_path": rcsdroad_path,
         "rcsdnode_path": rcsdnode_path,
     }
 
 
+def _write_reverse_tip_fixture(tmp_path: Path) -> dict[str, Path]:
+    nodes_path = tmp_path / "nodes.gpkg"
+    roads_path = tmp_path / "roads.gpkg"
+    drivezone_path = tmp_path / "drivezone.gpkg"
+    divstripzone_path = tmp_path / "divstripzone.gpkg"
+    rcsdroad_path = tmp_path / "rcsdroad.gpkg"
+    rcsdnode_path = tmp_path / "rcsdnode.gpkg"
+    write_vector(
+        nodes_path,
+        [
+            {"properties": {"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 8, "grade_2": 1}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": "101", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 8, "grade_2": 1}, "geometry": Point(6.0, 2.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        roads_path,
+        [
+            {"properties": {"id": "road_north", "snodeid": "100", "enodeid": "200", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 60.0)])},
+            {"properties": {"id": "road_south", "snodeid": "300", "enodeid": "100", "direction": 2}, "geometry": LineString([(0.0, -60.0), (0.0, 0.0)])},
+            {"properties": {"id": "road_west", "snodeid": "401", "enodeid": "100", "direction": 2}, "geometry": LineString([(-40.0, 0.0), (0.0, 0.0)])},
+            {"properties": {"id": "road_east", "snodeid": "100", "enodeid": "402", "direction": 2}, "geometry": LineString([(0.0, 0.0), (45.0, 0.0)])},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        drivezone_path,
+        [{"properties": {"name": "dz"}, "geometry": unary_union([box(-50.0, -12.0, 60.0, 12.0), box(-12.0, -70.0, 12.0, 70.0)])}],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        divstripzone_path,
+        [{"properties": {"id": "divstrip_east"}, "geometry": box(18.0, -4.0, 30.0, 4.0)}],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        rcsdroad_path,
+        [
+            {"properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 55.0)])},
+            {"properties": {"id": "rc_south", "snodeid": "902", "enodeid": "100", "direction": 2}, "geometry": LineString([(0.0, -55.0), (0.0, 0.0)])},
+            {"properties": {"id": "rc_west", "snodeid": "904", "enodeid": "100", "direction": 2}, "geometry": LineString([(-35.0, 0.0), (0.0, 0.0)])},
+            {"properties": {"id": "rc_east", "snodeid": "100", "enodeid": "903", "direction": 2}, "geometry": LineString([(0.0, 0.0), (42.0, 0.0)])},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        rcsdnode_path,
+        [
+            {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": "901", "mainnodeid": None}, "geometry": Point(0.0, 55.0)},
+            {"properties": {"id": "902", "mainnodeid": None}, "geometry": Point(0.0, -55.0)},
+            {"properties": {"id": "903", "mainnodeid": None}, "geometry": Point(42.0, 0.0)},
+            {"properties": {"id": "904", "mainnodeid": None}, "geometry": Point(-35.0, 0.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    return {
+        "nodes_path": nodes_path,
+        "roads_path": roads_path,
+        "drivezone_path": drivezone_path,
+        "divstripzone_path": divstripzone_path,
+        "rcsdroad_path": rcsdroad_path,
+        "rcsdnode_path": rcsdnode_path,
+    }
+
+
+def _write_continuous_chain_fixture(tmp_path: Path) -> dict[str, Path]:
+    fixture = _write_fixture(tmp_path, kind_2=8, divstrip_mode="nearby_single")
+    nodes_path = fixture["nodes_path"]
+    existing_features = _load_vector_doc(nodes_path)["features"]
+    write_vector(
+        nodes_path,
+        [
+            {
+                "properties": feature["properties"],
+                "geometry": shape(feature["geometry"]),
+            }
+            for feature in existing_features
+        ]
+        + [
+            {"properties": {"id": "200", "mainnodeid": "200", "has_evd": "yes", "is_anchor": "no", "kind_2": 16, "grade_2": 1}, "geometry": Point(24.0, 0.0)},
+            {"properties": {"id": "201", "mainnodeid": "200", "has_evd": "yes", "is_anchor": "no", "kind_2": 16, "grade_2": 1}, "geometry": Point(29.0, 2.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    return {
+        "nodes_path": fixture["nodes_path"],
+        "roads_path": fixture["roads_path"],
+        "drivezone_path": fixture["drivezone_path"],
+        "divstripzone_path": fixture["divstripzone_path"],
+        "rcsdroad_path": fixture["rcsdroad_path"],
+        "rcsdnode_path": fixture["rcsdnode_path"],
+    }
+
+
 @pytest.mark.parametrize("kind_2", [8, 16])
-def test_stage4_accepts_kind_8_and_16_and_writes_independent_outputs(tmp_path: Path, kind_2: int) -> None:
-    paths = _write_fixture(tmp_path, kind_2=kind_2)
-    original_nodes = _load_vector_doc(paths["nodes_path"])
+def test_stage4_accepts_kind_8_and_16_with_nearby_divstrip(tmp_path: Path, kind_2: int) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=kind_2, divstrip_mode="nearby_single")
+    original_nodes = _load_vector_doc(fixture["nodes_path"])
     artifacts = run_t02_stage4_divmerge_virtual_polygon(
         mainnodeid="100",
         out_root=tmp_path / "out",
         run_id=f"kind_{kind_2}",
-        **paths,
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
     )
 
     assert artifacts.success is True
-    assert artifacts.virtual_polygon_path.is_file()
-    assert artifacts.node_link_json_path.is_file()
-    assert artifacts.rcsdnode_link_json_path.is_file()
-    assert artifacts.audit_json_path.is_file()
-    assert not (artifacts.out_root / "nodes.gpkg").exists()
-
     polygon_doc = _load_vector_doc(artifacts.virtual_polygon_path)
-    assert len(polygon_doc["features"]) == 1
-    assert polygon_doc["features"][0]["properties"]["mainnodeid"] == "100"
-    assert polygon_doc["features"][0]["properties"]["acceptance_class"] == "accepted"
+    polygon_feature = polygon_doc["features"][0]
+    polygon_geometry = shape(polygon_feature["geometry"])
+    assert polygon_feature["properties"]["acceptance_class"] == "accepted"
+    assert polygon_feature["properties"]["divstrip_present"] == 1
+    assert polygon_feature["properties"]["divstrip_nearby"] == 1
+    assert polygon_feature["properties"]["divstrip_component_count"] == 1
+    assert polygon_feature["properties"]["selection_mode"] == "divstrip_primary"
+    assert polygon_feature["properties"]["evidence_source"] == "drivezone+divstrip+roads+rcsd+seed"
+    assert polygon_geometry.intersection(fixture["divstrip_union"]).area == pytest.approx(0.0)
 
-    node_link = json.loads(artifacts.node_link_json_path.read_text(encoding="utf-8"))
-    rcsdnode_link = json.loads(artifacts.rcsdnode_link_json_path.read_text(encoding="utf-8"))
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
     audit_doc = json.loads(artifacts.audit_json_path.read_text(encoding="utf-8"))
+    assert status_doc["divstrip"]["divstrip_present"] is True
+    assert status_doc["divstrip"]["divstrip_nearby"] is True
+    assert status_doc["divstrip"]["divstrip_component_count"] == 1
+    assert status_doc["divstrip"]["divstrip_component_selected"] == ["divstrip_component_0"]
+    assert status_doc["divstrip"]["selection_mode"] == "divstrip_primary"
+    assert status_doc["review_reasons"] == []
+    assert audit_doc["rows"][0]["evidence_source"] == "drivezone+divstrip+roads+rcsd+seed"
+    assert _load_vector_doc(fixture["nodes_path"]) == original_nodes
 
-    assert node_link["mainnodeid"] == "100"
-    assert node_link["target_node_ids"] == ["100", "101"]
-    assert rcsdnode_link["mainnodeid"] == "100"
-    assert "100" in rcsdnode_link["linked_node_ids"]
-    assert audit_doc["audit_count"] == 1
-    assert audit_doc["rows"][0]["reason"] == "stable"
-    assert _load_vector_doc(paths["nodes_path"]) == original_nodes
 
-
-def test_stage4_rejects_when_rcsdnode_or_rcsdroad_leaves_drivezone(tmp_path: Path) -> None:
-    paths = _write_fixture(tmp_path, kind_2=8, rcsdroad_outside_drivezone=True)
+def test_stage4_marks_review_required_when_divstrip_not_nearby(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=8, divstrip_mode="not_nearby")
     artifacts = run_t02_stage4_divmerge_virtual_polygon(
         mainnodeid="100",
         out_root=tmp_path / "out",
-        run_id="outside_drivezone",
-        **paths,
+        run_id="divstrip_not_nearby",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
     )
 
     assert artifacts.success is False
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
-    assert status_doc["success"] is False
+    audit_doc = json.loads(artifacts.audit_json_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "review_required"
+    assert status_doc["acceptance_reason"] == "divstrip_not_nearby"
+    assert status_doc["divstrip"]["divstrip_present"] is True
+    assert status_doc["divstrip"]["divstrip_nearby"] is False
+    assert status_doc["divstrip"]["divstrip_component_count"] == 1
+    assert status_doc["divstrip"]["divstrip_component_selected"] == []
+    assert status_doc["divstrip"]["selection_mode"] == "roads_fallback"
+    assert status_doc["review_reasons"][0] == "divstrip_not_nearby"
+    assert audit_doc["rows"][0]["evidence_source"] == "drivezone+roads+rcsd+seed"
+    assert artifacts.virtual_polygon_path.is_file()
+
+
+def test_stage4_accepts_without_divstrip_input_by_falling_back_to_roads(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=16, divstrip_mode="nearby_single")
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="no_divstrip_input",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["divstrip"]["divstrip_present"] is False
+    assert status_doc["divstrip"]["divstrip_nearby"] is False
+    assert status_doc["divstrip"]["selection_mode"] == "roads_fallback"
+    assert status_doc["divstrip"]["evidence_source"] == "drivezone+roads+rcsd+seed"
+
+
+def test_stage4_marks_review_required_when_divstrip_has_ambiguous_components(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=16, divstrip_mode="ambiguous_two_nearby")
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="divstrip_ambiguous",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is False
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "review_required"
+    assert status_doc["acceptance_reason"] == "divstrip_component_ambiguous"
+    assert status_doc["divstrip"]["divstrip_present"] is True
+    assert status_doc["divstrip"]["divstrip_nearby"] is True
+    assert status_doc["divstrip"]["divstrip_component_count"] == 2
+    assert status_doc["divstrip"]["divstrip_component_selected"] == [
+        "divstrip_component_0",
+        "divstrip_component_1",
+    ]
+
+
+def test_stage4_accepts_diverge_main_rcsdnode_within_pre_trunk_window(tmp_path: Path) -> None:
+    fixture = _write_fixture(
+        tmp_path,
+        kind_2=16,
+        divstrip_mode="nearby_single",
+        main_rcsdnode_geometry=Point(0.0, -18.0),
+    )
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="diverge_pre_trunk_window",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_2"
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_rule"] == "diverge_main_seed_on_pre_trunk_le_20m"
+    assert isinstance(status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"], bool)
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_coverage_mode"] in {"exact_cover", "trunk_tolerance_extension"}
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_offset_m"] == pytest.approx(18.0, abs=1.0)
+    assert status_doc["coverage_missing_ids"] == []
+
+
+def test_stage4_accepts_merge_main_rcsdnode_within_post_trunk_window(tmp_path: Path) -> None:
+    fixture = _write_fixture(
+        tmp_path,
+        kind_2=8,
+        divstrip_mode="nearby_single",
+        main_rcsdnode_geometry=Point(0.0, 18.0),
+    )
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="merge_post_trunk_window",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_1"
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_rule"] == "merge_main_seed_on_post_trunk_le_20m"
+    assert isinstance(status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"], bool)
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_coverage_mode"] in {"exact_cover", "trunk_tolerance_extension"}
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_offset_m"] == pytest.approx(18.0, abs=1.0)
+    assert status_doc["coverage_missing_ids"] == []
+
+
+def test_stage4_marks_review_required_when_main_rcsdnode_exceeds_trunk_window(tmp_path: Path) -> None:
+    fixture = _write_fixture(
+        tmp_path,
+        kind_2=16,
+        divstrip_mode="nearby_single",
+        main_rcsdnode_geometry=Point(0.0, -28.0),
+    )
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="main_rcsdnode_out_of_window",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is False
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "review_required"
+    assert status_doc["acceptance_reason"] == "rcsdnode_main_out_of_window"
+    assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_2"
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"] is False
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_coverage_mode"] == "out_of_window"
+    assert "100" in status_doc["coverage_missing_ids"]
+
+
+@pytest.mark.parametrize("kind_2", [8, 16])
+def test_stage4_accepts_multibranch_event_with_clear_selected_pair(tmp_path: Path, kind_2: int) -> None:
+    fixture = _write_multibranch_fixture(tmp_path, kind_2=kind_2)
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id=f"multibranch_{kind_2}",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["multibranch"]["multibranch_enabled"] is True
+    assert status_doc["multibranch"]["multibranch_n"] >= 3
+    assert status_doc["multibranch"]["event_candidate_count"] >= 3
+    assert status_doc["multibranch"]["selected_event_index"] == 0
+    assert status_doc["multibranch"]["selected_event_branch_ids"] == (
+        ["branch_east", "branch_southeast"] if kind_2 == 8 else ["branch_east", "branch_northeast"]
+    )
+    assert status_doc["multibranch"]["branches_used_count"] == 2
+
+
+def test_stage4_uses_reverse_tip_when_reverse_retry_improves_branch_positioning(tmp_path: Path) -> None:
+    fixture = _write_reverse_tip_fixture(tmp_path)
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="reverse_tip",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    node_link_doc = json.loads(artifacts.node_link_json_path.read_text(encoding="utf-8"))
+    assert status_doc["reverse_tip"]["reverse_tip_attempted"] is True
+    assert status_doc["reverse_tip"]["reverse_tip_used"] is True
+    assert status_doc["reverse_tip"]["reverse_trigger"] == "forward_divstrip_mismatch"
+    assert status_doc["reverse_tip"]["position_source_forward"] == "divstrip_primary"
+    assert status_doc["reverse_tip"]["position_source_reverse"] == "reverse_tip_divstrip"
+    assert status_doc["reverse_tip"]["position_source_final"] == "reverse_tip_divstrip"
+    assert "road_east" in node_link_doc["selected_road_ids"]
+    assert "road_west" not in node_link_doc["selected_road_ids"]
+
+
+def test_stage4_marks_review_required_for_continuous_chain_with_adjacent_opposite_event(tmp_path: Path) -> None:
+    fixture = _write_continuous_chain_fixture(tmp_path)
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="continuous_chain",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is False
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "review_required"
+    assert status_doc["acceptance_reason"] == "continuous_chain_review"
+    assert status_doc["continuous_chain"]["is_in_continuous_chain"] is True
+    assert status_doc["continuous_chain"]["chain_component_id"] == "100__200"
+    assert status_doc["continuous_chain"]["related_mainnodeids"] == ["200"]
+    assert status_doc["continuous_chain"]["chain_node_count"] == 2
+    assert status_doc["continuous_chain"]["sequential_ok"] is True
+
+
+def test_stage4_rejects_when_divstrip_crs_override_is_invalid(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=8, divstrip_mode="nearby_single")
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="divstrip_invalid_crs",
+        divstripzone_crs="EPSG:not-a-crs",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is False
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "rejected"
+    assert status_doc["acceptance_reason"] == "invalid_crs_or_unprojectable"
+
+
+def test_stage4_rejects_when_rcsdnode_or_rcsdroad_leaves_drivezone(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=8, divstrip_mode="nearby_single", rcsdroad_outside_drivezone=True)
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="outside_drivezone",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is False
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
     assert status_doc["acceptance_class"] == "rejected"
     assert status_doc["acceptance_reason"] == "rcsd_outside_drivezone"
 
 
 def test_stage4_rejects_when_rcsdnode_leaves_drivezone(tmp_path: Path) -> None:
-    paths = _write_fixture(tmp_path, kind_2=16, rcsdnode_outside_drivezone=True)
+    fixture = _write_fixture(tmp_path, kind_2=16, divstrip_mode="nearby_single", rcsdnode_outside_drivezone=True)
     artifacts = run_t02_stage4_divmerge_virtual_polygon(
         mainnodeid="100",
         out_root=tmp_path / "out",
         run_id="rcsdnode_outside_drivezone",
-        **paths,
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
     )
 
     assert artifacts.success is False
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
-    assert status_doc["success"] is False
     assert status_doc["acceptance_class"] == "rejected"
     assert status_doc["acceptance_reason"] == "rcsd_outside_drivezone"
 

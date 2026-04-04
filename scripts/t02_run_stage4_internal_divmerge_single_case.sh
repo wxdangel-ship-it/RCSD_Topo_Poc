@@ -53,6 +53,11 @@ cmd=(
   --run-id "$RUN_ID"
   "$DEBUG_FLAG"
 )
+if [[ -n "${DIVSTRIPZONE_PATH:-}" && -f "$DIVSTRIPZONE_PATH" ]]; then
+  cmd+=(--divstripzone-path "$DIVSTRIPZONE_PATH")
+elif [[ -n "${DIVSTRIPZONE_PATH:-}" ]]; then
+  echo "[WARN] DIVSTRIPZONE_PATH does not exist, Stage4 will fallback without DivStripZone: $DIVSTRIPZONE_PATH" >&2
+fi
 
 echo "[RUN] REPO_DIR=$REPO_DIR"
 echo "[RUN] PYTHON_BIN=$PYTHON_BIN"
@@ -65,8 +70,6 @@ echo "[RUN] RCSDROAD_PATH=$RCSDROAD_PATH"
 echo "[RUN] RCSDNODE_PATH=$RCSDNODE_PATH"
 echo "[RUN] OUT_ROOT=$OUT_ROOT"
 echo "[RUN] RUN_ID=$RUN_ID"
-echo "[INFO] DIVSTRIPZONE_PATH is frozen for internal Stage4 context, but the current Stage4 baseline does not consume it yet."
-
 PYTHONPATH=src "${cmd[@]}"
 
 echo "[DONE] Stage4 outputs: $OUT_ROOT/$RUN_ID"

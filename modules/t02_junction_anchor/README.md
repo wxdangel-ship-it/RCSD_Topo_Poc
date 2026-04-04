@@ -54,7 +54,7 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
 - 它不重算 stage1 `has_evd` 或 stage2 `is_anchor`，而是直接消费其结果字段
 - `t02-fix-node-error-2` 是独立离线修复工具，只消费 `node_error_2 / nodes / roads / RCSDIntersection` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json`；它不属于 stage 主流程
 - `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 / 多 `mainnodeid` 文本证据包导出与解包，服务于 stage3 复核与外部复现
-- `t02-stage4-divmerge-virtual-polygon` 用于单 case 的 div/merge 虚拟路口面 baseline，输入为 `nodes / roads / DriveZone / RCSDRoad / RCSDNode / mainnodeid`
+- `t02-stage4-divmerge-virtual-polygon` 用于单 case 的 div/merge 虚拟路口面 baseline，输入为 `nodes / roads / DriveZone / DivStripZone / RCSDRoad / RCSDNode / mainnodeid`
 - T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
 - T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
 - `case-package` 是 stage3 baseline regression 入口，不允许回退
@@ -101,8 +101,9 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
-  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.gpkg \
-  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.gpkg \
+  --divstripzone-path /mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
   --mainnodeid 100 \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage4_divmerge_virtual_polygon \
   --run-id t02_stage4_divmerge_demo \
@@ -144,7 +145,10 @@ bash scripts/t02_watch_stage4_internal_full_input.sh
   - `ONCE=1 bash scripts/t02_watch_stage4_internal_full_input.sh`
 - 若你内网 `nodes.gpkg` 不在默认位置，也可临时覆盖：
   - `NODES_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg bash scripts/t02_run_stage4_internal_full_input_8workers.sh`
-- 当前 Stage4 baseline 尚未消费 `DivStripZone`，脚本仅冻结并校验该输入路径，供后续扩展继续使用。
+- 当前 Stage4 已正式消费 `DivStripZone`：
+  - 在合法 `DriveZone` patch 内，它是局部分支裁决和虚拟面约束的一级参考
+  - nearby 缺失或未提供输入时，会先降级到 `roads / RCSDRoad` 支撑面
+  - 多组件歧义或覆盖不完整时，才进入 `review_required`
 
 ```bash
 python -m rcsd_topo_poc t02-virtual-intersection-poc \
@@ -192,8 +196,15 @@ bash scripts/t02_run_stage3_internal_full_input_8workers.sh
   - `NODES_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg`
   - `ROADS_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg`
   - `DRIVEZONE_PATH=/mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg`
+  - `DIVSTRIPZONE_PATH=/mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg`
   - `RCSDROAD_PATH=/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg`
   - `RCSDNODE_PATH=/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg`
+- Stage4 当前正式读取 `DivStripZone` 的局部 patch；它是合法 `DriveZone` patch 内的一级局部参考，用于分支裁决和虚拟面约束，不直接作为输出 polygon。
+- 若局部 patch 中缺少 nearby `DivStripZone` 或未提供该输入，默认先降级到 `roads / RCSDRoad` 支撑面，并在 `stage4_status.json / stage4_audit.json` 中写出 `divstrip_present / divstrip_nearby / divstrip_component_count / divstrip_component_selected / selection_mode / evidence_source`。
+- `mainnodeid` 对应的主 `RCSDNode` 不再无条件当作精确 seed：
+  - `kind_2=16` 允许位于分歧前主干 `<=20m`
+  - `kind_2=8` 允许位于合流后主干 `<=20m`
+  - 若超窗、方向错误或 off-trunk，会在 `stage4_status.json / stage4_audit.json` 中写出 `trunk_branch_id / rcsdnode_tolerance_rule / rcsdnode_tolerance_applied / rcsdnode_coverage_mode / rcsdnode_offset_m / rcsdnode_lateral_dist_m`，并进入 `review_required`
 - 默认 `WORKERS=8`，默认开启 `--debug`。
 - 所有目视检查 PNG 统一输出到：
   - `<OUT_ROOT>/<RUN_ID>/visual_checks/`

@@ -325,13 +325,16 @@
 ### 2.10 Stage4 div/merge 虚拟面契约
 
 - `t02-stage4-divmerge-virtual-polygon` 是当前 stage4 独立入口。
-- stage4 必选输入：
+- stage4 核心必选输入：
   - `nodes`
   - `roads`
   - `DriveZone`
   - `RCSDRoad`
   - `RCSDNode`
   - `mainnodeid`
+- stage4 高优先级局部参考输入：
+  - `DivStripZone`
+  - 可缺省；缺省或局部无 nearby 命中时，允许降级到 `roads / RCSDRoad` 支撑面
 - stage4 当前只认字段：
   - `nodes.id / nodes.mainnodeid / nodes.has_evd / nodes.is_anchor / nodes.kind_2 / nodes.grade_2`
   - `roads.id / roads.snodeid / roads.enodeid / roads.direction`
@@ -350,11 +353,33 @@
   - `stage4_perf_markers.jsonl`
 - 这些运行态工件用于审计与性能追踪，不属于当前 stage4 正式契约输出。
 - stage4 成功态必须覆盖：
-  - 目标 `mainnodeid` 对应的 `RCSDNode` seed
+  - 目标 `mainnodeid` 对应的主 `RCSDNode`
   - 与选定分支语义一致的相关 node
+- 主 `RCSDNode` 允许按主干容差解释，而不是无条件精确 seed：
+  - `kind_2=16`：允许位于分歧前主干 `<=20m`
+  - `kind_2=8`：允许位于合流后主干 `<=20m`
+  - 超过 `20m`、方向错误或明显 off-trunk 时，不得记为 accepted/stable
+- stage4 必须正式读取 `DivStripZone` 的局部 patch；它是 stage4 在合法 `DriveZone` patch 内的一级局部选择标准：
+  - nearby `DivStripZone` 优先决定分支裁决与虚拟面约束
+  - `roads / RCSDRoad` 只在 `DivStripZone` 缺失或局部无可用 nearby 命中时作为降级支撑
+  - 不得把 `DivStripZone` 直接当输出面
+- `DriveZone` 仍是 stage4 的硬边界与合法性约束，不能被远处 `DivStripZone` 或道路面替代。
+- 局部 patch 中 `DivStripZone` 缺失 nearby 证据时，默认先降级到 `roads / RCSDRoad` 支撑面；仅当同时出现主方向不稳、patch 连通域失败、关键字段缺失或 CRS 不可统一时才报异常。
+- stage4 审计至少必须写出：
+  - `divstrip_present`
+  - `divstrip_nearby`
+  - `divstrip_component_count`
+  - `divstrip_component_selected`
+  - `evidence_source`
+  - `trunk_branch_id`
+  - `rcsdnode_tolerance_rule`
+  - `rcsdnode_tolerance_applied`
+  - `rcsdnode_coverage_mode`
+  - `rcsdnode_offset_m`
+  - `rcsdnode_lateral_dist_m`
 - 若 `RCSDRoad` / `RCSDNode` 不在 `DriveZone` 上，必须报异常，不允许 silent fix。
 - 若覆盖失败但输入完整，记 `review_required` 风险，不得 silent fix。
-- 若 `mainnodeid` 关联不稳定、patch 无法形成主连通域、关键字段缺失或 CRS 无法统一到 `EPSG:3857`，必须报异常。
+- 若 `mainnodeid` 关联不稳定、patch 无法形成主连通域、关键字段缺失、`DivStripZone` 图层不可读或 CRS 无法统一到 `EPSG:3857`，必须报异常。
 
 ## 3. Outputs
 
@@ -793,20 +818,15 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
   - `rcsdroad_path`
   - `rcsdnode_path`
   - `mainnodeid`
+- 可选高优先级局部参考：
+  - `divstripzone_path`
 - 可选兼容：
-  - `nodes_layer / roads_layer / drivezone_layer / rcsdroad_layer / rcsdnode_layer`
-  - `nodes_crs / roads_crs / drivezone_crs / rcsdroad_crs / rcsdnode_crs`
+  - `nodes_layer / roads_layer / drivezone_layer / divstripzone_layer / rcsdroad_layer / rcsdnode_layer`
+  - `nodes_crs / roads_crs / drivezone_crs / divstripzone_crs / rcsdroad_crs / rcsdnode_crs`
 - 可选输出控制：
   - `out_root`
   - `run_id`
   - `debug`
-- 输出控制：
-  - `out_root`
-  - `run_id`
-- 复核辅助：
-  - `debug`
-  - `debug_render_root`
-  - `review_mode`
 
 ### 5.3 参数原则
 
@@ -844,8 +864,9 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
-  --rcsdroad-path /mnt/d/TestData/POC_Data/patch_all/RCSDRoad.gpkg \
-  --rcsdnode-path /mnt/d/TestData/POC_Data/patch_all/RCSDNode.gpkg \
+  --divstripzone-path /mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
   --mainnodeid 100 \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage4_divmerge_virtual_polygon \
   --run-id t02_stage4_divmerge_demo \

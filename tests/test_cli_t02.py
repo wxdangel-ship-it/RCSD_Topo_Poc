@@ -123,11 +123,56 @@ def test_t02_stage4_divmerge_virtual_polygon_cli_accepts_expected_args(monkeypat
         captured["nodes_path"] = args.nodes_path
         captured["roads_path"] = args.roads_path
         captured["drivezone_path"] = args.drivezone_path
+        captured["divstripzone_path"] = args.divstripzone_path
         captured["rcsdroad_path"] = args.rcsdroad_path
         captured["rcsdnode_path"] = args.rcsdnode_path
         captured["mainnodeid"] = args.mainnodeid
         captured["out_root"] = args.out_root
         captured["debug"] = args.debug
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_t02_stage4_divmerge_virtual_polygon", _fake_cmd)
+
+    exit_code = cli.main(
+        [
+            "t02-stage4-divmerge-virtual-polygon",
+            "--nodes_path",
+            str(tmp_path / "nodes.gpkg"),
+            "--roads_path",
+            str(tmp_path / "roads.gpkg"),
+            "--drivezone_path",
+            str(tmp_path / "drivezone.gpkg"),
+            "--divstripzone_path",
+            str(tmp_path / "divstripzone.gpkg"),
+            "--rcsdroad_path",
+            str(tmp_path / "rcsdroad.gpkg"),
+            "--rcsdnode_path",
+            str(tmp_path / "rcsdnode.gpkg"),
+            "--mainnodeid",
+            "100",
+            "--out_dir",
+            str(tmp_path / "out"),
+            "--debug",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
+    assert captured["roads_path"] == str(tmp_path / "roads.gpkg")
+    assert captured["drivezone_path"] == str(tmp_path / "drivezone.gpkg")
+    assert captured["divstripzone_path"] == str(tmp_path / "divstripzone.gpkg")
+    assert captured["rcsdroad_path"] == str(tmp_path / "rcsdroad.gpkg")
+    assert captured["rcsdnode_path"] == str(tmp_path / "rcsdnode.gpkg")
+    assert captured["mainnodeid"] == "100"
+    assert captured["out_root"] == str(tmp_path / "out")
+    assert captured["debug"] is True
+
+
+def test_t02_stage4_divmerge_virtual_polygon_cli_allows_missing_divstrip(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_cmd(args) -> int:
+        captured["divstripzone_path"] = args.divstripzone_path
         return 0
 
     monkeypatch.setattr(cli, "_cmd_t02_stage4_divmerge_virtual_polygon", _fake_cmd)
@@ -147,21 +192,11 @@ def test_t02_stage4_divmerge_virtual_polygon_cli_accepts_expected_args(monkeypat
             str(tmp_path / "rcsdnode.gpkg"),
             "--mainnodeid",
             "100",
-            "--out_dir",
-            str(tmp_path / "out"),
-            "--debug",
         ]
     )
 
     assert exit_code == 0
-    assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
-    assert captured["roads_path"] == str(tmp_path / "roads.gpkg")
-    assert captured["drivezone_path"] == str(tmp_path / "drivezone.gpkg")
-    assert captured["rcsdroad_path"] == str(tmp_path / "rcsdroad.gpkg")
-    assert captured["rcsdnode_path"] == str(tmp_path / "rcsdnode.gpkg")
-    assert captured["mainnodeid"] == "100"
-    assert captured["out_root"] == str(tmp_path / "out")
-    assert captured["debug"] is True
+    assert captured["divstripzone_path"] is None
 
 
 def test_t02_virtual_intersection_poc_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> None:

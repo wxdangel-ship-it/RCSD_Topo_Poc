@@ -54,7 +54,7 @@ if [[ -n "$MAX_CASES" ]] && ! [[ "$MAX_CASES" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH DIVSTRIPZONE_PATH RCSDROAD_PATH RCSDNODE_PATH; do
+for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH; do
   path_value="${!path_var}"
   if [[ ! -f "$path_value" ]]; then
     echo "[BLOCK] $path_var does not exist: $path_value" >&2
@@ -150,8 +150,6 @@ echo "[RUN] MAX_CASES=${MAX_CASES:-<all eligible cases>}"
 echo "[RUN] CANDIDATE_LIST_PATH=$CANDIDATE_LIST_PATH"
 echo "[RUN] SUMMARY_PATH=$SUMMARY_PATH"
 echo "[RUN] Eligible cases are auto-discovered from representative nodes where has_evd=yes, is_anchor=no, kind_2 in {8, 16}."
-echo "[INFO] DIVSTRIPZONE_PATH is frozen for internal Stage4 context, but the current Stage4 baseline does not consume it yet."
-
 CASE_IDS_TEXT="$(printf '%s\n' "${CASE_IDS[@]}")"
 CASE_IDS_JSON="$(
   CASE_IDS_TEXT="$CASE_IDS_TEXT" "$PYTHON_BIN" - <<'PY'
@@ -169,6 +167,7 @@ REPO_DIR="$REPO_DIR" \
 NODES_PATH="$NODES_PATH" \
 ROADS_PATH="$ROADS_PATH" \
 DRIVEZONE_PATH="$DRIVEZONE_PATH" \
+DIVSTRIPZONE_PATH="$DIVSTRIPZONE_PATH" \
 RCSDROAD_PATH="$RCSDROAD_PATH" \
 RCSDNODE_PATH="$RCSDNODE_PATH" \
 NODES_LAYER="$NODES_LAYER" \
@@ -243,6 +242,9 @@ def run_case(case_id):
     _append_optional_arg(cmd, "--roads-crs", os.environ.get("ROADS_CRS", "").strip())
     _append_optional_arg(cmd, "--drivezone-layer", os.environ.get("DRIVEZONE_LAYER", "").strip())
     _append_optional_arg(cmd, "--drivezone-crs", os.environ.get("DRIVEZONE_CRS", "").strip())
+    divstripzone_path = os.environ.get("DIVSTRIPZONE_PATH", "").strip()
+    if divstripzone_path and Path(divstripzone_path).is_file():
+        cmd.extend(["--divstripzone-path", divstripzone_path])
     _append_optional_arg(cmd, "--rcsdroad-layer", os.environ.get("RCSDROAD_LAYER", "").strip())
     _append_optional_arg(cmd, "--rcsdroad-crs", os.environ.get("RCSDROAD_CRS", "").strip())
     _append_optional_arg(cmd, "--rcsdnode-layer", os.environ.get("RCSDNODE_LAYER", "").strip())

@@ -178,6 +178,10 @@
 - stage4 的“前后区域范围”先按保守虚拟面处理：
   - 事件核心区
   - 选定分支组前后臂区
+- 主 `RCSDNode` 不再被解释为无条件精确 seed：
+  - `kind_2 = 16` 时，允许位于分歧前主干 `<=20m`
+  - `kind_2 = 8` 时，允许位于合流后主干 `<=20m`
+  - 超窗、方向错误或明显 off-trunk 时，不得记为 `accepted/stable`
 - 若覆盖失败但输入完整，记 `review_required` 风险，不得 silent fix
 - 若 `mainnodeid` 关联不稳定、patch 无法形成主连通域、关键字段缺失或 CRS 无法统一到 `EPSG:3857`，必须报异常
 
@@ -351,13 +355,18 @@
 
 ### 10.1 目标
 - 处理 `has_evd = yes`、`is_anchor = no` 且 `kind_2 in {8, 16}` 的单个 `mainnodeid`。
-- 生成保守虚拟路口面，覆盖目标 `mainnodeid` 对应的 `RCSDNode` seed 与相关 node。
+- 生成保守虚拟路口面，覆盖目标 `mainnodeid` 对应的主 `RCSDNode` 与相关 node。
 
 ### 10.2 当前业务规则
 - `kind_2 = 8` 归因为 merge（`2 in 1 out`）。
 - `kind_2 = 16` 归因为 diverge（`1 in 2 out`）。
 - stage4 采用 stage3 的栅格策略主线：
   - patch + mask + 连通提取 + 回矢量 + 审计
+- stage4 对主 `RCSDNode` 应用主干有向容差：
+  - `kind_2 = 16`：允许主 `RCSDNode` 位于分歧前主干 `<=20m`
+  - `kind_2 = 8`：允许主 `RCSDNode` 位于合流后主干 `<=20m`
+  - 命中窗口时，可沿 trunk corridor 定向延伸 polygon
+  - 超窗、方向错误或 off-trunk 时，进入 `review_required`
 - stage4 不重写 `nodes.is_anchor`，也不并入统一锚定结果。
 
 ### 10.3 当前正式输出语义

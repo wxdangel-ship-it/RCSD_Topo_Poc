@@ -24,6 +24,7 @@ def test_smoke_t02_stage4_divmerge_virtual_polygon() -> None:
     nodes_path = inputs_dir / "nodes.gpkg"
     roads_path = inputs_dir / "roads.gpkg"
     drivezone_path = inputs_dir / "drivezone.gpkg"
+    divstripzone_path = inputs_dir / "divstripzone.gpkg"
     rcsdroad_path = inputs_dir / "rcsdroad.gpkg"
     rcsdnode_path = inputs_dir / "rcsdnode.gpkg"
 
@@ -75,6 +76,11 @@ def test_smoke_t02_stage4_divmerge_virtual_polygon() -> None:
         crs_text="EPSG:3857",
     )
     write_vector(
+        divstripzone_path,
+        [{"properties": {"id": "divstrip_0"}, "geometry": box(18.0, -4.0, 30.0, 4.0)}],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
         rcsdroad_path,
         [
             {"properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 55.0)])},
@@ -103,6 +109,8 @@ def test_smoke_t02_stage4_divmerge_virtual_polygon() -> None:
             str(roads_path),
             "--drivezone_path",
             str(drivezone_path),
+            "--divstripzone_path",
+            str(divstripzone_path),
             "--rcsdroad_path",
             str(rcsdroad_path),
             "--rcsdnode_path",
@@ -128,3 +136,14 @@ def test_smoke_t02_stage4_divmerge_virtual_polygon() -> None:
     status_doc = json.loads((run_dir / "stage4_status.json").read_text(encoding="utf-8"))
     assert status_doc["success"] is True
     assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["divstrip"]["divstrip_present"] is True
+    assert status_doc["divstrip"]["divstrip_nearby"] is True
+    assert status_doc["divstrip"]["divstrip_component_count"] == 1
+    assert status_doc["multibranch"]["multibranch_enabled"] is False
+    assert status_doc["multibranch"]["event_candidate_count"] == 0
+    assert isinstance(status_doc["reverse_tip"]["reverse_tip_attempted"], bool)
+    assert isinstance(status_doc["reverse_tip"]["reverse_tip_used"], bool)
+    assert status_doc["continuous_chain"]["is_in_continuous_chain"] is False
+    assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_1"
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_rule"] == "merge_main_seed_on_post_trunk_le_20m"
+    assert isinstance(status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"], bool)

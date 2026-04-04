@@ -14,7 +14,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 
 
 @pytest.mark.smoke
-def test_smoke_t02_aggregate_continuous_divmerge() -> None:
+def test_smoke_t02_aggregate_continuous_divmerge(capsys: pytest.CaptureFixture[str]) -> None:
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     root = Path("outputs/_work/smoke_t02_aggregate_continuous_divmerge") / f"{run_id}_{os.getpid()}"
     inputs_dir = root / "inputs"
@@ -76,10 +76,16 @@ def test_smoke_t02_aggregate_continuous_divmerge() -> None:
     assert roads_fix_path.is_file()
     assert report_path.is_file()
 
+    stdout = capsys.readouterr().out
+    assert "Complex junction count: 1" in stdout
+    assert "Complex junction mainnodeids: 200" in stdout
+
     with fiona.open(nodes_fix_path) as src:
         props_by_id = {str(feature["properties"]["id"]): dict(feature["properties"]) for feature in src}
     assert props_by_id["200"]["kind_2"] == 128
     assert props_by_id["100"]["mainnodeid"] == "200"
 
     report_doc = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report_doc["counts"]["complex_junction_count"] == 1
+    assert report_doc["complex_mainnodeids"] == ["200"]
     assert report_doc["counts"]["aggregated_component_count"] == 1

@@ -132,6 +132,8 @@ def test_aggregate_continuous_divmerge_merges_diverge_to_merge_component(tmp_pat
     )
 
     assert artifacts.success is True
+    assert artifacts.complex_junction_count == 1
+    assert artifacts.complex_mainnodeids == ("200",)
     nodes_fix = _load_properties_by_id(nodes_fix_path)
     assert nodes_fix["200"]["mainnodeid"] == "200"
     assert nodes_fix["200"]["kind"] == 128
@@ -155,6 +157,8 @@ def test_aggregate_continuous_divmerge_merges_diverge_to_merge_component(tmp_pat
     assert roads_fix["r-200-out"]["formway"] == 1
 
     report_doc = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report_doc["counts"]["complex_junction_count"] == 1
+    assert report_doc["complex_mainnodeids"] == ["200"]
     assert report_doc["counts"]["aggregated_component_count"] == 1
     assert report_doc["rows"][0]["status"] == "aggregated"
     assert report_doc["rows"][0]["mainnodeid"] == "200"
@@ -184,6 +188,8 @@ def test_aggregate_continuous_divmerge_rejects_diverge_to_merge_over_75m(tmp_pat
     assert roads_fix["r-main-3"]["formway"] == 1
 
     report_doc = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report_doc["counts"]["complex_junction_count"] == 0
+    assert report_doc["complex_mainnodeids"] == []
     assert report_doc["counts"]["aggregated_component_count"] == 0
 
 
@@ -205,4 +211,6 @@ def test_aggregate_continuous_divmerge_keeps_non_diverge_merge_pair_on_50m_limit
     assert nodes_fix["100"]["mainnodeid"] == "100"
     assert nodes_fix["200"]["mainnodeid"] == "200"
     report_doc = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report_doc["counts"]["complex_junction_count"] == 0
+    assert report_doc["complex_mainnodeids"] == []
     assert report_doc["counts"]["aggregated_component_count"] == 0

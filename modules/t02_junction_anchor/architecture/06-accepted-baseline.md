@@ -389,6 +389,10 @@
   - `nodes_fix.gpkg`
   - `roads_fix.gpkg`
   - `continuous_divmerge_report.json`
+- `continuous_divmerge_report.json` 同步输出：
+  - `counts.complex_junction_count`
+  - `complex_mainnodeids`
+- CLI 结束时同步打印复杂路口数量和 `mainnodeid` 列表摘要。
 - 它不重算 stage1 / stage2 / stage3 / stage4，也不回写统一锚定结果。
 
 ## 10. 阶段四：stage4，diverge / merge virtual polygon

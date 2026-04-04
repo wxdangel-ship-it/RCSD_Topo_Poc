@@ -784,6 +784,10 @@ python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
     - component 内连续链路的 `roads.formway = 2048`
     - mainnode 的 `subnodeid` 当前写为整组 node id 的逗号拼接，包含 mainnode 自身
   - 输出独立 `nodes_fix.gpkg / roads_fix.gpkg / continuous_divmerge_report.json`
+  - `continuous_divmerge_report.json` 必须同步输出：
+    - `counts.complex_junction_count`
+    - `complex_mainnodeids`
+  - CLI 结束时必须打印复杂路口数量和 `mainnodeid` 列表摘要
   - 该工具不回写 stage3 / stage4 产物，也不属于统一锚定主线
 
 ### 4.5 程序内入口

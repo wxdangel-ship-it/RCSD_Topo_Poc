@@ -89,6 +89,8 @@ class AggregateContinuousDivmergeArtifacts:
     nodes_fix_path: Path
     roads_fix_path: Path
     report_path: Path
+    complex_mainnodeids: tuple[str, ...]
+    complex_junction_count: int
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -626,6 +628,14 @@ def run_t02_aggregate_continuous_divmerge(
             }
         )
 
+    complex_mainnodeids = tuple(
+        sorted(
+            [str(row["mainnodeid"]) for row in aggregated_rows if row["status"] == "aggregated" and row.get("mainnodeid") is not None],
+            key=_sort_key,
+        )
+    )
+    complex_junction_count = len(complex_mainnodeids)
+
     nodes_fix_features = [_serialize_feature(feature) for feature in nodes_layer_data.features]
     roads_fix_features = [_serialize_feature(feature) for feature in roads_layer_data.features]
     write_vector(nodes_fix_path, nodes_fix_features, crs_text=TARGET_CRS.to_string())
@@ -660,11 +670,13 @@ def run_t02_aggregate_continuous_divmerge(
                 "candidate_node_count": len(candidate_nodes),
                 "chain_edge_count": len(chain_edges),
                 "chain_component_count": len(chain_components),
+                "complex_junction_count": complex_junction_count,
                 "aggregated_component_count": sum(1 for row in aggregated_rows if row["status"] == "aggregated"),
                 "skipped_component_count": sum(1 for row in aggregated_rows if row["status"] != "aggregated"),
                 "updated_node_count": len(updated_node_ids),
                 "updated_road_count": len(updated_road_ids),
             },
+            "complex_mainnodeids": list(complex_mainnodeids),
             "diag": chain_diag,
             "rows": aggregated_rows,
         },
@@ -674,6 +686,8 @@ def run_t02_aggregate_continuous_divmerge(
         nodes_fix_path=nodes_fix_path,
         roads_fix_path=roads_fix_path,
         report_path=report_path,
+        complex_mainnodeids=complex_mainnodeids,
+        complex_junction_count=complex_junction_count,
     )
 
 
@@ -695,4 +709,9 @@ def run_t02_aggregate_continuous_divmerge_cli(args: argparse.Namespace) -> int:
         return 1
 
     print(f"T02 continuous div/merge aggregation completed: {artifacts.nodes_fix_path}")
+    print(f"Complex junction count: {artifacts.complex_junction_count}")
+    print(
+        "Complex junction mainnodeids: "
+        + (",".join(artifacts.complex_mainnodeids) if artifacts.complex_mainnodeids else "<none>")
+    )
     return 0

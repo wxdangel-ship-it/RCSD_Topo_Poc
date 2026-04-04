@@ -116,6 +116,41 @@ def test_t02_fix_node_error_2_cli_accepts_expected_args(monkeypatch, tmp_path: P
     assert captured["report_path"] == str(tmp_path / "fix_report.json")
 
 
+def test_t02_aggregate_continuous_divmerge_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_cmd(args) -> int:
+        captured["nodes_path"] = args.nodes_path
+        captured["roads_path"] = args.roads_path
+        captured["nodes_fix_path"] = args.nodes_fix_path
+        captured["roads_fix_path"] = args.roads_fix_path
+        captured["report_path"] = args.report_path
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_t02_aggregate_continuous_divmerge", _fake_cmd)
+
+    exit_code = cli.main(
+        [
+            "t02-aggregate-continuous-divmerge",
+            "--nodes_path",
+            str(tmp_path / "nodes.gpkg"),
+            "--roads_path",
+            str(tmp_path / "roads.gpkg"),
+            "--nodes_fix_path",
+            str(tmp_path / "nodes_fix.gpkg"),
+            "--roads_fix_path",
+            str(tmp_path / "roads_fix.gpkg"),
+            "--report_path",
+            str(tmp_path / "report.json"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["nodes_path"] == str(tmp_path / "nodes.gpkg")
+    assert captured["roads_path"] == str(tmp_path / "roads.gpkg")
+    assert captured["nodes_fix_path"] == str(tmp_path / "nodes_fix.gpkg")
+    assert captured["roads_fix_path"] == str(tmp_path / "roads_fix.gpkg")
+    assert captured["report_path"] == str(tmp_path / "report.json")
 def test_t02_stage4_divmerge_virtual_polygon_cli_accepts_expected_args(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 

@@ -10,6 +10,7 @@
   - stage2 `anchor recognition / anchor existence`
   - stage3 `virtual intersection anchoring`
   - stage4 `diverge / merge virtual polygon`
+  - 连续分歧 / 合流复杂路口聚合离线工具
 - 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础。
 - `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口。
 - `t02-stage4-divmerge-virtual-polygon` 是当前 stage4 独立入口，只输出虚拟路口面及关联审计，不回写 `nodes.is_anchor`。
@@ -46,6 +47,10 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
 python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
 ```
 
+```bash
+python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
+```
+
 - `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口
 - 默认 `case-package` 模式保持既有单 `mainnodeid` baseline 回归能力
 - 显式 `--input-mode full-input` 时，统一承接：
@@ -55,6 +60,7 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
 - `t02-fix-node-error-2` 是独立离线修复工具，只消费 `node_error_2 / nodes / roads / RCSDIntersection` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json`；它不属于 stage 主流程
 - `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 / 多 `mainnodeid` 文本证据包导出与解包，服务于 stage3 复核与外部复现
 - `t02-stage4-divmerge-virtual-polygon` 用于单 case 的 div/merge 虚拟路口面 baseline，输入为 `nodes / roads / DriveZone / DivStripZone / RCSDRoad / RCSDNode / mainnodeid`
+- `t02-aggregate-continuous-divmerge` 是独立离线聚合工具，按 T04 continuous chain 语义识别连续分歧/合流组，改写 `nodes / roads` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / continuous_divmerge_report.json`
 - T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
 - T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
 - `case-package` 是 stage3 baseline regression 入口，不允许回退
@@ -108,6 +114,17 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage4_divmerge_virtual_polygon \
   --run-id t02_stage4_divmerge_demo \
   --debug
+```
+
+连续分歧 / 合流聚合工具示例：
+
+```bash
+python -m rcsd_topo_poc t02-aggregate-continuous-divmerge \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --nodes-fix-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_continuous_divmerge/nodes_fix.gpkg \
+  --roads-fix-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_continuous_divmerge/roads_fix.gpkg \
+  --report-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_continuous_divmerge/continuous_divmerge_report.json
 ```
 
 内网 Stage4 全量运行脚本：

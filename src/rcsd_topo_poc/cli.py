@@ -211,6 +211,14 @@ def _cmd_t02_fix_node_error_2(args: argparse.Namespace) -> int:
     return run_t02_fix_node_error_2_cli(args)
 
 
+def _cmd_t02_aggregate_continuous_divmerge(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t02_junction_anchor.aggregate_continuous_divmerge import (
+        run_t02_aggregate_continuous_divmerge_cli,
+    )
+
+    return run_t02_aggregate_continuous_divmerge_cli(args)
+
+
 def _cmd_t02_stage4_divmerge_virtual_polygon(args: argparse.Namespace) -> int:
     from rcsd_topo_poc.modules.t02_junction_anchor.stage4_divmerge_virtual_polygon import (
         run_t02_stage4_divmerge_virtual_polygon_cli,
@@ -770,6 +778,50 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Optional audit JSON output path. Defaults to sibling fix_report.json next to nodes_fix.",
     )
     p_t02_fix_node_error_2.set_defaults(func=_cmd_t02_fix_node_error_2)
+
+    p_t02_chain_agg = sub.add_parser(
+        "t02-aggregate-continuous-divmerge",
+        help="Aggregate continuous div/merge stage4 candidates into complex junction nodes/roads.",
+    )
+    p_t02_chain_agg.add_argument(
+        "--nodes-path",
+        "--nodes_path",
+        required=True,
+        dest="nodes_path",
+        help="Path to T02 stage2 nodes GeoPackage/GeoJSON/Shapefile.",
+    )
+    p_t02_chain_agg.add_argument("--nodes-layer", help="Optional nodes layer name.")
+    p_t02_chain_agg.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
+    p_t02_chain_agg.add_argument(
+        "--roads-path",
+        "--roads_path",
+        required=True,
+        dest="roads_path",
+        help="Path to roads GeoPackage/GeoJSON/Shapefile.",
+    )
+    p_t02_chain_agg.add_argument("--roads-layer", help="Optional roads layer name.")
+    p_t02_chain_agg.add_argument("--roads-crs", help="Optional roads CRS override, e.g. EPSG:4326.")
+    p_t02_chain_agg.add_argument(
+        "--nodes-fix-path",
+        "--nodes_fix_path",
+        required=True,
+        dest="nodes_fix_path",
+        help="Output path for aggregated nodes GeoPackage.",
+    )
+    p_t02_chain_agg.add_argument(
+        "--roads-fix-path",
+        "--roads_fix_path",
+        required=True,
+        dest="roads_fix_path",
+        help="Output path for aggregated roads GeoPackage.",
+    )
+    p_t02_chain_agg.add_argument(
+        "--report-path",
+        "--report_path",
+        dest="report_path",
+        help="Optional audit JSON output path. Defaults to sibling continuous_divmerge_report.json next to nodes_fix.",
+    )
+    p_t02_chain_agg.set_defaults(func=_cmd_t02_aggregate_continuous_divmerge)
 
     p_t02_stage4 = sub.add_parser(
         "t02-stage4-divmerge-virtual-polygon",

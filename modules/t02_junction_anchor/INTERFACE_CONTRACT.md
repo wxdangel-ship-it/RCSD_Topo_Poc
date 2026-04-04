@@ -17,11 +17,13 @@
   - stage2 anchor recognition / anchor existence 最小闭环
   - stage3 `virtual intersection anchoring` baseline
   - stage4 `diverge / merge virtual polygon` 独立成果
+  - 连续分歧 / 合流复杂路口聚合离线工具
   - `t02-virtual-intersection-poc` baseline 入口：
     - 默认 `case-package`
     - 可显式切换 `--input-mode full-input`
   - 单 / 多 `mainnodeid` 文本证据包支撑入口
   - 独立离线修复工具 `t02-fix-node-error-2`
+  - 独立连续分歧 / 合流聚合工具 `t02-aggregate-continuous-divmerge`
   - 消费 T01 `segment` 与 `nodes`
   - 消费 `DriveZone`、`RCSDIntersection`、`roads`、`RCSDRoad`、`RCSDNode`
   - 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit/log` 与 stage3 产物
@@ -760,7 +762,31 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
 - 该入口只做单 case baseline，不进入 full-input 批处理
 - 该入口不重算 stage1 / stage2，也不写回 `nodes.is_anchor`
 
-### 4.4 程序内入口
+### 4.4 独立离线修复与聚合工具
+
+```bash
+python -m rcsd_topo_poc t02-fix-node-error-2 --help
+python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
+```
+
+- `t02-fix-node-error-2` 是独立离线修复工具，只处理 `node_error_2` 相关修复，不属于 stage 主流程
+- `t02-aggregate-continuous-divmerge` 是独立离线聚合工具：
+  - 输入为带 `has_evd / is_anchor / kind_2` 的 stage2 `nodes` 与配套 `roads`
+  - 候选只取代表 node 满足 `has_evd = yes`、`is_anchor = no`、`kind_2 in {8,16}`
+  - 连续链识别语义对齐 T04 continuous chain：
+    - `diverge -> merge` 距离阈值 `75m`
+    - 其他连续 pair 距离阈值 `50m`
+    - 仅沿 `direction in {2,3}` 的有效有向 road 搜索
+  - 对每个可聚合 DAG component：
+    - 取 `grade` 最高等级节点（`1` 最高）为 mainnode
+    - mainnode 写 `kind = 128`、`kind_2 = 128`
+    - 其余 node 写 `mainnodeid = <mainnodeid>`、`grade = 0`、`kind = 0`、`grade_2 = 0`、`kind_2 = 0`
+    - component 内连续链路的 `roads.formway = 2048`
+    - mainnode 的 `subnodeid` 当前写为整组 node id 的逗号拼接，包含 mainnode 自身
+  - 输出独立 `nodes_fix.gpkg / roads_fix.gpkg / continuous_divmerge_report.json`
+  - 该工具不回写 stage3 / stage4 产物，也不属于统一锚定主线
+
+### 4.5 程序内入口
 
 - [stage1_drivezone_gate.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/stage1_drivezone_gate.py)
   - `run_t02_stage1_drivezone_gate(...)`
@@ -780,6 +806,9 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
 - [stage4_divmerge_virtual_polygon.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/stage4_divmerge_virtual_polygon.py)
   - `run_t02_stage4_divmerge_virtual_polygon(...)`
   - `run_t02_stage4_divmerge_virtual_polygon_cli(args)`
+- [aggregate_continuous_divmerge.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/aggregate_continuous_divmerge.py)
+  - `run_t02_aggregate_continuous_divmerge(...)`
+  - `run_t02_aggregate_continuous_divmerge_cli(args)`
 
 ## 5. Params
 
@@ -836,7 +865,20 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
   - `run_id`
   - `debug`
 
-### 5.3 参数原则
+### 5.4 连续分歧 / 合流聚合工具参数
+
+- 必选输入：
+  - `nodes_path`
+  - `roads_path`
+  - `nodes_fix_path`
+  - `roads_fix_path`
+- 可选兼容：
+  - `nodes_layer / roads_layer`
+  - `nodes_crs / roads_crs`
+- 可选输出：
+  - `report_path`
+
+### 5.5 参数原则
 
 - 所有输入兼容都必须显式声明；不能猜字段、猜 CRS、猜 fallback。
 - stage1 当前没有业务阈值参数，也不开放 stage2 相关参数。
@@ -879,6 +921,15 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_stage4_divmerge_virtual_polygon \
   --run-id t02_stage4_divmerge_demo \
   --debug
+```
+
+```bash
+python -m rcsd_topo_poc t02-aggregate-continuous-divmerge \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --nodes-fix-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_continuous_divmerge/nodes_fix.gpkg \
+  --roads-fix-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_continuous_divmerge/roads_fix.gpkg \
+  --report-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_continuous_divmerge/continuous_divmerge_report.json
 ```
 
 ```bash

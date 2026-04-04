@@ -7,6 +7,7 @@
   - 若实现与本文档冲突，应先视为实现待对齐，不得自行改写 accepted baseline。
   - 若 T01 上游事实、当前实现与本文档之间存在理解分歧，应先说明 T02 文档存在歧义，再由业务拍板。
   - `t02-fix-node-error-2` 与文本证据包是独立支撑入口，不改写 stage1 / stage2 / stage3 主阶段链。
+  - 连续分歧 / 合流聚合工具是独立支撑入口，不构成新的业务阶段。
   - stage4 是独立并行成果，不写回 `nodes.is_anchor`，也不并入统一锚定结果。
 
 ## 2. 目标
@@ -29,10 +30,11 @@
 - 独立支撑入口：
   - 单 / 多 `mainnodeid` 文本证据包
   - `t02-fix-node-error-2` 离线修复工具
+  - `t02-aggregate-continuous-divmerge` 连续分歧 / 合流聚合离线工具
 
 说明：
 - stage3 已纳入当前正式 baseline。
-- 文本证据包与 `t02-fix-node-error-2` 不属于新的业务阶段。
+- 文本证据包、`t02-fix-node-error-2` 与 `t02-aggregate-continuous-divmerge` 不属于新的业务阶段。
 - 当前正式阶段链只包含 stage1 / stage2 / stage3 / stage4，不包含最终唯一锚定决策闭环、概率阶段或正式产线级全量治理闭环。
 
 ## 4. 当前有效输入
@@ -364,6 +366,31 @@
   - 合并后更新 `nodes_fix`，并删除“组内且面内”的 `roads_fix` 目标 road
 - 它不重算 stage2，也不改写 `node_error_2` 的生成逻辑。
 
+### 9.3 连续分歧 / 合流聚合离线工具
+- `t02-aggregate-continuous-divmerge` 是独立离线聚合工具，不挂到 stage 主入口中。
+- 它只消费：
+  - `nodes`
+  - `roads`
+- 候选只取代表 node 满足：
+  - `has_evd = yes`
+  - `is_anchor = no`
+  - `kind_2 in {8, 16}`
+- 连续链识别当前对齐 T04 continuous chain 语义：
+  - `diverge -> merge` 距离阈值 `75m`
+  - 其他连续 pair 距离阈值 `50m`
+  - 仅沿 `direction in {2,3}` 的有效有向 road 搜索
+- 聚合输出当前口径：
+  - 主 node 取整组 `grade` 最高等级（`1` 最高）
+  - 主 node 写 `kind = 128`、`kind_2 = 128`
+  - 其余 node 写 `mainnodeid = <mainnodeid>`、`grade = 0`、`kind = 0`、`grade_2 = 0`、`kind_2 = 0`
+  - 组内连续链路的 `roads.formway = 2048`
+  - 主 node 的 `subnodeid` 写整组 node id 的逗号拼接，包含主 node 自身
+- 它只输出：
+  - `nodes_fix.gpkg`
+  - `roads_fix.gpkg`
+  - `continuous_divmerge_report.json`
+- 它不重算 stage1 / stage2 / stage3 / stage4，也不回写统一锚定结果。
+
 ## 10. 阶段四：stage4，diverge / merge virtual polygon
 
 ### 10.1 目标
@@ -402,6 +429,7 @@
 - full-input 已支持统一汇总 `virtual_intersection_polygons.gpkg` 与 `_rendered_maps/`。
 - 文本证据包已明确为 stage3 支撑工具，不属于新的业务阶段。
 - `t02-fix-node-error-2` 已明确为独立离线修复工具，不纳入 stage 主流程。
+- `t02-aggregate-continuous-divmerge` 已明确为独立离线聚合工具，不纳入 stage 主流程。
 
 ## 11. 当前仍需继续验证 / 修正的内容
 - 少量 stage2 `fail1 / fail2 / anchor_reason` 的边界 case 仍需继续回归验证。

@@ -117,6 +117,7 @@ RAY_GAP_STEPS = 3
 RAY_SAMPLE_STEP_MULTIPLIER = 0.5
 SPATIAL_CACHE_VERSION = "v1"
 POC_SPATIAL_CACHE_DIR = Path(__file__).resolve().parents[4] / "outputs" / "_work" / "t02_poc_spatial_cache"
+PATCH_ID_FIELD_NAMES = ("patchid", "patch_id")
 
 REASON_MISSING_REQUIRED_FIELD = "missing_required_field"
 REASON_INVALID_CRS_OR_UNPROJECTABLE = "invalid_crs_or_unprojectable"
@@ -1109,6 +1110,63 @@ def _parse_roads(layer: LoadedLayer, *, label: str) -> list[ParsedRoad]:
             )
         )
     return parsed
+
+
+def _normalize_single_patch_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if any(separator in text for separator in (",", ";", "|")):
+        return None
+    return _normalize_id(text)
+
+
+def _patch_id_from_properties(properties: dict[str, Any]) -> str | None:
+    for field_name in PATCH_ID_FIELD_NAMES:
+        if field_name in properties:
+            return _normalize_single_patch_id(properties.get(field_name))
+    return None
+
+
+def _resolve_current_patch_id_from_roads(
+    *,
+    group_nodes: list[ParsedNode],
+    roads: list[ParsedRoad],
+) -> str | None:
+    member_node_ids = {node.node_id for node in group_nodes}
+    patch_ids = {
+        patch_id
+        for road in roads
+        if road.snodeid in member_node_ids or road.enodeid in member_node_ids
+        for patch_id in [_patch_id_from_properties(road.properties)]
+        if patch_id is not None
+    }
+    if len(patch_ids) != 1:
+        return None
+    return next(iter(patch_ids))
+
+
+def _filter_parsed_roads_to_patch(
+    roads: list[ParsedRoad],
+    *,
+    patch_id: str | None,
+) -> list[ParsedRoad]:
+    if patch_id is None:
+        return list(roads)
+    return [road for road in roads if _patch_id_from_properties(road.properties) == patch_id]
+
+
+def _filter_loaded_features_to_patch(
+    features: Iterable[LoadedFeature],
+    *,
+    patch_id: str | None,
+) -> list[LoadedFeature]:
+    feature_list = list(features)
+    if patch_id is None:
+        return feature_list
+    return [feature for feature in feature_list if _patch_id_from_properties(feature.properties) == patch_id]
 
 
 def _road_flow_flags_for_group(road: ParsedRoad, member_node_ids: set[str]) -> tuple[bool, bool]:
@@ -3979,8 +4037,13 @@ def run_t02_virtual_intersection_poc(
             current_stage="inputs_loaded",
             message="Loaded local POC inputs around the target junction.",
         )
-        local_roads = parsed_roads
-        local_drivezone_features = [feature for feature in drivezone_layer_data.features if feature.geometry is not None]
+        current_patch_id = _resolve_current_patch_id_from_roads(group_nodes=group_nodes, roads=parsed_roads)
+        local_roads = _filter_parsed_roads_to_patch(parsed_roads, patch_id=current_patch_id)
+        local_drivezone_features = [
+            feature
+            for feature in _filter_loaded_features_to_patch(drivezone_layer_data.features, patch_id=current_patch_id)
+            if feature.geometry is not None
+        ]
         local_rc_roads = parsed_rc_roads
         local_rc_nodes = parsed_rc_nodes
         local_road_degree_by_node_id = _road_degree_by_node_id(local_roads)
@@ -3995,6 +4058,8 @@ def run_t02_virtual_intersection_poc(
         counts["local_drivezone_feature_count"] = len(local_drivezone_features)
         counts["local_rcsdroad_count"] = len(local_rc_roads)
         counts["local_rcsdnode_count"] = len(local_rc_nodes)
+        counts["current_patch_id"] = current_patch_id
+        counts["same_patch_filter_applied"] = current_patch_id is not None
 
         drivezone_union = unary_union([feature.geometry for feature in local_drivezone_features if feature.geometry is not None])
         if out_of_scope_error is not None:

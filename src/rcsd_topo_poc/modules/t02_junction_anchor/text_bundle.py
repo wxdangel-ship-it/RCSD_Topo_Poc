@@ -28,10 +28,14 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     ParsedNode,
     VirtualIntersectionPocError,
     _build_grid,
+    _filter_loaded_features_to_patch,
+    _filter_parsed_roads_to_patch,
     _load_layer_filtered,
     _parse_nodes,
+    _parse_roads,
     _rasterize_geometries,
     _resolve_group,
+    _resolve_current_patch_id_from_roads,
 )
 
 
@@ -53,7 +57,8 @@ LEGACY_TEXT_BUNDLE_META = "META "
 LEGACY_TEXT_BUNDLE_CHECKSUM = "CHECKSUM "
 
 NODE_FIELDS = ("id", "mainnodeid", "has_evd", "is_anchor", "kind_2", "grade_2")
-ROAD_FIELDS = ("id", "direction", "snodeid", "enodeid")
+ROAD_REQUIRED_FIELDS = ("id", "direction", "snodeid", "enodeid")
+ROAD_OPTIONAL_FIELDS = ("patchid", "patch_id")
 RCSDNODE_FIELDS = ("id", "mainnodeid")
 REQUIRED_BUNDLE_FILES = (
     "manifest.json",
@@ -191,6 +196,14 @@ def _filter_properties(properties: dict[str, Any], field_names: tuple[str, ...])
     if missing:
         raise TextBundleError("missing_required_field", f"Missing required fields: {','.join(missing)}")
     return {field_name: properties.get(field_name) for field_name in field_names}
+
+
+def _filter_road_properties(properties: dict[str, Any]) -> dict[str, Any]:
+    filtered = _filter_properties(properties, ROAD_REQUIRED_FIELDS)
+    for field_name in ROAD_OPTIONAL_FIELDS:
+        if field_name in properties:
+            filtered[field_name] = properties.get(field_name)
+    return filtered
 
 
 def _local_feature(
@@ -603,7 +616,17 @@ def _run_t02_export_single_text_bundle(
             query_geometry=patch_query,
         )
 
-        local_drivezone_geometries = [feature.geometry for feature in local_drivezone_layer.features if feature.geometry is not None]
+        parsed_roads = _parse_roads(local_roads_layer, label="roads")
+        current_patch_id = _resolve_current_patch_id_from_roads(group_nodes=group_nodes, roads=parsed_roads)
+        filtered_roads = _filter_parsed_roads_to_patch(parsed_roads, patch_id=current_patch_id)
+        local_drivezone_features = _filter_loaded_features_to_patch(local_drivezone_layer.features, patch_id=current_patch_id)
+        local_divstripzone_features = (
+            None
+            if local_divstripzone_layer is None
+            else _filter_loaded_features_to_patch(local_divstripzone_layer.features, patch_id=current_patch_id)
+        )
+
+        local_drivezone_geometries = [feature.geometry for feature in local_drivezone_features if feature.geometry is not None]
         if not local_drivezone_geometries:
             raise TextBundleError("missing_drivezone", f"mainnodeid='{normalized_mainnodeid}' local buffer has no DriveZone coverage.")
         drivezone_union = unary_union(local_drivezone_geometries)
@@ -611,7 +634,7 @@ def _run_t02_export_single_text_bundle(
         drivezone_mask_png = _mask_png_bytes(drivezone_mask)
 
         drivezone_features = []
-        for feature in local_drivezone_layer.features:
+        for feature in local_drivezone_features:
             drivezone_features.append(
                 _local_feature(
                     properties=dict(feature.properties),
@@ -622,9 +645,9 @@ def _run_t02_export_single_text_bundle(
             )
 
         divstripzone_features: list[dict[str, Any]] | None = None
-        if local_divstripzone_layer is not None:
+        if local_divstripzone_features is not None:
             divstripzone_features = []
-            for feature in local_divstripzone_layer.features:
+            for feature in local_divstripzone_features:
                 divstripzone_features.append(
                     _local_feature(
                         properties=dict(feature.properties),
@@ -646,11 +669,11 @@ def _run_t02_export_single_text_bundle(
             )
 
         roads_features = []
-        for feature in local_roads_layer.features:
+        for road in filtered_roads:
             roads_features.append(
                 _local_feature(
-                    properties=_filter_properties(feature.properties, ROAD_FIELDS),
-                    geometry=feature.geometry,
+                    properties=_filter_road_properties(road.properties),
+                    geometry=road.geometry,
                     origin_x=origin_x,
                     origin_y=origin_y,
                 )
@@ -660,7 +683,7 @@ def _run_t02_export_single_text_bundle(
         for feature in local_rcsdroad_layer.features:
             rcsdroad_features.append(
                 _local_feature(
-                    properties=_filter_properties(feature.properties, ROAD_FIELDS),
+                    properties=_filter_properties(feature.properties, ROAD_REQUIRED_FIELDS),
                     geometry=feature.geometry,
                     origin_x=origin_x,
                     origin_y=origin_y,
@@ -686,6 +709,7 @@ def _run_t02_export_single_text_bundle(
             "bundle_version": TEXT_BUNDLE_VERSION,
             "bundle_mode": TEXT_BUNDLE_MODE_SINGLE,
             "mainnodeid": normalized_mainnodeid,
+            "current_patch_id": current_patch_id,
             "epsg": TARGET_CRS.to_epsg(),
             "buffer_m": buffer_m,
             "patch_size_m": patch_size_m,

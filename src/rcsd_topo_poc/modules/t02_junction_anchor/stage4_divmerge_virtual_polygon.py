@@ -43,6 +43,8 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _build_grid,
     _build_road_branches_for_member_nodes,
     _extract_seed_component,
+    _filter_loaded_features_to_patch,
+    _filter_parsed_roads_to_patch,
     _load_layer_filtered,
     _mask_to_geometry,
     _parse_nodes,
@@ -51,6 +53,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _rasterize_geometries,
     _regularize_virtual_polygon_geometry,
     _resolve_group,
+    _resolve_current_patch_id_from_roads,
     _select_main_pair,
     _write_debug_rendered_map,
 )
@@ -1202,6 +1205,14 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 ),
             )
 
+        current_patch_id = _resolve_current_patch_id_from_roads(group_nodes=group_nodes, roads=roads)
+        filtered_roads = _filter_parsed_roads_to_patch(roads, patch_id=current_patch_id)
+        filtered_drivezone_features = [
+            feature
+            for feature in _filter_loaded_features_to_patch(drivezone_layer_data.features, patch_id=current_patch_id)
+            if feature.geometry is not None and not feature.geometry.is_empty
+        ]
+
         target_rc_nodes = [
             node
             for node in rcsd_nodes
@@ -1222,7 +1233,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             if primary_main_rc_node is None or normalize_id(node.node_id) != normalize_id(primary_main_rc_node.node_id)
         ]
 
-        drivezone_union = unary_union([feature.geometry for feature in drivezone_layer_data.features if feature.geometry is not None and not feature.geometry.is_empty])
+        drivezone_union = unary_union([feature.geometry for feature in filtered_drivezone_features])
         if drivezone_union.is_empty:
             raise Stage4RunError(REASON_MISSING_REQUIRED_FIELD, "DriveZone layer has no non-empty geometry.")
 
@@ -1248,14 +1259,24 @@ def run_t02_stage4_divmerge_virtual_polygon(
             counts["divstripzone_feature_count"] = len(divstripzone_layer_data.features)
 
         local_nodes = [node for node in nodes if node.geometry.intersects(grid.patch_polygon)]
-        local_roads = [road for road in roads if road.geometry.intersects(grid.patch_polygon)]
+        local_roads = [road for road in filtered_roads if road.geometry.intersects(grid.patch_polygon)]
         local_rcsd_roads = [road for road in rcsd_roads if road.geometry.intersects(grid.patch_polygon)]
         local_rcsd_nodes = [node for node in rcsd_nodes if node.geometry.intersects(grid.patch_polygon)]
         local_divstrip_features = [
             feature
-            for feature in ([] if divstripzone_layer_data is None else divstripzone_layer_data.features)
+            for feature in (
+                []
+                if divstripzone_layer_data is None
+                else _filter_loaded_features_to_patch(divstripzone_layer_data.features, patch_id=current_patch_id)
+            )
             if feature.geometry is not None and not feature.geometry.is_empty
         ]
+        counts["current_patch_id"] = current_patch_id
+        counts["local_node_count"] = len(local_nodes)
+        counts["local_road_count"] = len(local_roads)
+        counts["local_rcsdroad_count"] = len(local_rcsd_roads)
+        counts["local_rcsdnode_count"] = len(local_rcsd_nodes)
+        counts["local_divstrip_feature_count"] = len(local_divstrip_features)
 
         member_node_ids = {node.node_id for node in group_nodes}
         _, _, road_branches = _build_road_branches_for_member_nodes(

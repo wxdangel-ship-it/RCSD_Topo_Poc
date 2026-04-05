@@ -24,6 +24,8 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _build_positive_negative_rc_groups,
     _build_polygon_support_from_association,
     _effect_success_acceptance,
+    _filter_loaded_features_to_patch,
+    _filter_parsed_roads_to_patch,
     _has_structural_side_branch,
     _local_road_mouth_polygon_length_m,
     _max_nonmain_branch_polygon_length_m,
@@ -31,6 +33,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _polygon_branch_length_m,
     _regularize_virtual_polygon_geometry,
     _rc_gap_branch_polygon_length_m,
+    _resolve_current_patch_id_from_roads,
     _select_positive_rc_road_ids,
     _status_from_risks,
     run_t02_virtual_intersection_poc,
@@ -2711,3 +2714,101 @@ def test_regularize_virtual_polygon_geometry_keeps_single_seeded_component_witho
     assert len(regularized.interiors) == 0
     assert regularized.intersects(seed_geometry)
     assert not regularized.intersects(detached)
+
+
+def _write_patch_filtered_poc_inputs(tmp_path: Path) -> dict[str, Path]:
+    nodes_path = tmp_path / "nodes.gpkg"
+    roads_path = tmp_path / "roads.gpkg"
+    drivezone_path = tmp_path / "drivezone.gpkg"
+    rcsdroad_path = tmp_path / "rcsdroad.gpkg"
+    rcsdnode_path = tmp_path / "rcsdnode.gpkg"
+
+    write_vector(
+        nodes_path,
+        [
+            {"properties": {"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 2048, "grade_2": 1}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": "101", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 2048, "grade_2": 1}, "geometry": Point(6.0, 2.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        roads_path,
+        [
+            {"properties": {"id": "road_north", "snodeid": "100", "enodeid": "200", "direction": 2, "patchid": "p1"}, "geometry": LineString([(0.0, 0.0), (0.0, 60.0)])},
+            {"properties": {"id": "road_south", "snodeid": "300", "enodeid": "100", "direction": 2, "patchid": "p1"}, "geometry": LineString([(0.0, -60.0), (0.0, 0.0)])},
+            {"properties": {"id": "road_east", "snodeid": "100", "enodeid": "400", "direction": 2, "patchid": "p1"}, "geometry": LineString([(0.0, 0.0), (55.0, 0.0)])},
+            {"properties": {"id": "road_noise_patch2", "snodeid": "500", "enodeid": "501", "direction": 2, "patchid": "p2"}, "geometry": LineString([(35.0, 42.0), (62.0, 42.0)])},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        drivezone_path,
+        [
+            {"properties": {"patchid": "p1"}, "geometry": unary_union([box(-12.0, -70.0, 12.0, 70.0), box(0.0, -12.0, 75.0, 12.0), box(-25.0, -8.0, 0.0, 8.0)])},
+            {"properties": {"patchid": "p2"}, "geometry": box(30.0, 34.0, 70.0, 50.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        rcsdroad_path,
+        [
+            {"properties": {"id": "rc_north", "snodeid": "100", "enodeid": "901", "direction": 2}, "geometry": LineString([(0.0, 0.0), (0.0, 55.0)])},
+            {"properties": {"id": "rc_south", "snodeid": "902", "enodeid": "100", "direction": 2}, "geometry": LineString([(0.0, -55.0), (0.0, 0.0)])},
+            {"properties": {"id": "rc_east", "snodeid": "100", "enodeid": "903", "direction": 2}, "geometry": LineString([(0.0, 0.0), (45.0, 0.0)])},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        rcsdnode_path,
+        [
+            {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": "901", "mainnodeid": None}, "geometry": Point(0.0, 55.0)},
+            {"properties": {"id": "902", "mainnodeid": None}, "geometry": Point(0.0, -55.0)},
+            {"properties": {"id": "903", "mainnodeid": None}, "geometry": Point(45.0, 0.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    return {
+        "nodes_path": nodes_path,
+        "roads_path": roads_path,
+        "drivezone_path": drivezone_path,
+        "rcsdroad_path": rcsdroad_path,
+        "rcsdnode_path": rcsdnode_path,
+    }
+
+
+def test_patch_resolution_and_filtering_uses_unique_incident_road_patch() -> None:
+    group_nodes = [
+        ParsedNode(0, {"id": "100"}, Point(0.0, 0.0), "100", "100", "yes", "no", 2048, 1),
+        ParsedNode(1, {"id": "101"}, Point(6.0, 2.0), "101", "100", "yes", "no", 2048, 1),
+    ]
+    roads = [
+        ParsedRoad(0, {"id": "r1", "snodeid": "100", "enodeid": "200", "direction": 2, "patchid": "p1"}, LineString([(0.0, 0.0), (0.0, 10.0)]), "r1", "100", "200", 2),
+        ParsedRoad(1, {"id": "r2", "snodeid": "300", "enodeid": "100", "direction": 2, "patchid": "p1"}, LineString([(0.0, -10.0), (0.0, 0.0)]), "r2", "300", "100", 2),
+        ParsedRoad(2, {"id": "r3", "snodeid": "500", "enodeid": "501", "direction": 2, "patchid": "p2"}, LineString([(20.0, 20.0), (30.0, 20.0)]), "r3", "500", "501", 2),
+    ]
+
+    current_patch_id = _resolve_current_patch_id_from_roads(group_nodes=group_nodes, roads=roads)
+
+    assert current_patch_id == "p1"
+    assert [road.road_id for road in _filter_parsed_roads_to_patch(roads, patch_id=current_patch_id)] == ["r1", "r2"]
+
+
+def test_stage3_uses_only_same_patch_roads_and_drivezone(tmp_path: Path) -> None:
+    paths = _write_patch_filtered_poc_inputs(tmp_path)
+
+    artifacts = run_t02_virtual_intersection_poc(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="same_patch_only",
+        debug=False,
+        **paths,
+    )
+
+    assert artifacts.status_path.is_file()
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    counts = status_doc["counts"]
+    assert counts["current_patch_id"] == "p1"
+    assert counts["same_patch_filter_applied"] is True
+    assert counts["local_road_count"] == 3
+    assert counts["local_drivezone_feature_count"] == 1

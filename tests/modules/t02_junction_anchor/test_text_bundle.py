@@ -332,9 +332,9 @@ def _write_far_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         roads_path,
         [
             {"properties": {"id": "road_west", "snodeid": "001", "enodeid": "100", "direction": 2}, "geometry": LineString([(-60.0, 0.0), (0.0, 0.0)])},
-            {"properties": {"id": "road_main", "snodeid": "100", "enodeid": "900", "direction": 2}, "geometry": LineString([(0.0, 0.0), (320.0, 0.0)])},
-            {"properties": {"id": "road_branch_up", "snodeid": "901", "enodeid": "902", "direction": 2}, "geometry": LineString([(230.0, 0.0), (230.0, 70.0)])},
-            {"properties": {"id": "road_branch_down", "snodeid": "903", "enodeid": "904", "direction": 2}, "geometry": LineString([(230.0, 0.0), (230.0, -70.0)])},
+            {"properties": {"id": "road_main", "snodeid": "100", "enodeid": "900", "direction": 2}, "geometry": LineString([(0.0, 0.0), (180.0, 0.0)])},
+            {"properties": {"id": "road_branch_up", "snodeid": "900", "enodeid": "902", "direction": 2}, "geometry": LineString([(180.0, 0.0), (180.0, 70.0)])},
+            {"properties": {"id": "road_branch_down", "snodeid": "900", "enodeid": "904", "direction": 2}, "geometry": LineString([(180.0, 0.0), (180.0, -70.0)])},
         ],
         crs_text="EPSG:3857",
     )
@@ -345,8 +345,8 @@ def _write_far_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
                 "properties": {"name": "dz_far"},
                 "geometry": unary_union(
                     [
-                        box(-70.0, -12.0, 330.0, 12.0),
-                        box(220.0, -82.0, 240.0, 82.0),
+                        box(-70.0, -12.0, 200.0, 12.0),
+                        box(170.0, -82.0, 190.0, 82.0),
                     ]
                 ),
             }
@@ -356,16 +356,16 @@ def _write_far_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
     write_vector(
         divstripzone_path,
         [
-            {"properties": {"name": "divstrip_far"}, "geometry": box(214.0, -5.0, 242.0, 5.0)},
+            {"properties": {"name": "divstrip_far"}, "geometry": box(164.0, -5.0, 192.0, 5.0)},
         ],
         crs_text="EPSG:3857",
     )
     write_vector(
         rcsdroad_path,
         [
-            {"properties": {"id": "rc_main", "snodeid": "100", "enodeid": "900", "direction": 2}, "geometry": LineString([(0.0, 0.0), (320.0, 0.0)])},
-            {"properties": {"id": "rc_up", "snodeid": "905", "enodeid": "906", "direction": 2}, "geometry": LineString([(230.0, 0.0), (230.0, 60.0)])},
-            {"properties": {"id": "rc_down", "snodeid": "907", "enodeid": "908", "direction": 2}, "geometry": LineString([(230.0, 0.0), (230.0, -60.0)])},
+            {"properties": {"id": "rc_main", "snodeid": "100", "enodeid": "900", "direction": 2}, "geometry": LineString([(0.0, 0.0), (180.0, 0.0)])},
+            {"properties": {"id": "rc_up", "snodeid": "900", "enodeid": "906", "direction": 2}, "geometry": LineString([(180.0, 0.0), (180.0, 60.0)])},
+            {"properties": {"id": "rc_down", "snodeid": "900", "enodeid": "908", "direction": 2}, "geometry": LineString([(180.0, 0.0), (180.0, -60.0)])},
         ],
         crs_text="EPSG:3857",
     )
@@ -373,8 +373,8 @@ def _write_far_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         rcsdnode_path,
         [
             {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": Point(0.0, 0.0)},
-            {"properties": {"id": "905", "mainnodeid": None}, "geometry": Point(230.0, 60.0)},
-            {"properties": {"id": "907", "mainnodeid": None}, "geometry": Point(230.0, -60.0)},
+            {"properties": {"id": "905", "mainnodeid": None}, "geometry": Point(180.0, 60.0)},
+            {"properties": {"id": "907", "mainnodeid": None}, "geometry": Point(180.0, -60.0)},
         ],
         crs_text="EPSG:3857",
     )
@@ -407,10 +407,12 @@ def _write_complex_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
     write_vector(
         roads_path,
         [
-            {"properties": {"id": "road_chain_main", "snodeid": "500", "enodeid": "999", "direction": 2}, "geometry": LineString([(0.0, 0.0), (380.0, 0.0)])},
+            {"properties": {"id": "road_chain_main_a", "snodeid": "500", "enodeid": "510", "direction": 2}, "geometry": LineString([(0.0, 0.0), (120.0, 0.0)])},
             {"properties": {"id": "road_chain_up_a", "snodeid": "510", "enodeid": "511", "direction": 2}, "geometry": LineString([(120.0, 0.0), (120.0, 70.0)])},
+            {"properties": {"id": "road_chain_main_b", "snodeid": "510", "enodeid": "501", "direction": 2}, "geometry": LineString([(120.0, 0.0), (180.0, 0.0)])},
+            {"properties": {"id": "road_chain_main_c", "snodeid": "501", "enodeid": "520", "direction": 2}, "geometry": LineString([(180.0, 0.0), (320.0, 0.0)])},
             {"properties": {"id": "road_chain_up_b", "snodeid": "520", "enodeid": "521", "direction": 2}, "geometry": LineString([(320.0, 0.0), (320.0, 75.0)])},
-            {"properties": {"id": "road_chain_down_b", "snodeid": "522", "enodeid": "523", "direction": 2}, "geometry": LineString([(350.0, 0.0), (350.0, -75.0)])},
+            {"properties": {"id": "road_chain_down_b", "snodeid": "520", "enodeid": "523", "direction": 2}, "geometry": LineString([(320.0, 0.0), (320.0, -75.0)])},
         ],
         crs_text="EPSG:3857",
     )
@@ -421,10 +423,10 @@ def _write_complex_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
                 "properties": {"name": "dz_complex"},
                 "geometry": unary_union(
                     [
-                        box(-20.0, -12.0, 390.0, 12.0),
+                        box(-20.0, -12.0, 340.0, 12.0),
                         box(112.0, 0.0, 128.0, 82.0),
                         box(312.0, 0.0, 328.0, 85.0),
-                        box(342.0, -85.0, 358.0, 0.0),
+                        box(312.0, -85.0, 328.0, 0.0),
                     ]
                 ),
             }
@@ -442,9 +444,9 @@ def _write_complex_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
     write_vector(
         rcsdroad_path,
         [
-            {"properties": {"id": "rc_chain_main", "snodeid": "500", "enodeid": "999", "direction": 2}, "geometry": LineString([(0.0, 0.0), (380.0, 0.0)])},
-            {"properties": {"id": "rc_chain_up_b", "snodeid": "524", "enodeid": "525", "direction": 2}, "geometry": LineString([(320.0, 0.0), (320.0, 70.0)])},
-            {"properties": {"id": "rc_chain_down_b", "snodeid": "526", "enodeid": "527", "direction": 2}, "geometry": LineString([(350.0, 0.0), (350.0, -70.0)])},
+            {"properties": {"id": "rc_chain_main", "snodeid": "500", "enodeid": "520", "direction": 2}, "geometry": LineString([(0.0, 0.0), (320.0, 0.0)])},
+            {"properties": {"id": "rc_chain_up_b", "snodeid": "520", "enodeid": "525", "direction": 2}, "geometry": LineString([(320.0, 0.0), (320.0, 70.0)])},
+            {"properties": {"id": "rc_chain_down_b", "snodeid": "520", "enodeid": "527", "direction": 2}, "geometry": LineString([(320.0, 0.0), (320.0, -70.0)])},
         ],
         crs_text="EPSG:3857",
     )
@@ -453,7 +455,7 @@ def _write_complex_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         [
             {"properties": {"id": "500", "mainnodeid": "500"}, "geometry": Point(0.0, 0.0)},
             {"properties": {"id": "524", "mainnodeid": None}, "geometry": Point(320.0, 70.0)},
-            {"properties": {"id": "526", "mainnodeid": None}, "geometry": Point(350.0, -70.0)},
+            {"properties": {"id": "526", "mainnodeid": None}, "geometry": Point(320.0, -70.0)},
         ],
         crs_text="EPSG:3857",
     )
@@ -486,9 +488,9 @@ def _write_multihop_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         roads_path,
         [
             {"properties": {"id": "road_seg_1", "snodeid": "700", "enodeid": "710", "direction": 2}, "geometry": LineString([(0.0, 0.0), (120.0, 0.0)])},
-            {"properties": {"id": "road_seg_2", "snodeid": "710", "enodeid": "720", "direction": 2}, "geometry": LineString([(120.0, 0.0), (240.0, 0.0)])},
-            {"properties": {"id": "road_seg_3", "snodeid": "720", "enodeid": "730", "direction": 2}, "geometry": LineString([(240.0, 0.0), (360.0, 0.0)])},
-            {"properties": {"id": "road_far_branch", "snodeid": "731", "enodeid": "732", "direction": 2}, "geometry": LineString([(350.0, 0.0), (350.0, 90.0)])},
+            {"properties": {"id": "road_seg_2", "snodeid": "710", "enodeid": "720", "direction": 2}, "geometry": LineString([(120.0, 0.0), (180.0, 0.0)])},
+            {"properties": {"id": "road_seg_3", "snodeid": "720", "enodeid": "730", "direction": 2}, "geometry": LineString([(180.0, 0.0), (195.0, 0.0)])},
+            {"properties": {"id": "road_far_branch", "snodeid": "730", "enodeid": "732", "direction": 2}, "geometry": LineString([(195.0, 0.0), (195.0, 90.0)])},
         ],
         crs_text="EPSG:3857",
     )
@@ -497,7 +499,7 @@ def _write_multihop_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         [
             {
                 "properties": {"name": "dz_multihop"},
-                "geometry": unary_union([box(-20.0, -12.0, 380.0, 12.0), box(342.0, 0.0, 358.0, 100.0)]),
+                "geometry": unary_union([box(-20.0, -12.0, 215.0, 12.0), box(187.0, 0.0, 203.0, 100.0)]),
             }
         ],
         crs_text="EPSG:3857",
@@ -505,14 +507,14 @@ def _write_multihop_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
     write_vector(
         divstripzone_path,
         [
-            {"properties": {"name": "divstrip_multihop"}, "geometry": box(330.0, -5.0, 360.0, 5.0)},
+            {"properties": {"name": "divstrip_multihop"}, "geometry": box(175.0, -5.0, 205.0, 5.0)},
         ],
         crs_text="EPSG:3857",
     )
     write_vector(
         rcsdroad_path,
         [
-            {"properties": {"id": "rc_far_branch", "snodeid": "733", "enodeid": "734", "direction": 2}, "geometry": LineString([(350.0, 0.0), (350.0, 80.0)])},
+            {"properties": {"id": "rc_far_branch", "snodeid": "730", "enodeid": "734", "direction": 2}, "geometry": LineString([(195.0, 0.0), (195.0, 80.0)])},
         ],
         crs_text="EPSG:3857",
     )
@@ -520,7 +522,7 @@ def _write_multihop_branch_bundle_inputs(tmp_path: Path) -> dict[str, Path]:
         rcsdnode_path,
         [
             {"properties": {"id": "700", "mainnodeid": "700"}, "geometry": Point(0.0, 0.0)},
-            {"properties": {"id": "733", "mainnodeid": None}, "geometry": Point(350.0, 80.0)},
+            {"properties": {"id": "733", "mainnodeid": None}, "geometry": Point(195.0, 80.0)},
         ],
         crs_text="EPSG:3857",
     )
@@ -707,11 +709,11 @@ def test_export_text_bundle_preserves_cross_patch_local_context(tmp_path: Path) 
 
     manifest = json.loads((decode_artifacts.out_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["current_patch_id"] == "p1"
-    assert manifest["patch_filter_mode"] == "current_patch_hint_only"
+    assert manifest["patch_filter_mode"] == "bounded_scene_extent_200m"
 
     with fiona.open(decode_artifacts.out_dir / "roads.gpkg") as src:
         road_ids = [feature["properties"]["id"] for feature in src]
-    assert sorted(road_ids) == ["road_east", "road_noise_patch2", "road_north", "road_south"]
+    assert sorted(road_ids) == ["road_east", "road_north", "road_south"]
 
     with fiona.open(decode_artifacts.out_dir / "drivezone.gpkg") as src:
         drivezone_patch_ids = [feature["properties"].get("patchid") for feature in src]
@@ -752,13 +754,20 @@ def test_export_text_bundle_expands_to_complex_associated_roads(tmp_path: Path) 
 
     with fiona.open(decode_artifacts.out_dir / "roads.gpkg") as src:
         road_ids = sorted(feature["properties"]["id"] for feature in src)
-    assert road_ids == ["road_chain_down_b", "road_chain_main", "road_chain_up_a", "road_chain_up_b"]
+    assert road_ids == [
+        "road_chain_down_b",
+        "road_chain_main_a",
+        "road_chain_main_b",
+        "road_chain_main_c",
+        "road_chain_up_a",
+        "road_chain_up_b",
+    ]
 
     manifest = json.loads((decode_artifacts.out_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["feature_counts"]["roads"] == 4
+    assert manifest["feature_counts"]["roads"] == 6
 
 
-def test_export_text_bundle_iteratively_expands_multihop_connected_roads(tmp_path: Path) -> None:
+def test_export_text_bundle_preserves_multihop_connected_roads_within_200m(tmp_path: Path) -> None:
     paths = _write_multihop_branch_bundle_inputs(tmp_path)
     bundle_path = tmp_path / "multihop_case.txt"
 

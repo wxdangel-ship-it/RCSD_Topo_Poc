@@ -11,6 +11,7 @@ import struct
 import tempfile
 import zlib
 import zipfile
+from heapq import heappop, heappush
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -50,6 +51,8 @@ TEXT_BUNDLE_CHECKSUM = "checksum: "
 TEXT_BUNDLE_END = "END_T02_BUNDLE"
 TEXT_BUNDLE_LINE_WIDTH = 120
 LOCAL_COORD_DECIMALS = 1
+BUNDLE_CONTEXT_MAX_DISTANCE_M = 200.0
+BUNDLE_CONTEXT_SURFACE_MARGIN_M = 40.0
 
 LEGACY_TEXT_BUNDLE_PAYLOAD = "PAYLOAD"
 LEGACY_TEXT_BUNDLE_END_PAYLOAD = "END_PAYLOAD"
@@ -556,6 +559,87 @@ def _build_bundle_context_query(
     )
 
 
+def _build_bundle_extent_query(
+    *,
+    group_nodes: list[ParsedNode],
+    representative_node: ParsedNode,
+    max_distance_m: float,
+) -> BaseGeometry:
+    seed_geometries = [
+        node.geometry
+        for node in group_nodes
+        if node.geometry is not None and not node.geometry.is_empty
+    ]
+    if not seed_geometries:
+        seed_geometries = [representative_node.geometry]
+    union_geometry = unary_union(seed_geometries)
+    return union_geometry.buffer(max_distance_m)
+
+
+def _is_bundle_semantic_boundary_node(node: ParsedNode) -> bool:
+    if node.kind_2 in {None, 0}:
+        return False
+    return node.mainnodeid is None or node.mainnodeid == node.node_id
+
+
+def _other_road_node_id(road: ParsedRoad, node_id: str) -> str | None:
+    if road.snodeid == node_id and road.enodeid != node_id:
+        return road.enodeid
+    if road.enodeid == node_id and road.snodeid != node_id:
+        return road.snodeid
+    if road.snodeid == node_id and road.enodeid == node_id:
+        return node_id
+    return None
+
+
+def _select_bundle_component_roads(
+    *,
+    parsed_roads: list[ParsedRoad],
+    group_nodes: list[ParsedNode],
+    local_nodes: list[ParsedNode],
+    max_distance_m: float,
+) -> list[ParsedRoad]:
+    adjacency: dict[str, list[ParsedRoad]] = {}
+    for road in parsed_roads:
+        adjacency.setdefault(road.snodeid, []).append(road)
+        adjacency.setdefault(road.enodeid, []).append(road)
+
+    member_node_ids = {node.node_id for node in group_nodes}
+    boundary_node_ids = {
+        node.node_id
+        for node in local_nodes
+        if node.node_id not in member_node_ids and _is_bundle_semantic_boundary_node(node)
+    }
+
+    heap: list[tuple[float, str]] = []
+    best_distance: dict[str, float] = {}
+    for node_id in member_node_ids:
+        best_distance[node_id] = 0.0
+        heappush(heap, (0.0, node_id))
+
+    included_roads: dict[str, ParsedRoad] = {}
+    while heap:
+        distance_m, node_id = heappop(heap)
+        if distance_m > best_distance.get(node_id, float("inf")):
+            continue
+        is_boundary = node_id in boundary_node_ids
+        for road in adjacency.get(node_id, []):
+            included_roads.setdefault(road.road_id, road)
+            if is_boundary:
+                continue
+            other_node_id = _other_road_node_id(road, node_id)
+            if other_node_id is None:
+                continue
+            next_distance_m = distance_m + float(road.geometry.length)
+            if next_distance_m > max_distance_m:
+                continue
+            if next_distance_m >= best_distance.get(other_node_id, float("inf")):
+                continue
+            best_distance[other_node_id] = next_distance_m
+            heappush(heap, (next_distance_m, other_node_id))
+    return list(included_roads.values())
+
+
 def _normalize_mainnodeids(value: Union[str, int, Iterable[Union[str, int]], None]) -> list[str]:
     if value is None:
         return []
@@ -720,123 +804,116 @@ def _run_t02_export_single_text_bundle(
             nodes_crs=nodes_crs,
             normalized_mainnodeid=normalized_mainnodeid,
         )
-        patch_query = representative_node.geometry.buffer(buffer_m)
+        patch_query = _build_bundle_extent_query(
+            group_nodes=group_nodes,
+            representative_node=representative_node,
+            max_distance_m=max(float(buffer_m), BUNDLE_CONTEXT_MAX_DISTANCE_M),
+        )
         grid = _build_grid(representative_node.geometry, patch_size_m=patch_size_m, resolution_m=resolution_m)
         origin_x = grid.min_x
         origin_y = grid.min_y
 
-        is_complex_group = any(node.kind_2 == 128 for node in group_nodes)
-        context_margin_m = max(float(buffer_m), 80.0) if is_complex_group else max(float(buffer_m) * 0.4, 40.0)
-        local_nodes_layer = None
-        local_roads_layer = None
-        local_drivezone_layer = None
-        local_divstripzone_layer = None
-        local_rcsdroad_layer = None
-        local_rcsdnode_layer = None
-        parsed_roads: list[Any] = []
-        query_geometry = patch_query
-        previous_signature: tuple[int, int, int, int, int, tuple[float, float, float, float] | None] | None = None
-        for _ in range(6):
-            local_layers = _load_bundle_local_layers(
-                nodes_path=nodes_path,
-                roads_path=roads_path,
-                drivezone_path=drivezone_path,
-                divstripzone_path=divstripzone_path,
-                rcsdroad_path=rcsdroad_path,
-                rcsdnode_path=rcsdnode_path,
-                query_geometry=query_geometry,
-                nodes_layer=nodes_layer,
-                roads_layer=roads_layer,
-                drivezone_layer=drivezone_layer,
-                divstripzone_layer=divstripzone_layer,
-                rcsdroad_layer=rcsdroad_layer,
-                rcsdnode_layer=rcsdnode_layer,
-                nodes_crs=nodes_crs,
-                roads_crs=roads_crs,
-                drivezone_crs=drivezone_crs,
-                divstripzone_crs=divstripzone_crs,
-                rcsdroad_crs=rcsdroad_crs,
-                rcsdnode_crs=rcsdnode_crs,
-            )
-            local_nodes_layer = local_layers["nodes"]
-            local_roads_layer = local_layers["roads"]
-            local_drivezone_layer = local_layers["drivezone"]
-            local_divstripzone_layer = local_layers["divstripzone"]
-            local_rcsdroad_layer = local_layers["rcsdroad"]
-            local_rcsdnode_layer = local_layers["rcsdnode"]
-            parsed_roads = _parse_roads(local_roads_layer, label="roads")
-            context_query = _build_bundle_context_query(
-                representative_node=representative_node,
-                group_nodes=group_nodes,
-                local_nodes_layer=local_nodes_layer,
-                parsed_roads=parsed_roads,
-                local_drivezone_layer=local_drivezone_layer,
-                local_divstripzone_layer=local_divstripzone_layer,
-                local_rcsdroad_layer=local_rcsdroad_layer,
-                local_rcsdnode_layer=local_rcsdnode_layer,
-                context_margin_m=context_margin_m,
-                is_complex_group=is_complex_group,
-            )
-            current_signature = (
-                len(local_nodes_layer.features),
-                len(local_roads_layer.features),
-                len(local_drivezone_layer.features),
-                0 if local_divstripzone_layer is None else len(local_divstripzone_layer.features),
-                len(local_rcsdroad_layer.features),
-                None if context_query is None or context_query.is_empty else tuple(float(v) for v in context_query.bounds),
-            )
-            if context_query is None or context_query.is_empty:
-                break
-            if previous_signature == current_signature:
-                break
-            if query_geometry.buffer(1e-6).covers(context_query):
-                break
-            previous_signature = current_signature
-            query_geometry = context_query
+        local_layers = _load_bundle_local_layers(
+            nodes_path=nodes_path,
+            roads_path=roads_path,
+            drivezone_path=drivezone_path,
+            divstripzone_path=divstripzone_path,
+            rcsdroad_path=rcsdroad_path,
+            rcsdnode_path=rcsdnode_path,
+            query_geometry=patch_query,
+            nodes_layer=nodes_layer,
+            roads_layer=roads_layer,
+            drivezone_layer=drivezone_layer,
+            divstripzone_layer=divstripzone_layer,
+            rcsdroad_layer=rcsdroad_layer,
+            rcsdnode_layer=rcsdnode_layer,
+            nodes_crs=nodes_crs,
+            roads_crs=roads_crs,
+            drivezone_crs=drivezone_crs,
+            divstripzone_crs=divstripzone_crs,
+            rcsdroad_crs=rcsdroad_crs,
+            rcsdnode_crs=rcsdnode_crs,
+        )
+        local_nodes_layer = local_layers["nodes"]
+        local_roads_layer = local_layers["roads"]
+        local_drivezone_layer = local_layers["drivezone"]
+        local_divstripzone_layer = local_layers["divstripzone"]
+        local_rcsdroad_layer = local_layers["rcsdroad"]
+        local_rcsdnode_layer = local_layers["rcsdnode"]
 
-        assert local_nodes_layer is not None
-        assert local_roads_layer is not None
-        assert local_drivezone_layer is not None
-        assert local_rcsdroad_layer is not None
-        assert local_rcsdnode_layer is not None
-
+        local_nodes = _parse_nodes(local_nodes_layer, require_anchor_fields=True)
+        parsed_roads = _parse_roads(local_roads_layer, label="roads")
         current_patch_id = _resolve_current_patch_id_from_roads(group_nodes=group_nodes, roads=parsed_roads)
-        patch_filtered_roads = _filter_parsed_roads_to_patch(parsed_roads, patch_id=current_patch_id)
-        patch_filtered_drivezone_features = _filter_loaded_features_to_patch(
-            local_drivezone_layer.features,
-            patch_id=current_patch_id,
+        filtered_roads = _select_bundle_component_roads(
+            parsed_roads=parsed_roads,
+            group_nodes=group_nodes,
+            local_nodes=local_nodes,
+            max_distance_m=BUNDLE_CONTEXT_MAX_DISTANCE_M,
         )
-        patch_filtered_divstripzone_features = (
-            None
-            if local_divstripzone_layer is None
-            else _filter_loaded_features_to_patch(local_divstripzone_layer.features, patch_id=current_patch_id)
+        patch_filter_mode = "bounded_scene_extent_200m"
+
+        road_surface_geometries = [
+            road.geometry
+            for road in filtered_roads
+            if road.geometry is not None and not road.geometry.is_empty
+        ]
+        road_surface_geometries.extend(
+            node.geometry
+            for node in group_nodes
+            if node.geometry is not None and not node.geometry.is_empty
+        )
+        if not road_surface_geometries:
+            raise TextBundleError(
+                "missing_roads",
+                f"mainnodeid='{normalized_mainnodeid}' resolved no connected roads inside bounded scene extent.",
+            )
+        scene_query = unary_union(road_surface_geometries).buffer(
+            BUNDLE_CONTEXT_SURFACE_MARGIN_M,
+            cap_style=2,
+            join_style=2,
         )
 
-        # Text bundle is an evidence package, not a production patch executor.
-        # Preserve nearby local context even when upstream patch ids fragment a
-        # single diverge/merge scene across multiple patches; otherwise
-        # branch-defining roads or divstrip fragments can disappear from the
-        # exported case package.
-        patch_filter_mode = "spatial_context"
-        filtered_roads = parsed_roads
-        local_drivezone_features = [feature for feature in local_drivezone_layer.features if feature.geometry is not None]
+        included_node_ids = {
+            node.node_id
+            for node in group_nodes
+        }
+        for road in filtered_roads:
+            included_node_ids.add(road.snodeid)
+            included_node_ids.add(road.enodeid)
+
+        local_drivezone_features = [
+            feature
+            for feature in local_drivezone_layer.features
+            if feature.geometry is not None and feature.geometry.intersects(scene_query)
+        ]
         local_divstripzone_features = (
             None
             if local_divstripzone_layer is None
-            else [feature for feature in local_divstripzone_layer.features if feature.geometry is not None]
+            else [
+                feature
+                for feature in local_divstripzone_layer.features
+                if feature.geometry is not None and feature.geometry.intersects(scene_query)
+            ]
         )
-        if current_patch_id is not None:
-            patch_filter_mode = "current_patch_hint_only"
-            if (
-                len(patch_filtered_roads) == len(parsed_roads)
-                and len(patch_filtered_drivezone_features) == len(local_drivezone_features)
-                and (
-                    patch_filtered_divstripzone_features is None
-                    or local_divstripzone_features is None
-                    or len(patch_filtered_divstripzone_features) == len(local_divstripzone_features)
-                )
-            ):
-                patch_filter_mode = "single_patch_context"
+        local_nodes_features = [
+            feature
+            for feature in local_nodes_layer.features
+            if feature.geometry is not None
+            and (
+                _normalize_id(feature.properties.get("id")) in included_node_ids
+                or feature.geometry.intersects(scene_query)
+            )
+        ]
+        local_rcsdroad_features = [
+            feature
+            for feature in local_rcsdroad_layer.features
+            if feature.geometry is not None and feature.geometry.intersects(scene_query)
+        ]
+        local_rcsdnode_features = [
+            feature
+            for feature in local_rcsdnode_layer.features
+            if feature.geometry is not None and feature.geometry.intersects(scene_query)
+        ]
 
         local_drivezone_geometries = [feature.geometry for feature in local_drivezone_features if feature.geometry is not None]
         if not local_drivezone_geometries:
@@ -870,7 +947,7 @@ def _run_t02_export_single_text_bundle(
                 )
 
         nodes_features = []
-        for feature in local_nodes_layer.features:
+        for feature in local_nodes_features:
             nodes_features.append(
                 _local_feature(
                     properties=_filter_properties(feature.properties, NODE_FIELDS),
@@ -892,7 +969,7 @@ def _run_t02_export_single_text_bundle(
             )
 
         rcsdroad_features = []
-        for feature in local_rcsdroad_layer.features:
+        for feature in local_rcsdroad_features:
             rcsdroad_features.append(
                 _local_feature(
                     properties=_filter_properties(feature.properties, ROAD_REQUIRED_FIELDS),
@@ -903,7 +980,7 @@ def _run_t02_export_single_text_bundle(
             )
 
         rcsdnode_features = []
-        for feature in local_rcsdnode_layer.features:
+        for feature in local_rcsdnode_features:
             rcsdnode_features.append(
                 _local_feature(
                     properties=_filter_properties(feature.properties, RCSDNODE_FIELDS),

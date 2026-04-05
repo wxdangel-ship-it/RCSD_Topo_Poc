@@ -8,6 +8,7 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 CASE_ROOT="${CASE_ROOT:-/mnt/d/TestData/POC_Data/T02/Anchor_2}"
 BUNDLE_GLOB="${BUNDLE_GLOB:-*.txt}"
 CASE_SEARCH_MAX_DEPTH="${CASE_SEARCH_MAX_DEPTH:-3}"
+DIRECT_CASE_REGEX="${DIRECT_CASE_REGEX:-[0-9]+}"
 
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t02_stage4_anchor2_internal}"
 RUN_ID="${RUN_ID:-t02_stage4_anchor2_internal_$(date +%Y%m%d_%H%M%S)}"
@@ -39,6 +40,11 @@ fi
 
 if ! [[ "$CASE_SEARCH_MAX_DEPTH" =~ ^[1-9][0-9]*$ ]]; then
   echo "[BLOCK] CASE_SEARCH_MAX_DEPTH must be a positive integer: $CASE_SEARCH_MAX_DEPTH" >&2
+  exit 2
+fi
+
+if [[ -z "$DIRECT_CASE_REGEX" ]]; then
+  echo "[BLOCK] DIRECT_CASE_REGEX must not be empty." >&2
   exit 2
 fi
 
@@ -79,6 +85,7 @@ DISCOVERY_JSON="$(
   CASE_ROOT="$CASE_ROOT" \
   DECODE_ROOT="$DECODE_ROOT" \
   CASE_SEARCH_MAX_DEPTH="$CASE_SEARCH_MAX_DEPTH" \
+  DIRECT_CASE_REGEX="$DIRECT_CASE_REGEX" \
   "$PYTHON_BIN" - <<'PY'
 import json
 import os
@@ -127,7 +134,14 @@ def normalize_case_id(case_dir: Path) -> Optional[str]:
     return manifest_mainnodeid(case_dir)
 
 
-def collect(root: Path, max_depth: int):
+def normalize_root_case_id(case_dir: Path, direct_case_regex: str) -> Optional[str]:
+    dirname = case_dir.name.strip()
+    if dirname and re.fullmatch(direct_case_regex, dirname):
+        return dirname
+    return None
+
+
+def collect(root: Path, max_depth: int, *, root_mode: bool, direct_case_regex: str):
     if not root.is_dir():
         return []
     collected = []
@@ -137,9 +151,14 @@ def collect(root: Path, max_depth: int):
         if not within_depth(root, path, max_depth):
             continue
         if is_case_dir(path):
-            case_id = normalize_case_id(path)
+            case_id = (
+                normalize_root_case_id(path, direct_case_regex)
+                if root_mode
+                else normalize_case_id(path)
+            )
             if case_id is None:
-                raise SystemExit(json.dumps({"error": f"case_id_unresolved:{path}"}, ensure_ascii=False))
+                label = "root_case_id_unresolved" if root_mode else "case_id_unresolved"
+                raise SystemExit(json.dumps({"error": f"{label}:{path}"}, ensure_ascii=False))
             collected.append({"case_id": case_id, "case_dir": str(path)})
     return collected
 
@@ -147,10 +166,12 @@ def collect(root: Path, max_depth: int):
 case_root = Path(os.environ["CASE_ROOT"])
 decode_root = Path(os.environ["DECODE_ROOT"])
 max_depth = int(os.environ["CASE_SEARCH_MAX_DEPTH"])
+direct_case_regex = os.environ["DIRECT_CASE_REGEX"]
 
-# CASE_ROOT 约定只接受根目录下的 bundle txt 和一级 case 目录；不向下递归扫描历史嵌套目录。
-direct_cases = collect(case_root, 1)
-decoded_cases = collect(decode_root, max_depth)
+# CASE_ROOT 约定只接受根目录下的 bundle txt 和一级纯数字 mainnodeid case 目录；
+# 不向下递归扫描历史嵌套目录，也不把其它目录名当正式 case。
+direct_cases = collect(case_root, 1, root_mode=True, direct_case_regex=direct_case_regex)
+decoded_cases = collect(decode_root, max_depth, root_mode=False, direct_case_regex=direct_case_regex)
 
 by_case_id = {}
 duplicates = {}

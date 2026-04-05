@@ -474,7 +474,7 @@ def test_export_text_bundle_fails_with_size_report_when_limit_exceeded(tmp_path:
     assert report["dominant_size_source"] in (*REQUIRED_BUNDLE_FILES, *OPTIONAL_BUNDLE_FILES)
 
 
-def test_export_text_bundle_keeps_only_same_patch_roads_drivezone_and_divstripzone(tmp_path: Path) -> None:
+def test_export_text_bundle_preserves_cross_patch_local_context(tmp_path: Path) -> None:
     paths = _write_patch_filtered_bundle_inputs(tmp_path)
     bundle_path = tmp_path / "case.txt"
 
@@ -486,15 +486,16 @@ def test_export_text_bundle_keeps_only_same_patch_roads_drivezone_and_divstripzo
 
     manifest = json.loads((decode_artifacts.out_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["current_patch_id"] == "p1"
+    assert manifest["patch_filter_mode"] == "current_patch_hint_only"
 
     with fiona.open(decode_artifacts.out_dir / "roads.gpkg") as src:
         road_ids = [feature["properties"]["id"] for feature in src]
-    assert sorted(road_ids) == ["road_east", "road_north", "road_south"]
+    assert sorted(road_ids) == ["road_east", "road_noise_patch2", "road_north", "road_south"]
 
     with fiona.open(decode_artifacts.out_dir / "drivezone.gpkg") as src:
         drivezone_patch_ids = [feature["properties"].get("patchid") for feature in src]
-    assert drivezone_patch_ids == ["p1"]
+    assert drivezone_patch_ids == ["p1", "p2"]
 
     with fiona.open(decode_artifacts.out_dir / "divstripzone.gpkg") as src:
         divstrip_patch_ids = [feature["properties"].get("patchid") for feature in src]
-    assert divstrip_patch_ids == ["p1"]
+    assert divstrip_patch_ids == ["p1", "p2"]

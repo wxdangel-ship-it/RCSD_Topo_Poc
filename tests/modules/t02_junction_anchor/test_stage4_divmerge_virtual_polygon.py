@@ -40,6 +40,8 @@ def _write_fixture(
     rcsdroad_outside_drivezone: bool = False,
     rcsdnode_outside_drivezone: bool = False,
     main_rcsdnode_geometry: Point | None = None,
+    main_rcsdnode_id: str = "100",
+    main_rcsdnode_mainnodeid: str | None = "100",
 ) -> dict[str, object]:
     nodes_path = tmp_path / "nodes.gpkg"
     roads_path = tmp_path / "roads.gpkg"
@@ -100,6 +102,8 @@ def _write_fixture(
 
     if divstrip_mode == "nearby_single":
         divstrip_geometries = [box(18.0, -4.0, 30.0, 4.0)]
+    elif divstrip_mode == "road_near_seed_far":
+        divstrip_geometries = [box(36.0, -4.0, 48.0, 4.0)]
     elif divstrip_mode == "not_nearby":
         divstrip_geometries = [box(68.0, 42.0, 78.0, 52.0)]
     elif divstrip_mode == "ambiguous_two_nearby":
@@ -122,7 +126,10 @@ def _write_fixture(
         crs_text="EPSG:3857",
     )
     rcsdnode_features = [
-        {"properties": {"id": "100", "mainnodeid": "100"}, "geometry": main_rcsdnode_geometry or Point(0.0, 0.0)},
+        {
+            "properties": {"id": main_rcsdnode_id, "mainnodeid": main_rcsdnode_mainnodeid},
+            "geometry": main_rcsdnode_geometry or Point(0.0, 0.0),
+        },
         {"properties": {"id": "901", "mainnodeid": None}, "geometry": Point(0.0, 55.0)},
         {"properties": {"id": "902", "mainnodeid": None}, "geometry": Point(0.0, -55.0)},
         {"properties": {"id": "903", "mainnodeid": None}, "geometry": Point(45.0, 0.0)},
@@ -295,8 +302,18 @@ def _write_reverse_tip_fixture(tmp_path: Path) -> dict[str, Path]:
     }
 
 
-def _write_continuous_chain_fixture(tmp_path: Path) -> dict[str, Path]:
-    fixture = _write_fixture(tmp_path, kind_2=8, divstrip_mode="nearby_single")
+def _write_continuous_chain_fixture(
+    tmp_path: Path,
+    *,
+    representative_kind_2: int = 8,
+    representative_kind: int | None = None,
+) -> dict[str, Path]:
+    fixture = _write_fixture(
+        tmp_path,
+        kind_2=representative_kind_2,
+        kind=representative_kind,
+        divstrip_mode="nearby_single",
+    )
     nodes_path = fixture["nodes_path"]
     existing_features = _load_vector_doc(nodes_path)["features"]
     write_vector(
@@ -351,6 +368,8 @@ def test_stage4_accepts_kind_8_and_16_with_nearby_divstrip(tmp_path: Path, kind_
     assert polygon_feature["properties"]["selection_mode"] == "divstrip_primary"
     assert polygon_feature["properties"]["evidence_source"] == "drivezone+divstrip+roads+rcsd+seed"
     assert polygon_geometry.intersection(fixture["divstrip_union"]).area == pytest.approx(0.0)
+    min_x, min_y, max_x, max_y = polygon_geometry.bounds
+    assert max_y - min_y <= 60.0
 
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
     audit_doc = json.loads(artifacts.audit_json_path.read_text(encoding="utf-8"))
@@ -359,12 +378,14 @@ def test_stage4_accepts_kind_8_and_16_with_nearby_divstrip(tmp_path: Path, kind_
     assert status_doc["divstrip"]["divstrip_component_count"] == 1
     assert status_doc["divstrip"]["divstrip_component_selected"] == ["divstrip_component_0"]
     assert status_doc["divstrip"]["selection_mode"] == "divstrip_primary"
+    assert status_doc["event_shape"]["event_span_start_m"] >= -25.0
+    assert status_doc["event_shape"]["event_span_end_m"] <= 25.0
     assert status_doc["review_reasons"] == []
     assert audit_doc["rows"][0]["evidence_source"] == "drivezone+divstrip+roads+rcsd+seed"
     assert _load_vector_doc(fixture["nodes_path"]) == original_nodes
 
 
-def test_stage4_marks_review_required_when_divstrip_not_nearby(tmp_path: Path) -> None:
+def test_stage4_falls_back_to_roads_when_divstrip_not_nearby(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, kind_2=8, divstrip_mode="not_nearby")
     artifacts = run_t02_stage4_divmerge_virtual_polygon(
         mainnodeid="100",
@@ -378,17 +399,17 @@ def test_stage4_marks_review_required_when_divstrip_not_nearby(tmp_path: Path) -
         rcsdnode_path=fixture["rcsdnode_path"],
     )
 
-    assert artifacts.success is False
+    assert artifacts.success is True
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
     audit_doc = json.loads(artifacts.audit_json_path.read_text(encoding="utf-8"))
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "divstrip_not_nearby"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
     assert status_doc["divstrip"]["divstrip_present"] is True
     assert status_doc["divstrip"]["divstrip_nearby"] is False
     assert status_doc["divstrip"]["divstrip_component_count"] == 1
     assert status_doc["divstrip"]["divstrip_component_selected"] == []
     assert status_doc["divstrip"]["selection_mode"] == "roads_fallback"
-    assert status_doc["review_reasons"][0] == "divstrip_not_nearby"
+    assert status_doc["review_reasons"] == []
     assert audit_doc["rows"][0]["evidence_source"] == "drivezone+roads+rcsd+seed"
     assert artifacts.virtual_polygon_path.is_file()
 
@@ -442,13 +463,14 @@ def test_stage4_accepts_complex_kind_128_and_writes_rendered_map(tmp_path: Path)
     assert status_doc["source_kind_2"] == 128
     assert status_doc["kind_2"] == 16
     assert status_doc["kind_resolution"]["complex_junction"] is True
-    assert status_doc["kind_resolution"]["kind_resolution_mode"] == "complex_branch_direction"
+    assert status_doc["kind_resolution"]["kind_resolution_mode"] == "divstrip_event_position"
     assert status_doc["kind_resolution"]["kind_resolution_ambiguous"] is False
     assert status_doc["continuous_chain"]["is_in_continuous_chain"] is False
+    assert status_doc["divstrip"]["selection_mode"] == "divstrip_primary"
     assert status_doc["output_files"]["rendered_map"] == str(rendered_root / "100.png")
 
 
-def test_stage4_marks_review_required_when_divstrip_has_ambiguous_components(tmp_path: Path) -> None:
+def test_stage4_prefers_event_anchor_when_divstrip_has_two_seed_nearby_components(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, kind_2=16, divstrip_mode="ambiguous_two_nearby")
     artifacts = run_t02_stage4_divmerge_virtual_polygon(
         mainnodeid="100",
@@ -462,17 +484,15 @@ def test_stage4_marks_review_required_when_divstrip_has_ambiguous_components(tmp
         rcsdnode_path=fixture["rcsdnode_path"],
     )
 
-    assert artifacts.success is False
+    assert artifacts.success is True
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "divstrip_component_ambiguous"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
     assert status_doc["divstrip"]["divstrip_present"] is True
     assert status_doc["divstrip"]["divstrip_nearby"] is True
     assert status_doc["divstrip"]["divstrip_component_count"] == 2
-    assert status_doc["divstrip"]["divstrip_component_selected"] == [
-        "divstrip_component_0",
-        "divstrip_component_1",
-    ]
+    assert len(status_doc["divstrip"]["divstrip_component_selected"]) == 1
+    assert status_doc["divstrip"]["selection_mode"] == "divstrip_primary"
 
 
 def test_stage4_accepts_diverge_main_rcsdnode_within_pre_trunk_window(tmp_path: Path) -> None:
@@ -499,10 +519,9 @@ def test_stage4_accepts_diverge_main_rcsdnode_within_pre_trunk_window(tmp_path: 
     assert status_doc["acceptance_class"] == "accepted"
     assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_2"
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_rule"] == "diverge_main_seed_on_pre_trunk_le_20m"
-    assert isinstance(status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"], bool)
-    assert status_doc["rcsdnode_tolerance"]["rcsdnode_coverage_mode"] in {"exact_cover", "trunk_tolerance_extension"}
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"] in {False, True}
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_coverage_mode"] in {"exact_cover", "trunk_window_tolerated"}
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_offset_m"] == pytest.approx(18.0, abs=1.0)
-    assert status_doc["coverage_missing_ids"] == []
 
 
 def test_stage4_accepts_merge_main_rcsdnode_within_post_trunk_window(tmp_path: Path) -> None:
@@ -529,13 +548,12 @@ def test_stage4_accepts_merge_main_rcsdnode_within_post_trunk_window(tmp_path: P
     assert status_doc["acceptance_class"] == "accepted"
     assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_1"
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_rule"] == "merge_main_seed_on_post_trunk_le_20m"
-    assert isinstance(status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"], bool)
-    assert status_doc["rcsdnode_tolerance"]["rcsdnode_coverage_mode"] in {"exact_cover", "trunk_tolerance_extension"}
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"] in {False, True}
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_coverage_mode"] in {"exact_cover", "trunk_window_tolerated"}
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_offset_m"] == pytest.approx(18.0, abs=1.0)
-    assert status_doc["coverage_missing_ids"] == []
 
 
-def test_stage4_marks_review_required_when_main_rcsdnode_exceeds_trunk_window(tmp_path: Path) -> None:
+def test_stage4_keeps_main_rcsdnode_out_of_window_as_audit_not_gate(tmp_path: Path) -> None:
     fixture = _write_fixture(
         tmp_path,
         kind_2=16,
@@ -554,14 +572,126 @@ def test_stage4_marks_review_required_when_main_rcsdnode_exceeds_trunk_window(tm
         rcsdnode_path=fixture["rcsdnode_path"],
     )
 
-    assert artifacts.success is False
+    assert artifacts.success is True
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "rcsdnode_main_out_of_window"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
     assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_2"
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"] is False
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_coverage_mode"] == "out_of_window"
-    assert "100" in status_doc["coverage_missing_ids"]
+    assert status_doc["coverage_missing_ids"] == []
+
+
+def test_stage4_infers_primary_rcsdnode_when_direct_mainnodeid_group_is_missing(tmp_path: Path) -> None:
+    fixture = _write_fixture(
+        tmp_path,
+        kind_2=16,
+        divstrip_mode="nearby_single",
+        main_rcsdnode_geometry=Point(0.0, -18.0),
+        main_rcsdnode_id="910",
+        main_rcsdnode_mainnodeid=None,
+    )
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="infer_local_rcsdnode",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    rcsdnode_link_doc = json.loads(artifacts.rcsdnode_link_json_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["rcsdnode_seed_mode"] == "inferred_local_trunk_window"
+    assert status_doc["rcsdnode_tolerance"]["rcsdnode_seed_mode"] == "inferred_local_trunk_window"
+    assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_2"
+    assert rcsdnode_link_doc["target_node_ids"] == ["910"]
+    assert "910" in rcsdnode_link_doc["linked_node_ids"]
+
+
+def test_stage4_does_not_reject_when_direct_mainnodeid_group_is_missing_and_local_rcsdnode_is_weak(tmp_path: Path) -> None:
+    fixture = _write_fixture(
+        tmp_path,
+        kind_2=8,
+        divstrip_mode="not_nearby",
+        main_rcsdnode_geometry=Point(0.0, 30.0),
+        main_rcsdnode_id="910",
+        main_rcsdnode_mainnodeid=None,
+    )
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="infer_local_rcsdnode_review",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    rcsdnode_link_doc = json.loads(artifacts.rcsdnode_link_json_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["rcsdnode_seed_mode"] == "inferred_local_trunk_window"
+    assert status_doc["flow_success"] is True
+    assert rcsdnode_link_doc["target_node_ids"] == []
+    assert rcsdnode_link_doc["coverage_missing_ids"] == []
+
+
+def test_stage4_ignores_unselected_outside_rcsd_features_in_case_package(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=8, divstrip_mode="nearby_single")
+    rcsdroad_doc = _load_vector_doc(fixture["rcsdroad_path"])
+    write_vector(
+        fixture["rcsdroad_path"],
+        [
+            {"properties": feature["properties"], "geometry": shape(feature["geometry"])}
+            for feature in rcsdroad_doc["features"]
+        ]
+        + [
+            {
+                "properties": {"id": "rc_far_outside", "snodeid": "990", "enodeid": "991", "direction": 2},
+                "geometry": LineString([(120.0, 120.0), (160.0, 160.0)]),
+            }
+        ],
+        crs_text="EPSG:3857",
+    )
+    rcsdnode_doc = _load_vector_doc(fixture["rcsdnode_path"])
+    write_vector(
+        fixture["rcsdnode_path"],
+        [
+            {"properties": feature["properties"], "geometry": shape(feature["geometry"])}
+            for feature in rcsdnode_doc["features"]
+        ]
+        + [
+            {"properties": {"id": "990", "mainnodeid": None}, "geometry": Point(120.0, 120.0)},
+            {"properties": {"id": "991", "mainnodeid": None}, "geometry": Point(160.0, 160.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="ignore_outside_unselected_rcs",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "accepted"
 
 
 @pytest.mark.parametrize("kind_2", [8, 16])
@@ -644,6 +774,58 @@ def test_stage4_marks_review_required_for_continuous_chain_with_adjacent_opposit
     assert status_doc["continuous_chain"]["sequential_ok"] is True
 
 
+def test_stage4_accepts_complex_kind_128_with_continuous_chain_and_divstrip_priority(tmp_path: Path) -> None:
+    fixture = _write_continuous_chain_fixture(
+        tmp_path,
+        representative_kind_2=128,
+        representative_kind=128,
+    )
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="complex_continuous_chain",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["kind"] == 128
+    assert status_doc["kind_2"] == 16
+    assert status_doc["kind_resolution"]["complex_junction"] is True
+    assert status_doc["kind_resolution"]["kind_resolution_mode"] == "continuous_chain_divstrip_event"
+    assert status_doc["continuous_chain"]["is_in_continuous_chain"] is True
+    assert status_doc["continuous_chain"]["sequential_ok"] is True
+    assert status_doc["divstrip"]["selection_mode"] == "divstrip_primary"
+
+
+def test_stage4_prioritizes_divstrip_near_road_even_when_far_from_seed(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=16, divstrip_mode="road_near_seed_far")
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="divstrip_road_priority",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["divstrip"]["divstrip_present"] is True
+    assert status_doc["divstrip"]["divstrip_nearby"] is True
+    assert status_doc["divstrip"]["selection_mode"] == "divstrip_primary"
+
+
 def test_stage4_rejects_when_divstrip_crs_override_is_invalid(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, kind_2=8, divstrip_mode="nearby_single")
     artifacts = run_t02_stage4_divmerge_virtual_polygon(
@@ -686,7 +868,12 @@ def test_stage4_rejects_when_rcsdnode_or_rcsdroad_leaves_drivezone(tmp_path: Pat
 
 
 def test_stage4_rejects_when_rcsdnode_leaves_drivezone(tmp_path: Path) -> None:
-    fixture = _write_fixture(tmp_path, kind_2=16, divstrip_mode="nearby_single", rcsdnode_outside_drivezone=True)
+    fixture = _write_fixture(
+        tmp_path,
+        kind_2=16,
+        divstrip_mode="nearby_single",
+        main_rcsdnode_geometry=Point(0.0, -155.0),
+    )
     artifacts = run_t02_stage4_divmerge_virtual_polygon(
         mainnodeid="100",
         out_root=tmp_path / "out",

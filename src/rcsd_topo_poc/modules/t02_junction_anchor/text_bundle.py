@@ -616,15 +616,124 @@ def _run_t02_export_single_text_bundle(
             query_geometry=patch_query,
         )
 
+        context_margin_m = max(float(buffer_m) * 0.5, 40.0)
+        context_seed_clip = patch_query.buffer(
+            context_margin_m,
+            cap_style=2,
+            join_style=2,
+        )
+        context_seed_geometries = [
+            representative_node.geometry,
+            *[node.geometry for node in group_nodes if node.geometry is not None and not node.geometry.is_empty],
+            *[
+                feature.geometry.intersection(context_seed_clip)
+                for feature in [
+                    *local_drivezone_layer.features,
+                    *(local_divstripzone_layer.features if local_divstripzone_layer is not None else []),
+                    *local_rcsdroad_layer.features,
+                    *local_rcsdnode_layer.features,
+                ]
+                if feature.geometry is not None
+                and not feature.geometry.is_empty
+                and not feature.geometry.intersection(context_seed_clip).is_empty
+            ],
+        ]
+        context_seed_geometries.extend(
+            road.geometry.intersection(context_seed_clip)
+            for road in _parse_roads(local_roads_layer, label="roads")
+            if road.geometry is not None
+            and not road.geometry.is_empty
+            and not road.geometry.intersection(context_seed_clip).is_empty
+        )
+        if context_seed_geometries:
+            context_query = unary_union(context_seed_geometries).buffer(
+                context_margin_m,
+                cap_style=2,
+                join_style=2,
+            )
+            if not context_query.is_empty and not patch_query.buffer(1e-6).covers(context_query):
+                local_nodes_layer = _load_layer_filtered(
+                    nodes_path,
+                    layer_name=nodes_layer,
+                    crs_override=nodes_crs,
+                    allow_null_geometry=False,
+                    query_geometry=context_query,
+                )
+                local_roads_layer = _load_layer_filtered(
+                    roads_path,
+                    layer_name=roads_layer,
+                    crs_override=roads_crs,
+                    allow_null_geometry=False,
+                    query_geometry=context_query,
+                )
+                local_drivezone_layer = _load_layer_filtered(
+                    drivezone_path,
+                    layer_name=drivezone_layer,
+                    crs_override=drivezone_crs,
+                    allow_null_geometry=False,
+                    query_geometry=context_query,
+                )
+                if divstripzone_path is not None:
+                    local_divstripzone_layer = _load_layer_filtered(
+                        divstripzone_path,
+                        layer_name=divstripzone_layer,
+                        crs_override=divstripzone_crs,
+                        allow_null_geometry=False,
+                        query_geometry=context_query,
+                    )
+                local_rcsdroad_layer = _load_layer_filtered(
+                    rcsdroad_path,
+                    layer_name=rcsdroad_layer,
+                    crs_override=rcsdroad_crs,
+                    allow_null_geometry=False,
+                    query_geometry=context_query,
+                )
+                local_rcsdnode_layer = _load_layer_filtered(
+                    rcsdnode_path,
+                    layer_name=rcsdnode_layer,
+                    crs_override=rcsdnode_crs,
+                    allow_null_geometry=False,
+                    query_geometry=context_query,
+                )
+
         parsed_roads = _parse_roads(local_roads_layer, label="roads")
         current_patch_id = _resolve_current_patch_id_from_roads(group_nodes=group_nodes, roads=parsed_roads)
-        filtered_roads = _filter_parsed_roads_to_patch(parsed_roads, patch_id=current_patch_id)
-        local_drivezone_features = _filter_loaded_features_to_patch(local_drivezone_layer.features, patch_id=current_patch_id)
-        local_divstripzone_features = (
+        patch_filtered_roads = _filter_parsed_roads_to_patch(parsed_roads, patch_id=current_patch_id)
+        patch_filtered_drivezone_features = _filter_loaded_features_to_patch(
+            local_drivezone_layer.features,
+            patch_id=current_patch_id,
+        )
+        patch_filtered_divstripzone_features = (
             None
             if local_divstripzone_layer is None
             else _filter_loaded_features_to_patch(local_divstripzone_layer.features, patch_id=current_patch_id)
         )
+
+        # Text bundle is an evidence package, not a production patch executor.
+        # Preserve nearby local context even when upstream patch ids fragment a
+        # single diverge/merge scene across multiple patches; otherwise
+        # branch-defining roads or divstrip fragments can disappear from the
+        # exported case package.
+        patch_filter_mode = "spatial_context"
+        filtered_roads = parsed_roads
+        local_drivezone_features = [feature for feature in local_drivezone_layer.features if feature.geometry is not None]
+        local_divstripzone_features = (
+            None
+            if local_divstripzone_layer is None
+            else [feature for feature in local_divstripzone_layer.features if feature.geometry is not None]
+        )
+        if current_patch_id is not None:
+            patch_filter_mode = "current_patch_hint_only"
+            if (
+                len(patch_filtered_roads) == len(parsed_roads)
+                and len(patch_filtered_drivezone_features) == len(local_drivezone_features)
+                and (
+                    patch_filtered_divstripzone_features is None
+                    or local_divstripzone_features is None
+                    or len(patch_filtered_divstripzone_features) == len(local_divstripzone_features)
+                )
+            ):
+                patch_filter_mode = "single_patch_context"
 
         local_drivezone_geometries = [feature.geometry for feature in local_drivezone_features if feature.geometry is not None]
         if not local_drivezone_geometries:
@@ -710,6 +819,7 @@ def _run_t02_export_single_text_bundle(
             "bundle_mode": TEXT_BUNDLE_MODE_SINGLE,
             "mainnodeid": normalized_mainnodeid,
             "current_patch_id": current_patch_id,
+            "patch_filter_mode": patch_filter_mode,
             "epsg": TARGET_CRS.to_epsg(),
             "buffer_m": buffer_m,
             "patch_size_m": patch_size_m,

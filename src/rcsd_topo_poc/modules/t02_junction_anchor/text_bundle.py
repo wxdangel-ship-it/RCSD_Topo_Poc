@@ -402,6 +402,160 @@ def _resolve_target_nodes(
     return _resolve_group(mainnodeid=normalized_mainnodeid, nodes=target_group_nodes)
 
 
+def _non_empty_feature_geometries(features: Iterable[Any]) -> list[BaseGeometry]:
+    geometries: list[BaseGeometry] = []
+    for feature in features:
+        geometry = getattr(feature, "geometry", None)
+        if geometry is None or geometry.is_empty:
+            continue
+        geometries.append(geometry)
+    return geometries
+
+
+def _load_bundle_local_layers(
+    *,
+    nodes_path: Union[str, Path],
+    roads_path: Union[str, Path],
+    drivezone_path: Union[str, Path],
+    divstripzone_path: Union[str, Path, None],
+    rcsdroad_path: Union[str, Path],
+    rcsdnode_path: Union[str, Path],
+    query_geometry: BaseGeometry,
+    nodes_layer: Optional[str],
+    roads_layer: Optional[str],
+    drivezone_layer: Optional[str],
+    divstripzone_layer: Optional[str],
+    rcsdroad_layer: Optional[str],
+    rcsdnode_layer: Optional[str],
+    nodes_crs: Optional[str],
+    roads_crs: Optional[str],
+    drivezone_crs: Optional[str],
+    divstripzone_crs: Optional[str],
+    rcsdroad_crs: Optional[str],
+    rcsdnode_crs: Optional[str],
+) -> dict[str, Any]:
+    local_divstripzone_layer = None
+    if divstripzone_path is not None:
+        local_divstripzone_layer = _load_layer_filtered(
+            divstripzone_path,
+            layer_name=divstripzone_layer,
+            crs_override=divstripzone_crs,
+            allow_null_geometry=False,
+            query_geometry=query_geometry,
+        )
+    return {
+        "nodes": _load_layer_filtered(
+            nodes_path,
+            layer_name=nodes_layer,
+            crs_override=nodes_crs,
+            allow_null_geometry=False,
+            query_geometry=query_geometry,
+        ),
+        "roads": _load_layer_filtered(
+            roads_path,
+            layer_name=roads_layer,
+            crs_override=roads_crs,
+            allow_null_geometry=False,
+            query_geometry=query_geometry,
+        ),
+        "drivezone": _load_layer_filtered(
+            drivezone_path,
+            layer_name=drivezone_layer,
+            crs_override=drivezone_crs,
+            allow_null_geometry=False,
+            query_geometry=query_geometry,
+        ),
+        "divstripzone": local_divstripzone_layer,
+        "rcsdroad": _load_layer_filtered(
+            rcsdroad_path,
+            layer_name=rcsdroad_layer,
+            crs_override=rcsdroad_crs,
+            allow_null_geometry=False,
+            query_geometry=query_geometry,
+        ),
+        "rcsdnode": _load_layer_filtered(
+            rcsdnode_path,
+            layer_name=rcsdnode_layer,
+            crs_override=rcsdnode_crs,
+            allow_null_geometry=False,
+            query_geometry=query_geometry,
+        ),
+    }
+
+
+def _build_bundle_context_query(
+    *,
+    representative_node: ParsedNode,
+    group_nodes: list[ParsedNode],
+    local_nodes_layer: Any,
+    parsed_roads: list[Any],
+    local_drivezone_layer: Any,
+    local_divstripzone_layer: Any | None,
+    local_rcsdroad_layer: Any,
+    local_rcsdnode_layer: Any,
+    context_margin_m: float,
+    is_complex_group: bool,
+) -> BaseGeometry | None:
+    seed_geometries: list[BaseGeometry] = [representative_node.geometry]
+    seed_geometries.extend(
+        node.geometry
+        for node in group_nodes
+        if node.geometry is not None and not node.geometry.is_empty
+    )
+    seed_geometries.extend(_non_empty_feature_geometries(local_nodes_layer.features))
+
+    roadlike_geometries = [
+        road.geometry
+        for road in parsed_roads
+        if road.geometry is not None and not road.geometry.is_empty
+    ]
+    roadlike_geometries.extend(_non_empty_feature_geometries(local_rcsdroad_layer.features))
+    if local_divstripzone_layer is not None:
+        roadlike_geometries.extend(_non_empty_feature_geometries(local_divstripzone_layer.features))
+    seed_geometries.extend(roadlike_geometries)
+    seed_geometries.extend(_non_empty_feature_geometries(local_rcsdnode_layer.features))
+
+    drivezone_clip_geometry: BaseGeometry | None = None
+    if roadlike_geometries:
+        roadlike_multiplier = 3.0 if is_complex_group else 1.25
+        node_multiplier = 2.0 if is_complex_group else 1.0
+        drivezone_clip_geometry = unary_union(roadlike_geometries).buffer(
+            context_margin_m * roadlike_multiplier,
+            cap_style=2,
+            join_style=2,
+        )
+        node_geometries = _non_empty_feature_geometries(local_nodes_layer.features)
+        if node_geometries:
+            drivezone_clip_geometry = unary_union(
+                [
+                    drivezone_clip_geometry,
+                    unary_union(node_geometries).buffer(
+                        context_margin_m * node_multiplier,
+                        cap_style=2,
+                        join_style=2,
+                    ),
+                ]
+            )
+
+    drivezone_geometries = _non_empty_feature_geometries(local_drivezone_layer.features)
+    if drivezone_clip_geometry is None:
+        seed_geometries.extend(drivezone_geometries)
+    else:
+        for geometry in drivezone_geometries:
+            clipped = geometry.intersection(drivezone_clip_geometry)
+            if clipped.is_empty:
+                continue
+            seed_geometries.append(clipped)
+
+    if not seed_geometries:
+        return None
+    return unary_union(seed_geometries).buffer(
+        context_margin_m,
+        cap_style=2,
+        join_style=2,
+    )
+
+
 def _normalize_mainnodeids(value: Union[str, int, Iterable[Union[str, int]], None]) -> list[str]:
     if value is None:
         return []
@@ -571,132 +725,81 @@ def _run_t02_export_single_text_bundle(
         origin_x = grid.min_x
         origin_y = grid.min_y
 
-        local_nodes_layer = _load_layer_filtered(
-            nodes_path,
-            layer_name=nodes_layer,
-            crs_override=nodes_crs,
-            allow_null_geometry=False,
-            query_geometry=patch_query,
-        )
-        local_roads_layer = _load_layer_filtered(
-            roads_path,
-            layer_name=roads_layer,
-            crs_override=roads_crs,
-            allow_null_geometry=False,
-            query_geometry=patch_query,
-        )
-        local_drivezone_layer = _load_layer_filtered(
-            drivezone_path,
-            layer_name=drivezone_layer,
-            crs_override=drivezone_crs,
-            allow_null_geometry=False,
-            query_geometry=patch_query,
-        )
+        is_complex_group = any(node.kind_2 == 128 for node in group_nodes)
+        context_margin_m = max(float(buffer_m), 80.0) if is_complex_group else max(float(buffer_m) * 0.4, 40.0)
+        local_nodes_layer = None
+        local_roads_layer = None
+        local_drivezone_layer = None
         local_divstripzone_layer = None
-        if divstripzone_path is not None:
-            local_divstripzone_layer = _load_layer_filtered(
-                divstripzone_path,
-                layer_name=divstripzone_layer,
-                crs_override=divstripzone_crs,
-                allow_null_geometry=False,
-                query_geometry=patch_query,
+        local_rcsdroad_layer = None
+        local_rcsdnode_layer = None
+        parsed_roads: list[Any] = []
+        query_geometry = patch_query
+        previous_signature: tuple[int, int, int, int, int, tuple[float, float, float, float] | None] | None = None
+        for _ in range(6):
+            local_layers = _load_bundle_local_layers(
+                nodes_path=nodes_path,
+                roads_path=roads_path,
+                drivezone_path=drivezone_path,
+                divstripzone_path=divstripzone_path,
+                rcsdroad_path=rcsdroad_path,
+                rcsdnode_path=rcsdnode_path,
+                query_geometry=query_geometry,
+                nodes_layer=nodes_layer,
+                roads_layer=roads_layer,
+                drivezone_layer=drivezone_layer,
+                divstripzone_layer=divstripzone_layer,
+                rcsdroad_layer=rcsdroad_layer,
+                rcsdnode_layer=rcsdnode_layer,
+                nodes_crs=nodes_crs,
+                roads_crs=roads_crs,
+                drivezone_crs=drivezone_crs,
+                divstripzone_crs=divstripzone_crs,
+                rcsdroad_crs=rcsdroad_crs,
+                rcsdnode_crs=rcsdnode_crs,
             )
-        local_rcsdroad_layer = _load_layer_filtered(
-            rcsdroad_path,
-            layer_name=rcsdroad_layer,
-            crs_override=rcsdroad_crs,
-            allow_null_geometry=False,
-            query_geometry=patch_query,
-        )
-        local_rcsdnode_layer = _load_layer_filtered(
-            rcsdnode_path,
-            layer_name=rcsdnode_layer,
-            crs_override=rcsdnode_crs,
-            allow_null_geometry=False,
-            query_geometry=patch_query,
-        )
-
-        context_margin_m = max(float(buffer_m) * 0.5, 40.0)
-        context_seed_clip = patch_query.buffer(
-            context_margin_m,
-            cap_style=2,
-            join_style=2,
-        )
-        context_seed_geometries = [
-            representative_node.geometry,
-            *[node.geometry for node in group_nodes if node.geometry is not None and not node.geometry.is_empty],
-            *[
-                feature.geometry.intersection(context_seed_clip)
-                for feature in [
-                    *local_drivezone_layer.features,
-                    *(local_divstripzone_layer.features if local_divstripzone_layer is not None else []),
-                    *local_rcsdroad_layer.features,
-                    *local_rcsdnode_layer.features,
-                ]
-                if feature.geometry is not None
-                and not feature.geometry.is_empty
-                and not feature.geometry.intersection(context_seed_clip).is_empty
-            ],
-        ]
-        context_seed_geometries.extend(
-            road.geometry.intersection(context_seed_clip)
-            for road in _parse_roads(local_roads_layer, label="roads")
-            if road.geometry is not None
-            and not road.geometry.is_empty
-            and not road.geometry.intersection(context_seed_clip).is_empty
-        )
-        if context_seed_geometries:
-            context_query = unary_union(context_seed_geometries).buffer(
-                context_margin_m,
-                cap_style=2,
-                join_style=2,
+            local_nodes_layer = local_layers["nodes"]
+            local_roads_layer = local_layers["roads"]
+            local_drivezone_layer = local_layers["drivezone"]
+            local_divstripzone_layer = local_layers["divstripzone"]
+            local_rcsdroad_layer = local_layers["rcsdroad"]
+            local_rcsdnode_layer = local_layers["rcsdnode"]
+            parsed_roads = _parse_roads(local_roads_layer, label="roads")
+            context_query = _build_bundle_context_query(
+                representative_node=representative_node,
+                group_nodes=group_nodes,
+                local_nodes_layer=local_nodes_layer,
+                parsed_roads=parsed_roads,
+                local_drivezone_layer=local_drivezone_layer,
+                local_divstripzone_layer=local_divstripzone_layer,
+                local_rcsdroad_layer=local_rcsdroad_layer,
+                local_rcsdnode_layer=local_rcsdnode_layer,
+                context_margin_m=context_margin_m,
+                is_complex_group=is_complex_group,
             )
-            if not context_query.is_empty and not patch_query.buffer(1e-6).covers(context_query):
-                local_nodes_layer = _load_layer_filtered(
-                    nodes_path,
-                    layer_name=nodes_layer,
-                    crs_override=nodes_crs,
-                    allow_null_geometry=False,
-                    query_geometry=context_query,
-                )
-                local_roads_layer = _load_layer_filtered(
-                    roads_path,
-                    layer_name=roads_layer,
-                    crs_override=roads_crs,
-                    allow_null_geometry=False,
-                    query_geometry=context_query,
-                )
-                local_drivezone_layer = _load_layer_filtered(
-                    drivezone_path,
-                    layer_name=drivezone_layer,
-                    crs_override=drivezone_crs,
-                    allow_null_geometry=False,
-                    query_geometry=context_query,
-                )
-                if divstripzone_path is not None:
-                    local_divstripzone_layer = _load_layer_filtered(
-                        divstripzone_path,
-                        layer_name=divstripzone_layer,
-                        crs_override=divstripzone_crs,
-                        allow_null_geometry=False,
-                        query_geometry=context_query,
-                    )
-                local_rcsdroad_layer = _load_layer_filtered(
-                    rcsdroad_path,
-                    layer_name=rcsdroad_layer,
-                    crs_override=rcsdroad_crs,
-                    allow_null_geometry=False,
-                    query_geometry=context_query,
-                )
-                local_rcsdnode_layer = _load_layer_filtered(
-                    rcsdnode_path,
-                    layer_name=rcsdnode_layer,
-                    crs_override=rcsdnode_crs,
-                    allow_null_geometry=False,
-                    query_geometry=context_query,
-                )
+            current_signature = (
+                len(local_nodes_layer.features),
+                len(local_roads_layer.features),
+                len(local_drivezone_layer.features),
+                0 if local_divstripzone_layer is None else len(local_divstripzone_layer.features),
+                len(local_rcsdroad_layer.features),
+                None if context_query is None or context_query.is_empty else tuple(float(v) for v in context_query.bounds),
+            )
+            if context_query is None or context_query.is_empty:
+                break
+            if previous_signature == current_signature:
+                break
+            if query_geometry.buffer(1e-6).covers(context_query):
+                break
+            previous_signature = current_signature
+            query_geometry = context_query
 
-        parsed_roads = _parse_roads(local_roads_layer, label="roads")
+        assert local_nodes_layer is not None
+        assert local_roads_layer is not None
+        assert local_drivezone_layer is not None
+        assert local_rcsdroad_layer is not None
+        assert local_rcsdnode_layer is not None
+
         current_patch_id = _resolve_current_patch_id_from_roads(group_nodes=group_nodes, roads=parsed_roads)
         patch_filtered_roads = _filter_parsed_roads_to_patch(parsed_roads, patch_id=current_patch_id)
         patch_filtered_drivezone_features = _filter_loaded_features_to_patch(

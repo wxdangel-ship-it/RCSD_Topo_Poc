@@ -32,6 +32,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _filter_loaded_features_to_patch,
     _filter_parsed_roads_to_patch,
     _load_layer_filtered,
+    _patch_ids_from_properties,
     _parse_nodes,
     _parse_roads,
     _rasterize_geometries,
@@ -640,6 +641,253 @@ def _select_bundle_component_roads(
     return list(included_roads.values())
 
 
+def _expand_scene_roads_by_semantic_boundary_nodes(
+    *,
+    parsed_roads: list[ParsedRoad],
+    local_nodes: list[ParsedNode],
+    base_roads: list[ParsedRoad],
+    scene_margin_m: float,
+    max_iterations: int = 2,
+) -> list[ParsedRoad]:
+    if not base_roads:
+        return []
+
+    road_by_id = {road.road_id: road for road in parsed_roads}
+    included_road_ids = {
+        road.road_id
+        for road in base_roads
+        if road.road_id in road_by_id
+    }
+    if not included_road_ids:
+        return []
+
+    for _ in range(max(1, int(max_iterations))):
+        current_geometries = [
+            road_by_id[road_id].geometry
+            for road_id in included_road_ids
+            if road_by_id[road_id].geometry is not None and not road_by_id[road_id].geometry.is_empty
+        ]
+        if not current_geometries:
+            break
+        current_scene_query = unary_union(current_geometries).buffer(
+            float(scene_margin_m),
+            cap_style=2,
+            join_style=2,
+        )
+        boundary_node_ids = {
+            node.node_id
+            for node in local_nodes
+            if node.geometry is not None
+            and not node.geometry.is_empty
+            and node.geometry.intersects(current_scene_query)
+            and _is_bundle_semantic_boundary_node(node)
+        }
+        if not boundary_node_ids:
+            break
+        added = False
+        for road in parsed_roads:
+            if road.road_id in included_road_ids:
+                continue
+            if road.snodeid in boundary_node_ids or road.enodeid in boundary_node_ids:
+                included_road_ids.add(road.road_id)
+                added = True
+        if not added:
+            break
+
+    return [road for road in parsed_roads if road.road_id in included_road_ids]
+
+
+def _scene_patch_ids_from_roads(
+    roads: list[ParsedRoad],
+    *,
+    current_patch_id: str | None,
+) -> tuple[str, ...]:
+    if current_patch_id is not None:
+        return (current_patch_id,)
+    patch_ids: list[str] = []
+    seen: set[str] = set()
+    for road in roads:
+        for patch_id in _patch_ids_from_properties(road.properties):
+            if patch_id in seen:
+                continue
+            seen.add(patch_id)
+            patch_ids.append(patch_id)
+    return tuple(patch_ids)
+
+
+def _supplement_scene_roads_by_patch(
+    *,
+    parsed_roads: list[ParsedRoad],
+    base_roads: list[ParsedRoad],
+    current_patch_id: str | None,
+    scene_query: BaseGeometry,
+) -> list[ParsedRoad]:
+    if not base_roads or scene_query.is_empty:
+        return list(base_roads)
+    patch_ids = set(_scene_patch_ids_from_roads(base_roads, current_patch_id=current_patch_id))
+    if not patch_ids:
+        return list(base_roads)
+    included_road_ids = {road.road_id for road in base_roads}
+    supplemented_roads = list(base_roads)
+    for road in parsed_roads:
+        if road.road_id in included_road_ids:
+            continue
+        if not patch_ids.intersection(_patch_ids_from_properties(road.properties)):
+            continue
+        if road.geometry is None or road.geometry.is_empty:
+            continue
+        if not road.geometry.intersects(scene_query):
+            continue
+        supplemented_roads.append(road)
+        included_road_ids.add(road.road_id)
+    return supplemented_roads
+
+
+def _supplement_scene_roads_by_scene_nodes(
+    *,
+    parsed_roads: list[ParsedRoad],
+    local_nodes: list[ParsedNode],
+    base_roads: list[ParsedRoad],
+    scene_query: BaseGeometry,
+) -> list[ParsedRoad]:
+    if not base_roads or scene_query.is_empty:
+        return list(base_roads)
+    semantic_node_ids = {
+        node.node_id
+        for node in local_nodes
+        if node.geometry is not None
+        and not node.geometry.is_empty
+        and node.geometry.intersects(scene_query)
+        and _is_bundle_semantic_boundary_node(node)
+    }
+    if not semantic_node_ids:
+        return list(base_roads)
+    included_road_ids = {road.road_id for road in base_roads}
+    supplemented_roads = list(base_roads)
+    for road in parsed_roads:
+        if road.road_id in included_road_ids:
+            continue
+        if road.geometry is None or road.geometry.is_empty:
+            continue
+        if not road.geometry.intersects(scene_query):
+            continue
+        if road.snodeid not in semantic_node_ids and road.enodeid not in semantic_node_ids:
+            continue
+        supplemented_roads.append(road)
+        included_road_ids.add(road.road_id)
+    return supplemented_roads
+
+
+def _merge_parsed_roads_by_id(*road_groups: Iterable[ParsedRoad]) -> list[ParsedRoad]:
+    merged: dict[str, ParsedRoad] = {}
+    for roads in road_groups:
+        for road in roads:
+            merged.setdefault(road.road_id, road)
+    return list(merged.values())
+
+
+def _merge_loaded_features_by_id(*feature_groups: Iterable[Any]) -> list[Any]:
+    merged: dict[str, Any] = {}
+    anonymous: list[Any] = []
+    for features in feature_groups:
+        for feature in features:
+            properties = getattr(feature, "properties", {}) or {}
+            feature_id = _normalize_id(properties.get("id"))
+            if feature_id is None:
+                anonymous.append(feature)
+                continue
+            merged.setdefault(feature_id, feature)
+    return [*merged.values(), *anonymous]
+
+
+def _load_supplemental_scene_roads_from_source(
+    *,
+    roads_path: Union[str, Path],
+    roads_layer: Optional[str],
+    roads_crs: Optional[str],
+    scene_node_ids: set[str],
+    patch_ids: set[str],
+) -> list[ParsedRoad]:
+    if not scene_node_ids and not patch_ids:
+        return []
+
+    def _predicate(properties: dict[str, Any]) -> bool:
+        snodeid = _normalize_id(properties.get("snodeid"))
+        enodeid = _normalize_id(properties.get("enodeid"))
+        if snodeid in scene_node_ids or enodeid in scene_node_ids:
+            return True
+        return bool(patch_ids.intersection(_patch_ids_from_properties(properties)))
+
+    supplemental_layer = _load_layer_filtered(
+        roads_path,
+        layer_name=roads_layer,
+        crs_override=roads_crs,
+        allow_null_geometry=False,
+        query_geometry=None,
+        property_predicate=_predicate,
+    )
+    return _parse_roads(supplemental_layer, label="roads")
+
+
+def _load_supplemental_scene_nodes_from_source(
+    *,
+    nodes_path: Union[str, Path],
+    nodes_layer: Optional[str],
+    nodes_crs: Optional[str],
+    scene_query: BaseGeometry,
+    included_node_ids: set[str],
+) -> list[Any]:
+    query_features = _load_layer_filtered(
+        nodes_path,
+        layer_name=nodes_layer,
+        crs_override=nodes_crs,
+        allow_null_geometry=False,
+        query_geometry=scene_query,
+    ).features
+    if not included_node_ids:
+        return query_features
+
+    def _predicate(properties: dict[str, Any]) -> bool:
+        node_id = _normalize_id(properties.get("id"))
+        mainnodeid = _normalize_id(properties.get("mainnodeid"))
+        return node_id in included_node_ids or mainnodeid in included_node_ids
+
+    endpoint_features = _load_layer_filtered(
+        nodes_path,
+        layer_name=nodes_layer,
+        crs_override=nodes_crs,
+        allow_null_geometry=False,
+        query_geometry=None,
+        property_predicate=_predicate,
+    ).features
+    return _merge_loaded_features_by_id(query_features, endpoint_features)
+
+
+def _clip_bundle_loaded_features_to_geometry(
+    *,
+    features: list[Any],
+    clip_geometry: BaseGeometry,
+) -> list[Any]:
+    if clip_geometry.is_empty:
+        return []
+    clipped_features: list[Any] = []
+    for feature in features:
+        geometry = getattr(feature, "geometry", None)
+        if geometry is None or geometry.is_empty:
+            continue
+        clipped_geometry = geometry.intersection(clip_geometry)
+        if clipped_geometry.is_empty:
+            continue
+        clipped_features.append(
+            type(feature)(
+                feature_index=getattr(feature, "feature_index", 0),
+                properties=dict(getattr(feature, "properties", {})),
+                geometry=clipped_geometry,
+            )
+        )
+    return clipped_features
+
+
 def _normalize_mainnodeids(value: Union[str, int, Iterable[Union[str, int]], None]) -> list[str]:
     if value is None:
         return []
@@ -850,7 +1098,71 @@ def _run_t02_export_single_text_bundle(
             local_nodes=local_nodes,
             max_distance_m=BUNDLE_CONTEXT_MAX_DISTANCE_M,
         )
-        patch_filter_mode = "bounded_scene_extent_200m"
+        filtered_roads = _expand_scene_roads_by_semantic_boundary_nodes(
+            parsed_roads=parsed_roads,
+            local_nodes=local_nodes,
+            base_roads=filtered_roads,
+            scene_margin_m=BUNDLE_CONTEXT_SURFACE_MARGIN_M,
+            max_iterations=2,
+        )
+
+        base_scene_geometries = [
+            road.geometry
+            for road in filtered_roads
+            if road.geometry is not None and not road.geometry.is_empty
+        ]
+        base_scene_geometries.extend(
+            node.geometry
+            for node in group_nodes
+            if node.geometry is not None and not node.geometry.is_empty
+        )
+        if not base_scene_geometries:
+            raise TextBundleError(
+                "missing_roads",
+                f"mainnodeid='{normalized_mainnodeid}' resolved no connected roads inside bounded scene extent.",
+            )
+        base_scene_query = unary_union(base_scene_geometries).buffer(
+            BUNDLE_CONTEXT_SURFACE_MARGIN_M,
+            cap_style=2,
+            join_style=2,
+        )
+        filtered_roads = _supplement_scene_roads_by_patch(
+            parsed_roads=parsed_roads,
+            base_roads=filtered_roads,
+            current_patch_id=current_patch_id,
+            scene_query=base_scene_query,
+        )
+        scene_semantic_node_ids = {
+            node.node_id
+            for node in local_nodes
+            if node.geometry is not None
+            and not node.geometry.is_empty
+            and node.geometry.intersects(base_scene_query)
+            and _is_bundle_semantic_boundary_node(node)
+        }
+        scene_patch_ids = set(_scene_patch_ids_from_roads(filtered_roads, current_patch_id=current_patch_id))
+        supplemental_roads = _load_supplemental_scene_roads_from_source(
+            roads_path=roads_path,
+            roads_layer=roads_layer,
+            roads_crs=roads_crs,
+            scene_node_ids=scene_semantic_node_ids,
+            patch_ids=scene_patch_ids,
+        )
+        if supplemental_roads:
+            parsed_roads = _merge_parsed_roads_by_id(parsed_roads, supplemental_roads)
+            filtered_roads = _supplement_scene_roads_by_patch(
+                parsed_roads=parsed_roads,
+                base_roads=filtered_roads,
+                current_patch_id=current_patch_id,
+                scene_query=base_scene_query,
+            )
+        filtered_roads = _supplement_scene_roads_by_scene_nodes(
+            parsed_roads=parsed_roads,
+            local_nodes=local_nodes,
+            base_roads=filtered_roads,
+            scene_query=base_scene_query,
+        )
+        patch_filter_mode = "bounded_scene_extent_200m_with_same_patch_and_scene_node_supplement"
 
         road_surface_geometries = [
             road.geometry
@@ -862,11 +1174,6 @@ def _run_t02_export_single_text_bundle(
             for node in group_nodes
             if node.geometry is not None and not node.geometry.is_empty
         )
-        if not road_surface_geometries:
-            raise TextBundleError(
-                "missing_roads",
-                f"mainnodeid='{normalized_mainnodeid}' resolved no connected roads inside bounded scene extent.",
-            )
         scene_query = unary_union(road_surface_geometries).buffer(
             BUNDLE_CONTEXT_SURFACE_MARGIN_M,
             cap_style=2,
@@ -880,40 +1187,54 @@ def _run_t02_export_single_text_bundle(
         for road in filtered_roads:
             included_node_ids.add(road.snodeid)
             included_node_ids.add(road.enodeid)
+        included_node_ids.update(scene_semantic_node_ids)
 
-        local_drivezone_features = [
-            feature
-            for feature in local_drivezone_layer.features
-            if feature.geometry is not None and feature.geometry.intersects(scene_query)
-        ]
-        local_divstripzone_features = (
-            None
-            if local_divstripzone_layer is None
-            else [
-                feature
-                for feature in local_divstripzone_layer.features
-                if feature.geometry is not None and feature.geometry.intersects(scene_query)
-            ]
+        local_nodes_features = _load_supplemental_scene_nodes_from_source(
+            nodes_path=nodes_path,
+            nodes_layer=nodes_layer,
+            nodes_crs=nodes_crs,
+            scene_query=scene_query,
+            included_node_ids=included_node_ids,
         )
-        local_nodes_features = [
-            feature
-            for feature in local_nodes_layer.features
-            if feature.geometry is not None
-            and (
-                _normalize_id(feature.properties.get("id")) in included_node_ids
-                or feature.geometry.intersects(scene_query)
+        local_drivezone_features = _load_layer_filtered(
+            drivezone_path,
+            layer_name=drivezone_layer,
+            crs_override=drivezone_crs,
+            allow_null_geometry=False,
+            query_geometry=scene_query,
+        ).features
+        local_drivezone_features = _clip_bundle_loaded_features_to_geometry(
+            features=local_drivezone_features,
+            clip_geometry=scene_query,
+        )
+        local_divstripzone_features = None
+        if divstripzone_path is not None:
+            local_divstripzone_features = _load_layer_filtered(
+                divstripzone_path,
+                layer_name=divstripzone_layer,
+                crs_override=divstripzone_crs,
+                allow_null_geometry=False,
+                query_geometry=scene_query,
+            ).features
+        if local_divstripzone_features is not None:
+            local_divstripzone_features = _clip_bundle_loaded_features_to_geometry(
+                features=local_divstripzone_features,
+                clip_geometry=scene_query,
             )
-        ]
-        local_rcsdroad_features = [
-            feature
-            for feature in local_rcsdroad_layer.features
-            if feature.geometry is not None and feature.geometry.intersects(scene_query)
-        ]
-        local_rcsdnode_features = [
-            feature
-            for feature in local_rcsdnode_layer.features
-            if feature.geometry is not None and feature.geometry.intersects(scene_query)
-        ]
+        local_rcsdroad_features = _load_layer_filtered(
+            rcsdroad_path,
+            layer_name=rcsdroad_layer,
+            crs_override=rcsdroad_crs,
+            allow_null_geometry=False,
+            query_geometry=scene_query,
+        ).features
+        local_rcsdnode_features = _load_layer_filtered(
+            rcsdnode_path,
+            layer_name=rcsdnode_layer,
+            crs_override=rcsdnode_crs,
+            allow_null_geometry=False,
+            query_geometry=scene_query,
+        ).features
 
         local_drivezone_geometries = [feature.geometry for feature in local_drivezone_features if feature.geometry is not None]
         if not local_drivezone_geometries:

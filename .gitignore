@@ -19,3 +19,8 @@ dist/
 
 # Generated outputs
 outputs/
+
+# Accidental root-level case bundle artifacts
+/[0-9]*/
+/*.bundle_manifest.json
+/decoded_bundle_*/

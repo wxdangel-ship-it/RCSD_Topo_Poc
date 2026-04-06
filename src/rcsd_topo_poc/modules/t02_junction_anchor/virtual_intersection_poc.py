@@ -1130,6 +1130,31 @@ def _patch_id_from_properties(properties: dict[str, Any]) -> str | None:
     return None
 
 
+def _patch_ids_from_value(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    text = str(value).strip()
+    if not text:
+        return ()
+    normalized = text.replace(";", ",").replace("|", ",")
+    patch_ids: list[str] = []
+    for piece in normalized.split(","):
+        patch_id = _normalize_id(piece)
+        if patch_id is None or patch_id in patch_ids:
+            continue
+        patch_ids.append(patch_id)
+    return tuple(patch_ids)
+
+
+def _patch_ids_from_properties(properties: dict[str, Any]) -> tuple[str, ...]:
+    for field_name in PATCH_ID_FIELD_NAMES:
+        if field_name in properties:
+            patch_ids = _patch_ids_from_value(properties.get(field_name))
+            if patch_ids:
+                return patch_ids
+    return ()
+
+
 def _resolve_current_patch_id_from_roads(
     *,
     group_nodes: list[ParsedNode],

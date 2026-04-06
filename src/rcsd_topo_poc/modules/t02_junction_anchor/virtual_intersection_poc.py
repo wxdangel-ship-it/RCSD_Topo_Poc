@@ -1123,6 +1123,27 @@ def _normalize_single_patch_id(value: Any) -> str | None:
     return _normalize_id(text)
 
 
+def _patch_ids_from_properties(properties: dict[str, Any]) -> tuple[str, ...]:
+    patch_ids: list[str] = []
+    seen: set[str] = set()
+    for field_name in PATCH_ID_FIELD_NAMES:
+        value = properties.get(field_name)
+        if value is None:
+            continue
+        text = str(value)
+        if not text:
+            continue
+        for token in text.replace("|", ",").replace(";", ",").split(","):
+            normalized = _normalize_id(token)
+            if normalized is None:
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            patch_ids.append(normalized)
+    return tuple(patch_ids)
+
+
 def _patch_id_from_properties(properties: dict[str, Any]) -> str | None:
     for field_name in PATCH_ID_FIELD_NAMES:
         if field_name in properties:
@@ -3151,6 +3172,26 @@ def _build_polygon_support_clip(
     if not clip_geometries:
         return analysis_center.buffer(POLYGON_LOCAL_RC_SEGMENT_EXTENSION_M)
     return unary_union(clip_geometries).buffer(POLYGON_SUPPORT_CLIP_BUFFER_M)
+
+
+def _build_associated_output_clip(
+    *,
+    analysis_center: Point,
+    group_nodes: list[ParsedNode],
+    local_rc_roads: list[ParsedRoad],
+    local_rc_nodes: list[ParsedNode],
+    support_road_ids: set[str] | list[str],
+    support_node_ids: set[str] | list[str],
+) -> BaseGeometry:
+    """Backward-compatible wrapper for legacy tests expecting this helper name."""
+    return _build_polygon_support_clip(
+        analysis_center=analysis_center,
+        group_nodes=group_nodes,
+        local_rc_roads=local_rc_roads,
+        local_rc_nodes=local_rc_nodes,
+        support_road_ids=set(support_road_ids),
+        support_node_ids=set(support_node_ids),
+    )
 
 
 def _validate_polygon_support(

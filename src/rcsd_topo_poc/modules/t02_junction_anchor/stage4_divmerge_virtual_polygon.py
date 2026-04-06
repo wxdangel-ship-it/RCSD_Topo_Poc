@@ -112,6 +112,11 @@ EVENT_RCSD_RECENTER_SHIFT_MAX_M = 20.0
 PARALLEL_ROAD_ANGLE_TOLERANCE_DEG = 18.0
 PARALLEL_ROAD_MIN_OFFSET_M = 4.0
 PARALLEL_ROAD_MAX_OFFSET_M = 80.0
+PARALLEL_SIDE_SIGN_EPS_M = 1.5
+PARALLEL_CENTERLINE_AXIS_WINDOW_M = 55.0
+PARALLEL_CENTERLINE_REFERENCE_DISTANCE_M = 35.0
+PARALLEL_SIDE_SIGN_MIN_WEIGHT = 0.05
+PARALLEL_SIDE_SIGN_BALANCE_RATIO = 0.1
 MULTIBRANCH_AMBIGUITY_SCORE_MARGIN = 5.0
 CHAIN_NEARBY_DISTANCE_M = 65.0
 CHAIN_SEQUENCE_DISTANCE_M = 40.0
@@ -1839,6 +1844,7 @@ def _resolve_event_span_window(
     selected_rcsd_nodes: list[ParsedNode],
     event_anchor_geometry,
     selected_roads_geometry=None,
+    selected_event_roads_geometry=None,
     selected_rcsd_roads_geometry=None,
 ) -> dict[str, Any]:
     start_offset_m = -EVENT_SPAN_DEFAULT_M
@@ -1875,14 +1881,20 @@ def _resolve_event_span_window(
             cap_style=2,
             join_style=2,
         )
-    candidate_offsets.extend(
-        _collect_axis_offsets_from_geometry(
-            selected_roads_geometry,
-            origin_xy=origin_xy,
-            axis_unit_vector=axis_unit_vector,
-            clip_geometry=road_context_clip_geometry,
-        )
+    event_span_roads_geometry = (
+        selected_event_roads_geometry
+        if selected_event_roads_geometry is not None and not selected_event_roads_geometry.is_empty
+        else selected_roads_geometry
     )
+    if event_span_roads_geometry is not None:
+        candidate_offsets.extend(
+            _collect_axis_offsets_from_geometry(
+                event_span_roads_geometry,
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+                clip_geometry=road_context_clip_geometry,
+            )
+        )
     candidate_offsets.extend(
         _collect_axis_offsets_from_geometry(
             selected_rcsd_roads_geometry,
@@ -2198,10 +2210,27 @@ def _resolve_parallel_centerline(
     axis_centerline,
     axis_unit_vector: tuple[float, float] | None,
     reference_point: Point,
+    parallel_side_sign: int | None = None,
 ):
     if axis_centerline is None or axis_centerline.is_empty or axis_unit_vector is None:
         return None
     ux, uy = axis_unit_vector
+    parallel_side_sign_value = int(parallel_side_sign) if parallel_side_sign in (-1, 1) else None
+    axis_reference_s = float(axis_centerline.project(reference_point))
+
+    def _signed_side(road_geometry) -> int | None:
+        if road_geometry is None or road_geometry.is_empty:
+            return None
+        try:
+            axis_nearest_point, road_nearest_point = nearest_points(axis_centerline, road_geometry)
+        except Exception:
+            return None
+        dx = float(road_nearest_point.x) - float(axis_nearest_point.x)
+        dy = float(road_nearest_point.y) - float(axis_nearest_point.y)
+        side = float(ux) * float(dy) - float(uy) * float(dx)
+        if abs(float(side)) <= float(PARALLEL_SIDE_SIGN_EPS_M):
+            return None
+        return 1 if side > 0 else -1
 
     def _road_axis_alignment(road_geometry) -> float | None:
         if road_geometry is None or road_geometry.is_empty:
@@ -2218,30 +2247,91 @@ def _resolve_parallel_centerline(
         dot = max(-1.0, min(1.0, dot))
         return math.degrees(math.acos(dot))
 
-    candidates: list[tuple[tuple[float, float], Any]] = []
+    candidates: list[tuple[tuple[float, float, float, float], Any]] = []
+    candidates_within_side: list[tuple[tuple[float, float, float, float], Any]] = []
     for road in local_roads:
         if road.road_id in selected_road_ids:
             continue
         angle_diff = _road_axis_alignment(road.geometry)
         if angle_diff is None or angle_diff > PARALLEL_ROAD_ANGLE_TOLERANCE_DEG:
             continue
-        distance_to_axis = float(road.geometry.distance(axis_centerline))
+        try:
+            axis_nearest_point, road_nearest_point = nearest_points(axis_centerline, road.geometry)
+        except Exception:
+            continue
+        axis_s = float(axis_centerline.project(axis_nearest_point))
+        if abs(axis_s - axis_reference_s) > PARALLEL_CENTERLINE_AXIS_WINDOW_M:
+            continue
+        distance_to_axis = float(road_nearest_point.distance(axis_nearest_point))
         if distance_to_axis < PARALLEL_ROAD_MIN_OFFSET_M or distance_to_axis > PARALLEL_ROAD_MAX_OFFSET_M:
             continue
-        candidates.append(
+        candidate_side = _signed_side(road.geometry)
+        candidate = (
             (
-                (
-                    distance_to_axis,
-                    float(road.geometry.distance(reference_point)),
-                    -float(road.geometry.length),
-                ),
-                road.geometry,
-            )
+                distance_to_axis,
+                abs(axis_s - axis_reference_s),
+                float(road.geometry.distance(reference_point)),
+                -float(road.geometry.length),
+            ),
+            road.geometry,
         )
+        candidates.append(candidate)
+        if parallel_side_sign_value is not None and candidate_side == parallel_side_sign_value:
+            candidates_within_side.append(candidate)
+        elif parallel_side_sign_value is None:
+            candidates_within_side.append(candidate)
+
+    if parallel_side_sign_value is not None and candidates_within_side:
+        candidates = candidates_within_side
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0])
     return candidates[0][1]
+
+
+def _resolve_parallel_side_sign(
+    *,
+    axis_centerline,
+    axis_unit_vector: tuple[float, float] | None,
+    reference_geometries: list[Any],
+) -> int | None:
+    if axis_centerline is None or axis_centerline.is_empty or axis_unit_vector is None:
+        return None
+    ux, uy = axis_unit_vector
+    positive_weight = 0.0
+    negative_weight = 0.0
+    for geometry in reference_geometries:
+        if geometry is None or geometry.is_empty:
+            continue
+        try:
+            axis_nearest_point, road_nearest_point = nearest_points(axis_centerline, geometry)
+        except Exception:
+            continue
+        axis_distance = float(axis_centerline.distance(geometry))
+        if axis_distance > PARALLEL_CENTERLINE_REFERENCE_DISTANCE_M:
+            continue
+        dx = float(road_nearest_point.x) - float(axis_nearest_point.x)
+        dy = float(road_nearest_point.y) - float(axis_nearest_point.y)
+        side = float(ux) * float(dy) - float(uy) * float(dx)
+        if abs(float(side)) <= float(PARALLEL_SIDE_SIGN_EPS_M):
+            continue
+        side_weight = (
+            (abs(side) / max(float(PARALLEL_CENTERLINE_REFERENCE_DISTANCE_M), 1.0))
+            * (1.0 - axis_distance / max(float(PARALLEL_CENTERLINE_REFERENCE_DISTANCE_M), 1.0))
+        )
+        if side_weight < float(PARALLEL_SIDE_SIGN_MIN_WEIGHT):
+            continue
+        if side > 0:
+            positive_weight += side_weight
+        else:
+            negative_weight += side_weight
+    total_weight = float(positive_weight + negative_weight)
+    if total_weight <= 0.0:
+        return None
+    balance_ratio = abs(positive_weight - negative_weight) / total_weight
+    if balance_ratio < PARALLEL_SIDE_SIGN_BALANCE_RATIO:
+        return None
+    return 1 if positive_weight > negative_weight else -1
 
 
 def _clip_line_to_parallel_midline(
@@ -2275,6 +2365,7 @@ def _clip_line_to_parallel_midline(
     end_s = float(crossline.project(Point(_coord_xy(line_coords[-1]))))
     lo = min(start_s, end_s)
     hi = max(start_s, end_s)
+    midpoint_s = max(lo + 1e-6, min(hi - 1e-6, midpoint_s))
     if midpoint_s <= lo + 1e-6 or midpoint_s >= hi - 1e-6:
         return line
     if axis_s <= parallel_s:
@@ -4156,12 +4247,26 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 axis_centerline=event_axis_centerline,
                 origin_point=event_origin_point,
             ) or event_axis_unit_vector
+        parallel_side_sign = _resolve_parallel_side_sign(
+            axis_centerline=event_axis_centerline,
+            axis_unit_vector=event_axis_unit_vector,
+            reference_geometries=[
+                road.geometry
+                for road in selected_event_roads
+                if road.geometry is not None and not road.geometry.is_empty
+            ] or [
+                road.geometry
+                for road in selected_roads
+                if road.geometry is not None and not road.geometry.is_empty
+            ],
+        )
         parallel_centerline = _resolve_parallel_centerline(
             local_roads=local_roads,
             selected_road_ids=set(selected_road_ids),
             axis_centerline=event_axis_centerline,
             axis_unit_vector=event_axis_unit_vector,
             reference_point=event_origin_point,
+            parallel_side_sign=parallel_side_sign,
         )
         event_span_window = _resolve_event_span_window(
             origin_point=event_origin_point,
@@ -4173,19 +4278,20 @@ def run_t02_stage4_divmerge_virtual_polygon(
             )
             if selected_roads
             else GeometryCollection(),
+            selected_event_roads_geometry=unary_union(
+                [road.geometry for road in selected_event_roads if road.geometry is not None and not road.geometry.is_empty]
+            )
+            if selected_event_roads
+            else GeometryCollection(),
             selected_rcsd_roads_geometry=unary_union(
                 [road.geometry for road in selected_rcsd_roads if road.geometry is not None and not road.geometry.is_empty]
             )
             if selected_rcsd_roads
             else GeometryCollection(),
         )
-        if kind_resolution["complex_junction"] and chain_context["related_mainnodeids"]:
+        if kind_resolution["complex_junction"] and chain_context["sequential_ok"] and chain_context["related_seed_nodes"]:
             chain_related_offsets: list[float] = []
-            related_mainnodeids = set(chain_context["related_mainnodeids"])
-            for candidate_node in local_nodes:
-                candidate_mainnodeid = normalize_id(candidate_node.mainnodeid or candidate_node.node_id)
-                if candidate_mainnodeid not in related_mainnodeids:
-                    continue
+            for candidate_node in chain_context["related_seed_nodes"]:
                 candidate_offset = _project_point_to_axis(
                     candidate_node.geometry,
                     origin_xy=(float(event_origin_point.x), float(event_origin_point.y)),
@@ -4194,16 +4300,22 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 if math.isfinite(float(candidate_offset)):
                     chain_related_offsets.append(float(candidate_offset))
             if chain_related_offsets:
+                event_min_offset = float(min(chain_related_offsets))
+                event_max_offset = float(max(chain_related_offsets))
                 event_span_window["start_offset_m"] = float(
                     max(
                         -CHAIN_NEARBY_DISTANCE_M,
-                        min(float(event_span_window["start_offset_m"]), min(chain_related_offsets) - EVENT_SPAN_MARGIN_M),
+                        event_min_offset - EVENT_SPAN_MARGIN_M
+                        if event_min_offset < 0.0
+                        else float(event_span_window["start_offset_m"]),
                     )
                 )
                 event_span_window["end_offset_m"] = float(
                     min(
                         CHAIN_NEARBY_DISTANCE_M,
-                        max(float(event_span_window["end_offset_m"]), max(chain_related_offsets) + EVENT_SPAN_MARGIN_M),
+                        event_max_offset + EVENT_SPAN_MARGIN_M
+                        if event_max_offset > 0.0
+                        else float(event_span_window["end_offset_m"]),
                     )
                 )
                 event_span_window["candidate_offset_count"] = int(event_span_window["candidate_offset_count"]) + len(chain_related_offsets)

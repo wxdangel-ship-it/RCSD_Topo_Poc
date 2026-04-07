@@ -1151,31 +1151,6 @@ def _patch_id_from_properties(properties: dict[str, Any]) -> str | None:
     return None
 
 
-def _patch_ids_from_value(value: Any) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    text = str(value).strip()
-    if not text:
-        return ()
-    normalized = text.replace(";", ",").replace("|", ",")
-    patch_ids: list[str] = []
-    for piece in normalized.split(","):
-        patch_id = _normalize_id(piece)
-        if patch_id is None or patch_id in patch_ids:
-            continue
-        patch_ids.append(patch_id)
-    return tuple(patch_ids)
-
-
-def _patch_ids_from_properties(properties: dict[str, Any]) -> tuple[str, ...]:
-    for field_name in PATCH_ID_FIELD_NAMES:
-        if field_name in properties:
-            patch_ids = _patch_ids_from_value(properties.get(field_name))
-            if patch_ids:
-                return patch_ids
-    return ()
-
-
 def _resolve_current_patch_id_from_roads(
     *,
     group_nodes: list[ParsedNode],
@@ -2324,7 +2299,11 @@ def _branch_has_local_road_mouth(branch: BranchEvidence) -> bool:
     if branch.rc_support_m >= 12.0:
         return False
 
-    if branch.drivezone_support_m >= 6.0 and branch.road_support_m >= 6.0:
+    if (
+        branch.drivezone_support_m >= 6.0
+        and branch.road_support_m >= 6.0
+        and branch.rc_support_m < 5.0
+    ):
         return True
 
     if (
@@ -2418,6 +2397,8 @@ def _can_soft_exclude_outside_rc(
         selected_rc_road_count >= 2
         and polygon_support_rc_road_count >= 1
         and max_selected_side_branch_covered_length_m >= 7.0
+        and effective_associated_rc_node_count == 0
+        and associated_nonzero_mainnode_count == 0
     ):
         return True
     if (
@@ -2425,6 +2406,8 @@ def _can_soft_exclude_outside_rc(
         and max_selected_side_branch_covered_length_m >= 7.0
         and min_invalid_rc_distance_to_center_m is not None
         and min_invalid_rc_distance_to_center_m >= RC_OUTSIDE_DRIVEZONE_SOFT_EXCLUDE_MIN_DISTANCE_M
+        and effective_associated_rc_node_count == 0
+        and associated_nonzero_mainnode_count == 0
     ):
         return True
     if status == STATUS_NO_VALID_RC_CONNECTION:
@@ -2453,6 +2436,8 @@ def _can_soft_exclude_outside_rc(
         and selected_rc_road_count >= 2
         and polygon_support_rc_road_count >= 2
         and max_selected_side_branch_covered_length_m >= 12.0
+        and effective_associated_rc_node_count == 0
+        and associated_nonzero_mainnode_count == 0
     ):
         return True
     if (
@@ -2462,6 +2447,33 @@ def _can_soft_exclude_outside_rc(
         and polygon_support_rc_road_count >= 1
         and min_invalid_rc_distance_to_center_m is not None
         and min_invalid_rc_distance_to_center_m >= 10.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and max_selected_side_branch_covered_length_m >= 8.0
+        and max_nonmain_branch_polygon_length_m >= 8.0
+        and min_invalid_rc_distance_to_center_m is not None
+        and min_invalid_rc_distance_to_center_m >= 10.0
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 8
+        and local_road_count <= 16
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and effective_local_rc_node_count == 0
+        and effective_associated_rc_node_count == 0
+        and associated_nonzero_mainnode_count == 0
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and connected_rc_group_count <= 1
+        and negative_rc_group_count == 0
+        and max_selected_side_branch_covered_length_m >= 7.0
+        and max_nonmain_branch_polygon_length_m >= 8.0
     ):
         return True
     if (
@@ -2622,6 +2634,19 @@ def _can_soft_exclude_outside_rc(
         and max_nonmain_branch_polygon_length_m >= 8.0
         and min_invalid_rc_distance_to_center_m is not None
         and min_invalid_rc_distance_to_center_m >= 10.0
+    ):
+        return True
+    if (
+        status == STATUS_STABLE
+        and associated_nonzero_mainnode_count >= 1
+        and selected_rc_road_count >= 1
+        and polygon_support_rc_road_count >= 1
+        and max_selected_side_branch_covered_length_m == 0.0
+        and max_nonmain_branch_polygon_length_m == 0.0
+        and local_node_count is not None
+        and local_road_count is not None
+        and local_node_count <= 8
+        and local_road_count <= 16
     ):
         return True
     if (
@@ -3314,6 +3339,17 @@ def _is_foreign_local_junction_node(
     )
 
 
+def _is_foreign_local_group_member_node(
+    *,
+    node: ParsedNode,
+    target_group_node_ids: set[str],
+    normalized_mainnodeid: str,
+) -> bool:
+    if node.node_id in target_group_node_ids:
+        return False
+    return node.mainnodeid is not None and node.mainnodeid != normalized_mainnodeid
+
+
 def _is_effective_rc_junction_node(
     *,
     node: ParsedNode,
@@ -3341,19 +3377,33 @@ def _build_foreign_node_exclusion_geometry(
     target_group_node_ids = {node.node_id for node in group_nodes}
     exclusion_geometries: list[BaseGeometry] = []
     for node in local_nodes:
-        if not _is_foreign_local_junction_node(
+        is_foreign_junction_node = _is_foreign_local_junction_node(
             node=node,
             target_group_node_ids=target_group_node_ids,
             normalized_mainnodeid=normalized_mainnodeid,
             local_road_degree_by_node_id=local_road_degree_by_node_id,
-        ):
+        )
+        is_foreign_group_member_node = _is_foreign_local_group_member_node(
+            node=node,
+            target_group_node_ids=target_group_node_ids,
+            normalized_mainnodeid=normalized_mainnodeid,
+        )
+        if not is_foreign_junction_node and not is_foreign_group_member_node:
             continue
         if polygon_geometry.distance(node.geometry) > POLYGON_FOREIGN_NODE_TRIGGER_DISTANCE_M:
             continue
-        node_buffer = node.geometry.buffer(POLYGON_FOREIGN_NODE_BUFFER_M).intersection(drivezone_union)
+        node_buffer = node.geometry.buffer(
+            POLYGON_FOREIGN_NODE_BUFFER_M
+            if is_foreign_junction_node
+            else POLYGON_FOREIGN_NODE_BUFFER_M * 0.8
+        ).intersection(drivezone_union)
         if not node_buffer.is_empty:
             exclusion_geometries.append(node_buffer)
-        incident_clip = node.geometry.buffer(POLYGON_FOREIGN_NODE_ROAD_EXTENSION_M)
+        incident_clip = node.geometry.buffer(
+            POLYGON_FOREIGN_NODE_ROAD_EXTENSION_M
+            if is_foreign_junction_node
+            else POLYGON_FOREIGN_NODE_ROAD_EXTENSION_M * 0.85
+        )
         for road in local_roads:
             if road.snodeid != node.node_id and road.enodeid != node.node_id:
                 continue
@@ -3572,15 +3622,25 @@ def _effect_success_acceptance(
     has_structural_side_branch: bool = True,
     max_nonmain_edge_branch_road_support_m: float = 0.0,
     max_nonmain_edge_branch_rc_support_m: float = 0.0,
+    excluded_local_rc_road_count: int = 0,
+    excluded_local_rc_node_count: int = 0,
 ) -> tuple[bool, str, str]:
     if effective_local_rc_node_count is None:
         effective_local_rc_node_count = local_rc_node_count
+    has_excluded_local_rc = (
+        excluded_local_rc_road_count > 0
+        or excluded_local_rc_node_count > 0
+    )
     if review_mode:
         return False, "review_required", "review_mode"
     if status == STATUS_STABLE:
         return True, "accepted", "stable"
     if status == STATUS_SURFACE_ONLY:
-        if local_rc_road_count == 0 and effective_local_rc_node_count == 0:
+        if (
+            not has_excluded_local_rc
+            and local_rc_road_count == 0
+            and effective_local_rc_node_count == 0
+        ):
             return True, "accepted", "surface_only_without_any_local_rcsd_data"
         if (
             connected_rc_group_count == 0
@@ -3590,20 +3650,6 @@ def _effect_success_acceptance(
             return True, "accepted", "surface_only_without_connected_local_rcsd_evidence"
         return False, "review_required", f"review_required_status:{status}"
     if status == STATUS_NO_VALID_RC_CONNECTION:
-        if (
-            connected_rc_group_count == 0
-            and associated_rc_road_count == 0
-            and polygon_support_rc_road_count == 0
-            and effective_local_rc_node_count == 0
-        ):
-            return True, "accepted", "rc_gap_without_connected_local_rcsd_evidence"
-        if (
-            associated_rc_road_count == 0
-            and polygon_support_rc_road_count == 0
-            and nonmain_branch_connected_rc_group_count == 0
-            and effective_local_rc_node_count == 0
-        ):
-            return True, "accepted", "rc_gap_without_connected_local_rcsd_evidence"
         if (
             associated_rc_road_count == 0
             and polygon_support_rc_road_count == 0
@@ -3617,6 +3663,20 @@ def _effect_success_acceptance(
             and max_nonmain_branch_polygon_length_m == 0.0
         ):
             return True, "accepted", "rc_gap_with_compact_local_mouth_geometry"
+        if (
+            connected_rc_group_count == 0
+            and associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+            and effective_local_rc_node_count == 0
+        ):
+            return True, "accepted", "rc_gap_without_connected_local_rcsd_evidence"
+        if (
+            associated_rc_road_count == 0
+            and polygon_support_rc_road_count == 0
+            and nonmain_branch_connected_rc_group_count == 0
+            and effective_local_rc_node_count == 0
+        ):
+            return True, "accepted", "rc_gap_without_connected_local_rcsd_evidence"
         if (
             associated_rc_road_count == 0
             and polygon_support_rc_road_count == 0
@@ -3761,6 +3821,16 @@ def _effect_success_acceptance(
             and max_selected_side_branch_covered_length_m <= 1.0
         ):
             return True, "accepted", "ambiguous_main_rc_gap_with_compact_supported_polygon"
+        if (
+            associated_rc_road_count >= 2
+            and polygon_support_rc_road_count >= associated_rc_road_count
+            and negative_rc_group_count >= 1
+            and local_road_count <= 6
+            and local_node_count <= 4
+            and max_selected_side_branch_covered_length_m >= 18.0
+            and max_nonmain_branch_polygon_length_m >= 10.0
+        ):
+            return True, "accepted", "ambiguous_main_rc_gap_with_supported_branch_polygon_coverage"
         return False, "review_required", f"review_required_status:{status}"
     return False, "rejected", f"rejected_status:{status}"
 
@@ -4652,25 +4722,46 @@ def run_t02_virtual_intersection_poc(
                         for road in local_roads
                         if road.road_id in branch.road_ids
                     ]
-                    support_geometries.extend(
+                    branch_road_geometries = [
                         geometry
                         for geometry in branch_road_geometries
                         if geometry is not None and not geometry.is_empty
-                    )
-                    branch_selected_geometries.extend(
-                        geometry
-                        for geometry in branch_road_geometries
-                        if geometry is not None and not geometry.is_empty
-                    )
-                    compact_local_branch_support = bool(branch_selected_geometries) and _branch_prefers_compact_local_support(
+                    ]
+                    compact_local_branch_support = bool(branch_road_geometries) and _branch_prefers_compact_local_support(
                         branch,
                         branch_has_local_road_mouth=branch_has_local_road_mouth,
                         branch_has_minimal_local_road_touch=branch_has_minimal_local_road_touch,
                     )
+                    if not compact_local_branch_support:
+                        support_geometries.extend(branch_road_geometries)
+                        branch_selected_geometries.extend(branch_road_geometries)
                     if compact_local_branch_support:
+                        compact_branch_clip = _branch_ray_geometry(
+                            analysis_center,
+                            angle_deg=branch.angle_deg,
+                            length_m=max(max_length + 4.0, 8.0),
+                        ).buffer(
+                            max(half_width * 1.2, 4.0),
+                            cap_style=2,
+                            join_style=2,
+                        ).intersection(drivezone_union)
+                        compact_branch_geometries = [
+                            geometry.intersection(compact_branch_clip)
+                            for geometry in branch_road_geometries
+                        ]
+                        compact_branch_geometries = [
+                            geometry
+                            for geometry in compact_branch_geometries
+                            if geometry is not None and not geometry.is_empty
+                        ]
+                        mouth_fan_source_geometries = (
+                            compact_branch_geometries
+                            if compact_branch_geometries
+                            else branch_road_geometries
+                        )
                         mouth_fan_geometry = _build_local_branch_mouth_fan_geometry(
                             center=analysis_center,
-                            branch_geometries=branch_selected_geometries,
+                            branch_geometries=mouth_fan_source_geometries,
                             drivezone_union=drivezone_union,
                             half_width=half_width,
                         )
@@ -4684,6 +4775,10 @@ def run_t02_virtual_intersection_poc(
                                 branch_local_refinement_specs.append(
                                     (refine_clip, mouth_fan_geometry.intersection(refine_clip))
                                 )
+                        else:
+                            compact_local_branch_support = False
+                            support_geometries.extend(branch_road_geometries)
+                            branch_selected_geometries.extend(branch_road_geometries)
                 if not connector_geometry.is_empty and not compact_local_branch_support:
                     support_geometries.append(connector_geometry)
                     branch_selected_geometries.append(connector_geometry)
@@ -4959,9 +5054,10 @@ def run_t02_virtual_intersection_poc(
                     seed_geometry=core_geometry,
                 )
         if not virtual_polygon_geometry.is_empty:
-            branch_road_ids = {
+            protected_branch_road_ids = {
                 road_id
                 for branch in road_branches
+                if branch.is_main_direction or bool(branch.rcsdroad_ids)
                 for road_id in branch.road_ids
             }
             foreign_node_exclusion_geometry = _build_foreign_node_exclusion_geometry(
@@ -4970,7 +5066,7 @@ def run_t02_virtual_intersection_poc(
                 group_nodes=group_nodes,
                 local_nodes=local_nodes,
                 local_roads=local_roads,
-                allowed_road_ids=branch_road_ids,
+                allowed_road_ids=protected_branch_road_ids,
                 drivezone_union=drivezone_union,
                 local_road_degree_by_node_id=local_road_degree_by_node_id,
             )
@@ -5076,10 +5172,69 @@ def run_t02_virtual_intersection_poc(
                 )
             )
         record_stage("virtual_polygon_built")
+        selected_rc_support_road_ids = {
+            road_id
+            for road_id in polygon_support_rc_road_ids
+            if road_id in positive_rc_road_ids
+        }
+        local_rc_road_by_id = {road.road_id: road for road in local_rc_roads}
+        for branch in road_branches:
+            if branch.polygon_length_m <= 0.0:
+                continue
+            matched_positive_group_ids = [
+                group_id
+                for group_id in branch.rcsdroad_ids
+                if group_id in positive_rc_groups and group_id not in negative_rc_groups
+            ]
+            if not matched_positive_group_ids:
+                continue
+            branch_support_clip = _branch_ray_geometry(
+                analysis_center,
+                angle_deg=branch.angle_deg,
+                length_m=max(float(branch.polygon_length_m or 0.0) + 6.0, 10.0),
+            ).buffer(
+                max(RC_ROAD_BUFFER_M * 1.5, SIDE_BRANCH_HALF_WIDTH_M * 1.2),
+                cap_style=2,
+                join_style=2,
+            ).intersection(drivezone_union)
+            if branch_support_clip.is_empty:
+                continue
+            for group_id in matched_positive_group_ids:
+                fallback_positive_roads = {
+                    road_id
+                    for road_id in rc_branch_by_id[group_id].road_ids
+                    if road_id in positive_rc_road_ids
+                }
+                if not branch.is_main_direction and fallback_positive_roads:
+                    selected_rc_support_road_ids.update(fallback_positive_roads)
+                candidate_roads = [
+                    local_rc_road_by_id[road_id]
+                    for road_id in rc_branch_by_id[group_id].road_ids
+                    if road_id in local_rc_road_by_id
+                    and local_rc_road_by_id[road_id].geometry.intersects(branch_support_clip)
+                ]
+                if not candidate_roads:
+                    continue
+                representative_road = min(
+                    candidate_roads,
+                    key=lambda road: (
+                        float(road.geometry.distance(analysis_center)),
+                        -float(road.geometry.intersection(branch_support_clip).length),
+                        float(road.geometry.length),
+                    ),
+                )
+                selected_rc_support_road_ids.add(representative_road.road_id)
+        selected_positive_rc_road_ids = positive_rc_road_ids | selected_rc_support_road_ids
         selected_rc_roads = [
             road
             for road in local_rc_roads
-            if road.road_id in positive_rc_road_ids and road.geometry.intersects(virtual_polygon_geometry)
+            if (
+                road.road_id in selected_positive_rc_road_ids
+                and (
+                    road.geometry.intersects(virtual_polygon_geometry)
+                    or road.road_id in selected_rc_support_road_ids
+                )
+            )
         ]
         selected_rc_node_ids: set[str] = {node.node_id for node in rc_group_nodes}
         for road in selected_rc_roads:
@@ -5250,6 +5405,8 @@ def run_t02_virtual_intersection_poc(
             has_structural_side_branch=has_structural_side_branch,
             max_nonmain_edge_branch_road_support_m=max_nonmain_edge_branch_road_support_m,
             max_nonmain_edge_branch_rc_support_m=max_nonmain_edge_branch_rc_support_m,
+            excluded_local_rc_road_count=len(invalid_rc_road_ids),
+            excluded_local_rc_node_count=len(invalid_rc_node_ids),
         )
         can_soft_exclude_outside_rc = (
             rc_outside_drivezone_error is not None

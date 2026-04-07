@@ -749,7 +749,7 @@ def test_stage4_uses_reverse_tip_when_reverse_retry_improves_branch_positioning(
     assert "road_west" not in node_link_doc["selected_road_ids"]
 
 
-def test_stage4_marks_review_required_for_continuous_chain_with_adjacent_opposite_event(tmp_path: Path) -> None:
+def test_stage4_accepts_continuous_chain_when_only_single_side_matched(tmp_path: Path) -> None:
     fixture = _write_continuous_chain_fixture(tmp_path)
     artifacts = run_t02_stage4_divmerge_virtual_polygon(
         mainnodeid="100",
@@ -763,10 +763,10 @@ def test_stage4_marks_review_required_for_continuous_chain_with_adjacent_opposit
         rcsdnode_path=fixture["rcsdnode_path"],
     )
 
-    assert artifacts.success is False
+    assert artifacts.success is True
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "continuous_chain_review"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
     assert status_doc["continuous_chain"]["is_in_continuous_chain"] is True
     assert status_doc["continuous_chain"]["chain_component_id"] == "100__200"
     assert status_doc["continuous_chain"]["related_mainnodeids"] == ["200"]

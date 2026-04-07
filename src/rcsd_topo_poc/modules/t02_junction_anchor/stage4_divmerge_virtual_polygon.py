@@ -6,6 +6,7 @@ import math
 import shutil
 import time
 import tracemalloc
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import combinations
@@ -36,6 +37,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     DEFAULT_PATCH_SIZE_M,
     DEFAULT_RESOLUTION_M,
     MAIN_AXIS_ANGLE_TOLERANCE_DEG,
+    BRANCH_MATCH_TOLERANCE_DEG,
     ROAD_BUFFER_M,
     RC_NODE_SEED_RADIUS_M,
     RC_ROAD_BUFFER_M,
@@ -43,6 +45,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     ParsedNode,
     ParsedRoad,
     _binary_close,
+    _cluster_branch_candidates,
     _branch_candidate_from_road,
     _build_debug_focus_geometry,
     _build_grid,
@@ -94,7 +97,7 @@ DIVSTRIP_REFERENCE_ROAD_BUFFER_M = 28.0
 DIVSTRIP_KIND_POSITION_MARGIN_M = 2.0
 EVENT_ANCHOR_BUFFER_M = 4.0
 EVENT_SPAN_DEFAULT_M = 10.0
-EVENT_SPAN_MAX_M = 25.0
+EVENT_SPAN_MAX_M = 120.0
 EVENT_SPAN_MARGIN_M = 1.5
 EVENT_AXIS_TANGENT_SAMPLE_M = 3.0
 EVENT_CROSSLINE_STEP_M = 1.0
@@ -109,6 +112,7 @@ EVENT_REFERENCE_SEARCH_MARGIN_M = 20.0
 EVENT_REFERENCE_SPLIT_EXTEND_M = 5.0
 EVENT_REFERENCE_DIVSTRIP_TARGET_BY_SPLIT_MIN_S_M = 5.0
 EVENT_RCSD_RECENTER_SHIFT_MAX_M = 20.0
+DEBUG_RENDER_PATCH_SIZE_M = 420.0
 EVENT_CROSS_HALF_LEN_FALLBACK_M = 60.0
 EVENT_CROSS_HALF_LEN_MIN_M = 30.0
 EVENT_CROSS_HALF_LEN_MAX_M = 130.0
@@ -125,11 +129,12 @@ PARALLEL_SIDE_SIGN_MIN_WEIGHT = 0.05
 PARALLEL_SIDE_SIGN_BALANCE_RATIO = 0.1
 PARALLEL_SIDE_FALLBACK_REFERENCE_DISTANCE_M = 120.0
 PARALLEL_SIDE_FALLBACK_BALANCE_RATIO = 0.03
+CHAIN_CONTEXT_EVENT_SPAN_M = 200.0
 MULTIBRANCH_AMBIGUITY_SCORE_MARGIN = 5.0
-CHAIN_NEARBY_DISTANCE_M = 65.0
-CHAIN_SEQUENCE_DISTANCE_M = 40.0
 RCSDNODE_TRUNK_WINDOW_M = 20.0
 RCSDNODE_TRUNK_LATERAL_TOLERANCE_M = 6.0
+CHAIN_NEARBY_DISTANCE_M = CHAIN_CONTEXT_EVENT_SPAN_M
+CHAIN_SEQUENCE_DISTANCE_M = CHAIN_CONTEXT_EVENT_SPAN_M
 
 
 def _now_text() -> str:
@@ -1854,13 +1859,18 @@ def _resolve_event_span_window(
     selected_roads_geometry=None,
     selected_event_roads_geometry=None,
     selected_rcsd_roads_geometry=None,
+    span_limit_m: float | None = None,
 ) -> dict[str, Any]:
+    if span_limit_m is None or float(span_limit_m) <= 0:
+        span_limit_m = EVENT_SPAN_MAX_M
+    else:
+        span_limit_m = float(span_limit_m)
     start_offset_m = -EVENT_SPAN_DEFAULT_M
     end_offset_m = EVENT_SPAN_DEFAULT_M
     if axis_unit_vector is None:
         return {
-            "start_offset_m": start_offset_m,
-            "end_offset_m": end_offset_m,
+            "start_offset_m": max(-span_limit_m, start_offset_m),
+            "end_offset_m": min(span_limit_m, end_offset_m),
             "candidate_offset_count": 0,
             "expansion_source": "default_no_axis",
         }
@@ -1917,8 +1927,8 @@ def _resolve_event_span_window(
         expansion_source = "rcsd_or_divstrip_context"
     else:
         expansion_source = "default_span"
-    start_offset_m = max(-EVENT_SPAN_MAX_M, start_offset_m)
-    end_offset_m = min(EVENT_SPAN_MAX_M, end_offset_m)
+    start_offset_m = max(-span_limit_m, start_offset_m)
+    end_offset_m = min(span_limit_m, end_offset_m)
     return {
         "start_offset_m": float(start_offset_m),
         "end_offset_m": float(end_offset_m),
@@ -2063,7 +2073,7 @@ def _collect_axis_lateral_offsets(
                 coordinates.extend(ring.coords)
         else:
             continue
-        for x, y in coordinates:
+        for x, y in (_coord_xy(coord) for coord in coordinates):
             dx = float(x) - float(origin_xy[0])
             dy = float(y) - float(origin_xy[1])
             axis_offset = dx * ux + dy * uy
@@ -2436,6 +2446,8 @@ def _resolve_parallel_side_sign_fallback(
     if axis_centerline is None or axis_centerline.is_empty or axis_unit_vector is None:
         return None
     ux, uy = axis_unit_vector
+    best_abs_side = 0.0
+    best_side: int | None = None
     positive_weight = 0.0
     negative_weight = 0.0
     for geometry in reference_geometries:
@@ -2457,17 +2469,220 @@ def _resolve_parallel_side_sign_fallback(
         side_weight = 1.0 / (1.0 + max(float(axis_distance), 0.0))
         if side_weight <= 0.0:
             continue
+        side_abs = abs(float(side_weight))
+        if side_abs > best_abs_side:
+            best_abs_side = side_abs
+            best_side = 1 if float(side) > 0.0 else -1
         if side > 0:
             positive_weight += side_weight
         else:
             negative_weight += side_weight
     total_weight = float(positive_weight + negative_weight)
     if total_weight <= 0.0:
-        return None
+        return best_side
     balance_ratio = abs(positive_weight - negative_weight) / total_weight
-    if balance_ratio < float(PARALLEL_SIDE_FALLBACK_BALANCE_RATIO):
+    if total_weight > 0.0 and balance_ratio < float(PARALLEL_SIDE_FALLBACK_BALANCE_RATIO):
+        if best_side is not None:
+            return best_side
         return None
     return 1 if positive_weight > negative_weight else -1
+
+
+def _build_stage4_directed_road_graph(
+    local_roads: list[ParsedRoad],
+) -> tuple[dict[str, list[tuple[str, ParsedRoad]]], dict[str, list[tuple[str, ParsedRoad]]], dict[str, int]]:
+    adjacency_out: dict[str, list[tuple[str, ParsedRoad]]] = defaultdict(list)
+    adjacency_in: dict[str, list[tuple[str, ParsedRoad]]] = defaultdict(list)
+    undirected_degree: dict[str, int] = defaultdict(int)
+
+    for road in local_roads:
+        if road.direction not in {2, 3}:
+            continue
+        if not road.road_id:
+            continue
+        src_node = road.snodeid
+        dst_node = road.enodeid
+        if not src_node or not dst_node:
+            continue
+        if road.direction == 2:
+            src_node = road.snodeid
+            dst_node = road.enodeid
+        else:
+            src_node = road.enodeid
+            dst_node = road.snodeid
+
+        adjacency_out[src_node].append((dst_node, road))
+        adjacency_in[dst_node].append((src_node, road))
+        undirected_degree[src_node] = int(undirected_degree.get(src_node, 0)) + 1
+        undirected_degree[dst_node] = int(undirected_degree.get(dst_node, 0)) + 1
+
+    return dict(adjacency_out), dict(adjacency_in), dict(undirected_degree)
+
+
+def _is_chain_kind_compatible(
+    lhs_kind_2: int | None,
+    rhs_kind_2: int | None,
+) -> bool:
+    if lhs_kind_2 is None or rhs_kind_2 is None:
+        return True
+    if lhs_kind_2 == rhs_kind_2:
+        return True
+    if lhs_kind_2 == COMPLEX_JUNCTION_KIND or rhs_kind_2 == COMPLEX_JUNCTION_KIND:
+        return True
+    if lhs_kind_2 in STAGE4_KIND_2_VALUES and rhs_kind_2 in STAGE4_KIND_2_VALUES:
+        return True
+    return False
+
+
+def _build_stage4_road_branches_for_member_nodes(
+    local_roads: list[ParsedRoad],
+    *,
+    member_node_ids: set[str],
+    drivezone_union: BaseGeometry,
+    include_internal_roads: bool = False,
+) -> tuple[list[ParsedRoad], set[str], list[Any]]:
+    incident_roads, internal_road_ids, road_branches = _build_road_branches_for_member_nodes(
+        local_roads,
+        member_node_ids=member_node_ids,
+        drivezone_union=drivezone_union,
+    )
+
+    if (not include_internal_roads) or len(road_branches) >= 2:
+        return incident_roads, internal_road_ids, road_branches
+
+    road_candidates = []
+    for road in local_roads:
+        touches_snode = road.snodeid in member_node_ids
+        touches_enode = road.enodeid in member_node_ids
+        if not touches_snode and not touches_enode:
+            continue
+        candidate = _branch_candidate_from_road(
+            road,
+            member_node_ids=member_node_ids,
+            drivezone_union=drivezone_union,
+        )
+        if candidate is not None:
+            road_candidates.append(candidate)
+
+    road_branches = _cluster_branch_candidates(
+        road_candidates,
+        branch_type="road",
+        angle_tolerance_deg=BRANCH_MATCH_TOLERANCE_DEG,
+    )
+    return incident_roads, internal_road_ids, road_branches
+
+
+def _chain_candidates_from_topology(
+    *,
+    representative_node_id: str,
+    representative_chain_kind_2: int | None,
+    local_nodes: list[ParsedNode],
+    local_roads: list[ParsedRoad],
+    chain_span_limit_m: float,
+) -> tuple[list[tuple[ParsedNode, float]], dict[str, Any]]:
+    representative_mainnode = normalize_id(representative_node_id) or representative_node_id
+    candidate_nodes = [
+        node
+        for node in local_nodes
+        if _is_stage4_representative(node)
+    ]
+    candidate_nodes_by_id: dict[str, ParsedNode] = {
+        normalize_id(node.node_id): node
+        for node in candidate_nodes
+        if normalize_id(node.node_id)
+    }
+    if not candidate_nodes_by_id:
+        return [], {}
+
+    adjacency_out, adjacency_in, undirected_degree = _build_stage4_directed_road_graph(local_roads)
+
+    def _seed_candidates(direction_sign: int, seed_edges: list[tuple[str, ParsedRoad]]) -> list[tuple[str, float]]:
+        traces: list[tuple[str, float]] = []
+        for next_node, road in seed_edges:
+            if road.geometry is None or road.geometry.is_empty:
+                continue
+            start_distance = float(road.geometry.length)
+            if start_distance <= 0.0 or start_distance > chain_span_limit_m:
+                continue
+            current_id = normalize_id(next_node) or next_node
+            prev_id = normalize_id(representative_mainnode) or representative_mainnode
+            if current_id == prev_id:
+                continue
+            distance_m = start_distance
+            visited: set[str] = {prev_id}
+
+            while True:
+                if distance_m > chain_span_limit_m:
+                    break
+                if current_id in visited:
+                    break
+                visited.add(current_id)
+                if current_id in candidate_nodes_by_id and current_id != representative_mainnode:
+                    traces.append((current_id, direction_sign * distance_m))
+                if int(undirected_degree.get(current_id, 0)) != 2:
+                    break
+                current_edges = adjacency_out[current_id] if direction_sign == 1 else adjacency_in[current_id]
+                candidates = [
+                    (target_node, candidate_road)
+                    for target_node, candidate_road in current_edges
+                    if normalize_id(target_node) != prev_id
+                ]
+                if len(candidates) != 1:
+                    break
+                next_node_id, next_road = candidates[0]
+                if next_road.geometry is None or next_road.geometry.is_empty:
+                    break
+                seg_len = float(next_road.geometry.length)
+                if seg_len <= 0.0:
+                    break
+                if distance_m + seg_len > chain_span_limit_m:
+                    break
+                prev_id = current_id
+                current_id = normalize_id(next_node_id) or next_node_id
+                distance_m += seg_len
+        return traces
+
+    traces: list[tuple[str, float]] = []
+    traces.extend(
+        _seed_candidates(
+            direction_sign=1,
+            seed_edges=adjacency_out.get(representative_mainnode, []) if representative_mainnode else [],
+        )
+    )
+    traces.extend(
+        _seed_candidates(
+            direction_sign=-1,
+            seed_edges=adjacency_in.get(representative_mainnode, []) if representative_mainnode else [],
+        )
+    )
+
+    best_distance_by_nodeid: dict[str, float] = {}
+    for node_id, distance_m in traces:
+        if not node_id or normalize_id(node_id) not in candidate_nodes_by_id:
+            continue
+        normalized = normalize_id(node_id)
+        if normalized is None:
+            continue
+        prev = best_distance_by_nodeid.get(normalized)
+        if prev is None or abs(float(distance_m)) < abs(float(prev)):
+            best_distance_by_nodeid[normalized] = distance_m
+
+    chain_candidates: list[tuple[ParsedNode, float]] = []
+    for node_id, distance_m in best_distance_by_nodeid.items():
+        node = candidate_nodes_by_id.get(node_id)
+        if node is None:
+            continue
+        if not _is_chain_kind_compatible(representative_chain_kind_2, _stage4_chain_kind_2(node)):
+            continue
+        chain_candidates.append((node, float(distance_m)))
+    chain_candidates.sort(key=lambda item: abs(float(item[1])))
+
+    return chain_candidates, {
+        "chain_graph_node_count": len(undirected_degree),
+        "chain_graph_edge_count": sum(1 for _edges in adjacency_out.values() for _ in _edges),
+        "chain_seed_count": len(traces),
+        "chain_seed_candidates": sorted(candidate_nodes_by_id.keys()),
+    }
 
 
 def _build_axis_side_halfmask(
@@ -3468,7 +3683,7 @@ def _resolve_multibranch_context(
 
     main_pair_ids = set(best_main_pair_ids or ())
     candidate_items = [item for item in candidate_items if item["item_id"] not in main_pair_ids]
-    multibranch_enabled = len({item["source_branch_id"] for item in candidate_items if item["source_branch_id"] is not None}) > 2
+    multibranch_enabled = len({item["source_branch_id"] for item in candidate_items if item["source_branch_id"] is not None}) >= 2
     if not multibranch_enabled:
         return {
             "enabled": False,
@@ -3784,6 +3999,7 @@ def _build_continuous_chain_context(
     *,
     representative_node: ParsedNode,
     local_nodes: list[ParsedNode],
+    local_roads: list[ParsedRoad],
     enabled: bool = True,
 ) -> dict[str, Any]:
     representative_mainnodeid = normalize_id(representative_node.mainnodeid or representative_node.node_id)
@@ -3798,28 +4014,25 @@ def _build_continuous_chain_context(
             "related_seed_nodes": [],
         }
 
-    representative_chain_kind_2 = _stage4_chain_kind_2(representative_node)
-    chain_candidates: list[tuple[ParsedNode, float]] = []
-    for candidate in local_nodes:
-        if not _is_stage4_representative(candidate):
-            continue
-        candidate_mainnodeid = normalize_id(candidate.mainnodeid or candidate.node_id)
-        if candidate_mainnodeid == representative_mainnodeid:
-            continue
-        candidate_chain_kind_2 = _stage4_chain_kind_2(candidate)
-        if candidate_chain_kind_2 is None or representative_chain_kind_2 is None:
-            continue
-        offset_m = float(candidate.geometry.distance(representative_node.geometry))
-        if offset_m <= CHAIN_NEARBY_DISTANCE_M:
-            chain_candidates.append((candidate, offset_m))
+    chain_candidates, chain_trace = _chain_candidates_from_topology(
+        representative_node_id=representative_node.node_id,
+        representative_chain_kind_2=_stage4_chain_kind_2(representative_node),
+        local_nodes=local_nodes,
+        local_roads=local_roads,
+        chain_span_limit_m=CHAIN_CONTEXT_EVENT_SPAN_M,
+    )
 
     chain_candidates.sort(key=lambda item: item[1])
     related_mainnodeids = [normalize_id(candidate.mainnodeid or candidate.node_id) for candidate, _ in chain_candidates]
-    nearest_offset_m = None if not chain_candidates else round(chain_candidates[0][1], 3)
+    nearest_offset_m = None if not chain_candidates else round(abs(chain_candidates[0][1]), 3)
     sequential_ok = any(
-        offset_m <= CHAIN_SEQUENCE_DISTANCE_M and _stage4_chain_kind_2(candidate) != representative_chain_kind_2
-        for candidate, offset_m in chain_candidates
+        abs(offset_m) <= CHAIN_SEQUENCE_DISTANCE_M
+        for _, offset_m in chain_candidates
     )
+    related_directions = [1 if offset_m >= 0.0 else -1 for _, offset_m in chain_candidates]
+    has_forward_chain = any(sign > 0 for sign in related_directions)
+    has_backward_chain = any(sign < 0 for sign in related_directions)
+    chain_node_ids = [normalize_id(candidate.node_id) for candidate, _ in chain_candidates]
     chain_member_ids = [representative_mainnodeid, *related_mainnodeids]
     return {
         "chain_component_id": "__".join(sorted(chain_member_ids)) if len(chain_member_ids) > 1 else representative_mainnodeid,
@@ -3828,7 +4041,10 @@ def _build_continuous_chain_context(
         "chain_node_count": 1 + len(chain_candidates),
         "chain_node_offset_m": nearest_offset_m,
         "sequential_ok": sequential_ok,
-        "related_seed_nodes": [candidate for candidate, offset_m in chain_candidates if offset_m <= CHAIN_SEQUENCE_DISTANCE_M],
+        "chain_bidirectional": has_forward_chain and has_backward_chain,
+        "chain_node_ids": chain_node_ids,
+        "chain_node_trace": chain_trace,
+        "related_seed_nodes": [candidate for candidate, offset_m in chain_candidates if abs(offset_m) <= CHAIN_SEQUENCE_DISTANCE_M],
     }
 
 
@@ -4085,15 +4301,17 @@ def run_t02_stage4_divmerge_virtual_polygon(
         chain_context = _build_continuous_chain_context(
             representative_node=representative_node,
             local_nodes=local_nodes,
+            local_roads=local_roads,
             enabled=True,
         )
         member_node_ids = {node.node_id for node in group_nodes}
-        _, _, road_branches = _build_road_branches_for_member_nodes(
+        _, _, road_branches = _build_stage4_road_branches_for_member_nodes(
             local_roads,
             member_node_ids=member_node_ids,
             drivezone_union=drivezone_union,
+            include_internal_roads=_is_complex_stage4_node(representative_node),
         )
-        if _is_complex_stage4_node(representative_node) and chain_context["related_mainnodeids"]:
+        if _is_complex_stage4_node(representative_node):
             needs_augmented_complex_context = len(road_branches) < 2
             if not needs_augmented_complex_context:
                 try:
@@ -4103,20 +4321,37 @@ def run_t02_stage4_divmerge_virtual_polygon(
             if needs_augmented_complex_context:
                 related_mainnodeids = {
                     normalize_id(mainnodeid)
-                    for mainnodeid in chain_context["related_mainnodeids"]
+                    for mainnodeid in chain_context.get("related_mainnodeids", ())
+                    if normalize_id(mainnodeid) is not None
                 }
+                if not related_mainnodeids:
+                    fallback_candidates, _ = _chain_candidates_from_topology(
+                        representative_node_id=representative_node.node_id,
+                        representative_chain_kind_2=None,
+                        local_nodes=local_nodes,
+                        local_roads=local_roads,
+                        chain_span_limit_m=CHAIN_CONTEXT_EVENT_SPAN_M,
+                    )
+                    related_mainnodeids = {
+                        normalize_id(candidate.mainnodeid or candidate.node_id)
+                        for candidate, _ in fallback_candidates
+                        if normalize_id(candidate.mainnodeid or candidate.node_id) is not None
+                    }
                 augmented_member_node_ids = set(member_node_ids)
                 augmented_member_node_ids.update(
                     node.node_id
                     for node in local_nodes
                     if normalize_id(node.mainnodeid or node.node_id) in related_mainnodeids
+                    and node.node_id not in member_node_ids
                 )
-                _, _, road_branches = _build_road_branches_for_member_nodes(
-                    local_roads,
-                    member_node_ids=augmented_member_node_ids,
-                    drivezone_union=drivezone_union,
-                )
-                member_node_ids = augmented_member_node_ids
+                if len(augmented_member_node_ids) > len(member_node_ids):
+                    _, _, road_branches = _build_stage4_road_branches_for_member_nodes(
+                        local_roads,
+                        member_node_ids=augmented_member_node_ids,
+                        drivezone_union=drivezone_union,
+                        include_internal_roads=True,
+                    )
+                    member_node_ids = augmented_member_node_ids
         if len(road_branches) < 2:
             raise Stage4RunError(
                 REASON_MAIN_DIRECTION_UNSTABLE,
@@ -4231,10 +4466,11 @@ def run_t02_stage4_divmerge_virtual_polygon(
             for road_id in branch.road_ids
         }
         selected_rcsdroad_ids: set[str] = set()
-        _, _, rc_branches = _build_road_branches_for_member_nodes(
+        _, _, rc_branches = _build_stage4_road_branches_for_member_nodes(
             local_rcsd_roads,
             member_node_ids=member_node_ids,
             drivezone_union=drivezone_union,
+            include_internal_roads=False,
         )
         for rc_branch in rc_branches:
             for road_branch in road_branches:
@@ -4429,14 +4665,22 @@ def run_t02_stage4_divmerge_virtual_polygon(
             road.geometry
             for road in selected_event_roads
             if road.geometry is not None and not road.geometry.is_empty
-        ] or [
-            road.geometry
-            for road in selected_roads
-            if road.geometry is not None and not road.geometry.is_empty
-        ] or [
+        ]
+        if not parallel_side_reference_geometries:
+            parallel_side_reference_geometries = [
+                road.geometry
+                for road in selected_roads
+                if road.geometry is not None and not road.geometry.is_empty
+            ] or [
+                road.geometry
+                for road in selected_rcsd_roads
+                if road.geometry is not None and not road.geometry.is_empty
+            ]
+        parallel_side_reference_geometries += [
             road.geometry
             for road in selected_rcsd_roads
             if road.geometry is not None and not road.geometry.is_empty
+            and road.geometry not in parallel_side_reference_geometries
         ]
         parallel_side_sign = _resolve_parallel_side_sign(
             axis_centerline=event_axis_centerline,
@@ -4493,18 +4737,20 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 event_max_offset = float(max(chain_related_offsets))
                 event_span_window["start_offset_m"] = float(
                     max(
-                        -CHAIN_NEARBY_DISTANCE_M,
-                        event_min_offset - EVENT_SPAN_MARGIN_M
-                        if event_min_offset < 0.0
-                        else float(event_span_window["start_offset_m"]),
+                        -CHAIN_CONTEXT_EVENT_SPAN_M,
+                        min(
+                            float(event_span_window["start_offset_m"]),
+                            event_min_offset - EVENT_SPAN_MARGIN_M,
+                        ),
                     )
                 )
                 event_span_window["end_offset_m"] = float(
                     min(
-                        CHAIN_NEARBY_DISTANCE_M,
-                        event_max_offset + EVENT_SPAN_MARGIN_M
-                        if event_max_offset > 0.0
-                        else float(event_span_window["end_offset_m"]),
+                        CHAIN_CONTEXT_EVENT_SPAN_M,
+                        max(
+                            float(event_span_window["end_offset_m"]),
+                            event_max_offset + EVENT_SPAN_MARGIN_M,
+                        ),
                     )
                 )
                 event_span_window["candidate_offset_count"] = int(event_span_window["candidate_offset_count"]) + len(chain_related_offsets)
@@ -4822,7 +5068,12 @@ def run_t02_stage4_divmerge_virtual_polygon(
             review_reasons.append(STATUS_MULTIBRANCH_EVENT_AMBIGUOUS)
         if divstrip_context["ambiguous"]:
             review_reasons.append(STATUS_DIVSTRIP_COMPONENT_AMBIGUOUS)
-        if chain_context["is_in_continuous_chain"] and chain_context["sequential_ok"] and not kind_resolution["complex_junction"]:
+        if (
+            chain_context["is_in_continuous_chain"]
+            and chain_context["sequential_ok"]
+            and not kind_resolution["complex_junction"]
+            and chain_context.get("chain_bidirectional", False)
+        ):
             review_reasons.append(STATUS_CONTINUOUS_CHAIN_REVIEW)
         if kind_resolution["ambiguous"]:
             review_reasons.append(STATUS_COMPLEX_KIND_AMBIGUOUS)
@@ -4987,23 +5238,36 @@ def run_t02_stage4_divmerge_virtual_polygon(
         _write_link_json(rcsdnode_link_json_path, rcsdnode_link_doc)
 
         if debug and debug_render_path is not None:
+            debug_render_patch_size = max(patch_size_m, DEBUG_RENDER_PATCH_SIZE_M)
+            debug_render_grid = _build_grid(
+                seed_center,
+                patch_size_m=debug_render_patch_size,
+                resolution_m=DEFAULT_RESOLUTION_M,
+            )
+            debug_drivezone_mask = (
+                _rasterize_geometries(debug_render_grid, [drivezone_union])
+                if not drivezone_union.is_empty
+                else np.zeros((debug_render_grid.height, debug_render_grid.width), dtype=bool)
+            )
             debug_dir = debug_render_path.parent
             debug_dir.mkdir(parents=True, exist_ok=True)
             _write_debug_rendered_map(
                 out_path=debug_render_path,
-                grid=grid,
-                drivezone_mask=drivezone_mask,
+                grid=debug_render_grid,
+                drivezone_mask=debug_drivezone_mask,
                 polygon_geometry=polygon_geometry,
                 representative_node=representative_node,
                 group_nodes=group_nodes,
-                local_nodes=local_nodes,
-                local_roads=local_roads,
-                local_rc_nodes=local_rcsd_nodes,
-                local_rc_roads=local_rcsd_roads,
+                # Render all available case geometry for review, not only the compact local subset,
+                # so reviewers can validate full before/after road context without missing surrounding network.
+                local_nodes=nodes,
+                local_roads=roads,
+                local_rc_nodes=rcsd_nodes,
+                local_rc_roads=rcsd_roads,
                 selected_rc_roads=selected_rcsd_roads,
                 selected_rc_node_ids=selected_rcsdnode_ids,
-                excluded_rc_road_ids={local_road.road_id for local_road in local_rcsd_roads if local_road.road_id not in selected_rcsdroad_ids},
-                excluded_rc_node_ids={node.node_id for node in local_rcsd_nodes if node.node_id not in selected_rcsdnode_ids},
+                excluded_rc_road_ids={rcsd_road.road_id for rcsd_road in rcsd_roads if rcsd_road.road_id not in selected_rcsdroad_ids},
+                excluded_rc_node_ids={node.node_id for node in rcsd_nodes if node.node_id not in selected_rcsdnode_ids},
                 failure_reason=None if acceptance_class == "accepted" else acceptance_reason,
                 local_divstrip_geometries=[feature.geometry for feature in local_divstrip_features],
                 selected_divstrip_geometry=divstrip_context["constraint_geometry"],

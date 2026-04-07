@@ -109,6 +109,12 @@ EVENT_REFERENCE_SEARCH_MARGIN_M = 20.0
 EVENT_REFERENCE_SPLIT_EXTEND_M = 5.0
 EVENT_REFERENCE_DIVSTRIP_TARGET_BY_SPLIT_MIN_S_M = 5.0
 EVENT_RCSD_RECENTER_SHIFT_MAX_M = 20.0
+EVENT_CROSS_HALF_LEN_FALLBACK_M = 60.0
+EVENT_CROSS_HALF_LEN_MIN_M = 30.0
+EVENT_CROSS_HALF_LEN_MAX_M = 130.0
+EVENT_CROSS_HALF_LEN_AXIS_SAMPLE_WINDOW_M = 50.0
+EVENT_CROSS_HALF_LEN_SIDE_MARGIN_M = 10.0
+EVENT_CROSS_HALF_LEN_PATCH_SCALE_RATIO = 0.5
 PARALLEL_ROAD_ANGLE_TOLERANCE_DEG = 18.0
 PARALLEL_ROAD_MIN_OFFSET_M = 4.0
 PARALLEL_ROAD_MAX_OFFSET_M = 80.0
@@ -117,6 +123,8 @@ PARALLEL_CENTERLINE_AXIS_WINDOW_M = 55.0
 PARALLEL_CENTERLINE_REFERENCE_DISTANCE_M = 35.0
 PARALLEL_SIDE_SIGN_MIN_WEIGHT = 0.05
 PARALLEL_SIDE_SIGN_BALANCE_RATIO = 0.1
+PARALLEL_SIDE_FALLBACK_REFERENCE_DISTANCE_M = 120.0
+PARALLEL_SIDE_FALLBACK_BALANCE_RATIO = 0.03
 MULTIBRANCH_AMBIGUITY_SCORE_MARGIN = 5.0
 CHAIN_NEARBY_DISTANCE_M = 65.0
 CHAIN_SEQUENCE_DISTANCE_M = 40.0
@@ -2029,6 +2037,91 @@ def _collect_line_parts(geometry) -> list[Any]:
     return parts
 
 
+def _collect_axis_lateral_offsets(
+    geometry,
+    *,
+    origin_xy: tuple[float, float],
+    axis_unit_vector: tuple[float, float],
+    axis_window_m: float | None = None,
+) -> list[float]:
+    if geometry is None or geometry.is_empty:
+        return []
+    ux, uy = axis_unit_vector
+    vx, vy = -uy, ux
+    if axis_window_m is None or axis_window_m <= 1e-6:
+        axis_window_m = None
+    lateral_offsets: list[float] = []
+    for item in _explode_component_geometries(geometry):
+        geometry_type = getattr(item, "geom_type", None)
+        if geometry_type == "Point":
+            coordinates = [_coord_xy(item.coords[0])]
+        elif geometry_type == "LineString":
+            coordinates = list(item.coords)
+        elif geometry_type == "Polygon":
+            coordinates = list(item.exterior.coords)
+            for ring in item.interiors:
+                coordinates.extend(ring.coords)
+        else:
+            continue
+        for x, y in coordinates:
+            dx = float(x) - float(origin_xy[0])
+            dy = float(y) - float(origin_xy[1])
+            axis_offset = dx * ux + dy * uy
+            if axis_window_m is not None and abs(axis_offset) > float(axis_window_m):
+                continue
+            lateral_offsets.append(abs(dx * vx + dy * vy))
+    return lateral_offsets
+
+
+def _resolve_event_cross_half_len(
+    *,
+    origin_point: Point,
+    axis_centerline,
+    axis_unit_vector: tuple[float, float] | None,
+    event_anchor_geometry,
+    branch_a_centerline,
+    branch_b_centerline,
+    selected_roads: list[ParsedRoad],
+    selected_rcsd_roads: list[ParsedRoad],
+    patch_size_m: float,
+) -> float:
+    if axis_unit_vector is None or axis_centerline is None or axis_centerline.is_empty:
+        return float(EVENT_CROSS_HALF_LEN_FALLBACK_M)
+    origin_xy = (float(origin_point.x), float(origin_point.y))
+    axis_window_m = float(EVENT_CROSS_HALF_LEN_AXIS_SAMPLE_WINDOW_M)
+    candidate_offsets: list[float] = []
+    candidate_geometries = [
+        event_anchor_geometry,
+        branch_a_centerline,
+        branch_b_centerline,
+    ] + [road.geometry for road in selected_roads if road.geometry is not None and not road.geometry.is_empty]
+    for road in selected_rcsd_roads:
+        if road.geometry is not None and not road.geometry.is_empty:
+            candidate_geometries.append(road.geometry)
+    candidate_geometries = [geometry for geometry in candidate_geometries if geometry is not None and not geometry.is_empty]
+    for geometry in candidate_geometries:
+        candidate_offsets.extend(
+            _collect_axis_lateral_offsets(
+                geometry,
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+                axis_window_m=axis_window_m,
+            )
+        )
+
+    max_lateral_offset = max(candidate_offsets) if candidate_offsets else None
+    if max_lateral_offset is None:
+        resolved_half_len = float(EVENT_CROSS_HALF_LEN_FALLBACK_M)
+    else:
+        resolved_half_len = float(max_lateral_offset + EVENT_CROSS_HALF_LEN_SIDE_MARGIN_M)
+    resolved_half_len = max(float(EVENT_CROSS_HALF_LEN_MIN_M), min(float(EVENT_CROSS_HALF_LEN_MAX_M), resolved_half_len))
+    patch_half_cap = max(
+        float(EVENT_CROSS_HALF_LEN_MIN_M),
+        min(float(EVENT_CROSS_HALF_LEN_MAX_M), float(patch_size_m) * float(EVENT_CROSS_HALF_LEN_PATCH_SCALE_RATIO)),
+    )
+    return float(min(resolved_half_len, patch_half_cap))
+
+
 def _build_event_crossline(
     *,
     origin_point: Point,
@@ -2332,6 +2425,69 @@ def _resolve_parallel_side_sign(
     if balance_ratio < PARALLEL_SIDE_SIGN_BALANCE_RATIO:
         return None
     return 1 if positive_weight > negative_weight else -1
+
+
+def _resolve_parallel_side_sign_fallback(
+    *,
+    axis_centerline,
+    axis_unit_vector: tuple[float, float] | None,
+    reference_geometries: list[Any],
+) -> int | None:
+    if axis_centerline is None or axis_centerline.is_empty or axis_unit_vector is None:
+        return None
+    ux, uy = axis_unit_vector
+    positive_weight = 0.0
+    negative_weight = 0.0
+    for geometry in reference_geometries:
+        if geometry is None or geometry.is_empty:
+            continue
+        try:
+            axis_nearest_point, road_nearest_point = nearest_points(axis_centerline, geometry)
+        except Exception:
+            continue
+        axis_distance = float(axis_centerline.distance(geometry))
+        if axis_distance > float(PARALLEL_SIDE_FALLBACK_REFERENCE_DISTANCE_M):
+            continue
+        dx = float(road_nearest_point.x) - float(axis_nearest_point.x)
+        dy = float(road_nearest_point.y) - float(axis_nearest_point.y)
+        side = float(ux) * float(dy) - float(uy) * float(dx)
+        if abs(float(side)) <= float(PARALLEL_SIDE_SIGN_EPS_M):
+            continue
+        # 1m越近权重越大，尽量偏向离 axis 更近的实体道路。
+        side_weight = 1.0 / (1.0 + max(float(axis_distance), 0.0))
+        if side_weight <= 0.0:
+            continue
+        if side > 0:
+            positive_weight += side_weight
+        else:
+            negative_weight += side_weight
+    total_weight = float(positive_weight + negative_weight)
+    if total_weight <= 0.0:
+        return None
+    balance_ratio = abs(positive_weight - negative_weight) / total_weight
+    if balance_ratio < float(PARALLEL_SIDE_FALLBACK_BALANCE_RATIO):
+        return None
+    return 1 if positive_weight > negative_weight else -1
+
+
+def _build_axis_side_halfmask(
+    *,
+    grid,
+    origin_point: Point,
+    axis_unit_vector: tuple[float, float] | None,
+    parallel_side_sign: int | None,
+) -> np.ndarray | None:
+    if axis_unit_vector is None or parallel_side_sign not in (-1, 1):
+        return None
+    ux, uy = axis_unit_vector
+    vx, vy = -uy, ux
+    lateral_offset = (grid.xx - float(origin_point.x)) * float(vx) + (grid.yy - float(origin_point.y)) * float(vy)
+    side_mask = np.where(
+        lateral_offset * float(parallel_side_sign) >= -float(PARALLEL_SIDE_SIGN_EPS_M),
+        True,
+        False,
+    )
+    return side_mask.astype(bool)
 
 
 def _clip_line_to_parallel_midline(
@@ -4215,6 +4371,17 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 reference_point=provisional_event_origin,
             )
         )
+        event_cross_half_len_m = _resolve_event_cross_half_len(
+            origin_point=provisional_event_origin,
+            axis_centerline=event_axis_centerline,
+            axis_unit_vector=initial_event_axis_unit_vector,
+            event_anchor_geometry=event_anchor_geometry,
+            branch_a_centerline=branch_a_centerline,
+            branch_b_centerline=branch_b_centerline,
+            selected_roads=selected_roads,
+            selected_rcsd_roads=selected_rcsd_roads,
+            patch_size_m=patch_size_m,
+        )
         event_reference = _resolve_event_reference_point(
             representative_node=representative_node,
             event_anchor_geometry=event_anchor_geometry,
@@ -4226,7 +4393,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             drivezone_union=drivezone_union,
             branch_a_centerline=branch_a_centerline,
             branch_b_centerline=branch_b_centerline,
-            cross_half_len_m=max(patch_size_m, DEFAULT_PATCH_SIZE_M),
+            cross_half_len_m=event_cross_half_len_m,
             patch_size_m=patch_size_m,
         )
         event_origin_point = event_reference["origin_point"]
@@ -4247,19 +4414,41 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 axis_centerline=event_axis_centerline,
                 origin_point=event_origin_point,
             ) or event_axis_unit_vector
+        event_cross_half_len_m = _resolve_event_cross_half_len(
+            origin_point=event_origin_point,
+            axis_centerline=event_axis_centerline,
+            axis_unit_vector=event_axis_unit_vector,
+            event_anchor_geometry=event_anchor_geometry,
+            branch_a_centerline=branch_a_centerline,
+            branch_b_centerline=branch_b_centerline,
+            selected_roads=selected_roads,
+            selected_rcsd_roads=selected_rcsd_roads,
+            patch_size_m=patch_size_m,
+        )
+        parallel_side_reference_geometries = [
+            road.geometry
+            for road in selected_event_roads
+            if road.geometry is not None and not road.geometry.is_empty
+        ] or [
+            road.geometry
+            for road in selected_roads
+            if road.geometry is not None and not road.geometry.is_empty
+        ] or [
+            road.geometry
+            for road in selected_rcsd_roads
+            if road.geometry is not None and not road.geometry.is_empty
+        ]
         parallel_side_sign = _resolve_parallel_side_sign(
             axis_centerline=event_axis_centerline,
             axis_unit_vector=event_axis_unit_vector,
-            reference_geometries=[
-                road.geometry
-                for road in selected_event_roads
-                if road.geometry is not None and not road.geometry.is_empty
-            ] or [
-                road.geometry
-                for road in selected_roads
-                if road.geometry is not None and not road.geometry.is_empty
-            ],
+            reference_geometries=parallel_side_reference_geometries,
         )
+        if parallel_side_sign is None:
+            parallel_side_sign = _resolve_parallel_side_sign_fallback(
+                axis_centerline=event_axis_centerline,
+                axis_unit_vector=event_axis_unit_vector,
+                reference_geometries=parallel_side_reference_geometries,
+            )
         parallel_centerline = _resolve_parallel_centerline(
             local_roads=local_roads,
             selected_road_ids=set(selected_road_ids),
@@ -4332,8 +4521,18 @@ def run_t02_stage4_divmerge_virtual_polygon(
             axis_unit_vector=event_axis_unit_vector,
             start_offset_m=event_span_window["start_offset_m"],
             end_offset_m=event_span_window["end_offset_m"],
-            cross_half_len_m=max(patch_size_m, DEFAULT_PATCH_SIZE_M),
+            cross_half_len_m=event_cross_half_len_m,
         )
+        parallel_side_mask = None
+        if parallel_side_sign in (-1, 1):
+            parallel_side_mask = _build_axis_side_halfmask(
+                grid=grid,
+                origin_point=event_origin_point,
+                axis_unit_vector=event_axis_unit_vector,
+                parallel_side_sign=parallel_side_sign,
+            )
+            if parallel_side_mask is not None and axis_window_mask is not None:
+                parallel_side_mask = parallel_side_mask & axis_window_mask
         parallel_side_geometry = GeometryCollection()
         parallel_side_sample_count = 0
         if parallel_centerline is not None and not parallel_centerline.is_empty:
@@ -4343,7 +4542,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 axis_unit_vector=event_axis_unit_vector,
                 start_offset_m=event_span_window["start_offset_m"],
                 end_offset_m=event_span_window["end_offset_m"],
-                cross_half_len_m=max(patch_size_m, DEFAULT_PATCH_SIZE_M),
+                cross_half_len_m=event_cross_half_len_m,
                 axis_centerline=event_axis_centerline,
                 branch_a_centerline=branch_a_centerline,
                 branch_b_centerline=branch_b_centerline,
@@ -4353,11 +4552,11 @@ def run_t02_stage4_divmerge_virtual_polygon(
             )
             if parallel_side_geometry is not None and not parallel_side_geometry.is_empty:
                 parallel_side_geometry = parallel_side_geometry.intersection(drivezone_union).buffer(0)
-        parallel_side_mask = (
-            None
-            if parallel_side_geometry is None or parallel_side_geometry.is_empty
-            else _rasterize_geometries(grid, [parallel_side_geometry]) & drivezone_mask
-        )
+        if parallel_side_geometry is not None and not parallel_side_geometry.is_empty:
+            parallel_side_mask = _rasterize_geometries(grid, [parallel_side_geometry]) & drivezone_mask
+        elif parallel_side_mask is not None and parallel_side_mask.any():
+            parallel_side_mask = parallel_side_mask & drivezone_mask
+            parallel_side_geometry = _mask_to_geometry(parallel_side_mask, grid)
         selected_event_road_support_union = unary_union(
             [
                 road.geometry
@@ -4409,7 +4608,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             axis_unit_vector=event_axis_unit_vector,
             start_offset_m=event_span_window["start_offset_m"],
             end_offset_m=event_span_window["end_offset_m"],
-            cross_half_len_m=max(patch_size_m, DEFAULT_PATCH_SIZE_M),
+            cross_half_len_m=event_cross_half_len_m,
             axis_centerline=event_axis_centerline,
             branch_a_centerline=branch_a_centerline,
             branch_b_centerline=branch_b_centerline,

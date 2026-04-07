@@ -32,7 +32,6 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _filter_loaded_features_to_patch,
     _filter_parsed_roads_to_patch,
     _load_layer_filtered,
-    _patch_ids_from_properties,
     _parse_nodes,
     _parse_roads,
     _rasterize_geometries,
@@ -83,6 +82,7 @@ VECTOR_BUNDLE_FILES = (
     "rcsdroad.gpkg",
     "rcsdnode.gpkg",
 )
+PATCH_ID_FIELD_NAMES = ("patchid", "patch_id")
 
 
 class TextBundleError(ValueError):
@@ -100,6 +100,10 @@ class TextBundleExportArtifacts:
     bundle_size_bytes: int
     failure_reason: str | None = None
     failure_detail: str | None = None
+    requested_mainnodeids: tuple[str, ...] = ()
+    successful_mainnodeids: tuple[str, ...] = ()
+    failed_mainnodeids: tuple[str, ...] = ()
+    case_failures: tuple[dict[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -126,6 +130,29 @@ def _normalize_id(value: Any) -> str | None:
         except Exception:
             return text
     return text
+
+
+def _patch_ids_from_properties(properties: dict[str, Any]) -> tuple[str, ...]:
+    if properties is None:
+        return ()
+    patch_ids: list[str] = []
+    seen: set[str] = set()
+    for field_name in PATCH_ID_FIELD_NAMES:
+        value = properties.get(field_name)
+        if value is None:
+            continue
+        text = str(value)
+        if not text:
+            continue
+        for token in text.replace("|", ",").replace(";", ",").split(","):
+            normalized = _normalize_id(token)
+            if normalized is None:
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            patch_ids.append(normalized)
+    return tuple(patch_ids)
 
 
 def _out_txt_size_report_path(out_txt: Path) -> Path:
@@ -1475,6 +1502,7 @@ def run_t02_export_text_bundle(
     patch_size_m: float = 200.0,
     resolution_m: float = 0.2,
     max_text_size_bytes: int = TEXT_BUNDLE_LIMIT_BYTES,
+    allow_partial_cases: bool = False,
 ) -> TextBundleExportArtifacts:
     normalized_mainnodeids = _normalize_mainnodeids(mainnodeid)
     out_txt_path = Path(out_txt)
@@ -1489,7 +1517,7 @@ def run_t02_export_text_bundle(
         )
 
     if len(normalized_mainnodeids) == 1:
-        return _run_t02_export_single_text_bundle(
+        single_artifacts = _run_t02_export_single_text_bundle(
             nodes_path=nodes_path,
             roads_path=roads_path,
             drivezone_path=drivezone_path,
@@ -1515,6 +1543,32 @@ def run_t02_export_text_bundle(
             resolution_m=resolution_m,
             max_text_size_bytes=max_text_size_bytes,
         )
+        return TextBundleExportArtifacts(
+            success=single_artifacts.success,
+            bundle_txt_path=single_artifacts.bundle_txt_path,
+            size_report_path=single_artifacts.size_report_path,
+            bundle_size_bytes=single_artifacts.bundle_size_bytes,
+            failure_reason=single_artifacts.failure_reason,
+            failure_detail=single_artifacts.failure_detail,
+            requested_mainnodeids=tuple(normalized_mainnodeids),
+            successful_mainnodeids=()
+            if not single_artifacts.success
+            else (normalized_mainnodeids[0],),
+            failed_mainnodeids=()
+            if single_artifacts.success
+            else (normalized_mainnodeids[0],),
+            case_failures=(
+                ()
+                if single_artifacts.success
+                else (
+                    {
+                        "mainnodeid": normalized_mainnodeids[0],
+                        "reason": single_artifacts.failure_reason or "bundle_export_failed",
+                        "detail": single_artifacts.failure_detail or "bundle export failed",
+                    },
+                )
+            ),
+        )
 
     out_txt_path.parent.mkdir(parents=True, exist_ok=True)
     if out_txt_path.exists():
@@ -1524,6 +1578,9 @@ def run_t02_export_text_bundle(
         size_report_path.unlink()
 
     try:
+        requested_mainnodeids = tuple(normalized_mainnodeids)
+        successful_mainnodeids: list[str] = []
+        failed_case_failures: list[dict[str, str]] = []
         case_archive_files: dict[str, bytes] = {}
         for normalized_mainnodeid in normalized_mainnodeids:
             with tempfile.TemporaryDirectory() as temp_dir_text:
@@ -1556,22 +1613,56 @@ def run_t02_export_text_bundle(
                 )
                 if not artifacts.success:
                     detail = artifacts.failure_detail or artifacts.failure_reason or "bundle export failed"
-                    return TextBundleExportArtifacts(
-                        success=False,
-                        bundle_txt_path=out_txt_path,
-                        size_report_path=None,
-                        bundle_size_bytes=0,
-                        failure_reason=artifacts.failure_reason,
-                        failure_detail=f"mainnodeid='{normalized_mainnodeid}': {detail}",
+                    failed_case_failures.append(
+                        {
+                            "mainnodeid": normalized_mainnodeid,
+                            "reason": artifacts.failure_reason or "bundle_export_failed",
+                            "detail": f"mainnodeid='{normalized_mainnodeid}': {detail}",
+                        }
                     )
+                    if not allow_partial_cases:
+                        return TextBundleExportArtifacts(
+                            success=False,
+                            bundle_txt_path=out_txt_path,
+                            size_report_path=None,
+                            bundle_size_bytes=0,
+                            failure_reason=artifacts.failure_reason,
+                            failure_detail=f"mainnodeid='{normalized_mainnodeid}': {detail}",
+                            requested_mainnodeids=requested_mainnodeids,
+                            successful_mainnodeids=tuple(successful_mainnodeids),
+                            failed_mainnodeids=tuple([case["mainnodeid"] for case in failed_case_failures]),
+                            case_failures=tuple(failed_case_failures),
+                        )
+                    continue
+                successful_mainnodeids.append(normalized_mainnodeid)
                 for name, content in _extract_bundle_files(temp_bundle_path).items():
                     case_archive_files[f"{normalized_mainnodeid}/{name}"] = content
+
+        if not successful_mainnodeids:
+            first_failure = failed_case_failures[0]
+            return TextBundleExportArtifacts(
+                success=False,
+                bundle_txt_path=out_txt_path,
+                size_report_path=None,
+                bundle_size_bytes=0,
+                failure_reason=first_failure["reason"],
+                failure_detail=first_failure["detail"],
+                requested_mainnodeids=requested_mainnodeids,
+                successful_mainnodeids=(),
+                failed_mainnodeids=tuple(case["mainnodeid"] for case in failed_case_failures),
+                case_failures=tuple(failed_case_failures),
+            )
 
         manifest = {
             "bundle_version": TEXT_BUNDLE_VERSION,
             "bundle_mode": TEXT_BUNDLE_MODE_MULTI,
-            "mainnodeids": normalized_mainnodeids,
-            "case_count": len(normalized_mainnodeids),
+            "requested_mainnodeids": list(requested_mainnodeids),
+            "mainnodeids": successful_mainnodeids,
+            "case_count": len(successful_mainnodeids),
+            "case_count_success": len(successful_mainnodeids),
+            "case_count_requested": len(requested_mainnodeids),
+            "failed_mainnodeids": [case["mainnodeid"] for case in failed_case_failures],
+            "case_failures": failed_case_failures,
             "file_list": [],
             "checksum": {},
             "encoder_info": {
@@ -1628,6 +1719,10 @@ def run_t02_export_text_bundle(
                     f"Bundle text size {bundle_size_bytes} exceeds limit {max_text_size_bytes}. "
                     f"See {size_report_path} for size analysis."
                 ),
+                requested_mainnodeids=requested_mainnodeids,
+                successful_mainnodeids=tuple(successful_mainnodeids),
+                failed_mainnodeids=tuple(case["mainnodeid"] for case in failed_case_failures),
+                case_failures=tuple(failed_case_failures),
             )
 
         out_txt_path.write_text(bundle_text, encoding="utf-8")
@@ -1636,6 +1731,10 @@ def run_t02_export_text_bundle(
             bundle_txt_path=out_txt_path,
             size_report_path=None,
             bundle_size_bytes=bundle_size_bytes,
+            requested_mainnodeids=requested_mainnodeids,
+            successful_mainnodeids=tuple(successful_mainnodeids),
+            failed_mainnodeids=(),
+            case_failures=tuple(failed_case_failures),
         )
     except (TextBundleError, VirtualIntersectionPocError) as exc:
         reason = getattr(exc, "reason", "bundle_export_failed")
@@ -1647,6 +1746,10 @@ def run_t02_export_text_bundle(
             bundle_size_bytes=0,
             failure_reason=reason,
             failure_detail=detail,
+            requested_mainnodeids=tuple(normalized_mainnodeids),
+            successful_mainnodeids=(),
+            failed_mainnodeids=(),
+            case_failures=(),
         )
 
 

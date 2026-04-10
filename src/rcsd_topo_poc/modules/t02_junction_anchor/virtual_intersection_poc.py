@@ -1430,6 +1430,15 @@ def _blend_mask(
     image[mask, 3] = 255
 
 
+def _failure_overlay_palette(failure_reason: str) -> dict[str, tuple[int, int, int]]:
+    return {
+        "tint": (220, 32, 32),
+        "border": (164, 0, 0),
+        "focus": (186, 0, 0),
+        "hatch": (124, 0, 0),
+    }
+
+
 def _write_debug_rendered_map(
     *,
     out_path: Path,
@@ -1559,15 +1568,23 @@ def _write_debug_rendered_map(
     _blend_mask(image, group_node_mask, color=(24, 24, 24), alpha=1.0)
     _blend_mask(image, representative_mask, color=(0, 0, 0), alpha=1.0)
     if failure_reason is not None:
+        palette = _failure_overlay_palette(failure_reason)
         failure_mask = np.ones((grid.height, grid.width), dtype=bool)
         border_px = max(2, int(round(4.0 / grid.resolution_m)))
+        focus_mask = polygon_mask | group_node_mask | representative_mask | selected_rc_road_mask | selected_rc_node_mask
+        stripe_period_px = max(8, int(round(12.0 / grid.resolution_m)))
+        stripe_width_px = max(2, stripe_period_px // 3)
+        rr, cc = np.indices((grid.height, grid.width))
         border_mask = np.zeros((grid.height, grid.width), dtype=bool)
         border_mask[:border_px, :] = True
         border_mask[-border_px:, :] = True
         border_mask[:, :border_px] = True
         border_mask[:, -border_px:] = True
-        _blend_mask(image, failure_mask, color=(208, 43, 43), alpha=0.18)
-        _blend_mask(image, border_mask, color=(144, 0, 0), alpha=1.0)
+        hatch_mask = focus_mask & (((rr + cc) % stripe_period_px) < stripe_width_px)
+        _blend_mask(image, failure_mask, color=palette["tint"], alpha=0.22)
+        _blend_mask(image, focus_mask, color=palette["focus"], alpha=0.24)
+        _blend_mask(image, hatch_mask, color=palette["hatch"], alpha=0.82)
+        _blend_mask(image, border_mask, color=palette["border"], alpha=1.0)
 
     _write_png_rgba(out_path, image)
 
@@ -6545,6 +6562,7 @@ def _effect_success_acceptance(
     representative_kind_2: int | None = None,
     effective_associated_rc_node_count: int = 0,
     associated_nonzero_mainnode_count: int = 0,
+    final_selected_node_cover_repair_discarded_due_to_extra_roads: bool = False,
 ) -> tuple[bool, str, str]:
     if effective_local_rc_node_count is None:
         effective_local_rc_node_count = local_rc_node_count
@@ -6561,10 +6579,22 @@ def _effect_success_acceptance(
     if status == STATUS_STABLE:
         if (
             representative_kind_2 == 2048
+            and positive_rc_group_count >= 2
+            and negative_rc_group_count >= 1
+            and associated_nonzero_mainnode_count == 0
+            and associated_rc_road_count >= 3
+            and effective_associated_rc_node_count >= 3
+        ):
+            return False, "review_required", "stable_with_rc_group_semantic_gap"
+        if (
+            representative_kind_2 == 2048
             and associated_rc_road_count <= 1
             and polygon_support_rc_node_count == 0
             and effective_associated_rc_node_count == 0
-            and max_nonmain_branch_polygon_length_m >= 20.0
+            and (
+                max_nonmain_branch_polygon_length_m >= 20.0
+                or final_selected_node_cover_repair_discarded_due_to_extra_roads
+            )
         ):
             return False, "review_required", "stable_with_incomplete_t_mouth_rc_context"
         if (
@@ -11908,6 +11938,7 @@ def run_t02_virtual_intersection_poc(
                                 f"selected_roads={','.join(sorted(trimmed_uncovered_selected_rc_road_ids)) or '-'}"
                             ),
                         )
+        final_selected_node_cover_repair_discarded_due_to_extra_roads = False
         if not virtual_polygon_geometry.is_empty and selected_rc_node_ids:
             selected_node_cover_geometry = virtual_polygon_geometry.buffer(
                 max(resolution_m, 0.5),
@@ -12261,6 +12292,7 @@ def run_t02_virtual_intersection_poc(
                                     virtual_polygon_geometry = obstacle_aware_virtual_polygon_geometry
                                     repaired_extra_local_road_ids = []
                                 if repaired_extra_local_road_ids:
+                                    final_selected_node_cover_repair_discarded_due_to_extra_roads = True
                                     announce(
                                         logger,
                                         (
@@ -12526,6 +12558,7 @@ def run_t02_virtual_intersection_poc(
             representative_kind_2=representative_node.kind_2,
             effective_associated_rc_node_count=effective_associated_rc_node_count,
             associated_nonzero_mainnode_count=associated_nonzero_mainnode_count,
+            final_selected_node_cover_repair_discarded_due_to_extra_roads=final_selected_node_cover_repair_discarded_due_to_extra_roads,
         )
         business_match_class = _business_match_class(
             status=status,
@@ -12822,7 +12855,7 @@ def run_t02_virtual_intersection_poc(
             current_stage="failed",
             message=exc.detail,
         )
-        if debug and not debug_rendered_map_written:
+        if debug:
             try:
                 representative_node_for_failure = locals().get("representative_node")
                 group_nodes_for_failure = locals().get("group_nodes")

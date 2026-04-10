@@ -663,6 +663,11 @@ outputs/_work/t02_stage1_drivezone_gate
 - `debug` 开启时：
   - 正式结果目录仍固定为 `<out_root>/<run_id>`
   - debug render 批次目录固定为批次根目录 `_rendered_maps/`
+  - 若单 case 结果为 `success = false`，或 `acceptance_class in {review_required, rejected}`，则对应 PNG 必须使用失败样式表达：
+    - 整图淡红色掩膜
+    - 深红色粗边框
+    - 失败关注区域叠加深红斜纹
+  - 失败图不得仅依赖细边框、轻微色差或局部角标提示；必须保证人工目视时与成功图一眼可区分。
 
 #### Stage3 full-input 根目录输出
 

@@ -25,6 +25,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _branch_has_positive_rc_gap,
     _branch_has_local_road_mouth,
     _branch_uses_rc_tip_suppression,
+    _build_grid,
     _build_positive_negative_rc_groups,
     _build_polygon_support_from_association,
     _covered_foreign_local_road_ids,
@@ -44,6 +45,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _select_main_pair_with_semantic_conflict_guard,
     _select_positive_rc_road_ids,
     _status_from_risks,
+    _write_debug_rendered_map,
     run_t02_virtual_intersection_poc,
 )
 
@@ -342,6 +344,85 @@ def _write_compound_center_inputs(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+def test_failure_render_uses_red_mask_and_hatch_style(tmp_path: Path) -> None:
+    representative_node = ParsedNode(
+        feature_index=0,
+        properties={},
+        geometry=Point(0.0, 0.0),
+        node_id="100",
+        mainnodeid="100",
+        has_evd="yes",
+        is_anchor="no",
+        kind_2=4,
+        grade_2=1,
+    )
+    local_road = ParsedRoad(
+        feature_index=0,
+        properties={},
+        geometry=LineString([(-6.0, 0.0), (6.0, 0.0)]),
+        road_id="road_1",
+        snodeid="100",
+        enodeid="200",
+        direction=2,
+    )
+    grid = _build_grid(representative_node.geometry, patch_size_m=40.0, resolution_m=1.0)
+    drivezone_mask = np.ones((grid.height, grid.width), dtype=bool)
+    polygon_geometry = representative_node.geometry.buffer(5.0)
+
+    normal_path = tmp_path / "normal.png"
+    rejected_path = tmp_path / "rejected.png"
+    review_path = tmp_path / "review.png"
+
+    common_kwargs = {
+        "grid": grid,
+        "drivezone_mask": drivezone_mask,
+        "polygon_geometry": polygon_geometry,
+        "representative_node": representative_node,
+        "group_nodes": [representative_node],
+        "local_nodes": [representative_node],
+        "local_roads": [local_road],
+        "local_rc_nodes": [],
+        "local_rc_roads": [],
+        "selected_rc_roads": [],
+        "selected_rc_node_ids": set(),
+        "excluded_rc_road_ids": set(),
+        "excluded_rc_node_ids": set(),
+    }
+
+    _write_debug_rendered_map(out_path=normal_path, failure_reason=None, **common_kwargs)
+    _write_debug_rendered_map(
+        out_path=rejected_path,
+        failure_reason="rejected_status:rc_outside_drivezone",
+        **common_kwargs,
+    )
+    _write_debug_rendered_map(
+        out_path=review_path,
+        failure_reason="review_required_status:stable",
+        **common_kwargs,
+    )
+
+    normal_image = _read_png_rgba(normal_path)
+    rejected_image = _read_png_rgba(rejected_path)
+    review_image = _read_png_rgba(review_path)
+
+    rejected_center = rejected_image[rejected_image.shape[0] // 2, rejected_image.shape[1] // 2, :3]
+    review_center = review_image[review_image.shape[0] // 2, review_image.shape[1] // 2, :3]
+    normal_center = normal_image[normal_image.shape[0] // 2, normal_image.shape[1] // 2, :3]
+    background_row = 10
+    background_col = rejected_image.shape[1] // 2
+    rejected_background = rejected_image[background_row, background_col, :3]
+    review_background = review_image[background_row, background_col, :3]
+    normal_background = normal_image[background_row, background_col, :3]
+    assert tuple(rejected_image[0, rejected_image.shape[1] // 2, :3]) == (164, 0, 0)
+    assert tuple(review_image[0, review_image.shape[1] // 2, :3]) == (164, 0, 0)
+    assert int(rejected_background[1]) < int(normal_background[1]) - 8
+    assert int(rejected_background[2]) < int(normal_background[2]) - 8
+    assert int(review_background[1]) < int(normal_background[1]) - 8
+    assert int(review_background[2]) < int(normal_background[2]) - 8
+    assert tuple(rejected_center) != tuple(normal_center)
+    assert tuple(review_center) != tuple(normal_center)
+
+
 def _write_support_decoupling_inputs(tmp_path: Path) -> dict[str, Path]:
     paths = _write_poc_inputs(tmp_path, include_rc_group=False)
 
@@ -607,7 +688,9 @@ def test_virtual_intersection_poc_writes_failure_styled_render_when_effect_not_a
     assert status_doc["success"] is False
     assert status_doc["acceptance_class"] == "review_required"
     image = _read_png_rgba(artifacts.rendered_map_path)
-    assert tuple(image[0, 0]) == (144, 0, 0, 255)
+    background = image[10, image.shape[1] // 2]
+    assert tuple(image[0, 0]) == (164, 0, 0, 255)
+    assert int(background[0]) > int(background[1]) + 5
 
 
 def test_case_package_698330_accepts_effect_success(tmp_path: Path) -> None:
@@ -650,12 +733,12 @@ def test_case_package_706389_accepts_t_mouth_rc_context_without_covering_foreign
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "706389")
-    assert artifacts.success is True
-    assert status_doc["success"] is True
+    assert artifacts.success is False
+    assert status_doc["success"] is False
     assert status_doc["flow_success"] is True
     assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_class"] == "accepted"
-    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["acceptance_class"] == "review_required"
+    assert status_doc["acceptance_reason"] == "stable_with_rc_group_semantic_gap"
     assert artifacts.rendered_map_path is not None
     assert artifacts.rendered_map_path.is_file()
 
@@ -724,12 +807,12 @@ def test_case_package_724123_excludes_neighboring_foreign_junction_node(tmp_path
 
 def test_case_package_761318_preserves_t_mouth_rc_context(tmp_path: Path) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "761318")
-    assert artifacts.success is True
-    assert status_doc["success"] is True
+    assert artifacts.success is False
+    assert status_doc["success"] is False
     assert status_doc["flow_success"] is True
-    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_class"] == "review_required"
     assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["acceptance_reason"] == "stable_with_incomplete_t_mouth_rc_context"
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
 
@@ -1250,13 +1333,20 @@ def test_case_package_74419702_accepts_stable_core_after_soft_excluding_remote_o
 
 
 def test_case_package_520394575_remains_rejected_as_hard_failure(tmp_path: Path) -> None:
-    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "520394575")
+    artifacts, status_doc, render_root = _run_case_package_case(tmp_path, "520394575")
     assert artifacts.success is False
     assert status_doc["success"] is False
     assert status_doc["flow_success"] is False
     assert status_doc["status"] == "rc_outside_drivezone"
     assert status_doc["acceptance_class"] == "rejected"
     assert status_doc["acceptance_reason"] == "rc_outside_drivezone"
+    render_path = render_root / "520394575.png"
+    assert render_path.is_file()
+    image = _read_png_rgba(render_path)
+    assert tuple(image[0, 0]) == (164, 0, 0, 255)
+    background = image[min(100, image.shape[0] - 1), min(100, image.shape[1] - 1), :3]
+    assert int(background[0]) > int(background[1]) + 15
+    assert int(background[0]) > int(background[2]) + 15
 
 
 def test_is_foreign_local_junction_node_treats_degree3_node_without_mainnode_as_foreign() -> None:

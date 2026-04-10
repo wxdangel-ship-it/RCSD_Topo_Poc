@@ -377,6 +377,15 @@
   - stage4 必须先基于局部 branch 方向证据与 nearby `DivStripZone` 解析单次运行的 `operational kind_2`
   - 解析结果仍只落到当前 stage4 的单事件语义：`8` 或 `16`
   - 若解析证据不稳定，必须显式写入审计，不得 silent fix
+- stage4 的几何终态验收要求正式冻结为：
+  - 必须优先定位道路面上的真实分歧 / 合流事件位置；`nodes` 点位只作为 seed，不能替代事件定位
+  - nearby `DivStripZone` 尖端前后是事件定位的第一优先级；`nodes / roads / RCSDRoad / RCSDNode` 只作为形态一致性与降级支撑
+  - 输出 polygon 必须填充目标事件前后的有效 `DriveZone` 路面，但不得把 `DivStripZone` 几何本身直接并入路口面
+  - 输出 polygon 的前端和末端必须由近似垂直于当前主干方向的横截面裁切，不得形成沿路面无约束拖尾的长条型结果
+  - 若同一 `DriveZone` 连通域内存在对向或平行 road，但不属于当前事件关联 branch，polygon 必须在道路中间分隔位置截断，不得吞并无关对向 / 平行 road 的整幅路面
+  - 简单分歧 / 合流 case 的 span 最多扩展到前一个或后一个语义路口，或总范围不超过 `200m`
+  - 复杂 / 连续分歧合流 case 必须覆盖当前 `mainnodeid` 语义组内应纳入的全部事件区域，但进入 / 退出支路也最多扩展到前一个或后一个语义路口，或总范围不超过 `200m`
+  - 不得把相邻无关 `T` 型路口、无关 patch、无关语义路口一起并入当前 Stage4 路口面
 - stage4 必须正式读取 `DivStripZone` 的局部 patch；它是 stage4 在合法 `DriveZone` patch 内的一级局部选择标准：
   - nearby `DivStripZone` 优先决定分支裁决与虚拟面约束
   - `roads / RCSDRoad` 只在 `DivStripZone` 缺失或局部无可用 nearby 命中时作为降级支撑
@@ -389,6 +398,12 @@
   - `divstrip_component_count`
   - `divstrip_component_selected`
   - `evidence_source`
+  - `event_position_source`
+  - `event_tip_s_m`
+  - `event_span_start_m`
+  - `event_span_end_m`
+  - `semantic_prev_boundary_offset_m`
+  - `semantic_next_boundary_offset_m`
   - `trunk_branch_id`
   - `rcsdnode_tolerance_rule`
   - `rcsdnode_tolerance_applied`
@@ -397,6 +412,7 @@
   - `rcsdnode_lateral_dist_m`
 - 若 `RCSDRoad` / `RCSDNode` 不在 `DriveZone` 上，必须报异常，不允许 silent fix。
 - 若覆盖失败但输入完整，记 `review_required` 风险，不得 silent fix。
+- 若输出 polygon 命中错误导流带、只覆盖复杂路口中的部分事件区域、吞并无关对向 / 平行 road、吞并相邻无关语义路口、或未保护主 `RCSDNode` / 相关 node，不得记为 `accepted/stable`；至少进入 `review_required`，无法形成合法局部结果时必须 `rejected`。
 - 若 `mainnodeid` 关联不稳定、patch 无法形成主连通域、关键字段缺失、`DivStripZone` 图层不可读或 CRS 无法统一到 `EPSG:3857`，必须报异常。
 
 ## 3. Outputs
@@ -738,6 +754,14 @@ outputs/_work/t02_stage1_drivezone_gate
   - `mainnodeid_out_of_scope`
   - `main_direction_unstable`
   - `rcsd_outside_drivezone`
+- 以下业务结果至少应进入 `review_required`，不得记为 `accepted/stable`：
+  - 命中错误 `DivStripZone` 组件或事件位置
+  - 简单路口 span 超过前后语义路口边界，或明显超过 `200m`
+  - 复杂 / 连续路口只覆盖部分事件 lobe，未覆盖当前 `mainnodeid` 组内应纳入的事件区域
+  - 吞并无关对向 / 平行 road 的整幅路面
+  - 吞并相邻无关 `T` 型路口、无关 patch 或无关语义路口
+  - 主 `RCSDNode` 仅靠超窗、反向或 off-trunk 才能解释
+- 若上述问题导致无法形成合法局部 polygon，则必须进入 `rejected`。
 - stage4 的 `status/progress/perf/perf_markers` 仍可输出为运行态工件，但不属于正式契约输出。
 
 ## 4. EntryPoints

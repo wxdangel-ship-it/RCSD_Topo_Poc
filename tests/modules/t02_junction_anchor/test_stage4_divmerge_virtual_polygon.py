@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import fiona
 import pytest
@@ -10,10 +11,17 @@ from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t02_junction_anchor.stage4_divmerge_virtual_polygon import (
+    _analyze_divstrip_context,
+    _clip_simple_event_span_window_by_divstrip_context,
     _cover_check,
+    _chain_candidates_from_topology,
+    _evaluate_primary_rcsdnode_tolerance,
+    _pick_reference_s,
+    _resolve_parallel_centerline,
+    _resolve_operational_kind_2,
     run_t02_stage4_divmerge_virtual_polygon,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import ParsedNode
+from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import ParsedNode, ParsedRoad
 
 
 def _load_vector_doc(path: Path) -> dict:
@@ -42,6 +50,7 @@ def _write_fixture(
     main_rcsdnode_geometry: Point | None = None,
     main_rcsdnode_id: str = "100",
     main_rcsdnode_mainnodeid: str | None = "100",
+    extra_node_features: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     nodes_path = tmp_path / "nodes.gpkg"
     roads_path = tmp_path / "roads.gpkg"
@@ -50,9 +59,7 @@ def _write_fixture(
     rcsdroad_path = tmp_path / "rcsdroad.gpkg"
     rcsdnode_path = tmp_path / "rcsdnode.gpkg"
 
-    write_vector(
-        nodes_path,
-        [
+    node_features = [
             {
                 "properties": {
                     "id": "100",
@@ -77,9 +84,10 @@ def _write_fixture(
                 },
                 "geometry": Point(6.0, 2.0),
             },
-        ],
-        crs_text="EPSG:3857",
-    )
+    ]
+    if extra_node_features:
+        node_features.extend(extra_node_features)
+    write_vector(nodes_path, node_features, crs_text="EPSG:3857")
     write_vector(
         roads_path,
         [
@@ -385,6 +393,598 @@ def test_stage4_accepts_kind_8_and_16_with_nearby_divstrip(tmp_path: Path, kind_
     assert _load_vector_doc(fixture["nodes_path"]) == original_nodes
 
 
+def test_stage4_uses_adjacent_semantic_junction_boundary_even_when_neighbor_is_not_stage4_candidate(tmp_path: Path) -> None:
+    fixture = _write_fixture(
+        tmp_path,
+        kind_2=16,
+        divstrip_mode="nearby_single",
+        extra_node_features=[
+            {
+                "properties": {
+                    "id": "500",
+                    "mainnodeid": "500",
+                    "has_evd": "yes",
+                    "is_anchor": "yes",
+                    "kind_2": 4,
+                    "grade_2": 1,
+                },
+                "geometry": Point(0.0, 34.0),
+            },
+            {
+                "properties": {
+                    "id": "501",
+                    "mainnodeid": "500",
+                    "has_evd": "yes",
+                    "is_anchor": "yes",
+                    "kind_2": 4,
+                    "grade_2": 1,
+                },
+                "geometry": Point(2.0, 38.0),
+            },
+        ],
+    )
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="semantic_boundary_neighbor",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    previous_boundary_offset = status_doc["event_shape"]["semantic_prev_boundary_offset_m"]
+    next_boundary_offset = status_doc["event_shape"]["semantic_next_boundary_offset_m"]
+    assert previous_boundary_offset is not None or next_boundary_offset is not None
+    if previous_boundary_offset is not None:
+        assert status_doc["event_shape"]["event_span_start_m"] > float(previous_boundary_offset)
+    if next_boundary_offset is not None:
+        assert status_doc["event_shape"]["event_span_end_m"] < float(next_boundary_offset)
+
+
+def test_pick_reference_s_prefers_tip_projection_over_drivezone_split() -> None:
+    chosen_s, position_source, split_pick_source = _pick_reference_s(
+        divstrip_ref_s=12.0,
+        divstrip_ref_source="tip_projection",
+        drivezone_split_s=8.0,
+        max_offset_m=30.0,
+    )
+
+    assert chosen_s == pytest.approx(12.0)
+    assert position_source == "divstrip_ref"
+    assert split_pick_source == "divstrip_tip_projection_window"
+
+
+def test_primary_rcsdnode_exact_cover_overrides_off_trunk_when_offset_is_valid() -> None:
+    representative_node = ParsedNode(
+        feature_index=0,
+        properties={"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 8, "grade_2": 1},
+        geometry=Point(0.0, 0.0),
+        node_id="100",
+        mainnodeid="100",
+        has_evd="yes",
+        is_anchor="no",
+        kind_2=8,
+        grade_2=1,
+    )
+    primary_main_rc_node = ParsedNode(
+        feature_index=1,
+        properties={"id": "200", "mainnodeid": "0"},
+        geometry=Point(10.0, 25.0),
+        node_id="200",
+        mainnodeid="0",
+        has_evd=None,
+        is_anchor=None,
+        kind_2=None,
+        grade_2=None,
+    )
+    local_roads = [
+        ParsedRoad(
+            feature_index=0,
+            properties={"id": "road_a", "snodeid": "100", "enodeid": "300", "direction": 2},
+            geometry=LineString([(0.0, 0.0), (20.0, 0.0)]),
+            road_id="road_a",
+            snodeid="100",
+            enodeid="300",
+            direction=2,
+        )
+    ]
+    road_branches = [
+        SimpleNamespace(
+            branch_id="road_1",
+            road_ids=["road_a"],
+            angle_deg=0.0,
+            has_incoming_support=False,
+            has_outgoing_support=True,
+        )
+    ]
+
+    result = _evaluate_primary_rcsdnode_tolerance(
+        polygon_geometry=box(5.0, 20.0, 15.0, 30.0),
+        primary_main_rc_node=primary_main_rc_node,
+        representative_node=representative_node,
+        road_branches=road_branches,
+        main_branch_ids={"road_1"},
+        local_roads=local_roads,
+        selected_roads=local_roads,
+        kind_2=8,
+        drivezone_union=box(-10.0, -10.0, 30.0, 40.0),
+    )
+
+    assert result["reason"] is None
+    assert result["rcsdnode_coverage_mode"] == "exact_cover"
+    assert result["covered"] is True
+    assert result["rcsdnode_lateral_dist_m"] == pytest.approx(25.0)
+
+
+def test_primary_rcsdnode_selected_road_corridor_tolerance_extends_polygon() -> None:
+    representative_node = ParsedNode(
+        feature_index=0,
+        properties={"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 8, "grade_2": 1},
+        geometry=Point(0.0, 0.0),
+        node_id="100",
+        mainnodeid="100",
+        has_evd="yes",
+        is_anchor="no",
+        kind_2=8,
+        grade_2=1,
+    )
+    primary_main_rc_node = ParsedNode(
+        feature_index=1,
+        properties={"id": "200", "mainnodeid": "0"},
+        geometry=Point(10.0, 8.0),
+        node_id="200",
+        mainnodeid="0",
+        has_evd=None,
+        is_anchor=None,
+        kind_2=None,
+        grade_2=None,
+    )
+    trunk_road = ParsedRoad(
+        feature_index=0,
+        properties={"id": "road_a", "snodeid": "100", "enodeid": "300", "direction": 2},
+        geometry=LineString([(0.0, 0.0), (20.0, 0.0)]),
+        road_id="road_a",
+        snodeid="100",
+        enodeid="300",
+        direction=2,
+    )
+    selected_side_road = ParsedRoad(
+        feature_index=1,
+        properties={"id": "road_b", "snodeid": "100", "enodeid": "301", "direction": 2},
+        geometry=LineString([(0.0, 8.0), (20.0, 8.0)]),
+        road_id="road_b",
+        snodeid="100",
+        enodeid="301",
+        direction=2,
+    )
+    road_branches = [
+        SimpleNamespace(
+            branch_id="road_1",
+            road_ids=["road_a"],
+            angle_deg=0.0,
+            has_incoming_support=False,
+            has_outgoing_support=True,
+        )
+    ]
+
+    result = _evaluate_primary_rcsdnode_tolerance(
+        polygon_geometry=box(5.0, -2.0, 15.0, 2.0),
+        primary_main_rc_node=primary_main_rc_node,
+        representative_node=representative_node,
+        road_branches=road_branches,
+        main_branch_ids={"road_1"},
+        local_roads=[trunk_road, selected_side_road],
+        selected_roads=[selected_side_road],
+        kind_2=8,
+        drivezone_union=box(-10.0, -10.0, 30.0, 20.0),
+    )
+
+    assert result["reason"] is None
+    assert result["rcsdnode_coverage_mode"] == "selected_road_corridor_tolerated"
+    assert result["covered"] is True
+    assert result["extended_polygon_geometry"].buffer(0).covers(primary_main_rc_node.geometry)
+
+
+def test_primary_rcsdnode_selected_road_corridor_tolerance_respects_support_clip() -> None:
+    representative_node = ParsedNode(
+        feature_index=0,
+        properties={"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 8, "grade_2": 1},
+        geometry=Point(0.0, 0.0),
+        node_id="100",
+        mainnodeid="100",
+        has_evd="yes",
+        is_anchor="no",
+        kind_2=8,
+        grade_2=1,
+    )
+    primary_main_rc_node = ParsedNode(
+        feature_index=1,
+        properties={"id": "200", "mainnodeid": "0"},
+        geometry=Point(10.0, 8.0),
+        node_id="200",
+        mainnodeid="0",
+        has_evd=None,
+        is_anchor=None,
+        kind_2=None,
+        grade_2=None,
+    )
+    trunk_road = ParsedRoad(
+        feature_index=0,
+        properties={"id": "road_a", "snodeid": "100", "enodeid": "300", "direction": 2},
+        geometry=LineString([(0.0, 0.0), (20.0, 0.0)]),
+        road_id="road_a",
+        snodeid="100",
+        enodeid="300",
+        direction=2,
+    )
+    selected_side_road = ParsedRoad(
+        feature_index=1,
+        properties={"id": "road_b", "snodeid": "100", "enodeid": "301", "direction": 2},
+        geometry=LineString([(0.0, 8.0), (20.0, 8.0)]),
+        road_id="road_b",
+        snodeid="100",
+        enodeid="301",
+        direction=2,
+    )
+    road_branches = [
+        SimpleNamespace(
+            branch_id="road_1",
+            road_ids=["road_a"],
+            angle_deg=0.0,
+            has_incoming_support=False,
+            has_outgoing_support=True,
+        )
+    ]
+
+    result = _evaluate_primary_rcsdnode_tolerance(
+        polygon_geometry=box(5.0, -2.0, 15.0, 2.0),
+        primary_main_rc_node=primary_main_rc_node,
+        representative_node=representative_node,
+        road_branches=road_branches,
+        main_branch_ids={"road_1"},
+        local_roads=[trunk_road, selected_side_road],
+        selected_roads=[selected_side_road],
+        kind_2=8,
+        drivezone_union=box(-10.0, -10.0, 30.0, 20.0),
+        support_clip_geometry=box(-10.0, -3.0, 30.0, 3.0),
+    )
+
+    assert result["reason"] == "rcsdnode_main_off_trunk"
+    assert result["rcsdnode_coverage_mode"] != "selected_road_corridor_tolerated"
+    assert result["covered"] is False
+
+
+def test_resolve_parallel_centerline_ignores_excluded_current_junction_roads() -> None:
+    axis_centerline = LineString([(0.0, 0.0), (30.0, 0.0)])
+    local_roads = [
+        ParsedRoad(
+            feature_index=0,
+            properties={"id": "road_selected", "snodeid": "100", "enodeid": "101", "direction": 2},
+            geometry=LineString([(0.0, 0.0), (30.0, 0.0)]),
+            road_id="road_selected",
+            snodeid="100",
+            enodeid="101",
+            direction=2,
+        ),
+        ParsedRoad(
+            feature_index=1,
+            properties={"id": "road_current_junction", "snodeid": "100", "enodeid": "102", "direction": 2},
+            geometry=LineString([(0.0, 6.0), (30.0, 6.0)]),
+            road_id="road_current_junction",
+            snodeid="100",
+            enodeid="102",
+            direction=2,
+        ),
+        ParsedRoad(
+            feature_index=2,
+            properties={"id": "road_other_corridor", "snodeid": "500", "enodeid": "501", "direction": 2},
+            geometry=LineString([(0.0, -18.0), (30.0, -18.0)]),
+            road_id="road_other_corridor",
+            snodeid="500",
+            enodeid="501",
+            direction=2,
+        ),
+    ]
+
+    result = _resolve_parallel_centerline(
+        local_roads=local_roads,
+        selected_road_ids={"road_selected"},
+        excluded_road_ids={"road_current_junction"},
+        axis_centerline=axis_centerline,
+        axis_unit_vector=(1.0, 0.0),
+        reference_point=Point(15.0, 0.0),
+        parallel_side_sign=-1,
+    )
+
+    assert result is not None
+    assert result.equals(local_roads[2].geometry)
+
+
+def test_analyze_divstrip_context_simple_prefers_seed_nearest_component() -> None:
+    main_road = ParsedRoad(
+        feature_index=0,
+        properties={"id": "road_main", "snodeid": "100", "enodeid": "200", "direction": 2},
+        geometry=LineString([(0.0, 0.0), (50.0, 0.0)]),
+        road_id="road_main",
+        snodeid="100",
+        enodeid="200",
+        direction=2,
+    )
+    side_road = ParsedRoad(
+        feature_index=1,
+        properties={"id": "road_side", "snodeid": "100", "enodeid": "300", "direction": 2},
+        geometry=LineString([(0.0, 0.0), (30.0, 20.0)]),
+        road_id="road_side",
+        snodeid="100",
+        enodeid="300",
+        direction=2,
+    )
+    road_branches = [
+        SimpleNamespace(branch_id="road_1", road_ids=["road_main"]),
+        SimpleNamespace(branch_id="road_2", road_ids=["road_side"]),
+    ]
+    result = _analyze_divstrip_context(
+        local_divstrip_features=[
+            SimpleNamespace(geometry=box(6.0, -1.5, 11.0, 1.5)),
+            SimpleNamespace(geometry=box(20.0, -1.5, 25.0, 1.5)),
+        ],
+        seed_union=Point(0.0, 0.0),
+        road_branches=road_branches,
+        local_roads=[main_road, side_road],
+        main_branch_ids={"road_1"},
+        drivezone_union=box(-5.0, -10.0, 60.0, 30.0),
+        event_branch_ids={"road_2"},
+        allow_compound_pair_merge=False,
+    )
+
+    assert result["nearby"] is True
+    assert result["selected_component_ids"] == ["divstrip_component_0"]
+
+
+def test_clip_simple_event_span_window_first_hit_keeps_wider_default_pad_without_direct_targets() -> None:
+    base_window = {
+        "start_offset_m": -20.0,
+        "end_offset_m": 20.0,
+        "semantic_protected_start_m": -1.5,
+        "semantic_protected_end_m": 1.5,
+    }
+    divstrip_geometry = box(6.0, -1.0, 9.0, 1.0)
+
+    clipped_tip = _clip_simple_event_span_window_by_divstrip_context(
+        event_span_window=base_window,
+        divstrip_constraint_geometry=divstrip_geometry,
+        direct_target_rc_nodes=[],
+        selected_roads=None,
+        origin_point=Point(0.0, 0.0),
+        axis_unit_vector=(1.0, 0.0),
+        selected_component_count=1,
+        is_complex_junction=False,
+        event_split_pick_source="divstrip_tip_projection_window",
+    )
+    clipped_first_hit = _clip_simple_event_span_window_by_divstrip_context(
+        event_span_window=base_window,
+        divstrip_constraint_geometry=divstrip_geometry,
+        direct_target_rc_nodes=[],
+        selected_roads=None,
+        origin_point=Point(0.0, 0.0),
+        axis_unit_vector=(1.0, 0.0),
+        selected_component_count=1,
+        is_complex_junction=False,
+        event_split_pick_source="divstrip_first_hit_window",
+    )
+
+    assert clipped_tip["end_offset_m"] == pytest.approx(18.5)
+    assert clipped_first_hit["end_offset_m"] == pytest.approx(20.0)
+    assert clipped_first_hit["start_offset_m"] <= clipped_tip["start_offset_m"]
+
+
+def test_resolve_operational_kind_2_accepts_complex_multibranch_event_without_side_branches() -> None:
+    representative_node = ParsedNode(
+        feature_index=0,
+        properties={"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 128, "grade_2": 1},
+        geometry=Point(0.0, 0.0),
+        node_id="100",
+        mainnodeid="100",
+        has_evd="yes",
+        is_anchor="no",
+        kind_2=128,
+        grade_2=1,
+    )
+    road_branches = [
+        SimpleNamespace(
+            branch_id="road_1",
+            road_ids=["road_a"],
+            angle_deg=0.0,
+            has_incoming_support=False,
+            has_outgoing_support=True,
+        ),
+        SimpleNamespace(
+            branch_id="road_2",
+            road_ids=["road_b"],
+            angle_deg=180.0,
+            has_incoming_support=True,
+            has_outgoing_support=False,
+        ),
+    ]
+
+    result = _resolve_operational_kind_2(
+        representative_node=representative_node,
+        road_branches=road_branches,
+        main_branch_ids={"road_1", "road_2"},
+        preferred_branch_ids={"road_1", "road_2"},
+        local_roads=[],
+        divstrip_context={
+            "constraint_geometry": None,
+            "nearby": False,
+            "ambiguous": False,
+        },
+        chain_context={
+            "is_in_continuous_chain": False,
+            "sequential_ok": False,
+        },
+        multibranch_context={
+            "enabled": True,
+            "selected_event_index": 0,
+            "ambiguous": False,
+        },
+    )
+
+    assert result["complex_junction"] is True
+    assert result["ambiguous"] is False
+    assert result["operational_kind_2"] == 16
+    assert result["kind_resolution_mode"] == "complex_multibranch_event"
+
+
+def test_chain_candidates_continue_through_degree_3_node_when_trunk_direction_is_clear() -> None:
+    local_nodes = [
+        ParsedNode(
+            feature_index=0,
+            properties={"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 16, "grade_2": 1},
+            geometry=Point(0.0, 0.0),
+            node_id="100",
+            mainnodeid="100",
+            has_evd="yes",
+            is_anchor="no",
+            kind_2=16,
+            grade_2=1,
+        ),
+        ParsedNode(
+            feature_index=1,
+            properties={"id": "200", "mainnodeid": "200", "has_evd": "yes", "is_anchor": "no", "kind_2": 16, "grade_2": 1},
+            geometry=Point(20.0, 0.0),
+            node_id="200",
+            mainnodeid="200",
+            has_evd="yes",
+            is_anchor="no",
+            kind_2=16,
+            grade_2=1,
+        ),
+    ]
+    local_roads = [
+        ParsedRoad(
+            feature_index=0,
+            properties={"id": "road_a", "snodeid": "100", "enodeid": "150", "direction": 2},
+            geometry=LineString([(0.0, 0.0), (10.0, 0.0)]),
+            road_id="road_a",
+            snodeid="100",
+            enodeid="150",
+            direction=2,
+        ),
+        ParsedRoad(
+            feature_index=1,
+            properties={"id": "road_b", "snodeid": "150", "enodeid": "200", "direction": 2},
+            geometry=LineString([(10.0, 0.0), (20.0, 0.0)]),
+            road_id="road_b",
+            snodeid="150",
+            enodeid="200",
+            direction=2,
+        ),
+        ParsedRoad(
+            feature_index=2,
+            properties={"id": "road_side", "snodeid": "150", "enodeid": "250", "direction": 2},
+            geometry=LineString([(10.0, 0.0), (10.0, 10.0)]),
+            road_id="road_side",
+            snodeid="150",
+            enodeid="250",
+            direction=2,
+        ),
+    ]
+
+    chain_candidates, diag = _chain_candidates_from_topology(
+        representative_node_id="100",
+        representative_chain_kind_2=16,
+        local_nodes=local_nodes,
+        local_roads=local_roads,
+        chain_span_limit_m=50.0,
+    )
+
+    assert [node.node_id for node, _distance in chain_candidates] == ["200"]
+    assert diag["chain_graph_node_count"] >= 4
+
+
+def test_chain_candidates_stop_when_degree_3_continuation_is_ambiguous() -> None:
+    local_nodes = [
+        ParsedNode(
+            feature_index=0,
+            properties={"id": "100", "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "kind_2": 16, "grade_2": 1},
+            geometry=Point(0.0, 0.0),
+            node_id="100",
+            mainnodeid="100",
+            has_evd="yes",
+            is_anchor="no",
+            kind_2=16,
+            grade_2=1,
+        ),
+        ParsedNode(
+            feature_index=1,
+            properties={"id": "200", "mainnodeid": "200", "has_evd": "yes", "is_anchor": "no", "kind_2": 16, "grade_2": 1},
+            geometry=Point(20.0, 1.75),
+            node_id="200",
+            mainnodeid="200",
+            has_evd="yes",
+            is_anchor="no",
+            kind_2=16,
+            grade_2=1,
+        ),
+        ParsedNode(
+            feature_index=2,
+            properties={"id": "300", "mainnodeid": "300", "has_evd": "yes", "is_anchor": "no", "kind_2": 16, "grade_2": 1},
+            geometry=Point(20.0, -1.75),
+            node_id="300",
+            mainnodeid="300",
+            has_evd="yes",
+            is_anchor="no",
+            kind_2=16,
+            grade_2=1,
+        ),
+    ]
+    local_roads = [
+        ParsedRoad(
+            feature_index=0,
+            properties={"id": "road_a", "snodeid": "100", "enodeid": "150", "direction": 2},
+            geometry=LineString([(0.0, 0.0), (10.0, 0.0)]),
+            road_id="road_a",
+            snodeid="100",
+            enodeid="150",
+            direction=2,
+        ),
+        ParsedRoad(
+            feature_index=1,
+            properties={"id": "road_b", "snodeid": "150", "enodeid": "200", "direction": 2},
+            geometry=LineString([(10.0, 0.0), (20.0, 1.75)]),
+            road_id="road_b",
+            snodeid="150",
+            enodeid="200",
+            direction=2,
+        ),
+        ParsedRoad(
+            feature_index=2,
+            properties={"id": "road_c", "snodeid": "150", "enodeid": "300", "direction": 2},
+            geometry=LineString([(10.0, 0.0), (20.0, -1.75)]),
+            road_id="road_c",
+            snodeid="150",
+            enodeid="300",
+            direction=2,
+        ),
+    ]
+
+    chain_candidates, diag = _chain_candidates_from_topology(
+        representative_node_id="100",
+        representative_chain_kind_2=16,
+        local_nodes=local_nodes,
+        local_roads=local_roads,
+        chain_span_limit_m=50.0,
+    )
+
+    assert chain_candidates == []
+    assert diag["chain_graph_node_count"] >= 4
+
+
 def test_stage4_falls_back_to_roads_when_divstrip_not_nearby(tmp_path: Path) -> None:
     fixture = _write_fixture(tmp_path, kind_2=8, divstrip_mode="not_nearby")
     artifacts = run_t02_stage4_divmerge_virtual_polygon(
@@ -553,7 +1153,7 @@ def test_stage4_accepts_merge_main_rcsdnode_within_post_trunk_window(tmp_path: P
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_offset_m"] == pytest.approx(18.0, abs=1.0)
 
 
-def test_stage4_keeps_main_rcsdnode_out_of_window_as_audit_not_gate(tmp_path: Path) -> None:
+def test_stage4_marks_main_rcsdnode_out_of_window_as_review_required(tmp_path: Path) -> None:
     fixture = _write_fixture(
         tmp_path,
         kind_2=16,
@@ -572,10 +1172,10 @@ def test_stage4_keeps_main_rcsdnode_out_of_window_as_audit_not_gate(tmp_path: Pa
         rcsdnode_path=fixture["rcsdnode_path"],
     )
 
-    assert artifacts.success is True
+    assert artifacts.success is False
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
-    assert status_doc["acceptance_class"] == "accepted"
-    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["acceptance_class"] == "review_required"
+    assert status_doc["acceptance_reason"] == "rcsdnode_main_out_of_window"
     assert status_doc["rcsdnode_tolerance"]["trunk_branch_id"] == "road_2"
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_tolerance_applied"] is False
     assert status_doc["rcsdnode_tolerance"]["rcsdnode_coverage_mode"] == "out_of_window"

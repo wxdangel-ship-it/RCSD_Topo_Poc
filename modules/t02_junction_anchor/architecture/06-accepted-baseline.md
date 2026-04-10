@@ -407,6 +407,17 @@
 - `kind / kind_2 = 128` 的复杂路口主节点允许进入 stage4；单次运行时先解析为当前 patch 上可解释的 `operational kind_2 = 8 / 16`，再沿现有 stage4 单事件链继续处理。
 - stage4 采用 stage3 的栅格策略主线：
   - patch + mask + 连通提取 + 回矢量 + 审计
+- stage4 先找真实事件位置，再生成路口面：
+  - `nodes` 点位只作为 seed，不直接等同于最终事件中心
+  - nearby `DivStripZone` 尖端前后是分歧 / 合流事件定位的第一优先级
+  - `roads / RCSDRoad / RCSDNode` 主要承担形态一致性与降级支撑，不得替代导流带优先级
+- stage4 路口面几何终态正式按以下口径验收：
+  - 路口面应填充当前事件前后的有效 `DriveZone` 路面，不包含 `DivStripZone` 区域本身
+  - 路口面的前端与末端应为近似垂直于道路方向的横截面，不得形成无约束长条拖尾
+  - 若同一 `DriveZone` 连通范围内存在不属于当前事件的对向或平行 road，路口面应在中间分隔位置止住，不得吞并无关对向 / 平行 road 的整幅路面
+  - 简单分歧 / 合流最多延伸到前一个或后一个语义路口，或不超过约 `200m`
+  - 复杂 / 连续分歧合流必须覆盖当前 `mainnodeid` 语义组内应纳入的全部局部事件区域，但进入 / 退出支路同样最多延伸到前一个或后一个语义路口，或不超过约 `200m`
+  - 不得把相邻无关 `T` 型路口、无关 patch 或无关语义路口并入当前 Stage4 路口面
 - stage4 对主 `RCSDNode` 应用主干有向容差：
   - `kind_2 = 16`：允许主 `RCSDNode` 位于分歧前主干 `<=20m`
   - `kind_2 = 8`：允许主 `RCSDNode` 位于合流后主干 `<=20m`
@@ -414,7 +425,16 @@
   - 超窗、方向错误或 off-trunk 时，进入 `review_required`
 - stage4 不重写 `nodes.is_anchor`，也不并入统一锚定结果。
 
-### 10.3 当前正式输出语义
+### 10.3 风险 / 失败判定补充
+- 以下结果至少进入 `review_required`，不得记为 `accepted/stable`：
+  - 命中错误 `DivStripZone` 组件或错误事件位置
+  - 复杂 / 连续路口只覆盖其中一部分事件区域
+  - 输出面错误吞并相邻语义路口
+  - 输出面错误吞并不属于当前事件的对向或平行 road 面
+  - 主 `RCSDNode` 只能通过超窗、反向或 off-trunk 解释
+- 若上述问题导致无法形成合法局部 polygon，则应进入 `rejected`。
+
+### 10.4 当前正式输出语义
 - `stage4_virtual_polygon.gpkg`
 - `stage4_node_link.json`
 - `stage4_rcsdnode_link.json`

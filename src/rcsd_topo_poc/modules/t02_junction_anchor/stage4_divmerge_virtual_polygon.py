@@ -9,7 +9,7 @@ import tracemalloc
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from itertools import combinations
+from itertools import combinations, permutations
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -47,6 +47,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _binary_close,
     _cluster_branch_candidates,
     _branch_candidate_from_road,
+    _branch_candidate_from_center_proximity,
     _build_debug_focus_geometry,
     _build_grid,
     _build_road_branches_for_member_nodes,
@@ -56,6 +57,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _load_layer_filtered,
     _mask_to_geometry,
     _parse_nodes,
+    _patch_ids_from_properties,
     _parse_rc_nodes,
     _parse_roads,
     _rasterize_geometries,
@@ -94,11 +96,26 @@ DIVSTRIP_SEED_FALLBACK_DISTANCE_M = 48.0
 DIVSTRIP_EVENT_BUFFER_M = 16.0
 DIVSTRIP_EVENT_ROAD_LINK_DISTANCE_M = 14.0
 DIVSTRIP_REFERENCE_ROAD_BUFFER_M = 28.0
+DIVSTRIP_COMPLEX_PAIR_DISTANCE_M = 180.0
+DIVSTRIP_COMPLEX_PAIR_SEED_DISTANCE_M = 120.0
 DIVSTRIP_KIND_POSITION_MARGIN_M = 2.0
 EVENT_ANCHOR_BUFFER_M = 4.0
 EVENT_SPAN_DEFAULT_M = 10.0
 EVENT_SPAN_MAX_M = 120.0
 EVENT_SPAN_MARGIN_M = 1.5
+EVENT_SPAN_LOCAL_CONTEXT_PAD_M = 25.0
+EVENT_COMPONENT_SURFACE_SPAN_CAP_M = 25.0
+EVENT_COMPONENT_SIDE_CLIP_BUFFER_M = 10.0
+EVENT_SIMPLE_COMPONENT_EXTRA_SPAN_PAD_M = 8.0
+EVENT_COMPONENT_BRANCH_LOCAL_DISTANCE_M = 30.0
+EVENT_COMPLEX_MEMBER_SPAN_PAD_M = 12.0
+EVENT_SEMANTIC_BOUNDARY_PAD_M = 12.0
+EVENT_SEMANTIC_BOUNDARY_AXIS_BUFFER_M = 14.0
+EVENT_SEMANTIC_BOUNDARY_ROAD_BUFFER_M = 18.0
+EVENT_NON_COMPLEX_EXTRA_SPAN_CAP_M = 18.0
+EVENT_COMPLEX_EXTRA_SPAN_CAP_M = 16.0
+EVENT_COMPLEX_LOCAL_SUPPORT_ROAD_DISTANCE_M = 6.0
+EVENT_COMPLEX_SUPPORT_BRANCH_PROXIMITY_M = 18.0
 EVENT_AXIS_TANGENT_SAMPLE_M = 3.0
 EVENT_CROSSLINE_STEP_M = 1.0
 EVENT_REFERENCE_SCAN_STEP_M = 1.0
@@ -111,6 +128,8 @@ EVENT_REFERENCE_BACKTRACK_PAST_NODE_M = 20.0
 EVENT_REFERENCE_SEARCH_MARGIN_M = 20.0
 EVENT_REFERENCE_SPLIT_EXTEND_M = 5.0
 EVENT_REFERENCE_DIVSTRIP_TARGET_BY_SPLIT_MIN_S_M = 5.0
+CHAIN_CONTINUATION_MAX_TURN_DEG = 55.0
+CHAIN_CONTINUATION_MIN_MARGIN_DEG = 8.0
 EVENT_RCSD_RECENTER_SHIFT_MAX_M = 20.0
 DEBUG_RENDER_PATCH_SIZE_M = 420.0
 EVENT_CROSS_HALF_LEN_FALLBACK_M = 60.0
@@ -131,6 +150,10 @@ PARALLEL_SIDE_FALLBACK_REFERENCE_DISTANCE_M = 120.0
 PARALLEL_SIDE_FALLBACK_BALANCE_RATIO = 0.03
 CHAIN_CONTEXT_EVENT_SPAN_M = 200.0
 MULTIBRANCH_AMBIGUITY_SCORE_MARGIN = 5.0
+MULTIBRANCH_EVENT_MAX_LOBES = 2
+MULTIBRANCH_LOCAL_CONTEXT_WINDOW_M = 36.0
+MULTIBRANCH_LOCAL_SPAN_MAX_M = 28.0
+MULTIBRANCH_SIDE_CLIP_BUFFER_M = 8.0
 RCSDNODE_TRUNK_WINDOW_M = 20.0
 RCSDNODE_TRUNK_LATERAL_TOLERANCE_M = 6.0
 CHAIN_NEARBY_DISTANCE_M = CHAIN_CONTEXT_EVENT_SPAN_M
@@ -223,6 +246,32 @@ def _record_perf_marker(
     if note is not None:
         marker["note"] = note
     _append_jsonl(out_path, marker)
+
+
+def _matches_stage4_patch_membership(properties: dict[str, Any], *, patch_id: str | None) -> bool:
+    if patch_id is None:
+        return True
+    return patch_id in _patch_ids_from_properties(properties)
+
+
+def _filter_stage4_roads_to_patch_membership(
+    roads: list[ParsedRoad],
+    *,
+    patch_id: str | None,
+) -> list[ParsedRoad]:
+    if patch_id is None:
+        return list(roads)
+    return [road for road in roads if _matches_stage4_patch_membership(road.properties, patch_id=patch_id)]
+
+
+def _filter_stage4_features_to_patch_membership(
+    features: list[LoadedFeature],
+    *,
+    patch_id: str | None,
+) -> list[LoadedFeature]:
+    if patch_id is None:
+        return list(features)
+    return [feature for feature in features if _matches_stage4_patch_membership(feature.properties, patch_id=patch_id)]
 
 
 class Stage4RunError(T02RunError):
@@ -539,8 +588,10 @@ def _evaluate_primary_rcsdnode_tolerance(
     road_branches,
     main_branch_ids: set[str],
     local_roads: list[ParsedRoad],
+    selected_roads: list[ParsedRoad] | None,
     kind_2: int,
     drivezone_union,
+    support_clip_geometry=None,
 ) -> dict[str, Any]:
     tolerance_rule = (
         "diverge_main_seed_on_pre_trunk_le_20m"
@@ -605,6 +656,75 @@ def _evaluate_primary_rcsdnode_tolerance(
     node_dist = float(trunk_centerline.project(primary_main_rc_node.geometry))
     offset_m = float(node_dist - event_ref_dist)
     lateral_dist_m = float(primary_main_rc_node.geometry.distance(trunk_centerline))
+    selected_roads_geometry = GeometryCollection()
+    if selected_roads:
+        selected_road_geometries = [
+            road.geometry
+            for road in selected_roads
+            if road.geometry is not None and not road.geometry.is_empty
+        ]
+        if selected_road_geometries:
+            selected_roads_geometry = unary_union(selected_road_geometries)
+
+    if -1.0 <= offset_m <= RCSDNODE_TRUNK_WINDOW_M and polygon_geometry.buffer(0).covers(primary_main_rc_node.geometry):
+        return {
+            "trunk_branch_id": trunk_branch.branch_id,
+            "rcsdnode_tolerance_rule": tolerance_rule,
+            "rcsdnode_tolerance_applied": False,
+            "rcsdnode_coverage_mode": "exact_cover",
+            "rcsdnode_offset_m": offset_m,
+            "rcsdnode_lateral_dist_m": lateral_dist_m,
+            "reason": None,
+            "extended_polygon_geometry": polygon_geometry,
+            "covered": True,
+        }
+
+    polygon_gap_m = float(polygon_geometry.distance(primary_main_rc_node.geometry))
+    selected_road_gap_m = (
+        math.inf
+        if selected_roads_geometry.is_empty
+        else float(primary_main_rc_node.geometry.distance(selected_roads_geometry))
+    )
+    if (
+        0.0 <= offset_m <= RCSDNODE_TRUNK_WINDOW_M
+        and polygon_gap_m > 0.0
+        and polygon_gap_m <= RCSDNODE_TRUNK_WINDOW_M + 5.0
+        and selected_road_gap_m <= RCSDNODE_TRUNK_LATERAL_TOLERANCE_M
+        and not selected_roads_geometry.is_empty
+    ):
+        corridor_buffer_m = max(
+            RCSDNODE_TRUNK_LATERAL_TOLERANCE_M,
+            float(selected_road_gap_m) + 1.5,
+            float(RC_ROAD_BUFFER_M) * 1.25,
+            2.5,
+        )
+        road_corridor = selected_roads_geometry.buffer(corridor_buffer_m, cap_style=2, join_style=2)
+        if drivezone_union is not None and not drivezone_union.is_empty:
+            road_corridor = road_corridor.intersection(drivezone_union).buffer(0)
+        if support_clip_geometry is not None and not support_clip_geometry.is_empty:
+            clipped_corridor = road_corridor.intersection(support_clip_geometry).buffer(0)
+            if not clipped_corridor.is_empty:
+                road_corridor = clipped_corridor
+        node_patch = road_corridor.intersection(
+            primary_main_rc_node.geometry.buffer(
+                max(float(RC_NODE_SEED_RADIUS_M), float(polygon_gap_m) + 1.5),
+                join_style=2,
+            )
+        ).buffer(0)
+        if not node_patch.is_empty:
+            extended_polygon_geometry = unary_union([polygon_geometry, node_patch]).buffer(0)
+            if extended_polygon_geometry.buffer(0).covers(primary_main_rc_node.geometry):
+                return {
+                    "trunk_branch_id": trunk_branch.branch_id,
+                    "rcsdnode_tolerance_rule": tolerance_rule,
+                    "rcsdnode_tolerance_applied": True,
+                    "rcsdnode_coverage_mode": "selected_road_corridor_tolerated",
+                    "rcsdnode_offset_m": offset_m,
+                    "rcsdnode_lateral_dist_m": lateral_dist_m,
+                    "reason": None,
+                    "extended_polygon_geometry": extended_polygon_geometry,
+                    "covered": True,
+                }
 
     if lateral_dist_m > RCSDNODE_TRUNK_LATERAL_TOLERANCE_M:
         return {
@@ -643,19 +763,6 @@ def _evaluate_primary_rcsdnode_tolerance(
             "reason": REASON_RCSDNODE_MAIN_OUT_OF_WINDOW,
             "extended_polygon_geometry": polygon_geometry,
             "covered": False,
-        }
-
-    if polygon_geometry.buffer(0).covers(primary_main_rc_node.geometry):
-        return {
-            "trunk_branch_id": trunk_branch.branch_id,
-            "rcsdnode_tolerance_rule": tolerance_rule,
-            "rcsdnode_tolerance_applied": False,
-            "rcsdnode_coverage_mode": "exact_cover",
-            "rcsdnode_offset_m": offset_m,
-            "rcsdnode_lateral_dist_m": lateral_dist_m,
-            "reason": None,
-            "extended_polygon_geometry": polygon_geometry,
-            "covered": True,
         }
 
     start_dist = max(0.0, min(event_ref_dist, node_dist))
@@ -929,6 +1036,7 @@ def _analyze_divstrip_context(
     main_branch_ids: set[str],
     drivezone_union,
     event_branch_ids: set[str] | None = None,
+    allow_compound_pair_merge: bool = False,
 ) -> dict[str, Any]:
     event_anchor_geometry = _estimate_event_anchor_geometry(
         local_roads=local_roads,
@@ -1052,55 +1160,140 @@ def _analyze_divstrip_context(
         for component in nearby_components
         if component["distance_to_roads"] <= DIVSTRIP_ROAD_NEARBY_DISTANCE_M
     ]
-    candidate_components = anchor_preferred_components or matched_components or road_nearby_components or nearby_components
-    candidate_components.sort(
-        key=lambda component: (
-            float(component["distance_to_event_anchor"]),
-            -len(component["matched_branch_ids"]),
-            -len(component["matched_all_branch_ids"]),
-            float(component["distance_to_roads"]),
-            float(component["distance_to_seed"]),
-        ),
-    )
-    selected_components = [candidate_components[0]]
-    ambiguous = False
-    if len(candidate_components) > 1:
-        first_component = candidate_components[0]
-        second_component = candidate_components[1]
-        first_branch_ids = set(first_component["matched_branch_ids"] or first_component["matched_all_branch_ids"])
-        second_branch_ids = set(second_component["matched_branch_ids"] or second_component["matched_all_branch_ids"])
-        first_corridor_geometry = unary_union(
+    if allow_compound_pair_merge:
+        candidate_components = anchor_preferred_components or matched_components or road_nearby_components or nearby_components
+    else:
+        candidate_components = []
+        seen_candidate_component_ids: set[str] = set()
+        for component in [*matched_components, *anchor_preferred_components, *road_nearby_components, *nearby_components]:
+            component_id = str(component["component_id"])
+            if component_id in seen_candidate_component_ids:
+                continue
+            seen_candidate_component_ids.add(component_id)
+            candidate_components.append(component)
+    if allow_compound_pair_merge:
+        candidate_components.sort(
+            key=lambda component: (
+                float(component["distance_to_event_anchor"]),
+                -len(component["matched_branch_ids"]),
+                -len(component["matched_all_branch_ids"]),
+                float(component["distance_to_roads"]),
+                float(component["distance_to_seed"]),
+            ),
+        )
+    else:
+        candidate_components.sort(
+            key=lambda component: (
+                -len(component["matched_branch_ids"]),
+                -len(component["matched_all_branch_ids"]),
+                float(component["distance_to_seed"]),
+                float(component["distance_to_event_anchor"]),
+                float(component["distance_to_roads"]),
+            ),
+        )
+
+    def _component_branch_ids(component: dict[str, Any]) -> set[str]:
+        return set(component["matched_branch_ids"] or component["matched_all_branch_ids"])
+
+    def _components_share_corridor(
+        base_component: dict[str, Any],
+        candidate_component: dict[str, Any],
+    ) -> bool:
+        base_branch_ids = _component_branch_ids(base_component)
+        candidate_branch_ids = _component_branch_ids(candidate_component)
+        base_corridor_geometry = unary_union(
             [
                 geometry
                 for branch_id, geometry in all_branch_geometry_lookup.items()
-                if branch_id in first_branch_ids and geometry is not None and not geometry.is_empty
+                if branch_id in base_branch_ids and geometry is not None and not geometry.is_empty
             ]
         )
         same_branch_corridor = bool(
-            first_branch_ids
-            and not first_corridor_geometry.is_empty
-            and first_corridor_geometry.buffer(
+            base_branch_ids
+            and not base_corridor_geometry.is_empty
+            and base_corridor_geometry.buffer(
                 max(DIVSTRIP_REFERENCE_ROAD_BUFFER_M * 0.6, DIVSTRIP_BRANCH_BUFFER_M * 2.5),
                 cap_style=2,
                 join_style=2,
-            ).intersects(second_component["geometry"])
-            and float(second_component["distance_to_seed"]) <= float(DIVSTRIP_SEED_FALLBACK_DISTANCE_M)
+            ).intersects(candidate_component["geometry"])
+            and float(candidate_component["distance_to_seed"]) <= float(DIVSTRIP_SEED_FALLBACK_DISTANCE_M)
         )
-        same_corridor_pair = (
+        same_corridor = (
             (
-                first_branch_ids
-                and second_branch_ids
-                and bool(first_branch_ids & second_branch_ids)
+                base_branch_ids
+                and candidate_branch_ids
+                and bool(base_branch_ids & candidate_branch_ids)
             )
             or same_branch_corridor
             or (
-                not first_branch_ids
-                and float(second_component["distance_to_roads"]) <= DIVSTRIP_CONTEXT_ROAD_DISTANCE_M
+                not base_branch_ids
+                and float(candidate_component["distance_to_roads"]) <= DIVSTRIP_CONTEXT_ROAD_DISTANCE_M
             )
-        ) and float(second_component["geometry"].distance(first_component["geometry"])) <= float(
+        )
+        if not same_corridor:
+            return False
+        return float(candidate_component["geometry"].distance(base_component["geometry"])) <= float(
             DIVSTRIP_REFERENCE_ROAD_BUFFER_M + 6.0
         )
-        if same_corridor_pair:
+
+    compound_pair_components: list[dict[str, Any]] = []
+    if allow_compound_pair_merge:
+        best_compound_pair: tuple[dict[str, Any], dict[str, Any]] | None = None
+        best_compound_pair_key: tuple[int, float, float, float] | None = None
+        for first_component, second_component in combinations(candidate_components, 2):
+            first_branch_ids = _component_branch_ids(first_component)
+            second_branch_ids = _component_branch_ids(second_component)
+            if not first_branch_ids or not second_branch_ids:
+                continue
+            if first_branch_ids & second_branch_ids:
+                continue
+            geometry_distance = float(first_component["geometry"].distance(second_component["geometry"]))
+            if geometry_distance > float(DIVSTRIP_COMPLEX_PAIR_DISTANCE_M):
+                continue
+            if (
+                float(first_component["distance_to_seed"]) > float(DIVSTRIP_COMPLEX_PAIR_SEED_DISTANCE_M)
+                or float(second_component["distance_to_seed"]) > float(DIVSTRIP_COMPLEX_PAIR_SEED_DISTANCE_M)
+            ):
+                continue
+            if (
+                float(first_component["distance_to_roads"]) > float(DIVSTRIP_CONTEXT_ROAD_DISTANCE_M)
+                or float(second_component["distance_to_roads"]) > float(DIVSTRIP_CONTEXT_ROAD_DISTANCE_M)
+            ):
+                continue
+            pair_key = (
+                len(first_branch_ids) + len(second_branch_ids),
+                -float(first_component["distance_to_event_anchor"] + second_component["distance_to_event_anchor"]),
+                -float(first_component["distance_to_roads"] + second_component["distance_to_roads"]),
+                -geometry_distance,
+            )
+            if best_compound_pair_key is None or pair_key > best_compound_pair_key:
+                best_compound_pair_key = pair_key
+                best_compound_pair = (first_component, second_component)
+        if best_compound_pair is not None:
+            compound_pair_components = [best_compound_pair[0], best_compound_pair[1]]
+
+    selected_components = list(compound_pair_components or [candidate_components[0]])
+    ambiguous = False
+    if len(candidate_components) > 1 and not compound_pair_components:
+        first_component = candidate_components[0]
+        second_component = candidate_components[1]
+        first_branch_ids = _component_branch_ids(first_component)
+        second_branch_ids = _component_branch_ids(second_component)
+        same_corridor_pair = _components_share_corridor(first_component, second_component)
+        opposite_compound_pair = (
+            allow_compound_pair_merge
+            and first_branch_ids
+            and second_branch_ids
+            and not bool(first_branch_ids & second_branch_ids)
+            and float(first_component["distance_to_seed"]) <= float(DIVSTRIP_COMPLEX_PAIR_SEED_DISTANCE_M)
+            and float(second_component["distance_to_seed"]) <= float(DIVSTRIP_COMPLEX_PAIR_SEED_DISTANCE_M)
+            and float(first_component["distance_to_roads"]) <= float(DIVSTRIP_CONTEXT_ROAD_DISTANCE_M)
+            and float(second_component["distance_to_roads"]) <= float(DIVSTRIP_CONTEXT_ROAD_DISTANCE_M)
+            and float(first_component["geometry"].distance(second_component["geometry"])) <= float(
+                DIVSTRIP_COMPLEX_PAIR_DISTANCE_M
+            )
+        )
+        if opposite_compound_pair or (allow_compound_pair_merge and same_corridor_pair):
             selected_components = [first_component, second_component]
             ambiguous = False
         else:
@@ -1121,50 +1314,24 @@ def _analyze_divstrip_context(
             ):
                 ambiguous = True
             if ambiguous:
-                selected_components = [first_component, second_component]
-    if not ambiguous and selected_components:
-        primary_component = selected_components[0]
-        primary_branch_ids = set(primary_component["matched_branch_ids"] or primary_component["matched_all_branch_ids"])
-        primary_corridor_geometry = unary_union(
-            [
-                geometry
-                for branch_id, geometry in all_branch_geometry_lookup.items()
-                if branch_id in primary_branch_ids and geometry is not None and not geometry.is_empty
-            ]
-        )
-        merged_components = [primary_component]
-        for component in candidate_components[1:]:
-            component_branch_ids = set(component["matched_branch_ids"] or component["matched_all_branch_ids"])
-            same_branch_corridor = bool(
-                primary_branch_ids
-                and not primary_corridor_geometry.is_empty
-                and primary_corridor_geometry.buffer(
-                    max(DIVSTRIP_REFERENCE_ROAD_BUFFER_M * 0.6, DIVSTRIP_BRANCH_BUFFER_M * 2.5),
-                    cap_style=2,
-                    join_style=2,
-                ).intersects(component["geometry"])
-                and float(component["distance_to_seed"]) <= float(DIVSTRIP_SEED_FALLBACK_DISTANCE_M)
-            )
-            same_corridor = (
-                (
-                    primary_branch_ids
-                    and component_branch_ids
-                    and bool(primary_branch_ids & component_branch_ids)
-                )
-                or same_branch_corridor
-                or (
-                    not primary_branch_ids
-                    and float(component["distance_to_roads"]) <= DIVSTRIP_CONTEXT_ROAD_DISTANCE_M
-                )
-            )
-            if not same_corridor:
+                if allow_compound_pair_merge:
+                    selected_components = [first_component, second_component]
+                else:
+                    selected_components = [first_component]
+                    ambiguous = False
+    if not ambiguous and selected_components and allow_compound_pair_merge:
+        merged_components = list(selected_components)
+        merged_component_ids = {component["component_id"] for component in merged_components}
+        for component in candidate_components:
+            if component["component_id"] in merged_component_ids:
                 continue
-            if (
-                float(component["geometry"].distance(primary_component["geometry"]))
-                > float(DIVSTRIP_REFERENCE_ROAD_BUFFER_M + 6.0)
+            if not any(
+                _components_share_corridor(base_component, component)
+                for base_component in merged_components
             ):
                 continue
             merged_components.append(component)
+            merged_component_ids.add(component["component_id"])
         selected_components = merged_components
     selected_geometry = unary_union([component["geometry"] for component in selected_components])
     preferred_branch_ids = sorted(
@@ -1200,6 +1367,12 @@ def _build_divstrip_event_window(
     if divstrip_constraint_geometry is None or divstrip_constraint_geometry.is_empty:
         return GeometryCollection()
 
+    selected_component_count = len(_collect_polygon_components(divstrip_constraint_geometry))
+    seed_link_distance_m = (
+        DIVSTRIP_COMPLEX_PAIR_SEED_DISTANCE_M
+        if selected_component_count > 1
+        else DIVSTRIP_SEED_FALLBACK_DISTANCE_M
+    )
     event_parts = [divstrip_constraint_geometry.buffer(DIVSTRIP_EVENT_BUFFER_M, join_style=2)]
     if event_anchor_geometry is not None and not event_anchor_geometry.is_empty:
         event_parts.append(event_anchor_geometry.buffer(EVENT_ANCHOR_BUFFER_M, join_style=2))
@@ -1211,7 +1384,7 @@ def _build_divstrip_event_window(
         and road.geometry.distance(divstrip_constraint_geometry) <= DIVSTRIP_EVENT_ROAD_LINK_DISTANCE_M
     ]
     event_parts.extend(linked_road_geometries)
-    if seed_union is not None and not seed_union.is_empty and seed_union.distance(divstrip_constraint_geometry) <= DIVSTRIP_SEED_FALLBACK_DISTANCE_M:
+    if seed_union is not None and not seed_union.is_empty and seed_union.distance(divstrip_constraint_geometry) <= float(seed_link_distance_m):
         event_parts.append(seed_union.buffer(max(NODE_SEED_RADIUS_M * 1.5, RC_NODE_SEED_RADIUS_M * 1.2, 3.0)))
     event_window = unary_union(event_parts).intersection(drivezone_union).buffer(0)
     return event_window if not event_window.is_empty else GeometryCollection()
@@ -1481,13 +1654,6 @@ def _pick_reference_s(
 ) -> tuple[float | None, str, str]:
     if divstrip_ref_s is not None:
         reference_s = float(divstrip_ref_s)
-        if drivezone_split_s is not None and str(divstrip_ref_source) == "tip_projection":
-            return float(drivezone_split_s), "drivezone_split", "drivezone_split_window_tip_projection_ignored"
-        if (
-            drivezone_split_s is not None
-            and (abs(float(reference_s)) - abs(float(drivezone_split_s))) > float(max_offset_m)
-        ):
-            return float(drivezone_split_s), "drivezone_split", "drivezone_split_window_divstrip_far_ignored"
         return float(reference_s), "divstrip_ref", f"divstrip_{str(divstrip_ref_source)}_window"
     if drivezone_split_s is not None:
         return float(drivezone_split_s), "drivezone_split", "drivezone_split_window"
@@ -1725,12 +1891,12 @@ def _resolve_event_reference_point(
 
     divstrip_ref_s = None
     divstrip_ref_source = "none"
-    if first_divstrip_hit_s is not None:
-        divstrip_ref_s = float(first_divstrip_hit_s)
-        divstrip_ref_source = "first_hit"
-    elif tip_s_m is not None:
+    if tip_s_m is not None:
         divstrip_ref_s = float(tip_s_m)
         divstrip_ref_source = "tip_projection"
+    elif first_divstrip_hit_s is not None:
+        divstrip_ref_s = float(first_divstrip_hit_s)
+        divstrip_ref_source = "first_hit"
 
     chosen_s, position_source, split_pick_source = _pick_reference_s(
         divstrip_ref_s=divstrip_ref_s,
@@ -1877,6 +2043,7 @@ def _resolve_event_span_window(
 
     origin_xy = (float(origin_point.x), float(origin_point.y))
     candidate_offsets: list[float] = []
+    rcsd_node_offsets: list[float] = []
     for node in selected_rcsd_nodes:
         projected_offset = _project_point_to_axis(
             node.geometry,
@@ -1884,12 +2051,39 @@ def _resolve_event_span_window(
             axis_unit_vector=axis_unit_vector,
         )
         if -EVENT_SPAN_MAX_M - EVENT_SPAN_MARGIN_M <= float(projected_offset) <= EVENT_SPAN_MAX_M + EVENT_SPAN_MARGIN_M:
-            candidate_offsets.append(float(projected_offset))
+            rcsd_node_offsets.append(float(projected_offset))
+    candidate_offsets.extend(rcsd_node_offsets)
+
+    if rcsd_node_offsets:
+        local_context_start_m = max(
+            -span_limit_m,
+            min(-EVENT_SPAN_DEFAULT_M, min(rcsd_node_offsets) - EVENT_SPAN_LOCAL_CONTEXT_PAD_M),
+        )
+        local_context_end_m = min(
+            span_limit_m,
+            max(EVENT_SPAN_DEFAULT_M, max(rcsd_node_offsets) + EVENT_SPAN_LOCAL_CONTEXT_PAD_M),
+        )
+    else:
+        local_context_start_m = max(-span_limit_m, -EVENT_SPAN_LOCAL_CONTEXT_PAD_M)
+        local_context_end_m = min(span_limit_m, EVENT_SPAN_LOCAL_CONTEXT_PAD_M)
+
+    def _filter_local_context_offsets(offsets: list[float]) -> list[float]:
+        return [
+            float(offset)
+            for offset in offsets
+            if math.isfinite(float(offset))
+            and float(local_context_start_m) - EVENT_SPAN_MARGIN_M
+            <= float(offset)
+            <= float(local_context_end_m) + EVENT_SPAN_MARGIN_M
+        ]
+
     candidate_offsets.extend(
-        _collect_axis_offsets_from_geometry(
-            event_anchor_geometry,
-            origin_xy=origin_xy,
-            axis_unit_vector=axis_unit_vector,
+        _filter_local_context_offsets(
+            _collect_axis_offsets_from_geometry(
+                event_anchor_geometry,
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+            )
         )
     )
     road_context_clip_geometry = None
@@ -1906,19 +2100,23 @@ def _resolve_event_span_window(
     )
     if event_span_roads_geometry is not None:
         candidate_offsets.extend(
+            _filter_local_context_offsets(
+                _collect_axis_offsets_from_geometry(
+                    event_span_roads_geometry,
+                    origin_xy=origin_xy,
+                    axis_unit_vector=axis_unit_vector,
+                    clip_geometry=road_context_clip_geometry,
+                )
+            )
+        )
+    candidate_offsets.extend(
+        _filter_local_context_offsets(
             _collect_axis_offsets_from_geometry(
-                event_span_roads_geometry,
+                selected_rcsd_roads_geometry,
                 origin_xy=origin_xy,
                 axis_unit_vector=axis_unit_vector,
                 clip_geometry=road_context_clip_geometry,
             )
-        )
-    candidate_offsets.extend(
-        _collect_axis_offsets_from_geometry(
-            selected_rcsd_roads_geometry,
-            origin_xy=origin_xy,
-            axis_unit_vector=axis_unit_vector,
-            clip_geometry=road_context_clip_geometry,
         )
     )
     if candidate_offsets:
@@ -1935,6 +2133,294 @@ def _resolve_event_span_window(
         "candidate_offset_count": len(candidate_offsets),
         "expansion_source": expansion_source,
     }
+
+
+def _is_semantic_boundary_representative(node: ParsedNode) -> bool:
+    representative_id = normalize_id(node.mainnodeid or node.node_id)
+    source_kind = _node_source_kind(node)
+    source_kind_2 = _node_source_kind_2(node)
+    has_semantic_marker = any(
+        value not in {None, 0, 1}
+        for value in (source_kind, source_kind_2)
+    )
+    return (
+        representative_id is not None
+        and normalize_id(node.node_id) == representative_id
+        and has_semantic_marker
+    )
+
+
+def _refine_event_span_window_by_semantic_context(
+    *,
+    event_span_window: dict[str, Any],
+    candidate_nodes: list[ParsedNode],
+    semantic_member_nodes: list[ParsedNode],
+    group_nodes: list[ParsedNode],
+    representative_node: ParsedNode,
+    related_mainnodeids: list[str],
+    origin_point: Point,
+    axis_unit_vector: tuple[float, float] | None,
+    axis_centerline,
+    event_anchor_geometry,
+    selected_roads: list[ParsedRoad],
+    include_complex_members: bool,
+) -> dict[str, Any]:
+    if axis_unit_vector is None:
+        return event_span_window
+
+    original_start = float(event_span_window["start_offset_m"])
+    original_end = float(event_span_window["end_offset_m"])
+    protected_offsets: list[float] = [0.0]
+    origin_xy = (float(origin_point.x), float(origin_point.y))
+    protected_offsets.extend(
+        [
+            float(offset)
+            for offset in _collect_axis_offsets_from_geometry(
+                event_anchor_geometry,
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+            )
+            if math.isfinite(float(offset))
+            and float(original_start) - EVENT_SPAN_MARGIN_M
+            <= float(offset)
+            <= float(original_end) + EVENT_SPAN_MARGIN_M
+        ]
+    )
+
+    included_mainnodeids = {
+        normalize_id(representative_node.mainnodeid or representative_node.node_id)
+    }
+    included_mainnodeids.update(
+        normalize_id(mainnodeid)
+        for mainnodeid in related_mainnodeids
+        if normalize_id(mainnodeid) is not None
+    )
+    included_mainnodeids.discard(None)
+
+    semantic_member_offsets: list[float] = []
+    if include_complex_members:
+        seen_member_node_ids: set[str] = set()
+        for node in semantic_member_nodes:
+            if node.node_id in seen_member_node_ids:
+                continue
+            seen_member_node_ids.add(node.node_id)
+            projected_offset = _project_point_to_axis(
+                node.geometry,
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+            )
+            if math.isfinite(float(projected_offset)):
+                semantic_member_offsets.append(float(projected_offset))
+        if semantic_member_offsets:
+            protected_offsets.append(min(semantic_member_offsets) - EVENT_COMPLEX_MEMBER_SPAN_PAD_M)
+            protected_offsets.append(max(semantic_member_offsets) + EVENT_COMPLEX_MEMBER_SPAN_PAD_M)
+
+    if not protected_offsets:
+        return event_span_window
+
+    protected_start = float(min(protected_offsets) - EVENT_SPAN_MARGIN_M)
+    protected_end = float(max(protected_offsets) + EVENT_SPAN_MARGIN_M)
+    refined_start = min(original_start, protected_start)
+    refined_end = max(original_end, protected_end)
+
+    corridor_geometries: list[Any] = []
+    if axis_centerline is not None and not axis_centerline.is_empty:
+        corridor_geometries.append(
+            axis_centerline.buffer(
+                EVENT_SEMANTIC_BOUNDARY_AXIS_BUFFER_M,
+                cap_style=2,
+                join_style=2,
+            )
+        )
+    selected_road_geometries = [
+        road.geometry
+        for road in selected_roads
+        if road.geometry is not None and not road.geometry.is_empty
+    ]
+    if selected_road_geometries:
+        corridor_geometries.append(
+            unary_union(selected_road_geometries).buffer(
+                EVENT_SEMANTIC_BOUNDARY_ROAD_BUFFER_M,
+                cap_style=2,
+                join_style=2,
+            )
+        )
+    corridor_geometry = unary_union(corridor_geometries) if corridor_geometries else GeometryCollection()
+
+    previous_boundary_offset_m = None
+    next_boundary_offset_m = None
+    for node in candidate_nodes:
+        if not _is_semantic_boundary_representative(node):
+            continue
+        node_mainnodeid = normalize_id(node.mainnodeid or node.node_id)
+        if node_mainnodeid in included_mainnodeids:
+            continue
+        if corridor_geometry is not None and not corridor_geometry.is_empty and not corridor_geometry.intersects(node.geometry):
+            continue
+        projected_offset = _project_point_to_axis(
+            node.geometry,
+            origin_xy=origin_xy,
+            axis_unit_vector=axis_unit_vector,
+        )
+        if not math.isfinite(float(projected_offset)):
+            continue
+        projected_offset = float(projected_offset)
+        if projected_offset < protected_start - 1e-6:
+            if previous_boundary_offset_m is None or projected_offset > float(previous_boundary_offset_m):
+                previous_boundary_offset_m = projected_offset
+        elif projected_offset > protected_end + 1e-6:
+            if next_boundary_offset_m is None or projected_offset < float(next_boundary_offset_m):
+                next_boundary_offset_m = projected_offset
+
+    if previous_boundary_offset_m is not None:
+        refined_start = max(refined_start, float(previous_boundary_offset_m) + EVENT_SEMANTIC_BOUNDARY_PAD_M)
+    if next_boundary_offset_m is not None:
+        refined_end = min(refined_end, float(next_boundary_offset_m) - EVENT_SEMANTIC_BOUNDARY_PAD_M)
+
+    extra_span_cap_m = (
+        EVENT_COMPLEX_EXTRA_SPAN_CAP_M
+        if include_complex_members
+        else EVENT_NON_COMPLEX_EXTRA_SPAN_CAP_M
+    )
+    refined_start = max(refined_start, protected_start - float(extra_span_cap_m))
+    refined_end = min(refined_end, protected_end + float(extra_span_cap_m))
+
+    refined_start = max(-CHAIN_CONTEXT_EVENT_SPAN_M, refined_start)
+    refined_end = min(CHAIN_CONTEXT_EVENT_SPAN_M, refined_end)
+    refined_start = min(refined_start, protected_start)
+    refined_end = max(refined_end, protected_end)
+
+    if refined_end - refined_start <= EVENT_SPAN_MARGIN_M * 2.0:
+        return event_span_window
+
+    refined_window = dict(event_span_window)
+    refined_window["start_offset_m"] = float(refined_start)
+    refined_window["end_offset_m"] = float(refined_end)
+    refined_window["semantic_protected_start_m"] = float(protected_start)
+    refined_window["semantic_protected_end_m"] = float(protected_end)
+    refined_window["semantic_member_count"] = len(semantic_member_offsets)
+    refined_window["semantic_prev_boundary_offset_m"] = (
+        None if previous_boundary_offset_m is None else float(previous_boundary_offset_m)
+    )
+    refined_window["semantic_next_boundary_offset_m"] = (
+        None if next_boundary_offset_m is None else float(next_boundary_offset_m)
+    )
+    if refined_start != original_start or refined_end != original_end:
+        refined_window["expansion_source"] = "semantic_context_refined"
+    return refined_window
+
+
+def _clip_simple_event_span_window_by_divstrip_context(
+    *,
+    event_span_window: dict[str, Any],
+    divstrip_constraint_geometry,
+    direct_target_rc_nodes: list[ParsedNode],
+    selected_roads: list[ParsedRoad] | None,
+    origin_point: Point,
+    axis_unit_vector: tuple[float, float] | None,
+    selected_component_count: int,
+    is_complex_junction: bool,
+    event_split_pick_source: str | None = None,
+) -> dict[str, Any]:
+    if (
+        axis_unit_vector is None
+        or is_complex_junction
+        or int(selected_component_count) != 1
+        or divstrip_constraint_geometry is None
+        or divstrip_constraint_geometry.is_empty
+    ):
+        return event_span_window
+
+    origin_xy = (float(origin_point.x), float(origin_point.y))
+    component_offsets = [
+        float(offset)
+        for offset in _collect_axis_offsets_from_geometry(
+            divstrip_constraint_geometry,
+            origin_xy=origin_xy,
+            axis_unit_vector=axis_unit_vector,
+        )
+        if math.isfinite(float(offset))
+    ]
+    if not component_offsets:
+        return event_span_window
+
+    protected_start = float(
+        event_span_window.get("semantic_protected_start_m", event_span_window["start_offset_m"])
+    )
+    protected_end = float(
+        event_span_window.get("semantic_protected_end_m", event_span_window["end_offset_m"])
+    )
+    current_start = float(event_span_window["start_offset_m"])
+    current_end = float(event_span_window["end_offset_m"])
+
+    local_start = float(min(component_offsets) - EVENT_SPAN_MARGIN_M)
+    local_end = float(max(component_offsets) + EVENT_SPAN_MARGIN_M)
+
+    target_offsets = [
+        float(
+            _project_point_to_axis(
+                node.geometry,
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+            )
+        )
+        for node in direct_target_rc_nodes
+        if node.geometry is not None and not node.geometry.is_empty
+    ]
+    target_offsets = [offset for offset in target_offsets if math.isfinite(float(offset))]
+    if target_offsets:
+        local_start = min(local_start, float(min(target_offsets) - EVENT_SPAN_MARGIN_M))
+        local_end = max(local_end, float(max(target_offsets) + EVENT_SPAN_MARGIN_M))
+
+    selected_road_geometries = [
+        road.geometry
+        for road in (selected_roads or [])
+        if road.geometry is not None and not road.geometry.is_empty
+    ]
+    if selected_road_geometries:
+        selected_road_offsets = [
+            float(offset)
+            for offset in _collect_axis_offsets_from_geometry(
+                unary_union(selected_road_geometries),
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+            )
+            if (
+                math.isfinite(float(offset))
+                and float(local_start) - float(EVENT_SPAN_LOCAL_CONTEXT_PAD_M)
+                <= float(offset)
+                <= float(local_end) + float(EVENT_SPAN_LOCAL_CONTEXT_PAD_M)
+            )
+        ]
+        if selected_road_offsets:
+            local_start = min(local_start, float(min(selected_road_offsets) - EVENT_SPAN_MARGIN_M))
+            local_end = max(local_end, float(max(selected_road_offsets) + EVENT_SPAN_MARGIN_M))
+
+    component_extra_span_pad_m = float(EVENT_SIMPLE_COMPONENT_EXTRA_SPAN_PAD_M)
+    if (
+        not target_offsets
+        and str(event_split_pick_source) == "divstrip_first_hit_window"
+    ):
+        component_extra_span_pad_m = max(component_extra_span_pad_m, 16.0)
+
+    clipped_start = max(current_start, local_start - component_extra_span_pad_m)
+    clipped_end = min(current_end, local_end + component_extra_span_pad_m)
+    clipped_start = min(clipped_start, protected_start)
+    clipped_end = max(clipped_end, protected_end)
+
+    if clipped_end - clipped_start <= EVENT_SPAN_MARGIN_M * 2.0:
+        return event_span_window
+    if (
+        abs(float(clipped_start) - current_start) <= 1e-6
+        and abs(float(clipped_end) - current_end) <= 1e-6
+    ):
+        return event_span_window
+
+    clipped_window = dict(event_span_window)
+    clipped_window["start_offset_m"] = float(clipped_start)
+    clipped_window["end_offset_m"] = float(clipped_end)
+    clipped_window["expansion_source"] = "simple_divstrip_clipped"
+    return clipped_window
 
 
 def _build_axis_window_mask(
@@ -2180,6 +2666,81 @@ def _pick_cross_section_boundary_branches(
     return best_pair
 
 
+def _pick_local_component_boundary_branches(
+    *,
+    road_branches,
+    selected_branch_ids: set[str],
+    kind_2: int,
+    road_lookup: dict[str, ParsedRoad],
+    reference_point: Point,
+):
+    fallback_pair = _pick_cross_section_boundary_branches(
+        road_branches=road_branches,
+        selected_branch_ids=selected_branch_ids,
+        kind_2=kind_2,
+    )
+    selected_branches = list(road_branches)
+    if kind_2 == 8:
+        directional_candidates = [branch for branch in selected_branches if branch.has_incoming_support]
+    else:
+        directional_candidates = [branch for branch in selected_branches if branch.has_outgoing_support]
+    if len(directional_candidates) < 2:
+        directional_candidates = list(selected_branches)
+    if len(directional_candidates) < 2:
+        return fallback_pair
+
+    local_candidates: list[tuple[Any, float, int]] = []
+    for branch in directional_candidates:
+        centerline = _resolve_branch_centerline(
+            branch=branch,
+            road_lookup=road_lookup,
+            reference_point=reference_point,
+        )
+        if centerline is None or centerline.is_empty:
+            continue
+        local_candidates.append(
+            (
+                branch,
+                float(centerline.distance(reference_point)),
+                1 if branch.branch_id in selected_branch_ids else 0,
+            )
+        )
+    if len(local_candidates) < 2:
+        return fallback_pair
+
+    nearby_candidates = [
+        item
+        for item in local_candidates
+        if float(item[1]) <= float(EVENT_COMPONENT_BRANCH_LOCAL_DISTANCE_M)
+    ]
+    if len(nearby_candidates) < 2:
+        nearby_candidates = sorted(
+            local_candidates,
+            key=lambda item: (
+                float(item[1]),
+                -int(item[2]),
+                -_selected_branch_score(item[0]),
+            ),
+        )[:5]
+
+    best_pair = None
+    best_key = None
+    for (first_branch, first_dist, first_preferred), (second_branch, second_dist, second_preferred) in combinations(nearby_candidates, 2):
+        pair_key = (
+            -max(float(first_dist), float(second_dist)),
+            -(float(first_dist) + float(second_dist)),
+            int(first_preferred) + int(second_preferred),
+            _branch_angle_gap_deg(first_branch, second_branch),
+            _selected_branch_score(first_branch) + _selected_branch_score(second_branch),
+        )
+        if best_key is None or pair_key > best_key:
+            best_key = pair_key
+            best_pair = (first_branch, second_branch)
+    if best_pair is None:
+        return fallback_pair
+    return best_pair
+
+
 def _collect_crossline_projection_points(geometry, *, crossline: LineString, center_point: Point) -> list[Point]:
     if geometry is None or geometry.is_empty:
         return []
@@ -2306,17 +2867,18 @@ def _segment_drivezone_pieces(
     return [piece for piece in pieces if float(piece.length) >= float(min_piece_len_m)]
 
 
-def _resolve_parallel_centerline(
+def _resolve_parallel_centerline_candidate(
     *,
     local_roads: list[ParsedRoad],
     selected_road_ids: set[str],
+    excluded_road_ids: set[str] | None = None,
     axis_centerline,
     axis_unit_vector: tuple[float, float] | None,
     reference_point: Point,
     parallel_side_sign: int | None = None,
 ):
     if axis_centerline is None or axis_centerline.is_empty or axis_unit_vector is None:
-        return None
+        return None, None
     ux, uy = axis_unit_vector
     parallel_side_sign_value = int(parallel_side_sign) if parallel_side_sign in (-1, 1) else None
     axis_reference_s = float(axis_centerline.project(reference_point))
@@ -2350,10 +2912,11 @@ def _resolve_parallel_centerline(
         dot = max(-1.0, min(1.0, dot))
         return math.degrees(math.acos(dot))
 
-    candidates: list[tuple[tuple[float, float, float, float], Any]] = []
-    candidates_within_side: list[tuple[tuple[float, float, float, float], Any]] = []
+    candidates: list[tuple[tuple[float, float, float, float], str, Any]] = []
+    candidates_within_side: list[tuple[tuple[float, float, float, float], str, Any]] = []
+    excluded_road_ids = {str(road_id) for road_id in (excluded_road_ids or set())}
     for road in local_roads:
-        if road.road_id in selected_road_ids:
+        if road.road_id in selected_road_ids or road.road_id in excluded_road_ids:
             continue
         angle_diff = _road_axis_alignment(road.geometry)
         if angle_diff is None or angle_diff > PARALLEL_ROAD_ANGLE_TOLERANCE_DEG:
@@ -2376,6 +2939,7 @@ def _resolve_parallel_centerline(
                 float(road.geometry.distance(reference_point)),
                 -float(road.geometry.length),
             ),
+            str(road.road_id),
             road.geometry,
         )
         candidates.append(candidate)
@@ -2387,9 +2951,90 @@ def _resolve_parallel_centerline(
     if parallel_side_sign_value is not None and candidates_within_side:
         candidates = candidates_within_side
     if not candidates:
-        return None
+        return None, None
     candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
+    return candidates[0][1], candidates[0][2]
+
+
+def _resolve_parallel_centerline(
+    *,
+    local_roads: list[ParsedRoad],
+    selected_road_ids: set[str],
+    excluded_road_ids: set[str] | None = None,
+    axis_centerline,
+    axis_unit_vector: tuple[float, float] | None,
+    reference_point: Point,
+    parallel_side_sign: int | None = None,
+):
+    return _resolve_parallel_centerline_candidate(
+        local_roads=local_roads,
+        selected_road_ids=selected_road_ids,
+        excluded_road_ids=excluded_road_ids,
+        axis_centerline=axis_centerline,
+        axis_unit_vector=axis_unit_vector,
+        reference_point=reference_point,
+        parallel_side_sign=parallel_side_sign,
+    )[1]
+
+
+def _collect_parallel_excluded_road_ids(
+    *,
+    local_roads: list[ParsedRoad],
+    selected_road_ids: set[str],
+    member_node_ids: set[str],
+    semantic_boundary_node_ids: set[str] | None,
+    event_anchor_geometry,
+    divstrip_constraint_geometry,
+    reference_geometries: list[Any],
+) -> set[str]:
+    excluded_road_ids = {str(road_id) for road_id in selected_road_ids}
+    normalized_member_node_ids = {
+        normalize_id(node_id)
+        for node_id in member_node_ids
+        if normalize_id(node_id) is not None
+    }
+    normalized_semantic_boundary_node_ids = {
+        normalize_id(node_id)
+        for node_id in (semantic_boundary_node_ids or set())
+        if normalize_id(node_id) is not None
+    }
+    guard_geometries = [
+        geometry
+        for geometry in [
+            event_anchor_geometry,
+            divstrip_constraint_geometry,
+            *reference_geometries,
+        ]
+        if geometry is not None and not geometry.is_empty
+    ]
+    guard_geometry = unary_union(guard_geometries) if guard_geometries else GeometryCollection()
+    if guard_geometry is not None and not guard_geometry.is_empty:
+        guard_geometry = guard_geometry.buffer(
+            max(2.5, ROAD_BUFFER_M * 1.25, RC_ROAD_BUFFER_M),
+            cap_style=2,
+            join_style=2,
+        )
+
+    for road in local_roads:
+        if road.road_id in excluded_road_ids:
+            continue
+        snodeid = normalize_id(road.snodeid)
+        enodeid = normalize_id(road.enodeid)
+        if snodeid in normalized_member_node_ids or enodeid in normalized_member_node_ids:
+            excluded_road_ids.add(str(road.road_id))
+            continue
+        if snodeid in normalized_semantic_boundary_node_ids or enodeid in normalized_semantic_boundary_node_ids:
+            excluded_road_ids.add(str(road.road_id))
+            continue
+        if (
+            guard_geometry is not None
+            and not guard_geometry.is_empty
+            and road.geometry is not None
+            and not road.geometry.is_empty
+            and road.geometry.intersects(guard_geometry)
+        ):
+            excluded_road_ids.add(str(road.road_id))
+    return excluded_road_ids
 
 
 def _resolve_parallel_side_sign(
@@ -2534,12 +3179,107 @@ def _is_chain_kind_compatible(
     return False
 
 
+def _road_travel_angle_deg(
+    road: ParsedRoad,
+    *,
+    from_node_id: str,
+    to_node_id: str,
+) -> float | None:
+    if road.geometry is None or road.geometry.is_empty:
+        return None
+    line = road.geometry if getattr(road.geometry, "geom_type", None) == "LineString" else linemerge(road.geometry)
+    line_components = [
+        component
+        for component in _explode_component_geometries(line)
+        if getattr(component, "geom_type", None) == "LineString" and not component.is_empty
+    ]
+    if not line_components:
+        return None
+    centerline = max(line_components, key=lambda component: float(component.length))
+    coords = list(centerline.coords)
+    if len(coords) < 2:
+        return None
+    start_x, start_y = _coord_xy(coords[0])
+    end_x, end_y = _coord_xy(coords[-1])
+    vector = (float(end_x) - float(start_x), float(end_y) - float(start_y))
+    if not vector[0] and not vector[1]:
+        return None
+
+    normalized_from = normalize_id(from_node_id) or str(from_node_id)
+    normalized_to = normalize_id(to_node_id) or str(to_node_id)
+    forward_src = normalize_id(road.snodeid) or road.snodeid
+    forward_dst = normalize_id(road.enodeid) or road.enodeid
+    if int(road.direction) == 3:
+        forward_src, forward_dst = forward_dst, forward_src
+    if normalized_from == forward_dst and normalized_to == forward_src:
+        vector = (-float(vector[0]), -float(vector[1]))
+    elif not (normalized_from == forward_src and normalized_to == forward_dst):
+        return None
+
+    normalized_vector = _normalize_axis_vector((float(vector[0]), float(vector[1])))
+    if normalized_vector is None:
+        return None
+    return float(math.degrees(math.atan2(normalized_vector[1], normalized_vector[0])) % 360.0)
+
+
+def _pick_chain_continuation_candidate(
+    *,
+    candidates: list[tuple[str, ParsedRoad]],
+    prev_node_id: str,
+    current_node_id: str,
+    previous_road: ParsedRoad,
+) -> tuple[str, ParsedRoad] | None:
+    if len(candidates) == 1:
+        return candidates[0]
+    previous_angle = _road_travel_angle_deg(
+        previous_road,
+        from_node_id=prev_node_id,
+        to_node_id=current_node_id,
+    )
+    if previous_angle is None:
+        return None
+
+    ranked_candidates: list[tuple[float, float, str, ParsedRoad]] = []
+    for next_node_id, candidate_road in candidates:
+        candidate_angle = _road_travel_angle_deg(
+            candidate_road,
+            from_node_id=current_node_id,
+            to_node_id=next_node_id,
+        )
+        if candidate_angle is None:
+            continue
+        angle_gap = _branch_angle_gap_deg(
+            {"angle_deg": previous_angle},
+            {"angle_deg": candidate_angle},
+        )
+        ranked_candidates.append(
+            (
+                float(angle_gap),
+                -float(candidate_road.geometry.length) if candidate_road.geometry is not None and not candidate_road.geometry.is_empty else 0.0,
+                str(next_node_id),
+                candidate_road,
+            )
+        )
+    if not ranked_candidates:
+        return None
+    ranked_candidates.sort(key=lambda item: (float(item[0]), float(item[1]), item[2]))
+    best_gap, _best_len, best_node_id, best_road = ranked_candidates[0]
+    if float(best_gap) > CHAIN_CONTINUATION_MAX_TURN_DEG:
+        return None
+    if len(ranked_candidates) > 1:
+        second_gap = float(ranked_candidates[1][0])
+        if second_gap - float(best_gap) < CHAIN_CONTINUATION_MIN_MARGIN_DEG:
+            return None
+    return str(best_node_id), best_road
+
+
 def _build_stage4_road_branches_for_member_nodes(
     local_roads: list[ParsedRoad],
     *,
     member_node_ids: set[str],
     drivezone_union: BaseGeometry,
     include_internal_roads: bool = False,
+    support_center: Point | None = None,
 ) -> tuple[list[ParsedRoad], set[str], list[Any]]:
     incident_roads, internal_road_ids, road_branches = _build_road_branches_for_member_nodes(
         local_roads,
@@ -2547,10 +3287,11 @@ def _build_stage4_road_branches_for_member_nodes(
         drivezone_union=drivezone_union,
     )
 
-    if (not include_internal_roads) or len(road_branches) >= 2:
+    if (not include_internal_roads) or (len(road_branches) >= 2 and support_center is None):
         return incident_roads, internal_road_ids, road_branches
 
     road_candidates = []
+    existing_candidate_road_ids: set[str] = set()
     for road in local_roads:
         touches_snode = road.snodeid in member_node_ids
         touches_enode = road.enodeid in member_node_ids
@@ -2563,6 +3304,22 @@ def _build_stage4_road_branches_for_member_nodes(
         )
         if candidate is not None:
             road_candidates.append(candidate)
+            existing_candidate_road_ids.add(str(candidate["road_id"]))
+
+    if support_center is not None and len(road_branches) < 3:
+        for road in local_roads:
+            if road.road_id in existing_candidate_road_ids:
+                continue
+            candidate = _branch_candidate_from_center_proximity(
+                road,
+                center=support_center,
+                drivezone_union=drivezone_union,
+                max_distance_m=EVENT_COMPLEX_SUPPORT_BRANCH_PROXIMITY_M,
+            )
+            if candidate is None:
+                continue
+            road_candidates.append(candidate)
+            existing_candidate_road_ids.add(str(candidate["road_id"]))
 
     road_branches = _cluster_branch_candidates(
         road_candidates,
@@ -2610,6 +3367,7 @@ def _chain_candidates_from_topology(
                 continue
             distance_m = start_distance
             visited: set[str] = {prev_id}
+            previous_road = road
 
             while True:
                 if distance_m > chain_span_limit_m:
@@ -2619,17 +3377,30 @@ def _chain_candidates_from_topology(
                 visited.add(current_id)
                 if current_id in candidate_nodes_by_id and current_id != representative_mainnode:
                     traces.append((current_id, direction_sign * distance_m))
-                if int(undirected_degree.get(current_id, 0)) != 2:
-                    break
-                current_edges = adjacency_out[current_id] if direction_sign == 1 else adjacency_in[current_id]
+                current_edges = (
+                    adjacency_out.get(current_id, [])
+                    if direction_sign == 1
+                    else adjacency_in.get(current_id, [])
+                )
                 candidates = [
                     (target_node, candidate_road)
                     for target_node, candidate_road in current_edges
                     if normalize_id(target_node) != prev_id
                 ]
-                if len(candidates) != 1:
+                if not candidates:
                     break
-                next_node_id, next_road = candidates[0]
+                if len(candidates) == 1:
+                    next_node_id, next_road = candidates[0]
+                else:
+                    continuation = _pick_chain_continuation_candidate(
+                        candidates=candidates,
+                        prev_node_id=prev_id,
+                        current_node_id=current_id,
+                        previous_road=previous_road,
+                    )
+                    if continuation is None:
+                        break
+                    next_node_id, next_road = continuation
                 if next_road.geometry is None or next_road.geometry.is_empty:
                     break
                 seg_len = float(next_road.geometry.length)
@@ -2640,6 +3411,7 @@ def _chain_candidates_from_topology(
                 prev_id = current_id
                 current_id = normalize_id(next_node_id) or next_node_id
                 distance_m += seg_len
+                previous_road = next_road
         return traces
 
     traces: list[tuple[str, float]] = []
@@ -2886,12 +3658,12 @@ def _resolve_event_reference_position(
                     break
 
     divstrip_ref_s = None
-    if first_divstrip_hit_s is not None:
-        divstrip_ref_s = float(first_divstrip_hit_s)
-        divstrip_ref_source = "first_hit"
-    elif tip_s is not None and search_start - 1e-6 <= float(tip_s) <= search_end + 1e-6:
+    if tip_s is not None and search_start - 1e-6 <= float(tip_s) <= search_end + 1e-6:
         divstrip_ref_s = float(tip_s)
         divstrip_ref_source = "tip_projection"
+    elif first_divstrip_hit_s is not None:
+        divstrip_ref_s = float(first_divstrip_hit_s)
+        divstrip_ref_source = "first_hit"
     chosen_s, position_source, split_pick_source = _pick_reference_s(
         divstrip_ref_s=divstrip_ref_s,
         divstrip_ref_source=divstrip_ref_source,
@@ -3113,6 +3885,688 @@ def _build_cross_section_surface_geometry(
         return GeometryCollection(), 0
     surface_geometry = unary_union(strip_geometries).intersection(drivezone_union).buffer(0)
     return surface_geometry, len(strip_geometries)
+
+
+def _build_selected_divstrip_component_surface_union(
+    *,
+    representative_node: ParsedNode,
+    main_origin_point: Point,
+    axis_centerline,
+    axis_unit_vector: tuple[float, float] | None,
+    kind_2: int,
+    road_branches,
+    selected_branch_ids: set[str],
+    multibranch_event_candidates: list[dict[str, Any]] | None,
+    boundary_branch_a,
+    boundary_branch_b,
+    road_lookup: dict[str, ParsedRoad],
+    divstrip_constraint_geometry,
+    drivezone_union,
+    parallel_centerline,
+    resolution_m: float,
+    cross_half_len_m: float,
+    support_geometry=None,
+) -> tuple[Any, list[dict[str, Any]]]:
+    if (
+        axis_centerline is None
+        or axis_centerline.is_empty
+        or axis_unit_vector is None
+        or boundary_branch_a is None
+        or boundary_branch_b is None
+        or divstrip_constraint_geometry is None
+        or divstrip_constraint_geometry.is_empty
+    ):
+        return GeometryCollection(), []
+
+    selected_components = [
+        component
+        for component in _collect_polygon_components(divstrip_constraint_geometry)
+        if component is not None and not component.is_empty
+    ]
+    if len(selected_components) <= 1:
+        return GeometryCollection(), []
+
+    scan_axis_unit_vector = _resolve_scan_axis_unit_vector(
+        axis_unit_vector=axis_unit_vector,
+        kind_2=kind_2,
+    )
+    if scan_axis_unit_vector is None:
+        return GeometryCollection(), []
+
+    localized_surfaces: list[Any] = []
+    component_diags: list[dict[str, Any]] = []
+    main_origin_xy = (float(main_origin_point.x), float(main_origin_point.y))
+    built_component_axis_intervals_main: list[tuple[float, float]] = []
+
+    main_branch_a_centerline = _resolve_branch_centerline(
+        branch=boundary_branch_a,
+        road_lookup=road_lookup,
+        reference_point=main_origin_point,
+    )
+    main_branch_b_centerline = _resolve_branch_centerline(
+        branch=boundary_branch_b,
+        road_lookup=road_lookup,
+        reference_point=main_origin_point,
+    )
+
+    valid_event_candidates: list[tuple[list[str], str, Any]] = []
+    if multibranch_event_candidates:
+        for candidate_index, candidate in enumerate(multibranch_event_candidates):
+            raw_road_ids = [str(road_id) for road_id in candidate.get("road_ids", [])]
+            road_ids = [
+                road_id
+                for road_id in raw_road_ids
+                if road_id in road_lookup
+                and road_lookup[road_id].geometry is not None
+                and not road_lookup[road_id].geometry.is_empty
+            ]
+            if len(road_ids) < 2:
+                continue
+            road_union = unary_union([road_lookup[road_id].geometry for road_id in road_ids])
+            if road_union.is_empty:
+                continue
+            valid_event_candidates.append((road_ids[:2], f"event_candidate_{candidate_index}", road_union))
+
+    def _component_event_candidate_score(component_geometry, road_union) -> tuple[int, float, float, int]:
+        buffered_union = road_union.buffer(
+            max(DIVSTRIP_BRANCH_BUFFER_M * 1.5, 3.0),
+            cap_style=2,
+            join_style=2,
+        )
+        overlap_area = float(component_geometry.intersection(buffered_union).area)
+        geometry_distance = float(component_geometry.distance(road_union))
+        return (
+            1 if buffered_union.intersects(component_geometry) else 0,
+            overlap_area,
+            -geometry_distance,
+            0,
+        )
+
+    component_event_candidate_assignments: dict[int, tuple[list[str], str]] = {}
+    if len(selected_components) > 1 and len(valid_event_candidates) >= len(selected_components):
+        best_assignment = None
+        best_assignment_key = None
+        for candidate_indexes in permutations(range(len(valid_event_candidates)), len(selected_components)):
+            score_hits = 0
+            score_overlap = 0.0
+            score_distance = 0.0
+            for component_index, candidate_index in enumerate(candidate_indexes):
+                _, _, road_union = valid_event_candidates[candidate_index]
+                score = _component_event_candidate_score(selected_components[component_index], road_union)
+                score_hits += int(score[0])
+                score_overlap += float(score[1])
+                score_distance += float(score[2])
+            assignment_key = (score_hits, score_overlap, score_distance)
+            if best_assignment_key is None or assignment_key > best_assignment_key:
+                best_assignment_key = assignment_key
+                best_assignment = candidate_indexes
+        if best_assignment is not None:
+            for component_index, candidate_index in enumerate(best_assignment):
+                road_ids, source, _ = valid_event_candidates[candidate_index]
+                component_event_candidate_assignments[int(component_index)] = (list(road_ids), str(source))
+
+    def _pick_component_event_candidate(component_index: int, component_geometry) -> tuple[list[str], str] | None:
+        assigned = component_event_candidate_assignments.get(int(component_index))
+        if assigned is not None:
+            return assigned
+        if not valid_event_candidates:
+            return None
+        best_road_ids: list[str] | None = None
+        best_source: str | None = None
+        best_key = None
+        for road_ids, source, road_union in valid_event_candidates:
+            buffered_union = road_union.buffer(
+                max(DIVSTRIP_BRANCH_BUFFER_M * 1.5, 3.0),
+                cap_style=2,
+                join_style=2,
+            )
+            overlap_area = float(component_geometry.intersection(buffered_union).area)
+            geometry_distance = float(component_geometry.distance(road_union))
+            pair_key = (
+                1 if buffered_union.intersects(component_geometry) else 0,
+                overlap_area,
+                -geometry_distance,
+                0,
+            )
+            if best_key is None or pair_key > best_key:
+                best_key = pair_key
+                best_road_ids = list(road_ids)
+                best_source = str(source)
+        if best_road_ids is None or best_source is None:
+            return None
+        return best_road_ids, best_source
+
+    for component_index, component_geometry in enumerate(selected_components):
+        component_focus_point = nearest_points(axis_centerline, component_geometry.representative_point())[0]
+        component_scan_origin_point = component_focus_point
+        component_boundary_source = "local_branch_pair"
+        component_boundary_branch_a = None
+        component_boundary_branch_b = None
+        component_boundary_road_ids: list[str] | None = None
+        component_branch_a_centerline = None
+        component_branch_b_centerline = None
+
+        component_event_candidate = _pick_component_event_candidate(component_index, component_geometry)
+        if component_event_candidate is not None:
+            component_boundary_road_ids, component_boundary_source = component_event_candidate
+            component_branch_a_centerline = _resolve_centerline_from_road_ids(
+                road_ids=[component_boundary_road_ids[0]],
+                road_lookup=road_lookup,
+                reference_point=component_focus_point,
+            )
+            component_branch_b_centerline = _resolve_centerline_from_road_ids(
+                road_ids=[component_boundary_road_ids[1]],
+                road_lookup=road_lookup,
+                reference_point=component_focus_point,
+            )
+
+        if (
+            component_branch_a_centerline is None
+            or component_branch_a_centerline.is_empty
+            or component_branch_b_centerline is None
+            or component_branch_b_centerline.is_empty
+        ):
+            local_boundary_branch_a, local_boundary_branch_b = _pick_local_component_boundary_branches(
+                road_branches=road_branches,
+                selected_branch_ids=selected_branch_ids,
+                kind_2=kind_2,
+                road_lookup=road_lookup,
+                reference_point=component_focus_point,
+            )
+            component_boundary_branch_a = local_boundary_branch_a or boundary_branch_a
+            component_boundary_branch_b = local_boundary_branch_b or boundary_branch_b
+            component_boundary_source = "local_branch_pair"
+            component_boundary_road_ids = None
+            component_branch_a_centerline = _resolve_branch_centerline(
+                branch=component_boundary_branch_a,
+                road_lookup=road_lookup,
+                reference_point=component_focus_point,
+            ) or main_branch_a_centerline
+            component_branch_b_centerline = _resolve_branch_centerline(
+                branch=component_boundary_branch_b,
+                road_lookup=road_lookup,
+                reference_point=component_focus_point,
+            ) or main_branch_b_centerline
+        if (
+            component_branch_a_centerline is None
+            or component_branch_a_centerline.is_empty
+            or component_branch_b_centerline is None
+            or component_branch_b_centerline.is_empty
+        ):
+            component_diags.append(
+                {
+                    "component_index": int(component_index),
+                    "ok": False,
+                    "reason": "component_branch_centerline_missing",
+                }
+            )
+            continue
+
+        component_reference = _resolve_event_reference_position(
+            representative_node=representative_node,
+            scan_origin_point=component_scan_origin_point,
+            axis_centerline=axis_centerline,
+            axis_unit_vector=axis_unit_vector,
+            scan_axis_unit_vector=scan_axis_unit_vector,
+            branch_a_centerline=component_branch_a_centerline,
+            branch_b_centerline=component_branch_b_centerline,
+            drivezone_union=drivezone_union,
+            divstrip_constraint_geometry=component_geometry,
+            event_anchor_geometry=component_geometry,
+            cross_half_len_m=cross_half_len_m,
+        )
+        if str(component_reference["position_source"]) == "representative_axis_origin":
+            component_diags.append(
+                {
+                    "component_index": int(component_index),
+                    "ok": False,
+                    "reason": "component_reference_unstable",
+                }
+            )
+            continue
+        component_origin_point = component_reference["origin_point"]
+        component_origin_xy = (
+            float(component_origin_point.x),
+            float(component_origin_point.y),
+        )
+        local_offsets = _collect_axis_offsets_from_geometry(
+            component_geometry,
+            origin_xy=component_origin_xy,
+            axis_unit_vector=axis_unit_vector,
+        )
+        if local_offsets:
+            start_offset_m = max(
+                -EVENT_COMPONENT_SURFACE_SPAN_CAP_M,
+                min(float(min(local_offsets) - EVENT_SPAN_MARGIN_M), -EVENT_SPAN_DEFAULT_M),
+            )
+            end_offset_m = min(
+                EVENT_COMPONENT_SURFACE_SPAN_CAP_M,
+                max(float(max(local_offsets) + EVENT_SPAN_MARGIN_M), EVENT_SPAN_DEFAULT_M),
+            )
+        else:
+            start_offset_m = -EVENT_SPAN_DEFAULT_M
+            end_offset_m = EVENT_SPAN_DEFAULT_M
+
+        component_surface_geometry, sample_count = _build_cross_section_surface_geometry(
+            drivezone_union=drivezone_union,
+            origin_point=component_origin_point,
+            axis_unit_vector=axis_unit_vector,
+            start_offset_m=start_offset_m,
+            end_offset_m=end_offset_m,
+            cross_half_len_m=cross_half_len_m,
+            axis_centerline=axis_centerline,
+            branch_a_centerline=component_branch_a_centerline,
+            branch_b_centerline=component_branch_b_centerline,
+            parallel_centerline=parallel_centerline,
+            resolution_m=resolution_m,
+            support_geometry=support_geometry,
+        )
+        component_diags.append(
+                {
+                    "component_index": int(component_index),
+                    "ok": bool(component_surface_geometry is not None and not component_surface_geometry.is_empty),
+                    "boundary_source": component_boundary_source,
+                    "boundary_branch_ids": [
+                        None if component_boundary_branch_a is None else component_boundary_branch_a.branch_id,
+                        None if component_boundary_branch_b is None else component_boundary_branch_b.branch_id,
+                    ],
+                    "boundary_road_ids": component_boundary_road_ids,
+                    "event_origin_source": component_reference["event_origin_source"],
+                    "position_source": component_reference["position_source"],
+                    "start_offset_m": float(start_offset_m),
+                "end_offset_m": float(end_offset_m),
+                "sample_count": int(sample_count),
+            }
+        )
+        if component_surface_geometry is None or component_surface_geometry.is_empty:
+            continue
+        localized_surfaces.append(component_surface_geometry)
+        component_surface_offsets_main = _collect_axis_offsets_from_geometry(
+            component_surface_geometry,
+            origin_xy=main_origin_xy,
+            axis_unit_vector=axis_unit_vector,
+        )
+        component_surface_offsets_main = [
+            float(offset)
+            for offset in component_surface_offsets_main
+            if math.isfinite(float(offset))
+        ]
+        if component_surface_offsets_main:
+            built_component_axis_intervals_main.append(
+                (
+                    float(min(component_surface_offsets_main)),
+                    float(max(component_surface_offsets_main)),
+                )
+            )
+
+    if not localized_surfaces:
+        return GeometryCollection(), component_diags
+
+    if (
+        main_branch_a_centerline is not None
+        and not main_branch_a_centerline.is_empty
+        and main_branch_b_centerline is not None
+        and not main_branch_b_centerline.is_empty
+        and len(built_component_axis_intervals_main) >= 2
+    ):
+        sorted_intervals = sorted(
+            built_component_axis_intervals_main,
+            key=lambda item: (float(item[0]), float(item[1])),
+        )
+        connector_index = 0
+        for previous_interval, next_interval in zip(sorted_intervals, sorted_intervals[1:]):
+            connector_start_m = float(previous_interval[1] - EVENT_SPAN_MARGIN_M)
+            connector_end_m = float(next_interval[0] + EVENT_SPAN_MARGIN_M)
+            connector_span_m = float(connector_end_m - connector_start_m)
+            if connector_span_m <= EVENT_SPAN_MARGIN_M * 2.0:
+                continue
+            if connector_span_m > float(MULTIBRANCH_LOCAL_CONTEXT_WINDOW_M) * 2.0:
+                component_diags.append(
+                    {
+                        "component_index": f"connector_{connector_index}",
+                        "ok": False,
+                        "reason": "connector_span_exceeds_limit",
+                        "start_offset_m": float(connector_start_m),
+                        "end_offset_m": float(connector_end_m),
+                        "span_m": float(connector_span_m),
+                    }
+                )
+                connector_index += 1
+                continue
+            connector_surface_geometry, connector_sample_count = _build_cross_section_surface_geometry(
+                drivezone_union=drivezone_union,
+                origin_point=main_origin_point,
+                axis_unit_vector=axis_unit_vector,
+                start_offset_m=connector_start_m,
+                end_offset_m=connector_end_m,
+                cross_half_len_m=cross_half_len_m,
+                axis_centerline=axis_centerline,
+                branch_a_centerline=main_branch_a_centerline,
+                branch_b_centerline=main_branch_b_centerline,
+                parallel_centerline=parallel_centerline,
+                resolution_m=resolution_m,
+                support_geometry=support_geometry,
+            )
+            if connector_surface_geometry is None or connector_surface_geometry.is_empty:
+                continue
+            localized_surfaces.append(connector_surface_geometry)
+            component_diags.append(
+                {
+                    "component_index": f"connector_{connector_index}",
+                    "ok": True,
+                    "start_offset_m": float(connector_start_m),
+                    "end_offset_m": float(connector_end_m),
+                    "sample_count": int(connector_sample_count),
+                }
+            )
+            connector_index += 1
+
+    return unary_union(localized_surfaces).intersection(drivezone_union).buffer(0), component_diags
+
+
+def _resolve_centerline_from_road_ids(
+    *,
+    road_ids: list[str],
+    road_lookup: dict[str, ParsedRoad],
+    reference_point: Point,
+):
+    line_union = unary_union(
+        [
+            road_lookup[road_id].geometry
+            for road_id in road_ids
+            if road_id in road_lookup
+            and road_lookup[road_id].geometry is not None
+            and not road_lookup[road_id].geometry.is_empty
+        ]
+    )
+    if line_union.is_empty:
+        return None
+    merged = line_union if getattr(line_union, "geom_type", None) == "LineString" else linemerge(line_union)
+    line_components = [
+        component
+        for component in _explode_component_geometries(merged)
+        if getattr(component, "geom_type", None) == "LineString" and not component.is_empty
+    ]
+    if not line_components:
+        line_components = [
+            component
+            for component in _explode_component_geometries(line_union)
+            if getattr(component, "geom_type", None) == "LineString" and not component.is_empty
+        ]
+    if not line_components:
+        return None
+    centerline = min(
+        line_components,
+        key=lambda component: (
+            float(component.distance(reference_point)),
+            -float(component.length),
+        ),
+    )
+    coords = list(centerline.coords)
+    if len(coords) < 2:
+        return centerline
+    start_point = Point(coords[0])
+    end_point = Point(coords[-1])
+    if end_point.distance(reference_point) < start_point.distance(reference_point):
+        centerline = type(centerline)(coords[::-1])
+    return centerline
+
+
+def _select_multibranch_divstrip_geometry(
+    *,
+    divstrip_geometry,
+    road_geometries: list[Any],
+):
+    if divstrip_geometry is None or divstrip_geometry.is_empty or not road_geometries:
+        return GeometryCollection()
+    road_union = unary_union([geometry for geometry in road_geometries if geometry is not None and not geometry.is_empty])
+    if road_union.is_empty:
+        return GeometryCollection()
+    matched_components = [
+        component
+        for component in _collect_polygon_components(divstrip_geometry)
+        if float(component.distance(road_union)) <= float(DIVSTRIP_EVENT_ROAD_LINK_DISTANCE_M)
+    ]
+    if matched_components:
+        return unary_union(matched_components).buffer(0)
+    nearest_component = min(
+        _collect_polygon_components(divstrip_geometry),
+        key=lambda component: float(component.distance(road_union)),
+        default=None,
+    )
+    if nearest_component is None:
+        return GeometryCollection()
+    if float(nearest_component.distance(road_union)) <= float(DIVSTRIP_EVENT_BUFFER_M):
+        return nearest_component.buffer(0)
+    return GeometryCollection()
+
+
+def _build_multibranch_candidate_lobe_geometry(
+    *,
+    candidate_road_ids: list[str],
+    representative_node: ParsedNode,
+    axis_centerline,
+    axis_unit_vector: tuple[float, float] | None,
+    kind_2: int,
+    drivezone_union,
+    divstrip_geometry,
+    road_lookup: dict[str, ParsedRoad],
+    road_to_branch: dict[str, Any],
+    road_branches_by_id: dict[str, Any],
+    parallel_centerline,
+    resolution_m: float,
+    cross_half_len_m: float,
+) -> tuple[Any, dict[str, Any]]:
+    if axis_centerline is None or axis_centerline.is_empty or axis_unit_vector is None:
+        return GeometryCollection(), {"ok": False, "reason": "missing_axis"}
+    candidate_roads = [
+        road_lookup[road_id]
+        for road_id in candidate_road_ids
+        if road_id in road_lookup
+        and road_lookup[road_id].geometry is not None
+        and not road_lookup[road_id].geometry.is_empty
+    ]
+    if len(candidate_roads) < 2:
+        return GeometryCollection(), {"ok": False, "reason": "candidate_road_count_lt_2"}
+
+    reference_point = representative_node.geometry
+    provisional_branch_a_centerline = _resolve_centerline_from_road_ids(
+        road_ids=[candidate_roads[0].road_id],
+        road_lookup=road_lookup,
+        reference_point=reference_point,
+    )
+    provisional_branch_b_centerline = _resolve_centerline_from_road_ids(
+        road_ids=[candidate_roads[1].road_id],
+        road_lookup=road_lookup,
+        reference_point=reference_point,
+    )
+    if (
+        provisional_branch_a_centerline is None
+        or provisional_branch_a_centerline.is_empty
+        or provisional_branch_b_centerline is None
+        or provisional_branch_b_centerline.is_empty
+    ):
+        return GeometryCollection(), {"ok": False, "reason": "candidate_centerline_missing"}
+
+    candidate_divstrip_geometry = _select_multibranch_divstrip_geometry(
+        divstrip_geometry=divstrip_geometry,
+        road_geometries=[road.geometry for road in candidate_roads],
+    )
+    event_anchor_geometry = (
+        candidate_divstrip_geometry
+        if candidate_divstrip_geometry is not None and not candidate_divstrip_geometry.is_empty
+        else unary_union(
+            [
+                road.geometry.buffer(max(EVENT_ANCHOR_BUFFER_M, 2.0), cap_style=2, join_style=2)
+                for road in candidate_roads
+            ]
+        ).buffer(0)
+    )
+    scan_origin_point, _ = nearest_points(axis_centerline, representative_node.geometry)
+    candidate_reference = _resolve_event_reference_position(
+        representative_node=representative_node,
+        scan_origin_point=scan_origin_point,
+        axis_centerline=axis_centerline,
+        axis_unit_vector=axis_unit_vector,
+        scan_axis_unit_vector=_resolve_scan_axis_unit_vector(axis_unit_vector=axis_unit_vector, kind_2=kind_2),
+        branch_a_centerline=provisional_branch_a_centerline,
+        branch_b_centerline=provisional_branch_b_centerline,
+        drivezone_union=drivezone_union,
+        divstrip_constraint_geometry=candidate_divstrip_geometry,
+        event_anchor_geometry=event_anchor_geometry,
+        cross_half_len_m=cross_half_len_m,
+    )
+    origin_point = candidate_reference["origin_point"]
+    candidate_source_branch_ids = sorted(
+        {
+            road_to_branch[road_id].branch_id
+            for road_id in candidate_road_ids
+            if road_id in road_to_branch and road_to_branch[road_id] is not None
+        }
+    )
+    branch_a_centerline = provisional_branch_a_centerline
+    branch_b_centerline = provisional_branch_b_centerline
+    if len(candidate_source_branch_ids) == 2:
+        branch_a = road_branches_by_id.get(candidate_source_branch_ids[0])
+        branch_b = road_branches_by_id.get(candidate_source_branch_ids[1])
+        if branch_a is not None and branch_b is not None:
+            branch_a_centerline = _resolve_branch_centerline(
+                branch=branch_a,
+                road_lookup=road_lookup,
+                reference_point=origin_point,
+            ) or provisional_branch_a_centerline
+            branch_b_centerline = _resolve_branch_centerline(
+                branch=branch_b,
+                road_lookup=road_lookup,
+                reference_point=origin_point,
+            ) or provisional_branch_b_centerline
+    local_axis_window_geometry = _build_axis_window_geometry(
+        origin_point=origin_point,
+        axis_unit_vector=axis_unit_vector,
+        start_offset_m=-MULTIBRANCH_LOCAL_CONTEXT_WINDOW_M,
+        end_offset_m=MULTIBRANCH_LOCAL_CONTEXT_WINDOW_M,
+        cross_half_len_m=cross_half_len_m,
+    )
+    origin_xy = (float(origin_point.x), float(origin_point.y))
+    candidate_offsets = _collect_axis_offsets_from_geometry(
+        candidate_divstrip_geometry if candidate_divstrip_geometry is not None and not candidate_divstrip_geometry.is_empty else event_anchor_geometry,
+        origin_xy=origin_xy,
+        axis_unit_vector=axis_unit_vector,
+        clip_geometry=local_axis_window_geometry,
+    )
+    for road in candidate_roads:
+        candidate_offsets.extend(
+            _collect_axis_offsets_from_geometry(
+                road.geometry,
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+                clip_geometry=local_axis_window_geometry,
+            )
+        )
+    if candidate_offsets:
+        start_offset_m = max(
+            -MULTIBRANCH_LOCAL_SPAN_MAX_M,
+            min(float(min(candidate_offsets) - EVENT_SPAN_MARGIN_M), -EVENT_SPAN_DEFAULT_M),
+        )
+        end_offset_m = min(
+            MULTIBRANCH_LOCAL_SPAN_MAX_M,
+            max(float(max(candidate_offsets) + EVENT_SPAN_MARGIN_M), EVENT_SPAN_DEFAULT_M),
+        )
+    else:
+        start_offset_m = -EVENT_SPAN_DEFAULT_M
+        end_offset_m = EVENT_SPAN_DEFAULT_M
+    support_geometry = unary_union(
+        [
+            road.geometry.buffer(max(ROAD_BUFFER_M * 1.5, RC_ROAD_BUFFER_M * 1.25, 2.25), cap_style=2, join_style=2)
+            for road in candidate_roads
+        ]
+    )
+    lobe_geometry, sample_count = _build_cross_section_surface_geometry(
+        drivezone_union=drivezone_union,
+        origin_point=origin_point,
+        axis_unit_vector=axis_unit_vector,
+        start_offset_m=start_offset_m,
+        end_offset_m=end_offset_m,
+        cross_half_len_m=cross_half_len_m,
+        axis_centerline=axis_centerline,
+        branch_a_centerline=branch_a_centerline,
+        branch_b_centerline=branch_b_centerline,
+        parallel_centerline=parallel_centerline,
+        resolution_m=resolution_m,
+        support_geometry=support_geometry,
+    )
+    if candidate_divstrip_geometry is not None and not candidate_divstrip_geometry.is_empty and lobe_geometry is not None and not lobe_geometry.is_empty:
+        lobe_geometry = lobe_geometry.difference(
+            candidate_divstrip_geometry.buffer(DIVSTRIP_EXCLUSION_BUFFER_M, join_style=2)
+        ).buffer(0)
+    return lobe_geometry, {
+        "ok": bool(lobe_geometry is not None and not lobe_geometry.is_empty),
+        "candidate_road_ids": list(candidate_road_ids),
+        "candidate_source_branch_ids": candidate_source_branch_ids,
+        "candidate_origin_source": candidate_reference["event_origin_source"],
+        "candidate_position_source": candidate_reference["position_source"],
+        "candidate_start_offset_m": float(start_offset_m),
+        "candidate_end_offset_m": float(end_offset_m),
+        "sample_count": int(sample_count),
+    }
+
+
+def _build_complex_multibranch_lobe_union(
+    *,
+    multibranch_context: dict[str, Any],
+    representative_node: ParsedNode,
+    axis_centerline,
+    axis_unit_vector: tuple[float, float] | None,
+    kind_2: int,
+    drivezone_union,
+    divstrip_geometry,
+    road_lookup: dict[str, ParsedRoad],
+    road_to_branch: dict[str, Any],
+    road_branches_by_id: dict[str, Any],
+    parallel_centerline,
+    resolution_m: float,
+    cross_half_len_m: float,
+) -> tuple[Any, list[dict[str, Any]]]:
+    candidate_specs: list[list[str]] = []
+    seen_specs: set[tuple[str, ...]] = set()
+    for road_ids in [
+        multibranch_context.get("main_pair_item_ids", []),
+        *[
+            candidate.get("road_ids", [])
+            for candidate in multibranch_context.get("event_candidates", [])[: max(0, MULTIBRANCH_EVENT_MAX_LOBES - 1)]
+        ],
+    ]:
+        normalized_ids = tuple(sorted(str(road_id) for road_id in road_ids if road_id))
+        if len(normalized_ids) < 2 or normalized_ids in seen_specs:
+            continue
+        seen_specs.add(normalized_ids)
+        candidate_specs.append(list(normalized_ids))
+
+    lobe_geometries: list[Any] = []
+    lobe_diags: list[dict[str, Any]] = []
+    for road_ids in candidate_specs:
+        lobe_geometry, lobe_diag = _build_multibranch_candidate_lobe_geometry(
+            candidate_road_ids=road_ids,
+            representative_node=representative_node,
+            axis_centerline=axis_centerline,
+            axis_unit_vector=axis_unit_vector,
+            kind_2=kind_2,
+            drivezone_union=drivezone_union,
+            divstrip_geometry=divstrip_geometry,
+            road_lookup=road_lookup,
+            road_to_branch=road_to_branch,
+            road_branches_by_id=road_branches_by_id,
+            parallel_centerline=parallel_centerline,
+            resolution_m=resolution_m,
+            cross_half_len_m=cross_half_len_m,
+        )
+        lobe_diags.append(lobe_diag)
+        if lobe_geometry is None or lobe_geometry.is_empty:
+            continue
+        lobe_geometries.append(lobe_geometry)
+    if not lobe_geometries:
+        return GeometryCollection(), lobe_diags
+    return unary_union(lobe_geometries).intersection(drivezone_union).buffer(0), lobe_diags
 
 
 def _resolve_event_reference_point(
@@ -3688,7 +5142,9 @@ def _resolve_multibranch_context(
         return {
             "enabled": False,
             "n": len(candidate_items),
+            "main_pair_item_ids": [] if best_main_pair_ids is None else list(best_main_pair_ids),
             "event_candidate_count": 0,
+            "event_candidates": [],
             "selected_event_index": None,
             "selected_event_branch_ids": [],
             "selected_event_source_branch_ids": [],
@@ -3726,8 +5182,9 @@ def _resolve_multibranch_context(
         )
         event_candidates.append(
             {
-                "branch_ids": pair_ids,
+                "road_ids": pair_ids,
                 "branches": pair_branches,
+                "source_branch_ids": sorted({branch.branch_id for branch in pair_branches}),
                 "score": score,
                 "preferred_hits": preferred_hits,
                 "divstrip_hit_count": divstrip_hit_count,
@@ -3751,6 +5208,25 @@ def _resolve_multibranch_context(
         reverse=True,
     )
     top_candidate = event_candidates[0] if event_candidates else None
+    if (
+        len(event_candidates) == 1
+        and top_candidate is not None
+        and float(top_candidate["adjacency_gap"]) >= 180.0 - MAIN_AXIS_ANGLE_TOLERANCE_DEG
+        and int(top_candidate["preferred_hits"]) <= 1
+    ):
+        return {
+            "enabled": False,
+            "n": len(candidate_items),
+            "main_pair_item_ids": [] if best_main_pair_ids is None else list(best_main_pair_ids),
+            "event_candidate_count": len(event_candidates),
+            "event_candidates": [],
+            "selected_event_index": None,
+            "selected_event_branch_ids": [],
+            "selected_event_source_branch_ids": [],
+            "selected_side_branches": [],
+            "branches_used_count": 0,
+            "ambiguous": False,
+        }
     ambiguous = False
     if len(event_candidates) > 1 and top_candidate is not None:
         second_candidate = event_candidates[1]
@@ -3760,18 +5236,33 @@ def _resolve_multibranch_context(
             and abs(float(top_candidate["divstrip_overlap_m"]) - float(second_candidate["divstrip_overlap_m"])) <= 1.0
             and top_candidate["directional_hits"] == second_candidate["directional_hits"]
             and {branch.branch_id for branch in top_candidate["branches"]} != {branch.branch_id for branch in second_candidate["branches"]}
-            and top_candidate["branch_ids"] != second_candidate["branch_ids"]
+            and top_candidate["road_ids"] != second_candidate["road_ids"]
         )
     return {
         "enabled": True,
         "n": len(candidate_items),
+        "main_pair_item_ids": [] if best_main_pair_ids is None else list(best_main_pair_ids),
         "event_candidate_count": len(event_candidates),
+        "event_candidates": [
+            {
+                "road_ids": list(candidate["road_ids"]),
+                "source_branch_ids": list(candidate["source_branch_ids"]),
+                "score": float(candidate["score"]),
+                "preferred_hits": int(candidate["preferred_hits"]),
+                "divstrip_hit_count": int(candidate["divstrip_hit_count"]),
+                "divstrip_overlap_m": float(candidate["divstrip_overlap_m"]),
+                "divstrip_distance_m": float(candidate["divstrip_distance_m"]),
+                "directional_hits": int(candidate["directional_hits"]),
+                "adjacency_gap": float(candidate["adjacency_gap"]),
+            }
+            for candidate in event_candidates
+        ],
         "selected_event_index": 0 if top_candidate is not None else None,
-        "selected_event_branch_ids": [] if top_candidate is None else list(top_candidate["branch_ids"]),
+        "selected_event_branch_ids": [] if top_candidate is None else list(top_candidate["road_ids"]),
         "selected_event_source_branch_ids": (
             []
             if top_candidate is None
-            else sorted({branch.branch_id for branch in top_candidate["branches"]})
+            else list(top_candidate["source_branch_ids"])
         ),
         "selected_side_branches": [] if top_candidate is None else list(top_candidate["branches"]),
         "branches_used_count": 0 if top_candidate is None else len({branch.branch_id for branch in top_candidate["branches"]}),
@@ -3891,6 +5382,7 @@ def _resolve_operational_kind_2(
     local_roads: list[ParsedRoad],
     divstrip_context: dict[str, Any],
     chain_context: dict[str, Any],
+    multibranch_context: dict[str, Any],
 ) -> dict[str, Any]:
     source_kind = _node_source_kind(representative_node)
     source_kind_2 = _node_source_kind_2(representative_node)
@@ -3939,6 +5431,28 @@ def _resolve_operational_kind_2(
         )
 
     side_branches = [branch for branch in road_branches if branch.branch_id not in main_branch_ids]
+    if (
+        not side_branches
+        and multibranch_context.get("enabled", False)
+        and multibranch_context.get("selected_event_index") is not None
+        and not multibranch_context.get("ambiguous", False)
+    ):
+        fallback_kind_2 = 16
+        if divstrip_kind_resolution is not None:
+            fallback_kind_2 = int(divstrip_kind_resolution["operational_kind_2"])
+        return {
+            "source_kind": source_kind,
+            "source_kind_2": source_kind_2,
+            "operational_kind_2": fallback_kind_2,
+            "complex_junction": True,
+            "ambiguous": False,
+            "kind_resolution_mode": "complex_multibranch_event",
+            "merge_score": None if divstrip_kind_resolution is None else divstrip_kind_resolution["merge_score"],
+            "diverge_score": None if divstrip_kind_resolution is None else divstrip_kind_resolution["diverge_score"],
+            "merge_hits": None if divstrip_kind_resolution is None else divstrip_kind_resolution["merge_hits"],
+            "diverge_hits": None if divstrip_kind_resolution is None else divstrip_kind_resolution["diverge_hits"],
+        }
+
     merge_score = 0.0
     diverge_score = 0.0
     merge_hits = 0
@@ -4225,10 +5739,10 @@ def run_t02_stage4_divmerge_virtual_polygon(
             )
 
         current_patch_id = _resolve_current_patch_id_from_roads(group_nodes=group_nodes, roads=roads)
-        filtered_roads = _filter_parsed_roads_to_patch(roads, patch_id=current_patch_id)
+        filtered_roads = _filter_stage4_roads_to_patch_membership(roads, patch_id=current_patch_id)
         filtered_drivezone_features = [
             feature
-            for feature in _filter_loaded_features_to_patch(drivezone_layer_data.features, patch_id=current_patch_id)
+            for feature in _filter_stage4_features_to_patch_membership(drivezone_layer_data.features, patch_id=current_patch_id)
             if feature.geometry is not None and not feature.geometry.is_empty
         ]
 
@@ -4282,7 +5796,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             for feature in (
                 []
                 if divstripzone_layer_data is None
-                else _filter_loaded_features_to_patch(divstripzone_layer_data.features, patch_id=current_patch_id)
+                else _filter_stage4_features_to_patch_membership(divstripzone_layer_data.features, patch_id=current_patch_id)
             )
             if feature.geometry is not None and not feature.geometry.is_empty
         ]
@@ -4310,6 +5824,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             member_node_ids=member_node_ids,
             drivezone_union=drivezone_union,
             include_internal_roads=_is_complex_stage4_node(representative_node),
+            support_center=seed_center if _is_complex_stage4_node(representative_node) else None,
         )
         if _is_complex_stage4_node(representative_node):
             needs_augmented_complex_context = len(road_branches) < 2
@@ -4350,8 +5865,17 @@ def run_t02_stage4_divmerge_virtual_polygon(
                         member_node_ids=augmented_member_node_ids,
                         drivezone_union=drivezone_union,
                         include_internal_roads=True,
+                        support_center=seed_center,
                     )
                     member_node_ids = augmented_member_node_ids
+        road_to_branch: dict[str, Any] = {}
+        for branch in road_branches:
+            for road_id in branch.road_ids:
+                road_to_branch[str(road_id)] = branch
+        road_branches_by_id: dict[str, Any] = {
+            str(branch.branch_id): branch
+            for branch in road_branches
+        }
         if len(road_branches) < 2:
             raise Stage4RunError(
                 REASON_MAIN_DIRECTION_UNSTABLE,
@@ -4365,8 +5889,24 @@ def run_t02_stage4_divmerge_virtual_polygon(
             local_roads=local_roads,
             main_branch_ids=main_branch_ids,
             drivezone_union=drivezone_union,
+            allow_compound_pair_merge=_is_complex_stage4_node(representative_node) or len(group_nodes) > 1,
         )
         preferred_branch_ids = set(divstrip_context["preferred_branch_ids"])
+        provisional_multibranch_kind_2 = (
+            int(representative_source_kind_2)
+            if representative_source_kind_2 in STAGE4_KIND_2_VALUES
+            else 16
+        )
+        multibranch_context = _resolve_multibranch_context(
+            road_branches=road_branches,
+            main_branch_ids=main_branch_ids,
+            preferred_branch_ids=preferred_branch_ids,
+            kind_2=provisional_multibranch_kind_2,
+            local_roads=local_roads,
+            member_node_ids=member_node_ids,
+            drivezone_union=drivezone_union,
+            divstrip_constraint_geometry=divstrip_context["constraint_geometry"],
+        )
         kind_resolution = _resolve_operational_kind_2(
             representative_node=representative_node,
             road_branches=road_branches,
@@ -4375,18 +5915,20 @@ def run_t02_stage4_divmerge_virtual_polygon(
             local_roads=local_roads,
             divstrip_context=divstrip_context,
             chain_context=chain_context,
+            multibranch_context=multibranch_context,
         )
         operational_kind_2 = kind_resolution["operational_kind_2"]
-        multibranch_context = _resolve_multibranch_context(
-            road_branches=road_branches,
-            main_branch_ids=main_branch_ids,
-            preferred_branch_ids=preferred_branch_ids,
-            kind_2=operational_kind_2,
-            local_roads=local_roads,
-            member_node_ids=member_node_ids,
-            drivezone_union=drivezone_union,
-            divstrip_constraint_geometry=divstrip_context["constraint_geometry"],
-        )
+        if operational_kind_2 != provisional_multibranch_kind_2:
+            multibranch_context = _resolve_multibranch_context(
+                road_branches=road_branches,
+                main_branch_ids=main_branch_ids,
+                preferred_branch_ids=preferred_branch_ids,
+                kind_2=operational_kind_2,
+                local_roads=local_roads,
+                member_node_ids=member_node_ids,
+                drivezone_union=drivezone_union,
+                divstrip_constraint_geometry=divstrip_context["constraint_geometry"],
+            )
         forward_side_branches = _select_stage4_side_branches(
             road_branches,
             kind_2=operational_kind_2,
@@ -4438,6 +5980,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             main_branch_ids=main_branch_ids,
             drivezone_union=drivezone_union,
             event_branch_ids=set(selected_event_branch_ids),
+            allow_compound_pair_merge=kind_resolution["complex_junction"] or len(group_nodes) > 1,
         )
         if (
             refined_divstrip_context["nearby"]
@@ -4471,6 +6014,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             member_node_ids=member_node_ids,
             drivezone_union=drivezone_union,
             include_internal_roads=False,
+            support_center=None,
         )
         for rc_branch in rc_branches:
             for road_branch in road_branches:
@@ -4502,6 +6046,28 @@ def run_t02_stage4_divmerge_virtual_polygon(
         selected_roads = [road for road in local_roads if road.road_id in selected_road_ids]
         selected_event_roads = [road for road in local_roads if road.road_id in selected_event_road_ids]
         selected_rcsd_roads = [road for road in local_rcsd_roads if road.road_id in selected_rcsdroad_ids]
+        complex_local_support_roads: list[ParsedRoad] = []
+        if kind_resolution["complex_junction"] or len(group_nodes) > 1:
+            complex_support_seed_union = unary_union(
+                [
+                    *[node.geometry.buffer(NODE_SEED_RADIUS_M) for node in group_nodes],
+                    *[
+                        node.geometry.buffer(max(1.5, NODE_SEED_RADIUS_M * 0.6))
+                        for node in chain_context["related_seed_nodes"]
+                    ],
+                ]
+            )
+            if complex_support_seed_union is not None and not complex_support_seed_union.is_empty:
+                selected_road_id_set = set(selected_road_ids)
+                complex_local_support_roads = [
+                    road
+                    for road in local_roads
+                    if road.road_id not in selected_road_id_set
+                    and road.geometry is not None
+                    and not road.geometry.is_empty
+                    and float(road.geometry.distance(complex_support_seed_union))
+                    <= EVENT_COMPLEX_LOCAL_SUPPORT_ROAD_DISTANCE_M
+                ]
         selected_rcsd_buffer = unary_union(
             [
                 road.geometry.buffer(max(1.5, RC_ROAD_BUFFER_M), cap_style=2, join_style=2)
@@ -4682,6 +6248,28 @@ def run_t02_stage4_divmerge_virtual_polygon(
             if road.geometry is not None and not road.geometry.is_empty
             and road.geometry not in parallel_side_reference_geometries
         ]
+        other_semantic_boundary_node_ids = {
+            node.node_id
+            for node in local_nodes
+            if _is_semantic_boundary_representative(node)
+            and normalize_id(node.mainnodeid or node.node_id) not in {
+                normalize_id(representative_node.mainnodeid or representative_node.node_id),
+                *{
+                    normalize_id(mainnodeid)
+                    for mainnodeid in chain_context.get("related_mainnodeids", ())
+                    if normalize_id(mainnodeid) is not None
+                },
+            }
+        }
+        parallel_excluded_road_ids = _collect_parallel_excluded_road_ids(
+            local_roads=local_roads,
+            selected_road_ids=set(selected_road_ids),
+            member_node_ids=member_node_ids,
+            semantic_boundary_node_ids=other_semantic_boundary_node_ids,
+            event_anchor_geometry=event_anchor_geometry,
+            divstrip_constraint_geometry=divstrip_constraint_geometry,
+            reference_geometries=parallel_side_reference_geometries,
+        )
         parallel_side_sign = _resolve_parallel_side_sign(
             axis_centerline=event_axis_centerline,
             axis_unit_vector=event_axis_unit_vector,
@@ -4693,18 +6281,20 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 axis_unit_vector=event_axis_unit_vector,
                 reference_geometries=parallel_side_reference_geometries,
             )
-        parallel_centerline = _resolve_parallel_centerline(
+        parallel_centerline_road_id, parallel_centerline = _resolve_parallel_centerline_candidate(
             local_roads=local_roads,
             selected_road_ids=set(selected_road_ids),
+            excluded_road_ids=parallel_excluded_road_ids,
             axis_centerline=event_axis_centerline,
             axis_unit_vector=event_axis_unit_vector,
             reference_point=event_origin_point,
             parallel_side_sign=parallel_side_sign,
         )
+        has_parallel_competitor = parallel_centerline is not None and not parallel_centerline.is_empty
         event_span_window = _resolve_event_span_window(
             origin_point=event_origin_point,
             axis_unit_vector=event_axis_unit_vector,
-            selected_rcsd_nodes=selected_rcsd_nodes,
+            selected_rcsd_nodes=direct_target_rc_nodes,
             event_anchor_geometry=event_anchor_geometry,
             selected_roads_geometry=unary_union(
                 [road.geometry for road in selected_roads if road.geometry is not None and not road.geometry.is_empty]
@@ -4722,7 +6312,12 @@ def run_t02_stage4_divmerge_virtual_polygon(
             if selected_rcsd_roads
             else GeometryCollection(),
         )
-        if kind_resolution["complex_junction"] and chain_context["sequential_ok"] and chain_context["related_seed_nodes"]:
+        if (
+            kind_resolution["complex_junction"]
+            and chain_context["sequential_ok"]
+            and chain_context["related_seed_nodes"]
+            and len(divstrip_context["selected_component_ids"]) <= 1
+        ):
             chain_related_offsets: list[float] = []
             for candidate_node in chain_context["related_seed_nodes"]:
                 candidate_offset = _project_point_to_axis(
@@ -4755,6 +6350,42 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 )
                 event_span_window["candidate_offset_count"] = int(event_span_window["candidate_offset_count"]) + len(chain_related_offsets)
                 event_span_window["expansion_source"] = "continuous_chain_context"
+        event_span_window = _refine_event_span_window_by_semantic_context(
+            event_span_window=event_span_window,
+            candidate_nodes=nodes,
+            semantic_member_nodes=[
+                *group_nodes,
+                *(
+                    chain_context["related_seed_nodes"]
+                    if kind_resolution["complex_junction"] and len(divstrip_context["selected_component_ids"]) <= 1
+                    else []
+                ),
+            ],
+            group_nodes=group_nodes,
+            representative_node=representative_node,
+            related_mainnodeids=(
+                chain_context["related_mainnodeids"]
+                if kind_resolution["complex_junction"]
+                else []
+            ),
+            origin_point=event_origin_point,
+            axis_unit_vector=event_axis_unit_vector,
+            axis_centerline=event_axis_centerline,
+            event_anchor_geometry=event_anchor_geometry,
+            selected_roads=selected_roads,
+            include_complex_members=kind_resolution["complex_junction"] or len(group_nodes) > 1,
+        )
+        event_span_window = _clip_simple_event_span_window_by_divstrip_context(
+            event_span_window=event_span_window,
+            divstrip_constraint_geometry=divstrip_constraint_geometry,
+            direct_target_rc_nodes=direct_target_rc_nodes,
+            selected_roads=selected_roads,
+            origin_point=event_origin_point,
+            axis_unit_vector=event_axis_unit_vector,
+            selected_component_count=len(divstrip_context["selected_component_ids"]),
+            is_complex_junction=kind_resolution["complex_junction"] or len(group_nodes) > 1,
+            event_split_pick_source=event_reference["split_pick_source"],
+        )
         axis_window_mask = _build_axis_window_mask(
             grid=grid,
             origin_point=event_origin_point,
@@ -4770,7 +6401,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             cross_half_len_m=event_cross_half_len_m,
         )
         parallel_side_mask = None
-        if parallel_side_sign in (-1, 1):
+        if has_parallel_competitor and parallel_side_sign in (-1, 1):
             parallel_side_mask = _build_axis_side_halfmask(
                 grid=grid,
                 origin_point=event_origin_point,
@@ -4815,6 +6446,11 @@ def run_t02_stage4_divmerge_virtual_polygon(
             for road in selected_event_roads
             if road.geometry is not None and not road.geometry.is_empty
         ]
+        event_branch_support_geometries.extend(
+            road.geometry
+            for road in complex_local_support_roads
+            if road.geometry is not None and not road.geometry.is_empty
+        )
         if selected_event_roads and not selected_event_road_support_union.is_empty:
             event_branch_support_geometries.extend(
                 road.geometry
@@ -4828,25 +6464,50 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 ).intersects(road.geometry)
             )
         event_branch_support_union = unary_union(event_branch_support_geometries)
-        event_side_drivezone_geometry = (
-            GeometryCollection()
-            if event_branch_support_union.is_empty
-            else drivezone_union.intersection(
-                event_branch_support_union.buffer(
-                    max(ROAD_BUFFER_M * 2.8, RC_ROAD_BUFFER_M * 2.2, 7.5),
-                    cap_style=2,
-                    join_style=2,
-                )
-            ).intersection(axis_window_geometry).buffer(0)
+        event_side_drivezone_buffer_m = max(ROAD_BUFFER_M * 2.8, RC_ROAD_BUFFER_M * 2.2, 7.5)
+        if kind_resolution["complex_junction"] and len(divstrip_context["selected_component_ids"]) > 1:
+            event_side_drivezone_buffer_m = max(event_side_drivezone_buffer_m, 18.0)
+        event_side_clip_geometry = axis_window_geometry
+        if kind_resolution["complex_junction"] and len(divstrip_context["selected_component_ids"]) > 1:
+            event_side_clip_geometry = None
+        allow_full_axis_drivezone_fill = (
+            not kind_resolution["complex_junction"]
+            and not multibranch_context["enabled"]
+            and len(divstrip_context["selected_component_ids"]) <= 1
+            and not has_parallel_competitor
+            and event_side_clip_geometry is not None
+            and not event_side_clip_geometry.is_empty
         )
+        event_side_drivezone_geometry = (
+            drivezone_union.intersection(event_side_clip_geometry).buffer(0)
+            if allow_full_axis_drivezone_fill
+            else (
+                GeometryCollection()
+                if event_branch_support_union.is_empty
+                else drivezone_union.intersection(
+                    event_branch_support_union.buffer(
+                        event_side_drivezone_buffer_m,
+                        cap_style=2,
+                        join_style=2,
+                    )
+                ).buffer(0)
+            )
+        )
+        if event_side_clip_geometry is not None and not event_side_clip_geometry.is_empty and event_side_drivezone_geometry is not None and not event_side_drivezone_geometry.is_empty:
+            event_side_drivezone_geometry = event_side_drivezone_geometry.intersection(event_side_clip_geometry).buffer(0)
         if parallel_side_geometry is not None and not parallel_side_geometry.is_empty and event_side_drivezone_geometry is not None and not event_side_drivezone_geometry.is_empty:
             event_side_drivezone_geometry = event_side_drivezone_geometry.intersection(parallel_side_geometry).buffer(0)
         event_cross_section_support_geometry = unary_union(
             [
                 road.geometry.buffer(max(ROAD_BUFFER_M * 1.5, RC_ROAD_BUFFER_M * 1.25, 2.25), cap_style=2, join_style=2)
-                for road in [*selected_roads, *selected_rcsd_roads]
+                for road in [*selected_roads, *selected_rcsd_roads, *complex_local_support_roads]
                 if road.geometry is not None and not road.geometry.is_empty
             ]
+        )
+        cross_section_support_geometry = (
+            None
+            if allow_full_axis_drivezone_fill
+            else event_cross_section_support_geometry
         )
         cross_section_surface_geometry, cross_section_sample_count = _build_cross_section_surface_geometry(
             drivezone_union=drivezone_union,
@@ -4860,8 +6521,168 @@ def run_t02_stage4_divmerge_virtual_polygon(
             branch_b_centerline=branch_b_centerline,
             parallel_centerline=parallel_centerline,
             resolution_m=grid.resolution_m,
-            support_geometry=event_cross_section_support_geometry,
+            support_geometry=cross_section_support_geometry,
         )
+        selected_component_offsets_on_axis = _collect_axis_offsets_from_geometry(
+            divstrip_constraint_geometry,
+            origin_xy=(float(event_origin_point.x), float(event_origin_point.y)),
+            axis_unit_vector=event_axis_unit_vector,
+        )
+        selected_component_exceeds_event_span = bool(selected_component_offsets_on_axis) and (
+            min(selected_component_offsets_on_axis) < float(event_span_window["start_offset_m"]) - 5.0
+            or max(selected_component_offsets_on_axis) > float(event_span_window["end_offset_m"]) + 5.0
+        )
+        selected_component_force_surface = (
+            multibranch_context["enabled"]
+            and kind_resolution["complex_junction"]
+            and len(divstrip_context["selected_component_ids"]) == 2
+        )
+        selected_component_surface_diags: list[dict[str, Any]] = []
+        component_side_clip_buffer_m = float(EVENT_COMPONENT_SIDE_CLIP_BUFFER_M)
+        if kind_resolution["complex_junction"] and multibranch_context["enabled"]:
+            component_side_clip_buffer_m = min(component_side_clip_buffer_m, 6.0)
+        if (
+            len(divstrip_context["selected_component_ids"]) > 1
+            and (selected_component_exceeds_event_span or selected_component_force_surface)
+            and (
+                kind_resolution["complex_junction"]
+                or chain_context["sequential_ok"]
+                or len(group_nodes) > 1
+            )
+        ):
+            selected_component_surface_geometry, selected_component_surface_diags = _build_selected_divstrip_component_surface_union(
+                representative_node=representative_node,
+                main_origin_point=event_origin_point,
+                axis_centerline=event_axis_centerline,
+                axis_unit_vector=event_axis_unit_vector,
+                kind_2=operational_kind_2,
+                road_branches=road_branches,
+                selected_branch_ids=set(selected_branch_ids),
+                multibranch_event_candidates=multibranch_context.get("event_candidates"),
+                boundary_branch_a=boundary_branch_a,
+                boundary_branch_b=boundary_branch_b,
+                road_lookup={road.road_id: road for road in local_roads},
+                divstrip_constraint_geometry=divstrip_constraint_geometry,
+                drivezone_union=drivezone_union,
+                parallel_centerline=parallel_centerline,
+                resolution_m=grid.resolution_m,
+                cross_half_len_m=event_cross_half_len_m,
+                support_geometry=event_cross_section_support_geometry,
+            )
+            if selected_component_surface_geometry is not None and not selected_component_surface_geometry.is_empty:
+                cross_section_surface_geometry = selected_component_surface_geometry
+                cross_section_sample_count = int(
+                    sum(
+                        int(item.get("sample_count", 0))
+                        for item in selected_component_surface_diags
+                        if bool(item.get("ok", False))
+                    )
+                )
+        multi_component_surface_applied = bool(
+            selected_component_surface_diags
+            and any(
+                bool(item.get("ok", False)) and item.get("component_index") != "connector"
+                for item in selected_component_surface_diags
+            )
+        )
+        if multi_component_surface_applied and cross_section_surface_geometry is not None and not cross_section_surface_geometry.is_empty:
+            component_axis_window_geometry = cross_section_surface_geometry.buffer(
+                component_side_clip_buffer_m,
+                cap_style=2,
+                join_style=2,
+            ).intersection(drivezone_union).buffer(0)
+            if not component_axis_window_geometry.is_empty:
+                axis_window_geometry = (
+                    component_axis_window_geometry
+                    if axis_window_geometry is None or axis_window_geometry.is_empty
+                    else unary_union([axis_window_geometry, component_axis_window_geometry]).intersection(drivezone_union).buffer(0)
+                )
+                axis_window_mask = (
+                    axis_window_mask | _rasterize_geometries(grid, [component_axis_window_geometry])
+                ) & drivezone_mask
+                if parallel_side_geometry is not None and not parallel_side_geometry.is_empty:
+                    parallel_side_geometry = parallel_side_geometry.union(cross_section_surface_geometry).intersection(drivezone_union).buffer(0)
+                if parallel_side_mask is not None:
+                    parallel_side_mask = (
+                        parallel_side_mask | _rasterize_geometries(grid, [cross_section_surface_geometry])
+                    ) & drivezone_mask
+        complex_multibranch_lobe_geometry = GeometryCollection()
+        complex_multibranch_lobe_diags: list[dict[str, Any]] = []
+        if (
+            kind_resolution["complex_junction"]
+            and multibranch_context["enabled"]
+            and len(divstrip_context["selected_component_ids"]) > 1
+        ):
+            complex_multibranch_lobe_geometry, complex_multibranch_lobe_diags = _build_complex_multibranch_lobe_union(
+                multibranch_context=multibranch_context,
+                representative_node=representative_node,
+                axis_centerline=event_axis_centerline,
+                axis_unit_vector=event_axis_unit_vector,
+                kind_2=operational_kind_2,
+                drivezone_union=drivezone_union,
+                divstrip_geometry=divstrip_constraint_geometry,
+                road_lookup={road.road_id: road for road in local_roads},
+                road_to_branch=road_to_branch,
+                road_branches_by_id=road_branches_by_id,
+                parallel_centerline=parallel_centerline,
+                resolution_m=grid.resolution_m,
+                cross_half_len_m=event_cross_half_len_m,
+            )
+            if complex_multibranch_lobe_geometry is not None and not complex_multibranch_lobe_geometry.is_empty:
+                cross_section_surface_geometry = (
+                    complex_multibranch_lobe_geometry
+                    if cross_section_surface_geometry is None or cross_section_surface_geometry.is_empty
+                    else unary_union([cross_section_surface_geometry, complex_multibranch_lobe_geometry])
+                    .intersection(drivezone_union)
+                    .buffer(0)
+                )
+                cross_section_sample_count += int(
+                    sum(
+                        int(item.get("sample_count", 0))
+                        for item in complex_multibranch_lobe_diags
+                        if bool(item.get("ok", False))
+                    )
+                )
+                lobe_axis_window_geometry = complex_multibranch_lobe_geometry.buffer(
+                    component_side_clip_buffer_m,
+                    cap_style=2,
+                    join_style=2,
+                ).intersection(drivezone_union).buffer(0)
+                if not lobe_axis_window_geometry.is_empty:
+                    axis_window_geometry = (
+                        lobe_axis_window_geometry
+                        if axis_window_geometry is None or axis_window_geometry.is_empty
+                        else unary_union([axis_window_geometry, lobe_axis_window_geometry]).intersection(drivezone_union).buffer(0)
+                    )
+                    axis_window_mask = (
+                        axis_window_mask | _rasterize_geometries(grid, [lobe_axis_window_geometry])
+                    ) & drivezone_mask
+                if parallel_side_geometry is not None and not parallel_side_geometry.is_empty:
+                    parallel_side_geometry = (
+                        parallel_side_geometry.union(complex_multibranch_lobe_geometry)
+                        .intersection(drivezone_union)
+                        .buffer(0)
+                    )
+                if parallel_side_mask is not None:
+                    parallel_side_mask = (
+                        parallel_side_mask | _rasterize_geometries(grid, [complex_multibranch_lobe_geometry])
+                    ) & drivezone_mask
+        if (
+            len(divstrip_context["selected_component_ids"]) > 1
+            and cross_section_surface_geometry is not None
+            and not cross_section_surface_geometry.is_empty
+            and event_side_drivezone_geometry is not None
+            and not event_side_drivezone_geometry.is_empty
+        ):
+            clipped_event_side_geometry = event_side_drivezone_geometry.intersection(
+                cross_section_surface_geometry.buffer(
+                    component_side_clip_buffer_m,
+                    cap_style=2,
+                    join_style=2,
+                )
+            ).buffer(0)
+            if not clipped_event_side_geometry.is_empty:
+                event_side_drivezone_geometry = clipped_event_side_geometry
         cross_section_surface_mask = (
             np.zeros_like(drivezone_mask, dtype=bool)
             if cross_section_surface_geometry.is_empty
@@ -4934,10 +6755,15 @@ def run_t02_stage4_divmerge_virtual_polygon(
             drivezone_component_mask = _binary_close(drivezone_component_mask, iterations=1)
             if parallel_side_mask is not None:
                 drivezone_component_mask &= parallel_side_mask
-        if drivezone_component_mask is not None and divstrip_constraint_geometry is not None and not divstrip_constraint_geometry.is_empty:
+        divstrip_exclusion_geometry = (
+            divstrip_constraint_geometry
+            if divstrip_constraint_geometry is not None and not divstrip_constraint_geometry.is_empty
+            else local_divstrip_union
+        )
+        if drivezone_component_mask is not None and divstrip_exclusion_geometry is not None and not divstrip_exclusion_geometry.is_empty:
             divstrip_mask = _rasterize_geometries(
                 grid,
-                [local_divstrip_union.buffer(DIVSTRIP_EXCLUSION_BUFFER_M, join_style=2)],
+                [divstrip_exclusion_geometry.buffer(DIVSTRIP_EXCLUSION_BUFFER_M, join_style=2)],
             )
             drivezone_component_mask &= ~divstrip_mask
         component_mask = (
@@ -4960,10 +6786,11 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "Stage4 raster support could not form an event-connected component.",
             )
         clipping_mask = axis_window_mask.copy()
-        if cross_section_surface_mask.any():
-            clipping_mask &= (cross_section_surface_mask | event_side_support_mask | seed_mask)
-        elif event_side_support_mask.any():
-            clipping_mask &= (event_side_support_mask | seed_mask)
+        if not allow_full_axis_drivezone_fill:
+            if cross_section_surface_mask.any():
+                clipping_mask &= (cross_section_surface_mask | event_side_support_mask | seed_mask)
+            elif event_side_support_mask.any():
+                clipping_mask &= (event_side_support_mask | seed_mask)
         clipped_component_mask = component_mask & clipping_mask
         if clipped_component_mask.any():
             reseeded_component_mask = _extract_seed_component(clipped_component_mask, seed_mask)
@@ -5021,9 +6848,14 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 )
             ):
                 polygon_geometry = clipped_polygon
-        if divstrip_constraint_geometry is not None and not divstrip_constraint_geometry.is_empty:
+        divstrip_geometry_to_exclude = (
+            divstrip_constraint_geometry
+            if divstrip_constraint_geometry is not None and not divstrip_constraint_geometry.is_empty
+            else local_divstrip_union
+        )
+        if divstrip_geometry_to_exclude is not None and not divstrip_geometry_to_exclude.is_empty:
             polygon_without_divstrip = polygon_geometry.difference(
-                local_divstrip_union.buffer(DIVSTRIP_EXCLUSION_BUFFER_M, join_style=2)
+                divstrip_geometry_to_exclude.buffer(DIVSTRIP_EXCLUSION_BUFFER_M, join_style=2)
             ).buffer(0)
             if not polygon_without_divstrip.is_empty:
                 polygon_geometry = polygon_without_divstrip
@@ -5052,8 +6884,18 @@ def run_t02_stage4_divmerge_virtual_polygon(
             road_branches=road_branches,
             main_branch_ids=main_branch_ids,
             local_roads=local_roads,
+            selected_roads=selected_roads,
             kind_2=operational_kind_2,
             drivezone_union=drivezone_union,
+            support_clip_geometry=(
+                event_side_drivezone_geometry
+                if event_side_drivezone_geometry is not None and not event_side_drivezone_geometry.is_empty
+                else (
+                    parallel_side_geometry
+                    if parallel_side_geometry is not None and not parallel_side_geometry.is_empty
+                    else axis_window_geometry
+                )
+            ),
         )
         polygon_geometry = primary_rcsdnode_tolerance["extended_polygon_geometry"]
         effective_target_rc_nodes = _resolve_effective_target_rc_nodes(
@@ -5077,6 +6919,20 @@ def run_t02_stage4_divmerge_virtual_polygon(
             review_reasons.append(STATUS_CONTINUOUS_CHAIN_REVIEW)
         if kind_resolution["ambiguous"]:
             review_reasons.append(STATUS_COMPLEX_KIND_AMBIGUOUS)
+        tolerance_reason = primary_rcsdnode_tolerance.get("reason")
+        suppress_inferred_rcsdnode_review = (
+            not direct_target_rc_nodes
+            and rcsdnode_seed_mode == "inferred_local_trunk_window"
+            and str(tolerance_reason) in {
+                REASON_RCSDNODE_MAIN_OUT_OF_WINDOW,
+                REASON_RCSDNODE_MAIN_OFF_TRUNK,
+                REASON_RCSDNODE_MAIN_DIRECTION_INVALID,
+            }
+        )
+        if tolerance_reason and not suppress_inferred_rcsdnode_review:
+            review_reasons.append(str(tolerance_reason))
+        if coverage_missing_ids:
+            review_reasons.append(REASON_COVERAGE_INCOMPLETE)
         acceptance_class = "accepted" if not review_reasons else "review_required"
         acceptance_reason = "stable" if not review_reasons else review_reasons[0]
         success = acceptance_class == "accepted"
@@ -5132,7 +6988,16 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "event_drivezone_split_s_m": event_reference["s_drivezone_split_m"],
                 "event_span_start_m": event_span_window["start_offset_m"],
                 "event_span_end_m": event_span_window["end_offset_m"],
+                "semantic_protected_start_m": event_span_window.get("semantic_protected_start_m"),
+                "semantic_protected_end_m": event_span_window.get("semantic_protected_end_m"),
+                "semantic_prev_boundary_offset_m": event_span_window.get("semantic_prev_boundary_offset_m"),
+                "semantic_next_boundary_offset_m": event_span_window.get("semantic_next_boundary_offset_m"),
                 "cross_section_sample_count": cross_section_sample_count,
+                "parallel_side_sign": parallel_side_sign,
+                "parallel_centerline_road_id": parallel_centerline_road_id,
+                "parallel_competitor_present": int(has_parallel_competitor),
+                "parallel_excluded_road_count": len(parallel_excluded_road_ids),
+                "allow_full_axis_drivezone_fill": int(allow_full_axis_drivezone_fill),
                 "branches_used_count": len(selected_branch_ids),
                 "reverse_tip_attempted": int(reverse_tip_attempted),
                 "reverse_tip_used": int(reverse_tip_used),
@@ -5166,6 +7031,10 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "kind_resolution_mode": kind_resolution["kind_resolution_mode"],
                 "kind_resolution_ambiguous": kind_resolution["ambiguous"],
                 "multibranch_enabled": multibranch_context["enabled"],
+                "multibranch_main_pair_item_ids": multibranch_context.get("main_pair_item_ids", []),
+                "multibranch_event_candidates": multibranch_context.get("event_candidates", []),
+                "multibranch_lobe_diags": complex_multibranch_lobe_diags,
+                "selected_component_surface_diags": selected_component_surface_diags,
                 "selected_event_branch_ids": selected_event_branch_ids,
                 "event_axis_branch_id": event_axis_branch_id,
                 "event_origin_source": event_origin_source,
@@ -5180,7 +7049,16 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "event_drivezone_split_s_m": event_reference["s_drivezone_split_m"],
                 "event_span_start_m": event_span_window["start_offset_m"],
                 "event_span_end_m": event_span_window["end_offset_m"],
+                "semantic_protected_start_m": event_span_window.get("semantic_protected_start_m"),
+                "semantic_protected_end_m": event_span_window.get("semantic_protected_end_m"),
+                "semantic_prev_boundary_offset_m": event_span_window.get("semantic_prev_boundary_offset_m"),
+                "semantic_next_boundary_offset_m": event_span_window.get("semantic_next_boundary_offset_m"),
                 "cross_section_sample_count": cross_section_sample_count,
+                "parallel_side_sign": parallel_side_sign,
+                "parallel_centerline_road_id": parallel_centerline_road_id,
+                "parallel_competitor_present": has_parallel_competitor,
+                "parallel_excluded_road_count": len(parallel_excluded_road_ids),
+                "allow_full_axis_drivezone_fill": allow_full_axis_drivezone_fill,
                 "branches_used_count": len(selected_branch_ids),
                 "position_source_final": position_source_final,
                 "related_mainnodeids": chain_context["related_mainnodeids"],
@@ -5206,6 +7084,10 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "kind_resolution_mode": kind_resolution["kind_resolution_mode"],
                 "kind_resolution_ambiguous": kind_resolution["ambiguous"],
                 "multibranch_enabled": multibranch_context["enabled"],
+                "multibranch_main_pair_item_ids": multibranch_context.get("main_pair_item_ids", []),
+                "multibranch_event_candidates": multibranch_context.get("event_candidates", []),
+                "multibranch_lobe_diags": complex_multibranch_lobe_diags,
+                "selected_component_surface_diags": selected_component_surface_diags,
                 "selected_event_branch_ids": selected_event_branch_ids,
                 "event_axis_branch_id": event_axis_branch_id,
                 "event_origin_source": event_origin_source,
@@ -5220,7 +7102,16 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "event_drivezone_split_s_m": event_reference["s_drivezone_split_m"],
                 "event_span_start_m": event_span_window["start_offset_m"],
                 "event_span_end_m": event_span_window["end_offset_m"],
+                "semantic_protected_start_m": event_span_window.get("semantic_protected_start_m"),
+                "semantic_protected_end_m": event_span_window.get("semantic_protected_end_m"),
+                "semantic_prev_boundary_offset_m": event_span_window.get("semantic_prev_boundary_offset_m"),
+                "semantic_next_boundary_offset_m": event_span_window.get("semantic_next_boundary_offset_m"),
                 "cross_section_sample_count": cross_section_sample_count,
+                "parallel_side_sign": parallel_side_sign,
+                "parallel_centerline_road_id": parallel_centerline_road_id,
+                "parallel_competitor_present": has_parallel_competitor,
+                "parallel_excluded_road_count": len(parallel_excluded_road_ids),
+                "allow_full_axis_drivezone_fill": allow_full_axis_drivezone_fill,
                 "branches_used_count": len(selected_branch_ids),
                 "position_source_final": position_source_final,
                 "related_mainnodeids": chain_context["related_mainnodeids"],
@@ -5306,10 +7197,28 @@ def run_t02_stage4_divmerge_virtual_polygon(
             "multibranch": {
                 "multibranch_enabled": multibranch_context["enabled"],
                 "multibranch_n": multibranch_context["n"],
+                "main_pair_item_ids": multibranch_context.get("main_pair_item_ids", []),
                 "event_candidate_count": multibranch_context["event_candidate_count"],
+                "event_candidates": multibranch_context.get("event_candidates", []),
                 "selected_event_index": multibranch_context["selected_event_index"],
                 "selected_event_branch_ids": selected_event_branch_ids,
                 "branches_used_count": len(selected_branch_ids),
+                "selected_component_surface_count": len(
+                    [
+                        item
+                        for item in selected_component_surface_diags
+                        if bool(item.get("ok", False)) and item.get("component_index") != "connector"
+                    ]
+                ),
+                "selected_component_surface_diags": selected_component_surface_diags,
+                "lobe_count": len(
+                    [
+                        item
+                        for item in complex_multibranch_lobe_diags
+                        if bool(item.get("ok", False))
+                    ]
+                ),
+                "lobe_diags": complex_multibranch_lobe_diags,
                 "event_axis_branch_id": event_axis_branch_id,
             "event_origin_source": event_origin_source,
             "event_recenter_applied": bool(event_recenter[1]["applied"]),
@@ -5343,9 +7252,18 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 "event_drivezone_split_s_m": event_reference["s_drivezone_split_m"],
                 "event_span_start_m": event_span_window["start_offset_m"],
                 "event_span_end_m": event_span_window["end_offset_m"],
+                "semantic_protected_start_m": event_span_window.get("semantic_protected_start_m"),
+                "semantic_protected_end_m": event_span_window.get("semantic_protected_end_m"),
+                "semantic_prev_boundary_offset_m": event_span_window.get("semantic_prev_boundary_offset_m"),
+                "semantic_next_boundary_offset_m": event_span_window.get("semantic_next_boundary_offset_m"),
                 "candidate_offset_count": event_span_window["candidate_offset_count"],
                 "expansion_source": event_span_window["expansion_source"],
                 "cross_section_sample_count": cross_section_sample_count,
+                "parallel_side_sign": parallel_side_sign,
+                "parallel_centerline_road_id": parallel_centerline_road_id,
+                "parallel_competitor_present": has_parallel_competitor,
+                "parallel_excluded_road_count": len(parallel_excluded_road_ids),
+                "allow_full_axis_drivezone_fill": allow_full_axis_drivezone_fill,
             },
             "continuous_chain": {
                 "chain_component_id": chain_context["chain_component_id"],

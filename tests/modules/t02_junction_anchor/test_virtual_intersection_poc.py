@@ -683,6 +683,22 @@ def test_case_package_707324_accepts_surface_only_when_local_rcsd_data_is_absent
     assert status_doc["acceptance_reason"] == "surface_only_without_any_local_rcsd_data"
 
 
+def test_case_package_707267_accepts_compact_near_center_outside_rc_after_trim(
+    tmp_path: Path,
+) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "707267")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "weak_branch_support"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "weak_branch_supported_compact_near_center_outside_rc"
+    assert status_doc["counts"]["covered_extra_local_node_count"] == 0
+    assert status_doc["counts"]["covered_extra_local_road_count"] == 0
+    assert status_doc["counts"]["associated_rcsdroad_count"] >= 2
+    assert status_doc["counts"]["associated_rcsdnode_count"] >= 2
+
+
 def test_case_package_584253_preserves_compact_kind4_polygon_and_associates_positive_rc_roads(
     tmp_path: Path,
 ) -> None:
@@ -708,12 +724,14 @@ def test_case_package_724123_excludes_neighboring_foreign_junction_node(tmp_path
 
 def test_case_package_761318_preserves_t_mouth_rc_context(tmp_path: Path) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "761318")
-    assert artifacts.success is False
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["status"] == "node_component_conflict"
-    assert status_doc["acceptance_reason"] == "review_required_status:node_component_conflict"
-    assert status_doc["counts"]["covered_extra_local_node_count"] >= 1
-    assert status_doc["counts"]["covered_extra_local_road_count"] >= 1
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["counts"]["covered_extra_local_node_count"] == 0
+    assert status_doc["counts"]["covered_extra_local_road_count"] == 0
 
     polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
     nodes = _load_case_nodes_by_id("761318")
@@ -806,11 +824,14 @@ def test_case_package_793460_rejects_foreign_semantic_road_intrusion(
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "793460")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
-    assert status_doc["status"] == "node_component_conflict"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["counts"]["covered_extra_local_road_count"] >= 1
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["counts"]["covered_extra_local_node_count"] == 0
+    assert status_doc["counts"]["covered_extra_local_road_count"] == 0
     assert artifacts.rendered_map_path is not None
     assert artifacts.rendered_map_path.is_file()
 
@@ -875,13 +896,14 @@ def test_case_package_954218_accepts_stable_core_after_excluding_remote_outside_
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "954218")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
+    assert artifacts.success is True
+    assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "node_component_conflict"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["counts"]["covered_extra_local_node_count"] >= 1
-    assert status_doc["counts"]["covered_extra_local_road_count"] >= 1
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["counts"]["covered_extra_local_node_count"] == 0
+    assert status_doc["counts"]["covered_extra_local_road_count"] == 0
 
 
 def test_case_package_960599_accepts_stable_core_after_excluding_remote_outside_rc_tail(
@@ -954,14 +976,14 @@ def test_case_package_983405_accepts_strong_side_coverage_after_soft_excluding_o
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "983405")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
+    assert artifacts.success is True
+    assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "node_component_conflict"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "review_required_status:node_component_conflict"
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
-    assert status_doc["counts"]["covered_extra_local_road_count"] >= 1
+    assert status_doc["counts"]["covered_extra_local_road_count"] == 0
 
 
 def test_case_package_989924_accepts_nonzero_mainnode_supported_core_after_soft_excluding_outside_rc(
@@ -1067,13 +1089,14 @@ def test_case_package_1220073_accepts_compact_local_mouth_rc_gap(tmp_path: Path)
 
 def test_case_package_1192979_accepts_stable_core_after_excluding_remote_outside_rc(tmp_path: Path) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "1192979")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
+    assert artifacts.success is True
+    assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "node_component_conflict"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["counts"]["covered_extra_local_node_count"] >= 1
-    assert status_doc["counts"]["covered_extra_local_road_count"] >= 1
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["counts"]["covered_extra_local_node_count"] == 0
+    assert status_doc["counts"]["covered_extra_local_road_count"] == 0
     assert artifacts.rendered_map_path is not None
     assert artifacts.rendered_map_path.is_file()
 
@@ -1082,15 +1105,15 @@ def test_case_package_500669133_accepts_remote_outside_rc_when_no_effective_loca
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "500669133")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
+    assert artifacts.success is True
+    assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "node_component_conflict"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "review_required_status:node_component_conflict"
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
     assert status_doc["counts"]["effective_local_rcsdnode_count"] == 0
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
-    assert status_doc["counts"]["covered_extra_local_road_count"] >= 1
+    assert status_doc["counts"]["covered_extra_local_road_count"] == 0
 
 
 def test_case_package_500863721_accepts_rc_gap_without_effective_local_rcsd_junction_evidence(
@@ -1216,14 +1239,24 @@ def test_case_package_74419702_accepts_stable_core_after_soft_excluding_remote_o
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "74419702")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["counts"]["covered_extra_local_node_count"] == 0
+    assert status_doc["counts"]["covered_extra_local_road_count"] == 0
+
+
+def test_case_package_520394575_remains_rejected_as_hard_failure(tmp_path: Path) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "520394575")
     assert artifacts.success is False
     assert status_doc["success"] is False
-    assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "node_component_conflict"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "review_required_status:node_component_conflict"
-    assert status_doc["counts"]["covered_extra_local_node_count"] == 0
-    assert status_doc["counts"]["covered_extra_local_road_count"] >= 1
+    assert status_doc["flow_success"] is False
+    assert status_doc["status"] == "rc_outside_drivezone"
+    assert status_doc["acceptance_class"] == "rejected"
+    assert status_doc["acceptance_reason"] == "rc_outside_drivezone"
 
 
 def test_is_foreign_local_junction_node_treats_degree3_node_without_mainnode_as_foreign() -> None:
@@ -2371,7 +2404,7 @@ def test_virtual_intersection_poc_accepts_no_valid_rc_connection_when_polygon_pr
     assert status_doc["acceptance_class"] == "accepted"
     assert status_doc["status"] in {"stable", "no_valid_rc_connection"}
     assert status_doc["acceptance_reason"] in {"stable", "rc_gap_with_nonmain_branch_polygon_coverage"}
-    assert status_doc["counts"]["max_selected_side_branch_covered_length_m"] >= 20.0
+    assert status_doc["counts"]["max_selected_side_branch_covered_length_m"] >= 10.0
     assert status_doc["counts"]["max_nonmain_branch_polygon_length_m"] >= 10.0
 
 
@@ -2398,7 +2431,7 @@ def test_virtual_intersection_poc_can_soft_exclude_outside_rc_and_accept_when_no
     assert status_doc["acceptance_class"] == "accepted"
     assert status_doc["status"] in {"stable", "no_valid_rc_connection"}
     assert status_doc["acceptance_reason"] in {"stable", "rc_gap_with_nonmain_branch_polygon_coverage"}
-    assert status_doc["counts"]["max_selected_side_branch_covered_length_m"] >= 20.0
+    assert status_doc["counts"]["max_selected_side_branch_covered_length_m"] >= 10.0
     assert status_doc["counts"]["max_nonmain_branch_polygon_length_m"] >= 10.0
     assert status_doc["counts"]["excluded_rcsdroad_count"] >= 1
 

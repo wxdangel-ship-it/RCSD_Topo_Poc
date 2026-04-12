@@ -7,6 +7,7 @@ from pathlib import Path
 
 import fiona
 import numpy as np
+import pytest
 from shapely.geometry import LineString, Point, Polygon, box, shape
 from shapely.ops import unary_union
 
@@ -50,6 +51,23 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
 )
 
 CASE_PACKAGE_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor")
+
+
+def _existing_case_root(case_id: str, preferred_root: Path) -> Path:
+    preferred_case_root = preferred_root / case_id
+    if preferred_case_root.exists():
+        return preferred_root
+    fallback_case_root = CASE_PACKAGE_ROOT / case_id
+    if fallback_case_root.exists():
+        return CASE_PACKAGE_ROOT
+    return preferred_root
+
+
+def _required_case_root(case_id: str, preferred_root: Path) -> Path:
+    root = _existing_case_root(case_id, preferred_root)
+    if not (root / case_id).exists():
+        pytest.skip(f"case fixture '{case_id}' is not available in {preferred_root} or {CASE_PACKAGE_ROOT}")
+    return root
 
 
 def _load_vector_doc(path: Path) -> dict:
@@ -693,20 +711,28 @@ def test_virtual_intersection_poc_writes_failure_styled_render_when_effect_not_a
     assert int(background[0]) > int(background[1]) + 5
 
 
-def test_case_package_698330_accepts_effect_success(tmp_path: Path) -> None:
+def test_case_package_698330_accepts_single_sided_trimmed_t_mouth_without_opposite_lane_overlap(
+    tmp_path: Path,
+) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "698330")
     assert artifacts.success is True
     assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "stable"
     assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["counts"]["max_target_group_foreign_semantic_road_overlap_m"] <= 1.0
     assert artifacts.rendered_map_path is not None
     assert artifacts.rendered_map_path.is_file()
     polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
     nodes = _load_case_nodes_by_id("698330")
+    roads = _load_case_roads_by_id("698330")
     assert polygon.buffer(0.5).covers(nodes["698330"])
     assert polygon.buffer(0.5).covers(nodes["709749"]) is False
     assert polygon.buffer(0.5).covers(nodes["607669479"]) is False
     assert polygon.buffer(0.5).covers(nodes["709743"]) is False
+    assert abs(polygon.intersection(roads["621944468"]).length) > 0.5
+    assert abs(polygon.intersection(roads["972225"]).length) <= 0.5
+    assert abs(polygon.intersection(roads["972227"]).length) > 0.5
 
 
 def test_case_package_699885_accepts_effect_success(tmp_path: Path) -> None:
@@ -733,25 +759,28 @@ def test_case_package_706389_accepts_t_mouth_rc_context_without_covering_foreign
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "706389")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
+    assert artifacts.success is True
+    assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
     assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "stable_with_rc_group_semantic_gap"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
     assert artifacts.rendered_map_path is not None
     assert artifacts.rendered_map_path.is_file()
 
     nodes = _load_case_nodes_by_id("706389")
     roads = _load_case_roads_by_id("706389")
     rcsd_nodes = _load_case_rcsd_nodes_by_id("706389")
-    assert status_doc["counts"]["associated_rcsdroad_count"] >= 2
-    assert status_doc["counts"]["associated_rcsdnode_count"] >= 3
+    assert status_doc["counts"]["associated_rcsdroad_count"] >= 4
+    assert status_doc["counts"]["associated_rcsdnode_count"] >= 8
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
+    assert not status_doc["excluded_negative_rc_groups"]
     polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
     assert polygon.buffer(0.5).covers(nodes["706389"])
     assert polygon.buffer(0.5).covers(nodes["522607717"]) is False
+    assert polygon.buffer(0.5).covers(rcsd_nodes["5395732498090127"])
+    assert polygon.buffer(0.5).covers(rcsd_nodes["5395732498090139"])
     assert abs(polygon.intersection(roads["627726937"]).length) <= 0.5
     assert abs(polygon.intersection(roads["527732809"]).length) <= 0.5
 
@@ -793,33 +822,64 @@ def test_case_package_584253_preserves_compact_kind4_polygon_and_associates_posi
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
 
 
-def test_case_package_724123_excludes_neighboring_foreign_junction_node(tmp_path: Path) -> None:
+def test_case_package_724123_accepts_trimmed_single_sided_corridor_without_opposite_lane_overlap(
+    tmp_path: Path,
+) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "724123")
     assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "stable"
     assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["counts"]["max_target_group_foreign_semantic_road_overlap_m"] <= 1.0
 
     polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
     nodes = _load_case_nodes_by_id("724123")
+    roads = _load_case_roads_by_id("724123")
     assert polygon.buffer(0.5).covers(nodes["724123"])
     assert polygon.buffer(0.5).covers(nodes["723406"]) is False
     assert polygon.buffer(0.5).covers(nodes["14445461"]) is False
+    assert abs(polygon.intersection(roads["1024939"]).length) <= 0.5
 
 
 def test_case_package_761318_preserves_t_mouth_rc_context(tmp_path: Path) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "761318")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
+    assert artifacts.success is True
+    assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
-    assert status_doc["acceptance_class"] == "review_required"
+    assert status_doc["acceptance_class"] == "accepted"
     assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_reason"] == "stable_with_incomplete_t_mouth_rc_context"
+    assert status_doc["acceptance_reason"] == "stable"
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
+    assert status_doc["counts"]["associated_rcsdroad_count"] >= 3
+    assert status_doc["counts"]["associated_rcsdnode_count"] >= 2
+    assert not status_doc["excluded_negative_rc_groups"]
 
     polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
     nodes = _load_case_nodes_by_id("761318")
+    roads = _load_case_roads_by_id("761318")
+    rcsd_nodes = _load_case_rcsd_nodes_by_id("761318")
     assert polygon.buffer(0.5).covers(nodes["761318"])
     assert polygon.buffer(0.5).covers(nodes["14547400"])
+    assert polygon.buffer(0.5).covers(rcsd_nodes["5384375395091111"])
+    assert abs(polygon.intersection(roads["605422519"]).length) <= 0.5
+
+
+def test_case_package_500860756_remains_successful_after_kind2048_main_rc_group_preservation(
+    tmp_path: Path,
+) -> None:
+    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "500860756")
+    assert artifacts.success is True
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["status"] == "stable"
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["counts"]["covered_extra_local_node_count"] == 0
+    assert status_doc["counts"]["covered_extra_local_road_count"] == 0
+    assert status_doc["selected_positive_rc_groups"] == ["rc_group_1", "rc_group_2"]
+    assert not status_doc["excluded_negative_rc_groups"]
 
 
 def test_case_package_769081_excludes_foreign_mainnode_group_nearby_junction(tmp_path: Path) -> None:
@@ -934,7 +994,11 @@ def test_case_package_861032_accepts_supported_compact_mainline_after_excluding_
 
 
 def test_case_package_912232_accepts_rc_gap_without_connected_local_rcsd_evidence(tmp_path: Path) -> None:
-    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "912232", case_root=Path.cwd())
+    artifacts, status_doc, _ = _run_case_package_case(
+        tmp_path,
+        "912232",
+        case_root=_required_case_root("912232", Path.cwd()),
+    )
     assert artifacts.success is True
     assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
@@ -944,7 +1008,11 @@ def test_case_package_912232_accepts_rc_gap_without_connected_local_rcsd_evidenc
 
 
 def test_case_package_1126819_accepts_surface_only_after_excluding_disconnected_outside_rc(tmp_path: Path) -> None:
-    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "1126819", case_root=Path.cwd())
+    artifacts, status_doc, _ = _run_case_package_case(
+        tmp_path,
+        "1126819",
+        case_root=_required_case_root("1126819", Path.cwd()),
+    )
     assert artifacts.success is True
     assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
@@ -954,7 +1022,11 @@ def test_case_package_1126819_accepts_surface_only_after_excluding_disconnected_
 
 
 def test_case_package_1180126_accepts_surface_only_after_excluding_disconnected_outside_rc(tmp_path: Path) -> None:
-    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "1180126", case_root=Path.cwd())
+    artifacts, status_doc, _ = _run_case_package_case(
+        tmp_path,
+        "1180126",
+        case_root=_required_case_root("1180126", Path.cwd()),
+    )
     assert artifacts.success is True
     assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
@@ -964,7 +1036,11 @@ def test_case_package_1180126_accepts_surface_only_after_excluding_disconnected_
 
 
 def test_case_package_967104_accepts_excluded_negative_rc_tail_when_stable_core_remains(tmp_path: Path) -> None:
-    artifacts, status_doc, _ = _run_case_package_case(tmp_path, "967104", case_root=Path.cwd())
+    artifacts, status_doc, _ = _run_case_package_case(
+        tmp_path,
+        "967104",
+        case_root=_required_case_root("967104", Path.cwd()),
+    )
     assert artifacts.success is True
     assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
@@ -1028,16 +1104,16 @@ def test_case_package_788820_accepts_compact_multi_group_core_after_soft_excludi
     assert status_doc["acceptance_reason"] == "stable"
 
 
-def test_case_package_851884_accepts_compact_single_group_core_after_soft_excluding_outside_rc(
+def test_case_package_851884_marks_unrelated_opposite_lane_corridor_for_review(
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "851884")
-    assert artifacts.success is True
-    assert status_doc["success"] is True
+    assert artifacts.success is False
+    assert status_doc["success"] is False
     assert status_doc["flow_success"] is True
     assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_class"] == "accepted"
-    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["acceptance_class"] == "review_required"
+    assert status_doc["acceptance_reason"] == "stable_with_unrelated_opposite_lane_corridor"
     polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
     nodes = _load_case_nodes_by_id("851884")
     assert polygon.buffer(0.5).covers(nodes["851885"]) is False

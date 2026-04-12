@@ -98,6 +98,10 @@ POLYGON_SUPPORT_MIN_LINE_COVERAGE_RATIO = 0.9
 POLYGON_SMALL_HOLE_AREA_M2 = 18.0
 POLYGON_FINAL_COMPONENT_MIN_AREA_M2 = 1.0
 POLYGON_FINAL_SMOOTH_M = 1.0
+POLYGON_FINAL_GEOMETRY_CLEANUP_OPEN_M = 0.6
+POLYGON_FINAL_GEOMETRY_CLEANUP_CLOSE_M = 0.9
+POLYGON_FINAL_GEOMETRY_CLEANUP_FOCUS_BUFFER_M = 16.0
+POLYGON_FINAL_GEOMETRY_CLEANUP_MIN_MOVABLE_AREA_M2 = 4.0
 POLYGON_RC_EXCLUSION_BUFFER_FACTOR = 1.8
 POLYGON_RC_EXCLUSION_KEEP_NODE_BUFFER_M = 4.5
 POLYGON_RC_NODE_CONNECTOR_HALF_WIDTH_M = 1.2
@@ -114,6 +118,7 @@ POLYGON_FOREIGN_INCIDENT_ROAD_ENDPOINT_INTRUSION_MIN_M = 4.0
 POLYGON_FOREIGN_TARGET_ARM_KEEP_LENGTH_M = 10.0
 POLYGON_FOREIGN_ROAD_OVERLAP_MIN_M = 1.0
 POLYGON_FOREIGN_TARGET_ARM_OVERREACH_TOLERANCE_M = 2.5
+POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M = 1.0
 POLYGON_COMPACT_RC_ENDPOINT_MIN_DISTANCE_M = 20.0
 POLYGON_COMPACT_RC_ENDPOINT_MAX_DISTANCE_M = 45.0
 POLYGON_COMPACT_RC_MAX_LENGTH_M = 80.0
@@ -214,6 +219,13 @@ class BranchEvidence:
     conflict_excluded: bool = False
     evidence_level: str = "edge_only"
     polygon_length_m: float = 0.0
+
+
+@dataclass(frozen=True)
+class SingleSidedTMouthCorridorPattern:
+    main_branch_ids: tuple[str, ...]
+    side_branch_ids: tuple[str, ...]
+    shared_positive_rc_groups: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -2138,6 +2150,8 @@ def _build_positive_negative_rc_groups(
     rc_branches: list[BranchEvidence],
     risks: list[str],
     has_rc_group_nodes: bool,
+    local_rc_road_count: int = 0,
+    local_rc_node_count: int = 0,
 ) -> tuple[set[str], set[str]]:
     rc_branch_by_id = {branch.branch_id: branch for branch in rc_branches}
     road_branch_by_id = {branch.branch_id: branch for branch in road_branches}
@@ -2161,6 +2175,16 @@ def _build_positive_negative_rc_groups(
         and (branch.selected_for_polygon or _is_rc_only_bridge_candidate(branch))
     ]
     if kind_2 == 2048 and not has_rc_group_nodes:
+        main_branches_with_rc = [
+            branch
+            for branch in road_branches
+            if branch.is_main_direction and branch.selected_for_polygon and branch.rcsdroad_ids
+        ]
+        shared_main_rc_groups: set[str] = set()
+        if len(main_branches_with_rc) >= 2:
+            shared_main_rc_groups = set(main_branches_with_rc[0].rcsdroad_ids)
+            for branch in main_branches_with_rc[1:]:
+                shared_main_rc_groups &= set(branch.rcsdroad_ids)
         candidates: dict[str, tuple[float, str]] = {}
         for branch in road_branches:
             if not branch.selected_for_polygon and not _is_rc_only_bridge_candidate(branch):
@@ -2173,6 +2197,36 @@ def _build_positive_negative_rc_groups(
                 current = candidates.get(rc_group_id)
                 if current is None or score > current[0]:
                     candidates[rc_group_id] = (score, branch.branch_id)
+        dense_local_rc_context = (
+            local_rc_road_count >= 20
+            and local_rc_node_count >= 15
+        )
+        strong_side_rc_groups = {
+            rc_group_id
+            for branch in side_branches
+            if branch.evidence_level != "edge_only"
+            and branch.drivezone_support_m >= 10.0
+            and branch.road_support_m >= 8.0
+            for rc_group_id in branch.rcsdroad_ids
+        }
+        has_strong_selected_side_mouth = any(
+            branch.selected_for_polygon
+            and branch.evidence_level != "edge_only"
+            and branch.drivezone_support_m >= 10.0
+            and branch.road_support_m >= 8.0
+            for branch in side_branches
+        )
+        if (
+            dense_local_rc_context
+            and shared_main_rc_groups
+            and (strong_side_rc_groups or has_strong_selected_side_mouth)
+        ):
+            positive.update(shared_main_rc_groups)
+            positive.update(strong_side_rc_groups)
+            for rc_group_id in candidates:
+                if rc_group_id not in positive:
+                    negative.add(rc_group_id)
+            return positive, negative
         ranked_candidates = sorted(
             ((score, branch_id, rc_group_id) for rc_group_id, (score, branch_id) in candidates.items()),
             reverse=True,
@@ -4103,7 +4157,11 @@ def _build_polygon_support_clip(
     local_rc_nodes: list[ParsedNode],
     support_road_ids: set[str],
     support_node_ids: set[str],
+    partial_support_road_ids: set[str] | None = None,
+    support_clip_by_road_id: dict[str, BaseGeometry] | None = None,
 ) -> BaseGeometry:
+    partial_support_road_ids = partial_support_road_ids or set()
+    support_clip_by_road_id = support_clip_by_road_id or {}
     simple_center_support = len(group_nodes) <= 1 and len(support_node_ids) <= 1
     center_segment_extension_m = (
         8.0 if simple_center_support else POLYGON_LOCAL_RC_SEGMENT_EXTENSION_M
@@ -4178,6 +4236,16 @@ def _build_polygon_support_clip(
             and not road.geometry.intersection(support_focus_geometry).is_empty
         )
     )
+    clip_geometries.extend(
+        support_clip_by_road_id[road_id]
+        for road_id in partial_support_road_ids
+        if (
+            road_id in support_road_ids
+            and road_id in support_clip_by_road_id
+            and support_clip_by_road_id[road_id] is not None
+            and not support_clip_by_road_id[road_id].is_empty
+        )
+    )
     clip_geometries.extend(support_node_clip_geometries)
     clip_geometries = [geometry for geometry in clip_geometries if not geometry.is_empty]
     if not clip_geometries:
@@ -4193,6 +4261,8 @@ def _build_associated_output_clip(
     local_rc_nodes: list[ParsedNode],
     support_road_ids: set[str] | list[str],
     support_node_ids: set[str] | list[str],
+    partial_support_road_ids: set[str] | list[str] | None = None,
+    support_clip_by_road_id: dict[str, BaseGeometry] | None = None,
 ) -> BaseGeometry:
     """Backward-compatible wrapper for legacy tests expecting this helper name."""
     return _build_polygon_support_clip(
@@ -4202,24 +4272,51 @@ def _build_associated_output_clip(
         local_rc_nodes=local_rc_nodes,
         support_road_ids=set(support_road_ids),
         support_node_ids=set(support_node_ids),
+        partial_support_road_ids=(
+            set(partial_support_road_ids)
+            if partial_support_road_ids is not None
+            else None
+        ),
+        support_clip_by_road_id=support_clip_by_road_id,
     )
 
 
 def _collect_selected_rc_support_road_ids(
     *,
+    representative_kind_2: int | None,
     road_branches: list[BranchEvidence],
     positive_rc_groups: set[str],
     negative_rc_groups: set[str],
     rc_branch_by_id: dict[str, BranchEvidence],
     positive_rc_road_ids: set[str],
+    local_roads: list[ParsedRoad],
     local_rc_roads: list[ParsedRoad],
     analysis_center: Point,
     drivezone_union: BaseGeometry,
-) -> tuple[set[str], dict[str, BaseGeometry]]:
+) -> tuple[set[str], dict[str, BaseGeometry], set[str]]:
     local_rc_road_by_id = {road.road_id: road for road in local_rc_roads}
     selected_rc_support_road_ids: set[str] = set()
     selected_rc_support_clips: dict[str, list[BaseGeometry]] = {}
+    corridor_main_support_road_ids: set[str] = set()
 
+    corridor_pattern = _detect_single_sided_t_mouth_corridor_pattern(
+        representative_kind_2=representative_kind_2,
+        road_branches=road_branches,
+        positive_rc_groups=positive_rc_groups,
+        negative_rc_groups=negative_rc_groups,
+        rc_branch_by_id=rc_branch_by_id,
+        local_rc_roads=local_rc_roads,
+        local_roads=local_roads,
+        analysis_center=analysis_center,
+    )
+    branch_by_id = {branch.branch_id: branch for branch in road_branches}
+    corridor_main_branch_ids = set(corridor_pattern.main_branch_ids) if corridor_pattern is not None else set()
+    corridor_side_branch_ids = set(corridor_pattern.side_branch_ids) if corridor_pattern is not None else set()
+    corridor_shared_positive_rc_groups = (
+        set(corridor_pattern.shared_positive_rc_groups)
+        if corridor_pattern is not None
+        else set()
+    )
     for branch in road_branches:
         if branch.polygon_length_m <= 0.0:
             continue
@@ -4230,12 +4327,28 @@ def _collect_selected_rc_support_road_ids(
         ]
         if not matched_positive_group_ids:
             continue
+        branch_support_length_m = max(float(branch.polygon_length_m or 0.0) + 6.0, 10.0)
+        branch_support_half_width_m = max(RC_ROAD_BUFFER_M * 1.5, SIDE_BRANCH_HALF_WIDTH_M * 1.2)
+        is_corridor_main_branch = (
+            branch.branch_id in corridor_main_branch_ids
+            and bool(corridor_shared_positive_rc_groups.intersection(matched_positive_group_ids))
+        )
+        is_corridor_side_branch = branch.branch_id in corridor_side_branch_ids
+        if is_corridor_main_branch:
+            branch_support_length_m = max(
+                min(branch.drivezone_support_m * 0.35, 32.0),
+                28.0,
+            )
+            branch_support_half_width_m = max(RC_ROAD_BUFFER_M * 1.05, SIDE_BRANCH_HALF_WIDTH_M * 0.75)
+        elif is_corridor_side_branch:
+            branch_support_length_m = max(float(branch.polygon_length_m or 0.0) + 3.5, 8.0)
+            branch_support_half_width_m = max(RC_ROAD_BUFFER_M, SIDE_BRANCH_HALF_WIDTH_M * 0.8)
         branch_support_clip = _branch_ray_geometry(
             analysis_center,
             angle_deg=branch.angle_deg,
-            length_m=max(float(branch.polygon_length_m or 0.0) + 6.0, 10.0),
+            length_m=branch_support_length_m,
         ).buffer(
-            max(RC_ROAD_BUFFER_M * 1.5, SIDE_BRANCH_HALF_WIDTH_M * 1.2),
+            branch_support_half_width_m,
             cap_style=2,
             join_style=2,
         ).intersection(drivezone_union)
@@ -4247,6 +4360,12 @@ def _collect_selected_rc_support_road_ids(
                 for road_id in rc_branch_by_id[group_id].road_ids
                 if road_id in positive_rc_road_ids
             }
+            if is_corridor_main_branch:
+                fallback_positive_roads = fallback_positive_roads or {
+                    road_id
+                    for road_id in rc_branch_by_id[group_id].road_ids
+                    if road_id in local_rc_road_by_id
+                }
             if not fallback_positive_roads:
                 continue
             if not branch.is_main_direction and not branch.conflict_excluded:
@@ -4257,10 +4376,32 @@ def _collect_selected_rc_support_road_ids(
                 local_rc_road_by_id[road_id]
                 for road_id in rc_branch_by_id[group_id].road_ids
                 if road_id in local_rc_road_by_id
-                and local_rc_road_by_id[road_id].geometry.intersects(branch_support_clip)
             ]
             if not candidate_roads:
                 continue
+            if is_corridor_main_branch:
+                corridor_group_geometry = unary_union([road.geometry for road in candidate_roads])
+                corridor_focus_geometry = analysis_center.buffer(
+                    max(branch_support_length_m + 8.0, 20.0)
+                )
+                corridor_group_clip = corridor_group_geometry.intersection(corridor_focus_geometry)
+                if corridor_group_clip is not None and not corridor_group_clip.is_empty:
+                    branch_support_clip = corridor_group_clip.buffer(
+                        branch_support_half_width_m,
+                        cap_style=2,
+                        join_style=2,
+                    ).intersection(drivezone_union)
+            else:
+                candidate_roads = [
+                    road for road in candidate_roads if road.geometry.intersects(branch_support_clip)
+                ]
+                if not candidate_roads:
+                    continue
+            if is_corridor_main_branch:
+                for candidate_road in candidate_roads:
+                    selected_rc_support_clips.setdefault(candidate_road.road_id, []).append(
+                        branch_support_clip
+                    )
             representative_road = min(
                 candidate_roads,
                 key=lambda road: (
@@ -4270,6 +4411,8 @@ def _collect_selected_rc_support_road_ids(
                 ),
             )
             selected_rc_support_road_ids.add(representative_road.road_id)
+            if is_corridor_main_branch:
+                corridor_main_support_road_ids.add(representative_road.road_id)
             if not branch.is_main_direction:
                 selected_rc_support_clips.setdefault(representative_road.road_id, []).append(branch_support_clip)
             else:
@@ -4301,7 +4444,146 @@ def _collect_selected_rc_support_road_ids(
             if len(valid_geometries) > 1
             else valid_geometries[0]
         )
-    return selected_rc_support_road_ids, support_clip_by_road_id
+    return selected_rc_support_road_ids, support_clip_by_road_id, corridor_main_support_road_ids
+
+
+def _detect_single_sided_t_mouth_corridor_pattern(
+    *,
+    representative_kind_2: int | None,
+    road_branches: list[BranchEvidence],
+    positive_rc_groups: set[str],
+    negative_rc_groups: set[str],
+    rc_branch_by_id: dict[str, BranchEvidence] | None = None,
+    local_rc_roads: list[ParsedRoad] | None = None,
+    local_roads: list[ParsedRoad] | None = None,
+    analysis_center: Point | None = None,
+) -> SingleSidedTMouthCorridorPattern | None:
+    if representative_kind_2 != 2048 or negative_rc_groups:
+        return None
+
+    main_branches = [
+        branch
+        for branch in road_branches
+        if branch.is_main_direction
+        and branch.selected_for_polygon
+        and not branch.conflict_excluded
+        and any(group_id in positive_rc_groups for group_id in branch.rcsdroad_ids)
+    ]
+    if len(main_branches) < 2:
+        return None
+
+    shared_positive_rc_groups = set(
+        group_id
+        for group_id in main_branches[0].rcsdroad_ids
+        if group_id in positive_rc_groups
+    )
+    for branch in main_branches[1:]:
+        shared_positive_rc_groups &= {
+            group_id
+            for group_id in branch.rcsdroad_ids
+            if group_id in positive_rc_groups
+        }
+    if not shared_positive_rc_groups:
+        return None
+
+    side_candidates = [
+        branch
+        for branch in road_branches
+        if not branch.is_main_direction
+        and branch.selected_for_polygon
+        and not branch.conflict_excluded
+        and branch.evidence_level != "edge_only"
+        and branch.drivezone_support_m >= 8.0
+        and branch.road_support_m >= 3.0
+    ]
+    if not side_candidates:
+        return None
+
+    side_candidates.sort(
+        key=lambda branch: (
+            branch.rc_support_m + branch.drivezone_support_m + branch.road_support_m,
+            branch.drivezone_support_m,
+            branch.road_support_m,
+        ),
+        reverse=True,
+    )
+    strongest_side_branch = side_candidates[0]
+    if len(main_branches) > 1:
+        local_rc_road_by_id = (
+            {road.road_id: road for road in local_rc_roads}
+            if local_rc_roads
+            else {}
+        )
+        local_road_by_id = (
+            {road.road_id: road for road in local_roads}
+            if local_roads
+            else {}
+        )
+        side_branch_geometries = [
+            local_rc_road_by_id[road_id].geometry
+            for group_id in strongest_side_branch.rcsdroad_ids
+            if group_id in positive_rc_groups and group_id not in negative_rc_groups
+            for road_id in (rc_branch_by_id[group_id].road_ids if rc_branch_by_id and group_id in rc_branch_by_id else [])
+            if road_id in local_rc_road_by_id
+        ]
+        if not side_branch_geometries and local_road_by_id:
+            side_branch_geometries = [
+                local_road_by_id[road_id].geometry
+                for road_id in strongest_side_branch.road_ids
+                if road_id in local_road_by_id
+            ]
+        side_branch_geometries = [
+            geometry
+            for geometry in side_branch_geometries
+            if geometry is not None and not geometry.is_empty
+        ]
+        if side_branch_geometries:
+            side_branch_geometry = unary_union(side_branch_geometries)
+            candidate_main_branch_rankings: dict[str, tuple[float, float, float]] = {}
+            candidate_main_branches: list[BranchEvidence] = []
+            for branch in main_branches:
+                main_branch_geometries = [
+                    local_rc_road_by_id[road_id].geometry
+                    for group_id in branch.rcsdroad_ids
+                    if group_id in shared_positive_rc_groups
+                    for road_id in (rc_branch_by_id[group_id].road_ids if rc_branch_by_id and group_id in rc_branch_by_id else [])
+                    if road_id in local_rc_road_by_id
+                ]
+                if not main_branch_geometries and local_road_by_id:
+                    main_branch_geometries = [
+                        local_road_by_id[road_id].geometry
+                        for road_id in branch.road_ids
+                        if road_id in local_road_by_id
+                    ]
+                main_branch_geometries = [
+                    geometry
+                    for geometry in main_branch_geometries
+                    if geometry is not None and not geometry.is_empty
+                ]
+                if not main_branch_geometries:
+                    continue
+                main_branch_geometry = unary_union(main_branch_geometries)
+                perpendicular_delta_deg = abs(
+                    abs((((branch.angle_deg - strongest_side_branch.angle_deg) + 180.0) % 360.0) - 180.0)
+                    - 90.0
+                )
+                candidate_main_branch_rankings[branch.branch_id] = (
+                    float(side_branch_geometry.distance(main_branch_geometry)),
+                    perpendicular_delta_deg,
+                    -float(branch.drivezone_support_m or 0.0),
+                )
+                candidate_main_branches.append(branch)
+            if candidate_main_branches:
+                selected_main_branch = min(
+                    candidate_main_branches,
+                    key=lambda branch: candidate_main_branch_rankings[branch.branch_id],
+                )
+                main_branches = [selected_main_branch]
+    return SingleSidedTMouthCorridorPattern(
+        main_branch_ids=tuple(branch.branch_id for branch in main_branches),
+        side_branch_ids=(strongest_side_branch.branch_id,),
+        shared_positive_rc_groups=tuple(sorted(shared_positive_rc_groups)),
+    )
 
 
 def _restrict_keep_geometries_to_focus(
@@ -4325,6 +4607,7 @@ def _restrict_keep_geometries_to_focus(
 def _build_selected_rc_support_geometries(
     *,
     selected_rc_support_road_ids: set[str],
+    corridor_main_support_road_ids: set[str],
     polygon_support_rc_road_ids: set[str],
     selected_rc_support_clip_by_road_id: dict[str, BaseGeometry],
     positive_nonmain_bridge_road_ids: set[str],
@@ -4343,15 +4626,27 @@ def _build_selected_rc_support_geometries(
     rc_node_by_id = {node.node_id: node for node in local_rc_nodes}
     local_node_by_id = {node.node_id: node for node in local_nodes}
     target_group_node_ids = {node.node_id for node in group_nodes}
+    selected_rc_support_clip_road_ids = set(selected_rc_support_clip_by_road_id)
+    corridor_main_auxiliary_support_road_ids = (
+        selected_rc_support_clip_road_ids - set(selected_rc_support_road_ids)
+        if corridor_main_support_road_ids
+        else set()
+    )
     support_geometries: list[BaseGeometry] = []
     support_node_ids: set[str] = set()
     endpoint_cover = POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.2
 
-    for road_id in selected_rc_support_road_ids:
+    for road_id in (
+        set(selected_rc_support_road_ids) | corridor_main_auxiliary_support_road_ids
+    ):
         road = road_by_id.get(road_id)
         support_clip = selected_rc_support_clip_by_road_id.get(road_id)
         if road is None or support_clip is None or support_clip.is_empty:
             continue
+        is_corridor_main_support_road = (
+            road_id in corridor_main_support_road_ids
+            or road_id in corridor_main_auxiliary_support_road_ids
+        )
         local_geometry = road.geometry.intersection(
             support_clip.buffer(RC_ROAD_BUFFER_M + 1.0, join_style=1)
         )
@@ -4378,6 +4673,10 @@ def _build_selected_rc_support_geometries(
             local_geometry = local_geometry.difference(unary_union(foreign_local_junction_cap_geometries))
         if local_geometry.is_empty or local_geometry.length <= 0.5:
             continue
+        if is_corridor_main_support_road:
+            corridor_geometry = support_clip.intersection(drivezone_union)
+            if corridor_geometry is not None and not corridor_geometry.is_empty:
+                support_geometries.append(corridor_geometry)
         support_cover = support_clip.buffer(endpoint_cover)
         long_endpoint_support_span = local_geometry.length >= 60.0
         nearby_local_node_distance_cap_m = 14.0 if long_endpoint_support_span else 11.0
@@ -4429,34 +4728,36 @@ def _build_selected_rc_support_geometries(
                 if not endpoint_support_cap.is_empty:
                     support_geometries.append(endpoint_support_cap)
             nearby_local_support_parts: list[BaseGeometry] = []
-            nearby_local_nodes = sorted(
-                (
-                    (float(local_node.geometry.distance(node.geometry)), local_node)
-                    for local_node in local_nodes
-                    if (
-                        _is_supportable_local_node_for_rc_bridge(
-                            node=local_node,
-                            target_group_node_ids=target_group_node_ids,
-                            normalized_mainnodeid=normalized_mainnodeid,
-                            local_road_degree_by_node_id=local_road_degree_by_node_id,
-                        )
-                        or any(
-                            local_road.road_id in positive_nonmain_bridge_road_ids
-                            and (
-                                local_road.snodeid == local_node.node_id
-                                or local_road.enodeid == local_node.node_id
+            nearby_local_nodes = []
+            if not is_corridor_main_support_road:
+                nearby_local_nodes = sorted(
+                    (
+                        (float(local_node.geometry.distance(node.geometry)), local_node)
+                        for local_node in local_nodes
+                        if (
+                            _is_supportable_local_node_for_rc_bridge(
+                                node=local_node,
+                                target_group_node_ids=target_group_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
                             )
-                            for local_road in local_roads
+                            or any(
+                                local_road.road_id in positive_nonmain_bridge_road_ids
+                                and (
+                                    local_road.snodeid == local_node.node_id
+                                    or local_road.enodeid == local_node.node_id
+                                )
+                                for local_road in local_roads
+                            )
                         )
-                    )
-                    if local_road_degree_by_node_id.get(local_node.node_id, 0) >= 2
-                    and float(local_node.geometry.distance(node.geometry)) <= nearby_local_node_distance_cap_m
-                ),
-                key=lambda item: (
-                    item[0],
-                    float(item[1].geometry.distance(analysis_center)),
-                ),
-            )[:nearby_local_node_limit]
+                        if local_road_degree_by_node_id.get(local_node.node_id, 0) >= 2
+                        and float(local_node.geometry.distance(node.geometry)) <= nearby_local_node_distance_cap_m
+                    ),
+                    key=lambda item: (
+                        item[0],
+                        float(item[1].geometry.distance(analysis_center)),
+                    ),
+                )[:nearby_local_node_limit]
             for local_node_distance_m, local_node in nearby_local_nodes:
                 local_node_degree = local_road_degree_by_node_id.get(local_node.node_id, 0)
                 local_node_distance_to_center_m = float(local_node.geometry.distance(analysis_center))
@@ -4523,7 +4824,7 @@ def _build_selected_rc_support_geometries(
                     ).intersection(drivezone_union)
                     if not local_road_support_geometry.is_empty:
                         nearby_local_support_parts.append(local_road_support_geometry)
-            if nearby_local_support_parts:
+            if nearby_local_support_parts and not is_corridor_main_support_road:
                 endpoint_local_support_cap = unary_union(
                     [*endpoint_cap_parts, *nearby_local_support_parts]
                 ).convex_hull.buffer(
@@ -4542,26 +4843,28 @@ def _build_selected_rc_support_geometries(
             ):
                 support_road_geometry = capped_support_road_geometry
         road_geometry = support_road_geometry.buffer(
-            RC_ROAD_BUFFER_M * 0.9,
+            RC_ROAD_BUFFER_M * (0.72 if is_corridor_main_support_road else 0.9),
             cap_style=2,
             join_style=2,
         ).intersection(drivezone_union)
         if not road_geometry.is_empty:
             support_geometries.append(road_geometry)
-        nearest_support_point = nearest_points(analysis_center, support_road_geometry)[1]
-        connector_geometry = LineString(
-            [
-                (float(analysis_center.x), float(analysis_center.y)),
-                (float(nearest_support_point.x), float(nearest_support_point.y)),
-            ]
-        ).buffer(
-            POLYGON_RC_NODE_CONNECTOR_HALF_WIDTH_M,
-            cap_style=2,
-            join_style=2,
-        ).intersection(drivezone_union)
-        if not connector_geometry.is_empty:
-            support_geometries.append(connector_geometry)
-        if local_geometry.length <= 20.0:
+        connector_geometry = GeometryCollection()
+        if not is_corridor_main_support_road:
+            nearest_support_point = nearest_points(analysis_center, support_road_geometry)[1]
+            connector_geometry = LineString(
+                [
+                    (float(analysis_center.x), float(analysis_center.y)),
+                    (float(nearest_support_point.x), float(nearest_support_point.y)),
+                ]
+            ).buffer(
+                POLYGON_RC_NODE_CONNECTOR_HALF_WIDTH_M,
+                cap_style=2,
+                join_style=2,
+            ).intersection(drivezone_union)
+            if not connector_geometry.is_empty:
+                support_geometries.append(connector_geometry)
+        if local_geometry.length <= 20.0 and not is_corridor_main_support_road:
             cap_parts = [
                 geometry
                 for geometry in [road_geometry, connector_geometry, *endpoint_node_geometries]
@@ -5696,6 +5999,48 @@ def _covered_foreign_local_road_ids(
     return sorted(set(covered_road_ids))
 
 
+def _target_group_foreign_semantic_road_overlap_lengths(
+    *,
+    polygon_geometry: BaseGeometry,
+    local_roads: list[ParsedRoad],
+    local_nodes: list[ParsedNode],
+    allowed_road_ids: set[str],
+    target_group_node_ids: set[str],
+    normalized_mainnodeid: str,
+    local_road_degree_by_node_id: Counter[str],
+    analysis_center: Point,
+    semantic_mainnodeids: set[str] | None = None,
+) -> dict[str, float]:
+    if polygon_geometry.is_empty:
+        return {}
+    local_node_by_id = {node.node_id: node for node in local_nodes}
+    overlap_by_road_id: dict[str, float] = {}
+    for road in local_roads:
+        if road.road_id in allowed_road_ids:
+            continue
+        if road.snodeid not in target_group_node_ids and road.enodeid not in target_group_node_ids:
+            continue
+        if not _road_touches_foreign_local_semantic_junction(
+            road=road,
+            local_node_by_id=local_node_by_id,
+            target_group_node_ids=target_group_node_ids,
+            normalized_mainnodeid=normalized_mainnodeid,
+            local_road_degree_by_node_id=local_road_degree_by_node_id,
+            analysis_center=analysis_center,
+            semantic_mainnodeids=semantic_mainnodeids,
+        ):
+            continue
+        covered_geometry = road.geometry.intersection(
+            polygon_geometry.buffer(max(DEFAULT_RESOLUTION_M, 0.5), join_style=1)
+        )
+        if covered_geometry.is_empty or covered_geometry.length <= 0.5:
+            covered_geometry = road.geometry.intersection(polygon_geometry)
+        covered_length_m = float(covered_geometry.length)
+        if covered_length_m > 0.5:
+            overlap_by_road_id[road.road_id] = covered_length_m
+    return overlap_by_road_id
+
+
 def _build_targeted_foreign_local_road_trim_geometry(
     *,
     polygon_geometry: BaseGeometry,
@@ -5710,6 +6055,7 @@ def _build_targeted_foreign_local_road_trim_geometry(
     semantic_mainnodeids: set[str] | None = None,
     respect_keep_geometry_for_target_group_foreign_roads: bool = False,
     target_group_keep_length_m_override: float | None = None,
+    allow_projected_keep_on_target_group_foreign_roads: bool = True,
 ) -> BaseGeometry:
     if not road_ids or polygon_geometry.is_empty:
         return GeometryCollection()
@@ -5778,7 +6124,12 @@ def _build_targeted_foreign_local_road_trim_geometry(
                 if target_group_keep_parts:
                     target_group_keep_geometry = unary_union(target_group_keep_parts)
                     road_keep_parts.append(target_group_keep_geometry)
-                    if allow_keep_geometry and keep_geometry is not None and not keep_geometry.is_empty:
+                    if (
+                        allow_keep_geometry
+                        and keep_geometry is not None
+                        and not keep_geometry.is_empty
+                        and allow_projected_keep_on_target_group_foreign_roads
+                    ):
                         keep_on_road = road.geometry.intersection(
                             keep_geometry.buffer(max(DEFAULT_RESOLUTION_M, 0.3), join_style=1)
                         )
@@ -6263,6 +6614,7 @@ def _build_uncovered_selected_rc_node_repair_geometries(
     obstacle_geometries: list[BaseGeometry] | None = None,
     node_buffer_m: float | None = None,
     connector_half_width_m: float | None = None,
+    allowed_focus_geometry: BaseGeometry | None = None,
 ) -> list[BaseGeometry]:
     if current_polygon_geometry.is_empty or not uncovered_selected_node_ids:
         return []
@@ -6385,6 +6737,12 @@ def _build_uncovered_selected_rc_node_repair_geometries(
                 join_style=2,
             ).intersection(drivezone_union)
         )
+    if allowed_focus_geometry is not None and not allowed_focus_geometry.is_empty:
+        repair_geometries = [
+            geometry.intersection(allowed_focus_geometry)
+            for geometry in repair_geometries
+            if geometry is not None and not geometry.is_empty
+        ]
     return [
         geometry
         for geometry in repair_geometries
@@ -6452,6 +6810,566 @@ def _regularize_virtual_polygon_geometry(
         seed_geometry=seed_geometry,
     )
     return regularized.intersection(drivezone_union).buffer(0) if not regularized.is_empty else regularized
+
+
+def _cleanup_final_virtual_polygon_geometry(
+    *,
+    geometry: BaseGeometry,
+    drivezone_union: BaseGeometry,
+    seed_geometry: BaseGeometry,
+    core_geometry: BaseGeometry,
+    keep_geometries: Iterable[BaseGeometry],
+) -> BaseGeometry:
+    if geometry.is_empty:
+        return geometry
+
+    keep_parts = [
+        candidate
+        for candidate in (core_geometry, *keep_geometries)
+        if candidate is not None and not candidate.is_empty
+    ]
+    keep_union = (
+        unary_union(keep_parts).intersection(drivezone_union).buffer(0)
+        if keep_parts
+        else GeometryCollection()
+    )
+    if keep_union.is_empty:
+        return geometry
+
+    focus_clip = keep_union.buffer(
+        POLYGON_FINAL_GEOMETRY_CLEANUP_FOCUS_BUFFER_M,
+        join_style=1,
+    ).intersection(drivezone_union)
+    if focus_clip.is_empty:
+        return geometry
+
+    outer_geometry = geometry.difference(focus_clip).intersection(drivezone_union)
+    focus_geometry = geometry.intersection(focus_clip)
+    movable_focus = focus_geometry.difference(keep_union).intersection(focus_clip)
+    if movable_focus.is_empty or movable_focus.area < POLYGON_FINAL_GEOMETRY_CLEANUP_MIN_MOVABLE_AREA_M2:
+        return geometry
+
+    opened_focus = movable_focus.buffer(
+        -POLYGON_FINAL_GEOMETRY_CLEANUP_OPEN_M,
+        join_style=1,
+    )
+    if opened_focus.is_empty:
+        return geometry
+    opened_focus = opened_focus.buffer(
+        POLYGON_FINAL_GEOMETRY_CLEANUP_OPEN_M,
+        join_style=1,
+    )
+    focus_candidate = unary_union(
+        [
+            opened_focus,
+            keep_union.intersection(focus_clip),
+        ]
+    ).intersection(focus_clip)
+    if focus_candidate.is_empty:
+        return geometry
+
+    focus_candidate = focus_candidate.buffer(
+        POLYGON_FINAL_GEOMETRY_CLEANUP_CLOSE_M,
+        join_style=1,
+    ).buffer(
+        -POLYGON_FINAL_GEOMETRY_CLEANUP_CLOSE_M,
+        join_style=1,
+    )
+    focus_candidate = _fill_small_polygon_holes(
+        focus_candidate,
+        max_hole_area_m2=POLYGON_SMALL_HOLE_AREA_M2,
+    )
+    focus_candidate = _remove_all_polygon_holes(focus_candidate)
+    focus_candidate = unary_union(
+        [
+            focus_candidate,
+            keep_union.intersection(focus_clip),
+        ]
+    ).intersection(focus_clip)
+    if focus_candidate.is_empty:
+        return geometry
+
+    cleaned_geometry = unary_union([outer_geometry, focus_candidate]).intersection(drivezone_union)
+    if cleaned_geometry.is_empty:
+        return geometry
+    cleaned_geometry = _regularize_virtual_polygon_geometry(
+        geometry=cleaned_geometry,
+        drivezone_union=drivezone_union,
+        seed_geometry=seed_geometry,
+    )
+    return cleaned_geometry if not cleaned_geometry.is_empty else geometry
+
+
+def _build_single_sided_t_mouth_corridor_candidate_geometry(
+    *,
+    geometry: BaseGeometry,
+    drivezone_union: BaseGeometry,
+    seed_geometry: BaseGeometry,
+    core_geometry: BaseGeometry,
+    corridor_support_clips: Iterable[BaseGeometry],
+    mandatory_keep_geometries: Iterable[BaseGeometry],
+    keep_geometries: Iterable[BaseGeometry],
+) -> BaseGeometry:
+    if geometry.is_empty:
+        return geometry
+
+    corridor_clip_parts = [
+        candidate
+        for candidate in corridor_support_clips
+        if candidate is not None and not candidate.is_empty
+    ]
+    if len(corridor_clip_parts) < 2:
+        return geometry
+
+    corridor_clip_union = unary_union(corridor_clip_parts).intersection(drivezone_union).buffer(0)
+    if corridor_clip_union.is_empty:
+        return geometry
+
+    focus_clip = corridor_clip_union.buffer(6.0, join_style=1).intersection(drivezone_union)
+    if focus_clip.is_empty:
+        return geometry
+
+    focused_core_geometry = core_geometry.intersection(
+        focus_clip.buffer(max(POLYGON_SUPPORT_CLIP_BUFFER_M, 2.5), join_style=1)
+    )
+    if focused_core_geometry.is_empty:
+        focused_core_geometry = core_geometry
+
+    candidate_parts = [
+        focused_core_geometry,
+        corridor_clip_union,
+    ]
+    candidate_parts.extend(
+        geometry
+        for geometry in mandatory_keep_geometries
+        if geometry is not None and not geometry.is_empty
+    )
+    candidate_parts.extend(
+        _restrict_keep_geometries_to_focus(
+            keep_geometries,
+            focus_geometry=focus_clip.buffer(max(POLYGON_SUPPORT_CLIP_BUFFER_M, 2.0), join_style=1),
+        )
+    )
+    corridor_candidate = unary_union(candidate_parts).intersection(drivezone_union)
+    if corridor_candidate.is_empty:
+        return geometry
+
+    corridor_candidate = _fill_small_polygon_holes(
+        corridor_candidate,
+        max_hole_area_m2=POLYGON_SMALL_HOLE_AREA_M2,
+    )
+    corridor_candidate = _remove_all_polygon_holes(corridor_candidate)
+    corridor_candidate = _regularize_virtual_polygon_geometry(
+        geometry=corridor_candidate,
+        drivezone_union=drivezone_union,
+        seed_geometry=seed_geometry,
+    )
+    return corridor_candidate if not corridor_candidate.is_empty else geometry
+
+
+def _collect_single_sided_t_mouth_branch_corridor_context(
+    *,
+    representative_kind_2: int | None,
+    road_branches: list[BranchEvidence],
+    positive_rc_groups: set[str],
+    negative_rc_groups: set[str],
+    local_roads: list[ParsedRoad],
+    local_rc_roads: list[ParsedRoad],
+    rc_branch_by_id: dict[str, BranchEvidence],
+    analysis_center: Point,
+    drivezone_union: BaseGeometry,
+    restrict_main_branch_to_best_aligned_rc_group: bool = False,
+) -> tuple[
+    SingleSidedTMouthCorridorPattern | None,
+    BaseGeometry,
+    list[BaseGeometry],
+    set[str],
+    set[str],
+]:
+    corridor_pattern = _detect_single_sided_t_mouth_corridor_pattern(
+        representative_kind_2=representative_kind_2,
+        road_branches=road_branches,
+        positive_rc_groups=positive_rc_groups,
+        negative_rc_groups=negative_rc_groups,
+        rc_branch_by_id=rc_branch_by_id,
+        local_rc_roads=local_rc_roads,
+        local_roads=local_roads,
+        analysis_center=analysis_center,
+    )
+    if corridor_pattern is None:
+        return None, GeometryCollection(), [], set()
+
+    branch_by_id = {branch.branch_id: branch for branch in road_branches}
+    road_by_id = {road.road_id: road for road in local_roads}
+    rc_road_by_id = {road.road_id: road for road in local_rc_roads}
+    side_branch_focus_geometry = GeometryCollection()
+    if len(corridor_pattern.main_branch_ids) > 1 and corridor_pattern.side_branch_ids:
+        side_branch_geometries = [
+            road_by_id[road_id].geometry
+            for branch_id in corridor_pattern.side_branch_ids
+            for branch in [branch_by_id.get(branch_id)]
+            if branch is not None
+            for road_id in branch.road_ids
+            if road_id in road_by_id
+        ]
+        side_branch_geometries = [
+            geometry
+            for geometry in side_branch_geometries
+            if geometry is not None and not geometry.is_empty
+        ]
+        if side_branch_geometries:
+            side_branch_geometry = unary_union(side_branch_geometries)
+            side_branch_focus_geometry = side_branch_geometry
+            side_branch_angle_deg = next(
+                (
+                    branch_by_id[branch_id].angle_deg
+                    for branch_id in corridor_pattern.side_branch_ids
+                    if branch_id in branch_by_id
+                ),
+                None,
+            )
+            ranked_main_branch_ids: list[tuple[float, float, float, str]] = []
+            for branch_id in corridor_pattern.main_branch_ids:
+                branch = branch_by_id.get(branch_id)
+                if branch is None:
+                    continue
+                main_branch_geometries = [
+                    road_by_id[road_id].geometry
+                    for road_id in branch.road_ids
+                    if road_id in road_by_id
+                ]
+                if not main_branch_geometries:
+                    continue
+                main_branch_geometry = unary_union(main_branch_geometries)
+                perpendicular_delta_deg = (
+                    abs(
+                        abs((((branch.angle_deg - side_branch_angle_deg) + 180.0) % 360.0) - 180.0)
+                        - 90.0
+                    )
+                    if side_branch_angle_deg is not None
+                    else 180.0
+                )
+                ranked_main_branch_ids.append(
+                    (
+                        float(side_branch_geometry.distance(main_branch_geometry)),
+                        perpendicular_delta_deg,
+                        -float(branch.drivezone_support_m or 0.0),
+                        branch_id,
+                    )
+                )
+            if ranked_main_branch_ids:
+                corridor_pattern = SingleSidedTMouthCorridorPattern(
+                    main_branch_ids=(min(ranked_main_branch_ids)[3],),
+                    side_branch_ids=corridor_pattern.side_branch_ids,
+                    shared_positive_rc_groups=corridor_pattern.shared_positive_rc_groups,
+                )
+    elif corridor_pattern.side_branch_ids:
+        side_branch_geometries = [
+            road_by_id[road_id].geometry
+            for branch_id in corridor_pattern.side_branch_ids
+            for branch in [branch_by_id.get(branch_id)]
+            if branch is not None
+            for road_id in branch.road_ids
+            if road_id in road_by_id
+        ]
+        side_branch_geometries = [
+            geometry
+            for geometry in side_branch_geometries
+            if geometry is not None and not geometry.is_empty
+        ]
+        if side_branch_geometries:
+            side_branch_focus_geometry = unary_union(side_branch_geometries)
+    target_branch_ids = set(corridor_pattern.main_branch_ids) | set(corridor_pattern.side_branch_ids)
+    corridor_parts: list[BaseGeometry] = []
+    branch_focus_parts: list[BaseGeometry] = []
+    target_rc_road_ids: set[str] = set()
+    target_local_road_ids: set[str] = set()
+    shared_positive_rc_groups = set(corridor_pattern.shared_positive_rc_groups)
+
+    for branch_id in target_branch_ids:
+        branch = branch_by_id.get(branch_id)
+        if branch is None:
+            continue
+        target_local_road_ids.update(branch.road_ids)
+        is_main_branch = branch_id in corridor_pattern.main_branch_ids
+        if is_main_branch and restrict_main_branch_to_best_aligned_rc_group:
+            branch_length_m = max(
+                min(float(branch.polygon_length_m or 0.0) + 5.0, 16.0),
+                10.0,
+            )
+        else:
+            branch_length_m = (
+                max(float(branch.polygon_length_m or 0.0) + 12.0, 22.0)
+                if is_main_branch
+                else max(min(float(branch.polygon_length_m or 0.0) + 1.5, 7.5), 6.0)
+            )
+        branch_half_width_m = (
+            max(MAIN_BRANCH_HALF_WIDTH_M * 0.58, RC_ROAD_BUFFER_M * 0.95)
+            if is_main_branch
+            else max(SIDE_BRANCH_HALF_WIDTH_M * 0.58, ROAD_BUFFER_M * 0.72)
+        )
+        branch_focus_clip = _branch_ray_geometry(
+            analysis_center,
+            angle_deg=branch.angle_deg,
+            length_m=branch_length_m,
+        ).buffer(
+            max(branch_half_width_m * 1.35, 3.2),
+            cap_style=2,
+            join_style=2,
+        ).intersection(drivezone_union)
+        if branch_focus_clip.is_empty:
+            continue
+        branch_focus_parts.append(branch_focus_clip)
+
+        branch_road_geometries = [
+            road.geometry.intersection(
+                branch_focus_clip.buffer(branch_half_width_m + 1.5, join_style=1)
+            ).buffer(
+                branch_half_width_m,
+                cap_style=2,
+                join_style=2,
+            ).intersection(drivezone_union)
+            for road_id in branch.road_ids
+            for road in [road_by_id.get(road_id)]
+            if road is not None
+        ]
+        branch_road_geometries = [
+            branch_geometry
+            for branch_geometry in branch_road_geometries
+            if branch_geometry is not None and not branch_geometry.is_empty
+        ]
+        main_branch_starter_geometry = (
+            branch_focus_clip.intersection(
+                analysis_center.buffer(max(float(branch.polygon_length_m or 0.0) + 2.5, 7.0))
+            )
+            if is_main_branch and restrict_main_branch_to_best_aligned_rc_group
+            else GeometryCollection()
+        )
+
+        matched_positive_group_ids = [
+            group_id
+            for group_id in branch.rcsdroad_ids
+            if group_id in positive_rc_groups and group_id not in negative_rc_groups
+        ]
+        selected_group_rc_road_count = 0
+        if is_main_branch and shared_positive_rc_groups:
+            matched_positive_group_ids = [
+                group_id for group_id in matched_positive_group_ids if group_id in shared_positive_rc_groups
+            ]
+            if (
+                restrict_main_branch_to_best_aligned_rc_group
+                and len(corridor_pattern.main_branch_ids) == 1
+                and len(matched_positive_group_ids) > 1
+            ):
+                branch_focus_geometry = (
+                    unary_union(branch_road_geometries)
+                    if branch_road_geometries
+                    else branch_focus_clip
+                )
+                ranked_group_ids: list[tuple[float, float, float, str]] = []
+                for group_id in matched_positive_group_ids:
+                    rc_branch = rc_branch_by_id.get(group_id)
+                    if rc_branch is None:
+                        continue
+                    rc_group_geometries = [
+                        rc_road.geometry.intersection(
+                            branch_focus_clip.buffer(
+                                max(branch_half_width_m + 1.8, 2.5),
+                                join_style=1,
+                            )
+                        )
+                        for road_id in rc_branch.road_ids
+                        for rc_road in [rc_road_by_id.get(road_id)]
+                        if rc_road is not None
+                    ]
+                    rc_group_geometries = [
+                        geometry
+                        for geometry in rc_group_geometries
+                        if geometry is not None and not geometry.is_empty
+                    ]
+                    if not rc_group_geometries:
+                        continue
+                    rc_group_geometry = unary_union(rc_group_geometries)
+                    branch_alignment_delta_deg = abs(
+                        (((rc_branch.angle_deg - branch.angle_deg) + 180.0) % 360.0) - 180.0
+                    )
+                    ranked_group_ids.append(
+                        (
+                            float(branch_focus_geometry.distance(rc_group_geometry)),
+                            branch_alignment_delta_deg,
+                            -float(rc_group_geometry.length),
+                            group_id,
+                        )
+                    )
+                if ranked_group_ids:
+                    matched_positive_group_ids = [min(ranked_group_ids)[3]]
+        rc_focus_clip = branch_focus_clip.buffer(max(branch_half_width_m + 1.8, 2.5), join_style=1)
+        rc_buffer_m = (
+            max(RC_ROAD_BUFFER_M * 0.82, branch_half_width_m * 0.72)
+            if is_main_branch
+            else max(RC_ROAD_BUFFER_M * 0.78, branch_half_width_m * 0.66)
+        )
+        for group_id in matched_positive_group_ids:
+            rc_branch = rc_branch_by_id.get(group_id)
+            if rc_branch is None:
+                continue
+            candidate_rc_roads: list[ParsedRoad] = []
+            for road_id in rc_branch.road_ids:
+                rc_road = rc_road_by_id.get(road_id)
+                if rc_road is None:
+                    continue
+                rc_piece = rc_road.geometry.intersection(rc_focus_clip)
+                if rc_piece.is_empty:
+                    continue
+                candidate_rc_roads.append(rc_road)
+            if (
+                is_main_branch
+                and restrict_main_branch_to_best_aligned_rc_group
+                and len(candidate_rc_roads) > 1
+            ):
+                ranked_rc_roads: list[tuple[float, float, float, str]] = []
+                for rc_road in candidate_rc_roads:
+                    side_branch_distance_m = (
+                        float(rc_road.geometry.distance(side_branch_focus_geometry))
+                        if not side_branch_focus_geometry.is_empty
+                        else float(rc_road.geometry.distance(analysis_center))
+                    )
+                    rc_piece_length_m = float(rc_road.geometry.intersection(rc_focus_clip).length)
+                    ranked_rc_roads.append(
+                        (
+                            side_branch_distance_m,
+                            float(rc_road.geometry.distance(analysis_center)),
+                            -rc_piece_length_m,
+                            rc_road.road_id,
+                        )
+                    )
+                if ranked_rc_roads:
+                    selected_road_id = min(ranked_rc_roads)[3]
+                    candidate_rc_roads = [
+                        rc_road
+                        for rc_road in candidate_rc_roads
+                        if rc_road.road_id == selected_road_id
+                    ]
+            for rc_road in candidate_rc_roads:
+                rc_piece = rc_road.geometry.intersection(rc_focus_clip)
+                if rc_piece.is_empty:
+                    continue
+                target_rc_road_ids.add(rc_road.road_id)
+                selected_group_rc_road_count += 1
+                rc_corridor_piece = rc_piece.buffer(
+                    rc_buffer_m,
+                    cap_style=2,
+                    join_style=2,
+                ).intersection(drivezone_union)
+                if not rc_corridor_piece.is_empty:
+                    corridor_parts.append(rc_corridor_piece)
+
+        if (
+            is_main_branch
+            and restrict_main_branch_to_best_aligned_rc_group
+            and selected_group_rc_road_count > 0
+        ):
+            if main_branch_starter_geometry is not None and not main_branch_starter_geometry.is_empty:
+                corridor_parts.append(main_branch_starter_geometry)
+        elif branch_road_geometries:
+            corridor_parts.extend(branch_road_geometries)
+        else:
+            corridor_parts.append(branch_focus_clip)
+
+    branch_focus_union = (
+        unary_union(branch_focus_parts).intersection(drivezone_union)
+        if branch_focus_parts
+        else GeometryCollection()
+    )
+    return (
+        corridor_pattern,
+        branch_focus_union,
+        corridor_parts,
+        target_rc_road_ids,
+        target_local_road_ids,
+    )
+
+
+def _build_single_sided_t_mouth_branch_corridor_geometry(
+    *,
+    geometry: BaseGeometry,
+    representative_kind_2: int | None,
+    road_branches: list[BranchEvidence],
+    positive_rc_groups: set[str],
+    negative_rc_groups: set[str],
+    local_roads: list[ParsedRoad],
+    local_rc_roads: list[ParsedRoad],
+    rc_branch_by_id: dict[str, BranchEvidence],
+    analysis_center: Point,
+    drivezone_union: BaseGeometry,
+    seed_geometry: BaseGeometry,
+    core_geometry: BaseGeometry,
+    mandatory_keep_geometries: Iterable[BaseGeometry],
+    keep_geometries: Iterable[BaseGeometry],
+    restrict_main_branch_to_best_aligned_rc_group: bool = False,
+) -> BaseGeometry:
+    if geometry.is_empty:
+        return geometry
+
+    (
+        corridor_pattern,
+        branch_focus_union,
+        corridor_parts,
+        _target_rc_road_ids,
+        _target_local_road_ids,
+    ) = _collect_single_sided_t_mouth_branch_corridor_context(
+        representative_kind_2=representative_kind_2,
+        road_branches=road_branches,
+        positive_rc_groups=positive_rc_groups,
+        negative_rc_groups=negative_rc_groups,
+        local_roads=local_roads,
+        local_rc_roads=local_rc_roads,
+        rc_branch_by_id=rc_branch_by_id,
+        analysis_center=analysis_center,
+        drivezone_union=drivezone_union,
+        restrict_main_branch_to_best_aligned_rc_group=restrict_main_branch_to_best_aligned_rc_group,
+    )
+    if corridor_pattern is None:
+        return geometry
+
+    if not corridor_parts:
+        return geometry
+
+    if branch_focus_union.is_empty:
+        branch_focus_union = unary_union(corridor_parts).intersection(drivezone_union)
+
+    focused_core_geometry = core_geometry.intersection(
+        branch_focus_union.buffer(max(POLYGON_SUPPORT_CLIP_BUFFER_M + 0.5, 2.5), join_style=1)
+    )
+    if focused_core_geometry.is_empty:
+        focused_core_geometry = core_geometry
+    corridor_parts.insert(0, focused_core_geometry)
+    corridor_parts.extend(
+        geometry
+        for geometry in mandatory_keep_geometries
+        if geometry is not None and not geometry.is_empty
+    )
+    corridor_parts.extend(
+        _restrict_keep_geometries_to_focus(
+            keep_geometries,
+            focus_geometry=branch_focus_union.buffer(max(POLYGON_SUPPORT_CLIP_BUFFER_M + 0.5, 2.0), join_style=1),
+        )
+    )
+    branch_corridor_geometry = unary_union(corridor_parts).intersection(drivezone_union)
+    if branch_corridor_geometry.is_empty:
+        return geometry
+
+    branch_corridor_geometry = _fill_small_polygon_holes(
+        branch_corridor_geometry,
+        max_hole_area_m2=POLYGON_SMALL_HOLE_AREA_M2,
+    )
+    branch_corridor_geometry = _remove_all_polygon_holes(branch_corridor_geometry)
+    branch_corridor_geometry = _regularize_virtual_polygon_geometry(
+        geometry=branch_corridor_geometry,
+        drivezone_union=drivezone_union,
+        seed_geometry=seed_geometry,
+    )
+    return branch_corridor_geometry if not branch_corridor_geometry.is_empty else geometry
 
 
 def _write_association_outputs(
@@ -6563,6 +7481,10 @@ def _effect_success_acceptance(
     effective_associated_rc_node_count: int = 0,
     associated_nonzero_mainnode_count: int = 0,
     final_selected_node_cover_repair_discarded_due_to_extra_roads: bool = False,
+    single_sided_t_mouth_corridor_pattern_detected: bool = False,
+    single_sided_t_mouth_corridor_semantic_gap: bool = False,
+    multi_node_selected_cover_repair_applied: bool = False,
+    final_uncovered_selected_endpoint_node_count: int = 0,
 ) -> tuple[bool, str, str]:
     if effective_local_rc_node_count is None:
         effective_local_rc_node_count = local_rc_node_count
@@ -6577,6 +7499,14 @@ def _effect_success_acceptance(
             return False, "review_required", "stable_with_foreign_swsd_intrusion"
         return False, "review_required", f"review_required_status:{status}"
     if status == STATUS_STABLE:
+        if (
+            representative_kind_2 == 2048
+            and single_sided_t_mouth_corridor_pattern_detected
+            and single_sided_t_mouth_corridor_semantic_gap
+            and associated_nonzero_mainnode_count == 0
+        ):
+            if final_uncovered_selected_endpoint_node_count > 0:
+                return False, "review_required", "stable_with_incomplete_t_mouth_rc_context"
         if (
             representative_kind_2 == 2048
             and positive_rc_group_count >= 2
@@ -6605,6 +7535,22 @@ def _effect_success_acceptance(
             and effective_local_rc_node_count >= 2
         ):
             return False, "review_required", "stable_with_sparse_rc_association_against_dense_local_rcsd_context"
+        if (
+            representative_kind_2 == 2048
+            and has_excluded_local_rc
+            and associated_rc_road_count >= 2
+            and polygon_support_rc_road_count >= 2
+            and polygon_support_rc_node_count <= 1
+            and effective_local_rc_node_count == 0
+            and effective_associated_rc_node_count == 0
+            and associated_nonzero_mainnode_count == 0
+            and max_nonmain_branch_polygon_length_m >= 10.0
+            and max_selected_side_branch_covered_length_m <= 3.0
+            and min_invalid_rc_distance_to_center_m is not None
+            and min_invalid_rc_distance_to_center_m <= 8.0
+            and not single_sided_t_mouth_corridor_pattern_detected
+        ):
+            return False, "review_required", "stable_with_unrelated_opposite_lane_corridor"
         if has_main_edge_only_branch:
             return False, "review_required", "stable_with_weak_main_direction"
         return True, "accepted", "stable"
@@ -7716,6 +8662,8 @@ def run_t02_virtual_intersection_poc(
             rc_branches=rc_branches,
             risks=risks,
             has_rc_group_nodes=bool(rc_group_nodes),
+            local_rc_road_count=len(local_rc_roads),
+            local_rc_node_count=len(local_rc_nodes),
         )
         if rc_branches and not positive_rc_groups:
             risks.append(STATUS_NO_VALID_RC_CONNECTION)
@@ -7810,10 +8758,46 @@ def run_t02_virtual_intersection_poc(
             branch.is_main_direction and len(branch.rcsdroad_ids) >= 2
             for branch in road_branches
         )
+        single_sided_t_mouth_corridor_pattern = _detect_single_sided_t_mouth_corridor_pattern(
+            representative_kind_2=representative_node.kind_2,
+            road_branches=road_branches,
+            positive_rc_groups=positive_rc_groups,
+            negative_rc_groups=negative_rc_groups,
+            local_roads=local_roads,
+        )
+        single_sided_t_mouth_corridor_target_local_road_ids = (
+            {
+                road_id
+                for branch in road_branches
+                if (
+                    single_sided_t_mouth_corridor_pattern is not None
+                    and branch.branch_id
+                    in (
+                        set(single_sided_t_mouth_corridor_pattern.main_branch_ids)
+                        | set(single_sided_t_mouth_corridor_pattern.side_branch_ids)
+                    )
+                )
+                for road_id in branch.road_ids
+            }
+            if single_sided_t_mouth_corridor_pattern is not None
+            else set()
+        )
+        corridor_positive_group_road_ids = (
+            {
+                road_id
+                for group_id in positive_rc_groups
+                for road_id in (
+                    rc_branch_by_id[group_id].road_ids if group_id in rc_branch_by_id else []
+                )
+            }
+            if single_sided_t_mouth_corridor_pattern is not None
+            else set()
+        )
         selected_positive_support_rc_endpoint_node_ids = {
             node_id
             for road in local_rc_roads
-            if road.road_id in (positive_rc_road_ids | polygon_support_rc_road_ids)
+            if road.road_id
+            in (positive_rc_road_ids | polygon_support_rc_road_ids | corridor_positive_group_road_ids)
             for node_id in (road.snodeid, road.enodeid)
             if node_id in rc_node_by_id
         }
@@ -7829,17 +8813,20 @@ def run_t02_virtual_intersection_poc(
         }
         enable_t_mouth_rc_bridge_support = (
             bool(selected_positive_support_rc_endpoint_node_ids)
-            and any(
-                float(local_node.geometry.distance(rc_node_by_id[node_id].geometry)) <= 10.0
-                and local_road_degree_by_node_id.get(local_node.node_id, 0) >= 2
-                and _is_supportable_local_node_for_rc_bridge(
-                    node=local_node,
-                    target_group_node_ids={node.node_id for node in group_nodes},
-                    normalized_mainnodeid=normalized_mainnodeid,
-                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+            and (
+                single_sided_t_mouth_corridor_pattern is not None
+                or any(
+                    float(local_node.geometry.distance(rc_node_by_id[node_id].geometry)) <= 10.0
+                    and local_road_degree_by_node_id.get(local_node.node_id, 0) >= 2
+                    and _is_supportable_local_node_for_rc_bridge(
+                        node=local_node,
+                        target_group_node_ids={node.node_id for node in group_nodes},
+                        normalized_mainnodeid=normalized_mainnodeid,
+                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    )
+                    for node_id in selected_positive_support_rc_endpoint_node_ids
+                    for local_node in local_nodes
                 )
-                for node_id in selected_positive_support_rc_endpoint_node_ids
-                for local_node in local_nodes
             )
         )
         should_expand_polygon_support_rc_subgraph = (
@@ -8534,12 +9521,18 @@ def run_t02_virtual_intersection_poc(
             )
 
         if enable_t_mouth_rc_bridge_support:
-            selected_rc_support_road_ids, selected_rc_support_clip_by_road_id = _collect_selected_rc_support_road_ids(
+            (
+                selected_rc_support_road_ids,
+                selected_rc_support_clip_by_road_id,
+                corridor_main_support_road_ids,
+            ) = _collect_selected_rc_support_road_ids(
+                representative_kind_2=representative_node.kind_2,
                 road_branches=road_branches,
                 positive_rc_groups=positive_rc_groups,
                 negative_rc_groups=negative_rc_groups,
                 rc_branch_by_id=rc_branch_by_id,
                 positive_rc_road_ids=positive_rc_road_ids,
+                local_roads=local_roads,
                 local_rc_roads=local_rc_roads,
                 analysis_center=analysis_center,
                 drivezone_union=drivezone_union,
@@ -8547,6 +9540,7 @@ def run_t02_virtual_intersection_poc(
         else:
             selected_rc_support_road_ids = set()
             selected_rc_support_clip_by_road_id = {}
+            corridor_main_support_road_ids = set()
 
         contested_selected_rc_node_ids = {
             node_id
@@ -8666,6 +9660,7 @@ def run_t02_virtual_intersection_poc(
         if enable_t_mouth_rc_bridge_support:
             selected_rc_support_geometries, selected_rc_support_node_ids = _build_selected_rc_support_geometries(
                 selected_rc_support_road_ids=selected_rc_support_road_ids,
+                corridor_main_support_road_ids=corridor_main_support_road_ids,
                 polygon_support_rc_road_ids=polygon_support_rc_road_ids,
                 selected_rc_support_clip_by_road_id=selected_rc_support_clip_by_road_id,
                 positive_nonmain_bridge_road_ids=positive_nonmain_bridge_road_ids,
@@ -8683,13 +9678,22 @@ def run_t02_virtual_intersection_poc(
         else:
             selected_rc_support_geometries = []
             selected_rc_support_node_ids = set()
+        selected_rc_support_clip_road_ids = set(selected_rc_support_clip_by_road_id)
         validation_support_rc_node_ids = polygon_support_rc_node_ids | selected_rc_support_node_ids
-        validation_support_rc_road_ids = polygon_support_rc_road_ids | selected_rc_support_road_ids
+        validation_support_rc_road_ids = (
+            polygon_support_rc_road_ids
+            | selected_rc_support_road_ids
+            | selected_rc_support_clip_road_ids
+        )
         validation_support_clip_parts = [polygon_support_clip]
         validation_support_clip_parts.extend(
             geometry
-            for geometry in selected_rc_support_clip_by_road_id.values()
-            if geometry is not None and not geometry.is_empty
+            for road_id, geometry in selected_rc_support_clip_by_road_id.items()
+            if (
+                road_id in selected_rc_support_clip_road_ids
+                and geometry is not None
+                and not geometry.is_empty
+            )
         )
         validation_support_clip = unary_union(validation_support_clip_parts)
         validation_support_cover = validation_support_clip.buffer(
@@ -8703,6 +9707,7 @@ def run_t02_virtual_intersection_poc(
                 positive_rc_road_ids
                 | polygon_support_rc_road_ids
                 | selected_rc_support_road_ids
+                | selected_rc_support_clip_road_ids
             )
         }
         if selected_rc_support_geometries:
@@ -9948,6 +10953,7 @@ def run_t02_virtual_intersection_poc(
                     )
         analysis_auxiliary_node_ids = {node.node_id for node in analysis_auxiliary_nodes}
         covered_extra_local_road_ids: list[str] = []
+        strict_target_group_foreign_trim = False
         polygon_cover = virtual_polygon_geometry.buffer(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M)
         foreign_node_cover = virtual_polygon_geometry.buffer(max(resolution_m, 0.25))
         covered_extra_local_node_ids = sorted(
@@ -10247,6 +11253,10 @@ def run_t02_virtual_intersection_poc(
                 if targeted_foreign_local_road_trim_keep_parts
                 else GeometryCollection()
             )
+            strict_target_group_foreign_trim = (
+                representative_node.kind_2 == 2048
+                and len(candidate_selected_positive_group_rc_road_ids) <= 2
+            )
             targeted_foreign_local_road_trim_geometry = _build_targeted_foreign_local_road_trim_geometry(
                 polygon_geometry=virtual_polygon_geometry,
                 road_ids=set(covered_extra_local_road_ids),
@@ -10259,6 +11269,8 @@ def run_t02_virtual_intersection_poc(
                 local_road_degree_by_node_id=local_road_degree_by_node_id,
                 semantic_mainnodeids=semantic_mainnodeids,
                 respect_keep_geometry_for_target_group_foreign_roads=True,
+                target_group_keep_length_m_override=(1.0 if strict_target_group_foreign_trim else None),
+                allow_projected_keep_on_target_group_foreign_roads=not strict_target_group_foreign_trim,
             )
             if not targeted_foreign_local_road_trim_geometry.is_empty:
                 announce(
@@ -10323,6 +11335,19 @@ def run_t02_virtual_intersection_poc(
                     support_node_ids=candidate_selected_rc_node_ids,
                     support_road_ids=candidate_selected_positive_group_rc_road_ids,
                     support_clip=validation_support_clip,
+                )
+                (
+                    trimmed_uncovered_candidate_selected_rc_node_ids,
+                    trimmed_uncovered_candidate_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=trimmed_uncovered_candidate_selected_rc_node_ids,
+                    uncovered_selected_road_ids=trimmed_uncovered_candidate_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_selected_node_ids=candidate_selected_rc_node_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
                 )
                 if (
                     not trimmed_uncovered_group_node_ids
@@ -10437,6 +11462,7 @@ def run_t02_virtual_intersection_poc(
                 and (
                     road.geometry.intersects(virtual_polygon_geometry)
                     or road.road_id in selected_rc_support_road_ids
+                    or road.road_id in selected_rc_support_clip_road_ids
                     or (
                         (representative_node.kind_2 or 0) == 4
                         and not local_rc_nodes
@@ -10452,6 +11478,12 @@ def run_t02_virtual_intersection_poc(
             local_rc_nodes=local_rc_nodes,
             support_road_ids=selected_positive_rc_road_ids,
             support_node_ids=polygon_support_rc_node_ids | selected_rc_support_node_ids,
+            partial_support_road_ids=(
+                set(selected_rc_support_clip_by_road_id) if corridor_main_support_road_ids else None
+            ),
+            support_clip_by_road_id=(
+                selected_rc_support_clip_by_road_id if corridor_main_support_road_ids else None
+            ),
         )
         selected_output_node_cover_geometry = selected_output_clip
         selected_output_cover = selected_output_node_cover_geometry.buffer(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M)
@@ -10554,6 +11586,45 @@ def run_t02_virtual_intersection_poc(
                         node = rc_node_by_id.get(node_id)
                         if node is not None and selected_output_cover.covers(node.geometry):
                             selected_rc_node_ids.add(node_id)
+        single_sided_t_mouth_repair_focus_road_ids = (
+            (
+                set(candidate_selected_positive_group_rc_road_ids)
+                | set(corridor_main_support_road_ids)
+            )
+            if (representative_node.kind_2 or 0) == 2048 and corridor_main_support_road_ids
+            else set(selected_rc_support_clip_road_ids)
+        )
+        selected_node_repair_focus_parts = [
+            geometry
+            for geometry in (
+                selected_output_node_cover_geometry,
+                *(
+                    geometry
+                    for road_id, geometry in selected_rc_support_clip_by_road_id.items()
+                    if (
+                        road_id in single_sided_t_mouth_repair_focus_road_ids
+                        and geometry is not None
+                        and not geometry.is_empty
+                    )
+                ),
+                *(
+                    road.geometry.buffer(
+                        max(RC_ROAD_BUFFER_M * 0.9, 1.8),
+                        join_style=1,
+                    ).intersection(drivezone_union)
+                    for road in selected_rc_roads
+                    if road.road_id in single_sided_t_mouth_repair_focus_road_ids
+                ),
+            )
+            if geometry is not None and not geometry.is_empty
+        ]
+        selected_node_repair_focus_geometry = (
+            unary_union(selected_node_repair_focus_parts)
+            .buffer(max(resolution_m * 2.0, 0.6), join_style=1)
+            .intersection(drivezone_union)
+            if selected_node_repair_focus_parts
+            else GeometryCollection()
+        )
         selected_association_repair_geometries: list[BaseGeometry] = []
         if not selected_rc_roads and positive_rc_road_ids and STATUS_NO_VALID_RC_CONNECTION not in risks:
             risks.append(STATUS_NO_VALID_RC_CONNECTION)
@@ -10665,8 +11736,20 @@ def run_t02_virtual_intersection_poc(
             for road in local_rc_roads:
                 if road.road_id not in uncovered_selected_rc_road_ids:
                     continue
+                selected_road_repair_clip = selected_output_node_cover_geometry.buffer(
+                    max(resolution_m, 0.4),
+                    join_style=1,
+                )
+                corridor_support_clip = selected_rc_support_clip_by_road_id.get(road.road_id)
+                if corridor_support_clip is not None and not corridor_support_clip.is_empty:
+                    if road.road_id in corridor_main_support_road_ids:
+                        selected_road_repair_clip = corridor_support_clip
+                    else:
+                        selected_road_repair_clip = unary_union(
+                            [selected_road_repair_clip, corridor_support_clip]
+                        ).intersection(drivezone_union)
                 selected_road_repair_geometry = road.geometry.intersection(
-                    selected_output_node_cover_geometry.buffer(max(resolution_m, 0.4), join_style=1)
+                    selected_road_repair_clip.buffer(max(resolution_m, 0.4), join_style=1)
                 )
                 if selected_road_repair_geometry.is_empty or selected_road_repair_geometry.length <= 0.5:
                     continue
@@ -10741,6 +11824,15 @@ def run_t02_virtual_intersection_poc(
                         *group_node_reinclude_geometries,
                         *selected_rc_node_buffers,
                         *selected_rc_node_connectors,
+                        *(
+                            geometry
+                            for road_id, geometry in selected_rc_support_clip_by_road_id.items()
+                            if (
+                                road_id in selected_rc_support_clip_road_ids
+                                and geometry is not None
+                                and not geometry.is_empty
+                            )
+                        ),
                         selected_output_node_cover_geometry,
                     )
                     if geometry is not None and not geometry.is_empty
@@ -11002,6 +12094,7 @@ def run_t02_virtual_intersection_poc(
                             current_polygon_geometry=trimmed_virtual_polygon_geometry,
                             local_rc_nodes=local_rc_nodes,
                             drivezone_union=drivezone_union,
+                            allowed_focus_geometry=selected_node_repair_focus_geometry,
                         )
                         if selected_node_repair_geometries:
                             trimmed_virtual_polygon_geometry = unary_union(
@@ -11138,6 +12231,8 @@ def run_t02_virtual_intersection_poc(
                     local_road_degree_by_node_id=local_road_degree_by_node_id,
                     semantic_mainnodeids=semantic_mainnodeids,
                     respect_keep_geometry_for_target_group_foreign_roads=True,
+                    target_group_keep_length_m_override=(1.0 if strict_target_group_foreign_trim else None),
+                    allow_projected_keep_on_target_group_foreign_roads=not strict_target_group_foreign_trim,
                 )
                 if not post_selected_foreign_local_road_trim_geometry.is_empty:
                     trimmed_virtual_polygon_geometry = virtual_polygon_geometry.difference(
@@ -11216,6 +12311,7 @@ def run_t02_virtual_intersection_poc(
                             current_polygon_geometry=trimmed_virtual_polygon_geometry,
                             local_rc_nodes=local_rc_nodes,
                             drivezone_union=drivezone_union,
+                            allowed_focus_geometry=selected_node_repair_focus_geometry,
                         )
                         if selected_node_repair_geometries:
                             trimmed_virtual_polygon_geometry = unary_union(
@@ -11420,6 +12516,7 @@ def run_t02_virtual_intersection_poc(
                 current_polygon_geometry=virtual_polygon_geometry,
                 local_rc_nodes=local_rc_nodes,
                 drivezone_union=drivezone_union,
+                allowed_focus_geometry=selected_node_repair_focus_geometry,
             )
             if final_selected_node_repair_geometries:
                 repaired_virtual_polygon_geometry = unary_union(
@@ -11686,6 +12783,8 @@ def run_t02_virtual_intersection_poc(
                     local_road_degree_by_node_id=local_road_degree_by_node_id,
                     semantic_mainnodeids=semantic_mainnodeids,
                     respect_keep_geometry_for_target_group_foreign_roads=True,
+                    target_group_keep_length_m_override=(1.0 if strict_target_group_foreign_trim else None),
+                    allow_projected_keep_on_target_group_foreign_roads=not strict_target_group_foreign_trim,
                 )
                 if final_foreign_local_road_trim_geometry.is_empty:
                     announce(
@@ -11937,8 +13036,13 @@ def run_t02_virtual_intersection_poc(
                                 f"selected_nodes={','.join(sorted(trimmed_uncovered_selected_rc_node_ids)) or '-'} "
                                 f"selected_roads={','.join(sorted(trimmed_uncovered_selected_rc_road_ids)) or '-'}"
                             ),
-                        )
+        )
         final_selected_node_cover_repair_discarded_due_to_extra_roads = False
+        multi_node_selected_cover_repair_applied = False
+        single_sided_t_mouth_corridor_pattern_detected = len(corridor_main_support_road_ids) >= 2
+        single_sided_t_mouth_branch_corridor_applied = False
+        single_sided_t_mouth_branch_target_endpoint_node_ids: set[str] = set()
+        single_sided_t_mouth_branch_target_local_road_ids: set[str] = set()
         if not virtual_polygon_geometry.is_empty and selected_rc_node_ids:
             selected_node_cover_geometry = virtual_polygon_geometry.buffer(
                 max(resolution_m, 0.5),
@@ -11951,6 +13055,32 @@ def run_t02_virtual_intersection_poc(
                 and node_id in selected_rc_endpoint_node_ids
                 and not selected_node_cover_geometry.covers(rc_node_by_id[node_id].geometry)
             )
+            if (
+                representative_node.kind_2 == 2048
+                and counts["associated_rcsdroad_count"] <= 2
+                and counts["associated_rcsdnode_count"] <= 1
+                and directly_uncovered_selected_rc_node_ids
+            ):
+                far_selected_node_relax_distance_m = max(
+                    POLYGON_FOREIGN_TARGET_ARM_KEEP_LENGTH_M
+                    + POLYGON_FOREIGN_TARGET_ARM_OVERREACH_TOLERANCE_M,
+                    20.0,
+                )
+                directly_uncovered_selected_rc_node_ids = [
+                    node_id
+                    for node_id in directly_uncovered_selected_rc_node_ids
+                    if not (
+                        node_id in rc_node_by_id
+                        and node_id not in polygon_support_rc_node_ids
+                        and rc_node_by_id[node_id].mainnodeid not in {None, "0"}
+                        and float(rc_node_by_id[node_id].geometry.distance(analysis_center))
+                        > far_selected_node_relax_distance_m
+                        and not _is_effective_rc_junction_node(
+                            node=rc_node_by_id[node_id],
+                            local_rc_road_degree_by_node_id=local_rc_road_degree_by_node_id,
+                        )
+                    )
+                ]
             if directly_uncovered_selected_rc_node_ids:
                 announce(
                     logger,
@@ -11959,17 +13089,34 @@ def run_t02_virtual_intersection_poc(
                         f"node_ids={','.join(directly_uncovered_selected_rc_node_ids)}"
                     ),
                 )
-                final_selected_node_cover_repair_geometries = (
-                    _build_uncovered_selected_rc_node_repair_geometries(
-                        uncovered_selected_node_ids=directly_uncovered_selected_rc_node_ids,
-                        current_polygon_geometry=virtual_polygon_geometry,
-                        local_rc_nodes=local_rc_nodes,
-                        drivezone_union=drivezone_union,
-                        selected_rc_roads=selected_rc_roads,
-                        node_buffer_m=max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.05, 0.35),
-                        connector_half_width_m=max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.05, 0.35),
+                if len(directly_uncovered_selected_rc_node_ids) <= 1:
+                    final_selected_node_cover_repair_geometries = (
+                        _build_uncovered_selected_rc_node_repair_geometries(
+                            uncovered_selected_node_ids=directly_uncovered_selected_rc_node_ids,
+                            current_polygon_geometry=virtual_polygon_geometry,
+                            local_rc_nodes=local_rc_nodes,
+                            drivezone_union=drivezone_union,
+                            selected_rc_roads=selected_rc_roads,
+                            node_buffer_m=max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.05, 0.35),
+                            connector_half_width_m=max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.05, 0.35),
+                            allowed_focus_geometry=selected_node_repair_focus_geometry,
+                        )
                     )
-                )
+                else:
+                    final_selected_node_cover_repair_geometries = (
+                        [
+                            rc_node_by_id[node_id].geometry.buffer(
+                                max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.05, 0.35),
+                                join_style=1,
+                            ).intersection(
+                                selected_node_repair_focus_geometry
+                                if not selected_node_repair_focus_geometry.is_empty
+                                else drivezone_union
+                            )
+                            for node_id in directly_uncovered_selected_rc_node_ids
+                            if node_id in rc_node_by_id
+                        ]
+                    )
                 if final_selected_node_cover_repair_geometries:
                     repaired_virtual_polygon_geometry = unary_union(
                         [virtual_polygon_geometry, *final_selected_node_cover_repair_geometries]
@@ -12195,6 +13342,7 @@ def run_t02_virtual_intersection_poc(
                                 ],
                                 node_buffer_m=max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.05, 0.35),
                                 connector_half_width_m=max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M * 0.45, 0.3),
+                                allowed_focus_geometry=selected_node_repair_focus_geometry,
                             )
                             if obstacle_aware_repair_geometries:
                                 obstacle_aware_virtual_polygon_geometry = unary_union(
@@ -12292,7 +13440,14 @@ def run_t02_virtual_intersection_poc(
                                     virtual_polygon_geometry = obstacle_aware_virtual_polygon_geometry
                                     repaired_extra_local_road_ids = []
                                 if repaired_extra_local_road_ids:
-                                    final_selected_node_cover_repair_discarded_due_to_extra_roads = True
+                                    if (
+                                        (representative_node.kind_2 or 0) == 2048
+                                        and (
+                                            len(directly_uncovered_selected_rc_node_ids) > 1
+                                            or len(positive_rc_groups) >= 2
+                                        )
+                                    ):
+                                        final_selected_node_cover_repair_discarded_due_to_extra_roads = True
                                     announce(
                                         logger,
                                         (
@@ -12301,15 +13456,1583 @@ def run_t02_virtual_intersection_poc(
                                         ),
                                     )
                     else:
+                        incrementally_repaired_selected_node_ids: list[str] = []
+                        for node_id in directly_uncovered_selected_rc_node_ids:
+                            single_node_repair_geometries = _build_uncovered_selected_rc_node_repair_geometries(
+                                uncovered_selected_node_ids=[node_id],
+                                current_polygon_geometry=virtual_polygon_geometry,
+                                local_rc_nodes=local_rc_nodes,
+                                drivezone_union=drivezone_union,
+                                selected_rc_roads=selected_rc_roads,
+                                node_buffer_m=max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.05, 0.35),
+                                connector_half_width_m=max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.05, 0.35),
+                                allowed_focus_geometry=selected_node_repair_focus_geometry,
+                            )
+                            if not single_node_repair_geometries:
+                                continue
+                            single_node_virtual_polygon_geometry = unary_union(
+                                [virtual_polygon_geometry, *single_node_repair_geometries]
+                            ).intersection(drivezone_union)
+                            if group_node_reinclude_geometries:
+                                single_node_virtual_polygon_geometry = unary_union(
+                                    [single_node_virtual_polygon_geometry, *group_node_reinclude_geometries]
+                                ).intersection(drivezone_union)
+                            if not single_node_virtual_polygon_geometry.is_empty:
+                                single_node_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                                    geometry=single_node_virtual_polygon_geometry,
+                                    drivezone_union=drivezone_union,
+                                    seed_geometry=core_geometry,
+                                )
+                            (
+                                single_uncovered_group_node_ids,
+                                single_uncovered_support_rc_node_ids,
+                                single_uncovered_support_rc_road_ids,
+                            ) = _validate_polygon_support(
+                                polygon_geometry=single_node_virtual_polygon_geometry,
+                                group_nodes=group_nodes,
+                                local_rc_nodes=local_rc_nodes,
+                                local_rc_roads=local_rc_roads,
+                                support_node_ids=validation_support_rc_node_ids,
+                                support_road_ids=validation_support_rc_road_ids,
+                                support_clip=validation_support_clip,
+                            )
+                            (
+                                single_uncovered_support_rc_node_ids,
+                                single_uncovered_support_rc_road_ids,
+                            ) = _relax_targeted_foreign_trim_support_gaps(
+                                uncovered_support_node_ids=single_uncovered_support_rc_node_ids,
+                                uncovered_support_road_ids=single_uncovered_support_rc_road_ids,
+                                rc_node_by_id=rc_node_by_id,
+                                rc_road_by_id=rc_road_by_id,
+                                analysis_center=analysis_center,
+                                hard_support_node_ids=candidate_selected_rc_node_ids,
+                                hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                                relax_node_ids=conflict_excluded_rc_node_ids,
+                                relax_road_ids=conflict_excluded_rc_road_ids,
+                            )
+                            (
+                                _single_selected_group_node_ids,
+                                single_uncovered_selected_rc_node_ids,
+                                single_uncovered_selected_rc_road_ids,
+                            ) = _validate_polygon_support(
+                                polygon_geometry=single_node_virtual_polygon_geometry,
+                                group_nodes=[],
+                                local_rc_nodes=local_rc_nodes,
+                                local_rc_roads=local_rc_roads,
+                                support_node_ids=selected_rc_node_ids,
+                                support_road_ids={road.road_id for road in selected_rc_roads},
+                                support_clip=selected_output_clip,
+                            )
+                            (
+                                single_uncovered_selected_rc_node_ids,
+                                single_uncovered_selected_rc_road_ids,
+                            ) = _relax_targeted_foreign_trim_selected_gaps(
+                                uncovered_selected_node_ids=single_uncovered_selected_rc_node_ids,
+                                uncovered_selected_road_ids=single_uncovered_selected_rc_road_ids,
+                                rc_node_by_id=rc_node_by_id,
+                                rc_road_by_id=rc_road_by_id,
+                                analysis_center=None,
+                                hard_selected_node_ids=selected_rc_endpoint_node_ids,
+                                relax_node_ids=conflict_excluded_rc_node_ids,
+                                relax_road_ids=conflict_excluded_rc_road_ids,
+                            )
+                            single_extra_local_road_ids = _covered_foreign_local_road_ids(
+                                polygon_geometry=single_node_virtual_polygon_geometry,
+                                local_roads=local_roads,
+                                local_nodes=local_nodes,
+                                allowed_road_ids=allowed_local_road_ids,
+                                target_group_node_ids=analysis_member_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                analysis_center=analysis_center,
+                                semantic_mainnodeids=semantic_mainnodeids,
+                            )
+                            if (
+                                not single_uncovered_group_node_ids
+                                and not single_uncovered_support_rc_node_ids
+                                and not single_uncovered_support_rc_road_ids
+                                and not single_uncovered_selected_rc_road_ids
+                                and not single_extra_local_road_ids
+                                and node_id not in single_uncovered_selected_rc_node_ids
+                            ):
+                                virtual_polygon_geometry = single_node_virtual_polygon_geometry
+                                incrementally_repaired_selected_node_ids.append(node_id)
+                        if incrementally_repaired_selected_node_ids:
+                            announce(
+                                logger,
+                                (
+                                    f"[T02-POC] final selected node cover repair applied incrementally mainnodeid={normalized_mainnodeid} "
+                                    f"node_ids={','.join(incrementally_repaired_selected_node_ids)}"
+                                ),
+                            )
+                            if len(incrementally_repaired_selected_node_ids) >= 2:
+                                multi_node_selected_cover_repair_applied = True
+                        else:
+                            announce(
+                                logger,
+                                (
+                                    f"[T02-POC] final selected node cover repair discarded mainnodeid={normalized_mainnodeid} "
+                                    f"group_uncovered={','.join(sorted(repaired_uncovered_group_node_ids)) or '-'} "
+                                    f"support_nodes={','.join(sorted(repaired_uncovered_support_rc_node_ids)) or '-'} "
+                                    f"support_roads={','.join(sorted(repaired_uncovered_support_rc_road_ids)) or '-'} "
+                                    f"selected_nodes={','.join(sorted(repaired_uncovered_selected_rc_node_ids)) or '-'} "
+                                    f"selected_roads={','.join(sorted(repaired_uncovered_selected_rc_road_ids)) or '-'}"
+                                ),
+                            )
+        geometry_cleanup_allowed = (
+            not local_rc_roads
+            or len(selected_rc_roads) >= 2
+            or len(polygon_support_rc_road_ids) >= 2
+        )
+        final_geometry_keep_parts: list[BaseGeometry] = []
+        if geometry_cleanup_allowed and not virtual_polygon_geometry.is_empty:
+            final_geometry_keep_parts = [
+                *group_node_buffers,
+                *group_node_connectors,
+                *group_node_reinclude_geometries,
+            ]
+            final_geometry_keep_parts.extend(
+                geometry
+                for road_id, geometry in selected_rc_support_clip_by_road_id.items()
+                if (
+                    road_id in selected_rc_support_clip_road_ids
+                    and geometry is not None
+                    and not geometry.is_empty
+                )
+            )
+            final_geometry_keep_parts.extend(
+                rc_node_by_id[node_id].geometry.buffer(
+                    max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M + 0.05, 0.35),
+                    join_style=1,
+                )
+                for node_id in selected_rc_node_ids
+                if node_id in rc_node_by_id
+            )
+            final_geometry_keep_parts.extend(
+                road.geometry.buffer(
+                    max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M * 0.35, 0.25),
+                    join_style=1,
+                )
+                for road in selected_rc_roads
+            )
+            cleaned_virtual_polygon_geometry = _cleanup_final_virtual_polygon_geometry(
+                geometry=virtual_polygon_geometry,
+                drivezone_union=drivezone_union,
+                seed_geometry=core_geometry,
+                core_geometry=core_geometry,
+                keep_geometries=final_geometry_keep_parts,
+            )
+            if not cleaned_virtual_polygon_geometry.equals(virtual_polygon_geometry):
+                (
+                    cleaned_uncovered_group_node_ids,
+                    cleaned_uncovered_support_rc_node_ids,
+                    cleaned_uncovered_support_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=cleaned_virtual_polygon_geometry,
+                    group_nodes=group_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=validation_support_rc_node_ids,
+                    support_road_ids=validation_support_rc_road_ids,
+                    support_clip=validation_support_clip,
+                )
+                (
+                    cleaned_uncovered_support_rc_node_ids,
+                    cleaned_uncovered_support_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_support_gaps(
+                    uncovered_support_node_ids=cleaned_uncovered_support_rc_node_ids,
+                    uncovered_support_road_ids=cleaned_uncovered_support_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                (
+                    _cleaned_selected_group_node_ids,
+                    cleaned_uncovered_selected_rc_node_ids,
+                    cleaned_uncovered_selected_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=cleaned_virtual_polygon_geometry,
+                    group_nodes=[],
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=selected_rc_node_ids,
+                    support_road_ids={road.road_id for road in selected_rc_roads},
+                    support_clip=selected_output_clip,
+                )
+                (
+                    cleaned_uncovered_selected_rc_node_ids,
+                    cleaned_uncovered_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=cleaned_uncovered_selected_rc_node_ids,
+                    uncovered_selected_road_ids=cleaned_uncovered_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=None,
+                    hard_selected_node_ids=selected_rc_endpoint_node_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                cleaned_extra_local_node_ids = sorted(
+                    node.node_id
+                    for node in local_nodes
+                    if (
+                        _is_foreign_local_semantic_node(
+                            node=node,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        and _polygon_substantively_covers_node(
+                            cleaned_virtual_polygon_geometry,
+                            node.geometry,
+                            cover_radius_m=max(resolution_m, 0.5),
+                        )
+                    )
+                )
+                cleaned_extra_local_road_ids = _covered_foreign_local_road_ids(
+                    polygon_geometry=cleaned_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                if (
+                    not cleaned_uncovered_group_node_ids
+                    and not cleaned_uncovered_support_rc_node_ids
+                    and not cleaned_uncovered_support_rc_road_ids
+                    and not cleaned_uncovered_selected_rc_node_ids
+                    and not cleaned_uncovered_selected_rc_road_ids
+                    and not cleaned_extra_local_node_ids
+                    and not cleaned_extra_local_road_ids
+                ):
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] final geometry cleanup applied mainnodeid={normalized_mainnodeid}"
+                        ),
+                    )
+                    virtual_polygon_geometry = cleaned_virtual_polygon_geometry
+                else:
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] final geometry cleanup discarded mainnodeid={normalized_mainnodeid} "
+                            f"group_uncovered={','.join(sorted(cleaned_uncovered_group_node_ids)) or '-'} "
+                            f"support_nodes={','.join(sorted(cleaned_uncovered_support_rc_node_ids)) or '-'} "
+                            f"support_roads={','.join(sorted(cleaned_uncovered_support_rc_road_ids)) or '-'} "
+                            f"selected_nodes={','.join(sorted(cleaned_uncovered_selected_rc_node_ids)) or '-'} "
+                            f"selected_roads={','.join(sorted(cleaned_uncovered_selected_rc_road_ids)) or '-'} "
+                            f"extra_nodes={','.join(sorted(cleaned_extra_local_node_ids)) or '-'} "
+                            f"extra_roads={','.join(sorted(cleaned_extra_local_road_ids)) or '-'}"
+                        ),
+                    )
+        single_sided_t_mouth_corridor_semantic_gap = False
+        corridor_selected_validation_clip = selected_output_clip
+        corridor_selected_target_node_ids = set(selected_rc_node_ids)
+        corridor_selected_target_road_ids = {road.road_id for road in selected_rc_roads}
+        corridor_refine_allowed = (
+            len(corridor_main_support_road_ids) >= 2
+            and bool(selected_rc_support_clip_by_road_id)
+            and not virtual_polygon_geometry.is_empty
+        )
+        if corridor_refine_allowed:
+            corridor_allowed_local_road_ids = (
+                set(allowed_local_road_ids)
+                | set(single_sided_t_mouth_corridor_target_local_road_ids)
+            )
+            corridor_support_clips = [
+                geometry
+                for road_id, geometry in selected_rc_support_clip_by_road_id.items()
+                if (
+                    geometry is not None
+                    and not geometry.is_empty
+                    and (
+                        road_id in corridor_main_support_road_ids
+                        or road_id in selected_rc_support_clip_road_ids
+                    )
+                )
+            ]
+            corridor_mandatory_keep_parts = [
+                *group_node_buffers,
+                *group_node_connectors,
+                *group_node_reinclude_geometries,
+            ]
+            corridor_mandatory_keep_parts.extend(
+                rc_node_by_id[node_id].geometry.buffer(
+                    max(POLYGON_RC_NODE_BUFFER_M * 0.8, 2.0),
+                    join_style=1,
+                )
+                for node_id in selected_rc_endpoint_node_ids
+                if node_id in rc_node_by_id
+            )
+            corridor_mandatory_keep_parts.extend(
+                road.geometry.buffer(
+                    max(RC_ROAD_BUFFER_M * 0.8, 1.4),
+                    join_style=1,
+                )
+                for road in selected_rc_roads
+                if road.road_id in candidate_selected_positive_group_rc_road_ids
+            )
+            corridor_optional_keep_parts: list[BaseGeometry] = []
+            corridor_optional_keep_parts.extend(
+                rc_node_by_id[node_id].geometry.buffer(
+                    max(POLYGON_RC_NODE_BUFFER_M * 0.8, 2.0),
+                    join_style=1,
+                )
+                for node_id in selected_rc_node_ids
+                if node_id in rc_node_by_id
+            )
+            corridor_optional_keep_parts.extend(
+                road.geometry.buffer(
+                    max(RC_ROAD_BUFFER_M * 0.8, 1.4),
+                    join_style=1,
+                )
+                for road in selected_rc_roads
+                if (
+                    road.road_id in corridor_main_support_road_ids
+                    or road.road_id in candidate_selected_positive_group_rc_road_ids
+                )
+            )
+            corridor_selected_validation_parts = [
+                geometry
+                for geometry in (
+                    *corridor_support_clips,
+                    *(
+                        road.geometry.buffer(
+                            max(RC_ROAD_BUFFER_M * 0.95, 1.8),
+                            join_style=1,
+                        )
+                        for road in selected_rc_roads
+                        if (
+                            road.road_id in corridor_main_support_road_ids
+                            or road.road_id in candidate_selected_positive_group_rc_road_ids
+                        )
+                    ),
+                )
+                if geometry is not None and not geometry.is_empty
+            ]
+            if corridor_selected_validation_parts:
+                corridor_selected_validation_clip = unary_union(
+                    corridor_selected_validation_parts
+                ).intersection(
+                    selected_output_clip if not selected_output_clip.is_empty else drivezone_union
+                )
+                if corridor_selected_validation_clip.is_empty:
+                    corridor_selected_validation_clip = unary_union(
+                        corridor_selected_validation_parts
+                    ).intersection(drivezone_union)
+                corridor_selected_validation_cover = corridor_selected_validation_clip.buffer(
+                    max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M, 0.35),
+                    join_style=1,
+                )
+                corridor_selected_target_node_ids = {
+                    node_id
+                    for node_id in selected_rc_node_ids
+                    if node_id in rc_node_by_id
+                    and corridor_selected_validation_cover.covers(rc_node_by_id[node_id].geometry)
+                }
+                corridor_selected_target_road_ids = {
+                    road.road_id
+                    for road in selected_rc_roads
+                    if (
+                        road.road_id in candidate_selected_positive_group_rc_road_ids
+                        or road.road_id in corridor_main_support_road_ids
+                        or road.geometry.intersects(
+                            corridor_selected_validation_clip.buffer(
+                                max(RC_ROAD_BUFFER_M * 0.6, 1.0),
+                                join_style=1,
+                            )
+                        )
+                    )
+                }
+                if not corridor_selected_target_node_ids:
+                    corridor_selected_target_node_ids = set(selected_rc_node_ids)
+                if not corridor_selected_target_road_ids:
+                    corridor_selected_target_road_ids = {road.road_id for road in selected_rc_roads}
+            corridor_virtual_polygon_geometry = _build_single_sided_t_mouth_corridor_candidate_geometry(
+                geometry=virtual_polygon_geometry,
+                drivezone_union=drivezone_union,
+                seed_geometry=core_geometry,
+                core_geometry=core_geometry,
+                corridor_support_clips=corridor_support_clips,
+                mandatory_keep_geometries=corridor_mandatory_keep_parts,
+                keep_geometries=corridor_optional_keep_parts,
+            )
+            if not corridor_virtual_polygon_geometry.equals(virtual_polygon_geometry):
+                (
+                    corridor_uncovered_group_node_ids,
+                    corridor_uncovered_support_rc_node_ids,
+                    corridor_uncovered_support_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=corridor_virtual_polygon_geometry,
+                    group_nodes=group_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=validation_support_rc_node_ids,
+                    support_road_ids=validation_support_rc_road_ids,
+                    support_clip=validation_support_clip,
+                )
+                (
+                    corridor_uncovered_support_rc_node_ids,
+                    corridor_uncovered_support_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_support_gaps(
+                    uncovered_support_node_ids=corridor_uncovered_support_rc_node_ids,
+                    uncovered_support_road_ids=corridor_uncovered_support_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                (
+                    _corridor_selected_group_node_ids,
+                    corridor_uncovered_selected_rc_node_ids,
+                    corridor_uncovered_selected_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=corridor_virtual_polygon_geometry,
+                    group_nodes=[],
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=corridor_selected_target_node_ids,
+                    support_road_ids=corridor_selected_target_road_ids,
+                    support_clip=corridor_selected_validation_clip,
+                )
+                (
+                    corridor_uncovered_selected_rc_node_ids,
+                    corridor_uncovered_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=corridor_uncovered_selected_rc_node_ids,
+                    uncovered_selected_road_ids=corridor_uncovered_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=None,
+                    hard_selected_node_ids=selected_rc_endpoint_node_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                corridor_extra_local_node_ids = sorted(
+                    node.node_id
+                    for node in local_nodes
+                    if (
+                        _is_foreign_local_semantic_node(
+                            node=node,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        and _polygon_substantively_covers_node(
+                            corridor_virtual_polygon_geometry,
+                            node.geometry,
+                            cover_radius_m=max(resolution_m, 0.5),
+                        )
+                    )
+                )
+                corridor_extra_local_road_ids = _covered_foreign_local_road_ids(
+                    polygon_geometry=corridor_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=corridor_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                if (
+                    not corridor_uncovered_group_node_ids
+                    and not corridor_uncovered_support_rc_node_ids
+                    and not corridor_uncovered_support_rc_road_ids
+                    and not corridor_uncovered_selected_rc_node_ids
+                    and not corridor_uncovered_selected_rc_road_ids
+                    and not corridor_extra_local_node_ids
+                    and not corridor_extra_local_road_ids
+                ):
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] single-sided corridor refine applied mainnodeid={normalized_mainnodeid}"
+                        ),
+                    )
+                    virtual_polygon_geometry = corridor_virtual_polygon_geometry
+                else:
+                    if (
+                        corridor_uncovered_selected_rc_node_ids
+                        or corridor_extra_local_node_ids
+                        or corridor_extra_local_road_ids
+                    ):
+                        single_sided_t_mouth_corridor_semantic_gap = True
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] single-sided corridor refine discarded mainnodeid={normalized_mainnodeid} "
+                            f"group_uncovered={','.join(sorted(corridor_uncovered_group_node_ids)) or '-'} "
+                            f"support_nodes={','.join(sorted(corridor_uncovered_support_rc_node_ids)) or '-'} "
+                            f"support_roads={','.join(sorted(corridor_uncovered_support_rc_road_ids)) or '-'} "
+                            f"selected_nodes={','.join(sorted(corridor_uncovered_selected_rc_node_ids)) or '-'} "
+                            f"selected_roads={','.join(sorted(corridor_uncovered_selected_rc_road_ids)) or '-'} "
+                            f"extra_nodes={','.join(sorted(corridor_extra_local_node_ids)) or '-'} "
+                            f"extra_roads={','.join(sorted(corridor_extra_local_road_ids)) or '-'}"
+                        ),
+                    )
+        sparse_single_main_branch_corridor_refine = (
+            representative_node.kind_2 == 2048
+            and len(corridor_main_support_road_ids) == 1
+            and len(positive_rc_groups) == 1
+            and not invalid_rc_road_ids
+            and len(selected_rc_roads) <= 2
+            and single_sided_t_mouth_corridor_pattern is not None
+        )
+        branch_corridor_refine_allowed = (
+            (
+                len(corridor_main_support_road_ids) >= 2
+                or sparse_single_main_branch_corridor_refine
+            )
+            and not virtual_polygon_geometry.is_empty
+        )
+        strict_single_sided_branch_corridor = (
+            representative_node.kind_2 == 2048
+            and len(selected_rc_roads) <= 2
+        )
+        if branch_corridor_refine_allowed:
+            (
+                branch_corridor_pattern,
+                branch_corridor_focus_union,
+                _branch_corridor_parts,
+                branch_corridor_target_rc_road_ids,
+                branch_corridor_target_local_road_ids,
+            ) = _collect_single_sided_t_mouth_branch_corridor_context(
+                representative_kind_2=representative_node.kind_2,
+                road_branches=road_branches,
+                positive_rc_groups=positive_rc_groups,
+                negative_rc_groups=negative_rc_groups,
+                local_roads=local_roads,
+                local_rc_roads=local_rc_roads,
+                rc_branch_by_id=rc_branch_by_id,
+                analysis_center=analysis_center,
+                drivezone_union=drivezone_union,
+                restrict_main_branch_to_best_aligned_rc_group=strict_single_sided_branch_corridor,
+            )
+            if (
+                branch_corridor_pattern is None
+                or branch_corridor_focus_union.is_empty
+                or not branch_corridor_target_rc_road_ids
+            ):
+                branch_corridor_refine_allowed = False
+        if branch_corridor_refine_allowed:
+            branch_corridor_focus_buffer = branch_corridor_focus_union.buffer(
+                max(POLYGON_SUPPORT_CLIP_BUFFER_M + 0.75, 2.5),
+                join_style=1,
+            ).intersection(drivezone_union)
+            if branch_corridor_focus_buffer.is_empty:
+                branch_corridor_focus_buffer = branch_corridor_focus_union
+            branch_corridor_focus_cover = branch_corridor_focus_buffer.buffer(
+                max(POLYGON_SUPPORT_VALIDATION_TOLERANCE_M, 0.35),
+                join_style=1,
+            )
+            branch_corridor_allowed_local_road_ids = (
+                set(allowed_local_road_ids) | set(branch_corridor_target_local_road_ids)
+            )
+            branch_corridor_target_node_ids = {
+                node_id
+                for node_id in selected_rc_node_ids
+                if node_id in rc_node_by_id
+                and branch_corridor_focus_cover.covers(rc_node_by_id[node_id].geometry)
+            }
+            if not branch_corridor_target_node_ids:
+                branch_corridor_target_node_ids = set(selected_rc_node_ids)
+            branch_corridor_endpoint_node_ids = {
+                node_id
+                for node_id in selected_rc_endpoint_node_ids
+                if node_id in branch_corridor_target_node_ids
+            }
+            if not branch_corridor_endpoint_node_ids:
+                branch_corridor_endpoint_node_ids = {
+                    node_id
+                    for node_id in selected_rc_endpoint_node_ids
+                    if node_id in rc_node_by_id
+                    and branch_corridor_focus_cover.covers(rc_node_by_id[node_id].geometry)
+                }
+            if not branch_corridor_endpoint_node_ids:
+                branch_corridor_endpoint_node_ids = set(selected_rc_endpoint_node_ids)
+            if strict_single_sided_branch_corridor and branch_corridor_target_rc_road_ids:
+                branch_corridor_target_road_ids = {
+                    road.road_id
+                    for road in selected_rc_roads
+                    if road.road_id in branch_corridor_target_rc_road_ids
+                }
+            else:
+                branch_corridor_target_road_ids = {
+                    road.road_id
+                    for road in selected_rc_roads
+                    if (
+                        road.road_id in branch_corridor_target_rc_road_ids
+                        or road.geometry.intersects(
+                            branch_corridor_focus_buffer.buffer(
+                                max(RC_ROAD_BUFFER_M * 0.6, 1.0),
+                                join_style=1,
+                            )
+                        )
+                    )
+                }
+            if not branch_corridor_target_road_ids:
+                branch_corridor_target_road_ids = {road.road_id for road in selected_rc_roads}
+            if strict_single_sided_branch_corridor and branch_corridor_target_road_ids:
+                branch_corridor_target_node_ids = {
+                    node_id
+                    for road in selected_rc_roads
+                    if road.road_id in branch_corridor_target_road_ids
+                    for node_id in (road.snodeid, road.enodeid)
+                    if node_id in rc_node_by_id and node_id in set(selected_rc_node_ids)
+                }
+                if not branch_corridor_target_node_ids:
+                    branch_corridor_target_node_ids = {
+                        node_id
+                        for road in selected_rc_roads
+                        if road.road_id in branch_corridor_target_road_ids
+                        for node_id in (road.snodeid, road.enodeid)
+                        if node_id in rc_node_by_id
+                    }
+                branch_corridor_endpoint_node_ids = {
+                    node_id
+                    for node_id in branch_corridor_endpoint_node_ids
+                    if node_id in branch_corridor_target_node_ids
+                }
+                if not branch_corridor_endpoint_node_ids:
+                    branch_corridor_endpoint_node_ids = {
+                        node_id
+                        for road in selected_rc_roads
+                        if road.road_id in branch_corridor_target_road_ids
+                        for node_id in (road.snodeid, road.enodeid)
+                        if node_id in rc_node_by_id
+                    }
+                far_branch_corridor_target_node_distance_m = max(
+                    POLYGON_FOREIGN_TARGET_ARM_KEEP_LENGTH_M
+                    + POLYGON_FOREIGN_TARGET_ARM_OVERREACH_TOLERANCE_M,
+                    28.0,
+                )
+                filtered_branch_corridor_target_node_ids = {
+                    node_id
+                    for node_id in branch_corridor_target_node_ids
+                    if not (
+                        node_id in rc_node_by_id
+                        and float(rc_node_by_id[node_id].geometry.distance(analysis_center))
+                        > far_branch_corridor_target_node_distance_m
+                    )
+                }
+                branch_corridor_target_node_ids = filtered_branch_corridor_target_node_ids
+                filtered_branch_corridor_endpoint_node_ids = {
+                    node_id
+                    for node_id in branch_corridor_endpoint_node_ids
+                    if node_id in branch_corridor_target_node_ids
+                }
+                branch_corridor_endpoint_node_ids = filtered_branch_corridor_endpoint_node_ids
+            if strict_single_sided_branch_corridor and branch_corridor_target_road_ids:
+                branch_corridor_selected_validation_clip_parts: list[BaseGeometry] = []
+                branch_corridor_selected_validation_clip_parts.extend(
+                    road.geometry.intersection(
+                        branch_corridor_focus_buffer.buffer(
+                            max(RC_ROAD_BUFFER_M * 0.6, 1.0),
+                            join_style=1,
+                        )
+                    ).buffer(
+                        max(RC_ROAD_BUFFER_M * 0.8, 1.4),
+                        cap_style=2,
+                        join_style=2,
+                    ).intersection(branch_corridor_focus_buffer)
+                    for road in selected_rc_roads
+                    if road.road_id in branch_corridor_target_road_ids
+                )
+                branch_corridor_selected_validation_clip_parts.extend(
+                    rc_node_by_id[node_id].geometry.buffer(
+                        max(POLYGON_RC_NODE_BUFFER_M * 0.8, 2.0),
+                        join_style=1,
+                    ).intersection(branch_corridor_focus_buffer)
+                    for node_id in branch_corridor_endpoint_node_ids
+                    if node_id in rc_node_by_id
+                )
+                branch_corridor_selected_validation_clip = (
+                    unary_union(
+                        [
+                            geometry
+                            for geometry in branch_corridor_selected_validation_clip_parts
+                            if geometry is not None and not geometry.is_empty
+                        ]
+                    ).intersection(branch_corridor_focus_buffer)
+                    if branch_corridor_selected_validation_clip_parts
+                    else corridor_selected_validation_clip.intersection(branch_corridor_focus_buffer)
+                )
+            else:
+                branch_corridor_selected_validation_clip = corridor_selected_validation_clip.intersection(
+                    branch_corridor_focus_buffer
+                )
+            if branch_corridor_selected_validation_clip.is_empty:
+                branch_corridor_selected_validation_clip = branch_corridor_focus_buffer
+            branch_corridor_mandatory_keep_parts = [
+                *group_node_buffers,
+                *group_node_connectors,
+                *group_node_reinclude_geometries,
+            ]
+            branch_corridor_mandatory_keep_parts.extend(
+                rc_node_by_id[node_id].geometry.buffer(
+                    max(POLYGON_RC_NODE_BUFFER_M * 0.8, 2.0),
+                    join_style=1,
+                )
+                for node_id in branch_corridor_endpoint_node_ids
+                if node_id in rc_node_by_id
+            )
+            branch_corridor_mandatory_keep_parts.extend(
+                (
+                    road.geometry.intersection(
+                        branch_corridor_focus_buffer.buffer(
+                            max(RC_ROAD_BUFFER_M * 0.6, 1.0),
+                            join_style=1,
+                        )
+                    )
+                    if strict_single_sided_branch_corridor
+                    else road.geometry
+                ).buffer(
+                    max(RC_ROAD_BUFFER_M * 0.8, 1.4),
+                    join_style=1,
+                ).intersection(branch_corridor_focus_buffer if strict_single_sided_branch_corridor else drivezone_union)
+                for road in selected_rc_roads
+                if road.road_id in branch_corridor_target_rc_road_ids
+            )
+            branch_corridor_optional_keep_parts: list[BaseGeometry] = []
+            branch_corridor_optional_keep_parts.extend(
+                rc_node_by_id[node_id].geometry.buffer(
+                    max(POLYGON_RC_NODE_BUFFER_M * 0.8, 2.0),
+                    join_style=1,
+                ).intersection(branch_corridor_focus_buffer if strict_single_sided_branch_corridor else drivezone_union)
+                for node_id in (
+                    branch_corridor_endpoint_node_ids
+                    if strict_single_sided_branch_corridor
+                    else branch_corridor_target_node_ids
+                )
+                if node_id in rc_node_by_id
+            )
+            branch_corridor_optional_keep_parts.extend(
+                (
+                    road.geometry.intersection(
+                        branch_corridor_focus_buffer.buffer(
+                            max(RC_ROAD_BUFFER_M * 0.6, 1.0),
+                            join_style=1,
+                        )
+                    )
+                    if strict_single_sided_branch_corridor
+                    else road.geometry
+                ).buffer(
+                    max(RC_ROAD_BUFFER_M * 0.8, 1.4),
+                    join_style=1,
+                ).intersection(branch_corridor_focus_buffer if strict_single_sided_branch_corridor else drivezone_union)
+                for road in selected_rc_roads
+                if road.road_id in branch_corridor_target_road_ids
+            )
+            branch_corridor_virtual_polygon_geometry = _build_single_sided_t_mouth_branch_corridor_geometry(
+                geometry=virtual_polygon_geometry,
+                representative_kind_2=representative_node.kind_2,
+                road_branches=road_branches,
+                positive_rc_groups=positive_rc_groups,
+                negative_rc_groups=negative_rc_groups,
+                local_roads=local_roads,
+                local_rc_roads=local_rc_roads,
+                rc_branch_by_id=rc_branch_by_id,
+                analysis_center=analysis_center,
+                drivezone_union=drivezone_union,
+                seed_geometry=core_geometry,
+                core_geometry=core_geometry,
+                mandatory_keep_geometries=branch_corridor_mandatory_keep_parts,
+                keep_geometries=branch_corridor_optional_keep_parts,
+                restrict_main_branch_to_best_aligned_rc_group=strict_single_sided_branch_corridor,
+            )
+            if not branch_corridor_virtual_polygon_geometry.equals(virtual_polygon_geometry):
+                (
+                    branch_corridor_uncovered_group_node_ids,
+                    branch_corridor_uncovered_support_rc_node_ids,
+                    branch_corridor_uncovered_support_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=branch_corridor_virtual_polygon_geometry,
+                    group_nodes=group_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=validation_support_rc_node_ids,
+                    support_road_ids=validation_support_rc_road_ids,
+                    support_clip=validation_support_clip,
+                )
+                (
+                    branch_corridor_uncovered_support_rc_node_ids,
+                    branch_corridor_uncovered_support_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_support_gaps(
+                    uncovered_support_node_ids=branch_corridor_uncovered_support_rc_node_ids,
+                    uncovered_support_road_ids=branch_corridor_uncovered_support_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                (
+                    _branch_corridor_selected_group_node_ids,
+                    branch_corridor_uncovered_selected_rc_node_ids,
+                    branch_corridor_uncovered_selected_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=branch_corridor_virtual_polygon_geometry,
+                    group_nodes=[],
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=branch_corridor_target_node_ids,
+                    support_road_ids=branch_corridor_target_road_ids,
+                    support_clip=branch_corridor_selected_validation_clip,
+                )
+                (
+                    branch_corridor_uncovered_selected_rc_node_ids,
+                    branch_corridor_uncovered_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=branch_corridor_uncovered_selected_rc_node_ids,
+                    uncovered_selected_road_ids=branch_corridor_uncovered_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=None,
+                    hard_selected_node_ids=selected_rc_endpoint_node_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                branch_corridor_extra_local_node_ids = sorted(
+                    node.node_id
+                    for node in local_nodes
+                    if (
+                        _is_foreign_local_semantic_node(
+                            node=node,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        and _polygon_substantively_covers_node(
+                            branch_corridor_virtual_polygon_geometry,
+                            node.geometry,
+                            cover_radius_m=max(resolution_m, 0.5),
+                        )
+                    )
+                )
+                branch_corridor_extra_local_road_ids = _covered_foreign_local_road_ids(
+                    polygon_geometry=branch_corridor_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=branch_corridor_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                branch_corridor_target_group_overlap_by_id = (
+                    _target_group_foreign_semantic_road_overlap_lengths(
+                        polygon_geometry=branch_corridor_virtual_polygon_geometry,
+                        local_roads=local_roads,
+                        local_nodes=local_nodes,
+                        allowed_road_ids=branch_corridor_allowed_local_road_ids,
+                        target_group_node_ids=analysis_member_node_ids,
+                        normalized_mainnodeid=normalized_mainnodeid,
+                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                        analysis_center=analysis_center,
+                        semantic_mainnodeids=semantic_mainnodeids,
+                    )
+                )
+                if (
+                    not branch_corridor_uncovered_group_node_ids
+                    and not branch_corridor_uncovered_support_rc_node_ids
+                    and not branch_corridor_uncovered_support_rc_road_ids
+                    and not branch_corridor_uncovered_selected_rc_node_ids
+                    and not branch_corridor_uncovered_selected_rc_road_ids
+                    and not branch_corridor_extra_local_node_ids
+                    and not branch_corridor_extra_local_road_ids
+                    and (
+                        not strict_single_sided_branch_corridor
+                        or max(
+                            branch_corridor_target_group_overlap_by_id.values(),
+                            default=0.0,
+                        )
+                        <= POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+                    )
+                ):
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] single-sided branch corridor refine applied mainnodeid={normalized_mainnodeid}"
+                        ),
+                    )
+                    virtual_polygon_geometry = branch_corridor_virtual_polygon_geometry
+                    single_sided_t_mouth_branch_corridor_applied = True
+                    single_sided_t_mouth_branch_target_endpoint_node_ids = set(
+                        branch_corridor_endpoint_node_ids
+                    )
+                    single_sided_t_mouth_branch_target_local_road_ids = set(
+                        branch_corridor_target_local_road_ids
+                    )
+                    single_sided_t_mouth_corridor_semantic_gap = False
+                else:
+                    branch_corridor_keep_parts = [
+                        *branch_corridor_mandatory_keep_parts,
+                    ]
+                    if not sparse_single_main_branch_corridor_refine:
+                        branch_corridor_keep_parts.extend(branch_corridor_optional_keep_parts)
+                    branch_corridor_keep_geometry = (
+                        unary_union(
+                            [
+                                geometry
+                                for geometry in branch_corridor_keep_parts
+                                if geometry is not None and not geometry.is_empty
+                            ]
+                        ).intersection(
+                            branch_corridor_focus_buffer.buffer(
+                                max(POLYGON_SUPPORT_CLIP_BUFFER_M + 1.5, 3.0),
+                                join_style=1,
+                            )
+                        )
+                        if branch_corridor_keep_parts
+                        else GeometryCollection()
+                    )
+                    branch_corridor_trimmed_virtual_polygon_geometry = branch_corridor_virtual_polygon_geometry
+                    branch_corridor_trim_applied = False
+                    if (
+                        not branch_corridor_uncovered_group_node_ids
+                        and not branch_corridor_uncovered_support_rc_node_ids
+                        and not branch_corridor_uncovered_support_rc_road_ids
+                        and not branch_corridor_uncovered_selected_rc_node_ids
+                        and not branch_corridor_uncovered_selected_rc_road_ids
+                        and (
+                            branch_corridor_extra_local_node_ids
+                            or branch_corridor_extra_local_road_ids
+                        )
+                    ):
+                        branch_corridor_foreign_node_trim_geometry = _build_targeted_foreign_semantic_node_core_trim_geometry(
+                            node_ids=set(branch_corridor_extra_local_node_ids),
+                            local_nodes=local_nodes,
+                            local_roads=local_roads,
+                            drivezone_union=drivezone_union,
+                            keep_geometry=branch_corridor_keep_geometry,
+                        )
+                        branch_corridor_foreign_road_trim_geometry = _build_targeted_foreign_local_road_trim_geometry(
+                            polygon_geometry=branch_corridor_virtual_polygon_geometry,
+                            road_ids=set(branch_corridor_extra_local_road_ids),
+                            local_roads=local_roads,
+                            drivezone_union=drivezone_union,
+                            keep_geometry=branch_corridor_keep_geometry,
+                            local_nodes=local_nodes,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                            respect_keep_geometry_for_target_group_foreign_roads=False,
+                            target_group_keep_length_m_override=1.0,
+                        )
+                        branch_corridor_trim_parts = [
+                            geometry
+                            for geometry in (
+                                branch_corridor_foreign_node_trim_geometry,
+                                branch_corridor_foreign_road_trim_geometry,
+                            )
+                            if geometry is not None and not geometry.is_empty
+                        ]
+                        if branch_corridor_trim_parts:
+                            branch_corridor_trim_geometry = unary_union(
+                                branch_corridor_trim_parts
+                            ).intersection(drivezone_union)
+                            if not branch_corridor_trim_geometry.is_empty:
+                                branch_corridor_trimmed_virtual_polygon_geometry = (
+                                    branch_corridor_virtual_polygon_geometry.difference(
+                                        branch_corridor_trim_geometry
+                                    ).intersection(drivezone_union)
+                                )
+                                if group_node_reinclude_geometries:
+                                    branch_corridor_trimmed_virtual_polygon_geometry = unary_union(
+                                        [
+                                            branch_corridor_trimmed_virtual_polygon_geometry,
+                                            *group_node_reinclude_geometries,
+                                        ]
+                                    ).intersection(drivezone_union)
+                                if not branch_corridor_trimmed_virtual_polygon_geometry.is_empty:
+                                    branch_corridor_trimmed_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                                        geometry=branch_corridor_trimmed_virtual_polygon_geometry,
+                                        drivezone_union=drivezone_union,
+                                        seed_geometry=core_geometry,
+                                    )
+                                (
+                                    branch_corridor_trimmed_uncovered_group_node_ids,
+                                    branch_corridor_trimmed_uncovered_support_rc_node_ids,
+                                    branch_corridor_trimmed_uncovered_support_rc_road_ids,
+                                ) = _validate_polygon_support(
+                                    polygon_geometry=branch_corridor_trimmed_virtual_polygon_geometry,
+                                    group_nodes=group_nodes,
+                                    local_rc_nodes=local_rc_nodes,
+                                    local_rc_roads=local_rc_roads,
+                                    support_node_ids=validation_support_rc_node_ids,
+                                    support_road_ids=validation_support_rc_road_ids,
+                                    support_clip=validation_support_clip,
+                                )
+                                (
+                                    branch_corridor_trimmed_uncovered_support_rc_node_ids,
+                                    branch_corridor_trimmed_uncovered_support_rc_road_ids,
+                                ) = _relax_targeted_foreign_trim_support_gaps(
+                                    uncovered_support_node_ids=branch_corridor_trimmed_uncovered_support_rc_node_ids,
+                                    uncovered_support_road_ids=branch_corridor_trimmed_uncovered_support_rc_road_ids,
+                                    rc_node_by_id=rc_node_by_id,
+                                    rc_road_by_id=rc_road_by_id,
+                                    analysis_center=analysis_center,
+                                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                                    relax_node_ids=conflict_excluded_rc_node_ids,
+                                    relax_road_ids=conflict_excluded_rc_road_ids,
+                                )
+                                (
+                                    _branch_corridor_trimmed_selected_group_node_ids,
+                                    branch_corridor_trimmed_uncovered_selected_rc_node_ids,
+                                    branch_corridor_trimmed_uncovered_selected_rc_road_ids,
+                                ) = _validate_polygon_support(
+                                    polygon_geometry=branch_corridor_trimmed_virtual_polygon_geometry,
+                                    group_nodes=[],
+                                    local_rc_nodes=local_rc_nodes,
+                                    local_rc_roads=local_rc_roads,
+                                    support_node_ids=branch_corridor_target_node_ids,
+                                    support_road_ids=branch_corridor_target_road_ids,
+                                    support_clip=branch_corridor_selected_validation_clip,
+                                )
+                                (
+                                    branch_corridor_trimmed_uncovered_selected_rc_node_ids,
+                                    branch_corridor_trimmed_uncovered_selected_rc_road_ids,
+                                ) = _relax_targeted_foreign_trim_selected_gaps(
+                                    uncovered_selected_node_ids=branch_corridor_trimmed_uncovered_selected_rc_node_ids,
+                                    uncovered_selected_road_ids=branch_corridor_trimmed_uncovered_selected_rc_road_ids,
+                                    rc_node_by_id=rc_node_by_id,
+                                    rc_road_by_id=rc_road_by_id,
+                                    analysis_center=None,
+                                    hard_selected_node_ids=branch_corridor_endpoint_node_ids,
+                                    relax_node_ids=conflict_excluded_rc_node_ids,
+                                    relax_road_ids=conflict_excluded_rc_road_ids,
+                                )
+                                branch_corridor_trimmed_extra_local_node_ids = sorted(
+                                    node.node_id
+                                    for node in local_nodes
+                                    if (
+                                        _is_foreign_local_semantic_node(
+                                            node=node,
+                                            target_group_node_ids=analysis_member_node_ids,
+                                            normalized_mainnodeid=normalized_mainnodeid,
+                                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                            semantic_mainnodeids=semantic_mainnodeids,
+                                        )
+                                        and _polygon_substantively_covers_node(
+                                            branch_corridor_trimmed_virtual_polygon_geometry,
+                                            node.geometry,
+                                            cover_radius_m=max(resolution_m, 0.5),
+                                        )
+                                    )
+                                )
+                                branch_corridor_trimmed_extra_local_road_ids = _covered_foreign_local_road_ids(
+                                    polygon_geometry=branch_corridor_trimmed_virtual_polygon_geometry,
+                                    local_roads=local_roads,
+                                    local_nodes=local_nodes,
+                                    allowed_road_ids=branch_corridor_allowed_local_road_ids,
+                                    target_group_node_ids=analysis_member_node_ids,
+                                    normalized_mainnodeid=normalized_mainnodeid,
+                                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                    analysis_center=analysis_center,
+                                    semantic_mainnodeids=semantic_mainnodeids,
+                                )
+                                branch_corridor_trimmed_target_group_overlap_by_id = (
+                                    _target_group_foreign_semantic_road_overlap_lengths(
+                                        polygon_geometry=branch_corridor_trimmed_virtual_polygon_geometry,
+                                        local_roads=local_roads,
+                                        local_nodes=local_nodes,
+                                        allowed_road_ids=branch_corridor_allowed_local_road_ids,
+                                        target_group_node_ids=analysis_member_node_ids,
+                                        normalized_mainnodeid=normalized_mainnodeid,
+                                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                        analysis_center=analysis_center,
+                                        semantic_mainnodeids=semantic_mainnodeids,
+                                    )
+                                )
+                                if (
+                                    not branch_corridor_trimmed_uncovered_group_node_ids
+                                    and not branch_corridor_trimmed_uncovered_support_rc_node_ids
+                                    and not branch_corridor_trimmed_uncovered_support_rc_road_ids
+                                    and not branch_corridor_trimmed_uncovered_selected_rc_node_ids
+                                    and not branch_corridor_trimmed_uncovered_selected_rc_road_ids
+                                    and not branch_corridor_trimmed_extra_local_node_ids
+                                    and not branch_corridor_trimmed_extra_local_road_ids
+                                    and (
+                                        not strict_single_sided_branch_corridor
+                                        or max(
+                                            branch_corridor_trimmed_target_group_overlap_by_id.values(),
+                                            default=0.0,
+                                        )
+                                        <= POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+                                    )
+                                ):
+                                    announce(
+                                        logger,
+                                        (
+                                            f"[T02-POC] single-sided branch corridor refine applied after hard-trim mainnodeid={normalized_mainnodeid}"
+                                        ),
+                                    )
+                                    virtual_polygon_geometry = branch_corridor_trimmed_virtual_polygon_geometry
+                                    single_sided_t_mouth_branch_corridor_applied = True
+                                    single_sided_t_mouth_branch_target_endpoint_node_ids = set(
+                                        branch_corridor_endpoint_node_ids
+                                    )
+                                    single_sided_t_mouth_branch_target_local_road_ids = set(
+                                        branch_corridor_target_local_road_ids
+                                    )
+                                    single_sided_t_mouth_corridor_semantic_gap = False
+                                    branch_corridor_trim_applied = True
+                    if (
+                        not branch_corridor_trim_applied
+                        and (
+                            branch_corridor_uncovered_selected_rc_node_ids
+                            or branch_corridor_extra_local_node_ids
+                            or branch_corridor_extra_local_road_ids
+                        )
+                    ):
+                        if (
+                            strict_single_sided_branch_corridor
+                            and not branch_corridor_uncovered_group_node_ids
+                            and not branch_corridor_uncovered_support_rc_node_ids
+                            and not branch_corridor_uncovered_support_rc_road_ids
+                            and not branch_corridor_uncovered_selected_rc_road_ids
+                        ):
+                            focused_branch_corridor_geometry = branch_corridor_virtual_polygon_geometry
+                            focused_branch_corridor_uncovered_selected_rc_node_ids = list(
+                                branch_corridor_uncovered_selected_rc_node_ids
+                            )
+                            focused_branch_corridor_extra_local_node_ids = list(
+                                branch_corridor_extra_local_node_ids
+                            )
+                            focused_branch_corridor_extra_local_road_ids = list(
+                                branch_corridor_extra_local_road_ids
+                            )
+                            focused_branch_corridor_target_group_overlap_by_id = dict(
+                                branch_corridor_target_group_overlap_by_id
+                            )
+                            if (
+                                focused_branch_corridor_extra_local_node_ids
+                                or focused_branch_corridor_extra_local_road_ids
+                            ):
+                                focused_foreign_node_trim_geometry = (
+                                    _build_targeted_foreign_semantic_node_core_trim_geometry(
+                                        node_ids=set(focused_branch_corridor_extra_local_node_ids),
+                                        local_nodes=local_nodes,
+                                        local_roads=local_roads,
+                                        drivezone_union=drivezone_union,
+                                        keep_geometry=branch_corridor_keep_geometry,
+                                    )
+                                )
+                                focused_foreign_road_trim_geometry = _build_targeted_foreign_local_road_trim_geometry(
+                                    polygon_geometry=focused_branch_corridor_geometry,
+                                    road_ids=set(focused_branch_corridor_extra_local_road_ids),
+                                    local_roads=local_roads,
+                                    drivezone_union=drivezone_union,
+                                    keep_geometry=branch_corridor_keep_geometry,
+                                    local_nodes=local_nodes,
+                                    target_group_node_ids=analysis_member_node_ids,
+                                    normalized_mainnodeid=normalized_mainnodeid,
+                                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                    semantic_mainnodeids=semantic_mainnodeids,
+                                    respect_keep_geometry_for_target_group_foreign_roads=False,
+                                    target_group_keep_length_m_override=0.0,
+                                    allow_projected_keep_on_target_group_foreign_roads=False,
+                                )
+                                focused_trim_parts = [
+                                    geometry
+                                    for geometry in (
+                                        focused_foreign_node_trim_geometry,
+                                        focused_foreign_road_trim_geometry,
+                                    )
+                                    if geometry is not None and not geometry.is_empty
+                                ]
+                                if focused_trim_parts:
+                                    focused_trim_geometry = unary_union(focused_trim_parts).intersection(
+                                        drivezone_union
+                                    )
+                                    if not focused_trim_geometry.is_empty:
+                                        focused_branch_corridor_geometry = (
+                                            focused_branch_corridor_geometry.difference(
+                                                focused_trim_geometry
+                                            ).intersection(drivezone_union)
+                                        )
+                                        if group_node_reinclude_geometries:
+                                            focused_branch_corridor_geometry = unary_union(
+                                                [
+                                                    focused_branch_corridor_geometry,
+                                                    *group_node_reinclude_geometries,
+                                                ]
+                                            ).intersection(drivezone_union)
+                                        if not focused_branch_corridor_geometry.is_empty:
+                                            focused_branch_corridor_geometry = _regularize_virtual_polygon_geometry(
+                                                geometry=focused_branch_corridor_geometry,
+                                                drivezone_union=drivezone_union,
+                                                seed_geometry=core_geometry,
+                                            )
+                                        (
+                                            focused_uncovered_group_node_ids,
+                                            focused_uncovered_support_rc_node_ids,
+                                            focused_uncovered_support_rc_road_ids,
+                                        ) = _validate_polygon_support(
+                                            polygon_geometry=focused_branch_corridor_geometry,
+                                            group_nodes=group_nodes,
+                                            local_rc_nodes=local_rc_nodes,
+                                            local_rc_roads=local_rc_roads,
+                                            support_node_ids=validation_support_rc_node_ids,
+                                            support_road_ids=validation_support_rc_road_ids,
+                                            support_clip=validation_support_clip,
+                                        )
+                                        (
+                                            focused_uncovered_support_rc_node_ids,
+                                            focused_uncovered_support_rc_road_ids,
+                                        ) = _relax_targeted_foreign_trim_support_gaps(
+                                            uncovered_support_node_ids=focused_uncovered_support_rc_node_ids,
+                                            uncovered_support_road_ids=focused_uncovered_support_rc_road_ids,
+                                            rc_node_by_id=rc_node_by_id,
+                                            rc_road_by_id=rc_road_by_id,
+                                            analysis_center=analysis_center,
+                                            hard_support_node_ids=candidate_selected_rc_node_ids,
+                                            hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                                            relax_node_ids=conflict_excluded_rc_node_ids,
+                                            relax_road_ids=conflict_excluded_rc_road_ids,
+                                        )
+                                        (
+                                            _focused_selected_group_node_ids,
+                                            focused_branch_corridor_uncovered_selected_rc_node_ids,
+                                            focused_uncovered_selected_rc_road_ids,
+                                        ) = _validate_polygon_support(
+                                            polygon_geometry=focused_branch_corridor_geometry,
+                                            group_nodes=[],
+                                            local_rc_nodes=local_rc_nodes,
+                                            local_rc_roads=local_rc_roads,
+                                            support_node_ids=branch_corridor_target_node_ids,
+                                            support_road_ids=branch_corridor_target_road_ids,
+                                            support_clip=branch_corridor_selected_validation_clip,
+                                        )
+                                        (
+                                            focused_branch_corridor_uncovered_selected_rc_node_ids,
+                                            focused_uncovered_selected_rc_road_ids,
+                                        ) = _relax_targeted_foreign_trim_selected_gaps(
+                                            uncovered_selected_node_ids=focused_branch_corridor_uncovered_selected_rc_node_ids,
+                                            uncovered_selected_road_ids=focused_uncovered_selected_rc_road_ids,
+                                            rc_node_by_id=rc_node_by_id,
+                                            rc_road_by_id=rc_road_by_id,
+                                            analysis_center=None,
+                                            hard_selected_node_ids=branch_corridor_endpoint_node_ids,
+                                            relax_node_ids=conflict_excluded_rc_node_ids,
+                                            relax_road_ids=conflict_excluded_rc_road_ids,
+                                        )
+                                        focused_branch_corridor_extra_local_node_ids = sorted(
+                                            node.node_id
+                                            for node in local_nodes
+                                            if (
+                                                _is_foreign_local_semantic_node(
+                                                    node=node,
+                                                    target_group_node_ids=analysis_member_node_ids,
+                                                    normalized_mainnodeid=normalized_mainnodeid,
+                                                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                                    semantic_mainnodeids=semantic_mainnodeids,
+                                                )
+                                                and _polygon_substantively_covers_node(
+                                                    focused_branch_corridor_geometry,
+                                                    node.geometry,
+                                                    cover_radius_m=max(resolution_m, 0.5),
+                                                )
+                                            )
+                                        )
+                                        focused_branch_corridor_extra_local_road_ids = _covered_foreign_local_road_ids(
+                                            polygon_geometry=focused_branch_corridor_geometry,
+                                            local_roads=local_roads,
+                                            local_nodes=local_nodes,
+                                            allowed_road_ids=branch_corridor_allowed_local_road_ids,
+                                            target_group_node_ids=analysis_member_node_ids,
+                                            normalized_mainnodeid=normalized_mainnodeid,
+                                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                            analysis_center=analysis_center,
+                                            semantic_mainnodeids=semantic_mainnodeids,
+                                        )
+                                        focused_branch_corridor_target_group_overlap_by_id = (
+                                            _target_group_foreign_semantic_road_overlap_lengths(
+                                                polygon_geometry=focused_branch_corridor_geometry,
+                                                local_roads=local_roads,
+                                                local_nodes=local_nodes,
+                                                allowed_road_ids=branch_corridor_allowed_local_road_ids,
+                                                target_group_node_ids=analysis_member_node_ids,
+                                                normalized_mainnodeid=normalized_mainnodeid,
+                                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                                analysis_center=analysis_center,
+                                                semantic_mainnodeids=semantic_mainnodeids,
+                                            )
+                                        )
+                                        if (
+                                            focused_uncovered_group_node_ids
+                                            or focused_uncovered_support_rc_node_ids
+                                            or focused_uncovered_support_rc_road_ids
+                                            or focused_uncovered_selected_rc_road_ids
+                                        ):
+                                            focused_branch_corridor_geometry = branch_corridor_virtual_polygon_geometry
+                                            focused_branch_corridor_uncovered_selected_rc_node_ids = list(
+                                                branch_corridor_uncovered_selected_rc_node_ids
+                                            )
+                                            focused_branch_corridor_extra_local_node_ids = list(
+                                                branch_corridor_extra_local_node_ids
+                                            )
+                                            focused_branch_corridor_extra_local_road_ids = list(
+                                                branch_corridor_extra_local_road_ids
+                                            )
+                                            focused_branch_corridor_target_group_overlap_by_id = dict(
+                                                branch_corridor_target_group_overlap_by_id
+                                            )
+                            if (
+                                focused_branch_corridor_uncovered_selected_rc_node_ids
+                                and not focused_branch_corridor_extra_local_node_ids
+                                and not focused_branch_corridor_extra_local_road_ids
+                            ):
+                                focused_obstacle_geometries = [
+                                    road.geometry
+                                    for road in local_roads
+                                    if road.road_id in set(focused_branch_corridor_target_group_overlap_by_id)
+                                ]
+                                focused_selected_roads = [
+                                    road
+                                    for road in selected_rc_roads
+                                    if road.road_id in branch_corridor_target_road_ids
+                                ]
+                                focused_repair_allowed_parts: list[BaseGeometry] = [
+                                    branch_corridor_focus_buffer.buffer(
+                                        max(POLYGON_SUPPORT_CLIP_BUFFER_M + 6.0, 8.0),
+                                        join_style=1,
+                                    ).intersection(drivezone_union)
+                                ]
+                                if strict_single_sided_branch_corridor:
+                                    focused_repair_radius_m = max(
+                                        POLYGON_FOREIGN_TARGET_ARM_KEEP_LENGTH_M
+                                        + POLYGON_FOREIGN_TARGET_ARM_OVERREACH_TOLERANCE_M,
+                                        35.0,
+                                    ) + 6.0
+                                    focused_repair_radius_geometry = analysis_center.buffer(
+                                        focused_repair_radius_m
+                                    )
+                                    focused_repair_allowed_parts.extend(
+                                        road.geometry.intersection(
+                                            focused_repair_radius_geometry
+                                        ).buffer(
+                                            max(RC_ROAD_BUFFER_M * 0.95, 1.8),
+                                            cap_style=2,
+                                            join_style=2,
+                                        ).intersection(drivezone_union)
+                                        for road in focused_selected_roads
+                                    )
+                                    focused_repair_allowed_parts.extend(
+                                        rc_node_by_id[node_id].geometry.buffer(
+                                            max(POLYGON_RC_NODE_BUFFER_M * 0.9, 2.2),
+                                            join_style=1,
+                                        ).intersection(drivezone_union)
+                                        for node_id in focused_branch_corridor_uncovered_selected_rc_node_ids
+                                        if node_id in rc_node_by_id
+                                    )
+                                focused_repair_allowed_geometry = unary_union(
+                                    [
+                                        geometry
+                                        for geometry in focused_repair_allowed_parts
+                                        if geometry is not None and not geometry.is_empty
+                                    ]
+                                ).intersection(drivezone_union)
+                                focused_node_repair_geometries = (
+                                    _build_uncovered_selected_rc_node_repair_geometries(
+                                        uncovered_selected_node_ids=focused_branch_corridor_uncovered_selected_rc_node_ids,
+                                        current_polygon_geometry=focused_branch_corridor_geometry,
+                                        local_rc_nodes=local_rc_nodes,
+                                        drivezone_union=drivezone_union,
+                                        selected_rc_roads=focused_selected_roads,
+                                        obstacle_geometries=focused_obstacle_geometries,
+                                        node_buffer_m=max(POLYGON_RC_NODE_BUFFER_M * 0.9, 2.2),
+                                        connector_half_width_m=max(
+                                            POLYGON_RC_NODE_CONNECTOR_HALF_WIDTH_M * 0.85,
+                                            1.8,
+                                        ),
+                                        allowed_focus_geometry=focused_repair_allowed_geometry,
+                                    )
+                                )
+                                if focused_node_repair_geometries:
+                                    focused_repaired_branch_corridor_geometry = unary_union(
+                                        [
+                                            focused_branch_corridor_geometry,
+                                            *focused_node_repair_geometries,
+                                        ]
+                                    ).intersection(drivezone_union)
+                                    if group_node_reinclude_geometries:
+                                        focused_repaired_branch_corridor_geometry = unary_union(
+                                            [
+                                                focused_repaired_branch_corridor_geometry,
+                                                *group_node_reinclude_geometries,
+                                            ]
+                                        ).intersection(drivezone_union)
+                                    if not focused_repaired_branch_corridor_geometry.is_empty:
+                                        focused_repaired_branch_corridor_geometry = _regularize_virtual_polygon_geometry(
+                                            geometry=focused_repaired_branch_corridor_geometry,
+                                            drivezone_union=drivezone_union,
+                                            seed_geometry=core_geometry,
+                                        )
+                                    (
+                                        focused_repaired_uncovered_group_node_ids,
+                                        focused_repaired_uncovered_support_rc_node_ids,
+                                        focused_repaired_uncovered_support_rc_road_ids,
+                                    ) = _validate_polygon_support(
+                                        polygon_geometry=focused_repaired_branch_corridor_geometry,
+                                        group_nodes=group_nodes,
+                                        local_rc_nodes=local_rc_nodes,
+                                        local_rc_roads=local_rc_roads,
+                                        support_node_ids=validation_support_rc_node_ids,
+                                        support_road_ids=validation_support_rc_road_ids,
+                                        support_clip=validation_support_clip,
+                                    )
+                                    (
+                                        focused_repaired_uncovered_support_rc_node_ids,
+                                        focused_repaired_uncovered_support_rc_road_ids,
+                                    ) = _relax_targeted_foreign_trim_support_gaps(
+                                        uncovered_support_node_ids=focused_repaired_uncovered_support_rc_node_ids,
+                                        uncovered_support_road_ids=focused_repaired_uncovered_support_rc_road_ids,
+                                        rc_node_by_id=rc_node_by_id,
+                                        rc_road_by_id=rc_road_by_id,
+                                        analysis_center=analysis_center,
+                                        hard_support_node_ids=candidate_selected_rc_node_ids,
+                                        hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                                        relax_node_ids=conflict_excluded_rc_node_ids,
+                                        relax_road_ids=conflict_excluded_rc_road_ids,
+                                    )
+                                    (
+                                        _focused_repaired_selected_group_node_ids,
+                                        focused_repaired_uncovered_selected_rc_node_ids,
+                                        focused_repaired_uncovered_selected_rc_road_ids,
+                                    ) = _validate_polygon_support(
+                                        polygon_geometry=focused_repaired_branch_corridor_geometry,
+                                        group_nodes=[],
+                                        local_rc_nodes=local_rc_nodes,
+                                        local_rc_roads=local_rc_roads,
+                                        support_node_ids=branch_corridor_target_node_ids,
+                                        support_road_ids=branch_corridor_target_road_ids,
+                                        support_clip=branch_corridor_selected_validation_clip,
+                                    )
+                                    (
+                                        focused_repaired_uncovered_selected_rc_node_ids,
+                                        focused_repaired_uncovered_selected_rc_road_ids,
+                                    ) = _relax_targeted_foreign_trim_selected_gaps(
+                                        uncovered_selected_node_ids=focused_repaired_uncovered_selected_rc_node_ids,
+                                        uncovered_selected_road_ids=focused_repaired_uncovered_selected_rc_road_ids,
+                                        rc_node_by_id=rc_node_by_id,
+                                        rc_road_by_id=rc_road_by_id,
+                                        analysis_center=None,
+                                        hard_selected_node_ids=branch_corridor_endpoint_node_ids,
+                                        relax_node_ids=conflict_excluded_rc_node_ids,
+                                        relax_road_ids=conflict_excluded_rc_road_ids,
+                                    )
+                                    focused_repaired_extra_local_node_ids = sorted(
+                                        node.node_id
+                                        for node in local_nodes
+                                        if (
+                                            _is_foreign_local_semantic_node(
+                                                node=node,
+                                                target_group_node_ids=analysis_member_node_ids,
+                                                normalized_mainnodeid=normalized_mainnodeid,
+                                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                                semantic_mainnodeids=semantic_mainnodeids,
+                                            )
+                                            and _polygon_substantively_covers_node(
+                                                focused_repaired_branch_corridor_geometry,
+                                                node.geometry,
+                                                cover_radius_m=max(resolution_m, 0.5),
+                                            )
+                                        )
+                                    )
+                                    focused_repaired_extra_local_road_ids = _covered_foreign_local_road_ids(
+                                        polygon_geometry=focused_repaired_branch_corridor_geometry,
+                                        local_roads=local_roads,
+                                        local_nodes=local_nodes,
+                                        allowed_road_ids=branch_corridor_allowed_local_road_ids,
+                                        target_group_node_ids=analysis_member_node_ids,
+                                        normalized_mainnodeid=normalized_mainnodeid,
+                                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                        analysis_center=analysis_center,
+                                        semantic_mainnodeids=semantic_mainnodeids,
+                                    )
+                                    focused_repaired_target_group_overlap_by_id = (
+                                        _target_group_foreign_semantic_road_overlap_lengths(
+                                            polygon_geometry=focused_repaired_branch_corridor_geometry,
+                                            local_roads=local_roads,
+                                            local_nodes=local_nodes,
+                                            allowed_road_ids=branch_corridor_allowed_local_road_ids,
+                                            target_group_node_ids=analysis_member_node_ids,
+                                            normalized_mainnodeid=normalized_mainnodeid,
+                                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                            analysis_center=analysis_center,
+                                            semantic_mainnodeids=semantic_mainnodeids,
+                                        )
+                                    )
+                                    if (
+                                        not focused_repaired_uncovered_group_node_ids
+                                        and not focused_repaired_uncovered_support_rc_node_ids
+                                        and not focused_repaired_uncovered_support_rc_road_ids
+                                        and not focused_repaired_uncovered_selected_rc_node_ids
+                                        and not focused_repaired_uncovered_selected_rc_road_ids
+                                        and not focused_repaired_extra_local_node_ids
+                                        and not focused_repaired_extra_local_road_ids
+                                        and max(
+                                            focused_repaired_target_group_overlap_by_id.values(),
+                                            default=0.0,
+                                        )
+                                        <= POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+                                    ):
+                                        announce(
+                                            logger,
+                                            (
+                                                f"[T02-POC] single-sided branch corridor refine applied after focused repair mainnodeid={normalized_mainnodeid}"
+                                            ),
+                                        )
+                                        virtual_polygon_geometry = focused_repaired_branch_corridor_geometry
+                                        single_sided_t_mouth_branch_corridor_applied = True
+                                        single_sided_t_mouth_branch_target_endpoint_node_ids = set(
+                                            branch_corridor_endpoint_node_ids
+                                        )
+                                        single_sided_t_mouth_branch_target_local_road_ids = set(
+                                            branch_corridor_target_local_road_ids
+                                        )
+                                        single_sided_t_mouth_corridor_semantic_gap = False
+                                        branch_corridor_trim_applied = True
+                        single_sided_t_mouth_corridor_semantic_gap = True
+                    if not branch_corridor_trim_applied and (
+                        branch_corridor_uncovered_selected_rc_node_ids
+                        or branch_corridor_extra_local_node_ids
+                        or branch_corridor_extra_local_road_ids
+                    ):
                         announce(
                             logger,
                             (
-                                f"[T02-POC] final selected node cover repair discarded mainnodeid={normalized_mainnodeid} "
-                                f"group_uncovered={','.join(sorted(repaired_uncovered_group_node_ids)) or '-'} "
-                                f"support_nodes={','.join(sorted(repaired_uncovered_support_rc_node_ids)) or '-'} "
-                                f"support_roads={','.join(sorted(repaired_uncovered_support_rc_road_ids)) or '-'} "
-                                f"selected_nodes={','.join(sorted(repaired_uncovered_selected_rc_node_ids)) or '-'} "
-                                f"selected_roads={','.join(sorted(repaired_uncovered_selected_rc_road_ids)) or '-'}"
+                                f"[T02-POC] single-sided branch corridor refine discarded mainnodeid={normalized_mainnodeid} "
+                                f"group_uncovered={','.join(sorted(branch_corridor_uncovered_group_node_ids)) or '-'} "
+                                f"support_nodes={','.join(sorted(branch_corridor_uncovered_support_rc_node_ids)) or '-'} "
+                                f"support_roads={','.join(sorted(branch_corridor_uncovered_support_rc_road_ids)) or '-'} "
+                                f"selected_nodes={','.join(sorted(branch_corridor_uncovered_selected_rc_node_ids)) or '-'} "
+                                f"selected_roads={','.join(sorted(branch_corridor_uncovered_selected_rc_road_ids)) or '-'} "
+                                f"extra_nodes={','.join(sorted(branch_corridor_extra_local_node_ids)) or '-'} "
+                                f"extra_roads={','.join(sorted(branch_corridor_extra_local_road_ids)) or '-'}"
                             ),
                         )
         covered_extra_local_node_ids = sorted(
@@ -12513,7 +15236,1200 @@ def run_t02_virtual_intersection_poc(
                 min_invalid_rc_distance_to_center_m,
                 3,
             )
-
+        final_allowed_local_road_ids = (
+            set(allowed_local_road_ids)
+            | set(single_sided_t_mouth_corridor_target_local_road_ids)
+            | set(single_sided_t_mouth_branch_target_local_road_ids)
+        )
+        late_strict_target_group_overlap_trim_applied = False
+        late_target_group_foreign_semantic_road_overlap_by_id = (
+            _target_group_foreign_semantic_road_overlap_lengths(
+                polygon_geometry=virtual_polygon_geometry,
+                local_roads=local_roads,
+                local_nodes=local_nodes,
+                allowed_road_ids=final_allowed_local_road_ids,
+                target_group_node_ids=analysis_member_node_ids,
+                normalized_mainnodeid=normalized_mainnodeid,
+                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                analysis_center=analysis_center,
+                semantic_mainnodeids=semantic_mainnodeids,
+            )
+        )
+        if (
+            representative_node.kind_2 == 2048
+            and not covered_extra_local_node_ids
+            and not covered_extra_local_road_ids
+            and counts["associated_rcsdroad_count"] <= 2
+            and effective_associated_rc_node_count <= 1
+            and max(late_target_group_foreign_semantic_road_overlap_by_id.values(), default=0.0)
+            > POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+        ):
+            announce(
+                logger,
+                (
+                    f"[T02-POC] late strict target-group overlap trim candidate mainnodeid={normalized_mainnodeid} "
+                    f"extra_roads={','.join(sorted(late_target_group_foreign_semantic_road_overlap_by_id))}"
+                ),
+            )
+            sparse_target_group_overlap_trim = (
+                representative_node.kind_2 == 2048
+                and counts["associated_rcsdroad_count"] <= 2
+                and effective_associated_rc_node_count <= 1
+            )
+            late_target_group_hard_keep_seed_geometries = (
+                tuple(
+                    node.geometry.buffer(
+                        max(resolution_m, 0.5),
+                        join_style=1,
+                    ).intersection(drivezone_union)
+                    for node in group_nodes
+                )
+                if sparse_target_group_overlap_trim
+                else (
+                    *group_node_buffers,
+                    *group_node_connectors,
+                    *group_node_reinclude_geometries,
+                )
+            )
+            late_target_group_hard_keep_parts = [
+                geometry
+                for geometry in late_target_group_hard_keep_seed_geometries
+                if geometry is not None and not geometry.is_empty
+            ]
+            late_target_group_hard_keep_endpoint_node_ids = set(selected_rc_endpoint_node_ids)
+            if sparse_target_group_overlap_trim:
+                far_selected_node_relax_distance_m = max(
+                    POLYGON_FOREIGN_TARGET_ARM_KEEP_LENGTH_M
+                    + POLYGON_FOREIGN_TARGET_ARM_OVERREACH_TOLERANCE_M,
+                    20.0,
+                )
+                late_target_group_hard_keep_endpoint_node_ids = {
+                    node_id
+                    for node_id in late_target_group_hard_keep_endpoint_node_ids
+                    if not (
+                        node_id in rc_node_by_id
+                        and node_id not in polygon_support_rc_node_ids
+                        and rc_node_by_id[node_id].mainnodeid not in {None, "0"}
+                        and float(rc_node_by_id[node_id].geometry.distance(analysis_center))
+                        > far_selected_node_relax_distance_m
+                        and not _is_effective_rc_junction_node(
+                            node=rc_node_by_id[node_id],
+                            local_rc_road_degree_by_node_id=local_rc_road_degree_by_node_id,
+                        )
+                    )
+                }
+            late_target_group_hard_keep_parts.extend(
+                rc_node_by_id[node_id].geometry.buffer(
+                    (
+                        max(resolution_m, 0.35)
+                        if sparse_target_group_overlap_trim
+                        else max(POLYGON_RC_NODE_BUFFER_M * 0.8, 2.0)
+                    ),
+                    join_style=1,
+                ).intersection(drivezone_union)
+                for node_id in late_target_group_hard_keep_endpoint_node_ids
+                if node_id in rc_node_by_id
+            )
+            late_target_group_hard_keep_geometry = (
+                unary_union(late_target_group_hard_keep_parts)
+                if late_target_group_hard_keep_parts
+                else GeometryCollection()
+            )
+            late_target_group_trim_geometry = _build_targeted_foreign_local_road_trim_geometry(
+                polygon_geometry=virtual_polygon_geometry,
+                road_ids=set(late_target_group_foreign_semantic_road_overlap_by_id),
+                local_roads=local_roads,
+                drivezone_union=drivezone_union,
+                keep_geometry=late_target_group_hard_keep_geometry,
+                local_nodes=local_nodes,
+                target_group_node_ids=analysis_member_node_ids,
+                normalized_mainnodeid=normalized_mainnodeid,
+                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                semantic_mainnodeids=semantic_mainnodeids,
+                respect_keep_geometry_for_target_group_foreign_roads=False,
+                target_group_keep_length_m_override=1.0,
+                allow_projected_keep_on_target_group_foreign_roads=False,
+            )
+            if (
+                representative_node.kind_2 == 2048
+                and single_sided_t_mouth_corridor_pattern_detected
+                and len(late_target_group_foreign_semantic_road_overlap_by_id) == 1
+            ):
+                single_overlap_road_id = next(iter(late_target_group_foreign_semantic_road_overlap_by_id))
+                local_road_by_id = {road.road_id: road for road in local_roads}
+                local_node_by_id = {node.node_id: node for node in local_nodes}
+                overlap_local_road = local_road_by_id.get(single_overlap_road_id)
+                if overlap_local_road is not None:
+                    single_sided_opposite_trim_keep_parts = [
+                        local_node_by_id[node_id].geometry.buffer(
+                            max(resolution_m, 0.2),
+                            join_style=1,
+                        ).intersection(drivezone_union)
+                        for node_id in (overlap_local_road.snodeid, overlap_local_road.enodeid)
+                        if node_id in analysis_member_node_ids and node_id in local_node_by_id
+                    ]
+                    single_sided_opposite_trim_keep_geometry = unary_union(
+                        [
+                            geometry
+                            for geometry in single_sided_opposite_trim_keep_parts
+                            if geometry is not None and not geometry.is_empty
+                        ]
+                    ).intersection(drivezone_union)
+                    single_sided_opposite_trim_geometry = (
+                        overlap_local_road.geometry.intersection(
+                            analysis_center.buffer(
+                                max(
+                                    POLYGON_FOREIGN_TARGET_ARM_KEEP_LENGTH_M
+                                    + POLYGON_FOREIGN_TARGET_ARM_OVERREACH_TOLERANCE_M,
+                                    28.0,
+                                )
+                            )
+                        ).buffer(
+                            max(ROAD_BUFFER_M * 0.9, SIDE_BRANCH_HALF_WIDTH_M * 0.9),
+                            cap_style=2,
+                            join_style=2,
+                        ).intersection(drivezone_union)
+                    )
+                    if (
+                        single_sided_opposite_trim_keep_geometry is not None
+                        and not single_sided_opposite_trim_keep_geometry.is_empty
+                    ):
+                        single_sided_opposite_trim_geometry = (
+                            single_sided_opposite_trim_geometry.difference(
+                                single_sided_opposite_trim_keep_geometry
+                            )
+                            .intersection(drivezone_union)
+                        )
+                    if (
+                        single_sided_opposite_trim_geometry is not None
+                        and not single_sided_opposite_trim_geometry.is_empty
+                    ):
+                        late_target_group_trim_geometry = unary_union(
+                            [
+                                geometry
+                                for geometry in (
+                                    late_target_group_trim_geometry,
+                                    single_sided_opposite_trim_geometry,
+                                )
+                                if geometry is not None and not geometry.is_empty
+                            ]
+                        ).intersection(drivezone_union)
+            if not late_target_group_trim_geometry.is_empty:
+                late_trimmed_virtual_polygon_geometry = (
+                    virtual_polygon_geometry.difference(late_target_group_trim_geometry)
+                    .intersection(drivezone_union)
+                )
+                if group_node_reinclude_geometries and not sparse_target_group_overlap_trim:
+                    late_trimmed_virtual_polygon_geometry = unary_union(
+                        [late_trimmed_virtual_polygon_geometry, *group_node_reinclude_geometries]
+                    ).intersection(drivezone_union)
+                if not late_trimmed_virtual_polygon_geometry.is_empty:
+                    late_trimmed_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                        geometry=late_trimmed_virtual_polygon_geometry,
+                        drivezone_union=drivezone_union,
+                        seed_geometry=core_geometry,
+                    )
+                (
+                    late_trimmed_uncovered_group_node_ids,
+                    late_trimmed_uncovered_support_rc_node_ids,
+                    late_trimmed_uncovered_support_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=late_trimmed_virtual_polygon_geometry,
+                    group_nodes=group_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=validation_support_rc_node_ids,
+                    support_road_ids=validation_support_rc_road_ids,
+                    support_clip=validation_support_clip,
+                )
+                (
+                    late_trimmed_uncovered_support_rc_node_ids,
+                    late_trimmed_uncovered_support_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_support_gaps(
+                    uncovered_support_node_ids=late_trimmed_uncovered_support_rc_node_ids,
+                    uncovered_support_road_ids=late_trimmed_uncovered_support_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                (
+                    _late_trimmed_selected_group_node_ids,
+                    late_trimmed_uncovered_selected_rc_node_ids,
+                    late_trimmed_uncovered_selected_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=late_trimmed_virtual_polygon_geometry,
+                    group_nodes=[],
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=selected_rc_node_ids,
+                    support_road_ids={road.road_id for road in selected_rc_roads},
+                    support_clip=selected_output_clip,
+                )
+                (
+                    late_trimmed_uncovered_selected_rc_node_ids,
+                    late_trimmed_uncovered_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=late_trimmed_uncovered_selected_rc_node_ids,
+                    uncovered_selected_road_ids=late_trimmed_uncovered_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=None,
+                    hard_selected_node_ids=selected_rc_endpoint_node_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                if (
+                    representative_node.kind_2 == 2048
+                    and counts["associated_rcsdroad_count"] <= 2
+                    and effective_associated_rc_node_count <= 1
+                    and late_trimmed_uncovered_selected_rc_node_ids
+                    and not late_trimmed_uncovered_selected_rc_road_ids
+                ):
+                    far_selected_node_relax_distance_m = max(
+                        POLYGON_FOREIGN_TARGET_ARM_KEEP_LENGTH_M
+                        + POLYGON_FOREIGN_TARGET_ARM_OVERREACH_TOLERANCE_M,
+                        20.0,
+                    )
+                    late_trimmed_uncovered_selected_rc_node_ids = [
+                        node_id
+                        for node_id in late_trimmed_uncovered_selected_rc_node_ids
+                        if not (
+                            node_id in rc_node_by_id
+                            and node_id not in polygon_support_rc_node_ids
+                            and rc_node_by_id[node_id].mainnodeid not in {None, "0"}
+                            and float(rc_node_by_id[node_id].geometry.distance(analysis_center))
+                            > far_selected_node_relax_distance_m
+                            and not _is_effective_rc_junction_node(
+                                node=rc_node_by_id[node_id],
+                                local_rc_road_degree_by_node_id=local_rc_road_degree_by_node_id,
+                            )
+                        )
+                    ]
+                if (
+                    not late_trimmed_uncovered_group_node_ids
+                    and not late_trimmed_uncovered_support_rc_node_ids
+                    and not late_trimmed_uncovered_support_rc_road_ids
+                    and late_trimmed_uncovered_selected_rc_node_ids
+                    and not late_trimmed_uncovered_selected_rc_road_ids
+                ):
+                    late_selected_node_repair_geometries = _build_uncovered_selected_rc_node_repair_geometries(
+                        uncovered_selected_node_ids=late_trimmed_uncovered_selected_rc_node_ids,
+                        current_polygon_geometry=late_trimmed_virtual_polygon_geometry,
+                        local_rc_nodes=local_rc_nodes,
+                        drivezone_union=drivezone_union,
+                        selected_rc_roads=selected_rc_roads,
+                        allowed_focus_geometry=selected_node_repair_focus_geometry,
+                    )
+                    if late_selected_node_repair_geometries:
+                        repaired_late_trimmed_virtual_polygon_geometry = unary_union(
+                            [
+                                late_trimmed_virtual_polygon_geometry,
+                                *late_selected_node_repair_geometries,
+                            ]
+                        ).intersection(drivezone_union)
+                        if group_node_reinclude_geometries:
+                            repaired_late_trimmed_virtual_polygon_geometry = unary_union(
+                                [
+                                    repaired_late_trimmed_virtual_polygon_geometry,
+                                    *group_node_reinclude_geometries,
+                                ]
+                            ).intersection(drivezone_union)
+                        if not repaired_late_trimmed_virtual_polygon_geometry.is_empty:
+                            repaired_late_trimmed_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                                geometry=repaired_late_trimmed_virtual_polygon_geometry,
+                                drivezone_union=drivezone_union,
+                                seed_geometry=core_geometry,
+                            )
+                        (
+                            repaired_late_trimmed_uncovered_group_node_ids,
+                            repaired_late_trimmed_uncovered_support_rc_node_ids,
+                            repaired_late_trimmed_uncovered_support_rc_road_ids,
+                        ) = _validate_polygon_support(
+                            polygon_geometry=repaired_late_trimmed_virtual_polygon_geometry,
+                            group_nodes=group_nodes,
+                            local_rc_nodes=local_rc_nodes,
+                            local_rc_roads=local_rc_roads,
+                            support_node_ids=validation_support_rc_node_ids,
+                            support_road_ids=validation_support_rc_road_ids,
+                            support_clip=validation_support_clip,
+                        )
+                        (
+                            repaired_late_trimmed_uncovered_support_rc_node_ids,
+                            repaired_late_trimmed_uncovered_support_rc_road_ids,
+                        ) = _relax_targeted_foreign_trim_support_gaps(
+                            uncovered_support_node_ids=repaired_late_trimmed_uncovered_support_rc_node_ids,
+                            uncovered_support_road_ids=repaired_late_trimmed_uncovered_support_rc_road_ids,
+                            rc_node_by_id=rc_node_by_id,
+                            rc_road_by_id=rc_road_by_id,
+                            analysis_center=analysis_center,
+                            hard_support_node_ids=candidate_selected_rc_node_ids,
+                            hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                            relax_node_ids=conflict_excluded_rc_node_ids,
+                            relax_road_ids=conflict_excluded_rc_road_ids,
+                        )
+                        (
+                            _repaired_late_trimmed_selected_group_node_ids,
+                            repaired_late_trimmed_uncovered_selected_rc_node_ids,
+                            repaired_late_trimmed_uncovered_selected_rc_road_ids,
+                        ) = _validate_polygon_support(
+                            polygon_geometry=repaired_late_trimmed_virtual_polygon_geometry,
+                            group_nodes=[],
+                            local_rc_nodes=local_rc_nodes,
+                            local_rc_roads=local_rc_roads,
+                            support_node_ids=selected_rc_node_ids,
+                            support_road_ids={road.road_id for road in selected_rc_roads},
+                            support_clip=selected_output_clip,
+                        )
+                        (
+                            repaired_late_trimmed_uncovered_selected_rc_node_ids,
+                            repaired_late_trimmed_uncovered_selected_rc_road_ids,
+                        ) = _relax_targeted_foreign_trim_selected_gaps(
+                            uncovered_selected_node_ids=repaired_late_trimmed_uncovered_selected_rc_node_ids,
+                            uncovered_selected_road_ids=repaired_late_trimmed_uncovered_selected_rc_road_ids,
+                            rc_node_by_id=rc_node_by_id,
+                            rc_road_by_id=rc_road_by_id,
+                            analysis_center=None,
+                            hard_selected_node_ids=selected_rc_endpoint_node_ids,
+                            relax_node_ids=conflict_excluded_rc_node_ids,
+                            relax_road_ids=conflict_excluded_rc_road_ids,
+                        )
+                        repaired_late_trimmed_extra_local_node_ids = sorted(
+                            node.node_id
+                            for node in local_nodes
+                            if (
+                                _is_foreign_local_semantic_node(
+                                    node=node,
+                                    target_group_node_ids=analysis_member_node_ids,
+                                    normalized_mainnodeid=normalized_mainnodeid,
+                                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                    semantic_mainnodeids=semantic_mainnodeids,
+                                )
+                                and _polygon_substantively_covers_node(
+                                    repaired_late_trimmed_virtual_polygon_geometry,
+                                    node.geometry,
+                                    cover_radius_m=max(resolution_m, 0.5),
+                                )
+                            )
+                        )
+                        repaired_late_trimmed_extra_local_road_ids = _covered_foreign_local_road_ids(
+                            polygon_geometry=repaired_late_trimmed_virtual_polygon_geometry,
+                            local_roads=local_roads,
+                            local_nodes=local_nodes,
+                            allowed_road_ids=final_allowed_local_road_ids,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            analysis_center=analysis_center,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        if (
+                            not repaired_late_trimmed_uncovered_group_node_ids
+                            and not repaired_late_trimmed_uncovered_support_rc_node_ids
+                            and not repaired_late_trimmed_uncovered_support_rc_road_ids
+                            and not repaired_late_trimmed_uncovered_selected_rc_node_ids
+                            and not repaired_late_trimmed_uncovered_selected_rc_road_ids
+                            and not repaired_late_trimmed_extra_local_node_ids
+                            and not repaired_late_trimmed_extra_local_road_ids
+                        ):
+                            late_trimmed_virtual_polygon_geometry = (
+                                repaired_late_trimmed_virtual_polygon_geometry
+                            )
+                            late_trimmed_uncovered_selected_rc_node_ids = []
+                            late_trimmed_uncovered_selected_rc_road_ids = []
+                            late_trimmed_extra_local_node_ids = []
+                            late_trimmed_extra_local_road_ids = []
+                if (
+                    not late_trimmed_uncovered_group_node_ids
+                    and not late_trimmed_uncovered_support_rc_node_ids
+                    and not late_trimmed_uncovered_support_rc_road_ids
+                    and late_trimmed_uncovered_selected_rc_node_ids
+                    and not late_trimmed_uncovered_selected_rc_road_ids
+                ):
+                    late_trim_obstacle_geometries = [
+                        road.geometry
+                        for road in local_roads
+                        if road.road_id in set(late_target_group_foreign_semantic_road_overlap_by_id)
+                    ]
+                    late_incrementally_repaired_selected_node_ids: list[str] = []
+                    for node_id in late_trimmed_uncovered_selected_rc_node_ids:
+                        late_repair_attempts = (
+                            (selected_rc_roads, selected_node_repair_focus_geometry, late_trim_obstacle_geometries),
+                            (selected_rc_roads, None, late_trim_obstacle_geometries),
+                            ([], selected_node_repair_focus_geometry, late_trim_obstacle_geometries),
+                            ([], None, late_trim_obstacle_geometries),
+                            ([], None, None),
+                        )
+                        for (
+                            late_attempt_selected_rc_roads,
+                            late_attempt_focus_geometry,
+                            late_attempt_obstacle_geometries,
+                        ) in late_repair_attempts:
+                            single_late_node_repair_geometries = _build_uncovered_selected_rc_node_repair_geometries(
+                                uncovered_selected_node_ids=[node_id],
+                                current_polygon_geometry=late_trimmed_virtual_polygon_geometry,
+                                local_rc_nodes=local_rc_nodes,
+                                drivezone_union=drivezone_union,
+                                selected_rc_roads=list(late_attempt_selected_rc_roads),
+                                obstacle_geometries=late_attempt_obstacle_geometries,
+                                node_buffer_m=max(POLYGON_RC_NODE_BUFFER_M + 0.6, 2.6),
+                                connector_half_width_m=max(POLYGON_RC_NODE_CONNECTOR_HALF_WIDTH_M * 0.7, 1.6),
+                                allowed_focus_geometry=late_attempt_focus_geometry,
+                            )
+                            if not single_late_node_repair_geometries:
+                                continue
+                            single_late_virtual_polygon_geometry = unary_union(
+                                [
+                                    late_trimmed_virtual_polygon_geometry,
+                                    *single_late_node_repair_geometries,
+                                ]
+                            ).intersection(drivezone_union)
+                            if group_node_reinclude_geometries:
+                                single_late_virtual_polygon_geometry = unary_union(
+                                    [
+                                        single_late_virtual_polygon_geometry,
+                                        *group_node_reinclude_geometries,
+                                    ]
+                                ).intersection(drivezone_union)
+                            if not single_late_virtual_polygon_geometry.is_empty:
+                                single_late_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                                    geometry=single_late_virtual_polygon_geometry,
+                                    drivezone_union=drivezone_union,
+                                    seed_geometry=core_geometry,
+                                )
+                            (
+                                single_late_uncovered_group_node_ids,
+                                single_late_uncovered_support_rc_node_ids,
+                                single_late_uncovered_support_rc_road_ids,
+                            ) = _validate_polygon_support(
+                                polygon_geometry=single_late_virtual_polygon_geometry,
+                                group_nodes=group_nodes,
+                                local_rc_nodes=local_rc_nodes,
+                                local_rc_roads=local_rc_roads,
+                                support_node_ids=validation_support_rc_node_ids,
+                                support_road_ids=validation_support_rc_road_ids,
+                                support_clip=validation_support_clip,
+                            )
+                            (
+                                single_late_uncovered_support_rc_node_ids,
+                                single_late_uncovered_support_rc_road_ids,
+                            ) = _relax_targeted_foreign_trim_support_gaps(
+                                uncovered_support_node_ids=single_late_uncovered_support_rc_node_ids,
+                                uncovered_support_road_ids=single_late_uncovered_support_rc_road_ids,
+                                rc_node_by_id=rc_node_by_id,
+                                rc_road_by_id=rc_road_by_id,
+                                analysis_center=analysis_center,
+                                hard_support_node_ids=candidate_selected_rc_node_ids,
+                                hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                                relax_node_ids=conflict_excluded_rc_node_ids,
+                                relax_road_ids=conflict_excluded_rc_road_ids,
+                            )
+                            (
+                                _single_late_selected_group_node_ids,
+                                single_late_uncovered_selected_rc_node_ids,
+                                single_late_uncovered_selected_rc_road_ids,
+                            ) = _validate_polygon_support(
+                                polygon_geometry=single_late_virtual_polygon_geometry,
+                                group_nodes=[],
+                                local_rc_nodes=local_rc_nodes,
+                                local_rc_roads=local_rc_roads,
+                                support_node_ids=selected_rc_node_ids,
+                                support_road_ids={road.road_id for road in selected_rc_roads},
+                                support_clip=selected_output_clip,
+                            )
+                            (
+                                single_late_uncovered_selected_rc_node_ids,
+                                single_late_uncovered_selected_rc_road_ids,
+                            ) = _relax_targeted_foreign_trim_selected_gaps(
+                                uncovered_selected_node_ids=single_late_uncovered_selected_rc_node_ids,
+                                uncovered_selected_road_ids=single_late_uncovered_selected_rc_road_ids,
+                                rc_node_by_id=rc_node_by_id,
+                                rc_road_by_id=rc_road_by_id,
+                                analysis_center=None,
+                                hard_selected_node_ids=selected_rc_endpoint_node_ids,
+                                relax_node_ids=conflict_excluded_rc_node_ids,
+                                relax_road_ids=conflict_excluded_rc_road_ids,
+                            )
+                            single_late_extra_local_node_ids = sorted(
+                                node.node_id
+                                for node in local_nodes
+                                if (
+                                    _is_foreign_local_semantic_node(
+                                        node=node,
+                                        target_group_node_ids=analysis_member_node_ids,
+                                        normalized_mainnodeid=normalized_mainnodeid,
+                                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                        semantic_mainnodeids=semantic_mainnodeids,
+                                    )
+                                    and _polygon_substantively_covers_node(
+                                        single_late_virtual_polygon_geometry,
+                                        node.geometry,
+                                        cover_radius_m=max(resolution_m, 0.5),
+                                    )
+                                )
+                            )
+                            single_late_extra_local_road_ids = _covered_foreign_local_road_ids(
+                                polygon_geometry=single_late_virtual_polygon_geometry,
+                                local_roads=local_roads,
+                                local_nodes=local_nodes,
+                                allowed_road_ids=final_allowed_local_road_ids,
+                                target_group_node_ids=analysis_member_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                analysis_center=analysis_center,
+                                semantic_mainnodeids=semantic_mainnodeids,
+                            )
+                            if (
+                                not single_late_uncovered_group_node_ids
+                                and not single_late_uncovered_support_rc_node_ids
+                                and not single_late_uncovered_support_rc_road_ids
+                                and not single_late_uncovered_selected_rc_road_ids
+                                and not single_late_extra_local_node_ids
+                                and not single_late_extra_local_road_ids
+                                and node_id not in single_late_uncovered_selected_rc_node_ids
+                            ):
+                                late_trimmed_virtual_polygon_geometry = single_late_virtual_polygon_geometry
+                                late_incrementally_repaired_selected_node_ids.append(node_id)
+                                break
+                    if late_incrementally_repaired_selected_node_ids:
+                        late_trimmed_uncovered_selected_rc_node_ids = [
+                            node_id
+                            for node_id in late_trimmed_uncovered_selected_rc_node_ids
+                            if node_id not in set(late_incrementally_repaired_selected_node_ids)
+                        ]
+                late_trimmed_extra_local_node_ids = sorted(
+                    node.node_id
+                    for node in local_nodes
+                    if (
+                        _is_foreign_local_semantic_node(
+                            node=node,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        and _polygon_substantively_covers_node(
+                            late_trimmed_virtual_polygon_geometry,
+                            node.geometry,
+                            cover_radius_m=max(resolution_m, 0.5),
+                        )
+                    )
+                )
+                late_trimmed_extra_local_road_ids = _covered_foreign_local_road_ids(
+                    polygon_geometry=late_trimmed_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=final_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                if (
+                    not late_trimmed_uncovered_group_node_ids
+                    and not late_trimmed_uncovered_support_rc_node_ids
+                    and not late_trimmed_uncovered_support_rc_road_ids
+                    and not late_trimmed_uncovered_selected_rc_node_ids
+                    and not late_trimmed_uncovered_selected_rc_road_ids
+                    and not late_trimmed_extra_local_node_ids
+                    and not late_trimmed_extra_local_road_ids
+                ):
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] late strict target-group overlap trim applied mainnodeid={normalized_mainnodeid} "
+                            f"extra_roads={','.join(sorted(late_target_group_foreign_semantic_road_overlap_by_id))}"
+                        ),
+                    )
+                    late_strict_target_group_overlap_trim_applied = True
+                    virtual_polygon_geometry = late_trimmed_virtual_polygon_geometry
+                else:
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] late strict target-group overlap trim discarded mainnodeid={normalized_mainnodeid} "
+                            f"group_uncovered={','.join(sorted(late_trimmed_uncovered_group_node_ids)) or '-'} "
+                            f"support_nodes={','.join(sorted(late_trimmed_uncovered_support_rc_node_ids)) or '-'} "
+                            f"support_roads={','.join(sorted(late_trimmed_uncovered_support_rc_road_ids)) or '-'} "
+                            f"selected_nodes={','.join(sorted(late_trimmed_uncovered_selected_rc_node_ids)) or '-'} "
+                            f"selected_roads={','.join(sorted(late_trimmed_uncovered_selected_rc_road_ids)) or '-'} "
+                            f"extra_nodes={','.join(sorted(late_trimmed_extra_local_node_ids)) or '-'} "
+                            f"extra_roads={','.join(sorted(late_trimmed_extra_local_road_ids)) or '-'}"
+                        ),
+                    )
+            else:
+                announce(
+                    logger,
+                    (
+                        f"[T02-POC] late strict target-group overlap trim empty mainnodeid={normalized_mainnodeid} "
+                        f"extra_roads={','.join(sorted(late_target_group_foreign_semantic_road_overlap_by_id))}"
+                    ),
+                )
+        target_group_foreign_semantic_road_overlap_by_id = (
+            _target_group_foreign_semantic_road_overlap_lengths(
+                polygon_geometry=virtual_polygon_geometry,
+                local_roads=local_roads,
+                local_nodes=local_nodes,
+                allowed_road_ids=final_allowed_local_road_ids,
+                target_group_node_ids=analysis_member_node_ids,
+                normalized_mainnodeid=normalized_mainnodeid,
+                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                analysis_center=analysis_center,
+                semantic_mainnodeids=semantic_mainnodeids,
+            )
+        )
+        max_target_group_foreign_semantic_road_overlap_m = max(
+            target_group_foreign_semantic_road_overlap_by_id.values(),
+            default=0.0,
+        )
+        counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+            max_target_group_foreign_semantic_road_overlap_m,
+            3,
+        )
+        if (
+            representative_node.kind_2 == 2048
+            and not covered_extra_local_node_ids
+            and not covered_extra_local_road_ids
+            and counts["associated_rcsdroad_count"] <= 2
+            and effective_associated_rc_node_count <= 1
+            and max_target_group_foreign_semantic_road_overlap_m
+            > POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+        ):
+            post_overlap_hard_keep_geometry = unary_union(
+                [
+                    node.geometry.buffer(max(resolution_m, 0.35), join_style=1).intersection(
+                        drivezone_union
+                    )
+                    for node in group_nodes
+                ]
+            ).intersection(drivezone_union)
+            post_overlap_trim_geometry = _build_targeted_foreign_local_road_trim_geometry(
+                polygon_geometry=virtual_polygon_geometry,
+                road_ids=set(target_group_foreign_semantic_road_overlap_by_id),
+                local_roads=local_roads,
+                drivezone_union=drivezone_union,
+                keep_geometry=post_overlap_hard_keep_geometry,
+                local_nodes=local_nodes,
+                target_group_node_ids=analysis_member_node_ids,
+                normalized_mainnodeid=normalized_mainnodeid,
+                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                semantic_mainnodeids=semantic_mainnodeids,
+                respect_keep_geometry_for_target_group_foreign_roads=False,
+                target_group_keep_length_m_override=-0.3,
+                allow_projected_keep_on_target_group_foreign_roads=False,
+            )
+            if (
+                representative_node.kind_2 == 2048
+                and single_sided_t_mouth_corridor_pattern_detected
+                and len(target_group_foreign_semantic_road_overlap_by_id) == 1
+            ):
+                single_overlap_road_id = next(iter(target_group_foreign_semantic_road_overlap_by_id))
+                local_road_by_id = {road.road_id: road for road in local_roads}
+                local_node_by_id = {node.node_id: node for node in local_nodes}
+                overlap_local_road = local_road_by_id.get(single_overlap_road_id)
+                if overlap_local_road is not None:
+                    post_overlap_keep_parts = [
+                        local_node_by_id[node_id].geometry.buffer(
+                            max(resolution_m * 0.5, 0.1),
+                            join_style=1,
+                        ).intersection(drivezone_union)
+                        for node_id in (overlap_local_road.snodeid, overlap_local_road.enodeid)
+                        if node_id in analysis_member_node_ids and node_id in local_node_by_id
+                    ]
+                    post_overlap_keep_geometry = unary_union(
+                        [
+                            geometry
+                            for geometry in post_overlap_keep_parts
+                            if geometry is not None and not geometry.is_empty
+                        ]
+                    ).intersection(drivezone_union)
+                    post_overlap_single_opposite_trim_geometry = (
+                        overlap_local_road.geometry.intersection(
+                            analysis_center.buffer(
+                                max(
+                                    POLYGON_FOREIGN_TARGET_ARM_KEEP_LENGTH_M
+                                    + POLYGON_FOREIGN_TARGET_ARM_OVERREACH_TOLERANCE_M,
+                                    28.0,
+                                )
+                            )
+                        ).buffer(
+                            max(ROAD_BUFFER_M * 0.9, SIDE_BRANCH_HALF_WIDTH_M * 0.9),
+                            cap_style=2,
+                            join_style=2,
+                        ).intersection(drivezone_union)
+                    )
+                    if (
+                        post_overlap_keep_geometry is not None
+                        and not post_overlap_keep_geometry.is_empty
+                    ):
+                        post_overlap_single_opposite_trim_geometry = (
+                            post_overlap_single_opposite_trim_geometry.difference(
+                                post_overlap_keep_geometry
+                            ).intersection(drivezone_union)
+                        )
+                    if (
+                        post_overlap_single_opposite_trim_geometry is not None
+                        and not post_overlap_single_opposite_trim_geometry.is_empty
+                    ):
+                        post_overlap_trim_geometry = unary_union(
+                            [
+                                geometry
+                                for geometry in (
+                                    post_overlap_trim_geometry,
+                                    post_overlap_single_opposite_trim_geometry,
+                                )
+                                if geometry is not None and not geometry.is_empty
+                            ]
+                        ).intersection(drivezone_union)
+            if not post_overlap_trim_geometry.is_empty:
+                post_overlap_virtual_polygon_geometry = (
+                    virtual_polygon_geometry.difference(post_overlap_trim_geometry)
+                    .intersection(drivezone_union)
+                )
+                if not post_overlap_virtual_polygon_geometry.is_empty:
+                    if (
+                        representative_node.kind_2 == 2048
+                        and counts["associated_rcsdroad_count"] <= 2
+                        and effective_associated_rc_node_count <= 1
+                        and len(target_group_foreign_semantic_road_overlap_by_id) == 1
+                    ):
+                        post_overlap_virtual_polygon_geometry = (
+                            post_overlap_virtual_polygon_geometry
+                            .intersection(drivezone_union)
+                            .buffer(0)
+                        )
+                        if not post_overlap_virtual_polygon_geometry.is_empty:
+                            post_overlap_virtual_polygon_geometry = _fill_small_polygon_holes(
+                                post_overlap_virtual_polygon_geometry,
+                                max_hole_area_m2=POLYGON_SMALL_HOLE_AREA_M2,
+                            )
+                            post_overlap_virtual_polygon_geometry = _remove_all_polygon_holes(
+                                post_overlap_virtual_polygon_geometry
+                            )
+                            post_overlap_virtual_polygon_geometry = _select_seed_connected_polygon(
+                                geometry=post_overlap_virtual_polygon_geometry,
+                                seed_geometry=core_geometry,
+                            )
+                            if not post_overlap_virtual_polygon_geometry.is_empty:
+                                post_overlap_virtual_polygon_geometry = (
+                                    post_overlap_virtual_polygon_geometry
+                                    .intersection(drivezone_union)
+                                    .buffer(0)
+                                )
+                    else:
+                        post_overlap_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                            geometry=post_overlap_virtual_polygon_geometry,
+                            drivezone_union=drivezone_union,
+                            seed_geometry=core_geometry,
+                        )
+                (
+                    post_overlap_uncovered_group_node_ids,
+                    post_overlap_uncovered_support_rc_node_ids,
+                    post_overlap_uncovered_support_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=post_overlap_virtual_polygon_geometry,
+                    group_nodes=group_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=validation_support_rc_node_ids,
+                    support_road_ids=validation_support_rc_road_ids,
+                    support_clip=validation_support_clip,
+                )
+                (
+                    post_overlap_uncovered_support_rc_node_ids,
+                    post_overlap_uncovered_support_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_support_gaps(
+                    uncovered_support_node_ids=post_overlap_uncovered_support_rc_node_ids,
+                    uncovered_support_road_ids=post_overlap_uncovered_support_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                (
+                    _post_overlap_selected_group_node_ids,
+                    post_overlap_uncovered_selected_rc_node_ids,
+                    post_overlap_uncovered_selected_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=post_overlap_virtual_polygon_geometry,
+                    group_nodes=[],
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=selected_rc_node_ids,
+                    support_road_ids={road.road_id for road in selected_rc_roads},
+                    support_clip=selected_output_clip,
+                )
+                (
+                    post_overlap_uncovered_selected_rc_node_ids,
+                    post_overlap_uncovered_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=post_overlap_uncovered_selected_rc_node_ids,
+                    uncovered_selected_road_ids=post_overlap_uncovered_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=None,
+                    hard_selected_node_ids=set(),
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                if (
+                    representative_node.kind_2 == 2048
+                    and counts["associated_rcsdroad_count"] <= 2
+                    and effective_associated_rc_node_count <= 1
+                    and post_overlap_uncovered_selected_rc_node_ids
+                    and not post_overlap_uncovered_selected_rc_road_ids
+                ):
+                    far_selected_node_relax_distance_m = max(
+                        POLYGON_FOREIGN_TARGET_ARM_KEEP_LENGTH_M
+                        + POLYGON_FOREIGN_TARGET_ARM_OVERREACH_TOLERANCE_M,
+                        20.0,
+                    )
+                    post_overlap_uncovered_selected_rc_node_ids = [
+                        node_id
+                        for node_id in post_overlap_uncovered_selected_rc_node_ids
+                        if not (
+                            node_id in rc_node_by_id
+                            and node_id not in polygon_support_rc_node_ids
+                            and rc_node_by_id[node_id].mainnodeid not in {None, "0"}
+                            and float(rc_node_by_id[node_id].geometry.distance(analysis_center))
+                            > far_selected_node_relax_distance_m
+                            and not _is_effective_rc_junction_node(
+                                node=rc_node_by_id[node_id],
+                                local_rc_road_degree_by_node_id=local_rc_road_degree_by_node_id,
+                            )
+                        )
+                    ]
+                post_overlap_extra_local_node_ids = sorted(
+                    node.node_id
+                    for node in local_nodes
+                    if (
+                        _is_foreign_local_semantic_node(
+                            node=node,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        and _polygon_substantively_covers_node(
+                            post_overlap_virtual_polygon_geometry,
+                            node.geometry,
+                            cover_radius_m=max(resolution_m, 0.5),
+                        )
+                    )
+                )
+                post_overlap_extra_local_road_ids = _covered_foreign_local_road_ids(
+                    polygon_geometry=post_overlap_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=final_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                post_overlap_target_group_overlap_by_id = _target_group_foreign_semantic_road_overlap_lengths(
+                    polygon_geometry=post_overlap_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=final_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                if (
+                    not post_overlap_uncovered_group_node_ids
+                    and not post_overlap_uncovered_support_rc_node_ids
+                    and not post_overlap_uncovered_support_rc_road_ids
+                    and post_overlap_uncovered_selected_rc_node_ids
+                    and not post_overlap_uncovered_selected_rc_road_ids
+                    and not post_overlap_extra_local_node_ids
+                    and not post_overlap_extra_local_road_ids
+                ):
+                    post_overlap_obstacle_geometries = [
+                        road.geometry
+                        for road in local_roads
+                        if road.road_id in set(target_group_foreign_semantic_road_overlap_by_id)
+                    ]
+                    post_overlap_selected_node_repair_geometries = _build_uncovered_selected_rc_node_repair_geometries(
+                        uncovered_selected_node_ids=post_overlap_uncovered_selected_rc_node_ids,
+                        current_polygon_geometry=post_overlap_virtual_polygon_geometry,
+                        local_rc_nodes=local_rc_nodes,
+                        drivezone_union=drivezone_union,
+                        selected_rc_roads=selected_rc_roads,
+                        obstacle_geometries=post_overlap_obstacle_geometries,
+                        node_buffer_m=max(POLYGON_RC_NODE_BUFFER_M + 0.3, 2.0),
+                        connector_half_width_m=max(
+                            POLYGON_RC_NODE_CONNECTOR_HALF_WIDTH_M * 0.5,
+                            1.0,
+                        ),
+                        allowed_focus_geometry=selected_node_repair_focus_geometry,
+                    )
+                    if post_overlap_selected_node_repair_geometries:
+                        repaired_post_overlap_virtual_polygon_geometry = unary_union(
+                            [
+                                post_overlap_virtual_polygon_geometry,
+                                *post_overlap_selected_node_repair_geometries,
+                            ]
+                        ).intersection(drivezone_union)
+                        if (
+                            representative_node.kind_2 == 2048
+                            and counts["associated_rcsdroad_count"] <= 2
+                            and effective_associated_rc_node_count <= 1
+                            and len(target_group_foreign_semantic_road_overlap_by_id) == 1
+                        ):
+                            repaired_post_overlap_virtual_polygon_geometry = (
+                                repaired_post_overlap_virtual_polygon_geometry
+                                .intersection(drivezone_union)
+                                .buffer(0)
+                            )
+                            if not repaired_post_overlap_virtual_polygon_geometry.is_empty:
+                                repaired_post_overlap_virtual_polygon_geometry = (
+                                    _fill_small_polygon_holes(
+                                        repaired_post_overlap_virtual_polygon_geometry,
+                                        max_hole_area_m2=POLYGON_SMALL_HOLE_AREA_M2,
+                                    )
+                                )
+                                repaired_post_overlap_virtual_polygon_geometry = _remove_all_polygon_holes(
+                                    repaired_post_overlap_virtual_polygon_geometry
+                                )
+                                repaired_post_overlap_virtual_polygon_geometry = (
+                                    _select_seed_connected_polygon(
+                                        geometry=repaired_post_overlap_virtual_polygon_geometry,
+                                        seed_geometry=core_geometry,
+                                    )
+                                )
+                                if not repaired_post_overlap_virtual_polygon_geometry.is_empty:
+                                    repaired_post_overlap_virtual_polygon_geometry = (
+                                        repaired_post_overlap_virtual_polygon_geometry
+                                        .intersection(drivezone_union)
+                                        .buffer(0)
+                                    )
+                        else:
+                            repaired_post_overlap_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                                geometry=repaired_post_overlap_virtual_polygon_geometry,
+                                drivezone_union=drivezone_union,
+                                seed_geometry=core_geometry,
+                            )
+                        (
+                            repaired_post_overlap_uncovered_group_node_ids,
+                            repaired_post_overlap_uncovered_support_rc_node_ids,
+                            repaired_post_overlap_uncovered_support_rc_road_ids,
+                        ) = _validate_polygon_support(
+                            polygon_geometry=repaired_post_overlap_virtual_polygon_geometry,
+                            group_nodes=group_nodes,
+                            local_rc_nodes=local_rc_nodes,
+                            local_rc_roads=local_rc_roads,
+                            support_node_ids=validation_support_rc_node_ids,
+                            support_road_ids=validation_support_rc_road_ids,
+                            support_clip=validation_support_clip,
+                        )
+                        (
+                            repaired_post_overlap_uncovered_support_rc_node_ids,
+                            repaired_post_overlap_uncovered_support_rc_road_ids,
+                        ) = _relax_targeted_foreign_trim_support_gaps(
+                            uncovered_support_node_ids=repaired_post_overlap_uncovered_support_rc_node_ids,
+                            uncovered_support_road_ids=repaired_post_overlap_uncovered_support_rc_road_ids,
+                            rc_node_by_id=rc_node_by_id,
+                            rc_road_by_id=rc_road_by_id,
+                            analysis_center=analysis_center,
+                            hard_support_node_ids=candidate_selected_rc_node_ids,
+                            hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                            relax_node_ids=conflict_excluded_rc_node_ids,
+                            relax_road_ids=conflict_excluded_rc_road_ids,
+                        )
+                        (
+                            _repaired_post_overlap_selected_group_node_ids,
+                            repaired_post_overlap_uncovered_selected_rc_node_ids,
+                            repaired_post_overlap_uncovered_selected_rc_road_ids,
+                        ) = _validate_polygon_support(
+                            polygon_geometry=repaired_post_overlap_virtual_polygon_geometry,
+                            group_nodes=[],
+                            local_rc_nodes=local_rc_nodes,
+                            local_rc_roads=local_rc_roads,
+                            support_node_ids=selected_rc_node_ids,
+                            support_road_ids={road.road_id for road in selected_rc_roads},
+                            support_clip=selected_output_clip,
+                        )
+                        (
+                            repaired_post_overlap_uncovered_selected_rc_node_ids,
+                            repaired_post_overlap_uncovered_selected_rc_road_ids,
+                        ) = _relax_targeted_foreign_trim_selected_gaps(
+                            uncovered_selected_node_ids=repaired_post_overlap_uncovered_selected_rc_node_ids,
+                            uncovered_selected_road_ids=repaired_post_overlap_uncovered_selected_rc_road_ids,
+                            rc_node_by_id=rc_node_by_id,
+                            rc_road_by_id=rc_road_by_id,
+                            analysis_center=None,
+                            hard_selected_node_ids=set(),
+                            relax_node_ids=conflict_excluded_rc_node_ids,
+                            relax_road_ids=conflict_excluded_rc_road_ids,
+                        )
+                        repaired_post_overlap_extra_local_node_ids = sorted(
+                            node.node_id
+                            for node in local_nodes
+                            if (
+                                _is_foreign_local_semantic_node(
+                                    node=node,
+                                    target_group_node_ids=analysis_member_node_ids,
+                                    normalized_mainnodeid=normalized_mainnodeid,
+                                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                    semantic_mainnodeids=semantic_mainnodeids,
+                                )
+                                and _polygon_substantively_covers_node(
+                                    repaired_post_overlap_virtual_polygon_geometry,
+                                    node.geometry,
+                                    cover_radius_m=max(resolution_m, 0.5),
+                                )
+                            )
+                        )
+                        repaired_post_overlap_extra_local_road_ids = _covered_foreign_local_road_ids(
+                            polygon_geometry=repaired_post_overlap_virtual_polygon_geometry,
+                            local_roads=local_roads,
+                            local_nodes=local_nodes,
+                            allowed_road_ids=final_allowed_local_road_ids,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            analysis_center=analysis_center,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        repaired_post_overlap_target_group_overlap_by_id = _target_group_foreign_semantic_road_overlap_lengths(
+                            polygon_geometry=repaired_post_overlap_virtual_polygon_geometry,
+                            local_roads=local_roads,
+                            local_nodes=local_nodes,
+                            allowed_road_ids=final_allowed_local_road_ids,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            analysis_center=analysis_center,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        if (
+                            not repaired_post_overlap_uncovered_group_node_ids
+                            and not repaired_post_overlap_uncovered_support_rc_node_ids
+                            and not repaired_post_overlap_uncovered_support_rc_road_ids
+                            and not repaired_post_overlap_uncovered_selected_rc_node_ids
+                            and not repaired_post_overlap_uncovered_selected_rc_road_ids
+                            and not repaired_post_overlap_extra_local_node_ids
+                            and not repaired_post_overlap_extra_local_road_ids
+                            and max(repaired_post_overlap_target_group_overlap_by_id.values(), default=0.0)
+                            <= POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+                        ):
+                            post_overlap_virtual_polygon_geometry = repaired_post_overlap_virtual_polygon_geometry
+                            post_overlap_uncovered_selected_rc_node_ids = []
+                            post_overlap_uncovered_selected_rc_road_ids = []
+                            post_overlap_extra_local_node_ids = []
+                            post_overlap_extra_local_road_ids = []
+                            post_overlap_target_group_overlap_by_id = (
+                                repaired_post_overlap_target_group_overlap_by_id
+                            )
+                if (
+                    not post_overlap_uncovered_group_node_ids
+                    and not post_overlap_uncovered_support_rc_node_ids
+                    and not post_overlap_uncovered_support_rc_road_ids
+                    and not post_overlap_uncovered_selected_rc_node_ids
+                    and not post_overlap_uncovered_selected_rc_road_ids
+                    and not post_overlap_extra_local_node_ids
+                    and not post_overlap_extra_local_road_ids
+                    and max(post_overlap_target_group_overlap_by_id.values(), default=0.0)
+                    <= POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+                ):
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] post-overlap foreign road snip applied mainnodeid={normalized_mainnodeid} "
+                            f"extra_roads={','.join(sorted(target_group_foreign_semantic_road_overlap_by_id))}"
+                        ),
+                    )
+                    virtual_polygon_geometry = post_overlap_virtual_polygon_geometry
+                    target_group_foreign_semantic_road_overlap_by_id = post_overlap_target_group_overlap_by_id
+                    max_target_group_foreign_semantic_road_overlap_m = max(
+                        target_group_foreign_semantic_road_overlap_by_id.values(),
+                        default=0.0,
+                    )
+                    counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+                        max_target_group_foreign_semantic_road_overlap_m,
+                        3,
+                    )
+        if (
+            representative_node.kind_2 == 2048
+            and not covered_extra_local_node_ids
+            and not covered_extra_local_road_ids
+            and counts["associated_rcsdroad_count"] <= 2
+            and effective_associated_rc_node_count <= 1
+            and max_target_group_foreign_semantic_road_overlap_m
+            > POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+            and (
+                not invalid_rc_road_ids
+                or (
+                    single_sided_t_mouth_corridor_pattern_detected
+                    and len(positive_rc_groups) >= 2
+                    and associated_nonzero_mainnode_count < 2
+                )
+                or (
+                    len(selected_rc_roads) >= 2
+                    and len(polygon_support_rc_road_ids) >= 2
+                    and associated_nonzero_mainnode_count >= 2
+                    and not negative_rc_groups
+                )
+            )
+        ):
+            if STATUS_NODE_COMPONENT_CONFLICT not in risks:
+                risks.append(STATUS_NODE_COMPONENT_CONFLICT)
+                audit_rows.append(
+                    _audit_row(
+                        scope="virtual_intersection_poc",
+                        status="warning",
+                        reason=STATUS_NODE_COMPONENT_CONFLICT,
+                        detail=(
+                            "Accepted polygon still retains excessive overlap on target-group incident foreign semantic roads: "
+                            + ",".join(
+                                f"{road_id}={length:.3f}m"
+                                for road_id, length in sorted(
+                                    target_group_foreign_semantic_road_overlap_by_id.items()
+                                )
+                            )
+                        ),
+                        mainnodeid=normalized_mainnodeid,
+                        feature_id=next(
+                            iter(target_group_foreign_semantic_road_overlap_by_id),
+                            normalized_mainnodeid,
+                        ),
+                    )
+                )
+        elif (
+            representative_node.kind_2 == 2048
+            and not covered_extra_local_node_ids
+            and not covered_extra_local_road_ids
+            and counts["associated_rcsdroad_count"] <= 2
+            and effective_associated_rc_node_count <= 1
+            and single_sided_t_mouth_branch_corridor_applied
+            and max_selected_side_branch_covered_length_m > 10.0
+        ):
+            if STATUS_NODE_COMPONENT_CONFLICT not in risks:
+                risks.append(STATUS_NODE_COMPONENT_CONFLICT)
+                audit_rows.append(
+                    _audit_row(
+                        scope="virtual_intersection_poc",
+                        status="warning",
+                        reason=STATUS_NODE_COMPONENT_CONFLICT,
+                        detail=(
+                            "Accepted polygon still keeps an overlong single-sided branch corridor after hard-trim: "
+                            f"max_selected_side_branch_covered_length_m={max_selected_side_branch_covered_length_m:.3f}."
+                        ),
+                        mainnodeid=normalized_mainnodeid,
+                        feature_id=normalized_mainnodeid,
+                    )
+                )
         if (
             STATUS_NODE_COMPONENT_CONFLICT in risks
             and not covered_extra_local_node_ids
@@ -12528,6 +16444,25 @@ def run_t02_virtual_intersection_poc(
         status = _status_from_risks(risks, has_associated_roads=bool(associated_rcsdroad_features))
         if status == STATUS_STABLE and not associated_rcsdroad_features:
             status = STATUS_SURFACE_ONLY
+        final_selected_rc_endpoint_cover = virtual_polygon_geometry.buffer(
+            max(resolution_m, 0.5),
+            join_style=1,
+        )
+        final_selected_endpoint_target_node_ids = (
+            single_sided_t_mouth_branch_target_endpoint_node_ids
+            if single_sided_t_mouth_branch_corridor_applied
+            and single_sided_t_mouth_branch_target_endpoint_node_ids
+            else set(selected_rc_endpoint_node_ids)
+        )
+        final_uncovered_selected_rc_endpoint_node_ids = sorted(
+            node_id
+            for node_id in selected_rc_node_ids
+            if (
+                node_id in final_selected_endpoint_target_node_ids
+                and node_id in rc_node_by_id
+                and not final_selected_rc_endpoint_cover.covers(rc_node_by_id[node_id].geometry)
+            )
+        )
         effect_success, acceptance_class, acceptance_reason = _effect_success_acceptance(
             status=status,
             review_mode=review_mode,
@@ -12559,6 +16494,10 @@ def run_t02_virtual_intersection_poc(
             effective_associated_rc_node_count=effective_associated_rc_node_count,
             associated_nonzero_mainnode_count=associated_nonzero_mainnode_count,
             final_selected_node_cover_repair_discarded_due_to_extra_roads=final_selected_node_cover_repair_discarded_due_to_extra_roads,
+            single_sided_t_mouth_corridor_pattern_detected=single_sided_t_mouth_corridor_pattern_detected,
+            single_sided_t_mouth_corridor_semantic_gap=single_sided_t_mouth_corridor_semantic_gap,
+            multi_node_selected_cover_repair_applied=multi_node_selected_cover_repair_applied,
+            final_uncovered_selected_endpoint_node_count=len(final_uncovered_selected_rc_endpoint_node_ids),
         )
         business_match_class = _business_match_class(
             status=status,

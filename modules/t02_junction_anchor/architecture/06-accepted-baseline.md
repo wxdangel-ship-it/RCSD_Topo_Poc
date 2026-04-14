@@ -90,6 +90,16 @@
 - 若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`。
 - 所有空间判定必须在统一 CRS 下完成；stage3 `full-input` 不允许用硬编码 CRS override 掩盖 layer / CRS 问题。
 
+## 4A. 数据源特性与精度约束
+
+- 当前 T02 消费两组道路数据源：
+  - **SWSD（`nodes` / `roads`）**：覆盖性高，但精度有误差且工艺有差异；与道路面（`DriveZone`）和导流带（`DivStripZone`）存在偏差，SWSD node 点位与真实的道路分歧 / 合流位置最大可偏差约 `200m`
+  - **RCSD（`RCSDNode` / `RCSDRoad`）**：覆盖性差，但精度高，与道路面和导流带套合较好；RCSD node 与真实路口位置差距不超过 `20m`
+- 这一特性决定了 stage3 / stage4 的核心策略：
+  - SWSD `nodes` 只作为 seed 和候选入口，不能替代真实事件定位
+  - RCSD 是路口面覆盖验收的刚性约束
+  - 路口面可以不包含 SWSD 路口点位，但必须包含对应的 RCSD 路口（`RCSDNode`）
+
 ## 5. 当前业务输入约束
 
 ### 5.1 stage1 / stage2 输入约束
@@ -399,7 +409,7 @@
 
 ### 10.1 目标
 - 处理 `has_evd = yes`、`is_anchor = no` 且 `kind_2 in {8, 16}`，以及 `kind / kind_2 = 128` 的复杂路口主节点 `mainnodeid`。
-- 生成保守虚拟路口面，覆盖目标 `mainnodeid` 对应的主 `RCSDNode` 与相关 node。
+- 面向真实的分歧 / 合流事件位置生成虚拟路口面，覆盖目标 `mainnodeid` 对应的主 `RCSDNode` 与相关 RCSD node（刚性约束），SWSD node 点位不是覆盖刚性约束。
 
 ### 10.2 当前业务规则
 - `kind_2 = 8` 归因为 merge（`2 in 1 out`）。
@@ -413,8 +423,10 @@
   - `roads / RCSDRoad / RCSDNode` 主要承担形态一致性与降级支撑，不得替代导流带优先级
 - stage4 路口面几何终态正式按以下口径验收：
   - 路口面应填充当前事件前后的有效 `DriveZone` 路面，不包含 `DivStripZone` 区域本身
+  - 当 `DriveZone` 连通域内仅有当前路口及其关联 road（含二度关联至其他路口的 road）时，路口面应在事件 span 范围内铺满 `DriveZone` 路面的全部宽度，不得只沿主干形成窄条
   - 路口面的前端与末端应为近似垂直于道路方向的横截面，不得形成无约束长条拖尾
-  - 若同一 `DriveZone` 连通范围内存在不属于当前事件的对向或平行 road，路口面应在中间分隔位置止住，不得吞并无关对向 / 平行 road 的整幅路面
+  - 若同一 `DriveZone` 连通域内存在对向或平行 road，且与当前路口及其关联 road（含二度关联至其他路口）不联通，路口面应以 `RCSDRoad` 的中央区域为纵向分割线截断，不得吞并无关对向 / 平行 road 的整幅路面
+  - 路口面可以不包含 SWSD node 点位，但必须包含对应的 RCSD 路口（`RCSDNode`）
   - 简单分歧 / 合流最多延伸到前一个或后一个语义路口，或不超过约 `200m`
   - 复杂 / 连续分歧合流必须覆盖当前 `mainnodeid` 语义组内应纳入的全部局部事件区域，但进入 / 退出支路同样最多延伸到前一个或后一个语义路口，或不超过约 `200m`
   - 不得把相邻无关 `T` 型路口、无关 patch 或无关语义路口并入当前 Stage4 路口面
@@ -426,12 +438,21 @@
 - stage4 不重写 `nodes.is_anchor`，也不并入统一锚定结果。
 
 ### 10.3 风险 / 失败判定补充
+- Stage3 / Stage4 当前接受结果与目视分类的冻结映射为：
+  - `accepted -> V1`
+  - `review_required -> V2`
+  - `rejected -> V3 / V4 / V5`
+- 其中：
+  - `V1 = 成功`
+  - `V2 = 有风险，但业务满足`
+  - `V3 / V4 / V5 = 失败`
 - 以下结果至少进入 `review_required`，不得记为 `accepted/stable`：
   - 命中错误 `DivStripZone` 组件或错误事件位置
   - 复杂 / 连续路口只覆盖其中一部分事件区域
   - 输出面错误吞并相邻语义路口
   - 输出面错误吞并不属于当前事件的对向或平行 road 面
   - 主 `RCSDNode` 只能通过超窗、反向或 off-trunk 解释
+- 仅当业务满足但几何或审查质量仍存在风险时，才允许保留在 `review_required / V2`
 - 若上述问题导致无法形成合法局部 polygon，则应进入 `rejected`。
 
 ### 10.4 当前正式输出语义

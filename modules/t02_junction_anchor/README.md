@@ -328,10 +328,25 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - `t02-fix-node-error-2` 的独立审计输出，记录候选组、忽视的 `kind_2 = 1` 组、合并结果、删除 roads 与 skip reason
 - `virtual_intersection_polygon.gpkg`
   - stage3 单 case 生成的虚拟路口面
+  - 属于最终成果路口面图层，必须包含 `mainnodeid / kind`
+  - `mainnodeid` 优先取代表 node 的 `nodes.mainnodeid`，为空或缺失时回退 `nodes.id`
+  - `kind` 优先写代表 node 的 `nodes.kind`，为空或缺失时回退 `nodes.kind_2`
+  - 输出 geometry 统一为 `EPSG:3857`
 - `virtual_intersection_polygons.gpkg`
   - stage3 full-input 模式汇总生成的批次虚拟路口面图层
+  - 属于 stage3 的最终全量路口面汇总图层
+  - 每条成果必须包含 `mainnodeid / kind`
+  - `mainnodeid` 优先取代表 node 的 `nodes.mainnodeid`，为空或缺失时回退 `nodes.id`
+  - `kind` 优先写代表 node 的 `nodes.kind`，为空或缺失时回退 `nodes.kind_2`
+  - 输出 geometry 统一为 `EPSG:3857`
 - `stage4_virtual_polygon.gpkg`
   - stage4 单 case 生成的 div/merge 虚拟路口面
+- `stage4_virtual_polygons.gpkg`
+  - stage4 batch / 全量运行时的最终全量路口面汇总图层
+  - 每条成果必须包含 `mainnodeid / kind`
+  - `mainnodeid` 优先取代表 node 的 `nodes.mainnodeid`，为空或缺失时回退 `nodes.id`
+  - `kind` 优先写代表 node 的 `nodes.kind`，为空或缺失时回退 `nodes.kind_2`
+  - 输出 geometry 统一为 `EPSG:3857`
 - `stage4_node_link.json`
   - stage4 与 `nodes.mainnodeid` 的关联结果
 - `stage4_rcsdnode_link.json`
@@ -340,6 +355,15 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - stage4 审计结果
 - `_rendered_maps/`
   - stage3 批次 render 目录
+- 所有最终成果路口面图层统一遵循：
+  - 必须带 `mainnodeid / kind`
+  - `mainnodeid` 缺失时回退 `id`
+  - geometry 统一写为 `EPSG:3857`
+  - 只要存在 batch / full-input / 全量运行，就必须同步输出最终全量路口面汇总图层
+- 成果审计当前统一采用双线模板：
+  - 机器审计给根因层（`step3 / step4 / step5 / step6 / frozen-constraints conflict`）
+  - 人工目视审计给快速分类（`V1 认可成功 / V2 业务正确但几何待修 / V3 漏包 required / V4 误包 foreign / V5 明确失败`）
+- Stage4 当前复用同一套成果审计与目视复核模板
 - `branch_evidence.json`
 - `branch_evidence.gpkg`
   - 分支方向、证据等级、是否纳入虚拟面和 RC 方向组映射
@@ -378,11 +402,11 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 
 说明：
 
-- stage1 正式候选边界已扩到 `semantic_junction_set ∪ segment_referenced_junction_set`。
+- stage1 正式候选边界已扩到“当前 `semantic_junction_set` 对应的目标 `junction_id` + `segment_referenced_junction_set`”。
 - stage1 业务 summary 的 `summary_by_s_grade` 继续按 `0-0双 / 0-1双 / 0-2双` 的 segment 视图统计。
 - stage1 在分桶之外补充 `all__d_sgrade`，表示所有 `s_grade` 非空的 `segment` 总汇总。
 - stage1 同时补充 `summary_by_kind_grade`，固定输出 `kind2_4_64_grade2_1 / kind2_4_64_grade2_0_2_3 / kind2_2048 / kind2_8_16` 四个 bucket，并按 `stage1_candidate_junction_set` 唯一 `junction_id` 统计 `junction_count / junction_has_evd_count`。
-- stage2 正式候选边界同样扩到 `semantic_junction_set ∪ segment_referenced_junction_set`，但 `summary_by_s_grade` 仍保持 segment 视图。
+- stage2 正式候选边界同样沿用“当前 `semantic_junction_set` 对应的目标 `junction_id` + `segment_referenced_junction_set`”，但 `summary_by_s_grade` 仍保持 segment 视图。
 - `kind_2 in {8,16}` 在 stage2 仍参与 `RCSDIntersection` 锚定判定；若满足 Stage2 标准，同样可记 `is_anchor = yes`，仅 `is_anchor = no` 的 case 继续进入 Stage4。
 
 ## 5. 文档阅读顺序
@@ -406,13 +430,66 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
 
 - 已实现：
   - stage1 输入读取与严格字段校验
-  - `semantic_junction_set ∪ segment_referenced_junction_set` 候选扩展
+  - 以“当前 `semantic_junction_set` 对应的目标 `junction_id` + `segment_referenced_junction_set`”构成 stage1 候选域
+  - 步骤1中 `semantic_junction_set` 按“当前语义路口的 node 集合”定义，`mainnode` 仅作为代表，不等于整个语义路口
   - `pair_nodes + junc_nodes` 解析与单 `segment` 去重
   - `mainnodeid` 分组 / 单点兜底
+  - 多节点语义组要求后续合法 polygon 一次性直接覆盖整组全部 node；不能完整覆盖时按问题 case 处理
+  - `boundary roads / arms` 的 road 两端按可穿越 `degree=2` 过渡节点跟踪后的边界端点理解；仅当两个边界端点都不属于当前 `semantic_junction_set` 时，才算 `foreign boundary roads`
+  - 判断误包其他语义路口不能只看 foreign node；纳入别的语义路口向外延伸到其他路口的 roads / arms 也视为错误
+  - `connector road` 术语不再使用
   - 代表 node `has_evd` 写值
   - `segment.has_evd`
   - `summary`
   - `audit/log`
+- 已冻结但当前以文档口径为准：
+  - Stage3 步骤2「模板分类」中，`kind_2` 作为强输入使用
+  - `kind_2 = 2048` 直接归入 `single_sided_t_mouth`
+  - `kind_2 = 4` 先归入 `center_junction`
+  - `kind_2 = 4` 的 `center_junction` 只表示后续可按中心型路口理解，不表示已经通过边界/入侵合法性检查；若后续发现 foreign boundary roads 或其他语义路口 roads / arms 入侵，则该 case 仍应视为问题 case
+  - Stage3 步骤3「目标 corridor / 口门边界」中，后续 polygon 只能在当前模板允许占用的 `DriveZone` 内合法道路面中活动
+  - 对与当前合法活动空间存在潜在冲突的 foreign elements，可先按 `1m` 负向缓冲构建硬排除区
+  - `single_sided_t_mouth` 只能在目标单侧 lane corridor 内展开，不得跨到对向 lane 或对向主路 corridor
+  - `center_junction` 可先按中心型路口铺满当前 case 的合法道路面，但不豁免 foreign boundary roads、其他语义路口 roads / arms 的入侵检查
+  - `10m` 只作为附加臂方向的保守外扩上限，且不得压过“整组 node 一次性直接覆盖”与 foreign 硬边界
+  - Stage3 步骤4「RCSD 关联语义」中，当前 case 的 `RC` 语义层级冻结为 A / B / C 三类：
+    - A 类：`RCSD` 也构成语义路口，按整组 `RCSDNode` 处理
+    - B 类：`RCSD` 不构成语义路口，但存在相关 `RCSDRoad`，只追加挂接区域语义
+    - C 类：无相关 `RCSDRoad`
+  - A 类单节点 `RC` 语义路口的“3 个方向”按“经过 `degree=2` 跟踪后的边界方向簇数”判定，不按字面 `RCSDRoad` 条数机械计数
+  - 步骤4可以识别 `required RC`，但不能反向扩大步骤3已冻结的合法活动空间；若 `required RC` 落在步骤3合法空间之外，当前仅记为审计异常 / `stage3_rc_gap`
+  - Stage3 步骤5「foreign SWSD / RCSD 排除规则」中，foreign 对象冻结为三类：
+    - `foreign_semantic_nodes`
+    - `foreign_roads_arms_corridors`
+    - `foreign_rc_context`
+  - `single_sided_t_mouth` 下，对向 lane / 对向主路 corridor / 非目标 mouth 的另一侧 corridor / 远端 `RC tail` 一律按 `foreign` 处理，不留容忍窗口
+  - `center_junction` 下，其他语义路口外延 `roads / arms / lane corridor`、`foreign boundary roads`、以及只在 foreign 语义上下文里成立的 `RC`，只要进入当前 case 就视为错误
+  - 步骤4中的 `excluded RC` 在步骤5中直接等价于 `foreign RC`
+  - 单纯“边界接触”不算错；形成可活动、可占用、可依赖的“实际纳入”一律算错
+-  - Stage3 步骤6「几何生成与后处理」中，步骤6是受约束的几何生成步骤，不是补面或洗白步骤
+  - 步骤6的硬约束优先级固定为：先守步骤3合法活动空间，再守步骤5 `foreign` 硬排除，再满足步骤1 must-cover，再满足步骤4 `required RC` must-cover，最后才允许做几何优化
+  - `single_sided_t_mouth` 的理想几何是围绕目标单侧 mouth 的单侧口门面；横向支路只贡献 mouth，纵向延伸只服务于闭合当前口门，不得跨对向 lane，不得退化成无意义狭长走廊或远端 patch 拼接
+  - `center_junction` 的理想几何是围绕当前语义中心展开的中心型路口面；可覆盖多个合法 arms，但不得退化成单条带状走廊，也不得依赖 `foreign roads / arms / corridors` 才成立
+  - 无意义狭长面、无意义空洞、无意义凹陷、细脖子、非当前方向远端尾巴、依赖 `foreign` 空间的补丁连接，都属于步骤6问题几何
+  - 步骤6失败按两层归因冻结为：
+    - 一级：`infeasible_under_frozen_constraints`、`geometry_solver_failed`
+    - 二级：`step1_step3_conflict`、`stage3_rc_gap`、`foreign_exclusion_conflict`、`template_misfit`、`geometry_closure_failure`、`cleanup_overtrim`、`cleanup_undertrim`、`foreign_reintroduced_by_cleanup`、`shape_artifact_failure`
+  - 当前目视检查中唯一已明确确认的失败锚点是 `520394575`；除它之外，若其他 case 要进入步骤6失败归类，必须先完成根因分型
+  - Stage3 步骤7「准出判定」中，步骤7是最终裁决层，只基于步骤1到步骤6已冻结结果做 `accepted / review_required / rejected` 分类，不承担补救职责
+  - `accepted` 的最小前提是：步骤1 must-cover 成立、步骤3合法活动空间成立、步骤4 `required RC` 成立、步骤5 `foreign` 排除成立、步骤6几何成立且不是问题几何、且不存在未消除的核心审计异常
+  - `review_required` 只适用于：当前结果已经满足业务需求，但几何表现、可审查性或视觉质量仍存在风险；`review_required` 只允许映射到 `V2`
+- `rejected` 只适用于：当前 case 已明确违反硬规则、或在当前冻结约束下无合法解、或步骤6已经确认“路口面几何未成立”且失败根因已明确；`rejected` 只允许映射到 `V3 / V4 / V5`
+- 步骤7不能洗白前面步骤的失败；若步骤6已认定“路口面几何未成立”，步骤7只能在 `review_required / rejected` 之间分类，不能再解释成成功
+- Stage3 结果类型与目视分类的正式映射冻结为：
+  - `accepted -> V1`
+  - `review_required -> V2`
+  - `rejected -> V3 / V4 / V5`
+- Stage3 / Stage4 的目视检查 PNG 当前统一复用三态样式：
+  - `accepted`：正常成功图样式，无整图风险/失败掩膜
+  - `review_required`：浅琥珀 / 橙黄色系整图掩膜、深橙粗边框、风险区域橙色强调、显式 `REVIEW / 待复核` 标识
+  - `rejected` 或 `success = false`：淡红整图掩膜、深红粗边框、失败区域深红强调、显式 `REJECTED / 失败` 标识
+  - `review_required` 不使用红色系主样式；`V2` 必须使用该风险样式；`V3 / V4 / V5` 必须统一使用失败样式
+  - 非成功图必须与成功图一眼可区分，且风险态与失败态彼此也必须一眼可区分
 - 补充已实现：
   - stage2 新增输入 `RCSDIntersection`
   - stage2 summary 读取 `segment`

@@ -51,6 +51,58 @@ from rcsd_topo_poc.modules.t02_junction_anchor.shared import (
     _resolve_shapefile_crs_strict,
     _transform_geometry,
 )
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_contract import (
+    build_stage3_polygon_properties,
+    derive_stage3_official_review_decision,
+    derive_stage3_review_metadata,
+    stage3_official_review_decision_dict,
+    stage3_review_metadata_dict,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_audit_assembler import (
+    STAGE3_EXECUTION_CONTRACT_VERSION,
+    build_stage3_failure_audit_envelope,
+    stage3_audit_record_dict,
+    stage3_step7_acceptance_result_dict,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_success_contract_assembly import (
+    Stage3SuccessContractIdentityInputs,
+    assemble_stage3_success_contracts,
+    build_stage3_success_contract_assembly_inputs_from_results,
+    build_stage3_success_step_results,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_success_snapshot_builder import (
+    Stage3SuccessStep3SnapshotInputs,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step5_step6_boundary import (
+    build_stage3_step6_final_state_snapshot,
+    build_stage3_step_snapshot_inputs_from_boundary,
+    freeze_stage3_step5_baseline,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_success_decision_builder import (
+    Stage3SuccessDecisionBuildInputs,
+    build_stage3_success_final_decision_inputs,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_output_assembly import (
+    build_stage3_failure_output_bundle,
+    build_stage3_success_output_bundle,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_context_builder import (
+    build_minimal_stage3_context,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step4_rc_semantics import (
+    Stage3Step4SemanticsInputs,
+    build_stage3_step4_rc_semantics_result,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step7_acceptance import (
+    Stage3AcceptanceDecision,
+    Stage3AcceptanceHeuristicInputs,
+    Stage3PostAcceptanceGateInputs,
+    apply_stage3_post_acceptance_gates as _stage3_apply_stage3_post_acceptance_gates,
+    apply_stage3_post_acceptance_gates_from_inputs as _stage3_apply_stage3_post_acceptance_gates_from_inputs,
+    build_stage3_failure_step7_result,
+    effect_success_acceptance as _stage3_effect_success_acceptance,
+    evaluate_stage3_acceptance_from_inputs as _stage3_evaluate_stage3_acceptance_from_inputs,
+)
 
 
 T = TypeVar("T")
@@ -151,6 +203,9 @@ STATUS_REVIEW_RC_OUTSIDE_DRIVEZONE_EXCLUDED = "review_rc_outside_drivezone_exclu
 BUSINESS_MATCH_COMPLETE_RCSD = "rcsd_complete_match"
 BUSINESS_MATCH_PARTIAL_RCSD = "rcsd_partial_match"
 BUSINESS_MATCH_SWSD_ONLY = "swsd_only_match"
+TEMPLATE_CENTER_JUNCTION = "center_junction"
+TEMPLATE_GENERIC_JUNCTION = TEMPLATE_CENTER_JUNCTION
+TEMPLATE_SINGLE_SIDED_T_MOUTH = "single_sided_t_mouth"
 
 AUDIT_FIELDNAMES = [
     "scope",
@@ -159,6 +214,9 @@ AUDIT_FIELDNAMES = [
     "detail",
     "mainnodeid",
     "feature_id",
+    "root_cause_layer",
+    "root_cause_type",
+    "visual_review_class",
 ]
 ASSOCIATION_AUDIT_FIELDNAMES = [
     "entity_type",
@@ -188,6 +246,7 @@ class ParsedNode:
     is_anchor: str | None
     kind_2: int | None
     grade_2: int | None
+    kind: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -226,6 +285,16 @@ class SingleSidedTMouthCorridorPattern:
     main_branch_ids: tuple[str, ...]
     side_branch_ids: tuple[str, ...]
     shared_positive_rc_groups: tuple[str, ...]
+
+
+def _classify_stage3_template(
+    *,
+    representative_kind_2: int | None,
+    single_sided_t_mouth_corridor_pattern: SingleSidedTMouthCorridorPattern | None,
+) -> str:
+    if representative_kind_2 == 2048:
+        return TEMPLATE_SINGLE_SIDED_T_MOUTH
+    return TEMPLATE_CENTER_JUNCTION
 
 
 @dataclass(frozen=True)
@@ -399,6 +468,12 @@ def _audit_row(
     mainnodeid: str | None = None,
     feature_id: str | None = None,
 ) -> dict[str, Any]:
+    review_metadata = derive_stage3_review_metadata(
+        success=False,
+        acceptance_class="review_required" if status == "warning" else "rejected",
+        acceptance_reason=reason,
+        status=reason,
+    )
     return {
         "scope": scope,
         "status": status,
@@ -406,6 +481,7 @@ def _audit_row(
         "detail": detail,
         "mainnodeid": mainnodeid,
         "feature_id": feature_id,
+        **stage3_review_metadata_dict(review_metadata),
     }
 
 
@@ -1053,6 +1129,7 @@ def _parse_nodes(layer: LoadedLayer, *, require_anchor_fields: bool) -> list[Par
                 is_anchor=_normalize_id(props.get("is_anchor")),
                 kind_2=_coerce_int(props.get("kind_2")),
                 grade_2=_coerce_int(props.get("grade_2")),
+                kind=props.get("kind"),
             )
         )
     return parsed
@@ -1088,6 +1165,7 @@ def _parse_rc_nodes(layer: LoadedLayer) -> list[ParsedNode]:
                 is_anchor=None,
                 kind_2=None,
                 grade_2=None,
+                kind=props.get("kind"),
             )
         )
     return parsed
@@ -1442,12 +1520,155 @@ def _blend_mask(
     image[mask, 3] = 255
 
 
-def _failure_overlay_palette(failure_reason: str) -> dict[str, tuple[int, int, int]]:
+_BITMAP_TEXT_GLYPHS_5X7: dict[str, tuple[str, ...]] = {
+    "C": ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    "I": ("11111", "00100", "00100", "00100", "00100", "00100", "11111"),
+    "J": ("00111", "00010", "00010", "00010", "10010", "10010", "01100"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    "V": ("10001", "10001", "10001", "10001", "01010", "01010", "00100"),
+    "W": ("10001", "10001", "10001", "10101", "10101", "10101", "01010"),
+}
+
+
+def _paint_rect(
+    image: np.ndarray,
+    *,
+    top: int,
+    left: int,
+    bottom: int,
+    right: int,
+    color: tuple[int, int, int],
+) -> None:
+    clamped_top = max(0, min(image.shape[0], top))
+    clamped_bottom = max(clamped_top, min(image.shape[0], bottom))
+    clamped_left = max(0, min(image.shape[1], left))
+    clamped_right = max(clamped_left, min(image.shape[1], right))
+    if clamped_top >= clamped_bottom or clamped_left >= clamped_right:
+        return
+    image[clamped_top:clamped_bottom, clamped_left:clamped_right, :3] = np.array(color, dtype=np.uint8)
+    image[clamped_top:clamped_bottom, clamped_left:clamped_right, 3] = 255
+
+
+def _bitmap_text_width(text: str, *, scale: int) -> int:
+    width = 0
+    for index, char in enumerate(text):
+        glyph = _BITMAP_TEXT_GLYPHS_5X7.get(char)
+        if glyph is None:
+            continue
+        width += len(glyph[0]) * scale
+        if index < len(text) - 1:
+            width += scale
+    return width
+
+
+def _draw_bitmap_text(
+    image: np.ndarray,
+    *,
+    text: str,
+    top: int,
+    left: int,
+    color: tuple[int, int, int],
+    scale: int,
+) -> None:
+    cursor_left = left
+    for char in text:
+        glyph = _BITMAP_TEXT_GLYPHS_5X7.get(char)
+        if glyph is None:
+            cursor_left += scale
+            continue
+        for row_index, row in enumerate(glyph):
+            for col_index, value in enumerate(row):
+                if value != "1":
+                    continue
+                _paint_rect(
+                    image,
+                    top=top + row_index * scale,
+                    left=cursor_left + col_index * scale,
+                    bottom=top + (row_index + 1) * scale,
+                    right=cursor_left + (col_index + 1) * scale,
+                    color=color,
+                )
+        cursor_left += (len(glyph[0]) + 1) * scale
+
+
+def _draw_failure_banner(
+    image: np.ndarray,
+    *,
+    banner_height_px: int,
+    banner_color: tuple[int, int, int],
+    label: str,
+    label_text_color: tuple[int, int, int],
+    label_shadow_color: tuple[int, int, int],
+) -> None:
+    if banner_height_px <= 0:
+        return
+    _paint_rect(
+        image,
+        top=0,
+        left=0,
+        bottom=banner_height_px,
+        right=image.shape[1],
+        color=banner_color,
+    )
+    label_scale = 2 if image.shape[1] >= 96 and banner_height_px >= 18 else 1
+    label_text = label
+    if _bitmap_text_width(label_text, scale=label_scale) > image.shape[1] - 4:
+        label_scale = 1
+    if _bitmap_text_width(label_text, scale=label_scale) > image.shape[1] - 4:
+        label_text = label[:3]
+    label_width = _bitmap_text_width(label_text, scale=label_scale)
+    label_height = 7 * label_scale
+    label_left = max(2, (image.shape[1] - label_width) // 2)
+    label_top = max(2, (banner_height_px - label_height) // 2)
+    _draw_bitmap_text(
+        image,
+        text=label_text,
+        top=label_top + 1,
+        left=label_left + 1,
+        color=label_shadow_color,
+        scale=label_scale,
+    )
+    _draw_bitmap_text(
+        image,
+        text=label_text,
+        top=label_top,
+        left=label_left,
+        color=label_text_color,
+        scale=label_scale,
+    )
+
+
+def _failure_overlay_palette(
+    failure_reason: str,
+    *,
+    failure_class: str | None = None,
+) -> dict[str, Any]:
+    normalized_reason = failure_reason.lower()
+    normalized_class = (failure_class or "").lower()
+    if not normalized_class:
+        normalized_class = "review_required" if normalized_reason.startswith("review_required") else "rejected"
+    if normalized_class == "review_required":
+        return {
+            "tint": (241, 172, 51),
+            "border": (176, 96, 0),
+            "focus": (214, 132, 34),
+            "hatch": (145, 78, 0),
+            "banner": (176, 96, 0),
+            "label": "REVIEW",
+            "label_text": (255, 255, 255),
+            "label_shadow": (92, 49, 0),
+        }
     return {
         "tint": (220, 32, 32),
         "border": (164, 0, 0),
         "focus": (186, 0, 0),
         "hatch": (124, 0, 0),
+        "banner": (164, 0, 0),
+        "label": "REJECT",
+        "label_text": (255, 255, 255),
+        "label_shadow": (72, 0, 0),
     }
 
 
@@ -1468,6 +1689,7 @@ def _write_debug_rendered_map(
     excluded_rc_road_ids: set[str],
     excluded_rc_node_ids: set[str] | None = None,
     failure_reason: str | None = None,
+    failure_class: str | None = None,
     local_divstrip_geometries: Iterable[BaseGeometry] = (),
     selected_divstrip_geometry: BaseGeometry | None = None,
 ) -> None:
@@ -1580,9 +1802,10 @@ def _write_debug_rendered_map(
     _blend_mask(image, group_node_mask, color=(24, 24, 24), alpha=1.0)
     _blend_mask(image, representative_mask, color=(0, 0, 0), alpha=1.0)
     if failure_reason is not None:
-        palette = _failure_overlay_palette(failure_reason)
+        palette = _failure_overlay_palette(failure_reason, failure_class=failure_class)
         failure_mask = np.ones((grid.height, grid.width), dtype=bool)
         border_px = max(2, int(round(4.0 / grid.resolution_m)))
+        banner_height_px = max(12, min(24, grid.height // 6))
         focus_mask = polygon_mask | group_node_mask | representative_mask | selected_rc_road_mask | selected_rc_node_mask
         stripe_period_px = max(8, int(round(12.0 / grid.resolution_m)))
         stripe_width_px = max(2, stripe_period_px // 3)
@@ -1597,6 +1820,14 @@ def _write_debug_rendered_map(
         _blend_mask(image, focus_mask, color=palette["focus"], alpha=0.24)
         _blend_mask(image, hatch_mask, color=palette["hatch"], alpha=0.82)
         _blend_mask(image, border_mask, color=palette["border"], alpha=1.0)
+        _draw_failure_banner(
+            image,
+            banner_height_px=banner_height_px,
+            banner_color=palette["banner"],
+            label=palette["label"],
+            label_text_color=palette["label_text"],
+            label_shadow_color=palette["label_shadow"],
+        )
 
     _write_png_rgba(out_path, image)
 
@@ -1663,6 +1894,7 @@ def _write_failure_debug_rendered_map(
         excluded_rc_road_ids=excluded_rc_road_ids or set(),
         excluded_rc_node_ids=excluded_rc_node_ids or set(),
         failure_reason=failure_reason,
+        failure_class="rejected",
     )
 
 
@@ -2786,6 +3018,7 @@ def _branch_prefers_compact_local_support(
 
 def _can_soft_exclude_outside_rc(
     *,
+    template_class: str = TEMPLATE_GENERIC_JUNCTION,
     status: str,
     selected_rc_road_count: int,
     polygon_support_rc_road_count: int,
@@ -2853,6 +3086,25 @@ def _can_soft_exclude_outside_rc(
             and polygon_support_rc_road_count <= 1
         ):
             return False
+    if _matches_single_sided_t_mouth_soft_exclude_profile(
+        status=status,
+        template_class=template_class,
+        selected_rc_road_count=selected_rc_road_count,
+        polygon_support_rc_road_count=polygon_support_rc_road_count,
+        max_selected_side_branch_covered_length_m=max_selected_side_branch_covered_length_m,
+        max_nonmain_branch_polygon_length_m=max_nonmain_branch_polygon_length_m,
+        min_invalid_rc_distance_to_center_m=min_invalid_rc_distance_to_center_m,
+        connected_rc_group_count=connected_rc_group_count,
+        negative_rc_group_count=negative_rc_group_count,
+        effective_local_rc_node_count=effective_local_rc_node_count,
+        effective_associated_rc_node_count=effective_associated_rc_node_count,
+        associated_nonzero_mainnode_count=associated_nonzero_mainnode_count,
+        covered_extra_local_node_count=covered_extra_local_node_count,
+        covered_extra_local_road_count=covered_extra_local_road_count,
+        local_road_count=local_road_count,
+        local_node_count=local_node_count,
+    ):
+        return True
     if (
         status == STATUS_SURFACE_ONLY
         and selected_rc_road_count == 0
@@ -3449,6 +3701,134 @@ def _can_soft_exclude_outside_rc(
     return False
 
 
+def _matches_single_sided_t_mouth_soft_exclude_profile(
+    *,
+    status: str,
+    template_class: str,
+    selected_rc_road_count: int,
+    polygon_support_rc_road_count: int,
+    max_selected_side_branch_covered_length_m: float,
+    max_nonmain_branch_polygon_length_m: float,
+    min_invalid_rc_distance_to_center_m: float | None,
+    connected_rc_group_count: int,
+    negative_rc_group_count: int,
+    effective_local_rc_node_count: int,
+    effective_associated_rc_node_count: int,
+    associated_nonzero_mainnode_count: int,
+    covered_extra_local_node_count: int,
+    covered_extra_local_road_count: int,
+    local_road_count: int | None,
+    local_node_count: int | None,
+) -> bool:
+    if template_class != TEMPLATE_SINGLE_SIDED_T_MOUTH:
+        return False
+    if covered_extra_local_node_count != 0 or covered_extra_local_road_count != 0:
+        return False
+    if local_node_count is None or local_road_count is None:
+        return False
+    # These are the currently-accepted "remote outside-RC tail" patterns for
+    # single-sided T-mouth corridors. Keeping them explicit lets us separate
+    # template-scoped tolerance from the broader generic soft-exclude ladder.
+    return any(
+        [
+            status == STATUS_STABLE
+            and associated_nonzero_mainnode_count >= 1
+            and local_node_count <= 8
+            and local_road_count <= 16
+            and selected_rc_road_count >= 1
+            and polygon_support_rc_road_count >= 1
+            and connected_rc_group_count <= 2
+            and negative_rc_group_count == 0
+            and max_nonmain_branch_polygon_length_m >= 7.5
+        ,
+            status == STATUS_STABLE
+            and effective_associated_rc_node_count >= 1
+            and associated_nonzero_mainnode_count >= 1
+            and local_node_count <= 8
+            and local_road_count <= 16
+            and (selected_rc_road_count + polygon_support_rc_road_count) >= 1
+            and connected_rc_group_count <= 2
+            and negative_rc_group_count == 0
+            and max_selected_side_branch_covered_length_m >= 10.0
+            and max_nonmain_branch_polygon_length_m >= 7.5
+            and min_invalid_rc_distance_to_center_m is not None
+            and min_invalid_rc_distance_to_center_m <= 2.0
+        ,
+            status == STATUS_STABLE
+            and effective_local_rc_node_count >= 1
+            and effective_associated_rc_node_count >= 1
+            and local_node_count <= 7
+            and local_road_count <= 16
+            and selected_rc_road_count >= 1
+            and polygon_support_rc_road_count >= 1
+            and connected_rc_group_count <= 2
+            and negative_rc_group_count == 0
+            and max_nonmain_branch_polygon_length_m >= 10.0
+            and min_invalid_rc_distance_to_center_m is not None
+            and min_invalid_rc_distance_to_center_m >= 10.0
+        ,
+            status == STATUS_STABLE
+            and effective_local_rc_node_count == 0
+            and effective_associated_rc_node_count == 0
+            and associated_nonzero_mainnode_count == 0
+            and local_node_count <= 5
+            and local_road_count <= 10
+            and selected_rc_road_count >= 1
+            and polygon_support_rc_road_count >= 2
+            and connected_rc_group_count <= 1
+            and negative_rc_group_count == 0
+            and max_selected_side_branch_covered_length_m <= 3.0
+            and max_nonmain_branch_polygon_length_m >= 10.0
+            and min_invalid_rc_distance_to_center_m is not None
+            and min_invalid_rc_distance_to_center_m >= 4.5
+        ,
+            status == STATUS_STABLE
+            and effective_local_rc_node_count == 0
+            and effective_associated_rc_node_count == 0
+            and associated_nonzero_mainnode_count == 0
+            and local_node_count <= 4
+            and local_road_count <= 9
+            and selected_rc_road_count >= 1
+            and polygon_support_rc_road_count >= 1
+            and negative_rc_group_count == 0
+            and max_selected_side_branch_covered_length_m >= 20.0
+            and max_nonmain_branch_polygon_length_m >= 10.0
+            and min_invalid_rc_distance_to_center_m is not None
+            and min_invalid_rc_distance_to_center_m >= 6.0
+        ,
+            status == STATUS_STABLE
+            and effective_local_rc_node_count == 0
+            and effective_associated_rc_node_count == 0
+            and associated_nonzero_mainnode_count == 0
+            and local_node_count <= 5
+            and local_road_count <= 16
+            and selected_rc_road_count >= 1
+            and polygon_support_rc_road_count >= 1
+            and connected_rc_group_count <= 1
+            and negative_rc_group_count == 0
+            and max_selected_side_branch_covered_length_m >= 7.5
+            and max_nonmain_branch_polygon_length_m >= 10.0
+            and min_invalid_rc_distance_to_center_m is not None
+            and min_invalid_rc_distance_to_center_m >= 4.0
+        ,
+            status == STATUS_STABLE
+            and effective_local_rc_node_count == 0
+            and effective_associated_rc_node_count == 0
+            and associated_nonzero_mainnode_count == 0
+            and local_node_count <= 2
+            and local_road_count <= 5
+            and selected_rc_road_count >= 1
+            and polygon_support_rc_road_count >= 1
+            and connected_rc_group_count <= 1
+            and negative_rc_group_count == 0
+            and max_selected_side_branch_covered_length_m >= 18.0
+            and max_nonmain_branch_polygon_length_m >= 12.0
+            and min_invalid_rc_distance_to_center_m is not None
+            and min_invalid_rc_distance_to_center_m <= 1.5
+        ]
+    )
+
+
 def _build_local_branch_mouth_fan_geometry(
     *,
     center: Point,
@@ -3488,6 +3868,78 @@ def _build_excluded_rc_geometry(
     if keep_node_union is not None and not keep_node_union.is_empty:
         exclusion_geometry = exclusion_geometry.difference(keep_node_union)
     return exclusion_geometry if not exclusion_geometry.is_empty else GeometryCollection()
+
+
+def _build_soft_excluded_rc_trim_geometry(
+    *,
+    invalid_rc_roads: Sequence[ParsedRoad],
+    analysis_center: Point,
+    min_invalid_rc_distance_to_center_m: float | None,
+    drivezone_union: BaseGeometry,
+    keep_node_union: BaseGeometry | None,
+) -> BaseGeometry:
+    if not invalid_rc_roads:
+        return GeometryCollection()
+    local_clip_radius_m = max(
+        POLYGON_LOCAL_RC_EXCLUSION_EXTENSION_M + 6.0,
+        (float(min_invalid_rc_distance_to_center_m or 0.0) + 10.0),
+    )
+    local_clip = analysis_center.buffer(local_clip_radius_m).intersection(drivezone_union)
+    if local_clip.is_empty:
+        return GeometryCollection()
+    exclusion_geometries: list[BaseGeometry] = []
+    aggressive_trim_enabled = (
+        min_invalid_rc_distance_to_center_m is not None
+        and float(min_invalid_rc_distance_to_center_m) >= 4.0
+    )
+    aggressive_center_keep = (
+        analysis_center.buffer(
+            max(2.5, min(float(min_invalid_rc_distance_to_center_m or 0.0) * 0.25, 6.0)),
+            join_style=1,
+        ).intersection(drivezone_union)
+        if aggressive_trim_enabled
+        else GeometryCollection()
+    )
+    aggressive_buffer_m = RC_ROAD_BUFFER_M * (
+        POLYGON_RC_EXCLUSION_BUFFER_FACTOR + (0.35 if aggressive_trim_enabled else 0.0)
+    )
+    for road in invalid_rc_roads:
+        base_exclusion_geometry = _build_excluded_rc_geometry(
+            road=road,
+            local_clip=local_clip,
+            drivezone_union=drivezone_union,
+            keep_node_union=keep_node_union,
+        )
+        if base_exclusion_geometry is not None and not base_exclusion_geometry.is_empty:
+            exclusion_geometries.append(base_exclusion_geometry)
+        if not aggressive_trim_enabled:
+            continue
+        local_geometry = road.geometry.intersection(local_clip)
+        if local_geometry.is_empty:
+            continue
+        aggressive_exclusion_geometry = local_geometry.buffer(
+            aggressive_buffer_m,
+            cap_style=2,
+            join_style=2,
+        ).intersection(drivezone_union)
+        if not aggressive_center_keep.is_empty:
+            aggressive_exclusion_geometry = aggressive_exclusion_geometry.difference(
+                aggressive_center_keep
+            )
+        if keep_node_union is not None and not keep_node_union.is_empty:
+            aggressive_exclusion_geometry = aggressive_exclusion_geometry.difference(
+                keep_node_union
+            )
+        if not aggressive_exclusion_geometry.is_empty:
+            exclusion_geometries.append(aggressive_exclusion_geometry)
+    exclusion_geometries = [
+        geometry
+        for geometry in exclusion_geometries
+        if geometry is not None and not geometry.is_empty
+    ]
+    if not exclusion_geometries:
+        return GeometryCollection()
+    return unary_union(exclusion_geometries).intersection(drivezone_union)
 
 
 def _branch_ray_geometry(center: Point, *, angle_deg: float, length_m: float) -> LineString:
@@ -6041,6 +6493,66 @@ def _target_group_foreign_semantic_road_overlap_lengths(
     return overlap_by_road_id
 
 
+def _single_sided_unrelated_local_road_overlap_lengths(
+    *,
+    polygon_geometry: BaseGeometry,
+    local_roads: list[ParsedRoad],
+    allowed_road_ids: set[str],
+    target_group_node_ids: set[str],
+) -> dict[str, float]:
+    if polygon_geometry.is_empty:
+        return {}
+    overlap_by_road_id: dict[str, float] = {}
+    polygon_cover = polygon_geometry.buffer(max(DEFAULT_RESOLUTION_M, 0.5), join_style=1)
+    for road in local_roads:
+        if road.road_id in allowed_road_ids:
+            continue
+        if road.snodeid in target_group_node_ids or road.enodeid in target_group_node_ids:
+            continue
+        covered_geometry = road.geometry.intersection(polygon_cover)
+        if covered_geometry.is_empty or covered_geometry.length <= 0.5:
+            covered_geometry = road.geometry.intersection(polygon_geometry)
+        covered_length_m = float(covered_geometry.length)
+        if covered_length_m > 0.5:
+            overlap_by_road_id[road.road_id] = covered_length_m
+    return overlap_by_road_id
+
+
+def _build_local_road_overlap_trim_geometry(
+    *,
+    polygon_geometry: BaseGeometry,
+    road_ids: set[str],
+    local_roads: list[ParsedRoad],
+    drivezone_union: BaseGeometry,
+    buffer_m: float,
+) -> BaseGeometry:
+    if polygon_geometry.is_empty or not road_ids:
+        return GeometryCollection()
+
+    polygon_cover = polygon_geometry.buffer(max(DEFAULT_RESOLUTION_M, 0.5), join_style=1)
+    trim_parts: list[BaseGeometry] = []
+    for road in local_roads:
+        if road.road_id not in road_ids:
+            continue
+        covered_geometry = road.geometry.intersection(polygon_cover)
+        if covered_geometry.is_empty or covered_geometry.length <= 0.5:
+            covered_geometry = road.geometry.intersection(polygon_geometry)
+        if covered_geometry.is_empty or covered_geometry.length <= 0.5:
+            continue
+        trim_geometry = covered_geometry.buffer(
+            buffer_m,
+            cap_style=2,
+            join_style=2,
+        ).intersection(drivezone_union)
+        if trim_geometry.is_empty:
+            continue
+        trim_parts.append(trim_geometry)
+
+    if not trim_parts:
+        return GeometryCollection()
+    return unary_union(trim_parts).intersection(drivezone_union)
+
+
 def _build_targeted_foreign_local_road_trim_geometry(
     *,
     polygon_geometry: BaseGeometry,
@@ -7380,7 +7892,7 @@ def _write_association_outputs(
     features: list[dict[str, Any]],
     audits: list[dict[str, Any]],
 ) -> None:
-    write_vector(vector_path, features)
+    write_vector(vector_path, features, crs_text=TARGET_CRS.to_string())
     write_csv(audit_csv_path, audits, fieldnames=ASSOCIATION_AUDIT_FIELDNAMES)
     write_json(audit_json_path, audits)
 
@@ -7422,6 +7934,89 @@ def _max_selected_side_branch_covered_length_m(
     return max_covered_length_m
 
 
+def _single_sided_strict_keep_road_ids(
+    *,
+    road_branches: list[BranchEvidence],
+) -> set[str]:
+    fallback_road_ids: set[str] = set()
+    strict_road_ids: set[str] = set()
+    for branch in road_branches:
+        if not branch.selected_for_polygon:
+            continue
+        branch_road_ids = set(branch.road_ids)
+        if not branch_road_ids:
+            continue
+        fallback_road_ids.update(branch_road_ids)
+        if (
+            branch.is_main_direction
+            or branch.evidence_level == "arm_full_rc"
+            or branch.selected_rc_group
+            or bool(branch.rcsdroad_ids)
+        ):
+            strict_road_ids.update(branch_road_ids)
+    return strict_road_ids or fallback_road_ids
+
+
+def _single_sided_partial_branch_road_ids(
+    *,
+    road_branches: list[BranchEvidence],
+) -> set[str]:
+    partial_branch_road_ids: set[str] = set()
+    for branch in road_branches:
+        if (
+            not branch.selected_for_polygon
+            or branch.is_main_direction
+            or branch.evidence_level != "arm_partial"
+            or bool(branch.rcsdroad_ids)
+        ):
+            continue
+        partial_branch_road_ids.update(branch.road_ids)
+    return partial_branch_road_ids
+
+
+def _late_cleanup_selected_node_pocket_geometries(
+    *,
+    selected_node_ids: Iterable[str],
+    rc_node_by_id: Mapping[str, ParsedNode],
+    reference_geometry: BaseGeometry | None,
+    drivezone_union: BaseGeometry,
+) -> list[BaseGeometry]:
+    if reference_geometry is None or reference_geometry.is_empty:
+        return []
+    pocket_geometries: list[BaseGeometry] = []
+    for node_id in selected_node_ids:
+        node = rc_node_by_id.get(node_id)
+        if node is None or node.geometry.distance(reference_geometry) > max(DEFAULT_RESOLUTION_M, 1.0):
+            continue
+        pocket_geometry = node.geometry.buffer(
+            max(RC_ROAD_BUFFER_M * 1.5, 1.8),
+            join_style=1,
+        ).intersection(drivezone_union)
+        if not pocket_geometry.is_empty:
+            pocket_geometries.append(pocket_geometry)
+    return pocket_geometries
+
+
+def _late_cleanup_hard_selected_endpoint_node_ids(
+    *,
+    selected_endpoint_node_ids: Iterable[str],
+    rc_node_by_id: Mapping[str, ParsedNode],
+    polygon_support_rc_node_ids: set[str],
+) -> set[str]:
+    hard_node_ids: set[str] = set()
+    for node_id in selected_endpoint_node_ids:
+        node = rc_node_by_id.get(node_id)
+        if node_id in polygon_support_rc_node_ids:
+            hard_node_ids.add(node_id)
+            continue
+        if node is None:
+            hard_node_ids.add(node_id)
+            continue
+        if node.mainnodeid not in {None, "0"}:
+            hard_node_ids.add(node_id)
+    return hard_node_ids
+
+
 def _max_nonmain_branch_polygon_length_m(*, road_branches: list[BranchEvidence]) -> float:
     max_polygon_length_m = 0.0
     for branch in road_branches:
@@ -7453,6 +8048,7 @@ def _effect_success_acceptance(
     *,
     status: str,
     review_mode: bool,
+    template_class: str = TEMPLATE_GENERIC_JUNCTION,
     max_selected_side_branch_covered_length_m: float,
     max_nonmain_branch_polygon_length_m: float,
     associated_rc_road_count: int,
@@ -7485,340 +8081,90 @@ def _effect_success_acceptance(
     single_sided_t_mouth_corridor_semantic_gap: bool = False,
     multi_node_selected_cover_repair_applied: bool = False,
     final_uncovered_selected_endpoint_node_count: int = 0,
+    single_sided_unrelated_opposite_lane_trim_applied: bool = False,
 ) -> tuple[bool, str, str]:
-    if effective_local_rc_node_count is None:
-        effective_local_rc_node_count = local_rc_node_count
-    has_excluded_local_rc = (
-        excluded_local_rc_road_count > 0
-        or excluded_local_rc_node_count > 0
-    )
-    if review_mode:
-        return False, "review_required", "review_mode"
-    if covered_extra_local_node_count > 0 or covered_extra_local_road_count > 0:
-        if status == STATUS_STABLE:
-            return False, "review_required", "stable_with_foreign_swsd_intrusion"
-        return False, "review_required", f"review_required_status:{status}"
-    if status == STATUS_STABLE:
-        if (
-            representative_kind_2 == 2048
-            and single_sided_t_mouth_corridor_pattern_detected
-            and single_sided_t_mouth_corridor_semantic_gap
-            and associated_nonzero_mainnode_count == 0
-        ):
-            if final_uncovered_selected_endpoint_node_count > 0:
-                return False, "review_required", "stable_with_incomplete_t_mouth_rc_context"
-        if (
-            representative_kind_2 == 2048
-            and positive_rc_group_count >= 2
-            and negative_rc_group_count >= 1
-            and associated_nonzero_mainnode_count == 0
-            and associated_rc_road_count >= 3
-            and effective_associated_rc_node_count >= 3
-        ):
-            return False, "review_required", "stable_with_rc_group_semantic_gap"
-        if (
-            representative_kind_2 == 2048
-            and associated_rc_road_count <= 1
-            and polygon_support_rc_node_count == 0
-            and effective_associated_rc_node_count == 0
-            and (
-                max_nonmain_branch_polygon_length_m >= 20.0
-                or final_selected_node_cover_repair_discarded_due_to_extra_roads
-            )
-        ):
-            return False, "review_required", "stable_with_incomplete_t_mouth_rc_context"
-        if (
-            associated_rc_road_count <= 1
-            and polygon_support_rc_node_count == 0
-            and effective_associated_rc_node_count == 0
-            and local_rc_road_count >= 20
-            and effective_local_rc_node_count >= 2
-        ):
-            return False, "review_required", "stable_with_sparse_rc_association_against_dense_local_rcsd_context"
-        if (
-            representative_kind_2 == 2048
-            and has_excluded_local_rc
-            and associated_rc_road_count >= 2
-            and polygon_support_rc_road_count >= 2
-            and polygon_support_rc_node_count <= 1
-            and effective_local_rc_node_count == 0
-            and effective_associated_rc_node_count == 0
-            and associated_nonzero_mainnode_count == 0
-            and max_nonmain_branch_polygon_length_m >= 10.0
-            and max_selected_side_branch_covered_length_m <= 3.0
-            and min_invalid_rc_distance_to_center_m is not None
-            and min_invalid_rc_distance_to_center_m <= 8.0
-            and not single_sided_t_mouth_corridor_pattern_detected
-        ):
-            return False, "review_required", "stable_with_unrelated_opposite_lane_corridor"
-        if has_main_edge_only_branch:
-            return False, "review_required", "stable_with_weak_main_direction"
-        return True, "accepted", "stable"
-    if status == STATUS_SURFACE_ONLY:
-        if (
-            not has_excluded_local_rc
-            and local_rc_road_count == 0
-            and effective_local_rc_node_count == 0
-        ):
-            return True, "accepted", "surface_only_without_any_local_rcsd_data"
-        if (
-            connected_rc_group_count == 0
-            and associated_rc_road_count == 0
-            and polygon_support_rc_road_count == 0
-        ):
-            return True, "accepted", "surface_only_without_connected_local_rcsd_evidence"
-        return False, "review_required", f"review_required_status:{status}"
-    if status == STATUS_NO_VALID_RC_CONNECTION:
-        if (
-            associated_rc_road_count <= 1
-            and polygon_support_rc_road_count == 0
-            and connected_rc_group_count == 1
-            and nonmain_branch_connected_rc_group_count == 0
-            and local_rc_road_count <= 4
-            and local_rc_node_count <= 2
-            and local_road_count <= 4
-            and local_node_count <= 1
-            and max_selected_side_branch_covered_length_m == 0.0
-            and max_nonmain_branch_polygon_length_m == 0.0
-        ):
-            return True, "accepted", "rc_gap_with_compact_local_mouth_geometry"
-        if (
-            connected_rc_group_count == 0
-            and associated_rc_road_count <= 1
-            and polygon_support_rc_road_count == 0
-            and effective_local_rc_node_count == 0
-        ):
-            return True, "accepted", "rc_gap_without_connected_local_rcsd_evidence"
-        if (
-            associated_rc_road_count <= 1
-            and polygon_support_rc_road_count == 0
-            and nonmain_branch_connected_rc_group_count == 0
-            and effective_local_rc_node_count == 0
-        ):
-            return True, "accepted", "rc_gap_without_connected_local_rcsd_evidence"
-        if (
-            associated_rc_road_count == 0
-            and polygon_support_rc_road_count == 0
-            and positive_rc_group_count == 0
-            and not has_structural_side_branch
-            and effective_local_rc_node_count <= 1
-            and local_road_count <= 10
-            and local_node_count <= 4
-            and max_selected_side_branch_covered_length_m == 0.0
-            and max_nonmain_branch_polygon_length_m == 0.0
-        ):
-            return True, "accepted", "rc_gap_with_compact_mainline_geometry"
-        if (
-            associated_rc_road_count == 0
-            and polygon_support_rc_road_count == 0
-            and positive_rc_group_count == 0
-            and road_branch_count is not None
-            and road_branch_count <= 3
-            and not has_structural_side_branch
-            and local_road_count <= 20
-            and local_node_count <= 12
-            and max_selected_side_branch_covered_length_m == 0.0
-            and max_nonmain_branch_polygon_length_m <= 8.0
-            and max_nonmain_edge_branch_road_support_m <= 6.5
-            and max_nonmain_edge_branch_rc_support_m <= 5.0
-        ):
-            return True, "accepted", "rc_gap_with_only_weak_unselected_edge_rc_groups"
-        if (
-            associated_rc_road_count <= 1
-            and polygon_support_rc_road_count == 0
-            and positive_rc_group_count == 1
-            and connected_rc_group_count == 1
-            and road_branch_count is not None
-            and road_branch_count <= 2
-            and not has_structural_side_branch
-            and local_road_count <= 13
-            and local_node_count <= 6
-            and max_selected_side_branch_covered_length_m == 0.0
-            and max_nonmain_branch_polygon_length_m == 0.0
-        ):
-            return True, "accepted", "rc_gap_without_structural_side_branch"
-        if (
-            associated_rc_road_count <= 1
-            and polygon_support_rc_road_count == 0
-            and positive_rc_group_count == 1
-            and connected_rc_group_count == 1
-            and road_branch_count is not None
-            and road_branch_count <= 3
-            and not has_structural_side_branch
-            and effective_local_rc_node_count <= 1
-            and local_road_count <= 10
-            and local_node_count <= 4
-            and max_selected_side_branch_covered_length_m == 0.0
-            and max_nonmain_branch_polygon_length_m == 0.0
-            and max_nonmain_edge_branch_road_support_m <= 40.0
-            and max_nonmain_edge_branch_rc_support_m <= 85.0
-        ):
-            return True, "accepted", "rc_gap_with_compact_edge_rc_tail"
-        if (
-            associated_rc_road_count <= 1
-            and polygon_support_rc_road_count == 0
-            and positive_rc_group_count == 1
-            and connected_rc_group_count == 1
-            and road_branch_count is not None
-            and road_branch_count <= 3
-            and not has_structural_side_branch
-            and effective_local_rc_node_count <= 1
-            and local_road_count <= 12
-            and local_node_count <= 5
-            and max_selected_side_branch_covered_length_m == 0.0
-            and max_nonmain_branch_polygon_length_m == 0.0
-            and max_nonmain_edge_branch_road_support_m <= 20.0
-            and max_nonmain_edge_branch_rc_support_m <= 60.0
-        ):
-            return True, "accepted", "rc_gap_with_single_weak_edge_side_branch"
-        if (
-            associated_rc_road_count <= 1
-            and polygon_support_rc_road_count == 0
-            and positive_rc_group_count == 1
-            and connected_rc_group_count == 1
-            and road_branch_count is not None
-            and road_branch_count <= 3
-            and not has_structural_side_branch
-            and max_selected_side_branch_covered_length_m == 0.0
-            and max_nonmain_branch_polygon_length_m == 0.0
-            and max_nonmain_edge_branch_road_support_m >= 50.0
-            and max_nonmain_edge_branch_road_support_m <= 90.0
-            and max_nonmain_edge_branch_rc_support_m <= 5.0
-        ):
-            return True, "accepted", "rc_gap_with_long_weak_unselected_edge_branch"
-        if max_nonmain_branch_polygon_length_m >= 4.0:
-            return True, "accepted", "rc_gap_with_nonmain_branch_polygon_coverage"
-        return False, "review_required", "rc_gap_without_substantive_nonmain_branch_coverage"
-    if status == STATUS_NODE_COMPONENT_CONFLICT:
-        return False, "review_required", f"review_required_status:{status}"
-    if status == STATUS_WEAK_BRANCH_SUPPORT:
-        if (
-            covered_extra_local_node_count == 0
-            and covered_extra_local_road_count == 0
-            and associated_rc_road_count >= 1
-            and polygon_support_rc_road_count >= 1
-            and effective_local_rc_node_count <= 0
-            and local_road_count <= 3
-            and local_node_count <= 1
-            and max_selected_side_branch_covered_length_m >= 12.0
-            and max_nonmain_branch_polygon_length_m >= 10.0
-        ):
-            return True, "accepted", "weak_branch_supported_compact_t_shape"
-        if (
-            covered_extra_local_node_count == 0
-            and covered_extra_local_road_count == 0
-            and associated_rc_road_count >= 2
-            and polygon_support_rc_road_count >= 2
-            and effective_associated_rc_node_count >= 2
-            and road_branch_count is not None
-            and road_branch_count <= 3
-            and max_selected_side_branch_covered_length_m >= 15.0
-            and max_nonmain_branch_polygon_length_m >= 8.0
-        ):
-            return True, "accepted", "weak_branch_supported_rc_handoff_core"
-        if (
-            covered_extra_local_node_count == 0
-            and covered_extra_local_road_count == 0
-            and associated_rc_road_count >= 2
-            and polygon_support_rc_road_count >= 2
-            and effective_local_rc_node_count == 0
-            and effective_associated_rc_node_count == 0
-            and associated_nonzero_mainnode_count == 0
-            and local_road_count <= 5
-            and local_node_count <= 2
-            and max_selected_side_branch_covered_length_m == 0.0
-            and max_nonmain_branch_polygon_length_m == 0.0
-        ):
-            return True, "accepted", "weak_branch_supported_compact_outside_rc_core"
-        if (
-            covered_extra_local_node_count == 0
-            and covered_extra_local_road_count == 0
-            and associated_rc_road_count >= 2
-            and polygon_support_rc_road_count >= 2
-            and effective_local_rc_node_count >= 2
-            and effective_associated_rc_node_count >= 2
-            and associated_nonzero_mainnode_count >= 2
-            and local_road_count <= 16
-            and local_node_count <= 12
-            and max_selected_side_branch_covered_length_m <= 4.0
-            and max_nonmain_branch_polygon_length_m >= 8.0
-            and max_nonmain_branch_polygon_length_m <= 10.0
-        ):
-            return True, "accepted", "weak_branch_supported_compact_near_center_outside_rc"
-        return False, "review_required", f"review_required_status:{status}"
-    if status == STATUS_AMBIGUOUS_RC_MATCH:
-        if (
-            associated_rc_road_count == 0
-            and polygon_support_rc_road_count == 0
-            and nonmain_branch_connected_rc_group_count == 0
-            and max_selected_side_branch_covered_length_m >= 7.0
-            and max_nonmain_branch_polygon_length_m >= 8.0
-        ):
-            return True, "accepted", "ambiguous_main_rc_gap_with_nonmain_branch_polygon_coverage"
-        if (
-            associated_rc_road_count <= 2
-            and polygon_support_rc_road_count <= 1
-            and connected_rc_group_count >= 2
-            and nonmain_branch_connected_rc_group_count <= 1
-            and negative_rc_group_count >= 1
-            and road_branch_count is not None
-            and road_branch_count <= 3
-            and max_selected_side_branch_covered_length_m >= 7.0
-            and max_nonmain_branch_polygon_length_m >= 8.0
-        ):
-            return True, "accepted", "ambiguous_main_rc_gap_with_compact_polygon"
-        if (
-            covered_extra_local_node_count == 0
-            and covered_extra_local_road_count == 0
-            and associated_rc_road_count <= 2
-            and polygon_support_rc_road_count <= 2
-            and positive_rc_group_count >= 1
-            and negative_rc_group_count >= 1
-            and effective_associated_rc_node_count == 0
-            and representative_kind_2 in {4, 2048}
-            and road_branch_count is not None
-            and road_branch_count <= 3
-            and local_road_count <= 24
-            and local_node_count <= 12
-            and max_selected_side_branch_covered_length_m >= 7.0
-            and max_nonmain_branch_polygon_length_m >= 8.0
-        ):
-            return True, "accepted", "ambiguous_main_rc_gap_with_compact_polygon"
-        if (
-            associated_rc_road_count <= 1
-            and polygon_support_rc_road_count <= 1
-            and connected_rc_group_count >= 2
-            and nonmain_branch_connected_rc_group_count <= 1
-            and negative_rc_group_count >= 1
-            and max_nonmain_branch_polygon_length_m >= 8.0
-            and max_selected_side_branch_covered_length_m <= 2.0
-        ):
-            return True, "accepted", "ambiguous_main_rc_gap_with_compact_polygon"
-        if (
-            associated_rc_road_count <= 1
-            and polygon_support_rc_road_count <= 1
-            and positive_rc_group_count == 1
-            and negative_rc_group_count >= 1
-            and not has_structural_side_branch
-            and local_road_count <= 7
-            and local_node_count <= 3
-            and max_nonmain_branch_polygon_length_m >= 4.0
-            and max_selected_side_branch_covered_length_m <= 1.0
-        ):
-            return True, "accepted", "ambiguous_main_rc_gap_with_compact_supported_polygon"
-        if (
-            associated_rc_road_count == 2
-            and polygon_support_rc_road_count >= associated_rc_road_count
-            and positive_rc_group_count <= 2
-            and negative_rc_group_count >= 1
-            and local_road_count <= 6
-            and local_node_count <= 4
-            and max_selected_side_branch_covered_length_m >= 18.0
-            and max_nonmain_branch_polygon_length_m >= 10.0
-        ):
-            return True, "accepted", "ambiguous_main_rc_gap_with_supported_branch_polygon_coverage"
-        return False, "review_required", f"review_required_status:{status}"
-    return False, "rejected", f"rejected_status:{status}"
+    return _stage3_effect_success_acceptance(**locals())
+
+
+def _evaluate_stage3_acceptance_from_inputs(
+    inputs: Stage3AcceptanceHeuristicInputs,
+) -> Stage3AcceptanceDecision:
+    return _stage3_evaluate_stage3_acceptance_from_inputs(inputs)
+
+
+def _apply_stage3_post_acceptance_gates(
+    *,
+    effect_success: bool,
+    acceptance_class: str,
+    acceptance_reason: str,
+    status: str,
+    template_class: str,
+    can_soft_exclude_outside_rc: bool,
+    rc_outside_drivezone_error: VirtualIntersectionPocError | None,
+    max_target_group_foreign_semantic_road_overlap_m: float,
+    max_selected_side_branch_covered_length_m: float,
+    max_nonmain_branch_polygon_length_m: float,
+    min_invalid_rc_distance_to_center_m: float | None,
+    associated_rc_road_count: int,
+    associated_rc_node_count: int,
+    effective_associated_rc_node_count: int,
+    excluded_rc_road_count: int,
+    positive_rc_group_count: int,
+    negative_rc_group_count: int,
+    local_node_count: int,
+    local_road_count: int,
+    polygon_aspect_ratio: float | None,
+    polygon_compactness: float | None,
+    polygon_bbox_fill_ratio: float | None,
+    single_sided_unrelated_opposite_lane_trim_applied: bool,
+    soft_excluded_rc_corridor_trim_applied: bool,
+    post_trim_non_target_tail_length_m: float,
+    foreign_overlap_zero_but_tail_present: bool,
+    audit_rows: Sequence[dict[str, Any]],
+) -> tuple[bool, str, str]:
+    return _stage3_apply_stage3_post_acceptance_gates(**locals())
+
+
+def _apply_stage3_post_acceptance_gates_from_inputs(
+    inputs: Stage3PostAcceptanceGateInputs,
+) -> Stage3AcceptanceDecision:
+    return _stage3_apply_stage3_post_acceptance_gates_from_inputs(inputs)
+
+
+def _compute_stage3_polygon_shape_metrics(geometry: BaseGeometry) -> tuple[float | None, float | None, float | None]:
+    if geometry is None or geometry.is_empty:
+        return None, None, None
+
+    area = float(geometry.area)
+    perimeter = float(geometry.length)
+    compactness = None
+    if area > 0.0 and perimeter > 0.0:
+        compactness = (4.0 * math.pi * area) / (perimeter * perimeter)
+
+    bbox_fill_ratio = None
+    minx, miny, maxx, maxy = geometry.bounds
+    bbox_area = max(0.0, (maxx - minx) * (maxy - miny))
+    if area > 0.0 and bbox_area > 0.0:
+        bbox_fill_ratio = area / bbox_area
+
+    aspect_ratio = None
+    try:
+        oriented = geometry.minimum_rotated_rectangle
+        if not oriented.is_empty and hasattr(oriented, "exterior"):
+            coords = list(oriented.exterior.coords)
+            if len(coords) >= 5:
+                edge_lengths = sorted(
+                    math.hypot(coords[index + 1][0] - coords[index][0], coords[index + 1][1] - coords[index][1])
+                    for index in range(4)
+                )
+                short_edge = edge_lengths[0]
+                long_edge = edge_lengths[-1]
+                if short_edge > 0.0:
+                    aspect_ratio = long_edge / short_edge
+    except Exception:
+        aspect_ratio = None
+
+    return aspect_ratio, compactness, bbox_fill_ratio
 
 
 def _business_match_class(
@@ -8062,7 +8408,11 @@ def run_t02_virtual_intersection_poc(
         counts["target_group_candidate_count"] = len(target_group_nodes)
         representative_node, group_nodes = _resolve_group(mainnodeid=normalized_mainnodeid, nodes=target_group_nodes)
         out_of_scope_error: VirtualIntersectionPocError | None = None
-        if representative_node.has_evd != "yes" or representative_node.kind_2 not in ALLOWED_KIND_2_VALUES:
+        if (
+            representative_node.has_evd != "yes"
+            or representative_node.kind_2 not in ALLOWED_KIND_2_VALUES
+            or (not review_mode and representative_node.is_anchor != "no")
+        ):
             out_of_scope_error = VirtualIntersectionPocError(
                 REASON_MAINNODEID_OUT_OF_SCOPE,
                 (
@@ -8382,9 +8732,12 @@ def run_t02_virtual_intersection_poc(
                         "by DriveZone within the local patch."
                     ),
                     mainnodeid=normalized_mainnodeid,
-                    feature_id=rc_node.node_id,
+                        feature_id=rc_node.node_id,
+                    )
                 )
-            )
+        invalid_rc_roads_for_trim = [
+            road for road in local_rc_roads if road.road_id in invalid_rc_road_ids
+        ]
         if invalid_rc_road_ids or invalid_rc_node_ids:
             if STATUS_REVIEW_RC_OUTSIDE_DRIVEZONE_EXCLUDED not in risks:
                 if review_mode:
@@ -8764,6 +9117,10 @@ def run_t02_virtual_intersection_poc(
             positive_rc_groups=positive_rc_groups,
             negative_rc_groups=negative_rc_groups,
             local_roads=local_roads,
+        )
+        stage3_template_class = _classify_stage3_template(
+            representative_kind_2=representative_node.kind_2,
+            single_sided_t_mouth_corridor_pattern=single_sided_t_mouth_corridor_pattern,
         )
         single_sided_t_mouth_corridor_target_local_road_ids = (
             {
@@ -11493,6 +11850,13 @@ def run_t02_virtual_intersection_poc(
             for node_id in (road.snodeid, road.enodeid)
             if node_id in rc_node_by_id
         }
+        selected_endpoint_hard_boundary_node_ids = (
+            _late_cleanup_hard_selected_endpoint_node_ids(
+                selected_endpoint_node_ids=selected_rc_endpoint_node_ids,
+                rc_node_by_id=rc_node_by_id,
+                polygon_support_rc_node_ids=polygon_support_rc_node_ids,
+            )
+        )
         selected_rc_node_ids: set[str] = {
             node.node_id
             for node in rc_group_nodes
@@ -13039,6 +13403,9 @@ def run_t02_virtual_intersection_poc(
         )
         final_selected_node_cover_repair_discarded_due_to_extra_roads = False
         multi_node_selected_cover_repair_applied = False
+        selected_node_repair_attempted = False
+        selected_node_repair_applied = False
+        selected_node_repair_introduced_extra_local_road_ids: set[str] = set()
         single_sided_t_mouth_corridor_pattern_detected = len(corridor_main_support_road_ids) >= 2
         single_sided_t_mouth_branch_corridor_applied = False
         single_sided_t_mouth_branch_target_endpoint_node_ids: set[str] = set()
@@ -13082,6 +13449,7 @@ def run_t02_virtual_intersection_poc(
                     )
                 ]
             if directly_uncovered_selected_rc_node_ids:
+                selected_node_repair_attempted = True
                 announce(
                     logger,
                     (
@@ -13203,6 +13571,9 @@ def run_t02_virtual_intersection_poc(
                             semantic_mainnodeids=semantic_mainnodeids,
                         )
                         if repaired_extra_local_road_ids:
+                            selected_node_repair_introduced_extra_local_road_ids.update(
+                                str(road_id) for road_id in repaired_extra_local_road_ids
+                            )
                             repair_keep_parts = [
                                 geometry
                                 for geometry in (
@@ -13327,6 +13698,7 @@ def run_t02_virtual_intersection_poc(
                                     f"node_ids={','.join(directly_uncovered_selected_rc_node_ids)}"
                                 ),
                             )
+                            selected_node_repair_applied = True
                             virtual_polygon_geometry = repaired_virtual_polygon_geometry
                         else:
                             obstacle_aware_repair_geometries = _build_uncovered_selected_rc_node_repair_geometries(
@@ -13437,9 +13809,13 @@ def run_t02_virtual_intersection_poc(
                                             f"node_ids={','.join(directly_uncovered_selected_rc_node_ids)}"
                                         ),
                                     )
+                                    selected_node_repair_applied = True
                                     virtual_polygon_geometry = obstacle_aware_virtual_polygon_geometry
                                     repaired_extra_local_road_ids = []
                                 if repaired_extra_local_road_ids:
+                                    selected_node_repair_introduced_extra_local_road_ids.update(
+                                        str(road_id) for road_id in repaired_extra_local_road_ids
+                                    )
                                     if (
                                         (representative_node.kind_2 or 0) == 2048
                                         and (
@@ -13547,6 +13923,10 @@ def run_t02_virtual_intersection_poc(
                                 analysis_center=analysis_center,
                                 semantic_mainnodeids=semantic_mainnodeids,
                             )
+                            if single_extra_local_road_ids:
+                                selected_node_repair_introduced_extra_local_road_ids.update(
+                                    str(road_id) for road_id in single_extra_local_road_ids
+                                )
                             if (
                                 not single_uncovered_group_node_ids
                                 and not single_uncovered_support_rc_node_ids
@@ -13565,6 +13945,7 @@ def run_t02_virtual_intersection_poc(
                                     f"node_ids={','.join(incrementally_repaired_selected_node_ids)}"
                                 ),
                             )
+                            selected_node_repair_applied = True
                             if len(incrementally_repaired_selected_node_ids) >= 2:
                                 multi_node_selected_cover_repair_applied = True
                         else:
@@ -15242,6 +15623,7 @@ def run_t02_virtual_intersection_poc(
             | set(single_sided_t_mouth_branch_target_local_road_ids)
         )
         late_strict_target_group_overlap_trim_applied = False
+        single_sided_unrelated_opposite_lane_trim_applied = False
         late_target_group_foreign_semantic_road_overlap_by_id = (
             _target_group_foreign_semantic_road_overlap_lengths(
                 polygon_geometry=virtual_polygon_geometry,
@@ -15256,11 +15638,10 @@ def run_t02_virtual_intersection_poc(
             )
         )
         if (
-            representative_node.kind_2 == 2048
+            stage3_template_class in {TEMPLATE_SINGLE_SIDED_T_MOUTH, TEMPLATE_CENTER_JUNCTION}
+            and invalid_rc_road_ids
             and not covered_extra_local_node_ids
             and not covered_extra_local_road_ids
-            and counts["associated_rcsdroad_count"] <= 2
-            and effective_associated_rc_node_count <= 1
             and max(late_target_group_foreign_semantic_road_overlap_by_id.values(), default=0.0)
             > POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
         ):
@@ -15907,6 +16288,9 @@ def run_t02_virtual_intersection_poc(
                     for node in group_nodes
                 ]
             ).intersection(drivezone_union)
+            # This branch still operates on the pre-Step6 foreign overlap snapshot.
+            # The mutable `step6_final_*` state is only initialized later, after the
+            # Step5 baseline has been frozen.
             post_overlap_trim_geometry = _build_targeted_foreign_local_road_trim_geometry(
                 polygon_geometry=virtual_polygon_geometry,
                 road_ids=set(target_group_foreign_semantic_road_overlap_by_id),
@@ -16361,6 +16745,237 @@ def run_t02_virtual_intersection_poc(
                         3,
                     )
         if (
+            stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
+            and not covered_extra_local_node_ids
+            and not covered_extra_local_road_ids
+            and invalid_rc_road_ids
+            and len(selected_rc_roads) >= 2
+            and len(polygon_support_rc_road_ids) >= 2
+            and len(polygon_support_rc_node_ids) <= 1
+            and effective_local_rc_node_count == 0
+            and effective_associated_rc_node_count == 0
+            and associated_nonzero_mainnode_count == 0
+            and max_nonmain_branch_polygon_length_m >= 10.0
+            and max_selected_side_branch_covered_length_m <= 3.0
+            and min_invalid_rc_distance_to_center_m is not None
+            and min_invalid_rc_distance_to_center_m <= 8.0
+        ):
+            unrelated_opposite_lane_overlap_by_id = _single_sided_unrelated_local_road_overlap_lengths(
+                polygon_geometry=virtual_polygon_geometry,
+                local_roads=local_roads,
+                allowed_road_ids=final_allowed_local_road_ids,
+                target_group_node_ids=analysis_member_node_ids,
+            )
+            if unrelated_opposite_lane_overlap_by_id:
+                unrelated_opposite_lane_geometry = unary_union(
+                    [
+                        road.geometry
+                        for road in local_roads
+                        if road.road_id in unrelated_opposite_lane_overlap_by_id
+                    ]
+                ).intersection(drivezone_union)
+                optional_trimmed_selected_rc_road_ids = {
+                    road.road_id
+                    for road in selected_rc_roads
+                    if (
+                        unrelated_opposite_lane_geometry is not None
+                        and not unrelated_opposite_lane_geometry.is_empty
+                        and (
+                            road.geometry.distance(unrelated_opposite_lane_geometry)
+                            <= max(DEFAULT_RESOLUTION_M, 0.8)
+                            or not road.geometry.intersection(
+                                unrelated_opposite_lane_geometry.buffer(
+                                    max(DEFAULT_RESOLUTION_M, 0.5),
+                                    join_style=1,
+                                )
+                            ).is_empty
+                        )
+                    )
+                }
+                optional_trimmed_selected_rc_node_ids = {
+                    node_id
+                    for node_id in selected_rc_node_ids
+                    if (
+                        node_id in rc_node_by_id
+                        and unrelated_opposite_lane_geometry is not None
+                        and not unrelated_opposite_lane_geometry.is_empty
+                        and rc_node_by_id[node_id].geometry.distance(
+                            unrelated_opposite_lane_geometry
+                        )
+                        <= max(DEFAULT_RESOLUTION_M, 0.8)
+                    )
+                }
+                unrelated_opposite_lane_trim_geometry = _build_local_road_overlap_trim_geometry(
+                    polygon_geometry=virtual_polygon_geometry,
+                    road_ids=set(unrelated_opposite_lane_overlap_by_id),
+                    local_roads=local_roads,
+                    drivezone_union=drivezone_union,
+                    buffer_m=max(ROAD_BUFFER_M * 0.95, MAIN_BRANCH_HALF_WIDTH_M * 0.85),
+                )
+                if (
+                    unrelated_opposite_lane_trim_geometry is not None
+                    and not unrelated_opposite_lane_trim_geometry.is_empty
+                ):
+                    trimmed_unrelated_opposite_lane_polygon_geometry = (
+                        virtual_polygon_geometry.difference(
+                            unrelated_opposite_lane_trim_geometry
+                        ).intersection(drivezone_union)
+                    )
+                    if not trimmed_unrelated_opposite_lane_polygon_geometry.is_empty:
+                        trimmed_unrelated_opposite_lane_polygon_geometry = (
+                            _regularize_virtual_polygon_geometry(
+                                geometry=trimmed_unrelated_opposite_lane_polygon_geometry,
+                                drivezone_union=drivezone_union,
+                                seed_geometry=core_geometry,
+                            )
+                        )
+                    (
+                        trimmed_unrelated_group_node_ids,
+                        trimmed_unrelated_support_rc_node_ids,
+                        trimmed_unrelated_support_rc_road_ids,
+                    ) = _validate_polygon_support(
+                        polygon_geometry=trimmed_unrelated_opposite_lane_polygon_geometry,
+                        group_nodes=group_nodes,
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        support_node_ids=validation_support_rc_node_ids,
+                        support_road_ids=validation_support_rc_road_ids,
+                        support_clip=validation_support_clip,
+                    )
+                    (
+                        trimmed_unrelated_support_rc_node_ids,
+                        trimmed_unrelated_support_rc_road_ids,
+                    ) = _relax_targeted_foreign_trim_support_gaps(
+                        uncovered_support_node_ids=trimmed_unrelated_support_rc_node_ids,
+                        uncovered_support_road_ids=trimmed_unrelated_support_rc_road_ids,
+                        rc_node_by_id=rc_node_by_id,
+                        rc_road_by_id=rc_road_by_id,
+                        analysis_center=analysis_center,
+                        hard_support_node_ids=candidate_selected_rc_node_ids,
+                        hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                        relax_node_ids=conflict_excluded_rc_node_ids,
+                        relax_road_ids=conflict_excluded_rc_road_ids,
+                    )
+                    (
+                        _trimmed_unrelated_selected_group_node_ids,
+                        trimmed_unrelated_selected_rc_node_ids,
+                        trimmed_unrelated_selected_rc_road_ids,
+                    ) = _validate_polygon_support(
+                        polygon_geometry=trimmed_unrelated_opposite_lane_polygon_geometry,
+                        group_nodes=[],
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        support_node_ids=selected_rc_node_ids,
+                        support_road_ids={road.road_id for road in selected_rc_roads},
+                        support_clip=selected_output_clip,
+                    )
+                    (
+                        trimmed_unrelated_selected_rc_node_ids,
+                        trimmed_unrelated_selected_rc_road_ids,
+                    ) = _relax_targeted_foreign_trim_selected_gaps(
+                        uncovered_selected_node_ids=trimmed_unrelated_selected_rc_node_ids,
+                        uncovered_selected_road_ids=trimmed_unrelated_selected_rc_road_ids,
+                        rc_node_by_id=rc_node_by_id,
+                        rc_road_by_id=rc_road_by_id,
+                        analysis_center=None,
+                        hard_selected_node_ids=set(),
+                        relax_node_ids=conflict_excluded_rc_node_ids,
+                        relax_road_ids=conflict_excluded_rc_road_ids,
+                    )
+                    trimmed_unrelated_selected_rc_node_ids = [
+                        node_id
+                        for node_id in trimmed_unrelated_selected_rc_node_ids
+                        if node_id not in optional_trimmed_selected_rc_node_ids
+                    ]
+                    trimmed_unrelated_selected_rc_road_ids = [
+                        road_id
+                        for road_id in trimmed_unrelated_selected_rc_road_ids
+                        if road_id not in optional_trimmed_selected_rc_road_ids
+                    ]
+                    trimmed_unrelated_extra_local_node_ids = sorted(
+                        node.node_id
+                        for node in local_nodes
+                        if (
+                            _is_foreign_local_semantic_node(
+                                node=node,
+                                target_group_node_ids=analysis_member_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                semantic_mainnodeids=semantic_mainnodeids,
+                            )
+                            and _polygon_substantively_covers_node(
+                                trimmed_unrelated_opposite_lane_polygon_geometry,
+                                node.geometry,
+                                cover_radius_m=max(resolution_m, 0.5),
+                            )
+                        )
+                    )
+                    trimmed_unrelated_extra_local_road_ids = _covered_foreign_local_road_ids(
+                        polygon_geometry=trimmed_unrelated_opposite_lane_polygon_geometry,
+                        local_roads=local_roads,
+                        local_nodes=local_nodes,
+                        allowed_road_ids=final_allowed_local_road_ids,
+                        target_group_node_ids=analysis_member_node_ids,
+                        normalized_mainnodeid=normalized_mainnodeid,
+                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                        analysis_center=analysis_center,
+                        semantic_mainnodeids=semantic_mainnodeids,
+                    )
+                    trimmed_unrelated_target_group_overlap_by_id = (
+                        _target_group_foreign_semantic_road_overlap_lengths(
+                            polygon_geometry=trimmed_unrelated_opposite_lane_polygon_geometry,
+                            local_roads=local_roads,
+                            local_nodes=local_nodes,
+                            allowed_road_ids=final_allowed_local_road_ids,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            analysis_center=analysis_center,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                    )
+                    trimmed_unrelated_overlap_by_id = (
+                        _single_sided_unrelated_local_road_overlap_lengths(
+                            polygon_geometry=trimmed_unrelated_opposite_lane_polygon_geometry,
+                            local_roads=local_roads,
+                            allowed_road_ids=final_allowed_local_road_ids,
+                            target_group_node_ids=analysis_member_node_ids,
+                        )
+                    )
+                    if (
+                        not trimmed_unrelated_group_node_ids
+                        and not trimmed_unrelated_support_rc_node_ids
+                        and not trimmed_unrelated_support_rc_road_ids
+                        and not trimmed_unrelated_selected_rc_node_ids
+                        and not trimmed_unrelated_selected_rc_road_ids
+                        and not trimmed_unrelated_extra_local_node_ids
+                        and not trimmed_unrelated_extra_local_road_ids
+                        and max(
+                            trimmed_unrelated_target_group_overlap_by_id.values(),
+                            default=0.0,
+                        )
+                        <= POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+                        and max(trimmed_unrelated_overlap_by_id.values(), default=0.0) <= 0.5
+                    ):
+                        announce(
+                            logger,
+                            (
+                                f"[T02-POC] single-sided unrelated opposite-lane trim applied mainnodeid={normalized_mainnodeid} "
+                                f"extra_roads={','.join(sorted(unrelated_opposite_lane_overlap_by_id))}"
+                            ),
+                        )
+                        virtual_polygon_geometry = trimmed_unrelated_opposite_lane_polygon_geometry
+                        max_selected_side_branch_covered_length_m = _max_selected_side_branch_covered_length_m(
+                            polygon_geometry=virtual_polygon_geometry,
+                            road_branches=road_branches,
+                            local_roads=local_roads,
+                        )
+                        counts["max_selected_side_branch_covered_length_m"] = round(
+                            max_selected_side_branch_covered_length_m,
+                            3,
+                        )
+                        single_sided_unrelated_opposite_lane_trim_applied = True
+        if (
             representative_node.kind_2 == 2048
             and not covered_extra_local_node_ids
             and not covered_extra_local_road_ids
@@ -16463,42 +17078,77 @@ def run_t02_virtual_intersection_poc(
                 and not final_selected_rc_endpoint_cover.covers(rc_node_by_id[node_id].geometry)
             )
         )
-        effect_success, acceptance_class, acceptance_reason = _effect_success_acceptance(
-            status=status,
-            review_mode=review_mode,
-            max_selected_side_branch_covered_length_m=max_selected_side_branch_covered_length_m,
-            max_nonmain_branch_polygon_length_m=max_nonmain_branch_polygon_length_m,
-            associated_rc_road_count=len(associated_rcsdroad_features),
-            polygon_support_rc_node_count=len(polygon_support_rc_node_ids),
-            polygon_support_rc_road_count=len(polygon_support_rc_road_ids),
-            min_invalid_rc_distance_to_center_m=min_invalid_rc_distance_to_center_m,
-            local_rc_road_count=len(local_rc_roads),
-            local_rc_node_count=len(local_rc_nodes),
-            effective_local_rc_node_count=effective_local_rc_node_count,
-            local_road_count=len(local_roads),
-            local_node_count=len(local_nodes),
-            connected_rc_group_count=len(connected_rc_group_ids),
-            nonmain_branch_connected_rc_group_count=len(nonmain_branch_connected_rc_group_ids),
-            negative_rc_group_count=len(negative_rc_groups),
-            positive_rc_group_count=len(positive_rc_groups),
-            road_branch_count=len(road_branches),
-            has_structural_side_branch=has_structural_side_branch,
-            max_nonmain_edge_branch_road_support_m=max_nonmain_edge_branch_road_support_m,
-            max_nonmain_edge_branch_rc_support_m=max_nonmain_edge_branch_rc_support_m,
-            excluded_local_rc_road_count=len(invalid_rc_road_ids),
-            excluded_local_rc_node_count=len(invalid_rc_node_ids),
-            covered_extra_local_node_count=len(covered_extra_local_node_ids),
-            covered_extra_local_road_count=len(covered_extra_local_road_ids),
-            has_main_edge_only_branch=has_main_edge_only_branch,
-            representative_kind_2=representative_node.kind_2,
-            effective_associated_rc_node_count=effective_associated_rc_node_count,
-            associated_nonzero_mainnode_count=associated_nonzero_mainnode_count,
-            final_selected_node_cover_repair_discarded_due_to_extra_roads=final_selected_node_cover_repair_discarded_due_to_extra_roads,
-            single_sided_t_mouth_corridor_pattern_detected=single_sided_t_mouth_corridor_pattern_detected,
-            single_sided_t_mouth_corridor_semantic_gap=single_sided_t_mouth_corridor_semantic_gap,
-            multi_node_selected_cover_repair_applied=multi_node_selected_cover_repair_applied,
-            final_uncovered_selected_endpoint_node_count=len(final_uncovered_selected_rc_endpoint_node_ids),
+        pre_step4_result = build_stage3_step4_rc_semantics_result(
+            Stage3Step4SemanticsInputs(
+                required_rc_node_ids=selected_rc_node_ids,
+                required_rc_road_ids=(road.road_id for road in selected_rc_roads),
+                support_rc_node_ids=(polygon_support_rc_node_ids | selected_rc_support_node_ids),
+                support_rc_road_ids=(
+                    polygon_support_rc_road_ids
+                    | selected_rc_support_road_ids
+                    | selected_rc_support_clip_road_ids
+                ),
+                excluded_rc_node_ids=invalid_rc_node_ids,
+                excluded_rc_road_ids=invalid_rc_road_ids,
+                review_excluded_rc_node_ids=(invalid_rc_node_ids if review_mode else ()),
+                review_excluded_rc_road_ids=(invalid_rc_road_ids if review_mode else ()),
+                selected_rc_endpoint_node_ids=selected_rc_endpoint_node_ids,
+                hard_selected_endpoint_node_ids=selected_endpoint_hard_boundary_node_ids,
+                business_match_reason=None,
+                single_sided_t_mouth_corridor_semantic_gap=single_sided_t_mouth_corridor_semantic_gap,
+                uncovered_selected_endpoint_node_ids=final_uncovered_selected_rc_endpoint_node_ids,
+                selected_node_cover_repair_discarded_due_to_extra_roads=(
+                    final_selected_node_cover_repair_discarded_due_to_extra_roads
+                ),
+                multi_node_selected_cover_repair_applied=(
+                    multi_node_selected_cover_repair_applied
+                ),
+            )
         )
+        initial_acceptance = _evaluate_stage3_acceptance_from_inputs(
+            Stage3AcceptanceHeuristicInputs(
+                status=status,
+                review_mode=review_mode,
+                template_class=stage3_template_class,
+                max_selected_side_branch_covered_length_m=max_selected_side_branch_covered_length_m,
+                max_nonmain_branch_polygon_length_m=max_nonmain_branch_polygon_length_m,
+                associated_rc_road_count=len(associated_rcsdroad_features),
+                polygon_support_rc_node_count=len(polygon_support_rc_node_ids),
+                polygon_support_rc_road_count=len(polygon_support_rc_road_ids),
+                min_invalid_rc_distance_to_center_m=min_invalid_rc_distance_to_center_m,
+                local_rc_road_count=len(local_rc_roads),
+                local_rc_node_count=len(local_rc_nodes),
+                effective_local_rc_node_count=effective_local_rc_node_count,
+                local_road_count=len(local_roads),
+                local_node_count=len(local_nodes),
+                connected_rc_group_count=len(connected_rc_group_ids),
+                nonmain_branch_connected_rc_group_count=len(nonmain_branch_connected_rc_group_ids),
+                negative_rc_group_count=len(negative_rc_groups),
+                positive_rc_group_count=len(positive_rc_groups),
+                road_branch_count=len(road_branches),
+                has_structural_side_branch=has_structural_side_branch,
+                max_nonmain_edge_branch_road_support_m=max_nonmain_edge_branch_road_support_m,
+                max_nonmain_edge_branch_rc_support_m=max_nonmain_edge_branch_rc_support_m,
+                excluded_local_rc_road_count=len(invalid_rc_road_ids),
+                excluded_local_rc_node_count=len(invalid_rc_node_ids),
+                covered_extra_local_node_count=len(covered_extra_local_node_ids),
+                covered_extra_local_road_count=len(covered_extra_local_road_ids),
+                has_main_edge_only_branch=has_main_edge_only_branch,
+                representative_kind_2=representative_node.kind_2,
+                effective_associated_rc_node_count=effective_associated_rc_node_count,
+                associated_nonzero_mainnode_count=associated_nonzero_mainnode_count,
+                final_selected_node_cover_repair_discarded_due_to_extra_roads=final_selected_node_cover_repair_discarded_due_to_extra_roads,
+                single_sided_t_mouth_corridor_pattern_detected=single_sided_t_mouth_corridor_pattern_detected,
+                single_sided_t_mouth_corridor_semantic_gap=single_sided_t_mouth_corridor_semantic_gap,
+                multi_node_selected_cover_repair_applied=multi_node_selected_cover_repair_applied,
+                final_uncovered_selected_endpoint_node_count=len(final_uncovered_selected_rc_endpoint_node_ids),
+                single_sided_unrelated_opposite_lane_trim_applied=single_sided_unrelated_opposite_lane_trim_applied,
+                step4_result=pre_step4_result,
+            )
+        )
+        effect_success = initial_acceptance.effect_success
+        acceptance_class = initial_acceptance.acceptance_class
+        acceptance_reason = initial_acceptance.acceptance_reason
         business_match_class = _business_match_class(
             status=status,
             acceptance_class=acceptance_class,
@@ -16513,9 +17163,37 @@ def run_t02_virtual_intersection_poc(
             acceptance_reason=acceptance_reason,
             excluded_rc_road_count=counts.get("excluded_rcsdroad_count", 0),
         )
+        step4_result = build_stage3_step4_rc_semantics_result(
+            Stage3Step4SemanticsInputs(
+                required_rc_node_ids=selected_rc_node_ids,
+                required_rc_road_ids=(road.road_id for road in selected_rc_roads),
+                support_rc_node_ids=(polygon_support_rc_node_ids | selected_rc_support_node_ids),
+                support_rc_road_ids=(
+                    polygon_support_rc_road_ids
+                    | selected_rc_support_road_ids
+                    | selected_rc_support_clip_road_ids
+                ),
+                excluded_rc_node_ids=invalid_rc_node_ids,
+                excluded_rc_road_ids=invalid_rc_road_ids,
+                review_excluded_rc_node_ids=(invalid_rc_node_ids if review_mode else ()),
+                review_excluded_rc_road_ids=(invalid_rc_road_ids if review_mode else ()),
+                selected_rc_endpoint_node_ids=selected_rc_endpoint_node_ids,
+                hard_selected_endpoint_node_ids=selected_endpoint_hard_boundary_node_ids,
+                business_match_reason=business_match_reason,
+                single_sided_t_mouth_corridor_semantic_gap=single_sided_t_mouth_corridor_semantic_gap,
+                uncovered_selected_endpoint_node_ids=final_uncovered_selected_rc_endpoint_node_ids,
+                selected_node_cover_repair_discarded_due_to_extra_roads=(
+                    final_selected_node_cover_repair_discarded_due_to_extra_roads
+                ),
+                multi_node_selected_cover_repair_applied=(
+                    multi_node_selected_cover_repair_applied
+                ),
+            )
+        )
         can_soft_exclude_outside_rc = False
         if rc_outside_drivezone_error is not None and not review_mode:
             can_soft_exclude_outside_rc = _can_soft_exclude_outside_rc(
+                template_class=stage3_template_class,
                 status=status,
                 selected_rc_road_count=len(selected_rc_roads),
                 polygon_support_rc_road_count=len(polygon_support_rc_road_ids),
@@ -16605,18 +17283,2011 @@ def run_t02_virtual_intersection_poc(
                         feature_id=node_id,
                     )
                 )
+        soft_excluded_rc_corridor_trim_applied = False
+        if can_soft_exclude_outside_rc and invalid_rc_roads_for_trim:
+            soft_excluded_keep_parts = [
+                node.geometry.buffer(max(resolution_m, 0.5), join_style=1).intersection(
+                    drivezone_union
+                )
+                for node in group_nodes
+            ]
+            soft_excluded_keep_parts.extend(
+                rc_node_by_id[node_id].geometry.buffer(
+                    max(POLYGON_RC_NODE_BUFFER_M * 0.85, 2.0),
+                    join_style=1,
+                ).intersection(drivezone_union)
+                for node_id in (set(selected_rc_node_ids) | set(polygon_support_rc_node_ids))
+                if node_id in rc_node_by_id
+            )
+            soft_excluded_keep_parts = [
+                geometry
+                for geometry in soft_excluded_keep_parts
+                if geometry is not None and not geometry.is_empty
+            ]
+            soft_excluded_keep_union = (
+                unary_union(soft_excluded_keep_parts).intersection(drivezone_union)
+                if soft_excluded_keep_parts
+                else GeometryCollection()
+            )
+            soft_excluded_trim_geometry = _build_soft_excluded_rc_trim_geometry(
+                invalid_rc_roads=invalid_rc_roads_for_trim,
+                analysis_center=analysis_center,
+                min_invalid_rc_distance_to_center_m=min_invalid_rc_distance_to_center_m,
+                drivezone_union=drivezone_union,
+                keep_node_union=soft_excluded_keep_union,
+            )
+            if not soft_excluded_trim_geometry.is_empty:
+                trimmed_soft_excluded_virtual_polygon_geometry = (
+                    virtual_polygon_geometry.difference(soft_excluded_trim_geometry)
+                    .intersection(drivezone_union)
+                )
+                if group_node_reinclude_geometries:
+                    trimmed_soft_excluded_virtual_polygon_geometry = unary_union(
+                        [
+                            trimmed_soft_excluded_virtual_polygon_geometry,
+                            *group_node_reinclude_geometries,
+                        ]
+                    ).intersection(drivezone_union)
+                if not trimmed_soft_excluded_virtual_polygon_geometry.is_empty:
+                    trimmed_soft_excluded_virtual_polygon_geometry = (
+                        _regularize_virtual_polygon_geometry(
+                            geometry=trimmed_soft_excluded_virtual_polygon_geometry,
+                            drivezone_union=drivezone_union,
+                            seed_geometry=core_geometry,
+                        )
+                    )
+                (
+                    trimmed_soft_excluded_uncovered_group_node_ids,
+                    trimmed_soft_excluded_uncovered_support_rc_node_ids,
+                    trimmed_soft_excluded_uncovered_support_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=trimmed_soft_excluded_virtual_polygon_geometry,
+                    group_nodes=group_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=validation_support_rc_node_ids,
+                    support_road_ids=validation_support_rc_road_ids,
+                    support_clip=validation_support_clip,
+                )
+                (
+                    trimmed_soft_excluded_uncovered_support_rc_node_ids,
+                    trimmed_soft_excluded_uncovered_support_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_support_gaps(
+                    uncovered_support_node_ids=trimmed_soft_excluded_uncovered_support_rc_node_ids,
+                    uncovered_support_road_ids=trimmed_soft_excluded_uncovered_support_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                (
+                    _trimmed_soft_excluded_selected_group_node_ids,
+                    trimmed_soft_excluded_uncovered_selected_rc_node_ids,
+                    trimmed_soft_excluded_uncovered_selected_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=trimmed_soft_excluded_virtual_polygon_geometry,
+                    group_nodes=[],
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=selected_rc_node_ids,
+                    support_road_ids={road.road_id for road in selected_rc_roads},
+                    support_clip=selected_output_clip,
+                )
+                (
+                    trimmed_soft_excluded_uncovered_selected_rc_node_ids,
+                    trimmed_soft_excluded_uncovered_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=trimmed_soft_excluded_uncovered_selected_rc_node_ids,
+                    uncovered_selected_road_ids=trimmed_soft_excluded_uncovered_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=None,
+                    hard_selected_node_ids=selected_rc_endpoint_node_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                trimmed_soft_excluded_extra_local_node_ids = sorted(
+                    node.node_id
+                    for node in local_nodes
+                    if (
+                        _is_foreign_local_semantic_node(
+                            node=node,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        and _polygon_substantively_covers_node(
+                            trimmed_soft_excluded_virtual_polygon_geometry,
+                            node.geometry,
+                            cover_radius_m=max(resolution_m, 0.5),
+                        )
+                    )
+                )
+                trimmed_soft_excluded_extra_local_road_ids = _covered_foreign_local_road_ids(
+                    polygon_geometry=trimmed_soft_excluded_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=final_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                if (
+                    not trimmed_soft_excluded_uncovered_group_node_ids
+                    and not trimmed_soft_excluded_uncovered_support_rc_node_ids
+                    and not trimmed_soft_excluded_uncovered_support_rc_road_ids
+                    and not trimmed_soft_excluded_uncovered_selected_rc_node_ids
+                    and not trimmed_soft_excluded_uncovered_selected_rc_road_ids
+                    and not trimmed_soft_excluded_extra_local_node_ids
+                    and not trimmed_soft_excluded_extra_local_road_ids
+                ):
+                    soft_excluded_rc_corridor_trim_applied = True
+                    virtual_polygon_geometry = trimmed_soft_excluded_virtual_polygon_geometry
+                    target_group_foreign_semantic_road_overlap_by_id = (
+                        _target_group_foreign_semantic_road_overlap_lengths(
+                            polygon_geometry=virtual_polygon_geometry,
+                            local_roads=local_roads,
+                            local_nodes=local_nodes,
+                            allowed_road_ids=final_allowed_local_road_ids,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            analysis_center=analysis_center,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                    )
+                    max_target_group_foreign_semantic_road_overlap_m = max(
+                        target_group_foreign_semantic_road_overlap_by_id.values(),
+                        default=0.0,
+                    )
+                    counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+                        max_target_group_foreign_semantic_road_overlap_m,
+                        3,
+                    )
+                    max_selected_side_branch_covered_length_m = (
+                        _max_selected_side_branch_covered_length_m(
+                            polygon_geometry=virtual_polygon_geometry,
+                            road_branches=road_branches,
+                            local_roads=local_roads,
+                        )
+                    )
+                    counts["max_selected_side_branch_covered_length_m"] = round(
+                        max_selected_side_branch_covered_length_m,
+                        3,
+                    )
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] soft-excluded rc corridor trim applied mainnodeid={normalized_mainnodeid} "
+                            f"excluded_rc_roads={','.join(sorted(invalid_rc_road_ids))}"
+                        ),
+                    )
 
+        step6_frozen_hard_selected_endpoint_node_ids = set(
+            step4_result.hard_selected_endpoint_node_ids
+            if step4_result is not None
+            else selected_endpoint_hard_boundary_node_ids
+        )
+        branch_cleanup_hard_selected_endpoint_node_ids = set(
+            step6_frozen_hard_selected_endpoint_node_ids
+        )
+        branch_cleanup_selected_support_node_ids = (
+            set(polygon_support_rc_node_ids) & branch_cleanup_hard_selected_endpoint_node_ids
+        )
+        branch_cleanup_selected_rc_node_buffers = [
+            node.geometry.buffer(
+                POLYGON_CONTESTED_RC_NODE_BUFFER_M
+                if node.node_id in contested_selected_rc_node_ids
+                else POLYGON_RC_NODE_BUFFER_M
+            ).intersection(drivezone_union)
+            for node in local_rc_nodes
+            if node.node_id in branch_cleanup_selected_support_node_ids
+        ]
+        branch_cleanup_selected_rc_node_connectors = [
+            LineString(
+                [
+                    (float(analysis_center.x), float(analysis_center.y)),
+                    (float(node.geometry.x), float(node.geometry.y)),
+                ]
+            )
+            .buffer(POLYGON_RC_NODE_CONNECTOR_HALF_WIDTH_M, cap_style=2, join_style=2)
+            .intersection(drivezone_union)
+            for node in local_rc_nodes
+            if node.node_id in branch_cleanup_selected_support_node_ids and not rc_group_nodes
+        ]
+
+        step5_baseline_tail_length_m = 0.0
+        step5_baseline_overlap_zero_but_tail_present = False
+        if (
+            stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
+            and single_sided_unrelated_opposite_lane_trim_applied
+        ):
+            step5_baseline_tail_length_m = round(
+                max(0.0, max_selected_side_branch_covered_length_m),
+                3,
+            )
+            step5_baseline_overlap_zero_but_tail_present = (
+                max_target_group_foreign_semantic_road_overlap_m <= 0.05
+                and step5_baseline_tail_length_m >= 1.5
+            )
+
+        # Freeze Step5 semantic facts before late cleanup begins mutating geometry.
+        step5_baseline_snapshot = freeze_stage3_step5_baseline(
+            foreign_semantic_node_ids=covered_extra_local_node_ids,
+            foreign_road_arm_corridor_ids=covered_extra_local_road_ids,
+            acceptance_reason=acceptance_reason,
+            foreign_overlap_metric_m=max_target_group_foreign_semantic_road_overlap_m,
+            foreign_tail_length_m=step5_baseline_tail_length_m,
+            foreign_strip_extent_m=max_nonmain_branch_polygon_length_m,
+            foreign_overlap_zero_but_tail_present=(
+                step5_baseline_overlap_zero_but_tail_present
+            ),
+            single_sided_unrelated_opposite_lane_trim_applied=(
+                single_sided_unrelated_opposite_lane_trim_applied
+            ),
+            soft_excluded_rc_corridor_trim_applied=(
+                soft_excluded_rc_corridor_trim_applied
+            ),
+            foreign_overlap_by_id=target_group_foreign_semantic_road_overlap_by_id,
+        )
+        step6_final_target_foreign_overlap_by_id = dict(
+            target_group_foreign_semantic_road_overlap_by_id
+        )
+        step6_final_foreign_overlap_metric_m = (
+            max_target_group_foreign_semantic_road_overlap_m
+        )
+        step6_final_selected_side_branch_covered_length_m = (
+            max_selected_side_branch_covered_length_m
+        )
+        step6_final_foreign_semantic_node_ids = tuple(covered_extra_local_node_ids)
+        step6_final_foreign_road_arm_corridor_ids = tuple(covered_extra_local_road_ids)
+        step6_final_extra_local_node_count = counts.get(
+            "covered_extra_local_node_count",
+            len(covered_extra_local_node_ids),
+        )
+        step6_final_extra_local_road_count = counts.get(
+            "covered_extra_local_road_count",
+            len(covered_extra_local_road_ids),
+        )
+
+        late_single_sided_branch_cap_cleanup_applied = False
+        if (
+            representative_node.kind_2 == 2048
+            and rc_outside_drivezone_error is not None
+            and can_soft_exclude_outside_rc
+            and not virtual_polygon_geometry.is_empty
+        ):
+            late_semantic_branch_hard_cap_keep_focus = (
+                post_selected_trim_keep_geometry.buffer(
+                    max(resolution_m * 4.0, 1.5),
+                    join_style=1,
+                ).intersection(drivezone_union)
+                if not post_selected_trim_keep_geometry.is_empty
+                else GeometryCollection()
+            )
+            late_semantic_branch_hard_cap_keep_parts = [
+                geometry
+                for geometry in (
+                    core_geometry,
+                    *group_node_buffers,
+                    *group_node_connectors,
+                    *group_node_reinclude_geometries,
+                    *_restrict_keep_geometries_to_focus(
+                        branch_cleanup_selected_rc_node_buffers,
+                        focus_geometry=late_semantic_branch_hard_cap_keep_focus,
+                    ),
+                    *_restrict_keep_geometries_to_focus(
+                        branch_cleanup_selected_rc_node_connectors,
+                        focus_geometry=late_semantic_branch_hard_cap_keep_focus,
+                    ),
+                )
+                if geometry is not None and not geometry.is_empty
+            ]
+            late_semantic_branch_hard_cap_exclusion_geometry = (
+                _build_semantic_branch_hard_cap_exclusion_geometry(
+                    analysis_center=analysis_center,
+                    road_branches=road_branches,
+                    drivezone_union=drivezone_union,
+                    patch_size_m=patch_size_m,
+                    resolution_m=resolution_m,
+                    hard_keep_geometries=late_semantic_branch_hard_cap_keep_parts,
+                )
+            )
+            if not late_semantic_branch_hard_cap_exclusion_geometry.is_empty:
+                late_capped_virtual_polygon_geometry = virtual_polygon_geometry.difference(
+                    late_semantic_branch_hard_cap_exclusion_geometry
+                ).intersection(drivezone_union)
+                if group_node_reinclude_geometries:
+                    late_capped_virtual_polygon_geometry = unary_union(
+                        [late_capped_virtual_polygon_geometry, *group_node_reinclude_geometries]
+                    ).intersection(drivezone_union)
+                if not late_capped_virtual_polygon_geometry.is_empty:
+                    late_capped_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                        geometry=late_capped_virtual_polygon_geometry,
+                        drivezone_union=drivezone_union,
+                        seed_geometry=core_geometry,
+                    )
+                (
+                    late_capped_uncovered_group_node_ids,
+                    late_capped_uncovered_support_rc_node_ids,
+                    late_capped_uncovered_support_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=late_capped_virtual_polygon_geometry,
+                    group_nodes=group_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=validation_support_rc_node_ids,
+                    support_road_ids=validation_support_rc_road_ids,
+                    support_clip=validation_support_clip,
+                )
+                (
+                    late_capped_uncovered_support_rc_node_ids,
+                    late_capped_uncovered_support_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_support_gaps(
+                    uncovered_support_node_ids=late_capped_uncovered_support_rc_node_ids,
+                    uncovered_support_road_ids=late_capped_uncovered_support_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                (
+                    _late_capped_selected_group_node_ids,
+                    late_capped_uncovered_selected_rc_node_ids,
+                    late_capped_uncovered_selected_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=late_capped_virtual_polygon_geometry,
+                    group_nodes=[],
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=selected_rc_node_ids,
+                    support_road_ids={road.road_id for road in selected_rc_roads},
+                    support_clip=selected_output_clip,
+                )
+                (
+                    late_capped_uncovered_selected_rc_node_ids,
+                    late_capped_uncovered_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=late_capped_uncovered_selected_rc_node_ids,
+                    uncovered_selected_road_ids=late_capped_uncovered_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_selected_node_ids=branch_cleanup_hard_selected_endpoint_node_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                late_capped_extra_local_node_ids = sorted(
+                    node.node_id
+                    for node in local_nodes
+                    if (
+                        _is_foreign_local_semantic_node(
+                            node=node,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        and _polygon_substantively_covers_node(
+                            late_capped_virtual_polygon_geometry,
+                            node.geometry,
+                            cover_radius_m=max(resolution_m, 0.5),
+                        )
+                    )
+                )
+                late_capped_extra_local_road_ids = _covered_foreign_local_road_ids(
+                    polygon_geometry=late_capped_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=final_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                if (
+                    not late_capped_uncovered_group_node_ids
+                    and not late_capped_uncovered_support_rc_node_ids
+                    and not late_capped_uncovered_support_rc_road_ids
+                    and not late_capped_uncovered_selected_rc_node_ids
+                    and not late_capped_uncovered_selected_rc_road_ids
+                    and not late_capped_extra_local_node_ids
+                    and not late_capped_extra_local_road_ids
+                ):
+                    previous_overlap_m = step6_final_foreign_overlap_metric_m
+                    previous_side_branch_length_m = (
+                        step6_final_selected_side_branch_covered_length_m
+                    )
+                    previous_polygon_area_m2 = float(virtual_polygon_geometry.area)
+                    late_capped_target_group_foreign_semantic_road_overlap_by_id = (
+                        _target_group_foreign_semantic_road_overlap_lengths(
+                            polygon_geometry=late_capped_virtual_polygon_geometry,
+                            local_roads=local_roads,
+                            local_nodes=local_nodes,
+                            allowed_road_ids=final_allowed_local_road_ids,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            analysis_center=analysis_center,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                    )
+                    late_capped_overlap_m = max(
+                        late_capped_target_group_foreign_semantic_road_overlap_by_id.values(),
+                        default=0.0,
+                    )
+                    late_capped_side_branch_length_m = (
+                        _max_selected_side_branch_covered_length_m(
+                            polygon_geometry=late_capped_virtual_polygon_geometry,
+                            road_branches=road_branches,
+                            local_roads=local_roads,
+                        )
+                    )
+                    if (
+                        late_capped_overlap_m < (previous_overlap_m - 0.05)
+                        or late_capped_side_branch_length_m
+                        < (previous_side_branch_length_m - 0.25)
+                        or float(late_capped_virtual_polygon_geometry.area)
+                        < (previous_polygon_area_m2 - 0.5)
+                    ):
+                        late_single_sided_branch_cap_cleanup_applied = True
+                        virtual_polygon_geometry = late_capped_virtual_polygon_geometry
+                        step6_final_target_foreign_overlap_by_id = (
+                            late_capped_target_group_foreign_semantic_road_overlap_by_id
+                        )
+                        step6_final_foreign_overlap_metric_m = late_capped_overlap_m
+                        counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+                            step6_final_foreign_overlap_metric_m,
+                            3,
+                        )
+                        step6_final_selected_side_branch_covered_length_m = (
+                            late_capped_side_branch_length_m
+                        )
+                        counts["max_selected_side_branch_covered_length_m"] = round(
+                            step6_final_selected_side_branch_covered_length_m,
+                            3,
+                        )
+                        announce(
+                            logger,
+                            (
+                                f"[T02-POC] late single-sided branch-cap cleanup applied mainnodeid={normalized_mainnodeid} "
+                                f"foreign_overlap={step6_final_foreign_overlap_metric_m:.3f} "
+                                f"side_branch_length={step6_final_selected_side_branch_covered_length_m:.3f}"
+                            ),
+                        )
+        late_post_soft_overlap_trim_applied = False
+        if (
+            soft_excluded_rc_corridor_trim_applied
+            and counts["associated_rcsdroad_count"] >= 2
+            and step6_final_foreign_overlap_metric_m
+            > POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+            and (
+                step6_final_selected_side_branch_covered_length_m <= 0.5
+                or (
+                    stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
+                    and step6_final_foreign_overlap_metric_m >= 8.0
+                    and max_nonmain_branch_polygon_length_m >= 8.0
+                )
+            )
+        ):
+            announce(
+                logger,
+                (
+                    f"[T02-POC] late post-soft overlap trim candidate mainnodeid={normalized_mainnodeid} "
+                    f"extra_roads={','.join(sorted(step6_final_target_foreign_overlap_by_id))}"
+                ),
+            )
+            late_post_soft_overlap_keep_parts = [
+                geometry
+                for geometry in (
+                    *group_node_buffers,
+                    *group_node_connectors,
+                    *group_node_reinclude_geometries,
+                )
+                if geometry is not None and not geometry.is_empty
+            ]
+            late_post_soft_overlap_keep_parts.extend(
+                rc_node_by_id[node_id].geometry.buffer(
+                    max(POLYGON_RC_NODE_BUFFER_M * 0.8, 2.0),
+                    join_style=1,
+                ).intersection(drivezone_union)
+                for node_id in set(branch_cleanup_hard_selected_endpoint_node_ids)
+                if node_id in rc_node_by_id
+            )
+            late_post_soft_overlap_keep_geometry = (
+                unary_union(late_post_soft_overlap_keep_parts)
+                if late_post_soft_overlap_keep_parts
+                else GeometryCollection()
+            )
+            late_post_soft_overlap_trim_geometry = _build_targeted_foreign_local_road_trim_geometry(
+                polygon_geometry=virtual_polygon_geometry,
+                road_ids=set(step6_final_target_foreign_overlap_by_id),
+                local_roads=local_roads,
+                drivezone_union=drivezone_union,
+                keep_geometry=late_post_soft_overlap_keep_geometry,
+                local_nodes=local_nodes,
+                target_group_node_ids=analysis_member_node_ids,
+                normalized_mainnodeid=normalized_mainnodeid,
+                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                semantic_mainnodeids=semantic_mainnodeids,
+                respect_keep_geometry_for_target_group_foreign_roads=False,
+                target_group_keep_length_m_override=0.8,
+                allow_projected_keep_on_target_group_foreign_roads=False,
+            )
+            if not late_post_soft_overlap_trim_geometry.is_empty:
+                late_post_soft_trimmed_virtual_polygon_geometry = (
+                    virtual_polygon_geometry.difference(late_post_soft_overlap_trim_geometry)
+                    .intersection(drivezone_union)
+                )
+                if group_node_reinclude_geometries:
+                    late_post_soft_trimmed_virtual_polygon_geometry = unary_union(
+                        [late_post_soft_trimmed_virtual_polygon_geometry, *group_node_reinclude_geometries]
+                    ).intersection(drivezone_union)
+                if not late_post_soft_trimmed_virtual_polygon_geometry.is_empty:
+                    late_post_soft_trimmed_virtual_polygon_geometry = (
+                        _regularize_virtual_polygon_geometry(
+                            geometry=late_post_soft_trimmed_virtual_polygon_geometry,
+                            drivezone_union=drivezone_union,
+                            seed_geometry=core_geometry,
+                        )
+                    )
+                (
+                    late_post_soft_uncovered_group_node_ids,
+                    late_post_soft_uncovered_support_rc_node_ids,
+                    late_post_soft_uncovered_support_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=late_post_soft_trimmed_virtual_polygon_geometry,
+                    group_nodes=group_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=validation_support_rc_node_ids,
+                    support_road_ids=validation_support_rc_road_ids,
+                    support_clip=validation_support_clip,
+                )
+                (
+                    late_post_soft_uncovered_support_rc_node_ids,
+                    late_post_soft_uncovered_support_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_support_gaps(
+                    uncovered_support_node_ids=late_post_soft_uncovered_support_rc_node_ids,
+                    uncovered_support_road_ids=late_post_soft_uncovered_support_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                (
+                    _late_post_soft_selected_group_node_ids,
+                    late_post_soft_uncovered_selected_rc_node_ids,
+                    late_post_soft_uncovered_selected_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=late_post_soft_trimmed_virtual_polygon_geometry,
+                    group_nodes=[],
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=selected_rc_node_ids,
+                    support_road_ids={road.road_id for road in selected_rc_roads},
+                    support_clip=selected_output_clip,
+                )
+                (
+                    late_post_soft_uncovered_selected_rc_node_ids,
+                    late_post_soft_uncovered_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=late_post_soft_uncovered_selected_rc_node_ids,
+                    uncovered_selected_road_ids=late_post_soft_uncovered_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=None,
+                    hard_selected_node_ids=branch_cleanup_hard_selected_endpoint_node_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                late_post_soft_extra_local_node_ids = sorted(
+                    node.node_id
+                    for node in local_nodes
+                    if (
+                        _is_foreign_local_semantic_node(
+                            node=node,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        and _polygon_substantively_covers_node(
+                            late_post_soft_trimmed_virtual_polygon_geometry,
+                            node.geometry,
+                            cover_radius_m=max(resolution_m, 0.5),
+                        )
+                    )
+                )
+                late_post_soft_extra_local_road_ids = _covered_foreign_local_road_ids(
+                    polygon_geometry=late_post_soft_trimmed_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=final_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                if (
+                    not late_post_soft_uncovered_group_node_ids
+                    and not late_post_soft_uncovered_support_rc_node_ids
+                    and not late_post_soft_uncovered_support_rc_road_ids
+                    and not late_post_soft_uncovered_selected_rc_node_ids
+                    and not late_post_soft_uncovered_selected_rc_road_ids
+                    and not late_post_soft_extra_local_node_ids
+                    and not late_post_soft_extra_local_road_ids
+                ):
+                    previous_overlap_m = step6_final_foreign_overlap_metric_m
+                    late_post_soft_target_group_foreign_semantic_road_overlap_by_id = (
+                        _target_group_foreign_semantic_road_overlap_lengths(
+                            polygon_geometry=late_post_soft_trimmed_virtual_polygon_geometry,
+                            local_roads=local_roads,
+                            local_nodes=local_nodes,
+                            allowed_road_ids=final_allowed_local_road_ids,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            analysis_center=analysis_center,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                    )
+                    late_post_soft_overlap_m = max(
+                        late_post_soft_target_group_foreign_semantic_road_overlap_by_id.values(),
+                        default=0.0,
+                    )
+                    if late_post_soft_overlap_m < (previous_overlap_m - 0.05):
+                        late_post_soft_overlap_trim_applied = True
+                        virtual_polygon_geometry = late_post_soft_trimmed_virtual_polygon_geometry
+                        step6_final_target_foreign_overlap_by_id = (
+                            late_post_soft_target_group_foreign_semantic_road_overlap_by_id
+                        )
+                        step6_final_foreign_overlap_metric_m = late_post_soft_overlap_m
+                        counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+                            step6_final_foreign_overlap_metric_m,
+                            3,
+                        )
+                        step6_final_selected_side_branch_covered_length_m = (
+                            _max_selected_side_branch_covered_length_m(
+                                polygon_geometry=virtual_polygon_geometry,
+                                road_branches=road_branches,
+                                local_roads=local_roads,
+                            )
+                        )
+                        counts["max_selected_side_branch_covered_length_m"] = round(
+                            step6_final_selected_side_branch_covered_length_m,
+                            3,
+                        )
+                        announce(
+                            logger,
+                            (
+                                f"[T02-POC] late post-soft overlap trim applied mainnodeid={normalized_mainnodeid} "
+                                f"foreign_overlap={step6_final_foreign_overlap_metric_m:.3f}"
+                            ),
+                        )
+
+        late_cleanup_hard_selected_endpoint_node_ids = set(
+            step6_frozen_hard_selected_endpoint_node_ids
+        )
+        late_cleanup_selected_support_node_ids = (
+            set(polygon_support_rc_node_ids) & late_cleanup_hard_selected_endpoint_node_ids
+        )
+        late_cleanup_selected_rc_node_buffers = [
+            node.geometry.buffer(
+                POLYGON_CONTESTED_RC_NODE_BUFFER_M
+                if node.node_id in contested_selected_rc_node_ids
+                else POLYGON_RC_NODE_BUFFER_M
+            ).intersection(drivezone_union)
+            for node in local_rc_nodes
+            if node.node_id in late_cleanup_selected_support_node_ids
+        ]
+        late_cleanup_selected_rc_node_connectors = [
+            LineString(
+                [
+                    (float(analysis_center.x), float(analysis_center.y)),
+                    (float(node.geometry.x), float(node.geometry.y)),
+                ]
+            )
+            .buffer(POLYGON_RC_NODE_CONNECTOR_HALF_WIDTH_M, cap_style=2, join_style=2)
+            .intersection(drivezone_union)
+            for node in local_rc_nodes
+            if node.node_id in late_cleanup_selected_support_node_ids and not rc_group_nodes
+        ]
+
+        late_final_foreign_residue_trim_applied = False
+        if rc_outside_drivezone_error is not None and can_soft_exclude_outside_rc and not virtual_polygon_geometry.is_empty:
+            late_final_unrelated_overlap_by_id = (
+                _single_sided_unrelated_local_road_overlap_lengths(
+                    polygon_geometry=virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    allowed_road_ids=final_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                )
+                if representative_node.kind_2 == 2048
+                else {}
+            )
+            late_final_target_overlap_road_ids = set(step6_final_target_foreign_overlap_by_id)
+            late_final_unrelated_overlap_road_ids = set(late_final_unrelated_overlap_by_id)
+            late_final_trim_road_ids = late_final_target_overlap_road_ids | late_final_unrelated_overlap_road_ids
+            late_final_should_try_trim = False
+            if representative_node.kind_2 == 2048:
+                late_final_should_try_trim = bool(late_final_trim_road_ids) and (
+                    single_sided_unrelated_opposite_lane_trim_applied
+                    or late_single_sided_branch_cap_cleanup_applied
+                    or soft_excluded_rc_corridor_trim_applied
+                    or (
+                        step6_final_foreign_overlap_metric_m >= 8.5
+                        and effective_associated_rc_node_count <= 1
+                        and step6_final_selected_side_branch_covered_length_m <= 0.5
+                    )
+                )
+            else:
+                late_final_should_try_trim = bool(late_final_target_overlap_road_ids) and (
+                    step6_final_foreign_overlap_metric_m >= 8.5
+                    and step6_final_selected_side_branch_covered_length_m <= 8.0
+                )
+            if late_final_should_try_trim:
+                announce(
+                    logger,
+                    (
+                        f"[T02-POC] late final foreign residue trim candidate mainnodeid={normalized_mainnodeid} "
+                        f"target_roads={','.join(sorted(late_final_target_overlap_road_ids)) or '-'} "
+                        f"unrelated_roads={','.join(sorted(late_final_unrelated_overlap_road_ids)) or '-'}"
+                    ),
+                )
+                late_final_keep_parts = [
+                    geometry
+                    for geometry in (
+                        core_geometry,
+                        *group_node_buffers,
+                        *group_node_connectors,
+                        *group_node_reinclude_geometries,
+                    )
+                    if geometry is not None and not geometry.is_empty
+                ]
+                late_final_keep_parts.extend(
+                    rc_node_by_id[node_id].geometry.buffer(
+                        max(POLYGON_RC_NODE_BUFFER_M * 0.8, 2.0),
+                        join_style=1,
+                    ).intersection(drivezone_union)
+                    for node_id in (
+                        set(selected_rc_endpoint_node_ids)
+                        | set(validation_support_rc_node_ids)
+                        | set(selected_rc_node_ids)
+                    )
+                    if node_id in rc_node_by_id
+                )
+                if not post_selected_trim_keep_geometry.is_empty:
+                    late_final_keep_parts.append(
+                        post_selected_trim_keep_geometry.intersection(drivezone_union)
+                    )
+                late_final_keep_parts = [
+                    geometry
+                    for geometry in late_final_keep_parts
+                    if geometry is not None and not geometry.is_empty
+                ]
+                late_final_keep_geometry = (
+                    unary_union(late_final_keep_parts).intersection(drivezone_union)
+                    if late_final_keep_parts
+                    else GeometryCollection()
+                )
+                late_final_trim_geometry = _build_targeted_foreign_local_road_trim_geometry(
+                    polygon_geometry=virtual_polygon_geometry,
+                    road_ids=late_final_trim_road_ids,
+                    local_roads=local_roads,
+                    drivezone_union=drivezone_union,
+                    keep_geometry=late_final_keep_geometry,
+                    local_nodes=local_nodes,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                    respect_keep_geometry_for_target_group_foreign_roads=False,
+                    target_group_keep_length_m_override=(
+                        0.6 if representative_node.kind_2 == 2048 else 0.8
+                    ),
+                    allow_projected_keep_on_target_group_foreign_roads=False,
+                )
+                if not late_final_trim_geometry.is_empty:
+                    late_final_trimmed_virtual_polygon_geometry = (
+                        virtual_polygon_geometry.difference(late_final_trim_geometry)
+                        .intersection(drivezone_union)
+                    )
+                    if group_node_reinclude_geometries:
+                        late_final_trimmed_virtual_polygon_geometry = unary_union(
+                            [late_final_trimmed_virtual_polygon_geometry, *group_node_reinclude_geometries]
+                        ).intersection(drivezone_union)
+                    if not late_final_trimmed_virtual_polygon_geometry.is_empty:
+                        late_final_trimmed_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                            geometry=late_final_trimmed_virtual_polygon_geometry,
+                            drivezone_union=drivezone_union,
+                            seed_geometry=core_geometry,
+                        )
+                    (
+                        late_final_uncovered_group_node_ids,
+                        late_final_uncovered_support_rc_node_ids,
+                        late_final_uncovered_support_rc_road_ids,
+                    ) = _validate_polygon_support(
+                        polygon_geometry=late_final_trimmed_virtual_polygon_geometry,
+                        group_nodes=group_nodes,
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        support_node_ids=validation_support_rc_node_ids,
+                        support_road_ids=validation_support_rc_road_ids,
+                        support_clip=validation_support_clip,
+                    )
+                    (
+                        late_final_uncovered_support_rc_node_ids,
+                        late_final_uncovered_support_rc_road_ids,
+                    ) = _relax_targeted_foreign_trim_support_gaps(
+                        uncovered_support_node_ids=late_final_uncovered_support_rc_node_ids,
+                        uncovered_support_road_ids=late_final_uncovered_support_rc_road_ids,
+                        rc_node_by_id=rc_node_by_id,
+                        rc_road_by_id=rc_road_by_id,
+                        analysis_center=analysis_center,
+                        hard_support_node_ids=candidate_selected_rc_node_ids,
+                        hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                        relax_node_ids=conflict_excluded_rc_node_ids,
+                        relax_road_ids=conflict_excluded_rc_road_ids,
+                    )
+                    (
+                        _late_final_selected_group_node_ids,
+                        late_final_uncovered_selected_rc_node_ids,
+                        late_final_uncovered_selected_rc_road_ids,
+                    ) = _validate_polygon_support(
+                        polygon_geometry=late_final_trimmed_virtual_polygon_geometry,
+                        group_nodes=[],
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        support_node_ids=selected_rc_node_ids,
+                        support_road_ids={road.road_id for road in selected_rc_roads},
+                        support_clip=selected_output_clip,
+                    )
+                    (
+                        late_final_uncovered_selected_rc_node_ids,
+                        late_final_uncovered_selected_rc_road_ids,
+                    ) = _relax_targeted_foreign_trim_selected_gaps(
+                        uncovered_selected_node_ids=late_final_uncovered_selected_rc_node_ids,
+                        uncovered_selected_road_ids=late_final_uncovered_selected_rc_road_ids,
+                        rc_node_by_id=rc_node_by_id,
+                        rc_road_by_id=rc_road_by_id,
+                        analysis_center=None,
+                        hard_selected_node_ids=late_cleanup_hard_selected_endpoint_node_ids,
+                        relax_node_ids=conflict_excluded_rc_node_ids,
+                        relax_road_ids=conflict_excluded_rc_road_ids,
+                    )
+                    late_final_extra_local_node_ids = sorted(
+                        node.node_id
+                        for node in local_nodes
+                        if (
+                            _is_foreign_local_semantic_node(
+                                node=node,
+                                target_group_node_ids=analysis_member_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                semantic_mainnodeids=semantic_mainnodeids,
+                            )
+                            and _polygon_substantively_covers_node(
+                                late_final_trimmed_virtual_polygon_geometry,
+                                node.geometry,
+                                cover_radius_m=max(resolution_m, 0.5),
+                            )
+                        )
+                    )
+                    late_final_extra_local_road_ids = _covered_foreign_local_road_ids(
+                        polygon_geometry=late_final_trimmed_virtual_polygon_geometry,
+                        local_roads=local_roads,
+                        local_nodes=local_nodes,
+                        allowed_road_ids=final_allowed_local_road_ids,
+                        target_group_node_ids=analysis_member_node_ids,
+                        normalized_mainnodeid=normalized_mainnodeid,
+                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                        analysis_center=analysis_center,
+                        semantic_mainnodeids=semantic_mainnodeids,
+                    )
+                    if (
+                        not late_final_uncovered_group_node_ids
+                        and not late_final_uncovered_support_rc_node_ids
+                        and not late_final_uncovered_support_rc_road_ids
+                        and not late_final_uncovered_selected_rc_node_ids
+                        and not late_final_uncovered_selected_rc_road_ids
+                        and not late_final_extra_local_node_ids
+                        and not late_final_extra_local_road_ids
+                    ):
+                        previous_target_overlap_m = step6_final_foreign_overlap_metric_m
+                        previous_unrelated_overlap_m = max(
+                            late_final_unrelated_overlap_by_id.values(),
+                            default=0.0,
+                        )
+                        previous_polygon_area_m2 = float(virtual_polygon_geometry.area)
+                        late_final_target_overlap_by_id = (
+                            _target_group_foreign_semantic_road_overlap_lengths(
+                                polygon_geometry=late_final_trimmed_virtual_polygon_geometry,
+                                local_roads=local_roads,
+                                local_nodes=local_nodes,
+                                allowed_road_ids=final_allowed_local_road_ids,
+                                target_group_node_ids=analysis_member_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                analysis_center=analysis_center,
+                                semantic_mainnodeids=semantic_mainnodeids,
+                            )
+                        )
+                        late_final_target_overlap_m = max(
+                            late_final_target_overlap_by_id.values(),
+                            default=0.0,
+                        )
+                        late_final_unrelated_overlap_m = 0.0
+                        if representative_node.kind_2 == 2048:
+                            late_final_unrelated_overlap_m = max(
+                                _single_sided_unrelated_local_road_overlap_lengths(
+                                    polygon_geometry=late_final_trimmed_virtual_polygon_geometry,
+                                    local_roads=local_roads,
+                                    allowed_road_ids=final_allowed_local_road_ids,
+                                    target_group_node_ids=analysis_member_node_ids,
+                                ).values(),
+                                default=0.0,
+                            )
+                        if (
+                            late_final_target_overlap_m < (previous_target_overlap_m - 0.05)
+                            or late_final_unrelated_overlap_m < (previous_unrelated_overlap_m - 0.05)
+                            or float(late_final_trimmed_virtual_polygon_geometry.area)
+                            < (previous_polygon_area_m2 - 0.1)
+                        ):
+                            late_final_foreign_residue_trim_applied = True
+                            virtual_polygon_geometry = late_final_trimmed_virtual_polygon_geometry
+                            step6_final_target_foreign_overlap_by_id = (
+                                late_final_target_overlap_by_id
+                            )
+                            step6_final_foreign_overlap_metric_m = (
+                                late_final_target_overlap_m
+                            )
+                            counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+                                step6_final_foreign_overlap_metric_m,
+                                3,
+                            )
+                            step6_final_foreign_semantic_node_ids = tuple(
+                                late_final_extra_local_node_ids
+                            )
+                            step6_final_foreign_road_arm_corridor_ids = tuple(
+                                late_final_extra_local_road_ids
+                            )
+                            step6_final_extra_local_node_count = len(
+                                late_final_extra_local_node_ids
+                            )
+                            step6_final_extra_local_road_count = len(
+                                late_final_extra_local_road_ids
+                            )
+                            step6_final_selected_side_branch_covered_length_m = (
+                                _max_selected_side_branch_covered_length_m(
+                                    polygon_geometry=virtual_polygon_geometry,
+                                    road_branches=road_branches,
+                                    local_roads=local_roads,
+                                )
+                            )
+                            counts["max_selected_side_branch_covered_length_m"] = round(
+                                step6_final_selected_side_branch_covered_length_m,
+                                3,
+                            )
+                            announce(
+                                logger,
+                                (
+                                    f"[T02-POC] late final foreign residue trim applied mainnodeid={normalized_mainnodeid} "
+                                    f"target_overlap={step6_final_foreign_overlap_metric_m:.3f} "
+                                    f"unrelated_overlap={late_final_unrelated_overlap_m:.3f}"
+                                ),
+                            )
+
+        late_single_sided_corridor_mask_cleanup_applied = False
+        late_single_sided_partial_branch_strip_cleanup_applied = False
+        if (
+            representative_node.kind_2 == 2048
+            and rc_outside_drivezone_error is not None
+            and can_soft_exclude_outside_rc
+            and not virtual_polygon_geometry.is_empty
+            and (
+                single_sided_unrelated_opposite_lane_trim_applied
+                or late_single_sided_branch_cap_cleanup_applied
+                or soft_excluded_rc_corridor_trim_applied
+            )
+        ):
+            single_sided_partial_branch_road_ids = _single_sided_partial_branch_road_ids(
+                road_branches=road_branches
+            )
+            if single_sided_partial_branch_road_ids:
+                late_partial_branch_strip_trim_geometry = _build_local_road_overlap_trim_geometry(
+                    polygon_geometry=virtual_polygon_geometry,
+                    road_ids=single_sided_partial_branch_road_ids,
+                    local_roads=local_roads,
+                    drivezone_union=drivezone_union,
+                    buffer_m=max(ROAD_BUFFER_M * 0.95, SIDE_BRANCH_HALF_WIDTH_M * 0.85),
+                )
+                if (
+                    late_partial_branch_strip_trim_geometry is not None
+                    and not late_partial_branch_strip_trim_geometry.is_empty
+                ):
+                    late_partial_branch_strip_virtual_polygon_geometry = (
+                        virtual_polygon_geometry.difference(late_partial_branch_strip_trim_geometry)
+                        .intersection(drivezone_union)
+                    )
+                    late_partial_branch_selected_node_pockets = (
+                        _late_cleanup_selected_node_pocket_geometries(
+                            selected_node_ids=late_cleanup_hard_selected_endpoint_node_ids,
+                            rc_node_by_id=rc_node_by_id,
+                            reference_geometry=late_partial_branch_strip_trim_geometry,
+                            drivezone_union=drivezone_union,
+                        )
+                    )
+                    late_partial_branch_strip_reinclude_parts = [
+                        late_partial_branch_strip_virtual_polygon_geometry,
+                        *group_node_reinclude_geometries,
+                        *late_cleanup_selected_rc_node_buffers,
+                        *late_cleanup_selected_rc_node_connectors,
+                        *late_partial_branch_selected_node_pockets,
+                    ]
+                    if late_partial_branch_strip_reinclude_parts:
+                        late_partial_branch_strip_virtual_polygon_geometry = unary_union(
+                            [
+                                geometry
+                                for geometry in late_partial_branch_strip_reinclude_parts
+                                if geometry is not None and not geometry.is_empty
+                            ]
+                        ).intersection(drivezone_union)
+                    if not late_partial_branch_strip_virtual_polygon_geometry.is_empty:
+                        late_partial_branch_strip_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                            geometry=late_partial_branch_strip_virtual_polygon_geometry,
+                            drivezone_union=drivezone_union,
+                            seed_geometry=core_geometry,
+                        )
+                    (
+                        late_partial_branch_strip_uncovered_group_node_ids,
+                        late_partial_branch_strip_uncovered_support_rc_node_ids,
+                        late_partial_branch_strip_uncovered_support_rc_road_ids,
+                    ) = _validate_polygon_support(
+                        polygon_geometry=late_partial_branch_strip_virtual_polygon_geometry,
+                        group_nodes=group_nodes,
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        support_node_ids=validation_support_rc_node_ids,
+                        support_road_ids=validation_support_rc_road_ids,
+                        support_clip=validation_support_clip,
+                    )
+                    (
+                        late_partial_branch_strip_uncovered_support_rc_node_ids,
+                        late_partial_branch_strip_uncovered_support_rc_road_ids,
+                    ) = _relax_targeted_foreign_trim_support_gaps(
+                        uncovered_support_node_ids=late_partial_branch_strip_uncovered_support_rc_node_ids,
+                        uncovered_support_road_ids=late_partial_branch_strip_uncovered_support_rc_road_ids,
+                        rc_node_by_id=rc_node_by_id,
+                        rc_road_by_id=rc_road_by_id,
+                        analysis_center=analysis_center,
+                        hard_support_node_ids=candidate_selected_rc_node_ids,
+                        hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                        relax_node_ids=conflict_excluded_rc_node_ids,
+                        relax_road_ids=conflict_excluded_rc_road_ids,
+                    )
+                    (
+                        _late_partial_branch_strip_selected_group_node_ids,
+                        late_partial_branch_strip_uncovered_selected_rc_node_ids,
+                        late_partial_branch_strip_uncovered_selected_rc_road_ids,
+                    ) = _validate_polygon_support(
+                        polygon_geometry=late_partial_branch_strip_virtual_polygon_geometry,
+                        group_nodes=[],
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        support_node_ids=selected_rc_node_ids,
+                        support_road_ids={road.road_id for road in selected_rc_roads},
+                        support_clip=selected_output_clip,
+                    )
+                    step6_relaxable_selected_rc_road_ids = {
+                        road.road_id
+                        for road in selected_rc_roads
+                        if (
+                            late_partial_branch_strip_trim_geometry is not None
+                            and not late_partial_branch_strip_trim_geometry.is_empty
+                            and (
+                                road.geometry.distance(late_partial_branch_strip_trim_geometry)
+                                <= max(DEFAULT_RESOLUTION_M, 0.8)
+                                or not road.geometry.intersection(
+                                    late_partial_branch_strip_trim_geometry.buffer(
+                                        max(DEFAULT_RESOLUTION_M, 0.5),
+                                        join_style=1,
+                                    )
+                                ).is_empty
+                            )
+                        )
+                    }
+                    step6_relaxable_selected_rc_node_ids = {
+                        node_id
+                        for node_id in selected_rc_node_ids
+                        if (
+                            node_id in rc_node_by_id
+                            and late_partial_branch_strip_trim_geometry is not None
+                            and not late_partial_branch_strip_trim_geometry.is_empty
+                            and rc_node_by_id[node_id].geometry.distance(
+                                late_partial_branch_strip_trim_geometry
+                            )
+                            <= max(DEFAULT_RESOLUTION_M, 0.8)
+                        )
+                    }
+                    (
+                        late_partial_branch_strip_uncovered_selected_rc_node_ids,
+                        late_partial_branch_strip_uncovered_selected_rc_road_ids,
+                    ) = _relax_targeted_foreign_trim_selected_gaps(
+                        uncovered_selected_node_ids=late_partial_branch_strip_uncovered_selected_rc_node_ids,
+                        uncovered_selected_road_ids=late_partial_branch_strip_uncovered_selected_rc_road_ids,
+                        rc_node_by_id=rc_node_by_id,
+                        rc_road_by_id=rc_road_by_id,
+                        analysis_center=None,
+                        hard_selected_node_ids=late_cleanup_hard_selected_endpoint_node_ids,
+                        relax_node_ids=conflict_excluded_rc_node_ids
+                        | step6_relaxable_selected_rc_node_ids,
+                        relax_road_ids=conflict_excluded_rc_road_ids
+                        | step6_relaxable_selected_rc_road_ids,
+                    )
+                    late_partial_branch_strip_extra_local_node_ids = sorted(
+                        node.node_id
+                        for node in local_nodes
+                        if (
+                            _is_foreign_local_semantic_node(
+                                node=node,
+                                target_group_node_ids=analysis_member_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                semantic_mainnodeids=semantic_mainnodeids,
+                            )
+                            and _polygon_substantively_covers_node(
+                                late_partial_branch_strip_virtual_polygon_geometry,
+                                node.geometry,
+                                cover_radius_m=max(resolution_m, 0.5),
+                            )
+                        )
+                    )
+                    late_partial_branch_strip_extra_local_road_ids = _covered_foreign_local_road_ids(
+                        polygon_geometry=late_partial_branch_strip_virtual_polygon_geometry,
+                        local_roads=local_roads,
+                        local_nodes=local_nodes,
+                        allowed_road_ids=final_allowed_local_road_ids,
+                        target_group_node_ids=analysis_member_node_ids,
+                        normalized_mainnodeid=normalized_mainnodeid,
+                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                        analysis_center=analysis_center,
+                        semantic_mainnodeids=semantic_mainnodeids,
+                    )
+                    if (
+                        not late_partial_branch_strip_uncovered_group_node_ids
+                        and not late_partial_branch_strip_uncovered_support_rc_node_ids
+                        and not late_partial_branch_strip_uncovered_support_rc_road_ids
+                        and not late_partial_branch_strip_uncovered_selected_rc_node_ids
+                        and not late_partial_branch_strip_uncovered_selected_rc_road_ids
+                        and not late_partial_branch_strip_extra_local_node_ids
+                        and not late_partial_branch_strip_extra_local_road_ids
+                    ):
+                        previous_target_overlap_m = step6_final_foreign_overlap_metric_m
+                        previous_side_branch_length_m = (
+                            step6_final_selected_side_branch_covered_length_m
+                        )
+                        previous_polygon_area_m2 = float(virtual_polygon_geometry.area)
+                        late_partial_branch_strip_target_overlap_by_id = (
+                            _target_group_foreign_semantic_road_overlap_lengths(
+                                polygon_geometry=late_partial_branch_strip_virtual_polygon_geometry,
+                                local_roads=local_roads,
+                                local_nodes=local_nodes,
+                                allowed_road_ids=final_allowed_local_road_ids,
+                                target_group_node_ids=analysis_member_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                analysis_center=analysis_center,
+                                semantic_mainnodeids=semantic_mainnodeids,
+                            )
+                        )
+                        late_partial_branch_strip_target_overlap_m = max(
+                            late_partial_branch_strip_target_overlap_by_id.values(),
+                            default=0.0,
+                        )
+                        late_partial_branch_strip_side_branch_length_m = (
+                            _max_selected_side_branch_covered_length_m(
+                                polygon_geometry=late_partial_branch_strip_virtual_polygon_geometry,
+                                road_branches=road_branches,
+                                local_roads=local_roads,
+                            )
+                        )
+                        if (
+                            late_partial_branch_strip_target_overlap_m
+                            < (previous_target_overlap_m - 0.05)
+                            or late_partial_branch_strip_side_branch_length_m
+                            < (previous_side_branch_length_m - 0.25)
+                        ) and float(late_partial_branch_strip_virtual_polygon_geometry.area) < (
+                            previous_polygon_area_m2 - 0.05
+                        ):
+                            late_single_sided_partial_branch_strip_cleanup_applied = True
+                            virtual_polygon_geometry = late_partial_branch_strip_virtual_polygon_geometry
+                            step6_final_target_foreign_overlap_by_id = (
+                                late_partial_branch_strip_target_overlap_by_id
+                            )
+                            step6_final_foreign_overlap_metric_m = (
+                                late_partial_branch_strip_target_overlap_m
+                            )
+                            counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+                                step6_final_foreign_overlap_metric_m,
+                                3,
+                            )
+                            step6_final_selected_side_branch_covered_length_m = (
+                                late_partial_branch_strip_side_branch_length_m
+                            )
+                            counts["max_selected_side_branch_covered_length_m"] = round(
+                                step6_final_selected_side_branch_covered_length_m,
+                                3,
+                            )
+                            step6_final_foreign_semantic_node_ids = tuple(
+                                late_partial_branch_strip_extra_local_node_ids
+                            )
+                            step6_final_foreign_road_arm_corridor_ids = tuple(
+                                late_partial_branch_strip_extra_local_road_ids
+                            )
+                            step6_final_extra_local_node_count = len(
+                                late_partial_branch_strip_extra_local_node_ids
+                            )
+                            step6_final_extra_local_road_count = len(
+                                late_partial_branch_strip_extra_local_road_ids
+                            )
+                            announce(
+                                logger,
+                                (
+                                    f"[T02-POC] late single-sided partial-branch strip cleanup applied mainnodeid={normalized_mainnodeid} "
+                                    f"target_overlap={step6_final_foreign_overlap_metric_m:.3f} "
+                                    f"side_branch_length={step6_final_selected_side_branch_covered_length_m:.3f}"
+                                ),
+                            )
+                        else:
+                            announce(
+                                logger,
+                                (
+                                    f"[T02-POC] late single-sided partial-branch strip cleanup discarded mainnodeid={normalized_mainnodeid} "
+                                    f"target_overlap_before={previous_target_overlap_m:.3f} "
+                                    f"target_overlap_after={late_partial_branch_strip_target_overlap_m:.3f} "
+                                    f"side_branch_before={previous_side_branch_length_m:.3f} "
+                                    f"side_branch_after={late_partial_branch_strip_side_branch_length_m:.3f} "
+                                    f"area_before={previous_polygon_area_m2:.3f} "
+                                    f"area_after={float(late_partial_branch_strip_virtual_polygon_geometry.area):.3f}"
+                                ),
+                            )
+                    else:
+                        announce(
+                            logger,
+                            (
+                                f"[T02-POC] late single-sided partial-branch strip cleanup blocked mainnodeid={normalized_mainnodeid} "
+                                f"group_uncovered={','.join(sorted(late_partial_branch_strip_uncovered_group_node_ids)) or '-'} "
+                                f"support_nodes={','.join(sorted(late_partial_branch_strip_uncovered_support_rc_node_ids)) or '-'} "
+                                f"support_roads={','.join(sorted(late_partial_branch_strip_uncovered_support_rc_road_ids)) or '-'} "
+                                f"selected_nodes={','.join(sorted(late_partial_branch_strip_uncovered_selected_rc_node_ids)) or '-'} "
+                                f"selected_roads={','.join(sorted(late_partial_branch_strip_uncovered_selected_rc_road_ids)) or '-'} "
+                                f"extra_nodes={','.join(sorted(late_partial_branch_strip_extra_local_node_ids)) or '-'} "
+                                f"extra_roads={','.join(sorted(late_partial_branch_strip_extra_local_road_ids)) or '-'}"
+                            ),
+                        )
+        if (
+            representative_node.kind_2 == 2048
+            and rc_outside_drivezone_error is not None
+            and can_soft_exclude_outside_rc
+            and not virtual_polygon_geometry.is_empty
+            and (
+                single_sided_unrelated_opposite_lane_trim_applied
+                or late_single_sided_branch_cap_cleanup_applied
+            )
+        ):
+            single_sided_corridor_keep_road_ids = (
+                set(single_sided_t_mouth_corridor_target_local_road_ids)
+                | {
+                    road_id
+                    for road_id in single_sided_t_mouth_branch_target_local_road_ids
+                    if road_id in _single_sided_strict_keep_road_ids(road_branches=road_branches)
+                }
+            )
+            if not single_sided_corridor_keep_road_ids:
+                single_sided_corridor_keep_road_ids = _single_sided_strict_keep_road_ids(
+                    road_branches=road_branches
+                )
+            local_road_by_id = {road.road_id: road for road in local_roads}
+            single_sided_corridor_keep_road_geometries = [
+                local_road_by_id[road_id].geometry
+                for road_id in single_sided_corridor_keep_road_ids
+                if road_id in local_road_by_id
+            ]
+            if single_sided_corridor_keep_road_geometries:
+                single_sided_corridor_keep_parts = [
+                    geometry
+                    for geometry in (
+                        core_geometry,
+                        *group_node_buffers,
+                        *group_node_connectors,
+                        *group_node_reinclude_geometries,
+                        *late_cleanup_selected_rc_node_buffers,
+                        *late_cleanup_selected_rc_node_connectors,
+                    )
+                    if geometry is not None and not geometry.is_empty
+                ]
+                single_sided_corridor_keep_parts.extend(
+                    geometry.buffer(
+                        max(SIDE_BRANCH_HALF_WIDTH_M * 1.25, RC_ROAD_BUFFER_M * 1.8),
+                        join_style=1,
+                    ).intersection(drivezone_union)
+                    for geometry in single_sided_corridor_keep_road_geometries
+                )
+                single_sided_corridor_keep_geometry = (
+                    unary_union(single_sided_corridor_keep_parts).intersection(drivezone_union)
+                    if single_sided_corridor_keep_parts
+                    else GeometryCollection()
+                )
+                if not single_sided_corridor_keep_geometry.is_empty:
+                    single_sided_corridor_mask_trimmed_geometry = (
+                        virtual_polygon_geometry.intersection(single_sided_corridor_keep_geometry)
+                        .intersection(drivezone_union)
+                    )
+                    single_sided_corridor_reinclude_parts = [
+                        single_sided_corridor_mask_trimmed_geometry,
+                        *group_node_reinclude_geometries,
+                        *late_cleanup_selected_rc_node_buffers,
+                        *late_cleanup_selected_rc_node_connectors,
+                    ]
+                    if single_sided_corridor_reinclude_parts:
+                        single_sided_corridor_mask_trimmed_geometry = unary_union(
+                            [
+                                geometry
+                                for geometry in single_sided_corridor_reinclude_parts
+                                if geometry is not None and not geometry.is_empty
+                            ]
+                        ).intersection(drivezone_union)
+                    if not single_sided_corridor_mask_trimmed_geometry.is_empty:
+                        single_sided_corridor_mask_trimmed_geometry = _regularize_virtual_polygon_geometry(
+                            geometry=single_sided_corridor_mask_trimmed_geometry,
+                            drivezone_union=drivezone_union,
+                            seed_geometry=core_geometry,
+                        )
+                    (
+                        single_sided_corridor_mask_uncovered_group_node_ids,
+                        single_sided_corridor_mask_uncovered_support_rc_node_ids,
+                        single_sided_corridor_mask_uncovered_support_rc_road_ids,
+                    ) = _validate_polygon_support(
+                        polygon_geometry=single_sided_corridor_mask_trimmed_geometry,
+                        group_nodes=group_nodes,
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        support_node_ids=validation_support_rc_node_ids,
+                        support_road_ids=validation_support_rc_road_ids,
+                        support_clip=validation_support_clip,
+                    )
+                    (
+                        single_sided_corridor_mask_uncovered_support_rc_node_ids,
+                        single_sided_corridor_mask_uncovered_support_rc_road_ids,
+                    ) = _relax_targeted_foreign_trim_support_gaps(
+                        uncovered_support_node_ids=single_sided_corridor_mask_uncovered_support_rc_node_ids,
+                        uncovered_support_road_ids=single_sided_corridor_mask_uncovered_support_rc_road_ids,
+                        rc_node_by_id=rc_node_by_id,
+                        rc_road_by_id=rc_road_by_id,
+                        analysis_center=analysis_center,
+                        hard_support_node_ids=candidate_selected_rc_node_ids,
+                        hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                        relax_node_ids=conflict_excluded_rc_node_ids,
+                        relax_road_ids=conflict_excluded_rc_road_ids,
+                    )
+                    (
+                        _single_sided_corridor_mask_selected_group_node_ids,
+                        single_sided_corridor_mask_uncovered_selected_rc_node_ids,
+                        single_sided_corridor_mask_uncovered_selected_rc_road_ids,
+                    ) = _validate_polygon_support(
+                        polygon_geometry=single_sided_corridor_mask_trimmed_geometry,
+                        group_nodes=[],
+                        local_rc_nodes=local_rc_nodes,
+                        local_rc_roads=local_rc_roads,
+                        support_node_ids=selected_rc_node_ids,
+                        support_road_ids={road.road_id for road in selected_rc_roads},
+                        support_clip=selected_output_clip,
+                    )
+                    (
+                        single_sided_corridor_mask_uncovered_selected_rc_node_ids,
+                        single_sided_corridor_mask_uncovered_selected_rc_road_ids,
+                    ) = _relax_targeted_foreign_trim_selected_gaps(
+                        uncovered_selected_node_ids=single_sided_corridor_mask_uncovered_selected_rc_node_ids,
+                        uncovered_selected_road_ids=single_sided_corridor_mask_uncovered_selected_rc_road_ids,
+                        rc_node_by_id=rc_node_by_id,
+                        rc_road_by_id=rc_road_by_id,
+                        analysis_center=None,
+                        hard_selected_node_ids=late_cleanup_hard_selected_endpoint_node_ids,
+                        relax_node_ids=conflict_excluded_rc_node_ids,
+                        relax_road_ids=conflict_excluded_rc_road_ids,
+                    )
+                    single_sided_corridor_mask_extra_local_node_ids = sorted(
+                        node.node_id
+                        for node in local_nodes
+                        if (
+                            _is_foreign_local_semantic_node(
+                                node=node,
+                                target_group_node_ids=analysis_member_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                semantic_mainnodeids=semantic_mainnodeids,
+                            )
+                            and _polygon_substantively_covers_node(
+                                single_sided_corridor_mask_trimmed_geometry,
+                                node.geometry,
+                                cover_radius_m=max(resolution_m, 0.5),
+                            )
+                        )
+                    )
+                    single_sided_corridor_mask_extra_local_road_ids = _covered_foreign_local_road_ids(
+                        polygon_geometry=single_sided_corridor_mask_trimmed_geometry,
+                        local_roads=local_roads,
+                        local_nodes=local_nodes,
+                        allowed_road_ids=final_allowed_local_road_ids,
+                        target_group_node_ids=analysis_member_node_ids,
+                        normalized_mainnodeid=normalized_mainnodeid,
+                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                        analysis_center=analysis_center,
+                        semantic_mainnodeids=semantic_mainnodeids,
+                    )
+                    if (
+                        not single_sided_corridor_mask_uncovered_group_node_ids
+                        and not single_sided_corridor_mask_uncovered_support_rc_node_ids
+                        and not single_sided_corridor_mask_uncovered_support_rc_road_ids
+                        and not single_sided_corridor_mask_uncovered_selected_rc_node_ids
+                        and not single_sided_corridor_mask_uncovered_selected_rc_road_ids
+                        and not single_sided_corridor_mask_extra_local_node_ids
+                        and not single_sided_corridor_mask_extra_local_road_ids
+                    ):
+                        previous_target_overlap_m = step6_final_foreign_overlap_metric_m
+                        previous_polygon_area_m2 = float(virtual_polygon_geometry.area)
+                        single_sided_corridor_mask_target_overlap_by_id = (
+                            _target_group_foreign_semantic_road_overlap_lengths(
+                                polygon_geometry=single_sided_corridor_mask_trimmed_geometry,
+                                local_roads=local_roads,
+                                local_nodes=local_nodes,
+                                allowed_road_ids=final_allowed_local_road_ids,
+                                target_group_node_ids=analysis_member_node_ids,
+                                normalized_mainnodeid=normalized_mainnodeid,
+                                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                                analysis_center=analysis_center,
+                                semantic_mainnodeids=semantic_mainnodeids,
+                            )
+                        )
+                        single_sided_corridor_mask_target_overlap_m = max(
+                            single_sided_corridor_mask_target_overlap_by_id.values(),
+                            default=0.0,
+                        )
+                        if (
+                            single_sided_corridor_mask_target_overlap_m
+                            <= (previous_target_overlap_m + 0.05)
+                            and float(single_sided_corridor_mask_trimmed_geometry.area)
+                            < (previous_polygon_area_m2 - 0.1)
+                        ):
+                            late_single_sided_corridor_mask_cleanup_applied = True
+                            virtual_polygon_geometry = single_sided_corridor_mask_trimmed_geometry
+                            step6_final_target_foreign_overlap_by_id = (
+                                single_sided_corridor_mask_target_overlap_by_id
+                            )
+                            step6_final_foreign_overlap_metric_m = (
+                                single_sided_corridor_mask_target_overlap_m
+                            )
+                            counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+                                step6_final_foreign_overlap_metric_m,
+                                3,
+                            )
+                            step6_final_foreign_semantic_node_ids = tuple(
+                                single_sided_corridor_mask_extra_local_node_ids
+                            )
+                            step6_final_foreign_road_arm_corridor_ids = tuple(
+                                single_sided_corridor_mask_extra_local_road_ids
+                            )
+                            step6_final_extra_local_node_count = len(
+                                single_sided_corridor_mask_extra_local_node_ids
+                            )
+                            step6_final_extra_local_road_count = len(
+                                single_sided_corridor_mask_extra_local_road_ids
+                            )
+                            step6_final_selected_side_branch_covered_length_m = (
+                                _max_selected_side_branch_covered_length_m(
+                                    polygon_geometry=virtual_polygon_geometry,
+                                    road_branches=road_branches,
+                                    local_roads=local_roads,
+                                )
+                            )
+                            counts["max_selected_side_branch_covered_length_m"] = round(
+                                step6_final_selected_side_branch_covered_length_m,
+                                3,
+                            )
+                            announce(
+                                logger,
+                                (
+                                    f"[T02-POC] late single-sided corridor-mask cleanup applied mainnodeid={normalized_mainnodeid} "
+                                    f"target_overlap={step6_final_foreign_overlap_metric_m:.3f}"
+                                ),
+                            )
+                        else:
+                            announce(
+                                logger,
+                                (
+                                    f"[T02-POC] late single-sided corridor-mask cleanup discarded mainnodeid={normalized_mainnodeid} "
+                                    f"target_overlap_before={previous_target_overlap_m:.3f} "
+                                    f"target_overlap_after={single_sided_corridor_mask_target_overlap_m:.3f} "
+                                    f"area_before={previous_polygon_area_m2:.3f} "
+                                    f"area_after={float(single_sided_corridor_mask_trimmed_geometry.area):.3f}"
+                                ),
+                            )
+                    else:
+                        announce(
+                            logger,
+                            (
+                                f"[T02-POC] late single-sided corridor-mask cleanup blocked mainnodeid={normalized_mainnodeid} "
+                                f"group_uncovered={','.join(sorted(single_sided_corridor_mask_uncovered_group_node_ids)) or '-'} "
+                                f"support_nodes={','.join(sorted(single_sided_corridor_mask_uncovered_support_rc_node_ids)) or '-'} "
+                                f"support_roads={','.join(sorted(single_sided_corridor_mask_uncovered_support_rc_road_ids)) or '-'} "
+                                f"selected_nodes={','.join(sorted(single_sided_corridor_mask_uncovered_selected_rc_node_ids)) or '-'} "
+                                f"selected_roads={','.join(sorted(single_sided_corridor_mask_uncovered_selected_rc_road_ids)) or '-'} "
+                                f"extra_nodes={','.join(sorted(single_sided_corridor_mask_extra_local_node_ids)) or '-'} "
+                                f"extra_roads={','.join(sorted(single_sided_corridor_mask_extra_local_road_ids)) or '-'}"
+                            ),
+                        )
+
+        late_single_sided_tail_clip_cleanup_applied = False
+        if (
+            representative_node.kind_2 == 2048
+            and rc_outside_drivezone_error is not None
+            and can_soft_exclude_outside_rc
+            and single_sided_unrelated_opposite_lane_trim_applied
+            and step6_final_foreign_overlap_metric_m <= 1.0
+            and step6_final_selected_side_branch_covered_length_m <= 3.0
+            and effective_associated_rc_node_count == 0
+            and len(local_nodes) <= 5
+            and counts["associated_rcsdroad_count"] >= 2
+            and not virtual_polygon_geometry.is_empty
+        ):
+            late_tail_clip_road_ids = _single_sided_strict_keep_road_ids(
+                road_branches=road_branches
+            )
+            late_tail_clip_keep_buffer_m = max(RC_ROAD_BUFFER_M * 1.15, 3.8)
+            if late_cleanup_hard_selected_endpoint_node_ids != set(selected_rc_endpoint_node_ids):
+                late_tail_clip_keep_buffer_m = max(RC_ROAD_BUFFER_M * 0.9, 3.0)
+            local_road_by_id = {road.road_id: road for road in local_roads}
+            late_tail_clip_keep_parts = [
+                geometry
+                for geometry in (
+                    core_geometry,
+                    *group_node_buffers,
+                    *group_node_connectors,
+                    *group_node_reinclude_geometries,
+                    *late_cleanup_selected_rc_node_buffers,
+                    *late_cleanup_selected_rc_node_connectors,
+                )
+                if geometry is not None and not geometry.is_empty
+            ]
+            late_tail_clip_keep_parts.extend(
+                local_road_by_id[road_id].geometry.buffer(
+                    late_tail_clip_keep_buffer_m,
+                    join_style=1,
+                ).intersection(drivezone_union)
+                for road_id in late_tail_clip_road_ids
+                if road_id in local_road_by_id
+            )
+            late_tail_clip_keep_geometry = (
+                unary_union(late_tail_clip_keep_parts).intersection(drivezone_union)
+                if late_tail_clip_keep_parts
+                else GeometryCollection()
+            )
+            if not late_tail_clip_keep_geometry.is_empty:
+                late_tail_clip_virtual_polygon_geometry = (
+                    virtual_polygon_geometry.intersection(late_tail_clip_keep_geometry)
+                    .intersection(drivezone_union)
+                )
+                late_tail_clip_reinclude_parts = [
+                    late_tail_clip_virtual_polygon_geometry,
+                    *group_node_reinclude_geometries,
+                    *late_cleanup_selected_rc_node_buffers,
+                    *late_cleanup_selected_rc_node_connectors,
+                ]
+                if late_tail_clip_reinclude_parts:
+                    late_tail_clip_virtual_polygon_geometry = unary_union(
+                        [
+                            geometry
+                            for geometry in late_tail_clip_reinclude_parts
+                            if geometry is not None and not geometry.is_empty
+                        ]
+                    ).intersection(drivezone_union)
+                if not late_tail_clip_virtual_polygon_geometry.is_empty:
+                    late_tail_clip_virtual_polygon_geometry = _regularize_virtual_polygon_geometry(
+                        geometry=late_tail_clip_virtual_polygon_geometry,
+                        drivezone_union=drivezone_union,
+                        seed_geometry=core_geometry,
+                    )
+                (
+                    late_tail_clip_uncovered_group_node_ids,
+                    late_tail_clip_uncovered_support_rc_node_ids,
+                    late_tail_clip_uncovered_support_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=late_tail_clip_virtual_polygon_geometry,
+                    group_nodes=group_nodes,
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=validation_support_rc_node_ids,
+                    support_road_ids=validation_support_rc_road_ids,
+                    support_clip=validation_support_clip,
+                )
+                (
+                    late_tail_clip_uncovered_support_rc_node_ids,
+                    late_tail_clip_uncovered_support_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_support_gaps(
+                    uncovered_support_node_ids=late_tail_clip_uncovered_support_rc_node_ids,
+                    uncovered_support_road_ids=late_tail_clip_uncovered_support_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=analysis_center,
+                    hard_support_node_ids=candidate_selected_rc_node_ids,
+                    hard_support_road_ids=candidate_selected_positive_group_rc_road_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                (
+                    _late_tail_clip_selected_group_node_ids,
+                    late_tail_clip_uncovered_selected_rc_node_ids,
+                    late_tail_clip_uncovered_selected_rc_road_ids,
+                ) = _validate_polygon_support(
+                    polygon_geometry=late_tail_clip_virtual_polygon_geometry,
+                    group_nodes=[],
+                    local_rc_nodes=local_rc_nodes,
+                    local_rc_roads=local_rc_roads,
+                    support_node_ids=selected_rc_node_ids,
+                    support_road_ids={road.road_id for road in selected_rc_roads},
+                    support_clip=selected_output_clip,
+                )
+                (
+                    late_tail_clip_uncovered_selected_rc_node_ids,
+                    late_tail_clip_uncovered_selected_rc_road_ids,
+                ) = _relax_targeted_foreign_trim_selected_gaps(
+                    uncovered_selected_node_ids=late_tail_clip_uncovered_selected_rc_node_ids,
+                    uncovered_selected_road_ids=late_tail_clip_uncovered_selected_rc_road_ids,
+                    rc_node_by_id=rc_node_by_id,
+                    rc_road_by_id=rc_road_by_id,
+                    analysis_center=None,
+                    hard_selected_node_ids=late_cleanup_hard_selected_endpoint_node_ids,
+                    relax_node_ids=conflict_excluded_rc_node_ids,
+                    relax_road_ids=conflict_excluded_rc_road_ids,
+                )
+                late_tail_clip_extra_local_node_ids = sorted(
+                    node.node_id
+                    for node in local_nodes
+                    if (
+                        _is_foreign_local_semantic_node(
+                            node=node,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                        and _polygon_substantively_covers_node(
+                            late_tail_clip_virtual_polygon_geometry,
+                            node.geometry,
+                            cover_radius_m=max(resolution_m, 0.5),
+                        )
+                    )
+                )
+                late_tail_clip_extra_local_road_ids = _covered_foreign_local_road_ids(
+                    polygon_geometry=late_tail_clip_virtual_polygon_geometry,
+                    local_roads=local_roads,
+                    local_nodes=local_nodes,
+                    allowed_road_ids=final_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    local_road_degree_by_node_id=local_road_degree_by_node_id,
+                    analysis_center=analysis_center,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                if (
+                    not late_tail_clip_uncovered_group_node_ids
+                    and not late_tail_clip_uncovered_support_rc_node_ids
+                    and not late_tail_clip_uncovered_support_rc_road_ids
+                    and not late_tail_clip_uncovered_selected_rc_node_ids
+                    and not late_tail_clip_uncovered_selected_rc_road_ids
+                    and not late_tail_clip_extra_local_node_ids
+                    and not late_tail_clip_extra_local_road_ids
+                    and float(late_tail_clip_virtual_polygon_geometry.area)
+                    < (float(virtual_polygon_geometry.area) - 0.05)
+                ):
+                    late_single_sided_tail_clip_cleanup_applied = True
+                    virtual_polygon_geometry = late_tail_clip_virtual_polygon_geometry
+                    step6_final_target_foreign_overlap_by_id = (
+                        _target_group_foreign_semantic_road_overlap_lengths(
+                            polygon_geometry=virtual_polygon_geometry,
+                            local_roads=local_roads,
+                            local_nodes=local_nodes,
+                            allowed_road_ids=final_allowed_local_road_ids,
+                            target_group_node_ids=analysis_member_node_ids,
+                            normalized_mainnodeid=normalized_mainnodeid,
+                            local_road_degree_by_node_id=local_road_degree_by_node_id,
+                            analysis_center=analysis_center,
+                            semantic_mainnodeids=semantic_mainnodeids,
+                        )
+                    )
+                    step6_final_foreign_overlap_metric_m = max(
+                        step6_final_target_foreign_overlap_by_id.values(),
+                        default=0.0,
+                    )
+                    counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+                        step6_final_foreign_overlap_metric_m,
+                        3,
+                    )
+                    step6_final_selected_side_branch_covered_length_m = _max_selected_side_branch_covered_length_m(
+                        polygon_geometry=virtual_polygon_geometry,
+                        road_branches=road_branches,
+                        local_roads=local_roads,
+                    )
+                    counts["max_selected_side_branch_covered_length_m"] = round(
+                        step6_final_selected_side_branch_covered_length_m,
+                        3,
+                    )
+                    step6_final_foreign_semantic_node_ids = tuple(
+                        late_tail_clip_extra_local_node_ids
+                    )
+                    step6_final_foreign_road_arm_corridor_ids = tuple(
+                        late_tail_clip_extra_local_road_ids
+                    )
+                    step6_final_extra_local_node_count = len(
+                        late_tail_clip_extra_local_node_ids
+                    )
+                    step6_final_extra_local_road_count = len(
+                        late_tail_clip_extra_local_road_ids
+                    )
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] late single-sided tail clip cleanup applied mainnodeid={normalized_mainnodeid} "
+                            f"target_overlap={step6_final_foreign_overlap_metric_m:.3f}"
+                        ),
+                    )
+                else:
+                    announce(
+                        logger,
+                        (
+                            f"[T02-POC] late single-sided tail clip cleanup blocked mainnodeid={normalized_mainnodeid} "
+                            f"group_uncovered={','.join(sorted(late_tail_clip_uncovered_group_node_ids)) or '-'} "
+                            f"support_nodes={','.join(sorted(late_tail_clip_uncovered_support_rc_node_ids)) or '-'} "
+                            f"support_roads={','.join(sorted(late_tail_clip_uncovered_support_rc_road_ids)) or '-'} "
+                            f"selected_nodes={','.join(sorted(late_tail_clip_uncovered_selected_rc_node_ids)) or '-'} "
+                            f"selected_roads={','.join(sorted(late_tail_clip_uncovered_selected_rc_road_ids)) or '-'} "
+                            f"extra_nodes={','.join(sorted(late_tail_clip_extra_local_node_ids)) or '-'} "
+                            f"extra_roads={','.join(sorted(late_tail_clip_extra_local_road_ids)) or '-'} "
+                            f"area_before={float(virtual_polygon_geometry.area):.3f} "
+                            f"area_after={float(late_tail_clip_virtual_polygon_geometry.area):.3f}"
+                        ),
+                    )
+
+        counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
+            step6_final_foreign_overlap_metric_m,
+            3,
+        )
+        counts["max_selected_side_branch_covered_length_m"] = round(
+            step6_final_selected_side_branch_covered_length_m,
+            3,
+        )
+        counts["covered_extra_local_node_count"] = step6_final_extra_local_node_count
+        counts["covered_extra_local_road_count"] = step6_final_extra_local_road_count
+        polygon_aspect_ratio, polygon_compactness, polygon_bbox_fill_ratio = _compute_stage3_polygon_shape_metrics(
+            virtual_polygon_geometry
+        )
+        post_trim_non_target_tail_length_m = 0.0
+        foreign_overlap_zero_but_tail_present = False
+        if (
+            stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
+            and single_sided_unrelated_opposite_lane_trim_applied
+        ):
+            post_trim_non_target_tail_length_m = round(
+                max(0.0, step6_final_selected_side_branch_covered_length_m),
+                3,
+            )
+            foreign_overlap_zero_but_tail_present = (
+                step6_final_foreign_overlap_metric_m <= 0.05
+                and post_trim_non_target_tail_length_m >= 1.5
+            )
+        counts["post_trim_non_target_tail_length_m"] = post_trim_non_target_tail_length_m
+        counts["foreign_overlap_zero_but_tail_present"] = foreign_overlap_zero_but_tail_present
+        post_gate_acceptance = _apply_stage3_post_acceptance_gates_from_inputs(
+            Stage3PostAcceptanceGateInputs(
+                effect_success=effect_success,
+                acceptance_class=acceptance_class,
+                acceptance_reason=acceptance_reason,
+                status=status,
+                template_class=stage3_template_class,
+                can_soft_exclude_outside_rc=can_soft_exclude_outside_rc,
+                rc_outside_drivezone_error=rc_outside_drivezone_error,
+                max_target_group_foreign_semantic_road_overlap_m=step6_final_foreign_overlap_metric_m,
+                max_selected_side_branch_covered_length_m=step6_final_selected_side_branch_covered_length_m,
+                max_nonmain_branch_polygon_length_m=max_nonmain_branch_polygon_length_m,
+                min_invalid_rc_distance_to_center_m=min_invalid_rc_distance_to_center_m,
+                associated_rc_road_count=len(associated_rcsdroad_features),
+                associated_rc_node_count=len(associated_rcsdnode_features),
+                effective_associated_rc_node_count=effective_associated_rc_node_count,
+                excluded_rc_road_count=counts.get("excluded_rcsdroad_count", 0),
+                positive_rc_group_count=len(positive_rc_groups),
+                negative_rc_group_count=len(negative_rc_groups),
+                local_node_count=len(local_nodes),
+                local_road_count=len(local_roads),
+                polygon_aspect_ratio=polygon_aspect_ratio,
+                polygon_compactness=polygon_compactness,
+                polygon_bbox_fill_ratio=polygon_bbox_fill_ratio,
+                single_sided_unrelated_opposite_lane_trim_applied=single_sided_unrelated_opposite_lane_trim_applied,
+                soft_excluded_rc_corridor_trim_applied=soft_excluded_rc_corridor_trim_applied,
+                post_trim_non_target_tail_length_m=post_trim_non_target_tail_length_m,
+                foreign_overlap_zero_but_tail_present=foreign_overlap_zero_but_tail_present,
+                audit_rows=audit_rows,
+            )
+        )
+        effect_success = post_gate_acceptance.effect_success
+        acceptance_class = post_gate_acceptance.acceptance_class
+        acceptance_reason = post_gate_acceptance.acceptance_reason
+        success_step_results = build_stage3_success_step_results(
+            identity_inputs=Stage3SuccessContractIdentityInputs(
+                representative_node_id=representative_node.node_id,
+                normalized_mainnodeid=normalized_mainnodeid,
+                template_class=stage3_template_class,
+                representative_kind=representative_node.kind,
+                representative_kind_2=representative_node.kind_2,
+                representative_grade_2=representative_node.grade_2,
+                semantic_junction_set=analysis_member_node_ids,
+                analysis_member_node_ids=analysis_member_node_ids,
+                group_node_ids=group_node_ids,
+                local_node_ids=(node.node_id for node in local_nodes),
+                local_road_ids=(road.road_id for road in local_roads),
+                local_rc_node_ids=(node.node_id for node in local_rc_nodes),
+                local_rc_road_ids=(road.road_id for road in local_rc_roads),
+                road_branch_ids=(
+                    str(getattr(branch, "branch_id"))
+                    for branch in road_branches
+                    if getattr(branch, "branch_id", None) is not None
+                ),
+                analysis_center_xy=(float(analysis_center.x), float(analysis_center.y)),
+            ),
+            step_snapshot_inputs=build_stage3_step_snapshot_inputs_from_boundary(
+                step3_inputs=Stage3SuccessStep3SnapshotInputs(
+                    legal_activity_space_geometry=drivezone_union,
+                    allowed_drivezone_geometry=drivezone_union,
+                    must_cover_group_node_ids=analysis_member_node_ids,
+                    single_sided_corridor_road_ids=(
+                        final_allowed_local_road_ids
+                        if stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
+                        else ()
+                    ),
+                    hard_boundary_road_ids=(),
+                    blockers=(("drivezone_empty",) if drivezone_union.is_empty else ()),
+                ),
+                step4_result=step4_result,
+                step5_baseline=step5_baseline_snapshot,
+                step6_final_state=build_stage3_step6_final_state_snapshot(
+                    primary_solved_geometry=virtual_polygon_geometry,
+                    geometry_established=not virtual_polygon_geometry.is_empty,
+                    max_selected_side_branch_covered_length_m=(
+                        step6_final_selected_side_branch_covered_length_m
+                    ),
+                    selected_node_repair_attempted=selected_node_repair_attempted,
+                    selected_node_repair_applied=selected_node_repair_applied,
+                    selected_node_repair_discarded_due_to_extra_roads=(
+                        final_selected_node_cover_repair_discarded_due_to_extra_roads
+                    ),
+                    introduced_extra_local_road_ids=(
+                        selected_node_repair_introduced_extra_local_road_ids
+                    ),
+                    optimizer_events=tuple(
+                        name
+                        for name, applied in (
+                            ("late_single_sided_branch_cap_cleanup_applied", late_single_sided_branch_cap_cleanup_applied),
+                            ("late_post_soft_overlap_trim_applied", late_post_soft_overlap_trim_applied),
+                            ("late_final_foreign_residue_trim_applied", late_final_foreign_residue_trim_applied),
+                            ("late_single_sided_partial_branch_strip_cleanup_applied", late_single_sided_partial_branch_strip_cleanup_applied),
+                            ("late_single_sided_corridor_mask_cleanup_applied", late_single_sided_corridor_mask_cleanup_applied),
+                            ("late_single_sided_tail_clip_cleanup_applied", late_single_sided_tail_clip_cleanup_applied),
+                        )
+                        if applied
+                    ),
+                    late_single_sided_branch_cap_cleanup_applied=(
+                        late_single_sided_branch_cap_cleanup_applied
+                    ),
+                    late_post_soft_overlap_trim_applied=late_post_soft_overlap_trim_applied,
+                    late_final_foreign_residue_trim_applied=(
+                        late_final_foreign_residue_trim_applied
+                    ),
+                    late_single_sided_partial_branch_strip_cleanup_applied=(
+                        late_single_sided_partial_branch_strip_cleanup_applied
+                    ),
+                    late_single_sided_corridor_mask_cleanup_applied=(
+                        late_single_sided_corridor_mask_cleanup_applied
+                    ),
+                    late_single_sided_tail_clip_cleanup_applied=(
+                        late_single_sided_tail_clip_cleanup_applied
+                    ),
+                    polygon_aspect_ratio=polygon_aspect_ratio,
+                    polygon_compactness=polygon_compactness,
+                    polygon_bbox_fill_ratio=polygon_bbox_fill_ratio,
+                    uncovered_selected_endpoint_node_ids=(
+                        final_uncovered_selected_rc_endpoint_node_ids
+                    ),
+                    foreign_semantic_node_ids=step6_final_foreign_semantic_node_ids,
+                    foreign_road_arm_corridor_ids=step6_final_foreign_road_arm_corridor_ids,
+                    foreign_overlap_metric_m=step6_final_foreign_overlap_metric_m,
+                    foreign_tail_length_m=post_trim_non_target_tail_length_m,
+                    foreign_overlap_zero_but_tail_present=(
+                        foreign_overlap_zero_but_tail_present
+                    ),
+                    geometry_review_reason=acceptance_reason,
+                ),
+            ),
+        )
+        success_contracts = assemble_stage3_success_contracts(
+            build_stage3_success_contract_assembly_inputs_from_results(
+                step_results=success_step_results,
+                final_decision_inputs=build_stage3_success_final_decision_inputs(
+                    Stage3SuccessDecisionBuildInputs(
+                        success=effect_success,
+                        acceptance_class=acceptance_class,
+                        acceptance_reason=acceptance_reason,
+                        status=status,
+                        representative_has_evd=representative_node.has_evd,
+                        representative_is_anchor=representative_node.is_anchor,
+                        representative_kind_2=representative_node.kind_2,
+                        business_match_reason=business_match_reason,
+                        single_sided_t_mouth_corridor_semantic_gap=single_sided_t_mouth_corridor_semantic_gap,
+                        final_uncovered_selected_endpoint_node_count=len(final_uncovered_selected_rc_endpoint_node_ids),
+                        selected_rc_node_count=len(selected_rc_node_ids),
+                        selected_rc_road_count=len(selected_rc_roads),
+                        polygon_support_rc_node_count=len(polygon_support_rc_node_ids),
+                        polygon_support_rc_road_count=len(polygon_support_rc_road_ids),
+                        invalid_rc_node_count=len(invalid_rc_node_ids),
+                        invalid_rc_road_count=len(invalid_rc_road_ids),
+                        drivezone_is_empty=drivezone_union.is_empty,
+                        polygon_is_empty=virtual_polygon_geometry.is_empty,
+                    )
+                ),
+            )
+        )
+        step3_result = success_contracts.step3_result
+        step5_result = success_contracts.step5_result
+        step6_result = success_contracts.step6_result
+        step7_assembly = success_contracts.step7_assembly
+        legacy_stage3_audit_envelope = success_contracts.legacy_stage3_audit_envelope
+        review_metadata = success_contracts.review_metadata
+        official_review_decision = success_contracts.official_review_decision
+        polygon_properties = build_stage3_polygon_properties(
+            representative_properties=representative_node.properties,
+            representative_kind=representative_node.kind,
+            representative_node_id=representative_node.node_id,
+            representative_mainnodeid=representative_node.mainnodeid,
+            status=status,
+            kind_2=representative_node.kind_2,
+            grade_2=representative_node.grade_2,
+        )
+        if polygon_properties.get("kind") in {None, ""}:
+            raise VirtualIntersectionPocError(
+                REASON_MISSING_REQUIRED_FIELD,
+                (
+                    "representative node lacks both nodes.kind and nodes.kind_2; "
+                    "cannot write final output field 'kind'."
+                ),
+            )
         virtual_polygon_feature = {
-            "properties": {
-                "mainnodeid": normalized_mainnodeid,
-                "status": status,
-                "representative_node_id": representative_node.node_id,
-                "kind_2": representative_node.kind_2,
-                "grade_2": representative_node.grade_2,
-            },
+            "properties": polygon_properties,
             "geometry": virtual_polygon_geometry,
         }
-        write_vector(virtual_polygon_path, [virtual_polygon_feature])
+        write_vector(virtual_polygon_path, [virtual_polygon_feature], crs_text=TARGET_CRS.to_string())
         write_json(
             branch_evidence_json_path,
             {
@@ -16646,7 +19317,11 @@ def run_t02_virtual_intersection_poc(
         write_csv(audit_csv_path, audit_rows, fieldnames=AUDIT_FIELDNAMES)
         write_json(audit_json_path, audit_rows)
         counts["audit_count"] = len(audit_rows)
-        if debug and not effect_success:
+        canonical_step7_result = success_contracts.canonical_step7_result
+        effect_success = canonical_step7_result.success
+        acceptance_class = canonical_step7_result.acceptance_class
+        acceptance_reason = canonical_step7_result.acceptance_reason
+        if debug and acceptance_class != "accepted":
             try:
                 _write_debug_rendered_map(
                     out_path=rendered_map_path,
@@ -16664,6 +19339,7 @@ def run_t02_virtual_intersection_poc(
                     excluded_rc_road_ids=polygon_excluded_rc_road_ids,
                     excluded_rc_node_ids=invalid_rc_node_ids,
                     failure_reason=acceptance_reason or status,
+                    failure_class=acceptance_class,
                 )
                 debug_rendered_map_written = True
                 announce(
@@ -16675,41 +19351,6 @@ def run_t02_virtual_intersection_poc(
                 )
             except Exception as exc:
                 announce(logger, f"[T02-POC] failure overlay debug rendered map skipped reason={type(exc).__name__}: {exc}")
-        status_doc = {
-            "run_id": resolved_run_id,
-            "success": effect_success,
-            "flow_success": True,
-            "acceptance_class": acceptance_class,
-            "acceptance_reason": acceptance_reason,
-            "business_match_class": business_match_class,
-            "business_match_reason": business_match_reason,
-            "mainnodeid": normalized_mainnodeid,
-            "representative_node_id": representative_node.node_id,
-            "kind_2": representative_node.kind_2,
-            "grade_2": representative_node.grade_2,
-            "status": status,
-            "risks": risks,
-            "counts": counts,
-            "review_mode": review_mode,
-            "patch": {
-                "buffer_m": buffer_m,
-                "patch_size_m": patch_size_m,
-                "resolution_m": resolution_m,
-            },
-            "selected_positive_rc_groups": sorted(positive_rc_groups),
-            "excluded_negative_rc_groups": sorted(negative_rc_groups),
-            "output_files": {
-                "virtual_intersection_polygon": str(virtual_polygon_path),
-                "branch_evidence_json": str(branch_evidence_json_path),
-                "branch_evidence_geojson": str(branch_evidence_geojson_path),
-                "associated_rcsdroad": str(associated_rcsdroad_path),
-                "associated_rcsdnode": str(associated_rcsdnode_path),
-                "audit_csv": str(audit_csv_path),
-                "audit_json": str(audit_json_path),
-                "rendered_map_png": str(rendered_map_path) if debug_rendered_map_written else None,
-            },
-        }
-        write_json(status_path, status_doc)
         announce(
             logger,
             (
@@ -16719,29 +19360,85 @@ def run_t02_virtual_intersection_poc(
             ),
         )
         emit_progress_snapshot(
-            status="success" if effect_success else "completed_with_review_required_result",
+            status=(
+                "success"
+                if acceptance_class == "accepted"
+                else (
+                    "completed_with_review_required_result"
+                    if acceptance_class == "review_required"
+                    else "failed"
+                )
+            ),
             current_stage="complete",
             message=(
                 "T02 virtual intersection POC completed and accepted."
-                if effect_success
-                else "T02 virtual intersection POC completed but requires review before acceptance."
+                if acceptance_class == "accepted"
+                else (
+                    "T02 virtual intersection POC completed but requires review before acceptance."
+                    if acceptance_class == "review_required"
+                    else "T02 virtual intersection POC completed with rejected outcome."
+                )
             ),
         )
         record_stage("outputs_written")
         total_wall_time_sec = time.perf_counter() - started_at
-        perf_doc = {
-            "run_id": resolved_run_id,
-            "success": effect_success,
-            "flow_success": True,
-            "acceptance_class": acceptance_class,
-            "acceptance_reason": acceptance_reason,
-            "business_match_class": business_match_class,
-            "business_match_reason": business_match_reason,
-            "total_wall_time_sec": round(total_wall_time_sec, 6),
-            "counts": counts,
-            "stage_timings": stage_timings,
-            **_tracemalloc_stats(),
-        }
+        success_output_bundle = build_stage3_success_output_bundle(
+            run_id=resolved_run_id,
+            business_match_class=business_match_class,
+            business_match_reason=business_match_reason,
+            template_class=stage3_template_class,
+            mainnodeid=normalized_mainnodeid,
+            representative_node_id=representative_node.node_id,
+            representative_kind=representative_node.kind,
+            representative_has_evd=representative_node.has_evd,
+            representative_is_anchor=representative_node.is_anchor,
+            resolved_kind=polygon_properties.get("kind"),
+            kind_source=polygon_properties.get("kind_source"),
+            kind_2=representative_node.kind_2,
+            grade_2=representative_node.grade_2,
+            counts=counts,
+            review_mode=review_mode,
+            risks=risks,
+            patch={
+                "buffer_m": buffer_m,
+                "patch_size_m": patch_size_m,
+                "resolution_m": resolution_m,
+            },
+            selected_positive_rc_groups=sorted(positive_rc_groups),
+            excluded_negative_rc_groups=sorted(negative_rc_groups),
+            single_sided_unrelated_opposite_lane_trim_applied=single_sided_unrelated_opposite_lane_trim_applied,
+            soft_excluded_rc_corridor_trim_applied=soft_excluded_rc_corridor_trim_applied,
+            late_cleanup_flags={
+                "late_single_sided_branch_cap_cleanup_applied": late_single_sided_branch_cap_cleanup_applied,
+                "late_post_soft_overlap_trim_applied": late_post_soft_overlap_trim_applied,
+                "late_final_foreign_residue_trim_applied": late_final_foreign_residue_trim_applied,
+                "late_single_sided_partial_branch_strip_cleanup_applied": late_single_sided_partial_branch_strip_cleanup_applied,
+                "late_single_sided_corridor_mask_cleanup_applied": late_single_sided_corridor_mask_cleanup_applied,
+                "late_single_sided_tail_clip_cleanup_applied": late_single_sided_tail_clip_cleanup_applied,
+            },
+            post_trim_non_target_tail_length_m=post_trim_non_target_tail_length_m,
+            foreign_overlap_zero_but_tail_present=foreign_overlap_zero_but_tail_present,
+            review_metadata=review_metadata,
+            official_review_decision=official_review_decision,
+            audit_envelope=legacy_stage3_audit_envelope,
+            virtual_polygon_path=virtual_polygon_path,
+            branch_evidence_json_path=branch_evidence_json_path,
+            branch_evidence_geojson_path=branch_evidence_geojson_path,
+            associated_rcsdroad_path=associated_rcsdroad_path,
+            associated_rcsdnode_path=associated_rcsdnode_path,
+            audit_csv_path=audit_csv_path,
+            audit_json_path=audit_json_path,
+            rendered_map_path=rendered_map_path if debug_rendered_map_written else None,
+            total_wall_time_sec=total_wall_time_sec,
+            stage_timings=stage_timings,
+            perf_extra_fields={
+                "single_sided_unrelated_opposite_lane_trim_applied": single_sided_unrelated_opposite_lane_trim_applied,
+                **_tracemalloc_stats(),
+            },
+        )
+        status_doc = success_output_bundle.status_doc
+        perf_doc = success_output_bundle.perf_doc
+        write_json(status_path, status_doc)
         write_json(perf_json_path, perf_doc)
         return VirtualIntersectionArtifacts(
             success=effect_success,
@@ -16832,7 +19529,7 @@ def run_t02_virtual_intersection_poc(
                             "[T02-POC] wrote failure debug rendered map "
                             f"path={rendered_map_path} reason={exc.reason}"
                         ),
-                    )
+                )
             except Exception as render_exc:
                 announce(
                     logger,
@@ -16841,49 +19538,103 @@ def run_t02_virtual_intersection_poc(
                         f"reason={type(render_exc).__name__}: {render_exc}"
                     ),
                 )
+        try:
+            write_vector(
+                virtual_polygon_path,
+                [],
+                crs_text=TARGET_CRS.to_string(),
+            )
+        except Exception as polygon_exc:
+            announce(
+                logger,
+                (
+                    "[T02-POC] failed polygon placeholder skipped "
+                    f"reason={type(polygon_exc).__name__}: {polygon_exc}"
+                ),
+            )
         write_csv(audit_csv_path, audit_rows, fieldnames=AUDIT_FIELDNAMES)
         write_json(audit_json_path, audit_rows)
-        status_doc = {
-            "run_id": resolved_run_id,
-            "success": False,
-            "flow_success": False,
-            "acceptance_class": "rejected",
-            "acceptance_reason": exc.reason,
-            "business_match_class": (
-                BUSINESS_MATCH_PARTIAL_RCSD
-                if counts.get("local_rcsdroad_count", 0) > 0 or counts.get("local_rcsdnode_count", 0) > 0
-                else BUSINESS_MATCH_SWSD_ONLY
+        representative_node_for_failure = locals().get("representative_node")
+        failure_step7_result = build_stage3_failure_step7_result(
+            mainnodeid=normalized_mainnodeid,
+            template_class=str(locals().get("stage3_template_class") or TEMPLATE_GENERIC_JUNCTION),
+            acceptance_reason=exc.reason,
+            status=exc.reason,
+        )
+        failure_audit_envelope = build_stage3_failure_audit_envelope(
+            mainnodeid=normalized_mainnodeid,
+            acceptance_reason=exc.reason,
+            template_class=str(locals().get("stage3_template_class") or TEMPLATE_GENERIC_JUNCTION),
+            context=build_minimal_stage3_context(
+                representative_node_id=normalized_mainnodeid,
+                normalized_mainnodeid=normalized_mainnodeid,
+                template_class=str(locals().get("stage3_template_class") or TEMPLATE_GENERIC_JUNCTION),
+                representative_kind_2=(
+                    representative_node_for_failure.kind_2
+                    if representative_node_for_failure is not None
+                    else None
+                ),
             ),
-            "business_match_reason": (
-                "failed_with_partial_rcsd_context"
-                if counts.get("local_rcsdroad_count", 0) > 0 or counts.get("local_rcsdnode_count", 0) > 0
-                else "failed_without_usable_rcsd_context"
+            representative_has_evd=(
+                representative_node_for_failure.has_evd if representative_node_for_failure is not None else None
             ),
-            "mainnodeid": normalized_mainnodeid,
-            "status": exc.reason,
-            "risks": [exc.reason],
-            "detail": exc.detail,
-            "counts": counts,
-            "review_mode": review_mode,
-            "output_files": {
-                "rendered_map_png": str(rendered_map_path) if debug_rendered_map_written else None,
-            },
-        }
+            representative_is_anchor=(
+                representative_node_for_failure.is_anchor if representative_node_for_failure is not None else None
+            ),
+            representative_kind_2=(
+                representative_node_for_failure.kind_2 if representative_node_for_failure is not None else None
+            ),
+            step7_result=failure_step7_result,
+        )
+        failure_review_metadata = failure_audit_envelope.review_metadata
+        failure_official_review_decision = failure_audit_envelope.official_review_decision
+        failure_business_match_class = (
+            BUSINESS_MATCH_PARTIAL_RCSD
+            if counts.get("local_rcsdroad_count", 0) > 0 or counts.get("local_rcsdnode_count", 0) > 0
+            else BUSINESS_MATCH_SWSD_ONLY
+        )
+        failure_business_match_reason = (
+            "failed_with_partial_rcsd_context"
+            if counts.get("local_rcsdroad_count", 0) > 0 or counts.get("local_rcsdnode_count", 0) > 0
+            else "failed_without_usable_rcsd_context"
+        )
+        failure_output_bundle = build_stage3_failure_output_bundle(
+            run_id=resolved_run_id,
+            mainnodeid=normalized_mainnodeid,
+            detail=exc.detail,
+            counts=counts,
+            review_mode=review_mode,
+            business_match_class=failure_business_match_class,
+            business_match_reason=failure_business_match_reason,
+            representative_node_id=(
+                representative_node_for_failure.node_id if representative_node_for_failure is not None else None
+            ),
+            representative_kind=(
+                representative_node_for_failure.kind if representative_node_for_failure is not None else None
+            ),
+            representative_has_evd=(
+                representative_node_for_failure.has_evd if representative_node_for_failure is not None else None
+            ),
+            representative_is_anchor=(
+                representative_node_for_failure.is_anchor if representative_node_for_failure is not None else None
+            ),
+            kind_2=(
+                representative_node_for_failure.kind_2 if representative_node_for_failure is not None else None
+            ),
+            grade_2=(
+                representative_node_for_failure.grade_2 if representative_node_for_failure is not None else None
+            ),
+            audit_envelope=failure_audit_envelope,
+            virtual_polygon_path=virtual_polygon_path,
+            rendered_map_path=rendered_map_path if debug_rendered_map_written else None,
+            template_class=str(locals().get("stage3_template_class") or TEMPLATE_GENERIC_JUNCTION),
+            total_wall_time_sec=(time.perf_counter() - started_at),
+            stage_timings=stage_timings,
+            perf_extra_fields=_tracemalloc_stats(),
+        )
+        status_doc = failure_output_bundle.status_doc
         write_json(status_path, status_doc)
-        total_wall_time_sec = time.perf_counter() - started_at
-        perf_doc = {
-            "run_id": resolved_run_id,
-            "success": False,
-            "flow_success": False,
-            "acceptance_class": "rejected",
-            "acceptance_reason": exc.reason,
-            "business_match_class": status_doc["business_match_class"],
-            "business_match_reason": status_doc["business_match_reason"],
-            "total_wall_time_sec": round(total_wall_time_sec, 6),
-            "counts": counts,
-            "stage_timings": stage_timings,
-            **_tracemalloc_stats(),
-        }
+        perf_doc = failure_output_bundle.perf_doc
         write_json(perf_json_path, perf_doc)
         announce(logger, f"[T02-POC] failed reason={exc.reason} detail={exc.detail}")
         return VirtualIntersectionArtifacts(

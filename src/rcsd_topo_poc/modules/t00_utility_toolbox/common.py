@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
+import re
 import shapefile
 from collections import Counter
 from dataclasses import dataclass
@@ -63,7 +65,7 @@ def remove_existing_output(path: Path) -> None:
 
 
 def prefer_vector_input_path(path: Path) -> Path:
-    resolved = Path(path)
+    resolved = normalize_runtime_path(path)
     suffix = resolved.suffix.lower()
     if suffix in GEOPACKAGE_SUFFIXES:
         return resolved
@@ -72,6 +74,23 @@ def prefer_vector_input_path(path: Path) -> Path:
         if candidate.is_file():
             return candidate
     return resolved
+
+
+def normalize_runtime_path(path: Path | str) -> Path:
+    raw = str(path)
+    if os.name == "nt":
+        match = re.match(r"^[\\/]+mnt[\\/]+([a-zA-Z])[\\/](.*)$", raw)
+        if match:
+            drive_letter = match.group(1).upper()
+            tail = match.group(2).replace("/", "\\")
+            return Path(f"{drive_letter}:\\{tail}")
+    else:
+        match = re.match(r"^([a-zA-Z]):[\\/](.*)$", raw)
+        if match:
+            drive_letter = match.group(1).lower()
+            tail = match.group(2).replace("\\", "/")
+            return Path(f"/mnt/{drive_letter}/{tail}")
+    return Path(path)
 
 
 def build_logger(log_path: Path, logger_name: str) -> logging.Logger:

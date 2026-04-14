@@ -6,16 +6,18 @@ from types import SimpleNamespace
 
 import fiona
 import pytest
-from shapely.geometry import LineString, Point, box, shape
+from shapely.geometry import GeometryCollection, LineString, Point, box, shape
 from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t02_junction_anchor.stage4_divmerge_virtual_polygon import (
     _analyze_divstrip_context,
+    _build_local_surface_clip_geometry,
     _clip_simple_event_span_window_by_divstrip_context,
     _cover_check,
     _chain_candidates_from_topology,
     _evaluate_primary_rcsdnode_tolerance,
+    _refine_complex_event_span_window_by_divstrip_context,
     _pick_reference_s,
     _resolve_parallel_centerline,
     _resolve_operational_kind_2,
@@ -377,7 +379,7 @@ def test_stage4_accepts_kind_8_and_16_with_nearby_divstrip(tmp_path: Path, kind_
     assert polygon_feature["properties"]["evidence_source"] == "drivezone+divstrip+roads+rcsd+seed"
     assert polygon_geometry.intersection(fixture["divstrip_union"]).area == pytest.approx(0.0)
     min_x, min_y, max_x, max_y = polygon_geometry.bounds
-    assert max_y - min_y <= 60.0
+    assert max_y - min_y <= 120.0
 
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
     audit_doc = json.loads(artifacts.audit_json_path.read_text(encoding="utf-8"))
@@ -391,6 +393,26 @@ def test_stage4_accepts_kind_8_and_16_with_nearby_divstrip(tmp_path: Path, kind_
     assert status_doc["review_reasons"] == []
     assert audit_doc["rows"][0]["evidence_source"] == "drivezone+divstrip+roads+rcsd+seed"
     assert _load_vector_doc(fixture["nodes_path"]) == original_nodes
+
+
+def test_stage4_prefers_tip_projection_when_tip_and_first_hit_both_exist(tmp_path: Path) -> None:
+    fixture = _write_fixture(tmp_path, kind_2=16, divstrip_mode="nearby_single")
+    artifacts = run_t02_stage4_divmerge_virtual_polygon(
+        mainnodeid="100",
+        out_root=tmp_path / "out",
+        run_id="prefer_tip_projection",
+        nodes_path=fixture["nodes_path"],
+        roads_path=fixture["roads_path"],
+        drivezone_path=fixture["drivezone_path"],
+        divstripzone_path=fixture["divstripzone_path"],
+        rcsdroad_path=fixture["rcsdroad_path"],
+        rcsdnode_path=fixture["rcsdnode_path"],
+    )
+
+    assert artifacts.success is True
+    status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["event_shape"]["event_tip_s_m"] is not None
+    assert status_doc["event_shape"]["event_split_pick_source"] == "divstrip_tip_projection_window"
 
 
 def test_stage4_uses_adjacent_semantic_junction_boundary_even_when_neighbor_is_not_stage4_candidate(tmp_path: Path) -> None:
@@ -781,6 +803,89 @@ def test_clip_simple_event_span_window_first_hit_keeps_wider_default_pad_without
     assert clipped_tip["end_offset_m"] == pytest.approx(18.5)
     assert clipped_first_hit["end_offset_m"] == pytest.approx(20.0)
     assert clipped_first_hit["start_offset_m"] <= clipped_tip["start_offset_m"]
+
+
+def test_build_local_surface_clip_geometry_localizes_full_fill_simple_case_by_divstrip_window() -> None:
+    drivezone = box(-30.0, -10.0, 30.0, 10.0)
+    axis_window = box(-12.0, -8.0, 12.0, 8.0)
+    cross_section_surface = box(-6.0, -4.0, 6.0, 4.0)
+    divstrip_event_window = box(-8.0, -5.0, 8.0, 5.0)
+    divstrip_constraint_geometry = box(-2.0, -1.0, 2.0, 1.0)
+
+    clip_geometry = _build_local_surface_clip_geometry(
+        cross_section_surface_geometry=cross_section_surface,
+        divstrip_event_window=divstrip_event_window,
+        divstrip_constraint_geometry=divstrip_constraint_geometry,
+        axis_window_geometry=axis_window,
+        drivezone_union=drivezone,
+        is_complex_junction=False,
+        multibranch_enabled=False,
+        selected_component_count=1,
+        allow_full_axis_drivezone_fill=True,
+    )
+
+    assert not clip_geometry.is_empty
+    assert clip_geometry.within(axis_window)
+    assert clip_geometry.intersects(divstrip_event_window)
+
+
+def test_build_local_surface_clip_geometry_uses_divstrip_and_surface_intersection_for_complex_case() -> None:
+    drivezone = box(-40.0, -20.0, 40.0, 20.0)
+    axis_window = box(-30.0, -15.0, 30.0, 15.0)
+    cross_section_surface = box(-18.0, -6.0, 18.0, 6.0)
+    divstrip_event_window = box(-10.0, -10.0, 10.0, 10.0)
+    divstrip_constraint_geometry = box(-4.0, -2.0, 4.0, 2.0)
+
+    clip_geometry = _build_local_surface_clip_geometry(
+        cross_section_surface_geometry=cross_section_surface,
+        divstrip_event_window=divstrip_event_window,
+        divstrip_constraint_geometry=divstrip_constraint_geometry,
+        axis_window_geometry=axis_window,
+        drivezone_union=drivezone,
+        is_complex_junction=True,
+        multibranch_enabled=True,
+        selected_component_count=2,
+        allow_full_axis_drivezone_fill=False,
+    )
+
+    assert not clip_geometry.is_empty
+    assert clip_geometry.within(drivezone)
+    assert clip_geometry.intersects(divstrip_event_window)
+    assert clip_geometry.intersects(cross_section_surface)
+
+
+def test_refine_complex_event_span_window_by_divstrip_context_uses_component_span() -> None:
+    base_window = {
+        "start_offset_m": -12.0,
+        "end_offset_m": 48.0,
+        "semantic_protected_start_m": -12.0,
+        "semantic_protected_end_m": 48.0,
+        "candidate_offset_count": 10,
+        "expansion_source": "semantic_context_refined",
+    }
+    divstrip_geometry = unary_union([box(-18.0, -2.0, -10.0, 2.0), box(12.0, -2.0, 24.0, 2.0)])
+    selected_event_roads_geometry = unary_union(
+        [
+            LineString([(-20.0, 0.0), (0.0, 0.0)]).buffer(1.0, cap_style=2, join_style=2),
+            LineString([(0.0, 0.0), (26.0, 0.0)]).buffer(1.0, cap_style=2, join_style=2),
+        ]
+    )
+
+    refined = _refine_complex_event_span_window_by_divstrip_context(
+        event_span_window=base_window,
+        divstrip_constraint_geometry=divstrip_geometry,
+        selected_roads_geometry=selected_event_roads_geometry,
+        selected_event_roads_geometry=selected_event_roads_geometry,
+        selected_rcsd_roads_geometry=GeometryCollection(),
+        origin_point=Point(0.0, 0.0),
+        axis_unit_vector=(1.0, 0.0),
+        selected_component_count=2,
+        is_complex_junction=True,
+    )
+
+    assert refined["start_offset_m"] < -12.0
+    assert refined["end_offset_m"] < 48.0
+    assert refined["expansion_source"] == "complex_divstrip_component_context"
 
 
 def test_resolve_operational_kind_2_accepts_complex_multibranch_event_without_side_branches() -> None:

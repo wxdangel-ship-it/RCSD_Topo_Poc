@@ -16,6 +16,7 @@ dist/
 
 # IDE
 .idea/
+.claude/
 
 # Generated outputs
 outputs/

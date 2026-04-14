@@ -138,6 +138,7 @@ EVENT_CROSS_HALF_LEN_MAX_M = 130.0
 EVENT_CROSS_HALF_LEN_AXIS_SAMPLE_WINDOW_M = 50.0
 EVENT_CROSS_HALF_LEN_SIDE_MARGIN_M = 10.0
 EVENT_CROSS_HALF_LEN_PATCH_SCALE_RATIO = 0.5
+FULL_FILL_SPAN_HALF_MIN_M = 25.0
 PARALLEL_ROAD_ANGLE_TOLERANCE_DEG = 18.0
 PARALLEL_ROAD_MIN_OFFSET_M = 4.0
 PARALLEL_ROAD_MAX_OFFSET_M = 80.0
@@ -1390,6 +1391,119 @@ def _build_divstrip_event_window(
     return event_window if not event_window.is_empty else GeometryCollection()
 
 
+def _build_local_surface_clip_geometry(
+    *,
+    cross_section_surface_geometry,
+    divstrip_event_window,
+    divstrip_constraint_geometry,
+    axis_window_geometry,
+    drivezone_union,
+    is_complex_junction: bool,
+    multibranch_enabled: bool,
+    selected_component_count: int,
+    allow_full_axis_drivezone_fill: bool,
+):
+    if bool(allow_full_axis_drivezone_fill):
+        clip_geometry = (
+            axis_window_geometry
+            if axis_window_geometry is not None and not axis_window_geometry.is_empty
+            else GeometryCollection()
+        )
+        if not clip_geometry.is_empty and drivezone_union is not None and not drivezone_union.is_empty:
+            clip_geometry = clip_geometry.intersection(drivezone_union).buffer(0)
+        return clip_geometry if not clip_geometry.is_empty else GeometryCollection()
+
+    prefer_divstrip_local_window = (
+        bool(is_complex_junction)
+        or bool(multibranch_enabled)
+        or int(selected_component_count) > 1
+    )
+    source_geometries = (
+        [divstrip_event_window, cross_section_surface_geometry]
+        if prefer_divstrip_local_window
+        else [cross_section_surface_geometry, divstrip_event_window]
+    )
+    if prefer_divstrip_local_window:
+        localized_divstrip_clip = GeometryCollection()
+        localized_intersection = GeometryCollection()
+        if divstrip_constraint_geometry is not None and not divstrip_constraint_geometry.is_empty:
+            localized_divstrip_clip = divstrip_constraint_geometry.buffer(
+                max(float(DIVSTRIP_EVENT_BUFFER_M), float(EVENT_COMPONENT_SIDE_CLIP_BUFFER_M)),
+                cap_style=2,
+                join_style=2,
+            )
+            if divstrip_event_window is not None and not divstrip_event_window.is_empty:
+                localized_divstrip_clip = localized_divstrip_clip.intersection(divstrip_event_window).buffer(0)
+        localized_surface_clip = GeometryCollection()
+        if cross_section_surface_geometry is not None and not cross_section_surface_geometry.is_empty:
+            localized_surface_clip = cross_section_surface_geometry.buffer(
+                max(1.5, min(float(EVENT_COMPONENT_SIDE_CLIP_BUFFER_M) * 0.25, 3.0)),
+                cap_style=2,
+                join_style=2,
+            )
+            if drivezone_union is not None and not drivezone_union.is_empty:
+                localized_surface_clip = localized_surface_clip.intersection(drivezone_union).buffer(0)
+        if (
+            localized_divstrip_clip is not None
+            and not localized_divstrip_clip.is_empty
+            and localized_surface_clip is not None
+            and not localized_surface_clip.is_empty
+        ):
+            localized_intersection = localized_divstrip_clip.intersection(localized_surface_clip).buffer(0)
+            if int(selected_component_count) > 1:
+                if not localized_intersection.is_empty:
+                    clip_parts = [localized_intersection]
+                else:
+                    clip_parts = [localized_divstrip_clip]
+            elif not localized_intersection.is_empty:
+                clip_parts = [localized_intersection]
+            else:
+                clip_parts = [localized_divstrip_clip]
+        else:
+            clip_parts = [
+                geometry
+                for geometry in [localized_divstrip_clip, localized_surface_clip]
+                if geometry is not None and not geometry.is_empty
+            ]
+        if not clip_parts:
+            clip_parts = [
+                geometry for geometry in [axis_window_geometry, cross_section_surface_geometry]
+                if geometry is not None and not geometry.is_empty
+            ]
+    else:
+        clip_parts = [
+            geometry
+            for geometry in source_geometries
+            if geometry is not None and not geometry.is_empty
+        ]
+    if not clip_parts:
+        return GeometryCollection()
+
+    clip_geometry = unary_union(clip_parts)
+    if drivezone_union is not None and not drivezone_union.is_empty:
+        clip_geometry = clip_geometry.intersection(drivezone_union).buffer(0)
+    if clip_geometry.is_empty:
+        return GeometryCollection()
+
+    clip_buffer_m = 0.0
+    if not is_complex_junction and not multibranch_enabled and int(selected_component_count) <= 1:
+        clip_buffer_m = max(float(EVENT_ANCHOR_BUFFER_M), float(ROAD_BUFFER_M), 2.5)
+    elif is_complex_junction or multibranch_enabled or int(selected_component_count) > 1:
+        clip_buffer_m = max(1.5, min(float(EVENT_COMPONENT_SIDE_CLIP_BUFFER_M) * 0.35, 3.0))
+
+    if clip_buffer_m > 1e-6:
+        buffered_geometry = clip_geometry.buffer(
+            clip_buffer_m,
+            cap_style=2,
+            join_style=2,
+        )
+        if drivezone_union is not None and not drivezone_union.is_empty:
+            buffered_geometry = buffered_geometry.intersection(drivezone_union).buffer(0)
+        if not buffered_geometry.is_empty:
+            clip_geometry = buffered_geometry
+    return clip_geometry if not clip_geometry.is_empty else GeometryCollection()
+
+
 def _localize_divstrip_reference_geometry(
     *,
     divstrip_constraint_geometry,
@@ -2421,6 +2535,140 @@ def _clip_simple_event_span_window_by_divstrip_context(
     clipped_window["end_offset_m"] = float(clipped_end)
     clipped_window["expansion_source"] = "simple_divstrip_clipped"
     return clipped_window
+
+
+def _refine_complex_event_span_window_by_divstrip_context(
+    *,
+    event_span_window: dict[str, Any],
+    divstrip_constraint_geometry,
+    selected_roads_geometry,
+    selected_event_roads_geometry,
+    selected_rcsd_roads_geometry,
+    origin_point: Point,
+    axis_unit_vector: tuple[float, float] | None,
+    selected_component_count: int,
+    is_complex_junction: bool,
+) -> dict[str, Any]:
+    if (
+        axis_unit_vector is None
+        or not is_complex_junction
+        or int(selected_component_count) <= 1
+        or divstrip_constraint_geometry is None
+        or divstrip_constraint_geometry.is_empty
+    ):
+        return event_span_window
+
+    origin_xy = (float(origin_point.x), float(origin_point.y))
+    component_offsets: list[float] = []
+    component_local_span_cap_m = max(
+        float(EVENT_SPAN_DEFAULT_M),
+        float(EVENT_COMPONENT_SIDE_CLIP_BUFFER_M) * 2.0,
+        12.0,
+    )
+    selected_components = [
+        component
+        for component in _collect_polygon_components(divstrip_constraint_geometry)
+        if component is not None and not component.is_empty
+    ]
+    for component_geometry in selected_components:
+        component_repr = component_geometry.representative_point()
+        if component_repr is None or component_repr.is_empty:
+            continue
+        component_center_offset = _project_point_to_axis(
+            component_repr,
+            origin_xy=origin_xy,
+            axis_unit_vector=axis_unit_vector,
+        )
+        if not math.isfinite(float(component_center_offset)):
+            continue
+        component_local_offsets = [
+            float(offset)
+            for offset in _collect_axis_offsets_from_geometry(
+                component_geometry,
+                origin_xy=(float(component_repr.x), float(component_repr.y)),
+                axis_unit_vector=axis_unit_vector,
+            )
+            if math.isfinite(float(offset))
+        ]
+        if component_local_offsets:
+            component_offsets.extend(
+                [
+                    float(component_center_offset)
+                    + max(float(min(component_local_offsets)), -component_local_span_cap_m),
+                    float(component_center_offset)
+                    + min(float(max(component_local_offsets)), component_local_span_cap_m),
+                ]
+            )
+        else:
+            component_offsets.extend(
+                [
+                    float(component_center_offset) - component_local_span_cap_m,
+                    float(component_center_offset) + component_local_span_cap_m,
+                ]
+            )
+    if not component_offsets:
+        component_offsets = [
+            float(offset)
+            for offset in _collect_axis_offsets_from_geometry(
+                divstrip_constraint_geometry,
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+            )
+            if math.isfinite(float(offset))
+        ]
+    if not component_offsets:
+        return event_span_window
+
+    component_min_offset = float(min(component_offsets))
+    component_max_offset = float(max(component_offsets))
+    context_start = float(component_min_offset - EVENT_SPAN_MARGIN_M)
+    context_end = float(component_max_offset + EVENT_SPAN_MARGIN_M)
+    local_context_start = float(context_start - EVENT_SPAN_LOCAL_CONTEXT_PAD_M)
+    local_context_end = float(context_end + EVENT_SPAN_LOCAL_CONTEXT_PAD_M)
+
+    def _collect_context_offsets(geometry) -> list[float]:
+        return [
+            float(offset)
+            for offset in _collect_axis_offsets_from_geometry(
+                geometry,
+                origin_xy=origin_xy,
+                axis_unit_vector=axis_unit_vector,
+            )
+            if (
+                math.isfinite(float(offset))
+                and float(local_context_start) - EVENT_SPAN_MARGIN_M
+                <= float(offset)
+                <= float(local_context_end) + EVENT_SPAN_MARGIN_M
+            )
+        ]
+
+    candidate_offsets = list(component_offsets)
+
+    if not candidate_offsets:
+        return event_span_window
+
+    extra_pad_m = max(float(EVENT_ANCHOR_BUFFER_M) * 1.5, float(EVENT_SPAN_MARGIN_M), 6.0)
+    component_context_extend_cap_m = max(extra_pad_m, float(EVENT_SPAN_LOCAL_CONTEXT_PAD_M), 12.0)
+    refined_start = max(
+        -CHAIN_CONTEXT_EVENT_SPAN_M,
+        float(min(candidate_offsets) - extra_pad_m),
+        float(component_min_offset - component_context_extend_cap_m),
+    )
+    refined_end = min(
+        CHAIN_CONTEXT_EVENT_SPAN_M,
+        float(max(candidate_offsets) + extra_pad_m),
+        float(component_max_offset + component_context_extend_cap_m),
+    )
+    if refined_end - refined_start <= EVENT_SPAN_MARGIN_M * 2.0:
+        return event_span_window
+
+    refined_window = dict(event_span_window)
+    refined_window["start_offset_m"] = float(refined_start)
+    refined_window["end_offset_m"] = float(refined_end)
+    refined_window["semantic_protected_start_m"] = float(refined_start)
+    refined_window["semantic_protected_end_m"] = float(refined_end)
+    refined_window["expansion_source"] = "complex_divstrip_component_context"
+    return refined_window
 
 
 def _build_axis_window_mask(
@@ -3859,15 +4107,31 @@ def _build_cross_section_surface_geometry(
         if found_segment is None or not segment_diag["ok"]:
             continue
         drivezone_pieces = _collect_line_parts(crossline.intersection(drivezone_union))
-        clipped_line = _build_continuous_line_from_crossline(
-            crossline=crossline,
-            pieces_raw=drivezone_pieces,
-            center_point=center_point,
-            found_segment=found_segment,
-            drivezone_union=drivezone_union,
-            edge_pad_m=max(step_m * 0.5, resolution_m * 0.75),
-            support_geometry=support_geometry,
-        )
+        if support_geometry is None and drivezone_pieces:
+            all_s_values: list[float] = []
+            for piece in drivezone_pieces:
+                for coord in list(piece.coords):
+                    if len(coord) >= 2:
+                        all_s_values.append(float(crossline.project(Point(float(coord[0]), float(coord[1])))))
+            if all_s_values:
+                full_start = crossline.interpolate(min(all_s_values))
+                full_end = crossline.interpolate(max(all_s_values))
+                clipped_line = LineString([
+                    (float(full_start.x), float(full_start.y)),
+                    (float(full_end.x), float(full_end.y)),
+                ])
+            else:
+                clipped_line = None
+        else:
+            clipped_line = _build_continuous_line_from_crossline(
+                crossline=crossline,
+                pieces_raw=drivezone_pieces,
+                center_point=center_point,
+                found_segment=found_segment,
+                drivezone_union=drivezone_union,
+                edge_pad_m=max(step_m * 0.5, resolution_m * 0.75),
+                support_geometry=support_geometry,
+            )
         if clipped_line is None:
             continue
         clipped_line = _clip_line_to_parallel_midline(
@@ -4787,12 +5051,12 @@ def _resolve_event_reference_point(
 
     divstrip_ref_s = None
     divstrip_ref_source = "none"
-    if first_divstrip_hit_s is not None:
-        divstrip_ref_s = float(first_divstrip_hit_s)
-        divstrip_ref_source = "first_hit"
-    elif tip_s is not None:
+    if tip_s is not None:
         divstrip_ref_s = float(tip_s)
         divstrip_ref_source = "tip_projection"
+    elif first_divstrip_hit_s is not None:
+        divstrip_ref_s = float(first_divstrip_hit_s)
+        divstrip_ref_source = "first_hit"
 
     if (
         drivezone_split_s is not None
@@ -4877,12 +5141,12 @@ def _resolve_event_reference_point(
 
         reverse_divstrip_ref_s = None
         reverse_divstrip_ref_source = "none"
-        if reverse_first_divstrip_hit_s is not None:
-            reverse_divstrip_ref_s = float(reverse_first_divstrip_hit_s)
-            reverse_divstrip_ref_source = "first_hit"
-        elif reverse_tip_s is not None:
+        if reverse_tip_s is not None:
             reverse_divstrip_ref_s = float(reverse_tip_s)
             reverse_divstrip_ref_source = "tip_projection"
+        elif reverse_first_divstrip_hit_s is not None:
+            reverse_divstrip_ref_s = float(reverse_first_divstrip_hit_s)
+            reverse_divstrip_ref_source = "first_hit"
         reverse_chosen_s, reverse_position_source, reverse_split_pick_source = _pick_reference_s(
             divstrip_ref_s=reverse_divstrip_ref_s,
             divstrip_ref_source=reverse_divstrip_ref_source,
@@ -6150,11 +6414,29 @@ def run_t02_stage4_divmerge_virtual_polygon(
             axis_centerline=event_axis_centerline,
             origin_point=provisional_event_origin,
         )
+        cross_section_boundary_branch_ids = (
+            set(main_branch_ids)
+            if (
+                kind_resolution["complex_junction"]
+                or multibranch_context["enabled"]
+                or len(divstrip_context["selected_component_ids"]) > 1
+            )
+            else set(selected_branch_ids)
+        )
         boundary_branch_a, boundary_branch_b = _pick_cross_section_boundary_branches(
             road_branches=road_branches,
-            selected_branch_ids=set(selected_branch_ids),
+            selected_branch_ids=cross_section_boundary_branch_ids,
             kind_2=operational_kind_2,
         )
+        if (
+            (boundary_branch_a is None or boundary_branch_b is None)
+            and cross_section_boundary_branch_ids != set(selected_branch_ids)
+        ):
+            boundary_branch_a, boundary_branch_b = _pick_cross_section_boundary_branches(
+                road_branches=road_branches,
+                selected_branch_ids=set(selected_branch_ids),
+                kind_2=operational_kind_2,
+            )
         branch_a_centerline = (
             None
             if boundary_branch_a is None
@@ -6173,6 +6455,29 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 reference_point=provisional_event_origin,
             )
         )
+        if (
+            (kind_resolution["complex_junction"] or multibranch_context["enabled"])
+            and len(multibranch_context.get("main_pair_item_ids", [])) >= 2
+        ):
+            main_pair_item_ids = [str(item_id) for item_id in multibranch_context["main_pair_item_ids"][:2]]
+            main_pair_branch_a_centerline = _resolve_centerline_from_road_ids(
+                road_ids=[main_pair_item_ids[0]],
+                road_lookup={road.road_id: road for road in local_roads},
+                reference_point=provisional_event_origin,
+            )
+            main_pair_branch_b_centerline = _resolve_centerline_from_road_ids(
+                road_ids=[main_pair_item_ids[1]],
+                road_lookup={road.road_id: road for road in local_roads},
+                reference_point=provisional_event_origin,
+            )
+            if (
+                main_pair_branch_a_centerline is not None
+                and not main_pair_branch_a_centerline.is_empty
+                and main_pair_branch_b_centerline is not None
+                and not main_pair_branch_b_centerline.is_empty
+            ):
+                branch_a_centerline = main_pair_branch_a_centerline
+                branch_b_centerline = main_pair_branch_b_centerline
         event_cross_half_len_m = _resolve_event_cross_half_len(
             origin_point=provisional_event_origin,
             axis_centerline=event_axis_centerline,
@@ -6291,26 +6596,29 @@ def run_t02_stage4_divmerge_virtual_polygon(
             parallel_side_sign=parallel_side_sign,
         )
         has_parallel_competitor = parallel_centerline is not None and not parallel_centerline.is_empty
+        selected_roads_geometry = (
+            unary_union([road.geometry for road in selected_roads if road.geometry is not None and not road.geometry.is_empty])
+            if selected_roads
+            else GeometryCollection()
+        )
+        selected_event_roads_geometry = (
+            unary_union([road.geometry for road in selected_event_roads if road.geometry is not None and not road.geometry.is_empty])
+            if selected_event_roads
+            else GeometryCollection()
+        )
+        selected_rcsd_roads_geometry = (
+            unary_union([road.geometry for road in selected_rcsd_roads if road.geometry is not None and not road.geometry.is_empty])
+            if selected_rcsd_roads
+            else GeometryCollection()
+        )
         event_span_window = _resolve_event_span_window(
             origin_point=event_origin_point,
             axis_unit_vector=event_axis_unit_vector,
             selected_rcsd_nodes=direct_target_rc_nodes,
             event_anchor_geometry=event_anchor_geometry,
-            selected_roads_geometry=unary_union(
-                [road.geometry for road in selected_roads if road.geometry is not None and not road.geometry.is_empty]
-            )
-            if selected_roads
-            else GeometryCollection(),
-            selected_event_roads_geometry=unary_union(
-                [road.geometry for road in selected_event_roads if road.geometry is not None and not road.geometry.is_empty]
-            )
-            if selected_event_roads
-            else GeometryCollection(),
-            selected_rcsd_roads_geometry=unary_union(
-                [road.geometry for road in selected_rcsd_roads if road.geometry is not None and not road.geometry.is_empty]
-            )
-            if selected_rcsd_roads
-            else GeometryCollection(),
+            selected_roads_geometry=selected_roads_geometry,
+            selected_event_roads_geometry=selected_event_roads_geometry,
+            selected_rcsd_roads_geometry=selected_rcsd_roads_geometry,
         )
         if (
             kind_resolution["complex_junction"]
@@ -6375,6 +6683,17 @@ def run_t02_stage4_divmerge_virtual_polygon(
             selected_roads=selected_roads,
             include_complex_members=kind_resolution["complex_junction"] or len(group_nodes) > 1,
         )
+        event_span_window = _refine_complex_event_span_window_by_divstrip_context(
+            event_span_window=event_span_window,
+            divstrip_constraint_geometry=divstrip_constraint_geometry,
+            selected_roads_geometry=selected_roads_geometry,
+            selected_event_roads_geometry=selected_event_roads_geometry,
+            selected_rcsd_roads_geometry=selected_rcsd_roads_geometry,
+            origin_point=event_origin_point,
+            axis_unit_vector=event_axis_unit_vector,
+            selected_component_count=len(divstrip_context["selected_component_ids"]),
+            is_complex_junction=kind_resolution["complex_junction"] or len(group_nodes) > 1,
+        )
         event_span_window = _clip_simple_event_span_window_by_divstrip_context(
             event_span_window=event_span_window,
             divstrip_constraint_geometry=divstrip_constraint_geometry,
@@ -6401,7 +6720,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
             cross_half_len_m=event_cross_half_len_m,
         )
         parallel_side_mask = None
-        if has_parallel_competitor and parallel_side_sign in (-1, 1):
+        if parallel_side_sign in (-1, 1) and len(parallel_excluded_road_ids) > 0:
             parallel_side_mask = _build_axis_side_halfmask(
                 grid=grid,
                 origin_point=event_origin_point,
@@ -6478,6 +6797,26 @@ def run_t02_stage4_divmerge_virtual_polygon(
             and event_side_clip_geometry is not None
             and not event_side_clip_geometry.is_empty
         )
+        full_fill_start_offset_m = float(event_span_window["start_offset_m"])
+        full_fill_end_offset_m = float(event_span_window["end_offset_m"])
+        if allow_full_axis_drivezone_fill:
+            full_fill_start_offset_m = min(full_fill_start_offset_m, -FULL_FILL_SPAN_HALF_MIN_M)
+            full_fill_end_offset_m = max(full_fill_end_offset_m, FULL_FILL_SPAN_HALF_MIN_M)
+            _sem_prev = event_span_window.get("semantic_prev_boundary_offset_m")
+            _sem_next = event_span_window.get("semantic_next_boundary_offset_m")
+            if _sem_prev is not None:
+                full_fill_start_offset_m = max(full_fill_start_offset_m, float(_sem_prev))
+            if _sem_next is not None:
+                full_fill_end_offset_m = min(full_fill_end_offset_m, float(_sem_next))
+            wide_axis_window = _build_axis_window_geometry(
+                origin_point=event_origin_point,
+                axis_unit_vector=event_axis_unit_vector,
+                start_offset_m=full_fill_start_offset_m,
+                end_offset_m=full_fill_end_offset_m,
+                cross_half_len_m=max(event_cross_half_len_m, EVENT_CROSS_HALF_LEN_MAX_M * 2.0),
+            )
+            if not wide_axis_window.is_empty:
+                event_side_clip_geometry = wide_axis_window
         event_side_drivezone_geometry = (
             drivezone_union.intersection(event_side_clip_geometry).buffer(0)
             if allow_full_axis_drivezone_fill
@@ -6506,16 +6845,26 @@ def run_t02_stage4_divmerge_virtual_polygon(
         )
         cross_section_support_geometry = (
             None
-            if allow_full_axis_drivezone_fill
+            if (
+                allow_full_axis_drivezone_fill
+                or kind_resolution["complex_junction"]
+                or multibranch_context["enabled"]
+                or len(divstrip_context["selected_component_ids"]) > 1
+            )
             else event_cross_section_support_geometry
+        )
+        full_fill_cross_half_len_m = (
+            max(event_cross_half_len_m, EVENT_CROSS_HALF_LEN_MAX_M * 2.0)
+            if allow_full_axis_drivezone_fill
+            else event_cross_half_len_m
         )
         cross_section_surface_geometry, cross_section_sample_count = _build_cross_section_surface_geometry(
             drivezone_union=drivezone_union,
             origin_point=event_origin_point,
             axis_unit_vector=event_axis_unit_vector,
-            start_offset_m=event_span_window["start_offset_m"],
-            end_offset_m=event_span_window["end_offset_m"],
-            cross_half_len_m=event_cross_half_len_m,
+            start_offset_m=full_fill_start_offset_m if allow_full_axis_drivezone_fill else event_span_window["start_offset_m"],
+            end_offset_m=full_fill_end_offset_m if allow_full_axis_drivezone_fill else event_span_window["end_offset_m"],
+            cross_half_len_m=full_fill_cross_half_len_m,
             axis_centerline=event_axis_centerline,
             branch_a_centerline=branch_a_centerline,
             branch_b_centerline=branch_b_centerline,
@@ -6543,9 +6892,10 @@ def run_t02_stage4_divmerge_virtual_polygon(
             component_side_clip_buffer_m = min(component_side_clip_buffer_m, 6.0)
         if (
             len(divstrip_context["selected_component_ids"]) > 1
-            and (selected_component_exceeds_event_span or selected_component_force_surface)
             and (
-                kind_resolution["complex_junction"]
+                selected_component_exceeds_event_span
+                or selected_component_force_surface
+                or kind_resolution["complex_junction"]
                 or chain_context["sequential_ok"]
                 or len(group_nodes) > 1
             )
@@ -6570,13 +6920,17 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 support_geometry=event_cross_section_support_geometry,
             )
             if selected_component_surface_geometry is not None and not selected_component_surface_geometry.is_empty:
-                cross_section_surface_geometry = selected_component_surface_geometry
-                cross_section_sample_count = int(
-                    sum(
-                        int(item.get("sample_count", 0))
-                        for item in selected_component_surface_diags
-                        if bool(item.get("ok", False))
-                    )
+                if cross_section_surface_geometry is None or cross_section_surface_geometry.is_empty:
+                    cross_section_surface_geometry = selected_component_surface_geometry
+                cross_section_sample_count = max(
+                    int(cross_section_sample_count),
+                    int(
+                        sum(
+                            int(item.get("sample_count", 0))
+                            for item in selected_component_surface_diags
+                            if bool(item.get("ok", False))
+                        )
+                    ),
                 )
         multi_component_surface_applied = bool(
             selected_component_surface_diags
@@ -6629,19 +6983,17 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 cross_half_len_m=event_cross_half_len_m,
             )
             if complex_multibranch_lobe_geometry is not None and not complex_multibranch_lobe_geometry.is_empty:
-                cross_section_surface_geometry = (
-                    complex_multibranch_lobe_geometry
-                    if cross_section_surface_geometry is None or cross_section_surface_geometry.is_empty
-                    else unary_union([cross_section_surface_geometry, complex_multibranch_lobe_geometry])
-                    .intersection(drivezone_union)
-                    .buffer(0)
-                )
-                cross_section_sample_count += int(
-                    sum(
-                        int(item.get("sample_count", 0))
-                        for item in complex_multibranch_lobe_diags
-                        if bool(item.get("ok", False))
-                    )
+                if cross_section_surface_geometry is None or cross_section_surface_geometry.is_empty:
+                    cross_section_surface_geometry = complex_multibranch_lobe_geometry
+                cross_section_sample_count = max(
+                    int(cross_section_sample_count),
+                    int(
+                        sum(
+                            int(item.get("sample_count", 0))
+                            for item in complex_multibranch_lobe_diags
+                            if bool(item.get("ok", False))
+                        )
+                    ),
                 )
                 lobe_axis_window_geometry = complex_multibranch_lobe_geometry.buffer(
                     component_side_clip_buffer_m,
@@ -6696,6 +7048,28 @@ def run_t02_stage4_divmerge_virtual_polygon(
             event_anchor_geometry=event_anchor_geometry,
             drivezone_union=drivezone_union,
         )
+        local_surface_clip_geometry = _build_local_surface_clip_geometry(
+            cross_section_surface_geometry=cross_section_surface_geometry,
+            divstrip_event_window=divstrip_event_window,
+            divstrip_constraint_geometry=divstrip_constraint_geometry,
+            axis_window_geometry=event_side_clip_geometry if allow_full_axis_drivezone_fill else axis_window_geometry,
+            drivezone_union=drivezone_union,
+            is_complex_junction=bool(kind_resolution["complex_junction"]),
+            multibranch_enabled=bool(multibranch_context["enabled"]),
+            selected_component_count=len(divstrip_context["selected_component_ids"]),
+            allow_full_axis_drivezone_fill=bool(allow_full_axis_drivezone_fill),
+        )
+        if (
+            local_surface_clip_geometry is not None
+            and not local_surface_clip_geometry.is_empty
+            and event_side_drivezone_geometry is not None
+            and not event_side_drivezone_geometry.is_empty
+        ):
+            clipped_event_side_geometry = event_side_drivezone_geometry.intersection(
+                local_surface_clip_geometry
+            ).buffer(0)
+            if not clipped_event_side_geometry.is_empty:
+                event_side_drivezone_geometry = clipped_event_side_geometry
         event_seed_geometries = [
             *[road.geometry.buffer(max(ROAD_BUFFER_M, 1.75), cap_style=2, join_style=2) for road in selected_roads],
             *[road.geometry.buffer(max(RC_ROAD_BUFFER_M, 1.75), cap_style=2, join_style=2) for road in selected_rcsd_roads],
@@ -6797,11 +7171,24 @@ def run_t02_stage4_divmerge_virtual_polygon(
             component_mask = reseeded_component_mask if reseeded_component_mask.any() else clipped_component_mask
 
         polygon_geometry = _mask_to_geometry(component_mask, grid)
+        include_event_side_drivezone_in_polygon_union = not (
+            kind_resolution["complex_junction"]
+            or multibranch_context["enabled"]
+            or len(divstrip_context["selected_component_ids"]) > 1
+        )
         if cross_section_surface_geometry is not None and not cross_section_surface_geometry.is_empty:
             polygon_geometry = unary_union(
                 [
                     geometry
-                    for geometry in [polygon_geometry, cross_section_surface_geometry, event_side_drivezone_geometry]
+                    for geometry in [
+                        polygon_geometry,
+                        cross_section_surface_geometry,
+                        (
+                            event_side_drivezone_geometry
+                            if include_event_side_drivezone_in_polygon_union
+                            else None
+                        ),
+                    ]
                     if geometry is not None and not geometry.is_empty
                 ]
             ).buffer(0)
@@ -6814,7 +7201,11 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 else seed_union
             ),
         )
-        if event_side_drivezone_geometry is not None and not event_side_drivezone_geometry.is_empty:
+        if (
+            include_event_side_drivezone_in_polygon_union
+            and event_side_drivezone_geometry is not None
+            and not event_side_drivezone_geometry.is_empty
+        ):
             polygon_geometry = polygon_geometry.union(event_side_drivezone_geometry).intersection(drivezone_union).buffer(0)
         selected_support_union = unary_union(
             [
@@ -6834,7 +7225,7 @@ def run_t02_stage4_divmerge_virtual_polygon(
                 clipped_polygon = polygon_geometry.difference(clip_geometry).buffer(0)
                 if not clipped_polygon.is_empty:
                     polygon_geometry = clipped_polygon
-        if not divstrip_event_window.is_empty and drivezone_component_mask is None:
+        if not divstrip_event_window.is_empty and drivezone_component_mask is None and not allow_full_axis_drivezone_fill:
             clipped_polygon = polygon_geometry.intersection(divstrip_event_window).buffer(0)
             event_guard_geometry = divstrip_context["event_anchor_geometry"]
             if event_guard_geometry is None or event_guard_geometry.is_empty:
@@ -6859,8 +7250,13 @@ def run_t02_stage4_divmerge_virtual_polygon(
             ).buffer(0)
             if not polygon_without_divstrip.is_empty:
                 polygon_geometry = polygon_without_divstrip
-        if axis_window_geometry is not None and not axis_window_geometry.is_empty:
-            clipped_polygon = polygon_geometry.intersection(axis_window_geometry).buffer(0)
+        preferred_clip_geometry = (
+            local_surface_clip_geometry
+            if local_surface_clip_geometry is not None and not local_surface_clip_geometry.is_empty
+            else axis_window_geometry
+        )
+        if preferred_clip_geometry is not None and not preferred_clip_geometry.is_empty:
+            clipped_polygon = polygon_geometry.intersection(preferred_clip_geometry).buffer(0)
             if not clipped_polygon.is_empty:
                 polygon_geometry = clipped_polygon
         elif cross_section_surface_geometry is not None and not cross_section_surface_geometry.is_empty:
@@ -6871,6 +7267,21 @@ def run_t02_stage4_divmerge_virtual_polygon(
             clipped_polygon = polygon_geometry.intersection(parallel_side_geometry).buffer(0)
             if not clipped_polygon.is_empty:
                 polygon_geometry = clipped_polygon
+        if (
+            allow_full_axis_drivezone_fill
+            and include_event_side_drivezone_in_polygon_union
+            and event_side_drivezone_geometry is not None
+            and not event_side_drivezone_geometry.is_empty
+        ):
+            full_fill_candidate = polygon_geometry.union(event_side_drivezone_geometry).intersection(drivezone_union).buffer(0)
+            if divstrip_geometry_to_exclude is not None and not divstrip_geometry_to_exclude.is_empty:
+                full_fill_candidate = full_fill_candidate.difference(
+                    divstrip_geometry_to_exclude.buffer(DIVSTRIP_EXCLUSION_BUFFER_M, join_style=2)
+                ).buffer(0)
+            if preferred_clip_geometry is not None and not preferred_clip_geometry.is_empty:
+                full_fill_candidate = full_fill_candidate.intersection(preferred_clip_geometry).buffer(0)
+            if not full_fill_candidate.is_empty:
+                polygon_geometry = full_fill_candidate
         if polygon_geometry.is_empty:
             raise Stage4RunError(
                 REASON_MAIN_DIRECTION_UNSTABLE,

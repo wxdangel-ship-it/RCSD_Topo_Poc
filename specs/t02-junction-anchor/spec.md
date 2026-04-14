@@ -96,6 +96,16 @@
 1. 对目标 `junction_id = J`，若存在 `mainnodeid = J` 的所有 node，则这些 node 构成该路口组。
 2. 若不存在上述组，且存在 `mainnodeid = NULL` 且 `id = J` 的单个 node，则该单点作为该路口组。
 
+在步骤1“目标语义路口确定”中，进一步冻结以下口径：
+
+- `semantic_junction_set` 指当前语义路口的 node 集合，不是单个点。
+- `mainnode` 只是该语义路口集合的代表 node，用于写值、索引和审计，不等于整个语义路口。
+- 若按 `mainnodeid = J` 找到多节点语义组，则后续合法 polygon 必须一次性直接覆盖组内全部 node；若最终 polygon 不能一次性直接覆盖整组所有 node，则该 case 属于问题 case，不是合法变体。
+- `boundary roads / arms` 保留为语义边界概念，但 road 的“两端”不是只看当前 road 记录的直接两端，而是要沿可穿越的 `degree=2` 过渡节点继续跟踪，直到语义边界；因此 road 的“两端”应理解为经过两度链接跟踪后的边界端点。
+- `foreign boundary roads` 仅指：某条 road 经过两度链接跟踪后的两个边界端点都不属于当前 `semantic_junction_set`。
+- 判断“是否误包其他语义路口”，不能只看 foreign node；若 polygon 把别的语义路口向外延伸到其他路口的 roads / arms 纳入当前路口面，即使没有直接覆盖 foreign node，也视为错误。
+- 本步骤不再定义 `connector road` 术语。
+
 说明：
 
 - 以上是当前 T02 阶段一采用的业务查找规则。
@@ -346,6 +356,57 @@
 - T02 总目标是双向 Segment 相关路口锚定。
 - 当前采用“阶段一 gate、阶段二 anchoring”的两阶段推进。
 - 当前阶段一实现基线已冻结，阶段二 anchor recognition 文档基线也已冻结。
+- Stage3 步骤2「模板分类」当前按以下业务口径冻结：
+  - `kind_2` 在步骤2中作为强输入使用，不再只是弱证据
+  - `kind_2 = 2048` 时，当前 case 直接按 `single_sided_t_mouth` 理解，不再按中心型路口模板理解
+  - `kind_2 = 4` 时，当前 case 先按 `center_junction` 理解，允许后续按中心型路口铺满当前语义路口
+  - 但若后续发现 foreign boundary roads、其他语义路口 roads / arms 入侵，或其它边界冲突，则该 case 仍属于问题 case
+- Stage3 步骤3「目标 corridor / 口门边界」当前按以下业务口径冻结：
+  - 步骤3只定义后续 polygon 唯一合法的活动空间，不直接生成 polygon
+  - 合法活动空间只能在当前模板允许占用的 `DriveZone` 内合法道路面中生长
+  - 对与当前合法活动空间存在潜在冲突的 foreign elements，可先按 `1m` 负向缓冲构建硬排除区
+  - `single_sided_t_mouth` 只能在目标单侧 lane corridor 内展开，不得跨到对向 lane 或对向主路 corridor
+  - `center_junction` 可先按中心型路口铺满当前 case 的合法道路面，但若后续发现 foreign boundary roads、其他语义路口 roads / arms 入侵，或其它边界冲突，则该 case 仍属于问题 case
+  - `10m` 只作为附加臂方向的保守外扩上限，且不得突破 foreign 硬边界，也不得压过“整组 node 一次性直接覆盖”要求
+- Stage3 步骤4「RCSD 关联语义」当前按以下业务口径冻结：
+  - 步骤4只负责在步骤2模板和步骤3合法活动空间已冻结的前提下，识别当前 case 的 `required RC`、`support RC` 与 `excluded RC`
+  - A 类：`RCSD` 也构成语义路口；`RCSDNode` 按 `mainnodeid` 聚组，单节点时其“3 个方向”按“经过 `degree=2` 跟踪后的边界方向簇数”判定
+  - B 类：`RCSD` 不构成语义路口，但存在相关 `RCSDRoad`；当前只要求覆盖挂接区域，而不是整条 `RCSDRoad`
+  - C 类：无相关 `RCSDRoad`；不追加 `RC` 侧 required semantics
+  - 步骤4可以增加“必须纳入的 `RC` 语义对象”，但不能扩大步骤3已经冻结的合法活动空间；若 `required RC` 落在步骤3合法空间之外，当前仅记为审计异常 / `stage3_rc_gap`
+- Stage3 步骤5「foreign SWSD / RCSD 排除规则」当前按以下业务口径冻结：
+  - 步骤5只定义哪些外部 `SWSD / RCSD` 元素一旦被纳入当前 case，就必须视为 `foreign / 错误对象`
+  - foreign 对象分为三类：`foreign_semantic_nodes`、`foreign_roads_arms_corridors`、`foreign_rc_context`
+  - `single_sided_t_mouth` 下，对向 lane / 对向主路 corridor / 非目标 mouth 的另一侧 corridor / 远端 `RC tail` 一律按 `foreign` 处理
+  - `center_junction` 下，其他语义路口外延 `roads / arms / lane corridor`、`foreign boundary roads`、以及只在 foreign 语义上下文里成立的 `RC` 对象，只要进入当前 case 即视为错误
+  - 步骤4中的 `excluded RC` 在步骤5中直接等价于 `foreign RC`
+  - 单纯边界接触不算错；形成可活动、可占用、可依赖的“实际纳入”一律算错
+- Stage3 步骤6「几何生成与后处理」当前按以下业务口径冻结：
+  - 步骤6是受约束的几何生成步骤，不是补面或补救步骤
+  - 硬约束优先级固定为：先守步骤3合法活动空间，再守步骤5 `foreign` 硬排除，再满足步骤1 must-cover，再满足步骤4 `required RC` must-cover，最后才允许做几何优化
+  - `single_sided_t_mouth` 的理想几何是围绕目标单侧 mouth 的单侧口门面；`center_junction` 的理想几何是围绕当前语义中心展开的中心型路口面
+  - 无意义狭长面、无意义空洞、无意义凹陷、细脖子、非当前方向远端尾巴、依赖 `foreign` 空间的补丁连接，均属于步骤6问题几何
+  - geometry cleanup 只能收敛几何，不能越出步骤3合法活动空间、不能重新引入步骤5 `foreign`、不能用 `support` 替代 `required`，也不能把问题几何“化妆成成功几何`
+  - 若步骤6无法生成一个同时满足步骤1 / 步骤3 / 步骤4 / 步骤5约束、并且符合当前模板认知形态的 polygon，则该 case 在业务上应视为“路口面几何未成立”
+  - 步骤6失败按两层归因冻结为：一级 `infeasible_under_frozen_constraints / geometry_solver_failed`；二级 `step1_step3_conflict / stage3_rc_gap / foreign_exclusion_conflict / template_misfit / geometry_closure_failure / cleanup_overtrim / cleanup_undertrim / foreign_reintroduced_by_cleanup / shape_artifact_failure`
+  - 当前目视检查中唯一已明确确认的失败锚点是 `520394575`；除它之外，若其他 case 要进入步骤6失败归类，必须先完成根因分型
+- Stage3 步骤7「准出判定」当前按以下业务口径冻结：
+  - 步骤7是最终裁决层，只基于步骤1到步骤6已冻结结果做 `accepted / review_required / rejected` 分类，不承担补救职责
+  - `accepted` 的最小前提是：步骤1 must-cover 成立、步骤3合法活动空间成立、步骤4 `required RC` 成立、步骤5 `foreign` 排除成立、步骤6几何成立且不是问题几何、且不存在未消除的核心审计异常
+  - `review_required` 只适用于：当前结果已经满足业务需求，但几何表现、可审查性或视觉质量仍存在风险；`review_required` 只允许映射到 `V2`
+  - `rejected` 只适用于：当前 case 已明确违反硬规则、或在当前冻结约束下无合法解、或步骤6已经确认“路口面几何未成立”且失败根因已明确；`rejected` 只允许映射到 `V3 / V4 / V5`
+  - 步骤7不能洗白前面步骤的失败；若步骤6已认定“路口面几何未成立”，步骤7只能在 `review_required / rejected` 之间分类，不能再解释成成功
+  - Stage3 结果类型与目视分类的正式映射冻结为：
+    - `accepted -> V1`
+    - `review_required -> V2`
+    - `rejected -> V3 / V4 / V5`
+  - 当前 `520394575` 作为唯一已明确确认的失败锚点保留；除它之外的其他 case 若要进入 `review_required / rejected`，必须先完成根因分析并说明属于“上游冻结约束下无合法解”还是“合法解存在但步骤6没求出来”
+- Stage3 / Stage4 目视检查 PNG 当前按统一三态样式冻结：
+  - `accepted`：正常成功图样式
+  - `review_required`：浅琥珀 / 橙黄色系整图掩膜、深橙粗边框、风险区域橙色强调、显式 `REVIEW / 待复核` 标识
+  - `rejected` 或 `success = false`：淡红整图掩膜、深红粗边框、失败区域深红强调、显式 `REJECTED / 失败` 标识
+  - `review_required` 不使用红色系主样式；`V2` 必须使用该风险样式；`V3 / V4 / V5` 必须统一使用失败样式
+  - 非成功图必须与成功图一眼可区分，且风险态与失败态彼此也必须一眼可区分
 - 阶段一正式输入为 `segment`、`nodes`、`DriveZone`。
 - stage1 实际输入字段冻结为：
   - `segment.id / pair_nodes / junc_nodes`
@@ -369,6 +430,30 @@
 - 文本证据包只服务于外网实验复现，不替代正式产线输入。
 - 文本证据包默认逻辑内容至少包含 `manifest.json`、`drivezone_mask.png`、`drivezone.gpkg`、`nodes.gpkg`、`roads.gpkg`、`rcsdroad.gpkg`、`rcsdnode.gpkg`、`size_report.json`。
 - 文本证据包固定采用“压缩归档 + 文本编码”方案，最终体积必须 `<= 300KB`；超限时必须失败并输出体积分析报告。
+
+### 7.1 最终成果路口面输出补充约束
+
+- 以下图层都视为“最终成果路口面”：
+  - stage3 单 case：`virtual_intersection_polygon.gpkg`
+  - stage3 full-input / batch：`virtual_intersection_polygons.gpkg`
+  - stage4 单 case：`stage4_virtual_polygon.gpkg`
+  - stage4 batch / 全量：`stage4_virtual_polygons.gpkg`
+- 所有最终成果路口面都必须包含字段：
+  - `mainnodeid`
+  - `kind`
+- `mainnodeid` 写值规则冻结为：
+  - 优先写当前 case 代表 node 的 `nodes.mainnodeid`
+  - 若 `nodes.mainnodeid` 为空、缺失或不可用，则回退写当前代表 node 的 `nodes.id`
+- `kind` 写值规则冻结为：
+  - 优先写当前 case 代表 node 的 `nodes.kind`
+  - 若 `nodes.kind` 为空、缺失或不可用，则回退写当前代表 node 的 `nodes.kind_2`
+  - 若 `nodes.kind / nodes.kind_2` 同时为空、缺失或不可用，则该 case 视为缺失最终成果字段，不得静默补值
+- 所有最终成果路口面 geometry 必须统一写为 `EPSG:3857`。
+- 只要存在 full-input / batch / 全量运行，就必须同步输出该批次的最终全量路口面汇总图层；不得只保留单 case 目录产物而缺失汇总成果。
+- 当前成果审计固定采用双线模板：
+  - 机器审计给根因层（`step3 / step4 / step5 / step6 / frozen-constraints conflict`）
+  - 人工目视审计给快速分类（`V1 / V2 / V3 / V4 / V5`）
+- Stage4 当前复用同一套成果审计与目视复核模板。
 
 ## 8. 剩余待确认项 / 非阻断风险 / 上游依赖
 

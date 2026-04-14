@@ -87,6 +87,7 @@ def _append_case(
                     "mainnodeid": node_id,
                     "has_evd": "yes",
                     "is_anchor": "no",
+                    "kind": int(node_id) + 700,
                     "kind_2": 2048,
                     "grade_2": 1,
                 },
@@ -98,6 +99,7 @@ def _append_case(
                     "mainnodeid": node_id,
                     "has_evd": "yes",
                     "is_anchor": "no",
+                    "kind": int(node_id) + 700,
                     "kind_2": 2048,
                     "grade_2": 1,
                 },
@@ -237,6 +239,7 @@ def test_full_input_poc_explicit_mainnodeid_writes_unified_outputs(tmp_path: Pat
     assert len(polygon_doc["features"]) == 1
     feature = polygon_doc["features"][0]
     assert feature["properties"]["mainnodeid"] == "100"
+    assert feature["properties"]["kind"] == 800
     assert feature["properties"]["status"] == "stable"
     assert Path(feature["properties"]["source_case_dir"]).name == "100"
 
@@ -280,6 +283,7 @@ def test_full_input_poc_reuses_case_outputs_for_summary_output(tmp_path: Path) -
     polygon_doc = _load_vector_doc(artifacts.polygons_path)
     assert len(polygon_doc["features"]) == 1
     assert polygon_doc["features"][0]["properties"]["mainnodeid"] == "100"
+    assert polygon_doc["features"][0]["properties"]["kind"] == 800
 
 
 def test_full_input_poc_auto_discovers_candidates_and_applies_max_cases(tmp_path: Path) -> None:
@@ -383,6 +387,73 @@ def test_full_input_poc_writes_exception_summary_and_case_events(tmp_path: Path)
     assert exception_summary_write_count == 2
 
 
+def test_build_failure_row_from_audit_envelope_uses_contract_fields(tmp_path: Path) -> None:
+    case_dir = tmp_path / "cases" / "100"
+    envelope = full_input_module.build_stage3_failure_audit_envelope(
+        mainnodeid="100",
+        acceptance_reason="worker_exception",
+        template_class="",
+    )
+
+    row = full_input_module._build_failure_row_from_audit_envelope(
+        case_id="100",
+        case_dir=case_dir,
+        failure_audit_envelope=envelope,
+        detail="RuntimeError: boom",
+    )
+
+    assert row["case_id"] == "100"
+    assert row["success"] is False
+    assert row["acceptance_class"] == envelope.audit_record.step7.acceptance_class
+    assert row["acceptance_reason"] == envelope.audit_record.step7.acceptance_reason
+    assert row["status"] == envelope.audit_record.step7.status
+    assert row["root_cause_layer"] == envelope.review_metadata.root_cause_layer
+    assert row["visual_review_class"] == envelope.review_metadata.visual_review_class
+    assert row["official_review_eligible"] == envelope.official_review_decision.official_review_eligible
+    assert row["blocking_reason"] == envelope.official_review_decision.blocking_reason
+    assert row["failure_bucket"] == envelope.official_review_decision.failure_bucket
+    assert row["step7_result"]["root_cause_layer"] == envelope.audit_record.step7.root_cause_layer
+    assert row["stage3_audit_record"]["failure_bucket"] == envelope.audit_record.failure_bucket
+
+
+def test_run_case_job_materializes_failure_artifacts_and_render_path(tmp_path: Path) -> None:
+    case_id = "100"
+    cases_root = tmp_path / "cases"
+    render_root = tmp_path / "renders"
+    render_root.mkdir(parents=True, exist_ok=True)
+    render_path = render_root / f"{case_id}.png"
+    single_case_module._write_png_rgba(render_path, np.full((16, 16, 4), 255, dtype=np.uint8))
+
+    def _boom(**kwargs):
+        raise RuntimeError("boom")
+
+    job = {
+        "mainnodeid": case_id,
+        "out_root": str(cases_root),
+        "debug_render_root": str(render_root),
+    }
+    with patch.object(full_input_module, "run_t02_virtual_intersection_poc", _boom):
+        row = full_input_module._run_case_job(job)
+
+    status_path = Path(row["status_path"])
+    audit_path = Path(row["audit_path"])
+    polygon_path = Path(row["polygon_path"])
+    assert status_path.is_file()
+    assert audit_path.is_file()
+    assert polygon_path.is_file()
+    assert row["rendered_map_png"] == str(render_path)
+
+    status_doc = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status_doc["status"] == "worker_exception"
+    assert status_doc["flow_success"] is False
+    assert status_doc["output_files"]["rendered_map_png"] == str(render_path)
+
+    audit_doc = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit_doc["failure_bucket"] == "frozen-constraints conflict"
+    polygon_doc = _load_vector_doc(polygon_path)
+    assert polygon_doc["features"] == []
+
+
 def test_full_input_poc_marks_unsuccessful_rendered_map_as_failure_style(tmp_path: Path) -> None:
     paths = _write_full_input_fixture(tmp_path, include_second_case=False)
 
@@ -393,9 +464,16 @@ def test_full_input_poc_marks_unsuccessful_rendered_map_as_failure_style(tmp_pat
             "case_id": "100",
             "success": False,
             "flow_success": True,
-            "acceptance_class": "review_required",
-            "acceptance_reason": "synthetic_review_required",
-            "status": "surface_only",
+            "business_outcome_class": "failure",
+            "acceptance_class": "rejected",
+            "acceptance_reason": "foreign_outside_drivezone_soft_excluded",
+            "status": "stable",
+            "root_cause_layer": "step5",
+            "root_cause_type": "foreign_outside_drivezone_soft_excluded",
+            "visual_review_class": "V4 误包 foreign",
+            "official_review_eligible": True,
+            "blocking_reason": None,
+            "failure_bucket": "official_failure",
             "risks": ["surface_only"],
             "detail": None,
             "representative_node_id": "100",
@@ -430,7 +508,9 @@ def test_full_input_poc_marks_unsuccessful_rendered_map_as_failure_style(tmp_pat
     render_path = artifacts.rendered_maps_root / "100.png"
     assert render_path.is_file()
     image = _read_png_rgba(render_path)
-    assert tuple(image[0, 0]) == (144, 0, 0, 255)
+    assert int(image[0, 0, 0]) > int(image[0, 0, 1]) + 40
+    assert int(image[0, 0, 1]) < 120
+    assert np.any(np.all(image[:12, :, :3] == (255, 255, 255), axis=2))
 
 
 def test_full_input_poc_writes_crash_report_on_top_level_failure(tmp_path: Path) -> None:
@@ -490,3 +570,127 @@ def test_full_input_poc_parallel_results_are_deterministic(tmp_path: Path) -> No
     serial_shapes = [shape(feature["geometry"]) for feature in serial_polygon_doc["features"]]
     parallel_shapes = [shape(feature["geometry"]) for feature in parallel_polygon_doc["features"]]
     assert [round(item.area, 3) for item in serial_shapes] == [round(item.area, 3) for item in parallel_shapes]
+
+
+def test_build_review_index_requires_explicit_official_review_fields() -> None:
+    row = {
+        "case_id": "100",
+        "case_dir": "E:/tmp/cases/100",
+        "success": False,
+        "flow_success": False,
+        "acceptance_class": "rejected",
+        "acceptance_reason": "worker_exception",
+        "status": "worker_exception",
+        "root_cause_layer": "step5",
+        "root_cause_type": "foreign_tail_after_opposite_lane_trim",
+        "visual_review_class": "V4 误包 foreign",
+        "representative_node_id": "100",
+        "resolved_kind": 800,
+        "kind_source": "kind",
+        "kind_2": 2048,
+        "status_path": "E:/tmp/cases/100/t02_virtual_intersection_poc_status.json",
+        "audit_path": "E:/tmp/cases/100/t02_virtual_intersection_poc_audit.json",
+        "virtual_polygon_path": "E:/tmp/cases/100/virtual_intersection_polygon.gpkg",
+        "rendered_map_png": "E:/tmp/cases/100/100.png",
+    }
+
+    try:
+        full_input_module._build_review_index(
+            run_id="run",
+            rows=[row],
+            input_mode="full-input",
+            input_paths={"nodes": "E:/tmp/nodes.gpkg"},
+        )
+    except ValueError as exc:
+        assert "explicit official review and review-triad fields" in str(exc)
+        assert "official_review_eligible" in str(exc)
+        return
+
+    raise AssertionError("expected _build_review_index() to reject rows without explicit official review fields")
+
+
+def test_build_review_index_uses_row_official_review_fields_without_rederivation() -> None:
+    row = {
+        "case_id": "100",
+        "case_dir": "E:/tmp/cases/100",
+        "success": False,
+        "flow_success": True,
+        "business_outcome_class": "failure",
+        "acceptance_class": "rejected",
+        "acceptance_reason": "representative is_anchor=yes; excluded by Stage3 input gate",
+        "status": "mainnodeid_out_of_scope",
+        "root_cause_layer": "frozen-constraints conflict",
+        "root_cause_type": "representative is_anchor=yes; excluded by Stage3 input gate",
+        "visual_review_class": "V4 误包 foreign",
+        "representative_node_id": "100",
+        "resolved_kind": 800,
+        "kind_source": "kind",
+        "kind_2": 2048,
+        "official_review_eligible": False,
+        "blocking_reason": "frozen-constraints conflict",
+        "failure_bucket": "excluded_out_of_scope",
+        "status_path": "E:/tmp/cases/100/t02_virtual_intersection_poc_status.json",
+        "audit_path": "E:/tmp/cases/100/t02_virtual_intersection_poc_audit.json",
+        "virtual_polygon_path": "E:/tmp/cases/100/virtual_intersection_polygon.gpkg",
+        "rendered_map_png": "E:/tmp/cases/100/100.png",
+    }
+
+    review_index = full_input_module._build_review_index(
+        run_id="run",
+        rows=[row],
+        input_mode="full-input",
+        input_paths={"nodes": "E:/tmp/nodes.gpkg"},
+    )
+
+    assert len(review_index) == 1
+    assert review_index[0]["official_review_eligible"] is False
+    assert review_index[0]["blocking_reason"] == "frozen-constraints conflict"
+    assert review_index[0]["failure_bucket"] == "excluded_out_of_scope"
+    assert review_index[0]["root_cause_layer"] == "frozen-constraints conflict"
+    assert review_index[0]["visual_review_class"] == "V4 误包 foreign"
+
+
+def test_build_review_index_prefers_canonical_step7_acceptance_fields() -> None:
+    row = {
+        "case_id": "861032",
+        "case_dir": "E:/tmp/cases/861032",
+        "success": True,
+        "flow_success": True,
+        "business_outcome_class": "risk",
+        "acceptance_class": "review_required",
+        "acceptance_reason": "outside_rc_gap_requires_review",
+        "status": "stable",
+        "root_cause_layer": "step5",
+        "root_cause_type": "foreign_semantic_road_overlap",
+        "visual_review_class": "V5 明确失败",
+        "official_review_eligible": True,
+        "blocking_reason": None,
+        "failure_bucket": "official_failure",
+        "representative_node_id": "861032",
+        "resolved_kind": 800,
+        "kind_source": "kind",
+        "kind_2": 2048,
+        "status_path": "E:/tmp/cases/861032/t02_virtual_intersection_poc_status.json",
+        "audit_path": "E:/tmp/cases/861032/t02_virtual_intersection_poc_audit.json",
+        "virtual_polygon_path": "E:/tmp/cases/861032/virtual_intersection_polygon.gpkg",
+        "rendered_map_png": "E:/tmp/cases/861032/861032.png",
+        "step7_result": {
+            "success": False,
+            "business_outcome_class": "failure",
+            "acceptance_class": "rejected",
+            "acceptance_reason": "foreign_semantic_road_overlap",
+            "status": "stable",
+        },
+    }
+
+    review_index = full_input_module._build_review_index(
+        run_id="run",
+        rows=[row],
+        input_mode="full-input",
+        input_paths={"nodes": "E:/tmp/nodes.gpkg"},
+    )
+
+    assert len(review_index) == 1
+    assert review_index[0]["acceptance_class"] == "rejected"
+    assert review_index[0]["acceptance_reason"] == "foreign_semantic_road_overlap"
+    assert review_index[0]["status"] == "stable"

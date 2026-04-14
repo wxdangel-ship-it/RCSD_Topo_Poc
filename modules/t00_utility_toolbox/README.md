@@ -21,6 +21,7 @@
 - Tool6：将 `A200_node.shp` 导出为保留原始属性的 `nodes.geojson`
 - Tool7：将指定目录下顶层 `GeoJSON` 批量导出为同名 `GPKG`
 - Tool9：对全量 `DivStripZone` 做逐 Patch 预处理并汇总输出
+- Tool10：将超大 JSON 点记录流式解析并导出为 `EPSG:3857` 的点状 `GPKG`
 
 ## 模块状态
 
@@ -32,6 +33,7 @@
 - Tool6 为本轮新增导出工具
 - Tool7 为目录参数驱动的批量格式转换工具
 - Tool9 为新增 DivStripZone 预处理与汇总工具
+- Tool10 为超大 JSON 点数据的流式转点 GPKG 工具
 
 ## 与业务模块的关系
 
@@ -44,6 +46,7 @@
 - Tool4 / Tool5 通过脚本头部 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
 - Tool5 对 `A200_road_patch` 与 SW 允许分别配置默认 CRS
 - Tool7 是经批准的参数驱动例外，目录通过脚本参数给定，且只扫描顶层 `.geojson`
+- Tool10 采用固定脚本入口与文件头参数，面向超大 JSON 点数据的流式导出
 - 输出已存在时先删除再重建
 - 命令行执行过程中必须提供阶段级与 Patch / 记录级进度输出
 
@@ -64,6 +67,14 @@
 - Tool9 读取 `patch_all/<PatchID>/(Vector|vector)/DivStripZone.geojson`
 - 每个 Patch 输出 `DivStripZone_fix.geojson` 并写入 `patchid`
 - 根目录 `DivStripZone.gpkg` 为逐 Patch 汇总结果，保留 `patchid`
+
+## Tool10 备注
+
+- Tool10 默认读取 `D:\TestData\poi\beijing_1334198.json`
+- Tool10 默认输出同目录同名 `beijing_1334198.gpkg`
+- 点几何使用 `lon/lat`，按 `EPSG:4326 -> EPSG:3857` 重投影后写入 GPKG
+- 顶层属性原样保留；嵌套 dict/list 会序列化为 JSON 字符串写入属性列
+- Tool10 同时兼容 `NDJSON` 与 `JSON array` 两种输入布局，适用于超大文件流式处理
 
 ## 文档入口
 
@@ -87,6 +98,7 @@ python3 scripts/t00_tool5_a200_kind_enrich.py
 python3 scripts/t00_tool6_node_export.py
 python3 scripts/t00_tool7_geojson_to_gpkg.py /mnt/d/TestData/POC_Data/some_directory
 python3 scripts/t00_tool9_divstripzone_merge.py
+python3 scripts/t00_tool10_json_point_export.py
 ```
 
 默认数据根位于：

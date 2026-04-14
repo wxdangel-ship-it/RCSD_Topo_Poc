@@ -1,6 +1,6 @@
 # 02. Constraints
 
-- 当前正式范围为 Tool1 至 Tool7
+- 当前正式范围为 Tool1 至 Tool10（当前未登记 Tool8）
 - 不得预扩展 Tool8+
 - Tool1 保持“固定脚本 + 文件头集中参数”风格
 - Tool2 至 Tool7 与 Tool1 保持脚本、日志和摘要风格一致

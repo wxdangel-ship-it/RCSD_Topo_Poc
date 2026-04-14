@@ -5,7 +5,7 @@
 - 模块 ID：`t00_utility_toolbox`
 - 模块名称：`T00 Utility Toolbox`
 - 模块角色：项目内工具集合模块
-- 当前承接 Tool1 至 Tool9 的固定脚本和共享底层能力
+- 当前承接 Tool1 至 Tool10 的固定脚本和共享底层能力
 
 ## 2. 开工前先读
 
@@ -25,7 +25,7 @@
 
 ## 4. 当前范围
 
-当前正式范围是 Tool1 至 Tool9：
+当前正式范围是 Tool1 至 Tool10：
 
 - Tool1：Patch 数据整理
 - Tool2：DriveZone per-patch fix + 全局 merge
@@ -35,6 +35,7 @@
 - Tool6：A200 node shp 导出 GeoJSON
 - Tool7：目录级 GeoJSON 批量转 GPKG
 - Tool9：DivStripZone 预处理与汇总输出
+- Tool10：超大 JSON 点记录流式转点 GPKG
 
 ## 5. 文档优先原则
 
@@ -45,7 +46,7 @@
 ## 6. 禁止事项
 
 - 不得把 `T00` 演化成业务生产模块
-- 不得未经确认擅自扩展 Tool1 至 Tool9 的范围
+- 不得未经确认擅自扩展 Tool1 至 Tool10 的范围
 - 不得绕过 `spec` 直接编码扩写
 - 不得引入复杂 manifest、数据库落仓或重型产线编排
 - 不得在模块根目录新增 `SKILL.md`
@@ -57,6 +58,7 @@
 - Tool4 / Tool5 通过脚本头部 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
 - Tool5 允许对不同输入分别设置默认 CRS
 - Tool7 为批准后的参数驱动例外，但仅允许接收目录参数
+- Tool10 采用固定脚本入口与文件头参数，面向超大 JSON 点数据的流式处理
 - “压缩”统一等于拓扑保持的几何简化
 - 允许最小几何修复，但不允许复杂推断修复
 - 所有输出已存在时先删除再重建
@@ -72,6 +74,7 @@
 - Tool6：固定脚本 + shp 元数据审计 + GeoJSON 导出 + 日志摘要
 - Tool7：固定脚本 + 顶层目录扫描 + GeoJSON/GPKG 批量转换 + 日志摘要
 - Tool9：固定脚本 + per-patch fix + 根目录汇总输出
+- Tool10：固定脚本 + 流式 JSON 解析 + 点状 GPKG 导出 + 日志摘要
 
 ## 9. 扩展门禁
 

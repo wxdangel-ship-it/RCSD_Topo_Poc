@@ -13,6 +13,7 @@
   - Tool6 `A200_node shp 导出 nodes.geojson`
   - Tool7 `目录级 GeoJSON 批量转 GPKG`
   - Tool9 `DivStripZone 预处理与汇总输出`
+  - Tool10 `超大 JSON 点记录流式转点 GPKG`
 
 本文件用于固化 `T00` 当前稳定的输入、输出、覆盖、跳过与摘要语义。
 
@@ -137,6 +138,7 @@
 - Tool5：`A200_road_patch_kind.geojson` 是正式输出
 - Tool6：`nodes.geojson` 是正式输出
 - Tool7：指定目录下与每个 `.geojson` 同名的 `.gpkg` 是正式输出
+- Tool10：同目录同名 `*.gpkg` 点数据导出文件是正式输出
 
 ## 10. Tool7 契约
 
@@ -178,18 +180,43 @@
   - `global_merge_input_count`
   - 输出要素统计与异常原因
 
-## 12. 非范围契约
+
+## 12. Tool10 契约
+
+- 输入：`D:\TestData\poi\beijing_1334198.json`
+- 输出：`D:\TestData\poi\beijing_1334198.gpkg`
+- 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
+- 几何类型：`Point`
+- 坐标来源：优先读取顶层 `lon/lat`；若缺失，则回退读取 `data.location.lon/lat`
+- 源坐标口径：`lon/lat` 视为 `EPSG:4326`，统一重投影到 `EPSG:3857`
+- 属性口径：保留顶层属性；嵌套 `dict/list` 会序列化为 JSON 字符串写入属性列
+- 输入布局：兼容 `NDJSON` 与 `JSON array`；按流式解析执行，不整体载入内存
+- 覆盖口径：同名 `.gpkg` 已存在时先删除再重建
+- 摘要至少包含：
+  - `input_path`
+  - `output_path`
+  - `input_format`
+  - `input_record_count`
+  - `output_feature_count`
+  - `failed_record_count`
+  - `source_crs`
+  - `output_crs`
+  - `field_names`
+  - `field_name_mapping`
+  - `coordinate_source_summary`
+  - `error_reason_summary`
+
+## 13. 非范围契约
 
 当前不承诺以下能力：
 
-- Tool10+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
 - 重型产线编排
 - 超出当前需求的中间产物正式化治理
 
-## 13. 后续实现注意事项
+## 14. 后续实现注意事项
 
 - 参数名、日志文件名和具体 CLI 形式可继续在脚本层补足
 - 但不得偏离当前契约语义

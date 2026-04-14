@@ -16,7 +16,7 @@
 
 ## 3. 当前范围
 
-当前纳入范围为 Tool1 至 Tool9：
+当前纳入范围为 Tool1 至 Tool10：
 
 - Tool1：Patch 数据整理脚本
 - Tool2：全量 DriveZone 预处理与合并
@@ -26,6 +26,7 @@
 - Tool6：shp 导出 GeoJSON 工具
 - Tool7：目录级 GeoJSON 批量转 GPKG 工具
 - Tool9：全量 DivStripZone 预处理与合并
+- Tool10：超大 JSON 点记录流式转点 GPKG 工具
 
 ## 4. 统一规则
 
@@ -57,6 +58,7 @@
 - 固定脚本入口
 - 文件头集中参数
 - Tool7 作为批准后的例外，允许通过脚本参数传入目录路径
+- Tool10 采用固定脚本入口与文件头参数，不引入复杂命令行参数体系
 - 命令行执行过程中必须提供进度输出
 - 至少体现工具开始/结束、阶段级进度、Patch 或记录级进度
 
@@ -207,11 +209,57 @@
   - `global_merge_input_count`
   - 输出要素统计与异常原因
 
-## 9. 非范围
+## 9. Tool10 需求基线
+
+### 9.1 目标
+
+将超大 JSON 点记录文件流式解析为点状 `GPKG`，避免整文件载入内存，并输出真实 `EPSG:3857` 坐标。
+
+### 9.2 输入与输出
+
+- 输入：`D:\TestData\poi\beijing_1334198.json`
+- 输出：`D:\TestData\poi\beijing_1334198.gpkg`
+- 输出坐标必须真实为 `EPSG:3857`
+- 输出几何类型为 `Point`
+
+### 9.3 处理要求
+
+1. 支持 `NDJSON` 与 `JSON array` 两种输入布局
+2. 按流式方式逐条解析记录，不得将超大文件整体载入内存
+3. 坐标优先读取顶层 `lon/lat`
+4. 若顶层坐标缺失，可回退读取 `data.location.lon/lat`
+5. 坐标值统一视为 `EPSG:4326`，并重投影到 `EPSG:3857`
+6. 输出已存在时先删除再重建
+7. 保留顶层属性；嵌套 `dict/list` 允许序列化为 JSON 字符串写入属性列
+8. 若单条记录缺失坐标、坐标非法或写出失败，则记录异常并继续处理其它记录
+
+### 9.4 日志、摘要与进度
+
+- 日志与摘要落在输入文件同目录
+- 命令行输出至少包含：
+  - Tool10 开始/结束
+  - 输入布局检测阶段
+  - 流式解析与投影阶段
+  - GPKG 收尾阶段
+  - 当前记录进度与失败统计
+- 摘要至少包含：
+  - `input_path`
+  - `output_path`
+  - `input_format`
+  - `input_record_count`
+  - `output_feature_count`
+  - `failed_record_count`
+  - `source_crs`
+  - `output_crs`
+  - `field_names`
+  - `field_name_mapping`
+  - `coordinate_source_summary`
+  - `error_reason_summary`
+
+## 10. 非范围
 
 当前非范围包括：
 
-- Tool10+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
@@ -219,19 +267,21 @@
 - 为未来扩展提前搭重型框架
 - 对 Tool1 至 Tool5 的无关业务重构
 
-## 10. 风险与边界
+## 11. 风险与边界
 
 - 必须防止 `T00` 从内部工具集合扩张为业务生产模块
 - Tool6 若输入 CRS 缺失，必须明确阻塞，不得静默猜测
 - Tool6 的 GeoJSON 输出采用项目内 `EPSG:3857` 约定，不应误宣称为严格标准 GeoJSON
 - Tool7 允许目录参数驱动，但只能接收目录参数，不能顺手演化成复杂批处理框架
 - Tool7 若遇到字段名与 GPKG 保留列冲突，必须显式记录最小重命名映射
+- Tool10 必须坚持流式解析；不得为了省事退化为整文件 `json.load`
+- Tool10 对单条异常记录只能记失败并继续，不得 silent drop 也不得因个别脏数据中断整批处理
 
-## 11. 进入后续阶段的门禁
+## 12. 进入后续阶段的门禁
 
 满足以下条件后，可继续进入后续增量实现或扩展：
 
 1. `spec / plan / tasks / README / AGENTS / INTERFACE_CONTRACT / architecture/*` 口径一致
-2. Tool1 至 Tool7 的输入、输出、覆盖、异常与摘要语义稳定
+2. Tool1 至 Tool10 的输入、输出、覆盖、异常与摘要语义稳定
 3. 不改变 `T00` 作为内部工具模块的定位
 4. 新工具进入 `T00` 前，先补规格与契约

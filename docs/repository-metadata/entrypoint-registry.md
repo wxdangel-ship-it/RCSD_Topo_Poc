@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前共识别 `41` 个执行入口文件
+- 当前共识别 `42` 个执行入口文件
 - 分布概览：
-  - repo 级 / 工具级：`35`
+  - repo 级 / 工具级：`36`
 
 ## 3. 当前已识别入口清单
 
@@ -56,6 +56,7 @@
 | `t00_tool6_node_export.py` | `scripts/t00_tool6_node_export.py` | repo 级 | T00 Tool6 shp 导出 GeoJSON | `active` | 否 |
 | `t00_tool7_geojson_to_gpkg.py` | `scripts/t00_tool7_geojson_to_gpkg.py` | repo 级 | T00 Tool7 顶层目录 GeoJSON 批量转 GPKG | `active` | 否 |
 | `t00_tool9_divstripzone_merge.py` | `scripts/t00_tool9_divstripzone_merge.py` | repo 级 | T00 Tool9 DivStripZone 预处理与汇总 | `active` | 否 |
+| `t00_tool10_json_point_export.py` | `scripts/t00_tool10_json_point_export.py` | repo 级 | T00 Tool10 超大 JSON 点记录流式转点 GPKG | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

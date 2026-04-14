@@ -17,6 +17,14 @@
 - 单 / 多 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑工具保留。
 - 当前代码已实现最小闭环，但尚未进入最终唯一锚定决策、概率阶段与正式产线级全量批处理。
 
+### Stage4 摘要
+
+- 当前定位：面向分歧 / 合流场景的独立补充阶段；当前不写回 `nodes.is_anchor`，不并入统一锚定结果，也不承担最终唯一锚定闭环。
+- 当前处理对象：`has_evd = yes`、`is_anchor = no` 且需要按真实分歧 / 合流事件解释的事实路口候选；包括简单 div/merge 候选和连续分歧 / 合流聚合后的 complex 128 主节点，不等于“所有 complex 128”。
+- 当前非目标：不做候选生成 / 打分，不做概率 / 置信度，不做误伤捞回，不做环岛新规则。
+- 审计与目视复核：复用 Stage3 的机器审计 + 人工目视双线模板与三态 PNG 样式，但不继承 Stage3 业务语义。
+- 最终成果输出：Stage4 产出 `stage4_virtual_polygon.gpkg` / `stage4_virtual_polygons.gpkg` 及关联审计；polygon 图层至少承载 `mainnodeid`、`kind` 和 Stage4 审计字段，支持脱离 JSON 的基本独立复核。
+
 ## 2. 官方运行入口
 
 ```bash
@@ -59,7 +67,7 @@ python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
 - 它不重算 stage1 `has_evd` 或 stage2 `is_anchor`，而是直接消费其结果字段
 - `t02-fix-node-error-2` 是独立离线修复工具，只消费 `node_error_2 / nodes / roads / RCSDIntersection` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json`；它不属于 stage 主流程
 - `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 / 多 `mainnodeid` 文本证据包导出与解包，服务于 stage3 复核与外部复现
-- `t02-stage4-divmerge-virtual-polygon` 用于单 case 的 div/merge 虚拟路口面 baseline，输入为 `nodes / roads / DriveZone / DivStripZone / RCSDRoad / RCSDNode / mainnodeid`，处理范围覆盖 `kind_2 in {8, 16}` 以及 `kind / kind_2 = 128` 的复杂路口主节点
+- `t02-stage4-divmerge-virtual-polygon` 用于单 case 的 div/merge 虚拟路口面 baseline，输入为 `nodes / roads / DriveZone / DivStripZone / RCSDRoad / RCSDNode / mainnodeid`；当前处理对象包括简单 div/merge 候选，以及连续分歧 / 合流聚合后的 complex 128 主节点
 - `t02-aggregate-continuous-divmerge` 是独立离线聚合工具，按 T04 continuous chain 语义识别连续分歧/合流组，改写 `nodes / roads` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / continuous_divmerge_report.json`
 - 该工具会同步输出：
   - 新生成复杂路口数量 `complex_junction_count`
@@ -67,8 +75,10 @@ python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
   - CLI 结束时也会直接打印这两个摘要
 - T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
 - T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
-- `case-package` 是 stage3 baseline regression 入口，不允许回退
-- `full-input` 是 stage3 完整数据 baseline 入口；共享大图层直连运行必须先满足正确 layer / CRS / 预裁剪与 preflight 约束
+- `case-package` 是 stage3 唯一正式验收基线入口，不允许回退
+- 当前唯一正式验收基线冻结为 `E:\TestData\POC_Data\T02\Anchor`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor`）下的 `61` 个 case
+- `full-input` 当前仅作为 fixture / dev-only / regression 入口；共享大图层直连运行必须先满足正确 layer / CRS / 预裁剪与 preflight 约束
+- `test_virtual_intersection_full_input_poc.py` 当前只承担 regression 角色，不再表述为 Stage3 正式交付基线
 ## 3. 常见运行方式
 
 ```bash
@@ -146,7 +156,7 @@ bash scripts/t02_watch_stage4_internal_full_input.sh
 
 说明：
 
-- 自动发现只处理符合 Stage4 baseline 的代表 node：`has_evd = yes`、`is_anchor = no`，且 `kind_2 in {8, 16}` 或 `kind / kind_2 = 128`。
+- 自动发现只处理符合 Stage4 baseline 的代表 node：`has_evd = yes`、`is_anchor = no`，且属于需要按真实分歧 / 合流事件解释的事实路口候选；当前包含简单 div/merge 候选，以及连续分歧 / 合流聚合后的 complex 128 主节点。
 - 默认内网路径冻结为：
   - `NODES_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg`
   - `ROADS_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg`

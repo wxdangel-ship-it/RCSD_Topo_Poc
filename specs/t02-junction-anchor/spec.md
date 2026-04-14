@@ -1,13 +1,13 @@
 # T02 路口锚定模块规格
 
-> 本文件是 T02 stage1 初始基线的变更工件。当前正式模块长期真相以 `modules/t02_junction_anchor/architecture/*` 与 `modules/t02_junction_anchor/INTERFACE_CONTRACT.md` 为准。
+> 本文件是 T02 需求基线的变更工件。当前正式模块长期真相以 `modules/t02_junction_anchor/architecture/*` 与 `modules/t02_junction_anchor/INTERFACE_CONTRACT.md` 为准。
 
 ## 1. 文档定位
 
 - 文档类型：需求基线规格
 - 模块 ID：`t02_junction_anchor`
 - 当前状态：`baseline change artifact / completed`
-- 本文件作用：保留 T02 stage1 初始需求冻结轨迹，不替代当前正式模块文档面
+- 本文件作用：保留 T02 早期需求冻结轨迹，并同步记录后续经批准的文档口径收敛；它不替代当前正式模块文档面
 
 ## 2. 模块业务定位
 
@@ -450,10 +450,32 @@
   - 若 `nodes.kind / nodes.kind_2` 同时为空、缺失或不可用，则该 case 视为缺失最终成果字段，不得静默补值
 - 所有最终成果路口面 geometry 必须统一写为 `EPSG:3857`。
 - 只要存在 full-input / batch / 全量运行，就必须同步输出该批次的最终全量路口面汇总图层；不得只保留单 case 目录产物而缺失汇总成果。
+- 当前 Stage3 唯一正式验收基线冻结为 `E:\TestData\POC_Data\T02\Anchor`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor`）下的 `61` 个 case-package。
+- 当前 `test_virtual_intersection_full_input_poc.py` 与 full-input 运行链仅承担 fixture / dev-only / regression 角色，不得再表述为 Stage3 正式交付基线。
 - 当前成果审计固定采用双线模板：
   - 机器审计给根因层（`step3 / step4 / step5 / step6 / frozen-constraints conflict`）
   - 人工目视审计给快速分类（`V1 / V2 / V3 / V4 / V5`）
 - Stage4 当前复用同一套成果审计与目视复核模板。
+
+### 7.2 Stage4 正式需求文档修订同步（2026-04）
+
+- 本轮同步属于正式需求文档修订，不属于代码重构、算法重构、测试改写或 CLI 调整。
+- Stage4 当前正式契约以以下文档为准：
+  - `modules/t02_junction_anchor/INTERFACE_CONTRACT.md`
+  - `modules/t02_junction_anchor/architecture/06-accepted-baseline.md`
+- 本轮同步冻结了 Stage4 的四类正式口径：
+  - 顶层定位、处理对象与非目标
+  - 七步正式业务定义
+  - 正式复用 Stage3 的成果审计 / 目视复核模板
+  - 最终成果路口面属性字段规则
+- Stage4 复用 Stage3 的边界是：
+  - 复用表达方式、审查模板和 PNG 三态样式
+  - 不继承 Stage3 的业务语义，不把 Stage3 的事件解释或几何规则直接平移为 Stage4 规则
+- Stage4 当前版本仍是独立补充阶段：
+  - 不写回 `nodes.is_anchor`
+  - 不并入统一锚定结果
+  - 不承担最终唯一锚定闭环
+- 当算法收敛到认可水平后，Stage4 可与 Stage3 合并进入同一锚定流程；该未来方向已在正式契约中冻结为“可合并方向”，但本轮文档修订不等于已经进入代码合并或流程合并。
 
 ## 8. 剩余待确认项 / 非阻断风险 / 上游依赖
 

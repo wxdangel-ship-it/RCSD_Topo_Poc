@@ -33,13 +33,23 @@
   - `DriveZone`
   - `RCSDRoad`
   - `RCSDNode`
-- stage4 仅处理代表 node 满足以下候选口径的单 case baseline：
+  - 可选高优先级局部参考：`DivStripZone`
+- stage4 当前定位冻结为：
+  - 面向分歧 / 合流事实事件的独立补充阶段
+  - 当前不写回 `nodes.is_anchor`
+  - 当前不并入统一锚定结果
+  - 当前不承担主流程最终唯一锚定闭环
+  - 当算法收敛到认可水平后，可与 stage3 合并进入同一锚定流程
+- stage4 当前处理对象冻结为：
   - `has_evd = yes`
   - `is_anchor = no`
-  - `kind_2 in {8, 16}`
+  - 需要按真实分歧 / 合流事件解释的事实路口候选
+  - 简单 div/merge 候选：`kind` 或 `kind_2` 落在 `{8, 16}`
+  - 经连续分歧 / 合流聚合后的 complex 主节点：`kind = 128` 或 `kind_2 = 128`
 - stage4 当前语义归因冻结为：
-  - `kind_2 = 8` 表示 merge（`2 in 1 out`）
-  - `kind_2 = 16` 表示 diverge（`1 in 2 out`）
+  - `kind = 8` 或 `kind_2 = 8` 表示 merge（`2 in 1 out`）
+  - `kind = 16` 或 `kind_2 = 16` 表示 diverge（`1 in 2 out`）
+  - `kind / kind_2 = 128` 仅在“连续分歧 / 合流聚合后的 complex 主节点”语义下进入 stage4，不代表“所有 complex 128”
 - stage4 实现采用 stage3 的栅格策略主线：
   - patch + mask + 连通提取 + 回矢量 + 审计
 - stage4 结果是独立并行成果：
@@ -103,8 +113,15 @@
   - **RCSD（`RCSDNode` / `RCSDRoad`）**：覆盖性差，但精度高，与道路面和导流带套合较好；RCSD node 与真实路口位置差距不超过 `20m`
 - 这一特性决定了 stage3 / stage4 的核心策略：
   - SWSD `nodes` 只作为 seed 和候选入口，不能替代真实事件定位
-  - RCSD 是路口面覆盖验收的刚性约束
-  - 路口面可以不包含 SWSD 路口点位，但必须包含对应的 RCSD 路口（`RCSDNode`）
+  - RCSD 不是无条件第一硬约束
+  - 只有在对应事实路口存在对应 RCSD 挂接时，RCSD 覆盖 / 容差才构成条件性硬约束
+  - 若 RCSD 在该事实路口缺失挂接，不以 RCSD 未覆盖作为失败条件
+  - 路口面可以不包含 SWSD 路口点位
+  - 对于存在挂接的事实路口，stage3 / stage4 必须保护对应的 `RCSDNode`
+- 对分歧 / 合流场景的 `RCSDNode` 位置约束当前冻结为：
+  - diverge：`RCSDNode` 允许位于真实分歧前不超过 `20m`
+  - merge：`RCSDNode` 允许位于真实合流后不超过 `20m`
+  - 该容差只用于与事实事件的条件性硬约束对齐，不得把 `RCSDNode` 反过来当作真实事件中心
 
 ### 2.4 实际输入字段冻结
 
@@ -307,10 +324,12 @@
 - `RCSDNode` 必须包含：
   - `id`
   - `mainnodeid`
-- case-package 是 baseline regression 入口，不允许回退。
-- full-input 是当前正式 baseline 入口，用于：
+- case-package 是 stage3 唯一正式验收基线入口，不允许回退。
+- 当前唯一正式验收基线冻结为 `E:\TestData\POC_Data\T02\Anchor`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor`）下的 `61` 个 case-package。
+- full-input 当前保留为 fixture / dev-only / regression 入口，用于：
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别未锚定且有资料的路口
+- full-input 当前不是 stage3 正式交付基线，不得再表述为“当前正式 baseline 入口”。
 - 代表 node 的 stage3 baseline 前提：
   - `has_evd = yes`
   - `kind_2 in {4, 2048}`
@@ -320,7 +339,7 @@
 ### 2.8 Stage3 虚拟路口锚定 baseline 处理契约
 
 - `case-package` 模式只处理单个 `mainnodeid`。
-- `full-input` 模式统一两类业务诉求：
+- `full-input` 模式统一两类 regression 诉求：
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别候选
 - stage3 步骤2「模板分类」当前正式业务口径冻结为：
@@ -525,7 +544,27 @@
 
 ### 2.10 Stage4 div/merge 虚拟面契约
 
+#### 2.10.1 顶层定位
+
 - `t02-stage4-divmerge-virtual-polygon` 是当前 stage4 独立入口。
+- stage4 当前定位冻结为：
+  - 面向分歧 / 合流场景的独立补充阶段
+  - 当前不属于统一锚定主流程的一部分
+  - 当前不负责写回 `nodes.is_anchor`
+  - 当前不负责并入统一锚定结果
+  - 当前不负责主流程最终唯一锚定闭环
+- 上述定位是当前版本定位，不是永久架构边界：
+  - 当算法收敛到认可水平后
+  - stage4 可与 stage3 合并进入同一锚定流程
+  - 并承担对应的锚定信息关联职责
+- stage4 的业务主线冻结为：
+  - 真实事件优先
+  - 不是中心优先
+  - SWSD `nodes` 只作为 seed / 候选入口
+  - 不能替代真实分歧 / 合流事件定位
+
+#### 2.10.2 处理对象与非目标
+
 - stage4 核心必选输入：
   - `nodes`
   - `roads`
@@ -535,79 +574,117 @@
   - `mainnodeid`
 - stage4 高优先级局部参考输入：
   - `DivStripZone`
-  - 可缺省；缺省或局部无 nearby 命中时，允许降级到 `roads / RCSDRoad` 支撑面
+  - 可缺省；缺省或局部无 nearby 命中时，允许降级到 `roads / RCSDRoad` 支撑解释
 - stage4 当前只认字段：
   - `nodes.id / nodes.mainnodeid / nodes.has_evd / nodes.is_anchor / nodes.kind / nodes.kind_2 / nodes.grade_2`
   - `roads.id / roads.snodeid / roads.enodeid / roads.direction`
   - `RCSDRoad.id / RCSDRoad.snodeid / RCSDRoad.enodeid / RCSDRoad.direction`
   - `RCSDNode.id / RCSDNode.mainnodeid`
-- stage4 正式输出：
-- `stage4_virtual_polygon.gpkg`
-- `stage4_virtual_polygons.gpkg`
-- `stage4_node_link.json`
-  - `stage4_rcsdnode_link.json`
-  - `stage4_audit.json`
-  - 可选 `stage4_debug/`
-  - 可选 `_rendered_maps/<mainnodeid>.png` 或显式 `--debug-render-root` 下的同名 PNG
-- stage4 运行态工件仍可输出：
-  - `stage4_status.json`
-  - `stage4_progress.json`
-  - `stage4_perf.json`
-  - `stage4_perf_markers.jsonl`
-- 这些运行态工件用于审计与性能追踪，不属于当前 stage4 正式契约输出。
-- stage4 成功态必须覆盖：
-  - 目标 `mainnodeid` 对应的主 `RCSDNode`（刚性约束）
-  - 与选定分支语义一致的相关 RCSD node
-  - SWSD `nodes` 点位不是覆盖刚性约束；路口面可以不包含 SWSD node 点位，但必须包含对应的 RCSD 路口
-- 主 `RCSDNode` 允许按主干容差解释，而不是无条件精确 seed：
-  - `kind_2=16`：允许位于分歧前主干 `<=20m`
-  - `kind_2=8`：允许位于合流后主干 `<=20m`
-  - 超过 `20m`、方向错误或明显 off-trunk 时，不得记为 accepted/stable
-- stage4 当前业务范围包括：
-  - 原始 `kind_2 in {8, 16}` 的单分歧 / 单合流候选
-  - 经连续分歧 / 合流聚合工具生成的复杂路口主节点：`kind = 128` 或 `kind_2 = 128`
-- 对 `kind / kind_2 = 128` 的复杂路口主节点：
-  - stage4 必须先基于局部 branch 方向证据与 nearby `DivStripZone` 解析单次运行的 `operational kind_2`
-  - 解析结果仍只落到当前 stage4 的单事件语义：`8` 或 `16`
-  - 若解析证据不稳定，必须显式写入审计，不得 silent fix
-- stage4 的几何终态验收要求正式冻结为：
-  - 必须优先定位道路面上的真实分歧 / 合流事件位置；`nodes` 点位只作为 seed，不能替代事件定位
-  - nearby `DivStripZone` 尖端前后是事件定位的第一优先级；`nodes / roads / RCSDRoad / RCSDNode` 只作为形态一致性与降级支撑
-  - 输出 polygon 必须填充目标事件前后的有效 `DriveZone` 路面，但不得把 `DivStripZone` 几何本身直接并入路口面
-  - 当 `DriveZone` 连通域内仅有当前路口及其关联 road（含二度关联至其他路口的 road）时，polygon 应在事件 span 范围内铺满 `DriveZone` 路面的全部宽度，不得只沿主干形成窄条
-  - 输出 polygon 的前端和末端必须由近似垂直于当前主干方向的横截面裁切，不得形成沿路面无约束拖尾的长条型结果
-  - 若同一 `DriveZone` 连通域内存在对向或平行 road，且与当前路口及其关联 road（含二度关联至其他路口）不联通，polygon 必须以 `RCSDRoad` 的中央区域为纵向分割线截断，不得吞并无关对向 / 平行 road 的整幅路面
-  - 简单分歧 / 合流 case 的 span 最多扩展到前一个或后一个语义路口，或总范围不超过 `200m`
-  - 复杂 / 连续分歧合流 case 必须覆盖当前 `mainnodeid` 语义组内应纳入的全部事件区域，但进入 / 退出支路也最多扩展到前一个或后一个语义路口，或总范围不超过 `200m`
-  - 不得把相邻无关 `T` 型路口、无关 patch、无关语义路口一起并入当前 Stage4 路口面
-- stage4 必须正式读取 `DivStripZone` 的局部 patch；它是 stage4 在合法 `DriveZone` patch 内的一级局部选择标准：
-  - nearby `DivStripZone` 优先决定分支裁决与虚拟面约束
-  - `roads / RCSDRoad` 只在 `DivStripZone` 缺失或局部无可用 nearby 命中时作为降级支撑
-  - 不得把 `DivStripZone` 直接当输出面
-- `DriveZone` 仍是 stage4 的硬边界与合法性约束，不能被远处 `DivStripZone` 或道路面替代。
-- 局部 patch 中 `DivStripZone` 缺失 nearby 证据时，默认先降级到 `roads / RCSDRoad` 支撑面；仅当同时出现主方向不稳、patch 连通域失败、关键字段缺失或 CRS 不可统一时才报异常。
-- stage4 审计至少必须写出：
-  - `divstrip_present`
-  - `divstrip_nearby`
-  - `divstrip_component_count`
-  - `divstrip_component_selected`
-  - `evidence_source`
-  - `event_position_source`
-  - `event_tip_s_m`
-  - `event_span_start_m`
-  - `event_span_end_m`
-  - `semantic_prev_boundary_offset_m`
-  - `semantic_next_boundary_offset_m`
-  - `trunk_branch_id`
-  - `rcsdnode_tolerance_rule`
-  - `rcsdnode_tolerance_applied`
-  - `rcsdnode_coverage_mode`
-  - `rcsdnode_offset_m`
-  - `rcsdnode_lateral_dist_m`
-- 若 `RCSDRoad` / `RCSDNode` 不在 `DriveZone` 上，必须报异常，不允许 silent fix。
-- 若覆盖失败但输入完整，记 `review_required` 风险，不得 silent fix。
-- 若输出 polygon 命中错误导流带、只覆盖复杂路口中的部分事件区域、吞并无关对向 / 平行 road、吞并相邻无关语义路口、或未保护主 `RCSDNode` / 相关 node，不得记为 `accepted/stable`；至少进入 `review_required`，无法形成合法局部结果时必须 `rejected`。
-- 若 `mainnodeid` 关联不稳定、patch 无法形成主连通域、关键字段缺失、`DivStripZone` 图层不可读或 CRS 无法统一到 `EPSG:3857`，必须报异常。
+- stage4 当前处理对象冻结为：
+  - 有证据、尚未完成正式锚定
+  - 需要按真实分歧 / 合流事件解释的事实路口候选
+- 当前正式处理两类对象：
+  - 简单 div/merge 候选
+  - 连续分歧 / 合流聚合后的 complex 128 主节点
+- `kind` 与 `kind_2` 在 stage4 候选识别语义上等价：
+  - 本地测试可能只有 `kind_2`
+  - 正式契约不得把候选识别写死在单一字段上
+- 普通 div/merge 场景中：
+  - `nodeid` 可作为等效 `mainnodeid`
+  - 不把“必须存在独立 `mainnodeid`”写成业务前提
+- RCSD 缺失挂接但事实事件存在时：
+  - 仍属于 stage4 处理对象
+  - 不得因为缺少 RCSD 挂接就排除进入 stage4
+- 当前非目标冻结为：
+  - 不写回 `nodes.is_anchor`
+  - 不并入统一锚定结果
+  - 不做最终唯一锚定决策闭环
+  - 不做候选生成 / 候选打分
+  - 不做概率 / 置信度实现
+  - 不做误伤捞回
+  - 不做环岛新业务规则
+  - 当前可用于审计 / 验证批跑，但不承担正式产线级全量锚定闭环职责
+
+#### 2.10.3 七步正式业务定义
+
+##### Step1 候选验证（Candidate Admission）
+
+- Step1 是准入 gate，不是正确性 gate。
+- Step1 只验证目标对象是否属于 stage4 当前处理范围。
+- Step1 不负责提前判断事件解释是否正确。
+- Step1 不加入拓扑 sanity。
+- RCSD 是否存在不影响准入。
+- `mainnodeid_out_of_scope` 只表示“不属于 stage4 当前处理范围”，不得用来承接后续 `operational kind_2` 解析失败。
+
+##### Step2 高召回事件局部上下文构建（High-recall Local Context）
+
+- Step2 不是 patch 全量解释，而是 `DriveZone` 硬边界内的高召回事实事件局部上下文构建。
+- Step2 既要保证真实事件不缺失，也要组织负向排除对象。
+- Step2 正向召回上限冻结为：
+  - diverge：以进入 road 为主干，沿其向后最多 `50m`；以前进方向各个 branch road 为臂，沿其向前最多 `200m`；各方向都不得越过相邻语义路口
+  - merge：以退出 road 为主干，沿其向前最多 `50m`；以回推方向各个 branch road 为臂，沿其向后最多 `200m`；各方向都不得越过相邻语义路口
+- 上述 `50m / 200m` 是当前版本的最大召回上限，不是每个 case 必须跑满的固定窗口；若更早碰到稳定的相邻语义路口边界，应提前收敛。
+- Step2 负向排除上下文冻结为：
+  - 负向排除对象是落在正向召回道路面内、但与当前正向事件无关的 `RCSD / SWSD / road` 对象
+  - 优先级为 `RCSDNode / RCSDRoad` 优先，`nodes / roads` 其次，必要时允许 road geometry 补位
+  - Step2 只负责组织 `negative exclusion context`，不在本步骤完成最终几何排除
+- `DriveZone` 是 Step2 无条件硬边界。
+- 对当前事件直接相关且被纳入解释范围的 RCSD：
+  - 若超出 `DriveZone`，直接失败
+
+##### Step3 拓扑成骨架（Topology Skeletonization）
+
+- Step3 是拓扑成骨架，不是重新分类候选。
+- 二度 through node 不打断 branch；二度 through node 视为完整 road 的中间连接点。
+- 对普通简单 div/merge：
+  - Step3 直接组织 branch 与主方向关系
+- 对连续分歧 / 合流及 complex 128：
+  - `chain_context` 不是日志附加项，而是会改变 branch 连通解释和主方向选择的结构性约束
+- Step3 原则上不作为常规业务失败步骤；它负责产出骨架并暴露不稳定性，不应把当前实现中的保底异常路径直接冻结成正式业务失败口径。
+
+##### Step4 事实事件解释层（Fact Event Interpretation）
+
+- Step4 是事实事件解释层，不是几何生成层，也不是人工目视中间过程输出层。
+- Step4 主输出是机器可消费的事件解释结果包，供 Step5 / Step6 消费。
+- `continuous chain / multibranch / reverse tip` 正式冻结为 Step4 内部稳定规则家族。
+- Step4 主证据链最小顺序冻结为：
+  1. DivStrip 直接事件证据优先
+  2. `continuous chain / multibranch` 结构约束与裁决
+  3. `reverse tip` 受控重试
+  4. 保守 fallback
+- Step4 不是把 `DivStrip / topology / RCSD / SWSD / road` 平铺混用，必须存在明确主证据链。
+- `reverse tip` 只允许作为受控重试，不得作为常规主路径。
+- Step4 默认行为是保守降级、显式外露风险，而不是轻易 hard fail。
+
+##### Step5 事件几何支撑域构建（Geometric Support Domain）
+
+- Step5 是事件几何支撑域构建层，不是事件解释层，也不是最终 polygon 层。
+- Step5 的 span 必须落在 Step2 召回上限之内，并根据 Step4 事件解释结果进一步收敛成实际几何窗口。
+- Step5 正式承担负向排除对象的几何约束落地职责。
+- “近似垂直横截面”正式冻结为 Step5 的几何构造要求，不是可有可无的实现建议。
+
+##### Step6 最终 polygon 组装（Polygon Assembly）
+
+- Step6 是最终 polygon 组装层，不再回头解释事件。
+- Step6 目标是收敛到一个主 polygon，不输出多候选几何。
+- Step6 不直接做 acceptance；它只产出几何成形状态与几何风险信号。
+- Step6 必须把这些结果完整传递给 Step7。
+- 正式需求中不得再把 Step6 的几何状态与 Step3 的拓扑不稳定混用成同一失败语义。
+
+##### Step7 最终业务验收与结果发布（Final Acceptance & Publishing）
+
+- Step7 是最终业务验收与结果发布层，不是事件解释层，也不是几何生成层。
+- Step7 正式使用条件性 RCSD 硬约束：
+  - 只有在对应事实路口存在对应 RCSD 挂接时
+  - 才必须满足 RCSD 覆盖 / 容差
+- Step7 三态冻结为：
+  - `accepted` = 稳定可交付
+  - `review_required` = 已形成结果但仍需人工复核
+  - `rejected` = 无合法结果或违反明确硬业务约束
+- Step7 输出责任冻结为：
+  - 三种状态都应尽量落完整独立结果包
+  - 当前不承担主流程写回责任
+- stage4 正式输出与结果字段约束见第 3 节。
 
 ## 3. Outputs
 
@@ -682,6 +759,26 @@ outputs/_work/t02_stage1_drivezone_gate
   - 若 `nodes.kind` 为空、缺失或不可用，则回退写当前代表 node 的 `nodes.kind_2`
   - 若 `nodes.kind / nodes.kind_2` 同时为空、缺失或不可用，则该 case 视为缺失最终成果字段，不得静默补值
 - 所有最终成果路口面 geometry 必须统一写为 `EPSG:3857`。
+- Stage4 最终成果路口面图层（`stage4_virtual_polygon.gpkg`、`stage4_virtual_polygons.gpkg`）还必须稳定承载以下审计属性字段：
+  - `divstrip_present`
+  - `divstrip_nearby`
+  - `divstrip_component_count`
+  - `divstrip_component_selected`
+  - `evidence_source`
+  - `event_position_source`
+  - `event_tip_s_m`
+  - `event_span_start_m`
+  - `event_span_end_m`
+  - `semantic_prev_boundary_offset_m`
+  - `semantic_next_boundary_offset_m`
+  - `trunk_branch_id`
+  - `rcsdnode_tolerance_rule`
+  - `rcsdnode_tolerance_applied`
+  - `rcsdnode_coverage_mode`
+  - `rcsdnode_offset_m`
+  - `rcsdnode_lateral_dist_m`
+- `acceptance_class` 与 `acceptance_reason` 为当前正式建议同步固化到 Stage4 最终成果路口面图层中的结果字段。
+- 上述 Stage4 字段不得只散落在 JSON 中；Stage4 最终成果 polygon 图层必须支持脱离 JSON 的基本独立复核。
 - 只要存在 full-input / batch / 全量运行，就必须同步输出该批次的最终全量路口面汇总图层；不得只保留单 case 目录产物而缺失汇总成果。
 
 #### `nodes.gpkg`
@@ -924,6 +1021,7 @@ outputs/_work/t02_stage1_drivezone_gate
 - 当前成果审计固定采用双线并行：
   - 机器审计：基于 `status.json / audit.json / gpkg / png` 产物给出根因分析
   - 人工目视审计：基于结果图与必要矢量叠加给出快速业务判断
+- Stage4 正式复用 Stage3 的双线并行成果审计方案、目视分类表达与 PNG 三态样式契约，但只复用表达方式与审查模板，不继承 Stage3 业务语义。
 - 机器审计的根因层至少应落在以下之一：
   - `step3`
   - `step4`
@@ -1011,10 +1109,16 @@ outputs/_work/t02_stage1_drivezone_gate
 
 #### Stage4 状态与失败口径
 
-- 成功态：
+- Step7 是 Stage4 最终业务验收与结果发布层。
+- Stage4 三态冻结为：
   - `accepted`
-- 风险态：
   - `review_required`
+  - `rejected`
+- `mainnodeid_out_of_scope` 只表示“不属于 Stage4 当前处理范围”，不得承接 `operational kind_2` 解析失败或几何求解失败。
+- 条件性 RCSD 硬约束冻结为：
+  - 只有在对应事实路口存在对应 RCSD 挂接时
+  - 才必须满足 RCSD 覆盖 / 容差
+  - 若事实路口缺失对应 RCSD 挂接，不以 RCSD 未覆盖作为单独失败条件
 - 明确失败原因至少包含：
   - `missing_required_field`
   - `invalid_crs_or_unprojectable`
@@ -1022,15 +1126,18 @@ outputs/_work/t02_stage1_drivezone_gate
   - `mainnodeid_out_of_scope`
   - `main_direction_unstable`
   - `rcsd_outside_drivezone`
-- 以下业务结果至少应进入 `review_required`，不得记为 `accepted/stable`：
-  - 命中错误 `DivStripZone` 组件或事件位置
+  - `no_legal_local_result`
+  - `hard_business_constraint_violation`
+- 以下业务结果至少应进入 `review_required`，不得记为 `accepted`：
+  - 命中错误 `DivStripZone` 组件或错误事件位置
   - 简单路口 span 超过前后语义路口边界，或明显超过 `200m`
-  - 复杂 / 连续路口只覆盖部分事件 lobe，未覆盖当前 `mainnodeid` 组内应纳入的事件区域
+  - 复杂 / 连续路口只覆盖部分事件区域，未覆盖当前 `mainnodeid` 组内应纳入的事件区域
   - 吞并无关对向 / 平行 road 的整幅路面
   - 吞并相邻无关 `T` 型路口、无关 patch 或无关语义路口
   - 主 `RCSDNode` 仅靠超窗、反向或 off-trunk 才能解释
-- 若上述问题导致无法形成合法局部 polygon，则必须进入 `rejected`。
-- stage4 的 `status/progress/perf/perf_markers` 仍可输出为运行态工件，但不属于正式契约输出。
+- 若对应事实路口存在对应 RCSD 挂接而结果又无法满足 RCSD 覆盖 / 容差，则不得记为 `accepted`；无法形成合法局部结果时必须进入 `rejected`。
+- `review_required` 只适用于“已形成结果但仍需人工复核”；`rejected` 不得再只由异常 handler 语义承接。
+- Stage4 的 `status/progress/perf/perf_markers` 仍可输出为运行态工件，但不属于正式契约输出。
 - Stage4 的目视检查 PNG 当前正式复用 Stage3 的三态样式契约：
   - `accepted` 使用正常成功图样式
   - `review_required` 使用浅琥珀 / 橙黄色系风险样式，并带 `REVIEW` / `待复核` 标识
@@ -1055,8 +1162,8 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
 ```
 
 - `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口
-- 默认 `input_mode = case-package`，保持既有 case-package baseline 行为不回退
-- `--input-mode full-input` 打开统一全量输入 baseline：
+- 默认 `input_mode = case-package`，保持 Anchor61 case-package 正式验收基线不回退
+- `--input-mode full-input` 打开统一全量输入 regression 入口：
   - 传 `--mainnodeid`：完整数据 + 指定路口
   - 不传 `--mainnodeid`：完整数据 + 自动识别候选
 - 不重算 stage1 / stage2，只消费其结果字段

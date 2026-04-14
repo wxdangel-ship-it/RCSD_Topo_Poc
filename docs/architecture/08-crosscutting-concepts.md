@@ -2,8 +2,9 @@
 
 ## 1. Source-of-Truth 分层
 
-- 项目级：`SPEC.md`、`docs/PROJECT_BRIEF.md`、`docs/architecture/*`
-- 模块级：`modules/<module>/architecture/*`、`INTERFACE_CONTRACT.md`
+- 项目级 source-of-truth：`SPEC.md`、`docs/PROJECT_BRIEF.md`、`docs/architecture/*`、`docs/doc-governance/module-lifecycle.md`
+- 项目级盘点 / 索引：`docs/doc-governance/current-module-inventory.md`、`docs/doc-governance/current-doc-inventory.md`、`docs/doc-governance/module-doc-status.csv`
+- 模块级 source-of-truth：`modules/<module>/architecture/*`、`modules/<module>/INTERFACE_CONTRACT.md`
 - durable guidance：`AGENTS.md`
 - workflow：repo root `.agents/skills/<skill-name>/SKILL.md`
 

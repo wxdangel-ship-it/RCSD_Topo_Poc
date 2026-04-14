@@ -64,34 +64,38 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_audit_assembler import (
     stage3_audit_record_dict,
     stage3_step7_acceptance_result_dict,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.stage3_success_contract_assembly import (
-    Stage3SuccessContractIdentityInputs,
-    assemble_stage3_success_contracts,
-    build_stage3_success_contract_assembly_inputs_from_results,
-    build_stage3_success_step_results,
-)
-from rcsd_topo_poc.modules.t02_junction_anchor.stage3_success_snapshot_builder import (
-    Stage3SuccessStep3SnapshotInputs,
-)
-from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step5_step6_boundary import (
-    build_stage3_step6_final_state_snapshot,
-    build_stage3_step_snapshot_inputs_from_boundary,
-    freeze_stage3_step5_baseline,
-)
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_success_decision_builder import (
     Stage3SuccessDecisionBuildInputs,
     build_stage3_success_final_decision_inputs,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_terminal_contract_assembly import (
+    Stage3Step6TerminalSolveSeedInputs,
+    Stage3TerminalContractInputs,
+    build_stage3_terminal_contracts,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_output_assembly import (
     build_stage3_failure_output_bundle,
     build_stage3_success_output_bundle,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_context_builder import (
+    Stage3LegacyContextInputs,
+    build_stage3_context_from_legacy_inputs,
     build_minimal_stage3_context,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step3_legal_space import (
+    Stage3Step3LegalSpaceInputs,
+    build_stage3_step3_legal_space_result,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step4_rc_semantics import (
     Stage3Step4SemanticsInputs,
     build_stage3_step4_rc_semantics_result,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step5_foreign_model import (
+    Stage3Step5ForeignModelInputs,
+    build_stage3_step5_foreign_model_result,
+)
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step6_geometry_controller import (
+    Stage3Step6GeometryControllerInputs,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step7_acceptance import (
     Stage3AcceptanceDecision,
@@ -8648,20 +8652,6 @@ def run_t02_virtual_intersection_poc(
                 semantic_mainnodeids=semantic_mainnodeids,
             ):
                 continue
-            if not review_mode:
-                invalid_rc_road_ids.add(rc_road.road_id)
-                invalid_distance_m = float(rc_road.geometry.distance(representative_node.geometry))
-                min_invalid_rc_distance_to_center_m = (
-                    invalid_distance_m
-                    if min_invalid_rc_distance_to_center_m is None
-                    else min(min_invalid_rc_distance_to_center_m, invalid_distance_m)
-                )
-                if rc_outside_drivezone_error is None:
-                    rc_outside_drivezone_error = VirtualIntersectionPocError(
-                        REASON_RC_OUTSIDE_DRIVEZONE,
-                        f"RCSDRoad id='{rc_road.road_id}' is not fully covered by DriveZone within the local patch.",
-                    )
-                continue
             invalid_rc_road_ids.add(rc_road.road_id)
             invalid_distance_m = float(rc_road.geometry.distance(representative_node.geometry))
             min_invalid_rc_distance_to_center_m = (
@@ -8669,19 +8659,25 @@ def run_t02_virtual_intersection_poc(
                 if min_invalid_rc_distance_to_center_m is None
                 else min(min_invalid_rc_distance_to_center_m, invalid_distance_m)
             )
-            audit_rows.append(
-                _audit_row(
-                    scope="virtual_intersection_poc",
-                    status="warning",
-                    reason=STATUS_REVIEW_RC_OUTSIDE_DRIVEZONE_EXCLUDED,
-                    detail=(
-                        f"review_mode excluded RCSDRoad id='{rc_road.road_id}' because it is not fully "
-                        "covered by DriveZone within the local patch."
-                    ),
-                    mainnodeid=normalized_mainnodeid,
-                    feature_id=rc_road.road_id,
+            if rc_outside_drivezone_error is None:
+                rc_outside_drivezone_error = VirtualIntersectionPocError(
+                    REASON_RC_OUTSIDE_DRIVEZONE,
+                    f"RCSDRoad id='{rc_road.road_id}' is not fully covered by DriveZone within the local patch.",
                 )
-            )
+            if review_mode:
+                audit_rows.append(
+                    _audit_row(
+                        scope="virtual_intersection_poc",
+                        status="warning",
+                        reason=STATUS_REVIEW_RC_OUTSIDE_DRIVEZONE_EXCLUDED,
+                        detail=(
+                            f"review_mode excluded RCSDRoad id='{rc_road.road_id}' because it is not fully "
+                            "covered by DriveZone within the local patch."
+                        ),
+                        mainnodeid=normalized_mainnodeid,
+                        feature_id=rc_road.road_id,
+                    )
+                )
         for rc_node in local_rc_nodes:
             if _covered_by_drivezone(rc_node.geometry.buffer(max(resolution_m, 0.2)), drivezone_union):
                 continue
@@ -8701,20 +8697,6 @@ def run_t02_virtual_intersection_poc(
                 semantic_mainnodeids=semantic_mainnodeids,
             ):
                 continue
-            if not review_mode:
-                invalid_rc_node_ids.add(rc_node.node_id)
-                invalid_distance_m = float(rc_node.geometry.distance(representative_node.geometry))
-                min_invalid_rc_distance_to_center_m = (
-                    invalid_distance_m
-                    if min_invalid_rc_distance_to_center_m is None
-                    else min(min_invalid_rc_distance_to_center_m, invalid_distance_m)
-                )
-                if rc_outside_drivezone_error is None:
-                    rc_outside_drivezone_error = VirtualIntersectionPocError(
-                        REASON_RC_OUTSIDE_DRIVEZONE,
-                        f"RCSDNode id='{rc_node.node_id}' is not covered by DriveZone within the local patch.",
-                    )
-                continue
             invalid_rc_node_ids.add(rc_node.node_id)
             invalid_distance_m = float(rc_node.geometry.distance(representative_node.geometry))
             min_invalid_rc_distance_to_center_m = (
@@ -8722,16 +8704,22 @@ def run_t02_virtual_intersection_poc(
                 if min_invalid_rc_distance_to_center_m is None
                 else min(min_invalid_rc_distance_to_center_m, invalid_distance_m)
             )
-            audit_rows.append(
-                _audit_row(
-                    scope="virtual_intersection_poc",
-                    status="warning",
-                    reason=STATUS_REVIEW_RC_OUTSIDE_DRIVEZONE_EXCLUDED,
-                    detail=(
-                        f"review_mode excluded RCSDNode id='{rc_node.node_id}' because it is not covered "
-                        "by DriveZone within the local patch."
-                    ),
-                    mainnodeid=normalized_mainnodeid,
+            if rc_outside_drivezone_error is None:
+                rc_outside_drivezone_error = VirtualIntersectionPocError(
+                    REASON_RC_OUTSIDE_DRIVEZONE,
+                    f"RCSDNode id='{rc_node.node_id}' is not covered by DriveZone within the local patch.",
+                )
+            if review_mode:
+                audit_rows.append(
+                    _audit_row(
+                        scope="virtual_intersection_poc",
+                        status="warning",
+                        reason=STATUS_REVIEW_RC_OUTSIDE_DRIVEZONE_EXCLUDED,
+                        detail=(
+                            f"review_mode excluded RCSDNode id='{rc_node.node_id}' because it is not covered "
+                            "by DriveZone within the local patch."
+                        ),
+                        mainnodeid=normalized_mainnodeid,
                         feature_id=rc_node.node_id,
                     )
                 )
@@ -17078,6 +17066,44 @@ def run_t02_virtual_intersection_poc(
                 and not final_selected_rc_endpoint_cover.covers(rc_node_by_id[node_id].geometry)
             )
         )
+        stage3_context = build_stage3_context_from_legacy_inputs(
+            Stage3LegacyContextInputs(
+                representative_node_id=representative_node.node_id,
+                normalized_mainnodeid=normalized_mainnodeid,
+                template_class=stage3_template_class,
+                representative_kind=representative_node.kind,
+                representative_kind_2=representative_node.kind_2,
+                representative_grade_2=representative_node.grade_2,
+                semantic_junction_set=analysis_member_node_ids,
+                analysis_member_node_ids=analysis_member_node_ids,
+                group_node_ids=group_node_ids,
+                local_node_ids=(node.node_id for node in local_nodes),
+                local_road_ids=(road.road_id for road in local_roads),
+                local_rc_node_ids=(node.node_id for node in local_rc_nodes),
+                local_rc_road_ids=(road.road_id for road in local_rc_roads),
+                road_branch_ids=(
+                    str(getattr(branch, "branch_id"))
+                    for branch in road_branches
+                    if getattr(branch, "branch_id", None) is not None
+                ),
+                analysis_center_xy=(float(analysis_center.x), float(analysis_center.y)),
+            )
+        )
+        step3_result = build_stage3_step3_legal_space_result(
+            Stage3Step3LegalSpaceInputs(
+                template_class=stage3_template_class,
+                legal_activity_space_geometry=drivezone_union,
+                allowed_drivezone_geometry=drivezone_union,
+                must_cover_group_node_ids=analysis_member_node_ids,
+                single_sided_corridor_road_ids=(
+                    final_allowed_local_road_ids
+                    if stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
+                    else ()
+                ),
+                hard_boundary_road_ids=(),
+                step3_blockers=(("drivezone_empty",) if drivezone_union.is_empty else ()),
+            )
+        )
         pre_step4_result = build_stage3_step4_rc_semantics_result(
             Stage3Step4SemanticsInputs(
                 required_rc_node_ids=selected_rc_node_ids,
@@ -17191,7 +17217,7 @@ def run_t02_virtual_intersection_poc(
             )
         )
         can_soft_exclude_outside_rc = False
-        if rc_outside_drivezone_error is not None and not review_mode:
+        if rc_outside_drivezone_error is not None:
             can_soft_exclude_outside_rc = _can_soft_exclude_outside_rc(
                 template_class=stage3_template_class,
                 status=status,
@@ -17228,11 +17254,7 @@ def run_t02_virtual_intersection_poc(
                     f"result={can_soft_exclude_outside_rc}"
                 ),
             )
-        if (
-            rc_outside_drivezone_error is not None
-            and not review_mode
-            and not can_soft_exclude_outside_rc
-        ):
+        if rc_outside_drivezone_error is not None and not can_soft_exclude_outside_rc:
             if debug and not debug_rendered_map_written:
                 try:
                     _write_failure_debug_rendered_map(
@@ -17518,23 +17540,26 @@ def run_t02_virtual_intersection_poc(
             )
 
         # Freeze Step5 semantic facts before late cleanup begins mutating geometry.
-        step5_baseline_snapshot = freeze_stage3_step5_baseline(
-            foreign_semantic_node_ids=covered_extra_local_node_ids,
-            foreign_road_arm_corridor_ids=covered_extra_local_road_ids,
-            acceptance_reason=acceptance_reason,
-            foreign_overlap_metric_m=max_target_group_foreign_semantic_road_overlap_m,
-            foreign_tail_length_m=step5_baseline_tail_length_m,
-            foreign_strip_extent_m=max_nonmain_branch_polygon_length_m,
-            foreign_overlap_zero_but_tail_present=(
-                step5_baseline_overlap_zero_but_tail_present
-            ),
-            single_sided_unrelated_opposite_lane_trim_applied=(
-                single_sided_unrelated_opposite_lane_trim_applied
-            ),
-            soft_excluded_rc_corridor_trim_applied=(
-                soft_excluded_rc_corridor_trim_applied
-            ),
-            foreign_overlap_by_id=target_group_foreign_semantic_road_overlap_by_id,
+        step5_result = build_stage3_step5_foreign_model_result(
+            Stage3Step5ForeignModelInputs(
+                foreign_semantic_node_ids=covered_extra_local_node_ids,
+                foreign_road_arm_corridor_ids=covered_extra_local_road_ids,
+                foreign_rc_context_ids=(),
+                acceptance_reason=acceptance_reason,
+                foreign_overlap_metric_m=max_target_group_foreign_semantic_road_overlap_m,
+                foreign_tail_length_m=step5_baseline_tail_length_m,
+                foreign_strip_extent_m=max_nonmain_branch_polygon_length_m,
+                foreign_overlap_zero_but_tail_present=(
+                    step5_baseline_overlap_zero_but_tail_present
+                ),
+                single_sided_unrelated_opposite_lane_trim_applied=(
+                    single_sided_unrelated_opposite_lane_trim_applied
+                ),
+                soft_excluded_rc_corridor_trim_applied=(
+                    soft_excluded_rc_corridor_trim_applied
+                ),
+                foreign_overlap_by_id=target_group_foreign_semantic_road_overlap_by_id,
+            )
         )
         step6_final_target_foreign_overlap_by_id = dict(
             target_group_foreign_semantic_road_overlap_by_id
@@ -19136,44 +19161,56 @@ def run_t02_virtual_intersection_poc(
         effect_success = post_gate_acceptance.effect_success
         acceptance_class = post_gate_acceptance.acceptance_class
         acceptance_reason = post_gate_acceptance.acceptance_reason
-        success_step_results = build_stage3_success_step_results(
-            identity_inputs=Stage3SuccessContractIdentityInputs(
-                representative_node_id=representative_node.node_id,
-                normalized_mainnodeid=normalized_mainnodeid,
-                template_class=stage3_template_class,
-                representative_kind=representative_node.kind,
-                representative_kind_2=representative_node.kind_2,
-                representative_grade_2=representative_node.grade_2,
-                semantic_junction_set=analysis_member_node_ids,
-                analysis_member_node_ids=analysis_member_node_ids,
-                group_node_ids=group_node_ids,
-                local_node_ids=(node.node_id for node in local_nodes),
-                local_road_ids=(road.road_id for road in local_roads),
-                local_rc_node_ids=(node.node_id for node in local_rc_nodes),
-                local_rc_road_ids=(road.road_id for road in local_rc_roads),
-                road_branch_ids=(
-                    str(getattr(branch, "branch_id"))
-                    for branch in road_branches
-                    if getattr(branch, "branch_id", None) is not None
-                ),
-                analysis_center_xy=(float(analysis_center.x), float(analysis_center.y)),
-            ),
-            step_snapshot_inputs=build_stage3_step_snapshot_inputs_from_boundary(
-                step3_inputs=Stage3SuccessStep3SnapshotInputs(
-                    legal_activity_space_geometry=drivezone_union,
-                    allowed_drivezone_geometry=drivezone_union,
-                    must_cover_group_node_ids=analysis_member_node_ids,
-                    single_sided_corridor_road_ids=(
-                        final_allowed_local_road_ids
-                        if stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
-                        else ()
-                    ),
-                    hard_boundary_road_ids=(),
-                    blockers=(("drivezone_empty",) if drivezone_union.is_empty else ()),
-                ),
+        terminal_contracts = build_stage3_terminal_contracts(
+            Stage3TerminalContractInputs(
+                context=stage3_context,
+                step3_result=step3_result,
                 step4_result=step4_result,
-                step5_baseline=step5_baseline_snapshot,
-                step6_final_state=build_stage3_step6_final_state_snapshot(
+                step5_result=step5_result,
+                step6_controller_inputs=Stage3Step6GeometryControllerInputs(
+                    template_class=stage3_template_class,
+                    status=status,
+                    geometry_established=not virtual_polygon_geometry.is_empty,
+                    step5_canonical_foreign_established=bool(
+                        step5_result and step5_result.canonical_foreign_established
+                    ),
+                    can_soft_exclude_outside_rc=can_soft_exclude_outside_rc,
+                    rc_outside_drivezone_present=rc_outside_drivezone_error is not None,
+                    max_target_group_foreign_semantic_road_overlap_m=(
+                        step6_final_foreign_overlap_metric_m
+                    ),
+                    max_selected_side_branch_covered_length_m=(
+                        step6_final_selected_side_branch_covered_length_m
+                    ),
+                    max_nonmain_branch_polygon_length_m=max_nonmain_branch_polygon_length_m,
+                    min_invalid_rc_distance_to_center_m=min_invalid_rc_distance_to_center_m,
+                    associated_rc_road_count=len(associated_rcsdroad_features),
+                    associated_rc_node_count=len(associated_rcsdnode_features),
+                    effective_associated_rc_node_count=effective_associated_rc_node_count,
+                    excluded_rc_road_count=counts.get("excluded_rcsdroad_count", 0),
+                    positive_rc_group_count=len(positive_rc_groups),
+                    negative_rc_group_count=len(negative_rc_groups),
+                    local_node_count=len(local_nodes),
+                    local_road_count=len(local_roads),
+                    polygon_aspect_ratio=polygon_aspect_ratio,
+                    polygon_compactness=polygon_compactness,
+                    polygon_bbox_fill_ratio=polygon_bbox_fill_ratio,
+                    single_sided_unrelated_opposite_lane_trim_applied=(
+                        single_sided_unrelated_opposite_lane_trim_applied
+                    ),
+                    soft_excluded_rc_corridor_trim_applied=(
+                        soft_excluded_rc_corridor_trim_applied
+                    ),
+                    foreign_tail_length_m=post_trim_non_target_tail_length_m,
+                    foreign_overlap_zero_but_tail_present=(
+                        foreign_overlap_zero_but_tail_present
+                    ),
+                    compound_center_applied=any(
+                        str(row.get("reason") or "") == "compound_center_applied"
+                        for row in audit_rows
+                    ),
+                ),
+                step6_solve_seed_inputs=Stage3Step6TerminalSolveSeedInputs(
                     primary_solved_geometry=virtual_polygon_geometry,
                     geometry_established=not virtual_polygon_geometry.is_empty,
                     max_selected_side_branch_covered_length_m=(
@@ -19228,13 +19265,7 @@ def run_t02_virtual_intersection_poc(
                     foreign_overlap_zero_but_tail_present=(
                         foreign_overlap_zero_but_tail_present
                     ),
-                    geometry_review_reason=acceptance_reason,
                 ),
-            ),
-        )
-        success_contracts = assemble_stage3_success_contracts(
-            build_stage3_success_contract_assembly_inputs_from_results(
-                step_results=success_step_results,
                 final_decision_inputs=build_stage3_success_final_decision_inputs(
                     Stage3SuccessDecisionBuildInputs(
                         success=effect_success,
@@ -19259,9 +19290,9 @@ def run_t02_virtual_intersection_poc(
                 ),
             )
         )
-        step3_result = success_contracts.step3_result
-        step5_result = success_contracts.step5_result
-        step6_result = success_contracts.step6_result
+        step6_controller_decision = terminal_contracts.step6_controller_decision
+        step6_result = terminal_contracts.step6_result
+        success_contracts = terminal_contracts.success_contracts
         step7_assembly = success_contracts.step7_assembly
         legacy_stage3_audit_envelope = success_contracts.legacy_stage3_audit_envelope
         review_metadata = success_contracts.review_metadata

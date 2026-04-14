@@ -11,7 +11,7 @@
 ## 全局约束
 
 - 当前阶段禁止迁移 Highway 业务模块实现。
-- 当前阶段禁止创建具体 RCSD 业务模块。
+- 当前阶段禁止无任务书、无登记地扩展新的 RCSD 业务模块。
 - 当前输入数据组织方式先保持与 `Highway_Topo_Poc` 一致。
 - 涉及 GIS / 拓扑 / 空间数据处理的设计与编码，必须按高质量 GIS 算法工程标准执行：
   - 优先保证 CRS 与坐标变换正确性。
@@ -29,6 +29,7 @@
   - 文档在 `modules/<module>/`
   - 实现在 `src/rcsd_topo_poc/modules/<module>/`
 - 标准 Skill 统一放 repo root `.agents/skills/`，模块根目录不放 `SKILL.md`。
+- `outputs/`、`outputs/_work/`、临时审计工件、`.claude/worktrees/`、`.venv/` 不属于 source-of-truth。
 
 ## 协作约束
 

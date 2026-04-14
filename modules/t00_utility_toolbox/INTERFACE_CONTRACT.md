@@ -16,6 +16,14 @@
 
 本文件用于固化 `T00` 当前稳定的输入、输出、覆盖、跳过与摘要语义。
 
+## 1.1 文档角色边界
+
+- `architecture/*` 承担长期结构、背景与风险说明。
+- `README.md` 只承担操作者入口与固定脚本总览。
+- `AGENTS.md` 只承担模块级 durable guidance。
+- `specs/t00-utility-toolbox/*` 只用于治理过程追溯，不替代 steady-state 契约。
+- `T00` 官方入口采用 repo root `scripts/` 下的固定脚本，并以仓库入口注册表为准。
+
 ## 2. 通用约束
 
 - 路径口径：Patch 子目录统一使用 `Vector/`
@@ -30,6 +38,17 @@
 - 修复口径：只允许最小修复；修复失败则跳过并记录异常
 - 覆盖口径：旧输出已存在时先删除再重建
 - 执行体验：命令行必须输出工具开始/结束、阶段级和 Patch / 记录级进度；Tool7 允许目录参数驱动
+
+## 2.1 官方入口
+
+- `python3 scripts/t00_tool1_patch_directory_bootstrap.py`
+- `python3 scripts/t00_tool2_drivezone_merge.py`
+- `python3 scripts/t00_tool3_intersection_merge.py`
+- `python3 scripts/t00_tool4_a200_patch_join.py`
+- `python3 scripts/t00_tool5_a200_kind_enrich.py`
+- `python3 scripts/t00_tool6_node_export.py`
+- `python3 scripts/t00_tool7_geojson_to_gpkg.py <directory>`
+- `python3 scripts/t00_tool9_divstripzone_merge.py`
 
 ## 3. Tool1 契约
 
@@ -63,13 +82,13 @@
 - 单 Patch 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone.geojson`
 - 单 Patch fix 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone_fix.geojson`
 - 全局输出：`D:\TestData\POC_Data\patch_all\DriveZone.geojson`
-- 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
+- 输出 CRS：`EPSG:3857`（输出格式为 `GeoJSON`）
 
 ## 5. Tool3 契约
 
 - 输入：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\Intersection.geojson`
 - 输出：`D:\TestData\POC_Data\patch_all\Intersection.geojson`
-- 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
+- 输出 CRS：`EPSG:3857`（输出格式为 `GeoJSON`）
 - 单 Patch 内逐要素做拓扑保持简化
 - 全量阶段只汇总，不做面合并
 
@@ -98,7 +117,7 @@
 
 - 输入：`D:\TestData\POC_Data\first_layer_road_net_v0\A200_node.shp`
 - 输出：`D:\TestData\POC_Data\first_layer_road_net_v0\nodes.geojson`
-- 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
+- 输出 CRS：`EPSG:3857`（输出格式为 `GeoJSON`）
 
 ### 8.2 处理契约
 

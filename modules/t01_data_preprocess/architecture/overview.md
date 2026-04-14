@@ -20,6 +20,7 @@
 - `Step5A`
 - `Step5B`
 - `Step5C`
+- `oneway continuation`
 - `Step6`
 
 ## 关键原则
@@ -59,6 +60,10 @@
   - 代码组件与职责边界
 - [06-accepted-baseline.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md)
   - 当前 accepted baseline 正文
+- [AGENTS.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/AGENTS.md)
+  - 模块级工作规则、冲突停机与执行边界
+- [README.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/README.md)
+  - 操作者入口、辅助脚本索引与运行说明
 - [10-quality-requirements.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/10-quality-requirements.md)
   - 质量、审计与回归要求
 - [11-risks-and-technical-debt.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/11-risks-and-technical-debt.md)

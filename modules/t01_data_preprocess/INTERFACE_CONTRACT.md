@@ -2,12 +2,10 @@
 
 ## 1. 文档定位
 - 状态：`accepted baseline contract / revised alignment`
-- 用途：
-  - 固化 T01 working layers、阶段输入输出、正式字段约束与 Step6 聚合契约
-  - 作为模块级 source of truth 摘要
-- 主业务规格以：
-  - `/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
-  为准
+- 本文件只固化稳定输入、稳定输出、官方入口、关键参数类别、continuation 约束与验收口径。
+- 具体阶段语义、节点重分类规则、gate / barrier / arbitration 细节以 `/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md` 为准。
+- `README.md` 只承担操作者入口与索引，不替代本文件与 accepted baseline。
+- repo root `scripts/t01_*.sh` 属于环境 / 交付辅助，不作为模块 steady-state 契约主表面。
 
 ## 2. 官方输入契约
 - 官方输入：
@@ -30,6 +28,8 @@
   - `python -m rcsd_topo_poc t01-continue-oneway-segment`
 - 官方 freeze compare 入口：
   - `python -m rcsd_topo_poc t01-compare-freeze`
+- 以上入口均属于 repo-level CLI 子命令，官方登记以 repo root `docs/repository-metadata/entrypoint-registry.md` 为准
+- repo root `scripts/t01_run_full_data_skill_v1.sh`、`scripts/t01_run_full_data.sh`、`scripts/t01_pull_from_internal_github.sh`、`scripts/t01_pull_main_from_internal_github.sh` 只作为环境与交付辅助脚本，不替代本节官方入口定义
 - debug 默认值：
   - `t01-run-skill-v1`、`t01-continue-oneway-segment` 与 `t01-step6-segment-aggregation-poc` 默认 `debug=false`
   - `t01-step1-pair-poc / t01-step2-segment-poc / t01-s2-refresh-node-road / t01-step4-residual-graph / t01-step5-staged-residual-graph` 默认 `debug=true`

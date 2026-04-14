@@ -14,6 +14,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_context_builder import (
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_contract import (
     Stage3OfficialReviewDecision,
     Stage3ReviewMetadata,
+    canonicalize_stage3_step7_result_from_official_review_decision,
     stage3_official_review_decision_from_step7_result,
     stage3_review_metadata_from_step7_result,
 )
@@ -53,16 +54,20 @@ def build_legacy_stage3_audit_envelope_from_step7_assembly(
     representative_is_anchor: Any | None,
     representative_kind_2: Any | None,
 ) -> LegacyStage3AuditEnvelope:
-    step7_result = step7_assembly.step7_result
+    raw_step7_result = step7_assembly.step7_result
     step3_result = step7_assembly.step3_result
     step4_result = step7_assembly.step4_result
     step5_result = step7_assembly.step5_result
     step6_result = step7_assembly.step6_result
     official_review_decision = stage3_official_review_decision_from_step7_result(
-        step7_result,
+        raw_step7_result,
         representative_has_evd=representative_has_evd,
         representative_is_anchor=representative_is_anchor,
         representative_kind_2=representative_kind_2,
+    )
+    step7_result = canonicalize_stage3_step7_result_from_official_review_decision(
+        raw_step7_result,
+        official_review_decision=official_review_decision,
     )
     review_metadata = stage3_review_metadata_from_step7_result(
         step7_result,
@@ -111,6 +116,10 @@ def build_stage3_failure_audit_envelope(
         representative_has_evd=representative_has_evd,
         representative_is_anchor=representative_is_anchor,
         representative_kind_2=representative_kind_2,
+    )
+    step7_result = canonicalize_stage3_step7_result_from_official_review_decision(
+        step7_result,
+        official_review_decision=official_review_decision,
     )
     review_metadata = stage3_review_metadata_from_step7_result(
         step7_result,

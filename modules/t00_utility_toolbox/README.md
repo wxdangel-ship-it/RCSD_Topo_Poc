@@ -1,5 +1,7 @@
 # T00 Utility Toolbox
 
+> 本文件是 `T00` 的操作者入口与固定脚本总览。长期源事实以 `architecture/*` 与 `INTERFACE_CONTRACT.md` 为准；如本文件与长期源事实冲突，以后者为准。
+
 ## 模块简介
 
 `T00` 是 `RCSD_Topo_Poc` 的 Utility Toolbox / 工具集合模块，用于承接项目内的数据整理、实验准备、辅助检查、问题排查与辅助图层预处理。
@@ -22,16 +24,12 @@
 - Tool7：将指定目录下顶层 `GeoJSON` 批量导出为同名 `GPKG`
 - Tool9：对全量 `DivStripZone` 做逐 Patch 预处理并汇总输出
 
-## 模块状态
+## 文档角色
 
-当前为直接增量实现状态：
-
-- Tool1 已完成
-- Tool2 / Tool4 / Tool5 已完成前序增量调整
-- Tool3 维持既有实现
-- Tool6 为本轮新增导出工具
-- Tool7 为目录参数驱动的批量格式转换工具
-- Tool9 为新增 DivStripZone 预处理与汇总工具
+- `architecture/*`：长期结构与风险说明
+- `INTERFACE_CONTRACT.md`：稳定输入、输出、覆盖、异常与摘要契约
+- `AGENTS.md`：模块级 durable guidance
+- `README.md`：操作者入口与固定脚本总览
 
 ## 与业务模块的关系
 
@@ -94,3 +92,8 @@ python3 scripts/t00_tool9_divstripzone_merge.py
 - `/mnt/d/TestData/POC_Data/patch_all`
 - `/mnt/d/TestData/POC_Data/first_layer_road_net_v0`
 - `/mnt/d/TestData/POC_Data/first_layer_road_net_v1_patch`
+
+说明：
+
+- `T00` 官方入口采用 repo root `scripts/` 下的固定脚本，不新增模块级私有 `python -m` 入口。
+- 若后续新增工具脚本，必须先满足 repo root `AGENTS.md` 的入口治理规则，并同步更新仓库入口注册表。

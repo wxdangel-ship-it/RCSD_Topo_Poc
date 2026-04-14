@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:
@@ -195,6 +195,46 @@ def stage3_review_metadata_from_step7_result(
         root_cause_type=step7_result.root_cause_type or step7_result.acceptance_reason or step7_result.status,
         visual_review_class=step7_result.visual_review_class,
         business_outcome_class=step7_result.business_outcome_class,
+    )
+
+
+def canonicalize_stage3_step7_result_from_official_review_decision(
+    step7_result: "Stage3Step7AcceptanceResult",
+    *,
+    official_review_decision: Stage3OfficialReviewDecision | None = None,
+) -> "Stage3Step7AcceptanceResult":
+    if (
+        official_review_decision is None
+        or official_review_decision.official_review_eligible
+    ):
+        return step7_result
+
+    blocking_reason = (
+        official_review_decision.blocking_reason
+        or ROOT_CAUSE_LAYER_FROZEN_CONSTRAINTS_CONFLICT
+    )
+    decision_basis = tuple(step7_result.decision_basis) + (
+        "official_review_gate_override_applied",
+        f"blocking_reason={blocking_reason}",
+        f"failure_bucket={official_review_decision.failure_bucket}",
+    )
+    audit_facts = tuple(step7_result.audit_facts) + (
+        "official_review_eligible=false",
+        f"blocking_reason={blocking_reason}",
+        f"failure_bucket={official_review_decision.failure_bucket}",
+    )
+    return replace(
+        step7_result,
+        success=False,
+        business_outcome_class=BUSINESS_OUTCOME_FAILURE,
+        acceptance_class="rejected",
+        acceptance_reason=str(blocking_reason),
+        root_cause_layer=ROOT_CAUSE_LAYER_FROZEN_CONSTRAINTS_CONFLICT,
+        root_cause_type=str(blocking_reason),
+        visual_review_class=VISUAL_REVIEW_V5,
+        legacy_review_metadata_source="official_review_gate_override_v1",
+        decision_basis=decision_basis,
+        audit_facts=audit_facts,
     )
 
 

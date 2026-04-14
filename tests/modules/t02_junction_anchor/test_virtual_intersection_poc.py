@@ -64,6 +64,10 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step6_geometry_solve impor
     Stage3Step6GeometrySolveInputs,
     build_stage3_step6_geometry_solve_result,
 )
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step6_geometry_controller import (
+    Stage3Step6GeometryControllerInputs,
+    derive_stage3_step6_geometry_controller_decision,
+)
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_contract import (
     ROOT_CAUSE_LAYER_FROZEN_CONSTRAINTS_CONFLICT,
     ROOT_CAUSE_LAYER_STEP4,
@@ -1264,6 +1268,234 @@ def test_stage3_step7_builder_derives_review_fields_without_legacy_metadata_depe
     assert step7_result.blocking_step == ROOT_CAUSE_LAYER_STEP5
     assert step7_result.legacy_review_metadata_source == "step7_acceptance_builder_v1"
     assert "root_cause_layer=step5" in step7_result.decision_basis
+
+
+def test_step6_geometry_controller_derives_compound_center_review_reason_without_acceptance_reason() -> None:
+    decision = derive_stage3_step6_geometry_controller_decision(
+        Stage3Step6GeometryControllerInputs(
+            template_class="center_junction",
+            status="stable",
+            geometry_established=True,
+            step5_canonical_foreign_established=False,
+            can_soft_exclude_outside_rc=False,
+            rc_outside_drivezone_present=False,
+            max_target_group_foreign_semantic_road_overlap_m=0.0,
+            max_selected_side_branch_covered_length_m=0.0,
+            max_nonmain_branch_polygon_length_m=0.0,
+            min_invalid_rc_distance_to_center_m=None,
+            associated_rc_road_count=4,
+            associated_rc_node_count=4,
+            effective_associated_rc_node_count=4,
+            excluded_rc_road_count=0,
+            positive_rc_group_count=2,
+            negative_rc_group_count=0,
+            local_node_count=6,
+            local_road_count=8,
+            polygon_aspect_ratio=1.4,
+            polygon_compactness=0.48,
+            polygon_bbox_fill_ratio=0.60,
+            single_sided_unrelated_opposite_lane_trim_applied=False,
+            soft_excluded_rc_corridor_trim_applied=False,
+            foreign_tail_length_m=0.0,
+            foreign_overlap_zero_but_tail_present=False,
+            compound_center_applied=True,
+        )
+    )
+    assert decision.geometry_review_reason == "stable_compound_center_requires_review"
+    assert (
+        "step6_geometry_review_reason=stable_compound_center_requires_review"
+        in decision.final_validation_flags
+    )
+
+
+def test_step6_geometry_controller_marks_high_residual_overlap_as_step5_blocking_foreign() -> None:
+    decision = derive_stage3_step6_geometry_controller_decision(
+        Stage3Step6GeometryControllerInputs(
+            template_class="center_junction",
+            status="stable",
+            geometry_established=True,
+            step5_canonical_foreign_established=False,
+            can_soft_exclude_outside_rc=True,
+            rc_outside_drivezone_present=True,
+            max_target_group_foreign_semantic_road_overlap_m=8.9,
+            max_selected_side_branch_covered_length_m=6.5,
+            max_nonmain_branch_polygon_length_m=10.0,
+            min_invalid_rc_distance_to_center_m=4.0,
+            associated_rc_road_count=1,
+            associated_rc_node_count=0,
+            effective_associated_rc_node_count=0,
+            excluded_rc_road_count=0,
+            positive_rc_group_count=1,
+            negative_rc_group_count=0,
+            local_node_count=2,
+            local_road_count=4,
+            polygon_aspect_ratio=1.3,
+            polygon_compactness=0.40,
+            polygon_bbox_fill_ratio=0.55,
+            single_sided_unrelated_opposite_lane_trim_applied=False,
+            soft_excluded_rc_corridor_trim_applied=False,
+            foreign_tail_length_m=0.0,
+            foreign_overlap_zero_but_tail_present=False,
+            compound_center_applied=False,
+        )
+    )
+    assert decision.geometry_review_reason == "outside_rc_gap_requires_review"
+    assert decision.residual_step5_blocking_foreign_required is True
+    assert "step6_residual_step5_blocking_foreign_required" in decision.final_validation_flags
+
+
+def test_stage3_step7_prefers_step6_geometry_reason_over_step4_reason() -> None:
+    inputs = replace(
+        _build_step7_test_inputs(
+            acceptance_reason="stable",
+            acceptance_class="review_required",
+            status="stable",
+            success=False,
+        ),
+        step5_result=build_stage3_step5_foreign_model_result(
+            Stage3Step5ForeignModelInputs(
+                foreign_semantic_node_ids=set(),
+                foreign_road_arm_corridor_ids=set(),
+                foreign_rc_context_ids=set(),
+                acceptance_reason="stable",
+                foreign_overlap_metric_m=0.0,
+                foreign_tail_length_m=0.0,
+                foreign_strip_extent_m=0.0,
+                foreign_overlap_zero_but_tail_present=False,
+                single_sided_unrelated_opposite_lane_trim_applied=False,
+                soft_excluded_rc_corridor_trim_applied=False,
+                foreign_overlap_by_id={},
+            )
+        ),
+        step4_result=replace(
+            build_stage3_step4_rc_semantics_result(
+                Stage3Step4SemanticsInputs(
+                    required_rc_node_ids={"901"},
+                    required_rc_road_ids={"rc_east"},
+                    support_rc_node_ids=set(),
+                    support_rc_road_ids=set(),
+                    excluded_rc_node_ids=set(),
+                    excluded_rc_road_ids=set(),
+                    review_excluded_rc_road_ids={"rc_west"},
+                    selected_rc_endpoint_node_ids={"901"},
+                    hard_selected_endpoint_node_ids={"901"},
+                    business_match_reason="partial_rcsd_context",
+                    single_sided_t_mouth_corridor_semantic_gap=False,
+                    uncovered_selected_endpoint_node_ids=set(),
+                )
+            ),
+        ),
+        step6_result=replace(
+            build_stage3_step6_geometry_solve_result(
+                Stage3Step6GeometrySolveInputs(
+                    primary_solved_geometry=None,
+                    geometry_established=True,
+                    geometry_review_reason="stable_compound_center_requires_review",
+                    final_validation_flags=(
+                        "step6_geometry_review_reason=stable_compound_center_requires_review",
+                    ),
+                    max_selected_side_branch_covered_length_m=2.5,
+                    selected_node_repair_attempted=False,
+                    selected_node_repair_applied=False,
+                    selected_node_repair_discarded_due_to_extra_roads=False,
+                    introduced_extra_local_road_ids=set(),
+                    polygon_aspect_ratio=1.3,
+                    polygon_compactness=0.35,
+                    polygon_bbox_fill_ratio=0.56,
+                    uncovered_selected_endpoint_node_ids=set(),
+                    foreign_semantic_node_ids=set(),
+                    foreign_road_arm_corridor_ids=set(),
+                    foreign_overlap_metric_m=0.0,
+                    foreign_tail_length_m=0.0,
+                    foreign_overlap_zero_but_tail_present=False,
+                )
+            ),
+        ),
+    )
+    assembly = build_stage3_legacy_step7_assembly(inputs)
+    assert assembly.step7_result.acceptance_reason == "stable_compound_center_requires_review"
+    assert assembly.step7_result.root_cause_layer == ROOT_CAUSE_LAYER_STEP6
+    assert assembly.step7_result.visual_review_class == VISUAL_REVIEW_V2
+    assert assembly.step7_result.blocking_step == ROOT_CAUSE_LAYER_STEP6
+    assert "step6_result_selected" in assembly.step7_result.decision_basis
+    assert "step4_result_selected" not in assembly.step7_result.decision_basis
+
+
+def test_stage3_step7_allows_step6_blocking_residual_foreign_to_promote_step5_verdict() -> None:
+    inputs = replace(
+        _build_step7_test_inputs(
+            acceptance_reason="stable",
+            acceptance_class="review_required",
+            status="stable",
+            success=False,
+        ),
+        step5_result=build_stage3_step5_foreign_model_result(
+            Stage3Step5ForeignModelInputs(
+                foreign_semantic_node_ids=set(),
+                foreign_road_arm_corridor_ids=set(),
+                foreign_rc_context_ids=set(),
+                acceptance_reason="stable",
+                foreign_overlap_metric_m=9.2,
+                foreign_tail_length_m=0.0,
+                foreign_strip_extent_m=0.0,
+                foreign_overlap_zero_but_tail_present=False,
+                single_sided_unrelated_opposite_lane_trim_applied=False,
+                soft_excluded_rc_corridor_trim_applied=False,
+                foreign_overlap_by_id={"road_1": 9.2},
+            )
+        ),
+        step4_result=replace(
+            build_stage3_step4_rc_semantics_result(
+                Stage3Step4SemanticsInputs(
+                    required_rc_node_ids={"901"},
+                    required_rc_road_ids={"rc_east"},
+                    support_rc_node_ids=set(),
+                    support_rc_road_ids=set(),
+                    excluded_rc_node_ids=set(),
+                    excluded_rc_road_ids=set(),
+                    review_excluded_rc_road_ids={"rc_west"},
+                    selected_rc_endpoint_node_ids={"901"},
+                    hard_selected_endpoint_node_ids={"901"},
+                    business_match_reason="partial_rcsd_context",
+                    single_sided_t_mouth_corridor_semantic_gap=False,
+                    uncovered_selected_endpoint_node_ids=set(),
+                )
+            ),
+        ),
+        step6_result=replace(
+            build_stage3_step6_geometry_solve_result(
+                Stage3Step6GeometrySolveInputs(
+                    primary_solved_geometry=None,
+                    geometry_established=True,
+                    residual_step5_blocking_foreign_required=True,
+                    geometry_review_reason="outside_rc_gap_requires_review",
+                    final_validation_flags=(
+                        "step6_geometry_review_reason=outside_rc_gap_requires_review",
+                        "step6_residual_step5_blocking_foreign_required",
+                    ),
+                    max_selected_side_branch_covered_length_m=6.5,
+                    selected_node_repair_attempted=False,
+                    selected_node_repair_applied=False,
+                    selected_node_repair_discarded_due_to_extra_roads=False,
+                    introduced_extra_local_road_ids=set(),
+                    polygon_aspect_ratio=1.3,
+                    polygon_compactness=0.35,
+                    polygon_bbox_fill_ratio=0.56,
+                    uncovered_selected_endpoint_node_ids=set(),
+                    foreign_semantic_node_ids=set(),
+                    foreign_road_arm_corridor_ids=set(),
+                    foreign_overlap_metric_m=9.2,
+                    foreign_tail_length_m=0.0,
+                    foreign_overlap_zero_but_tail_present=False,
+                )
+            ),
+        ),
+    )
+    assembly = build_stage3_legacy_step7_assembly(inputs)
+    assert assembly.step7_result.acceptance_reason == "foreign_outside_drivezone_soft_excluded"
+    assert assembly.step7_result.root_cause_layer == ROOT_CAUSE_LAYER_STEP5
+    assert assembly.step7_result.visual_review_class == VISUAL_REVIEW_V4
+    assert "step5_result_selected_from_step6_blocking_residual" in assembly.step7_result.decision_basis
 
 
 def test_stage3_audit_envelope_consumes_existing_step7_result_without_reclassification() -> None:
@@ -2741,6 +2973,7 @@ def _run_case_package_case(
     case_id: str,
     *,
     case_root: Path = CASE_PACKAGE_ROOT,
+    review_mode: bool = False,
 ) -> tuple[object, dict, Path]:
     render_root = tmp_path / "renders"
     artifacts = run_t02_virtual_intersection_poc(
@@ -2748,6 +2981,7 @@ def _run_case_package_case(
         out_root=tmp_path / "out",
         debug=True,
         debug_render_root=render_root,
+        review_mode=review_mode,
         **_load_case_package_inputs(case_id, case_root=case_root),
     )
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
@@ -3187,13 +3421,10 @@ def test_case_package_500860756_remains_successful_after_kind2048_main_rc_group_
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "500860756")
     assert artifacts.success is False
-    _assert_case_review_required_v2(
+    _assert_case_rejected_v4(
         status_doc,
         allowed_statuses={"stable"},
-        allowed_reasons={
-            "stable_overlap_requires_review",
-            "stable_with_incomplete_t_mouth_rc_context",
-        },
+        allowed_reasons={"foreign_outside_drivezone_soft_excluded"},
     )
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
@@ -3290,12 +3521,11 @@ def test_case_package_793460_rejects_foreign_semantic_road_intrusion(
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "793460")
     assert artifacts.success is False
-    assert status_doc["success"] is False
-    assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "stable_overlap_requires_review"
-    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V2
+    _assert_case_rejected_v4(
+        status_doc,
+        allowed_statuses={"stable"},
+        allowed_reasons={"foreign_outside_drivezone_soft_excluded"},
+    )
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
     assert artifacts.rendered_map_path is not None
@@ -3381,12 +3611,11 @@ def test_case_package_954218_accepts_stable_core_after_excluding_remote_outside_
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "954218")
     assert artifacts.success is False
-    assert status_doc["success"] is False
-    assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "stable_overlap_requires_review"
-    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V2
+    _assert_case_rejected_v4(
+        status_doc,
+        allowed_statuses={"stable"},
+        allowed_reasons={"foreign_outside_drivezone_soft_excluded"},
+    )
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
 
@@ -3761,6 +3990,27 @@ def test_case_package_520394575_remains_rejected_as_hard_failure(tmp_path: Path)
     background = image[min(100, image.shape[0] - 1), min(100, image.shape[1] - 1), :3]
     assert int(background[0]) > int(background[1]) + 15
     assert int(background[0]) > int(background[2]) + 15
+
+
+def test_case_package_520394575_review_mode_preserves_hard_failure(tmp_path: Path) -> None:
+    artifacts, status_doc, render_root = _run_case_package_case(
+        tmp_path,
+        "520394575",
+        review_mode=True,
+    )
+    assert artifacts.success is False
+    assert status_doc["success"] is False
+    assert status_doc["flow_success"] is False
+    assert status_doc["status"] == "rc_outside_drivezone"
+    assert status_doc["acceptance_class"] == "rejected"
+    assert status_doc["acceptance_reason"] == "rc_outside_drivezone"
+    assert status_doc["business_outcome_class"] == "failure"
+    assert status_doc["official_review_eligible"] is False
+    assert status_doc["failure_bucket"] == "frozen-constraints conflict"
+    render_path = render_root / "520394575.png"
+    assert render_path.is_file()
+    image = _read_png_rgba(render_path)
+    assert tuple(image[0, 0]) == (164, 0, 0, 255)
 
 
 def test_is_foreign_local_junction_node_treats_degree3_node_without_mainnode_as_foreign() -> None:

@@ -3,7 +3,9 @@
 主要构件：
 
 - `specs/t00-utility-toolbox/*`
-  - 固化 Tool1 至 Tool7 的需求基线
+  - 承载 T00 相关治理轮次的 spec-kit 过程文档，不替代 steady-state 模块源事实
+- `modules/t00_utility_toolbox/AGENTS.md`
+  - 模块级工作规则与边界
 - `modules/t00_utility_toolbox/README.md`
   - 模块入口说明
 - `modules/t00_utility_toolbox/INTERFACE_CONTRACT.md`
@@ -24,6 +26,8 @@
   - Tool6 实现
 - `src/rcsd_topo_poc/modules/t00_utility_toolbox/geojson_to_gpkg_export.py`
   - Tool7 实现
+- `src/rcsd_topo_poc/modules/t00_utility_toolbox/divstripzone_merge.py`
+  - Tool9 实现
 - `scripts/t00_tool1_patch_directory_bootstrap.py`
 - `scripts/t00_tool2_drivezone_merge.py`
 - `scripts/t00_tool3_intersection_merge.py`
@@ -31,3 +35,4 @@
 - `scripts/t00_tool5_a200_kind_enrich.py`
 - `scripts/t00_tool6_node_export.py`
 - `scripts/t00_tool7_geojson_to_gpkg.py`
+- `scripts/t00_tool9_divstripzone_merge.py`

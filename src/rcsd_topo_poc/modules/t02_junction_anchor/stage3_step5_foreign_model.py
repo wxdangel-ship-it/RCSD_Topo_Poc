@@ -5,6 +5,7 @@ from typing import Iterable, Mapping
 
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_execution_contract import (
     Stage3Step5ForeignModelResult,
+    Stage3Step6GeometrySolveResult,
 )
 
 
@@ -190,6 +191,122 @@ class Stage3Step5ForeignModelInputs:
     single_sided_unrelated_opposite_lane_trim_applied: bool
     soft_excluded_rc_corridor_trim_applied: bool
     foreign_overlap_by_id: Mapping[str, float]
+
+
+@dataclass(frozen=True)
+class Stage3Step5ContractDecision:
+    foreign_baseline_established: bool
+    foreign_subtype: str | None
+    canonical_foreign_established: bool
+    canonical_foreign_reason: str | None
+    residual_foreign_present: bool
+    audit_facts: tuple[str, ...] = ()
+
+
+def _step5_has_hard_blocking_context(
+    step5_result: Stage3Step5ForeignModelResult,
+) -> bool:
+    if step5_result.single_sided_unrelated_opposite_lane_trim_applied:
+        return True
+    if step5_result.foreign_tail_length_m is not None and step5_result.foreign_tail_length_m > 0.0:
+        return True
+    if step5_result.foreign_overlap_zero_but_tail_present:
+        return True
+    return bool(step5_result.foreign_road_arm_corridor_ids)
+
+
+def stage3_step6_has_remaining_foreign_residue(
+    step6_result: Stage3Step6GeometrySolveResult | None,
+) -> bool:
+    if step6_result is None:
+        return False
+    if step6_result.remaining_foreign_semantic_node_ids:
+        return True
+    if step6_result.remaining_foreign_road_arm_corridor_ids:
+        return True
+    if (
+        step6_result.foreign_overlap_metric_m is not None
+        and step6_result.foreign_overlap_metric_m > 0.0
+    ):
+        return True
+    if (
+        step6_result.foreign_tail_length_m is not None
+        and step6_result.foreign_tail_length_m > 0.0
+    ):
+        return True
+    return bool(step6_result.foreign_overlap_zero_but_tail_present)
+
+
+def resolve_stage3_step5_contract_decision(
+    *,
+    step5_result: Stage3Step5ForeignModelResult | None,
+    step6_result: Stage3Step6GeometrySolveResult | None,
+) -> Stage3Step5ContractDecision:
+    if step5_result is None:
+        return Stage3Step5ContractDecision(
+            foreign_baseline_established=False,
+            foreign_subtype=None,
+            canonical_foreign_established=False,
+            canonical_foreign_reason=None,
+            residual_foreign_present=stage3_step6_has_remaining_foreign_residue(
+                step6_result
+            ),
+            audit_facts=(),
+        )
+
+    residual_present = stage3_step6_has_remaining_foreign_residue(step6_result)
+    if not residual_present and step6_result is None:
+        residual_present = bool(step5_result.canonical_foreign_established)
+
+    decision_audit_facts: list[str] = []
+    canonical_foreign_established = bool(step5_result.canonical_foreign_established)
+    canonical_foreign_reason = step5_result.canonical_foreign_reason
+    if (
+        step5_result.foreign_subtype is not None
+        and not step5_result.canonical_foreign_established
+    ):
+        decision_audit_facts.append("step5_result_provenance_only")
+    if (
+        canonical_foreign_established
+        and not residual_present
+        and not _step5_has_hard_blocking_context(step5_result)
+        and step5_result.foreign_subtype in {"semantic_road_overlap", "outside_drivezone_or_corridor"}
+    ):
+        canonical_foreign_established = False
+        canonical_foreign_reason = None
+        decision_audit_facts.append(
+            "step5_canonical_downgraded_after_step6_final_state"
+        )
+    if (
+        not canonical_foreign_established
+        and residual_present
+        and step6_result is not None
+        and step5_result.foreign_subtype in {"semantic_road_overlap", "outside_drivezone_or_corridor"}
+        and step6_result.residual_step5_blocking_foreign_required
+    ):
+        canonical_foreign_established = True
+        canonical_foreign_reason = "foreign_outside_drivezone_soft_excluded"
+        decision_audit_facts.append(
+            "step5_canonical_escalated_from_step6_residual_overlap"
+        )
+    if residual_present and not step5_result.canonical_foreign_established:
+        decision_audit_facts.append("step5_residual_present_but_nonblocking")
+    if (
+        step5_result.foreign_baseline_established
+        and not canonical_foreign_established
+    ):
+        decision_audit_facts.append("step5_baseline_retained_but_nonblocking")
+        if not residual_present:
+            decision_audit_facts.append("step5_baseline_cleared_by_step6_final_state")
+
+    return Stage3Step5ContractDecision(
+        foreign_baseline_established=bool(step5_result.foreign_baseline_established),
+        foreign_subtype=step5_result.foreign_subtype,
+        canonical_foreign_established=canonical_foreign_established,
+        canonical_foreign_reason=canonical_foreign_reason,
+        residual_foreign_present=residual_present,
+        audit_facts=_sorted_unique(decision_audit_facts),
+    )
 
 
 def build_stage3_step5_foreign_model_result(

@@ -23,14 +23,12 @@
 
 ## 文档目标
 
-本模块的最小正式文档面应由以下文件共同组成：
+本模块启动时，至少应具备以下稳定文档面：
 
-- `architecture/*`
-- `INTERFACE_CONTRACT.md`
 - `AGENTS.md`
+- `INTERFACE_CONTRACT.md`
+- `architecture/01-introduction-and-goals.md`
+- `architecture/03-context-and-scope.md`
+- `architecture/04-solution-strategy.md`
 
-建议在模块成熟后补充：
-
-- `review-summary.md`
-- `README.md`
-- repo root Skill 包
+随着模块成熟，再逐步补齐其余 `architecture/*`、`README.md`、`review-summary.md`、`history/README.md`。

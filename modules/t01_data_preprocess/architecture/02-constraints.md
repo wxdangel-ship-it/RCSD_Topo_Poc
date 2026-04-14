@@ -1,10 +1,11 @@
 # 02 约束
 
 ## 全局业务约束
-- 当前模块仅处理非封闭式双向道路场景。
+- 当前模块以非封闭式道路场景下的双向 Segment 构建为主流程。
+- 当前已登记的后续路径仅包括：`Step5` 后基于 refreshed `nodes / roads` 的单向补段 continuation。
 - 当前不覆盖：
   - 封闭式道路场景
-  - 单向 Segment
+  - 脱离 `Step5` refreshed 结果的独立单向 Segment 求解
 
 ## 输入约束
 - node：

@@ -26,9 +26,9 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_success_step_result_builde
     build_stage3_success_step_results,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step7_acceptance import (
-    Stage3LegacyStep7DecisionInputs,
+    Stage3Step7DecisionInputs,
     Stage3LegacyStep7Assembly,
-    build_stage3_legacy_step7_assembly_from_results,
+    build_stage3_step7_assembly_from_results,
 )
 
 
@@ -110,13 +110,13 @@ def build_stage3_success_contract_assembly_inputs(
 def assemble_stage3_success_contracts(
     inputs: Stage3SuccessContractAssemblyInputs,
 ) -> Stage3SuccessContractAssemblyOutputs:
-    step7_assembly = build_stage3_legacy_step7_assembly_from_results(
+    step7_assembly = build_stage3_step7_assembly_from_results(
         context=inputs.context,
         step3_result=inputs.step3_result,
         step4_result=inputs.step4_result,
         step5_result=inputs.step5_result,
         step6_result=inputs.step6_result,
-        decision_inputs=Stage3LegacyStep7DecisionInputs(
+        decision_inputs=Stage3Step7DecisionInputs(
             success=inputs.final_decision_inputs.success,
             acceptance_class=inputs.final_decision_inputs.acceptance_class,
             acceptance_reason=inputs.final_decision_inputs.acceptance_reason,
@@ -160,7 +160,7 @@ def assemble_stage3_success_contracts(
         step5_result=inputs.step5_result,
         step6_result=inputs.step6_result,
         step7_assembly=step7_assembly,
-        canonical_step7_result=step7_assembly.step7_result,
+        canonical_step7_result=legacy_stage3_audit_envelope.audit_record.step7,
         legacy_stage3_audit_envelope=legacy_stage3_audit_envelope,
         review_metadata=legacy_stage3_audit_envelope.review_metadata,
         official_review_decision=legacy_stage3_audit_envelope.official_review_decision,

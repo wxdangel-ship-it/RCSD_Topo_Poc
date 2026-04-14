@@ -233,7 +233,13 @@ def test_full_input_poc_explicit_mainnodeid_writes_unified_outputs(tmp_path: Pat
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["mode"] == "specified_mainnodeid"
     assert summary["selected_case_ids"] == ["100"]
+    assert summary["accepted_count"] == 1
+    assert summary["review_required_count"] == 0
+    assert summary["rejected_count"] == 0
     assert summary["success_count"] == 1
+    assert summary["risk_count"] == 0
+    assert summary["failed_count"] == 0
+    assert summary["summary_semantics"]["primary_statistics"] == "accepted/review_required/rejected"
 
     polygon_doc = _load_vector_doc(artifacts.polygons_path)
     assert len(polygon_doc["features"]) == 1
@@ -505,6 +511,9 @@ def test_full_input_poc_marks_unsuccessful_rendered_map_as_failure_style(tmp_pat
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["success_count"] == 0
+    assert summary["accepted_count"] == 0
+    assert summary["review_required_count"] == 0
+    assert summary["rejected_count"] == 1
     render_path = artifacts.rendered_maps_root / "100.png"
     assert render_path.is_file()
     image = _read_png_rgba(render_path)

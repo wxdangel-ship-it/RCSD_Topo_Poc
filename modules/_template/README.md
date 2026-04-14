@@ -9,8 +9,16 @@
 ## 2. 运行入口
 
 ```bash
-python -m rcsd_topo_poc.modules.<module_id> --help
+python -m rcsd_topo_poc <module-command> --help
+# 或在获批且已登记时：
+python3 scripts/<module-script>.py --help
 ```
+
+说明：
+
+- 当前仓库默认采用 repo-level CLI 子命令或 root `scripts/` 作为官方入口。
+- 模块级 `python -m rcsd_topo_poc.modules.<module_id>` 不是当前模板默认入口模式。
+- 任何新入口都必须先满足 repo root `AGENTS.md` 的入口治理与登记要求。
 
 ## 3. 常见运行方式
 
@@ -30,3 +38,4 @@ python -m rcsd_topo_poc.modules.<module_id> --help
 说明：
 
 - 本文件是建议文档，不是模块 day-0 必建文档。
+- `review-summary.md`、`history/` 和 `scripts/` 视模块成熟度与任务边界按需补齐。

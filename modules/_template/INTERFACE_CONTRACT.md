@@ -5,6 +5,7 @@
 - 本文件是 `<module_id>` 的稳定契约面。
 - 模块目标、上下文、构件关系与风险说明以 `architecture/*` 为准。
 - `README.md` 只承担操作者入口职责，不替代长期源事实。
+- `AGENTS.md` 只承担模块级 durable guidance，不替代长期源事实。
 
 ## 1. 目标与范围
 
@@ -42,12 +43,19 @@
 ### 4.1 官方入口
 
 ```bash
-python -m rcsd_topo_poc.modules.<module_id> --help
+python -m rcsd_topo_poc <module-command> --help
+# 或在获批且已登记时：
+python3 scripts/<module-script>.py --help
 ```
 
 ### 4.2 其它入口
 
 - `<若无则删除本小节>`
+
+说明：
+
+- 当前仓库默认把 repo-level CLI 子命令和 root `scripts/` 视为官方入口。
+- 若模块需要独立入口，必须先获得批准并登记到 repo root `docs/repository-metadata/entrypoint-registry.md`。
 
 ## 5. Params
 
@@ -65,9 +73,9 @@ python -m rcsd_topo_poc.modules.<module_id> --help
 ## 6. Examples
 
 ```bash
-python -m rcsd_topo_poc.modules.<module_id> \
+python -m rcsd_topo_poc <module-command> \
   --config <config_path> \
-  --out_root outputs/_work/<module_id>
+  --out-root outputs/_work/<module_id>
 ```
 
 ## 7. Acceptance

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Sequence
 
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_execution_contract import (
@@ -12,7 +12,8 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_execution_contract import 
     Stage3Step7AcceptanceResult,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step5_foreign_model import (
-    derive_stage3_step5_foreign_subtype,
+    Stage3Step5ContractDecision,
+    resolve_stage3_step5_contract_decision,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_facts import (
     BUSINESS_OUTCOME_FAILURE,
@@ -79,7 +80,7 @@ class Stage3LegacyStep7Inputs:
 
 
 @dataclass(frozen=True)
-class Stage3LegacyStep7DecisionInputs:
+class Stage3Step7DecisionInputs:
     success: bool
     acceptance_class: str
     acceptance_reason: str
@@ -98,6 +99,11 @@ class Stage3LegacyStep7DecisionInputs:
     invalid_rc_road_count: int
     drivezone_is_empty: bool
     polygon_is_empty: bool
+
+
+@dataclass(frozen=True)
+class Stage3LegacyStep7DecisionInputs(Stage3Step7DecisionInputs):
+    pass
 
 
 @dataclass(frozen=True)
@@ -644,20 +650,6 @@ def apply_stage3_post_acceptance_gates(
 ) -> tuple[bool, str, str]:
     if effect_success and acceptance_class == "accepted" and status == STATUS_STABLE:
         if (
-            template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
-            and not single_sided_unrelated_opposite_lane_trim_applied
-            and excluded_rc_road_count == 0
-            and local_node_count >= 4
-            and local_road_count >= 8
-            and max_selected_side_branch_covered_length_m >= 8.0
-            and max_nonmain_branch_polygon_length_m >= 8.0
-            and polygon_compactness is not None
-            and polygon_compactness <= 0.30
-            and polygon_bbox_fill_ratio is not None
-            and polygon_bbox_fill_ratio <= 0.35
-        ):
-            return False, "review_required", "stable_single_sided_mouth_geometry_requires_review"
-        if (
             max_target_group_foreign_semantic_road_overlap_m >= 11.0
             and (
                 (
@@ -678,19 +670,6 @@ def apply_stage3_post_acceptance_gates(
             )
         ):
             return False, "review_required", "foreign_outside_drivezone_soft_excluded"
-        if any(str(row.get("reason") or "") == "compound_center_applied" for row in audit_rows):
-            return False, "review_required", "stable_compound_center_requires_review"
-        if (
-            max_target_group_foreign_semantic_road_overlap_m >= 10.0
-            and effective_associated_rc_node_count < 4
-        ):
-            return False, "review_required", "stable_overlap_requires_review"
-        if (
-            associated_rc_node_count == 0
-            and effective_associated_rc_node_count == 0
-            and max_nonmain_branch_polygon_length_m <= 5.0
-        ):
-            return False, "review_required", "stable_sparse_rc_context_requires_review"
 
     if rc_outside_drivezone_error is not None and can_soft_exclude_outside_rc:
         if (
@@ -700,17 +679,6 @@ def apply_stage3_post_acceptance_gates(
             and post_trim_non_target_tail_length_m >= 1.5
         ):
             return False, "review_required", "foreign_tail_after_opposite_lane_trim"
-        if (
-            template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
-            and max_target_group_foreign_semantic_road_overlap_m <= 1.0
-            and associated_rc_road_count <= 2
-            and effective_associated_rc_node_count == 0
-            and polygon_aspect_ratio is not None
-            and polygon_aspect_ratio <= 2.1
-            and polygon_compactness is not None
-            and polygon_compactness <= 0.30
-        ):
-            return False, "review_required", "outside_rc_gap_requires_review"
         if soft_excluded_rc_corridor_trim_applied:
             if (
                 local_road_count <= 6
@@ -719,7 +687,6 @@ def apply_stage3_post_acceptance_gates(
                 and max_target_group_foreign_semantic_road_overlap_m >= 2.0
             ):
                 return False, "review_required", "foreign_outside_drivezone_soft_excluded"
-            return False, "review_required", "outside_rc_gap_requires_review"
         strong_foreign_evidence = False
         if positive_rc_group_count >= 2 and negative_rc_group_count == 0:
             strong_foreign_evidence = True
@@ -771,7 +738,6 @@ def apply_stage3_post_acceptance_gates(
             strong_foreign_evidence = True
         if strong_foreign_evidence:
             return False, "review_required", "foreign_outside_drivezone_soft_excluded"
-        return False, "review_required", "outside_rc_gap_requires_review"
 
     for row in audit_rows:
         reason = str(row.get("reason") or "")
@@ -950,7 +916,7 @@ def _build_stage3_legacy_step7_inputs_from_results(
     step4_result: Stage3Step4RCSemanticsResult | None,
     step5_result: Stage3Step5ForeignModelResult | None,
     step6_result: Stage3Step6GeometrySolveResult | None,
-    decision_inputs: Stage3LegacyStep7DecisionInputs,
+    decision_inputs: Stage3Step7DecisionInputs,
     acceptance_class: str,
     acceptance_reason: str,
 ) -> Stage3LegacyStep7Inputs:
@@ -1038,16 +1004,16 @@ def _build_stage3_legacy_step7_inputs_from_results(
     )
 
 
-def build_stage3_legacy_step7_assembly_from_results(
+def build_stage3_step7_assembly_from_results(
     *,
     context: Stage3Context,
     step3_result: Stage3Step3LegalSpaceResult | None,
     step4_result: Stage3Step4RCSemanticsResult | None,
     step5_result: Stage3Step5ForeignModelResult | None,
     step6_result: Stage3Step6GeometrySolveResult | None,
-    decision_inputs: Stage3LegacyStep7DecisionInputs,
+    decision_inputs: Stage3Step7DecisionInputs,
 ) -> Stage3LegacyStep7Assembly:
-    return build_stage3_legacy_step7_assembly(
+    assembly = build_stage3_legacy_step7_assembly(
         _build_stage3_legacy_step7_inputs_from_results(
             context=context,
             step3_result=step3_result,
@@ -1059,43 +1025,57 @@ def build_stage3_legacy_step7_assembly_from_results(
             acceptance_reason=decision_inputs.acceptance_reason,
         )
     )
+    if assembly.step7_result.legacy_review_metadata_source == "step7_results_verdict_v2":
+        return assembly
+    return replace(
+        assembly,
+        step7_result=replace(
+            assembly.step7_result,
+            legacy_review_metadata_source="step7_results_verdict_v2",
+        ),
+    )
 
 
-def _step6_has_remaining_foreign_residue(
-    step6_result: Stage3Step6GeometrySolveResult | None,
-) -> bool:
-    if step6_result is None:
-        return False
-    if step6_result.remaining_foreign_semantic_node_ids:
-        return True
-    if step6_result.remaining_foreign_road_arm_corridor_ids:
-        return True
-    if (
-        step6_result.foreign_overlap_metric_m is not None
-        and step6_result.foreign_overlap_metric_m > 0.0
-    ):
-        return True
-    if (
-        step6_result.foreign_tail_length_m is not None
-        and step6_result.foreign_tail_length_m > 0.0
-    ):
-        return True
-    return bool(step6_result.foreign_overlap_zero_but_tail_present)
-
-
-def _resolve_step5_contract_decision(
+def build_stage3_legacy_step7_assembly_from_results(
     *,
+    context: Stage3Context,
+    step3_result: Stage3Step3LegalSpaceResult | None,
+    step4_result: Stage3Step4RCSemanticsResult | None,
     step5_result: Stage3Step5ForeignModelResult | None,
     step6_result: Stage3Step6GeometrySolveResult | None,
-) -> tuple[str | None, bool]:
-    if step5_result is None:
-        return None, False
-    residual_present = _step6_has_remaining_foreign_residue(step6_result)
-    if not residual_present and step6_result is None:
-        residual_present = bool(step5_result.canonical_foreign_established)
-    if not step5_result.canonical_foreign_established:
-        return None, residual_present
-    return step5_result.canonical_foreign_reason, residual_present
+    decision_inputs: Stage3LegacyStep7DecisionInputs,
+) -> Stage3LegacyStep7Assembly:
+    return build_stage3_step7_assembly_from_results(
+        context=context,
+        step3_result=step3_result,
+        step4_result=step4_result,
+        step5_result=step5_result,
+        step6_result=step6_result,
+        decision_inputs=Stage3Step7DecisionInputs(
+            success=decision_inputs.success,
+            acceptance_class=decision_inputs.acceptance_class,
+            acceptance_reason=decision_inputs.acceptance_reason,
+            status=decision_inputs.status,
+            representative_has_evd=decision_inputs.representative_has_evd,
+            representative_is_anchor=decision_inputs.representative_is_anchor,
+            representative_kind_2=decision_inputs.representative_kind_2,
+            business_match_reason=decision_inputs.business_match_reason,
+            single_sided_t_mouth_corridor_semantic_gap=(
+                decision_inputs.single_sided_t_mouth_corridor_semantic_gap
+            ),
+            final_uncovered_selected_endpoint_node_count=(
+                decision_inputs.final_uncovered_selected_endpoint_node_count
+            ),
+            selected_rc_node_count=decision_inputs.selected_rc_node_count,
+            selected_rc_road_count=decision_inputs.selected_rc_road_count,
+            polygon_support_rc_node_count=decision_inputs.polygon_support_rc_node_count,
+            polygon_support_rc_road_count=decision_inputs.polygon_support_rc_road_count,
+            invalid_rc_node_count=decision_inputs.invalid_rc_node_count,
+            invalid_rc_road_count=decision_inputs.invalid_rc_road_count,
+            drivezone_is_empty=decision_inputs.drivezone_is_empty,
+            polygon_is_empty=decision_inputs.polygon_is_empty,
+        ),
+    )
 
 
 def _resolve_stage3_step7_review_fields(
@@ -1114,9 +1094,10 @@ def _resolve_stage3_step7_review_fields(
     list[str],
     list[str],
     list[str],
-    str | None,
-    bool,
+    Stage3Step5ContractDecision,
 ]:
+    local_node_count = len(inputs.context.local_node_ids)
+    local_road_count = len(inputs.context.local_road_ids)
     if step3_result is not None:
         step3_contract_signals = [signal for signal in step3_result.step3_blockers if signal]
         if step3_result.must_cover_group_node_ids:
@@ -1202,7 +1183,7 @@ def _resolve_stage3_step7_review_fields(
 
     explicit_layer: str | None = None
     explicit_reason: str | None = None
-    step5_canonical_reason, step5_foreign_residual_present = _resolve_step5_contract_decision(
+    step5_contract_decision = resolve_stage3_step5_contract_decision(
         step5_result=step5_result,
         step6_result=step6_result,
     )
@@ -1213,57 +1194,74 @@ def _resolve_stage3_step7_review_fields(
         step3_contract_signals.append("step3_result_selected")
         step3_contract_signals.append("step3_result_override_applied")
     else:
-        if step5_canonical_reason is not None:
+        step5_residual_escalation_selected = (
+            "step5_canonical_escalated_from_step6_residual_overlap"
+            in step5_contract_decision.audit_facts
+        )
+        step6_residual_step5_blocking_selected = bool(
+            step6_result is not None
+            and step6_result.residual_step5_blocking_foreign_required
+        )
+        step5_selected = False
+        if (
+            step5_contract_decision.canonical_foreign_reason is not None
+            and (
+                not step5_residual_escalation_selected
+                or step6_residual_step5_blocking_selected
+            )
+        ):
             explicit_layer = ROOT_CAUSE_LAYER_STEP5
-            explicit_reason = step5_canonical_reason
+            explicit_reason = step5_contract_decision.canonical_foreign_reason
             step5_contract_signals.append("step5_result_selected")
             step5_contract_signals.append("step5_result_override_applied")
-            step5_contract_signals.append("step5_residual_foreign_present")
-        else:
-            step4_reason = _step4_reason_from_result(step4_result)
-            if step4_reason is not None:
-                explicit_layer = ROOT_CAUSE_LAYER_STEP4
-                explicit_reason = step4_reason
-                step4_contract_signals.append("step4_result_selected")
-                step4_contract_signals.append("step4_result_override_applied")
-            else:
-                step6_reason = (
-                    step6_result.geometry_review_reason
-                    if step6_result is not None
-                    else None
+            if step6_residual_step5_blocking_selected:
+                step5_contract_signals.append(
+                    "step5_result_selected_from_step6_blocking_residual"
                 )
-                if step6_reason:
-                    candidate_step6_review_fields = derive_stage3_review_fields(
-                        success=False,
-                        acceptance_class="review_required",
-                        acceptance_reason=step6_reason,
-                        status=inputs.status,
+            if step5_contract_decision.residual_foreign_present:
+                step5_contract_signals.append("step5_residual_foreign_present")
+            step5_selected = True
+        if not step5_selected:
+            step6_reason = (
+                step6_result.geometry_review_reason
+                if step6_result is not None
+                else None
+            )
+            step6_selected = False
+            if step6_reason:
+                candidate_step6_review_fields = derive_stage3_review_fields(
+                    success=False,
+                    acceptance_class="review_required",
+                    acceptance_reason=step6_reason,
+                    status=inputs.status,
+                )
+                if (
+                    candidate_step6_review_fields.root_cause_layer
+                    == ROOT_CAUSE_LAYER_STEP6
+                    and not success_flag_from_business_outcome(
+                        candidate_step6_review_fields.business_outcome_class
                     )
-                    if candidate_step6_review_fields.root_cause_layer == ROOT_CAUSE_LAYER_STEP6:
-                        explicit_layer = ROOT_CAUSE_LAYER_STEP6
-                        explicit_reason = step6_reason
-                        step6_optimizer_events.append("step6_result_selected")
-                        step6_optimizer_events.append("step6_result_override_applied")
+                ):
+                    explicit_layer = candidate_step6_review_fields.root_cause_layer
+                    explicit_reason = step6_reason
+                    step6_optimizer_events.append("step6_result_selected")
+                    step6_optimizer_events.append("step6_result_override_applied")
+                    step6_selected = True
+            if not step6_selected:
+                step4_reason = _step4_reason_from_result(step4_result)
+                if step4_reason is not None:
+                    explicit_layer = ROOT_CAUSE_LAYER_STEP4
+                    explicit_reason = step4_reason
+                    step4_contract_signals.append("step4_result_selected")
+                    step4_contract_signals.append("step4_result_override_applied")
 
-    if (
-        step5_result is not None
-        and step5_result.foreign_subtype is not None
-        and not step5_result.canonical_foreign_established
-    ):
-        step5_contract_signals.append("step5_result_provenance_only")
-    if (
-        step5_result is not None
-        and step5_foreign_residual_present
-        and not step5_result.canonical_foreign_established
-    ):
-        step5_contract_signals.append("step5_residual_present_but_nonblocking")
     if (
         step5_result is not None
         and step5_result.foreign_baseline_established
         and explicit_layer != ROOT_CAUSE_LAYER_STEP5
     ):
         step5_contract_signals.append("step5_baseline_retained_but_nonblocking")
-        step5_contract_signals.append("step5_baseline_cleared_by_step6_final_state")
+    step5_contract_signals.extend(step5_contract_decision.audit_facts)
 
     legacy_review_acceptance_class = inputs.acceptance_class
     if explicit_layer is not None and legacy_review_acceptance_class == "accepted":
@@ -1295,8 +1293,7 @@ def _resolve_stage3_step7_review_fields(
         step5_contract_signals,
         step6_optimizer_events,
         step6_geometry_problem_flags,
-        step5_canonical_reason,
-        step5_foreign_residual_present,
+        step5_contract_decision,
     )
 
 
@@ -1316,8 +1313,7 @@ def build_stage3_legacy_step7_assembly(
         step5_contract_signals,
         step6_optimizer_events,
         step6_geometry_problem_flags,
-        step5_canonical_reason,
-        step5_foreign_residual_present,
+        step5_contract_decision,
     ) = _resolve_stage3_step7_review_fields(
         inputs=inputs,
         step3_result=step3_result,
@@ -1425,22 +1421,14 @@ def build_stage3_legacy_step7_assembly(
             )
         ),
         step5_foreign_baseline_established=(
-            bool(step5_result.foreign_baseline_established)
-            if step5_result is not None
-            else False
+            step5_contract_decision.foreign_baseline_established
         ),
         step5_foreign_exclusion_established=(
-            bool(step5_result.canonical_foreign_established)
-            if step5_result is not None
-            else review_fields.root_cause_layer == ROOT_CAUSE_LAYER_STEP5
+            step5_contract_decision.canonical_foreign_established
         ),
-        step5_foreign_subtype=(
-            step5_result.foreign_subtype if step5_result is not None else None
-        ),
-        step5_canonical_reason=(
-            step5_result.canonical_foreign_reason if step5_result is not None else None
-        ),
-        step5_foreign_residual_present=step5_foreign_residual_present,
+        step5_foreign_subtype=step5_contract_decision.foreign_subtype,
+        step5_canonical_reason=step5_contract_decision.canonical_foreign_reason,
+        step5_foreign_residual_present=step5_contract_decision.residual_foreign_present,
         step6_geometry_established=(
             step6_result.geometry_established
             if step6_result is not None
@@ -1487,11 +1475,7 @@ def build_stage3_legacy_step7_assembly(
         step3_signals=tuple(sorted(set(step3_contract_signals))),
         step4_signals=tuple(sorted(set(step4_contract_signals))),
         step5_signals=tuple(sorted(set(step5_contract_signals))),
-        step5_foreign_subtype=(
-            step5_result.foreign_subtype
-            if step5_result is not None
-            else derive_stage3_step5_foreign_subtype(inputs.acceptance_reason)
-        ),
+        step5_foreign_subtype=step5_contract_decision.foreign_subtype,
         step5_foreign_overlap_metric_m=(
             step5_result.foreign_overlap_metric_m
             if step5_result is not None

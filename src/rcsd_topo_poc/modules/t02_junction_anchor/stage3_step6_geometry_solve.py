@@ -38,6 +38,7 @@ class Stage3Step6GeometrySolveInputs:
     foreign_overlap_metric_m: float | None
     foreign_tail_length_m: float | None
     foreign_overlap_zero_but_tail_present: bool | None
+    residual_step5_blocking_foreign_required: bool = False
     late_single_sided_branch_cap_cleanup_applied: bool = False
     late_post_soft_overlap_trim_applied: bool = False
     late_final_foreign_residue_trim_applied: bool = False
@@ -46,6 +47,7 @@ class Stage3Step6GeometrySolveInputs:
     late_single_sided_tail_clip_cleanup_applied: bool = False
     optimizer_events: Iterable[str] = ()
     geometry_review_reason: str | None = None
+    final_validation_flags: Iterable[str] = ()
 
 
 def build_stage3_step6_geometry_solve_result(
@@ -160,9 +162,15 @@ def build_stage3_step6_geometry_solve_result(
     audit_facts = _sorted_unique(
         [
             "geometry_established" if inputs.geometry_established else "geometry_missing",
+            (
+                "step6_residual_step5_blocking_foreign_required"
+                if inputs.residual_step5_blocking_foreign_required
+                else None
+            ),
             *optimizer_events,
             *must_cover_validation,
             *foreign_exclusion_validation,
+            *_sorted_unique(inputs.final_validation_flags),
             *geometry_problem_flags,
         ]
     )
@@ -170,6 +178,9 @@ def build_stage3_step6_geometry_solve_result(
         primary_solved_geometry=inputs.primary_solved_geometry,
         geometry_established=inputs.geometry_established,
         geometry_review_reason=inputs.geometry_review_reason,
+        residual_step5_blocking_foreign_required=(
+            inputs.residual_step5_blocking_foreign_required
+        ),
         max_selected_side_branch_covered_length_m=(
             inputs.max_selected_side_branch_covered_length_m
         ),
@@ -194,6 +205,7 @@ def build_stage3_step6_geometry_solve_result(
         optimizer_events=optimizer_events,
         must_cover_validation=must_cover_validation,
         foreign_exclusion_validation=foreign_exclusion_validation,
+        final_validation_flags=_sorted_unique(inputs.final_validation_flags),
         foreign_overlap_metric_m=inputs.foreign_overlap_metric_m,
         foreign_tail_length_m=inputs.foreign_tail_length_m,
         foreign_overlap_zero_but_tail_present=(

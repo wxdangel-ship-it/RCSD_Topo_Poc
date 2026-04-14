@@ -9,6 +9,7 @@
 - 约束主体是纳入版本管理的源码与脚本文件，重点包括 `.py`、`.sh`、`.cmd`、`.ps1`、`.js`、`.ts`、`.bat` 等。
 - `tests/`、`tools/` 中同类源码 / 脚本文件也纳入体量审计。
 - 文档、数据、导出产物、`outputs/`、第三方依赖目录不属于本轮约束主体。
+- `outputs/`、`outputs/_work/`、`.claude/worktrees/`、`.venv/`、`.idea/` 不属于 source-of-truth，也不应作为主搜索路径。
 
 ## 3. 单文件体量约束
 
@@ -24,13 +25,22 @@
 - repo 级命令包装，如 `Makefile`
 - `scripts/`、`tools/` 下可以直接执行的 shell / Python 命令脚本
 - 包级 `python -m rcsd_topo_poc`
+- `src/rcsd_topo_poc/cli.py` 暴露的稳定子命令
 - 未来模块内带独立启动面的 `__main__.py`、`run.py` 或其它带独立入口的脚本
 
 ### 4.2 当前治理规则
 
 - 默认禁止新增新的执行入口脚本。
 - 只有当现有入口无法通过参数化、配置化或模块内复用解决，且不能由已有 Skill 或已有入口替代时，才允许新增入口。
-- 任何新增执行入口脚本都必须登记到 `entrypoint-registry.md`。
+- 任何新增、删除、重命名的执行入口，都必须在同一轮变更中同步更新 `entrypoint-registry.md`。
+- 若 registry 与 `python -m rcsd_topo_poc --help` 或 `scripts/` 实际文件不一致，以代码事实为准，并视为治理缺口待补。
+
+### 4.3 最小验证方法
+
+- CLI 事实：执行 `python -m rcsd_topo_poc --help`
+- 脚本事实：枚举 `scripts/` 下纳入版本管理的文件
+- registry 一致性：对照 `entrypoint-registry.md` 表格行
+- outputs 边界：执行 `git ls-files outputs`；若有返回，说明工件边界被打破
 
 ## 5. 后续维护原则
 

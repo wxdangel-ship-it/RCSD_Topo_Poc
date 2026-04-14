@@ -897,6 +897,8 @@ def _collect_polygon_features(rows: list[dict[str, Any]], polygon_feature_cache:
                 "kind_source": properties.get("kind_source") or row.get("kind_source"),
                 "status": row["status"],
                 "success": bool(row["success"]),
+                "business_outcome_class": row.get("business_outcome_class"),
+                "acceptance_class": row.get("acceptance_class"),
                 "root_cause_layer": row.get("root_cause_layer"),
                 "root_cause_type": row.get("root_cause_type"),
                 "visual_review_class": row.get("visual_review_class"),
@@ -956,8 +958,25 @@ def _row_business_outcome_class(row: dict[str, Any]) -> str | None:
     return _canonical_row_step7_fields(row).get("business_outcome_class")
 
 
+def _row_acceptance_class(row: dict[str, Any]) -> str | None:
+    return _canonical_row_step7_fields(row).get("acceptance_class")
+
+
 def _row_is_failure_outcome(row: dict[str, Any]) -> bool:
     return _row_business_outcome_class(row) == "failure"
+
+
+def _build_tri_state_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    acceptance_counter = Counter(str(_row_acceptance_class(row) or "unknown") for row in rows)
+    outcome_counter = Counter(str(_row_business_outcome_class(row) or "unknown") for row in rows)
+    return {
+        "accepted_count": acceptance_counter.get("accepted", 0),
+        "review_required_count": acceptance_counter.get("review_required", 0),
+        "rejected_count": acceptance_counter.get("rejected", 0),
+        "success_count": outcome_counter.get("success", 0),
+        "risk_count": outcome_counter.get("risk", 0),
+        "failure_count": outcome_counter.get("failure", 0),
+    }
 
 
 def _build_review_index(
@@ -1102,6 +1121,64 @@ def _render_review_summary_markdown_v2(
     return "\n".join(lines) + "\n"
 
 
+def _render_review_summary_markdown_v3(
+    *,
+    run_id: str,
+    input_paths: dict[str, str],
+    review_index: list[dict[str, Any]],
+) -> str:
+    tri_state_counts = _build_tri_state_counts(review_index)
+    visual_counter = Counter(str(item.get("visual_review_class") or "unknown") for item in review_index)
+    official_failure_case_ids = [
+        str(item["case_id"])
+        for item in review_index
+        if item.get("official_review_eligible")
+        and item.get("business_outcome_class") == "failure"
+    ]
+    out_of_scope_case_ids = [
+        str(item["case_id"])
+        for item in review_index
+        if not item.get("official_review_eligible")
+    ]
+    lines = [
+        f"# Stage3 Review Summary ({run_id})",
+        "",
+        f"- run_id: `{run_id}`",
+        "- 输入来源说明：本批正式材料全部来自同一批真实运行结果。",
+        f"- 正式 case 总数：`{len(review_index)}`",
+        f"- accepted 数量：`{tri_state_counts['accepted_count']}`",
+        f"- review_required 数量：`{tri_state_counts['review_required_count']}`",
+        f"- rejected 数量：`{tri_state_counts['rejected_count']}`",
+        f"- business outcome / success 数量：`{tri_state_counts['success_count']}`",
+        f"- business outcome / risk 数量：`{tri_state_counts['risk_count']}`",
+        f"- business outcome / failure 数量：`{tri_state_counts['failure_count']}`",
+        f"- official-review eligible 数量：`{sum(1 for item in review_index if item.get('official_review_eligible'))}`",
+        f"- frozen-constraints conflict 数量：`{len(out_of_scope_case_ids)}`",
+        f"- V1 数量：`{visual_counter.get('V1 认可成功', 0)}`",
+        f"- V2 数量：`{visual_counter.get('V2 业务正确但几何待修', 0)}`",
+        f"- V3 数量：`{visual_counter.get('V3 漏包 required', 0)}`",
+        f"- V4 数量：`{visual_counter.get('V4 误包 foreign', 0)}`",
+        f"- V5 数量：`{visual_counter.get('V5 明确失败', 0)}`",
+        f"- official-review 失败 case：`{', '.join(official_failure_case_ids) if official_failure_case_ids else '无'}`",
+        f"- out-of-scope / frozen-constraints conflict：`{', '.join(out_of_scope_case_ids) if out_of_scope_case_ids else '无'}`",
+        (
+            "- `520394575`：未出现在本批 review index 中。"
+            if "520394575" not in {str(item['case_id']) for item in review_index}
+            else "- `520394575`：已包含于本批 review index 中，请单独核查其最终状态。"
+        ),
+        "- 非 `520394575` 失败 case 的轮次变化说明：详见对应轮次 `failed_cases_diff.md` 与 `integration_round_summary.md`。",
+        "- 是否存在环境缺失：否。",
+        "- 是否存在 mixed-source 风险：否，本批文件均由同一批运行结果新生成。",
+        "- 兼容字段说明：若 `summary.json` 保留 `success_count/failed_count`，仅作为兼容统计；主统计以 accepted/review_required/rejected 为准。",
+        "- 是否允许宣告完成：待主控结合测试轮次与多角色留痕统一判定。",
+        "",
+        "## 输入路径",
+    ]
+    for key, value in input_paths.items():
+        lines.append(f"- `{key}`: `{value}`")
+    return "\n".join(lines) + "\n"
+
+
 def _build_package_manifest(
     *,
     run_id: str,
@@ -1138,6 +1215,81 @@ def _build_package_manifest(
         "mixed_source": False,
         "counts": {
             "case_count": len(review_index),
+            "official_review_eligible_count": sum(
+                1 for item in review_index if item.get("official_review_eligible")
+            ),
+            "frozen_constraints_conflict_count": len(excluded_out_of_scope_case_ids),
+            "official_failure_count": len(official_failure_case_ids),
+        },
+        "official_failure_case_ids": official_failure_case_ids,
+        "excluded_out_of_scope_case_ids": excluded_out_of_scope_case_ids,
+        "structure": {
+            "cases_dir": str(cases_root),
+            "rendered_maps_dir": str(rendered_maps_root),
+            "virtual_intersection_polygons": str(polygons_path),
+            "summary": str(summary_path),
+            "perf_summary": str(perf_summary_path),
+            "review_index": str(review_index_path),
+            "review_summary": str(review_summary_path),
+            "exception_summary": str(exception_summary_path),
+        },
+        "whitelist": {
+            "root_files": [
+                str(polygons_path),
+                str(summary_path),
+                str(perf_summary_path),
+                str(review_index_path),
+                str(review_summary_path),
+                str(exception_summary_path),
+            ],
+            "case_dirs": [str(item.get("output_dir")) for item in review_index],
+        },
+    }
+
+
+def _build_package_manifest_v2(
+    *,
+    run_id: str,
+    out_root: Path,
+    input_mode: str,
+    input_paths: dict[str, str],
+    polygons_path: Path,
+    summary_path: Path,
+    review_index_path: Path,
+    review_summary_path: Path,
+    perf_summary_path: Path,
+    exception_summary_path: Path,
+    cases_root: Path,
+    rendered_maps_root: Path,
+    review_index: list[dict[str, Any]],
+) -> dict[str, Any]:
+    tri_state_counts = _build_tri_state_counts(review_index)
+    official_failure_case_ids = [
+        str(item["case_id"])
+        for item in review_index
+        if item.get("official_review_eligible")
+        and item.get("business_outcome_class") == "failure"
+    ]
+    excluded_out_of_scope_case_ids = [
+        str(item["case_id"])
+        for item in review_index
+        if not item.get("official_review_eligible")
+    ]
+    return {
+        "run_id": run_id,
+        "generated_at": _now_text(),
+        "input_mode": input_mode,
+        "input_paths": dict(input_paths),
+        "run_root": str(out_root),
+        "mixed_source": False,
+        "counts": {
+            "case_count": len(review_index),
+            "accepted_count": tri_state_counts["accepted_count"],
+            "review_required_count": tri_state_counts["review_required_count"],
+            "rejected_count": tri_state_counts["rejected_count"],
+            "success_count": tri_state_counts["success_count"],
+            "risk_count": tri_state_counts["risk_count"],
+            "failure_count": tri_state_counts["failure_count"],
             "official_review_eligible_count": sum(
                 1 for item in review_index if item.get("official_review_eligible")
             ),
@@ -1219,7 +1371,11 @@ def _build_package_consistency_audit(
                     "root_cause_layer": item.get("root_cause_layer"),
                 }
             )
-        if item.get("official_review_eligible") and item.get("success") and item.get("kind") in {None, ""}:
+        if (
+            item.get("official_review_eligible")
+            and item.get("business_outcome_class") != "failure"
+            and item.get("kind") in {None, ""}
+        ):
             issues.append({"case_id": case_id, "kind": "eligible_success_missing_kind"})
 
     return {
@@ -1231,6 +1387,82 @@ def _build_package_consistency_audit(
         "excluded_out_of_scope_case_ids": package_manifest.get("excluded_out_of_scope_case_ids", []),
         "issues": issues,
     }
+
+
+def _build_full_input_summary_payload(
+    *,
+    run_id: str,
+    mode: str,
+    review_mode: bool,
+    workers: int,
+    max_cases: int | None,
+    out_root_path: Path,
+    cases_root: Path,
+    rendered_maps_root: Path,
+    polygons_path: Path,
+    review_index_path: Path,
+    review_summary_path: Path,
+    package_manifest_path: Path,
+    package_consistency_audit_path: Path,
+    preflight: dict[str, Any],
+    shared_memory_summary: dict[str, Any],
+    selected_case_ids: list[str],
+    discovered_case_ids: list[str],
+    skipped_case_ids: list[str],
+    rows: list[dict[str, Any]],
+    package_manifest: dict[str, Any] | None = None,
+    package_consistency_audit: dict[str, Any] | None = None,
+    crashed: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    tri_state_counts = _build_tri_state_counts(rows)
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "mode": mode,
+        "review_mode": review_mode,
+        "workers": workers,
+        "max_cases": max_cases,
+        "run_root": str(out_root_path),
+        "structure": {
+            "cases_dir": str(cases_root),
+            "rendered_maps_dir": str(rendered_maps_root),
+            "virtual_intersection_polygons": str(polygons_path),
+            "review_index": str(review_index_path),
+            "review_summary": str(review_summary_path),
+            "review_package_manifest": str(package_manifest_path),
+            "review_package_consistency_audit": str(package_consistency_audit_path),
+        },
+        "preflight": preflight,
+        "shared_memory": shared_memory_summary,
+        "selected_case_ids": selected_case_ids,
+        "discovered_case_ids": discovered_case_ids,
+        "skipped_case_ids": skipped_case_ids,
+        "case_count": len(rows),
+        "accepted_count": tri_state_counts["accepted_count"],
+        "review_required_count": tri_state_counts["review_required_count"],
+        "rejected_count": tri_state_counts["rejected_count"],
+        "success_count": tri_state_counts["success_count"],
+        "risk_count": tri_state_counts["risk_count"],
+        "failed_count": tri_state_counts["failure_count"],
+        "summary_semantics": {
+            "primary_statistics": "accepted/review_required/rejected",
+            "compatibility_statistics": {
+                "success_count": "business_outcome=success",
+                "risk_count": "business_outcome=risk",
+                "failed_count": "business_outcome=failure",
+            },
+            "success_flag_semantics": "accepted_only_compat",
+        },
+        "rows": rows,
+    }
+    if package_manifest is not None:
+        payload["official_failure_case_ids"] = package_manifest["official_failure_case_ids"]
+        payload["excluded_out_of_scope_case_ids"] = package_manifest["excluded_out_of_scope_case_ids"]
+        payload["package_manifest"] = package_manifest
+    if package_consistency_audit is not None:
+        payload["package_consistency_audit"] = package_consistency_audit
+    if crashed is not None:
+        payload["crashed"] = crashed
+    return payload
 
 
 SHARED_LAYER_PROPERTY_FIELDS: dict[str, tuple[str, ...]] = {
@@ -1577,7 +1809,7 @@ def run_t02_virtual_intersection_full_input_poc(
         )
         write_json(review_index_path, review_index)
         review_summary_path.write_text(
-            _render_review_summary_markdown_v2(
+            _render_review_summary_markdown_v3(
                 run_id=resolved_run_id,
                 input_paths=review_input_paths,
                 review_index=review_index,
@@ -1615,7 +1847,7 @@ def run_t02_virtual_intersection_full_input_poc(
         write_json(perf_summary_path, perf_summary)
         _write_exception_summary(exception_summary_path, rows)
 
-        package_manifest = _build_package_manifest(
+        package_manifest = _build_package_manifest_v2(
             run_id=resolved_run_id,
             out_root=out_root_path,
             input_mode=FULL_INPUT_MODE_NAME,
@@ -1639,36 +1871,29 @@ def run_t02_virtual_intersection_full_input_poc(
         )
         write_json(package_consistency_audit_path, package_consistency_audit)
 
-        summary = {
-            "run_id": resolved_run_id,
-            "mode": mode,
-            "review_mode": review_mode,
-            "workers": workers,
-            "max_cases": max_cases,
-            "run_root": str(out_root_path),
-            "structure": {
-                "cases_dir": str(cases_root),
-                "rendered_maps_dir": str(rendered_maps_root),
-                "virtual_intersection_polygons": str(polygons_path),
-                "review_index": str(review_index_path),
-                "review_summary": str(review_summary_path),
-                "review_package_manifest": str(package_manifest_path),
-                "review_package_consistency_audit": str(package_consistency_audit_path),
-            },
-            "preflight": preflight,
-            "shared_memory": shared_memory_summary,
-            "selected_case_ids": selected_case_ids,
-            "discovered_case_ids": discovered_case_ids,
-            "skipped_case_ids": skipped_case_ids,
-            "case_count": len(rows),
-            "success_count": sum(1 for item in rows if not _row_is_failure_outcome(item)),
-            "failed_count": sum(1 for item in rows if _row_is_failure_outcome(item)),
-            "official_failure_case_ids": package_manifest["official_failure_case_ids"],
-            "excluded_out_of_scope_case_ids": package_manifest["excluded_out_of_scope_case_ids"],
-            "package_manifest": package_manifest,
-            "package_consistency_audit": package_consistency_audit,
-            "rows": rows,
-        }
+        summary = _build_full_input_summary_payload(
+            run_id=resolved_run_id,
+            mode=mode,
+            review_mode=review_mode,
+            workers=workers,
+            max_cases=max_cases,
+            out_root_path=out_root_path,
+            cases_root=cases_root,
+            rendered_maps_root=rendered_maps_root,
+            polygons_path=polygons_path,
+            review_index_path=review_index_path,
+            review_summary_path=review_summary_path,
+            package_manifest_path=package_manifest_path,
+            package_consistency_audit_path=package_consistency_audit_path,
+            preflight=preflight,
+            shared_memory_summary=shared_memory_summary,
+            selected_case_ids=selected_case_ids,
+            discovered_case_ids=discovered_case_ids,
+            skipped_case_ids=skipped_case_ids,
+            rows=rows,
+            package_manifest=package_manifest,
+            package_consistency_audit=package_consistency_audit,
+        )
         write_json(summary_path, summary)
 
         success = all(bool(item.get("success")) for item in rows)
@@ -1679,14 +1904,18 @@ def run_t02_virtual_intersection_full_input_poc(
             current_stage="completed",
             counts=counts,
             message=(
-                f"Finished {len(rows)} cases; success={summary['success_count']} failed={summary['failed_count']}."
+                "Finished "
+                f"{len(rows)} cases; accepted={summary['accepted_count']} "
+                f"review_required={summary['review_required_count']} rejected={summary['rejected_count']}."
             ),
         )
         announce(
             logger,
             (
                 "[T02-FULL-POC] completed "
-                f"success_count={summary['success_count']} failed_count={summary['failed_count']} "
+                f"accepted_count={summary['accepted_count']} "
+                f"review_required_count={summary['review_required_count']} "
+                f"rejected_count={summary['rejected_count']} "
                 f"out_root={out_root_path}"
             ),
         )
@@ -1706,33 +1935,28 @@ def run_t02_virtual_intersection_full_input_poc(
         _write_exception_summary(exception_summary_path, rows, crashed=crash_report)
         write_json(
             summary_path,
-            {
-                "run_id": resolved_run_id,
-                "mode": mode,
-                "review_mode": review_mode,
-                "workers": workers,
-                "max_cases": max_cases,
-                "run_root": str(out_root_path),
-                "structure": {
-                    "cases_dir": str(cases_root),
-                    "rendered_maps_dir": str(rendered_maps_root),
-                    "virtual_intersection_polygons": str(polygons_path),
-                    "review_index": str(review_index_path),
-                    "review_summary": str(review_summary_path),
-                    "review_package_manifest": str(package_manifest_path),
-                    "review_package_consistency_audit": str(package_consistency_audit_path),
-                },
-                "preflight": preflight,
-                "shared_memory": shared_memory_summary,
-                "selected_case_ids": selected_case_ids,
-                "discovered_case_ids": discovered_case_ids,
-                "skipped_case_ids": skipped_case_ids,
-                "case_count": len(rows),
-                "success_count": sum(1 for item in rows if not _row_is_failure_outcome(item)),
-                "failed_count": sum(1 for item in rows if _row_is_failure_outcome(item)),
-                "rows": sorted(rows, key=lambda item: sort_patch_key(str(item["case_id"]))),
-                "crashed": crash_report,
-            },
+            _build_full_input_summary_payload(
+                run_id=resolved_run_id,
+                mode=mode,
+                review_mode=review_mode,
+                workers=workers,
+                max_cases=max_cases,
+                out_root_path=out_root_path,
+                cases_root=cases_root,
+                rendered_maps_root=rendered_maps_root,
+                polygons_path=polygons_path,
+                review_index_path=review_index_path,
+                review_summary_path=review_summary_path,
+                package_manifest_path=package_manifest_path,
+                package_consistency_audit_path=package_consistency_audit_path,
+                preflight=preflight,
+                shared_memory_summary=shared_memory_summary,
+                selected_case_ids=selected_case_ids,
+                discovered_case_ids=discovered_case_ids,
+                skipped_case_ids=skipped_case_ids,
+                rows=sorted(rows, key=lambda item: sort_patch_key(str(item["case_id"]))),
+                crashed=crash_report,
+            ),
         )
         write_json(
             perf_summary_path,

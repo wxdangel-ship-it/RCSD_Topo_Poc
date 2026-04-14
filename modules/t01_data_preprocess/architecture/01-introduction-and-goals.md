@@ -11,6 +11,7 @@
 - 角色：
   - 在非封闭式双向道路场景中，逐阶段构建双向 Segment
   - 为后续 Segment 聚合与更高层拓扑分析提供稳定输入
+  - 当前正式流程以双向 Segment 构建为主，并登记了 `Step5` 后基于 refreshed 结果的单向补段 continuation
 
 ## 模块目标
 1. 在普通道路网络上稳定提取双向 Segment。

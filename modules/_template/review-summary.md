@@ -11,17 +11,27 @@
   - repo root `.agents/skills/<skill-name>/SKILL.md`：标准可复用流程
   - `README.md`：操作者总览
 
-## 当前最小正式文档面
+## 当前标准文档面
 
-- `architecture/*`
-- `INTERFACE_CONTRACT.md`
+### 启动时必建
+
 - `AGENTS.md`
+- `INTERFACE_CONTRACT.md`
+- `architecture/01-introduction-and-goals.md`
+- `architecture/03-context-and-scope.md`
+- `architecture/04-solution-strategy.md`
 
-## 当前建议补充项
+### 建议尽早补齐
+
+- `README.md`
+- `architecture/05-building-block-view.md`
+- `architecture/10-quality-requirements.md`
+
+### 模块成熟后补齐
 
 - `review-summary.md`
-- `README.md`
-- repo root Skill 包
+- `history/README.md`
+- `scripts/README.md`（仅当模块确有获批模块内脚本时）
 
 说明：
 

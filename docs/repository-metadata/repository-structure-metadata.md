@@ -8,8 +8,9 @@
 
 ### repo root
 
-- 放仓库级 durable guidance 和最高层项目规格
-- 当前标准文档：`AGENTS.md`、`SPEC.md`
+- 放仓库级 durable guidance、项目级 source-of-truth 与仓库级构建 / 运行元文件
+- 当前受治理的根文件包括：`AGENTS.md`、`SPEC.md`、`Makefile`、`pyproject.toml`、`uv.lock`、`.gitignore`、`.gitattributes`
+- 根目录不承载临时审计产物、运行输出或模块级事实
 
 ### `.agents/skills/`
 
@@ -39,6 +40,12 @@
 
 - 放新模块启动模板
 - 不是业务模块，不参与模块生命周期盘点
+
+### `outputs/`
+
+- 放本地运行、调试、审计与比对产物
+- `outputs/` 与 `outputs/_work/` 默认不属于 source-of-truth，不进入 day-0 主阅读路径
+- 若其中内容需要长期保留，应提炼为正式文档并迁移到 `docs/`、`modules/<module>/history/` 或 `specs/archive/`，而不是直接跟踪原始输出
 
 ### `src/rcsd_topo_poc/`
 
@@ -77,6 +84,11 @@
 
 - `AGENTS.md`
 - `SPEC.md`
+- `Makefile`
+- `pyproject.toml`
+- `uv.lock`
+- `.gitignore`
+- `.gitattributes`
 - `.agents/skills/`
 - `.specify/`
 - `.codex/prompts/`
@@ -147,11 +159,13 @@
 - `architecture/`
 - `history/`
 - `scripts/`
+- `baselines/`
 
 说明：
 
 - 模块根目录不放 `SKILL.md`
 - 标准 Skill 统一位于 repo root `.agents/skills/`
+- `baselines/` 如存在，只承载 accepted / frozen 示例或对照样本；其结论必须由 `architecture/` 或 `INTERFACE_CONTRACT.md` 解释，不能单独充当 source-of-truth
 
 ## 4. 归档规则
 
@@ -160,15 +174,18 @@
 - 历史变更工件：`specs/archive/`
 - 模块级历史资料：`modules/<module>/history/`
 
-## 5. 当前主阅读顺序
+## 5. 本目录的按需阅读顺序
 
-1. `AGENTS.md`
-2. `SPEC.md`
-3. `docs/PROJECT_BRIEF.md`
-4. `docs/doc-governance/README.md`
-5. `docs/repository-metadata/README.md`
-6. `docs/repository-metadata/code-boundaries-and-entrypoints.md`
-7. `docs/doc-governance/module-lifecycle.md`
-8. `docs/doc-governance/current-module-inventory.md`
-9. `docs/doc-governance/current-doc-inventory.md`
-10. 如需启动模块，再进入 `modules/_template/`
+本目录不是仓库 day-0 主入口。
+按 `AGENTS.md`，应先进入 `docs/doc-governance/README.md`；只有在需要确认仓库结构、入口边界与体量约束时，再按下列顺序阅读：
+
+1. `README.md`
+2. `repository-structure-metadata.md`
+3. `code-boundaries-and-entrypoints.md`
+4. `entrypoint-registry.md`
+5. `code-size-audit.md`
+
+说明：
+
+- `entrypoint-registry.md` 只登记当前真实入口，不裁定项目阶段或模块正式性
+- `outputs/`、`outputs/_work/`、`.claude/worktrees/`、`.venv/` 不进入主阅读路径，不作为 source-of-truth

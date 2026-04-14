@@ -1,56 +1,25 @@
 # T01 数据预处理模块
 
+> 本文件是 `T01` 的操作者入口与运行说明。长期源事实以 `architecture/06-accepted-baseline.md` 与 `INTERFACE_CONTRACT.md` 为准；如本文件与长期源事实冲突，以后者为准。
+
 ## 模块定位
-- 面向非封闭式双向道路场景的双向 Segment 构建模块。
-- 正式流程：
-  - `working bootstrap -> roundabout preprocessing -> bootstrap node retyping -> Step1 -> Step2 -> Step3 -> Step4 -> Step5A -> Step5B -> Step5C -> Step6`
-- Step6 已正式纳入 official end-to-end，不再是额外 POC。
 
-## 官方输入
-- 官方矢量输入文件名：
-  - `nodes.gpkg`
-  - `roads.gpkg`
-- 兼容读取：
-  - 同名 `GeoPackage(.gpkg)` 优先
-  - 历史 `.gpkt` 仅兼容读取
-  - `GeoJSON(.geojson/.json)` 与 `Shapefile(.shp)` 继续兼容
+- `T01` 以双向 Segment 构建为主流程。
+- 当前已登记 `Step5` 后基于 refreshed 结果的单向补段 continuation 与 `Step6` 聚合路径。
+- 本文件只提供操作者入口、运行方式与文档索引。
 
-## 当前 accepted 约束摘要
-- node 输入：
-  - `closed_con in {2,3}`
-- road 输入：
-  - `road_kind != 1`
-  - `formway != 128`
-- 后续业务判断统一使用：
-  - `grade_2`
-  - `kind_2`
-- 原始 `grade / kind` 仅保留为输入信息，不再作为后续业务判断依据。
+## 运行前确认
 
-## 关键业务口径
-- 环岛预处理在模块开始阶段完成，环岛 `mainnode` 统一写成：
-  - `grade_2 = 1`
-  - `kind_2 = 64`
-- `bootstrap node retyping` 位于环岛预处理之后、Step1 之前：
-  - 只修正 `grade_2 / kind_2`
-  - 不改原始 `grade / kind`
-  - 当前仅支持极窄的 strict-T 纠错：`1/4 -> 2/2048`
-- Step3 / Step4 / Step5* 的节点刷新已改为 family-based retyping：
-  - `1/4 -> 2/2048`
-  - 或 `1/4 -> 2/4`
-  - 不再使用旧的泛化 `t_like => 2048` 叙述
-- 全局共享：
-  - `50m` 双线路段最小闭环垂距门控
-  - `50m` 侧向并入距离门控
-- T 型路口竖向阻断规则：
-  - 仅对应 `kind_2 = 2048`
-  - 只要不是当前 segment 的起点 / 终点，在 `Step2 / Step4 / Step5*` 中都禁止内部竖向追溯
-- 右转专用道：
-  - `formway bit7 / 128` 的 road 不参与 Segment 构建
-  - 去掉右转专用道后不成真实路口的节点，不得作为构段路口
+- 官方输入文件名：`nodes.gpkg`、`roads.gpkg`
+- 官方业务入口以 repo-level CLI 子命令为准
+- 详细输入约束、阶段语义、freeze compare 边界请分别查看：
+  - `INTERFACE_CONTRACT.md`
+  - `architecture/06-accepted-baseline.md`
 
 ## 官方入口
 
 ### official end-to-end
+
 ```bash
 python -m rcsd_topo_poc t01-run-skill-v1 \
   --road-path <roads.gpkg> \
@@ -59,29 +28,42 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
 ```
 
 ### oneway continuation
+
 ```bash
 python -m rcsd_topo_poc t01-continue-oneway-segment \
   --continue-from-dir <previous_skill_out_root_or_step5_dir> \
   --out-root <out_root>
 ```
 
-说明：
-- `--continue-from-dir` 支持三种输入：
-  - 上一轮 `t01-run-skill-v1` 的完整输出目录，且其中包含 `debug/step5/`
-  - 直接的 `debug/` 目录，且其中包含 `step2/step4/step5/`
-  - 直接的 `Step5` refreshed 输出目录，且其中包含 Step5 marker 与 `nodes.gpkg/roads.gpkg`
-- continuation 模式只复用上一阶段结果并继续执行 `oneway + Step6`，不重跑 `Step1-Step5`。
-- `--out-root` 必须指向新的结果目录，不能与 `--continue-from-dir` 或其解析出的 `Step5` 目录重叠。
-
 ### 分步 / 调试入口
+
 - `python -m rcsd_topo_poc t01-step1-pair-poc`
 - `python -m rcsd_topo_poc t01-step2-segment-poc`
 - `python -m rcsd_topo_poc t01-s2-refresh-node-road`
 - `python -m rcsd_topo_poc t01-step4-residual-graph`
 - `python -m rcsd_topo_poc t01-step5-staged-residual-graph`
 - `python -m rcsd_topo_poc t01-step6-segment-aggregation-poc`
+- `python -m rcsd_topo_poc t01-compare-freeze`
+
+说明：
+
+- `T01` 官方入口采用 repo-level CLI 子命令，不新增模块级私有 `python -m rcsd_topo_poc.modules.*` 入口。
+- 若后续有新的官方入口，必须先满足 repo root `AGENTS.md` 的入口治理规则，并同步仓库入口注册表。
+
+## 辅助脚本（非官方模块契约）
+
+- `scripts/t01_run_full_data_skill_v1.sh`
+- `scripts/t01_run_full_data.sh`
+- `scripts/t01_pull_from_internal_github.sh`
+- `scripts/t01_pull_main_from_internal_github.sh`
+
+说明：
+
+- 这些脚本用于环境交付或批量执行辅助，不替代 repo-level CLI 子命令。
+- 若脚本与模块契约冲突，以 `INTERFACE_CONTRACT.md`、`architecture/06-accepted-baseline.md` 与 `src/rcsd_topo_poc/cli.py` 为准。
 
 ## 正式输出
+
 - `nodes.gpkg`
 - `roads.gpkg`
 - `segment.gpkg`
@@ -94,21 +76,24 @@ python -m rcsd_topo_poc t01-continue-oneway-segment \
 - `trunk_membership_skill_v1.csv`
 - `skill_v1_manifest.json`
 - `skill_v1_summary.json`
-
-说明：
-- `slice_builder` 是当前唯一默认双写 `GeoJSON + GPKG` 的入口：
-  - `nodes.geojson` + `nodes.gpkg`
-  - `roads.geojson` + `roads.gpkg`
-- 其余官方阶段矢量输出默认统一为 `.gpkg`。
+- `oneway_segment_roads.gpkg`
+- `oneway_segment_build_table.csv`
+- `oneway_segment_summary.json`
+- `unsegmented_roads.gpkg`
+- `unsegmented_roads.csv`
+- `unsegmented_roads_summary.json`
 
 ## 文档索引
+
 - 架构总览：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/overview.md`
 - accepted baseline：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
 - 契约：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
+- 模块级规则：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/AGENTS.md`
 - spec-kit 计划：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/plan.md`
 - spec-kit 任务：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/tasks.md`
 
 ## 临时样例基线
+
 - `XXXS*` 的临时最终 Segment 基线仅用于迭代过程中的非回退检查。
 - 不覆盖 accepted baseline。
 - 记录位置：

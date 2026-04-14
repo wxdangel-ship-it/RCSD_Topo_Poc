@@ -4,21 +4,23 @@
 - 项目名称：RCSD_Topo_Poc
 - 版本：v0.1
 - 状态：Draft
-- 当前阶段：仓库骨架已建立，进入正式业务模块治理与实现并行阶段
+- 当前阶段：仓库骨架已建立，进入工程治理与已登记模块并行维护阶段
 - 交付形态：外网 GitHub 仓库 + 内网执行 + 文本粘贴回传
 
 ---
 
 ## 1. 项目概述
 
-`RCSD_Topo_Poc` 的目标是为 RCSD 场景下的路网拓扑相关能力建立一个可持续迭代的工程底座，并在此基础上承载正式业务模块。当前阶段在延续基础工程治理的同时，已经开始落正式模块文档与实现：
+`RCSD_Topo_Poc` 的目标是为 RCSD 场景下的路网拓扑相关能力建立一个可持续迭代的工程底座，并在此基础上承载正式业务模块。当前阶段在延续基础工程治理的同时，已经进入“工程治理 + 已登记模块并行维护”阶段：
 
 - 仓库级骨架
 - 文档治理与 source-of-truth 分层
 - 共享文本回传协议
 - 模块启动标准模板
 - `src/`、`modules/`、`tests/`、`tools/` 的基础边界
-- 当前已登记正式模块 `t02_junction_anchor`
+- 当前已登记正式业务模块 `t01_data_preprocess`
+- 当前已登记正式业务模块 `t02_junction_anchor`
+- 当前已纳入治理的工具集合模块 `t00_utility_toolbox`
 
 当前原则是优先复用 `Highway_Topo_Poc` 中已经验证有效的仓库骨架、治理方式与协作约束，但不迁移任何高速场景业务模块实现。
 
@@ -33,8 +35,10 @@
 - 建立项目级 `docs/architecture/*`、`docs/doc-governance/*`、`docs/repository-metadata/*`
 - 建立 RCSD-neutral 的 `TEXT_QC_BUNDLE` 协议、粘贴性守卫与基础测试
 - 建立 `modules/_template/`，用于后续任何新模块的标准启动
-- 让已登记正式模块的文档面、实现入口与测试面保持一致
-- 让已登记正式模块的 stage1、stage2、stage3 baseline 与支撑工具入口保持边界清晰、可审计、可复现
+- 让已登记模块的文档面、实现入口与测试面保持一致
+- 让 `t00_utility_toolbox` 维持工具集合模块 / 非业务生产模块边界
+- 让 `t01_data_preprocess` 的 accepted baseline、官方入口与 freeze compare 口径保持一致
+- 让 `t02_junction_anchor` 的项目级登记状态与仓库级入口事实保持一致
 
 ### 2.2 当前阶段明确不做
 
@@ -53,10 +57,9 @@
 - 模块级启动模板
 - 文本回传协议与其最小共享代码
 - 基础测试与 smoke 模式
-- 已登记正式模块 `t02_junction_anchor` 的 stage1 `DriveZone / has_evd gate`
-- 已登记正式模块 `t02_junction_anchor` 的 stage2 `anchor recognition / anchor existence` 最小闭环
-- `t02_junction_anchor` 的 stage3 `virtual intersection anchoring` baseline
-- `t02_junction_anchor` 的单 `mainnodeid` 文本证据包支撑入口
+- `t00_utility_toolbox` 作为工具集合模块的治理与固定脚本入口
+- 已登记正式模块 `t01_data_preprocess` 的 accepted baseline、official end-to-end 与 freeze compare
+- 已登记正式模块 `t02_junction_anchor` 的项目级登记状态与仓库级入口索引
 
 ### 3.2 当前非目标（不包含）
 
@@ -134,27 +137,33 @@
 
 ## 7. 模块启动标准
 
-后续任何新模块启动时，至少应创建：
+后续任何新模块启动时，Day-0 最少应创建：
 
 - `AGENTS.md`
 - `INTERFACE_CONTRACT.md`
-- `architecture/00-current-state-research.md`
 - `architecture/01-introduction-and-goals.md`
-- `architecture/02-constraints.md`
 - `architecture/03-context-and-scope.md`
 - `architecture/04-solution-strategy.md`
+
+建议在模块进入稳定执行前尽早补齐：
+
+- `README.md`
+- `architecture/02-constraints.md`
 - `architecture/05-building-block-view.md`
 - `architecture/10-quality-requirements.md`
 - `architecture/11-risks-and-technical-debt.md`
 - `architecture/12-glossary.md`
 
-建议按成熟度补充：
+按模块成熟度和治理需要补充：
 
 - `review-summary.md`
-- `README.md`
-- repo root `.agents/skills/<skill-name>/SKILL.md`
 - `history/`
 - `scripts/`
+
+说明：
+
+- repo root `.agents/skills/<skill-name>/SKILL.md` 属于仓库级可复用流程资产，不属于模块根 Day-0 文档集。
+- 模块默认应复用 repo-level CLI 或 root `scripts/` 入口；若要新增模块局部执行入口，必须先满足 repo root `AGENTS.md` 的入口治理规则并登记。
 
 ---
 
@@ -170,7 +179,8 @@
 ## 9. 当前结论
 
 - RCSD 当前已从纯骨架阶段进入“工程治理 + 正式业务模块并行”阶段。
-- 当前已登记正式业务模块：`t02_junction_anchor`。
-- `t02_junction_anchor` 当前已具备 stage1、stage2、stage3 `virtual intersection anchoring` baseline 的最小闭环。
-- 单 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑工具保留。
+- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`。
+- 当前已纳入治理的工具集合模块：`t00_utility_toolbox`，其定位为非业务生产模块。
+- `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小闭环。
+- `t02_junction_anchor` 当前仍是 Active 正式业务模块；其模块正文可在独立轮次中维护，但项目级登记与仓库级入口必须保持一致。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

@@ -82,6 +82,7 @@ class Stage3Step6GeometrySolveResult:
     bounded_optimizer_geometry: Any | None = None
     geometry_established: bool = False
     geometry_review_reason: str | None = None
+    residual_step5_blocking_foreign_required: bool = False
     max_selected_side_branch_covered_length_m: float | None = None
     polygon_aspect_ratio: float | None = None
     polygon_compactness: float | None = None
@@ -96,6 +97,7 @@ class Stage3Step6GeometrySolveResult:
     optimizer_events: tuple[str, ...] = field(default_factory=tuple)
     must_cover_validation: tuple[str, ...] = field(default_factory=tuple)
     foreign_exclusion_validation: tuple[str, ...] = field(default_factory=tuple)
+    final_validation_flags: tuple[str, ...] = field(default_factory=tuple)
     foreign_overlap_metric_m: float | None = None
     foreign_tail_length_m: float | None = None
     foreign_overlap_zero_but_tail_present: bool | None = None

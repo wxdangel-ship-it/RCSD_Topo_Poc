@@ -74,7 +74,7 @@
 - Tool6：固定脚本 + shp 元数据审计 + GeoJSON 导出 + 日志摘要
 - Tool7：固定脚本 + 顶层目录扫描 + GeoJSON/GPKG 批量转换 + 日志摘要
 - Tool9：固定脚本 + per-patch fix + 根目录汇总输出
-- Tool10：固定脚本 + 流式 JSON 解析 + 不做 CRS 变换的点状 GPKG 导出 + 50000 条上限 + 日志摘要
+- Tool10：固定脚本 + 流式 JSON 解析 + `data.spots` 展开成 `pickup_spots` 点图层 + 不做 CRS 变换 + 50000 条上限 + 日志摘要
 
 ## 9. 扩展门禁
 

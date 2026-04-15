@@ -186,11 +186,14 @@
 - 输入：`D:\TestData\poi\beijing_1334198.json`
 - 输出：`D:\TestData\poi\beijing_1334198.gpkg`
 - 输出 CRS：`EPSG:4326`（输出格式为 `GPKG`）
+- 图层名：`pickup_spots`
 - 几何类型：`Point`
-- 坐标来源：优先读取顶层 `lon/lat`；若缺失，则回退读取 `data.location.lon/lat`
-- 源坐标口径：`lon/lat` 视为 `EPSG:4326`，直接写出，不做坐标变换
-- 属性口径：保留顶层属性；嵌套 `dict/list` 会序列化为 JSON 字符串写入属性列
+- 一条输出要素 = `data.spots` 数组中的一个候选上车点
+- 几何来源：只读取 `spots[i].lon/lat`，不得使用顶层 `lon/lat` 或 `data.location.lon/lat` 作为几何
+- 源坐标口径：spot 的 `lon/lat` 视为原始经纬度，直接写出，不做坐标变换
+- 属性口径：按 spot 自身字段、请求/中心点上下文字段、界面状态字段平铺保存，并额外写入 `source_crs`
 - 输入布局：兼容 `NDJSON` 与 `JSON array`；按流式解析执行，不整体载入内存
+- spot 导出模式：默认导出 `spots` 全量候选点；若切换到 `default_pickup` 模式，则筛选 `spot.id == data.card.selectedShowId` 或 `isRecommend == 1`
 - 导出上限：成功导出 `50000` 条 POI 后立即停止
 - 覆盖口径：同名 `.gpkg` 已存在时先删除再重建
 - 摘要至少包含：
@@ -198,10 +201,14 @@
   - `output_path`
   - `input_format`
   - `input_record_count`
+  - `spot_candidate_count`
+  - `selected_spot_count`
   - `output_feature_count`
   - `failed_record_count`
   - `source_crs`
   - `output_crs`
+  - `layer_name`
+  - `spot_filter_mode`
   - `max_output_features`
   - `stopped_by_export_limit`
   - `field_names`

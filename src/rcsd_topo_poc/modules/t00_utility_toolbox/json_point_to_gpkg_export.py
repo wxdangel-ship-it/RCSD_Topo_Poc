@@ -40,6 +40,7 @@ class JsonPointToGpkgConfig:
     output_path: Path
     output_epsg: int = 4326
     max_output_features: int = 50000
+    spot_filter_mode: str = "all_spots"
     progress_interval: int = PROGRESS_INTERVAL
     run_id: str | None = None
 
@@ -168,18 +169,101 @@ def _nested_get(payload: dict[str, Any], path: tuple[str, ...]) -> Any:
     return current
 
 
-def _extract_lon_lat(payload: dict[str, Any]) -> tuple[float, float, str]:
-    candidates = [
-        (("lon",), ("lat",), "top-level lon/lat"),
-        (("data", "location", "lon"), ("data", "location", "lat"), "data.location.lon/lat"),
-    ]
-    for lon_path, lat_path, label in candidates:
-        lon_value = _nested_get(payload, lon_path)
-        lat_value = _nested_get(payload, lat_path)
-        if lon_value is None or lat_value is None:
+def _extract_spot_lon_lat(spot: dict[str, Any]) -> tuple[float, float]:
+    lon_value = spot.get("lon")
+    lat_value = spot.get("lat")
+    if lon_value is None or lat_value is None:
+        raise ValueError("spot lon/lat not found")
+    return float(str(lon_value)), float(str(lat_value))
+
+
+def _scalar(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return None
+
+
+def _as_bool_flag(value: Any) -> int | None:
+    scalar_value = _scalar(value)
+    if scalar_value is None:
+        return None
+    return 1 if bool(scalar_value) else 0
+
+
+def _build_feature_properties(payload: dict[str, Any], spot: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    center = data.get("location") if isinstance(data.get("location"), dict) else {}
+    card = data.get("card") if isinstance(data.get("card"), dict) else {}
+    other_args = payload.get("other_args") if isinstance(payload.get("other_args"), dict) else {}
+
+    properties: dict[str, Any] = {
+        "source_crs": "raw_lonlat_unconfirmed",
+        "spot_id": _scalar(spot.get("id")) or _scalar(spot.get("spotId")),
+        "name": _scalar(spot.get("name")),
+        "distance": _scalar(spot.get("distance")),
+        "walk_distance": _scalar(spot.get("walkDistance")),
+        "is_recommend": _as_bool_flag(spot.get("isRecommend")),
+        "type": _scalar(spot.get("type")),
+        "link_id": _scalar(spot.get("linkId")),
+        "link_coors": _scalar(spot.get("linkCoors")),
+        "location": _scalar(spot.get("location")),
+        "origin_id": _scalar(spot.get("originId")),
+        "is_nparking": _as_bool_flag(spot.get("isNparking")),
+        "req_tid": _scalar(payload.get("tid")),
+        "req_gd_id": _scalar(payload.get("gd_id")),
+        "req_lon": _scalar(payload.get("lon")),
+        "req_lat": _scalar(payload.get("lat")),
+        "req_success": _as_bool_flag(payload.get("success")),
+        "req_db": _scalar(other_args.get("db")),
+        "req_table_name": _scalar(other_args.get("table_name")),
+        "cen_id": _scalar(center.get("id")) or _scalar(center.get("spotId")),
+        "cen_name": _scalar(center.get("name")),
+        "cen_lon": _scalar(center.get("lon")),
+        "cen_lat": _scalar(center.get("lat")),
+        "cen_type": _scalar(center.get("type")),
+        "adcode": _scalar(center.get("adcode")),
+        "city_adcode": _scalar(center.get("cityAdcode")),
+        "province_adcode": _scalar(center.get("provinceAdcode")),
+        "district_adcode": _scalar(center.get("districtAdcode")),
+        "selected_show_id": _scalar(card.get("selectedShowId")),
+        "card_style": _scalar(card.get("cardStyle")),
+        "card_title": _scalar(card.get("title")),
+        "had_recommend": _as_bool_flag(data.get("hadRecommend")),
+        "had_spot_image": _as_bool_flag(data.get("hadSpotImage")),
+        "crawl_time": _scalar(payload.get("crawl_time")),
+    }
+    return properties
+
+
+def _iter_spots(payload: dict[str, Any], spot_filter_mode: str) -> Iterator[dict[str, Any]]:
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return
+    spots = data.get("spots")
+    if not isinstance(spots, list):
+        return
+
+    selected_show_id = _nested_get(payload, ("data", "card", "selectedShowId"))
+    normalized_selected = str(selected_show_id) if selected_show_id is not None else None
+    normalized_mode = spot_filter_mode.strip().lower()
+
+    for spot in spots:
+        if not isinstance(spot, dict):
             continue
-        return float(str(lon_value)), float(str(lat_value)), label
-    raise ValueError("lon/lat not found in supported fields")
+        if normalized_mode == "all_spots":
+            yield spot
+            continue
+        if normalized_mode != "default_pickup":
+            raise ValueError(f"unsupported spot_filter_mode: {spot_filter_mode}")
+
+        spot_id = spot.get("id")
+        spot_spot_id = spot.get("spotId")
+        is_selected = normalized_selected is not None and (
+            str(spot_id) == normalized_selected or str(spot_spot_id) == normalized_selected
+        )
+        is_recommend = bool(spot.get("isRecommend") == 1 or spot.get("isRecommend") is True)
+        if is_selected or is_recommend:
+            yield spot
 
 
 def _quote_identifier(identifier: str) -> str:
@@ -314,11 +398,11 @@ def _build_gpkg_geometry_blob(geometry: BaseGeometry, srs_id: int) -> bytes:
 
 
 class _PointGpkgWriter:
-    def __init__(self, output_path: Path, target_crs: CRS) -> None:
+    def __init__(self, output_path: Path, target_crs: CRS, *, table_name: str) -> None:
         self.output_path = output_path
         self.target_crs = target_crs
-        self.table_name = output_path.stem
-        self.layer_name = output_path.stem
+        self.table_name = table_name
+        self.layer_name = table_name
         self.used_lower_names = {FID_COLUMN_NAME.lower(), GEOMETRY_COLUMN_NAME.lower()}
         self.field_mapping: dict[str, str] = {}
         self.output_columns: list[str] = []
@@ -465,6 +549,10 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
         "input_size_bytes": input_path.stat().st_size if input_path.exists() else None,
         "input_format": None,
         "input_record_count": 0,
+        "spot_candidate_count": 0,
+        "selected_spot_count": 0,
+        "records_without_spots_count": 0,
+        "filtered_out_spot_count": 0,
         "output_feature_count": 0,
         "failed_record_count": 0,
         "repaired_feature_count": 0,
@@ -473,15 +561,17 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
         "no_crs_transform": True,
         "max_output_features": config.max_output_features,
         "stopped_by_export_limit": False,
+        "layer_name": "pickup_spots",
+        "spot_filter_mode": config.spot_filter_mode,
         "field_names": [],
         "field_name_mapping": {},
         "coordinate_source_summary": {},
         "error_reason_summary": {},
         "blocking_reason": None,
         "notes": [
-            "Tool10 preserves top-level properties.",
-            "Nested dict/list values are serialized as JSON strings in GPKG attribute columns.",
-            "Point geometry is built directly from lon/lat without CRS transformation.",
+            "Tool10 writes one output feature per data.spots candidate pickup point.",
+            "Geometry is built only from spot lon/lat without CRS transformation.",
+            "Properties are flattened from spot, request context, center context, and UI/status fields.",
         ],
     }
 
@@ -498,7 +588,7 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
         announce(logger, "[Stage 1/4] Detect input format and prepare GPKG writer.")
         input_format = _detect_input_format(input_path)
         summary["input_format"] = input_format
-        writer = _PointGpkgWriter(output_path, output_crs)
+        writer = _PointGpkgWriter(output_path, output_crs, table_name="pickup_spots")
         writer.open()
 
         error_reason_counter = Counter()
@@ -509,46 +599,72 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
         output_feature_count = 0
         failed_record_count = 0
         input_record_count = 0
+        spot_candidate_count = 0
+        selected_spot_count = 0
+        records_without_spots_count = 0
+        filtered_out_spot_count = 0
 
         announce(
             logger,
-            "[Stage 2/4] Stream records, build point geometries, and write them without CRS transform. "
+            "[Stage 2/4] Stream records, expand data.spots, and write pickup candidate points without CRS transform. "
             f"output_crs={output_crs.to_string()} input_format={input_format} "
-            f"max_output_features={config.max_output_features}",
+            f"max_output_features={config.max_output_features} spot_filter_mode={config.spot_filter_mode}",
         )
+        stop_due_to_limit = False
         for record_index, payload in enumerate(_iter_records(input_path, input_format), start=1):
             input_record_count = record_index
-            try:
-                lon, lat, coordinate_source = _extract_lon_lat(payload)
-                coordinate_source_counter[coordinate_source] += 1
-                geometry = Point(float(lon), float(lat))
-                if geometry.is_empty:
-                    raise ValueError("geometry is empty")
-                if not geometry.is_valid:
-                    repaired_geometry = minimal_geometry_repair(geometry)
-                    if repaired_geometry is None:
-                        raise ValueError("minimal repair failed")
-                    geometry = repaired_geometry
-                    repaired_feature_count += 1
-
-                properties = dict(payload)
-                for field_name in properties.keys():
-                    if field_name not in field_name_set:
-                        field_name_set.add(field_name)
-                        field_names_seen.append(field_name)
-
-                writer.write_feature(properties, geometry)
-                output_feature_count += 1
-                if output_feature_count >= config.max_output_features:
-                    summary["stopped_by_export_limit"] = True
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            raw_spots = data.get("spots")
+            if not isinstance(raw_spots, list) or len(raw_spots) == 0:
+                records_without_spots_count += 1
+                if _should_report_progress(record_index, config.progress_interval):
                     announce(
                         logger,
-                        f"[Record {record_index}] reached export limit max_output_features={config.max_output_features}; stop streaming",
+                        f"[Record {record_index}] output_feature_count={output_feature_count} failed_record_count={failed_record_count}",
                     )
-                    break
-            except Exception as exc:
-                failed_record_count += 1
-                error_reason_counter[str(exc)] += 1
+                continue
+
+            spot_candidate_count += sum(1 for spot in raw_spots if isinstance(spot, dict))
+            selected_spots = list(_iter_spots(payload, config.spot_filter_mode))
+            selected_spot_count += len(selected_spots)
+            filtered_out_spot_count += max(0, len([spot for spot in raw_spots if isinstance(spot, dict)]) - len(selected_spots))
+
+            for spot in selected_spots:
+                try:
+                    lon, lat = _extract_spot_lon_lat(spot)
+                    coordinate_source_counter["data.spots.lon/lat"] += 1
+                    geometry = Point(float(lon), float(lat))
+                    if geometry.is_empty:
+                        raise ValueError("geometry is empty")
+                    if not geometry.is_valid:
+                        repaired_geometry = minimal_geometry_repair(geometry)
+                        if repaired_geometry is None:
+                            raise ValueError("minimal repair failed")
+                        geometry = repaired_geometry
+                        repaired_feature_count += 1
+
+                    properties = _build_feature_properties(payload, spot)
+                    for field_name in properties.keys():
+                        if field_name not in field_name_set:
+                            field_name_set.add(field_name)
+                            field_names_seen.append(field_name)
+
+                    writer.write_feature(properties, geometry)
+                    output_feature_count += 1
+                    if output_feature_count >= config.max_output_features:
+                        summary["stopped_by_export_limit"] = True
+                        stop_due_to_limit = True
+                        announce(
+                            logger,
+                            f"[Record {record_index}] reached export limit max_output_features={config.max_output_features}; stop streaming",
+                        )
+                        break
+                except Exception as exc:
+                    failed_record_count += 1
+                    error_reason_counter[str(exc)] += 1
+
+            if stop_due_to_limit:
+                break
 
             if _should_report_progress(record_index, config.progress_interval):
                 announce(
@@ -563,6 +679,10 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
         announce(logger, "[Stage 4/4] Write summary and finish Tool10.")
         summary["status"] = "completed"
         summary["input_record_count"] = input_record_count
+        summary["spot_candidate_count"] = spot_candidate_count
+        summary["selected_spot_count"] = selected_spot_count
+        summary["records_without_spots_count"] = records_without_spots_count
+        summary["filtered_out_spot_count"] = filtered_out_spot_count
         summary["output_feature_count"] = output_feature_count
         summary["failed_record_count"] = failed_record_count
         summary["repaired_feature_count"] = repaired_feature_count

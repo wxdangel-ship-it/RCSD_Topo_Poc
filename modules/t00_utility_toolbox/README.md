@@ -71,9 +71,10 @@
 ## Tool10 备注
 
 - Tool10 默认读取 `D:\TestData\poi\beijing_1334198.json`
-- Tool10 默认输出同目录同名 `beijing_1334198.gpkg`
-- 点几何直接使用原始 `lon/lat` 写入 GPKG，不做坐标变换，输出 CRS 保持 `EPSG:4326`
-- 顶层属性原样保留；嵌套 dict/list 会序列化为 JSON 字符串写入属性列
+- Tool10 默认输出同目录同名 `beijing_1334198.gpkg`，图层名固定为 `pickup_spots`
+- Tool10 一条输出要素对应 `data.spots` 数组中的一个候选上车点
+- 几何只取 `spots[i].lon/lat`，直接按原始经纬度写入 GPKG，不用顶层 `lon/lat` 或 `data.location.lon/lat`
+- 属性按 spot、自身请求上下文、中心点上下文、界面状态分组平铺保存
 - Tool10 同时兼容 `NDJSON` 与 `JSON array` 两种输入布局，适用于超大文件流式处理
 - Tool10 成功导出到 `50000` 条 POI 后立即停止，不继续扫描剩余记录
 

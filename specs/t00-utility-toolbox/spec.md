@@ -213,7 +213,7 @@
 
 ### 9.1 目标
 
-将超大 JSON 点记录文件流式解析为点状 `GPKG`，避免整文件载入内存，保持原始经纬度坐标不变，并在成功导出 `50000` 条 POI 后停止。
+将超大 JSON 请求记录中的 `data.spots` 候选上车点流式展开为点状 `GPKG`，避免整文件载入内存，保持原始经纬度坐标不变，并在成功导出 `50000` 条 POI 后停止。
 
 ### 9.2 输入与输出
 
@@ -221,18 +221,20 @@
 - 输出：`D:\TestData\poi\beijing_1334198.gpkg`
 - 输出坐标保持原始经纬度，输出 CRS 为 `EPSG:4326`
 - 输出几何类型为 `Point`
+- 输出图层名固定为 `pickup_spots`
 
 ### 9.3 处理要求
 
 1. 支持 `NDJSON` 与 `JSON array` 两种输入布局
 2. 按流式方式逐条解析记录，不得将超大文件整体载入内存
-3. 坐标优先读取顶层 `lon/lat`
-4. 若顶层坐标缺失，可回退读取 `data.location.lon/lat`
-5. 坐标值统一视为 `EPSG:4326`，直接写出，不做坐标变换
-6. 输出已存在时先删除再重建
-7. 保留顶层属性；嵌套 `dict/list` 允许序列化为 JSON 字符串写入属性列
-8. 成功导出 `50000` 条 POI 后立即停止，不继续扫描剩余记录
-9. 若单条记录缺失坐标、坐标非法或写出失败，则记录异常并继续处理其它记录
+3. 一条输出要素对应 `data.spots` 数组中的一个候选上车点
+4. 几何只读取 `spots[i].lon/lat`，不得使用顶层 `lon/lat` 或 `data.location.lon/lat`
+5. 默认导出 `spots` 全量候选点；若切换到 `default_pickup` 模式，则筛选 `spot.id == data.card.selectedShowId` 或 `isRecommend == 1`
+6. 坐标值统一视为原始经纬度，直接写出，不做坐标变换
+7. 输出已存在时先删除再重建
+8. 属性按 spot、自身请求上下文、中心点上下文、界面状态字段平铺保存，并增加 `source_crs`
+9. 成功导出 `50000` 条 POI 后立即停止，不继续扫描剩余记录
+10. 若单个候选点缺失坐标、坐标非法或写出失败，则记录异常并继续处理其它记录
 
 ### 9.4 日志、摘要与进度
 
@@ -248,10 +250,14 @@
   - `output_path`
   - `input_format`
   - `input_record_count`
+  - `spot_candidate_count`
+  - `selected_spot_count`
   - `output_feature_count`
   - `failed_record_count`
   - `source_crs`
   - `output_crs`
+  - `layer_name`
+  - `spot_filter_mode`
   - `max_output_features`
   - `stopped_by_export_limit`
   - `field_names`

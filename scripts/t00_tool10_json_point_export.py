@@ -13,6 +13,7 @@ OUTPUT_PATH = Path("/mnt/d/TestData/poi/beijing_1334198.gpkg")
 
 OUTPUT_EPSG = 4326
 MAX_OUTPUT_FEATURES = 50000
+SPOT_FILTER_MODE = "all_spots"
 PROGRESS_INTERVAL = 50000
 
 
@@ -46,6 +47,7 @@ def main() -> int:
                 output_path=OUTPUT_PATH,
                 output_epsg=OUTPUT_EPSG,
                 max_output_features=MAX_OUTPUT_FEATURES,
+                spot_filter_mode=SPOT_FILTER_MODE,
                 progress_interval=PROGRESS_INTERVAL,
             )
         )
@@ -57,10 +59,14 @@ def main() -> int:
     print(f"status={summary['status']}")
     print(f"input_format={summary['input_format']}")
     print(f"input_record_count={summary['input_record_count']}")
+    print(f"spot_candidate_count={summary['spot_candidate_count']}")
+    print(f"selected_spot_count={summary['selected_spot_count']}")
     print(f"output_feature_count={summary['output_feature_count']}")
     print(f"failed_record_count={summary['failed_record_count']}")
     print(f"source_crs={summary['source_crs']}")
     print(f"output_crs={summary['output_crs']}")
+    print(f"spot_filter_mode={summary['spot_filter_mode']}")
+    print(f"layer_name={summary['layer_name']}")
     print(f"max_output_features={summary['max_output_features']}")
     print(f"stopped_by_export_limit={summary['stopped_by_export_limit']}")
     print(f"output_path={summary['output_path']}")

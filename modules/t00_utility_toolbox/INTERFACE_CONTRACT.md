@@ -185,12 +185,13 @@
 
 - 输入：`D:\TestData\poi\beijing_1334198.json`
 - 输出：`D:\TestData\poi\beijing_1334198.gpkg`
-- 输出 CRS：`EPSG:3857`（输出格式为 `GPKG`）
+- 输出 CRS：`EPSG:4326`（输出格式为 `GPKG`）
 - 几何类型：`Point`
 - 坐标来源：优先读取顶层 `lon/lat`；若缺失，则回退读取 `data.location.lon/lat`
-- 源坐标口径：`lon/lat` 视为 `EPSG:4326`，统一重投影到 `EPSG:3857`
+- 源坐标口径：`lon/lat` 视为 `EPSG:4326`，直接写出，不做坐标变换
 - 属性口径：保留顶层属性；嵌套 `dict/list` 会序列化为 JSON 字符串写入属性列
 - 输入布局：兼容 `NDJSON` 与 `JSON array`；按流式解析执行，不整体载入内存
+- 导出上限：成功导出 `50000` 条 POI 后立即停止
 - 覆盖口径：同名 `.gpkg` 已存在时先删除再重建
 - 摘要至少包含：
   - `input_path`
@@ -201,6 +202,8 @@
   - `failed_record_count`
   - `source_crs`
   - `output_crs`
+  - `max_output_features`
+  - `stopped_by_export_limit`
   - `field_names`
   - `field_name_mapping`
   - `coordinate_source_summary`

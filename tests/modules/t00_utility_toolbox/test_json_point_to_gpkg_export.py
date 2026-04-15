@@ -4,7 +4,6 @@ import json
 import sqlite3
 from pathlib import Path
 
-from pyproj import Transformer
 from shapely import from_wkb
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.json_point_to_gpkg_export import (
@@ -17,7 +16,7 @@ def _decode_gpkg_geometry(blob: bytes):
     return from_wkb(blob[8:])
 
 
-def test_tool10_exports_ndjson_points_to_3857_gpkg(tmp_path: Path) -> None:
+def test_tool10_exports_ndjson_points_without_crs_transform(tmp_path: Path) -> None:
     input_path = tmp_path / "beijing.json"
     output_path = tmp_path / "beijing.gpkg"
     input_path.write_text(
@@ -68,11 +67,12 @@ def test_tool10_exports_ndjson_points_to_3857_gpkg(tmp_path: Path) -> None:
     assert summary["input_record_count"] == 2
     assert summary["output_feature_count"] == 2
     assert summary["failed_record_count"] == 0
+    assert summary["output_crs"] == "EPSG:4326"
+    assert summary["no_crs_transform"] is True
+    assert summary["stopped_by_export_limit"] is False
     assert summary["coordinate_source_summary"] == {"top-level lon/lat": 2}
 
     mapping = summary["field_name_mapping"]
-    transformer = Transformer.from_crs(4326, 3857, always_xy=True)
-    expected_x, expected_y = transformer.transform(116.305274, 39.866327)
 
     with sqlite3.connect(output_path) as conn:
         contents_row = conn.execute("SELECT table_name, srs_id FROM gpkg_contents").fetchone()
@@ -81,7 +81,7 @@ def test_tool10_exports_ndjson_points_to_3857_gpkg(tmp_path: Path) -> None:
             f'"{mapping["data"]}", geom FROM "{output_path.stem}" ORDER BY fid LIMIT 1'
         ).fetchone()
 
-    assert contents_row == (output_path.stem, 3857)
+    assert contents_row == (output_path.stem, 4326)
     assert first_row[0] == "643137"
     assert first_row[1] == "B0FFI2YNTE"
     assert str(first_row[2]) == "1"
@@ -89,8 +89,8 @@ def test_tool10_exports_ndjson_points_to_3857_gpkg(tmp_path: Path) -> None:
 
     geometry = _decode_gpkg_geometry(first_row[4])
     assert geometry.geom_type == "Point"
-    assert abs(geometry.x - expected_x) < 1e-6
-    assert abs(geometry.y - expected_y) < 1e-6
+    assert abs(geometry.x - 116.305274) < 1e-9
+    assert abs(geometry.y - 39.866327) < 1e-9
 
 
 def test_tool10_supports_json_array_and_nested_location_fallback(tmp_path: Path) -> None:
@@ -134,6 +134,7 @@ def test_tool10_supports_json_array_and_nested_location_fallback(tmp_path: Path)
     assert summary["input_record_count"] == 2
     assert summary["output_feature_count"] == 1
     assert summary["failed_record_count"] == 1
+    assert summary["output_crs"] == "EPSG:4326"
     assert summary["coordinate_source_summary"] == {"data.location.lon/lat": 1}
     assert "could not convert string to float" in next(iter(summary["error_reason_summary"].keys()))
 
@@ -141,5 +142,46 @@ def test_tool10_supports_json_array_and_nested_location_fallback(tmp_path: Path)
         contents_row = conn.execute("SELECT table_name, srs_id FROM gpkg_contents").fetchone()
         feature_count = conn.execute(f'SELECT COUNT(*) FROM "{output_path.stem}"').fetchone()[0]
 
-    assert contents_row == (output_path.stem, 3857)
+    assert contents_row == (output_path.stem, 4326)
     assert feature_count == 1
+
+
+def test_tool10_stops_after_exporting_50000_features(tmp_path: Path) -> None:
+    input_path = tmp_path / "limit.json"
+    output_path = tmp_path / "limit.gpkg"
+    lines = []
+    for index in range(1, 50003):
+        lines.append(
+            json.dumps(
+                {
+                    "_id": {"$oid": str(index)},
+                    "tid": str(index),
+                    "lon": "116.300000",
+                    "lat": "39.900000",
+                    "success": True,
+                },
+                ensure_ascii=False,
+            )
+        )
+    input_path.write_text("\n".join(lines), encoding="utf-8")
+
+    summary = run_json_point_to_gpkg_export(
+        JsonPointToGpkgConfig(
+            input_path=input_path,
+            output_path=output_path,
+            run_id="test_tool10_export_limit",
+            progress_interval=10000,
+        )
+    )
+
+    assert summary["status"] == "completed"
+    assert summary["input_record_count"] == 50000
+    assert summary["output_feature_count"] == 50000
+    assert summary["failed_record_count"] == 0
+    assert summary["stopped_by_export_limit"] is True
+    assert summary["max_output_features"] == 50000
+
+    with sqlite3.connect(output_path) as conn:
+        feature_count = conn.execute(f'SELECT COUNT(*) FROM "{output_path.stem}"').fetchone()[0]
+
+    assert feature_count == 50000

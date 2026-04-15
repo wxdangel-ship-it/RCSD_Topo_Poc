@@ -13,7 +13,6 @@ from shapely import Point, to_wkb
 from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
-    TARGET_CRS,
     aggregate_bounds,
     announce,
     build_logger,
@@ -22,7 +21,6 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     minimal_geometry_repair,
     normalize_runtime_path,
     remove_existing_output,
-    transform_geometry_to_target,
     write_json,
 )
 
@@ -40,7 +38,8 @@ FID_COLUMN_NAME = "fid"
 class JsonPointToGpkgConfig:
     input_path: Path
     output_path: Path
-    target_epsg: int = 3857
+    output_epsg: int = 4326
+    max_output_features: int = 50000
     progress_interval: int = PROGRESS_INTERVAL
     run_id: str | None = None
 
@@ -453,7 +452,7 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
     log_path = output_dir / f"{run_id}.log"
     summary_path = output_dir / f"{run_id}_summary.json"
     logger = build_logger(log_path, run_id)
-    target_crs = CRS.from_epsg(config.target_epsg)
+    output_crs = CRS.from_epsg(config.output_epsg)
 
     summary: dict[str, Any] = {
         "run_id": run_id,
@@ -470,7 +469,10 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
         "failed_record_count": 0,
         "repaired_feature_count": 0,
         "source_crs": INPUT_SOURCE_CRS.to_string(),
-        "output_crs": target_crs.to_string(),
+        "output_crs": output_crs.to_string(),
+        "no_crs_transform": True,
+        "max_output_features": config.max_output_features,
+        "stopped_by_export_limit": False,
         "field_names": [],
         "field_name_mapping": {},
         "coordinate_source_summary": {},
@@ -479,7 +481,7 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
         "notes": [
             "Tool10 preserves top-level properties.",
             "Nested dict/list values are serialized as JSON strings in GPKG attribute columns.",
-            "Point geometry is built from lon/lat and reprojected from EPSG:4326 to the configured target CRS.",
+            "Point geometry is built directly from lon/lat without CRS transformation.",
         ],
     }
 
@@ -496,7 +498,7 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
         announce(logger, "[Stage 1/4] Detect input format and prepare GPKG writer.")
         input_format = _detect_input_format(input_path)
         summary["input_format"] = input_format
-        writer = _PointGpkgWriter(output_path, target_crs)
+        writer = _PointGpkgWriter(output_path, output_crs)
         writer.open()
 
         error_reason_counter = Counter()
@@ -510,8 +512,9 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
 
         announce(
             logger,
-            "[Stage 2/4] Stream records, build point geometries, and reproject to the target CRS. "
-            f"target_crs={target_crs.to_string()} input_format={input_format}",
+            "[Stage 2/4] Stream records, build point geometries, and write them without CRS transform. "
+            f"output_crs={output_crs.to_string()} input_format={input_format} "
+            f"max_output_features={config.max_output_features}",
         )
         for record_index, payload in enumerate(_iter_records(input_path, input_format), start=1):
             input_record_count = record_index
@@ -519,14 +522,13 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
                 lon, lat, coordinate_source = _extract_lon_lat(payload)
                 coordinate_source_counter[coordinate_source] += 1
                 geometry = Point(float(lon), float(lat))
-                transformed_geometry = transform_geometry_to_target(geometry, INPUT_SOURCE_CRS, target_crs)
-                if transformed_geometry.is_empty:
-                    raise ValueError("geometry became empty after transform")
-                if not transformed_geometry.is_valid:
-                    repaired_geometry = minimal_geometry_repair(transformed_geometry)
+                if geometry.is_empty:
+                    raise ValueError("geometry is empty")
+                if not geometry.is_valid:
+                    repaired_geometry = minimal_geometry_repair(geometry)
                     if repaired_geometry is None:
                         raise ValueError("minimal repair failed")
-                    transformed_geometry = repaired_geometry
+                    geometry = repaired_geometry
                     repaired_feature_count += 1
 
                 properties = dict(payload)
@@ -535,8 +537,15 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
                         field_name_set.add(field_name)
                         field_names_seen.append(field_name)
 
-                writer.write_feature(properties, transformed_geometry)
+                writer.write_feature(properties, geometry)
                 output_feature_count += 1
+                if output_feature_count >= config.max_output_features:
+                    summary["stopped_by_export_limit"] = True
+                    announce(
+                        logger,
+                        f"[Record {record_index}] reached export limit max_output_features={config.max_output_features}; stop streaming",
+                    )
+                    break
             except Exception as exc:
                 failed_record_count += 1
                 error_reason_counter[str(exc)] += 1

@@ -11,7 +11,8 @@ INPUT_PATH = Path("/mnt/d/TestData/poi/beijing_1334198.json")
 # Windows reference: D:\TestData\poi\beijing_1334198.gpkg
 OUTPUT_PATH = Path("/mnt/d/TestData/poi/beijing_1334198.gpkg")
 
-TARGET_EPSG = 3857
+OUTPUT_EPSG = 4326
+MAX_OUTPUT_FEATURES = 50000
 PROGRESS_INTERVAL = 50000
 
 
@@ -43,7 +44,8 @@ def main() -> int:
             JsonPointToGpkgConfig(
                 input_path=INPUT_PATH,
                 output_path=OUTPUT_PATH,
-                target_epsg=TARGET_EPSG,
+                output_epsg=OUTPUT_EPSG,
+                max_output_features=MAX_OUTPUT_FEATURES,
                 progress_interval=PROGRESS_INTERVAL,
             )
         )
@@ -59,6 +61,8 @@ def main() -> int:
     print(f"failed_record_count={summary['failed_record_count']}")
     print(f"source_crs={summary['source_crs']}")
     print(f"output_crs={summary['output_crs']}")
+    print(f"max_output_features={summary['max_output_features']}")
+    print(f"stopped_by_export_limit={summary['stopped_by_export_limit']}")
     print(f"output_path={summary['output_path']}")
     print(f"log_path={summary['log_path']}")
     print(f"summary_path={summary['summary_path']}")

@@ -21,7 +21,7 @@
 - Tool6：将 `A200_node.shp` 导出为保留原始属性的 `nodes.geojson`
 - Tool7：将指定目录下顶层 `GeoJSON` 批量导出为同名 `GPKG`
 - Tool9：对全量 `DivStripZone` 做逐 Patch 预处理并汇总输出
-- Tool10：将超大 JSON 点记录流式解析并导出为 `EPSG:3857` 的点状 `GPKG`
+- Tool10：将超大 JSON 点记录流式解析并导出为保持原始坐标系的点状 `GPKG`
 
 ## 模块状态
 
@@ -72,9 +72,10 @@
 
 - Tool10 默认读取 `D:\TestData\poi\beijing_1334198.json`
 - Tool10 默认输出同目录同名 `beijing_1334198.gpkg`
-- 点几何使用 `lon/lat`，按 `EPSG:4326 -> EPSG:3857` 重投影后写入 GPKG
+- 点几何直接使用原始 `lon/lat` 写入 GPKG，不做坐标变换，输出 CRS 保持 `EPSG:4326`
 - 顶层属性原样保留；嵌套 dict/list 会序列化为 JSON 字符串写入属性列
 - Tool10 同时兼容 `NDJSON` 与 `JSON array` 两种输入布局，适用于超大文件流式处理
+- Tool10 成功导出到 `50000` 条 POI 后立即停止，不继续扫描剩余记录
 
 ## 文档入口
 

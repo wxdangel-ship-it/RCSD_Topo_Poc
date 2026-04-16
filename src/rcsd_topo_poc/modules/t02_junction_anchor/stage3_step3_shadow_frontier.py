@@ -177,6 +177,7 @@ class Stage3Step3ShadowFrontierConfig:
     fallback_strategy: str = "floor_20m"
     fallback_floor_m: float = 20.0
     fallback_cap_m: float = 30.0
+    sidearm_cap_m: float = 50.0
     core_radius_m: float = 18.0
     group_node_buffer_m: float = 9.0
     main_half_width_m: float = 13.0
@@ -201,6 +202,7 @@ class Stage3Step3ShadowFrontierBranchRecord:
     frontier_length_m: float | None
     fallback_applied: bool = False
     fallback_strategy_used: str | None = None
+    sidearm_cap_applied: bool = False
     stop_reasons: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -400,6 +402,7 @@ def build_stage3_step3_shadow_frontier(
         frontier_length_m: float | None = None
         fallback_applied = False
         fallback_strategy_used: str | None = None
+        sidearm_cap_applied = False
         if frontier_candidates:
             raw_frontier_length_m = min(length_m for length_m, _ in frontier_candidates)
             stop_reasons = tuple(
@@ -415,6 +418,23 @@ def build_stage3_step3_shadow_frontier(
                     drivezone_limit_m=drivezone_limit_m,
                     neighbor_projection_m=neighbor_projection_m,
                 )
+            if (
+                not fallback_applied
+                and not is_main_direction
+                and support_projection_m is None
+                and neighbor_projection_m is None
+                and frontier_length_m is not None
+            ):
+                sidearm_cap_m = max(0.0, float(config.sidearm_cap_m))
+                capped_frontier_length_m = (
+                    min(frontier_length_m, sidearm_cap_m)
+                    if sidearm_cap_m > 0.0
+                    else frontier_length_m
+                )
+                if capped_frontier_length_m < frontier_length_m - 1e-6:
+                    frontier_length_m = capped_frontier_length_m
+                    sidearm_cap_applied = True
+                    stop_reasons = ("sidearm_cap_50m",)
 
         if selected_for_shadow and frontier_length_m is not None and frontier_length_m > 0.0:
             branch_half_width_m = (
@@ -471,6 +491,7 @@ def build_stage3_step3_shadow_frontier(
                 frontier_length_m=frontier_length_m,
                 fallback_applied=fallback_applied,
                 fallback_strategy_used=fallback_strategy_used,
+                sidearm_cap_applied=sidearm_cap_applied,
                 stop_reasons=stop_reasons,
             )
         )
@@ -577,6 +598,7 @@ def build_stage3_step3_shadow_summary_dict(
                 ),
                 "fallback_applied": record.fallback_applied,
                 "fallback_strategy_used": record.fallback_strategy_used,
+                "sidearm_cap_applied": record.sidearm_cap_applied,
                 "stop_reasons": list(record.stop_reasons),
             }
             for record in result.branch_records
@@ -603,6 +625,9 @@ def build_stage3_step3_shadow_frontier_features(
                     "is_main_direction": bool(record.is_main_direction),
                     "selected_for_shadow": bool(record.selected_for_shadow),
                     "frontier_length_m": round(record.frontier_length_m, 3),
+                    "fallback_applied": bool(record.fallback_applied),
+                    "fallback_strategy_used": record.fallback_strategy_used or "",
+                    "sidearm_cap_applied": bool(record.sidearm_cap_applied),
                     "stop_reasons": "|".join(record.stop_reasons),
                 },
                 "geometry": _branch_ray_geometry(

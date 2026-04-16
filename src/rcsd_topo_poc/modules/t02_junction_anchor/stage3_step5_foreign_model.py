@@ -8,6 +8,8 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_execution_contract import 
     Stage3Step6GeometrySolveResult,
 )
 
+STEP5_SMALL_RESIDUAL_FOREIGN_OVERLAP_M = 2.0
+
 
 def _frozen_ids(values: Iterable[str]) -> frozenset[str]:
     return frozenset(
@@ -215,6 +217,38 @@ def _step5_has_hard_blocking_context(
     return bool(step5_result.foreign_road_arm_corridor_ids)
 
 
+def _step5_can_downgrade_small_residual_foreign(
+    step5_result: Stage3Step5ForeignModelResult,
+    step6_result: Stage3Step6GeometrySolveResult | None,
+) -> bool:
+    if step6_result is None:
+        return False
+    if step6_result.residual_step5_blocking_foreign_required:
+        return False
+    if _step5_has_hard_blocking_context(step5_result):
+        return False
+    if step5_result.foreign_subtype not in {
+        "semantic_road_overlap",
+        "outside_drivezone_or_corridor",
+    }:
+        return False
+    if step6_result.remaining_foreign_semantic_node_ids:
+        return False
+    if step6_result.remaining_foreign_road_arm_corridor_ids:
+        return False
+    if step6_result.foreign_overlap_zero_but_tail_present:
+        return False
+    if (
+        step6_result.foreign_tail_length_m is not None
+        and step6_result.foreign_tail_length_m > 0.0
+    ):
+        return False
+    overlap_metric_m = step6_result.foreign_overlap_metric_m
+    if overlap_metric_m is None:
+        return False
+    return overlap_metric_m <= STEP5_SMALL_RESIDUAL_FOREIGN_OVERLAP_M
+
+
 def stage3_step6_has_remaining_foreign_residue(
     step6_result: Stage3Step6GeometrySolveResult | None,
 ) -> bool:
@@ -276,6 +310,16 @@ def resolve_stage3_step5_contract_decision(
         canonical_foreign_reason = None
         decision_audit_facts.append(
             "step5_canonical_downgraded_after_step6_final_state"
+        )
+    elif (
+        canonical_foreign_established
+        and residual_present
+        and _step5_can_downgrade_small_residual_foreign(step5_result, step6_result)
+    ):
+        canonical_foreign_established = False
+        canonical_foreign_reason = None
+        decision_audit_facts.append(
+            "step5_canonical_downgraded_after_step6_small_residual_overlap"
         )
     if (
         not canonical_foreign_established

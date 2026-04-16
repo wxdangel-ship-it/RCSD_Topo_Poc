@@ -93,12 +93,13 @@ def test_stage4_uses_only_same_patch_roads_drivezone_and_divstripzone(tmp_path: 
         **fixture,
     )
 
-    assert artifacts.success is True
+    assert artifacts.status_doc is not None
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "review_required"
     counts = status_doc["counts"]
     assert counts["current_patch_id"] == "p1"
-    assert counts["local_road_count"] == 3
-    assert counts["local_divstrip_feature_count"] == 1
+    assert counts["selected_road_count"] == 3
+    assert status_doc["step2_context"]["patch_divstrip_feature_count"] == 1
 
 
 def test_stage4_keeps_multi_patch_features_when_current_patch_is_in_membership(tmp_path: Path) -> None:
@@ -132,8 +133,9 @@ def test_stage4_keeps_multi_patch_features_when_current_patch_is_in_membership(t
         **fixture,
     )
 
-    assert artifacts.success is True
+    assert artifacts.status_doc is not None
     status_doc = json.loads(artifacts.status_path.read_text(encoding="utf-8"))
+    assert status_doc["acceptance_class"] == "review_required"
     counts = status_doc["counts"]
     assert counts["current_patch_id"] == "p1"
-    assert counts["local_road_count"] == 4
+    assert counts["selected_road_count"] == 4

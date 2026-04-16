@@ -410,7 +410,14 @@ results.sort(key=lambda item: item["case_id"])
 accepted = sum(1 for item in results if item["acceptance_class"] == "accepted")
 review_required = sum(1 for item in results if item["acceptance_class"] == "review_required")
 rejected = sum(1 for item in results if item["acceptance_class"] == "rejected")
-unexpected_exit = sum(1 for item in results if item["returncode"] != 0 or not item["status_exists"])
+unexpected_exit = sum(
+    1
+    for item in results
+    if (
+        not item["status_exists"]
+        or item["acceptance_class"] not in {"accepted", "review_required", "rejected"}
+    )
+)
 
 summary = {
     "run_root": str(summary_path.parent),

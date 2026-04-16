@@ -8,10 +8,29 @@ STATUS_NO_VALID_RC_CONNECTION = "no_valid_rc_connection"
 STATUS_WEAK_BRANCH_SUPPORT = "weak_branch_support"
 TEMPLATE_CENTER_JUNCTION = "center_junction"
 TEMPLATE_SINGLE_SIDED_T_MOUTH = "single_sided_t_mouth"
+_CLUSTER_CANONICAL_REASONS = {
+    "nonstable_center_junction_extreme_geometry_anomaly": (
+        "center_junction_extreme_geometry_cluster"
+    ),
+    "stable_compound_center_requires_review": (
+        "center_junction_compound_center_cluster"
+    ),
+}
 
 
 def _as_flag(value: bool, label: str) -> str | None:
     return label if value else None
+
+
+def _cluster_canonical_flags(reason: str | None) -> tuple[str, ...]:
+    cluster_name = _CLUSTER_CANONICAL_REASONS.get(reason)
+    if cluster_name is None:
+        return ()
+    return (
+        f"step6_cluster_path={cluster_name}",
+        f"step6_cluster_canonical_review_reason={reason}",
+        "step6_cluster_canonical_result_owned",
+    )
 
 
 @dataclass(frozen=True)
@@ -120,6 +139,15 @@ def derive_stage3_step6_geometry_controller_decision(
             and inputs.max_nonmain_branch_polygon_length_m <= 5.0
         ):
             reason = "stable_sparse_rc_context_requires_review"
+    elif (
+        inputs.template_class == TEMPLATE_CENTER_JUNCTION
+        and inputs.status != STATUS_STABLE
+        and inputs.polygon_compactness is not None
+        and inputs.polygon_compactness <= 0.20
+        and inputs.polygon_bbox_fill_ratio is not None
+        and inputs.polygon_bbox_fill_ratio <= 0.25
+    ):
+        reason = "nonstable_center_junction_extreme_geometry_anomaly"
 
     if (
         reason is None
@@ -164,6 +192,7 @@ def derive_stage3_step6_geometry_controller_decision(
 
     if reason:
         flags.append(f"step6_geometry_review_reason={reason}")
+        flags.extend(_cluster_canonical_flags(reason))
 
     return Stage3Step6GeometryControllerDecision(
         geometry_review_reason=reason,

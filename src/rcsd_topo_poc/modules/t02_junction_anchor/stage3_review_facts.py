@@ -58,6 +58,7 @@ def derive_stage3_review_fields(
     token = ((acceptance_reason or status) or "").lower()
     status_token = (status or "").lower()
     explicit_step6_review_tokens = {
+        "nonstable_center_junction_extreme_geometry_anomaly",
         "stable_compound_center_requires_review",
         "stable_overlap_requires_review",
         "stable_single_sided_mouth_geometry_requires_review",

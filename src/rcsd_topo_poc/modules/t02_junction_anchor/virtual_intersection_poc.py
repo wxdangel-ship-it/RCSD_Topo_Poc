@@ -86,6 +86,14 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step3_legal_space import (
     Stage3Step3LegalSpaceInputs,
     build_stage3_step3_legal_space_result,
 )
+from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step3_shadow_frontier import (
+    Stage3Step3ShadowFrontierConfig,
+    Stage3Step3ShadowFrontierResult,
+    build_stage3_step3_shadow_diff_features,
+    build_stage3_step3_shadow_frontier,
+    build_stage3_step3_shadow_frontier_features,
+    build_stage3_step3_shadow_summary_dict,
+)
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step4_rc_semantics import (
     Stage3Step4SemanticsInputs,
     build_stage3_step4_rc_semantics_result,
@@ -1525,7 +1533,9 @@ def _blend_mask(
 
 
 _BITMAP_TEXT_GLYPHS_5X7: dict[str, tuple[str, ...]] = {
+    "/": ("00001", "00010", "00100", "00100", "01000", "10000", "00000"),
     "C": ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
+    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
     "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
     "I": ("11111", "00100", "00100", "00100", "00100", "00100", "11111"),
     "J": ("00111", "00010", "00010", "00010", "10010", "10010", "01100"),
@@ -1533,6 +1543,11 @@ _BITMAP_TEXT_GLYPHS_5X7: dict[str, tuple[str, ...]] = {
     "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
     "V": ("10001", "10001", "10001", "10001", "01010", "01010", "00100"),
     "W": ("10001", "10001", "10001", "10101", "10101", "10101", "01010"),
+    "\u5f85": ("0010000", "1111111", "0010000", "1111110", "0010010", "1111111", "0010000"),
+    "\u590d": ("1111111", "0010000", "0111110", "0001000", "0011100", "0100010", "1111111"),
+    "\u6838": ("1001001", "1111111", "0101010", "0011100", "0101010", "1001001", "1111111"),
+    "\u5931": ("0010000", "1111111", "0010000", "0111110", "0010000", "0101000", "1000111"),
+    "\u8d25": ("1000001", "1110111", "0010100", "1110111", "0010100", "0100010", "1000001"),
 }
 
 
@@ -1660,7 +1675,7 @@ def _failure_overlay_palette(
             "focus": (214, 132, 34),
             "hatch": (145, 78, 0),
             "banner": (176, 96, 0),
-            "label": "REVIEW",
+            "label": "REVIEW / \u5f85\u590d\u6838",
             "label_text": (255, 255, 255),
             "label_shadow": (92, 49, 0),
         }
@@ -1670,7 +1685,7 @@ def _failure_overlay_palette(
         "focus": (186, 0, 0),
         "hatch": (124, 0, 0),
         "banner": (164, 0, 0),
-        "label": "REJECT",
+        "label": "REJECTED / \u5931\u8d25",
         "label_text": (255, 255, 255),
         "label_shadow": (72, 0, 0),
     }
@@ -4203,6 +4218,136 @@ def _branch_feature(
         "properties": _branch_to_json(branch),
         "geometry": _branch_ray_geometry(center, angle_deg=branch.angle_deg, length_m=max(length_m, 1.0)),
     }
+
+
+def _write_step3_shadow_outputs(
+    *,
+    export_root: Path,
+    mainnodeid: str,
+    step3_shadow_result: Stage3Step3ShadowFrontierResult,
+    analysis_center: Point,
+    final_virtual_polygon_geometry: BaseGeometry,
+    grid: GridSpec,
+    drivezone_mask: np.ndarray,
+    representative_node: ParsedNode,
+    group_nodes: list[ParsedNode],
+    local_nodes: list[ParsedNode],
+    local_roads: list[ParsedRoad],
+    local_rc_nodes: list[ParsedNode],
+    local_rc_roads: list[ParsedRoad],
+    selected_rc_roads: list[ParsedRoad],
+    selected_rc_node_ids: set[str],
+    excluded_rc_road_ids: set[str],
+    excluded_rc_node_ids: set[str],
+) -> None:
+    export_root.mkdir(parents=True, exist_ok=True)
+    baseline_geometry = step3_shadow_result.baseline_legal_space_geometry
+    shadow_geometry = step3_shadow_result.shadow_legal_space_geometry
+
+    write_vector(
+        export_root / "baseline_step3_legal_space.gpkg",
+        [
+            {
+                "properties": {
+                    "mainnodeid": str(mainnodeid),
+                    "mode": "baseline_step3",
+                    "area_m2": round(float(baseline_geometry.area), 3),
+                },
+                "geometry": baseline_geometry,
+            }
+        ],
+        crs_text=TARGET_CRS.to_string(),
+    )
+    write_vector(
+        export_root / "shadow_step3_legal_space.gpkg",
+        [
+            {
+                "properties": {
+                    "mainnodeid": str(mainnodeid),
+                    "mode": "shadow_step3",
+                    "area_m2": round(float(shadow_geometry.area), 3),
+                    "trunk_frontier_defined": bool(step3_shadow_result.trunk_frontier_defined),
+                    "shadow_unresolved": bool(step3_shadow_result.step3_shadow_frontier_unresolved),
+                },
+                "geometry": shadow_geometry,
+            }
+        ],
+        crs_text=TARGET_CRS.to_string(),
+    )
+    frontier_features = build_stage3_step3_shadow_frontier_features(
+        mainnodeid=mainnodeid,
+        analysis_center=analysis_center,
+        result=step3_shadow_result,
+    )
+    if not frontier_features:
+        frontier_features = [
+            {
+                "properties": {
+                    "mainnodeid": str(mainnodeid),
+                    "branch_id": "unresolved",
+                    "branch_type": "unresolved",
+                    "is_main_direction": False,
+                    "selected_for_shadow": False,
+                    "frontier_length_m": 0.0,
+                    "stop_reasons": step3_shadow_result.unresolved_reason or "none",
+                },
+                "geometry": analysis_center.buffer(0.5, join_style=1),
+            }
+        ]
+    write_vector(
+        export_root / "step3_shadow_frontier.gpkg",
+        frontier_features,
+        crs_text=TARGET_CRS.to_string(),
+    )
+    write_vector(
+        export_root / "baseline_vs_shadow_diff.gpkg",
+        build_stage3_step3_shadow_diff_features(
+            mainnodeid=mainnodeid,
+            baseline_geometry=baseline_geometry,
+            shadow_geometry=shadow_geometry,
+        ),
+        crs_text=TARGET_CRS.to_string(),
+    )
+    write_json(
+        export_root / "shadow_step3_summary.json",
+        build_stage3_step3_shadow_summary_dict(
+            mainnodeid=mainnodeid,
+            result=step3_shadow_result,
+            final_polygon_geometry=final_virtual_polygon_geometry,
+        ),
+    )
+    _write_debug_rendered_map(
+        out_path=export_root / "baseline_step3_legal_space.png",
+        grid=grid,
+        drivezone_mask=drivezone_mask,
+        polygon_geometry=baseline_geometry,
+        representative_node=representative_node,
+        group_nodes=group_nodes,
+        local_nodes=local_nodes,
+        local_roads=local_roads,
+        local_rc_nodes=local_rc_nodes,
+        local_rc_roads=local_rc_roads,
+        selected_rc_roads=selected_rc_roads,
+        selected_rc_node_ids=selected_rc_node_ids,
+        excluded_rc_road_ids=excluded_rc_road_ids,
+        excluded_rc_node_ids=excluded_rc_node_ids,
+    )
+    _write_debug_rendered_map(
+        out_path=export_root / "shadow_step3_legal_space.png",
+        grid=grid,
+        drivezone_mask=drivezone_mask,
+        polygon_geometry=shadow_geometry,
+        representative_node=representative_node,
+        group_nodes=group_nodes,
+        local_nodes=local_nodes,
+        local_roads=local_roads,
+        local_rc_nodes=local_rc_nodes,
+        local_rc_roads=local_rc_roads,
+        selected_rc_roads=selected_rc_roads,
+        selected_rc_node_ids=selected_rc_node_ids,
+        excluded_rc_road_ids=excluded_rc_road_ids,
+        excluded_rc_node_ids=excluded_rc_node_ids,
+    )
 
 
 def _polygon_branch_length_m(branch: BranchEvidence) -> float:
@@ -8171,6 +8316,58 @@ def _compute_stage3_polygon_shape_metrics(geometry: BaseGeometry) -> tuple[float
     return aspect_ratio, compactness, bbox_fill_ratio
 
 
+def _should_relax_step5_foreign_rejection_to_review_gap(
+    *,
+    acceptance_class: str,
+    acceptance_reason: str | None,
+    template_class: str,
+    can_soft_exclude_outside_rc: bool,
+    rc_outside_drivezone_present: bool,
+    max_target_group_foreign_semantic_road_overlap_m: float,
+    max_selected_side_branch_covered_length_m: float,
+    max_nonmain_branch_polygon_length_m: float,
+    effective_associated_rc_node_count: int,
+    covered_extra_local_node_count: int,
+    covered_extra_local_road_count: int,
+    soft_excluded_rc_corridor_trim_applied: bool,
+    single_sided_unrelated_opposite_lane_trim_applied: bool,
+    post_trim_non_target_tail_length_m: float,
+    foreign_overlap_zero_but_tail_present: bool,
+) -> bool:
+    if acceptance_class != "rejected":
+        return False
+    if acceptance_reason != "foreign_outside_drivezone_soft_excluded":
+        return False
+    if not can_soft_exclude_outside_rc or not rc_outside_drivezone_present:
+        return False
+    if covered_extra_local_node_count > 0 or covered_extra_local_road_count > 0:
+        return False
+    if single_sided_unrelated_opposite_lane_trim_applied:
+        return False
+    if post_trim_non_target_tail_length_m > 0.0 or foreign_overlap_zero_but_tail_present:
+        return False
+
+    if template_class == TEMPLATE_CENTER_JUNCTION:
+        return (
+            soft_excluded_rc_corridor_trim_applied
+            and max_target_group_foreign_semantic_road_overlap_m
+            <= (POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M * 2.0)
+            and max_selected_side_branch_covered_length_m <= 0.5
+            and max_nonmain_branch_polygon_length_m <= 4.0
+        )
+
+    if template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH:
+        return (
+            not soft_excluded_rc_corridor_trim_applied
+            and effective_associated_rc_node_count == 0
+            and max_target_group_foreign_semantic_road_overlap_m
+            <= POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+            and max_nonmain_branch_polygon_length_m >= 7.5
+        )
+
+    return False
+
+
 def _business_match_class(
     *,
     status: str,
@@ -8258,6 +8455,8 @@ def run_t02_virtual_intersection_poc(
     write_perf_markers: bool = True,
     layer_loader: Callable[..., LoadedLayer] | None = None,
     target_group_loader: Callable[[str], LoadedLayer] | None = None,
+    step3_shadow_frontier_config: Stage3Step3ShadowFrontierConfig | None = None,
+    step3_shadow_export_root: Optional[Union[str, Path]] = None,
 ) -> VirtualIntersectionArtifacts:
     if trace_memory:
         tracemalloc.start()
@@ -8287,6 +8486,11 @@ def run_t02_virtual_intersection_poc(
         if debug_render_root is not None
         else out_root_path.parent / "_rendered_maps"
     )
+    step3_shadow_export_root_path = (
+        Path(step3_shadow_export_root)
+        if step3_shadow_export_root is not None
+        else None
+    )
     rendered_map_path = debug_render_root_path / f"{_normalize_id(mainnodeid) or 'unknown'}.png"
 
     logger = build_logger(log_path, f"t02_virtual_intersection_poc_{resolved_run_id}")
@@ -8314,6 +8518,7 @@ def run_t02_virtual_intersection_poc(
     risks: list[str] = []
     normalized_mainnodeid = _normalize_id(mainnodeid)
     debug_rendered_map_written = False
+    step3_shadow_result: Stage3Step3ShadowFrontierResult | None = None
     load_layer_filtered = layer_loader or _load_layer_filtered
 
     def emit_progress_snapshot(
@@ -14040,7 +14245,7 @@ def run_t02_virtual_intersection_poc(
                     uncovered_selected_road_ids=cleaned_uncovered_selected_rc_road_ids,
                     rc_node_by_id=rc_node_by_id,
                     rc_road_by_id=rc_road_by_id,
-                    analysis_center=None,
+                    analysis_center=analysis_center,
                     hard_selected_node_ids=selected_rc_endpoint_node_ids,
                     relax_node_ids=conflict_excluded_rc_node_ids,
                     relax_road_ids=conflict_excluded_rc_road_ids,
@@ -16865,7 +17070,7 @@ def run_t02_virtual_intersection_poc(
                         uncovered_selected_road_ids=trimmed_unrelated_selected_rc_road_ids,
                         rc_node_by_id=rc_node_by_id,
                         rc_road_by_id=rc_road_by_id,
-                        analysis_center=None,
+                        analysis_center=analysis_center,
                         hard_selected_node_ids=set(),
                         relax_node_ids=conflict_excluded_rc_node_ids,
                         relax_road_ids=conflict_excluded_rc_road_ids,
@@ -17104,6 +17309,21 @@ def run_t02_virtual_intersection_poc(
                 step3_blockers=(("drivezone_empty",) if drivezone_union.is_empty else ()),
             )
         )
+        if step3_shadow_frontier_config is not None or step3_shadow_export_root_path is not None:
+            step3_shadow_result = build_stage3_step3_shadow_frontier(
+                template_class=stage3_template_class,
+                analysis_center=analysis_center,
+                drivezone_union=drivezone_union,
+                group_nodes=group_nodes,
+                local_nodes=local_nodes,
+                local_roads=local_roads,
+                selected_rc_roads=selected_rc_roads,
+                road_branches=road_branches,
+                positive_rc_groups=positive_rc_groups,
+                analysis_member_node_ids=analysis_member_node_ids,
+                normalized_mainnodeid=normalized_mainnodeid,
+                config=step3_shadow_frontier_config,
+            )
         pre_step4_result = build_stage3_step4_rc_semantics_result(
             Stage3Step4SemanticsInputs(
                 required_rc_node_ids=selected_rc_node_ids,
@@ -18190,7 +18410,7 @@ def run_t02_virtual_intersection_poc(
                         uncovered_selected_road_ids=late_final_uncovered_selected_rc_road_ids,
                         rc_node_by_id=rc_node_by_id,
                         rc_road_by_id=rc_road_by_id,
-                        analysis_center=None,
+                        analysis_center=analysis_center,
                         hard_selected_node_ids=late_cleanup_hard_selected_endpoint_node_ids,
                         relax_node_ids=conflict_excluded_rc_node_ids,
                         relax_road_ids=conflict_excluded_rc_road_ids,
@@ -18457,7 +18677,7 @@ def run_t02_virtual_intersection_poc(
                         uncovered_selected_road_ids=late_partial_branch_strip_uncovered_selected_rc_road_ids,
                         rc_node_by_id=rc_node_by_id,
                         rc_road_by_id=rc_road_by_id,
-                        analysis_center=None,
+                        analysis_center=analysis_center,
                         hard_selected_node_ids=late_cleanup_hard_selected_endpoint_node_ids,
                         relax_node_ids=conflict_excluded_rc_node_ids
                         | step6_relaxable_selected_rc_node_ids,
@@ -18985,7 +19205,7 @@ def run_t02_virtual_intersection_poc(
                     uncovered_selected_road_ids=late_tail_clip_uncovered_selected_rc_road_ids,
                     rc_node_by_id=rc_node_by_id,
                     rc_road_by_id=rc_road_by_id,
-                    analysis_center=None,
+                    analysis_center=analysis_center,
                     hard_selected_node_ids=late_cleanup_hard_selected_endpoint_node_ids,
                     relax_node_ids=conflict_excluded_rc_node_ids,
                     relax_road_ids=conflict_excluded_rc_road_ids,
@@ -19161,6 +19381,28 @@ def run_t02_virtual_intersection_poc(
         effect_success = post_gate_acceptance.effect_success
         acceptance_class = post_gate_acceptance.acceptance_class
         acceptance_reason = post_gate_acceptance.acceptance_reason
+        if _should_relax_step5_foreign_rejection_to_review_gap(
+            acceptance_class=acceptance_class,
+            acceptance_reason=acceptance_reason,
+            template_class=stage3_template_class,
+            can_soft_exclude_outside_rc=can_soft_exclude_outside_rc,
+            rc_outside_drivezone_present=rc_outside_drivezone_error is not None,
+            max_target_group_foreign_semantic_road_overlap_m=step6_final_foreign_overlap_metric_m,
+            max_selected_side_branch_covered_length_m=step6_final_selected_side_branch_covered_length_m,
+            max_nonmain_branch_polygon_length_m=max_nonmain_branch_polygon_length_m,
+            effective_associated_rc_node_count=effective_associated_rc_node_count,
+            covered_extra_local_node_count=counts.get("covered_extra_local_node_count", 0),
+            covered_extra_local_road_count=counts.get("covered_extra_local_road_count", 0),
+            soft_excluded_rc_corridor_trim_applied=soft_excluded_rc_corridor_trim_applied,
+            single_sided_unrelated_opposite_lane_trim_applied=(
+                single_sided_unrelated_opposite_lane_trim_applied
+            ),
+            post_trim_non_target_tail_length_m=post_trim_non_target_tail_length_m,
+            foreign_overlap_zero_but_tail_present=foreign_overlap_zero_but_tail_present,
+        ):
+            effect_success = False
+            acceptance_class = "review_required"
+            acceptance_reason = "outside_rc_gap_requires_review"
         terminal_contracts = build_stage3_terminal_contracts(
             Stage3TerminalContractInputs(
                 context=stage3_context,
@@ -19297,6 +19539,11 @@ def run_t02_virtual_intersection_poc(
         legacy_stage3_audit_envelope = success_contracts.legacy_stage3_audit_envelope
         review_metadata = success_contracts.review_metadata
         official_review_decision = success_contracts.official_review_decision
+        final_virtual_polygon_geometry = (
+            step6_result.primary_solved_geometry
+            if step6_result.primary_solved_geometry is not None
+            else virtual_polygon_geometry
+        )
         polygon_properties = build_stage3_polygon_properties(
             representative_properties=representative_node.properties,
             representative_kind=representative_node.kind,
@@ -19316,7 +19563,7 @@ def run_t02_virtual_intersection_poc(
             )
         virtual_polygon_feature = {
             "properties": polygon_properties,
-            "geometry": virtual_polygon_geometry,
+            "geometry": final_virtual_polygon_geometry,
         }
         write_vector(virtual_polygon_path, [virtual_polygon_feature], crs_text=TARGET_CRS.to_string())
         write_json(
@@ -19352,13 +19599,13 @@ def run_t02_virtual_intersection_poc(
         effect_success = canonical_step7_result.success
         acceptance_class = canonical_step7_result.acceptance_class
         acceptance_reason = canonical_step7_result.acceptance_reason
-        if debug and acceptance_class != "accepted":
+        if debug:
             try:
                 _write_debug_rendered_map(
                     out_path=rendered_map_path,
                     grid=grid,
                     drivezone_mask=drivezone_mask,
-                    polygon_geometry=virtual_polygon_geometry,
+                    polygon_geometry=final_virtual_polygon_geometry,
                     representative_node=representative_node,
                     group_nodes=group_nodes,
                     local_nodes=local_nodes,
@@ -19369,17 +19616,32 @@ def run_t02_virtual_intersection_poc(
                     selected_rc_node_ids=selected_rc_node_ids,
                     excluded_rc_road_ids=polygon_excluded_rc_road_ids,
                     excluded_rc_node_ids=invalid_rc_node_ids,
-                    failure_reason=acceptance_reason or status,
-                    failure_class=acceptance_class,
-                )
-                debug_rendered_map_written = True
-                announce(
-                    logger,
-                    (
-                        "[T02-POC] rewrote debug rendered map with failure overlay "
-                        f"path={rendered_map_path} reason={acceptance_reason or status}"
+                    failure_reason=(
+                        acceptance_reason or status
+                        if acceptance_class != "accepted"
+                        else None
+                    ),
+                    failure_class=(
+                        acceptance_class if acceptance_class != "accepted" else None
                     ),
                 )
+                debug_rendered_map_written = True
+                if acceptance_class != "accepted":
+                    announce(
+                        logger,
+                        (
+                            "[T02-POC] rewrote debug rendered map with failure overlay "
+                            f"path={rendered_map_path} reason={acceptance_reason or status}"
+                        ),
+                    )
+                else:
+                    announce(
+                        logger,
+                        (
+                            "[T02-POC] rewrote debug rendered map with final geometry "
+                            f"path={rendered_map_path}"
+                        ),
+                    )
             except Exception as exc:
                 announce(logger, f"[T02-POC] failure overlay debug rendered map skipped reason={type(exc).__name__}: {exc}")
         announce(
@@ -19471,6 +19733,26 @@ def run_t02_virtual_intersection_poc(
         perf_doc = success_output_bundle.perf_doc
         write_json(status_path, status_doc)
         write_json(perf_json_path, perf_doc)
+        if step3_shadow_result is not None and step3_shadow_export_root_path is not None:
+            _write_step3_shadow_outputs(
+                export_root=step3_shadow_export_root_path,
+                mainnodeid=normalized_mainnodeid,
+                step3_shadow_result=step3_shadow_result,
+                analysis_center=analysis_center,
+                final_virtual_polygon_geometry=final_virtual_polygon_geometry,
+                grid=grid,
+                drivezone_mask=drivezone_mask,
+                representative_node=representative_node,
+                group_nodes=group_nodes,
+                local_nodes=local_nodes,
+                local_roads=local_roads,
+                local_rc_nodes=local_rc_nodes,
+                local_rc_roads=local_rc_roads,
+                selected_rc_roads=selected_rc_roads,
+                selected_rc_node_ids=selected_rc_node_ids,
+                excluded_rc_road_ids=invalid_rc_road_ids,
+                excluded_rc_node_ids=invalid_rc_node_ids,
+            )
         return VirtualIntersectionArtifacts(
             success=effect_success,
             out_root=out_root_path,
@@ -19667,6 +19949,58 @@ def run_t02_virtual_intersection_poc(
         write_json(status_path, status_doc)
         perf_doc = failure_output_bundle.perf_doc
         write_json(perf_json_path, perf_doc)
+        if step3_shadow_result is not None and step3_shadow_export_root_path is not None:
+            analysis_center_for_shadow = locals().get("analysis_center")
+            grid_for_shadow = locals().get("grid")
+            drivezone_mask_for_shadow = locals().get("drivezone_mask")
+            representative_node_for_shadow = locals().get("representative_node")
+            group_nodes_for_shadow = locals().get("group_nodes")
+            local_nodes_for_shadow = locals().get("local_nodes")
+            local_roads_for_shadow = locals().get("local_roads")
+            local_rc_nodes_for_shadow = locals().get("local_rc_nodes")
+            local_rc_roads_for_shadow = locals().get("local_rc_roads")
+            selected_rc_roads_for_shadow = locals().get("selected_rc_roads")
+            selected_rc_node_ids_for_shadow = locals().get("selected_rc_node_ids")
+            invalid_rc_road_ids_for_shadow = locals().get("invalid_rc_road_ids")
+            invalid_rc_node_ids_for_shadow = locals().get("invalid_rc_node_ids")
+            virtual_polygon_geometry_for_shadow = (
+                locals().get("virtual_polygon_geometry")
+                or step3_shadow_result.shadow_legal_space_geometry
+            )
+            if (
+                analysis_center_for_shadow is not None
+                and grid_for_shadow is not None
+                and drivezone_mask_for_shadow is not None
+                and representative_node_for_shadow is not None
+                and group_nodes_for_shadow is not None
+                and local_nodes_for_shadow is not None
+                and local_roads_for_shadow is not None
+                and local_rc_nodes_for_shadow is not None
+                and local_rc_roads_for_shadow is not None
+                and selected_rc_roads_for_shadow is not None
+                and selected_rc_node_ids_for_shadow is not None
+                and invalid_rc_road_ids_for_shadow is not None
+                and invalid_rc_node_ids_for_shadow is not None
+            ):
+                _write_step3_shadow_outputs(
+                    export_root=step3_shadow_export_root_path,
+                    mainnodeid=normalized_mainnodeid,
+                    step3_shadow_result=step3_shadow_result,
+                    analysis_center=analysis_center_for_shadow,
+                    final_virtual_polygon_geometry=virtual_polygon_geometry_for_shadow,
+                    grid=grid_for_shadow,
+                    drivezone_mask=drivezone_mask_for_shadow,
+                    representative_node=representative_node_for_shadow,
+                    group_nodes=group_nodes_for_shadow,
+                    local_nodes=local_nodes_for_shadow,
+                    local_roads=local_roads_for_shadow,
+                    local_rc_nodes=local_rc_nodes_for_shadow,
+                    local_rc_roads=local_rc_roads_for_shadow,
+                    selected_rc_roads=selected_rc_roads_for_shadow,
+                    selected_rc_node_ids=selected_rc_node_ids_for_shadow,
+                    excluded_rc_road_ids=invalid_rc_road_ids_for_shadow,
+                    excluded_rc_node_ids=invalid_rc_node_ids_for_shadow,
+                )
         announce(logger, f"[T02-POC] failed reason={exc.reason} detail={exc.detail}")
         return VirtualIntersectionArtifacts(
             success=False,

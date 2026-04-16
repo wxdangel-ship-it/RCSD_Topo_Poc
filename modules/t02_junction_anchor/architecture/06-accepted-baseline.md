@@ -147,7 +147,7 @@
   - `mainnodeid`
   - `has_evd`
   - `is_anchor`
-  - `kind_2`
+  - `kind` 或 `kind_2`
   - `grade_2`
 - `roads / RCSDRoad` 当前正式依赖：
   - `id`
@@ -160,11 +160,17 @@
 - `stage4` 候选口径冻结为：
   - `has_evd = yes`
   - `is_anchor = no`
-  - `kind_2 in {8, 16}`
-- `kind_2 = 8` 表示 merge（`2 in 1 out`）
-- `kind_2 = 16` 表示 diverge（`1 in 2 out`）
+  - 简单 div/merge 候选
+  - 连续分歧 / 合流聚合后的 complex 128 主节点
+- `kind` 与 `kind_2` 在 stage4 候选识别语义上等价：
+  - `kind = 8` 或 `kind_2 = 8` 表示 merge（`2 in 1 out`）
+  - `kind = 16` 或 `kind_2 = 16` 表示 diverge（`1 in 2 out`）
+  - `kind / kind_2 = 128` 仅在“连续分歧 / 合流聚合后的 complex 主节点”语义下进入 stage4
 - `stage4` 实现采用 stage3 的栅格策略主线，但不依赖 stage3 产物文件
-- `RCSDRoad` / `RCSDNode` 不在 `DriveZone` 上必须报异常，不允许 silent fix
+- `RCSDRoad` / `RCSDNode` 约束在 stage4 中是条件性硬约束：
+  - 只有在对应事实路口存在对应 RCSD 挂接时，RCSD 覆盖 / 容差才构成硬约束
+  - 对当前事件直接相关且被纳入解释范围的 RCSD，若超出 `DriveZone`，必须显式失败并留下审计
+  - 若事实路口缺失对应 RCSD 挂接，不以 RCSD 未覆盖作为单独失败条件
 
 ### 5.3 语义字段约束
 - T02 当前正式业务字段为：

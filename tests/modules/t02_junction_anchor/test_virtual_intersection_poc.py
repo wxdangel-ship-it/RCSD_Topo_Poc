@@ -74,6 +74,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_contract import (
     ROOT_CAUSE_LAYER_STEP5,
     ROOT_CAUSE_LAYER_STEP6,
     Stage3OfficialReviewDecision,
+    VISUAL_REVIEW_V1,
     VISUAL_REVIEW_V2,
     VISUAL_REVIEW_V4,
     VISUAL_REVIEW_V5,
@@ -3239,6 +3240,22 @@ def _assert_case_rejected_v4(
         assert status_doc["acceptance_reason"] in allowed_reasons
 
 
+def _assert_case_accepted_v1(
+    status_doc: dict,
+    *,
+    allowed_statuses: set[str] | None = None,
+    allowed_reasons: set[str] | None = None,
+) -> None:
+    assert status_doc["success"] is True
+    assert status_doc["flow_success"] is True
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V1
+    if allowed_statuses is not None:
+        assert status_doc["status"] in allowed_statuses
+    if allowed_reasons is not None:
+        assert status_doc["acceptance_reason"] in allowed_reasons
+
+
 def test_case_package_698330_accepts_single_sided_trimmed_t_mouth_without_opposite_lane_overlap(
     tmp_path: Path,
 ) -> None:
@@ -3360,7 +3377,10 @@ def test_case_package_584253_preserves_compact_kind4_polygon_and_associates_posi
     _assert_case_review_required_v2(
         status_doc,
         allowed_statuses={"no_valid_rc_connection"},
-        allowed_reasons={"rc_gap_with_nonmain_branch_polygon_coverage"},
+        allowed_reasons={
+            "rc_gap_with_nonmain_branch_polygon_coverage",
+            "nonstable_center_junction_extreme_geometry_anomaly",
+        },
     )
     assert status_doc["counts"]["associated_rcsdroad_count"] == 2
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
@@ -3371,11 +3391,11 @@ def test_case_package_724123_accepts_trimmed_single_sided_corridor_without_oppos
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "724123")
-    assert artifacts.success is False
-    _assert_case_rejected_v4(
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
         status_doc,
         allowed_statuses={"stable"},
-        allowed_reasons={"foreign_outside_drivezone_soft_excluded"},
+        allowed_reasons={"stable"},
     )
     assert status_doc["counts"]["max_target_group_foreign_semantic_road_overlap_m"] <= 1.0
 
@@ -3494,11 +3514,11 @@ def test_case_package_709632_accepts_ambiguous_main_rc_gap_when_polygon_covers_n
 
 def test_case_package_758888_soft_excludes_remote_outside_rc_and_accepts(tmp_path: Path) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "758888")
-    assert artifacts.success is False
-    _assert_case_rejected_v4(
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
         status_doc,
         allowed_statuses={"stable"},
-        allowed_reasons={"foreign_outside_drivezone_soft_excluded"},
+        allowed_reasons={"stable"},
     )
     assert status_doc["status"] != "rc_outside_drivezone"
 
@@ -3507,13 +3527,12 @@ def test_case_package_789616_accepts_compact_strong_mouth_after_excluding_near_o
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "789616")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
-    assert status_doc["flow_success"] is True
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_reason"] == "outside_rc_gap_requires_review"
-    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V2
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
+        status_doc,
+        allowed_statuses={"stable"},
+        allowed_reasons={"stable"},
+    )
 
 
 def test_case_package_793460_rejects_foreign_semantic_road_intrusion(
@@ -3528,6 +3547,8 @@ def test_case_package_793460_rejects_foreign_semantic_road_intrusion(
     )
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
+    assert status_doc["counts"]["max_selected_side_branch_covered_length_m"] > 1.0
+    assert status_doc["counts"]["max_nonmain_branch_polygon_length_m"] > 8.0
     assert artifacts.rendered_map_path is not None
     assert artifacts.rendered_map_path.is_file()
 
@@ -3536,13 +3557,12 @@ def test_case_package_861032_accepts_supported_compact_mainline_after_excluding_
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "861032")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
-    assert status_doc["flow_success"] is True
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_reason"] == "outside_rc_gap_requires_review"
-    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V2
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
+        status_doc,
+        allowed_statuses={"stable"},
+        allowed_reasons={"stable"},
+    )
     polygon = shape(_load_vector_doc(artifacts.virtual_polygon_path)["features"][0]["geometry"])
     nodes = _load_case_nodes_by_id("861032")
     assert polygon.buffer(0.5).covers(nodes["861034"]) is False
@@ -3640,11 +3660,11 @@ def test_case_package_998122_accepts_stable_core_after_excluding_remote_outside_
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "998122")
-    assert artifacts.success is False
-    _assert_case_rejected_v4(
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
         status_doc,
         allowed_statuses={"stable"},
-        allowed_reasons={"foreign_outside_drivezone_soft_excluded"},
+        allowed_reasons={"stable"},
     )
 
 
@@ -3652,11 +3672,11 @@ def test_case_package_788820_accepts_compact_multi_group_core_after_soft_excludi
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "788820")
-    assert artifacts.success is False
-    _assert_case_review_required_v2(
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
         status_doc,
         allowed_statuses={"stable"},
-        allowed_reasons={"outside_rc_gap_requires_review"},
+        allowed_reasons={"stable"},
     )
 
 
@@ -3686,26 +3706,25 @@ def test_case_package_928223_accepts_stable_core_after_excluding_remote_negative
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "928223")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
+    assert artifacts.success is True
+    assert status_doc["success"] is True
     assert status_doc["flow_success"] is True
     assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "outside_rc_gap_requires_review"
-    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V2
+    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["acceptance_reason"] == "stable"
+    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V1
 
 
 def test_case_package_983405_accepts_strong_side_coverage_after_soft_excluding_outside_rc(
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "983405")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
-    assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "outside_rc_gap_requires_review"
-    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V2
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
+        status_doc,
+        allowed_statuses={"stable"},
+        allowed_reasons={"stable"},
+    )
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
 
@@ -3714,13 +3733,12 @@ def test_case_package_989924_accepts_nonzero_mainnode_supported_core_after_soft_
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "989924")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
-    assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "stable_sparse_rc_context_requires_review"
-    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V2
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
+        status_doc,
+        allowed_statuses={"stable"},
+        allowed_reasons={"stable"},
+    )
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
 
@@ -3815,11 +3833,11 @@ def test_case_package_1220073_accepts_compact_local_mouth_rc_gap(tmp_path: Path)
 
 def test_case_package_1192979_accepts_stable_core_after_excluding_remote_outside_rc(tmp_path: Path) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "1192979")
-    assert artifacts.success is False
-    _assert_case_rejected_v4(
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
         status_doc,
         allowed_statuses={"stable"},
-        allowed_reasons={"foreign_outside_drivezone_soft_excluded"},
+        allowed_reasons={"stable"},
     )
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
@@ -3860,11 +3878,11 @@ def test_case_package_941714_accepts_stable_core_after_soft_excluding_remote_out
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "941714")
-    assert artifacts.success is False
-    _assert_case_review_required_v2(
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
         status_doc,
         allowed_statuses={"stable"},
-        allowed_reasons={"outside_rc_gap_requires_review"},
+        allowed_reasons={"stable"},
     )
 
 
@@ -3872,11 +3890,11 @@ def test_case_package_787133_accepts_compact_t_shape_after_soft_excluding_outsid
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "787133")
-    assert artifacts.success is False
-    _assert_case_rejected_v4(
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
         status_doc,
         allowed_statuses={"stable"},
-        allowed_reasons={"foreign_outside_drivezone_soft_excluded"},
+        allowed_reasons={"stable"},
     )
 
 
@@ -3884,13 +3902,12 @@ def test_case_package_854878_accepts_compact_single_group_core_after_soft_exclud
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "854878")
-    assert artifacts.success is False
-    assert status_doc["success"] is False
-    assert status_doc["flow_success"] is True
-    assert status_doc["status"] == "stable"
-    assert status_doc["acceptance_class"] == "review_required"
-    assert status_doc["acceptance_reason"] == "stable_sparse_rc_context_requires_review"
-    assert status_doc["visual_review_class"] == VISUAL_REVIEW_V2
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
+        status_doc,
+        allowed_statuses={"stable"},
+        allowed_reasons={"stable"},
+    )
 
 
 def test_case_package_948228_accepts_compact_mainline_rc_gap_without_selected_positive_rc(
@@ -3965,11 +3982,11 @@ def test_case_package_74419702_accepts_stable_core_after_soft_excluding_remote_o
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "74419702")
-    assert artifacts.success is False
-    _assert_case_rejected_v4(
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
         status_doc,
         allowed_statuses={"stable"},
-        allowed_reasons={"foreign_outside_drivezone_soft_excluded"},
+        allowed_reasons={"stable"},
     )
     assert status_doc["counts"]["covered_extra_local_node_count"] == 0
     assert status_doc["counts"]["covered_extra_local_road_count"] == 0
@@ -4271,11 +4288,11 @@ def test_case_package_513244637_accepts_remote_outside_rc_when_only_degree2_rcsd
     tmp_path: Path,
 ) -> None:
     artifacts, status_doc, _ = _run_case_package_case(tmp_path, "513244637")
-    assert artifacts.success is False
-    _assert_case_review_required_v2(
+    assert artifacts.success is True
+    _assert_case_accepted_v1(
         status_doc,
         allowed_statuses={"stable", "weak_branch_support"},
-        allowed_reasons={"outside_rc_gap_requires_review"},
+        allowed_reasons={"stable"},
     )
     assert status_doc["counts"]["effective_local_rcsdnode_count"] == 0
 

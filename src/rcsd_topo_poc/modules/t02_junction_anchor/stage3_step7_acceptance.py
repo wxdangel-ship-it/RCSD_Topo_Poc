@@ -12,11 +12,13 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_execution_contract import 
     Stage3Step7AcceptanceResult,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_step5_foreign_model import (
+    STEP5_SMALL_RESIDUAL_FOREIGN_OVERLAP_M,
     Stage3Step5ContractDecision,
     resolve_stage3_step5_contract_decision,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_facts import (
     BUSINESS_OUTCOME_FAILURE,
+    BUSINESS_OUTCOME_RISK,
     ROOT_CAUSE_LAYER_STEP3,
     ROOT_CAUSE_LAYER_STEP4,
     ROOT_CAUSE_LAYER_STEP5,
@@ -39,6 +41,61 @@ STATUS_WEAK_BRANCH_SUPPORT = "weak_branch_support"
 STATUS_AMBIGUOUS_RC_MATCH = "ambiguous_rc_match"
 STATUS_NO_VALID_RC_CONNECTION = "no_valid_rc_connection"
 STATUS_NODE_COMPONENT_CONFLICT = "node_component_conflict"
+_STEP6_CLUSTER_CANONICAL_REASONS = {
+    "nonstable_center_junction_extreme_geometry_anomaly": (
+        "center_junction_extreme_geometry_cluster"
+    ),
+    "stable_compound_center_requires_review": (
+        "center_junction_compound_center_cluster"
+    ),
+}
+
+
+def _is_step5_small_residual_provenance_only_signature(
+    *,
+    max_target_group_foreign_semantic_road_overlap_m: float,
+    single_sided_unrelated_opposite_lane_trim_applied: bool,
+    post_trim_non_target_tail_length_m: float,
+    foreign_overlap_zero_but_tail_present: bool,
+) -> bool:
+    return (
+        max_target_group_foreign_semantic_road_overlap_m
+        <= STEP5_SMALL_RESIDUAL_FOREIGN_OVERLAP_M
+        and not single_sided_unrelated_opposite_lane_trim_applied
+        and post_trim_non_target_tail_length_m <= 0.0
+        and not foreign_overlap_zero_but_tail_present
+    )
+
+
+def _should_release_center_soft_excluded_small_residual_to_accepted(
+    *,
+    effect_success: bool,
+    acceptance_class: str,
+    acceptance_reason: str,
+    template_class: str,
+    step5_small_residual_provenance_only: bool,
+    soft_excluded_rc_corridor_trim_applied: bool,
+    associated_rc_road_count: int,
+    excluded_rc_road_count: int,
+    negative_rc_group_count: int,
+    local_road_count: int,
+    max_selected_side_branch_covered_length_m: float,
+    max_nonmain_branch_polygon_length_m: float,
+) -> bool:
+    return (
+        effect_success
+        and acceptance_class == "accepted"
+        and acceptance_reason == "stable"
+        and template_class == TEMPLATE_CENTER_JUNCTION
+        and step5_small_residual_provenance_only
+        and soft_excluded_rc_corridor_trim_applied
+        and associated_rc_road_count >= 2
+        and excluded_rc_road_count >= 2
+        and negative_rc_group_count == 0
+        and local_road_count <= 6
+        and max_selected_side_branch_covered_length_m <= 0.5
+        and max_nonmain_branch_polygon_length_m <= 4.0
+    )
 
 
 @dataclass(frozen=True)
@@ -648,6 +705,20 @@ def apply_stage3_post_acceptance_gates(
     foreign_overlap_zero_but_tail_present: bool,
     audit_rows: Sequence[dict[str, Any]],
 ) -> tuple[bool, str, str]:
+    step5_small_residual_provenance_only = (
+        _is_step5_small_residual_provenance_only_signature(
+            max_target_group_foreign_semantic_road_overlap_m=(
+                max_target_group_foreign_semantic_road_overlap_m
+            ),
+            single_sided_unrelated_opposite_lane_trim_applied=(
+                single_sided_unrelated_opposite_lane_trim_applied
+            ),
+            post_trim_non_target_tail_length_m=post_trim_non_target_tail_length_m,
+            foreign_overlap_zero_but_tail_present=(
+                foreign_overlap_zero_but_tail_present
+            ),
+        )
+    )
     if effect_success and acceptance_class == "accepted" and status == STATUS_STABLE:
         if (
             max_target_group_foreign_semantic_road_overlap_m >= 11.0
@@ -679,6 +750,45 @@ def apply_stage3_post_acceptance_gates(
             and post_trim_non_target_tail_length_m >= 1.5
         ):
             return False, "review_required", "foreign_tail_after_opposite_lane_trim"
+        if _should_release_center_soft_excluded_small_residual_to_accepted(
+            effect_success=effect_success,
+            acceptance_class=acceptance_class,
+            acceptance_reason=acceptance_reason,
+            template_class=template_class,
+            step5_small_residual_provenance_only=(
+                step5_small_residual_provenance_only
+            ),
+            soft_excluded_rc_corridor_trim_applied=(
+                soft_excluded_rc_corridor_trim_applied
+            ),
+            associated_rc_road_count=associated_rc_road_count,
+            excluded_rc_road_count=excluded_rc_road_count,
+            negative_rc_group_count=negative_rc_group_count,
+            local_road_count=local_road_count,
+            max_selected_side_branch_covered_length_m=(
+                max_selected_side_branch_covered_length_m
+            ),
+            max_nonmain_branch_polygon_length_m=(
+                max_nonmain_branch_polygon_length_m
+            ),
+        ):
+            return effect_success, acceptance_class, acceptance_reason
+        if (
+            step5_small_residual_provenance_only
+            and soft_excluded_rc_corridor_trim_applied
+            and template_class == TEMPLATE_CENTER_JUNCTION
+        ):
+            return False, "review_required", "outside_rc_gap_requires_review"
+        if (
+            step5_small_residual_provenance_only
+            and not soft_excluded_rc_corridor_trim_applied
+            and effect_success
+            and acceptance_class == "accepted"
+            and acceptance_reason == "stable"
+            and associated_rc_road_count >= 2
+            and max_selected_side_branch_covered_length_m <= 0.5
+        ):
+            return effect_success, acceptance_class, acceptance_reason
         if soft_excluded_rc_corridor_trim_applied:
             if (
                 local_road_count <= 6
@@ -824,6 +934,18 @@ def _step3_reason_from_result(
     if step3_result is None or not step3_result.step3_blockers:
         return None
     return step3_result.step3_blockers[0]
+
+
+def _derive_cluster_step6_review_fields(
+    *,
+    reason: str,
+) -> Stage3ReviewFields:
+    return Stage3ReviewFields(
+        root_cause_layer=ROOT_CAUSE_LAYER_STEP6,
+        root_cause_type=reason,
+        visual_review_class="V2 业务正确但几何待修",
+        business_outcome_class=BUSINESS_OUTCOME_RISK,
+    )
 
 
 @dataclass(frozen=True)
@@ -1183,6 +1305,7 @@ def _resolve_stage3_step7_review_fields(
 
     explicit_layer: str | None = None
     explicit_reason: str | None = None
+    review_fields_override: Stage3ReviewFields | None = None
     step5_contract_decision = resolve_stage3_step5_contract_decision(
         step5_result=step5_result,
         step6_result=step6_result,
@@ -1228,7 +1351,20 @@ def _resolve_stage3_step7_review_fields(
                 else None
             )
             step6_selected = False
-            if step6_reason:
+            step6_cluster_name = _STEP6_CLUSTER_CANONICAL_REASONS.get(step6_reason)
+            if step6_cluster_name is not None:
+                explicit_layer = ROOT_CAUSE_LAYER_STEP6
+                explicit_reason = step6_reason
+                review_fields_override = _derive_cluster_step6_review_fields(
+                    reason=step6_reason
+                )
+                step6_optimizer_events.append("step6_cluster_canonical_result_selected")
+                step6_optimizer_events.append("step6_cluster_delegacy_override_applied")
+                step6_optimizer_events.append(
+                    f"step6_cluster_path={step6_cluster_name}"
+                )
+                step6_selected = True
+            elif step6_reason:
                 candidate_step6_review_fields = derive_stage3_review_fields(
                     success=False,
                     acceptance_class="review_required",
@@ -1269,13 +1405,21 @@ def _resolve_stage3_step7_review_fields(
     effective_acceptance_reason = (
         explicit_reason if explicit_reason is not None else inputs.acceptance_reason
     )
-    review_fields = derive_stage3_review_fields(
-        success=inputs.success if explicit_layer is None else False,
-        acceptance_class=legacy_review_acceptance_class,
-        acceptance_reason=effective_acceptance_reason,
-        status=inputs.status,
+    review_fields = (
+        review_fields_override
+        if review_fields_override is not None
+        else derive_stage3_review_fields(
+            success=inputs.success if explicit_layer is None else False,
+            acceptance_class=legacy_review_acceptance_class,
+            acceptance_reason=effective_acceptance_reason,
+            status=inputs.status,
+        )
     )
-    if explicit_layer is not None and review_fields.root_cause_layer != explicit_layer:
+    if (
+        review_fields_override is None
+        and explicit_layer is not None
+        and review_fields.root_cause_layer != explicit_layer
+    ):
         review_fields = Stage3ReviewFields(
             root_cause_layer=explicit_layer,
             root_cause_type=effective_acceptance_reason or inputs.status,

@@ -48,6 +48,7 @@ def test_rule_e_single_sided_blocks_opposite_side_before_growth(tmp_path: Path) 
     assert "road_west_opposite" not in audit_doc["selected_road_ids"]
     assert audit_doc["lane_guard_status"] == "proxy_only_not_modeled"
     assert audit_doc["corridor_guard_status"] == "hard_blocked_by_rcsdroad_mask"
+    assert audit_doc["rules"]["E"]["template_only"] is True
     assert any(item["reason"] == "single_sided_opposite_corridor" for item in audit_doc["blocked_directions"])
 
 

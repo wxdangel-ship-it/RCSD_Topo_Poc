@@ -72,5 +72,8 @@ def test_rule_a_skips_cut_that_would_block_current_target_core(tmp_path: Path) -
     cut_road_ids = {item["road_id"] for item in case_result.audit_doc["adjacent_junction_cuts"]}
 
     assert cut_road_ids == set()
+    assert case_result.audit_doc["rules"]["A"]["count"] == 0
+    assert case_result.audit_doc["rules"]["A"]["suppressed_count"] == 1
+    assert case_result.audit_doc["adjacent_junction_cut_suppressed"][0]["road_id"] == "road_short_to_foreign"
     assert case_result.key_metrics["selected_road_count"] == 1
     assert case_result.reason == "step3_established"

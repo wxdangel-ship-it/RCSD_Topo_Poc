@@ -359,12 +359,22 @@
   - 这里的“铺满道路面”只表示铺满当前 case 的合法道路面，不表示铺满整个连通 `DriveZone`
 - 步骤3的通用边界规则：
   - 对与当前合法活动空间存在潜在冲突的 foreign elements，应构建负向区域
-  - 当前 baseline 可先采用 `1m` 负向缓冲作为默认业务口径
+  - 对与当前语义路口直接连通的其他语义路口，应沿进入该语义路口的道路方向，在其入口边界前 `1m` 设置垂直于道路方向的负向掩膜边界
+  - 对与当前语义路口无关、但位于同一道路面内的 foreign road / arm / node，优先沿 foreign road / arm 构造 `1m` 缓冲负向掩膜；仅在无法识别 road / arm 时，才退化为 node 周边小范围负向掩膜
+  - 对道路面内、属于同一其他语义路口的 node，先按平面位置构造 MST 最小连通线集，MST 连线只保留道路面内部分，并对道路面内部分做 `1m` 缓冲负向掩膜
   - 一旦后续 polygon 活动空间必须侵入其他语义路口、foreign arms、或 `foreign boundary roads` 才能成立，则该空间不合法，应视为问题 case
   - `1m` 负向区域是硬排除边界，不得被后续 support / repair / cleanup 重新突破
   - 当前 case 的 Step3 `allowed space / polygon-support space` 不得进入其他语义路口，也不得纳入其他语义路口向外延伸的 `roads / arms / lane corridor`
   - 当前 case 的 Step3 `allowed space` 不得进入与当前语义/拓扑不连通的对向道路面；该约束按语义/拓扑连通性判定，不按纯几何“看起来在对面”判定
-  - 任何长度放大、mouth 补长、或竖向补长，都只能在上述硬排除已经满足后才允许讨论；不得先放大再依赖 cleanup / trim 作为主要补救手段
+  - 当前 case 的 Step3 候选空间必须先自成立；若某个方向只能依赖 cleanup / trim 才能不越界，则该方向的 Step3 候选空间不成立
+  - 任何长度放大、mouth 补长、或竖向补长，都只能在上述硬排除已经满足且 Step3 候选空间已自成立后才允许讨论；不得先放大再依赖 cleanup / trim 作为主要补救手段
+- 上述 Step3 口径冻结为规则 A / B / C / D / E / F / G / H：
+  - A / B / C：分别对应“相邻语义路口入口截断”“同面无关对象负向掩膜”“其他语义路口内部 node 的 MST 负向掩膜”
+  - D：当前语义路口候选空间只能在道路面内沿合法方向增长，不能越过负向掩膜边界，也不能越过非道路面区域
+  - E：`kind_2 = 2048 / single_sided_t_mouth` 不得进入对向 Road、对向语义 Node、对向 lane、或对向主路 corridor
+  - F：若某个 case 只能依赖 cleanup / trim 才满足边界要求，则视为 Step3 未成立
+  - G：参数放大只能在以上边界全部满足后进行；不得先放大，再靠 cleanup / trim 擦除越界
+  - H：旧的 `10m` 保守外扩口径取消；统一采用“无更早边界时单向 `50m`”
 - `single_sided_t_mouth` 的步骤3口径：
   - 合法活动空间是当前 case 的目标单侧 lane corridor
   - 被负向区域命中的方向必须终止生长
@@ -376,13 +386,10 @@
   - 合法活动空间可先按中心型路口展开，并允许铺满当前 case 的合法道路面
   - 但其合法边界仍受当前 `semantic_junction_set` 的 `boundary roads / arms` 约束
   - 若必须侵入 foreign boundary roads、其他语义路口 roads / arms，或其他边界冲突空间，当前中心型活动空间即不成立，应视为问题 case
-- 步骤3的保守外扩上限：
-  - `10m` 的测量方式按 arm / road 方向长度计算
-  - 若当前路口存在“有效附加臂数量 > 2”，则相关附加臂方向的生长范围不超过 `10m`
-  - 若不存在“有效附加臂数量 > 2”的情形，则左右侧向范围同样按 `10m` 控制
-  - “有效附加臂数量 > 2”指当前模板下仍属于合法活动空间候选的附加臂数量，不按全部 incident branches 机械计数
-  - `10m` 规则不得突破 foreign 负向区域，不得突破当前模板合法空间
-  - `10m` 规则不得优先于步骤1中“整组 node 必须一次性直接覆盖”的要求；若二者冲突，则当前 case 应视为问题 case
+- 步骤3的单向增长上限：
+  - 若某个方向上不存在更早的语义边界或 foreign 边界，则该方向单向最大增长距离不超过 `50m`
+  - `50m` 只用于“无更早边界时”的单向补足，不替代其他边界判断
+  - `50m` 不得突破 foreign 负向区域，不得突破当前模板合法空间，也不得优先于步骤1中“整组 node 必须一次性直接覆盖”的要求；若二者冲突，则当前 case 应视为问题 case
 - 当前路口组 own-group nodes 必须纳入 polygon，不能只作为分析输入。
 - `associated_rcsdroad.gpkg / associated_rcsdnode.gpkg` 与 `polygon-support` 允许解耦：
   - association 可以保守
@@ -411,7 +418,8 @@
   - “挂接区域”当前正式理解为：以当前 `SWSD semantic_junction_set` 到目标 `RCSDRoad` 的最小连接区域附近为默认基线；若存在明确臂悬，可沿臂悬方向修正；它不等于整条 `RCSDRoad` 全段
 - C 类（无相关 `RCSDRoad`）：
   - 当前 case 不追加 `RC` 侧 `required semantics`
-  - 只按 `SWSD semantic_junction_set`、步骤3合法活动空间与 `10m` 保守臂悬约束处理
+  - 若某个方向上不存在更早的语义边界或 foreign 边界，则该方向单向最大增长距离不超过 `50m`
+  - `50m` 只用于“无更早边界时”的单向补足，不替代其他边界判断，也不得压过 `SWSD semantic_junction_set` 与步骤3合法活动空间的边界要求；旧 `10m` 正式口径取消
 - 步骤4与步骤3的边界当前冻结为：
   - 步骤4可以增加“必须纳入的 `RC` 语义对象”，但不能扩大步骤3已经冻结的合法活动空间
   - 若某个 `required RCSDNode / required RCSDRoad` 按步骤4语义应当纳入，但它落在步骤3合法空间之外，则当前定义为审计异常 / `stage3_rc_gap` 类问题
@@ -516,7 +524,7 @@
     - 细脖子 / 窄连接
     - 非当前方向远端尾巴
     - 依赖 `foreign` 空间才成立的补丁连接
-  - geometry cleanup 只能在已合法的模板空间内收敛几何，不能越出步骤3合法活动空间，不能重新引入步骤5 `foreign` 对象，不能用 `support` 替代 `required`，也不能把问题几何“化妆成成功几何”
+  - geometry cleanup 只能在已合法的模板空间内收敛几何，不能作为让 Step3 候选空间成立的主通路，不能越出步骤3合法活动空间，不能重新引入步骤5 `foreign` 对象，不能用 `support` 替代 `required`，也不能把问题几何“化妆成成功几何”
   - 若步骤6无法生成一个同时满足步骤1 / 步骤3 / 步骤4 / 步骤5约束、并且符合当前模板认知形态的 polygon，则该 case 在业务上应视为“路口面几何未成立”
 - 步骤6失败的根因归类当前冻结为两层：
   - 一级：

@@ -453,19 +453,24 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - `summary`
   - `audit/log`
 - 已冻结但当前以文档口径为准：
+  - Stage3 步骤3当前冻结为规则 A / B / C / D / E / F / G / H，不再保留旧 `10m` 正式口径
   - Stage3 步骤2「模板分类」中，`kind_2` 作为强输入使用
   - `kind_2 = 2048` 直接归入 `single_sided_t_mouth`
   - `kind_2 = 4` 先归入 `center_junction`
   - `kind_2 = 4` 的 `center_junction` 只表示后续可按中心型路口理解，不表示已经通过边界/入侵合法性检查；若后续发现 foreign boundary roads 或其他语义路口 roads / arms 入侵，则该 case 仍应视为问题 case
   - Stage3 步骤3「目标 corridor / 口门边界」中，后续 polygon 只能在当前模板允许占用的 `DriveZone` 内合法道路面中活动
-  - 对与当前合法活动空间存在潜在冲突的 foreign elements，可先按 `1m` 负向缓冲构建硬排除区
+  - 对与当前语义路口直接连通的其他语义路口，应沿进入该语义路口的道路方向，在其入口边界前 `1m` 设置垂直于道路方向的负向掩膜边界
+  - 对与当前语义路口无关、但位于同一道路面内的 foreign road / arm / node，优先沿 foreign road / arm 构造 `1m` 缓冲负向掩膜；仅在无法识别 road / arm 时，才退化为 node 周边小范围负向掩膜
+  - 对道路面内、属于同一其他语义路口的 node，先按平面位置构造 MST 最小连通线集，MST 连线只保留道路面内部分，并对道路面内部分做 `1m` 缓冲负向掩膜
   - `single_sided_t_mouth` 只能在目标单侧 lane corridor 内展开，不得跨到对向 lane 或对向主路 corridor
   - Step3 `allowed space` 不得进入其他语义路口，也不得纳入其他语义路口向外延伸的 `roads / arms / lane corridor`
   - Step3 `allowed space` 不得进入与当前语义/拓扑不连通的对向道路面
   - `single_sided_t_mouth` 下，对向 Road / 对向语义 Node / 对向 lane / 对向主路 corridor 一律按硬排除处理
-  - 任何长度放大只能在上述硬排除满足后再讨论，不能先放大再靠 cleanup / trim 补救越界
+  - 当前 case 的 Step3 候选空间必须先自成立；若某个方向只能依赖 cleanup / trim 才能不越界，则该方向的 Step3 候选空间不成立
+  - 任何长度放大只能在上述硬排除满足后且 Step3 候选空间已自成立后再讨论，不能先放大再靠 cleanup / trim 补救越界
   - `center_junction` 可先按中心型路口铺满当前 case 的合法道路面，但不豁免 foreign boundary roads、其他语义路口 roads / arms 的入侵检查
-  - `10m` 只作为附加臂方向的保守外扩上限，且不得压过“整组 node 一次性直接覆盖”与 foreign 硬边界
+  - 若某个方向上不存在更早的语义边界或 foreign 边界，则该方向单向最大增长距离不超过 `50m`
+  - `50m` 只用于“无更早边界时”的单向补足，不替代其他边界判断，也不得压过“整组 node 一次性直接覆盖”与 foreign 硬边界；旧 `10m` 正式口径取消
   - Stage3 步骤4「RCSD 关联语义」中，当前 case 的 `RC` 语义层级冻结为 A / B / C 三类：
     - A 类：`RCSD` 也构成语义路口，按整组 `RCSDNode` 处理
     - B 类：`RCSD` 不构成语义路口，但存在相关 `RCSDRoad`，只追加挂接区域语义
@@ -481,7 +486,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - 步骤4中的 `excluded RC` 在步骤5中直接等价于 `foreign RC`
   - 单纯“边界接触”不算错；形成可活动、可占用、可依赖的“实际纳入”一律算错
 -  - Stage3 步骤6「几何生成与后处理」中，步骤6是受约束的几何生成步骤，不是补面或洗白步骤
-  - 步骤6的硬约束优先级固定为：先守步骤3合法活动空间，再守步骤5 `foreign` 硬排除，再满足步骤1 must-cover，再满足步骤4 `required RC` must-cover，最后才允许做几何优化
+  - 步骤6的硬约束优先级固定为：先守步骤3合法活动空间，再守步骤5 `foreign` 硬排除，再满足步骤1 must-cover，再满足步骤4 `required RC` must-cover，最后才允许做几何优化；cleanup 只能收敛已成立的几何，不能作为让 Step3 候选空间成立的主通路
   - `single_sided_t_mouth` 的理想几何是围绕目标单侧 mouth 的单侧口门面；横向支路只贡献 mouth，纵向延伸只服务于闭合当前口门，不得跨对向 lane，不得退化成无意义狭长走廊或远端 patch 拼接
   - `center_junction` 的理想几何是围绕当前语义中心展开的中心型路口面；可覆盖多个合法 arms，但不得退化成单条带状走廊，也不得依赖 `foreign roads / arms / corridors` 才成立
   - 无意义狭长面、无意义空洞、无意义凹陷、细脖子、非当前方向远端尾巴、依赖 `foreign` 空间的补丁连接，都属于步骤6问题几何

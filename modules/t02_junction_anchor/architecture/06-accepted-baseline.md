@@ -324,6 +324,14 @@
 
 ### 8.3 stage3 当前业务规则
 - polygon 必须先满足 own-group nodes `must-cover`。
+- Step3 当前冻结为规则 A / B / C / D / E / F / G / H：
+  - A / B / C：对相邻语义路口入口、同面无关对象、以及其他语义路口内部 node 分别构造 `1m` 级负向掩膜
+  - D：当前语义路口候选空间只能在道路面内沿合法方向增长；若某个方向上不存在更早的语义边界或 foreign 边界，则该方向单向最大增长距离不超过 `50m`
+  - E：`kind_2 = 2048 / single_sided_t_mouth` 不得进入对向 Road、对向语义 Node、对向 lane、或对向主路 corridor
+  - F：若某个方向只能依赖 cleanup / trim 才能不越界，则该方向的 Step3 候选空间不成立
+  - G：任何长度放大都只能排在上述硬排除之后且在 Step3 候选空间已自成立后才允许讨论
+  - H：旧的 `10m` 保守外扩口径取消；统一采用“无更早边界时单向 `50m`”
+- Step3 候选空间必须先自成立；若某个方向只能依赖 cleanup / trim 才能不越界，则该方向的 Step3 候选空间不成立。
 - polygon-support 与最终 RC association 可以解耦，但都必须围绕同一局部路口组件。
 - 若 RC 不存在与 roads 同方向的有效局部分支，不得拿其他横向或直行 RC 替代。
 - 满足不了 own-group nodes 与局部 RC 支撑一致性时，应明确失败或风险，不得 silent fix。
@@ -477,7 +485,10 @@
   - 当前 case 的 Step3 `allowed space / polygon-support space` 不得进入其他语义路口，也不得纳入其他语义路口向外延伸的 `roads / arms / lane corridor`
   - 当前 case 的 Step3 `allowed space` 不得进入与当前语义/拓扑不连通的对向道路面；该约束按语义/拓扑连通性判定，不按纯几何朝向判定
   - `single_sided_t_mouth` 下，对向 Road / 对向语义 Node / 对向 lane / 对向主路 corridor 一律按硬排除处理
-  - 任何长度放大、mouth 补长、或竖向补长，都只能排在上述硬排除之后；不得先放大再依赖 cleanup / trim 补救越界
+  - 当前 case 的 Step3 候选空间必须先自成立；若某个方向只能依赖 cleanup / trim 才能不越界，则该方向的 Step3 候选空间不成立
+  - 任何长度放大、mouth 补长、或竖向补长，都只能排在上述硬排除之后且在 Step3 候选空间已自成立后才允许讨论；不得先放大再依赖 cleanup / trim 补救越界
+  - 若某个方向上不存在更早的语义边界或 foreign 边界，则该方向单向最大增长距离不超过 `50m`
+  - 旧的 `10m` 保守外扩口径取消，不再作为 Stage3 正式口径
 - Step4 事实事件解释层（Fact Event Interpretation）：
   - Step4 是事实事件解释层，不是几何生成层
   - 主输出是供 Step5 / Step6 消费的机器可消费事件解释结果包

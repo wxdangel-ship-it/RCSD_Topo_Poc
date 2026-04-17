@@ -362,16 +362,21 @@
   - `kind_2 = 4` 时，当前 case 先按 `center_junction` 理解，允许后续按中心型路口铺满当前语义路口
   - 但若后续发现 foreign boundary roads、其他语义路口 roads / arms 入侵，或其它边界冲突，则该 case 仍属于问题 case
 - Stage3 步骤3「目标 corridor / 口门边界」当前按以下业务口径冻结：
+  - 本轮冻结为规则 A / B / C / D / E / F / G / H，不再保留旧 `10m` 正式口径
   - 步骤3只定义后续 polygon 唯一合法的活动空间，不直接生成 polygon
   - 合法活动空间只能在当前模板允许占用的 `DriveZone` 内合法道路面中生长
-  - 对与当前合法活动空间存在潜在冲突的 foreign elements，可先按 `1m` 负向缓冲构建硬排除区
+  - 对与当前语义路口直接连通的其他语义路口，应沿进入该语义路口的道路方向，在其入口边界前 `1m` 设置垂直于道路方向的负向掩膜边界
+  - 对与当前语义路口无关、但位于同一道路面内的 foreign road / arm / node，优先沿 foreign road / arm 构造 `1m` 缓冲负向掩膜；仅在无法识别 road / arm 时，才退化为 node 周边小范围负向掩膜
+  - 对道路面内、属于同一其他语义路口的 node，先按平面位置构造 MST 最小连通线集，MST 连线只保留道路面内部分，并对道路面内部分做 `1m` 缓冲负向掩膜
   - `single_sided_t_mouth` 只能在目标单侧 lane corridor 内展开，不得跨到对向 lane 或对向主路 corridor
   - 当前 case 的 Step3 `allowed space / polygon-support space` 不得进入其他语义路口，也不得纳入其他语义路口向外延伸的 `roads / arms / lane corridor`
   - 当前 case 的 Step3 `allowed space` 不得进入与当前语义/拓扑不连通的对向道路面
   - `single_sided_t_mouth` 下，对向 Road / 对向语义 Node / 对向 lane / 对向主路 corridor 一律按硬排除处理
-  - 任何长度放大、mouth 补长、或竖向补长，都只能排在上述硬排除之后，不能先放大再依赖 cleanup / trim 做越界补救
+  - 当前 case 的 Step3 候选空间必须先自成立；若某个方向只能依赖 cleanup / trim 才能不越界，则该方向的 Step3 候选空间不成立
+  - 任何长度放大、mouth 补长、或竖向补长，都只能排在上述硬排除之后且在 Step3 候选空间已自成立后才允许讨论，不能先放大再依赖 cleanup / trim 做越界补救
   - `center_junction` 可先按中心型路口铺满当前 case 的合法道路面，但若后续发现 foreign boundary roads、其他语义路口 roads / arms 入侵，或其它边界冲突，则该 case 仍属于问题 case
-  - `10m` 只作为附加臂方向的保守外扩上限，且不得突破 foreign 硬边界，也不得压过“整组 node 一次性直接覆盖”要求
+  - 若某个方向上不存在更早的语义边界或 foreign 边界，则该方向单向最大增长距离不超过 `50m`
+  - `50m` 只用于“无更早边界时”的单向补足，不替代其他边界判断，也不得突破 foreign 硬边界，更不得压过“整组 node 一次性直接覆盖”要求；旧 `10m` 正式口径取消
 - Stage3 步骤4「RCSD 关联语义」当前按以下业务口径冻结：
   - 步骤4只负责在步骤2模板和步骤3合法活动空间已冻结的前提下，识别当前 case 的 `required RC`、`support RC` 与 `excluded RC`
   - A 类：`RCSD` 也构成语义路口；`RCSDNode` 按 `mainnodeid` 聚组，单节点时其“3 个方向”按“经过 `degree=2` 跟踪后的边界方向簇数”判定
@@ -390,7 +395,7 @@
   - 硬约束优先级固定为：先守步骤3合法活动空间，再守步骤5 `foreign` 硬排除，再满足步骤1 must-cover，再满足步骤4 `required RC` must-cover，最后才允许做几何优化
   - `single_sided_t_mouth` 的理想几何是围绕目标单侧 mouth 的单侧口门面；`center_junction` 的理想几何是围绕当前语义中心展开的中心型路口面
   - 无意义狭长面、无意义空洞、无意义凹陷、细脖子、非当前方向远端尾巴、依赖 `foreign` 空间的补丁连接，均属于步骤6问题几何
-  - geometry cleanup 只能收敛几何，不能越出步骤3合法活动空间、不能重新引入步骤5 `foreign`、不能用 `support` 替代 `required`，也不能把问题几何“化妆成成功几何`
+  - geometry cleanup 只能收敛已成立的几何，不能作为让 Step3 候选空间成立的主通路，不能越出步骤3合法活动空间、不能重新引入步骤5 `foreign`、不能用 `support` 替代 `required`，也不能把问题几何“化妆成成功几何”
   - 若步骤6无法生成一个同时满足步骤1 / 步骤3 / 步骤4 / 步骤5约束、并且符合当前模板认知形态的 polygon，则该 case 在业务上应视为“路口面几何未成立”
   - 步骤6失败按两层归因冻结为：一级 `infeasible_under_frozen_constraints / geometry_solver_failed`；二级 `step1_step3_conflict / stage3_rc_gap / foreign_exclusion_conflict / template_misfit / geometry_closure_failure / cleanup_overtrim / cleanup_undertrim / foreign_reintroduced_by_cleanup / shape_artifact_failure`
   - 当前目视检查中唯一已明确确认的失败锚点是 `520394575`；除它之外，若其他 case 要进入步骤6失败归类，必须先完成根因分型

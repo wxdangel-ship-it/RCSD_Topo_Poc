@@ -4,6 +4,7 @@
 
 - 本文件是 `t03_virtual_junction_anchor` 的稳定契约面。
 - 当前正式范围仅限 `Phase A / Step3 legal-space baseline only`。
+- 本轮已进入 `Step3` 修复轮，契约仍以 `A-H` 为正式规则范围，不扩到 `Step4-7`。
 - 模块目标、上下文与构件关系以 `architecture/*` 为准。
 - `README.md` 只承担操作者入口职责。
 - 线程 `REQUIREMENT.md` 本轮整体不启用，不作为当前模块事实源。
@@ -20,6 +21,7 @@
   - `Step2` 模板归类
   - `Step3` A-H、allowed space、三类 negative mask、`step3_state`
   - 批量运行、平铺 PNG、CSV/JSON 汇总
+- `input_gate_failed` 仅作为前置输入门禁 `reason`，不新增第四种 `step3_state`，也不代表 Step3 业务失败态本身
 - 当前不在正式范围：
   - `Step4/5/6/7`
   - cleanup/trim 补救
@@ -77,6 +79,7 @@
 说明：
 
 - `step3_status.json` 至少包含 `case_id / template_class / step3_state / step3_established / reason / key_metrics`
+- `step3_status.json` 可额外携带 `input_gate_failed` 的门禁诊断信息，但不得据此扩展状态枚举
 - `step3_audit.json` 至少包含 `rules.A-H / adjacent_junction_cuts / foreign_object_masks / foreign_mst_masks / growth_limits / cleanup_dependency / must_cover_result / blocked_directions / review_signals`
 - 平铺目录必须无子目录，文件名固定为 `<case_id>__<state>.png`
 

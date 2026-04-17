@@ -1,23 +1,15 @@
-# T03 / Phase A plan
+# T03 / Phase A Step3 repair closeout plan
 
 ## 1. 文档与治理
 
-- 先落仓 spec-kit 三件套。
-- 新建 `modules/t03_virtual_junction_anchor/` 文档骨架。
-- 同步项目治理文档与入口注册表，将 T03 登记为 Active。
+- 仅修复本轮 `Step3` 契约收口，不重写总体 spec。
+- 统一 `INTERFACE_CONTRACT.md / spec.md / README.md / architecture/03-context-and-scope.md` 的修复轮口径。
+- 明确 `input_gate_failed` 只作为前置输入门禁 `reason`，不新增第四种状态。
 
 ## 2. 模块实现
 
-- 新建 `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/`。
-- 实现：
-  - `case_loader`
-  - `step1_context`
-  - `step2_template`
-  - `step3_engine`
-  - `render`
-  - `writer`
-  - `batch_runner`
-- 在 `src/rcsd_topo_poc/cli.py` 新增 `t03-step3-legal-space`。
+- 本轮不扩展模块骨架，只为后续代码修复保留一致契约面。
+- Step3 修复目标聚焦 `Rule D / Rule E / Rule F / Rule G` 与 Anchor61 真实验收。
 
 ## 3. 输出结构
 
@@ -28,19 +20,16 @@
   - `step3_review_flat/`
   - `cases/<case_id>/...`
 - 每个 case 固定 7 个业务输出。
+- run 级 summary 需要补齐 `expected_case_count / actual_case_dir_count / flat_png_count / tri_state_sum / tri_state_sum_matches_total / missing_case_ids / failed_case_ids / rerun_cleaned_before_write`。
 
 ## 4. 验证
 
-- 补齐 CLI / loader / writer / state mapping / batch smoke 测试。
+- 补齐规则级回归与 run 级 summary 回读验证。
 - 使用系统 `python3` 跑测试与真实 Anchor61。
-- 验证平铺 PNG、索引、summary 与 case 级产物完整。
+- 验证平铺 PNG、索引、summary 与 case 级产物完整，且 `missing_case_ids / failed_case_ids` 为空。
 
 ## 5. 发布
 
 - 分支：`codex/t03-phasea-step3-legal-space`
-- 建议 commit 拆分：
-  1. spec-kit + 模块文档 + 治理注册
-  2. 模块骨架 + CLI + loader/writer
-  3. Step3 引擎 + 渲染 + flat 输出
-  4. 测试 + 61 case 验证 + thread sync
-- push 后创建 Draft PR。
+- 本轮以 repair closeout 为目标，建议 commit 只覆盖文档收口、规则修复、测试补强、验收结果更新
+- push 后更新现有 Draft PR 描述，明确本轮仍只做到 `Step3`

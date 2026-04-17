@@ -5,6 +5,7 @@
 ## 1. 当前定位
 
 - T03 当前只承接 `Phase A / Step3 legal-space baseline only`
+- 当前已进入 `Step3` 修复轮，目标是把 baseline 收敛到可验收状态，而不是重做模块骨架
 - 正式输入契约固定为 Anchor61 `case-package`
 - 线程 `REQUIREMENT.md` 本轮整体不启用，不作为当前模块事实源
 - 本轮交付：
@@ -39,6 +40,7 @@ python3 -m rcsd_topo_poc t03-step3-legal-space \
 ## 5. 当前正式边界
 
 - `Step3` 只输出 `allowed space / negative mask / step3 status`
+- 批次级正式交付还包括 `step3_review.png`、`step3_review_flat/`、`step3_review_index.csv`、`summary.json`
 - 不实现 `Step4/5/6/7`
 - 不允许把 `cleanup / trim / review_mode / stage4 聚合` 前置成 `Step3` 成立条件
 - 平铺 PNG 审查目录是正式交付物之一

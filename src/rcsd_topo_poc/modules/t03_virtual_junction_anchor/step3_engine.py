@@ -80,6 +80,17 @@ def _extract_line_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None
     return _clean_geometry(unary_union(line_parts))
 
 
+def _extract_polygon_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
+    polygon_parts = [
+        part
+        for part in _iter_geometries(geometry)
+        if part.geom_type == "Polygon" and getattr(part, "area", 0.0) > 0.0
+    ]
+    if not polygon_parts:
+        return None
+    return _clean_geometry(unary_union(polygon_parts))
+
+
 def _line_midpoint(geometry: BaseGeometry) -> Point:
     if geometry.length <= 0.0:
         centroid = geometry.centroid
@@ -691,11 +702,11 @@ def _build_reachable_road_support(
         if hard_bound_line is None:
             continue
         selected_road_ids.add(road.road_id)
-        buffered_support = _clean_geometry(
+        buffered_support = _extract_polygon_geometry(
             hard_bound_line.buffer(ROAD_BUFFER_M, cap_style=2, join_style=2).intersection(context.drivezone_geometry)
         )
         if blocker_geometry is not None and buffered_support is not None:
-            buffered_support = _clean_geometry(buffered_support.difference(blocker_geometry))
+            buffered_support = _extract_polygon_geometry(buffered_support.difference(blocker_geometry))
         if buffered_support is None:
             frontier_stop_reasons.add("hard_blocker_applied" if blocker_geometry is not None else "drivezone_boundary")
             continue
@@ -716,11 +727,11 @@ def _build_reachable_road_support(
                 "outgoing_support": _road_flow_flags_for_group_like_t02(road, source_node_ids)[1],
             }
         )
-    target_core = _clean_geometry(unary_union([node.geometry.buffer(NODE_BUFFER_M) for node in context.target_group.nodes]))
+    target_core = _extract_polygon_geometry(unary_union([node.geometry.buffer(NODE_BUFFER_M) for node in context.target_group.nodes]))
     if target_core is not None:
-        target_core = _clean_geometry(target_core.intersection(context.drivezone_geometry))
+        target_core = _extract_polygon_geometry(target_core.intersection(context.drivezone_geometry))
         if blocker_geometry is not None and target_core is not None:
-            clipped_core = _clean_geometry(target_core.difference(blocker_geometry))
+            clipped_core = _extract_polygon_geometry(target_core.difference(blocker_geometry))
             if clipped_core is None:
                 frontier_stop_reasons.add("target_core_blocked")
             target_core = clipped_core
@@ -729,7 +740,7 @@ def _build_reachable_road_support(
         candidate_parts.append(target_core)
     if not candidate_parts:
         return None, growth_limits, selected_road_ids, sorted(frontier_stop_reasons)
-    candidate = _clean_geometry(unary_union(candidate_parts))
+    candidate = _extract_polygon_geometry(unary_union(candidate_parts))
     return candidate, growth_limits, selected_road_ids, sorted(frontier_stop_reasons)
 
 
@@ -782,7 +793,7 @@ def _build_foreign_object_masks(
 
 
 def _component_touching_target(geometry: BaseGeometry | None, target_geometry: BaseGeometry) -> BaseGeometry | None:
-    cleaned = _clean_geometry(geometry)
+    cleaned = _extract_polygon_geometry(geometry)
     if cleaned is None:
         return None
     geoms: list[BaseGeometry]

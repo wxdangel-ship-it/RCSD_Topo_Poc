@@ -60,8 +60,8 @@ python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
 ```
 
 - `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口
-- 默认 `case-package` 模式保持既有单 `mainnodeid` baseline 回归能力
-- 显式 `--input-mode full-input` 时，统一承接：
+- 默认 `case-package` 模式承载单 `mainnodeid` 的唯一正式验收基线与小样本复核能力
+- 显式 `--input-mode full-input` 时，仅作为完整数据 `fixture / dev-only / regression` 入口，统一承接：
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别“有资料但未锚定”的路口
 - 它不重算 stage1 `has_evd` 或 stage2 `is_anchor`，而是直接消费其结果字段

@@ -135,8 +135,8 @@
 - `RCSDNode` 当前正式依赖：
   - `id`
   - `mainnodeid`
-- `case-package` 是 stage3 baseline regression 入口，不允许回退。
-- `full-input` 是 stage3 完整数据 baseline 入口，统一承接：
+- `case-package` 是 stage3 唯一正式验收基线入口，不允许回退。
+- `full-input` 当前仅保留为 stage3 完整数据 `fixture / dev-only / regression` 入口，统一承接：
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别“有资料但未锚定”的路口
 

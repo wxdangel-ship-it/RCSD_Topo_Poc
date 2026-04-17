@@ -37,8 +37,8 @@
 - 缺失必需字段、缺失可用 CRS、几何不可投影时，必须显式失败并留下审计。
 - `junction_nodes_not_found` 与 `no_target_junctions` 是业务结果中的 `no`，不能被伪装成运行成功且无审计。
 - `representative_node_missing` 不允许 silent fallback。
-- stage3 `case-package` 是 baseline regression 入口，不允许回退。
-- stage3 `full-input` 是完整数据 baseline 入口；共享大图层直连运行必须先通过 layer / CRS / 预裁剪与 preflight 约束，不能把数据接入问题误判为算法回退。
+- stage3 `case-package` 是唯一正式验收基线入口，不允许回退。
+- stage3 `full-input` 仅作为完整数据 `fixture / dev-only / regression` 入口；共享大图层直连运行必须先通过 layer / CRS / 预裁剪与 preflight 约束，不能把数据接入问题误判为算法回退。
 - `review_mode` 仅用于分析和人工复核，不得被描述成正式生产口径。
 
 ## 协作约束

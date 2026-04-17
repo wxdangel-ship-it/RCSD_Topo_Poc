@@ -18,9 +18,9 @@
 6. 对 `has_evd = yes` 的组，用 `RCSDIntersection` 做 stage2 anchor recognition / anchor existence；`kind_2 in {8,16}` 也按同一套标准判定，只有最终 `is_anchor = no` 的 case 才继续进入 stage4
 7. 对 stage2 后仍未锚定、但有资料的路口，进入 stage3 `virtual intersection anchoring`
 8. stage3 统一复用单 case worker，支持：
-   - `case-package` baseline regression
-   - `full-input` 指定 `mainnodeid`
-   - `full-input` 自动识别候选并批量处理
+   - `case-package` 唯一正式验收基线 / 小样本复核
+   - `full-input` 指定 `mainnodeid` 的完整数据 regression / dev-only
+   - `full-input` 自动识别候选并批量处理的完整数据 regression / dev-only
 9. stage3 构造局部 patch、分支证据、RC 关联与虚拟路口面，并汇总单 case 与批次级输出
 10. 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit / log` 与 stage3 产物
 
@@ -58,8 +58,8 @@
 4. `polygon-support` 必须覆盖 own-group nodes，并只允许吸纳与当前路口局部组件一致的紧凑 RC 支撑子图。
 5. 若 RC 不存在与 roads 同方向的有效局部分支，不得拿其它横向或直行 RC 替代。
 6. 最终 polygon 必须通过 support validation；无法同时满足 own-group nodes 与局部 RC 支撑时，明确失败而不是 silent fix。
-7. `case-package` 模式作为 baseline regression 与小样本复核入口保留，不允许回退。
-8. `full-input` 模式作为正式 baseline 入口，统一承接单点验证与自动识别候选两类业务诉求，并支持 `max_cases / workers`。
+7. `case-package` 模式作为唯一正式验收基线入口与小样本复核入口保留，不允许回退。
+8. `full-input` 模式仅作为完整数据 regression / dev-only 入口，统一承接单点验证与自动识别候选两类业务诉求，并支持 `max_cases / workers`。
 9. `review_mode` 只放宽 anchor gate 与 RC outside DriveZone 的处理方式，用于人工复核，不改变正式契约边界。
 
 ## 文档策略

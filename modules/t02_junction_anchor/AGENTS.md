@@ -35,8 +35,8 @@
 
 - 当前已实现 stage1 `DriveZone / has_evd gate`、stage2 `anchor recognition / anchor existence` 与 stage3 `virtual intersection anchoring` baseline。
 - `t02-virtual-intersection-poc` 当前是 stage3 baseline 入口：
-  - 默认 `case-package`
-  - 可切换 `--input-mode full-input`
+  - `case-package` 是唯一正式验收基线
+  - `full-input` 仅用于完整数据 `fixture / dev-only / regression`
 - 单 `mainnodeid` 文本证据包当前是 stage3 复核与外部复现支撑工具，不等于新的业务阶段或正式产线批处理方案。
 - 最终唯一锚定决策、概率 / 置信度、误伤捞回、环岛新规则都不在当前正式实现范围。
 - `mainnode` 可作为业务概念名，但 stage1 正式输入字段只能是 `mainnodeid`。

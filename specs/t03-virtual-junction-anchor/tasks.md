@@ -16,7 +16,7 @@
 - [x] T014 修正当前 branch 双向追溯与 second-degree road 保护，并完成 `692723 / 698330` 定点回归
 - [x] T015 记录 `922217 / 54265667 / 502058682` 为 input-gate hard-stop case，并从默认全量验收集排除，同时保留显式点名单复跑能力
 - [x] T016 将 `Rule D` 的 `50m fallback` 改写为允许成立且不自动进入 `review`，同时在契约与 spec 中补充 fallback 审计留痕口径
-- [x] T017 将 `Rule E` 明确降格为 baseline partial，并固定 `lane_guard_status=proxy_only_not_modeled`，避免任何 fully complete 表述
+- [x] T017 将 `Rule E` 明确降格为 `single_sided opposite-side guard baseline partial`，正式文档和审计文案统一改成 `opposite road / semantic node / near-corridor proxy` 口径，避免任何 lane 级护栏残留说法
 - [x] T018 为双 node `single_sided_t_mouth` 补充两条正式规则：bridge 进入 `allowed-space` 主通路、共享 `2进2出` through-node 不中断主通路
 - [x] T019 在 `INTERFACE_CONTRACT.md / spec.md` 中补充 `Rule D / Rule E` 建议审计字段，覆盖 fallback 与 double-node through-node 观测项
 - [x] T020 在 `README.md` 补齐 patch round 操作者口径，并重申原始 Anchor `61`、默认正式全量验收 `58` 与固定 `excluded_case_ids`

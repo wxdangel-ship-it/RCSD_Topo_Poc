@@ -46,8 +46,9 @@ def test_rule_e_single_sided_blocks_opposite_side_before_growth(tmp_path: Path) 
     assert "rcsd_opp" in audit_doc["opposite_semantic_node_ids"]
     assert "road_east_1" in audit_doc["selected_road_ids"]
     assert "road_west_opposite" not in audit_doc["selected_road_ids"]
-    assert audit_doc["lane_guard_status"] == "proxy_only_not_modeled"
+    assert audit_doc["opposite_side_guard_mode"] == "proxy_baseline"
     assert audit_doc["corridor_guard_status"] == "hard_blocked_by_rcsdroad_mask"
+    assert audit_doc["opposite_side_guard_note"] == "road/semantic-node/near-corridor proxy applied."
     assert audit_doc["rules"]["E"]["template_only"] is True
     assert any(item["reason"] == "single_sided_opposite_corridor" for item in audit_doc["blocked_directions"])
 

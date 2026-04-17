@@ -13,7 +13,7 @@
 - 本轮不扩展模块骨架，只为后续代码修复保留一致契约面。
 - Step3 修复目标聚焦 `Rule D / Rule E / Rule F / Rule G` 与 Anchor61 真实验收。
 - `Rule D` 需改为：无更早稳定边界时 `50m fallback` 允许直接成立，不自动进入 `review`，仅保留审计字段。
-- `Rule E` 需降格明示为 baseline partial，固定 `lane_guard_status=proxy_only_not_modeled`，不宣称 fully complete。
+- `Rule E` 需降格明示为 `single_sided opposite-side guard baseline partial`，正式文档和审计文案统一改成 `opposite road / semantic node / near-corridor proxy` 口径，不再保留 lane 级护栏残留说法。
 - 对双 node `single_sided_t_mouth` 追加两条规则：两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 作为 through-node 时不中断主通路。
 
 ## 3. 输出结构

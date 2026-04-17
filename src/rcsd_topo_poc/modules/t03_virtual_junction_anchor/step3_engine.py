@@ -1188,7 +1188,7 @@ def _empty_audit_doc(
     *,
     reason: str,
     input_gate: dict[str, Any],
-    lane_guard_status: str = "not_applicable",
+    opposite_side_guard_mode: str = "not_applicable",
     corridor_guard_status: str = "not_applicable",
 ) -> dict[str, Any]:
     return {
@@ -1218,9 +1218,9 @@ def _empty_audit_doc(
         "opposite_road_ids": [],
         "opposite_semantic_node_ids": [],
         "opposite_rcsdroad_ids": [],
-        "lane_guard_status": lane_guard_status,
+        "opposite_side_guard_mode": opposite_side_guard_mode,
         "corridor_guard_status": corridor_guard_status,
-        "proxy_note": None,
+        "opposite_side_guard_note": None,
         "hard_path_passed": False,
         "cleanup_preview_passed": False,
         "rescue_reason": None,
@@ -1368,9 +1368,9 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     excluded_opposite_rc_road_ids: set[str] = set()
     excluded_opposite_rc_node_ids: set[str] = set()
     review_signals: list[str] = []
-    lane_guard_status = "not_applicable"
+    opposite_side_guard_mode = "not_applicable"
     corridor_guard_status = "not_applicable"
-    proxy_note: str | None = None
+    opposite_side_guard_note: str | None = None
     shared_two_in_two_out = _detect_shared_two_in_two_out_node(context)
     shared_through_node_ids = (
         {shared_two_in_two_out["node_id"]}
@@ -1416,11 +1416,11 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             filtered_rc_road_ids=excluded_opposite_rc_road_ids,
             candidate_rc_node_ids=candidate_opposite_rc_node_ids,
         )
-        lane_guard_status = "proxy_only_not_modeled"
+        opposite_side_guard_mode = "proxy_baseline"
         corridor_guard_status = (
             "hard_blocked_by_rcsdroad_mask" if excluded_opposite_rc_road_ids else "not_applicable"
         )
-        proxy_note = "lane-level hard guard is not modeled; road/node/corridor proxies are applied."
+        opposite_side_guard_note = "road/semantic-node/near-corridor proxy applied."
         if ambiguous:
             review_signals.append("single_sided_direction_ambiguous")
 
@@ -1580,9 +1580,9 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             "excluded_opposite_road_ids": sorted(excluded_opposite_road_ids),
             "excluded_opposite_rc_road_ids": sorted(excluded_opposite_rc_road_ids),
             "excluded_opposite_semantic_node_ids": sorted(excluded_opposite_rc_node_ids),
-            "lane_guard_status": lane_guard_status,
+            "opposite_side_guard_mode": opposite_side_guard_mode,
             "corridor_guard_status": corridor_guard_status,
-            "proxy_note": proxy_note,
+            "opposite_side_guard_note": opposite_side_guard_note,
         },
         "F": {
             "passed": not cleanup_dependency,
@@ -1628,9 +1628,9 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "opposite_road_ids": sorted(excluded_opposite_road_ids),
         "opposite_semantic_node_ids": sorted(excluded_opposite_rc_node_ids),
         "opposite_rcsdroad_ids": sorted(excluded_opposite_rc_road_ids),
-        "lane_guard_status": lane_guard_status,
+        "opposite_side_guard_mode": opposite_side_guard_mode,
         "corridor_guard_status": corridor_guard_status,
-        "proxy_note": proxy_note,
+        "opposite_side_guard_note": opposite_side_guard_note,
         "hard_path_passed": hard_path_passed,
         "cleanup_preview_passed": cleanup_preview_passed,
         "rescue_reason": "post_difference_preview_only" if cleanup_dependency else None,

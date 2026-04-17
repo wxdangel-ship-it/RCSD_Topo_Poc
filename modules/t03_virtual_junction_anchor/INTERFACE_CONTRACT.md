@@ -29,7 +29,7 @@
 - `Rule D` 在当前语义路口关联 branch 上必须同时支持进入路口与退出路口的双向追溯，直到下一个或上一个语义路口为止
 - `single_sided_t_mouth` 的方向歧义只在“多个候选方向会导出实质不同的当前 branch / opposite branch 划分结果”时才成立；若只是局部向量并列、但最终 road partition 等价，则不得单独提升为 `review`
 - `Rule A` 的负向边界应在与当前路口直接关联的相邻语义路口入口处，沿当前 branch 反向构造 `1m` 逆向掩膜；正向增长到这里应自然终止，不再依赖路口前横截切面
-- `Rule E` 当前只定义为 baseline partial；`lane_guard_status` 固定记录为 `proxy_only_not_modeled`，不得宣称已 fully complete
+- `Rule E` 当前只定义为 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy` 表达，当前 baseline 不单独定义 lane 级对向护栏能力，也不得在文档、PR 或验收结论中把 lane 级护栏表述为当前能力或当前未完成项
 - `Rule E` 的 `single_sided_t_mouth` opposite 判定不得覆盖当前语义路口关联 road，也不得覆盖这些 road 的二度衔接 road；`RCSDRoad` 只允许作为 near-corridor proxy，挂靠到已识别的 opposite `SWSD road`，不得以 opposite side 全量 `RCSDRoad` 直接主导硬阻断；若某个 `RCSDRoad` proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress，不得 materialize 成 hard blocker
 - 双 node `single_sided_t_mouth` 新增规则：
   - 当两 `node` 间存在 bridge 且 bridge 位于合法道路面内时，该 bridge 应进入 `allowed-space` 主通路，而不是单独降级到 review-only 分支
@@ -97,7 +97,8 @@
   - `rule_d_fallback_applied`
   - `rule_d_fallback_distance_m`
   - `rule_d_fallback_reason`
-  - `lane_guard_status`
+  - `opposite_side_guard_mode`
+  - `opposite_side_guard_note`
   - `double_node_bridge_in_allowed_space`
   - `through_node_shared_2in2out`
   - `through_node_break_suppressed`

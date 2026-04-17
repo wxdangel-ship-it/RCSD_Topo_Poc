@@ -51,7 +51,7 @@ python3 -m rcsd_topo_poc t03-step3-legal-space \
 - `single_sided_t_mouth` 的方向歧义只在候选方向会导出不同 road partition 时才保留；局部向量并列但 partition 等价时，不再单独升为 `review`
 - 双 node `single_sided_t_mouth` 场景下，两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 若仅承担 through-node，不得中断主通路
 - `RCSDRoad` 在 `Rule E` 中只承担 near-corridor proxy，必须挂靠到 opposite `SWSD road`，不能以 opposite side 全量 `RCSDRoad` 主导硬阻断；若 proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress
-- `Rule E` 当前只到 baseline partial；`lane_guard_status=proxy_only_not_modeled`，不宣称 fully complete
+- `Rule E` 当前只到 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy`，当前 baseline 不单独定义 lane 级对向护栏能力
 - 不实现 `Step4/5/6/7`
 - 不允许把 `cleanup / trim / review_mode / stage4 聚合` 前置成 `Step3` 成立条件
 - 平铺 PNG 审查目录是正式交付物之一

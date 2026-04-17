@@ -12,7 +12,6 @@ from shapely.geometry import (
     MultiPoint,
     MultiPolygon,
     Point,
-    Polygon,
 )
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import substring, unary_union
@@ -32,8 +31,7 @@ NEGATIVE_MASK_BUFFER_M = 1.0
 STEP3_DISTANCE_CAP_M = 50.0
 INTRUSION_AREA_TOLERANCE_M2 = 0.05
 DRIVEZONE_OUTSIDE_AREA_TOLERANCE_M2 = 0.05
-ADJACENT_CROSS_SECTION_PROBE_M = 80.0
-ADJACENT_CUT_DEPTH_M = 1.0
+ADJACENT_REVERSE_MASK_LENGTH_M = 1.0
 OPPOSITE_RC_ROAD_MAX_SWSD_GAP_M = 10.0
 OPPOSITE_RC_ROAD_MAX_REFERENCE_DISTANCE_M = 35.0
 OPPOSITE_RC_ROAD_MIN_DIRECTION_SIM = 0.85
@@ -253,75 +251,6 @@ def _largest_line_string(geometry: BaseGeometry | None) -> LineString | None:
     return max(line_parts, key=lambda item: item.length)
 
 
-def _nearest_line_string(geometry: BaseGeometry | None, reference: Point) -> LineString | None:
-    line_parts = [
-        part
-        for part in _iter_geometries(geometry)
-        if isinstance(part, LineString) and getattr(part, "length", 0.0) > 0.0
-    ]
-    if not line_parts:
-        return None
-    return min(line_parts, key=lambda item: (item.distance(reference), -item.length))
-
-
-def _build_endpoint_cut_strip(
-    line: LineString,
-    *,
-    endpoint: str,
-    drivezone_geometry: BaseGeometry,
-) -> BaseGeometry | None:
-    coords = list(line.coords)
-    if len(coords) < 2:
-        return None
-    if endpoint == "start":
-        p0 = Point(coords[0])
-        p1 = Point(coords[1])
-        offset_base = line.interpolate(min(NEGATIVE_MASK_BUFFER_M, line.length))
-    else:
-        p0 = Point(coords[-1])
-        p1 = Point(coords[-2])
-        offset_base = line.interpolate(max(0.0, line.length - NEGATIVE_MASK_BUFFER_M))
-    vx = offset_base.x - p0.x
-    vy = offset_base.y - p0.y
-    norm = math.hypot(vx, vy)
-    if norm <= 1e-6:
-        vx = p0.x - p1.x
-        vy = p0.y - p1.y
-        norm = math.hypot(vx, vy)
-    if norm <= 1e-6:
-        return None
-    vx /= norm
-    vy /= norm
-    nx = -vy
-    ny = vx
-    cx = offset_base.x
-    cy = offset_base.y
-    cross_section_probe = LineString(
-        [
-            (cx - nx * ADJACENT_CROSS_SECTION_PROBE_M, cy - ny * ADJACENT_CROSS_SECTION_PROBE_M),
-            (cx + nx * ADJACENT_CROSS_SECTION_PROBE_M, cy + ny * ADJACENT_CROSS_SECTION_PROBE_M),
-        ]
-    )
-    local_cross_section = _nearest_line_string(
-        _extract_line_geometry(cross_section_probe.intersection(drivezone_geometry)),
-        offset_base,
-    )
-    if local_cross_section is None:
-        return None
-    start_x, start_y = local_cross_section.coords[0]
-    end_x, end_y = local_cross_section.coords[-1]
-    depth = ADJACENT_CUT_DEPTH_M
-    polygon = Polygon(
-        [
-            (start_x - vx * depth, start_y - vy * depth),
-            (end_x - vx * depth, end_y - vy * depth),
-            (end_x + vx * depth, end_y + vy * depth),
-            (start_x + vx * depth, start_y + vy * depth),
-        ]
-    )
-    return _clean_geometry(polygon)
-
-
 def _node_group_lookup(context: Step1Context) -> dict[str, str]:
     return {node.node_id: (node.mainnodeid or node.node_id) for node in context.all_nodes}
 
@@ -401,7 +330,7 @@ def _build_branch_frontier(
     return branch_frontier_road_ids, related_road_ids, adjacent_records
 
 
-def _perpendicular_cut_strip_in_drivezone(
+def _reverse_mask_strip_in_drivezone(
     road: RoadRecord,
     endpoint: str,
     drivezone_geometry: BaseGeometry,
@@ -416,14 +345,22 @@ def _perpendicular_cut_strip_in_drivezone(
     clipped_start = Point(clipped_line.coords[0])
     clipped_end = Point(clipped_line.coords[-1])
     clipped_endpoint = "start" if clipped_start.distance(original_endpoint) <= clipped_end.distance(original_endpoint) else "end"
-    strip = _build_endpoint_cut_strip(
-        clipped_line,
-        endpoint=clipped_endpoint,
-        drivezone_geometry=drivezone_geometry,
-    )
-    if strip is None:
+    reverse_length = min(ADJACENT_REVERSE_MASK_LENGTH_M, clipped_line.length)
+    if reverse_length <= 1e-6:
         return None
-    return _clean_geometry(strip.intersection(drivezone_geometry))
+    if clipped_endpoint == "start":
+        reverse_segment = substring(clipped_line, 0.0, reverse_length)
+    else:
+        reverse_segment = substring(clipped_line, max(0.0, clipped_line.length - reverse_length), clipped_line.length)
+    reverse_line = _extract_line_geometry(reverse_segment)
+    if reverse_line is None:
+        return None
+    reverse_mask = _clean_geometry(
+        reverse_line.buffer(NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2).intersection(drivezone_geometry)
+    )
+    if reverse_mask is None:
+        return None
+    return reverse_mask
 
 
 def _build_adjacent_junction_masks(
@@ -442,7 +379,7 @@ def _build_adjacent_junction_masks(
         road = road_lookup.get(record["road_id"])
         if road is None:
             continue
-        strip = _perpendicular_cut_strip_in_drivezone(
+        strip = _reverse_mask_strip_in_drivezone(
             road,
             record["endpoint"],
             context.drivezone_geometry,

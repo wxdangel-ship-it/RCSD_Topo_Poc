@@ -13,6 +13,7 @@
 - 支持 `61` 个 case 的批量运行、case 级输出、平铺 PNG 审查目录、索引与汇总。
 - 将 T03 固化为“只做到 Step3 的干净新基线”，为后续 `Step4-7` 留扩展位。
 - 本轮修复闭环聚焦 `Rule D / Rule E / Rule F / Rule G` 与 Anchor61 真实验收，不引入 `Step4-7` 语义。
+- `Rule D` 的最终 `allowed space` 必须满足 `DriveZone` containment；若 `allowed_outside_drivezone_area_m2` 超过稳定阈值，则 `Rule D` 失败，case 不能只作为普通 `review`
 
 ## 3. 正式输入契约
 
@@ -40,7 +41,7 @@
 - A：相邻语义路口入口截断；沿进入相邻语义路口的道路方向，在入口边界前 `1m` 设置垂直负向边界。
 - B：同面无关对象负向掩膜；优先对 `foreign road / arm` 做 `1m` 缓冲，无法识别时退化为 node 小范围掩膜。
 - C：其他语义路口内部 node 的 MST 负向掩膜；MST 连线只保留道路面内部分，并做 `1m` 缓冲。
-- D：候选空间只能在 `DriveZone` 内沿合法方向增长，不得越过负向掩膜或非道路面；无更早边界时单向最大增长距离 `50m`。
+- D：候选空间只能在 `DriveZone` 内沿合法方向增长，不得越过负向掩膜或非道路面；最终 `allowed space` 必须回切 `DriveZone`，且 `allowed_outside_drivezone_area_m2` 超阈值时判失败；无更早边界时单向最大增长距离 `50m`。
 - E：`single_sided_t_mouth` 不得进入对向 `Road / semantic Node / lane / main corridor`。
 - F：若某个 case 只能依赖 `cleanup / trim` 才满足边界，则 `Step3` 未成立。
 - G：任何放大都只能在 `A-F` 满足后进行，不得先放大再补救越界。
@@ -73,6 +74,7 @@
 - `input_gate_failed` 作为前置输入门禁 `reason` 允许出现，但不新增第四种 `step3_state`，也不替代 Step3 业务状态
 - `Step4/5/6/7` 不在本轮范围内；不得用它们的语义或补救逻辑反向证明 `Step3` 成立。
 - T02 的 `late_*cleanup* / trim / review_mode / stage4 聚合` 本轮禁止前置进入 T03。
+- `Rule D` 的 `outside_drivezone` 失败优先级高于普通 review signal；若最终 `allowed space` 越出 `DriveZone` 超阈值，case 不得仅作为普通 `review` 保留。
 
 ## 8. 验证
 

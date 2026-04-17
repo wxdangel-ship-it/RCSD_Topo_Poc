@@ -31,6 +31,7 @@ NODE_BUFFER_M = 5.0
 NEGATIVE_MASK_BUFFER_M = 1.0
 STEP3_DISTANCE_CAP_M = 50.0
 INTRUSION_AREA_TOLERANCE_M2 = 0.05
+DRIVEZONE_OUTSIDE_AREA_TOLERANCE_M2 = 0.05
 
 
 def _clean_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
@@ -469,7 +470,13 @@ def _build_reachable_road_support(
         if hard_bound_line is None:
             continue
         selected_road_ids.add(road.road_id)
-        clipped_geometries.append(hard_bound_line.buffer(ROAD_BUFFER_M, cap_style=2, join_style=2))
+        buffered_support = _clean_geometry(
+            hard_bound_line.buffer(ROAD_BUFFER_M, cap_style=2, join_style=2).intersection(context.drivezone_geometry)
+        )
+        if buffered_support is None:
+            frontier_stop_reasons.add("drivezone_boundary")
+            continue
+        clipped_geometries.append(buffered_support)
         d_start = distances.get(road.snodeid or "", math.inf)
         d_end = distances.get(road.enodeid or "", math.inf)
         cap_hit = min(d_start, d_end) <= cap_m and max(d_start, d_end) > cap_m
@@ -576,6 +583,33 @@ def _has_negative_intrusion(geometry: BaseGeometry | None, negative_union: BaseG
     return float(getattr(intersection, "area", 0.0)) > INTRUSION_AREA_TOLERANCE_M2
 
 
+def _drivezone_containment_metrics(
+    geometry: BaseGeometry | None,
+    drivezone_geometry: BaseGeometry,
+) -> dict[str, Any]:
+    if geometry is None or geometry.is_empty:
+        return {
+            "allowed_area_m2": 0.0,
+            "allowed_inside_drivezone_area_m2": 0.0,
+            "allowed_outside_drivezone_area_m2": 0.0,
+            "allowed_outside_drivezone_ratio": 0.0,
+            "drivezone_containment_passed": False,
+        }
+    allowed_area = float(getattr(geometry, "area", 0.0))
+    inside = geometry.intersection(drivezone_geometry)
+    outside = geometry.difference(drivezone_geometry)
+    inside_area = 0.0 if inside.is_empty else float(getattr(inside, "area", 0.0))
+    outside_area = 0.0 if outside.is_empty else float(getattr(outside, "area", 0.0))
+    outside_ratio = 0.0 if allowed_area <= 0.0 else outside_area / allowed_area
+    return {
+        "allowed_area_m2": round(allowed_area, 6),
+        "allowed_inside_drivezone_area_m2": round(inside_area, 6),
+        "allowed_outside_drivezone_area_m2": round(outside_area, 6),
+        "allowed_outside_drivezone_ratio": round(outside_ratio, 9),
+        "drivezone_containment_passed": outside_area <= DRIVEZONE_OUTSIDE_AREA_TOLERANCE_M2,
+    }
+
+
 def _build_status_doc(case_result: Step3CaseResult) -> dict[str, Any]:
     return {
         "case_id": case_result.case_id,
@@ -647,6 +681,11 @@ def _empty_audit_doc(
         "hard_path_passed": False,
         "cleanup_preview_passed": False,
         "rescue_reason": None,
+        "allowed_area_m2": 0.0,
+        "allowed_inside_drivezone_area_m2": 0.0,
+        "allowed_outside_drivezone_area_m2": 0.0,
+        "allowed_outside_drivezone_ratio": 0.0,
+        "drivezone_containment_passed": False,
     }
 
 
@@ -681,6 +720,11 @@ def _status_for_unsupported_template(context: Step1Context, template_result: Ste
             "excluded_road_ids": [],
             "blocked_direction_reasons": [],
             "cleanup_dependency": False,
+            "allowed_area_m2": 0.0,
+            "allowed_inside_drivezone_area_m2": 0.0,
+            "allowed_outside_drivezone_area_m2": 0.0,
+            "allowed_outside_drivezone_ratio": 0.0,
+            "drivezone_containment_passed": False,
         },
     )
 
@@ -715,6 +759,11 @@ def _status_for_input_gate_failure(
             "excluded_road_ids": [],
             "blocked_direction_reasons": [],
             "cleanup_dependency": False,
+            "allowed_area_m2": 0.0,
+            "allowed_inside_drivezone_area_m2": 0.0,
+            "allowed_outside_drivezone_area_m2": 0.0,
+            "allowed_outside_drivezone_ratio": 0.0,
+            "drivezone_containment_passed": False,
         },
     )
 
@@ -805,6 +854,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         review_signals.append("rule_d_50m_cap_used")
 
     hard_path_geometry = _component_touching_target(hard_candidate_support_geometry, reference_target_geometry)
+    drivezone_metrics = _drivezone_containment_metrics(hard_path_geometry, context.drivezone_geometry)
     hard_intrusion = _has_negative_intrusion(hard_path_geometry, blocker_union)
     covered_node_ids = _covered_node_ids(context, hard_path_geometry)
     target_node_ids = [node.node_id for node in context.target_group.nodes]
@@ -819,6 +869,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     if cleanup_preview_geometry is not None and blocker_union is not None:
         cleanup_preview_geometry = _clean_geometry(cleanup_preview_geometry.difference(blocker_union))
     cleanup_preview_geometry = _component_touching_target(cleanup_preview_geometry, reference_target_geometry)
+    cleanup_preview_drivezone_metrics = _drivezone_containment_metrics(cleanup_preview_geometry, context.drivezone_geometry)
     cleanup_preview_intrusion = _has_negative_intrusion(cleanup_preview_geometry, blocker_union)
     cleanup_preview_covered_node_ids = _covered_node_ids(context, cleanup_preview_geometry)
     cleanup_preview_missing_node_ids = [
@@ -827,9 +878,15 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         if node_id not in cleanup_preview_covered_node_ids
     ]
 
-    hard_path_passed = hard_path_geometry is not None and not hard_intrusion and not missing_node_ids
+    hard_path_passed = (
+        hard_path_geometry is not None
+        and drivezone_metrics["drivezone_containment_passed"]
+        and not hard_intrusion
+        and not missing_node_ids
+    )
     cleanup_preview_passed = (
         cleanup_preview_geometry is not None
+        and cleanup_preview_drivezone_metrics["drivezone_containment_passed"]
         and not cleanup_preview_intrusion
         and not cleanup_preview_missing_node_ids
     )
@@ -847,6 +904,9 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     elif hard_path_geometry is None:
         step3_state = "not_established"
         reason = "allowed_space_empty"
+    elif not drivezone_metrics["drivezone_containment_passed"]:
+        step3_state = "not_established"
+        reason = "outside_drivezone_intrusion"
     elif missing_node_ids:
         step3_state = "not_established"
         reason = "must_cover_failed"
@@ -866,9 +926,15 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "B": {"passed": True, "count": len(b_records), "node_fallback_used": node_fallback_used},
         "C": {"passed": True, "count": len(foreign_mst_records)},
         "D": {
-            "passed": hard_path_geometry is not None and not missing_node_ids and not opposite_side_intrusion,
+            "passed": (
+                hard_path_geometry is not None
+                and drivezone_metrics["drivezone_containment_passed"]
+                and not missing_node_ids
+                and not opposite_side_intrusion
+            ),
             "growth_limit_count": len(growth_limits),
             "direction_mode": "directed_graph_from_t02_semantics",
+            **drivezone_metrics,
         },
         "E": {
             "passed": not opposite_side_intrusion and not e_intrusion,
@@ -927,6 +993,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "hard_path_passed": hard_path_passed,
         "cleanup_preview_passed": cleanup_preview_passed,
         "rescue_reason": "post_difference_preview_only" if cleanup_dependency else None,
+        **drivezone_metrics,
     }
     key_metrics = {
         "target_group_node_count": len(context.target_group.nodes),
@@ -938,6 +1005,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "review_signal_count": len(review_signals),
         "cleanup_dependency": cleanup_dependency,
         "blocked_direction_count": len(blocked_directions),
+        **drivezone_metrics,
     }
     visual_review_class = _review_visual_class(step3_state, review_signals, reason)
     return Step3CaseResult(
@@ -971,6 +1039,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             "excluded_road_ids": sorted(excluded_opposite_road_ids),
             "blocked_direction_reasons": blocked_direction_reasons,
             "cleanup_dependency": cleanup_dependency,
+            **drivezone_metrics,
             "visual_review_class": visual_review_class,
             "root_cause_layer": _root_cause_layer(step3_state),
             "root_cause_type": None if step3_state == "established" else reason,

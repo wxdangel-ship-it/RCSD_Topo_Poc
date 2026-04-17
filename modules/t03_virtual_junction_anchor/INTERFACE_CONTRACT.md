@@ -22,6 +22,7 @@
   - `Step3` A-H、allowed space、三类 negative mask、`step3_state`
   - 批量运行、平铺 PNG、CSV/JSON 汇总
 - `input_gate_failed` 仅作为前置输入门禁 `reason`，不新增第四种 `step3_state`，也不代表 Step3 业务失败态本身
+- `Rule D` 的最终 `allowed space` 必须满足 `DriveZone` containment；若 `allowed_outside_drivezone_area_m2` 超过稳定阈值，则 `Rule D` 判定失败，case 不能仅作为普通 `review`
 - 当前不在正式范围：
   - `Step4/5/6/7`
   - cleanup/trim 补救

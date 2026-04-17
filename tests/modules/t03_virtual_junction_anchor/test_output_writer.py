@@ -187,6 +187,8 @@ def test_output_writer_keeps_flat_dir_flat_and_fields_stable(tmp_path: Path) -> 
     assert summary_doc["step3_not_established_count"] == 0
     assert summary_doc["tri_state_sum"] == 1
     assert summary_doc["tri_state_sum_matches_total"] is True
+    assert summary_doc["excluded_case_count"] == 0
+    assert summary_doc["excluded_case_ids"] == []
     assert summary_doc["missing_case_ids"] == []
     assert summary_doc["failed_case_ids"] == []
     assert summary_doc["rerun_cleaned_before_write"] is False

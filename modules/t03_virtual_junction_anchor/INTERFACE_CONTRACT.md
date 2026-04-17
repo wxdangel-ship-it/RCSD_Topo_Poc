@@ -22,6 +22,7 @@
   - `Step3` A-H、allowed space、三类 negative mask、`step3_state`
   - 批量运行、平铺 PNG、CSV/JSON 汇总
 - `input_gate_failed` 仅作为前置输入门禁 `reason`，不新增第四种 `step3_state`，也不代表 Step3 业务失败态本身
+- 已确认的 input-gate hard-stop case `922217 / 54265667 / 502058682` 需要记录为 T03 默认全量验收排除集：后续默认全量跑批不再计入这些 case，但显式点名单 case 调试仍允许单独运行
 - `Rule D` 的最终 `allowed space` 必须满足 `DriveZone` containment；若 `allowed_outside_drivezone_area_m2` 超过稳定阈值，则 `Rule D` 判定失败，case 不能仅作为普通 `review`
 - `Rule A` 只允许截断“当前语义路口分支上真正进入相邻语义路口的入口”；若候选截断会覆盖当前 target group core，则该截断无效
 - `Rule B` 只允许针对与当前语义路口真正无关的 `foreign road / arm / node` 生成负向掩膜；当前语义路口 branch、直接关联 road 及其二度衔接 road 不得因为“未进入 frontier”而被回灌判成 foreign
@@ -113,7 +114,8 @@ python3 -m rcsd_topo_poc t03-step3-legal-space --help
 ## 6. Acceptance
 
 1. Anchor61 `61` 个 case 可批量运行
-2. 每个 case 固定 `7` 个业务输出齐全
-3. `step3_review_flat/` 有 `61` 张 PNG 且无子目录
-4. `step3_state` 仅出现 `established / review / not_established`
-5. 未引入 `Step4/5/6/7` 或 cleanup/trim 作为 `Step3` 主通路
+2. 其中默认全量验收集固定排除 `922217 / 54265667 / 502058682` 这 `3` 个 input-gate hard-stop case，默认全量统计口径按剩余 `58` 个 case 计算；显式 `--case-id` 仍可单独复跑它们
+3. 每个进入全量验收集的 case 固定 `7` 个业务输出齐全
+4. `step3_review_flat/` 的 PNG 数量应与默认全量验收集规模一致，当前口径为 `58`
+5. `step3_state` 仅出现 `established / review / not_established`
+6. 未引入 `Step4/5/6/7` 或 cleanup/trim 作为 `Step3` 主通路

@@ -7,6 +7,7 @@
 - T03 当前只承接 `Phase A / Step3 legal-space baseline only`
 - 当前已进入 `Step3` 修复轮，目标是把 baseline 收敛到可验收状态，而不是重做模块骨架
 - 正式输入契约固定为 Anchor61 `case-package`
+- Anchor61 原始样本仍为 `61` 个 case；其中 `922217 / 54265667 / 502058682` 已确认为 input-gate hard-stop case，默认全量跑批会排除它们，只在显式点名单时单独复跑
 - 线程 `REQUIREMENT.md` 本轮整体不启用，不作为当前模块事实源
 - 本轮交付：
   - 独立 `Step1/Step2` 最小支撑
@@ -49,3 +50,4 @@ python3 -m rcsd_topo_poc t03-step3-legal-space \
 - 不实现 `Step4/5/6/7`
 - 不允许把 `cleanup / trim / review_mode / stage4 聚合` 前置成 `Step3` 成立条件
 - 平铺 PNG 审查目录是正式交付物之一
+- 默认全量验收统计口径当前为 `58` 个 case，并会在 `preflight.json / summary.json` 记录 `excluded_case_ids`

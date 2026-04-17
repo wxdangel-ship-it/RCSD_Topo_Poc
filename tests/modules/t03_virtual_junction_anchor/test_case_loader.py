@@ -7,7 +7,10 @@ import pytest
 from shapely.geometry import Point, box
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_vector
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_loader import load_case_specs
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_loader import (
+    DEFAULT_FULL_BATCH_EXCLUDED_CASE_IDS,
+    load_case_specs,
+)
 
 
 def _write_case_package(case_root: Path, case_id: str, *, file_list: list[str] | None = None) -> None:
@@ -69,6 +72,7 @@ def test_case_loader_ignores_out_and_renders_dirs(tmp_path: Path) -> None:
     assert preflight["selected_case_count"] == 1
     assert preflight["selected_case_ids"] == ["100001"]
     assert all(row["case_id"] == "100001" for row in preflight["rows"])
+    assert preflight["applied_excluded_case_ids"] == []
 
 
 def test_case_loader_rejects_manifest_missing_required_file_list_entry(tmp_path: Path) -> None:
@@ -87,3 +91,30 @@ def test_case_loader_rejects_manifest_missing_required_file_list_entry(tmp_path:
 
     with pytest.raises(ValueError, match=r"manifest_missing_files=roads\.gpkg"):
         load_case_specs(case_root=tmp_path)
+
+
+def test_case_loader_excludes_confirmed_input_gate_cases_from_default_full_batch(tmp_path: Path) -> None:
+    _write_case_package(tmp_path / "922217", "922217")
+    _write_case_package(tmp_path / "54265667", "54265667")
+    _write_case_package(tmp_path / "502058682", "502058682")
+    _write_case_package(tmp_path / "100001", "100001")
+
+    specs, preflight = load_case_specs(case_root=tmp_path, exclude_case_ids=DEFAULT_FULL_BATCH_EXCLUDED_CASE_IDS)
+
+    assert [spec.case_id for spec in specs] == ["100001"]
+    assert preflight["selected_case_ids"] == ["100001"]
+    assert preflight["applied_excluded_case_ids"] == ["922217", "54265667", "502058682"]
+
+
+def test_case_loader_keeps_explicitly_selected_excluded_case_available(tmp_path: Path) -> None:
+    _write_case_package(tmp_path / "922217", "922217")
+
+    specs, preflight = load_case_specs(
+        case_root=tmp_path,
+        case_ids=["922217"],
+        exclude_case_ids=DEFAULT_FULL_BATCH_EXCLUDED_CASE_IDS,
+    )
+
+    assert [spec.case_id for spec in specs] == ["922217"]
+    assert preflight["explicit_case_selection"] is True
+    assert preflight["applied_excluded_case_ids"] == []

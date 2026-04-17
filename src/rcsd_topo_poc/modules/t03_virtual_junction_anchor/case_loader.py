@@ -18,6 +18,12 @@ REQUIRED_CASE_FILES = (
     "rcsdnode.gpkg",
 )
 
+DEFAULT_FULL_BATCH_EXCLUDED_CASE_IDS = (
+    "922217",
+    "54265667",
+    "502058682",
+)
+
 
 def _stable_case_sort_key(value: str) -> tuple[int, int | str]:
     return sort_patch_key(value)
@@ -55,12 +61,15 @@ def load_case_specs(
     case_root: str | Path,
     case_ids: list[str] | None = None,
     max_cases: int | None = None,
+    exclude_case_ids: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[list[CaseSpec], dict[str, Any]]:
     resolved_case_root = normalize_runtime_path(case_root)
     if not resolved_case_root.is_dir():
         raise ValueError(f"case root does not exist: {resolved_case_root}")
 
     selected_case_ids = {str(case_id) for case_id in case_ids or []}
+    explicit_case_selection = bool(selected_case_ids)
+    default_excluded_case_ids = {str(case_id) for case_id in exclude_case_ids or []}
     raw_case_dirs = [
         path
         for path in resolved_case_root.iterdir()
@@ -70,9 +79,13 @@ def load_case_specs(
 
     specs: list[CaseSpec] = []
     preflight_rows: list[dict[str, Any]] = []
+    applied_excluded_case_ids: list[str] = []
     for case_dir in sorted_case_dirs:
         case_id = str(case_dir.name)
         if selected_case_ids and case_id not in selected_case_ids:
+            continue
+        if not explicit_case_selection and case_id in default_excluded_case_ids:
+            applied_excluded_case_ids.append(case_id)
             continue
         manifest = _read_json(case_dir / "manifest.json")
         size_report = _read_json(case_dir / "size_report.json")
@@ -108,6 +121,15 @@ def load_case_specs(
 
     preflight_doc = {
         "case_root": str(resolved_case_root),
+        "explicit_case_selection": explicit_case_selection,
+        "default_full_batch_excluded_case_ids": sorted(
+            default_excluded_case_ids,
+            key=_stable_case_sort_key,
+        ),
+        "applied_excluded_case_ids": sorted(
+            applied_excluded_case_ids,
+            key=_stable_case_sort_key,
+        ),
         "selected_case_count": len(specs),
         "selected_case_ids": [spec.case_id for spec in specs],
         "rows": preflight_rows,

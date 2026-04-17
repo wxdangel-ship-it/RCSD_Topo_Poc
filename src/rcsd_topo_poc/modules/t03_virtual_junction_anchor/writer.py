@@ -118,6 +118,7 @@ def write_summary(
     rows: list[ReviewIndexRow],
     *,
     expected_case_ids: list[str],
+    excluded_case_ids: list[str] | None = None,
     failed_case_ids: list[str],
     rerun_cleaned_before_write: bool,
 ) -> Path:
@@ -131,6 +132,7 @@ def write_summary(
         else 0
     )
     expected_case_ids = _sorted_case_ids(list(expected_case_ids))
+    excluded_case_ids = _sorted_case_ids(list(excluded_case_ids or []))
     missing_case_ids = [
         case_id
         for case_id in expected_case_ids
@@ -150,6 +152,8 @@ def write_summary(
         "step3_not_established_count": step3_not_established_count,
         "tri_state_sum": tri_state_sum,
         "tri_state_sum_matches_total": tri_state_sum == len(expected_case_ids),
+        "excluded_case_count": len(excluded_case_ids),
+        "excluded_case_ids": excluded_case_ids,
         "missing_case_ids": missing_case_ids,
         "failed_case_ids": _sorted_case_ids(list(failed_case_ids)),
         "rerun_cleaned_before_write": rerun_cleaned_before_write,

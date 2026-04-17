@@ -72,6 +72,7 @@
   - `review`
   - `not_established`
 - `input_gate_failed` 作为前置输入门禁 `reason` 允许出现，但不新增第四种 `step3_state`，也不替代 Step3 业务状态
+- 已确认的 input-gate hard-stop case `922217 / 54265667 / 502058682` 记录为默认全量验收排除集：后续默认全量跑批不再把这 `3` 个 case 计入测试用例级统计，但显式点名单 case 调试仍允许单独运行
 - `Step4/5/6/7` 不在本轮范围内；不得用它们的语义或补救逻辑反向证明 `Step3` 成立。
 - T02 的 `late_*cleanup* / trim / review_mode / stage4 聚合` 本轮禁止前置进入 T03。
 - `Rule D` 的 `outside_drivezone` 失败优先级高于普通 review signal；若最终 `allowed space` 越出 `DriveZone` 超阈值，case 不得仅作为普通 `review` 保留。
@@ -80,11 +81,13 @@
 
 - CLI 帮助可用：`python3 -m rcsd_topo_poc t03-step3-legal-space --help`
 - 至少补齐 CLI、loader、writer、state mapping、rule-level 修复测试与 run 级 summary 回读。
-- 必须真实跑完 `61` 个 case，核对：
-  - `cases/` 有 `61` 个 case 目录
-  - `step3_review_flat/` 有 `61` 张 PNG 且无子目录
+- Anchor61 原始 case 集仍为 `61`，但默认全量验收集按排除 `922217 / 54265667 / 502058682` 后的 `58` 个 case 统计；显式点名单 case 不受该默认排除影响
+- 必须真实跑完默认全量验收集，核对：
+  - `cases/` 有 `58` 个 case 目录
+  - `step3_review_flat/` 有 `58` 张 PNG 且无子目录
   - `step3_review_index.csv` 与 `summary.json` 字段完整
-  - 三态计数之和等于 `61`
+  - 三态计数之和等于 `58`
+  - `excluded_case_ids == ["922217", "54265667", "502058682"]`
   - `missing_case_ids == []`
   - `failed_case_ids == []`
 

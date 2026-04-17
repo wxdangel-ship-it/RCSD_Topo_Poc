@@ -5,6 +5,7 @@
 - 仅修复本轮 `Step3` 契约收口，不重写总体 spec。
 - 统一 `INTERFACE_CONTRACT.md / spec.md / README.md / architecture/03-context-and-scope.md` 的修复轮口径。
 - 明确 `input_gate_failed` 只作为前置输入门禁 `reason`，不新增第四种状态。
+- 将 `922217 / 54265667 / 502058682` 记录为默认全量验收排除集，并保持显式点名单 case 的单独复跑能力。
 
 ## 2. 模块实现
 
@@ -27,6 +28,7 @@
 - 补齐规则级回归与 run 级 summary 回读验证。
 - 使用系统 `python3` 跑测试与真实 Anchor61。
 - 验证平铺 PNG、索引、summary 与 case 级产物完整，且 `missing_case_ids / failed_case_ids` 为空。
+- 默认全量验收统计需同步记录 `excluded_case_ids / excluded_case_count`，避免将硬门禁 case 混入 run 级口径。
 
 ## 5. 发布
 

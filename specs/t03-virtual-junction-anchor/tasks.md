@@ -14,3 +14,4 @@
 - [x] T012 更新现有 Draft PR 的说明，明确本轮仍只做到 `Step3`
 - [x] T013 修正 `Rule A` 只截当前 branch 进入相邻语义路口的入口，且不得覆盖当前 target core
 - [x] T014 修正当前 branch 双向追溯与 second-degree road 保护，并完成 `692723 / 698330` 定点回归
+- [x] T015 记录 `922217 / 54265667 / 502058682` 为 input-gate hard-stop case，并从默认全量验收集排除，同时保留显式点名单复跑能力

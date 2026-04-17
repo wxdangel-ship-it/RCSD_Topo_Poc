@@ -20,7 +20,6 @@ def test_rule_e_single_sided_blocks_opposite_side_before_growth(tmp_path: Path) 
         roads=[
             road_feature("road_east_1", case_id, "110001", [(0.0, 0.0), (25.0, 0.0)], direction=2),
             road_feature("road_east_2", "110001", "110002", [(25.0, 0.0), (55.0, 0.0)], direction=2),
-            road_feature("road_west_seed", case_id, "200001", [(0.0, 0.0), (-20.0, 0.0)], direction=2),
             road_feature("road_west_opposite", "200001", "200002", [(-20.0, 0.0), (-50.0, 0.0)], direction=2),
         ],
         extra_nodes=[
@@ -31,6 +30,7 @@ def test_rule_e_single_sided_blocks_opposite_side_before_growth(tmp_path: Path) 
         ],
         rcsd_roads=[
             road_feature("corridor_west", "r1", "r2", [(-10.0, 10.0), (-40.0, 10.0)], direction=2),
+            road_feature("corridor_far_west", "r3", "r4", [(-10.0, 35.0), (-40.0, 35.0)], direction=2),
         ],
         rcsd_nodes=[
             node_feature("rcsd_opp", -20.0, 8.0, mainnodeid="rcsd_opp"),
@@ -42,9 +42,10 @@ def test_rule_e_single_sided_blocks_opposite_side_before_growth(tmp_path: Path) 
 
     assert template_result.template_class == "single_sided_t_mouth"
     assert "corridor_west" in audit_doc["opposite_rcsdroad_ids"]
+    assert "corridor_far_west" not in audit_doc["opposite_rcsdroad_ids"]
     assert "rcsd_opp" in audit_doc["opposite_semantic_node_ids"]
     assert "road_east_1" in audit_doc["selected_road_ids"]
-    assert "road_west_seed" in audit_doc["selected_road_ids"]
+    assert "road_west_opposite" not in audit_doc["selected_road_ids"]
     assert audit_doc["lane_guard_status"] == "proxy_only_not_modeled"
     assert audit_doc["corridor_guard_status"] == "hard_blocked_by_rcsdroad_mask"
     assert any(item["reason"] == "single_sided_opposite_corridor" for item in audit_doc["blocked_directions"])

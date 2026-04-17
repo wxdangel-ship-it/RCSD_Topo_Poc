@@ -43,7 +43,9 @@ python3 -m rcsd_topo_poc t03-step3-legal-space \
 - 批次级正式交付还包括 `step3_review.png`、`step3_review_flat/`、`step3_review_index.csv`、`summary.json`
 - 当前路口关联 branch 上，进入路口与退出路口的 road 都属于可追溯的合法活动链，应双向追到上一个或下一个语义路口
 - `Rule A` 只截当前 branch 真正进入相邻语义路口的入口，且不能覆盖当前 target core
+- `Rule A` 的条带应按局部 road surface 截面生成，不得继续使用脱离局部路面的固定宽条带
 - `Rule B / Rule E` 不得把当前路口关联 road 或其二度衔接 road 回灌成 `foreign / opposite`
+- `RCSDRoad` 在 `Rule E` 中只承担 near-corridor proxy，必须挂靠到 opposite `SWSD road`，不能以 opposite side 全量 `RCSDRoad` 主导硬阻断
 - 不实现 `Step4/5/6/7`
 - 不允许把 `cleanup / trim / review_mode / stage4 聚合` 前置成 `Step3` 成立条件
 - 平铺 PNG 审查目录是正式交付物之一

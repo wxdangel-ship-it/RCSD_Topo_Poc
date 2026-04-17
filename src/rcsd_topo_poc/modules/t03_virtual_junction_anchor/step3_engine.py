@@ -32,8 +32,12 @@ NEGATIVE_MASK_BUFFER_M = 1.0
 STEP3_DISTANCE_CAP_M = 50.0
 INTRUSION_AREA_TOLERANCE_M2 = 0.05
 DRIVEZONE_OUTSIDE_AREA_TOLERANCE_M2 = 0.05
-ADJACENT_CUT_HALF_WIDTH_M = 60.0
-ADJACENT_CUT_DEPTH_M = 2.5
+ADJACENT_CROSS_SECTION_PROBE_M = 80.0
+ADJACENT_CUT_DEPTH_M = 1.0
+OPPOSITE_RC_ROAD_MAX_SWSD_GAP_M = 10.0
+OPPOSITE_RC_ROAD_MAX_REFERENCE_DISTANCE_M = 35.0
+OPPOSITE_RC_ROAD_MIN_DIRECTION_SIM = 0.85
+OPPOSITE_RC_NODE_MAX_CORRIDOR_DISTANCE_M = 10.0
 DIRECTION_MODE = "t02_direction_plus_bidirectional_junction_trace"
 
 
@@ -105,6 +109,24 @@ def _road_vector_from_reference(road: RoadRecord, reference: Point) -> tuple[flo
     if norm <= 1e-6:
         return (1.0, 0.0)
     return (vx / norm, vy / norm)
+
+
+def _geometry_axis_vector(geometry: BaseGeometry) -> tuple[float, float]:
+    coords = list(geometry.coords)
+    if len(coords) < 2:
+        return (1.0, 0.0)
+    start_x, start_y = float(coords[0][0]), float(coords[0][1])
+    end_x, end_y = float(coords[-1][0]), float(coords[-1][1])
+    vx = end_x - start_x
+    vy = end_y - start_y
+    norm = math.hypot(vx, vy)
+    if norm <= 1e-6:
+        return (1.0, 0.0)
+    return (vx / norm, vy / norm)
+
+
+def _axis_similarity(left: tuple[float, float], right: tuple[float, float]) -> float:
+    return abs(left[0] * right[0] + left[1] * right[1])
 
 
 def _road_flow_flags_for_group_like_t02(road: RoadRecord, member_node_ids: set[str]) -> tuple[bool, bool]:
@@ -230,10 +252,22 @@ def _largest_line_string(geometry: BaseGeometry | None) -> LineString | None:
     return max(line_parts, key=lambda item: item.length)
 
 
+def _nearest_line_string(geometry: BaseGeometry | None, reference: Point) -> LineString | None:
+    line_parts = [
+        part
+        for part in _iter_geometries(geometry)
+        if isinstance(part, LineString) and getattr(part, "length", 0.0) > 0.0
+    ]
+    if not line_parts:
+        return None
+    return min(line_parts, key=lambda item: (item.distance(reference), -item.length))
+
+
 def _build_endpoint_cut_strip(
     line: LineString,
     *,
     endpoint: str,
+    drivezone_geometry: BaseGeometry,
 ) -> BaseGeometry | None:
     coords = list(line.coords)
     if len(coords) < 2:
@@ -259,16 +293,29 @@ def _build_endpoint_cut_strip(
     vy /= norm
     nx = -vy
     ny = vx
-    half_width = ADJACENT_CUT_HALF_WIDTH_M
-    depth = ADJACENT_CUT_DEPTH_M
     cx = offset_base.x
     cy = offset_base.y
+    cross_section_probe = LineString(
+        [
+            (cx - nx * ADJACENT_CROSS_SECTION_PROBE_M, cy - ny * ADJACENT_CROSS_SECTION_PROBE_M),
+            (cx + nx * ADJACENT_CROSS_SECTION_PROBE_M, cy + ny * ADJACENT_CROSS_SECTION_PROBE_M),
+        ]
+    )
+    local_cross_section = _nearest_line_string(
+        _extract_line_geometry(cross_section_probe.intersection(drivezone_geometry)),
+        offset_base,
+    )
+    if local_cross_section is None:
+        return None
+    start_x, start_y = local_cross_section.coords[0]
+    end_x, end_y = local_cross_section.coords[-1]
+    depth = ADJACENT_CUT_DEPTH_M
     polygon = Polygon(
         [
-            (cx - nx * half_width - vx * depth, cy - ny * half_width - vy * depth),
-            (cx + nx * half_width - vx * depth, cy + ny * half_width - vy * depth),
-            (cx + nx * half_width + vx * depth, cy + ny * half_width + vy * depth),
-            (cx - nx * half_width + vx * depth, cy - ny * half_width + vy * depth),
+            (start_x - vx * depth, start_y - vy * depth),
+            (end_x - vx * depth, end_y - vy * depth),
+            (end_x + vx * depth, end_y + vy * depth),
+            (start_x + vx * depth, start_y + vy * depth),
         ]
     )
     return _clean_geometry(polygon)
@@ -368,7 +415,11 @@ def _perpendicular_cut_strip_in_drivezone(
     clipped_start = Point(clipped_line.coords[0])
     clipped_end = Point(clipped_line.coords[-1])
     clipped_endpoint = "start" if clipped_start.distance(original_endpoint) <= clipped_end.distance(original_endpoint) else "end"
-    strip = _build_endpoint_cut_strip(clipped_line, endpoint=clipped_endpoint)
+    strip = _build_endpoint_cut_strip(
+        clipped_line,
+        endpoint=clipped_endpoint,
+        drivezone_geometry=drivezone_geometry,
+    )
     if strip is None:
         return None
     return _clean_geometry(strip.intersection(drivezone_geometry))
@@ -528,6 +579,70 @@ def _build_single_sided_exclusions(
     return excluded_rc_road_ids, excluded_rc_node_ids
 
 
+def _filter_opposite_rc_road_ids(
+    context: Step1Context,
+    *,
+    excluded_opposite_road_ids: set[str],
+    candidate_rc_road_ids: set[str],
+) -> set[str]:
+    if not excluded_opposite_road_ids or not candidate_rc_road_ids:
+        return set()
+    reference = _point_like(context.representative_node.geometry)
+    opposite_roads = [road for road in context.roads if road.road_id in excluded_opposite_road_ids]
+    if not opposite_roads:
+        return set()
+    kept: set[str] = set()
+    for rc_road in context.rcsd_roads:
+        if rc_road.road_id not in candidate_rc_road_ids:
+            continue
+        if reference.distance(rc_road.geometry) > OPPOSITE_RC_ROAD_MAX_REFERENCE_DISTANCE_M:
+            continue
+        best_distance = math.inf
+        best_similarity = 0.0
+        rc_axis = _geometry_axis_vector(rc_road.geometry)
+        for opposite_road in opposite_roads:
+            distance = rc_road.geometry.distance(opposite_road.geometry)
+            similarity = _axis_similarity(rc_axis, _geometry_axis_vector(opposite_road.geometry))
+            if distance + 1e-6 < best_distance:
+                best_distance = distance
+                best_similarity = similarity
+            elif abs(distance - best_distance) <= 1e-6 and similarity > best_similarity:
+                best_similarity = similarity
+        if best_distance <= OPPOSITE_RC_ROAD_MAX_SWSD_GAP_M and best_similarity >= OPPOSITE_RC_ROAD_MIN_DIRECTION_SIM:
+            kept.add(rc_road.road_id)
+    return kept
+
+
+def _filter_opposite_rc_node_ids(
+    context: Step1Context,
+    *,
+    excluded_opposite_road_ids: set[str],
+    filtered_rc_road_ids: set[str],
+    candidate_rc_node_ids: set[str],
+) -> set[str]:
+    if not candidate_rc_node_ids:
+        return set()
+    corridor_geometries: list[BaseGeometry] = [
+        road.geometry for road in context.roads if road.road_id in excluded_opposite_road_ids
+    ]
+    corridor_geometries.extend(
+        road.geometry for road in context.rcsd_roads if road.road_id in filtered_rc_road_ids
+    )
+    if not corridor_geometries:
+        return set()
+    reference = _point_like(context.representative_node.geometry)
+    corridor_union = unary_union(corridor_geometries)
+    kept: set[str] = set()
+    for node in context.rcsd_nodes:
+        if node.node_id not in candidate_rc_node_ids:
+            continue
+        if reference.distance(node.geometry) > OPPOSITE_RC_ROAD_MAX_REFERENCE_DISTANCE_M:
+            continue
+        if node.geometry.distance(corridor_union) <= OPPOSITE_RC_NODE_MAX_CORRIDOR_DISTANCE_M:
+            kept.add(node.node_id)
+    return kept
+
+
 def _build_single_sided_blockers(
     context: Step1Context,
     *,
@@ -626,8 +741,10 @@ def _build_reachable_road_support(
         buffered_support = _clean_geometry(
             hard_bound_line.buffer(ROAD_BUFFER_M, cap_style=2, join_style=2).intersection(context.drivezone_geometry)
         )
+        if blocker_geometry is not None and buffered_support is not None:
+            buffered_support = _clean_geometry(buffered_support.difference(blocker_geometry))
         if buffered_support is None:
-            frontier_stop_reasons.add("drivezone_boundary")
+            frontier_stop_reasons.add("hard_blocker_applied" if blocker_geometry is not None else "drivezone_boundary")
             continue
         clipped_geometries.append(buffered_support)
         d_start = distances.get(road.snodeid or "", math.inf)
@@ -963,10 +1080,21 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             protected_road_ids=junction_related_road_ids,
         )
         base_allowed_road_ids &= single_sided_allowed_road_ids
-        excluded_opposite_rc_road_ids, excluded_opposite_rc_node_ids = _build_single_sided_exclusions(
+        candidate_opposite_rc_road_ids, candidate_opposite_rc_node_ids = _build_single_sided_exclusions(
             context,
             direction,
             protected_node_ids={node.node_id for node in context.target_group.nodes},
+        )
+        excluded_opposite_rc_road_ids = _filter_opposite_rc_road_ids(
+            context,
+            excluded_opposite_road_ids=excluded_opposite_road_ids,
+            candidate_rc_road_ids=candidate_opposite_rc_road_ids,
+        )
+        excluded_opposite_rc_node_ids = _filter_opposite_rc_node_ids(
+            context,
+            excluded_opposite_road_ids=excluded_opposite_road_ids,
+            filtered_rc_road_ids=excluded_opposite_rc_road_ids,
+            candidate_rc_node_ids=candidate_opposite_rc_node_ids,
         )
         lane_guard_status = "proxy_only_not_modeled"
         corridor_guard_status = (

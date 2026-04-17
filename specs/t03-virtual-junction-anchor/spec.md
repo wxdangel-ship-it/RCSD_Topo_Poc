@@ -42,7 +42,7 @@
 - B：同面无关对象负向掩膜；优先对 `foreign road / arm` 做 `1m` 缓冲，无法识别时退化为 node 小范围掩膜；当前语义路口 branch、直接关联 road 及其二度衔接 road 不得因“未进入 frontier”而被回灌为 foreign。
 - C：其他语义路口内部 node 的 MST 负向掩膜；MST 连线只保留道路面内部分，并做 `1m` 缓冲。
 - D：候选空间只能在 `DriveZone` 内沿合法方向增长，不得越过负向掩膜或非道路面；在当前语义路口关联 branch 上，进入路口与退出路口的 road 都属于可追溯的合法活动链，应双向追溯到下一个或上一个语义路口；最终 `allowed space` 必须回切 `DriveZone`，且 `allowed_outside_drivezone_area_m2` 超阈值时判失败；无更早边界时单向最大增长距离 `50m`。
-- E：`single_sided_t_mouth` 不得进入对向 `Road / semantic Node / lane / main corridor`；但当前语义路口关联 road 及其二度衔接 road 不得被误判为 opposite。`RCSDRoad` 只能在 opposite `SWSD road` 证据不足或偏出路面时，作为 near-corridor proxy 补充，不得按 opposite side 全量 `RCSDRoad` 直接主导硬阻断。
+- E：`single_sided_t_mouth` 不得进入对向 `Road / semantic Node / lane / main corridor`；但当前语义路口关联 road 及其二度衔接 road 不得被误判为 opposite。`RCSDRoad` 只能在 opposite `SWSD road` 证据不足或偏出路面时，作为 near-corridor proxy 补充，不得按 opposite side 全量 `RCSDRoad` 直接主导硬阻断；若某个 `RCSDRoad` proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress，不得写入 `opposite_corridor_buffer`。
 - F：若某个 case 只能依赖 `cleanup / trim` 才满足边界，则 `Step3` 未成立。
 - G：任何放大都只能在 `A-F` 满足后进行，不得先放大再补救越界。
 - H：旧 `10m` 正式口径取消，统一采用“无更早边界时单向 `50m`”。

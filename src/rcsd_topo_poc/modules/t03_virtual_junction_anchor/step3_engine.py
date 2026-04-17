@@ -38,6 +38,7 @@ OPPOSITE_RC_ROAD_MAX_SWSD_GAP_M = 10.0
 OPPOSITE_RC_ROAD_MAX_REFERENCE_DISTANCE_M = 35.0
 OPPOSITE_RC_ROAD_MIN_DIRECTION_SIM = 0.85
 OPPOSITE_RC_NODE_MAX_CORRIDOR_DISTANCE_M = 10.0
+OPPOSITE_RC_ROAD_MAX_PROTECTED_OVERLAP_M = 3.0
 DIRECTION_MODE = "t02_direction_plus_bidirectional_junction_trace"
 
 
@@ -584,11 +585,13 @@ def _filter_opposite_rc_road_ids(
     *,
     excluded_opposite_road_ids: set[str],
     candidate_rc_road_ids: set[str],
+    protected_road_ids: set[str],
 ) -> set[str]:
     if not excluded_opposite_road_ids or not candidate_rc_road_ids:
         return set()
     reference = _point_like(context.representative_node.geometry)
     opposite_roads = [road for road in context.roads if road.road_id in excluded_opposite_road_ids]
+    protected_roads = [road for road in context.roads if road.road_id in protected_road_ids]
     if not opposite_roads:
         return set()
     kept: set[str] = set()
@@ -609,6 +612,19 @@ def _filter_opposite_rc_road_ids(
             elif abs(distance - best_distance) <= 1e-6 and similarity > best_similarity:
                 best_similarity = similarity
         if best_distance <= OPPOSITE_RC_ROAD_MAX_SWSD_GAP_M and best_similarity >= OPPOSITE_RC_ROAD_MIN_DIRECTION_SIM:
+            blocker_mask = _clean_geometry(
+                rc_road.geometry.buffer(NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2).intersection(context.drivezone_geometry)
+            )
+            if blocker_mask is None:
+                continue
+            max_protected_overlap = 0.0
+            for protected_road in protected_roads:
+                overlap = protected_road.geometry.intersection(blocker_mask)
+                max_protected_overlap = max(max_protected_overlap, float(getattr(overlap, "length", 0.0)))
+            # RCSD corridor proxy can补SWSD缺口, but it must not materialize as a hard blocker
+            # when it still rides on the current junction branch / second-degree protected roads.
+            if max_protected_overlap > OPPOSITE_RC_ROAD_MAX_PROTECTED_OVERLAP_M:
+                continue
             kept.add(rc_road.road_id)
     return kept
 
@@ -1089,6 +1105,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             context,
             excluded_opposite_road_ids=excluded_opposite_road_ids,
             candidate_rc_road_ids=candidate_opposite_rc_road_ids,
+            protected_road_ids=junction_related_road_ids,
         )
         excluded_opposite_rc_node_ids = _filter_opposite_rc_node_ids(
             context,

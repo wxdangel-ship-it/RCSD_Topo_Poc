@@ -84,3 +84,34 @@ def test_rule_e_keeps_junction_related_and_second_degree_roads_out_of_opposite(t
     assert "road_second_degree" not in audit_doc["excluded_road_ids"]
     assert "road_target" not in masked_road_ids
     assert "road_second_degree" not in masked_road_ids
+
+
+def test_rule_e_suppresses_rcsd_proxy_when_it_overlaps_current_branch(tmp_path: Path) -> None:
+    suite_root = tmp_path / "suite"
+    case_id = "100003"
+    write_case_package(
+        suite_root / case_id,
+        case_id,
+        kind_2=2048,
+        roads=[
+            road_feature("road_target_east", case_id, "110001", [(0.0, 0.0), (25.0, 0.0)], direction=2),
+            road_feature("road_target_west", "120001", case_id, [(-25.0, 0.0), (0.0, 0.0)], direction=2),
+            road_feature("road_opposite", "200001", "200002", [(-15.0, -10.0), (-45.0, -10.0)], direction=2),
+        ],
+        extra_nodes=[
+            node_feature("110001", 25.0, 0.0, mainnodeid="110001"),
+            node_feature("120001", -25.0, 0.0, mainnodeid="120001"),
+            node_feature("200001", -15.0, -10.0, mainnodeid="200001"),
+            node_feature("200002", -45.0, -10.0, mainnodeid="200002"),
+        ],
+        rcsd_roads=[
+            road_feature("corridor_overlap_current", "r1", "r2", [(-20.0, 0.0), (20.0, 0.0)], direction=2),
+            road_feature("corridor_true_opposite", "r3", "r4", [(-15.0, -10.0), (-45.0, -10.0)], direction=2),
+        ],
+    )
+
+    _context, _template_result, case_result = run_case_bundle(suite_root, case_id)
+    audit_doc = case_result.audit_doc
+
+    assert "corridor_overlap_current" not in audit_doc["opposite_rcsdroad_ids"]
+    assert set(audit_doc["selected_road_ids"]) >= {"road_target_east", "road_target_west"}

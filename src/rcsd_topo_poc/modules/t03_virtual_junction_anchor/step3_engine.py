@@ -40,6 +40,51 @@ OPPOSITE_RC_ROAD_MAX_PROTECTED_OVERLAP_M = 3.0
 DIRECTION_MODE = "t02_direction_plus_bidirectional_junction_trace"
 
 
+def _rule_d_fallback_fields(*, growth_limits: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    fallback_applied = any(bool(item.get("cap_hit")) for item in (growth_limits or []))
+    return {
+        "rule_d_fallback_applied": fallback_applied,
+        "rule_d_fallback_distance_m": STEP3_DISTANCE_CAP_M if fallback_applied else None,
+        "rule_d_fallback_reason": "no_earlier_boundary_found" if fallback_applied else None,
+    }
+
+
+def _two_node_t_bridge_closeout_defaults() -> dict[str, Any]:
+    return {
+        "two_node_t_bridge_applied": False,
+        "two_node_t_bridge_length_m": 0.0,
+        "two_node_t_bridge_inside_drivezone_length_m": 0.0,
+        "two_node_t_bridge_clipped_to_drivezone": False,
+        "two_node_t_bridge_blocked": False,
+        "two_node_t_bridge_reason": "not_applicable",
+        "double_node_bridge_in_allowed_space": False,
+    }
+
+
+def _shared_two_in_two_out_closeout_fields(shared_two_in_two_out: dict[str, Any] | None = None) -> dict[str, Any]:
+    shared_two_in_two_out = shared_two_in_two_out or {}
+    return {
+        "shared_two_in_two_out_node_detected": bool(shared_two_in_two_out.get("detected", False)),
+        "shared_two_in_two_out_node_id": shared_two_in_two_out.get("node_id"),
+        "shared_two_in_two_out_as_through_node": bool(shared_two_in_two_out.get("as_through_node", False)),
+        "frontier_interruption_skipped_by_two_in_two_out": bool(
+            shared_two_in_two_out.get("frontier_interruption_skipped", False)
+        ),
+        "through_node_shared_2in2out": bool(shared_two_in_two_out.get("as_through_node", False)),
+        "through_node_break_suppressed": bool(shared_two_in_two_out.get("frontier_interruption_skipped", False)),
+    }
+
+
+def _rule_a_target_core_protection_fields(adjacent_suppressed_records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "suppressed_count": len(adjacent_suppressed_records),
+        "target_core_protection_applied": bool(adjacent_suppressed_records),
+        "target_core_protection_reason": (
+            "target_core_or_bridge_overlap" if adjacent_suppressed_records else None
+        ),
+    }
+
+
 def _clean_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
     if geometry is None or geometry.is_empty:
         return None
@@ -1191,6 +1236,9 @@ def _empty_audit_doc(
     opposite_side_guard_mode: str = "not_applicable",
     corridor_guard_status: str = "not_applicable",
 ) -> dict[str, Any]:
+    rule_d_fallback_fields = _rule_d_fallback_fields()
+    two_node_t_bridge_fields = _two_node_t_bridge_closeout_defaults()
+    shared_two_in_two_out_fields = _shared_two_in_two_out_closeout_fields()
     return {
         "input_gate": input_gate,
         "rules": {key: {"passed": False, "reason": reason} for key in "ABCDEFGH"},
@@ -1198,9 +1246,7 @@ def _empty_audit_doc(
         "foreign_object_masks": [],
         "foreign_mst_masks": [],
         "growth_limits": [],
-        "rule_d_fallback_applied": False,
-        "rule_d_fallback_distance_m": None,
-        "rule_d_fallback_reason": None,
+        **rule_d_fallback_fields,
         "cleanup_dependency": False,
         "must_cover_result": {
             "covered_node_ids": [],
@@ -1225,21 +1271,15 @@ def _empty_audit_doc(
         "cleanup_preview_passed": False,
         "rescue_reason": None,
         "adjacent_junction_cut_suppressed": [],
+        "adjacent_junction_cut_protection_applied": False,
+        "adjacent_junction_cut_protection_reason": None,
         "allowed_area_m2": 0.0,
         "allowed_inside_drivezone_area_m2": 0.0,
         "allowed_outside_drivezone_area_m2": 0.0,
         "allowed_outside_drivezone_ratio": 0.0,
         "drivezone_containment_passed": False,
-        "two_node_t_bridge_applied": False,
-        "two_node_t_bridge_length_m": 0.0,
-        "two_node_t_bridge_inside_drivezone_length_m": 0.0,
-        "two_node_t_bridge_clipped_to_drivezone": False,
-        "two_node_t_bridge_blocked": False,
-        "two_node_t_bridge_reason": "not_applicable",
-        "shared_two_in_two_out_node_detected": False,
-        "shared_two_in_two_out_node_id": None,
-        "shared_two_in_two_out_as_through_node": False,
-        "frontier_interruption_skipped_by_two_in_two_out": False,
+        **two_node_t_bridge_fields,
+        **shared_two_in_two_out_fields,
     }
 
 
@@ -1252,6 +1292,9 @@ def _status_for_unsupported_template(context: Step1Context, template_result: Ste
         "is_anchor": context.representative_node.is_anchor,
     }
     audit_doc = _empty_audit_doc(context, reason=reason, input_gate=input_gate)
+    rule_d_fallback_fields = _rule_d_fallback_fields()
+    two_node_t_bridge_fields = _two_node_t_bridge_closeout_defaults()
+    shared_two_in_two_out_fields = _shared_two_in_two_out_closeout_fields()
     return Step3CaseResult(
         case_id=context.case_spec.case_id,
         template_class=template_result.template_class,
@@ -1274,24 +1317,15 @@ def _status_for_unsupported_template(context: Step1Context, template_result: Ste
             "excluded_road_ids": [],
             "blocked_direction_reasons": [],
             "cleanup_dependency": False,
-            "rule_d_fallback_applied": False,
-            "rule_d_fallback_distance_m": None,
-            "rule_d_fallback_reason": None,
+            "direction_mode": DIRECTION_MODE,
+            **rule_d_fallback_fields,
             "allowed_area_m2": 0.0,
             "allowed_inside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_ratio": 0.0,
             "drivezone_containment_passed": False,
-            "two_node_t_bridge_applied": False,
-            "two_node_t_bridge_length_m": 0.0,
-            "two_node_t_bridge_inside_drivezone_length_m": 0.0,
-            "two_node_t_bridge_clipped_to_drivezone": False,
-            "two_node_t_bridge_blocked": False,
-            "two_node_t_bridge_reason": "not_applicable",
-            "shared_two_in_two_out_node_detected": False,
-            "shared_two_in_two_out_node_id": None,
-            "shared_two_in_two_out_as_through_node": False,
-            "frontier_interruption_skipped_by_two_in_two_out": False,
+            **two_node_t_bridge_fields,
+            **shared_two_in_two_out_fields,
         },
     )
 
@@ -1304,6 +1338,9 @@ def _status_for_input_gate_failure(
 ) -> Step3CaseResult:
     reason = "input_gate_failed"
     audit_doc = _empty_audit_doc(context, reason=reason, input_gate=input_gate)
+    rule_d_fallback_fields = _rule_d_fallback_fields()
+    two_node_t_bridge_fields = _two_node_t_bridge_closeout_defaults()
+    shared_two_in_two_out_fields = _shared_two_in_two_out_closeout_fields()
     return Step3CaseResult(
         case_id=context.case_spec.case_id,
         template_class=template_result.template_class,
@@ -1326,24 +1363,15 @@ def _status_for_input_gate_failure(
             "excluded_road_ids": [],
             "blocked_direction_reasons": [],
             "cleanup_dependency": False,
-            "rule_d_fallback_applied": False,
-            "rule_d_fallback_distance_m": None,
-            "rule_d_fallback_reason": None,
+            "direction_mode": DIRECTION_MODE,
+            **rule_d_fallback_fields,
             "allowed_area_m2": 0.0,
             "allowed_inside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_ratio": 0.0,
             "drivezone_containment_passed": False,
-            "two_node_t_bridge_applied": False,
-            "two_node_t_bridge_length_m": 0.0,
-            "two_node_t_bridge_inside_drivezone_length_m": 0.0,
-            "two_node_t_bridge_clipped_to_drivezone": False,
-            "two_node_t_bridge_blocked": False,
-            "two_node_t_bridge_reason": "not_applicable",
-            "shared_two_in_two_out_node_detected": False,
-            "shared_two_in_two_out_node_id": None,
-            "shared_two_in_two_out_as_through_node": False,
-            "frontier_interruption_skipped_by_two_in_two_out": False,
+            **two_node_t_bridge_fields,
+            **shared_two_in_two_out_fields,
         },
     )
 
@@ -1380,7 +1408,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         and shared_two_in_two_out["node_id"] is not None
         else set()
     )
-    bridge_protection_geometry, bridge_preview_fields = _build_two_node_t_bridge_support(
+    bridge_protection_geometry, _bridge_preview_fields = _build_two_node_t_bridge_support(
         context,
         blocker_geometry=None,
     )
@@ -1526,7 +1554,9 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         and not cleanup_preview_intrusion
         and not cleanup_preview_missing_node_ids
     )
-    rule_d_fallback_applied = any(bool(item["cap_hit"]) for item in growth_limits)
+    rule_d_fallback_fields = _rule_d_fallback_fields(growth_limits=growth_limits)
+    rule_a_protection_fields = _rule_a_target_core_protection_fields(adjacent_suppressed_records)
+    shared_two_in_two_out_fields = _shared_two_in_two_out_closeout_fields(shared_two_in_two_out)
     cleanup_dependency = (not hard_path_passed) and cleanup_preview_passed
     opposite_side_intrusion = bool(selected_road_ids & excluded_opposite_road_ids)
     e_intrusion = _has_negative_intrusion(hard_path_geometry, e_geometry)
@@ -1556,7 +1586,11 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
 
     blocked_direction_reasons = sorted({item["reason"] for item in blocked_directions})
     rules = {
-        "A": {"passed": True, "count": len(adjacent_records), "suppressed_count": len(adjacent_suppressed_records)},
+        "A": {
+            "passed": True,
+            "count": len(adjacent_records),
+            **rule_a_protection_fields,
+        },
         "B": {"passed": True, "count": len(b_records), "node_fallback_used": node_fallback_used},
         "C": {"passed": True, "count": len(foreign_mst_records)},
         "D": {
@@ -1567,9 +1601,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
                 and not opposite_side_intrusion
             ),
             "growth_limit_count": len(growth_limits),
-            "rule_d_fallback_applied": rule_d_fallback_applied,
-            "rule_d_fallback_distance_m": STEP3_DISTANCE_CAP_M if rule_d_fallback_applied else None,
-            "rule_d_fallback_reason": "no_earlier_boundary_found" if rule_d_fallback_applied else None,
+            **rule_d_fallback_fields,
             "direction_mode": DIRECTION_MODE,
             **drivezone_metrics,
         },
@@ -1606,9 +1638,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "foreign_object_masks": foreign_object_records,
         "foreign_mst_masks": foreign_mst_records,
         "growth_limits": growth_limits,
-        "rule_d_fallback_applied": rule_d_fallback_applied,
-        "rule_d_fallback_distance_m": STEP3_DISTANCE_CAP_M if rule_d_fallback_applied else None,
-        "rule_d_fallback_reason": "no_earlier_boundary_found" if rule_d_fallback_applied else None,
+        **rule_d_fallback_fields,
         "cleanup_dependency": cleanup_dependency,
         "must_cover_result": {
             "covered_node_ids": covered_node_ids,
@@ -1634,11 +1664,10 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "hard_path_passed": hard_path_passed,
         "cleanup_preview_passed": cleanup_preview_passed,
         "rescue_reason": "post_difference_preview_only" if cleanup_dependency else None,
+        "adjacent_junction_cut_protection_applied": rule_a_protection_fields["target_core_protection_applied"],
+        "adjacent_junction_cut_protection_reason": rule_a_protection_fields["target_core_protection_reason"],
         **bridge_hard_fields,
-        "shared_two_in_two_out_node_detected": shared_two_in_two_out["detected"],
-        "shared_two_in_two_out_node_id": shared_two_in_two_out["node_id"],
-        "shared_two_in_two_out_as_through_node": shared_two_in_two_out["as_through_node"],
-        "frontier_interruption_skipped_by_two_in_two_out": shared_two_in_two_out["frontier_interruption_skipped"],
+        **shared_two_in_two_out_fields,
         **drivezone_metrics,
     }
     key_metrics = {
@@ -1651,9 +1680,9 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "review_signal_count": len(review_signals),
         "cleanup_dependency": cleanup_dependency,
         "blocked_direction_count": len(blocked_directions),
-        "rule_d_fallback_applied": rule_d_fallback_applied,
+        "rule_d_fallback_applied": rule_d_fallback_fields["rule_d_fallback_applied"],
         "two_node_t_bridge_applied": bridge_hard_fields["two_node_t_bridge_applied"],
-        "shared_two_in_two_out_as_through_node": shared_two_in_two_out["as_through_node"],
+        "shared_two_in_two_out_as_through_node": shared_two_in_two_out_fields["shared_two_in_two_out_as_through_node"],
         **drivezone_metrics,
     }
     visual_review_class = _review_visual_class(step3_state, review_signals, reason)
@@ -1688,14 +1717,10 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             "excluded_road_ids": sorted(excluded_opposite_road_ids),
             "blocked_direction_reasons": blocked_direction_reasons,
             "cleanup_dependency": cleanup_dependency,
-            "rule_d_fallback_applied": rule_d_fallback_applied,
-            "rule_d_fallback_distance_m": STEP3_DISTANCE_CAP_M if rule_d_fallback_applied else None,
-            "rule_d_fallback_reason": "no_earlier_boundary_found" if rule_d_fallback_applied else None,
+            "direction_mode": DIRECTION_MODE,
+            **rule_d_fallback_fields,
             **bridge_hard_fields,
-            "shared_two_in_two_out_node_detected": shared_two_in_two_out["detected"],
-            "shared_two_in_two_out_node_id": shared_two_in_two_out["node_id"],
-            "shared_two_in_two_out_as_through_node": shared_two_in_two_out["as_through_node"],
-            "frontier_interruption_skipped_by_two_in_two_out": shared_two_in_two_out["frontier_interruption_skipped"],
+            **shared_two_in_two_out_fields,
             **drivezone_metrics,
             "visual_review_class": visual_review_class,
             "root_cause_layer": _root_cause_layer(step3_state),

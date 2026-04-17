@@ -97,11 +97,23 @@
   - `rule_d_fallback_applied`
   - `rule_d_fallback_distance_m`
   - `rule_d_fallback_reason`
+  - `direction_mode = t02_direction_plus_bidirectional_junction_trace`
   - `opposite_side_guard_mode`
   - `opposite_side_guard_note`
   - `double_node_bridge_in_allowed_space`
   - `through_node_shared_2in2out`
   - `through_node_break_suppressed`
+- closeout 轮的 `preflight.json / summary.json` 至少应能直接表达：
+  - `raw_case_count`
+  - `default_formal_case_count`
+  - `excluded_case_ids`
+  - `effective_case_ids`
+  - `missing_case_ids`
+  - `failed_case_ids`
+- `Rule A` 的相邻截断审计至少应能区分：
+  - 已 materialize 的 cut
+  - 被 suppress 的 cut
+  - suppress reason
 - 平铺目录必须无子目录，文件名固定为 `<case_id>__<state>.png`
 
 ## 4. EntryPoints
@@ -133,3 +145,4 @@ python3 -m rcsd_topo_poc t03-step3-legal-space --help
 4. `step3_review_flat/` 的 PNG 数量应与默认全量验收集规模一致，当前口径为 `58`
 5. `step3_state` 仅出现 `established / review / not_established`
 6. 未引入 `Step4/5/6/7` 或 cleanup/trim 作为 `Step3` 主通路
+7. 仓库内需保留一份轻量 closeout 文档，说明 `61 -> 默认 58` 的正式验收口径、run 证据与结论，作为 `_work` 结果不入库时的正式证据摘要

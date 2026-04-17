@@ -56,6 +56,14 @@ python3 -m rcsd_topo_poc t03-step3-legal-space \
 - 不允许把 `cleanup / trim / review_mode / stage4 聚合` 前置成 `Step3` 成立条件
 - 平铺 PNG 审查目录是正式交付物之一
 - Anchor 原始样本固定为 `61`；默认正式全量验收统计口径为排除 `922217 / 54265667 / 502058682` 后的 `58` 个 case，并会在 `preflight.json / summary.json` 记录 `excluded_case_ids`
+- 未传 `--case-id` 时，默认正式验收集按上述 `58` 个 case 运行；显式传入 `--case-id` 时，不应用默认排除集
+- `preflight.json / summary.json` 关闭 closeout 时至少应直接看到：
+  - `raw_case_count`
+  - `default_formal_case_count`
+  - `excluded_case_ids`
+  - `effective_case_ids`
+- `Rule D` 的 audit/status 命名统一为 `direction_mode = t02_direction_plus_bidirectional_junction_trace`
+- Step3 baseline closeout 证据见：`modules/t03_virtual_junction_anchor/architecture/04-step3-closeout.md`
 
 ## 6. Patch Round 操作者口径
 

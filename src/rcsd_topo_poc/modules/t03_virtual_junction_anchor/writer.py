@@ -118,7 +118,14 @@ def write_summary(
     rows: list[ReviewIndexRow],
     *,
     expected_case_ids: list[str],
+    raw_case_count: int,
+    default_formal_case_count: int,
+    effective_case_ids: list[str],
+    raw_case_ids: list[str] | None = None,
+    default_formal_case_ids: list[str] | None = None,
+    default_full_batch_excluded_case_ids: list[str] | None = None,
     excluded_case_ids: list[str] | None = None,
+    explicit_case_selection: bool = False,
     failed_case_ids: list[str],
     rerun_cleaned_before_write: bool,
 ) -> Path:
@@ -131,7 +138,11 @@ def write_summary(
         if flat_dir.is_dir()
         else 0
     )
+    raw_case_ids = _sorted_case_ids(list(raw_case_ids or []))
+    default_formal_case_ids = _sorted_case_ids(list(default_formal_case_ids or []))
+    default_full_batch_excluded_case_ids = _sorted_case_ids(list(default_full_batch_excluded_case_ids or []))
     expected_case_ids = _sorted_case_ids(list(expected_case_ids))
+    effective_case_ids = _sorted_case_ids(list(effective_case_ids))
     excluded_case_ids = _sorted_case_ids(list(excluded_case_ids or []))
     missing_case_ids = [
         case_id
@@ -144,7 +155,15 @@ def write_summary(
     tri_state_sum = step3_established_count + step3_review_count + step3_not_established_count
     summary = {
         "total_case_count": len(rows),
+        "raw_case_count": raw_case_count,
+        "raw_case_ids": raw_case_ids,
+        "default_formal_case_count": default_formal_case_count,
+        "default_formal_case_ids": default_formal_case_ids,
+        "formal_full_batch_case_count": default_formal_case_count,
+        "formal_full_batch_case_ids": default_formal_case_ids,
         "expected_case_count": len(expected_case_ids),
+        "effective_case_count": len(effective_case_ids),
+        "effective_case_ids": effective_case_ids,
         "actual_case_dir_count": len(actual_case_ids),
         "flat_png_count": flat_png_count,
         "step3_established_count": step3_established_count,
@@ -152,8 +171,13 @@ def write_summary(
         "step3_not_established_count": step3_not_established_count,
         "tri_state_sum": tri_state_sum,
         "tri_state_sum_matches_total": tri_state_sum == len(expected_case_ids),
+        "default_full_batch_excluded_case_count": len(default_full_batch_excluded_case_ids),
+        "default_full_batch_excluded_case_ids": default_full_batch_excluded_case_ids,
         "excluded_case_count": len(excluded_case_ids),
         "excluded_case_ids": excluded_case_ids,
+        "applied_excluded_case_count": len(excluded_case_ids),
+        "applied_excluded_case_ids": excluded_case_ids,
+        "explicit_case_selection": explicit_case_selection,
         "missing_case_ids": missing_case_ids,
         "failed_case_ids": _sorted_case_ids(list(failed_case_ids)),
         "rerun_cleaned_before_write": rerun_cleaned_before_write,
@@ -165,6 +189,11 @@ def write_summary(
         },
         "summary_semantics": {
             "primary_statistics": "established/review/not_established",
+            "acceptance_case_sets": {
+                "raw": "all discovered case-package directories under case_root",
+                "formal_full_batch": "raw cases minus default full-batch excluded cases",
+                "effective": "cases actually executed in this run after explicit selection and max_cases",
+            },
         },
     }
     output_path = run_root / "summary.json"

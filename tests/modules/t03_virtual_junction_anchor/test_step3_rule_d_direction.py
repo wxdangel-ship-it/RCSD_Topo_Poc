@@ -30,6 +30,7 @@ def test_rule_d_traces_junction_branch_bidirectionally_from_target(tmp_path: Pat
 
     assert case_result.audit_doc["direction_mode"] == "t02_direction_plus_bidirectional_junction_trace"
     assert case_result.audit_doc["rules"]["D"]["direction_mode"] == "t02_direction_plus_bidirectional_junction_trace"
+    assert case_result.extra_status_fields["direction_mode"] == "t02_direction_plus_bidirectional_junction_trace"
     assert "road_wrong_way" in case_result.audit_doc["selected_road_ids"]
     assert "road_downstream" not in case_result.audit_doc["selected_road_ids"]
     assert case_result.key_metrics["selected_road_count"] == 1
@@ -55,3 +56,9 @@ def test_rule_d_50m_cap_stays_in_audit_but_does_not_force_review(tmp_path: Path)
     assert "rule_d_50m_cap_used" not in case_result.review_signals
     assert any(item["cap_hit"] is True for item in case_result.audit_doc["growth_limits"])
     assert case_result.audit_doc["rules"]["D"]["growth_limit_count"] == len(case_result.audit_doc["growth_limits"])
+    assert case_result.audit_doc["rule_d_fallback_applied"] is True
+    assert case_result.audit_doc["rule_d_fallback_distance_m"] == 50.0
+    assert case_result.audit_doc["rule_d_fallback_reason"] == "no_earlier_boundary_found"
+    assert case_result.audit_doc["rules"]["D"]["rule_d_fallback_applied"] is True
+    assert case_result.audit_doc["rules"]["D"]["rule_d_fallback_distance_m"] == 50.0
+    assert case_result.audit_doc["rules"]["D"]["rule_d_fallback_reason"] == "no_earlier_boundary_found"

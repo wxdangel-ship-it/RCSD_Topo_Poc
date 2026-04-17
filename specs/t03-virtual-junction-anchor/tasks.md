@@ -20,3 +20,8 @@
 - [x] T018 为双 node `single_sided_t_mouth` 补充两条正式规则：bridge 进入 `allowed-space` 主通路、共享 `2进2出` through-node 不中断主通路
 - [x] T019 在 `INTERFACE_CONTRACT.md / spec.md` 中补充 `Rule D / Rule E` 建议审计字段，覆盖 fallback 与 double-node through-node 观测项
 - [x] T020 在 `README.md` 补齐 patch round 操作者口径，并重申原始 Anchor `61`、默认正式全量验收 `58` 与固定 `excluded_case_ids`
+- [x] T021 把默认正式全量验收集固化为 `58-case`，并在 `preflight.json / summary.json` 落盘 `raw_case_count / default_formal_case_count / excluded_case_ids / effective_case_ids`
+- [x] T022 统一 `Rule D direction_mode = t02_direction_plus_bidirectional_junction_trace`
+- [x] T023 把 Rule A target-core suppress 的 materialized/suppressed 审计字段正式落盘
+- [x] T024 补一份 repo 内 Step3 baseline closeout 文档
+- [x] T025 更新 Draft PR 为 Step3 baseline closeout 口径，并明确是否可作为 Step4 前置基线

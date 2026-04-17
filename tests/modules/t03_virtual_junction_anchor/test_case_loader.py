@@ -69,8 +69,12 @@ def test_case_loader_ignores_out_and_renders_dirs(tmp_path: Path) -> None:
     specs, preflight = load_case_specs(case_root=tmp_path)
 
     assert [spec.case_id for spec in specs] == ["100001"]
+    assert preflight["raw_case_count"] == 1
+    assert preflight["default_formal_case_count"] == 1
+    assert preflight["effective_case_count"] == 1
     assert preflight["selected_case_count"] == 1
     assert preflight["selected_case_ids"] == ["100001"]
+    assert preflight["effective_case_ids"] == ["100001"]
     assert all(row["case_id"] == "100001" for row in preflight["rows"])
     assert preflight["applied_excluded_case_ids"] == []
 
@@ -102,7 +106,11 @@ def test_case_loader_excludes_confirmed_input_gate_cases_from_default_full_batch
     specs, preflight = load_case_specs(case_root=tmp_path, exclude_case_ids=DEFAULT_FULL_BATCH_EXCLUDED_CASE_IDS)
 
     assert [spec.case_id for spec in specs] == ["100001"]
+    assert preflight["raw_case_count"] == 4
+    assert preflight["default_formal_case_count"] == 1
+    assert preflight["effective_case_count"] == 1
     assert preflight["selected_case_ids"] == ["100001"]
+    assert preflight["effective_case_ids"] == ["100001"]
     assert preflight["applied_excluded_case_ids"] == ["922217", "54265667", "502058682"]
 
 
@@ -117,4 +125,8 @@ def test_case_loader_keeps_explicitly_selected_excluded_case_available(tmp_path:
 
     assert [spec.case_id for spec in specs] == ["922217"]
     assert preflight["explicit_case_selection"] is True
+    assert preflight["raw_case_count"] == 1
+    assert preflight["default_formal_case_count"] == 0
+    assert preflight["effective_case_count"] == 1
+    assert preflight["effective_case_ids"] == ["922217"]
     assert preflight["applied_excluded_case_ids"] == []

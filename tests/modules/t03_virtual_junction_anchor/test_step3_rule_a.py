@@ -74,6 +74,14 @@ def test_rule_a_skips_cut_that_would_block_current_target_core(tmp_path: Path) -
     assert cut_road_ids == set()
     assert case_result.audit_doc["rules"]["A"]["count"] == 0
     assert case_result.audit_doc["rules"]["A"]["suppressed_count"] == 1
+    assert case_result.audit_doc["rules"]["A"]["target_core_protection_applied"] is True
+    assert case_result.audit_doc["rules"]["A"]["target_core_protection_reason"] == "target_core_or_bridge_overlap"
     assert case_result.audit_doc["adjacent_junction_cut_suppressed"][0]["road_id"] == "road_short_to_foreign"
+    assert case_result.audit_doc["adjacent_junction_cut_suppressed"][0]["suppress_reason"] in {
+        "overlaps_target_core_or_bridge",
+        "emptied_by_target_core_or_bridge_protection",
+    }
+    assert case_result.audit_doc["adjacent_junction_cut_protection_applied"] is True
+    assert case_result.audit_doc["adjacent_junction_cut_protection_reason"] == "target_core_or_bridge_overlap"
     assert case_result.key_metrics["selected_road_count"] == 1
     assert case_result.reason == "step3_established"

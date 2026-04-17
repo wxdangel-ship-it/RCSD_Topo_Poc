@@ -10,7 +10,7 @@
 ## 2. 本轮目标
 
 - 在独立模块 `t03_virtual_junction_anchor` 中，以 Anchor61 `case-package` 为正式输入契约，实现最小 `Step1/Step2` 支撑与完整 `Step3 legal space`。
-- 支持 `61` 个 case 的批量运行、case 级输出、平铺 PNG 审查目录、索引与汇总。
+- 支持原始 Anchor `61` 个 case 的批量运行、case 级输出、平铺 PNG 审查目录、索引与汇总；当前默认正式验收集按排除 `922217 / 54265667 / 502058682` 后的 `58` 个 case 统计。
 - 将 T03 固化为“只做到 Step3 的干净新基线”，为后续 `Step4-7` 留扩展位。
 - 本轮修复闭环聚焦 `Rule D / Rule E / Rule F / Rule G` 与 Anchor61 真实验收，不引入 `Step4-7` 语义。
 - `Rule D` 的最终 `allowed space` 必须满足 `DriveZone` containment；当不存在更早的稳定边界时，`50m fallback` 允许作为可成立路径，不自动进入 `review`，但必须保留 fallback 审计信息
@@ -42,6 +42,7 @@
 - B：同面无关对象负向掩膜；优先对 `foreign road / arm` 做 `1m` 缓冲，无法识别时退化为 node 小范围掩膜；当前语义路口 branch、直接关联 road 及其二度衔接 road 不得因“未进入 frontier”而被回灌为 foreign。node fallback 本身属于允许的正式边界手段，只在审计中留痕，不单独构成 `review`。
 - C：其他语义路口内部 node 的 MST 负向掩膜；MST 连线只保留道路面内部分，并做 `1m` 缓冲。
 - D：候选空间只能在 `DriveZone` 内沿合法方向增长，不得越过负向掩膜或非道路面；在当前语义路口关联 branch 上，进入路口与退出路口的 road 都属于可追溯的合法活动链，应双向追溯到下一个或上一个语义路口；最终 `allowed space` 必须回切 `DriveZone`；无更早稳定边界时，单向最大增长距离 `50m`，且该 fallback 允许直接成立，不自动提升为 `review`，只在审计中留痕。
+- 当前 `Rule D` 的正式 audit/status 命名统一为 `direction_mode = t02_direction_plus_bidirectional_junction_trace`。
 - 对 `single_sided_t_mouth`，方向歧义只在多个候选方向会导出实质不同的当前 branch / opposite branch 划分结果时才成立；若只是局部向量并列、但最终 road partition 等价，则不得单独提升为 `review`。
 - E：`single_sided_t_mouth` 当前定义为 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy` 表达，当前 baseline 不单独定义 lane 级对向护栏能力。当前语义路口关联 road 及其二度衔接 road 不得被误判为 opposite。`RCSDRoad` 只能在 opposite `SWSD road` 证据不足或偏出路面时，作为 near-corridor proxy 补充，不得按 opposite side 全量 `RCSDRoad` 直接主导硬阻断；若某个 `RCSDRoad` proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress，不得写入 `opposite_corridor_buffer`。对双 node `single_sided_t_mouth`，两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 作为 through-node 时不应中断主通路增长。
 - F：若某个 case 只能依赖 `cleanup / trim` 才满足边界，则 `Step3` 未成立。
@@ -79,7 +80,12 @@
 - `Rule D` 的 `outside_drivezone` 失败优先级高于普通 review signal；若最终 `allowed space` 越出 `DriveZone` 超阈值，case 不得仅作为普通 `review` 保留。
 - `Rule D` 的 `50m fallback` 若被使用，不单独构成 review signal；必须在 `step3_audit.json` 明确记录 fallback 原因、距离与是否启用。
 - `Rule E` 当前只承诺 `single_sided opposite-side guard baseline partial`；建议落盘字段使用中性表达，例如 `opposite_side_guard_mode / opposite_side_guard_note`，不得再把 lane 级护栏表述为当前能力、当前未完成项或当前验收阻塞。
-- 对双 node `single_sided_t_mouth` 建议补充审计字段：`double_node_bridge_in_allowed_space / through_node_shared_2in2out / through_node_break_suppressed`
+- closeout 轮至少应落盘：
+  - `rule_d_fallback_applied / rule_d_fallback_distance_m / rule_d_fallback_reason`
+  - `direction_mode`
+  - `opposite_side_guard_mode / opposite_side_guard_note`
+  - `double_node_bridge_in_allowed_space / through_node_shared_2in2out / through_node_break_suppressed`
+  - `adjacent_junction_cut_suppressed` 及其 `suppress_reason`
 
 ## 8. 验证
 
@@ -94,6 +100,12 @@
   - `excluded_case_ids == ["922217", "54265667", "502058682"]`
   - `missing_case_ids == []`
   - `failed_case_ids == []`
+- `preflight.json / summary.json` 应明确表达：
+  - `raw_case_count = 61`
+  - `default_formal_case_count = 58`
+  - `excluded_case_ids`
+  - `effective_case_ids`
+- 本轮 closeout 需在 repo 内补一份轻量证据文档，作为 `_work` 结果不入 Git 时的正式收口说明。
 
 ## 9. 非目标
 

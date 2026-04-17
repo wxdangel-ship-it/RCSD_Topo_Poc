@@ -121,10 +121,13 @@ def _build_case_result(case_id: str = "100001") -> Step3CaseResult:
             "two_node_t_bridge_clipped_to_drivezone": False,
             "two_node_t_bridge_blocked": False,
             "two_node_t_bridge_reason": "not_applicable",
+            "double_node_bridge_in_allowed_space": False,
             "shared_two_in_two_out_node_detected": False,
             "shared_two_in_two_out_node_id": None,
             "shared_two_in_two_out_as_through_node": False,
             "frontier_interruption_skipped_by_two_in_two_out": False,
+            "through_node_shared_2in2out": False,
+            "through_node_break_suppressed": False,
             "allowed_area_m2": 200.0,
             "allowed_inside_drivezone_area_m2": 200.0,
             "allowed_outside_drivezone_area_m2": 0.0,
@@ -141,6 +144,7 @@ def _build_case_result(case_id: str = "100001") -> Step3CaseResult:
             "excluded_road_ids": [],
             "blocked_direction_reasons": [],
             "cleanup_dependency": False,
+            "direction_mode": "t02_direction_plus_bidirectional_junction_trace",
             "rule_d_fallback_applied": False,
             "rule_d_fallback_distance_m": None,
             "rule_d_fallback_reason": None,
@@ -150,10 +154,13 @@ def _build_case_result(case_id: str = "100001") -> Step3CaseResult:
             "two_node_t_bridge_clipped_to_drivezone": False,
             "two_node_t_bridge_blocked": False,
             "two_node_t_bridge_reason": "not_applicable",
+            "double_node_bridge_in_allowed_space": False,
             "shared_two_in_two_out_node_detected": False,
             "shared_two_in_two_out_node_id": None,
             "shared_two_in_two_out_as_through_node": False,
             "frontier_interruption_skipped_by_two_in_two_out": False,
+            "through_node_shared_2in2out": False,
+            "through_node_break_suppressed": False,
             "allowed_area_m2": 200.0,
             "allowed_inside_drivezone_area_m2": 200.0,
             "allowed_outside_drivezone_area_m2": 0.0,
@@ -177,6 +184,9 @@ def test_output_writer_keeps_flat_dir_flat_and_fields_stable(tmp_path: Path) -> 
         run_root,
         [row],
         expected_case_ids=["100001"],
+        raw_case_count=1,
+        default_formal_case_count=1,
+        effective_case_ids=["100001"],
         failed_case_ids=[],
         rerun_cleaned_before_write=False,
     )
@@ -206,7 +216,11 @@ def test_output_writer_keeps_flat_dir_flat_and_fields_stable(tmp_path: Path) -> 
 
     summary_doc = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
     assert summary_doc["total_case_count"] == 1
+    assert summary_doc["raw_case_count"] == 1
+    assert summary_doc["default_formal_case_count"] == 1
     assert summary_doc["expected_case_count"] == 1
+    assert summary_doc["effective_case_count"] == 1
+    assert summary_doc["effective_case_ids"] == ["100001"]
     assert summary_doc["actual_case_dir_count"] == 1
     assert summary_doc["flat_png_count"] == 1
     assert summary_doc["step3_established_count"] == 1

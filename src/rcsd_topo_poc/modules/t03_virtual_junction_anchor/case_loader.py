@@ -76,6 +76,12 @@ def load_case_specs(
         if path.is_dir() and path.name not in {"out", "renders"}
     ]
     sorted_case_dirs = sorted(raw_case_dirs, key=lambda path: _stable_case_sort_key(path.name))
+    raw_case_ids = [path.name for path in sorted_case_dirs]
+    default_formal_case_ids = [
+        case_id
+        for case_id in raw_case_ids
+        if case_id not in default_excluded_case_ids
+    ]
 
     specs: list[CaseSpec] = []
     preflight_rows: list[dict[str, Any]] = []
@@ -121,15 +127,24 @@ def load_case_specs(
 
     preflight_doc = {
         "case_root": str(resolved_case_root),
+        "raw_case_count": len(raw_case_ids),
+        "raw_case_ids": raw_case_ids,
         "explicit_case_selection": explicit_case_selection,
         "default_full_batch_excluded_case_ids": sorted(
             default_excluded_case_ids,
             key=_stable_case_sort_key,
         ),
+        "default_formal_case_count": len(default_formal_case_ids),
+        "default_formal_case_ids": default_formal_case_ids,
+        "formal_full_batch_case_count": len(default_formal_case_ids),
+        "formal_full_batch_case_ids": default_formal_case_ids,
         "applied_excluded_case_ids": sorted(
             applied_excluded_case_ids,
             key=_stable_case_sort_key,
         ),
+        "applied_excluded_case_count": len(applied_excluded_case_ids),
+        "effective_case_count": len(specs),
+        "effective_case_ids": [spec.case_id for spec in specs],
         "selected_case_count": len(specs),
         "selected_case_ids": [spec.case_id for spec in specs],
         "rows": preflight_rows,

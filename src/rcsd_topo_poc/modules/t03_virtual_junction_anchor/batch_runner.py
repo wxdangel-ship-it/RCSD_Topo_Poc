@@ -32,10 +32,23 @@ def _preflight_doc(*, case_root: Path, out_root: Path, selected_case_ids: list[s
         "platform": platform.platform(),
         "case_root": str(case_root),
         "out_root": str(out_root),
+        "run_root": None,
+        "raw_case_count": case_loader_preflight.get("raw_case_count"),
+        "raw_case_ids": case_loader_preflight.get("raw_case_ids", []),
+        "default_formal_case_count": case_loader_preflight.get("default_formal_case_count"),
+        "default_formal_case_ids": case_loader_preflight.get("default_formal_case_ids", []),
+        "formal_full_batch_case_count": case_loader_preflight.get("formal_full_batch_case_count"),
+        "formal_full_batch_case_ids": case_loader_preflight.get("formal_full_batch_case_ids", []),
+        "explicit_case_selection": case_loader_preflight.get("explicit_case_selection", False),
         "selected_case_count": len(selected_case_ids),
         "selected_case_ids": selected_case_ids,
         "default_full_batch_excluded_case_ids": case_loader_preflight.get("default_full_batch_excluded_case_ids", []),
+        "default_full_batch_excluded_case_count": len(case_loader_preflight.get("default_full_batch_excluded_case_ids", [])),
         "applied_excluded_case_ids": case_loader_preflight.get("applied_excluded_case_ids", []),
+        "applied_excluded_case_count": case_loader_preflight.get("applied_excluded_case_count", 0),
+        "effective_case_count": case_loader_preflight.get("effective_case_count", len(selected_case_ids)),
+        "effective_case_ids": case_loader_preflight.get("effective_case_ids", selected_case_ids),
+        "formal_acceptance_scope": "explicit_case_selection" if case_loader_preflight.get("explicit_case_selection") else "default_full_batch",
         "loader_preflight": case_loader_preflight,
     }
 
@@ -79,6 +92,7 @@ def run_t03_step3_legal_space_batch(
         selected_case_ids=[spec.case_id for spec in specs],
         case_loader_preflight=loader_preflight,
     )
+    preflight["run_root"] = str(run_root)
     write_json(run_root / "preflight.json", preflight)
 
     review_rows: list[ReviewIndexRow] = []
@@ -112,7 +126,14 @@ def run_t03_step3_legal_space_batch(
         run_root,
         review_rows,
         expected_case_ids=[spec.case_id for spec in specs],
+        raw_case_count=loader_preflight.get("raw_case_count", len(specs)),
+        default_formal_case_count=loader_preflight.get("default_formal_case_count", len(specs)),
+        effective_case_ids=loader_preflight.get("effective_case_ids", [spec.case_id for spec in specs]),
+        raw_case_ids=loader_preflight.get("raw_case_ids", []),
+        default_formal_case_ids=loader_preflight.get("default_formal_case_ids", []),
+        default_full_batch_excluded_case_ids=loader_preflight.get("default_full_batch_excluded_case_ids", []),
         excluded_case_ids=loader_preflight.get("applied_excluded_case_ids", []),
+        explicit_case_selection=loader_preflight.get("explicit_case_selection", False),
         failed_case_ids=failed_case_ids,
         rerun_cleaned_before_write=rerun_cleaned_before_write,
     )

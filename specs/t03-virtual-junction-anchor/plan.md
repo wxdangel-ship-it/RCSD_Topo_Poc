@@ -40,3 +40,17 @@
 - 分支：`codex/t03-phasea-step3-legal-space`
 - 本轮以 repair closeout 为目标，建议 commit 只覆盖文档收口、规则修复、测试补强、验收结果更新
 - push 后更新现有 Draft PR 描述，明确本轮仍只做到 `Step3`
+
+## 6. Step3 Baseline Closeout Addendum
+
+- closeout 轮不再扩展几何算法，只收口默认正式验收、审计字段与证据文档。
+- 默认正式验收字段需要在 `preflight.json / summary.json` 直接落盘：
+  - `raw_case_count`
+  - `default_formal_case_count`
+  - `excluded_case_ids`
+  - `effective_case_ids`
+  - `missing_case_ids`
+  - `failed_case_ids`
+- 文档、代码、审计、测试统一使用 `direction_mode = t02_direction_plus_bidirectional_junction_trace`
+- Rule A closeout 要求：materialized cut / suppressed cut / suppress reason 在 audit 中可直接复核
+- 仓库内需新增一份 Step3 baseline closeout 文档，作为 `_work` 结果不入库时的正式证据摘要

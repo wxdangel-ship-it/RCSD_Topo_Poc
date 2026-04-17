@@ -85,9 +85,14 @@ def _resolve_representative_node(nodes: tuple[NodeRecord, ...], case_id: str) ->
 
 def _build_target_group(nodes: tuple[NodeRecord, ...], representative_node: NodeRecord, case_id: str) -> SemanticGroup:
     group_nodes = tuple(
-        node
-        for node in nodes
-        if node.mainnodeid is not None and node.mainnodeid == (representative_node.mainnodeid or case_id)
+        sorted(
+            (
+                node
+                for node in nodes
+                if node.mainnodeid is not None and node.mainnodeid == (representative_node.mainnodeid or case_id)
+            ),
+            key=lambda item: item.node_id,
+        )
     )
     if group_nodes:
         group_id = representative_node.mainnodeid or case_id
@@ -104,7 +109,7 @@ def _build_foreign_groups(nodes: tuple[NodeRecord, ...], target_group: SemanticG
         group_id = node.mainnodeid or node.node_id
         grouped[group_id].append(node)
     return tuple(
-        SemanticGroup(group_id=group_id, nodes=tuple(group_nodes))
+        SemanticGroup(group_id=group_id, nodes=tuple(sorted(group_nodes, key=lambda item: item.node_id)))
         for group_id, group_nodes in sorted(grouped.items(), key=lambda item: item[0])
     )
 

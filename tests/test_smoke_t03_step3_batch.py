@@ -93,7 +93,15 @@ def test_smoke_t03_step3_batch_writes_flat_review_outputs(tmp_path: Path) -> Non
 
     summary_doc = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
     assert summary_doc["total_case_count"] == 1
+    assert summary_doc["expected_case_count"] == 1
+    assert summary_doc["actual_case_dir_count"] == 1
+    assert summary_doc["flat_png_count"] == 1
     assert summary_doc["step3_established_count"] + summary_doc["step3_review_count"] + summary_doc["step3_not_established_count"] == 1
+    assert summary_doc["tri_state_sum"] == 1
+    assert summary_doc["tri_state_sum_matches_total"] is True
+    assert summary_doc["missing_case_ids"] == []
+    assert summary_doc["failed_case_ids"] == []
+    assert summary_doc["rerun_cleaned_before_write"] is False
     assert summary_doc["run_root"] == str(run_root)
     assert summary_doc["step3_review_flat_dir"] == str(flat_dir)
 

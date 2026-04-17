@@ -17,6 +17,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import (
     Step3NegativeMasks,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.writer import (
+    CASE_REQUIRED_OUTPUTS,
     REVIEW_INDEX_FIELDNAMES,
     write_case_outputs,
     write_review_index,
@@ -84,6 +85,7 @@ def _build_case_result(case_id: str = "100001") -> Step3CaseResult:
         ),
         key_metrics={"target_group_node_count": 1},
         audit_doc={
+            "input_gate": {"passed": True, "reason": None},
             "rules": {key: {"passed": True} for key in "ABCDEFGH"},
             "adjacent_junction_cuts": [],
             "foreign_object_masks": [],
@@ -93,10 +95,33 @@ def _build_case_result(case_id: str = "100001") -> Step3CaseResult:
             "must_cover_result": {"covered_node_ids": [case_id], "missing_node_ids": []},
             "blocked_directions": [],
             "review_signals": [],
+            "direction_mode": "directed_graph_from_t02_semantics",
+            "growth_order": "hard_bound_first",
+            "hard_bound_first": True,
+            "post_growth_safety_only": True,
+            "frontier_stop_reason": [],
+            "selected_road_ids": ["road_1"],
+            "excluded_road_ids": [],
+            "opposite_road_ids": [],
+            "opposite_semantic_node_ids": [],
+            "opposite_rcsdroad_ids": [],
+            "lane_guard_status": "not_applicable",
+            "corridor_guard_status": "not_applicable",
+            "proxy_note": None,
+            "hard_path_passed": True,
+            "cleanup_preview_passed": True,
+            "rescue_reason": None,
         },
         review_signals=(),
         blocked_directions=(),
         extra_status_fields={
+            "representative_node_id": case_id,
+            "target_group_node_ids": [case_id],
+            "foreign_group_ids": [],
+            "selected_road_ids": ["road_1"],
+            "excluded_road_ids": [],
+            "blocked_direction_reasons": [],
+            "cleanup_dependency": False,
             "visual_review_class": "V1 认可成功",
             "root_cause_layer": None,
             "root_cause_type": None,
@@ -111,16 +136,17 @@ def test_output_writer_keeps_flat_dir_flat_and_fields_stable(tmp_path: Path) -> 
 
     row = write_case_outputs(run_root=run_root, context=context, case_result=case_result)
     write_review_index(run_root, [row])
-    write_summary(run_root, [row])
+    write_summary(
+        run_root,
+        [row],
+        expected_case_ids=["100001"],
+        failed_case_ids=[],
+        rerun_cleaned_before_write=False,
+    )
 
     case_dir = run_root / "cases" / "100001"
-    assert (case_dir / "step3_allowed_space.gpkg").is_file()
-    assert (case_dir / "step3_negative_mask_adjacent_junction.gpkg").is_file()
-    assert (case_dir / "step3_negative_mask_foreign_objects.gpkg").is_file()
-    assert (case_dir / "step3_negative_mask_foreign_mst.gpkg").is_file()
-    assert (case_dir / "step3_status.json").is_file()
-    assert (case_dir / "step3_audit.json").is_file()
-    assert (case_dir / "step3_review.png").is_file()
+    for rel_path in CASE_REQUIRED_OUTPUTS:
+        assert (case_dir / rel_path).is_file()
 
     flat_dir = run_root / "step3_review_flat"
     flat_entries = list(flat_dir.iterdir())
@@ -143,9 +169,17 @@ def test_output_writer_keeps_flat_dir_flat_and_fields_stable(tmp_path: Path) -> 
 
     summary_doc = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
     assert summary_doc["total_case_count"] == 1
+    assert summary_doc["expected_case_count"] == 1
+    assert summary_doc["actual_case_dir_count"] == 1
+    assert summary_doc["flat_png_count"] == 1
     assert summary_doc["step3_established_count"] == 1
     assert summary_doc["step3_review_count"] == 0
     assert summary_doc["step3_not_established_count"] == 0
+    assert summary_doc["tri_state_sum"] == 1
+    assert summary_doc["tri_state_sum_matches_total"] is True
+    assert summary_doc["missing_case_ids"] == []
+    assert summary_doc["failed_case_ids"] == []
+    assert summary_doc["rerun_cleaned_before_write"] is False
     assert summary_doc["run_root"] == str(run_root)
     assert summary_doc["step3_review_flat_dir"] == str(flat_dir)
 

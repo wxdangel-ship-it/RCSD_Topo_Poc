@@ -115,10 +115,10 @@ def _road_feature(*, road_id: str, snodeid: str, enodeid: str, coords: list[tupl
             "200001",
             4,
             [],
-            "review",
-            "rule_b_node_fallback",
-            "step3",
-            "V2",
+            "established",
+            "step3_established",
+            None,
+            "V1",
         ),
         (
             "300001",
@@ -177,7 +177,6 @@ def test_step3_state_mapping(
     assert str(result.visual_review_class).startswith(expected_visual_prefix)
 
     if expected_state == "review":
-        assert "rule_b_node_fallback" in result.audit_doc["review_signals"]
         assert result.audit_doc["rules"]["D"]["passed"] is True
     elif expected_state == "established":
         assert result.audit_doc["review_signals"] == []

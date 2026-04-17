@@ -1348,9 +1348,6 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         protected_road_ids=junction_related_road_ids,
         protected_group_ids=protected_group_ids,
     )
-    if node_fallback_used:
-        review_signals.append("rule_b_node_fallback")
-
     foreign_object_geometry = _clean_geometry(unary_union([geometry for geometry in (e_geometry, b_geometry) if geometry is not None]))
     foreign_object_records = [*e_records, *b_records]
     blocker_union = _clean_geometry(
@@ -1427,9 +1424,6 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     cleanup_dependency = (not hard_path_passed) and cleanup_preview_passed
     opposite_side_intrusion = bool(selected_road_ids & excluded_opposite_road_ids)
     e_intrusion = _has_negative_intrusion(hard_path_geometry, e_geometry)
-    if cleanup_dependency:
-        review_signals = [signal for signal in review_signals if signal != "rule_b_node_fallback"]
-
     reason = "step3_established"
     step3_state = "established"
     if cleanup_dependency:

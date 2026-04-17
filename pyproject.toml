@@ -10,6 +10,7 @@ dependencies = [
   "fiona>=1.9,<2",
   "ijson>=3.4,<4",
   "numpy>=1.26,<3",
+  "Pillow>=10,<12",
   "pyproj>=3.6,<3.7",
   "pyshp>=3.0",
   "shapely>=2.0,<3",

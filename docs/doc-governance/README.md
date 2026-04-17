@@ -36,6 +36,7 @@
 - Active 正式业务模块：
   - `t01_data_preprocess`
   - `t02_junction_anchor`
+  - `t03_virtual_junction_anchor`
 - Support Retained：
   - `t00_utility_toolbox`
 - 模板目录：
@@ -46,6 +47,7 @@
 - `_template` 仅用于后续模块启动，不属于业务模块生命周期盘点对象。
 - `t00_utility_toolbox` 纳入治理，但定位为工具集合模块 / 非业务生产模块。
 - `t02_junction_anchor` 当前仍是 Active 模块；其模块正文若处于独立重构中，应以该轮任务边界为准，不在其它治理轮次中顺手改写。
+- `t03_virtual_junction_anchor` 当前进入 Active 模块集合；其正式范围只到 `Phase A / Step3 legal-space baseline only`。
 - 未在模块生命周期文档中登记的模块目录，不自动视为当前正式治理对象。
 
 ## 哪些文档不是主入口

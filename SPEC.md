@@ -20,6 +20,7 @@
 - `src/`、`modules/`、`tests/`、`tools/` 的基础边界
 - 当前已登记正式业务模块 `t01_data_preprocess`
 - 当前已登记正式业务模块 `t02_junction_anchor`
+- 当前已登记正式业务模块 `t03_virtual_junction_anchor`
 - 当前已纳入治理的工具集合模块 `t00_utility_toolbox`
 
 当前原则是优先复用 `Highway_Topo_Poc` 中已经验证有效的仓库骨架、治理方式与协作约束，但不迁移任何高速场景业务模块实现。
@@ -39,6 +40,7 @@
 - 让 `t00_utility_toolbox` 维持工具集合模块 / 非业务生产模块边界
 - 让 `t01_data_preprocess` 的 accepted baseline、官方入口与 freeze compare 口径保持一致
 - 让 `t02_junction_anchor` 的项目级登记状态与仓库级入口事实保持一致
+- 让 `t03_virtual_junction_anchor` 的 Phase A / Step3 legal-space baseline 与仓库级入口事实保持一致
 
 ### 2.2 当前阶段明确不做
 
@@ -60,6 +62,7 @@
 - `t00_utility_toolbox` 作为工具集合模块的治理与固定脚本入口
 - 已登记正式模块 `t01_data_preprocess` 的 accepted baseline、official end-to-end 与 freeze compare
 - 已登记正式模块 `t02_junction_anchor` 的项目级登记状态与仓库级入口索引
+- 已登记正式模块 `t03_virtual_junction_anchor` 的 Phase A / Step3 legal-space baseline、批量审查产物与入口索引
 
 ### 3.2 当前非目标（不包含）
 
@@ -179,8 +182,9 @@
 ## 9. 当前结论
 
 - RCSD 当前已从纯骨架阶段进入“工程治理 + 正式业务模块并行”阶段。
-- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`。
+- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`。
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`，其定位为非业务生产模块。
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小闭环。
 - `t02_junction_anchor` 当前仍是 Active 正式业务模块；其模块正文可在独立轮次中维护，但项目级登记与仓库级入口必须保持一致。
+- `t03_virtual_junction_anchor` 当前作为 Active 正式业务模块启动；当前正式范围只到 `Phase A / Step3 legal-space baseline only`。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

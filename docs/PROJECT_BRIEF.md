@@ -22,6 +22,7 @@
 - 维护当前已纳入治理的 `t00_utility_toolbox`
 - 维护当前已登记正式模块 `t01_data_preprocess`
 - 维护当前已登记正式模块 `t02_junction_anchor`
+- 维护当前已登记正式模块 `t03_virtual_junction_anchor`
 
 ## 3. 当前非目标
 
@@ -31,11 +32,12 @@
 
 ## 4. 当前结构性结论
 
-- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`
+- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`
 - `t00_utility_toolbox` 的定位是工具集合模块 / 非业务生产模块
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小实现闭环
 - `t02_junction_anchor` 当前仍为 Active 正式业务模块；模块正文如在独立重构中，应在独立轮次中维护
+- `t03_virtual_junction_anchor` 当前仍为 Active 正式业务模块；正式范围只到 Phase A / Step3 legal-space baseline only
 - `_template` 仅是模板目录，不属于模块生命周期盘点对象
 - 模块根目录不放 `SKILL.md`
 - 标准 Skill 统一放 repo root `.agents/skills/`

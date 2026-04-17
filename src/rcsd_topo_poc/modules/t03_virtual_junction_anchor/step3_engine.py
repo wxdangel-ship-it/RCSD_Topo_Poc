@@ -276,6 +276,87 @@ def _build_node_to_roads(roads: tuple[RoadRecord, ...]) -> dict[str, list[RoadRe
     return mapping
 
 
+def _node_flow_counts(node_id: str, roads: tuple[RoadRecord, ...]) -> tuple[int, int]:
+    incoming = 0
+    outgoing = 0
+    for road in roads:
+        if road.snodeid != node_id and road.enodeid != node_id:
+            continue
+        if road.direction in {0, 1}:
+            incoming += 1
+            outgoing += 1
+            continue
+        if road.direction == 2:
+            if road.snodeid == node_id:
+                outgoing += 1
+            if road.enodeid == node_id:
+                incoming += 1
+            continue
+        if road.direction == 3:
+            if road.snodeid == node_id:
+                incoming += 1
+            if road.enodeid == node_id:
+                outgoing += 1
+    return incoming, outgoing
+
+
+def _detect_shared_two_in_two_out_node(context: Step1Context) -> dict[str, Any]:
+    target_nodes = tuple(sorted(context.target_group.nodes, key=lambda item: item.node_id))
+    if len(target_nodes) != 2:
+        return {
+            "detected": False,
+            "node_id": None,
+            "as_through_node": False,
+            "frontier_interruption_skipped": False,
+            "reason": "target_group_is_not_two_node",
+        }
+
+    target_node_ids = {node.node_id for node in target_nodes}
+    shared_candidates: dict[str, set[str]] = defaultdict(set)
+    for road in context.roads:
+        if road.road_id not in context.target_road_ids:
+            continue
+        if road.snodeid in target_node_ids and road.enodeid not in target_node_ids and road.enodeid is not None:
+            shared_candidates[road.enodeid].add(road.snodeid)
+        if road.enodeid in target_node_ids and road.snodeid not in target_node_ids and road.snodeid is not None:
+            shared_candidates[road.snodeid].add(road.enodeid)
+
+    valid_candidates: list[tuple[float, str]] = []
+    for node_id, touched_target_nodes in shared_candidates.items():
+        if len(touched_target_nodes) < 2:
+            continue
+        incoming, outgoing = _node_flow_counts(node_id, context.roads)
+        if incoming != 2 or outgoing != 2:
+            continue
+        node_geometry = None
+        for node in context.all_nodes:
+            if node.node_id == node_id:
+                node_geometry = _point_like(node.geometry)
+                break
+        if node_geometry is None:
+            continue
+        reference = _point_like(context.representative_node.geometry)
+        valid_candidates.append((reference.distance(node_geometry), node_id))
+
+    if not valid_candidates:
+        return {
+            "detected": False,
+            "node_id": None,
+            "as_through_node": False,
+            "frontier_interruption_skipped": False,
+            "reason": "shared_two_in_two_out_node_not_found",
+        }
+
+    valid_candidates.sort(key=lambda item: (item[0], item[1]))
+    return {
+        "detected": True,
+        "node_id": valid_candidates[0][1],
+        "as_through_node": True,
+        "frontier_interruption_skipped": True,
+        "reason": "shared_two_in_two_out_node_detected",
+    }
+
+
 def _other_endpoint(road: RoadRecord, node_id: str) -> tuple[str | None, str | None]:
     if road.snodeid == node_id:
         return road.enodeid, "end"
@@ -286,7 +367,10 @@ def _other_endpoint(road: RoadRecord, node_id: str) -> tuple[str | None, str | N
 
 def _build_branch_frontier(
     context: Step1Context,
+    *,
+    through_node_ids: set[str] | None = None,
 ) -> tuple[set[str], set[str], list[dict[str, Any]]]:
+    through_node_ids = through_node_ids or set()
     target_group_id = context.target_group.group_id
     target_node_ids = {node.node_id for node in context.target_group.nodes}
     node_group_lookup = _node_group_lookup(context)
@@ -308,6 +392,11 @@ def _build_branch_frontier(
             branch_frontier_road_ids.add(road.road_id)
             other_group_id = node_group_lookup.get(other_node_id)
             if other_group_id is None:
+                if other_node_id not in visited_nodes:
+                    visited_nodes.add(other_node_id)
+                    queue.append(other_node_id)
+                continue
+            if other_node_id in through_node_ids:
                 if other_node_id not in visited_nodes:
                     visited_nodes.add(other_node_id)
                     queue.append(other_node_id)
@@ -378,14 +467,20 @@ def _build_adjacent_junction_masks(
     context: Step1Context,
     *,
     adjacent_records: list[dict[str, Any]],
-) -> tuple[BaseGeometry | None, list[dict[str, Any]], set[str]]:
+    additional_protection_geometry: BaseGeometry | None = None,
+) -> tuple[BaseGeometry | None, list[dict[str, Any]], list[dict[str, Any]], set[str]]:
     geometries: list[BaseGeometry] = []
     road_lookup = {road.road_id: road for road in context.roads}
     target_protection = _clean_geometry(
         unary_union([node.geometry.buffer(NODE_BUFFER_M) for node in context.target_group.nodes])
     )
+    if target_protection is not None and additional_protection_geometry is not None:
+        target_protection = _extract_polygon_geometry(unary_union([target_protection, additional_protection_geometry]))
+    elif target_protection is None:
+        target_protection = additional_protection_geometry
     road_ids: set[str] = set()
     filtered_records: list[dict[str, Any]] = []
+    suppressed_records: list[dict[str, Any]] = []
     for record in adjacent_records:
         road = road_lookup.get(record["road_id"])
         if road is None:
@@ -401,14 +496,110 @@ def _build_adjacent_junction_masks(
             overlap = strip.intersection(target_protection)
             overlap_area = 0.0 if overlap.is_empty else float(getattr(overlap, "area", 0.0))
             if overlap_area > INTRUSION_AREA_TOLERANCE_M2:
+                suppressed_records.append(
+                    {
+                        **record,
+                        "suppress_reason": "overlaps_target_core_or_bridge",
+                        "overlap_area_m2": round(overlap_area, 6),
+                    }
+                )
                 continue
             strip = _clean_geometry(strip.difference(target_protection))
             if strip is None:
+                suppressed_records.append(
+                    {
+                        **record,
+                        "suppress_reason": "emptied_by_target_core_or_bridge_protection",
+                        "overlap_area_m2": round(overlap_area, 6),
+                    }
+                )
                 continue
         geometries.append(strip)
         road_ids.add(road.road_id)
         filtered_records.append(record)
-    return _clean_geometry(unary_union(geometries)) if geometries else None, filtered_records, road_ids
+    return _clean_geometry(unary_union(geometries)) if geometries else None, filtered_records, suppressed_records, road_ids
+
+
+def _build_two_node_t_bridge_support(
+    context: Step1Context,
+    *,
+    blocker_geometry: BaseGeometry | None,
+) -> tuple[BaseGeometry | None, dict[str, Any]]:
+    target_nodes = tuple(sorted(context.target_group.nodes, key=lambda item: item.node_id))
+    if len(target_nodes) != 2:
+        return None, {
+            "two_node_t_bridge_applied": False,
+            "two_node_t_bridge_length_m": 0.0,
+            "two_node_t_bridge_inside_drivezone_length_m": 0.0,
+            "two_node_t_bridge_clipped_to_drivezone": False,
+            "two_node_t_bridge_blocked": False,
+            "two_node_t_bridge_reason": "target_group_is_not_two_node",
+        }
+
+    start_point = _point_like(target_nodes[0].geometry)
+    end_point = _point_like(target_nodes[1].geometry)
+    raw_line = LineString([start_point, end_point])
+    bridge_length_m = float(raw_line.length)
+    if bridge_length_m <= 1e-6:
+        return None, {
+            "two_node_t_bridge_applied": False,
+            "two_node_t_bridge_length_m": 0.0,
+            "two_node_t_bridge_inside_drivezone_length_m": 0.0,
+            "two_node_t_bridge_clipped_to_drivezone": False,
+            "two_node_t_bridge_blocked": False,
+            "two_node_t_bridge_reason": "degenerate_target_nodes",
+        }
+
+    inside_drivezone_line = _extract_line_geometry(raw_line.intersection(context.drivezone_geometry))
+    inside_drivezone_length_m = 0.0 if inside_drivezone_line is None else float(inside_drivezone_line.length)
+    if inside_drivezone_line is None:
+        return None, {
+            "two_node_t_bridge_applied": False,
+            "two_node_t_bridge_length_m": round(bridge_length_m, 6),
+            "two_node_t_bridge_inside_drivezone_length_m": 0.0,
+            "two_node_t_bridge_clipped_to_drivezone": True,
+            "two_node_t_bridge_blocked": True,
+            "two_node_t_bridge_reason": "bridge_outside_drivezone",
+        }
+
+    hard_bound_line = _clip_line_to_hard_bounds(
+        inside_drivezone_line,
+        drivezone_geometry=context.drivezone_geometry,
+        blocker_geometry=blocker_geometry,
+    )
+    if hard_bound_line is None:
+        return None, {
+            "two_node_t_bridge_applied": False,
+            "two_node_t_bridge_length_m": round(bridge_length_m, 6),
+            "two_node_t_bridge_inside_drivezone_length_m": round(inside_drivezone_length_m, 6),
+            "two_node_t_bridge_clipped_to_drivezone": abs(inside_drivezone_length_m - bridge_length_m) > 1e-6,
+            "two_node_t_bridge_blocked": True,
+            "two_node_t_bridge_reason": "bridge_blocked_by_hard_bounds",
+        }
+
+    bridge_support = _extract_polygon_geometry(
+        hard_bound_line.buffer(ROAD_BUFFER_M, cap_style=2, join_style=2).intersection(context.drivezone_geometry)
+    )
+    if blocker_geometry is not None and bridge_support is not None:
+        bridge_support = _extract_polygon_geometry(bridge_support.difference(blocker_geometry))
+    if bridge_support is None:
+        return None, {
+            "two_node_t_bridge_applied": False,
+            "two_node_t_bridge_length_m": round(bridge_length_m, 6),
+            "two_node_t_bridge_inside_drivezone_length_m": round(inside_drivezone_length_m, 6),
+            "two_node_t_bridge_clipped_to_drivezone": abs(inside_drivezone_length_m - bridge_length_m) > 1e-6,
+            "two_node_t_bridge_blocked": True,
+            "two_node_t_bridge_reason": "bridge_buffer_clipped_to_empty",
+        }
+
+    return bridge_support, {
+        "two_node_t_bridge_applied": True,
+        "two_node_t_bridge_length_m": round(bridge_length_m, 6),
+        "two_node_t_bridge_inside_drivezone_length_m": round(inside_drivezone_length_m, 6),
+        "two_node_t_bridge_clipped_to_drivezone": abs(inside_drivezone_length_m - bridge_length_m) > 1e-6,
+        "two_node_t_bridge_blocked": False,
+        "two_node_t_bridge_reason": "bridge_applied",
+    }
 
 
 def _build_mst_edges(points: list[Point]) -> list[LineString]:
@@ -901,6 +1092,9 @@ def _empty_audit_doc(
         "foreign_object_masks": [],
         "foreign_mst_masks": [],
         "growth_limits": [],
+        "rule_d_fallback_applied": False,
+        "rule_d_fallback_distance_m": None,
+        "rule_d_fallback_reason": None,
         "cleanup_dependency": False,
         "must_cover_result": {
             "covered_node_ids": [],
@@ -924,11 +1118,22 @@ def _empty_audit_doc(
         "hard_path_passed": False,
         "cleanup_preview_passed": False,
         "rescue_reason": None,
+        "adjacent_junction_cut_suppressed": [],
         "allowed_area_m2": 0.0,
         "allowed_inside_drivezone_area_m2": 0.0,
         "allowed_outside_drivezone_area_m2": 0.0,
         "allowed_outside_drivezone_ratio": 0.0,
         "drivezone_containment_passed": False,
+        "two_node_t_bridge_applied": False,
+        "two_node_t_bridge_length_m": 0.0,
+        "two_node_t_bridge_inside_drivezone_length_m": 0.0,
+        "two_node_t_bridge_clipped_to_drivezone": False,
+        "two_node_t_bridge_blocked": False,
+        "two_node_t_bridge_reason": "not_applicable",
+        "shared_two_in_two_out_node_detected": False,
+        "shared_two_in_two_out_node_id": None,
+        "shared_two_in_two_out_as_through_node": False,
+        "frontier_interruption_skipped_by_two_in_two_out": False,
     }
 
 
@@ -963,11 +1168,24 @@ def _status_for_unsupported_template(context: Step1Context, template_result: Ste
             "excluded_road_ids": [],
             "blocked_direction_reasons": [],
             "cleanup_dependency": False,
+            "rule_d_fallback_applied": False,
+            "rule_d_fallback_distance_m": None,
+            "rule_d_fallback_reason": None,
             "allowed_area_m2": 0.0,
             "allowed_inside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_ratio": 0.0,
             "drivezone_containment_passed": False,
+            "two_node_t_bridge_applied": False,
+            "two_node_t_bridge_length_m": 0.0,
+            "two_node_t_bridge_inside_drivezone_length_m": 0.0,
+            "two_node_t_bridge_clipped_to_drivezone": False,
+            "two_node_t_bridge_blocked": False,
+            "two_node_t_bridge_reason": "not_applicable",
+            "shared_two_in_two_out_node_detected": False,
+            "shared_two_in_two_out_node_id": None,
+            "shared_two_in_two_out_as_through_node": False,
+            "frontier_interruption_skipped_by_two_in_two_out": False,
         },
     )
 
@@ -1002,11 +1220,24 @@ def _status_for_input_gate_failure(
             "excluded_road_ids": [],
             "blocked_direction_reasons": [],
             "cleanup_dependency": False,
+            "rule_d_fallback_applied": False,
+            "rule_d_fallback_distance_m": None,
+            "rule_d_fallback_reason": None,
             "allowed_area_m2": 0.0,
             "allowed_inside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_ratio": 0.0,
             "drivezone_containment_passed": False,
+            "two_node_t_bridge_applied": False,
+            "two_node_t_bridge_length_m": 0.0,
+            "two_node_t_bridge_inside_drivezone_length_m": 0.0,
+            "two_node_t_bridge_clipped_to_drivezone": False,
+            "two_node_t_bridge_blocked": False,
+            "two_node_t_bridge_reason": "not_applicable",
+            "shared_two_in_two_out_node_detected": False,
+            "shared_two_in_two_out_node_id": None,
+            "shared_two_in_two_out_as_through_node": False,
+            "frontier_interruption_skipped_by_two_in_two_out": False,
         },
     )
 
@@ -1034,8 +1265,26 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     lane_guard_status = "not_applicable"
     corridor_guard_status = "not_applicable"
     proxy_note: str | None = None
-    branch_frontier_road_ids, junction_related_road_ids, adjacent_seed_records = _build_branch_frontier(context)
+    shared_two_in_two_out = _detect_shared_two_in_two_out_node(context)
+    shared_through_node_ids = (
+        {shared_two_in_two_out["node_id"]}
+        if template_result.template_class == "single_sided_t_mouth"
+        and shared_two_in_two_out["detected"]
+        and shared_two_in_two_out["as_through_node"]
+        and shared_two_in_two_out["node_id"] is not None
+        else set()
+    )
+    bridge_protection_geometry, bridge_preview_fields = _build_two_node_t_bridge_support(
+        context,
+        blocker_geometry=None,
+    )
+    branch_frontier_road_ids, junction_related_road_ids, adjacent_seed_records = _build_branch_frontier(
+        context,
+        through_node_ids=shared_through_node_ids,
+    )
     adjacent_group_ids = {record["group_id"] for record in adjacent_seed_records}
+    protected_group_ids = set(adjacent_group_ids)
+    protected_group_ids.update(shared_through_node_ids)
     base_allowed_road_ids = set(branch_frontier_road_ids)
 
     if template_result.template_class == "single_sided_t_mouth":
@@ -1069,9 +1318,10 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         if ambiguous:
             review_signals.append("single_sided_direction_ambiguous")
 
-    adjacent_geometry, adjacent_records, adjacent_cut_road_ids = _build_adjacent_junction_masks(
+    adjacent_geometry, adjacent_records, adjacent_suppressed_records, adjacent_cut_road_ids = _build_adjacent_junction_masks(
         context,
         adjacent_records=adjacent_seed_records,
+        additional_protection_geometry=bridge_protection_geometry,
     )
     foreign_mst_geometry, foreign_mst_records = _build_foreign_mst_masks(context)
     e_geometry, e_records, blocked_directions = _build_single_sided_blockers(
@@ -1096,7 +1346,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         excluded_road_ids=excluded_opposite_road_ids,
         excluded_node_ids=excluded_opposite_rc_node_ids,
         protected_road_ids=junction_related_road_ids,
-        protected_group_ids=adjacent_group_ids,
+        protected_group_ids=protected_group_ids,
     )
     if node_fallback_used:
         review_signals.append("rule_b_node_fallback")
@@ -1123,10 +1373,14 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         blocker_geometry=blocker_union,
         force_bidirectional_road_ids=branch_frontier_road_ids,
     )
-    if any(bool(item["cap_hit"]) for item in growth_limits):
-        review_signals.append("rule_d_50m_cap_used")
+    bridge_hard_support, bridge_hard_fields = _build_two_node_t_bridge_support(
+        context,
+        blocker_geometry=blocker_union,
+    )
+    hard_candidate_parts = [geometry for geometry in (hard_candidate_support_geometry, bridge_hard_support) if geometry is not None]
+    hard_candidate_with_bridge = _extract_polygon_geometry(unary_union(hard_candidate_parts)) if hard_candidate_parts else None
 
-    hard_path_geometry = _component_touching_target(hard_candidate_support_geometry, reference_target_geometry)
+    hard_path_geometry = _component_touching_target(hard_candidate_with_bridge, reference_target_geometry)
     drivezone_metrics = _drivezone_containment_metrics(hard_path_geometry, context.drivezone_geometry)
     hard_intrusion = _has_negative_intrusion(hard_path_geometry, blocker_union)
     covered_node_ids = _covered_node_ids(context, hard_path_geometry)
@@ -1139,7 +1393,12 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         blocker_geometry=None,
         force_bidirectional_road_ids=branch_frontier_road_ids,
     )
-    cleanup_preview_geometry = cleanup_preview_source_geometry
+    cleanup_preview_parts = [
+        geometry
+        for geometry in (cleanup_preview_source_geometry, bridge_protection_geometry)
+        if geometry is not None
+    ]
+    cleanup_preview_geometry = _extract_polygon_geometry(unary_union(cleanup_preview_parts)) if cleanup_preview_parts else None
     if cleanup_preview_geometry is not None and blocker_union is not None:
         cleanup_preview_geometry = _clean_geometry(cleanup_preview_geometry.difference(blocker_union))
     cleanup_preview_geometry = _component_touching_target(cleanup_preview_geometry, reference_target_geometry)
@@ -1164,6 +1423,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         and not cleanup_preview_intrusion
         and not cleanup_preview_missing_node_ids
     )
+    rule_d_fallback_applied = any(bool(item["cap_hit"]) for item in growth_limits)
     cleanup_dependency = (not hard_path_passed) and cleanup_preview_passed
     opposite_side_intrusion = bool(selected_road_ids & excluded_opposite_road_ids)
     e_intrusion = _has_negative_intrusion(hard_path_geometry, e_geometry)
@@ -1196,7 +1456,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
 
     blocked_direction_reasons = sorted({item["reason"] for item in blocked_directions})
     rules = {
-        "A": {"passed": True, "count": len(adjacent_records)},
+        "A": {"passed": True, "count": len(adjacent_records), "suppressed_count": len(adjacent_suppressed_records)},
         "B": {"passed": True, "count": len(b_records), "node_fallback_used": node_fallback_used},
         "C": {"passed": True, "count": len(foreign_mst_records)},
         "D": {
@@ -1207,6 +1467,9 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
                 and not opposite_side_intrusion
             ),
             "growth_limit_count": len(growth_limits),
+            "rule_d_fallback_applied": rule_d_fallback_applied,
+            "rule_d_fallback_distance_m": STEP3_DISTANCE_CAP_M if rule_d_fallback_applied else None,
+            "rule_d_fallback_reason": "no_earlier_boundary_found" if rule_d_fallback_applied else None,
             "direction_mode": DIRECTION_MODE,
             **drivezone_metrics,
         },
@@ -1239,9 +1502,13 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "input_gate": input_gate,
         "rules": rules,
         "adjacent_junction_cuts": adjacent_records,
+        "adjacent_junction_cut_suppressed": adjacent_suppressed_records,
         "foreign_object_masks": foreign_object_records,
         "foreign_mst_masks": foreign_mst_records,
         "growth_limits": growth_limits,
+        "rule_d_fallback_applied": rule_d_fallback_applied,
+        "rule_d_fallback_distance_m": STEP3_DISTANCE_CAP_M if rule_d_fallback_applied else None,
+        "rule_d_fallback_reason": "no_earlier_boundary_found" if rule_d_fallback_applied else None,
         "cleanup_dependency": cleanup_dependency,
         "must_cover_result": {
             "covered_node_ids": covered_node_ids,
@@ -1267,6 +1534,11 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "hard_path_passed": hard_path_passed,
         "cleanup_preview_passed": cleanup_preview_passed,
         "rescue_reason": "post_difference_preview_only" if cleanup_dependency else None,
+        **bridge_hard_fields,
+        "shared_two_in_two_out_node_detected": shared_two_in_two_out["detected"],
+        "shared_two_in_two_out_node_id": shared_two_in_two_out["node_id"],
+        "shared_two_in_two_out_as_through_node": shared_two_in_two_out["as_through_node"],
+        "frontier_interruption_skipped_by_two_in_two_out": shared_two_in_two_out["frontier_interruption_skipped"],
         **drivezone_metrics,
     }
     key_metrics = {
@@ -1279,6 +1551,9 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "review_signal_count": len(review_signals),
         "cleanup_dependency": cleanup_dependency,
         "blocked_direction_count": len(blocked_directions),
+        "rule_d_fallback_applied": rule_d_fallback_applied,
+        "two_node_t_bridge_applied": bridge_hard_fields["two_node_t_bridge_applied"],
+        "shared_two_in_two_out_as_through_node": shared_two_in_two_out["as_through_node"],
         **drivezone_metrics,
     }
     visual_review_class = _review_visual_class(step3_state, review_signals, reason)
@@ -1292,7 +1567,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         root_cause_layer=_root_cause_layer(step3_state),
         root_cause_type=None if step3_state == "established" else reason,
         allowed_space_geometry=hard_path_geometry,
-        allowed_drivezone_geometry=hard_candidate_support_geometry,
+        allowed_drivezone_geometry=hard_candidate_with_bridge,
         negative_masks=Step3NegativeMasks(
             adjacent_junction_geometry=adjacent_geometry,
             foreign_objects_geometry=foreign_object_geometry,
@@ -1313,6 +1588,14 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             "excluded_road_ids": sorted(excluded_opposite_road_ids),
             "blocked_direction_reasons": blocked_direction_reasons,
             "cleanup_dependency": cleanup_dependency,
+            "rule_d_fallback_applied": rule_d_fallback_applied,
+            "rule_d_fallback_distance_m": STEP3_DISTANCE_CAP_M if rule_d_fallback_applied else None,
+            "rule_d_fallback_reason": "no_earlier_boundary_found" if rule_d_fallback_applied else None,
+            **bridge_hard_fields,
+            "shared_two_in_two_out_node_detected": shared_two_in_two_out["detected"],
+            "shared_two_in_two_out_node_id": shared_two_in_two_out["node_id"],
+            "shared_two_in_two_out_as_through_node": shared_two_in_two_out["as_through_node"],
+            "frontier_interruption_skipped_by_two_in_two_out": shared_two_in_two_out["frontier_interruption_skipped"],
             **drivezone_metrics,
             "visual_review_class": visual_review_class,
             "root_cause_layer": _root_cause_layer(step3_state),

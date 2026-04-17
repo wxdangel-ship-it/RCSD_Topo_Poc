@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -55,6 +56,10 @@ def run_t03_step3_legal_space_batch(
     resolved_out_root = normalize_runtime_path(out_root)
     resolved_run_id = run_id or build_run_id("t03_step3_phase_a")
     run_root = resolved_out_root / resolved_run_id
+    rerun_cleaned_before_write = False
+    if run_root.exists():
+        shutil.rmtree(run_root)
+        rerun_cleaned_before_write = True
     run_root.mkdir(parents=True, exist_ok=True)
 
     specs, loader_preflight = load_case_specs(case_root=resolved_case_root, case_ids=case_ids, max_cases=max_cases)
@@ -67,10 +72,15 @@ def run_t03_step3_legal_space_batch(
     write_json(run_root / "preflight.json", preflight)
 
     review_rows: list[ReviewIndexRow] = []
+    failed_case_ids: list[str] = []
     max_workers = max(1, int(workers or 1))
     if max_workers == 1:
         for spec in specs:
-            context, case_result = _run_single_case(spec)
+            try:
+                context, case_result = _run_single_case(spec)
+            except Exception:
+                failed_case_ids.append(spec.case_id)
+                continue
             review_rows.append(write_case_outputs(run_root=run_root, context=context, case_result=case_result))
     else:
         futures = {}
@@ -78,18 +88,31 @@ def run_t03_step3_legal_space_batch(
             for spec in specs:
                 futures[executor.submit(_run_single_case, spec)] = spec.case_id
             for future in as_completed(futures):
-                context, case_result = future.result()
+                case_id = futures[future]
+                try:
+                    context, case_result = future.result()
+                except Exception:
+                    failed_case_ids.append(case_id)
+                    continue
                 review_rows.append(write_case_outputs(run_root=run_root, context=context, case_result=case_result))
-        review_rows.sort(key=lambda row: (0, int(row.case_id)) if row.case_id.isdigit() else (1, row.case_id))
+    review_rows.sort(key=lambda row: (0, int(row.case_id)) if row.case_id.isdigit() else (1, row.case_id))
 
     write_review_index(run_root, review_rows)
-    write_summary(run_root, review_rows)
+    write_summary(
+        run_root,
+        review_rows,
+        expected_case_ids=[spec.case_id for spec in specs],
+        failed_case_ids=failed_case_ids,
+        rerun_cleaned_before_write=rerun_cleaned_before_write,
+    )
     if debug:
         write_json(
             run_root / "debug_manifest.json",
             {
                 "selected_case_ids": [row.case_id for row in review_rows],
                 "review_rows": [row.__dict__ for row in review_rows],
+                "failed_case_ids": failed_case_ids,
+                "rerun_cleaned_before_write": rerun_cleaned_before_write,
             },
         )
     return run_root

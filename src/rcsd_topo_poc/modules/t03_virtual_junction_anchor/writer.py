@@ -22,6 +22,16 @@ REVIEW_INDEX_FIELDNAMES = [
     "root_cause_type",
 ]
 
+CASE_REQUIRED_OUTPUTS = (
+    "step3_allowed_space.gpkg",
+    "step3_negative_mask_adjacent_junction.gpkg",
+    "step3_negative_mask_foreign_objects.gpkg",
+    "step3_negative_mask_foreign_mst.gpkg",
+    "step3_status.json",
+    "step3_audit.json",
+    "step3_review.png",
+)
+
 
 def _geometry_feature(geometry, **properties):
     if geometry is None:
@@ -95,16 +105,58 @@ def write_review_index(run_root: Path, rows: list[ReviewIndexRow]) -> Path:
     return output_path
 
 
-def write_summary(run_root: Path, rows: list[ReviewIndexRow]) -> Path:
+def _sorted_case_ids(case_ids: list[str]) -> list[str]:
+    return sorted(case_ids, key=lambda item: (0, int(item)) if item.isdigit() else (1, item))
+
+
+def _case_outputs_complete(case_dir: Path) -> bool:
+    return case_dir.is_dir() and all((case_dir / rel_path).is_file() for rel_path in CASE_REQUIRED_OUTPUTS)
+
+
+def write_summary(
+    run_root: Path,
+    rows: list[ReviewIndexRow],
+    *,
+    expected_case_ids: list[str],
+    failed_case_ids: list[str],
+    rerun_cleaned_before_write: bool,
+) -> Path:
+    cases_dir = run_root / "cases"
+    flat_dir = run_root / "step3_review_flat"
+    actual_case_ids = [entry.name for entry in cases_dir.iterdir() if entry.is_dir()] if cases_dir.is_dir() else []
+    actual_case_ids = _sorted_case_ids(actual_case_ids)
+    flat_png_count = (
+        len([entry for entry in flat_dir.iterdir() if entry.is_file() and entry.suffix.lower() == ".png"])
+        if flat_dir.is_dir()
+        else 0
+    )
+    expected_case_ids = _sorted_case_ids(list(expected_case_ids))
+    missing_case_ids = [
+        case_id
+        for case_id in expected_case_ids
+        if not _case_outputs_complete(cases_dir / case_id)
+    ]
+    step3_established_count = sum(1 for row in rows if row.step3_state == "established")
+    step3_review_count = sum(1 for row in rows if row.step3_state == "review")
+    step3_not_established_count = sum(1 for row in rows if row.step3_state == "not_established")
+    tri_state_sum = step3_established_count + step3_review_count + step3_not_established_count
     summary = {
         "total_case_count": len(rows),
-        "step3_established_count": sum(1 for row in rows if row.step3_state == "established"),
-        "step3_review_count": sum(1 for row in rows if row.step3_state == "review"),
-        "step3_not_established_count": sum(1 for row in rows if row.step3_state == "not_established"),
+        "expected_case_count": len(expected_case_ids),
+        "actual_case_dir_count": len(actual_case_ids),
+        "flat_png_count": flat_png_count,
+        "step3_established_count": step3_established_count,
+        "step3_review_count": step3_review_count,
+        "step3_not_established_count": step3_not_established_count,
+        "tri_state_sum": tri_state_sum,
+        "tri_state_sum_matches_total": tri_state_sum == len(expected_case_ids),
+        "missing_case_ids": missing_case_ids,
+        "failed_case_ids": _sorted_case_ids(list(failed_case_ids)),
+        "rerun_cleaned_before_write": rerun_cleaned_before_write,
         "run_root": str(run_root),
-        "step3_review_flat_dir": str(run_root / "step3_review_flat"),
+        "step3_review_flat_dir": str(flat_dir),
         "structure": {
-            "cases_dir": str(run_root / "cases"),
+            "cases_dir": str(cases_dir),
             "review_index_csv": str(run_root / "step3_review_index.csv"),
         },
         "summary_semantics": {

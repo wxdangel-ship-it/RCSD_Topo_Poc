@@ -4350,6 +4350,238 @@ def _write_step3_shadow_outputs(
     )
 
 
+
+def _build_step3_formal_candidate_frontier_result(
+    *,
+    step3_shadow_result: Stage3Step3ShadowFrontierResult,
+    config: Stage3Step3ShadowFrontierConfig,
+    template_class: str,
+    analysis_center: Point,
+    drivezone_union: BaseGeometry,
+    group_nodes: list[ParsedNode],
+    local_nodes: list[ParsedNode],
+    local_roads: list[ParsedRoad],
+    local_road_degree_by_node_id: Counter[str],
+    selected_rc_roads: list[ParsedRoad],
+    analysis_member_node_ids: set[str],
+    normalized_mainnodeid: str,
+    semantic_mainnodeids: set[str] | None,
+    allowed_road_ids: set[str],
+) -> Stage3Step3ShadowFrontierResult:
+    baseline_geometry = (
+        step3_shadow_result.baseline_legal_space_geometry.buffer(0)
+        if step3_shadow_result.baseline_legal_space_geometry is not None
+        else GeometryCollection()
+    )
+    candidate_geometry = (
+        step3_shadow_result.shadow_legal_space_geometry.buffer(0)
+        if step3_shadow_result.shadow_legal_space_geometry is not None
+        else GeometryCollection()
+    )
+    if drivezone_union is None or drivezone_union.is_empty or baseline_geometry.is_empty:
+        return step3_shadow_result
+
+    core_parts: list[BaseGeometry] = [
+        analysis_center.buffer(max(float(config.core_radius_m), 18.0), join_style=1).intersection(
+            drivezone_union
+        )
+    ]
+    for node in group_nodes:
+        if node.geometry is None or node.geometry.is_empty:
+            continue
+        core_parts.append(
+            node.geometry.buffer(
+                max(POLYGON_GROUP_NODE_BUFFER_M, float(config.group_node_buffer_m)),
+                join_style=1,
+            ).intersection(drivezone_union)
+        )
+    core_geometry = unary_union(
+        [geometry for geometry in core_parts if geometry is not None and not geometry.is_empty]
+    ).intersection(drivezone_union)
+
+    keep_parts: list[BaseGeometry] = [core_geometry] if not core_geometry.is_empty else []
+    allowed_road_buffer_m = max(
+        ROAD_BUFFER_M * 0.95,
+        SIDE_BRANCH_HALF_WIDTH_M * (0.9 if template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH else 1.0),
+    )
+    allowed_road_geometries = [
+        road.geometry.buffer(
+            allowed_road_buffer_m,
+            cap_style=2,
+            join_style=2,
+        ).intersection(drivezone_union)
+        for road in local_roads
+        if road.road_id in allowed_road_ids
+        and road.geometry is not None
+        and not road.geometry.is_empty
+    ]
+    if allowed_road_geometries:
+        keep_parts.append(
+            unary_union(
+                [geometry for geometry in allowed_road_geometries if geometry is not None and not geometry.is_empty]
+            ).intersection(drivezone_union)
+        )
+    selected_rc_keep_parts = [
+        road.geometry.buffer(
+            max(RC_ROAD_BUFFER_M * 0.8, float(config.rc_buffer_m)),
+            cap_style=2,
+            join_style=2,
+        ).intersection(drivezone_union)
+        for road in selected_rc_roads
+        if road.geometry is not None and not road.geometry.is_empty
+    ]
+    if selected_rc_keep_parts:
+        keep_parts.append(
+            unary_union(
+                [geometry for geometry in selected_rc_keep_parts if geometry is not None and not geometry.is_empty]
+            ).intersection(drivezone_union)
+        )
+    keep_geometry = unary_union(
+        [geometry for geometry in keep_parts if geometry is not None and not geometry.is_empty]
+    ).intersection(drivezone_union)
+    if not keep_geometry.is_empty:
+        candidate_geometry = candidate_geometry.intersection(
+            keep_geometry.buffer(max(DEFAULT_RESOLUTION_M, 0.2), join_style=1)
+        )
+    if candidate_geometry.is_empty and not core_geometry.is_empty:
+        candidate_geometry = core_geometry.intersection(drivezone_union)
+
+    exclusion_geometries: list[BaseGeometry] = []
+    foreign_node_exclusion_geometry = _build_foreign_node_exclusion_geometry(
+        polygon_geometry=candidate_geometry,
+        normalized_mainnodeid=normalized_mainnodeid,
+        group_nodes=group_nodes,
+        local_nodes=local_nodes,
+        local_roads=local_roads,
+        allowed_road_ids=allowed_road_ids,
+        drivezone_union=drivezone_union,
+        local_road_degree_by_node_id=local_road_degree_by_node_id,
+        semantic_mainnodeids=semantic_mainnodeids,
+    )
+    if not foreign_node_exclusion_geometry.is_empty:
+        exclusion_geometries.append(foreign_node_exclusion_geometry)
+    explicit_foreign_arm_exclusion_geometry = _build_explicit_foreign_group_arm_exclusion_geometry(
+        polygon_geometry=candidate_geometry,
+        analysis_center=analysis_center,
+        normalized_mainnodeid=normalized_mainnodeid,
+        group_nodes=group_nodes,
+        local_nodes=local_nodes,
+        local_roads=local_roads,
+        protected_road_ids=allowed_road_ids,
+        drivezone_union=drivezone_union,
+        local_road_degree_by_node_id=local_road_degree_by_node_id,
+        semantic_mainnodeids=semantic_mainnodeids,
+    )
+    if not explicit_foreign_arm_exclusion_geometry.is_empty:
+        exclusion_geometries.append(explicit_foreign_arm_exclusion_geometry)
+    strict_foreign_core_exclusion_geometry = _build_strict_foreign_local_junction_core_exclusion_geometry(
+        polygon_geometry=candidate_geometry,
+        analysis_center=analysis_center,
+        normalized_mainnodeid=normalized_mainnodeid,
+        group_nodes=group_nodes,
+        local_nodes=local_nodes,
+        local_roads=local_roads,
+        drivezone_union=drivezone_union,
+        local_road_degree_by_node_id=local_road_degree_by_node_id,
+        keep_geometry=keep_geometry,
+        semantic_mainnodeids=semantic_mainnodeids,
+    )
+    if not strict_foreign_core_exclusion_geometry.is_empty:
+        exclusion_geometries.append(strict_foreign_core_exclusion_geometry)
+    target_group_overlap_by_id = _target_group_foreign_semantic_road_overlap_lengths(
+        polygon_geometry=candidate_geometry,
+        local_roads=local_roads,
+        local_nodes=local_nodes,
+        allowed_road_ids=allowed_road_ids,
+        target_group_node_ids=analysis_member_node_ids,
+        normalized_mainnodeid=normalized_mainnodeid,
+        local_road_degree_by_node_id=local_road_degree_by_node_id,
+        analysis_center=analysis_center,
+        semantic_mainnodeids=semantic_mainnodeids,
+    )
+    if target_group_overlap_by_id:
+        target_group_trim_geometry = _build_local_road_overlap_trim_geometry(
+            polygon_geometry=candidate_geometry,
+            road_ids=set(target_group_overlap_by_id),
+            local_roads=local_roads,
+            drivezone_union=drivezone_union,
+            buffer_m=max(ROAD_BUFFER_M * 0.95, MAIN_BRANCH_HALF_WIDTH_M * 0.85),
+        )
+        if not target_group_trim_geometry.is_empty:
+            exclusion_geometries.append(target_group_trim_geometry)
+    if template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH:
+        unrelated_overlap_by_id = _single_sided_unrelated_local_road_overlap_lengths(
+            polygon_geometry=candidate_geometry,
+            local_roads=local_roads,
+            allowed_road_ids=allowed_road_ids,
+            target_group_node_ids=analysis_member_node_ids,
+        )
+        if unrelated_overlap_by_id:
+            unrelated_trim_geometry = _build_local_road_overlap_trim_geometry(
+                polygon_geometry=candidate_geometry,
+                road_ids=set(unrelated_overlap_by_id),
+                local_roads=local_roads,
+                drivezone_union=drivezone_union,
+                buffer_m=max(ROAD_BUFFER_M * 0.95, MAIN_BRANCH_HALF_WIDTH_M * 0.85),
+            )
+            if not unrelated_trim_geometry.is_empty:
+                exclusion_geometries.append(unrelated_trim_geometry)
+    if exclusion_geometries:
+        total_exclusion_geometry = unary_union(
+            [geometry for geometry in exclusion_geometries if geometry is not None and not geometry.is_empty]
+        ).intersection(drivezone_union)
+        if not total_exclusion_geometry.is_empty:
+            candidate_geometry = candidate_geometry.difference(total_exclusion_geometry).intersection(
+                drivezone_union
+            )
+
+    if not candidate_geometry.is_empty:
+        candidate_geometry = candidate_geometry.buffer(0)
+        if not candidate_geometry.is_empty:
+            candidate_geometry = _fill_small_polygon_holes(
+                candidate_geometry,
+                max_hole_area_m2=POLYGON_SMALL_HOLE_AREA_M2,
+            )
+            candidate_geometry = _remove_all_polygon_holes(candidate_geometry)
+            candidate_geometry = _select_seed_connected_polygon(
+                geometry=candidate_geometry,
+                seed_geometry=(core_geometry if not core_geometry.is_empty else analysis_center.buffer(1.0)),
+            )
+            if not candidate_geometry.is_empty:
+                candidate_geometry = candidate_geometry.intersection(drivezone_union).buffer(0)
+
+    unresolved = bool(step3_shadow_result.step3_shadow_frontier_unresolved)
+    unresolved_reason = step3_shadow_result.unresolved_reason
+    if candidate_geometry.is_empty:
+        unresolved = True
+        unresolved_reason = unresolved_reason or 'formal_candidate_geometry_empty'
+        candidate_geometry = (
+            core_geometry.intersection(drivezone_union)
+            if not core_geometry.is_empty
+            else baseline_geometry
+        )
+
+    baseline_area_m2 = float(baseline_geometry.area)
+    shadow_area_m2 = float(candidate_geometry.area)
+    shadow_area_ratio = shadow_area_m2 / baseline_area_m2 if baseline_area_m2 > 0.0 else 0.0
+    shadow_equals_baseline = abs(shadow_area_m2 - baseline_area_m2) <= 1e-6
+    return Stage3Step3ShadowFrontierResult(
+        template_class=step3_shadow_result.template_class,
+        shadow_legal_space_geometry=candidate_geometry,
+        baseline_legal_space_geometry=baseline_geometry,
+        baseline_area_m2=baseline_area_m2,
+        shadow_area_m2=shadow_area_m2,
+        shadow_area_ratio=shadow_area_ratio,
+        shadow_equals_baseline=shadow_equals_baseline,
+        trunk_frontier_defined=bool(step3_shadow_result.trunk_frontier_defined),
+        step3_shadow_frontier_unresolved=unresolved,
+        unresolved_reason=unresolved_reason,
+        selected_branch_ids=step3_shadow_result.selected_branch_ids,
+        stop_records=step3_shadow_result.stop_records,
+        branch_records=step3_shadow_result.branch_records,
+    )
+
+
 def _polygon_branch_length_m(branch: BranchEvidence) -> float:
     if (
         branch.selected_for_polygon
@@ -8457,6 +8689,8 @@ def run_t02_virtual_intersection_poc(
     target_group_loader: Callable[[str], LoadedLayer] | None = None,
     step3_shadow_frontier_config: Stage3Step3ShadowFrontierConfig | None = None,
     step3_shadow_export_root: Optional[Union[str, Path]] = None,
+    step3_formal_candidate_config: Stage3Step3ShadowFrontierConfig | None = None,
+    step3_formal_candidate_export_root: Optional[Union[str, Path]] = None,
 ) -> VirtualIntersectionArtifacts:
     if trace_memory:
         tracemalloc.start()
@@ -8491,6 +8725,11 @@ def run_t02_virtual_intersection_poc(
         if step3_shadow_export_root is not None
         else None
     )
+    step3_formal_candidate_export_root_path = (
+        Path(step3_formal_candidate_export_root)
+        if step3_formal_candidate_export_root is not None
+        else None
+    )
     rendered_map_path = debug_render_root_path / f"{_normalize_id(mainnodeid) or 'unknown'}.png"
 
     logger = build_logger(log_path, f"t02_virtual_intersection_poc_{resolved_run_id}")
@@ -8519,6 +8758,7 @@ def run_t02_virtual_intersection_poc(
     normalized_mainnodeid = _normalize_id(mainnodeid)
     debug_rendered_map_written = False
     step3_shadow_result: Stage3Step3ShadowFrontierResult | None = None
+    step3_formal_candidate_result: Stage3Step3ShadowFrontierResult | None = None
     load_layer_filtered = layer_loader or _load_layer_filtered
 
     def emit_progress_snapshot(
@@ -15815,6 +16055,15 @@ def run_t02_virtual_intersection_poc(
             | set(single_sided_t_mouth_corridor_target_local_road_ids)
             | set(single_sided_t_mouth_branch_target_local_road_ids)
         )
+        step3_candidate_allowed_local_road_ids = (
+            (
+                _single_sided_strict_keep_road_ids(road_branches=road_branches)
+                | set(single_sided_t_mouth_corridor_target_local_road_ids)
+                | set(single_sided_t_mouth_branch_target_local_road_ids)
+            )
+            if stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
+            else set(final_allowed_local_road_ids)
+        )
         late_strict_target_group_overlap_trim_applied = False
         single_sided_unrelated_opposite_lane_trim_applied = False
         late_target_group_foreign_semantic_road_overlap_by_id = (
@@ -15822,7 +16071,7 @@ def run_t02_virtual_intersection_poc(
                 polygon_geometry=virtual_polygon_geometry,
                 local_roads=local_roads,
                 local_nodes=local_nodes,
-                allowed_road_ids=final_allowed_local_road_ids,
+                allowed_road_ids=step3_candidate_allowed_local_road_ids,
                 target_group_node_ids=analysis_member_node_ids,
                 normalized_mainnodeid=normalized_mainnodeid,
                 local_road_degree_by_node_id=local_road_degree_by_node_id,
@@ -16396,7 +16645,7 @@ def run_t02_virtual_intersection_poc(
                     polygon_geometry=late_trimmed_virtual_polygon_geometry,
                     local_roads=local_roads,
                     local_nodes=local_nodes,
-                    allowed_road_ids=final_allowed_local_road_ids,
+                    allowed_road_ids=step3_candidate_allowed_local_road_ids,
                     target_group_node_ids=analysis_member_node_ids,
                     normalized_mainnodeid=normalized_mainnodeid,
                     local_road_degree_by_node_id=local_road_degree_by_node_id,
@@ -16448,7 +16697,7 @@ def run_t02_virtual_intersection_poc(
                 polygon_geometry=virtual_polygon_geometry,
                 local_roads=local_roads,
                 local_nodes=local_nodes,
-                allowed_road_ids=final_allowed_local_road_ids,
+                allowed_road_ids=step3_candidate_allowed_local_road_ids,
                 target_group_node_ids=analysis_member_node_ids,
                 normalized_mainnodeid=normalized_mainnodeid,
                 local_road_degree_by_node_id=local_road_degree_by_node_id,
@@ -17294,21 +17543,6 @@ def run_t02_virtual_intersection_poc(
                 analysis_center_xy=(float(analysis_center.x), float(analysis_center.y)),
             )
         )
-        step3_result = build_stage3_step3_legal_space_result(
-            Stage3Step3LegalSpaceInputs(
-                template_class=stage3_template_class,
-                legal_activity_space_geometry=drivezone_union,
-                allowed_drivezone_geometry=drivezone_union,
-                must_cover_group_node_ids=analysis_member_node_ids,
-                single_sided_corridor_road_ids=(
-                    final_allowed_local_road_ids
-                    if stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
-                    else ()
-                ),
-                hard_boundary_road_ids=(),
-                step3_blockers=(("drivezone_empty",) if drivezone_union.is_empty else ()),
-            )
-        )
         if step3_shadow_frontier_config is not None or step3_shadow_export_root_path is not None:
             step3_shadow_result = build_stage3_step3_shadow_frontier(
                 template_class=stage3_template_class,
@@ -17324,6 +17558,142 @@ def run_t02_virtual_intersection_poc(
                 normalized_mainnodeid=normalized_mainnodeid,
                 config=step3_shadow_frontier_config,
             )
+        if step3_formal_candidate_config is not None or step3_formal_candidate_export_root_path is not None:
+            formal_candidate_frontier_config = (
+                step3_formal_candidate_config
+                or Stage3Step3ShadowFrontierConfig(
+                    enabled=True,
+                    alpha=0.6,
+                    buffer_m=14.0,
+                    fallback_strategy="min_drivezone_edge_30m",
+                    fallback_cap_m=30.0,
+                    sidearm_cap_m=50.0,
+                )
+            )
+            step3_formal_candidate_result = _build_step3_formal_candidate_frontier_result(
+                step3_shadow_result=build_stage3_step3_shadow_frontier(
+                    template_class=stage3_template_class,
+                    analysis_center=analysis_center,
+                    drivezone_union=drivezone_union,
+                    group_nodes=group_nodes,
+                    local_nodes=local_nodes,
+                    local_roads=local_roads,
+                    selected_rc_roads=selected_rc_roads,
+                    road_branches=road_branches,
+                    positive_rc_groups=positive_rc_groups,
+                    analysis_member_node_ids=analysis_member_node_ids,
+                    normalized_mainnodeid=normalized_mainnodeid,
+                    config=formal_candidate_frontier_config,
+                ),
+                config=formal_candidate_frontier_config,
+                template_class=stage3_template_class,
+                analysis_center=analysis_center,
+                drivezone_union=drivezone_union,
+                group_nodes=group_nodes,
+                local_nodes=local_nodes,
+                local_roads=local_roads,
+                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                selected_rc_roads=selected_rc_roads,
+                analysis_member_node_ids=analysis_member_node_ids,
+                normalized_mainnodeid=normalized_mainnodeid,
+                semantic_mainnodeids=semantic_mainnodeids,
+                allowed_road_ids=step3_candidate_allowed_local_road_ids,
+            )
+        step3_legal_space_geometry = drivezone_union
+        step3_allowed_drivezone_geometry = drivezone_union
+        step3_single_sided_corridor_road_ids = (
+            step3_candidate_allowed_local_road_ids
+            if stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
+            else ()
+        )
+        step3_hard_boundary_road_ids: set[str] = set()
+        step3_blockers: list[str] = ["drivezone_empty"] if drivezone_union.is_empty else []
+        if step3_formal_candidate_result is not None:
+            step3_legal_space_geometry = step3_formal_candidate_result.shadow_legal_space_geometry
+            step3_allowed_drivezone_geometry = step3_formal_candidate_result.shadow_legal_space_geometry
+            step3_candidate_extra_local_node_ids = sorted(
+                node.node_id
+                for node in local_nodes
+                if (
+                    _is_foreign_local_semantic_node(
+                        node=node,
+                        target_group_node_ids=analysis_member_node_ids,
+                        normalized_mainnodeid=normalized_mainnodeid,
+                        local_road_degree_by_node_id=local_road_degree_by_node_id,
+                        semantic_mainnodeids=semantic_mainnodeids,
+                    )
+                    and _polygon_substantively_covers_node(
+                        step3_legal_space_geometry,
+                        node.geometry,
+                        cover_radius_m=max(resolution_m, 0.5),
+                    )
+                )
+            )
+            step3_candidate_extra_local_road_ids = _covered_foreign_local_road_ids(
+                polygon_geometry=step3_legal_space_geometry,
+                local_roads=local_roads,
+                local_nodes=local_nodes,
+                allowed_road_ids=step3_candidate_allowed_local_road_ids,
+                target_group_node_ids=analysis_member_node_ids,
+                normalized_mainnodeid=normalized_mainnodeid,
+                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                analysis_center=analysis_center,
+                semantic_mainnodeids=semantic_mainnodeids,
+            )
+            step3_candidate_target_group_overlap_by_id = _target_group_foreign_semantic_road_overlap_lengths(
+                polygon_geometry=step3_legal_space_geometry,
+                local_roads=local_roads,
+                local_nodes=local_nodes,
+                allowed_road_ids=step3_candidate_allowed_local_road_ids,
+                target_group_node_ids=analysis_member_node_ids,
+                normalized_mainnodeid=normalized_mainnodeid,
+                local_road_degree_by_node_id=local_road_degree_by_node_id,
+                analysis_center=analysis_center,
+                semantic_mainnodeids=semantic_mainnodeids,
+            )
+            step3_candidate_unrelated_overlap_by_id = (
+                _single_sided_unrelated_local_road_overlap_lengths(
+                    polygon_geometry=step3_legal_space_geometry,
+                    local_roads=local_roads,
+                    allowed_road_ids=step3_candidate_allowed_local_road_ids,
+                    target_group_node_ids=analysis_member_node_ids,
+                )
+                if stage3_template_class == TEMPLATE_SINGLE_SIDED_T_MOUTH
+                else {}
+            )
+            step3_hard_boundary_road_ids.update(step3_candidate_extra_local_road_ids)
+            step3_hard_boundary_road_ids.update(step3_candidate_target_group_overlap_by_id)
+            step3_hard_boundary_road_ids.update(step3_candidate_unrelated_overlap_by_id)
+            if step3_formal_candidate_result.step3_shadow_frontier_unresolved:
+                step3_blockers.append(
+                    step3_formal_candidate_result.unresolved_reason or "step3_frontier_unresolved"
+                )
+            if (
+                step3_formal_candidate_result.shadow_equals_baseline
+                or step3_formal_candidate_result.shadow_area_ratio >= 0.85
+                or not step3_formal_candidate_result.trunk_frontier_defined
+            ):
+                step3_blockers.append("trunk_frontier_absent_or_ineffective")
+            if (
+                step3_candidate_extra_local_node_ids
+                or step3_candidate_extra_local_road_ids
+                or max(step3_candidate_target_group_overlap_by_id.values(), default=0.0)
+                > POLYGON_FOREIGN_TARGET_ARM_REVIEW_OVERLAP_M
+            ):
+                step3_blockers.append("other_semantic_junction_intrusion")
+            if step3_candidate_unrelated_overlap_by_id:
+                step3_blockers.append("single_sided_opposite_side_intrusion")
+        step3_result = build_stage3_step3_legal_space_result(
+            Stage3Step3LegalSpaceInputs(
+                template_class=stage3_template_class,
+                legal_activity_space_geometry=step3_legal_space_geometry,
+                allowed_drivezone_geometry=step3_allowed_drivezone_geometry,
+                must_cover_group_node_ids=analysis_member_node_ids,
+                single_sided_corridor_road_ids=step3_single_sided_corridor_road_ids,
+                hard_boundary_road_ids=tuple(sorted(step3_hard_boundary_road_ids)),
+                step3_blockers=tuple(sorted({value for value in step3_blockers if value})),
+            )
+        )
         pre_step4_result = build_stage3_step4_rc_semantics_result(
             Stage3Step4SemanticsInputs(
                 required_rc_node_ids=selected_rc_node_ids,
@@ -19753,6 +20123,26 @@ def run_t02_virtual_intersection_poc(
                 excluded_rc_road_ids=invalid_rc_road_ids,
                 excluded_rc_node_ids=invalid_rc_node_ids,
             )
+        if step3_formal_candidate_result is not None and step3_formal_candidate_export_root_path is not None:
+            _write_step3_shadow_outputs(
+                export_root=step3_formal_candidate_export_root_path,
+                mainnodeid=normalized_mainnodeid,
+                step3_shadow_result=step3_formal_candidate_result,
+                analysis_center=analysis_center,
+                final_virtual_polygon_geometry=final_virtual_polygon_geometry,
+                grid=grid,
+                drivezone_mask=drivezone_mask,
+                representative_node=representative_node,
+                group_nodes=group_nodes,
+                local_nodes=local_nodes,
+                local_roads=local_roads,
+                local_rc_nodes=local_rc_nodes,
+                local_rc_roads=local_rc_roads,
+                selected_rc_roads=selected_rc_roads,
+                selected_rc_node_ids=selected_rc_node_ids,
+                excluded_rc_road_ids=invalid_rc_road_ids,
+                excluded_rc_node_ids=invalid_rc_node_ids,
+            )
         return VirtualIntersectionArtifacts(
             success=effect_success,
             out_root=out_root_path,
@@ -19986,6 +20376,58 @@ def run_t02_virtual_intersection_poc(
                     export_root=step3_shadow_export_root_path,
                     mainnodeid=normalized_mainnodeid,
                     step3_shadow_result=step3_shadow_result,
+                    analysis_center=analysis_center_for_shadow,
+                    final_virtual_polygon_geometry=virtual_polygon_geometry_for_shadow,
+                    grid=grid_for_shadow,
+                    drivezone_mask=drivezone_mask_for_shadow,
+                    representative_node=representative_node_for_shadow,
+                    group_nodes=group_nodes_for_shadow,
+                    local_nodes=local_nodes_for_shadow,
+                    local_roads=local_roads_for_shadow,
+                    local_rc_nodes=local_rc_nodes_for_shadow,
+                    local_rc_roads=local_rc_roads_for_shadow,
+                    selected_rc_roads=selected_rc_roads_for_shadow,
+                    selected_rc_node_ids=selected_rc_node_ids_for_shadow,
+                    excluded_rc_road_ids=invalid_rc_road_ids_for_shadow,
+                    excluded_rc_node_ids=invalid_rc_node_ids_for_shadow,
+                )
+        if step3_formal_candidate_result is not None and step3_formal_candidate_export_root_path is not None:
+            analysis_center_for_shadow = locals().get("analysis_center")
+            grid_for_shadow = locals().get("grid")
+            drivezone_mask_for_shadow = locals().get("drivezone_mask")
+            representative_node_for_shadow = locals().get("representative_node")
+            group_nodes_for_shadow = locals().get("group_nodes")
+            local_nodes_for_shadow = locals().get("local_nodes")
+            local_roads_for_shadow = locals().get("local_roads")
+            local_rc_nodes_for_shadow = locals().get("local_rc_nodes")
+            local_rc_roads_for_shadow = locals().get("local_rc_roads")
+            selected_rc_roads_for_shadow = locals().get("selected_rc_roads")
+            selected_rc_node_ids_for_shadow = locals().get("selected_rc_node_ids")
+            invalid_rc_road_ids_for_shadow = locals().get("invalid_rc_road_ids")
+            invalid_rc_node_ids_for_shadow = locals().get("invalid_rc_node_ids")
+            virtual_polygon_geometry_for_shadow = (
+                locals().get("virtual_polygon_geometry")
+                or step3_formal_candidate_result.shadow_legal_space_geometry
+            )
+            if (
+                analysis_center_for_shadow is not None
+                and grid_for_shadow is not None
+                and drivezone_mask_for_shadow is not None
+                and representative_node_for_shadow is not None
+                and group_nodes_for_shadow is not None
+                and local_nodes_for_shadow is not None
+                and local_roads_for_shadow is not None
+                and local_rc_nodes_for_shadow is not None
+                and local_rc_roads_for_shadow is not None
+                and selected_rc_roads_for_shadow is not None
+                and selected_rc_node_ids_for_shadow is not None
+                and invalid_rc_road_ids_for_shadow is not None
+                and invalid_rc_node_ids_for_shadow is not None
+            ):
+                _write_step3_shadow_outputs(
+                    export_root=step3_formal_candidate_export_root_path,
+                    mainnodeid=normalized_mainnodeid,
+                    step3_shadow_result=step3_formal_candidate_result,
                     analysis_center=analysis_center_for_shadow,
                     final_virtual_polygon_geometry=virtual_polygon_geometry_for_shadow,
                     grid=grid_for_shadow,

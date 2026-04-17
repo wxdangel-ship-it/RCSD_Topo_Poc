@@ -473,6 +473,11 @@
   - 二度 through node 不打断 branch
   - `chain_context` 是连续 / complex 128 场景下的结构性约束，不是日志附加项
   - Step3 原则上不作为常规业务失败步骤
+  - Step3 `allowed space` 不得退化成整片 patch `DriveZone` 直通；主干方向必须有可执行的 frontier / stop condition
+  - 当前 case 的 Step3 `allowed space / polygon-support space` 不得进入其他语义路口，也不得纳入其他语义路口向外延伸的 `roads / arms / lane corridor`
+  - 当前 case 的 Step3 `allowed space` 不得进入与当前语义/拓扑不连通的对向道路面；该约束按语义/拓扑连通性判定，不按纯几何朝向判定
+  - `single_sided_t_mouth` 下，对向 Road / 对向语义 Node / 对向 lane / 对向主路 corridor 一律按硬排除处理
+  - 任何长度放大、mouth 补长、或竖向补长，都只能排在上述硬排除之后；不得先放大再依赖 cleanup / trim 补救越界
 - Step4 事实事件解释层（Fact Event Interpretation）：
   - Step4 是事实事件解释层，不是几何生成层
   - 主输出是供 Step5 / Step6 消费的机器可消费事件解释结果包

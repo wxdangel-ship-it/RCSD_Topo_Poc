@@ -366,6 +366,10 @@
   - 合法活动空间只能在当前模板允许占用的 `DriveZone` 内合法道路面中生长
   - 对与当前合法活动空间存在潜在冲突的 foreign elements，可先按 `1m` 负向缓冲构建硬排除区
   - `single_sided_t_mouth` 只能在目标单侧 lane corridor 内展开，不得跨到对向 lane 或对向主路 corridor
+  - 当前 case 的 Step3 `allowed space / polygon-support space` 不得进入其他语义路口，也不得纳入其他语义路口向外延伸的 `roads / arms / lane corridor`
+  - 当前 case 的 Step3 `allowed space` 不得进入与当前语义/拓扑不连通的对向道路面
+  - `single_sided_t_mouth` 下，对向 Road / 对向语义 Node / 对向 lane / 对向主路 corridor 一律按硬排除处理
+  - 任何长度放大、mouth 补长、或竖向补长，都只能排在上述硬排除之后，不能先放大再依赖 cleanup / trim 做越界补救
   - `center_junction` 可先按中心型路口铺满当前 case 的合法道路面，但若后续发现 foreign boundary roads、其他语义路口 roads / arms 入侵，或其它边界冲突，则该 case 仍属于问题 case
   - `10m` 只作为附加臂方向的保守外扩上限，且不得突破 foreign 硬边界，也不得压过“整组 node 一次性直接覆盖”要求
 - Stage3 步骤4「RCSD 关联语义」当前按以下业务口径冻结：

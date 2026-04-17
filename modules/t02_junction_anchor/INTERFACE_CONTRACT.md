@@ -362,11 +362,15 @@
   - 当前 baseline 可先采用 `1m` 负向缓冲作为默认业务口径
   - 一旦后续 polygon 活动空间必须侵入其他语义路口、foreign arms、或 `foreign boundary roads` 才能成立，则该空间不合法，应视为问题 case
   - `1m` 负向区域是硬排除边界，不得被后续 support / repair / cleanup 重新突破
+  - 当前 case 的 Step3 `allowed space / polygon-support space` 不得进入其他语义路口，也不得纳入其他语义路口向外延伸的 `roads / arms / lane corridor`
+  - 当前 case 的 Step3 `allowed space` 不得进入与当前语义/拓扑不连通的对向道路面；该约束按语义/拓扑连通性判定，不按纯几何“看起来在对面”判定
+  - 任何长度放大、mouth 补长、或竖向补长，都只能在上述硬排除已经满足后才允许讨论；不得先放大再依赖 cleanup / trim 作为主要补救手段
 - `single_sided_t_mouth` 的步骤3口径：
   - 合法活动空间是当前 case 的目标单侧 lane corridor
   - 被负向区域命中的方向必须终止生长
   - 未命中的方向，只能在当前 case 合法的单侧道路面内继续展开
   - 不得跨到对向 lane，不得跨到对向主路 corridor
+  - 不得进入对向 Road，不得进入对向语义 Node，不得进入对向 lane / 对向主路 corridor；这是硬排除，不是弱风险提示
   - 横向支路只贡献当前口门附近所必需的 mouth 空间，不得借此沿无关方向继续外延
 - `center_junction` 的步骤3口径：
   - 合法活动空间可先按中心型路口展开，并允许铺满当前 case 的合法道路面
@@ -438,6 +442,8 @@
   - 以下对象一律按 `foreign` 处理，不留容忍窗口：
     - 对向 lane
     - 对向主路 corridor
+    - 对向 Road
+    - 对向语义 Node
     - 非当前目标 mouth 的另一侧 corridor
     - 非当前 mouth 的远端 `RC tail`
     - `foreign arms`
@@ -458,6 +464,10 @@
     - 被纳入当前 mouth 的可展开方向
     - 成为当前 case 的 `support / repair / cleanup` 依赖对象
     - 只有依赖它，当前 case 才能继续成立
+- 当前 A / B / C 三类 Step3 硬排除口径属于既有业务边界的显式化，不是新增业务方向：
+  - A. 其他语义路口及其外延 `roads / arms / lane corridor` 硬排除
+  - B. 与当前语义/拓扑不连通的对向道路面硬排除
+  - C. `single_sided_t_mouth` 下，对向 Road / 对向语义 Node / 对向 lane / 对向主路 corridor 硬排除
 - `review_mode` 仅用于分析和人工复核：
   - 可绕过代表 node `is_anchor` gate
   - 可将 RC outside DriveZone 从硬失败改成风险记录 + 软排除

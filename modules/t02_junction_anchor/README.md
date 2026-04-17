@@ -460,6 +460,10 @@ python -m rcsd_topo_poc t02-decode-text-bundle \
   - Stage3 步骤3「目标 corridor / 口门边界」中，后续 polygon 只能在当前模板允许占用的 `DriveZone` 内合法道路面中活动
   - 对与当前合法活动空间存在潜在冲突的 foreign elements，可先按 `1m` 负向缓冲构建硬排除区
   - `single_sided_t_mouth` 只能在目标单侧 lane corridor 内展开，不得跨到对向 lane 或对向主路 corridor
+  - Step3 `allowed space` 不得进入其他语义路口，也不得纳入其他语义路口向外延伸的 `roads / arms / lane corridor`
+  - Step3 `allowed space` 不得进入与当前语义/拓扑不连通的对向道路面
+  - `single_sided_t_mouth` 下，对向 Road / 对向语义 Node / 对向 lane / 对向主路 corridor 一律按硬排除处理
+  - 任何长度放大只能在上述硬排除满足后再讨论，不能先放大再靠 cleanup / trim 补救越界
   - `center_junction` 可先按中心型路口铺满当前 case 的合法道路面，但不豁免 foreign boundary roads、其他语义路口 roads / arms 的入侵检查
   - `10m` 只作为附加臂方向的保守外扩上限，且不得压过“整组 node 一次性直接覆盖”与 foreign 硬边界
   - Stage3 步骤4「RCSD 关联语义」中，当前 case 的 `RC` 语义层级冻结为 A / B / C 三类：

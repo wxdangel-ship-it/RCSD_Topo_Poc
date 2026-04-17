@@ -46,8 +46,17 @@ python3 -m rcsd_topo_poc t03-step3-legal-space \
 - `Rule A` 只截当前 branch 真正进入相邻语义路口的入口，按相邻路口处 `1m` 逆向掩膜处理，且不能覆盖当前 target core
 - `Rule A` 的条带应按局部 road surface 截面生成，不得继续使用脱离局部路面的固定宽条带
 - `Rule B / Rule E` 不得把当前路口关联 road 或其二度衔接 road 回灌成 `foreign / opposite`
+- `Rule D` 的 `50m fallback` 在无更早稳定边界时允许直接成立，不自动进入 review，只在 `step3_audit.json` 保留审计信息
+- 双 node `single_sided_t_mouth` 场景下，两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 若仅承担 through-node，不得中断主通路
 - `RCSDRoad` 在 `Rule E` 中只承担 near-corridor proxy，必须挂靠到 opposite `SWSD road`，不能以 opposite side 全量 `RCSDRoad` 主导硬阻断；若 proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress
+- `Rule E` 当前只到 baseline partial；`lane_guard_status=proxy_only_not_modeled`，不宣称 fully complete
 - 不实现 `Step4/5/6/7`
 - 不允许把 `cleanup / trim / review_mode / stage4 聚合` 前置成 `Step3` 成立条件
 - 平铺 PNG 审查目录是正式交付物之一
-- 默认全量验收统计口径当前为 `58` 个 case，并会在 `preflight.json / summary.json` 记录 `excluded_case_ids`
+- Anchor 原始样本固定为 `61`；默认正式全量验收统计口径为排除 `922217 / 54265667 / 502058682` 后的 `58` 个 case，并会在 `preflight.json / summary.json` 记录 `excluded_case_ids`
+
+## 6. Patch Round 操作者口径
+
+- 本 README 面向 patch round 操作者，只说明当前轮允许执行的正式口径与默认验收边界，不替代 `INTERFACE_CONTRACT.md`
+- patch round 只做增量修补，不覆盖既有契约结论，不回退并行代码修改，不把 `baseline partial` 误写成 fully complete
+- 若实现、审计结果与本页或契约面不一致，操作者应先回写审计事实，再由后续 patch round 继续收口

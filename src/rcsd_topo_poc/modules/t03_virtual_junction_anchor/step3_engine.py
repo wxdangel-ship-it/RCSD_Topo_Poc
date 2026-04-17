@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import heapq
 import math
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Any, Iterable
 
 from shapely.geometry import (
@@ -32,6 +32,9 @@ NEGATIVE_MASK_BUFFER_M = 1.0
 STEP3_DISTANCE_CAP_M = 50.0
 INTRUSION_AREA_TOLERANCE_M2 = 0.05
 DRIVEZONE_OUTSIDE_AREA_TOLERANCE_M2 = 0.05
+ADJACENT_CUT_HALF_WIDTH_M = 60.0
+ADJACENT_CUT_DEPTH_M = 2.5
+DIRECTION_MODE = "t02_direction_plus_bidirectional_junction_trace"
 
 
 def _clean_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
@@ -120,10 +123,14 @@ def _road_flow_flags_for_group_like_t02(road: RoadRecord, member_node_ids: set[s
     return False, False
 
 
-def _directed_edge_pairs_from_t02_semantics(road: RoadRecord) -> tuple[tuple[str, str], ...]:
+def _directed_edge_pairs_from_t02_semantics(
+    road: RoadRecord,
+    *,
+    force_bidirectional: bool = False,
+) -> tuple[tuple[str, str], ...]:
     if road.snodeid is None or road.enodeid is None:
         return ()
-    if road.direction in {0, 1} or road.snodeid == road.enodeid:
+    if force_bidirectional or road.direction in {0, 1} or road.snodeid == road.enodeid:
         return ((road.snodeid, road.enodeid), (road.enodeid, road.snodeid))
     if road.direction == 2:
         return ((road.snodeid, road.enodeid),)
@@ -132,13 +139,21 @@ def _directed_edge_pairs_from_t02_semantics(road: RoadRecord) -> tuple[tuple[str
     return ()
 
 
-def _build_road_graph(roads: tuple[RoadRecord, ...]) -> dict[str, list[tuple[str, float, RoadRecord]]]:
+def _build_road_graph(
+    roads: tuple[RoadRecord, ...],
+    *,
+    force_bidirectional_road_ids: set[str] | None = None,
+) -> dict[str, list[tuple[str, float, RoadRecord]]]:
     graph: dict[str, list[tuple[str, float, RoadRecord]]] = defaultdict(list)
+    force_bidirectional_road_ids = force_bidirectional_road_ids or set()
     for road in roads:
         if road.geometry.length <= 0.0:
             continue
         length = float(road.geometry.length)
-        for source_node_id, target_node_id in _directed_edge_pairs_from_t02_semantics(road):
+        for source_node_id, target_node_id in _directed_edge_pairs_from_t02_semantics(
+            road,
+            force_bidirectional=road.road_id in force_bidirectional_road_ids,
+        ):
             graph[source_node_id].append((target_node_id, length, road))
     return graph
 
@@ -162,10 +177,16 @@ def _multi_source_dijkstra(
     return distances
 
 
-def _clip_road_to_cap(road: RoadRecord, distances: dict[str, float], cap_m: float) -> BaseGeometry | None:
+def _clip_road_to_cap(
+    road: RoadRecord,
+    distances: dict[str, float],
+    cap_m: float,
+    *,
+    force_bidirectional: bool = False,
+) -> BaseGeometry | None:
     if road.snodeid is None or road.enodeid is None:
         return None
-    directed_pairs = set(_directed_edge_pairs_from_t02_semantics(road))
+    directed_pairs = set(_directed_edge_pairs_from_t02_semantics(road, force_bidirectional=force_bidirectional))
     d_start = distances.get(road.snodeid, math.inf)
     d_end = distances.get(road.enodeid, math.inf)
     if d_start > cap_m and d_end > cap_m:
@@ -198,18 +219,33 @@ def _clip_line_to_hard_bounds(
     return _extract_line_geometry(clipped.difference(blocker_geometry))
 
 
-def _perpendicular_cut_strip(road: RoadRecord, endpoint: str) -> BaseGeometry | None:
-    coords = list(road.geometry.coords)
+def _largest_line_string(geometry: BaseGeometry | None) -> LineString | None:
+    line_parts = [
+        part
+        for part in _iter_geometries(geometry)
+        if isinstance(part, LineString) and getattr(part, "length", 0.0) > 0.0
+    ]
+    if not line_parts:
+        return None
+    return max(line_parts, key=lambda item: item.length)
+
+
+def _build_endpoint_cut_strip(
+    line: LineString,
+    *,
+    endpoint: str,
+) -> BaseGeometry | None:
+    coords = list(line.coords)
     if len(coords) < 2:
         return None
     if endpoint == "start":
         p0 = Point(coords[0])
         p1 = Point(coords[1])
-        offset_base = road.geometry.interpolate(min(NEGATIVE_MASK_BUFFER_M, road.geometry.length))
+        offset_base = line.interpolate(min(NEGATIVE_MASK_BUFFER_M, line.length))
     else:
         p0 = Point(coords[-1])
         p1 = Point(coords[-2])
-        offset_base = road.geometry.interpolate(max(0.0, road.geometry.length - NEGATIVE_MASK_BUFFER_M))
+        offset_base = line.interpolate(max(0.0, line.length - NEGATIVE_MASK_BUFFER_M))
     vx = offset_base.x - p0.x
     vy = offset_base.y - p0.y
     norm = math.hypot(vx, vy)
@@ -223,8 +259,8 @@ def _perpendicular_cut_strip(road: RoadRecord, endpoint: str) -> BaseGeometry | 
     vy /= norm
     nx = -vy
     ny = vx
-    half_width = 6.0
-    depth = 2.5
+    half_width = ADJACENT_CUT_HALF_WIDTH_M
+    depth = ADJACENT_CUT_DEPTH_M
     cx = offset_base.x
     cy = offset_base.y
     polygon = Polygon(
@@ -238,40 +274,141 @@ def _perpendicular_cut_strip(road: RoadRecord, endpoint: str) -> BaseGeometry | 
     return _clean_geometry(polygon)
 
 
-def _build_adjacent_junction_masks(context: Step1Context) -> tuple[BaseGeometry | None, list[dict[str, Any]], set[str]]:
+def _node_group_lookup(context: Step1Context) -> dict[str, str]:
+    return {node.node_id: (node.mainnodeid or node.node_id) for node in context.all_nodes}
+
+
+def _build_node_to_roads(roads: tuple[RoadRecord, ...]) -> dict[str, list[RoadRecord]]:
+    mapping: dict[str, list[RoadRecord]] = defaultdict(list)
+    for road in roads:
+        if road.snodeid is not None:
+            mapping[road.snodeid].append(road)
+        if road.enodeid is not None and road.enodeid != road.snodeid:
+            mapping[road.enodeid].append(road)
+    return mapping
+
+
+def _other_endpoint(road: RoadRecord, node_id: str) -> tuple[str | None, str | None]:
+    if road.snodeid == node_id:
+        return road.enodeid, "end"
+    if road.enodeid == node_id:
+        return road.snodeid, "start"
+    return None, None
+
+
+def _build_branch_frontier(
+    context: Step1Context,
+) -> tuple[set[str], set[str], list[dict[str, Any]]]:
     target_group_id = context.target_group.group_id
-    geometries: list[BaseGeometry] = []
-    records: list[dict[str, Any]] = []
-    road_ids: set[str] = set()
-    foreign_group_lookup = {
-        node.node_id: group.group_id
-        for group in context.foreign_groups
-        for node in group.nodes
-    }
-    for road in context.roads:
-        if road.snodeid is None or road.enodeid is None:
-            continue
-        for endpoint_name, node_id in {"start": road.snodeid, "end": road.enodeid}.items():
-            group_id = foreign_group_lookup.get(node_id)
-            if group_id is None or group_id == target_group_id:
+    target_node_ids = {node.node_id for node in context.target_group.nodes}
+    node_group_lookup = _node_group_lookup(context)
+    node_to_roads = _build_node_to_roads(context.roads)
+    road_lookup = {road.road_id: road for road in context.roads}
+
+    branch_frontier_road_ids: set[str] = set()
+    adjacent_records: list[dict[str, Any]] = []
+    adjacent_seen: set[tuple[str, str, str]] = set()
+
+    queue: deque[str] = deque(sorted(target_node_ids))
+    visited_nodes: set[str] = set(target_node_ids)
+    while queue:
+        node_id = queue.popleft()
+        for road in node_to_roads.get(node_id, []):
+            other_node_id, endpoint_name = _other_endpoint(road, node_id)
+            if other_node_id is None or endpoint_name is None:
                 continue
-            strip = _perpendicular_cut_strip(road, endpoint_name)
-            if strip is None:
+            branch_frontier_road_ids.add(road.road_id)
+            other_group_id = node_group_lookup.get(other_node_id)
+            if other_group_id is None:
+                if other_node_id not in visited_nodes:
+                    visited_nodes.add(other_node_id)
+                    queue.append(other_node_id)
                 continue
-            clipped = _clean_geometry(strip.intersection(context.drivezone_geometry))
-            if clipped is None:
+            if other_group_id == target_group_id:
+                if other_node_id not in visited_nodes:
+                    visited_nodes.add(other_node_id)
+                    queue.append(other_node_id)
                 continue
-            geometries.append(clipped)
-            road_ids.add(road.road_id)
-            records.append(
+            key = (road.road_id, endpoint_name, other_group_id)
+            if key in adjacent_seen:
+                continue
+            adjacent_seen.add(key)
+            adjacent_records.append(
                 {
-                    "group_id": group_id,
+                    "group_id": other_group_id,
                     "road_id": road.road_id,
                     "endpoint": endpoint_name,
                     "rule": "A",
                 }
             )
-    return _clean_geometry(unary_union(geometries)) if geometries else None, records, road_ids
+
+    related_road_ids = set(branch_frontier_road_ids)
+    for road_id in list(branch_frontier_road_ids):
+        road = road_lookup[road_id]
+        for node_id in (road.snodeid, road.enodeid):
+            if node_id is None:
+                continue
+            for neighbor in node_to_roads.get(node_id, []):
+                related_road_ids.add(neighbor.road_id)
+    return branch_frontier_road_ids, related_road_ids, adjacent_records
+
+
+def _perpendicular_cut_strip_in_drivezone(
+    road: RoadRecord,
+    endpoint: str,
+    drivezone_geometry: BaseGeometry,
+) -> BaseGeometry | None:
+    clipped_line = _largest_line_string(_extract_line_geometry(road.geometry.intersection(drivezone_geometry)))
+    if clipped_line is None:
+        return None
+    original_coords = list(road.geometry.coords)
+    if len(original_coords) < 2:
+        return None
+    original_endpoint = Point(original_coords[0] if endpoint == "start" else original_coords[-1])
+    clipped_start = Point(clipped_line.coords[0])
+    clipped_end = Point(clipped_line.coords[-1])
+    clipped_endpoint = "start" if clipped_start.distance(original_endpoint) <= clipped_end.distance(original_endpoint) else "end"
+    strip = _build_endpoint_cut_strip(clipped_line, endpoint=clipped_endpoint)
+    if strip is None:
+        return None
+    return _clean_geometry(strip.intersection(drivezone_geometry))
+
+
+def _build_adjacent_junction_masks(
+    context: Step1Context,
+    *,
+    adjacent_records: list[dict[str, Any]],
+) -> tuple[BaseGeometry | None, list[dict[str, Any]], set[str]]:
+    geometries: list[BaseGeometry] = []
+    road_lookup = {road.road_id: road for road in context.roads}
+    target_protection = _clean_geometry(
+        unary_union([node.geometry.buffer(NODE_BUFFER_M) for node in context.target_group.nodes])
+    )
+    road_ids: set[str] = set()
+    filtered_records: list[dict[str, Any]] = []
+    for record in adjacent_records:
+        road = road_lookup.get(record["road_id"])
+        if road is None:
+            continue
+        strip = _perpendicular_cut_strip_in_drivezone(
+            road,
+            record["endpoint"],
+            context.drivezone_geometry,
+        )
+        if strip is None:
+            continue
+        if target_protection is not None:
+            overlap = strip.intersection(target_protection)
+            overlap_area = 0.0 if overlap.is_empty else float(getattr(overlap, "area", 0.0))
+            if overlap_area > INTRUSION_AREA_TOLERANCE_M2:
+                continue
+            strip = _clean_geometry(strip.difference(target_protection))
+            if strip is None:
+                continue
+        geometries.append(strip)
+        road_ids.add(road.road_id)
+        filtered_records.append(record)
+    return _clean_geometry(unary_union(geometries)) if geometries else None, filtered_records, road_ids
 
 
 def _build_mst_edges(points: list[Point]) -> list[LineString]:
@@ -321,6 +458,8 @@ def _build_foreign_mst_masks(context: Step1Context) -> tuple[BaseGeometry | None
 
 def _build_candidate_roads_for_single_sided(
     context: Step1Context,
+    *,
+    protected_road_ids: set[str],
 ) -> tuple[set[str], set[str], bool, tuple[float, float] | None]:
     reference = _point_like(context.representative_node.geometry)
     candidate_roads = [
@@ -336,6 +475,9 @@ def _build_candidate_roads_for_single_sided(
         allowed: set[str] = set()
         excluded: set[str] = set()
         for road in context.roads:
+            if road.road_id in protected_road_ids:
+                allowed.add(road.road_id)
+                continue
             midpoint = _line_midpoint(road.geometry)
             dot = (midpoint.x - reference.x) * vx + (midpoint.y - reference.y) * vy
             if dot >= -2.0:
@@ -362,6 +504,8 @@ def _split_point_side(reference: Point, point: Point, direction: tuple[float, fl
 def _build_single_sided_exclusions(
     context: Step1Context,
     direction: tuple[float, float] | None,
+    *,
+    protected_node_ids: set[str],
 ) -> tuple[set[str], set[str]]:
     if direction is None:
         return set(), set()
@@ -375,6 +519,8 @@ def _build_single_sided_exclusions(
             excluded_rc_road_ids.add(road.road_id)
     for node in context.rcsd_nodes:
         if node.mainnodeid == target_group_id or node.node_id == context.representative_node.node_id:
+            continue
+        if node.node_id in protected_node_ids:
             continue
         point = _point_like(node.geometry)
         if _split_point_side(reference, point, direction) < -2.0:
@@ -434,11 +580,13 @@ def _build_reachable_road_support(
     *,
     allowed_road_ids: set[str] | None = None,
     blocker_geometry: BaseGeometry | None = None,
+    force_bidirectional_road_ids: set[str] | None = None,
     cap_m: float = STEP3_DISTANCE_CAP_M,
 ) -> tuple[BaseGeometry | None, list[dict[str, Any]], set[str], list[str]]:
     roads = tuple(road for road in context.roads if allowed_road_ids is None or road.road_id in allowed_road_ids)
     source_node_ids = {node.node_id for node in context.target_group.nodes}
-    graph = _build_road_graph(roads)
+    force_bidirectional_road_ids = force_bidirectional_road_ids or set()
+    graph = _build_road_graph(roads, force_bidirectional_road_ids=force_bidirectional_road_ids)
     distances = _multi_source_dijkstra(graph, source_node_ids)
     clipped_geometries: list[BaseGeometry] = []
     growth_limits: list[dict[str, Any]] = []
@@ -447,7 +595,12 @@ def _build_reachable_road_support(
     if allowed_road_ids is not None and len(roads) < len(context.roads):
         frontier_stop_reasons.add("template_road_filter_applied")
     for road in roads:
-        clipped_to_cap = _clip_road_to_cap(road, distances, cap_m)
+        clipped_to_cap = _clip_road_to_cap(
+            road,
+            distances,
+            cap_m,
+            force_bidirectional=road.road_id in force_bidirectional_road_ids,
+        )
         if clipped_to_cap is None:
             continue
         drivezone_line = _extract_line_geometry(clipped_to_cap.intersection(context.drivezone_geometry))
@@ -517,6 +670,8 @@ def _build_foreign_object_masks(
     adjacent_cut_road_ids: set[str],
     excluded_road_ids: set[str],
     excluded_node_ids: set[str],
+    protected_road_ids: set[str],
+    protected_group_ids: set[str],
 ) -> tuple[BaseGeometry | None, list[dict[str, Any]], bool]:
     geometries: list[BaseGeometry] = []
     records: list[dict[str, Any]] = []
@@ -524,7 +679,12 @@ def _build_foreign_object_masks(
     foreign_node_ids = {node.node_id for group in context.foreign_groups for node in group.nodes}
     masked_foreign_node_ids: set[str] = set(excluded_node_ids)
     for road in context.roads:
-        if road.road_id in frontier_candidate_road_ids or road.road_id in adjacent_cut_road_ids or road.road_id in excluded_road_ids:
+        if (
+            road.road_id in frontier_candidate_road_ids
+            or road.road_id in adjacent_cut_road_ids
+            or road.road_id in excluded_road_ids
+            or road.road_id in protected_road_ids
+        ):
             continue
         local_mask = _clean_geometry(
             road.geometry.buffer(NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2).intersection(context.drivezone_geometry)
@@ -537,6 +697,8 @@ def _build_foreign_object_masks(
                 masked_foreign_node_ids.add(endpoint_id)
         records.append({"road_id": road.road_id, "rule": "B", "mode": "road_buffer"})
     for group in context.foreign_groups:
+        if group.group_id in protected_group_ids:
+            continue
         for node in group.nodes:
             if node.node_id in masked_foreign_node_ids:
                 continue
@@ -665,7 +827,7 @@ def _empty_audit_doc(
         },
         "blocked_directions": [],
         "review_signals": [],
-        "direction_mode": "directed_graph_from_t02_semantics",
+        "direction_mode": DIRECTION_MODE,
         "growth_order": "hard_bound_first",
         "hard_bound_first": True,
         "post_growth_safety_only": True,
@@ -791,10 +953,21 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     lane_guard_status = "not_applicable"
     corridor_guard_status = "not_applicable"
     proxy_note: str | None = None
+    branch_frontier_road_ids, junction_related_road_ids, adjacent_seed_records = _build_branch_frontier(context)
+    adjacent_group_ids = {record["group_id"] for record in adjacent_seed_records}
+    base_allowed_road_ids = set(branch_frontier_road_ids)
 
     if template_result.template_class == "single_sided_t_mouth":
-        base_allowed_road_ids, excluded_opposite_road_ids, ambiguous, direction = _build_candidate_roads_for_single_sided(context)
-        excluded_opposite_rc_road_ids, excluded_opposite_rc_node_ids = _build_single_sided_exclusions(context, direction)
+        single_sided_allowed_road_ids, excluded_opposite_road_ids, ambiguous, direction = _build_candidate_roads_for_single_sided(
+            context,
+            protected_road_ids=junction_related_road_ids,
+        )
+        base_allowed_road_ids &= single_sided_allowed_road_ids
+        excluded_opposite_rc_road_ids, excluded_opposite_rc_node_ids = _build_single_sided_exclusions(
+            context,
+            direction,
+            protected_node_ids={node.node_id for node in context.target_group.nodes},
+        )
         lane_guard_status = "proxy_only_not_modeled"
         corridor_guard_status = (
             "hard_blocked_by_rcsdroad_mask" if excluded_opposite_rc_road_ids else "not_applicable"
@@ -803,7 +976,10 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         if ambiguous:
             review_signals.append("single_sided_direction_ambiguous")
 
-    adjacent_geometry, adjacent_records, adjacent_cut_road_ids = _build_adjacent_junction_masks(context)
+    adjacent_geometry, adjacent_records, adjacent_cut_road_ids = _build_adjacent_junction_masks(
+        context,
+        adjacent_records=adjacent_seed_records,
+    )
     foreign_mst_geometry, foreign_mst_records = _build_foreign_mst_masks(context)
     e_geometry, e_records, blocked_directions = _build_single_sided_blockers(
         context,
@@ -818,6 +994,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         context,
         allowed_road_ids=base_allowed_road_ids,
         blocker_geometry=pre_blocker_union,
+        force_bidirectional_road_ids=branch_frontier_road_ids,
     )
     b_geometry, b_records, node_fallback_used = _build_foreign_object_masks(
         context,
@@ -825,6 +1002,8 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         adjacent_cut_road_ids=adjacent_cut_road_ids,
         excluded_road_ids=excluded_opposite_road_ids,
         excluded_node_ids=excluded_opposite_rc_node_ids,
+        protected_road_ids=junction_related_road_ids,
+        protected_group_ids=adjacent_group_ids,
     )
     if node_fallback_used:
         review_signals.append("rule_b_node_fallback")
@@ -849,6 +1028,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         context,
         allowed_road_ids=base_allowed_road_ids,
         blocker_geometry=blocker_union,
+        force_bidirectional_road_ids=branch_frontier_road_ids,
     )
     if any(bool(item["cap_hit"]) for item in growth_limits):
         review_signals.append("rule_d_50m_cap_used")
@@ -864,6 +1044,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         context,
         allowed_road_ids=base_allowed_road_ids,
         blocker_geometry=None,
+        force_bidirectional_road_ids=branch_frontier_road_ids,
     )
     cleanup_preview_geometry = cleanup_preview_source_geometry
     if cleanup_preview_geometry is not None and blocker_union is not None:
@@ -933,7 +1114,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
                 and not opposite_side_intrusion
             ),
             "growth_limit_count": len(growth_limits),
-            "direction_mode": "directed_graph_from_t02_semantics",
+            "direction_mode": DIRECTION_MODE,
             **drivezone_metrics,
         },
         "E": {
@@ -977,7 +1158,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         },
         "blocked_directions": blocked_directions,
         "review_signals": review_signals,
-        "direction_mode": "directed_graph_from_t02_semantics",
+        "direction_mode": DIRECTION_MODE,
         "growth_order": "hard_bound_first",
         "hard_bound_first": True,
         "post_growth_safety_only": True,

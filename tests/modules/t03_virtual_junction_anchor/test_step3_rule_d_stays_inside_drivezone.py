@@ -22,7 +22,14 @@ def test_rule_d_forces_final_allowed_space_back_inside_drivezone(tmp_path: Path,
         extra_nodes=[node_feature("foreign_1", 50.0, 50.0, mainnodeid="foreign_1")],
     )
 
-    def _fake_build_reachable_road_support(context, *, allowed_road_ids=None, blocker_geometry=None, cap_m=50.0):
+    def _fake_build_reachable_road_support(
+        context,
+        *,
+        allowed_road_ids=None,
+        blocker_geometry=None,
+        force_bidirectional_road_ids=None,
+        cap_m=50.0,
+    ):
         return box(-5.0, -5.0, 25.0, 5.0), [{"road_id": "road_1", "cap_hit": True}], {"road_1"}, []
 
     monkeypatch.setattr(step3_engine, "_build_reachable_road_support", _fake_build_reachable_road_support)

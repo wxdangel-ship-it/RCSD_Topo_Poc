@@ -21,7 +21,14 @@ def test_rule_g_keeps_hard_bound_first_even_if_preview_can_rescue(tmp_path: Path
         extra_nodes=[node_feature("foreign_1", 50.0, 50.0, mainnodeid="foreign_1")],
     )
 
-    def _fake_build_reachable_road_support(context, *, allowed_road_ids=None, blocker_geometry=None, cap_m=50.0):
+    def _fake_build_reachable_road_support(
+        context,
+        *,
+        allowed_road_ids=None,
+        blocker_geometry=None,
+        force_bidirectional_road_ids=None,
+        cap_m=50.0,
+    ):
         if blocker_geometry is not None:
             return None, [], set(), ["hard_blocker_applied"]
         return box(-6.0, -6.0, 6.0, 6.0), [], set(), []

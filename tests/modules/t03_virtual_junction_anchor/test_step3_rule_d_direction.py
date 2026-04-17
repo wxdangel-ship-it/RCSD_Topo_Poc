@@ -10,7 +10,7 @@ from tests.modules.t03_virtual_junction_anchor._case_helpers import (
 )
 
 
-def test_rule_d_uses_directed_graph_from_t02_semantics(tmp_path: Path) -> None:
+def test_rule_d_traces_junction_branch_bidirectionally_from_target(tmp_path: Path) -> None:
     suite_root = tmp_path / "suite"
     case_id = "100001"
     write_case_package(
@@ -28,7 +28,8 @@ def test_rule_d_uses_directed_graph_from_t02_semantics(tmp_path: Path) -> None:
 
     _context, _template_result, case_result = run_case_bundle(suite_root, case_id)
 
-    assert case_result.audit_doc["direction_mode"] == "directed_graph_from_t02_semantics"
-    assert case_result.audit_doc["rules"]["D"]["direction_mode"] == "directed_graph_from_t02_semantics"
-    assert case_result.audit_doc["selected_road_ids"] == []
-    assert case_result.key_metrics["selected_road_count"] == 0
+    assert case_result.audit_doc["direction_mode"] == "t02_direction_plus_bidirectional_junction_trace"
+    assert case_result.audit_doc["rules"]["D"]["direction_mode"] == "t02_direction_plus_bidirectional_junction_trace"
+    assert "road_wrong_way" in case_result.audit_doc["selected_road_ids"]
+    assert "road_downstream" not in case_result.audit_doc["selected_road_ids"]
+    assert case_result.key_metrics["selected_road_count"] == 1

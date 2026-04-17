@@ -16,9 +16,9 @@ def test_case_584141_keeps_final_allowed_space_inside_drivezone(tmp_path: Path) 
     audit_doc = json.loads((run_root / "cases" / "584141" / "step3_audit.json").read_text(encoding="utf-8"))
 
     assert case_result.step3_state == "review"
-    assert case_result.reason == "rule_b_node_fallback"
+    assert case_result.reason == "rule_d_50m_cap_used"
     assert audit_doc["rules"]["D"]["passed"] is True
-    assert audit_doc["rules"]["B"]["node_fallback_used"] is True
+    assert audit_doc["rules"]["B"]["node_fallback_used"] is False
     assert audit_doc["allowed_area_m2"] == status_doc["key_metrics"]["allowed_area_m2"]
     assert audit_doc["allowed_inside_drivezone_area_m2"] == status_doc["key_metrics"]["allowed_inside_drivezone_area_m2"]
     assert audit_doc["allowed_outside_drivezone_area_m2"] == 0.0

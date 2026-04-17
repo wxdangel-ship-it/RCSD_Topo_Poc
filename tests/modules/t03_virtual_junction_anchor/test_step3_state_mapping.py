@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from shapely.geometry import Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_vector
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_loader import load_case_specs
@@ -85,6 +85,18 @@ def _run_case(case_root: Path) -> object:
     context = build_step1_context(specs[0])
     template_result = classify_step2_template(context)
     return build_step3_case_result(context, template_result)
+
+
+def _road_feature(*, road_id: str, snodeid: str, enodeid: str, coords: list[tuple[float, float]]) -> dict:
+    return {
+        "properties": {
+            "id": road_id,
+            "snodeid": snodeid,
+            "enodeid": enodeid,
+            "direction": 2,
+        },
+        "geometry": LineString(coords),
+    }
 
 
 @pytest.mark.parametrize(
@@ -173,3 +185,39 @@ def test_step3_state_mapping(
     else:
         assert result.audit_doc["rules"]["D"]["passed"] is False
         assert result.audit_doc["must_cover_result"]["missing_node_ids"] == [case_id]
+
+
+def test_step3_reachable_road_support_preserves_clipped_lines(tmp_path: Path) -> None:
+    suite_root = tmp_path / "suite"
+    case_id = "400001"
+    case_root = suite_root / case_id
+    _write_case_package(
+        case_root,
+        case_id,
+        roads=[
+            _road_feature(
+                road_id="road_1",
+                snodeid=case_id,
+                enodeid="other_1",
+                coords=[(0.0, 0.0), (35.0, 0.0)],
+            )
+        ],
+        extra_nodes=[
+            {
+                "properties": {
+                    "id": "other_1",
+                    "mainnodeid": "other_1",
+                    "has_evd": "yes",
+                    "is_anchor": "no",
+                    "kind_2": 4,
+                    "grade_2": 1,
+                },
+                "geometry": Point(35.0, 0.0),
+            }
+        ],
+    )
+
+    result = _run_case(suite_root)
+
+    assert result.key_metrics["selected_road_count"] == 1
+    assert result.audit_doc["growth_limits"][0]["road_id"] == "road_1"

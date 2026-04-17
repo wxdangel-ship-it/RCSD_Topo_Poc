@@ -5,7 +5,14 @@ import math
 from collections import defaultdict
 from typing import Any
 
-from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon
+from shapely.geometry import (
+    GeometryCollection,
+    LineString,
+    MultiLineString,
+    MultiPolygon,
+    Point,
+    Polygon,
+)
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import substring, unary_union
 
@@ -30,7 +37,10 @@ def _clean_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
         return None
     if geometry.is_empty:
         return None
-    cleaned = geometry.buffer(0)
+    if isinstance(geometry, (Point, LineString, MultiLineString)):
+        cleaned = geometry
+    else:
+        cleaned = geometry.buffer(0)
     if cleaned.is_empty:
         return None
     return cleaned

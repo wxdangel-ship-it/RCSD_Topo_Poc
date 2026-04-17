@@ -139,6 +139,50 @@ def _axis_similarity(left: tuple[float, float], right: tuple[float, float]) -> f
     return abs(left[0] * right[0] + left[1] * right[1])
 
 
+def _normalized_axis_vector(vector: tuple[float, float]) -> tuple[float, float]:
+    vx, vy = vector
+    if vx < -1e-6 or (abs(vx) <= 1e-6 and vy < 0):
+        return (-vx, -vy)
+    return (vx, vy)
+
+
+def _point_along_road_from_reference(
+    road: RoadRecord,
+    reference: Point,
+    offset_m: float,
+) -> Point:
+    coords = list(road.geometry.coords)
+    start = Point(coords[0])
+    end = Point(coords[-1])
+    offset = min(max(offset_m, 0.0), max(road.geometry.length, 0.0))
+    if start.distance(reference) <= end.distance(reference):
+        point = road.geometry.interpolate(offset)
+    else:
+        point = road.geometry.interpolate(max(road.geometry.length - offset, 0.0))
+    return point if isinstance(point, Point) else _point_like(point)
+
+
+def _road_pair_distance_trend_from_reference(
+    first: RoadRecord,
+    second: RoadRecord,
+    reference: Point,
+) -> float | None:
+    min_length = min(first.geometry.length, second.geometry.length)
+    if min_length <= 2.0:
+        return None
+    near_offset = min(5.0, max(1.0, min_length * 0.2))
+    far_offset = min(20.0, max(near_offset + 1.0, min_length * 0.7))
+    if far_offset <= near_offset + 1e-6:
+        return None
+    near_first = _point_along_road_from_reference(first, reference, near_offset)
+    near_second = _point_along_road_from_reference(second, reference, near_offset)
+    far_first = _point_along_road_from_reference(first, reference, far_offset)
+    far_second = _point_along_road_from_reference(second, reference, far_offset)
+    near_distance = float(near_first.distance(near_second))
+    far_distance = float(far_first.distance(far_second))
+    return far_distance - near_distance
+
+
 def _road_flow_flags_for_group_like_t02(road: RoadRecord, member_node_ids: set[str]) -> tuple[bool, bool]:
     touches_snode = road.snodeid in member_node_ids
     touches_enode = road.enodeid in member_node_ids
@@ -660,9 +704,14 @@ def _build_candidate_roads_for_single_sided(
     ]
     if not candidate_roads:
         return set(), {road.road_id for road in context.roads}, True, None
-    direction_vectors = [_road_vector_from_reference(road, reference) for road in candidate_roads]
-    scored: list[tuple[float, set[str], set[str], tuple[float, float]]] = []
-    for vx, vy in direction_vectors:
+    member_node_ids = {node.node_id for node in context.target_group.nodes}
+    candidate_vectors = [
+        (_road_vector_from_reference(road, reference), road)
+        for road in candidate_roads
+    ]
+    scored: list[dict[str, Any]] = []
+    for (vx, vy), seed_road in candidate_vectors:
+        axis_vector = _normalized_axis_vector((vx, vy))
         allowed: set[str] = set()
         excluded: set[str] = set()
         for road in context.roads:
@@ -680,11 +729,68 @@ def _build_candidate_roads_for_single_sided(
             if road.road_id in allowed:
                 midpoint = _line_midpoint(road.geometry)
                 score += math.hypot(midpoint.x - reference.x, midpoint.y - reference.y) * 0.01
-        scored.append((score, allowed, excluded, (vx, vy)))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    top_score = scored[0][0]
-    ambiguous = len(scored) > 1 and abs(top_score - scored[1][0]) <= max(3.0, abs(top_score) * 0.15)
-    return scored[0][1], scored[0][2], ambiguous, scored[0][3]
+
+        axis_aligned_roads = [
+            road
+            for road in candidate_roads
+            if _axis_similarity(_road_vector_from_reference(road, reference), axis_vector) >= 0.95
+        ]
+        incoming_axis_roads = [
+            road for road in axis_aligned_roads if _road_flow_flags_for_group_like_t02(road, member_node_ids)[0]
+        ]
+        outgoing_axis_roads = [
+            road for road in axis_aligned_roads if _road_flow_flags_for_group_like_t02(road, member_node_ids)[1]
+        ]
+        horizontal_pair_detected = any(
+            incoming.road_id != outgoing.road_id
+            for incoming in incoming_axis_roads
+            for outgoing in outgoing_axis_roads
+        )
+        best_divergence = None
+        for incoming in incoming_axis_roads:
+            for outgoing in outgoing_axis_roads:
+                if incoming.road_id == outgoing.road_id:
+                    continue
+                trend = _road_pair_distance_trend_from_reference(incoming, outgoing, reference)
+                if trend is None:
+                    continue
+                best_divergence = trend if best_divergence is None else max(best_divergence, trend)
+        if horizontal_pair_detected:
+            score += 12.0
+        if best_divergence is not None:
+            score += max(-5.0, min(12.0, best_divergence * 0.5))
+
+        scored.append(
+            {
+                "score": score,
+                "allowed": allowed,
+                "excluded": excluded,
+                "direction": (vx, vy),
+                "seed_road_id": seed_road.road_id,
+                "axis_vector": axis_vector,
+                "horizontal_pair_detected": horizontal_pair_detected,
+                "best_divergence": best_divergence,
+            }
+        )
+    scored.sort(key=lambda item: item["score"], reverse=True)
+    top = scored[0]
+    top_score = top["score"]
+    ambiguous = False
+    if len(scored) > 1:
+        second = scored[1]
+        close_in_score = abs(top_score - second["score"]) <= max(3.0, abs(top_score) * 0.15)
+        same_partition = (
+            top["allowed"] == second["allowed"]
+            and top["excluded"] == second["excluded"]
+        )
+        same_axis = _axis_similarity(top["axis_vector"], second["axis_vector"]) >= 0.97
+        semantically_equivalent = same_partition or (
+            same_axis
+            and top["horizontal_pair_detected"]
+            and second["horizontal_pair_detected"]
+        )
+        ambiguous = close_in_score and not semantically_equivalent
+    return top["allowed"], top["excluded"], ambiguous, top["direction"]
 
 
 def _split_point_side(reference: Point, point: Point, direction: tuple[float, float]) -> float:

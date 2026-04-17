@@ -48,6 +48,7 @@ python3 -m rcsd_topo_poc t03-step3-legal-space \
 - `Rule B / Rule E` 不得把当前路口关联 road 或其二度衔接 road 回灌成 `foreign / opposite`
 - `Rule B` 的 `node fallback` 仍是允许的正式边界手段，只保留审计留痕，不自动进入 `review`
 - `Rule D` 的 `50m fallback` 在无更早稳定边界时允许直接成立，不自动进入 review，只在 `step3_audit.json` 保留审计信息
+- `single_sided_t_mouth` 的方向歧义只在候选方向会导出不同 road partition 时才保留；局部向量并列但 partition 等价时，不再单独升为 `review`
 - 双 node `single_sided_t_mouth` 场景下，两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 若仅承担 through-node，不得中断主通路
 - `RCSDRoad` 在 `Rule E` 中只承担 near-corridor proxy，必须挂靠到 opposite `SWSD road`，不能以 opposite side 全量 `RCSDRoad` 主导硬阻断；若 proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress
 - `Rule E` 当前只到 baseline partial；`lane_guard_status=proxy_only_not_modeled`，不宣称 fully complete

@@ -7,8 +7,9 @@ def test_case_706389_uses_near_corridor_rcsd_proxy_instead_of_full_opposite_side
     _context, _template_result, case_result = load_real_case_bundle("706389")
     audit_doc = case_result.audit_doc
 
-    assert case_result.step3_state == "review"
-    assert case_result.reason == "single_sided_direction_ambiguous"
+    assert case_result.step3_state == "established"
+    assert case_result.reason == "step3_established"
+    assert audit_doc["review_signals"] == []
     assert set(audit_doc["selected_road_ids"]) == {"58163436", "617732646", "629431331"}
     assert set(audit_doc["opposite_road_ids"]) == {"529751673", "58163412"}
     assert set(audit_doc["opposite_rcsdroad_ids"]) == {"5395781419598853", "5395781419598870"}

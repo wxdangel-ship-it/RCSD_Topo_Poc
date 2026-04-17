@@ -12,6 +12,8 @@ def test_single_sided_two_node_target_keeps_bridge_in_allowed_space_main_path() 
 
     assert template_result.template_class == "single_sided_t_mouth"
     assert [node.node_id for node in target_nodes] == ["851884", "851886"]
+    assert case_result.step3_state == "established"
+    assert case_result.reason == "step3_established"
     assert case_result.allowed_space_geometry is not None
     assert case_result.allowed_space_geometry.buffer(0.5).covers(bridge_midpoint)
     assert {"58285198", "506188765", "87963411", "1103051"}.issubset(set(case_result.audit_doc["selected_road_ids"]))

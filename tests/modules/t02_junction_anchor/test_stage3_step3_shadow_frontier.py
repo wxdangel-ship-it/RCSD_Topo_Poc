@@ -94,3 +94,66 @@ def test_sidearm_cap_does_not_override_main_direction_branch() -> None:
     assert record.is_main_direction is True
     assert record.frontier_length_m == record.raw_frontier_length_m
     assert record.sidearm_cap_applied is False
+
+
+def test_main_direction_uses_unbounded_50m_cap_when_no_earlier_boundary() -> None:
+    result = build_stage3_step3_shadow_frontier(
+        template_class="single_sided_t_mouth",
+        analysis_center=Point(0.0, 0.0),
+        drivezone_union=Polygon([(-120.0, -80.0), (120.0, -80.0), (120.0, 80.0), (-120.0, 80.0)]),
+        group_nodes=[_node("100", mainnodeid="100")],
+        local_nodes=[_node("100", mainnodeid="100")],
+        local_roads=[_road("road_1", [(0.0, 0.0), (110.0, 0.0)])],
+        selected_rc_roads=[],
+        road_branches=[_branch(is_main_direction=True, branch_type="trunk", road_support_m=110.0)],
+        positive_rc_groups=[],
+        analysis_member_node_ids=["100"],
+        normalized_mainnodeid="100",
+        config=Stage3Step3ShadowFrontierConfig(
+            alpha=0.6,
+            buffer_m=14.0,
+            fallback_strategy="min_drivezone_edge_cap",
+            fallback_cap_m=50.0,
+            sidearm_cap_m=50.0,
+        ),
+    )
+
+    record = result.branch_records[0]
+    assert record.is_main_direction is True
+    assert record.raw_frontier_length_m == 110.0
+    assert record.frontier_length_m == 50.0
+    assert record.fallback_applied is True
+    assert record.stop_reasons == ("fallback_drivezone_cap_50m",)
+
+
+def test_neighbor_boundary_is_not_overridden_by_unbounded_50m_cap() -> None:
+    result = build_stage3_step3_shadow_frontier(
+        template_class="single_sided_t_mouth",
+        analysis_center=Point(0.0, 0.0),
+        drivezone_union=Polygon([(-120.0, -80.0), (120.0, -80.0), (120.0, 80.0), (-120.0, 80.0)]),
+        group_nodes=[_node("100", mainnodeid="100")],
+        local_nodes=[
+            _node("100", mainnodeid="100"),
+            _node("200", mainnodeid="200", x=12.0, y=0.0),
+        ],
+        local_roads=[_road("road_1", [(0.0, 0.0), (110.0, 0.0)])],
+        selected_rc_roads=[],
+        road_branches=[_branch(is_main_direction=True, branch_type="trunk", road_support_m=110.0)],
+        positive_rc_groups=[],
+        analysis_member_node_ids=["100"],
+        normalized_mainnodeid="100",
+        config=Stage3Step3ShadowFrontierConfig(
+            alpha=0.6,
+            buffer_m=14.0,
+            fallback_strategy="min_drivezone_edge_cap",
+            fallback_cap_m=50.0,
+            sidearm_cap_m=50.0,
+        ),
+    )
+
+    record = result.branch_records[0]
+    assert record.neighbor_projection_m == 12.0
+    assert record.raw_frontier_length_m == 7.199999999999999
+    assert record.frontier_length_m == 7.199999999999999
+    assert record.fallback_applied is False
+    assert record.stop_reasons == ("neighbor_semantic_alpha",)

@@ -176,7 +176,7 @@ class Stage3Step3ShadowFrontierConfig:
     buffer_m: float = 14.0
     fallback_strategy: str = "floor_20m"
     fallback_floor_m: float = 20.0
-    fallback_cap_m: float = 30.0
+    fallback_cap_m: float = 50.0
     sidearm_cap_m: float = 50.0
     core_radius_m: float = 18.0
     group_node_buffer_m: float = 9.0
@@ -223,6 +223,15 @@ class Stage3Step3ShadowFrontierResult:
     branch_records: tuple[Stage3Step3ShadowFrontierBranchRecord, ...] = field(default_factory=tuple)
 
 
+def _format_cap_stop_reason(prefix: str, cap_m: float) -> str:
+    rounded_cap = round(float(cap_m), 3)
+    if abs(rounded_cap - round(rounded_cap)) <= 1e-6:
+        cap_token = str(int(round(rounded_cap)))
+    else:
+        cap_token = str(rounded_cap).replace(".", "p")
+    return f"{prefix}_{cap_token}m"
+
+
 def _resolve_fallback_frontier_length(
     *,
     config: Stage3Step3ShadowFrontierConfig,
@@ -242,12 +251,12 @@ def _resolve_fallback_frontier_length(
     elif cap_m > 0.0:
         drivezone_cap = cap_m
 
-    if strategy == "min_drivezone_edge_30m":
+    if strategy in {"min_drivezone_edge_cap", "min_drivezone_edge_30m", "min_drivezone_edge_50m"}:
         if drivezone_cap is None or drivezone_cap <= 0.0:
             return None, (), strategy
-        return drivezone_cap, ("fallback_drivezone_cap_30m",), strategy
+        return drivezone_cap, (_format_cap_stop_reason("fallback_drivezone_cap", drivezone_cap),), strategy
 
-    if strategy == "neighbor_then_30m":
+    if strategy in {"neighbor_then_cap", "neighbor_then_30m", "neighbor_then_50m"}:
         if neighbor_projection_m is not None and neighbor_projection_m > 0.0:
             neighbor_cap = neighbor_projection_m * float(config.alpha)
             if drivezone_limit_m > 0.0:
@@ -256,7 +265,9 @@ def _resolve_fallback_frontier_length(
                 return neighbor_cap, ("fallback_neighbor_semantic_alpha",), strategy
         if drivezone_cap is None or drivezone_cap <= 0.0:
             return None, (), strategy
-        return drivezone_cap, ("fallback_neighbor_missing_then_drivezone_cap_30m",), strategy
+        return drivezone_cap, (
+            _format_cap_stop_reason("fallback_neighbor_missing_then_drivezone_cap", drivezone_cap),
+        ), strategy
 
     raise ValueError(f"unsupported fallback_strategy: {strategy!r}")
 
@@ -411,18 +422,25 @@ def build_stage3_step3_shadow_frontier(
                 if abs(length_m - raw_frontier_length_m) <= 0.75
             )
             frontier_length_m = raw_frontier_length_m
-            if raw_frontier_length_m < float(config.fallback_floor_m):
-                fallback_applied = True
-                frontier_length_m, stop_reasons, fallback_strategy_used = _resolve_fallback_frontier_length(
+            no_earlier_boundary = support_projection_m is None and neighbor_projection_m is None
+            if no_earlier_boundary and is_main_direction and frontier_length_m is not None:
+                capped_frontier_length_m, capped_stop_reasons, fallback_strategy_used = _resolve_fallback_frontier_length(
                     config=config,
                     drivezone_limit_m=drivezone_limit_m,
                     neighbor_projection_m=neighbor_projection_m,
                 )
+                if (
+                    capped_frontier_length_m is not None
+                    and capped_frontier_length_m > 0.0
+                    and capped_frontier_length_m < frontier_length_m - 1e-6
+                ):
+                    fallback_applied = True
+                    frontier_length_m = capped_frontier_length_m
+                    stop_reasons = capped_stop_reasons
             if (
                 not fallback_applied
                 and not is_main_direction
-                and support_projection_m is None
-                and neighbor_projection_m is None
+                and no_earlier_boundary
                 and frontier_length_m is not None
             ):
                 sidearm_cap_m = max(0.0, float(config.sidearm_cap_m))

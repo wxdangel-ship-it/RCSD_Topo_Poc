@@ -4534,7 +4534,6 @@ def _build_step3_formal_candidate_frontier_result(
             candidate_geometry = candidate_geometry.difference(total_exclusion_geometry).intersection(
                 drivezone_union
             )
-
     if not candidate_geometry.is_empty:
         candidate_geometry = candidate_geometry.buffer(0)
         if not candidate_geometry.is_empty:
@@ -6717,8 +6716,6 @@ def _covered_foreign_local_road_ids(
     foreign_node_cover_radius_m = max(DEFAULT_RESOLUTION_M, 0.5)
     covered_road_ids: list[str] = []
     for road in local_roads:
-        if road.road_id in allowed_road_ids:
-            continue
         endpoint_nodes = [
             local_node_by_id.get(road.snodeid),
             local_node_by_id.get(road.enodeid),
@@ -6765,6 +6762,8 @@ def _covered_foreign_local_road_ids(
             analysis_center=analysis_center,
             semantic_mainnodeids=semantic_mainnodeids,
         )
+        if road.road_id in allowed_road_ids and not touches_foreign_semantic_junction:
+            continue
         if not touches_foreign_semantic_junction:
             if not touches_target_group and touches_non_target_group and covered_length_m > POLYGON_FOREIGN_ROAD_OVERLAP_MIN_M:
                 covered_road_ids.append(road.road_id)
@@ -6849,11 +6848,9 @@ def _target_group_foreign_semantic_road_overlap_lengths(
     local_node_by_id = {node.node_id: node for node in local_nodes}
     overlap_by_road_id: dict[str, float] = {}
     for road in local_roads:
-        if road.road_id in allowed_road_ids:
-            continue
         if road.snodeid not in target_group_node_ids and road.enodeid not in target_group_node_ids:
             continue
-        if not _road_touches_foreign_local_semantic_junction(
+        touches_foreign_semantic_junction = _road_touches_foreign_local_semantic_junction(
             road=road,
             local_node_by_id=local_node_by_id,
             target_group_node_ids=target_group_node_ids,
@@ -6861,7 +6858,10 @@ def _target_group_foreign_semantic_road_overlap_lengths(
             local_road_degree_by_node_id=local_road_degree_by_node_id,
             analysis_center=analysis_center,
             semantic_mainnodeids=semantic_mainnodeids,
-        ):
+        )
+        if road.road_id in allowed_road_ids and not touches_foreign_semantic_junction:
+            continue
+        if not touches_foreign_semantic_junction:
             continue
         covered_geometry = road.geometry.intersection(
             polygon_geometry.buffer(max(DEFAULT_RESOLUTION_M, 0.5), join_style=1)
@@ -17565,8 +17565,8 @@ def run_t02_virtual_intersection_poc(
                     enabled=True,
                     alpha=0.6,
                     buffer_m=14.0,
-                    fallback_strategy="min_drivezone_edge_30m",
-                    fallback_cap_m=30.0,
+                    fallback_strategy="min_drivezone_edge_cap",
+                    fallback_cap_m=50.0,
                     sidearm_cap_m=50.0,
                 )
             )
@@ -19687,6 +19687,7 @@ def run_t02_virtual_intersection_poc(
                             f"area_after={float(late_tail_clip_virtual_polygon_geometry.area):.3f}"
                         ),
                     )
+
 
         counts["max_target_group_foreign_semantic_road_overlap_m"] = round(
             step6_final_foreign_overlap_metric_m,

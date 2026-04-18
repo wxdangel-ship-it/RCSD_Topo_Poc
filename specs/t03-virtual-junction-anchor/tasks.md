@@ -1,0 +1,27 @@
+# T03 / Phase A Step3 repair closeout tasks
+
+- [x] T001 收口 `INTERFACE_CONTRACT.md / spec.md / README.md / architecture/03-context-and-scope.md`
+- [x] T002 统一 `input_gate_failed` 的契约归属为前置输入门禁 `reason`
+- [x] T003 将 `plan.md / tasks.md` 改写为 Step3 repair closeout 口径
+- [x] T004 修复 `Rule D` 的合法方向约束
+- [x] T005 修复 `Rule E` 的 single-sided 前置约束与 proxy 表达
+- [x] T006 修复 `Rule F` 的 cleanup_dependency 判定
+- [x] T007 修复 `Rule G` 的 hard-bound-first 主通路顺序
+- [x] T008 增加最终 `allowed space` 的 `DriveZone` containment 约束与 `outside_drivezone` 失败优先级
+- [x] T009 补齐规则级与 run 级回归测试
+- [x] T010 先定点回归 `584253 / 584141`，再决定是否真实跑 Anchor61
+- [x] T011 真实跑完 Anchor61 并核对 `61` case 闭环
+- [x] T012 更新现有 Draft PR 的说明，明确本轮仍只做到 `Step3`
+- [x] T013 修正 `Rule A` 只截当前 branch 进入相邻语义路口的入口，且不得覆盖当前 target core
+- [x] T014 修正当前 branch 双向追溯与 second-degree road 保护，并完成 `692723 / 698330` 定点回归
+- [x] T015 记录 `922217 / 54265667 / 502058682` 为 input-gate hard-stop case，并从默认全量验收集排除，同时保留显式点名单复跑能力
+- [x] T016 将 `Rule D` 的 `50m fallback` 改写为允许成立且不自动进入 `review`，同时在契约与 spec 中补充 fallback 审计留痕口径
+- [x] T017 将 `Rule E` 明确降格为 `single_sided opposite-side guard baseline partial`，正式文档和审计文案统一改成 `opposite road / semantic node / near-corridor proxy` 口径，避免任何 lane 级护栏残留说法
+- [x] T018 为双 node `single_sided_t_mouth` 补充两条正式规则：bridge 进入 `allowed-space` 主通路、共享 `2进2出` through-node 不中断主通路
+- [x] T019 在 `INTERFACE_CONTRACT.md / spec.md` 中补充 `Rule D / Rule E` 建议审计字段，覆盖 fallback 与 double-node through-node 观测项
+- [x] T020 在 `README.md` 补齐 patch round 操作者口径，并重申原始 Anchor `61`、默认正式全量验收 `58` 与固定 `excluded_case_ids`
+- [x] T021 把默认正式全量验收集固化为 `58-case`，并在 `preflight.json / summary.json` 落盘 `raw_case_count / default_formal_case_count / excluded_case_ids / effective_case_ids`
+- [x] T022 统一 `Rule D direction_mode = t02_direction_plus_bidirectional_junction_trace`
+- [x] T023 把 Rule A target-core suppress 的 materialized/suppressed 审计字段正式落盘
+- [x] T024 补一份 repo 内 Step3 baseline closeout 文档
+- [x] T025 更新 Draft PR 为 Step3 baseline closeout 口径，并明确是否可作为 Step4 前置基线

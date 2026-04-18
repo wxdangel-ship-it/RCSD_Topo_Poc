@@ -227,6 +227,12 @@ def _cmd_t02_stage4_divmerge_virtual_polygon(args: argparse.Namespace) -> int:
     return run_t02_stage4_divmerge_virtual_polygon_cli(args)
 
 
+def _cmd_t03_step3_legal_space(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t03_virtual_junction_anchor.cli import run_t03_step3_legal_space_cli
+
+    return run_t03_step3_legal_space_cli(args)
+
+
 def _add_debug_flag(parser: argparse.ArgumentParser, *, default: bool) -> None:
     parser.add_argument(
         "--debug",
@@ -902,6 +908,46 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     _add_debug_flag(p_t02_stage4, default=False)
     p_t02_stage4.set_defaults(func=_cmd_t02_stage4_divmerge_virtual_polygon)
+
+    p_t03 = sub.add_parser(
+        "t03-step3-legal-space",
+        help="Run T03 Phase A Step3 legal-space baseline on Anchor case-package inputs.",
+    )
+    p_t03.add_argument(
+        "--case-root",
+        default="/mnt/e/TestData/POC_Data/T02/Anchor",
+        help="Anchor case-package root directory. Default: /mnt/e/TestData/POC_Data/T02/Anchor.",
+    )
+    p_t03.add_argument(
+        "--case-id",
+        action="append",
+        help="Optional case id filter. Repeat to run multiple cases.",
+    )
+    p_t03.add_argument(
+        "--max-cases",
+        type=int,
+        help="Optional maximum number of cases to run after stable sorting.",
+    )
+    p_t03.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel case workers. Default: 1.",
+    )
+    p_t03.add_argument(
+        "--run-id",
+        help="Optional run id. If omitted, use t03_step3_phase_a_YYYYMMDD_HHMMSS.",
+    )
+    p_t03.add_argument(
+        "--out-root",
+        "--out-dir",
+        "--out_dir",
+        dest="out_root",
+        default="/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a",
+        help="Optional output root override. Default: /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a.",
+    )
+    _add_debug_flag(p_t03, default=False)
+    p_t03.set_defaults(func=_cmd_t03_step3_legal_space)
 
     p_t02_poc = sub.add_parser(
         "t02-virtual-intersection-poc",

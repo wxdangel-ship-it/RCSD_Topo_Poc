@@ -1,0 +1,24 @@
+# 05 Building Block View
+
+- `case_loader`
+  - 读取 case-package
+  - 校验 `manifest / file_list / size_report`
+- `step1_context`
+  - 组装 `semantic_junction_set`
+  - 解析本地 `roads / RC roads / RC nodes`
+- `step2_template`
+  - 模板归类
+- `step3_engine`
+  - A-H
+  - allowed space
+  - negative masks
+- `render`
+  - case PNG
+  - tri-state banner
+- `writer`
+  - case 级产物
+  - flat 目录
+  - index / summary
+- `batch_runner`
+  - 批处理 orchestration
+  - preflight / summary

@@ -85,6 +85,19 @@ def _rule_a_target_core_protection_fields(adjacent_suppressed_records: list[dict
     }
 
 
+def _single_sided_direction_resolution_fields(
+    resolution: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolution = resolution or {}
+    pair_road_ids = resolution.get("horizontal_pair_road_ids") or []
+    return {
+        "single_sided_horizontal_pair_detected": bool(resolution.get("horizontal_pair_detected", False)),
+        "single_sided_horizontal_pair_road_ids": sorted(pair_road_ids),
+        "single_sided_horizontal_pair_divergence_m": resolution.get("horizontal_pair_divergence_m"),
+        "single_sided_direction_resolution_mode": resolution.get("resolution_mode"),
+    }
+
+
 def _clean_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
     if geometry is None or geometry.is_empty:
         return None
@@ -740,23 +753,9 @@ def _build_candidate_roads_for_single_sided(
     context: Step1Context,
     *,
     protected_road_ids: set[str],
-) -> tuple[set[str], set[str], bool, tuple[float, float] | None]:
-    reference = _point_like(context.representative_node.geometry)
-    candidate_roads = [
-        road
-        for road in context.roads
-        if road.road_id in context.target_road_ids or road.geometry.distance(reference) <= 18.0
-    ]
-    if not candidate_roads:
-        return set(), {road.road_id for road in context.roads}, True, None
-    member_node_ids = {node.node_id for node in context.target_group.nodes}
-    candidate_vectors = [
-        (_road_vector_from_reference(road, reference), road)
-        for road in candidate_roads
-    ]
-    scored: list[dict[str, Any]] = []
-    for (vx, vy), seed_road in candidate_vectors:
-        axis_vector = _normalized_axis_vector((vx, vy))
+) -> tuple[set[str], set[str], bool, tuple[float, float] | None, dict[str, Any]]:
+    def _partition_by_direction(direction: tuple[float, float]) -> tuple[set[str], set[str]]:
+        vx, vy = direction
         allowed: set[str] = set()
         excluded: set[str] = set()
         for road in context.roads:
@@ -769,6 +768,96 @@ def _build_candidate_roads_for_single_sided(
                 allowed.add(road.road_id)
             else:
                 excluded.add(road.road_id)
+        return allowed, excluded
+
+    def _detect_semantic_horizontal_pair(
+        roads: list[RoadRecord],
+        member_node_ids: set[str],
+    ) -> dict[str, Any] | None:
+        direct_target_roads = [road for road in roads if road.road_id in context.target_road_ids]
+        candidate_pairs: list[dict[str, Any]] = []
+        for incoming_road in direct_target_roads:
+            incoming_support, outgoing_support = _road_flow_flags_for_group_like_t02(incoming_road, member_node_ids)
+            if not incoming_support or outgoing_support:
+                continue
+            incoming_vector = _road_vector_from_reference(incoming_road, reference)
+            for outgoing_road in direct_target_roads:
+                if outgoing_road.road_id == incoming_road.road_id:
+                    continue
+                incoming_support_out, outgoing_support_out = _road_flow_flags_for_group_like_t02(
+                    outgoing_road,
+                    member_node_ids,
+                )
+                if incoming_support_out or not outgoing_support_out:
+                    continue
+                outgoing_vector = _road_vector_from_reference(outgoing_road, reference)
+                if _axis_similarity(incoming_vector, outgoing_vector) < 0.95:
+                    continue
+                divergence = _road_pair_distance_trend_from_reference(incoming_road, outgoing_road, reference)
+                if divergence is None or divergence <= 1.0:
+                    continue
+                candidate_pairs.append(
+                    {
+                        "horizontal_pair_road_ids": [incoming_road.road_id, outgoing_road.road_id],
+                        "horizontal_pair_divergence_m": round(float(divergence), 6),
+                        "direction": outgoing_vector,
+                    }
+                )
+        if not candidate_pairs:
+            return None
+        candidate_pairs.sort(
+            key=lambda item: (
+                -item["horizontal_pair_divergence_m"],
+                item["horizontal_pair_road_ids"],
+            )
+        )
+        best_pair = candidate_pairs[0]
+        return {
+            "horizontal_pair_detected": True,
+            "horizontal_pair_road_ids": best_pair["horizontal_pair_road_ids"],
+            "horizontal_pair_divergence_m": best_pair["horizontal_pair_divergence_m"],
+            "resolution_mode": "semantic_horizontal_pair",
+            "direction": best_pair["direction"],
+        }
+
+    reference = _point_like(context.representative_node.geometry)
+    candidate_roads = [
+        road
+        for road in context.roads
+        if road.road_id in context.target_road_ids or road.geometry.distance(reference) <= 18.0
+    ]
+    if not candidate_roads:
+        return (
+            set(),
+            {road.road_id for road in context.roads},
+            True,
+            None,
+            {
+                "horizontal_pair_detected": False,
+                "horizontal_pair_road_ids": [],
+                "horizontal_pair_divergence_m": None,
+                "resolution_mode": "no_candidate_roads",
+            },
+        )
+    member_node_ids = {node.node_id for node in context.target_group.nodes}
+    semantic_horizontal_pair = _detect_semantic_horizontal_pair(candidate_roads, member_node_ids)
+    if semantic_horizontal_pair is not None:
+        allowed, excluded = _partition_by_direction(semantic_horizontal_pair["direction"])
+        return (
+            allowed,
+            excluded,
+            False,
+            semantic_horizontal_pair["direction"],
+            semantic_horizontal_pair,
+        )
+    candidate_vectors = [
+        (_road_vector_from_reference(road, reference), road)
+        for road in candidate_roads
+    ]
+    scored: list[dict[str, Any]] = []
+    for (vx, vy), seed_road in candidate_vectors:
+        axis_vector = _normalized_axis_vector((vx, vy))
+        allowed, excluded = _partition_by_direction((vx, vy))
         score = float(len(allowed) * 10 - len(excluded))
         for road in context.roads:
             if road.road_id in allowed:
@@ -835,7 +924,18 @@ def _build_candidate_roads_for_single_sided(
             and second["horizontal_pair_detected"]
         )
         ambiguous = close_in_score and not semantically_equivalent
-    return top["allowed"], top["excluded"], ambiguous, top["direction"]
+    return (
+        top["allowed"],
+        top["excluded"],
+        ambiguous,
+        top["direction"],
+        {
+            "horizontal_pair_detected": False,
+            "horizontal_pair_road_ids": [],
+            "horizontal_pair_divergence_m": None,
+            "resolution_mode": "score_fallback",
+        },
+    )
 
 
 def _split_point_side(reference: Point, point: Point, direction: tuple[float, float]) -> float:
@@ -1295,6 +1395,7 @@ def _status_for_unsupported_template(context: Step1Context, template_result: Ste
     rule_d_fallback_fields = _rule_d_fallback_fields()
     two_node_t_bridge_fields = _two_node_t_bridge_closeout_defaults()
     shared_two_in_two_out_fields = _shared_two_in_two_out_closeout_fields()
+    single_sided_direction_resolution = _single_sided_direction_resolution_fields()
     return Step3CaseResult(
         case_id=context.case_spec.case_id,
         template_class=template_result.template_class,
@@ -1319,6 +1420,7 @@ def _status_for_unsupported_template(context: Step1Context, template_result: Ste
             "cleanup_dependency": False,
             "direction_mode": DIRECTION_MODE,
             **rule_d_fallback_fields,
+            **single_sided_direction_resolution,
             "allowed_area_m2": 0.0,
             "allowed_inside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_area_m2": 0.0,
@@ -1341,6 +1443,7 @@ def _status_for_input_gate_failure(
     rule_d_fallback_fields = _rule_d_fallback_fields()
     two_node_t_bridge_fields = _two_node_t_bridge_closeout_defaults()
     shared_two_in_two_out_fields = _shared_two_in_two_out_closeout_fields()
+    single_sided_direction_resolution = _single_sided_direction_resolution_fields()
     return Step3CaseResult(
         case_id=context.case_spec.case_id,
         template_class=template_result.template_class,
@@ -1365,6 +1468,7 @@ def _status_for_input_gate_failure(
             "cleanup_dependency": False,
             "direction_mode": DIRECTION_MODE,
             **rule_d_fallback_fields,
+            **single_sided_direction_resolution,
             "allowed_area_m2": 0.0,
             "allowed_inside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_area_m2": 0.0,
@@ -1399,6 +1503,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     opposite_side_guard_mode = "not_applicable"
     corridor_guard_status = "not_applicable"
     opposite_side_guard_note: str | None = None
+    single_sided_direction_resolution = _single_sided_direction_resolution_fields()
     shared_two_in_two_out = _detect_shared_two_in_two_out_node(context)
     shared_through_node_ids = (
         {shared_two_in_two_out["node_id"]}
@@ -1422,9 +1527,18 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     base_allowed_road_ids = set(branch_frontier_road_ids)
 
     if template_result.template_class == "single_sided_t_mouth":
-        single_sided_allowed_road_ids, excluded_opposite_road_ids, ambiguous, direction = _build_candidate_roads_for_single_sided(
+        (
+            single_sided_allowed_road_ids,
+            excluded_opposite_road_ids,
+            ambiguous,
+            direction,
+            single_sided_direction_resolution_raw,
+        ) = _build_candidate_roads_for_single_sided(
             context,
             protected_road_ids=junction_related_road_ids,
+        )
+        single_sided_direction_resolution = _single_sided_direction_resolution_fields(
+            single_sided_direction_resolution_raw
         )
         base_allowed_road_ids &= single_sided_allowed_road_ids
         candidate_opposite_rc_road_ids, candidate_opposite_rc_node_ids = _build_single_sided_exclusions(
@@ -1661,6 +1775,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "opposite_side_guard_mode": opposite_side_guard_mode,
         "corridor_guard_status": corridor_guard_status,
         "opposite_side_guard_note": opposite_side_guard_note,
+        **single_sided_direction_resolution,
         "hard_path_passed": hard_path_passed,
         "cleanup_preview_passed": cleanup_preview_passed,
         "rescue_reason": "post_difference_preview_only" if cleanup_dependency else None,
@@ -1683,6 +1798,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "rule_d_fallback_applied": rule_d_fallback_fields["rule_d_fallback_applied"],
         "two_node_t_bridge_applied": bridge_hard_fields["two_node_t_bridge_applied"],
         "shared_two_in_two_out_as_through_node": shared_two_in_two_out_fields["shared_two_in_two_out_as_through_node"],
+        "single_sided_horizontal_pair_detected": single_sided_direction_resolution["single_sided_horizontal_pair_detected"],
         **drivezone_metrics,
     }
     visual_review_class = _review_visual_class(step3_state, review_signals, reason)
@@ -1721,6 +1837,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             **rule_d_fallback_fields,
             **bridge_hard_fields,
             **shared_two_in_two_out_fields,
+            **single_sided_direction_resolution,
             **drivezone_metrics,
             "visual_review_class": visual_review_class,
             "root_cause_layer": _root_cause_layer(step3_state),

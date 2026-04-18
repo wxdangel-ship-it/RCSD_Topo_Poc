@@ -27,7 +27,9 @@
 - `Rule A` 只允许截断“当前语义路口分支上真正进入相邻语义路口的入口”；若候选截断会覆盖当前 target group core，则该截断无效
 - `Rule B` 只允许针对与当前语义路口真正无关的 `foreign road / arm / node` 生成负向掩膜；当前语义路口 branch、直接关联 road 及其二度衔接 road 不得因为“未进入 frontier”而被回灌判成 foreign。若仅能退化为 `foreign node` 周边小范围负向掩膜，则该 node fallback 仍属于可成立的正式边界手段，只保留审计信息，不自动提升为 `review`
 - `Rule D` 在当前语义路口关联 branch 上必须同时支持进入路口与退出路口的双向追溯，直到下一个或上一个语义路口为止
-- `single_sided_t_mouth` 的方向歧义只在“多个候选方向会导出实质不同的当前 branch / opposite branch 划分结果”时才成立；若只是局部向量并列、但最终 road partition 等价，则不得单独提升为 `review`
+- `single_sided_t_mouth` 的方向判定以语义横方向优先：若当前路口可识别出一组 `1` 条进入 + `1` 条退出、且轴线近似共线并在远离路口后几何距离持续发散的 direct roads，则该组 road 视为横方向主轴，应优先用于确定当前 branch / opposite branch；局部打分只允许作为 fallback，不得反过来推翻已识别的横方向主轴
+- `single_sided_t_mouth` 的竖方向既可能近似垂直，也可能是八字形挂接；局部角度近似平行本身不构成方向歧义，若远离路口后两条 road 几何距离趋于收敛，则应按竖方向理解，不得仅因局部向量接近而把该 case 提升为 `review`
+- `single_sided_t_mouth` 的方向歧义只在“多个候选方向会导出实质不同的当前 branch / opposite branch 划分结果”时才成立；若已存在稳定横方向主轴，则不得仅因分数接近或局部向量并列而单独提升为 `review`
 - `Rule A` 的负向边界应在与当前路口直接关联的相邻语义路口入口处，沿当前 branch 反向构造 `1m` 逆向掩膜；正向增长到这里应自然终止，不再依赖路口前横截切面
 - `Rule E` 当前只定义为 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy` 表达，当前 baseline 不单独定义 lane 级对向护栏能力，也不得在文档、PR 或验收结论中把 lane 级护栏表述为当前能力或当前未完成项
 - `Rule E` 的 `single_sided_t_mouth` opposite 判定不得覆盖当前语义路口关联 road，也不得覆盖这些 road 的二度衔接 road；`RCSDRoad` 只允许作为 near-corridor proxy，挂靠到已识别的 opposite `SWSD road`，不得以 opposite side 全量 `RCSDRoad` 直接主导硬阻断；若某个 `RCSDRoad` proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress，不得 materialize 成 hard blocker
@@ -98,6 +100,10 @@
   - `rule_d_fallback_distance_m`
   - `rule_d_fallback_reason`
   - `direction_mode = t02_direction_plus_bidirectional_junction_trace`
+  - `single_sided_horizontal_pair_detected`
+  - `single_sided_horizontal_pair_road_ids`
+  - `single_sided_horizontal_pair_divergence_m`
+  - `single_sided_direction_resolution_mode`
   - `opposite_side_guard_mode`
   - `opposite_side_guard_note`
   - `double_node_bridge_in_allowed_space`

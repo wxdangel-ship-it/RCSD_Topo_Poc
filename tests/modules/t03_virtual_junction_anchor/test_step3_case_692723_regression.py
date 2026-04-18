@@ -19,8 +19,11 @@ def test_case_692723_keeps_related_roads_out_of_opposite_and_foreign_masks() -> 
     assert protected_road_ids.isdisjoint(set(audit_doc["excluded_road_ids"]))
     assert protected_road_ids.isdisjoint(masked_road_ids)
     assert {"518881575", "528884634", "622002086"}.issubset(set(audit_doc["selected_road_ids"]))
-    assert case_result.step3_state == "review"
-    assert case_result.reason == "single_sided_direction_ambiguous"
+    assert case_result.step3_state == "established"
+    assert case_result.reason == "step3_established"
+    assert audit_doc["review_signals"] == []
+    assert audit_doc["single_sided_horizontal_pair_detected"] is True
+    assert set(audit_doc["single_sided_horizontal_pair_road_ids"]) == {"518881575", "528884634"}
     assert audit_doc["opposite_side_guard_mode"] == "proxy_baseline"
     assert "rule_d_50m_cap_used" not in audit_doc["review_signals"]
     assert any(item["cap_hit"] is True for item in audit_doc["growth_limits"])

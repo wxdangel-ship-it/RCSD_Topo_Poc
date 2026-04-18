@@ -15,3 +15,5 @@ def test_case_698330_node_fallback_no_longer_forces_review() -> None:
     assert audit_doc["rules"]["D"]["passed"] is True
     assert audit_doc["rules"]["E"]["passed"] is True
     assert audit_doc["cleanup_dependency"] is False
+    assert audit_doc["single_sided_horizontal_pair_detected"] is True
+    assert set(audit_doc["single_sided_horizontal_pair_road_ids"]) == {"972225", "621944468"}

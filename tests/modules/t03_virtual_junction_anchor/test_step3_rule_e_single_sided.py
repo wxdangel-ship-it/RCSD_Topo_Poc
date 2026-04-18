@@ -10,7 +10,7 @@ from tests.modules.t03_virtual_junction_anchor._case_helpers import (
 )
 
 
-def test_rule_e_single_sided_blocks_opposite_side_before_growth(tmp_path: Path) -> None:
+def test_rule_e_single_sided_prefers_swsd_opposite_and_disables_rcsd_fallback(tmp_path: Path) -> None:
     suite_root = tmp_path / "suite"
     case_id = "100001"
     write_case_package(
@@ -18,22 +18,24 @@ def test_rule_e_single_sided_blocks_opposite_side_before_growth(tmp_path: Path) 
         case_id,
         kind_2=2048,
         roads=[
+            road_feature("road_west_incoming", "120001", case_id, [(-25.0, 0.0), (0.0, 0.0)], direction=2),
             road_feature("road_east_1", case_id, "110001", [(0.0, 0.0), (25.0, 0.0)], direction=2),
             road_feature("road_east_2", "110001", "110002", [(25.0, 0.0), (55.0, 0.0)], direction=2),
-            road_feature("road_west_opposite", "200001", "200002", [(-20.0, 0.0), (-50.0, 0.0)], direction=2),
+            road_feature("road_west_opposite", "200001", "200002", [(-20.0, -10.0), (-50.0, -10.0)], direction=2),
         ],
         extra_nodes=[
+            node_feature("120001", -25.0, 0.0, mainnodeid="120001"),
             node_feature("110001", 25.0, 0.0, mainnodeid="110001"),
             node_feature("110002", 55.0, 0.0, mainnodeid="110002"),
-            node_feature("200001", -25.0, 0.0, mainnodeid="200001"),
-            node_feature("200002", -50.0, 0.0, mainnodeid="200002"),
+            node_feature("200001", -25.0, -10.0, mainnodeid="200001"),
+            node_feature("200002", -50.0, -10.0, mainnodeid="200002"),
         ],
         rcsd_roads=[
-            road_feature("corridor_west", "r1", "r2", [(-10.0, 10.0), (-40.0, 10.0)], direction=2),
-            road_feature("corridor_far_west", "r3", "r4", [(-10.0, 35.0), (-40.0, 35.0)], direction=2),
+            road_feature("corridor_west", "r1", "r2", [(-10.0, -10.0), (-40.0, -10.0)], direction=2),
+            road_feature("corridor_far_west", "r3", "r4", [(-10.0, -35.0), (-40.0, -35.0)], direction=2),
         ],
         rcsd_nodes=[
-            node_feature("rcsd_opp", -20.0, 8.0, mainnodeid="rcsd_opp"),
+            node_feature("rcsd_opp", -20.0, -12.0, mainnodeid="rcsd_opp"),
         ],
     )
 
@@ -41,16 +43,64 @@ def test_rule_e_single_sided_blocks_opposite_side_before_growth(tmp_path: Path) 
     audit_doc = case_result.audit_doc
 
     assert template_result.template_class == "single_sided_t_mouth"
-    assert "corridor_west" in audit_doc["opposite_rcsdroad_ids"]
-    assert "corridor_far_west" not in audit_doc["opposite_rcsdroad_ids"]
+    assert audit_doc["opposite_rcsdroad_ids"] == []
     assert "rcsd_opp" in audit_doc["opposite_semantic_node_ids"]
     assert "road_east_1" in audit_doc["selected_road_ids"]
+    assert "road_west_incoming" in audit_doc["selected_road_ids"]
     assert "road_west_opposite" not in audit_doc["selected_road_ids"]
     assert audit_doc["opposite_side_guard_mode"] == "proxy_baseline"
-    assert audit_doc["corridor_guard_status"] == "hard_blocked_by_rcsdroad_mask"
-    assert audit_doc["opposite_side_guard_note"] == "road/semantic-node/near-corridor proxy applied."
+    assert audit_doc["corridor_guard_status"] == "not_applicable"
+    assert (
+        audit_doc["opposite_side_guard_note"]
+        == "road/semantic-node guard applied; near-corridor fallback only when SWSD opposite is missing."
+    )
     assert audit_doc["rules"]["E"]["template_only"] is True
-    assert any(item["reason"] == "single_sided_opposite_corridor" for item in audit_doc["blocked_directions"])
+    assert audit_doc["rcsd_opposite_fallback_enabled"] is False
+    assert audit_doc["rcsd_opposite_fallback_reason"] == "disabled_swsd_opposite_present"
+    assert sorted(audit_doc["rcsd_opposite_fallback_candidate_ids"]) == ["corridor_far_west", "corridor_west"]
+    assert sorted(audit_doc["rcsd_opposite_fallback_suppressed_ids"]) == ["corridor_far_west", "corridor_west"]
+    assert not any(item["reason"] == "single_sided_opposite_corridor" for item in audit_doc["blocked_directions"])
+
+
+def test_rule_e_uses_rcsd_fallback_only_when_swsd_opposite_is_missing(tmp_path: Path) -> None:
+    suite_root = tmp_path / "suite"
+    case_id = "100004"
+    write_case_package(
+        suite_root / case_id,
+        case_id,
+        kind_2=2048,
+        roads=[
+            road_feature("road_incoming_west", "120001", case_id, [(-25.0, 0.0), (0.0, 0.0)], direction=2),
+            road_feature("road_outgoing_east", case_id, "110001", [(0.0, 0.0), (25.0, 0.0)], direction=2),
+        ],
+        extra_nodes=[
+            node_feature("110001", 25.0, 0.0, mainnodeid="110001"),
+            node_feature("120001", -25.0, 0.0, mainnodeid="120001"),
+        ],
+        rcsd_roads=[
+            road_feature("corridor_reverse_west", "r1", "r2", [(-10.0, -6.0), (-40.0, -6.0)], direction=2),
+            road_feature("corridor_wrong_axis", "r3", "r4", [(-8.0, 6.0), (-8.0, 35.0)], direction=2),
+        ],
+        rcsd_nodes=[
+            node_feature("rcsd_opp", -18.0, -6.0, mainnodeid="rcsd_opp"),
+        ],
+    )
+
+    _context, template_result, case_result = run_case_bundle(suite_root, case_id)
+    audit_doc = case_result.audit_doc
+
+    assert template_result.template_class == "single_sided_t_mouth"
+    assert audit_doc["single_sided_horizontal_pair_detected"] is True
+    assert set(audit_doc["single_sided_horizontal_pair_road_ids"]) == {"road_incoming_west", "road_outgoing_east"}
+    assert audit_doc["opposite_road_ids"] == []
+    assert audit_doc["opposite_rcsdroad_ids"] == ["corridor_reverse_west"]
+    assert audit_doc["rcsd_opposite_fallback_enabled"] is True
+    assert audit_doc["rcsd_opposite_fallback_reason"] == "enabled_missing_swsd_opposite"
+    assert sorted(audit_doc["rcsd_opposite_fallback_candidate_ids"]) == ["corridor_reverse_west", "corridor_wrong_axis"]
+    assert audit_doc["rcsd_opposite_fallback_selected_ids"] == ["corridor_reverse_west"]
+    assert audit_doc["rcsd_opposite_fallback_suppressed_ids"] == ["corridor_wrong_axis"]
+    assert audit_doc["corridor_guard_status"] == "hard_blocked_by_rcsdroad_mask"
+    assert any(item["object_id"] == "corridor_reverse_west" for item in audit_doc["blocked_directions"])
 
 
 def test_rule_e_keeps_junction_related_and_second_degree_roads_out_of_opposite(tmp_path: Path) -> None:

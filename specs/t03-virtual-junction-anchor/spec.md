@@ -43,8 +43,10 @@
 - C：其他语义路口内部 node 的 MST 负向掩膜；MST 连线只保留道路面内部分，并做 `1m` 缓冲。
 - D：候选空间只能在 `DriveZone` 内沿合法方向增长，不得越过负向掩膜或非道路面；在当前语义路口关联 branch 上，进入路口与退出路口的 road 都属于可追溯的合法活动链，应双向追溯到下一个或上一个语义路口；最终 `allowed space` 必须回切 `DriveZone`；无更早稳定边界时，单向最大增长距离 `50m`，且该 fallback 允许直接成立，不自动提升为 `review`，只在审计中留痕。
 - 当前 `Rule D` 的正式 audit/status 命名统一为 `direction_mode = t02_direction_plus_bidirectional_junction_trace`。
-- 对 `single_sided_t_mouth`，方向歧义只在多个候选方向会导出实质不同的当前 branch / opposite branch 划分结果时才成立；若只是局部向量并列、但最终 road partition 等价，则不得单独提升为 `review`。
-- E：`single_sided_t_mouth` 当前定义为 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy` 表达，当前 baseline 不单独定义 lane 级对向护栏能力。当前语义路口关联 road 及其二度衔接 road 不得被误判为 opposite。`RCSDRoad` 只能在 opposite `SWSD road` 证据不足或偏出路面时，作为 near-corridor proxy 补充，不得按 opposite side 全量 `RCSDRoad` 直接主导硬阻断；若某个 `RCSDRoad` proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress，不得写入 `opposite_corridor_buffer`。对双 node `single_sided_t_mouth`，两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 作为 through-node 时不应中断主通路增长。
+- 对 `single_sided_t_mouth`，方向判定优先识别语义横方向：若可找到一组 `1` 条进入 + `1` 条退出、轴线近似共线、且远离路口后几何距离持续发散的 direct roads，则该组 road 视为横方向主轴，应优先确定当前 branch / opposite branch。
+- `single_sided_t_mouth` 的竖方向既可以是近似垂直的支路，也可以是八字形挂接；局部角度近似平行本身不构成方向歧义，若远离路口后 road 间距离呈收敛趋势，则应按竖方向理解。
+- 对 `single_sided_t_mouth`，方向歧义只在多个候选方向会导出实质不同的当前 branch / opposite branch 划分结果时才成立；若已识别出稳定横方向主轴，则局部分数只作为 fallback，不得仅因分数接近而单独提升为 `review`。
+- E：`single_sided_t_mouth` 当前定义为 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy` 表达，当前 baseline 不单独定义 lane 级对向护栏能力。当前语义路口关联 road 及其二度衔接 road 不得被误判为 opposite。`RCSDRoad` 不是常驻 opposite-side blocker，而是仅在 `SWSD` 未找到可用于生成反向掩膜的 opposite road 时，才允许启用的 near-corridor fallback；启用前提是当前 case 已稳定识别出横方向主轴，且候选 `RCSDRoad` 在路口前进方向上与横方向 `outgoing road` 的前进向量相反。若 `SWSD` opposite road 已存在，则 `RCSDRoad` fallback 必须禁用，不得写入 `opposite_corridor_buffer`。对双 node `single_sided_t_mouth`，两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 作为 through-node 时不应中断主通路增长。
 - F：若某个 case 只能依赖 `cleanup / trim` 才满足边界，则 `Step3` 未成立。
 - G：任何放大都只能在 `A-F` 满足后进行，不得先放大再补救越界。
 - H：旧 `10m` 正式口径取消，统一采用“无更早边界时单向 `50m`”。
@@ -83,7 +85,9 @@
 - closeout 轮至少应落盘：
   - `rule_d_fallback_applied / rule_d_fallback_distance_m / rule_d_fallback_reason`
   - `direction_mode`
+  - `single_sided_horizontal_pair_detected / single_sided_horizontal_pair_road_ids / single_sided_horizontal_pair_divergence_m / single_sided_direction_resolution_mode`
   - `opposite_side_guard_mode / opposite_side_guard_note`
+  - `rcsd_opposite_fallback_enabled / rcsd_opposite_fallback_reason / rcsd_opposite_fallback_candidate_ids / rcsd_opposite_fallback_selected_ids / rcsd_opposite_fallback_suppressed_ids`
   - `double_node_bridge_in_allowed_space / through_node_shared_2in2out / through_node_break_suppressed`
   - `adjacent_junction_cut_suppressed` 及其 `suppress_reason`
 

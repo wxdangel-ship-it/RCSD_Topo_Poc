@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-- branch: `codex/t03-phasea-step3-legal-space`
+- branch: `codex/t03-step45-joint-refactor`
 - scope: `T03 / Phase A / Step3` only
 - non-goals:
   - `Step4/5/6/7`
@@ -13,7 +13,7 @@
 
 ## 2. Closeout Run
 
-- run_id: `20260418_t03_step3_closeout_v001`
+- run_id: `20260418_t03_step3_rulee_rcsd_fallback_v003`
 - command:
 
 ```bash
@@ -21,7 +21,7 @@ PYTHONPATH=src python3 -m rcsd_topo_poc t03-step3-legal-space \
   --case-root /mnt/e/TestData/POC_Data/T02/Anchor \
   --workers 4 \
   --out-root /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a \
-  --run-id 20260418_t03_step3_closeout_v001
+  --run-id 20260418_t03_step3_rulee_rcsd_fallback_v003
 ```
 
 - environment:
@@ -46,32 +46,29 @@ PYTHONPATH=src python3 -m rcsd_topo_poc t03-step3-legal-space \
 
 ## 4. Batch Result
 
-- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_closeout_v001`
+- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003`
 - case_dir_count: `58`
 - flat_png_count: `58`
 - flat_subdir_count: `0`
 - tri_state_sum: `58`
 - tri_state distribution:
-  - `established = 55`
-  - `review = 3`
+  - `established = 58`
+  - `review = 0`
   - `not_established = 0`
-- review cases:
-  - `692723`: `single_sided_direction_ambiguous`
-  - `698330`: `single_sided_direction_ambiguous`
-  - `500669133`: `single_sided_direction_ambiguous`
 - missing_case_ids: `[]`
 - failed_case_ids: `[]`
 
 Reference files:
-- `outputs/_work/t03_step3_phase_a/20260418_t03_step3_closeout_v001/preflight.json`
-- `outputs/_work/t03_step3_phase_a/20260418_t03_step3_closeout_v001/summary.json`
-- `outputs/_work/t03_step3_phase_a/20260418_t03_step3_closeout_v001/step3_review_index.csv`
+- `outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003/preflight.json`
+- `outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003/summary.json`
+- `outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003/step3_review_index.csv`
 
 ## 5. Capability Declaration
 
 - `Rule D`
   - `direction_mode = t02_direction_plus_bidirectional_junction_trace`
   - `50m fallback` 允许成立，只在审计中留痕，不自动提升为 `review`
+  - `single_sided_t_mouth` 的方向判定优先采用语义横方向：若识别出一组 `1` 条进入 + `1` 条退出、轴线近似共线、且远离路口后几何距离持续发散的 direct roads，则应以该组 road 确定横方向主轴；局部分数只作为 fallback
 - `Rule A`
   - adjacent cut 若会覆盖当前 target core，则被 suppress
   - audit 中保留 materialized / suppressed cut 与 suppress reason
@@ -82,6 +79,7 @@ Reference files:
     - `opposite semantic node`
     - `near-corridor proxy`
   - 当前 baseline 不单独定义 lane 级对向护栏能力
+  - `RCSDRoad` 仅在 `SWSD` opposite road 缺失时作为 fallback 启用；若 `SWSD` opposite road 已存在，则 `RCSDRoad` fallback 必须禁用，且候选 `RCSDRoad` 必须与横方向 `outgoing road` 的前进方向相反
 - 双 node `single_sided_t_mouth`
   - bridge 已进入 `allowed-space` 主通路
   - shared `2-in-2-out` node 可作为 through-node，不中断 tracing/frontier
@@ -93,10 +91,11 @@ Reference files:
 
 解释：
 - 当前 Step3 baseline 已完成默认正式 `58-case` 验收口径的代码、输出、审计字段与文字证据闭环
-- 当前仍存在 `3` 个 `review` case，但它们不构成 Step3 baseline closeout 的阻塞项
+- 当前默认正式 `58-case` 验收集已全部收敛为 `established`
+- `Rule E` 中 `RCSDRoad` 已收口为严格 fallback：只有 `SWSD` opposite road 缺失且方向与横方向前进向量相反时才允许 materialize；`885744 / 520394575` 这类已有 `SWSD` opposite road 的 case 不再写入 `opposite_corridor_buffer`
 - 当前 `Rule E` 仍为 baseline partial，这属于已声明的非阻塞残留项，不影响本轮把 Step3 作为 Step4 的稳定输入前提
 
 ## 7. Non-Blocking Residuals
 
 - `Rule E` 仍为 baseline partial，不宣称 lane-level opposite-side guard completion
-- `single_sided_direction_ambiguous` 仍保留在少量 case 上，当前按 review 保留，不阻塞 Step4
+- `single_sided_t_mouth` 的方向语义已按“横方向主轴优先、局部分数 fallback”收口；后续若继续演化，应在此语义边界内推进，而不是回退到纯分数竞争

@@ -186,6 +186,6 @@
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`，其定位为非业务生产模块。
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小闭环。
 - `t02_junction_anchor` 当前仍是 Active 正式业务模块；其模块正文可在独立轮次中维护，但项目级登记与仓库级入口必须保持一致。
-- `t03_virtual_junction_anchor` 当前作为 Active 正式业务模块；当前正式范围为“冻结 `Step3 legal-space baseline` + `Step4-7 clarified formal stage（仅 `center_junction / single_sided_t_mouth`）`”。
+- `t03_virtual_junction_anchor` 当前作为 Active 正式业务模块；当前正式范围为“冻结 `Step3 legal-space baseline` + `Step4-7 clarified formal stage（仅 `center_junction / single_sided_t_mouth`）`”，默认正式全量 `58` case 的业务正确性基线已满足人工目视审计，少量 accepted case 的几何形状优化保留为长期迭代方向。
 - `t03_virtual_junction_anchor` 当前仍只有 `Step4-5` 官方 CLI；`Step67` 已有正式交付与 closeout，但本轮未提升为 repo 官方入口。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

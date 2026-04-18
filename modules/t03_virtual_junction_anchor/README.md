@@ -52,10 +52,17 @@ python3 -m rcsd_topo_poc t03-step3-legal-space --help
 - `step7_state` 契约只允许 `accepted / rejected`
 - `B / review` 是当前正式保守策略，不视为算法缺陷；其含义是“已有 support / hook zone，但 RCSD semantic core 仍待 `Step6` 收窄”
 - `support_only` 在 `Step6` 合法收敛后允许转为 `Step7 accepted`
+- 若某条 `RCSDRoad` 两端分别连接方向相反的 `RCSDRoad`，则该 road 视为 `调头口 RCSDRoad`；它在 `Step45` 上游语义处理中视为不存在，并且必须在 `degree2 connector / chain merge / required-support-excluded` 之前先过滤
 - `degree = 2` 的 `RCSDNode` 不进入 `required semantic core`；经其串接的 candidate `RCSDRoad` 必须先按 chain 合并，再参与 `required / support / excluded` 分类
 - 每个 case 只处理当前 SWSD 路口所在道路面；道路面外的 SWSD / RCSD 对象不进入当前 case 主结果集合
 - `single_sided_t_mouth` 的平行重复 `support RCSDRoad` 继续按竖方向退出当前面一侧去重
+- 对 `single_sided_t_mouth + association_class=A`，横方向口门必须按“竖向 RCSDRoad seed -> 横向 tracing -> terminal RCSDNode -> +5m -> stop at next directly-associated semantic junction”求解
+- tracing 过程中的 `RCSDRoad` 不要求整体完全留在候选空间内；只要最终确认的 `RCSDNode` 落在横方向候选空间内，即可作为当前口门 tracing 的有效结果
+- 若 tracing 无法在横方向两侧都确认 terminal `RCSDNode`，则当前 `A` 类横向口门特化规则不成立，横方向回到 generic directional boundary
+- 若冻结 `Step3` 对当前 `single_sided_t_mouth` case 标记 `two_node_t_bridge_applied = true`，则 `Step67 directional boundary / polygon_seed` 必须继承这条 two-node T bridge；它属于全局 target-connected center support，不得在横向截断后留下中间断开或多组件狭长残留
 - `Step6` 是受约束几何层，不是 cleanup 驱动补救层
+- `Step6` 必须先确定 directional boundary，再在 boundary 内构面；不允许“先裁剪再把 required RC 整体补回边界外”
+- `required RC must-cover` 当前只对 directional boundary 内的 `local required RC` 成立
 - `Step7` 只负责最终业务发布，不重新定义 `required / support / excluded / foreign`
 - `V1-V5` 只属于视觉审计层，不等价于主机器状态
 - `Step5` 当前不再生成 hard foreign polygon context；`Step6` hard negative mask 仅消费 road-like `1m` mask
@@ -70,7 +77,15 @@ python3 -m rcsd_topo_poc t03-step3-legal-space --help
 - Step67 clarified formal stage closeout：`modules/t03_virtual_junction_anchor/architecture/08-step67-closeout.md`
 - `07-step6-readiness-prep.md` 保留为 Step67 正式落地前的历史准备文档，不再定义当前正式范围
 
-## 8. Patch Round 操作者口径
+## 8. 当前完成口径
+
+- 当前 T03 正式完成口径为：
+  - 冻结 `Step3 legal-space baseline`
+  - `Step4-7 clarified formal stage`
+  - 默认正式全量 `58` 个 case 的业务正确性已满足目视审计要求
+- 当前剩余少量 accepted case 的几何形状仍有优化空间，但这属于后续长期迭代方向，不再构成当前正式准出阻塞项
+
+## 9. Patch Round 操作者口径
 
 - 本 README 面向 patch round 操作者，只说明当前轮允许执行的正式口径与默认验收边界，不替代 `INTERFACE_CONTRACT.md`
 - patch round 只做增量修补、契约收口、测试补强与 closeout 同步，不顺手扩大为新的执行入口治理轮次

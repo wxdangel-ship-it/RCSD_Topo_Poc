@@ -14,7 +14,7 @@
 
 ## 2. Delivery Mode
 
-- current formal run root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step67_phase/20260418_t03_step67_formal_v008`
+- current formal run root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015`
 - execution surface: module-internal `run_t03_step67_batch()`
 - repo official CLI status:
   - `Step67` still has **no** repo official CLI
@@ -30,7 +30,14 @@
 - `support_only` remains a conservative `Step45` intermediate state and can converge to `Step7 accepted`
 - `Step5` no longer provides hard polygon foreign context
 - `Step6` hard negative mask is currently limited to road-like `1m` masks
+- `Step45` now formally applies `RCSD 调头口过滤` upstream:
+  - matched `u-turn RCSDRoad` is treated as non-existent in current-case semantics
+  - filtering happens before `degree2 connector / chain merge / required-support-excluded`
 - `degree = 2` connector `RCSDNode` itself does not become semantic core; its connected candidate `RCSDRoad` chain is merged upstream before `required / support / excluded` classification
+- `Step6` now follows `boundary-first + local required RC`:
+  - directional boundary is a final hard cap
+  - `required RC must-cover` only applies to `local required RC` inside the directional boundary
+- 当冻结 `Step3` 对 `single_sided_t_mouth` case 应用 `two_node_t_bridge` 时，`Step67` 现在会显式继承该 bridge corridor 进入 directional boundary / polygon seed，避免横方向口门截断后出现中心断开、多组件狭长残留
 
 ## 4. Formal Acceptance Scope
 
@@ -46,7 +53,7 @@
 
 ## 5. Batch Result
 
-- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step67_phase/20260418_t03_step67_formal_v008`
+- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015`
 - case_dir_count: `58`
 - flat_png_count: `58`
 - missing_case_ids: `[]`
@@ -55,16 +62,16 @@
   - `accepted = 55`
   - `rejected = 3`
 - visual distribution:
-  - `V1 = 50`
-  - `V2 = 5`
+  - `V1 = 54`
+  - `V2 = 1`
   - `V4 = 3`
   - `V5 = 0`
 
 Reference files:
 
-- `outputs/_work/t03_step67_phase/20260418_t03_step67_formal_v008/preflight.json`
-- `outputs/_work/t03_step67_phase/20260418_t03_step67_formal_v008/summary.json`
-- `outputs/_work/t03_step67_phase/20260418_t03_step67_formal_v008/step67_review_index.csv`
+- `outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015/preflight.json`
+- `outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015/summary.json`
+- `outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015/step67_review_index.csv`
 
 ## 6. Representative Recoveries
 
@@ -73,10 +80,24 @@ Reference files:
   - selected-road longitudinal segment no longer gets incorrectly shortened by foreign handling
 - `706389`
   - `accepted / V1`
-  - no longer rejected by node-based foreign interpretation
+  - `single_sided_t_mouth + association_class=A` 横向口门已切到 trace-based rule
+  - `58163436 -> single_sided_semantic_plus_5m / cut_length_m = 45.417283`
+  - `629431331 -> single_sided_semantic_plus_5m / cut_length_m = 22.863822`
 - `707476`
   - `accepted / V1`
-  - no longer rejected by node-based foreign interpretation
+  - final geometry no longer regrows beyond the `20m` directional boundary
+- `709431`
+  - `accepted / V1`
+  - tracing 无法形成横向 terminal-node pair，三条 selected roads 全部回到 `20m`
+- `758888`
+  - `accepted / V1`
+  - `Step3 two-node T bridge` 已被 `Step67` 继承，不再在横方向截断后出现中心断开或多组件狭长残留
+- `851884`
+  - `accepted / V1`
+  - `Step3 two-node T bridge` 已被 `Step67` 继承，不再在横方向截断后出现中心断开
+- `761318 / 765003`
+  - `accepted / V1`
+  - `two-node T bridge` 继承后，中心桥位保持连通，横方向截断不再留下狭长残留
 - `787133`
   - `accepted / V1`
   - degree-2 `RCSDRoad` chain merge prevents same-chain support fragment from being reclassified into `excluded_rcsdroad_ids`
@@ -103,9 +124,13 @@ Manual review / data governance note:
 
 - `Step67 clarified formal stage closeout`: **成立**
 - `default 58-case run`: **完成**
+- `default 58-case correctness baseline`: **成立**
 - `Step67 current accepted baseline`: **成立，但仍保留 3 个数据侧异常拒绝案例**
+- `少量 accepted case 的几何形状优化`: **保留为后续长期迭代方向，不再构成当前正式准出阻塞项**
 
 解释：
 
 - 当前 T03 正式文档面已经可以把 Step67 视为已正式吸收的 clarified formal stage
-- 但 solver 常量、几何启发式和 remaining 3 个数据错误案例的人工处置语义，仍保留在 closeout / thread deliverables 层，不伪装为新的长期机器契约
+- 当前 `58` 个默认正式验收 case 的业务正确性已经满足人工目视审计要求
+- solver 常量、几何启发式细调与少量 accepted case 的形状优化，仍保留在长期迭代层，不伪装为新的长期机器契约
+- remaining `3` 个数据错误案例的人工处置语义，仍保留在 closeout / thread deliverables 层，不伪装为新的长期机器契约

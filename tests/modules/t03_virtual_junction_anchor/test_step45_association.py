@@ -73,7 +73,8 @@ def test_step45_degree2_connector_node_is_not_promoted_into_semantic_core(tmp_pa
     assert "rc_connector" not in result.extra_status_fields["required_rcsdnode_ids"]
     assert "rc_connector" not in result.extra_status_fields["support_rcsdnode_ids"]
     assert result.extra_status_fields["nonsemantic_connector_rcsdnode_ids"] == ["rc_connector"]
-    assert result.extra_status_fields["true_foreign_rcsdnode_ids"] == ["rc_far"]
+    assert result.extra_status_fields["true_foreign_rcsdnode_ids"] == []
+    assert result.extra_status_fields["ignored_outside_current_swsd_surface_rcsdnode_ids"] == ["rc_far"]
     assert result.audit_doc["step4"]["degree2_connector_candidate_rcsdnode_ids"] == ["rc_connector"]
 
 

@@ -27,6 +27,8 @@ INCIDENT_NODE_DISTANCE_M = 6.0
 PARALLEL_SUPPORT_DIRECTION_SIM = 0.94
 PARALLEL_SUPPORT_MAX_EXIT_DISTANCE_M = 8.0
 PARALLEL_SUPPORT_EXIT_CLUSTER_M = 45.0
+UTURN_MAX_LENGTH_M = 40.0
+UTURN_OPPOSITE_DIRECTION_DOT_MAX = -0.92
 
 
 def _sorted_ids(values: Iterable[str]) -> list[str]:
@@ -129,6 +131,35 @@ def _line_direction_similarity(lhs: BaseGeometry | None, rhs: BaseGeometry | Non
     return abs((ldx * rdx + ldy * rdy) / (lnorm * rnorm))
 
 
+def _line_tangent_at_node(road: RoadRecord, node_id: str) -> tuple[float, float] | None:
+    line = _largest_line_string(_clean_geometry(road.geometry))
+    if line is None:
+        return None
+    coords = list(line.coords)
+    if len(coords) < 2:
+        return None
+    if str(road.snodeid) == str(node_id):
+        p0 = coords[0]
+        p1 = coords[min(1, len(coords) - 1)]
+    elif str(road.enodeid) == str(node_id):
+        p0 = coords[-1]
+        p1 = coords[max(0, len(coords) - 2)]
+    else:
+        return None
+    dx = p1[0] - p0[0]
+    dy = p1[1] - p0[1]
+    norm = (dx * dx + dy * dy) ** 0.5
+    if norm <= 1e-6:
+        return None
+    return dx / norm, dy / norm
+
+
+def _direction_dot(lhs: tuple[float, float] | None, rhs: tuple[float, float] | None) -> float | None:
+    if lhs is None or rhs is None:
+        return None
+    return lhs[0] * rhs[0] + lhs[1] * rhs[1]
+
+
 def _nearest_exit_point(geometry: BaseGeometry | None, vertical_exit_geometry: BaseGeometry | None) -> Point | None:
     if geometry is None or geometry.is_empty or vertical_exit_geometry is None or vertical_exit_geometry.is_empty:
         return None
@@ -186,6 +217,71 @@ def _graph_incident_roads(all_roads: Iterable[RoadRecord], node: NodeRecord) -> 
     if explicit:
         return list({road.road_id: road for road in explicit}.values())
     return _incident_roads(list(all_roads), node)
+
+
+def _detect_u_turn_rcsdroads(
+    active_rcsd_roads: list[RoadRecord],
+) -> tuple[set[str], dict[str, dict[str, Any]]]:
+    roads_by_id = {road.road_id: road for road in active_rcsd_roads}
+    incident_road_ids_by_node: dict[str, set[str]] = defaultdict(set)
+    for road in active_rcsd_roads:
+        if road.snodeid not in {None, ""}:
+            incident_road_ids_by_node[str(road.snodeid)].add(road.road_id)
+        if road.enodeid not in {None, ""}:
+            incident_road_ids_by_node[str(road.enodeid)].add(road.road_id)
+
+    u_turn_ids: set[str] = set()
+    audit_rows: dict[str, dict[str, Any]] = {}
+    for road in active_rcsd_roads:
+        if road.geometry.length > UTURN_MAX_LENGTH_M:
+            continue
+        endpoint_matches: list[dict[str, Any]] = []
+        qualifies = True
+        for node_id in [str(road.snodeid or ""), str(road.enodeid or "")]:
+            if not node_id:
+                qualifies = False
+                endpoint_matches.append(
+                    {
+                        "node_id": node_id,
+                        "best_opposite_rcsdroad_id": None,
+                        "best_opposite_direction_dot": None,
+                        "opposite_rcsdroad_ids": [],
+                    }
+                )
+                continue
+            tangent = _line_tangent_at_node(road, node_id)
+            candidates: list[tuple[str, float]] = []
+            for other_id in _sorted_ids(incident_road_ids_by_node.get(node_id, set())):
+                if other_id == road.road_id:
+                    continue
+                direction_dot = _direction_dot(tangent, _line_tangent_at_node(roads_by_id[other_id], node_id))
+                if direction_dot is None:
+                    continue
+                candidates.append((other_id, direction_dot))
+            opposite_candidates = [
+                (other_id, direction_dot)
+                for other_id, direction_dot in candidates
+                if direction_dot <= UTURN_OPPOSITE_DIRECTION_DOT_MAX
+            ]
+            best_opposite = min(opposite_candidates, key=lambda item: item[1], default=None)
+            endpoint_matches.append(
+                {
+                    "node_id": node_id,
+                    "best_opposite_rcsdroad_id": best_opposite[0] if best_opposite is not None else None,
+                    "best_opposite_direction_dot": round(best_opposite[1], 6) if best_opposite is not None else None,
+                    "opposite_rcsdroad_ids": [other_id for other_id, _ in opposite_candidates],
+                }
+            )
+            if best_opposite is None:
+                qualifies = False
+        if not qualifies:
+            continue
+        u_turn_ids.add(road.road_id)
+        audit_rows[road.road_id] = {
+            "road_length_m": round(road.geometry.length, 6),
+            "endpoint_matches": endpoint_matches,
+        }
+    return u_turn_ids, audit_rows
 
 
 def _build_degree2_rcsdroad_chains(
@@ -422,6 +518,7 @@ def _empty_step45_key_metrics() -> dict[str, Any]:
     return {
         "active_rcsdnode_count": 0,
         "active_rcsdroad_count": 0,
+        "u_turn_rcsdroad_count": 0,
         "candidate_rcsdnode_count": 0,
         "candidate_rcsdroad_count": 0,
         "required_rcsdnode_count": 0,
@@ -475,6 +572,8 @@ def _build_gate_failure_case_result(
             "degree2_connector_candidate_rcsdnode_ids": [],
             "parallel_support_duplicate_dropped_rcsdroad_ids": [],
             "hook_zone_shrunk_road_ids": [],
+            "u_turn_rcsdroad_ids": [],
+            "u_turn_rcsdroad_audit": {},
         },
         "step5": {
             "association_class": "C",
@@ -525,6 +624,8 @@ def _build_gate_failure_case_result(
             "ignored_outside_current_swsd_surface_rcsdroad_ids": [],
             "parallel_support_duplicate_dropped_rcsdroad_ids": [],
             "hook_zone_shrunk_road_ids": [],
+            "u_turn_rcsdroad_ids": [],
+            "u_turn_rcsdroad_audit": {},
         },
     )
 
@@ -542,6 +643,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         "step3_run_root": str(context.step3_run_root),
         "selected_road_ids": list(context.selected_road_ids),
         "step3_excluded_road_ids": list(context.step3_excluded_road_ids),
+        "u_turn_rcsdroad_ids": [],
         "required_rcsdnode_ids": [],
         "required_rcsdroad_ids": [],
         "support_rcsdnode_ids": [],
@@ -552,6 +654,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         "association_executed": False,
         "association_reason": None,
         "association_blocker": None,
+        "u_turn_rcsdroad_ids": [],
     }
     if not template_result.supported:
         return _build_gate_failure_case_result(
@@ -597,14 +700,18 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
     active_rcsd_nodes = [
         node for node in step1.rcsd_nodes if node.geometry.intersects(current_swsd_surface.buffer(RCSD_ALLOWED_BUFFER_M))
     ]
-    active_rcsd_roads = [
+    active_rcsd_roads_raw = [
         road for road in step1.rcsd_roads if road.geometry.intersects(current_swsd_surface.buffer(RCSD_ALLOWED_BUFFER_M))
+    ]
+    u_turn_rcsdroad_ids, u_turn_rcsdroad_audit = _detect_u_turn_rcsdroads(active_rcsd_roads_raw)
+    active_rcsd_roads = [
+        road for road in active_rcsd_roads_raw if road.road_id not in u_turn_rcsdroad_ids
     ]
     ignored_outside_current_swsd_surface_rcsdnode_ids = _sorted_ids(
         node.node_id for node in step1.rcsd_nodes if node.node_id not in {item.node_id for item in active_rcsd_nodes}
     )
     ignored_outside_current_swsd_surface_rcsdroad_ids = _sorted_ids(
-        road.road_id for road in step1.rcsd_roads if road.road_id not in {item.road_id for item in active_rcsd_roads}
+        road.road_id for road in step1.rcsd_roads if road.road_id not in {item.road_id for item in active_rcsd_roads_raw}
     )
 
     node_graph_incident_map = {
@@ -792,6 +899,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
     key_metrics = {
         "active_rcsdnode_count": len(active_rcsd_nodes),
         "active_rcsdroad_count": len(active_rcsd_roads),
+        "u_turn_rcsdroad_count": len(u_turn_rcsdroad_ids),
         "candidate_rcsdnode_count": len(candidate_nodes),
         "candidate_rcsdroad_count": len(candidate_roads),
         "required_rcsdnode_count": len(required_node_ids),
@@ -823,7 +931,13 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
             "association_blocker": None,
             "current_swsd_surface_area_m2": round(current_swsd_surface.area, 6),
             "active_rcsdnode_ids": [node.node_id for node in active_rcsd_nodes],
+            "active_rcsdroad_ids_before_u_turn_filter": [road.road_id for road in active_rcsd_roads_raw],
             "active_rcsdroad_ids": [road.road_id for road in active_rcsd_roads],
+            "u_turn_rcsdroad_ids": _sorted_ids(u_turn_rcsdroad_ids),
+            "u_turn_rcsdroad_audit": {
+                road_id: u_turn_rcsdroad_audit[road_id]
+                for road_id in _sorted_ids(u_turn_rcsdroad_ids)
+            },
             "ignored_outside_current_swsd_surface_rcsdnode_ids": ignored_outside_current_swsd_surface_rcsdnode_ids,
             "ignored_outside_current_swsd_surface_rcsdroad_ids": ignored_outside_current_swsd_surface_rcsdroad_ids,
             "candidate_rcsdnode_ids": [node.node_id for node in candidate_nodes],
@@ -876,6 +990,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
     extra_status_fields = {
         **base_extra_fields,
         "current_swsd_surface_area_m2": round(current_swsd_surface.area, 6),
+        "u_turn_rcsdroad_ids": audit_doc["step4"]["u_turn_rcsdroad_ids"],
         "required_rcsdnode_ids": audit_doc["step4"]["required_rcsdnode_ids"],
         "required_rcsdroad_ids": audit_doc["step4"]["required_rcsdroad_ids"],
         "support_rcsdnode_ids": audit_doc["step4"]["support_rcsdnode_ids"],
@@ -894,6 +1009,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         "ignored_outside_current_swsd_surface_rcsdroad_ids": ignored_outside_current_swsd_surface_rcsdroad_ids,
         "parallel_support_duplicate_dropped_rcsdroad_ids": dropped_parallel_support_road_ids,
         "hook_zone_shrunk_road_ids": audit_doc["step4"]["hook_zone_shrunk_road_ids"],
+        "u_turn_rcsdroad_audit": audit_doc["step4"]["u_turn_rcsdroad_audit"],
     }
     return Step45CaseResult(
         case_id=step1.case_spec.case_id,

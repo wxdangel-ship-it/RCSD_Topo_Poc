@@ -35,7 +35,7 @@
 |---|---|---|---|
 | `t01_data_preprocess` | `modules/t01_data_preprocess` | working bootstrap + roundabout preprocessing + Step1-Step6 双向 Segment 构建 official end-to-end；active freeze compare 为 `t01_skill_active_eight_sample_suite` | `official end-to-end / freeze-compare baseline active` |
 | `t02_junction_anchor` | `modules/t02_junction_anchor` | `DriveZone / has_evd gate` + `anchor recognition / anchor existence` + `virtual intersection anchoring` baseline；文本证据包与 `t02-fix-node-error-2` 为独立支撑入口 | `stage1/stage2/stage3 baseline active / independent refactor may continue outside this governance round` |
-| `t03_virtual_junction_anchor` | `modules/t03_virtual_junction_anchor` | 冻结 `Step3 legal-space baseline` + `Step4-7 clarified formal stage`；仅处理 `center_junction / single_sided_t_mouth`，消费 Anchor61 `case-package` 与 Step3 baseline run root，输出 `Step45 required/support/excluded` RCSD 中间结果包，以及 `Step67 accepted/rejected` 发布结果、平铺 PNG、索引与汇总 | `step67 clarified formal stage active / frozen-step3 prerequisite / no public step67 cli` |
+| `t03_virtual_junction_anchor` | `modules/t03_virtual_junction_anchor` | 冻结 `Step3 legal-space baseline` + `Step4-7 clarified formal stage`；仅处理 `center_junction / single_sided_t_mouth`，消费 Anchor61 `case-package` 与 Step3 baseline run root，输出 `Step45 required/support/excluded` RCSD 中间结果包，以及 `Step67 accepted/rejected` 发布结果、平铺 PNG、索引与汇总 | `step67 clarified formal stage active / 58-case correctness baseline accepted / minor geometry refinement remains iterative / frozen-step3 prerequisite / no public step67 cli` |
 
 ### Retired
 

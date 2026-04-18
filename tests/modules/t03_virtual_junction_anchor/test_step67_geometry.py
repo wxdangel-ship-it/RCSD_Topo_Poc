@@ -76,6 +76,8 @@ def test_step67_accepts_case_a_when_step6_is_clean(tmp_path: Path) -> None:
     assert step7_result.visual_review_class == VISUAL_V1
     assert step7_result.root_cause_layer is None
     assert step6_result.audit_doc["assembly"]["directional_cut_rule"]["mode"] == "directional_selected_road_cut"
+    assert step6_result.audit_doc["assembly"]["direction_boundary_hard_cap_applied"] is True
+    assert step6_result.audit_doc["validation"]["required_rc_cover_mode"] == "local_required_rc_within_direction_boundary"
     assert _road_covered_length(step67_context, step6_result, "road_h") <= 38.0
     assert _road_covered_length(step67_context, step6_result, "road_v") <= 38.0
 
@@ -95,6 +97,7 @@ def test_step67_accepts_step45_support_only_cases_after_step6_convergence(tmp_pa
     branch_rows = step6_result.audit_doc["assembly"]["directional_cut_branches"]
     assert any(row["window_mode"] == "cut_at_20m" for row in branch_rows)
     assert any(row["preserve_candidate_boundary"] for row in branch_rows)
+    assert step6_result.extra_status_fields["within_direction_boundary_ok"] is True
     assert _road_covered_length(_step67_context, step6_result, "road_h") <= 41.0
     assert _road_covered_length(_step67_context, step6_result, "road_v") <= 26.0
 

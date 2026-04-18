@@ -47,6 +47,36 @@ DEFAULT_STEP3_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_pha
 DEFAULT_OUT_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step67_phase")
 
 
+def _now_text() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_case_watch_status(
+    *,
+    run_root: Path,
+    case_id: str,
+    state: str,
+    current_stage: str,
+    reason: str,
+    detail: str,
+    **extra: Any,
+) -> None:
+    case_dir = run_root / "cases" / case_id
+    case_dir.mkdir(parents=True, exist_ok=True)
+    write_json(
+        case_dir / "step67_watch_status.json",
+        {
+            "case_id": case_id,
+            "state": state,
+            "current_stage": current_stage,
+            "reason": reason,
+            "detail": detail,
+            "updated_at": _now_text(),
+            **extra,
+        },
+    )
+
+
 def _preflight_doc(
     *,
     case_root: Path,
@@ -109,6 +139,29 @@ def _run_single_case(spec, *, step3_root: Path):
     return step67_context, case_result
 
 
+def _run_single_case_with_watch(spec, *, step3_root: Path, run_root: Path):
+    _write_case_watch_status(
+        run_root=run_root,
+        case_id=spec.case_id,
+        state="running",
+        current_stage="step67_case_execution",
+        reason="step67_case_started",
+        detail="step67 case execution started",
+    )
+    try:
+        return _run_single_case(spec, step3_root=step3_root)
+    except Exception as exc:
+        _write_case_watch_status(
+            run_root=run_root,
+            case_id=spec.case_id,
+            state="failed",
+            current_stage="step67_case_execution",
+            reason="step67_case_failed",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+
+
 def run_t03_step67_batch(
     *,
     case_root: str | Path = DEFAULT_CASE_ROOT,
@@ -147,6 +200,15 @@ def run_t03_step67_batch(
     )
     preflight["run_root"] = str(run_root)
     write_json(run_root / "preflight.json", preflight)
+    for spec in specs:
+        _write_case_watch_status(
+            run_root=run_root,
+            case_id=spec.case_id,
+            state="pending",
+            current_stage="step67_batch",
+            reason="queued_for_step67",
+            detail="case queued for step67 batch execution",
+        )
 
     review_rows = []
     failed_case_ids: list[str] = []
@@ -154,7 +216,11 @@ def run_t03_step67_batch(
     if max_workers == 1:
         for spec in specs:
             try:
-                step67_context, case_result = _run_single_case(spec, step3_root=resolved_step3_root)
+                step67_context, case_result = _run_single_case_with_watch(
+                    spec,
+                    step3_root=resolved_step3_root,
+                    run_root=run_root,
+                )
             except Exception:
                 failed_case_ids.append(spec.case_id)
                 continue
@@ -166,11 +232,30 @@ def run_t03_step67_batch(
                     debug_render=debug_render,
                 )
             )
+            _write_case_watch_status(
+                run_root=run_root,
+                case_id=spec.case_id,
+                state=case_result.step7_result.step7_state,
+                current_stage="completed",
+                reason=case_result.step7_result.reason,
+                detail=case_result.step7_result.note or case_result.step6_result.reason,
+                step45_state=case_result.step45_state,
+                step6_state=case_result.step6_result.step6_state,
+                step7_state=case_result.step7_result.step7_state,
+                visual_class=case_result.step7_result.visual_review_class,
+            )
     else:
         futures = {}
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="t03-step67") as executor:
             for spec in specs:
-                futures[executor.submit(_run_single_case, spec, step3_root=resolved_step3_root)] = spec.case_id
+                futures[
+                    executor.submit(
+                        _run_single_case_with_watch,
+                        spec,
+                        step3_root=resolved_step3_root,
+                        run_root=run_root,
+                    )
+                ] = spec.case_id
             for future in as_completed(futures):
                 case_id = futures[future]
                 try:
@@ -185,6 +270,18 @@ def run_t03_step67_batch(
                         case_result=case_result,
                         debug_render=debug_render,
                     )
+                )
+                _write_case_watch_status(
+                    run_root=run_root,
+                    case_id=case_id,
+                    state=case_result.step7_result.step7_state,
+                    current_stage="completed",
+                    reason=case_result.step7_result.reason,
+                    detail=case_result.step7_result.note or case_result.step6_result.reason,
+                    step45_state=case_result.step45_state,
+                    step6_state=case_result.step6_result.step6_state,
+                    step7_state=case_result.step7_result.step7_state,
+                    visual_class=case_result.step7_result.visual_review_class,
                 )
 
     review_rows = materialize_review_gallery(run_root, review_rows)

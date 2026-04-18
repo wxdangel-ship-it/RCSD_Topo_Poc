@@ -40,7 +40,7 @@
 - 让 `t00_utility_toolbox` 维持工具集合模块 / 非业务生产模块边界
 - 让 `t01_data_preprocess` 的 accepted baseline、官方入口与 freeze compare 口径保持一致
 - 让 `t02_junction_anchor` 的项目级登记状态与仓库级入口事实保持一致
-- 让 `t03_virtual_junction_anchor` 的 Phase A / Step3 legal-space baseline 与仓库级入口事实保持一致
+- 让 `t03_virtual_junction_anchor` 的冻结 `Step3 legal-space baseline`、`Step4-5` 联合阶段与仓库级入口事实保持一致
 
 ### 2.2 当前阶段明确不做
 
@@ -62,7 +62,7 @@
 - `t00_utility_toolbox` 作为工具集合模块的治理与固定脚本入口
 - 已登记正式模块 `t01_data_preprocess` 的 accepted baseline、official end-to-end 与 freeze compare
 - 已登记正式模块 `t02_junction_anchor` 的项目级登记状态与仓库级入口索引
-- 已登记正式模块 `t03_virtual_junction_anchor` 的 Phase A / Step3 legal-space baseline、批量审查产物与入口索引
+- 已登记正式模块 `t03_virtual_junction_anchor` 的冻结 `Step3 legal-space baseline`、`Step4-5` 联合阶段、批量审查产物与入口索引
 
 ### 3.2 当前非目标（不包含）
 
@@ -186,5 +186,5 @@
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`，其定位为非业务生产模块。
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小闭环。
 - `t02_junction_anchor` 当前仍是 Active 正式业务模块；其模块正文可在独立轮次中维护，但项目级登记与仓库级入口必须保持一致。
-- `t03_virtual_junction_anchor` 当前作为 Active 正式业务模块启动；当前正式范围只到 `Phase A / Step3 legal-space baseline only`。
+- `t03_virtual_junction_anchor` 当前作为 Active 正式业务模块；当前正式范围为“冻结 `Step3 legal-space baseline` + `Step4-5` 联合阶段（仅 `center_junction / single_sided_t_mouth`）”。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

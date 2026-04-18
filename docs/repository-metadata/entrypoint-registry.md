@@ -6,10 +6,10 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `53` 个。
+- 当前真实执行入口共 `54` 个。
 - 分布概览：
   - repo 级入口文件：`30`（`Makefile` 1 + `scripts/` 28 + `python -m rcsd_topo_poc` 1）
-  - CLI 稳定子命令：`23`
+  - CLI 稳定子命令：`24`
 - 维护口径：
   - CLI 子命令以 `python -m rcsd_topo_poc --help` 为准。
   - 脚本入口以 `scripts/` 下纳入版本管理的文件为准。
@@ -59,6 +59,7 @@
 | `t02-stage2-anchor-recognition` | `src/rcsd_topo_poc/cli.py` | repo 级 | 在 stage1 node 输出与 `RCSDIntersection` 输入上执行 T02 stage2 anchor recognition | `active` | 否 |
 | `t02-virtual-intersection-poc` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 stage3 虚拟路口锚定入口（`case-package` 为唯一正式验收基线，`full-input` 为完整数据 `fixture / dev-only / regression`） | `active` | 否 |
 | `t03-step3-legal-space` | `src/rcsd_topo_poc/cli.py` | repo 级 | T03 Phase A / Step3 legal-space baseline 入口；消费 Anchor61 `case-package`，输出 case 级产物、平铺 PNG、索引与汇总 | `active` | 否 |
+| `t03-step45-rcsd-association` | `src/rcsd_topo_poc/cli.py` | repo 级 | T03 Step4-5 联合阶段入口；消费 Anchor61 `case-package` 与冻结 Step3 run root，输出 `required/support/excluded` RCSD 中间结果包、平铺 PNG、索引与汇总 | `active` | 否 |
 | `t02-fix-node-error-2` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 `node_error_2` 独立离线修复工具，输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json` | `active` | 否 |
 | `t02-export-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 单 / 多 mainnodeid 文本证据包导出入口 | `active` | 否 |
 | `t02-decode-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 单 / 多 mainnodeid 文本证据包解包入口 | `active` | 否 |

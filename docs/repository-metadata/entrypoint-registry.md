@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `56` 个。
+- 当前真实执行入口共 `57` 个。
 - 分布概览：
-  - repo 级入口文件：`32`（`Makefile` 1 + `scripts/` 30 + `python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`33`（`Makefile` 1 + `scripts/` 31 + `python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`24`
 - 维护口径：
   - CLI 子命令以 `python -m rcsd_topo_poc --help` 为准。
@@ -40,6 +40,7 @@
 | `t02_export_text_bundle_internal_selected_mainnodeids.sh` | `scripts/t02_export_text_bundle_internal_selected_mainnodeids.sh` | repo 级 | T02 内网多 mainnodeid 文本证据包导出脚本，固定 selected mainnodeid 列表并输出单个 bundle txt | `active` | 否 |
 | `t02_export_text_bundle_internal_divmerge_focus_mainnodeids.sh` | `scripts/t02_export_text_bundle_internal_divmerge_focus_mainnodeids.sh` | repo 级 | T02 内网分歧/合流 focus mainnodeid 文本证据包导出脚本，默认打包 `13460276 / 13460274 / 765592 / 13460256`，参数全部可外显覆盖 | `active` | 否 |
 | `t02_export_text_bundle_internal_multi_mainnodeids.sh` | `scripts/t02_export_text_bundle_internal_multi_mainnodeids.sh` | repo 级 | T02 内网多 mainnodeid 单文件文本证据包导出脚本，默认写 `Anchor_2` 根目录，支持位置参数或 `MAINNODEIDS_TEXT` 自定义并可自动解包 | `active` | 否 |
+| `pull_rcsd_topo_poc_main_from_github.sh` | `scripts/pull_rcsd_topo_poc_main_from_github.sh` | repo 级 | RCSD_Topo_Poc 固定仓库路径 / 固定远端 / 固定主干的零参数 GitHub 下拉脚本；首次运行可 clone，后续运行执行 fetch + switch main + ff-only pull | `active` | 否 |
 | `t03_run_step67_internal_full_input_8workers.sh` | `scripts/t03_run_step67_internal_full_input_8workers.sh` | repo 级 | T03 Step67 内网 full-input 全量运行脚本；对外复用 T02 Stage3 内网脚本参数面，内部经 case-package / Step3 adapter 串联 Step67 batch runner | `active` | 否 |
 | `t03_watch_step67_internal_full_input.sh` | `scripts/t03_watch_step67_internal_full_input.sh` | repo 级 | T03 Step67 内网 full-input 实时跟踪脚本；优先读 Step67 run root 与 internal progress 工件，按 selected/completed/running/pending/accepted/rejected 与 V1-V5 视角展示批次状态 | `active` | 否 |
 | `python -m rcsd_topo_poc` | `src/rcsd_topo_poc/__main__.py` | repo 级 | Python 包入口 | `active` | 否 |

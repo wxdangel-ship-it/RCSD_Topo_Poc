@@ -1,23 +1,27 @@
-# T03 / Phase A - Step3 Legal-Space Baseline
+# T03 / Step4-5 联合阶段变更工件
 
 ## 1. 文档定位
 
 - 文档类型：spec-kit 变更工件
-- 状态：`active change / phase-a`
-- 本文件服务于 `t03_virtual_junction_anchor` 的 Phase A 启动，不替代模块长期真相。
-- 当前任务已进入 `Step3` 修复轮，本文件只追加修复说明，不重写总体业务。
+- 状态：`active change / step45-joint-phase`
+- 本轮任务已确认将 `t03_virtual_junction_anchor` 从 `Step3-only` 升级为 `Step4-5` 联合阶段。
+- 本文件用于固化本轮变更需求，不替代模块长期源事实。
+- `Step3 legal space` 是已冻结前置层；本轮只消费其既有产物，不重新定义 allowed space，不反向扩大 corridor，不重新引入 `50m` 新口径。
 
 ## 2. 本轮目标
 
-- 在独立模块 `t03_virtual_junction_anchor` 中，以 Anchor61 `case-package` 为正式输入契约，实现最小 `Step1/Step2` 支撑与完整 `Step3 legal space`。
-- 支持原始 Anchor `61` 个 case 的批量运行、case 级输出、平铺 PNG 审查目录、索引与汇总；当前默认正式验收集按排除 `922217 / 54265667 / 502058682` 后的 `58` 个 case 统计。
-- 将 T03 固化为“只做到 Step3 的干净新基线”，为后续 `Step4-7` 留扩展位。
-- 本轮修复闭环聚焦 `Rule D / Rule E / Rule F / Rule G` 与 Anchor61 真实验收，不引入 `Step4-7` 语义。
-- `Rule D` 的最终 `allowed space` 必须满足 `DriveZone` containment；当不存在更早的稳定边界时，`50m fallback` 允许作为可成立路径，不自动进入 `review`，但必须保留 fallback 审计信息
+- 将 T03 正式范围升级为 `Step4 = RCSD 关联语义识别` 与 `Step5 = foreign 过滤与排除落地` 的联合阶段。
+- 只处理 `center_junction` 与 `single_sided_t_mouth`。
+- 联合阶段最终输出是供 `Step6` 消费的干净中间结果包，不是 polygon。
+- 保持单 case 输出、批跑、审计与平铺 PNG 可复现。
+- 默认正式批量集固定为：`raw 61 / formal 58`，默认排除 `922217 / 54265667 / 502058682`。
 
 ## 3. 正式输入契约
 
-- 本轮正式输入固定为 `/mnt/e/TestData/POC_Data/T02/Anchor/<case_id>/` 下的 `case-package`：
+### 3.1 case-package 基础输入
+
+- 正式输入根目录固定为 `/mnt/e/TestData/POC_Data/T02/Anchor/<case_id>/`
+- 每个 case 必须包含：
   - `manifest.json`
   - `size_report.json`
   - `drivezone.gpkg`
@@ -25,94 +29,148 @@
   - `roads.gpkg`
   - `rcsdroad.gpkg`
   - `rcsdnode.gpkg`
-- 线程 `REQUIREMENT.md` 本轮整体不启用；其中旧的 `lane_centerline.json / lane_topology.json` 输入口径视为历史误写，不进入本轮事实源。
-- 所有空间处理统一在 `EPSG:3857`。
 
-## 4. Step3 正式范围
+### 3.2 Step3 冻结前置输入
 
-- `Step1`：只负责组装 `semantic_junction_set`、must-cover group nodes、本地 `roads / RC roads / RC nodes` 视图。
-- `Step2`：只负责模板归类：
-  - `kind_2 = 4 -> center_junction`
-  - `kind_2 = 2048 -> single_sided_t_mouth`
-- `Step3`：只负责冻结合法活动空间，输出 `allowed space / negative mask / step3 status`。
-
-## 5. Step3 A-H 冻结规则
-
-- A：相邻语义路口入口截断；只对当前语义路口 branch 上真正进入相邻语义路口的 road 生效。在与当前路口直接关联的相邻语义路口入口处，沿当前 branch 反向构造 `1m` 逆向掩膜，正向增长到这里应自然终止；不再依赖路口前横截切面。若候选截断会覆盖当前 target group core，则该截断无效。
-- B：同面无关对象负向掩膜；优先对 `foreign road / arm` 做 `1m` 缓冲，无法识别时退化为 node 小范围掩膜；当前语义路口 branch、直接关联 road 及其二度衔接 road 不得因“未进入 frontier”而被回灌为 foreign。node fallback 本身属于允许的正式边界手段，只在审计中留痕，不单独构成 `review`。
-- C：其他语义路口内部 node 的 MST 负向掩膜；MST 连线只保留道路面内部分，并做 `1m` 缓冲。
-- D：候选空间只能在 `DriveZone` 内沿合法方向增长，不得越过负向掩膜或非道路面；在当前语义路口关联 branch 上，进入路口与退出路口的 road 都属于可追溯的合法活动链，应双向追溯到下一个或上一个语义路口；最终 `allowed space` 必须回切 `DriveZone`；无更早稳定边界时，单向最大增长距离 `50m`，且该 fallback 允许直接成立，不自动提升为 `review`，只在审计中留痕。
-- 当前 `Rule D` 的正式 audit/status 命名统一为 `direction_mode = t02_direction_plus_bidirectional_junction_trace`。
-- 对 `single_sided_t_mouth`，方向判定优先识别语义横方向：若可找到一组 `1` 条进入 + `1` 条退出、轴线近似共线、且远离路口后几何距离持续发散的 direct roads，则该组 road 视为横方向主轴，应优先确定当前 branch / opposite branch。
-- `single_sided_t_mouth` 的竖方向既可以是近似垂直的支路，也可以是八字形挂接；局部角度近似平行本身不构成方向歧义，若远离路口后 road 间距离呈收敛趋势，则应按竖方向理解。
-- 对 `single_sided_t_mouth`，方向歧义只在多个候选方向会导出实质不同的当前 branch / opposite branch 划分结果时才成立；若已识别出稳定横方向主轴，则局部分数只作为 fallback，不得仅因分数接近而单独提升为 `review`。
-- E：`single_sided_t_mouth` 当前定义为 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy` 表达，当前 baseline 不单独定义 lane 级对向护栏能力。当前语义路口关联 road 及其二度衔接 road 不得被误判为 opposite。`RCSDRoad` 不是常驻 opposite-side blocker，而是仅在 `SWSD` 未找到可用于生成反向掩膜的 opposite road 时，才允许启用的 near-corridor fallback；启用前提是当前 case 已稳定识别出横方向主轴，且候选 `RCSDRoad` 在路口前进方向上与横方向 `outgoing road` 的前进向量相反。若 `SWSD` opposite road 已存在，则 `RCSDRoad` fallback 必须禁用，不得写入 `opposite_corridor_buffer`。对双 node `single_sided_t_mouth`，两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 作为 through-node 时不应中断主通路增长。
-- F：若某个 case 只能依赖 `cleanup / trim` 才满足边界，则 `Step3` 未成立。
-- G：任何放大都只能在 `A-F` 满足后进行，不得先放大再补救越界。
-- H：旧 `10m` 正式口径取消，统一采用“无更早边界时单向 `50m`”。
-
-## 6. 输出契约
-
-- 单 case 固定输出：
+- `Step4-5` 只能消费同 case 的冻结 `Step3` 产物：
   - `step3_allowed_space.gpkg`
-  - `step3_negative_mask_adjacent_junction.gpkg`
-  - `step3_negative_mask_foreign_objects.gpkg`
-  - `step3_negative_mask_foreign_mst.gpkg`
   - `step3_status.json`
   - `step3_audit.json`
-  - `step3_review.png`
-- 批次固定输出：
-  - `preflight.json`
-  - `summary.json`
-  - `step3_review_index.csv`
-  - `step3_review_flat/`
-  - `cases/`
-- `step3_review_flat/` 必须平铺所有 case PNG，目录内禁止出现子目录。
+- 官方默认 `--step3-root` 指向仓库内现行 Step3 正式基线 run root；显式单 case 调试可改写。
 
-## 7. 状态与审查
+### 3.3 字段与空间前提
 
-- `step3_state` 只允许：
+- 所有空间处理统一到 `EPSG:3857`
+- `nodes` 至少需具备：`id / mainnodeid / has_evd / is_anchor / kind_2 / grade_2`
+- `roads / rcsdroad` 至少需具备：`id / snodeid / enodeid / direction`
+- `rcsdnode` 至少需具备：`id / mainnodeid`
+
+## 4. 联合阶段业务定义
+
+### 4.1 冻结前置层
+
+- `Step1`、`Step2`、`Step3` 是已冻结前置层。
+- 联合阶段不得重新定义：
+  - `allowed space`
+  - `negative mask`
+  - `corridor`
+  - `50m fallback`
+
+### 4.2 Step4 定义
+
+- `Step4` 负责在冻结 `Step3 allowed space` 内选择 RCSD，并完成 `A / B / C` 分类。
+- `Step4-5` 只允许处理当前 SWSD 路口所在道路面上的对象；其他道路面对象不参与当前 case 全局处理。
+- 当前 SWSD 道路面由 `Step3 selected_road_ids` 在 `drivezone` 内构成的局部道路面近似得到。
+- `A`：RCSD 也构成当前 case 对应语义路口
+- `B`：RCSD 不构成完整语义路口，但存在相关 `RCSDRoad`
+- `C`：无相关 `RCSDRoad`
+- `A` 类输出 `required_rcsdnode / required_rcsdroad`
+- `B` 类输出重点是 `required hook zone`，不是整条 road 全段
+- `C` 类不新增 RC 侧 required
+- 若 RCSD 下没有稳定语义路口 core，但存在 support / hook zone，则统一按 `B / review` 处理，并显式记 `rcsd_semantic_core_missing = true`
+- `degree = 2` 的 `RCSDNode` 只视为 connector，不进入 `required semantic core`
+- 对 `single_sided_t_mouth` 的平行重复 `support RCSDRoad`，应优先保留更贴近竖方向退出当前面一侧的那条，而不是泛化地按“离 semantic core 更近”保留
+
+### 4.3 Step5 定义
+
+- `Step5` 负责：
+  - 将 `excluded RC` 直接视为 `foreign RC`
+  - 明确 foreign `SWSD / RCSD / roads / arms / corridors`
+  - 为 `Step6` 提供硬边界
+- `Step5` 不是：
+  - 重新做 `Step4` 关联
+  - 生成最终 polygon
+  - 做最终 accepted/rejected 判定
+
+## 5. 输出契约
+
+### 5.1 单 case 固定输出
+
+- `step45_required_rcsdnode.gpkg`
+- `step45_required_rcsdroad.gpkg`
+- `step45_support_rcsdnode.gpkg`
+- `step45_support_rcsdroad.gpkg`
+- `step45_excluded_rcsdnode.gpkg`
+- `step45_excluded_rcsdroad.gpkg`
+- `step45_required_hook_zone.gpkg`
+- `step45_foreign_swsd_context.gpkg`
+- `step45_foreign_rcsd_context.gpkg`
+- `step45_status.json`
+- `step45_audit.json`
+- `step45_review.png`
+
+### 5.3 审计补充字段
+
+- `step45_status.json / step45_audit.json` 需补充：
+  - `rcsd_semantic_core_missing`
+  - `nonsemantic_connector_rcsdnode_ids`
+  - `true_foreign_rcsdnode_ids`
+  - `parallel_support_duplicate_dropped_rcsdroad_ids`
+- `step45_audit.json` 需补充当前 SWSD 道路面过滤审计：
+  - `active_rcsdnode_ids / active_rcsdroad_ids`
+  - `ignored_outside_current_swsd_surface_rcsdnode_ids / ignored_outside_current_swsd_surface_rcsdroad_ids`
+- `nonsemantic_connector_rcsdnode_ids` 与 `true_foreign_rcsdnode_ids` 必须分开落盘，避免将 local connector node 误记为真正 foreign semantic node
+
+### 5.2 批次固定输出
+
+- `preflight.json`
+- `summary.json`
+- `step45_review_index.csv`
+- `step45_review_flat/`
+- `cases/`
+
+### 5.3 批次输出要求
+
+- `step45_review_flat/` 内禁止子目录
+- 平铺所有 case PNG
+- 命名稳定、可排序
+- 便于连续人工目视检查
+
+## 6. 状态枚举
+
+- `step45_state` 只允许：
   - `established`
   - `review`
   - `not_established`
-- `input_gate_failed` 作为前置输入门禁 `reason` 允许出现，但不新增第四种 `step3_state`，也不替代 Step3 业务状态
-- 已确认的 input-gate hard-stop case `922217 / 54265667 / 502058682` 记录为默认全量验收排除集：后续默认全量跑批不再把这 `3` 个 case 计入测试用例级统计，但显式点名单 case 调试仍允许单独运行
-- `Step4/5/6/7` 不在本轮范围内；不得用它们的语义或补救逻辑反向证明 `Step3` 成立。
-- T02 的 `late_*cleanup* / trim / review_mode / stage4 聚合` 本轮禁止前置进入 T03。
-- `Rule D` 的 `outside_drivezone` 失败优先级高于普通 review signal；若最终 `allowed space` 越出 `DriveZone` 超阈值，case 不得仅作为普通 `review` 保留。
-- `Rule D` 的 `50m fallback` 若被使用，不单独构成 review signal；必须在 `step3_audit.json` 明确记录 fallback 原因、距离与是否启用。
-- `Rule E` 当前只承诺 `single_sided opposite-side guard baseline partial`；建议落盘字段使用中性表达，例如 `opposite_side_guard_mode / opposite_side_guard_note`，不得再把 lane 级护栏表述为当前能力、当前未完成项或当前验收阻塞。
-- closeout 轮至少应落盘：
-  - `rule_d_fallback_applied / rule_d_fallback_distance_m / rule_d_fallback_reason`
-  - `direction_mode`
-  - `single_sided_horizontal_pair_detected / single_sided_horizontal_pair_road_ids / single_sided_horizontal_pair_divergence_m / single_sided_direction_resolution_mode`
-  - `opposite_side_guard_mode / opposite_side_guard_note`
-  - `rcsd_opposite_fallback_enabled / rcsd_opposite_fallback_reason / rcsd_opposite_fallback_candidate_ids / rcsd_opposite_fallback_selected_ids / rcsd_opposite_fallback_suppressed_ids`
-  - `double_node_bridge_in_allowed_space / through_node_shared_2in2out / through_node_break_suppressed`
-  - `adjacent_junction_cut_suppressed` 及其 `suppress_reason`
+- `association_class` 只允许：
+  - `A`
+  - `B`
+  - `C`
 
-## 8. 验证
+## 7. CLI 要求
 
-- CLI 帮助可用：`python3 -m rcsd_topo_poc t03-step3-legal-space --help`
-- 至少补齐 CLI、loader、writer、state mapping、rule-level 修复测试与 run 级 summary 回读。
-- Anchor61 原始 Anchor 总量仍为 `61`，默认正式全量验收集按排除 `922217 / 54265667 / 502058682` 后的 `58` 个 case 统计；显式点名单 case 不受该默认排除影响
-- 必须真实跑完默认全量验收集，核对：
-  - `cases/` 有 `58` 个 case 目录
-  - `step3_review_flat/` 有 `58` 张 PNG 且无子目录
-  - `step3_review_index.csv` 与 `summary.json` 字段完整
-  - 三态计数之和等于 `58`
-  - `excluded_case_ids == ["922217", "54265667", "502058682"]`
-  - `missing_case_ids == []`
-  - `failed_case_ids == []`
-- `preflight.json / summary.json` 应明确表达：
+- 官方入口：
+
+```bash
+python3 -m rcsd_topo_poc t03-step45-rcsd-association --help
+```
+
+- 必须支持：
+  - 单 case 模式
+  - 批量模式
+  - 默认正式 `58` case
+  - 显式点名单 case 调试
+  - 输出目录可控
+  - `debug render` 可控
+
+## 8. 验证与验收
+
+- 至少补齐：
+  - loader / writer 基础测试
+  - `Step4 A/B/C` 分类测试
+  - `B` 类 hook zone 不是整条 road 的测试
+  - `Step5 excluded -> foreign` 转换测试
+  - `step45_state` 三态映射测试
+  - batch `summary / index / flat review` 输出测试
+  - flat PNG 无子目录测试
+- 必须真实跑：
+  - CLI `--help`
+  - 若干代表性单 case smoke
+  - 默认正式 `58` case 批跑
+- `summary.json` 中必须明确表达：
   - `raw_case_count = 61`
   - `default_formal_case_count = 58`
   - `excluded_case_ids`
   - `effective_case_ids`
-- 本轮 closeout 需在 repo 内补一份轻量证据文档，作为 `_work` 结果不入 Git 时的正式收口说明。
-
-## 9. 非目标
-
-- 不实现 `Step4/5/6/7`
-- 不修改 T02 正式业务结果
-- 不把 `outputs/_work`、批量 PNG、线程同步文件提交进 Git
+  - `missing_case_ids == []`
+  - `failed_case_ids == []`

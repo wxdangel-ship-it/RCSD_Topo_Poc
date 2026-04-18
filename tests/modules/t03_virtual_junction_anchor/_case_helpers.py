@@ -66,6 +66,7 @@ def write_case_package(
     has_evd: str = "yes",
     is_anchor: str = "no",
     drivezone_geometry=None,
+    drivezone_geometries: list | None = None,
 ) -> None:
     case_root.mkdir(parents=True, exist_ok=True)
     base_node = node_feature(case_id, 0.0, 0.0, mainnodeid=case_id, kind_2=kind_2, has_evd=has_evd, is_anchor=is_anchor)
@@ -77,9 +78,10 @@ def write_case_package(
         case_root / "drivezone.gpkg",
         [
             {
-                "properties": {"id": "dz"},
-                "geometry": drivezone_geometry or box(-60.0, -60.0, 120.0, 60.0),
+                "properties": {"id": f"dz_{idx}"},
+                "geometry": geometry,
             }
+            for idx, geometry in enumerate(drivezone_geometries or [drivezone_geometry or box(-60.0, -60.0, 120.0, 60.0)])
         ],
     )
     manifest = {

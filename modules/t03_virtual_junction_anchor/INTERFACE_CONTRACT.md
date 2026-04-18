@@ -32,7 +32,7 @@
 - `single_sided_t_mouth` 的方向歧义只在“多个候选方向会导出实质不同的当前 branch / opposite branch 划分结果”时才成立；若已存在稳定横方向主轴，则不得仅因分数接近或局部向量并列而单独提升为 `review`
 - `Rule A` 的负向边界应在与当前路口直接关联的相邻语义路口入口处，沿当前 branch 反向构造 `1m` 逆向掩膜；正向增长到这里应自然终止，不再依赖路口前横截切面
 - `Rule E` 当前只定义为 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy` 表达，当前 baseline 不单独定义 lane 级对向护栏能力，也不得在文档、PR 或验收结论中把 lane 级护栏表述为当前能力或当前未完成项
-- `Rule E` 的 `single_sided_t_mouth` opposite 判定不得覆盖当前语义路口关联 road，也不得覆盖这些 road 的二度衔接 road；`RCSDRoad` 只允许作为 near-corridor proxy，挂靠到已识别的 opposite `SWSD road`，不得以 opposite side 全量 `RCSDRoad` 直接主导硬阻断；若某个 `RCSDRoad` proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress，不得 materialize 成 hard blocker
+- `Rule E` 的 `single_sided_t_mouth` opposite 判定不得覆盖当前语义路口关联 road，也不得覆盖这些 road 的二度衔接 road；`RCSDRoad` 不是常驻 opposite-side guard，而是仅在 `SWSD` 未找到可用于生成反向掩膜的 opposite road 时，才允许启用的 near-corridor fallback。启用前提是：当前 case 已稳定识别出横方向主轴，且候选 `RCSDRoad` 在路口前进方向上与横方向 `outgoing road` 的前进向量相反；若 `SWSD` opposite road 已存在，则 `RCSDRoad` fallback 必须禁用，不得与 `SWSD` opposite 掩膜并存主导硬阻断
 - 双 node `single_sided_t_mouth` 新增规则：
   - 当两 `node` 间存在 bridge 且 bridge 位于合法道路面内时，该 bridge 应进入 `allowed-space` 主通路，而不是单独降级到 review-only 分支
   - 当共享 `2进2出` 的 `node` 仅承担 through-node 角色时，不应中断主通路增长，也不得因共享 node 事实直接判成 opposite blocker

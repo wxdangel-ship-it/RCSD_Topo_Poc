@@ -35,6 +35,7 @@ ADJACENT_REVERSE_MASK_LENGTH_M = 1.0
 OPPOSITE_RC_ROAD_MAX_SWSD_GAP_M = 10.0
 OPPOSITE_RC_ROAD_MAX_REFERENCE_DISTANCE_M = 35.0
 OPPOSITE_RC_ROAD_MIN_DIRECTION_SIM = 0.85
+OPPOSITE_RC_ROAD_MIN_REVERSE_DIRECTION_DOT = 0.85
 OPPOSITE_RC_NODE_MAX_CORRIDOR_DISTANCE_M = 10.0
 OPPOSITE_RC_ROAD_MAX_PROTECTED_OVERLAP_M = 3.0
 DIRECTION_MODE = "t02_direction_plus_bidirectional_junction_trace"
@@ -95,6 +96,17 @@ def _single_sided_direction_resolution_fields(
         "single_sided_horizontal_pair_road_ids": sorted(pair_road_ids),
         "single_sided_horizontal_pair_divergence_m": resolution.get("horizontal_pair_divergence_m"),
         "single_sided_direction_resolution_mode": resolution.get("resolution_mode"),
+    }
+
+
+def _rcsd_opposite_fallback_fields(fields: dict[str, Any] | None = None) -> dict[str, Any]:
+    fields = fields or {}
+    return {
+        "rcsd_opposite_fallback_enabled": bool(fields.get("enabled", False)),
+        "rcsd_opposite_fallback_reason": fields.get("reason"),
+        "rcsd_opposite_fallback_candidate_ids": sorted(fields.get("candidate_ids", [])),
+        "rcsd_opposite_fallback_selected_ids": sorted(fields.get("selected_ids", [])),
+        "rcsd_opposite_fallback_suppressed_ids": sorted(fields.get("suppressed_ids", [])),
     }
 
 
@@ -195,6 +207,10 @@ def _geometry_axis_vector(geometry: BaseGeometry) -> tuple[float, float]:
 
 def _axis_similarity(left: tuple[float, float], right: tuple[float, float]) -> float:
     return abs(left[0] * right[0] + left[1] * right[1])
+
+
+def _vector_dot(left: tuple[float, float], right: tuple[float, float]) -> float:
+    return left[0] * right[0] + left[1] * right[1]
 
 
 def _normalized_axis_vector(vector: tuple[float, float]) -> tuple[float, float]:
@@ -976,47 +992,71 @@ def _filter_opposite_rc_road_ids(
     excluded_opposite_road_ids: set[str],
     candidate_rc_road_ids: set[str],
     protected_road_ids: set[str],
-) -> set[str]:
-    if not excluded_opposite_road_ids or not candidate_rc_road_ids:
-        return set()
+    forward_direction: tuple[float, float] | None,
+    horizontal_pair_detected: bool,
+) -> tuple[set[str], dict[str, Any]]:
+    candidate_ids = sorted(candidate_rc_road_ids)
+    if not candidate_rc_road_ids:
+        return set(), {
+            "enabled": False,
+            "reason": "no_candidate_rcsd_opposite",
+            "candidate_ids": [],
+            "selected_ids": [],
+            "suppressed_ids": [],
+        }
+    if not horizontal_pair_detected or forward_direction is None:
+        return set(), {
+            "enabled": False,
+            "reason": "disabled_no_semantic_horizontal_pair",
+            "candidate_ids": candidate_ids,
+            "selected_ids": [],
+            "suppressed_ids": candidate_ids,
+        }
+    if excluded_opposite_road_ids:
+        return set(), {
+            "enabled": False,
+            "reason": "disabled_swsd_opposite_present",
+            "candidate_ids": candidate_ids,
+            "selected_ids": [],
+            "suppressed_ids": candidate_ids,
+        }
     reference = _point_like(context.representative_node.geometry)
-    opposite_roads = [road for road in context.roads if road.road_id in excluded_opposite_road_ids]
     protected_roads = [road for road in context.roads if road.road_id in protected_road_ids]
-    if not opposite_roads:
-        return set()
     kept: set[str] = set()
+    suppressed: set[str] = set()
     for rc_road in context.rcsd_roads:
         if rc_road.road_id not in candidate_rc_road_ids:
             continue
         if reference.distance(rc_road.geometry) > OPPOSITE_RC_ROAD_MAX_REFERENCE_DISTANCE_M:
+            suppressed.add(rc_road.road_id)
             continue
-        best_distance = math.inf
-        best_similarity = 0.0
-        rc_axis = _geometry_axis_vector(rc_road.geometry)
-        for opposite_road in opposite_roads:
-            distance = rc_road.geometry.distance(opposite_road.geometry)
-            similarity = _axis_similarity(rc_axis, _geometry_axis_vector(opposite_road.geometry))
-            if distance + 1e-6 < best_distance:
-                best_distance = distance
-                best_similarity = similarity
-            elif abs(distance - best_distance) <= 1e-6 and similarity > best_similarity:
-                best_similarity = similarity
-        if best_distance <= OPPOSITE_RC_ROAD_MAX_SWSD_GAP_M and best_similarity >= OPPOSITE_RC_ROAD_MIN_DIRECTION_SIM:
-            blocker_mask = _clean_geometry(
-                rc_road.geometry.buffer(NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2).intersection(context.drivezone_geometry)
-            )
-            if blocker_mask is None:
-                continue
-            max_protected_overlap = 0.0
-            for protected_road in protected_roads:
-                overlap = protected_road.geometry.intersection(blocker_mask)
-                max_protected_overlap = max(max_protected_overlap, float(getattr(overlap, "length", 0.0)))
-            # RCSD corridor proxy can补SWSD缺口, but it must not materialize as a hard blocker
-            # when it still rides on the current junction branch / second-degree protected roads.
-            if max_protected_overlap > OPPOSITE_RC_ROAD_MAX_PROTECTED_OVERLAP_M:
-                continue
-            kept.add(rc_road.road_id)
-    return kept
+        reverse_dot = -_vector_dot(_road_vector_from_reference(rc_road, reference), forward_direction)
+        if reverse_dot < OPPOSITE_RC_ROAD_MIN_REVERSE_DIRECTION_DOT:
+            suppressed.add(rc_road.road_id)
+            continue
+        blocker_mask = _clean_geometry(
+            rc_road.geometry.buffer(NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2).intersection(context.drivezone_geometry)
+        )
+        if blocker_mask is None:
+            suppressed.add(rc_road.road_id)
+            continue
+        max_protected_overlap = 0.0
+        for protected_road in protected_roads:
+            overlap = protected_road.geometry.intersection(blocker_mask)
+            max_protected_overlap = max(max_protected_overlap, float(getattr(overlap, "length", 0.0)))
+        # RCSD corridor fallback only补SWSD opposite缺口; even in fallback mode it must not
+        # materialize as a hard blocker when it rides on the current protected branch geometry.
+        if max_protected_overlap > OPPOSITE_RC_ROAD_MAX_PROTECTED_OVERLAP_M:
+            suppressed.add(rc_road.road_id)
+            continue
+        kept.add(rc_road.road_id)
+    return kept, {
+        "enabled": bool(kept),
+        "reason": "enabled_missing_swsd_opposite" if kept else "disabled_no_reverse_rcsd_candidate",
+        "candidate_ids": candidate_ids,
+        "selected_ids": sorted(kept),
+        "suppressed_ids": sorted(set(candidate_ids) - kept),
+    }
 
 
 def _filter_opposite_rc_node_ids(
@@ -1339,6 +1379,7 @@ def _empty_audit_doc(
     rule_d_fallback_fields = _rule_d_fallback_fields()
     two_node_t_bridge_fields = _two_node_t_bridge_closeout_defaults()
     shared_two_in_two_out_fields = _shared_two_in_two_out_closeout_fields()
+    rcsd_opposite_fallback = _rcsd_opposite_fallback_fields()
     return {
         "input_gate": input_gate,
         "rules": {key: {"passed": False, "reason": reason} for key in "ABCDEFGH"},
@@ -1367,6 +1408,7 @@ def _empty_audit_doc(
         "opposite_side_guard_mode": opposite_side_guard_mode,
         "corridor_guard_status": corridor_guard_status,
         "opposite_side_guard_note": None,
+        **rcsd_opposite_fallback,
         "hard_path_passed": False,
         "cleanup_preview_passed": False,
         "rescue_reason": None,
@@ -1396,6 +1438,7 @@ def _status_for_unsupported_template(context: Step1Context, template_result: Ste
     two_node_t_bridge_fields = _two_node_t_bridge_closeout_defaults()
     shared_two_in_two_out_fields = _shared_two_in_two_out_closeout_fields()
     single_sided_direction_resolution = _single_sided_direction_resolution_fields()
+    rcsd_opposite_fallback = _rcsd_opposite_fallback_fields()
     return Step3CaseResult(
         case_id=context.case_spec.case_id,
         template_class=template_result.template_class,
@@ -1421,6 +1464,7 @@ def _status_for_unsupported_template(context: Step1Context, template_result: Ste
             "direction_mode": DIRECTION_MODE,
             **rule_d_fallback_fields,
             **single_sided_direction_resolution,
+            **rcsd_opposite_fallback,
             "allowed_area_m2": 0.0,
             "allowed_inside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_area_m2": 0.0,
@@ -1444,6 +1488,7 @@ def _status_for_input_gate_failure(
     two_node_t_bridge_fields = _two_node_t_bridge_closeout_defaults()
     shared_two_in_two_out_fields = _shared_two_in_two_out_closeout_fields()
     single_sided_direction_resolution = _single_sided_direction_resolution_fields()
+    rcsd_opposite_fallback = _rcsd_opposite_fallback_fields()
     return Step3CaseResult(
         case_id=context.case_spec.case_id,
         template_class=template_result.template_class,
@@ -1469,6 +1514,7 @@ def _status_for_input_gate_failure(
             "direction_mode": DIRECTION_MODE,
             **rule_d_fallback_fields,
             **single_sided_direction_resolution,
+            **rcsd_opposite_fallback,
             "allowed_area_m2": 0.0,
             "allowed_inside_drivezone_area_m2": 0.0,
             "allowed_outside_drivezone_area_m2": 0.0,
@@ -1504,6 +1550,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     corridor_guard_status = "not_applicable"
     opposite_side_guard_note: str | None = None
     single_sided_direction_resolution = _single_sided_direction_resolution_fields()
+    rcsd_opposite_fallback = _rcsd_opposite_fallback_fields()
     shared_two_in_two_out = _detect_shared_two_in_two_out_node(context)
     shared_through_node_ids = (
         {shared_two_in_two_out["node_id"]}
@@ -1546,12 +1593,15 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             direction,
             protected_node_ids={node.node_id for node in context.target_group.nodes},
         )
-        excluded_opposite_rc_road_ids = _filter_opposite_rc_road_ids(
+        excluded_opposite_rc_road_ids, rcsd_opposite_fallback_raw = _filter_opposite_rc_road_ids(
             context,
             excluded_opposite_road_ids=excluded_opposite_road_ids,
             candidate_rc_road_ids=candidate_opposite_rc_road_ids,
             protected_road_ids=junction_related_road_ids,
+            forward_direction=direction,
+            horizontal_pair_detected=single_sided_direction_resolution["single_sided_horizontal_pair_detected"],
         )
+        rcsd_opposite_fallback = _rcsd_opposite_fallback_fields(rcsd_opposite_fallback_raw)
         excluded_opposite_rc_node_ids = _filter_opposite_rc_node_ids(
             context,
             excluded_opposite_road_ids=excluded_opposite_road_ids,
@@ -1562,7 +1612,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         corridor_guard_status = (
             "hard_blocked_by_rcsdroad_mask" if excluded_opposite_rc_road_ids else "not_applicable"
         )
-        opposite_side_guard_note = "road/semantic-node/near-corridor proxy applied."
+        opposite_side_guard_note = "road/semantic-node guard applied; near-corridor fallback only when SWSD opposite is missing."
         if ambiguous:
             review_signals.append("single_sided_direction_ambiguous")
 
@@ -1729,6 +1779,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             "opposite_side_guard_mode": opposite_side_guard_mode,
             "corridor_guard_status": corridor_guard_status,
             "opposite_side_guard_note": opposite_side_guard_note,
+            **rcsd_opposite_fallback,
         },
         "F": {
             "passed": not cleanup_dependency,
@@ -1775,6 +1826,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "opposite_side_guard_mode": opposite_side_guard_mode,
         "corridor_guard_status": corridor_guard_status,
         "opposite_side_guard_note": opposite_side_guard_note,
+        **rcsd_opposite_fallback,
         **single_sided_direction_resolution,
         "hard_path_passed": hard_path_passed,
         "cleanup_preview_passed": cleanup_preview_passed,
@@ -1796,6 +1848,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         "cleanup_dependency": cleanup_dependency,
         "blocked_direction_count": len(blocked_directions),
         "rule_d_fallback_applied": rule_d_fallback_fields["rule_d_fallback_applied"],
+        "rcsd_opposite_fallback_enabled": rcsd_opposite_fallback["rcsd_opposite_fallback_enabled"],
         "two_node_t_bridge_applied": bridge_hard_fields["two_node_t_bridge_applied"],
         "shared_two_in_two_out_as_through_node": shared_two_in_two_out_fields["shared_two_in_two_out_as_through_node"],
         "single_sided_horizontal_pair_detected": single_sided_direction_resolution["single_sided_horizontal_pair_detected"],
@@ -1838,6 +1891,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             **bridge_hard_fields,
             **shared_two_in_two_out_fields,
             **single_sided_direction_resolution,
+            **rcsd_opposite_fallback,
             **drivezone_metrics,
             "visual_review_class": visual_review_class,
             "root_cause_layer": _root_cause_layer(step3_state),

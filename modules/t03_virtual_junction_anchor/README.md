@@ -52,7 +52,7 @@ python3 -m rcsd_topo_poc t03-step3-legal-space \
 - `single_sided_t_mouth` 的竖方向可以是近似垂直支路，也可以是八字形挂接；局部角度近似平行本身不构成方向歧义，若远离路口后 road 间距离趋于收敛，则按竖方向理解
 - `single_sided_t_mouth` 的方向歧义只在候选方向会导出不同 road partition 时才保留；若已识别出稳定横方向主轴，则分数只作为 fallback，不再单独升为 `review`
 - 双 node `single_sided_t_mouth` 场景下，两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 若仅承担 through-node，不得中断主通路
-- `RCSDRoad` 在 `Rule E` 中只承担 near-corridor proxy，必须挂靠到 opposite `SWSD road`，不能以 opposite side 全量 `RCSDRoad` 主导硬阻断；若 proxy 仍稳定覆盖当前 branch 或 junction-related roads，则必须 suppress
+- `RCSDRoad` 在 `Rule E` 中不是常驻 opposite-side blocker，而是仅在 `SWSD` 未找到 opposite road 掩膜时才允许启用的 near-corridor fallback；启用前提是已稳定识别出横方向主轴，且候选 `RCSDRoad` 在路口前进方向上与横方向 `outgoing road` 的前进向量相反。若 `SWSD` opposite road 已存在，则 `RCSDRoad` fallback 必须禁用
 - `Rule E` 当前只到 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy`，当前 baseline 不单独定义 lane 级对向护栏能力
 - 不实现 `Step4/5/6/7`
 - 不允许把 `cleanup / trim / review_mode / stage4 聚合` 前置成 `Step3` 成立条件

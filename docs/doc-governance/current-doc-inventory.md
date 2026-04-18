@@ -44,10 +44,10 @@
 | `modules/t02_junction_anchor/AGENTS.md` | T02 durable guidance | `durable_guidance` | 只保留模块级执行边界与协作规则 |
 | `modules/t02_junction_anchor/history/*` | T02 模块级历史材料 | `history` | 记录 bootstrap 与后续演进轨迹 |
 | `specs/t02-junction-anchor/*`、`specs/t02-virtual-intersection-batch-poc/*` | T02 变更工件 | `active_change_artifact` | 记录历次与当前 active change 的变更规格，不替代长期模块真相 |
-| `modules/t03_virtual_junction_anchor/architecture/*` | T03 模块长期架构真相 | `source_of_truth` | T03 正式模块的长期文档主表面；当前正式范围为冻结 `Step3` 之上的 `Step4-5` 联合阶段 |
-| `modules/t03_virtual_junction_anchor/INTERFACE_CONTRACT.md` | T03 稳定契约面 | `source_of_truth` | 固化 Anchor61 `case-package` 输入、冻结 Step3 prerequisite、Step4-5 输出、状态与验收标准 |
-| `modules/t03_virtual_junction_anchor/README.md` | T03 操作者入口 | `operator_guide` | 说明 Step4-5 官方入口、冻结前置入口、默认路径与当前边界 |
-| `modules/t03_virtual_junction_anchor/AGENTS.md` | T03 durable guidance | `durable_guidance` | 只保留模块级边界、冻结前置约束与当前执行边界 |
+| `modules/t03_virtual_junction_anchor/architecture/*` | T03 模块长期架构真相 | `source_of_truth` | T03 正式模块的长期文档主表面；当前正式范围为冻结 `Step3` 之上的 `Step4-7 clarified formal stage` |
+| `modules/t03_virtual_junction_anchor/INTERFACE_CONTRACT.md` | T03 稳定契约面 | `source_of_truth` | 固化 Anchor61 `case-package` 输入、冻结 Step3 prerequisite、Step45/Step67 状态、输出与验收标准 |
+| `modules/t03_virtual_junction_anchor/README.md` | T03 操作者入口 | `operator_guide` | 说明 Step4-5 官方入口、冻结前置入口、Step67 正式交付方式、默认路径与当前边界 |
+| `modules/t03_virtual_junction_anchor/AGENTS.md` | T03 durable guidance | `durable_guidance` | 只保留模块级边界、冻结前置约束、Step67 无官方 CLI 与当前执行边界 |
 | `specs/t03-virtual-junction-anchor/*` | T03 变更工件 | `active_change_artifact` | 记录 T03 Phase A 变更计划，不替代长期模块真相 |
 
 ## 当前模块模板文档面
@@ -71,7 +71,7 @@
 ## 当前结论
 
 1. 主阅读路径已经收口到项目级源事实、治理入口、结构元数据、T01 / T02 正式模块文档面与模块模板。
-2. 当前已存在正式业务模块文档面：`modules/t01_data_preprocess/*`、`modules/t02_junction_anchor/*` 与 `modules/t03_virtual_junction_anchor/*`。
+2. 当前已存在正式业务模块文档面：`modules/t01_data_preprocess/*`、`modules/t02_junction_anchor/*` 与 `modules/t03_virtual_junction_anchor/*`；其中 T03 当前正式范围已升级为 `Step4-7 clarified formal stage`。
 3. `t00_utility_toolbox` 当前作为已纳入治理的工具集合模块文档面存在。
 4. `_template` 继续承担新模块启动模板职责。
 5. 模块根目录不放 `SKILL.md` 的规则已经写回仓库级文档。

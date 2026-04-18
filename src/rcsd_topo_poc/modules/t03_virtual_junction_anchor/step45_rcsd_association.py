@@ -188,6 +188,75 @@ def _graph_incident_roads(all_roads: Iterable[RoadRecord], node: NodeRecord) -> 
     return _incident_roads(list(all_roads), node)
 
 
+def _build_degree2_rcsdroad_chains(
+    candidate_roads: list[RoadRecord],
+    degree2_connector_candidate_node_ids: set[str],
+) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
+    roads_by_id = {road.road_id: road for road in candidate_roads}
+    if not roads_by_id:
+        return {}, {}
+
+    parent = {road_id: road_id for road_id in roads_by_id}
+
+    def _find(road_id: str) -> str:
+        while parent[road_id] != road_id:
+            parent[road_id] = parent[parent[road_id]]
+            road_id = parent[road_id]
+        return road_id
+
+    def _union(lhs: str, rhs: str) -> None:
+        left_root = _find(lhs)
+        right_root = _find(rhs)
+        if left_root == right_root:
+            return
+        if left_root < right_root:
+            parent[right_root] = left_root
+        else:
+            parent[left_root] = right_root
+
+    incident_roads_by_node: dict[str, set[str]] = defaultdict(set)
+    for road in candidate_roads:
+        if road.snodeid in degree2_connector_candidate_node_ids:
+            incident_roads_by_node[str(road.snodeid)].add(road.road_id)
+        if road.enodeid in degree2_connector_candidate_node_ids:
+            incident_roads_by_node[str(road.enodeid)].add(road.road_id)
+
+    for road_ids in incident_roads_by_node.values():
+        ordered_ids = _sorted_ids(road_ids)
+        if len(ordered_ids) < 2:
+            continue
+        pivot = ordered_ids[0]
+        for other_id in ordered_ids[1:]:
+            _union(pivot, other_id)
+
+    groups_by_root: dict[str, list[str]] = defaultdict(list)
+    for road_id in roads_by_id:
+        groups_by_root[_find(road_id)].append(road_id)
+
+    chain_id_by_road_id: dict[str, str] = {}
+    chain_members_by_chain_id: dict[str, tuple[str, ...]] = {}
+    for member_ids in groups_by_root.values():
+        ordered_ids = tuple(_sorted_ids(member_ids))
+        chain_id = ordered_ids[0]
+        chain_members_by_chain_id[chain_id] = ordered_ids
+        for road_id in ordered_ids:
+            chain_id_by_road_id[road_id] = chain_id
+    return chain_id_by_road_id, chain_members_by_chain_id
+
+
+def _expand_rcsdroad_ids_via_degree2_chains(
+    road_ids: Iterable[str],
+    *,
+    chain_id_by_road_id: dict[str, str],
+    chain_members_by_chain_id: dict[str, tuple[str, ...]],
+) -> set[str]:
+    expanded_ids: set[str] = set()
+    for road_id in road_ids:
+        chain_id = chain_id_by_road_id.get(road_id, road_id)
+        expanded_ids.update(chain_members_by_chain_id.get(chain_id, (road_id,)))
+    return expanded_ids
+
+
 def _clip_required_road(road: RoadRecord, allowed_space: BaseGeometry) -> BaseGeometry | None:
     return _extract_line_geometry(road.geometry.intersection(allowed_space.buffer(RCSD_ALLOWED_BUFFER_M)))
 
@@ -307,6 +376,22 @@ def _prune_parallel_support_duplicates(
     return kept, _sorted_ids(dropped_ids)
 
 
+def _group_support_fragments_by_degree2_chain(
+    support_fragments_by_road_id: dict[str, BaseGeometry],
+    *,
+    chain_id_by_road_id: dict[str, str],
+) -> dict[str, BaseGeometry]:
+    grouped_fragments: dict[str, list[BaseGeometry]] = defaultdict(list)
+    for road_id, fragment in support_fragments_by_road_id.items():
+        chain_id = chain_id_by_road_id.get(road_id, road_id)
+        grouped_fragments[chain_id].append(fragment)
+    return {
+        chain_id: _union_lines(fragments)
+        for chain_id, fragments in grouped_fragments.items()
+        if _union_lines(fragments) is not None
+    }
+
+
 def _visual_review_class(step45_state: str, reason: str) -> str:
     if step45_state == "established":
         return "V1 认可成功"
@@ -386,6 +471,7 @@ def _build_gate_failure_case_result(
             "required_rcsdroad_ids": [],
             "support_rcsdnode_ids": [],
             "support_rcsdroad_ids": [],
+            "degree2_merged_rcsdroad_groups": {},
             "degree2_connector_candidate_rcsdnode_ids": [],
             "parallel_support_duplicate_dropped_rcsdroad_ids": [],
             "hook_zone_shrunk_road_ids": [],
@@ -434,6 +520,7 @@ def _build_gate_failure_case_result(
             "nonsemantic_connector_rcsdnode_ids": [],
             "true_foreign_rcsdnode_ids": [],
             "degree2_connector_candidate_rcsdnode_ids": [],
+            "degree2_merged_rcsdroad_groups": {},
             "ignored_outside_current_swsd_surface_rcsdnode_ids": [],
             "ignored_outside_current_swsd_surface_rcsdroad_ids": [],
             "parallel_support_duplicate_dropped_rcsdroad_ids": [],
@@ -536,6 +623,10 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         for node in candidate_nodes
         if node_degree_map.get(node.node_id, 0) == 2
     }
+    road_chain_id_by_road_id, road_chain_members_by_chain_id = _build_degree2_rcsdroad_chains(
+        candidate_roads,
+        degree2_connector_candidate_node_ids,
+    )
 
     grouped_candidate_nodes: dict[str, list[NodeRecord]] = defaultdict(list)
     for node in candidate_nodes:
@@ -565,8 +656,15 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
             required_road_ids.add(road.road_id)
             required_roads.append(road)
 
+    required_road_ids = _expand_rcsdroad_ids_via_degree2_chains(
+        required_road_ids,
+        chain_id_by_road_id=road_chain_id_by_road_id,
+        chain_members_by_chain_id=road_chain_members_by_chain_id,
+    )
+    required_roads = [road for road in candidate_roads if road.road_id in required_road_ids]
     required_roads = list({road.road_id: road for road in required_roads}.values())
 
+    support_fragments_by_road_id: dict[str, BaseGeometry] = {}
     for road in candidate_roads:
         if road.road_id in required_road_ids:
             continue
@@ -582,25 +680,42 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
             continue
         if fragment.length < road.geometry.length * 0.95:
             hook_shrunk_road_ids.append(road.road_id)
-        support_road_ids.add(road.road_id)
-        support_roads.append(road)
-        support_fragments.append(fragment)
-    support_fragments_by_id = {
-        road.road_id: fragment
-        for road, fragment in zip(support_roads, support_fragments, strict=False)
-    }
-    support_fragments_by_id, dropped_parallel_support_road_ids = _prune_parallel_support_duplicates(
+        support_fragments_by_road_id[road.road_id] = fragment
+    support_fragments_by_chain_id = _group_support_fragments_by_degree2_chain(
+        support_fragments_by_road_id,
+        chain_id_by_road_id=road_chain_id_by_road_id,
+    )
+    support_fragments_by_chain_id, dropped_parallel_support_chain_ids = _prune_parallel_support_duplicates(
         context=context,
-        support_fragments_by_id=support_fragments_by_id,
+        support_fragments_by_id=support_fragments_by_chain_id,
         anchor_point=anchor_point,
         vertical_exit_geometry=vertical_exit_geometry,
     )
-    if dropped_parallel_support_road_ids:
-        support_roads = [road for road in support_roads if road.road_id in support_fragments_by_id]
-        support_fragments = [support_fragments_by_id[road.road_id] for road in support_roads]
-        support_road_ids = {road.road_id for road in support_roads}
-        hook_shrunk_road_ids = [road_id for road_id in hook_shrunk_road_ids if road_id in support_road_ids]
+    retained_support_chain_ids = set(support_fragments_by_chain_id.keys())
+    support_road_ids = _expand_rcsdroad_ids_via_degree2_chains(
+        (
+            road_id
+            for road_id, chain_id in road_chain_id_by_road_id.items()
+            if chain_id in retained_support_chain_ids
+        ),
+        chain_id_by_road_id=road_chain_id_by_road_id,
+        chain_members_by_chain_id=road_chain_members_by_chain_id,
+    )
+    support_road_ids -= required_road_ids
+    dropped_parallel_support_road_ids = _sorted_ids(
+        road_id
+        for chain_id in dropped_parallel_support_chain_ids
+        for road_id in road_chain_members_by_chain_id.get(chain_id, (chain_id,))
+    )
+    support_roads = [road for road in candidate_roads if road.road_id in support_road_ids]
     support_roads = list({road.road_id: road for road in support_roads}.values())
+    support_fragments = [
+        support_fragments_by_chain_id[chain_id]
+        for chain_id in _sorted_ids(retained_support_chain_ids)
+        if chain_id in support_fragments_by_chain_id
+    ]
+    if support_road_ids:
+        hook_shrunk_road_ids = [road_id for road_id in hook_shrunk_road_ids if road_id in support_road_ids]
 
     if required_node_ids:
         association_class = "A"
@@ -727,6 +842,11 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
                 }
             ],
             "parallel_support_duplicate_dropped_rcsdroad_ids": dropped_parallel_support_road_ids,
+            "degree2_merged_rcsdroad_groups": {
+                chain_id: list(member_ids)
+                for chain_id, member_ids in sorted(road_chain_members_by_chain_id.items())
+                if len(member_ids) > 1
+            },
             "degree2_connector_candidate_rcsdnode_ids": _sorted_ids(degree2_connector_candidate_node_ids),
             "rcsdnode_degree_map": {node_id: int(node_degree_map.get(node_id, 0)) for node_id in _sorted_ids(node_degree_map.keys())},
             "hook_zone_shrunk_road_ids": _sorted_ids(hook_shrunk_road_ids),
@@ -769,6 +889,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         "nonsemantic_connector_rcsdnode_ids": list(foreign_result.nonsemantic_connector_rcsdnode_ids),
         "true_foreign_rcsdnode_ids": list(foreign_result.true_foreign_rcsdnode_ids),
         "degree2_connector_candidate_rcsdnode_ids": audit_doc["step4"]["degree2_connector_candidate_rcsdnode_ids"],
+        "degree2_merged_rcsdroad_groups": audit_doc["step4"]["degree2_merged_rcsdroad_groups"],
         "ignored_outside_current_swsd_surface_rcsdnode_ids": ignored_outside_current_swsd_surface_rcsdnode_ids,
         "ignored_outside_current_swsd_surface_rcsdroad_ids": ignored_outside_current_swsd_surface_rcsdroad_ids,
         "parallel_support_duplicate_dropped_rcsdroad_ids": dropped_parallel_support_road_ids,

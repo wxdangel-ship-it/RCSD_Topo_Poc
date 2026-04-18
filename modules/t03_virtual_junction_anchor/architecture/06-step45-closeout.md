@@ -12,18 +12,18 @@
   - rewriting `Step3 allowed space / corridor / 50m fallback`
   - polygon finalization
 
-本文件用于在 `_work` 运行结果不提交入库时，保留本轮 Step4-5 联合阶段的轻量 closeout 证据摘要。
+本文件用于在 `_work` 运行结果不提交入库时，保留 Step4-5 联合阶段的 closeout 证据摘要。当前 Step4-5 已作为 Step67 clarified formal stage 的冻结前置层保留。
 
 ## 2. Closeout Run
 
-- run_id: `20260418_t03_step45_closeout_v001`
+- run_id: `20260418_t03_step45_joint_phase_v004`
 - command:
 
 ```bash
 PYTHONPATH=src python3 -m rcsd_topo_poc t03-step45-rcsd-association \
   --step3-root /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003 \
   --out-root /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase \
-  --run-id 20260418_t03_step45_closeout_v001 \
+  --run-id 20260418_t03_step45_joint_phase_v004 \
   --workers 4
 ```
 
@@ -48,7 +48,7 @@ PYTHONPATH=src python3 -m rcsd_topo_poc t03-step45-rcsd-association \
 
 ## 4. Batch Result
 
-- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase/20260418_t03_step45_closeout_v001`
+- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase/20260418_t03_step45_joint_phase_v004`
 - case_dir_count: `58`
 - flat_png_count: `58`
 - flat_subdir_count: `0`
@@ -130,14 +130,14 @@ Reference files:
 
 - `Step4-5 joint phase closeout`: **成立**
 - `default 58-case run`: **完成**
-- `可直接进入 Step6 的 baseline`: **部分成立**
+- `Step67 冻结前置 baseline`: **成立**
 
 解释：
 - `28` 个 case 已达 `established`
 - `30` 个 case 为 `review`，全部来自 `association_class = B / reason = step45_support_only`
 - 上述 `30` 个 `review` 是当前正式业务策略，不视为算法缺陷；它们统一表示“已有 support/hook zone，但 RCSD 语义 core 仍待 `Step6` 收窄”
 - 当前没有 `not_established`，说明本轮实现已经形成稳定可交付的联合阶段中间结果包
-- 但由于仍有 `30` 个 `review` case，当前 baseline 更适合作为“Step6 可消费但需携带 review guard”的前置层，而不是“全量无复核直通”
+- 该结论作为 `Step67 clarified formal stage` 的历史前置 closeout 保留；当前正式 Step67 closeout 见 `08-step67-closeout.md`
 
 ## 8. Non-Blocking Residuals
 

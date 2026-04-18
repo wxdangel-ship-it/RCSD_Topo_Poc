@@ -68,6 +68,8 @@ def test_step45_status_and_audit_contract_for_blocked_case(tmp_path: Path) -> No
     assert "step45_missing_selected_road_ids" in status_doc["step45_prerequisite_issues"]
     assert set(audit_doc) >= {"step3_prerequisite", "step4", "step5", "joint_phase"}
     assert audit_doc["step4"]["association_executed"] is False
+    assert status_doc["degree2_merged_rcsdroad_groups"] == {}
+    assert audit_doc["step4"]["degree2_merged_rcsdroad_groups"] == {}
     assert audit_doc["joint_phase"]["association_blocker"] == "step45_missing_selected_road_ids"
 
 

@@ -1,8 +1,23 @@
 # 02 Constraints
 
 - 正式输入契约固定为 Anchor61 `case-package`
-- `Step4-5` 必须消费冻结 Step3 run root，不得回写 Step3
+- `Step4-7` 必须消费冻结 Step3 run root，不得回写 Step3
 - 所有空间判定统一到 `EPSG:3857`
-- `Step3` 仍必须严格遵守 A-H；`Step4-5` 不得用 cleanup/trim 反证 Step3 成立
+- `Step3` 仍必须严格遵守 A-H；`Step4-7` 不得用 cleanup/trim 反证 Step3 成立
+- `Step5` 不再向 `Step6` 提供 hard polygon foreign context
+- `Step6` 当前 hard negative mask 只消费 road-like `1m` 掩膜，不把 node 类 foreign 变成 hard subtract
+- `Step45` 已识别的 `调头口 RCSDRoad`，不得继续进入 `degree2 connector / chain merge / required-support-excluded`，也不得在 `Step6` 被重新回补为 `local required RC`
+- `Step6` 必须遵守 `boundary-first`：
+  - 先确定 directional boundary
+  - 再在该边界内构面
+  - 不允许先裁剪再用 `required RC` 把 geometry 补回边界外
+- `single_sided_t_mouth + association_class=A` 的横方向口门必须按 tracing 规则求解：
+  - tracing seed 来自竖方向候选空间内的相关 `RCSDRoad / RCSDRoad chain`
+  - tracing 过程中的 `RCSDRoad` 不要求整体完全留在候选空间内
+  - 最终确认的 terminal `RCSDNode` 必须落在横方向候选空间内
+  - 若 tracing 无法在横方向两侧都确认 terminal `RCSDNode`，则横方向回到 generic directional boundary
+  - 横方向 `+5m` 扩展不得越过前方其他直接关联语义路口（`RCSD / SWSD`）
+- 若冻结 `Step3` 已对当前 `single_sided_t_mouth` case 应用 `two_node_t_bridge`，则 `Step67` 必须继承这条 bridge corridor 参与 directional boundary / polygon_seed 计算，不得在横方向截断后留下中心断开或多组件狭长残留
 - 不修改 T02 正式业务行为
+- 不新增 T03 repo 官方 `Step67` CLI
 - 不提交 `outputs/_work`、批量 PNG、线程同步文件到 Git

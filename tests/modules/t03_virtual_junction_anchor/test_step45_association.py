@@ -9,6 +9,7 @@ from tests.modules.t03_virtual_junction_anchor._step45_helpers import (
     build_center_case_b,
     build_center_case_c,
     build_center_case_degree2_connector,
+    build_center_case_degree2_turn_connector,
     build_center_case_multi_surface_filter,
     build_single_sided_parallel_support_case,
 )
@@ -72,8 +73,29 @@ def test_step45_degree2_connector_node_is_not_promoted_into_semantic_core(tmp_pa
     assert "rc_connector" not in result.extra_status_fields["required_rcsdnode_ids"]
     assert "rc_connector" not in result.extra_status_fields["support_rcsdnode_ids"]
     assert result.extra_status_fields["nonsemantic_connector_rcsdnode_ids"] == ["rc_connector"]
-    assert result.extra_status_fields["true_foreign_rcsdnode_ids"] == ["rc_far"]
+    assert result.extra_status_fields["true_foreign_rcsdnode_ids"] == []
+    assert result.extra_status_fields["ignored_outside_current_swsd_surface_rcsdnode_ids"] == ["rc_far"]
     assert result.audit_doc["step4"]["degree2_connector_candidate_rcsdnode_ids"] == ["rc_connector"]
+
+
+def test_step45_degree2_connector_chain_expands_required_rcsdroad_even_without_angle_filter(tmp_path: Path) -> None:
+    case_root = tmp_path / "cases"
+    step3_root = tmp_path / "step3"
+    build_center_case_degree2_turn_connector(case_root, step3_root, case_id="100008")
+
+    result = _run_case(case_root, step3_root, "100008")
+
+    assert result.association_class == "A"
+    assert result.extra_status_fields["required_rcsdroad_ids"] == [
+        "rc_r_connector",
+        "rc_r_down",
+        "rc_r_left",
+        "rc_r_turn",
+    ]
+    assert result.extra_status_fields["excluded_rcsdroad_ids"] == []
+    assert result.audit_doc["step4"]["degree2_merged_rcsdroad_groups"] == {
+        "rc_r_connector": ["rc_r_connector", "rc_r_turn"]
+    }
 
 
 def test_step45_ignores_rcsd_outside_current_swsd_surface(tmp_path: Path) -> None:

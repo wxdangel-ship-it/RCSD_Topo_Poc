@@ -37,7 +37,9 @@
 - `t00_utility_toolbox` 的定位是工具集合模块 / 非业务生产模块
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小实现闭环
 - `t02_junction_anchor` 当前仍为 Active 正式业务模块；模块正文如在独立重构中，应在独立轮次中维护
-- `t03_virtual_junction_anchor` 当前仍为 Active 正式业务模块；正式范围为冻结 `Step3 legal-space baseline` 之上的 `Step4-5` 联合阶段，仅处理 `center_junction / single_sided_t_mouth`
+- `t03_virtual_junction_anchor` 当前仍为 Active 正式业务模块；正式范围为冻结 `Step3 legal-space baseline` 之上的 `Step4-7 clarified formal stage`，仅处理 `center_junction / single_sided_t_mouth`，默认正式全量 `58` case 的业务正确性基线已满足人工目视审计
+- `t03_virtual_junction_anchor` 当前少量 accepted case 仍存在几何形状优化空间，但这属于后续长期迭代方向，不再构成当前正式准出阻塞项
+- `t03_virtual_junction_anchor` 当前仍只有 `Step4-5` 官方 CLI；`Step67` 正式交付通过模块内 batch runner 与 closeout 维持，不在本轮新增 repo 官方入口
 - `_template` 仅是模板目录，不属于模块生命周期盘点对象
 - 模块根目录不放 `SKILL.md`
 - 标准 Skill 统一放 repo root `.agents/skills/`

@@ -3,4 +3,4 @@ _template,modules/_template,template-artifact,template-ready,copy-and-concretize
 t00_utility_toolbox,modules/t00_utility_toolbox,support-retained,governed-tooling-module,keep-in-sync-with-repo-entrypoints,tooling-only-non-business-production
 t01_data_preprocess,modules/t01_data_preprocess,active,formal-module-surface,keep-in-sync-with-implementation,official-end-to-end-plus-eight-sample-freeze-active
 t02_junction_anchor,modules/t02_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,stage1-stage2-stage3-active-independent-refactor-managed-separately
-t03_virtual_junction_anchor,modules/t03_virtual_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,phase-a-step45-joint-phase-on-frozen-step3
+t03_virtual_junction_anchor,modules/t03_virtual_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,step67-clarified-formal-stage-on-frozen-step3-no-public-step67-cli

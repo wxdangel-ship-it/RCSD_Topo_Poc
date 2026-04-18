@@ -149,14 +149,71 @@ def build_center_case_degree2_connector(case_root: Path, step3_root: Path, case_
     ]
     rcsd_nodes = [
         node_feature("rc_core", 0.0, 0.0, mainnodeid="rc_g_1", kind_2=4),
+        node_feature("rc_connector", 10.0, 6.0, mainnodeid="rc_g_1", kind_2=4),
+        node_feature("rc_far", 14.0, 24.0, mainnodeid="rc_g_far", kind_2=4),
+    ]
+    rcsd_roads = [
+        road_feature("rc_r_left", "rc_left", "rc_core", [(-12.0, 0.0), (0.0, 0.0)]),
+        road_feature("rc_r_down", "rc_down", "rc_core", [(0.0, -12.0), (0.0, 0.0)]),
+        road_feature("rc_r_connector", "rc_core", "rc_connector", [(0.0, 0.0), (10.0, 6.0)]),
+        road_feature("rc_r_tail", "rc_connector", "rc_far", [(10.0, 6.0), (14.0, 24.0)]),
+    ]
+    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
+    write_step3_prerequisite(
+        step3_root,
+        case_id,
+        template_class="center_junction",
+        selected_road_ids=["road_h", "road_v"],
+        allowed_geometry=box(-18.0, -18.0, 18.0, 18.0),
+    )
+
+
+def build_center_case_degree2_connector_with_true_foreign_node(
+    case_root: Path,
+    step3_root: Path,
+    case_id: str = "100009",
+) -> None:
+    roads = [
+        road_feature("road_h", case_id, "n2", [(-30.0, 0.0), (30.0, 0.0)]),
+        road_feature("road_v", "n3", case_id, [(0.0, -30.0), (0.0, 30.0)]),
+    ]
+    rcsd_nodes = [
+        node_feature("rc_core", 0.0, 0.0, mainnodeid="rc_g_1", kind_2=4),
+        node_feature("rc_connector", 10.0, 6.0, mainnodeid="rc_g_1", kind_2=4),
+        node_feature("rc_tail_end", 14.0, 24.0, mainnodeid="rc_g_far", kind_2=4),
+        node_feature("rc_true_foreign", 6.0, 6.0, mainnodeid="rc_g_true_foreign", kind_2=4),
+    ]
+    rcsd_roads = [
+        road_feature("rc_r_left", "rc_left", "rc_core", [(-12.0, 0.0), (0.0, 0.0)]),
+        road_feature("rc_r_down", "rc_down", "rc_core", [(0.0, -12.0), (0.0, 0.0)]),
+        road_feature("rc_r_connector", "rc_core", "rc_connector", [(0.0, 0.0), (10.0, 6.0)]),
+        road_feature("rc_r_tail", "rc_connector", "rc_tail_end", [(10.0, 6.0), (14.0, 24.0)]),
+    ]
+    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
+    write_step3_prerequisite(
+        step3_root,
+        case_id,
+        template_class="center_junction",
+        selected_road_ids=["road_h", "road_v"],
+        allowed_geometry=box(-18.0, -18.0, 18.0, 18.0),
+    )
+
+
+def build_center_case_degree2_turn_connector(case_root: Path, step3_root: Path, case_id: str = "100008") -> None:
+    roads = [
+        road_feature("road_h", case_id, "n2", [(-30.0, 0.0), (30.0, 0.0)]),
+        road_feature("road_v", "n3", case_id, [(0.0, -30.0), (0.0, 30.0)]),
+    ]
+    rcsd_nodes = [
+        node_feature("rc_core", 0.0, 0.0, mainnodeid="rc_g_1", kind_2=4),
         node_feature("rc_connector", 10.0, 0.0, mainnodeid="rc_g_1", kind_2=4),
-        node_feature("rc_far", 24.0, 0.0, mainnodeid="rc_g_far", kind_2=4),
+        node_feature("rc_turn_end", 10.0, 14.0, mainnodeid="rc_g_turn", kind_2=4),
     ]
     rcsd_roads = [
         road_feature("rc_r_left", "rc_left", "rc_core", [(-12.0, 0.0), (0.0, 0.0)]),
         road_feature("rc_r_down", "rc_down", "rc_core", [(0.0, -12.0), (0.0, 0.0)]),
         road_feature("rc_r_connector", "rc_core", "rc_connector", [(0.0, 0.0), (10.0, 0.0)]),
-        road_feature("rc_r_tail", "rc_connector", "rc_far", [(10.0, 0.0), (30.0, 0.0)]),
+        road_feature("rc_r_turn", "rc_connector", "rc_turn_end", [(10.0, 0.0), (10.0, 14.0)]),
     ]
     write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
     write_step3_prerequisite(
@@ -242,4 +299,32 @@ def build_single_sided_parallel_support_case(case_root: Path, step3_root: Path, 
             "single_sided_direction_resolution_mode": "semantic_horizontal_pair",
             "target_group_node_ids": [case_id, "pair_b"],
         },
+    )
+
+
+def build_center_case_foreign_selected_surface_overlap(
+    case_root: Path,
+    step3_root: Path,
+    case_id: str = "100007",
+) -> None:
+    roads = [
+        road_feature("road_h", case_id, "n2", [(-30.0, 0.0), (30.0, 0.0)]),
+        road_feature("road_v", "n3", case_id, [(0.0, -30.0), (0.0, 30.0)]),
+        road_feature("road_foreign_parallel", "nf_a", "nf_b", [(-30.0, 11.5), (30.0, 11.5)]),
+    ]
+    rcsd_nodes = [
+        node_feature("rc_n_1", 2.0, 2.0, mainnodeid="rc_g_1", kind_2=4),
+    ]
+    rcsd_roads = [
+        road_feature("rc_r_1", "rc_a", "rc_n_1", [(-12.0, 2.0), (12.0, 2.0)]),
+        road_feature("rc_r_2", "rc_n_1", "rc_b", [(2.0, -12.0), (2.0, 12.0)]),
+        road_feature("rc_r_3", "rc_n_1", "rc_c", [(2.0, 2.0), (12.0, 12.0)]),
+    ]
+    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
+    write_step3_prerequisite(
+        step3_root,
+        case_id,
+        template_class="center_junction",
+        selected_road_ids=["road_h", "road_v"],
+        allowed_geometry=box(-18.0, -18.0, 18.0, 18.0),
     )

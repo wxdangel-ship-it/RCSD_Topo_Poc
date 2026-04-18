@@ -21,6 +21,7 @@ class Step45Context:
     step3_audit_doc: dict[str, Any]
     selected_road_ids: tuple[str, ...]
     step3_excluded_road_ids: tuple[str, ...]
+    prerequisite_issues: tuple[str, ...]
 
 
 @dataclass(frozen=True)

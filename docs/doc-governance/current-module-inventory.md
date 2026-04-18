@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 盘点日期：2026-04-14
+- 盘点日期：2026-04-18
 - 目的：说明当前仓库正式业务模块现状、模块文档面状态与模板资产状态
 
 ## 当前正式生命周期结论
@@ -22,7 +22,7 @@
 |---|---|---|---|---|---|
 | `t01_data_preprocess` | `modules/t01_data_preprocess` | working bootstrap + roundabout preprocessing + Step1-Step6 双向 Segment 构建 official end-to-end；active freeze compare 为 `t01_skill_active_eight_sample_suite` | 已补齐标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | `t01-run-skill-v1` 与 `t01-compare-freeze` 已正式可用；Step6 已纳入 official end-to-end | 当前正式范围聚焦非封闭式双向道路；单向 Segment 与更大批处理扩展未纳入当前正式范围 |
 | `t02_junction_anchor` | `modules/t02_junction_anchor` | stage1 `DriveZone / has_evd gate` + stage2 `anchor recognition / anchor existence` + stage3 `virtual intersection anchoring` baseline；文本证据包与 `t02-fix-node-error-2` 为独立支撑入口 | 已补齐标准 architecture 文档组、`06-accepted-baseline.md`、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | stage1 / stage2 / stage3 已实现；`t02-virtual-intersection-poc` 已支持 `case-package` 唯一正式验收基线与 `full-input` 完整数据 `fixture / dev-only / regression` 模式 | T01 是其上游事实源之一；模块正文可在独立重构轮次中维护，本盘点只保留项目级登记与入口索引 |
-| `t03_virtual_junction_anchor` | `modules/t03_virtual_junction_anchor` | `Phase A / Step3 legal-space baseline only`；Anchor61 `case-package` 输入、批量运行、平铺 PNG 审查目录与索引汇总 | 已补齐标准 architecture 最小文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | `t03-step3-legal-space` 为当前唯一正式入口；当前只实现 Step3，不进入 Step4-7 | 继承 T02 正式契约，不继承 T02 的 cleanup/trim 结构债 |
+| `t03_virtual_junction_anchor` | `modules/t03_virtual_junction_anchor` | 冻结 `Step3 legal-space baseline` + `Step4-5` 联合阶段；Anchor61 `case-package` 输入、Step3 prerequisite、RCSD 中间结果包、平铺 PNG 审查目录与索引汇总 | 已补齐标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | `t03-step3-legal-space` 作为冻结前置入口保留，`t03-step45-rcsd-association` 为当前正式联合阶段入口；`Step4-5` 已实现，`Step6-7` 尚未实现 | 继承 T02 正式契约，不继承 T02 的 cleanup/trim 结构债 |
 
 ## 当前 Support Retained 模块
 

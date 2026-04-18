@@ -52,6 +52,11 @@
   - `step3_status.json`
   - `step3_audit.json`
 - 当前实现的官方默认 `--step3-root` 指向仓库内现行 Step3 正式基线 run root；显式单 case 调试可改写为其它包含 Step3 产物的 run root。
+- `Step4-5` 对冻结 Step3 的关键 prerequisite 采用显式校验：
+  - `step3_status.json` 必须提供 `step3_state`
+  - `step3_status.json` 必须直接提供非空 `selected_road_ids`
+  - 不允许在 `selected_road_ids` 缺失时静默回退到 `Step1 target_road_ids`
+  - prerequisite 缺失时，case 进入 `step45_state = not_established`，并在 status/audit 中显式记录 blocker 与 issue 列表
 
 ### 2.3 输入前提
 
@@ -118,6 +123,8 @@
   - `case_id / template_class / association_class / step45_state / step45_established / reason / key_metrics`
   - `step3_state`
   - `selected_road_ids`
+  - `association_executed / association_reason / association_blocker`
+  - `step45_prerequisite_issues`
   - `required_rcsdnode_ids / required_rcsdroad_ids`
   - `support_rcsdnode_ids / support_rcsdroad_ids`
   - `excluded_rcsdnode_ids / excluded_rcsdroad_ids`
@@ -128,6 +135,10 @@
   - `step4`
   - `step5`
   - `joint_phase`
+- 当门禁失败导致 `Step4` 未执行时：
+  - `association_class` 仍收敛到契约枚举 `A / B / C`，当前实现使用保守占位 `C`
+  - 真实阻断原因通过 `association_blocker` 与 `step45_prerequisite_issues` 表达
+  - 不再输出 `association_class = unsupported / blocked`
 
 ### 3.4 RCSD 节点语义约束
 

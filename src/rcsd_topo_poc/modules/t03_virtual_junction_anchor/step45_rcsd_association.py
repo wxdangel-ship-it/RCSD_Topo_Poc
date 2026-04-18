@@ -333,6 +333,115 @@ def build_step45_status_doc(case_result: Step45CaseResult) -> dict[str, Any]:
     }
 
 
+def _empty_step45_key_metrics() -> dict[str, Any]:
+    return {
+        "active_rcsdnode_count": 0,
+        "active_rcsdroad_count": 0,
+        "candidate_rcsdnode_count": 0,
+        "candidate_rcsdroad_count": 0,
+        "required_rcsdnode_count": 0,
+        "required_rcsdroad_count": 0,
+        "support_rcsdnode_count": 0,
+        "support_rcsdroad_count": 0,
+        "excluded_rcsdnode_count": 0,
+        "excluded_rcsdroad_count": 0,
+        "nonsemantic_connector_rcsdnode_count": 0,
+        "true_foreign_rcsdnode_count": 0,
+        "hook_zone_present": False,
+        "hook_zone_area_m2": 0.0,
+        "parallel_support_duplicate_drop_count": 0,
+    }
+
+
+def _build_gate_failure_case_result(
+    *,
+    context: Step45Context,
+    base_extra_fields: dict[str, Any],
+    blocker: str,
+    supported_template: bool,
+    allowed_space_loaded: bool,
+    current_swsd_surface_loaded: bool,
+) -> Step45CaseResult:
+    empty_geometries = Step45OutputGeometries(None, None, None, None, None, None, None, None, None)
+    audit_doc = {
+        "step3_prerequisite": {
+            "step3_state": base_extra_fields.get("step3_state"),
+            "step3_reason": base_extra_fields.get("step3_reason"),
+            "step3_case_dir": base_extra_fields.get("step3_case_dir"),
+            "selected_road_ids": list(base_extra_fields.get("selected_road_ids") or []),
+            "step3_excluded_road_ids": list(base_extra_fields.get("step3_excluded_road_ids") or []),
+            "supported_template": supported_template,
+            "allowed_space_loaded": allowed_space_loaded,
+            "current_swsd_surface_loaded": current_swsd_surface_loaded,
+            "prerequisite_issues": list(context.prerequisite_issues),
+        },
+        "step4": {
+            "association_class": "C",
+            "association_executed": False,
+            "association_reason": None,
+            "association_blocker": blocker,
+            "candidate_rcsdnode_ids": [],
+            "candidate_rcsdroad_ids": [],
+            "required_rcsdnode_ids": [],
+            "required_rcsdroad_ids": [],
+            "support_rcsdnode_ids": [],
+            "support_rcsdroad_ids": [],
+            "degree2_connector_candidate_rcsdnode_ids": [],
+            "parallel_support_duplicate_dropped_rcsdroad_ids": [],
+            "hook_zone_shrunk_road_ids": [],
+        },
+        "step5": {
+            "association_class": "C",
+            "association_executed": False,
+            "association_reason": None,
+            "association_blocker": blocker,
+            "excluded_rcsdnode_ids": [],
+            "excluded_rcsdroad_ids": [],
+            "foreign_swsd_group_ids": [],
+            "foreign_swsd_road_ids": [],
+            "nonsemantic_connector_rcsdnode_ids": [],
+            "true_foreign_rcsdnode_ids": [],
+        },
+        "joint_phase": {
+            "step45_state": "not_established",
+            "reason": blocker,
+            "association_executed": False,
+            "association_reason": None,
+            "association_blocker": blocker,
+            "rcsd_semantic_core_missing": False,
+            "prerequisite_issues": list(context.prerequisite_issues),
+        },
+    }
+    return Step45CaseResult(
+        case_id=context.step1_context.case_spec.case_id,
+        template_class=context.template_result.template_class,
+        association_class="C",
+        step45_state="not_established",
+        step45_established=False,
+        reason=blocker,
+        visual_review_class="V5 明确失败",
+        root_cause_layer="step45",
+        root_cause_type=blocker,
+        output_geometries=empty_geometries,
+        key_metrics=_empty_step45_key_metrics(),
+        audit_doc=audit_doc,
+        extra_status_fields={
+            **base_extra_fields,
+            "association_executed": False,
+            "association_reason": None,
+            "association_blocker": blocker,
+            "rcsd_semantic_core_missing": False,
+            "nonsemantic_connector_rcsdnode_ids": [],
+            "true_foreign_rcsdnode_ids": [],
+            "degree2_connector_candidate_rcsdnode_ids": [],
+            "ignored_outside_current_swsd_surface_rcsdnode_ids": [],
+            "ignored_outside_current_swsd_surface_rcsdroad_ids": [],
+            "parallel_support_duplicate_dropped_rcsdroad_ids": [],
+            "hook_zone_shrunk_road_ids": [],
+        },
+    )
+
+
 def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
     step1 = context.step1_context
     template_result = context.template_result
@@ -352,51 +461,37 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         "support_rcsdroad_ids": [],
         "excluded_rcsdnode_ids": [],
         "excluded_rcsdroad_ids": [],
+        "step45_prerequisite_issues": list(context.prerequisite_issues),
+        "association_executed": False,
+        "association_reason": None,
+        "association_blocker": None,
     }
-    empty_geometries = Step45OutputGeometries(None, None, None, None, None, None, None, None, None)
     if not template_result.supported:
-        return Step45CaseResult(
-            case_id=step1.case_spec.case_id,
-            template_class=template_result.template_class,
-            association_class="unsupported",
-            step45_state="not_established",
-            step45_established=False,
-            reason="unsupported_template",
-            visual_review_class="V5 明确失败",
-            root_cause_layer="step45",
-            root_cause_type="unsupported_template",
-            output_geometries=empty_geometries,
-            key_metrics={"candidate_rcsdnode_count": 0, "candidate_rcsdroad_count": 0},
-            audit_doc={
-                "input_gate": {
-                    "supported_template": False,
-                    "step3_state": step3_state,
-                }
-            },
-            extra_status_fields=base_extra_fields,
+        return _build_gate_failure_case_result(
+            context=context,
+            base_extra_fields=base_extra_fields,
+            blocker="unsupported_template",
+            supported_template=False,
+            allowed_space_loaded=allowed_space is not None,
+            current_swsd_surface_loaded=current_swsd_surface is not None,
         )
-    if step3_state not in {"established", "review"} or allowed_space is None or current_swsd_surface is None:
-        return Step45CaseResult(
-            case_id=step1.case_spec.case_id,
-            template_class=template_result.template_class,
-            association_class="blocked",
-            step45_state="not_established",
-            step45_established=False,
-            reason="step45_missing_current_swsd_surface" if current_swsd_surface is None else "step45_step3_not_established",
-            visual_review_class="V5 明确失败",
-            root_cause_layer="step45",
-            root_cause_type="step45_missing_current_swsd_surface" if current_swsd_surface is None else "step45_step3_not_established",
-            output_geometries=empty_geometries,
-            key_metrics={"candidate_rcsdnode_count": 0, "candidate_rcsdroad_count": 0},
-            audit_doc={
-                "input_gate": {
-                    "supported_template": True,
-                    "step3_state": step3_state,
-                    "allowed_space_loaded": allowed_space is not None,
-                    "current_swsd_surface_loaded": current_swsd_surface is not None,
-                }
-            },
-            extra_status_fields=base_extra_fields,
+    if context.prerequisite_issues:
+        return _build_gate_failure_case_result(
+            context=context,
+            base_extra_fields=base_extra_fields,
+            blocker=context.prerequisite_issues[0],
+            supported_template=True,
+            allowed_space_loaded=allowed_space is not None,
+            current_swsd_surface_loaded=current_swsd_surface is not None,
+        )
+    if step3_state not in {"established", "review"}:
+        return _build_gate_failure_case_result(
+            context=context,
+            base_extra_fields=base_extra_fields,
+            blocker="step45_step3_not_established",
+            supported_template=True,
+            allowed_space_loaded=allowed_space is not None,
+            current_swsd_surface_loaded=current_swsd_surface is not None,
         )
 
     selected_corridor = _build_selected_corridor(context)
@@ -513,6 +608,11 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         association_class = "B"
     else:
         association_class = "C"
+    association_reason = {
+        "A": "required_rcsd_semantic_core_present",
+        "B": "support_only_hook_zone",
+        "C": "no_related_rcsd",
+    }[association_class]
 
     for node in candidate_nodes:
         if node.node_id in required_node_ids:
@@ -603,6 +703,9 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         },
         "step4": {
             "association_class": association_class,
+            "association_executed": True,
+            "association_reason": association_reason,
+            "association_blocker": None,
             "current_swsd_surface_area_m2": round(current_swsd_surface.area, 6),
             "active_rcsdnode_ids": [node.node_id for node in active_rcsd_nodes],
             "active_rcsdroad_ids": [road.road_id for road in active_rcsd_roads],
@@ -635,10 +738,16 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         "step5": {
             **foreign_result.audit_doc,
             "association_class": association_class,
+            "association_executed": True,
+            "association_reason": association_reason,
+            "association_blocker": None,
         },
         "joint_phase": {
             "step45_state": step45_state,
             "reason": reason,
+            "association_executed": True,
+            "association_reason": association_reason,
+            "association_blocker": None,
             "rcsd_semantic_core_missing": rcsd_semantic_core_missing,
             "allowed_space_area_m2": round(allowed_space.area, 6),
             "current_swsd_surface_area_m2": round(current_swsd_surface.area, 6),
@@ -653,6 +762,9 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         "support_rcsdroad_ids": audit_doc["step4"]["support_rcsdroad_ids"],
         "excluded_rcsdnode_ids": list(foreign_result.excluded_rcsdnode_ids),
         "excluded_rcsdroad_ids": list(foreign_result.excluded_rcsdroad_ids),
+        "association_executed": True,
+        "association_reason": association_reason,
+        "association_blocker": None,
         "rcsd_semantic_core_missing": rcsd_semantic_core_missing,
         "nonsemantic_connector_rcsdnode_ids": list(foreign_result.nonsemantic_connector_rcsdnode_ids),
         "true_foreign_rcsdnode_ids": list(foreign_result.true_foreign_rcsdnode_ids),

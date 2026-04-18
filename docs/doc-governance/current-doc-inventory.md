@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 盘点日期：2026-04-14
+- 盘点日期：2026-04-18
 - 目的：说明当前主阅读路径、标准文档位置、正式模块文档面与模板入口
 
 ## 当前主入口文档
@@ -44,10 +44,10 @@
 | `modules/t02_junction_anchor/AGENTS.md` | T02 durable guidance | `durable_guidance` | 只保留模块级执行边界与协作规则 |
 | `modules/t02_junction_anchor/history/*` | T02 模块级历史材料 | `history` | 记录 bootstrap 与后续演进轨迹 |
 | `specs/t02-junction-anchor/*`、`specs/t02-virtual-intersection-batch-poc/*` | T02 变更工件 | `active_change_artifact` | 记录历次与当前 active change 的变更规格，不替代长期模块真相 |
-| `modules/t03_virtual_junction_anchor/architecture/*` | T03 模块长期架构真相 | `source_of_truth` | T03 正式模块的长期文档主表面；当前正式范围只到 Phase A / Step3 |
-| `modules/t03_virtual_junction_anchor/INTERFACE_CONTRACT.md` | T03 稳定契约面 | `source_of_truth` | 固化 Anchor61 `case-package` 输入、Step3 A-H、批量输出与 tri-state 状态 |
-| `modules/t03_virtual_junction_anchor/README.md` | T03 操作者入口 | `operator_guide` | 说明官方入口、默认路径与当前边界 |
-| `modules/t03_virtual_junction_anchor/AGENTS.md` | T03 durable guidance | `durable_guidance` | 只保留模块级边界与执行约束 |
+| `modules/t03_virtual_junction_anchor/architecture/*` | T03 模块长期架构真相 | `source_of_truth` | T03 正式模块的长期文档主表面；当前正式范围为冻结 `Step3` 之上的 `Step4-5` 联合阶段 |
+| `modules/t03_virtual_junction_anchor/INTERFACE_CONTRACT.md` | T03 稳定契约面 | `source_of_truth` | 固化 Anchor61 `case-package` 输入、冻结 Step3 prerequisite、Step4-5 输出、状态与验收标准 |
+| `modules/t03_virtual_junction_anchor/README.md` | T03 操作者入口 | `operator_guide` | 说明 Step4-5 官方入口、冻结前置入口、默认路径与当前边界 |
+| `modules/t03_virtual_junction_anchor/AGENTS.md` | T03 durable guidance | `durable_guidance` | 只保留模块级边界、冻结前置约束与当前执行边界 |
 | `specs/t03-virtual-junction-anchor/*` | T03 变更工件 | `active_change_artifact` | 记录 T03 Phase A 变更计划，不替代长期模块真相 |
 
 ## 当前模块模板文档面

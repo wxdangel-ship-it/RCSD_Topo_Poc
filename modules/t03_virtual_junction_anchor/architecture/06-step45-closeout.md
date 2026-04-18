@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-- branch: `codex/t03-step45-joint-refactor`
+- branch: `codex/t03-step45-closeout-v001`
 - scope: `T03 / Step4-5` joint phase on top of frozen `Step3`
 - templates:
   - `center_junction`
@@ -16,14 +16,14 @@
 
 ## 2. Closeout Run
 
-- run_id: `20260418_t03_step45_joint_phase_v004`
+- run_id: `20260418_t03_step45_closeout_v001`
 - command:
 
 ```bash
 PYTHONPATH=src python3 -m rcsd_topo_poc t03-step45-rcsd-association \
   --step3-root /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003 \
   --out-root /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase \
-  --run-id 20260418_t03_step45_joint_phase_v004 \
+  --run-id 20260418_t03_step45_closeout_v001 \
   --workers 4
 ```
 
@@ -48,7 +48,7 @@ PYTHONPATH=src python3 -m rcsd_topo_poc t03-step45-rcsd-association \
 
 ## 4. Batch Result
 
-- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase/20260418_t03_step45_joint_phase_v004`
+- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase/20260418_t03_step45_closeout_v001`
 - case_dir_count: `58`
 - flat_png_count: `58`
 - flat_subdir_count: `0`
@@ -107,21 +107,24 @@ Reference files:
 - `Step4`
   - 只在冻结 `Step3 allowed space` 内收集 RCSD 候选
   - 只处理当前 SWSD 路口所在道路面上的 SWSD / RCSD 对象；道路面外对象不参与当前 case 全局处理
-  - 输出 `A / B / C` 关联分类
+  - 输出严格收敛到契约枚举 `A / B / C` 的关联分类
   - `B` 类以 hook zone 裁剪片段为主，不退化为整条 RCSDRoad 全段
   - 对 `single_sided_t_mouth` 的平行重复 `support RCSDRoad`，按竖方向退出当前面一侧做去重，避免把仅平行贴近的 RCSDRoad 一并保留
   - `step45_support_only` 明确表示“RCSD 下没有稳定语义路口 core”，因此当前阶段保守记为 `review`，并显式落 `rcsd_semantic_core_missing = true`
   - `degree = 2` 的 `RCSDNode` 不进入 `required semantic core`；这类 local connector node 在审计中与真正 foreign node 分桶记录
+  - `association_class` 不再输出 `unsupported / blocked`；门禁失败统一通过 `association_blocker / step45_prerequisite_issues` 表达
 - `Step5`
   - 将 `excluded RC` 直接视为 `foreign RC`
   - `foreign_swsd_context` 也只保留当前 SWSD 道路面上的局部对象
   - 输出 `foreign SWSD context` 与 `foreign RCSD context`
   - 为 `Step6` 提供硬边界与中间结果包，而不是 polygon
   - `step45_audit.json` 额外记录 `ignored_outside_current_swsd_surface_*`，用于审计哪些对象因不在当前道路面而被整体忽略
+  - 冻结 Step3 prerequisite 改为显式校验：`selected_road_ids` 缺失时不再回退到 `Step1 target_road_ids`
 - Render / batch
   - 复用 Step3 三态样式
   - 平铺 `step45_review_flat/`，目录内无子目录
   - `summary.json / preflight.json / step45_review_index.csv` 全部稳定落盘
+  - `preflight.json` 在运行结束后回填 `excluded_case_ids / effective_case_ids / missing_case_ids / failed_case_ids`
 
 ## 7. Conclusion
 

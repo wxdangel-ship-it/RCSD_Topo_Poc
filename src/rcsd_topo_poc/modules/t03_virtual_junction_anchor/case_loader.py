@@ -142,11 +142,17 @@ def load_case_specs(
             applied_excluded_case_ids,
             key=_stable_case_sort_key,
         ),
+        "excluded_case_ids": sorted(
+            applied_excluded_case_ids,
+            key=_stable_case_sort_key,
+        ),
         "applied_excluded_case_count": len(applied_excluded_case_ids),
         "effective_case_count": len(specs),
         "effective_case_ids": [spec.case_id for spec in specs],
         "selected_case_count": len(specs),
         "selected_case_ids": [spec.case_id for spec in specs],
+        "missing_case_ids": [],
+        "failed_case_ids": [],
         "rows": preflight_rows,
     }
     return specs, preflight_doc

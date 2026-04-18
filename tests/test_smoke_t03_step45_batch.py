@@ -55,11 +55,15 @@ def test_smoke_t03_step45_batch_writes_flat_review_outputs(tmp_path: Path) -> No
     assert len([entry for entry in flat_entries if entry.suffix.lower() == ".png"]) == 1
 
     summary_doc = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+    preflight_doc = json.loads((run_root / "preflight.json").read_text(encoding="utf-8"))
     assert summary_doc["total_case_count"] == 1
     assert summary_doc["actual_case_dir_count"] == 1
     assert summary_doc["flat_png_count"] == 1
     assert summary_doc["tri_state_sum"] == 1
     assert summary_doc["failed_case_ids"] == []
+    assert preflight_doc["excluded_case_ids"] == []
+    assert preflight_doc["missing_case_ids"] == []
+    assert preflight_doc["failed_case_ids"] == []
 
     with (run_root / "step45_review_index.csv").open("r", encoding="utf-8-sig", newline="") as fp:
         rows = list(csv.DictReader(fp))

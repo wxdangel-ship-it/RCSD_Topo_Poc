@@ -4,71 +4,71 @@
 
 ## 1. 当前定位
 
-- T03 当前只承接 `Phase A / Step3 legal-space baseline only`
-- 当前已进入 `Step3` 修复轮，目标是把 baseline 收敛到可验收状态，而不是重做模块骨架
+- T03 当前正式承接“冻结 `Step3 legal-space baseline` 之上的 `Step4-5` 联合阶段”
+- `Step3` 仍是冻结前置层；当前工作重点是治理文档同步、契约收口、测试补强与进入 `Step6` 前的轻量整备
 - 正式输入契约固定为 Anchor61 `case-package`
 - Anchor61 原始样本仍为 `61` 个 case；其中 `922217 / 54265667 / 502058682` 已确认为 input-gate hard-stop case，默认全量跑批会排除它们，只在显式点名单时单独复跑
-- 线程 `REQUIREMENT.md` 本轮整体不启用，不作为当前模块事实源
-- 本轮交付：
-  - 独立 `Step1/Step2` 最小支撑
-  - `Step3 legal space`
-  - 批量运行
-  - case 级输出
-  - 平铺 PNG 审查目录
+- 当前正式交付：
+  - `Step4 = RCSD` 关联语义识别
+  - `Step5 = foreign` 过滤与排除落地
+  - 单 case / batch 输出
+  - `step45_review_flat/` 平铺 PNG 审查目录
 
 ## 2. 官方入口
+
+```bash
+python3 -m rcsd_topo_poc t03-step45-rcsd-association --help
+```
+
+## 3. 冻结前置入口
 
 ```bash
 python3 -m rcsd_topo_poc t03-step3-legal-space --help
 ```
 
-## 3. 默认路径
+## 4. 默认路径
 
 - 默认输入根：`/mnt/e/TestData/POC_Data/T02/Anchor`
-- 默认输出根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a`
+- 默认 `Step3` 前置根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003`
+- 默认 `Step4-5` 输出根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase`
 
-## 4. 典型运行方式
+## 5. 典型运行方式
 
 ```bash
-python3 -m rcsd_topo_poc t03-step3-legal-space \
-  --case-root /mnt/e/TestData/POC_Data/T02/Anchor \
+python3 -m rcsd_topo_poc t03-step45-rcsd-association \
+  --step3-root /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003 \
   --workers 4 \
-  --out-root /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a \
-  --run-id t03_phase_a_demo \
+  --out-root /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase \
+  --run-id t03_step45_demo \
   --debug
 ```
 
-## 5. 当前正式边界
+## 6. 当前正式边界
 
-- `Step3` 只输出 `allowed space / negative mask / step3 status`
-- 批次级正式交付还包括 `step3_review.png`、`step3_review_flat/`、`step3_review_index.csv`、`summary.json`
-- 当前路口关联 branch 上，进入路口与退出路口的 road 都属于可追溯的合法活动链，应双向追到上一个或下一个语义路口
-- `Rule A` 只截当前 branch 真正进入相邻语义路口的入口，按相邻路口处 `1m` 逆向掩膜处理，且不能覆盖当前 target core
-- `Rule A` 的条带应按局部 road surface 截面生成，不得继续使用脱离局部路面的固定宽条带
-- `Rule B / Rule E` 不得把当前路口关联 road 或其二度衔接 road 回灌成 `foreign / opposite`
-- `Rule B` 的 `node fallback` 仍是允许的正式边界手段，只保留审计留痕，不自动进入 `review`
-- `Rule D` 的 `50m fallback` 在无更早稳定边界时允许直接成立，不自动进入 review，只在 `step3_audit.json` 保留审计信息
-- `single_sided_t_mouth` 的方向判定优先看语义横方向：若 direct roads 中可识别出一组 `1` 条进入 + `1` 条退出、轴线近似共线、且远离路口后几何距离持续发散的 road，则该组 road 视为横方向主轴
-- `single_sided_t_mouth` 的竖方向可以是近似垂直支路，也可以是八字形挂接；局部角度近似平行本身不构成方向歧义，若远离路口后 road 间距离趋于收敛，则按竖方向理解
-- `single_sided_t_mouth` 的方向歧义只在候选方向会导出不同 road partition 时才保留；若已识别出稳定横方向主轴，则分数只作为 fallback，不再单独升为 `review`
-- 双 node `single_sided_t_mouth` 场景下，两 `node` 间 bridge 进入 `allowed-space` 主通路；共享 `2进2出` `node` 若仅承担 through-node，不得中断主通路
-- `RCSDRoad` 在 `Rule E` 中不是常驻 opposite-side blocker，而是仅在 `SWSD` 未找到 opposite road 掩膜时才允许启用的 near-corridor fallback；启用前提是已稳定识别出横方向主轴，且候选 `RCSDRoad` 在路口前进方向上与横方向 `outgoing road` 的前进向量相反。若 `SWSD` opposite road 已存在，则 `RCSDRoad` fallback 必须禁用
-- `Rule E` 当前只到 `single_sided opposite-side guard baseline partial`；当前 opposite-side guard 仅使用 `opposite road / opposite semantic node / near-corridor proxy`，当前 baseline 不单独定义 lane 级对向护栏能力
-- 不实现 `Step4/5/6/7`
-- 不允许把 `cleanup / trim / review_mode / stage4 聚合` 前置成 `Step3` 成立条件
-- 平铺 PNG 审查目录是正式交付物之一
+- `Step4-5` 必须消费冻结 `Step3 allowed space / step3_status / step3_audit`
+- 当前正式模板只包括 `center_junction / single_sided_t_mouth`
+- 正式交付是 `required / support / excluded` RCSD 中间结果包、hook zone、foreign context、状态/审计、PNG 与批量汇总
+- `association_class` 契约只允许 `A / B / C`
+- `step45_state` 契约只允许 `established / review / not_established`
+- `B / review` 是当前正式保守策略，不视为算法缺陷；其含义是“已有 support / hook zone，但 RCSD semantic core 仍待 `Step6` 收窄”
+- `degree = 2` 的 `RCSDNode` 不进入 `required semantic core`
+- 每个 case 只处理当前 SWSD 路口所在道路面；道路面外的 SWSD / RCSD 对象不进入当前 case 全局处理
+- `single_sided_t_mouth` 的平行重复 `support RCSDRoad` 按竖方向退出当前面一侧去重
+- 本模块当前不进入 `Step6/7`
+- 不允许把 `cleanup / trim`、`review_mode` 或其它补救链前置成 `Step4-5` 成立条件
+- 平铺 PNG 审查目录与 `preflight.json / summary.json / step45_review_index.csv` 是正式交付物之一
 - Anchor 原始样本固定为 `61`；默认正式全量验收统计口径为排除 `922217 / 54265667 / 502058682` 后的 `58` 个 case，并会在 `preflight.json / summary.json` 记录 `excluded_case_ids`
 - 未传 `--case-id` 时，默认正式验收集按上述 `58` 个 case 运行；显式传入 `--case-id` 时，不应用默认排除集
-- `preflight.json / summary.json` 关闭 closeout 时至少应直接看到：
+- `preflight.json / summary.json` closeout 时至少应直接看到：
   - `raw_case_count`
   - `default_formal_case_count`
   - `excluded_case_ids`
   - `effective_case_ids`
-- `Rule D` 的 audit/status 命名统一为 `direction_mode = t02_direction_plus_bidirectional_junction_trace`
 - Step3 baseline closeout 证据见：`modules/t03_virtual_junction_anchor/architecture/04-step3-closeout.md`
+- Step4-5 联合阶段 closeout 证据见：`modules/t03_virtual_junction_anchor/architecture/06-step45-closeout.md`
 
-## 6. Patch Round 操作者口径
+## 7. Patch Round 操作者口径
 
 - 本 README 面向 patch round 操作者，只说明当前轮允许执行的正式口径与默认验收边界，不替代 `INTERFACE_CONTRACT.md`
-- patch round 只做增量修补，不覆盖既有契约结论，不回退并行代码修改，不把 `baseline partial` 误写成 fully complete
+- patch round 只做增量修补、契约收口、测试补强与轻量整备，不覆盖既有契约结论，不回退并行代码修改，不把 review guard 误写成 fully complete
 - 若实现、审计结果与本页或契约面不一致，操作者应先回写审计事实，再由后续 patch round 继续收口

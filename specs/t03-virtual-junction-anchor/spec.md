@@ -1,18 +1,23 @@
-# T03 / Step4-5 联合阶段变更工件
+# T03 / Step4-5 收口优化变更工件
 
 ## 1. 文档定位
 
 - 文档类型：spec-kit 变更工件
-- 状态：`active change / step45-joint-phase`
-- 本轮任务已确认将 `t03_virtual_junction_anchor` 从 `Step3-only` 升级为 `Step4-5` 联合阶段。
+- 状态：`active change / step45-closeout`
+- 当前正式事实已确认：`t03_virtual_junction_anchor` 已从 `Step3-only` 升级为 `Step4-5` 联合阶段。
+- 本轮任务不是重做 `Step4-5` 主链，而是在既有实现基础上做治理同步、契约收口、测试补强与 `Step6` 前整备。
 - 本文件用于固化本轮变更需求，不替代模块长期源事实。
 - `Step3 legal space` 是已冻结前置层；本轮只消费其既有产物，不重新定义 allowed space，不反向扩大 corridor，不重新引入 `50m` 新口径。
 
 ## 2. 本轮目标
 
-- 将 T03 正式范围升级为 `Step4 = RCSD 关联语义识别` 与 `Step5 = foreign 过滤与排除落地` 的联合阶段。
-- 只处理 `center_junction` 与 `single_sided_t_mouth`。
-- 联合阶段最终输出是供 `Step6` 消费的干净中间结果包，不是 polygon。
+- 保持 T03 正式范围为 `Step4 = RCSD 关联语义识别` 与 `Step5 = foreign 过滤与排除落地` 的联合阶段。
+- 清理治理文档中的 `Step3-only` 残留。
+- 收紧 `Step4-5` 当前最关键的契约漂移：
+  - `association_class` 只允许 `A / B / C`
+  - `selected_road_ids` 缺失时不再静默回退
+  - `preflight.json` 直表达批量集与运行结果字段
+  - 输入 prerequisite 缺失时显式失败、显式审计
 - 保持单 case 输出、批跑、审计与平铺 PNG 可复现。
 - 默认正式批量集固定为：`raw 61 / formal 58`，默认排除 `922217 / 54265667 / 502058682`。
 
@@ -37,6 +42,7 @@
   - `step3_status.json`
   - `step3_audit.json`
 - 官方默认 `--step3-root` 指向仓库内现行 Step3 正式基线 run root；显式单 case 调试可改写。
+- `step3_status.json` 必须直接提供非空 `selected_road_ids`；缺失时不允许回退到 `Step1` 推断。
 
 ### 3.3 字段与空间前提
 
@@ -103,6 +109,10 @@
 
 - `step45_status.json / step45_audit.json` 需补充：
   - `rcsd_semantic_core_missing`
+  - `association_executed`
+  - `association_reason`
+  - `association_blocker`
+  - `step45_prerequisite_issues`
   - `nonsemantic_connector_rcsdnode_ids`
   - `true_foreign_rcsdnode_ids`
   - `parallel_support_duplicate_dropped_rcsdroad_ids`
@@ -174,3 +184,8 @@ python3 -m rcsd_topo_poc t03-step45-rcsd-association --help
   - `effective_case_ids`
   - `missing_case_ids == []`
   - `failed_case_ids == []`
+- `preflight.json` 也必须在最终落盘版本中直接表达：
+  - `excluded_case_ids`
+  - `effective_case_ids`
+  - `missing_case_ids`
+  - `failed_case_ids`

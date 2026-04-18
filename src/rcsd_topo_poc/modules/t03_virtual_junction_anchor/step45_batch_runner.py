@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import platform
 import shutil
 import sys
@@ -51,8 +52,11 @@ def _preflight_doc(
         "default_full_batch_excluded_case_count": len(case_loader_preflight.get("default_full_batch_excluded_case_ids", [])),
         "applied_excluded_case_ids": case_loader_preflight.get("applied_excluded_case_ids", []),
         "applied_excluded_case_count": case_loader_preflight.get("applied_excluded_case_count", 0),
+        "excluded_case_ids": case_loader_preflight.get("excluded_case_ids", case_loader_preflight.get("applied_excluded_case_ids", [])),
         "effective_case_count": case_loader_preflight.get("effective_case_count", len(selected_case_ids)),
         "effective_case_ids": case_loader_preflight.get("effective_case_ids", selected_case_ids),
+        "missing_case_ids": case_loader_preflight.get("missing_case_ids", []),
+        "failed_case_ids": case_loader_preflight.get("failed_case_ids", []),
         "formal_acceptance_scope": "explicit_case_selection" if case_loader_preflight.get("explicit_case_selection") else "default_full_batch",
         "loader_preflight": case_loader_preflight,
     }
@@ -134,7 +138,7 @@ def run_t03_step45_rcsd_association_batch(
     review_rows.sort(key=lambda row: (0, int(row.case_id)) if row.case_id.isdigit() else (1, row.case_id))
 
     write_review_index(run_root, review_rows)
-    write_summary(
+    summary_path = write_summary(
         run_root,
         review_rows,
         expected_case_ids=[spec.case_id for spec in specs],
@@ -149,6 +153,15 @@ def run_t03_step45_rcsd_association_batch(
         failed_case_ids=failed_case_ids,
         rerun_cleaned_before_write=rerun_cleaned_before_write,
     )
+    summary_doc = json.loads(summary_path.read_text(encoding="utf-8"))
+    preflight.update(
+        {
+            "excluded_case_ids": summary_doc.get("excluded_case_ids", preflight.get("excluded_case_ids", [])),
+            "missing_case_ids": summary_doc.get("missing_case_ids", []),
+            "failed_case_ids": summary_doc.get("failed_case_ids", []),
+        }
+    )
+    write_json(run_root / "preflight.json", preflight)
     if debug:
         write_json(
             run_root / "debug_manifest.json",

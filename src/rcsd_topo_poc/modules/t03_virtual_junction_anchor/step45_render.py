@@ -42,8 +42,10 @@ def _patch_bounds(context: Step45Context, case_result: Step45CaseResult) -> tupl
     step1 = context.step1_context
     reference = step1.representative_node.geometry
     drivezone_focus = context.current_swsd_surface_geometry or step1.drivezone_geometry
-    focus = [reference.buffer(15.0), drivezone_focus.intersection(context.step3_allowed_space_geometry.buffer(40.0))]
-    focus.append(context.step3_allowed_space_geometry)
+    focus = [reference.buffer(15.0), drivezone_focus]
+    if context.step3_allowed_space_geometry is not None:
+        focus.append(drivezone_focus.intersection(context.step3_allowed_space_geometry.buffer(40.0)))
+        focus.append(context.step3_allowed_space_geometry)
     for geometry in (
         case_result.output_geometries.required_rcsdroad_geometry,
         case_result.output_geometries.support_rcsdroad_geometry,

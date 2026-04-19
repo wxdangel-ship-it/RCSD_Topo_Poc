@@ -51,8 +51,7 @@ STEP67_STYLE = {
     },
 }
 
-ALLOWED_FILL = (255, 155, 74, 110)
-ALLOWED_EDGE = (219, 119, 25, 255)
+VISIBLE_RC_ROAD_EDGE = (222, 112, 124, 220)
 REQUIRED_EDGE = (161, 13, 13, 255)
 SUPPORT_EDGE = (189, 124, 9, 255)
 FINAL_FILL = (40, 120, 85, 130)
@@ -102,14 +101,6 @@ def render_step67_review_png(
     _draw_polygon(draw, step6_result.output_geometries.foreign_mask_geometry, bounds, fill=FOREIGN_MASK_FILL)
     _draw_polygon(
         draw,
-        step67_context.step45_context.step3_allowed_space_geometry,
-        bounds,
-        fill=ALLOWED_FILL,
-        outline=ALLOWED_EDGE,
-        width=2,
-    )
-    _draw_polygon(
-        draw,
         step6_result.output_geometries.polygon_final_geometry,
         bounds,
         fill=FINAL_FILL,
@@ -121,6 +112,9 @@ def render_step67_review_png(
         fill = ROAD_COLOR if road.road_id in set(step67_context.step45_context.selected_road_ids) else (95, 95, 95, 170)
         width = 8 if road.road_id in set(step67_context.step45_context.selected_road_ids) else 5
         _draw_line(draw, road.geometry, bounds, fill=fill, width=width)
+
+    for rcsd_road in step1.rcsd_roads:
+        _draw_line(draw, rcsd_road.geometry, bounds, fill=VISIBLE_RC_ROAD_EDGE, width=4)
 
     _draw_line(draw, step45_result.output_geometries.support_rcsdroad_geometry, bounds, fill=SUPPORT_EDGE, width=5)
     _draw_line(draw, step45_result.output_geometries.required_rcsdroad_geometry, bounds, fill=REQUIRED_EDGE, width=6)

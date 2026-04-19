@@ -13,6 +13,8 @@ RECENT_CASES="${RECENT_CASES:-8}"
 ONCE="${ONCE:-0}"
 CLEAR_SCREEN="${CLEAR_SCREEN:-1}"
 DEBUG_VISUAL="${DEBUG_VISUAL:-0}"
+CASE_SCAN="${CASE_SCAN:-auto}"
+CASE_SCAN_THRESHOLD="${CASE_SCAN_THRESHOLD:-1000}"
 
 if [[ -z "$PYTHON_BIN" ]]; then
   if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
@@ -34,6 +36,16 @@ fi
 
 if [[ "$DEBUG_VISUAL" != "0" && "$DEBUG_VISUAL" != "1" ]]; then
   echo "[BLOCK] DEBUG_VISUAL must be 0 or 1: $DEBUG_VISUAL" >&2
+  exit 2
+fi
+
+if [[ "$CASE_SCAN" != "auto" && "$CASE_SCAN" != "on" && "$CASE_SCAN" != "off" ]]; then
+  echo "[BLOCK] CASE_SCAN must be auto, on or off: $CASE_SCAN" >&2
+  exit 2
+fi
+
+if ! [[ "$CASE_SCAN_THRESHOLD" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[BLOCK] CASE_SCAN_THRESHOLD must be a positive integer: $CASE_SCAN_THRESHOLD" >&2
   exit 2
 fi
 
@@ -85,6 +97,8 @@ while true; do
   RUN_ROOT="$RESOLVED_RUN_ROOT" \
   RECENT_CASES="$RECENT_CASES" \
   DEBUG_VISUAL="$DEBUG_VISUAL" \
+  CASE_SCAN="$CASE_SCAN" \
+  CASE_SCAN_THRESHOLD="$CASE_SCAN_THRESHOLD" \
   PYTHONUNBUFFERED=1 \
   "$PYTHON_BIN" - <<'PY'
 import json
@@ -130,6 +144,8 @@ def int_or_default(source, key, default):
 run_root = Path(os.environ["RUN_ROOT"])
 debug_visual = os.environ.get("DEBUG_VISUAL", "0") == "1"
 recent_cases = int(os.environ["RECENT_CASES"])
+case_scan_mode = os.environ.get("CASE_SCAN", "auto")
+case_scan_threshold = int(os.environ.get("CASE_SCAN_THRESHOLD", "1000"))
 internal_root = run_root.parent / "_internal" / run_root.name
 preflight_doc = load_json(run_root / "preflight.json") or {}
 summary_doc = load_json(run_root / "summary.json") or {}
@@ -175,131 +191,24 @@ for source in (summary_doc, preflight_doc, internal_progress_doc):
         selected_case_ids = [str(value) for value in values]
         break
 
-known_case_ids = set(selected_case_ids)
-if case_progress_root.is_dir():
-    known_case_ids.update(path.stem for path in case_progress_root.glob("*.json"))
-if cases_root.is_dir():
-    known_case_ids.update(path.name for path in cases_root.iterdir() if path.is_dir())
-case_ids = sorted(known_case_ids, key=lambda item: (0, int(item)) if item.isdigit() else (1, item))
-
-accepted = 0
-rejected = 0
-runtime_failed = 0
-completed = 0
-running = 0
-pending = 0
-missing_status = 0
-rows = []
-
-for case_id in case_ids:
-    case_dir = cases_root / case_id
-    internal_case_path = case_progress_root / f"{case_id}.json"
-    watch_status_path = (
-        case_dir / "t03_case_watch_status.json"
-        if (case_dir / "t03_case_watch_status.json").is_file()
-        else case_dir / "step67_watch_status.json"
-    )
-    step7_status_path = case_dir / "step7_status.json"
-    internal_case_doc = load_json(internal_case_path) if internal_case_path.is_file() else None
-    watch_doc = load_json(watch_status_path) if watch_status_path.is_file() else None
-    step7_doc = load_json(step7_status_path) if step7_status_path.is_file() else None
-
-    if step7_doc is not None:
-        completed += 1
-        state = str(step7_doc.get("step7_state") or "missing_status")
-        current_stage = "completed"
-        acceptance_reason = str(step7_doc.get("reason") or state)
-        detail = truncate(step7_doc.get("note") or step7_doc.get("reason"))
-        updated_at = step7_doc.get("updated_at") or "-"
-        if state == "accepted":
-            accepted += 1
-        elif state == "rejected":
-            rejected += 1
-        else:
-            missing_status += 1
-    elif watch_doc is not None:
-        state = str(watch_doc.get("state") or "running")
-        current_stage = str(watch_doc.get("current_stage") or "-")
-        acceptance_reason = str(watch_doc.get("reason") or "-")
-        detail = truncate(watch_doc.get("detail"))
-        updated_at = watch_doc.get("updated_at") or "-"
-        if state == "failed":
-            completed += 1
-            runtime_failed += 1
-        elif state == "running":
-            running += 1
-        elif state == "pending":
-            pending += 1
-        elif state == "accepted":
-            completed += 1
-            accepted += 1
-        elif state == "rejected":
-            completed += 1
-            rejected += 1
-        else:
-            missing_status += 1
-    elif internal_case_doc is not None:
-        state = str(internal_case_doc.get("state") or "running")
-        current_stage = str(internal_case_doc.get("current_stage") or "-")
-        acceptance_reason = str(internal_case_doc.get("reason") or "-")
-        detail = truncate(internal_case_doc.get("detail"))
-        updated_at = internal_case_doc.get("updated_at") or "-"
-        if state == "failed":
-            completed += 1
-            runtime_failed += 1
-        elif state == "running":
-            running += 1
-        elif state == "pending":
-            pending += 1
-        elif state == "accepted":
-            completed += 1
-            accepted += 1
-        elif state == "rejected":
-            completed += 1
-            rejected += 1
-        else:
-            missing_status += 1
-    else:
-        state = "pending"
-        current_stage = "-"
-        acceptance_reason = "-"
-        detail = "-"
-        updated_at = "-"
-        pending += 1
-
-    rows.append(
-        {
-            "case_id": case_id,
-            "state": state,
-            "current_stage": current_stage,
-            "acceptance_reason": acceptance_reason,
-            "detail": detail,
-            "updated_at": updated_at,
-            "mtime": max(
-                safe_mtime(internal_case_path),
-                safe_mtime(watch_status_path),
-                safe_mtime(step7_status_path),
-            ),
-        }
-    )
-
-selected_case_count = len(selected_case_ids) if selected_case_ids else len(case_ids)
-if selected_case_count and pending == 0:
-    pending = max(selected_case_count - completed - running, 0)
-
+selected_case_count = len(selected_case_ids)
 total_count = int_or_default(internal_progress_doc, "total_case_count", selected_case_count)
-completed = int_or_default(internal_progress_doc, "completed_case_count", completed)
-running = int_or_default(internal_progress_doc, "running_case_count", running)
-pending = int_or_default(internal_progress_doc, "pending_case_count", pending)
-success = int_or_default(internal_progress_doc, "success_case_count", accepted)
-failed = int_or_default(internal_progress_doc, "failed_case_count", rejected + runtime_failed)
+completed = int_or_default(internal_progress_doc, "completed_case_count", 0)
+running = int_or_default(internal_progress_doc, "running_case_count", 0)
+pending = int_or_default(internal_progress_doc, "pending_case_count", 0)
+success = int_or_default(internal_progress_doc, "success_case_count", 0)
+failed = int_or_default(internal_progress_doc, "failed_case_count", 0)
 
-rows.sort(key=lambda item: (item["mtime"], item["case_id"]), reverse=True)
+if total_count == 0 and selected_case_count > 0:
+    total_count = selected_case_count
+if total_count > 0 and pending == 0 and completed + running < total_count:
+    pending = max(total_count - completed - running, 0)
 
 performance = internal_progress_doc.get("performance") or {}
 elapsed_seconds_total = performance.get("elapsed_seconds_total")
 avg_completed_case_seconds = performance.get("avg_completed_case_seconds")
 completed_cases_per_minute = performance.get("completed_cases_per_minute")
+estimated_remaining_seconds = performance.get("estimated_remaining_seconds")
 last_completed_case_id = internal_progress_doc.get("last_completed_case_id") or "-"
 last_completed_at = internal_progress_doc.get("last_completed_at") or "-"
 
@@ -341,6 +250,7 @@ print(
     f"elapsed_s={elapsed_seconds_total if elapsed_seconds_total is not None else '-'} "
     f"avg_case_s={avg_completed_case_seconds if avg_completed_case_seconds is not None else '-'} "
     f"case_per_min={completed_cases_per_minute if completed_cases_per_minute is not None else '-'} "
+    f"eta_s={estimated_remaining_seconds if estimated_remaining_seconds is not None else '-'} "
     f"last_completed_case_id={last_completed_case_id} last_completed_at={last_completed_at}",
     flush=True,
 )
@@ -353,14 +263,101 @@ if internal_failure_doc or bootstrap_failure_doc:
         f"failure={truncate(failure_doc.get('failure'), 120)}",
         flush=True,
     )
-print("[RECENT]", flush=True)
-for row in rows[:recent_cases]:
+
+should_scan_cases = False
+scan_skip_reason = None
+if recent_cases <= 0:
+    scan_skip_reason = "RECENT_CASES<=0"
+elif case_scan_mode == "on":
+    should_scan_cases = True
+elif case_scan_mode == "off":
+    scan_skip_reason = "CASE_SCAN=off"
+elif total_count > case_scan_threshold:
+    scan_skip_reason = f"large_batch total={total_count} threshold={case_scan_threshold}"
+else:
+    should_scan_cases = True
+
+if should_scan_cases:
+    known_case_ids = set(selected_case_ids)
+    if case_progress_root.is_dir():
+        known_case_ids.update(path.stem for path in case_progress_root.glob("*.json"))
+    if cases_root.is_dir():
+        known_case_ids.update(path.name for path in cases_root.iterdir() if path.is_dir())
+    case_ids = sorted(known_case_ids, key=lambda item: (0, int(item)) if item.isdigit() else (1, item))
+    rows = []
+
+    for case_id in case_ids:
+        case_dir = cases_root / case_id
+        internal_case_path = case_progress_root / f"{case_id}.json"
+        watch_status_path = (
+            case_dir / "t03_case_watch_status.json"
+            if (case_dir / "t03_case_watch_status.json").is_file()
+            else case_dir / "step67_watch_status.json"
+        )
+        step7_status_path = case_dir / "step7_status.json"
+        internal_case_doc = load_json(internal_case_path) if internal_case_path.is_file() else None
+        watch_doc = load_json(watch_status_path) if watch_status_path.is_file() else None
+        step7_doc = load_json(step7_status_path) if step7_status_path.is_file() else None
+
+        if step7_doc is not None:
+            state = str(step7_doc.get("step7_state") or "missing_status")
+            current_stage = "completed"
+            acceptance_reason = str(step7_doc.get("reason") or state)
+            detail = truncate(step7_doc.get("note") or step7_doc.get("reason"))
+            updated_at = step7_doc.get("updated_at") or "-"
+        elif watch_doc is not None:
+            state = str(watch_doc.get("state") or "running")
+            current_stage = str(watch_doc.get("current_stage") or "-")
+            acceptance_reason = str(watch_doc.get("reason") or "-")
+            detail = truncate(watch_doc.get("detail"))
+            updated_at = watch_doc.get("updated_at") or "-"
+        elif internal_case_doc is not None:
+            state = str(internal_case_doc.get("state") or "running")
+            current_stage = str(internal_case_doc.get("current_stage") or "-")
+            acceptance_reason = str(internal_case_doc.get("reason") or "-")
+            detail = truncate(internal_case_doc.get("detail"))
+            updated_at = internal_case_doc.get("updated_at") or "-"
+        else:
+            state = "pending"
+            current_stage = "-"
+            acceptance_reason = "-"
+            detail = "-"
+            updated_at = "-"
+
+        rows.append(
+            {
+                "case_id": case_id,
+                "state": state,
+                "current_stage": current_stage,
+                "acceptance_reason": acceptance_reason,
+                "detail": detail,
+                "updated_at": updated_at,
+                "mtime": max(
+                    safe_mtime(internal_case_path),
+                    safe_mtime(watch_status_path),
+                    safe_mtime(step7_status_path),
+                ),
+            }
+        )
+
+    rows.sort(key=lambda item: (item["mtime"], item["case_id"]), reverse=True)
+    print("[RECENT]", flush=True)
+    if not rows:
+        print("  no case-level status files yet", flush=True)
+    for row in rows[:recent_cases]:
+        print(
+            f"  {row['case_id']}: state={row['state']} stage={row['current_stage']} "
+            f"reason={truncate(row['acceptance_reason'], 48)} updated_at={row['updated_at']}",
+            flush=True,
+        )
+        print(f"    detail={row['detail']}", flush=True)
+else:
     print(
-        f"  {row['case_id']}: state={row['state']} stage={row['current_stage']} "
-        f"reason={truncate(row['acceptance_reason'], 48)} updated_at={row['updated_at']}",
+        "[RECENT] "
+        f"skipped case-level scan ({scan_skip_reason}); "
+        "set CASE_SCAN=on to force.",
         flush=True,
     )
-    print(f"    detail={row['detail']}", flush=True)
 
 if debug_visual and review_summary_doc:
     visual_counts = review_summary_doc.get("visual_class_counts") or {}

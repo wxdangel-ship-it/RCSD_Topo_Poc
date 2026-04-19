@@ -130,6 +130,9 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_p
     assert (step3_case_dir / "step3_status.json").is_file()
     assert (step67_case_dir / "step7_status.json").is_file()
     assert (step67_case_dir / "t03_case_watch_status.json").is_file()
+    assert not (artifacts.internal_root / "t03_perf_audit_config.json").exists()
+    assert not (artifacts.internal_root / "t03_perf_audit_samples.jsonl").exists()
+    assert not (artifacts.internal_root / "t03_perf_audit_summary.json").exists()
     assert polygons_path.is_file()
     assert updated_nodes_path.is_file()
     assert nodes_audit_json_path.is_file()
@@ -502,3 +505,159 @@ def test_internal_full_input_runner_writes_failure_artifact_on_prepare_error(tmp
     assert progress_doc["status"] == "failed"
     assert progress_doc["failure"] == "synthetic prepare failure"
     assert failure_doc["failure"] == "synthetic prepare failure"
+
+
+def test_internal_full_input_runner_writes_perf_audit_logs_when_enabled(tmp_path: Path) -> None:
+    inputs_dir = tmp_path / "inputs"
+    out_root = tmp_path / "out"
+    visual_check_dir = tmp_path / "visual_checks"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+
+    nodes_path = inputs_dir / "nodes.gpkg"
+    roads_path = inputs_dir / "roads.gpkg"
+    drivezone_path = inputs_dir / "drivezone.gpkg"
+    rcsdroad_path = inputs_dir / "rcsdroad.gpkg"
+    rcsdnode_path = inputs_dir / "rcsdnode.gpkg"
+
+    write_vector(
+        nodes_path,
+        [
+            {
+                "properties": {
+                    "id": "100001",
+                    "mainnodeid": "100001",
+                    "has_evd": "yes",
+                    "is_anchor": "no",
+                    "kind_2": 4,
+                    "grade_2": 1,
+                },
+                "geometry": Point(0.0, 0.0),
+            }
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        roads_path,
+        [
+            {
+                "properties": {"id": "road_h", "snodeid": "100001", "enodeid": "n2", "direction": 2},
+                "geometry": LineString([(-30.0, 0.0), (30.0, 0.0)]),
+            },
+            {
+                "properties": {"id": "road_v", "snodeid": "n3", "enodeid": "100001", "direction": 2},
+                "geometry": LineString([(0.0, -30.0), (0.0, 30.0)]),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        drivezone_path,
+        [{"properties": {"name": "dz"}, "geometry": box(-60.0, -60.0, 60.0, 60.0)}],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        rcsdroad_path,
+        [
+            {
+                "properties": {"id": "rc_r_1", "snodeid": "rc_a", "enodeid": "rc_n_1", "direction": 2},
+                "geometry": LineString([(-12.0, 2.0), (12.0, 2.0)]),
+            },
+            {
+                "properties": {"id": "rc_r_2", "snodeid": "rc_n_1", "enodeid": "rc_b", "direction": 2},
+                "geometry": LineString([(2.0, -12.0), (2.0, 12.0)]),
+            },
+            {
+                "properties": {"id": "rc_r_3", "snodeid": "rc_n_1", "enodeid": "rc_c", "direction": 2},
+                "geometry": LineString([(2.0, 2.0), (12.0, 12.0)]),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        rcsdnode_path,
+        [
+            {
+                "properties": {"id": "rc_n_1", "mainnodeid": "rc_g_1"},
+                "geometry": Point(2.0, 2.0),
+            }
+        ],
+        crs_text="EPSG:3857",
+    )
+
+    artifacts = run_t03_internal_full_input(
+        nodes_path=nodes_path,
+        roads_path=roads_path,
+        drivezone_path=drivezone_path,
+        rcsdroad_path=rcsdroad_path,
+        rcsdnode_path=rcsdnode_path,
+        out_root=out_root,
+        run_id="perf_audit_case",
+        workers=1,
+        max_cases=1,
+        debug=False,
+        visual_check_dir=visual_check_dir,
+        perf_audit=True,
+        perf_audit_interval_sec=30,
+        perf_audit_max_samples=64,
+        perf_audit_max_bytes=100_000,
+    )
+
+    config_path = artifacts.internal_root / "t03_perf_audit_config.json"
+    samples_path = artifacts.internal_root / "t03_perf_audit_samples.jsonl"
+    summary_path = artifacts.internal_root / "t03_perf_audit_summary.json"
+
+    assert config_path.is_file()
+    assert samples_path.is_file()
+    assert summary_path.is_file()
+
+    config_doc = json.loads(config_path.read_text(encoding="utf-8"))
+    sample_rows = [json.loads(line) for line in samples_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    summary_doc = json.loads(summary_path.read_text(encoding="utf-8"))
+    total_bytes = config_path.stat().st_size + samples_path.stat().st_size + summary_path.stat().st_size
+
+    assert config_doc["enabled"] is True
+    assert config_doc["sample_interval_sec"] == 30
+    assert config_doc["max_samples"] == 64
+    assert config_doc["log_budget_bytes"] == 100_000
+    assert sample_rows
+    assert set(sample_rows[0]) == {
+        "ts",
+        "phase",
+        "total",
+        "completed",
+        "running",
+        "pending",
+        "success",
+        "failed",
+        "runtime_failed_count",
+        "business_rejected_count",
+        "elapsed_s",
+        "avg_case_s",
+        "case_per_min",
+        "effective_concurrency_est",
+        "top_stage",
+        "top_stage_s",
+        "run_root_size_mb",
+        "internal_root_size_mb",
+        "cases_dir_count",
+        "visual_png_count",
+    }
+    assert "selected_case_ids" not in summary_doc
+    assert "discovered_case_ids" not in summary_doc
+    assert "failed_case_ids" not in summary_doc
+    assert summary_doc["sample_count_written"] == len(sample_rows)
+    assert summary_doc["total_log_bytes_est"] <= 100_000
+    assert total_bytes <= 100_000
+    assert set(summary_doc["stage_timer_totals_seconds"]) == {
+        "candidate_discovery",
+        "shared_preload",
+        "local_feature_selection",
+        "step3",
+        "step4_or_association",
+        "step5_or_foreign_filter",
+        "step6",
+        "step7",
+        "output_write",
+        "visual_copy",
+        "observability_write",
+    }

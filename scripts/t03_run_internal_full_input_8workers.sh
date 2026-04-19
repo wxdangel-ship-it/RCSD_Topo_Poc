@@ -21,6 +21,10 @@ RESOLUTION_M="${RESOLUTION_M:-0.2}"
 DEBUG_FLAG="${DEBUG_FLAG:---debug}"
 VISUAL_CHECK_DIR="${VISUAL_CHECK_DIR:-$OUT_ROOT/$RUN_ID/visual_checks}"
 REVIEW_MODE="${REVIEW_MODE:-0}"
+PERF_AUDIT="${PERF_AUDIT:-0}"
+PERF_AUDIT_INTERVAL_SEC="${PERF_AUDIT_INTERVAL_SEC:-30}"
+PERF_AUDIT_MAX_SAMPLES="${PERF_AUDIT_MAX_SAMPLES:-64}"
+PERF_AUDIT_MAX_BYTES="${PERF_AUDIT_MAX_BYTES:-100000}"
 
 choose_python() {
   if [[ -n "${PYTHON_BIN:-}" ]]; then
@@ -85,6 +89,18 @@ if [[ "$REVIEW_MODE" != "0" && "$REVIEW_MODE" != "1" ]]; then
   exit 2
 fi
 
+if [[ "$PERF_AUDIT" != "0" && "$PERF_AUDIT" != "1" ]]; then
+  echo "[BLOCK] PERF_AUDIT must be 0 or 1: $PERF_AUDIT" >&2
+  exit 2
+fi
+
+for numeric_var in PERF_AUDIT_INTERVAL_SEC PERF_AUDIT_MAX_SAMPLES PERF_AUDIT_MAX_BYTES; do
+  if ! [[ "${!numeric_var}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[BLOCK] $numeric_var must be a positive integer: ${!numeric_var}" >&2
+    exit 2
+  fi
+done
+
 mkdir -p "$OUT_ROOT"
 mkdir -p "$VISUAL_CHECK_DIR"
 cd "$REPO_DIR"
@@ -101,11 +117,18 @@ echo "[RUN] RUN_ID=$RUN_ID"
 echo "[RUN] WORKERS=$WORKERS"
 echo "[RUN] MAX_CASES=${MAX_CASES:-<all eligible cases>}"
 echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
+echo "[RUN] PERF_AUDIT=$PERF_AUDIT"
+if [[ "$PERF_AUDIT" == "1" ]]; then
+  echo "[RUN] PERF_AUDIT_INTERVAL_SEC=$PERF_AUDIT_INTERVAL_SEC"
+  echo "[RUN] PERF_AUDIT_MAX_SAMPLES=$PERF_AUDIT_MAX_SAMPLES"
+  echo "[RUN] PERF_AUDIT_MAX_BYTES=$PERF_AUDIT_MAX_BYTES"
+fi
 echo "[RUN] Eligible cases are auto-discovered from nodes where has_evd=yes, is_anchor=no, kind_2 in {4, 2048}; T03 default full-batch excluded cases remain excluded."
 
 export NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH
 export OUT_ROOT RUN_ID WORKERS MAX_CASES BUFFER_M PATCH_SIZE_M RESOLUTION_M
 export DEBUG_FLAG VISUAL_CHECK_DIR REVIEW_MODE
+export PERF_AUDIT PERF_AUDIT_INTERVAL_SEC PERF_AUDIT_MAX_SAMPLES PERF_AUDIT_MAX_BYTES
 
 PYTHONUNBUFFERED=1 PYTHONPATH=src "$PYTHON_BIN" - <<'PY'
 import json
@@ -192,6 +215,10 @@ try:
         debug=os.environ["DEBUG_FLAG"] == "--debug",
         review_mode=os.environ["REVIEW_MODE"] == "1",
         visual_check_dir=os.environ["VISUAL_CHECK_DIR"],
+        perf_audit=os.environ["PERF_AUDIT"] == "1",
+        perf_audit_interval_sec=int(os.environ["PERF_AUDIT_INTERVAL_SEC"]),
+        perf_audit_max_samples=int(os.environ["PERF_AUDIT_MAX_SAMPLES"]),
+        perf_audit_max_bytes=int(os.environ["PERF_AUDIT_MAX_BYTES"]),
     )
 except Exception as exc:
     _write_internal_bootstrap_failure("bootstrap", exc)

@@ -39,6 +39,12 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_observability 
     write_json_atomic,
     write_local_context_snapshot,
 )
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_perf_audit import (
+    DEFAULT_PERF_AUDIT_INTERVAL_SEC,
+    DEFAULT_PERF_AUDIT_MAX_BYTES,
+    DEFAULT_PERF_AUDIT_MAX_SAMPLES,
+    T03PerfAuditRecorder,
+)
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers import (
     discover_candidate_case_ids,
     feature_id,
@@ -120,6 +126,10 @@ def run_t03_internal_full_input(
     debug: bool = False,
     review_mode: bool = False,
     visual_check_dir: str | Path | None = None,
+    perf_audit: bool = False,
+    perf_audit_interval_sec: int = DEFAULT_PERF_AUDIT_INTERVAL_SEC,
+    perf_audit_max_samples: int = DEFAULT_PERF_AUDIT_MAX_SAMPLES,
+    perf_audit_max_bytes: int = DEFAULT_PERF_AUDIT_MAX_BYTES,
 ) -> T03InternalFullInputArtifacts:
     resolved_nodes_path = normalize_runtime_path(nodes_path)
     resolved_roads_path = normalize_runtime_path(roads_path)
@@ -188,6 +198,18 @@ def run_t03_internal_full_input(
         "last_completed_at": None,
         "next_progress_log_threshold": PROGRESS_LOG_INTERVAL_CASES,
     }
+    perf_audit_recorder = T03PerfAuditRecorder(
+        enabled=perf_audit,
+        internal_root=internal_root,
+        run_root=run_root,
+        visual_check_dir=resolved_visual_check_dir,
+        run_id=run_id,
+        started_at=run_started_at,
+        workers=max_workers,
+        sample_interval_sec=perf_audit_interval_sec,
+        max_samples=perf_audit_max_samples,
+        log_budget_bytes=perf_audit_max_bytes,
+    )
 
     def _record_stage_timer_locked(stage_name: str, elapsed_seconds: float) -> None:
         _accumulate_duration(progress_state["stage_timer_totals_seconds"], stage_name, elapsed_seconds)
@@ -285,6 +307,17 @@ def run_t03_internal_full_input(
                 **metrics,
             },
         )
+        perf_audit_recorder.observe_snapshot(
+            phase=str(progress_state["phase"]),
+            status=str(progress_state["status"]),
+            metrics={
+                "total_case_count": len(selected_case_ids),
+                **metrics,
+            },
+            timestamp=_now_text(),
+            force_summary=str(progress_state["status"]) in {"completed", "failed"},
+            force_sample=str(progress_state["status"]) in {"completed", "failed"},
+        )
         _record_stage_timer_locked("observability_write", perf_counter() - observability_started_perf)
 
     def _write_internal_case_progress_runtime(**kwargs: Any) -> None:
@@ -363,7 +396,14 @@ def run_t03_internal_full_input(
             progress_state["running_case_ids"].add(str(case_id))
             _write_runtime_observability_locked(step3_run_root_for_progress=step3_run_root)
 
-    def _mark_case_finished(case_id: str, *, state: str, case_elapsed_seconds: float) -> None:
+    def _mark_case_finished(
+        case_id: str,
+        *,
+        state: str,
+        case_elapsed_seconds: float,
+        short_reason: str | None = None,
+        last_stage: str = "completed",
+    ) -> None:
         with progress_lock:
             progress_state["running_case_ids"].discard(str(case_id))
             progress_state["completed_case_count"] = int(progress_state["completed_case_count"]) + 1
@@ -378,6 +418,13 @@ def run_t03_internal_full_input(
                 progress_state["runtime_failed_case_count"] = int(progress_state["runtime_failed_case_count"]) + 1
                 if str(case_id) not in failed_case_ids:
                     failed_case_ids.append(str(case_id))
+            perf_audit_recorder.record_case_result(
+                case_id=str(case_id),
+                case_elapsed_seconds=case_elapsed_seconds,
+                final_state=str(state),
+                last_stage=last_stage,
+                short_reason=short_reason,
+            )
             _write_runtime_observability_locked(step3_run_root_for_progress=step3_run_root)
             _emit_progress_log_locked(force=False)
 
@@ -581,6 +628,8 @@ def run_t03_internal_full_input(
                     case_id,
                     state="failed",
                     case_elapsed_seconds=max(perf_counter() - case_started_perf, 0.0),
+                    short_reason=f"{type(exc).__name__}: {exc}",
+                    last_stage="direct_case_execution",
                 )
                 raise
 
@@ -629,6 +678,8 @@ def run_t03_internal_full_input(
                 case_id,
                 state=case_result.step7_result.step7_state,
                 case_elapsed_seconds=max(perf_counter() - case_started_perf, 0.0),
+                short_reason=case_result.step7_result.reason,
+                last_stage="completed",
             )
             return result
 

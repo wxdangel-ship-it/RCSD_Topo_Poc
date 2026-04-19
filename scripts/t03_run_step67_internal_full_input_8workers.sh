@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-}"
+MIN_PYTHON="3.10"
 
 NODES_PATH="${NODES_PATH:-/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg}"
 ROADS_PATH="${ROADS_PATH:-/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg}"
@@ -22,12 +23,46 @@ DEBUG_FLAG="${DEBUG_FLAG:---debug}"
 VISUAL_CHECK_DIR="${VISUAL_CHECK_DIR:-$OUT_ROOT/$RUN_ID/visual_checks}"
 REVIEW_MODE="${REVIEW_MODE:-0}"
 
+version_ge() {
+  [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
+}
+
+python_version_of() {
+  local bin="$1"
+  "$bin" - <<'PY'
+import sys
+print(".".join(str(part) for part in sys.version_info[:3]))
+PY
+}
+
 if [[ -z "$PYTHON_BIN" ]]; then
   if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
-    PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+    VENV_PYTHON_VERSION="$(python_version_of "$REPO_DIR/.venv/bin/python")"
+    if version_ge "$VENV_PYTHON_VERSION" "$MIN_PYTHON"; then
+      PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+    else
+      echo "[WARN] Existing .venv uses Python $VENV_PYTHON_VERSION, but T03 internal full-input requires >= $MIN_PYTHON." >&2
+      if command -v python3.10 >/dev/null 2>&1; then
+        PYTHON_BIN="python3.10"
+      else
+        echo "[BLOCK] python3.10 is required to recreate / repair .venv for this script." >&2
+        echo "[HINT] Run: rm -rf \"$REPO_DIR/.venv\" && python3.10 -m venv \"$REPO_DIR/.venv\" && \"$REPO_DIR/.venv/bin/python\" -m pip install -U pip setuptools wheel && \"$REPO_DIR/.venv/bin/python\" -m pip install -e \".[dev]\"" >&2
+        exit 2
+      fi
+    fi
   else
-    PYTHON_BIN="python3"
+    if command -v python3.10 >/dev/null 2>&1; then
+      PYTHON_BIN="python3.10"
+    else
+      PYTHON_BIN="python3"
+    fi
   fi
+fi
+
+PYTHON_VERSION="$(python_version_of "$PYTHON_BIN")"
+if ! version_ge "$PYTHON_VERSION" "$MIN_PYTHON"; then
+  echo "[BLOCK] PYTHON_BIN=$PYTHON_BIN uses Python $PYTHON_VERSION, but this script requires >= $MIN_PYTHON." >&2
+  exit 2
 fi
 
 for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH; do
@@ -70,7 +105,7 @@ echo "[RUN] MAX_CASES=${MAX_CASES:-<all eligible cases>}"
 echo "[RUN] DEBUG_FLAG=$DEBUG_FLAG"
 echo "[RUN] REVIEW_MODE=$REVIEW_MODE"
 echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
-echo "[RUN] Eligible cases are auto-discovered from nodes where has_evd=yes, is_anchor=no, kind_2 in {4, 2048}; T03 default full-batch excluded cases remain excluded."
+echo "[RUN] Eligible cases are auto-discovered by the T03 internal full-input adapter from nodes where has_evd=yes, is_anchor=no, kind_2 in {4, 2048}; T03 default full-batch excluded cases remain excluded."
 
 if [[ "$REVIEW_MODE" == "1" ]]; then
   echo "[WARN] REVIEW_MODE=1 is accepted for parameter compatibility only; T03 internal full-input runner does not change Step67 formal semantics." >&2

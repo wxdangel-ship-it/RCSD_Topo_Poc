@@ -220,6 +220,8 @@ for case_id in sorted(known_case_ids, key=lambda item: (0, int(item)) if item.is
 selected = len(selected_case_ids) if selected_case_ids else len(rows)
 completed = accepted + rejected + failed
 pending = max(selected - completed - running, 0)
+success = accepted
+failed_total = rejected + failed
 
 phase = "-"
 phase_status = "-"
@@ -243,12 +245,18 @@ print(f"[MONITOR] summary_path={summary_path}")
 print(f"[PHASE] phase={phase} status={phase_status} message={truncate(phase_message, 120)}")
 print(
     "[COUNTS] "
-    f"selected={selected} "
+    f"total={selected} "
     f"completed={completed} "
     f"running={running} "
     f"pending={pending} "
+    f"success={success} "
+    f"failed={failed_total}"
+)
+print(
+    "[DETAIL] "
     f"accepted={accepted} "
-    f"rejected={rejected}"
+    f"rejected={rejected} "
+    f"runtime_failed={failed}"
 )
 print(
     "[VISUAL] "
@@ -262,9 +270,9 @@ if summary_doc is not None:
     print(
         "[BATCH] "
         f"effective={summary_doc.get('effective_case_count', selected)} "
-        f"accepted={summary_doc.get('step7_accepted_count', accepted)} "
-        f"rejected={summary_doc.get('step7_rejected_count', rejected)} "
-        f"failed={len(summary_doc.get('failed_case_ids', []))}"
+        f"completed={summary_doc.get('step7_accepted_count', accepted) + summary_doc.get('step7_rejected_count', rejected) + len(summary_doc.get('failed_case_ids', []))} "
+        f"success={summary_doc.get('step7_accepted_count', accepted)} "
+        f"failed={summary_doc.get('step7_rejected_count', rejected) + len(summary_doc.get('failed_case_ids', []))}"
     )
 else:
     print("[BATCH] summary not written yet")

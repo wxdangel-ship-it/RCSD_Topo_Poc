@@ -290,6 +290,7 @@
 - `step7_status.json`
 - `step7_audit.json`
 - `step67_review.png`
+- `step67_review_summary.json` 为 batch 级 review-only 工件，不进入正式结果面
 
 ### 4.6 Step67 status / audit 至少包含
 
@@ -311,11 +312,15 @@
   - `step45_state / step6_state / step7_state`
   - `accepted`
   - `reason`
-  - `visual_review_class`
-  - `visual_audit_family`
-  - `manual_review_recommended`
   - `root_cause_layer / root_cause_type`
   - `note`
+- `step7_status.json` 不得包含：
+  - `visual_review_class`
+  - `visual_audit_class`
+  - `visual_audit_family`
+  - `manual_review_recommended`
+- `step67_final_polygon.gpkg` 只允许保留正式业务字段；不得写入 `visual_review_class / visual_audit_class`
+- 正式 `summary.json` 只统计 formal 口径；不得写入 `visual_v1_count / visual_v2_count / visual_v3_count / visual_v4_count / visual_v5_count`
 - `step67_review_index.csv` 至少要包含：
   - `sequence_no`
   - `case_id`
@@ -329,6 +334,7 @@
   - `note`
   - `image_name`
   - `image_path`
+- `step67_review_summary.json` 当前属于 review-only 工件；若存在，允许记录 `V1-V5` 统计，但不得替代正式 `summary.json`
 
 ## 5. EntryPoints
 

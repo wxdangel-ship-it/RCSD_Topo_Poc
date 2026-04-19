@@ -38,6 +38,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_writer import (
     materialize_review_gallery,
     write_case_outputs,
     write_review_index,
+    write_review_summary,
     write_summary,
 )
 
@@ -242,7 +243,6 @@ def run_t03_step67_batch(
                 step45_state=case_result.step45_state,
                 step6_state=case_result.step6_result.step6_state,
                 step7_state=case_result.step7_result.step7_state,
-                visual_class=case_result.step7_result.visual_review_class,
             )
     else:
         futures = {}
@@ -281,11 +281,11 @@ def run_t03_step67_batch(
                     step45_state=case_result.step45_state,
                     step6_state=case_result.step6_result.step6_state,
                     step7_state=case_result.step7_result.step7_state,
-                    visual_class=case_result.step7_result.visual_review_class,
                 )
 
     review_rows = materialize_review_gallery(run_root, review_rows)
     write_review_index(run_root, review_rows)
+    write_review_summary(run_root, review_rows)
     summary_path = write_summary(
         run_root,
         review_rows,

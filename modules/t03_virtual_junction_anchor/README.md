@@ -36,6 +36,12 @@ python3 -m rcsd_topo_poc t03-step3-legal-space --help
 
 - 当前 `Step67` 的正式批量交付通过模块内 `run_t03_step67_batch()` 生成。
 - 这属于当前模块的正式交付面，但不是 repo 官方入口，不登记到 `entrypoint-registry.md`。
+- 内网 full-input 批量执行通过 repo 级脚本 `scripts/t03_run_step67_internal_full_input_8workers.sh` 提供。
+- 该脚本对外参数面与 `scripts/t02_run_stage3_internal_full_input_8workers.sh` 保持同风格；watch 脚本 `scripts/t03_watch_step67_internal_full_input.sh` 默认按 formal-first 口径展示 `total / completed / running / pending / success / failed`。
+- 当前 T03 internal full-input 的主执行形态为：`candidate discovery -> shared handle preload -> per-case local context query -> internal runner 内直接执行 Step3/Step45/Step67`；`case-package` 物化不再是默认主执行依赖，仅保留为历史过渡路径说明。
+- 当前 T03 internal full-input 批次根目录会补写两类正式成果：
+  - `virtual_intersection_polygons.gpkg`：按 T02 official full-input 聚合口径输出的批次级 polygon 图层
+  - `nodes.gpkg`：基于 full-input 原始整层 nodes 的更新版输出，仅对当前批次代表 node 更新 `is_anchor`（`accepted => yes`，`rejected/runtime_failed => fail3`）
 
 ## 5. 默认路径
 
@@ -65,6 +71,7 @@ python3 -m rcsd_topo_poc t03-step3-legal-space --help
 - `required RC must-cover` 当前只对 directional boundary 内的 `local required RC` 成立
 - `Step7` 只负责最终业务发布，不重新定义 `required / support / excluded / foreign`
 - `V1-V5` 只属于视觉审计层，不等价于主机器状态
+- `step7_status.json`、`step67_final_polygon.gpkg` 与正式 `summary.json` 当前不再承载 `V1-V5 / visual_* / manual_review_recommended`；这些信息只保留在 review-only 工件中
 - `Step5` 当前不再生成 hard foreign polygon context；`Step6` hard negative mask 仅消费 road-like `1m` mask
 - `step45_foreign_swsd_context.gpkg / step45_foreign_rcsd_context.gpkg` 当前仅作为兼容性审计产物保留，可以为空
 - Anchor 原始样本固定为 `61`；默认正式全量验收统计口径为排除 `922217 / 54265667 / 502058682` 后的 `58` 个 case，并会在 `preflight.json / summary.json` 记录 `excluded_case_ids`

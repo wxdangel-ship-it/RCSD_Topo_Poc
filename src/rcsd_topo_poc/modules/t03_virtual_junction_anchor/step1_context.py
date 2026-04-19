@@ -131,12 +131,20 @@ def _resolve_target_road_ids(roads: tuple[RoadRecord, ...], target_group: Semant
     )
 
 
-def build_step1_context(case_spec: CaseSpec) -> Step1Context:
-    nodes = _parse_nodes(read_vector_layer(case_spec.input_paths["nodes_path"]).features)
-    roads = _parse_roads(read_vector_layer(case_spec.input_paths["roads_path"]).features)
-    rcsd_roads = _parse_roads(read_vector_layer(case_spec.input_paths["rcsdroad_path"]).features)
-    rcsd_nodes = _parse_nodes(read_vector_layer(case_spec.input_paths["rcsdnode_path"]).features)
-    drivezone_features = read_vector_layer(case_spec.input_paths["drivezone_path"]).features
+def build_step1_context_from_features(
+    *,
+    case_spec: CaseSpec,
+    node_features: Iterable[LayerFeature],
+    road_features: Iterable[LayerFeature],
+    drivezone_features: Iterable[LayerFeature],
+    rcsdroad_features: Iterable[LayerFeature],
+    rcsdnode_features: Iterable[LayerFeature],
+) -> Step1Context:
+    nodes = _parse_nodes(node_features)
+    roads = _parse_roads(road_features)
+    rcsd_roads = _parse_roads(rcsdroad_features)
+    rcsd_nodes = _parse_nodes(rcsdnode_features)
+    drivezone_features = tuple(drivezone_features)
     drivezone_geometries = [feature.geometry for feature in drivezone_features if feature.geometry is not None]
     if not drivezone_geometries:
         raise ValueError(f"drivezone is empty for case_id={case_spec.case_id}")
@@ -154,4 +162,15 @@ def build_step1_context(case_spec: CaseSpec) -> Step1Context:
         rcsd_nodes=rcsd_nodes,
         drivezone_geometry=unary_union(drivezone_geometries).buffer(0),
         target_road_ids=_resolve_target_road_ids(roads, target_group),
+    )
+
+
+def build_step1_context(case_spec: CaseSpec) -> Step1Context:
+    return build_step1_context_from_features(
+        case_spec=case_spec,
+        node_features=read_vector_layer(case_spec.input_paths["nodes_path"]).features,
+        road_features=read_vector_layer(case_spec.input_paths["roads_path"]).features,
+        drivezone_features=read_vector_layer(case_spec.input_paths["drivezone_path"]).features,
+        rcsdroad_features=read_vector_layer(case_spec.input_paths["rcsdroad_path"]).features,
+        rcsdnode_features=read_vector_layer(case_spec.input_paths["rcsdnode_path"]).features,
     )

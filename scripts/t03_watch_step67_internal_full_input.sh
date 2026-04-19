@@ -12,6 +12,7 @@ INTERVAL_SEC="${INTERVAL_SEC:-10}"
 RECENT_CASES="${RECENT_CASES:-8}"
 ONCE="${ONCE:-0}"
 CLEAR_SCREEN="${CLEAR_SCREEN:-1}"
+DEBUG_VISUAL="${DEBUG_VISUAL:-0}"
 
 if [[ -z "$PYTHON_BIN" ]]; then
   if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
@@ -28,6 +29,11 @@ fi
 
 if ! [[ "$RECENT_CASES" =~ ^[1-9][0-9]*$ ]]; then
   echo "[BLOCK] RECENT_CASES must be a positive integer: $RECENT_CASES" >&2
+  exit 2
+fi
+
+if [[ "$DEBUG_VISUAL" != "0" && "$DEBUG_VISUAL" != "1" ]]; then
+  echo "[BLOCK] DEBUG_VISUAL must be 0 or 1: $DEBUG_VISUAL" >&2
   exit 2
 fi
 
@@ -82,6 +88,7 @@ while true; do
 
   RUN_ROOT="$RESOLVED_RUN_ROOT" \
   RECENT_CASES="$RECENT_CASES" \
+  DEBUG_VISUAL="$DEBUG_VISUAL" \
   "$PYTHON_BIN" - <<'PY'
 import json
 import os
@@ -120,13 +127,16 @@ def truncate(text, limit=88):
 
 run_root = Path(os.environ["RUN_ROOT"])
 recent_cases = int(os.environ["RECENT_CASES"])
+debug_visual = os.environ.get("DEBUG_VISUAL", "0") == "1"
 internal_root = run_root.parent / "_internal" / run_root.name
 case_progress_root = internal_root / "case_progress"
 summary_path = run_root / "summary.json"
+review_summary_path = run_root / "step67_review_summary.json"
 preflight_path = run_root / "preflight.json"
 internal_progress_path = internal_root / "internal_full_input_progress.json"
 
 summary_doc = load_json(summary_path) if summary_path.is_file() else None
+review_summary_doc = load_json(review_summary_path) if review_summary_path.is_file() else None
 preflight_doc = load_json(preflight_path) if preflight_path.is_file() else None
 internal_progress_doc = load_json(internal_progress_path) if internal_progress_path.is_file() else None
 
@@ -149,9 +159,8 @@ if cases_root.is_dir():
 rows = []
 accepted = 0
 rejected = 0
-failed = 0
+runtime_failed = 0
 running = 0
-visual_counts = {"V1": 0, "V2": 0, "V3": 0, "V4": 0, "V5": 0}
 
 for case_id in sorted(known_case_ids, key=lambda item: (0, int(item)) if item.isdigit() else (1, item)):
     internal_case_doc = load_json(case_progress_root / f"{case_id}.json") if case_progress_root.is_dir() else None
@@ -171,8 +180,6 @@ for case_id in sorted(known_case_ids, key=lambda item: (0, int(item)) if item.is
             "reason": str(step7_doc.get("reason") or "-"),
             "detail": str(step7_doc.get("note") or step7_doc.get("reason") or "-"),
             "updated_at": None,
-            "step7_state": step7_doc.get("step7_state"),
-            "visual_class": step7_doc.get("visual_review_class"),
         }
 
     state = str(doc.get("state") or "pending")
@@ -180,30 +187,15 @@ for case_id in sorted(known_case_ids, key=lambda item: (0, int(item)) if item.is
     reason = str(doc.get("reason") or "-")
     detail = truncate(doc.get("detail"))
     updated_at = iso_or_dash(doc.get("updated_at"))
-    visual_class_value = doc.get("visual_class")
-    if not visual_class_value and step7_doc:
-        visual_class_value = step7_doc.get("visual_review_class")
-    visual_class = str(visual_class_value or "")
 
     if state == "accepted":
         accepted += 1
     elif state == "rejected":
         rejected += 1
     elif state == "failed":
-        failed += 1
+        runtime_failed += 1
     elif state == "running":
         running += 1
-
-    if visual_class.startswith("V1"):
-        visual_counts["V1"] += 1
-    elif visual_class.startswith("V2"):
-        visual_counts["V2"] += 1
-    elif visual_class.startswith("V3"):
-        visual_counts["V3"] += 1
-    elif visual_class.startswith("V4"):
-        visual_counts["V4"] += 1
-    elif visual_class.startswith("V5"):
-        visual_counts["V5"] += 1
 
     rows.append(
         {
@@ -213,15 +205,19 @@ for case_id in sorted(known_case_ids, key=lambda item: (0, int(item)) if item.is
             "reason": reason,
             "detail": detail,
             "updated_at": updated_at,
-            "mtime": max(safe_mtime(watch_status_path), safe_mtime(step7_status_path), safe_mtime(case_progress_root / f"{case_id}.json")),
+            "mtime": max(
+                safe_mtime(watch_status_path),
+                safe_mtime(step7_status_path),
+                safe_mtime(case_progress_root / f"{case_id}.json"),
+            ),
         }
     )
 
-selected = len(selected_case_ids) if selected_case_ids else len(rows)
-completed = accepted + rejected + failed
-pending = max(selected - completed - running, 0)
+total = len(selected_case_ids) if selected_case_ids else len(rows)
+completed = accepted + rejected + runtime_failed
+pending = max(total - completed - running, 0)
 success = accepted
-failed_total = rejected + failed
+failed = rejected + runtime_failed
 
 phase = "-"
 phase_status = "-"
@@ -245,37 +241,31 @@ print(f"[MONITOR] summary_path={summary_path}")
 print(f"[PHASE] phase={phase} status={phase_status} message={truncate(phase_message, 120)}")
 print(
     "[COUNTS] "
-    f"total={selected} "
+    f"total={total} "
     f"completed={completed} "
     f"running={running} "
     f"pending={pending} "
     f"success={success} "
-    f"failed={failed_total}"
+    f"failed={failed}"
 )
 print(
     "[DETAIL] "
-    f"accepted={accepted} "
-    f"rejected={rejected} "
-    f"runtime_failed={failed}"
+    f"business_rejected={rejected} "
+    f"runtime_failed={runtime_failed}"
 )
-print(
-    "[VISUAL] "
-    f"V1={visual_counts['V1']} "
-    f"V2={visual_counts['V2']} "
-    f"V3={visual_counts['V3']} "
-    f"V4={visual_counts['V4']} "
-    f"V5={visual_counts['V5']}"
-)
-if summary_doc is not None:
-    print(
-        "[BATCH] "
-        f"effective={summary_doc.get('effective_case_count', selected)} "
-        f"completed={summary_doc.get('step7_accepted_count', accepted) + summary_doc.get('step7_rejected_count', rejected) + len(summary_doc.get('failed_case_ids', []))} "
-        f"success={summary_doc.get('step7_accepted_count', accepted)} "
-        f"failed={summary_doc.get('step7_rejected_count', rejected) + len(summary_doc.get('failed_case_ids', []))}"
-    )
-else:
-    print("[BATCH] summary not written yet")
+
+if debug_visual and review_summary_doc:
+    visual_counts = review_summary_doc.get("visual_class_counts") or {}
+    parts = []
+    for visual_key in (
+        "V1 认可成功",
+        "V2 业务正确但几何待修",
+        "V3 漏包 required",
+        "V4 误包 foreign",
+        "V5 明确失败",
+    ):
+        parts.append(f"{visual_key.split()[0]}={int(visual_counts.get(visual_key, 0))}")
+    print("[VISUAL] " + " ".join(parts))
 
 print("[RECENT]")
 for row in rows[:recent_cases]:

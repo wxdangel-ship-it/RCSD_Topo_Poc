@@ -45,8 +45,8 @@
 | `modules/t02_junction_anchor/history/*` | T02 模块级历史材料 | `history` | 记录 bootstrap 与后续演进轨迹 |
 | `specs/t02-junction-anchor/*`、`specs/t02-virtual-intersection-batch-poc/*` | T02 变更工件 | `active_change_artifact` | 记录历次与当前 active change 的变更规格，不替代长期模块真相 |
 | `modules/t03_virtual_junction_anchor/architecture/*` | T03 模块长期架构真相 | `source_of_truth` | T03 正式模块的长期文档主表面；当前正式范围为冻结 `Step3` 之上的 `Step4-7 clarified formal stage` |
-| `modules/t03_virtual_junction_anchor/INTERFACE_CONTRACT.md` | T03 稳定契约面 | `source_of_truth` | 固化 Anchor61 `case-package` 输入、冻结 Step3 prerequisite、Step45/Step67 状态、输出与验收标准 |
-| `modules/t03_virtual_junction_anchor/README.md` | T03 操作者入口 | `operator_guide` | 说明 Step4-5 官方入口、冻结前置入口、Step67 正式交付方式、默认路径与当前边界 |
+| `modules/t03_virtual_junction_anchor/INTERFACE_CONTRACT.md` | T03 稳定契约面 | `source_of_truth` | 固化 Anchor61 `case-package` 输入、冻结 Step3 prerequisite、Step45/Step67 状态、输出与验收标准，并区分 formal result plane 与 review-only visual 工件 |
+| `modules/t03_virtual_junction_anchor/README.md` | T03 操作者入口 | `operator_guide` | 说明 Step4-5 官方入口、冻结前置入口、Step67 正式交付方式、内网 full-input shell/watch 用法、direct shared-handle local-query 主执行形态、默认路径与当前边界 |
 | `modules/t03_virtual_junction_anchor/AGENTS.md` | T03 durable guidance | `durable_guidance` | 只保留模块级边界、冻结前置约束、Step67 无官方 CLI 与当前执行边界 |
 | `specs/t03-virtual-junction-anchor/*` | T03 变更工件 | `active_change_artifact` | 记录 T03 Phase A 变更计划，不替代长期模块真相 |
 

@@ -38,19 +38,27 @@ def test_step67_batch_runner_writes_gallery_summary_and_preflight(tmp_path: Path
     )
 
     summary_doc = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+    review_summary_doc = json.loads((run_root / "step67_review_summary.json").read_text(encoding="utf-8"))
     preflight_doc = json.loads((run_root / "preflight.json").read_text(encoding="utf-8"))
+    step7_status_doc = json.loads((run_root / "cases" / "100001" / "step7_status.json").read_text(encoding="utf-8"))
 
     assert summary_doc["raw_case_count"] == 4
     assert summary_doc["default_formal_case_count"] == 3
     assert summary_doc["effective_case_ids"] == ["100001", "100002", "100003"]
     assert summary_doc["step7_accepted_count"] == 2
     assert summary_doc["step7_rejected_count"] == 1
-    assert summary_doc["visual_v1_count"] == 2
-    assert summary_doc["visual_v2_count"] == 0
+    assert "visual_v1_count" not in summary_doc
+    assert "visual_v2_count" not in summary_doc
     assert summary_doc["failed_case_ids"] == []
     assert summary_doc["excluded_case_ids"] == ["922217"]
     assert preflight_doc["effective_case_ids"] == ["100001", "100002", "100003"]
     assert preflight_doc["excluded_case_ids"] == ["922217"]
+    assert review_summary_doc["visual_class_counts"]["V1 认可成功"] == 2
+    assert review_summary_doc["visual_class_counts"]["V2 业务正确但几何待修"] == 0
+    assert "visual_review_class" not in step7_status_doc
+    assert "visual_audit_class" not in step7_status_doc
+    assert "visual_audit_family" not in step7_status_doc
+    assert "manual_review_recommended" not in step7_status_doc
 
     flat_dir = run_root / "step67_review_flat"
     accepted_dir = run_root / "step67_review_accepted"

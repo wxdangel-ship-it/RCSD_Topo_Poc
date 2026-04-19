@@ -12,8 +12,10 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_loader import load_case_specs
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import CaseSpec
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step1_context import build_step1_context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import build_step3_status_doc
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step2_template import classify_step2_template
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_models import Step45Context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import Step1Context, Step2TemplateResult, Step3CaseResult
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import ROAD_BUFFER_M
 
 
@@ -127,6 +129,55 @@ def load_step45_context(*, case_spec: CaseSpec, step3_root: str | Path) -> Step4
         step3_run_root=resolved_step3_root,
         step3_case_dir=step3_case_dir,
         step3_allowed_space_geometry=step3_allowed_space_geometry,
+        current_swsd_surface_geometry=current_swsd_surface_geometry,
+        step3_status_doc=step3_status_doc,
+        step3_audit_doc=step3_audit_doc,
+        selected_road_ids=selected_road_ids,
+        step3_excluded_road_ids=excluded_road_ids,
+        prerequisite_issues=_stable_issue_codes(prerequisite_issues),
+    )
+
+
+def build_step45_context_from_step3_case(
+    *,
+    step1_context: Step1Context,
+    template_result: Step2TemplateResult,
+    step3_run_root: str | Path,
+    step3_case_dir: str | Path,
+    step3_case_result: Step3CaseResult,
+) -> Step45Context:
+    resolved_step3_run_root = normalize_runtime_path(step3_run_root)
+    resolved_step3_case_dir = normalize_runtime_path(step3_case_dir)
+    step3_status_doc = build_step3_status_doc(step3_case_result)
+    step3_audit_doc = dict(step3_case_result.audit_doc)
+    prerequisite_issues: list[str] = []
+
+    step3_state = str(step3_status_doc.get("step3_state") or "")
+    if not step3_state:
+        prerequisite_issues.append("step45_missing_step3_state")
+
+    selected_road_ids = _stable_ids(step3_status_doc.get("selected_road_ids"))
+    if not selected_road_ids:
+        prerequisite_issues.append("step45_missing_selected_road_ids")
+    else:
+        available_road_ids = {road.road_id for road in step1_context.roads}
+        if any(road_id not in available_road_ids for road_id in selected_road_ids):
+            prerequisite_issues.append("step45_selected_road_ids_not_in_step1_roads")
+
+    excluded_road_ids = _stable_ids(
+        step3_status_doc.get("excluded_road_ids")
+        or step3_audit_doc.get("excluded_road_ids")
+    )
+    current_swsd_surface_geometry = _build_current_swsd_surface_geometry(step1_context, selected_road_ids)
+    if selected_road_ids and current_swsd_surface_geometry is None:
+        prerequisite_issues.append("step45_missing_current_swsd_surface")
+
+    return Step45Context(
+        step1_context=step1_context,
+        template_result=template_result,
+        step3_run_root=resolved_step3_run_root,
+        step3_case_dir=resolved_step3_case_dir,
+        step3_allowed_space_geometry=step3_case_result.allowed_space_geometry,
         current_swsd_surface_geometry=current_swsd_surface_geometry,
         step3_status_doc=step3_status_doc,
         step3_audit_doc=step3_audit_doc,

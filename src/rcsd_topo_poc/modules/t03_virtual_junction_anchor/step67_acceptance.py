@@ -30,6 +30,17 @@ def _visual_audit_family(visual_class: str) -> str:
     return "failure"
 
 
+def _formal_status_extra_fields(extra_fields: dict[str, Any]) -> dict[str, Any]:
+    filtered: dict[str, Any] = {}
+    for key, value in extra_fields.items():
+        if key == "manual_review_recommended":
+            continue
+        if key.startswith("visual_"):
+            continue
+        filtered[key] = value
+    return filtered
+
+
 def build_step7_result(step67_context: Step67Context, step6_result: Step6Result) -> Step7Result:
     step45_case_result = step67_context.step45_case_result
     step45_context = step67_context.step45_context
@@ -50,10 +61,8 @@ def build_step7_result(step67_context: Step67Context, step6_result: Step6Result)
                 "classification": {
                     "step7_state": "rejected",
                     "reason": "step67_blocked_by_step45",
-                    "visual_audit_family": _visual_audit_family(VISUAL_V5),
                     "root_cause_layer": ROOT_CAUSE_LAYER_FROZEN_CONSTRAINTS_CONFLICT,
                     "root_cause_type": step45_reason,
-                    "visual_review_class": VISUAL_V5,
                 }
             },
             extra_status_fields={
@@ -87,10 +96,8 @@ def build_step7_result(step67_context: Step67Context, step6_result: Step6Result)
                 "classification": {
                     "step7_state": "rejected",
                     "reason": "step67_rejected_after_step6_failure",
-                    "visual_audit_family": _visual_audit_family(visual_class),
                     "root_cause_layer": ROOT_CAUSE_LAYER_STEP6,
                     "root_cause_type": secondary or step6_result.reason,
-                    "visual_review_class": visual_class,
                 }
             },
             extra_status_fields={
@@ -162,10 +169,8 @@ def build_step7_result(step67_context: Step67Context, step6_result: Step6Result)
             "classification": {
                 "step7_state": "accepted",
                 "reason": accepted_reason,
-                "visual_audit_family": _visual_audit_family(accepted_visual_class),
                 "root_cause_layer": accepted_root_cause_layer,
                 "root_cause_type": accepted_root_cause_type,
-                "visual_review_class": accepted_visual_class,
             }
         },
         extra_status_fields=accepted_extra_fields,
@@ -174,10 +179,6 @@ def build_step7_result(step67_context: Step67Context, step6_result: Step6Result)
 
 def build_step7_status_doc(step67_context: Step67Context, step6_result: Step6Result, step7_result: Step7Result) -> dict[str, Any]:
     step45_case_result = step67_context.step45_case_result
-    visual_family = step7_result.extra_status_fields.get("visual_audit_family") or _visual_audit_family(
-        step7_result.visual_review_class
-    )
-    manual_review_recommended = bool(step7_result.extra_status_fields.get("manual_review_recommended", False))
     return {
         "case_id": step67_context.step45_context.step1_context.case_spec.case_id,
         "template_class": step45_case_result.template_class,
@@ -188,13 +189,9 @@ def build_step7_status_doc(step67_context: Step67Context, step6_result: Step6Res
         "step7_state": step7_result.step7_state,
         "accepted": step7_result.accepted,
         "reason": step7_result.reason,
-        "visual_review_class": step7_result.visual_review_class,
-        "visual_audit_class": step7_result.visual_review_class,
-        "visual_audit_family": visual_family,
-        "manual_review_recommended": manual_review_recommended,
         "root_cause_layer": step7_result.root_cause_layer,
         "root_cause_type": step7_result.root_cause_type,
         "note": step7_result.note,
         "key_metrics": step7_result.key_metrics,
-        **step7_result.extra_status_fields,
+        **_formal_status_extra_fields(step7_result.extra_status_fields),
     }

@@ -48,6 +48,14 @@ REVIEW_INDEX_FIELDNAMES = [
     "image_path",
 ]
 
+REVIEW_SUMMARY_VISUAL_CLASSES = (
+    "V1 认可成功",
+    "V2 业务正确但几何待修",
+    "V3 漏包 required",
+    "V4 误包 foreign",
+    "V5 明确失败",
+)
+
 
 def _geometry_feature(geometry, **properties):
     if geometry is None:
@@ -125,9 +133,9 @@ def write_case_outputs(
             layer="step67_final_polygon",
             step6_state=step6_result.step6_state,
             step7_state=step7_result.step7_state,
-            visual_review_class=step7_result.visual_review_class,
-            visual_audit_class=step7_result.visual_review_class,
             reason=step7_result.reason,
+            root_cause_layer=step7_result.root_cause_layer,
+            root_cause_type=step7_result.root_cause_type,
         ),
     )
     write_json(case_dir / "step6_status.json", build_step6_status_doc(step67_context, step6_result))
@@ -211,6 +219,22 @@ def write_review_index(run_root: Path, rows: list[Step67ReviewIndexRow]) -> Path
     return output_path
 
 
+def write_review_summary(run_root: Path, rows: list[Step67ReviewIndexRow]) -> Path:
+    visual_counts = {
+        visual_class: sum(1 for row in rows if row.visual_class == visual_class)
+        for visual_class in REVIEW_SUMMARY_VISUAL_CLASSES
+    }
+    summary = {
+        "total_case_count": len(rows),
+        "accepted_case_count": sum(1 for row in rows if row.step7_state == "accepted"),
+        "rejected_case_count": sum(1 for row in rows if row.step7_state == "rejected"),
+        "visual_class_counts": visual_counts,
+    }
+    output_path = run_root / "step67_review_summary.json"
+    write_json(output_path, summary)
+    return output_path
+
+
 def _case_outputs_complete(case_dir: Path) -> bool:
     return case_dir.is_dir() and all((case_dir / rel_path).is_file() for rel_path in CASE_REQUIRED_OUTPUTS)
 
@@ -255,12 +279,6 @@ def write_summary(
     step7_accepted_count = sum(1 for row in rows if row.step7_state == "accepted")
     step7_rejected_count = sum(1 for row in rows if row.step7_state == "rejected")
     binary_state_sum = step7_accepted_count + step7_rejected_count
-    visual_v1_count = sum(1 for row in rows if row.visual_class == "V1 认可成功")
-    visual_v2_count = sum(1 for row in rows if row.visual_class == "V2 业务正确但几何待修")
-    visual_v3_count = sum(1 for row in rows if row.visual_class == "V3 漏包 required")
-    visual_v4_count = sum(1 for row in rows if row.visual_class == "V4 误包 foreign")
-    visual_v5_count = sum(1 for row in rows if row.visual_class == "V5 明确失败")
-
     summary = {
         "total_case_count": len(rows),
         "raw_case_count": raw_case_count,
@@ -280,11 +298,6 @@ def write_summary(
         "step7_rejected_count": step7_rejected_count,
         "binary_state_sum": binary_state_sum,
         "binary_state_sum_matches_total": binary_state_sum == len(expected_case_ids),
-        "visual_v1_count": visual_v1_count,
-        "visual_v2_count": visual_v2_count,
-        "visual_v3_count": visual_v3_count,
-        "visual_v4_count": visual_v4_count,
-        "visual_v5_count": visual_v5_count,
         "default_full_batch_excluded_case_count": len(default_full_batch_excluded_case_ids),
         "default_full_batch_excluded_case_ids": default_full_batch_excluded_case_ids,
         "excluded_case_count": len(excluded_case_ids),

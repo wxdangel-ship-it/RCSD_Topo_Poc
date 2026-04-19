@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TARGET_SCRIPT="$SCRIPT_DIR/t03_run_internal_full_input_8workers.sh"
+
+if [[ ! -f "$TARGET_SCRIPT" ]]; then
+  echo "[BLOCK] missing target script: $TARGET_SCRIPT" >&2
+  exit 2
+fi
+
+export WORKERS="${WORKERS:-8}"
+export DEBUG_FLAG="${DEBUG_FLAG:---no-debug}"
+export PERF_AUDIT="${PERF_AUDIT:-1}"
+export PERF_AUDIT_INTERVAL_SEC="${PERF_AUDIT_INTERVAL_SEC:-30}"
+export PERF_AUDIT_MAX_SAMPLES="${PERF_AUDIT_MAX_SAMPLES:-64}"
+export PERF_AUDIT_MAX_BYTES="${PERF_AUDIT_MAX_BYTES:-100000}"
+export PROGRESS_FLUSH_INTERVAL_SEC="${PROGRESS_FLUSH_INTERVAL_SEC:-5}"
+export PROGRESS_FLUSH_INTERVAL_CASES="${PROGRESS_FLUSH_INTERVAL_CASES:-5}"
+export LOCAL_CONTEXT_SNAPSHOT_MODE="${LOCAL_CONTEXT_SNAPSHOT_MODE:-failed_only}"
+export RESUME="${RESUME:-0}"
+export RETRY_FAILED="${RETRY_FAILED:-0}"
+export REVIEW_MODE="${REVIEW_MODE:-0}"
+export RUN_ID="${RUN_ID:-t03_internal_full_input_innernet_$(date +%Y%m%d_%H%M%S)}"
+
+echo "[INNERNET] T03 internal full-input wrapper" >&2
+echo "[INNERNET] RUN_ID=$RUN_ID" >&2
+echo "[INNERNET] WORKERS=$WORKERS DEBUG_FLAG=$DEBUG_FLAG PERF_AUDIT=$PERF_AUDIT" >&2
+echo "[INNERNET] RESUME=$RESUME RETRY_FAILED=$RETRY_FAILED LOCAL_CONTEXT_SNAPSHOT_MODE=$LOCAL_CONTEXT_SNAPSHOT_MODE" >&2
+
+exec "$TARGET_SCRIPT"

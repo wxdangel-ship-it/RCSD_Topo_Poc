@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -18,6 +20,32 @@ REQUIRED_DOCS = [
     "modules/_template/INTERFACE_CONTRACT.md",
 ]
 
+EXPECTED_RUNTIME_PACKAGES = [
+    ("fiona", "fiona"),
+    ("ijson", "ijson"),
+    ("numpy", "numpy"),
+    ("Pillow", "PIL"),
+    ("pyproj", "pyproj"),
+    ("pyshp", "shapefile"),
+    ("shapely", "shapely"),
+]
+EXPECTED_DEV_PACKAGES = [
+    ("pytest", "pytest"),
+    ("geopandas", "geopandas"),
+]
+EXPECTED_LOCK_PACKAGES = [
+    "fiona",
+    "geopandas",
+    "ijson",
+    "numpy",
+    "pillow",
+    "pyproj",
+    "pyshp",
+    "pytest",
+    "shapely",
+]
+EXPECTED_PYTHON_SERIES = (3, 10)
+
 
 def _find_repo_root(start: Path) -> Optional[Path]:
     p = start.resolve()
@@ -25,6 +53,74 @@ def _find_repo_root(start: Path) -> Optional[Path]:
         if (candidate / "SPEC.md").is_file() and (candidate / "docs").is_dir():
             return candidate
     return None
+
+
+def _expected_repo_python(root: Path) -> Path:
+    return root / ".venv" / "bin" / "python"
+
+
+def _current_python_matches_repo_venv(root: Path) -> tuple[bool, str]:
+    expected = _expected_repo_python(root)
+    if not expected.is_file():
+        return False, f"MISSING ({expected})"
+
+    current = Path(sys.executable)
+    try:
+        matches = current.samefile(expected)
+    except OSError:
+        matches = False
+    if not matches:
+        return False, f"current={current} expected={expected}"
+    return True, str(expected)
+
+
+def _import_dependency(import_name: str) -> tuple[bool, str]:
+    try:
+        module = importlib.import_module(import_name)
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+    if import_name == "PIL":
+        try:
+            from PIL import __version__ as version
+        except Exception:
+            version = None
+    else:
+        version = getattr(module, "__version__", None)
+    return True, str(version or "unknown")
+
+
+def _format_dependency_group(
+    package_specs: list[tuple[str, str]],
+) -> tuple[bool, str]:
+    failures: list[str] = []
+    versions: list[str] = []
+    for display_name, import_name in package_specs:
+        ok, detail = _import_dependency(import_name)
+        if ok:
+            versions.append(f"{display_name}={detail}")
+        else:
+            failures.append(f"{display_name} ({detail})")
+
+    if failures:
+        return False, "; ".join(failures)
+    return True, ", ".join(versions)
+
+
+def _lockfile_status(root: Path) -> tuple[bool, str]:
+    lock_path = root / "uv.lock"
+    if not lock_path.is_file():
+        return False, f"MISSING ({lock_path})"
+
+    lock_text = lock_path.read_text(encoding="utf-8").lower()
+    missing = [
+        package_name
+        for package_name in EXPECTED_LOCK_PACKAGES
+        if re.search(rf'^name = "{re.escape(package_name)}"$', lock_text, flags=re.MULTILINE) is None
+    ]
+    if missing:
+        return False, "missing packages: " + ", ".join(missing)
+    return True, "required runtime/dev packages present"
 
 
 def _cmd_doctor(_args: argparse.Namespace) -> int:
@@ -48,6 +144,43 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
 
     pyver = sys.version.split()[0]
     print(f"Python: {pyver}")
+    print(f"PythonExecutable: {sys.executable}")
+
+    ok = True
+
+    if sys.version_info[:2] == EXPECTED_PYTHON_SERIES:
+        print(f"PythonSeries: OK ({pyver})")
+    else:
+        print(f"PythonSeries: FAIL (expected 3.10.x, got {pyver})")
+        ok = False
+
+    repo_venv_ok, repo_venv_detail = _current_python_matches_repo_venv(root)
+    if repo_venv_ok:
+        print(f"RepoVenv: OK ({repo_venv_detail})")
+    else:
+        print(f"RepoVenv: FAIL ({repo_venv_detail})")
+        ok = False
+
+    runtime_ok, runtime_detail = _format_dependency_group(EXPECTED_RUNTIME_PACKAGES)
+    if runtime_ok:
+        print(f"RuntimeDeps: OK ({runtime_detail})")
+    else:
+        print(f"RuntimeDeps: FAIL ({runtime_detail})")
+        ok = False
+
+    dev_ok, dev_detail = _format_dependency_group(EXPECTED_DEV_PACKAGES)
+    if dev_ok:
+        print(f"DevDeps: OK ({dev_detail})")
+    else:
+        print(f"DevDeps: FAIL ({dev_detail})")
+        ok = False
+
+    lock_ok, lock_detail = _lockfile_status(root)
+    if lock_ok:
+        print(f"Lockfile: OK ({lock_detail})")
+    else:
+        print(f"Lockfile: FAIL ({lock_detail})")
+        ok = False
 
     try:
         import rcsd_topo_poc as pkg
@@ -57,7 +190,7 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
         print("PackageImport: FAIL")
         return 1
 
-    return 0
+    return 0 if ok else 1
 
 
 def _cmd_qc_template(_args: argparse.Namespace) -> int:
@@ -234,7 +367,7 @@ def _cmd_t03_step3_legal_space(args: argparse.Namespace) -> int:
 
 
 def _cmd_t03_step45_rcsd_association(args: argparse.Namespace) -> int:
-    from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_cli import (
+    from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_cli import (
         run_t03_step45_rcsd_association_cli,
     )
 

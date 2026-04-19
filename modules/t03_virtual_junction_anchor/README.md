@@ -13,12 +13,12 @@
   - `Step6 =` 受约束几何建立与审计
   - `Step7 = accepted / rejected` 最终发布
   - 单 case / batch 输出
-  - `step45_review_flat/`、`step67_review_flat/` 与索引汇总
+  - `step45_review_flat/`、`t03_review_flat/` 与索引汇总
 
 ## 2. 官方入口
 
 ```bash
-python3 -m rcsd_topo_poc t03-step45-rcsd-association --help
+.venv/bin/python -m rcsd_topo_poc t03-step45-rcsd-association --help
 ```
 
 说明：
@@ -29,26 +29,39 @@ python3 -m rcsd_topo_poc t03-step45-rcsd-association --help
 ## 3. 冻结前置入口
 
 ```bash
-python3 -m rcsd_topo_poc t03-step3-legal-space --help
+.venv/bin/python -m rcsd_topo_poc t03-step3-legal-space --help
 ```
 
-## 4. 当前 Step67 交付方式
+## 4. 当前 T03 模块级交付方式
 
-- 当前 `Step67` 的正式批量交付通过模块内 `run_t03_step67_batch()` 生成。
+- 当前 T03 模块级正式批量交付通过模块内 `run_t03_batch()` 生成。
 - 这属于当前模块的正式交付面，但不是 repo 官方入口，不登记到 `entrypoint-registry.md`。
-- 内网 full-input 批量执行通过 repo 级脚本 `scripts/t03_run_step67_internal_full_input_8workers.sh` 提供。
-- 该脚本对外参数面与 `scripts/t02_run_stage3_internal_full_input_8workers.sh` 保持同风格；watch 脚本 `scripts/t03_watch_step67_internal_full_input.sh` 默认按 formal-first 口径展示 `total / completed / running / pending / success / failed`。
+- 内网 full-input 批量执行当前以 repo 级脚本 `scripts/t03_run_internal_full_input_8workers.sh` 为主入口。
+- 兼容层 `scripts/t03_run_step67_internal_full_input_8workers.sh` 仍保留，但只做 wrapper / shim，并显式提示调用方迁移到新的模块级命名。
+- 该脚本对外参数面与 `scripts/t02_run_stage3_internal_full_input_8workers.sh` 保持同风格；它是当前模块的 repo 级 full-input 交付外壳，不提升为新的 repo 官方 CLI。
+- watch 脚本 `scripts/t03_watch_internal_full_input.sh` 是对应的 repo 级监控外壳；默认按 formal-first 口径展示 `total / completed / running / pending / success / failed`，其中 `success = accepted`、`failed = rejected + runtime_failed`，并显式表达当前是否已进入 `case execution` 阶段。
+- 兼容层 `scripts/t03_watch_step67_internal_full_input.sh` 仍保留，但只做 wrapper / shim，并显式提示调用方迁移到新的模块级命名。
 - 当前 T03 internal full-input 的主执行形态为：`candidate discovery -> shared handle preload -> per-case local context query -> internal runner 内直接执行 Step3/Step45/Step67`；`case-package` 物化不再是默认主执行依赖，仅保留为历史过渡路径说明。
-- 当前 T03 internal full-input 批次根目录会补写两类正式成果：
-  - `virtual_intersection_polygons.gpkg`：按 T02 official full-input 聚合口径输出的批次级 polygon 图层
-  - `nodes.gpkg`：基于 full-input 原始整层 nodes 的更新版输出，仅对当前批次代表 node 更新 `is_anchor`（`accepted => yes`，`rejected/runtime_failed => fail3`）
+- 当前 T03 internal full-input 批次根目录会补写正式成果：
+  - `virtual_intersection_polygons.gpkg`：batch aggregate polygon 图层，字段集合对齐 T02 Stage3 official full-input 当前实际聚合层实现
+  - `nodes.gpkg`：基于 full-input 原始整层 nodes 的更新版输出，只更新当前批次 selected / effective case 的代表 node `is_anchor`（`accepted => yes`，`rejected/runtime_failed => fail3`）；非代表 node 与未选中 node 保持原值
+  - `nodes_anchor_update_audit.csv`
+  - `nodes_anchor_update_audit.json`
+- `fail3` 当前只属于 T03 internal full-input 下游 `nodes.gpkg` 输出语义，不回写输入原始 `nodes.gpkg`，也不提升为 T02 或 Step3 上游契约字段。
+- 当前 full-input run root 还会实时平铺：
+  - `visual_checks/`：每完成一个 case 即镜像该 case 的 `step67_review.png`
+  - `t03_review_accepted/`、`t03_review_rejected/`、`t03_review_v2_risk/`、`t03_review_flat/`
+  - `t03_review_index.csv` 与 `t03_review_summary.json`
+  - `_internal/<RUN_ID>/t03_internal_full_input_manifest.json`：承载 static manifest、selected/discovered 列表与输出路径
+  - `_internal/<RUN_ID>/t03_internal_full_input_progress.json` 与 `t03_internal_full_input_performance.json`：承载 lightweight runtime counters、stage timer 与后续性能审计所需统计
 
 ## 5. 默认路径
 
 - 默认输入根：`/mnt/e/TestData/POC_Data/T02/Anchor`
 - 默认 `Step3` 前置根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003`
 - 默认 `Step4-5` 输出根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase`
-- 默认 `Step67` 输出根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step67_phase`
+- 默认 T03 batch 输出根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_batch`
+- 默认 T03 internal full-input 输出根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_internal_full_input`
 
 ## 6. 当前正式边界
 
@@ -82,6 +95,7 @@ python3 -m rcsd_topo_poc t03-step3-legal-space --help
 - Step3 baseline closeout：`modules/t03_virtual_junction_anchor/architecture/04-step3-closeout.md`
 - Step4-5 joint phase closeout：`modules/t03_virtual_junction_anchor/architecture/06-step45-closeout.md`
 - Step67 clarified formal stage closeout：`modules/t03_virtual_junction_anchor/architecture/08-step67-closeout.md`
+- T02 Stage3 继承边界：`modules/t03_virtual_junction_anchor/architecture/09-t02-inheritance-boundary.md`
 - `07-step6-readiness-prep.md` 保留为 Step67 正式落地前的历史准备文档，不再定义当前正式范围
 
 ## 8. 当前完成口径

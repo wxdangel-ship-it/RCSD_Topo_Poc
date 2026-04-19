@@ -8,7 +8,9 @@ import pytest
 from shapely.geometry import Point, box
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_vector
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.batch_runner import run_t03_step3_legal_space_batch
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_batch_runner import (
+    run_t03_step3_legal_space_batch,
+)
 
 
 def _write_case_package(case_root: Path, case_id: str) -> None:

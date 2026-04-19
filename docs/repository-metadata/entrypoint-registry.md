@@ -6,20 +6,28 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `57` 个。
+- 当前真实执行入口共 `59` 个。
 - 分布概览：
-  - repo 级入口文件：`33`（`Makefile` 1 + `scripts/` 31 + `python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`35`（`Makefile` 1 + `scripts/` 33 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`24`
 - 维护口径：
-  - CLI 子命令以 `python -m rcsd_topo_poc --help` 为准。
+  - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
   - 脚本入口以 `scripts/` 下纳入版本管理的文件为准。
   - 若摘要数字、表格行数与事实来源不一致，以事实来源回填本表。
+- 当前仓库本地标准环境与自检入口：
+  - `make env-sync`
+  - `make doctor`
+  - `make test`
+  - `make smoke`
+- 当前 `make test` / `make smoke` 已重新纳入 `tests/modules/t03_virtual_junction_anchor/**`、`tests/test_smoke_t03_step3_batch.py` 与 `tests/test_smoke_t03_step45_batch.py`；T03 不再作为默认本地自检的排除项。
+- 新增依赖或新增入口时，除更新本表外，还必须同步更新 `pyproject.toml`、`uv.lock`、repo root `Makefile`、`doctor` 逻辑以及受影响模块文档。
+- 当前 T03 模块仍保留单独治理轮次；在其专门收口之前，不得把 T03 现存命令示例当作新模块模板。
 
 ## 3. 当前已识别入口清单
 
 | 名称 | 路径 | 类型 | 适用范围 | 当前状态 | 是否建议后续收敛 |
 |---|---|---|---|---|---|
-| `Makefile` | `Makefile` | repo 级 | 仓库级测试入口 | `active` | 否 |
+| `Makefile` | `Makefile` | repo 级 | 仓库级环境同步 / 自检 / 测试入口 | `active` | 否 |
 | `agent_enter.sh` | `scripts/agent_enter.sh` | repo 级 | 进入仓库后的标准握手辅助 | `active` | 否 |
 | `t01_pull_from_internal_github.sh` | `scripts/t01_pull_from_internal_github.sh` | repo 级 | T01 部署机从内网 Git 远端 clone/fetch/pull 主干 | `active` | 否 |
 | `t01_pull_main_from_internal_github.sh` | `scripts/t01_pull_main_from_internal_github.sh` | repo 级 | 在现有 repo worktree 中从指定 remote / branch 拉取主干；若 worktree dirty 或存在 untracked 文件则阻断 | `active` | 否 |
@@ -41,10 +49,12 @@
 | `t02_export_text_bundle_internal_divmerge_focus_mainnodeids.sh` | `scripts/t02_export_text_bundle_internal_divmerge_focus_mainnodeids.sh` | repo 级 | T02 内网分歧/合流 focus mainnodeid 文本证据包导出脚本，默认打包 `13460276 / 13460274 / 765592 / 13460256`，参数全部可外显覆盖 | `active` | 否 |
 | `t02_export_text_bundle_internal_multi_mainnodeids.sh` | `scripts/t02_export_text_bundle_internal_multi_mainnodeids.sh` | repo 级 | T02 内网多 mainnodeid 单文件文本证据包导出脚本，默认写 `Anchor_2` 根目录，支持位置参数或 `MAINNODEIDS_TEXT` 自定义并可自动解包 | `active` | 否 |
 | `pull_rcsd_topo_poc_main_from_github.sh` | `scripts/pull_rcsd_topo_poc_main_from_github.sh` | repo 级 | RCSD_Topo_Poc 固定仓库路径 / 固定远端 / 固定主干的零参数 GitHub 下拉脚本；首次运行可 clone，后续运行执行 fetch + switch main + ff-only pull | `active` | 否 |
-| `t03_run_step67_internal_full_input_8workers.sh` | `scripts/t03_run_step67_internal_full_input_8workers.sh` | repo 级 | T03 Step67 内网 full-input 全量运行脚本；外层 shell 结构与 public env surface 镜像 T02 Stage3 内网模板，内部主链为 candidate discovery / shared handle preload / per-case local context query / direct Step3-45-67 execution，并在 early failure 时补 internal failure 工件 | `active` | 否 |
-| `t03_watch_step67_internal_full_input.sh` | `scripts/t03_watch_step67_internal_full_input.sh` | repo 级 | T03 Step67 内网 full-input 实时跟踪脚本；默认按 formal-first 口径显示 total/completed/running/pending/success/failed，只有 `DEBUG_VISUAL=1` 时才从 review-only 工件读取 V1-V5 统计 | `active` | 否 |
-| `python -m rcsd_topo_poc` | `src/rcsd_topo_poc/__main__.py` | repo 级 | Python 包入口 | `active` | 否 |
-| `doctor` | `src/rcsd_topo_poc/cli.py` | repo 级 | 检查 repo / docs / Python 环境与必需文档存在性 | `active` | 否 |
+| `t03_run_internal_full_input_8workers.sh` | `scripts/t03_run_internal_full_input_8workers.sh` | repo 级 | T03 模块级内网 full-input 全量运行主脚本；外层 shell 结构与 public env surface 镜像 T02 Stage3 内网模板，内部主链为 candidate discovery / shared handle preload / per-case local context query / direct Step3-45-67 execution，并在 `.venv/bin/python` 关键依赖不可用时自动 fallback 到 `python3`；当前 `_internal/<RUN_ID>/` 已拆分为 `t03_internal_full_input_manifest/progress/performance/failure` 等模块级 observability 工件，批次根目录正式成果至少包括 `virtual_intersection_polygons.gpkg`、downstream `nodes.gpkg` 与 `t03_review_*` review-only 输出 | `active` | 否 |
+| `t03_watch_internal_full_input.sh` | `scripts/t03_watch_internal_full_input.sh` | repo 级 | T03 模块级内网 full-input 实时跟踪主脚本；当前作为 T03 internal full-input 的正式 repo 级监控面，默认按 formal-first 口径显示 `total / completed / running / pending / success / failed`（其中 `success = accepted`、`failed = rejected + runtime_failed`）与执行阶段信息，只有 `DEBUG_VISUAL=1` 时才从 review-only 工件读取 V1-V5 统计；同时兼容读取历史 `step67` 命名工件 | `active` | 否 |
+| `t03_run_step67_internal_full_input_8workers.sh` | `scripts/t03_run_step67_internal_full_input_8workers.sh` | repo 级 | T03 内网 full-input 历史脚本名的兼容 wrapper；当前只负责提示迁移到 `t03_run_internal_full_input_8workers.sh` 并转发调用，不再承担模块级主命名事实 | `compatibility_wrapper` | 是 |
+| `t03_watch_step67_internal_full_input.sh` | `scripts/t03_watch_step67_internal_full_input.sh` | repo 级 | T03 内网 full-input 历史 watch 脚本名的兼容 wrapper；当前只负责提示迁移到 `t03_watch_internal_full_input.sh` 并转发调用，不再承担模块级主命名事实 | `compatibility_wrapper` | 是 |
+| `.venv/bin/python -m rcsd_topo_poc` | `src/rcsd_topo_poc/__main__.py` | repo 级 | Python 包入口 | `active` | 否 |
+| `doctor` | `src/rcsd_topo_poc/cli.py` | repo 级 | 检查 repo / docs / repo `.venv` / 锁文件 / 运行与开发依赖是否齐备 | `active` | 否 |
 | `qc-template` | `src/rcsd_topo_poc/cli.py` | repo 级 | 打印 `TEXT_QC_BUNDLE v1` 模板 | `active` | 否 |
 | `qc-demo` | `src/rcsd_topo_poc/cli.py` | repo 级 | 打印可粘贴、截断版 `TEXT_QC_BUNDLE` 示例 | `active` | 否 |
 | `lint-text` | `src/rcsd_topo_poc/cli.py` | repo 级 | 校验文本可粘贴性，包括体积、行数与长行约束 | `active` | 否 |

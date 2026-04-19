@@ -26,6 +26,7 @@
   - `Step6 =` 受约束几何建立与后处理
   - `Step7 = accepted / rejected` 最终业务发布
   - 批量运行、平铺 PNG、CSV/JSON 汇总
+  - internal full-input：`candidate discovery -> shared handle preload -> per-case local context query -> direct Step3/Step45/Step67 execution`
 - 明确不在正式范围：
   - `diverge / merge / continuous divmerge / complex 128`
   - `T02` 独立 `stage4 div/merge`
@@ -219,6 +220,26 @@
   - `V4 误包 foreign`
   - `V5 明确失败`
 
+### 3.10 internal full-input 执行与监控语义
+
+- 当前 T03 internal full-input 是模块正式交付面的一部分，但通过 repo 级脚本提供，不提升为新的 repo 官方 CLI：
+  - 主脚本：`scripts/t03_run_internal_full_input_8workers.sh`
+  - 主 watch：`scripts/t03_watch_internal_full_input.sh`
+  - 兼容 wrapper：`scripts/t03_run_step67_internal_full_input_8workers.sh` / `scripts/t03_watch_step67_internal_full_input.sh`
+- internal full-input 当前正式执行形态为：
+  - `candidate discovery`
+  - `shared handle preload`
+  - `per-case local context query`
+  - internal runner 内直接执行 `Step3 / Step45 / Step67`
+- `case-package` 物化不再是 internal full-input 默认主执行依赖；若实现中仍保留相关兼容逻辑，它只属于历史过渡路径，不重新定义当前正式主链。
+- watch 的默认口径为 formal-first：
+  - 默认展示 `total / completed / running / pending / success / failed`
+  - 其中：
+    - `success = accepted`
+    - `failed = rejected + runtime_failed`
+  - 默认不显示 `V1-V5`；仅当 `DEBUG_VISUAL=1` 时，才允许从 review-only 工件读取视觉统计
+- 当前 internal progress 必须能显式表达是否已进入 `case execution` 阶段；该语义用于区分 preload/discovery 与真正 case-level Step3/45/67 执行。
+
 ## 4. Outputs
 
 ### 4.1 Step45 run root 固定输出
@@ -268,15 +289,16 @@
   - `step5`
   - `joint_phase`
 
-### 4.4 Step67 run root 固定输出
+### 4.4 T03 batch run root 固定输出
 
 - `preflight.json`
 - `summary.json`
-- `step67_review_index.csv`
-- `step67_review_accepted/`
-- `step67_review_rejected/`
-- `step67_review_v2_risk/`
-- `step67_review_flat/`
+- `t03_review_index.csv`
+- `t03_review_summary.json`
+- `t03_review_accepted/`
+- `t03_review_rejected/`
+- `t03_review_v2_risk/`
+- `t03_review_flat/`
 - `cases/`
 
 ### 4.5 Step67 单 case 固定输出
@@ -290,7 +312,6 @@
 - `step7_status.json`
 - `step7_audit.json`
 - `step67_review.png`
-- `step67_review_summary.json` 为 batch 级 review-only 工件，不进入正式结果面
 
 ### 4.6 Step67 status / audit 至少包含
 
@@ -321,7 +342,7 @@
   - `manual_review_recommended`
 - `step67_final_polygon.gpkg` 只允许保留正式业务字段；不得写入 `visual_review_class / visual_audit_class`
 - 正式 `summary.json` 只统计 formal 口径；不得写入 `visual_v1_count / visual_v2_count / visual_v3_count / visual_v4_count / visual_v5_count`
-- `step67_review_index.csv` 至少要包含：
+- `t03_review_index.csv` 至少要包含：
   - `sequence_no`
   - `case_id`
   - `template_class`
@@ -334,26 +355,108 @@
   - `note`
   - `image_name`
   - `image_path`
-- `step67_review_summary.json` 当前属于 review-only 工件；若存在，允许记录 `V1-V5` 统计，但不得替代正式 `summary.json`
+- `t03_review_summary.json` 当前属于 review-only 工件；若存在，允许记录 `V1-V5` 统计，但不得替代正式 `summary.json`
+
+### 4.7 internal full-input run root 固定输出
+
+- `preflight.json`
+- `cases/`
+- `visual_checks/`
+- `virtual_intersection_polygons.gpkg`
+- `nodes.gpkg`
+- `nodes_anchor_update_audit.csv`
+- `nodes_anchor_update_audit.json`
+
+说明：
+
+- `virtual_intersection_polygons.gpkg`
+  - 属于当前 batch / full-input 的正式聚合成果图层，固定输出在当前批次 run root。
+  - 聚合来源是各 case 最终 `Step67` polygon；当前实现只纳入最终业务结果为非 failure 的 case，`rejected / runtime_failed` case 不写入该图层。
+  - 输出 CRS 固定为 `EPSG:3857`。
+  - 当前字段集合与 T02 Stage3 official full-input 聚合成果层的实际代码实现对齐；T03 当前正式字段为：
+    - `mainnodeid`
+    - `kind`
+    - `kind_source`
+    - `status`
+    - `representative_node_id`
+    - `kind_2`
+    - `grade_2`
+    - `success`
+    - `business_outcome_class`
+    - `acceptance_class`
+    - `root_cause_layer`
+    - `root_cause_type`
+    - `visual_review_class`
+    - `official_review_eligible`
+    - `failure_bucket`
+    - `source_case_dir`
+  - 当前写值规则：
+    - `mainnodeid` 优先取代表 node 的 `nodes.mainnodeid`，为空时回退代表 node 的 `nodes.id`
+    - `kind / kind_source` 沿用 T02 official full-input 聚合层当前实际实现：优先取代表 node 的 `nodes.kind`，缺失时回退 `nodes.kind_2`
+    - `status / root_cause_layer / root_cause_type / business_outcome_class / acceptance_class / visual_review_class / official_review_eligible / failure_bucket` 的字段槽位语义与 T02 聚合层保持一致，但字段值内容按 T03 当前 `Step67` 结果写入，不继承 T02 Stage3 的状态值域
+  - `visual_review_class / official_review_eligible / failure_bucket` 属于 batch aggregate compatibility 字段，只允许停留在该聚合图层；不得据此把 `step7_status.json`、`step67_final_polygon.gpkg` 或正式 `summary.json` 重新写回 visual/manual review 字段。
+- `nodes.gpkg`
+  - 属于当前 batch / full-input 的正式成果图层，固定输出在当前批次 run root。
+  - 它基于 full-input 输入整层 `nodes.gpkg` copy-on-write 生成，继承输入全量 properties 与 geometry，输出 CRS 固定为 `EPSG:3857`。
+  - 只允许更新当前批次 selected / effective case 对应代表 node 的 `is_anchor`：
+    - `step7_state = accepted -> yes`
+    - `step7_state = rejected -> fail3`
+    - `runtime_failed / formal result missing -> fail3`
+  - 这里的 `rejected / runtime_failed` 指当前 T03 full-input 批次执行的最终失败面。
+  - 非代表 node 保持输入值不变；未被当前批次选中的 node 保持输入值不变。
+  - `is_anchor = fail3` 只属于 T03 internal full-input 下游 `nodes.gpkg` 输出语义，不回写输入原始 nodes，也不修改 T02 / Step3 上游字段契约。
+- `nodes_anchor_update_audit.csv / nodes_anchor_update_audit.json`
+  - 属于当前 batch / full-input 的正式审计工件，固定输出在当前批次 run root。
+  - 每条审计记录至少包含：
+    - `case_id`
+    - `representative_node_id`
+    - `previous_is_anchor`
+    - `new_is_anchor`
+    - `step7_state`
+    - `reason`
+  - `nodes_anchor_update_audit.json` 当前还应稳定汇总：
+    - `total_update_count`
+    - `updated_to_yes_count`
+    - `updated_to_fail3_count`
+    - `rows`
+
+### 4.8 internal full-input internal / review-only 工件
+
+- `<OUT_ROOT>/_internal/<RUN_ID>/t03_internal_full_input_manifest.json`
+- `<OUT_ROOT>/_internal/<RUN_ID>/t03_internal_full_input_progress.json`
+- `<OUT_ROOT>/_internal/<RUN_ID>/t03_internal_full_input_performance.json`
+- `<OUT_ROOT>/_internal/<RUN_ID>/case_progress/*.json`
+
+语义：
+
+- `t03_internal_full_input_manifest.json` 承载 selected/discovered/excluded case 列表、输入路径、输出路径、shared-memory 摘要与 run 级静态语义；它是 static manifest，不承担高频写盘职责。
+- `t03_internal_full_input_progress.json` 负责承载 lightweight runtime counters：`phase / status / message / total/completed/running/pending/success/failed / last_completed / entered_case_execution` 等监控语义；运行中不得再高频重写大体量 case id 列表。
+- `t03_internal_full_input_performance.json` 负责承载累计耗时、阶段耗时、stage timer、完成速率等性能统计。
+- 运行中高频 JSON 写盘必须采用 temp file + atomic rename，避免 watch 读到半写状态、空文件或假 bootstrap。
+- `visual_checks/` 属于 review-only 平铺可视化目录；每完成一个 case 即镜像该 case 的 `step67_review.png`，不等待整批结束后再统一生成。
 
 ## 5. EntryPoints
 
 ### 5.1 repo 官方入口
 
 ```bash
-python3 -m rcsd_topo_poc t03-step45-rcsd-association --help
+.venv/bin/python -m rcsd_topo_poc t03-step45-rcsd-association --help
 ```
 
 ### 5.2 冻结前置入口
 
 ```bash
-python3 -m rcsd_topo_poc t03-step3-legal-space --help
+.venv/bin/python -m rcsd_topo_poc t03-step3-legal-space --help
 ```
 
-### 5.3 Step67 交付方式
+### 5.3 T03 batch / Step67 交付方式
 
 - 当前 `Step67` 没有 repo 官方 CLI
-- 当前正式 Step67 批量交付通过模块内 `run_t03_step67_batch()` 与 closeout run root 维持
+- 当前正式 T03 批量交付通过模块内 `run_t03_batch()` 与 closeout run root 维持
+- internal full-input 通过 repo 级脚本提供交付与监控外壳：
+  - 主脚本：`scripts/t03_run_internal_full_input_8workers.sh`
+  - 主 watch：`scripts/t03_watch_internal_full_input.sh`
+  - 兼容 wrapper：`scripts/t03_run_step67_internal_full_input_8workers.sh` / `scripts/t03_watch_step67_internal_full_input.sh`
 
 ## 6. Params
 

@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_batch_runner import run_t03_step45_rcsd_association_batch
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_batch_runner import (
+    run_t03_step45_rcsd_association_batch,
+)
 from tests.modules.t03_virtual_junction_anchor._step45_helpers import build_center_case_a
 
 

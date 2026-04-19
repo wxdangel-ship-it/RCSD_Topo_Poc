@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+
 from rcsd_topo_poc import cli
 
 
@@ -158,3 +160,21 @@ def test_t03_step45_cli_parses_custom_arguments(monkeypatch) -> None:
     assert captured["out_root"] == "/tmp/t03-step45-out"
     assert captured["debug"] is True
     assert captured["debug_render"] is True
+
+
+def test_cmd_t03_step45_rcsd_association_delegates_to_association_cli(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_runner(args) -> int:
+        captured["args"] = args
+        return 0
+
+    from rcsd_topo_poc.modules.t03_virtual_junction_anchor import association_cli
+
+    monkeypatch.setattr(association_cli, "run_t03_step45_rcsd_association_cli", _fake_runner)
+
+    args = argparse.Namespace(case_root="/tmp/cases")
+    exit_code = cli._cmd_t03_step45_rcsd_association(args)
+
+    assert exit_code == 0
+    assert captured["args"] is args

@@ -8,8 +8,7 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t03_step67_full_input_internal}"
 RUN_ID="${RUN_ID:-}"
 RUN_ROOT="${RUN_ROOT:-}"
-INTERVAL_SEC="${INTERVAL_SEC:-10}"
-RECENT_CASES="${RECENT_CASES:-8}"
+INTERVAL_SEC="${INTERVAL_SEC:-5}"
 ONCE="${ONCE:-0}"
 CLEAR_SCREEN="${CLEAR_SCREEN:-1}"
 DEBUG_VISUAL="${DEBUG_VISUAL:-0}"
@@ -24,11 +23,6 @@ fi
 
 if ! [[ "$INTERVAL_SEC" =~ ^[1-9][0-9]*$ ]]; then
   echo "[BLOCK] INTERVAL_SEC must be a positive integer: $INTERVAL_SEC" >&2
-  exit 2
-fi
-
-if ! [[ "$RECENT_CASES" =~ ^[1-9][0-9]*$ ]]; then
-  echo "[BLOCK] RECENT_CASES must be a positive integer: $RECENT_CASES" >&2
   exit 2
 fi
 
@@ -57,11 +51,7 @@ out_root = Path(os.environ["OUT_ROOT"])
 if not out_root.is_dir():
     sys.exit(1)
 
-dirs = [
-    path
-    for path in out_root.iterdir()
-    if path.is_dir() and path.name != "_internal"
-]
+dirs = [path for path in out_root.iterdir() if path.is_dir() and path.name != "_internal"]
 if not dirs:
     sys.exit(2)
 
@@ -87,8 +77,8 @@ while true; do
   fi
 
   RUN_ROOT="$RESOLVED_RUN_ROOT" \
-  RECENT_CASES="$RECENT_CASES" \
   DEBUG_VISUAL="$DEBUG_VISUAL" \
+  PYTHONUNBUFFERED=1 \
   "$PYTHON_BIN" - <<'PY'
 import json
 import os
@@ -103,177 +93,110 @@ def load_json(path: Path):
         return None
 
 
-def iso_or_dash(value):
-    if not value:
-        return "-"
-    return str(value)
-
-
-def safe_mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except FileNotFoundError:
-        return 0.0
-
-
-def truncate(text, limit=88):
-    if not text:
-        return "-"
-    text = str(text).strip().replace("\n", " ")
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
-
-
 run_root = Path(os.environ["RUN_ROOT"])
-recent_cases = int(os.environ["RECENT_CASES"])
 debug_visual = os.environ.get("DEBUG_VISUAL", "0") == "1"
 internal_root = run_root.parent / "_internal" / run_root.name
-case_progress_root = internal_root / "case_progress"
-summary_path = run_root / "summary.json"
-review_summary_path = run_root / "step67_review_summary.json"
-preflight_path = run_root / "preflight.json"
-internal_progress_path = internal_root / "internal_full_input_progress.json"
+preflight_doc = load_json(run_root / "preflight.json") or {}
+summary_doc = load_json(run_root / "summary.json") or {}
+review_summary_doc = load_json(run_root / "step67_review_summary.json") or {}
+internal_progress_doc = load_json(internal_root / "internal_full_input_progress.json") or {}
 
-summary_doc = load_json(summary_path) if summary_path.is_file() else None
-review_summary_doc = load_json(review_summary_path) if review_summary_path.is_file() else None
-preflight_doc = load_json(preflight_path) if preflight_path.is_file() else None
-internal_progress_doc = load_json(internal_progress_path) if internal_progress_path.is_file() else None
+phase = str(
+    internal_progress_doc.get("phase")
+    or ("completed" if summary_doc else "bootstrap")
+)
+status = str(
+    internal_progress_doc.get("status")
+    or ("completed" if summary_doc else "running")
+)
+message = str(
+    internal_progress_doc.get("message")
+    or ("summary.json written" if summary_doc else "waiting for progress")
+)
+entered_case_execution = bool(internal_progress_doc.get("entered_case_execution_stage", phase == "direct_case_execution"))
 
-selected_case_ids = []
-for source in (summary_doc, preflight_doc, internal_progress_doc):
-    if not source:
-        continue
-    values = source.get("effective_case_ids") or source.get("selected_case_ids")
-    if values:
-        selected_case_ids = [str(value) for value in values]
-        break
-
-known_case_ids = set(selected_case_ids)
-if case_progress_root.is_dir():
-    known_case_ids.update(path.stem for path in case_progress_root.glob("*.json"))
-cases_root = run_root / "cases"
-if cases_root.is_dir():
-    known_case_ids.update(path.name for path in cases_root.iterdir() if path.is_dir())
-
-rows = []
-accepted = 0
-rejected = 0
-runtime_failed = 0
-running = 0
-
-for case_id in sorted(known_case_ids, key=lambda item: (0, int(item)) if item.isdigit() else (1, item)):
-    internal_case_doc = load_json(case_progress_root / f"{case_id}.json") if case_progress_root.is_dir() else None
-    watch_status_path = cases_root / case_id / "step67_watch_status.json"
-    watch_doc = load_json(watch_status_path) if watch_status_path.is_file() else None
-    step7_status_path = cases_root / case_id / "step7_status.json"
-    step7_doc = load_json(step7_status_path) if step7_status_path.is_file() else None
-
-    doc = internal_case_doc or {}
-    if watch_doc:
-        doc = {**doc, **watch_doc}
-    if step7_doc and not watch_doc:
-        doc = {
-            **doc,
-            "state": str(step7_doc.get("step7_state") or "completed"),
-            "current_stage": "completed",
-            "reason": str(step7_doc.get("reason") or "-"),
-            "detail": str(step7_doc.get("note") or step7_doc.get("reason") or "-"),
-            "updated_at": None,
-        }
-
-    state = str(doc.get("state") or "pending")
-    current_stage = str(doc.get("current_stage") or "-")
-    reason = str(doc.get("reason") or "-")
-    detail = truncate(doc.get("detail"))
-    updated_at = iso_or_dash(doc.get("updated_at"))
-
-    if state == "accepted":
-        accepted += 1
-    elif state == "rejected":
-        rejected += 1
-    elif state == "failed":
-        runtime_failed += 1
-    elif state == "running":
-        running += 1
-
-    rows.append(
-        {
-            "case_id": case_id,
-            "state": state,
-            "current_stage": current_stage,
-            "reason": reason,
-            "detail": detail,
-            "updated_at": updated_at,
-            "mtime": max(
-                safe_mtime(watch_status_path),
-                safe_mtime(step7_status_path),
-                safe_mtime(case_progress_root / f"{case_id}.json"),
-            ),
-        }
+total = int(
+    internal_progress_doc.get("selected_case_count")
+    or preflight_doc.get("selected_case_count")
+    or summary_doc.get("effective_case_count")
+    or 0
+)
+completed = int(
+    internal_progress_doc.get("completed_case_count")
+    or (
+        int(summary_doc.get("step7_accepted_count", 0))
+        + int(summary_doc.get("step7_rejected_count", 0))
+        + len(summary_doc.get("failed_case_ids", []))
     )
+)
+success = int(
+    internal_progress_doc.get("success_case_count")
+    or internal_progress_doc.get("accepted_case_count")
+    or summary_doc.get("step7_accepted_count")
+    or 0
+)
+business_rejected = int(
+    internal_progress_doc.get("rejected_case_count")
+    or summary_doc.get("step7_rejected_count")
+    or 0
+)
+runtime_failed = int(
+    internal_progress_doc.get("runtime_failed_case_count")
+    or len(summary_doc.get("failed_case_ids", []))
+)
+failed = business_rejected + runtime_failed
+running = int(internal_progress_doc.get("running_case_count") or 0)
+pending = int(
+    internal_progress_doc.get("pending_case_count")
+    if "pending_case_count" in internal_progress_doc
+    else max(total - completed - running, 0)
+)
 
-total = len(selected_case_ids) if selected_case_ids else len(rows)
-completed = accepted + rejected + runtime_failed
-pending = max(total - completed - running, 0)
-success = accepted
-failed = rejected + runtime_failed
+performance = internal_progress_doc.get("performance") or {}
+elapsed_seconds_total = performance.get("elapsed_seconds_total")
+avg_completed_case_seconds = performance.get("avg_completed_case_seconds")
+completed_cases_per_minute = performance.get("completed_cases_per_minute")
+last_completed_case_id = internal_progress_doc.get("last_completed_case_id") or "-"
+last_completed_at = internal_progress_doc.get("last_completed_at") or "-"
 
-phase = "-"
-phase_status = "-"
-phase_message = "-"
-if internal_progress_doc:
-    phase = str(internal_progress_doc.get("phase") or "-")
-    phase_status = str(internal_progress_doc.get("status") or "-")
-    phase_message = str(internal_progress_doc.get("message") or "-")
-elif summary_doc:
-    phase = "completed"
-    phase_status = "completed"
-    phase_message = "summary.json written"
-
-rows.sort(key=lambda item: (item["mtime"], item["case_id"]), reverse=True)
-
-print(f"[MONITOR] snapshot_at={datetime.now().isoformat(timespec='seconds')}")
-print(f"[MONITOR] run_root={run_root}")
-print(f"[MONITOR] internal_root={internal_root}")
-print(f"[MONITOR] preflight_path={preflight_path}")
-print(f"[MONITOR] summary_path={summary_path}")
-print(f"[PHASE] phase={phase} status={phase_status} message={truncate(phase_message, 120)}")
+print(f"[MONITOR] snapshot_at={datetime.now().isoformat(timespec='seconds')}", flush=True)
+print(f"[RUN] run_root={run_root}", flush=True)
+print(f"[RUN] internal_root={internal_root}", flush=True)
+print(
+    f"[PHASE] phase={phase} status={status} entered_case_execution={'yes' if entered_case_execution else 'no'}",
+    flush=True,
+)
+print(f"[MESSAGE] {message}", flush=True)
 print(
     "[COUNTS] "
-    f"total={total} "
-    f"completed={completed} "
-    f"running={running} "
-    f"pending={pending} "
-    f"success={success} "
-    f"failed={failed}"
+    f"total={total} completed={completed} success={success} failed={failed} running={running} pending={pending}",
+    flush=True,
 )
 print(
     "[DETAIL] "
-    f"business_rejected={rejected} "
-    f"runtime_failed={runtime_failed}"
+    f"business_rejected={business_rejected} runtime_failed={runtime_failed}",
+    flush=True,
+)
+print(
+    "[PERF] "
+    f"elapsed_s={elapsed_seconds_total if elapsed_seconds_total is not None else '-'} "
+    f"avg_case_s={avg_completed_case_seconds if avg_completed_case_seconds is not None else '-'} "
+    f"case_per_min={completed_cases_per_minute if completed_cases_per_minute is not None else '-'} "
+    f"last_completed_case_id={last_completed_case_id} last_completed_at={last_completed_at}",
+    flush=True,
 )
 
 if debug_visual and review_summary_doc:
     visual_counts = review_summary_doc.get("visual_class_counts") or {}
-    parts = []
-    for visual_key in (
-        "V1 认可成功",
-        "V2 业务正确但几何待修",
-        "V3 漏包 required",
-        "V4 误包 foreign",
-        "V5 明确失败",
-    ):
-        parts.append(f"{visual_key.split()[0]}={int(visual_counts.get(visual_key, 0))}")
-    print("[VISUAL] " + " ".join(parts))
-
-print("[RECENT]")
-for row in rows[:recent_cases]:
     print(
-        f"  {row['case_id']}: state={row['state']} stage={row['current_stage']} "
-        f"reason={truncate(row['reason'], 48)} updated_at={row['updated_at']}"
+        "[VISUAL] "
+        f"V1={int(visual_counts.get('V1 认可成功', 0))} "
+        f"V2={int(visual_counts.get('V2 业务正确但几何待修', 0))} "
+        f"V3={int(visual_counts.get('V3 漏包 required', 0))} "
+        f"V4={int(visual_counts.get('V4 误包 foreign', 0))} "
+        f"V5={int(visual_counts.get('V5 明确失败', 0))}",
+        flush=True,
     )
-    print(f"    detail={row['detail']}")
 PY
 
   if [[ "$ONCE" == "1" ]]; then

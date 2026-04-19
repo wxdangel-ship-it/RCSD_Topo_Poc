@@ -117,6 +117,7 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_p
     review_summary_doc = json.loads((artifacts.run_root / "step67_review_summary.json").read_text(encoding="utf-8"))
     internal_manifest = json.loads((artifacts.internal_root / "internal_full_input_manifest.json").read_text(encoding="utf-8"))
     internal_progress = json.loads((artifacts.internal_root / "internal_full_input_progress.json").read_text(encoding="utf-8"))
+    internal_performance = json.loads((artifacts.internal_root / "internal_full_input_performance.json").read_text(encoding="utf-8"))
     case_progress = json.loads((artifacts.internal_root / "case_progress" / "100001.json").read_text(encoding="utf-8"))
     watch_status = json.loads((step67_case_dir / "step67_watch_status.json").read_text(encoding="utf-8"))
     polygons = read_vector_layer(polygons_path).features
@@ -142,6 +143,13 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_p
     assert internal_progress["phase"] == "completed"
     assert internal_progress["status"] == "completed"
     assert internal_progress["execution_mode"] == "direct_shared_handle_local_query"
+    assert internal_progress["completed_case_count"] == 1
+    assert internal_progress["success_case_count"] == 1
+    assert internal_progress["failed_case_count"] == 0
+    assert internal_progress["entered_case_execution_stage"] is True
+    assert internal_performance["phase"] == "completed"
+    assert internal_performance["selected_case_count"] == 1
+    assert internal_performance["completed_case_count"] == 1
     assert case_progress["state"] == "accepted"
     assert watch_status["state"] == "accepted"
     assert watch_status["current_stage"] == "completed"
@@ -152,6 +160,7 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_p
     assert internal_manifest["transitional_case_package_path_retained"] is False
     assert internal_manifest["virtual_intersection_polygons_path"] == str(polygons_path)
     assert internal_manifest["nodes_output_path"] == str(updated_nodes_path)
+    assert internal_manifest["performance_path"] == str(artifacts.internal_root / "internal_full_input_performance.json")
     assert len(polygons) == 1
     polygon_properties = polygons[0].properties
     assert set(polygon_properties) == {
@@ -314,6 +323,7 @@ def test_internal_full_input_runner_writes_nodes_fail3_for_runtime_failed_cases(
     updated_nodes = read_vector_layer(artifacts.run_root / "nodes.gpkg").features
     nodes_audit_doc = json.loads((artifacts.run_root / "nodes_anchor_update_audit.json").read_text(encoding="utf-8"))
     polygons = read_vector_layer(artifacts.run_root / "virtual_intersection_polygons.gpkg").features
+    internal_progress = json.loads((artifacts.internal_root / "internal_full_input_progress.json").read_text(encoding="utf-8"))
 
     updated_node_map = {str(feature.properties["id"]): feature.properties.get("is_anchor") for feature in updated_nodes}
     assert updated_node_map["100001"] == "yes"
@@ -327,6 +337,9 @@ def test_internal_full_input_runner_writes_nodes_fail3_for_runtime_failed_cases(
     }
     assert len(polygons) == 1
     assert polygons[0].properties["mainnodeid"] == "100001"
+    assert internal_progress["runtime_failed_case_count"] == 1
+    assert internal_progress["failed_case_count"] == 1
+    assert "100002" in internal_progress["runtime_failed_case_ids"]
 
 
 def test_internal_full_input_runner_writes_failure_artifact_on_prepare_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

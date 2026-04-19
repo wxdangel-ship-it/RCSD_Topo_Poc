@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
+from time import perf_counter
 from typing import Any
 
 from shapely.geometry import box
@@ -87,6 +89,7 @@ CASE_FILE_LIST = (
 )
 
 ALLOWED_KIND_2_VALUES = frozenset({4, 2048})
+PROGRESS_LOG_INTERVAL_CASES = 1000
 
 
 @dataclass(frozen=True)
@@ -659,6 +662,27 @@ def _write_internal_progress(
     write_json(internal_root / "internal_full_input_progress.json", payload)
 
 
+def _write_internal_performance(
+    *,
+    internal_root: Path,
+    run_root: Path,
+    phase: str,
+    status: str,
+    payload: dict[str, Any],
+) -> None:
+    write_json(
+        internal_root / "internal_full_input_performance.json",
+        {
+            "updated_at": _now_text(),
+            "run_root": str(run_root),
+            "internal_root": str(internal_root),
+            "phase": phase,
+            "status": status,
+            **payload,
+        },
+    )
+
+
 def _mirror_visual_checks(*, source_dir: Path, target_dir: Path) -> None:
     target_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -668,8 +692,29 @@ def _mirror_visual_checks(*, source_dir: Path, target_dir: Path) -> None:
     if same_dir:
         return
 
+    for existing_png in target_dir.glob("*.png"):
+        if existing_png.is_file():
+            existing_png.unlink()
+
     for png_path in sorted(source_dir.glob("*.png"), key=lambda path: sort_patch_key(path.name)):
         shutil.copy2(png_path, target_dir / png_path.name)
+
+
+def _publish_incremental_visual_check(
+    *,
+    source_png_path: str,
+    target_dir: Path,
+    case_id: str,
+    step7_state: str,
+) -> None:
+    source_path = Path(source_png_path)
+    if not source_path.is_file():
+        return
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / f"{case_id}_{step7_state}_step67_review.png"
+    shutil.copy2(source_path, target_path)
+    latest_path = target_dir / "latest_step67_review.png"
+    shutil.copy2(source_path, latest_path)
 
 
 def _write_internal_failure(
@@ -929,6 +974,189 @@ def run_t03_step67_internal_full_input(
         "rcsdroad_path": resolved_rcsdroad_path,
         "rcsdnode_path": resolved_rcsdnode_path,
     }
+    run_started_at = _now_text()
+    run_started_perf = perf_counter()
+    progress_lock = Lock()
+    progress_state: dict[str, Any] = {
+        "phase": "bootstrap",
+        "status": "running",
+        "message": "Preloading shared nodes handle for T03 internal full-input execution.",
+        "current_phase_started_perf": run_started_perf,
+        "completed_phase_durations_seconds": {},
+        "entered_case_execution_stage": False,
+        "running_case_ids": set(),
+        "completed_case_count": 0,
+        "accepted_case_count": 0,
+        "rejected_case_count": 0,
+        "runtime_failed_case_count": 0,
+        "case_elapsed_total_seconds": 0.0,
+        "last_completed_case_id": None,
+        "last_completed_at": None,
+        "next_progress_log_threshold": PROGRESS_LOG_INTERVAL_CASES,
+    }
+
+    def _runtime_metrics_locked() -> dict[str, Any]:
+        now_perf = perf_counter()
+        total = len(selected_case_ids)
+        completed = int(progress_state["completed_case_count"])
+        running = len(progress_state["running_case_ids"])
+        pending = max(total - completed - running, 0)
+        elapsed_total = max(now_perf - float(run_started_perf), 0.0)
+        case_elapsed_total = float(progress_state["case_elapsed_total_seconds"])
+        avg_completed_case_seconds = (
+            round(case_elapsed_total / completed, 6) if completed > 0 else None
+        )
+        completed_cases_per_minute = (
+            round(completed / (elapsed_total / 60.0), 6) if completed > 0 and elapsed_total > 0 else 0.0
+        )
+        eta_remaining_seconds = (
+            round(pending / (completed / elapsed_total), 6)
+            if pending > 0 and completed > 0 and elapsed_total > 0
+            else None
+        )
+        phase_durations = {
+            phase_name: round(float(value), 6)
+            for phase_name, value in progress_state["completed_phase_durations_seconds"].items()
+        }
+        current_phase = str(progress_state["phase"])
+        phase_durations[current_phase] = round(
+            phase_durations.get(current_phase, 0.0)
+            + max(now_perf - float(progress_state["current_phase_started_perf"]), 0.0),
+            6,
+        )
+        return {
+            "entered_case_execution_stage": bool(progress_state["entered_case_execution_stage"]),
+            "completed_case_count": completed,
+            "accepted_case_count": int(progress_state["accepted_case_count"]),
+            "rejected_case_count": int(progress_state["rejected_case_count"]),
+            "runtime_failed_case_count": int(progress_state["runtime_failed_case_count"]),
+            "success_case_count": int(progress_state["accepted_case_count"]),
+            "failed_case_count": int(progress_state["rejected_case_count"]) + int(progress_state["runtime_failed_case_count"]),
+            "running_case_count": running,
+            "pending_case_count": pending,
+            "last_completed_case_id": progress_state["last_completed_case_id"],
+            "last_completed_at": progress_state["last_completed_at"],
+            "performance": {
+                "run_started_at": run_started_at,
+                "elapsed_seconds_total": round(elapsed_total, 6),
+                "case_elapsed_total_seconds": round(case_elapsed_total, 6),
+                "avg_completed_case_seconds": avg_completed_case_seconds,
+                "completed_cases_per_minute": completed_cases_per_minute,
+                "estimated_remaining_seconds": eta_remaining_seconds,
+                "phase_durations_seconds": phase_durations,
+                "progress_log_interval_cases": PROGRESS_LOG_INTERVAL_CASES,
+            },
+        }
+
+    def _write_runtime_observability_locked(
+        *,
+        step3_run_root_for_progress: Path | None = None,
+        extra_progress: dict[str, Any] | None = None,
+    ) -> None:
+        metrics = _runtime_metrics_locked()
+        _write_internal_progress(
+            internal_root=internal_root,
+            run_root=run_root,
+            phase=str(progress_state["phase"]),
+            status=str(progress_state["status"]),
+            message=str(progress_state["message"]),
+            selected_case_ids=selected_case_ids,
+            discovered_case_ids=discovered_case_ids,
+            excluded_case_ids=excluded_case_ids,
+            prepared_case_ids=[],
+            step3_run_root=step3_run_root_for_progress,
+            **metrics,
+            **(extra_progress or {}),
+        )
+        _write_internal_performance(
+            internal_root=internal_root,
+            run_root=run_root,
+            phase=str(progress_state["phase"]),
+            status=str(progress_state["status"]),
+            payload={
+                "selected_case_count": len(selected_case_ids),
+                **metrics,
+            },
+        )
+
+    def _emit_progress_log_locked(*, force: bool = False) -> None:
+        completed = int(progress_state["completed_case_count"])
+        threshold = int(progress_state["next_progress_log_threshold"])
+        if not force and completed < threshold:
+            return
+        metrics = _runtime_metrics_locked()
+        print(
+            "[PROGRESS] "
+            f"phase={progress_state['phase']} "
+            f"total={len(selected_case_ids)} "
+            f"completed={metrics['completed_case_count']} "
+            f"success={metrics['success_case_count']} "
+            f"failed={metrics['failed_case_count']} "
+            f"running={metrics['running_case_count']} "
+            f"pending={metrics['pending_case_count']} "
+            f"elapsed_s={metrics['performance']['elapsed_seconds_total']:.1f} "
+            f"rate_case_per_min={metrics['performance']['completed_cases_per_minute']:.3f}",
+            flush=True,
+        )
+        while int(progress_state["next_progress_log_threshold"]) <= completed:
+            progress_state["next_progress_log_threshold"] = int(progress_state["next_progress_log_threshold"]) + PROGRESS_LOG_INTERVAL_CASES
+
+    def _set_phase(
+        phase: str,
+        *,
+        status: str,
+        message: str,
+        step3_run_root_for_progress: Path | None = None,
+        extra_progress: dict[str, Any] | None = None,
+    ) -> None:
+        with progress_lock:
+            now_perf = perf_counter()
+            previous_phase = str(progress_state["phase"])
+            progress_state["completed_phase_durations_seconds"][previous_phase] = (
+                float(progress_state["completed_phase_durations_seconds"].get(previous_phase, 0.0))
+                + max(now_perf - float(progress_state["current_phase_started_perf"]), 0.0)
+            )
+            progress_state["phase"] = phase
+            progress_state["status"] = status
+            progress_state["message"] = message
+            progress_state["current_phase_started_perf"] = now_perf
+            if phase == "direct_case_execution":
+                progress_state["entered_case_execution_stage"] = True
+            _write_runtime_observability_locked(
+                step3_run_root_for_progress=step3_run_root_for_progress,
+                extra_progress=extra_progress,
+            )
+            metrics = _runtime_metrics_locked()
+        print(
+            "[PHASE] "
+            f"phase={phase} status={status} total={len(selected_case_ids)} "
+            f"completed={metrics['completed_case_count']} success={metrics['success_case_count']} "
+            f"failed={metrics['failed_case_count']} message={message}",
+            flush=True,
+        )
+
+    def _mark_case_running(case_id: str) -> None:
+        with progress_lock:
+            progress_state["running_case_ids"].add(str(case_id))
+            _write_runtime_observability_locked(step3_run_root_for_progress=step3_run_root)
+
+    def _mark_case_finished(case_id: str, *, state: str, case_elapsed_seconds: float) -> None:
+        with progress_lock:
+            progress_state["running_case_ids"].discard(str(case_id))
+            progress_state["completed_case_count"] = int(progress_state["completed_case_count"]) + 1
+            progress_state["case_elapsed_total_seconds"] = float(progress_state["case_elapsed_total_seconds"]) + max(case_elapsed_seconds, 0.0)
+            progress_state["last_completed_case_id"] = str(case_id)
+            progress_state["last_completed_at"] = _now_text()
+            if state == "accepted":
+                progress_state["accepted_case_count"] = int(progress_state["accepted_case_count"]) + 1
+            elif state == "rejected":
+                progress_state["rejected_case_count"] = int(progress_state["rejected_case_count"]) + 1
+            else:
+                progress_state["runtime_failed_case_count"] = int(progress_state["runtime_failed_case_count"]) + 1
+                if str(case_id) not in failed_case_ids:
+                    failed_case_ids.append(str(case_id))
+            _write_runtime_observability_locked(step3_run_root_for_progress=step3_run_root)
+            _emit_progress_log_locked(force=False)
 
     _write_internal_progress(
         internal_root=internal_root,
@@ -939,6 +1167,25 @@ def run_t03_step67_internal_full_input(
         selected_case_ids=[],
         discovered_case_ids=[],
         excluded_case_ids=excluded_case_ids,
+        entered_case_execution_stage=False,
+        completed_case_count=0,
+        accepted_case_count=0,
+        rejected_case_count=0,
+        runtime_failed_case_count=0,
+        success_case_count=0,
+        failed_case_count=0,
+        running_case_count=0,
+        pending_case_count=0,
+        performance={
+            "run_started_at": run_started_at,
+            "elapsed_seconds_total": 0.0,
+            "case_elapsed_total_seconds": 0.0,
+            "avg_completed_case_seconds": None,
+            "completed_cases_per_minute": 0.0,
+            "estimated_remaining_seconds": None,
+            "phase_durations_seconds": {"bootstrap": 0.0},
+            "progress_log_interval_cases": PROGRESS_LOG_INTERVAL_CASES,
+        },
     )
 
     try:
@@ -1018,15 +1265,10 @@ def run_t03_step67_internal_full_input(
         }
         write_json(run_root / "preflight.json", preflight_doc)
 
-        _write_internal_progress(
-            internal_root=internal_root,
-            run_root=run_root,
-            phase="shared_handle_preload",
+        _set_phase(
+            "shared_handle_preload",
             status="running",
             message="Preloading shared full-input layers for direct per-case local query.",
-            selected_case_ids=selected_case_ids,
-            discovered_case_ids=discovered_case_ids,
-            excluded_case_ids=excluded_case_ids,
         )
         shared_layers = _load_shared_layers(
             nodes=shared_nodes,
@@ -1060,19 +1302,16 @@ def run_t03_step67_internal_full_input(
             },
         )
 
-        _write_internal_progress(
-            internal_root=internal_root,
-            run_root=run_root,
-            phase="direct_case_execution",
+        _set_phase(
+            "direct_case_execution",
             status="running",
             message="Executing T03 Step3/Step67 directly inside full-input runner with shared local query.",
-            selected_case_ids=selected_case_ids,
-            discovered_case_ids=discovered_case_ids,
-            excluded_case_ids=excluded_case_ids,
-            step3_run_root=step3_run_root,
+            step3_run_root_for_progress=step3_run_root,
         )
 
         def _execute_case(case_id: str) -> dict[str, Any]:
+            case_started_perf = perf_counter()
+            _mark_case_running(case_id)
             _write_internal_case_progress(
                 case_progress_root=case_progress_root,
                 case_id=case_id,
@@ -1119,6 +1358,11 @@ def run_t03_step67_internal_full_input(
                     reason="direct_case_failed",
                     detail=f"{type(exc).__name__}: {exc}",
                 )
+                _mark_case_finished(
+                    case_id,
+                    state="failed",
+                    case_elapsed_seconds=max(perf_counter() - case_started_perf, 0.0),
+                )
                 raise
 
             _write_local_context_snapshot(
@@ -1152,6 +1396,17 @@ def run_t03_step67_internal_full_input(
                 step6_state=case_result.step6_result.step6_state,
                 step7_state=case_result.step7_result.step7_state,
             )
+            _publish_incremental_visual_check(
+                source_png_path=result["step67_row"].source_png_path,
+                target_dir=resolved_visual_check_dir,
+                case_id=case_id,
+                step7_state=case_result.step7_result.step7_state,
+            )
+            _mark_case_finished(
+                case_id,
+                state=case_result.step7_result.step7_state,
+                case_elapsed_seconds=max(perf_counter() - case_started_perf, 0.0),
+            )
             return result
 
         if max_workers == 1 or len(selected_case_ids) <= 1:
@@ -1159,7 +1414,6 @@ def run_t03_step67_internal_full_input(
                 try:
                     result = _execute_case(case_id)
                 except Exception:
-                    failed_case_ids.append(case_id)
                     continue
                 step3_rows.append(result["step3_row"])
                 step67_rows.append(result["step67_row"])
@@ -1174,7 +1428,6 @@ def run_t03_step67_internal_full_input(
                     try:
                         result = future.result()
                     except Exception:
-                        failed_case_ids.append(case_id)
                         continue
                     step3_rows.append(result["step3_row"])
                     step67_rows.append(result["step67_row"])
@@ -1232,24 +1485,22 @@ def run_t03_step67_internal_full_input(
             target_dir=resolved_visual_check_dir,
         )
 
-        _write_internal_progress(
-            internal_root=internal_root,
-            run_root=run_root,
-            phase="completed",
+        _set_phase(
+            "completed",
             status="completed",
             message="T03 internal full-input execution completed with direct shared-handle local query.",
-            selected_case_ids=selected_case_ids,
-            discovered_case_ids=discovered_case_ids,
-            excluded_case_ids=excluded_case_ids,
-            prepared_case_ids=[],
-            step3_run_root=step3_run_root,
-            execution_mode="direct_shared_handle_local_query",
-            runtime_failed_case_ids=list(failed_case_ids),
-            virtual_intersection_polygons_path=str(polygons_path),
-            nodes_output_path=str(nodes_outputs["nodes_path"]),
-            nodes_anchor_update_audit_csv=str(nodes_outputs["audit_csv_path"]),
-            nodes_anchor_update_audit_json=str(nodes_outputs["audit_json_path"]),
+            step3_run_root_for_progress=step3_run_root,
+            extra_progress={
+                "execution_mode": "direct_shared_handle_local_query",
+                "runtime_failed_case_ids": list(failed_case_ids),
+                "virtual_intersection_polygons_path": str(polygons_path),
+                "nodes_output_path": str(nodes_outputs["nodes_path"]),
+                "nodes_anchor_update_audit_csv": str(nodes_outputs["audit_csv_path"]),
+                "nodes_anchor_update_audit_json": str(nodes_outputs["audit_json_path"]),
+            },
         )
+        with progress_lock:
+            _emit_progress_log_locked(force=True)
 
         write_json(
             internal_root / "internal_full_input_manifest.json",
@@ -1288,6 +1539,7 @@ def run_t03_step67_internal_full_input(
                 "transitional_case_package_path_retained": False,
                 "local_context_root": str(case_root),
                 "progress_path": str(internal_root / "internal_full_input_progress.json"),
+                "performance_path": str(internal_root / "internal_full_input_performance.json"),
                 "case_progress_root": str(case_progress_root),
                 "runtime_failed_case_ids": list(failed_case_ids),
                 "virtual_intersection_polygons_path": str(polygons_path),
@@ -1297,20 +1549,18 @@ def run_t03_step67_internal_full_input(
             },
         )
     except Exception as exc:
-        _write_internal_progress(
-            internal_root=internal_root,
-            run_root=run_root,
-            phase="failed",
-            status="failed",
-            message="T03 internal full-input execution failed before completion.",
-            selected_case_ids=selected_case_ids,
-            discovered_case_ids=discovered_case_ids,
-            excluded_case_ids=excluded_case_ids,
-            prepared_case_ids=[],
-            step3_run_root=step3_run_root if step3_run_root.exists() else None,
-            failure=str(exc),
-            execution_mode="direct_shared_handle_local_query",
-        )
+        with progress_lock:
+            progress_state["phase"] = "failed"
+            progress_state["status"] = "failed"
+            progress_state["message"] = "T03 internal full-input execution failed before completion."
+            _write_runtime_observability_locked(
+                step3_run_root_for_progress=step3_run_root if step3_run_root.exists() else None,
+                extra_progress={
+                    "failure": str(exc),
+                    "execution_mode": "direct_shared_handle_local_query",
+                },
+            )
+            _emit_progress_log_locked(force=True)
         _write_internal_failure(
             internal_root=internal_root,
             run_root=run_root,

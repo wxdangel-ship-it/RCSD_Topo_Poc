@@ -8,7 +8,8 @@ PYTHON_BIN="${PYTHON_BIN:-}"
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t03_step67_full_input_internal}"
 RUN_ID="${RUN_ID:-}"
 RUN_ROOT="${RUN_ROOT:-}"
-INTERVAL_SEC="${INTERVAL_SEC:-5}"
+INTERVAL_SEC="${INTERVAL_SEC:-10}"
+RECENT_CASES="${RECENT_CASES:-8}"
 ONCE="${ONCE:-0}"
 CLEAR_SCREEN="${CLEAR_SCREEN:-1}"
 DEBUG_VISUAL="${DEBUG_VISUAL:-0}"
@@ -23,6 +24,11 @@ fi
 
 if ! [[ "$INTERVAL_SEC" =~ ^[1-9][0-9]*$ ]]; then
   echo "[BLOCK] INTERVAL_SEC must be a positive integer: $INTERVAL_SEC" >&2
+  exit 2
+fi
+
+if ! [[ "$RECENT_CASES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[BLOCK] RECENT_CASES must be a positive integer: $RECENT_CASES" >&2
   exit 2
 fi
 
@@ -77,6 +83,7 @@ while true; do
   fi
 
   RUN_ROOT="$RESOLVED_RUN_ROOT" \
+  RECENT_CASES="$RECENT_CASES" \
   DEBUG_VISUAL="$DEBUG_VISUAL" \
   PYTHONUNBUFFERED=1 \
   "$PYTHON_BIN" - <<'PY'
@@ -93,64 +100,161 @@ def load_json(path: Path):
         return None
 
 
+def safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except FileNotFoundError:
+        return 0.0
+
+
+def truncate(text, limit=88):
+    if not text:
+        return "-"
+    text = str(text).strip().replace("\n", " ")
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
 run_root = Path(os.environ["RUN_ROOT"])
 debug_visual = os.environ.get("DEBUG_VISUAL", "0") == "1"
+recent_cases = int(os.environ["RECENT_CASES"])
 internal_root = run_root.parent / "_internal" / run_root.name
 preflight_doc = load_json(run_root / "preflight.json") or {}
 summary_doc = load_json(run_root / "summary.json") or {}
 review_summary_doc = load_json(run_root / "step67_review_summary.json") or {}
 internal_progress_doc = load_json(internal_root / "internal_full_input_progress.json") or {}
+case_progress_root = internal_root / "case_progress"
+cases_root = run_root / "cases"
+preflight_path = run_root / "preflight.json"
+summary_path = run_root / "summary.json"
+internal_progress_path = internal_root / "internal_full_input_progress.json"
 
-phase = str(
-    internal_progress_doc.get("phase")
-    or ("completed" if summary_doc else "bootstrap")
+phase = str(internal_progress_doc.get("phase") or ("completed" if summary_doc else "bootstrap"))
+status = str(internal_progress_doc.get("status") or ("completed" if summary_doc else "running"))
+message = str(internal_progress_doc.get("message") or ("summary.json written" if summary_doc else "waiting for progress"))
+entered_case_execution = bool(
+    internal_progress_doc.get("entered_case_execution_stage", phase == "direct_case_execution")
 )
-status = str(
-    internal_progress_doc.get("status")
-    or ("completed" if summary_doc else "running")
-)
-message = str(
-    internal_progress_doc.get("message")
-    or ("summary.json written" if summary_doc else "waiting for progress")
-)
-entered_case_execution = bool(internal_progress_doc.get("entered_case_execution_stage", phase == "direct_case_execution"))
 
-total = int(
-    internal_progress_doc.get("selected_case_count")
-    or preflight_doc.get("selected_case_count")
-    or summary_doc.get("effective_case_count")
-    or 0
-)
-completed = int(
-    internal_progress_doc.get("completed_case_count")
-    or (
-        int(summary_doc.get("step7_accepted_count", 0))
-        + int(summary_doc.get("step7_rejected_count", 0))
-        + len(summary_doc.get("failed_case_ids", []))
+selected_case_ids = []
+for source in (summary_doc, preflight_doc, internal_progress_doc):
+    if not source:
+        continue
+    values = source.get("effective_case_ids") or source.get("selected_case_ids")
+    if values:
+        selected_case_ids = [str(value) for value in values]
+        break
+
+known_case_ids = set(selected_case_ids)
+if case_progress_root.is_dir():
+    known_case_ids.update(path.stem for path in case_progress_root.glob("*.json"))
+if cases_root.is_dir():
+    known_case_ids.update(path.name for path in cases_root.iterdir() if path.is_dir())
+case_ids = sorted(known_case_ids, key=lambda item: (0, int(item)) if item.isdigit() else (1, item))
+
+accepted = 0
+rejected = 0
+runtime_failed = 0
+completed = 0
+running = 0
+pending = 0
+missing_status = 0
+rows = []
+
+for case_id in case_ids:
+    case_dir = cases_root / case_id
+    internal_case_path = case_progress_root / f"{case_id}.json"
+    watch_status_path = case_dir / "step67_watch_status.json"
+    step7_status_path = case_dir / "step7_status.json"
+    internal_case_doc = load_json(internal_case_path) if internal_case_path.is_file() else None
+    watch_doc = load_json(watch_status_path) if watch_status_path.is_file() else None
+    step7_doc = load_json(step7_status_path) if step7_status_path.is_file() else None
+
+    if step7_doc is not None:
+        completed += 1
+        state = str(step7_doc.get("step7_state") or "missing_status")
+        current_stage = "completed"
+        acceptance_reason = str(step7_doc.get("reason") or state)
+        detail = truncate(step7_doc.get("note") or step7_doc.get("reason"))
+        updated_at = step7_doc.get("updated_at") or "-"
+        if state == "accepted":
+            accepted += 1
+        elif state == "rejected":
+            rejected += 1
+        else:
+            missing_status += 1
+    elif watch_doc is not None:
+        state = str(watch_doc.get("state") or "running")
+        current_stage = str(watch_doc.get("current_stage") or "-")
+        acceptance_reason = str(watch_doc.get("reason") or "-")
+        detail = truncate(watch_doc.get("detail"))
+        updated_at = watch_doc.get("updated_at") or "-"
+        if state == "failed":
+            completed += 1
+            runtime_failed += 1
+        elif state == "running":
+            running += 1
+        elif state == "pending":
+            pending += 1
+        elif state == "accepted":
+            completed += 1
+            accepted += 1
+        elif state == "rejected":
+            completed += 1
+            rejected += 1
+        else:
+            missing_status += 1
+    elif internal_case_doc is not None:
+        state = str(internal_case_doc.get("state") or "running")
+        current_stage = str(internal_case_doc.get("current_stage") or "-")
+        acceptance_reason = str(internal_case_doc.get("reason") or "-")
+        detail = truncate(internal_case_doc.get("detail"))
+        updated_at = internal_case_doc.get("updated_at") or "-"
+        if state == "failed":
+            completed += 1
+            runtime_failed += 1
+        elif state == "running":
+            running += 1
+        elif state == "pending":
+            pending += 1
+        elif state == "accepted":
+            completed += 1
+            accepted += 1
+        elif state == "rejected":
+            completed += 1
+            rejected += 1
+        else:
+            missing_status += 1
+    else:
+        state = "pending"
+        current_stage = "-"
+        acceptance_reason = "-"
+        detail = "-"
+        updated_at = "-"
+        pending += 1
+
+    rows.append(
+        {
+            "case_id": case_id,
+            "state": state,
+            "current_stage": current_stage,
+            "acceptance_reason": acceptance_reason,
+            "detail": detail,
+            "updated_at": updated_at,
+            "mtime": max(
+                safe_mtime(internal_case_path),
+                safe_mtime(watch_status_path),
+                safe_mtime(step7_status_path),
+            ),
+        }
     )
-)
-success = int(
-    internal_progress_doc.get("success_case_count")
-    or internal_progress_doc.get("accepted_case_count")
-    or summary_doc.get("step7_accepted_count")
-    or 0
-)
-business_rejected = int(
-    internal_progress_doc.get("rejected_case_count")
-    or summary_doc.get("step7_rejected_count")
-    or 0
-)
-runtime_failed = int(
-    internal_progress_doc.get("runtime_failed_case_count")
-    or len(summary_doc.get("failed_case_ids", []))
-)
-failed = business_rejected + runtime_failed
-running = int(internal_progress_doc.get("running_case_count") or 0)
-pending = int(
-    internal_progress_doc.get("pending_case_count")
-    if "pending_case_count" in internal_progress_doc
-    else max(total - completed - running, 0)
-)
+
+selected_case_count = len(selected_case_ids) if selected_case_ids else len(case_ids)
+if selected_case_count and pending == 0:
+    pending = max(selected_case_count - completed - running, 0)
+
+rows.sort(key=lambda item: (item["mtime"], item["case_id"]), reverse=True)
 
 performance = internal_progress_doc.get("performance") or {}
 elapsed_seconds_total = performance.get("elapsed_seconds_total")
@@ -160,23 +264,39 @@ last_completed_case_id = internal_progress_doc.get("last_completed_case_id") or 
 last_completed_at = internal_progress_doc.get("last_completed_at") or "-"
 
 print(f"[MONITOR] snapshot_at={datetime.now().isoformat(timespec='seconds')}", flush=True)
-print(f"[RUN] run_root={run_root}", flush=True)
-print(f"[RUN] internal_root={internal_root}", flush=True)
-print(
-    f"[PHASE] phase={phase} status={status} entered_case_execution={'yes' if entered_case_execution else 'no'}",
-    flush=True,
-)
-print(f"[MESSAGE] {message}", flush=True)
+print(f"[MONITOR] run_root={run_root}", flush=True)
+print(f"[MONITOR] preflight_path={preflight_path}", flush=True)
+print(f"[MONITOR] internal_progress_path={internal_progress_path}", flush=True)
+print(f"[MONITOR] summary_path={summary_path}", flush=True)
 print(
     "[COUNTS] "
-    f"total={total} completed={completed} success={success} failed={failed} running={running} pending={pending}",
+    f"selected={selected_case_count} "
+    f"completed={completed} "
+    f"running={running} "
+    f"pending={pending} "
+    f"accepted={accepted} "
+    f"rejected={rejected} "
+    f"runtime_failed={runtime_failed} "
+    f"missing_status={missing_status}",
     flush=True,
 )
 print(
-    "[DETAIL] "
-    f"business_rejected={business_rejected} runtime_failed={runtime_failed}",
+    "[EXECUTION] "
+    f"entered_case_execution={'yes' if entered_case_execution else 'no'} "
+    f"phase={phase} status={status}",
     flush=True,
 )
+if summary_doc:
+    print(
+        "[BATCH] "
+        f"finished_at={summary_doc.get('updated_at', '-')} "
+        f"accepted={summary_doc.get('step7_accepted_count', 0)} "
+        f"rejected={summary_doc.get('step7_rejected_count', 0)} "
+        f"runtime_failed={len(summary_doc.get('failed_case_ids', []))}",
+        flush=True,
+    )
+else:
+    print("[BATCH] summary not written yet", flush=True)
 print(
     "[PERF] "
     f"elapsed_s={elapsed_seconds_total if elapsed_seconds_total is not None else '-'} "
@@ -185,6 +305,15 @@ print(
     f"last_completed_case_id={last_completed_case_id} last_completed_at={last_completed_at}",
     flush=True,
 )
+print(f"[MESSAGE] {message}", flush=True)
+print("[RECENT]", flush=True)
+for row in rows[:recent_cases]:
+    print(
+        f"  {row['case_id']}: state={row['state']} stage={row['current_stage']} "
+        f"reason={truncate(row['acceptance_reason'], 48)} updated_at={row['updated_at']}",
+        flush=True,
+    )
+    print(f"    detail={row['detail']}", flush=True)
 
 if debug_visual and review_summary_doc:
     visual_counts = review_summary_doc.get("visual_class_counts") or {}

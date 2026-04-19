@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from tests.modules.t03_virtual_junction_anchor._case_helpers import write_case_package
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.batch_runner import run_t03_step3_legal_space_batch
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_batch_runner import run_t03_step3_legal_space_batch
 
 
 def test_batch_runner_summary_includes_acceptance_fields(tmp_path: Path) -> None:

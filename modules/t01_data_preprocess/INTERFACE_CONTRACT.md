@@ -22,12 +22,15 @@
   - `formway != 128`
 
 ## 2.1 官方 runner / 诊断契约
+- 运行前先在 repo root 执行：
+  - `make env-sync`
+  - `make doctor`
 - 官方 end-to-end 入口：
-  - `python -m rcsd_topo_poc t01-run-skill-v1`
+  - `.venv/bin/python -m rcsd_topo_poc t01-run-skill-v1`
 - 官方 continuation 入口：
-  - `python -m rcsd_topo_poc t01-continue-oneway-segment`
+  - `.venv/bin/python -m rcsd_topo_poc t01-continue-oneway-segment`
 - 官方 freeze compare 入口：
-  - `python -m rcsd_topo_poc t01-compare-freeze`
+  - `.venv/bin/python -m rcsd_topo_poc t01-compare-freeze`
 - 以上入口均属于 repo-level CLI 子命令，官方登记以 repo root `docs/repository-metadata/entrypoint-registry.md` 为准
 - repo root `scripts/t01_run_full_data_skill_v1.sh`、`scripts/t01_run_full_data.sh`、`scripts/t01_pull_from_internal_github.sh`、`scripts/t01_pull_main_from_internal_github.sh` 只作为环境与交付辅助脚本，不替代本节官方入口定义
 - debug 默认值：

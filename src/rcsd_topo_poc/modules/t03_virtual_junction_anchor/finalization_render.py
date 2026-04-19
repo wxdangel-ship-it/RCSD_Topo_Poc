@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from shapely.ops import unary_union
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.render import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_render import (
     BACKGROUND_COLOR,
     DRIVEZONE_EDGE,
     DRIVEZONE_FILL,
@@ -22,7 +22,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.render import (
     _draw_text_with_shadow,
     _font,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_models import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
     Step67CaseResult,
     Step67Context,
 )

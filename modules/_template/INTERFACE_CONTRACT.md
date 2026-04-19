@@ -42,10 +42,17 @@
 
 ### 4.1 官方入口
 
+运行前先在 repo root 执行：
+
 ```bash
-python -m rcsd_topo_poc <module-command> --help
+make env-sync
+make doctor
+```
+
+```bash
+.venv/bin/python -m rcsd_topo_poc <module-command> --help
 # 或在获批且已登记时：
-python3 scripts/<module-script>.py --help
+.venv/bin/python scripts/<module-script>.py --help
 ```
 
 ### 4.2 其它入口
@@ -73,7 +80,7 @@ python3 scripts/<module-script>.py --help
 ## 6. Examples
 
 ```bash
-python -m rcsd_topo_poc <module-command> \
+.venv/bin/python -m rcsd_topo_poc <module-command> \
   --config <config_path> \
   --out-root outputs/_work/<module_id>
 ```

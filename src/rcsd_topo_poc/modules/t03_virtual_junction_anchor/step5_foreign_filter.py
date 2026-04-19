@@ -7,7 +7,7 @@ from shapely.geometry import GeometryCollection, LineString, MultiLineString, Mu
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_models import Step45Context, Step45ForeignResult
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import Step45Context, Step45ForeignResult
 
 
 FOREIGN_MASK_NORMALIZATION_MODE = "road_like_1m_mask_in_step6"

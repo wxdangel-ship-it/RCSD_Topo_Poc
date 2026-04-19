@@ -6,7 +6,7 @@ from typing import Any
 
 from shapely.geometry.base import BaseGeometry
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import Step1Context, Step2TemplateResult
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import Step1Context, Step2TemplateResult
 
 
 @dataclass(frozen=True)

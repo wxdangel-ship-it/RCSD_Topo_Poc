@@ -12,6 +12,17 @@ LEFT_TURN_FORMWAY_BIT="${LEFT_TURN_FORMWAY_BIT:-8}"
 COMPARE_FREEZE_DIR="${COMPARE_FREEZE_DIR:-}"
 DEBUG_FLAG="${DEBUG_FLAG:---no-debug}"
 
+if [[ -n "${PYTHON_BIN:-}" && "$PYTHON_BIN" != "$REPO_DIR/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
+  exit 2
+fi
+PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
+fi
+
 if [[ -z "$NODE_PATH" || -z "$ROAD_PATH" ]]; then
   echo "[BLOCK] NODE_PATH and ROAD_PATH are required." >&2
   echo "Example:" >&2
@@ -23,7 +34,7 @@ mkdir -p "$OUT_ROOT"
 cd "$REPO_DIR"
 
 cmd=(
-  python3 -m rcsd_topo_poc t01-run-skill-v1
+  "$PYTHON_BIN" -m rcsd_topo_poc t01-run-skill-v1
   --road-path "$ROAD_PATH"
   --node-path "$NODE_PATH"
   --strategy-config "$STRATEGY_CONFIG"
@@ -42,4 +53,4 @@ echo "[RUN] REPO_DIR=$REPO_DIR"
 echo "[RUN] NODE_PATH=$NODE_PATH"
 echo "[RUN] ROAD_PATH=$ROAD_PATH"
 echo "[RUN] OUT_ROOT=$OUT_ROOT"
-PYTHONPATH=src "${cmd[@]}"
+"${cmd[@]}"

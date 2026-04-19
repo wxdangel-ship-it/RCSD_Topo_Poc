@@ -4,21 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_loader import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import (
     load_step45_case_specs,
     load_step45_context,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_rcsd_association import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import (
     build_step45_case_result,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_acceptance import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step7_acceptance import (
     VISUAL_V1,
     build_step7_result,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_geometry import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry import (
     build_step6_result,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_models import Step67Context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import Step67Context
 
 
 REAL_ANCHOR_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor")

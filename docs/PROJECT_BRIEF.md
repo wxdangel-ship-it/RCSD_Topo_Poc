@@ -39,7 +39,10 @@
 - `t02_junction_anchor` 当前仍为 Active 正式业务模块；模块正文如在独立重构中，应在独立轮次中维护
 - `t03_virtual_junction_anchor` 当前仍为 Active 正式业务模块；正式范围为冻结 `Step3 legal-space baseline` 之上的 `Step4-7 clarified formal stage`，仅处理 `center_junction / single_sided_t_mouth`，默认正式全量 `58` case 的业务正确性基线已满足人工目视审计
 - `t03_virtual_junction_anchor` 当前少量 accepted case 仍存在几何形状优化空间，但这属于后续长期迭代方向，不再构成当前正式准出阻塞项
-- `t03_virtual_junction_anchor` 当前仍只有 `Step4-5` 官方 CLI；`Step67` 正式交付通过模块内 batch runner 与 closeout 维持，不在本轮新增 repo 官方入口
+- `t03_virtual_junction_anchor` 当前仍只有 `Step4-5` 官方 CLI；`Step67` 不新增 repo 官方 CLI，但 T03 模块级内网批量执行与监控已经形成 repo 级脚本交付面：主脚本为 `scripts/t03_run_internal_full_input_8workers.sh` 与 `scripts/t03_watch_internal_full_input.sh`，旧 `step67` 脚本名仅保留兼容 wrapper
+- `t03_virtual_junction_anchor` 当前 internal full-input 批次根目录正式成果包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`
+- `t03_virtual_junction_anchor` 当前 `nodes.gpkg` 仅更新代表 node 的 `is_anchor`：`accepted => yes`，`rejected / runtime_failed => fail3`；其中 `fail3` 只属于 T03 downstream output 语义，不回写输入原始 `nodes.gpkg`，也不反向修改 T02 上游契约
+- `t03_watch_internal_full_input.sh` 当前采用 T02 风格的 formal-first 监控口径，默认关注 `total / completed / running / pending / success / failed`
 - `_template` 仅是模板目录，不属于模块生命周期盘点对象
 - 模块根目录不放 `SKILL.md`
 - 标准 Skill 统一放 repo root `.agents/skills/`

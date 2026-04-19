@@ -137,8 +137,10 @@ def test_smoke_t02_stage4_divmerge_virtual_polygon() -> None:
     assert (root / "visual_checks" / "100.png").is_file()
 
     status_doc = json.loads((run_dir / "stage4_status.json").read_text(encoding="utf-8"))
-    assert status_doc["success"] is True
-    assert status_doc["acceptance_class"] == "accepted"
+    assert status_doc["success"] is False
+    assert status_doc["acceptance_class"] == "review_required"
+    assert status_doc["acceptance_reason"] == "reverse_tip_used"
+    assert status_doc["business_outcome_class"] == "risk"
     assert status_doc["divstrip"]["divstrip_present"] is True
     assert status_doc["divstrip"]["divstrip_nearby"] is True
     assert status_doc["divstrip"]["divstrip_component_count"] == 1

@@ -16,7 +16,7 @@ from shapely.geometry import (
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import substring, unary_union
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import (
     RoadRecord,
     Step1Context,
     Step2TemplateResult,

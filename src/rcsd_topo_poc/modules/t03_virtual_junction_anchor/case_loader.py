@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import normalize_runtime_path, sort_patch_key
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import CaseSpec
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import CaseSpec
 
 
 REQUIRED_CASE_FILES = (

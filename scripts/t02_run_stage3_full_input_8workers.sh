@@ -20,12 +20,15 @@ DEBUG_FLAG="${DEBUG_FLAG:---no-debug}"
 DEBUG_RENDER_ROOT="${DEBUG_RENDER_ROOT:-}"
 REVIEW_MODE="${REVIEW_MODE:-0}"
 
-if [[ -z "$PYTHON_BIN" ]]; then
-  if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
-    PYTHON_BIN="$REPO_DIR/.venv/bin/python"
-  else
-    PYTHON_BIN="python3"
-  fi
+if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != "$REPO_DIR/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
+  exit 2
+fi
+PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
 fi
 
 if [[ -z "$NODES_PATH" || -z "$ROADS_PATH" || -z "$DRIVEZONE_PATH" || -z "$RCSDROAD_PATH" || -z "$RCSDNODE_PATH" ]]; then
@@ -92,4 +95,4 @@ echo "[RUN] RUN_ID=$RUN_ID"
 echo "[RUN] WORKERS=$WORKERS"
 echo "[RUN] MAX_CASES=${MAX_CASES:-<all eligible cases>}"
 echo "[RUN] Eligible cases are auto-discovered from nodes where has_evd=yes, is_anchor=no, kind_2 in {4, 2048}."
-PYTHONPATH=src "${cmd[@]}"
+"${cmd[@]}"

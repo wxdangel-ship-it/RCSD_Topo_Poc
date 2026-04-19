@@ -77,14 +77,19 @@
 内网 WSL 固定执行方式：
 
 ```bash
-python3 scripts/t00_tool1_patch_directory_bootstrap.py
-python3 scripts/t00_tool2_drivezone_merge.py
-python3 scripts/t00_tool3_intersection_merge.py
-python3 scripts/t00_tool4_a200_patch_join.py
-python3 scripts/t00_tool5_a200_kind_enrich.py
-python3 scripts/t00_tool6_node_export.py
-python3 scripts/t00_tool7_geojson_to_gpkg.py /mnt/d/TestData/POC_Data/some_directory
-python3 scripts/t00_tool9_divstripzone_merge.py
+make env-sync
+make doctor
+```
+
+```bash
+.venv/bin/python scripts/t00_tool1_patch_directory_bootstrap.py
+.venv/bin/python scripts/t00_tool2_drivezone_merge.py
+.venv/bin/python scripts/t00_tool3_intersection_merge.py
+.venv/bin/python scripts/t00_tool4_a200_patch_join.py
+.venv/bin/python scripts/t00_tool5_a200_kind_enrich.py
+.venv/bin/python scripts/t00_tool6_node_export.py
+.venv/bin/python scripts/t00_tool7_geojson_to_gpkg.py /mnt/d/TestData/POC_Data/some_directory
+.venv/bin/python scripts/t00_tool9_divstripzone_merge.py
 ```
 
 默认数据根位于：

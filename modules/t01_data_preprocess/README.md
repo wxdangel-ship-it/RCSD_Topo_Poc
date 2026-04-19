@@ -10,6 +10,9 @@
 
 ## 运行前确认
 
+- repo root 标准环境先执行：
+  - `make env-sync`
+  - `make doctor`
 - 官方输入文件名：`nodes.gpkg`、`roads.gpkg`
 - 官方业务入口以 repo-level CLI 子命令为准
 - 详细输入约束、阶段语义、freeze compare 边界请分别查看：
@@ -21,7 +24,7 @@
 ### official end-to-end
 
 ```bash
-python -m rcsd_topo_poc t01-run-skill-v1 \
+.venv/bin/python -m rcsd_topo_poc t01-run-skill-v1 \
   --road-path <roads.gpkg> \
   --node-path <nodes.gpkg> \
   --out-root <out_root>
@@ -30,24 +33,24 @@ python -m rcsd_topo_poc t01-run-skill-v1 \
 ### oneway continuation
 
 ```bash
-python -m rcsd_topo_poc t01-continue-oneway-segment \
+.venv/bin/python -m rcsd_topo_poc t01-continue-oneway-segment \
   --continue-from-dir <previous_skill_out_root_or_step5_dir> \
   --out-root <out_root>
 ```
 
 ### 分步 / 调试入口
 
-- `python -m rcsd_topo_poc t01-step1-pair-poc`
-- `python -m rcsd_topo_poc t01-step2-segment-poc`
-- `python -m rcsd_topo_poc t01-s2-refresh-node-road`
-- `python -m rcsd_topo_poc t01-step4-residual-graph`
-- `python -m rcsd_topo_poc t01-step5-staged-residual-graph`
-- `python -m rcsd_topo_poc t01-step6-segment-aggregation-poc`
-- `python -m rcsd_topo_poc t01-compare-freeze`
+- `.venv/bin/python -m rcsd_topo_poc t01-step1-pair-poc`
+- `.venv/bin/python -m rcsd_topo_poc t01-step2-segment-poc`
+- `.venv/bin/python -m rcsd_topo_poc t01-s2-refresh-node-road`
+- `.venv/bin/python -m rcsd_topo_poc t01-step4-residual-graph`
+- `.venv/bin/python -m rcsd_topo_poc t01-step5-staged-residual-graph`
+- `.venv/bin/python -m rcsd_topo_poc t01-step6-segment-aggregation-poc`
+- `.venv/bin/python -m rcsd_topo_poc t01-compare-freeze`
 
 说明：
 
-- `T01` 官方入口采用 repo-level CLI 子命令，不新增模块级私有 `python -m rcsd_topo_poc.modules.*` 入口。
+- `T01` 官方入口采用 repo-level CLI 子命令，不新增模块级私有 `.venv/bin/python -m rcsd_topo_poc.modules.*` 入口。
 - 若后续有新的官方入口，必须先满足 repo root `AGENTS.md` 的入口治理规则，并同步仓库入口注册表。
 
 ## 辅助脚本（非官方模块契约）

@@ -7,7 +7,7 @@ Usage:
   scripts/t01_run_full_data.sh <roads_path> <nodes_path> [out_root]
 
 Optional environment variables:
-  PYTHON_BIN          Python executable. Default: .venv/bin/python then python3
+  PYTHON_BIN          Optional override, but only repo .venv/bin/python is accepted
   FORMWAY_MODE        strict | audit_only | off. Default: strict
   STRATEGY_CONFIG     Override strategy config path
   COMPARE_FREEZE_DIR  Optional freeze compare dir
@@ -40,12 +40,16 @@ if [ ! -f "$NODE_PATH" ]; then
   exit 2
 fi
 
-if [ -n "${PYTHON_BIN:-}" ]; then
-  PY="$PYTHON_BIN"
-elif [ -x "$ROOT/.venv/bin/python" ]; then
-  PY="$ROOT/.venv/bin/python"
-else
-  PY="python3"
+if [ -n "${PYTHON_BIN:-}" ] && [ "${PYTHON_BIN}" != "$ROOT/.venv/bin/python" ] && [ "${PYTHON_BIN}" != ".venv/bin/python" ]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $ROOT/.venv/bin/python"
+  exit 2
+fi
+
+PY="$ROOT/.venv/bin/python"
+if [ ! -x "$PY" ]; then
+  echo "[BLOCK] Missing repo python: $PY"
+  echo "[TIP] Run: make env-sync && make doctor"
+  exit 2
 fi
 
 OUT_ROOT="${3:-$ROOT/outputs/_work/t01_full_data_$(date +%Y%m%d_%H%M%S)}"
@@ -87,7 +91,7 @@ echo "[INFO] command=${CMD[*]}"
 
 (
   cd "$ROOT"
-  PYTHONPATH=src "${CMD[@]}" | tee "$OUT_ROOT/cli_stdout.json"
+  "${CMD[@]}" | tee "$OUT_ROOT/cli_stdout.json"
 )
 
 "$PY" - <<PY

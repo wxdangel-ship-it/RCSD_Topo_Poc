@@ -216,7 +216,7 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
     assert summary["mainnode_pair_endpoint_count"] == 4
     assert summary["mainnode_single_segment_non_intersection_count"] == 1
     assert summary["mainnode_right_turn_only_side_count"] == 1
-    assert summary["mainnode_t_like_count"] == 1
+    assert summary["mainnode_t_like_count"] == 0
     assert summary["multi_segment_mainnode_kept_init_count"] == 1
     assert summary["subnode_kept_init_count"] == 1
     assert summary["preserved_s2_dir"] == str(artifacts.preserved_s2_dir)
@@ -232,8 +232,8 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
     assert node_props["3"]["kind_2"] == 1
     assert node_props["4"]["grade_2"] == 3
     assert node_props["4"]["kind_2"] == 1
-    assert node_props["5"]["grade_2"] == 2
-    assert node_props["5"]["kind_2"] == 2048
+    assert node_props["5"]["grade_2"] == 9
+    assert node_props["5"]["kind_2"] == 9
     assert node_props["6"]["grade_2"] == 6
     assert node_props["6"]["kind_2"] == 6
 
@@ -251,7 +251,7 @@ def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None
     assert mainnode_rows["1"]["applied_rule"] == "validated_pair_endpoint"
     assert mainnode_rows["3"]["applied_rule"] == "single_segment_non_intersection"
     assert mainnode_rows["4"]["applied_rule"] == "right_turn_only_side"
-    assert mainnode_rows["5"]["applied_rule"] == "t_like"
+    assert mainnode_rows["5"]["applied_rule"] == "keep_init"
     assert mainnode_rows["6"]["applied_rule"] == "multi_segment_kept_init"
 
 

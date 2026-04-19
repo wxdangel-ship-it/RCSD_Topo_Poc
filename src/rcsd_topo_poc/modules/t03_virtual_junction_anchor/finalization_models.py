@@ -5,7 +5,7 @@ from typing import Any
 
 from shapely.geometry.base import BaseGeometry
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_models import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import (
     Step45CaseResult,
     Step45Context,
 )

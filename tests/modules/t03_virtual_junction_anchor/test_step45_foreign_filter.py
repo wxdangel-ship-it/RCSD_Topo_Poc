@@ -8,8 +8,8 @@ from tests.modules.t03_virtual_junction_anchor._step45_helpers import (
     build_center_case_foreign_selected_surface_overlap,
     build_center_case_multi_surface_filter,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_loader import load_step45_case_specs, load_step45_context
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_rcsd_association import build_step45_case_result
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import load_step45_case_specs, load_step45_context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import build_step45_case_result
 
 
 def test_step45_true_foreign_nodes_stay_audit_only_without_polygon_context(tmp_path: Path) -> None:

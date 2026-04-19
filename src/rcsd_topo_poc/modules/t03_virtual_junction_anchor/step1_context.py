@@ -6,7 +6,7 @@ from typing import Iterable
 from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature, read_vector_layer
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import (
     CaseSpec,
     NodeRecord,
     RoadRecord,

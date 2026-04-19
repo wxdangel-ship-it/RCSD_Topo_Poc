@@ -1,29 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /mnt/d/Work/RCSD_Topo_Poc
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+cd "$REPO_DIR"
 
-PY_BIN="${PY_BIN:-.venv/bin/python}"
-_probe_python() {
-  local candidate="$1"
-  [[ -x "$candidate" ]] || return 1
-  PYTHONPATH=src "$candidate" - <<'PY' >/dev/null 2>&1
-import fiona  # noqa: F401
-import shapely  # noqa: F401
-import rcsd_topo_poc.cli  # noqa: F401
-PY
-}
-
-if ! _probe_python "$PY_BIN"; then
-  if _probe_python "python3"; then
-    echo "[INFO] Fallback to python3 because '$PY_BIN' cannot import required modules." >&2
-    PY_BIN="python3"
-  else
-    echo "[BLOCK] Neither '$PY_BIN' nor 'python3' can import required modules (fiona/shapely/rcsd_topo_poc)." >&2
-    echo "[TIP] Try: PYTHONPATH=src .venv/bin/python -m rcsd_topo_poc t02-export-text-bundle --help" >&2
-    echo "[TIP] Or:   PYTHONPATH=src python3 -m rcsd_topo_poc t02-export-text-bundle --help" >&2
-    exit 2
-  fi
+PY_BIN="${PY_BIN:-}"
+if [[ -n "$PY_BIN" && "$PY_BIN" != "$REPO_DIR/.venv/bin/python" && "$PY_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PY_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
+  exit 2
+fi
+PY_BIN="$REPO_DIR/.venv/bin/python"
+if [[ ! -x "$PY_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PY_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
 fi
 
 NODES_PATH="${NODES_PATH:-/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg}"
@@ -76,7 +67,7 @@ echo "[RUN] DECODE_DIR=$DECODE_DIR"
 echo "[RUN] DECODE_AFTER_EXPORT=$DECODE_AFTER_EXPORT"
 echo "[RUN] MAINNODEIDS=${MAINNODEIDS[*]}"
 
-PYTHONPATH=src "$PY_BIN" -m rcsd_topo_poc t02-export-text-bundle \
+"$PY_BIN" -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path "$NODES_PATH" \
   --roads-path "$ROADS_PATH" \
   --drivezone-path "$DRIVEZONE_PATH" \
@@ -87,7 +78,7 @@ PYTHONPATH=src "$PY_BIN" -m rcsd_topo_poc t02-export-text-bundle \
   --out-txt "$OUT_TXT"
 
 if [[ "$DECODE_AFTER_EXPORT" == "1" ]]; then
-  PYTHONPATH=src "$PY_BIN" -m rcsd_topo_poc t02-decode-text-bundle \
+  "$PY_BIN" -m rcsd_topo_poc t02-decode-text-bundle \
     --bundle-txt "$OUT_TXT" \
     --out-dir "$DECODE_DIR"
 fi
@@ -96,5 +87,5 @@ echo "[DONE] bundle_txt=$OUT_TXT"
 if [[ "$DECODE_AFTER_EXPORT" == "1" ]]; then
   echo "[DONE] decoded_dir=$DECODE_DIR"
 else
-  echo "[TIP] decode_cmd=PYTHONPATH=src $PY_BIN -m rcsd_topo_poc t02-decode-text-bundle --bundle-txt $OUT_TXT --out-dir $DECODE_DIR"
+  echo "[TIP] decode_cmd=$PY_BIN -m rcsd_topo_poc t02-decode-text-bundle --bundle-txt $OUT_TXT --out-dir $DECODE_DIR"
 fi

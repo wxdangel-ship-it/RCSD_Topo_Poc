@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.writer import write_case_outputs
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_outputs import write_case_outputs
 from tests.modules.t03_virtual_junction_anchor._regression_utils import load_real_case_bundle
 
 

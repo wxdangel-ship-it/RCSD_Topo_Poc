@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.batch_runner import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_batch_runner import (
     DEFAULT_CASE_ROOT,
     DEFAULT_OUT_ROOT,
     run_t03_step3_legal_space_batch,

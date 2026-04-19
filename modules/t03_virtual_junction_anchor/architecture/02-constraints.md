@@ -18,6 +18,16 @@
   - 若 tracing 无法在横方向两侧都确认 terminal `RCSDNode`，则横方向回到 generic directional boundary
   - 横方向 `+5m` 扩展不得越过前方其他直接关联语义路口（`RCSD / SWSD`）
 - 若冻结 `Step3` 已对当前 `single_sided_t_mouth` case 应用 `two_node_t_bridge`，则 `Step67` 必须继承这条 bridge corridor 参与 directional boundary / polygon_seed 计算，不得在横方向截断后留下中心断开或多组件狭长残留
+- T03 internal full-input 的正式主执行形态固定为：`candidate discovery -> shared handle preload -> per-case local context query -> direct Step3/Step45/Step67 execution`
+- repo 级主脚本 `scripts/t03_run_internal_full_input_8workers.sh` / `scripts/t03_watch_internal_full_input.sh` 只承接 full-input 运行与监控外壳，不提升为新的 repo 官方 CLI
+- 兼容 wrapper `scripts/t03_run_step67_internal_full_input_8workers.sh` / `scripts/t03_watch_step67_internal_full_input.sh` 只保留迁移期兼容，不再定义模块级主命名
+- watch 默认必须按 formal-first 口径监控，并显式区分是否已进入 `case execution` 阶段；默认不把 `V1-V5` 混入顶层监控
+- internal full-input run root 必须稳定产出：
+  - `virtual_intersection_polygons.gpkg`
+  - `nodes.gpkg`
+  - `nodes_anchor_update_audit.csv`
+  - `nodes_anchor_update_audit.json`
+- `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义，不回写输入原始 nodes，也不修改 T02 / Step3 上游字段契约
 - 不修改 T02 正式业务行为
 - 不新增 T03 repo 官方 `Step67` CLI
 - 不提交 `outputs/_work`、批量 PNG、线程同步文件到 Git

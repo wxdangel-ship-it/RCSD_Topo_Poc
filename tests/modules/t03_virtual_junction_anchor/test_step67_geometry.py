@@ -3,14 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from dataclasses import replace
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_loader import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import (
     load_step45_case_specs,
     load_step45_context,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_rcsd_association import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import (
     build_step45_case_result,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_acceptance import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step7_acceptance import (
     ROOT_CAUSE_LAYER_FROZEN_CONSTRAINTS_CONFLICT,
     ROOT_CAUSE_LAYER_STEP4,
     VISUAL_V1,
@@ -19,11 +19,11 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_acceptance import 
     VISUAL_V5,
     build_step7_result,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_geometry import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry import (
     build_step6_result,
     build_step6_status_doc,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_models import Step67Context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import Step67Context
 from tests.modules.t03_virtual_junction_anchor._step45_helpers import (
     build_center_case_a,
     build_center_case_b,

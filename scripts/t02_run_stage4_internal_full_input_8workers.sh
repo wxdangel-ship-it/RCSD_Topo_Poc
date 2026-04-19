@@ -37,12 +37,15 @@ CASE_LOG_ROOT="$RUN_ROOT/case_logs"
 CANDIDATE_LIST_PATH="$RUN_ROOT/candidate_mainnodeids.txt"
 SUMMARY_PATH="$RUN_ROOT/batch_summary.json"
 
-if [[ -z "$PYTHON_BIN" ]]; then
-  if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
-    PYTHON_BIN="$REPO_DIR/.venv/bin/python"
-  else
-    PYTHON_BIN="python3"
-  fi
+if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != "$REPO_DIR/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
+  exit 2
+fi
+PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
 fi
 
 if ! [[ "$WORKERS" =~ ^[1-9][0-9]*$ ]]; then
@@ -67,7 +70,6 @@ mkdir -p "$CASES_ROOT" "$CASE_LOG_ROOT" "$VISUAL_CHECK_DIR"
 cd "$REPO_DIR"
 
 mapfile -t CASE_IDS < <(
-  PYTHONPATH=src \
   NODES_PATH="$NODES_PATH" \
   NODES_LAYER="$NODES_LAYER" \
   NODES_CRS="$NODES_CRS" \
@@ -172,7 +174,6 @@ PY
 )"
 
 set +e
-PYTHONPATH=src \
 PYTHON_BIN="$PYTHON_BIN" \
 REPO_DIR="$REPO_DIR" \
 NODES_PATH="$NODES_PATH" \

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import Step1Context, Step2TemplateResult
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import Step1Context, Step2TemplateResult
 
 
 def classify_step2_template(context: Step1Context) -> Step2TemplateResult:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_models import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
     Step6Result,
     Step7Result,
     Step67Context,

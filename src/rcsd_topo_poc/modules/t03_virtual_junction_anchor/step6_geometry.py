@@ -17,8 +17,8 @@ from shapely.geometry import (
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points, substring, unary_union
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import NodeRecord, RoadRecord
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_models import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import NodeRecord, RoadRecord
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
     Step6OutputGeometries,
     Step6Result,
     Step67Context,

@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_loader import load_step45_case_specs, load_step45_context
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_rcsd_association import build_step45_case_result
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_writer import write_case_outputs
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import load_step45_case_specs, load_step45_context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import build_step45_case_result
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_outputs import write_case_outputs
 from tests.modules.t03_virtual_junction_anchor._step45_helpers import (
     build_center_case_a,
     build_center_case_b,

@@ -26,12 +26,15 @@ MAINNODEIDS=(
   "${MAINNODEID_7:-722518}"
 )
 
-if [[ -z "$PYTHON_BIN" ]]; then
-  if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
-    PYTHON_BIN="$REPO_DIR/.venv/bin/python"
-  else
-    PYTHON_BIN="python3"
-  fi
+if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != "$REPO_DIR/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
+  exit 2
+fi
+PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
 fi
 
 for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH DIVSTRIPZONE_PATH RCSDROAD_PATH RCSDNODE_PATH; do
@@ -56,7 +59,7 @@ echo "[RUN] RCSDNODE_PATH=$RCSDNODE_PATH"
 echo "[RUN] OUT_TXT=$OUT_TXT"
 echo "[RUN] MAINNODEIDS=${MAINNODEIDS[*]}"
 
-PYTHONPATH=src "$PYTHON_BIN" -m rcsd_topo_poc t02-export-text-bundle \
+"$PYTHON_BIN" -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path "$NODES_PATH" \
   --roads-path "$ROADS_PATH" \
   --drivezone-path "$DRIVEZONE_PATH" \
@@ -68,4 +71,4 @@ PYTHONPATH=src "$PYTHON_BIN" -m rcsd_topo_poc t02-export-text-bundle \
 
 echo "[DONE] BUNDLE_TXT=$OUT_TXT"
 echo "[TIP] Decode in current directory with:"
-echo "cd /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle_internal/$RUN_ID && PYTHONPATH=$REPO_DIR/src $PYTHON_BIN -m rcsd_topo_poc t02-decode-text-bundle --bundle-txt $OUT_TXT"
+echo "cd /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle_internal/$RUN_ID && $PYTHON_BIN -m rcsd_topo_poc t02-decode-text-bundle --bundle-txt $OUT_TXT"

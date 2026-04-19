@@ -5,15 +5,20 @@ from pathlib import Path
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_vector
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_json
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import ReviewIndexRow, Step1Context, Step3CaseResult
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.render import render_step3_review_png
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import build_step3_status_doc
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import (
+    Step45CaseResult,
+    Step45Context,
+    Step45ReviewIndexRow,
+)
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import build_step45_status_doc
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_render import render_step45_review_png
 
 
 REVIEW_INDEX_FIELDNAMES = [
     "case_id",
     "template_class",
-    "step3_state",
+    "association_class",
+    "step45_state",
     "reason",
     "image_name",
     "image_path",
@@ -23,13 +28,18 @@ REVIEW_INDEX_FIELDNAMES = [
 ]
 
 CASE_REQUIRED_OUTPUTS = (
-    "step3_allowed_space.gpkg",
-    "step3_negative_mask_adjacent_junction.gpkg",
-    "step3_negative_mask_foreign_objects.gpkg",
-    "step3_negative_mask_foreign_mst.gpkg",
-    "step3_status.json",
-    "step3_audit.json",
-    "step3_review.png",
+    "step45_required_rcsdnode.gpkg",
+    "step45_required_rcsdroad.gpkg",
+    "step45_support_rcsdnode.gpkg",
+    "step45_support_rcsdroad.gpkg",
+    "step45_excluded_rcsdnode.gpkg",
+    "step45_excluded_rcsdroad.gpkg",
+    "step45_required_hook_zone.gpkg",
+    "step45_foreign_swsd_context.gpkg",
+    "step45_foreign_rcsd_context.gpkg",
+    "step45_status.json",
+    "step45_audit.json",
+    "step45_review.png",
 )
 
 
@@ -42,40 +52,63 @@ def _geometry_feature(geometry, **properties):
 def write_case_outputs(
     *,
     run_root: Path,
-    context: Step1Context,
-    case_result: Step3CaseResult,
-) -> ReviewIndexRow:
-    case_dir = run_root / "cases" / context.case_spec.case_id
+    context: Step45Context,
+    case_result: Step45CaseResult,
+    debug_render: bool = False,
+) -> Step45ReviewIndexRow:
+    case_dir = run_root / "cases" / context.step1_context.case_spec.case_id
     case_dir.mkdir(parents=True, exist_ok=True)
+    outputs = case_result.output_geometries
     write_vector(
-        case_dir / "step3_allowed_space.gpkg",
-        _geometry_feature(case_result.allowed_space_geometry, case_id=context.case_spec.case_id, layer="allowed_space"),
+        case_dir / "step45_required_rcsdnode.gpkg",
+        _geometry_feature(outputs.required_rcsdnode_geometry, case_id=context.step1_context.case_spec.case_id, layer="required_rcsdnode"),
     )
     write_vector(
-        case_dir / "step3_negative_mask_adjacent_junction.gpkg",
-        _geometry_feature(case_result.negative_masks.adjacent_junction_geometry, case_id=context.case_spec.case_id, layer="adjacent_junction"),
+        case_dir / "step45_required_rcsdroad.gpkg",
+        _geometry_feature(outputs.required_rcsdroad_geometry, case_id=context.step1_context.case_spec.case_id, layer="required_rcsdroad"),
     )
     write_vector(
-        case_dir / "step3_negative_mask_foreign_objects.gpkg",
-        _geometry_feature(case_result.negative_masks.foreign_objects_geometry, case_id=context.case_spec.case_id, layer="foreign_objects"),
+        case_dir / "step45_support_rcsdnode.gpkg",
+        _geometry_feature(outputs.support_rcsdnode_geometry, case_id=context.step1_context.case_spec.case_id, layer="support_rcsdnode"),
     )
     write_vector(
-        case_dir / "step3_negative_mask_foreign_mst.gpkg",
-        _geometry_feature(case_result.negative_masks.foreign_mst_geometry, case_id=context.case_spec.case_id, layer="foreign_mst"),
+        case_dir / "step45_support_rcsdroad.gpkg",
+        _geometry_feature(outputs.support_rcsdroad_geometry, case_id=context.step1_context.case_spec.case_id, layer="support_rcsdroad"),
     )
-    write_json(case_dir / "step3_status.json", build_step3_status_doc(case_result))
-    write_json(case_dir / "step3_audit.json", case_result.audit_doc)
-    review_png_path = case_dir / "step3_review.png"
-    render_step3_review_png(out_path=review_png_path, context=context, case_result=case_result)
-    flat_dir = run_root / "step3_review_flat"
+    write_vector(
+        case_dir / "step45_excluded_rcsdnode.gpkg",
+        _geometry_feature(outputs.excluded_rcsdnode_geometry, case_id=context.step1_context.case_spec.case_id, layer="excluded_rcsdnode"),
+    )
+    write_vector(
+        case_dir / "step45_excluded_rcsdroad.gpkg",
+        _geometry_feature(outputs.excluded_rcsdroad_geometry, case_id=context.step1_context.case_spec.case_id, layer="excluded_rcsdroad"),
+    )
+    write_vector(
+        case_dir / "step45_required_hook_zone.gpkg",
+        _geometry_feature(outputs.required_hook_zone_geometry, case_id=context.step1_context.case_spec.case_id, layer="required_hook_zone"),
+    )
+    write_vector(
+        case_dir / "step45_foreign_swsd_context.gpkg",
+        _geometry_feature(outputs.foreign_swsd_context_geometry, case_id=context.step1_context.case_spec.case_id, layer="foreign_swsd_context"),
+    )
+    write_vector(
+        case_dir / "step45_foreign_rcsd_context.gpkg",
+        _geometry_feature(outputs.foreign_rcsd_context_geometry, case_id=context.step1_context.case_spec.case_id, layer="foreign_rcsd_context"),
+    )
+    write_json(case_dir / "step45_status.json", build_step45_status_doc(case_result))
+    write_json(case_dir / "step45_audit.json", case_result.audit_doc)
+    review_png_path = case_dir / "step45_review.png"
+    render_step45_review_png(out_path=review_png_path, context=context, case_result=case_result, debug_render=debug_render)
+    flat_dir = run_root / "step45_review_flat"
     flat_dir.mkdir(parents=True, exist_ok=True)
-    image_name = f"{context.case_spec.case_id}__{case_result.step3_state}.png"
+    image_name = f"{context.step1_context.case_spec.case_id}__{case_result.step45_state}.png"
     flat_image_path = flat_dir / image_name
     shutil.copy2(review_png_path, flat_image_path)
-    return ReviewIndexRow(
-        case_id=context.case_spec.case_id,
+    return Step45ReviewIndexRow(
+        case_id=context.step1_context.case_spec.case_id,
         template_class=case_result.template_class,
-        step3_state=case_result.step3_state,
+        association_class=case_result.association_class,
+        step45_state=case_result.step45_state,
         reason=case_result.reason,
         image_name=image_name,
         image_path=str(flat_image_path),
@@ -85,12 +118,13 @@ def write_case_outputs(
     )
 
 
-def write_review_index(run_root: Path, rows: list[ReviewIndexRow]) -> Path:
+def write_review_index(run_root: Path, rows: list[Step45ReviewIndexRow]) -> Path:
     csv_rows = [
         {
             "case_id": row.case_id,
             "template_class": row.template_class,
-            "step3_state": row.step3_state,
+            "association_class": row.association_class,
+            "step45_state": row.step45_state,
             "reason": row.reason,
             "image_name": row.image_name,
             "image_path": row.image_path,
@@ -100,7 +134,7 @@ def write_review_index(run_root: Path, rows: list[ReviewIndexRow]) -> Path:
         }
         for row in rows
     ]
-    output_path = run_root / "step3_review_index.csv"
+    output_path = run_root / "step45_review_index.csv"
     write_csv(output_path, csv_rows, REVIEW_INDEX_FIELDNAMES)
     return output_path
 
@@ -115,7 +149,7 @@ def _case_outputs_complete(case_dir: Path) -> bool:
 
 def write_summary(
     run_root: Path,
-    rows: list[ReviewIndexRow],
+    rows: list[Step45ReviewIndexRow],
     *,
     expected_case_ids: list[str],
     raw_case_count: int,
@@ -130,7 +164,7 @@ def write_summary(
     rerun_cleaned_before_write: bool,
 ) -> Path:
     cases_dir = run_root / "cases"
-    flat_dir = run_root / "step3_review_flat"
+    flat_dir = run_root / "step45_review_flat"
     actual_case_ids = [entry.name for entry in cases_dir.iterdir() if entry.is_dir()] if cases_dir.is_dir() else []
     actual_case_ids = _sorted_case_ids(actual_case_ids)
     flat_png_count = (
@@ -149,10 +183,10 @@ def write_summary(
         for case_id in expected_case_ids
         if not _case_outputs_complete(cases_dir / case_id)
     ]
-    step3_established_count = sum(1 for row in rows if row.step3_state == "established")
-    step3_review_count = sum(1 for row in rows if row.step3_state == "review")
-    step3_not_established_count = sum(1 for row in rows if row.step3_state == "not_established")
-    tri_state_sum = step3_established_count + step3_review_count + step3_not_established_count
+    step45_established_count = sum(1 for row in rows if row.step45_state == "established")
+    step45_review_count = sum(1 for row in rows if row.step45_state == "review")
+    step45_not_established_count = sum(1 for row in rows if row.step45_state == "not_established")
+    tri_state_sum = step45_established_count + step45_review_count + step45_not_established_count
     summary = {
         "total_case_count": len(rows),
         "raw_case_count": raw_case_count,
@@ -166,9 +200,9 @@ def write_summary(
         "effective_case_ids": effective_case_ids,
         "actual_case_dir_count": len(actual_case_ids),
         "flat_png_count": flat_png_count,
-        "step3_established_count": step3_established_count,
-        "step3_review_count": step3_review_count,
-        "step3_not_established_count": step3_not_established_count,
+        "step45_established_count": step45_established_count,
+        "step45_review_count": step45_review_count,
+        "step45_not_established_count": step45_not_established_count,
         "tri_state_sum": tri_state_sum,
         "tri_state_sum_matches_total": tri_state_sum == len(expected_case_ids),
         "default_full_batch_excluded_case_count": len(default_full_batch_excluded_case_ids),
@@ -182,10 +216,10 @@ def write_summary(
         "failed_case_ids": _sorted_case_ids(list(failed_case_ids)),
         "rerun_cleaned_before_write": rerun_cleaned_before_write,
         "run_root": str(run_root),
-        "step3_review_flat_dir": str(flat_dir),
+        "step45_review_flat_dir": str(flat_dir),
         "structure": {
             "cases_dir": str(cases_dir),
-            "review_index_csv": str(run_root / "step3_review_index.csv"),
+            "review_index_csv": str(run_root / "step45_review_index.csv"),
         },
         "summary_semantics": {
             "primary_statistics": "established/review/not_established",

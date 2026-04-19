@@ -25,12 +25,15 @@ DEBUG_FLAG="${DEBUG_FLAG:---debug}"
 FAIL_ON_NON_ACCEPTED="${FAIL_ON_NON_ACCEPTED:-0}"
 DECODE_BUNDLES="${DECODE_BUNDLES:-1}"
 
-if [[ -z "$PYTHON_BIN" ]]; then
-  if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
-    PYTHON_BIN="$REPO_DIR/.venv/bin/python"
-  else
-    PYTHON_BIN="python3"
-  fi
+if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != "$REPO_DIR/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
+  exit 2
+fi
+PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
 fi
 
 if ! [[ "$WORKERS" =~ ^[1-9][0-9]*$ ]]; then
@@ -72,7 +75,7 @@ if (( ${#BUNDLE_TXT_PATHS[@]} > 0 )); then
     echo "[RUN] decode bundle: $bundle_txt -> $decode_dir"
     rm -rf "$decode_dir"
     if [[ "$DECODE_BUNDLES" == "1" ]]; then
-      PYTHONPATH=src "$PYTHON_BIN" -m rcsd_topo_poc t02-decode-text-bundle \
+      "$PYTHON_BIN" -m rcsd_topo_poc t02-decode-text-bundle \
         --bundle-txt "$bundle_txt" \
         --out-dir "$decode_dir"
     fi
@@ -279,7 +282,6 @@ PY
 )"
 
 set +e
-PYTHONPATH=src \
 PYTHON_BIN="$PYTHON_BIN" \
 REPO_DIR="$REPO_DIR" \
 CASES_ROOT="$CASES_ROOT" \

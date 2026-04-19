@@ -10,12 +10,12 @@ from shapely.ops import unary_union
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import normalize_runtime_path
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_loader import load_case_specs
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import CaseSpec
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import CaseSpec
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step1_context import build_step1_context
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import build_step3_status_doc
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step2_template import classify_step2_template
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_models import Step45Context
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import Step1Context, Step2TemplateResult, Step3CaseResult
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import Step45Context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import Step1Context, Step2TemplateResult, Step3CaseResult
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import ROAD_BUFFER_M
 
 

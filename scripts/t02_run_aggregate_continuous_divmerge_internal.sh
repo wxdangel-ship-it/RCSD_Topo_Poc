@@ -21,12 +21,15 @@ NODES_FIX_PATH="${NODES_FIX_PATH:-$RUN_ROOT/nodes_fix.gpkg}"
 ROADS_FIX_PATH="${ROADS_FIX_PATH:-$RUN_ROOT/roads_fix.gpkg}"
 REPORT_PATH="${REPORT_PATH:-$RUN_ROOT/continuous_divmerge_report.json}"
 
-if [[ -z "$PYTHON_BIN" ]]; then
-  if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
-    PYTHON_BIN="$REPO_DIR/.venv/bin/python"
-  else
-    PYTHON_BIN="python3"
-  fi
+if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != "$REPO_DIR/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
+  exit 2
+fi
+PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
 fi
 
 for path_var in NODES_PATH ROADS_PATH; do
@@ -74,6 +77,6 @@ echo "[RUN] NODES_FIX_PATH=$NODES_FIX_PATH"
 echo "[RUN] ROADS_FIX_PATH=$ROADS_FIX_PATH"
 echo "[RUN] REPORT_PATH=$REPORT_PATH"
 
-PYTHONPATH=src "${cmd[@]}"
+"${cmd[@]}"
 
 echo "[DONE] continuous-divmerge outputs: $RUN_ROOT"

@@ -3,10 +3,21 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/outputs/_work/t02_key_info_latest}"
 RUN_STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_PATH="$OUT_DIR/$RUN_STAMP.json"
+
+if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != "$REPO_ROOT/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_ROOT/.venv/bin/python" >&2
+  exit 2
+fi
+PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
+fi
 
 resolve_latest_run_dir() {
   local summary_name="$1"
@@ -29,7 +40,6 @@ STAGE2_RUN_DIR="$(resolve_latest_run_dir t02_stage2_summary.json "$REPO_ROOT/out
 
 mkdir -p "$OUT_DIR"
 cd "$REPO_ROOT"
-export PYTHONPATH="$REPO_ROOT/src:${PYTHONPATH:-}"
 
 ARGS=("$REPO_ROOT/scripts/t02_extract_key_info.py" "--json-out" "$OUT_PATH")
 if [[ -n "$STAGE1_RUN_DIR" ]]; then

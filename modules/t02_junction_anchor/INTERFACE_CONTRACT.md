@@ -1166,17 +1166,24 @@ outputs/_work/t02_stage1_drivezone_gate
 
 ### 4.1 官方入口
 
+运行前先在 repo root 执行：
+
 ```bash
-python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
-python -m rcsd_topo_poc t02-stage2-anchor-recognition --help
+make env-sync
+make doctor
+```
+
+```bash
+.venv/bin/python -m rcsd_topo_poc t02-stage1-drivezone-gate --help
+.venv/bin/python -m rcsd_topo_poc t02-stage2-anchor-recognition --help
 ```
 
 ### 4.2 Stage3 与支撑入口
 
 ```bash
-python -m rcsd_topo_poc t02-virtual-intersection-poc --help
-python -m rcsd_topo_poc t02-export-text-bundle --help
-python -m rcsd_topo_poc t02-decode-text-bundle --help
+.venv/bin/python -m rcsd_topo_poc t02-virtual-intersection-poc --help
+.venv/bin/python -m rcsd_topo_poc t02-export-text-bundle --help
+.venv/bin/python -m rcsd_topo_poc t02-decode-text-bundle --help
 ```
 
 - `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口
@@ -1190,7 +1197,7 @@ python -m rcsd_topo_poc t02-decode-text-bundle --help
 ### 4.3 Stage4 独立入口
 
 ```bash
-python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
+.venv/bin/python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
 ```
 
 - `t02-stage4-divmerge-virtual-polygon` 是当前 stage4 独立入口
@@ -1200,8 +1207,8 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon --help
 ### 4.4 独立离线修复与聚合工具
 
 ```bash
-python -m rcsd_topo_poc t02-fix-node-error-2 --help
-python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
+.venv/bin/python -m rcsd_topo_poc t02-fix-node-error-2 --help
+.venv/bin/python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
 ```
 
 - `t02-fix-node-error-2` 是独立离线修复工具，只处理 `node_error_2` 相关修复，不属于 stage 主流程
@@ -1327,7 +1334,7 @@ python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
 ## 6. Examples
 
 ```bash
-python -m rcsd_topo_poc t02-stage1-drivezone-gate \
+.venv/bin/python -m rcsd_topo_poc t02-stage1-drivezone-gate \
   --segment-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/nodes.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
@@ -1336,7 +1343,7 @@ python -m rcsd_topo_poc t02-stage1-drivezone-gate \
 ```
 
 ```bash
-python -m rcsd_topo_poc t02-virtual-intersection-poc \
+.venv/bin/python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/stage2/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
@@ -1349,7 +1356,7 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
 ```
 
 ```bash
-python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
+.venv/bin/python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
@@ -1363,7 +1370,7 @@ python -m rcsd_topo_poc t02-stage4-divmerge-virtual-polygon \
 ```
 
 ```bash
-python -m rcsd_topo_poc t02-aggregate-continuous-divmerge \
+.venv/bin/python -m rcsd_topo_poc t02-aggregate-continuous-divmerge \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --nodes-fix-path /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_continuous_divmerge/nodes_fix.gpkg \
@@ -1372,7 +1379,7 @@ python -m rcsd_topo_poc t02-aggregate-continuous-divmerge \
 ```
 
 ```bash
-python -m rcsd_topo_poc t02-virtual-intersection-poc \
+.venv/bin/python -m rcsd_topo_poc t02-virtual-intersection-poc \
   --input-mode full-input \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
@@ -1387,7 +1394,7 @@ python -m rcsd_topo_poc t02-virtual-intersection-poc \
 ```
 
 ```bash
-python -m rcsd_topo_poc t02-export-text-bundle \
+.venv/bin/python -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
@@ -1399,7 +1406,7 @@ python -m rcsd_topo_poc t02-export-text-bundle \
 ```
 
 ```bash
-python -m rcsd_topo_poc t02-export-text-bundle \
+.venv/bin/python -m rcsd_topo_poc t02-export-text-bundle \
   --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
   --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
   --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
@@ -1411,13 +1418,13 @@ python -m rcsd_topo_poc t02-export-text-bundle \
 ```
 
 ```bash
-python -m rcsd_topo_poc t02-decode-text-bundle \
+.venv/bin/python -m rcsd_topo_poc t02-decode-text-bundle \
   --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/case_765003.txt
 ```
 
 ```bash
 cd /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle
-python -m rcsd_topo_poc t02-decode-text-bundle \
+.venv/bin/python -m rcsd_topo_poc t02-decode-text-bundle \
   --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle/cases_pack.txt
 ```
 

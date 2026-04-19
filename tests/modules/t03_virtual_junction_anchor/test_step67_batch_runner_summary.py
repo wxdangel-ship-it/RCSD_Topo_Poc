@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_batch_runner import (
-    run_t03_step67_batch,
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.t03_batch_runner import (
+    run_t03_batch,
 )
 from tests.modules.t03_virtual_junction_anchor._step45_helpers import (
     build_center_case_a,
@@ -29,7 +30,7 @@ def test_step67_batch_runner_writes_gallery_summary_and_preflight(tmp_path: Path
     )
     write_step45_case_package(case_root / "922217", "922217")
 
-    run_root = run_t03_step67_batch(
+    run_root = run_t03_batch(
         case_root=case_root,
         step3_root=step3_root,
         out_root=out_root,
@@ -38,9 +39,10 @@ def test_step67_batch_runner_writes_gallery_summary_and_preflight(tmp_path: Path
     )
 
     summary_doc = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
-    review_summary_doc = json.loads((run_root / "step67_review_summary.json").read_text(encoding="utf-8"))
+    review_summary_doc = json.loads((run_root / "t03_review_summary.json").read_text(encoding="utf-8"))
     preflight_doc = json.loads((run_root / "preflight.json").read_text(encoding="utf-8"))
     step7_status_doc = json.loads((run_root / "cases" / "100001" / "step7_status.json").read_text(encoding="utf-8"))
+    final_polygon = read_vector_layer(run_root / "cases" / "100001" / "step67_final_polygon.gpkg").features[0]
 
     assert summary_doc["raw_case_count"] == 4
     assert summary_doc["default_formal_case_count"] == 3
@@ -59,11 +61,14 @@ def test_step67_batch_runner_writes_gallery_summary_and_preflight(tmp_path: Path
     assert "visual_audit_class" not in step7_status_doc
     assert "visual_audit_family" not in step7_status_doc
     assert "manual_review_recommended" not in step7_status_doc
+    assert "visual_review_class" not in final_polygon.properties
+    assert "visual_audit_class" not in final_polygon.properties
+    assert "manual_review_recommended" not in final_polygon.properties
 
-    flat_dir = run_root / "step67_review_flat"
-    accepted_dir = run_root / "step67_review_accepted"
-    rejected_dir = run_root / "step67_review_rejected"
-    v2_risk_dir = run_root / "step67_review_v2_risk"
+    flat_dir = run_root / "t03_review_flat"
+    accepted_dir = run_root / "t03_review_accepted"
+    rejected_dir = run_root / "t03_review_rejected"
+    v2_risk_dir = run_root / "t03_review_v2_risk"
 
     flat_entries = sorted(entry.name for entry in flat_dir.iterdir())
     assert flat_entries == [

@@ -55,5 +55,22 @@
   - 未显式获得内网访问能力前，Agent 不得声称自己已经完成任何内网操作。
 - 项目工作目录默认使用 WSL 路径，例如 `/mnt/e/Work/RCSD_Topo_Poc`。
 - 若收到 Windows 路径输入，应先转换为对应的 WSL 路径再继续。
+- 当前仓库本地标准环境固定为 repo root `.venv`：
+  - 依赖真相固定为 `pyproject.toml` + `uv.lock`
+  - Python 版本固定为 `3.10.x`
+  - 本地同步命令固定为 `uv sync --python 3.10 --extra dev`
+  - repo-level CLI 固定执行口径为 `.venv/bin/python -m rcsd_topo_poc <subcommand>`
+  - root `scripts/` 下 Python 入口固定执行口径为 `.venv/bin/python scripts/<script>.py`
+  - 测试固定执行口径为 `.venv/bin/python -m pytest ...`
+  - 未经批准，不再把裸 `python`、裸 `python3` 或任意系统解释器写成官方模块契约命令
+  - 在当前 T03 专门治理轮次完成前，repo-level `make test` / `make smoke` 默认只覆盖 repo 级、T00、T01、T02 测试树；T03 测试与修复单独执行
+- 新增或变更本地依赖、Python 版本、执行入口时，必须在同一轮内同步完成：
+  - `pyproject.toml`
+  - `uv.lock`
+  - repo root `Makefile`
+  - `.venv/bin/python -m rcsd_topo_poc doctor` 对应审计逻辑
+  - `docs/repository-metadata/code-boundaries-and-entrypoints.md`
+  - `docs/repository-metadata/entrypoint-registry.md`
+  - 受影响模块的 `README.md` 与 `INTERFACE_CONTRACT.md`
 - 运行输出目录写入 `outputs/_work/`。
 - 文本回传必须符合 `TEXT_QC_BUNDLE` 粘贴性约束。

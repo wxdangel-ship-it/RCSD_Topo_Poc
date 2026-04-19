@@ -18,12 +18,15 @@ RUN_ID="${RUN_ID:-t02_stage4_divmerge_internal_${MAINNODEID:-unknown}_$(date +%Y
 DEBUG_FLAG="${DEBUG_FLAG:---debug}"
 VISUAL_CHECK_DIR="${VISUAL_CHECK_DIR:-$OUT_ROOT/$RUN_ID/visual_checks}"
 
-if [[ -z "$PYTHON_BIN" ]]; then
-  if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
-    PYTHON_BIN="$REPO_DIR/.venv/bin/python"
-  else
-    PYTHON_BIN="python3"
-  fi
+if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != "$REPO_DIR/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
+  exit 2
+fi
+PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
 fi
 
 if [[ -z "$MAINNODEID" ]]; then
@@ -73,7 +76,7 @@ echo "[RUN] RCSDNODE_PATH=$RCSDNODE_PATH"
 echo "[RUN] OUT_ROOT=$OUT_ROOT"
 echo "[RUN] RUN_ID=$RUN_ID"
 echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
-PYTHONPATH=src "${cmd[@]}"
+"${cmd[@]}"
 
 echo "[DONE] Stage4 outputs: $OUT_ROOT/$RUN_ID"
 echo "[DONE] Stage4 visual checks directory: $VISUAL_CHECK_DIR"

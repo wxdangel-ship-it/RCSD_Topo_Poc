@@ -17,65 +17,44 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_loader import (
     DEFAULT_FULL_BATCH_EXCLUDED_CASE_IDS,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_loader import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_observability import (
+    write_case_watch_status,
+)
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import (
     load_step45_case_specs,
     load_step45_context,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step45_rcsd_association import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import (
     build_step45_case_result,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_acceptance import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step7_acceptance import (
     build_step7_result,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_geometry import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry import (
     build_step6_result,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_models import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
     Step67CaseResult,
     Step67Context,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step67_writer import (
-    materialize_review_gallery,
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_outputs import (
     write_case_outputs,
-    write_review_index,
-    write_review_summary,
-    write_summary,
+)
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.t03_batch_closeout import (
+    materialize_t03_review_gallery,
+    write_t03_review_index,
+    write_t03_review_summary,
+    write_t03_summary,
 )
 
 
 DEFAULT_CASE_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor")
 DEFAULT_STEP3_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003")
-DEFAULT_OUT_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step67_phase")
+DEFAULT_OUT_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_batch")
 
 
 def _now_text() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _write_case_watch_status(
-    *,
-    run_root: Path,
-    case_id: str,
-    state: str,
-    current_stage: str,
-    reason: str,
-    detail: str,
-    **extra: Any,
-) -> None:
-    case_dir = run_root / "cases" / case_id
-    case_dir.mkdir(parents=True, exist_ok=True)
-    write_json(
-        case_dir / "step67_watch_status.json",
-        {
-            "case_id": case_id,
-            "state": state,
-            "current_stage": current_stage,
-            "reason": reason,
-            "detail": detail,
-            "updated_at": _now_text(),
-            **extra,
-        },
-    )
 
 
 def _preflight_doc(
@@ -105,7 +84,10 @@ def _preflight_doc(
         "selected_case_count": len(selected_case_ids),
         "selected_case_ids": selected_case_ids,
         "default_full_batch_excluded_case_ids": case_loader_preflight.get("default_full_batch_excluded_case_ids", []),
-        "excluded_case_ids": case_loader_preflight.get("excluded_case_ids", case_loader_preflight.get("applied_excluded_case_ids", [])),
+        "excluded_case_ids": case_loader_preflight.get(
+            "excluded_case_ids",
+            case_loader_preflight.get("applied_excluded_case_ids", []),
+        ),
         "effective_case_count": case_loader_preflight.get("effective_case_count", len(selected_case_ids)),
         "effective_case_ids": case_loader_preflight.get("effective_case_ids", selected_case_ids),
         "missing_case_ids": case_loader_preflight.get("missing_case_ids", []),
@@ -141,29 +123,29 @@ def _run_single_case(spec, *, step3_root: Path):
 
 
 def _run_single_case_with_watch(spec, *, step3_root: Path, run_root: Path):
-    _write_case_watch_status(
+    write_case_watch_status(
         run_root=run_root,
         case_id=spec.case_id,
         state="running",
-        current_stage="step67_case_execution",
-        reason="step67_case_started",
-        detail="step67 case execution started",
+        current_stage="t03_case_execution",
+        reason="t03_case_started",
+        detail="t03 case execution started",
     )
     try:
         return _run_single_case(spec, step3_root=step3_root)
     except Exception as exc:
-        _write_case_watch_status(
+        write_case_watch_status(
             run_root=run_root,
             case_id=spec.case_id,
             state="failed",
-            current_stage="step67_case_execution",
-            reason="step67_case_failed",
+            current_stage="t03_case_execution",
+            reason="t03_case_failed",
             detail=f"{type(exc).__name__}: {exc}",
         )
         raise
 
 
-def run_t03_step67_batch(
+def run_t03_batch(
     *,
     case_root: str | Path = DEFAULT_CASE_ROOT,
     step3_root: str | Path = DEFAULT_STEP3_ROOT,
@@ -178,7 +160,7 @@ def run_t03_step67_batch(
     resolved_case_root = normalize_runtime_path(case_root)
     resolved_step3_root = normalize_runtime_path(step3_root)
     resolved_out_root = normalize_runtime_path(out_root)
-    resolved_run_id = run_id or build_run_id("t03_step67_phase")
+    resolved_run_id = run_id or build_run_id("t03_batch")
     run_root = resolved_out_root / resolved_run_id
     rerun_cleaned_before_write = False
     if run_root.exists():
@@ -202,13 +184,13 @@ def run_t03_step67_batch(
     preflight["run_root"] = str(run_root)
     write_json(run_root / "preflight.json", preflight)
     for spec in specs:
-        _write_case_watch_status(
+        write_case_watch_status(
             run_root=run_root,
             case_id=spec.case_id,
             state="pending",
-            current_stage="step67_batch",
-            reason="queued_for_step67",
-            detail="case queued for step67 batch execution",
+            current_stage="t03_batch_queue",
+            reason="queued_for_t03_batch",
+            detail="case queued for t03 batch execution",
         )
 
     review_rows = []
@@ -233,7 +215,7 @@ def run_t03_step67_batch(
                     debug_render=debug_render,
                 )
             )
-            _write_case_watch_status(
+            write_case_watch_status(
                 run_root=run_root,
                 case_id=spec.case_id,
                 state=case_result.step7_result.step7_state,
@@ -246,7 +228,7 @@ def run_t03_step67_batch(
             )
     else:
         futures = {}
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="t03-step67") as executor:
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="t03-batch") as executor:
             for spec in specs:
                 futures[
                     executor.submit(
@@ -271,7 +253,7 @@ def run_t03_step67_batch(
                         debug_render=debug_render,
                     )
                 )
-                _write_case_watch_status(
+                write_case_watch_status(
                     run_root=run_root,
                     case_id=case_id,
                     state=case_result.step7_result.step7_state,
@@ -283,10 +265,10 @@ def run_t03_step67_batch(
                     step7_state=case_result.step7_result.step7_state,
                 )
 
-    review_rows = materialize_review_gallery(run_root, review_rows)
-    write_review_index(run_root, review_rows)
-    write_review_summary(run_root, review_rows)
-    summary_path = write_summary(
+    review_rows = materialize_t03_review_gallery(run_root, review_rows)
+    write_t03_review_index(run_root, review_rows)
+    write_t03_review_summary(run_root, review_rows)
+    summary_path = write_t03_summary(
         run_root,
         review_rows,
         expected_case_ids=[spec.case_id for spec in specs],
@@ -316,6 +298,7 @@ def run_t03_step67_batch(
         write_json(
             run_root / "debug_manifest.json",
             {
+                "generated_at": _now_text(),
                 "selected_case_ids": [row.case_id for row in review_rows],
                 "review_rows": [row.__dict__ for row in review_rows],
                 "excluded_case_ids": loader_preflight.get("applied_excluded_case_ids", []),
@@ -325,3 +308,6 @@ def run_t03_step67_batch(
             },
         )
     return run_root
+
+
+__all__ = ["DEFAULT_OUT_ROOT", "run_t03_batch"]

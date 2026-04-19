@@ -8,22 +8,22 @@
   - 解析本地 `roads / RC roads / RC nodes`
 - `step2_template`
   - 模板归类
-- `step45_loader`
+- `association_loader`
   - 装配单 case
   - 读取冻结 `step3_allowed_space / step3_status / step3_audit`
-- `step45_rcsd_association`
+- `step4_association`
   - Step4 A/B/C
   - required/support 识别
   - hook zone 裁剪
-- `step45_foreign_filter`
+- `step5_foreign_filter`
   - Step5 foreign / excluded / context
-- `step45_render`
+- `association_render`
   - case PNG
   - tri-state banner
-- `step45_writer`
+- `association_outputs`
   - case 级产物
   - flat 目录
   - index / summary
-- `step45_batch_runner`
+- `association_batch_runner`
   - 批处理 orchestration
   - preflight / summary

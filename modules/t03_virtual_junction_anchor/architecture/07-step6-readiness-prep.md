@@ -11,9 +11,9 @@
 ### 1. shared geometry primitives
 
 - 候选来源：
-  - `step45_rcsd_association.py`
-  - `step45_foreign_filter.py`
-  - `step45_render.py`
+  - `step4_association.py`
+  - `step5_foreign_filter.py`
+  - `association_render.py`
 - 候选内容：
   - `allowed-space / current-surface / selected-corridor` 的公共几何裁剪
   - line / point / polygon 的 `_clean / _union / _extract` 小工具
@@ -25,8 +25,8 @@
 ### 2. status-audit adapter
 
 - 候选来源：
-  - `step45_rcsd_association.py`
-  - `step45_writer.py`
+  - `step4_association.py`
+  - `association_outputs.py`
 - 候选内容：
   - `Step45CaseResult -> step45_status.json`
   - `Step45CaseResult -> step45_audit.json`
@@ -38,9 +38,9 @@
 ### 3. Step45 classifier boundary
 
 - 历史边界：
-  - `step45_loader` 负责 prerequisite 装配与显式校验
-  - `step45_rcsd_association` 负责 `A / B / C` 分类与主状态输出
-  - `step45_foreign_filter` 负责 excluded / foreign 结果
+  - `association_loader` 负责 prerequisite 装配与显式校验
+  - `step4_association` 负责 `A / B / C` 分类与主状态输出
+  - `step5_foreign_filter` 负责 excluded / foreign 结果
 - 这些边界随后已被 Step67 正式吸收，但本页保留其历史准备语义
 
 ## 本页已被后续正式文档吸收的点

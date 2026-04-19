@@ -41,6 +41,7 @@
 - 让 `t01_data_preprocess` 的 accepted baseline、官方入口与 freeze compare 口径保持一致
 - 让 `t02_junction_anchor` 的项目级登记状态与仓库级入口事实保持一致
 - 让 `t03_virtual_junction_anchor` 的冻结 `Step3 legal-space baseline`、`Step4-7 clarified formal stage` 与仓库级入口事实保持一致
+- 让 `t03_virtual_junction_anchor` 的 internal full-input repo 级脚本交付面、批次根目录正式成果与 project-level 文档登记保持一致
 
 ### 2.2 当前阶段明确不做
 
@@ -62,7 +63,7 @@
 - `t00_utility_toolbox` 作为工具集合模块的治理与固定脚本入口
 - 已登记正式模块 `t01_data_preprocess` 的 accepted baseline、official end-to-end 与 freeze compare
 - 已登记正式模块 `t02_junction_anchor` 的项目级登记状态与仓库级入口索引
-- 已登记正式模块 `t03_virtual_junction_anchor` 的冻结 `Step3 legal-space baseline`、`Step4-7 clarified formal stage`、批量审查产物与入口索引
+- 已登记正式模块 `t03_virtual_junction_anchor` 的冻结 `Step3 legal-space baseline`、`Step4-7 clarified formal stage`、repo 级 internal full-input shell/watch 交付面、批量审查产物与入口索引
 
 ### 3.2 当前非目标（不包含）
 
@@ -112,6 +113,13 @@
 - 若上游输入或任务书给出 Windows 路径，应先转换为对应的 WSL 路径再执行。
 - 文档在 `modules/<module>/`，实现代码在 `src/rcsd_topo_poc/modules/<module>/`。
 - 运行输出写入 `outputs/_work/`，不把输出目录当工作区。
+
+### 4.4 T03 internal full-input 交付约束
+
+- `t03_virtual_junction_anchor` 当前除 `Step4-5` 官方 CLI 外，还存在 repo 级 internal full-input shell/watch 交付面：`scripts/t03_run_step67_internal_full_input_8workers.sh` 与 `scripts/t03_watch_step67_internal_full_input.sh`；它们属于 repo 级脚本入口，不构成新的 repo 官方 CLI。
+- T03 internal full-input 当前正式批次根目录成果至少包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`；前者聚合当前批次 case 级最终虚拟路口面，后者基于 full-input 输入的整层 `nodes.gpkg` 输出更新版结果。
+- `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义：仅更新代表 node，`accepted => yes`，`rejected / runtime_failed => fail3`；该语义不回写输入原始 `nodes.gpkg`，也不反向修改 T02 上游契约。
+- `t03_watch_step67_internal_full_input.sh` 当前采用 T02 风格的 formal-first 监控口径：默认显示 `selected / completed / running / pending / accepted / rejected / runtime_failed / missing_status`，并显式表达是否已进入 `case execution` 阶段；视觉层统计仅在显式调试场景下读取 review-only 工件。
 
 ---
 
@@ -187,5 +195,6 @@
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小闭环。
 - `t02_junction_anchor` 当前仍是 Active 正式业务模块；其模块正文可在独立轮次中维护，但项目级登记与仓库级入口必须保持一致。
 - `t03_virtual_junction_anchor` 当前作为 Active 正式业务模块；当前正式范围为“冻结 `Step3 legal-space baseline` + `Step4-7 clarified formal stage（仅 `center_junction / single_sided_t_mouth`）`”，默认正式全量 `58` case 的业务正确性基线已满足人工目视审计，少量 accepted case 的几何形状优化保留为长期迭代方向。
-- `t03_virtual_junction_anchor` 当前仍只有 `Step4-5` 官方 CLI；`Step67` 已有正式交付与 closeout，但本轮未提升为 repo 官方入口。
+- `t03_virtual_junction_anchor` 当前仍只有 `Step4-5` 官方 CLI；`Step67` 已有正式交付与 closeout，但未提升为 repo 官方 CLI。其内网批量执行与监控当前通过 repo 级 `t03_run_step67_internal_full_input_8workers.sh` / `t03_watch_step67_internal_full_input.sh` 交付。
+- `t03_virtual_junction_anchor` 的 internal full-input 当前正式批次根目录成果包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`；其中 `nodes.gpkg` 仅更新代表 node，`fail3` 只代表 T03 downstream output 语义。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

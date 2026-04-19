@@ -6,7 +6,7 @@ from pathlib import Path
 
 from shapely.geometry import LineString, Point, box
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import (
     CaseSpec,
     NodeRecord,
     ReviewIndexRow,
@@ -16,7 +16,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import (
     Step3CaseResult,
     Step3NegativeMasks,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.writer import (
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_outputs import (
     CASE_REQUIRED_OUTPUTS,
     REVIEW_INDEX_FIELDNAMES,
     write_case_outputs,

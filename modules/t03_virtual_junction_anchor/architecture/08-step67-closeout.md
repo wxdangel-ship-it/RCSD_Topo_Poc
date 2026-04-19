@@ -11,14 +11,24 @@
   - rewriting `Step3 allowed space / corridor / 50m fallback`
   - freezing solver constants as long-term contract
   - promoting `Step67` to repo official CLI in this round
+- note:
+  - 本文档文件名保留 `step67-closeout` 历史来源，但当前模块级 batch closeout / full-input 交付主命名已经收口到 `T03`，不再以 `step67_*` 作为模块级输出主名
 
 ## 2. Delivery Mode
 
-- current formal run root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015`
-- execution surface: module-internal `run_t03_step67_batch()`
+- current formal run root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_batch/20260419_t03_formal_v015`
+- execution surface: module-internal `run_t03_batch()`
 - repo official CLI status:
   - `Step67` still has **no** repo official CLI
   - current official CLI remains `t03-step45-rcsd-association`
+- internal full-input execution surface:
+  - repo shell: `scripts/t03_run_internal_full_input_8workers.sh`
+  - repo watch: `scripts/t03_watch_internal_full_input.sh`
+  - compatibility wrapper:
+    - `scripts/t03_run_step67_internal_full_input_8workers.sh`
+    - `scripts/t03_watch_step67_internal_full_input.sh`
+  - current main path: `candidate discovery -> shared handle preload -> per-case local context query -> direct Step3/Step45/Step67 execution`
+  - `case-package` materialization is no longer the default internal full-input main path
 
 ## 3. Clarified Formal Conclusions
 
@@ -53,7 +63,7 @@
 
 ## 5. Batch Result
 
-- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015`
+- run_root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_batch/20260419_t03_formal_v015`
 - case_dir_count: `58`
 - flat_png_count: `58`
 - missing_case_ids: `[]`
@@ -69,9 +79,42 @@
 
 Reference files:
 
-- `outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015/preflight.json`
-- `outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015/summary.json`
-- `outputs/_work/t03_step67_phase/20260419_t03_step67_formal_v015/step67_review_index.csv`
+- `outputs/_work/t03_batch/20260419_t03_formal_v015/preflight.json`
+- `outputs/_work/t03_batch/20260419_t03_formal_v015/summary.json`
+- `outputs/_work/t03_batch/20260419_t03_formal_v015/t03_review_index.csv`
+
+## 5A. Internal Full-Input Delivery Alignment
+
+- current formal understanding:
+  - T03 internal full-input is now part of the module-level formal delivery surface
+  - its goal is execution/monitoring parity with T02 official full-input, not a new repo CLI
+- current formal-first monitor semantics:
+  - top-level default counters are `total / completed / running / pending / success / failed`
+  - `success = accepted`
+  - `failed = rejected + runtime_failed`
+  - default monitor no longer prints `V1-V5`; visual counts stay behind `DEBUG_VISUAL=1` and only read from review-only artifacts
+  - `entered_case_execution` is the stable monitor flag used to indicate that batch execution has moved from preload/discovery into real case-level `Step3/45/67` execution
+- current internal progress / performance surfaces:
+  - `<OUT_ROOT>/_internal/<RUN_ID>/t03_internal_full_input_manifest.json`
+  - `<OUT_ROOT>/_internal/<RUN_ID>/t03_internal_full_input_progress.json`
+  - `<OUT_ROOT>/_internal/<RUN_ID>/t03_internal_full_input_performance.json`
+  - `<OUT_ROOT>/_internal/<RUN_ID>/case_progress/*.json`
+- current observability split:
+  - `manifest.json` 承载 static manifest、case 列表与输出路径
+  - `progress.json` 只承载 lightweight runtime counters，不再高频重写大体量 case id 列表
+  - `performance.json` 额外记录 `candidate_discovery / shared_preload / local_feature_selection / step3 / step45 / step6 / step7 / output_write / visual_copy / observability_write` 分段耗时
+  - 高频 JSON 写盘统一使用 atomic rename，避免 watch 读到半写状态或空文件
+- current run-root batch outputs now additionally include:
+  - `virtual_intersection_polygons.gpkg`
+  - `nodes.gpkg`
+  - `nodes_anchor_update_audit.csv`
+  - `nodes_anchor_update_audit.json`
+- `virtual_intersection_polygons.gpkg` is the batch-level aggregate polygon result layer; its field set follows T02 official full-input aggregate output semantics
+- `nodes.gpkg` is a copy-on-write downstream result layer built from full-input nodes:
+  - representative node of `accepted` case -> `is_anchor = yes`
+  - representative node of `rejected / runtime_failed` case -> `is_anchor = fail3`
+  - `fail3` is retained only as a T03 downstream output marker and is not promoted into T02 / Step3 upstream field semantics
+- `visual_checks/` is retained as a review-only flat directory and now reflects per-case completion incrementally rather than waiting for end-of-batch mirroring
 
 ## 6. Representative Recoveries
 

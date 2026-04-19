@@ -8,7 +8,7 @@ from shapely.geometry import GeometryCollection, MultiLineString, MultiPoint, Mu
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.models import Step1Context, Step3CaseResult
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import Step1Context, Step3CaseResult
 
 
 IMAGE_SIZE = 1024

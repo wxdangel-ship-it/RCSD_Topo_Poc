@@ -52,12 +52,15 @@ else
   MAINNODEIDS=("${DEFAULT_MAINNODEIDS[@]}")
 fi
 
-if [[ -z "$PYTHON_BIN" ]]; then
-  if [[ -x "$REPO_DIR/.venv/bin/python" ]]; then
-    PYTHON_BIN="$REPO_DIR/.venv/bin/python"
-  else
-    PYTHON_BIN="python3"
-  fi
+if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != "$REPO_DIR/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+  echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
+  exit 2
+fi
+PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
+  echo "[TIP] Run: make env-sync && make doctor" >&2
+  exit 2
 fi
 
 for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH; do
@@ -246,7 +249,7 @@ run_decode() {
   local bundle_txt="$1"
   local decode_dir="$2"
   mkdir -p "$decode_dir"
-  PYTHONPATH=src "$PYTHON_BIN" -m rcsd_topo_poc t02-decode-text-bundle \
+  "$PYTHON_BIN" -m rcsd_topo_poc t02-decode-text-bundle \
     --bundle-txt "$bundle_txt" \
     --out-dir "$decode_dir"
 }
@@ -258,7 +261,7 @@ if [[ "$BUNDLE_MODE" == "multi_case" ]]; then
     --mainnodeid "${VALID_MAINNODEIDS[@]}"
     --out-txt "$OUT_TXT"
   )
-  PYTHONPATH=src "${CMD[@]}"
+  "${CMD[@]}"
   printf '%s\n' "${VALID_MAINNODEIDS[@]}" > "$SUCCESS_LIST_PATH"
   echo "[DONE] BUNDLE_TXT=$OUT_TXT"
   if [[ "$DECODE_AFTER_EXPORT" == "1" ]]; then
@@ -266,7 +269,7 @@ if [[ "$BUNDLE_MODE" == "multi_case" ]]; then
     echo "[DONE] DECODE_DIR=$DECODE_ROOT"
   else
     echo "[TIP] Decode with:"
-    echo "cd $(dirname "$OUT_TXT") && PYTHONPATH=$REPO_DIR/src $PYTHON_BIN -m rcsd_topo_poc t02-decode-text-bundle --bundle-txt $OUT_TXT --out-dir $DECODE_ROOT"
+    echo "cd $(dirname "$OUT_TXT") && $PYTHON_BIN -m rcsd_topo_poc t02-decode-text-bundle --bundle-txt $OUT_TXT --out-dir $DECODE_ROOT"
   fi
   exit 0
 fi
@@ -284,7 +287,7 @@ for mainnodeid in "${VALID_MAINNODEIDS[@]}"; do
     --out-txt "$case_bundle_txt"
   )
   set +e
-  PYTHONPATH=src "${export_cmd[@]}"
+  "${export_cmd[@]}"
   status=$?
   set -e
   if [[ "$status" -ne 0 ]]; then
@@ -323,5 +326,5 @@ if [[ "$DECODE_AFTER_EXPORT" == "1" ]]; then
   echo "[DONE] DECODE_ROOT=$DECODE_ROOT"
 else
   echo "[TIP] Decode a single case with:"
-  echo "PYTHONPATH=$REPO_DIR/src $PYTHON_BIN -m rcsd_topo_poc t02-decode-text-bundle --bundle-txt $BUNDLE_DIR/<mainnodeid>.txt --out-dir $DECODE_ROOT/<mainnodeid>"
+  echo "$PYTHON_BIN -m rcsd_topo_poc t02-decode-text-bundle --bundle-txt $BUNDLE_DIR/<mainnodeid>.txt --out-dir $DECODE_ROOT/<mainnodeid>"
 fi

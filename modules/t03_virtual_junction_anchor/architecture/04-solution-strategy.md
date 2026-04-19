@@ -1,9 +1,16 @@
 # 04 Solution Strategy
 
 - 使用独立 `Step45` pipeline 承接冻结 Step3 之后的 RCSD 关联、`required / support / excluded` 分类与审计，不回灌 Step3
-- `Step45` 结构拆分为 `step45_loader / step45_rcsd_association / step45_foreign_filter / step45_render / step45_writer`
+- `Step45` 结构拆分为 `association_loader / step4_association / step5_foreign_filter / association_render / association_outputs`
 - `Step45` 产出 `required / support / excluded` RCSD 集合、hook zone、状态与审计；兼容性 foreign context 文件仍保留，但不再承担 `Step6` hard subtract 语义
-- 使用独立 `Step67` pipeline 承接 `Step6` 受约束几何与 `Step7` 最终发布，结构拆分为 `step67_geometry / step67_acceptance / step67_render / step67_writer / step67_batch_runner`
+- 使用独立 `Step67` pipeline 承接 `Step6` 受约束几何与 `Step7` 最终发布；其中 case 级业务阶段继续保留在 `step6_geometry / step7_acceptance`，其配套 case 渲染与写出收口到 `finalization_render / finalization_outputs`，模块级 batch closeout / aggregation 则收口到 `t03_batch_closeout / t03_batch_runner`
+- 对 internal full-input，不再把“先切最小 case-package 再 batch”视为主执行形态；当前主链收敛为：
+  - `candidate discovery`
+  - `shared handle preload`
+  - `per-case local context query`
+  - internal runner 内直接执行 `Step3 / Step45 / Step67`
+- repo 级主脚本 `scripts/t03_run_internal_full_input_8workers.sh` / `scripts/t03_watch_internal_full_input.sh` 负责提供 full-input 运行与监控外壳；它们复用 T02 风格的参数面与使用习惯，但不构成新的 repo 官方 CLI
+- 旧脚本名 `scripts/t03_run_step67_internal_full_input_8workers.sh` / `scripts/t03_watch_step67_internal_full_input.sh` 只保留为兼容 wrapper，不再承担模块级主命名
 - 对 `single_sided_t_mouth + association_class=A`，Step67 的横方向口门不再使用纯投影启发式：
   - 先从竖方向候选空间内的相关 `RCSDRoad / chain` 建 tracing seed
   - 再向横方向追踪并确认落在横方向候选空间内的 terminal `RCSDNode`
@@ -13,4 +20,14 @@
 - 对冻结 `Step3` 已应用 `two_node_t_bridge` 的 `single_sided_t_mouth` case，Step67 不再把该 bridge 仅视为上游 allowed-space 历史事实，而是显式继承为 directional boundary / polygon_seed 的中心桥接支撑，保证横方向口门裁剪后中心仍保持连通
 - `Step67` 的 solver 细节继续留在实现与 closeout，不把 `20m`、buffer、ratio 等常量提升为长期契约
 - `Step7` 主状态收敛为 `accepted / rejected`；视觉审计继续沿用 `V1-V5`
-- 当前 `Step67` 正式交付通过模块内 `run_t03_step67_batch()` 维持，不在本轮新增 repo 官方 CLI
+- 当前 T03 模块级正式批量交付通过模块内 `run_t03_batch()` 维持，不在本轮新增 repo 官方 CLI
+- internal full-input 的正式批次根目录当前额外承接两类下游成果：
+  - `virtual_intersection_polygons.gpkg`：聚合当前批次所有非失败 case 的最终 polygon，字段口径对齐 T02 official full-input 聚合成果层
+  - `nodes.gpkg`：复制 full-input 原始整层 nodes 并按代表 node 更新 `is_anchor`；`fail3` 仅在该下游输出内使用
+- internal full-input 的正式批次根目录同时固化 `nodes_anchor_update_audit.csv / nodes_anchor_update_audit.json`，用于追踪代表 node `is_anchor` 的批次级写值变化
+- internal monitor 当前以 `_internal/<RUN_ID>/t03_internal_full_input_progress.json` 与 `t03_internal_full_input_performance.json` 为主数据源：
+  - `t03_internal_full_input_manifest.json` 承载 static manifest、selected/discovered 列表与输出路径
+  - `t03_internal_full_input_progress.json` 只承载 lightweight runtime counters、最近完成 case 与 `entered_case_execution`
+  - `t03_internal_full_input_performance.json` 承载累计耗时、stage timer 与完成速率
+- 高频监控 JSON 统一使用 atomic rename 写盘，避免 watch 读到半写状态；同时取消启动前为所有 selected case 预写 pending case status 的做法，pending 由 `preflight.json + runtime counters` 推导
+- `visual_checks/` 作为 review-only 平铺目录，按 case 增量镜像 `step67_review.png`，不等待整批完成后再统一生成

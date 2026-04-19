@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import heapq
 import math
+from dataclasses import dataclass, field
+from hashlib import sha1
 from collections import defaultdict, deque
+from time import perf_counter
 from typing import Any, Iterable
 
 from shapely.geometry import (
@@ -39,6 +42,54 @@ OPPOSITE_RC_ROAD_MIN_REVERSE_DIRECTION_DOT = 0.85
 OPPOSITE_RC_NODE_MAX_CORRIDOR_DISTANCE_M = 10.0
 OPPOSITE_RC_ROAD_MAX_PROTECTED_OVERLAP_M = 3.0
 DIRECTION_MODE = "t02_direction_plus_bidirectional_junction_trace"
+
+
+@dataclass(frozen=True)
+class _ReachableRoadPreparedRecord:
+    road: RoadRecord
+    drivezone_line: BaseGeometry | None
+    source_distance_start_m: float
+    source_distance_end_m: float
+    cap_hit: bool
+    incoming_support: bool
+    outgoing_support: bool
+
+
+@dataclass(frozen=True)
+class _ReachableRoadPreparedSupport:
+    prepared_records: tuple[_ReachableRoadPreparedRecord, ...]
+    base_target_core: BaseGeometry | None
+    template_road_filter_applied: bool
+
+
+@dataclass
+class _ReachableRoadSupportCaseCache:
+    prepared_supports: dict[tuple[Any, ...], _ReachableRoadPreparedSupport] = field(default_factory=dict)
+    result_cache: dict[tuple[Any, ...], tuple[BaseGeometry | None, tuple[dict[str, Any], ...], frozenset[str], tuple[str, ...]]] = field(
+        default_factory=dict
+    )
+
+
+def _accumulate_step3_stage_timer(
+    stage_timers: dict[str, float] | None,
+    key: str,
+    elapsed_seconds: float,
+) -> None:
+    if stage_timers is None:
+        return
+    stage_timers[key] = round(float(stage_timers.get(key, 0.0)) + max(float(elapsed_seconds), 0.0), 6)
+
+
+def _sorted_string_key(values: Iterable[str] | None) -> tuple[str, ...] | None:
+    if values is None:
+        return None
+    return tuple(sorted(str(value) for value in values))
+
+
+def _geometry_cache_token(geometry: BaseGeometry | None) -> str | None:
+    if geometry is None or geometry.is_empty:
+        return None
+    return sha1(geometry.wkb).hexdigest()
 
 
 def _rule_d_fallback_fields(*, growth_limits: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -1136,25 +1187,27 @@ def _build_single_sided_blockers(
     return _clean_geometry(unary_union(geometries)) if geometries else None, records, blocked_directions
 
 
-def _build_reachable_road_support(
+def _prepare_reachable_road_support(
     context: Step1Context,
     *,
     allowed_road_ids: set[str] | None = None,
-    blocker_geometry: BaseGeometry | None = None,
     force_bidirectional_road_ids: set[str] | None = None,
     cap_m: float = STEP3_DISTANCE_CAP_M,
-) -> tuple[BaseGeometry | None, list[dict[str, Any]], set[str], list[str]]:
+    case_cache: _ReachableRoadSupportCaseCache | None = None,
+) -> _ReachableRoadPreparedSupport:
+    allowed_key = _sorted_string_key(allowed_road_ids)
+    force_key = _sorted_string_key(force_bidirectional_road_ids)
+    prepared_key = (allowed_key, force_key, round(float(cap_m), 6))
+    if case_cache is not None and prepared_key in case_cache.prepared_supports:
+        return case_cache.prepared_supports[prepared_key]
+
     roads = tuple(road for road in context.roads if allowed_road_ids is None or road.road_id in allowed_road_ids)
     source_node_ids = {node.node_id for node in context.target_group.nodes}
     force_bidirectional_road_ids = force_bidirectional_road_ids or set()
     graph = _build_road_graph(roads, force_bidirectional_road_ids=force_bidirectional_road_ids)
     distances = _multi_source_dijkstra(graph, source_node_ids)
-    clipped_geometries: list[BaseGeometry] = []
-    growth_limits: list[dict[str, Any]] = []
-    selected_road_ids: set[str] = set()
-    frontier_stop_reasons: set[str] = set()
-    if allowed_road_ids is not None and len(roads) < len(context.roads):
-        frontier_stop_reasons.add("template_road_filter_applied")
+
+    prepared_records: list[_ReachableRoadPreparedRecord] = []
     for road in roads:
         clipped_to_cap = _clip_road_to_cap(
             road,
@@ -1165,6 +1218,76 @@ def _build_reachable_road_support(
         if clipped_to_cap is None:
             continue
         drivezone_line = _extract_line_geometry(clipped_to_cap.intersection(context.drivezone_geometry))
+        d_start = distances.get(road.snodeid or "", math.inf)
+        d_end = distances.get(road.enodeid or "", math.inf)
+        incoming_support, outgoing_support = _road_flow_flags_for_group_like_t02(road, source_node_ids)
+        prepared_records.append(
+            _ReachableRoadPreparedRecord(
+                road=road,
+                drivezone_line=drivezone_line,
+                source_distance_start_m=d_start,
+                source_distance_end_m=d_end,
+                cap_hit=min(d_start, d_end) <= cap_m and max(d_start, d_end) > cap_m,
+                incoming_support=incoming_support,
+                outgoing_support=outgoing_support,
+            )
+        )
+
+    base_target_core = _extract_polygon_geometry(unary_union([node.geometry.buffer(NODE_BUFFER_M) for node in context.target_group.nodes]))
+    if base_target_core is not None:
+        base_target_core = _extract_polygon_geometry(base_target_core.intersection(context.drivezone_geometry))
+
+    prepared_support = _ReachableRoadPreparedSupport(
+        prepared_records=tuple(prepared_records),
+        base_target_core=base_target_core,
+        template_road_filter_applied=allowed_road_ids is not None and len(roads) < len(context.roads),
+    )
+    if case_cache is not None:
+        case_cache.prepared_supports[prepared_key] = prepared_support
+    return prepared_support
+
+
+def _build_reachable_road_support(
+    context: Step1Context,
+    *,
+    allowed_road_ids: set[str] | None = None,
+    blocker_geometry: BaseGeometry | None = None,
+    force_bidirectional_road_ids: set[str] | None = None,
+    cap_m: float = STEP3_DISTANCE_CAP_M,
+    case_cache: _ReachableRoadSupportCaseCache | None = None,
+) -> tuple[BaseGeometry | None, list[dict[str, Any]], set[str], list[str]]:
+    force_bidirectional_road_ids = force_bidirectional_road_ids or set()
+    prepared_support = _prepare_reachable_road_support(
+        context,
+        allowed_road_ids=allowed_road_ids,
+        force_bidirectional_road_ids=force_bidirectional_road_ids,
+        cap_m=cap_m,
+        case_cache=case_cache,
+    )
+    result_key = (
+        _sorted_string_key(allowed_road_ids),
+        _geometry_cache_token(blocker_geometry),
+        _sorted_string_key(force_bidirectional_road_ids),
+        round(float(cap_m), 6),
+    )
+    if case_cache is not None and result_key in case_cache.result_cache:
+        cached_geometry, cached_growth_limits, cached_selected_road_ids, cached_frontier_stop_reasons = case_cache.result_cache[result_key]
+        return (
+            cached_geometry,
+            [dict(item) for item in cached_growth_limits],
+            set(cached_selected_road_ids),
+            list(cached_frontier_stop_reasons),
+        )
+
+    clipped_geometries: list[BaseGeometry] = []
+    growth_limits: list[dict[str, Any]] = []
+    selected_road_ids: set[str] = set()
+    frontier_stop_reasons: set[str] = set()
+    if prepared_support.template_road_filter_applied:
+        frontier_stop_reasons.add("template_road_filter_applied")
+    for prepared_record in prepared_support.prepared_records:
+        road = prepared_record.road
+        drivezone_line = prepared_record.drivezone_line
         if drivezone_line is None:
             frontier_stop_reasons.add("drivezone_boundary")
             continue
@@ -1193,25 +1316,29 @@ def _build_reachable_road_support(
             frontier_stop_reasons.add("hard_blocker_applied" if blocker_geometry is not None else "drivezone_boundary")
             continue
         clipped_geometries.append(buffered_support)
-        d_start = distances.get(road.snodeid or "", math.inf)
-        d_end = distances.get(road.enodeid or "", math.inf)
-        cap_hit = min(d_start, d_end) <= cap_m and max(d_start, d_end) > cap_m
-        if cap_hit:
+        if prepared_record.cap_hit:
             frontier_stop_reasons.add("distance_cap_reached")
         growth_limits.append(
             {
                 "road_id": road.road_id,
-                "source_distance_start_m": None if math.isinf(d_start) else round(d_start, 3),
-                "source_distance_end_m": None if math.isinf(d_end) else round(d_end, 3),
+                "source_distance_start_m": (
+                    None
+                    if math.isinf(prepared_record.source_distance_start_m)
+                    else round(prepared_record.source_distance_start_m, 3)
+                ),
+                "source_distance_end_m": (
+                    None
+                    if math.isinf(prepared_record.source_distance_end_m)
+                    else round(prepared_record.source_distance_end_m, 3)
+                ),
                 "cap_m": cap_m,
-                "cap_hit": bool(cap_hit),
-                "incoming_support": _road_flow_flags_for_group_like_t02(road, source_node_ids)[0],
-                "outgoing_support": _road_flow_flags_for_group_like_t02(road, source_node_ids)[1],
+                "cap_hit": bool(prepared_record.cap_hit),
+                "incoming_support": prepared_record.incoming_support,
+                "outgoing_support": prepared_record.outgoing_support,
             }
         )
-    target_core = _extract_polygon_geometry(unary_union([node.geometry.buffer(NODE_BUFFER_M) for node in context.target_group.nodes]))
+    target_core = prepared_support.base_target_core
     if target_core is not None:
-        target_core = _extract_polygon_geometry(target_core.intersection(context.drivezone_geometry))
         if blocker_geometry is not None and target_core is not None:
             clipped_core = _extract_polygon_geometry(target_core.difference(blocker_geometry))
             if clipped_core is None:
@@ -1221,9 +1348,20 @@ def _build_reachable_road_support(
     if target_core is not None:
         candidate_parts.append(target_core)
     if not candidate_parts:
-        return None, growth_limits, selected_road_ids, sorted(frontier_stop_reasons)
+        result = (None, tuple(dict(item) for item in growth_limits), frozenset(selected_road_ids), tuple(sorted(frontier_stop_reasons)))
+        if case_cache is not None:
+            case_cache.result_cache[result_key] = result
+        return None, [dict(item) for item in result[1]], set(result[2]), list(result[3])
     candidate = _extract_polygon_geometry(unary_union(candidate_parts))
-    return candidate, growth_limits, selected_road_ids, sorted(frontier_stop_reasons)
+    result = (
+        candidate,
+        tuple(dict(item) for item in growth_limits),
+        frozenset(selected_road_ids),
+        tuple(sorted(frontier_stop_reasons)),
+    )
+    if case_cache is not None:
+        case_cache.result_cache[result_key] = result
+    return candidate, [dict(item) for item in result[1]], set(result[2]), list(result[3])
 
 
 def _build_foreign_object_masks(
@@ -1526,7 +1664,13 @@ def _status_for_input_gate_failure(
     )
 
 
-def build_step3_case_result(context: Step1Context, template_result: Step2TemplateResult) -> Step3CaseResult:
+def build_step3_case_result(
+    context: Step1Context,
+    template_result: Step2TemplateResult,
+    *,
+    stage_timers: dict[str, float] | None = None,
+    use_reachable_support_cache: bool = True,
+) -> Step3CaseResult:
     if not template_result.supported:
         return _status_for_unsupported_template(context, template_result)
 
@@ -1540,6 +1684,11 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         input_gate["reason"] = "input_gate_failed"
         return _status_for_input_gate_failure(context, template_result, input_gate=input_gate)
 
+    reachable_support_case_cache = (
+        _ReachableRoadSupportCaseCache()
+        if use_reachable_support_cache
+        else None
+    )
     reference_target_geometry = unary_union([node.geometry.buffer(1.0) for node in context.target_group.nodes])
     base_allowed_road_ids: set[str] | None = None
     excluded_opposite_road_ids: set[str] = set()
@@ -1616,6 +1765,7 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         if ambiguous:
             review_signals.append("single_sided_direction_ambiguous")
 
+    negative_masks_started_perf = perf_counter()
     adjacent_geometry, adjacent_records, adjacent_suppressed_records, adjacent_cut_road_ids = _build_adjacent_junction_masks(
         context,
         adjacent_records=adjacent_seed_records,
@@ -1631,12 +1781,25 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     pre_blocker_union = _clean_geometry(
         unary_union([geometry for geometry in (adjacent_geometry, foreign_mst_geometry, e_geometry) if geometry is not None])
     )
+    _accumulate_step3_stage_timer(
+        stage_timers,
+        "step3_negative_masks",
+        perf_counter() - negative_masks_started_perf,
+    )
+    reachable_support_started_perf = perf_counter()
     pre_candidate_support, _pre_growth_limits, frontier_candidate_road_ids, _pre_frontier_stop_reason = _build_reachable_road_support(
         context,
         allowed_road_ids=base_allowed_road_ids,
         blocker_geometry=pre_blocker_union,
         force_bidirectional_road_ids=branch_frontier_road_ids,
+        case_cache=reachable_support_case_cache,
     )
+    _accumulate_step3_stage_timer(
+        stage_timers,
+        "step3_reachable_support",
+        perf_counter() - reachable_support_started_perf,
+    )
+    negative_masks_started_perf = perf_counter()
     b_geometry, b_records, node_fallback_used = _build_foreign_object_masks(
         context,
         frontier_candidate_road_ids=frontier_candidate_road_ids,
@@ -1661,12 +1824,24 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
             ]
         )
     )
+    _accumulate_step3_stage_timer(
+        stage_timers,
+        "step3_negative_masks",
+        perf_counter() - negative_masks_started_perf,
+    )
 
+    reachable_support_started_perf = perf_counter()
     hard_candidate_support_geometry, growth_limits, selected_road_ids, frontier_stop_reason = _build_reachable_road_support(
         context,
         allowed_road_ids=base_allowed_road_ids,
         blocker_geometry=blocker_union,
         force_bidirectional_road_ids=branch_frontier_road_ids,
+        case_cache=reachable_support_case_cache,
+    )
+    _accumulate_step3_stage_timer(
+        stage_timers,
+        "step3_reachable_support",
+        perf_counter() - reachable_support_started_perf,
     )
     bridge_hard_support, bridge_hard_fields = _build_two_node_t_bridge_support(
         context,
@@ -1675,18 +1850,26 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
     hard_candidate_parts = [geometry for geometry in (hard_candidate_support_geometry, bridge_hard_support) if geometry is not None]
     hard_candidate_with_bridge = _extract_polygon_geometry(unary_union(hard_candidate_parts)) if hard_candidate_parts else None
 
+    hard_path_validation_started_perf = perf_counter()
     hard_path_geometry = _component_touching_target(hard_candidate_with_bridge, reference_target_geometry)
     drivezone_metrics = _drivezone_containment_metrics(hard_path_geometry, context.drivezone_geometry)
     hard_intrusion = _has_negative_intrusion(hard_path_geometry, blocker_union)
     covered_node_ids = _covered_node_ids(context, hard_path_geometry)
     target_node_ids = [node.node_id for node in context.target_group.nodes]
     missing_node_ids = [node_id for node_id in target_node_ids if node_id not in covered_node_ids]
+    _accumulate_step3_stage_timer(
+        stage_timers,
+        "step3_hard_path_validation",
+        perf_counter() - hard_path_validation_started_perf,
+    )
 
+    cleanup_preview_started_perf = perf_counter()
     cleanup_preview_source_geometry, _preview_growth_limits, _preview_selected_road_ids, _preview_frontier_stop_reason = _build_reachable_road_support(
         context,
         allowed_road_ids=base_allowed_road_ids,
         blocker_geometry=None,
         force_bidirectional_road_ids=branch_frontier_road_ids,
+        case_cache=reachable_support_case_cache,
     )
     cleanup_preview_parts = [
         geometry
@@ -1705,6 +1888,11 @@ def build_step3_case_result(context: Step1Context, template_result: Step2Templat
         for node_id in target_node_ids
         if node_id not in cleanup_preview_covered_node_ids
     ]
+    _accumulate_step3_stage_timer(
+        stage_timers,
+        "step3_cleanup_preview",
+        perf_counter() - cleanup_preview_started_perf,
+    )
 
     hard_path_passed = (
         hard_path_geometry is not None

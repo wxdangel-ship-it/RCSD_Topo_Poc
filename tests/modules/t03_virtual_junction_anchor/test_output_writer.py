@@ -194,6 +194,7 @@ def test_output_writer_keeps_flat_dir_flat_and_fields_stable(tmp_path: Path) -> 
     case_dir = run_root / "cases" / "100001"
     for rel_path in CASE_REQUIRED_OUTPUTS:
         assert (case_dir / rel_path).is_file()
+    assert (case_dir / "step3_review.png").is_file()
 
     flat_dir = run_root / "step3_review_flat"
     flat_entries = list(flat_dir.iterdir())
@@ -259,3 +260,22 @@ def test_output_writer_review_row_names_png_by_state(tmp_path: Path) -> None:
 
     row = write_case_outputs(run_root=run_root, context=context, case_result=case_result)
     assert row.image_name == "200002__review.png"
+
+
+def test_output_writer_can_skip_review_png(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    context = _build_context(tmp_path / "case_root", case_id="300003")
+    case_result = _build_case_result(case_id="300003")
+
+    row = write_case_outputs(
+        run_root=run_root,
+        context=context,
+        case_result=case_result,
+        render_review_png=False,
+    )
+
+    case_dir = run_root / "cases" / "300003"
+    assert not (case_dir / "step3_review.png").exists()
+    assert not (run_root / "step3_review_flat").exists()
+    assert row.image_name == ""
+    assert row.image_path == ""

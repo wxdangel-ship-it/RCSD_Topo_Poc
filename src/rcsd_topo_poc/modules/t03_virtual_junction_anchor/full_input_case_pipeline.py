@@ -81,21 +81,32 @@ def run_single_case_direct(
     step3_run_root: Path,
     input_paths: dict[str, Path],
     debug_render: bool,
+    render_review_png: bool,
 ) -> dict[str, Any]:
     stage_timers = {
         key: 0.0
         for key in (
             "local_feature_selection",
             "step3",
+            "step3_reachable_support",
+            "step3_negative_masks",
+            "step3_cleanup_preview",
+            "step3_hard_path_validation",
             "step45",
             "step6",
+            "step6_mask_prep",
+            "step6_directional_cut",
+            "step6_finalize",
+            "step6_finalize_cleanup",
+            "step6_finalize_validation",
+            "step6_finalize_status",
             "step7",
             "output_write",
         )
     }
 
     local_feature_started_perf = perf_counter()
-    representative_feature = resolve_representative_feature(shared_layers.nodes, case_id)
+    representative_feature = resolve_representative_feature(shared_layers, case_id)
     selected = collect_case_features(
         shared_layers=shared_layers,
         case_id=case_id,
@@ -126,11 +137,16 @@ def run_single_case_direct(
         rcsdnode_features=selected["rcsd_nodes"],
     )
     template_result = classify_step2_template(step1_context)
-    step3_case_result = build_step3_case_result(step1_context, template_result)
+    step3_case_result = build_step3_case_result(
+        step1_context,
+        template_result,
+        stage_timers=stage_timers,
+    )
     step3_row = write_step3_case_outputs(
         run_root=step3_run_root,
         context=step1_context,
         case_result=step3_case_result,
+        render_review_png=render_review_png,
     )
     accumulate_duration(stage_timers, "step3", perf_counter() - step3_started_perf)
 
@@ -150,7 +166,10 @@ def run_single_case_direct(
         step45_case_result=step45_case_result,
     )
     step6_started_perf = perf_counter()
-    step6_result = build_step6_result(step67_context)
+    step6_result = build_step6_result(
+        step67_context,
+        stage_timers=stage_timers,
+    )
     accumulate_duration(stage_timers, "step6", perf_counter() - step6_started_perf)
 
     step7_started_perf = perf_counter()
@@ -170,6 +189,7 @@ def run_single_case_direct(
         step67_context=step67_context,
         case_result=step67_case_result,
         debug_render=debug_render,
+        render_review_png=render_review_png,
     )
     accumulate_duration(stage_timers, "output_write", perf_counter() - output_write_started_perf)
     return {

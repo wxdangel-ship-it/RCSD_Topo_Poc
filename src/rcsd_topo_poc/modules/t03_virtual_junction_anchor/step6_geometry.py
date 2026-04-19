@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any
 
 from shapely.geometry import (
@@ -89,8 +90,43 @@ class _SingleSidedHorizontalTraceDecision:
     apply_special_rule: bool
 
 
+@dataclass
+class _Step6GeometryCache:
+    line_buffer_cache: dict[tuple[bytes | None, float], BaseGeometry | None] = field(default_factory=dict)
+    boundary_buffer_cache: dict[tuple[bytes | None, float], BaseGeometry | None] = field(default_factory=dict)
+    shape_metrics_cache: dict[bytes | None, dict[str, Any]] = field(default_factory=dict)
+    directional_cut_cache: dict[
+        tuple[bool, bool],
+        tuple[BaseGeometry | None, BaseGeometry | None, list[dict[str, Any]]],
+    ] = field(default_factory=dict)
+    allowed_space_tolerance_geometry: BaseGeometry | None = None
+    allowed_space_tolerance_ready: bool = False
+    target_anchor_geometry: BaseGeometry | None = None
+    target_anchor_geometry_ready: bool = False
+    single_sided_vertical_exit_geometry: BaseGeometry | None = None
+    single_sided_vertical_exit_geometry_ready: bool = False
+    single_sided_trace_decisions: dict[tuple[str, int], _SingleSidedHorizontalTraceDecision] = field(default_factory=dict)
+    single_sided_trace_decisions_ready: bool = False
+
+
 def _sorted_ids(values: Iterable[str]) -> list[str]:
     return sorted(set(values), key=lambda item: (0, int(item)) if item.isdigit() else (1, item))
+
+
+def _accumulate_stage_timer(
+    stage_timers: dict[str, float] | None,
+    key: str,
+    elapsed_seconds: float,
+) -> None:
+    if stage_timers is None:
+        return
+    stage_timers[key] = round(float(stage_timers.get(key, 0.0)) + max(float(elapsed_seconds), 0.0), 6)
+
+
+def _geometry_cache_token(geometry: BaseGeometry | None) -> bytes | None:
+    if geometry is None or geometry.is_empty:
+        return None
+    return geometry.wkb
 
 
 def _clean_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
@@ -152,16 +188,40 @@ def _line_buffers(geometry: BaseGeometry | None, distance: float) -> BaseGeometr
     )
 
 
+def _cached_line_buffers(
+    geometry: BaseGeometry | None,
+    distance: float,
+    *,
+    geometry_cache: _Step6GeometryCache | None,
+) -> BaseGeometry | None:
+    if geometry_cache is None:
+        return _line_buffers(geometry, distance)
+    cache_key = (_geometry_cache_token(geometry), round(float(distance), 6))
+    if cache_key not in geometry_cache.line_buffer_cache:
+        geometry_cache.line_buffer_cache[cache_key] = _line_buffers(geometry, distance)
+    return geometry_cache.line_buffer_cache[cache_key]
+
+
 def _road_union(roads: Iterable[RoadRecord]) -> BaseGeometry | None:
     return _union_geometries(road.geometry for road in roads)
 
 
-def _build_foreign_mask_geometry(step67_context: Step67Context) -> tuple[BaseGeometry | None, list[str]]:
+def _build_foreign_mask_geometry(
+    step67_context: Step67Context,
+    *,
+    geometry_cache: _Step6GeometryCache | None = None,
+) -> tuple[BaseGeometry | None, list[str]]:
     step45_outputs = step67_context.step45_case_result.output_geometries
     sources: list[str] = []
     geometries: list[BaseGeometry | None] = []
     if step45_outputs.excluded_rcsdroad_geometry is not None:
-        geometries.append(_line_buffers(step45_outputs.excluded_rcsdroad_geometry, FOREIGN_MASK_BUFFER_M))
+        geometries.append(
+            _cached_line_buffers(
+                step45_outputs.excluded_rcsdroad_geometry,
+                FOREIGN_MASK_BUFFER_M,
+                geometry_cache=geometry_cache,
+            )
+        )
         sources.append("excluded_rcsdroad_geometry")
     return _union_geometries(geometries), sources
 
@@ -347,10 +407,20 @@ def _branch_local_overrun_mask(
     )
 
 
-def _target_anchor_geometry(step67_context: Step67Context) -> BaseGeometry | None:
-    return _union_geometries(
+def _target_anchor_geometry(
+    step67_context: Step67Context,
+    *,
+    geometry_cache: _Step6GeometryCache | None = None,
+) -> BaseGeometry | None:
+    if geometry_cache is not None and geometry_cache.target_anchor_geometry_ready:
+        return geometry_cache.target_anchor_geometry
+    geometry = _union_geometries(
         node.geometry for node in step67_context.step45_context.step1_context.target_group.nodes
     )
+    if geometry_cache is not None:
+        geometry_cache.target_anchor_geometry = geometry
+        geometry_cache.target_anchor_geometry_ready = True
+    return geometry
 
 
 def _step3_two_node_t_bridge_geometry(
@@ -407,10 +477,17 @@ def _road_directional_branches(
 def _contiguous_allowed_prefix(
     branch_geometry: LineString | None,
     allowed_space: BaseGeometry | None,
+    *,
+    allowed_space_tolerance_geometry: BaseGeometry | None = None,
 ) -> LineString | None:
     if branch_geometry is None or allowed_space is None:
         return None
-    clipped = _clean_geometry(branch_geometry.intersection(allowed_space.buffer(LEGAL_SPACE_TOLERANCE_M)))
+    tolerance_geometry = (
+        allowed_space_tolerance_geometry
+        if allowed_space_tolerance_geometry is not None
+        else _clean_geometry(allowed_space.buffer(LEGAL_SPACE_TOLERANCE_M))
+    )
+    clipped = _clean_geometry(branch_geometry.intersection(tolerance_geometry))
     if clipped is None:
         return None
     branch_start = Point(branch_geometry.coords[0])
@@ -437,10 +514,25 @@ def _retain_components_touching_anchors(
     anchors = _union_geometries(anchor_geometries)
     if anchors is None:
         return cleaned
+    return _retain_components_touching_keep_geometry(
+        cleaned,
+        _clean_geometry(anchors.buffer(NODE_COVER_TOLERANCE_M)),
+    )
+
+
+def _retain_components_touching_keep_geometry(
+    geometry: BaseGeometry | None,
+    keep_geometry: BaseGeometry | None,
+) -> BaseGeometry | None:
+    cleaned = _clean_geometry(geometry)
+    if cleaned is None:
+        return None
+    if keep_geometry is None:
+        return cleaned
     kept = [
         polygon
         for polygon in _iter_polygons(cleaned)
-        if polygon.intersects(anchors.buffer(NODE_COVER_TOLERANCE_M))
+        if polygon.intersects(keep_geometry)
     ]
     if not kept:
         return None
@@ -448,32 +540,55 @@ def _retain_components_touching_anchors(
 
 
 def _line_coverage_ratio(line_geometry: BaseGeometry | None, polygon_geometry: BaseGeometry | None) -> float:
+    cover_geometry = _cached_boundary_buffer(
+        polygon_geometry,
+        LINE_COVER_BUFFER_M,
+        geometry_cache=None,
+    )
+    return _line_coverage_ratio_with_cover_geometry(line_geometry, cover_geometry)
+
+
+def _line_coverage_ratio_with_cover_geometry(
+    line_geometry: BaseGeometry | None,
+    cover_geometry: BaseGeometry | None,
+) -> float:
     line = _clean_geometry(line_geometry)
-    polygon = _clean_geometry(polygon_geometry)
+    polygon_cover = _clean_geometry(cover_geometry)
     if line is None:
         return 1.0
-    if polygon is None:
+    if polygon_cover is None:
         return 0.0
     total_length = sum(item.length for item in _iter_lines(line))
     if total_length <= 0.0:
         return 1.0
     covered_length = sum(
-        item.intersection(polygon.buffer(LINE_COVER_BUFFER_M)).length
+        item.intersection(polygon_cover).length
         for item in _iter_lines(line)
     )
     return max(0.0, min(1.0, covered_length / total_length))
 
 
 def _node_cover_ratio(nodes: Iterable[NodeRecord], polygon_geometry: BaseGeometry | None) -> float:
-    polygon = _clean_geometry(polygon_geometry)
+    polygon_cover = _cached_boundary_buffer(
+        polygon_geometry,
+        NODE_COVER_TOLERANCE_M,
+        geometry_cache=None,
+    )
+    return _node_cover_ratio_with_cover_geometry(nodes, polygon_cover)
+
+
+def _node_cover_ratio_with_cover_geometry(
+    nodes: Iterable[NodeRecord],
+    polygon_cover: BaseGeometry | None,
+) -> float:
     items = list(nodes)
     if not items:
         return 1.0
-    if polygon is None:
+    if polygon_cover is None:
         return 0.0
     covered = 0
     for node in items:
-        if polygon.buffer(NODE_COVER_TOLERANCE_M).contains(node.geometry):
+        if polygon_cover.contains(node.geometry):
             covered += 1
     return covered / len(items)
 
@@ -482,6 +597,19 @@ def _road_core_cover_ratio(core_geometry: BaseGeometry | None, polygon_geometry:
     if core_geometry is None:
         return 1.0
     return _line_coverage_ratio(core_geometry, polygon_geometry)
+
+
+def _cached_shape_metrics(
+    geometry: BaseGeometry | None,
+    *,
+    geometry_cache: _Step6GeometryCache | None,
+) -> dict[str, Any]:
+    if geometry_cache is None:
+        return _shape_metrics(geometry)
+    cache_key = _geometry_cache_token(geometry)
+    if cache_key not in geometry_cache.shape_metrics_cache:
+        geometry_cache.shape_metrics_cache[cache_key] = _shape_metrics(geometry)
+    return geometry_cache.shape_metrics_cache[cache_key]
 
 
 def _required_node_records(step67_context: Step67Context) -> list[NodeRecord]:
@@ -512,7 +640,13 @@ def _required_road_records(step67_context: Step67Context) -> list[RoadRecord]:
     return [road for road in step1.rcsd_roads if road.road_id in required_ids]
 
 
-def _single_sided_vertical_exit_geometry(step67_context: Step67Context) -> BaseGeometry | None:
+def _single_sided_vertical_exit_geometry(
+    step67_context: Step67Context,
+    *,
+    geometry_cache: _Step6GeometryCache | None = None,
+) -> BaseGeometry | None:
+    if geometry_cache is not None and geometry_cache.single_sided_vertical_exit_geometry_ready:
+        return geometry_cache.single_sided_vertical_exit_geometry
     step45_context = step67_context.step45_context
     if step45_context.template_result.template_class != "single_sided_t_mouth":
         return None
@@ -522,17 +656,59 @@ def _single_sided_vertical_exit_geometry(step67_context: Step67Context) -> BaseG
         for road in step45_context.step1_context.roads
         if road.road_id in set(step45_context.selected_road_ids) and road.road_id not in horizontal_pair_ids
     ]
-    return _union_geometries(exit_geometries)
+    geometry = _union_geometries(exit_geometries)
+    if geometry_cache is not None:
+        geometry_cache.single_sided_vertical_exit_geometry = geometry
+        geometry_cache.single_sided_vertical_exit_geometry_ready = True
+    return geometry
+
+
+def _allowed_space_tolerance_geometry(
+    allowed_space: BaseGeometry | None,
+    *,
+    geometry_cache: _Step6GeometryCache | None,
+) -> BaseGeometry | None:
+    if allowed_space is None:
+        return None
+    if geometry_cache is not None and geometry_cache.allowed_space_tolerance_ready:
+        return geometry_cache.allowed_space_tolerance_geometry
+    geometry = _clean_geometry(allowed_space.buffer(LEGAL_SPACE_TOLERANCE_M))
+    if geometry_cache is not None:
+        geometry_cache.allowed_space_tolerance_geometry = geometry
+        geometry_cache.allowed_space_tolerance_ready = True
+    return geometry
+
+
+def _cached_boundary_buffer(
+    boundary_geometry: BaseGeometry | None,
+    distance: float,
+    *,
+    geometry_cache: _Step6GeometryCache | None,
+) -> BaseGeometry | None:
+    boundary = _clean_geometry(boundary_geometry)
+    if boundary is None:
+        return None
+    if geometry_cache is None:
+        return _clean_geometry(boundary.buffer(distance))
+    cache_key = (_geometry_cache_token(boundary), round(float(distance), 6))
+    if cache_key not in geometry_cache.boundary_buffer_cache:
+        geometry_cache.boundary_buffer_cache[cache_key] = _clean_geometry(boundary.buffer(distance))
+    return geometry_cache.boundary_buffer_cache[cache_key]
 
 
 def _local_required_node_records(
     step67_context: Step67Context,
     boundary_geometry: BaseGeometry | None,
+    *,
+    geometry_cache: _Step6GeometryCache | None = None,
 ) -> list[NodeRecord]:
-    boundary = _clean_geometry(boundary_geometry)
-    if boundary is None:
+    boundary_buffer = _cached_boundary_buffer(
+        boundary_geometry,
+        NODE_COVER_TOLERANCE_M,
+        geometry_cache=geometry_cache,
+    )
+    if boundary_buffer is None:
         return []
-    boundary_buffer = boundary.buffer(NODE_COVER_TOLERANCE_M)
     return [
         node
         for node in _required_node_records(step67_context)
@@ -543,11 +719,16 @@ def _local_required_node_records(
 def _local_required_road_records(
     step67_context: Step67Context,
     boundary_geometry: BaseGeometry | None,
+    *,
+    geometry_cache: _Step6GeometryCache | None = None,
 ) -> list[RoadRecord]:
-    boundary = _clean_geometry(boundary_geometry)
-    if boundary is None:
+    boundary_buffer = _cached_boundary_buffer(
+        boundary_geometry,
+        LINE_COVER_BUFFER_M,
+        geometry_cache=geometry_cache,
+    )
+    if boundary_buffer is None:
         return []
-    boundary_buffer = boundary.buffer(LINE_COVER_BUFFER_M)
     return [
         road
         for road in _required_road_records(step67_context)
@@ -558,16 +739,22 @@ def _local_required_road_records(
 def _local_required_road_geometry(
     step67_context: Step67Context,
     boundary_geometry: BaseGeometry | None,
+    *,
+    geometry_cache: _Step6GeometryCache | None = None,
 ) -> BaseGeometry | None:
-    boundary = _clean_geometry(boundary_geometry)
-    if boundary is None:
+    boundary_buffer = _cached_boundary_buffer(
+        boundary_geometry,
+        LINE_COVER_BUFFER_M,
+        geometry_cache=geometry_cache,
+    )
+    if boundary_buffer is None:
         return None
     required_geometry = _clean_geometry(
         step67_context.step45_case_result.output_geometries.required_rcsdroad_geometry
     )
     if required_geometry is None:
         return None
-    return _clean_geometry(required_geometry.intersection(boundary.buffer(LINE_COVER_BUFFER_M)))
+    return _clean_geometry(required_geometry.intersection(boundary_buffer))
 
 
 def _single_sided_trace_candidate_rcsdroad_records(
@@ -591,8 +778,13 @@ def _single_sided_trace_candidate_rcsdroad_records(
 def _single_sided_trace_reachable_endpoint_nodes(
     step67_context: Step67Context,
     candidate_roads: list[RoadRecord],
+    *,
+    geometry_cache: _Step6GeometryCache | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...], list[NodeRecord]]:
-    vertical_exit_geometry = _single_sided_vertical_exit_geometry(step67_context)
+    vertical_exit_geometry = _single_sided_vertical_exit_geometry(
+        step67_context,
+        geometry_cache=geometry_cache,
+    )
     if vertical_exit_geometry is None or vertical_exit_geometry.is_empty:
         return (), (), []
 
@@ -646,7 +838,12 @@ def _single_sided_trace_reachable_endpoint_nodes(
 def _single_sided_horizontal_trace_decisions(
     step67_context: Step67Context,
     allowed_space: BaseGeometry | None,
+    *,
+    allowed_space_tolerance_geometry: BaseGeometry | None = None,
+    geometry_cache: _Step6GeometryCache | None = None,
 ) -> dict[tuple[str, int], _SingleSidedHorizontalTraceDecision]:
+    if geometry_cache is not None and geometry_cache.single_sided_trace_decisions_ready:
+        return geometry_cache.single_sided_trace_decisions
     step45_case_result = step67_context.step45_case_result
     if step45_case_result.template_class != "single_sided_t_mouth":
         return {}
@@ -663,18 +860,23 @@ def _single_sided_horizontal_trace_decisions(
     vertical_seed_ids, traced_road_ids, endpoint_nodes = _single_sided_trace_reachable_endpoint_nodes(
         step67_context,
         candidate_roads,
+        geometry_cache=geometry_cache,
     )
     if not vertical_seed_ids or not traced_road_ids or not endpoint_nodes:
         return {}
 
     selected_roads = _selected_road_records(step67_context)
-    anchor_geometry = _target_anchor_geometry(step67_context)
+    anchor_geometry = _target_anchor_geometry(step67_context, geometry_cache=geometry_cache)
     branch_hits: dict[tuple[str, int], list[tuple[NodeRecord, float]]] = {}
     for road in selected_roads:
         if road.road_id not in horizontal_pair_ids:
             continue
         for branch_index, branch_geometry, _anchor_distance in _road_directional_branches(road, anchor_geometry):
-            allowed_prefix = _contiguous_allowed_prefix(branch_geometry, allowed_space)
+            allowed_prefix = _contiguous_allowed_prefix(
+                branch_geometry,
+                allowed_space,
+                allowed_space_tolerance_geometry=allowed_space_tolerance_geometry,
+            )
             if allowed_prefix is None or allowed_prefix.length <= 1e-6:
                 continue
             hits: list[tuple[NodeRecord, float]] = []
@@ -732,6 +934,9 @@ def _single_sided_horizontal_trace_decisions(
             requested_cut_length_m=round(requested_length, 6),
             apply_special_rule=apply_special_rule,
         )
+    if geometry_cache is not None:
+        geometry_cache.single_sided_trace_decisions = decision_map
+        geometry_cache.single_sided_trace_decisions_ready = True
     return decision_map
 
 
@@ -739,19 +944,33 @@ def _build_directional_cut_geometry(
     step67_context: Step67Context,
     allowed_space: BaseGeometry | None,
     *,
+    geometry_cache: _Step6GeometryCache | None = None,
+    step3_two_node_t_bridge_geometry: BaseGeometry | None = None,
     force_preserve_single_sided_horizontal_pair: bool = False,
     force_preserve_all_branches: bool = False,
 ) -> tuple[BaseGeometry | None, BaseGeometry | None, list[dict[str, Any]]]:
+    cache_key = (
+        bool(force_preserve_single_sided_horizontal_pair),
+        bool(force_preserve_all_branches),
+    )
+    if geometry_cache is not None and cache_key in geometry_cache.directional_cut_cache:
+        return geometry_cache.directional_cut_cache[cache_key]
     selected_roads = _selected_road_records(step67_context)
     if not selected_roads:
         return None, None, []
-    anchor_geometry = _target_anchor_geometry(step67_context)
+    anchor_geometry = _target_anchor_geometry(step67_context, geometry_cache=geometry_cache)
     clip_extent = _directional_window_half_width(allowed_space) * DIRECTIONAL_WINDOW_EXTENSION_FACTOR
     target_road_ids = set(step67_context.step45_context.step1_context.target_road_ids)
     single_sided_horizontal_pair_ids = _single_sided_horizontal_pair_ids(step67_context)
+    allowed_space_tolerance_geometry = _allowed_space_tolerance_geometry(
+        allowed_space,
+        geometry_cache=geometry_cache,
+    )
     single_sided_trace_decisions = _single_sided_horizontal_trace_decisions(
         step67_context,
         allowed_space,
+        allowed_space_tolerance_geometry=allowed_space_tolerance_geometry,
+        geometry_cache=geometry_cache,
     )
     branch_windows: list[_DirectionalBranchWindow] = []
     branch_decisions: dict[tuple[str, int], _SingleSidedHorizontalTraceDecision] = {}
@@ -760,7 +979,11 @@ def _build_directional_cut_geometry(
 
     for road in selected_roads:
         for branch_index, branch_geometry, anchor_distance in _road_directional_branches(road, anchor_geometry):
-            allowed_prefix = _contiguous_allowed_prefix(branch_geometry, allowed_space)
+            allowed_prefix = _contiguous_allowed_prefix(
+                branch_geometry,
+                allowed_space,
+                allowed_space_tolerance_geometry=allowed_space_tolerance_geometry,
+            )
             available_length = allowed_prefix.length if allowed_prefix is not None else 0.0
             trace_decision = single_sided_trace_decisions.get((road.road_id, branch_index))
             branch_decisions[(road.road_id, branch_index)] = trace_decision
@@ -848,7 +1071,9 @@ def _build_directional_cut_geometry(
         direction_clip_geometry = _clean_geometry(
             direction_clip_geometry.difference(_union_geometries(trim_geometries))
         )
-    bridge_geometry = _step3_two_node_t_bridge_geometry(step67_context, allowed_space)
+    bridge_geometry = step3_two_node_t_bridge_geometry
+    if bridge_geometry is None:
+        bridge_geometry = _step3_two_node_t_bridge_geometry(step67_context, allowed_space)
     if bridge_geometry is not None:
         direction_clip_geometry = _union_geometries([direction_clip_geometry, bridge_geometry])
     selected_core_geometry = _union_geometries(
@@ -902,7 +1127,10 @@ def _build_directional_cut_geometry(
         }
         for branch in branch_windows
     ]
-    return direction_clip_geometry, selected_core_geometry, audit_rows
+    result = (direction_clip_geometry, selected_core_geometry, audit_rows)
+    if geometry_cache is not None:
+        geometry_cache.directional_cut_cache[cache_key] = result
+    return result
 
 
 def _step6_failure_result(
@@ -938,11 +1166,17 @@ def _step6_failure_result(
     )
 
 
-def build_step6_result(step67_context: Step67Context) -> Step6Result:
+def build_step6_result(
+    step67_context: Step67Context,
+    *,
+    stage_timers: dict[str, float] | None = None,
+    use_step6_geometry_cache: bool = True,
+) -> Step6Result:
     step45_context = step67_context.step45_context
     step45_case_result = step67_context.step45_case_result
     step1 = step45_context.step1_context
     template_class = step45_case_result.template_class
+    geometry_cache = _Step6GeometryCache() if use_step6_geometry_cache else None
     allowed_space = _clean_geometry(step45_context.step3_allowed_space_geometry)
     if allowed_space is None:
         return _step6_failure_result(
@@ -962,15 +1196,28 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
                 "step45_state": step45_case_result.step45_state,
             },
         )
+    mask_prep_started_perf = perf_counter()
+    allowed_space_tolerance_geometry = _allowed_space_tolerance_geometry(
+        allowed_space,
+        geometry_cache=geometry_cache,
+    )
     target_cover_geometry = _point_buffers(step1.target_group.nodes, TARGET_NODE_BUFFER_M)
-    foreign_mask_geometry, foreign_mask_sources = _build_foreign_mask_geometry(step67_context)
+    foreign_mask_geometry, foreign_mask_sources = _build_foreign_mask_geometry(
+        step67_context,
+        geometry_cache=geometry_cache,
+    )
     step3_two_node_t_bridge_geometry = _step3_two_node_t_bridge_geometry(
         step67_context,
         allowed_space,
     )
+    _accumulate_stage_timer(stage_timers, "step6_mask_prep", perf_counter() - mask_prep_started_perf)
+
+    directional_cut_started_perf = perf_counter()
     direction_clip_geometry, selected_road_core_geometry, directional_cut_branches = _build_directional_cut_geometry(
         step67_context,
         allowed_space,
+        geometry_cache=geometry_cache,
+        step3_two_node_t_bridge_geometry=step3_two_node_t_bridge_geometry,
     )
     polygon_seed_geometry = _clean_geometry(
         allowed_space.intersection(direction_clip_geometry) if direction_clip_geometry is not None else None
@@ -983,6 +1230,8 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
         direction_clip_geometry, selected_road_core_geometry, directional_cut_branches = _build_directional_cut_geometry(
             step67_context,
             allowed_space,
+            geometry_cache=geometry_cache,
+            step3_two_node_t_bridge_geometry=step3_two_node_t_bridge_geometry,
             force_preserve_single_sided_horizontal_pair=True,
         )
         polygon_seed_geometry = _clean_geometry(
@@ -996,12 +1245,15 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
         direction_clip_geometry, selected_road_core_geometry, directional_cut_branches = _build_directional_cut_geometry(
             step67_context,
             allowed_space,
+            geometry_cache=geometry_cache,
+            step3_two_node_t_bridge_geometry=step3_two_node_t_bridge_geometry,
             force_preserve_all_branches=True,
         )
         polygon_seed_geometry = _clean_geometry(
             allowed_space.intersection(direction_clip_geometry) if direction_clip_geometry is not None else None
         )
         target_connected_boundary_fallback_applied = True
+    _accumulate_stage_timer(stage_timers, "step6_directional_cut", perf_counter() - directional_cut_started_perf)
     if polygon_seed_geometry is None:
         return _step6_failure_result(
             step67_context=step67_context,
@@ -1016,14 +1268,44 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
             ),
         )
 
+    finalize_started_perf = perf_counter()
+
+    def _complete_step6_result(
+        result: Step6Result,
+        *,
+        status_started_perf: float | None = None,
+    ) -> Step6Result:
+        if status_started_perf is not None:
+            _accumulate_stage_timer(
+                stage_timers,
+                "step6_finalize_status",
+                perf_counter() - status_started_perf,
+            )
+        _accumulate_stage_timer(stage_timers, "step6_finalize", perf_counter() - finalize_started_perf)
+        return result
+
+    cleanup_started_perf = perf_counter()
     direction_boundary_geometry = polygon_seed_geometry
-    local_required_nodes = _local_required_node_records(step67_context, direction_boundary_geometry)
-    local_required_road_records = _local_required_road_records(step67_context, direction_boundary_geometry)
-    local_required_road_geometry = _local_required_road_geometry(step67_context, direction_boundary_geometry)
+    local_required_nodes = _local_required_node_records(
+        step67_context,
+        direction_boundary_geometry,
+        geometry_cache=geometry_cache,
+    )
+    local_required_road_records = _local_required_road_records(
+        step67_context,
+        direction_boundary_geometry,
+        geometry_cache=geometry_cache,
+    )
+    local_required_road_geometry = _local_required_road_geometry(
+        step67_context,
+        direction_boundary_geometry,
+        geometry_cache=geometry_cache,
+    )
     required_node_cover_geometry = _point_buffers(local_required_nodes, REQUIRED_NODE_BUFFER_M)
-    required_road_cover_geometry = _line_buffers(
+    required_road_cover_geometry = _cached_line_buffers(
         local_required_road_geometry,
         REQUIRED_ROAD_BUFFER_M,
+        geometry_cache=geometry_cache,
     )
     must_cover_geometry = _union_geometries(
         [
@@ -1031,6 +1313,17 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
             required_node_cover_geometry,
             required_road_cover_geometry,
         ]
+    )
+    anchor_geometries = [
+        target_cover_geometry,
+        required_node_cover_geometry,
+        required_road_cover_geometry,
+    ]
+    anchor_union_geometry = _union_geometries(anchor_geometries)
+    anchor_keep_geometry = (
+        _clean_geometry(anchor_union_geometry.buffer(NODE_COVER_TOLERANCE_M))
+        if anchor_union_geometry is not None
+        else None
     )
 
     raw_polygon = _clean_geometry(
@@ -1043,97 +1336,122 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
             ]
         )
     )
-    raw_polygon = _clean_geometry(raw_polygon.intersection(allowed_space.buffer(LEGAL_SPACE_TOLERANCE_M)))
+    raw_polygon = _clean_geometry(raw_polygon.intersection(allowed_space_tolerance_geometry))
     raw_polygon = _clean_geometry(raw_polygon.intersection(direction_boundary_geometry))
-    raw_polygon = _retain_components_touching_anchors(
-        raw_polygon,
-        [
-            target_cover_geometry,
-            required_node_cover_geometry,
-            required_road_cover_geometry,
-        ],
-    )
+    raw_polygon = _retain_components_touching_keep_geometry(raw_polygon, anchor_keep_geometry)
     pre_cleanup_polygon = raw_polygon
     if raw_polygon is None:
-        return _step6_failure_result(
-            step67_context=step67_context,
-            reason="step6_polygon_empty_after_legal_clip",
-            primary_root_cause=PRIMARY_INFEASIBLE,
-            secondary_root_cause=SECONDARY_STEP1_STEP3_CONFLICT,
-            output_geometries=Step6OutputGeometries(
-                polygon_seed_geometry=polygon_seed_geometry,
-                polygon_final_geometry=None,
-                foreign_mask_geometry=foreign_mask_geometry,
-                must_cover_geometry=must_cover_geometry,
+        _accumulate_stage_timer(stage_timers, "step6_finalize_cleanup", perf_counter() - cleanup_started_perf)
+        status_started_perf = perf_counter()
+        return _complete_step6_result(
+            _step6_failure_result(
+                step67_context=step67_context,
+                reason="step6_polygon_empty_after_legal_clip",
+                primary_root_cause=PRIMARY_INFEASIBLE,
+                secondary_root_cause=SECONDARY_STEP1_STEP3_CONFLICT,
+                output_geometries=Step6OutputGeometries(
+                    polygon_seed_geometry=polygon_seed_geometry,
+                    polygon_final_geometry=None,
+                    foreign_mask_geometry=foreign_mask_geometry,
+                    must_cover_geometry=must_cover_geometry,
+                ),
             ),
+            status_started_perf=status_started_perf,
         )
 
     final_polygon = raw_polygon
     if foreign_mask_geometry is not None:
         final_polygon = _clean_geometry(final_polygon.difference(foreign_mask_geometry))
-        final_polygon = _retain_components_touching_anchors(
-            final_polygon,
-            [
-                target_cover_geometry,
-                required_node_cover_geometry,
-                required_road_cover_geometry,
-            ],
-        )
+        final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
     final_polygon = _clean_geometry(final_polygon)
     if final_polygon is not None:
         final_polygon = _clean_geometry(
             final_polygon.buffer(FINAL_CLOSE_M).buffer(-FINAL_CLOSE_M)
         )
-        final_polygon = _clean_geometry(final_polygon.intersection(allowed_space.buffer(LEGAL_SPACE_TOLERANCE_M)))
+        final_polygon = _clean_geometry(final_polygon.intersection(allowed_space_tolerance_geometry))
         final_polygon = _clean_geometry(final_polygon.intersection(direction_boundary_geometry))
-        final_polygon = _retain_components_touching_anchors(
-            final_polygon,
-            [
-                target_cover_geometry,
-                required_node_cover_geometry,
-                required_road_cover_geometry,
-            ],
-        )
+        final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
+    _accumulate_stage_timer(stage_timers, "step6_finalize_cleanup", perf_counter() - cleanup_started_perf)
 
-    target_node_cover_ratio = _node_cover_ratio(step1.target_group.nodes, final_polygon)
-    selected_core_cover_ratio = _road_core_cover_ratio(selected_road_core_geometry, final_polygon)
+    validation_started_perf = perf_counter()
+    final_node_cover_geometry = _cached_boundary_buffer(
+        final_polygon,
+        NODE_COVER_TOLERANCE_M,
+        geometry_cache=geometry_cache,
+    )
+    raw_node_cover_geometry = _cached_boundary_buffer(
+        pre_cleanup_polygon,
+        NODE_COVER_TOLERANCE_M,
+        geometry_cache=geometry_cache,
+    )
+    final_line_cover_geometry = _cached_boundary_buffer(
+        final_polygon,
+        LINE_COVER_BUFFER_M,
+        geometry_cache=geometry_cache,
+    )
+    raw_line_cover_geometry = _cached_boundary_buffer(
+        pre_cleanup_polygon,
+        LINE_COVER_BUFFER_M,
+        geometry_cache=geometry_cache,
+    )
+    target_node_cover_ratio = _node_cover_ratio_with_cover_geometry(
+        step1.target_group.nodes,
+        final_node_cover_geometry,
+    )
+    selected_core_cover_ratio = _line_coverage_ratio_with_cover_geometry(
+        selected_road_core_geometry,
+        final_line_cover_geometry,
+    )
     semantic_junction_cover_ok = (
         target_node_cover_ratio >= 1.0
         and selected_core_cover_ratio >= SELECTED_ROAD_CORE_MIN_RATIO
     )
-    required_rc_node_cover_ratio = _node_cover_ratio(local_required_nodes, final_polygon)
-    required_rc_line_cover_ratio = _line_coverage_ratio(
+    required_rc_node_cover_ratio = _node_cover_ratio_with_cover_geometry(
+        local_required_nodes,
+        final_node_cover_geometry,
+    )
+    required_rc_line_cover_ratio = _line_coverage_ratio_with_cover_geometry(
         local_required_road_geometry,
-        final_polygon,
+        final_line_cover_geometry,
     )
     required_rc_cover_ok = (
         required_rc_node_cover_ratio >= 1.0
         and required_rc_line_cover_ratio >= LINE_COVER_MIN_RATIO
     )
-    within_legal_space_ok = bool(
-        final_polygon is not None
-        and final_polygon.difference(allowed_space.buffer(LEGAL_SPACE_TOLERANCE_M)).area <= 1e-6
-    )
-    within_direction_boundary_ok = bool(
-        final_polygon is not None
-        and final_polygon.difference(direction_boundary_geometry).area <= 1e-6
-    )
+    legal_escape_area_m2 = 0.0
+    direction_escape_area_m2 = 0.0
+    if final_polygon is not None:
+        legal_escape_area_m2 = final_polygon.difference(allowed_space_tolerance_geometry).area
+        direction_escape_area_m2 = final_polygon.difference(direction_boundary_geometry).area
+    within_legal_space_ok = bool(final_polygon is not None and legal_escape_area_m2 <= 1e-6)
+    within_direction_boundary_ok = bool(final_polygon is not None and direction_escape_area_m2 <= 1e-6)
     foreign_overlap_area_m2 = 0.0
     if final_polygon is not None and foreign_mask_geometry is not None:
         foreign_overlap_area_m2 = final_polygon.intersection(foreign_mask_geometry).area
     foreign_exclusion_ok = foreign_overlap_area_m2 <= FOREIGN_OVERLAP_TOLERANCE_M2
 
-    raw_target_cover_ratio = _node_cover_ratio(step1.target_group.nodes, pre_cleanup_polygon)
-    raw_required_rc_cover_ratio = _line_coverage_ratio(
+    raw_target_cover_ratio = _node_cover_ratio_with_cover_geometry(
+        step1.target_group.nodes,
+        raw_node_cover_geometry,
+    )
+    raw_required_rc_cover_ratio = _line_coverage_ratio_with_cover_geometry(
         local_required_road_geometry,
-        pre_cleanup_polygon,
+        raw_line_cover_geometry,
     )
     review_signals: list[str] = []
-    shape_metrics = _shape_metrics(final_polygon)
+    shape_metrics = _cached_shape_metrics(final_polygon, geometry_cache=geometry_cache)
+    polygon_seed_metrics = _cached_shape_metrics(polygon_seed_geometry, geometry_cache=geometry_cache)
+    pre_cleanup_metrics = _cached_shape_metrics(pre_cleanup_polygon, geometry_cache=geometry_cache)
+    direction_clip_metrics = _cached_shape_metrics(direction_clip_geometry, geometry_cache=geometry_cache)
+    bridge_metrics = _cached_shape_metrics(step3_two_node_t_bridge_geometry, geometry_cache=geometry_cache)
     if shape_metrics["hole_count"] > 0:
         review_signals.append("polygon_has_holes")
     if shape_metrics["component_count"] > 1:
         review_signals.append("polygon_multicomponent")
+    pre_cleanup_foreign_overlap_area_m2 = 0.0
+    if pre_cleanup_polygon is not None and foreign_mask_geometry is not None:
+        pre_cleanup_foreign_overlap_area_m2 = pre_cleanup_polygon.intersection(foreign_mask_geometry).area
+    _accumulate_stage_timer(stage_timers, "step6_finalize_validation", perf_counter() - validation_started_perf)
 
     base_audit_doc = {
         "inputs": {
@@ -1152,12 +1470,12 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
         },
         "assembly": {
             "geometry_mode": "directional_selected_road_cut",
-            "polygon_seed_metrics": _shape_metrics(polygon_seed_geometry),
-            "polygon_after_legal_clip_metrics": _shape_metrics(pre_cleanup_polygon),
+            "polygon_seed_metrics": polygon_seed_metrics,
+            "polygon_after_legal_clip_metrics": pre_cleanup_metrics,
             "polygon_final_metrics": shape_metrics,
-            "direction_clip_metrics": _shape_metrics(direction_clip_geometry),
+            "direction_clip_metrics": direction_clip_metrics,
             "step3_two_node_t_bridge_inherited": step3_two_node_t_bridge_geometry is not None,
-            "step3_two_node_t_bridge_metrics": _shape_metrics(step3_two_node_t_bridge_geometry),
+            "step3_two_node_t_bridge_metrics": bridge_metrics,
             "directional_cut_rule": {
                 "mode": "directional_selected_road_cut",
                 "cut_distance_m": DIRECTIONAL_CUT_DISTANCE_M,
@@ -1215,23 +1533,41 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
         "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
     }
 
+    def _complete_failure_result(
+        *,
+        reason: str,
+        primary_root_cause: str,
+        secondary_root_cause: str,
+        review_signals_for_result: Iterable[str] = (),
+    ) -> Step6Result:
+        status_started_perf = perf_counter()
+        return _complete_step6_result(
+            _step6_failure_result(
+                step67_context=step67_context,
+                reason=reason,
+                primary_root_cause=primary_root_cause,
+                secondary_root_cause=secondary_root_cause,
+                review_signals=review_signals_for_result,
+                output_geometries=output_geometries,
+                key_metrics=key_metrics,
+                audit_doc={
+                    **base_audit_doc,
+                    "decision": {
+                        "reason": reason,
+                        "primary_root_cause": primary_root_cause,
+                        "secondary_root_cause": secondary_root_cause,
+                    },
+                },
+                extra_status_fields=extra_status_fields,
+            ),
+            status_started_perf=status_started_perf,
+        )
+
     if final_polygon is None:
-        return _step6_failure_result(
-            step67_context=step67_context,
+        return _complete_failure_result(
             reason="step6_polygon_lost_after_cleanup",
             primary_root_cause=PRIMARY_SOLVER_FAILED,
             secondary_root_cause=SECONDARY_CLEANUP_OVERTRIM,
-            output_geometries=output_geometries,
-            key_metrics=key_metrics,
-            audit_doc={
-                **base_audit_doc,
-                "decision": {
-                    "reason": "step6_polygon_lost_after_cleanup",
-                    "primary_root_cause": PRIMARY_SOLVER_FAILED,
-                    "secondary_root_cause": SECONDARY_CLEANUP_OVERTRIM,
-                },
-            },
-            extra_status_fields=extra_status_fields,
         )
 
     if not semantic_junction_cover_ok:
@@ -1245,22 +1581,10 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
             if secondary == SECONDARY_CLEANUP_OVERTRIM
             else PRIMARY_INFEASIBLE
         )
-        return _step6_failure_result(
-            step67_context=step67_context,
+        return _complete_failure_result(
             reason="step6_semantic_junction_not_covered",
             primary_root_cause=primary,
             secondary_root_cause=secondary,
-            output_geometries=output_geometries,
-            key_metrics=key_metrics,
-            audit_doc={
-                **base_audit_doc,
-                "decision": {
-                    "reason": "step6_semantic_junction_not_covered",
-                    "primary_root_cause": primary,
-                    "secondary_root_cause": secondary,
-                },
-            },
-            extra_status_fields=extra_status_fields,
         )
 
     if not required_rc_cover_ok:
@@ -1274,67 +1598,29 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
             if secondary == SECONDARY_CLEANUP_OVERTRIM
             else PRIMARY_INFEASIBLE
         )
-        return _step6_failure_result(
-            step67_context=step67_context,
+        return _complete_failure_result(
             reason="step6_required_rc_not_covered",
             primary_root_cause=primary,
             secondary_root_cause=secondary,
-            output_geometries=output_geometries,
-            key_metrics=key_metrics,
-            audit_doc={
-                **base_audit_doc,
-                "decision": {
-                    "reason": "step6_required_rc_not_covered",
-                    "primary_root_cause": primary,
-                    "secondary_root_cause": secondary,
-                },
-            },
-            extra_status_fields=extra_status_fields,
         )
 
     if not within_legal_space_ok:
-        return _step6_failure_result(
-            step67_context=step67_context,
+        return _complete_failure_result(
             reason="step6_escaped_legal_space",
             primary_root_cause=PRIMARY_INFEASIBLE,
             secondary_root_cause=SECONDARY_STEP1_STEP3_CONFLICT,
-            output_geometries=output_geometries,
-            key_metrics=key_metrics,
-            audit_doc={
-                **base_audit_doc,
-                "decision": {
-                    "reason": "step6_escaped_legal_space",
-                    "primary_root_cause": PRIMARY_INFEASIBLE,
-                    "secondary_root_cause": SECONDARY_STEP1_STEP3_CONFLICT,
-                },
-            },
-            extra_status_fields=extra_status_fields,
         )
 
     if not foreign_exclusion_ok:
         secondary = (
             SECONDARY_FOREIGN_REINTRODUCED
-            if pre_cleanup_polygon is not None
-            and pre_cleanup_polygon.intersection(foreign_mask_geometry).area
-            <= 1e-6
+            if pre_cleanup_foreign_overlap_area_m2 <= 1e-6
             else SECONDARY_FOREIGN_CONFLICT
         )
-        return _step6_failure_result(
-            step67_context=step67_context,
+        return _complete_failure_result(
             reason="step6_foreign_intrusion_remains",
             primary_root_cause=PRIMARY_INFEASIBLE,
             secondary_root_cause=secondary,
-            output_geometries=output_geometries,
-            key_metrics=key_metrics,
-            audit_doc={
-                **base_audit_doc,
-                "decision": {
-                    "reason": "step6_foreign_intrusion_remains",
-                    "primary_root_cause": PRIMARY_INFEASIBLE,
-                    "secondary_root_cause": secondary,
-                },
-            },
-            extra_status_fields=extra_status_fields,
         )
 
     severe_template_misfit = False
@@ -1361,45 +1647,37 @@ def build_step6_result(step67_context: Step67Context) -> Step6Result:
             if shape_metrics["component_count"] > 1
             else SECONDARY_SHAPE_ARTIFACT
         )
-        return _step6_failure_result(
-            step67_context=step67_context,
+        return _complete_failure_result(
             reason=severe_reason or "step6_shape_artifact",
             primary_root_cause=PRIMARY_SOLVER_FAILED,
             secondary_root_cause=secondary,
-            review_signals=review_signals,
+            review_signals_for_result=review_signals,
+        )
+
+    status_started_perf = perf_counter()
+    return _complete_step6_result(
+        Step6Result(
+            step6_state="established",
+            geometry_established=True,
+            problem_geometry=bool(review_signals),
+            reason="step6_geometry_established",
+            primary_root_cause=None,
+            secondary_root_cause=None,
+            review_signals=tuple(review_signals),
             output_geometries=output_geometries,
             key_metrics=key_metrics,
             audit_doc={
                 **base_audit_doc,
                 "decision": {
-                    "reason": severe_reason or "step6_shape_artifact",
-                    "primary_root_cause": PRIMARY_SOLVER_FAILED,
-                    "secondary_root_cause": secondary,
+                    "reason": "step6_geometry_established",
+                    "primary_root_cause": None,
+                    "secondary_root_cause": None,
+                    "review_signals": list(review_signals),
                 },
             },
             extra_status_fields=extra_status_fields,
-        )
-
-    return Step6Result(
-        step6_state="established",
-        geometry_established=True,
-        problem_geometry=bool(review_signals),
-        reason="step6_geometry_established",
-        primary_root_cause=None,
-        secondary_root_cause=None,
-        review_signals=tuple(review_signals),
-        output_geometries=output_geometries,
-        key_metrics=key_metrics,
-        audit_doc={
-            **base_audit_doc,
-            "decision": {
-                "reason": "step6_geometry_established",
-                "primary_root_cause": None,
-                "secondary_root_cause": None,
-                "review_signals": list(review_signals),
-            },
-        },
-        extra_status_fields=extra_status_fields,
+        ),
+        status_started_perf=status_started_perf,
     )
 
 

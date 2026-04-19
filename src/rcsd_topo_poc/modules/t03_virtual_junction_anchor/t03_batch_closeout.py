@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -10,7 +11,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     write_json,
     write_vector,
 )
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature, write_csv
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature, read_vector_layer, write_csv
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_contract import (
     derive_stage3_official_review_decision,
     resolve_stage3_output_kind,
@@ -21,6 +22,10 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_facts import (
     business_outcome_from_visual_review_class,
     success_flag_from_business_outcome,
 )
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import ReviewIndexRow
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_streamed_results import (
+    T03StreamedCaseResult,
+)
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers import (
     coerce_int,
     feature_id,
@@ -28,7 +33,6 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers 
     resolve_representative_feature,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
-    Step67CaseResult,
     Step67ReviewIndexRow,
 )
 
@@ -89,24 +93,33 @@ def materialize_t03_review_gallery(run_root: Path, rows: list[Step67ReviewIndexR
     flat_dir = run_root / T03_REVIEW_FLAT_DIRNAME
     for path in (accepted_dir, rejected_dir, v2_risk_dir, flat_dir):
         path.mkdir(parents=True, exist_ok=True)
+        for existing_png in path.glob("*.png"):
+            if existing_png.is_file():
+                existing_png.unlink()
 
     categorized_rows: list[Step67ReviewIndexRow] = []
     for index, row in enumerate(sorted(rows, key=lambda item: _stable_sort_key(item.case_id)), start=1):
         label = _short_label(row)
         image_name = f"{index:04d}_{row.case_id}_{row.step7_state}_{label}.png"
-        target_dir = accepted_dir if row.step7_state == "accepted" else rejected_dir
-        target_path = target_dir / image_name
-        flat_path = flat_dir / image_name
-        shutil.copy2(row.source_png_path, target_path)
-        shutil.copy2(row.source_png_path, flat_path)
-        if row.visual_class == "V2 业务正确但几何待修":
-            shutil.copy2(row.source_png_path, v2_risk_dir / image_name)
+        source_path = Path(row.source_png_path) if row.source_png_path else None
+        output_image_name = ""
+        output_image_path = ""
+        if source_path is not None and source_path.is_file():
+            output_image_name = image_name
+            target_dir = accepted_dir if row.step7_state == "accepted" else rejected_dir
+            target_path = target_dir / image_name
+            flat_path = flat_dir / image_name
+            shutil.copy2(source_path, target_path)
+            shutil.copy2(source_path, flat_path)
+            output_image_path = str(flat_path)
+            if row.visual_class == "V2 业务正确但几何待修":
+                shutil.copy2(source_path, v2_risk_dir / image_name)
         categorized_rows.append(
             replace(
                 row,
                 sequence_no=index,
-                image_name=image_name,
-                image_path=str(flat_path),
+                image_name=output_image_name,
+                image_path=output_image_path,
             )
         )
     return categorized_rows
@@ -161,7 +174,6 @@ def _case_outputs_complete(case_dir: Path) -> bool:
         "step6_audit.json",
         "step7_status.json",
         "step7_audit.json",
-        "step67_review.png",
     )
     return case_dir.is_dir() and all((case_dir / rel_path).is_file() for rel_path in required_outputs)
 
@@ -263,6 +275,9 @@ def mirror_visual_checks(*, source_dir: Path, target_dir: Path) -> None:
         if existing_png.is_file():
             existing_png.unlink()
 
+    if not source_dir.is_dir():
+        return
+
     for png_path in sorted(source_dir.glob("*.png"), key=lambda path: sort_patch_key(path.name)):
         shutil.copy2(png_path, target_dir / png_path.name)
 
@@ -284,17 +299,72 @@ def publish_incremental_visual_check(
     shutil.copy2(source_path, latest_path)
 
 
+def load_step3_review_rows(*, run_root: Path, expected_case_ids: list[str]) -> list[ReviewIndexRow]:
+    rows: list[ReviewIndexRow] = []
+    flat_dir = run_root / "step3_review_flat"
+    for case_id in sorted(expected_case_ids, key=sort_patch_key):
+        case_dir = run_root / "cases" / case_id
+        status_path = case_dir / "step3_status.json"
+        review_png_path = case_dir / "step3_review.png"
+        if not status_path.is_file():
+            continue
+        status_doc = json.loads(status_path.read_text(encoding="utf-8"))
+        image_name = ""
+        image_path = ""
+        if review_png_path.is_file():
+            image_name = f"{case_id}__{status_doc.get('step3_state')}.png"
+            flat_image_path = flat_dir / image_name
+            image_path = str(flat_image_path if flat_image_path.is_file() else review_png_path)
+        rows.append(
+            ReviewIndexRow(
+                case_id=case_id,
+                template_class=status_doc.get("template_class"),
+                step3_state=str(status_doc.get("step3_state") or ""),
+                reason=str(status_doc.get("reason") or ""),
+                image_name=image_name,
+                image_path=image_path,
+                visual_review_class=status_doc.get("visual_review_class"),
+                root_cause_layer=status_doc.get("root_cause_layer"),
+                root_cause_type=status_doc.get("root_cause_type"),
+            )
+        )
+    return rows
+
+
+def build_step67_review_rows(
+    streamed_results: dict[str, T03StreamedCaseResult],
+) -> list[Step67ReviewIndexRow]:
+    rows: list[Step67ReviewIndexRow] = []
+    for case_id in sorted(streamed_results, key=sort_patch_key):
+        record = streamed_results[case_id]
+        rows.append(
+            Step67ReviewIndexRow(
+                case_id=record.case_id,
+                template_class=record.template_class,
+                association_class=record.association_class,
+                step45_state=record.step45_state,
+                step6_state=record.step6_state,
+                step7_state=record.step7_state,
+                visual_class=record.visual_class,
+                reason=record.reason,
+                note=record.note,
+                source_png_path=record.source_png_path,
+            )
+        )
+    return rows
+
+
 def _build_virtual_intersection_polygon_feature(
     *,
     representative_feature: LayerFeature,
-    case_result: Step67CaseResult,
+    streamed_result: T03StreamedCaseResult,
+    polygon_geometry,
     case_dir: Path,
 ) -> dict[str, Any] | None:
-    polygon_geometry = case_result.step6_result.output_geometries.polygon_final_geometry
     if polygon_geometry is None or polygon_geometry.is_empty:
         return None
 
-    visual_review_class = case_result.step7_result.visual_review_class
+    visual_review_class = streamed_result.visual_class
     business_outcome_class = business_outcome_from_visual_review_class(visual_review_class)
     if business_outcome_class == "failure":
         return None
@@ -302,7 +372,7 @@ def _build_virtual_intersection_polygon_feature(
     acceptance_class = acceptance_class_from_business_outcome(business_outcome_class)
     success = success_flag_from_business_outcome(business_outcome_class)
     representative_properties = dict(representative_feature.properties)
-    representative_node_id = feature_id(representative_feature) or case_result.case_id
+    representative_node_id = feature_id(representative_feature) or streamed_result.case_id
     mainnodeid = feature_mainnodeid(representative_feature) or representative_node_id
     kind_2 = coerce_int(representative_properties.get("kind_2"))
     grade_2 = coerce_int(representative_properties.get("grade_2"))
@@ -310,9 +380,9 @@ def _build_virtual_intersection_polygon_feature(
         success=success,
         business_outcome_class=business_outcome_class,
         acceptance_class=acceptance_class,
-        acceptance_reason=case_result.step7_result.reason,
-        status=case_result.step7_result.reason,
-        root_cause_layer=case_result.step7_result.root_cause_layer,
+        acceptance_reason=streamed_result.reason,
+        status=streamed_result.reason,
+        root_cause_layer=streamed_result.root_cause_layer,
         representative_has_evd=representative_properties.get("has_evd"),
         representative_is_anchor=representative_properties.get("is_anchor"),
         representative_kind_2=kind_2,
@@ -329,15 +399,15 @@ def _build_virtual_intersection_polygon_feature(
             representative_kind_2=kind_2,
             representative_properties=representative_properties,
         ),
-        "status": case_result.step7_result.reason,
+        "status": streamed_result.reason,
         "representative_node_id": representative_node_id,
         "kind_2": kind_2,
         "grade_2": grade_2,
         "success": success,
         "business_outcome_class": business_outcome_class,
         "acceptance_class": acceptance_class,
-        "root_cause_layer": case_result.step7_result.root_cause_layer,
-        "root_cause_type": case_result.step7_result.root_cause_type,
+        "root_cause_layer": streamed_result.root_cause_layer,
+        "root_cause_type": streamed_result.root_cause_type,
         "visual_review_class": visual_review_class,
         "official_review_eligible": official_review.official_review_eligible,
         "failure_bucket": official_review.failure_bucket,
@@ -349,14 +419,19 @@ def _build_virtual_intersection_polygon_feature(
 def write_virtual_intersection_polygons(
     *,
     run_root: Path,
-    successful_results: dict[str, dict[str, Any]],
+    shared_nodes: tuple[LayerFeature, ...],
+    streamed_results: dict[str, T03StreamedCaseResult],
 ) -> Path:
     features: list[dict[str, Any]] = []
-    for case_id in sorted(successful_results.keys(), key=sort_patch_key):
-        result = successful_results[case_id]
+    for case_id in sorted(streamed_results.keys(), key=sort_patch_key):
+        streamed_result = streamed_results[case_id]
+        polygon_path = Path(streamed_result.final_polygon_path)
+        polygon_features = read_vector_layer(polygon_path).features if polygon_path.is_file() else []
+        polygon_geometry = polygon_features[0].geometry if polygon_features else None
         feature = _build_virtual_intersection_polygon_feature(
-            representative_feature=result["representative_feature"],
-            case_result=result["step67_case_result"],
+            representative_feature=resolve_representative_feature(shared_nodes, case_id),
+            streamed_result=streamed_result,
+            polygon_geometry=polygon_geometry,
             case_dir=run_root / "cases" / case_id,
         )
         if feature is not None:
@@ -371,7 +446,7 @@ def write_updated_nodes_outputs(
     run_root: Path,
     shared_nodes: tuple[LayerFeature, ...],
     selected_case_ids: list[str],
-    successful_results: dict[str, dict[str, Any]],
+    streamed_results: dict[str, T03StreamedCaseResult],
     failed_case_ids: list[str],
 ) -> dict[str, Path]:
     updates_by_node_id: dict[str, str] = {}
@@ -382,15 +457,17 @@ def write_updated_nodes_outputs(
         representative_feature = resolve_representative_feature(shared_nodes, case_id)
         representative_node_id = feature_id(representative_feature) or case_id
         previous_is_anchor = representative_feature.properties.get("is_anchor")
-        if case_id in successful_results:
-            case_result = successful_results[case_id]["step67_case_result"]
-            step7_state = case_result.step7_result.step7_state
-            reason = case_result.step7_result.reason
+        if case_id in streamed_results:
+            streamed_result = streamed_results[case_id]
+            step7_state = streamed_result.step7_state
+            reason = streamed_result.reason
             new_is_anchor = "yes" if step7_state == "accepted" else "fail3"
-        else:
-            step7_state = "runtime_failed" if case_id in failed_case_id_set else "runtime_failed"
+        elif case_id in failed_case_id_set:
+            step7_state = "runtime_failed"
             reason = "runtime_failed"
             new_is_anchor = "fail3"
+        else:
+            continue
         updates_by_node_id[representative_node_id] = new_is_anchor
         audit_rows.append(
             {
@@ -450,6 +527,8 @@ __all__ = [
     "T03_REVIEW_REJECTED_DIRNAME",
     "T03_REVIEW_SUMMARY_FILENAME",
     "T03_REVIEW_V2_RISK_DIRNAME",
+    "build_step67_review_rows",
+    "load_step3_review_rows",
     "materialize_t03_review_gallery",
     "mirror_visual_checks",
     "publish_incremental_visual_check",

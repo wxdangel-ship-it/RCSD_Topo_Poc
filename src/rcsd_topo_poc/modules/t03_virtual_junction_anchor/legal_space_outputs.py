@@ -29,7 +29,6 @@ CASE_REQUIRED_OUTPUTS = (
     "step3_negative_mask_foreign_mst.gpkg",
     "step3_status.json",
     "step3_audit.json",
-    "step3_review.png",
 )
 
 
@@ -44,6 +43,7 @@ def write_case_outputs(
     run_root: Path,
     context: Step1Context,
     case_result: Step3CaseResult,
+    render_review_png: bool = True,
 ) -> ReviewIndexRow:
     case_dir = run_root / "cases" / context.case_spec.case_id
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -65,20 +65,24 @@ def write_case_outputs(
     )
     write_json(case_dir / "step3_status.json", build_step3_status_doc(case_result))
     write_json(case_dir / "step3_audit.json", case_result.audit_doc)
-    review_png_path = case_dir / "step3_review.png"
-    render_step3_review_png(out_path=review_png_path, context=context, case_result=case_result)
-    flat_dir = run_root / "step3_review_flat"
-    flat_dir.mkdir(parents=True, exist_ok=True)
-    image_name = f"{context.case_spec.case_id}__{case_result.step3_state}.png"
-    flat_image_path = flat_dir / image_name
-    shutil.copy2(review_png_path, flat_image_path)
+    image_name = ""
+    image_path = ""
+    if render_review_png:
+        review_png_path = case_dir / "step3_review.png"
+        render_step3_review_png(out_path=review_png_path, context=context, case_result=case_result)
+        flat_dir = run_root / "step3_review_flat"
+        flat_dir.mkdir(parents=True, exist_ok=True)
+        image_name = f"{context.case_spec.case_id}__{case_result.step3_state}.png"
+        flat_image_path = flat_dir / image_name
+        shutil.copy2(review_png_path, flat_image_path)
+        image_path = str(flat_image_path)
     return ReviewIndexRow(
         case_id=context.case_spec.case_id,
         template_class=case_result.template_class,
         step3_state=case_result.step3_state,
         reason=case_result.reason,
         image_name=image_name,
-        image_path=str(flat_image_path),
+        image_path=image_path,
         visual_review_class=case_result.visual_review_class,
         root_cause_layer=case_result.root_cause_layer,
         root_cause_type=case_result.root_cause_type,

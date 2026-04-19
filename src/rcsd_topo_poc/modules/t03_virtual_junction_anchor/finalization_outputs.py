@@ -33,7 +33,6 @@ CASE_REQUIRED_OUTPUTS = (
     "step6_audit.json",
     "step7_status.json",
     "step7_audit.json",
-    "step67_review.png",
 )
 
 def _geometry_feature(geometry, **properties):
@@ -48,6 +47,7 @@ def write_case_outputs(
     step67_context: Step67Context,
     case_result: Step67CaseResult,
     debug_render: bool = False,
+    render_review_png: bool = True,
 ) -> Step67ReviewIndexRow:
     case_id = step67_context.step45_context.step1_context.case_spec.case_id
     case_dir = run_root / "cases" / case_id
@@ -103,13 +103,16 @@ def write_case_outputs(
     write_json(case_dir / "step6_audit.json", step6_result.audit_doc)
     write_json(case_dir / "step7_status.json", build_step7_status_doc(step67_context, step6_result, step7_result))
     write_json(case_dir / "step7_audit.json", step7_result.audit_doc)
-    review_png_path = case_dir / "step67_review.png"
-    render_step67_review_png(
-        out_path=review_png_path,
-        step67_context=step67_context,
-        case_result=case_result,
-        debug_render=debug_render,
-    )
+    source_png_path = ""
+    if render_review_png:
+        review_png_path = case_dir / "step67_review.png"
+        render_step67_review_png(
+            out_path=review_png_path,
+            step67_context=step67_context,
+            case_result=case_result,
+            debug_render=debug_render,
+        )
+        source_png_path = str(review_png_path)
     return Step67ReviewIndexRow(
         case_id=case_id,
         template_class=case_result.template_class,
@@ -120,7 +123,7 @@ def write_case_outputs(
         visual_class=step7_result.visual_review_class,
         reason=step7_result.reason,
         note=step7_result.note or "",
-        source_png_path=str(review_png_path),
+        source_png_path=source_png_path,
     )
 
 

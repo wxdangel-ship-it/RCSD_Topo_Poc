@@ -18,13 +18,18 @@ MAX_CASES="${MAX_CASES:-}"
 BUFFER_M="${BUFFER_M:-100.0}"
 PATCH_SIZE_M="${PATCH_SIZE_M:-200.0}"
 RESOLUTION_M="${RESOLUTION_M:-0.2}"
-DEBUG_FLAG="${DEBUG_FLAG:---debug}"
+DEBUG_FLAG="${DEBUG_FLAG:---no-debug}"
 VISUAL_CHECK_DIR="${VISUAL_CHECK_DIR:-$OUT_ROOT/$RUN_ID/visual_checks}"
 REVIEW_MODE="${REVIEW_MODE:-0}"
+RESUME="${RESUME:-0}"
+RETRY_FAILED="${RETRY_FAILED:-0}"
 PERF_AUDIT="${PERF_AUDIT:-0}"
 PERF_AUDIT_INTERVAL_SEC="${PERF_AUDIT_INTERVAL_SEC:-30}"
 PERF_AUDIT_MAX_SAMPLES="${PERF_AUDIT_MAX_SAMPLES:-64}"
 PERF_AUDIT_MAX_BYTES="${PERF_AUDIT_MAX_BYTES:-100000}"
+PROGRESS_FLUSH_INTERVAL_SEC="${PROGRESS_FLUSH_INTERVAL_SEC:-5}"
+PROGRESS_FLUSH_INTERVAL_CASES="${PROGRESS_FLUSH_INTERVAL_CASES:-5}"
+LOCAL_CONTEXT_SNAPSHOT_MODE="${LOCAL_CONTEXT_SNAPSHOT_MODE:-failed_only}"
 
 choose_python() {
   if [[ -n "${PYTHON_BIN:-}" ]]; then
@@ -89,17 +94,37 @@ if [[ "$REVIEW_MODE" != "0" && "$REVIEW_MODE" != "1" ]]; then
   exit 2
 fi
 
+if [[ "$RESUME" != "0" && "$RESUME" != "1" ]]; then
+  echo "[BLOCK] RESUME must be 0 or 1: $RESUME" >&2
+  exit 2
+fi
+
+if [[ "$RETRY_FAILED" != "0" && "$RETRY_FAILED" != "1" ]]; then
+  echo "[BLOCK] RETRY_FAILED must be 0 or 1: $RETRY_FAILED" >&2
+  exit 2
+fi
+
 if [[ "$PERF_AUDIT" != "0" && "$PERF_AUDIT" != "1" ]]; then
   echo "[BLOCK] PERF_AUDIT must be 0 or 1: $PERF_AUDIT" >&2
   exit 2
 fi
 
-for numeric_var in PERF_AUDIT_INTERVAL_SEC PERF_AUDIT_MAX_SAMPLES PERF_AUDIT_MAX_BYTES; do
+for numeric_var in PERF_AUDIT_INTERVAL_SEC PERF_AUDIT_MAX_SAMPLES PERF_AUDIT_MAX_BYTES PROGRESS_FLUSH_INTERVAL_CASES; do
   if ! [[ "${!numeric_var}" =~ ^[1-9][0-9]*$ ]]; then
     echo "[BLOCK] $numeric_var must be a positive integer: ${!numeric_var}" >&2
     exit 2
   fi
 done
+
+if ! [[ "$PROGRESS_FLUSH_INTERVAL_SEC" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "[BLOCK] PROGRESS_FLUSH_INTERVAL_SEC must be a non-negative number: $PROGRESS_FLUSH_INTERVAL_SEC" >&2
+  exit 2
+fi
+
+if [[ "$LOCAL_CONTEXT_SNAPSHOT_MODE" != "all" && "$LOCAL_CONTEXT_SNAPSHOT_MODE" != "failed_only" && "$LOCAL_CONTEXT_SNAPSHOT_MODE" != "off" ]]; then
+  echo "[BLOCK] LOCAL_CONTEXT_SNAPSHOT_MODE must be all, failed_only or off: $LOCAL_CONTEXT_SNAPSHOT_MODE" >&2
+  exit 2
+fi
 
 mkdir -p "$OUT_ROOT"
 mkdir -p "$VISUAL_CHECK_DIR"
@@ -117,7 +142,13 @@ echo "[RUN] RUN_ID=$RUN_ID"
 echo "[RUN] WORKERS=$WORKERS"
 echo "[RUN] MAX_CASES=${MAX_CASES:-<all eligible cases>}"
 echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
+echo "[RUN] DEBUG_FLAG=$DEBUG_FLAG"
+echo "[RUN] RESUME=$RESUME"
+echo "[RUN] RETRY_FAILED=$RETRY_FAILED"
 echo "[RUN] PERF_AUDIT=$PERF_AUDIT"
+echo "[RUN] PROGRESS_FLUSH_INTERVAL_SEC=$PROGRESS_FLUSH_INTERVAL_SEC"
+echo "[RUN] PROGRESS_FLUSH_INTERVAL_CASES=$PROGRESS_FLUSH_INTERVAL_CASES"
+echo "[RUN] LOCAL_CONTEXT_SNAPSHOT_MODE=$LOCAL_CONTEXT_SNAPSHOT_MODE"
 if [[ "$PERF_AUDIT" == "1" ]]; then
   echo "[RUN] PERF_AUDIT_INTERVAL_SEC=$PERF_AUDIT_INTERVAL_SEC"
   echo "[RUN] PERF_AUDIT_MAX_SAMPLES=$PERF_AUDIT_MAX_SAMPLES"
@@ -127,12 +158,15 @@ echo "[RUN] Eligible cases are auto-discovered from nodes where has_evd=yes, is_
 
 export NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH
 export OUT_ROOT RUN_ID WORKERS MAX_CASES BUFFER_M PATCH_SIZE_M RESOLUTION_M
-export DEBUG_FLAG VISUAL_CHECK_DIR REVIEW_MODE
+export DEBUG_FLAG VISUAL_CHECK_DIR REVIEW_MODE RESUME RETRY_FAILED
 export PERF_AUDIT PERF_AUDIT_INTERVAL_SEC PERF_AUDIT_MAX_SAMPLES PERF_AUDIT_MAX_BYTES
+export PROGRESS_FLUSH_INTERVAL_SEC PROGRESS_FLUSH_INTERVAL_CASES
+export LOCAL_CONTEXT_SNAPSHOT_MODE
 
 PYTHONUNBUFFERED=1 PYTHONPATH=src "$PYTHON_BIN" - <<'PY'
 import json
 import os
+import tempfile
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -145,6 +179,19 @@ def _now_text() -> str:
 def _optional_int(value: str) -> int | None:
     text = value.strip()
     return int(text) if text else None
+
+
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
 
 
 def _write_internal_bootstrap_failure(stage: str, exc: BaseException) -> None:
@@ -180,18 +227,9 @@ def _write_internal_bootstrap_failure(stage: str, exc: BaseException) -> None:
         "run_root": str(run_root),
         "internal_root": str(internal_root),
     }
-    (internal_root / "t03_internal_full_input_progress.json").write_text(
-        json.dumps(progress, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    (internal_root / "t03_internal_full_input_failure.json").write_text(
-        json.dumps(failure, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    (internal_root / "bootstrap_failure.json").write_text(
-        json.dumps(failure, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    _write_json_atomic(internal_root / "t03_internal_full_input_progress.json", progress)
+    _write_json_atomic(internal_root / "t03_internal_full_input_failure.json", failure)
+    _write_json_atomic(internal_root / "bootstrap_failure.json", failure)
 
 
 try:
@@ -213,12 +251,18 @@ try:
         patch_size_m=float(os.environ["PATCH_SIZE_M"]),
         resolution_m=float(os.environ["RESOLUTION_M"]),
         debug=os.environ["DEBUG_FLAG"] == "--debug",
+        render_review_png=os.environ["DEBUG_FLAG"] == "--debug",
         review_mode=os.environ["REVIEW_MODE"] == "1",
         visual_check_dir=os.environ["VISUAL_CHECK_DIR"],
+        resume=os.environ["RESUME"] == "1",
+        retry_failed=os.environ["RETRY_FAILED"] == "1",
         perf_audit=os.environ["PERF_AUDIT"] == "1",
         perf_audit_interval_sec=int(os.environ["PERF_AUDIT_INTERVAL_SEC"]),
         perf_audit_max_samples=int(os.environ["PERF_AUDIT_MAX_SAMPLES"]),
         perf_audit_max_bytes=int(os.environ["PERF_AUDIT_MAX_BYTES"]),
+        progress_flush_interval_sec=float(os.environ["PROGRESS_FLUSH_INTERVAL_SEC"]),
+        progress_flush_interval_cases=int(os.environ["PROGRESS_FLUSH_INTERVAL_CASES"]),
+        local_context_snapshot_mode=os.environ["LOCAL_CONTEXT_SNAPSHOT_MODE"],
     )
 except Exception as exc:
     _write_internal_bootstrap_failure("bootstrap", exc)

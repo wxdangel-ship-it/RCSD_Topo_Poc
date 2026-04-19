@@ -113,13 +113,47 @@ def _stage_timer_summary(raw_stage_timers: dict[str, Any]) -> dict[str, float | 
         "shared_preload": round(_safe_float(raw_stage_timers.get("shared_preload")) or 0.0, 6),
         "local_feature_selection": round(_safe_float(raw_stage_timers.get("local_feature_selection")) or 0.0, 6),
         "step3": round(_safe_float(raw_stage_timers.get("step3")) or 0.0, 6),
+        "step3_reachable_support": round(_safe_float(raw_stage_timers.get("step3_reachable_support")) or 0.0, 6),
+        "step3_negative_masks": round(_safe_float(raw_stage_timers.get("step3_negative_masks")) or 0.0, 6),
+        "step3_cleanup_preview": round(_safe_float(raw_stage_timers.get("step3_cleanup_preview")) or 0.0, 6),
+        "step3_hard_path_validation": round(
+            _safe_float(raw_stage_timers.get("step3_hard_path_validation")) or 0.0,
+            6,
+        ),
         "step4_or_association": round(_safe_float(raw_stage_timers.get("step45")) or 0.0, 6),
         "step5_or_foreign_filter": None,
         "step6": round(_safe_float(raw_stage_timers.get("step6")) or 0.0, 6),
+        "step6_mask_prep": round(_safe_float(raw_stage_timers.get("step6_mask_prep")) or 0.0, 6),
+        "step6_directional_cut": round(_safe_float(raw_stage_timers.get("step6_directional_cut")) or 0.0, 6),
+        "step6_finalize": round(_safe_float(raw_stage_timers.get("step6_finalize")) or 0.0, 6),
+        "step6_finalize_cleanup": round(
+            _safe_float(raw_stage_timers.get("step6_finalize_cleanup")) or 0.0,
+            6,
+        ),
+        "step6_finalize_validation": round(
+            _safe_float(raw_stage_timers.get("step6_finalize_validation")) or 0.0,
+            6,
+        ),
+        "step6_finalize_status": round(
+            _safe_float(raw_stage_timers.get("step6_finalize_status")) or 0.0,
+            6,
+        ),
         "step7": round(_safe_float(raw_stage_timers.get("step7")) or 0.0, 6),
         "output_write": round(_safe_float(raw_stage_timers.get("output_write")) or 0.0, 6),
         "visual_copy": round(_safe_float(raw_stage_timers.get("visual_copy")) or 0.0, 6),
-        "observability_write": round(_safe_float(raw_stage_timers.get("observability_write")) or 0.0, 6),
+        "root_observability_write": round(
+            _safe_float(raw_stage_timers.get("root_observability_write")) or 0.0,
+            6,
+        ),
+        "case_observability_write": round(
+            _safe_float(raw_stage_timers.get("case_observability_write")) or 0.0,
+            6,
+        ),
+        "local_context_snapshot_write": round(
+            _safe_float(raw_stage_timers.get("local_context_snapshot_write")) or 0.0,
+            6,
+        ),
+        "perf_audit_write": round(_safe_float(raw_stage_timers.get("perf_audit_write")) or 0.0, 6),
     }
 
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
+from numbers import Integral
 from typing import Any
 
 from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
+from shapely.strtree import STRtree
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import sort_patch_key
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
@@ -17,12 +20,36 @@ ALLOWED_KIND_2_VALUES = frozenset({4, 2048})
 
 
 @dataclass(frozen=True)
+class SpatialFeatureIndex:
+    all_features: tuple[LayerFeature, ...]
+    indexed_features: tuple[LayerFeature, ...]
+    tree: STRtree | None
+    geometry_to_feature: dict[int, LayerFeature]
+    feature_order_by_object_id: dict[int, int]
+
+
+@dataclass(frozen=True)
 class SharedFullInputLayers:
     nodes: tuple[LayerFeature, ...]
     roads: tuple[LayerFeature, ...]
     drivezones: tuple[LayerFeature, ...]
     rcsd_roads: tuple[LayerFeature, ...]
     rcsd_nodes: tuple[LayerFeature, ...]
+    node_spatial_index: SpatialFeatureIndex
+    road_spatial_index: SpatialFeatureIndex
+    drivezone_spatial_index: SpatialFeatureIndex
+    rcsd_road_spatial_index: SpatialFeatureIndex
+    rcsd_node_spatial_index: SpatialFeatureIndex
+    node_id_to_feature: dict[str, LayerFeature]
+    node_id_to_features: dict[str, tuple[LayerFeature, ...]]
+    rcsd_node_id_to_feature: dict[str, LayerFeature]
+    rcsd_node_id_to_features: dict[str, tuple[LayerFeature, ...]]
+    mainnodeid_to_member_features: dict[str, tuple[LayerFeature, ...]]
+    rcsd_mainnodeid_to_member_features: dict[str, tuple[LayerFeature, ...]]
+    target_group_nodes_by_group_id: dict[str, tuple[LayerFeature, ...]]
+    case_id_to_representative_feature: dict[str, LayerFeature]
+    node_id_to_roads: dict[str, tuple[LayerFeature, ...]]
+    rcsd_node_id_to_roads: dict[str, tuple[LayerFeature, ...]]
 
 
 def stable_case_ids(case_ids: list[str]) -> list[str]:
@@ -70,6 +97,139 @@ def intersects(feature: LayerFeature, geometry: BaseGeometry) -> bool:
     return has_geometry(feature) and bool(feature.geometry.intersects(geometry))
 
 
+def _build_spatial_index(features: tuple[LayerFeature, ...]) -> SpatialFeatureIndex:
+    indexed_features = tuple(feature for feature in features if has_geometry(feature))
+    indexed_geometries = tuple(feature.geometry for feature in indexed_features)
+    return SpatialFeatureIndex(
+        all_features=features,
+        indexed_features=indexed_features,
+        tree=STRtree(indexed_geometries) if indexed_geometries else None,
+        geometry_to_feature={
+            id(geometry): feature
+            for geometry, feature in zip(indexed_geometries, indexed_features)
+        },
+        feature_order_by_object_id={
+            id(feature): index for index, feature in enumerate(features)
+        },
+    )
+
+
+def _query_index_candidates(
+    spatial_index: SpatialFeatureIndex,
+    window: BaseGeometry,
+) -> tuple[LayerFeature, ...]:
+    if spatial_index.tree is None:
+        return ()
+    raw_matches = spatial_index.tree.query(window)
+    if len(raw_matches) == 0:
+        return ()
+    first = raw_matches[0]
+    if isinstance(first, Integral):
+        return tuple(
+            spatial_index.indexed_features[int(index)]
+            for index in raw_matches
+        )
+    return tuple(
+        spatial_index.geometry_to_feature[id(geometry)]
+        for geometry in raw_matches
+    )
+
+
+def _ordered_unique_features(
+    candidates: list[LayerFeature],
+    *,
+    feature_order_by_object_id: dict[int, int],
+) -> list[LayerFeature]:
+    ordered_pairs: list[tuple[int, LayerFeature]] = []
+    seen_object_ids: set[int] = set()
+    for feature in candidates:
+        object_id = id(feature)
+        if object_id in seen_object_ids:
+            continue
+        seen_object_ids.add(object_id)
+        ordered_pairs.append((feature_order_by_object_id[object_id], feature))
+    ordered_pairs.sort(key=lambda item: item[0])
+    return [feature for _, feature in ordered_pairs]
+
+
+def _build_feature_lookup(
+    features: tuple[LayerFeature, ...],
+    *,
+    key_getter,
+) -> tuple[dict[str, LayerFeature], dict[str, tuple[LayerFeature, ...]]]:
+    grouped: dict[str, list[LayerFeature]] = defaultdict(list)
+    first_feature_by_key: dict[str, LayerFeature] = {}
+    for feature in features:
+        if not has_geometry(feature):
+            continue
+        key = key_getter(feature)
+        if key is None:
+            continue
+        grouped[key].append(feature)
+        first_feature_by_key.setdefault(key, feature)
+    return (
+        first_feature_by_key,
+        {key: tuple(value) for key, value in grouped.items()},
+    )
+
+
+def _build_target_group_cache(
+    nodes: tuple[LayerFeature, ...],
+) -> tuple[dict[str, tuple[LayerFeature, ...]], dict[str, tuple[LayerFeature, ...]]]:
+    grouped_by_mainnodeid: dict[str, list[LayerFeature]] = defaultdict(list)
+    grouped_by_target_group_id: dict[str, list[LayerFeature]] = defaultdict(list)
+    for feature in nodes:
+        if not has_geometry(feature):
+            continue
+        mainnodeid = feature_mainnodeid(feature)
+        node_id = feature_id(feature)
+        if mainnodeid is not None:
+            grouped_by_mainnodeid[mainnodeid].append(feature)
+        target_group_id = mainnodeid or node_id
+        if target_group_id is not None:
+            grouped_by_target_group_id[target_group_id].append(feature)
+    return (
+        {key: tuple(value) for key, value in grouped_by_mainnodeid.items()},
+        {key: tuple(value) for key, value in grouped_by_target_group_id.items()},
+    )
+
+
+def _build_representative_feature_cache(
+    nodes: tuple[LayerFeature, ...],
+) -> dict[str, LayerFeature]:
+    representatives: dict[str, LayerFeature] = {}
+    for feature in nodes:
+        if not has_geometry(feature):
+            continue
+        node_id = feature_id(feature)
+        if node_id is not None:
+            representatives.setdefault(node_id, feature)
+    for feature in nodes:
+        if not has_geometry(feature):
+            continue
+        mainnodeid = feature_mainnodeid(feature)
+        if mainnodeid is not None:
+            representatives.setdefault(mainnodeid, feature)
+    return representatives
+
+
+def _build_road_adjacency(
+    roads: tuple[LayerFeature, ...],
+) -> dict[str, tuple[LayerFeature, ...]]:
+    adjacency: dict[str, list[LayerFeature]] = defaultdict(list)
+    for feature in roads:
+        seen_node_ids: set[str] = set()
+        for node_id in (feature_snodeid(feature), feature_enodeid(feature)):
+            if node_id is None or node_id in seen_node_ids:
+                continue
+            seen_node_ids.add(node_id)
+            adjacency[node_id].append(feature)
+    return {
+        node_id: tuple(node_roads)
+        for node_id, node_roads in adjacency.items()
+    }
+
+
 def load_shared_nodes(*, nodes_path) -> tuple[LayerFeature, ...]:
     return tuple(read_vector_layer(nodes_path).features)
 
@@ -82,12 +242,41 @@ def load_shared_layers(
     rcsdroad_path,
     rcsdnode_path,
 ) -> SharedFullInputLayers:
+    roads = tuple(read_vector_layer(roads_path).features)
+    drivezones = tuple(read_vector_layer(drivezone_path).features)
+    rcsd_roads = tuple(read_vector_layer(rcsdroad_path).features)
+    rcsd_nodes = tuple(read_vector_layer(rcsdnode_path).features)
+    node_id_to_feature, node_id_to_features = _build_feature_lookup(
+        nodes,
+        key_getter=feature_id,
+    )
+    rcsd_node_id_to_feature, rcsd_node_id_to_features = _build_feature_lookup(
+        rcsd_nodes,
+        key_getter=feature_id,
+    )
+    mainnodeid_to_member_features, target_group_nodes_by_group_id = _build_target_group_cache(nodes)
+    rcsd_mainnodeid_to_member_features, _ = _build_target_group_cache(rcsd_nodes)
     return SharedFullInputLayers(
         nodes=nodes,
-        roads=tuple(read_vector_layer(roads_path).features),
-        drivezones=tuple(read_vector_layer(drivezone_path).features),
-        rcsd_roads=tuple(read_vector_layer(rcsdroad_path).features),
-        rcsd_nodes=tuple(read_vector_layer(rcsdnode_path).features),
+        roads=roads,
+        drivezones=drivezones,
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        node_spatial_index=_build_spatial_index(nodes),
+        road_spatial_index=_build_spatial_index(roads),
+        drivezone_spatial_index=_build_spatial_index(drivezones),
+        rcsd_road_spatial_index=_build_spatial_index(rcsd_roads),
+        rcsd_node_spatial_index=_build_spatial_index(rcsd_nodes),
+        node_id_to_feature=node_id_to_feature,
+        node_id_to_features=node_id_to_features,
+        rcsd_node_id_to_feature=rcsd_node_id_to_feature,
+        rcsd_node_id_to_features=rcsd_node_id_to_features,
+        mainnodeid_to_member_features=mainnodeid_to_member_features,
+        rcsd_mainnodeid_to_member_features=rcsd_mainnodeid_to_member_features,
+        target_group_nodes_by_group_id=target_group_nodes_by_group_id,
+        case_id_to_representative_feature=_build_representative_feature_cache(nodes),
+        node_id_to_roads=_build_road_adjacency(roads),
+        rcsd_node_id_to_roads=_build_road_adjacency(rcsd_roads),
     )
 
 
@@ -119,7 +308,17 @@ def discover_candidate_case_ids(nodes: tuple[LayerFeature, ...]) -> list[str]:
     return stable_case_ids(discovered)
 
 
-def resolve_representative_feature(nodes: tuple[LayerFeature, ...], case_id: str) -> LayerFeature:
+def resolve_representative_feature(
+    nodes_or_shared_layers: tuple[LayerFeature, ...] | SharedFullInputLayers,
+    case_id: str,
+) -> LayerFeature:
+    if isinstance(nodes_or_shared_layers, SharedFullInputLayers):
+        representative_feature = nodes_or_shared_layers.case_id_to_representative_feature.get(case_id)
+        if representative_feature is not None:
+            return representative_feature
+        nodes = nodes_or_shared_layers.nodes
+    else:
+        nodes = nodes_or_shared_layers
     for feature in nodes:
         if feature_id(feature) == case_id and has_geometry(feature):
             return feature
@@ -152,7 +351,7 @@ def collect_case_features(
     buffer_m: float,
     patch_size_m: float,
 ) -> dict[str, list[LayerFeature] | BaseGeometry]:
-    representative_feature = resolve_representative_feature(shared_layers.nodes, case_id)
+    representative_feature = resolve_representative_feature(shared_layers, case_id)
     window = selection_window(
         representative_feature,
         buffer_m=buffer_m,
@@ -160,24 +359,23 @@ def collect_case_features(
     )
     target_group_id = feature_mainnodeid(representative_feature) or case_id
 
-    target_group_nodes = [
-        feature
-        for feature in shared_layers.nodes
-        if (feature_mainnodeid(feature) or feature_id(feature)) == target_group_id and has_geometry(feature)
-    ]
+    target_group_nodes = list(shared_layers.target_group_nodes_by_group_id.get(target_group_id, ()))
     if not target_group_nodes:
         target_group_nodes = [representative_feature]
 
     target_node_ids = {feature_id(feature) for feature in target_group_nodes if feature_id(feature) is not None}
-    selected_roads = [
+    road_candidates: list[LayerFeature] = []
+    for node_id in target_node_ids:
+        road_candidates.extend(shared_layers.node_id_to_roads.get(node_id, ()))
+    road_candidates.extend(
         feature
-        for feature in shared_layers.roads
-        if (
-            feature_snodeid(feature) in target_node_ids
-            or feature_enodeid(feature) in target_node_ids
-            or intersects(feature, window)
-        )
-    ]
+        for feature in _query_index_candidates(shared_layers.road_spatial_index, window)
+        if intersects(feature, window)
+    )
+    selected_roads = _ordered_unique_features(
+        road_candidates,
+        feature_order_by_object_id=shared_layers.road_spatial_index.feature_order_by_object_id,
+    )
     referenced_node_ids = {
         value
         for feature in selected_roads
@@ -185,53 +383,60 @@ def collect_case_features(
         if value is not None
     }
 
-    selected_nodes = []
-    for feature in shared_layers.nodes:
-        node_id = feature_id(feature)
-        if node_id is None or not has_geometry(feature):
-            continue
-        if (
-            node_id in referenced_node_ids
-            or node_id in target_node_ids
-            or feature_mainnodeid(feature) == target_group_id
-            or intersects(feature, window)
-        ):
-            selected_nodes.append(feature)
-
-    selected_rcsd_nodes = [
+    node_candidates: list[LayerFeature] = []
+    for node_id in referenced_node_ids | target_node_ids:
+        node_candidates.extend(shared_layers.node_id_to_features.get(node_id, ()))
+    node_candidates.extend(target_group_nodes)
+    node_candidates.extend(
         feature
-        for feature in shared_layers.rcsd_nodes
-        if (
-            has_geometry(feature)
-            and (
-                intersects(feature, window)
-                or feature_mainnodeid(feature) == target_group_id
-                or feature_id(feature) == case_id
-            )
-        )
-    ]
+        for feature in _query_index_candidates(shared_layers.node_spatial_index, window)
+        if intersects(feature, window)
+    )
+    selected_nodes = _ordered_unique_features(
+        node_candidates,
+        feature_order_by_object_id=shared_layers.node_spatial_index.feature_order_by_object_id,
+    )
+
+    rcsd_node_candidates: list[LayerFeature] = []
+    rcsd_node_candidates.extend(shared_layers.rcsd_mainnodeid_to_member_features.get(target_group_id, ()))
+    rcsd_node_candidates.extend(shared_layers.rcsd_node_id_to_features.get(case_id, ()))
+    rcsd_node_candidates.extend(
+        feature
+        for feature in _query_index_candidates(shared_layers.rcsd_node_spatial_index, window)
+        if intersects(feature, window)
+    )
+    selected_rcsd_nodes = _ordered_unique_features(
+        rcsd_node_candidates,
+        feature_order_by_object_id=shared_layers.rcsd_node_spatial_index.feature_order_by_object_id,
+    )
     selected_rcsd_node_ids = {
         feature_id(feature)
         for feature in selected_rcsd_nodes
         if feature_id(feature) is not None
     }
-    selected_rcsd_roads = [
+    rcsd_road_candidates: list[LayerFeature] = []
+    for node_id in selected_rcsd_node_ids:
+        rcsd_road_candidates.extend(shared_layers.rcsd_node_id_to_roads.get(node_id, ()))
+    rcsd_road_candidates.extend(
         feature
-        for feature in shared_layers.rcsd_roads
-        if (
-            feature_snodeid(feature) in selected_rcsd_node_ids
-            or feature_enodeid(feature) in selected_rcsd_node_ids
-            or intersects(feature, window)
-        )
-    ]
-
-    selected_drivezones = [
-        feature
-        for feature in shared_layers.drivezones
+        for feature in _query_index_candidates(shared_layers.rcsd_road_spatial_index, window)
         if intersects(feature, window)
-    ]
+    )
+    selected_rcsd_roads = _ordered_unique_features(
+        rcsd_road_candidates,
+        feature_order_by_object_id=shared_layers.rcsd_road_spatial_index.feature_order_by_object_id,
+    )
+
+    selected_drivezones = _ordered_unique_features(
+        [
+            feature
+            for feature in _query_index_candidates(shared_layers.drivezone_spatial_index, window)
+            if intersects(feature, window)
+        ],
+        feature_order_by_object_id=shared_layers.drivezone_spatial_index.feature_order_by_object_id,
+    )
     if not selected_drivezones:
-        drivezone_candidates = [feature for feature in shared_layers.drivezones if has_geometry(feature)]
+        drivezone_candidates = list(shared_layers.drivezone_spatial_index.indexed_features)
         if not drivezone_candidates:
             raise ValueError(f"drivezone layer is empty for case_id={case_id}")
         representative_geometry = representative_feature.geometry

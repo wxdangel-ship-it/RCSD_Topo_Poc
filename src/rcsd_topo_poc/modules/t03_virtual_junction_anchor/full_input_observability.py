@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from datetime import datetime, timezone
@@ -16,12 +17,25 @@ RUNTIME_STAGE_TIMER_KEYS = (
     "shared_preload",
     "local_feature_selection",
     "step3",
+    "step3_reachable_support",
+    "step3_negative_masks",
+    "step3_cleanup_preview",
+    "step3_hard_path_validation",
     "step45",
     "step6",
+    "step6_mask_prep",
+    "step6_directional_cut",
+    "step6_finalize",
+    "step6_finalize_cleanup",
+    "step6_finalize_validation",
+    "step6_finalize_status",
     "step7",
     "output_write",
     "visual_copy",
-    "observability_write",
+    "root_observability_write",
+    "case_observability_write",
+    "local_context_snapshot_write",
+    "perf_audit_write",
 )
 
 T03_INTERNAL_MANIFEST_FILENAME = "t03_internal_full_input_manifest.json"
@@ -54,6 +68,26 @@ def write_json_atomic(path: Path, payload: Any) -> None:
             temp_path.unlink(missing_ok=True)
 
 
+def _load_existing_json(path: Path) -> Any | None:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _semantic_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if key != "updated_at"}
+
+
+def _write_state_payload_atomic(path: Path, payload: dict[str, Any]) -> None:
+    existing = _load_existing_json(path)
+    if isinstance(existing, dict) and _semantic_payload(existing) == _semantic_payload(payload):
+        return
+    write_json_atomic(path, payload)
+
+
 def accumulate_duration(totals: dict[str, float], key: str, duration_seconds: float) -> None:
     totals[key] = round(float(totals.get(key, 0.0)) + max(float(duration_seconds), 0.0), 6)
 
@@ -75,7 +109,7 @@ def write_local_context_snapshot(
     selection_window: BaseGeometry,
 ) -> None:
     local_context_root.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(
+    _write_state_payload_atomic(
         local_context_root / f"{case_id}.json",
         {
             "case_id": case_id,
@@ -99,7 +133,7 @@ def write_case_watch_status(
 ) -> None:
     case_dir = run_root / "cases" / case_id
     case_dir.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(
+    _write_state_payload_atomic(
         case_dir / T03_CASE_WATCH_STATUS_FILENAME,
         {
             "case_id": case_id,
@@ -124,7 +158,7 @@ def write_internal_case_progress(
     **extra: Any,
 ) -> None:
     case_progress_root.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(
+    _write_state_payload_atomic(
         case_progress_root / f"{case_id}.json",
         {
             "case_id": str(case_id),
@@ -243,11 +277,22 @@ def write_internal_manifest(
     resolution_m: float,
     debug: bool,
     review_mode: bool,
+    render_review_png: bool,
+    progress_flush_interval_sec: float,
+    progress_flush_interval_cases: int,
+    local_context_snapshot_mode: str,
     shared_memory_summary: dict[str, Any],
     discovered_case_ids: list[str],
     excluded_case_ids: list[str],
     selected_case_ids: list[str],
     runtime_failed_case_ids: list[str],
+    execution_case_ids: list[str] | None = None,
+    streamed_results_path: Path | None = None,
+    terminal_case_records_root: Path | None = None,
+    resume_requested: bool = False,
+    retry_failed_requested: bool = False,
+    resume_effective: bool = False,
+    retry_failed_effective: bool = False,
     polygons_path: Path | None = None,
     nodes_outputs: dict[str, Path] | None = None,
 ) -> None:
@@ -270,12 +315,16 @@ def write_internal_manifest(
         "patch_size_m": patch_size_m,
         "resolution_m": resolution_m,
         "debug": debug,
+        "render_review_png": render_review_png,
         "review_mode_requested": review_mode,
         "review_mode_effective": False,
         "review_mode_note": (
             "accepted for parameter compatibility only; "
             "T03 internal full-input runner keeps formal Step67 semantics unchanged"
         ),
+        "progress_flush_interval_sec": float(progress_flush_interval_sec),
+        "progress_flush_interval_cases": int(progress_flush_interval_cases),
+        "local_context_snapshot_mode": str(local_context_snapshot_mode),
         "source_mode": "t03_internal_full_input_direct_local_query",
         "execution_mode": "direct_shared_handle_local_query",
         "candidate_discovery_mode": "shared_nodes_handle",
@@ -286,6 +335,7 @@ def write_internal_manifest(
         "discovered_case_ids": list(discovered_case_ids),
         "default_full_batch_excluded_case_ids": list(excluded_case_ids),
         "selected_case_ids": list(selected_case_ids),
+        "execution_case_ids": list(execution_case_ids or []),
         "prepared_cases": [],
         "transitional_case_package_path_retained": False,
         "local_context_root": str(case_root),
@@ -293,7 +343,16 @@ def write_internal_manifest(
         "performance_path": str(paths["performance"]),
         "case_progress_root": str(internal_root / "case_progress"),
         "runtime_failed_case_ids": list(runtime_failed_case_ids),
+        "resume_requested": resume_requested,
+        "retry_failed_requested": retry_failed_requested,
+        "resume_effective": resume_effective,
+        "retry_failed_effective": retry_failed_effective,
     }
+    if streamed_results_path is not None:
+        payload["streamed_case_results_path"] = str(streamed_results_path)
+    if terminal_case_records_root is not None:
+        payload["terminal_case_records_root"] = str(terminal_case_records_root)
+        payload["authoritative_terminal_state_source"] = "per_case_atomic_terminal_record"
     if polygons_path is not None:
         payload["virtual_intersection_polygons_path"] = str(polygons_path)
     if nodes_outputs is not None:

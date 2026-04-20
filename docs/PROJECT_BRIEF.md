@@ -23,6 +23,7 @@
 - 维护当前已登记正式模块 `t01_data_preprocess`
 - 维护当前已登记正式模块 `t02_junction_anchor`
 - 维护当前已登记正式模块 `t03_virtual_junction_anchor`
+- 维护当前已登记正式模块 `t04_divmerge_virtual_polygon`
 
 ## 3. 当前非目标
 
@@ -32,7 +33,7 @@
 
 ## 4. 当前结构性结论
 
-- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`
+- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`
 - `t00_utility_toolbox` 的定位是工具集合模块 / 非业务生产模块
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小实现闭环
@@ -43,6 +44,7 @@
 - `t03_virtual_junction_anchor` 当前 internal full-input 批次根目录正式成果包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`
 - `t03_virtual_junction_anchor` 当前 `nodes.gpkg` 仅更新代表 node 的 `is_anchor`：`accepted => yes`，`rejected / runtime_failed => fail3`；其中 `fail3` 只属于 T03 downstream output 语义，不回写输入原始 `nodes.gpkg`，也不反向修改 T02 上游契约
 - `t03_watch_internal_full_input.sh` 当前采用 T02 风格的 formal-first 监控口径，默认关注 `total / completed / running / pending / success / failed`
+- `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围只到 `Step1-4`，默认交付 `case-package` 输入下的 Step4 review PNG、flat mirror、index 与 summary，不新增 repo 官方 CLI
 - `_template` 仅是模板目录，不属于模块生命周期盘点对象
 - 模块根目录不放 `SKILL.md`
 - 标准 Skill 统一放 repo root `.agents/skills/`

@@ -1,0 +1,27 @@
+# 05 Building Block View
+
+- `case_loader`
+  - 发现 case-package
+  - 校验 `manifest / size_report / required gpkg`
+- `admission`
+  - 解析代表 node / group nodes
+  - 输出 Step1 准入结果与 case meta
+- `local_context`
+  - 构建 patch-scoped local world
+  - 组织 SWSD negative context
+- `topology`
+  - 生成 member / passthrough / branch / main pair / chain context
+- `event_units`
+  - 将 case 拆成 Step4 event units
+- `event_interpretation`
+  - 解释事实依据、事件参考位置、正向 RCSD
+- `review_render`
+  - overview PNG
+  - event-unit PNG
+- `outputs`
+  - case 级文件
+  - flat mirror / index / summary
+- `batch_runner`
+  - preflight
+  - per-case orchestration
+  - summary

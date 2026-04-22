@@ -43,6 +43,7 @@
 
 - 至少保留 synthetic smoke。
 - 至少跑 selected real-case batch。
+- `Step4 候选空间` 当前 accepted baseline 已冻结在 `Anchor_2` real-case 集；后续任何新线程只要触碰 Step4 candidate space / branch propagation / pair-space identity，都必须默认把这组 real-case 当作回归闸门，而不是可选附加验证。
 - Step3/Step4 修复后，至少覆盖以下回归样类：
   - `forward throat-pass`
   - `same-axis conflict -> reverse success`
@@ -61,3 +62,37 @@
   - `valid_scan_offsets_m` 只沿单一合法方向延续
   - 候选空间不覆盖当前 unit 之外的非分支道路
 - 复杂连续分歧、multi-diverge / multi-merge、simple 二分歧三类场景都必须有可复查样本。
+
+### 当前 accepted baseline gate（2026-04-22）
+
+- 基线输入集冻结为：`/mnt/e/TestData/POC_Data/T02/Anchor_2`
+- 当前人工审计参考 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch/codex_t04_pair_variant_fix_20260422`
+- 参考 run root 只承担 audit evidence 角色；默认回归闸门以模块契约和冻结测试为准。
+
+后续只要改动以下任一链路，就必须至少核对这组 case：
+
+- Step3 complex branch variant generation / selection
+- Step4 pair-local scope
+- sibling propagation / continuation stop gate
+- pair-local middle / structure-face candidate materialization
+- ownership / reselection 导致的 selected candidate 变化
+
+冻结守门 case：
+
+- `760213`：`node_760213`、`node_760218`
+- `785671`：`event_unit_01`
+- `857993`：`node_857993`、`node_870089`
+- `987998`：`event_unit_01`
+- `17943587`：`node_17943587`、`node_55353233`、`node_55353239`、`node_55353248`
+- `30434673`：`event_unit_01`
+- `73462878`：`event_unit_01`
+
+冻结判据：
+
+- 候选空间只能由当前 unit 的边界 pair `(L, R)` 及其合法 continuation 构成。
+- 候选空间不得做反向追溯补全。
+- `L / R` 之间不得夹入其他 road。
+- accepted baseline unit 的 `selected_candidate` 必须保持 `structure:middle:01`，且 `selected_candidate_region` 覆盖 representative node。
+- `17943587 / node_55353233` 不得回退到 `502953712 + 605949403`。
+- `17943587 / node_55353248` 不得回退到 trunk 主导或缺失 `607962170` continuation。
+- `857993 / node_870089` 不得回退到只剩 node 邻域小块或重新吸入非 pair 道路。

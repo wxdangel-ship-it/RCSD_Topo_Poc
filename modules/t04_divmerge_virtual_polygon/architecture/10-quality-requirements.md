@@ -85,6 +85,8 @@
   - pair-local RCSD 为空时直接 `C / no_support`
   - 正式结果不回退到 scoped / case 级 RCSD 世界
   - `required_rcsd_node` 可在 `B` 下独立输出
+  - `positive_rcsd_present = true` 不再自动保底 `B`
+  - 事实层成立但经 aggregated polarity normalization 后仍存在结构性硬冲突时，允许最终落 `C`
   - side-label mismatch 不再单独把事实存在样本压到 `C`
   - `axis_polarity_inverted` 默认在 aggregated 级别识别
 - 复杂连续分歧、multi-diverge / multi-merge、simple 二分歧三类场景都必须有可复查样本。

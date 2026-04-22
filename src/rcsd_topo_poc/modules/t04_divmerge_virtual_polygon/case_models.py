@@ -416,6 +416,8 @@ class T04ReviewIndexRow:
     image_path: str = ""
     compare_image_name: str = ""
     compare_image_path: str = ""
+    positive_rcsd_image_name: str = ""
+    positive_rcsd_image_path: str = ""
     sequence_no: int = 0
     case_overview_path: str = ""
 
@@ -479,5 +481,7 @@ class T04ReviewIndexRow:
             "image_path": self.image_path,
             "compare_image_name": self.compare_image_name,
             "compare_image_path": self.compare_image_path,
+            "positive_rcsd_image_name": self.positive_rcsd_image_name,
+            "positive_rcsd_image_path": self.positive_rcsd_image_path,
             "case_overview_path": self.case_overview_path,
         }

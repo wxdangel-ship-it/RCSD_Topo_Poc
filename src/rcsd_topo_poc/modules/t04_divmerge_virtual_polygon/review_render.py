@@ -28,9 +28,9 @@ BOUNDARY_ROAD_COLOR = (32, 103, 170, 255)
 AXIS_ROAD_COLOR = (34, 34, 34, 255)
 RCSD_ROAD_COLOR = (175, 33, 61, 255)
 ALL_RCSD_ROAD_COLOR = (235, 170, 176, 150)
-SELECTED_RCSD_ROAD_COLOR = (0, 176, 146, 255)
-FIRST_HIT_RCSD_ROAD_COLOR = (0, 176, 146, 255)
-SELECTED_RCSD_ROAD_HALO = (255, 255, 255, 230)
+SELECTED_RCSD_ROAD_COLOR = (134, 23, 38, 255)
+FIRST_HIT_RCSD_ROAD_COLOR = ALL_RCSD_ROAD_COLOR
+SELECTED_RCSD_ROAD_HALO = (255, 255, 255, 0)
 RCSD_NODE_FILL = (255, 255, 255, 255)
 RCSD_NODE_RING = (189, 49, 49, 168)
 SELECTED_RCSD_NODE_RING = (189, 49, 49, 255)
@@ -316,8 +316,39 @@ def _draw_rcsd_scope_layers(draw, event_unit: T04EventUnitResult, bounds) -> Non
 
 
 def _draw_branch_overlays(draw, event_unit: T04EventUnitResult, bounds) -> None:
-    _draw_line(draw, event_unit.positive_rcsd_road_geometry, bounds, fill=SELECTED_RCSD_ROAD_HALO, width=15)
-    _draw_line(draw, event_unit.positive_rcsd_road_geometry, bounds, fill=SELECTED_RCSD_ROAD_COLOR, width=9)
+    _draw_line(draw, event_unit.positive_rcsd_road_geometry, bounds, fill=SELECTED_RCSD_ROAD_COLOR, width=10)
+
+
+def _draw_positive_rcsd_audit_layers(draw, event_unit: T04EventUnitResult, bounds) -> None:
+    local_context = event_unit.unit_context.local_context
+    for road in local_context.patch_roads:
+        _draw_line(draw, road.geometry, bounds, fill=ROAD_COLOR, width=3)
+    for road in local_context.local_rcsd_roads:
+        _draw_line(draw, road.geometry, bounds, fill=ALL_RCSD_ROAD_COLOR, width=2)
+    _draw_line(draw, event_unit.positive_rcsd_road_geometry, bounds, fill=SELECTED_RCSD_ROAD_COLOR, width=10)
+    _draw_point(draw, event_unit.required_rcsd_node_geometry, bounds, fill=RCSD_NODE_FILL, radius=7, ring=REQUIRED_RCSD_RING)
+    _draw_point(draw, event_unit.primary_main_rc_node_geometry, bounds, fill=RCSD_NODE_FILL, radius=5, ring=PRIMARY_RCSD_RING)
+
+
+def _positive_rcsd_review_lines(event_unit: T04EventUnitResult, audit_summary: dict[str, object]) -> list[str]:
+    return [
+        f"mainnodeid: {event_unit.unit_context.admission.mainnodeid}",
+        f"event_unit_id: {event_unit.spec.event_unit_id}",
+        f"selected_evidence: {_truncate(str(event_unit.selected_evidence_summary.get('candidate_id') or ''), limit=58)}",
+        f"candidate_region: {_truncate(str(audit_summary.get('selected_candidate_region') or ''), limit=58)}",
+        f"positive_present: {event_unit.positive_rcsd_present} / {_truncate(event_unit.positive_rcsd_present_reason, limit=44)}",
+        f"positive_rcsd: {event_unit.positive_rcsd_support_level} / {event_unit.positive_rcsd_consistency_level}",
+        f"selection_mode: {event_unit.rcsd_selection_mode}",
+        f"local_unit: {_truncate(str(event_unit.local_rcsd_unit_id or ''), limit=58)}",
+        f"aggregated_unit: {_truncate(str(event_unit.aggregated_rcsd_unit_id or ''), limit=58)}",
+        f"axis_polarity_inverted: {event_unit.axis_polarity_inverted}",
+        f"first_hit_roads: {_truncate(';'.join(event_unit.first_hit_rcsdroad_ids), limit=58)}",
+        f"selected_rcsd_roads: {_truncate(';'.join(event_unit.selected_rcsdroad_ids), limit=58)}",
+        f"selected_rcsd_nodes: {_truncate(';'.join(event_unit.selected_rcsdnode_ids), limit=58)}",
+        f"primary_main_rc_node: {event_unit.primary_main_rc_node_id or ''}",
+        f"required_rcsd_node: {event_unit.required_rcsd_node or ''} / {event_unit.required_rcsd_node_source or ''}",
+        f"rcsd_reason: {_truncate(str(event_unit.positive_rcsd_audit.get('rcsd_decision_reason') or ''), limit=58)}",
+    ]
 
 
 def _main_review_lines(event_unit: T04EventUnitResult, audit_summary: dict[str, object]) -> list[str]:
@@ -511,6 +542,91 @@ def render_event_unit_candidate_compare_png(
         state=event_unit.review_state,
         title="Step4 Candidate Compare",
         lines=_candidate_compare_lines(event_unit, audit_summary, shortlisted_entries),
+    )
+    _save_flattened_png(image, out_path)
+
+
+def render_event_unit_positive_rcsd_review_png(
+    out_path: Path,
+    event_unit: T04EventUnitResult,
+    *,
+    audit_summary: dict[str, object] | None = None,
+) -> None:
+    audit_summary = audit_summary or {}
+    image = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), BACKGROUND)
+    draw = ImageDraw.Draw(image, "RGBA")
+    bounds = _base_bounds(event_unit)
+
+    _draw_polygon(
+        draw,
+        event_unit.unit_context.local_context.patch_drivezone_union,
+        bounds,
+        fill=DRIVEZONE_FILL,
+        outline=DRIVEZONE_EDGE,
+        width=2,
+    )
+    for feature in event_unit.unit_context.local_context.patch_divstrip_features:
+        _draw_polygon(draw, feature.geometry, bounds, fill=DIVSTRIP_FILL, outline=DIVSTRIP_EDGE, width=2)
+    primary_evidence_geometry = (
+        event_unit.selected_evidence_region_geometry
+        or event_unit.localized_evidence_core_geometry
+        or event_unit.selected_component_union_geometry
+    )
+    _draw_polygon(
+        draw,
+        primary_evidence_geometry,
+        bounds,
+        fill=SELECTED_EVIDENCE_FILL,
+        outline=SELECTED_CANDIDATE_EDGE,
+        width=4,
+    )
+    _draw_positive_rcsd_audit_layers(draw, event_unit, bounds)
+    fact_point = _first_point(event_unit.fact_reference_point)
+    _draw_crosshair(draw, fact_point, bounds, fill=FACT_POINT_FILL, outline=FACT_POINT_EDGE, radius=6)
+    for node in event_unit.unit_context.local_context.local_nodes:
+        _draw_point(draw, node.geometry, bounds, fill=NODE_COLOR, radius=4)
+    _draw_point(
+        draw,
+        event_unit.unit_context.representative_node.geometry,
+        bounds,
+        fill=GROUP_NODE_COLOR,
+        radius=6,
+        ring=REP_RING_COLOR,
+    )
+
+    _draw_badge(
+        draw,
+        x=MAP_LEFT + 18,
+        y=MAP_TOP + 18,
+        text=f"positive:{event_unit.positive_rcsd_consistency_level}",
+        fill=RCSD_ROAD_COLOR,
+    )
+    _draw_badge(
+        draw,
+        x=MAP_LEFT + 220,
+        y=MAP_TOP + 18,
+        text=f"required:{'yes' if event_unit.required_rcsd_node else 'no'}",
+        fill=REQUIRED_RCSD_RING,
+    )
+    _draw_legend(
+        draw,
+        x=MAP_LEFT + 18,
+        y=MAP_TOP + MAP_SIZE - 176,
+        items=[
+            ("Road Surface", DRIVEZONE_EDGE, "poly"),
+            ("Divstrip", DIVSTRIP_FILL, "poly"),
+            ("Primary Evidence", SELECTED_CANDIDATE_EDGE, "poly"),
+            ("Reference Point", FACT_POINT_FILL, "point"),
+            ("SWSD Node", NODE_COLOR, "point"),
+            ("Other RCSD", ALL_RCSD_ROAD_COLOR, "line"),
+            ("Selected RCSD", SELECTED_RCSD_ROAD_COLOR, "strong_line"),
+        ],
+    )
+    _draw_panel(
+        draw,
+        state=event_unit.review_state,
+        title="Step4 Positive RCSD Audit",
+        lines=_positive_rcsd_review_lines(event_unit, audit_summary),
     )
     _save_flattened_png(image, out_path)
 

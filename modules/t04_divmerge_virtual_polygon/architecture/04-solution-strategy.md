@@ -125,7 +125,12 @@
   - `B / secondary_support`
   - `C / no_support`
 - `A/B/C` 必须由 normalized role mapping 产生，不能再用 `angle_match` 或 nearby fallback 包装。
-- 一旦 `positive_rcsd_present = true`，支持强度下限就是 `B`；side-label 不得单独把事实存在样本压到 `C`。
+- `positive_rcsd_present = true` 只表示事实层成立，不等于 `A`，也不自动保底 `B`。
+- 事实层成立后，仍必须在 `aggregated_rcsd_unit` 上完成 polarity normalization 与 normalized role mapping；若归一化后仍存在结构性硬冲突，最终允许落到 `C`。
+- `C` 同时覆盖：
+  - 事实层缺失
+  - 事实层虽成立，但归一化后仍存在结构性硬冲突
+- side-label mismatch 不得单独把事实存在样本压到 `C`。
 - `required_rcsd_node` 必须从已匹配的 local / aggregated RCSD unit 中独立输出，不再依赖 `A`；本轮仍不把它扩成 Step5-7 的 cover / publish 逻辑。
 - `branch-middle / throat gate` 的 boundary branches 必须来自当前 unit 的 `boundary_branch_ids`；complex / multi 场景下不再允许静默退回 case-level main pair 充当 unit-local throat。
 - merge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 entering branches；diverge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 exiting branches；`preferred_axis_branch_id` 只允许来自当前 unit 的唯一 opposite-direction trunk。

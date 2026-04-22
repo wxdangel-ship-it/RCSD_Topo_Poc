@@ -238,13 +238,17 @@
   - 作用域层：`pair-local raw observation / rcsd_candidate_scope / local_rcsd_unit / aggregated_rcsd_unit`
   - 事实层：`positive_rcsd_present = true/false`
   - 支持强度层：`positive_rcsd_support_level / positive_rcsd_consistency_level`
-- 一旦 `positive_rcsd_present = true`，支持强度下限就是 `B`；不允许再因为 side-label 单独条件把事实存在样本压到 `C`。
+- `positive_rcsd_present = true` 只表示事实层成立，不等于 `A`，也不自动保底 `B`。
+- 事实层成立后，仍必须在 `aggregated_rcsd_unit` 上继续完成 `polarity normalization` 与 normalized entering / exiting role mapping；若归一化后仍存在结构性硬冲突，最终允许落到 `C`。
 - Step4 必须显式做 `polarity normalization`；`axis polarity inverted` 默认在 `aggregated_rcsd_unit` 级别识别，single-unit 仅可作为 fallback。
 - Step4 正向 RCSD 一致性正式冻结为：
   - `A`：强一致
   - `B`：部分一致
-  - `C`：缺失
+  - `C`：缺失 / 不成立
 - `A/B/C` 必须由 `SWSD unit ↔ RCSD local / aggregated unit` 的 normalized entering / exiting role mapping 结果产生，不能再由“角度匹配到了 road + 选到了 node”包装得出。
+- `C` 允许用于两类情况：
+  - 事实层本身缺失
+  - 事实层虽成立，但归一化后仍存在结构性硬冲突
 - 判定原则冻结为：
   - 先比角色
   - 再比方向

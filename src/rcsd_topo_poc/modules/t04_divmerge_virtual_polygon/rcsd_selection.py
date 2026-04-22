@@ -26,9 +26,13 @@ RCSD_TRACE_MAX_DEPTH = 4
 def _normalize_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
     if geometry is None or geometry.is_empty:
         return None
-    try:
-        normalized = geometry.buffer(0)
-    except Exception:
+    geom_type = str(getattr(geometry, "geom_type", "") or "")
+    if geom_type in {"Polygon", "MultiPolygon"}:
+        try:
+            normalized = geometry.buffer(0)
+        except Exception:
+            normalized = geometry
+    else:
         normalized = geometry
     if normalized is None or normalized.is_empty:
         return None
@@ -597,6 +601,52 @@ def _select_primary_node_id(
     return None if best is None else best[1]
 
 
+def _select_required_node_id(
+    *,
+    node_ids: Iterable[str],
+    local_units: Sequence["_LocalRcsdUnit"],
+    road_ids: Iterable[str],
+    roads_by_id: dict[str, ParsedRoad],
+    roads_by_node_id: dict[str, set[str]],
+    first_hit_road_ids: Iterable[str],
+    node_points_by_id: dict[str, Point],
+    representative_point: Point,
+) -> str | None:
+    candidate_node_ids = tuple(sorted({str(node_id) for node_id in node_ids if str(node_id)}))
+    if not candidate_node_ids:
+        return None
+    component_road_ids = {str(road_id) for road_id in road_ids if str(road_id)}
+    first_hit_set = {str(road_id) for road_id in first_hit_road_ids if str(road_id)}
+    local_node_ids = {str(unit.node_id) for unit in local_units if unit.node_id}
+    best: tuple[tuple[int, int, int, int, int, str], str] | None = None
+    for node_id in candidate_node_ids:
+        point = node_points_by_id.get(node_id)
+        if point is None:
+            continue
+        incident_road_ids = set(roads_by_node_id.get(node_id, set())) & component_road_ids
+        direct_first_hit_count = len(incident_road_ids & first_hit_set)
+        traced_first_hit_count = 0
+        for first_hit_road_id in sorted(first_hit_set):
+            if _trace_path_to_node(
+                start_road_id=first_hit_road_id,
+                target_node_id=node_id,
+                roads_by_id=roads_by_id,
+                roads_by_node_id=roads_by_node_id,
+            ):
+                traced_first_hit_count += 1
+        candidate = (
+            traced_first_hit_count,
+            len(incident_road_ids),
+            direct_first_hit_count,
+            1 if node_id in local_node_ids else 0,
+            -int(round(float(point.distance(representative_point)) * 10.0)),
+            node_id,
+        )
+        if best is None or candidate > best[0]:
+            best = (candidate, node_id)
+    return None if best is None else best[1]
+
+
 def _unit_from_roads_and_node(
     *,
     unit_id: str,
@@ -680,12 +730,24 @@ def _unit_from_roads_and_node(
     positive_rcsd_present = bool(event_side_road_ids) and (
         trunk_present or unit_kind == "node_centric" or len(ordered_road_ids) >= 2
     )
+    structural_conflict = bool(
+        positive_rcsd_present
+        and unit_kind == "node_centric"
+        and not trunk_present
+        and len(event_side_road_ids) >= expected_event_arm_count
+    )
     if exact_match:
         consistency_level = "A"
         support_level = "primary_support"
         decision_reason = "local_role_mapping_exact"
         role_match_result = "exact"
         positive_rcsd_present_reason = "matched_event_side_with_trunk"
+    elif structural_conflict:
+        consistency_level = "C"
+        support_level = "no_support"
+        decision_reason = "local_role_mapping_structural_conflict"
+        role_match_result = "structural_conflict"
+        positive_rcsd_present_reason = "matched_event_side_without_trunk_conflict"
     elif partial_match:
         consistency_level = "B"
         support_level = "secondary_support"
@@ -772,6 +834,8 @@ def _build_aggregated_rcsd_units(
     local_units: Sequence[_LocalRcsdUnit],
     expected_role_map: dict[str, Any],
     first_hit_road_ids: tuple[str, ...],
+    roads_by_id: dict[str, ParsedRoad],
+    roads_by_node_id: dict[str, set[str]],
     node_points_by_id: dict[str, Point],
     representative_point: Point,
 ) -> tuple[_AggregatedRcsdUnit, ...]:
@@ -857,19 +921,77 @@ def _build_aggregated_rcsd_units(
             else (1 if event_side_road_ids else 0)
         )
         has_node_centric = any(unit.unit_kind == "node_centric" for unit in component_units_sorted)
+        has_exact_local_node_unit = any(
+            unit.unit_kind == "node_centric" and unit.consistency_level == "A"
+            for unit in component_units_sorted
+        )
         trunk_present = bool(axis_side_road_ids)
         primary_node_id = _select_primary_node_id(
             node_ids=node_ids,
             node_points_by_id=node_points_by_id,
             representative_point=representative_point,
         )
-        required_node_id = primary_node_id if has_node_centric and positive_rcsd_present else None
-        required_node_source = "aggregated_node_centric" if required_node_id is not None else None
+        required_node_id = (
+            _select_required_node_id(
+                node_ids=node_ids,
+                local_units=component_units_sorted,
+                road_ids=road_ids,
+                roads_by_id=roads_by_id,
+                roads_by_node_id=roads_by_node_id,
+                first_hit_road_ids=first_hit_road_ids,
+                node_points_by_id=node_points_by_id,
+                representative_point=representative_point,
+            )
+            if has_node_centric and positive_rcsd_present
+            else None
+        )
+        required_node_source = None
+        if required_node_id is not None:
+            required_node_source = (
+                "aggregated_node_centric"
+                if required_node_id == primary_node_id
+                else "aggregated_structural_required"
+            )
+        required_incident_road_ids = (
+            set(roads_by_node_id.get(required_node_id, set())) & set(road_ids)
+            if required_node_id is not None
+            else set()
+        )
+        required_first_hit_trace_count = 0
+        if required_node_id is not None:
+            for first_hit_road_id in first_hit_road_ids:
+                if _trace_path_to_node(
+                    start_road_id=first_hit_road_id,
+                    target_node_id=required_node_id,
+                    roads_by_id=roads_by_id,
+                    roads_by_node_id=roads_by_node_id,
+                ):
+                    required_first_hit_trace_count += 1
+        structural_arm_target = expected_event_arm_count + 1
+        structural_support_complete = bool(
+            required_node_id is not None
+            and len(required_incident_road_ids) >= structural_arm_target
+            and (
+                not first_hit_road_ids
+                or required_first_hit_trace_count >= max(1, len(tuple(sorted(set(first_hit_road_ids)))))
+            )
+        )
+        structural_conflict = bool(
+            positive_rcsd_present
+            and has_node_centric
+            and not trunk_present
+            and len(event_side_road_ids) >= expected_event_arm_count
+        )
         if not positive_rcsd_present:
             consistency_level = "C"
             support_level = "no_support"
             decision_reason = "aggregated_role_mapping_failed"
             positive_rcsd_present_reason = "no_positive_rcsd_present"
+        elif structural_conflict:
+            consistency_level = "C"
+            support_level = "no_support"
+            decision_reason = "role_mapping_structural_conflict"
+            positive_rcsd_present_reason = "aggregated_structural_conflict"
         else:
             positive_rcsd_present_reason = (
                 "aggregated_axis_polarity_inverted"
@@ -878,12 +1000,7 @@ def _build_aggregated_rcsd_units(
             )
             exact_match = (
                 has_node_centric
-                and trunk_present
-                and observed_event_arm_count >= expected_event_arm_count
-                and (
-                    not expected_event_labels
-                    or set(normalized_labels) == expected_event_labels
-                )
+                and (has_exact_local_node_unit or structural_support_complete)
             )
             if exact_match:
                 consistency_level = "A"
@@ -915,9 +1032,18 @@ def _build_aggregated_rcsd_units(
             1 if positive_rcsd_present else 0,
             1 if has_node_centric else 0,
             len(set(road_ids) & first_hit_set),
-            matched_arm_count,
+            max(matched_arm_count, len(required_incident_road_ids)),
             -int(axis_polarity_inverted),
-            -int(round(float((node_points_by_id.get(primary_node_id) or representative_point).distance(representative_point)) * 10.0)),
+            -int(
+                round(
+                    float(
+                        (node_points_by_id.get(primary_node_id) or representative_point).distance(
+                            representative_point
+                        )
+                    )
+                    * 10.0
+                )
+            ),
         )
         aggregated_units.append(
             _AggregatedRcsdUnit(
@@ -1275,6 +1401,8 @@ def resolve_positive_rcsd_selection(
         local_units=local_units,
         expected_role_map=expected_role_map,
         first_hit_road_ids=tuple(first_hit_road_ids),
+        roads_by_id=roads_by_id,
+        roads_by_node_id=roads_by_node_id,
         node_points_by_id=node_points_by_id,
         representative_point=representative_point,
     )
@@ -1367,7 +1495,7 @@ def resolve_positive_rcsd_selection(
     if primary_main_rc_node_id is not None and primary_main_rc_node_id in node_points_by_id:
         primary_main_rc_node_geometry = node_points_by_id[primary_main_rc_node_id]
     required_rcsd_node = selected_aggregated.required_node_id
-    required_rcsd_node_geometry = primary_main_rc_node_geometry
+    required_rcsd_node_geometry = None
     if required_rcsd_node is not None and required_rcsd_node in node_points_by_id:
         required_rcsd_node_geometry = node_points_by_id[required_rcsd_node]
     if selected_aggregated.consistency_level == "A":

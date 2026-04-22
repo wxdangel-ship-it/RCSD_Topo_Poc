@@ -16,6 +16,7 @@ from .review_audit import build_case_review_audit
 from .review_render import (
     render_case_overview_png,
     render_event_unit_candidate_compare_png,
+    render_event_unit_positive_rcsd_review_png,
     render_event_unit_review_png,
 )
 from .topology import build_step3_status_doc, build_unit_step3_status_doc
@@ -80,6 +81,8 @@ REVIEW_INDEX_FIELDNAMES = [
     "image_path",
     "compare_image_name",
     "compare_image_path",
+    "positive_rcsd_image_name",
+    "positive_rcsd_image_path",
     "case_overview_path",
 ]
 
@@ -276,6 +279,12 @@ def write_case_outputs(
         render_event_unit_review_png(png_path, event_unit, audit_summary=audit_summary)
         compare_png_path = event_unit_dir / "step4_candidate_compare.png"
         render_event_unit_candidate_compare_png(compare_png_path, event_unit, audit_summary=audit_summary)
+        positive_rcsd_png_path = event_unit_dir / "step4_positive_rcsd_review.png"
+        render_event_unit_positive_rcsd_review_png(
+            positive_rcsd_png_path,
+            event_unit,
+            audit_summary=audit_summary,
+        )
         event_unit.source_png_path = str(png_path)
         event_unit.compare_png_path = str(compare_png_path)
         rows.append(
@@ -343,6 +352,7 @@ def write_case_outputs(
                 point_signature=str(event_unit.selected_evidence_summary.get("point_signature") or ""),
                 image_path=str(png_path),
                 compare_image_path=str(compare_png_path),
+                positive_rcsd_image_path=str(positive_rcsd_png_path),
                 case_overview_path=str(overview_path),
             )
         )
@@ -366,6 +376,11 @@ def materialize_review_gallery(run_root: Path, rows: list[T04ReviewIndexRow]) ->
             if row.compare_image_path
             else run_root / "cases" / row.case_id / "event_units" / row.event_unit_id / "step4_candidate_compare.png"
         )
+        positive_rcsd_source_path = (
+            Path(row.positive_rcsd_image_path)
+            if row.positive_rcsd_image_path
+            else run_root / "cases" / row.case_id / "event_units" / row.event_unit_id / "step4_positive_rcsd_review.png"
+        )
         overview_source_path = (
             Path(row.case_overview_path)
             if row.case_overview_path
@@ -384,11 +399,17 @@ def materialize_review_gallery(run_root: Path, rows: list[T04ReviewIndexRow]) ->
         compare_image_path = flat_dir / compare_image_name
         if compare_source_path.is_file():
             shutil.copy2(compare_source_path, compare_image_path)
+        positive_rcsd_image_name = f"{index:04d}__{row.case_id}__{row.event_unit_id}__rcsd.png"
+        positive_rcsd_image_path = flat_dir / positive_rcsd_image_name
+        if positive_rcsd_source_path.is_file():
+            shutil.copy2(positive_rcsd_source_path, positive_rcsd_image_path)
         row.sequence_no = index
         row.image_name = image_name
         row.image_path = str(image_path)
         row.compare_image_name = compare_image_name
         row.compare_image_path = str(compare_image_path)
+        row.positive_rcsd_image_name = positive_rcsd_image_name
+        row.positive_rcsd_image_path = str(positive_rcsd_image_path)
         row.case_overview_path = overview_flat_paths.get(row.case_id, str(overview_source_path))
         materialized_rows.append(row)
     return materialized_rows

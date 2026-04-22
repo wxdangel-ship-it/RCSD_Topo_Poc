@@ -99,9 +99,23 @@ def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitRes
             "position_source": result.position_source,
             "reverse_tip_used": bool(result.reverse_tip_used),
             "rcsd_consistency_result": result.rcsd_consistency_result,
+            "pair_local_rcsd_empty": bool(result.pair_local_rcsd_empty),
+            "pair_local_rcsd_road_ids": list(result.pair_local_rcsd_road_ids),
+            "pair_local_rcsd_node_ids": list(result.pair_local_rcsd_node_ids),
+            "first_hit_rcsdroad_ids": list(result.first_hit_rcsdroad_ids),
+            "local_rcsd_unit_id": result.local_rcsd_unit_id,
+            "local_rcsd_unit_kind": result.local_rcsd_unit_kind,
+            "aggregated_rcsd_unit_id": result.aggregated_rcsd_unit_id,
+            "aggregated_rcsd_unit_ids": list(result.aggregated_rcsd_unit_ids),
+            "rcsd_selection_mode": result.rcsd_selection_mode,
+            "positive_rcsd_present": bool(result.positive_rcsd_present),
+            "positive_rcsd_present_reason": result.positive_rcsd_present_reason,
             "positive_rcsd_support_level": result.positive_rcsd_support_level,
             "positive_rcsd_consistency_level": result.positive_rcsd_consistency_level,
             "required_rcsd_node": result.required_rcsd_node,
+            "required_rcsd_node_source": result.required_rcsd_node_source,
+            "axis_polarity_inverted": bool(result.axis_polarity_inverted),
+            "rcsd_decision_reason": str(result.positive_rcsd_audit.get("rcsd_decision_reason") or ""),
         }
     )
     return merged

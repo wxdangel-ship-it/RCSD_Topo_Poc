@@ -69,6 +69,7 @@ from .event_interpretation_shared import (
     _stable_boundary_pair_signature,
 )
 from .local_context import build_step2_local_context
+from .rcsd_selection import resolve_positive_rcsd_selection
 from .topology import build_step3_topology
 from .variant_ranking import (
     _pair_interval_variant_metrics_from_data,
@@ -183,41 +184,35 @@ def _sorted_id_tuple(values: Iterable[Any]) -> tuple[str, ...]:
     return tuple(sorted({str(value) for value in values if str(value)}))
 
 
-def _resolve_required_rcsd_node_id(
+def _apply_positive_rcsd_audit_to_summary(
+    summary: dict[str, Any],
     *,
-    primary_main_rc_node,
-    effective_target_rc_nodes: Iterable[Any],
-    selected_rcsd_nodes: Iterable[Any],
-    positive_rcsd_consistency_level: str,
-) -> str | None:
-    if str(positive_rcsd_consistency_level) != "A":
-        return None
-    if primary_main_rc_node is not None and getattr(primary_main_rc_node, "node_id", None):
-        return str(primary_main_rc_node.node_id)
-    for node in [*effective_target_rc_nodes, *selected_rcsd_nodes]:
-        node_id = getattr(node, "node_id", None)
-        if node_id:
-            return str(node_id)
-    return None
-
-
-def _positive_rcsd_levels(
-    *,
-    bridge,
-) -> tuple[str, str, str]:
-    has_roads = bool(bridge.selected_rcsd_roads)
-    has_nodes = bool(bridge.selected_rcsd_nodes)
-    has_target_node = bool(bridge.effective_target_rc_nodes) or bridge.primary_main_rc_node is not None
-    selection_mode = str(bridge.rcsdroad_selection_mode or "").strip()
-    if has_roads and has_target_node and selection_mode == "angle_match":
-        return "primary_support", "A", "positive_rcsd_consistent"
-    if has_roads and has_nodes:
-        return "secondary_support", "B", "positive_rcsd_partial_consistent"
-    if has_roads:
-        return "secondary_support", "B", "positive_rcsd_without_target_node"
-    if has_nodes:
-        return "secondary_support", "B", "positive_rcsd_node_only"
-    return "no_support", "C", "missing_positive_rcsd"
+    decision,
+) -> dict[str, Any]:
+    merged = dict(summary)
+    merged.update(
+        {
+            "pair_local_rcsd_empty": bool(decision.pair_local_rcsd_empty),
+            "pair_local_rcsd_road_ids": list(decision.pair_local_rcsd_road_ids),
+            "pair_local_rcsd_node_ids": list(decision.pair_local_rcsd_node_ids),
+            "first_hit_rcsdroad_ids": list(decision.first_hit_rcsdroad_ids),
+            "local_rcsd_unit_id": decision.local_rcsd_unit_id,
+            "local_rcsd_unit_kind": decision.local_rcsd_unit_kind,
+            "aggregated_rcsd_unit_id": decision.aggregated_rcsd_unit_id,
+            "aggregated_rcsd_unit_ids": list(decision.aggregated_rcsd_unit_ids),
+            "rcsd_selection_mode": decision.rcsd_selection_mode,
+            "positive_rcsd_present": bool(decision.positive_rcsd_present),
+            "positive_rcsd_present_reason": decision.positive_rcsd_present_reason,
+            "positive_rcsd_support_level": decision.positive_rcsd_support_level,
+            "positive_rcsd_consistency_level": decision.positive_rcsd_consistency_level,
+            "required_rcsd_node": decision.required_rcsd_node,
+            "required_rcsd_node_source": decision.required_rcsd_node_source,
+            "axis_polarity_inverted": bool(decision.axis_polarity_inverted),
+            "rcsd_decision_reason": decision.rcsd_decision_reason,
+            "positive_rcsd_audit": dict(decision.positive_rcsd_audit),
+        }
+    )
+    return merged
 
 
 def _effective_complex_kind_hint(
@@ -1105,12 +1100,14 @@ def _materialize_prepared_unit_inputs(
         scoped_rcsd_roads,
         scope_geometry=scope_geometry,
         pad_m=PAIR_LOCAL_RCSD_SCOPE_PAD_M,
-    ) or tuple(scoped_rcsd_roads)
+    )
     pair_local_scope_rcsd_nodes = _filter_nodes_to_scope(
         scoped_rcsd_nodes,
         scope_geometry=scope_geometry,
         pad_m=PAIR_LOCAL_RCSD_SCOPE_PAD_M,
-    ) or tuple(scoped_rcsd_nodes)
+    )
+    if not pair_local_scope_rcsd_roads and not pair_local_scope_rcsd_nodes:
+        pair_local_degraded_reasons.append("pair_local_scope_rcsd_empty")
     if pair_local_drivezone_union is not None and not pair_local_drivezone_union.is_empty:
         contained_rcsd_roads = tuple(
             road
@@ -1122,6 +1119,8 @@ def _materialize_prepared_unit_inputs(
         if len(contained_rcsd_roads) < len(pair_local_scope_rcsd_roads):
             pair_local_degraded_reasons.append("pair_local_scope_rcsd_outside_drivezone_filtered")
         pair_local_scope_rcsd_roads = contained_rcsd_roads
+    if not pair_local_scope_rcsd_roads and not pair_local_scope_rcsd_nodes:
+        pair_local_degraded_reasons.append("pair_local_scope_rcsd_empty")
     pair_local_scope_divstrip_features = _filter_divstrip_features_to_scope(
         scoped_divstrip_features,
         scope_geometry=scope_geometry,
@@ -1159,6 +1158,9 @@ def _materialize_prepared_unit_inputs(
         "pair_scan_truncated_to_local": bool(pair_scan_truncated_to_local),
         "degraded_reasons": list(dict.fromkeys(pair_local_degraded_reasons)),
         "valid_scan_offsets_m": [round(float(offset), 3) for offset in sorted(valid_offsets)],
+        "pair_local_rcsd_road_count": len(pair_local_scope_rcsd_roads),
+        "pair_local_rcsd_node_count": len(pair_local_scope_rcsd_nodes),
+        "pair_local_rcsd_empty": not pair_local_scope_rcsd_roads and not pair_local_scope_rcsd_nodes,
         "pair_local_region_area_m2": 0.0 if pair_local_region_geometry is None else round(float(pair_local_region_geometry.area), 3),
         "structure_face_area_m2": 0.0 if pair_local_structure_face_geometry is None else round(float(pair_local_structure_face_geometry.area), 3),
         "pair_local_middle_area_m2": 0.0 if pair_local_middle_geometry is None else round(float(pair_local_middle_geometry.area), 3),
@@ -1537,34 +1539,34 @@ def _build_result_from_interpretation(
         interpretation=interpretation,
         selected_divstrip_geometry=localized_evidence_core_geometry,
     )
-    positive_rcsd_road_geometry = _positive_rcsd_geometry(
-        [road.geometry for road in bridge.selected_rcsd_roads]
+    positive_rcsd_decision = resolve_positive_rcsd_selection(
+        event_unit_id=prepared.event_unit_spec.event_unit_id,
+        operational_kind_hint=prepared.operational_kind_hint,
+        representative_node=prepared.unit_context.representative_node,
+        selected_evidence_region_geometry=selected_evidence_region_geometry,
+        fact_reference_point=fact_reference_point,
+        pair_local_region_geometry=prepared.pair_local_region_geometry,
+        pair_local_middle_geometry=prepared.pair_local_middle_geometry,
+        scoped_rcsd_roads=prepared.scoped_rcsd_roads,
+        scoped_rcsd_nodes=prepared.scoped_rcsd_nodes,
+        pair_local_scope_rcsd_roads=prepared.pair_local_scope_rcsd_roads,
+        pair_local_scope_rcsd_nodes=prepared.pair_local_scope_rcsd_nodes,
+        scoped_roads=prepared.scoped_roads,
+        boundary_branch_ids=prepared.boundary_branch_ids,
+        preferred_axis_branch_id=prepared.preferred_axis_branch_id,
+        scoped_input_branch_ids=prepared.scoped_input_branch_ids,
+        scoped_output_branch_ids=prepared.scoped_output_branch_ids,
+        branch_road_memberships=prepared.branch_road_memberships,
+        axis_vector=prepared.pair_local_axis_unit_vector,
     )
-    positive_rcsd_node_geometry = _positive_rcsd_geometry(
-        [node.geometry for node in bridge.selected_rcsd_nodes]
+    positive_rcsd_support_level = positive_rcsd_decision.positive_rcsd_support_level
+    positive_rcsd_consistency_level = positive_rcsd_decision.positive_rcsd_consistency_level
+    rcsd_consistency_result = positive_rcsd_decision.rcsd_consistency_result
+    required_rcsd_node = positive_rcsd_decision.required_rcsd_node
+    selected_candidate_summary = _apply_positive_rcsd_audit_to_summary(
+        selected_candidate_summary,
+        decision=positive_rcsd_decision,
     )
-    positive_rcsd_geometry = _positive_rcsd_geometry(
-        [positive_rcsd_road_geometry, positive_rcsd_node_geometry]
-    )
-    positive_rcsd_support_level, positive_rcsd_consistency_level, rcsd_consistency_result = (
-        _positive_rcsd_levels(bridge=bridge)
-    )
-    required_rcsd_node = _resolve_required_rcsd_node_id(
-        primary_main_rc_node=bridge.primary_main_rc_node,
-        effective_target_rc_nodes=bridge.effective_target_rc_nodes,
-        selected_rcsd_nodes=bridge.selected_rcsd_nodes,
-        positive_rcsd_consistency_level=positive_rcsd_consistency_level,
-    )
-    required_rcsd_node_geometry = _positive_rcsd_geometry(
-        [
-            node.geometry
-            for node in bridge.selected_rcsd_nodes
-            if str(getattr(node, "node_id", "")) == str(required_rcsd_node or "")
-        ]
-    )
-    if (required_rcsd_node_geometry is None or required_rcsd_node_geometry.is_empty) and bridge.primary_main_rc_node is not None:
-        if str(getattr(bridge.primary_main_rc_node, "node_id", "")) == str(required_rcsd_node or ""):
-            required_rcsd_node_geometry = bridge.primary_main_rc_node.geometry
     review_reasons: list[str] = list(interpretation.review_signals)
     fail_reasons: list[str] = list(interpretation.hard_rejection_signals)
     fail_reasons.extend(interpretation.legacy_step5_readiness.reasons)
@@ -1572,7 +1574,7 @@ def _build_result_from_interpretation(
         fail_reasons.append("missing_event_reference_point")
     if not bridge.selected_branch_ids:
         fail_reasons.append("selected_branch_ids_empty")
-    if rcsd_consistency_result != "positive_rcsd_consistent":
+    if rcsd_consistency_result != "positive_rcsd_strong_consistent":
         review_reasons.append(rcsd_consistency_result)
     if interpretation.evidence_decision.fallback_used:
         review_reasons.append("fallback_to_weak_evidence")
@@ -1616,32 +1618,41 @@ def _build_result_from_interpretation(
         selected_evidence_region_geometry=selected_evidence_region_geometry,
         fact_reference_point=fact_reference_point,
         review_materialized_point=review_materialized_point,
-        positive_rcsd_geometry=positive_rcsd_geometry,
-        positive_rcsd_road_geometry=positive_rcsd_road_geometry,
-        positive_rcsd_node_geometry=positive_rcsd_node_geometry,
-        primary_main_rc_node_geometry=(
-            None
-            if bridge.primary_main_rc_node is None
-            else bridge.primary_main_rc_node.geometry
-        ),
-        required_rcsd_node_geometry=required_rcsd_node_geometry,
+        pair_local_rcsd_scope_geometry=positive_rcsd_decision.pair_local_rcsd_scope_geometry,
+        first_hit_rcsd_road_geometry=positive_rcsd_decision.first_hit_rcsd_road_geometry,
+        local_rcsd_unit_geometry=positive_rcsd_decision.local_rcsd_unit_geometry,
+        positive_rcsd_geometry=positive_rcsd_decision.positive_rcsd_geometry,
+        positive_rcsd_road_geometry=positive_rcsd_decision.positive_rcsd_road_geometry,
+        positive_rcsd_node_geometry=positive_rcsd_decision.positive_rcsd_node_geometry,
+        primary_main_rc_node_geometry=positive_rcsd_decision.primary_main_rc_node_geometry,
+        required_rcsd_node_geometry=positive_rcsd_decision.required_rcsd_node_geometry,
         selected_branch_ids=tuple(bridge.selected_branch_ids),
         selected_event_branch_ids=tuple(bridge.selected_event_branch_ids),
         selected_component_ids=tuple(bridge.divstrip_context.selected_component_ids),
-        selected_rcsdroad_ids=_sorted_id_tuple(bridge.selected_rcsdroad_ids),
-        selected_rcsdnode_ids=_sorted_id_tuple(bridge.selected_rcsdnode_ids),
-        primary_main_rc_node_id=(
-            None
-            if bridge.primary_main_rc_node is None
-            else str(bridge.primary_main_rc_node.node_id)
-        ),
+        pair_local_rcsd_road_ids=positive_rcsd_decision.pair_local_rcsd_road_ids,
+        pair_local_rcsd_node_ids=positive_rcsd_decision.pair_local_rcsd_node_ids,
+        first_hit_rcsdroad_ids=positive_rcsd_decision.first_hit_rcsdroad_ids,
+        selected_rcsdroad_ids=positive_rcsd_decision.selected_rcsdroad_ids,
+        selected_rcsdnode_ids=positive_rcsd_decision.selected_rcsdnode_ids,
+        primary_main_rc_node_id=positive_rcsd_decision.primary_main_rc_node_id,
+        local_rcsd_unit_id=positive_rcsd_decision.local_rcsd_unit_id,
+        local_rcsd_unit_kind=positive_rcsd_decision.local_rcsd_unit_kind,
+        aggregated_rcsd_unit_id=positive_rcsd_decision.aggregated_rcsd_unit_id,
+        aggregated_rcsd_unit_ids=positive_rcsd_decision.aggregated_rcsd_unit_ids,
+        positive_rcsd_present=positive_rcsd_decision.positive_rcsd_present,
+        positive_rcsd_present_reason=positive_rcsd_decision.positive_rcsd_present_reason,
+        axis_polarity_inverted=positive_rcsd_decision.axis_polarity_inverted,
+        rcsd_selection_mode=positive_rcsd_decision.rcsd_selection_mode,
+        pair_local_rcsd_empty=positive_rcsd_decision.pair_local_rcsd_empty,
         positive_rcsd_support_level=positive_rcsd_support_level,
         positive_rcsd_consistency_level=positive_rcsd_consistency_level,
         required_rcsd_node=required_rcsd_node,
+        required_rcsd_node_source=positive_rcsd_decision.required_rcsd_node_source,
         event_axis_branch_id=bridge.event_axis_branch_id,
         event_chosen_s_m=interpretation.event_reference.event_chosen_s_m,
         pair_local_summary=dict(prepared.pair_local_summary),
         selected_candidate_summary=dict(selected_candidate_summary),
+        positive_rcsd_audit=dict(positive_rcsd_decision.positive_rcsd_audit),
         selected_evidence_summary=dict(selected_candidate_summary),
     )
     if not bool(selected_candidate_summary.get("primary_eligible")):
@@ -1913,6 +1924,9 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                 selected_evidence_region_geometry=None,
                 fact_reference_point=None,
                 review_materialized_point=None,
+                pair_local_rcsd_scope_geometry=None,
+                first_hit_rcsd_road_geometry=None,
+                local_rcsd_unit_geometry=None,
                 positive_rcsd_geometry=None,
                 positive_rcsd_road_geometry=None,
                 positive_rcsd_node_geometry=None,
@@ -1921,14 +1935,38 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                 selected_branch_ids=(),
                 selected_event_branch_ids=(),
                 selected_component_ids=(),
+                first_hit_rcsdroad_ids=(),
                 selected_rcsdroad_ids=(),
                 selected_rcsdnode_ids=(),
                 primary_main_rc_node_id=None,
+                local_rcsd_unit_id=None,
+                local_rcsd_unit_kind=None,
+                aggregated_rcsd_unit_id=None,
+                aggregated_rcsd_unit_ids=(),
+                positive_rcsd_present=False,
+                positive_rcsd_present_reason="no_selected_evidence_after_reselection",
+                axis_polarity_inverted=False,
+                rcsd_selection_mode="no_selected_evidence",
                 positive_rcsd_support_level="no_support",
                 positive_rcsd_consistency_level="C",
                 required_rcsd_node=None,
+                required_rcsd_node_source=None,
                 event_axis_branch_id=None,
                 event_chosen_s_m=None,
+                positive_rcsd_audit={
+                    "pair_local_rcsd_empty": bool(template_result.pair_local_rcsd_empty),
+                    "pair_local_rcsd_road_ids": list(template_result.pair_local_rcsd_road_ids),
+                    "pair_local_rcsd_node_ids": list(template_result.pair_local_rcsd_node_ids),
+                    "first_hit_rcsdroad_ids": [],
+                    "local_rcsd_units": [],
+                    "aggregated_rcsd_units": [],
+                    "positive_rcsd_present": False,
+                    "positive_rcsd_present_reason": "no_selected_evidence_after_reselection",
+                    "axis_polarity_inverted": False,
+                    "required_rcsd_node_source": None,
+                    "rcsd_role_map": {},
+                    "rcsd_decision_reason": "no_selected_evidence_after_reselection",
+                },
                 selected_candidate_summary=dict(empty_summary),
                 selected_evidence_summary=dict(empty_summary),
                 alternative_candidate_summaries=alternative_candidates,

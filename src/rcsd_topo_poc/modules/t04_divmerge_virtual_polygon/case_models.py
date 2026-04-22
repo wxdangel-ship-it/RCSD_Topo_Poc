@@ -214,6 +214,9 @@ class T04EventUnitResult:
     selected_evidence_region_geometry: BaseGeometry | None
     fact_reference_point: BaseGeometry | None
     review_materialized_point: BaseGeometry | None
+    pair_local_rcsd_scope_geometry: BaseGeometry | None
+    first_hit_rcsd_road_geometry: BaseGeometry | None
+    local_rcsd_unit_geometry: BaseGeometry | None
     positive_rcsd_geometry: BaseGeometry | None
     positive_rcsd_road_geometry: BaseGeometry | None
     positive_rcsd_node_geometry: BaseGeometry | None
@@ -222,16 +225,30 @@ class T04EventUnitResult:
     selected_branch_ids: tuple[str, ...]
     selected_event_branch_ids: tuple[str, ...]
     selected_component_ids: tuple[str, ...]
+    pair_local_rcsd_road_ids: tuple[str, ...]
+    pair_local_rcsd_node_ids: tuple[str, ...]
+    first_hit_rcsdroad_ids: tuple[str, ...]
     selected_rcsdroad_ids: tuple[str, ...]
     selected_rcsdnode_ids: tuple[str, ...]
     primary_main_rc_node_id: str | None
+    local_rcsd_unit_id: str | None
+    local_rcsd_unit_kind: str | None
+    aggregated_rcsd_unit_id: str | None
+    aggregated_rcsd_unit_ids: tuple[str, ...]
+    positive_rcsd_present: bool
+    positive_rcsd_present_reason: str
+    axis_polarity_inverted: bool
+    rcsd_selection_mode: str
+    pair_local_rcsd_empty: bool
     positive_rcsd_support_level: str
     positive_rcsd_consistency_level: str
     required_rcsd_node: str | None
+    required_rcsd_node_source: str | None
     event_axis_branch_id: str | None
     event_chosen_s_m: float | None
     pair_local_summary: dict[str, Any]
     selected_candidate_summary: dict[str, Any]
+    positive_rcsd_audit: dict[str, Any] = field(default_factory=dict)
     selected_evidence_summary: dict[str, Any] = field(default_factory=dict)
     alternative_candidate_summaries: tuple[dict[str, Any], ...] = ()
     candidate_audit_entries: tuple[T04CandidateAuditEntry, ...] = ()
@@ -283,18 +300,32 @@ class T04EventUnitResult:
             "position_source": self.position_source,
             "reverse_tip_used": self.reverse_tip_used,
             "rcsd_consistency_result": self.rcsd_consistency_result,
+            "pair_local_rcsd_road_ids": list(self.pair_local_rcsd_road_ids),
+            "pair_local_rcsd_node_ids": list(self.pair_local_rcsd_node_ids),
+            "first_hit_rcsdroad_ids": list(self.first_hit_rcsdroad_ids),
             "selected_rcsdroad_ids": list(self.selected_rcsdroad_ids),
             "selected_rcsdnode_ids": list(self.selected_rcsdnode_ids),
             "primary_main_rc_node": self.primary_main_rc_node_id,
+            "local_rcsd_unit_id": self.local_rcsd_unit_id,
+            "local_rcsd_unit_kind": self.local_rcsd_unit_kind,
+            "aggregated_rcsd_unit_id": self.aggregated_rcsd_unit_id,
+            "aggregated_rcsd_unit_ids": list(self.aggregated_rcsd_unit_ids),
+            "positive_rcsd_present": self.positive_rcsd_present,
+            "positive_rcsd_present_reason": self.positive_rcsd_present_reason,
+            "axis_polarity_inverted": self.axis_polarity_inverted,
+            "rcsd_selection_mode": self.rcsd_selection_mode,
+            "pair_local_rcsd_empty": self.pair_local_rcsd_empty,
             "positive_rcsd_support_level": self.positive_rcsd_support_level,
             "positive_rcsd_consistency_level": self.positive_rcsd_consistency_level,
             "required_rcsd_node": self.required_rcsd_node,
+            "required_rcsd_node_source": self.required_rcsd_node_source,
             "selected_branch_ids": list(self.selected_branch_ids),
             "selected_event_branch_ids": list(self.selected_event_branch_ids),
             "selected_component_ids": list(self.selected_component_ids),
             "event_axis_branch_id": self.event_axis_branch_id,
             "event_chosen_s_m": self.event_chosen_s_m,
             "pair_local_summary": dict(self.pair_local_summary),
+            "positive_rcsd_audit": _json_safe(dict(self.positive_rcsd_audit)),
             "selected_candidate_region": self.selected_candidate_region,
             "selected_evidence_state": self.selected_evidence_state,
             "selected_evidence": dict(self.selected_evidence_summary),
@@ -338,10 +369,21 @@ class T04ReviewIndexRow:
     rcsd_consistency_result: str
     positive_rcsd_support_level: str = ""
     positive_rcsd_consistency_level: str = ""
+    positive_rcsd_present: bool = False
+    positive_rcsd_present_reason: str = ""
+    pair_local_rcsd_empty: bool = False
+    rcsd_selection_mode: str = ""
+    local_rcsd_unit_kind: str = ""
+    local_rcsd_unit_id: str = ""
+    aggregated_rcsd_unit_id: str = ""
+    aggregated_rcsd_unit_ids: str = ""
+    axis_polarity_inverted: bool = False
+    first_hit_rcsdroad_ids: str = ""
     selected_rcsdroad_ids: str = ""
     selected_rcsdnode_ids: str = ""
     primary_main_rc_node: str = ""
     required_rcsd_node: str = ""
+    required_rcsd_node_source: str = ""
     selected_candidate_region: str = ""
     selected_evidence_state: str = ""
     selected_evidence_kind: str = ""
@@ -390,10 +432,21 @@ class T04ReviewIndexRow:
             "rcsd_consistency_result": self.rcsd_consistency_result,
             "positive_rcsd_support_level": self.positive_rcsd_support_level,
             "positive_rcsd_consistency_level": self.positive_rcsd_consistency_level,
+            "positive_rcsd_present": int(self.positive_rcsd_present),
+            "positive_rcsd_present_reason": self.positive_rcsd_present_reason,
+            "pair_local_rcsd_empty": int(self.pair_local_rcsd_empty),
+            "rcsd_selection_mode": self.rcsd_selection_mode,
+            "local_rcsd_unit_kind": self.local_rcsd_unit_kind,
+            "local_rcsd_unit_id": self.local_rcsd_unit_id,
+            "aggregated_rcsd_unit_id": self.aggregated_rcsd_unit_id,
+            "aggregated_rcsd_unit_ids": self.aggregated_rcsd_unit_ids,
+            "axis_polarity_inverted": int(self.axis_polarity_inverted),
+            "first_hit_rcsdroad_ids": self.first_hit_rcsdroad_ids,
             "selected_rcsdroad_ids": self.selected_rcsdroad_ids,
             "selected_rcsdnode_ids": self.selected_rcsdnode_ids,
             "primary_main_rc_node": self.primary_main_rc_node,
             "required_rcsd_node": self.required_rcsd_node,
+            "required_rcsd_node_source": self.required_rcsd_node_source,
             "selected_candidate_region": self.selected_candidate_region,
             "selected_evidence_state": self.selected_evidence_state,
             "selected_evidence_kind": self.selected_evidence_kind,

@@ -18,12 +18,16 @@
 
 - Step4 review 图必须能直接表达当前事件单元的主证据、主轴、参考点与正向 RCSD。
 - Step4 review 图必须能一眼区分：
+  - `pair_local_rcsd_scope`
   - `selected_candidate_region` 这个空间容器
   - `selected_evidence`
   - `fact_reference_point / review_materialized_point`
+  - `first_hit RCSDRoad`
+  - `local RCSD unit`
   - `positive RCSD road / node`
   - `required_rcsd_node`
   - `positive_rcsd_support_level / positive_rcsd_consistency_level`
+  - `rcsd_decision_reason`
 - complex / multi 场景下，必须能从持久化输出中直接区分：
   - 顶层 case coordination skeleton
   - 当前 event unit 的 executable skeleton
@@ -38,6 +42,15 @@
   - localized evidence core
   - same-axis `Δs`
 - CSV/JSON summary 必须能让人工快速定位复核对象。
+- 正向 RCSD 审计输出必须能明确举证：
+  - pair-local raw RCSD 是否为空
+  - first-hit RCSDRoad 是哪些
+  - 选中的 local RCSD unit 是 node-centric 还是 road-only
+  - 是否构成 `aggregated_rcsd_unit`
+  - 是否触发 `axis_polarity_inverted`
+  - `positive_rcsd_present` 为什么成立或为什么不成立
+  - normalized role mapping 为什么得到 `A/B/C`
+  - `required_rcsd_node` 为什么输出或为什么为空
 
 ## 可维护性
 
@@ -68,6 +81,12 @@
   - `boundary_branch_ids == event_branch_ids`
   - `valid_scan_offsets_m` 只沿单一合法方向延续
   - 候选空间不覆盖当前 unit 之外的非分支道路
+- 必须至少有一个 Step4 正向 RCSD 回归，锁住：
+  - pair-local RCSD 为空时直接 `C / no_support`
+  - 正式结果不回退到 scoped / case 级 RCSD 世界
+  - `required_rcsd_node` 可在 `B` 下独立输出
+  - side-label mismatch 不再单独把事实存在样本压到 `C`
+  - `axis_polarity_inverted` 默认在 aggregated 级别识别
 - 复杂连续分歧、multi-diverge / multi-merge、simple 二分歧三类场景都必须有可复查样本。
 
 ### 当前 accepted baseline gate（2026-04-22）

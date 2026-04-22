@@ -87,22 +87,46 @@
 - 同一 case 的 sub-unit / event-unit 先各自生成候选池和初选，再做单 Case 内重选；若多个 unit 初选撞到一起，优先保留更高层/更稳的候选，其它 unit 在自己的候选池内改选，而不是直接 fail。
 - 若当前初选候选被 `branch-middle / throat` gate 或 `node_fallback_only` 拒绝，必须继续在当前候选池内重选；若重选后仍无合法候选，则显式输出 `selected_evidence_state = none`。
 - 当前单 Case Step4 输出只视为“初选结果”；跨 Case 共用证据冲突不在单 Case 内硬解，等全量 Step4 结束后再做二次处理。
-- 正向 RCSD 在 Step4 内只承担“主证据后的支持 / 一致性 preview”：
-  - 先按当前 unit 特征筛
-  - 再在主证据附近做邻域匹配
-  - 不把 pair-local scope 之外的 RCSD 回流成当前 unit 的主支持对象
+- 正向 RCSD 在 Step4 内改成 T04 自己的正式选择器，而不是继续让旧 T02 bridge 主导正式输出：
+  - 先做 `pair-local raw observation`
+  - 再构造 `rcsd_candidate_scope`
+  - 再构造 `local RCSD unit`
+  - 再构造 `aggregated_rcsd_unit`
+  - 再做 `polarity normalization`
+  - 再做 `SWSD ↔ RCSD role mapping`
+  - 先判 `positive_rcsd_present`
+  - 最后得出 `A/B/C`、`primary_main_rc_node` 与 `required_rcsd_node`
+- `pair-local` 为空时直接 `C / no_support`；不回退到 scoped / case 级 RCSD 世界补主支持对象。
+- `local RCSD unit` 正式分为：
+  - `node-centric local_rcsd_unit`
+  - `road-only local_rcsd_unit`
+- `aggregated_rcsd_unit` 是默认正式判级单元；它由共享 road / node / forward 锚点的相邻 matched local units 聚合而成。
+- single-unit 只作为 fallback，不再用“单个 local unit 的严格等式”直接替代 aggregated-first 判级。
+- `road-only local_rcsd_unit` 最高只能到 `B`
+- Step4 正向 RCSD 必须显式分层：
+  - 作用域层：`pair-local raw observation / rcsd_candidate_scope / local_rcsd_unit / aggregated_rcsd_unit`
+  - 事实层：`positive_rcsd_present`
+  - 支持强度层：`A/B/C`
+- `axis polarity inverted` 默认在 `aggregated_rcsd_unit` 级别识别；single-unit 仅作 fallback。
 - T04 当前显式输出：
   - `selected_rcsdroad_ids`
   - `selected_rcsdnode_ids`
   - `primary_main_rc_node`
+  - `positive_rcsd_present`
   - `positive_rcsd_support_level`
   - `positive_rcsd_consistency_level`
   - `required_rcsd_node`
+  - `aggregated_rcsd_unit_id`
+  - `aggregated_rcsd_unit_ids`
+  - `axis_polarity_inverted`
+  - `required_rcsd_node_source`
 - 一致性在 Step4 内冻结为：
   - `A / primary_support`
   - `B / secondary_support`
   - `C / no_support`
-- `required_rcsd_node` 只作为后续 polygon 强约束的 preview 输出；本轮不把它扩成 Step5-7 的 cover / publish 逻辑。
+- `A/B/C` 必须由 normalized role mapping 产生，不能再用 `angle_match` 或 nearby fallback 包装。
+- 一旦 `positive_rcsd_present = true`，支持强度下限就是 `B`；side-label 不得单独把事实存在样本压到 `C`。
+- `required_rcsd_node` 必须从已匹配的 local / aggregated RCSD unit 中独立输出，不再依赖 `A`；本轮仍不把它扩成 Step5-7 的 cover / publish 逻辑。
 - `branch-middle / throat gate` 的 boundary branches 必须来自当前 unit 的 `boundary_branch_ids`；complex / multi 场景下不再允许静默退回 case-level main pair 充当 unit-local throat。
 - merge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 entering branches；diverge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 exiting branches；`preferred_axis_branch_id` 只允许来自当前 unit 的唯一 opposite-direction trunk。
 - `divstrip_ref` 命中时，Step4 正式拆分：

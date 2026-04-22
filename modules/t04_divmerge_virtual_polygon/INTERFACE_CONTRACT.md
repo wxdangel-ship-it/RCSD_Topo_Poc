@@ -210,14 +210,45 @@
 - 连续链 case 若原始 anchor 仍停留在 seed 占位区且不命中当前选中的 DivStrip，T04 必须把 review 用 `event_anchor_geometry` materialize 为围绕当前事实证据的 coarse anchor zone，而不是继续输出固定 seed 方框。
 - `fact_reference_point` 不得落到 `DriveZone` 外；若轴向候选越界，T04 必须显式记为无效候选，`review_materialized_point` 只允许收敛回当前道路面内的事实证据位置，并留痕。
 - Step4 只负责正向 RCSD 选取与一致性校验，不定义 RCSD 最终负向语义。
-- 正向 RCSD 候选池冻结为：
-  - 先按当前 unit 特征筛
-  - 再按当前主证据附近邻域匹配
-  - pair-local scope 为空时，不得回退到更大的 case 级 RCSD 世界补主支持对象
+- Step4 正向 RCSD 的正式执行链冻结为：
+  - `pair-local raw observation`
+  - `rcsd_candidate_scope`
+  - `local RCSD unit`
+  - `aggregated_rcsd_unit`
+  - `polarity normalization`
+  - `SWSD ↔ RCSD role mapping`
+  - `positive_rcsd_present`
+  - `A/B/C`
+  - `primary_main_rc_node / required_rcsd_node`
+- `rcsd_candidate_scope` 不是静态 polygon，也不是 `selected_candidate_region` 的硬裁剪；它只允许当前 pair-local 语义框架内、与当前主证据和 `fact_reference_point` 有稳定关系的 RCSD 对象进入讨论。
+- pair-local scope 为空时，正式结果必须直接 `C / no_support`；不得回退到更大的 case 级 RCSD 世界补主支持对象。
+- Step4 正向 RCSD 的正式判断单元不再是“先挑 road / node”，而是：
+  - `node-centric local_rcsd_unit`
+  - `road-only local_rcsd_unit`
+- Step4 默认正式判级单元不是单个 local unit，而是：
+  - `aggregated_rcsd_unit`
+- `aggregated_rcsd_unit` 由共享 road、共享 node 或共享同一 forward 锚点的相邻 matched local units 聚合而成。
+- single-unit 只允许作为 fallback；默认不再用“单个 local unit 的严格等式”直接替代 aggregated-first 判级。
+- `node-centric local_rcsd_unit` 至少包含：
+  - 一个 RCSDNode
+  - 与该 node 直接挂接、并进入当前局部讨论范围的 RCSDRoad
+  - 这些 roads 的 entering / exiting 角色
+- `road-only local_rcsd_unit` 只在局部无可用 node 但有明确局部 RCSD 结构时成立；它最高只能给到 `B / partial_consistent`
+- Step4 必须显式区分三层：
+  - 作用域层：`pair-local raw observation / rcsd_candidate_scope / local_rcsd_unit / aggregated_rcsd_unit`
+  - 事实层：`positive_rcsd_present = true/false`
+  - 支持强度层：`positive_rcsd_support_level / positive_rcsd_consistency_level`
+- 一旦 `positive_rcsd_present = true`，支持强度下限就是 `B`；不允许再因为 side-label 单独条件把事实存在样本压到 `C`。
+- Step4 必须显式做 `polarity normalization`；`axis polarity inverted` 默认在 `aggregated_rcsd_unit` 级别识别，single-unit 仅可作为 fallback。
 - Step4 正向 RCSD 一致性正式冻结为：
   - `A`：强一致
   - `B`：部分一致
   - `C`：缺失
+- `A/B/C` 必须由 `SWSD unit ↔ RCSD local / aggregated unit` 的 normalized entering / exiting role mapping 结果产生，不能再由“角度匹配到了 road + 选到了 node”包装得出。
+- 判定原则冻结为：
+  - 先比角色
+  - 再比方向
+  - 不再把 `angle <= 35°` 作为正式主规则
 - 正向 RCSD 作用边界冻结为：
   - `A` 可参与主证据支持、主证据修正与后续 polygon 强约束
   - `B` 只做支持 / 提示 / risk 强化，不直接推翻主证据
@@ -226,10 +257,24 @@
   - `selected_rcsdroad_ids`
   - `selected_rcsdnode_ids`
   - `primary_main_rc_node`
+  - `positive_rcsd_present`
   - `positive_rcsd_support_level`
   - `positive_rcsd_consistency_level`
   - `required_rcsd_node`
-- 若当前主证据位置存在正向匹配的 RCSD 路口节点，则该节点必须作为 `required_rcsd_node` 输出；本轮只在 Step4 做输出与审计表达，不扩展到 Step5-7。
+  - `aggregated_rcsd_unit_id`
+  - `aggregated_rcsd_unit_ids`
+  - `axis_polarity_inverted`
+  - `required_rcsd_node_source`
+- 若当前主证据位置存在正向匹配的 RCSD 路口节点，则该节点必须作为 `required_rcsd_node` 输出；它不再依赖 `A` 才能出现。
+- `required_rcsd_node` 必须从已匹配的 local / aggregated RCSD unit 中独立输出；`A/B` 只影响其支持强度，不影响该字段是否应输出。
+- `positive_rcsd_present = true` 的 case，不得仅因 side-label mismatch 直接落到 `C / no_support`。
+- Step4 审计输出至少必须显式表达：
+  - `pair_local_rcsd_scope`
+  - `first_hit_rcsdroad_ids`
+  - `local_rcsd_unit`
+  - `rcsd_role_map`
+  - `rcsd_decision_reason`
+  - `required_rcsd_node`
 - reverse 不是独立证据体系，只是同一 `pair-local region` 内的另一种查找方向；reverse 命中的候选也必须进入相同的三层优先级判断。
 - reverse 不得反向扩大、补全或重定义当前 `pair-local region`；候选空间边界一旦由 `(L, R)` 确定，reverse 只能在其内部活动。
 - fallback 不是“道路面降级兜底”；它表示在同一 `pair-local region` 内，从“导流带强约束定位”切换到“道路结构面主导定位”的模式切换。

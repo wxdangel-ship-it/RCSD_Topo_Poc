@@ -15,7 +15,14 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.case_loader import (
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.event_interpretation import (
     build_case_result,
 )
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.rcsd_selection import (
+    resolve_positive_rcsd_selection,
+)
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon import run_t04_step14_batch
+from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
+    ParsedNode,
+    ParsedRoad,
+)
 
 
 REAL_ANCHOR_2_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor_2")
@@ -90,6 +97,50 @@ def _assert_selected_candidate_region_is_pair_local_container(event_unit) -> Non
     assert float(event_unit.selected_candidate_region_geometry.area) == pytest.approx(
         float(event_unit.pair_local_region_geometry.area),
         abs=1e-3,
+    )
+
+
+def _parsed_node(
+    node_id: str,
+    x: float,
+    y: float,
+    *,
+    mainnodeid: str | None = None,
+    has_evd: str | None = "no",
+    is_anchor: str | None = "no",
+    kind_2: int | None = 0,
+    grade_2: int | None = 0,
+) -> ParsedNode:
+    return ParsedNode(
+        feature_index=0,
+        properties={"id": node_id, "mainnodeid": mainnodeid},
+        geometry=Point(x, y),
+        node_id=str(node_id),
+        mainnodeid=None if mainnodeid is None else str(mainnodeid),
+        has_evd=has_evd,
+        is_anchor=is_anchor,
+        kind_2=kind_2,
+        grade_2=grade_2,
+        kind=None,
+    )
+
+
+def _parsed_road(
+    road_id: str,
+    coords: list[tuple[float, float]],
+    *,
+    snodeid: str,
+    enodeid: str,
+    direction: int = 2,
+) -> ParsedRoad:
+    return ParsedRoad(
+        feature_index=0,
+        properties={"id": road_id, "snodeid": snodeid, "enodeid": enodeid, "direction": direction},
+        geometry=LineString(coords),
+        road_id=str(road_id),
+        snodeid=str(snodeid),
+        enodeid=str(enodeid),
+        direction=direction,
     )
 
 
@@ -221,6 +272,34 @@ def _build_synthetic_case_package(case_dir: Path) -> None:
             {
                 "properties": {"id": 9001, "mainnodeid": 1001},
                 "geometry": Point(5, 0),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+
+
+def _build_pair_local_empty_rcsd_case_package(case_dir: Path) -> None:
+    _build_synthetic_case_package(case_dir)
+    write_vector(
+        case_dir / "rcsdroad.gpkg",
+        [
+            {
+                "properties": {"id": 21, "snodeid": 9101, "enodeid": 9102, "direction": 2},
+                "geometry": LineString([(-68, 34), (-56, 38)]),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        case_dir / "rcsdnode.gpkg",
+        [
+            {
+                "properties": {"id": 9101, "mainnodeid": 9999},
+                "geometry": Point(-68, 34),
+            },
+            {
+                "properties": {"id": 9102, "mainnodeid": 9999},
+                "geometry": Point(-56, 38),
             },
         ],
         crs_text="EPSG:3857",
@@ -373,8 +452,24 @@ def test_t04_step14_batch_writes_unit_level_step3_and_candidate_docs(tmp_path: P
     assert candidate_doc["selected_candidate_region"] == case_step4["event_units"][0]["pair_local_summary"]["region_id"]
     assert candidate_doc["positive_rcsd_support_level"] in {"primary_support", "secondary_support", "no_support"}
     assert candidate_doc["positive_rcsd_consistency_level"] in {"A", "B", "C"}
+    assert "pair_local_rcsd_empty" in candidate_doc
+    assert "rcsd_selection_mode" in candidate_doc
+    assert "local_rcsd_unit_kind" in candidate_doc
+    assert "aggregated_rcsd_unit_id" in candidate_doc
+    assert "aggregated_rcsd_unit_ids" in candidate_doc
+    assert "first_hit_rcsdroad_ids" in candidate_doc
+    assert "positive_rcsd_present" in candidate_doc
+    assert "positive_rcsd_present_reason" in candidate_doc
+    assert "axis_polarity_inverted" in candidate_doc
+    assert "positive_rcsd_audit" in candidate_doc
     assert "selected_rcsdroad_ids" in candidate_doc
     assert "selected_rcsdnode_ids" in candidate_doc
+    assert "required_rcsd_node_source" in candidate_doc
+    if (
+        candidate_doc["local_rcsd_unit_kind"] == "node_centric"
+        and candidate_doc["positive_rcsd_consistency_level"] in {"A", "B"}
+    ):
+        assert candidate_doc["required_rcsd_node"] not in {"", None}
     assert any(
         candidate["layer_label"] == "Layer 2"
         for candidate in candidate_doc["alternative_candidates"]
@@ -408,6 +503,8 @@ def test_t04_step14_batch_writes_unit_level_step3_and_candidate_docs(tmp_path: P
     assert case_step4["event_units"][0]["selected_candidate_region"] == candidate_doc["selected_candidate_region"]
     assert case_step4["event_units"][0]["selected_evidence"]["candidate_id"] == selected_evidence["candidate_id"]
     assert case_step4["event_units"][0]["positive_rcsd_consistency_level"] in {"A", "B", "C"}
+    assert isinstance(case_step4["event_units"][0]["positive_rcsd_present"], bool)
+    assert "positive_rcsd_audit" in case_step4["event_units"][0]
     assert case_step4["event_units"][0]["selected_rcsdroad_ids"] == candidate_doc["selected_rcsdroad_ids"]
     assert case_step4_audit["event_units"][0]["selected_evidence"]["candidate_id"] == selected_evidence["candidate_id"]
 
@@ -460,6 +557,8 @@ def test_t04_step14_multi_event_case_exports_reselection_and_index_fields(tmp_pa
     assert review_summary["selected_layer_3_count"] == 0
     assert "positive_rcsd_support_level_counts" in review_summary
     assert "positive_rcsd_consistency_level_counts" in review_summary
+    assert "positive_rcsd_present_counts" in review_summary
+    assert "axis_polarity_inverted_counts" in review_summary
     assert "selected_reference_zone_counts" in review_summary
     assert "conflict_signal_level_counts" in review_summary
     assert "top_focus_reasons" in review_summary
@@ -514,11 +613,145 @@ def test_t04_step14_multi_event_case_exports_reselection_and_index_fields(tmp_pa
     assert rows["event_unit_02"]["selected_reference_zone"] in {"throat", "middle", "edge", "outside", "missing"}
     assert rows["event_unit_02"]["positive_rcsd_support_level"] in {"primary_support", "secondary_support", "no_support"}
     assert rows["event_unit_02"]["positive_rcsd_consistency_level"] in {"A", "B", "C"}
+    assert rows["event_unit_02"]["positive_rcsd_present"] in {"0", "1"}
+    assert rows["event_unit_02"]["axis_polarity_inverted"] in {"0", "1"}
+    assert rows["event_unit_02"]["pair_local_rcsd_empty"] in {"0", "1"}
+    assert rows["event_unit_02"]["rcsd_selection_mode"] != ""
     assert rows["event_unit_02"]["selected_candidate_region"] != ""
     assert rows["event_unit_02"]["selected_evidence_membership"] != ""
     assert rows["event_unit_02"]["needs_manual_review_focus"] == "1"
     assert rows["event_unit_02"]["compare_image_path"].endswith("__compare.png")
     assert rows["event_unit_02"]["case_overview_path"].endswith("overview.png")
+
+
+@pytest.mark.smoke
+def test_t04_step14_pair_local_empty_rcsd_does_not_fallback_to_case_world(tmp_path: Path) -> None:
+    case_root = tmp_path / "cases"
+    case_dir = case_root / "1002"
+    _build_pair_local_empty_rcsd_case_package(case_dir)
+
+    run_root = run_t04_step14_batch(
+        case_root=case_root,
+        out_root=tmp_path / "out_pair_local_empty",
+        run_id="synthetic_t04_pair_local_empty",
+    )
+
+    unit_dir = next((run_root / "cases" / "1002" / "event_units").iterdir())
+    candidate_doc = json.loads((unit_dir / "step4_candidates.json").read_text(encoding="utf-8"))
+    evidence_doc = json.loads((unit_dir / "step4_evidence_audit.json").read_text(encoding="utf-8"))
+    review_summary = json.loads((run_root / "step4_review_summary.json").read_text(encoding="utf-8"))
+
+    assert candidate_doc["pair_local_rcsd_empty"] is True
+    assert candidate_doc["positive_rcsd_support_level"] == "no_support"
+    assert candidate_doc["positive_rcsd_consistency_level"] == "C"
+    assert candidate_doc["positive_rcsd_present"] is False
+    assert candidate_doc["required_rcsd_node"] in {"", None}
+    assert candidate_doc["selected_rcsdroad_ids"] == []
+    assert candidate_doc["selected_rcsdnode_ids"] == []
+    assert candidate_doc["rcsd_selection_mode"] == "pair_local_empty"
+    assert evidence_doc["positive_rcsd_audit"]["rcsd_decision_reason"] == "pair_local_rcsd_empty"
+    assert review_summary["pair_local_rcsd_empty_count"] >= 1
+
+
+def test_positive_rcsd_present_side_label_mismatch_does_not_drop_to_c() -> None:
+    representative_node = _parsed_node("1001", 0.0, 0.0, mainnodeid="1001", has_evd="yes", kind_2=16, grade_2=1)
+    selected_evidence_region_geometry = Point(6.0, 0.0).buffer(4.0)
+    pair_local_region_geometry = Polygon([(-12, -12), (20, -12), (20, 12), (-12, 12), (-12, -12)])
+    pair_local_middle_geometry = Polygon([(-2, -4), (18, -4), (18, 4), (-2, 4), (-2, -4)])
+
+    scoped_roads = [
+        _parsed_road("road_1", [(-10.0, 0.0), (0.0, 0.0)], snodeid="s_1", enodeid="1001"),
+        _parsed_road("road_2", [(0.0, 0.0), (10.0, 8.0)], snodeid="1001", enodeid="s_2"),
+    ]
+    pair_local_rcsd_roads = [
+        _parsed_road("rc_road_axis", [(0.0, 0.0), (6.0, 0.0)], snodeid="1001", enodeid="rc_1"),
+        _parsed_road("rc_road_event", [(6.0, 0.0), (15.0, -8.0)], snodeid="rc_1", enodeid="rc_2"),
+    ]
+    pair_local_rcsd_nodes = [
+        _parsed_node("rc_1", 6.0, 0.0, mainnodeid="1001"),
+    ]
+
+    decision = resolve_positive_rcsd_selection(
+        event_unit_id="synthetic_label_mismatch",
+        operational_kind_hint=16,
+        representative_node=representative_node,
+        selected_evidence_region_geometry=selected_evidence_region_geometry,
+        fact_reference_point=Point(6.0, 0.0),
+        pair_local_region_geometry=pair_local_region_geometry,
+        pair_local_middle_geometry=pair_local_middle_geometry,
+        scoped_rcsd_roads=pair_local_rcsd_roads,
+        scoped_rcsd_nodes=pair_local_rcsd_nodes,
+        pair_local_scope_rcsd_roads=pair_local_rcsd_roads,
+        pair_local_scope_rcsd_nodes=pair_local_rcsd_nodes,
+        scoped_roads=scoped_roads,
+        boundary_branch_ids=("road_1", "road_2"),
+        preferred_axis_branch_id="road_1",
+        scoped_input_branch_ids=("road_1",),
+        scoped_output_branch_ids=("road_2",),
+        branch_road_memberships={"road_1": ("road_1",), "road_2": ("road_2",)},
+        axis_vector=(1.0, 0.0),
+    )
+
+    assert decision.pair_local_rcsd_empty is False
+    assert decision.positive_rcsd_present is True
+    assert decision.positive_rcsd_consistency_level in {"A", "B"}
+    assert decision.positive_rcsd_consistency_level != "C"
+    assert decision.required_rcsd_node == "rc_1"
+    assert decision.axis_polarity_inverted is True
+
+
+def test_aggregated_rcsd_unit_upgrades_multiple_partial_local_units() -> None:
+    representative_node = _parsed_node("2002", 0.0, 0.0, mainnodeid="2002", has_evd="yes", kind_2=16, grade_2=1)
+    selected_evidence_region_geometry = Point(7.0, 0.0).buffer(5.0)
+    pair_local_region_geometry = Polygon([(-14, -16), (24, -16), (24, 16), (-14, 16), (-14, -16)])
+    pair_local_middle_geometry = Polygon([(-2, -4), (20, -4), (20, 4), (-2, 4), (-2, -4)])
+
+    scoped_roads = [
+        _parsed_road("road_1", [(-10.0, 0.0), (0.0, 0.0)], snodeid="s_1", enodeid="2002"),
+        _parsed_road("road_2", [(0.0, 0.0), (10.0, 8.0)], snodeid="2002", enodeid="s_2"),
+        _parsed_road("road_3", [(0.0, 0.0), (10.0, -8.0)], snodeid="2002", enodeid="s_3"),
+    ]
+    pair_local_rcsd_roads = [
+        _parsed_road("rc_axis", [(0.0, 0.0), (6.0, 0.0)], snodeid="2002", enodeid="rc_1"),
+        _parsed_road("rc_mid", [(6.0, 0.0), (12.0, 0.0)], snodeid="rc_1", enodeid="rc_2"),
+        _parsed_road("rc_right", [(6.0, 0.0), (12.0, 8.0)], snodeid="rc_1", enodeid="rc_3"),
+        _parsed_road("rc_left", [(12.0, 0.0), (18.0, -8.0)], snodeid="rc_2", enodeid="rc_4"),
+    ]
+    pair_local_rcsd_nodes = [
+        _parsed_node("rc_1", 6.0, 0.0, mainnodeid="2002"),
+        _parsed_node("rc_2", 12.0, 0.0, mainnodeid="2002"),
+    ]
+
+    decision = resolve_positive_rcsd_selection(
+        event_unit_id="synthetic_aggregated",
+        operational_kind_hint=16,
+        representative_node=representative_node,
+        selected_evidence_region_geometry=selected_evidence_region_geometry,
+        fact_reference_point=Point(7.0, 0.0),
+        pair_local_region_geometry=pair_local_region_geometry,
+        pair_local_middle_geometry=pair_local_middle_geometry,
+        scoped_rcsd_roads=pair_local_rcsd_roads,
+        scoped_rcsd_nodes=pair_local_rcsd_nodes,
+        pair_local_scope_rcsd_roads=pair_local_rcsd_roads,
+        pair_local_scope_rcsd_nodes=pair_local_rcsd_nodes,
+        scoped_roads=scoped_roads,
+        boundary_branch_ids=("road_1", "road_2", "road_3"),
+        preferred_axis_branch_id="road_1",
+        scoped_input_branch_ids=("road_1",),
+        scoped_output_branch_ids=("road_2", "road_3"),
+        branch_road_memberships={
+            "road_1": ("road_1",),
+            "road_2": ("road_2",),
+            "road_3": ("road_3",),
+        },
+        axis_vector=(1.0, 0.0),
+    )
+
+    assert decision.positive_rcsd_present is True
+    assert decision.aggregated_rcsd_unit_id is not None
+    assert decision.positive_rcsd_consistency_level == "A"
+    assert set(decision.selected_rcsdroad_ids) >= {"rc_axis", "rc_mid", "rc_right", "rc_left"}
+    assert decision.required_rcsd_node in {"rc_1", "rc_2"}
 
 
 def test_real_case_17943587_keeps_same_case_merge_branch_continuation_and_nested_pair_geometry() -> None:

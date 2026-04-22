@@ -21,14 +21,16 @@ PANEL_TOP = 20
 BACKGROUND = (249, 246, 238, 255)
 DRIVEZONE_FILL = (244, 239, 226, 255)
 DRIVEZONE_EDGE = (214, 204, 182, 255)
-DIVSTRIP_FILL = (120, 91, 170, 74)
-DIVSTRIP_EDGE = None
+DIVSTRIP_FILL = (120, 91, 170, 92)
+DIVSTRIP_EDGE = (96, 71, 142, 138)
 ROAD_COLOR = (82, 78, 74, 255)
 BOUNDARY_ROAD_COLOR = (32, 103, 170, 255)
 AXIS_ROAD_COLOR = (34, 34, 34, 255)
 RCSD_ROAD_COLOR = (175, 33, 61, 255)
-ALL_RCSD_ROAD_COLOR = (189, 49, 49, 168)
-SELECTED_RCSD_ROAD_COLOR = (189, 49, 49, 255)
+ALL_RCSD_ROAD_COLOR = (235, 170, 176, 150)
+SELECTED_RCSD_ROAD_COLOR = (0, 176, 146, 255)
+FIRST_HIT_RCSD_ROAD_COLOR = (0, 176, 146, 255)
+SELECTED_RCSD_ROAD_HALO = (255, 255, 255, 230)
 RCSD_NODE_FILL = (255, 255, 255, 255)
 RCSD_NODE_RING = (189, 49, 49, 168)
 SELECTED_RCSD_NODE_RING = (189, 49, 49, 255)
@@ -44,6 +46,10 @@ THROAT_FILL = (214, 164, 38, 96)
 THROAT_EDGE = (180, 124, 18, 210)
 SELECTED_EVIDENCE_FILL = (57, 118, 189, 82)
 SELECTED_CANDIDATE_EDGE = (32, 103, 170, 255)
+RCSD_SCOPE_FILL = (189, 49, 49, 24)
+RCSD_SCOPE_EDGE = (189, 49, 49, 138)
+LOCAL_RCSD_UNIT_FILL = (189, 49, 49, 34)
+LOCAL_RCSD_UNIT_EDGE = (134, 23, 38, 220)
 SELECTED_COMPONENT_FILL = (114, 86, 165, 50)
 SELECTED_COMPONENT_EDGE = (84, 55, 128, 186)
 LOCALIZED_CORE_FILL = (84, 55, 128, 118)
@@ -193,14 +199,25 @@ def _draw_badge(draw, *, x: int, y: int, text: str, fill):
     draw.text((left + 12, top + 5), text, font=_font(16), fill=(255, 255, 255, 255))
 
 
-def _draw_legend(draw, *, x: int, y: int, items: list[tuple[str, tuple[int, int, int, int]]]) -> None:
+def _draw_legend(
+    draw,
+    *,
+    x: int,
+    y: int,
+    items: list[tuple[str, tuple[int, int, int, int], str]],
+) -> None:
     width = 320
     height = 24 + len(items) * 24
     draw.rounded_rectangle((x, y, x + width, y + height), radius=14, fill=(255, 255, 255, 230), outline=PANEL_EDGE)
     draw.text((x + 14, y + 6), "Legend", font=_font(16), fill=PANEL_TEXT)
     cursor_y = y + 30
-    for label, color in items:
-        draw.line((x + 18, cursor_y + 8, x + 42, cursor_y + 8), fill=color, width=4)
+    for label, color, item_type in items:
+        if item_type == "point":
+            draw.ellipse((x + 22, cursor_y + 2, x + 38, cursor_y + 18), fill=color)
+        elif item_type == "poly":
+            draw.rounded_rectangle((x + 18, cursor_y + 2, x + 42, cursor_y + 16), radius=4, fill=color)
+        else:
+            draw.line((x + 18, cursor_y + 8, x + 42, cursor_y + 8), fill=color, width=4 if item_type == "line" else 6)
         draw.text((x + 52, cursor_y), label, font=_font(14), fill=SUBTEXT)
         cursor_y += 22
 
@@ -285,22 +302,22 @@ def _road_lookup(event_unit: T04EventUnitResult):
 def _draw_context_layers(draw, event_unit: T04EventUnitResult, bounds) -> None:
     local_context = event_unit.unit_context.local_context
     _draw_polygon(draw, local_context.patch_drivezone_union, bounds, fill=DRIVEZONE_FILL, outline=DRIVEZONE_EDGE, width=2)
-    for road in local_context.patch_roads:
-        _draw_line(draw, road.geometry, bounds, fill=ROAD_COLOR, width=4)
+    for feature in local_context.patch_divstrip_features:
+        _draw_polygon(draw, feature.geometry, bounds, fill=DIVSTRIP_FILL, outline=DIVSTRIP_EDGE, width=2)
     for road in local_context.local_rcsd_roads:
-        _draw_line(draw, road.geometry, bounds, fill=ALL_RCSD_ROAD_COLOR, width=2)
+        _draw_line(draw, road.geometry, bounds, fill=ALL_RCSD_ROAD_COLOR, width=1)
     for node in local_context.local_nodes:
-        _draw_point(draw, node.geometry, bounds, fill=NODE_COLOR, radius=3)
-    for node in local_context.local_rcsd_nodes:
-        _draw_point(draw, node.geometry, bounds, fill=RCSD_NODE_FILL, radius=3, ring=RCSD_NODE_RING)
+        _draw_point(draw, node.geometry, bounds, fill=NODE_COLOR, radius=4)
     _draw_point(draw, event_unit.unit_context.representative_node.geometry, bounds, fill=GROUP_NODE_COLOR, radius=6, ring=REP_RING_COLOR)
 
 
+def _draw_rcsd_scope_layers(draw, event_unit: T04EventUnitResult, bounds) -> None:
+    return
+
+
 def _draw_branch_overlays(draw, event_unit: T04EventUnitResult, bounds) -> None:
-    _draw_line(draw, event_unit.positive_rcsd_road_geometry, bounds, fill=SELECTED_RCSD_ROAD_COLOR, width=7)
-    _draw_point(draw, event_unit.positive_rcsd_node_geometry, bounds, fill=RCSD_NODE_FILL, radius=6, ring=SELECTED_RCSD_NODE_RING)
-    _draw_point(draw, event_unit.primary_main_rc_node_geometry, bounds, fill=RCSD_NODE_FILL, radius=7, ring=PRIMARY_RCSD_RING)
-    _draw_point(draw, event_unit.required_rcsd_node_geometry, bounds, fill=RCSD_NODE_FILL, radius=8, ring=REQUIRED_RCSD_RING)
+    _draw_line(draw, event_unit.positive_rcsd_road_geometry, bounds, fill=SELECTED_RCSD_ROAD_HALO, width=15)
+    _draw_line(draw, event_unit.positive_rcsd_road_geometry, bounds, fill=SELECTED_RCSD_ROAD_COLOR, width=9)
 
 
 def _main_review_lines(event_unit: T04EventUnitResult, audit_summary: dict[str, object]) -> list[str]:
@@ -308,41 +325,26 @@ def _main_review_lines(event_unit: T04EventUnitResult, audit_summary: dict[str, 
     lines = [
         f"mainnodeid: {event_unit.unit_context.admission.mainnodeid}",
         f"event_unit_id: {event_unit.spec.event_unit_id}",
-        f"event_type: {event_unit.spec.event_type}",
-        f"split_mode: {event_unit.spec.split_mode}",
-        f"boundary_pair: {_truncate(str(audit_summary.get('boundary_pair_signature') or ''))}",
-        f"candidate_region: {_truncate(str(audit_summary.get('selected_candidate_region') or ''), limit=62)}",
         f"selected_evidence_state: {event_unit.selected_evidence_state}",
         f"selected_evidence: {_truncate(str(selected.get('candidate_id') or ''), limit=62)}",
-        f"evidence_layer: {selected.get('layer_label', '')} / {selected.get('layer_reason', '')}",
-        f"axis_position_m: {audit_summary.get('axis_position_m', '')}",
-        f"ref_dist_to_origin_m: {audit_summary.get('reference_distance_to_origin_m', '')}",
+        f"candidate_region: {_truncate(str(audit_summary.get('selected_candidate_region') or ''), limit=62)}",
         f"reference_zone: {audit_summary.get('selected_reference_zone', '')}",
-        f"evidence_membership: {audit_summary.get('selected_evidence_membership', '')}",
+        f"positive_present: {event_unit.positive_rcsd_present} / {_truncate(event_unit.positive_rcsd_present_reason, limit=44)}",
         f"positive_rcsd: {event_unit.positive_rcsd_support_level} / {event_unit.positive_rcsd_consistency_level}",
+        f"aggregated_unit: {_truncate(str(event_unit.aggregated_rcsd_unit_id or ''), limit=56)}",
+        f"axis_polarity_inverted: {event_unit.axis_polarity_inverted}",
+        f"first_hit_roads: {_truncate(';'.join(event_unit.first_hit_rcsdroad_ids), limit=56)}",
         f"rcsd_counts: roads={len(event_unit.selected_rcsdroad_ids)} nodes={len(event_unit.selected_rcsdnode_ids)}",
-        f"required_rcsd_node: {event_unit.required_rcsd_node or ''}",
-        f"evidence_source: {event_unit.evidence_source}",
-        f"position_source: {event_unit.position_source}",
-        f"reverse_tip_used: {event_unit.reverse_tip_used}",
-        f"conflict_level: {audit_summary.get('conflict_signal_level', '')}",
-        f"manual_focus: {bool(audit_summary.get('needs_manual_review_focus'))}",
+        f"required_rcsd_node: {event_unit.required_rcsd_node or ''} / {event_unit.required_rcsd_node_source or ''}",
+        f"rcsd_reason: {_truncate(str(event_unit.positive_rcsd_audit.get('rcsd_decision_reason') or ''), limit=56)}",
     ]
     best_alt_id = str(audit_summary.get("best_alternative_candidate_id") or "")
     if best_alt_id:
         lines.append(f"best_alt: {_truncate(best_alt_id, limit=58)}")
-        lines.append(f"  alt_reason: {_pretty_reason_text(str(audit_summary.get('best_alternative_reason', '')))}")
     if event_unit.unit_envelope.degraded_scope_reason:
         lines.append(f"degraded_scope: {_pretty_reason_text(event_unit.unit_envelope.degraded_scope_reason)}")
     if event_unit.all_review_reasons():
         lines.append(f"key_reason: {_pretty_reason_text(event_unit.all_review_reasons()[0])}")
-        for reason in event_unit.all_review_reasons()[1:4]:
-            lines.append(f"  {_pretty_reason_text(reason)}")
-    elif audit_summary.get("focus_reasons"):
-        focus_reasons = list(audit_summary.get("focus_reasons") or [])
-        lines.append(f"key_reason: {_pretty_reason_text(str(focus_reasons[0]))}")
-        for reason in focus_reasons[1:4]:
-            lines.append(f"  {_pretty_reason_text(reason)}")
     return lines
 
 
@@ -358,13 +360,14 @@ def render_event_unit_review_png(
     bounds = _base_bounds(event_unit)
 
     _draw_context_layers(draw, event_unit, bounds)
-    _draw_branch_overlays(draw, event_unit, bounds)
     primary_evidence_geometry = (
         event_unit.selected_evidence_region_geometry
         or event_unit.localized_evidence_core_geometry
         or event_unit.selected_component_union_geometry
     )
     _draw_polygon(draw, primary_evidence_geometry, bounds, fill=SELECTED_EVIDENCE_FILL, outline=SELECTED_CANDIDATE_EDGE, width=4)
+    _draw_rcsd_scope_layers(draw, event_unit, bounds)
+    _draw_branch_overlays(draw, event_unit, bounds)
 
     fact_point = _first_point(event_unit.fact_reference_point)
     _draw_crosshair(draw, fact_point, bounds, fill=FACT_POINT_FILL, outline=FACT_POINT_EDGE, radius=6)
@@ -386,14 +389,15 @@ def render_event_unit_review_png(
     _draw_legend(
         draw,
         x=MAP_LEFT + 18,
-        y=MAP_TOP + MAP_SIZE - 150,
+        y=MAP_TOP + MAP_SIZE - 132,
         items=[
-            ("SWSD Road", ROAD_COLOR),
-            ("All RCSD Road", ALL_RCSD_ROAD_COLOR),
-            ("Selected RCSD", SELECTED_RCSD_ROAD_COLOR),
-            ("Primary Evidence", SELECTED_CANDIDATE_EDGE),
-            ("Required RCSD Node", REQUIRED_RCSD_RING),
-            ("SWSD Node", NODE_COLOR),
+            ("Road Surface", DRIVEZONE_EDGE, "poly"),
+            ("Divstrip", DIVSTRIP_FILL, "poly"),
+            ("Primary Evidence", SELECTED_CANDIDATE_EDGE, "poly"),
+            ("Reference Point", FACT_POINT_FILL, "point"),
+            ("SWSD Node", NODE_COLOR, "point"),
+            ("RCSD", ALL_RCSD_ROAD_COLOR, "line"),
+            ("Selected RCSD", SELECTED_RCSD_ROAD_COLOR, "strong_line"),
         ],
     )
 
@@ -486,7 +490,6 @@ def render_event_unit_candidate_compare_png(
     bounds = _base_bounds(event_unit)
 
     _draw_context_layers(draw, event_unit, bounds)
-    _draw_branch_overlays(draw, event_unit, bounds)
 
     for index, candidate_entry in enumerate(shortlisted_entries):
         fill, outline = CANDIDATE_COLORS[index % len(CANDIDATE_COLORS)]
@@ -499,6 +502,9 @@ def render_event_unit_candidate_compare_png(
             label = str(index + 1)
             draw.rounded_rectangle((px + 8, py - 16, px + 34, py + 10), radius=8, fill=outline)
             draw.text((px + 16, py - 14), label, font=_font(16), fill=(255, 255, 255, 255))
+
+    _draw_rcsd_scope_layers(draw, event_unit, bounds)
+    _draw_branch_overlays(draw, event_unit, bounds)
 
     _draw_panel(
         draw,
@@ -522,14 +528,12 @@ def render_case_overview_png(
     local_context = case_result.base_context.local_context
 
     _draw_polygon(draw, local_context.patch_drivezone_union, bounds, fill=DRIVEZONE_FILL, outline=DRIVEZONE_EDGE, width=2)
-    for road in local_context.patch_roads:
-        _draw_line(draw, road.geometry, bounds, fill=ROAD_COLOR, width=4)
+    for feature in local_context.patch_divstrip_features:
+        _draw_polygon(draw, feature.geometry, bounds, fill=DIVSTRIP_FILL, outline=DIVSTRIP_EDGE, width=2)
     for road in local_context.local_rcsd_roads:
-        _draw_line(draw, road.geometry, bounds, fill=ALL_RCSD_ROAD_COLOR, width=2)
+        _draw_line(draw, road.geometry, bounds, fill=ALL_RCSD_ROAD_COLOR, width=1)
     for node in local_context.local_nodes:
-        _draw_point(draw, node.geometry, bounds, fill=NODE_COLOR, radius=3)
-    for node in local_context.local_rcsd_nodes:
-        _draw_point(draw, node.geometry, bounds, fill=RCSD_NODE_FILL, radius=3, ring=RCSD_NODE_RING)
+        _draw_point(draw, node.geometry, bounds, fill=NODE_COLOR, radius=4)
     _draw_point(draw, case_result.base_context.representative_node.geometry, bounds, fill=GROUP_NODE_COLOR, radius=6, ring=REP_RING_COLOR)
 
     unit_colors = [color[1] for color in CANDIDATE_COLORS]
@@ -567,32 +571,6 @@ def render_case_overview_png(
         key_reason = str(audit_summary.get("key_reason") or "")
         if key_reason:
             overview_lines.append(f"  {_truncate(key_reason, limit=58)}")
-
-    drawn_pairs: set[tuple[str, str, str]] = set()
-    for unit_id, audit_summary in audit_by_unit.items():
-        lhs_point = unit_point_lookup.get(unit_id)
-        if lhs_point is None:
-            continue
-        for conflict_level, key_name in (
-            ("object", "shared_object_unit_ids"),
-            ("region", "shared_region_unit_ids"),
-            ("point", "shared_point_unit_ids"),
-        ):
-            for other_unit_id in audit_summary.get(key_name, []):
-                rhs_point = unit_point_lookup.get(str(other_unit_id))
-                if rhs_point is None:
-                    continue
-                pair_key = tuple(sorted([unit_id, str(other_unit_id)])) + (conflict_level,)
-                if pair_key in drawn_pairs:
-                    continue
-                drawn_pairs.add(pair_key)
-                lhs_px, lhs_py = _project(bounds, float(lhs_point.x), float(lhs_point.y))
-                rhs_px, rhs_py = _project(bounds, float(rhs_point.x), float(rhs_point.y))
-                draw.line(
-                    (lhs_px, lhs_py, rhs_px, rhs_py),
-                    fill=CONFLICT_COLORS[conflict_level],
-                    width=4 if conflict_level == "point" else 3,
-                )
 
     _draw_panel(
         draw,

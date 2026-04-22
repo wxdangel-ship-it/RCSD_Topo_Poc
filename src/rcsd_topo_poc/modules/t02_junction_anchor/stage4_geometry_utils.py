@@ -409,7 +409,10 @@ def _build_branch_pair_anchor_geometry(
 ):
     if lhs_geometry is None or lhs_geometry.is_empty or rhs_geometry is None or rhs_geometry.is_empty:
         return GeometryCollection()
-    intersection_geometry = lhs_geometry.intersection(rhs_geometry).buffer(0)
+    corridor_buffer_m = max(float(EVENT_ANCHOR_BUFFER_M), float(EVENT_SEMANTIC_BOUNDARY_ROAD_BUFFER_M) * 0.5)
+    lhs_corridor = lhs_geometry.buffer(corridor_buffer_m, cap_style=2, join_style=2)
+    rhs_corridor = rhs_geometry.buffer(corridor_buffer_m, cap_style=2, join_style=2)
+    intersection_geometry = lhs_corridor.intersection(rhs_corridor).buffer(0)
     if drivezone_union is not None and not drivezone_union.is_empty:
         intersection_geometry = intersection_geometry.intersection(drivezone_union).buffer(0)
     if not intersection_geometry.is_empty:
@@ -434,13 +437,18 @@ def _estimate_event_anchor_geometry(
     drivezone_union,
     event_branch_ids: set[str] | None = None,
 ):
-    candidate_branch_ids = {
-        branch.branch_id
-        for branch in road_branches
-        if branch.branch_id not in main_branch_ids
-    }
-    if event_branch_ids:
-        candidate_branch_ids &= set(event_branch_ids)
+    all_branch_ids = {branch.branch_id for branch in road_branches}
+    explicit_event_branch_ids = set(event_branch_ids or ()) & all_branch_ids
+    if explicit_event_branch_ids:
+        candidate_branch_ids = set(explicit_event_branch_ids)
+    else:
+        candidate_branch_ids = {
+            branch.branch_id
+            for branch in road_branches
+            if branch.branch_id not in main_branch_ids
+        }
+    if not candidate_branch_ids and explicit_event_branch_ids:
+        candidate_branch_ids = set(explicit_event_branch_ids)
     if not candidate_branch_ids:
         candidate_branch_ids = {
             branch.branch_id
@@ -484,9 +492,16 @@ def _estimate_event_anchor_geometry(
                 best_anchor = pair_anchor
         return best_anchor
 
+    if explicit_event_branch_ids:
+        main_union_branch_ids = all_branch_ids - candidate_branch_ids
+        if not main_union_branch_ids:
+            main_union_branch_ids = set(main_branch_ids) - candidate_branch_ids
+    else:
+        main_union_branch_ids = set(main_branch_ids)
+
     main_union = _build_branch_union_geometry(
         local_roads=local_roads,
-        branch_ids=main_branch_ids,
+        branch_ids=main_union_branch_ids,
         road_branches=road_branches,
     )
     side_union = _build_branch_union_geometry(
@@ -556,6 +571,59 @@ def _analyze_divstrip_context(
         for branch in road_branches
     }
     road_union = unary_union([road.geometry for road in local_roads if road.geometry is not None and not road.geometry.is_empty])
+    road_lookup = {road.road_id: road for road in local_roads}
+    reference_point = (
+        event_anchor_geometry.representative_point()
+        if event_anchor_geometry is not None and not event_anchor_geometry.is_empty
+        else seed_union.representative_point()
+    )
+    component_reference_segment = None
+    reference_branch_candidates: list[tuple[float, int, Any]] = []
+    for branch in road_branches:
+        centerline = _resolve_branch_centerline(
+            branch=branch,
+            road_lookup=road_lookup,
+            reference_point=reference_point,
+        )
+        if centerline is None or centerline.is_empty:
+            continue
+        reference_branch_candidates.append(
+            (
+                float(centerline.distance(reference_point)),
+                1 if branch.branch_id in candidate_branch_ids else 0,
+                branch,
+            )
+        )
+    reference_branch_candidates.sort(key=lambda item: (float(item[0]), -int(item[1]), -_selected_branch_score(item[2])))
+    reference_branches = [item[2] for item in reference_branch_candidates[:2]]
+    reference_branch_a = reference_branches[0] if len(reference_branches) >= 1 else None
+    reference_branch_b = reference_branches[1] if len(reference_branches) >= 2 else None
+    if reference_branch_a is not None and reference_branch_b is not None:
+        reference_centerline_a = _resolve_branch_centerline(
+            branch=reference_branch_a,
+            road_lookup=road_lookup,
+            reference_point=reference_point,
+        )
+        reference_centerline_b = _resolve_branch_centerline(
+            branch=reference_branch_b,
+            road_lookup=road_lookup,
+            reference_point=reference_point,
+        )
+        if (
+            reference_centerline_a is not None
+            and not reference_centerline_a.is_empty
+            and reference_centerline_b is not None
+            and not reference_centerline_b.is_empty
+        ):
+            point_a = nearest_points(reference_centerline_a, reference_point)[0]
+            point_b = nearest_points(reference_centerline_b, reference_point)[0]
+            if float(point_a.distance(point_b)) > 1e-6:
+                component_reference_segment = LineString(
+                    [
+                        (float(point_a.x), float(point_a.y)),
+                        (float(point_b.x), float(point_b.y)),
+                    ]
+                )
 
     nearby_components: list[dict[str, Any]] = []
     for component_index, component_geometry in enumerate(components):
@@ -584,6 +652,11 @@ def _analyze_divstrip_context(
             if event_anchor_geometry is None or event_anchor_geometry.is_empty
             else float(component_geometry.distance(event_anchor_geometry))
         )
+        related_to_branch_middle, distance_to_branch_middle, branch_middle_overlap = _component_reference_overlap_metrics(
+            component_geometry=component_geometry,
+            reference_geometry=component_reference_segment,
+            reference_buffer_m=max(float(DIVSTRIP_BRANCH_BUFFER_M), 2.0),
+        )
         if (
             matched_branch_ids
             or matched_all_branch_ids
@@ -604,6 +677,10 @@ def _analyze_divstrip_context(
                     "distance_to_seed": distance_to_seed,
                     "distance_to_roads": distance_to_roads,
                     "distance_to_event_anchor": distance_to_event_anchor,
+                    "distance_to_branch_middle": distance_to_branch_middle,
+                    "related_to_branch_middle": related_to_branch_middle,
+                    "branch_middle_overlap": branch_middle_overlap,
+                    "component_area": float(getattr(component_geometry, "area", 0.0) or 0.0),
                 }
             )
 
@@ -638,7 +715,15 @@ def _analyze_divstrip_context(
         if component["distance_to_roads"] <= DIVSTRIP_ROAD_NEARBY_DISTANCE_M
     ]
     if allow_compound_pair_merge:
-        candidate_components = anchor_preferred_components or matched_components or road_nearby_components or nearby_components
+        branch_middle_components = [
+            component
+            for component in nearby_components
+            if bool(component["related_to_branch_middle"]) or float(component["branch_middle_overlap"]) > 1e-6
+        ]
+        if branch_middle_components:
+            candidate_components = branch_middle_components
+        else:
+            candidate_components = matched_components or road_nearby_components or nearby_components
     else:
         candidate_components = []
         seen_candidate_component_ids: set[str] = set()
@@ -649,22 +734,57 @@ def _analyze_divstrip_context(
             seen_candidate_component_ids.add(component_id)
             candidate_components.append(component)
     if allow_compound_pair_merge:
-        candidate_components.sort(
-            key=lambda component: (
-                float(component["distance_to_event_anchor"]),
-                -len(component["matched_branch_ids"]),
-                -len(component["matched_all_branch_ids"]),
-                float(component["distance_to_roads"]),
-                float(component["distance_to_seed"]),
-            ),
+        has_branch_middle_signal = any(
+            bool(component["related_to_branch_middle"]) or float(component["branch_middle_overlap"]) > 1e-6
+            for component in candidate_components
         )
+        large_component_area_threshold = max(
+            80.0,
+            0.35 * max(float(component["component_area"]) for component in candidate_components),
+        )
+        if has_branch_middle_signal:
+            candidate_components.sort(
+                key=lambda component: (
+                    0 if component["related_to_branch_middle"] else 1,
+                    float(component["distance_to_branch_middle"]),
+                    -float(component["branch_middle_overlap"]),
+                    0 if float(component["component_area"]) >= large_component_area_threshold else 1,
+                    -float(component["component_area"]),
+                    float(component["distance_to_event_anchor"]),
+                    -len(component["matched_branch_ids"]),
+                    -len(component["matched_all_branch_ids"]),
+                    float(component["distance_to_roads"]),
+                    float(component["distance_to_seed"]),
+                ),
+            )
+        else:
+            candidate_components.sort(
+                key=lambda component: (
+                    -len(component["matched_branch_ids"]),
+                    -len(component["matched_all_branch_ids"]),
+                    0 if float(component["component_area"]) >= large_component_area_threshold else 1,
+                    -float(component["component_area"]),
+                    float(component["distance_to_event_anchor"]),
+                    float(component["distance_to_seed"]),
+                    float(component["distance_to_roads"]),
+                ),
+            )
     else:
+        large_component_area_threshold = max(
+            80.0,
+            0.35 * max(float(component["component_area"]) for component in candidate_components),
+        )
         candidate_components.sort(
             key=lambda component: (
+                0 if component["related_to_branch_middle"] else 1,
+                float(component["distance_to_branch_middle"]),
+                -float(component["branch_middle_overlap"]),
                 -len(component["matched_branch_ids"]),
                 -len(component["matched_all_branch_ids"]),
-                float(component["distance_to_seed"]),
+                0 if float(component["component_area"]) >= large_component_area_threshold else 1,
+                -float(component["component_area"]),
                 float(component["distance_to_event_anchor"]),
+                float(component["distance_to_seed"]),
                 float(component["distance_to_roads"]),
             ),
         )
@@ -1311,6 +1431,31 @@ def _tip_point_from_divstrip(
     )
 
 
+def _component_reference_overlap_metrics(
+    *,
+    component_geometry,
+    reference_geometry,
+    reference_buffer_m: float,
+) -> tuple[bool, float, float]:
+    if (
+        component_geometry is None
+        or component_geometry.is_empty
+        or reference_geometry is None
+        or reference_geometry.is_empty
+    ):
+        return False, math.inf, 0.0
+    distance_to_reference = float(component_geometry.distance(reference_geometry))
+    overlap_geometry = component_geometry.intersection(
+        reference_geometry.buffer(max(0.1, float(reference_buffer_m)), cap_style=2, join_style=2)
+    ).buffer(0)
+    overlap_measure = 0.0
+    if not overlap_geometry.is_empty:
+        overlap_measure = float(getattr(overlap_geometry, "area", 0.0) or 0.0)
+        if overlap_measure <= 1e-6:
+            overlap_measure = float(getattr(overlap_geometry, "length", 0.0) or 0.0)
+    return bool(overlap_measure > 1e-6 or distance_to_reference <= max(0.25, float(reference_buffer_m) * 0.35)), distance_to_reference, overlap_measure
+
+
 def _pick_reference_s(
     *,
     divstrip_ref_s: float | None,
@@ -1412,13 +1557,17 @@ def _pick_divstrip_component_near_split(
         if split_segment is not None and split_diag["ok"]
         else split_crossline
     )
-    best_geometry = None
-    best_key = None
-    best_distance = None
+    component_metrics: list[dict[str, Any]] = []
+    min_distance = math.inf
     for component in divstrip_components:
         if component is None or component.is_empty:
             continue
-        distance = float(reference_geometry.distance(component))
+        related_to_split, distance, overlap_measure = _component_reference_overlap_metrics(
+            component_geometry=component,
+            reference_geometry=reference_geometry,
+            reference_buffer_m=max(float(DIVSTRIP_BRANCH_BUFFER_M), 2.0),
+        )
+        min_distance = min(float(min_distance), float(distance))
         tip_s = None
         tip_point = _tip_point_from_divstrip(
             divstrip_geometry=component,
@@ -1435,16 +1584,41 @@ def _pick_divstrip_component_near_split(
                 tip_s = float(candidate_tip_s)
         tip_delta = None if tip_s is None else float(tip_s) - float(split_s)
         forward_tip = tip_delta is not None and float(tip_delta) >= -float(EVENT_REFERENCE_HARD_WINDOW_M)
+        component_metrics.append(
+            {
+                "geometry": component,
+                "distance": float(distance),
+                "related_to_split": bool(related_to_split),
+                "overlap_measure": float(overlap_measure),
+                "tip_delta": tip_delta,
+                "forward_tip": bool(forward_tip),
+                "area": float(getattr(component, "area", 0.0) or 0.0),
+            }
+        )
+    if not component_metrics:
+        return None, None
+    distance_band_m = float(min_distance) + 12.0
+    best_geometry = None
+    best_key = None
+    best_distance = None
+    for metric in component_metrics:
+        distance = float(metric["distance"])
+        tip_delta = metric["tip_delta"]
+        forward_tip = bool(metric["forward_tip"])
         component_key = (
+            0 if metric["related_to_split"] else 1,
+            0 if distance <= distance_band_m else 1,
+            -float(metric["area"]) if distance <= distance_band_m else 0.0,
             0 if forward_tip else 1,
-            math.inf if tip_delta is None or not forward_tip else max(0.0, float(tip_delta)),
             float(distance),
+            -float(metric["overlap_measure"]),
+            math.inf if tip_delta is None or not forward_tip else max(0.0, float(tip_delta)),
             math.inf if tip_delta is None else abs(float(tip_delta)),
         )
         if best_key is None or component_key < best_key:
             best_key = component_key
             best_distance = distance
-            best_geometry = component
+            best_geometry = metric["geometry"]
     return best_geometry, best_distance
 
 

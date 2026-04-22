@@ -443,6 +443,396 @@ def _infer_primary_main_rc_node_from_local_context(
         "seed_rule": tolerance_rule,
     }
 
+
+def _pick_section_core_point(
+    *,
+    section_geometry,
+    center_point: Point,
+) -> Point | None:
+    line_parts = _collect_line_parts(section_geometry)
+    if line_parts:
+        longest_part = max(line_parts, key=lambda item: float(item.length))
+        point = longest_part.interpolate(0.5, normalized=True)
+        return Point(float(point.x), float(point.y))
+    if section_geometry is None or section_geometry.is_empty:
+        return None
+    if section_geometry.buffer(1e-6).covers(center_point):
+        return Point(float(center_point.x), float(center_point.y))
+    representative_point = section_geometry.representative_point()
+    if representative_point is None or representative_point.is_empty:
+        return None
+    return Point(float(representative_point.x), float(representative_point.y))
+
+
+def _materialize_divstrip_core_point(
+    *,
+    scan_origin_point: Point,
+    scan_axis_unit_vector: tuple[float, float],
+    scan_dist_m: float,
+    cross_half_len_m: float,
+    branch_a_centerline,
+    branch_b_centerline,
+    divstrip_geometry,
+) -> Point | None:
+    if divstrip_geometry is None or divstrip_geometry.is_empty:
+        return None
+    crossline = _build_event_crossline(
+        origin_point=scan_origin_point,
+        axis_unit_vector=scan_axis_unit_vector,
+        scan_dist_m=float(scan_dist_m),
+        cross_half_len_m=cross_half_len_m,
+    )
+    center_point = crossline.interpolate(0.5, normalized=True)
+    found_segment, segment_diag = _build_between_branches_segment(
+        crossline=crossline,
+        center_point=center_point,
+        branch_a_centerline=branch_a_centerline,
+        branch_b_centerline=branch_b_centerline,
+    )
+    probe_geometry = (
+        found_segment
+        if found_segment is not None and segment_diag["ok"]
+        else crossline
+    )
+    section_geometry = probe_geometry.intersection(divstrip_geometry)
+    core_point = _pick_section_core_point(
+        section_geometry=section_geometry,
+        center_point=center_point,
+    )
+    if core_point is not None:
+        return core_point
+    if divstrip_geometry.buffer(float(EVENT_REFERENCE_DIVSTRIP_TOL_M)).covers(center_point):
+        return Point(float(center_point.x), float(center_point.y))
+    return None
+
+
+EVENT_REFERENCE_BRANCH_MIDDLE_TOL_M = 6.0
+EVENT_REFERENCE_BRANCH_MIDDLE_SCAN_WINDOW_M = 4.0
+
+
+def _materialize_reference_candidate(
+    *,
+    scan_origin_point: Point,
+    scan_axis_unit_vector: tuple[float, float],
+    chosen_s: float,
+    position_source: str,
+    split_pick_source: str,
+    tip_s: float | None,
+    first_divstrip_hit_s: float | None,
+    drivezone_split_s: float | None,
+    divstrip_ref_s: float | None,
+    cross_half_len_m: float,
+    branch_a_centerline,
+    branch_b_centerline,
+    selected_divstrip_geometry,
+    drivezone_union,
+    all_divstrip_geometry,
+    step_m: float,
+) -> dict[str, Any]:
+    final_scan_s = float(chosen_s)
+    chosen_point = None
+    resolved_split_pick_source = str(split_pick_source)
+    if str(position_source) == "divstrip_ref":
+        divstrip_scan_candidates: list[tuple[float, str]] = []
+        if (
+            drivezone_split_s is not None
+            and divstrip_ref_s is not None
+            and abs(float(drivezone_split_s) - float(divstrip_ref_s)) <= float(EVENT_REFERENCE_MAX_OFFSET_M)
+        ):
+            divstrip_scan_candidates.append((float(drivezone_split_s), "split_guided"))
+        if first_divstrip_hit_s is not None and tip_s is not None:
+            divstrip_scan_candidates.append((0.5 * (float(first_divstrip_hit_s) + float(tip_s)), "core_mid"))
+        if tip_s is not None:
+            divstrip_scan_candidates.append((float(tip_s), "tip_projection"))
+        if not divstrip_scan_candidates:
+            divstrip_scan_candidates.append((float(final_scan_s), "chosen_s"))
+
+        seen_scan_values: set[float] = set()
+        for candidate_scan_s, candidate_label in divstrip_scan_candidates:
+            rounded_scan_s = round(float(candidate_scan_s), 6)
+            if rounded_scan_s in seen_scan_values:
+                continue
+            seen_scan_values.add(rounded_scan_s)
+            candidate_point = _materialize_divstrip_core_point(
+                scan_origin_point=scan_origin_point,
+                scan_axis_unit_vector=scan_axis_unit_vector,
+                scan_dist_m=float(candidate_scan_s),
+                cross_half_len_m=cross_half_len_m,
+                branch_a_centerline=branch_a_centerline,
+                branch_b_centerline=branch_b_centerline,
+                divstrip_geometry=selected_divstrip_geometry,
+            )
+            if candidate_point is None:
+                continue
+            chosen_point = candidate_point
+            final_scan_s = _project_point_to_axis(
+                candidate_point,
+                origin_xy=(float(scan_origin_point.x), float(scan_origin_point.y)),
+                axis_unit_vector=scan_axis_unit_vector,
+            )
+            resolved_split_pick_source = f"{resolved_split_pick_source}_{candidate_label}_core_point"
+            break
+    else:
+        window_lo, window_hi, target_s = _build_ref_window_toward_node(
+            ref_s=float(chosen_s),
+            window_m=float(EVENT_REFERENCE_HARD_WINDOW_M),
+        )
+        if float(chosen_s) >= 0.0:
+            window_lo = float(max(0.0, window_lo))
+            window_hi = float(max(0.0, window_hi))
+            target_s = float(max(0.0, target_s))
+        else:
+            window_lo = float(min(0.0, window_lo))
+            window_hi = float(min(0.0, window_hi))
+            target_s = float(min(0.0, target_s))
+        if window_hi + 1e-9 < window_lo:
+            window_lo = float(chosen_s)
+            window_hi = float(chosen_s)
+            target_s = float(chosen_s)
+        probe_step = min(float(EVENT_REFERENCE_PROBE_STEP_M), max(0.05, step_m))
+        candidate_scan_values: list[float] = []
+        cursor = float(window_lo)
+        while cursor <= float(window_hi) + 1e-9:
+            candidate_scan_values.append(float(max(window_lo, min(window_hi, cursor))))
+            cursor += probe_step
+        if not candidate_scan_values:
+            candidate_scan_values = [float(max(window_lo, min(window_hi, float(chosen_s))))]
+        target_in_window = float(max(window_lo, min(window_hi, float(target_s))))
+        if all(abs(float(value) - target_in_window) > 1e-6 for value in candidate_scan_values):
+            candidate_scan_values.append(float(target_in_window))
+
+        def _probe_scan_candidates(scan_values: list[float]) -> list[dict[str, Any]]:
+            hits: list[dict[str, Any]] = []
+            for scan_value in scan_values:
+                crossline = _build_event_crossline(
+                    origin_point=scan_origin_point,
+                    axis_unit_vector=scan_axis_unit_vector,
+                    scan_dist_m=float(scan_value),
+                    cross_half_len_m=cross_half_len_m,
+                )
+                pieces = _segment_drivezone_pieces(
+                    segment=crossline,
+                    drivezone_union=drivezone_union,
+                    min_piece_len_m=0.5,
+                )
+                if not pieces:
+                    continue
+                center_point = Point(
+                    float(scan_origin_point.x) + float(scan_axis_unit_vector[0]) * float(scan_value),
+                    float(scan_origin_point.y) + float(scan_axis_unit_vector[1]) * float(scan_value),
+                )
+                center_s = float(crossline.project(center_point))
+                piece_info: list[tuple[float, float, float]] = []
+                for piece in pieces:
+                    values: list[float] = []
+                    for coord in list(piece.coords):
+                        if len(coord) < 2:
+                            continue
+                        values.append(float(crossline.project(Point(float(coord[0]), float(coord[1])))))
+                    if not values:
+                        continue
+                    start_s = float(min(values))
+                    end_s = float(max(values))
+                    piece_info.append((start_s, end_s, 0.5 * (start_s + end_s)))
+                if not piece_info:
+                    continue
+                has_center_piece = any(float(item[0]) - 1e-6 <= center_s <= float(item[1]) + 1e-6 for item in piece_info)
+                hits.append(
+                    {
+                        "s": float(scan_value),
+                        "raw_count": int(len(pieces)),
+                        "has_center_piece": bool(has_center_piece),
+                    }
+                )
+            return hits
+
+        candidate_hits = _probe_scan_candidates(candidate_scan_values)
+        backtrack_single_hit = None
+        if _is_drivezone_position_source(position_source) and not any(int(hit["raw_count"]) == 1 for hit in candidate_hits):
+            backtrack_candidates = _build_drivezone_backtrack_candidates(
+                ref_s=float(chosen_s),
+                start_s=float(target_in_window),
+                probe_step=float(probe_step),
+                past_node_m=float(EVENT_REFERENCE_BACKTRACK_PAST_NODE_M),
+            )
+            backtrack_hits = _probe_scan_candidates(backtrack_candidates)
+            for hit in backtrack_hits:
+                if int(hit["raw_count"]) == 1 and bool(hit["has_center_piece"]):
+                    backtrack_single_hit = hit
+                    break
+            if backtrack_single_hit is None:
+                for hit in backtrack_hits:
+                    if int(hit["raw_count"]) == 1:
+                        backtrack_single_hit = hit
+                        break
+            candidate_hits.extend(backtrack_hits)
+
+        if candidate_hits:
+            if backtrack_single_hit is not None:
+                final_scan_s = float(backtrack_single_hit["s"])
+                resolved_split_pick_source = f"{resolved_split_pick_source}_backtrack_single_piece"
+            else:
+                best_hit = min(
+                    candidate_hits,
+                    key=lambda hit: (
+                        0 if bool(hit["has_center_piece"]) else 1,
+                        0 if int(hit["raw_count"]) == 1 else 1,
+                        int(hit["raw_count"]),
+                        abs(float(hit["s"]) - float(target_in_window)),
+                    ),
+                )
+                final_scan_s = float(best_hit["s"])
+
+    if chosen_point is None:
+        chosen_point = _point_from_axis_offset(
+            origin_point=scan_origin_point,
+            axis_unit_vector=scan_axis_unit_vector,
+            offset_m=float(final_scan_s),
+        )
+    if drivezone_union is not None and not drivezone_union.is_empty and not drivezone_union.buffer(0).covers(chosen_point):
+        safe_geometry = GeometryCollection()
+        if selected_divstrip_geometry is not None and not selected_divstrip_geometry.is_empty:
+            safe_geometry = selected_divstrip_geometry.intersection(drivezone_union).buffer(0)
+        if safe_geometry.is_empty and all_divstrip_geometry is not None and not all_divstrip_geometry.is_empty:
+            safe_geometry = all_divstrip_geometry.intersection(drivezone_union).buffer(0)
+        if safe_geometry.is_empty:
+            safe_geometry = drivezone_union.buffer(0)
+        snapped_point = nearest_points(chosen_point, safe_geometry)[1]
+        chosen_point = snapped_point
+        final_scan_s = _project_point_to_axis(
+            snapped_point,
+            origin_xy=(float(scan_origin_point.x), float(scan_origin_point.y)),
+            axis_unit_vector=scan_axis_unit_vector,
+        )
+        resolved_split_pick_source = f"{resolved_split_pick_source}_drivezone_clip"
+    return {
+        "origin_point": chosen_point,
+        "chosen_s_m": float(final_scan_s),
+        "split_pick_source": str(resolved_split_pick_source),
+    }
+
+
+def _evaluate_branch_middle_gate(
+    *,
+    scan_origin_point: Point,
+    scan_axis_unit_vector: tuple[float, float],
+    candidate_point,
+    candidate_scan_s: float,
+    cross_half_len_m: float,
+    branch_a_centerline,
+    branch_b_centerline,
+    divstrip_geometry,
+) -> dict[str, Any]:
+    if (
+        candidate_point is None
+        or candidate_point.is_empty
+        or divstrip_geometry is None
+        or divstrip_geometry.is_empty
+    ):
+        return {
+            "valid": False,
+            "signal": "event_reference_outside_branch_middle",
+            "reason": "missing_candidate_or_divstrip",
+            "point": candidate_point,
+            "chosen_s_m": float(candidate_scan_s),
+            "point_distance_m": math.inf,
+            "component_distance_m": math.inf,
+            "branch_middle_overlap": 0.0,
+        }
+
+    search_offsets = [0.0, -1.0, 1.0, -2.0, 2.0, -4.0, 4.0]
+    best_result: dict[str, Any] | None = None
+    for offset in search_offsets:
+        if abs(float(offset)) > float(EVENT_REFERENCE_BRANCH_MIDDLE_SCAN_WINDOW_M) + 1e-9:
+            continue
+        scan_s = float(candidate_scan_s) + float(offset)
+        probe_point = (
+            candidate_point
+            if abs(float(offset)) <= 1e-9
+            else _materialize_divstrip_core_point(
+                scan_origin_point=scan_origin_point,
+                scan_axis_unit_vector=scan_axis_unit_vector,
+                scan_dist_m=float(scan_s),
+                cross_half_len_m=cross_half_len_m,
+                branch_a_centerline=branch_a_centerline,
+                branch_b_centerline=branch_b_centerline,
+                divstrip_geometry=divstrip_geometry,
+            )
+        )
+        if probe_point is None or probe_point.is_empty:
+            continue
+        crossline = _build_event_crossline(
+            origin_point=scan_origin_point,
+            axis_unit_vector=scan_axis_unit_vector,
+            scan_dist_m=float(scan_s),
+            cross_half_len_m=cross_half_len_m,
+        )
+        center_point = crossline.interpolate(0.5, normalized=True)
+        found_segment, segment_diag = _build_between_branches_segment(
+            crossline=crossline,
+            center_point=center_point,
+            branch_a_centerline=branch_a_centerline,
+            branch_b_centerline=branch_b_centerline,
+        )
+        if found_segment is None or not segment_diag["ok"]:
+            continue
+        point_distance_m = float(probe_point.distance(found_segment))
+        component_related, component_distance_m, branch_middle_overlap = _component_reference_overlap_metrics(
+            component_geometry=divstrip_geometry,
+            reference_geometry=found_segment,
+            reference_buffer_m=float(EVENT_REFERENCE_BRANCH_MIDDLE_TOL_M),
+        )
+        point_related = point_distance_m <= float(EVENT_REFERENCE_BRANCH_MIDDLE_TOL_M)
+        valid = bool(
+            point_related
+            and (
+                bool(component_related)
+                or float(branch_middle_overlap) > 1e-6
+                or float(component_distance_m) <= float(EVENT_REFERENCE_BRANCH_MIDDLE_TOL_M)
+            )
+        )
+        score = (
+            1 if valid else 0,
+            1 if point_related else 0,
+            1 if component_related else 0,
+            float(branch_middle_overlap),
+            -float(point_distance_m),
+            -float(component_distance_m),
+            -abs(float(offset)),
+        )
+        candidate_result = {
+            "valid": valid,
+            "signal": None if valid else "event_reference_outside_branch_middle",
+            "reason": "branch_middle_gate_pass" if valid else "outside_branch_middle_tolerance",
+            "point": probe_point,
+            "chosen_s_m": _project_point_to_axis(
+                probe_point,
+                origin_xy=(float(scan_origin_point.x), float(scan_origin_point.y)),
+                axis_unit_vector=scan_axis_unit_vector,
+            ),
+            "point_distance_m": float(point_distance_m),
+            "component_distance_m": float(component_distance_m),
+            "branch_middle_overlap": float(branch_middle_overlap),
+            "_score": score,
+        }
+        if best_result is None or score > best_result["_score"]:
+            best_result = candidate_result
+
+    if best_result is None:
+        return {
+            "valid": False,
+            "signal": "event_reference_outside_branch_middle",
+            "reason": "missing_branch_middle_reference",
+            "point": candidate_point,
+            "chosen_s_m": float(candidate_scan_s),
+            "point_distance_m": math.inf,
+            "component_distance_m": math.inf,
+            "branch_middle_overlap": 0.0,
+        }
+    best_result.pop("_score", None)
+    return best_result
+
+
 def _resolve_event_reference_point(
     *,
     representative_node: ParsedNode,
@@ -480,7 +870,7 @@ def _resolve_event_reference_point(
             "divstrip_ref_offset_m": None,
         }
 
-    scan_origin_point, _ = nearest_points(axis_centerline, representative_node.geometry)
+    scan_origin_point, _ = nearest_points(axis_centerline, fallback_point)
     base_scan_axis_unit_vector = _resolve_scan_axis_unit_vector(
         axis_unit_vector=axis_unit_vector,
         kind_2=kind_2,
@@ -544,18 +934,7 @@ def _resolve_event_reference_point(
     divstrip_components = _collect_polygon_components(all_divstrip_geometry)
     scan_axis_unit_vector = base_scan_axis_unit_vector
     tip_s_forward = _tip_projection_for_scan(base_scan_axis_unit_vector)
-    reverse_scan_axis_unit_vector = (
-        -float(base_scan_axis_unit_vector[0]),
-        -float(base_scan_axis_unit_vector[1]),
-    )
-    tip_s_reverse = _tip_projection_for_scan(reverse_scan_axis_unit_vector)
     tip_s = tip_s_forward
-    if tip_s is None and tip_s_reverse is not None:
-        scan_axis_unit_vector = reverse_scan_axis_unit_vector
-        tip_s = tip_s_reverse
-    elif tip_s is not None and tip_s_reverse is not None and float(tip_s_reverse) + 1e-6 < float(tip_s):
-        scan_axis_unit_vector = reverse_scan_axis_unit_vector
-        tip_s = tip_s_reverse
 
     first_divstrip_hit_s = None
     drivezone_split_s = None
@@ -683,6 +1062,60 @@ def _resolve_event_reference_point(
         drivezone_split_s=drivezone_split_s,
         max_offset_m=float(EVENT_REFERENCE_MAX_OFFSET_M),
     )
+    branch_middle_gate_signal: str | None = None
+    branch_middle_gate_reason: str | None = None
+    branch_middle_gate_phase: str | None = None
+    force_reverse_probe = bool(
+        divstrip_ref_s is None
+        and selected_divstrip_geometry is not None
+        and not selected_divstrip_geometry.is_empty
+    )
+    forward_drivezone_split_s = None if drivezone_split_s is None else float(drivezone_split_s)
+    if force_reverse_probe:
+        chosen_s = None
+        position_source = "none"
+        split_pick_source = "forward_divstrip_missing"
+    resolved_candidate = None
+    if chosen_s is not None:
+        forward_candidate = _materialize_reference_candidate(
+            scan_origin_point=scan_origin_point,
+            scan_axis_unit_vector=scan_axis_unit_vector,
+            chosen_s=float(chosen_s),
+            position_source=str(position_source),
+            split_pick_source=str(split_pick_source),
+            tip_s=None if tip_s is None else float(tip_s),
+            first_divstrip_hit_s=None if first_divstrip_hit_s is None else float(first_divstrip_hit_s),
+            drivezone_split_s=None if drivezone_split_s is None else float(drivezone_split_s),
+            divstrip_ref_s=None if divstrip_ref_s is None else float(divstrip_ref_s),
+            cross_half_len_m=cross_half_len_m,
+            branch_a_centerline=branch_a_centerline,
+            branch_b_centerline=branch_b_centerline,
+            selected_divstrip_geometry=selected_divstrip_geometry,
+            drivezone_union=drivezone_union,
+            all_divstrip_geometry=all_divstrip_geometry,
+            step_m=step_m,
+        )
+        forward_gate = _evaluate_branch_middle_gate(
+            scan_origin_point=scan_origin_point,
+            scan_axis_unit_vector=scan_axis_unit_vector,
+            candidate_point=forward_candidate["origin_point"],
+            candidate_scan_s=float(forward_candidate["chosen_s_m"]),
+            cross_half_len_m=cross_half_len_m,
+            branch_a_centerline=branch_a_centerline,
+            branch_b_centerline=branch_b_centerline,
+            divstrip_geometry=selected_divstrip_geometry,
+        )
+        if forward_gate["valid"]:
+            resolved_candidate = dict(forward_candidate)
+            resolved_candidate["origin_point"] = forward_gate["point"]
+            resolved_candidate["chosen_s_m"] = float(forward_gate["chosen_s_m"])
+        else:
+            branch_middle_gate_signal = str(forward_gate["signal"] or "event_reference_outside_branch_middle")
+            branch_middle_gate_reason = str(forward_gate["reason"] or "outside_branch_middle_tolerance")
+            branch_middle_gate_phase = "forward"
+            chosen_s = None
+            position_source = "none"
+            split_pick_source = f"{split_pick_source}_outside_branch_middle"
     if chosen_s is None:
         reverse_scan_axis_unit_vector = (-float(scan_axis_unit_vector[0]), -float(scan_axis_unit_vector[1]))
         reverse_tip_s = None
@@ -775,7 +1208,85 @@ def _resolve_event_reference_point(
                 None if reverse_drivezone_split_s is None else float(reverse_drivezone_split_s)
             )
             divstrip_ref_source = str(reverse_divstrip_ref_source)
-    if chosen_s is None:
+            reverse_candidate = _materialize_reference_candidate(
+                scan_origin_point=scan_origin_point,
+                scan_axis_unit_vector=scan_axis_unit_vector,
+                chosen_s=float(chosen_s),
+                position_source=str(position_source),
+                split_pick_source=str(split_pick_source),
+                tip_s=None if tip_s is None else float(tip_s),
+                first_divstrip_hit_s=None if first_divstrip_hit_s is None else float(first_divstrip_hit_s),
+                drivezone_split_s=None if drivezone_split_s is None else float(drivezone_split_s),
+                divstrip_ref_s=None if reverse_divstrip_ref_s is None else float(reverse_divstrip_ref_s),
+                cross_half_len_m=cross_half_len_m,
+                branch_a_centerline=branch_a_centerline,
+                branch_b_centerline=branch_b_centerline,
+                selected_divstrip_geometry=selected_divstrip_geometry,
+                drivezone_union=drivezone_union,
+                all_divstrip_geometry=all_divstrip_geometry,
+                step_m=step_m,
+            )
+            reverse_gate = _evaluate_branch_middle_gate(
+                scan_origin_point=scan_origin_point,
+                scan_axis_unit_vector=scan_axis_unit_vector,
+                candidate_point=reverse_candidate["origin_point"],
+                candidate_scan_s=float(reverse_candidate["chosen_s_m"]),
+                cross_half_len_m=cross_half_len_m,
+                branch_a_centerline=branch_a_centerline,
+                branch_b_centerline=branch_b_centerline,
+                divstrip_geometry=selected_divstrip_geometry,
+            )
+            if reverse_gate["valid"]:
+                resolved_candidate = dict(reverse_candidate)
+                resolved_candidate["origin_point"] = reverse_gate["point"]
+                resolved_candidate["chosen_s_m"] = float(reverse_gate["chosen_s_m"])
+            else:
+                chosen_s = None
+                branch_middle_gate_signal = str(reverse_gate["signal"] or "event_reference_outside_branch_middle")
+                branch_middle_gate_reason = str(reverse_gate["reason"] or "outside_branch_middle_tolerance")
+                branch_middle_gate_phase = "reverse"
+    if resolved_candidate is None and chosen_s is None and force_reverse_probe and forward_drivezone_split_s is not None:
+        chosen_s = float(forward_drivezone_split_s)
+        position_source = "drivezone_split"
+        split_pick_source = "drivezone_split_window_after_reverse_probe"
+        fallback_candidate = _materialize_reference_candidate(
+            scan_origin_point=scan_origin_point,
+            scan_axis_unit_vector=scan_axis_unit_vector,
+            chosen_s=float(chosen_s),
+            position_source=str(position_source),
+            split_pick_source=str(split_pick_source),
+            tip_s=None if tip_s is None else float(tip_s),
+            first_divstrip_hit_s=None if first_divstrip_hit_s is None else float(first_divstrip_hit_s),
+            drivezone_split_s=float(forward_drivezone_split_s),
+            divstrip_ref_s=None if divstrip_ref_s is None else float(divstrip_ref_s),
+            cross_half_len_m=cross_half_len_m,
+            branch_a_centerline=branch_a_centerline,
+            branch_b_centerline=branch_b_centerline,
+            selected_divstrip_geometry=selected_divstrip_geometry,
+            drivezone_union=drivezone_union,
+            all_divstrip_geometry=all_divstrip_geometry,
+            step_m=step_m,
+        )
+        fallback_gate = _evaluate_branch_middle_gate(
+            scan_origin_point=scan_origin_point,
+            scan_axis_unit_vector=scan_axis_unit_vector,
+            candidate_point=fallback_candidate["origin_point"],
+            candidate_scan_s=float(fallback_candidate["chosen_s_m"]),
+            cross_half_len_m=cross_half_len_m,
+            branch_a_centerline=branch_a_centerline,
+            branch_b_centerline=branch_b_centerline,
+            divstrip_geometry=selected_divstrip_geometry,
+        )
+        if fallback_gate["valid"]:
+            resolved_candidate = dict(fallback_candidate)
+            resolved_candidate["origin_point"] = fallback_gate["point"]
+            resolved_candidate["chosen_s_m"] = float(fallback_gate["chosen_s_m"])
+        else:
+            chosen_s = None
+            branch_middle_gate_signal = str(fallback_gate["signal"] or "event_reference_outside_branch_middle")
+            branch_middle_gate_reason = str(fallback_gate["reason"] or "outside_branch_middle_tolerance")
+            branch_middle_gate_phase = "fallback"
+    if resolved_candidate is None:
         return {
             "origin_point": fallback_point,
             "event_origin_source": fallback_source,
@@ -789,131 +1300,14 @@ def _resolve_event_reference_point(
             "split_pick_source": f"{split_pick_source}_fallback",
             "divstrip_ref_source": str(divstrip_ref_source),
             "divstrip_ref_offset_m": None,
+            "branch_middle_gate_signal": branch_middle_gate_signal,
+            "branch_middle_gate_reason": branch_middle_gate_reason,
+            "branch_middle_gate_phase": branch_middle_gate_phase,
+            "branch_middle_gate_passed": False,
         }
-
-    if _is_drivezone_position_source(position_source):
-        window_lo, window_hi, target_s = _build_ref_window_toward_node(
-            ref_s=float(chosen_s),
-            window_m=float(EVENT_REFERENCE_HARD_WINDOW_M),
-        )
-        if float(chosen_s) >= 0.0:
-            window_lo = float(max(0.0, window_lo))
-            window_hi = float(max(0.0, window_hi))
-            target_s = float(max(0.0, target_s))
-        else:
-            window_lo = float(min(0.0, window_lo))
-            window_hi = float(min(0.0, window_hi))
-            target_s = float(min(0.0, target_s))
-        if window_hi + 1e-9 < window_lo:
-            window_lo = float(chosen_s)
-            window_hi = float(chosen_s)
-            target_s = float(chosen_s)
-    else:
-        window_lo, window_hi, target_s = _build_ref_window_toward_node(
-            ref_s=float(chosen_s),
-            window_m=float(EVENT_REFERENCE_HARD_WINDOW_M),
-        )
-    probe_step = min(float(EVENT_REFERENCE_PROBE_STEP_M), max(0.05, step_m))
-    candidate_scan_values: list[float] = []
-    cursor = float(window_lo)
-    while cursor <= float(window_hi) + 1e-9:
-        candidate_scan_values.append(float(max(window_lo, min(window_hi, cursor))))
-        cursor += probe_step
-    if not candidate_scan_values:
-        candidate_scan_values = [float(max(window_lo, min(window_hi, float(chosen_s))))]
-    target_in_window = float(max(window_lo, min(window_hi, float(target_s))))
-    if all(abs(float(value) - target_in_window) > 1e-6 for value in candidate_scan_values):
-        candidate_scan_values.append(float(target_in_window))
-
-    def _probe_scan_candidates(scan_values: list[float]) -> list[dict[str, Any]]:
-        hits: list[dict[str, Any]] = []
-        for scan_value in scan_values:
-            crossline = _build_event_crossline(
-                origin_point=scan_origin_point,
-                axis_unit_vector=scan_axis_unit_vector,
-                scan_dist_m=float(scan_value),
-                cross_half_len_m=cross_half_len_m,
-            )
-            pieces = _segment_drivezone_pieces(
-                segment=crossline,
-                drivezone_union=drivezone_union,
-                min_piece_len_m=0.5,
-            )
-            if not pieces:
-                continue
-            center_point = Point(
-                float(scan_origin_point.x) + float(scan_axis_unit_vector[0]) * float(scan_value),
-                float(scan_origin_point.y) + float(scan_axis_unit_vector[1]) * float(scan_value),
-            )
-            center_s = float(crossline.project(center_point))
-            piece_info: list[tuple[float, float, float]] = []
-            for piece in pieces:
-                values: list[float] = []
-                for coord in list(piece.coords):
-                    if len(coord) < 2:
-                        continue
-                    values.append(float(crossline.project(Point(float(coord[0]), float(coord[1])))))
-                if not values:
-                    continue
-                start_s = float(min(values))
-                end_s = float(max(values))
-                piece_info.append((start_s, end_s, 0.5 * (start_s + end_s)))
-            if not piece_info:
-                continue
-            has_center_piece = any(float(item[0]) - 1e-6 <= center_s <= float(item[1]) + 1e-6 for item in piece_info)
-            hits.append(
-                {
-                    "s": float(scan_value),
-                    "raw_count": int(len(pieces)),
-                    "has_center_piece": bool(has_center_piece),
-                }
-            )
-        return hits
-
-    candidate_hits = _probe_scan_candidates(candidate_scan_values)
-    backtrack_single_hit = None
-    if _is_drivezone_position_source(position_source) and not any(int(hit["raw_count"]) == 1 for hit in candidate_hits):
-        backtrack_candidates = _build_drivezone_backtrack_candidates(
-            ref_s=float(chosen_s),
-            start_s=float(target_in_window),
-            probe_step=float(probe_step),
-            past_node_m=float(EVENT_REFERENCE_BACKTRACK_PAST_NODE_M),
-        )
-        backtrack_hits = _probe_scan_candidates(backtrack_candidates)
-        for hit in backtrack_hits:
-            if int(hit["raw_count"]) == 1 and bool(hit["has_center_piece"]):
-                backtrack_single_hit = hit
-                break
-        if backtrack_single_hit is None:
-            for hit in backtrack_hits:
-                if int(hit["raw_count"]) == 1:
-                    backtrack_single_hit = hit
-                    break
-        candidate_hits.extend(backtrack_hits)
-
-    if candidate_hits:
-        if backtrack_single_hit is not None:
-            final_scan_s = float(backtrack_single_hit["s"])
-            split_pick_source = f"{split_pick_source}_backtrack_single_piece"
-        else:
-            best_hit = min(
-                candidate_hits,
-                key=lambda hit: (
-                    0 if bool(hit["has_center_piece"]) else 1,
-                    0 if int(hit["raw_count"]) == 1 else 1,
-                    int(hit["raw_count"]),
-                    abs(float(hit["s"]) - float(target_in_window)),
-                ),
-            )
-            final_scan_s = float(best_hit["s"])
-    else:
-        final_scan_s = float(chosen_s)
-
-    chosen_point = _point_from_axis_offset(
-        origin_point=scan_origin_point,
-        axis_unit_vector=scan_axis_unit_vector,
-        offset_m=float(final_scan_s),
-    )
+    final_scan_s = float(resolved_candidate["chosen_s_m"])
+    chosen_point = resolved_candidate["origin_point"]
+    split_pick_source = str(resolved_candidate["split_pick_source"])
     divstrip_ref_offset_m = (
         None
         if divstrip_ref_s is None
@@ -932,6 +1326,10 @@ def _resolve_event_reference_point(
         "split_pick_source": str(split_pick_source),
         "divstrip_ref_source": str(divstrip_ref_source),
         "divstrip_ref_offset_m": divstrip_ref_offset_m,
+        "branch_middle_gate_signal": branch_middle_gate_signal,
+        "branch_middle_gate_reason": branch_middle_gate_reason,
+        "branch_middle_gate_phase": branch_middle_gate_phase,
+        "branch_middle_gate_passed": True,
     }
 
 
@@ -1305,6 +1703,39 @@ def _resolve_operational_kind_2(
         )
 
     side_branches = [branch for branch in road_branches if branch.branch_id not in main_branch_ids]
+    preferred_complex_branches = [
+        branch
+        for branch in road_branches
+        if branch.branch_id in preferred_branch_ids
+    ]
+    if not side_branches and len(preferred_complex_branches) == 1:
+        preferred_branch = preferred_complex_branches[0]
+        if preferred_branch.has_incoming_support and not preferred_branch.has_outgoing_support:
+            return {
+                "source_kind": source_kind,
+                "source_kind_2": source_kind_2,
+                "operational_kind_2": 8,
+                "complex_junction": True,
+                "ambiguous": False,
+                "kind_resolution_mode": "complex_divstrip_preferred_branch",
+                "merge_score": None if divstrip_kind_resolution is None else divstrip_kind_resolution["merge_score"],
+                "diverge_score": None if divstrip_kind_resolution is None else divstrip_kind_resolution["diverge_score"],
+                "merge_hits": None if divstrip_kind_resolution is None else divstrip_kind_resolution["merge_hits"],
+                "diverge_hits": None if divstrip_kind_resolution is None else divstrip_kind_resolution["diverge_hits"],
+            }
+        if preferred_branch.has_outgoing_support and not preferred_branch.has_incoming_support:
+            return {
+                "source_kind": source_kind,
+                "source_kind_2": source_kind_2,
+                "operational_kind_2": 16,
+                "complex_junction": True,
+                "ambiguous": False,
+                "kind_resolution_mode": "complex_divstrip_preferred_branch",
+                "merge_score": None if divstrip_kind_resolution is None else divstrip_kind_resolution["merge_score"],
+                "diverge_score": None if divstrip_kind_resolution is None else divstrip_kind_resolution["diverge_score"],
+                "merge_hits": None if divstrip_kind_resolution is None else divstrip_kind_resolution["merge_hits"],
+                "diverge_hits": None if divstrip_kind_resolution is None else divstrip_kind_resolution["diverge_hits"],
+            }
     if (
         not side_branches
         and multibranch_context.get("enabled", False)
@@ -1565,16 +1996,9 @@ def _build_stage4_event_interpretation(
         kind_2=operational_kind_2,
         preferred_branch_ids=preferred_branch_ids,
     )
-    forward_branch_ids = {branch.branch_id for branch in forward_side_branches}
     position_source_forward = divstrip_context_raw["selection_mode"]
     reverse_trigger: str | None = None
-    if not multibranch_context_raw["enabled"]:
-        if preferred_branch_ids and not (forward_branch_ids & preferred_branch_ids):
-            reverse_trigger = "forward_divstrip_mismatch"
-        elif not divstrip_context_raw["nearby"]:
-            reverse_trigger = "divstrip_not_nearby"
-
-    reverse_tip_attempted = reverse_trigger is not None
+    reverse_tip_attempted = False
     reverse_tip_used = False
     position_source_reverse: str | None = None
     reverse_side_branches: list[Any] = []
@@ -1583,24 +2007,6 @@ def _build_stage4_event_interpretation(
         if multibranch_context_raw["enabled"] and multibranch_context_raw["selected_side_branches"]
         else list(forward_side_branches)
     )
-    if reverse_tip_attempted:
-        reverse_side_branches = _select_reverse_tip_side_branches(
-            road_branches,
-            kind_2=operational_kind_2,
-            preferred_branch_ids=preferred_branch_ids,
-        )
-        position_source_reverse = (
-            "reverse_tip_divstrip"
-            if ({branch.branch_id for branch in reverse_side_branches} & preferred_branch_ids)
-            else "reverse_tip_roads"
-        )
-        if (
-            {branch.branch_id for branch in reverse_side_branches} != forward_branch_ids
-            and _branch_selection_quality(reverse_side_branches, preferred_branch_ids)
-            > _branch_selection_quality(forward_side_branches, preferred_branch_ids)
-        ):
-            reverse_tip_used = True
-            selected_side_branches = list(reverse_side_branches)
 
     selected_event_branch_ids = (
         multibranch_context_raw["selected_event_branch_ids"]
@@ -1925,6 +2331,30 @@ def _build_stage4_event_interpretation(
         cross_half_len_m=event_cross_half_len_m,
         patch_size_m=patch_size_m,
     )
+    branch_middle_gate_signal = str(event_reference_raw.get("branch_middle_gate_signal") or "").strip() or None
+    branch_middle_gate_passed = bool(event_reference_raw.get("branch_middle_gate_passed", True))
+    hard_rejection_signals: list[str] = []
+    if str(event_reference_raw.get("split_pick_source") or "").startswith("reverse_"):
+        reverse_tip_attempted = True
+        reverse_tip_used = True
+        if reverse_trigger is None:
+            reverse_trigger = (
+                "forward_reference_outside_branch_middle"
+                if branch_middle_gate_signal == "event_reference_outside_branch_middle"
+                else "forward_reference_unstable"
+            )
+        position_source_reverse = str(event_reference_raw.get("position_source") or "reverse_tip_divstrip")
+    elif branch_middle_gate_signal == "event_reference_outside_branch_middle":
+        reverse_tip_attempted = True
+        if reverse_trigger is None:
+            reverse_trigger = "forward_reference_outside_branch_middle"
+    if branch_middle_gate_signal is not None and not branch_middle_gate_passed:
+        hard_rejection_signals.append(branch_middle_gate_signal)
+    position_source_final = (
+        position_source_reverse
+        if reverse_tip_used and position_source_reverse is not None
+        else ("multibranch_event" if multibranch_context_raw["enabled"] else position_source_forward)
+    )
     event_origin_point = event_reference_raw["origin_point"]
     event_origin_source = event_reference_raw["event_origin_source"]
     event_axis_unit_vector = _resolve_event_axis_unit_vector(
@@ -1977,6 +2407,8 @@ def _build_stage4_event_interpretation(
         kind_resolution=kind_resolution_raw,
         chain_context=chain_context,
     )
+    if branch_middle_gate_signal is not None:
+        review_signals = tuple([*review_signals, branch_middle_gate_signal])
     risk_signals = _build_stage4_interpretation_risk_signals(
         review_signals=review_signals,
         reverse_tip_used=reverse_tip_used,
@@ -2090,7 +2522,7 @@ def _build_stage4_event_interpretation(
         reverse_tip_decision=reverse_tip_decision,
         event_reference=event_reference,
         review_signals=review_signals,
-        hard_rejection_signals=(),
+        hard_rejection_signals=tuple(dict.fromkeys(hard_rejection_signals)),
         risk_signals=risk_signals,
         legacy_step5_bridge=legacy_step5_bridge,
         legacy_step5_readiness=legacy_step5_readiness,

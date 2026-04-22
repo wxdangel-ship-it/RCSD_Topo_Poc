@@ -1,0 +1,43 @@
+# 05 Building Block View
+
+- `case_loader`
+  - 发现 case-package
+  - 校验 `manifest / size_report / required gpkg`
+- `admission`
+  - 解析代表 node / group nodes
+  - 输出 Step1 准入结果与 case meta
+- `local_context`
+  - 构建 patch-scoped local world
+  - 组织 SWSD negative context
+- `topology`
+  - 生成 member / passthrough / branch / main pair / chain context
+- `event_units`
+  - 将 case 拆成 Step4 event units
+- `event_interpretation`
+  - facade / composition root
+  - `event_interpretation_shared`
+    - `_PreparedUnitInputs / _ExecutableBranchSet / _CandidateEvaluation`
+    - Step4 共用几何裁剪与 scope/filter helper
+  - `event_interpretation_branch_variants`
+    - direct-adjacency 三臂拆分
+    - complex same-case branch continuation
+    - executable branch-set variants
+  - `event_interpretation_selection`
+    - candidate merge/priority
+    - case-level reselection
+    - ownership guard
+  - 主文件保留：
+    - prepared input 物化
+    - candidate pool 生成
+    - T02 Step4 桥接
+    - `build_case_result`
+- `review_render`
+  - overview PNG
+  - event-unit PNG
+- `outputs`
+  - case 级文件
+  - flat mirror / index / summary
+- `batch_runner`
+  - preflight
+  - per-case orchestration
+  - summary

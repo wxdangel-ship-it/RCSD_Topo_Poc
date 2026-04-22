@@ -52,6 +52,11 @@
 | `specs/t03-step45-degree2-rcsdroad-chain-merge/*` | T03 Step45 定向治理变更工件 | `active_change_artifact` | 记录 `degree2 connector -> RCSDRoad chain merge` 的结构化治理变更，不替代模块长期真相 |
 | `specs/t03-step67-boundary-first-local-required/*`、`specs/t03-step67-directional-cut/*`、`specs/t03-step67-foreign-mask-normalization/*`、`specs/t03-step67-single-sided-horizontal-cut/*` | T03 Step67 clarified formal stage 定向治理变更工件 | `active_change_artifact` | 记录 directional boundary、local required、foreign mask 与 horizontal cut 等 Step67 定向治理变更，不替代模块长期真相 |
 | `specs/t03-step67-contract-formalization/*`、`specs/t03-internal-full-input-output-contract/*` | T03 formalization / full-input 输出治理变更工件 | `active_change_artifact` | 记录 Step67 formal/review 边界收紧、batch aggregate outputs、updated nodes layer 与 `fail3` downstream 语义写回治理文档的变更工件 |
+| `modules/t04_divmerge_virtual_polygon/architecture/*` | T04 模块长期架构真相 | `source_of_truth` | T04 正式模块的长期文档主表面；当前正式范围为 `Step1-4`，明确 `admission / local_context / topology / event_interpretation / review_render / outputs / batch_runner` 分层与 Step4 审计输出 |
+| `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md` | T04 稳定契约面 | `source_of_truth` | 固化 case-package 输入、Step1-4 业务边界、event-unit 规则、Step4 review PNG / flat mirror / index / summary 输出与当前无 repo 官方 CLI 的入口状态 |
+| `modules/t04_divmerge_virtual_polygon/README.md` | T04 操作者入口 | `operator_guide` | 说明默认 case root、默认输出根、模块内 runner 与 Step4 review 产物位置 |
+| `modules/t04_divmerge_virtual_polygon/AGENTS.md` | T04 durable guidance | `durable_guidance` | 只保留 T04 当前只到 Step1-4、不得顺手推进 Step5-7 与不得新增 repo 官方入口的模块边界 |
+| `specs/t04-step14-speckit-refactor/*` | T04 Step1-4 治理变更工件 | `active_change_artifact` | 记录 T04 doc-first formalization、架构规划、任务拆解与重构计划，不替代模块长期真相 |
 
 ## 当前模块模板文档面
 
@@ -74,7 +79,7 @@
 ## 当前结论
 
 1. 主阅读路径已经收口到项目级源事实、治理入口、结构元数据、T01 / T02 正式模块文档面与模块模板。
-2. 当前已存在正式业务模块文档面：`modules/t01_data_preprocess/*`、`modules/t02_junction_anchor/*` 与 `modules/t03_virtual_junction_anchor/*`；其中 T03 当前正式范围已升级为 `Step4-7 clarified formal stage`。
+2. 当前已存在正式业务模块文档面：`modules/t01_data_preprocess/*`、`modules/t02_junction_anchor/*`、`modules/t03_virtual_junction_anchor/*` 与 `modules/t04_divmerge_virtual_polygon/*`；其中 T04 当前正式范围只到 `Step1-4`。
 3. `t00_utility_toolbox` 当前作为已纳入治理的工具集合模块文档面存在。
 4. `_template` 继续承担新模块启动模板职责。
 5. 模块根目录不放 `SKILL.md` 的规则已经写回仓库级文档。

@@ -5,14 +5,14 @@ from collections import defaultdict
 from itertools import product
 from typing import Any
 
-from rcsd_topo_poc.modules.t02_junction_anchor.shared import normalize_id
-from rcsd_topo_poc.modules.t02_junction_anchor.stage4_geometry_utils import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_shared import normalize_id
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step4_geometry_core import (
     CHAIN_CONTINUATION_MAX_TURN_DEG,
     CHAIN_CONTINUATION_MIN_MARGIN_DEG,
     _explode_component_geometries,
     _node_source_kind_2,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import (
     BranchEvidence,
     ParsedNode,
     ParsedRoad,

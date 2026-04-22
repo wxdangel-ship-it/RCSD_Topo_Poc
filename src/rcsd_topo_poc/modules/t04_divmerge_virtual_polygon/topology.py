@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rcsd_topo_poc.modules.t02_junction_anchor.stage4_step3_topology_skeleton import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step3_topology_skeleton import (
     _build_stage4_topology_skeleton,
 )
 

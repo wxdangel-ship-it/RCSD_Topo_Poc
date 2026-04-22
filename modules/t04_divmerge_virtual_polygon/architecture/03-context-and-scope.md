@@ -9,7 +9,7 @@
 ## 上游关系
 
 - `t01_data_preprocess` 提供基础道路与 node 事实源。
-- `t02_junction_anchor` 提供 Stage4 可复用核心算法与 continuous chain 既有实践。
+- `t02_junction_anchor` 提供可参考的 Stage4 业务逻辑与 continuous chain 既有实践；T04 只继承理解与审计经验，不保留运行时代码依赖。
 - `t03_virtual_junction_anchor` 提供模块级 batch / review / summary 组织模式。
 
 ## 输出边界

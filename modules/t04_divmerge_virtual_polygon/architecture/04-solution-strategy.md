@@ -3,8 +3,8 @@
 ## 总体策略
 
 - 采用 `case_loader -> admission -> local_context -> topology -> event_interpretation -> review_render -> outputs -> batch_runner` 主链。
-- Step2/3 主要包装 T02 Stage4 现有内核。
-- Step4 在 T02 现有单事件解释逻辑上增加 event-unit 物化与 T03 风格 review 输出。
+- Step2/3 参考 T02 Stage4 的既有语义，但正式运行时内核在 T04 私有实现中落地。
+- Step4 参考 T02 的单事件解释思路并增加 event-unit 物化与 T03 风格 review 输出，但正式执行不得回调 T02 模块代码。
 
 ## 关键策略
 
@@ -35,7 +35,7 @@
 - multi-diverge / multi-merge 使用角度相邻的有序 branch pair `(L, R)`。
 - complex 使用当前 case 的 member node 粒度；chain augmentation 只补上下文，不直接扩 event-unit population。
 - complex 子节点在 Step4 解释阶段继承 complex 128 上下文提示，不因为聚合后 `kind_2=0` 被静默丢弃。
-- Step4 先在 T04 层显式构造 `pair-local` 搜索空间，而不是直接让 T02 内核在大走廊里找证据：
+- Step4 先在 T04 层显式构造 `pair-local` 搜索空间，而不是在大走廊里无边界找证据：
   - `unit-local branch pair region`
   - `unit-local structure face`
 - `unit-local branch pair region` 通过当前 unit 的有序边界 pair `(L, R)`、throat / node 起始切片和 pair-middle 纵向扫描切出；扫描长度沿用原 Step4 硬上限，但候选空间一旦确定当前合法延续方向，只允许沿该方向单向延伸，不再为了补齐候选空间做反向追溯。对 `continuous complex/merge`，这里允许沿同一 `pair-middle` 语义跨 same-case sibling internal node 延续，但不允许把整条 complex corridor 直接开放给当前 unit。
@@ -52,7 +52,7 @@
   - 最后才允许用最小转角做 tie-breaker
 - `external associated road` 不是“遇到的任意第一个外部 exit”，而是沿 unit 边界 branch 的合法单向延续外推后、与当前 pair 传播语义一致的首个非 complex 内部 road。它当前只用于 arm 选择一致性和停止条件审计，不再驱动候选空间反向追溯。只有当前 unit 在 complex 内构成 `closed interval` 时，才允许不继续接近外部关联 road。
 - `unit-local structure face` 由道路结构面在该 pair-local region 内定义主事实空间；导流带只在这个空间里做分界、镂空和 throat / middle 强化。该结构面只能由当前 `(L, R)` 及其合法 continuation 所围成，不得吸纳非分支道路面。
-- Step4 在进入 T02 解释内核前，先构造 `unit envelope`：
+- Step4 在进入 T04 私有解释内核前，先构造 `unit envelope`：
   - `unit_population_node_ids`
   - `context_augmented_node_ids`
   - `event_branch_ids`

@@ -7,15 +7,15 @@ from typing import Any
 
 from shapely.geometry.base import BaseGeometry
 
-from rcsd_topo_poc.modules.t02_junction_anchor.shared import LoadedFeature
-from rcsd_topo_poc.modules.t02_junction_anchor.stage4_step2_step3_contract import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_shared import LoadedFeature
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step23_contracts import (
     Stage4LocalContext,
     Stage4TopologySkeleton,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.stage4_step4_contract import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step4_contracts import (
     Stage4EventInterpretationResult,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import (
     ParsedNode,
     ParsedRoad,
 )

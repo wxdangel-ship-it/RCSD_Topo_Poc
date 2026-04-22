@@ -14,6 +14,6 @@
 
 ## 工程约束
 
-- 优先复用 T02 Stage4 的 Step2/3/4 核心能力。
+- 可以参考 T02 Stage4 的 Step2/3/4 业务逻辑与已验证判定思路，但 T04 运行时不得直接 import / 调用 T02 模块代码；所需逻辑必须在 T04 私有实现中落地。
 - 优先复用 T03 的 case-package / batch / review 输出组织。
 - 不把 T02 大 orchestrator 平移到 T04 主结构。

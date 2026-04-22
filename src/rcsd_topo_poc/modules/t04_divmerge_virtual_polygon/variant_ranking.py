@@ -3,8 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from rcsd_topo_poc.modules.t02_junction_anchor.shared import normalize_id
-from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_shared import normalize_id
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import (
     ParsedRoad,
     _angle_diff_deg,
 )

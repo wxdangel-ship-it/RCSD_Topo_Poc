@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from rcsd_topo_poc.modules.t02_junction_anchor.stage4_execution_contract import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_stage4_execution_contract import (
     evaluate_stage4_candidate_admission,
     resolve_stage4_output_kind,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.stage4_geometry_utils import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step4_geometry_core import (
     REASON_MAINNODEID_OUT_OF_SCOPE,
     _is_stage4_supported_node_kind,
     _node_source_kind,
     _node_source_kind_2,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.shared import normalize_id
-from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import ParsedNode
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_shared import normalize_id
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import ParsedNode
 
 from .case_models import T04AdmissionResult
 
@@ -43,4 +43,3 @@ def build_step1_admission(
         output_kind=resolve_stage4_output_kind(source_kind=source_kind, source_kind_2=source_kind_2),
         grade_2=representative_node.grade_2,
     )
-

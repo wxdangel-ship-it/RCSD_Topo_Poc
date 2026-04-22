@@ -8,8 +8,8 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     normalize_runtime_path,
     sort_patch_key,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.stage4_step2_local_context import _load_layer
-from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step2_local_context import _load_layer
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import (
     _parse_nodes,
     _parse_rc_nodes,
     _parse_roads,
@@ -158,4 +158,3 @@ def load_case_bundle(case_spec: T04CaseSpec) -> T04CaseBundle:
         representative_node=representative_node,
         group_nodes=tuple(group_nodes),
     )
-

@@ -6,9 +6,9 @@ from typing import Any, Iterable
 from shapely.geometry import GeometryCollection
 from shapely.geometry.base import BaseGeometry
 
-from rcsd_topo_poc.modules.t02_junction_anchor.shared import LoadedFeature
-from rcsd_topo_poc.modules.t02_junction_anchor.stage4_geometry_utils import _explode_component_geometries
-from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_shared import LoadedFeature
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step4_geometry_core import _explode_component_geometries
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import (
     BranchEvidence,
     ParsedNode,
     ParsedRoad,

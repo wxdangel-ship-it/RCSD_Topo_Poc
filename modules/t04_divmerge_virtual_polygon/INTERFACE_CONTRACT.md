@@ -20,6 +20,7 @@
   - Step3 topology skeleton
   - Step4 fact event interpretation
   - case-level / batch-level review outputs
+- T04 可以参考 `t02_junction_anchor` 的 Stage4 业务逻辑与审计经验，但运行时不得直接 import / 调用 T02 模块代码；正式执行逻辑必须在 T04 私有实现内落地。
 - 明确不在当前正式范围：
   - Step5 geometric support domain
   - Step6 polygon assembly
@@ -315,7 +316,7 @@
 - 本节冻结的是 `Step4 候选空间 / selected_candidate_region` 的当前 accepted baseline，不扩展到 `Step5-7`。
 - 当前 accepted baseline 输入集冻结为：`E:\TestData\POC_Data\T02\Anchor_2`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor_2`）。
 - 当前人工目视审计参考工件为：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch/codex_t04_pair_variant_fix_20260422`。
-- 上述输出目录只是审计证据，不是 source-of-truth；若审计工件缺失，以本契约与 `tests/modules/t04_divmerge_virtual_polygon/test_step14_pipeline.py` 的冻结断言为准。
+- 上述输出目录只是审计证据，不是 source-of-truth；若审计工件缺失，以本契约与 `tests/modules/t04_divmerge_virtual_polygon/test_step14_*.py` 的冻结断言为准。
 - 若后续实现与本节冻结基线冲突，默认先视为实现回退；未经用户明确确认，不得自行重设 baseline 或修改本节。
 
 当前冻结的共同要求：
@@ -354,7 +355,7 @@
 
 - 本节冻结的是 `Step4 主证据 / fact_reference_point` 的当前 accepted baseline，不扩展到 `Step5-7`。
 - 当前人工目视通过的审计 run 冻结为：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch/codex_t04_step4_primary_evidence_iteration_20260422_fix3`。
-- 上述 run 只是 audit evidence；正式冻结口径仍以本契约和 `tests/modules/t04_divmerge_virtual_polygon/test_step14_pipeline.py` 为准。
+- 上述 run 只是 audit evidence；正式冻结口径仍以本契约和 `tests/modules/t04_divmerge_virtual_polygon/test_step14_*.py` 为准。
 - 若后续实现使本节冻结样本重新出现以下任一现象，默认视为 Step4 回退：
   - `selected_evidence_state` 重新退回 `none`
   - 主证据不再是当前已人工确认通过的 local divstrip evidence

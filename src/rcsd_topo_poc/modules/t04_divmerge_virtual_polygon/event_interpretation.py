@@ -728,7 +728,6 @@ def _materialize_prepared_unit_inputs(
         road_branches=list(scoped_branches),
         main_branch_ids=set(scoped_main_branch_ids),
         kind_2=kind_hint,
-        preferred_axis_branch_id=None,
     )
     preferred_axis_branch_id = None if event_axis_branch is None else str(event_axis_branch.branch_id)
     axis_origin_point = effective_representative_node.geometry

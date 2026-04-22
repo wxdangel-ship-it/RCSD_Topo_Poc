@@ -234,6 +234,43 @@
   - `local_region_id`
   - `point_signature`
 
+### 3.5 当前冻结候选空间基线（2026-04-22）
+
+- 本节冻结的是 `Step4 候选空间 / selected_candidate_region` 的当前 accepted baseline，不扩展到 `Step5-7`。
+- 当前 accepted baseline 输入集冻结为：`E:\TestData\POC_Data\T02\Anchor_2`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor_2`）。
+- 当前人工目视审计参考工件为：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch/codex_t04_pair_variant_fix_20260422`。
+- 上述输出目录只是审计证据，不是 source-of-truth；若审计工件缺失，以本契约与 `tests/modules/t04_divmerge_virtual_polygon/test_step14_pipeline.py` 的冻结断言为准。
+- 若后续实现与本节冻结基线冲突，默认先视为实现回退；未经用户明确确认，不得自行重设 baseline 或修改本节。
+
+当前冻结的共同要求：
+
+- 候选空间必须由当前 unit 的两条边界 branch `(L, R)` 及其合法 continuation 物化。
+- 候选空间纵向延续仍可沿当前扫描长度要求执行，但不得做反向追溯。
+- local truncation 只能限制扫描方向，不能切断已确认的 boundary-branch continuation。
+- propagation 到 sibling node 时，`L / R` 之间不得夹入其他 road；若无法满足，必须停止延续，而不是换成错误 pair。
+- accepted baseline 中被确认正确的 unit，其 `selected_candidate` 当前统一冻结为 `structure:middle:01`，且 `selected_candidate_region` 必须覆盖当前 representative node。
+
+当前冻结的 real-case 基线：
+
+- `760213`
+  - `node_760213`、`node_760218` 的候选空间目视正确，作为 simple / local pair 正常样本冻结。
+- `785671`
+  - `event_unit_01` 的候选空间必须由 `980348` 与 `527854843` 这对边界分支定义。
+- `857993`
+  - `node_857993` 的边界 pair 冻结为 `12557730 / 1112045`，不得把 trunk `619715536` 误吸入候选空间。
+  - `node_870089` 的边界 pair 冻结为 `509954401 / 617462076`，不得把其他非 pair 道路吸入其候选空间。
+- `987998`
+  - `event_unit_01` 的候选空间必须由 `1026704` 与 `1078428` 这对边界分支定义。
+- `17943587`
+  - `node_17943587` 的边界 pair 冻结为 `510969745 / (607951495 + 528620938)`。
+  - `node_55353233` 的边界 pair 冻结为 `528620938 / (502953712 + 41727506 + 620950831)`；`605949403` 不得重新进入该 unit 的 event pair。
+  - `node_55353239` 的 local three-arm 拓扑冻结为 `607962170 / 620950831 / 41727506`，且候选空间必须回到 node / throat / middle 合法位置。
+  - `node_55353248` 的边界 pair 冻结为 `605949403 / (41727506 + 607962170)`，trunk `502953712` 不得主导候选空间。
+- `30434673`
+  - `event_unit_01` 的候选空间必须由 `530277767` 与 `76761971` 这对边界分支定义。
+- `73462878`
+  - `event_unit_01` 保持当前 pair-space 行为不回退，作为 full-input / degraded-scope 守门样本冻结。
+
 ## 4. Outputs
 
 ### 4.1 Run Root 固定输出

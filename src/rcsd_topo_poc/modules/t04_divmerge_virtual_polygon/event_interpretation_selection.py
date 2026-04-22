@@ -16,6 +16,14 @@ from .event_interpretation_shared import (
 SHARED_EVIDENCE_OVERLAP_AREA_M2 = 8.0
 SHARED_EVIDENCE_OVERLAP_RATIO = 0.2
 EVENT_REFERENCE_CONFLICT_TOL_M = 5.0
+NODE_FALLBACK_AXIS_POSITION_MAX_M = 1.0
+NODE_FALLBACK_DISTANCE_MAX_M = 3.0
+INVALID_PRIMARY_REASONS = {
+    "event_reference_outside_branch_middle",
+    "event_reference_axis_conflict_with_prior_unit",
+    "missing_event_reference_point",
+    "selected_branch_ids_empty",
+}
 
 
 def _event_axis_signature(event_unit: T04EventUnitResult) -> str | None:
@@ -41,6 +49,48 @@ def _candidate_axis_position(event_unit: T04EventUnitResult) -> tuple[str | None
 
 def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitResult) -> dict:
     merged = dict(candidate_summary)
+    event_axis_signature = str(merged.get("axis_signature") or result.event_axis_branch_id or "").strip()
+    axis_position_basis = str(merged.get("axis_position_basis") or "").strip()
+    axis_position_m = merged.get("axis_position_m")
+    try:
+        axis_position_m = None if axis_position_m is None else float(axis_position_m)
+    except (TypeError, ValueError):
+        axis_position_m = None
+    if result.event_chosen_s_m is not None:
+        axis_position_m = round(float(result.event_chosen_s_m), 1)
+        merged["axis_position_m"] = axis_position_m
+        if event_axis_signature:
+            if axis_position_basis and axis_position_basis != event_axis_signature:
+                merged["point_signature"] = f"{event_axis_signature}:{axis_position_basis}:{axis_position_m}"
+            else:
+                merged["point_signature"] = f"{event_axis_signature}:{axis_position_m}"
+    reference_distance_to_origin_m = merged.get("reference_distance_to_origin_m")
+    try:
+        numeric_reference_distance = (
+            None if reference_distance_to_origin_m is None else float(reference_distance_to_origin_m)
+        )
+    except (TypeError, ValueError):
+        numeric_reference_distance = None
+    node_fallback_only = bool(
+        (
+            numeric_reference_distance is not None
+            and numeric_reference_distance <= NODE_FALLBACK_DISTANCE_MAX_M + 1e-9
+        )
+        or (
+            numeric_reference_distance is None
+            and axis_position_m is not None
+            and abs(axis_position_m) <= NODE_FALLBACK_AXIS_POSITION_MAX_M + 1e-9
+        )
+    )
+    merged["node_fallback_only"] = node_fallback_only
+    merged["primary_eligible"] = bool(int(merged.get("layer", 3) or 3) in {1, 2} and not node_fallback_only)
+    layer_reason = str(merged.get("layer_reason") or "")
+    if node_fallback_only and "node_fallback_only" not in layer_reason:
+        merged["layer_reason"] = f"{layer_reason}|node_fallback_only" if layer_reason else "node_fallback_only"
+    elif not node_fallback_only and "node_fallback_only" in layer_reason:
+        merged["layer_reason"] = layer_reason.replace("|node_fallback_only", "").replace("node_fallback_only|", "").replace("node_fallback_only", "")
+    if any(str(reason) in INVALID_PRIMARY_REASONS for reason in result.all_review_reasons()):
+        merged["primary_eligible"] = False
     merged.update(
         {
             "review_state": result.review_state,
@@ -49,20 +99,59 @@ def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitRes
             "position_source": result.position_source,
             "reverse_tip_used": bool(result.reverse_tip_used),
             "rcsd_consistency_result": result.rcsd_consistency_result,
+            "positive_rcsd_support_level": result.positive_rcsd_support_level,
+            "positive_rcsd_consistency_level": result.positive_rcsd_consistency_level,
+            "required_rcsd_node": result.required_rcsd_node,
         }
     )
     return merged
 
 
+def _primary_evidence_invalid(result: T04EventUnitResult) -> bool:
+    for reason in result.all_review_reasons():
+        text = str(reason).strip()
+        if text in INVALID_PRIMARY_REASONS:
+            return True
+        if text.startswith("shared_event_reference_with:"):
+            return True
+        if text.startswith("shared_event_core_segment_with:"):
+            return True
+        if text.startswith("shared_divstrip_component_with:"):
+            return True
+    return False
+
+
 def _candidate_priority_score(candidate_summary: dict, result: T04EventUnitResult) -> int:
+    if _primary_evidence_invalid(result):
+        return -1000
+    if not bool(candidate_summary.get("primary_eligible")):
+        return -100
     layer = int(candidate_summary.get("layer", 3) or 3)
-    primary_bonus = 1000 if bool(candidate_summary.get("primary_eligible")) else 100
+    primary_bonus = 1000
     layer_bonus = {1: 300, 2: 200, 3: 50}.get(layer, 0)
-    state_bonus = {"STEP4_OK": 80, "STEP4_REVIEW": 40, "STEP4_FAIL": 0}.get(result.review_state, 0)
+    state_bonus = {"STEP4_OK": 120, "STEP4_REVIEW": 60, "STEP4_FAIL": -80}.get(result.review_state, 0)
     middle_bonus = int(round(float(candidate_summary.get("pair_middle_overlap_ratio", 0.0)) * 100.0))
     throat_bonus = int(round(float(candidate_summary.get("throat_overlap_ratio", 0.0)) * 50.0))
-    rcsd_bonus = 10 if result.rcsd_consistency_result == "positive_rcsd_consistent" else 0
-    return int(primary_bonus + layer_bonus + state_bonus + middle_bonus + throat_bonus + rcsd_bonus)
+    rcsd_bonus = {
+        "A": 160,
+        "B": 60,
+        "C": 0,
+    }.get(str(result.positive_rcsd_consistency_level or "C"), 0)
+    evidence_bonus = 40 if (
+        (result.localized_evidence_core_geometry is not None and not result.localized_evidence_core_geometry.is_empty)
+        or (result.selected_component_union_geometry is not None and not result.selected_component_union_geometry.is_empty)
+    ) else 0
+    node_penalty = 220 if bool(candidate_summary.get("node_fallback_only")) else 0
+    return int(
+        primary_bonus
+        + layer_bonus
+        + state_bonus
+        + middle_bonus
+        + throat_bonus
+        + rcsd_bonus
+        + evidence_bonus
+        - node_penalty
+    )
 
 
 def _result_conflicts(lhs: T04EventUnitResult, rhs: T04EventUnitResult) -> bool:
@@ -118,6 +207,7 @@ def _rank_candidate_pool(evaluations: list[_CandidateEvaluation]) -> list[_Candi
     return sorted(
         evaluations,
         key=lambda item: (
+            -{"A": 3, "B": 2, "C": 1}.get(str(item.result.positive_rcsd_consistency_level or "C"), 1),
             -int(item.priority_score),
             str(item.result.selected_candidate_summary.get("candidate_id") or ""),
         ),

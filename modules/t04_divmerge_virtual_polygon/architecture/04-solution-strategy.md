@@ -61,6 +61,11 @@
 - 在 `pair-local region` 内，T04 先生成 `local candidate unit` 候选池，而不是把整块导流带对象直接拿去优选：
   - `pair_local_divstrip`
   - `pair_local_structure_mode`
+- `selected_candidate_region` 只保留为 pair-local 容器输出，不再等同于主证据。
+- 正式主输出改为 `selected_evidence`：
+  - 只允许来自 `local candidate unit`
+  - 当前 unit 若无合法主证据，则输出 `selected_evidence_state = none`
+- `structure:middle:01` 不再作为正式主证据候选；若实现内部仍保留类似中间带几何，只能作为容器 / 审计辅助。
 - 每个 `local candidate unit` 都显式保留：
   - `upper_evidence_object_id`
   - `local_region_id`
@@ -73,13 +78,31 @@
   - Layer 2：主体稳定落在 `pair-middle`
   - Layer 3：仅弱进入当前 unit 候选空间，只作 reverse / mode switch / 审计参考
 - T04 当前不把三层混成一个总分；正式策略是“先层级，再层内排序”。
+- `axis_position_m = 0` 或 reference 贴 node 的候选，统一记为 `node_fallback_only`；这类候选只能作为审计 / 兜底参考，不得直接成为主排序第一名。
 - forward / reverse / structure-mode 都共享同一个 `pair-local region`：
   - forward：当前 unit 的自然事实形成方向
   - reverse：同一空间内的反向重试，不是独立证据体系
   - structure-mode：同一空间内的道路结构面主导定位，不是跨区兜底
 - reverse 只作用于候选空间内的证据查找，不得再作为候选空间边界延伸或反向补全机制。
 - 同一 case 的 sub-unit / event-unit 先各自生成候选池和初选，再做单 Case 内重选；若多个 unit 初选撞到一起，优先保留更高层/更稳的候选，其它 unit 在自己的候选池内改选，而不是直接 fail。
+- 若当前初选候选被 `branch-middle / throat` gate 或 `node_fallback_only` 拒绝，必须继续在当前候选池内重选；若重选后仍无合法候选，则显式输出 `selected_evidence_state = none`。
 - 当前单 Case Step4 输出只视为“初选结果”；跨 Case 共用证据冲突不在单 Case 内硬解，等全量 Step4 结束后再做二次处理。
+- 正向 RCSD 在 Step4 内只承担“主证据后的支持 / 一致性 preview”：
+  - 先按当前 unit 特征筛
+  - 再在主证据附近做邻域匹配
+  - 不把 pair-local scope 之外的 RCSD 回流成当前 unit 的主支持对象
+- T04 当前显式输出：
+  - `selected_rcsdroad_ids`
+  - `selected_rcsdnode_ids`
+  - `primary_main_rc_node`
+  - `positive_rcsd_support_level`
+  - `positive_rcsd_consistency_level`
+  - `required_rcsd_node`
+- 一致性在 Step4 内冻结为：
+  - `A / primary_support`
+  - `B / secondary_support`
+  - `C / no_support`
+- `required_rcsd_node` 只作为后续 polygon 强约束的 preview 输出；本轮不把它扩成 Step5-7 的 cover / publish 逻辑。
 - `branch-middle / throat gate` 的 boundary branches 必须来自当前 unit 的 `boundary_branch_ids`；complex / multi 场景下不再允许静默退回 case-level main pair 充当 unit-local throat。
 - merge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 entering branches；diverge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 exiting branches；`preferred_axis_branch_id` 只允许来自当前 unit 的唯一 opposite-direction trunk。
 - `divstrip_ref` 命中时，Step4 正式拆分：

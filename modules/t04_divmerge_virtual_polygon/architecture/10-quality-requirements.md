@@ -17,6 +17,13 @@
 ## 可审计性
 
 - Step4 review 图必须能直接表达当前事件单元的主证据、主轴、参考点与正向 RCSD。
+- Step4 review 图必须能一眼区分：
+  - `selected_candidate_region` 这个空间容器
+  - `selected_evidence`
+  - `fact_reference_point / review_materialized_point`
+  - `positive RCSD road / node`
+  - `required_rcsd_node`
+  - `positive_rcsd_support_level / positive_rcsd_consistency_level`
 - complex / multi 场景下，必须能从持久化输出中直接区分：
   - 顶层 case coordination skeleton
   - 当前 event unit 的 executable skeleton
@@ -92,7 +99,15 @@
 - 候选空间只能由当前 unit 的边界 pair `(L, R)` 及其合法 continuation 构成。
 - 候选空间不得做反向追溯补全。
 - `L / R` 之间不得夹入其他 road。
-- accepted baseline unit 的 `selected_candidate` 必须保持 `structure:middle:01`，且 `selected_candidate_region` 覆盖 representative node。
+- `selected_candidate_region` 只校验容器语义：
+  - 表示当前 unit 的合法候选空间
+  - 覆盖 representative node
+  - 不再等同主证据
+- accepted baseline unit 的正确性判据应围绕：
+  - `selected_evidence`
+  - `fact_reference_point`
+  - `positive RCSD support / consistency`
+  - 不再使用 `selected_candidate = structure:middle:01` 作为正式守门条件
 - `17943587 / node_55353233` 不得回退到 `502953712 + 605949403`。
 - `17943587 / node_55353248` 不得回退到 trunk 主导或缺失 `607962170` continuation。
 - `857993 / node_870089` 不得回退到只剩 node 邻域小块或重新吸入非 pair 道路。

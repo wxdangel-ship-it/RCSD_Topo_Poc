@@ -195,7 +195,9 @@
   - `fact_reference_point`：与 `event_chosen_s_m` 对齐的事实参考点
   - `review_materialized_point`：仅用于 PNG 的可视化落点
 - 过渡期允许保留 `event_reference_point` 作为 review alias，但它不再承担唯一事实点语义。
-- `divstrip_ref` 命中时，`review_materialized_point` 必须落在当前选中的 DivStrip 事实上，且优先物化到 tip / throat 邻域；`event_chosen_s_m` 继续作为轴向标量审计值保留。
+- `divstrip_ref` 命中时，`fact_reference_point` 与 `review_materialized_point` 都必须落在当前选中的局部 DivStrip 事实上。
+- `fact_reference_point` 的正式语义冻结为：当前分歧 / 合流事实开始形成的一侧，即 `formation-side / throat-side reference`；一般情况下应更靠近当前 representative node / throat，而不是落到导流带远离 node 的 distal tip。
+- `review_materialized_point` 可以继续保留 legacy 可视化落点，但不得替代 `fact_reference_point` 的 formation-side 语义；`event_chosen_s_m` 继续作为轴向标量审计值保留。
 - review 中表达的 `selected DivStrip` 是当前事实依据的 localized evidence patch，不得继续把整块无关导流带面作为单一事实依据涂出。
 - Step4 事实依据几何正式拆成三层：
   - `selected_component_union_geometry`
@@ -208,6 +210,26 @@
 - 连续链 case 若原始 anchor 仍停留在 seed 占位区且不命中当前选中的 DivStrip，T04 必须把 review 用 `event_anchor_geometry` materialize 为围绕当前事实证据的 coarse anchor zone，而不是继续输出固定 seed 方框。
 - `fact_reference_point` 不得落到 `DriveZone` 外；若轴向候选越界，T04 必须显式记为无效候选，`review_materialized_point` 只允许收敛回当前道路面内的事实证据位置，并留痕。
 - Step4 只负责正向 RCSD 选取与一致性校验，不定义 RCSD 最终负向语义。
+- 正向 RCSD 候选池冻结为：
+  - 先按当前 unit 特征筛
+  - 再按当前主证据附近邻域匹配
+  - pair-local scope 为空时，不得回退到更大的 case 级 RCSD 世界补主支持对象
+- Step4 正向 RCSD 一致性正式冻结为：
+  - `A`：强一致
+  - `B`：部分一致
+  - `C`：缺失
+- 正向 RCSD 作用边界冻结为：
+  - `A` 可参与主证据支持、主证据修正与后续 polygon 强约束
+  - `B` 只做支持 / 提示 / risk 强化，不直接推翻主证据
+  - `C` 只输出 `no_support`，不自动否决主证据
+- Step4 当前必须显式输出：
+  - `selected_rcsdroad_ids`
+  - `selected_rcsdnode_ids`
+  - `primary_main_rc_node`
+  - `positive_rcsd_support_level`
+  - `positive_rcsd_consistency_level`
+  - `required_rcsd_node`
+- 若当前主证据位置存在正向匹配的 RCSD 路口节点，则该节点必须作为 `required_rcsd_node` 输出；本轮只在 Step4 做输出与审计表达，不扩展到 Step5-7。
 - reverse 不是独立证据体系，只是同一 `pair-local region` 内的另一种查找方向；reverse 命中的候选也必须进入相同的三层优先级判断。
 - reverse 不得反向扩大、补全或重定义当前 `pair-local region`；候选空间边界一旦由 `(L, R)` 确定，reverse 只能在其内部活动。
 - fallback 不是“道路面降级兜底”；它表示在同一 `pair-local region` 内，从“导流带强约束定位”切换到“道路结构面主导定位”的模式切换。
@@ -216,6 +238,9 @@
   - `forward rejected by local throat / branch-middle gate`
   - `forward rejected by same-axis prior conflict`
 - `drivezone_split_window_after_reverse_probe` 只属于 conservative fallback 语义，不得单独算作 reverse-tip 成功证据。
+- `structure:middle:01` 不再是 Step4 正式主证据候选；若实现内部仍保留类似中间带几何，只能作为 `selected_candidate_region` 的容器 / 辅助语义，不得直接作为 `selected_evidence`。
+- `axis_position_m = 0` 或 reference 贴 node 的候选，正式记为 `node_fallback_only`；它只能作为审计 / 兜底候选，不得直接成为主排序第一名。
+- 若候选触发 `event_reference_outside_branch_middle`、`event_reference_axis_conflict_with_prior_unit` 或等价主证据 gate 拒绝，系统必须先在当前 unit 候选池内重选；若无合法候选，必须输出 `selected_evidence_state = none`，不得保留假的主证据占位。
 - 对 complex `1 node = 1 event unit` 子单元，Step4 解释阶段必须把 evidence search scope 锚定在当前 representative node 的局部 throat 与当前 unit 的 executable event branches 上；它可以沿同一 `pair-middle` 语义跨 same-case sibling internal node 延续，但不得继续共享整条 complex 走廊。
 - 若当前 unit-local scope 无法构成有效 throat pair 或有效 branch-middle gate，系统不得静默回退成整条 complex 走廊；必须显式记录 `degraded_scope_reason`，并至少上浮为 `STEP4_REVIEW`。
 - ownership guard 的主判断必须以语义冲突为先：
@@ -227,7 +252,9 @@
 - 单 Case 内必须先完成候选池生成、初选和重选；若多个 unit 初选撞到一起，不得直接“一过一 fail”，必须先在各自候选池内重选。
 - 当前 Step4 单 Case 输出是“初选结果”，不是全量最终裁决；跨 Case 的对象级 / 区域级共用冲突不在单 Case 内强行解完，而是在全量 Step4 结束后做二次处理。
 - 因此 Step4 单 Case 输出必须保留后续二次处理所需字段：
-  - `selected_candidate`
+  - `selected_candidate_region`
+  - `selected_evidence_state`
+  - `selected_evidence`
   - `alternative_candidates`
   - `ownership_signature`
   - `upper_evidence_object_id`
@@ -248,7 +275,10 @@
 - 候选空间纵向延续仍可沿当前扫描长度要求执行，但不得做反向追溯。
 - local truncation 只能限制扫描方向，不能切断已确认的 boundary-branch continuation。
 - propagation 到 sibling node 时，`L / R` 之间不得夹入其他 road；若无法满足，必须停止延续，而不是换成错误 pair。
-- accepted baseline 中被确认正确的 unit，其 `selected_candidate` 当前统一冻结为 `structure:middle:01`，且 `selected_candidate_region` 必须覆盖当前 representative node。
+- 当前冻结基线只约束 `selected_candidate_region` 的容器语义：
+  - 它必须表示当前 unit 的 pair-local 候选空间容器，而不是主证据本身
+  - 它必须覆盖当前 representative node
+  - 不再冻结 `selected_evidence` 必须等于 `structure:middle:01`
 
 当前冻结的 real-case 基线：
 
@@ -270,6 +300,46 @@
   - `event_unit_01` 的候选空间必须由 `530277767` 与 `76761971` 这对边界分支定义。
 - `73462878`
   - `event_unit_01` 保持当前 pair-space 行为不回退，作为 full-input / degraded-scope 守门样本冻结。
+
+### 3.6 当前冻结主证据 / Reference 基线（2026-04-22）
+
+- 本节冻结的是 `Step4 主证据 / fact_reference_point` 的当前 accepted baseline，不扩展到 `Step5-7`。
+- 当前人工目视通过的审计 run 冻结为：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch/codex_t04_step4_primary_evidence_iteration_20260422_fix3`。
+- 上述 run 只是 audit evidence；正式冻结口径仍以本契约和 `tests/modules/t04_divmerge_virtual_polygon/test_step14_pipeline.py` 为准。
+- 若后续实现使本节冻结样本重新出现以下任一现象，默认视为 Step4 回退：
+  - `selected_evidence_state` 重新退回 `none`
+  - 主证据不再是当前已人工确认通过的 local divstrip evidence
+  - `fact_reference_point` 重新跑到导流带 distal tip，而不再表示 formation-side / throat-side reference
+
+当前冻结的共同要求：
+
+- `selected_evidence` 必须是当前 unit 内切出的合法 `local candidate unit`，不得重新退回容器语义或假的 `structure:middle` 主证据。
+- `fact_reference_point` 必须落在当前 `selected_evidence_region_geometry` 上，并表达当前分歧 / 合流过程的 formation-side / throat-side reference。
+- 对当前已接受样本，`fact_reference_point` 应比候选摘要中的远端参考距离更靠近当前 representative node；它不是导流带远端 tip 的展示点。
+
+当前冻结的 Anchor_2 accepted baseline：
+
+- `760213`
+  - `node_760213 -> node_760213:divstrip:3:01`
+  - `node_760218 -> node_760218:divstrip:3:01`
+- `785671`
+  - `event_unit_01 -> event_unit_01:divstrip:3:01`
+- `785675`
+  - `event_unit_01 -> event_unit_01:divstrip:5:01`
+- `857993`
+  - `node_857993 -> node_857993:divstrip:4:01`
+  - `node_870089 -> node_870089:divstrip:4:01`
+- `987998`
+  - `event_unit_01 -> event_unit_01:divstrip:4:01`
+- `17943587`
+  - `node_17943587 -> node_17943587:divstrip:2:01`
+  - `node_55353233 -> node_55353233:divstrip:2:01`
+  - `node_55353239 -> node_55353239:divstrip:2:01`
+  - `node_55353248 -> node_55353248:divstrip:2:01`
+- `30434673`
+  - `event_unit_01 -> event_unit_01:divstrip:4:01`
+- `73462878`
+  - `event_unit_01 -> event_unit_01:divstrip:1:01`
 
 ## 4. Outputs
 
@@ -313,8 +383,17 @@
   - `evidence_source`
   - `position_source`
   - `reverse_tip_used`
+  - `positive_rcsd_support_level`
+  - `positive_rcsd_consistency_level`
+  - `selected_rcsdroad_ids`
+  - `selected_rcsdnode_ids`
+  - `primary_main_rc_node`
+  - `required_rcsd_node`
+  - `selected_candidate_region`
   - `primary_candidate_id`
   - `primary_candidate_layer`
+  - `axis_position_m`
+  - `reference_distance_to_origin_m`
   - `ownership_signature`
   - `upper_evidence_object_id`
   - `local_region_id`

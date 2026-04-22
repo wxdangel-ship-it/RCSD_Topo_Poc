@@ -197,22 +197,20 @@ def _build_stage4_local_context(
         )
         if feature.geometry is not None and not feature.geometry.is_empty
     ]
-    patch_local_divstrip_features = [
-        feature
-        for feature in raw_local_divstrip_features
-        if _matches_stage4_patch_membership(feature.properties, patch_id=current_patch_id)
-    ]
-    if patch_local_divstrip_features:
-        legacy_raw_local_divstrip_features = patch_local_divstrip_features
-    else:
-        legacy_raw_local_divstrip_features = raw_local_divstrip_features
-    local_divstrip_features = _clip_loaded_features_to_geometry(
+    clipped_local_divstrip_features = _clip_loaded_features_to_geometry(
         features=raw_local_divstrip_features,
         clip_geometry=grid.patch_polygon,
     )
-    patch_divstrip_features = _clip_loaded_features_to_geometry(
-        features=legacy_raw_local_divstrip_features,
-        clip_geometry=grid.patch_polygon,
+    local_divstrip_features = _explode_loaded_polygon_features(
+        features=clipped_local_divstrip_features,
+    )
+    patch_local_divstrip_features = [
+        feature
+        for feature in local_divstrip_features
+        if _matches_stage4_patch_membership(feature.properties, patch_id=current_patch_id)
+    ]
+    patch_divstrip_features = (
+        patch_local_divstrip_features if patch_local_divstrip_features else local_divstrip_features
     )
     local_divstrip_union = (
         unary_union([feature.geometry for feature in local_divstrip_features])
@@ -252,7 +250,7 @@ def _build_stage4_local_context(
         local_rcsd_nodes=tuple(local_rcsd_nodes),
         local_rcsd_roads=tuple(local_rcsd_roads),
         local_divstrip_features=tuple(local_divstrip_features),
-        queried_divstrip_feature_count=0 if divstripzone_layer_data is None else len(divstripzone_layer_data.features),
+        queried_divstrip_feature_count=len(local_divstrip_features),
         local_divstrip_union=local_divstrip_union,
         patch_drivezone_union=legacy_drivezone_union,
         patch_drivezone_mask=legacy_drivezone_mask,
@@ -330,3 +328,45 @@ def _clip_loaded_features_to_geometry(
             )
         )
     return clipped_features
+
+
+def _explode_loaded_polygon_features(
+    *,
+    features: list[LoadedFeature],
+) -> list[LoadedFeature]:
+    exploded_features: list[LoadedFeature] = []
+    for feature in features:
+        geometry = feature.geometry
+        if geometry is None or geometry.is_empty:
+            continue
+        component_geometries = [
+            component
+            for component in _explode_component_geometries(geometry)
+            if getattr(component, "geom_type", None) == "Polygon"
+            and not component.is_empty
+            and float(getattr(component, "area", 0.0) or 0.0) > 1e-6
+        ]
+        if not component_geometries:
+            continue
+        if len(component_geometries) == 1:
+            exploded_features.append(
+                LoadedFeature(
+                    feature_index=feature.feature_index,
+                    properties=dict(feature.properties),
+                    geometry=component_geometries[0],
+                )
+            )
+            continue
+        source_properties = dict(feature.properties)
+        source_properties.setdefault("source_feature_index", feature.feature_index)
+        for component_index, component_geometry in enumerate(component_geometries):
+            component_properties = dict(source_properties)
+            component_properties["exploded_component_index"] = component_index
+            exploded_features.append(
+                LoadedFeature(
+                    feature_index=feature.feature_index,
+                    properties=component_properties,
+                    geometry=component_geometry,
+                )
+            )
+    return exploded_features

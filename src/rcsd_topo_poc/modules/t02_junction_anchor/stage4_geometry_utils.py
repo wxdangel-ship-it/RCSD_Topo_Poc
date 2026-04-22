@@ -529,6 +529,7 @@ def _analyze_divstrip_context(
     drivezone_union,
     event_branch_ids: set[str] | None = None,
     allow_compound_pair_merge: bool = False,
+    excluded_component_geometries: list[Any] | None = None,
 ) -> dict[str, Any]:
     event_anchor_geometry = _estimate_event_anchor_geometry(
         local_roads=local_roads,
@@ -625,6 +626,41 @@ def _analyze_divstrip_context(
                     ]
                 )
 
+    valid_excluded_geometries = [
+        geometry
+        for geometry in (excluded_component_geometries or [])
+        if geometry is not None and not geometry.is_empty
+    ]
+
+    def _component_is_excluded_by_prior_unit(component_geometry) -> bool:
+        if not valid_excluded_geometries:
+            return False
+        component_area = float(getattr(component_geometry, "area", 0.0) or 0.0)
+        for excluded_geometry in valid_excluded_geometries:
+            try:
+                overlap = component_geometry.intersection(excluded_geometry)
+            except Exception:
+                continue
+            overlap_area = float(getattr(overlap, "area", 0.0) or 0.0)
+            if overlap_area <= 1e-6:
+                if float(component_geometry.distance(excluded_geometry)) > 0.5:
+                    continue
+            excluded_area = float(getattr(excluded_geometry, "area", 0.0) or 0.0)
+            smaller_area = min(component_area, excluded_area)
+            if smaller_area <= 1e-6:
+                if float(component_geometry.distance(excluded_geometry)) <= 0.5:
+                    return True
+                continue
+            overlap_ratio = overlap_area / smaller_area if smaller_area > 1e-6 else 0.0
+            if overlap_area >= 4.0 or overlap_ratio >= 0.15:
+                return True
+            if (
+                float(component_geometry.distance(excluded_geometry)) <= 0.25
+                and overlap_ratio >= 0.05
+            ):
+                return True
+        return False
+
     nearby_components: list[dict[str, Any]] = []
     for component_index, component_geometry in enumerate(components):
         matched_branch_ids = sorted(
@@ -681,6 +717,7 @@ def _analyze_divstrip_context(
                     "related_to_branch_middle": related_to_branch_middle,
                     "branch_middle_overlap": branch_middle_overlap,
                     "component_area": float(getattr(component_geometry, "area", 0.0) or 0.0),
+                    "is_excluded_by_prior_unit": _component_is_excluded_by_prior_unit(component_geometry),
                 }
             )
 
@@ -724,6 +761,27 @@ def _analyze_divstrip_context(
             candidate_components = branch_middle_components
         else:
             candidate_components = matched_components or road_nearby_components or nearby_components
+        if valid_excluded_geometries and candidate_components and all(
+            bool(component.get("is_excluded_by_prior_unit"))
+            for component in candidate_components
+        ):
+            seen_candidate_ids: set[str] = {
+                str(component["component_id"]) for component in candidate_components
+            }
+            broader_pool: list[dict[str, Any]] = []
+            for component in [*matched_components, *road_nearby_components, *nearby_components]:
+                cid = str(component["component_id"])
+                if cid in seen_candidate_ids:
+                    continue
+                seen_candidate_ids.add(cid)
+                broader_pool.append(component)
+            broader_non_excluded = [
+                component
+                for component in broader_pool
+                if not bool(component.get("is_excluded_by_prior_unit"))
+            ]
+            if broader_non_excluded:
+                candidate_components = broader_non_excluded
     else:
         candidate_components = []
         seen_candidate_component_ids: set[str] = set()
@@ -733,6 +791,14 @@ def _analyze_divstrip_context(
                 continue
             seen_candidate_component_ids.add(component_id)
             candidate_components.append(component)
+    if valid_excluded_geometries and candidate_components:
+        non_excluded_candidates = [
+            component
+            for component in candidate_components
+            if not bool(component.get("is_excluded_by_prior_unit"))
+        ]
+        if non_excluded_candidates:
+            candidate_components = non_excluded_candidates
     if allow_compound_pair_merge:
         has_branch_middle_signal = any(
             bool(component["related_to_branch_middle"]) or float(component["branch_middle_overlap"]) > 1e-6
@@ -1291,7 +1357,12 @@ def _resolve_event_axis_branch(
     road_branches,
     main_branch_ids: set[str],
     kind_2: int,
+    preferred_axis_branch_id: str | None = None,
 ):
+    if preferred_axis_branch_id is not None:
+        for branch in road_branches:
+            if str(branch.branch_id) == str(preferred_axis_branch_id):
+                return branch
     trunk_branch, _ = _resolve_trunk_branch(
         road_branches=road_branches,
         main_branch_ids=main_branch_ids,

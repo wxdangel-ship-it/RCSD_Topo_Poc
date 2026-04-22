@@ -153,6 +153,7 @@ if [[ "$PERF_AUDIT" == "1" ]]; then
   echo "[RUN] PERF_AUDIT_INTERVAL_SEC=$PERF_AUDIT_INTERVAL_SEC"
   echo "[RUN] PERF_AUDIT_MAX_SAMPLES=$PERF_AUDIT_MAX_SAMPLES"
   echo "[RUN] PERF_AUDIT_MAX_BYTES=$PERF_AUDIT_MAX_BYTES"
+  echo "[RUN] PERF_AUDIT_* controls sampling only; it does not auto-stop the batch."
 fi
 echo "[RUN] Eligible cases are auto-discovered from nodes where has_evd=yes, is_anchor=no, kind_2 in {4, 2048}; T03 default full-batch excluded cases remain excluded."
 

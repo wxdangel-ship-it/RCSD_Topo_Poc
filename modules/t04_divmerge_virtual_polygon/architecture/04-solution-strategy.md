@@ -61,6 +61,11 @@
 - 在 `pair-local region` 内，T04 先生成 `local candidate unit` 候选池，而不是把整块导流带对象直接拿去优选：
   - `pair_local_divstrip`
   - `pair_local_structure_mode`
+- `selected_candidate_region` 只保留为 pair-local 容器输出，不再等同于主证据。
+- 正式主输出改为 `selected_evidence`：
+  - 只允许来自 `local candidate unit`
+  - 当前 unit 若无合法主证据，则输出 `selected_evidence_state = none`
+- `structure:middle:01` 不再作为正式主证据候选；若实现内部仍保留类似中间带几何，只能作为容器 / 审计辅助。
 - 每个 `local candidate unit` 都显式保留：
   - `upper_evidence_object_id`
   - `local_region_id`
@@ -73,13 +78,60 @@
   - Layer 2：主体稳定落在 `pair-middle`
   - Layer 3：仅弱进入当前 unit 候选空间，只作 reverse / mode switch / 审计参考
 - T04 当前不把三层混成一个总分；正式策略是“先层级，再层内排序”。
+- `axis_position_m = 0` 或 reference 贴 node 的候选，统一记为 `node_fallback_only`；这类候选只能作为审计 / 兜底参考，不得直接成为主排序第一名。
 - forward / reverse / structure-mode 都共享同一个 `pair-local region`：
   - forward：当前 unit 的自然事实形成方向
   - reverse：同一空间内的反向重试，不是独立证据体系
   - structure-mode：同一空间内的道路结构面主导定位，不是跨区兜底
 - reverse 只作用于候选空间内的证据查找，不得再作为候选空间边界延伸或反向补全机制。
 - 同一 case 的 sub-unit / event-unit 先各自生成候选池和初选，再做单 Case 内重选；若多个 unit 初选撞到一起，优先保留更高层/更稳的候选，其它 unit 在自己的候选池内改选，而不是直接 fail。
+- 若当前初选候选被 `branch-middle / throat` gate 或 `node_fallback_only` 拒绝，必须继续在当前候选池内重选；若重选后仍无合法候选，则显式输出 `selected_evidence_state = none`。
 - 当前单 Case Step4 输出只视为“初选结果”；跨 Case 共用证据冲突不在单 Case 内硬解，等全量 Step4 结束后再做二次处理。
+- 正向 RCSD 在 Step4 内改成 T04 自己的正式选择器，而不是继续让旧 T02 bridge 主导正式输出：
+  - 先做 `pair-local raw observation`
+  - 再构造 `rcsd_candidate_scope`
+  - 再构造 `local RCSD unit`
+  - 再构造 `aggregated_rcsd_unit`
+  - 再做 `polarity normalization`
+  - 再做 `SWSD ↔ RCSD role mapping`
+  - 先判 `positive_rcsd_present`
+  - 最后得出 `A/B/C`、`primary_main_rc_node` 与 `required_rcsd_node`
+- `pair-local` 为空时直接 `C / no_support`；不回退到 scoped / case 级 RCSD 世界补主支持对象。
+- `local RCSD unit` 正式分为：
+  - `node-centric local_rcsd_unit`
+  - `road-only local_rcsd_unit`
+- `aggregated_rcsd_unit` 是默认正式判级单元；它由共享 road / node / forward 锚点的相邻 matched local units 聚合而成。
+- single-unit 只作为 fallback，不再用“单个 local unit 的严格等式”直接替代 aggregated-first 判级。
+- `road-only local_rcsd_unit` 最高只能到 `B`
+- Step4 正向 RCSD 必须显式分层：
+  - 作用域层：`pair-local raw observation / rcsd_candidate_scope / local_rcsd_unit / aggregated_rcsd_unit`
+  - 事实层：`positive_rcsd_present`
+  - 支持强度层：`A/B/C`
+- `axis polarity inverted` 默认在 `aggregated_rcsd_unit` 级别识别；single-unit 仅作 fallback。
+- T04 当前显式输出：
+  - `selected_rcsdroad_ids`
+  - `selected_rcsdnode_ids`
+  - `primary_main_rc_node`
+  - `positive_rcsd_present`
+  - `positive_rcsd_support_level`
+  - `positive_rcsd_consistency_level`
+  - `required_rcsd_node`
+  - `aggregated_rcsd_unit_id`
+  - `aggregated_rcsd_unit_ids`
+  - `axis_polarity_inverted`
+  - `required_rcsd_node_source`
+- 一致性在 Step4 内冻结为：
+  - `A / primary_support`
+  - `B / secondary_support`
+  - `C / no_support`
+- `A/B/C` 必须由 normalized role mapping 产生，不能再用 `angle_match` 或 nearby fallback 包装。
+- `positive_rcsd_present = true` 只表示事实层成立，不等于 `A`，也不自动保底 `B`。
+- 事实层成立后，仍必须在 `aggregated_rcsd_unit` 上完成 polarity normalization 与 normalized role mapping；若归一化后仍存在结构性硬冲突，最终允许落到 `C`。
+- `C` 同时覆盖：
+  - 事实层缺失
+  - 事实层虽成立，但归一化后仍存在结构性硬冲突
+- side-label mismatch 不得单独把事实存在样本压到 `C`。
+- `required_rcsd_node` 必须从已匹配的 local / aggregated RCSD unit 中独立输出，不再依赖 `A`；本轮仍不把它扩成 Step5-7 的 cover / publish 逻辑。
 - `branch-middle / throat gate` 的 boundary branches 必须来自当前 unit 的 `boundary_branch_ids`；complex / multi 场景下不再允许静默退回 case-level main pair 充当 unit-local throat。
 - merge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 entering branches；diverge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 exiting branches；`preferred_axis_branch_id` 只允许来自当前 unit 的唯一 opposite-direction trunk。
 - `divstrip_ref` 命中时，Step4 正式拆分：

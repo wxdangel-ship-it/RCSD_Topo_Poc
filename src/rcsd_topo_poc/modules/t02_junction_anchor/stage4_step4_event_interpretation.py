@@ -540,6 +540,71 @@ def _materialize_reference_candidate(
             and abs(float(drivezone_split_s) - float(divstrip_ref_s)) <= float(EVENT_REFERENCE_MAX_OFFSET_M)
         ):
             divstrip_scan_candidates.append((float(drivezone_split_s), "split_guided"))
+        body_center_s_value: float | None = None
+        body_center_full_component = None
+        if tip_s is not None:
+            full_component_geometry = None
+            if all_divstrip_geometry is not None and not all_divstrip_geometry.is_empty:
+                tip_point_at_s = _point_from_axis_offset(
+                    origin_point=scan_origin_point,
+                    axis_unit_vector=scan_axis_unit_vector,
+                    offset_m=float(tip_s),
+                )
+                tip_point_for_lookup = tip_point_at_s
+                if (
+                    selected_divstrip_geometry is not None
+                    and not selected_divstrip_geometry.is_empty
+                ):
+                    try:
+                        snapped = nearest_points(tip_point_at_s, selected_divstrip_geometry)[1]
+                    except Exception:
+                        snapped = tip_point_at_s
+                    if snapped is not None and not snapped.is_empty:
+                        tip_point_for_lookup = snapped
+                full_polygon_components = _collect_polygon_components(all_divstrip_geometry)
+                covering = [
+                    component
+                    for component in full_polygon_components
+                    if component.buffer(1.0).covers(tip_point_for_lookup)
+                ]
+                if covering:
+                    full_component_geometry = max(
+                        covering,
+                        key=lambda component: float(getattr(component, "area", 0.0) or 0.0),
+                    )
+                elif full_polygon_components:
+                    full_component_geometry = min(
+                        full_polygon_components,
+                        key=lambda component: float(component.distance(tip_point_for_lookup)),
+                    )
+            centroid_source_geometry = (
+                full_component_geometry
+                if full_component_geometry is not None and not full_component_geometry.is_empty
+                else selected_divstrip_geometry
+            )
+            if centroid_source_geometry is not None and not centroid_source_geometry.is_empty:
+                try:
+                    _component_centroid = centroid_source_geometry.centroid
+                except Exception:
+                    _component_centroid = None
+                if _component_centroid is not None and not _component_centroid.is_empty:
+                    projected_centroid_s = _project_point_to_axis(
+                        _component_centroid,
+                        origin_xy=(float(scan_origin_point.x), float(scan_origin_point.y)),
+                        axis_unit_vector=scan_axis_unit_vector,
+                    )
+                    if (
+                        projected_centroid_s is not None
+                        and abs(float(projected_centroid_s) - float(tip_s)) > 1.5
+                        and (
+                            (float(tip_s) >= 0.0 and float(projected_centroid_s) >= 0.0)
+                            or (float(tip_s) < 0.0 and float(projected_centroid_s) < 0.0)
+                        )
+                    ):
+                        body_center_s_value = float(projected_centroid_s)
+                        body_center_full_component = full_component_geometry
+        if body_center_s_value is not None:
+            divstrip_scan_candidates.append((body_center_s_value, "body_center"))
         if first_divstrip_hit_s is not None and tip_s is not None:
             divstrip_scan_candidates.append((0.5 * (float(first_divstrip_hit_s) + float(tip_s)), "core_mid"))
         if tip_s is not None:
@@ -553,6 +618,13 @@ def _materialize_reference_candidate(
             if rounded_scan_s in seen_scan_values:
                 continue
             seen_scan_values.add(rounded_scan_s)
+            candidate_divstrip_geometry = selected_divstrip_geometry
+            if (
+                candidate_label == "body_center"
+                and body_center_full_component is not None
+                and not body_center_full_component.is_empty
+            ):
+                candidate_divstrip_geometry = body_center_full_component
             candidate_point = _materialize_divstrip_core_point(
                 scan_origin_point=scan_origin_point,
                 scan_axis_unit_vector=scan_axis_unit_vector,
@@ -560,8 +632,29 @@ def _materialize_reference_candidate(
                 cross_half_len_m=cross_half_len_m,
                 branch_a_centerline=branch_a_centerline,
                 branch_b_centerline=branch_b_centerline,
-                divstrip_geometry=selected_divstrip_geometry,
+                divstrip_geometry=candidate_divstrip_geometry,
             )
+            if candidate_point is None and candidate_label == "body_center" and body_center_full_component is not None:
+                axis_anchor_point = _point_from_axis_offset(
+                    origin_point=scan_origin_point,
+                    axis_unit_vector=scan_axis_unit_vector,
+                    offset_m=float(candidate_scan_s),
+                )
+                if (
+                    body_center_full_component is not None
+                    and not body_center_full_component.is_empty
+                    and axis_anchor_point is not None
+                    and not axis_anchor_point.is_empty
+                ):
+                    if body_center_full_component.buffer(1e-6).covers(axis_anchor_point):
+                        candidate_point = axis_anchor_point
+                    else:
+                        try:
+                            candidate_point = nearest_points(
+                                axis_anchor_point, body_center_full_component
+                            )[1]
+                        except Exception:
+                            candidate_point = None
             if candidate_point is None:
                 continue
             chosen_point = candidate_point
@@ -847,6 +940,8 @@ def _resolve_event_reference_point(
     branch_b_centerline,
     cross_half_len_m: float,
     patch_size_m: float,
+    excluded_axis_s_values: list[float] | None = None,
+    excluded_axis_tolerance_m: float = 5.0,
 ) -> dict[str, Any]:
     fallback_point, fallback_source = _resolve_event_origin_point(
         representative_node=representative_node,
@@ -1105,17 +1200,32 @@ def _resolve_event_reference_point(
             branch_b_centerline=branch_b_centerline,
             divstrip_geometry=selected_divstrip_geometry,
         )
-        if forward_gate["valid"]:
+        forward_axis_conflict = False
+        if forward_gate["valid"] and excluded_axis_s_values:
+            forward_chosen_s_value = float(forward_gate["chosen_s_m"])
+            for prior_s in excluded_axis_s_values:
+                if abs(float(prior_s) - forward_chosen_s_value) <= float(excluded_axis_tolerance_m) + 1e-9:
+                    forward_axis_conflict = True
+                    break
+        if forward_gate["valid"] and not forward_axis_conflict:
             resolved_candidate = dict(forward_candidate)
             resolved_candidate["origin_point"] = forward_gate["point"]
             resolved_candidate["chosen_s_m"] = float(forward_gate["chosen_s_m"])
         else:
-            branch_middle_gate_signal = str(forward_gate["signal"] or "event_reference_outside_branch_middle")
-            branch_middle_gate_reason = str(forward_gate["reason"] or "outside_branch_middle_tolerance")
+            if forward_axis_conflict:
+                branch_middle_gate_signal = "event_reference_axis_conflict_with_prior_unit"
+                branch_middle_gate_reason = "forward_axis_position_overlaps_prior_unit"
+            else:
+                branch_middle_gate_signal = str(forward_gate["signal"] or "event_reference_outside_branch_middle")
+                branch_middle_gate_reason = str(forward_gate["reason"] or "outside_branch_middle_tolerance")
             branch_middle_gate_phase = "forward"
             chosen_s = None
             position_source = "none"
-            split_pick_source = f"{split_pick_source}_outside_branch_middle"
+            split_pick_source = (
+                f"{split_pick_source}_axis_conflict_with_prior_unit"
+                if forward_axis_conflict
+                else f"{split_pick_source}_outside_branch_middle"
+            )
     if chosen_s is None:
         reverse_scan_axis_unit_vector = (-float(scan_axis_unit_vector[0]), -float(scan_axis_unit_vector[1]))
         reverse_tip_s = None
@@ -1236,14 +1346,25 @@ def _resolve_event_reference_point(
                 branch_b_centerline=branch_b_centerline,
                 divstrip_geometry=selected_divstrip_geometry,
             )
-            if reverse_gate["valid"]:
+            reverse_axis_conflict = False
+            if reverse_gate["valid"] and excluded_axis_s_values:
+                reverse_chosen_s_value = float(reverse_gate["chosen_s_m"])
+                for prior_s in excluded_axis_s_values:
+                    if abs(float(prior_s) - reverse_chosen_s_value) <= float(excluded_axis_tolerance_m) + 1e-9:
+                        reverse_axis_conflict = True
+                        break
+            if reverse_gate["valid"] and not reverse_axis_conflict:
                 resolved_candidate = dict(reverse_candidate)
                 resolved_candidate["origin_point"] = reverse_gate["point"]
                 resolved_candidate["chosen_s_m"] = float(reverse_gate["chosen_s_m"])
             else:
                 chosen_s = None
-                branch_middle_gate_signal = str(reverse_gate["signal"] or "event_reference_outside_branch_middle")
-                branch_middle_gate_reason = str(reverse_gate["reason"] or "outside_branch_middle_tolerance")
+                if reverse_axis_conflict:
+                    branch_middle_gate_signal = "event_reference_axis_conflict_with_prior_unit"
+                    branch_middle_gate_reason = "reverse_axis_position_overlaps_prior_unit"
+                else:
+                    branch_middle_gate_signal = str(reverse_gate["signal"] or "event_reference_outside_branch_middle")
+                    branch_middle_gate_reason = str(reverse_gate["reason"] or "outside_branch_middle_tolerance")
                 branch_middle_gate_phase = "reverse"
     if resolved_candidate is None and chosen_s is None and force_reverse_probe and forward_drivezone_split_s is not None:
         chosen_s = float(forward_drivezone_split_s)
@@ -1938,16 +2059,33 @@ def _build_stage4_event_interpretation(
     road_branches: list[Any],
     main_branch_ids: set[str],
     member_node_ids: set[str],
+    event_branch_ids: set[str] | None = None,
+    boundary_branch_ids: Sequence[str] | None = None,
+    preferred_axis_branch_id: str | None = None,
+    context_augmented_node_ids: set[str] | None = None,
+    degraded_scope_reason: str | None = None,
     direct_target_rc_nodes: list[ParsedNode],
     exact_target_rc_nodes: list[ParsedNode],
     primary_main_rc_node: ParsedNode | None,
     rcsdnode_seed_mode: str,
     chain_context: dict[str, Any],
+    excluded_component_geometries: list[Any] | None = None,
+    excluded_axis_positions: list[tuple[str, float]] | None = None,
 ) -> Stage4EventInterpretationResult:
     provisional_multibranch_kind_2 = (
         int(representative_source_kind_2)
         if representative_source_kind_2 in STAGE4_KIND_2_VALUES
         else 16
+    )
+    explicit_event_branch_ids = {
+        str(branch_id)
+        for branch_id in (event_branch_ids or set())
+        if branch_id is not None
+    }
+    explicit_boundary_branch_ids = tuple(
+        str(branch_id)
+        for branch_id in (boundary_branch_ids or ())
+        if branch_id is not None
     )
     divstrip_context_raw = _analyze_divstrip_context(
         local_divstrip_features=local_divstrip_features,
@@ -1956,9 +2094,11 @@ def _build_stage4_event_interpretation(
         local_roads=local_roads,
         main_branch_ids=main_branch_ids,
         drivezone_union=drivezone_union,
+        event_branch_ids=explicit_event_branch_ids or None,
         allow_compound_pair_merge=_is_complex_stage4_node(representative_node) or len(group_nodes) > 1,
+        excluded_component_geometries=excluded_component_geometries,
     )
-    preferred_branch_ids = set(divstrip_context_raw["preferred_branch_ids"])
+    preferred_branch_ids = set(divstrip_context_raw["preferred_branch_ids"]) | explicit_event_branch_ids
     multibranch_context_raw = _resolve_multibranch_context(
         road_branches=road_branches,
         main_branch_ids=main_branch_ids,
@@ -2002,16 +2142,25 @@ def _build_stage4_event_interpretation(
     reverse_tip_used = False
     position_source_reverse: str | None = None
     reverse_side_branches: list[Any] = []
-    selected_side_branches = (
-        list(multibranch_context_raw["selected_side_branches"])
-        if multibranch_context_raw["enabled"] and multibranch_context_raw["selected_side_branches"]
-        else list(forward_side_branches)
-    )
+    if explicit_event_branch_ids:
+        selected_side_branches = [
+            branch for branch in road_branches if str(branch.branch_id) in explicit_event_branch_ids
+        ]
+    else:
+        selected_side_branches = (
+            list(multibranch_context_raw["selected_side_branches"])
+            if multibranch_context_raw["enabled"] and multibranch_context_raw["selected_side_branches"]
+            else list(forward_side_branches)
+        )
 
     selected_event_branch_ids = (
-        multibranch_context_raw["selected_event_branch_ids"]
-        if multibranch_context_raw["enabled"] and multibranch_context_raw["selected_event_branch_ids"]
-        else sorted(branch.branch_id for branch in selected_side_branches)
+        sorted(explicit_event_branch_ids)
+        if explicit_event_branch_ids
+        else (
+            multibranch_context_raw["selected_event_branch_ids"]
+            if multibranch_context_raw["enabled"] and multibranch_context_raw["selected_event_branch_ids"]
+            else sorted(branch.branch_id for branch in selected_side_branches)
+        )
     )
     refined_divstrip_context_raw = _analyze_divstrip_context(
         local_divstrip_features=local_divstrip_features,
@@ -2022,6 +2171,7 @@ def _build_stage4_event_interpretation(
         drivezone_union=drivezone_union,
         event_branch_ids=set(selected_event_branch_ids),
         allow_compound_pair_merge=kind_resolution_raw["complex_junction"] or len(group_nodes) > 1,
+        excluded_component_geometries=excluded_component_geometries,
     )
     if (
         refined_divstrip_context_raw["nearby"]
@@ -2029,7 +2179,7 @@ def _build_stage4_event_interpretation(
         or refined_divstrip_context_raw["selected_component_ids"]
     ):
         divstrip_context_raw = refined_divstrip_context_raw
-        preferred_branch_ids = set(divstrip_context_raw["preferred_branch_ids"])
+        preferred_branch_ids = set(divstrip_context_raw["preferred_branch_ids"]) | explicit_event_branch_ids
     position_source_forward = divstrip_context_raw["selection_mode"]
     position_source_final = (
         position_source_reverse
@@ -2037,9 +2187,13 @@ def _build_stage4_event_interpretation(
         else ("multibranch_event" if multibranch_context_raw["enabled"] else position_source_forward)
     )
     selected_branch_ids = (
-        sorted(multibranch_context_raw["selected_event_source_branch_ids"])
-        if multibranch_context_raw["enabled"] and multibranch_context_raw["selected_event_source_branch_ids"]
-        else sorted(main_branch_ids | {branch.branch_id for branch in selected_side_branches})
+        list(explicit_boundary_branch_ids)
+        if explicit_boundary_branch_ids
+        else (
+            sorted(multibranch_context_raw["selected_event_source_branch_ids"])
+            if multibranch_context_raw["enabled"] and multibranch_context_raw["selected_event_source_branch_ids"]
+            else sorted(main_branch_ids | {branch.branch_id for branch in selected_side_branches})
+        )
     )
     selected_road_ids = sorted(
         {
@@ -2187,6 +2341,7 @@ def _build_stage4_event_interpretation(
         road_branches=road_branches,
         main_branch_ids=main_branch_ids,
         kind_2=operational_kind_2,
+        preferred_axis_branch_id=preferred_axis_branch_id,
     )
     event_axis_branch_id = None if event_axis_branch is None else event_axis_branch.branch_id
     if (
@@ -2241,13 +2396,17 @@ def _build_stage4_event_interpretation(
         origin_point=provisional_event_origin,
     )
     cross_section_boundary_branch_ids = (
-        set(main_branch_ids)
-        if (
-            kind_resolution_raw["complex_junction"]
-            or multibranch_context_raw["enabled"]
-            or len(divstrip_context_raw["selected_component_ids"]) > 1
+        set(explicit_boundary_branch_ids)
+        if explicit_boundary_branch_ids
+        else (
+            set(main_branch_ids)
+            if (
+                kind_resolution_raw["complex_junction"]
+                or multibranch_context_raw["enabled"]
+                or len(divstrip_context_raw["selected_component_ids"]) > 1
+            )
+            else set(selected_branch_ids)
         )
-        else set(selected_branch_ids)
     )
     boundary_branch_a, boundary_branch_b = _pick_cross_section_boundary_branches(
         road_branches=road_branches,
@@ -2255,7 +2414,8 @@ def _build_stage4_event_interpretation(
         kind_2=operational_kind_2,
     )
     if (
-        (boundary_branch_a is None or boundary_branch_b is None)
+        not explicit_boundary_branch_ids
+        and (boundary_branch_a is None or boundary_branch_b is None)
         and cross_section_boundary_branch_ids != set(selected_branch_ids)
     ):
         boundary_branch_a, boundary_branch_b = _pick_cross_section_boundary_branches(
@@ -2282,7 +2442,8 @@ def _build_stage4_event_interpretation(
         )
     )
     if (
-        (kind_resolution_raw["complex_junction"] or multibranch_context_raw["enabled"])
+        not explicit_boundary_branch_ids
+        and (kind_resolution_raw["complex_junction"] or multibranch_context_raw["enabled"])
         and len(multibranch_context_raw.get("main_pair_item_ids", [])) >= 2
     ):
         main_pair_item_ids = [str(item_id) for item_id in multibranch_context_raw["main_pair_item_ids"][:2]]
@@ -2315,6 +2476,12 @@ def _build_stage4_event_interpretation(
         selected_rcsd_roads=selected_rcsd_roads,
         patch_size_m=patch_size_m,
     )
+    excluded_axis_s_values: list[float] = []
+    if excluded_axis_positions and event_axis_branch_id is not None:
+        target_axis_id = str(event_axis_branch_id)
+        for prior_axis_id, prior_s in excluded_axis_positions:
+            if str(prior_axis_id) == target_axis_id:
+                excluded_axis_s_values.append(float(prior_s))
     event_reference_raw = _resolve_event_reference_point(
         representative_node=representative_node,
         event_anchor_geometry=event_anchor_geometry,
@@ -2330,10 +2497,19 @@ def _build_stage4_event_interpretation(
         branch_b_centerline=branch_b_centerline,
         cross_half_len_m=event_cross_half_len_m,
         patch_size_m=patch_size_m,
+        excluded_axis_s_values=excluded_axis_s_values or None,
     )
     branch_middle_gate_signal = str(event_reference_raw.get("branch_middle_gate_signal") or "").strip() or None
     branch_middle_gate_passed = bool(event_reference_raw.get("branch_middle_gate_passed", True))
     hard_rejection_signals: list[str] = []
+    strict_branch_middle_enforcement = bool(
+        explicit_event_branch_ids
+        or explicit_boundary_branch_ids
+        or preferred_axis_branch_id is not None
+        or degraded_scope_reason is not None
+        or excluded_component_geometries
+        or excluded_axis_positions
+    )
     if str(event_reference_raw.get("split_pick_source") or "").startswith("reverse_"):
         reverse_tip_attempted = True
         reverse_tip_used = True
@@ -2349,7 +2525,13 @@ def _build_stage4_event_interpretation(
         if reverse_trigger is None:
             reverse_trigger = "forward_reference_outside_branch_middle"
     if branch_middle_gate_signal is not None and not branch_middle_gate_passed:
-        hard_rejection_signals.append(branch_middle_gate_signal)
+        # Keep legacy T02 behavior unless the caller explicitly opts into
+        # unit-local branch-middle enforcement via the new Step4 inputs.
+        if (
+            branch_middle_gate_signal != "event_reference_outside_branch_middle"
+            or strict_branch_middle_enforcement
+        ):
+            hard_rejection_signals.append(branch_middle_gate_signal)
     position_source_final = (
         position_source_reverse
         if reverse_tip_used and position_source_reverse is not None
@@ -2407,8 +2589,16 @@ def _build_stage4_event_interpretation(
         kind_resolution=kind_resolution_raw,
         chain_context=chain_context,
     )
-    if branch_middle_gate_signal is not None:
+    if (
+        branch_middle_gate_signal is not None
+        and (
+            branch_middle_gate_signal != "event_reference_outside_branch_middle"
+            or strict_branch_middle_enforcement
+        )
+    ):
         review_signals = tuple([*review_signals, branch_middle_gate_signal])
+    if degraded_scope_reason:
+        review_signals = tuple([*review_signals, f"degraded_scope:{degraded_scope_reason}"])
     risk_signals = _build_stage4_interpretation_risk_signals(
         review_signals=review_signals,
         reverse_tip_used=reverse_tip_used,

@@ -4,4 +4,4 @@ t00_utility_toolbox,modules/t00_utility_toolbox,support-retained,governed-toolin
 t01_data_preprocess,modules/t01_data_preprocess,active,formal-module-surface,keep-in-sync-with-implementation,official-end-to-end-plus-eight-sample-freeze-active
 t02_junction_anchor,modules/t02_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,stage1-stage2-stage3-active-independent-refactor-managed-separately
 t03_virtual_junction_anchor,modules/t03_virtual_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,step67-clarified-formal-stage-on-frozen-step3-no-public-step67-cli
-t04_divmerge_virtual_polygon,modules/t04_divmerge_virtual_polygon,active,formal-module-surface,keep-in-sync-with-step14-implementation,step1-step4-active-step4-review-outputs-no-public-cli
+t04_divmerge_virtual_polygon,modules/t04_divmerge_virtual_polygon,active,formal-module-surface,keep-in-sync-with-step14-implementation,step1-step4-active-step4-review-outputs-no-public-cli-step34-repair-formalization-open

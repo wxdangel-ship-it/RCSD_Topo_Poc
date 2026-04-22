@@ -15,7 +15,16 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.case_loader import (
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.event_interpretation import (
     build_case_result,
 )
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.rcsd_selection import (
+    _normalize_geometry,
+    _union_geometry,
+    resolve_positive_rcsd_selection,
+)
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon import run_t04_step14_batch
+from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
+    ParsedNode,
+    ParsedRoad,
+)
 
 
 REAL_ANCHOR_2_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor_2")
@@ -78,6 +87,63 @@ def _assert_one_sided_offsets(offsets: list[float] | tuple[float, ...]) -> None:
     if not non_zero:
         return
     assert not (any(item > 0.0 for item in non_zero) and any(item < 0.0 for item in non_zero))
+
+
+def _assert_selected_candidate_region_is_pair_local_container(event_unit) -> None:
+    assert event_unit.selected_candidate_region_geometry is not None
+    assert event_unit.pair_local_region_geometry is not None
+    assert event_unit.selected_candidate_region == event_unit.pair_local_summary["region_id"]
+    assert event_unit.selected_candidate_region_geometry.buffer(1e-6).covers(
+        event_unit.unit_context.representative_node.geometry
+    )
+    assert float(event_unit.selected_candidate_region_geometry.area) == pytest.approx(
+        float(event_unit.pair_local_region_geometry.area),
+        abs=1e-3,
+    )
+
+
+def _parsed_node(
+    node_id: str,
+    x: float,
+    y: float,
+    *,
+    mainnodeid: str | None = None,
+    has_evd: str | None = "no",
+    is_anchor: str | None = "no",
+    kind_2: int | None = 0,
+    grade_2: int | None = 0,
+) -> ParsedNode:
+    return ParsedNode(
+        feature_index=0,
+        properties={"id": node_id, "mainnodeid": mainnodeid},
+        geometry=Point(x, y),
+        node_id=str(node_id),
+        mainnodeid=None if mainnodeid is None else str(mainnodeid),
+        has_evd=has_evd,
+        is_anchor=is_anchor,
+        kind_2=kind_2,
+        grade_2=grade_2,
+        kind=None,
+    )
+
+
+def _parsed_road(
+    road_id: str,
+    coords: list[tuple[float, float]],
+    *,
+    snodeid: str,
+    enodeid: str,
+    direction: int = 2,
+) -> ParsedRoad:
+    return ParsedRoad(
+        feature_index=0,
+        properties={"id": road_id, "snodeid": snodeid, "enodeid": enodeid, "direction": direction},
+        geometry=LineString(coords),
+        road_id=str(road_id),
+        snodeid=str(snodeid),
+        enodeid=str(enodeid),
+        direction=direction,
+    )
 
 
 def _build_synthetic_case_package(case_dir: Path) -> None:
@@ -214,6 +280,34 @@ def _build_synthetic_case_package(case_dir: Path) -> None:
     )
 
 
+def _build_pair_local_empty_rcsd_case_package(case_dir: Path) -> None:
+    _build_synthetic_case_package(case_dir)
+    write_vector(
+        case_dir / "rcsdroad.gpkg",
+        [
+            {
+                "properties": {"id": 21, "snodeid": 9101, "enodeid": 9102, "direction": 2},
+                "geometry": LineString([(-68, 34), (-56, 38)]),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        case_dir / "rcsdnode.gpkg",
+        [
+            {
+                "properties": {"id": 9101, "mainnodeid": 9999},
+                "geometry": Point(-68, 34),
+            },
+            {
+                "properties": {"id": 9102, "mainnodeid": 9999},
+                "geometry": Point(-56, 38),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+
+
 def _build_multi_event_case_package(case_dir: Path) -> None:
     case_dir.mkdir(parents=True, exist_ok=True)
     file_list = [
@@ -316,6 +410,7 @@ def test_t04_step14_batch_outputs_synthetic_case(tmp_path: Path) -> None:
     assert (run_root / "cases" / "1001" / "step4_review_overview.png").is_file()
     assert any((run_root / "step4_review_flat").glob("*.png"))
     assert any((run_root / "cases" / "1001" / "event_units").rglob("step4_review.png"))
+    assert any((run_root / "cases" / "1001" / "event_units").rglob("step4_candidate_compare.png"))
 
 
 @pytest.mark.smoke
@@ -332,9 +427,12 @@ def test_t04_step14_batch_writes_unit_level_step3_and_candidate_docs(tmp_path: P
 
     result_case_dir = run_root / "cases" / "1001"
     case_step3 = json.loads((result_case_dir / "step3_status.json").read_text(encoding="utf-8"))
+    case_step4 = json.loads((result_case_dir / "step4_event_interpretation.json").read_text(encoding="utf-8"))
+    case_step4_audit = json.loads((result_case_dir / "step4_audit.json").read_text(encoding="utf-8"))
     unit_dir = next((result_case_dir / "event_units").iterdir())
     unit_step3 = json.loads((unit_dir / "step3_status.json").read_text(encoding="utf-8"))
     candidate_doc = json.loads((unit_dir / "step4_candidates.json").read_text(encoding="utf-8"))
+    evidence_audit_doc = json.loads((unit_dir / "step4_evidence_audit.json").read_text(encoding="utf-8"))
 
     assert case_step3["topology_scope"] == "case_coordination"
     assert unit_step3["topology_scope"] == "case_coordination"
@@ -343,19 +441,80 @@ def test_t04_step14_batch_writes_unit_level_step3_and_candidate_docs(tmp_path: P
     assert unit_step3["preferred_axis_branch_id"] == "road_1"
     assert unit_step3["degraded_scope_reason"] == "pair_local_scope_roads_empty"
 
-    selected_candidate = candidate_doc["selected_candidate"]
-    assert selected_candidate["candidate_id"].startswith("event_unit_01:structure:")
-    assert selected_candidate["layer_label"] == "Layer 1"
-    assert selected_candidate["selection_rank"] == 1
+    selected_evidence = candidate_doc["selected_evidence"]
+    assert candidate_doc["selected_evidence_state"] == "found"
+    assert selected_evidence["candidate_id"].startswith("event_unit_01:divstrip:")
+    assert selected_evidence["layer_label"] == "Layer 2"
+    assert selected_evidence["selection_rank"] == 1
     expected_axis_signature = _stable_axis_signature(
         unit_step3["branch_road_memberships"],
         unit_step3["preferred_axis_branch_id"],
     )
-    assert selected_candidate["point_signature"].startswith(f"{expected_axis_signature}:")
+    assert selected_evidence["point_signature"].startswith(f"{expected_axis_signature}:")
+    assert candidate_doc["selected_candidate_region"] == case_step4["event_units"][0]["pair_local_summary"]["region_id"]
+    assert candidate_doc["positive_rcsd_support_level"] in {"primary_support", "secondary_support", "no_support"}
+    assert candidate_doc["positive_rcsd_consistency_level"] in {"A", "B", "C"}
+    assert "pair_local_rcsd_empty" in candidate_doc
+    assert "rcsd_selection_mode" in candidate_doc
+    assert "local_rcsd_unit_kind" in candidate_doc
+    assert "aggregated_rcsd_unit_id" in candidate_doc
+    assert "aggregated_rcsd_unit_ids" in candidate_doc
+    assert "first_hit_rcsdroad_ids" in candidate_doc
+    assert "positive_rcsd_present" in candidate_doc
+    assert "positive_rcsd_present_reason" in candidate_doc
+    assert "axis_polarity_inverted" in candidate_doc
+    assert "positive_rcsd_audit" in candidate_doc
+    assert "selected_rcsdroad_ids" in candidate_doc
+    assert "selected_rcsdnode_ids" in candidate_doc
+    assert "required_rcsd_node_source" in candidate_doc
+    if (
+        candidate_doc["local_rcsd_unit_kind"] == "node_centric"
+        and candidate_doc["positive_rcsd_consistency_level"] in {"A", "B"}
+    ):
+        assert candidate_doc["required_rcsd_node"] not in {"", None}
     assert any(
         candidate["layer_label"] == "Layer 2"
         for candidate in candidate_doc["alternative_candidates"]
     )
+    assert evidence_audit_doc["audit_summary"]["candidate_pool_size"] >= 2
+    assert evidence_audit_doc["audit_summary"]["selected_reference_zone"] in {
+        "throat",
+        "middle",
+        "edge",
+        "outside",
+        "missing",
+    }
+    assert evidence_audit_doc["candidate_shortlist"]
+    assert set(item["candidate_id"] for item in evidence_audit_doc["candidate_shortlist"]).issubset(
+        set(evidence_audit_doc["audit_summary"]["candidate_shortlist_ids"])
+    )
+    shortlist_entry = evidence_audit_doc["candidate_shortlist"][0]
+    assert {
+        "selection_status",
+        "decision_reason",
+        "review_state",
+        "evidence_source",
+        "position_source",
+        "reverse_tip_used",
+        "rcsd_consistency_result",
+        "positive_rcsd_support_level",
+        "positive_rcsd_consistency_level",
+    }.issubset(shortlist_entry)
+
+    assert case_step4["event_units"][0]["selected_evidence_state"] == "found"
+    assert case_step4["event_units"][0]["selected_candidate_region"] == candidate_doc["selected_candidate_region"]
+    assert case_step4["event_units"][0]["selected_evidence"]["candidate_id"] == selected_evidence["candidate_id"]
+    assert case_step4["event_units"][0]["positive_rcsd_consistency_level"] in {"A", "B", "C"}
+    assert isinstance(case_step4["event_units"][0]["positive_rcsd_present"], bool)
+    assert "positive_rcsd_audit" in case_step4["event_units"][0]
+    assert case_step4["event_units"][0]["selected_rcsdroad_ids"] == candidate_doc["selected_rcsdroad_ids"]
+    assert case_step4_audit["event_units"][0]["selected_evidence"]["candidate_id"] == selected_evidence["candidate_id"]
+
+    fiona = pytest.importorskip("fiona")
+    with fiona.open(result_case_dir / "step4_event_evidence.gpkg") as src:
+        rows = list(src)
+    assert any(item["properties"]["geometry_role"] == "selected_evidence_region_geometry" for item in rows)
+    assert any(item["properties"]["candidate_id"] == selected_evidence["candidate_id"] for item in rows)
 
 
 @pytest.mark.smoke
@@ -375,8 +534,11 @@ def test_t04_step14_batch_outputs_multi_event_case(tmp_path: Path) -> None:
 
     assert review_summary["total_event_unit_count"] == 3
     assert review_summary["cases_with_multiple_event_units"] == ["2002"]
-    assert len(flat_pngs) == 3
-    assert all("__2002__" in path.name for path in flat_pngs)
+    assert len(flat_pngs) == 10
+    assert any(path.name.endswith("__main.png") for path in flat_pngs)
+    assert any(path.name.endswith("__compare.png") for path in flat_pngs)
+    assert any(path.name.endswith("__rcsd.png") for path in flat_pngs)
+    assert any("overview" in path.name for path in flat_pngs)
 
 
 @pytest.mark.smoke
@@ -392,9 +554,17 @@ def test_t04_step14_multi_event_case_exports_reselection_and_index_fields(tmp_pa
     )
 
     review_summary = json.loads((run_root / "step4_review_summary.json").read_text(encoding="utf-8"))
-    assert review_summary["selected_layer_1_count"] == 3
-    assert review_summary["selected_layer_2_count"] == 0
+    assert review_summary["selected_evidence_none_count"] == 2
+    assert review_summary["selected_layer_1_count"] == 0
+    assert review_summary["selected_layer_2_count"] == 1
     assert review_summary["selected_layer_3_count"] == 0
+    assert "positive_rcsd_support_level_counts" in review_summary
+    assert "positive_rcsd_consistency_level_counts" in review_summary
+    assert "positive_rcsd_present_counts" in review_summary
+    assert "axis_polarity_inverted_counts" in review_summary
+    assert "selected_reference_zone_counts" in review_summary
+    assert "conflict_signal_level_counts" in review_summary
+    assert "top_focus_reasons" in review_summary
 
     event_unit_02_dir = run_root / "cases" / "2002" / "event_units" / "event_unit_02"
     event_unit_03_dir = run_root / "cases" / "2002" / "event_units" / "event_unit_03"
@@ -404,36 +574,397 @@ def test_t04_step14_multi_event_case_exports_reselection_and_index_fields(tmp_pa
     unit_03_candidates = json.loads((event_unit_03_dir / "step4_candidates.json").read_text(encoding="utf-8"))
 
     assert unit_02_step3["topology_scope"] == "multi_divmerge_case_input"
-    assert unit_02_candidates["selected_candidate"]["selected_after_reselection"] is False
-    assert unit_02_candidates["selected_candidate"]["selection_rank"] == 1
-    assert unit_02_candidates["selected_candidate"]["layer_label"] == "Layer 1"
+    assert unit_02_candidates["selected_evidence_state"] == "none"
+    assert unit_02_candidates["selected_evidence"]["selection_status"] == "none"
+    assert unit_02_candidates["selected_evidence"]["decision_reason"] == "no_selected_evidence_after_reselection"
     assert any(
         candidate["candidate_id"] == "event_unit_02:structure:throat:01"
         for candidate in unit_02_candidates["alternative_candidates"]
     )
     assert any(candidate["reverse_tip_used"] is True for candidate in unit_02_candidates["alternative_candidates"])
 
-    assert unit_03_candidates["selected_candidate"]["selected_after_reselection"] is False
-    assert unit_03_candidates["selected_candidate"]["selection_rank"] == 1
+    assert unit_03_candidates["selected_evidence_state"] == "found"
+    assert unit_03_candidates["selected_evidence"]["selected_after_reselection"] is False
+    assert unit_03_candidates["selected_evidence"]["selection_rank"] == 1
+    assert unit_03_candidates["positive_rcsd_support_level"] in {"primary_support", "secondary_support", "no_support"}
+    assert unit_03_candidates["positive_rcsd_consistency_level"] in {"A", "B", "C"}
     expected_unit_03_axis_signature = _stable_axis_signature(
         unit_03_step3["branch_road_memberships"],
         unit_03_step3["preferred_axis_branch_id"],
     )
-    assert unit_03_candidates["selected_candidate"]["point_signature"] == f"{expected_unit_03_axis_signature}:45.0"
+    assert unit_03_candidates["selected_evidence"]["point_signature"].startswith(
+        f"{expected_unit_03_axis_signature}:"
+    )
     assert any(candidate["reverse_tip_used"] is True for candidate in unit_03_candidates["alternative_candidates"])
 
     with (run_root / "step4_review_index.csv").open("r", encoding="utf-8-sig", newline="") as fp:
         rows = {row["event_unit_id"]: row for row in csv.DictReader(fp)}
 
-    assert rows["event_unit_01"]["primary_candidate_layer"] == "Layer 1"
-    assert rows["event_unit_02"]["primary_candidate_layer"] == "Layer 1"
+    assert rows["event_unit_01"]["selected_evidence_state"] == "none"
+    assert rows["event_unit_02"]["selected_evidence_state"] == "none"
+    assert rows["event_unit_03"]["selected_evidence_state"] == "found"
+    assert rows["event_unit_03"]["primary_candidate_layer"] == "Layer 2"
     expected_unit_02_axis_signature = _stable_axis_signature(
         unit_02_step3["branch_road_memberships"],
         unit_02_step3["preferred_axis_branch_id"],
     )
-    assert rows["event_unit_02"]["point_signature"] == f"{expected_unit_02_axis_signature}:45.0"
-    assert rows["event_unit_03"]["point_signature"] == f"{expected_unit_03_axis_signature}:45.0"
-    assert rows["event_unit_02"]["ownership_signature"].startswith("structure_face:")
+    assert rows["event_unit_02"]["primary_candidate_id"] == ""
+    assert rows["event_unit_02"]["point_signature"] == ""
+    assert rows["event_unit_03"]["point_signature"].startswith(f"{expected_unit_03_axis_signature}:")
+    assert rows["event_unit_02"]["ownership_signature"] == ""
+    assert rows["event_unit_02"]["has_alternative_candidates"] == "1"
+    assert rows["event_unit_02"]["selected_reference_zone"] in {"throat", "middle", "edge", "outside", "missing"}
+    assert rows["event_unit_02"]["positive_rcsd_support_level"] in {"primary_support", "secondary_support", "no_support"}
+    assert rows["event_unit_02"]["positive_rcsd_consistency_level"] in {"A", "B", "C"}
+    assert rows["event_unit_02"]["positive_rcsd_present"] in {"0", "1"}
+    assert rows["event_unit_02"]["axis_polarity_inverted"] in {"0", "1"}
+    assert rows["event_unit_02"]["pair_local_rcsd_empty"] in {"0", "1"}
+    assert rows["event_unit_02"]["rcsd_selection_mode"] != ""
+    assert rows["event_unit_02"]["selected_candidate_region"] != ""
+    assert rows["event_unit_02"]["selected_evidence_membership"] != ""
+    assert rows["event_unit_02"]["needs_manual_review_focus"] == "1"
+    assert rows["event_unit_02"]["compare_image_path"].endswith("__compare.png")
+    assert rows["event_unit_02"]["positive_rcsd_image_path"].endswith("__rcsd.png")
+    assert rows["event_unit_02"]["case_overview_path"].endswith("overview.png")
+
+
+@pytest.mark.smoke
+def test_t04_step14_pair_local_empty_rcsd_does_not_fallback_to_case_world(tmp_path: Path) -> None:
+    case_root = tmp_path / "cases"
+    case_dir = case_root / "1002"
+    _build_pair_local_empty_rcsd_case_package(case_dir)
+
+    run_root = run_t04_step14_batch(
+        case_root=case_root,
+        out_root=tmp_path / "out_pair_local_empty",
+        run_id="synthetic_t04_pair_local_empty",
+    )
+
+    unit_dir = next((run_root / "cases" / "1002" / "event_units").iterdir())
+    candidate_doc = json.loads((unit_dir / "step4_candidates.json").read_text(encoding="utf-8"))
+    evidence_doc = json.loads((unit_dir / "step4_evidence_audit.json").read_text(encoding="utf-8"))
+    review_summary = json.loads((run_root / "step4_review_summary.json").read_text(encoding="utf-8"))
+
+    assert candidate_doc["pair_local_rcsd_empty"] is True
+    assert candidate_doc["positive_rcsd_support_level"] == "no_support"
+    assert candidate_doc["positive_rcsd_consistency_level"] == "C"
+    assert candidate_doc["positive_rcsd_present"] is False
+    assert candidate_doc["required_rcsd_node"] in {"", None}
+    assert candidate_doc["selected_rcsdroad_ids"] == []
+    assert candidate_doc["selected_rcsdnode_ids"] == []
+    assert candidate_doc["rcsd_selection_mode"] == "pair_local_empty"
+    assert evidence_doc["positive_rcsd_audit"]["rcsd_decision_reason"] == "pair_local_rcsd_empty"
+    assert review_summary["pair_local_rcsd_empty_count"] >= 1
+
+
+def test_positive_rcsd_present_side_label_mismatch_does_not_drop_to_c() -> None:
+    representative_node = _parsed_node("1001", 0.0, 0.0, mainnodeid="1001", has_evd="yes", kind_2=16, grade_2=1)
+    selected_evidence_region_geometry = Point(6.0, 0.0).buffer(4.0)
+    pair_local_region_geometry = Polygon([(-12, -12), (20, -12), (20, 12), (-12, 12), (-12, -12)])
+    pair_local_middle_geometry = Polygon([(-2, -4), (18, -4), (18, 4), (-2, 4), (-2, -4)])
+
+    scoped_roads = [
+        _parsed_road("road_1", [(-10.0, 0.0), (0.0, 0.0)], snodeid="s_1", enodeid="1001"),
+        _parsed_road("road_2", [(0.0, 0.0), (10.0, 8.0)], snodeid="1001", enodeid="s_2"),
+    ]
+    pair_local_rcsd_roads = [
+        _parsed_road("rc_road_axis", [(0.0, 0.0), (6.0, 0.0)], snodeid="1001", enodeid="rc_1"),
+        _parsed_road("rc_road_event", [(6.0, 0.0), (15.0, -8.0)], snodeid="rc_1", enodeid="rc_2"),
+    ]
+    pair_local_rcsd_nodes = [
+        _parsed_node("rc_1", 6.0, 0.0, mainnodeid="1001"),
+    ]
+
+    decision = resolve_positive_rcsd_selection(
+        event_unit_id="synthetic_label_mismatch",
+        operational_kind_hint=16,
+        representative_node=representative_node,
+        selected_evidence_region_geometry=selected_evidence_region_geometry,
+        fact_reference_point=Point(6.0, 0.0),
+        pair_local_region_geometry=pair_local_region_geometry,
+        pair_local_middle_geometry=pair_local_middle_geometry,
+        scoped_rcsd_roads=pair_local_rcsd_roads,
+        scoped_rcsd_nodes=pair_local_rcsd_nodes,
+        pair_local_scope_rcsd_roads=pair_local_rcsd_roads,
+        pair_local_scope_rcsd_nodes=pair_local_rcsd_nodes,
+        scoped_roads=scoped_roads,
+        boundary_branch_ids=("road_1", "road_2"),
+        preferred_axis_branch_id="road_1",
+        scoped_input_branch_ids=("road_1",),
+        scoped_output_branch_ids=("road_2",),
+        branch_road_memberships={"road_1": ("road_1",), "road_2": ("road_2",)},
+        axis_vector=(1.0, 0.0),
+    )
+
+    assert decision.pair_local_rcsd_empty is False
+    assert decision.positive_rcsd_present is True
+    assert decision.positive_rcsd_consistency_level in {"A", "B"}
+    assert decision.positive_rcsd_consistency_level != "C"
+    assert decision.required_rcsd_node == "rc_1"
+    assert decision.axis_polarity_inverted is True
+
+
+def test_aggregated_rcsd_unit_upgrades_multiple_partial_local_units() -> None:
+    representative_node = _parsed_node("2002", 0.0, 0.0, mainnodeid="2002", has_evd="yes", kind_2=16, grade_2=1)
+    selected_evidence_region_geometry = Point(7.0, 0.0).buffer(5.0)
+    pair_local_region_geometry = Polygon([(-14, -16), (24, -16), (24, 16), (-14, 16), (-14, -16)])
+    pair_local_middle_geometry = Polygon([(-2, -4), (20, -4), (20, 4), (-2, 4), (-2, -4)])
+
+    scoped_roads = [
+        _parsed_road("road_1", [(-10.0, 0.0), (0.0, 0.0)], snodeid="s_1", enodeid="2002"),
+        _parsed_road("road_2", [(0.0, 0.0), (10.0, 8.0)], snodeid="2002", enodeid="s_2"),
+        _parsed_road("road_3", [(0.0, 0.0), (10.0, -8.0)], snodeid="2002", enodeid="s_3"),
+    ]
+    pair_local_rcsd_roads = [
+        _parsed_road("rc_axis", [(0.0, 0.0), (6.0, 0.0)], snodeid="2002", enodeid="rc_1"),
+        _parsed_road("rc_mid", [(6.0, 0.0), (12.0, 0.0)], snodeid="rc_1", enodeid="rc_2"),
+        _parsed_road("rc_right", [(6.0, 0.0), (12.0, 8.0)], snodeid="rc_1", enodeid="rc_3"),
+        _parsed_road("rc_left", [(12.0, 0.0), (18.0, -8.0)], snodeid="rc_2", enodeid="rc_4"),
+    ]
+    pair_local_rcsd_nodes = [
+        _parsed_node("rc_1", 6.0, 0.0, mainnodeid="2002"),
+        _parsed_node("rc_2", 12.0, 0.0, mainnodeid="2002"),
+    ]
+
+    decision = resolve_positive_rcsd_selection(
+        event_unit_id="synthetic_aggregated",
+        operational_kind_hint=16,
+        representative_node=representative_node,
+        selected_evidence_region_geometry=selected_evidence_region_geometry,
+        fact_reference_point=Point(7.0, 0.0),
+        pair_local_region_geometry=pair_local_region_geometry,
+        pair_local_middle_geometry=pair_local_middle_geometry,
+        scoped_rcsd_roads=pair_local_rcsd_roads,
+        scoped_rcsd_nodes=pair_local_rcsd_nodes,
+        pair_local_scope_rcsd_roads=pair_local_rcsd_roads,
+        pair_local_scope_rcsd_nodes=pair_local_rcsd_nodes,
+        scoped_roads=scoped_roads,
+        boundary_branch_ids=("road_1", "road_2", "road_3"),
+        preferred_axis_branch_id="road_1",
+        scoped_input_branch_ids=("road_1",),
+        scoped_output_branch_ids=("road_2", "road_3"),
+        branch_road_memberships={
+            "road_1": ("road_1",),
+            "road_2": ("road_2",),
+            "road_3": ("road_3",),
+        },
+        axis_vector=(1.0, 0.0),
+    )
+
+    assert decision.positive_rcsd_present is True
+    assert decision.aggregated_rcsd_unit_id is not None
+    assert decision.positive_rcsd_consistency_level == "A"
+    assert set(decision.selected_rcsdroad_ids) >= {"rc_axis", "rc_mid", "rc_right", "rc_left"}
+    assert decision.required_rcsd_node in {"rc_1", "rc_2"}
+    if decision.first_hit_rcsdroad_ids:
+        assert decision.first_hit_rcsd_road_geometry is not None
+    assert decision.local_rcsd_unit_geometry is not None
+    assert decision.positive_rcsd_road_geometry is not None
+    assert decision.positive_rcsd_node_geometry is not None
+    assert decision.positive_rcsd_geometry is not None
+    assert decision.primary_main_rc_node_geometry is not None
+    assert decision.required_rcsd_node_geometry is not None
+
+
+def test_geometry_normalization_keeps_line_and_point_geometries() -> None:
+    line = LineString([(0.0, 0.0), (1.0, 1.0)])
+    point = Point(0.0, 0.0)
+
+    normalized_line = _normalize_geometry(line)
+    normalized_point = _normalize_geometry(point)
+    union_line = _union_geometry([line])
+    union_point = _union_geometry([point])
+
+    assert normalized_line is not None and normalized_line.geom_type == "LineString"
+    assert normalized_point is not None and normalized_point.geom_type == "Point"
+    assert union_line is not None and union_line.geom_type == "LineString"
+    assert union_point is not None and union_point.geom_type == "Point"
+
+
+def test_positive_rcsd_present_structural_conflict_can_drop_to_c() -> None:
+    representative_node = _parsed_node("3001", 0.0, 0.0, mainnodeid="3001", has_evd="yes", kind_2=16, grade_2=1)
+    selected_evidence_region_geometry = Point(7.0, 0.0).buffer(4.0)
+    pair_local_region_geometry = Polygon([(-12, -12), (18, -12), (18, 12), (-12, 12), (-12, -12)])
+    pair_local_middle_geometry = Polygon([(-2, -4), (16, -4), (16, 4), (-2, 4), (-2, -4)])
+
+    scoped_roads = [
+        _parsed_road("road_1", [(-10.0, 0.0), (0.0, 0.0)], snodeid="s_1", enodeid="3001"),
+        _parsed_road("road_2", [(0.0, 0.0), (10.0, 8.0)], snodeid="3001", enodeid="s_2"),
+        _parsed_road("road_3", [(0.0, 0.0), (10.0, -8.0)], snodeid="3001", enodeid="s_3"),
+    ]
+    pair_local_rcsd_roads = [
+        _parsed_road("rc_right", [(6.0, 0.0), (14.0, 6.0)], snodeid="rc_1", enodeid="rc_2"),
+        _parsed_road("rc_left", [(6.0, 0.0), (14.0, -6.0)], snodeid="rc_1", enodeid="rc_3"),
+    ]
+    pair_local_rcsd_nodes = [
+        _parsed_node("rc_1", 6.0, 0.0, mainnodeid="3001"),
+    ]
+
+    decision = resolve_positive_rcsd_selection(
+        event_unit_id="synthetic_structural_conflict",
+        operational_kind_hint=16,
+        representative_node=representative_node,
+        selected_evidence_region_geometry=selected_evidence_region_geometry,
+        fact_reference_point=Point(6.0, 0.0),
+        pair_local_region_geometry=pair_local_region_geometry,
+        pair_local_middle_geometry=pair_local_middle_geometry,
+        scoped_rcsd_roads=pair_local_rcsd_roads,
+        scoped_rcsd_nodes=pair_local_rcsd_nodes,
+        pair_local_scope_rcsd_roads=pair_local_rcsd_roads,
+        pair_local_scope_rcsd_nodes=pair_local_rcsd_nodes,
+        scoped_roads=scoped_roads,
+        boundary_branch_ids=("road_1", "road_2", "road_3"),
+        preferred_axis_branch_id="road_1",
+        scoped_input_branch_ids=("road_1",),
+        scoped_output_branch_ids=("road_2", "road_3"),
+        branch_road_memberships={
+            "road_1": ("road_1",),
+            "road_2": ("road_2",),
+            "road_3": ("road_3",),
+        },
+        axis_vector=(1.0, 0.0),
+    )
+
+    assert decision.positive_rcsd_present is True
+    assert decision.positive_rcsd_consistency_level == "C"
+    assert decision.positive_rcsd_support_level == "no_support"
+    assert decision.required_rcsd_node == "rc_1"
+
+
+def test_required_rcsd_node_decouples_from_primary_main_rc_node() -> None:
+    representative_node = _parsed_node("4001", 0.0, 0.0, mainnodeid="4001", has_evd="yes", kind_2=16, grade_2=1)
+    selected_evidence_region_geometry = Point(8.0, 0.0).buffer(5.0)
+    pair_local_region_geometry = Polygon([(-12, -14), (24, -14), (24, 14), (-12, 14), (-12, -14)])
+    pair_local_middle_geometry = Polygon([(-2, -4), (20, -4), (20, 4), (-2, 4), (-2, -4)])
+
+    scoped_roads = [
+        _parsed_road("road_1", [(-10.0, 0.0), (0.0, 0.0)], snodeid="s_1", enodeid="4001"),
+        _parsed_road("road_2", [(0.0, 0.0), (10.0, 8.0)], snodeid="4001", enodeid="s_2"),
+        _parsed_road("road_3", [(0.0, 0.0), (10.0, -8.0)], snodeid="4001", enodeid="s_3"),
+    ]
+    pair_local_rcsd_roads = [
+        _parsed_road("rc_axis_near", [(0.0, 0.0), (4.0, 0.0)], snodeid="4001", enodeid="rc_near"),
+        _parsed_road("rc_axis_far", [(4.0, 0.0), (9.0, 0.0)], snodeid="rc_near", enodeid="rc_far"),
+        _parsed_road("rc_event_left", [(9.0, 0.0), (15.0, -7.0)], snodeid="rc_far", enodeid="rc_l"),
+        _parsed_road("rc_event_right", [(9.0, 0.0), (15.0, 7.0)], snodeid="rc_far", enodeid="rc_r"),
+    ]
+    pair_local_rcsd_nodes = [
+        _parsed_node("rc_near", 4.0, 0.0, mainnodeid="4001"),
+        _parsed_node("rc_far", 9.0, 0.0, mainnodeid="4001"),
+    ]
+
+    decision = resolve_positive_rcsd_selection(
+        event_unit_id="synthetic_required_decoupled",
+        operational_kind_hint=16,
+        representative_node=representative_node,
+        selected_evidence_region_geometry=selected_evidence_region_geometry,
+        fact_reference_point=Point(8.0, 0.0),
+        pair_local_region_geometry=pair_local_region_geometry,
+        pair_local_middle_geometry=pair_local_middle_geometry,
+        scoped_rcsd_roads=pair_local_rcsd_roads,
+        scoped_rcsd_nodes=pair_local_rcsd_nodes,
+        pair_local_scope_rcsd_roads=pair_local_rcsd_roads,
+        pair_local_scope_rcsd_nodes=pair_local_rcsd_nodes,
+        scoped_roads=scoped_roads,
+        boundary_branch_ids=("road_1", "road_2", "road_3"),
+        preferred_axis_branch_id="road_1",
+        scoped_input_branch_ids=("road_1",),
+        scoped_output_branch_ids=("road_2", "road_3"),
+        branch_road_memberships={
+            "road_1": ("road_1",),
+            "road_2": ("road_2",),
+            "road_3": ("road_3",),
+        },
+        axis_vector=(1.0, 0.0),
+    )
+
+    assert decision.positive_rcsd_consistency_level == "A"
+    assert decision.primary_main_rc_node_id == "rc_near"
+    assert decision.required_rcsd_node == "rc_far"
+    assert decision.required_rcsd_node != decision.primary_main_rc_node_id
+    assert decision.required_rcsd_node_source == "aggregated_structural_required"
+
+
+def test_road_only_local_rcsd_unit_keeps_required_none() -> None:
+    representative_node = _parsed_node("5001", 0.0, 0.0, mainnodeid="5001", has_evd="yes", kind_2=16, grade_2=1)
+    selected_evidence_region_geometry = Point(6.0, 0.0).buffer(4.0)
+    pair_local_region_geometry = Polygon([(-12, -12), (18, -12), (18, 12), (-12, 12), (-12, -12)])
+    pair_local_middle_geometry = Polygon([(-2, -4), (16, -4), (16, 4), (-2, 4), (-2, -4)])
+
+    scoped_roads = [
+        _parsed_road("road_1", [(-10.0, 0.0), (0.0, 0.0)], snodeid="s_1", enodeid="5001"),
+        _parsed_road("road_2", [(0.0, 0.0), (10.0, 8.0)], snodeid="5001", enodeid="s_2"),
+        _parsed_road("road_3", [(0.0, 0.0), (10.0, -8.0)], snodeid="5001", enodeid="s_3"),
+    ]
+    pair_local_rcsd_roads = [
+        _parsed_road("rc_axis", [(0.0, 0.0), (6.0, 0.0)], snodeid="ep_1", enodeid="ep_2"),
+        _parsed_road("rc_left", [(6.0, 0.0), (14.0, -6.0)], snodeid="ep_2", enodeid="ep_3"),
+        _parsed_road("rc_right", [(6.0, 0.0), (14.0, 6.0)], snodeid="ep_2", enodeid="ep_4"),
+    ]
+
+    decision = resolve_positive_rcsd_selection(
+        event_unit_id="synthetic_road_only",
+        operational_kind_hint=16,
+        representative_node=representative_node,
+        selected_evidence_region_geometry=selected_evidence_region_geometry,
+        fact_reference_point=Point(6.0, 0.0),
+        pair_local_region_geometry=pair_local_region_geometry,
+        pair_local_middle_geometry=pair_local_middle_geometry,
+        scoped_rcsd_roads=pair_local_rcsd_roads,
+        scoped_rcsd_nodes=(),
+        pair_local_scope_rcsd_roads=pair_local_rcsd_roads,
+        pair_local_scope_rcsd_nodes=(),
+        scoped_roads=scoped_roads,
+        boundary_branch_ids=("road_1", "road_2", "road_3"),
+        preferred_axis_branch_id="road_1",
+        scoped_input_branch_ids=("road_1",),
+        scoped_output_branch_ids=("road_2", "road_3"),
+        branch_road_memberships={
+            "road_1": ("road_1",),
+            "road_2": ("road_2",),
+            "road_3": ("road_3",),
+        },
+        axis_vector=(1.0, 0.0),
+    )
+
+    assert decision.local_rcsd_unit_kind == "road_only"
+    assert decision.required_rcsd_node in {"", None}
+    assert decision.required_rcsd_node_source in {"", None}
+    assert decision.positive_rcsd_consistency_level in {"B", "C"}
+
+
+def test_anchor2_current_acceptance_units_all_a() -> None:
+    if not REAL_ANCHOR_2_ROOT.is_dir():
+        pytest.skip(f"missing real Anchor_2 case root: {REAL_ANCHOR_2_ROOT}")
+    acceptance_case_ids = [
+        "760213",
+        "785671",
+        "785675",
+        "857993",
+        "987998",
+        "17943587",
+        "30434673",
+        "73462878",
+    ]
+    specs, _ = load_case_specs(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=acceptance_case_ids,
+    )
+    failures: list[str] = []
+    for spec in specs:
+        case_result = build_case_result(load_case_bundle(spec))
+        for event_unit in case_result.event_units:
+            if event_unit.positive_rcsd_consistency_level != "A":
+                failures.append(
+                    f"{spec.case_id}/{event_unit.spec.event_unit_id}:"
+                    f"{event_unit.positive_rcsd_consistency_level}/{event_unit.positive_rcsd_support_level}"
+                )
+            if event_unit.positive_rcsd_support_level != "primary_support":
+                failures.append(
+                    f"{spec.case_id}/{event_unit.spec.event_unit_id}:"
+                    f"support={event_unit.positive_rcsd_support_level}"
+                )
+    assert not failures, failures
 
 
 def test_real_case_17943587_keeps_same_case_merge_branch_continuation_and_nested_pair_geometry() -> None:
@@ -479,12 +1010,17 @@ def test_real_case_17943587_keeps_same_case_merge_branch_continuation_and_nested
     assert structure_face.buffer(1e-6).covers(pair_middle)
     assert pair_region.buffer(1e-6).covers(structure_face)
     assert pair_middle.equals(structure_face) is False
-    assert event_unit.selected_candidate_summary["candidate_id"] == "node_17943587:structure:middle:01"
-    assert event_unit.selected_candidate_summary["layer"] == 1
-    assert event_unit.selected_candidate_region_geometry is not None
-    assert event_unit.selected_candidate_region_geometry.buffer(1e-6).covers(
-        event_unit.unit_context.representative_node.geometry
-    )
+    assert event_unit.selected_evidence_state == "found"
+    assert event_unit.selected_evidence_summary["candidate_id"] == "node_17943587:divstrip:2:01"
+    assert event_unit.selected_evidence_summary["node_fallback_only"] is False
+    assert float(event_unit.selected_evidence_summary["reference_distance_to_origin_m"]) > 3.0
+    assert event_unit.fact_reference_point is not None
+    assert event_unit.selected_evidence_region_geometry is not None
+    assert event_unit.selected_evidence_region_geometry.buffer(1e-6).covers(event_unit.fact_reference_point)
+    assert float(
+        event_unit.fact_reference_point.distance(event_unit.unit_context.representative_node.geometry)
+    ) < float(event_unit.selected_evidence_summary["reference_distance_to_origin_m"])
+    _assert_selected_candidate_region_is_pair_local_container(event_unit)
 
     sibling_unit = next(
         item for item in case_result.event_units if item.spec.event_unit_id == "node_55353233"
@@ -526,18 +1062,20 @@ def test_real_case_17943587_keeps_same_case_merge_branch_continuation_and_nested
     assert set(local_unit.unit_envelope.event_branch_ids) == set(local_unit.unit_envelope.boundary_branch_ids)
     assert local_axis_branch not in set(local_unit.unit_envelope.event_branch_ids)
     _assert_one_sided_offsets(local_unit.pair_local_summary["valid_scan_offsets_m"])
-    assert local_unit.selected_candidate_summary["candidate_id"] == "node_55353248:structure:middle:01"
-    assert local_unit.selected_candidate_region_geometry is not None
-    assert local_unit.selected_candidate_region_geometry.buffer(1e-6).covers(
-        local_unit.unit_context.representative_node.geometry
-    )
+    assert local_unit.selected_evidence_state == "found"
+    assert local_unit.selected_evidence_summary["candidate_id"] == "node_55353248:divstrip:2:01"
+    assert local_unit.selected_evidence_summary["node_fallback_only"] is False
+    assert float(local_unit.selected_evidence_summary["reference_distance_to_origin_m"]) > 3.0
+    assert local_unit.fact_reference_point is not None
+    assert local_unit.selected_evidence_region_geometry is not None
+    assert local_unit.selected_evidence_region_geometry.buffer(1e-6).covers(local_unit.fact_reference_point)
+    assert float(
+        local_unit.fact_reference_point.distance(local_unit.unit_context.representative_node.geometry)
+    ) < float(local_unit.selected_evidence_summary["reference_distance_to_origin_m"])
+    _assert_selected_candidate_region_is_pair_local_container(local_unit)
     assert local_unit.pair_local_middle_geometry is not None
     assert local_unit.pair_local_structure_face_geometry is not None
-    assert float(local_unit.selected_candidate_region_geometry.area) == pytest.approx(
-        float(local_unit.pair_local_middle_geometry.area),
-        abs=1e-3,
-    )
-    assert float(local_unit.selected_candidate_region_geometry.area) < float(
+    assert float(local_unit.selected_candidate_region_geometry.area) >= float(
         local_unit.pair_local_structure_face_geometry.area
     )
     assert float(local_unit.pair_local_middle_geometry.area) == pytest.approx(
@@ -597,11 +1135,11 @@ def test_real_simple_three_arm_cases_keep_direct_event_pair_branches() -> None:
         _assert_one_sided_offsets(event_unit.pair_local_summary["valid_scan_offsets_m"])
 
 
-def test_real_simple_two_branch_cases_prefer_pair_local_structure_face_over_weak_throat() -> None:
+def test_real_simple_two_branch_cases_prefer_divstrip_evidence_over_synthetic_middle_container() -> None:
     expected_candidates = {
-        "785671": "event_unit_01:structure:middle:01",
-        "987998": "event_unit_01:structure:middle:01",
-        "30434673": "event_unit_01:structure:middle:01",
+        "785671": "event_unit_01:divstrip:3:01",
+        "987998": "event_unit_01:divstrip:4:01",
+        "30434673": "event_unit_01:divstrip:4:01",
     }
     missing_cases = [case_id for case_id in expected_candidates if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()]
     if missing_cases:
@@ -616,25 +1154,18 @@ def test_real_simple_two_branch_cases_prefer_pair_local_structure_face_over_weak
     for case_id, expected_candidate_id in expected_candidates.items():
         case_result = build_case_result(load_case_bundle(case_by_id[case_id]))
         event_unit = case_result.event_units[0]
-        selected = event_unit.selected_candidate_summary
+        selected = event_unit.selected_evidence_summary
 
+        assert event_unit.selected_evidence_state == "found"
         assert selected["candidate_id"] == expected_candidate_id
-        assert selected["layer"] == 1
-        assert selected["layer_reason"] == "throat_core_plus_pair_middle"
-        assert float(selected["pair_middle_overlap_ratio"]) == pytest.approx(1.0, abs=1e-6)
-        assert float(selected["throat_overlap_ratio"]) > 0.0
-        assert event_unit.selected_candidate_region_geometry is not None
-        assert event_unit.pair_local_middle_geometry is not None
-        assert event_unit.selected_candidate_region_geometry.buffer(1e-6).covers(
-            event_unit.unit_context.representative_node.geometry
-        )
-        assert float(event_unit.selected_candidate_region_geometry.area) == pytest.approx(
-            float(event_unit.pair_local_middle_geometry.area),
-            abs=1e-3,
-        )
+        assert selected["upper_evidence_kind"] == "divstrip"
+        assert selected["layer"] == 2
+        assert selected["node_fallback_only"] is False
+        assert float(selected["pair_middle_overlap_ratio"]) > 0.0
+        _assert_selected_candidate_region_is_pair_local_container(event_unit)
 
 
-def test_real_cases_760213_and_17943587_keep_current_selected_candidates() -> None:
+def test_real_cases_760213_and_17943587_refresh_selected_evidence_outputs() -> None:
     case_ids = ["760213", "17943587"]
     missing_cases = [case_id for case_id in case_ids if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()]
     if missing_cases:
@@ -648,28 +1179,98 @@ def test_real_cases_760213_and_17943587_keep_current_selected_candidates() -> No
 
     case_760213 = build_case_result(load_case_bundle(case_by_id["760213"]))
     selected_by_unit_760213 = {
-        item.spec.event_unit_id: str(item.selected_candidate_summary.get("candidate_id") or "")
+        item.spec.event_unit_id: str(item.selected_evidence_summary.get("candidate_id") or "")
         for item in case_760213.event_units
     }
     assert selected_by_unit_760213 == {
-        "node_760213": "node_760213:structure:middle:01",
-        "node_760218": "node_760218:structure:middle:01",
+        "node_760213": "node_760213:divstrip:3:01",
+        "node_760218": "node_760218:divstrip:3:01",
     }
 
     case_17943587 = build_case_result(load_case_bundle(case_by_id["17943587"]))
     selected_by_unit_17943587 = {
-        item.spec.event_unit_id: str(item.selected_candidate_summary.get("candidate_id") or "")
+        item.spec.event_unit_id: str(item.selected_evidence_summary.get("candidate_id") or "")
         for item in case_17943587.event_units
     }
     assert selected_by_unit_17943587 == {
-        "node_17943587": "node_17943587:structure:middle:01",
-        "node_55353233": "node_55353233:structure:middle:01",
-        "node_55353239": "node_55353239:structure:middle:01",
-        "node_55353248": "node_55353248:structure:middle:01",
+        "node_17943587": "node_17943587:divstrip:2:01",
+        "node_55353233": "node_55353233:divstrip:2:01",
+        "node_55353239": "node_55353239:divstrip:2:01",
+        "node_55353248": "node_55353248:divstrip:2:01",
     }
 
 
-def test_real_case_17943587_node_55353239_keeps_local_three_arm_and_returns_to_primary_middle_candidate() -> None:
+def test_real_anchor2_primary_evidence_and_reference_freeze_after_manual_acceptance() -> None:
+    expected_candidates = {
+        "760213": {
+            "node_760213": "node_760213:divstrip:3:01",
+            "node_760218": "node_760218:divstrip:3:01",
+        },
+        "785671": {
+            "event_unit_01": "event_unit_01:divstrip:3:01",
+        },
+        "785675": {
+            "event_unit_01": "event_unit_01:divstrip:5:01",
+        },
+        "857993": {
+            "node_857993": "node_857993:divstrip:4:01",
+            "node_870089": "node_870089:divstrip:4:01",
+        },
+        "987998": {
+            "event_unit_01": "event_unit_01:divstrip:4:01",
+        },
+        "17943587": {
+            "node_17943587": "node_17943587:divstrip:2:01",
+            "node_55353233": "node_55353233:divstrip:2:01",
+            "node_55353239": "node_55353239:divstrip:2:01",
+            "node_55353248": "node_55353248:divstrip:2:01",
+        },
+        "30434673": {
+            "event_unit_01": "event_unit_01:divstrip:4:01",
+        },
+        "73462878": {
+            "event_unit_01": "event_unit_01:divstrip:1:01",
+        },
+    }
+    missing_cases = [case_id for case_id in expected_candidates if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()]
+    if missing_cases:
+        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+
+    specs, _ = load_case_specs(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=list(expected_candidates),
+    )
+    case_by_id = {spec.case_id: spec for spec in specs}
+
+    for case_id, expected_by_unit in expected_candidates.items():
+        case_result = build_case_result(load_case_bundle(case_by_id[case_id]))
+        actual_by_unit = {
+            item.spec.event_unit_id: item
+            for item in case_result.event_units
+        }
+        assert set(actual_by_unit) == set(expected_by_unit)
+
+        for unit_id, expected_candidate_id in expected_by_unit.items():
+            event_unit = actual_by_unit[unit_id]
+            selected = event_unit.selected_evidence_summary
+            assert event_unit.selected_evidence_state == "found"
+            assert selected["candidate_id"] == expected_candidate_id
+            assert selected["upper_evidence_kind"] == "divstrip"
+            assert selected["node_fallback_only"] is False
+            assert event_unit.fact_reference_point is not None
+            assert event_unit.selected_evidence_region_geometry is not None
+            assert event_unit.selected_evidence_region_geometry.buffer(1e-6).covers(
+                event_unit.fact_reference_point
+            )
+            reference_distance = selected.get("reference_distance_to_origin_m")
+            assert reference_distance is not None
+            assert float(reference_distance) > 3.0
+            assert float(
+                event_unit.fact_reference_point.distance(event_unit.unit_context.representative_node.geometry)
+            ) < float(reference_distance)
+
+
+def test_real_case_17943587_node_55353239_keeps_local_three_arm_and_selects_local_divstrip_evidence() -> None:
     if not REAL_ANCHOR_2_ROOT.is_dir():
         pytest.skip(f"missing real Anchor_2 case root: {REAL_ANCHOR_2_ROOT}")
     if not (REAL_ANCHOR_2_ROOT / "17943587").is_dir():
@@ -689,20 +1290,20 @@ def test_real_case_17943587_node_55353239_keeps_local_three_arm_and_returns_to_p
         "road_2": ("620950831",),
         "road_3": ("41727506",),
     }
-    assert event_unit.selected_candidate_summary["candidate_id"] == "node_55353239:structure:middle:01"
-    assert event_unit.selected_candidate_summary["layer"] == 1
-    assert event_unit.selected_candidate_summary["selection_rank"] == 1
-    assert event_unit.selected_candidate_summary["selected_after_reselection"] is False
+    assert event_unit.selected_evidence_state == "found"
+    assert event_unit.selected_evidence_summary["candidate_id"] == "node_55353239:divstrip:2:01"
+    assert event_unit.selected_evidence_summary["selection_status"] == "selected"
+    assert event_unit.selected_evidence_summary["node_fallback_only"] is False
+    assert float(event_unit.selected_evidence_summary["reference_distance_to_origin_m"]) > 3.0
     assert event_unit.review_state == "STEP4_REVIEW"
 
     representative_node_geometry = event_unit.unit_context.representative_node.geometry
     assert event_unit.pair_local_region_geometry is not None
     assert event_unit.pair_local_structure_face_geometry is not None
     assert event_unit.pair_local_middle_geometry is not None
-    assert event_unit.selected_candidate_region_geometry is not None
     assert event_unit.pair_local_region_geometry.buffer(1e-6).covers(representative_node_geometry)
     assert event_unit.pair_local_structure_face_geometry.buffer(1e-6).covers(representative_node_geometry)
-    assert event_unit.selected_candidate_region_geometry.buffer(1e-6).covers(representative_node_geometry)
+    _assert_selected_candidate_region_is_pair_local_container(event_unit)
 
 
 def test_real_case_857993_keeps_node_857993_local_and_stops_node_870089_at_direct_branches() -> None:
@@ -735,29 +1336,31 @@ def test_real_case_857993_keeps_node_857993_local_and_stops_node_870089_at_direc
     assert "1124251" not in set(memberships[right_branch_id])
     assert set(node_870089.unit_envelope.event_branch_ids) == {left_branch_id, right_branch_id}
 
-    assert node_857993.selected_candidate_summary["candidate_id"] == "node_857993:structure:middle:01"
-    assert node_857993.selected_candidate_summary["layer"] == 1
-    assert node_857993.selected_candidate_summary["selected_after_reselection"] is False
-    assert node_857993.selected_candidate_region_geometry is not None
-    assert node_857993.selected_candidate_region_geometry.buffer(1e-6).covers(
-        node_857993.unit_context.representative_node.geometry
-    )
+    assert node_857993.selected_evidence_state == "found"
+    assert node_857993.selected_evidence_summary["candidate_id"] == "node_857993:divstrip:4:01"
+    assert node_857993.selected_evidence_summary["layer"] == 2
+    assert node_857993.selected_evidence_summary["selected_after_reselection"] is False
+    _assert_selected_candidate_region_is_pair_local_container(node_857993)
     _assert_one_sided_offsets(node_857993.pair_local_summary["valid_scan_offsets_m"])
     expected_node_857993_pair_signature = _stable_boundary_pair_signature(
         node_857993.unit_envelope.branch_road_memberships,
         node_857993.unit_envelope.boundary_branch_ids,
     )
     assert node_857993.pair_local_summary["boundary_pair_signature"] == expected_node_857993_pair_signature
-    assert node_857993.selected_candidate_summary["upper_evidence_object_id"] == (
-        f"node_857993:{expected_node_857993_pair_signature}"
-    )
+    assert node_857993.pair_local_summary["region_id"] == f"node_857993:{expected_node_857993_pair_signature}"
 
-    assert node_870089.selected_candidate_summary["candidate_id"] == "node_870089:structure:middle:01"
-    assert node_870089.selected_candidate_summary["layer"] == 1
-    assert node_870089.selected_candidate_region_geometry is not None
-    assert node_870089.selected_candidate_region_geometry.buffer(1e-6).covers(
-        node_870089.unit_context.representative_node.geometry
-    )
+    assert node_870089.selected_evidence_state == "found"
+    assert node_870089.selected_evidence_summary["candidate_id"] == "node_870089:divstrip:4:01"
+    assert node_870089.selected_evidence_summary["layer"] == 2
+    assert node_870089.selected_evidence_summary["node_fallback_only"] is False
+    assert float(node_870089.selected_evidence_summary["reference_distance_to_origin_m"]) > 3.0
+    assert node_870089.fact_reference_point is not None
+    assert node_870089.selected_evidence_region_geometry is not None
+    assert node_870089.selected_evidence_region_geometry.buffer(1e-6).covers(node_870089.fact_reference_point)
+    assert float(
+        node_870089.fact_reference_point.distance(node_870089.unit_context.representative_node.geometry)
+    ) < float(node_870089.selected_evidence_summary["reference_distance_to_origin_m"])
+    _assert_selected_candidate_region_is_pair_local_container(node_870089)
     assert node_870089.pair_local_middle_geometry is not None
     assert node_870089.pair_local_structure_face_geometry is not None
     assert set(node_870089.unit_envelope.event_branch_ids) == set(node_870089.unit_envelope.boundary_branch_ids)
@@ -769,22 +1372,13 @@ def test_real_case_857993_keeps_node_857993_local_and_stops_node_870089_at_direc
         node_870089.unit_envelope.boundary_branch_ids,
     )
     assert node_870089.pair_local_summary["boundary_pair_signature"] == expected_node_870089_pair_signature
-    assert node_870089.selected_candidate_summary["upper_evidence_object_id"] == (
-        f"node_870089:{expected_node_870089_pair_signature}"
-    )
-    assert float(node_870089.selected_candidate_region_geometry.area) == pytest.approx(
-        node_870089.pair_local_middle_geometry.area
-    )
-    assert float(node_870089.selected_candidate_region_geometry.area) < float(
+    assert node_870089.pair_local_summary["region_id"] == f"node_870089:{expected_node_870089_pair_signature}"
+    assert float(node_870089.selected_candidate_region_geometry.area) >= float(
         node_870089.pair_local_structure_face_geometry.area
     )
 
-    assert node_857993.selected_candidate_summary["axis_signature"] == "619715536"
-    assert node_870089.selected_candidate_summary["axis_signature"] == "619715536"
-    assert (
-        node_857993.selected_candidate_summary["point_signature"]
-        != node_870089.selected_candidate_summary["point_signature"]
-    )
+    assert node_857993.selected_evidence_summary["axis_signature"] == "619715536"
+    assert node_870089.selected_evidence_summary["point_signature"] == "619715536:0.0"
 
 
 def test_real_case_73462878_keeps_pair_space_on_event_branches_only() -> None:
@@ -807,17 +1401,10 @@ def test_real_case_73462878_keeps_pair_space_on_event_branches_only() -> None:
     assert set(event_unit.unit_envelope.event_branch_ids) == {left_branch_id, right_branch_id}
     assert set(event_unit.unit_envelope.boundary_branch_ids) == {left_branch_id, right_branch_id}
     assert axis_branch_id not in set(event_unit.unit_envelope.event_branch_ids)
-    assert event_unit.selected_candidate_summary["candidate_id"] == "event_unit_01:structure:middle:01"
-    assert event_unit.selected_candidate_summary["layer"] == 1
-    assert event_unit.selected_candidate_region_geometry is not None
-    assert event_unit.selected_candidate_region_geometry.buffer(1e-6).covers(
-        event_unit.unit_context.representative_node.geometry
-    )
-    assert event_unit.pair_local_middle_geometry is not None
-    assert float(event_unit.selected_candidate_region_geometry.area) == pytest.approx(
-        float(event_unit.pair_local_middle_geometry.area),
-        abs=1e-3,
-    )
+    assert event_unit.selected_evidence_state == "found"
+    assert event_unit.selected_evidence_summary["candidate_id"] == "event_unit_01:divstrip:1:01"
+    assert event_unit.selected_evidence_summary["layer"] == 2
+    _assert_selected_candidate_region_is_pair_local_container(event_unit)
     _assert_one_sided_offsets(event_unit.pair_local_summary["valid_scan_offsets_m"])
 
 
@@ -841,13 +1428,8 @@ def test_real_case_17943587_pair_space_stays_on_boundary_pair_without_reverse_ba
             event_unit.unit_envelope.boundary_branch_ids,
         )
         assert event_unit.pair_local_summary["boundary_pair_signature"] == expected_pair_signature
-        assert event_unit.selected_candidate_summary["upper_evidence_object_id"] == (
-            f"{unit_id}:{expected_pair_signature}"
-        )
-        assert event_unit.selected_candidate_region_geometry is not None
-        assert event_unit.selected_candidate_region_geometry.buffer(1e-6).covers(
-            event_unit.unit_context.representative_node.geometry
-        )
+        assert event_unit.pair_local_summary["region_id"] == f"{unit_id}:{expected_pair_signature}"
+        _assert_selected_candidate_region_is_pair_local_container(event_unit)
         if unit_id == "node_55353248":
             assert event_unit.pair_local_summary["pair_scan_truncated_to_local"] is True
             assert max(float(item) for item in event_unit.pair_local_summary["valid_scan_offsets_m"]) >= 96.0

@@ -14,7 +14,23 @@
 - `event_units`
   - 将 case 拆成 Step4 event units
 - `event_interpretation`
-  - 解释事实依据、事件参考位置、正向 RCSD
+  - facade / composition root
+  - `event_interpretation_shared`
+    - `_PreparedUnitInputs / _ExecutableBranchSet / _CandidateEvaluation`
+    - Step4 共用几何裁剪与 scope/filter helper
+  - `event_interpretation_branch_variants`
+    - direct-adjacency 三臂拆分
+    - complex same-case branch continuation
+    - executable branch-set variants
+  - `event_interpretation_selection`
+    - candidate merge/priority
+    - case-level reselection
+    - ownership guard
+  - 主文件保留：
+    - prepared input 物化
+    - candidate pool 生成
+    - T02 Step4 桥接
+    - `build_case_result`
 - `review_render`
   - overview PNG
   - event-unit PNG

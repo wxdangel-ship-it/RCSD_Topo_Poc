@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,18 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     ParsedNode,
     ParsedRoad,
 )
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        return None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -94,10 +107,51 @@ class T04EventUnitSpec:
     selected_side_branch_ids: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class T04UnitEnvelope:
+    topology_scope: str
+    unit_population_node_ids: tuple[str, ...]
+    context_augmented_node_ids: tuple[str, ...]
+    event_branch_ids: tuple[str, ...]
+    boundary_branch_ids: tuple[str, ...]
+    preferred_axis_branch_id: str | None
+    branch_ids: tuple[str, ...] = ()
+    main_branch_ids: tuple[str, ...] = ()
+    input_branch_ids: tuple[str, ...] = ()
+    output_branch_ids: tuple[str, ...] = ()
+    branch_road_memberships: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    branch_bridge_node_ids: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    degraded_scope_reason: str | None = None
+
+    def to_status_doc(self) -> dict[str, Any]:
+        return {
+            "topology_scope": self.topology_scope,
+            "unit_population_node_ids": list(self.unit_population_node_ids),
+            "context_augmented_node_ids": list(self.context_augmented_node_ids),
+            "branch_ids": list(self.branch_ids),
+            "main_branch_ids": list(self.main_branch_ids),
+            "input_branch_ids": list(self.input_branch_ids),
+            "output_branch_ids": list(self.output_branch_ids),
+            "event_branch_ids": list(self.event_branch_ids),
+            "boundary_branch_ids": list(self.boundary_branch_ids),
+            "preferred_axis_branch_id": self.preferred_axis_branch_id,
+            "branch_road_memberships": {
+                str(branch_id): list(road_ids)
+                for branch_id, road_ids in self.branch_road_memberships.items()
+            },
+            "branch_bridge_node_ids": {
+                str(branch_id): list(node_ids)
+                for branch_id, node_ids in self.branch_bridge_node_ids.items()
+            },
+            "degraded_scope_reason": self.degraded_scope_reason,
+        }
+
+
 @dataclass
 class T04EventUnitResult:
     spec: T04EventUnitSpec
     unit_context: T04UnitContext
+    unit_envelope: T04UnitEnvelope
     interpretation: Stage4EventInterpretationResult
     review_state: str
     review_reasons: tuple[str, ...]
@@ -105,19 +159,41 @@ class T04EventUnitResult:
     position_source: str
     reverse_tip_used: bool
     rcsd_consistency_result: str
-    selected_divstrip_geometry: BaseGeometry | None
-    event_anchor_geometry: BaseGeometry | None
-    event_reference_point: BaseGeometry | None
+    selected_component_union_geometry: BaseGeometry | None
+    localized_evidence_core_geometry: BaseGeometry | None
+    coarse_anchor_zone_geometry: BaseGeometry | None
+    pair_local_region_geometry: BaseGeometry | None
+    pair_local_structure_face_geometry: BaseGeometry | None
+    pair_local_middle_geometry: BaseGeometry | None
+    pair_local_throat_core_geometry: BaseGeometry | None
+    selected_candidate_region_geometry: BaseGeometry | None
+    fact_reference_point: BaseGeometry | None
+    review_materialized_point: BaseGeometry | None
     positive_rcsd_geometry: BaseGeometry | None
     selected_branch_ids: tuple[str, ...]
     selected_event_branch_ids: tuple[str, ...]
     selected_component_ids: tuple[str, ...]
     event_axis_branch_id: str | None
     event_chosen_s_m: float | None
+    pair_local_summary: dict[str, Any]
+    selected_candidate_summary: dict[str, Any]
+    alternative_candidate_summaries: tuple[dict[str, Any], ...] = ()
     extra_review_notes: tuple[str, ...] = ()
     source_png_path: str = ""
     image_name: str = ""
     image_path: str = ""
+
+    @property
+    def selected_divstrip_geometry(self) -> BaseGeometry | None:
+        return self.localized_evidence_core_geometry
+
+    @property
+    def event_anchor_geometry(self) -> BaseGeometry | None:
+        return self.coarse_anchor_zone_geometry
+
+    @property
+    def event_reference_point(self) -> BaseGeometry | None:
+        return self.review_materialized_point
 
     def all_review_reasons(self) -> tuple[str, ...]:
         reasons: list[str] = [*self.review_reasons, *self.extra_review_notes]
@@ -132,11 +208,12 @@ class T04EventUnitResult:
         return tuple(deduped)
 
     def to_summary_doc(self) -> dict[str, Any]:
-        return {
+        return _json_safe({
             "event_unit_id": self.spec.event_unit_id,
             "event_type": self.spec.event_type,
             "split_mode": self.spec.split_mode,
             "representative_node_id": self.spec.representative_node_id,
+            "unit_envelope": self.unit_envelope.to_status_doc(),
             "review_state": self.review_state,
             "review_reasons": list(self.all_review_reasons()),
             "evidence_source": self.evidence_source,
@@ -148,8 +225,11 @@ class T04EventUnitResult:
             "selected_component_ids": list(self.selected_component_ids),
             "event_axis_branch_id": self.event_axis_branch_id,
             "event_chosen_s_m": self.event_chosen_s_m,
+            "pair_local_summary": dict(self.pair_local_summary),
+            "selected_candidate": dict(self.selected_candidate_summary),
+            "alternative_candidates": [dict(item) for item in self.alternative_candidate_summaries],
             "interpretation": self.interpretation.to_audit_summary(),
-        }
+        })
 
 
 @dataclass
@@ -183,6 +263,12 @@ class T04ReviewIndexRow:
     position_source: str
     reverse_tip_used: bool
     rcsd_consistency_result: str
+    primary_candidate_id: str = ""
+    primary_candidate_layer: str = ""
+    ownership_signature: str = ""
+    upper_evidence_object_id: str = ""
+    local_region_id: str = ""
+    point_signature: str = ""
     image_name: str = ""
     image_path: str = ""
     sequence_no: int = 0
@@ -199,8 +285,13 @@ class T04ReviewIndexRow:
             "position_source": self.position_source,
             "reverse_tip_used": int(self.reverse_tip_used),
             "rcsd_consistency_result": self.rcsd_consistency_result,
+            "primary_candidate_id": self.primary_candidate_id,
+            "primary_candidate_layer": self.primary_candidate_layer,
+            "ownership_signature": self.ownership_signature,
+            "upper_evidence_object_id": self.upper_evidence_object_id,
+            "local_region_id": self.local_region_id,
+            "point_signature": self.point_signature,
             "image_name": self.image_name,
             "image_path": self.image_path,
             "case_overview_path": self.case_overview_path,
         }
-

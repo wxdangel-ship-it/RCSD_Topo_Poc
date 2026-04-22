@@ -12,7 +12,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
 
 from .case_models import T04CaseResult, T04ReviewIndexRow
 from .review_render import render_case_overview_png, render_event_unit_review_png
-from .topology import build_step3_status_doc
+from .topology import build_step3_status_doc, build_unit_step3_status_doc
 
 
 REVIEW_INDEX_FIELDNAMES = [
@@ -25,6 +25,12 @@ REVIEW_INDEX_FIELDNAMES = [
     "position_source",
     "reverse_tip_used",
     "rcsd_consistency_result",
+    "primary_candidate_id",
+    "primary_candidate_layer",
+    "ownership_signature",
+    "upper_evidence_object_id",
+    "local_region_id",
+    "point_signature",
     "image_name",
     "image_path",
     "case_overview_path",
@@ -35,9 +41,16 @@ def _geometry_features_for_case(case_result: T04CaseResult):
     features: list[dict] = []
     for event_unit in case_result.event_units:
         for geometry_role, geometry in (
-            ("event_anchor_geometry", event_unit.event_anchor_geometry),
-            ("selected_divstrip_component", event_unit.selected_divstrip_geometry),
-            ("event_reference_point", event_unit.event_reference_point),
+            ("pair_local_region_geometry", event_unit.pair_local_region_geometry),
+            ("pair_local_structure_face_geometry", event_unit.pair_local_structure_face_geometry),
+            ("pair_local_middle_geometry", event_unit.pair_local_middle_geometry),
+            ("pair_local_throat_core_geometry", event_unit.pair_local_throat_core_geometry),
+            ("selected_candidate_region_geometry", event_unit.selected_candidate_region_geometry),
+            ("coarse_anchor_zone_geometry", event_unit.coarse_anchor_zone_geometry),
+            ("selected_component_union_geometry", event_unit.selected_component_union_geometry),
+            ("localized_evidence_core_geometry", event_unit.localized_evidence_core_geometry),
+            ("fact_reference_point", event_unit.fact_reference_point),
+            ("review_materialized_point", event_unit.review_materialized_point),
             ("positive_rcsd_geometry", event_unit.positive_rcsd_geometry),
         ):
             if geometry is None or geometry.is_empty:
@@ -50,6 +63,8 @@ def _geometry_features_for_case(case_result: T04CaseResult):
                         "geometry_role": geometry_role,
                         "event_type": event_unit.spec.event_type,
                         "review_state": event_unit.review_state,
+                        "candidate_id": str(event_unit.selected_candidate_summary.get("candidate_id") or ""),
+                        "candidate_layer": str(event_unit.selected_candidate_summary.get("layer_label") or ""),
                     },
                     "geometry": geometry,
                 }
@@ -107,6 +122,36 @@ def write_case_outputs(
     for event_unit in case_result.event_units:
         event_unit_dir = case_dir / "event_units" / event_unit.spec.event_unit_id
         event_unit_dir.mkdir(parents=True, exist_ok=True)
+        write_json(
+            event_unit_dir / "step3_status.json",
+            build_unit_step3_status_doc(
+                admission=event_unit.unit_context.admission,
+                topology_skeleton=event_unit.unit_context.topology_skeleton,
+                topology_scope=event_unit.unit_envelope.topology_scope,
+                unit_population_node_ids=event_unit.unit_envelope.unit_population_node_ids,
+                context_augmented_node_ids=event_unit.unit_envelope.context_augmented_node_ids,
+                event_branch_ids=event_unit.unit_envelope.event_branch_ids,
+                boundary_branch_ids=event_unit.unit_envelope.boundary_branch_ids,
+                preferred_axis_branch_id=event_unit.unit_envelope.preferred_axis_branch_id,
+                degraded_scope_reason=event_unit.unit_envelope.degraded_scope_reason,
+                explicit_branch_ids=event_unit.unit_envelope.branch_ids,
+                explicit_main_branch_ids=event_unit.unit_envelope.main_branch_ids,
+                explicit_input_branch_ids=event_unit.unit_envelope.input_branch_ids,
+                explicit_output_branch_ids=event_unit.unit_envelope.output_branch_ids,
+                branch_road_memberships=event_unit.unit_envelope.branch_road_memberships,
+                branch_bridge_node_ids=event_unit.unit_envelope.branch_bridge_node_ids,
+            ),
+        )
+        write_json(
+            event_unit_dir / "step4_candidates.json",
+            {
+                "case_id": case_result.case_spec.case_id,
+                "event_unit_id": event_unit.spec.event_unit_id,
+                "pair_local_summary": dict(event_unit.pair_local_summary),
+                "selected_candidate": dict(event_unit.selected_candidate_summary),
+                "alternative_candidates": [dict(item) for item in event_unit.alternative_candidate_summaries],
+            },
+        )
         png_path = event_unit_dir / "step4_review.png"
         render_event_unit_review_png(png_path, event_unit)
         event_unit.source_png_path = str(png_path)
@@ -120,6 +165,12 @@ def write_case_outputs(
                 position_source=event_unit.position_source,
                 reverse_tip_used=event_unit.reverse_tip_used,
                 rcsd_consistency_result=event_unit.rcsd_consistency_result,
+                primary_candidate_id=str(event_unit.selected_candidate_summary.get("candidate_id") or ""),
+                primary_candidate_layer=str(event_unit.selected_candidate_summary.get("layer_label") or ""),
+                ownership_signature=str(event_unit.selected_candidate_summary.get("ownership_signature") or ""),
+                upper_evidence_object_id=str(event_unit.selected_candidate_summary.get("upper_evidence_object_id") or ""),
+                local_region_id=str(event_unit.selected_candidate_summary.get("local_region_id") or ""),
+                point_signature=str(event_unit.selected_candidate_summary.get("point_signature") or ""),
                 case_overview_path=str(overview_path),
             )
         )
@@ -161,6 +212,9 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
         "STEP4_OK": sum(1 for row in rows if row.review_state == "STEP4_OK"),
         "STEP4_REVIEW": sum(1 for row in rows if row.review_state == "STEP4_REVIEW"),
         "STEP4_FAIL": sum(1 for row in rows if row.review_state == "STEP4_FAIL"),
+        "selected_layer_1_count": sum(1 for row in rows if row.primary_candidate_layer == "Layer 1"),
+        "selected_layer_2_count": sum(1 for row in rows if row.primary_candidate_layer == "Layer 2"),
+        "selected_layer_3_count": sum(1 for row in rows if row.primary_candidate_layer == "Layer 3"),
         "cases_with_multiple_event_units": sorted(
             case_id
             for case_id in {row.case_id for row in rows}

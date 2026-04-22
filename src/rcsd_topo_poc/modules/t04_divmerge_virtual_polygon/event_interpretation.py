@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from typing import Any, Iterable
 
@@ -1488,36 +1489,43 @@ def _evaluate_unit_candidate(
             pad_m=PAIR_LOCAL_RCSD_SCOPE_PAD_M,
         )
         primary_main_rc_node = scoped_primary[0] if scoped_primary else None
-    interpretation = _build_stage4_event_interpretation(
-        representative_node=prepared.effective_representative_node,
-        representative_source_kind_2=prepared.effective_source_kind_2,
-        mainnodeid_norm=prepared.unit_context.admission.mainnodeid,
-        seed_union=_seed_union(
+    interpretation_kwargs = {
+        "representative_node": prepared.effective_representative_node,
+        "representative_source_kind_2": prepared.effective_source_kind_2,
+        "mainnodeid_norm": prepared.unit_context.admission.mainnodeid,
+        "seed_union": _seed_union(
             representative_node=prepared.effective_representative_node,
             group_nodes=prepared.unit_context.group_nodes,
             local_context=local_context,
         ),
-        group_nodes=list(prepared.unit_context.group_nodes),
-        patch_size_m=float(prepared.pair_local_patch_size_m),
-        seed_center=local_context.seed_center,
-        drivezone_union=prepared.pair_local_drivezone_union,
-        local_roads=list(prepared.pair_local_scope_roads),
-        local_rcsd_roads=list(prepared.pair_local_scope_rcsd_roads),
-        local_rcsd_nodes=list(prepared.pair_local_scope_rcsd_nodes),
-        local_divstrip_features=list(candidate["divstrip_features"]),
-        road_branches=list(prepared.scoped_branches),
-        main_branch_ids=set(prepared.scoped_main_branch_ids),
-        member_node_ids={str(node_id) for node_id in prepared.unit_population_node_ids},
-        direct_target_rc_nodes=list(direct_target_rc_nodes),
-        exact_target_rc_nodes=list(exact_target_rc_nodes),
-        primary_main_rc_node=primary_main_rc_node,
-        rcsdnode_seed_mode=local_context.rcsdnode_seed_mode,
-        chain_context=prepared.unit_context.topology_skeleton.chain_context.to_legacy_dict(),
-        event_branch_ids=set(prepared.explicit_event_branch_ids),
-        boundary_branch_ids=tuple(prepared.boundary_branch_ids),
-        preferred_axis_branch_id=prepared.preferred_axis_branch_id,
-        context_augmented_node_ids=set(prepared.context_augmented_node_ids),
-        degraded_scope_reason=prepared.degraded_scope_reason,
+        "group_nodes": list(prepared.unit_context.group_nodes),
+        "patch_size_m": float(prepared.pair_local_patch_size_m),
+        "seed_center": local_context.seed_center,
+        "drivezone_union": prepared.pair_local_drivezone_union,
+        "local_roads": list(prepared.pair_local_scope_roads),
+        "local_rcsd_roads": list(prepared.pair_local_scope_rcsd_roads),
+        "local_rcsd_nodes": list(prepared.pair_local_scope_rcsd_nodes),
+        "local_divstrip_features": list(candidate["divstrip_features"]),
+        "road_branches": list(prepared.scoped_branches),
+        "main_branch_ids": set(prepared.scoped_main_branch_ids),
+        "member_node_ids": {str(node_id) for node_id in prepared.unit_population_node_ids},
+        "direct_target_rc_nodes": list(direct_target_rc_nodes),
+        "exact_target_rc_nodes": list(exact_target_rc_nodes),
+        "primary_main_rc_node": primary_main_rc_node,
+        "rcsdnode_seed_mode": local_context.rcsdnode_seed_mode,
+        "chain_context": prepared.unit_context.topology_skeleton.chain_context.to_legacy_dict(),
+        "event_branch_ids": set(prepared.explicit_event_branch_ids),
+        "boundary_branch_ids": tuple(prepared.boundary_branch_ids),
+        "preferred_axis_branch_id": prepared.preferred_axis_branch_id,
+        "context_augmented_node_ids": set(prepared.context_augmented_node_ids),
+        "degraded_scope_reason": prepared.degraded_scope_reason,
+    }
+    interpretation = _build_stage4_event_interpretation(
+        **{
+            key: value
+            for key, value in interpretation_kwargs.items()
+            if key in inspect.signature(_build_stage4_event_interpretation).parameters
+        }
     )
     base_result = _build_result_from_interpretation(
         prepared=prepared,

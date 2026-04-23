@@ -77,6 +77,12 @@ REVIEW_INDEX_FIELDNAMES = [
     "upper_evidence_object_id",
     "local_region_id",
     "point_signature",
+    "pair_local_direction",
+    "branch_separation_max_m",
+    "stop_reason",
+    "degraded_scope_reason",
+    "degraded_scope_severity",
+    "degraded_scope_fallback_used",
     "evidence_conflict_component_id",
     "rcsd_conflict_component_id",
     "evidence_conflict_type",
@@ -385,6 +391,16 @@ def write_case_outputs(
                 upper_evidence_object_id=str(event_unit.selected_evidence_summary.get("upper_evidence_object_id") or ""),
                 local_region_id=str(event_unit.selected_evidence_summary.get("local_region_id") or ""),
                 point_signature=str(event_unit.selected_evidence_summary.get("point_signature") or ""),
+                pair_local_direction=str(event_unit.pair_local_summary.get("pair_local_direction") or ""),
+                branch_separation_max_m=(
+                    ""
+                    if event_unit.pair_local_summary.get("branch_separation_max_m") is None
+                    else str(event_unit.pair_local_summary.get("branch_separation_max_m"))
+                ),
+                stop_reason=str(event_unit.pair_local_summary.get("stop_reason") or ""),
+                degraded_scope_reason=str(event_unit.unit_envelope.degraded_scope_reason or ""),
+                degraded_scope_severity=str(event_unit.unit_envelope.degraded_scope_severity or ""),
+                degraded_scope_fallback_used=bool(event_unit.unit_envelope.degraded_scope_fallback_used),
                 evidence_conflict_component_id=event_unit.evidence_conflict_component_id,
                 rcsd_conflict_component_id=event_unit.rcsd_conflict_component_id,
                 evidence_conflict_type=event_unit.evidence_conflict_type,

@@ -142,7 +142,7 @@
   - `unit-local branch pair region`
   - `unit-local structure face`
 - `unit-local branch pair region` 表示：当前 unit 的相邻 branch pair 在 throat / node 起始切片附近形成的局部中间区域；forward / reverse / structure-mode 都只能在这同一空间内活动。
-- `unit-local branch pair region` 的纵向延续仍沿用当前 Step4 的扫描长度要求，但一旦确定当前 `(L, R)` 的合法延续方向，候选空间构造阶段只能沿该方向单向延伸，不得再为补齐候选空间做反向追溯。
+- `unit-local branch pair region` 的纵向延续硬上限冻结为 `200m`；一旦确定当前 `(L, R)` 的合法延续方向，候选空间构造阶段只能沿该方向单向延伸，不得再为补齐候选空间做反向追溯。
 - local truncation 只约束扫描方向，不得把当前 boundary branch 已确认的合法 continuation membership 再截回 seed road；若 `(L, R)` 已合法跨 same-case sibling internal node 延续，则候选空间必须沿该 continuation 继续。
 - 对 `continuous complex/merge`，`unit-local branch pair region` 以当前 representative node 为锚点起算，但允许沿当前 unit 的同一 `pair-middle` 关系跨 same-case sibling internal node 延伸；停止条件不是“碰到内部 node”，而是 `pair-middle` 被封闭、被切断、被新的 pair 关系替代、碰到语义边界或触及 Step2 硬上限。
 - `unit-local branch pair region` 的纵向传播单位不是单条 road，而是 `(L, R, middle-region)`；到每个 sibling node 时，都必须尝试找到新的 `(L', R')`，并同时满足：
@@ -151,6 +151,22 @@
   - `L' / R'` 之间仍构成当前 unit 的 `middle-region`
   - `L' / R'` 之间不能夹入其他 road
 - 若某个 sibling node 上 pair 无法唯一传播、当前 `pair-middle` 关系失效、或 `L' / R'` 之间夹入其他 road，则当前 unit 必须停止延伸，不得继续扩大候选空间。
+- Step4 pair-local continuation 当前至少必须显式输出以下停止原因：
+  - `max_branch_length_reached`
+  - `semantic_boundary_reached`
+  - `pair_relation_replaced`
+  - `branch_separation_too_large`
+  - `road_intrusion_between_branches`
+  - `pair_local_middle_missing`
+- 其中 `branch_separation_too_large` 的全局硬阈值当前尚未冻结；本轮先冻结 separation 指标化与 stop reason 显式化，不在契约层拍板最终统一阈值。
+- 当前 pair-local 输出至少必须显式保留：
+  - `pair_local_direction`
+  - `branch_separation_mean_m`
+  - `branch_separation_max_m`
+  - `branch_separation_consecutive_exceed_count`
+  - `branch_separation_stop_triggered`
+  - `stop_reason`
+- `L' / R'` 之间“不能夹入其他 road”必须按几何级 gate 判断，不得继续只靠角度近似。若命中 intrusion，必须显式记录 `intruding_road_ids`。
 - `external associated road` 定义为：从当前 unit 的边界 branch 沿当前 pair 的合法延续方向持续外推，首次走出当前 complex 后连接到的第一条非 complex 内部 road。
 - `external associated road` 方向规则：
   - diverge：沿退出延续方向外推
@@ -292,7 +308,14 @@
 - `axis_position_m = 0` 或 reference 贴 node 的候选，正式记为 `node_fallback_only`；它只能作为审计 / 兜底候选，不得直接成为主排序第一名。
 - 若候选触发 `event_reference_outside_branch_middle`、`event_reference_axis_conflict_with_prior_unit` 或等价主证据 gate 拒绝，系统必须先在当前 unit 候选池内重选；若无合法候选，必须输出 `selected_evidence_state = none`，不得保留假的主证据占位。
 - 对 complex `1 node = 1 event unit` 子单元，Step4 解释阶段必须把 evidence search scope 锚定在当前 representative node 的局部 throat 与当前 unit 的 executable event branches 上；它可以沿同一 `pair-middle` 语义跨 same-case sibling internal node 延续，但不得继续共享整条 complex 走廊。
-- 若当前 unit-local scope 无法构成有效 throat pair 或有效 branch-middle gate，系统不得静默回退成整条 complex 走廊；必须显式记录 `degraded_scope_reason`，并至少上浮为 `STEP4_REVIEW`。
+- 若当前 unit-local scope 无法构成有效 throat pair 或有效 branch-middle gate，系统不得静默回退成整条 complex 走廊；必须显式记录：
+  - `degraded_scope_reason`
+  - `degraded_scope_severity`
+  - `degraded_scope_fallback_used`
+- `degraded_scope_severity` 至少分为：
+  - `soft`
+  - `hard`
+- 仅 `soft` degraded 可继续维持 `STEP4_REVIEW`；当候选空间语义已实质丢失时，`hard` degraded 允许直接升到 `STEP4_FAIL`。
 - ownership guard 的主判断必须以语义冲突为先：
   - 共用同一物理 DivStrip component（`selected_component_ids` 是局部索引，跨 sub-unit 不稳定，只允许作为 debug label；component ownership 须以 `selected_component_union_geometry` 的物理重叠等价判定）
   - 同一 `event_axis_branch_id` 且 `|Δevent_chosen_s_m| <= 5m`
@@ -334,7 +357,7 @@
 当前冻结的共同要求：
 
 - 候选空间必须由当前 unit 的两条边界 branch `(L, R)` 及其合法 continuation 物化。
-- 候选空间纵向延续仍可沿当前扫描长度要求执行，但不得做反向追溯。
+- 候选空间纵向延续当前冻结到 `200m`，并且不得做反向追溯。
 - local truncation 只能限制扫描方向，不能切断已确认的 boundary-branch continuation。
 - propagation 到 sibling node 时，`L / R` 之间不得夹入其他 road；若无法满足，必须停止延续，而不是换成错误 pair。
 - 当前冻结基线只约束 `selected_candidate_region` 的容器语义：

@@ -10,7 +10,7 @@ from shapely.ops import nearest_points, unary_union
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_shared import LoadedFeature, normalize_id
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step4_geometry_core import (
-    EVENT_REFERENCE_SCAN_MAX_M,
+    PAIR_LOCAL_BRANCH_MAX_LENGTH_M,
     _explode_component_geometries,
     _node_source_kind_2,
     _resolve_branch_centerline,
@@ -18,8 +18,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step4_geometry_
     _resolve_scan_axis_unit_vector,
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step4_geometry_reference import (
-    _build_between_branches_segment,
-    _build_event_crossline,
+    _build_pair_local_slice_diagnostic,
     _pick_cross_section_boundary_branches,
     _resolve_event_axis_unit_vector,
     _resolve_event_cross_half_len,
@@ -95,6 +94,10 @@ COMPLEX_SUBUNIT_SCOPE_RADIUS_M = 60.0
 COMPLEX_SUBUNIT_ROAD_PAD_M = 10.0
 COMPLEX_SUBUNIT_DIVSTRIP_PAD_M = 12.0
 COMPLEX_SUBUNIT_RCSD_PAD_M = 18.0
+
+HARD_DEGRADED_SCOPE_REASONS = {
+    "pair_local_middle_missing",
+}
 
 
 def _singleton_group(node) -> tuple:
@@ -184,6 +187,26 @@ def _positive_rcsd_geometry(geometries: Iterable[BaseGeometry | None]):
 
 def _sorted_id_tuple(values: Iterable[Any]) -> tuple[str, ...]:
     return tuple(sorted({str(value) for value in values if str(value)}))
+
+
+def _dedupe_reason_list(values: Iterable[Any]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        deduped.append(text)
+    return deduped
+
+
+def _degraded_scope_metadata(reasons: Iterable[Any]) -> tuple[str | None, str | None, bool]:
+    deduped = _dedupe_reason_list(reasons)
+    if not deduped:
+        return None, None, False
+    severity = "hard" if any(reason in HARD_DEGRADED_SCOPE_REASONS for reason in deduped) else "soft"
+    return "|".join(deduped), severity, True
 
 
 def _apply_positive_rcsd_audit_to_summary(
@@ -915,37 +938,40 @@ def _materialize_prepared_unit_inputs(
         )
     collected_slices: list[BaseGeometry] = []
     valid_offsets: list[float] = []
+    allowed_pair_branch_ids = tuple(str(branch_id) for branch_id in boundary_branch_ids)
+    allowed_pair_road_ids = {
+        str(road_id)
+        for branch_id in allowed_pair_branch_ids
+        for road_id in branch_road_memberships.get(str(branch_id), ())
+    }
+    event_branch_road_ids = {
+        str(road_id)
+        for branch_id in explicit_event_branch_ids
+        for road_id in branch_road_memberships.get(str(branch_id), ())
+    }
+    branch_separation_threshold_m = max(
+        float(PAIR_LOCAL_THROAT_RADIUS_M) * 2.0,
+        float(event_cross_half_len_m) * 2.0,
+    )
+    branch_separation_values: list[float] = []
+    pair_local_direction = "none"
+    stop_reason: str | None = None
+    intruding_road_ids: tuple[str, ...] = ()
+    pair_replacement_road_ids: tuple[str, ...] = ()
+    branch_separation_stop_triggered = False
+    branch_separation_consecutive_exceed_count = 0
 
-    def _collect_pair_slice(scan_s: float) -> BaseGeometry | None:
-        if (
-            scan_axis_unit_vector is None
-            or branch_a_centerline is None
-            or branch_a_centerline.is_empty
-            or branch_b_centerline is None
-            or branch_b_centerline.is_empty
-        ):
-            return None
-        crossline = _build_event_crossline(
-            origin_point=axis_origin_point,
-            axis_unit_vector=scan_axis_unit_vector,
-            scan_dist_m=float(scan_s),
-            cross_half_len_m=float(event_cross_half_len_m),
-        )
-        center_point = crossline.interpolate(0.5, normalized=True)
-        segment, segment_diag = _build_between_branches_segment(
-            crossline=crossline,
-            center_point=center_point,
-            branch_a_centerline=branch_a_centerline,
-            branch_b_centerline=branch_b_centerline,
-        )
-        if segment is None or not segment_diag["ok"]:
+    def _build_slice_geometry_from_diag(diag: dict[str, Any]) -> BaseGeometry | None:
+        segment = diag.get("segment")
+        center_point = diag.get("center_point")
+        if segment is None or center_point is None:
             return None
         if pair_scan_truncated_to_local and (
-            not bool(segment_diag.get("branch_a_crossline_hit"))
-            or not bool(segment_diag.get("branch_b_crossline_hit"))
+            not bool(diag.get("branch_a_crossline_hit"))
+            or not bool(diag.get("branch_b_crossline_hit"))
         ):
             return None
-        segment_length = float(segment_diag.get("seg_len_m", 0.0) or 0.0)
+        segment_length = float(diag.get("seg_len_m", 0.0) or 0.0)
         if segment_length <= 1e-3:
             slice_geometry = center_point.buffer(PAIR_LOCAL_SLICE_BUFFER_M, join_style=2)
         else:
@@ -954,60 +980,178 @@ def _materialize_prepared_unit_inputs(
             slice_geometry = slice_geometry.intersection(local_context.patch_drivezone_union)
         return _safe_normalize_geometry(slice_geometry)
 
-    hard_limit_m = min(
-        float(EVENT_REFERENCE_SCAN_MAX_M),
-        max(float(PAIR_LOCAL_THROAT_RADIUS_M) * 2.0, float(local_context.patch_size_m) * 0.45),
+    def _scan_pair_local_direction(direction_sign: float) -> dict[str, Any]:
+        local_slices: list[BaseGeometry] = []
+        local_offsets: list[float] = []
+        local_separations: list[float] = []
+        miss_count = 0
+        separation_exceed_streak = 0
+        local_stop_reason: str | None = None
+        local_intruding_road_ids: tuple[str, ...] = ()
+        local_pair_replacement_road_ids: tuple[str, ...] = ()
+        max_step_count = int(float(PAIR_LOCAL_BRANCH_MAX_LENGTH_M) // PAIR_LOCAL_SCAN_STEP_M)
+        for step_index in range(1, max_step_count + 1):
+            scan_s = float(direction_sign * step_index * PAIR_LOCAL_SCAN_STEP_M)
+            diag = _build_pair_local_slice_diagnostic(
+                origin_point=axis_origin_point,
+                axis_unit_vector=scan_axis_unit_vector,
+                scan_dist_m=scan_s,
+                cross_half_len_m=float(event_cross_half_len_m),
+                branch_a_centerline=branch_a_centerline,
+                branch_b_centerline=branch_b_centerline,
+                scoped_roads=list(scoped_roads),
+                allowed_road_ids=set(allowed_pair_road_ids),
+                event_road_ids=set(event_branch_road_ids),
+                branch_separation_threshold_m=float(branch_separation_threshold_m),
+                throat_radius_m=float(PAIR_LOCAL_THROAT_RADIUS_M),
+            )
+            step_stop_reason = str(diag.get("stop_reason") or "semantic_boundary_reached")
+            slice_geometry = None
+            if step_stop_reason == "ok":
+                slice_geometry = _build_slice_geometry_from_diag(diag)
+            if slice_geometry is not None:
+                local_slices.append(slice_geometry)
+                local_offsets.append(scan_s)
+                local_separations.append(float(diag.get("seg_len_m", 0.0) or 0.0))
+                miss_count = 0
+                separation_exceed_streak = 0
+                continue
+            if step_stop_reason in {"pair_relation_replaced", "road_intrusion_between_branches"}:
+                local_stop_reason = step_stop_reason
+                local_intruding_road_ids = tuple(diag.get("intruding_road_ids") or ())
+                local_pair_replacement_road_ids = tuple(diag.get("pair_replacement_road_ids") or ())
+                break
+            miss_count += 1
+            if bool(diag.get("branch_separation_exceeded")):
+                separation_exceed_streak += 1
+            else:
+                separation_exceed_streak = 0
+            if (collected_slices or local_slices) and miss_count >= PAIR_LOCAL_SCAN_STOP_MISS_COUNT:
+                if separation_exceed_streak >= PAIR_LOCAL_SCAN_STOP_MISS_COUNT:
+                    local_stop_reason = "branch_separation_too_large"
+                else:
+                    local_stop_reason = step_stop_reason
+                break
+        if local_stop_reason is None and local_offsets:
+            local_stop_reason = "max_branch_length_reached"
+        return {
+            "slices": local_slices,
+            "offsets": local_offsets,
+            "separations": local_separations,
+            "stop_reason": local_stop_reason,
+            "intruding_road_ids": local_intruding_road_ids,
+            "pair_replacement_road_ids": local_pair_replacement_road_ids,
+            "branch_separation_consecutive_exceed_count": separation_exceed_streak,
+            "branch_separation_stop_triggered": local_stop_reason == "branch_separation_too_large",
+        }
+
+    initial_diag = None
+    if (
+        scan_axis_unit_vector is not None
+        and branch_a_centerline is not None
+        and not branch_a_centerline.is_empty
+        and branch_b_centerline is not None
+        and not branch_b_centerline.is_empty
+    ):
+        initial_diag = _build_pair_local_slice_diagnostic(
+            origin_point=axis_origin_point,
+            axis_unit_vector=scan_axis_unit_vector,
+            scan_dist_m=0.0,
+            cross_half_len_m=float(event_cross_half_len_m),
+            branch_a_centerline=branch_a_centerline,
+            branch_b_centerline=branch_b_centerline,
+            scoped_roads=list(scoped_roads),
+            allowed_road_ids=set(allowed_pair_road_ids),
+            event_road_ids=set(event_branch_road_ids),
+            branch_separation_threshold_m=float(branch_separation_threshold_m),
+            throat_radius_m=float(PAIR_LOCAL_THROAT_RADIUS_M),
+        )
+    initial_slice = (
+        None
+        if initial_diag is None or str(initial_diag.get("stop_reason") or "ok") != "ok"
+        else _build_slice_geometry_from_diag(initial_diag)
     )
-    initial_slice = _collect_pair_slice(0.0)
+    if initial_diag is not None and str(initial_diag.get("stop_reason") or "ok") != "ok":
+        stop_reason = str(initial_diag.get("stop_reason") or "")
+        intruding_road_ids = tuple(initial_diag.get("intruding_road_ids") or ())
+        pair_replacement_road_ids = tuple(initial_diag.get("pair_replacement_road_ids") or ())
+        branch_separation_stop_triggered = stop_reason == "branch_separation_too_large"
     if initial_slice is not None:
         collected_slices.append(initial_slice)
         valid_offsets.append(0.0)
-    directional_collections: list[tuple[float, list[BaseGeometry], list[float]]] = []
-    for direction in (1.0, -1.0):
-        miss_count = 0
-        direction_slices: list[BaseGeometry] = []
-        direction_offsets: list[float] = []
-        for step_index in range(1, int(hard_limit_m // PAIR_LOCAL_SCAN_STEP_M) + 1):
-            scan_s = float(direction * step_index * PAIR_LOCAL_SCAN_STEP_M)
-            slice_geometry = _collect_pair_slice(scan_s)
-            if slice_geometry is None:
-                miss_count += 1
-                if (collected_slices or direction_slices) and miss_count >= PAIR_LOCAL_SCAN_STOP_MISS_COUNT:
-                    break
-                continue
-            direction_slices.append(slice_geometry)
-            direction_offsets.append(scan_s)
-            miss_count = 0
-        directional_collections.append((direction, direction_slices, direction_offsets))
-
-    best_direction_slices: list[BaseGeometry] = []
-    best_direction_offsets: list[float] = []
-    best_direction_key: tuple[int, float, float] | None = None
-    for _direction, direction_slices, direction_offsets in directional_collections:
-        if not direction_slices:
-            continue
-        try:
-            direction_area = float(
-                getattr(
-                    _safe_normalize_geometry(unary_union(direction_slices)),
-                    "area",
-                    0.0,
-                )
-                or 0.0
-            )
-        except Exception:
-            direction_area = 0.0
-        direction_key = (
-            len(direction_offsets),
-            direction_area,
-            float(max(abs(offset) for offset in direction_offsets)),
+        branch_separation_values.append(float(initial_diag.get("seg_len_m", 0.0) or 0.0))
+    forward_scan = (
+        {
+            "slices": [],
+            "offsets": [],
+            "separations": [],
+            "stop_reason": None,
+            "intruding_road_ids": (),
+            "pair_replacement_road_ids": (),
+            "branch_separation_consecutive_exceed_count": 0,
+            "branch_separation_stop_triggered": False,
+        }
+        if scan_axis_unit_vector is None
+        else _scan_pair_local_direction(1.0)
+    )
+    selected_scan = forward_scan
+    if forward_scan["offsets"]:
+        pair_local_direction = "forward"
+    else:
+        reverse_scan = (
+            {
+                "slices": [],
+                "offsets": [],
+                "separations": [],
+                "stop_reason": None,
+                "intruding_road_ids": (),
+                "pair_replacement_road_ids": (),
+                "branch_separation_consecutive_exceed_count": 0,
+                "branch_separation_stop_triggered": False,
+            }
+            if scan_axis_unit_vector is None
+            else _scan_pair_local_direction(-1.0)
         )
-        if best_direction_key is None or direction_key > best_direction_key:
-            best_direction_key = direction_key
-            best_direction_slices = direction_slices
-            best_direction_offsets = direction_offsets
-    collected_slices.extend(best_direction_slices)
-    valid_offsets.extend(best_direction_offsets)
+        if reverse_scan["offsets"]:
+            selected_scan = reverse_scan
+            pair_local_direction = "reverse_fallback"
+        elif initial_slice is not None:
+            pair_local_direction = "origin_only"
+        stop_reason = selected_scan["stop_reason"] or reverse_scan["stop_reason"]
+        intruding_road_ids = tuple(selected_scan["intruding_road_ids"] or reverse_scan["intruding_road_ids"])
+        pair_replacement_road_ids = tuple(
+            selected_scan["pair_replacement_road_ids"] or reverse_scan["pair_replacement_road_ids"]
+        )
+        branch_separation_consecutive_exceed_count = max(
+            int(selected_scan["branch_separation_consecutive_exceed_count"]),
+            int(reverse_scan["branch_separation_consecutive_exceed_count"]),
+        )
+        branch_separation_stop_triggered = bool(
+            selected_scan["branch_separation_stop_triggered"] or reverse_scan["branch_separation_stop_triggered"]
+        )
+    if pair_local_direction == "none":
+        stop_reason = stop_reason or selected_scan["stop_reason"]
+        intruding_road_ids = tuple(selected_scan["intruding_road_ids"])
+        pair_replacement_road_ids = tuple(selected_scan["pair_replacement_road_ids"])
+        branch_separation_consecutive_exceed_count = int(
+            selected_scan["branch_separation_consecutive_exceed_count"]
+        )
+        branch_separation_stop_triggered = bool(selected_scan["branch_separation_stop_triggered"])
+    collected_slices.extend(selected_scan["slices"])
+    valid_offsets.extend(selected_scan["offsets"])
+    branch_separation_values.extend(float(item) for item in selected_scan["separations"])
+    if stop_reason is None:
+        stop_reason = selected_scan["stop_reason"]
+    if not intruding_road_ids:
+        intruding_road_ids = tuple(selected_scan["intruding_road_ids"])
+    if not pair_replacement_road_ids:
+        pair_replacement_road_ids = tuple(selected_scan["pair_replacement_road_ids"])
+    if not branch_separation_consecutive_exceed_count:
+        branch_separation_consecutive_exceed_count = int(
+            selected_scan["branch_separation_consecutive_exceed_count"]
+        )
+    if not branch_separation_stop_triggered:
+        branch_separation_stop_triggered = bool(selected_scan["branch_separation_stop_triggered"])
 
     pair_local_middle_geometry = _safe_normalize_geometry(
         unary_union(collected_slices) if collected_slices else GeometryCollection()
@@ -1029,6 +1173,7 @@ def _materialize_prepared_unit_inputs(
         )
     if pair_local_structure_face_geometry is None:
         pair_local_degraded_reasons.append("pair_local_middle_missing")
+        stop_reason = stop_reason or "pair_local_middle_missing"
         fallback_parts: list[BaseGeometry] = []
         for geometry in (
             local_context.patch_drivezone_union,
@@ -1132,6 +1277,9 @@ def _materialize_prepared_unit_inputs(
     if pair_local_region_geometry is not None:
         minx, miny, maxx, maxy = pair_local_region_geometry.bounds
         pair_local_patch_size_m = max(float(maxx - minx), float(maxy - miny), float(PAIR_LOCAL_THROAT_RADIUS_M) * 2.0)
+    degraded_scope_reason, degraded_scope_severity, degraded_scope_fallback_used = _degraded_scope_metadata(
+        pair_local_degraded_reasons
+    )
     pair_local_summary = {
         "region_id": (
             f"{event_unit_spec.event_unit_id}:{pair_region_signature}"
@@ -1157,9 +1305,27 @@ def _materialize_prepared_unit_inputs(
             for branch_id, node_ids in branch_bridge_node_ids.items()
         },
         "operational_kind_hint": kind_hint,
+        "pair_local_direction": pair_local_direction,
         "pair_scan_truncated_to_local": bool(pair_scan_truncated_to_local),
         "degraded_reasons": list(dict.fromkeys(pair_local_degraded_reasons)),
+        "degraded_scope_reason": degraded_scope_reason,
+        "degraded_scope_severity": degraded_scope_severity,
+        "degraded_scope_fallback_used": bool(degraded_scope_fallback_used),
         "valid_scan_offsets_m": [round(float(offset), 3) for offset in sorted(valid_offsets)],
+        "branch_separation_mean_m": (
+            None
+            if not branch_separation_values
+            else round(float(sum(branch_separation_values) / len(branch_separation_values)), 3)
+        ),
+        "branch_separation_max_m": (
+            None if not branch_separation_values else round(float(max(branch_separation_values)), 3)
+        ),
+        "branch_separation_threshold_m": round(float(branch_separation_threshold_m), 3),
+        "branch_separation_consecutive_exceed_count": int(branch_separation_consecutive_exceed_count),
+        "branch_separation_stop_triggered": bool(branch_separation_stop_triggered),
+        "stop_reason": stop_reason,
+        "intruding_road_ids": list(intruding_road_ids),
+        "pair_replacement_road_ids": list(pair_replacement_road_ids),
         "pair_local_rcsd_road_count": len(pair_local_scope_rcsd_roads),
         "pair_local_rcsd_node_count": len(pair_local_scope_rcsd_nodes),
         "pair_local_rcsd_empty": not pair_local_scope_rcsd_roads and not pair_local_scope_rcsd_nodes,
@@ -1189,11 +1355,7 @@ def _materialize_prepared_unit_inputs(
         boundary_pair_signature=pair_region_signature,
         branch_road_memberships=dict(branch_road_memberships),
         branch_bridge_node_ids=dict(branch_bridge_node_ids),
-        degraded_scope_reason=(
-            "|".join(dict.fromkeys(pair_local_degraded_reasons))
-            if pair_local_degraded_reasons
-            else None
-        ),
+        degraded_scope_reason=degraded_scope_reason,
         pair_local_summary=pair_local_summary,
         pair_local_region_geometry=pair_local_region_geometry,
         pair_local_structure_face_geometry=pair_local_structure_face_geometry,
@@ -1505,6 +1667,8 @@ def _build_unit_envelope(prepared: _PreparedUnitInputs) -> T04UnitEnvelope:
         branch_road_memberships=dict(prepared.branch_road_memberships),
         branch_bridge_node_ids=dict(prepared.branch_bridge_node_ids),
         degraded_scope_reason=prepared.degraded_scope_reason,
+        degraded_scope_severity=prepared.pair_local_summary.get("degraded_scope_severity"),
+        degraded_scope_fallback_used=bool(prepared.pair_local_summary.get("degraded_scope_fallback_used")),
     )
 
 
@@ -1582,6 +1746,8 @@ def _build_result_from_interpretation(
         review_reasons.append("fallback_to_weak_evidence")
     if prepared.degraded_scope_reason:
         review_reasons.append(f"degraded_scope:{prepared.degraded_scope_reason}")
+        if str(prepared.pair_local_summary.get("degraded_scope_severity") or "") == "hard":
+            fail_reasons.append("hard_degraded_scope")
     if fail_reasons:
         review_state = "STEP4_FAIL"
         all_reasons = tuple(dict.fromkeys([*fail_reasons, *review_reasons]))
@@ -1791,5 +1957,3 @@ def _empty_selected_evidence_summary(*, decision_reason: str) -> dict[str, Any]:
         "selection_status": "none",
         "decision_reason": decision_reason,
     }
-
-

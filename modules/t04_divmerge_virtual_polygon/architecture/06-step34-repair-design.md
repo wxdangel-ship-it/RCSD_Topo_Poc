@@ -71,7 +71,7 @@ Step3 正式拆成两层：
 - `unit population` 仍然只属于当前 representative node。
 - 但对 `continuous complex/merge`，当前 unit 的 executable branches 允许在 same-case sibling internal node 上做 branch continuation；前提是 continuation 后仍属于当前 unit 的同一 merge/diverge 臂，且 `pair-middle` 语义连续、开放、未被新的竞争 pair 替代。
 - `continuous chain` 只允许作为 case 外 `chain_context_hint`，不得把整条 complex corridor 直接回流成 unit-local throat 几何或 event-unit population。
-- 这里的 continuation 目标不再是“给单条 road 找下一跳”，而是给当前 unit 的有序 pair `(L, R)` 找到新的 `(L', R')`。当前轮次候选空间一旦确定当前 pair 的合法延续方向，就只允许沿该方向单向推进，不再为了补全候选空间做反向追溯。只要 sibling node 上无法唯一传播 pair、`L' / R'` 之间夹入其他 road、或当前 pair-middle 被新 pair 关系替代，就必须立即停止。
+- 这里的 continuation 目标不再是“给单条 road 找下一跳”，而是给当前 unit 的有序 pair `(L, R)` 找到新的 `(L', R')`。当前轮次候选空间一旦确定当前 pair 的合法延续方向，就只允许沿该方向单向推进，不再为了补全候选空间做反向追溯；continuation 的正式硬上限冻结为 `200m`。只要 sibling node 上无法唯一传播 pair、`L' / R'` 之间夹入其他 road、当前 pair-middle 被新 pair 关系替代、或显式 separation stop 命中，就必须立即停止。
 - local truncation 只限制扫描方向，不得把 boundary branch 的合法 continuation membership 再裁回 seed road；只要 `(L, R)` 已合法跨 same-case sibling node 延续，pair-middle 就必须沿该 continuation 继续物化。
 - sibling node 上 arm 的选择顺序冻结为：
   1. `external associated road` 一致
@@ -115,9 +115,11 @@ Step3 正式拆成两层：
 - complex / multi 的 `branch-middle / throat gate` 必须使用当前 unit 的 `boundary_branch_ids`。
 - 不再允许静默退回 case-level `main pair` 充当 unit-local throat。
 - 若当前 unit 无法形成有效 throat pair，必须显式记录 `degraded_scope_reason`。
+- `degraded_scope_reason` 当前必须补 `degraded_scope_severity` 与 `degraded_scope_fallback_used`；当候选空间语义已实质丢失时，允许升到 `STEP4_FAIL`，不能永远只留在 `STEP4_REVIEW`。
 - merge 单元的 `boundary_branch_ids` 来自当前 unit 的 entering branches；diverge 单元来自当前 unit 的 exiting branches；`preferred_axis_branch_id` 来自唯一 opposite-direction trunk。
 - `boundary_branch_ids` 的求解必须遵循当前 unit 的有序 pair `(L, R)`；对 complex / multi，不能再靠匿名 branch 集或单路 greedy continuation 近似替代。
 - `external associated road` 是 boundary branch 的正式外部归宿审计点，不是任意碰到的第一个外部 exit；当前轮次它只用于 arm 选择一致性与停止条件判断，不再作为候选空间反向延伸的硬终点。若当前 unit 在 complex 内形成 `closed interval`，才允许在内部停止。
+- pair-local 候选空间还必须显式输出 `branch_separation_*` 与 `stop_reason`，并把“中间夹其他 road”的判断落到 geometry-level intrusion gate，而不是继续只靠角度近似。
 
 ### 4.3 reverse tip 状态机
 

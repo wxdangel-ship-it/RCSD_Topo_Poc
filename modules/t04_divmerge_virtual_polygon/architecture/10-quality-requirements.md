@@ -9,8 +9,16 @@
 - 对 `continuous complex/merge`，Step3/Step4 必须能证明“unit population 不扩，但 executable branch 可跨 same-case sibling internal node 延续”的语义没有被压扁成二叉 pair。
 - Step4 必须把 unit 的第一层边界解释为有序 branch pair `(L, R)`，而不是匿名 branch 集。
 - Step4 候选空间必须只由当前 unit 的两条边界 branch `(L, R)` 及其合法 continuation 物化，不得吸纳非分支道路面。
-- Step4 候选空间的纵向延续仍可沿原扫描长度要求执行，但只能沿当前 unit 的合法单向延续推进；不得再通过反向追溯补全 `pair-local region`。
+- Step4 候选空间的纵向延续当前冻结为 `200m`，并且只能沿当前 unit 的合法单向延续推进；不得再通过反向追溯补全 `pair-local region`。
 - sibling node 上 arm 的选择不得退化成单纯方位角或最小转角贪心；`external associated road`、pair 排布与“中间不得夹入其他 road”必须先于 tie-breaker 生效。
+- Step4 pair-local 输出必须能审出：
+  - `pair_local_direction`
+  - `branch_separation_mean_m`
+  - `branch_separation_max_m`
+  - `branch_separation_consecutive_exceed_count`
+  - `branch_separation_stop_triggered`
+  - `stop_reason`
+  - `intruding_road_ids`
 - Step4 每个 event unit 的事实依据与位置必须可解释。
 - `fact_reference_point`、`review_materialized_point`、`selected_component_union_geometry`、`localized_evidence_core_geometry`、`coarse_anchor_zone_geometry` 的语义边界必须可解释。
 
@@ -37,6 +45,7 @@
   - `external associated road` 如何确定
   - propagation 在哪个 sibling node 停止，以及停止原因
   - 当前候选空间是否只沿单向延续展开、是否排除了非分支道路
+- `degraded_scope_reason` 必须同时带出 `degraded_scope_severity` 与 `degraded_scope_fallback_used`，否则 QA 无法区分 soft degraded 与 hard degraded。
 - ownership 冲突必须能举证到：
   - component union
   - localized evidence core

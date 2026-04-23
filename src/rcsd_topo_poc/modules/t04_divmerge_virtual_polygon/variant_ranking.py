@@ -159,11 +159,14 @@ def _prepared_variant_rank(
 ) -> tuple[int, ...]:
     best_priority = evaluations[0].priority_score if evaluations else -10_000
     degraded_reasons = list(prepared.pair_local_summary.get("degraded_reasons") or [])
+    degraded_scope_severity = str(prepared.pair_local_summary.get("degraded_scope_severity") or "")
     degraded_penalty = 0
     for reason in degraded_reasons:
         degraded_penalty += 80
         if reason in {"pair_local_scope_roads_empty", "pair_local_middle_missing"}:
             degraded_penalty += 160
+    if degraded_scope_severity == "hard":
+        degraded_penalty += 320
     extra_road_count = sum(max(len(road_ids) - 1, 0) for road_ids in prepared.branch_road_memberships.values())
     bridge_count = sum(len(node_ids) for node_ids in prepared.branch_bridge_node_ids.values())
     best_priority -= int(extra_road_count) * 40

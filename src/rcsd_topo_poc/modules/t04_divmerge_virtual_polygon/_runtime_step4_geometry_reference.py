@@ -624,6 +624,133 @@ def _build_between_branches_segment(
     }
 
 
+def _trim_line_endcaps(
+    *,
+    line: LineString | None,
+    trim_m: float,
+):
+    if line is None or line.is_empty:
+        return GeometryCollection()
+    line_length = float(line.length)
+    if line_length <= 1e-6:
+        return GeometryCollection()
+    trim = max(0.0, float(trim_m))
+    if trim <= 1e-6:
+        return line
+    if line_length <= float(trim) * 2.0 + 1e-6:
+        return GeometryCollection()
+    return substring(line, float(trim), float(line_length) - float(trim))
+
+
+def _segment_intruding_road_ids(
+    *,
+    segment: LineString | None,
+    scoped_roads: list[ParsedRoad],
+    allowed_road_ids: set[str],
+    event_road_ids: set[str],
+    origin_point: Point | None,
+    throat_radius_m: float,
+    trim_m: float = 1.5,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    inner_segment = _trim_line_endcaps(line=segment, trim_m=trim_m)
+    if inner_segment is None or inner_segment.is_empty:
+        return (), ()
+    if origin_point is not None and not origin_point.is_empty:
+        inner_segment = inner_segment.difference(
+            origin_point.buffer(max(0.0, float(throat_radius_m)), join_style=2)
+        )
+    if inner_segment is None or inner_segment.is_empty:
+        return (), ()
+    probe_geometry = inner_segment.buffer(max(0.4, float(trim_m) * 0.35), cap_style=2, join_style=2)
+    pair_replacement_ids: set[str] = set()
+    intrusion_ids: set[str] = set()
+    for road in scoped_roads:
+        road_id = str(road.road_id)
+        if road_id in allowed_road_ids:
+            continue
+        geometry = road.geometry
+        if geometry is None or geometry.is_empty or not geometry.intersects(probe_geometry):
+            continue
+        if road_id in event_road_ids:
+            pair_replacement_ids.add(road_id)
+        else:
+            intrusion_ids.add(road_id)
+    return tuple(sorted(pair_replacement_ids)), tuple(sorted(intrusion_ids))
+
+
+def _build_pair_local_slice_diagnostic(
+    *,
+    origin_point: Point,
+    axis_unit_vector: tuple[float, float],
+    scan_dist_m: float,
+    cross_half_len_m: float,
+    branch_a_centerline,
+    branch_b_centerline,
+    scoped_roads: list[ParsedRoad],
+    allowed_road_ids: set[str],
+    event_road_ids: set[str],
+    branch_separation_threshold_m: float,
+    throat_radius_m: float,
+) -> dict[str, Any]:
+    crossline = _build_event_crossline(
+        origin_point=origin_point,
+        axis_unit_vector=axis_unit_vector,
+        scan_dist_m=float(scan_dist_m),
+        cross_half_len_m=float(cross_half_len_m),
+    )
+    center_point = crossline.interpolate(0.5, normalized=True)
+    segment, segment_diag = _build_between_branches_segment(
+        crossline=crossline,
+        center_point=center_point,
+        branch_a_centerline=branch_a_centerline,
+        branch_b_centerline=branch_b_centerline,
+    )
+    diag = {
+        "scan_s": float(scan_dist_m),
+        "crossline": crossline,
+        "center_point": center_point,
+        "segment": segment,
+        **dict(segment_diag),
+        "pair_replacement_road_ids": (),
+        "intruding_road_ids": (),
+        "branch_separation_threshold_m": float(branch_separation_threshold_m),
+        "branch_separation_exceeded": False,
+        "stop_reason": "ok",
+    }
+    if segment is None or not bool(segment_diag.get("ok")):
+        diag["stop_reason"] = str(segment_diag.get("reason") or "semantic_boundary_reached")
+        return diag
+    segment_length = float(segment_diag.get("seg_len_m", 0.0) or 0.0)
+    diag["branch_separation_exceeded"] = bool(
+        segment_length >= max(0.0, float(branch_separation_threshold_m)) - 1e-6
+        or not bool(segment_diag.get("branch_a_crossline_hit"))
+        or not bool(segment_diag.get("branch_b_crossline_hit"))
+    )
+    pair_replacement_ids, intrusion_ids = _segment_intruding_road_ids(
+        segment=segment,
+        scoped_roads=scoped_roads,
+        allowed_road_ids=allowed_road_ids,
+        event_road_ids=event_road_ids,
+        origin_point=origin_point,
+        throat_radius_m=throat_radius_m,
+    )
+    diag["pair_replacement_road_ids"] = pair_replacement_ids
+    diag["intruding_road_ids"] = intrusion_ids
+    if pair_replacement_ids:
+        diag["stop_reason"] = "pair_relation_replaced"
+        return diag
+    if intrusion_ids:
+        diag["stop_reason"] = "road_intrusion_between_branches"
+        return diag
+    if diag["branch_separation_exceeded"]:
+        diag["stop_reason"] = "branch_separation_too_large"
+        return diag
+    if not bool(segment_diag.get("branch_a_crossline_hit")) or not bool(segment_diag.get("branch_b_crossline_hit")):
+        diag["stop_reason"] = "semantic_boundary_reached"
+        return diag
+    return diag
+
+
 def _extend_line_to_half_len(
     *,
     line: LineString,

@@ -38,7 +38,12 @@
 - Step4 先在 T04 层显式构造 `pair-local` 搜索空间，而不是在大走廊里无边界找证据：
   - `unit-local branch pair region`
   - `unit-local structure face`
-- `unit-local branch pair region` 通过当前 unit 的有序边界 pair `(L, R)`、throat / node 起始切片和 pair-middle 纵向扫描切出；扫描长度沿用原 Step4 硬上限，但候选空间一旦确定当前合法延续方向，只允许沿该方向单向延伸，不再为了补齐候选空间做反向追溯。对 `continuous complex/merge`，这里允许沿同一 `pair-middle` 语义跨 same-case sibling internal node 延续，但不允许把整条 complex corridor 直接开放给当前 unit。
+- 候选空间正式规则以 `INTERFACE_CONTRACT.md §3.4 / §3.5` 为主；本节只解释为什么 T04 仍保留 `branch-first + slice-fill`，而不把完整规则在此平行重写。
+- `unit-local branch pair region` 通过当前 unit 的有序边界 pair `(L, R)`、throat / node 起始切片和 pair-middle 纵向扫描切出；当前策略上冻结为：
+  - continuation 硬上限 `200m`
+  - 先定合法方向，再单向延伸
+  - stop reason / separation metrics 必须显式审计
+  - `road intrusion between branches` 必须用 geometry gate，而不是只靠角度近似
 - complex / multi 下真正传播的不是单条 road，而是 `(L, R, middle-region)`。到每个 sibling node 时，T04 必须尝试找到新的 `(L', R')`，并满足：
   - `L'` 继承 `L` 的排布侧
   - `R'` 继承 `R` 的排布侧
@@ -72,7 +77,7 @@
   - `ownership_signature`
   - `point_signature`
 - complex `sub-unit` 在 Step4 内必须把 scope 锚定在当前 representative node 的 throat 邻域与当前 unit 的 executable event branches 上；若同一 `pair-middle` 语义在 same-case sibling internal node 之后仍连续、开放且未引入新的竞争 pair，则允许 branch continuation 穿过该 internal node，但不得因此把当前 unit 退回整条 complex 走廊。
-- 若当前 unit-local scope 无法形成有效 throat pair 或 branch-middle gate，系统不得静默回退成整条 complex 走廊；必须显式记录 `degraded_scope_reason`，并至少上浮为 `STEP4_REVIEW`。
+- 若当前 unit-local scope 无法形成有效 throat pair 或 branch-middle gate，系统不得静默回退成整条 complex 走廊；必须显式记录 `degraded_scope_reason / degraded_scope_severity / degraded_scope_fallback_used`，其中 severe degraded 允许升 `STEP4_FAIL`。
 - 候选先按三层优先级分层，再在层内优选：
   - Layer 1：主体稳定落在 `throat core + pair-middle`
   - Layer 2：主体稳定落在 `pair-middle`

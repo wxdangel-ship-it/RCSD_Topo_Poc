@@ -122,6 +122,8 @@ class T04UnitEnvelope:
     branch_road_memberships: dict[str, tuple[str, ...]] = field(default_factory=dict)
     branch_bridge_node_ids: dict[str, tuple[str, ...]] = field(default_factory=dict)
     degraded_scope_reason: str | None = None
+    degraded_scope_severity: str | None = None
+    degraded_scope_fallback_used: bool = False
 
     def to_status_doc(self) -> dict[str, Any]:
         return {
@@ -144,6 +146,8 @@ class T04UnitEnvelope:
                 for branch_id, node_ids in self.branch_bridge_node_ids.items()
             },
             "degraded_scope_reason": self.degraded_scope_reason,
+            "degraded_scope_severity": self.degraded_scope_severity,
+            "degraded_scope_fallback_used": self.degraded_scope_fallback_used,
         }
 
 
@@ -473,6 +477,12 @@ class T04ReviewIndexRow:
     upper_evidence_object_id: str = ""
     local_region_id: str = ""
     point_signature: str = ""
+    pair_local_direction: str = ""
+    branch_separation_max_m: str = ""
+    stop_reason: str = ""
+    degraded_scope_reason: str = ""
+    degraded_scope_severity: str = ""
+    degraded_scope_fallback_used: bool = False
     evidence_conflict_component_id: str = ""
     rcsd_conflict_component_id: str = ""
     evidence_conflict_type: str = ""
@@ -549,6 +559,12 @@ class T04ReviewIndexRow:
             "upper_evidence_object_id": self.upper_evidence_object_id,
             "local_region_id": self.local_region_id,
             "point_signature": self.point_signature,
+            "pair_local_direction": self.pair_local_direction,
+            "branch_separation_max_m": self.branch_separation_max_m,
+            "stop_reason": self.stop_reason,
+            "degraded_scope_reason": self.degraded_scope_reason,
+            "degraded_scope_severity": self.degraded_scope_severity,
+            "degraded_scope_fallback_used": int(self.degraded_scope_fallback_used),
             "evidence_conflict_component_id": self.evidence_conflict_component_id,
             "rcsd_conflict_component_id": self.rcsd_conflict_component_id,
             "evidence_conflict_type": self.evidence_conflict_type,

@@ -66,6 +66,7 @@ def _constrain_geometry_to_case_limits(
     *,
     drivezone_union: BaseGeometry | None,
     allowed_geometry: BaseGeometry | None,
+    terminal_window_geometry: BaseGeometry | None,
     forbidden_geometry: BaseGeometry | None,
     cut_barrier_geometry: BaseGeometry | None,
 ) -> BaseGeometry | None:
@@ -75,6 +76,13 @@ def _constrain_geometry_to_case_limits(
     if allowed_geometry is not None and not allowed_geometry.is_empty:
         constrained = _clip_to_drivezone(
             constrained.intersection(allowed_geometry),
+            drivezone_union,
+        )
+    if constrained is None or constrained.is_empty:
+        return None
+    if terminal_window_geometry is not None and not terminal_window_geometry.is_empty:
+        constrained = _clip_to_drivezone(
+            constrained.intersection(terminal_window_geometry),
             drivezone_union,
         )
     if constrained is None or constrained.is_empty:
@@ -411,6 +419,7 @@ def build_step6_polygon_assembly(
             step5_result.case_allowed_growth_domain,
             step5_result.case_must_cover_domain,
             step5_result.case_terminal_cut_constraints,
+            step5_result.case_terminal_window_domain,
             step5_result.case_bridge_zone_geometry,
         ]
     )
@@ -425,6 +434,12 @@ def build_step6_polygon_assembly(
     )
 
     allowed_mask = _rasterize_geometries(grid, [step5_result.case_allowed_growth_domain])
+    terminal_window_geometry = step5_result.case_terminal_window_domain
+    terminal_window_mask = (
+        _rasterize_geometries(grid, [terminal_window_geometry])
+        if terminal_window_geometry is not None and not terminal_window_geometry.is_empty
+        else np.ones_like(allowed_mask, dtype=bool)
+    )
     forbidden_mask = _rasterize_geometries(grid, [step5_result.case_forbidden_domain])
     cut_barrier_geometry = None
     if step5_result.case_terminal_cut_constraints is not None and not step5_result.case_terminal_cut_constraints.is_empty:
@@ -434,11 +449,12 @@ def build_step6_polygon_assembly(
             join_style=2,
         )
     cut_mask = _rasterize_geometries(grid, [cut_barrier_geometry]) if cut_barrier_geometry is not None else np.zeros_like(allowed_mask, dtype=bool)
-    assembly_canvas_mask = allowed_mask & ~forbidden_mask & ~cut_mask
+    assembly_canvas_mask = allowed_mask & terminal_window_mask & ~forbidden_mask & ~cut_mask
     assembly_canvas_geometry = _constrain_geometry_to_case_limits(
         _mask_to_geometry(assembly_canvas_mask, grid),
         drivezone_union=drivezone_union,
         allowed_geometry=step5_result.case_allowed_growth_domain,
+        terminal_window_geometry=terminal_window_geometry,
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
@@ -449,6 +465,7 @@ def build_step6_polygon_assembly(
         _mask_to_geometry(hard_seed_mask, grid),
         drivezone_union=drivezone_union,
         allowed_geometry=step5_result.case_allowed_growth_domain,
+        terminal_window_geometry=terminal_window_geometry,
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
@@ -464,6 +481,7 @@ def build_step6_polygon_assembly(
         _mask_to_geometry(weak_seed_mask, grid),
         drivezone_union=drivezone_union,
         allowed_geometry=step5_result.case_allowed_growth_domain,
+        terminal_window_geometry=terminal_window_geometry,
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
@@ -491,6 +509,7 @@ def build_step6_polygon_assembly(
         _mask_to_geometry(assembled_mask, grid),
         drivezone_union=drivezone_union,
         allowed_geometry=step5_result.case_allowed_growth_domain,
+        terminal_window_geometry=terminal_window_geometry,
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
@@ -548,6 +567,7 @@ def build_step6_polygon_assembly(
                 target_geometry,
                 drivezone_union=drivezone_union,
                 allowed_geometry=step5_result.case_allowed_growth_domain,
+                terminal_window_geometry=terminal_window_geometry,
                 forbidden_geometry=step5_result.case_forbidden_domain,
                 cut_barrier_geometry=cut_barrier_geometry,
             )

@@ -2,10 +2,65 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from shapely.geometry import LineString, Point, Polygon
+from shapely.ops import unary_union
+
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.polygon_assembly import (
+    build_step6_polygon_assembly,
+)
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.support_domain import (
+    T04Step5CaseResult,
+)
 
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import *  # noqa: F401,F403
+
+
+def test_t04_step6_canvas_respects_terminal_window_domain() -> None:
+    drivezone = Polygon([(-60, -30), (160, -30), (160, 30), (-60, 30), (-60, -30)])
+    case_result = SimpleNamespace(
+        case_spec=SimpleNamespace(case_id="window_case"),
+        case_bundle=SimpleNamespace(
+            representative_node=SimpleNamespace(geometry=Point(0, 0)),
+            drivezone_features=(SimpleNamespace(geometry=drivezone),),
+        ),
+    )
+    must_cover = unary_union([Point(20, 0).buffer(2.5), Point(80, 0).buffer(2.5)])
+    allowed = Polygon([(-40, -12), (140, -12), (140, 12), (-40, 12), (-40, -12)])
+    terminal_window = Polygon([(0, -30), (100, -30), (100, 30), (0, 30), (0, -30)])
+    cut_lines = unary_union(
+        [
+            LineString([(0, -24), (0, 24)]),
+            LineString([(100, -24), (100, 24)]),
+        ]
+    )
+    step5_result = T04Step5CaseResult(
+        case_id="window_case",
+        unit_results=(),
+        case_must_cover_domain=must_cover,
+        case_allowed_growth_domain=allowed,
+        case_forbidden_domain=None,
+        case_terminal_cut_constraints=cut_lines,
+        case_terminal_window_domain=terminal_window,
+        case_terminal_support_corridor_geometry=LineString([(0, 0), (100, 0)]).buffer(6.0, cap_style=2),
+        case_bridge_zone_geometry=None,
+        case_support_graph_geometry=None,
+        unrelated_swsd_mask_geometry=None,
+        unrelated_rcsd_mask_geometry=None,
+        divstrip_void_mask_geometry=None,
+        drivezone_outside_enforced_by_allowed_domain=True,
+    )
+
+    result = build_step6_polygon_assembly(case_result, step5_result)
+
+    assert result.assembly_canvas_geometry is not None
+    assert result.final_case_polygon is not None
+    assert result.assembly_canvas_geometry.bounds[0] >= -0.75
+    assert result.assembly_canvas_geometry.bounds[2] <= 100.75
+    assert result.final_case_polygon.bounds[0] >= -0.75
+    assert result.final_case_polygon.bounds[2] <= 100.75
 
 
 @pytest.mark.smoke

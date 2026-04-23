@@ -2,10 +2,74 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from shapely.geometry import LineString, Point, Polygon
+
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.support_domain import (
+    _build_terminal_window_domain,
+)
 
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import *  # noqa: F401,F403
+
+
+def test_t04_step5_terminal_window_uses_semantic_anchors_for_diverge() -> None:
+    drivezone = Polygon([(-40, -40), (140, -40), (140, 40), (-40, 40), (-40, -40)])
+    legacy_bridge = SimpleNamespace(
+        event_axis_unit_vector=(1.0, 0.0),
+        event_axis_centerline=LineString([(0, 0), (100, 0)]),
+        event_origin_point=Point(0, 0),
+        selected_event_roads=(),
+        selected_roads=(),
+    )
+    unit_result = SimpleNamespace(
+        fact_reference_point=Point(80, 0),
+        required_rcsd_node_geometry=Point(20, 0),
+        interpretation=SimpleNamespace(
+            kind_resolution=SimpleNamespace(operational_kind_2=16),
+            legacy_step5_bridge=legacy_bridge,
+        ),
+    )
+
+    window = _build_terminal_window_domain(unit_result, drivezone_union=drivezone)
+
+    assert window is not None
+    assert window.bounds[0] == pytest.approx(0.0, abs=1e-6)
+    assert window.bounds[2] == pytest.approx(100.0, abs=1e-6)
+    assert window.covers(Point(20, 0))
+    assert window.covers(Point(80, 0))
+    assert not window.covers(Point(-5, 0))
+    assert not window.covers(Point(105, 0))
+
+
+def test_t04_step5_terminal_window_falls_back_when_axis_misses_anchors() -> None:
+    drivezone = Polygon([(-30, -30), (70, -30), (70, 30), (-30, 30), (-30, -30)])
+    legacy_bridge = SimpleNamespace(
+        event_axis_unit_vector=(1.0, 0.0),
+        event_axis_centerline=LineString([(100, 0), (140, 0)]),
+        event_origin_point=Point(100, 0),
+        selected_event_roads=(),
+        selected_roads=(),
+    )
+    unit_result = SimpleNamespace(
+        fact_reference_point=Point(10, 0),
+        required_rcsd_node_geometry=Point(30, 0),
+        interpretation=SimpleNamespace(
+            kind_resolution=SimpleNamespace(operational_kind_2=8),
+            legacy_step5_bridge=legacy_bridge,
+        ),
+    )
+
+    window = _build_terminal_window_domain(unit_result, drivezone_union=drivezone)
+
+    assert window is not None
+    assert window.bounds[0] == pytest.approx(-10.0, abs=1e-6)
+    assert window.bounds[2] == pytest.approx(50.0, abs=1e-6)
+    assert window.covers(Point(10, 0))
+    assert window.covers(Point(30, 0))
+    assert not window.covers(Point(-15, 0))
+    assert not window.covers(Point(55, 0))
 
 
 @pytest.mark.smoke
@@ -32,6 +96,8 @@ def test_t04_step5_outputs_synthetic_case(tmp_path: Path) -> None:
     assert case_step5["case_allowed_growth_domain"]["present"] is True
     assert case_step5["case_forbidden_domain"]["present"] is True
     assert case_step5["case_terminal_cut_constraints"]["present"] is True
+    assert "case_terminal_window_domain" in case_step5
+    assert "case_terminal_support_corridor_geometry" in case_step5
     assert "unit_results" in case_step5
     assert case_step5_audit["drivezone_outside_enforced_by_allowed_domain"] is True
 
@@ -39,6 +105,8 @@ def test_t04_step5_outputs_synthetic_case(tmp_path: Path) -> None:
     assert unit_step5["unit_allowed_growth_domain"]["present"] is True
     assert unit_step5["unit_forbidden_domain"]["present"] is True
     assert unit_step5["unit_terminal_cut_constraints"]["present"] is True
+    assert "unit_terminal_window_domain" in unit_step5
+    assert "terminal_support_corridor_geometry" in unit_step5
     assert case_step5["case_terminal_cut_constraints"]["length_m"] <= 60.0
     assert unit_step5["must_cover_components"]["localized_evidence_core_geometry"] is True
     assert unit_step5["must_cover_components"]["fact_reference_patch_geometry"] is True

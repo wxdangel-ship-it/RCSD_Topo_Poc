@@ -24,6 +24,9 @@ STEP5_NEGATIVE_MASK_BUFFER_M = 1.0
 STEP5_TERMINAL_CUT_HALF_WIDTH_M = 12.0
 STEP5_TERMINAL_CUT_WINDOW_MARGIN_M = 20.0
 STEP5_SUPPORT_GRAPH_PAD_M = 2.0
+STEP5_TERMINAL_WINDOW_FALLBACK_HALF_WIDTH_M = 240.0
+STEP5_TERMINAL_AXIS_ANCHOR_TOLERANCE_M = 15.0
+STEP5_TERMINAL_MIN_ANCHOR_SPAN_M = 1.0
 
 
 def _iter_polygon_parts(geometry: BaseGeometry | None) -> Iterable[Polygon]:
@@ -205,6 +208,33 @@ def _ordered_line_by_semantic_anchors(
     return LineString(list(reversed(line.coords)))
 
 
+def _semantic_anchor_axis_line(start_point: Point, end_point: Point) -> LineString | None:
+    if start_point.distance(end_point) <= 1e-6:
+        return None
+    return LineString(
+        [
+            (float(start_point.x), float(start_point.y)),
+            (float(end_point.x), float(end_point.y)),
+        ]
+    )
+
+
+def _axis_line_supports_semantic_anchors(
+    line: LineString,
+    *,
+    start_point: Point,
+    end_point: Point,
+) -> bool:
+    if line.distance(start_point) > STEP5_TERMINAL_AXIS_ANCHOR_TOLERANCE_M:
+        return False
+    if line.distance(end_point) > STEP5_TERMINAL_AXIS_ANCHOR_TOLERANCE_M:
+        return False
+    projected_span = abs(float(line.project(end_point)) - float(line.project(start_point)))
+    if projected_span <= STEP5_TERMINAL_MIN_ANCHOR_SPAN_M and start_point.distance(end_point) > STEP5_TERMINAL_MIN_ANCHOR_SPAN_M:
+        return False
+    return True
+
+
 def _event_axis_line(unit_result: T04EventUnitResult) -> LineString | None:
     bridge = unit_result.interpretation.legacy_step5_bridge
     origin_point = _as_point(bridge.event_origin_point) or _as_point(unit_result.fact_reference_point)
@@ -231,6 +261,24 @@ def _terminal_cut_semantic_anchors(unit_result: T04EventUnitResult) -> tuple[Poi
     if kind_2 == 16:
         return (rcsd_point, reference_point)
     return (reference_point, rcsd_point)
+
+
+def _terminal_semantic_axis_line(unit_result: T04EventUnitResult) -> LineString | None:
+    semantic_start_point, semantic_end_point = _terminal_cut_semantic_anchors(unit_result)
+    if semantic_start_point is None or semantic_end_point is None:
+        return None
+    axis_line = _ordered_line_by_semantic_anchors(
+        _event_axis_line(unit_result),
+        start_point=semantic_start_point,
+        end_point=semantic_end_point,
+    )
+    if axis_line is not None and _axis_line_supports_semantic_anchors(
+        axis_line,
+        start_point=semantic_start_point,
+        end_point=semantic_end_point,
+    ):
+        return axis_line
+    return _semantic_anchor_axis_line(semantic_start_point, semantic_end_point)
 
 
 def _line_point_and_tangent(
@@ -302,6 +350,100 @@ def _line_point_and_tangent(
         )
     )
     return (Point(line.interpolate(clamped_distance)), tangent)
+
+
+def _line_window_centerline(
+    line: LineString,
+    *,
+    start_distance_m: float,
+    end_distance_m: float,
+) -> LineString | None:
+    start_distance = float(start_distance_m)
+    end_distance = float(end_distance_m)
+    if end_distance < start_distance:
+        start_distance, end_distance = end_distance, start_distance
+    if abs(end_distance - start_distance) <= 1e-6:
+        return None
+    start_point, _start_tangent = _line_point_and_tangent(line, distance_m=start_distance)
+    end_point, _end_tangent = _line_point_and_tangent(line, distance_m=end_distance)
+    if start_point is None or end_point is None:
+        return None
+
+    coords: list[tuple[float, float]] = [(float(start_point.x), float(start_point.y))]
+    for coord in line.coords:
+        point = Point(coord)
+        projected = float(line.project(point))
+        if start_distance + 1e-6 < projected < end_distance - 1e-6:
+            coords.append((float(point.x), float(point.y)))
+    coords.append((float(end_point.x), float(end_point.y)))
+
+    deduped: list[tuple[float, float]] = []
+    for coord in coords:
+        if deduped and abs(deduped[-1][0] - coord[0]) <= 1e-6 and abs(deduped[-1][1] - coord[1]) <= 1e-6:
+            continue
+        deduped.append(coord)
+    if len(deduped) < 2:
+        return None
+    return LineString(deduped)
+
+
+def _terminal_window_half_width(drivezone_union: BaseGeometry | None) -> float:
+    if drivezone_union is None or drivezone_union.is_empty:
+        return STEP5_TERMINAL_WINDOW_FALLBACK_HALF_WIDTH_M
+    min_x, min_y, max_x, max_y = drivezone_union.bounds
+    diagonal = ((float(max_x) - float(min_x)) ** 2 + (float(max_y) - float(min_y)) ** 2) ** 0.5
+    return max(
+        diagonal + STEP5_TERMINAL_CUT_WINDOW_MARGIN_M,
+        STEP5_TERMINAL_WINDOW_FALLBACK_HALF_WIDTH_M,
+    )
+
+
+def _terminal_axis_window_centerline(unit_result: T04EventUnitResult) -> LineString | None:
+    axis_line = _terminal_semantic_axis_line(unit_result)
+    semantic_start_point, semantic_end_point = _terminal_cut_semantic_anchors(unit_result)
+    if axis_line is None or semantic_start_point is None or semantic_end_point is None:
+        return None
+    start_offset = float(axis_line.project(semantic_start_point)) - STEP5_TERMINAL_CUT_WINDOW_MARGIN_M
+    end_offset = float(axis_line.project(semantic_end_point)) + STEP5_TERMINAL_CUT_WINDOW_MARGIN_M
+    return _line_window_centerline(
+        axis_line,
+        start_distance_m=start_offset,
+        end_distance_m=end_offset,
+    )
+
+
+def _build_terminal_window_domain(
+    unit_result: T04EventUnitResult,
+    *,
+    drivezone_union: BaseGeometry | None,
+) -> BaseGeometry | None:
+    window_centerline = _terminal_axis_window_centerline(unit_result)
+    if window_centerline is None:
+        return None
+    window_domain = window_centerline.buffer(
+        _terminal_window_half_width(drivezone_union),
+        cap_style=2,
+        join_style=2,
+    )
+    return _clip_to_drivezone(window_domain, drivezone_union)
+
+
+def _build_terminal_support_corridor(
+    unit_result: T04EventUnitResult,
+    *,
+    drivezone_union: BaseGeometry | None,
+) -> BaseGeometry | None:
+    window_centerline = _terminal_axis_window_centerline(unit_result)
+    if window_centerline is None:
+        return None
+    return _clip_to_drivezone(
+        window_centerline.buffer(
+            STEP5_SUPPORT_ROAD_BUFFER_M,
+            cap_style=2,
+            join_style=2,
+        ),
+        drivezone_union,
+    )
 
 
 def _build_fallback_support_strip(
@@ -463,19 +605,9 @@ def _build_terminal_cut_constraints(
     *,
     drivezone_union: BaseGeometry | None,
 ) -> BaseGeometry | None:
-    axis_line = _event_axis_line(unit_result)
+    axis_line = _terminal_semantic_axis_line(unit_result)
     semantic_start_point, semantic_end_point = _terminal_cut_semantic_anchors(unit_result)
     if axis_line is None or semantic_start_point is None or semantic_end_point is None:
-        return _build_terminal_cut_constraints_from_road_terminals(
-            unit_result,
-            drivezone_union=drivezone_union,
-        )
-    axis_line = _ordered_line_by_semantic_anchors(
-        axis_line,
-        start_point=semantic_start_point,
-        end_point=semantic_end_point,
-    )
-    if axis_line is None:
         return _build_terminal_cut_constraints_from_road_terminals(
             unit_result,
             drivezone_union=drivezone_union,
@@ -649,6 +781,8 @@ class T04Step5UnitResult:
     unit_allowed_growth_domain: BaseGeometry | None
     unit_forbidden_domain: BaseGeometry | None
     unit_terminal_cut_constraints: BaseGeometry | None
+    unit_terminal_window_domain: BaseGeometry | None
+    terminal_support_corridor_geometry: BaseGeometry | None
     support_road_ids: tuple[str, ...] = ()
     support_event_road_ids: tuple[str, ...] = ()
     positive_rcsd_road_ids: tuple[str, ...] = ()
@@ -672,11 +806,13 @@ class T04Step5UnitResult:
             "unit_allowed_growth_domain": _geometry_summary(self.unit_allowed_growth_domain),
             "unit_forbidden_domain": _geometry_summary(self.unit_forbidden_domain),
             "unit_terminal_cut_constraints": _geometry_summary(self.unit_terminal_cut_constraints),
+            "unit_terminal_window_domain": _geometry_summary(self.unit_terminal_window_domain),
             "localized_evidence_core_geometry": _geometry_summary(self.localized_evidence_core_geometry),
             "fact_reference_patch_geometry": _geometry_summary(self.fact_reference_patch_geometry),
             "required_rcsd_node_patch_geometry": _geometry_summary(self.required_rcsd_node_patch_geometry),
             "target_b_node_patch_geometry": _geometry_summary(self.target_b_node_patch_geometry),
             "fallback_support_strip_geometry": _geometry_summary(self.fallback_support_strip_geometry),
+            "terminal_support_corridor_geometry": _geometry_summary(self.terminal_support_corridor_geometry),
         }
 
     def to_audit_doc(self) -> dict[str, Any]:
@@ -687,6 +823,8 @@ class T04Step5UnitResult:
             "positive_rcsd_road_ids": list(self.positive_rcsd_road_ids),
             "positive_rcsd_node_ids": list(self.positive_rcsd_node_ids),
             "must_cover_components": dict(self.must_cover_components),
+            "unit_terminal_window_domain": _geometry_summary(self.unit_terminal_window_domain),
+            "terminal_support_corridor_geometry": _geometry_summary(self.terminal_support_corridor_geometry),
         }
 
 
@@ -698,6 +836,8 @@ class T04Step5CaseResult:
     case_allowed_growth_domain: BaseGeometry | None
     case_forbidden_domain: BaseGeometry | None
     case_terminal_cut_constraints: BaseGeometry | None
+    case_terminal_window_domain: BaseGeometry | None
+    case_terminal_support_corridor_geometry: BaseGeometry | None
     case_bridge_zone_geometry: BaseGeometry | None
     case_support_graph_geometry: BaseGeometry | None
     unrelated_swsd_mask_geometry: BaseGeometry | None
@@ -723,6 +863,8 @@ class T04Step5CaseResult:
             "case_allowed_growth_domain": _geometry_summary(self.case_allowed_growth_domain),
             "case_forbidden_domain": _geometry_summary(self.case_forbidden_domain),
             "case_terminal_cut_constraints": _geometry_summary(self.case_terminal_cut_constraints),
+            "case_terminal_window_domain": _geometry_summary(self.case_terminal_window_domain),
+            "case_terminal_support_corridor_geometry": _geometry_summary(self.case_terminal_support_corridor_geometry),
             "case_bridge_zone_geometry": _geometry_summary(self.case_bridge_zone_geometry),
             "unit_results": [unit.to_status_doc() for unit in self.unit_results],
         }
@@ -735,6 +877,8 @@ class T04Step5CaseResult:
             "unrelated_swsd_mask_geometry": _geometry_summary(self.unrelated_swsd_mask_geometry),
             "unrelated_rcsd_mask_geometry": _geometry_summary(self.unrelated_rcsd_mask_geometry),
             "divstrip_void_mask_geometry": _geometry_summary(self.divstrip_void_mask_geometry),
+            "case_terminal_window_domain": _geometry_summary(self.case_terminal_window_domain),
+            "case_terminal_support_corridor_geometry": _geometry_summary(self.case_terminal_support_corridor_geometry),
             "related_swsd_road_ids": list(self.related_swsd_road_ids),
             "related_rcsd_road_ids": list(self.related_rcsd_road_ids),
             "unit_results": [unit.to_audit_doc() for unit in self.unit_results],
@@ -798,6 +942,20 @@ class T04Step5CaseResult:
         append_feature(
             scope="case",
             event_unit_id="",
+            domain_role="case_terminal_window_domain",
+            component_role="case_terminal_window_domain",
+            geometry=self.case_terminal_window_domain,
+        )
+        append_feature(
+            scope="case",
+            event_unit_id="",
+            domain_role="case_allowed_growth_domain",
+            component_role="case_terminal_support_corridor_geometry",
+            geometry=self.case_terminal_support_corridor_geometry,
+        )
+        append_feature(
+            scope="case",
+            event_unit_id="",
             domain_role="case_allowed_growth_domain",
             component_role="case_bridge_zone_geometry",
             geometry=self.case_bridge_zone_geometry,
@@ -831,6 +989,20 @@ class T04Step5CaseResult:
                 domain_role="unit_terminal_cut_constraints",
                 component_role="unit_terminal_cut_constraints",
                 geometry=unit.unit_terminal_cut_constraints,
+            )
+            append_feature(
+                scope="unit",
+                event_unit_id=unit.event_unit_id,
+                domain_role="unit_terminal_window_domain",
+                component_role="unit_terminal_window_domain",
+                geometry=unit.unit_terminal_window_domain,
+            )
+            append_feature(
+                scope="unit",
+                event_unit_id=unit.event_unit_id,
+                domain_role="unit_allowed_growth_domain",
+                component_role="terminal_support_corridor_geometry",
+                geometry=unit.terminal_support_corridor_geometry,
             )
             append_feature(
                 scope="unit",
@@ -919,6 +1091,10 @@ def _build_step5_unit_result(
             unit_result,
             drivezone_union=drivezone_union,
         )
+    terminal_support_corridor_geometry = _build_terminal_support_corridor(
+        unit_result,
+        drivezone_union=drivezone_union,
+    )
 
     unit_must_cover_domain = _clip_to_drivezone(
         _union_geometry(
@@ -938,6 +1114,7 @@ def _build_step5_unit_result(
                 unit_result.selected_component_union_geometry,
                 unit_result.pair_local_structure_face_geometry,
                 fallback_support_strip_geometry,
+                terminal_support_corridor_geometry,
                 target_b_node_patch_geometry,
                 unit_must_cover_domain,
             ]
@@ -960,6 +1137,10 @@ def _build_step5_unit_result(
         drivezone_union,
     )
     unit_terminal_cut_constraints = _build_terminal_cut_constraints(
+        unit_result,
+        drivezone_union=drivezone_union,
+    )
+    unit_terminal_window_domain = _build_terminal_window_domain(
         unit_result,
         drivezone_union=drivezone_union,
     )
@@ -988,6 +1169,8 @@ def _build_step5_unit_result(
         unit_allowed_growth_domain=unit_allowed_growth_domain,
         unit_forbidden_domain=unit_forbidden_domain,
         unit_terminal_cut_constraints=unit_terminal_cut_constraints,
+        unit_terminal_window_domain=unit_terminal_window_domain,
+        terminal_support_corridor_geometry=terminal_support_corridor_geometry,
         support_road_ids=tuple(bridge.selected_road_ids),
         support_event_road_ids=tuple(bridge.selected_event_road_ids),
         positive_rcsd_road_ids=tuple(unit_result.selected_rcsdroad_ids),
@@ -1015,7 +1198,10 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
     seed_rcsd_road_ids = {
         str(road_id)
         for event_unit in case_result.event_units
-        for road_id in event_unit.selected_rcsdroad_ids
+        for road_id in (
+            tuple(event_unit.selected_rcsdroad_ids)
+            + tuple(event_unit.pair_local_rcsd_road_ids)
+        )
         if str(road_id).strip()
     }
     current_semantic_node_ids = {
@@ -1197,6 +1383,14 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         unit_results=unit_results,
         drivezone_union=drivezone_union,
     )
+    case_terminal_window_domain = _clip_to_drivezone(
+        _union_geometry(unit.unit_terminal_window_domain for unit in unit_results),
+        drivezone_union,
+    )
+    case_terminal_support_corridor_geometry = _clip_to_drivezone(
+        _union_geometry(unit.terminal_support_corridor_geometry for unit in unit_results),
+        drivezone_union,
+    )
     return T04Step5CaseResult(
         case_id=case_result.case_spec.case_id,
         unit_results=tuple(unit_results),
@@ -1204,6 +1398,8 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         case_allowed_growth_domain=case_allowed_growth_domain,
         case_forbidden_domain=case_forbidden_domain,
         case_terminal_cut_constraints=case_terminal_cut_constraints,
+        case_terminal_window_domain=case_terminal_window_domain,
+        case_terminal_support_corridor_geometry=case_terminal_support_corridor_geometry,
         case_bridge_zone_geometry=case_bridge_zone_geometry,
         case_support_graph_geometry=case_support_graph_geometry,
         unrelated_swsd_mask_geometry=unrelated_swsd_mask_geometry,

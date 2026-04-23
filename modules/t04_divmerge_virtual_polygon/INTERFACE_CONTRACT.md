@@ -301,6 +301,11 @@
 - 例外（与 REQUIREMENT §9.5 一致）：当两个 unit 共用同一物理 DivStrip component，但同时满足同一 `event_axis_branch_id` 且 `|Δevent_chosen_s_m| > 5m` 时，视为「同一导流带不同位置」的允许场景，不再仅凭 localized core segment 几何重叠触发 fail。
 - 单 Case 内必须先完成候选池生成、初选和重选；若多个 unit 初选撞到一起，不得直接“一过一 fail”，必须先在各自候选池内重选。
 - 当前 Step4 单 Case 输出是“初选结果”，不是全量最终裁决；跨 Case 的对象级 / 区域级共用冲突不在单 Case 内强行解完，而是在全量 Step4 结束后做二次处理。
+- Step4 final tuning 当前正式固定为 second-pass resolver：
+  - 顺序必须是 `same-case evidence -> same-case RCSD claim -> cross-case inventory/cleanup -> final consistency`
+  - 默认不重开主证据
+  - 只有“主证据硬冲突 + RCSD 硬冲突”双重同向成立时，才允许 evidence reopen
+  - RCSD claim resolver 优先在当前 selected aggregated support 内重选 `required_rcsd_node`，不得先降 support
 - 因此 Step4 单 Case 输出必须保留后续二次处理所需字段：
   - `selected_candidate_region`
   - `selected_evidence_state`
@@ -310,6 +315,13 @@
   - `upper_evidence_object_id`
   - `local_region_id`
   - `point_signature`
+  - `selected_rcsdroad_ids`
+  - `selected_rcsdnode_ids`
+  - `aggregated_rcsd_unit_id`
+  - `required_rcsd_node`
+  - `positive_rcsd_support_level`
+  - `positive_rcsd_consistency_level`
+  - `positive_rcsd_audit`
 
 ### 3.5 当前冻结候选空间基线（2026-04-22）
 
@@ -399,6 +411,7 @@
 - `summary.json`
 - `step4_review_index.csv`
 - `step4_review_summary.json`
+- `second_pass_conflict_resolution.json`
 - `step4_review_flat/`
 - `cases/`
 
@@ -448,6 +461,17 @@
   - `upper_evidence_object_id`
   - `local_region_id`
   - `point_signature`
+  - `evidence_conflict_component_id`
+  - `rcsd_conflict_component_id`
+  - `evidence_conflict_type`
+  - `rcsd_conflict_type`
+  - `conflict_resolution_action`
+  - `pre_resolution_candidate_id`
+  - `post_resolution_candidate_id`
+  - `pre_required_rcsd_node`
+  - `post_required_rcsd_node`
+  - `resolution_reason`
+  - `kept_by_baseline_guard`
   - `image_name`
   - `image_path`
 - `step4_review_summary.json` 至少包含：

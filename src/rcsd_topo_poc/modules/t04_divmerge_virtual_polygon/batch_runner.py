@@ -21,6 +21,7 @@ from .outputs import (
     write_review_summary,
     write_summary,
 )
+from .step4_final_conflict_resolver import resolve_step4_final_conflicts
 
 
 DEFAULT_CASE_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor_2")
@@ -80,15 +81,21 @@ def run_t04_step14_batch(
     )
     write_json(run_root / "preflight.json", preflight)
 
-    review_rows = []
+    case_results = []
     failed_case_ids: list[str] = []
     for spec in specs:
         try:
             case_bundle = load_case_bundle(spec)
-            case_result = build_case_result(case_bundle)
-            review_rows.extend(write_case_outputs(run_root=run_root, case_result=case_result))
+            case_results.append(build_case_result(case_bundle))
         except Exception:
             failed_case_ids.append(spec.case_id)
+
+    finalized_case_results, resolution_doc = resolve_step4_final_conflicts(case_results)
+    write_json(run_root / "second_pass_conflict_resolution.json", resolution_doc)
+
+    review_rows = []
+    for case_result in finalized_case_results:
+        review_rows.extend(write_case_outputs(run_root=run_root, case_result=case_result))
 
     materialized_rows = materialize_review_gallery(run_root, review_rows)
     write_review_index(run_root, materialized_rows)
@@ -118,4 +125,3 @@ def run_t04_step14_case(
         out_root=out_root,
         run_id=run_id,
     )
-

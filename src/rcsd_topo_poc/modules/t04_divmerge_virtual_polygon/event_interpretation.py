@@ -18,6 +18,16 @@ from .admission import build_step1_admission
 from .case_models import T04CandidateAuditEntry, T04CaseBundle, T04CaseResult, T04UnitContext
 from .event_units import build_event_unit_specs
 
+
+def _candidate_state_key(summary: dict[str, object]) -> tuple[str, str, str, str]:
+    return (
+        str(summary.get("candidate_id") or ""),
+        str(summary.get("layer_label") or summary.get("layer") or ""),
+        str(summary.get("local_region_id") or ""),
+        str(summary.get("point_signature") or ""),
+    )
+
+
 def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
     admission = build_step1_admission(
         representative_node=case_bundle.representative_node,
@@ -63,28 +73,29 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
         if not evaluations:
             continue
         selected_eval = assignment_by_unit_index[pool_index]
-        selected_candidate_id = (
-            str(selected_eval.result.selected_candidate_summary.get("candidate_id") or "")
+        selected_candidate_key = (
+            _candidate_state_key(selected_eval.result.selected_candidate_summary)
             if selected_eval is not None
-            else ""
+            else ("", "", "", "")
         )
+        selected_candidate_id = selected_candidate_key[0]
         selection_rank = next(
             (
                 rank
                 for rank, item in enumerate(evaluations, start=1)
-                if item.result.selected_candidate_summary.get("candidate_id")
-                == selected_candidate_id
+                if _candidate_state_key(item.result.selected_candidate_summary) == selected_candidate_key
             ),
             None,
         )
         alternative_candidates_list: list[dict[str, Any]] = []
         candidate_audit_entries: list[T04CandidateAuditEntry] = []
         for pool_rank, item in enumerate(evaluations, start=1):
-            candidate_id = str(item.result.selected_candidate_summary.get("candidate_id") or "")
+            candidate_key = _candidate_state_key(item.result.selected_candidate_summary)
+            candidate_id = candidate_key[0]
             candidate_summary = dict(item.result.selected_candidate_summary)
             candidate_summary["pool_rank"] = pool_rank
             candidate_summary["priority_score"] = int(item.priority_score)
-            if selected_eval is not None and candidate_id == selected_candidate_id:
+            if selected_eval is not None and candidate_key == selected_candidate_key:
                 selection_status = "selected"
                 decision_reason = (
                     "selected_after_case_reselection"
@@ -102,7 +113,7 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                 decision_reason = "lower_priority_than_selected"
             candidate_summary["selection_status"] = selection_status
             candidate_summary["decision_reason"] = decision_reason
-            if candidate_id != selected_candidate_id:
+            if candidate_key != selected_candidate_key:
                 alternative_candidates_list.append(dict(candidate_summary))
             candidate_audit_entries.append(
                 T04CandidateAuditEntry(
@@ -126,6 +137,38 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                     review_materialized_point=item.result.review_materialized_point,
                     localized_evidence_core_geometry=item.result.localized_evidence_core_geometry,
                     selected_component_union_geometry=item.result.selected_component_union_geometry,
+                    selected_candidate_region=item.result.selected_candidate_region,
+                    selected_evidence_region_geometry=item.result.selected_evidence_region_geometry,
+                    selected_branch_ids=item.result.selected_branch_ids,
+                    selected_event_branch_ids=item.result.selected_event_branch_ids,
+                    selected_component_ids=item.result.selected_component_ids,
+                    pair_local_rcsd_road_ids=item.result.pair_local_rcsd_road_ids,
+                    pair_local_rcsd_node_ids=item.result.pair_local_rcsd_node_ids,
+                    first_hit_rcsdroad_ids=item.result.first_hit_rcsdroad_ids,
+                    selected_rcsdroad_ids=item.result.selected_rcsdroad_ids,
+                    selected_rcsdnode_ids=item.result.selected_rcsdnode_ids,
+                    primary_main_rc_node_id=item.result.primary_main_rc_node_id,
+                    local_rcsd_unit_id=item.result.local_rcsd_unit_id,
+                    local_rcsd_unit_kind=item.result.local_rcsd_unit_kind,
+                    aggregated_rcsd_unit_id=item.result.aggregated_rcsd_unit_id,
+                    aggregated_rcsd_unit_ids=item.result.aggregated_rcsd_unit_ids,
+                    positive_rcsd_present=item.result.positive_rcsd_present,
+                    positive_rcsd_present_reason=item.result.positive_rcsd_present_reason,
+                    axis_polarity_inverted=bool(item.result.axis_polarity_inverted),
+                    rcsd_selection_mode=item.result.rcsd_selection_mode,
+                    pair_local_rcsd_empty=bool(item.result.pair_local_rcsd_empty),
+                    required_rcsd_node_source=item.result.required_rcsd_node_source,
+                    event_axis_branch_id=item.result.event_axis_branch_id,
+                    event_chosen_s_m=item.result.event_chosen_s_m,
+                    positive_rcsd_audit=dict(item.result.positive_rcsd_audit),
+                    pair_local_rcsd_scope_geometry=item.result.pair_local_rcsd_scope_geometry,
+                    first_hit_rcsd_road_geometry=item.result.first_hit_rcsd_road_geometry,
+                    local_rcsd_unit_geometry=item.result.local_rcsd_unit_geometry,
+                    positive_rcsd_geometry=item.result.positive_rcsd_geometry,
+                    positive_rcsd_road_geometry=item.result.positive_rcsd_road_geometry,
+                    positive_rcsd_node_geometry=item.result.positive_rcsd_node_geometry,
+                    primary_main_rc_node_geometry=item.result.primary_main_rc_node_geometry,
+                    required_rcsd_node_geometry=item.result.required_rcsd_node_geometry,
                 )
             )
         alternative_candidates = tuple(alternative_candidates_list)

@@ -169,6 +169,38 @@ class T04CandidateAuditEntry:
     review_materialized_point: BaseGeometry | None
     localized_evidence_core_geometry: BaseGeometry | None
     selected_component_union_geometry: BaseGeometry | None
+    selected_candidate_region: str | None = None
+    selected_evidence_region_geometry: BaseGeometry | None = None
+    selected_branch_ids: tuple[str, ...] = ()
+    selected_event_branch_ids: tuple[str, ...] = ()
+    selected_component_ids: tuple[str, ...] = ()
+    pair_local_rcsd_road_ids: tuple[str, ...] = ()
+    pair_local_rcsd_node_ids: tuple[str, ...] = ()
+    first_hit_rcsdroad_ids: tuple[str, ...] = ()
+    selected_rcsdroad_ids: tuple[str, ...] = ()
+    selected_rcsdnode_ids: tuple[str, ...] = ()
+    primary_main_rc_node_id: str | None = None
+    local_rcsd_unit_id: str | None = None
+    local_rcsd_unit_kind: str | None = None
+    aggregated_rcsd_unit_id: str | None = None
+    aggregated_rcsd_unit_ids: tuple[str, ...] = ()
+    positive_rcsd_present: bool = False
+    positive_rcsd_present_reason: str = ""
+    axis_polarity_inverted: bool = False
+    rcsd_selection_mode: str = ""
+    pair_local_rcsd_empty: bool = False
+    required_rcsd_node_source: str | None = None
+    event_axis_branch_id: str | None = None
+    event_chosen_s_m: float | None = None
+    positive_rcsd_audit: dict[str, Any] = field(default_factory=dict)
+    pair_local_rcsd_scope_geometry: BaseGeometry | None = None
+    first_hit_rcsd_road_geometry: BaseGeometry | None = None
+    local_rcsd_unit_geometry: BaseGeometry | None = None
+    positive_rcsd_geometry: BaseGeometry | None = None
+    positive_rcsd_road_geometry: BaseGeometry | None = None
+    positive_rcsd_node_geometry: BaseGeometry | None = None
+    primary_main_rc_node_geometry: BaseGeometry | None = None
+    required_rcsd_node_geometry: BaseGeometry | None = None
 
     def to_doc(self) -> dict[str, Any]:
         return _json_safe({
@@ -184,9 +216,14 @@ class T04CandidateAuditEntry:
             "position_source": self.position_source,
             "reverse_tip_used": self.reverse_tip_used,
             "rcsd_consistency_result": self.rcsd_consistency_result,
+            "positive_rcsd_present": self.positive_rcsd_present,
             "positive_rcsd_support_level": self.positive_rcsd_support_level,
             "positive_rcsd_consistency_level": self.positive_rcsd_consistency_level,
             "required_rcsd_node": self.required_rcsd_node,
+            "required_rcsd_node_source": self.required_rcsd_node_source,
+            "selected_candidate_region": self.selected_candidate_region,
+            "selected_rcsdroad_ids": list(self.selected_rcsdroad_ids),
+            "selected_rcsdnode_ids": list(self.selected_rcsdnode_ids),
         })
 
 
@@ -253,6 +290,18 @@ class T04EventUnitResult:
     alternative_candidate_summaries: tuple[dict[str, Any], ...] = ()
     candidate_audit_entries: tuple[T04CandidateAuditEntry, ...] = ()
     extra_review_notes: tuple[str, ...] = ()
+    evidence_conflict_component_id: str = ""
+    rcsd_conflict_component_id: str = ""
+    evidence_conflict_type: str = "none"
+    rcsd_conflict_type: str = "none"
+    conflict_resolution_action: str = "kept"
+    pre_resolution_candidate_id: str = ""
+    post_resolution_candidate_id: str = ""
+    pre_required_rcsd_node: str = ""
+    post_required_rcsd_node: str = ""
+    resolution_reason: str = ""
+    kept_by_baseline_guard: bool = False
+    conflict_audit: dict[str, Any] = field(default_factory=dict)
     source_png_path: str = ""
     compare_png_path: str = ""
     image_name: str = ""
@@ -332,6 +381,18 @@ class T04EventUnitResult:
             "selected_candidate": dict(self.selected_candidate_summary),
             "alternative_candidates": [dict(item) for item in self.alternative_candidate_summaries],
             "candidate_audit_entries": [item.to_doc() for item in self.candidate_audit_entries],
+            "evidence_conflict_component_id": self.evidence_conflict_component_id,
+            "rcsd_conflict_component_id": self.rcsd_conflict_component_id,
+            "evidence_conflict_type": self.evidence_conflict_type,
+            "rcsd_conflict_type": self.rcsd_conflict_type,
+            "conflict_resolution_action": self.conflict_resolution_action,
+            "pre_resolution_candidate_id": self.pre_resolution_candidate_id,
+            "post_resolution_candidate_id": self.post_resolution_candidate_id,
+            "pre_required_rcsd_node": self.pre_required_rcsd_node,
+            "post_required_rcsd_node": self.post_required_rcsd_node,
+            "resolution_reason": self.resolution_reason,
+            "kept_by_baseline_guard": self.kept_by_baseline_guard,
+            "conflict_audit": _json_safe(dict(self.conflict_audit)),
             "interpretation": self.interpretation.to_audit_summary(),
         })
 
@@ -412,6 +473,17 @@ class T04ReviewIndexRow:
     upper_evidence_object_id: str = ""
     local_region_id: str = ""
     point_signature: str = ""
+    evidence_conflict_component_id: str = ""
+    rcsd_conflict_component_id: str = ""
+    evidence_conflict_type: str = ""
+    rcsd_conflict_type: str = ""
+    conflict_resolution_action: str = ""
+    pre_resolution_candidate_id: str = ""
+    post_resolution_candidate_id: str = ""
+    pre_required_rcsd_node: str = ""
+    post_required_rcsd_node: str = ""
+    resolution_reason: str = ""
+    kept_by_baseline_guard: bool = False
     image_name: str = ""
     image_path: str = ""
     compare_image_name: str = ""
@@ -477,6 +549,17 @@ class T04ReviewIndexRow:
             "upper_evidence_object_id": self.upper_evidence_object_id,
             "local_region_id": self.local_region_id,
             "point_signature": self.point_signature,
+            "evidence_conflict_component_id": self.evidence_conflict_component_id,
+            "rcsd_conflict_component_id": self.rcsd_conflict_component_id,
+            "evidence_conflict_type": self.evidence_conflict_type,
+            "rcsd_conflict_type": self.rcsd_conflict_type,
+            "conflict_resolution_action": self.conflict_resolution_action,
+            "pre_resolution_candidate_id": self.pre_resolution_candidate_id,
+            "post_resolution_candidate_id": self.post_resolution_candidate_id,
+            "pre_required_rcsd_node": self.pre_required_rcsd_node,
+            "post_required_rcsd_node": self.post_required_rcsd_node,
+            "resolution_reason": self.resolution_reason,
+            "kept_by_baseline_guard": int(self.kept_by_baseline_guard),
             "image_name": self.image_name,
             "image_path": self.image_path,
             "compare_image_name": self.compare_image_name,

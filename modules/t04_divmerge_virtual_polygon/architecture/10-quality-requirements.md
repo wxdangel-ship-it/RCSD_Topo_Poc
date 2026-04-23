@@ -132,3 +132,14 @@
 - `17943587 / node_55353233` 不得回退到 `502953712 + 605949403`。
 - `17943587 / node_55353248` 不得回退到 trunk 主导或缺失 `607962170` continuation。
 - `857993 / node_870089` 不得回退到只剩 node 邻域小块或重新吸入非 pair 道路。
+
+Step4 final tuning 额外质量门槛：
+
+- accepted `8 case / 13 unit` 在 second-pass 后仍必须保持：
+  - `selected_evidence_state = found`
+  - 主候选不回退
+  - `positive_rcsd_present = true`
+  - `positive_rcsd_support_level = primary_support`
+  - `positive_rcsd_consistency_level = A`
+- `17943587` 允许在不改主证据、不断 support 的前提下，通过 second-pass claim reconcile 改写 `required_rcsd_node`；若发生该类变化，必须显式产出 pre/post compare，不允许 silent drift。
+- same-case non-conflict unit 进入 second-pass 后只能 `kept`，不得被误判成 hard conflict 或 baseline guard 降级。

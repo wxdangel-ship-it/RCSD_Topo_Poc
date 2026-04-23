@@ -16,10 +16,16 @@ def test_t04_step14_batch_outputs_synthetic_case(tmp_path: Path) -> None:
 
     summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
     review_summary = json.loads((run_root / "step4_review_summary.json").read_text(encoding="utf-8"))
+    second_pass = json.loads((run_root / "second_pass_conflict_resolution.json").read_text(encoding="utf-8"))
 
     assert summary["total_case_count"] == 1
     assert summary["failed_case_ids"] == []
     assert review_summary["total_event_unit_count"] >= 1
+    assert {
+        "same_case_evidence_components",
+        "same_case_rcsd_components",
+        "cross_case_components",
+    }.issubset(second_pass)
     assert (run_root / "cases" / "1001" / "step4_review_overview.png").is_file()
     assert any((run_root / "step4_review_flat").glob("*.png"))
     assert any((run_root / "cases" / "1001" / "event_units").rglob("step4_review.png"))
@@ -76,6 +82,17 @@ def test_t04_step14_batch_writes_unit_level_step3_and_candidate_docs(tmp_path: P
     assert "positive_rcsd_present_reason" in candidate_doc
     assert "axis_polarity_inverted" in candidate_doc
     assert "positive_rcsd_audit" in candidate_doc
+    assert "evidence_conflict_component_id" in candidate_doc
+    assert "rcsd_conflict_component_id" in candidate_doc
+    assert "evidence_conflict_type" in candidate_doc
+    assert "rcsd_conflict_type" in candidate_doc
+    assert "conflict_resolution_action" in candidate_doc
+    assert "pre_resolution_candidate_id" in candidate_doc
+    assert "post_resolution_candidate_id" in candidate_doc
+    assert "pre_required_rcsd_node" in candidate_doc
+    assert "post_required_rcsd_node" in candidate_doc
+    assert "resolution_reason" in candidate_doc
+    assert "kept_by_baseline_guard" in candidate_doc
     assert "selected_rcsdroad_ids" in candidate_doc
     assert "selected_rcsdnode_ids" in candidate_doc
     assert "required_rcsd_node_source" in candidate_doc
@@ -119,6 +136,8 @@ def test_t04_step14_batch_writes_unit_level_step3_and_candidate_docs(tmp_path: P
     assert case_step4["event_units"][0]["positive_rcsd_consistency_level"] in {"A", "B", "C"}
     assert isinstance(case_step4["event_units"][0]["positive_rcsd_present"], bool)
     assert "positive_rcsd_audit" in case_step4["event_units"][0]
+    assert "evidence_conflict_component_id" in case_step4["event_units"][0]
+    assert "rcsd_conflict_component_id" in case_step4["event_units"][0]
     assert case_step4["event_units"][0]["selected_rcsdroad_ids"] == candidate_doc["selected_rcsdroad_ids"]
     assert case_step4_audit["event_units"][0]["selected_evidence"]["candidate_id"] == selected_evidence["candidate_id"]
 
@@ -222,6 +241,11 @@ def test_t04_step14_multi_event_case_exports_reselection_and_index_fields(tmp_pa
     assert rows["event_unit_02"]["point_signature"] == ""
     assert rows["event_unit_03"]["point_signature"].startswith(f"{expected_unit_03_axis_signature}:")
     assert rows["event_unit_02"]["ownership_signature"] == ""
+    assert rows["event_unit_02"]["evidence_conflict_type"] != ""
+    assert rows["event_unit_02"]["rcsd_conflict_type"] != ""
+    assert rows["event_unit_02"]["conflict_resolution_action"] != ""
+    assert rows["event_unit_02"]["resolution_reason"] != ""
+    assert rows["event_unit_02"]["kept_by_baseline_guard"] in {"0", "1"}
     assert rows["event_unit_02"]["has_alternative_candidates"] == "1"
     assert rows["event_unit_02"]["selected_reference_zone"] in {"throat", "middle", "edge", "outside", "missing"}
     assert rows["event_unit_02"]["positive_rcsd_support_level"] in {"primary_support", "secondary_support", "no_support"}

@@ -87,6 +87,12 @@
 - 同一 case 的 sub-unit / event-unit 先各自生成候选池和初选，再做单 Case 内重选；若多个 unit 初选撞到一起，优先保留更高层/更稳的候选，其它 unit 在自己的候选池内改选，而不是直接 fail。
 - 若当前初选候选被 `branch-middle / throat` gate 或 `node_fallback_only` 拒绝，必须继续在当前候选池内重选；若重选后仍无合法候选，则显式输出 `selected_evidence_state = none`。
 - 当前单 Case Step4 输出只视为“初选结果”；跨 Case 共用证据冲突不在单 Case 内硬解，等全量 Step4 结束后再做二次处理。
+- Step4 final tuning 正式增加 second-pass resolver：
+  - 先做 same-case evidence conflict inventory / gate
+  - 再做 same-case RCSD claim reconcile
+  - 最后做 cross-case inventory / cleanup
+  - 非冲突单元冻结
+  - RCSD 冲突默认只能改 claim，不能单独推翻主证据
 - 正向 RCSD 在 Step4 内改成 T04 自己的正式选择器，而不是继续让旧 T02 bridge 主导正式输出：
   - 先做 `pair-local raw observation`
   - 再构造 `rcsd_candidate_scope`
@@ -156,8 +162,14 @@
   - `selected_component_union_geometry` 负责物理 component ownership。
   - 同一 `event_axis_branch_id` 且 `|Δevent_chosen_s_m| <= 5m`：记 `shared_event_reference_with` 并升 `STEP4_FAIL`。
   - `localized_evidence_core_geometry` 负责 core-segment ownership；`coarse_anchor_zone_geometry` 只用于审计，不再代理 component ownership。
-  - localized core segment 显著重叠（面积阈值 + 比例阈值）：记 `shared_event_core_segment_with` 并升 `STEP4_FAIL`；但当两 unit 处于同一轴且 `|Δs| > 5m` 时，认定为 REQUIREMENT §9.5 允许的「同一导流带不同位置」，不再触发 segment 重叠 fail。
+- localized core segment 显著重叠（面积阈值 + 比例阈值）：记 `shared_event_core_segment_with` 并升 `STEP4_FAIL`；但当两 unit 处于同一轴且 `|Δs| > 5m` 时，认定为 REQUIREMENT §9.5 允许的「同一导流带不同位置」，不再触发 segment 重叠 fail。
 - Step4 输出除主结果外，还要显式保留备选候选和 pair-local 调试信息，供后续全量二次处理与 case-by-case 审计使用。
+- second-pass 结束后，输出层必须把 pre/post candidate / claim 和 conflict component 审计同步到：
+  - `step4_event_interpretation.json`
+  - `step4_candidates.json`
+  - `step4_evidence_audit.json`
+  - `step4_review_index.csv`
+  - `second_pass_conflict_resolution.json`
 
 ### 4. Review 输出
 

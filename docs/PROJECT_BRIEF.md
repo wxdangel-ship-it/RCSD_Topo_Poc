@@ -44,7 +44,7 @@
 - `t03_virtual_junction_anchor` 当前 internal full-input 批次根目录正式成果包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`
 - `t03_virtual_junction_anchor` 当前 `nodes.gpkg` 仅更新代表 node 的 `is_anchor`：`accepted => yes`，`rejected / runtime_failed => fail3`；其中 `fail3` 只属于 T03 downstream output 语义，不回写输入原始 `nodes.gpkg`，也不反向修改 T02 上游契约
 - `t03_watch_internal_full_input.sh` 当前采用 T02 风格的 formal-first 监控口径，默认关注 `total / completed / running / pending / success / failed`
-- `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围只到 `Step1-4`，默认交付 `case-package` 输入下的 Step4 review PNG、flat mirror、index 与 summary，不新增 repo 官方 CLI
+- `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围已扩展到 `Step1-7`，其中 `Step1-4` 维持既有 `case-package` 输入下的 Step4 review PNG、flat mirror、index 与 summary，`Step5-7` 进入正式研发实现阶段，且默认遵循 SpecKit 的 `Product / Architecture / Development / Testing / QA` 五视角覆盖；internal full-input 通过 repo 级 shell/watch 包装 + T04 私有 runner 交付，不新增 repo 官方 CLI
 - `_template` 仅是模板目录，不属于模块生命周期盘点对象
 - 模块根目录不放 `SKILL.md`
 - 标准 Skill 统一放 repo root `.agents/skills/`

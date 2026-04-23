@@ -50,7 +50,7 @@
 - `t02_junction_anchor` 当前仍是 Active 模块；其模块正文若处于独立重构中，应以该轮任务边界为准，不在其它治理轮次中顺手改写。
 - `t03_virtual_junction_anchor` 当前进入 Active 模块集合；其正式范围为冻结 `Step3 legal-space baseline` 之上的 `Step4-7 clarified formal stage`。
 - `t03_virtual_junction_anchor` 当前 repo 官方入口仍只有 `t03-step3-legal-space` 与 `t03-step45-rcsd-association`；`Step67` 已形成正式交付，但仍通过模块内 batch runner 与 closeout 维持。
-- `t04_divmerge_virtual_polygon` 当前进入 Active 模块集合；其正式范围为 `Step1-4` 的模块化实现与 Step4 审计输出，不承接 Step5-7 与 repo 官方 CLI。
+- `t04_divmerge_virtual_polygon` 当前进入 Active 模块集合；其正式范围为 `Step1-7` 的模块化实现、Step7 发布层与 internal full-input repo 级脚本包装；不新增 repo 官方 CLI 子命令。
 - 未在模块生命周期文档中登记的模块目录，不自动视为当前正式治理对象。
 
 ## 哪些文档不是主入口

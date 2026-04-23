@@ -43,7 +43,7 @@
 - 让 `t02_junction_anchor` 的项目级登记状态与仓库级入口事实保持一致
 - 让 `t03_virtual_junction_anchor` 的冻结 `Step3 legal-space baseline`、`Step4-7 clarified formal stage` 与仓库级入口事实保持一致
 - 让 `t03_virtual_junction_anchor` 的 internal full-input repo 级脚本交付面、批次根目录正式成果与 project-level 文档登记保持一致
-- 让 `t04_divmerge_virtual_polygon` 的 Step1-4 模块文档、领域分层实现与 Step4 审计输出保持一致
+- 让 `t04_divmerge_virtual_polygon` 的 Step1-7 模块文档、领域分层实现、Step4 审计输出与最终发布契约保持一致
 
 ### 2.2 当前阶段明确不做
 
@@ -66,7 +66,7 @@
 - 已登记正式模块 `t01_data_preprocess` 的 accepted baseline、official end-to-end 与 freeze compare
 - 已登记正式模块 `t02_junction_anchor` 的项目级登记状态与仓库级入口索引
 - 已登记正式模块 `t03_virtual_junction_anchor` 的冻结 `Step3 legal-space baseline`、`Step4-7 clarified formal stage`、repo 级 internal full-input shell/watch 交付面、批量审查产物与入口索引
-- 已登记正式模块 `t04_divmerge_virtual_polygon` 的 Step1-4 正式文档面、模块化实现与 Step4 review 输出契约
+- 已登记正式模块 `t04_divmerge_virtual_polygon` 的 Step1-7 正式文档面、模块化实现、Step4 review 输出与最终发布契约
 
 ### 3.2 当前非目标（不包含）
 
@@ -125,16 +125,27 @@
 - `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义：仅更新代表 node，`accepted => yes`，`rejected / runtime_failed => fail3`；该语义不回写输入原始 `nodes.gpkg`，也不反向修改 T02 上游契约。
 - `t03_watch_internal_full_input.sh` 当前采用 T02 风格的 formal-first 监控口径：默认显示 `selected / completed / running / pending / accepted / rejected / runtime_failed / missing_status`，并显式表达是否已进入 `case execution` 阶段；视觉层统计仅在显式调试场景下读取 review-only 工件。
 
-### 4.5 T04 Step1-4 正式范围约束
+### 4.5 T04 Step1-7 正式范围约束
 
-- `t04_divmerge_virtual_polygon` 当前正式范围只到 `Step1-4`：
+- `t04_divmerge_virtual_polygon` 当前正式范围扩展到 `Step1-7`：
   - `Step1 = candidate admission`
   - `Step2 = high-recall local context`
   - `Step3 = topology skeleton`
   - `Step4 = fact event interpretation + review outputs`
-- T04 当前正式输入是包含 `divstripzone.gpkg` 的 case-package，full-input candidate discovery 只保留工程边界，不在本轮提升为 repo 官方入口。
+  - `Step5 = geometric support domain`
+  - `Step6 = polygon assembly`
+  - `Step7 = final acceptance + publishing`
+- T04 当前正式输入同时覆盖包含 `divstripzone.gpkg` 的 case-package 与 internal full-input；full-input 通过 repo 级 shell/watch 包装进入 T04 私有 runner，不新增 repo 官方 CLI 子命令。
 - T04 Step4 当前必须输出 case overview、event-unit review PNG、flat mirror、review index 与 review summary，用于人工审计；这些结果不等同最终发布层。
-- T04 当前不推进 `Step5-7`，也不新增 repo 官方 CLI / shell 入口。
+- T04 当前已进入 `Step5-7` 正式研发实现阶段；`Step1-4` 保持既有稳定执行面，`Step5-7` 按冻结需求分轮落地。
+- T04 `Step5-7` 正式研发默认遵循 SpecKit，任务书必须覆盖：
+  - `Product`
+  - `Architecture`
+  - `Development`
+  - `Testing`
+  - `QA`
+- T04 可以参考 `t03_virtual_junction_anchor` 的实现逻辑、审计风格、产物组织与输出组织方式，但运行时不得直接 import / 调用 / 拷贝 T03 模块代码；正式执行逻辑必须保留在 T04 私有实现内。
+- T04 当前不新增 repo 官方 CLI；internal full-input shell/watch 交付面为 repo 级脚本入口，执行逻辑保留在 T04 私有实现内。
 
 ---
 
@@ -212,5 +223,5 @@
 - `t03_virtual_junction_anchor` 当前作为 Active 正式业务模块；当前正式范围为“冻结 `Step3 legal-space baseline` + `Step4-7 clarified formal stage（仅 `center_junction / single_sided_t_mouth`）`”，默认正式全量 `58` case 的业务正确性基线已满足人工目视审计，少量 accepted case 的几何形状优化保留为长期迭代方向。
 - `t03_virtual_junction_anchor` 当前仍只有 `Step4-5` 官方 CLI；`Step67` 已有正式交付与 closeout，但未提升为 repo 官方 CLI。其内网批量执行与监控当前通过 repo 级 `t03_run_internal_full_input_8workers.sh` / `t03_watch_internal_full_input.sh` 交付，旧 `step67` 命名仅保留兼容 wrapper。
 - `t03_virtual_junction_anchor` 的 internal full-input 当前正式批次根目录成果包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`；其中 `nodes.gpkg` 仅更新代表 node，`fail3` 只代表 T03 downstream output 语义。
-- `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围是 `Step1-4` 的 doc-first formalization、模块化实现与 Step4 review outputs，暂不承接 Step5-7 与 repo 官方入口扩展。
+- `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围已扩展到 `Step1-7`，其中 `Step1-4` 维持既有稳定执行面，`Step5-7` 进入正式研发实现阶段；internal full-input 通过 repo 级脚本包装 + T04 私有 runner 交付，不新增 repo 官方 CLI。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

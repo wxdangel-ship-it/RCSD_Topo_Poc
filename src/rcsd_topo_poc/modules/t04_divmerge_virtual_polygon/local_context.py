@@ -21,6 +21,7 @@ def build_step2_local_context(
         drivezone_features=list(case_bundle.drivezone_features),
         rcsd_roads=list(case_bundle.rcsd_roads),
         rcsd_nodes=list(case_bundle.rcsd_nodes),
+        preloaded_divstrip_features=list(case_bundle.divstrip_features),
         divstripzone_path=case_bundle.case_spec.input_paths["divstripzone_path"],
         divstripzone_layer=None,
         divstripzone_crs=None,

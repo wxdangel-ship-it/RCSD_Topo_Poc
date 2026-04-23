@@ -3,29 +3,41 @@
 ## 定位
 
 - 本文件是 `t04_divmerge_virtual_polygon` 的稳定契约面。
-- 当前正式范围为：T04 `Step1-4` doc-first formalization 与模块化实现。
+- 当前正式范围为：T04 `Step1-7` source-of-truth 对齐与分阶段模块化实现。
 - `README.md` 只承担操作者入口职责；长期设计以 `architecture/*` 为准。
 
 ## 1. 目标与范围
 
 - 模块 ID：`t04_divmerge_virtual_polygon`
 - 目标：
-  - 将线程级 T04 Step1-4 需求落入 repo source-of-truth
-  - 提供 case-package 输入下可运行的 Step1-4 pipeline
-  - 提供 Step4 review PNG / flat mirror / index / summary
+  - 将线程级 T04 Step1-7 冻结需求落入 repo source-of-truth
+  - 维持 case-package 输入下可运行的 Step1-4 pipeline
+  - 推进 Step5-7 的正式研发实现与最终发布契约
+  - 提供 Step4 review PNG / flat mirror / index / summary，并承接 Step5-7 最终发布层
 - 当前正式范围：
   - case-package loader / preflight
   - Step1 candidate admission
   - Step2 local context
   - Step3 topology skeleton
   - Step4 fact event interpretation
-  - case-level / batch-level review outputs
-- T04 可以参考 `t02_junction_anchor` 的 Stage4 业务逻辑与审计经验，但运行时不得直接 import / 调用 T02 模块代码；正式执行逻辑必须在 T04 私有实现内落地。
-- 明确不在当前正式范围：
   - Step5 geometric support domain
   - Step6 polygon assembly
   - Step7 final acceptance / publishing
-  - repo 官方 CLI / shell 入口扩展
+  - case-level / batch-level review outputs
+  - internal full-input runner / shell wrapper / watch / final flat visual audit output
+- 当前实施阶段：
+  - `Step1-4` = 既有稳定执行面
+  - `Step5-7` = 正式研发实现阶段
+- T04 可以参考 `t02_junction_anchor` 的 Stage4 业务逻辑与审计经验，但运行时不得直接 import / 调用 T02 模块代码；正式执行逻辑必须在 T04 私有实现内落地。
+- T04 可以参考 `t03_virtual_junction_anchor` 的实现逻辑、审计风格、产物形式与输出组织方式，但运行时不得直接 import / 调用 / 硬拷贝 T03 模块代码；正式执行逻辑必须在 T04 私有实现内落地。
+- `Step5-7` 正式研发默认遵循 SpecKit，任务书必须覆盖：
+  - `Product`
+  - `Architecture`
+  - `Development`
+  - `Testing`
+  - `QA`
+- 明确不在当前正式范围：
+  - repo 官方 CLI 子命令扩展
 
 ## 2. Inputs
 
@@ -286,6 +298,7 @@
   - `aggregated_rcsd_unit_ids`
   - `axis_polarity_inverted`
   - `required_rcsd_node_source`
+- 其中 `selected_rcsdroad_ids / selected_rcsdnode_ids` 表达供 Step5-7 正式下游消费的 publish/core 子集；当前冻结实现优先取 `primary local unit` core roads + 必要 trace；聚合全量 component 成员必须保留在 `positive_rcsd_audit`。
 - 若当前主证据位置存在正向匹配的 RCSD 路口节点，则该节点必须作为 `required_rcsd_node` 输出；它不再依赖 `A` 才能出现。
 - `required_rcsd_node` 必须从已匹配的 local / aggregated RCSD unit 中独立输出；`A/B` 只影响其支持强度，不影响该字段是否应输出。
 - `positive_rcsd_present = true` 的 case，不得仅因 side-label mismatch 直接落到 `C / no_support`。
@@ -346,9 +359,77 @@
   - `positive_rcsd_consistency_level`
   - `positive_rcsd_audit`
 
-### 3.5 当前冻结候选空间基线（2026-04-22）
+### 3.5 Step5 Geometric Support Domain
 
-- 本节冻结的是 `Step4 候选空间 / selected_candidate_region` 的当前 accepted baseline，不扩展到 `Step5-7`。
+- Step5 只负责构建几何支撑域与约束层，不生成最终 polygon。
+- Step5 的计算单元按 Unit 做，并提升到 Case 级汇总。
+- Step5 当前正式输出对象至少包括：
+  - `must_cover_domain`
+  - `allowed_growth_domain`
+  - `forbidden_domain`
+  - `terminal_cut_constraints`
+- `must_cover_domain` 当前至少必须覆盖：
+  - `localized_evidence_core_geometry`
+  - `fact_reference_point` materialized patch
+  - `A` 类 `required_rcsd_node` patch
+  - `B` 类无 node / `C` 类 `fallback_support_strip`
+- `allowed_growth_domain` 当前至少必须包含：
+  - `selected_candidate_region`
+  - `selected_component_union_geometry`
+  - `unit-local structure face`
+  - `fallback_support_strip`
+  - same-case 合法 `bridge zone`
+- `forbidden_domain` 当前必须显式构建 `1m` hard negative mask，至少覆盖：
+  - 不属于当前 Case 合法支撑图的 SWSD roads
+  - 不属于当前 Case 正向 RCSD support graph 的 `RCSDRoad`
+  - same-case 其他 Unit 的核心占用区
+  - `DriveZone` 外部
+  - `DivStrip` 不可进入区 / void
+- SWSD / RCSD 相关 road 判定必须从当前 Unit 支撑 road / 正向 RCSD road 出发，经 degree-2 node 继续追溯，直到下一语义路口前停止；该通路内 road 不得作为 unrelated negative mask。
+- `terminal_cut_constraints` 只在 Step5 定义，不在 Step5 执行裁面。
+- 当前冻结实现口径：
+  - terminal cut 的 longitudinal window 由 `fact_reference_point` 与当前正向召回 `RCSD node` 共同限定
+  - 合流通常按 `fact_reference_point -> 正向 RCSD node`，分歧通常按 `正向 RCSD node -> fact_reference_point`
+  - 沿 case 主方向在语义起点后方 `20m`、语义终点前方 `20m` 截断
+  - 缺少正向 node 时，不得用 `review point` 伪造语义窗口，应退回道路末端约束或 fallback 支撑规则
+  - multi-unit 且同轴的 case，Case 级执行 cut 只保留外侧边界 cut；内部 unit cut 仅保留在 unit audit
+  - 不再按 support road 远端端点无限外扩
+
+### 3.6 Step6 Polygon Assembly
+
+- Step6 只消费 Step5 的 Case 级结果，不得回退到 Step4 自由发挥。
+- Step6 的职责是：
+  - 在 Step5 约束内形成一个 Case 级单一连通面
+  - 严格服从 `allowed_growth_domain / forbidden_domain / terminal_cut_constraints`
+  - 输出最终 polygon 及组装审计结果
+- Step6 主流程以 `raster-first` 组装为主，`vector boolean` 只用于末端矢量化与清理。
+- Step6 当前正式目标包括：
+  - 覆盖全部硬 must-cover
+  - 不突破 Step5 的 `allowed / forbidden / cut`
+  - 只允许业务 hole，不允许算法洞
+- Step6 当前正式输出至少包括：
+  - `final_case_polygon`
+  - `step6_status.json`
+  - `step6_audit.json`
+
+### 3.7 Step7 Final Acceptance And Publishing
+
+- Step7 基于 Step6 已产出的 `final_case_polygon` 做最终业务验收、状态判定、发布与批量汇总。
+- Step7 原则上不再修改几何，不回头重开 Step6 组装，不重算 Step5 支撑域。
+- Step7 最终状态机只允许：
+  - `accepted`
+  - `rejected`
+- Step7 不再保留最终 `review` 状态；所有不确定性只保留在审计材料中。
+- Step7 当前正式发布层至少包括：
+  - `divmerge_virtual_anchor_surface`
+  - `divmerge_virtual_anchor_surface_rejected`
+  - `divmerge_virtual_anchor_surface_summary`
+  - `divmerge_virtual_anchor_surface_audit`
+- `rejected` 层不发布 fake final polygon，优先发布 `reject_stub_geometry` 或拒绝索引。
+
+### 3.8 当前冻结候选空间基线（2026-04-22）
+
+- 本节冻结的是 `Step4 候选空间 / selected_candidate_region` 的当前 accepted baseline；Step5-7 以下游章节消费这些 Step4 输出为准，不在本节重写下游规则。
 - 当前 accepted baseline 输入集冻结为：`E:\TestData\POC_Data\T02\Anchor_2`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor_2`）。
 - 当前人工目视审计参考工件为：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch/codex_t04_pair_variant_fix_20260422`。
 - 上述输出目录只是审计证据，不是 source-of-truth；若审计工件缺失，以本契约与 `tests/modules/t04_divmerge_virtual_polygon/test_step14_*.py` 的冻结断言为准。
@@ -386,9 +467,9 @@
 - `73462878`
   - `event_unit_01` 保持当前 pair-space 行为不回退，作为 full-input / degraded-scope 守门样本冻结。
 
-### 3.6 当前冻结主证据 / Reference 基线（2026-04-22）
+### 3.9 当前冻结主证据 / Reference 基线（2026-04-22）
 
-- 本节冻结的是 `Step4 主证据 / fact_reference_point` 的当前 accepted baseline，不扩展到 `Step5-7`。
+- 本节冻结的是 `Step4 主证据 / fact_reference_point` 的当前 accepted baseline；Step5-7 以下游约束、组装与发布章节消费这些对象为准，不在本节重写下游规则。
 - 当前人工目视通过的审计 run 冻结为：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch/codex_t04_step4_primary_evidence_iteration_20260422_fix3`。
 - 上述 run 只是 audit evidence；正式冻结口径仍以本契约和 `tests/modules/t04_divmerge_virtual_polygon/test_step14_*.py` 为准。
 - 若后续实现使本节冻结样本重新出现以下任一现象，默认视为 Step4 回退：
@@ -447,7 +528,7 @@
 - `step4_event_interpretation.json`
 - `step4_event_evidence.gpkg`
 - `step4_audit.json`
-- `step4_review_overview.png`
+- `final_review.png`
 - `event_units/<event_unit_id>/step4_review.png`
 - `event_units/<event_unit_id>/step3_status.json`
 - `event_units/<event_unit_id>/step4_candidates.json`
@@ -508,19 +589,53 @@
   - `selected_layer_3_count`
   - `cases_with_multiple_event_units`
 
+### 4.5 Step5 正式输出边界
+
+- Step5 当前至少需要持久化 Unit / Case 两级的以下对象：
+  - `must_cover_domain`
+  - `allowed_growth_domain`
+  - `forbidden_domain`
+  - `terminal_cut_constraints`
+- 具体文件命名可在实现轮次细化，但不得改变上述对象层级与语义。
+
+### 4.6 Step6 正式输出边界
+
+- Step6 当前至少需要持久化：
+  - `final_case_polygon`
+  - `step6_status.json`
+  - `step6_audit.json`
+
+### 4.7 Step7 正式输出边界
+
+- Step7 当前至少需要持久化：
+  - `step7_status.json`
+  - `step7_audit.json`
+  - `divmerge_virtual_anchor_surface.gpkg`
+  - `divmerge_virtual_anchor_surface_rejected.geojson` 或 `.json`
+  - `divmerge_virtual_anchor_surface_summary.csv`
+  - `divmerge_virtual_anchor_surface_summary.json`
+
 ## 5. EntryPoints
 
 ### 5.1 当前正式入口状态
 
 - 当前 **无 repo 官方 CLI**。
-- 当前模块正式执行面为程序内 runner：
+- 当前稳定执行面仍为程序内 runner：
   - `run_t04_step14_batch(...)`
   - `run_t04_step14_case(...)`
-- 本轮不更新 `entrypoint-registry.md`。
+- internal full-input 稳定执行面为：
+  - repo 级脚本：`scripts/t04_run_internal_full_input_8workers.sh`
+  - repo 级监控：`scripts/t04_watch_internal_full_input.sh`
+  - repo 级最终平铺目视审计包装：`scripts/t04_run_internal_full_input_innernet_flat_review.sh`
+  - T04 私有 runner：`run_t04_internal_full_input(...)`
+- 上述脚本不构成新的 repo 官方 CLI 子命令；执行逻辑必须保留在 T04 私有模块内。
+- 本轮需同步 `entrypoint-registry.md`。
 
 ## 6. Acceptance
 
-1. repo 已存在 T04 正式模块文档面。
-2. Step1-4 可对 case-package 运行并产出稳定文件集。
-3. Step4 review overview / event-unit png / flat mirror / index / summary 可直接人工检查。
-4. 本轮未进入 Step5-7，也未新增 repo 官方入口。
+1. repo 已存在 T04 `Step1-7` 正式模块文档面。
+2. `Step1-4` 可对 case-package 运行并产出稳定文件集。
+3. `Step5-7` 已纳入正式范围，并明确进入按冻结需求分轮推进的正式研发实现阶段。
+4. `Step5-7` 正式研发默认遵循 SpecKit，且必须覆盖 `Product / Architecture / Development / Testing / QA` 五视角。
+5. T04 可以参考 T03 的实现逻辑与产物风格，但不得直接 import / 调用 / 硬拷贝 T03 模块代码。
+6. 当前阶段的 Case 级正式目视审计入口以 `final_review.png` 及其 flat mirror 为准；event-unit png / index / summary 仍可用于审计，但不再把 `step4_review_overview.png` 当作正式 Case 级输出。

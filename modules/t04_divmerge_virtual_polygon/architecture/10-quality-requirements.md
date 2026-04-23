@@ -21,6 +21,9 @@
   - `intruding_road_ids`
 - Step4 每个 event unit 的事实依据与位置必须可解释。
 - `fact_reference_point`、`review_materialized_point`、`selected_component_union_geometry`、`localized_evidence_core_geometry`、`coarse_anchor_zone_geometry` 的语义边界必须可解释。
+- Step5 必须能稳定产出 Unit / Case 两级的 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints`，并对 `1m` hard negative mask、`fallback_support_strip` 与 `bridge zone` 给出可追溯解释。
+- Step6 必须能在不突破 Step5 约束的前提下生成单一连通面；只允许业务 hole，不允许算法洞。
+- Step7 必须把最终状态机压缩为 `accepted / rejected` 两态；审计材料可以保留，但不得冒充第三种正式状态。
 
 ## 可审计性
 
@@ -60,6 +63,20 @@
   - `positive_rcsd_present` 为什么成立或为什么不成立
   - normalized role mapping 为什么得到 `A/B/C`
   - `required_rcsd_node` 为什么输出或为什么为空
+- Step5 审计输出必须能明确举证：
+  - 哪些区域进入 `must_cover_domain`
+  - 哪些对象触发 `1m` hard negative mask
+  - `fallback_support_strip` 与 `bridge zone` 如何物化
+  - `terminal_cut_constraints` 如何从局部道路方向确定
+- Step6 审计输出必须能明确举证：
+  - `assembly_canvas` 如何构造
+  - 哪些硬种子被写入
+  - 最终是否单一连通
+  - 是否存在 forbidden overlap / cut violation / 非业务 hole
+- Step7 审计输出必须能明确举证：
+  - `accepted / rejected` 的最终判定依据
+  - 发布层去向
+  - `divmerge_virtual_anchor_surface*` 成果与审计材料之间的映射关系
 
 ## 可维护性
 
@@ -67,11 +84,22 @@
 - 避免单一超大 orchestrator。
 - 与 T02/T03 的复用边界显式写入文档。
 - 允许复用 T02 的 topology / event interpretation 内核，但 T04 必须先把 unit-local 结构封装清楚，再传入 T02。
+- 可以参考 T03 的实现逻辑与产物风格，但 T04 的 `Step5-7` 正式执行逻辑必须保留在模块私有实现内，不得直接 import / 调用 / 硬拷贝 T03 模块代码。
 
 ## 可回归性
 
 - 至少保留 synthetic smoke。
 - 至少跑 selected real-case batch。
+- `Step5-7` 正式研发默认按 SpecKit 串行推进，并在每轮显式覆盖：
+  - `Product`
+  - `Architecture`
+  - `Development`
+  - `Testing`
+  - `QA`
+- `Step5-7` 回归顺序固定为：
+  - 先单 case
+  - 再 batch
+  - 最后做发布层与汇总层核对
 - `Step4 候选空间` 当前 accepted baseline 已冻结在 `Anchor_2` real-case 集；后续任何新线程只要触碰 Step4 candidate space / branch propagation / pair-space identity，都必须默认把这组 real-case 当作回归闸门，而不是可选附加验证。
 - Step3/Step4 修复后，至少覆盖以下回归样类：
   - `forward throat-pass`

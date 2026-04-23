@@ -34,9 +34,20 @@
 - `review_render`
   - overview PNG
   - event-unit PNG
+- `support_domain`
+  - Unit / Case 两级 `must_cover / allowed_growth / forbidden / terminal_cut`
+  - `fallback_support_strip` 与 `bridge zone` 物化
+- `polygon_assembly`
+  - `assembly_canvas`
+  - raster-first 单连通面组装
+  - hole / cut / forbidden 审计
+- `final_publish`
+  - `accepted / rejected` 二态验收
+  - `divmerge_virtual_anchor_surface*` 发布层与 summary / audit
 - `outputs`
   - case 级文件
   - flat mirror / index / summary
+  - Step5-7 状态 / 审计 / 发布结果
 - `batch_runner`
   - preflight
   - per-case orchestration

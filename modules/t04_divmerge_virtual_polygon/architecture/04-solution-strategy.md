@@ -2,9 +2,10 @@
 
 ## 总体策略
 
-- 采用 `case_loader -> admission -> local_context -> topology -> event_interpretation -> review_render -> outputs -> batch_runner` 主链。
+- 采用 `case_loader -> admission -> local_context -> topology -> event_interpretation -> support_domain -> polygon_assembly -> final_publish -> review_render -> outputs -> batch_runner` 主链。
 - Step2/3 参考 T02 Stage4 的既有语义，但正式运行时内核在 T04 私有实现中落地。
 - Step4 参考 T02 的单事件解释思路并增加 event-unit 物化与 T03 风格 review 输出，但正式执行不得回调 T02 模块代码。
+- Step5/6/7 参考 T03 的产物风格、批量审计与汇总组织方式，但正式执行不得直接 import / 调用 / 硬拷贝 T03 模块代码。
 
 ## 关键策略
 
@@ -142,7 +143,7 @@
   - 事实层缺失
   - 事实层虽成立，但归一化后仍存在结构性硬冲突
 - side-label mismatch 不得单独把事实存在样本压到 `C`。
-- `required_rcsd_node` 必须从已匹配的 local / aggregated RCSD unit 中独立输出，不再依赖 `A`；本轮仍不把它扩成 Step5-7 的 cover / publish 逻辑。
+- `required_rcsd_node` 必须从已匹配的 local / aggregated RCSD unit 中独立输出，不再依赖 `A`；其 downstream cover / publish 逻辑由 Step5-7 消费，但不在此处重复改写。
 - `branch-middle / throat gate` 的 boundary branches 必须来自当前 unit 的 `boundary_branch_ids`；complex / multi 场景下不再允许静默退回 case-level main pair 充当 unit-local throat。
 - merge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 entering branches；diverge 单元的 `boundary_branch_ids` 必须对应当前 unit 的 exiting branches；`preferred_axis_branch_id` 只允许来自当前 unit 的唯一 opposite-direction trunk。
 - `divstrip_ref` 命中时，Step4 正式拆分：
@@ -185,7 +186,20 @@
 - `event_units/<event_unit_id>/step4_candidates.json` 表达 pair-local region、selected candidate 与 alternative candidates。
 - flat mirror 用于人工平铺质检。
 
+### 5. Step5-7
+
+- `support_domain`
+  - 以 Step4 主证据、`fact_reference_point`、正向 RCSD 结果与局部道路面构建 Unit / Case 两级约束层
+  - 只定义 `must_cover / allowed_growth / forbidden / terminal_cut`，不生成最终 polygon
+- `polygon_assembly`
+  - 在 Step5 约束内以 `raster-first` 方式组装单一连通面
+  - 不得突破 `allowed / forbidden / terminal_cut`
+- `final_publish`
+  - 基于 Step6 结果做最终验收、二态裁决与发布
+  - 输出 `divmerge_virtual_anchor_surface` 主层、rejected 层、summary 层与 audit 层
+
 ## 当前入口策略
 
 - 不新增 repo 官方 CLI。
-- 通过程序内 batch runner 与 pytest/smoke 交付本轮能力。
+- `Step1-4` 继续通过程序内 batch runner 与 pytest/smoke 交付既有能力。
+- `Step5-7` 后续实现仍维持模块私有 runner / batch orchestration，不提升为 repo 官方 CLI。

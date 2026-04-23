@@ -28,6 +28,76 @@ from ._rcsd_selection_support import (
     _unit_from_roads_and_node,
 )
 
+
+def _published_rcsd_subset(
+    *,
+    selected_aggregated: _AggregatedRcsdUnit,
+    selected_local_unit: _LocalRcsdUnit,
+    local_units: Sequence[_LocalRcsdUnit],
+    first_hit_road_ids: Sequence[str],
+    roads_by_id: dict[str, ParsedRoad],
+    roads_by_node_id: dict[str, set[str]],
+    node_points_by_id: dict[str, object],
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], str]:
+    selected_road_ids: set[str] = set(selected_aggregated.road_ids)
+    selected_node_ids: set[str] = {str(node_id) for node_id in selected_aggregated.node_ids if str(node_id)}
+    published_member_unit_ids: tuple[str, ...] = selected_aggregated.member_unit_ids
+    publish_mode = "aggregated_full_component"
+
+    if selected_aggregated.consistency_level == "A":
+        selected_road_ids = {
+            str(assignment.get("road_id"))
+            for assignment in selected_local_unit.role_assignments
+            if str(assignment.get("road_id") or "")
+        }
+        if not selected_road_ids:
+            selected_road_ids = {
+                str(road_id)
+                for road_id in selected_local_unit.road_ids
+                if str(road_id)
+            }
+        published_member_unit_ids = (
+            (selected_local_unit.unit_id,)
+            if selected_local_unit.unit_id
+            else selected_aggregated.member_unit_ids
+        )
+        publish_mode = "aggregated_a_primary_unit"
+        if selected_aggregated.required_node_id is not None and first_hit_road_ids:
+            for road_id in first_hit_road_ids:
+                traced = _trace_path_to_node(
+                    start_road_id=road_id,
+                    target_node_id=selected_aggregated.required_node_id,
+                    roads_by_id=roads_by_id,
+                    roads_by_node_id=roads_by_node_id,
+                )
+                if traced:
+                    selected_road_ids.update(traced)
+                    publish_mode = "aggregated_a_primary_unit_with_trace"
+        selected_node_ids = (
+            _node_ids_for_roads(selected_road_ids, roads_by_id) & set(node_points_by_id)
+        ) & {str(node_id) for node_id in selected_aggregated.node_ids if str(node_id)}
+        for node_id in (selected_aggregated.required_node_id, selected_aggregated.primary_node_id):
+            if node_id is not None and node_id in node_points_by_id:
+                selected_node_ids.add(node_id)
+    else:
+        if selected_aggregated.required_node_id is not None and first_hit_road_ids:
+            for road_id in first_hit_road_ids:
+                traced = _trace_path_to_node(
+                    start_road_id=road_id,
+                    target_node_id=selected_aggregated.required_node_id,
+                    roads_by_id=roads_by_id,
+                    roads_by_node_id=roads_by_node_id,
+                )
+                selected_road_ids.update(traced)
+
+    return (
+        tuple(sorted(selected_road_ids)),
+        tuple(sorted(selected_node_ids)),
+        tuple(sorted(published_member_unit_ids)),
+        publish_mode,
+    )
+
+
 def resolve_positive_rcsd_selection(
     *,
     event_unit_id: str,
@@ -416,18 +486,20 @@ def resolve_positive_rcsd_selection(
         ),
         local_units[0],
     )
-    selected_road_ids = set(selected_aggregated.road_ids)
-    if selected_aggregated.required_node_id is not None and first_hit_road_ids:
-        for road_id in first_hit_road_ids:
-            traced = _trace_path_to_node(
-                start_road_id=road_id,
-                target_node_id=selected_aggregated.required_node_id,
-                roads_by_id=roads_by_id,
-                roads_by_node_id=roads_by_node_id,
-            )
-            selected_road_ids.update(traced)
-    selected_rcsd_roads = tuple(sorted(selected_road_ids))
-    selected_rcsd_nodes = tuple(sorted({*selected_aggregated.node_ids} - {None}))
+    (
+        selected_rcsd_roads,
+        selected_rcsd_nodes,
+        published_member_unit_ids,
+        publish_mode,
+    ) = _published_rcsd_subset(
+        selected_aggregated=selected_aggregated,
+        selected_local_unit=selected_local_unit,
+        local_units=local_units,
+        first_hit_road_ids=first_hit_road_ids,
+        roads_by_id=roads_by_id,
+        roads_by_node_id=roads_by_node_id,
+        node_points_by_id=node_points_by_id,
+    )
     selected_road_geometry = _union_geometry(
         roads_by_id[road_id].geometry
         for road_id in selected_rcsd_roads
@@ -503,6 +575,10 @@ def resolve_positive_rcsd_selection(
             "aggregated_rcsd_unit_id": selected_aggregated.unit_id,
             "aggregated_rcsd_unit_ids": list(selected_aggregated.member_unit_ids),
             "rcsd_selection_mode": selection_mode,
+            "published_rcsdroad_ids": list(selected_rcsd_roads),
+            "published_rcsdnode_ids": list(selected_rcsd_nodes),
+            "published_member_unit_ids": list(published_member_unit_ids),
+            "published_rcsd_selection_mode": publish_mode,
             "positive_rcsd_present": selected_aggregated.positive_rcsd_present,
             "positive_rcsd_present_reason": selected_aggregated.positive_rcsd_present_reason,
             "axis_polarity_inverted": selected_aggregated.axis_polarity_inverted,

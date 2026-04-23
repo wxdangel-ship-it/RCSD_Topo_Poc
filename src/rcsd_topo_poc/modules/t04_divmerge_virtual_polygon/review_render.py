@@ -8,7 +8,9 @@ from shapely.geometry import GeometryCollection, MultiLineString, MultiPoint, Mu
 from shapely.geometry.base import BaseGeometry
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
+from .polygon_assembly import T04Step6Result
 from .review_audit import _candidate_entry_reference_zone, build_case_review_audit
+from .support_domain import T04Step5CaseResult
 
 
 CANVAS_WIDTH = 1720
@@ -76,6 +78,8 @@ STATE_STYLE = {
     "STEP4_OK": {"banner": (38, 122, 72, 240), "label": "STEP4_OK"},
     "STEP4_REVIEW": {"banner": (185, 122, 17, 240), "label": "STEP4_REVIEW"},
     "STEP4_FAIL": {"banner": (170, 38, 38, 240), "label": "STEP4_FAIL"},
+    "accepted": {"banner": (38, 122, 72, 240), "label": "ACCEPTED"},
+    "rejected": {"banner": (170, 38, 38, 240), "label": "REJECTED"},
 }
 
 CONFLICT_COLORS = {
@@ -297,6 +301,53 @@ def _base_bounds(unit: T04EventUnitResult):
 
 def _road_lookup(event_unit: T04EventUnitResult):
     return {road.road_id: road for road in event_unit.unit_context.local_context.patch_roads}
+
+
+def _road_lookup_by_id(roads: Iterable[Any]) -> dict[str, Any]:
+    return {
+        str(road.road_id): road
+        for road in roads
+        if str(getattr(road, "road_id", "")).strip()
+    }
+
+
+def _ordered_roads_by_ids(roads: Iterable[Any], road_ids: Iterable[str]) -> tuple[Any, ...]:
+    lookup = _road_lookup_by_id(roads)
+    seen: set[str] = set()
+    ordered: list[Any] = []
+    for road_id in road_ids:
+        key = str(road_id).strip()
+        if not key or key in seen or key not in lookup:
+            continue
+        seen.add(key)
+        ordered.append(lookup[key])
+    return tuple(ordered)
+
+
+def _related_swsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for unit_result in step5_result.unit_results:
+        for road_id in (*unit_result.support_road_ids, *unit_result.support_event_road_ids):
+            key = str(road_id).strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            ordered.append(key)
+    return tuple(ordered)
+
+
+def _related_rcsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for unit_result in step5_result.unit_results:
+        for road_id in unit_result.positive_rcsd_road_ids:
+            key = str(road_id).strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            ordered.append(key)
+    return tuple(ordered)
 
 
 def _draw_context_layers(draw, event_unit: T04EventUnitResult, bounds) -> None:
@@ -693,5 +744,86 @@ def render_case_overview_png(
         state=case_result.case_review_state,
         title="Step4 Case Overview",
         lines=overview_lines[:24],
+    )
+    _save_flattened_png(image, out_path)
+
+
+def render_case_final_review_png(
+    out_path: Path,
+    case_result: T04CaseResult,
+    step5_result: T04Step5CaseResult,
+    step6_result: T04Step6Result,
+    *,
+    final_state: str,
+    reject_reasons: Iterable[str] = (),
+    publish_target: str = "",
+) -> None:
+    image = Image.new("RGBA", (CANVAS_WIDTH, CANVAS_HEIGHT), BACKGROUND)
+    draw = ImageDraw.Draw(image, "RGBA")
+    bounds = _base_bounds(case_result.event_units[0])
+    local_context = case_result.base_context.local_context
+
+    related_swsd_road_ids = set(_related_swsd_road_ids(step5_result))
+    related_rcsd_road_ids = set(_related_rcsd_road_ids(step5_result))
+    related_swsd_roads = _ordered_roads_by_ids(local_context.local_roads, related_swsd_road_ids)
+    related_rcsd_roads = _ordered_roads_by_ids(local_context.local_rcsd_roads, related_rcsd_road_ids)
+    other_swsd_roads = tuple(
+        road for road in local_context.local_roads if str(road.road_id) not in related_swsd_road_ids
+    )
+    other_rcsd_roads = tuple(
+        road for road in local_context.local_rcsd_roads if str(road.road_id) not in related_rcsd_road_ids
+    )
+
+    _draw_polygon(draw, local_context.patch_drivezone_union, bounds, fill=DRIVEZONE_FILL, outline=DRIVEZONE_EDGE, width=2)
+    for feature in local_context.patch_divstrip_features:
+        _draw_polygon(draw, feature.geometry, bounds, fill=DIVSTRIP_FILL, outline=DIVSTRIP_EDGE, width=2)
+    for road in other_swsd_roads:
+        _draw_line(draw, road.geometry, bounds, fill=AXIS_ROAD_COLOR, width=2)
+    for road in related_swsd_roads:
+        _draw_line(draw, road.geometry, bounds, fill=AXIS_ROAD_COLOR, width=6)
+    for road in other_rcsd_roads:
+        _draw_line(draw, road.geometry, bounds, fill=ALL_RCSD_ROAD_COLOR, width=2)
+    for road in related_rcsd_roads:
+        _draw_line(draw, road.geometry, bounds, fill=RCSD_ROAD_COLOR, width=6)
+    if step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty:
+        _draw_line(draw, step6_result.final_case_polygon.boundary, bounds, fill=BOUNDARY_ROAD_COLOR, width=6)
+
+    _draw_legend(
+        draw,
+        x=MAP_LEFT + 18,
+        y=MAP_TOP + 18,
+        items=[
+            ("Road Surface", DRIVEZONE_FILL, "poly"),
+            ("Divstrip", DIVSTRIP_EDGE, "poly"),
+            ("SWSD Other", AXIS_ROAD_COLOR, "line"),
+            ("SWSD Current", AXIS_ROAD_COLOR, "strong_line"),
+            ("RCSD Other", ALL_RCSD_ROAD_COLOR, "line"),
+            ("RCSD Current", RCSD_ROAD_COLOR, "strong_line"),
+            ("Final Boundary", BOUNDARY_ROAD_COLOR, "strong_line"),
+        ],
+    )
+    reject_reason_list = [str(reason).strip() for reason in reject_reasons if str(reason).strip()]
+    final_review_lines = [
+        f"case_id: {case_result.case_spec.case_id}",
+        f"mainnodeid: {case_result.case_spec.mainnodeid}",
+        f"final_state: {final_state}",
+        f"publish_target: {publish_target or '-'}",
+        f"event_unit_count: {len(case_result.event_units)}",
+        f"assembly_state: {step6_result.assembly_state}",
+        f"component_count: {step6_result.component_count}",
+        f"swsd_current_roads: {len(related_swsd_roads)} / other={len(other_swsd_roads)}",
+        f"rcsd_current_roads: {len(related_rcsd_roads)} / other={len(other_rcsd_roads)}",
+        f"final_boundary_present: {bool(step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty)}",
+    ]
+    if reject_reason_list:
+        final_review_lines.append(
+            f"reject_reasons: {_truncate('|'.join(reject_reason_list), limit=56)}"
+        )
+
+    _draw_panel(
+        draw,
+        state=final_state,
+        title="Step7 Final Review",
+        lines=final_review_lines,
     )
     _save_flattened_png(image, out_path)

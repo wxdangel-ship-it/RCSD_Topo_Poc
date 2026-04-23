@@ -96,6 +96,7 @@ def _build_stage4_local_context(
     drivezone_features: list[LoadedFeature],
     rcsd_roads: list[ParsedRoad],
     rcsd_nodes: list[ParsedNode],
+    preloaded_divstrip_features: list[LoadedFeature] | None = None,
     divstripzone_path: Optional[Union[str, Path]] = None,
     divstripzone_layer: Optional[str] = None,
     divstripzone_crs: Optional[str] = None,
@@ -181,7 +182,9 @@ def _build_stage4_local_context(
     )
     legacy_drivezone_mask = _rasterize_geometries(grid, [legacy_drivezone_union])
     divstripzone_layer_data = None
-    if divstripzone_path is not None:
+    if preloaded_divstrip_features is not None:
+        raw_divstrip_features = list(preloaded_divstrip_features)
+    elif divstripzone_path is not None:
         divstripzone_layer_data = _load_layer(
             divstripzone_path,
             layer_name=divstripzone_layer,
@@ -189,14 +192,14 @@ def _build_stage4_local_context(
             allow_null_geometry=False,
             query_geometry=grid.patch_polygon,
         )
+        raw_divstrip_features = list(divstripzone_layer_data.features)
+    else:
+        raw_divstrip_features = []
     raw_local_divstrip_features = [
         feature
-        for feature in (
-            []
-            if divstripzone_layer_data is None
-            else divstripzone_layer_data.features
-        )
+        for feature in raw_divstrip_features
         if feature.geometry is not None and not feature.geometry.is_empty
+        and feature.geometry.intersects(grid.patch_polygon)
     ]
     clipped_local_divstrip_features = _clip_loaded_features_to_geometry(
         features=raw_local_divstrip_features,

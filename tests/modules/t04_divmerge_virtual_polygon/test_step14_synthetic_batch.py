@@ -26,7 +26,8 @@ def test_t04_step14_batch_outputs_synthetic_case(tmp_path: Path) -> None:
         "same_case_rcsd_components",
         "cross_case_components",
     }.issubset(second_pass)
-    assert (run_root / "cases" / "1001" / "step4_review_overview.png").is_file()
+    assert (run_root / "cases" / "1001" / "final_review.png").is_file()
+    assert not (run_root / "cases" / "1001" / "step4_review_overview.png").exists()
     assert any((run_root / "step4_review_flat").glob("*.png"))
     assert any((run_root / "cases" / "1001" / "event_units").rglob("step4_review.png"))
     assert any((run_root / "cases" / "1001" / "event_units").rglob("step4_candidate_compare.png"))
@@ -168,7 +169,7 @@ def test_t04_step14_batch_outputs_multi_event_case(tmp_path: Path) -> None:
     assert any(path.name.endswith("__main.png") for path in flat_pngs)
     assert any(path.name.endswith("__compare.png") for path in flat_pngs)
     assert any(path.name.endswith("__rcsd.png") for path in flat_pngs)
-    assert any("overview" in path.name for path in flat_pngs)
+    assert any("final_review" in path.name for path in flat_pngs)
 
 @pytest.mark.smoke
 def test_t04_step14_multi_event_case_exports_reselection_and_index_fields(tmp_path: Path) -> None:
@@ -259,7 +260,7 @@ def test_t04_step14_multi_event_case_exports_reselection_and_index_fields(tmp_pa
     assert rows["event_unit_02"]["needs_manual_review_focus"] == "1"
     assert rows["event_unit_02"]["compare_image_path"].endswith("__compare.png")
     assert rows["event_unit_02"]["positive_rcsd_image_path"].endswith("__rcsd.png")
-    assert rows["event_unit_02"]["case_overview_path"].endswith("overview.png")
+    assert rows["event_unit_02"]["case_overview_path"].endswith("final_review.png")
 
 @pytest.mark.smoke
 def test_t04_step14_pair_local_empty_rcsd_does_not_fallback_to_case_world(tmp_path: Path) -> None:

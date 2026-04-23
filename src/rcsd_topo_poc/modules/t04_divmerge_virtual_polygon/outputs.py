@@ -14,10 +14,18 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
 from .case_models import T04CaseResult, T04ReviewIndexRow
 from .review_audit import build_case_review_audit
 from .review_render import (
-    render_case_overview_png,
+    render_case_final_review_png,
     render_event_unit_candidate_compare_png,
     render_event_unit_positive_rcsd_review_png,
     render_event_unit_review_png,
+)
+from .polygon_assembly import build_step6_polygon_assembly
+from .support_domain import build_step5_support_domain
+from .final_publish import (
+    STEP7_CASE_FINAL_REVIEW_NAME,
+    T04Step7CaseArtifact,
+    build_step7_case_artifact,
+    write_step7_case_outputs,
 )
 from .topology import build_step3_status_doc, build_unit_step3_status_doc
 
@@ -151,9 +159,18 @@ def write_case_outputs(
     *,
     run_root: Path,
     case_result: T04CaseResult,
-) -> list[T04ReviewIndexRow]:
+) -> tuple[list[T04ReviewIndexRow], T04Step7CaseArtifact]:
     case_dir = run_root / "cases" / case_result.case_spec.case_id
     case_dir.mkdir(parents=True, exist_ok=True)
+    step5_result = build_step5_support_domain(case_result)
+    step6_result = build_step6_polygon_assembly(case_result, step5_result)
+    step7_artifact = build_step7_case_artifact(
+        run_root=run_root,
+        case_dir=case_dir,
+        case_result=case_result,
+        step5_result=step5_result,
+        step6_result=step6_result,
+    )
 
     write_json(case_dir / "step1_status.json", case_result.admission.to_status_doc())
     write_json(case_dir / "case_meta.json", case_result.to_case_meta_doc())
@@ -189,14 +206,44 @@ def write_case_outputs(
             "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
         },
     )
+    write_json(case_dir / "step5_status.json", step5_result.to_status_doc())
+    write_json(case_dir / "step5_audit.json", step5_result.to_audit_doc())
+    write_json(case_dir / "step6_status.json", step6_result.to_status_doc())
+    write_json(case_dir / "step6_audit.json", step6_result.to_audit_doc())
     write_vector(case_dir / "step4_event_evidence.gpkg", _geometry_features_for_case(case_result))
+    write_vector(case_dir / "step5_domains.gpkg", step5_result.to_vector_features())
+    if step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty:
+        write_vector(
+            case_dir / "final_case_polygon.gpkg",
+            [
+                {
+                    "properties": {
+                        "case_id": case_result.case_spec.case_id,
+                        "assembly_state": step6_result.assembly_state,
+                        "component_count": step6_result.component_count,
+                        "hole_count": step6_result.hole_count,
+                    },
+                    "geometry": step6_result.final_case_polygon,
+                }
+            ],
+        )
     audit_by_unit = build_case_review_audit(case_result)
-    overview_path = case_dir / "step4_review_overview.png"
-    render_case_overview_png(overview_path, case_result, audit_by_unit=audit_by_unit)
+    final_review_path = case_dir / STEP7_CASE_FINAL_REVIEW_NAME
+    render_case_final_review_png(
+        final_review_path,
+        case_result,
+        step5_result,
+        step6_result,
+        final_state=step7_artifact.final_state,
+        reject_reasons=step7_artifact.reject_reasons,
+        publish_target=step7_artifact.publish_target,
+    )
+    write_step7_case_outputs(case_dir=case_dir, artifact=step7_artifact)
 
     rows: list[T04ReviewIndexRow] = []
     for event_unit in case_result.event_units:
         audit_summary = audit_by_unit.get(event_unit.spec.event_unit_id, {})
+        step5_unit = step5_result.unit_result_by_id(event_unit.spec.event_unit_id)
         event_unit_dir = case_dir / "event_units" / event_unit.spec.event_unit_id
         event_unit_dir.mkdir(parents=True, exist_ok=True)
         write_json(
@@ -219,6 +266,8 @@ def write_case_outputs(
                 branch_bridge_node_ids=event_unit.unit_envelope.branch_bridge_node_ids,
             ),
         )
+        write_json(event_unit_dir / "step5_status.json", step5_unit.to_status_doc())
+        write_json(event_unit_dir / "step5_audit.json", step5_unit.to_audit_doc())
         write_json(
             event_unit_dir / "step4_candidates.json",
             {
@@ -415,10 +464,10 @@ def write_case_outputs(
                 image_path=str(png_path),
                 compare_image_path=str(compare_png_path),
                 positive_rcsd_image_path=str(positive_rcsd_png_path),
-                case_overview_path=str(overview_path),
+                case_overview_path=str(final_review_path),
             )
         )
-    return rows
+    return rows, step7_artifact
 
 
 def materialize_review_gallery(run_root: Path, rows: list[T04ReviewIndexRow]) -> list[T04ReviewIndexRow]:
@@ -430,7 +479,7 @@ def materialize_review_gallery(run_root: Path, rows: list[T04ReviewIndexRow]) ->
 
     ordered_rows = sorted(rows, key=lambda row: (sort_patch_key(row.case_id), row.event_unit_id))
     materialized_rows: list[T04ReviewIndexRow] = []
-    overview_flat_paths: dict[str, str] = {}
+    final_review_flat_paths: dict[str, str] = {}
     for index, row in enumerate(ordered_rows, start=1):
         source_path = Path(row.image_path) if row.image_path else run_root / "cases" / row.case_id / "event_units" / row.event_unit_id / "step4_review.png"
         compare_source_path = (
@@ -443,16 +492,12 @@ def materialize_review_gallery(run_root: Path, rows: list[T04ReviewIndexRow]) ->
             if row.positive_rcsd_image_path
             else run_root / "cases" / row.case_id / "event_units" / row.event_unit_id / "step4_positive_rcsd_review.png"
         )
-        overview_source_path = (
-            Path(row.case_overview_path)
-            if row.case_overview_path
-            else run_root / "cases" / row.case_id / "step4_review_overview.png"
-        )
-        if row.case_id not in overview_flat_paths and overview_source_path.is_file():
-            overview_name = f"case__{row.case_id}__overview.png"
-            overview_flat_path = flat_dir / overview_name
-            shutil.copy2(overview_source_path, overview_flat_path)
-            overview_flat_paths[row.case_id] = str(overview_flat_path)
+        final_review_source_path = run_root / "cases" / row.case_id / STEP7_CASE_FINAL_REVIEW_NAME
+        if row.case_id not in final_review_flat_paths and final_review_source_path.is_file():
+            final_review_name = f"case__{row.case_id}__final_review.png"
+            final_review_flat_path = flat_dir / final_review_name
+            shutil.copy2(final_review_source_path, final_review_flat_path)
+            final_review_flat_paths[row.case_id] = str(final_review_flat_path)
         image_name = f"{index:04d}__{row.case_id}__{row.event_unit_id}__main.png"
         image_path = flat_dir / image_name
         if source_path.is_file():
@@ -472,7 +517,7 @@ def materialize_review_gallery(run_root: Path, rows: list[T04ReviewIndexRow]) ->
         row.compare_image_path = str(compare_image_path)
         row.positive_rcsd_image_name = positive_rcsd_image_name
         row.positive_rcsd_image_path = str(positive_rcsd_image_path)
-        row.case_overview_path = overview_flat_paths.get(row.case_id, str(overview_source_path))
+        row.case_overview_path = final_review_flat_paths.get(row.case_id, str(final_review_source_path))
         materialized_rows.append(row)
     return materialized_rows
 
@@ -552,6 +597,7 @@ def write_summary(
     preflight: dict,
     failed_case_ids: list[str],
     rerun_cleaned_before_write: bool,
+    step7_outputs: dict[str, Any] | None = None,
 ) -> Path:
     cases_dir = run_root / "cases"
     summary = {
@@ -567,6 +613,21 @@ def write_summary(
         "step4_review_summary_json": str(run_root / "step4_review_summary.json"),
         "step4_review_flat_dir": str(run_root / "step4_review_flat"),
     }
+    if step7_outputs:
+        summary.update(
+            {
+                "step7_accepted_layer": step7_outputs.get("accepted_layer_path"),
+                "step7_rejected_layer": step7_outputs.get("rejected_layer_path"),
+                "step7_audit_layer": step7_outputs.get("audit_layer_path"),
+                "step7_summary_csv": step7_outputs.get("summary_csv_path"),
+                "step7_summary_json": step7_outputs.get("summary_json_path"),
+                "step7_rejected_index_csv": step7_outputs.get("rejected_index_csv_path"),
+                "step7_rejected_index_json": step7_outputs.get("rejected_index_json_path"),
+                "step7_consistency_report": step7_outputs.get("consistency_report_path"),
+                "step7_accepted_count": step7_outputs.get("accepted_count"),
+                "step7_rejected_count": step7_outputs.get("rejected_count"),
+            }
+        )
     output_path = run_root / "summary.json"
     write_json(output_path, summary)
     return output_path

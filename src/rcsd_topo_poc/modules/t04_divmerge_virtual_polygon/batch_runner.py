@@ -21,6 +21,7 @@ from .outputs import (
     write_review_summary,
     write_summary,
 )
+from .final_publish import write_step7_batch_outputs
 from .step4_final_conflict_resolver import resolve_step4_final_conflicts
 
 
@@ -94,18 +95,23 @@ def run_t04_step14_batch(
     write_json(run_root / "second_pass_conflict_resolution.json", resolution_doc)
 
     review_rows = []
+    step7_artifacts = []
     for case_result in finalized_case_results:
-        review_rows.extend(write_case_outputs(run_root=run_root, case_result=case_result))
+        case_review_rows, step7_artifact = write_case_outputs(run_root=run_root, case_result=case_result)
+        review_rows.extend(case_review_rows)
+        step7_artifacts.append(step7_artifact)
 
     materialized_rows = materialize_review_gallery(run_root, review_rows)
     write_review_index(run_root, materialized_rows)
     write_review_summary(run_root, materialized_rows)
+    step7_outputs = write_step7_batch_outputs(run_root=run_root, artifacts=step7_artifacts)
     write_summary(
         run_root=run_root,
         rows=materialized_rows,
         preflight=preflight,
         failed_case_ids=failed_case_ids,
         rerun_cleaned_before_write=rerun_cleaned_before_write,
+        step7_outputs=step7_outputs,
     )
     return run_root
 

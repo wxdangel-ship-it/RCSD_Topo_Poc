@@ -88,6 +88,7 @@ PAIR_LOCAL_RCSD_SCOPE_PAD_M = 18.0
 PAIR_LOCAL_THROAT_RADIUS_M = 10.0
 NODE_FALLBACK_AXIS_POSITION_MAX_M = 1.0
 NODE_FALLBACK_DISTANCE_MAX_M = 3.0
+ROAD_SURFACE_FORK_SCOPE = "road_surface_fork"
 STRUCTURE_BODY_THROAT_EXCLUSION_M = 8.0
 MAX_CANDIDATES_PER_UNIT = 6
 COMPLEX_SUBUNIT_SCOPE_RADIUS_M = 60.0
@@ -462,13 +463,15 @@ def _candidate_summary(
             reference_distance_to_origin_m = round(float(reference_point.distance(axis_origin_point)), 3)
         except Exception:
             reference_distance_to_origin_m = None
-    node_fallback_only = bool(
-        (axis_position_m is not None and abs(float(axis_position_m)) <= NODE_FALLBACK_AXIS_POSITION_MAX_M + 1e-9)
-        or (
-            reference_distance_to_origin_m is not None
-            and reference_distance_to_origin_m <= NODE_FALLBACK_DISTANCE_MAX_M + 1e-9
+    node_fallback_only = False
+    if candidate_scope != ROAD_SURFACE_FORK_SCOPE:
+        node_fallback_only = bool(
+            (axis_position_m is not None and abs(float(axis_position_m)) <= NODE_FALLBACK_AXIS_POSITION_MAX_M + 1e-9)
+            or (
+                reference_distance_to_origin_m is not None
+                and reference_distance_to_origin_m <= NODE_FALLBACK_DISTANCE_MAX_M + 1e-9
+            )
         )
-    )
     if node_fallback_only:
         layer_reason = f"{layer_reason}|node_fallback_only"
     point_signature = _point_signature(
@@ -1256,16 +1259,27 @@ def _materialize_prepared_unit_inputs(
     if not pair_local_scope_rcsd_roads and not pair_local_scope_rcsd_nodes:
         pair_local_degraded_reasons.append("pair_local_scope_rcsd_empty")
     if pair_local_drivezone_union is not None and not pair_local_drivezone_union.is_empty:
+        pair_local_drivezone_cover = pair_local_drivezone_union.buffer(0)
         contained_rcsd_roads = tuple(
             road
             for road in pair_local_scope_rcsd_roads
             if road.geometry is not None
             and not road.geometry.is_empty
-            and pair_local_drivezone_union.buffer(0).covers(road.geometry)
+            and pair_local_drivezone_cover.covers(road.geometry)
         )
         if len(contained_rcsd_roads) < len(pair_local_scope_rcsd_roads):
             pair_local_degraded_reasons.append("pair_local_scope_rcsd_outside_drivezone_filtered")
         pair_local_scope_rcsd_roads = contained_rcsd_roads
+        contained_rcsd_nodes = tuple(
+            node
+            for node in pair_local_scope_rcsd_nodes
+            if node.geometry is not None
+            and not node.geometry.is_empty
+            and pair_local_drivezone_cover.covers(node.geometry)
+        )
+        if len(contained_rcsd_nodes) < len(pair_local_scope_rcsd_nodes):
+            pair_local_degraded_reasons.append("pair_local_scope_rcsdnode_outside_drivezone_filtered")
+        pair_local_scope_rcsd_nodes = contained_rcsd_nodes
     if not pair_local_scope_rcsd_roads and not pair_local_scope_rcsd_nodes:
         pair_local_degraded_reasons.append("pair_local_scope_rcsd_empty")
     pair_local_scope_divstrip_features = _filter_divstrip_features_to_scope(
@@ -1559,6 +1573,20 @@ def _build_candidate_pool(prepared: _PreparedUnitInputs) -> list[dict[str, Any]]
                 reference_strategy="representative",
             )
 
+    if not candidates and throat_core is not None and not throat_core.is_empty:
+        for index, component in enumerate(_explode_polygon_geometries(throat_core), start=1):
+            _append_candidate(
+                candidate_id=f"{prepared.event_unit_spec.event_unit_id}:structure:road_surface_fork:{index:02d}",
+                source_mode="pair_local_structure_mode",
+                upper_evidence_kind="structure_face",
+                upper_evidence_object_id=prepared.pair_local_summary["region_id"],
+                candidate_scope=ROAD_SURFACE_FORK_SCOPE,
+                region_geometry=component,
+                feature_index=-10,
+                properties={"candidate_scope": ROAD_SURFACE_FORK_SCOPE},
+                force_empty_divstrip=True,
+            )
+
     if throat_core is not None and not throat_core.is_empty:
         for index, component in enumerate(_explode_polygon_geometries(throat_core), start=1):
             _append_candidate(
@@ -1681,12 +1709,17 @@ def _build_result_from_interpretation(
     selected_reference_point: BaseGeometry | None,
 ) -> T04EventUnitResult:
     bridge = interpretation.legacy_step5_bridge
+    candidate_scope = str(selected_candidate_summary.get("candidate_scope") or "")
+    road_surface_fork_candidate = candidate_scope == ROAD_SURFACE_FORK_SCOPE
     selected_component_union_geometry = bridge.divstrip_context.constraint_geometry
     localized_evidence_core_geometry = _materialize_selected_divstrip_geometry(
         interpretation=interpretation,
         selected_divstrip_geometry=selected_component_union_geometry,
         localized_divstrip_geometry=bridge.localized_divstrip_reference_geometry,
     )
+    if road_surface_fork_candidate and _geometry_present(selected_evidence_region_geometry):
+        selected_component_union_geometry = selected_evidence_region_geometry
+        localized_evidence_core_geometry = selected_evidence_region_geometry
     coarse_anchor_zone_geometry = _materialize_event_anchor_geometry(
         interpretation=interpretation,
         selected_divstrip_geometry=localized_evidence_core_geometry,
@@ -1742,12 +1775,23 @@ def _build_result_from_interpretation(
         fail_reasons.append("selected_branch_ids_empty")
     if rcsd_consistency_result != "positive_rcsd_strong_consistent":
         review_reasons.append(rcsd_consistency_result)
-    if interpretation.evidence_decision.fallback_used:
+    if interpretation.evidence_decision.fallback_used and not road_surface_fork_candidate:
         review_reasons.append("fallback_to_weak_evidence")
     if prepared.degraded_scope_reason:
         review_reasons.append(f"degraded_scope:{prepared.degraded_scope_reason}")
         if str(prepared.pair_local_summary.get("degraded_scope_severity") or "") == "hard":
             fail_reasons.append("hard_degraded_scope")
+    if road_surface_fork_candidate:
+        fail_reasons = [
+            reason
+            for reason in fail_reasons
+            if str(reason) not in {"event_reference_outside_branch_middle"}
+        ]
+        review_reasons = [
+            reason
+            for reason in review_reasons
+            if str(reason) not in {"event_reference_outside_branch_middle", "fallback_to_weak_evidence"}
+        ]
     if fail_reasons:
         review_state = "STEP4_FAIL"
         all_reasons = tuple(dict.fromkeys([*fail_reasons, *review_reasons]))
@@ -1763,6 +1807,12 @@ def _build_result_from_interpretation(
         or prepared.pair_local_middle_geometry
     )
     selected_candidate_region = str(prepared.pair_local_summary.get("region_id") or "").strip() or None
+    event_chosen_s_m = interpretation.event_reference.event_chosen_s_m
+    if road_surface_fork_candidate and event_chosen_s_m is None:
+        try:
+            event_chosen_s_m = float(selected_candidate_summary.get("axis_position_m"))
+        except (TypeError, ValueError):
+            event_chosen_s_m = None
     result = T04EventUnitResult(
         spec=prepared.event_unit_spec,
         unit_context=prepared.unit_context,
@@ -1770,8 +1820,16 @@ def _build_result_from_interpretation(
         interpretation=interpretation,
         review_state=review_state,
         review_reasons=all_reasons,
-        evidence_source=interpretation.evidence_decision.primary_source,
-        position_source=interpretation.event_reference.event_position_source,
+        evidence_source=(
+            "road_surface_fork"
+            if road_surface_fork_candidate
+            else interpretation.evidence_decision.primary_source
+        ),
+        position_source=(
+            "road_surface_fork"
+            if road_surface_fork_candidate
+            else interpretation.event_reference.event_position_source
+        ),
         reverse_tip_used=interpretation.reverse_tip_decision.used,
         rcsd_consistency_result=rcsd_consistency_result,
         selected_component_union_geometry=selected_component_union_geometry,
@@ -1817,12 +1875,66 @@ def _build_result_from_interpretation(
         required_rcsd_node=required_rcsd_node,
         required_rcsd_node_source=positive_rcsd_decision.required_rcsd_node_source,
         event_axis_branch_id=bridge.event_axis_branch_id,
-        event_chosen_s_m=interpretation.event_reference.event_chosen_s_m,
+        event_chosen_s_m=event_chosen_s_m,
         pair_local_summary=dict(prepared.pair_local_summary),
         selected_candidate_summary=dict(selected_candidate_summary),
         positive_rcsd_audit=dict(positive_rcsd_decision.positive_rcsd_audit),
         selected_evidence_summary=dict(selected_candidate_summary),
     )
+    no_bound_target_rcsd = bool(
+        road_surface_fork_candidate
+        and not prepared.unit_context.local_context.direct_target_rc_nodes
+        and not prepared.unit_context.local_context.exact_target_rc_nodes
+        and prepared.unit_context.local_context.primary_main_rc_node is None
+    )
+    if no_bound_target_rcsd:
+        summary = dict(result.selected_candidate_summary)
+        summary.update(
+            {
+                "positive_rcsd_present": False,
+                "positive_rcsd_present_reason": "road_surface_fork_without_bound_target_rcsd",
+                "positive_rcsd_support_level": "no_support",
+                "positive_rcsd_consistency_level": "C",
+                "required_rcsd_node": None,
+                "required_rcsd_node_source": None,
+                "rcsd_selection_mode": "road_surface_fork_without_bound_target_rcsd",
+                "rcsd_decision_reason": "road_surface_fork_without_bound_target_rcsd",
+            }
+        )
+        rcsd_audit = dict(result.positive_rcsd_audit)
+        rcsd_audit["road_surface_fork_without_bound_target_rcsd"] = True
+        rcsd_audit["rcsd_decision_reason"] = "road_surface_fork_without_bound_target_rcsd"
+        result = replace(
+            result,
+            rcsd_consistency_result="road_surface_fork_without_bound_target_rcsd",
+            pair_local_rcsd_scope_geometry=positive_rcsd_decision.pair_local_rcsd_scope_geometry,
+            first_hit_rcsd_road_geometry=positive_rcsd_decision.first_hit_rcsd_road_geometry,
+            local_rcsd_unit_geometry=None,
+            positive_rcsd_geometry=None,
+            positive_rcsd_road_geometry=None,
+            positive_rcsd_node_geometry=None,
+            primary_main_rc_node_geometry=None,
+            required_rcsd_node_geometry=None,
+            first_hit_rcsdroad_ids=(),
+            selected_rcsdroad_ids=(),
+            selected_rcsdnode_ids=(),
+            primary_main_rc_node_id=None,
+            local_rcsd_unit_id=None,
+            local_rcsd_unit_kind=None,
+            aggregated_rcsd_unit_id=None,
+            aggregated_rcsd_unit_ids=(),
+            positive_rcsd_present=False,
+            positive_rcsd_present_reason="road_surface_fork_without_bound_target_rcsd",
+            rcsd_selection_mode="road_surface_fork_without_bound_target_rcsd",
+            pair_local_rcsd_empty=False,
+            positive_rcsd_support_level="no_support",
+            positive_rcsd_consistency_level="C",
+            required_rcsd_node=None,
+            required_rcsd_node_source=None,
+            selected_candidate_summary=summary,
+            selected_evidence_summary=dict(summary),
+            positive_rcsd_audit=rcsd_audit,
+        )
     if not bool(selected_candidate_summary.get("primary_eligible")):
         extra_review_notes = list(result.extra_review_notes)
         if bool(selected_candidate_summary.get("node_fallback_only")):

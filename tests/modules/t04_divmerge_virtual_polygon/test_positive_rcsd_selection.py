@@ -231,6 +231,58 @@ def test_required_rcsd_node_decouples_from_primary_main_rc_node() -> None:
     assert decision.required_rcsd_node != decision.primary_main_rc_node_id
     assert decision.required_rcsd_node_source == "aggregated_structural_required"
 
+def test_merge_partial_aggregated_prefers_structural_convergence_node() -> None:
+    representative_node = _parsed_node("6001", 0.0, 0.0, mainnodeid="6001", has_evd="yes", kind_2=8, grade_2=1)
+    selected_evidence_region_geometry = Point(8.0, 0.0).buffer(6.0)
+    pair_local_region_geometry = Polygon([(-20, -20), (30, -20), (30, 20), (-20, 20), (-20, -20)])
+    pair_local_middle_geometry = Polygon([(-2, -4), (22, -4), (22, 4), (-2, 4), (-2, -4)])
+
+    scoped_roads = [
+        _parsed_road("road_1", [(-10.0, -6.0), (0.0, 0.0)], snodeid="s_1", enodeid="6001"),
+        _parsed_road("road_2", [(-10.0, 6.0), (0.0, 0.0)], snodeid="s_2", enodeid="6001"),
+        _parsed_road("road_3", [(0.0, 0.0), (14.0, 0.0)], snodeid="6001", enodeid="s_3"),
+    ]
+    pair_local_rcsd_roads = [
+        _parsed_road("rc_axis", [(0.0, 0.0), (6.0, 0.0)], snodeid="6001", enodeid="rc_near"),
+        _parsed_road("rc_branch_a", [(6.0, 0.0), (12.0, -6.0)], snodeid="rc_near", enodeid="rc_merge"),
+        _parsed_road("rc_branch_b", [(8.0, 8.0), (12.0, -6.0)], snodeid="rc_far", enodeid="rc_merge"),
+    ]
+    pair_local_rcsd_nodes = [
+        _parsed_node("rc_near", 6.0, 0.0, mainnodeid="6001"),
+        _parsed_node("rc_merge", 12.0, -6.0, mainnodeid="6001"),
+        _parsed_node("rc_far", 8.0, 8.0, mainnodeid="6001"),
+    ]
+
+    decision = resolve_positive_rcsd_selection(
+        event_unit_id="synthetic_merge_required",
+        operational_kind_hint=8,
+        representative_node=representative_node,
+        selected_evidence_region_geometry=selected_evidence_region_geometry,
+        fact_reference_point=Point(7.0, 0.0),
+        pair_local_region_geometry=pair_local_region_geometry,
+        pair_local_middle_geometry=pair_local_middle_geometry,
+        scoped_rcsd_roads=pair_local_rcsd_roads,
+        scoped_rcsd_nodes=pair_local_rcsd_nodes,
+        pair_local_scope_rcsd_roads=pair_local_rcsd_roads,
+        pair_local_scope_rcsd_nodes=pair_local_rcsd_nodes,
+        scoped_roads=scoped_roads,
+        boundary_branch_ids=("road_1", "road_2", "road_3"),
+        preferred_axis_branch_id="road_3",
+        scoped_input_branch_ids=("road_1", "road_2"),
+        scoped_output_branch_ids=("road_3",),
+        branch_road_memberships={
+            "road_1": ("road_1",),
+            "road_2": ("road_2",),
+            "road_3": ("road_3",),
+        },
+        axis_vector=(-1.0, 0.0),
+    )
+
+    assert decision.positive_rcsd_present is True
+    assert decision.positive_rcsd_consistency_level == "B"
+    assert decision.required_rcsd_node == "rc_merge"
+    assert decision.required_rcsd_node_source == "aggregated_structural_required"
+
 def test_road_only_local_rcsd_unit_keeps_required_none() -> None:
     representative_node = _parsed_node("5001", 0.0, 0.0, mainnodeid="5001", has_evd="yes", kind_2=16, grade_2=1)
     selected_evidence_region_geometry = Point(6.0, 0.0).buffer(4.0)

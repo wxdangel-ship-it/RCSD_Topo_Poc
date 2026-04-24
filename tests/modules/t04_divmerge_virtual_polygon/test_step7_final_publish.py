@@ -167,7 +167,7 @@ def test_anchor2_step7_freezes_857993_as_expected_rejected(tmp_path: Path) -> No
 
 
 @pytest.mark.smoke
-def test_anchor2_added_cases_freeze_698380_698389_acceptance_and_known_rejects(tmp_path: Path) -> None:
+def test_anchor2_added_cases_freeze_698380_698389_and_699870_acceptance(tmp_path: Path) -> None:
     anchor2_case_ids = [
         "698380",
         "698389",
@@ -192,10 +192,127 @@ def test_anchor2_added_cases_freeze_698380_698389_acceptance_and_known_rejects(t
     )
     rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
 
-    assert summary_payload["accepted_count"] == 2
-    assert summary_payload["rejected_count"] == 2
+    assert summary_payload["accepted_count"] == 3
+    assert summary_payload["rejected_count"] == 1
     assert rows_by_case["698380"]["final_state"] == "accepted"
     assert rows_by_case["698389"]["final_state"] == "accepted"
-    assert rows_by_case["699870"]["final_state"] == "rejected"
+    assert rows_by_case["699870"]["final_state"] == "accepted"
     assert rows_by_case["857993"]["final_state"] == "rejected"
+    assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
+
+    reverse_payload = json.loads((run_root / "step4_rcsd_anchored_reverse.json").read_text(encoding="utf-8"))
+    reverse_699870 = [
+        record for record in reverse_payload["records"] if record["case_id"] == "699870"
+    ][0]
+    assert reverse_699870["post_reverse_conflict_recheck"] == "passed"
+    assert reverse_699870["post_state"] == "found"
+
+
+@pytest.mark.smoke
+def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(tmp_path: Path) -> None:
+    anchor2_case_ids = [
+        "699870",
+        "724067",
+        "760936",
+        "857993",
+    ]
+    missing_cases = [
+        case_id for case_id in anchor2_case_ids if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
+    ]
+    if missing_cases:
+        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=anchor2_case_ids,
+        out_root=tmp_path / "anchor2_724067_road_surface_fork",
+        run_id="anchor2_724067_road_surface_fork",
+    )
+
+    summary_payload = json.loads(
+        (run_root / "divmerge_virtual_anchor_surface_summary.json").read_text(encoding="utf-8")
+    )
+    rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
+    assert summary_payload["accepted_count"] == 2
+    assert summary_payload["rejected_count"] == 2
+    assert rows_by_case["699870"]["final_state"] == "accepted"
+    assert rows_by_case["724067"]["final_state"] == "accepted"
+    assert rows_by_case["760936"]["final_state"] == "rejected"
+    assert rows_by_case["857993"]["final_state"] == "rejected"
+    assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
+
+    reverse_payload = json.loads((run_root / "step4_rcsd_anchored_reverse.json").read_text(encoding="utf-8"))
+    reverse_by_case = {record["case_id"]: record for record in reverse_payload["records"]}
+    assert reverse_by_case["699870"]["post_reverse_conflict_recheck"] == "passed"
+    assert reverse_by_case["699870"]["post_state"] == "found"
+    assert reverse_by_case["724067"]["skip_reason"] == "skipped_selected_evidence_present"
+    assert reverse_by_case["724067"]["post_state"] == "found"
+    assert reverse_by_case["724067"]["mother_candidate_id"] is None
+
+    case_dir = run_root / "cases" / "724067"
+    step4_status = json.loads((case_dir / "step4_event_interpretation.json").read_text(encoding="utf-8"))
+    step4_unit = step4_status["event_units"][0]
+    selected_evidence = step4_unit["selected_evidence"]
+    assert step4_unit["evidence_source"] == "road_surface_fork"
+    assert step4_unit["position_source"] == "road_surface_fork"
+    assert step4_unit["event_chosen_s_m"] == 0.0
+    assert step4_unit["required_rcsd_node"] is None
+    assert step4_unit["positive_rcsd_present"] is False
+    assert step4_unit["rcsd_selection_mode"] == "road_surface_fork_without_bound_target_rcsd"
+    assert selected_evidence["candidate_id"] == "event_unit_01:structure:road_surface_fork:01"
+    assert selected_evidence["candidate_scope"] == "road_surface_fork"
+    assert selected_evidence["primary_eligible"] is True
+    assert selected_evidence["node_fallback_only"] is False
+
+    step5_status = json.loads((case_dir / "step5_status.json").read_text(encoding="utf-8"))
+    unit_status = step5_status["unit_results"][0]
+    assert step5_status["case_must_cover_domain"]["present"] is True
+    assert unit_status["must_cover_components"]["localized_evidence_core_geometry"] is True
+    assert unit_status["must_cover_components"]["required_rcsd_node_patch_geometry"] is False
+    assert unit_status["must_cover_components"]["fallback_support_strip_geometry"] is False
+
+    step6_status = json.loads((case_dir / "step6_status.json").read_text(encoding="utf-8"))
+    assert step6_status["assembly_state"] == "assembled"
+    assert step6_status["component_count"] == 1
+    assert step6_status["hard_must_cover_ok"] is True
+
+    status_760936 = json.loads(
+        (run_root / "cases" / "760936" / "step7_status.json").read_text(encoding="utf-8")
+    )
+    status_857993 = json.loads(
+        (run_root / "cases" / "857993" / "step7_status.json").read_text(encoding="utf-8")
+    )
+    assert status_760936["final_state"] == "rejected"
+    assert "multi_component_result" in set(status_760936["reject_reasons"])
+    assert status_857993["final_state"] == "rejected"
+
+
+@pytest.mark.smoke
+def test_anchor2_rcsdnode_pair_local_drivezone_filter_keeps_cross_patch_cases_publishable(tmp_path: Path) -> None:
+    anchor2_case_ids = [
+        "723276",
+        "758784",
+    ]
+    missing_cases = [
+        case_id for case_id in anchor2_case_ids if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
+    ]
+    if missing_cases:
+        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=anchor2_case_ids,
+        out_root=tmp_path / "anchor2_cross_patch_rcsdnode_filter",
+        run_id="anchor2_cross_patch_rcsdnode_filter",
+    )
+
+    batch_summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+    summary_payload = json.loads(
+        (run_root / "divmerge_virtual_anchor_surface_summary.json").read_text(encoding="utf-8")
+    )
+    rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
+
+    assert batch_summary["failed_case_ids"] == []
+    assert summary_payload["row_count"] == 2
+    assert set(rows_by_case) == set(anchor2_case_ids)
     assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}

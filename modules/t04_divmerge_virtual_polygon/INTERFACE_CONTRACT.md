@@ -319,8 +319,16 @@
   - `forward rejected by local throat / branch-middle gate`
   - `forward rejected by same-axis prior conflict`
 - `drivezone_split_window_after_reverse_probe` 只属于 conservative fallback 语义，不得单独算作 reverse-tip 成功证据。
+- `rcsd_anchored_reverse` 是 Step4 final conflict resolver 之后的末段旁路，只允许在 `selected_evidence_state = none`、已有候选暴露 positive RCSD fact、且 unit executable axis 存在时触发。
+- `rcsd_anchored_reverse` 不复用 `reverse_tip_*` 语义；它先基于 SWSD 语义、event axis、Step2 local context、DriveZone 局部世界与 RCSDRoad / RCSDNode 构造 `axis-driven reverse search domain`，再找未被占用的 RCSD cluster，最后反推 axis anchor 并尝试恢复真实 evidence。
+- `rcsd_anchored_reverse` 成功写回时，`evidence_source` 允许取值：
+  - `rcsd_anchored_reverse`
+- `rcsd_anchored_reverse` 成功写回时，`position_source` 允许取值：
+  - `rcsd_anchored_axis_projection`
+- 若 RCSD anchor 样本数 `< 3`，必须跳过并记录 `skipped_insufficient_rcsd_samples`；若 executable axis 缺失，必须记录 `skipped_missing_axis_branch`。
+- `rcsd_anchored_reverse` 不得抢占 same-case / cross-case 已有 RCSD claim 或 evidence ownership；命中同 case 冲突时记录 `skipped_same_case_rcsd_claim_conflict` 或 `skipped_same_case_evidence_conflict`，batch / full-input 模式下还必须进行 `post_reverse_conflict_recheck`。
 - `structure:middle:01` 不再是 Step4 正式主证据候选；若实现内部仍保留类似中间带几何，只能作为 `selected_candidate_region` 的容器 / 辅助语义，不得直接作为 `selected_evidence`。
-- `axis_position_m = 0` 或 reference 贴 node 的候选，正式记为 `node_fallback_only`；它只能作为审计 / 兜底候选，不得直接成为主排序第一名。
+- `axis_position_m = 0` 或 reference 贴 node 的候选，正式记为 `node_fallback_only`；它只能作为审计 / 兜底候选，不得直接成为主排序第一名。唯一例外是无导流带时由当前 `pair-local region` 道路结构面分叉形成的 `candidate_scope = road_surface_fork`：其 reference 允许落在分支点，且可作为正式主证据。
 - 若候选触发 `event_reference_outside_branch_middle`、`event_reference_axis_conflict_with_prior_unit` 或等价主证据 gate 拒绝，系统必须先在当前 unit 候选池内重选；若无合法候选，必须输出 `selected_evidence_state = none`，不得保留假的主证据占位。
 - 对 complex `1 node = 1 event unit` 子单元，Step4 解释阶段必须把 evidence search scope 锚定在当前 representative node 的局部 throat 与当前 unit 的 executable event branches 上；它可以沿同一 `pair-middle` 语义跨 same-case sibling internal node 延续，但不得继续共享整条 complex 走廊。
 - 若当前 unit-local scope 无法构成有效 throat pair 或有效 branch-middle gate，系统不得静默回退成整条 complex 走廊；必须显式记录：

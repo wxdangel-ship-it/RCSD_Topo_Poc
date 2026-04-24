@@ -4,10 +4,13 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_json
+
 from .case_models import T04CaseBundle, T04CaseSpec
 from .event_interpretation import build_case_result
 from .full_input_shared_layers import T04SharedFullInputLayers, collect_case_features
 from .outputs import write_case_outputs
+from .step4_rcsd_anchored_reverse import apply_rcsd_anchored_reverse_lookup
 from .step4_final_conflict_resolver import resolve_step4_final_conflicts
 
 
@@ -85,23 +88,26 @@ def run_single_case_direct(
 
     resolution_started = perf_counter()
     resolved_results, resolution_doc = resolve_step4_final_conflicts([case_result])
-    resolved_case_result = resolved_results[0] if resolved_results else case_result
+    reverse_results, reverse_doc = apply_rcsd_anchored_reverse_lookup(resolved_results)
+    resolved_case_result = reverse_results[0] if reverse_results else case_result
     stage_timers["same_case_resolution"] = round(perf_counter() - resolution_started, 6)
 
     output_started = perf_counter()
+    case_dir = run_root / "cases" / str(case_id)
+    write_json(case_dir / "step4_rcsd_anchored_reverse.json", reverse_doc)
     review_rows, step7_artifact = write_case_outputs(
         run_root=run_root,
         case_result=resolved_case_result,
     )
     stage_timers["step5_7_output_write"] = round(perf_counter() - output_started, 6)
 
-    case_dir = run_root / "cases" / str(case_id)
     return {
         "case_id": str(case_id),
         "case_dir": str(case_dir),
         "selected_counts": dict(selected["selected_counts"]),
         "selection_window_bounds": [round(float(value), 6) for value in selected["selection_window"].bounds],
         "resolution_doc": resolution_doc,
+        "rcsd_anchored_reverse_doc": reverse_doc,
         "review_rows": review_rows,
         "step7_artifact": step7_artifact,
         "final_state": step7_artifact.final_state,

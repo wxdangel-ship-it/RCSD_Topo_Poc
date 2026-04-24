@@ -1081,10 +1081,13 @@ def _build_step5_unit_result(
         )
     fallback_support_strip_geometry = None
     if (
-        unit_result.positive_rcsd_consistency_level == "C"
-        or (
-            unit_result.positive_rcsd_consistency_level == "B"
-            and unit_result.required_rcsd_node in {None, ""}
+        unit_result.evidence_source != "road_surface_fork"
+        and (
+            unit_result.positive_rcsd_consistency_level == "C"
+            or (
+                unit_result.positive_rcsd_consistency_level == "B"
+                and unit_result.required_rcsd_node in {None, ""}
+            )
         )
     ):
         fallback_support_strip_geometry = _build_fallback_support_strip(
@@ -1249,7 +1252,6 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         ),
         drivezone_union,
     )
-
     unit_core_occupancies: dict[str, BaseGeometry | None] = {}
     precomputed_components: dict[str, dict[str, BaseGeometry | None]] = {}
     for event_unit in case_result.event_units:
@@ -1269,10 +1271,13 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
             )
         fallback_support_strip_geometry = None
         if (
-            event_unit.positive_rcsd_consistency_level == "C"
-            or (
-                event_unit.positive_rcsd_consistency_level == "B"
-                and event_unit.required_rcsd_node in {None, ""}
+            event_unit.evidence_source != "road_surface_fork"
+            and (
+                event_unit.positive_rcsd_consistency_level == "C"
+                or (
+                    event_unit.positive_rcsd_consistency_level == "B"
+                    and event_unit.required_rcsd_node in {None, ""}
+                )
             )
         ):
             fallback_support_strip_geometry = _build_fallback_support_strip(

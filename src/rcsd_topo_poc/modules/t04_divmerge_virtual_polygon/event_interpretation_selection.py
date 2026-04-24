@@ -18,6 +18,7 @@ SHARED_EVIDENCE_OVERLAP_RATIO = 0.2
 EVENT_REFERENCE_CONFLICT_TOL_M = 5.0
 NODE_FALLBACK_AXIS_POSITION_MAX_M = 1.0
 NODE_FALLBACK_DISTANCE_MAX_M = 3.0
+ROAD_SURFACE_FORK_SCOPE = "road_surface_fork"
 INVALID_PRIMARY_REASONS = {
     "event_reference_outside_branch_middle",
     "event_reference_axis_conflict_with_prior_unit",
@@ -49,6 +50,7 @@ def _candidate_axis_position(event_unit: T04EventUnitResult) -> tuple[str | None
 
 def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitResult) -> dict:
     merged = dict(candidate_summary)
+    road_surface_fork_candidate = str(merged.get("candidate_scope") or "") == ROAD_SURFACE_FORK_SCOPE
     event_axis_signature = str(merged.get("axis_signature") or result.event_axis_branch_id or "").strip()
     axis_position_basis = str(merged.get("axis_position_basis") or "").strip()
     axis_position_m = merged.get("axis_position_m")
@@ -71,17 +73,19 @@ def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitRes
         )
     except (TypeError, ValueError):
         numeric_reference_distance = None
-    node_fallback_only = bool(
-        (
-            numeric_reference_distance is not None
-            and numeric_reference_distance <= NODE_FALLBACK_DISTANCE_MAX_M + 1e-9
+    node_fallback_only = False
+    if not road_surface_fork_candidate:
+        node_fallback_only = bool(
+            (
+                numeric_reference_distance is not None
+                and numeric_reference_distance <= NODE_FALLBACK_DISTANCE_MAX_M + 1e-9
+            )
+            or (
+                numeric_reference_distance is None
+                and axis_position_m is not None
+                and abs(axis_position_m) <= NODE_FALLBACK_AXIS_POSITION_MAX_M + 1e-9
+            )
         )
-        or (
-            numeric_reference_distance is None
-            and axis_position_m is not None
-            and abs(axis_position_m) <= NODE_FALLBACK_AXIS_POSITION_MAX_M + 1e-9
-        )
-    )
     merged["node_fallback_only"] = node_fallback_only
     merged["primary_eligible"] = bool(int(merged.get("layer", 3) or 3) in {1, 2} and not node_fallback_only)
     layer_reason = str(merged.get("layer_reason") or "")
@@ -89,7 +93,10 @@ def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitRes
         merged["layer_reason"] = f"{layer_reason}|node_fallback_only" if layer_reason else "node_fallback_only"
     elif not node_fallback_only and "node_fallback_only" in layer_reason:
         merged["layer_reason"] = layer_reason.replace("|node_fallback_only", "").replace("node_fallback_only|", "").replace("node_fallback_only", "")
-    if any(str(reason) in INVALID_PRIMARY_REASONS for reason in result.all_review_reasons()):
+    invalid_primary_reasons = set(INVALID_PRIMARY_REASONS)
+    if road_surface_fork_candidate:
+        invalid_primary_reasons.discard("event_reference_outside_branch_middle")
+    if any(str(reason) in invalid_primary_reasons for reason in result.all_review_reasons()):
         merged["primary_eligible"] = False
     merged.update(
         {
@@ -121,9 +128,16 @@ def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitRes
     return merged
 
 
-def _primary_evidence_invalid(result: T04EventUnitResult) -> bool:
+def _primary_evidence_invalid(
+    result: T04EventUnitResult,
+    *,
+    allowed_invalid_reasons: set[str] | None = None,
+) -> bool:
+    allowed = set() if allowed_invalid_reasons is None else set(allowed_invalid_reasons)
     for reason in result.all_review_reasons():
         text = str(reason).strip()
+        if text in allowed:
+            continue
         if text in INVALID_PRIMARY_REASONS:
             return True
         if text.startswith("shared_event_reference_with:"):
@@ -136,7 +150,13 @@ def _primary_evidence_invalid(result: T04EventUnitResult) -> bool:
 
 
 def _candidate_priority_score(candidate_summary: dict, result: T04EventUnitResult) -> int:
-    if _primary_evidence_invalid(result):
+    road_surface_fork_candidate = str(candidate_summary.get("candidate_scope") or "") == ROAD_SURFACE_FORK_SCOPE
+    allowed_invalid_reasons = (
+        {"event_reference_outside_branch_middle"}
+        if road_surface_fork_candidate
+        else set()
+    )
+    if _primary_evidence_invalid(result, allowed_invalid_reasons=allowed_invalid_reasons):
         return -1000
     if not bool(candidate_summary.get("primary_eligible")):
         return -100

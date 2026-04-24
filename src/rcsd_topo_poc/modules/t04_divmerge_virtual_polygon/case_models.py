@@ -337,6 +337,9 @@ class T04EventUnitResult:
 
     @property
     def selected_evidence_state(self) -> str:
+        explicit_state = str(self.selected_evidence_summary.get("selected_evidence_state") or "").strip()
+        if explicit_state:
+            return explicit_state
         candidate_id = str(self.selected_evidence_summary.get("candidate_id") or "").strip()
         return "found" if candidate_id else "none"
 

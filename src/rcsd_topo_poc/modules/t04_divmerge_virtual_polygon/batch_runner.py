@@ -22,6 +22,7 @@ from .outputs import (
     write_summary,
 )
 from .final_publish import write_step7_batch_outputs
+from .step4_rcsd_anchored_reverse import apply_rcsd_anchored_reverse_lookup
 from .step4_final_conflict_resolver import resolve_step4_final_conflicts
 
 
@@ -92,7 +93,9 @@ def run_t04_step14_batch(
             failed_case_ids.append(spec.case_id)
 
     finalized_case_results, resolution_doc = resolve_step4_final_conflicts(case_results)
+    finalized_case_results, reverse_doc = apply_rcsd_anchored_reverse_lookup(finalized_case_results)
     write_json(run_root / "second_pass_conflict_resolution.json", resolution_doc)
+    write_json(run_root / "step4_rcsd_anchored_reverse.json", reverse_doc)
 
     review_rows = []
     step7_artifacts = []

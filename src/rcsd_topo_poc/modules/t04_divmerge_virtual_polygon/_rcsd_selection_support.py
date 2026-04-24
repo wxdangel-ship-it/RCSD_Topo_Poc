@@ -611,6 +611,8 @@ def _select_required_node_id(
     first_hit_road_ids: Iterable[str],
     node_points_by_id: dict[str, Point],
     representative_point: Point,
+    expected_event_arm_count: int,
+    expected_event_labels: set[str],
 ) -> str | None:
     candidate_node_ids = tuple(sorted({str(node_id) for node_id in node_ids if str(node_id)}))
     if not candidate_node_ids:
@@ -618,11 +620,19 @@ def _select_required_node_id(
     component_road_ids = {str(road_id) for road_id in road_ids if str(road_id)}
     first_hit_set = {str(road_id) for road_id in first_hit_road_ids if str(road_id)}
     local_node_ids = {str(unit.node_id) for unit in local_units if unit.node_id}
-    best: tuple[tuple[int, int, int, int, int, str], str] | None = None
+    local_units_by_node_id: dict[str, _LocalRcsdUnit] = {}
+    for unit in local_units:
+        if unit.unit_kind != "node_centric" or unit.node_id is None:
+            continue
+        current = local_units_by_node_id.get(str(unit.node_id))
+        if current is None or unit.score > current.score:
+            local_units_by_node_id[str(unit.node_id)] = unit
+    best: tuple[tuple[int, int, int, int, int, int, int, int, int, int, str], str] | None = None
     for node_id in candidate_node_ids:
         point = node_points_by_id.get(node_id)
         if point is None:
             continue
+        local_unit = local_units_by_node_id.get(node_id)
         incident_road_ids = set(roads_by_node_id.get(node_id, set())) & component_road_ids
         direct_first_hit_count = len(incident_road_ids & first_hit_set)
         traced_first_hit_count = 0
@@ -634,10 +644,22 @@ def _select_required_node_id(
                 roads_by_node_id=roads_by_node_id,
             ):
                 traced_first_hit_count += 1
+        local_event_arm_count = len(local_unit.event_side_road_ids) if local_unit is not None else 0
+        matched_event_label_count = (
+            len(set(local_unit.event_side_labels) & expected_event_labels)
+            if local_unit is not None and expected_event_labels
+            else (1 if local_event_arm_count > 0 else 0)
+        )
+        structural_event_completion = int(local_event_arm_count >= max(1, expected_event_arm_count))
         candidate = (
+            structural_event_completion,
+            1 if local_unit is not None and local_unit.consistency_level == "A" else 0,
             traced_first_hit_count,
+            local_event_arm_count,
+            matched_event_label_count,
             len(incident_road_ids),
             direct_first_hit_count,
+            1 if local_unit is not None and local_unit.trunk_present else 0,
             1 if node_id in local_node_ids else 0,
             -int(round(float(point.distance(representative_point)) * 10.0)),
             node_id,
@@ -941,6 +963,8 @@ def _build_aggregated_rcsd_units(
                 first_hit_road_ids=first_hit_road_ids,
                 node_points_by_id=node_points_by_id,
                 representative_point=representative_point,
+                expected_event_arm_count=expected_event_arm_count,
+                expected_event_labels=expected_event_labels,
             )
             if has_node_centric and positive_rcsd_present
             else None
@@ -1077,5 +1101,3 @@ def _build_aggregated_rcsd_units(
         )
     aggregated_units.sort(key=lambda unit: unit.score, reverse=True)
     return tuple(aggregated_units)
-
-

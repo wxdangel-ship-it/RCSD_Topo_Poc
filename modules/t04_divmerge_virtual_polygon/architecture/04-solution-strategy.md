@@ -84,7 +84,7 @@
   - Layer 2：主体稳定落在 `pair-middle`
   - Layer 3：仅弱进入当前 unit 候选空间，只作 reverse / mode switch / 审计参考
 - T04 当前不把三层混成一个总分；正式策略是“先层级，再层内排序”。
-- `axis_position_m = 0` 或 reference 贴 node 的候选，统一记为 `node_fallback_only`；这类候选只能作为审计 / 兜底参考，不得直接成为主排序第一名。
+- `axis_position_m = 0` 或 reference 贴 node 的候选，统一记为 `node_fallback_only`；这类候选只能作为审计 / 兜底参考，不得直接成为主排序第一名。无导流带时的道路结构面分叉候选 `candidate_scope = road_surface_fork` 是唯一例外：reference point 应落在分支点上，并允许成为正式主证据。
 - forward / reverse / structure-mode 都共享同一个 `pair-local region`：
   - forward：当前 unit 的自然事实形成方向
   - reverse：同一空间内的反向重试，不是独立证据体系

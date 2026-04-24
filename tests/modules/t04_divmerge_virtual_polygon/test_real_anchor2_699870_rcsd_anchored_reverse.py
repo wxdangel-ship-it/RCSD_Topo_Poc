@@ -28,6 +28,8 @@ def test_real_anchor2_699870_uses_rcsd_anchored_reverse_and_reaches_step7(tmp_pa
     assert record["post_state"] != "none"
     assert record["sample_count"] >= 3
     assert record["post_reverse_conflict_recheck"] == "passed"
+    assert record["reference_point_mode"] == "selected_divstrip_branch_tip"
+    assert record["reference_point_axis_s"] == pytest.approx(33.72, abs=1e-3)
 
     step4_doc = json.loads(
         (run_root / "cases" / "699870" / "step4_event_interpretation.json").read_text(encoding="utf-8")
@@ -41,7 +43,22 @@ def test_real_anchor2_699870_uses_rcsd_anchored_reverse_and_reaches_step7(tmp_pa
     assert unit_doc["required_rcsd_node_source"] == "aggregated_structural_required"
 
     step5_doc = json.loads((run_root / "cases" / "699870" / "step5_status.json").read_text(encoding="utf-8"))
+    step5_unit = step5_doc["unit_results"][0]
     assert step5_doc["case_must_cover_domain"]["present"] is True
+    assert step5_unit["surface_fill_mode"] == "junction_full_road_fill"
+    assert step5_unit["surface_fill_axis_half_width_m"] == pytest.approx(20.0, abs=1e-6)
+    assert step5_unit["junction_full_road_fill_domain"]["present"] is True
+    assert step5_unit["axis_lateral_band_geometry"]["present"] is True
+    assert step5_unit["required_rcsd_node_patch_geometry"]["present"] is True
+
+    full_fill_area = step5_unit["junction_full_road_fill_domain"]["area_m2"]
+    support_corridor_area = step5_unit["terminal_support_corridor_geometry"]["area_m2"]
+    assert full_fill_area > support_corridor_area * 2.0
+
+    step6_doc = json.loads((run_root / "cases" / "699870" / "step6_status.json").read_text(encoding="utf-8"))
+    assert step6_doc["assembly_state"] == "assembled"
+    assert step6_doc["hard_must_cover_ok"] is True
+    assert step6_doc["final_case_polygon"]["area_m2"] > support_corridor_area * 1.5
 
     step7_doc = json.loads((run_root / "cases" / "699870" / "step7_status.json").read_text(encoding="utf-8"))
     assert step7_doc["final_state"] in {"accepted", "rejected"}

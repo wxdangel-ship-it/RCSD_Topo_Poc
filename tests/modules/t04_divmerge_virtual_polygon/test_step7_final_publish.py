@@ -206,6 +206,20 @@ def test_anchor2_added_cases_freeze_698380_698389_and_699870_acceptance(tmp_path
     ][0]
     assert reverse_699870["post_reverse_conflict_recheck"] == "passed"
     assert reverse_699870["post_state"] == "found"
+    assert reverse_699870["reference_point_mode"] == "selected_divstrip_branch_tip"
+    assert reverse_699870["reference_point_axis_s"] == pytest.approx(33.72, abs=1e-3)
+
+    step5_699870 = json.loads(
+        (run_root / "cases" / "699870" / "step5_status.json").read_text(encoding="utf-8")
+    )
+    unit_699870 = step5_699870["unit_results"][0]
+    assert unit_699870["surface_fill_mode"] == "junction_full_road_fill"
+    assert unit_699870["surface_fill_axis_half_width_m"] == pytest.approx(20.0, abs=1e-6)
+    assert unit_699870["junction_full_road_fill_domain"]["present"] is True
+    assert (
+        unit_699870["junction_full_road_fill_domain"]["area_m2"]
+        > unit_699870["terminal_support_corridor_geometry"]["area_m2"] * 2.0
+    )
 
 
 @pytest.mark.smoke
@@ -245,6 +259,14 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
     reverse_by_case = {record["case_id"]: record for record in reverse_payload["records"]}
     assert reverse_by_case["699870"]["post_reverse_conflict_recheck"] == "passed"
     assert reverse_by_case["699870"]["post_state"] == "found"
+    assert reverse_by_case["699870"]["reference_point_mode"] == "selected_divstrip_branch_tip"
+    assert reverse_by_case["699870"]["reference_point_axis_s"] == pytest.approx(33.72, abs=1e-3)
+    step5_699870 = json.loads(
+        (run_root / "cases" / "699870" / "step5_status.json").read_text(encoding="utf-8")
+    )
+    unit_699870 = step5_699870["unit_results"][0]
+    assert unit_699870["surface_fill_mode"] == "junction_full_road_fill"
+    assert unit_699870["surface_fill_axis_half_width_m"] == pytest.approx(20.0, abs=1e-6)
     assert reverse_by_case["724067"]["skip_reason"] == "skipped_selected_evidence_present"
     assert reverse_by_case["724067"]["post_state"] == "found"
     assert reverse_by_case["724067"]["mother_candidate_id"] is None

@@ -191,6 +191,7 @@
 - `support_domain`
   - 以 Step4 主证据、`fact_reference_point`、正向 RCSD 结果与局部道路面构建 Unit / Case 两级约束层
   - 只定义 `must_cover / allowed_growth / forbidden / terminal_cut`，不生成最终 polygon
+  - 对 `rcsd_anchored_reverse` 且同时具备 `Reference Point + required_rcsd_node` 的路口面，必须额外构建 `junction_full_road_fill_domain`：以 Reference Point 与 RCSDNode 定义的语义主轴为中心，纵向只保留两端各 `20m` terminal window，横向单侧不超过 `20m`，再与 DriveZone 道路面和 forbidden masks 共同约束；`terminal_support_corridor_geometry` 在此场景只作为支撑与审计对象，不应成为最终铺面的主范围。
 - `polygon_assembly`
   - 在 Step5 约束内以 `raster-first` 方式组装单一连通面
   - 不得突破 `allowed / forbidden / terminal_cut`

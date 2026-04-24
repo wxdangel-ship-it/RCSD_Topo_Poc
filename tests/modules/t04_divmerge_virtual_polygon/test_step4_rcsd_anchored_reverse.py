@@ -144,6 +144,11 @@ def test_rcsd_anchored_reverse_triggers_successfully() -> None:
     assert unit.evidence_source == "rcsd_anchored_reverse"
     assert unit.position_source == "rcsd_anchored_axis_projection"
     assert unit.event_chosen_s_m is not None
+    assert record["reference_point_mode"] == "selected_divstrip_branch_tip"
+    assert record["reference_point_axis_s"] == pytest.approx(33.72, abs=1e-3)
+    assert unit.fact_reference_point is not None
+    assert unit.required_rcsd_node_geometry is not None
+    assert unit.fact_reference_point.distance(unit.required_rcsd_node_geometry) == pytest.approx(24.026, abs=1e-3)
 
 
 def test_699870_prefers_merge_convergence_rcsd_node_before_reverse() -> None:

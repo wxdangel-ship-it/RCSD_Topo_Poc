@@ -21,7 +21,8 @@
   - `intruding_road_ids`
 - Step4 每个 event unit 的事实依据与位置必须可解释。
 - `fact_reference_point`、`review_materialized_point`、`selected_component_union_geometry`、`localized_evidence_core_geometry`、`coarse_anchor_zone_geometry` 的语义边界必须可解释。
-- Step5 必须能稳定产出 Unit / Case 两级的 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints`，并对 `1m` hard negative mask、`fallback_support_strip` 与 `bridge zone` 给出可追溯解释。
+- Step5 必须能稳定产出 Unit / Case 两级的 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints`，并对 `1m` hard negative mask、`fallback_support_strip`、`bridge zone` 与 `junction_full_road_fill_domain` 给出可追溯解释。
+- 对 `rcsd_anchored_reverse` 且同时具备 `Reference Point + required_rcsd_node` 的路口面，Step5 必须在 DriveZone 内按语义主轴构造整幅路面填充域：Reference Point 与 RCSDNode 两端各保留 `20m` terminal window，主轴横向单侧不超过 `20m`，并继续受 forbidden masks / terminal cuts 硬裁剪。
 - Step6 必须能在不突破 Step5 约束的前提下生成单一连通面；只允许业务 hole，不允许算法洞。
 - Step7 必须把最终状态机压缩为 `accepted / rejected` 两态；审计材料可以保留，但不得冒充第三种正式状态。
 
@@ -68,6 +69,7 @@
   - 哪些对象触发 `1m` hard negative mask
   - `fallback_support_strip` 与 `bridge zone` 如何物化
   - `terminal_cut_constraints` 如何从局部道路方向确定
+  - `junction_full_road_fill_domain` 是否启用，以及其 `surface_fill_axis_half_width_m`、语义主轴横向带和面积
 - Step6 审计输出必须能明确举证：
   - `assembly_canvas` 如何构造
   - 哪些硬种子被写入
@@ -194,5 +196,6 @@ Step7 当前最终发布冻结门槛：
 - `699870` 暂不进入主 frozen baseline 表；它只用于验证“前向主证据缺位，但 RCSD 端可稳定成团”的旁路能力。
 - 单 case 回归中，`699870` 必须触发 reverse，且 Step4 不得再以 `selected_evidence_state = none` 结束。
 - `699870` 的 Step5-7 必须能继续消费 Step4 写回的 `event_chosen_s_m / axis_position_m / selected_evidence_state` 与 legacy Step5 bridge 字段。
+- `699870` 的 Step5 必须启用 `junction_full_road_fill`，并以 `surface_fill_axis_half_width_m = 20.0` 约束整幅路面填充；最终 polygon 不得退化为仅覆盖 `terminal_support_corridor_geometry` 的窄带结果。
 - 若 `699870` 最终仍为 `rejected`，拒绝原因必须来自 Step6 几何约束或 Step7 最终门禁，不得来自 Step4 主证据缺位。
 - batch / full-input 混跑中，若 `699870` 的 reverse 结果命中 cross-case 已占用 RCSD claim 或 evidence ownership，必须通过 `post_reverse_conflict_recheck` 放弃本次 reverse；该 guard 生效不表示 699870 被加入主 frozen baseline。

@@ -4,7 +4,7 @@ from dataclasses import replace
 from statistics import median
 from typing import Any, Iterable, Sequence
 
-from shapely.geometry import GeometryCollection, LineString, MultiLineString, Point
+from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge, nearest_points, unary_union
 
@@ -20,6 +20,7 @@ MIN_RCSD_ANCHOR_SAMPLE_COUNT = 3
 RCSD_ANCHORED_EVIDENCE_RECOVERY_WINDOW_M = 20.0
 RCSD_ANCHORED_FALLBACK_PATCH_RADIUS_M = 4.0
 RCSD_CLAIM_ROAD_OVERLAP_RATIO = 0.5
+RCSD_REFERENCE_SAMPLE_ENDPOINT_TOL_M = 1.0
 RCSD_ANCHORED_REVIEW_REASON = "rcsd_anchored_reverse_used"
 RCSD_ANCHORED_RISK_SIGNAL = "rcsd_anchored_reverse"
 
@@ -83,6 +84,22 @@ def _line_parts(geometry: BaseGeometry | None) -> tuple[LineString, ...]:
         parts: list[LineString] = []
         for part in geoms:
             parts.extend(_line_parts(part))
+        return tuple(parts)
+    return ()
+
+
+def _polygon_parts(geometry: BaseGeometry | None) -> tuple[Polygon, ...]:
+    if geometry is None or geometry.is_empty:
+        return ()
+    if isinstance(geometry, Polygon):
+        return (geometry,)
+    if isinstance(geometry, MultiPolygon):
+        return tuple(part for part in geometry.geoms if isinstance(part, Polygon) and not part.is_empty)
+    geoms = getattr(geometry, "geoms", None)
+    if geoms is not None:
+        parts: list[Polygon] = []
+        for part in geoms:
+            parts.extend(_polygon_parts(part))
         return tuple(parts)
     return ()
 
@@ -281,6 +298,176 @@ def _rcsd_anchor_samples(
             if sample is not None:
                 road_samples.append(round(float(sample), 3))
     return node_samples, road_samples
+
+
+def _road_axis_sample_points(
+    case_result: T04CaseResult,
+    *,
+    road_ids: set[str],
+    axis_context: dict[str, Any],
+) -> list[tuple[str, float, Point]]:
+    axis_line = axis_context.get("axis_line")
+    if axis_line is None:
+        return []
+    roads_by_id = _rcsd_road_lookup(case_result)
+    samples: list[tuple[str, float, Point]] = []
+    for road_id in sorted(road_ids):
+        road = roads_by_id.get(road_id)
+        geometry = None if road is None else road.geometry
+        if geometry is None or geometry.is_empty:
+            continue
+        try:
+            axis_point = nearest_points(axis_line, geometry)[0]
+        except Exception:
+            continue
+        sample = _project_point_to_axis(axis_point, axis_context)
+        if sample is None:
+            continue
+        samples.append((road_id, float(sample), axis_point))
+    return samples
+
+
+def _selected_divstrip_component_geometry(
+    event_unit: T04EventUnitResult,
+    *,
+    component_ids: Sequence[str],
+) -> BaseGeometry | None:
+    selected_indices: list[int] = []
+    for component_id in component_ids:
+        text = str(component_id or "").strip()
+        if not text.startswith("divstrip_component_"):
+            continue
+        try:
+            selected_indices.append(int(text.rsplit("_", 1)[-1]))
+        except ValueError:
+            continue
+    if not selected_indices:
+        return None
+    divstrip_union = _union_geometry(
+        feature.geometry
+        for feature in event_unit.unit_context.local_context.patch_divstrip_features
+        if feature.geometry is not None and not feature.geometry.is_empty
+    )
+    components = _polygon_parts(divstrip_union)
+    if not components:
+        return None
+    picked = [
+        components[index]
+        for index in sorted(set(selected_indices))
+        if 0 <= int(index) < len(components)
+    ]
+    return _union_geometry(picked)
+
+
+def _divstrip_reference_vertices(component_geometry: BaseGeometry | None) -> list[Point]:
+    vertices: list[Point] = []
+    for polygon in _polygon_parts(component_geometry):
+        for ring in (polygon.exterior, *polygon.interiors):
+            for coord in ring.coords:
+                vertices.append(Point(float(coord[0]), float(coord[1])))
+    return vertices
+
+
+def _reverse_divstrip_reference_point(
+    event_unit: T04EventUnitResult,
+    *,
+    component_ids: Sequence[str],
+    required_point: Point,
+    axis_context: dict[str, Any],
+    s_rcsd_anchored: float,
+    required_s: float,
+) -> tuple[Point, float, str] | None:
+    component_geometry = _selected_divstrip_component_geometry(
+        event_unit,
+        component_ids=component_ids,
+    )
+    if component_geometry is None:
+        return None
+    boundary = getattr(component_geometry, "boundary", None)
+    if boundary is not None and not boundary.is_empty:
+        boundary_point = nearest_points(boundary, required_point)[0]
+        boundary_s = _project_point_to_axis(boundary_point, axis_context)
+        if boundary_s is not None:
+            lower = min(float(s_rcsd_anchored), float(required_s)) - 1e-6
+            upper = max(float(s_rcsd_anchored), float(required_s)) + 1e-6
+            if lower <= float(boundary_s) <= upper:
+                return boundary_point, float(boundary_s), "selected_divstrip_branch_tip"
+
+    lower = min(float(s_rcsd_anchored), float(required_s)) + RCSD_REFERENCE_SAMPLE_ENDPOINT_TOL_M
+    upper = max(float(s_rcsd_anchored), float(required_s)) - RCSD_REFERENCE_SAMPLE_ENDPOINT_TOL_M
+    projected_vertices: list[tuple[float, Point]] = []
+    for vertex in _divstrip_reference_vertices(component_geometry):
+        sample_s = _project_point_to_axis(vertex, axis_context)
+        if sample_s is None or not (lower <= float(sample_s) <= upper):
+            continue
+        projected_vertices.append((float(sample_s), vertex))
+    if not projected_vertices:
+        return None
+    if float(required_s) >= float(s_rcsd_anchored):
+        sample_s, reference_point = max(projected_vertices, key=lambda item: item[0])
+    else:
+        sample_s, reference_point = min(projected_vertices, key=lambda item: item[0])
+    return reference_point, float(sample_s), "selected_divstrip_branch_tip"
+
+
+def _reverse_reference_point(
+    case_result: T04CaseResult,
+    *,
+    event_unit: T04EventUnitResult,
+    mother: T04CandidateAuditEntry,
+    road_ids: set[str],
+    axis_context: dict[str, Any],
+    s_rcsd_anchored: float,
+    anchor_point: Point | None,
+) -> tuple[Point | None, float, str]:
+    required_point = _as_point(mother.required_rcsd_node_geometry)
+    if required_point is None:
+        return anchor_point, float(s_rcsd_anchored), "axis_anchor"
+    required_s = _project_point_to_axis(required_point, axis_context)
+    if required_s is None:
+        return anchor_point, float(s_rcsd_anchored), "axis_anchor"
+
+    divstrip_reference = _reverse_divstrip_reference_point(
+        event_unit,
+        component_ids=mother.selected_component_ids or event_unit.selected_component_ids,
+        required_point=required_point,
+        axis_context=axis_context,
+        s_rcsd_anchored=s_rcsd_anchored,
+        required_s=float(required_s),
+    )
+    if divstrip_reference is not None:
+        return divstrip_reference
+
+    lower = min(float(s_rcsd_anchored), float(required_s)) + RCSD_REFERENCE_SAMPLE_ENDPOINT_TOL_M
+    upper = max(float(s_rcsd_anchored), float(required_s)) - RCSD_REFERENCE_SAMPLE_ENDPOINT_TOL_M
+    if upper <= lower:
+        return anchor_point, float(s_rcsd_anchored), "axis_anchor"
+
+    interior_samples: list[tuple[float, float, str, Point]] = []
+    for road_id, sample_s, axis_point in _road_axis_sample_points(
+        case_result,
+        road_ids=road_ids,
+        axis_context=axis_context,
+    ):
+        if sample_s <= lower or sample_s >= upper:
+            continue
+        interior_samples.append(
+            (
+                abs(float(required_s) - float(sample_s)),
+                abs(float(s_rcsd_anchored) - float(sample_s)),
+                road_id,
+                axis_point,
+            )
+        )
+    if not interior_samples:
+        return anchor_point, float(s_rcsd_anchored), "axis_anchor"
+
+    interior_samples.sort(key=lambda item: (item[0], item[1], item[2]))
+    _distance_to_required, _distance_to_anchor, road_id, reference_point = interior_samples[0]
+    reference_s = _project_point_to_axis(reference_point, axis_context)
+    if reference_s is None:
+        return anchor_point, float(s_rcsd_anchored), "axis_anchor"
+    return reference_point, float(reference_s), f"intermediate_rcsd_road_axis_sample:{road_id}"
 
 
 def _drivezone_union(case_result: T04CaseResult) -> BaseGeometry | None:
@@ -494,6 +681,9 @@ def _update_interpretation(
     axis_branch_id: str,
     s_rcsd_anchored: float,
     anchor_point: Point | None,
+    reference_point: Point | None,
+    reference_origin_point: Point | None,
+    reference_mode: str,
     fallback_used: bool,
 ) -> Any:
     interpretation = event_unit.interpretation
@@ -510,6 +700,7 @@ def _update_interpretation(
             "event_origin_source": "rcsd_anchored_axis_projection",
             "position_source": "rcsd_anchored_axis_projection",
             "chosen_s_m": round(float(s_rcsd_anchored), 3),
+            "reference_point_mode": reference_mode,
         },
     )
     evidence_decision = replace(
@@ -529,8 +720,9 @@ def _update_interpretation(
             "event_origin_source": "rcsd_anchored_axis_projection",
             "position_source": "rcsd_anchored_axis_projection",
             "chosen_s_m": round(float(s_rcsd_anchored), 3),
+            "reference_point_mode": reference_mode,
         },
-        event_origin_point=anchor_point or interpretation.legacy_step5_bridge.event_origin_point,
+        event_origin_point=reference_origin_point or anchor_point or interpretation.legacy_step5_bridge.event_origin_point,
         event_origin_source="rcsd_anchored_axis_projection",
     )
     return replace(
@@ -557,6 +749,16 @@ def _apply_reverse_to_unit(
     samples = [*node_samples_s, *road_samples_s]
     s_rcsd_anchored = round(float(median(samples)), 3)
     anchor_point = _axis_point_at_s(axis_context, s_rcsd_anchored)
+    reference_point, reference_s, reference_mode = _reverse_reference_point(
+        case_result,
+        event_unit=event_unit,
+        mother=mother,
+        road_ids=road_ids,
+        axis_context=axis_context,
+        s_rcsd_anchored=s_rcsd_anchored,
+        anchor_point=anchor_point,
+    )
+    reference_origin_point = _axis_point_at_s(axis_context, reference_s) or reference_point
     drivezone = _drivezone_union(case_result)
     recovered = _recover_evidence(event_unit.candidate_audit_entries, s_rcsd_anchored=s_rcsd_anchored)
     fallback_used = recovered is None
@@ -593,6 +795,9 @@ def _apply_reverse_to_unit(
         axis_branch_id=str(axis_context["axis_branch_id"]),
         s_rcsd_anchored=s_rcsd_anchored,
         anchor_point=anchor_point,
+        reference_point=reference_point,
+        reference_origin_point=reference_origin_point,
+        reference_mode=reference_mode,
         fallback_used=fallback_used,
     )
     review_reasons = _dedupe(
@@ -611,6 +816,8 @@ def _apply_reverse_to_unit(
             "sample_count": len(samples),
             "evidence_recovered": recovered is not None,
             "recovered_candidate_id": None if recovered is None else recovered.candidate_id,
+            "reference_point_mode": reference_mode,
+            "reference_point_axis_s": round(float(reference_s), 3),
         },
     }
     updated = replace(
@@ -630,8 +837,8 @@ def _apply_reverse_to_unit(
             drivezone,
         ),
         selected_evidence_region_geometry=evidence_region_geometry,
-        fact_reference_point=anchor_point,
-        review_materialized_point=anchor_point,
+        fact_reference_point=reference_point,
+        review_materialized_point=reference_point,
         pair_local_rcsd_scope_geometry=mother.pair_local_rcsd_scope_geometry,
         first_hit_rcsd_road_geometry=mother.first_hit_rcsd_road_geometry,
         local_rcsd_unit_geometry=mother.local_rcsd_unit_geometry,
@@ -677,6 +884,8 @@ def _apply_reverse_to_unit(
         "evidence_recovered": recovered is not None,
         "recovered_candidate_id": None if recovered is None else recovered.candidate_id,
         "post_selected_evidence_state": updated.selected_evidence_state,
+        "reference_point_mode": reference_mode,
+        "reference_point_axis_s": round(float(reference_s), 3),
     }
     return updated, detail
 

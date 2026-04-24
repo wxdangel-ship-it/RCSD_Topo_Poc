@@ -27,6 +27,7 @@ STEP5_SUPPORT_GRAPH_PAD_M = 2.0
 STEP5_TERMINAL_WINDOW_FALLBACK_HALF_WIDTH_M = 240.0
 STEP5_TERMINAL_AXIS_ANCHOR_TOLERANCE_M = 15.0
 STEP5_TERMINAL_MIN_ANCHOR_SPAN_M = 1.0
+STEP5_FULL_ROAD_FILL_AXIS_HALF_WIDTH_M = 20.0
 
 
 def _iter_polygon_parts(geometry: BaseGeometry | None) -> Iterable[Polygon]:
@@ -446,6 +447,47 @@ def _build_terminal_support_corridor(
     )
 
 
+def _uses_junction_full_road_fill(unit_result: T04EventUnitResult) -> bool:
+    return bool(
+        unit_result.evidence_source == "rcsd_anchored_reverse"
+        and str(unit_result.required_rcsd_node or "").strip()
+        and _as_point(unit_result.fact_reference_point) is not None
+        and _as_point(unit_result.required_rcsd_node_geometry) is not None
+    )
+
+
+def _build_junction_full_road_fill_axis_band(
+    unit_result: T04EventUnitResult,
+    *,
+    drivezone_union: BaseGeometry | None,
+) -> BaseGeometry | None:
+    if not _uses_junction_full_road_fill(unit_result):
+        return None
+    window_centerline = _terminal_axis_window_centerline(unit_result)
+    if window_centerline is None:
+        return None
+    axis_band = window_centerline.buffer(
+        STEP5_FULL_ROAD_FILL_AXIS_HALF_WIDTH_M,
+        cap_style=2,
+        join_style=2,
+    )
+    return _clip_to_drivezone(axis_band, drivezone_union)
+
+
+def _build_junction_full_road_fill_domain(
+    unit_result: T04EventUnitResult,
+    *,
+    drivezone_union: BaseGeometry | None,
+) -> BaseGeometry | None:
+    axis_band = _build_junction_full_road_fill_axis_band(
+        unit_result,
+        drivezone_union=drivezone_union,
+    )
+    if axis_band is None:
+        return None
+    return _clip_to_drivezone(axis_band, drivezone_union)
+
+
 def _build_fallback_support_strip(
     unit_result: T04EventUnitResult,
     *,
@@ -783,6 +825,10 @@ class T04Step5UnitResult:
     unit_terminal_cut_constraints: BaseGeometry | None
     unit_terminal_window_domain: BaseGeometry | None
     terminal_support_corridor_geometry: BaseGeometry | None
+    axis_lateral_band_geometry: BaseGeometry | None = None
+    junction_full_road_fill_domain: BaseGeometry | None = None
+    surface_fill_mode: str = "standard"
+    surface_fill_axis_half_width_m: float | None = None
     support_road_ids: tuple[str, ...] = ()
     support_event_road_ids: tuple[str, ...] = ()
     positive_rcsd_road_ids: tuple[str, ...] = ()
@@ -801,12 +847,16 @@ class T04Step5UnitResult:
                 "ready": self.legacy_step5_ready,
                 "reasons": list(self.legacy_step5_reasons),
             },
+            "surface_fill_mode": self.surface_fill_mode,
+            "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
             "must_cover_components": dict(self.must_cover_components),
             "unit_must_cover_domain": _geometry_summary(self.unit_must_cover_domain),
             "unit_allowed_growth_domain": _geometry_summary(self.unit_allowed_growth_domain),
             "unit_forbidden_domain": _geometry_summary(self.unit_forbidden_domain),
             "unit_terminal_cut_constraints": _geometry_summary(self.unit_terminal_cut_constraints),
             "unit_terminal_window_domain": _geometry_summary(self.unit_terminal_window_domain),
+            "axis_lateral_band_geometry": _geometry_summary(self.axis_lateral_band_geometry),
+            "junction_full_road_fill_domain": _geometry_summary(self.junction_full_road_fill_domain),
             "localized_evidence_core_geometry": _geometry_summary(self.localized_evidence_core_geometry),
             "fact_reference_patch_geometry": _geometry_summary(self.fact_reference_patch_geometry),
             "required_rcsd_node_patch_geometry": _geometry_summary(self.required_rcsd_node_patch_geometry),
@@ -822,8 +872,12 @@ class T04Step5UnitResult:
             "support_event_road_ids": list(self.support_event_road_ids),
             "positive_rcsd_road_ids": list(self.positive_rcsd_road_ids),
             "positive_rcsd_node_ids": list(self.positive_rcsd_node_ids),
+            "surface_fill_mode": self.surface_fill_mode,
+            "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
             "must_cover_components": dict(self.must_cover_components),
             "unit_terminal_window_domain": _geometry_summary(self.unit_terminal_window_domain),
+            "axis_lateral_band_geometry": _geometry_summary(self.axis_lateral_band_geometry),
+            "junction_full_road_fill_domain": _geometry_summary(self.junction_full_road_fill_domain),
             "terminal_support_corridor_geometry": _geometry_summary(self.terminal_support_corridor_geometry),
         }
 
@@ -1001,6 +1055,20 @@ class T04Step5CaseResult:
                 scope="unit",
                 event_unit_id=unit.event_unit_id,
                 domain_role="unit_allowed_growth_domain",
+                component_role="axis_lateral_band_geometry",
+                geometry=unit.axis_lateral_band_geometry,
+            )
+            append_feature(
+                scope="unit",
+                event_unit_id=unit.event_unit_id,
+                domain_role="unit_allowed_growth_domain",
+                component_role="junction_full_road_fill_domain",
+                geometry=unit.junction_full_road_fill_domain,
+            )
+            append_feature(
+                scope="unit",
+                event_unit_id=unit.event_unit_id,
+                domain_role="unit_allowed_growth_domain",
                 component_role="terminal_support_corridor_geometry",
                 geometry=unit.terminal_support_corridor_geometry,
             )
@@ -1059,9 +1127,13 @@ def _build_step5_unit_result(
         radius_m=STEP5_POINT_PATCH_RADIUS_M,
         drivezone_union=drivezone_union,
     )
+    full_road_fill_requested = _uses_junction_full_road_fill(unit_result)
     required_rcsd_node_patch_geometry = None
     if (
-        unit_result.positive_rcsd_consistency_level == "A"
+        (
+            unit_result.positive_rcsd_consistency_level == "A"
+            or full_road_fill_requested
+        )
         and unit_result.required_rcsd_node is not None
     ):
         required_rcsd_node_patch_geometry = _buffered_patch(
@@ -1098,6 +1170,24 @@ def _build_step5_unit_result(
         unit_result,
         drivezone_union=drivezone_union,
     )
+    axis_lateral_band_geometry = _build_junction_full_road_fill_axis_band(
+        unit_result,
+        drivezone_union=drivezone_union,
+    )
+    junction_full_road_fill_domain = _build_junction_full_road_fill_domain(
+        unit_result,
+        drivezone_union=drivezone_union,
+    )
+    surface_fill_mode = (
+        "junction_full_road_fill"
+        if junction_full_road_fill_domain is not None
+        else "standard"
+    )
+    surface_fill_axis_half_width_m = (
+        STEP5_FULL_ROAD_FILL_AXIS_HALF_WIDTH_M
+        if junction_full_road_fill_domain is not None
+        else None
+    )
 
     unit_must_cover_domain = _clip_to_drivezone(
         _union_geometry(
@@ -1117,6 +1207,7 @@ def _build_step5_unit_result(
                 unit_result.selected_component_union_geometry,
                 unit_result.pair_local_structure_face_geometry,
                 fallback_support_strip_geometry,
+                junction_full_road_fill_domain,
                 terminal_support_corridor_geometry,
                 target_b_node_patch_geometry,
                 unit_must_cover_domain,
@@ -1168,12 +1259,16 @@ def _build_step5_unit_result(
         required_rcsd_node_patch_geometry=required_rcsd_node_patch_geometry,
         target_b_node_patch_geometry=target_b_node_patch_geometry,
         fallback_support_strip_geometry=fallback_support_strip_geometry,
+        axis_lateral_band_geometry=axis_lateral_band_geometry,
+        junction_full_road_fill_domain=junction_full_road_fill_domain,
         unit_must_cover_domain=unit_must_cover_domain,
         unit_allowed_growth_domain=unit_allowed_growth_domain,
         unit_forbidden_domain=unit_forbidden_domain,
         unit_terminal_cut_constraints=unit_terminal_cut_constraints,
         unit_terminal_window_domain=unit_terminal_window_domain,
         terminal_support_corridor_geometry=terminal_support_corridor_geometry,
+        surface_fill_mode=surface_fill_mode,
+        surface_fill_axis_half_width_m=surface_fill_axis_half_width_m,
         support_road_ids=tuple(bridge.selected_road_ids),
         support_event_road_ids=tuple(bridge.selected_event_road_ids),
         positive_rcsd_road_ids=tuple(unit_result.selected_rcsdroad_ids),
@@ -1261,7 +1356,10 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         )
         required_rcsd_node_patch_geometry = None
         if (
-            event_unit.positive_rcsd_consistency_level == "A"
+            (
+                event_unit.positive_rcsd_consistency_level == "A"
+                or _uses_junction_full_road_fill(event_unit)
+            )
             and event_unit.required_rcsd_node is not None
         ):
             required_rcsd_node_patch_geometry = _buffered_patch(

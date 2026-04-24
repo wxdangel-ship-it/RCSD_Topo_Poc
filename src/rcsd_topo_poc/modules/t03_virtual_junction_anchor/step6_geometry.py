@@ -32,6 +32,7 @@ REQUIRED_ROAD_BUFFER_M = 6.0
 FOREIGN_MASK_BUFFER_M = 1.0
 LEGAL_SPACE_TOLERANCE_M = 0.6
 NODE_COVER_TOLERANCE_M = 1.0
+TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M = 10.0
 LINE_COVER_BUFFER_M = 2.0
 LINE_COVER_MIN_RATIO = 0.68
 SELECTED_ROAD_CORE_MIN_RATIO = 0.45
@@ -589,6 +590,43 @@ def _node_cover_ratio_with_cover_geometry(
     covered = 0
     for node in items:
         if polygon_cover.contains(node.geometry):
+            covered += 1
+    return covered / len(items)
+
+
+def _target_node_has_incident_polygon_support(
+    step67_context: Step67Context,
+    node: NodeRecord,
+    polygon_cover: BaseGeometry,
+) -> bool:
+    if node.geometry.distance(polygon_cover) > TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M:
+        return False
+    selected_road_ids = set(step67_context.step45_context.selected_road_ids)
+    for road in step67_context.step45_context.step1_context.roads:
+        if road.road_id not in selected_road_ids:
+            continue
+        if node.node_id not in {road.snodeid, road.enodeid}:
+            continue
+        return True
+    return False
+
+
+def _target_node_cover_ratio_with_cover_geometry(
+    step67_context: Step67Context,
+    polygon_cover: BaseGeometry | None,
+) -> float:
+    items = list(step67_context.step45_context.step1_context.target_group.nodes)
+    if not items:
+        return 1.0
+    if polygon_cover is None:
+        return 0.0
+    covered = 0
+    for node in items:
+        if polygon_cover.contains(node.geometry) or _target_node_has_incident_polygon_support(
+            step67_context,
+            node,
+            polygon_cover,
+        ):
             covered += 1
     return covered / len(items)
 
@@ -1371,6 +1409,9 @@ def build_step6_result(
         final_polygon = _clean_geometry(final_polygon.intersection(allowed_space_tolerance_geometry))
         final_polygon = _clean_geometry(final_polygon.intersection(direction_boundary_geometry))
         final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
+    if final_polygon is not None and foreign_mask_geometry is not None:
+        final_polygon = _clean_geometry(final_polygon.difference(foreign_mask_geometry))
+        final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
     _accumulate_stage_timer(stage_timers, "step6_finalize_cleanup", perf_counter() - cleanup_started_perf)
 
     validation_started_perf = perf_counter()
@@ -1394,8 +1435,8 @@ def build_step6_result(
         LINE_COVER_BUFFER_M,
         geometry_cache=geometry_cache,
     )
-    target_node_cover_ratio = _node_cover_ratio_with_cover_geometry(
-        step1.target_group.nodes,
+    target_node_cover_ratio = _target_node_cover_ratio_with_cover_geometry(
+        step67_context,
         final_node_cover_geometry,
     )
     selected_core_cover_ratio = _line_coverage_ratio_with_cover_geometry(
@@ -1430,8 +1471,8 @@ def build_step6_result(
         foreign_overlap_area_m2 = final_polygon.intersection(foreign_mask_geometry).area
     foreign_exclusion_ok = foreign_overlap_area_m2 <= FOREIGN_OVERLAP_TOLERANCE_M2
 
-    raw_target_cover_ratio = _node_cover_ratio_with_cover_geometry(
-        step1.target_group.nodes,
+    raw_target_cover_ratio = _target_node_cover_ratio_with_cover_geometry(
+        step67_context,
         raw_node_cover_geometry,
     )
     raw_required_rc_cover_ratio = _line_coverage_ratio_with_cover_geometry(
@@ -1626,12 +1667,17 @@ def build_step6_result(
     severe_template_misfit = False
     severe_reason = None
     if template_class == "single_sided_t_mouth":
-        # Boundary-first single-sided outputs can legitimately form two lobes while
-        # still satisfying legal/foreign/must-cover constraints; keep this as a
-        # visual review signal instead of a hard failure.
+        # Boundary-first single-sided outputs can legitimately form two lobes.
+        # Keep that as review-only unless the result is fragmented or too sparse
+        # to represent a stable business geometry.
+        component_count = int(shape_metrics["component_count"] or 0)
+        compactness = shape_metrics["compactness"]
+        bbox_fill_ratio = shape_metrics["bbox_fill_ratio"]
         severe_template_misfit = (
-            (shape_metrics["compactness"] is not None and shape_metrics["compactness"] < 0.12)
-            or (shape_metrics["bbox_fill_ratio"] is not None and shape_metrics["bbox_fill_ratio"] < 0.11)
+            (compactness is not None and compactness < 0.12)
+            or (bbox_fill_ratio is not None and bbox_fill_ratio < 0.11)
+            or component_count > 3
+            or (component_count > 1 and compactness is not None and compactness < 0.16)
         )
         severe_reason = "step6_single_sided_shape_artifact" if severe_template_misfit else None
     else:

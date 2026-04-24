@@ -32,6 +32,8 @@ ROAD_BUFFER_M = 8.0
 NODE_BUFFER_M = 5.0
 NEGATIVE_MASK_BUFFER_M = 1.0
 STEP3_DISTANCE_CAP_M = 50.0
+TARGET_NODE_COVER_TOLERANCE_M = 0.5
+TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M = 10.0
 INTRUSION_AREA_TOLERANCE_M2 = 0.05
 DRIVEZONE_OUTSIDE_AREA_TOLERANCE_M2 = 0.05
 ADJACENT_REVERSE_MASK_LENGTH_M = 1.0
@@ -1427,14 +1429,49 @@ def _component_touching_target(geometry: BaseGeometry | None, target_geometry: B
     return _clean_geometry(unary_union(kept))
 
 
-def _covered_node_ids(context: Step1Context, allowed_space_geometry: BaseGeometry | None) -> list[str]:
+def _node_has_incident_allowed_support(
+    context: Step1Context,
+    node: NodeRecord,
+    allowed_space_geometry: BaseGeometry,
+    *,
+    selected_road_ids: set[str] | None = None,
+) -> bool:
+    point = _point_like(node.geometry)
+    if point.distance(allowed_space_geometry) > TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M:
+        return False
+    allowed_probe = allowed_space_geometry.buffer(TARGET_NODE_COVER_TOLERANCE_M)
+    for road in context.roads:
+        if selected_road_ids is not None and road.road_id not in selected_road_ids:
+            continue
+        if node.node_id not in {road.snodeid, road.enodeid}:
+            continue
+        supported_segment = road.geometry.intersection(allowed_probe)
+        if supported_segment.is_empty:
+            return True
+        if point.distance(supported_segment) <= TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M:
+            return True
+    return False
+
+
+def _covered_node_ids(
+    context: Step1Context,
+    allowed_space_geometry: BaseGeometry | None,
+    *,
+    selected_road_ids: set[str] | None = None,
+) -> list[str]:
     if allowed_space_geometry is None:
         return []
-    return [
-        node.node_id
-        for node in context.target_group.nodes
-        if allowed_space_geometry.buffer(0.5).covers(node.geometry)
-    ]
+    cover_geometry = allowed_space_geometry.buffer(TARGET_NODE_COVER_TOLERANCE_M)
+    covered_node_ids: list[str] = []
+    for node in context.target_group.nodes:
+        if cover_geometry.covers(node.geometry) or _node_has_incident_allowed_support(
+            context,
+            node,
+            allowed_space_geometry,
+            selected_road_ids=selected_road_ids,
+        ):
+            covered_node_ids.append(node.node_id)
+    return covered_node_ids
 
 
 def _has_negative_intrusion(geometry: BaseGeometry | None, negative_union: BaseGeometry | None) -> bool:
@@ -1854,7 +1891,11 @@ def build_step3_case_result(
     hard_path_geometry = _component_touching_target(hard_candidate_with_bridge, reference_target_geometry)
     drivezone_metrics = _drivezone_containment_metrics(hard_path_geometry, context.drivezone_geometry)
     hard_intrusion = _has_negative_intrusion(hard_path_geometry, blocker_union)
-    covered_node_ids = _covered_node_ids(context, hard_path_geometry)
+    covered_node_ids = _covered_node_ids(
+        context,
+        hard_path_geometry,
+        selected_road_ids=selected_road_ids,
+    )
     target_node_ids = [node.node_id for node in context.target_group.nodes]
     missing_node_ids = [node_id for node_id in target_node_ids if node_id not in covered_node_ids]
     _accumulate_step3_stage_timer(
@@ -1882,7 +1923,11 @@ def build_step3_case_result(
     cleanup_preview_geometry = _component_touching_target(cleanup_preview_geometry, reference_target_geometry)
     cleanup_preview_drivezone_metrics = _drivezone_containment_metrics(cleanup_preview_geometry, context.drivezone_geometry)
     cleanup_preview_intrusion = _has_negative_intrusion(cleanup_preview_geometry, blocker_union)
-    cleanup_preview_covered_node_ids = _covered_node_ids(context, cleanup_preview_geometry)
+    cleanup_preview_covered_node_ids = _covered_node_ids(
+        context,
+        cleanup_preview_geometry,
+        selected_road_ids=_preview_selected_road_ids,
+    )
     cleanup_preview_missing_node_ids = [
         node_id
         for node_id in target_node_ids

@@ -302,6 +302,8 @@
 - 若当前主证据位置存在正向匹配的 RCSD 路口节点，则该节点必须作为 `required_rcsd_node` 输出；它不再依赖 `A` 才能出现。
 - `required_rcsd_node` 必须从已匹配的 local / aggregated RCSD unit 中独立输出；`A/B` 只影响其支持强度，不影响该字段是否应输出。
 - `positive_rcsd_present = true` 的 case，不得仅因 side-label mismatch 直接落到 `C / no_support`。
+- RCSD 侧的分歧 / 合流若由多个相邻 RCSDNode 共同承载同一个 `pair-local` 正向结构，仍可构成标准语义路口；不得仅因语义路口不是单一 RCSDNode 而将主事实面降为最终业务拒绝。
+- 对 `B / secondary_support` 的 `target_b_node_patch_geometry`，Step6 校验口径必须使用当前栅格组装下、已套入 `allowed_growth_domain / forbidden_domain / terminal_cut_constraints` 的有效目标区域；不得用原始连续 patch 的边界残片否决最终二态结果。
 - Step4 审计输出至少必须显式表达：
   - `pair_local_rcsd_scope`
   - `first_hit_rcsdroad_ids`
@@ -409,6 +411,8 @@
   - 覆盖全部硬 must-cover
   - 不突破 Step5 的 `allowed / forbidden / cut`
   - 只允许业务 hole，不允许算法洞
+- Step6 在 raster-to-vector、small-hole fill、unexpected-hole cleanup 等任何矢量清理之后，必须重新套用 `allowed_growth_domain / forbidden_domain / terminal_cut_constraints`；清理步骤不得把最终面扩出 Step5 支撑域。
+- 由 `allowed_growth_domain / forbidden_domain / terminal_cut_constraints` 明确约束形成的洞属于约束洞，不得当作 `unexpected_hole_present` 拒绝；只有不受上述约束解释的洞才是算法洞。
 - Step6 当前正式输出至少包括：
   - `final_case_polygon`
   - `step6_status.json`
@@ -631,6 +635,11 @@
   - repo 级监控：`scripts/t04_watch_internal_full_input.sh`
   - repo 级最终平铺目视审计包装：`scripts/t04_run_internal_full_input_innernet_flat_review.sh`
   - T04 私有 runner：`run_t04_internal_full_input(...)`
+- internal full-input 运行态统计必须区分：
+  - `accepted / rejected`：Step7 正常完成后的最终业务二态；
+  - `guard_failed`：已知输入一致性或资源保护触发，包括 `input_guard_failed` 与 `resource_guard_failed`，不计入业务 `rejected`，也不计入未知 `runtime_failed`；
+  - `runtime_failed`：未分类的代码运行异常；
+  - `missing_status`：运行中断后未形成任何 terminal record 的 case。
 - 上述脚本不构成新的 repo 官方 CLI 子命令；执行逻辑必须保留在 T04 私有模块内。
 - 本轮需同步 `entrypoint-registry.md`。
 

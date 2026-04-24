@@ -10,6 +10,11 @@ from pathlib import Path
 import pytest
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon import run_t04_internal_full_input
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon import internal_full_input_runner
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step4_geometry_core import (
+    REASON_RCS_OUTSIDE_DRIVEZONE,
+    Stage4RunError,
+)
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.full_input_streamed_results import (
     T04TerminalCaseRecord,
     materialize_streamed_case_visual_check,
@@ -58,6 +63,7 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     assert progress["status"] == "completed"
     assert progress["entered_case_execution"] is True
     assert summary["accepted_count"] + summary["rejected_count"] == 1
+    assert summary["guard_failed_count"] == 0
     assert summary["runtime_failed_count"] == 0
     assert consistency["passed"] is True
 
@@ -161,5 +167,64 @@ def test_t04_internal_full_input_watch_once(tmp_path: Path) -> None:
     assert "[COUNTS]" in result.stdout
     assert "selected=1" in result.stdout
     assert "completed=1" in result.stdout
+    assert "guard_failed=0" in result.stdout
     assert "runtime_failed=0" in result.stdout
     assert "[PERF]" in result.stdout
+
+
+def test_t04_internal_full_input_classifies_resource_guard_separately(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case_dir = tmp_path / "full_input_source" / "1001"
+    _build_synthetic_case_package(case_dir)
+
+    def raise_grid_guard(*args, **kwargs):
+        raise ValueError(
+            "step6_grid_too_large: case_id=1001, patch_size_m=2000.000, "
+            "resolution_m=0.500, side_cells=4000, max_side_cells=2000"
+        )
+
+    monkeypatch.setattr(internal_full_input_runner, "run_single_case_direct", raise_grid_guard)
+
+    run_root = internal_full_input_runner.run_t04_internal_full_input(
+        nodes_path=case_dir / "nodes.gpkg",
+        roads_path=case_dir / "roads.gpkg",
+        drivezone_path=case_dir / "drivezone.gpkg",
+        divstripzone_path=case_dir / "divstripzone.gpkg",
+        rcsdroad_path=case_dir / "rcsdroad.gpkg",
+        rcsdnode_path=case_dir / "rcsdnode.gpkg",
+        out_root=tmp_path / "out_guard",
+        run_id="t04_internal_resource_guard",
+        workers=1,
+        max_cases=1,
+        resume=False,
+        retry_failed=False,
+        perf_audit=False,
+    ).run_root
+
+    summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+    progress = json.loads((run_root / "t04_internal_full_input_progress.json").read_text(encoding="utf-8"))
+    record = json.loads((run_root / "terminal_case_records" / "1001.json").read_text(encoding="utf-8"))
+
+    assert summary["accepted_count"] == 0
+    assert summary["rejected_count"] == 0
+    assert summary["guard_failed_count"] == 1
+    assert summary["resource_guard_failed_count"] == 1
+    assert summary["input_guard_failed_count"] == 0
+    assert summary["runtime_failed_count"] == 0
+    assert progress["guard_failed_case_count"] == 1
+    assert progress["runtime_failed_case_count"] == 0
+    assert record["terminal_state"] == "guard_failed"
+    assert record["guard_type"] == "resource_guard_failed"
+    assert record["reject_reason"] == "step6_grid_too_large_resource_guard"
+
+
+def test_t04_internal_full_input_classifies_rcsdnode_outside_drivezone_as_input_guard() -> None:
+    failure = internal_full_input_runner._classify_guard_failure(
+        Stage4RunError(REASON_RCS_OUTSIDE_DRIVEZONE, "RCSDNode features are outside DriveZone: 123")
+    )
+
+    assert failure is not None
+    assert failure.guard_type == "input_guard_failed"
+    assert failure.reason == "input_rcsdnode_outside_drivezone"

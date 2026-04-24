@@ -129,6 +129,9 @@ running = int_value(progress, "running_case_count", 0)
 pending = int_value(progress, "pending_case_count", max(selected - completed - running, 0))
 accepted = int_value(progress, "accepted_case_count", int_value(summary, "accepted_count", 0))
 rejected = int_value(progress, "rejected_case_count", int_value(summary, "rejected_count", 0))
+guard_failed = int_value(progress, "guard_failed_case_count", int_value(summary, "guard_failed_count", 0))
+input_guard_failed = int_value(progress, "input_guard_failed_case_count", int_value(summary, "input_guard_failed_count", 0))
+resource_guard_failed = int_value(progress, "resource_guard_failed_case_count", int_value(summary, "resource_guard_failed_count", 0))
 runtime_failed = int_value(progress, "runtime_failed_case_count", int_value(summary, "runtime_failed_count", 0))
 missing_status = int_value(progress, "missing_status_case_count", int_value(summary, "missing_status_count", 0))
 phase = str(progress.get("phase") or ("completed" if summary else "preflight"))
@@ -145,7 +148,10 @@ print(f"[MONITOR] summary_path={run_root / 'summary.json'}")
 print(
     "[COUNTS] "
     f"selected={selected} completed={completed} running={running} pending={pending} "
-    f"accepted={accepted} rejected={rejected} runtime_failed={runtime_failed} missing_status={missing_status}"
+    f"accepted={accepted} rejected={rejected} "
+    f"guard_failed={guard_failed} input_guard_failed={input_guard_failed} "
+    f"resource_guard_failed={resource_guard_failed} "
+    f"runtime_failed={runtime_failed} missing_status={missing_status}"
 )
 print(
     "[EXECUTION] "

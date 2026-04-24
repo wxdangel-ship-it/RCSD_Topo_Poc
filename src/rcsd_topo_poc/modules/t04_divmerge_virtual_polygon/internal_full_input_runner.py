@@ -11,6 +11,7 @@ from typing import Any
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import build_run_id, normalize_runtime_path, write_json
 
+from ._runtime_step4_geometry_core import REASON_RCS_OUTSIDE_DRIVEZONE, Stage4RunError
 from .final_publish import T04Step7CaseArtifact, write_step7_batch_outputs
 from .full_input_bootstrap import (
     build_preflight_doc,
@@ -39,6 +40,7 @@ from .full_input_shared_layers import (
 )
 from .full_input_streamed_results import (
     append_streamed_case_result,
+    guard_failed_terminal_case_record,
     materialize_final_visual_checks,
     materialize_streamed_case_visual_check,
     runtime_failed_terminal_case_record,
@@ -64,6 +66,14 @@ class T04InternalFullInputArtifacts:
     runtime_failed_count: int
     visual_check_dir: Path
     summary_path: Path
+    guard_failed_count: int = 0
+
+
+@dataclass(frozen=True)
+class _GuardFailure:
+    guard_type: str
+    reason: str
+    detail: str
 
 
 def _optional_path(value: str | Path | None) -> Path | None:
@@ -79,6 +89,9 @@ def _progress_snapshot(
     accepted_case_count: int,
     rejected_case_count: int,
     runtime_failed_case_count: int,
+    guard_failed_case_count: int,
+    input_guard_failed_case_count: int,
+    resource_guard_failed_case_count: int,
     missing_status_case_count: int,
     case_elapsed_total_seconds: float,
     last_completed_case_id: str | None,
@@ -97,6 +110,9 @@ def _progress_snapshot(
         "running_case_ids": sorted(running_case_ids),
         "accepted_case_count": accepted_case_count,
         "rejected_case_count": rejected_case_count,
+        "guard_failed_case_count": guard_failed_case_count,
+        "input_guard_failed_case_count": input_guard_failed_case_count,
+        "resource_guard_failed_case_count": resource_guard_failed_case_count,
         "runtime_failed_case_count": runtime_failed_case_count,
         "missing_status_case_count": missing_status_case_count,
         "performance": performance,
@@ -112,6 +128,7 @@ def _write_summary(
     discovered_case_ids: list[str],
     artifacts: list[T04Step7CaseArtifact],
     runtime_failed_case_ids: list[str],
+    guard_failure_records: list[dict[str, str]],
     candidate_artifacts: dict[str, str],
     bootstrap_artifacts: dict[str, str],
     step7_outputs: dict[str, Any],
@@ -122,9 +139,12 @@ def _write_summary(
     performance: dict[str, Any],
 ) -> Path:
     final_state_by_case = {artifact.case_id: artifact.final_state for artifact in artifacts}
+    guard_failed_case_ids = [record["case_id"] for record in guard_failure_records]
     missing_status_case_ids = [
         case_id for case_id in selected_case_ids
-        if case_id not in final_state_by_case and case_id not in set(runtime_failed_case_ids)
+        if case_id not in final_state_by_case
+        and case_id not in set(runtime_failed_case_ids)
+        and case_id not in set(guard_failed_case_ids)
     ]
     summary = {
         "updated_at": now_text(),
@@ -134,9 +154,22 @@ def _write_summary(
         "selected_case_ids": list(selected_case_ids),
         "raw_case_count": len(discovered_case_ids),
         "raw_case_ids": list(discovered_case_ids),
-        "completed_case_count": len(artifacts) + len(runtime_failed_case_ids),
+        "completed_case_count": len(artifacts) + len(runtime_failed_case_ids) + len(guard_failed_case_ids),
         "accepted_count": sum(1 for item in artifacts if item.final_state == "accepted"),
         "rejected_count": sum(1 for item in artifacts if item.final_state == "rejected"),
+        "guard_failed_count": len(guard_failed_case_ids),
+        "guard_failed_case_ids": guard_failed_case_ids,
+        "input_guard_failed_count": sum(1 for item in guard_failure_records if item["guard_type"] == "input_guard_failed"),
+        "input_guard_failed_case_ids": [
+            item["case_id"] for item in guard_failure_records if item["guard_type"] == "input_guard_failed"
+        ],
+        "resource_guard_failed_count": sum(
+            1 for item in guard_failure_records if item["guard_type"] == "resource_guard_failed"
+        ),
+        "resource_guard_failed_case_ids": [
+            item["case_id"] for item in guard_failure_records if item["guard_type"] == "resource_guard_failed"
+        ],
+        "guard_failure_records": list(guard_failure_records),
         "runtime_failed_count": len(runtime_failed_case_ids),
         "runtime_failed_case_ids": list(runtime_failed_case_ids),
         "missing_status_count": len(missing_status_case_ids),
@@ -160,6 +193,28 @@ def _write_summary(
     summary_path = run_root / "summary.json"
     write_json(summary_path, summary)
     return summary_path
+
+
+def _classify_guard_failure(exc: Exception) -> _GuardFailure | None:
+    detail = f"{type(exc).__name__}: {exc}"
+    if (
+        isinstance(exc, Stage4RunError)
+        and str(getattr(exc, "reason", "")) == REASON_RCS_OUTSIDE_DRIVEZONE
+    ) or (
+        "RCSDNode features are outside DriveZone" in detail
+    ):
+        return _GuardFailure(
+            guard_type="input_guard_failed",
+            reason="input_rcsdnode_outside_drivezone",
+            detail=detail,
+        )
+    if isinstance(exc, ValueError) and str(exc).startswith("step6_grid_too_large"):
+        return _GuardFailure(
+            guard_type="resource_guard_failed",
+            reason="step6_grid_too_large_resource_guard",
+            detail=detail,
+        )
+    return None
 
 
 def run_t04_internal_full_input(
@@ -237,6 +292,7 @@ def run_t04_internal_full_input(
             runtime_failed_count=int(summary_doc.get("runtime_failed_count", 0)),
             visual_check_dir=resolved_visual_check_dir,
             summary_path=run_root / "summary.json",
+            guard_failed_count=int(summary_doc.get("guard_failed_count", 0)),
         )
 
     started_perf = perf_counter()
@@ -244,6 +300,7 @@ def run_t04_internal_full_input(
     discovered_case_ids: list[str] = []
     artifacts: list[T04Step7CaseArtifact] = []
     runtime_failed_case_ids: list[str] = []
+    guard_failure_records: list[dict[str, str]] = []
     progress_lock = Lock()
     stream_lock = Lock()
     running_case_ids: set[str] = set()
@@ -251,6 +308,9 @@ def run_t04_internal_full_input(
     accepted_case_count = 0
     rejected_case_count = 0
     runtime_failed_case_count = 0
+    guard_failed_case_count = 0
+    input_guard_failed_case_count = 0
+    resource_guard_failed_case_count = 0
     missing_status_case_count = 0
     case_elapsed_total_seconds = 0.0
     last_completed_case_id: str | None = None
@@ -266,6 +326,9 @@ def run_t04_internal_full_input(
             accepted_case_count=accepted_case_count,
             rejected_case_count=rejected_case_count,
             runtime_failed_case_count=runtime_failed_case_count,
+            guard_failed_case_count=guard_failed_case_count,
+            input_guard_failed_case_count=input_guard_failed_case_count,
+            resource_guard_failed_case_count=resource_guard_failed_case_count,
             missing_status_case_count=missing_status_case_count,
             case_elapsed_total_seconds=case_elapsed_total_seconds,
             last_completed_case_id=last_completed_case_id,
@@ -364,6 +427,9 @@ def run_t04_internal_full_input(
             nonlocal accepted_case_count
             nonlocal rejected_case_count
             nonlocal runtime_failed_case_count
+            nonlocal guard_failed_case_count
+            nonlocal input_guard_failed_case_count
+            nonlocal resource_guard_failed_case_count
             nonlocal missing_status_case_count
             nonlocal case_elapsed_total_seconds
             nonlocal last_completed_case_id
@@ -439,6 +505,69 @@ def run_t04_internal_full_input(
             except Exception as exc:
                 elapsed = perf_counter() - case_started
                 detail = f"{type(exc).__name__}: {exc}"
+                guard_failure = _classify_guard_failure(exc)
+                if guard_failure is not None:
+                    record = guard_failed_terminal_case_record(
+                        run_root=run_root,
+                        case_id=case_id,
+                        guard_type=guard_failure.guard_type,
+                        reason=guard_failure.reason,
+                        detail=guard_failure.detail,
+                    )
+                    write_terminal_case_record(run_root=run_root, record=record)
+                    with stream_lock:
+                        append_streamed_case_result(stream_path, record)
+                    perf_recorder.record_case_result(
+                        case_id=case_id,
+                        elapsed_seconds=elapsed,
+                        final_state="guard_failed",
+                        reason=guard_failure.reason,
+                    )
+                    write_case_watch_status(
+                        run_root=run_root,
+                        case_id=case_id,
+                        state="guard_failed",
+                        current_stage="direct_case_execution",
+                        reason=guard_failure.reason,
+                        detail=guard_failure.detail,
+                        guard_type=guard_failure.guard_type,
+                    )
+                    if local_context_snapshot_mode in {"all", "failed_only"}:
+                        write_json(
+                            run_root / "cases" / str(case_id) / "local_context_snapshot.json",
+                            {
+                                "case_id": str(case_id),
+                                "snapshot_mode": local_context_snapshot_mode,
+                                "guard_type": guard_failure.guard_type,
+                                "failure": guard_failure.detail,
+                            },
+                        )
+                    with progress_lock:
+                        running_case_ids.discard(case_id)
+                        completed_case_count += 1
+                        guard_failed_case_count += 1
+                        if guard_failure.guard_type == "input_guard_failed":
+                            input_guard_failed_case_count += 1
+                        elif guard_failure.guard_type == "resource_guard_failed":
+                            resource_guard_failed_case_count += 1
+                        guard_failure_records.append(
+                            {
+                                "case_id": str(case_id),
+                                "guard_type": guard_failure.guard_type,
+                                "reason": guard_failure.reason,
+                                "detail": guard_failure.detail,
+                            }
+                        )
+                        case_elapsed_total_seconds += max(elapsed, 0.0)
+                        last_completed_case_id = case_id
+                        last_completed_at = now_text()
+                        _flush_progress(
+                            "direct_case_execution",
+                            "running",
+                            f"case {case_id} guard_failed with reason={guard_failure.reason}",
+                            force=True,
+                        )
+                    return
                 record = runtime_failed_terminal_case_record(
                     run_root=run_root,
                     case_id=case_id,
@@ -507,6 +636,9 @@ def run_t04_internal_full_input(
             accepted_case_count=accepted_case_count,
             rejected_case_count=rejected_case_count,
             runtime_failed_case_count=runtime_failed_case_count,
+            guard_failed_case_count=guard_failed_case_count,
+            input_guard_failed_case_count=input_guard_failed_case_count,
+            resource_guard_failed_case_count=resource_guard_failed_case_count,
             missing_status_case_count=missing_status_case_count,
             case_elapsed_total_seconds=case_elapsed_total_seconds,
             last_completed_case_id=last_completed_case_id,
@@ -518,6 +650,7 @@ def run_t04_internal_full_input(
             discovered_case_ids=discovered_case_ids,
             artifacts=ordered_artifacts,
             runtime_failed_case_ids=runtime_failed_case_ids,
+            guard_failure_records=guard_failure_records,
             candidate_artifacts=candidate_artifacts,
             bootstrap_artifacts=bootstrap_artifacts,
             step7_outputs=step7_outputs,
@@ -537,6 +670,7 @@ def run_t04_internal_full_input(
             runtime_failed_count=runtime_failed_case_count,
             visual_check_dir=resolved_visual_check_dir,
             summary_path=summary_path,
+            guard_failed_count=guard_failed_case_count,
         )
     except Exception as exc:
         write_root_failure(

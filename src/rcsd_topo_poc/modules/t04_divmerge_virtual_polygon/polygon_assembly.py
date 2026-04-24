@@ -308,6 +308,7 @@ def _hole_details(
     *,
     geometry: BaseGeometry | None,
     forbidden_geometry: BaseGeometry | None,
+    allowed_geometry: BaseGeometry | None,
 ) -> tuple[list[dict[str, Any]], BaseGeometry | None]:
     details: list[dict[str, Any]] = []
     hole_geometries: list[BaseGeometry] = []
@@ -318,12 +319,26 @@ def _hole_details(
             else float(hole.intersection(forbidden_geometry).area)
         )
         hole_area = float(hole.area)
-        business_hole = hole_area > 0.0 and forbidden_overlap / hole_area >= 0.5
+        allowed_overlap = (
+            hole_area
+            if allowed_geometry is None or allowed_geometry.is_empty
+            else float(hole.intersection(allowed_geometry).area)
+        )
+        constraint_hole = hole_area > 0.0 and allowed_overlap / hole_area <= 0.5
+        business_hole = bool(
+            hole_area > 0.0
+            and (
+                forbidden_overlap / hole_area >= 0.5
+                or constraint_hole
+            )
+        )
         details.append(
             {
                 "hole_id": f"hole_{index:02d}",
                 "area_m2": hole_area,
                 "forbidden_overlap_area_m2": forbidden_overlap,
+                "allowed_overlap_area_m2": allowed_overlap,
+                "constraint_hole": constraint_hole,
                 "business_hole": business_hole,
             }
         )
@@ -486,9 +501,20 @@ def build_step6_polygon_assembly(
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
+    target_b_seed_geometry = _target_b_seed_geometry(step5_result)
+    target_b_requested_mask = _rasterize_geometries(grid, [target_b_seed_geometry])
+    target_b_mask = target_b_requested_mask & assembly_canvas_mask
+    target_b_effective_geometry = _constrain_geometry_to_case_limits(
+        _mask_to_geometry(target_b_mask, grid),
+        drivezone_union=drivezone_union,
+        allowed_geometry=step5_result.case_allowed_growth_domain,
+        terminal_window_geometry=terminal_window_geometry,
+        forbidden_geometry=step5_result.case_forbidden_domain,
+        cut_barrier_geometry=cut_barrier_geometry,
+    )
     weak_seed_geometry = _union_geometry(
         [
-            _target_b_seed_geometry(step5_result),
+            target_b_seed_geometry,
             step5_result.case_bridge_zone_geometry,
         ]
     )
@@ -543,11 +569,22 @@ def build_step6_polygon_assembly(
             final_case_polygon,
             forbidden_geometry=step5_result.case_forbidden_domain,
         )
+    if final_case_polygon is not None and not final_case_polygon.is_empty:
+        final_case_polygon = _constrain_geometry_to_case_limits(
+            final_case_polygon,
+            drivezone_union=drivezone_union,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            terminal_window_geometry=terminal_window_geometry,
+            forbidden_geometry=step5_result.case_forbidden_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
+    cut_checked_polygon = final_case_polygon
 
     component_count = len(_polygon_components(final_case_polygon or GeometryCollection()))
     hole_details, final_case_holes = _hole_details(
         geometry=final_case_polygon,
         forbidden_geometry=step5_result.case_forbidden_domain,
+        allowed_geometry=step5_result.case_allowed_growth_domain,
     )
     business_hole_count = sum(1 for item in hole_details if bool(item["business_hole"]))
     unexpected_hole_count = sum(1 for item in hole_details if not bool(item["business_hole"]))
@@ -575,24 +612,12 @@ def build_step6_polygon_assembly(
     b_node_target_covered = True
     if final_case_polygon is None or final_case_polygon.is_empty:
         b_node_target_covered = False
-    else:
-        for unit in step5_result.unit_results:
-            target_geometry = unit.target_b_node_patch_geometry
-            if target_geometry is None or target_geometry.is_empty:
-                continue
-            effective_target_geometry = _constrain_geometry_to_case_limits(
-                target_geometry,
-                drivezone_union=drivezone_union,
-                allowed_geometry=step5_result.case_allowed_growth_domain,
-                terminal_window_geometry=terminal_window_geometry,
-                forbidden_geometry=step5_result.case_forbidden_domain,
-                cut_barrier_geometry=cut_barrier_geometry,
-            )
-            if effective_target_geometry is None or effective_target_geometry.is_empty:
-                continue
-            if not final_case_polygon.buffer(1e-6).covers(effective_target_geometry):
-                b_node_target_covered = False
-                break
+    elif (
+        target_b_effective_geometry is not None
+        and not target_b_effective_geometry.is_empty
+        and not final_case_polygon.buffer(1e-6).covers(target_b_effective_geometry)
+    ):
+        b_node_target_covered = False
 
     review_reasons: list[str] = []
     if final_case_polygon is None or final_case_polygon.is_empty:

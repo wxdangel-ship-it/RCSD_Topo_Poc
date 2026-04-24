@@ -39,6 +39,7 @@ class T04TerminalCaseRecord:
     step7_status_path: str
     audit_path: str
     source_image_path: str
+    guard_type: str = ""
 
 
 def streamed_case_results_path(run_root: Path) -> Path:
@@ -88,6 +89,28 @@ def runtime_failed_terminal_case_record(
         step7_status_path=str(case_dir / "step7_status.json"),
         audit_path=str(case_dir / "step7_audit.json"),
         source_image_path=str(case_dir / STEP7_CASE_FINAL_REVIEW_NAME),
+    )
+
+
+def guard_failed_terminal_case_record(
+    *,
+    run_root: Path,
+    case_id: str,
+    guard_type: str,
+    reason: str,
+    detail: str,
+) -> T04TerminalCaseRecord:
+    case_dir = run_root / "cases" / str(case_id)
+    return T04TerminalCaseRecord(
+        case_id=str(case_id),
+        terminal_state="guard_failed",
+        final_state="",
+        reject_reason=str(reason or guard_type or "guard_failed"),
+        reject_reason_detail=str(detail or reason or guard_type or "guard_failed"),
+        step7_status_path=str(case_dir / "step7_status.json"),
+        audit_path=str(case_dir / "step7_audit.json"),
+        source_image_path=str(case_dir / STEP7_CASE_FINAL_REVIEW_NAME),
+        guard_type=str(guard_type or "guard_failed"),
     )
 
 
@@ -235,6 +258,7 @@ def materialize_final_visual_checks(
 __all__ = [
     "T04TerminalCaseRecord",
     "append_streamed_case_result",
+    "guard_failed_terminal_case_record",
     "load_terminal_case_records",
     "materialize_final_visual_checks",
     "materialize_streamed_case_visual_check",

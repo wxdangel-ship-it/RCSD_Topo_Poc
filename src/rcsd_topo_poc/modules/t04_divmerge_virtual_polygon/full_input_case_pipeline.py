@@ -12,6 +12,7 @@ from .full_input_shared_layers import T04SharedFullInputLayers, collect_case_fea
 from .outputs import write_case_outputs
 from .step4_rcsd_anchored_reverse import apply_rcsd_anchored_reverse_lookup
 from .step4_final_conflict_resolver import resolve_step4_final_conflicts
+from .step4_road_surface_fork_binding import apply_road_surface_fork_binding
 
 
 def build_case_bundle_from_shared(
@@ -88,12 +89,14 @@ def run_single_case_direct(
 
     resolution_started = perf_counter()
     resolved_results, resolution_doc = resolve_step4_final_conflicts([case_result])
-    reverse_results, reverse_doc = apply_rcsd_anchored_reverse_lookup(resolved_results)
+    surface_results, surface_binding_doc = apply_road_surface_fork_binding(resolved_results)
+    reverse_results, reverse_doc = apply_rcsd_anchored_reverse_lookup(surface_results)
     resolved_case_result = reverse_results[0] if reverse_results else case_result
     stage_timers["same_case_resolution"] = round(perf_counter() - resolution_started, 6)
 
     output_started = perf_counter()
     case_dir = run_root / "cases" / str(case_id)
+    write_json(case_dir / "step4_road_surface_fork_binding.json", surface_binding_doc)
     write_json(case_dir / "step4_rcsd_anchored_reverse.json", reverse_doc)
     review_rows, step7_artifact = write_case_outputs(
         run_root=run_root,
@@ -107,6 +110,7 @@ def run_single_case_direct(
         "selected_counts": dict(selected["selected_counts"]),
         "selection_window_bounds": [round(float(value), 6) for value in selected["selection_window"].bounds],
         "resolution_doc": resolution_doc,
+        "road_surface_fork_binding_doc": surface_binding_doc,
         "rcsd_anchored_reverse_doc": reverse_doc,
         "review_rows": review_rows,
         "step7_artifact": step7_artifact,

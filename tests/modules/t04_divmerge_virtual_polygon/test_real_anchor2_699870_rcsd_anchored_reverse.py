@@ -41,6 +41,14 @@ def test_real_anchor2_699870_uses_rcsd_anchored_reverse_and_reaches_step7(tmp_pa
     assert unit_doc["position_source"] == "rcsd_anchored_axis_projection"
     assert unit_doc["required_rcsd_node"] == "5396472305684570"
     assert unit_doc["required_rcsd_node_source"] == "aggregated_structural_required"
+    assert "5396472305684684" in set(unit_doc["selected_rcsdroad_ids"])
+    assert "5396472305684546" in set(unit_doc["selected_rcsdnode_ids"])
+    continuation = unit_doc["positive_rcsd_audit"]["terminal_continuation_expansion"]
+    assert continuation["used"] is True
+    assert continuation["operation_type"] == "merge"
+    assert continuation["required_rcsd_node"] == "5396472305684570"
+    assert continuation["road_ids"] == ["5396472305684684"]
+    assert "5396472305684684" in set(unit_doc["positive_rcsd_audit"]["published_rcsdroad_ids"])
 
     step5_doc = json.loads((run_root / "cases" / "699870" / "step5_status.json").read_text(encoding="utf-8"))
     step5_unit = step5_doc["unit_results"][0]

@@ -448,8 +448,9 @@ def _build_terminal_support_corridor(
 
 
 def _uses_junction_full_road_fill(unit_result: T04EventUnitResult) -> bool:
+    source = str(unit_result.evidence_source or "")
     return bool(
-        unit_result.evidence_source == "rcsd_anchored_reverse"
+        source in {"rcsd_anchored_reverse", "road_surface_fork", "multibranch_event"}
         and str(unit_result.required_rcsd_node or "").strip()
         and _as_point(unit_result.fact_reference_point) is not None
         and _as_point(unit_result.required_rcsd_node_geometry) is not None
@@ -486,6 +487,64 @@ def _build_junction_full_road_fill_domain(
     if axis_band is None:
         return None
     return _clip_to_drivezone(axis_band, drivezone_union)
+
+
+def _seed_connected_fill_domain(
+    fill_domain: BaseGeometry | None,
+    seed_geometries: Iterable[BaseGeometry | None],
+) -> BaseGeometry | None:
+    normalized = _normalize_geometry(fill_domain)
+    if normalized is None:
+        return None
+    seed = _normalize_geometry(_union_geometry(seed_geometries))
+    if seed is None:
+        return normalized
+    parts = list(_iter_polygon_parts(normalized))
+    if not parts:
+        return normalized
+    connected = [
+        part
+        for part in parts
+        if part.buffer(1e-6).intersects(seed)
+    ]
+    if not connected:
+        connected = [min(parts, key=lambda part: float(part.distance(seed)))]
+    return _normalize_geometry(_union_geometry(connected))
+
+
+def _single_surface_component_domain(
+    geometry: BaseGeometry | None,
+    *,
+    seed_geometries: Iterable[BaseGeometry | None],
+    forbidden_geometry: BaseGeometry | None,
+    drivezone_union: BaseGeometry | None,
+) -> BaseGeometry | None:
+    normalized = _clip_to_drivezone(geometry, drivezone_union)
+    if normalized is None:
+        return None
+    if forbidden_geometry is not None and not forbidden_geometry.is_empty:
+        normalized = _clip_to_drivezone(
+            normalized.difference(forbidden_geometry),
+            drivezone_union,
+        )
+    if normalized is None:
+        return None
+    parts = list(_iter_polygon_parts(normalized))
+    if not parts:
+        return normalized
+    seed = _normalize_geometry(_union_geometry(seed_geometries))
+    if seed is None:
+        return _normalize_geometry(max(parts, key=lambda part: float(part.area)))
+    touching = [
+        part
+        for part in parts
+        if part.buffer(1e-6).intersects(seed)
+    ]
+    if touching:
+        return _normalize_geometry(max(touching, key=lambda part: float(part.area)))
+    return _normalize_geometry(
+        min(parts, key=lambda part: (float(part.distance(seed)), -float(part.area)))
+    )
 
 
 def _build_fallback_support_strip(
@@ -713,6 +772,32 @@ def _terminal_cut_group_key(unit_result: T04EventUnitResult) -> str:
     return f"event_unit:{unit_result.spec.event_unit_id}"
 
 
+def _filter_internal_case_cut_lines(
+    cut_lines: Sequence[BaseGeometry],
+    *,
+    unit_results: Sequence[T04Step5UnitResult],
+) -> tuple[BaseGeometry, ...]:
+    if len(cut_lines) <= 2 or len(unit_results) <= 1:
+        return tuple(cut_lines)
+    full_fill_geometry = _normalize_geometry(
+        _union_geometry(unit.junction_full_road_fill_domain for unit in unit_results)
+    )
+    if full_fill_geometry is None or full_fill_geometry.is_empty:
+        return tuple(cut_lines)
+    kept: list[BaseGeometry] = []
+    for cut_line in cut_lines:
+        cut_length = float(getattr(cut_line, "length", 0.0) or 0.0)
+        if cut_length <= 1e-6:
+            continue
+        inside_length = float(cut_line.intersection(full_fill_geometry).length)
+        if inside_length / cut_length >= 0.8:
+            continue
+        kept.append(cut_line)
+    if len(kept) < 2:
+        return tuple(cut_lines)
+    return tuple(kept)
+
+
 def _build_case_terminal_cut_constraints(
     case_result: T04CaseResult,
     *,
@@ -760,6 +845,12 @@ def _build_case_terminal_cut_constraints(
             seen_keys.add(key)
             selected_lines.append(clipped)
 
+    selected_lines = list(
+        _filter_internal_case_cut_lines(
+            selected_lines,
+            unit_results=unit_results,
+        )
+    )
     if selected_lines:
         return _normalize_geometry(_union_geometry(selected_lines))
     return _clip_to_drivezone(
@@ -829,6 +920,7 @@ class T04Step5UnitResult:
     junction_full_road_fill_domain: BaseGeometry | None = None
     surface_fill_mode: str = "standard"
     surface_fill_axis_half_width_m: float | None = None
+    single_component_surface_seed: bool = False
     support_road_ids: tuple[str, ...] = ()
     support_event_road_ids: tuple[str, ...] = ()
     positive_rcsd_road_ids: tuple[str, ...] = ()
@@ -849,6 +941,7 @@ class T04Step5UnitResult:
             },
             "surface_fill_mode": self.surface_fill_mode,
             "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
+            "single_component_surface_seed": self.single_component_surface_seed,
             "must_cover_components": dict(self.must_cover_components),
             "unit_must_cover_domain": _geometry_summary(self.unit_must_cover_domain),
             "unit_allowed_growth_domain": _geometry_summary(self.unit_allowed_growth_domain),
@@ -874,6 +967,7 @@ class T04Step5UnitResult:
             "positive_rcsd_node_ids": list(self.positive_rcsd_node_ids),
             "surface_fill_mode": self.surface_fill_mode,
             "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
+            "single_component_surface_seed": self.single_component_surface_seed,
             "must_cover_components": dict(self.must_cover_components),
             "unit_terminal_window_domain": _geometry_summary(self.unit_terminal_window_domain),
             "axis_lateral_band_geometry": _geometry_summary(self.axis_lateral_band_geometry),
@@ -1178,6 +1272,15 @@ def _build_step5_unit_result(
         unit_result,
         drivezone_union=drivezone_union,
     )
+    junction_full_road_fill_domain = _seed_connected_fill_domain(
+        junction_full_road_fill_domain,
+        [
+            localized_evidence_core_geometry,
+            fact_reference_patch_geometry,
+            required_rcsd_node_patch_geometry,
+            target_b_node_patch_geometry,
+        ],
+    )
     surface_fill_mode = (
         "junction_full_road_fill"
         if junction_full_road_fill_domain is not None
@@ -1188,6 +1291,39 @@ def _build_step5_unit_result(
         if junction_full_road_fill_domain is not None
         else None
     )
+    single_component_surface_seed = (
+        unit_result.evidence_source == "road_surface_fork"
+        and junction_full_road_fill_domain is None
+    )
+    surface_growth_geometries = [
+        unit_result.selected_candidate_region_geometry,
+        unit_result.selected_component_union_geometry,
+        unit_result.pair_local_structure_face_geometry,
+    ]
+    if single_component_surface_seed:
+        surface_component = _single_surface_component_domain(
+            _union_geometry(surface_growth_geometries),
+            seed_geometries=[
+                localized_evidence_core_geometry,
+                fact_reference_patch_geometry,
+            ],
+            forbidden_geometry=case_external_forbidden_geometry,
+            drivezone_union=drivezone_union,
+        )
+        if surface_component is not None:
+            surface_growth_geometries = [surface_component]
+            if localized_evidence_core_geometry is not None and not localized_evidence_core_geometry.is_empty:
+                clipped_core = _normalize_geometry(
+                    localized_evidence_core_geometry.intersection(surface_component)
+                )
+                if clipped_core is not None:
+                    localized_evidence_core_geometry = clipped_core
+            if fact_reference_patch_geometry is not None and not fact_reference_patch_geometry.is_empty:
+                clipped_reference_patch = _normalize_geometry(
+                    fact_reference_patch_geometry.intersection(surface_component)
+                )
+                if clipped_reference_patch is not None:
+                    fact_reference_patch_geometry = clipped_reference_patch
 
     unit_must_cover_domain = _clip_to_drivezone(
         _union_geometry(
@@ -1195,6 +1331,7 @@ def _build_step5_unit_result(
                 localized_evidence_core_geometry,
                 fact_reference_patch_geometry,
                 required_rcsd_node_patch_geometry,
+                junction_full_road_fill_domain,
                 fallback_support_strip_geometry,
             ]
         ),
@@ -1203,9 +1340,7 @@ def _build_step5_unit_result(
     unit_allowed_growth_domain = _clip_to_drivezone(
         _union_geometry(
             [
-                unit_result.selected_candidate_region_geometry,
-                unit_result.selected_component_union_geometry,
-                unit_result.pair_local_structure_face_geometry,
+                *surface_growth_geometries,
                 fallback_support_strip_geometry,
                 junction_full_road_fill_domain,
                 terminal_support_corridor_geometry,
@@ -1242,6 +1377,7 @@ def _build_step5_unit_result(
         "localized_evidence_core_geometry": localized_evidence_core_geometry is not None,
         "fact_reference_patch_geometry": fact_reference_patch_geometry is not None,
         "required_rcsd_node_patch_geometry": required_rcsd_node_patch_geometry is not None,
+        "junction_full_road_fill_domain": junction_full_road_fill_domain is not None,
         "fallback_support_strip_geometry": fallback_support_strip_geometry is not None,
         "target_b_node_patch_geometry": target_b_node_patch_geometry is not None,
     }
@@ -1269,6 +1405,7 @@ def _build_step5_unit_result(
         terminal_support_corridor_geometry=terminal_support_corridor_geometry,
         surface_fill_mode=surface_fill_mode,
         surface_fill_axis_half_width_m=surface_fill_axis_half_width_m,
+        single_component_surface_seed=single_component_surface_seed,
         support_road_ids=tuple(bridge.selected_road_ids),
         support_event_road_ids=tuple(bridge.selected_event_road_ids),
         positive_rcsd_road_ids=tuple(unit_result.selected_rcsdroad_ids),

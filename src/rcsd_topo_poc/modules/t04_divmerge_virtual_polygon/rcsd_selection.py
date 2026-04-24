@@ -43,6 +43,11 @@ def _published_rcsd_subset(
     selected_node_ids: set[str] = {str(node_id) for node_id in selected_aggregated.node_ids if str(node_id)}
     published_member_unit_ids: tuple[str, ...] = selected_aggregated.member_unit_ids
     publish_mode = "aggregated_full_component"
+    exact_required_node_anchor = bool(
+        selected_local_unit.unit_kind == "node_centric"
+        and selected_local_unit.consistency_level == "A"
+        and str(selected_aggregated.required_node_id or "") == str(selected_local_unit.node_id or "")
+    )
 
     if selected_aggregated.consistency_level == "A":
         member_units_by_id = {unit.unit_id: unit for unit in local_units}
@@ -51,40 +56,46 @@ def _published_rcsd_subset(
             for assignment in selected_local_unit.role_assignments
             if str(assignment.get("road_id") or "")
         }
-        aggregated_positive_branch_road_ids = {
-            str(road_id)
-            for member_unit_id in selected_aggregated.member_unit_ids
-            if (member_unit := member_units_by_id.get(member_unit_id)) is not None
-            and member_unit.unit_kind == "node_centric"
-            and member_unit.positive_rcsd_present
-            and member_unit.first_hit_cover_count > 0
-            for road_id in member_unit.event_side_road_ids
-            if str(road_id)
-        }
-        selected_road_ids.update(aggregated_positive_branch_road_ids)
+        aggregated_positive_branch_road_ids: set[str] = set()
+        if not exact_required_node_anchor:
+            aggregated_positive_branch_road_ids = {
+                str(road_id)
+                for member_unit_id in selected_aggregated.member_unit_ids
+                if (member_unit := member_units_by_id.get(member_unit_id)) is not None
+                and member_unit.unit_kind == "node_centric"
+                and member_unit.positive_rcsd_present
+                and member_unit.first_hit_cover_count > 0
+                for road_id in member_unit.event_side_road_ids
+                if str(road_id)
+            }
+            selected_road_ids.update(aggregated_positive_branch_road_ids)
         if not selected_road_ids:
             selected_road_ids = {
                 str(road_id)
                 for road_id in selected_local_unit.road_ids
                 if str(road_id)
             }
-        published_member_unit_ids = (
-            tuple(
-                unit_id
-                for unit_id in selected_aggregated.member_unit_ids
-                if (member_unit := member_units_by_id.get(unit_id)) is not None
-                and member_unit.unit_kind == "node_centric"
-                and member_unit.positive_rcsd_present
+        if exact_required_node_anchor and selected_local_unit.unit_id:
+            published_member_unit_ids = (selected_local_unit.unit_id,)
+            publish_mode = "aggregated_a_exact_required_node_unit"
+        else:
+            published_member_unit_ids = (
+                tuple(
+                    unit_id
+                    for unit_id in selected_aggregated.member_unit_ids
+                    if (member_unit := member_units_by_id.get(unit_id)) is not None
+                    and member_unit.unit_kind == "node_centric"
+                    and member_unit.positive_rcsd_present
+                )
+                or (
+                    (selected_local_unit.unit_id,)
+                    if selected_local_unit.unit_id
+                    else selected_aggregated.member_unit_ids
+                )
             )
-            or (
-                (selected_local_unit.unit_id,)
-                if selected_local_unit.unit_id
-                else selected_aggregated.member_unit_ids
-            )
-        )
-        publish_mode = "aggregated_a_primary_unit"
-        if aggregated_positive_branch_road_ids:
-            publish_mode = "aggregated_a_positive_node_units"
+            publish_mode = "aggregated_a_primary_unit"
+            if aggregated_positive_branch_road_ids:
+                publish_mode = "aggregated_a_positive_node_units"
         if selected_aggregated.required_node_id is not None and first_hit_road_ids:
             traced_to_required = False
             for road_id in first_hit_road_ids:

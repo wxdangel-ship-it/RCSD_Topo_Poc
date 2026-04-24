@@ -165,9 +165,22 @@ def test_anchor2_step7_freezes_857993_as_expected_rejected(tmp_path: Path) -> No
     assert "review" not in rejected_status["final_state"]
     assert (run_root / "cases" / "857993" / "reject_stub.geojson").is_file()
 
+    step5_760213 = json.loads(
+        (run_root / "cases" / "760213" / "step5_status.json").read_text(encoding="utf-8")
+    )
+    unit_760213 = step5_760213["unit_results"][0]
+    assert unit_760213["surface_fill_mode"] == "junction_full_road_fill"
+    assert unit_760213["surface_fill_axis_half_width_m"] == pytest.approx(20.0, abs=1e-6)
+    assert unit_760213["single_component_surface_seed"] is False
+    step6_760213 = json.loads(
+        (run_root / "cases" / "760213" / "step6_status.json").read_text(encoding="utf-8")
+    )
+    assert step6_760213["component_count"] == 1
+    assert step6_760213["review_reasons"] == []
+
 
 @pytest.mark.smoke
-def test_anchor2_added_cases_freeze_698380_698389_and_699870_acceptance(tmp_path: Path) -> None:
+def test_anchor2_added_cases_recover_698389_road_surface_without_wrong_rcsd(tmp_path: Path) -> None:
     anchor2_case_ids = [
         "698380",
         "698389",
@@ -200,7 +213,22 @@ def test_anchor2_added_cases_freeze_698380_698389_and_699870_acceptance(tmp_path
     assert rows_by_case["857993"]["final_state"] == "rejected"
     assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
 
+    surface_binding_payload = json.loads(
+        (run_root / "step4_road_surface_fork_binding.json").read_text(encoding="utf-8")
+    )
+    surface_binding_by_case = {record["case_id"]: record for record in surface_binding_payload["records"]}
+    assert surface_binding_by_case["698389"]["action"] == "recovered_road_surface_fork_with_relaxed_primary_rcsd"
+    assert surface_binding_by_case["698389"]["post_state"] == "found"
+    assert surface_binding_by_case["698389"]["required_rcsd_node"] == "5396318492905216"
+    assert surface_binding_by_case["698389"]["positive_rcsd_consistency_level"] == "B"
+    assert surface_binding_by_case["698389"]["detail"]["relaxed_rcsd_dropped"] is False
+    assert surface_binding_by_case["698389"]["detail"]["relaxed_primary_rcsd_promoted"] is True
+    assert surface_binding_by_case["698389"]["detail"]["representative_distance_m"] == pytest.approx(6.58, abs=1e-3)
+
     reverse_payload = json.loads((run_root / "step4_rcsd_anchored_reverse.json").read_text(encoding="utf-8"))
+    reverse_by_case = {record["case_id"]: record for record in reverse_payload["records"]}
+    assert reverse_by_case["698389"]["skip_reason"] == "skipped_selected_evidence_present"
+    assert reverse_by_case["698389"]["post_state"] == "found"
     reverse_699870 = [
         record for record in reverse_payload["records"] if record["case_id"] == "699870"
     ][0]
@@ -221,13 +249,90 @@ def test_anchor2_added_cases_freeze_698380_698389_and_699870_acceptance(tmp_path
         > unit_699870["terminal_support_corridor_geometry"]["area_m2"] * 2.0
     )
 
+    step4_698389 = json.loads(
+        (run_root / "cases" / "698389" / "step4_event_interpretation.json").read_text(encoding="utf-8")
+    )
+    unit_698389 = step4_698389["event_units"][0]
+    assert unit_698389["selected_evidence_state"] == "found"
+    assert unit_698389["evidence_source"] == "road_surface_fork"
+    assert unit_698389["position_source"] == "road_surface_fork"
+    assert unit_698389["selected_evidence"]["candidate_id"] == (
+        "event_unit_01:structure:road_surface_fork:recovered"
+    )
+    assert unit_698389["selected_evidence"]["candidate_scope"] == "road_surface_fork"
+    assert unit_698389["selected_evidence"]["node_fallback_only"] is False
+    assert unit_698389["positive_rcsd_present"] is True
+    assert unit_698389["positive_rcsd_consistency_level"] == "B"
+    assert unit_698389["required_rcsd_node"] == "5396318492905216"
+    assert unit_698389["required_rcsd_node_source"] == "road_surface_fork_relaxed_primary_rcsd"
+    assert unit_698389["rcsd_selection_mode"] == "road_surface_fork_relaxed_primary_rcsd_binding"
+    assert "road_surface_fork_binding_used" in set(unit_698389["review_reasons"])
+
+    fiona = pytest.importorskip("fiona")
+    from shapely.geometry import shape
+
+    with fiona.open(run_root / "cases" / "698389" / "step4_event_evidence.gpkg") as src:
+        evidence_features = list(src)
+    fact_reference = next(
+        shape(feature["geometry"])
+        for feature in evidence_features
+        if feature["properties"]["geometry_role"] == "fact_reference_point"
+    )
+    selected_surface = next(
+        shape(feature["geometry"])
+        for feature in evidence_features
+        if feature["properties"]["geometry_role"] == "selected_evidence_region_geometry"
+    )
+    assert fact_reference.x == pytest.approx(12724323.350, abs=1e-3)
+    assert fact_reference.y == pytest.approx(2605444.015, abs=1e-3)
+    assert selected_surface.area == pytest.approx(1781.058, abs=1e-3)
+
+    step5_698389 = json.loads(
+        (run_root / "cases" / "698389" / "step5_status.json").read_text(encoding="utf-8")
+    )
+    unit_698389_step5 = step5_698389["unit_results"][0]
+    assert unit_698389_step5["surface_fill_mode"] == "junction_full_road_fill"
+    assert unit_698389_step5["surface_fill_axis_half_width_m"] == pytest.approx(20.0, abs=1e-6)
+    assert unit_698389_step5["single_component_surface_seed"] is False
+    assert unit_698389_step5["must_cover_components"]["required_rcsd_node_patch_geometry"] is True
+    assert unit_698389_step5["must_cover_components"]["junction_full_road_fill_domain"] is True
+    step6_698389 = json.loads(
+        (run_root / "cases" / "698389" / "step6_status.json").read_text(encoding="utf-8")
+    )
+    assert step6_698389["component_count"] == 1
+    assert step6_698389["review_reasons"] == []
+
+    candidates_698389 = json.loads(
+        (
+            run_root
+            / "cases"
+            / "698389"
+            / "event_units"
+            / "event_unit_01"
+            / "step4_candidates.json"
+        ).read_text(encoding="utf-8")
+    )
+    wrong_divstrip = next(
+        entry
+        for entry in candidates_698389["candidate_audit_entries"]
+        if entry["candidate_id"] == "event_unit_01:divstrip:0:01"
+    )
+    wrong_summary = wrong_divstrip["candidate_summary"]
+    assert wrong_summary["primary_eligible"] is False
+    assert wrong_summary["degraded_reverse_divstrip_far_from_throat"] is True
+    assert wrong_summary["positive_rcsd_consistency_level"] == "B"
+    assert wrong_summary["rcsd_decision_reason"] == "role_mapping_partial_relaxed_aggregated"
+
 
 @pytest.mark.smoke
 def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(tmp_path: Path) -> None:
     anchor2_case_ids = [
         "699870",
         "724067",
+        "760598",
         "760936",
+        "760984",
+        "788824",
         "857993",
     ]
     missing_cases = [
@@ -247,11 +352,14 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
         (run_root / "divmerge_virtual_anchor_surface_summary.json").read_text(encoding="utf-8")
     )
     rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
-    assert summary_payload["accepted_count"] == 2
-    assert summary_payload["rejected_count"] == 2
+    assert summary_payload["accepted_count"] == 4
+    assert summary_payload["rejected_count"] == 3
     assert rows_by_case["699870"]["final_state"] == "accepted"
     assert rows_by_case["724067"]["final_state"] == "accepted"
+    assert rows_by_case["760598"]["final_state"] == "rejected"
     assert rows_by_case["760936"]["final_state"] == "rejected"
+    assert rows_by_case["760984"]["final_state"] == "accepted"
+    assert rows_by_case["788824"]["final_state"] == "accepted"
     assert rows_by_case["857993"]["final_state"] == "rejected"
     assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
 
@@ -267,6 +375,17 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
     unit_699870 = step5_699870["unit_results"][0]
     assert unit_699870["surface_fill_mode"] == "junction_full_road_fill"
     assert unit_699870["surface_fill_axis_half_width_m"] == pytest.approx(20.0, abs=1e-6)
+    surface_binding_payload = json.loads(
+        (run_root / "step4_road_surface_fork_binding.json").read_text(encoding="utf-8")
+    )
+    surface_binding_by_case = {record["case_id"]: record for record in surface_binding_payload["records"]}
+    assert surface_binding_by_case["724067"]["action"] == "bound_forward_rcsd_to_road_surface_fork"
+    assert surface_binding_by_case["724067"]["required_rcsd_node"] == "5395137610783733"
+    assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
+    assert surface_binding_by_case["760598"]["post_state"] == "none"
+    assert surface_binding_by_case["760598"]["required_rcsd_node"] is None
+    assert surface_binding_by_case["760984"]["skip_reason"] == "skipped_no_surface_binding_candidate"
+    assert surface_binding_by_case["788824"]["skip_reason"] == "skipped_no_surface_binding_candidate"
     assert reverse_by_case["724067"]["skip_reason"] == "skipped_selected_evidence_present"
     assert reverse_by_case["724067"]["post_state"] == "found"
     assert reverse_by_case["724067"]["mother_candidate_id"] is None
@@ -278,9 +397,10 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
     assert step4_unit["evidence_source"] == "road_surface_fork"
     assert step4_unit["position_source"] == "road_surface_fork"
     assert step4_unit["event_chosen_s_m"] == 0.0
-    assert step4_unit["required_rcsd_node"] is None
-    assert step4_unit["positive_rcsd_present"] is False
-    assert step4_unit["rcsd_selection_mode"] == "road_surface_fork_without_bound_target_rcsd"
+    assert step4_unit["required_rcsd_node"] == "5395137610783733"
+    assert step4_unit["positive_rcsd_present"] is True
+    assert step4_unit["positive_rcsd_consistency_level"] == "A"
+    assert step4_unit["rcsd_selection_mode"] == "road_surface_fork_forward_rcsd_binding"
     assert selected_evidence["candidate_id"] == "event_unit_01:structure:road_surface_fork:01"
     assert selected_evidence["candidate_scope"] == "road_surface_fork"
     assert selected_evidence["primary_eligible"] is True
@@ -288,9 +408,13 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
 
     step5_status = json.loads((case_dir / "step5_status.json").read_text(encoding="utf-8"))
     unit_status = step5_status["unit_results"][0]
+    assert unit_status["surface_fill_mode"] == "junction_full_road_fill"
+    assert unit_status["surface_fill_axis_half_width_m"] == pytest.approx(20.0, abs=1e-6)
+    assert unit_status["single_component_surface_seed"] is False
     assert step5_status["case_must_cover_domain"]["present"] is True
     assert unit_status["must_cover_components"]["localized_evidence_core_geometry"] is True
-    assert unit_status["must_cover_components"]["required_rcsd_node_patch_geometry"] is False
+    assert unit_status["must_cover_components"]["required_rcsd_node_patch_geometry"] is True
+    assert unit_status["must_cover_components"]["junction_full_road_fill_domain"] is True
     assert unit_status["must_cover_components"]["fallback_support_strip_geometry"] is False
 
     step6_status = json.loads((case_dir / "step6_status.json").read_text(encoding="utf-8"))
@@ -298,12 +422,29 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
     assert step6_status["component_count"] == 1
     assert step6_status["hard_must_cover_ok"] is True
 
+    for accepted_surface_case in ("760984", "788824"):
+        step4_surface = json.loads(
+            (run_root / "cases" / accepted_surface_case / "step4_event_interpretation.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        unit_surface = step4_surface["event_units"][0]
+        assert unit_surface["selected_evidence_state"] == "found"
+        assert unit_surface["evidence_source"] == "road_surface_fork"
+        assert unit_surface["positive_rcsd_consistency_level"] == "C"
+        assert "positive_rcsd_partial_consistent" in "|".join(unit_surface["review_reasons"])
+
     status_760936 = json.loads(
         (run_root / "cases" / "760936" / "step7_status.json").read_text(encoding="utf-8")
+    )
+    status_760598 = json.loads(
+        (run_root / "cases" / "760598" / "step7_status.json").read_text(encoding="utf-8")
     )
     status_857993 = json.loads(
         (run_root / "cases" / "857993" / "step7_status.json").read_text(encoding="utf-8")
     )
+    assert status_760598["final_state"] == "rejected"
+    assert "assembly_failed" in set(status_760598["reject_reasons"])
     assert status_760936["final_state"] == "rejected"
     assert "multi_component_result" in set(status_760936["reject_reasons"])
     assert status_857993["final_state"] == "rejected"

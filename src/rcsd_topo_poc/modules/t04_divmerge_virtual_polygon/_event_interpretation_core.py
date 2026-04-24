@@ -1422,6 +1422,7 @@ def _prepare_unit_inputs(
         executable_branch_variants = _build_complex_executable_branch_variants(
             unit_context=unit_context,
             filtered_roads=list(filtered_roads),
+            selected_event_branch_ids=tuple(event_unit_spec.selected_side_branch_ids),
         )
         best_prepared: _PreparedUnitInputs | None = None
         best_rank: tuple[int, ...] | None = None
@@ -1573,7 +1574,16 @@ def _build_candidate_pool(prepared: _PreparedUnitInputs) -> list[dict[str, Any]]
                 reference_strategy="representative",
             )
 
-    if not candidates and throat_core is not None and not throat_core.is_empty:
+    has_primary_candidate = any(bool(item["summary"].get("primary_eligible")) for item in candidates)
+    allow_additional_surface_fork = (
+        prepared.event_unit_spec.split_mode == "complex_one_node_one_unit"
+        and len(prepared.explicit_event_branch_ids) >= 2
+    )
+    if (
+        throat_core is not None
+        and not throat_core.is_empty
+        and (not candidates or (allow_additional_surface_fork and not has_primary_candidate))
+    ):
         for index, component in enumerate(_explode_polygon_geometries(throat_core), start=1):
             _append_candidate(
                 candidate_id=f"{prepared.event_unit_spec.event_unit_id}:structure:road_surface_fork:{index:02d}",
@@ -1738,6 +1748,12 @@ def _build_result_from_interpretation(
         interpretation=interpretation,
         selected_divstrip_geometry=localized_evidence_core_geometry,
     )
+    rcsd_axis_vector = prepared.pair_local_axis_unit_vector
+    if (
+        rcsd_axis_vector is not None
+        and str(prepared.pair_local_summary.get("pair_local_direction") or "") == "reverse_fallback"
+    ):
+        rcsd_axis_vector = (-float(rcsd_axis_vector[0]), -float(rcsd_axis_vector[1]))
     positive_rcsd_decision = resolve_positive_rcsd_selection(
         event_unit_id=prepared.event_unit_spec.event_unit_id,
         operational_kind_hint=prepared.operational_kind_hint,
@@ -1756,7 +1772,7 @@ def _build_result_from_interpretation(
         scoped_input_branch_ids=prepared.scoped_input_branch_ids,
         scoped_output_branch_ids=prepared.scoped_output_branch_ids,
         branch_road_memberships=prepared.branch_road_memberships,
-        axis_vector=prepared.pair_local_axis_unit_vector,
+        axis_vector=rcsd_axis_vector,
     )
     positive_rcsd_support_level = positive_rcsd_decision.positive_rcsd_support_level
     positive_rcsd_consistency_level = positive_rcsd_decision.positive_rcsd_consistency_level
@@ -1888,6 +1904,18 @@ def _build_result_from_interpretation(
         and prepared.unit_context.local_context.primary_main_rc_node is None
     )
     if no_bound_target_rcsd:
+        filtered_partial_rcsd = bool(
+            positive_rcsd_decision.pair_local_rcsd_node_ids
+            and "pair_local_scope_rcsdnode_outside_drivezone_filtered"
+            in {
+                str(reason or "").strip()
+                for reason in prepared.pair_local_summary.get("degraded_reasons") or ()
+                if str(reason or "").strip()
+            }
+        )
+        review_reasons = list(result.all_review_reasons())
+        if filtered_partial_rcsd and "positive_rcsd_partial_consistent" not in review_reasons:
+            review_reasons.append("positive_rcsd_partial_consistent")
         summary = dict(result.selected_candidate_summary)
         summary.update(
             {
@@ -1899,6 +1927,7 @@ def _build_result_from_interpretation(
                 "required_rcsd_node_source": None,
                 "rcsd_selection_mode": "road_surface_fork_without_bound_target_rcsd",
                 "rcsd_decision_reason": "road_surface_fork_without_bound_target_rcsd",
+                "review_reasons": review_reasons,
             }
         )
         rcsd_audit = dict(result.positive_rcsd_audit)
@@ -1906,6 +1935,7 @@ def _build_result_from_interpretation(
         rcsd_audit["rcsd_decision_reason"] = "road_surface_fork_without_bound_target_rcsd"
         result = replace(
             result,
+            review_reasons=tuple(review_reasons),
             rcsd_consistency_result="road_surface_fork_without_bound_target_rcsd",
             pair_local_rcsd_scope_geometry=positive_rcsd_decision.pair_local_rcsd_scope_geometry,
             first_hit_rcsd_road_geometry=positive_rcsd_decision.first_hit_rcsd_road_geometry,

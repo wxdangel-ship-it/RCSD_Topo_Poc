@@ -947,6 +947,11 @@ def _build_aggregated_rcsd_units(
             unit.unit_kind == "node_centric" and unit.consistency_level == "A"
             for unit in component_units_sorted
         )
+        has_relaxed_node_centric_unit = any(
+            unit.unit_kind == "node_centric"
+            and unit.role_match_result == "label_mismatch_relaxed"
+            for unit in component_units_sorted
+        )
         trunk_present = bool(axis_side_road_ids)
         primary_node_id = _select_primary_node_id(
             node_ids=node_ids,
@@ -1024,7 +1029,13 @@ def _build_aggregated_rcsd_units(
             )
             exact_match = (
                 has_node_centric
-                and (has_exact_local_node_unit or structural_support_complete)
+                and (
+                    has_exact_local_node_unit
+                    or (
+                        structural_support_complete
+                        and not has_relaxed_node_centric_unit
+                    )
+                )
             )
             if exact_match:
                 consistency_level = "A"
@@ -1039,6 +1050,8 @@ def _build_aggregated_rcsd_units(
                 support_level = "secondary_support"
                 if axis_polarity_inverted:
                     decision_reason = "role_mapping_partial_axis_polarity_inverted"
+                elif has_relaxed_node_centric_unit:
+                    decision_reason = "role_mapping_partial_relaxed_aggregated"
                 elif observed_event_arm_count < expected_event_arm_count:
                     decision_reason = "role_mapping_partial_missing_arms"
                 else:

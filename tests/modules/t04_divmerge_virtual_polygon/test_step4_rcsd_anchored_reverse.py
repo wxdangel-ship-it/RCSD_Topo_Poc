@@ -146,8 +146,13 @@ def test_rcsd_anchored_reverse_triggers_successfully() -> None:
     assert unit.event_chosen_s_m is not None
     assert record["reference_point_mode"] == "selected_divstrip_branch_tip"
     assert record["reference_point_axis_s"] == pytest.approx(33.72, abs=1e-3)
+    assert record["terminal_continuation_expansion"]["used"] is True
+    assert record["terminal_continuation_expansion"]["operation_type"] == "merge"
+    assert record["terminal_continuation_expansion"]["road_ids"] == ["5396472305684684"]
     assert unit.fact_reference_point is not None
     assert unit.required_rcsd_node_geometry is not None
+    assert "5396472305684684" in set(unit.selected_rcsdroad_ids)
+    assert "5396472305684546" in set(unit.selected_rcsdnode_ids)
     assert unit.fact_reference_point.distance(unit.required_rcsd_node_geometry) == pytest.approx(24.026, abs=1e-3)
 
 

@@ -62,6 +62,70 @@ def _clip_to_drivezone(geometry: BaseGeometry | None, drivezone_union: BaseGeome
     return _normalize_geometry(normalized.intersection(drivezone_union))
 
 
+def _core_must_cover_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry | None:
+    return _normalize_geometry(
+        _union_geometry(
+            component
+            for unit in step5_result.unit_results
+            for component in (
+                unit.localized_evidence_core_geometry,
+                unit.fact_reference_patch_geometry,
+                unit.required_rcsd_node_patch_geometry,
+                unit.fallback_support_strip_geometry,
+            )
+        )
+    )
+
+
+def _full_fill_target_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry | None:
+    return _normalize_geometry(
+        _union_geometry(unit.junction_full_road_fill_domain for unit in step5_result.unit_results)
+    )
+
+
+def _uses_single_component_surface_seed(step5_result: T04Step5CaseResult) -> bool:
+    return bool(
+        len(step5_result.unit_results) == 1
+        and step5_result.unit_results[0].single_component_surface_seed
+    )
+
+
+def _seed_dominant_polygon_component(
+    geometry: BaseGeometry | None,
+    seed_geometry: BaseGeometry | None,
+) -> BaseGeometry | None:
+    normalized = _normalize_geometry(geometry)
+    if normalized is None:
+        return None
+    parts = _polygon_components(normalized)
+    if len(parts) <= 1:
+        return normalized
+    seed = _normalize_geometry(seed_geometry)
+    if seed is None:
+        return _normalize_geometry(max(parts, key=lambda part: float(part.area)))
+    overlaps = [
+        (
+            float(part.intersection(seed).area),
+            float(part.area),
+            part,
+        )
+        for part in parts
+    ]
+    positive_overlaps = [item for item in overlaps if item[0] > 1e-6]
+    if positive_overlaps:
+        return _normalize_geometry(max(positive_overlaps, key=lambda item: (item[0], item[1]))[2])
+    touching = [
+        part
+        for part in parts
+        if part.buffer(1e-6).intersects(seed)
+    ]
+    if touching:
+        return _normalize_geometry(max(touching, key=lambda part: float(part.area)))
+    return _normalize_geometry(
+        min(parts, key=lambda part: (float(part.distance(seed)), -float(part.area)))
+    )
+
+
 def _constrain_geometry_to_case_limits(
     geometry: BaseGeometry | None,
     *,
@@ -491,7 +555,17 @@ def build_step6_polygon_assembly(
         cut_barrier_geometry=cut_barrier_geometry,
     )
 
+    core_hard_seed_geometry = _core_must_cover_geometry(step5_result)
     hard_seed_requested_mask = _rasterize_geometries(grid, [step5_result.case_must_cover_domain])
+    full_fill_target_geometry = _full_fill_target_geometry(step5_result)
+    if full_fill_target_geometry is not None and not full_fill_target_geometry.is_empty:
+        core_seed_requested_mask = _rasterize_geometries(grid, [core_hard_seed_geometry])
+        full_fill_requested_mask = _rasterize_geometries(grid, [full_fill_target_geometry])
+        effective_full_fill_mask = _extract_seed_component(
+            full_fill_requested_mask & assembly_canvas_mask,
+            core_seed_requested_mask & assembly_canvas_mask,
+        )
+        hard_seed_requested_mask = core_seed_requested_mask | effective_full_fill_mask
     hard_seed_mask = hard_seed_requested_mask & assembly_canvas_mask
     hard_seed_geometry = _constrain_geometry_to_case_limits(
         _mask_to_geometry(hard_seed_mask, grid),
@@ -501,6 +575,13 @@ def build_step6_polygon_assembly(
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
+    single_component_surface_seed = _uses_single_component_surface_seed(step5_result)
+    if single_component_surface_seed:
+        hard_seed_geometry = _seed_dominant_polygon_component(
+            hard_seed_geometry,
+            core_hard_seed_geometry,
+        )
+        hard_seed_mask = _rasterize_geometries(grid, [hard_seed_geometry]) & assembly_canvas_mask
     target_b_seed_geometry = _target_b_seed_geometry(step5_result)
     target_b_requested_mask = _rasterize_geometries(grid, [target_b_seed_geometry])
     target_b_mask = target_b_requested_mask & assembly_canvas_mask
@@ -577,6 +658,11 @@ def build_step6_polygon_assembly(
             terminal_window_geometry=terminal_window_geometry,
             forbidden_geometry=step5_result.case_forbidden_domain,
             cut_barrier_geometry=cut_barrier_geometry,
+        )
+    if single_component_surface_seed:
+        final_case_polygon = _seed_dominant_polygon_component(
+            final_case_polygon,
+            hard_seed_geometry,
         )
     cut_checked_polygon = final_case_polygon
 

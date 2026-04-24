@@ -18,6 +18,9 @@ SHARED_EVIDENCE_OVERLAP_RATIO = 0.2
 EVENT_REFERENCE_CONFLICT_TOL_M = 5.0
 NODE_FALLBACK_AXIS_POSITION_MAX_M = 1.0
 NODE_FALLBACK_DISTANCE_MAX_M = 3.0
+DEGRADED_REVERSE_DIVSTRIP_MAX_REFERENCE_DISTANCE_M = 60.0
+DEGRADED_REVERSE_DIVSTRIP_MAX_MIDDLE_RATIO = 0.10
+DEGRADED_REVERSE_DIVSTRIP_MIN_THROAT_RATIO = 0.05
 ROAD_SURFACE_FORK_SCOPE = "road_surface_fork"
 INVALID_PRIMARY_REASONS = {
     "event_reference_outside_branch_middle",
@@ -25,6 +28,36 @@ INVALID_PRIMARY_REASONS = {
     "missing_event_reference_point",
     "selected_branch_ids_empty",
 }
+
+
+def _has_degraded_pair_local_scope(result: T04EventUnitResult) -> bool:
+    return any(
+        str(reason).strip() == "degraded_scope:pair_local_scope_roads_empty"
+        for reason in result.all_review_reasons()
+    )
+
+
+def _degraded_reverse_divstrip_far_from_throat(
+    candidate_summary: dict,
+    result: T04EventUnitResult,
+) -> bool:
+    if str(candidate_summary.get("candidate_scope") or "") != "divstrip_component":
+        return False
+    if str(result.evidence_source or "") != "reverse_tip_retry":
+        return False
+    if not _has_degraded_pair_local_scope(result):
+        return False
+    try:
+        reference_distance = float(candidate_summary.get("reference_distance_to_origin_m") or 0.0)
+        middle_ratio = float(candidate_summary.get("pair_middle_overlap_ratio") or 0.0)
+        throat_ratio = float(candidate_summary.get("throat_overlap_ratio") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        reference_distance > DEGRADED_REVERSE_DIVSTRIP_MAX_REFERENCE_DISTANCE_M
+        and middle_ratio < DEGRADED_REVERSE_DIVSTRIP_MAX_MIDDLE_RATIO
+        and throat_ratio < DEGRADED_REVERSE_DIVSTRIP_MIN_THROAT_RATIO
+    )
 
 
 def _event_axis_signature(event_unit: T04EventUnitResult) -> str | None:
@@ -46,6 +79,20 @@ def _candidate_axis_position(event_unit: T04EventUnitResult) -> tuple[str | None
     except (TypeError, ValueError):
         numeric_position = None
     return basis, numeric_position
+
+
+def _allows_shared_axis_reference(lhs: T04EventUnitResult, rhs: T04EventUnitResult) -> bool:
+    if str(lhs.spec.representative_node_id or "") != str(rhs.spec.representative_node_id or ""):
+        return False
+    lhs_axis = str(lhs.event_axis_branch_id or "").strip()
+    rhs_axis = str(rhs.event_axis_branch_id or "").strip()
+    if not lhs_axis or not rhs_axis or lhs_axis != rhs_axis:
+        return False
+    lhs_event_branches = {str(branch_id) for branch_id in lhs.selected_event_branch_ids if str(branch_id)}
+    rhs_event_branches = {str(branch_id) for branch_id in rhs.selected_event_branch_ids if str(branch_id)}
+    if not lhs_event_branches or not rhs_event_branches:
+        return False
+    return lhs_event_branches != rhs_event_branches
 
 
 def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitResult) -> dict:
@@ -98,10 +145,27 @@ def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitRes
         invalid_primary_reasons.discard("event_reference_outside_branch_middle")
     if any(str(reason) in invalid_primary_reasons for reason in result.all_review_reasons()):
         merged["primary_eligible"] = False
+    if _degraded_reverse_divstrip_far_from_throat(merged, result):
+        merged["primary_eligible"] = False
+        merged["degraded_reverse_divstrip_far_from_throat"] = True
+        review_reasons = list(merged.get("review_reasons") or result.all_review_reasons())
+        review_reasons.append("degraded_reverse_divstrip_far_from_throat")
+        merged["review_reasons"] = list(dict.fromkeys(str(reason) for reason in review_reasons))
+    support_level = result.positive_rcsd_support_level
+    consistency_level = result.positive_rcsd_consistency_level
+    decision_reason = str(result.positive_rcsd_audit.get("rcsd_decision_reason") or "")
+    if (
+        merged.get("degraded_reverse_divstrip_far_from_throat") is True
+        and bool(result.positive_rcsd_present)
+        and str(consistency_level or "C") == "A"
+    ):
+        support_level = "secondary_support"
+        consistency_level = "B"
+        decision_reason = "role_mapping_partial_relaxed_aggregated"
     merged.update(
         {
             "review_state": result.review_state,
-            "review_reasons": list(result.all_review_reasons()),
+            "review_reasons": list(merged.get("review_reasons") or result.all_review_reasons()),
             "evidence_source": result.evidence_source,
             "position_source": result.position_source,
             "reverse_tip_used": bool(result.reverse_tip_used),
@@ -117,12 +181,12 @@ def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitRes
             "rcsd_selection_mode": result.rcsd_selection_mode,
             "positive_rcsd_present": bool(result.positive_rcsd_present),
             "positive_rcsd_present_reason": result.positive_rcsd_present_reason,
-            "positive_rcsd_support_level": result.positive_rcsd_support_level,
-            "positive_rcsd_consistency_level": result.positive_rcsd_consistency_level,
+            "positive_rcsd_support_level": support_level,
+            "positive_rcsd_consistency_level": consistency_level,
             "required_rcsd_node": result.required_rcsd_node,
             "required_rcsd_node_source": result.required_rcsd_node_source,
             "axis_polarity_inverted": bool(result.axis_polarity_inverted),
-            "rcsd_decision_reason": str(result.positive_rcsd_audit.get("rcsd_decision_reason") or ""),
+            "rcsd_decision_reason": decision_reason,
         }
     )
     return merged
@@ -189,6 +253,7 @@ def _candidate_priority_score(candidate_summary: dict, result: T04EventUnitResul
 
 
 def _result_conflicts(lhs: T04EventUnitResult, rhs: T04EventUnitResult) -> bool:
+    shared_axis_reference_allowed = _allows_shared_axis_reference(lhs, rhs)
     lhs_axis = _event_axis_signature(lhs)
     rhs_axis = _event_axis_signature(rhs)
     lhs_basis, lhs_position = _candidate_axis_position(lhs)
@@ -206,9 +271,16 @@ def _result_conflicts(lhs: T04EventUnitResult, rhs: T04EventUnitResult) -> bool:
     )
     lhs_point_signature = str(lhs.selected_candidate_summary.get("point_signature") or "")
     rhs_point_signature = str(rhs.selected_candidate_summary.get("point_signature") or "")
-    if lhs_point_signature and rhs_point_signature and lhs_point_signature == rhs_point_signature:
+    if (
+        not shared_axis_reference_allowed
+        and lhs_point_signature
+        and rhs_point_signature
+        and lhs_point_signature == rhs_point_signature
+    ):
         return True
     if (
+        not shared_axis_reference_allowed
+        and
         lhs_axis is not None
         and rhs_axis is not None
         and lhs_axis == rhs_axis
@@ -219,6 +291,8 @@ def _result_conflicts(lhs: T04EventUnitResult, rhs: T04EventUnitResult) -> bool:
         if abs(lhs_s - rhs_s) <= EVENT_REFERENCE_CONFLICT_TOL_M + 1e-9:
             return True
     if same_axis_separated:
+        return False
+    if shared_axis_reference_allowed:
         return False
     for lhs_geometry, rhs_geometry in (
         (lhs.selected_component_union_geometry, rhs.selected_component_union_geometry),
@@ -293,6 +367,7 @@ def _select_case_assignment(
 def _apply_evidence_ownership_guards(
     event_units: list[T04EventUnitResult],
 ) -> list[T04EventUnitResult]:
+    seen_units: dict[str, T04EventUnitResult] = {}
     seen_records: list[
         tuple[str, BaseGeometry | None, BaseGeometry | None, str | None, float | None]
     ] = []
@@ -311,6 +386,9 @@ def _apply_evidence_ownership_guards(
         position_key = None if axis_branch_id is None else f"{axis_branch_id}|{axis_position_basis or '*'}"
         if position_key is not None and chosen_s is not None:
             for prior_unit_id, prior_s in seen_positions.get(position_key, []):
+                prior_unit = seen_units.get(prior_unit_id)
+                if prior_unit is not None and _allows_shared_axis_reference(event_unit, prior_unit):
+                    continue
                 if abs(float(prior_s) - chosen_s) <= EVENT_REFERENCE_CONFLICT_TOL_M + 1e-9:
                     hard_fail = True
                     conflict_unit_ids.add(prior_unit_id)
@@ -329,6 +407,9 @@ def _apply_evidence_ownership_guards(
                 prior_axis_branch_id,
                 prior_chosen_s,
             ) in seen_records:
+                prior_unit = seen_units.get(prior_unit_id)
+                if prior_unit is not None and _allows_shared_axis_reference(event_unit, prior_unit):
+                    continue
                 same_axis_separated = bool(
                     position_key is not None
                     and chosen_s is not None
@@ -394,6 +475,7 @@ def _apply_evidence_ownership_guards(
 
         if position_key is not None and chosen_s is not None:
             seen_positions.setdefault(position_key, []).append((event_unit.spec.event_unit_id, chosen_s))
+        seen_units[event_unit.spec.event_unit_id] = event_unit
 
         if extra_review_notes:
             guarded.append(

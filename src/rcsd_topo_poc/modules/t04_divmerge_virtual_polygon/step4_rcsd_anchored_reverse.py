@@ -21,8 +21,12 @@ RCSD_ANCHORED_EVIDENCE_RECOVERY_WINDOW_M = 20.0
 RCSD_ANCHORED_FALLBACK_PATCH_RADIUS_M = 4.0
 RCSD_CLAIM_ROAD_OVERLAP_RATIO = 0.5
 RCSD_REFERENCE_SAMPLE_ENDPOINT_TOL_M = 1.0
+RCSD_TERMINAL_CONTINUATION_AXIS_TOL_M = 0.75
 RCSD_ANCHORED_REVIEW_REASON = "rcsd_anchored_reverse_used"
 RCSD_ANCHORED_RISK_SIGNAL = "rcsd_anchored_reverse"
+RELAXED_AGGREGATED_RCSD_REASONS = {
+    "role_mapping_partial_relaxed_aggregated",
+}
 
 _EVIDENCE_MISSING_REASONS = {
     "no_selected_evidence_after_reselection",
@@ -131,6 +135,24 @@ def _rcsd_node_lookup(case_result: T04CaseResult):
     return {str(node.node_id): node for node in case_result.case_bundle.rcsd_nodes}
 
 
+def _rcsd_road_geometry(case_result: T04CaseResult, road_ids: Iterable[str]) -> BaseGeometry | None:
+    roads_by_id = _rcsd_road_lookup(case_result)
+    return _union_geometry(
+        roads_by_id[str(road_id)].geometry
+        for road_id in road_ids
+        if str(road_id) in roads_by_id
+    )
+
+
+def _rcsd_node_geometry(case_result: T04CaseResult, node_ids: Iterable[str]) -> BaseGeometry | None:
+    nodes_by_id = _rcsd_node_lookup(case_result)
+    return _union_geometry(
+        nodes_by_id[str(node_id)].geometry
+        for node_id in node_ids
+        if str(node_id) in nodes_by_id
+    )
+
+
 def _stable_axis_signature(event_unit: T04EventUnitResult, axis_branch_id: str | None) -> str:
     selected_signature = str(event_unit.selected_candidate_summary.get("axis_signature") or "").strip()
     if selected_signature:
@@ -205,6 +227,24 @@ def _axis_point_at_s(axis_context: dict[str, Any], s_value: float) -> Point | No
     return None if point is None or point.is_empty else point
 
 
+def _road_endpoint_ids(road: Any) -> tuple[str | None, str | None]:
+    start = str(getattr(road, "snodeid", "") or "").strip() or None
+    end = str(getattr(road, "enodeid", "") or "").strip() or None
+    return start, end
+
+
+def _road_endpoint_node_ids(road_ids: Iterable[str], roads_by_id: dict[str, Any]) -> set[str]:
+    result: set[str] = set()
+    for road_id in road_ids:
+        road = roads_by_id.get(str(road_id))
+        if road is None:
+            continue
+        for node_id in _road_endpoint_ids(road):
+            if node_id:
+                result.add(node_id)
+    return result
+
+
 def _candidate_axis_position(entry: T04CandidateAuditEntry) -> float | None:
     value = entry.candidate_summary.get("axis_position_m")
     try:
@@ -213,12 +253,17 @@ def _candidate_axis_position(entry: T04CandidateAuditEntry) -> float | None:
         return None
 
 
+def _relaxed_aggregated_rcsd(summary: dict[str, Any]) -> bool:
+    return str(summary.get("rcsd_decision_reason") or "").strip() in RELAXED_AGGREGATED_RCSD_REASONS
+
+
 def _trigger_candidate(entry: T04CandidateAuditEntry) -> bool:
     summary = entry.candidate_summary
     return bool(
         summary.get("positive_rcsd_present") is True
         and str(summary.get("aggregated_rcsd_unit_id") or "").strip()
         and list(summary.get("first_hit_rcsdroad_ids") or ())
+        and not _relaxed_aggregated_rcsd(summary)
     )
 
 
@@ -543,6 +588,153 @@ def _road_overlap_ratio(lhs: Iterable[str], rhs: Iterable[str]) -> float:
     return len(lhs_set & rhs_set) / min(len(lhs_set), len(rhs_set))
 
 
+def _operation_type(event_unit: T04EventUnitResult, mother: T04CandidateAuditEntry) -> str:
+    audit_type = str(mother.positive_rcsd_audit.get("operational_event_type") or "").strip()
+    if audit_type in {"merge", "diverge"}:
+        return audit_type
+    try:
+        kind_2 = int(event_unit.interpretation.kind_resolution.operational_kind_2 or 0)
+    except (TypeError, ValueError):
+        kind_2 = 0
+    if kind_2 == 8:
+        return "merge"
+    if kind_2 == 16:
+        return "diverge"
+    return str(event_unit.spec.event_type or "").strip()
+
+
+def _terminal_continuation_axis_ok(
+    road: Any,
+    *,
+    required_node_id: str,
+    operation_type: str,
+    axis_context: dict[str, Any],
+    nodes_by_id: dict[str, Any],
+) -> tuple[bool, dict[str, Any]]:
+    required_node = nodes_by_id.get(required_node_id)
+    required_point = None if required_node is None else _as_point(required_node.geometry)
+    start_node_id, end_node_id = _road_endpoint_ids(road)
+    far_node_id = end_node_id if operation_type == "merge" else start_node_id
+    far_node = nodes_by_id.get(str(far_node_id or ""))
+    far_point = None if far_node is None else _as_point(far_node.geometry)
+    required_s = None if required_point is None else _project_point_to_axis(required_point, axis_context)
+    far_s = None if far_point is None else _project_point_to_axis(far_point, axis_context)
+    detail = {
+        "required_axis_s": None if required_s is None else round(float(required_s), 3),
+        "far_node_id": far_node_id,
+        "far_axis_s": None if far_s is None else round(float(far_s), 3),
+    }
+    if required_s is None or far_s is None:
+        return True, detail
+    if operation_type == "merge":
+        return (
+            float(far_s) >= float(required_s) + RCSD_TERMINAL_CONTINUATION_AXIS_TOL_M,
+            detail,
+        )
+    if operation_type == "diverge":
+        return (
+            float(far_s) <= float(required_s) - RCSD_TERMINAL_CONTINUATION_AXIS_TOL_M,
+            detail,
+        )
+    return False, detail
+
+
+def _same_case_claims_terminal_continuation(
+    case_result: T04CaseResult,
+    event_unit: T04EventUnitResult,
+    *,
+    road_ids: set[str],
+    node_ids: set[str],
+) -> bool:
+    for other in case_result.event_units:
+        if other is event_unit or other.spec.event_unit_id == event_unit.spec.event_unit_id:
+            continue
+        if other.selected_evidence_state == "none":
+            continue
+        if set(other.selected_rcsdroad_ids) & road_ids:
+            return True
+        if str(other.required_rcsd_node or "").strip() in node_ids:
+            return True
+    return False
+
+
+def _terminal_continuation_expansion(
+    case_result: T04CaseResult,
+    event_unit: T04EventUnitResult,
+    *,
+    mother: T04CandidateAuditEntry,
+    axis_context: dict[str, Any],
+    drivezone: BaseGeometry | None,
+) -> dict[str, Any]:
+    operation_type = _operation_type(event_unit, mother)
+    required_node_id = str(mother.required_rcsd_node or "").strip()
+    if operation_type not in {"merge", "diverge"} or not required_node_id:
+        return {
+            "used": False,
+            "operation_type": operation_type,
+            "required_rcsd_node": required_node_id or None,
+            "road_ids": [],
+            "node_ids": [],
+            "skip_reason": "not_applicable",
+        }
+    roads_by_id = _rcsd_road_lookup(case_result)
+    nodes_by_id = _rcsd_node_lookup(case_result)
+    already_selected = {str(item) for item in mother.selected_rcsdroad_ids if str(item)}
+    accepted_road_ids: list[str] = []
+    accepted_node_ids: set[str] = set()
+    skipped: list[dict[str, Any]] = []
+    drivezone_cover = None if drivezone is None or drivezone.is_empty else drivezone.buffer(0)
+    for road_id, road in sorted(roads_by_id.items()):
+        if road_id in already_selected:
+            continue
+        start_node_id, end_node_id = _road_endpoint_ids(road)
+        direction_ok = (
+            start_node_id == required_node_id
+            if operation_type == "merge"
+            else end_node_id == required_node_id
+        )
+        if not direction_ok:
+            continue
+        geometry = getattr(road, "geometry", None)
+        if geometry is None or geometry.is_empty:
+            skipped.append({"road_id": road_id, "skip_reason": "empty_geometry"})
+            continue
+        if drivezone_cover is not None and not drivezone_cover.covers(geometry):
+            skipped.append({"road_id": road_id, "skip_reason": "outside_drivezone"})
+            continue
+        axis_ok, axis_detail = _terminal_continuation_axis_ok(
+            road,
+            required_node_id=required_node_id,
+            operation_type=operation_type,
+            axis_context=axis_context,
+            nodes_by_id=nodes_by_id,
+        )
+        if not axis_ok:
+            skipped.append({"road_id": road_id, "skip_reason": "axis_direction_mismatch", **axis_detail})
+            continue
+        road_node_ids = {node_id for node_id in _road_endpoint_ids(road) if node_id}
+        if _same_case_claims_terminal_continuation(
+            case_result,
+            event_unit,
+            road_ids={road_id},
+            node_ids=road_node_ids,
+        ):
+            skipped.append({"road_id": road_id, "skip_reason": "same_case_claim_conflict", **axis_detail})
+            continue
+        accepted_road_ids.append(road_id)
+        accepted_node_ids.update(road_node_ids)
+    accepted_node_ids.update(_road_endpoint_node_ids(accepted_road_ids, roads_by_id))
+    return {
+        "used": bool(accepted_road_ids),
+        "operation_type": operation_type,
+        "required_rcsd_node": required_node_id,
+        "road_ids": accepted_road_ids,
+        "node_ids": sorted(accepted_node_ids),
+        "skip_reason": None if accepted_road_ids else "no_directional_terminal_continuation",
+        "skipped": skipped,
+    }
+
+
 def _aggregate_id_conflicts(lhs: str, rhs: str, *, same_case: bool) -> bool:
     if not lhs or not rhs or lhs != rhs:
         return False
@@ -760,6 +952,20 @@ def _apply_reverse_to_unit(
     )
     reference_origin_point = _axis_point_at_s(axis_context, reference_s) or reference_point
     drivezone = _drivezone_union(case_result)
+    continuation = _terminal_continuation_expansion(
+        case_result,
+        event_unit,
+        mother=mother,
+        axis_context=axis_context,
+        drivezone=drivezone,
+    )
+    selected_rcsdroad_ids = _dedupe([*mother.selected_rcsdroad_ids, *continuation.get("road_ids", [])])
+    selected_rcsdnode_ids = _dedupe([*mother.selected_rcsdnode_ids, *continuation.get("node_ids", [])])
+    continuation_road_geometry = _rcsd_road_geometry(case_result, continuation.get("road_ids", []))
+    continuation_node_geometry = _rcsd_node_geometry(case_result, continuation.get("node_ids", []))
+    positive_rcsd_road_geometry = _union_geometry([mother.positive_rcsd_road_geometry, continuation_road_geometry])
+    positive_rcsd_node_geometry = _union_geometry([mother.positive_rcsd_node_geometry, continuation_node_geometry])
+    positive_rcsd_geometry = _union_geometry([positive_rcsd_road_geometry, positive_rcsd_node_geometry])
     recovered = _recover_evidence(event_unit.candidate_audit_entries, s_rcsd_anchored=s_rcsd_anchored)
     fallback_used = recovered is None
     if recovered is None:
@@ -790,6 +996,13 @@ def _apply_reverse_to_unit(
         mother=mother,
         recovered=recovered,
     )
+    summary.update(
+        {
+            "selected_rcsdroad_ids": list(selected_rcsdroad_ids),
+            "selected_rcsdnode_ids": list(selected_rcsdnode_ids),
+            "terminal_continuation_expansion": continuation,
+        }
+    )
     updated_interpretation = _update_interpretation(
         event_unit,
         axis_branch_id=str(axis_context["axis_branch_id"]),
@@ -810,6 +1023,9 @@ def _apply_reverse_to_unit(
     )
     updated_positive_audit = {
         **dict(mother.positive_rcsd_audit),
+        "published_rcsdroad_ids": list(selected_rcsdroad_ids),
+        "published_rcsdnode_ids": list(selected_rcsdnode_ids),
+        "terminal_continuation_expansion": continuation,
         "rcsd_anchored_reverse": {
             "used": True,
             "s_rcsd_anchored": s_rcsd_anchored,
@@ -818,6 +1034,7 @@ def _apply_reverse_to_unit(
             "recovered_candidate_id": None if recovered is None else recovered.candidate_id,
             "reference_point_mode": reference_mode,
             "reference_point_axis_s": round(float(reference_s), 3),
+            "terminal_continuation_expansion": continuation,
         },
     }
     updated = replace(
@@ -842,9 +1059,9 @@ def _apply_reverse_to_unit(
         pair_local_rcsd_scope_geometry=mother.pair_local_rcsd_scope_geometry,
         first_hit_rcsd_road_geometry=mother.first_hit_rcsd_road_geometry,
         local_rcsd_unit_geometry=mother.local_rcsd_unit_geometry,
-        positive_rcsd_geometry=mother.positive_rcsd_geometry,
-        positive_rcsd_road_geometry=mother.positive_rcsd_road_geometry,
-        positive_rcsd_node_geometry=mother.positive_rcsd_node_geometry,
+        positive_rcsd_geometry=positive_rcsd_geometry,
+        positive_rcsd_road_geometry=positive_rcsd_road_geometry,
+        positive_rcsd_node_geometry=positive_rcsd_node_geometry,
         primary_main_rc_node_geometry=mother.primary_main_rc_node_geometry,
         required_rcsd_node_geometry=mother.required_rcsd_node_geometry,
         selected_branch_ids=mother.selected_branch_ids,
@@ -853,8 +1070,8 @@ def _apply_reverse_to_unit(
         pair_local_rcsd_road_ids=mother.pair_local_rcsd_road_ids,
         pair_local_rcsd_node_ids=mother.pair_local_rcsd_node_ids,
         first_hit_rcsdroad_ids=mother.first_hit_rcsdroad_ids,
-        selected_rcsdroad_ids=mother.selected_rcsdroad_ids,
-        selected_rcsdnode_ids=mother.selected_rcsdnode_ids,
+        selected_rcsdroad_ids=selected_rcsdroad_ids,
+        selected_rcsdnode_ids=selected_rcsdnode_ids,
         primary_main_rc_node_id=mother.primary_main_rc_node_id,
         local_rcsd_unit_id=mother.local_rcsd_unit_id,
         local_rcsd_unit_kind=mother.local_rcsd_unit_kind,
@@ -886,6 +1103,7 @@ def _apply_reverse_to_unit(
         "post_selected_evidence_state": updated.selected_evidence_state,
         "reference_point_mode": reference_mode,
         "reference_point_axis_s": round(float(reference_s), 3),
+        "terminal_continuation_expansion": continuation,
     }
     return updated, detail
 

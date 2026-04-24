@@ -311,6 +311,7 @@ def _build_executable_branch_set_from_paths(
     seed_rows: tuple[tuple[float, str, ParsedRoad, dict[str, Any]], ...],
     path_selection: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...],
     road_lookup: dict[str, ParsedRoad],
+    selected_event_branch_ids: tuple[str, ...] = (),
 ) -> _ExecutableBranchSet:
     road_branches: list[BranchEvidence] = []
     branch_road_memberships: dict[str, tuple[str, ...]] = {}
@@ -364,6 +365,14 @@ def _build_executable_branch_set_from_paths(
         operational_kind_hint = int(source_kind_2)
         event_branch_ids = tuple(input_branch_ids if source_kind_2 == 8 else output_branch_ids)
         boundary_branch_ids = tuple(event_branch_ids[:2])
+    selected_event_branch_set = {str(branch_id) for branch_id in selected_event_branch_ids if str(branch_id)}
+    if len(selected_event_branch_set) >= 2 and event_branch_ids:
+        selected_boundary_branch_ids = tuple(
+            branch_id for branch_id in event_branch_ids if branch_id in selected_event_branch_set
+        )
+        if len(selected_boundary_branch_ids) == 2:
+            event_branch_ids = selected_boundary_branch_ids
+            boundary_branch_ids = selected_boundary_branch_ids
 
     branch_ids = tuple(str(branch.branch_id) for branch in road_branches)
     return _ExecutableBranchSet(
@@ -384,6 +393,7 @@ def _build_complex_executable_branch_variants(
     *,
     unit_context: T04UnitContext,
     filtered_roads: list[ParsedRoad],
+    selected_event_branch_ids: tuple[str, ...] = (),
 ) -> tuple[_ExecutableBranchSet, ...]:
     representative_node = unit_context.representative_node
     representative_node_id = str(representative_node.node_id)
@@ -439,6 +449,7 @@ def _build_complex_executable_branch_variants(
             seed_rows=seed_rows,
             path_selection=tuple(path_selection),
             road_lookup=road_lookup,
+            selected_event_branch_ids=tuple(selected_event_branch_ids),
         )
         membership_key = tuple(
             (str(branch_id), tuple(road_ids))

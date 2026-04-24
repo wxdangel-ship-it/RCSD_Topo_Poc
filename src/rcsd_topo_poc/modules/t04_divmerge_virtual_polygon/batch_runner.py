@@ -24,6 +24,7 @@ from .outputs import (
 from .final_publish import write_step7_batch_outputs
 from .step4_rcsd_anchored_reverse import apply_rcsd_anchored_reverse_lookup
 from .step4_final_conflict_resolver import resolve_step4_final_conflicts
+from .step4_road_surface_fork_binding import apply_road_surface_fork_binding
 
 
 DEFAULT_CASE_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor_2")
@@ -93,8 +94,10 @@ def run_t04_step14_batch(
             failed_case_ids.append(spec.case_id)
 
     finalized_case_results, resolution_doc = resolve_step4_final_conflicts(case_results)
+    finalized_case_results, surface_binding_doc = apply_road_surface_fork_binding(finalized_case_results)
     finalized_case_results, reverse_doc = apply_rcsd_anchored_reverse_lookup(finalized_case_results)
     write_json(run_root / "second_pass_conflict_resolution.json", resolution_doc)
+    write_json(run_root / "step4_road_surface_fork_binding.json", surface_binding_doc)
     write_json(run_root / "step4_rcsd_anchored_reverse.json", reverse_doc)
 
     review_rows = []

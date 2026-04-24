@@ -52,7 +52,7 @@
 
 | 模块 ID | 路径 | 当前正式范围 | 当前状态 |
 |---|---|---|---|
-| `t00_utility_toolbox` | `modules/t00_utility_toolbox` | Tool1-Tool9 固定脚本与共享底层能力；项目内工具集合，不直接承担业务生产逻辑 | `governed tooling module / non-business production` |
+| `t00_utility_toolbox` | `modules/t00_utility_toolbox` | Tool1-Tool7、Tool9、Tool10 固定脚本与共享底层能力；项目内工具集合，不直接承担业务生产逻辑 | `governed tooling module / non-business production` |
 
 说明：
 

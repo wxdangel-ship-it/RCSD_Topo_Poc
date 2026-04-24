@@ -8,10 +8,11 @@
 - Tool6：将 `A200_node.shp` 导出为正式节点矢量结果
 - Tool7：将指定目录下顶层 `GeoJSON` 批量导出为同名 `GPKG`
 - Tool9：对 `DivStripZone` 做逐 Patch 预处理并汇总输出
+- Tool10：将指定 JSON / NDJSON 中的 `data.spots` 上车点导出为单个双图层 `GPKG`
 
 当前不在范围内：
 
 - Tool8
-- Tool10+
+- Tool11+
 - Tool3 全量重写
 - 复杂 manifest / 数据库治理

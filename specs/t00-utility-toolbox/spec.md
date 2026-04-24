@@ -16,7 +16,7 @@
 
 ## 3. 当前范围
 
-当前纳入范围为 Tool1 至 Tool9：
+当前纳入范围为 Tool1-Tool7、Tool9、Tool10；Tool8 当前未登记：
 
 - Tool1：Patch 数据整理脚本
 - Tool2：全量 DriveZone 预处理与合并
@@ -26,6 +26,7 @@
 - Tool6：shp 导出 GeoJSON 工具
 - Tool7：目录级 GeoJSON 批量转 GPKG 工具
 - Tool9：全量 DivStripZone 预处理与合并
+- Tool10：指定 JSON 上车点导出双图层 GPKG 工具
 
 ## 4. 统一规则
 
@@ -43,6 +44,7 @@
 - Tool5 的两类输入默认 CRS 分别独立配置：
   - `A200_road_patch` 默认 `EPSG:3857`
   - SW 原始路网默认 `EPSG:4326`
+- Tool10 只读取 `data.spots[].lon/lat` 作为点几何，按原始经纬度写出为 `EPSG:4326`
 - 输入若非目标 CRS，先重投影到目标 CRS
 - 允许最小限度几何修复，仅用于保证流程可执行
 - 不做复杂人工推断式修复
@@ -57,6 +59,7 @@
 - 固定脚本入口
 - 文件头集中参数
 - Tool7 作为批准后的例外，允许通过脚本参数传入目录路径
+- Tool10 作为批准后的例外，允许通过脚本参数传入输入 JSON 路径与可选输出 GPKG 路径
 - 命令行执行过程中必须提供进度输出
 - 至少体现工具开始/结束、阶段级进度、Patch 或记录级进度
 
@@ -207,11 +210,65 @@
   - `global_merge_input_count`
   - 输出要素统计与异常原因
 
-## 9. 非范围
+## 9. Tool10 需求基线
+
+### 9.1 目标
+
+将指定 JSON / NDJSON 请求记录中的 `data.spots` 候选上车点流式展开为点状 `GPKG`，在同一个 GPKG 中同时输出全量候选上车点与推荐上车点。
+
+### 9.2 输入与输出
+
+- 输入：脚本参数指定的 JSON / NDJSON 文件
+- 输出：脚本参数 `--output` 指定的 GPKG；未指定时输出输入文件同目录同名 `.gpkg`
+- 输出坐标保持原始经纬度，输出 CRS 为 `EPSG:4326`
+- 输出几何类型为 `Point`
+- 输出图层名：
+  - `pickup_spots_all`
+  - `pickup_spots_recommended`
+
+### 9.3 处理要求
+
+1. 支持 `NDJSON` 与 `JSON array` 两种输入布局
+2. 按流式方式逐条解析记录，不得将超大文件整体载入内存
+3. `pickup_spots_all` 中一条输出要素对应 `data.spots` 数组中的一个候选上车点
+4. `pickup_spots_recommended` 只包含 `isRecommend` 为真值的候选上车点
+5. 几何只读取 `spots[i].lon/lat`，不得使用顶层 `lon/lat` 或 `data.location.lon/lat`
+6. 坐标值统一视为原始经纬度，直接写出，不做坐标变换
+7. 输出已存在时先删除再重建
+8. 属性按 spot、自身请求上下文、中心点上下文、界面状态字段平铺保存，并增加 `source_crs`
+9. 若单个候选点缺失坐标、坐标非法或写出失败，则记录异常并继续处理其它记录
+
+### 9.4 日志、摘要与进度
+
+- 日志与摘要落在输出 GPKG 同目录
+- 命令行输出至少包含：
+  - Tool10 开始/结束
+  - 输入布局检测阶段
+  - 流式解析与导出阶段
+  - GPKG 收尾阶段
+  - 当前记录进度与失败统计
+- 摘要至少包含：
+  - `input_path`
+  - `output_path`
+  - `input_format`
+  - `input_record_count`
+  - `spot_candidate_count`
+  - `all_spot_output_count`
+  - `recommended_spot_output_count`
+  - `failed_spot_count`
+  - `source_crs`
+  - `output_crs`
+  - `layer_names`
+  - `field_names`
+  - `field_name_mapping`
+  - `coordinate_source_summary`
+  - `error_reason_summary`
+
+## 10. 非范围
 
 当前非范围包括：
 
-- Tool10+
+- Tool11+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
@@ -219,19 +276,20 @@
 - 为未来扩展提前搭重型框架
 - 对 Tool1 至 Tool5 的无关业务重构
 
-## 10. 风险与边界
+## 11. 风险与边界
 
 - 必须防止 `T00` 从内部工具集合扩张为业务生产模块
 - Tool6 若输入 CRS 缺失，必须明确阻塞，不得静默猜测
 - Tool6 的 GeoJSON 输出采用项目内 `EPSG:3857` 约定，不应误宣称为严格标准 GeoJSON
 - Tool7 允许目录参数驱动，但只能接收目录参数，不能顺手演化成复杂批处理框架
 - Tool7 若遇到字段名与 GPKG 保留列冲突，必须显式记录最小重命名映射
+- Tool10 只固化 `data.spots` 上车点导出，不扩大为通用 JSON 数据湖或业务生产模块
 
-## 11. 进入后续阶段的门禁
+## 12. 进入后续阶段的门禁
 
 满足以下条件后，可继续进入后续增量实现或扩展：
 
 1. `spec / plan / tasks / README / AGENTS / INTERFACE_CONTRACT / architecture/*` 口径一致
-2. Tool1 至 Tool7 的输入、输出、覆盖、异常与摘要语义稳定
+2. Tool1-Tool7、Tool9、Tool10 的输入、输出、覆盖、异常与摘要语义稳定
 3. 不改变 `T00` 作为内部工具模块的定位
 4. 新工具进入 `T00` 前，先补规格与契约

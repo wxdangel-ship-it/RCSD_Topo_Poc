@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `62` 个。
+- 当前真实执行入口共 `67` 个。
 - 分布概览：
-  - repo 级入口文件：`38`（`Makefile` 1 + `scripts/` 36 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`43`（`Makefile` 1 + `scripts/` 41 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`24`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -51,6 +51,10 @@
 | `pull_rcsd_topo_poc_main_from_github.sh` | `scripts/pull_rcsd_topo_poc_main_from_github.sh` | repo 级 | RCSD_Topo_Poc 固定仓库路径 / 固定远端 / 固定主干的零参数 GitHub 下拉脚本；首次运行可 clone，后续运行执行 fetch + switch main + ff-only pull | `active` | 否 |
 | `t03_run_internal_full_input_8workers.sh` | `scripts/t03_run_internal_full_input_8workers.sh` | repo 级 | T03 模块级内网 full-input 全量运行主脚本；外层 shell 结构与 public env surface 镜像 T02 Stage3 内网模板，内部主链为 candidate discovery / shared handle preload / per-case local context query / direct Step3-45-67 execution，并在 `.venv/bin/python` 关键依赖不可用时自动 fallback 到 `python3`；当前 `_internal/<RUN_ID>/` 已拆分为 `t03_internal_full_input_manifest/progress/performance/failure` 等模块级 observability 工件，批次根目录正式成果至少包括 `virtual_intersection_polygons.gpkg`、downstream `nodes.gpkg` 与 `t03_review_*` review-only 输出 | `active` | 否 |
 | `t03_watch_internal_full_input.sh` | `scripts/t03_watch_internal_full_input.sh` | repo 级 | T03 模块级内网 full-input 实时跟踪主脚本；当前作为 T03 internal full-input 的正式 repo 级监控面，默认按 formal-first 口径显示 `total / completed / running / pending / success / failed`（其中 `success = accepted`、`failed = rejected + runtime_failed`）与执行阶段信息，只有 `DEBUG_VISUAL=1` 时才从 review-only 工件读取 V1-V5 统计；同时兼容读取历史 `step67` 命名工件 | `active` | 否 |
+| `t03_run_internal_full_input_innernet.sh` | `scripts/t03_run_internal_full_input_innernet.sh` | repo 级 | T03 internal full-input 内网运行包装脚本，设置 innernet 默认运行参数后转发到 `t03_run_internal_full_input_8workers.sh` | `active` | 否 |
+| `t03_run_internal_full_input_innernet_flat_review.sh` | `scripts/t03_run_internal_full_input_innernet_flat_review.sh` | repo 级 | T03 internal full-input 内网 flat-review 运行包装脚本，写入 latest run id 并转发到 `t03_run_internal_full_input_8workers.sh` | `active` | 否 |
+| `t03_watch_internal_full_input_innernet.sh` | `scripts/t03_watch_internal_full_input_innernet.sh` | repo 级 | T03 internal full-input 内网监控包装脚本，设置默认监控参数后转发到 `t03_watch_internal_full_input.sh` | `active` | 否 |
+| `t03_watch_internal_full_input_innernet_flat_review.sh` | `scripts/t03_watch_internal_full_input_innernet_flat_review.sh` | repo 级 | T03 internal full-input 内网 flat-review 监控包装脚本，从 latest run id 文件发现 RUN_ID 后转发到 `t03_watch_internal_full_input.sh` | `active` | 否 |
 | `t04_run_internal_full_input_8workers.sh` | `scripts/t04_run_internal_full_input_8workers.sh` | repo 级 | T04 模块级内网 full-input 全量运行主脚本；输入全局 `nodes/roads/DriveZone/DivStripZone/RCSDRoad/RCSDNode`，执行 preflight / candidate discovery / shared bootstrap / direct Step1-7 case execution / batch closeout，并输出 `divmerge_virtual_anchor_surface*` 正式成果与 `visual_checks/final_*` 最终平铺目视审计入口；不新增 repo 官方 CLI 子命令 | `active` | 否 |
 | `t04_watch_internal_full_input.sh` | `scripts/t04_watch_internal_full_input.sh` | repo 级 | T04 内网 full-input 实时监控脚本；显示 `selected / completed / running / pending / accepted / rejected / runtime_failed / missing_status`、phase/status/message/entered_case_execution 与性能估算，并支持 `CASE_SCAN=auto/on/off` 降扫描 | `active` | 否 |
 | `t04_run_internal_full_input_innernet_flat_review.sh` | `scripts/t04_run_internal_full_input_innernet_flat_review.sh` | repo 级 | T04 内网 full-input 最终平铺目视审计运行包装；默认关闭 debug、启用 resume/retry/perf audit、使用 failed_only snapshot，并转发到 `t04_run_internal_full_input_8workers.sh` | `active` | 否 |
@@ -89,6 +93,7 @@
 | `t00_tool6_node_export.py` | `scripts/t00_tool6_node_export.py` | repo 级 | T00 Tool6 shp 导出 GeoJSON | `active` | 否 |
 | `t00_tool7_geojson_to_gpkg.py` | `scripts/t00_tool7_geojson_to_gpkg.py` | repo 级 | T00 Tool7 顶层目录 GeoJSON 批量转 GPKG | `active` | 否 |
 | `t00_tool9_divstripzone_merge.py` | `scripts/t00_tool9_divstripzone_merge.py` | repo 级 | T00 Tool9 DivStripZone 预处理与汇总 | `active` | 否 |
+| `t00_tool10_json_point_export.py` | `scripts/t00_tool10_json_point_export.py` | repo 级 | T00 Tool10 指定 JSON 上车点导出双图层 GPKG | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

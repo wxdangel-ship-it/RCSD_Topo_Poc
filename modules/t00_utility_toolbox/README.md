@@ -23,6 +23,7 @@
 - Tool6：将 `A200_node.shp` 导出为保留原始属性的 `nodes.geojson`
 - Tool7：将指定目录下顶层 `GeoJSON` 批量导出为同名 `GPKG`
 - Tool9：对全量 `DivStripZone` 做逐 Patch 预处理并汇总输出
+- Tool10：将指定 JSON / NDJSON 中的 `data.spots` 上车点导出为单个双图层 `GPKG`
 
 ## 文档角色
 
@@ -42,6 +43,7 @@
 - Tool4 / Tool5 通过脚本头部 `TARGET_EPSG` 固定目标 CRS，默认 `3857`
 - Tool5 对 `A200_road_patch` 与 SW 允许分别配置默认 CRS
 - Tool7 是经批准的参数驱动例外，目录通过脚本参数给定，且只扫描顶层 `.geojson`
+- Tool10 是经批准的参数驱动入口，输入 JSON 通过脚本参数给定
 - 输出已存在时先删除再重建
 - 命令行执行过程中必须提供阶段级与 Patch / 记录级进度输出
 
@@ -62,6 +64,15 @@
 - Tool9 读取 `patch_all/<PatchID>/(Vector|vector)/DivStripZone.geojson`
 - 每个 Patch 输出 `DivStripZone_fix.geojson` 并写入 `patchid`
 - 根目录 `DivStripZone.gpkg` 为逐 Patch 汇总结果，保留 `patchid`
+
+## Tool10 备注
+
+- Tool10 读取调用参数指定的 JSON / NDJSON 文件
+- Tool10 默认输出输入文件同目录同名 `.gpkg`，也可通过 `--output` 指定
+- Tool10 在一个 GPKG 内输出两个图层：`pickup_spots_all` 与 `pickup_spots_recommended`
+- `pickup_spots_all` 一条要素对应 `data.spots` 数组中的一个候选上车点
+- `pickup_spots_recommended` 只包含 `isRecommend` 为真值的候选上车点
+- 几何只取 `spots[i].lon/lat`，直接按原始经纬度写入 GPKG，不使用顶层 `lon/lat` 或 `data.location.lon/lat`
 
 ## 文档入口
 
@@ -90,6 +101,7 @@ make doctor
 .venv/bin/python scripts/t00_tool6_node_export.py
 .venv/bin/python scripts/t00_tool7_geojson_to_gpkg.py /mnt/d/TestData/POC_Data/some_directory
 .venv/bin/python scripts/t00_tool9_divstripzone_merge.py
+.venv/bin/python scripts/t00_tool10_json_point_export.py /mnt/d/TestData/poi/beijing_1334198.json
 ```
 
 默认数据根位于：

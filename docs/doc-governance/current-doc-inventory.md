@@ -27,7 +27,7 @@
 | 路径 | 当前角色 | 主要属性 | 说明 |
 |---|---|---|---|
 | `modules/t00_utility_toolbox/architecture/*` | T00 模块长期架构真相 | `source_of_truth` | T00 工具集合模块的长期文档主表面 |
-| `modules/t00_utility_toolbox/INTERFACE_CONTRACT.md` | T00 稳定契约面 | `source_of_truth` | 固化 Tool1-Tool9 的稳定输入、输出、覆盖、异常与摘要语义 |
+| `modules/t00_utility_toolbox/INTERFACE_CONTRACT.md` | T00 稳定契约面 | `source_of_truth` | 固化 Tool1-Tool7、Tool9、Tool10 的稳定输入、输出、覆盖、异常与摘要语义 |
 | `modules/t00_utility_toolbox/README.md` | T00 操作者入口 | `operator_guide` | 说明固定脚本入口、工具边界和常见运行方式 |
 | `modules/t00_utility_toolbox/AGENTS.md` | T00 durable guidance | `durable_guidance` | 只保留工具集合模块边界与协作规则 |
 | `modules/t00_utility_toolbox/history/*` | T00 模块级历史材料 | `history` | 记录工具模块演进与补充说明 |

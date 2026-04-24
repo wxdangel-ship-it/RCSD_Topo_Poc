@@ -13,6 +13,7 @@
   - Tool6 `A200_node shp 导出 nodes.geojson`
   - Tool7 `目录级 GeoJSON 批量转 GPKG`
   - Tool9 `DivStripZone 预处理与汇总输出`
+  - Tool10 `指定 JSON 上车点导出双图层 GPKG`
 
 本文件用于固化 `T00` 当前稳定的输入、输出、覆盖、跳过与摘要语义。
 
@@ -35,6 +36,10 @@
 - Tool7 输入 CRS 口径：
   - 优先读取 GeoJSON `crs`
   - 若缺失 `crs`，默认按 `EPSG:4326`
+- Tool10 坐标口径：
+  - 只读取 `data.spots[].lon/lat` 作为点几何
+  - 原始经纬度直接按 `EPSG:4326` 写入 GPKG
+  - 不使用顶层 `lon/lat` 或 `data.location.lon/lat` 生成几何
 - 修复口径：只允许最小修复；修复失败则跳过并记录异常
 - 覆盖口径：旧输出已存在时先删除再重建
 - 执行体验：命令行必须输出工具开始/结束、阶段级和 Patch / 记录级进度；Tool7 允许目录参数驱动
@@ -52,6 +57,7 @@
 - `.venv/bin/python scripts/t00_tool6_node_export.py`
 - `.venv/bin/python scripts/t00_tool7_geojson_to_gpkg.py <directory>`
 - `.venv/bin/python scripts/t00_tool9_divstripzone_merge.py`
+- `.venv/bin/python scripts/t00_tool10_json_point_export.py <input-json> [--output <output-gpkg>]`
 
 ## 3. Tool1 契约
 
@@ -159,6 +165,7 @@
 - Tool5：`A200_road_patch_kind.geojson` 是正式输出
 - Tool6：`nodes.geojson` 是正式输出
 - Tool7：指定目录下与每个 `.geojson` 同名的 `.gpkg` 是正式输出
+- Tool10：指定输出路径或输入同目录同名 `.gpkg` 是正式输出
 
 ## 10. Tool7 契约
 
@@ -200,18 +207,51 @@
   - `global_merge_input_count`
   - 输出要素统计与异常原因
 
-## 12. 非范围契约
+## 12. Tool10 契约
+
+- 输入：脚本参数指定的 JSON / NDJSON 文件
+- 输出：脚本参数 `--output` 指定的 GPKG；未指定时输出输入文件同目录同名 `.gpkg`
+- 输出 CRS：`EPSG:4326`（输出格式为 `GPKG`）
+- 图层名：
+  - `pickup_spots_all`
+  - `pickup_spots_recommended`
+- 几何类型：`Point`
+- `pickup_spots_all` 一条输出要素 = `data.spots` 数组中的一个候选上车点
+- `pickup_spots_recommended` 只包含 `data.spots` 中 `isRecommend` 为真值的候选上车点
+- 几何来源：只读取 `spots[i].lon/lat`，不得使用顶层 `lon/lat` 或 `data.location.lon/lat` 作为几何
+- 源坐标口径：spot 的 `lon/lat` 视为原始经纬度，直接写出，不做坐标变换
+- 属性口径：按 spot 自身字段、请求/中心点上下文字段、界面状态字段平铺保存，并额外写入 `source_crs`
+- 输入布局：兼容 `NDJSON` 与 `JSON array`；按流式解析执行，不整体载入内存
+- 覆盖口径：同名 `.gpkg` 已存在时先删除再重建
+- 摘要至少包含：
+  - `input_path`
+  - `output_path`
+  - `input_format`
+  - `input_record_count`
+  - `spot_candidate_count`
+  - `all_spot_output_count`
+  - `recommended_spot_output_count`
+  - `failed_spot_count`
+  - `source_crs`
+  - `output_crs`
+  - `layer_names`
+  - `field_names`
+  - `field_name_mapping`
+  - `coordinate_source_summary`
+  - `error_reason_summary`
+
+## 13. 非范围契约
 
 当前不承诺以下能力：
 
-- Tool10+
+- Tool11+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
 - 重型产线编排
 - 超出当前需求的中间产物正式化治理
 
-## 13. 后续实现注意事项
+## 14. 后续实现注意事项
 
 - 参数名、日志文件名和具体 CLI 形式可继续在脚本层补足
 - 但不得偏离当前契约语义

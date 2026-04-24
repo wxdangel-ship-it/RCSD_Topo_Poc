@@ -24,6 +24,7 @@ from .support_domain import T04Step5CaseResult, T04Step5UnitResult
 
 STEP6_GRID_MARGIN_M = 30.0
 STEP6_RESOLUTION_M = 0.5
+STEP6_MAX_GRID_SIDE_CELLS = 2000
 STEP6_CUT_BARRIER_BUFFER_M = 0.75
 STEP6_CONNECTIVITY_NEIGHBORS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 STEP6_CLOSE_ITERATIONS = 1
@@ -122,6 +123,18 @@ def _grid_center_and_patch_size(
         height + 2.0 * STEP6_GRID_MARGIN_M,
     )
     return center, patch_size_m
+
+
+def _validate_step6_grid_size(*, case_id: str, patch_size_m: float, resolution_m: float) -> None:
+    side_cells = int(round(float(patch_size_m) / float(resolution_m)))
+    if side_cells <= STEP6_MAX_GRID_SIDE_CELLS:
+        return
+    raise ValueError(
+        "step6_grid_too_large: "
+        f"case_id={case_id}, patch_size_m={patch_size_m:.3f}, "
+        f"resolution_m={resolution_m:.3f}, side_cells={side_cells}, "
+        f"max_side_cells={STEP6_MAX_GRID_SIDE_CELLS}"
+    )
 
 
 def _component_masks(mask: np.ndarray) -> list[np.ndarray]:
@@ -419,13 +432,17 @@ def build_step6_polygon_assembly(
             step5_result.case_allowed_growth_domain,
             step5_result.case_must_cover_domain,
             step5_result.case_terminal_cut_constraints,
-            step5_result.case_terminal_window_domain,
             step5_result.case_bridge_zone_geometry,
         ]
     )
     grid_center, patch_size_m = _grid_center_and_patch_size(
         assembly_source_geometry,
         fallback_point=representative_point,
+    )
+    _validate_step6_grid_size(
+        case_id=case_result.case_spec.case_id,
+        patch_size_m=patch_size_m,
+        resolution_m=STEP6_RESOLUTION_M,
     )
     grid = _build_grid(
         grid_center,

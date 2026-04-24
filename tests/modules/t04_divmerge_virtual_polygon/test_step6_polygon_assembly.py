@@ -8,6 +8,7 @@ import pytest
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import unary_union
 
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon import polygon_assembly
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.polygon_assembly import (
     build_step6_polygon_assembly,
 )
@@ -61,6 +62,82 @@ def test_t04_step6_canvas_respects_terminal_window_domain() -> None:
     assert result.assembly_canvas_geometry.bounds[2] <= 100.75
     assert result.final_case_polygon.bounds[0] >= -0.75
     assert result.final_case_polygon.bounds[2] <= 100.75
+
+
+def test_t04_step6_terminal_window_does_not_expand_grid_canvas(monkeypatch: pytest.MonkeyPatch) -> None:
+    drivezone = Polygon([(-60, -30), (160, -30), (160, 30), (-60, 30), (-60, -30)])
+    case_result = SimpleNamespace(
+        case_spec=SimpleNamespace(case_id="wide_window_case"),
+        case_bundle=SimpleNamespace(
+            representative_node=SimpleNamespace(geometry=Point(0, 0)),
+            drivezone_features=(SimpleNamespace(geometry=drivezone),),
+        ),
+    )
+    must_cover = unary_union([Point(20, 0).buffer(2.5), Point(80, 0).buffer(2.5)])
+    allowed = Polygon([(-40, -12), (140, -12), (140, 12), (-40, 12), (-40, -12)])
+    terminal_window = Polygon(
+        [(-5000, -5000), (5000, -5000), (5000, 5000), (-5000, 5000), (-5000, -5000)]
+    )
+    observed_patch_sizes: list[float] = []
+    real_build_grid = polygon_assembly._build_grid
+
+    def guarded_build_grid(center: Point, *, patch_size_m: float, resolution_m: float):
+        observed_patch_sizes.append(float(patch_size_m))
+        assert patch_size_m < 300.0
+        return real_build_grid(center, patch_size_m=patch_size_m, resolution_m=resolution_m)
+
+    monkeypatch.setattr(polygon_assembly, "_build_grid", guarded_build_grid)
+    step5_result = T04Step5CaseResult(
+        case_id="wide_window_case",
+        unit_results=(),
+        case_must_cover_domain=must_cover,
+        case_allowed_growth_domain=allowed,
+        case_forbidden_domain=None,
+        case_terminal_cut_constraints=None,
+        case_terminal_window_domain=terminal_window,
+        case_terminal_support_corridor_geometry=None,
+        case_bridge_zone_geometry=None,
+        case_support_graph_geometry=None,
+        unrelated_swsd_mask_geometry=None,
+        unrelated_rcsd_mask_geometry=None,
+        divstrip_void_mask_geometry=None,
+        drivezone_outside_enforced_by_allowed_domain=True,
+    )
+
+    result = build_step6_polygon_assembly(case_result, step5_result)
+
+    assert observed_patch_sizes
+    assert result.assembly_canvas_geometry is not None
+
+
+def test_t04_step6_rejects_oversized_grid_before_allocating_arrays() -> None:
+    drivezone = Polygon([(-3000, -3000), (3000, -3000), (3000, 3000), (-3000, 3000), (-3000, -3000)])
+    case_result = SimpleNamespace(
+        case_spec=SimpleNamespace(case_id="oversized_grid_case"),
+        case_bundle=SimpleNamespace(
+            representative_node=SimpleNamespace(geometry=Point(0, 0)),
+            drivezone_features=(SimpleNamespace(geometry=drivezone),),
+        ),
+    )
+    step5_result = T04Step5CaseResult(
+        case_id="oversized_grid_case",
+        unit_results=(),
+        case_must_cover_domain=Point(0, 0).buffer(2.5),
+        case_allowed_growth_domain=drivezone,
+        case_forbidden_domain=None,
+        case_terminal_cut_constraints=None,
+        case_terminal_window_domain=None,
+        case_terminal_support_corridor_geometry=None,
+        case_bridge_zone_geometry=None,
+        case_support_graph_geometry=None,
+        unrelated_swsd_mask_geometry=None,
+        unrelated_rcsd_mask_geometry=None,
+        divstrip_void_mask_geometry=None,
+        drivezone_outside_enforced_by_allowed_domain=True,
+    )
+
+    with pytest.raises(ValueError, match="step6_grid_too_large"):
+        build_step6_polygon_assembly(case_result, step5_result)
 
 
 @pytest.mark.smoke

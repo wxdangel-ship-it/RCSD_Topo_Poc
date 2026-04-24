@@ -127,6 +127,45 @@ def _copy_if_present(source: Path, destination: Path) -> str:
     return str(destination)
 
 
+def materialize_streamed_case_visual_check(
+    *,
+    run_root: Path,
+    record: T04TerminalCaseRecord,
+    visual_check_dir: Path | None = None,
+) -> dict[str, Any]:
+    visual_root = visual_check_dir or (run_root / "visual_checks")
+    final_state = str(record.final_state or record.terminal_state or "unknown")
+    image_name = f"case__{record.case_id}__{final_state}.png"
+    source_image = Path(record.source_image_path) if record.source_image_path else (
+        run_root / "cases" / record.case_id / STEP7_CASE_FINAL_REVIEW_NAME
+    )
+    if not source_image.is_file():
+        return {
+            "case_id": record.case_id,
+            "final_state": final_state,
+            "copied": False,
+            "source_image_path": str(source_image),
+        }
+
+    step4_flat_image = run_root / "step4_review_flat" / f"case__{record.case_id}__final_review.png"
+    visual_flat_image = visual_root / "final_flat" / image_name
+    state_image = visual_root / "final_by_state" / final_state / image_name
+    for target_path in (step4_flat_image, visual_flat_image, state_image):
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_image, step4_flat_image)
+    shutil.copy2(source_image, visual_flat_image)
+    shutil.copy2(source_image, state_image)
+    return {
+        "case_id": record.case_id,
+        "final_state": final_state,
+        "copied": True,
+        "source_image_path": str(source_image),
+        "step4_flat_image_path": str(step4_flat_image),
+        "visual_flat_image_path": str(visual_flat_image),
+        "state_image_path": str(state_image),
+    }
+
+
 def materialize_final_visual_checks(
     *,
     run_root: Path,
@@ -198,6 +237,7 @@ __all__ = [
     "append_streamed_case_result",
     "load_terminal_case_records",
     "materialize_final_visual_checks",
+    "materialize_streamed_case_visual_check",
     "runtime_failed_terminal_case_record",
     "streamed_case_results_path",
     "terminal_case_record_from_artifact",

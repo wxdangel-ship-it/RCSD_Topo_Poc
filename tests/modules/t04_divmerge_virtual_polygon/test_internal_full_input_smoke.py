@@ -10,6 +10,10 @@ from pathlib import Path
 import pytest
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon import run_t04_internal_full_input
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.full_input_streamed_results import (
+    T04TerminalCaseRecord,
+    materialize_streamed_case_visual_check,
+)
 
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import (
     _build_synthetic_case_package,
@@ -66,6 +70,7 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     assert (run_root / "step7_rejected_index.json").is_file()
 
     visual_root = run_root / "visual_checks"
+    assert (run_root / "step4_review_flat" / "case__1001__final_review.png").is_file()
     assert (visual_root / "final_by_state" / "accepted").is_dir()
     assert (visual_root / "final_by_state" / "rejected").is_dir()
     assert (visual_root / "final_flat").is_dir()
@@ -84,6 +89,36 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     assert Path(rows[0]["step7_status_path"]).is_file()
     assert Path(rows[0]["audit_path"]).is_file()
     assert (visual_root / "final_index.json").is_file()
+
+
+def test_t04_internal_full_input_streams_final_review_flat_png(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    source_png = run_root / "cases" / "1001" / "final_review.png"
+    source_png.parent.mkdir(parents=True, exist_ok=True)
+    source_png.write_bytes(b"fake-png")
+    record = T04TerminalCaseRecord(
+        case_id="1001",
+        terminal_state="accepted",
+        final_state="accepted",
+        reject_reason="",
+        reject_reason_detail="",
+        step7_status_path=str(run_root / "cases" / "1001" / "step7_status.json"),
+        audit_path=str(run_root / "cases" / "1001" / "step7_audit.json"),
+        source_image_path=str(source_png),
+    )
+
+    result = materialize_streamed_case_visual_check(
+        run_root=run_root,
+        record=record,
+        visual_check_dir=run_root / "visual_checks",
+    )
+
+    assert result["copied"] is True
+    assert (run_root / "step4_review_flat" / "case__1001__final_review.png").is_file()
+    assert (run_root / "visual_checks" / "final_flat" / "case__1001__accepted.png").is_file()
+    assert (
+        run_root / "visual_checks" / "final_by_state" / "accepted" / "case__1001__accepted.png"
+    ).is_file()
 
 
 @pytest.mark.smoke

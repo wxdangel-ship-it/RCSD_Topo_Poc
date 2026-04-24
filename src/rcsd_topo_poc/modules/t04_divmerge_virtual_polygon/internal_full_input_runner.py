@@ -40,6 +40,7 @@ from .full_input_shared_layers import (
 from .full_input_streamed_results import (
     append_streamed_case_result,
     materialize_final_visual_checks,
+    materialize_streamed_case_visual_check,
     runtime_failed_terminal_case_record,
     streamed_case_results_path,
     terminal_case_record_from_artifact,
@@ -392,6 +393,11 @@ def run_t04_internal_full_input(
                 write_terminal_case_record(run_root=run_root, record=record)
                 with stream_lock:
                     append_streamed_case_result(stream_path, record)
+                    materialize_streamed_case_visual_check(
+                        run_root=run_root,
+                        record=record,
+                        visual_check_dir=resolved_visual_check_dir,
+                    )
                 with artifact_lock:
                     artifacts.append(artifact)
                 final_state = artifact.final_state

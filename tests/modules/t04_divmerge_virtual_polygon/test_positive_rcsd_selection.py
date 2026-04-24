@@ -98,7 +98,13 @@ def test_aggregated_rcsd_unit_upgrades_multiple_partial_local_units() -> None:
     assert decision.positive_rcsd_present is True
     assert decision.aggregated_rcsd_unit_id is not None
     assert decision.positive_rcsd_consistency_level == "A"
-    assert set(decision.selected_rcsdroad_ids) >= {"rc_axis", "rc_mid", "rc_right", "rc_left"}
+    assert set(decision.selected_rcsdroad_ids) >= {"rc_axis", "rc_mid", "rc_right"}
+    aggregated_units = decision.positive_rcsd_audit["aggregated_rcsd_units"]
+    selected_aggregated = next(
+        item for item in aggregated_units if item["unit_id"] == decision.aggregated_rcsd_unit_id
+    )
+    assert set(selected_aggregated["road_ids"]) >= {"rc_axis", "rc_mid", "rc_right", "rc_left"}
+    assert set(selected_aggregated["event_side_road_ids"]) >= {"rc_right", "rc_left"}
     assert decision.required_rcsd_node in {"rc_1", "rc_2"}
     if decision.first_hit_rcsdroad_ids:
         assert decision.first_hit_rcsd_road_geometry is not None

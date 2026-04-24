@@ -178,5 +178,11 @@ Step4 final tuning 额外质量门槛：
   - `positive_rcsd_present = true`
   - `positive_rcsd_support_level = primary_support`
   - `positive_rcsd_consistency_level = A`
+
+Step7 当前最终发布冻结门槛：
+
+- Anchor_2 当前最终业务基线为 `accepted = 7 / rejected = 1`。
+- `857993` 的最终 `rejected` 是人工目视审计确认后的正确结论，不得在治理回归中改成追求 `accepted` 的目标。
+- 最终发布状态只允许 `accepted / rejected`；Step4 的 `STEP4_REVIEW` 仅保留为内部审计提示，不得作为最终第三态。
 - `17943587` 允许在不改主证据、不断 support 的前提下，通过 second-pass claim reconcile 改写 `required_rcsd_node`；若发生该类变化，必须显式产出 pre/post compare，不允许 silent drift。
 - same-case non-conflict unit 进入 second-pass 后只能 `kept`，不得被误判成 hard conflict 或 baseline guard 降级。

@@ -329,6 +329,8 @@
   - `soft`
   - `hard`
 - 仅 `soft` degraded 可继续维持 `STEP4_REVIEW`；当候选空间语义已实质丢失时，`hard` degraded 允许直接升到 `STEP4_FAIL`。
+- `STEP4_REVIEW` 是 Step4 内部审计态，不是 Step7 最终失败态；当前 Anchor_2 冻结基线允许 `pair_local_scope_roads_empty` 等 `soft` degraded 使 `STEP4_REVIEW` 成为常态，只要 Step4 主证据、pair-local 容器、正向 RCSD 与后续 Step7 二态发布均满足冻结门槛。
+- Step4 review summary 中的 `STEP4_OK = 0 / STEP4_REVIEW = 13 / STEP4_FAIL = 0` 在当前 Anchor_2 基线下是已解释的内部软退化分布；不得据此重新引入最终 `review / review_required` 状态。
 - ownership guard 的主判断必须以语义冲突为先：
   - 共用同一物理 DivStrip component（`selected_component_ids` 是局部索引，跨 sub-unit 不稳定，只允许作为 debug label；component ownership 须以 `selected_component_union_geometry` 的物理重叠等价判定）
   - 同一 `event_axis_branch_id` 且 `|Δevent_chosen_s_m| <= 5m`
@@ -486,26 +488,26 @@
 当前冻结的 Anchor_2 accepted baseline：
 
 - `760213`
-  - `node_760213 -> node_760213:divstrip:3:01`
-  - `node_760218 -> node_760218:divstrip:3:01`
+  - `node_760213 -> node_760213:divstrip:2:01`
+  - `node_760218 -> node_760218:divstrip:2:01`
 - `785671`
-  - `event_unit_01 -> event_unit_01:divstrip:3:01`
+  - `event_unit_01 -> event_unit_01:divstrip:2:01`
 - `785675`
-  - `event_unit_01 -> event_unit_01:divstrip:5:01`
+  - `event_unit_01 -> event_unit_01:divstrip:4:01`
 - `857993`
-  - `node_857993 -> node_857993:divstrip:4:01`
-  - `node_870089 -> node_870089:divstrip:4:01`
+  - `node_857993 -> node_857993:divstrip:3:01`
+  - `node_870089 -> node_870089:divstrip:3:01`
 - `987998`
-  - `event_unit_01 -> event_unit_01:divstrip:4:01`
+  - `event_unit_01 -> event_unit_01:divstrip:3:01`
 - `17943587`
-  - `node_17943587 -> node_17943587:divstrip:2:01`
-  - `node_55353233 -> node_55353233:divstrip:2:01`
-  - `node_55353239 -> node_55353239:divstrip:2:01`
-  - `node_55353248 -> node_55353248:divstrip:2:01`
+  - `node_17943587 -> node_17943587:divstrip:1:01`
+  - `node_55353233 -> node_55353233:divstrip:1:01`
+  - `node_55353239 -> node_55353239:divstrip:1:01`
+  - `node_55353248 -> node_55353248:divstrip:1:01`
 - `30434673`
-  - `event_unit_01 -> event_unit_01:divstrip:4:01`
+  - `event_unit_01 -> event_unit_01:divstrip:3:01`
 - `73462878`
-  - `event_unit_01 -> event_unit_01:divstrip:1:01`
+  - `event_unit_01 -> event_unit_01:divstrip:0:01`
 
 ## 4. Outputs
 
@@ -588,6 +590,7 @@
   - `selected_layer_2_count`
   - `selected_layer_3_count`
   - `cases_with_multiple_event_units`
+- 当前 Anchor_2 Step4 冻结基线允许 `STEP4_OK = 0 / STEP4_REVIEW = 13 / STEP4_FAIL = 0`，该分布只说明 Step4 内部保留 soft-degrade 审计提示，不影响 Step7 最终只发布 `accepted / rejected` 两态。
 
 ### 4.5 Step5 正式输出边界
 
@@ -639,3 +642,4 @@
 4. `Step5-7` 正式研发默认遵循 SpecKit，且必须覆盖 `Product / Architecture / Development / Testing / QA` 五视角。
 5. T04 可以参考 T03 的实现逻辑与产物风格，但不得直接 import / 调用 / 硬拷贝 T03 模块代码。
 6. 当前阶段的 Case 级正式目视审计入口以 `final_review.png` 及其 flat mirror 为准；event-unit png / index / summary 仍可用于审计，但不再把 `step4_review_overview.png` 当作正式 Case 级输出。
+7. 当前 Anchor_2 最终发布冻结基线为 `accepted = 7 / rejected = 1`；`857993` 的最终 `rejected` 是人工目视审计确认后的正确业务结论，不得作为待修成 `accepted` 的回归目标。

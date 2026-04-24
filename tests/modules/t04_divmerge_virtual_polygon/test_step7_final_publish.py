@@ -117,3 +117,50 @@ def test_t04_step7_rejected_case_writes_reject_stub_without_final_review_state(t
     assert reject_index["final_state"] == "rejected"
     assert (case_dir / "reject_stub.geojson").is_file()
     assert (case_dir / "final_review.png").is_file()
+
+
+@pytest.mark.smoke
+def test_anchor2_step7_freezes_857993_as_expected_rejected(tmp_path: Path) -> None:
+    if not REAL_ANCHOR_2_ROOT.is_dir():
+        pytest.skip(f"missing real Anchor_2 case root: {REAL_ANCHOR_2_ROOT}")
+
+    anchor2_case_ids = [
+        "760213",
+        "785671",
+        "785675",
+        "857993",
+        "987998",
+        "17943587",
+        "30434673",
+        "73462878",
+    ]
+    missing_cases = [
+        case_id for case_id in anchor2_case_ids if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
+    ]
+    if missing_cases:
+        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=anchor2_case_ids,
+        out_root=tmp_path / "anchor2_step7",
+        run_id="anchor2_expected_857993_rejected",
+    )
+
+    summary_payload = json.loads(
+        (run_root / "divmerge_virtual_anchor_surface_summary.json").read_text(encoding="utf-8")
+    )
+    rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
+
+    assert summary_payload["accepted_count"] == 7
+    assert summary_payload["rejected_count"] == 1
+    assert rows_by_case["857993"]["final_state"] == "rejected"
+    assert rows_by_case["857993"]["publish_target"] == "rejected_index"
+    assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
+
+    rejected_status = json.loads(
+        (run_root / "cases" / "857993" / "step7_status.json").read_text(encoding="utf-8")
+    )
+    assert rejected_status["final_state"] == "rejected"
+    assert "review" not in rejected_status["final_state"]
+    assert (run_root / "cases" / "857993" / "reject_stub.geojson").is_file()

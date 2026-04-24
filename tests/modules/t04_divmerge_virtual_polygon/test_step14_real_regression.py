@@ -46,7 +46,7 @@ def test_real_case_17943587_keeps_same_case_merge_branch_continuation_and_nested
     assert pair_region.buffer(1e-6).covers(structure_face)
     assert pair_middle.equals(structure_face) is False
     assert event_unit.selected_evidence_state == "found"
-    assert event_unit.selected_evidence_summary["candidate_id"] == "node_17943587:divstrip:2:01"
+    assert event_unit.selected_evidence_summary["candidate_id"] == "node_17943587:divstrip:1:01"
     assert event_unit.selected_evidence_summary["node_fallback_only"] is False
     assert float(event_unit.selected_evidence_summary["reference_distance_to_origin_m"]) > 3.0
     assert event_unit.fact_reference_point is not None
@@ -98,7 +98,7 @@ def test_real_case_17943587_keeps_same_case_merge_branch_continuation_and_nested
     assert local_axis_branch not in set(local_unit.unit_envelope.event_branch_ids)
     _assert_one_sided_offsets(local_unit.pair_local_summary["valid_scan_offsets_m"])
     assert local_unit.selected_evidence_state == "found"
-    assert local_unit.selected_evidence_summary["candidate_id"] == "node_55353248:divstrip:2:01"
+    assert local_unit.selected_evidence_summary["candidate_id"] == "node_55353248:divstrip:1:01"
     assert local_unit.selected_evidence_summary["node_fallback_only"] is False
     assert float(local_unit.selected_evidence_summary["reference_distance_to_origin_m"]) > 3.0
     assert local_unit.fact_reference_point is not None
@@ -170,9 +170,9 @@ def test_real_simple_three_arm_cases_keep_direct_event_pair_branches() -> None:
 
 def test_real_simple_two_branch_cases_prefer_divstrip_evidence_over_synthetic_middle_container() -> None:
     expected_candidates = {
-        "785671": "event_unit_01:divstrip:3:01",
-        "987998": "event_unit_01:divstrip:4:01",
-        "30434673": "event_unit_01:divstrip:4:01",
+        "785671": "event_unit_01:divstrip:2:01",
+        "987998": "event_unit_01:divstrip:3:01",
+        "30434673": "event_unit_01:divstrip:3:01",
     }
     missing_cases = [case_id for case_id in expected_candidates if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()]
     if missing_cases:
@@ -218,7 +218,7 @@ def test_real_case_17943587_node_55353239_keeps_local_three_arm_and_selects_loca
         "road_3": ("41727506",),
     }
     assert event_unit.selected_evidence_state == "found"
-    assert event_unit.selected_evidence_summary["candidate_id"] == "node_55353239:divstrip:2:01"
+    assert event_unit.selected_evidence_summary["candidate_id"] == "node_55353239:divstrip:1:01"
     assert event_unit.selected_evidence_summary["selection_status"] == "selected"
     assert event_unit.selected_evidence_summary["node_fallback_only"] is False
     assert float(event_unit.selected_evidence_summary["reference_distance_to_origin_m"]) > 3.0
@@ -263,7 +263,7 @@ def test_real_case_857993_keeps_node_857993_local_and_stops_node_870089_at_direc
     assert set(node_870089.unit_envelope.event_branch_ids) == {left_branch_id, right_branch_id}
 
     assert node_857993.selected_evidence_state == "found"
-    assert node_857993.selected_evidence_summary["candidate_id"] == "node_857993:divstrip:4:01"
+    assert node_857993.selected_evidence_summary["candidate_id"] == "node_857993:divstrip:3:01"
     assert node_857993.selected_evidence_summary["layer"] == 2
     assert node_857993.selected_evidence_summary["selected_after_reselection"] is False
     _assert_selected_candidate_region_is_pair_local_container(node_857993)
@@ -276,7 +276,7 @@ def test_real_case_857993_keeps_node_857993_local_and_stops_node_870089_at_direc
     assert node_857993.pair_local_summary["region_id"] == f"node_857993:{expected_node_857993_pair_signature}"
 
     assert node_870089.selected_evidence_state == "found"
-    assert node_870089.selected_evidence_summary["candidate_id"] == "node_870089:divstrip:4:01"
+    assert node_870089.selected_evidence_summary["candidate_id"] == "node_870089:divstrip:3:01"
     assert node_870089.selected_evidence_summary["layer"] == 2
     assert node_870089.selected_evidence_summary["node_fallback_only"] is False
     assert float(node_870089.selected_evidence_summary["reference_distance_to_origin_m"]) > 3.0
@@ -327,7 +327,7 @@ def test_real_case_73462878_keeps_pair_space_on_event_branches_only() -> None:
     assert set(event_unit.unit_envelope.boundary_branch_ids) == {left_branch_id, right_branch_id}
     assert axis_branch_id not in set(event_unit.unit_envelope.event_branch_ids)
     assert event_unit.selected_evidence_state == "found"
-    assert event_unit.selected_evidence_summary["candidate_id"] == "event_unit_01:divstrip:1:01"
+    assert event_unit.selected_evidence_summary["candidate_id"] == "event_unit_01:divstrip:0:01"
     assert event_unit.selected_evidence_summary["layer"] == 2
     _assert_selected_candidate_region_is_pair_local_container(event_unit)
     _assert_one_sided_offsets(event_unit.pair_local_summary["valid_scan_offsets_m"])

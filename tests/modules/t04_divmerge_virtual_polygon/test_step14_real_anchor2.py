@@ -53,8 +53,8 @@ def test_real_cases_760213_and_17943587_refresh_selected_evidence_outputs() -> N
         for item in case_760213.event_units
     }
     assert selected_by_unit_760213 == {
-        "node_760213": "node_760213:divstrip:3:01",
-        "node_760218": "node_760218:divstrip:3:01",
+        "node_760213": "node_760213:divstrip:2:01",
+        "node_760218": "node_760218:divstrip:2:01",
     }
 
     case_17943587 = build_case_result(load_case_bundle(case_by_id["17943587"]))
@@ -63,42 +63,42 @@ def test_real_cases_760213_and_17943587_refresh_selected_evidence_outputs() -> N
         for item in case_17943587.event_units
     }
     assert selected_by_unit_17943587 == {
-        "node_17943587": "node_17943587:divstrip:2:01",
-        "node_55353233": "node_55353233:divstrip:2:01",
-        "node_55353239": "node_55353239:divstrip:2:01",
-        "node_55353248": "node_55353248:divstrip:2:01",
+        "node_17943587": "node_17943587:divstrip:1:01",
+        "node_55353233": "node_55353233:divstrip:1:01",
+        "node_55353239": "node_55353239:divstrip:1:01",
+        "node_55353248": "node_55353248:divstrip:1:01",
     }
 
 def test_real_anchor2_primary_evidence_and_reference_freeze_after_manual_acceptance() -> None:
     expected_candidates = {
         "760213": {
-            "node_760213": "node_760213:divstrip:3:01",
-            "node_760218": "node_760218:divstrip:3:01",
+            "node_760213": "node_760213:divstrip:2:01",
+            "node_760218": "node_760218:divstrip:2:01",
         },
         "785671": {
-            "event_unit_01": "event_unit_01:divstrip:3:01",
+            "event_unit_01": "event_unit_01:divstrip:2:01",
         },
         "785675": {
-            "event_unit_01": "event_unit_01:divstrip:5:01",
+            "event_unit_01": "event_unit_01:divstrip:4:01",
         },
         "857993": {
-            "node_857993": "node_857993:divstrip:4:01",
-            "node_870089": "node_870089:divstrip:4:01",
+            "node_857993": "node_857993:divstrip:3:01",
+            "node_870089": "node_870089:divstrip:3:01",
         },
         "987998": {
-            "event_unit_01": "event_unit_01:divstrip:4:01",
+            "event_unit_01": "event_unit_01:divstrip:3:01",
         },
         "17943587": {
-            "node_17943587": "node_17943587:divstrip:2:01",
-            "node_55353233": "node_55353233:divstrip:2:01",
-            "node_55353239": "node_55353239:divstrip:2:01",
-            "node_55353248": "node_55353248:divstrip:2:01",
+            "node_17943587": "node_17943587:divstrip:1:01",
+            "node_55353233": "node_55353233:divstrip:1:01",
+            "node_55353239": "node_55353239:divstrip:1:01",
+            "node_55353248": "node_55353248:divstrip:1:01",
         },
         "30434673": {
-            "event_unit_01": "event_unit_01:divstrip:4:01",
+            "event_unit_01": "event_unit_01:divstrip:3:01",
         },
         "73462878": {
-            "event_unit_01": "event_unit_01:divstrip:1:01",
+            "event_unit_01": "event_unit_01:divstrip:0:01",
         },
     }
     missing_cases = [case_id for case_id in expected_candidates if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()]

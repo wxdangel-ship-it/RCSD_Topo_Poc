@@ -50,6 +50,10 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
     assert units["node_510222629__pair_02"]["selected_evidence_state"] == "found"
     assert units["node_510222629__pair_02"]["evidence_source"] == "road_surface_fork"
     assert units["node_510222629__pair_02"]["selected_evidence"]["candidate_scope"] == "road_surface_fork"
+    assert units["node_510222629__pair_02"]["positive_rcsd_present"] is True
+    assert units["node_510222629__pair_02"]["positive_rcsd_consistency_level"] == "B"
+    assert units["node_510222629__pair_02"]["selected_rcsdroad_ids"]
+    assert units["node_510222629__pair_02"]["selected_rcsdnode_ids"]
 
     step5_doc = json.loads(
         (run_root / "cases" / "505078921" / "step5_status.json").read_text(encoding="utf-8")

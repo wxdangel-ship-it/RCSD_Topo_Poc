@@ -413,6 +413,32 @@ def _terminal_axis_window_centerline(unit_result: T04EventUnitResult) -> LineStr
     )
 
 
+def _road_surface_fork_candidate_domain(
+    unit_result: T04EventUnitResult,
+    *,
+    drivezone_union: BaseGeometry | None,
+) -> BaseGeometry | None:
+    if str(unit_result.evidence_source or "") != "road_surface_fork":
+        return None
+    if str(unit_result.positive_rcsd_consistency_level or "") != "A":
+        return None
+    surface_domain = _clip_to_drivezone(
+        unit_result.selected_candidate_region_geometry,
+        drivezone_union,
+    )
+    if surface_domain is None or surface_domain.is_empty:
+        return None
+    reference_point = _as_point(unit_result.fact_reference_point)
+    required_node_point = _as_point(unit_result.required_rcsd_node_geometry)
+    if reference_point is None or required_node_point is None:
+        return None
+    if not surface_domain.buffer(1e-6).covers(reference_point):
+        return None
+    if not surface_domain.buffer(1e-6).covers(required_node_point):
+        return None
+    return surface_domain
+
+
 def _build_terminal_window_domain(
     unit_result: T04EventUnitResult,
     *,
@@ -426,7 +452,18 @@ def _build_terminal_window_domain(
         cap_style=2,
         join_style=2,
     )
-    return _clip_to_drivezone(window_domain, drivezone_union)
+    return _clip_to_drivezone(
+        _union_geometry(
+            [
+                window_domain,
+                _road_surface_fork_candidate_domain(
+                    unit_result,
+                    drivezone_union=drivezone_union,
+                ),
+            ]
+        ),
+        drivezone_union,
+    )
 
 
 def _build_terminal_support_corridor(
@@ -480,6 +517,12 @@ def _build_junction_full_road_fill_domain(
     *,
     drivezone_union: BaseGeometry | None,
 ) -> BaseGeometry | None:
+    surface_domain = _road_surface_fork_candidate_domain(
+        unit_result,
+        drivezone_union=drivezone_union,
+    )
+    if surface_domain is not None and not surface_domain.is_empty:
+        return surface_domain
     axis_band = _build_junction_full_road_fill_axis_band(
         unit_result,
         drivezone_union=drivezone_union,

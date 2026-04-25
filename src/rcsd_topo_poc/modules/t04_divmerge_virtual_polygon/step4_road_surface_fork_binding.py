@@ -11,6 +11,7 @@ from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResu
 
 ROAD_SURFACE_FORK_BINDING_REASON = "road_surface_fork_binding_used"
 UNBOUND_ROAD_SURFACE_FORK_REASON = "unbound_road_surface_fork_without_bifurcation_rcsd"
+STRUCTURE_ONLY_SURFACE_REASON = "road_surface_fork_structure_only_used"
 ROAD_SURFACE_FORK_SCOPE = "road_surface_fork"
 THROAT_CORE_SCOPE = "throat_core"
 RELAXED_AGGREGATED_RCSD_REASONS = {
@@ -22,6 +23,8 @@ RELAXED_PRIMARY_MAX_REPRESENTATIVE_DISTANCE_M = 20.0
 SURFACE_RECOVERY_MIN_THROAT_RATIO = 0.8
 SURFACE_RECOVERY_MAX_REFERENCE_DISTANCE_M = 10.0
 SURFACE_RECOVERY_THROAT_EXCLUSION_M = 0.0
+STRUCTURE_ONLY_SURFACE_MIN_AXIS_POSITION_M = 12.0
+STRUCTURE_ONLY_SURFACE_MIN_PAIR_MIDDLE_RATIO = 0.05
 
 
 def _dedupe(items: Iterable[Any]) -> tuple[str, ...]:
@@ -779,6 +782,7 @@ def _promote_relaxed_primary_rcsd_binding(
     bind_detail: dict[str, Any],
     *,
     allow_exact_primary_fallback: bool = False,
+    prefer_required_node: bool = False,
 ) -> tuple[T04EventUnitResult | None, dict[str, Any] | None]:
     audit = dict(entry.positive_rcsd_audit)
     aggregate = _relaxed_primary_aggregate(
@@ -789,7 +793,9 @@ def _promote_relaxed_primary_rcsd_binding(
         return None, None
 
     primary_node = str(aggregate.get("primary_node_id") or "").strip()
-    required_geometry = _point_geometry(case_result, primary_node)
+    aggregate_required_node = str(aggregate.get("required_node_id") or "").strip() or primary_node
+    bound_node = aggregate_required_node if prefer_required_node else primary_node
+    required_geometry = _point_geometry(case_result, bound_node)
     representative_geometry = getattr(event_unit.unit_context.representative_node, "geometry", None)
     if not isinstance(required_geometry, Point) or not isinstance(representative_geometry, Point):
         return None, None
@@ -810,18 +816,21 @@ def _promote_relaxed_primary_rcsd_binding(
         if support_level == "primary_support":
             support_level = "secondary_support"
     aggregate_id = str(aggregate.get("unit_id") or "").strip()
-    local_unit_id = _local_unit_id_for_node(aggregate, primary_node)
+    local_unit_id = _local_unit_id_for_node(aggregate, bound_node)
     promoted_detail = dict(bind_detail)
     promoted_detail.update(
         {
-            "action": "recovered_road_surface_fork_with_relaxed_primary_rcsd",
+            "action": str(
+                bind_detail.get("promoted_action") or "recovered_road_surface_fork_with_relaxed_primary_rcsd"
+            ),
             "relaxed_rcsd_dropped": False,
             "relaxed_primary_rcsd_promoted": True,
             "aggregated_rcsd_unit_id": aggregate_id,
-            "required_rcsd_node": primary_node,
+            "required_rcsd_node": bound_node,
             "primary_node_id": primary_node,
-            "original_required_node_id": str(aggregate.get("required_node_id") or "").strip() or None,
+            "original_required_node_id": aggregate_required_node or None,
             "required_node_source": RELAXED_PRIMARY_NODE_SOURCE,
+            "bound_node_strategy": "aggregate_required_node" if prefer_required_node else "aggregate_primary_node",
             "representative_distance_m": round(representative_distance, 3),
             "rcsd_decision_reason": decision_reason,
         }
@@ -843,7 +852,7 @@ def _promote_relaxed_primary_rcsd_binding(
             "positive_rcsd_present_reason": "road_surface_fork_relaxed_primary_rcsd_present",
             "positive_rcsd_support_level": support_level,
             "positive_rcsd_consistency_level": consistency_level,
-            "required_rcsd_node": primary_node,
+            "required_rcsd_node": bound_node,
             "required_rcsd_node_source": RELAXED_PRIMARY_NODE_SOURCE,
             "selected_rcsdroad_ids": list(selected_roads),
             "selected_rcsdnode_ids": list(selected_nodes),
@@ -868,7 +877,7 @@ def _promote_relaxed_primary_rcsd_binding(
         rcsd_consistency_result="positive_rcsd_partial_consistent",
         positive_rcsd_support_level=support_level,
         positive_rcsd_consistency_level=consistency_level,
-        required_rcsd_node=primary_node,
+        required_rcsd_node=bound_node,
         first_hit_rcsdroad_ids=first_hit,
         selected_rcsdroad_ids=selected_roads,
         selected_rcsdnode_ids=selected_nodes,
@@ -911,7 +920,7 @@ def _promote_relaxed_primary_rcsd_binding(
             "positive_rcsd_present": True,
             "positive_rcsd_present_reason": "road_surface_fork_relaxed_primary_rcsd_present",
             "required_rcsd_node_source": RELAXED_PRIMARY_NODE_SOURCE,
-            "required_rcsd_node": primary_node,
+            "required_rcsd_node": bound_node,
             "rcsd_selection_mode": RELAXED_PRIMARY_BINDING_MODE,
             "rcsd_decision_reason": decision_reason,
         }
@@ -948,15 +957,342 @@ def _promote_relaxed_primary_rcsd_binding(
         rcsd_selection_mode=RELAXED_PRIMARY_BINDING_MODE,
         positive_rcsd_support_level=support_level,
         positive_rcsd_consistency_level=consistency_level,
-        required_rcsd_node=primary_node,
+        required_rcsd_node=bound_node,
         required_rcsd_node_source=RELAXED_PRIMARY_NODE_SOURCE,
         selected_candidate_summary=dict(summary),
         selected_evidence_summary=dict(summary),
         positive_rcsd_audit=updated_audit,
         candidate_audit_entries=updated_entries,
-        post_required_rcsd_node=primary_node,
+        post_required_rcsd_node=bound_node,
     )
     return updated, promoted_detail
+
+
+def _selected_surface_entry(event_unit: T04EventUnitResult) -> T04CandidateAuditEntry | None:
+    if event_unit.selected_evidence_state == "none":
+        return None
+    if event_unit.evidence_source != "road_surface_fork":
+        return None
+    selected_id = str(
+        event_unit.selected_candidate_summary.get("candidate_id")
+        or event_unit.selected_evidence_summary.get("candidate_id")
+        or ""
+    ).strip()
+    if not selected_id:
+        return None
+    for entry in event_unit.candidate_audit_entries:
+        if entry.candidate_id == selected_id:
+            return entry
+    return None
+
+
+def _promote_selected_surface_partial_rcsd(
+    case_result: T04CaseResult,
+    event_unit: T04EventUnitResult,
+) -> tuple[T04EventUnitResult | None, dict[str, Any] | None]:
+    if event_unit.selected_evidence_state == "none":
+        return None, None
+    if event_unit.evidence_source != "road_surface_fork":
+        return None, None
+    if event_unit.required_rcsd_node:
+        return None, None
+    if not _has_partial_rcsd_signal(event_unit):
+        return None, None
+    entry = _selected_surface_entry(event_unit)
+    if entry is None:
+        return None, None
+    bind_detail = {
+        "action": "bound_selected_road_surface_fork_with_relaxed_required_rcsd",
+        "promoted_action": "bound_selected_road_surface_fork_with_relaxed_required_rcsd",
+        "candidate_id": entry.candidate_id,
+        "candidate_scope": str(entry.candidate_summary.get("candidate_scope") or ""),
+        "selected_surface_existing": True,
+        "relaxed_rcsd_dropped": False,
+    }
+    promoted, promoted_detail = _promote_relaxed_primary_rcsd_binding(
+        case_result,
+        event_unit,
+        entry,
+        bind_detail,
+        prefer_required_node=True,
+    )
+    if promoted is not None:
+        return promoted, promoted_detail
+
+    audit = dict(entry.positive_rcsd_audit)
+    aggregate = _relaxed_primary_aggregate(audit)
+    if aggregate is None:
+        return None, None
+    primary_node = str(aggregate.get("primary_node_id") or "").strip() or None
+    road_ids = _aggregate_ids(aggregate, "road_ids")
+    node_ids = _aggregate_ids(aggregate, "node_ids")
+    selected_roads = _dedupe(audit.get("published_rcsdroad_ids") or road_ids)
+    selected_nodes = _dedupe(audit.get("published_rcsdnode_ids") or node_ids)
+    first_hit = _first_hit_ids(audit)
+    support_level = str(aggregate.get("support_level") or "secondary_support")
+    consistency_level = str(aggregate.get("consistency_level") or "B")
+    decision_reason = str(aggregate.get("decision_reason") or "")
+    aggregate_id = str(aggregate.get("unit_id") or "").strip()
+    local_unit_id = _local_unit_id_for_node(aggregate, primary_node or "")
+    support_detail = dict(bind_detail)
+    support_detail.update(
+        {
+            "action": "bound_selected_road_surface_fork_partial_rcsd_support_only",
+            "partial_rcsd_support_only": True,
+            "aggregated_rcsd_unit_id": aggregate_id,
+            "primary_node_id": primary_node,
+            "required_rcsd_node": None,
+            "rcsd_decision_reason": decision_reason,
+        }
+    )
+    review_reasons = _dedupe(
+        [
+            *event_unit.all_review_reasons(),
+            "positive_rcsd_partial_consistent",
+            ROAD_SURFACE_FORK_BINDING_REASON,
+        ]
+    )
+    summary = dict(event_unit.selected_candidate_summary)
+    summary.update(
+        {
+            "review_reasons": list(review_reasons),
+            "road_surface_fork_binding": support_detail,
+            "rcsd_consistency_result": "positive_rcsd_partial_consistent",
+            "positive_rcsd_present": True,
+            "positive_rcsd_present_reason": "road_surface_fork_partial_rcsd_support_only",
+            "positive_rcsd_support_level": support_level,
+            "positive_rcsd_consistency_level": consistency_level,
+            "required_rcsd_node": None,
+            "required_rcsd_node_source": None,
+            "selected_rcsdroad_ids": list(selected_roads),
+            "selected_rcsdnode_ids": list(selected_nodes),
+            "first_hit_rcsdroad_ids": list(first_hit),
+            "local_rcsd_unit_id": local_unit_id,
+            "local_rcsd_unit_kind": "node_centric" if local_unit_id else None,
+            "aggregated_rcsd_unit_id": aggregate_id,
+            "aggregated_rcsd_unit_ids": list(
+                _dedupe(audit.get("aggregated_rcsd_unit_ids") or aggregate.get("member_unit_ids") or ())
+            ),
+            "primary_main_rc_node": primary_node,
+            "primary_main_rc_node_id": primary_node,
+            "rcsd_selection_mode": "road_surface_fork_partial_rcsd_support_only",
+            "rcsd_decision_reason": decision_reason,
+        }
+    )
+    updated_entries = _candidate_entries_with_selection(
+        event_unit.candidate_audit_entries,
+        replace(
+            entry,
+            candidate_summary=dict(summary),
+            review_state="STEP4_REVIEW",
+            review_reasons=review_reasons,
+            rcsd_consistency_result="positive_rcsd_partial_consistent",
+            positive_rcsd_support_level=support_level,
+            positive_rcsd_consistency_level=consistency_level,
+            required_rcsd_node=None,
+            first_hit_rcsdroad_ids=first_hit,
+            selected_rcsdroad_ids=selected_roads,
+            selected_rcsdnode_ids=selected_nodes,
+            primary_main_rc_node_id=primary_node,
+            local_rcsd_unit_id=local_unit_id,
+            local_rcsd_unit_kind="node_centric" if local_unit_id else None,
+            aggregated_rcsd_unit_id=aggregate_id,
+            aggregated_rcsd_unit_ids=tuple(
+                _dedupe(audit.get("aggregated_rcsd_unit_ids") or aggregate.get("member_unit_ids") or ())
+            ),
+            positive_rcsd_present=True,
+            positive_rcsd_present_reason="road_surface_fork_partial_rcsd_support_only",
+            rcsd_selection_mode="road_surface_fork_partial_rcsd_support_only",
+            required_rcsd_node_source=None,
+            pair_local_rcsd_scope_geometry=_road_geometries(case_result, event_unit.pair_local_rcsd_road_ids),
+            first_hit_rcsd_road_geometry=_road_geometries(case_result, first_hit),
+            local_rcsd_unit_geometry=_road_geometries(case_result, selected_roads),
+            positive_rcsd_geometry=_union_geometries(
+                [
+                    _road_geometries(case_result, selected_roads),
+                    _node_geometries(case_result, selected_nodes),
+                ]
+            ),
+            positive_rcsd_road_geometry=_road_geometries(case_result, selected_roads),
+            positive_rcsd_node_geometry=_node_geometries(case_result, selected_nodes),
+            primary_main_rc_node_geometry=_point_geometry(case_result, primary_node),
+            required_rcsd_node_geometry=None,
+        ),
+        summary,
+    )
+    updated_audit = dict(event_unit.positive_rcsd_audit)
+    updated_audit.pop("road_surface_fork_without_bound_target_rcsd", None)
+    updated_audit.update(
+        {
+            "road_surface_fork_binding": support_detail,
+            "road_surface_fork_partial_rcsd_support_only": support_detail,
+            "positive_rcsd_present": True,
+            "positive_rcsd_present_reason": "road_surface_fork_partial_rcsd_support_only",
+            "required_rcsd_node_source": None,
+            "required_rcsd_node": None,
+            "rcsd_selection_mode": "road_surface_fork_partial_rcsd_support_only",
+            "rcsd_decision_reason": decision_reason,
+        }
+    )
+    updated = replace(
+        event_unit,
+        review_reasons=review_reasons,
+        rcsd_consistency_result="positive_rcsd_partial_consistent",
+        pair_local_rcsd_scope_geometry=_road_geometries(case_result, event_unit.pair_local_rcsd_road_ids),
+        first_hit_rcsd_road_geometry=_road_geometries(case_result, first_hit),
+        local_rcsd_unit_geometry=_road_geometries(case_result, selected_roads),
+        positive_rcsd_geometry=_union_geometries(
+            [
+                _road_geometries(case_result, selected_roads),
+                _node_geometries(case_result, selected_nodes),
+            ]
+        ),
+        positive_rcsd_road_geometry=_road_geometries(case_result, selected_roads),
+        positive_rcsd_node_geometry=_node_geometries(case_result, selected_nodes),
+        primary_main_rc_node_geometry=_point_geometry(case_result, primary_node),
+        required_rcsd_node_geometry=None,
+        first_hit_rcsdroad_ids=first_hit,
+        selected_rcsdroad_ids=selected_roads,
+        selected_rcsdnode_ids=selected_nodes,
+        primary_main_rc_node_id=primary_node,
+        local_rcsd_unit_id=local_unit_id,
+        local_rcsd_unit_kind="node_centric" if local_unit_id else None,
+        aggregated_rcsd_unit_id=aggregate_id,
+        aggregated_rcsd_unit_ids=tuple(
+            _dedupe(audit.get("aggregated_rcsd_unit_ids") or aggregate.get("member_unit_ids") or ())
+        ),
+        positive_rcsd_present=True,
+        positive_rcsd_present_reason="road_surface_fork_partial_rcsd_support_only",
+        rcsd_selection_mode="road_surface_fork_partial_rcsd_support_only",
+        positive_rcsd_support_level=support_level,
+        positive_rcsd_consistency_level=consistency_level,
+        required_rcsd_node=None,
+        required_rcsd_node_source=None,
+        selected_candidate_summary=dict(summary),
+        selected_evidence_summary=dict(summary),
+        positive_rcsd_audit=updated_audit,
+        candidate_audit_entries=updated_entries,
+    )
+    return updated, support_detail
+
+
+def _stable_structure_only_surface_summary(summary: dict[str, Any]) -> bool:
+    if str(summary.get("candidate_scope") or "") != ROAD_SURFACE_FORK_SCOPE:
+        return False
+    if not bool(summary.get("primary_eligible")):
+        return False
+    if bool(summary.get("node_fallback_only")):
+        return False
+    axis_position = abs(_as_float(summary.get("axis_position_m")) or 0.0)
+    if axis_position < STRUCTURE_ONLY_SURFACE_MIN_AXIS_POSITION_M:
+        return False
+    throat_ratio = _as_float(summary.get("throat_overlap_ratio")) or 0.0
+    pair_middle_ratio = _as_float(summary.get("pair_middle_overlap_ratio")) or 0.0
+    return (
+        throat_ratio >= SURFACE_RECOVERY_MIN_THROAT_RATIO
+        and pair_middle_ratio >= STRUCTURE_ONLY_SURFACE_MIN_PAIR_MIDDLE_RATIO
+    )
+
+
+def _retain_structure_only_surface_candidate(
+    event_unit: T04EventUnitResult,
+) -> tuple[T04EventUnitResult | None, dict[str, Any] | None]:
+    if event_unit.selected_evidence_state == "none":
+        return None, None
+    if event_unit.evidence_source != "road_surface_fork":
+        return None, None
+    if event_unit.required_rcsd_node:
+        return None, None
+    if event_unit.positive_rcsd_present:
+        return None, None
+    if _has_partial_rcsd_signal(event_unit):
+        return None, None
+    selected_summary = dict(event_unit.selected_evidence_summary or event_unit.selected_candidate_summary or {})
+    if selected_summary.get("road_surface_fork_binding"):
+        return None, None
+    if not _stable_structure_only_surface_summary(selected_summary):
+        return None, None
+    entry = _selected_surface_entry(event_unit)
+    if entry is None:
+        return None, None
+
+    detail = {
+        "action": "kept_structure_only_road_surface_fork",
+        "reason": STRUCTURE_ONLY_SURFACE_REASON,
+        "candidate_id": entry.candidate_id,
+        "axis_position_m": _as_float(selected_summary.get("axis_position_m")),
+        "pair_middle_overlap_ratio": _as_float(selected_summary.get("pair_middle_overlap_ratio")),
+        "throat_overlap_ratio": _as_float(selected_summary.get("throat_overlap_ratio")),
+    }
+    review_reasons = _dedupe([*event_unit.all_review_reasons(), STRUCTURE_ONLY_SURFACE_REASON])
+    summary = dict(selected_summary)
+    summary.update(
+        {
+            "review_reasons": list(review_reasons),
+            "road_surface_fork_binding": detail,
+            "rcsd_consistency_result": "road_surface_fork_structure_only_no_rcsd",
+            "positive_rcsd_present": False,
+            "positive_rcsd_present_reason": "road_surface_fork_structure_only_no_rcsd",
+            "positive_rcsd_support_level": "no_support",
+            "positive_rcsd_consistency_level": "C",
+            "required_rcsd_node": None,
+            "required_rcsd_node_source": None,
+            "rcsd_selection_mode": "road_surface_fork_structure_only_no_rcsd",
+            "rcsd_decision_reason": "road_surface_fork_structure_only_no_rcsd",
+            "decision_reason": STRUCTURE_ONLY_SURFACE_REASON,
+            "selection_status": "selected",
+        }
+    )
+    updated_entries = _candidate_entries_with_selection(
+        event_unit.candidate_audit_entries,
+        replace(
+            entry,
+            candidate_summary=dict(summary),
+            review_state="STEP4_REVIEW",
+            review_reasons=review_reasons,
+            rcsd_consistency_result="road_surface_fork_structure_only_no_rcsd",
+            positive_rcsd_support_level="no_support",
+            positive_rcsd_consistency_level="C",
+            required_rcsd_node=None,
+            positive_rcsd_present=False,
+            positive_rcsd_present_reason="road_surface_fork_structure_only_no_rcsd",
+            rcsd_selection_mode="road_surface_fork_structure_only_no_rcsd",
+            required_rcsd_node_source=None,
+        ),
+        summary,
+    )
+    updated_audit = dict(event_unit.positive_rcsd_audit)
+    updated_audit.update(
+        {
+            "road_surface_fork_binding": detail,
+            "road_surface_fork_structure_only_no_rcsd": True,
+            "positive_rcsd_present": False,
+            "positive_rcsd_present_reason": "road_surface_fork_structure_only_no_rcsd",
+            "rcsd_selection_mode": "road_surface_fork_structure_only_no_rcsd",
+            "rcsd_decision_reason": "road_surface_fork_structure_only_no_rcsd",
+        }
+    )
+    updated = replace(
+        event_unit,
+        review_state="STEP4_REVIEW",
+        review_reasons=review_reasons,
+        rcsd_consistency_result="road_surface_fork_structure_only_no_rcsd",
+        positive_rcsd_present=False,
+        positive_rcsd_present_reason="road_surface_fork_structure_only_no_rcsd",
+        rcsd_selection_mode="road_surface_fork_structure_only_no_rcsd",
+        positive_rcsd_support_level="no_support",
+        positive_rcsd_consistency_level="C",
+        required_rcsd_node=None,
+        required_rcsd_node_source=None,
+        selected_candidate_summary=dict(summary),
+        selected_evidence_summary=dict(summary),
+        positive_rcsd_audit=updated_audit,
+        candidate_audit_entries=updated_entries,
+        conflict_resolution_action="road_surface_fork_binding",
+        post_resolution_candidate_id=entry.candidate_id,
+        resolution_reason=STRUCTURE_ONLY_SURFACE_REASON,
+    )
+    return updated, detail
 
 
 def _clear_unbound_surface_candidate(
@@ -1105,7 +1441,11 @@ def apply_road_surface_fork_binding(
             record = _base_record(current_case, event_unit)
             replacement, detail = _bind_strong_rcsd_to_surface(current_case, event_unit)
             if replacement is None:
+                replacement, detail = _promote_selected_surface_partial_rcsd(current_case, event_unit)
+            if replacement is None:
                 replacement, detail = _recover_surface_from_candidate(current_case, event_unit)
+            if replacement is None:
+                replacement, detail = _retain_structure_only_surface_candidate(event_unit)
             if replacement is None:
                 replacement, detail = _clear_unbound_surface_candidate(event_unit)
             if replacement is None:

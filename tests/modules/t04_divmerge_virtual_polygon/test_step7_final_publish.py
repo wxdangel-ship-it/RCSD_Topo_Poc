@@ -8,6 +8,33 @@ import pytest
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import *  # noqa: F401,F403
 
 
+ANCHOR2_FULL_BASELINE_20260426: dict[str, str] = {
+    "17943587": "accepted",
+    "30434673": "accepted",
+    "505078921": "accepted",
+    "698380": "accepted",
+    "698389": "accepted",
+    "699870": "accepted",
+    "706629": "accepted",
+    "723276": "accepted",
+    "724067": "accepted",
+    "724081": "accepted",
+    "73462878": "accepted",
+    "758784": "accepted",
+    "760213": "accepted",
+    "760256": "accepted",
+    "760598": "rejected",
+    "760936": "rejected",
+    "760984": "accepted",
+    "785671": "accepted",
+    "785675": "accepted",
+    "788824": "accepted",
+    "824002": "accepted",
+    "857993": "rejected",
+    "987998": "accepted",
+}
+
+
 @pytest.mark.smoke
 def test_t04_step7_batch_publishes_accepted_and_rejected_layers(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
@@ -381,11 +408,22 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
     surface_binding_by_case = {record["case_id"]: record for record in surface_binding_payload["records"]}
     assert surface_binding_by_case["724067"]["action"] == "bound_forward_rcsd_to_road_surface_fork"
     assert surface_binding_by_case["724067"]["required_rcsd_node"] == "5395137610783733"
+    reference_detail_724067 = surface_binding_by_case["724067"]["detail"]["reference_point"]
+    assert reference_detail_724067["road_surface_fork_reference_point_mode"] == "road_surface_fork_boundary_apex"
+    assert reference_detail_724067["boundary_pair_road_ids"] == ["611600880", "18386573"]
+    assert reference_detail_724067["road_surface_fork_reference_distance_m"] == pytest.approx(87.922, abs=1e-3)
+    assert reference_detail_724067["road_surface_fork_reference_sample_s_m"] == pytest.approx(87.028, abs=1e-3)
+    assert reference_detail_724067["road_surface_fork_branch_separation_m"] == pytest.approx(13.717, abs=1e-3)
+    assert reference_detail_724067["road_surface_fork_apex_midline_distance_m"] == pytest.approx(1.397, abs=1e-3)
+    assert reference_detail_724067["road_surface_fork_apex_transverse_alignment"] == pytest.approx(0.954, abs=1e-3)
+    assert reference_detail_724067["road_surface_fork_apex_segment_index"] == 61
     assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
     assert surface_binding_by_case["760598"]["post_state"] == "none"
     assert surface_binding_by_case["760598"]["required_rcsd_node"] is None
-    assert surface_binding_by_case["760984"]["skip_reason"] == "skipped_no_surface_binding_candidate"
-    assert surface_binding_by_case["788824"]["skip_reason"] == "skipped_no_surface_binding_candidate"
+    assert surface_binding_by_case["760984"]["action"] == "bound_selected_surface_to_rcsd_junction_window"
+    assert surface_binding_by_case["760984"]["required_rcsd_node"] == "5384392508834203"
+    assert surface_binding_by_case["788824"]["action"] == "bound_selected_surface_to_rcsd_junction_window"
+    assert surface_binding_by_case["788824"]["required_rcsd_node"] == "5395664851308727"
     assert reverse_by_case["724067"]["skip_reason"] == "skipped_selected_evidence_present"
     assert reverse_by_case["724067"]["post_state"] == "found"
     assert reverse_by_case["724067"]["mother_candidate_id"] is None
@@ -417,21 +455,64 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
     assert unit_status["must_cover_components"]["required_rcsd_node_patch_geometry"] is True
     assert unit_status["must_cover_components"]["junction_full_road_fill_domain"] is True
     assert unit_status["must_cover_components"]["fallback_support_strip_geometry"] is False
-    assert unit_status["junction_full_road_fill_domain"]["area_m2"] >= road_surface_fork_area * 0.95
+    assert unit_status["junction_full_road_fill_domain"]["area_m2"] < road_surface_fork_area * 0.7
+    assert unit_status["junction_full_road_fill_domain"]["area_m2"] == pytest.approx(1695.840, abs=1e-3)
     assert (
         unit_status["junction_full_road_fill_domain"]["area_m2"]
-        > unit_status["terminal_support_corridor_geometry"]["area_m2"] * 2.5
+        > unit_status["terminal_support_corridor_geometry"]["area_m2"] * 1.1
     )
 
     step6_status = json.loads((case_dir / "step6_status.json").read_text(encoding="utf-8"))
     assert step6_status["assembly_state"] == "assembled"
     assert step6_status["component_count"] == 1
     assert step6_status["hard_must_cover_ok"] is True
-    assert step6_status["final_case_polygon"]["area_m2"] >= road_surface_fork_area * 0.9
     assert (
         step6_status["final_case_polygon"]["area_m2"]
-        > unit_status["terminal_support_corridor_geometry"]["area_m2"] * 2.4
+        >= unit_status["junction_full_road_fill_domain"]["area_m2"] * 0.9
     )
+    assert step6_status["final_case_polygon"]["area_m2"] < road_surface_fork_area * 0.75
+    assert step6_status["final_case_polygon"]["area_m2"] == pytest.approx(1666.546, abs=1e-3)
+    assert (
+        step6_status["final_case_polygon"]["area_m2"]
+        > unit_status["terminal_support_corridor_geometry"]["area_m2"] * 1.1
+    )
+    geopandas = pytest.importorskip("geopandas")
+    step4_geometries = geopandas.read_file(case_dir / "step4_event_evidence.gpkg")
+    final_geometries = geopandas.read_file(case_dir / "final_case_polygon.gpkg")
+    geometry_by_role = {row.geometry_role: row.geometry for _, row in step4_geometries.iterrows()}
+    reference_point = geometry_by_role["fact_reference_point"]
+    rcsd_node_point = geometry_by_role["required_rcsd_node_geometry"]
+    throat_core_geometry = geometry_by_role["pair_local_throat_core_geometry"]
+    selected_candidate_region_geometry = geometry_by_role["selected_candidate_region_geometry"]
+    final_geometry = final_geometries.geometry.iloc[0]
+    assert reference_point.x == pytest.approx(12737746.898, abs=1e-3)
+    assert reference_point.y == pytest.approx(2586260.366, abs=1e-3)
+    assert selected_candidate_region_geometry.buffer(1e-6).covers(reference_point)
+    assert reference_point.distance(selected_candidate_region_geometry.boundary) <= 1e-6
+    assert not throat_core_geometry.buffer(1e-6).covers(reference_point)
+    assert throat_core_geometry.representative_point().distance(reference_point) > 80.0
+    axis_dx = float(rcsd_node_point.x) - float(reference_point.x)
+    axis_dy = float(rcsd_node_point.y) - float(reference_point.y)
+    axis_length = (axis_dx * axis_dx + axis_dy * axis_dy) ** 0.5
+    unit_x = axis_dx / axis_length
+    unit_y = axis_dy / axis_length
+
+    def signed_axis_range(geometry: object) -> tuple[float, float]:
+        coords = []
+        if geometry.geom_type == "Polygon":
+            coords = list(geometry.exterior.coords)
+        elif geometry.geom_type == "MultiPolygon":
+            coords = [coord for part in geometry.geoms for coord in part.exterior.coords]
+        values = [
+            ((float(x) - float(reference_point.x)) * unit_x)
+            + ((float(y) - float(reference_point.y)) * unit_y)
+            for x, y, *_ in coords
+        ]
+        return min(values), max(values)
+
+    min_axis_s, max_axis_s = signed_axis_range(final_geometry)
+    assert min_axis_s >= -22.0
+    assert max_axis_s <= axis_length + 22.0
 
     for accepted_surface_case in ("760984", "788824"):
         step4_surface = json.loads(
@@ -441,9 +522,21 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
         )
         unit_surface = step4_surface["event_units"][0]
         assert unit_surface["selected_evidence_state"] == "found"
-        assert unit_surface["evidence_source"] == "road_surface_fork"
-        assert unit_surface["positive_rcsd_consistency_level"] == "C"
-        assert "positive_rcsd_partial_consistent" in "|".join(unit_surface["review_reasons"])
+        assert unit_surface["evidence_source"] == "rcsd_junction_window"
+        assert unit_surface["required_rcsd_node"]
+        assert unit_surface["positive_rcsd_present"] is True
+        assert unit_surface["rcsd_selection_mode"] == "rcsd_junction_window"
+        assert "rcsd_junction_window_used" in "|".join(unit_surface["review_reasons"])
+
+        step5_surface = json.loads(
+            (run_root / "cases" / accepted_surface_case / "step5_status.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        unit_step5_surface = step5_surface["unit_results"][0]
+        assert unit_step5_surface["surface_fill_mode"] == "junction_window"
+        assert unit_step5_surface["junction_full_road_fill_domain"]["present"] is True
+        assert unit_step5_surface["required_rcsd_node_patch_geometry"]["present"] is True
 
     status_760936 = json.loads(
         (run_root / "cases" / "760936" / "step7_status.json").read_text(encoding="utf-8")
@@ -523,31 +616,189 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert rows_by_case["824002"]["final_state"] == "accepted"
     assert rows_by_case["760598"]["final_state"] == "rejected"
 
+    step5_824002 = json.loads(
+        (run_root / "cases" / "824002" / "step5_status.json").read_text(encoding="utf-8")
+    )
+    step6_824002 = json.loads(
+        (run_root / "cases" / "824002" / "step6_status.json").read_text(encoding="utf-8")
+    )
+    assert step5_824002["case_bridge_zone_geometry"]["present"] is True
+    assert step5_824002["case_bridge_zone_geometry"]["area_m2"] == pytest.approx(656.616, abs=1e-3)
+    assert step6_824002["assembly_state"] == "assembled"
+    assert step6_824002["component_count"] == 1
+    assert step6_824002["hole_count"] == 0
+    assert step6_824002["hard_must_cover_ok"] is True
+    assert step6_824002["final_case_polygon"]["area_m2"] == pytest.approx(2735.149, abs=1e-3)
+    assert step6_824002["final_case_polygon"]["length_m"] == pytest.approx(333.511, abs=1e-3)
+
+    geopandas = pytest.importorskip("geopandas")
+    step5_domains_824002 = geopandas.read_file(run_root / "cases" / "824002" / "step5_domains.gpkg")
+    final_824002 = geopandas.read_file(run_root / "cases" / "824002" / "final_case_polygon.gpkg").geometry.iloc[0]
+    bridge_824002 = step5_domains_824002[
+        (step5_domains_824002.event_unit_id == "")
+        & (step5_domains_824002.component_role == "case_bridge_zone_geometry")
+    ].geometry.iloc[0]
+    assert bridge_824002.intersection(final_824002).area / bridge_824002.area > 0.97
+    for unit_id in ("node_824002", "node_824003"):
+        localized_core = step5_domains_824002[
+            (step5_domains_824002.event_unit_id == unit_id)
+            & (step5_domains_824002.component_role == "localized_evidence_core_geometry")
+        ].geometry.iloc[0]
+        assert localized_core.difference(final_824002.buffer(1e-6)).area <= 1e-6
+
     surface_binding_payload = json.loads(
         (run_root / "step4_road_surface_fork_binding.json").read_text(encoding="utf-8")
     )
     surface_binding_by_case = {record["case_id"]: record for record in surface_binding_payload["records"]}
-    for case_id in ("706629", "724081"):
-        record = surface_binding_by_case[case_id]
-        assert record["action"] == "kept_structure_only_road_surface_fork"
-        assert record["post_state"] == "found"
-        assert record["positive_rcsd_consistency_level"] == "C"
+    record_706629 = surface_binding_by_case["706629"]
+    assert record_706629["action"] == "kept_swsd_junction_window_no_rcsd"
+    assert record_706629["post_state"] == "found"
+    assert record_706629["positive_rcsd_consistency_level"] == "C"
 
-        step4_status = json.loads(
+    step4_706629 = json.loads(
+        (run_root / "cases" / "706629" / "step4_event_interpretation.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    unit_706629 = step4_706629["event_units"][0]
+    assert unit_706629["selected_evidence_state"] == "found"
+    assert unit_706629["evidence_source"] == "swsd_junction_window"
+    assert unit_706629["required_rcsd_node"] is None
+    assert unit_706629["rcsd_selection_mode"] == "swsd_junction_window_no_rcsd"
+    assert "swsd_junction_window_no_rcsd_used" in set(unit_706629["review_reasons"])
+
+    step5_706629 = json.loads(
+        (run_root / "cases" / "706629" / "step5_status.json").read_text(encoding="utf-8")
+    )
+    unit_step5_706629 = step5_706629["unit_results"][0]
+    assert step5_706629["case_bridge_zone_geometry"]["present"] is False
+    assert step5_706629["case_terminal_window_domain"]["present"] is False
+    assert unit_step5_706629["surface_fill_mode"] == "junction_window"
+    assert unit_step5_706629["single_component_surface_seed"] is False
+    assert unit_step5_706629["junction_full_road_fill_domain"]["present"] is True
+    assert unit_step5_706629["required_rcsd_node_patch_geometry"]["present"] is False
+
+    step6_706629 = json.loads(
+        (run_root / "cases" / "706629" / "step6_status.json").read_text(encoding="utf-8")
+    )
+    assert step6_706629["assembly_state"] == "assembled"
+    assert step6_706629["component_count"] == 1
+    assert step6_706629["hole_count"] == 0
+    assert step6_706629["final_case_polygon"]["area_m2"] == pytest.approx(552.368, abs=1e-3)
+
+    record_724081 = surface_binding_by_case["724081"]
+    assert record_724081["action"] == "kept_structure_only_road_surface_fork"
+    assert record_724081["post_state"] == "found"
+    assert record_724081["positive_rcsd_consistency_level"] == "C"
+
+    step4_724081 = json.loads(
+        (run_root / "cases" / "724081" / "step4_event_interpretation.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    unit_724081 = step4_724081["event_units"][0]
+    assert unit_724081["selected_evidence_state"] == "found"
+    assert unit_724081["evidence_source"] == "road_surface_fork"
+    assert unit_724081["required_rcsd_node"] is None
+    assert unit_724081["rcsd_selection_mode"] == "road_surface_fork_structure_only_no_rcsd"
+    assert "road_surface_fork_structure_only_used" in set(unit_724081["review_reasons"])
+
+    step5_724081 = json.loads(
+        (run_root / "cases" / "724081" / "step5_status.json").read_text(encoding="utf-8")
+    )
+    unit_step5_724081 = step5_724081["unit_results"][0]
+    assert step5_724081["case_bridge_zone_geometry"]["present"] is False
+    assert step5_724081["case_terminal_window_domain"]["present"] is False
+    assert unit_step5_724081["surface_fill_mode"] == "standard"
+    assert unit_step5_724081["single_component_surface_seed"] is True
+    assert unit_step5_724081["junction_full_road_fill_domain"]["present"] is False
+    assert unit_step5_724081["required_rcsd_node_patch_geometry"]["present"] is False
+
+    step6_724081 = json.loads(
+        (run_root / "cases" / "724081" / "step6_status.json").read_text(encoding="utf-8")
+    )
+    assert step6_724081["assembly_state"] == "assembled"
+    assert step6_724081["component_count"] == 1
+    assert step6_724081["hole_count"] == 0
+    assert step5_724081["case_must_cover_domain"]["area_m2"] == pytest.approx(116.738, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(353.828, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(87.868, abs=1e-3)
+
+    assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
+
+
+@pytest.mark.smoke
+def test_anchor2_full_20260426_baseline_gate(tmp_path: Path) -> None:
+    missing_cases = [
+        case_id
+        for case_id in ANCHOR2_FULL_BASELINE_20260426
+        if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
+    ]
+    if missing_cases:
+        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=list(ANCHOR2_FULL_BASELINE_20260426),
+        out_root=tmp_path / "anchor2_full_20260426_baseline",
+        run_id="anchor2_full_20260426_baseline",
+    )
+
+    summary_payload = json.loads(
+        (run_root / "divmerge_virtual_anchor_surface_summary.json").read_text(encoding="utf-8")
+    )
+    rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
+    states_by_case = {case_id: row["final_state"] for case_id, row in rows_by_case.items()}
+
+    assert summary_payload["row_count"] == 23
+    assert summary_payload["accepted_count"] == 20
+    assert summary_payload["rejected_count"] == 3
+    assert states_by_case == ANCHOR2_FULL_BASELINE_20260426
+    assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
+    assert rows_by_case["857993"]["publish_target"] == "rejected_index"
+
+    step4_505078921 = json.loads(
+        (run_root / "cases" / "505078921" / "step4_event_interpretation.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    units_505078921 = {unit["event_unit_id"]: unit for unit in step4_505078921["event_units"]}
+    assert units_505078921["node_505078921"]["required_rcsd_node"] == "5385438602535104"
+    assert units_505078921["node_510222629"]["required_rcsd_node"] == "5385438602535122"
+    assert units_505078921["node_510222629__pair_02"]["evidence_source"] == "road_surface_fork"
+    assert units_505078921["node_510222629__pair_02"]["required_rcsd_node"] is None
+    assert (
+        units_505078921["node_510222629__pair_02"]["rcsd_selection_mode"]
+        == "road_surface_fork_partial_rcsd_support_only"
+    )
+
+    step7_505078921 = json.loads(
+        (run_root / "cases" / "505078921" / "step7_status.json").read_text(encoding="utf-8")
+    )
+    assert step7_505078921["final_state"] == "accepted"
+
+    step6_505078921 = json.loads(
+        (run_root / "cases" / "505078921" / "step6_status.json").read_text(encoding="utf-8")
+    )
+    assert step6_505078921["component_count"] == 1
+    assert step6_505078921["hole_count"] == 0
+
+    step4_706629 = json.loads(
+        (run_root / "cases" / "706629" / "step4_event_interpretation.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert step4_706629["event_units"][0]["evidence_source"] == "swsd_junction_window"
+
+    for case_id, expected_node in {
+        "760984": "5384392508834203",
+        "788824": "5395664851308727",
+    }.items():
+        step4_doc = json.loads(
             (run_root / "cases" / case_id / "step4_event_interpretation.json").read_text(
                 encoding="utf-8"
             )
         )
-        unit = step4_status["event_units"][0]
-        assert unit["selected_evidence_state"] == "found"
-        assert unit["evidence_source"] == "road_surface_fork"
-        assert unit["rcsd_selection_mode"] == "road_surface_fork_structure_only_no_rcsd"
-        assert "road_surface_fork_structure_only_used" in set(unit["review_reasons"])
-
-        step6_status = json.loads(
-            (run_root / "cases" / case_id / "step6_status.json").read_text(encoding="utf-8")
-        )
-        assert step6_status["assembly_state"] == "assembled"
-        assert step6_status["component_count"] == 1
-
-    assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
+        unit = step4_doc["event_units"][0]
+        assert unit["evidence_source"] == "rcsd_junction_window"
+        assert unit["required_rcsd_node"] == expected_node

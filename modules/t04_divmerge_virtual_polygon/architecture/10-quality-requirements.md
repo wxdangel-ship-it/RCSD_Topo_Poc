@@ -181,14 +181,31 @@ Step4 final tuning 额外质量门槛：
   - `positive_rcsd_support_level = primary_support`
   - `positive_rcsd_consistency_level = A`
 
-Step7 当前最终发布冻结门槛：
+Step7 legacy selected-case 发布冻结门槛：
 
-- Anchor_2 当前最终业务基线为 `accepted = 7 / rejected = 1`。
+- Anchor_2 legacy selected-case 业务基线为 `accepted = 7 / rejected = 1`。
 - `857993` 的最终 `rejected` 是人工目视审计确认后的正确结论，不得在治理回归中改成追求 `accepted` 的目标。
 - `760598` 在当前数据输入条件下无法正确找到对应数据；该 case 当前接受 `rejected`，并归类为数据输入限制样本，不作为本轮算法继续追修对象。
 - 最终发布状态只允许 `accepted / rejected`；Step4 的 `STEP4_REVIEW` 仅保留为内部审计提示，不得作为最终第三态。
 - `17943587` 允许在不改主证据、不断 support 的前提下，通过 second-pass claim reconcile 改写 `required_rcsd_node`；若发生该类变化，必须显式产出 pre/post compare，不允许 silent drift。
 - same-case non-conflict unit 进入 second-pass 后只能 `kept`，不得被误判成 hard conflict 或 baseline guard 降级。
+
+### Anchor_2 full baseline gate（2026-04-26）
+
+- 基线输入集：`/mnt/e/TestData/POC_Data/T02/Anchor_2`
+- 当前人工审计参考 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_anchor2_full_requested/anchor2_full_all_20260426_junction_window_guard`
+- 当前全量冻结结果：`row_count = 23`，`accepted = 20`，`rejected = 3`。
+- 冻结测试入口：`tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_full_20260426_baseline_gate`
+- 当前全量 final_state：
+  - accepted：`17943587`、`30434673`、`505078921`、`698380`、`698389`、`699870`、`706629`、`723276`、`724067`、`724081`、`73462878`、`758784`、`760213`、`760256`、`760984`、`785671`、`785675`、`788824`、`824002`、`987998`
+  - rejected：`760598`、`760936`、`857993`
+- `505078921` 当前作为 complex multi-unit 防回退重点样本：
+  - `node_505078921` 必须保持 `required_rcsd_node = 5385438602535104`
+  - `node_510222629` 必须保持 `required_rcsd_node = 5385438602535122`
+  - `node_510222629__pair_02` 必须保持 `evidence_source = road_surface_fork`，不得被 `rcsd_junction_window` 抢占为独立 RCSD window。
+- `706629` 当前锁定为 `swsd_junction_window`：无主证据、无正向 RCSD 时，以 SWSD 路口前后 `20m` 构面。
+- `760984 / 788824` 当前锁定为 `rcsd_junction_window`：无主证据、但可召回正向 RCSD 时，以 RCSDNode 前后 `20m` 构面。
+- `760598 / 760936 / 857993` 当前保持 `rejected`；后续不得为了提高 accepted count 静默放宽 Step7 门禁。
 
 ### RCSD-anchored reverse 定向回归（2026-04-24）
 

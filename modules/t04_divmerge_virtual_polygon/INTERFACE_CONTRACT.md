@@ -325,6 +325,15 @@
   - `rcsd_anchored_reverse`
 - `rcsd_anchored_reverse` 成功写回时，`position_source` 允许取值：
   - `rcsd_anchored_axis_projection`
+- 当 SWSD 路口无法召回真实主证据（导流带或可解释道路面分叉），且无法召回可发布 RCSD 路口时，Step4 可写回保守 window 证据：
+  - `evidence_source = swsd_junction_window`
+  - `position_source = swsd_junction_window_axis_projection`
+  - Step5 必须按 SWSD reference / event axis 前后各 `20m` 构造 `junction_window`，不得继续用弱结构面候选扩张整块道路面。
+- 当 SWSD 路口无法召回真实主证据，但已在正向或反向审计中召回可发布 RCSD 路口时，Step4 可写回 RCSD window 证据：
+  - `evidence_source = rcsd_junction_window`
+  - `position_source = rcsd_junction_window_axis_projection`
+  - `required_rcsd_node`、`selected_rcsdroad_ids`、`selected_rcsdnode_ids` 必须同步到发布层。
+  - Step5 必须按 RCSD anchor / RCSD axis 前后各 `20m` 构造 `junction_window`。
 - 若 RCSD anchor 样本数 `< 3`，必须跳过并记录 `skipped_insufficient_rcsd_samples`；若 executable axis 缺失，必须记录 `skipped_missing_axis_branch`。
 - `rcsd_anchored_reverse` 不得抢占 same-case / cross-case 已有 RCSD claim 或 evidence ownership；命中同 case 冲突时记录 `skipped_same_case_rcsd_claim_conflict` 或 `skipped_same_case_evidence_conflict`，batch / full-input 模式下还必须进行 `post_reverse_conflict_recheck`。
 - `structure:middle:01` 不再是 Step4 正式主证据候选；若实现内部仍保留类似中间带几何，只能作为 `selected_candidate_region` 的容器 / 辅助语义，不得直接作为 `selected_evidence`。

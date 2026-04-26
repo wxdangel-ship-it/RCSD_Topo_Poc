@@ -23,7 +23,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_shared import L
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import ParsedNode, ParsedRoad
 
 from ._runtime_step4_geometry_core import *
-from ._runtime_step4_geometry_reference import *
+from ._runtime_step4_geometry_base import *
 from ._runtime_step2_local_context import _validate_drivezone_containment
 from ._runtime_step3_topology_skeleton import _build_stage4_road_branches_for_member_nodes
 from ._runtime_step4_surface import _resolve_centerline_from_road_ids

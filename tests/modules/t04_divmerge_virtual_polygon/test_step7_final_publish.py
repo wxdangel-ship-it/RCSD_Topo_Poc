@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import struct
+import zlib
 from pathlib import Path
 
 import pytest
 
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import *  # noqa: F401,F403
 
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 ANCHOR2_FULL_BASELINE_20260426: dict[str, str] = {
     "17943587": "accepted",
@@ -33,6 +38,167 @@ ANCHOR2_FULL_BASELINE_20260426: dict[str, str] = {
     "857993": "rejected",
     "987998": "accepted",
 }
+
+ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426: dict[str, dict[str, object]] = {
+    "17943587": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "097768b3773369d094094ee6799977ca036d1fb3f876f3bd2639ff0e66030080",
+    },
+    "30434673": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "1b0d73e8d84ac35723ce8d35511a9bc52e9c7e35ddab4e80b8e038c80331c03c",
+    },
+    "505078921": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "e882f788b0779f6b1c4261bd0e6b2be4d4974c0dab2ac14792fe05783fe28b00",
+    },
+    "698380": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "e96ff65515f999859a29fdb4d9792b0a8da88314f3de192d31ee23aea1145b5c",
+    },
+    "698389": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "5bacc900b066fb385de3ef93229b88a22712fe6e4a4119f8922c572dc688bf35",
+    },
+    "699870": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "c871c336d9a3e93b3912a94ee458dee7a534840d3ade1223eb5f47bb4245d2df",
+    },
+    "706629": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "42cbecefa9d37191cb5d69b0a1ca9b204647053ed08a9667061fa2700de6ee9b",
+    },
+    "723276": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "c2a2cb34ec55a8bde0300f05a03d811c227a90fbfa7ae9cbb5bd9aee681be003",
+    },
+    "724067": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "636ab2be1d189d25bb8d3f84fc006653215f683e34d948a2d0c6fdac41d3d8a9",
+    },
+    "724081": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "01d4168a7a1079b1c497b86d6c47a6a0e4654e00f48d3ac06c253419dd87234e",
+    },
+    "73462878": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "dc6ac748d4f67643772dadc4f27cba1d5ccaef662c1780ea2a961f86aa04ee99",
+    },
+    "758784": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "7181aef5f5b5ccbb8a5b11a5ebb0bdb09fb0a569300c4b4b4e92c7fed74bf0e6",
+    },
+    "760213": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "b58ccd0162347882e7cb95d5cfd1957d520ef8b119eacd60f893ce967aa7161b",
+    },
+    "760256": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "88e52b22974fade61645d9fddbe6048e3eb15a276d683ff1c13e4c831cf0c10b",
+    },
+    "760598": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "9c42feecad96479bc915554cdcfc66fa3f1ded65b8c9dc4061e96f78c13baa99",
+    },
+    "760936": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "68d492ce9aa6fdd8f1df64419cb267d3925f6a9bf922a435d291f2212971a953",
+    },
+    "760984": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "4a169b8d5b43d1e0f469f9f7d104365858254b5e29ed97076a477044338bdac8",
+    },
+    "785671": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "c465d9318bd5509dde2ce84c3ea9941444f90f6d262d02fd02707d5befff8964",
+    },
+    "785675": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "baca9612ae99e8f775ae0d7c621df75c088f48c40d360d93a8d809be744b8c9f",
+    },
+    "788824": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "18fa73d4e41d13f10dcf096a320346baee3a69773534558ea06f13d1fc7bcdb7",
+    },
+    "824002": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "6a88dd10be0cc23d2c20e2de4e677203539e5e299f51ff951bebce3c4ef065a4",
+    },
+    "857993": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "d0ab02fd5c77cb32fee5a0810c8320dcf31a7cecab4e107470539b8c27385240",
+    },
+    "987998": {
+        "width": 1720,
+        "height": 1040,
+        "raw_scanline_sha256": "bbb870ab2ffccecf98f36c411acd41640f24f818e0425f5d7d0bc785e8f3fd56",
+    },
+}
+
+
+def _load_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _assert_provenance(doc: dict, *, input_dataset_id_prefix: str) -> None:
+    assert doc["produced_at"]
+    assert doc["git_sha"]
+    assert str(doc["input_dataset_id"]).startswith(input_dataset_id_prefix)
+
+
+def _final_review_png_fingerprint(path: Path) -> dict[str, object]:
+    data = path.read_bytes()
+    assert data.startswith(PNG_SIGNATURE)
+    offset = len(PNG_SIGNATURE)
+    width: int | None = None
+    height: int | None = None
+    idat_chunks: list[bytes] = []
+    while offset < len(data):
+        chunk_length = struct.unpack(">I", data[offset : offset + 4])[0]
+        chunk_type = data[offset + 4 : offset + 8]
+        payload_start = offset + 8
+        payload_end = payload_start + chunk_length
+        payload = data[payload_start:payload_end]
+        offset = payload_end + 4
+        if chunk_type == b"IHDR":
+            width, height = struct.unpack(">II", payload[:8])
+        elif chunk_type == b"IDAT":
+            idat_chunks.append(payload)
+        elif chunk_type == b"IEND":
+            break
+    assert width is not None
+    assert height is not None
+    raw_scanlines = zlib.decompress(b"".join(idat_chunks))
+    digest = hashlib.sha256()
+    digest.update(f"{width}x{height}\n".encode("ascii"))
+    digest.update(raw_scanlines)
+    return {
+        "width": width,
+        "height": height,
+        "raw_scanline_sha256": digest.hexdigest(),
+    }
 
 
 @pytest.mark.smoke
@@ -747,15 +913,88 @@ def test_anchor2_full_20260426_baseline_gate(tmp_path: Path) -> None:
     summary_payload = json.loads(
         (run_root / "divmerge_virtual_anchor_surface_summary.json").read_text(encoding="utf-8")
     )
+    batch_summary = _load_json(run_root / "summary.json")
+    preflight = _load_json(run_root / "preflight.json")
+    consistency_payload = _load_json(run_root / "step7_consistency_report.json")
+    rejected_index_payload = _load_json(run_root / "step7_rejected_index.json")
     rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
     states_by_case = {case_id: row["final_state"] for case_id, row in rows_by_case.items()}
+    rejected_case_ids = {
+        case_id
+        for case_id, final_state in ANCHOR2_FULL_BASELINE_20260426.items()
+        if final_state == "rejected"
+    }
 
+    _assert_provenance(preflight, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(batch_summary, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(summary_payload, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(consistency_payload, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(rejected_index_payload, input_dataset_id_prefix="case-package-stat-sha256:")
+    assert batch_summary["failed_case_ids"] == []
+    assert batch_summary["step7_accepted_count"] == 20
+    assert batch_summary["step7_rejected_count"] == 3
     assert summary_payload["row_count"] == 23
     assert summary_payload["accepted_count"] == 20
     assert summary_payload["rejected_count"] == 3
     assert states_by_case == ANCHOR2_FULL_BASELINE_20260426
     assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
     assert rows_by_case["857993"]["publish_target"] == "rejected_index"
+    assert rows_by_case["857993"]["final_state"] == "rejected"
+    assert rows_by_case["699870"]["final_state"] == "accepted"
+
+    assert consistency_payload["passed"] is True
+    assert consistency_payload["total_case_count"] == 23
+    assert consistency_payload["accepted_count"] == 20
+    assert consistency_payload["rejected_count"] == 3
+    assert consistency_payload["accepted_layer_feature_count"] == 20
+    assert consistency_payload["rejected_layer_feature_count"] == 3
+    assert consistency_payload["audit_layer_feature_count"] == 23
+    assert consistency_payload["summary_row_count"] == 23
+    assert consistency_payload["rejected_index_row_count"] == 3
+    assert consistency_payload["review_png_present_count"] == 23
+    assert consistency_payload["missing_review_png_case_ids"] == []
+    assert consistency_payload["missing_reject_stub_case_ids"] == []
+    assert consistency_payload["missing_reject_index_case_ids"] == []
+    assert consistency_payload["missing_step7_status_case_ids"] == []
+    assert consistency_payload["missing_step7_audit_case_ids"] == []
+
+    assert rejected_index_payload["row_count"] == 3
+    assert {row["case_id"] for row in rejected_index_payload["rows"]} == rejected_case_ids
+
+    for case_id, expected_fingerprint in ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426.items():
+        png_path = Path(rows_by_case[case_id]["review_png_path"])
+        assert png_path.is_file()
+        assert _final_review_png_fingerprint(png_path) == expected_fingerprint
+
+    for case_id, expected_state in ANCHOR2_FULL_BASELINE_20260426.items():
+        case_dir = run_root / "cases" / case_id
+        for filename in [
+            "case_meta.json",
+            "step1_status.json",
+            "step3_status.json",
+            "step3_audit.json",
+            "step4_event_interpretation.json",
+            "step4_audit.json",
+            "step5_status.json",
+            "step5_audit.json",
+            "step6_status.json",
+            "step6_audit.json",
+            "step7_status.json",
+            "step7_audit.json",
+        ]:
+            _assert_provenance(
+                _load_json(case_dir / filename),
+                input_dataset_id_prefix="case-input-stat-sha256:",
+            )
+        step7_status = _load_json(case_dir / "step7_status.json")
+        assert step7_status["final_state"] == expected_state
+        assert step7_status["final_state"] in {"accepted", "rejected"}
+        assert Path(rows_by_case[case_id]["audit_path"]).is_file()
+        if expected_state == "rejected":
+            _assert_provenance(
+                _load_json(case_dir / "reject_index.json"),
+                input_dataset_id_prefix="case-input-stat-sha256:",
+            )
 
     step4_505078921 = json.loads(
         (run_root / "cases" / "505078921" / "step4_event_interpretation.json").read_text(

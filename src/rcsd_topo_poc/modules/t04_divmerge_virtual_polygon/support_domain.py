@@ -425,7 +425,7 @@ def _road_surface_fork_candidate_domain(
     *,
     drivezone_union: BaseGeometry | None,
 ) -> BaseGeometry | None:
-    if str(unit_result.evidence_source or "") != "road_surface_fork":
+    if str(getattr(unit_result, "evidence_source", "") or "") != "road_surface_fork":
         return None
     if str(unit_result.positive_rcsd_consistency_level or "") != "A":
         return None

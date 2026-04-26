@@ -12,6 +12,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
 
 from .case_models import T04CaseResult, T04ReviewIndexRow
+from .provenance import case_input_fingerprint, provenance_doc
 from .review_audit import build_case_review_audit
 from .review_render import (
     render_case_final_review_png,
@@ -28,6 +29,10 @@ from .final_publish import (
     write_step7_case_outputs,
 )
 from .topology import build_step3_status_doc, build_unit_step3_status_doc
+
+
+def _with_provenance(payload: dict, provenance: dict) -> dict:
+    return {**payload, **provenance}
 
 
 REVIEW_INDEX_FIELDNAMES = [
@@ -162,6 +167,9 @@ def write_case_outputs(
 ) -> tuple[list[T04ReviewIndexRow], T04Step7CaseArtifact]:
     case_dir = run_root / "cases" / case_result.case_spec.case_id
     case_dir.mkdir(parents=True, exist_ok=True)
+    case_provenance = provenance_doc(
+        input_dataset_id=case_input_fingerprint(case_result.case_spec.input_paths)
+    )
     step5_result = build_step5_support_domain(case_result)
     step6_result = build_step6_polygon_assembly(case_result, step5_result)
     step7_artifact = build_step7_case_artifact(
@@ -172,44 +180,59 @@ def write_case_outputs(
         step6_result=step6_result,
     )
 
-    write_json(case_dir / "step1_status.json", case_result.admission.to_status_doc())
+    write_json(
+        case_dir / "step1_status.json",
+        _with_provenance(case_result.admission.to_status_doc(), case_provenance),
+    )
     write_json(case_dir / "case_meta.json", case_result.to_case_meta_doc())
     write_json(
         case_dir / "step3_status.json",
-        build_step3_status_doc(
-            admission=case_result.base_context.admission,
-            topology_skeleton=case_result.base_context.topology_skeleton,
+        _with_provenance(
+            build_step3_status_doc(
+                admission=case_result.base_context.admission,
+                topology_skeleton=case_result.base_context.topology_skeleton,
+            ),
+            case_provenance,
         ),
     )
     write_json(
         case_dir / "step3_audit.json",
-        {
-            "step2_local_context": case_result.base_context.local_context.to_audit_summary(),
-            "step3_topology_skeleton": case_result.base_context.topology_skeleton.to_audit_summary(),
-        },
+        _with_provenance(
+            {
+                "step2_local_context": case_result.base_context.local_context.to_audit_summary(),
+                "step3_topology_skeleton": case_result.base_context.topology_skeleton.to_audit_summary(),
+            },
+            case_provenance,
+        ),
     )
     write_json(
         case_dir / "step4_event_interpretation.json",
-        {
-            "case_id": case_result.case_spec.case_id,
-            "case_review_state": case_result.case_review_state,
-            "case_review_reasons": list(case_result.case_review_reasons),
-            "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
-        },
+        _with_provenance(
+            {
+                "case_id": case_result.case_spec.case_id,
+                "case_review_state": case_result.case_review_state,
+                "case_review_reasons": list(case_result.case_review_reasons),
+                "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
+            },
+            case_provenance,
+        ),
     )
     write_json(
         case_dir / "step4_audit.json",
-        {
-            "case_id": case_result.case_spec.case_id,
-            "step4_review_state": case_result.case_review_state,
-            "step4_review_reasons": list(case_result.case_review_reasons),
-            "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
-        },
+        _with_provenance(
+            {
+                "case_id": case_result.case_spec.case_id,
+                "step4_review_state": case_result.case_review_state,
+                "step4_review_reasons": list(case_result.case_review_reasons),
+                "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
+            },
+            case_provenance,
+        ),
     )
-    write_json(case_dir / "step5_status.json", step5_result.to_status_doc())
-    write_json(case_dir / "step5_audit.json", step5_result.to_audit_doc())
-    write_json(case_dir / "step6_status.json", step6_result.to_status_doc())
-    write_json(case_dir / "step6_audit.json", step6_result.to_audit_doc())
+    write_json(case_dir / "step5_status.json", _with_provenance(step5_result.to_status_doc(), case_provenance))
+    write_json(case_dir / "step5_audit.json", _with_provenance(step5_result.to_audit_doc(), case_provenance))
+    write_json(case_dir / "step6_status.json", _with_provenance(step6_result.to_status_doc(), case_provenance))
+    write_json(case_dir / "step6_audit.json", _with_provenance(step6_result.to_audit_doc(), case_provenance))
     write_vector(case_dir / "step4_event_evidence.gpkg", _geometry_features_for_case(case_result))
     write_vector(case_dir / "step5_domains.gpkg", step5_result.to_vector_features())
     if step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty:
@@ -238,7 +261,7 @@ def write_case_outputs(
         reject_reasons=step7_artifact.reject_reasons,
         publish_target=step7_artifact.publish_target,
     )
-    write_step7_case_outputs(case_dir=case_dir, artifact=step7_artifact)
+    write_step7_case_outputs(case_dir=case_dir, artifact=step7_artifact, provenance=case_provenance)
 
     rows: list[T04ReviewIndexRow] = []
     for event_unit in case_result.event_units:
@@ -597,15 +620,21 @@ def write_summary(
     preflight: dict,
     failed_case_ids: list[str],
     rerun_cleaned_before_write: bool,
+    failed_cases: list[dict[str, Any]] | None = None,
     step7_outputs: dict[str, Any] | None = None,
 ) -> Path:
     cases_dir = run_root / "cases"
+    summary_trace = provenance_doc(input_dataset_id=str(preflight.get("input_dataset_id") or ""))
     summary = {
+        **summary_trace,
+        "git_sha": preflight.get("git_sha") or summary_trace["git_sha"],
+        "input_dataset_id": preflight.get("input_dataset_id") or summary_trace["input_dataset_id"],
         "total_case_count": len({row.case_id for row in rows}),
         "total_event_unit_count": len(rows),
         "selected_case_count": preflight.get("selected_case_count"),
         "selected_case_ids": preflight.get("selected_case_ids", []),
         "failed_case_ids": failed_case_ids,
+        "failed_cases": [] if failed_cases is None else failed_cases,
         "rerun_cleaned_before_write": rerun_cleaned_before_write,
         "run_root": str(run_root),
         "cases_dir": str(cases_dir),

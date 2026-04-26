@@ -8,6 +8,7 @@ from typing import Any
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import TARGET_CRS, write_json
 
 from .full_input_observability import now_text
+from .provenance import input_paths_fingerprint, provenance_doc
 from .full_input_shared_layers import T04SharedFullInputLayers
 
 
@@ -61,6 +62,7 @@ def build_preflight_doc(
     retry_failed_requested: bool,
 ) -> dict[str, Any]:
     return {
+        **provenance_doc(input_dataset_id=input_paths_fingerprint(input_paths)),
         "generated_at": now_text(),
         "python_executable": sys.executable,
         "python_version": sys.version.split()[0],

@@ -27,13 +27,55 @@
     - case-level reselection
     - ownership guard
   - 主文件保留：
-    - prepared input 物化
+    - unit preparation 调用
     - candidate pool 生成
-    - T02 Step4 桥接
     - `build_case_result`
+  - `_event_interpretation_unit_preparation`
+    - unit population / context augmentation / boundary pair materialization
+    - pair-local scan、scope filtering 与 `_PreparedUnitInputs` 物化
+- `runtime_support`
+  - `_runtime_shared`
+    - CRS / geometry feature / local data helper
+  - `_runtime_types_io`
+    - runtime data object、GeoJSON/GPKG IO 与 review-side raster helper
+  - `_runtime_step23_contracts`
+    - Step2 / Step3 runtime contract
+  - `_runtime_step2_local_context`
+    - patch-scoped local context implementation
+  - `_runtime_step3_topology_skeleton`
+    - case coordination skeleton 与 unit-level executable skeleton implementation
+  - `_runtime_step4_contracts`
+    - Step4 runtime contract / adapter objects
+  - `_runtime_step4_geometry_core`
+    - Step4 geometry constants、pair-local geometry helper 与 reference selection primitive
+  - `_runtime_step4_geometry_base`
+    - Step4 geometry base helper，原 `reference` 命名已在 Round 2 收口
+  - `_runtime_step4_kernel`
+    - T04 Step4 kernel facade
+  - `_runtime_step4_kernel_base`
+    - 当前 active kernel base，不是死代码或 reference sample
+  - `_runtime_step4_surface`
+    - road surface / structure-face helper
+  - `_runtime_polygon_cleanup`
+    - polygon cleanup helper
+- `step4_postprocess`
+  - `step4_final_conflict_resolver`
+    - same-case evidence、same-case RCSD claim、cross-case inventory / cleanup、final consistency
+  - `step4_road_surface_fork_binding`
+    - road-surface fork 主证据绑定、SWSD/RCSD junction window、structure-only fallback
+  - `step4_road_surface_fork_geometry`
+    - road-surface fork reference point、apex、surface geometry 与基础几何 helper
+  - `step4_road_surface_fork_rcsd`
+    - aggregated RCSD、relaxed primary binding 与 same-case RCSD claim helper
+  - `step4_rcsd_anchored_reverse`
+    - RCSD anchored reverse lookup、terminal continuation expansion、post reverse conflict recheck
+  - 该层不重开 Step4 主规则，只做冻结语义内的后处理与审计补全
 - `review_render`
   - overview PNG
   - event-unit PNG
+- `review_audit`
+  - case / unit review signal aggregation
+  - focus reason 与 conflict signal 汇总
 - `support_domain`
   - Unit / Case 两级 `must_cover / allowed_growth / forbidden / terminal_cut`
   - `fallback_support_strip` 与 `bridge zone` 物化
@@ -51,4 +93,23 @@
 - `batch_runner`
   - preflight
   - per-case orchestration
+  - Step4 second-pass / postprocess orchestration
   - summary
+- `full_input_orchestration`
+  - `internal_full_input_runner`
+    - internal full-input 主 runner、worker orchestration、batch closeout
+  - `full_input_bootstrap`
+    - full-input shared source bootstrap
+  - `full_input_shared_layers`
+    - global nodes / roads / DriveZone / DivStripZone / RCSDRoad / RCSDNode preload 与 spatial index
+  - `full_input_case_pipeline`
+    - direct Step1-7 per-case execution
+  - `full_input_observability`
+    - progress / status / failure records
+  - `full_input_perf_audit`
+    - full-input performance audit
+  - `full_input_streamed_results`
+    - streamed result aggregation
+- `case_models`
+  - T04 case / event unit / review index dataclass
+  - Step4 -> Step5-7 交接对象

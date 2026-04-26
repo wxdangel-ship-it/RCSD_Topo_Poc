@@ -85,9 +85,9 @@ def test_real_case_17943587_keeps_same_case_merge_branch_continuation_and_nested
     local_branch_road_memberships = local_unit.unit_envelope.branch_road_memberships
     local_merge_branch = _find_branch_id_with_required_roads(
         local_branch_road_memberships,
-        {"41727506", "607962170"},
+        {"41727506", "620950831"},
     )
-    assert "620950831" not in set(local_branch_road_memberships[local_merge_branch])
+    assert "607962170" not in set(local_branch_road_memberships[local_merge_branch])
     local_axis_branch = _find_branch_id_with_road(
         local_branch_road_memberships,
         "502953712",

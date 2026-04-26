@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 审计日期：2026-04-23
+- 审计日期：2026-04-26
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
 - 本表只记录结构债事实，不代表本轮进入对应模块正文治理。
@@ -20,10 +20,14 @@
 
 | 路径 | 体量 | 当前判断 | 建议 |
 |---|---:|---|---|
-| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_event_interpretation_core.py` | `87975` bytes | 距 100 KB 硬阈值不足一轮中型改动，T04 当前最高风险文件 | 后续若继续扩写，应优先拆出 pair-local / candidate materialization / orchestration 子模块 |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_types_io.py` | `76769` bytes | 类型与 IO 聚合文件偏大，仍未越过硬阈值 | 后续新增运行时类型前先评估拆分 |
-| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step4_kernel_reference.py` | `65297` bytes | 当前被 `_runtime_step4_kernel.py` import，不能按无 importer 死代码删除；命名与体量容易误判为归档残留 | 后续结构轮次应明确改名或拆分；本轮仅登记为 active runtime reference debt |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/support_domain.py` | `74330` bytes | Step5 支撑域实现偏大，仍未越过硬阈值 | 后续 Step5 约束扩展前先评估局部拆分 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/step4_road_surface_fork_binding.py` | `72363` bytes | Round 2 已拆出 `step4_road_surface_fork_geometry.py` 与 `step4_road_surface_fork_rcsd.py`，主文件从 92 KB 降至 72 KB | 后续继续保持 dispatcher / binding 编排职责，不再把 geometry / RCSD helper 回填进主文件 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step4_kernel_base.py` | `65292` bytes | 原 `_runtime_step4_kernel_reference.py` 已改名为 active kernel base，体量仍偏大但低于阈值 | 后续 kernel base 语义扩展前评估局部拆分 |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step4_geometry_core.py` | `64063` bytes | Step4 几何常量与核心工具聚合偏大 | 后续几何阈值或 CRS gate 改动前先评估局部拆分 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_event_interpretation_core.py` | `55532` bytes | Round 2 已拆出 `_event_interpretation_unit_preparation.py`，主文件从 94 KB 降至 55 KB | 后续保持 case orchestration / candidate pool / evaluation 职责，不再把 unit preparation 回填进主文件 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step4_geometry_base.py` | `48003` bytes | 原 `_runtime_step4_geometry_reference.py` 已改名为 geometry base，低于阈值 | 后续避免重新引入 `reference` 命名误导 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_event_interpretation_unit_preparation.py` | `41565` bytes | Round 2 新拆出的 unit preparation / pair-local materialization 模块 | 后续仅承接 preparation 与 scope materialization，不承接 candidate selection |
 
 说明：
 

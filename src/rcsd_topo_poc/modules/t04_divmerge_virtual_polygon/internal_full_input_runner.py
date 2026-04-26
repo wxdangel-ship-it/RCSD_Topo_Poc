@@ -124,6 +124,7 @@ def _progress_snapshot(
 def _write_summary(
     *,
     run_root: Path,
+    preflight_doc: dict[str, Any],
     selected_case_ids: list[str],
     discovered_case_ids: list[str],
     artifacts: list[T04Step7CaseArtifact],
@@ -147,6 +148,9 @@ def _write_summary(
         and case_id not in set(guard_failed_case_ids)
     ]
     summary = {
+        "produced_at": now_text(),
+        "git_sha": preflight_doc.get("git_sha"),
+        "input_dataset_id": preflight_doc.get("input_dataset_id"),
         "updated_at": now_text(),
         "run_root": str(run_root),
         "cases_dir": str(run_root / "cases"),
@@ -622,7 +626,11 @@ def run_t04_internal_full_input(
 
         _flush_progress("batch_closeout", "running", "writing Step7 batch outputs and final visual checks")
         ordered_artifacts = sorted(artifacts, key=lambda item: item.case_id)
-        step7_outputs = write_step7_batch_outputs(run_root=run_root, artifacts=ordered_artifacts)
+        step7_outputs = write_step7_batch_outputs(
+            run_root=run_root,
+            artifacts=ordered_artifacts,
+            input_dataset_id=str(preflight_doc.get("input_dataset_id") or ""),
+        )
         visual_outputs = materialize_final_visual_checks(
             run_root=run_root,
             artifacts=ordered_artifacts,
@@ -646,6 +654,7 @@ def run_t04_internal_full_input(
         )
         summary_path = _write_summary(
             run_root=run_root,
+            preflight_doc=preflight_doc,
             selected_case_ids=selected_case_ids,
             discovered_case_ids=discovered_case_ids,
             artifacts=ordered_artifacts,

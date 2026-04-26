@@ -15,11 +15,26 @@ def test_t04_step14_batch_outputs_synthetic_case(tmp_path: Path) -> None:
     )
 
     summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+    preflight = json.loads((run_root / "preflight.json").read_text(encoding="utf-8"))
+    case_meta = json.loads((run_root / "cases" / "1001" / "case_meta.json").read_text(encoding="utf-8"))
+    step4_audit = json.loads((run_root / "cases" / "1001" / "step4_audit.json").read_text(encoding="utf-8"))
     review_summary = json.loads((run_root / "step4_review_summary.json").read_text(encoding="utf-8"))
     second_pass = json.loads((run_root / "second_pass_conflict_resolution.json").read_text(encoding="utf-8"))
 
     assert summary["total_case_count"] == 1
     assert summary["failed_case_ids"] == []
+    assert summary["produced_at"]
+    assert summary["git_sha"]
+    assert summary["input_dataset_id"].startswith("case-package-stat-sha256:")
+    assert preflight["produced_at"]
+    assert preflight["git_sha"]
+    assert preflight["input_dataset_id"].startswith("case-package-stat-sha256:")
+    assert case_meta["produced_at"]
+    assert case_meta["git_sha"]
+    assert case_meta["input_dataset_id"].startswith("case-input-stat-sha256:")
+    assert step4_audit["produced_at"]
+    assert step4_audit["git_sha"]
+    assert step4_audit["input_dataset_id"].startswith("case-input-stat-sha256:")
     assert review_summary["total_event_unit_count"] >= 1
     assert {
         "same_case_evidence_components",
@@ -184,9 +199,9 @@ def test_t04_step14_multi_event_case_exports_reselection_and_index_fields(tmp_pa
     )
 
     review_summary = json.loads((run_root / "step4_review_summary.json").read_text(encoding="utf-8"))
-    assert review_summary["selected_evidence_none_count"] == 2
+    assert review_summary["selected_evidence_none_count"] == 1
     assert review_summary["selected_layer_1_count"] == 0
-    assert review_summary["selected_layer_2_count"] == 1
+    assert review_summary["selected_layer_2_count"] == 2
     assert review_summary["selected_layer_3_count"] == 0
     assert "positive_rcsd_support_level_counts" in review_summary
     assert "positive_rcsd_consistency_level_counts" in review_summary
@@ -230,9 +245,10 @@ def test_t04_step14_multi_event_case_exports_reselection_and_index_fields(tmp_pa
     with (run_root / "step4_review_index.csv").open("r", encoding="utf-8-sig", newline="") as fp:
         rows = {row["event_unit_id"]: row for row in csv.DictReader(fp)}
 
-    assert rows["event_unit_01"]["selected_evidence_state"] == "none"
+    assert rows["event_unit_01"]["selected_evidence_state"] == "found"
     assert rows["event_unit_02"]["selected_evidence_state"] == "none"
     assert rows["event_unit_03"]["selected_evidence_state"] == "found"
+    assert rows["event_unit_01"]["primary_candidate_layer"] == "Layer 2"
     assert rows["event_unit_03"]["primary_candidate_layer"] == "Layer 2"
     expected_unit_02_axis_signature = _stable_axis_signature(
         unit_02_step3["branch_road_memberships"],

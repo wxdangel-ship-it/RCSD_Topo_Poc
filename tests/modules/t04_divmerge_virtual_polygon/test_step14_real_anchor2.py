@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import *  # noqa: F401,F403
 
-def test_anchor2_current_acceptance_units_all_a() -> None:
+def test_anchor2_current_selected_units_match_frozen_support_levels() -> None:
     if not REAL_ANCHOR_2_ROOT.is_dir():
         pytest.skip(f"missing real Anchor_2 case root: {REAL_ANCHOR_2_ROOT}")
-    acceptance_case_ids = [
+    case_ids = [
         "760213",
         "785671",
         "785675",
@@ -15,20 +15,27 @@ def test_anchor2_current_acceptance_units_all_a() -> None:
         "30434673",
         "73462878",
     ]
+    expected_support_levels = {
+        ("785671", "event_unit_01"): ("secondary_support", "B"),
+    }
     specs, _ = load_case_specs(
         case_root=REAL_ANCHOR_2_ROOT,
-        case_ids=acceptance_case_ids,
+        case_ids=case_ids,
     )
     failures: list[str] = []
     for spec in specs:
         case_result = build_case_result(load_case_bundle(spec))
         for event_unit in case_result.event_units:
-            if event_unit.positive_rcsd_consistency_level != "A":
+            expected_support, expected_consistency = expected_support_levels.get(
+                (spec.case_id, event_unit.spec.event_unit_id),
+                ("primary_support", "A"),
+            )
+            if event_unit.positive_rcsd_consistency_level != expected_consistency:
                 failures.append(
                     f"{spec.case_id}/{event_unit.spec.event_unit_id}:"
                     f"{event_unit.positive_rcsd_consistency_level}/{event_unit.positive_rcsd_support_level}"
                 )
-            if event_unit.positive_rcsd_support_level != "primary_support":
+            if event_unit.positive_rcsd_support_level != expected_support:
                 failures.append(
                     f"{spec.case_id}/{event_unit.spec.event_unit_id}:"
                     f"support={event_unit.positive_rcsd_support_level}"

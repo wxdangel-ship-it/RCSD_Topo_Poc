@@ -18,6 +18,7 @@ from ._rcsd_selection_support import _normalize_geometry, _union_geometry
 from ._runtime_polygon_cleanup import _polygon_components
 from .case_models import T04CaseResult
 from .polygon_assembly import T04Step6Result
+from .provenance import provenance_doc
 from .support_domain import T04Step5CaseResult
 
 
@@ -532,11 +533,13 @@ def write_step7_case_outputs(
     *,
     case_dir: Path,
     artifact: T04Step7CaseArtifact,
+    provenance: dict[str, Any] | None = None,
 ) -> None:
-    write_json(case_dir / "step7_status.json", artifact.status_doc)
-    write_json(case_dir / "step7_audit.json", artifact.audit_doc)
+    trace = {} if provenance is None else dict(provenance)
+    write_json(case_dir / "step7_status.json", {**artifact.status_doc, **trace})
+    write_json(case_dir / "step7_audit.json", {**artifact.audit_doc, **trace})
     if artifact.final_state == "rejected":
-        write_json(case_dir / "reject_index.json", artifact.reject_index_doc)
+        write_json(case_dir / "reject_index.json", {**artifact.reject_index_doc, **trace})
         if artifact.reject_stub_feature is not None:
             write_vector(case_dir / "reject_stub.geojson", [artifact.reject_stub_feature])
 
@@ -545,7 +548,9 @@ def write_step7_batch_outputs(
     *,
     run_root: Path,
     artifacts: list[T04Step7CaseArtifact],
+    input_dataset_id: str | None = None,
 ) -> dict[str, Any]:
+    batch_provenance = provenance_doc(input_dataset_id=input_dataset_id)
     ordered_artifacts = sorted(artifacts, key=lambda item: sort_patch_key(item.case_id))
     accepted_features = [item.accepted_feature for item in ordered_artifacts if item.accepted_feature is not None]
     rejected_features = [item.rejected_feature for item in ordered_artifacts if item.rejected_feature is not None]
@@ -576,6 +581,7 @@ def write_step7_batch_outputs(
     write_json(
         summary_json_path,
         {
+            **batch_provenance,
             "business_object": STEP7_BUSINESS_OBJECT,
             "row_count": len(summary_rows),
             "accepted_count": sum(1 for item in ordered_artifacts if item.final_state == "accepted"),
@@ -608,6 +614,7 @@ def write_step7_batch_outputs(
     write_json(
         rejected_index_json_path,
         {
+            **batch_provenance,
             "row_count": len(rejected_index_rows),
             "rows": rejected_index_rows,
         },
@@ -646,6 +653,7 @@ def write_step7_batch_outputs(
         if not Path(run_root / "cases" / item.case_id / "step7_audit.json").is_file()
     )
     consistency_report = {
+        **batch_provenance,
         "passed": not any(
             [
                 missing_review_png_case_ids,

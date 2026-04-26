@@ -7,6 +7,8 @@ from typing import Any
 
 from shapely.geometry.base import BaseGeometry
 
+from .provenance import case_input_fingerprint, provenance_doc
+
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_shared import LoadedFeature
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step23_contracts import (
     Stage4LocalContext,
@@ -415,6 +417,9 @@ class T04CaseResult:
     case_review_reasons: tuple[str, ...]
 
     def to_case_meta_doc(self) -> dict[str, Any]:
+        provenance = provenance_doc(
+            input_dataset_id=case_input_fingerprint(self.case_spec.input_paths)
+        )
         return {
             "case_id": self.case_spec.case_id,
             "mainnodeid": self.case_spec.mainnodeid,
@@ -422,6 +427,7 @@ class T04CaseResult:
             "representative_node_id": self.case_bundle.representative_node.node_id,
             "group_node_ids": [node.node_id for node in self.case_bundle.group_nodes],
             "input_paths": {key: str(value) for key, value in self.case_spec.input_paths.items()},
+            **provenance,
         }
 
 

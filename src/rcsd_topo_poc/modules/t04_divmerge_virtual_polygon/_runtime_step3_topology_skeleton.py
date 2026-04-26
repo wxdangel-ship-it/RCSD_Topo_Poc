@@ -22,7 +22,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
 )
 
 from ._runtime_step4_geometry_core import *
-from ._runtime_step4_geometry_reference import *
+from ._runtime_step4_geometry_base import *
 
 def _collect_stage4_passthrough_node_ids(
     *,

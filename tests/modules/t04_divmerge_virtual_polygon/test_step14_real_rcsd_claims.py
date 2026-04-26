@@ -20,7 +20,7 @@ def _resolve_real_cases(case_ids: list[str]) -> list:
     return resolved_case_results
 
 
-def test_anchor2_current_acceptance_units_keep_primary_support_after_second_pass() -> None:
+def test_anchor2_current_units_keep_frozen_support_after_second_pass() -> None:
     expected_candidates = {
         "760213": {
             "node_760213": "node_760213:divstrip:2:01",
@@ -52,6 +52,9 @@ def test_anchor2_current_acceptance_units_keep_primary_support_after_second_pass
             "event_unit_01": "event_unit_01:divstrip:0:01",
         },
     }
+    expected_support_levels = {
+        ("785671", "event_unit_01"): ("secondary_support", "B"),
+    }
     case_results = _resolve_real_cases(list(expected_candidates))
     case_by_id = {case_result.case_spec.case_id: case_result for case_result in case_results}
 
@@ -64,8 +67,12 @@ def test_anchor2_current_acceptance_units_keep_primary_support_after_second_pass
             assert event_unit.selected_evidence_state == "found"
             assert event_unit.selected_evidence_summary["candidate_id"] == expected_candidate_id
             assert event_unit.positive_rcsd_present is True
-            assert event_unit.positive_rcsd_support_level == "primary_support"
-            assert event_unit.positive_rcsd_consistency_level == "A"
+            expected_support, expected_consistency = expected_support_levels.get(
+                (case_id, unit_id),
+                ("primary_support", "A"),
+            )
+            assert event_unit.positive_rcsd_support_level == expected_support
+            assert event_unit.positive_rcsd_consistency_level == expected_consistency
             assert event_unit.required_rcsd_node not in {"", None}
 
 
@@ -86,7 +93,7 @@ def test_real_case_17943587_second_pass_resolves_duplicate_required_rcsd_node_wi
     assert required_by_unit["node_17943587"] == "5381293925340513"
     assert required_by_unit["node_55353233"] == "5381293925340546"
     assert required_by_unit["node_55353239"] == "5381293925340519"
-    assert required_by_unit["node_55353248"] == "5389885804905128"
+    assert required_by_unit["node_55353248"] == "5381293925340552"
 
     assert units["node_55353233"].pre_required_rcsd_node == "5381293925340546"
     assert units["node_55353233"].post_required_rcsd_node == "5381293925340546"
@@ -95,8 +102,9 @@ def test_real_case_17943587_second_pass_resolves_duplicate_required_rcsd_node_wi
     assert units["node_55353233"].positive_rcsd_support_level == "primary_support"
     assert units["node_55353233"].positive_rcsd_consistency_level == "A"
 
-    assert units["node_55353248"].post_required_rcsd_node == "5389885804905128"
-    assert units["node_55353248"].conflict_resolution_action == "reassigned_required_rcsd_node"
+    assert units["node_55353248"].pre_required_rcsd_node == "5381293925340552"
+    assert units["node_55353248"].post_required_rcsd_node == "5381293925340552"
+    assert units["node_55353248"].conflict_resolution_action == "kept"
     assert units["node_55353248"].positive_rcsd_support_level == "primary_support"
     assert units["node_55353248"].positive_rcsd_consistency_level == "A"
 

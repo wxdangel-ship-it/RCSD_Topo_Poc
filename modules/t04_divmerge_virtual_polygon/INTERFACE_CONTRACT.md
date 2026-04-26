@@ -144,12 +144,23 @@
 
 ### 3.4 Step4 Fact Event Interpretation
 
+#### 3.4.1 Event Unit 与 Unit Envelope
+
 - event unit 规则：
   - simple：`1 case = 1 event unit`
   - multi-diverge / multi-merge：按角度相邻的有序 branch pair `(L, R)` = `1 event unit`
   - complex：`1 node = 1 event unit`
   - complex 的 unit population 来自当前 case 的语义 member nodes；`augmented_member_node_ids` 只用于连续链上下文，不自动扩成 event units。
 - Step4 unit 的第一层正式定义是“有序相邻 branch pair `(L, R)`”，而不是匿名 branch 集合；其中 `L / R` 表示当前 unit 候选空间的左右边界，必须来自 Step3 的语义连续 branch，而不是原始单条 road segment。
+- `Step4` 当前正式执行输入必须以 `unit envelope` 表达，至少包括：
+  - `unit_population_node_ids`
+  - `context_augmented_node_ids`
+  - `event_branch_ids`
+  - `boundary_branch_ids`
+  - `preferred_axis_branch_id`
+
+#### 3.4.2 Pair-local Candidate Space
+
 - Step4 当前第一层候选空间不再是 case 级 corridor；正式切换为：
   - `unit-local branch pair region`
   - `unit-local structure face`
@@ -193,16 +204,13 @@
   - 只有仍无法唯一确定时，才允许用最小转角做 tie-breaker
 - `unit-local structure face` 表示：当前 pair-local region 内，由道路结构面定义的单连通主事实空间；导流带只负责在该空间内做分界、镂空与 throat / middle 强化，不再承担“主证据 vs fallback”二分。
 - `unit-local structure face` 与后续 `local candidate unit` 只能由当前 unit 的两条边界 branch `(L, R)` 及其合法 continuation 共同围成；不属于当前 pair 的非分支道路面，不得被吸纳进候选空间。
+
+#### 3.4.3 Local Candidate Unit 与事实点位
+
 - Step4 当前正式候选对象不是“整块导流带对象 / 整个道路面对象”，而是 `local candidate unit`：
   - 上层证据对象 ID
   - 当前 unit 内切出的局部单连通区域
   - 一个代表性参考位置
-- `Step4` 当前正式执行输入必须以 `unit envelope` 表达，至少包括：
-  - `unit_population_node_ids`
-  - `context_augmented_node_ids`
-  - `event_branch_ids`
-  - `boundary_branch_ids`
-  - `preferred_axis_branch_id`
 - `local candidate unit` 必须按三层优先级分层，而不是混成总分：
   - Layer 1：主体稳定落在 `throat core + pair-middle`
   - Layer 2：主体稳定落在 `pair-middle`，但不一定命中最强 throat core
@@ -238,6 +246,9 @@
 - merge 单元的 `boundary_branch_ids` 必须由当前 unit 的 entering branches 组成；diverge 单元的 `boundary_branch_ids` 必须由当前 unit 的 exiting branches 组成。`preferred_axis_branch_id` 只能来自当前 unit 的唯一 opposite-direction trunk，不得再通过 `kind_2=128 -> 16` 的静默降级去替代真实 unit-local merge/diverge 语义。
 - 连续链 case 若原始 anchor 仍停留在 seed 占位区且不命中当前选中的 DivStrip，T04 必须把 review 用 `event_anchor_geometry` materialize 为围绕当前事实证据的 coarse anchor zone，而不是继续输出固定 seed 方框。
 - `fact_reference_point` 不得落到 `DriveZone` 外；若轴向候选越界，T04 必须显式记为无效候选，`review_materialized_point` 只允许收敛回当前道路面内的事实证据位置，并留痕。
+
+#### 3.4.4 正向 RCSD 选择
+
 - Step4 只负责正向 RCSD 选取与一致性校验，不定义 RCSD 最终负向语义。
 - Step4 正向 RCSD 的正式执行链冻结为：
   - `pair-local raw observation`
@@ -311,6 +322,9 @@
   - `rcsd_role_map`
   - `rcsd_decision_reason`
   - `required_rcsd_node`
+
+#### 3.4.5 Reverse / Window / Degraded Scope
+
 - reverse 不是独立证据体系，只是同一 `pair-local region` 内的另一种查找方向；reverse 命中的候选也必须进入相同的三层优先级判断。
 - reverse 不得反向扩大、补全或重定义当前 `pair-local region`；候选空间边界一旦由 `(L, R)` 确定，reverse 只能在其内部活动。
 - fallback 不是“道路面降级兜底”；它表示在同一 `pair-local region` 内，从“导流带强约束定位”切换到“道路结构面主导定位”的模式切换。
@@ -349,7 +363,10 @@
   - `hard`
 - 仅 `soft` degraded 可继续维持 `STEP4_REVIEW`；当候选空间语义已实质丢失时，`hard` degraded 允许直接升到 `STEP4_FAIL`。
 - `STEP4_REVIEW` 是 Step4 内部审计态，不是 Step7 最终失败态；当前 Anchor_2 冻结基线允许 `pair_local_scope_roads_empty` 等 `soft` degraded 使 `STEP4_REVIEW` 成为常态，只要 Step4 主证据、pair-local 容器、正向 RCSD 与后续 Step7 二态发布均满足冻结门槛。
-- Step4 review summary 中的 `STEP4_OK = 0 / STEP4_REVIEW = 13 / STEP4_FAIL = 0` 在当前 Anchor_2 基线下是已解释的内部软退化分布；不得据此重新引入最终 `review / review_required` 状态。
+- 当前 Anchor_2 full baseline 的 Step4 review summary 允许 `STEP4_OK = 0 / STEP4_REVIEW = 31 / STEP4_FAIL = 0`，这是已解释的内部软退化分布；2026-04-22 selected-case legacy 分布 `STEP4_OK = 0 / STEP4_REVIEW = 13 / STEP4_FAIL = 0` 仅作为历史审计口径保留。两者均不得据此重新引入最终 `review / review_required` 状态。
+
+#### 3.4.6 Ownership Guard 与 Second-pass Resolver
+
 - ownership guard 的主判断必须以语义冲突为先：
   - 共用同一物理 DivStrip component（`selected_component_ids` 是局部索引，跨 sub-unit 不稳定，只允许作为 debug label；component ownership 须以 `selected_component_union_geometry` 的物理重叠等价判定）
   - 同一 `event_axis_branch_id` 且 `|Δevent_chosen_s_m| <= 5m`
@@ -379,6 +396,34 @@
   - `positive_rcsd_support_level`
   - `positive_rcsd_consistency_level`
   - `positive_rcsd_audit`
+
+#### 3.4.7 Step4 字段枚举最小闭环
+
+- `evidence_source` 当前稳定允许值至少包括：
+  - `divstrip_direct`
+  - `multibranch_event`
+  - `conservative_fallback`
+  - `reverse_tip_retry`
+  - `road_surface_fork`
+  - `swsd_junction_window`
+  - `rcsd_junction_window`
+  - `rcsd_anchored_reverse`
+  - `none`
+- `position_source` 当前稳定允许值至少包括：
+  - `divstrip_ref`
+  - `drivezone_split`
+  - `fallback`
+  - `representative_axis_origin`
+  - `road_surface_fork`
+  - `swsd_junction_window_axis_projection`
+  - `rcsd_junction_window_axis_projection`
+  - `rcsd_anchored_axis_projection`
+  - `none`
+- `review_state` 仅属于 Step4 内部审计态，允许值为：
+  - `STEP4_OK`
+  - `STEP4_REVIEW`
+  - `STEP4_FAIL`
+- 上述 Step4 审计态不得映射为 Step7 最终第三态；最终发布状态仍只允许 `accepted / rejected`。
 
 ### 3.5 Step5 Geometric Support Domain
 
@@ -443,6 +488,22 @@
   - `accepted`
   - `rejected`
 - Step7 不再保留最终 `review` 状态；所有不确定性只保留在审计材料中。
+- `swsd_relation_type` 当前稳定允许值为：
+  - `covering`：最终面覆盖当前 T04 事实核心几何
+  - `partial`：最终面与事实核心几何相交但未完全覆盖
+  - `offset_fact`：最终面不覆盖 SWSD 语义路口核心，但能解释为偏移事实面
+  - `unknown`：最终 `rejected` 或缺少可解释事实核心几何时的保守值
+- `reject_reason` 当前稳定允许值至少包括：
+  - `final_polygon_missing`
+  - `multi_component_result`
+  - `hard_must_cover_disconnected`
+  - `b_node_not_covered`
+  - `forbidden_conflict`
+  - `allowed_growth_conflict`
+  - `terminal_cut_conflict`
+  - `unexpected_hole_present`
+  - `assembly_failed`
+- `reject_reason_detail` 使用 `|` 串联本 case 命中的全部拒绝原因；不得把 `857993` 的 `rejected` 解释为待提升 accepted 的缺陷。
 - Step7 当前正式发布层至少包括：
   - `divmerge_virtual_anchor_surface`
   - `divmerge_virtual_anchor_surface_rejected`
@@ -484,7 +545,7 @@
   - `node_17943587` 的边界 pair 冻结为 `510969745 / (607951495 + 528620938)`。
   - `node_55353233` 的边界 pair 冻结为 `528620938 / (502953712 + 41727506 + 620950831)`；`605949403` 不得重新进入该 unit 的 event pair。
   - `node_55353239` 的 local three-arm 拓扑冻结为 `607962170 / 620950831 / 41727506`，且候选空间必须回到 node / throat / middle 合法位置。
-  - `node_55353248` 的边界 pair 冻结为 `605949403 / (41727506 + 607962170)`，trunk `502953712` 不得主导候选空间。
+  - `node_55353248` 的边界 pair 冻结为 `605949403 / (41727506 + 620950831)`，trunk `502953712` 不得主导候选空间；旧 `607962170` continuation 口径降级为 legacy selected-case 微观断言，不再覆盖当前 full baseline。
 - `30434673`
   - `event_unit_01` 的候选空间必须由 `530277767` 与 `76761971` 这对边界分支定义。
 - `73462878`
@@ -551,10 +612,23 @@
 - `step4_event_interpretation.json`
 - `step4_event_evidence.gpkg`
 - `step4_audit.json`
+- `step5_status.json`
+- `step5_audit.json`
+- `step5_domains.gpkg`
+- `step6_status.json`
+- `step6_audit.json`
+- `final_case_polygon.gpkg`（仅当 `final_case_polygon` 非空时写出）
+- `step7_status.json`
+- `step7_audit.json`
+- `reject_index.json`（仅 rejected case）
+- `reject_stub.geojson`（仅 rejected case 且存在 stub geometry）
 - `final_review.png`
 - `event_units/<event_unit_id>/step4_review.png`
 - `event_units/<event_unit_id>/step3_status.json`
 - `event_units/<event_unit_id>/step4_candidates.json`
+- `event_units/<event_unit_id>/step4_evidence_audit.json`
+- `event_units/<event_unit_id>/step5_status.json`
+- `event_units/<event_unit_id>/step5_audit.json`
 
 ### 4.3 Step3 输出分层
 
@@ -573,21 +647,58 @@
   - `evidence_source`
   - `position_source`
   - `reverse_tip_used`
+  - `rcsd_consistency_result`
   - `positive_rcsd_support_level`
   - `positive_rcsd_consistency_level`
+  - `positive_rcsd_present`
+  - `positive_rcsd_present_reason`
+  - `pair_local_rcsd_empty`
+  - `rcsd_selection_mode`
+  - `local_rcsd_unit_kind`
+  - `local_rcsd_unit_id`
+  - `aggregated_rcsd_unit_id`
+  - `aggregated_rcsd_unit_ids`
+  - `axis_polarity_inverted`
+  - `first_hit_rcsdroad_ids`
   - `selected_rcsdroad_ids`
   - `selected_rcsdnode_ids`
   - `primary_main_rc_node`
   - `required_rcsd_node`
+  - `required_rcsd_node_source`
   - `selected_candidate_region`
+  - `selected_evidence_state`
+  - `selected_evidence_kind`
   - `primary_candidate_id`
   - `primary_candidate_layer`
+  - `primary_candidate_layer_reason`
   - `axis_position_m`
   - `reference_distance_to_origin_m`
+  - `has_alternative_candidates`
+  - `candidate_pool_size`
+  - `selected_reference_zone`
+  - `selected_evidence_membership`
+  - `better_alternative_signal`
+  - `best_alternative_candidate_id`
+  - `best_alternative_layer`
+  - `best_alternative_reason`
+  - `shared_object_signal`
+  - `shared_region_signal`
+  - `shared_point_signal`
+  - `conflict_signal_level`
+  - `related_unit_ids`
+  - `key_reason`
+  - `needs_manual_review_focus`
+  - `focus_reasons`
   - `ownership_signature`
   - `upper_evidence_object_id`
   - `local_region_id`
   - `point_signature`
+  - `pair_local_direction`
+  - `branch_separation_max_m`
+  - `stop_reason`
+  - `degraded_scope_reason`
+  - `degraded_scope_severity`
+  - `degraded_scope_fallback_used`
   - `evidence_conflict_component_id`
   - `rcsd_conflict_component_id`
   - `evidence_conflict_type`
@@ -601,6 +712,11 @@
   - `kept_by_baseline_guard`
   - `image_name`
   - `image_path`
+  - `compare_image_name`
+  - `compare_image_path`
+  - `positive_rcsd_image_name`
+  - `positive_rcsd_image_path`
+  - `case_overview_path`
 - `step4_review_summary.json` 至少包含：
   - `total_case_count`
   - `total_event_unit_count`
@@ -611,7 +727,7 @@
   - `selected_layer_2_count`
   - `selected_layer_3_count`
   - `cases_with_multiple_event_units`
-- 当前 Anchor_2 Step4 冻结基线允许 `STEP4_OK = 0 / STEP4_REVIEW = 13 / STEP4_FAIL = 0`，该分布只说明 Step4 内部保留 soft-degrade 审计提示，不影响 Step7 最终只发布 `accepted / rejected` 两态。
+- 当前 Anchor_2 full baseline 允许 `STEP4_OK = 0 / STEP4_REVIEW = 31 / STEP4_FAIL = 0`；2026-04-22 selected-case legacy 的 `0 / 13 / 0` 只保留为历史审计口径。该分布只说明 Step4 内部保留 soft-degrade 审计提示，不影响 Step7 最终只发布 `accepted / rejected` 两态。
 
 ### 4.5 Step5 正式输出边界
 
@@ -620,7 +736,11 @@
   - `allowed_growth_domain`
   - `forbidden_domain`
   - `terminal_cut_constraints`
-- 具体文件命名可在实现轮次细化，但不得改变上述对象层级与语义。
+- 当前文件级最小 schema：
+  - `step5_status.json`：`case_id`、`unit_count`、`legacy_step5_ready_unit_count`、case 级几何摘要、`unit_results`
+  - `step5_audit.json`：case 级 `must_cover / allowed_growth / forbidden / terminal_cut / bridge_zone / terminal_window` 几何摘要，以及 Unit 级审计
+  - `step5_domains.gpkg`：以 `domain_role` 区分 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints / bridge_zone / junction_full_road_fill_domain` 等几何对象
+- 具体字段可继续扩展，但不得改变上述对象层级与语义。
 
 ### 4.6 Step6 正式输出边界
 
@@ -628,6 +748,10 @@
   - `final_case_polygon`
   - `step6_status.json`
   - `step6_audit.json`
+- 当前文件级最小 schema：
+  - `step6_status.json`：`case_id`、`assembly_state`、`component_count`、`hard_must_cover_ok`、`b_node_target_covered`、`forbidden_overlap_area_m2`、`cut_violation`、`unexpected_hole_count`、`review_reasons`
+  - `step6_audit.json`：`assembly_canvas_geometry`、hard/weak seed、hole、cut、forbidden overlap 与 final polygon 的几何摘要
+  - `final_case_polygon.gpkg`：`case_id`、`assembly_state`、`component_count`、`hole_count` 与最终 case polygon；仅在最终面非空时写出
 
 ### 4.7 Step7 正式输出边界
 
@@ -638,6 +762,26 @@
   - `divmerge_virtual_anchor_surface_rejected.geojson` 或 `.json`
   - `divmerge_virtual_anchor_surface_summary.csv`
   - `divmerge_virtual_anchor_surface_summary.json`
+- 当前 summary 字段固定包含：
+  - `case_id`
+  - `anchor_id`
+  - `mainnodeid`
+  - `source_module`
+  - `scene_family`
+  - `scene_type`
+  - `final_state`
+  - `unit_count`
+  - `required_rcsd_node_count`
+  - `has_c_unit`
+  - `swsd_relation_type`
+  - `publish_target`
+  - `geometry_path`
+  - `audit_path`
+  - `review_png_path`
+- `divmerge_virtual_anchor_surface.gpkg` 主层字段至少包含 `anchor_id / case_id / mainnodeid / related_mainnodeids / business_object / source_module / scene_family / scene_type / final_state / swsd_relation_type / component_count / hole_count / area_m2 / perimeter_m`。
+- `divmerge_virtual_anchor_surface_rejected.geojson` 字段至少包含 `anchor_id / case_id / mainnodeid / related_mainnodeids / business_object / source_module / scene_family / scene_type / final_state / reject_reason / reject_reason_detail / unit_count / required_rcsd_node_ids / rcsd_profile / swsd_relation_type`。
+- `divmerge_virtual_anchor_surface_audit.gpkg` 字段至少包含 `anchor_id / case_id / unit_count / fact_reference_count / required_rcsd_node_ids / required_rcsd_node_count / rcsd_profile / has_c_unit / hard_must_cover_ok / forbidden_overlap / cut_violation / hole_valid / reject_reason / reject_reason_detail / publish_target`。
+- `step7_consistency_report.json` 必须能核对 accepted/rejected layer、summary、rejected index、case-level status/audit 与 review PNG 的存在性。
 
 ## 5. EntryPoints
 
@@ -658,14 +802,16 @@
   - `runtime_failed`：未分类的代码运行异常；
   - `missing_status`：运行中断后未形成任何 terminal record 的 case。
 - 上述脚本不构成新的 repo 官方 CLI 子命令；执行逻辑必须保留在 T04 私有模块内。
-- 本轮需同步 `entrypoint-registry.md`。
+- 只有新增、删除、重命名或改变官方调用方式时，才需要同轮同步 `entrypoint-registry.md`；当前 Round 1 文档治理不改变入口事实。
 
 ## 6. Acceptance
 
-1. repo 已存在 T04 `Step1-7` 正式模块文档面。
-2. `Step1-4` 可对 case-package 运行并产出稳定文件集。
-3. `Step5-7` 已纳入正式范围，并明确进入按冻结需求分轮推进的正式研发实现阶段。
-4. `Step5-7` 正式研发默认遵循 SpecKit，且必须覆盖 `Product / Architecture / Development / Testing / QA` 五视角。
-5. T04 可以参考 T03 的实现逻辑与产物风格，但不得直接 import / 调用 / 硬拷贝 T03 模块代码。
-6. 当前阶段的 Case 级正式目视审计入口以 `final_review.png` 及其 flat mirror 为准；event-unit png / index / summary 仍可用于审计，但不再把 `step4_review_overview.png` 当作正式 Case 级输出。
-7. 当前 Anchor_2 最终发布冻结基线为 `accepted = 7 / rejected = 1`；`857993` 的最终 `rejected` 是人工目视审计确认后的正确业务结论，不得作为待修成 `accepted` 的回归目标。
+1. repo 已存在 T04 `Step1-7` 正式模块文档面，且当前 source-of-truth 以本契约、`architecture/10-quality-requirements.md` 与冻结测试共同解释。
+2. `Step1-7` 可对 Anchor_2 case-package / full baseline 执行并产出稳定文件集。
+3. 当前正式业务冻结基线为 Anchor_2 full baseline：`row_count = 23`，`accepted = 20`，`rejected = 3`；该口径与 `architecture/10-quality-requirements.md` 的 `Anchor_2 full baseline gate（2026-04-26）` 保持一致。
+4. 当前 full baseline 的 accepted case 为：`17943587`、`30434673`、`505078921`、`698380`、`698389`、`699870`、`706629`、`723276`、`724067`、`724081`、`73462878`、`758784`、`760213`、`760256`、`760984`、`785671`、`785675`、`788824`、`824002`、`987998`。
+5. 当前 full baseline 的 rejected case 为：`760598`、`760936`、`857993`；其中 `857993 = rejected` 是人工验收确认后的正确业务结果，不得作为待修成 `accepted` 的回归目标。
+6. 2026-04-22 selected-case legacy 口径 `accepted = 7 / rejected = 1` 只作为历史子集审计材料保留，不再作为当前正式 Acceptance 数字真相；需要引用时必须标注 `legacy selected-case` 并交叉引用当前 `23 / 20 / 3` full baseline。
+7. T04 可以参考 T03 的实现逻辑与产物风格，但不得直接 import / 调用 / 硬拷贝 T03 模块代码。
+8. 当前阶段的 Case 级正式目视审计入口以 `final_review.png` 及其 flat mirror 为准；event-unit png / index / summary 仍可用于审计，但不再把 `step4_review_overview.png` 当作正式 Case 级输出。
+9. 后续治理与实现迭代默认遵循 SpecKit，且必须覆盖 `Product / Architecture / Development / Testing / QA` 五视角；不得改变当前 `accepted / rejected` 最终状态机，且不得新增最终 `review / review_required` 状态。

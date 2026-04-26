@@ -53,8 +53,13 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
     progress = json.loads((run_root / "t04_internal_full_input_progress.json").read_text(encoding="utf-8"))
     consistency = json.loads((run_root / "step7_consistency_report.json").read_text(encoding="utf-8"))
+    rejected_index = json.loads((run_root / "step7_rejected_index.json").read_text(encoding="utf-8"))
 
     assert preflight["selected_case_ids"] == ["1001"]
+    for doc in [preflight, summary, consistency, rejected_index]:
+        assert doc["produced_at"]
+        assert doc["git_sha"]
+        assert doc["input_dataset_id"].startswith("input-paths-stat-sha256:")
     assert (run_root / "candidate_mainnodeids.txt").read_text(encoding="utf-8").strip() == "1001"
     assert (run_root / "candidate_manifest.json").is_file()
     assert (run_root / "shared_layers_manifest.json").is_file()

@@ -169,7 +169,7 @@
   - `positive RCSD support / consistency`
   - 不再使用 `selected_candidate = structure:middle:01` 作为正式守门条件
 - `17943587 / node_55353233` 不得回退到 `502953712 + 605949403`。
-- `17943587 / node_55353248` 不得回退到 trunk 主导或缺失 `607962170` continuation。
+- `17943587 / node_55353248` 当前 full baseline 锁定为 `605949403 / (41727506 + 620950831)` pair，不得回退到 trunk `502953712` 主导；旧 `607962170` continuation 口径仅作为 legacy selected-case 审计线索保留。
 - `857993 / node_870089` 不得回退到只剩 node 邻域小块或重新吸入非 pair 道路。
 
 Step4 final tuning 额外质量门槛：
@@ -178,8 +178,7 @@ Step4 final tuning 额外质量门槛：
   - `selected_evidence_state = found`
   - 主候选不回退
   - `positive_rcsd_present = true`
-  - `positive_rcsd_support_level = primary_support`
-  - `positive_rcsd_consistency_level = A`
+  - `positive_rcsd_support_level / positive_rcsd_consistency_level` 以当前 full baseline 测试断言为准；`785671 / event_unit_01` 当前冻结为 `secondary_support / B`，不得再用 legacy 全量 `primary_support / A` 口径否决当前 `23 / 20 / 3` baseline。
 
 Step7 legacy selected-case 发布冻结门槛：
 

@@ -48,6 +48,7 @@ from .full_input_streamed_results import (
     terminal_case_record_from_artifact,
     write_terminal_case_record,
 )
+from .nodes_publish import augment_step7_consistency_report, write_t04_nodes_outputs
 
 
 DEFAULT_OUT_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_internal_full_input")
@@ -134,6 +135,7 @@ def _write_summary(
     bootstrap_artifacts: dict[str, str],
     step7_outputs: dict[str, Any],
     visual_outputs: dict[str, Any],
+    nodes_outputs: dict[str, Any],
     rerun_cleaned_before_write: bool,
     resume_requested: bool,
     retry_failed_requested: bool,
@@ -192,6 +194,13 @@ def _write_summary(
         "step7_rejected_index_csv": step7_outputs.get("rejected_index_csv_path"),
         "step7_rejected_index_json": step7_outputs.get("rejected_index_json_path"),
         "step7_consistency_report": step7_outputs.get("consistency_report_path"),
+        "nodes_gpkg": nodes_outputs.get("nodes_path"),
+        "nodes_anchor_update_audit_csv": nodes_outputs.get("nodes_anchor_update_audit_csv_path"),
+        "nodes_anchor_update_audit_json": nodes_outputs.get("nodes_anchor_update_audit_json_path"),
+        "nodes_total_update_count": nodes_outputs.get("nodes_total_update_count"),
+        "nodes_updated_to_yes_count": nodes_outputs.get("nodes_updated_to_yes_count"),
+        "nodes_updated_to_fail4_count": nodes_outputs.get("nodes_updated_to_fail4_count"),
+        "nodes_consistency_passed": nodes_outputs.get("nodes_consistency_passed"),
         **visual_outputs,
     }
     summary_path = run_root / "summary.json"
@@ -636,6 +645,34 @@ def run_t04_internal_full_input(
             artifacts=ordered_artifacts,
             visual_check_dir=resolved_visual_check_dir,
         )
+        failure_status_by_case = {
+            case_id: {"step7_state": "runtime_failed", "reason": "runtime_failed"}
+            for case_id in runtime_failed_case_ids
+        }
+        for guard_record in guard_failure_records:
+            failure_status_by_case[str(guard_record["case_id"])] = {
+                "step7_state": "formal_result_missing",
+                "reason": str(
+                    guard_record.get("reason")
+                    or guard_record.get("guard_type")
+                    or "formal_result_missing"
+                ),
+            }
+        nodes_outputs = write_t04_nodes_outputs(
+            run_root=run_root,
+            source_node_features=shared_layers.node_layer.features,
+            selected_cases=[
+                {"case_id": case_id, "mainnodeid": case_id}
+                for case_id in selected_case_ids
+            ],
+            artifacts=ordered_artifacts,
+            failure_status_by_case=failure_status_by_case,
+            input_dataset_id=str(preflight_doc.get("input_dataset_id") or ""),
+        )
+        augment_step7_consistency_report(
+            consistency_report_path=Path(str(step7_outputs["consistency_report_path"])),
+            nodes_outputs=nodes_outputs,
+        )
         final_snapshot = _progress_snapshot(
             started_perf=started_perf,
             selected_case_ids=selected_case_ids,
@@ -664,6 +701,7 @@ def run_t04_internal_full_input(
             bootstrap_artifacts=bootstrap_artifacts,
             step7_outputs=step7_outputs,
             visual_outputs=visual_outputs,
+            nodes_outputs=nodes_outputs,
             rerun_cleaned_before_write=rerun_cleaned_before_write,
             resume_requested=resume,
             retry_failed_requested=retry_failed,

@@ -917,6 +917,7 @@ def test_anchor2_full_20260426_baseline_gate(tmp_path: Path) -> None:
     preflight = _load_json(run_root / "preflight.json")
     consistency_payload = _load_json(run_root / "step7_consistency_report.json")
     rejected_index_payload = _load_json(run_root / "step7_rejected_index.json")
+    nodes_audit_payload = _load_json(run_root / "nodes_anchor_update_audit.json")
     rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
     states_by_case = {case_id: row["final_state"] for case_id, row in rows_by_case.items()}
     rejected_case_ids = {
@@ -930,9 +931,14 @@ def test_anchor2_full_20260426_baseline_gate(tmp_path: Path) -> None:
     _assert_provenance(summary_payload, input_dataset_id_prefix="case-package-stat-sha256:")
     _assert_provenance(consistency_payload, input_dataset_id_prefix="case-package-stat-sha256:")
     _assert_provenance(rejected_index_payload, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(nodes_audit_payload, input_dataset_id_prefix="case-package-stat-sha256:")
     assert batch_summary["failed_case_ids"] == []
     assert batch_summary["step7_accepted_count"] == 20
     assert batch_summary["step7_rejected_count"] == 3
+    assert batch_summary["nodes_gpkg"] == str(run_root / "nodes.gpkg")
+    assert batch_summary["nodes_total_update_count"] == 23
+    assert batch_summary["nodes_updated_to_yes_count"] == 20
+    assert batch_summary["nodes_updated_to_fail4_count"] == 3
     assert summary_payload["row_count"] == 23
     assert summary_payload["accepted_count"] == 20
     assert summary_payload["rejected_count"] == 3
@@ -957,9 +963,35 @@ def test_anchor2_full_20260426_baseline_gate(tmp_path: Path) -> None:
     assert consistency_payload["missing_reject_index_case_ids"] == []
     assert consistency_payload["missing_step7_status_case_ids"] == []
     assert consistency_payload["missing_step7_audit_case_ids"] == []
+    assert consistency_payload["nodes_consistency_passed"] is True
+    assert consistency_payload["nodes_total_update_count"] == 23
+    assert consistency_payload["nodes_updated_to_yes_count"] == 20
+    assert consistency_payload["nodes_updated_to_fail4_count"] == 3
+    assert consistency_payload["nodes_mismatch_case_ids"] == []
 
     assert rejected_index_payload["row_count"] == 3
     assert {row["case_id"] for row in rejected_index_payload["rows"]} == rejected_case_ids
+    assert (run_root / "nodes.gpkg").is_file()
+    assert nodes_audit_payload["total_update_count"] == 23
+    assert nodes_audit_payload["updated_to_yes_count"] == 20
+    assert nodes_audit_payload["updated_to_fail4_count"] == 3
+    nodes_audit_by_case = {row["case_id"]: row for row in nodes_audit_payload["rows"]}
+    assert nodes_audit_by_case["857993"]["step7_state"] == "rejected"
+    assert nodes_audit_by_case["857993"]["new_is_anchor"] == "fail4"
+    assert nodes_audit_by_case["699870"]["step7_state"] == "accepted"
+    assert nodes_audit_by_case["699870"]["new_is_anchor"] == "yes"
+
+    fiona = pytest.importorskip("fiona")
+    with fiona.open(run_root / "nodes.gpkg") as src:
+        node_is_anchor_by_id = {
+            str(row["properties"]["id"]): row["properties"]["is_anchor"]
+            for row in src
+        }
+    for case_id, expected_state in ANCHOR2_FULL_BASELINE_20260426.items():
+        expected_is_anchor = "yes" if expected_state == "accepted" else "fail4"
+        audit_row = nodes_audit_by_case[case_id]
+        assert audit_row["new_is_anchor"] == expected_is_anchor
+        assert node_is_anchor_by_id[audit_row["representative_node_id"]] == expected_is_anchor
 
     for case_id, expected_fingerprint in ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426.items():
         png_path = Path(rows_by_case[case_id]["review_png_path"])

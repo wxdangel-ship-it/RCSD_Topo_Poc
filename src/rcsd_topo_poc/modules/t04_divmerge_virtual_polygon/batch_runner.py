@@ -24,6 +24,10 @@ from .outputs import (
 )
 from .provenance import batch_input_dataset_id, current_git_sha
 from .final_publish import write_step7_batch_outputs
+from .nodes_publish import (
+    augment_step7_consistency_report,
+    write_t04_nodes_outputs_for_case_packages,
+)
 from .step4_rcsd_anchored_reverse import apply_rcsd_anchored_reverse_lookup
 from .step4_final_conflict_resolver import resolve_step4_final_conflicts
 from .step4_road_surface_fork_binding import apply_road_surface_fork_binding
@@ -193,6 +197,17 @@ def run_t04_step14_batch(
         artifacts=step7_artifacts,
         input_dataset_id=str(preflight.get("input_dataset_id") or ""),
     )
+    nodes_outputs = write_t04_nodes_outputs_for_case_packages(
+        run_root=run_root,
+        case_specs=specs,
+        artifacts=step7_artifacts,
+        failed_case_ids=failed_case_ids,
+        input_dataset_id=str(preflight.get("input_dataset_id") or ""),
+    )
+    augment_step7_consistency_report(
+        consistency_report_path=Path(str(step7_outputs["consistency_report_path"])),
+        nodes_outputs=nodes_outputs,
+    )
     write_summary(
         run_root=run_root,
         rows=materialized_rows,
@@ -201,6 +216,7 @@ def run_t04_step14_batch(
         rerun_cleaned_before_write=rerun_cleaned_before_write,
         failed_cases=failed_cases,
         step7_outputs=step7_outputs,
+        nodes_outputs=nodes_outputs,
     )
     return run_root
 

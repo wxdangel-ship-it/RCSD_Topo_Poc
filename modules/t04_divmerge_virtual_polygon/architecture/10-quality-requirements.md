@@ -79,6 +79,7 @@
   - `accepted / rejected` 的最终判定依据
   - 发布层去向
   - `divmerge_virtual_anchor_surface*` 成果与审计材料之间的映射关系
+- T04 full baseline 不只校验 `divmerge_virtual_anchor_surface*` surface 发布层，也必须校验 downstream `nodes.gpkg` 的 representative node `is_anchor` 写回结果与 Step7 `final_state` 一致：`accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
 
 ## 可维护性
 
@@ -195,6 +196,7 @@ Step7 legacy selected-case 发布冻结门槛：
 - 当前人工审计参考 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_anchor2_full_requested/anchor2_full_all_20260426_junction_window_guard`
 - 当前全量冻结结果：`row_count = 23`，`accepted = 20`，`rejected = 3`。
 - 冻结测试入口：`tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_full_20260426_baseline_gate`
+- 冻结测试还必须守住 T04 downstream `nodes.gpkg` 写回：20 个 accepted representative node 为 `yes`，3 个 rejected representative node 为 `fail4`，其中 `857993 = fail4`、`699870 = yes`。
 - 当前全量 final_state：
   - accepted：`17943587`、`30434673`、`505078921`、`698380`、`698389`、`699870`、`706629`、`723276`、`724067`、`724081`、`73462878`、`758784`、`760213`、`760256`、`760984`、`785671`、`785675`、`788824`、`824002`、`987998`
   - rejected：`760598`、`760936`、`857993`

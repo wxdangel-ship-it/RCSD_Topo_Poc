@@ -762,6 +762,9 @@
   - `divmerge_virtual_anchor_surface_rejected.geojson` 或 `.json`
   - `divmerge_virtual_anchor_surface_summary.csv`
   - `divmerge_virtual_anchor_surface_summary.json`
+  - `nodes.gpkg`
+  - `nodes_anchor_update_audit.csv`
+  - `nodes_anchor_update_audit.json`
 - 当前 summary 字段固定包含：
   - `case_id`
   - `anchor_id`
@@ -781,7 +784,10 @@
 - `divmerge_virtual_anchor_surface.gpkg` 主层字段至少包含 `anchor_id / case_id / mainnodeid / related_mainnodeids / business_object / source_module / scene_family / scene_type / final_state / swsd_relation_type / component_count / hole_count / area_m2 / perimeter_m`。
 - `divmerge_virtual_anchor_surface_rejected.geojson` 字段至少包含 `anchor_id / case_id / mainnodeid / related_mainnodeids / business_object / source_module / scene_family / scene_type / final_state / reject_reason / reject_reason_detail / unit_count / required_rcsd_node_ids / rcsd_profile / swsd_relation_type`。
 - `divmerge_virtual_anchor_surface_audit.gpkg` 字段至少包含 `anchor_id / case_id / unit_count / fact_reference_count / required_rcsd_node_ids / required_rcsd_node_count / rcsd_profile / has_c_unit / hard_must_cover_ok / forbidden_overlap / cut_violation / hole_valid / reject_reason / reject_reason_detail / publish_target`。
-- `step7_consistency_report.json` 必须能核对 accepted/rejected layer、summary、rejected index、case-level status/audit 与 review PNG 的存在性。
+- `nodes.gpkg` 是 downstream 状态回写层，不替代 `divmerge_virtual_anchor_surface.gpkg` 的正式几何真值。它必须基于 full-input / batch 输入 `nodes.gpkg` 做 copy-on-write，保留输入节点 geometry 与原字段，仅对当前 selected / effective case 的 representative node 更新 `is_anchor`。
+- T04 `nodes.gpkg` 写回规则固定为：`accepted -> is_anchor = yes`；`rejected / runtime_failed / formal result missing -> is_anchor = fail4`。`fail4` 仅属于 T04 downstream nodes 写回值域，不改变 T03 `fail3` 语义。
+- `nodes_anchor_update_audit.csv/json` 至少记录 `case_id / representative_node_id / mainnodeid / previous_is_anchor / new_is_anchor / step7_state / reason`；JSON 还必须包含 `total_update_count / updated_to_yes_count / updated_to_fail4_count / rows`。
+- `step7_consistency_report.json` 必须能核对 accepted/rejected layer、summary、rejected index、case-level status/audit、review PNG、`nodes.gpkg` 与 `nodes_anchor_update_audit.*` 的一致性。
 
 ## 5. EntryPoints
 

@@ -54,9 +54,10 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     progress = json.loads((run_root / "t04_internal_full_input_progress.json").read_text(encoding="utf-8"))
     consistency = json.loads((run_root / "step7_consistency_report.json").read_text(encoding="utf-8"))
     rejected_index = json.loads((run_root / "step7_rejected_index.json").read_text(encoding="utf-8"))
+    nodes_audit = json.loads((run_root / "nodes_anchor_update_audit.json").read_text(encoding="utf-8"))
 
     assert preflight["selected_case_ids"] == ["1001"]
-    for doc in [preflight, summary, consistency, rejected_index]:
+    for doc in [preflight, summary, consistency, rejected_index, nodes_audit]:
         assert doc["produced_at"]
         assert doc["git_sha"]
         assert doc["input_dataset_id"].startswith("input-paths-stat-sha256:")
@@ -71,6 +72,7 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     assert summary["guard_failed_count"] == 0
     assert summary["runtime_failed_count"] == 0
     assert consistency["passed"] is True
+    assert consistency["nodes_consistency_passed"] is True
 
     assert (run_root / "divmerge_virtual_anchor_surface.gpkg").is_file()
     assert (run_root / "divmerge_virtual_anchor_surface_rejected.geojson").is_file()
@@ -79,6 +81,22 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     assert (run_root / "divmerge_virtual_anchor_surface_audit.gpkg").is_file()
     assert (run_root / "step7_rejected_index.csv").is_file()
     assert (run_root / "step7_rejected_index.json").is_file()
+    assert (run_root / "nodes.gpkg").is_file()
+    assert (run_root / "nodes_anchor_update_audit.csv").is_file()
+    assert (run_root / "nodes_anchor_update_audit.json").is_file()
+    assert summary["nodes_gpkg"] == str(run_root / "nodes.gpkg")
+    assert summary["nodes_total_update_count"] == 1
+    assert nodes_audit["total_update_count"] == 1
+    node_audit_row = nodes_audit["rows"][0]
+    assert node_audit_row["case_id"] == "1001"
+    expected_is_anchor = "yes" if node_audit_row["step7_state"] == "accepted" else "fail4"
+    assert node_audit_row["new_is_anchor"] == expected_is_anchor
+
+    fiona = pytest.importorskip("fiona")
+    with fiona.open(run_root / "nodes.gpkg") as src:
+        nodes_by_id = {str(row["properties"]["id"]): dict(row["properties"]) for row in src}
+    assert nodes_by_id[node_audit_row["representative_node_id"]]["is_anchor"] == expected_is_anchor
+    assert nodes_by_id["2001"]["is_anchor"] == "no"
 
     visual_root = run_root / "visual_checks"
     assert (run_root / "step4_review_flat" / "case__1001__final_review.png").is_file()

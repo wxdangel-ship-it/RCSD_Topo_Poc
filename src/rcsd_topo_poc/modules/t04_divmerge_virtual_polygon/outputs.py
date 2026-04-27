@@ -622,6 +622,7 @@ def write_summary(
     rerun_cleaned_before_write: bool,
     failed_cases: list[dict[str, Any]] | None = None,
     step7_outputs: dict[str, Any] | None = None,
+    nodes_outputs: dict[str, Any] | None = None,
 ) -> Path:
     cases_dir = run_root / "cases"
     summary_trace = provenance_doc(input_dataset_id=str(preflight.get("input_dataset_id") or ""))
@@ -655,6 +656,18 @@ def write_summary(
                 "step7_consistency_report": step7_outputs.get("consistency_report_path"),
                 "step7_accepted_count": step7_outputs.get("accepted_count"),
                 "step7_rejected_count": step7_outputs.get("rejected_count"),
+            }
+        )
+    if nodes_outputs:
+        summary.update(
+            {
+                "nodes_gpkg": nodes_outputs.get("nodes_path"),
+                "nodes_anchor_update_audit_csv": nodes_outputs.get("nodes_anchor_update_audit_csv_path"),
+                "nodes_anchor_update_audit_json": nodes_outputs.get("nodes_anchor_update_audit_json_path"),
+                "nodes_total_update_count": nodes_outputs.get("nodes_total_update_count"),
+                "nodes_updated_to_yes_count": nodes_outputs.get("nodes_updated_to_yes_count"),
+                "nodes_updated_to_fail4_count": nodes_outputs.get("nodes_updated_to_fail4_count"),
+                "nodes_consistency_passed": nodes_outputs.get("nodes_consistency_passed"),
             }
         )
     output_path = run_root / "summary.json"

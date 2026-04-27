@@ -1,7 +1,7 @@
 # 12. Glossary
 
 - `Tool1`：Patch 数据整理脚本
-- `Tool2`：DriveZone per-patch fix + 全局 merge 工具
+- `Tool2`：DriveZone per-patch fix + 全局聚合输出工具
 - `Tool3`：Intersection 逐 Patch 预处理与汇总工具
 - `Tool4`：A200 road 增加 `patch_id` 工具
 - `Tool5`：A200 road 增加 SW 原始 `kind` 工具

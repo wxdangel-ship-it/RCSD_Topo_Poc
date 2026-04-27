@@ -66,7 +66,7 @@
 ## 5. Tool1 至 Tool5 既有基线
 
 - Tool1：维护 `patch_all` 目录骨架与 `Vector/` 归位
-- Tool2：生成 per-patch `DriveZone_fix.geojson` 并输出根目录全局 `DriveZone.geojson`
+- Tool2：生成 per-patch `DriveZone_fix.geojson`，按 `+1m / -1m` 做单 Patch 修复，并汇总输出根目录 `DriveZone.geojson`
 - Tool3：对 `Intersection` 做逐 Patch 预处理并汇总输出
 - Tool4：对 `A200_road` 写入 `patch_id`
 - Tool5：对 `A200_road_patch` 写入 SW 原始 `kind`

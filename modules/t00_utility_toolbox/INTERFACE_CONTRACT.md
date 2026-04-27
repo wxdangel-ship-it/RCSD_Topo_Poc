@@ -6,7 +6,7 @@
 - 模块名称：`T00 Utility Toolbox`
 - 当前工具：
   - Tool1 `Patch 数据整理`
-  - Tool2 `DriveZone per-patch fix + 全局 merge`
+  - Tool2 `DriveZone per-patch fix + 全局聚合输出`
   - Tool3 `Intersection 逐 Patch 预处理与汇总`
   - Tool4 `A200 road 增加 patch_id`
   - Tool5 `A200 road 增加 SW 原始 kind`
@@ -92,6 +92,8 @@
 - 单 Patch fix 输出：`D:\TestData\POC_Data\patch_all\<PatchID>\Vector\DriveZone_fix.geojson`
 - 全局输出：`D:\TestData\POC_Data\patch_all\DriveZone.geojson`
 - 输出 CRS：`EPSG:3857`（输出格式为 `GeoJSON`）
+- 单 Patch 处理对 dissolve 结果执行 `+1m / -1m`
+- 根目录 `DriveZone.geojson` 只汇总各 Patch 的 fix 结果到一个文件，不再做全局 dissolve
 
 ## 5. Tool3 契约
 

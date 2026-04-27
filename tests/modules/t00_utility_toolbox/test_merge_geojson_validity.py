@@ -128,6 +128,7 @@ def test_drivezone_merge_writes_fix_outputs_before_global_merge(tmp_path: Path) 
     fix_3001 = patch_all_root / "3001" / "Vector" / "DriveZone_fix.geojson"
     fix_3002 = patch_all_root / "3002" / "Vector" / "DriveZone_fix.geojson"
     global_output = patch_all_root / "DriveZone.geojson"
+    global_doc = json.loads(global_output.read_text(encoding="utf-8"))
 
     assert fix_3001.is_file()
     assert fix_3002.is_file()
@@ -135,8 +136,11 @@ def test_drivezone_merge_writes_fix_outputs_before_global_merge(tmp_path: Path) 
     assert summary["processed_patch_count"] == 2
     assert summary["fixed_output_count"] == 2
     assert summary["global_merge_input_count"] == 2
+    assert summary["buffer_distance_meters"] == 1.0
     assert summary["output_feature_count"] == 2
     assert summary["output_bounds_3857"] is not None
+    assert global_doc["crs"]["properties"]["name"] == "EPSG:3857"
+    assert len(global_doc["features"]) == 2
 
     fix_3001_doc = json.loads(fix_3001.read_text(encoding="utf-8"))
     fix_3002_doc = json.loads(fix_3002.read_text(encoding="utf-8"))

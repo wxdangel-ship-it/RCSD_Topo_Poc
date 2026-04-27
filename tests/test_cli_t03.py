@@ -78,7 +78,7 @@ def test_t03_step3_cli_parses_custom_arguments(monkeypatch) -> None:
     assert captured["debug"] is True
 
 
-def test_t03_step45_cli_uses_default_paths(monkeypatch) -> None:
+def test_t03_association_cli_uses_default_paths(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def _fake_cmd(args) -> int:
@@ -93,9 +93,9 @@ def test_t03_step45_cli_uses_default_paths(monkeypatch) -> None:
         captured["debug_render"] = args.debug_render
         return 0
 
-    monkeypatch.setattr(cli, "_cmd_t03_step45_rcsd_association", _fake_cmd)
+    monkeypatch.setattr(cli, "_cmd_t03_rcsd_association", _fake_cmd)
 
-    exit_code = cli.main(["t03-step45-rcsd-association"])
+    exit_code = cli.main(["t03-rcsd-association"])
 
     assert exit_code == 0
     assert captured["case_root"] == "/mnt/e/TestData/POC_Data/T02/Anchor"
@@ -104,12 +104,12 @@ def test_t03_step45_cli_uses_default_paths(monkeypatch) -> None:
     assert captured["max_cases"] is None
     assert captured["workers"] == 1
     assert captured["run_id"] is None
-    assert captured["out_root"] == "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase"
+    assert captured["out_root"] == "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_association_phase"
     assert captured["debug"] is False
     assert captured["debug_render"] is False
 
 
-def test_t03_step45_cli_parses_custom_arguments(monkeypatch) -> None:
+def test_t03_association_cli_parses_custom_arguments(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def _fake_cmd(args) -> int:
@@ -124,11 +124,11 @@ def test_t03_step45_cli_parses_custom_arguments(monkeypatch) -> None:
         captured["debug_render"] = args.debug_render
         return 0
 
-    monkeypatch.setattr(cli, "_cmd_t03_step45_rcsd_association", _fake_cmd)
+    monkeypatch.setattr(cli, "_cmd_t03_rcsd_association", _fake_cmd)
 
     exit_code = cli.main(
         [
-            "t03-step45-rcsd-association",
+            "t03-rcsd-association",
             "--case-root",
             "/tmp/cases",
             "--step3-root",
@@ -144,7 +144,7 @@ def test_t03_step45_cli_parses_custom_arguments(monkeypatch) -> None:
             "--run-id",
             "custom-run",
             "--out-root",
-            "/tmp/t03-step45-out",
+            "/tmp/t03-association-out",
             "--debug",
             "--debug-render",
         ]
@@ -157,12 +157,12 @@ def test_t03_step45_cli_parses_custom_arguments(monkeypatch) -> None:
     assert captured["max_cases"] == 2
     assert captured["workers"] == 4
     assert captured["run_id"] == "custom-run"
-    assert captured["out_root"] == "/tmp/t03-step45-out"
+    assert captured["out_root"] == "/tmp/t03-association-out"
     assert captured["debug"] is True
     assert captured["debug_render"] is True
 
 
-def test_cmd_t03_step45_rcsd_association_delegates_to_association_cli(monkeypatch) -> None:
+def test_cmd_t03_rcsd_association_delegates_to_association_cli(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     def _fake_runner(args) -> int:
@@ -171,10 +171,10 @@ def test_cmd_t03_step45_rcsd_association_delegates_to_association_cli(monkeypatc
 
     from rcsd_topo_poc.modules.t03_virtual_junction_anchor import association_cli
 
-    monkeypatch.setattr(association_cli, "run_t03_step45_rcsd_association_cli", _fake_runner)
+    monkeypatch.setattr(association_cli, "run_t03_rcsd_association_cli", _fake_runner)
 
     args = argparse.Namespace(case_root="/tmp/cases")
-    exit_code = cli._cmd_t03_step45_rcsd_association(args)
+    exit_code = cli._cmd_t03_rcsd_association(args)
 
     assert exit_code == 0
     assert captured["args"] is args

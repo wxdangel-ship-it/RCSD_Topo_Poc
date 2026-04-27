@@ -7,7 +7,7 @@ from shapely.geometry import GeometryCollection, LineString, MultiLineString, Mu
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import Step45Context, Step45ForeignResult
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import AssociationContext, AssociationForeignResult
 
 
 FOREIGN_MASK_NORMALIZATION_MODE = "road_like_1m_mask_in_step6"
@@ -67,7 +67,7 @@ def _union_points(geometries: Iterable[BaseGeometry]) -> BaseGeometry | None:
     return _clean_geometry(unary_union(parts))
 
 
-def _graph_incident_roads(context: Step45Context, node_id: str) -> list[str]:
+def _graph_incident_roads(context: AssociationContext, node_id: str) -> list[str]:
     explicit = [
         road.road_id
         for road in context.step1_context.rcsd_roads
@@ -76,9 +76,9 @@ def _graph_incident_roads(context: Step45Context, node_id: str) -> list[str]:
     return _sorted_ids(explicit)
 
 
-def build_step45_foreign_result(
+def build_association_foreign_result(
     *,
-    context: Step45Context,
+    context: AssociationContext,
     active_rcsd_nodes: list,
     active_rcsd_roads: list,
     required_rcsdnode_ids: set[str],
@@ -86,7 +86,7 @@ def build_step45_foreign_result(
     required_rcsdroad_ids: set[str],
     support_rcsdroad_ids: set[str],
     node_degree_map: dict[str, int],
-) -> Step45ForeignResult:
+) -> AssociationForeignResult:
     step1 = context.step1_context
     excluded_nodes = [
         node
@@ -115,7 +115,7 @@ def build_step45_foreign_result(
     foreign_swsd_context_geometry = None
     foreign_rcsd_context_geometry = None
 
-    return Step45ForeignResult(
+    return AssociationForeignResult(
         excluded_rcsdnode_ids=tuple(_sorted_ids(node.node_id for node in excluded_nodes)),
         excluded_rcsdroad_ids=tuple(_sorted_ids(road.road_id for road in excluded_roads)),
         nonsemantic_connector_rcsdnode_ids=tuple(_sorted_ids(node.node_id for node in nonsemantic_connector_nodes)),

@@ -2,24 +2,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.modules.t03_virtual_junction_anchor._step45_helpers import (
+from tests.modules.t03_virtual_junction_anchor._association_helpers import (
     build_center_case_degree2_connector,
     build_center_case_degree2_connector_with_true_foreign_node,
     build_center_case_foreign_selected_surface_overlap,
     build_center_case_multi_surface_filter,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import load_step45_case_specs, load_step45_context
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import build_step45_case_result
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import load_association_case_specs, load_association_context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import build_association_case_result
 
 
-def test_step45_true_foreign_nodes_stay_audit_only_without_polygon_context(tmp_path: Path) -> None:
+def test_step5_true_foreign_nodes_stay_audit_only_without_polygon_context(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     build_center_case_degree2_connector_with_true_foreign_node(case_root, step3_root, case_id="100001")
 
-    specs, _ = load_step45_case_specs(case_root=case_root, case_ids=["100001"], exclude_case_ids=["922217", "54265667", "502058682"])
-    context = load_step45_context(case_spec=specs[0], step3_root=step3_root)
-    result = build_step45_case_result(context)
+    specs, _ = load_association_case_specs(case_root=case_root, case_ids=["100001"], exclude_case_ids=["922217", "54265667", "502058682"])
+    context = load_association_context(case_spec=specs[0], step3_root=step3_root)
+    result = build_association_case_result(context)
 
     assert "rc_true_foreign" in result.extra_status_fields["excluded_rcsdnode_ids"]
     assert "rc_true_foreign" in result.extra_status_fields["true_foreign_rcsdnode_ids"]
@@ -31,14 +31,14 @@ def test_step45_true_foreign_nodes_stay_audit_only_without_polygon_context(tmp_p
     ]
 
 
-def test_step45_connector_nodes_are_audited_separately_from_true_foreign_nodes(tmp_path: Path) -> None:
+def test_step5_connector_nodes_are_audited_separately_from_true_foreign_nodes(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     build_center_case_degree2_connector_with_true_foreign_node(case_root, step3_root, case_id="100004")
 
-    specs, _ = load_step45_case_specs(case_root=case_root, case_ids=["100004"], exclude_case_ids=["922217", "54265667", "502058682"])
-    context = load_step45_context(case_spec=specs[0], step3_root=step3_root)
-    result = build_step45_case_result(context)
+    specs, _ = load_association_case_specs(case_root=case_root, case_ids=["100004"], exclude_case_ids=["922217", "54265667", "502058682"])
+    context = load_association_context(case_spec=specs[0], step3_root=step3_root)
+    result = build_association_case_result(context)
 
     assert result.extra_status_fields["nonsemantic_connector_rcsdnode_ids"] == ["rc_connector"]
     assert result.extra_status_fields["true_foreign_rcsdnode_ids"] == ["rc_true_foreign"]
@@ -47,14 +47,14 @@ def test_step45_connector_nodes_are_audited_separately_from_true_foreign_nodes(t
     }
 
 
-def test_step45_no_longer_builds_hard_foreign_swsd_context(tmp_path: Path) -> None:
+def test_step5_no_longer_builds_hard_foreign_swsd_context(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     build_center_case_multi_surface_filter(case_root, step3_root, case_id="100005")
 
-    specs, _ = load_step45_case_specs(case_root=case_root, case_ids=["100005"], exclude_case_ids=["922217", "54265667", "502058682"])
-    context = load_step45_context(case_spec=specs[0], step3_root=step3_root)
-    result = build_step45_case_result(context)
+    specs, _ = load_association_case_specs(case_root=case_root, case_ids=["100005"], exclude_case_ids=["922217", "54265667", "502058682"])
+    context = load_association_context(case_spec=specs[0], step3_root=step3_root)
+    result = build_association_case_result(context)
 
     assert result.output_geometries.foreign_swsd_context_geometry is None
     assert result.audit_doc["step5"]["foreign_swsd_road_ids"] == []
@@ -62,14 +62,14 @@ def test_step45_no_longer_builds_hard_foreign_swsd_context(tmp_path: Path) -> No
     assert result.audit_doc["step5"]["foreign_mask_normalization_mode"] == "road_like_1m_mask_in_step6"
 
 
-def test_step45_selected_surface_overlap_case_no_longer_uses_selected_surface_protection_patch(tmp_path: Path) -> None:
+def test_step5_selected_surface_overlap_case_no_longer_uses_selected_surface_protection_patch(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     build_center_case_foreign_selected_surface_overlap(case_root, step3_root, case_id="100007")
 
-    specs, _ = load_step45_case_specs(case_root=case_root, case_ids=["100007"], exclude_case_ids=["922217", "54265667", "502058682"])
-    context = load_step45_context(case_spec=specs[0], step3_root=step3_root)
-    result = build_step45_case_result(context)
+    specs, _ = load_association_case_specs(case_root=case_root, case_ids=["100007"], exclude_case_ids=["922217", "54265667", "502058682"])
+    context = load_association_context(case_spec=specs[0], step3_root=step3_root)
+    result = build_association_case_result(context)
 
     assert result.output_geometries.foreign_swsd_context_geometry is None
     assert result.audit_doc["step5"]["selected_surface_foreign_protection_applied"] is False

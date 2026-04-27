@@ -11,15 +11,15 @@ from typing import Any
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import build_run_id, normalize_runtime_path, write_json
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_loader import DEFAULT_FULL_BATCH_EXCLUDED_CASE_IDS
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import load_step45_case_specs, load_step45_context
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import Step45ReviewIndexRow
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import build_step45_case_result
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import load_association_case_specs, load_association_context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import AssociationReviewIndexRow
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import build_association_case_result
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_outputs import write_case_outputs, write_review_index, write_summary
 
 
 DEFAULT_CASE_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor")
 DEFAULT_STEP3_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003")
-DEFAULT_OUT_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase")
+DEFAULT_OUT_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_association_phase")
 
 
 def _preflight_doc(
@@ -63,12 +63,12 @@ def _preflight_doc(
 
 
 def _run_single_case(spec, *, step3_root: Path):
-    context = load_step45_context(case_spec=spec, step3_root=step3_root)
-    case_result = build_step45_case_result(context)
+    context = load_association_context(case_spec=spec, step3_root=step3_root)
+    case_result = build_association_case_result(context)
     return context, case_result
 
 
-def run_t03_step45_rcsd_association_batch(
+def run_t03_rcsd_association_batch(
     *,
     case_root: str | Path = DEFAULT_CASE_ROOT,
     step3_root: str | Path = DEFAULT_STEP3_ROOT,
@@ -83,7 +83,7 @@ def run_t03_step45_rcsd_association_batch(
     resolved_case_root = normalize_runtime_path(case_root)
     resolved_step3_root = normalize_runtime_path(step3_root)
     resolved_out_root = normalize_runtime_path(out_root)
-    resolved_run_id = run_id or build_run_id("t03_step45_joint_phase")
+    resolved_run_id = run_id or build_run_id("t03_association_phase")
     run_root = resolved_out_root / resolved_run_id
     rerun_cleaned_before_write = False
     if run_root.exists():
@@ -91,7 +91,7 @@ def run_t03_step45_rcsd_association_batch(
         rerun_cleaned_before_write = True
     run_root.mkdir(parents=True, exist_ok=True)
 
-    specs, loader_preflight = load_step45_case_specs(
+    specs, loader_preflight = load_association_case_specs(
         case_root=resolved_case_root,
         case_ids=case_ids,
         max_cases=max_cases,
@@ -107,7 +107,7 @@ def run_t03_step45_rcsd_association_batch(
     preflight["run_root"] = str(run_root)
     write_json(run_root / "preflight.json", preflight)
 
-    review_rows: list[Step45ReviewIndexRow] = []
+    review_rows: list[AssociationReviewIndexRow] = []
     failed_case_ids: list[str] = []
     max_workers = max(1, int(workers or 1))
     if max_workers == 1:
@@ -122,7 +122,7 @@ def run_t03_step45_rcsd_association_batch(
             )
     else:
         futures = {}
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="t03-step45") as executor:
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="t03-association") as executor:
             for spec in specs:
                 futures[executor.submit(_run_single_case, spec, step3_root=resolved_step3_root)] = spec.case_id
             for future in as_completed(futures):

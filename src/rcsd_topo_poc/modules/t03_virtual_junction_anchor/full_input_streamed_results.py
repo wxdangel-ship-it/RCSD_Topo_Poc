@@ -8,8 +8,8 @@ from typing import Any
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import sort_patch_key
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
-    Step67CaseResult,
-    Step67ReviewIndexRow,
+    FinalizationCaseResult,
+    FinalizationReviewIndexRow,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_observability import (
     write_json_atomic,
@@ -36,7 +36,7 @@ class T03StreamedCaseResult:
     representative_mainnodeid: str
     template_class: str | None
     association_class: str
-    step45_state: str
+    association_state: str
     step6_state: str
     step7_state: str
     visual_class: str
@@ -56,7 +56,7 @@ class T03TerminalCaseRecord:
     representative_mainnodeid: str
     template_class: str | None
     association_class: str
-    step45_state: str
+    association_state: str
     step6_state: str
     step7_state: str
     visual_class: str
@@ -84,8 +84,8 @@ def build_streamed_case_result(
     *,
     case_id: str,
     representative_feature,
-    case_result: Step67CaseResult,
-    review_row: Step67ReviewIndexRow,
+    case_result: FinalizationCaseResult,
+    review_row: FinalizationReviewIndexRow,
     run_root: Path,
 ) -> T03StreamedCaseResult:
     representative_node_id = feature_id(representative_feature) or case_id
@@ -96,7 +96,7 @@ def build_streamed_case_result(
         representative_mainnodeid=representative_mainnodeid,
         template_class=case_result.template_class,
         association_class=case_result.association_class,
-        step45_state=case_result.step45_state,
+        association_state=case_result.association_state,
         step6_state=case_result.step6_result.step6_state,
         step7_state=case_result.step7_result.step7_state,
         visual_class=case_result.step7_result.visual_review_class,
@@ -105,7 +105,7 @@ def build_streamed_case_result(
         root_cause_layer=case_result.step7_result.root_cause_layer,
         root_cause_type=case_result.step7_result.root_cause_type,
         source_png_path=review_row.source_png_path,
-        final_polygon_path=str(run_root / "cases" / case_id / "step67_final_polygon.gpkg"),
+        final_polygon_path=str(run_root / "cases" / case_id / "step7_final_polygon.gpkg"),
     )
 
 
@@ -122,7 +122,7 @@ def terminal_case_record_from_streamed_result(
         representative_mainnodeid=record.representative_mainnodeid,
         template_class=record.template_class,
         association_class=record.association_class,
-        step45_state=record.step45_state,
+        association_state=record.association_state,
         step6_state=record.step6_state,
         step7_state=record.step7_state,
         visual_class=record.visual_class,
@@ -139,8 +139,8 @@ def build_terminal_case_record(
     *,
     case_id: str,
     representative_feature,
-    case_result: Step67CaseResult,
-    review_row: Step67ReviewIndexRow,
+    case_result: FinalizationCaseResult,
+    review_row: FinalizationReviewIndexRow,
     run_root: Path,
 ) -> T03TerminalCaseRecord:
     return terminal_case_record_from_streamed_result(
@@ -171,7 +171,7 @@ def build_runtime_failed_terminal_case_record(
         representative_mainnodeid=representative_mainnodeid,
         template_class=None,
         association_class="",
-        step45_state="",
+        association_state="",
         step6_state="",
         step7_state="runtime_failed",
         visual_class=VISUAL_V5,
@@ -195,7 +195,7 @@ def streamed_case_result_from_terminal_record(
         representative_mainnodeid=record.representative_mainnodeid,
         template_class=record.template_class,
         association_class=record.association_class,
-        step45_state=record.step45_state,
+        association_state=record.association_state,
         step6_state=record.step6_state,
         step7_state=record.step7_state,
         visual_class=record.visual_class,
@@ -272,8 +272,8 @@ def reconstruct_streamed_case_result_from_case_outputs(
     case_id: str,
 ) -> T03StreamedCaseResult | None:
     case_dir = run_root / "cases" / case_id
-    final_polygon_path = case_dir / "step67_final_polygon.gpkg"
-    review_png_path = case_dir / "step67_review.png"
+    final_polygon_path = case_dir / "step7_final_polygon.gpkg"
+    review_png_path = case_dir / "step7_review.png"
     step6_status_path = case_dir / "step6_status.json"
     step7_status_path = case_dir / "step7_status.json"
     if not (final_polygon_path.is_file() and step6_status_path.is_file() and step7_status_path.is_file()):
@@ -287,7 +287,7 @@ def reconstruct_streamed_case_result_from_case_outputs(
         representative_mainnodeid=case_id,
         template_class=step7_status.get("template_class"),
         association_class=str(step7_status.get("association_class") or ""),
-        step45_state=str(step7_status.get("step45_state") or ""),
+        association_state=str(step7_status.get("association_state") or ""),
         step6_state=str(step6_status.get("step6_state") or ""),
         step7_state=str(step7_status.get("step7_state") or ""),
         visual_class=_infer_visual_class(step6_status=step6_status, step7_status=step7_status),
@@ -378,13 +378,13 @@ def _infer_visual_class(
     reason = str(step7_status.get("reason") or "")
     if step7_state == "accepted":
         if reason in {
-            "step67_accepted_with_upstream_step3_visual_risk",
-            "step67_accepted_with_visual_risk",
+            "step7_accepted_with_upstream_step3_visual_risk",
+            "step7_accepted_with_visual_risk",
         }:
             return VISUAL_V2
         return VISUAL_V1
 
-    if str(step7_status.get("step45_state") or "") == "not_established":
+    if str(step7_status.get("association_state") or "") == "not_established":
         return VISUAL_V5
     if not bool(step6_status.get("geometry_established")):
         secondary_root_cause = str(step6_status.get("secondary_root_cause") or "")

@@ -23,8 +23,8 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_render import
     _font,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
-    Step67CaseResult,
-    Step67Context,
+    FinalizationCaseResult,
+    FinalizationContext,
 )
 
 
@@ -61,19 +61,19 @@ SEED_EDGE = (24, 96, 151, 180)
 FOREIGN_MASK_FILL = (164, 0, 0, 52)
 
 
-def _patch_bounds(step67_context: Step67Context, case_result: Step67CaseResult) -> tuple[float, float, float, float]:
-    step1 = step67_context.step45_context.step1_context
+def _patch_bounds(finalization_context: FinalizationContext, case_result: FinalizationCaseResult) -> tuple[float, float, float, float]:
+    step1 = finalization_context.association_context.step1_context
     reference = step1.representative_node.geometry
     focus = [
         reference.buffer(16.0),
         step1.drivezone_geometry,
-        step67_context.step45_context.step3_allowed_space_geometry,
+        finalization_context.association_context.step3_allowed_space_geometry,
         case_result.step6_result.output_geometries.polygon_seed_geometry,
         case_result.step6_result.output_geometries.polygon_final_geometry,
         case_result.step6_result.output_geometries.foreign_mask_geometry,
-        step67_context.step45_case_result.output_geometries.required_hook_zone_geometry,
-        step67_context.step45_case_result.output_geometries.required_rcsdroad_geometry,
-        step67_context.step45_case_result.output_geometries.support_rcsdroad_geometry,
+        finalization_context.association_case_result.output_geometries.required_hook_zone_geometry,
+        finalization_context.association_case_result.output_geometries.required_rcsdroad_geometry,
+        finalization_context.association_case_result.output_geometries.support_rcsdroad_geometry,
     ]
     merged = unary_union([geometry for geometry in focus if geometry is not None and not geometry.is_empty])
     minx, miny, maxx, maxy = merged.bounds
@@ -82,21 +82,21 @@ def _patch_bounds(step67_context: Step67Context, case_result: Step67CaseResult) 
     return reference.x - half, reference.y - half, reference.x + half, reference.y + half
 
 
-def render_step67_review_png(
+def render_finalization_review_png(
     *,
     out_path: Path,
-    step67_context: Step67Context,
-    case_result: Step67CaseResult,
+    finalization_context: FinalizationContext,
+    case_result: FinalizationCaseResult,
     debug_render: bool = False,
 ) -> None:
-    step1 = step67_context.step45_context.step1_context
-    step45_result = step67_context.step45_case_result
+    step1 = finalization_context.association_context.step1_context
+    association_result = finalization_context.association_case_result
     step6_result = case_result.step6_result
     step7_result = case_result.step7_result
 
     image = Image.new("RGBA", (IMAGE_SIZE, IMAGE_SIZE), BACKGROUND_COLOR)
     draw = ImageDraw.Draw(image, "RGBA")
-    bounds = _patch_bounds(step67_context, case_result)
+    bounds = _patch_bounds(finalization_context, case_result)
     _draw_polygon(draw, step1.drivezone_geometry, bounds, fill=DRIVEZONE_FILL, outline=DRIVEZONE_EDGE, width=2)
     _draw_polygon(draw, step6_result.output_geometries.foreign_mask_geometry, bounds, fill=FOREIGN_MASK_FILL)
     _draw_polygon(
@@ -109,16 +109,16 @@ def render_step67_review_png(
     )
 
     for road in step1.roads:
-        fill = ROAD_COLOR if road.road_id in set(step67_context.step45_context.selected_road_ids) else (95, 95, 95, 170)
-        width = 8 if road.road_id in set(step67_context.step45_context.selected_road_ids) else 5
+        fill = ROAD_COLOR if road.road_id in set(finalization_context.association_context.selected_road_ids) else (95, 95, 95, 170)
+        width = 8 if road.road_id in set(finalization_context.association_context.selected_road_ids) else 5
         _draw_line(draw, road.geometry, bounds, fill=fill, width=width)
 
     for rcsd_road in step1.rcsd_roads:
         _draw_line(draw, rcsd_road.geometry, bounds, fill=VISIBLE_RC_ROAD_EDGE, width=4)
 
-    _draw_line(draw, step45_result.output_geometries.support_rcsdroad_geometry, bounds, fill=SUPPORT_EDGE, width=5)
-    _draw_line(draw, step45_result.output_geometries.required_rcsdroad_geometry, bounds, fill=REQUIRED_EDGE, width=6)
-    _draw_point(draw, step45_result.output_geometries.required_rcsdnode_geometry, bounds, fill=REQUIRED_EDGE, radius=7)
+    _draw_line(draw, association_result.output_geometries.support_rcsdroad_geometry, bounds, fill=SUPPORT_EDGE, width=5)
+    _draw_line(draw, association_result.output_geometries.required_rcsdroad_geometry, bounds, fill=REQUIRED_EDGE, width=6)
+    _draw_point(draw, association_result.output_geometries.required_rcsdnode_geometry, bounds, fill=REQUIRED_EDGE, radius=7)
     _draw_point(
         draw,
         step1.representative_node.geometry,
@@ -154,7 +154,7 @@ def render_step67_review_png(
     _draw_text_with_shadow(
         draw,
         xy=(44, 40),
-        text=f"{step7_result.step7_state.upper()} / {'已接受' if step7_result.step7_state == 'accepted' else '失败'} / Step67",
+        text=f"{step7_result.step7_state.upper()} / {'已接受' if step7_result.step7_state == 'accepted' else '失败'} / Finalization",
         font=_font(32),
         fill=overlay_style["text"],
         shadow=overlay_style["text_shadow"],
@@ -176,7 +176,7 @@ def render_step67_review_png(
             draw,
             xy=(44, IMAGE_SIZE - 64),
             text=(
-                f"step45={case_result.step45_state}/{case_result.association_class}  "
+                f"association={case_result.association_state}/{case_result.association_class}  "
                 f"signals={len(step6_result.review_signals)}"
             ),
             font=_font(16),

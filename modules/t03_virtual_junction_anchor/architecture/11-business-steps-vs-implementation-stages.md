@@ -18,25 +18,25 @@ T03 当前正式业务主链固定按 `Step1~Step7` 理解：
 
 ## 2. 历史实现阶段
 
-`Step45` 与 `Step67` 是历史实现阶段名，不再作为正式需求主结构。
+`Association` 与 `Finalization` 是历史实现阶段名，不再作为正式需求主结构。
 
 | 历史标签 | 当前解释 | 允许出现的位置 |
 |---|---|---|
-| `Step45` | `Step4 + Step5` 的历史联合实现阶段，承载 RCSD 关联、`required / support / excluded` 分类、状态与审计文件 | 现有 CLI 名、代码类名、输出文件名、测试、历史 closeout、兼容说明 |
-| `Step67` | `Step6 + Step7` 的历史 finalization / delivery 阶段，承载受约束几何、最终发布、review PNG 与 batch closeout | 现有代码类名、输出文件名、测试、历史 closeout、兼容脚本、兼容说明 |
+| `Association` | `Step4 + Step5` 的历史联合实现阶段，承载 RCSD 关联、`required / support / excluded` 分类、状态与审计文件 | 现有 CLI 名、代码类名、输出文件名、测试、历史 closeout、兼容说明 |
+| `Finalization` | `Step6 + Step7` 的历史 finalization / delivery 阶段，承载受约束几何、最终发布、review PNG 与 batch closeout | 现有代码类名、输出文件名、测试、历史 closeout、兼容脚本、兼容说明 |
 
 ## 3. 命名保留原则
 
-- 现有 `step45_*` 与 `step67_*` 文件名是当前输出兼容契约的一部分，本轮不重命名。
-- 现有 `Step45Context / Step45CaseResult / Step67Context / Step67CaseResult` 等代码符号是当前实现 API，本轮不重命名。
-- 现有 `t03-step45-rcsd-association` CLI 是 repo 官方入口事实，本轮不删除、不改签名。
-- 现有 `t03_run_step67_internal_full_input_8workers.sh` 与 `t03_watch_step67_internal_full_input.sh` 是历史兼容 wrapper，本轮不退役。
-- 新文档主叙述不再用 `Step45 / Step67` 组织业务章节；需要解释历史命名时，应引用本映射文档。
+- 现有 `association_*` 与 `step7_*` 文件名是当前输出兼容契约的一部分，本轮不重命名。
+- 现有 `AssociationContext / AssociationCaseResult / FinalizationContext / FinalizationCaseResult` 等代码符号是当前实现 API，本轮不重命名。
+- 现有 `t03-rcsd-association` CLI 是 repo 官方入口事实，本轮不删除、不改签名。
+- 历史 finalization wrapper 已退役，不再作为当前入口契约的一部分。
+- 新文档主叙述不再用 `Association / Finalization` 组织业务章节；需要解释历史命名时，应引用本映射文档。
 
 ## 4. 审计与验收口径
 
 - 正式状态以 `Step7` 机器状态为准：`accepted / rejected`；批量运行还需区分 `runtime_failed`。
 - 视觉等级 `V1~V5` 只属于 review-only 层，不得反向覆盖正式状态。
 - `virtual_intersection_polygons.gpkg`、`nodes.gpkg` 与 `nodes_anchor_update_audit.*` 是 batch / full-input 正式成果。
-- `step67_review.png`、`t03_review_*` 与 `visual_checks/` 是 review-only 产物。
+- `step7_review.png`、`t03_review_*` 与 `visual_checks/` 是 review-only 产物。
 - `terminal_case_records/<case_id>.json` 是 internal full-input 的 authoritative terminal state；`t03_streamed_case_results.jsonl` 是 append log，不作为唯一准真值。

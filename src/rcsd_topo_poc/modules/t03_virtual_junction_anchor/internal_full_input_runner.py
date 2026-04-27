@@ -70,7 +70,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers 
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.t03_batch_closeout import (
     T03_REVIEW_FLAT_DIRNAME,
-    build_step67_review_rows,
+    build_finalization_review_rows,
     load_step3_review_rows,
     materialize_t03_review_gallery,
     mirror_visual_checks,
@@ -95,7 +95,7 @@ T03_FINAL_CASE_REQUIRED_OUTPUTS = (
     "step6_polygon_seed.gpkg",
     "step6_polygon_final.gpkg",
     "step6_constraint_foreign_mask.gpkg",
-    "step67_final_polygon.gpkg",
+    "step7_final_polygon.gpkg",
     "step6_status.json",
     "step6_audit.json",
     "step7_status.json",
@@ -115,7 +115,7 @@ class T03InternalFullInputArtifacts:
     excluded_case_ids: tuple[str, ...]
 
 
-T03Step67InternalFullInputArtifacts = T03InternalFullInputArtifacts
+T03FinalizationInternalFullInputArtifacts = T03InternalFullInputArtifacts
 
 _now_text = now_text
 _write_json_atomic = write_json_atomic
@@ -960,7 +960,7 @@ def run_t03_internal_full_input(
                 state="running",
                 current_stage="direct_case_execution",
                 reason="direct_case_started",
-                detail="executing step3/step67 directly from shared full-input layers",
+                detail="executing step3 through step7 directly from shared full-input layers",
             )
             try:
                 result = _run_single_case_direct(
@@ -1021,12 +1021,12 @@ def run_t03_internal_full_input(
                 )
             for stage_name, elapsed_seconds in result.get("stage_timers", {}).items():
                 _record_stage_timer(str(stage_name), float(elapsed_seconds))
-            case_result = result["step67_case_result"]
+            case_result = result["finalization_case_result"]
             terminal_record = _build_terminal_case_record(
                 case_id=case_id,
                 representative_feature=result["representative_feature"],
                 case_result=case_result,
-                review_row=result["step67_row"],
+                review_row=result["finalization_row"],
                 run_root=run_root,
             )
             _write_terminal_case_record_locked(terminal_record)
@@ -1038,13 +1038,13 @@ def run_t03_internal_full_input(
                 reason=case_result.step7_result.reason,
                 detail=case_result.step7_result.note or case_result.step6_result.reason,
                 step3_state=result["step3_case_result"].step3_state,
-                step45_state=case_result.step45_state,
+                association_state=case_result.association_state,
                 step6_state=case_result.step6_result.step6_state,
                 step7_state=case_result.step7_result.step7_state,
             )
             visual_copy_started_perf = perf_counter()
             _publish_incremental_visual_check(
-                source_png_path=result["step67_row"].source_png_path,
+                source_png_path=result["finalization_row"].source_png_path,
                 target_dir=resolved_visual_check_dir,
                 case_id=case_id,
                 step7_state=case_result.step7_result.step7_state,
@@ -1088,9 +1088,9 @@ def run_t03_internal_full_input(
             run_root=run_root,
             case_ids=list(selected_case_ids),
         )
-        step67_rows = build_step67_review_rows(closeout_case_results)
+        finalization_rows = build_finalization_review_rows(closeout_case_results)
         output_write_started_perf = perf_counter()
-        categorized_rows = materialize_t03_review_gallery(run_root, step67_rows)
+        categorized_rows = materialize_t03_review_gallery(run_root, finalization_rows)
         write_step3_review_index(step3_run_root, step3_rows)
         write_step3_summary(
             step3_run_root,
@@ -1237,4 +1237,4 @@ def run_t03_internal_full_input(
     )
 
 
-run_t03_step67_internal_full_input = run_t03_internal_full_input
+run_t03_internal_full_input = run_t03_internal_full_input

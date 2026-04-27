@@ -49,7 +49,7 @@
 - `t00_utility_toolbox` 纳入治理，但定位为工具集合模块 / 非业务生产模块。
 - `t02_junction_anchor` 当前仍是 Active 模块；其模块正文若处于独立重构中，应以该轮任务边界为准，不在其它治理轮次中顺手改写。
 - `t03_virtual_junction_anchor` 当前进入 Active 模块集合；其正式业务主链按 `Step1~Step7` 表达，覆盖 case 受理、模板归类、合法空间冻结、RCSD 关联、foreign / excluded 负向约束、受约束几何与最终发布。
-- `t03_virtual_junction_anchor` 当前 repo 官方入口仍保留 `t03-step3-legal-space` 与历史命名的 `t03-step45-rcsd-association`；`Step45 / Step67` 只作为实现阶段、兼容命名与历史 closeout 标签保留，不再作为正式需求主结构。
+- `t03_virtual_junction_anchor` 当前 repo 官方入口保留 `t03-step3-legal-space` 与 `t03-rcsd-association`；`Association / Finalization` 只作为实现阶段与输出命名保留，不再作为正式需求主结构。
 - `t04_divmerge_virtual_polygon` 当前进入 Active 模块集合；其正式范围为 `Step1-7` 的模块化实现、Step7 发布层与 internal full-input repo 级脚本包装；不新增 repo 官方 CLI 子命令。
 - 未在模块生命周期文档中登记的模块目录，不自动视为当前正式治理对象。
 

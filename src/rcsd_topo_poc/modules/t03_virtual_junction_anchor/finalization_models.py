@@ -6,15 +6,15 @@ from typing import Any
 from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import (
-    Step45CaseResult,
-    Step45Context,
+    AssociationCaseResult,
+    AssociationContext,
 )
 
 
 @dataclass(frozen=True)
-class Step67Context:
-    step45_context: Step45Context
-    step45_case_result: Step45CaseResult
+class FinalizationContext:
+    association_context: AssociationContext
+    association_case_result: AssociationCaseResult
 
 
 @dataclass(frozen=True)
@@ -55,21 +55,21 @@ class Step7Result:
 
 
 @dataclass(frozen=True)
-class Step67CaseResult:
+class FinalizationCaseResult:
     case_id: str
     template_class: str | None
     association_class: str
-    step45_state: str
+    association_state: str
     step6_result: Step6Result
     step7_result: Step7Result
 
 
 @dataclass(frozen=True)
-class Step67ReviewIndexRow:
+class FinalizationReviewIndexRow:
     case_id: str
     template_class: str | None
     association_class: str
-    step45_state: str
+    association_state: str
     step6_state: str
     step7_state: str
     visual_class: str

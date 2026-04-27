@@ -4,29 +4,29 @@ from pathlib import Path
 
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor import step6_geometry
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import (
-    load_step45_case_specs,
-    load_step45_context,
+    load_association_case_specs,
+    load_association_context,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import Step67Context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import FinalizationContext
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import (
-    build_step45_case_result,
+    build_association_case_result,
 )
-from tests.modules.t03_virtual_junction_anchor._step45_helpers import (
+from tests.modules.t03_virtual_junction_anchor._association_helpers import (
     build_single_sided_parallel_support_case,
 )
 
 
-def _build_step67_context(case_root: Path, step3_root: Path, case_id: str) -> Step67Context:
-    specs, _ = load_step45_case_specs(
+def _build_finalization_context(case_root: Path, step3_root: Path, case_id: str) -> FinalizationContext:
+    specs, _ = load_association_case_specs(
         case_root=case_root,
         case_ids=[case_id],
         exclude_case_ids=["922217", "54265667", "502058682"],
     )
-    step45_context = load_step45_context(case_spec=specs[0], step3_root=step3_root)
-    step45_case_result = build_step45_case_result(step45_context)
-    return Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=specs[0], step3_root=step3_root)
+    association_case_result = build_association_case_result(association_context)
+    return FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
 
 
@@ -40,15 +40,15 @@ def test_build_step6_result_cache_preserves_semantics_and_records_stage_timers(t
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     build_single_sided_parallel_support_case(case_root, step3_root, case_id="100006")
-    step67_context = _build_step67_context(case_root, step3_root, "100006")
+    finalization_context = _build_finalization_context(case_root, step3_root, "100006")
 
     uncached_result = step6_geometry.build_step6_result(
-        step67_context,
+        finalization_context,
         use_step6_geometry_cache=False,
     )
     cached_stage_timers: dict[str, float] = {}
     cached_result = step6_geometry.build_step6_result(
-        step67_context,
+        finalization_context,
         stage_timers=cached_stage_timers,
         use_step6_geometry_cache=True,
     )
@@ -102,9 +102,9 @@ def test_directional_cut_cache_reuses_single_sided_trace_preparation(
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     build_single_sided_parallel_support_case(case_root, step3_root, case_id="100006")
-    step67_context = _build_step67_context(case_root, step3_root, "100006")
-    allowed_space = step6_geometry._clean_geometry(step67_context.step45_context.step3_allowed_space_geometry)
-    bridge_geometry = step6_geometry._step3_two_node_t_bridge_geometry(step67_context, allowed_space)
+    finalization_context = _build_finalization_context(case_root, step3_root, "100006")
+    allowed_space = step6_geometry._clean_geometry(finalization_context.association_context.step3_allowed_space_geometry)
+    bridge_geometry = step6_geometry._step3_two_node_t_bridge_geometry(finalization_context, allowed_space)
 
     original_trace_candidates = step6_geometry._single_sided_trace_candidate_rcsdroad_records
     counts = {"trace_candidates": 0}
@@ -121,18 +121,18 @@ def test_directional_cut_cache_reuses_single_sided_trace_preparation(
 
     uncached_results = [
         step6_geometry._build_directional_cut_geometry(
-            step67_context,
+            finalization_context,
             allowed_space,
             step3_two_node_t_bridge_geometry=bridge_geometry,
         ),
         step6_geometry._build_directional_cut_geometry(
-            step67_context,
+            finalization_context,
             allowed_space,
             step3_two_node_t_bridge_geometry=bridge_geometry,
             force_preserve_single_sided_horizontal_pair=True,
         ),
         step6_geometry._build_directional_cut_geometry(
-            step67_context,
+            finalization_context,
             allowed_space,
             step3_two_node_t_bridge_geometry=bridge_geometry,
             force_preserve_all_branches=True,
@@ -144,20 +144,20 @@ def test_directional_cut_cache_reuses_single_sided_trace_preparation(
     geometry_cache = step6_geometry._Step6GeometryCache()
     cached_results = [
         step6_geometry._build_directional_cut_geometry(
-            step67_context,
+            finalization_context,
             allowed_space,
             geometry_cache=geometry_cache,
             step3_two_node_t_bridge_geometry=bridge_geometry,
         ),
         step6_geometry._build_directional_cut_geometry(
-            step67_context,
+            finalization_context,
             allowed_space,
             geometry_cache=geometry_cache,
             step3_two_node_t_bridge_geometry=bridge_geometry,
             force_preserve_single_sided_horizontal_pair=True,
         ),
         step6_geometry._build_directional_cut_geometry(
-            step67_context,
+            finalization_context,
             allowed_space,
             geometry_cache=geometry_cache,
             step3_two_node_t_bridge_geometry=bridge_geometry,

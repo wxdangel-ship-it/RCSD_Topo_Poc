@@ -191,7 +191,7 @@ def _write_resume_retry_inputs(inputs_dir: Path) -> tuple[Path, Path, Path, Path
     return nodes_path, roads_path, drivezone_path, rcsdroad_path, rcsdnode_path
 
 
-def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_path: Path) -> None:
+def test_internal_full_input_runner_prepares_case_packages_and_runs_finalization(tmp_path: Path) -> None:
     inputs_dir = tmp_path / "inputs"
     out_root = tmp_path / "out"
     visual_check_dir = tmp_path / "visual_checks"
@@ -285,7 +285,7 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_p
 
     local_context_path = artifacts.case_root / "100001.json"
     step3_case_dir = artifacts.step3_run_root / "cases" / "100001"
-    step67_case_dir = artifacts.run_root / "cases" / "100001"
+    step7_case_dir = artifacts.run_root / "cases" / "100001"
     polygons_path = artifacts.run_root / "virtual_intersection_polygons.gpkg"
     updated_nodes_path = artifacts.run_root / "nodes.gpkg"
     nodes_audit_json_path = artifacts.run_root / "nodes_anchor_update_audit.json"
@@ -298,7 +298,7 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_p
     internal_progress = json.loads((artifacts.internal_root / "t03_internal_full_input_progress.json").read_text(encoding="utf-8"))
     internal_performance = json.loads((artifacts.internal_root / "t03_internal_full_input_performance.json").read_text(encoding="utf-8"))
     case_progress = json.loads((artifacts.internal_root / "case_progress" / "100001.json").read_text(encoding="utf-8"))
-    final_polygon = read_vector_layer(step67_case_dir / "step67_final_polygon.gpkg").features
+    final_polygon = read_vector_layer(step7_case_dir / "step7_final_polygon.gpkg").features
     polygons = read_vector_layer(polygons_path).features
     updated_nodes = read_vector_layer(updated_nodes_path).features
     nodes_audit_doc = json.loads(nodes_audit_json_path.read_text(encoding="utf-8"))
@@ -308,10 +308,10 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_p
     assert artifacts.selected_case_ids == ("100001",)
     assert not local_context_path.exists()
     assert (step3_case_dir / "step3_status.json").is_file()
-    assert (step67_case_dir / "step7_status.json").is_file()
+    assert (step7_case_dir / "step7_status.json").is_file()
     assert not (step3_case_dir / "step3_review.png").exists()
-    assert not (step67_case_dir / "step67_review.png").exists()
-    assert not (step67_case_dir / "t03_case_watch_status.json").exists()
+    assert not (step7_case_dir / "step7_review.png").exists()
+    assert not (step7_case_dir / "t03_case_watch_status.json").exists()
     assert not (artifacts.internal_root / "t03_perf_audit_config.json").exists()
     assert not (artifacts.internal_root / "t03_perf_audit_samples.jsonl").exists()
     assert not (artifacts.internal_root / "t03_perf_audit_summary.json").exists()
@@ -351,7 +351,7 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_p
         "step3_negative_masks",
         "step3_cleanup_preview",
         "step3_hard_path_validation",
-        "step45",
+        "association",
         "step6",
         "step6_mask_prep",
         "step6_directional_cut",
@@ -390,7 +390,7 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_step67(tmp_p
     assert streamed_results["100001"].step7_state == "accepted"
     assert streamed_results["100001"].source_png_path == ""
     assert terminal_records["100001"].terminal_state == "accepted"
-    assert terminal_records["100001"].final_polygon_path == str(step67_case_dir / "step67_final_polygon.gpkg")
+    assert terminal_records["100001"].final_polygon_path == str(step7_case_dir / "step7_final_polygon.gpkg")
     assert len(polygons) == 1
     assert len(final_polygon) == 1
     polygon_properties = polygons[0].properties
@@ -710,7 +710,7 @@ def test_internal_full_input_runner_writes_fail3_for_rejected_case_only_on_repre
             "previous_is_anchor": "no",
             "new_is_anchor": "fail3",
             "step7_state": "rejected",
-            "reason": "step67_blocked_by_step45",
+            "reason": "step7_blocked_by_association",
         }
     ]
     assert polygons == []

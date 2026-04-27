@@ -3,18 +3,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_batch_runner import run_t03_step45_rcsd_association_batch
-from tests.modules.t03_virtual_junction_anchor._step45_helpers import build_center_case_a, build_center_case_b, write_step3_prerequisite, write_step45_case_package
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_batch_runner import run_t03_rcsd_association_batch
+from tests.modules.t03_virtual_junction_anchor._association_helpers import build_center_case_a, build_center_case_b, write_step3_prerequisite, write_association_case_package
 
 
-def test_step45_batch_runner_summary_includes_acceptance_fields(tmp_path: Path) -> None:
+def test_association_batch_runner_summary_includes_acceptance_fields(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     out_root = tmp_path / "out"
     build_center_case_a(case_root, step3_root, case_id="100001")
-    write_step45_case_package(case_root / "922217", "922217")
+    write_association_case_package(case_root / "922217", "922217")
 
-    run_root = run_t03_step45_rcsd_association_batch(
+    run_root = run_t03_rcsd_association_batch(
         case_root=case_root,
         step3_root=step3_root,
         out_root=out_root,
@@ -42,7 +42,7 @@ def test_step45_batch_runner_summary_includes_acceptance_fields(tmp_path: Path) 
     assert preflight_doc["step3_root"] == str(step3_root)
 
 
-def test_step45_batch_runner_keeps_blocked_cases_out_of_failed_case_ids(tmp_path: Path) -> None:
+def test_association_batch_runner_keeps_blocked_cases_out_of_failed_case_ids(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     out_root = tmp_path / "out"
@@ -55,7 +55,7 @@ def test_step45_batch_runner_keeps_blocked_cases_out_of_failed_case_ids(tmp_path
         selected_road_ids=[],
     )
 
-    run_root = run_t03_step45_rcsd_association_batch(
+    run_root = run_t03_rcsd_association_batch(
         case_root=case_root,
         step3_root=step3_root,
         out_root=out_root,
@@ -65,24 +65,24 @@ def test_step45_batch_runner_keeps_blocked_cases_out_of_failed_case_ids(tmp_path
 
     summary_doc = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
     preflight_doc = json.loads((run_root / "preflight.json").read_text(encoding="utf-8"))
-    blocked_status = json.loads((run_root / "cases" / "100002" / "step45_status.json").read_text(encoding="utf-8"))
+    blocked_status = json.loads((run_root / "cases" / "100002" / "association_status.json").read_text(encoding="utf-8"))
 
     assert summary_doc["effective_case_ids"] == ["100001", "100002"]
     assert summary_doc["failed_case_ids"] == []
     assert summary_doc["missing_case_ids"] == []
     assert preflight_doc["failed_case_ids"] == []
     assert preflight_doc["missing_case_ids"] == []
-    assert blocked_status["step45_state"] == "not_established"
-    assert blocked_status["association_blocker"] == "step45_missing_selected_road_ids"
+    assert blocked_status["association_state"] == "not_established"
+    assert blocked_status["association_blocker"] == "association_missing_selected_road_ids"
 
 
-def test_step45_batch_runner_parallel_smoke_keeps_summary_and_index_stable(tmp_path: Path) -> None:
+def test_association_batch_runner_parallel_smoke_keeps_summary_and_index_stable(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     out_root = tmp_path / "out"
     build_center_case_a(case_root, step3_root, case_id="100001")
     build_center_case_b(case_root, step3_root, case_id="100002")
-    write_step45_case_package(case_root / "100003", "100003")
+    write_association_case_package(case_root / "100003", "100003")
     write_step3_prerequisite(
         step3_root,
         "100003",
@@ -90,7 +90,7 @@ def test_step45_batch_runner_parallel_smoke_keeps_summary_and_index_stable(tmp_p
         selected_road_ids=[],
     )
 
-    run_root = run_t03_step45_rcsd_association_batch(
+    run_root = run_t03_rcsd_association_batch(
         case_root=case_root,
         step3_root=step3_root,
         out_root=out_root,
@@ -100,7 +100,7 @@ def test_step45_batch_runner_parallel_smoke_keeps_summary_and_index_stable(tmp_p
 
     summary_doc = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
     preflight_doc = json.loads((run_root / "preflight.json").read_text(encoding="utf-8"))
-    index_rows = (run_root / "step45_review_index.csv").read_text(encoding="utf-8-sig").strip().splitlines()
+    index_rows = (run_root / "association_review_index.csv").read_text(encoding="utf-8-sig").strip().splitlines()
 
     assert summary_doc["effective_case_ids"] == ["100001", "100002", "100003"]
     assert summary_doc["failed_case_ids"] == []

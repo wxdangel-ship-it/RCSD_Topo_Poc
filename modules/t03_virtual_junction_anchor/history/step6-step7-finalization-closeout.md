@@ -1,8 +1,8 @@
-# T03 / Step67 Clarified Formal Stage Closeout
+# T03 / Finalization Clarified Formal Stage Closeout
 
 ## 1. Scope
 
-- scope: `T03 / Step67 clarified formal stage` on top of frozen `Step3` and established `Step45` baseline
+- scope: `T03 / Finalization clarified formal stage` on top of frozen `Step3` and established `Association` baseline
 - templates:
   - `center_junction`
   - `single_sided_t_mouth`
@@ -10,24 +10,24 @@
   - `diverge / merge / continuous divmerge / complex 128`
   - rewriting `Step3 allowed space / corridor / 50m fallback`
   - freezing solver constants as long-term contract
-  - promoting `Step67` to repo official CLI in this round
+  - promoting `Finalization` to repo official CLI in this round
 - note:
-  - 本文档文件名保留 `step67-closeout` 历史来源，但当前模块级 batch closeout / full-input 交付主命名已经收口到 `T03`，不再以 `step67_*` 作为模块级输出主名
+  - 本文档已移入 `history/`，当前模块级 batch closeout / full-input 交付主命名已经收口到 `T03`
 
 ## 2. Delivery Mode
 
 - current formal run root: `/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_batch/20260419_t03_formal_v015`
 - execution surface: module-internal `run_t03_batch()`
 - repo official CLI status:
-  - `Step67` still has **no** repo official CLI
-  - current official CLI remains `t03-step45-rcsd-association`
+  - `Finalization` still has **no** repo official CLI
+  - current official CLI remains `t03-rcsd-association`
 - internal full-input execution surface:
   - repo shell: `scripts/t03_run_internal_full_input_8workers.sh`
   - repo watch: `scripts/t03_watch_internal_full_input.sh`
   - compatibility wrapper:
-    - `scripts/t03_run_step67_internal_full_input_8workers.sh`
-    - `scripts/t03_watch_step67_internal_full_input.sh`
-  - historical closeout main path: `candidate discovery -> shared handle preload -> per-case local context query -> direct Step3/Step45/Step67 execution`
+    - `scripts/t03_run_internal_full_input_8workers.sh`
+    - `scripts/t03_watch_internal_full_input.sh`
+  - historical closeout main path: `candidate discovery -> shared handle preload -> per-case local context query -> direct Step3/Association/Finalization execution`
   - current formal documentation now expresses the same execution chain as direct `Step1~Step7` case execution; see `11-business-steps-vs-implementation-stages.md`
   - `case-package` materialization is no longer the default internal full-input main path
 
@@ -38,17 +38,17 @@
   - `accepted`
   - `rejected`
 - `V1-V5` remain visual audit classes only
-- `support_only` remains a conservative `Step45` intermediate state and can converge to `Step7 accepted`
+- `support_only` remains a conservative `Association` intermediate state and can converge to `Step7 accepted`
 - `Step5` no longer provides hard polygon foreign context
 - `Step6` hard negative mask is currently limited to road-like `1m` masks
-- `Step45` now formally applies `RCSD 调头口过滤` upstream:
+- `Association` now formally applies `RCSD 调头口过滤` upstream:
   - matched `u-turn RCSDRoad` is treated as non-existent in current-case semantics
   - filtering happens before `degree2 connector / chain merge / required-support-excluded`
 - `degree = 2` connector `RCSDNode` itself does not become semantic core; its connected candidate `RCSDRoad` chain is merged upstream before `required / support / excluded` classification
 - `Step6` now follows `boundary-first + local required RC`:
   - directional boundary is a final hard cap
   - `required RC must-cover` only applies to `local required RC` inside the directional boundary
-- 当冻结 `Step3` 对 `single_sided_t_mouth` case 应用 `two_node_t_bridge` 时，`Step67` 现在会显式继承该 bridge corridor 进入 directional boundary / polygon seed，避免横方向口门截断后出现中心断开、多组件狭长残留
+- 当冻结 `Step3` 对 `single_sided_t_mouth` case 应用 `two_node_t_bridge` 时，`Finalization` 现在会显式继承该 bridge corridor 进入 directional boundary / polygon seed，避免横方向口门截断后出现中心断开、多组件狭长残留
 
 ## 4. Formal Acceptance Scope
 
@@ -103,7 +103,7 @@ Reference files:
 - current observability split:
   - `manifest.json` 承载 static manifest、case 列表与输出路径
   - `progress.json` 只承载 lightweight runtime counters，不再高频重写大体量 case id 列表
-  - `performance.json` 额外记录 `candidate_discovery / shared_preload / local_feature_selection / step3 / step45 / step6 / step7 / output_write / visual_copy / observability_write` 分段耗时
+  - `performance.json` 额外记录 `candidate_discovery / shared_preload / local_feature_selection / step3 / association / step6 / step7 / output_write / visual_copy / observability_write` 分段耗时
   - 高频 JSON 写盘统一使用 atomic rename，避免 watch 读到半写状态或空文件
 - current run-root batch outputs now additionally include:
   - `virtual_intersection_polygons.gpkg`
@@ -135,10 +135,10 @@ Reference files:
   - tracing 无法形成横向 terminal-node pair，三条 selected roads 全部回到 `20m`
 - `758888`
   - `accepted / V1`
-  - `Step3 two-node T bridge` 已被 `Step67` 继承，不再在横方向截断后出现中心断开或多组件狭长残留
+  - `Step3 two-node T bridge` 已被 `Finalization` 继承，不再在横方向截断后出现中心断开或多组件狭长残留
 - `851884`
   - `accepted / V1`
-  - `Step3 two-node T bridge` 已被 `Step67` 继承，不再在横方向截断后出现中心断开
+  - `Step3 two-node T bridge` 已被 `Finalization` 继承，不再在横方向截断后出现中心断开
 - `761318 / 765003`
   - `accepted / V1`
   - `two-node T bridge` 继承后，中心桥位保持连通，横方向截断不再留下狭长残留
@@ -166,15 +166,15 @@ Manual review / data governance note:
 
 ## 8. Conclusion
 
-- `Step67 clarified formal stage closeout`: **成立**
+- `Finalization clarified formal stage closeout`: **成立**
 - `default 58-case run`: **完成**
 - `default 58-case correctness baseline`: **成立**
-- `Step67 current accepted baseline`: **成立，但仍保留 3 个数据侧异常拒绝案例**
+- `Finalization current accepted baseline`: **成立，但仍保留 3 个数据侧异常拒绝案例**
 - `少量 accepted case 的几何形状优化`: **保留为后续长期迭代方向，不再构成当前正式准出阻塞项**
 
 解释：
 
-- 当前 T03 正式文档面已经可以把 Step67 视为已正式吸收的 clarified formal stage
+- 当前 T03 正式文档面已经可以把 Finalization 视为已正式吸收的 clarified formal stage
 - 当前 `58` 个默认正式验收 case 的业务正确性已经满足人工目视审计要求
 - solver 常量、几何启发式细调与少量 accepted case 的形状优化，仍保留在长期迭代层，不伪装为新的长期机器契约
 - remaining `3` 个数据错误案例的人工处置语义，仍保留在 closeout / thread deliverables 层，不伪装为新的长期机器契约

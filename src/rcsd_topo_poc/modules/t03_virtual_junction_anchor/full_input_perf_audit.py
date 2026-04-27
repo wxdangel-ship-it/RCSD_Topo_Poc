@@ -120,7 +120,7 @@ def _stage_timer_summary(raw_stage_timers: dict[str, Any]) -> dict[str, float | 
             _safe_float(raw_stage_timers.get("step3_hard_path_validation")) or 0.0,
             6,
         ),
-        "step4_or_association": round(_safe_float(raw_stage_timers.get("step45")) or 0.0, 6),
+        "step4_or_association": round(_safe_float(raw_stage_timers.get("association")) or 0.0, 6),
         "step5_or_foreign_filter": None,
         "step6": round(_safe_float(raw_stage_timers.get("step6")) or 0.0, 6),
         "step6_mask_prep": round(_safe_float(raw_stage_timers.get("step6_mask_prep")) or 0.0, 6),

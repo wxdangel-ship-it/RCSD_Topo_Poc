@@ -9,11 +9,11 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points, substring, unary_union
 
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import NodeRecord, RoadRecord
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step5_foreign_filter import build_step45_foreign_result
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step5_foreign_filter import build_association_foreign_result
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import (
-    Step45CaseResult,
-    Step45Context,
-    Step45OutputGeometries,
+    AssociationCaseResult,
+    AssociationContext,
+    AssociationOutputGeometries,
 )
 
 
@@ -172,14 +172,14 @@ def _normalize_group_id(node: NodeRecord) -> str:
     return str(mainnodeid or node.node_id)
 
 
-def _build_selected_corridor(context: Step45Context) -> BaseGeometry:
+def _build_selected_corridor(context: AssociationContext) -> BaseGeometry:
     roads = [road.geometry.buffer(SELECTED_CORRIDOR_BUFFER_M, cap_style=2, join_style=2) for road in context.step1_context.roads if road.road_id in set(context.selected_road_ids)]
     if not roads:
         return context.step1_context.representative_node.geometry.buffer(REQUIRED_NODE_CORRIDOR_BUFFER_M)
     return unary_union(roads)
 
 
-def _build_single_sided_vertical_exit_geometry(context: Step45Context) -> BaseGeometry | None:
+def _build_single_sided_vertical_exit_geometry(context: AssociationContext) -> BaseGeometry | None:
     if context.template_result.template_class != "single_sided_t_mouth":
         return None
     horizontal_pair_ids = {
@@ -419,7 +419,7 @@ def _parallel_support_duplicate(
 
 def _prune_parallel_support_duplicates(
     *,
-    context: Step45Context,
+    context: AssociationContext,
     support_fragments_by_id: dict[str, BaseGeometry],
     anchor_point: Point,
     vertical_exit_geometry: BaseGeometry | None,
@@ -488,23 +488,23 @@ def _group_support_fragments_by_degree2_chain(
     }
 
 
-def _visual_review_class(step45_state: str, reason: str) -> str:
-    if step45_state == "established":
+def _visual_review_class(association_state: str, reason: str) -> str:
+    if association_state == "established":
         return "V1 认可成功"
-    if step45_state == "review":
-        if reason == "step45_support_only":
+    if association_state == "review":
+        if reason == "association_support_only":
             return "V2 业务正确但几何待修"
         return "V2 业务正确但几何待修"
     return "V5 明确失败"
 
 
-def build_step45_status_doc(case_result: Step45CaseResult) -> dict[str, Any]:
+def build_association_status_doc(case_result: AssociationCaseResult) -> dict[str, Any]:
     return {
         "case_id": case_result.case_id,
         "template_class": case_result.template_class,
         "association_class": case_result.association_class,
-        "step45_state": case_result.step45_state,
-        "step45_established": case_result.step45_established,
+        "association_state": case_result.association_state,
+        "association_established": case_result.association_established,
         "reason": case_result.reason,
         "visual_review_class": case_result.visual_review_class,
         "root_cause_layer": case_result.root_cause_layer,
@@ -514,7 +514,7 @@ def build_step45_status_doc(case_result: Step45CaseResult) -> dict[str, Any]:
     }
 
 
-def _empty_step45_key_metrics() -> dict[str, Any]:
+def _empty_association_key_metrics() -> dict[str, Any]:
     return {
         "active_rcsdnode_count": 0,
         "active_rcsdroad_count": 0,
@@ -537,14 +537,14 @@ def _empty_step45_key_metrics() -> dict[str, Any]:
 
 def _build_gate_failure_case_result(
     *,
-    context: Step45Context,
+    context: AssociationContext,
     base_extra_fields: dict[str, Any],
     blocker: str,
     supported_template: bool,
     allowed_space_loaded: bool,
     current_swsd_surface_loaded: bool,
-) -> Step45CaseResult:
-    empty_geometries = Step45OutputGeometries(None, None, None, None, None, None, None, None, None)
+) -> AssociationCaseResult:
+    empty_geometries = AssociationOutputGeometries(None, None, None, None, None, None, None, None, None)
     audit_doc = {
         "step3_prerequisite": {
             "step3_state": base_extra_fields.get("step3_state"),
@@ -588,7 +588,7 @@ def _build_gate_failure_case_result(
             "true_foreign_rcsdnode_ids": [],
         },
         "joint_phase": {
-            "step45_state": "not_established",
+            "association_state": "not_established",
             "reason": blocker,
             "association_executed": False,
             "association_reason": None,
@@ -597,18 +597,18 @@ def _build_gate_failure_case_result(
             "prerequisite_issues": list(context.prerequisite_issues),
         },
     }
-    return Step45CaseResult(
+    return AssociationCaseResult(
         case_id=context.step1_context.case_spec.case_id,
         template_class=context.template_result.template_class,
         association_class="C",
-        step45_state="not_established",
-        step45_established=False,
+        association_state="not_established",
+        association_established=False,
         reason=blocker,
         visual_review_class="V5 明确失败",
-        root_cause_layer="step45",
+        root_cause_layer="association",
         root_cause_type=blocker,
         output_geometries=empty_geometries,
-        key_metrics=_empty_step45_key_metrics(),
+        key_metrics=_empty_association_key_metrics(),
         audit_doc=audit_doc,
         extra_status_fields={
             **base_extra_fields,
@@ -630,7 +630,7 @@ def _build_gate_failure_case_result(
     )
 
 
-def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
+def build_association_case_result(context: AssociationContext) -> AssociationCaseResult:
     step1 = context.step1_context
     template_result = context.template_result
     step3_state = str(context.step3_status_doc.get("step3_state") or "")
@@ -650,7 +650,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         "support_rcsdroad_ids": [],
         "excluded_rcsdnode_ids": [],
         "excluded_rcsdroad_ids": [],
-        "step45_prerequisite_issues": list(context.prerequisite_issues),
+        "association_prerequisite_issues": list(context.prerequisite_issues),
         "association_executed": False,
         "association_reason": None,
         "association_blocker": None,
@@ -678,7 +678,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         return _build_gate_failure_case_result(
             context=context,
             base_extra_fields=base_extra_fields,
-            blocker="step45_step3_not_established",
+            blocker="association_step3_not_established",
             supported_template=True,
             allowed_space_loaded=allowed_space is not None,
             current_swsd_surface_loaded=current_swsd_surface is not None,
@@ -845,7 +845,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
             support_node_ids.add(node.node_id)
 
     rcsd_semantic_core_missing = association_class == "B" and not required_node_ids
-    foreign_result = build_step45_foreign_result(
+    foreign_result = build_association_foreign_result(
         context=context,
         active_rcsd_nodes=active_rcsd_nodes,
         active_rcsd_roads=active_rcsd_roads,
@@ -872,19 +872,19 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         hook_zone_geometry = _clean_geometry(hook_zone_geometry.intersection(allowed_space.buffer(RCSD_ALLOWED_BUFFER_M)))
 
     if association_class == "B" and hook_zone_geometry is None:
-        step45_state = "not_established"
-        reason = "step45_missing_hook_zone"
+        association_state = "not_established"
+        reason = "association_missing_hook_zone"
     elif association_class == "B":
-        step45_state = "review"
-        reason = "step45_support_only"
+        association_state = "review"
+        reason = "association_support_only"
     elif association_class == "C":
-        step45_state = "review" if step3_state == "review" else "established"
-        reason = "step45_upstream_step3_review" if step3_state == "review" else "step45_no_related_rcsd"
+        association_state = "review" if step3_state == "review" else "established"
+        reason = "association_upstream_step3_review" if step3_state == "review" else "association_no_related_rcsd"
     else:
-        step45_state = "review" if step3_state == "review" else "established"
-        reason = "step45_upstream_step3_review" if step3_state == "review" else "step45_established"
+        association_state = "review" if step3_state == "review" else "established"
+        reason = "association_upstream_step3_review" if step3_state == "review" else "association_established"
 
-    output_geometries = Step45OutputGeometries(
+    output_geometries = AssociationOutputGeometries(
         required_rcsdnode_geometry=_union_points(node.geometry for node in candidate_nodes if node.node_id in required_node_ids),
         required_rcsdroad_geometry=required_road_geometry,
         support_rcsdnode_geometry=_union_points(node.geometry for node in candidate_nodes if node.node_id in support_node_ids),
@@ -977,7 +977,7 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
             "association_blocker": None,
         },
         "joint_phase": {
-            "step45_state": step45_state,
+            "association_state": association_state,
             "reason": reason,
             "association_executed": True,
             "association_reason": association_reason,
@@ -1011,16 +1011,16 @@ def build_step45_case_result(context: Step45Context) -> Step45CaseResult:
         "hook_zone_shrunk_road_ids": audit_doc["step4"]["hook_zone_shrunk_road_ids"],
         "u_turn_rcsdroad_audit": audit_doc["step4"]["u_turn_rcsdroad_audit"],
     }
-    return Step45CaseResult(
+    return AssociationCaseResult(
         case_id=step1.case_spec.case_id,
         template_class=template_result.template_class,
         association_class=association_class,
-        step45_state=step45_state,
-        step45_established=step45_state == "established",
+        association_state=association_state,
+        association_established=association_state == "established",
         reason=reason,
-        visual_review_class=_visual_review_class(step45_state, reason),
-        root_cause_layer=None if step45_state == "established" else "step45",
-        root_cause_type=None if step45_state == "established" else reason,
+        visual_review_class=_visual_review_class(association_state, reason),
+        root_cause_layer=None if association_state == "established" else "association",
+        root_cause_type=None if association_state == "established" else reason,
         output_geometries=output_geometries,
         key_metrics=key_metrics,
         audit_doc=audit_doc,

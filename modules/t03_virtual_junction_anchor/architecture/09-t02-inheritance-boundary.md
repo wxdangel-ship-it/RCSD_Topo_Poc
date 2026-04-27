@@ -34,7 +34,7 @@
   - T03 只保留当前执行/监控所需的 internal manifest、runtime counters、performance、case progress 与 visual flat mirror
   - 不要求复制 T02 历史批次中的所有中间目录和旧式 pending 预写模式
 - T03 当前没有 repo 官方 finalization CLI
-  - 当前 repo 官方 CLI 仍保留历史命名的 `t03-step45-rcsd-association`
+  - 当前 repo 官方 CLI 保留 `t03-rcsd-association`
   - Step7 发布通过模块内 batch runner 与 repo shell/watch 外壳维持正式交付
 
 ## 4. T03 当前自有语义
@@ -48,7 +48,7 @@
   - `rejected / runtime_failed => fail3`
   - 非代表 node 与未选中 node 保持输入值不变
 - formal vs review 分层
-  - `step7_status.json`、`step67_final_polygon.gpkg`、正式 `summary.json` 不承载 `visual_* / manual_review_*`
+  - `step7_status.json`、`step7_final_polygon.gpkg`、正式 `summary.json` 不承载 `visual_* / manual_review_*`
   - review-only 统计只留在 `t03_review_*`、`visual_checks/` 与 batch aggregate compatibility 字段
 - observability / performance 语义
   - `t03_internal_full_input_manifest.json` 承载 static manifest

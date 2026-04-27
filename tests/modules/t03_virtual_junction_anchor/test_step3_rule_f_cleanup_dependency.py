@@ -28,6 +28,7 @@ def test_rule_f_marks_cleanup_dependency_required(tmp_path: Path, monkeypatch) -
         blocker_geometry=None,
         force_bidirectional_road_ids=None,
         cap_m=50.0,
+        case_cache=None,
     ):
         if blocker_geometry is not None:
             return None, [], set(), ["hard_blocker_applied"]

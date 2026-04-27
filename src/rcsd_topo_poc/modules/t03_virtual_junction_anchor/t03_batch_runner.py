@@ -21,11 +21,11 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_observability 
     write_case_watch_status,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import (
-    load_step45_case_specs,
-    load_step45_context,
+    load_association_case_specs,
+    load_association_context,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import (
-    build_step45_case_result,
+    build_association_case_result,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step7_acceptance import (
     build_step7_result,
@@ -34,8 +34,8 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry import (
     build_step6_result,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
-    Step67CaseResult,
-    Step67Context,
+    FinalizationCaseResult,
+    FinalizationContext,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_outputs import (
     write_case_outputs,
@@ -98,28 +98,28 @@ def _preflight_doc(
             else "default_full_batch"
         ),
         "loader_preflight": case_loader_preflight,
-        "step45_source_mode": "recomputed_from_case_root_and_step3_root",
+        "association_source_mode": "recomputed_from_case_root_and_step3_root",
     }
 
 
 def _run_single_case(spec, *, step3_root: Path):
-    step45_context = load_step45_context(case_spec=spec, step3_root=step3_root)
-    step45_case_result = build_step45_case_result(step45_context)
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=spec, step3_root=step3_root)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
-    step6_result = build_step6_result(step67_context)
-    step7_result = build_step7_result(step67_context, step6_result)
-    case_result = Step67CaseResult(
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
+    case_result = FinalizationCaseResult(
         case_id=spec.case_id,
-        template_class=step45_case_result.template_class,
-        association_class=step45_case_result.association_class,
-        step45_state=step45_case_result.step45_state,
+        template_class=association_case_result.template_class,
+        association_class=association_case_result.association_class,
+        association_state=association_case_result.association_state,
         step6_result=step6_result,
         step7_result=step7_result,
     )
-    return step67_context, case_result
+    return finalization_context, case_result
 
 
 def _run_single_case_with_watch(spec, *, step3_root: Path, run_root: Path):
@@ -168,7 +168,7 @@ def run_t03_batch(
         rerun_cleaned_before_write = True
     run_root.mkdir(parents=True, exist_ok=True)
 
-    specs, loader_preflight = load_step45_case_specs(
+    specs, loader_preflight = load_association_case_specs(
         case_root=resolved_case_root,
         case_ids=case_ids,
         max_cases=max_cases,
@@ -199,7 +199,7 @@ def run_t03_batch(
     if max_workers == 1:
         for spec in specs:
             try:
-                step67_context, case_result = _run_single_case_with_watch(
+                finalization_context, case_result = _run_single_case_with_watch(
                     spec,
                     step3_root=resolved_step3_root,
                     run_root=run_root,
@@ -210,7 +210,7 @@ def run_t03_batch(
             review_rows.append(
                 write_case_outputs(
                     run_root=run_root,
-                    step67_context=step67_context,
+                    finalization_context=finalization_context,
                     case_result=case_result,
                     debug_render=debug_render,
                 )
@@ -222,7 +222,7 @@ def run_t03_batch(
                 current_stage="completed",
                 reason=case_result.step7_result.reason,
                 detail=case_result.step7_result.note or case_result.step6_result.reason,
-                step45_state=case_result.step45_state,
+                association_state=case_result.association_state,
                 step6_state=case_result.step6_result.step6_state,
                 step7_state=case_result.step7_result.step7_state,
             )
@@ -241,14 +241,14 @@ def run_t03_batch(
             for future in as_completed(futures):
                 case_id = futures[future]
                 try:
-                    step67_context, case_result = future.result()
+                    finalization_context, case_result = future.result()
                 except Exception:
                     failed_case_ids.append(case_id)
                     continue
                 review_rows.append(
                     write_case_outputs(
                         run_root=run_root,
-                        step67_context=step67_context,
+                        finalization_context=finalization_context,
                         case_result=case_result,
                         debug_render=debug_render,
                     )
@@ -260,7 +260,7 @@ def run_t03_batch(
                     current_stage="completed",
                     reason=case_result.step7_result.reason,
                     detail=case_result.step7_result.note or case_result.step6_result.reason,
-                    step45_state=case_result.step45_state,
+                    association_state=case_result.association_state,
                     step6_state=case_result.step6_result.step6_state,
                     step7_state=case_result.step7_result.step7_state,
                 )

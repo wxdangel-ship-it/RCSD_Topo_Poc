@@ -23,7 +23,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_render import
     _font,
     _project_xy,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import Step45CaseResult, Step45Context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import AssociationCaseResult, AssociationContext
 
 
 ALLOWED_FILL = (255, 155, 74, 120)
@@ -38,7 +38,7 @@ FOREIGN_SWSD_FILL = (102, 102, 102, 54)
 FOREIGN_RCSD_FILL = (195, 79, 93, 42)
 
 
-def _patch_bounds(context: Step45Context, case_result: Step45CaseResult) -> tuple[float, float, float, float]:
+def _patch_bounds(context: AssociationContext, case_result: AssociationCaseResult) -> tuple[float, float, float, float]:
     step1 = context.step1_context
     reference = step1.representative_node.geometry
     drivezone_focus = context.current_swsd_surface_geometry or step1.drivezone_geometry
@@ -64,11 +64,11 @@ def _patch_bounds(context: Step45Context, case_result: Step45CaseResult) -> tupl
     return cx - half, cy - half, cx + half, cy + half
 
 
-def render_step45_review_png(
+def render_association_review_png(
     *,
     out_path: Path,
-    context: Step45Context,
-    case_result: Step45CaseResult,
+    context: AssociationContext,
+    case_result: AssociationCaseResult,
     debug_render: bool = False,
 ) -> None:
     step1 = context.step1_context
@@ -120,15 +120,15 @@ def render_step45_review_png(
         image,
         bounds=bounds,
         focus_geometry=focus_geometry,
-        step3_state=case_result.step45_state,
+        step3_state=case_result.association_state,
     )
 
-    banner_style = STATUS_STYLE[case_result.step45_state]
+    banner_style = STATUS_STYLE[case_result.association_state]
     draw.rectangle((24, 24, IMAGE_SIZE - 24, 112), fill=banner_style["banner"])
     _draw_text_with_shadow(
         draw,
         xy=(44, 40),
-        text=f"{banner_style['label']} / Step45 {case_result.association_class}",
+        text=f"{banner_style['label']} / Association {case_result.association_class}",
         font=_font(32),
         fill=banner_style["text"],
         shadow=banner_style["text_shadow"],

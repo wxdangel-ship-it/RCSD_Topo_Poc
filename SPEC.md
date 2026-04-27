@@ -119,8 +119,8 @@
 
 ### 4.4 T03 internal full-input 交付约束
 
-- `t03_virtual_junction_anchor` 当前除历史命名的 `t03-step45-rcsd-association` 官方 CLI 外，还存在 repo 级 internal full-input shell/watch 交付面：`scripts/t03_run_internal_full_input_8workers.sh` 与 `scripts/t03_watch_internal_full_input.sh`；它们属于 repo 级脚本入口，不构成新的 repo 官方 CLI。
-- 旧 `step67` shell 命名当前只保留兼容 wrapper，不再作为项目级主命名。
+- `t03_virtual_junction_anchor` 当前除 `t03-rcsd-association` 官方 CLI 外，还存在 repo 级 internal full-input shell/watch 交付面：`scripts/t03_run_internal_full_input_8workers.sh` 与 `scripts/t03_watch_internal_full_input.sh`；它们属于 repo 级脚本入口，不构成新的 repo 官方 CLI。
+- 历史 finalization shell wrapper 已退役，不再作为项目级入口或兼容入口登记。
 - T03 internal full-input 当前正式批次根目录成果至少包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`；前者聚合当前批次 case 级最终虚拟路口面，后者基于 full-input 输入的整层 `nodes.gpkg` 输出更新版结果。
 - `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义：仅更新代表 node，`accepted => yes`，`rejected / runtime_failed => fail3`；该语义不回写输入原始 `nodes.gpkg`，也不反向修改 T02 上游契约。
 - `t03_watch_internal_full_input.sh` 当前采用 T02 风格的 formal-first 监控口径：默认显示 `total / completed / running / pending / success / failed`，其中 `success = accepted`、`failed = rejected + runtime_failed`，并显式表达是否已进入 `case execution` 阶段；视觉层统计仅在显式调试场景下读取 review-only 工件。
@@ -221,7 +221,7 @@
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小闭环。
 - `t02_junction_anchor` 当前仍是 Active 正式业务模块；其模块正文可在独立轮次中维护，但项目级登记与仓库级入口必须保持一致。
 - `t03_virtual_junction_anchor` 当前作为 Active 正式业务模块；当前正式范围按 `Step1~Step7` 业务主链表达（仅 `center_junction / single_sided_t_mouth`），默认正式全量 `58` case 的业务正确性基线已满足人工目视审计，少量 accepted case 的几何形状优化保留为长期迭代方向。
-- `t03_virtual_junction_anchor` 当前仍保留历史命名的 `t03-step45-rcsd-association` 官方 CLI；其业务含义对应 `Step4 + Step5`，`Step45 / Step67` 只作为实现阶段、输出文件名、兼容 wrapper 与历史 closeout 标签保留。其内网批量执行与监控当前通过 repo 级 `t03_run_internal_full_input_8workers.sh` / `t03_watch_internal_full_input.sh` 交付，旧 `step67` 命名仅保留兼容 wrapper。
+- `t03_virtual_junction_anchor` 当前保留 `t03-rcsd-association` 官方 CLI；其业务含义对应 `Step4 + Step5` 关联阶段。其内网批量执行与监控当前通过 repo 级 `t03_run_internal_full_input_8workers.sh` / `t03_watch_internal_full_input.sh` 交付，历史 finalization shell wrapper 已退役。
 - `t03_virtual_junction_anchor` 的 internal full-input 当前正式批次根目录成果包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`；其中 `nodes.gpkg` 仅更新代表 node，`fail3` 只代表 T03 downstream output 语义。
 - `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围已扩展到 `Step1-7`，其中 `Step1-4` 维持既有稳定执行面，`Step5-7` 进入正式研发实现阶段；internal full-input 通过 repo 级脚本包装 + T04 私有 runner 交付，不新增 repo 官方 CLI。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

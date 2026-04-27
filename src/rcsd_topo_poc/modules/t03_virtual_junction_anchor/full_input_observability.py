@@ -21,7 +21,7 @@ RUNTIME_STAGE_TIMER_KEYS = (
     "step3_negative_masks",
     "step3_cleanup_preview",
     "step3_hard_path_validation",
-    "step45",
+    "association",
     "step6",
     "step6_mask_prep",
     "step6_directional_cut",
@@ -48,7 +48,7 @@ LEGACY_INTERNAL_MANIFEST_FILENAME = "internal_full_input_manifest.json"
 LEGACY_INTERNAL_PROGRESS_FILENAME = "internal_full_input_progress.json"
 LEGACY_INTERNAL_PERFORMANCE_FILENAME = "internal_full_input_performance.json"
 LEGACY_INTERNAL_FAILURE_FILENAME = "internal_full_input_failure.json"
-LEGACY_CASE_WATCH_STATUS_FILENAME = "step67_watch_status.json"
+LEGACY_CASE_WATCH_STATUS_FILENAME = "t03_case_watch_status.json"
 
 
 def now_text() -> str:
@@ -320,7 +320,7 @@ def write_internal_manifest(
         "review_mode_effective": False,
         "review_mode_note": (
             "accepted for parameter compatibility only; "
-            "T03 internal full-input runner keeps formal Step67 semantics unchanged"
+            "T03 internal full-input runner keeps formal Finalization semantics unchanged"
         ),
         "progress_flush_interval_sec": float(progress_flush_interval_sec),
         "progress_flush_interval_cases": int(progress_flush_interval_cases),

@@ -11,11 +11,11 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry import (
     build_step6_status_doc,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
-    Step67CaseResult,
-    Step67Context,
-    Step67ReviewIndexRow,
+    FinalizationCaseResult,
+    FinalizationContext,
+    FinalizationReviewIndexRow,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_render import render_step67_review_png
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_render import render_finalization_review_png
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.t03_batch_closeout import (
     materialize_t03_review_gallery,
     write_t03_review_index,
@@ -28,7 +28,7 @@ CASE_REQUIRED_OUTPUTS = (
     "step6_polygon_seed.gpkg",
     "step6_polygon_final.gpkg",
     "step6_constraint_foreign_mask.gpkg",
-    "step67_final_polygon.gpkg",
+    "step7_final_polygon.gpkg",
     "step6_status.json",
     "step6_audit.json",
     "step7_status.json",
@@ -44,12 +44,12 @@ def _geometry_feature(geometry, **properties):
 def write_case_outputs(
     *,
     run_root: Path,
-    step67_context: Step67Context,
-    case_result: Step67CaseResult,
+    finalization_context: FinalizationContext,
+    case_result: FinalizationCaseResult,
     debug_render: bool = False,
     render_review_png: bool = True,
-) -> Step67ReviewIndexRow:
-    case_id = step67_context.step45_context.step1_context.case_spec.case_id
+) -> FinalizationReviewIndexRow:
+    case_id = finalization_context.association_context.step1_context.case_spec.case_id
     case_dir = run_root / "cases" / case_id
     case_dir.mkdir(parents=True, exist_ok=True)
     step6_result = case_result.step6_result
@@ -86,12 +86,12 @@ def write_case_outputs(
         ),
     )
     write_vector(
-        case_dir / "step67_final_polygon.gpkg",
+        case_dir / "step7_final_polygon.gpkg",
         _geometry_feature(
             step6_result.output_geometries.polygon_final_geometry,
             case_id=case_id,
             template_class=case_result.template_class,
-            layer="step67_final_polygon",
+            layer="step7_final_polygon",
             step6_state=step6_result.step6_state,
             step7_state=step7_result.step7_state,
             reason=step7_result.reason,
@@ -99,25 +99,25 @@ def write_case_outputs(
             root_cause_type=step7_result.root_cause_type,
         ),
     )
-    write_json(case_dir / "step6_status.json", build_step6_status_doc(step67_context, step6_result))
+    write_json(case_dir / "step6_status.json", build_step6_status_doc(finalization_context, step6_result))
     write_json(case_dir / "step6_audit.json", step6_result.audit_doc)
-    write_json(case_dir / "step7_status.json", build_step7_status_doc(step67_context, step6_result, step7_result))
+    write_json(case_dir / "step7_status.json", build_step7_status_doc(finalization_context, step6_result, step7_result))
     write_json(case_dir / "step7_audit.json", step7_result.audit_doc)
     source_png_path = ""
     if render_review_png:
-        review_png_path = case_dir / "step67_review.png"
-        render_step67_review_png(
+        review_png_path = case_dir / "step7_review.png"
+        render_finalization_review_png(
             out_path=review_png_path,
-            step67_context=step67_context,
+            finalization_context=finalization_context,
             case_result=case_result,
             debug_render=debug_render,
         )
         source_png_path = str(review_png_path)
-    return Step67ReviewIndexRow(
+    return FinalizationReviewIndexRow(
         case_id=case_id,
         template_class=case_result.template_class,
         association_class=case_result.association_class,
-        step45_state=case_result.step45_state,
+        association_state=case_result.association_state,
         step6_state=step6_result.step6_state,
         step7_state=step7_result.step7_state,
         visual_class=step7_result.visual_review_class,
@@ -127,21 +127,21 @@ def write_case_outputs(
     )
 
 
-def materialize_review_gallery(run_root: Path, rows: list[Step67ReviewIndexRow]) -> list[Step67ReviewIndexRow]:
+def materialize_review_gallery(run_root: Path, rows: list[FinalizationReviewIndexRow]) -> list[FinalizationReviewIndexRow]:
     return materialize_t03_review_gallery(run_root, rows)
 
 
-def write_review_index(run_root: Path, rows: list[Step67ReviewIndexRow]) -> Path:
+def write_review_index(run_root: Path, rows: list[FinalizationReviewIndexRow]) -> Path:
     return write_t03_review_index(run_root, rows)
 
 
-def write_review_summary(run_root: Path, rows: list[Step67ReviewIndexRow]) -> Path:
+def write_review_summary(run_root: Path, rows: list[FinalizationReviewIndexRow]) -> Path:
     return write_t03_review_summary(run_root, rows)
 
 
 def write_summary(
     run_root: Path,
-    rows: list[Step67ReviewIndexRow],
+    rows: list[FinalizationReviewIndexRow],
     *,
     expected_case_ids: list[str],
     raw_case_count: int,

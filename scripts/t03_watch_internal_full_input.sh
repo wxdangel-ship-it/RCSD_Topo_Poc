@@ -149,11 +149,7 @@ case_scan_threshold = int(os.environ.get("CASE_SCAN_THRESHOLD", "1000"))
 internal_root = run_root.parent / "_internal" / run_root.name
 preflight_doc = load_json(run_root / "preflight.json") or {}
 summary_doc = load_json(run_root / "summary.json") or {}
-review_summary_doc = (
-    load_json(run_root / "t03_review_summary.json")
-    or load_json(run_root / "step67_review_summary.json")
-    or {}
-)
+review_summary_doc = load_json(run_root / "t03_review_summary.json") or {}
 internal_progress_doc = (
     load_json(internal_root / "t03_internal_full_input_progress.json")
     or load_json(internal_root / "internal_full_input_progress.json")
@@ -289,11 +285,7 @@ if should_scan_cases:
     for case_id in case_ids:
         case_dir = cases_root / case_id
         internal_case_path = case_progress_root / f"{case_id}.json"
-        watch_status_path = (
-            case_dir / "t03_case_watch_status.json"
-            if (case_dir / "t03_case_watch_status.json").is_file()
-            else case_dir / "step67_watch_status.json"
-        )
+        watch_status_path = case_dir / "t03_case_watch_status.json"
         step7_status_path = case_dir / "step7_status.json"
         internal_case_doc = load_json(internal_case_path) if internal_case_path.is_file() else None
         watch_doc = load_json(watch_status_path) if watch_status_path.is_file() else None

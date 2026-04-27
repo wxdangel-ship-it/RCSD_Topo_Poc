@@ -10,7 +10,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import Step1C
 
 
 @dataclass(frozen=True)
-class Step45Context:
+class AssociationContext:
     step1_context: Step1Context
     template_result: Step2TemplateResult
     step3_run_root: Path
@@ -25,7 +25,7 @@ class Step45Context:
 
 
 @dataclass(frozen=True)
-class Step45OutputGeometries:
+class AssociationOutputGeometries:
     required_rcsdnode_geometry: BaseGeometry | None
     required_rcsdroad_geometry: BaseGeometry | None
     support_rcsdnode_geometry: BaseGeometry | None
@@ -38,7 +38,7 @@ class Step45OutputGeometries:
 
 
 @dataclass(frozen=True)
-class Step45ForeignResult:
+class AssociationForeignResult:
     excluded_rcsdnode_ids: tuple[str, ...]
     excluded_rcsdroad_ids: tuple[str, ...]
     nonsemantic_connector_rcsdnode_ids: tuple[str, ...]
@@ -51,28 +51,28 @@ class Step45ForeignResult:
 
 
 @dataclass(frozen=True)
-class Step45CaseResult:
+class AssociationCaseResult:
     case_id: str
     template_class: str | None
     association_class: str
-    step45_state: str
-    step45_established: bool
+    association_state: str
+    association_established: bool
     reason: str
     visual_review_class: str
     root_cause_layer: str | None
     root_cause_type: str | None
-    output_geometries: Step45OutputGeometries
+    output_geometries: AssociationOutputGeometries
     key_metrics: dict[str, Any]
     audit_doc: dict[str, Any]
     extra_status_fields: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
-class Step45ReviewIndexRow:
+class AssociationReviewIndexRow:
     case_id: str
     template_class: str | None
     association_class: str
-    step45_state: str
+    association_state: str
     reason: str
     image_name: str
     image_path: str

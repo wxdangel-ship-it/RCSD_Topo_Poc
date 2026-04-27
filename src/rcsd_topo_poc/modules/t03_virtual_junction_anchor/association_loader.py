@@ -14,7 +14,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import CaseSp
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step1_context import build_step1_context
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import build_step3_status_doc
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step2_template import classify_step2_template
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import Step45Context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import AssociationContext
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import Step1Context, Step2TemplateResult, Step3CaseResult
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import ROAD_BUFFER_M
 
@@ -74,7 +74,7 @@ def _stable_issue_codes(values: list[str]) -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def load_step45_context(*, case_spec: CaseSpec, step3_root: str | Path) -> Step45Context:
+def load_association_context(*, case_spec: CaseSpec, step3_root: str | Path) -> AssociationContext:
     step1_context = build_step1_context(case_spec)
     template_result = classify_step2_template(step1_context)
     resolved_step3_root = normalize_runtime_path(step3_root)
@@ -87,34 +87,34 @@ def load_step45_context(*, case_spec: CaseSpec, step3_root: str | Path) -> Step4
     step3_audit_doc: dict[str, Any] = {}
     step3_allowed_space_geometry = None
     if not step3_case_dir.is_dir():
-        prerequisite_issues.append("step45_missing_step3_case_dir")
+        prerequisite_issues.append("association_missing_step3_case_dir")
     else:
         if status_path.exists():
             step3_status_doc = _read_json(status_path)
         else:
-            prerequisite_issues.append("step45_missing_step3_status_json")
+            prerequisite_issues.append("association_missing_step3_status_json")
         if audit_path.exists():
             step3_audit_doc = _read_json(audit_path)
         else:
-            prerequisite_issues.append("step45_missing_step3_audit_json")
+            prerequisite_issues.append("association_missing_step3_audit_json")
         if allowed_space_path.exists():
             step3_allowed_space_geometry = _read_union_geometry(allowed_space_path)
             if step3_allowed_space_geometry is None:
-                prerequisite_issues.append("step45_empty_step3_allowed_space")
+                prerequisite_issues.append("association_empty_step3_allowed_space")
         else:
-            prerequisite_issues.append("step45_missing_step3_allowed_space")
+            prerequisite_issues.append("association_missing_step3_allowed_space")
 
     step3_state = str(step3_status_doc.get("step3_state") or "")
     if not step3_state:
-        prerequisite_issues.append("step45_missing_step3_state")
+        prerequisite_issues.append("association_missing_step3_state")
 
     selected_road_ids = _stable_ids(step3_status_doc.get("selected_road_ids"))
     if not selected_road_ids:
-        prerequisite_issues.append("step45_missing_selected_road_ids")
+        prerequisite_issues.append("association_missing_selected_road_ids")
     else:
         available_road_ids = {road.road_id for road in step1_context.roads}
         if any(road_id not in available_road_ids for road_id in selected_road_ids):
-            prerequisite_issues.append("step45_selected_road_ids_not_in_step1_roads")
+            prerequisite_issues.append("association_selected_road_ids_not_in_step1_roads")
 
     excluded_road_ids = _stable_ids(
         step3_status_doc.get("excluded_road_ids")
@@ -122,8 +122,8 @@ def load_step45_context(*, case_spec: CaseSpec, step3_root: str | Path) -> Step4
     )
     current_swsd_surface_geometry = _build_current_swsd_surface_geometry(step1_context, selected_road_ids)
     if selected_road_ids and current_swsd_surface_geometry is None:
-        prerequisite_issues.append("step45_missing_current_swsd_surface")
-    return Step45Context(
+        prerequisite_issues.append("association_missing_current_swsd_surface")
+    return AssociationContext(
         step1_context=step1_context,
         template_result=template_result,
         step3_run_root=resolved_step3_root,
@@ -138,14 +138,14 @@ def load_step45_context(*, case_spec: CaseSpec, step3_root: str | Path) -> Step4
     )
 
 
-def build_step45_context_from_step3_case(
+def build_association_context_from_step3_case(
     *,
     step1_context: Step1Context,
     template_result: Step2TemplateResult,
     step3_run_root: str | Path,
     step3_case_dir: str | Path,
     step3_case_result: Step3CaseResult,
-) -> Step45Context:
+) -> AssociationContext:
     resolved_step3_run_root = normalize_runtime_path(step3_run_root)
     resolved_step3_case_dir = normalize_runtime_path(step3_case_dir)
     step3_status_doc = build_step3_status_doc(step3_case_result)
@@ -154,15 +154,15 @@ def build_step45_context_from_step3_case(
 
     step3_state = str(step3_status_doc.get("step3_state") or "")
     if not step3_state:
-        prerequisite_issues.append("step45_missing_step3_state")
+        prerequisite_issues.append("association_missing_step3_state")
 
     selected_road_ids = _stable_ids(step3_status_doc.get("selected_road_ids"))
     if not selected_road_ids:
-        prerequisite_issues.append("step45_missing_selected_road_ids")
+        prerequisite_issues.append("association_missing_selected_road_ids")
     else:
         available_road_ids = {road.road_id for road in step1_context.roads}
         if any(road_id not in available_road_ids for road_id in selected_road_ids):
-            prerequisite_issues.append("step45_selected_road_ids_not_in_step1_roads")
+            prerequisite_issues.append("association_selected_road_ids_not_in_step1_roads")
 
     excluded_road_ids = _stable_ids(
         step3_status_doc.get("excluded_road_ids")
@@ -170,9 +170,9 @@ def build_step45_context_from_step3_case(
     )
     current_swsd_surface_geometry = _build_current_swsd_surface_geometry(step1_context, selected_road_ids)
     if selected_road_ids and current_swsd_surface_geometry is None:
-        prerequisite_issues.append("step45_missing_current_swsd_surface")
+        prerequisite_issues.append("association_missing_current_swsd_surface")
 
-    return Step45Context(
+    return AssociationContext(
         step1_context=step1_context,
         template_result=template_result,
         step3_run_root=resolved_step3_run_root,
@@ -187,7 +187,7 @@ def build_step45_context_from_step3_case(
     )
 
 
-def load_step45_case_specs(
+def load_association_case_specs(
     *,
     case_root: str | Path,
     case_ids: list[str] | None = None,

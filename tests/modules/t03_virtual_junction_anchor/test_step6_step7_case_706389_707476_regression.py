@@ -5,11 +5,11 @@ from pathlib import Path
 import pytest
 
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import (
-    load_step45_case_specs,
-    load_step45_context,
+    load_association_case_specs,
+    load_association_context,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import (
-    build_step45_case_result,
+    build_association_case_result,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step7_acceptance import (
     VISUAL_V1,
@@ -19,17 +19,17 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step7_acceptance import (
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry import (
     build_step6_result,
 )
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import Step67Context
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import FinalizationContext
 
 
 REAL_ANCHOR_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor")
 REAL_STEP3_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003")
 
 
-def _selected_road_covered_length(step67_context: Step67Context, step6_result: object, road_id: str) -> float:
+def _selected_road_covered_length(finalization_context: FinalizationContext, step6_result: object, road_id: str) -> float:
     road = next(
         road
-        for road in step67_context.step45_context.step1_context.roads
+        for road in finalization_context.association_context.step1_context.roads
         if road.road_id == road_id
     )
     polygon = step6_result.output_geometries.polygon_final_geometry
@@ -38,10 +38,10 @@ def _selected_road_covered_length(step67_context: Step67Context, step6_result: o
     return road.geometry.intersection(polygon).length
 
 
-def _selected_road_seed_length(step67_context: Step67Context, step6_result: object, road_id: str) -> float:
+def _selected_road_seed_length(finalization_context: FinalizationContext, step6_result: object, road_id: str) -> float:
     road = next(
         road
-        for road in step67_context.step45_context.step1_context.roads
+        for road in finalization_context.association_context.step1_context.roads
         if road.road_id == road_id
     )
     polygon = step6_result.output_geometries.polygon_seed_geometry
@@ -57,19 +57,19 @@ def test_real_cases_706389_707476_and_709431_remain_accepted_after_boundary_firs
     if not REAL_STEP3_ROOT.is_dir():
         pytest.skip(f"missing real Step3 root: {REAL_STEP3_ROOT}")
 
-    specs, _ = load_step45_case_specs(
+    specs, _ = load_association_case_specs(
         case_root=REAL_ANCHOR_ROOT,
         case_ids=[case_id],
         exclude_case_ids=[],
     )
-    step45_context = load_step45_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
-    step45_case_result = build_step45_case_result(step45_context)
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
-    step6_result = build_step6_result(step67_context)
-    step7_result = build_step7_result(step67_context, step6_result)
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
 
     assert step6_result.geometry_established is True
     assert step6_result.extra_status_fields["foreign_overlap_area_m2"] == 0.0
@@ -90,19 +90,19 @@ def test_real_case_706389_uses_trace_based_single_sided_horizontal_mouth_cut() -
     if not REAL_STEP3_ROOT.is_dir():
         pytest.skip(f"missing real Step3 root: {REAL_STEP3_ROOT}")
 
-    specs, _ = load_step45_case_specs(
+    specs, _ = load_association_case_specs(
         case_root=REAL_ANCHOR_ROOT,
         case_ids=["706389"],
         exclude_case_ids=[],
     )
-    step45_context = load_step45_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
-    step45_case_result = build_step45_case_result(step45_context)
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
-    step6_result = build_step6_result(step67_context)
-    step7_result = build_step7_result(step67_context, step6_result)
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
 
     branches = {
         row["road_id"]: row
@@ -110,7 +110,7 @@ def test_real_case_706389_uses_trace_based_single_sided_horizontal_mouth_cut() -
     }
 
     assert step7_result.step7_state == "accepted"
-    assert step45_case_result.extra_status_fields["u_turn_rcsdroad_ids"] == [
+    assert association_case_result.extra_status_fields["u_turn_rcsdroad_ids"] == [
         "5395781419598881",
         "5395781419598961",
         "5395781419599024",
@@ -127,11 +127,11 @@ def test_real_case_706389_uses_trace_based_single_sided_horizontal_mouth_cut() -
     assert branches["58163436"]["trace_traced_rcsdnode_ids"] == ["5395732498090127"]
     assert branches["617732646"]["window_mode"] == "cut_at_20m"
     assert branches["617732646"]["cut_length_m"] == 20.0
-    assert _selected_road_covered_length(step67_context, step6_result, "58163436") == pytest.approx(
+    assert _selected_road_covered_length(finalization_context, step6_result, "58163436") == pytest.approx(
         branches["58163436"]["cut_length_m"],
     )
-    assert _selected_road_covered_length(step67_context, step6_result, "617732646") == pytest.approx(20.0)
-    assert _selected_road_covered_length(step67_context, step6_result, "629431331") == pytest.approx(
+    assert _selected_road_covered_length(finalization_context, step6_result, "617732646") == pytest.approx(20.0)
+    assert _selected_road_covered_length(finalization_context, step6_result, "629431331") == pytest.approx(
         branches["629431331"]["cut_length_m"],
     )
 
@@ -152,18 +152,18 @@ def test_real_cases_707476_and_709431_keep_final_geometry_within_20m_directional
     if not REAL_STEP3_ROOT.is_dir():
         pytest.skip(f"missing real Step3 root: {REAL_STEP3_ROOT}")
 
-    specs, _ = load_step45_case_specs(
+    specs, _ = load_association_case_specs(
         case_root=REAL_ANCHOR_ROOT,
         case_ids=[case_id],
         exclude_case_ids=[],
     )
-    step45_context = load_step45_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
-    step45_case_result = build_step45_case_result(step45_context)
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
-    step6_result = build_step6_result(step67_context)
+    step6_result = build_step6_result(finalization_context)
 
     branches = {
         row["road_id"]: row
@@ -173,8 +173,8 @@ def test_real_cases_707476_and_709431_keep_final_geometry_within_20m_directional
     for road_id in expected_road_ids:
         assert branches[road_id]["window_mode"] == "cut_at_20m"
         assert branches[road_id]["cut_length_m"] == 20.0
-        assert _selected_road_covered_length(step67_context, step6_result, road_id) == pytest.approx(
-            _selected_road_seed_length(step67_context, step6_result, road_id),
+        assert _selected_road_covered_length(finalization_context, step6_result, road_id) == pytest.approx(
+            _selected_road_seed_length(finalization_context, step6_result, road_id),
             abs=1e-6,
         )
     if case_id == "709431":
@@ -188,19 +188,19 @@ def test_real_case_724123_keeps_all_selected_arms_at_generic_20m_without_rcsd_se
     if not REAL_STEP3_ROOT.is_dir():
         pytest.skip(f"missing real Step3 root: {REAL_STEP3_ROOT}")
 
-    specs, _ = load_step45_case_specs(
+    specs, _ = load_association_case_specs(
         case_root=REAL_ANCHOR_ROOT,
         case_ids=["724123"],
         exclude_case_ids=[],
     )
-    step45_context = load_step45_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
-    step45_case_result = build_step45_case_result(step45_context)
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
-    step6_result = build_step6_result(step67_context)
-    step7_result = build_step7_result(step67_context, step6_result)
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
 
     assert step6_result.geometry_established is True
     assert step7_result.step7_state == "accepted"
@@ -213,7 +213,7 @@ def test_real_case_724123_keeps_all_selected_arms_at_generic_20m_without_rcsd_se
     for road_id in ["82197984", "46438267", "1024939"]:
         assert branches[road_id]["window_mode"] == "cut_at_20m"
         assert branches[road_id]["cut_length_m"] == 20.0
-        assert _selected_road_covered_length(step67_context, step6_result, road_id) == pytest.approx(20.0)
+        assert _selected_road_covered_length(finalization_context, step6_result, road_id) == pytest.approx(20.0)
 
 
 @pytest.mark.parametrize(
@@ -232,19 +232,19 @@ def test_real_cases_758888_and_851884_use_trace_based_horizontal_mouth_cut_witho
     if not REAL_STEP3_ROOT.is_dir():
         pytest.skip(f"missing real Step3 root: {REAL_STEP3_ROOT}")
 
-    specs, _ = load_step45_case_specs(
+    specs, _ = load_association_case_specs(
         case_root=REAL_ANCHOR_ROOT,
         case_ids=[case_id],
         exclude_case_ids=[],
     )
-    step45_context = load_step45_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
-    step45_case_result = build_step45_case_result(step45_context)
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
-    step6_result = build_step6_result(step67_context)
-    step7_result = build_step7_result(step67_context, step6_result)
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
 
     branches = {
         row["road_id"]: row
@@ -273,8 +273,8 @@ def test_real_cases_758888_and_851884_use_trace_based_horizontal_mouth_cut_witho
         assert branches["506188765"]["cut_length_m"] == 20.0
         expected_roads = ["58285198", "506188765", "1103051", "67337978", "87963411"]
     for road_id in expected_roads:
-        assert _selected_road_covered_length(step67_context, step6_result, road_id) == pytest.approx(
-            _selected_road_seed_length(step67_context, step6_result, road_id),
+        assert _selected_road_covered_length(finalization_context, step6_result, road_id) == pytest.approx(
+            _selected_road_seed_length(finalization_context, step6_result, road_id),
             abs=1e-2,
         )
 
@@ -309,19 +309,19 @@ def test_real_cases_761318_and_769081_keep_each_branch_at_its_own_cap_without_si
     if not REAL_STEP3_ROOT.is_dir():
         pytest.skip(f"missing real Step3 root: {REAL_STEP3_ROOT}")
 
-    specs, _ = load_step45_case_specs(
+    specs, _ = load_association_case_specs(
         case_root=REAL_ANCHOR_ROOT,
         case_ids=[case_id],
         exclude_case_ids=[],
     )
-    step45_context = load_step45_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
-    step45_case_result = build_step45_case_result(step45_context)
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
-    step6_result = build_step6_result(step67_context)
-    step7_result = build_step7_result(step67_context, step6_result)
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
 
     branches = {
         row["road_id"]: row
@@ -333,16 +333,16 @@ def test_real_cases_761318_and_769081_keep_each_branch_at_its_own_cap_without_si
     assert step6_result.audit_doc["assembly"]["target_connected_boundary_fallback_applied"] is False
     for road_id, expected_length in expected_lengths.items():
         assert branches[road_id]["cut_length_m"] == pytest.approx(expected_length)
-        assert _selected_road_covered_length(step67_context, step6_result, road_id) == pytest.approx(
-            _selected_road_seed_length(step67_context, step6_result, road_id),
+        assert _selected_road_covered_length(finalization_context, step6_result, road_id) == pytest.approx(
+            _selected_road_seed_length(finalization_context, step6_result, road_id),
             abs=1e-2,
         )
     if case_id == "761318":
-        assert _selected_road_covered_length(step67_context, step6_result, "518898861") > 16.0
+        assert _selected_road_covered_length(finalization_context, step6_result, "518898861") > 16.0
         assert step6_result.audit_doc["assembly"]["step3_two_node_t_bridge_inherited"] is True
         assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 1
     else:
-        assert _selected_road_covered_length(step67_context, step6_result, "527108106") > 16.0
+        assert _selected_road_covered_length(finalization_context, step6_result, "527108106") > 16.0
 
 
 def test_real_case_765003_inherits_step3_two_node_bridge_and_keeps_center_connected() -> None:
@@ -351,19 +351,19 @@ def test_real_case_765003_inherits_step3_two_node_bridge_and_keeps_center_connec
     if not REAL_STEP3_ROOT.is_dir():
         pytest.skip(f"missing real Step3 root: {REAL_STEP3_ROOT}")
 
-    specs, _ = load_step45_case_specs(
+    specs, _ = load_association_case_specs(
         case_root=REAL_ANCHOR_ROOT,
         case_ids=["765003"],
         exclude_case_ids=[],
     )
-    step45_context = load_step45_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
-    step45_case_result = build_step45_case_result(step45_context)
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
-    step6_result = build_step6_result(step67_context)
-    step7_result = build_step7_result(step67_context, step6_result)
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
 
     branches = {
         row["road_id"]: row
@@ -391,19 +391,19 @@ def test_real_case_520394575_remains_rejected_after_u_turn_filter_and_boundary_f
     if not REAL_STEP3_ROOT.is_dir():
         pytest.skip(f"missing real Step3 root: {REAL_STEP3_ROOT}")
 
-    specs, _ = load_step45_case_specs(
+    specs, _ = load_association_case_specs(
         case_root=REAL_ANCHOR_ROOT,
         case_ids=["520394575"],
         exclude_case_ids=[],
     )
-    step45_context = load_step45_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
-    step45_case_result = build_step45_case_result(step45_context)
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    association_context = load_association_context(case_spec=specs[0], step3_root=REAL_STEP3_ROOT)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
-    step6_result = build_step6_result(step67_context)
-    step7_result = build_step7_result(step67_context, step6_result)
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
 
     assert step6_result.geometry_established is False
     assert step6_result.reason == "step6_foreign_intrusion_remains"

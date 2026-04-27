@@ -33,7 +33,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers 
     resolve_representative_feature,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
-    Step67ReviewIndexRow,
+    FinalizationReviewIndexRow,
 )
 
 
@@ -49,7 +49,7 @@ REVIEW_INDEX_FIELDNAMES = [
     "case_id",
     "template_class",
     "association_class",
-    "step45_state",
+    "association_state",
     "step6_state",
     "step7_state",
     "visual_class",
@@ -80,13 +80,13 @@ def _sanitize_slug(value: str | None) -> str:
     return cleaned.strip("_") or "result"
 
 
-def _short_label(row: Step67ReviewIndexRow) -> str:
+def _short_label(row: FinalizationReviewIndexRow) -> str:
     if row.step7_state == "accepted" and row.visual_class == "V1 认可成功":
         return _sanitize_slug(row.template_class or "accepted")
     return _sanitize_slug(row.reason)
 
 
-def materialize_t03_review_gallery(run_root: Path, rows: list[Step67ReviewIndexRow]) -> list[Step67ReviewIndexRow]:
+def materialize_t03_review_gallery(run_root: Path, rows: list[FinalizationReviewIndexRow]) -> list[FinalizationReviewIndexRow]:
     accepted_dir = run_root / T03_REVIEW_ACCEPTED_DIRNAME
     rejected_dir = run_root / T03_REVIEW_REJECTED_DIRNAME
     v2_risk_dir = run_root / T03_REVIEW_V2_RISK_DIRNAME
@@ -97,7 +97,7 @@ def materialize_t03_review_gallery(run_root: Path, rows: list[Step67ReviewIndexR
             if existing_png.is_file():
                 existing_png.unlink()
 
-    categorized_rows: list[Step67ReviewIndexRow] = []
+    categorized_rows: list[FinalizationReviewIndexRow] = []
     for index, row in enumerate(sorted(rows, key=lambda item: _stable_sort_key(item.case_id)), start=1):
         label = _short_label(row)
         image_name = f"{index:04d}_{row.case_id}_{row.step7_state}_{label}.png"
@@ -125,14 +125,14 @@ def materialize_t03_review_gallery(run_root: Path, rows: list[Step67ReviewIndexR
     return categorized_rows
 
 
-def write_t03_review_index(run_root: Path, rows: list[Step67ReviewIndexRow]) -> Path:
+def write_t03_review_index(run_root: Path, rows: list[FinalizationReviewIndexRow]) -> Path:
     csv_rows = [
         {
             "sequence_no": row.sequence_no,
             "case_id": row.case_id,
             "template_class": row.template_class,
             "association_class": row.association_class,
-            "step45_state": row.step45_state,
+            "association_state": row.association_state,
             "step6_state": row.step6_state,
             "step7_state": row.step7_state,
             "visual_class": row.visual_class,
@@ -148,7 +148,7 @@ def write_t03_review_index(run_root: Path, rows: list[Step67ReviewIndexRow]) -> 
     return output_path
 
 
-def write_t03_review_summary(run_root: Path, rows: list[Step67ReviewIndexRow]) -> Path:
+def write_t03_review_summary(run_root: Path, rows: list[FinalizationReviewIndexRow]) -> Path:
     visual_counts = {
         visual_class: sum(1 for row in rows if row.visual_class == visual_class)
         for visual_class in REVIEW_SUMMARY_VISUAL_CLASSES
@@ -169,7 +169,7 @@ def _case_outputs_complete(case_dir: Path) -> bool:
         "step6_polygon_seed.gpkg",
         "step6_polygon_final.gpkg",
         "step6_constraint_foreign_mask.gpkg",
-        "step67_final_polygon.gpkg",
+        "step7_final_polygon.gpkg",
         "step6_status.json",
         "step6_audit.json",
         "step7_status.json",
@@ -180,7 +180,7 @@ def _case_outputs_complete(case_dir: Path) -> bool:
 
 def write_t03_summary(
     run_root: Path,
-    rows: list[Step67ReviewIndexRow],
+    rows: list[FinalizationReviewIndexRow],
     *,
     expected_case_ids: list[str],
     raw_case_count: int,
@@ -331,18 +331,18 @@ def load_step3_review_rows(*, run_root: Path, expected_case_ids: list[str]) -> l
     return rows
 
 
-def build_step67_review_rows(
+def build_finalization_review_rows(
     streamed_results: dict[str, T03StreamedCaseResult],
-) -> list[Step67ReviewIndexRow]:
-    rows: list[Step67ReviewIndexRow] = []
+) -> list[FinalizationReviewIndexRow]:
+    rows: list[FinalizationReviewIndexRow] = []
     for case_id in sorted(streamed_results, key=sort_patch_key):
         record = streamed_results[case_id]
         rows.append(
-            Step67ReviewIndexRow(
+            FinalizationReviewIndexRow(
                 case_id=record.case_id,
                 template_class=record.template_class,
                 association_class=record.association_class,
-                step45_state=record.step45_state,
+                association_state=record.association_state,
                 step6_state=record.step6_state,
                 step7_state=record.step7_state,
                 visual_class=record.visual_class,
@@ -527,7 +527,7 @@ __all__ = [
     "T03_REVIEW_REJECTED_DIRNAME",
     "T03_REVIEW_SUMMARY_FILENAME",
     "T03_REVIEW_V2_RISK_DIRNAME",
-    "build_step67_review_rows",
+    "build_finalization_review_rows",
     "load_step3_review_rows",
     "materialize_t03_review_gallery",
     "mirror_visual_checks",

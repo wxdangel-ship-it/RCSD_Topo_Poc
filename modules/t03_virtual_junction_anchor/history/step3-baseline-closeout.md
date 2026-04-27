@@ -2,7 +2,6 @@
 
 ## 1. Scope
 
-- branch: `codex/t03-step45-joint-refactor`
 - scope: `T03 / Phase A / Step3` only
 - non-goals:
   - `Step4/5/6/7`

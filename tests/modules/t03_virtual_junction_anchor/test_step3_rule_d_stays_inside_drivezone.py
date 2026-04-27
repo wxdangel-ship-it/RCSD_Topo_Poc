@@ -29,6 +29,7 @@ def test_rule_d_forces_final_allowed_space_back_inside_drivezone(tmp_path: Path,
         blocker_geometry=None,
         force_bidirectional_road_ids=None,
         cap_m=50.0,
+        case_cache=None,
     ):
         return box(-5.0, -5.0, 25.0, 5.0), [{"road_id": "road_1", "cap_hit": True}], {"road_1"}, []
 

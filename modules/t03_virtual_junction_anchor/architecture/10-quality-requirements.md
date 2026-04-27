@@ -16,12 +16,12 @@
 - 可发布：`virtual_intersection_polygons.gpkg` 是 batch / full-input 正式聚合成果层。
 - 可发布：`nodes.gpkg` 只能更新当前批次 selected / effective case 的代表 node `is_anchor`；`accepted => yes`、`rejected / runtime_failed => fail3`，非代表 node 与未选中 node 必须保持输入值不变。
 - 可一致：`nodes_anchor_update_audit.csv / nodes_anchor_update_audit.json` 的行集、计数与 `nodes.gpkg` 实际写值必须一致。
-- 可兼容：现有 `step45_*` 与 `step67_*` 输出文件名继续作为当前兼容契约保留，不因文档主结构切换而重命名。
+- 可兼容：现有 `association_*` 与 `step7_*` 输出文件名继续作为当前兼容契约保留，不因文档主结构切换而重命名。
 
 ## 3. Review 与 formal 分层
 
 - `V1~V5` 只属于视觉审计层，不等价于正式机器状态。
-- `step7_status.json`、`step67_final_polygon.gpkg` 与正式 `summary.json` 不得写入 `visual_review_class / visual_audit_class / manual_review_recommended`。
+- `step7_status.json`、`step7_final_polygon.gpkg` 与正式 `summary.json` 不得写入 `visual_review_class / visual_audit_class / manual_review_recommended`。
 - `t03_review_*`、`visual_checks/` 与 review PNG 是 review-only 产物。
 - batch aggregate polygon 上的 review compatibility 字段不得反向渗透回 formal status / summary 面。
 
@@ -38,6 +38,6 @@
 ## 5. 治理要求
 
 - 模块文档面、项目级盘点、官方入口事实与当前实现保持一致。
-- 正式主文档不再用 `Step45 / Step67` 组织业务结构；历史阶段名只允许在实现映射、兼容说明、历史 closeout、现有输出/入口名解释中出现。
+- 正式主文档不再用 `Association / Finalization` 组织业务结构；历史阶段名只允许在实现映射、兼容说明、历史 closeout、现有输出/入口名解释中出现。
 - 不把 solver 常量、启发式参数或单轮 closeout 结果误写成长期业务契约。
 - 不新增、不删除、不重命名 repo 官方 CLI 或 shell wrapper，除非后续单独获得入口治理任务授权。

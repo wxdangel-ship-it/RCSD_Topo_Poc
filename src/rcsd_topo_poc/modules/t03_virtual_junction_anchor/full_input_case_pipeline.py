@@ -5,12 +5,12 @@ from time import perf_counter
 from typing import Any
 
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import (
-    build_step45_context_from_step3_case,
+    build_association_context_from_step3_case,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import CaseSpec
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
-    Step67CaseResult,
-    Step67Context,
+    FinalizationCaseResult,
+    FinalizationContext,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_outputs import (
     write_case_outputs as write_finalization_case_outputs,
@@ -36,7 +36,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_outputs impor
     write_case_outputs as write_step3_case_outputs,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import (
-    build_step45_case_result,
+    build_association_case_result,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry import (
     build_step6_result,
@@ -92,7 +92,7 @@ def run_single_case_direct(
             "step3_negative_masks",
             "step3_cleanup_preview",
             "step3_hard_path_validation",
-            "step45",
+            "association",
             "step6",
             "step6_mask_prep",
             "step6_directional_cut",
@@ -150,44 +150,44 @@ def run_single_case_direct(
     )
     accumulate_duration(stage_timers, "step3", perf_counter() - step3_started_perf)
 
-    step45_started_perf = perf_counter()
-    step45_context = build_step45_context_from_step3_case(
+    association_started_perf = perf_counter()
+    association_context = build_association_context_from_step3_case(
         step1_context=step1_context,
         template_result=template_result,
         step3_run_root=step3_run_root,
         step3_case_dir=step3_run_root / "cases" / case_id,
         step3_case_result=step3_case_result,
     )
-    step45_case_result = build_step45_case_result(step45_context)
-    accumulate_duration(stage_timers, "step45", perf_counter() - step45_started_perf)
+    association_case_result = build_association_case_result(association_context)
+    accumulate_duration(stage_timers, "association", perf_counter() - association_started_perf)
 
-    step67_context = Step67Context(
-        step45_context=step45_context,
-        step45_case_result=step45_case_result,
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
     )
     step6_started_perf = perf_counter()
     step6_result = build_step6_result(
-        step67_context,
+        finalization_context,
         stage_timers=stage_timers,
     )
     accumulate_duration(stage_timers, "step6", perf_counter() - step6_started_perf)
 
     step7_started_perf = perf_counter()
-    step7_result = build_step7_result(step67_context, step6_result)
+    step7_result = build_step7_result(finalization_context, step6_result)
     accumulate_duration(stage_timers, "step7", perf_counter() - step7_started_perf)
-    step67_case_result = Step67CaseResult(
+    finalization_case_result = FinalizationCaseResult(
         case_id=case_id,
-        template_class=step45_case_result.template_class,
-        association_class=step45_case_result.association_class,
-        step45_state=step45_case_result.step45_state,
+        template_class=association_case_result.template_class,
+        association_class=association_case_result.association_class,
+        association_state=association_case_result.association_state,
         step6_result=step6_result,
         step7_result=step7_result,
     )
     output_write_started_perf = perf_counter()
-    step67_row = write_finalization_case_outputs(
+    finalization_row = write_finalization_case_outputs(
         run_root=run_root,
-        step67_context=step67_context,
-        case_result=step67_case_result,
+        finalization_context=finalization_context,
+        case_result=finalization_case_result,
         debug_render=debug_render,
         render_review_png=render_review_png,
     )
@@ -199,7 +199,7 @@ def run_single_case_direct(
         "selected_counts": selected_counts,
         "step3_row": step3_row,
         "step3_case_result": step3_case_result,
-        "step67_row": step67_row,
-        "step67_case_result": step67_case_result,
+        "finalization_row": finalization_row,
+        "finalization_case_result": finalization_case_result,
         "stage_timers": stage_timers,
     }

@@ -9,7 +9,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_vector
 from tests.modules.t03_virtual_junction_anchor._case_helpers import node_feature, road_feature, write_case_package
 
 
-def write_step45_case_package(
+def write_association_case_package(
     case_root: Path,
     case_id: str,
     *,
@@ -96,7 +96,7 @@ def build_center_case_a(case_root: Path, step3_root: Path, case_id: str = "10000
         road_feature("rc_r_2", "rc_n_1", "rc_b", [(2.0, -12.0), (2.0, 12.0)]),
         road_feature("rc_r_3", "rc_n_1", "rc_c", [(2.0, 2.0), (12.0, 12.0)]),
     ]
-    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
+    write_association_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
     write_step3_prerequisite(
         step3_root,
         case_id,
@@ -114,7 +114,7 @@ def build_center_case_b(case_root: Path, step3_root: Path, case_id: str = "10000
     rcsd_roads = [
         road_feature("rc_r_support", "ra", "rb", [(-60.0, 0.0), (60.0, 0.0)]),
     ]
-    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_roads=rcsd_roads)
+    write_association_case_package(case_root / case_id, case_id, roads=roads, rcsd_roads=rcsd_roads)
     write_step3_prerequisite(
         step3_root,
         case_id,
@@ -132,7 +132,7 @@ def build_center_case_c(case_root: Path, step3_root: Path, case_id: str = "10000
     rcsd_roads = [
         road_feature("rc_r_far", "ra", "rb", [(-80.0, 80.0), (80.0, 80.0)]),
     ]
-    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_roads=rcsd_roads)
+    write_association_case_package(case_root / case_id, case_id, roads=roads, rcsd_roads=rcsd_roads)
     write_step3_prerequisite(
         step3_root,
         case_id,
@@ -158,7 +158,7 @@ def build_center_case_degree2_connector(case_root: Path, step3_root: Path, case_
         road_feature("rc_r_connector", "rc_core", "rc_connector", [(0.0, 0.0), (10.0, 6.0)]),
         road_feature("rc_r_tail", "rc_connector", "rc_far", [(10.0, 6.0), (14.0, 24.0)]),
     ]
-    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
+    write_association_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
     write_step3_prerequisite(
         step3_root,
         case_id,
@@ -189,7 +189,7 @@ def build_center_case_degree2_connector_with_true_foreign_node(
         road_feature("rc_r_connector", "rc_core", "rc_connector", [(0.0, 0.0), (10.0, 6.0)]),
         road_feature("rc_r_tail", "rc_connector", "rc_tail_end", [(10.0, 6.0), (14.0, 24.0)]),
     ]
-    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
+    write_association_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
     write_step3_prerequisite(
         step3_root,
         case_id,
@@ -215,7 +215,7 @@ def build_center_case_degree2_turn_connector(case_root: Path, step3_root: Path, 
         road_feature("rc_r_connector", "rc_core", "rc_connector", [(0.0, 0.0), (10.0, 0.0)]),
         road_feature("rc_r_turn", "rc_connector", "rc_turn_end", [(10.0, 0.0), (10.0, 14.0)]),
     ]
-    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
+    write_association_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
     write_step3_prerequisite(
         step3_root,
         case_id,
@@ -242,7 +242,7 @@ def build_center_case_multi_surface_filter(case_root: Path, step3_root: Path, ca
         road_feature("rc_r_3", "rc_n_1", "rc_c", [(2.0, 2.0), (12.0, 12.0)]),
         road_feature("rc_r_far", "rc_far_a", "rc_n_far", [(88.0, 0.0), (112.0, 0.0)]),
     ]
-    write_step45_case_package(
+    write_association_case_package(
         case_root / case_id,
         case_id,
         roads=roads,
@@ -277,7 +277,7 @@ def build_single_sided_parallel_support_case(case_root: Path, step3_root: Path, 
         road_feature("rc_support_exit_side", "rc_exit_a", "rc_exit_b", [(0.0, 0.0), (0.0, 28.0)]),
         road_feature("rc_support_parallel", "rc_parallel_a", "rc_parallel_b", [(2.0, 0.0), (2.0, 28.0)]),
     ]
-    write_step45_case_package(
+    write_association_case_package(
         case_root / case_id,
         case_id,
         kind_2=2048,
@@ -320,7 +320,7 @@ def build_center_case_foreign_selected_surface_overlap(
         road_feature("rc_r_2", "rc_n_1", "rc_b", [(2.0, -12.0), (2.0, 12.0)]),
         road_feature("rc_r_3", "rc_n_1", "rc_c", [(2.0, 2.0), (12.0, 12.0)]),
     ]
-    write_step45_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
+    write_association_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
     write_step3_prerequisite(
         step3_root,
         case_id,

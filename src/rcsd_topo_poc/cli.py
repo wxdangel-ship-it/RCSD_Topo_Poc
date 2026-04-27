@@ -366,12 +366,12 @@ def _cmd_t03_step3_legal_space(args: argparse.Namespace) -> int:
     return run_t03_step3_legal_space_cli(args)
 
 
-def _cmd_t03_step45_rcsd_association(args: argparse.Namespace) -> int:
+def _cmd_t03_rcsd_association(args: argparse.Namespace) -> int:
     from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_cli import (
-        run_t03_step45_rcsd_association_cli,
+        run_t03_rcsd_association_cli,
     )
 
-    return run_t03_step45_rcsd_association_cli(args)
+    return run_t03_rcsd_association_cli(args)
 
 
 def _add_debug_flag(parser: argparse.ArgumentParser, *, default: bool) -> None:
@@ -1090,56 +1090,56 @@ def main(argv: Optional[List[str]] = None) -> int:
     _add_debug_flag(p_t03, default=False)
     p_t03.set_defaults(func=_cmd_t03_step3_legal_space)
 
-    p_t03_step45 = sub.add_parser(
-        "t03-step45-rcsd-association",
+    p_t03_association = sub.add_parser(
+        "t03-rcsd-association",
         help="Run T03 Step4-5 joint RCSD association on top of frozen Step3 outputs.",
     )
-    p_t03_step45.add_argument(
+    p_t03_association.add_argument(
         "--case-root",
         default="/mnt/e/TestData/POC_Data/T02/Anchor",
         help="Anchor case-package root directory. Default: /mnt/e/TestData/POC_Data/T02/Anchor.",
     )
-    p_t03_step45.add_argument(
+    p_t03_association.add_argument(
         "--step3-root",
         default="/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003",
         help="Frozen Step3 run root that provides step3_allowed_space/status/audit prerequisites.",
     )
-    p_t03_step45.add_argument(
+    p_t03_association.add_argument(
         "--case-id",
         action="append",
         help="Optional case id filter. Repeat to run multiple cases.",
     )
-    p_t03_step45.add_argument(
+    p_t03_association.add_argument(
         "--max-cases",
         type=int,
         help="Optional maximum number of cases to run after stable sorting.",
     )
-    p_t03_step45.add_argument(
+    p_t03_association.add_argument(
         "--workers",
         type=int,
         default=1,
         help="Number of parallel case workers. Default: 1.",
     )
-    p_t03_step45.add_argument(
+    p_t03_association.add_argument(
         "--run-id",
-        help="Optional run id. If omitted, use t03_step45_joint_phase_YYYYMMDD_HHMMSS.",
+        help="Optional run id. If omitted, use t03_association_phase_YYYYMMDD_HHMMSS.",
     )
-    p_t03_step45.add_argument(
+    p_t03_association.add_argument(
         "--out-root",
         "--out-dir",
         "--out_dir",
         dest="out_root",
-        default="/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase",
-        help="Optional output root override. Default: /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase.",
+        default="/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_association_phase",
+        help="Optional output root override. Default: /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_association_phase.",
     )
-    p_t03_step45.add_argument(
+    p_t03_association.add_argument(
         "--debug-render",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Whether to add render-time debug annotations onto the mandatory step45_review.png outputs.",
+        help="Whether to add render-time debug annotations onto the mandatory association_review.png outputs.",
     )
-    _add_debug_flag(p_t03_step45, default=False)
-    p_t03_step45.set_defaults(func=_cmd_t03_step45_rcsd_association)
+    _add_debug_flag(p_t03_association, default=False)
+    p_t03_association.set_defaults(func=_cmd_t03_rcsd_association)
 
     p_t02_poc = sub.add_parser(
         "t02-virtual-intersection-poc",

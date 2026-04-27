@@ -151,15 +151,40 @@ def _draw_polygon(
     geometry: BaseGeometry | None,
     bounds: tuple[float, float, float, float],
     *,
-    fill: tuple[int, int, int, int],
+    fill: tuple[int, int, int, int] | int,
     outline: tuple[int, int, int, int] | None = None,
     width: int = 1,
 ) -> None:
+    target_image = getattr(draw, "_image", None)
     for polygon in _iter_polygons(geometry):
         exterior = [_project_xy(x, y, bounds) for x, y in map(_xy_pair, polygon.exterior.coords)]
-        draw.polygon(exterior, fill=fill, outline=outline)
-        if outline is not None and width > 1:
-            draw.line(exterior, fill=outline, width=width, joint="curve")
+        interior_rings = [
+            [_project_xy(x, y, bounds) for x, y in map(_xy_pair, ring.coords)]
+            for ring in polygon.interiors
+        ]
+        if target_image is None or not isinstance(fill, tuple) or target_image.mode != "RGBA":
+            draw.polygon(exterior, fill=fill, outline=outline)
+            for ring in interior_rings:
+                draw.polygon(ring, fill=0)
+                if outline is not None:
+                    draw.line(ring, fill=outline, width=max(1, width), joint="curve")
+            continue
+
+        mask = Image.new("L", target_image.size, 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.polygon(exterior, fill=fill[3])
+        for ring in interior_rings:
+            mask_draw.polygon(ring, fill=0)
+
+        overlay = Image.new("RGBA", target_image.size, (fill[0], fill[1], fill[2], 0))
+        overlay.putalpha(mask)
+        target_image.alpha_composite(overlay)
+
+        if outline is not None:
+            line_width = max(1, width)
+            draw.line(exterior, fill=outline, width=line_width, joint="curve")
+            for ring in interior_rings:
+                draw.line(ring, fill=outline, width=line_width, joint="curve")
 
 
 def _draw_line(

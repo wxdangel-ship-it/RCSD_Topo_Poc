@@ -36,9 +36,11 @@
 ## 推荐阅读顺序
 
 1. `06-accepted-baseline.md`
-2. `01-introduction-and-goals.md`
-3. `02-constraints.md`
-4. `04-solution-strategy.md`
-5. `05-building-block-view.md`
-6. `INTERFACE_CONTRACT.md`
-7. `10-quality-requirements.md`
+2. `07-stage3-business-requirements.md`
+3. `08-stage3-algorithm-strategy.md`
+4. `01-introduction-and-goals.md`
+5. `02-constraints.md`
+6. `04-solution-strategy.md`
+7. `05-building-block-view.md`
+8. `INTERFACE_CONTRACT.md`
+9. `10-quality-requirements.md`

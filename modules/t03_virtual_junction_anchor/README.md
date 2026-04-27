@@ -1,113 +1,161 @@
 # t03_virtual_junction_anchor
 
-> 本文件是 `t03_virtual_junction_anchor` 的操作者入口说明。正式契约以 `INTERFACE_CONTRACT.md` 为准，长期设计以 `architecture/*` 为准。
+> 本文件是 `t03_virtual_junction_anchor` 的操作者入口说明。正式契约以 `INTERFACE_CONTRACT.md` 为准，业务步骤与实现阶段映射见 `architecture/11-business-steps-vs-implementation-stages.md`。
 
-## 1. 当前定位
+## 1. 模块定位
 
-- T03 当前正式承接“冻结 `Step3 legal-space baseline` 之上的 `Step4-7 clarified formal stage`”
-- `Step3` 仍是冻结前置层；当前正式模板只包括 `center_junction / single_sided_t_mouth`
-- 正式输入契约固定为 Anchor61 `case-package`
-- Anchor61 原始样本仍为 `61` 个 case；其中 `922217 / 54265667 / 502058682` 已确认为 input-gate hard-stop case，默认全量跑批会排除它们，只在显式点名单时单独复跑
-- 当前正式交付包括：
-  - `Step4-5 = RCSD` 关联语义识别与 `required / support / excluded` 中间结果包
-  - `Step6 =` 受约束几何建立与审计
-  - `Step7 = accepted / rejected` 最终发布
-  - 单 case / batch 输出
-  - `step45_review_flat/`、`t03_review_flat/` 与索引汇总
+T03 面向当前语义路口，在冻结的合法活动空间内识别 RCSD 有效关联关系，构造受约束的最终路口面，并输出正式结果、复核结果与批量执行成果。
 
-## 2. 官方入口
+正式业务主链按 `Step1~Step7` 表达：
+
+| 步骤 | 业务职责 |
+|---|---|
+| `Step1` | 当前 case 受理、代表节点与局部上下文建立 |
+| `Step2` | 模板归类 |
+| `Step3` | 合法活动空间冻结 |
+| `Step4` | RCSD 关联语义识别 |
+| `Step5` | foreign / excluded 负向约束 |
+| `Step6` | 受约束几何生成 |
+| `Step7` | 最终验收与发布 |
+
+`Step45` 与 `Step67` 是历史实现阶段和兼容命名，不再作为正式需求主结构。
+
+## 2. 当前正式支持范围
+
+- 当前正式模板：
+  - `center_junction`
+  - `single_sided_t_mouth`
+- Anchor61 原始样本为 `61` 个 case；`922217 / 54265667 / 502058682` 已确认为 input-gate hard-stop case。
+- 默认正式全量验收集为排除上述 3 个 input-gate case 后的 `58` 个 case；显式传入 `--case-id` 时仍可单独复跑。
+- 不纳入当前 T03 正式范围：
+  - `diverge / merge / continuous divmerge / complex 128`
+  - 环岛
+  - 概率化排序、置信度学习、自动回捞
+  - 重写 T02 或 T03 Step3 的冻结规则
+
+## 3. 当前入口
+
+### 3.1 RCSD 关联阶段 CLI
 
 ```bash
 .venv/bin/python -m rcsd_topo_poc t03-step45-rcsd-association --help
 ```
 
-说明：
+该 CLI 名称保留历史 `step45` 命名；当前业务含义对应 `Step4 + Step5`，不表示正式需求主结构仍以 `Step45` 组织。
 
-- 当前 repo 官方 CLI 仍只有 `Step4-5` 联合阶段入口。
-- 本轮未新增 `Step67` 官方 CLI；`Step67` 正式交付由模块内 batch runner 与 closeout 维持。
-
-## 3. 冻结前置入口
+### 3.2 合法空间冻结前置入口
 
 ```bash
 .venv/bin/python -m rcsd_topo_poc t03-step3-legal-space --help
 ```
 
-## 4. 当前 T03 模块级交付方式
+`Step3` 是当前 T03 正式主链中的合法空间冻结步骤，也是后续 `Step4~Step7` 不得反向篡改的前置事实。
 
-- 当前 T03 模块级正式批量交付通过模块内 `run_t03_batch()` 生成。
-- 这属于当前模块的正式交付面，但不是 repo 官方入口，不登记到 `entrypoint-registry.md`。
-- 内网 full-input 批量执行当前以 repo 级脚本 `scripts/t03_run_internal_full_input_8workers.sh` 为主入口。
-- 兼容层 `scripts/t03_run_step67_internal_full_input_8workers.sh` 仍保留，但只做 wrapper / shim，并显式提示调用方迁移到新的模块级命名。
-- 该脚本对外参数面与 `scripts/t02_run_stage3_internal_full_input_8workers.sh` 保持同风格；它是当前模块的 repo 级 full-input 交付外壳，不提升为新的 repo 官方 CLI。
-- watch 脚本 `scripts/t03_watch_internal_full_input.sh` 是对应的 repo 级监控外壳；默认按 formal-first 口径展示 `total / completed / running / pending / success / failed`，其中 `success = accepted`、`failed = rejected + runtime_failed`，并显式表达当前是否已进入 `case execution` 阶段。
-- 兼容层 `scripts/t03_watch_step67_internal_full_input.sh` 仍保留，但只做 wrapper / shim，并显式提示调用方迁移到新的模块级命名。
-- 当前 T03 internal full-input 的主执行形态为：`candidate discovery -> shared handle preload -> per-case local context query -> internal runner 内直接执行 Step3/Step45/Step67`；`case-package` 物化不再是默认主执行依赖，仅保留为历史过渡路径说明。
-- 当前 T03 internal full-input 批次根目录会补写正式成果：
-  - `virtual_intersection_polygons.gpkg`：batch aggregate polygon 图层，字段集合对齐 T02 Stage3 official full-input 当前实际聚合层实现
-  - `nodes.gpkg`：基于 full-input 原始整层 nodes 的更新版输出，只更新当前批次 selected / effective case 的代表 node `is_anchor`（`accepted => yes`，`rejected/runtime_failed => fail3`）；非代表 node 与未选中 node 保持原值
-  - `nodes_anchor_update_audit.csv`
-  - `nodes_anchor_update_audit.json`
-- `fail3` 当前只属于 T03 internal full-input 下游 `nodes.gpkg` 输出语义，不回写输入原始 `nodes.gpkg`，也不提升为 T02 或 Step3 上游契约字段。
-- 当前 full-input run root 还会实时平铺：
-  - `visual_checks/`：每完成一个 case 即镜像该 case 的 `step67_review.png`
-  - `t03_review_accepted/`、`t03_review_rejected/`、`t03_review_v2_risk/`、`t03_review_flat/`
-  - `t03_review_index.csv` 与 `t03_review_summary.json`
-  - `_internal/<RUN_ID>/t03_internal_full_input_manifest.json`：承载 static manifest、selected/discovered 列表与输出路径
-  - `_internal/<RUN_ID>/t03_internal_full_input_progress.json` 与 `t03_internal_full_input_performance.json`：承载 lightweight runtime counters、stage timer 与后续性能审计所需统计
+### 3.3 internal full-input 脚本
 
-## 5. 默认路径
+```bash
+OUT_ROOT=/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_internal_full_input \
+RUN_ID=t03_innernet_full_$(date +%Y%m%d_%H%M%S) \
+./scripts/t03_run_internal_full_input_innernet.sh
+```
 
-- 默认输入根：`/mnt/e/TestData/POC_Data/T02/Anchor`
-- 默认 `Step3` 前置根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step3_phase_a/20260418_t03_step3_rulee_rcsd_fallback_v003`
-- 默认 `Step4-5` 输出根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_step45_joint_phase`
-- 默认 T03 batch 输出根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_batch`
-- 默认 T03 internal full-input 输出根：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_internal_full_input`
+常用监控：
 
-## 6. 当前正式边界
+```bash
+./scripts/t03_watch_internal_full_input_innernet.sh
+```
 
-- `Step4-7` 必须消费冻结 `Step3 allowed space / step3_status / step3_audit`
-- `association_class` 契约只允许 `A / B / C`
-- `step45_state` 契约只允许 `established / review / not_established`
-- `step7_state` 契约只允许 `accepted / rejected`
-- `B / review` 是当前正式保守策略，不视为算法缺陷；其含义是“已有 support / hook zone，但 RCSD semantic core 仍待 `Step6` 收窄”
-- `support_only` 在 `Step6` 合法收敛后允许转为 `Step7 accepted`
-- 若某条 `RCSDRoad` 两端分别连接方向相反的 `RCSDRoad`，则该 road 视为 `调头口 RCSDRoad`；它在 `Step45` 上游语义处理中视为不存在，并且必须在 `degree2 connector / chain merge / required-support-excluded` 之前先过滤
-- `degree = 2` 的 `RCSDNode` 不进入 `required semantic core`；经其串接的 candidate `RCSDRoad` 必须先按 chain 合并，再参与 `required / support / excluded` 分类
-- 每个 case 只处理当前 SWSD 路口所在道路面；道路面外的 SWSD / RCSD 对象不进入当前 case 主结果集合
-- `single_sided_t_mouth` 的平行重复 `support RCSDRoad` 继续按竖方向退出当前面一侧去重
-- 对 `single_sided_t_mouth + association_class=A`，横方向口门必须按“竖向 RCSDRoad seed -> 横向 tracing -> terminal RCSDNode -> +5m -> stop at next directly-associated semantic junction”求解
-- tracing 过程中的 `RCSDRoad` 不要求整体完全留在候选空间内；只要最终确认的 `RCSDNode` 落在横方向候选空间内，即可作为当前口门 tracing 的有效结果
-- 若 tracing 无法在横方向两侧都确认 terminal `RCSDNode`，则当前 `A` 类横向口门特化规则不成立，横方向回到 generic directional boundary
-- 若冻结 `Step3` 对当前 `single_sided_t_mouth` case 标记 `two_node_t_bridge_applied = true`，则 `Step67 directional boundary / polygon_seed` 必须继承这条 two-node T bridge；它属于全局 target-connected center support，不得在横向截断后留下中间断开或多组件狭长残留
-- `Step6` 是受约束几何层，不是 cleanup 驱动补救层
-- `Step6` 必须先确定 directional boundary，再在 boundary 内构面；不允许“先裁剪再把 required RC 整体补回边界外”
-- `required RC must-cover` 当前只对 directional boundary 内的 `local required RC` 成立
-- `Step7` 只负责最终业务发布，不重新定义 `required / support / excluded / foreign`
-- `V1-V5` 只属于视觉审计层，不等价于主机器状态
-- `step7_status.json`、`step67_final_polygon.gpkg` 与正式 `summary.json` 当前不再承载 `V1-V5 / visual_* / manual_review_recommended`；这些信息只保留在 review-only 工件中
-- `Step5` 当前不再生成 hard foreign polygon context；`Step6` hard negative mask 仅消费 road-like `1m` mask
-- `step45_foreign_swsd_context.gpkg / step45_foreign_rcsd_context.gpkg` 当前仅作为兼容性审计产物保留，可以为空
-- Anchor 原始样本固定为 `61`；默认正式全量验收统计口径为排除 `922217 / 54265667 / 502058682` 后的 `58` 个 case，并会在 `preflight.json / summary.json` 记录 `excluded_case_ids`
-- 未传 `--case-id` 时，默认正式验收集按上述 `58` 个 case 运行；显式传入 `--case-id` 时，不应用默认排除集
+主脚本事实：
 
-## 7. 当前 closeout 与历史文档
+- `scripts/t03_run_internal_full_input_8workers.sh` 是 T03 internal full-input 主运行脚本。
+- `scripts/t03_watch_internal_full_input.sh` 是对应主监控脚本。
+- `scripts/t03_run_step67_internal_full_input_8workers.sh` 与 `scripts/t03_watch_step67_internal_full_input.sh` 只保留为历史兼容 wrapper。
+- 本轮不新增 repo 官方 CLI，不改变入口签名。
 
-- Step3 baseline closeout：`modules/t03_virtual_junction_anchor/architecture/04-step3-closeout.md`
-- Step4-5 joint phase closeout：`modules/t03_virtual_junction_anchor/architecture/06-step45-closeout.md`
-- Step67 clarified formal stage closeout：`modules/t03_virtual_junction_anchor/architecture/08-step67-closeout.md`
-- T02 Stage3 继承边界：`modules/t03_virtual_junction_anchor/architecture/09-t02-inheritance-boundary.md`
-- `07-step6-readiness-prep.md` 保留为 Step67 正式落地前的历史准备文档，不再定义当前正式范围
+## 4. 主要输出
 
-## 8. 当前完成口径
+### 4.1 case 级正式输出
 
-- 当前 T03 正式完成口径为：
-  - 冻结 `Step3 legal-space baseline`
-  - `Step4-7 clarified formal stage`
-  - 默认正式全量 `58` 个 case 的业务正确性已满足目视审计要求
-- 当前剩余少量 accepted case 的几何形状仍有优化空间，但这属于后续长期迭代方向，不再构成当前正式准出阻塞项
+- `step3_allowed_space.gpkg`
+- `step3_status.json`
+- `step3_audit.json`
+- `step45_required_rcsdnode.gpkg`
+- `step45_required_rcsdroad.gpkg`
+- `step45_support_rcsdnode.gpkg`
+- `step45_support_rcsdroad.gpkg`
+- `step45_excluded_rcsdnode.gpkg`
+- `step45_excluded_rcsdroad.gpkg`
+- `step45_status.json`
+- `step45_audit.json`
+- `step6_polygon_seed.gpkg`
+- `step6_polygon_final.gpkg`
+- `step6_constraint_foreign_mask.gpkg`
+- `step6_status.json`
+- `step6_audit.json`
+- `step67_final_polygon.gpkg`
+- `step7_status.json`
+- `step7_audit.json`
 
-## 9. Patch Round 操作者口径
+说明：`step45_*` 与 `step67_*` 是当前输出兼容文件名，本轮不重命名。
 
-- 本 README 面向 patch round 操作者，只说明当前轮允许执行的正式口径与默认验收边界，不替代 `INTERFACE_CONTRACT.md`
-- patch round 只做增量修补、契约收口、测试补强与 closeout 同步，不顺手扩大为新的执行入口治理轮次
-- 若实现、审计结果与本页或契约面不一致，操作者应先回写审计事实，再由后续 patch round 继续收口
+### 4.2 review-only 输出
+
+- `step45_review.png`
+- `step67_review.png`
+- `t03_review_index.csv`
+- `t03_review_summary.json`
+- `t03_review_flat/`
+- `t03_review_accepted/`
+- `t03_review_rejected/`
+- `t03_review_v2_risk/`
+- `visual_checks/`
+
+`V1~V5` 只属于人工复核层，不等价于机器正式状态。
+
+### 4.3 batch / full-input 正式成果
+
+- `preflight.json`
+- `summary.json`
+- `virtual_intersection_polygons.gpkg`
+- `nodes.gpkg`
+- `nodes_anchor_update_audit.csv`
+- `nodes_anchor_update_audit.json`
+- `_internal/<RUN_ID>/terminal_case_records/<case_id>.json`
+
+`nodes.gpkg` 只更新当前批次代表 node 的 `is_anchor`：
+
+- `accepted -> yes`
+- `rejected / runtime_failed -> fail3`
+
+`fail3` 只属于 T03 downstream output 语义，不回写输入原始 `nodes.gpkg`，也不反向修改 T02 上游契约。
+
+## 5. 当前正式边界
+
+- 所有空间处理统一使用 `EPSG:3857`。
+- `Step4~Step7` 必须消费冻结 `Step3 allowed space / step3_status / step3_audit`。
+- `association_class` 只允许 `A / B / C`。
+- `step45_state` 只允许 `established / review / not_established`，这是当前兼容状态字段名。
+- `step7_state` 只允许 `accepted / rejected`。
+- `B / review` 是当前正式保守策略，不视为算法缺陷；其含义是“已有 support / hook zone，但 RCSD semantic core 仍不足以直接判定主关联”。
+- `support_only` 在 `Step6` 合法收敛后允许转为 `Step7 accepted`。
+- `degree = 2` 的 `RCSDNode` 不进入 required semantic core；经其串接的 candidate `RCSDRoad` 必须先按 chain 合并，再参与 `required / support / excluded` 分类。
+- 当前 case 只处理当前 SWSD 路口所在道路面；道路面外的 SWSD / RCSD 对象不进入当前 case 主结果集合。
+- `Step6` 是受约束几何层，不是 cleanup 驱动补救层。
+- `Step6` 必须先确定 directional boundary，再在 boundary 内构面；不允许“先裁剪再把 required RC 整体补回边界外”。
+- `required RC must-cover` 当前只对 directional boundary 内的 `local required RC` 成立。
+- `Step7` 只负责最终业务发布，不重新定义 `required / support / excluded / foreign`。
+- `terminal_case_records/<case_id>.json` 是 internal full-input 的 authoritative terminal state；`t03_streamed_case_results.jsonl` 是 compact append log。
+
+## 6. 文档索引
+
+- 正式契约：`INTERFACE_CONTRACT.md`
+- 业务步骤与实现阶段映射：`architecture/11-business-steps-vs-implementation-stages.md`
+- 方案策略：`architecture/04-solution-strategy.md`
+- 质量要求：`architecture/10-quality-requirements.md`
+- 历史 closeout：
+  - `architecture/04-step3-closeout.md`
+  - `architecture/06-step45-closeout.md`
+  - `architecture/08-step67-closeout.md`
+- T02 继承边界：`architecture/09-t02-inheritance-boundary.md`
+
+历史 closeout 文档用于追溯阶段性实现，不替代当前 `Step1~Step7` 正式业务结构。

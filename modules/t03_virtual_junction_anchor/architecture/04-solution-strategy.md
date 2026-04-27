@@ -1,33 +1,72 @@
 # 04 Solution Strategy
 
-- 使用独立 `Step45` pipeline 承接冻结 Step3 之后的 RCSD 关联、`required / support / excluded` 分类与审计，不回灌 Step3
-- `Step45` 结构拆分为 `association_loader / step4_association / step5_foreign_filter / association_render / association_outputs`
-- `Step45` 产出 `required / support / excluded` RCSD 集合、hook zone、状态与审计；兼容性 foreign context 文件仍保留，但不再承担 `Step6` hard subtract 语义
-- 使用独立 `Step67` pipeline 承接 `Step6` 受约束几何与 `Step7` 最终发布；其中 case 级业务阶段继续保留在 `step6_geometry / step7_acceptance`，其配套 case 渲染与写出收口到 `finalization_render / finalization_outputs`，模块级 batch closeout / aggregation 则收口到 `t03_batch_closeout / t03_batch_runner`
-- 对 internal full-input，不再把“先切最小 case-package 再 batch”视为主执行形态；当前主链收敛为：
-  - `candidate discovery`
-  - `shared handle preload`
-  - `per-case local context query`
-  - internal runner 内直接执行 `Step3 / Step45 / Step67`
-- repo 级主脚本 `scripts/t03_run_internal_full_input_8workers.sh` / `scripts/t03_watch_internal_full_input.sh` 负责提供 full-input 运行与监控外壳；它们复用 T02 风格的参数面与使用习惯，但不构成新的 repo 官方 CLI
-- 旧脚本名 `scripts/t03_run_step67_internal_full_input_8workers.sh` / `scripts/t03_watch_step67_internal_full_input.sh` 只保留为兼容 wrapper，不再承担模块级主命名
-- 对 `single_sided_t_mouth + association_class=A`，Step67 的横方向口门不再使用纯投影启发式：
-  - 先从竖方向候选空间内的相关 `RCSDRoad / chain` 建 tracing seed
-  - 再向横方向追踪并确认落在横方向候选空间内的 terminal `RCSDNode`
-  - 以 terminal `RCSDNode` 为主锚点外扩 `5m`
-  - 若 tracing 无法在横方向两侧都确认 terminal `RCSDNode`，则回到 generic directional boundary
-  - 并在前方其他直接关联语义路口处提前停止
-- 对冻结 `Step3` 已应用 `two_node_t_bridge` 的 `single_sided_t_mouth` case，Step67 不再把该 bridge 仅视为上游 allowed-space 历史事实，而是显式继承为 directional boundary / polygon_seed 的中心桥接支撑，保证横方向口门裁剪后中心仍保持连通
-- `Step67` 的 solver 细节继续留在实现与 closeout，不把 `20m`、buffer、ratio 等常量提升为长期契约
-- `Step7` 主状态收敛为 `accepted / rejected`；视觉审计继续沿用 `V1-V5`
-- 当前 T03 模块级正式批量交付通过模块内 `run_t03_batch()` 维持，不在本轮新增 repo 官方 CLI
-- internal full-input 的正式批次根目录当前额外承接两类下游成果：
-  - `virtual_intersection_polygons.gpkg`：聚合当前批次所有非失败 case 的最终 polygon，字段口径对齐 T02 official full-input 聚合成果层
-  - `nodes.gpkg`：复制 full-input 原始整层 nodes 并按代表 node 更新 `is_anchor`；`fail3` 仅在该下游输出内使用
-- internal full-input 的正式批次根目录同时固化 `nodes_anchor_update_audit.csv / nodes_anchor_update_audit.json`，用于追踪代表 node `is_anchor` 的批次级写值变化
-- internal monitor 当前以 `_internal/<RUN_ID>/t03_internal_full_input_progress.json` 与 `t03_internal_full_input_performance.json` 为主数据源：
-  - `t03_internal_full_input_manifest.json` 承载 static manifest、selected/discovered 列表与输出路径
-  - `t03_internal_full_input_progress.json` 只承载 lightweight runtime counters、最近完成 case 与 `entered_case_execution`
-  - `t03_internal_full_input_performance.json` 承载累计耗时、stage timer 与完成速率
-- 高频监控 JSON 统一使用 atomic rename 写盘，避免 watch 读到半写状态；同时取消启动前为所有 selected case 预写 pending case status 的做法，pending 由 `preflight.json + runtime counters` 推导
-- `visual_checks/` 作为 review-only 平铺目录，按 case 增量镜像 `step67_review.png`，不等待整批完成后再统一生成
+## 1. 策略总览
+
+T03 当前处理策略按正式业务主链 `Step1~Step7` 组织：
+
+1. 建立当前 case 的代表节点、局部道路、DriveZone、RCSDRoad、RCSDNode 与冻结前置上下文。
+2. 将 case 限定到当前正式支持模板：`center_junction` 或 `single_sided_t_mouth`。
+3. 使用冻结合法空间作为不可反向篡改的前置约束。
+4. 识别当前语义路口与 RCSD 的 `A / B / C` 关联关系。
+5. 将不应进入当前路口面的 RCSD 对象分为 `excluded` 或 audit-only foreign。
+6. 在合法空间、方向边界、required RC 与 hard negative mask 约束下生成最终候选几何。
+7. 将结果发布为 `accepted / rejected`，并生成 formal、review-only 与 internal full-input 成果。
+
+历史 `Step45` 与 `Step67` 不再作为方案主结构；它们的当前含义见 `11-business-steps-vs-implementation-stages.md`。
+
+## 2. 实现分层
+
+- `association_loader.py` 与 full-input shared query 层负责 `Step1 / Step2` 的输入受理、局部上下文与模板归类。
+- `step3_engine.py` 与 `legal_space_*` 文件负责 `Step3` 合法空间冻结。
+- `step4_association.py` 负责 `Step4` RCSD 关联语义识别。
+- `step5_foreign_filter.py` 负责 `Step5` foreign / excluded 分组与审计。
+- `step6_geometry.py` 负责 `Step6` 受约束几何生成。
+- `step7_acceptance.py`、`finalization_outputs.py` 与 `t03_batch_closeout.py` 负责 `Step7` 发布、写盘与批量 closeout。
+
+## 3. internal full-input 主链
+
+internal full-input 不再把“先切最小 case-package 再 batch”视为默认主形态。当前主链为：
+
+1. `candidate discovery`
+2. `shared handle preload`
+3. `per-case local context query`
+4. direct `Step1~Step7` case execution
+5. streamed / terminal state 写出
+6. batch closeout
+
+主运行脚本与监控脚本：
+
+- `scripts/t03_run_internal_full_input_8workers.sh`
+- `scripts/t03_watch_internal_full_input.sh`
+
+历史 `step67` shell 名只保留为兼容 wrapper，不承担模块级主命名。
+
+## 4. 输出策略
+
+- case 级 formal 输出保留现有文件名，包括 `step45_*`、`step6_*`、`step67_final_polygon.gpkg`、`step7_*`。
+- review-only 输出保留 `step45_review.png`、`step67_review.png` 与 `t03_review_*` 目录。
+- batch / full-input formal 输出固定包括：
+  - `virtual_intersection_polygons.gpkg`
+  - `nodes.gpkg`
+  - `nodes_anchor_update_audit.csv`
+  - `nodes_anchor_update_audit.json`
+- `_internal/<RUN_ID>/terminal_case_records/<case_id>.json` 是 authoritative terminal state。
+- `t03_streamed_case_results.jsonl` 是 compact append log，不作为唯一准真值。
+
+## 5. 关键业务策略
+
+- `Step3` 的合法空间、负向掩膜、must-cover 与 no-silent-fallback 语义必须保持冻结，不由后续步骤回写。
+- `Step4` 的 `A / B / C` 是业务关联解释，不是视觉结果等级。
+- `Step5` 的 hard negative mask 当前仅由 `excluded_rcsdroad -> road-like 1m mask` 进入 `Step6`。
+- `Step6` 必须在 directional boundary 内构面，不允许为满足 required RC 而突破边界。
+- `Step7` 只发布 `accepted / rejected`；`V1~V5` 只属于 review-only 层。
+- 对 `single_sided_t_mouth + association_class=A`，横方向口门按“竖向 RCSDRoad seed -> 横向 tracing -> terminal RCSDNode -> +5m -> stop at next directly-associated semantic junction”求解；无法确认横向两侧 terminal 时回到 generic directional boundary。
+- 对冻结 `Step3` 已应用 `two_node_t_bridge` 的 case，后续几何必须继承该中心桥接支撑，不能由横向裁剪引入中心断开或桥位空洞。
+
+## 6. 性能与观测策略
+
+- shared-layer 查询使用空间索引与缓存，不回退到全层线性扫描。
+- root progress / performance 文件受 flush gate 控制，避免每 case 高频重写。
+- case-level terminal record 使用 atomic write。
+- perf audit 继续记录 `candidate_discovery / shared_preload / local_feature_selection / step3 / step4 / step5 / step6 / step7 / output_write / observability_write` 等阶段耗时。
+- review PNG 在 production no-debug 路径默认关闭；开启 review 时仍保持现有平铺输出契约。

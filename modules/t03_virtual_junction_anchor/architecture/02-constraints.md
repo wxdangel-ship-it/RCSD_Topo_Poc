@@ -1,12 +1,12 @@
 # 02 Constraints
 
 - 正式输入契约固定为 Anchor61 `case-package`
-- `Step4-7` 必须消费冻结 Step3 run root，不得回写 Step3
+- `Step4~Step7` 必须消费冻结 Step3 run root，不得回写 Step3
 - 所有空间判定统一到 `EPSG:3857`
-- `Step3` 仍必须严格遵守 A-H；`Step4-7` 不得用 cleanup/trim 反证 Step3 成立
+- `Step3` 必须严格遵守道路归属、DriveZone 约束、邻近路口切断、foreign 屏蔽、foreign MST 补充切断、must-cover、single-sided opposite-side guard 与 no-silent-fallback 规则；后续步骤不得用 cleanup/trim 反证 Step3 成立
 - `Step5` 不再向 `Step6` 提供 hard polygon foreign context
 - `Step6` 当前 hard negative mask 只消费 road-like `1m` 掩膜，不把 node 类 foreign 变成 hard subtract
-- `Step45` 已识别的 `调头口 RCSDRoad`，不得继续进入 `degree2 connector / chain merge / required-support-excluded`，也不得在 `Step6` 被重新回补为 `local required RC`
+- `Step4 / Step5` 已识别的 `调头口 RCSDRoad`，不得继续进入 `degree2 connector / chain merge / required-support-excluded`，也不得在 `Step6` 被重新回补为 `local required RC`
 - `Step6` 必须遵守 `boundary-first`：
   - 先确定 directional boundary
   - 再在该边界内构面
@@ -17,8 +17,8 @@
   - 最终确认的 terminal `RCSDNode` 必须落在横方向候选空间内
   - 若 tracing 无法在横方向两侧都确认 terminal `RCSDNode`，则横方向回到 generic directional boundary
   - 横方向 `+5m` 扩展不得越过前方其他直接关联语义路口（`RCSD / SWSD`）
-- 若冻结 `Step3` 已对当前 `single_sided_t_mouth` case 应用 `two_node_t_bridge`，则 `Step67` 必须继承这条 bridge corridor 参与 directional boundary / polygon_seed 计算，不得在横方向截断后留下中心断开或多组件狭长残留
-- T03 internal full-input 的正式主执行形态固定为：`candidate discovery -> shared handle preload -> per-case local context query -> direct Step3/Step45/Step67 execution`
+- 若冻结 `Step3` 已对当前 `single_sided_t_mouth` case 应用 `two_node_t_bridge`，则 `Step6` 必须继承这条 bridge corridor 参与 directional boundary / polygon_seed 计算，不得在横方向截断后留下中心断开或多组件狭长残留
+- T03 internal full-input 的正式主执行形态固定为：`candidate discovery -> shared handle preload -> per-case local context query -> direct Step1~Step7 case execution`
 - repo 级主脚本 `scripts/t03_run_internal_full_input_8workers.sh` / `scripts/t03_watch_internal_full_input.sh` 只承接 full-input 运行与监控外壳，不提升为新的 repo 官方 CLI
 - 兼容 wrapper `scripts/t03_run_step67_internal_full_input_8workers.sh` / `scripts/t03_watch_step67_internal_full_input.sh` 只保留迁移期兼容，不再定义模块级主命名
 - watch 默认必须按 formal-first 口径监控，并显式区分是否已进入 `case execution` 阶段；默认不把 `V1-V5` 混入顶层监控
@@ -29,5 +29,5 @@
   - `nodes_anchor_update_audit.json`
 - `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义，不回写输入原始 nodes，也不修改 T02 / Step3 上游字段契约
 - 不修改 T02 正式业务行为
-- 不新增 T03 repo 官方 `Step67` CLI
+- 不新增 T03 repo 官方 finalization CLI
 - 不提交 `outputs/_work`、批量 PNG、线程同步文件到 Git

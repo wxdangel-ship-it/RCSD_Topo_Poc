@@ -2,7 +2,7 @@
 
 ## 1. 文档定位
 
-- 本文用于明确：T03 internal full-input / Step67 正式交付与 T02 Stage3 official full-input 之间，哪些语义是继承复用，哪些不是。
+- 本文用于明确：T03 internal full-input / Step7 正式发布与 T02 Stage3 official full-input 之间，哪些语义是继承复用，哪些不是。
 - 它是 T03 模块级 source-of-truth 的边界说明，不回写 T02 上游正式契约。
 
 ## 2. T03 当前明确继承的内容
@@ -26,21 +26,21 @@
 
 - 不逐值复用 T02 Stage3 的状态值域
   - `virtual_intersection_polygons.gpkg` 的字段槽位继承 T02
-  - 但 `status / business_outcome_class / acceptance_class / visual_review_class` 的实际写值来源于 T03 当前 `Step67` 结果，而不是 T02 Stage3 逐值照搬
+  - 但 `status / business_outcome_class / acceptance_class / visual_review_class` 的实际写值来源于 T03 当前 Step7 发布结果，而不是 T02 Stage3 逐值照搬
 - 不回写 T02 上游正式契约
   - `fail3` 只属于 T03 下游 `nodes.gpkg` 输出语义
   - 不修改 T02 `is_anchor` 既有值域契约
 - 不把 T02 Stage3 单 case / full-input 全部内部工件逐一照搬
   - T03 只保留当前执行/监控所需的 internal manifest、runtime counters、performance、case progress 与 visual flat mirror
   - 不要求复制 T02 历史批次中的所有中间目录和旧式 pending 预写模式
-- T03 当前没有 repo 官方 Step67 CLI
-  - 当前 repo 官方 CLI 仍是 `t03-step45-rcsd-association`
-  - Step67 通过模块内 batch runner 与 repo shell/watch 外壳维持正式交付
+- T03 当前没有 repo 官方 finalization CLI
+  - 当前 repo 官方 CLI 仍保留历史命名的 `t03-step45-rcsd-association`
+  - Step7 发布通过模块内 batch runner 与 repo shell/watch 外壳维持正式交付
 
 ## 4. T03 当前自有语义
 
 - formal stage 边界
-  - T03 当前正式范围是冻结 `Step3 legal-space baseline` 之上的 `Step45 / Step67 clarified formal stage`
+  - T03 当前正式范围按 `Step1~Step7` 业务主链表达
   - `Step6 / Step7` 是 T03 自有的 formal 结果层，不等价于 T02 Stage3 的阶段命名与实现拆分
 - updated `nodes.gpkg` downstream 语义
   - 只更新当前批次 selected / effective case 的代表 node

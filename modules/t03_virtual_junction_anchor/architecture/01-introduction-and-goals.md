@@ -17,5 +17,5 @@
 
 - 本轮不重新定义 `Step3`
 - 本轮不把 `20m`、buffer、ratio 等 solver 参数冻结成长期业务契约
-- 本轮不迁移 T02 的 cleanup/trim 补救链
+- 本轮不引入 cleanup/trim 补救链
 - 本轮不新增 repo 官方 finalization CLI

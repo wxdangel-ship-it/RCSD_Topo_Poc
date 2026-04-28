@@ -28,7 +28,7 @@
     - `scripts/t03_run_internal_full_input_8workers.sh`
     - `scripts/t03_watch_internal_full_input.sh`
   - historical closeout main path: `candidate discovery -> shared handle preload -> per-case local context query -> direct Step3/Association/Finalization execution`
-  - current formal documentation now expresses the same execution chain as direct `Step1~Step7` case execution; see `11-business-steps-vs-implementation-stages.md`
+  - current formal documentation now expresses the same execution chain as direct `Step1~Step7` case execution; see `10-business-steps-vs-implementation-stages.md`
   - `case-package` materialization is no longer the default internal full-input main path
 
 ## 3. Clarified Formal Conclusions

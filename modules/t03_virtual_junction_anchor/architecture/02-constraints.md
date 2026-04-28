@@ -27,7 +27,6 @@
   - `nodes.gpkg`
   - `nodes_anchor_update_audit.csv`
   - `nodes_anchor_update_audit.json`
-- `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义，不回写输入原始 nodes，也不修改 T02 / Step3 上游字段契约
-- 不修改 T02 正式业务行为
+- `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义，不回写输入原始 nodes，也不修改上游输入字段契约
 - 不新增 T03 repo 官方 finalization CLI
 - 不提交 `outputs/_work`、批量 PNG、线程同步文件到 Git

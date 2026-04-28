@@ -44,7 +44,7 @@
 | `modules/t02_junction_anchor/AGENTS.md` | T02 durable guidance | `durable_guidance` | 只保留模块级执行边界与协作规则 |
 | `modules/t02_junction_anchor/history/*` | T02 模块级历史材料 | `history` | 记录 bootstrap 与后续演进轨迹 |
 | `specs/t02-junction-anchor/*`、`specs/t02-virtual-intersection-batch-poc/*` | T02 变更工件 | `active_change_artifact` | 记录历次与当前 active change 的变更规格，不替代长期模块真相 |
-| `modules/t03_virtual_junction_anchor/architecture/*` | T03 模块长期架构真相 | `source_of_truth` | T03 正式模块的长期文档主表面；当前正式范围按 `Step1~Step7` 业务主链表达，并通过 `11-business-steps-vs-implementation-stages.md` 说明 `Association / Finalization` 实现阶段映射 |
+| `modules/t03_virtual_junction_anchor/architecture/*` | T03 模块长期架构真相 | `source_of_truth` | T03 正式模块的长期文档主表面；当前正式范围按 `Step1~Step7` 业务主链表达，并通过 `10-business-steps-vs-implementation-stages.md` 说明 `Association / Finalization` 实现阶段映射 |
 | `modules/t03_virtual_junction_anchor/INTERFACE_CONTRACT.md` | T03 稳定契约面 | `source_of_truth` | 固化 Anchor61 `case-package` / internal full-input 输入、`Step1~Step7` 正式业务主链、formal/review/internal 分层、batch aggregate polygons、updated nodes layer、anchor update audit、terminal case records 与 `association_* / step7_*` 正式输出文件名 |
 | `modules/t03_virtual_junction_anchor/README.md` | T03 操作者入口 | `operator_guide` | 说明 T03 `Step1~Step7` 模块定位、关联阶段 CLI、冻结前置入口、内网 full-input shell/watch 用法、批次根目录 `virtual_intersection_polygons.gpkg / nodes.gpkg / nodes_anchor_update_audit.*` 成果、`fail3` downstream output 语义与默认路径边界 |
 | `modules/t03_virtual_junction_anchor/AGENTS.md` | T03 durable guidance | `durable_guidance` | 只保留模块级边界、`Step1~Step7` 主链、冻结前置约束、`Association / Finalization` 实现阶段命名边界与当前执行边界 |

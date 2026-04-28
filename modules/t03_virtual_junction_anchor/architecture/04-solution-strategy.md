@@ -12,7 +12,7 @@ T03 当前处理策略按正式业务主链 `Step1~Step7` 组织：
 6. 在合法空间、方向边界、required RC 与 hard negative mask 约束下生成最终候选几何。
 7. 将结果发布为 `accepted / rejected`，并生成 formal、review-only 与 internal full-input 成果。
 
-历史 `Association` 与 `Finalization` 不再作为方案主结构；它们的当前含义见 `11-business-steps-vs-implementation-stages.md`。
+历史 `Association` 与 `Finalization` 不再作为方案主结构；它们的当前含义见 `10-business-steps-vs-implementation-stages.md`。
 
 ## 2. 实现分层
 

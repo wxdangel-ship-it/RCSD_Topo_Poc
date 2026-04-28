@@ -122,8 +122,8 @@
 - `t03_virtual_junction_anchor` 当前除 `t03-rcsd-association` 官方 CLI 外，还存在 repo 级 internal full-input shell/watch 交付面：`scripts/t03_run_internal_full_input_8workers.sh` 与 `scripts/t03_watch_internal_full_input.sh`；它们属于 repo 级脚本入口，不构成新的 repo 官方 CLI。
 - 历史 finalization shell wrapper 已退役，不再作为项目级入口或兼容入口登记。
 - T03 internal full-input 当前正式批次根目录成果至少包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`；前者聚合当前批次 case 级最终虚拟路口面，后者基于 full-input 输入的整层 `nodes.gpkg` 输出更新版结果。
-- `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义：仅更新代表 node，`accepted => yes`，`rejected / runtime_failed => fail3`；该语义不回写输入原始 `nodes.gpkg`，也不反向修改 T02 上游契约。
-- `t03_watch_internal_full_input.sh` 当前采用 T02 风格的 formal-first 监控口径：默认显示 `total / completed / running / pending / success / failed`，其中 `success = accepted`、`failed = rejected + runtime_failed`，并显式表达是否已进入 `case execution` 阶段；视觉层统计仅在显式调试场景下读取 review-only 工件。
+- `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义：仅更新代表 node，`accepted => yes`，`rejected / runtime_failed => fail3`；该语义不回写输入原始 `nodes.gpkg`，也不反向修改上游输入契约。
+- `t03_watch_internal_full_input.sh` 当前采用 T03 formal-first 监控口径：默认显示 `total / completed / running / pending / success / failed`，其中 `success = accepted`、`failed = rejected + runtime_failed`，并显式表达是否已进入 `case execution` 阶段；视觉层统计仅在显式调试场景下读取 review-only 工件。
 
 ### 4.5 T04 Step1-7 正式范围约束
 
@@ -187,7 +187,7 @@
 - `README.md`
 - `architecture/02-constraints.md`
 - `architecture/05-building-block-view.md`
-- `architecture/10-quality-requirements.md`
+- `architecture/09-quality-requirements.md`
 - `architecture/11-risks-and-technical-debt.md`
 - `architecture/12-glossary.md`
 

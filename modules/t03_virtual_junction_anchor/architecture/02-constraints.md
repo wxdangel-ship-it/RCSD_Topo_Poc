@@ -6,7 +6,9 @@
 - `Step3` 必须严格遵守道路归属、DriveZone 约束、邻近路口切断、foreign 屏蔽、foreign MST 补充切断、must-cover、single-sided opposite-side guard 与 no-silent-fallback 规则；后续步骤不得用 cleanup/trim 反证 Step3 成立
 - `Step5` 不再向 `Step6` 提供 hard polygon foreign context
 - `Step6` 当前 hard negative mask 只消费 road-like `1m` 掩膜，不把 node 类 foreign 变成 hard subtract
-- `Step4 / Step5` 已识别的 `调头口 RCSDRoad`，不得继续进入 `degree2 connector / chain merge / required-support-excluded`，也不得在 `Step6` 被重新回补为 `local required RC`
+- `Step4 / Step5` 已识别的最终 `调头口 RCSDRoad`，不得继续进入 `degree2 connector / chain merge / required-support-excluded`，也不得在 `Step6` 被重新回补为 `local required RC`
+- `RCSDNode.mainnodeid` 非空且非 `0` 只表示 RCSD 语义路口候选 / grouping 信号；effective degree = `2` 的候选仍按非语义 connector 处理
+- 无 `RCSDRoad.formway` 时，几何调头口 fallback 必须以 effective-degree=3 语义路口、主干平行与可信方向相反为直接过滤条件；方向不可用或不可信的候选只能进入 suspect 审计，不得过滤
 - `Step6` 必须遵守 `boundary-first`：
   - 先确定 directional boundary
   - 再在该边界内构面

@@ -37,6 +37,7 @@ class RoadRecord:
     enodeid: str | None
     direction: int | None
     geometry: BaseGeometry
+    formway: int | None = None
 
 
 @dataclass(frozen=True)

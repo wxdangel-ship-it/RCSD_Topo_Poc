@@ -11,10 +11,41 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import
 
 
 FOREIGN_MASK_NORMALIZATION_MODE = "road_like_1m_mask_in_step6"
+COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M = 9.0
 
 
 def _sorted_ids(values: Iterable[str]) -> list[str]:
     return sorted(set(values), key=lambda item: (0, int(item)) if item.isdigit() else (1, item))
+
+
+def _normalize_node_group_id(node) -> str:
+    mainnodeid = None if node.mainnodeid in {None, "", "0"} else node.mainnodeid
+    return str(mainnodeid or node.node_id)
+
+
+def _max_node_group_span_m(nodes: Iterable) -> float:
+    node_list = list(nodes)
+    max_distance = 0.0
+    for index, node in enumerate(node_list):
+        for other in node_list[index + 1:]:
+            max_distance = max(max_distance, float(node.geometry.distance(other.geometry)))
+    return max_distance
+
+
+def _compact_group_id_by_node(nodes: Iterable) -> dict[str, str]:
+    raw_groups: dict[str, list] = {}
+    for node in nodes:
+        raw_groups.setdefault(_normalize_node_group_id(node), []).append(node)
+
+    group_id_by_node: dict[str, str] = {}
+    for raw_group_id, group_nodes in raw_groups.items():
+        compact = (
+            len(group_nodes) > 1
+            and _max_node_group_span_m(group_nodes) <= COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M
+        )
+        for node in group_nodes:
+            group_id_by_node[node.node_id] = raw_group_id if compact else node.node_id
+    return group_id_by_node
 
 
 def _clean_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
@@ -68,6 +99,23 @@ def _union_points(geometries: Iterable[BaseGeometry]) -> BaseGeometry | None:
 
 
 def _graph_incident_roads(context: AssociationContext, node_id: str) -> list[str]:
+    nodes_by_id = {node.node_id: node for node in context.step1_context.rcsd_nodes}
+    target_node = nodes_by_id.get(node_id)
+    if target_node is not None:
+        group_id_by_node = _compact_group_id_by_node(context.step1_context.rcsd_nodes)
+        group_id = group_id_by_node.get(target_node.node_id, target_node.node_id)
+        group_node_ids = {
+            node.node_id
+            for node in context.step1_context.rcsd_nodes
+            if group_id_by_node.get(node.node_id, node.node_id) == group_id
+        }
+        explicit_group = [
+            road.road_id
+            for road in context.step1_context.rcsd_roads
+            if road.snodeid in group_node_ids or road.enodeid in group_node_ids
+        ]
+        if explicit_group:
+            return _sorted_ids(explicit_group)
     explicit = [
         road.road_id
         for road in context.step1_context.rcsd_roads
@@ -85,20 +133,25 @@ def build_association_foreign_result(
     support_rcsdnode_ids: set[str],
     required_rcsdroad_ids: set[str],
     support_rcsdroad_ids: set[str],
+    related_rcsdnode_ids: set[str] | None = None,
+    related_rcsdroad_ids: set[str] | None = None,
     node_degree_map: dict[str, int],
 ) -> AssociationForeignResult:
     step1 = context.step1_context
+    retained_rcsdnode_ids = set(required_rcsdnode_ids) | set(support_rcsdnode_ids) | set(related_rcsdnode_ids or set())
     excluded_nodes = [
         node
         for node in active_rcsd_nodes
-        if node.node_id not in required_rcsdnode_ids and node.node_id not in support_rcsdnode_ids
+        if node.node_id not in retained_rcsdnode_ids
     ]
     excluded_roads = [
         road
         for road in active_rcsd_roads
-        if road.road_id not in required_rcsdroad_ids and road.road_id not in support_rcsdroad_ids
+        if road.road_id not in required_rcsdroad_ids
+        and road.road_id not in support_rcsdroad_ids
+        and road.road_id not in (related_rcsdroad_ids or set())
     ]
-    retained_rcsdroad_ids = set(required_rcsdroad_ids) | set(support_rcsdroad_ids)
+    retained_rcsdroad_ids = set(required_rcsdroad_ids) | set(support_rcsdroad_ids) | set(related_rcsdroad_ids or set())
     nonsemantic_connector_nodes = []
     true_foreign_nodes = []
     connector_incident_retained_road_ids: dict[str, list[str]] = {}
@@ -107,7 +160,10 @@ def build_association_foreign_result(
         retained_incident_road_ids = _sorted_ids(
             road_id for road_id in incident_road_ids if road_id in retained_rcsdroad_ids
         )
-        if node_degree_map.get(node.node_id, 0) == 2 and retained_incident_road_ids:
+        if (
+            node_degree_map.get(node.node_id, 0) == 2
+            and retained_incident_road_ids
+        ):
             nonsemantic_connector_nodes.append(node)
             connector_incident_retained_road_ids[node.node_id] = retained_incident_road_ids
             continue
@@ -141,6 +197,9 @@ def build_association_foreign_result(
             "selected_swsd_road_ids": list(context.selected_road_ids),
             "foreign_mask_normalization_mode": FOREIGN_MASK_NORMALIZATION_MODE,
             "hard_negative_mask_sources": ["excluded_rcsdroad_geometry"],
+            "foreign_mask_source_rcsdroad_ids": _sorted_ids(road.road_id for road in excluded_roads),
+            "related_rcsdnode_ids": _sorted_ids(related_rcsdnode_ids or set()),
+            "related_rcsdroad_ids": _sorted_ids(related_rcsdroad_ids or set()),
             "audit_only_node_sources": ["excluded_rcsdnode_ids", "true_foreign_rcsdnode_ids"],
         },
     )

@@ -31,6 +31,14 @@ def _coerce_int(value: object) -> int | None:
         return None
 
 
+def _get_case_insensitive(props: dict, field_name: str) -> object:
+    target = field_name.lower()
+    for key, value in props.items():
+        if str(key).lower() == target:
+            return value
+    return None
+
+
 def _parse_nodes(features: Iterable[LayerFeature]) -> tuple[NodeRecord, ...]:
     rows: list[NodeRecord] = []
     for feature_index, feature in enumerate(features):
@@ -68,6 +76,7 @@ def _parse_roads(features: Iterable[LayerFeature]) -> tuple[RoadRecord, ...]:
                 enodeid=_normalize_text(props.get("enodeid")),
                 direction=_coerce_int(props.get("direction")),
                 geometry=feature.geometry,
+                formway=_coerce_int(_get_case_insensitive(props, "formway")),
             )
         )
     return tuple(rows)

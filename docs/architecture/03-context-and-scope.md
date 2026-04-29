@@ -18,6 +18,8 @@
 - `t00_utility_toolbox` 工具集合模块治理
 - `t01_data_preprocess` 项目级登记与文档契约
 - `t02_junction_anchor` 项目级登记与仓库级入口索引
+- `t03_virtual_junction_anchor` 项目级登记、Step1~Step7 正式业务主链与 internal full-input 交付面
+- `t04_divmerge_virtual_polygon` 项目级登记、Step1~Step7 正式文档面与 internal full-input 交付面
 
 ## 当前范围外
 

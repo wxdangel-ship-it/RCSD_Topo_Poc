@@ -1,8 +1,8 @@
 # Feature Specification: T03 RCSD u-turn and same-path chain semantics
 
-**Feature Branch**: `codex/t03-rcsd-uturn-chain-semantics`  
-**Created**: 2026-04-28  
-**Status**: Implemented  
+**Feature Branch**: `codex/t03-rcsd-uturn-chain-semantics`
+**Created**: 2026-04-28
+**Status**: Implemented
 **Input**: User confirmed new T03 RCSD semantics for same-path chains, narrowed u-turn filtering, and T-mouth strong semantic RCSD limits.
 
 ## Context

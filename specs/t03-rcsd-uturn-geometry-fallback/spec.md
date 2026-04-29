@@ -1,8 +1,8 @@
 # Feature Specification: T03 RCSD u-turn geometry fallback hardening
 
-**Feature Branch**: `codex/t03-rcsd-uturn-geometry-fallback`  
-**Created**: 2026-04-28  
-**Status**: Implemented  
+**Feature Branch**: `codex/t03-rcsd-uturn-geometry-fallback`
+**Created**: 2026-04-28
+**Status**: Implemented
 **Input**: User confirmed that `RCSDRoad.formway` is authoritative when present, and when absent geometry fallback may only filter a u-turn if semantic topology, trunk geometry, and trusted direction all agree.
 
 ## Context

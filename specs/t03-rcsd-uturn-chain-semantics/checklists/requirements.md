@@ -1,7 +1,7 @@
 # Specification Quality Checklist: T03 RCSD u-turn and same-path chain semantics
 
-**Purpose**: Validate specification completeness before implementation  
-**Created**: 2026-04-28  
+**Purpose**: Validate specification completeness before implementation
+**Created**: 2026-04-28
 **Feature**: `specs/t03-rcsd-uturn-chain-semantics/spec.md`
 
 ## Content Quality

@@ -9,6 +9,7 @@
 | `RCSD` | 条件性高精度约束；对应事实路口缺失 RCSD 挂接时，不得仅因 RCSD 未覆盖就判定失败。 |
 | `Anchor_2 full baseline` | 当前冻结业务基线：`23 case / accepted = 20 / rejected = 3`。 |
 | `legacy selected-case baseline` | 2026-04-22 历史子集口径：`accepted = 7 / rejected = 1`，不再作为当前正式 acceptance 数字真相。 |
+| `representative node` | 当前 case 的代表节点；downstream `nodes.gpkg` 只更新 selected / effective case 的 representative node。 |
 
 ## Step4 术语
 
@@ -40,6 +41,10 @@
 | `reject_stub_geometry` | rejected case 的可定位 stub 几何，不是 fake final polygon。 |
 | `swsd_relation_type` | Step7 发布字段，当前允许 `covering / partial / offset_fact / unknown`。 |
 | `reject_reason` | Step7 主拒绝原因；完整原因串见 `reject_reason_detail`。 |
+| `divmerge_virtual_anchor_surface.gpkg` | T04 的正式 surface 几何真值主产物。 |
+| `nodes.gpkg` | T04 downstream 状态回写副本，基于输入 node 层 copy-on-write，只更新 representative node 的 `is_anchor`。 |
+| `nodes_anchor_update_audit.csv/json` | T04 downstream nodes 写回审计，记录旧值、新值、Step7 state 与 reason，并与 summary / consistency report 保持一致。 |
+| `fail4` | T04 downstream `nodes.gpkg` 中表示 `rejected / runtime_failed / formal result missing` 的 `is_anchor` 写回值；不属于 T03 `fail3` 语义。 |
 
 ## 执行与治理术语
 
@@ -48,5 +53,8 @@
 | `runtime_support` | T04 私有 `_runtime_*` 实现支撑层，承载 runtime contract、geometry helper、kernel base 与 IO helper。 |
 | `step4_postprocess` | Step4 主解释后处理层，包括 conflict resolver、road-surface fork binding 与 RCSD anchored reverse。 |
 | `full_input_orchestration` | internal full-input 运行编排层，包括 bootstrap、shared layers、case pipeline、observability、perf audit 与 streamed results。 |
+| `case-package` | 单 case 输入包，包含 manifest、size report 与该 case 可见的 GPKG 输入层。 |
+| `internal full-input` | 一次性加载 full-layer source，发现候选并按 case 直跑 Step1-7 的 T04 私有执行面。 |
+| `batch closeout` | 所有 case Step7 完成后的根目录发布阶段，生成 surface、rejected、summary、audit、consistency report 与 downstream nodes 输出。 |
 | `repo 官方 CLI` | `src/rcsd_topo_poc/cli.py` 暴露的稳定子命令；T04 当前不新增此类入口。 |
 | `repo 级脚本入口` | `scripts/t04_*` 包装脚本，已登记但不构成新的 CLI 子命令。 |

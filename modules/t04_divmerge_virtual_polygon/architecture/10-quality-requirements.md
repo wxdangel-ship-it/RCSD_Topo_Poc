@@ -1,8 +1,16 @@
 # 10 Quality Requirements
 
+## 文件职责
+
+- 本文件维护 T04 的正确性、可审计性、可维护性、可回归性与 frozen baseline gate。
+- Step1-7 的业务策略写在 `architecture/04-solution-strategy.md`。
+- 稳定输入、输出、状态机、枚举和值域写在 `INTERFACE_CONTRACT.md`。
+- 本文件不得把 Step4 的 `STEP4_REVIEW` 解释为 Step7 最终第三态，也不得把 `857993 = rejected` 解释为待修复缺陷。
+
 ## 正确性
 
 - CRS 与几何裁剪必须可追溯。
+- full-input 与 case-package 两种执行面必须保持相同 Step1-7 业务语义；full-input candidate discovery 不能替代 Step1 admission。
 - Step1/2/3/4 的失败原因不得串层滥用。
 - Step3 必须显式区分 `case coordination skeleton` 与 `unit-level executable skeleton`。
 - complex / multi 场景下，Step4 只允许消费 `unit-level executable skeleton`，不得继续把 case-level 粗骨架当成 throat 几何。
@@ -11,6 +19,9 @@
 - Step4 候选空间必须只由当前 unit 的两条边界 branch `(L, R)` 及其合法 continuation 物化，不得吸纳非分支道路面。
 - Step4 候选空间的纵向延续当前冻结为 `200m`，并且只能沿当前 unit 的合法单向延续推进；不得再通过反向追溯补全 `pair-local region`。
 - sibling node 上 arm 的选择不得退化成单纯方位角或最小转角贪心；`external associated road`、pair 排布与“中间不得夹入其他 road”必须先于 tie-breaker 生效。
+- `tip / throat` 优先于 `body_center`，不得把 `body_center` 重新提升为 Step4 主事实定位策略。
+- candidate pruning 必须采用硬排除与显式 degraded state；被排除 component 不得被后续 fallback 静默复用。
+- complex unit-local scope、overlap 与 same-axis ownership guard 的冻结阈值必须继续可审计：`~60m` unit-local scope、`8m2 / 0.2` overlap、same-axis `Delta s <= 5m`。
 - Step4 pair-local 输出必须能审出：
   - `pair_local_direction`
   - `branch_separation_mean_m`
@@ -50,6 +61,8 @@
   - propagation 在哪个 sibling node 停止，以及停止原因
   - 当前候选空间是否只沿单向延续展开、是否排除了非分支道路
 - `degraded_scope_reason` 必须同时带出 `degraded_scope_severity` 与 `degraded_scope_fallback_used`，否则 QA 无法区分 soft degraded 与 hard degraded。
+- 当候选空间语义已经实质丢失时，允许升为 `STEP4_FAIL`；不得永远用 `STEP4_REVIEW` 掩盖 hard degraded。
+- reverse tip 审计必须能区分 `forward missing`、`forward rejected by local throat`、`forward rejected by same-axis prior conflict`；`drivezone_split_window_after_reverse_probe` 只能作为 conservative fallback，不得作为独立 reverse-tip 成功语义。
 - ownership 冲突必须能举证到：
   - component union
   - localized evidence core
@@ -80,26 +93,28 @@
   - 发布层去向
   - `divmerge_virtual_anchor_surface*` 成果与审计材料之间的映射关系
 - T04 full baseline 不只校验 `divmerge_virtual_anchor_surface*` surface 发布层，也必须校验 downstream `nodes.gpkg` 的 representative node `is_anchor` 写回结果与 Step7 `final_state` 一致：`accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
+- `nodes_anchor_update_audit.csv/json` 必须与 `nodes.gpkg` 实际写回、`divmerge_virtual_anchor_surface_summary.*` 和 `step7_consistency_report.json` 保持一致；`857993` 必须保持 `fail4`，`699870` 必须保持 `yes`。
 
 ## 可维护性
 
 - 代码按领域能力分层。
 - 避免单一超大 orchestrator。
 - 与 T02/T03 的复用边界显式写入文档。
-- 允许复用 T02 的 topology / event interpretation 内核，但 T04 必须先把 unit-local 结构封装清楚，再传入 T02。
+- 可以参考 T02 的 topology / event interpretation 经验，但正式运行时语义必须在 T04 私有层内封装清楚，不把 T02 runtime 依赖作为质量前提。
 - 可以参考 T03 的实现逻辑与产物风格，但 T04 的 `Step5-7` 正式执行逻辑必须保留在模块私有实现内，不得直接 import / 调用 / 硬拷贝 T03 模块代码。
+- `nodes_publish.py` 是 T04 私有 downstream 写回层；`fail4` 不得上溢到 T03 语义。
 
 ## 可回归性
 
 - 至少保留 synthetic smoke。
 - 至少跑 selected real-case batch。
-- `Step5-7` 正式研发默认按 SpecKit 串行推进，并在每轮显式覆盖：
+- 正式治理与影响 Step1-7 语义的变更默认按 SpecKit 串行推进，并在每轮显式覆盖：
   - `Product`
   - `Architecture`
   - `Development`
   - `Testing`
   - `QA`
-- `Step5-7` 回归顺序固定为：
+- Step1-7 回归顺序固定为：
   - 先单 case
   - 再 batch
   - 最后做发布层与汇总层核对
@@ -109,6 +124,7 @@
   - `same-axis conflict -> reverse success`
   - `forward/reverse 都不通过 throat`
   - `shared component but Δs>5m allowed`
+- Step3/Step4 回归必须覆盖三类真实业务场景：continuous complex、multi-diverge / multi-merge、simple 二分歧 / 二合流。
 - 必须至少有一个 real-case continuous merge complex 回归，锁住：
   - `unit population` 不扩
   - branch continuation 经过 same-case sibling internal node
@@ -210,10 +226,10 @@ Step7 legacy selected-case 发布冻结门槛：
 
 ### RCSD-anchored reverse 定向回归（2026-04-24）
 
-- `699870` 作为 Step4 末段 `rcsd_anchored_reverse` 的定向真实回归样本。
-- `699870` 暂不进入主 frozen baseline 表；它只用于验证“前向主证据缺位，但 RCSD 端可稳定成团”的旁路能力。
+- `699870` 当前属于 Anchor_2 full baseline 的 accepted case，同时也是 Step4 末段 `rcsd_anchored_reverse` 的定向真实回归样本。
+- `699870` 用于验证“前向主证据缺位，但 RCSD 端可稳定成团”的旁路能力；该旁路能力已经进入当前 `23 / 20 / 3` baseline 守门。
 - 单 case 回归中，`699870` 必须触发 reverse，且 Step4 不得再以 `selected_evidence_state = none` 结束。
 - `699870` 的 Step5-7 必须能继续消费 Step4 写回的 `event_chosen_s_m / axis_position_m / selected_evidence_state` 与 legacy Step5 bridge 字段。
 - `699870` 的 Step5 必须启用 `junction_full_road_fill`，并以 `surface_fill_axis_half_width_m = 20.0` 约束整幅路面填充；最终 polygon 不得退化为仅覆盖 `terminal_support_corridor_geometry` 的窄带结果。
-- 若 `699870` 最终仍为 `rejected`，拒绝原因必须来自 Step6 几何约束或 Step7 最终门禁，不得来自 Step4 主证据缺位。
-- batch / full-input 混跑中，若 `699870` 的 reverse 结果命中 cross-case 已占用 RCSD claim 或 evidence ownership，必须通过 `post_reverse_conflict_recheck` 放弃本次 reverse；该 guard 生效不表示 699870 被加入主 frozen baseline。
+- 当前 full baseline 中 `699870` 必须保持 `accepted`，且 downstream `nodes.gpkg` 必须写为 `yes`。
+- batch / full-input 混跑中，若 `699870` 的 reverse 结果命中 cross-case 已占用 RCSD claim 或 evidence ownership，必须通过 `post_reverse_conflict_recheck` 放弃本次 reverse；该 guard 不能被用于静默破坏当前 full baseline。

@@ -86,6 +86,11 @@
 - `final_publish`
   - `accepted / rejected` 二态验收
   - `divmerge_virtual_anchor_surface*` 发布层与 summary / audit
+- `nodes_publish`
+  - downstream `nodes.gpkg` copy-on-write 发布
+  - 只更新 selected / effective case 的 representative node `is_anchor`
+  - T04 私有写回值域：`accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`
+  - `nodes_anchor_update_audit.csv/json` 与 `step7_consistency_report.json` 的 nodes 一致性检查
 - `outputs`
   - case 级文件
   - flat mirror / index / summary
@@ -97,7 +102,7 @@
   - summary
 - `full_input_orchestration`
   - `internal_full_input_runner`
-    - internal full-input 主 runner、worker orchestration、batch closeout
+    - internal full-input 主 runner、worker orchestration、batch closeout 与 downstream nodes closeout
   - `full_input_bootstrap`
     - full-input shared source bootstrap
   - `full_input_shared_layers`

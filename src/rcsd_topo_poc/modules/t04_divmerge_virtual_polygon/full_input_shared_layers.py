@@ -6,7 +6,7 @@ from numbers import Integral
 from pathlib import Path
 from typing import Any
 
-from shapely.geometry import GeometryCollection
+from shapely.geometry import GeometryCollection, box
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 from shapely.strtree import STRtree
@@ -27,9 +27,17 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
     _parse_roads,
     _resolve_group,
 )
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.polygon_assembly import (
+    STEP6_GRID_MARGIN_M,
+    STEP6_MAX_GRID_SIDE_CELLS,
+    STEP6_RESOLUTION_M,
+)
 
 
 T04_ALLOWED_KIND_2_VALUES = frozenset({8, 16, 128})
+STEP6_SAFE_LOCAL_POLYGON_WINDOW_MAX_SIDE_M = (
+    float(STEP6_MAX_GRID_SIDE_CELLS) * float(STEP6_RESOLUTION_M) - 2.0 * float(STEP6_GRID_MARGIN_M)
+)
 
 
 @dataclass(frozen=True)
@@ -249,6 +257,69 @@ def _ordered_by_feature_index(items: tuple[Any, ...]) -> tuple[Any, ...]:
     return tuple(sorted(items, key=lambda item: getattr(item, "feature_index", 0)))
 
 
+def _bounded_interval(min_value: float, max_value: float, *, center: float, max_size: float) -> tuple[float, float]:
+    width = float(max_value) - float(min_value)
+    if width <= float(max_size):
+        return float(min_value), float(max_value)
+    half = float(max_size) / 2.0
+    bounded_center = min(max(float(center), float(min_value) + half), float(max_value) - half)
+    return bounded_center - half, bounded_center + half
+
+
+def _case_local_polygon_clip_window(
+    *,
+    selection_window: BaseGeometry,
+    seed: BaseGeometry,
+    representative_geometry: BaseGeometry | None,
+) -> BaseGeometry:
+    if selection_window is None or selection_window.is_empty:
+        return GeometryCollection()
+    if seed is not None and not seed.is_empty:
+        anchor = seed.centroid
+    elif representative_geometry is not None and not representative_geometry.is_empty:
+        anchor = representative_geometry
+    else:
+        anchor = selection_window.centroid
+    min_x, min_y, max_x, max_y = selection_window.bounds
+    clipped_min_x, clipped_max_x = _bounded_interval(
+        float(min_x),
+        float(max_x),
+        center=float(anchor.x),
+        max_size=STEP6_SAFE_LOCAL_POLYGON_WINDOW_MAX_SIDE_M,
+    )
+    clipped_min_y, clipped_max_y = _bounded_interval(
+        float(min_y),
+        float(max_y),
+        center=float(anchor.y),
+        max_size=STEP6_SAFE_LOCAL_POLYGON_WINDOW_MAX_SIDE_M,
+    )
+    return selection_window.intersection(box(clipped_min_x, clipped_min_y, clipped_max_x, clipped_max_y))
+
+
+def _clip_loaded_features_to_window(
+    features: tuple[LoadedFeature, ...],
+    window: BaseGeometry,
+) -> tuple[LoadedFeature, ...]:
+    if window is None or window.is_empty:
+        return ()
+    clipped_features: list[LoadedFeature] = []
+    for feature in features:
+        geometry = getattr(feature, "geometry", None)
+        if geometry is None or geometry.is_empty:
+            continue
+        clipped_geometry = geometry.intersection(window)
+        if clipped_geometry.is_empty:
+            continue
+        clipped_features.append(
+            LoadedFeature(
+                feature_index=feature.feature_index,
+                properties=dict(feature.properties),
+                geometry=clipped_geometry,
+            )
+        )
+    return tuple(clipped_features)
+
+
 def collect_case_features(
     *,
     layers: T04SharedFullInputLayers,
@@ -292,12 +363,24 @@ def collect_case_features(
         for item in query_spatial_index(layers.rcsdnode_index, selection_window)
         if isinstance(item, ParsedNode)
     }
-    drivezones = _ordered_by_feature_index(query_spatial_index(layers.drivezone_index, selection_window))
-    divstrips = _ordered_by_feature_index(query_spatial_index(layers.divstrip_index, selection_window))
+    polygon_clip_window = _case_local_polygon_clip_window(
+        selection_window=selection_window,
+        seed=seed,
+        representative_geometry=representative.geometry,
+    )
+    drivezones = _clip_loaded_features_to_window(
+        _ordered_by_feature_index(query_spatial_index(layers.drivezone_index, selection_window)),
+        polygon_clip_window,
+    )
+    divstrips = _clip_loaded_features_to_window(
+        _ordered_by_feature_index(query_spatial_index(layers.divstrip_index, selection_window)),
+        polygon_clip_window,
+    )
     return {
         "representative_node": representative,
         "group_nodes": tuple(group_nodes),
         "selection_window": selection_window,
+        "polygon_clip_window": polygon_clip_window,
         "nodes": _ordered_by_feature_index(tuple(selected_nodes.values())),
         "roads": _ordered_by_feature_index(tuple(selected_roads.values())),
         "drivezone_features": drivezones,

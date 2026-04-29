@@ -99,6 +99,7 @@ internal full-input 当前主链是：
   - `snodeid`
   - `enodeid`
   - `direction`
+- `rcsdroad.formway` 是可选字段；若存在且可解析，Step4 调头口判定必须优先采用该字段。
 - `rcsdnode` 至少需具备：
   - `id`
   - `mainnodeid`
@@ -171,7 +172,7 @@ Step1 不负责最终正确性判断，也不负责几何生成。
 业务目标：
 
 - 在 Step3 冻结前提下解释当前语义路口与 RCSD 的关系
-- 识别哪些 RCSD 对象对当前结果是必须的、可支持的、需排除的
+- 识别哪些 RCSD 对象属于完整 related 证据、局部 local required 约束、以及 hard foreign mask
 - 形成后续 Step5 / Step6 可消费的 RCSD 语义事实
 
 `association_class` 只允许：
@@ -194,6 +195,37 @@ Step1 不负责最终正确性判断，也不负责几何生成。
 
 `association_state` 是现有输出兼容字段名，其业务归属为 `Step4 / Step5` 的中间状态，不等价于 `Step7` 最终发布状态。
 
+#### 3.4.1 RCSD 三层语义
+
+T03 当前 RCSD 关联契约分为三层：
+
+- `related`：当前 SWSD 路口在 RCSD 下的强语义关联证据层。它包含 `required_rcsd*`，以及通过 `degree = 2` 非语义 connector 与本地 required road 连通、但整体落在 Step3 局部 scope 外的同路径 `RCSDRoad`；该延伸遇到有效 RCSD 语义路口边界必须停止。`support_rcsd*` 是辅助证据层，不自动进入 `related`。
+- `local_required`：Step6 在 directional boundary 内实际消费的硬 must-cover 子集。它不是 full related 的全长覆盖要求。
+- `foreign_mask`：Step5 最终进入 Step6 hard subtract 的 `RCSDRoad` 掩膜来源。`related` 对象不得进入 `foreign_mask`。
+
+兼容字段说明：
+
+- `required_rcsdnode_ids / required_rcsdroad_ids` 与 `support_rcsdnode_ids / support_rcsdroad_ids` 继续作为 Step4 局部关联分类保留。A 类 case 可以同时存在 required 与 support；B 类表示 support-only，不存在 required 语义核心。
+- `excluded_rcsdroad_ids` 在当前实现中等同于 `foreign_mask_source_rcsdroad_ids`，只表示 hard negative mask source，不再表示“所有非 required/support 的 active RCSDRoad”。
+- `related_outside_scope_rcsdroad_ids` 必须可审计 connector 证据，且只能从 `required_rcsdroad_ids` 经 allowed/candidate 范围内的非语义 connector 做一跳延伸；不得从 `support_rcsdroad_ids` 或 `related_group_rcsdroad_ids` 继续外扩，不得递归多跳吞入远端 road。若延伸遇到有效 RCSD 语义路口边界、远端节点未打包 / 非 active，或 connector 不在当前 allowed/candidate 口径内，则不得跨越该边界纳入当前 case related。非空且非 `0` 的 `mainnodeid` 只是语义候选 / grouping 信号，不单独构成停止条件。该集合不进入 Step6 hard mask，也不自动成为 full-length must-cover。
+- `related_group_rcsdroad_ids` 表示用于证明同一 `mainnodeid` 复合 RCSD 语义路口组成立的 related road 子集。它不等于该 group 的全部 incident road。
+
+RCSD 语义候选与多点语义路口组规则：
+
+- `RCSDNode.mainnodeid` 非空且非 `0` 时，只表示该 node 具备 RCSD 语义路口候选 / grouping 信号；最终是否作为语义路口，仍必须与无 `mainnodeid` 的单点 RCSDNode 使用同一套判断标准。
+- 候选路口按单点或空间紧凑的同 `mainnodeid` group 折叠后，若 effective degree = `2`，则只视为非语义 connector，不进入 required/support/strong related semantic core。
+- 紧凑同 `mainnodeid` group 当前按小口门尺度识别；实现阈值为 `<= 9m`，超过该尺度的同 `mainnodeid` 节点不得被强行折叠为一个语义路口。
+- 最终判定为 `u_turn_rcsdroad_ids` 的调头结构不得把其端点或相关结构提升为当前 case 的强相关语义路口。
+- 多个空间紧凑的 `RCSDNode` 共享非空 `mainnodeid` 时，Step4 计算 connector degree 时必须按 group 语义理解；若 group effective degree = `2`，整个 group 仍按非语义 connector 理解。
+- 同一紧凑 group 中已有至少两个 incident `RCSDRoad` 被判定为 related 时，该 group 内所有 active `RCSDNode` 属于 `related_rcsdnode_ids`；只有已经由 local / outside-scope 路径规则命中的 group road 属于 `related_group_rcsdroad_ids`。
+- 复合 group 的其他 incident `RCSDRoad` 不得仅因共享 `mainnodeid` 自动进入 `related_rcsdroad_ids`；它们应继续按当前 case 路径、scope、foreign mask 规则独立判定。
+- 仅共享 `mainnodeid` 但空间跨度明显超过复合路口口门尺度的节点，不按本条扩展；这类远距离串接仍按同路径 chain / 二度 connector / 调头口规则分别判定。
+- `related_group_rcsdroad_ids` 不改变调头口过滤规则；已被最终判定为 `u_turn_rcsdroad_ids` 的 road 仍不进入 related。
+- `RCSDNode` 进入 required/support 语义关联时必须具备 incident `RCSDRoad` 证据；仅靠空间邻近且无 road 拓扑连接的孤立点不得升格为 related。
+- `center_junction` 的 required semantic core 必须由当前代表点附近的 anchor-local 语义组、代表点附近成对语义组，或与当前 SWSD 路口结构一致且偏移受限的紧凑高阶 RCSD 复合语义组证明；远离当前代表点、无结构一致性证据的单个 RCSD 语义组不得单独把 case 升格为 A 类。
+- `single_sided_t_mouth` 的 required semantic core 必须满足至少一种条件：当前代表点附近的 anchor-local 语义组、横向两侧成对语义组、代表点近处的紧凑同 `mainnodeid` 复合语义组，或落在 allowed space 但不落在当前 SWSD surface 的紧凑复合语义组。已落在当前 SWSD surface 内、但既非 anchor-local 也非成对的紧凑复合组，不得仅凭 compact group 身份把 case 升格为 A 类。
+- Step4 对 `required_rcsdnode_ids` 的升格 / 降级必须通过 `required_rcsdnode_gate_audit` 与 `required_rcsdnode_gate_dropped_ids` 可审计。
+
 ### 3.5 Step5：foreign / excluded 负向约束
 
 业务目标：
@@ -212,6 +244,8 @@ Step1 不负责最终正确性判断，也不负责几何生成。
 当前正式 hard negative 来源：
 
 - `excluded_rcsdroad -> road-like 1m mask`
+
+若 active `RCSDRoad` 已由 Step4 判定为 `required_rcsdroad_ids`、`support_rcsdroad_ids` 或强语义 `related_rcsdroad_ids`，不得进入 `foreign_mask_source_rcsdroad_ids`。
 
 node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard subtract。`association_foreign_swsd_context.gpkg / association_foreign_rcsd_context.gpkg` 为兼容性审计产物，可以为空，不应再被解释为 hard negative polygon context。
 
@@ -236,7 +270,8 @@ node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard su
 - 不允许先裁剪再把 required RC 整体补回边界外。
 - final geometry 不得突破 directional boundary。
 - `required RC must-cover` 当前只对 directional boundary 内的 local required RC 成立。
-- directional boundary 外的 required RCSDRoad / RCSDNode 不得作为 accepted 的硬失败条件。
+- directional boundary 外的 related RCSDRoad / RCSDNode 不得作为 accepted 的硬失败条件。
+- `association_class=B` 的 support-only case 允许在目标节点附近增加局部 seam bridge，以修补中心连接缝隙；该 bridge 仍必须受 legal space、directional boundary 与 hard negative mask 共同约束，不能成为跨路口扩张通道。
 - 当前正式契约不冻结 Step6 solver 常量、阈值与具体构面参数。
 
 ### 3.7 Step7：最终验收与发布
@@ -273,26 +308,53 @@ node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard su
   - `active_rcsdnode_ids / active_rcsdroad_ids`
   - `ignored_outside_current_swsd_surface_rcsdnode_ids / ignored_outside_current_swsd_surface_rcsdroad_ids`
 
-### 4.2 RCSD 调头口过滤
+### 4.2 RCSD 同路径链保护与调头口过滤
 
-- 若某条 `RCSDRoad` 的两端分别关联到方向相反的 `RCSDRoad`，则该 `RCSDRoad` 视为 `调头口 RCSDRoad`。
-- `调头口 RCSDRoad` 在当前 case 的 RCSD 语义处理中视为不存在：
+- Step4 必须先识别“路口和路口间二度链接的 `RCSDRoad` 同路径链”，再做最终 `调头口 RCSDRoad` 过滤。
+- 同路径链判定原则：
+  - 由 `degree = 2` connector node 串接；
+  - 链两端至少连接两个当前候选语义 `RCSDNode`；
+  - 链内 `RCSDRoad` 视为同一路径级单元。
+- 若 `RCSDRoad` 输入中存在可解析 `formway` 字段，调头口判定必须进入 `formway_bit` 模式：`(formway & 1024) != 0` 是唯一判定条件；字段名大小写不敏感。
+- 在 `formway_bit` 模式下，不再使用几何特征、长度特征或同路径链保护反向覆盖该字段判定；`formway` 未置 1024 bit 的 road 不得仅因几何相似进入 `u_turn_rcsdroad_ids`。
+- 仅当当前活动 `RCSDRoad` 集没有可解析 `formway` 字段时，允许进入 `geometry_fallback_no_formway` 模式；该模式不再以“短 road + 两端反向 incident road”作为直接过滤条件。
+- `geometry_fallback_no_formway` 模式下，最终过滤必须同时满足：
+  - 候选 `RCSDRoad` 是短连接，且连接两个不同 RCSD 语义路口；
+  - 两端语义路口按单点 / 紧凑同 `mainnodeid` 复合组折叠后，均为 `effective degree = 3`；
+  - 去除候选 `RCSDRoad` 后，两端各自剩余两条主干 incident `RCSDRoad`，且各端主干 pair 近似共线；
+  - 两个端点语义路口的主干轴线近似平行；
+  - `direction` 字段可用且可信，并能证明两个主干方向相反。
+- 若几何结构满足但 `direction` 不可用或不可信，该 `RCSDRoad` 只能进入 `u_turn_suspect_rcsdroad_ids / u_turn_suspect_rcsdroad_audit`，不得进入最终 `u_turn_rcsdroad_ids`。
+- `geometry_fallback_no_formway` 模式下，同路径链保护默认优先于最终过滤；但若某条 road 已满足 strict 几何 fallback，则可覆盖同路径保护进入最终 `u_turn_rcsdroad_ids`，即使该 road 是同路径链中的短分段。该覆盖必须在候选审计中表达 `rejected_by_same_path_chain=false`。若 tentative 调头过滤后才暴露出 `degree = 2` 同路径证据，最终调头过滤前必须回补复核。
+- `调头口 RCSDRoad` 只表示上 / 下行或对向平行路径之间的短连接，不表示同一路径链中的短分段；但当 `formway_bit` 模式启用时，以源字段语义为准。
+- 最终 `调头口 RCSDRoad` 在当前 case 的 RCSD 语义处理中视为不存在：
   - 不进入后续 `candidate / required / support / excluded` 分类。
   - 不得在 Step6 被重新解释为 local required RC。
-- 去除 `调头口 RCSDRoad` 后，后续 `degree = 2 connector` 识别与 `RCSDRoad chain merge` 必须基于过滤后的活动集重新计算。
+- 去除最终 `调头口 RCSDRoad` 后，后续 `degree = 2 connector` 识别与 `RCSDRoad chain merge` 必须基于过滤后的活动集重新计算，但同路径链端点不得因过滤后局部度数变化而降级为 connector。
 - 审计至少要稳定表达：
   - `active_rcsdroad_ids_before_u_turn_filter`
+  - `u_turn_detection_mode`
+  - `u_turn_formway_bit`
+  - `u_turn_candidate_rcsdroad_ids`
   - `u_turn_rcsdroad_ids`
+  - `u_turn_suspect_rcsdroad_ids`
+  - `u_turn_rejected_by_same_path_chain_ids`
+  - `same_path_chain_protected_rcsdroad_ids`
+  - `same_path_chain_terminal_rcsdnode_ids`
+  - `same_path_rcsdroad_chain_groups`
   - `u_turn_rcsdroad_audit`
+  - `u_turn_candidate_rcsdroad_audit`
+  - `u_turn_suspect_rcsdroad_audit`
 
 ### 4.3 degree-2 connector 语义
 
-- `degree = 2` 的 `RCSDNode` 只视为 connector，不进入 required semantic core。
+- `degree = 2` 的 `RCSDNode` 只视为 connector，不进入 required semantic core；该规则对非空 `mainnodeid` node、`mainnodeid = 0` node 与无 `mainnodeid` node 一致适用。
 - connector node 与真正 foreign node 必须在审计上分开记录：
   - `nonsemantic_connector_rcsdnode_ids`
   - `true_foreign_rcsdnode_ids`
 - 经 `degree = 2` connector 串接的 candidate `RCSDRoad`，必须先按同一 `RCSDRoad chain` 合并，再参与 `required / support / excluded` 分类。
 - 该 chain merge 当前不考虑角度门禁。
+- 对同路径链端点，若其是当前候选语义 `RCSDNode`，不得仅因为过滤调头口后的活动度数变为 `degree = 2` 而被降级为非语义 connector。
 - 审计至少要稳定表达：
   - `degree2_merged_rcsdroad_groups`
 
@@ -300,6 +362,9 @@ node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard su
 
 - 对 `single_sided_t_mouth`，若 support RCSDRoad 在当前竖向退出链附近出现平行重复，按“更贴近竖方向退出当前面一侧”保留。
 - 对 `single_sided_t_mouth + association_class=A`，横方向口门按“竖向 RCSDRoad seed -> 横向 tracing -> terminal RCSDNode -> +5m -> stop at next directly-associated semantic junction”求解。
+- 对 `single_sided_t_mouth + association_class=A`，Step4 输出的强相关 RCSD 语义路口最多为两个；调头口结构生成的 node 与 effective-degree-2 connector node 不计入强相关语义路口。
+- 若 single-sided 强相关候选包含 anchor-local 语义路口与远端下一语义路口，远端下一语义路口只能作为道路延伸终点；不得作为当前 case 的 `required_rcsdnode_ids`，也不得把远端路口之后的 incident road 纳入当前 `related_rcsdroad_ids`。
+- Step6 横向 tracing 在存在 `t_mouth_strong_related_rcsdnode_ids`，且该集合能覆盖横向两侧并保持已确认 terminal extent 时，必须优先以该强相关集合收敛；若强相关集合不足以完成横向两侧确认，则保留既有可达 endpoint tracing，但不得把调头口结构生成 node、Step4 已审计的非语义 connector node、single-sided overflow node 或 remote terminal node 提升为 terminal 语义集合。
 - tracing 过程中的 `RCSDRoad` 不要求整体完全落在当前候选空间内；只要最终确认的 `RCSDNode` 落在横方向候选空间内，即可视为当前 tracing 有效。
 - 若 tracing 无法在横方向两侧都确认 terminal `RCSDNode`，则当前 A 类横向口门特化规则不成立，横方向回到 generic directional boundary。
 - 若冻结 Step3 已对当前 case 标记 `two_node_t_bridge_applied = true`，则后续 directional boundary / polygon seed 必须继承该 bridge corridor。
@@ -336,6 +401,13 @@ node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard su
 - `association_review.png`
 - `step7_review.png`
 
+review PNG 当前颜色语义：
+
+- SWSD 当前路口相关道路以黑色道路线表达。
+- RCSD 深红道路线表达强语义 `related_rcsdroad_ids` / `required_rcsdroad_ids`，不表达 `support_rcsdroad_ids`。
+- RCSD amber 道路线表达 `support_rcsdroad_ids`，仅表示辅助证据 / hook zone。
+- `foreign_mask` 以独立 mask 填充表达，不得混入深红 related 线条。
+
 ### 5.3 batch / full-input run root 输出
 
 - `preflight.json`
@@ -369,13 +441,28 @@ node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard su
 - `association_executed / association_reason / association_blocker`
 - `association_prerequisite_issues`
 - `active_rcsdroad_ids_before_u_turn_filter`
+- `u_turn_detection_mode`
+- `u_turn_formway_bit`
 - `u_turn_rcsdroad_ids`
+- `u_turn_candidate_rcsdroad_ids`
+- `u_turn_suspect_rcsdroad_ids`
+- `u_turn_rejected_by_same_path_chain_ids`
+- `same_path_chain_protected_rcsdroad_ids`
+- `same_path_chain_terminal_rcsdnode_ids`
+- `same_path_rcsdroad_chain_groups`
 - `required_rcsdnode_ids / required_rcsdroad_ids`
+- `required_rcsdnode_gate_dropped_ids / required_rcsdnode_gate_audit`
 - `support_rcsdnode_ids / support_rcsdroad_ids`
 - `excluded_rcsdnode_ids / excluded_rcsdroad_ids`
+- `related_rcsdnode_ids / related_rcsdroad_ids`
+- `related_local_rcsdroad_ids`
+- `related_group_rcsdroad_ids`
+- `related_outside_scope_rcsdroad_ids`
+- `foreign_mask_source_rcsdroad_ids`
 - `rcsd_semantic_core_missing`
 - `nonsemantic_connector_rcsdnode_ids / true_foreign_rcsdnode_ids`
 - `degree2_merged_rcsdroad_groups`
+- `t_mouth_strong_related_rcsdnode_ids / t_mouth_strong_related_overflow_rcsdnode_ids`
 
 `step6_status.json` 至少包含：
 
@@ -389,7 +476,11 @@ node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard su
 - `within_direction_boundary_ok`
 - `foreign_exclusion_ok`
 - `required_rc_cover_mode`
+- `related_rcsdnode_ids / related_rcsdroad_ids`
+- `related_local_rcsdroad_ids / related_group_rcsdroad_ids / related_outside_scope_rcsdroad_ids`
 - `local_required_rcsdnode_ids / local_required_rcsdroad_ids`
+- `foreign_mask_source_rcsdroad_ids`
+- `t_mouth_strong_related_rcsdnode_ids / t_mouth_strong_related_overflow_rcsdnode_ids`
 - `step3_two_node_t_bridge_inherited`
 
 `step7_status.json` 至少包含：

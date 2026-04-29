@@ -97,6 +97,9 @@ def test_finalization_accepts_association_support_only_cases_after_step6_converg
     branch_rows = step6_result.audit_doc["assembly"]["directional_cut_branches"]
     assert any(row["window_mode"] == "cut_at_20m" for row in branch_rows)
     assert any(row["preserve_candidate_boundary"] for row in branch_rows)
+    assert step6_result.audit_doc["assembly"]["support_only_seam_bridge_applied"] is True
+    assert step6_result.audit_doc["assembly"]["support_only_seam_bridge_buffer_m"] == 9.0
+    assert step6_result.audit_doc["assembly"]["support_only_seam_bridge_metrics"]["area_m2"] > 0.0
     assert step6_result.extra_status_fields["within_direction_boundary_ok"] is True
     assert _road_covered_length(_finalization_context, step6_result, "road_h") <= 41.0
     assert _road_covered_length(_finalization_context, step6_result, "road_v") <= 26.0
@@ -140,7 +143,7 @@ def test_finalization_rejects_cases_blocked_by_upstream_association(tmp_path: Pa
     assert step7_result.root_cause_layer == ROOT_CAUSE_LAYER_FROZEN_CONSTRAINTS_CONFLICT
 
 
-def test_finalization_single_sided_case_applies_directional_cut_before_rejecting(tmp_path: Path) -> None:
+def test_finalization_single_sided_case_applies_directional_cut_with_visual_risk(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     build_single_sided_parallel_support_case(case_root, step3_root, case_id="100006")
@@ -153,5 +156,6 @@ def test_finalization_single_sided_case_applies_directional_cut_before_rejecting
         row["window_mode"] in {"cut_at_20m", "preserve_candidate_boundary"}
         for row in step6_result.audit_doc["assembly"]["directional_cut_branches"]
     )
-    assert step7_result.step7_state == "rejected"
-    assert step7_result.visual_review_class in {VISUAL_V4, VISUAL_V5}
+    assert step7_result.step7_state == "accepted"
+    assert step7_result.visual_review_class == VISUAL_V2
+    assert step7_result.reason == "step7_accepted_with_visual_risk"

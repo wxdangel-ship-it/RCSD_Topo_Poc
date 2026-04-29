@@ -5,9 +5,15 @@
 - `Step1` 必须可追溯当前 case 的代表节点、语义路口集合、道路集合、DriveZone、RCSDRoad 与 RCSDNode。
 - `Step2` 只允许当前正式模板：`center_junction / single_sided_t_mouth`。
 - `Step3` 必须保持冻结前置语义：道路归属、DriveZone 约束、邻近路口切断、foreign 屏蔽、foreign MST 补充切断、must-cover、single-sided opposite-side guard、no-silent-fallback。
-- `Step4` 必须稳定解释 `A / B / C` 三类 RCSD 关联结果。
+- `Step4` 必须稳定解释 `A / B / C` 三类 RCSD 关联结果，并可审计区分同路径 `RCSDRoad` chain、最终调头口、suspect 调头口、被同路径保护拒绝的调头候选；当 `RCSDRoad.formway` 存在时，`(formway & 1024) != 0` 是唯一调头口判定条件，未提供该字段时只允许 strict 几何 fallback，且方向不可用 / 不可信的几何候选只能审计不得过滤；同路径保护可被 strict 调头连接覆盖，短分段不再作为覆盖失败的独立条件；tentative 调头过滤后新增的同路径证据也必须在最终调头过滤前复核。
+- `Step4 / Step5 / Step6` 必须可审计区分 `related / local_required / foreign_mask` 三层 RCSD 语义；`related` 不得被误作为全长 must-cover，`foreign_mask` 不得包含 related road。
+- `related_outside_scope_rcsdroad_ids` 不得跨越有效 RCSD 语义路口边界；只能从 required core 经 allowed/candidate 范围内的非语义 connector 做一跳延伸，不得从 support/group related road 或远端 / 未打包节点继续外扩。非空且非 `0` 的 `mainnodeid` 只是候选 / grouping 信号，不单独构成停止条件。
+- 共享同一非空 `mainnodeid` 且空间紧凑的多点 RCSD 候选组必须按 group 计算 effective degree；若 effective degree = `2`，仍按非语义 connector 处理。同组 road 必须只有在自身命中 local / outside-scope related 规则时才进入 `related_rcsdroad_ids`。
+- required core 必须通过模板相关 gate：中心路口不能由远端单个 RCSD 语义组独立升格，但允许当前 SWSD 路口结构一致且偏移受限的紧凑高阶 RCSD 复合语义组升格；单侧 T 口不能由孤立远端单点独立升格，也不能由已落在当前 SWSD surface 内但非 anchor-local / 非成对的 compact group 独立升格。所有降级必须在 `required_rcsdnode_gate_audit` / `required_rcsdnode_gate_dropped_ids` 中可追溯。
+- `RCSDNode` 的 required/support 关联必须有 incident `RCSDRoad` 证据，避免无拓扑连接的邻近点误升格为 related。
+- `single_sided_t_mouth` 的强相关 RCSD 语义路口最多两个；远端下一语义路口只能作为道路延伸终点，不得把远端之后的 incident road 纳入当前 related；Step6 必须优先使用可完成两侧确认的 Step4 强相关集合，强相关集合不足以确认两侧时保留既有 endpoint tracing。
 - `Step5` 必须区分正式 hard negative 对象与 audit-only foreign 对象。
-- `Step6` 不得突破合法空间、directional boundary 或 excluded hard mask。
+- `Step6` 不得突破合法空间、directional boundary 或 excluded hard mask；B 类 support-only 的中心 seam bridge 只能在上述约束内修补目标节点附近缝隙，不得成为跨路口扩张。
 - `Step7` 机器状态只允许 `accepted / rejected`；批量运行另需显式区分 `runtime_failed`。
 
 ## 2. 输出与契约稳定性
@@ -21,6 +27,7 @@
 ## 3. Review 与 formal 分层
 
 - `V1~V5` 只属于视觉审计层，不等价于正式机器状态。
+- review PNG 中深红 RCSDRoad 只表达强语义 `related_rcsdroad_ids` / `required_rcsdroad_ids`；`support_rcsdroad_ids` 必须保持 amber 辅助证据表达；`foreign_mask` 只能以 mask 口径表达，不得伪装成 related 线条。
 - `step7_status.json`、`step7_final_polygon.gpkg` 与正式 `summary.json` 不得写入 `visual_review_class / visual_audit_class / manual_review_recommended`。
 - `t03_review_*`、`visual_checks/` 与 review PNG 是 review-only 产物。
 - batch aggregate polygon 上的 review compatibility 字段不得反向渗透回 formal status / summary 面。

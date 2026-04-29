@@ -35,6 +35,8 @@ class AssociationOutputGeometries:
     required_hook_zone_geometry: BaseGeometry | None
     foreign_swsd_context_geometry: BaseGeometry | None
     foreign_rcsd_context_geometry: BaseGeometry | None
+    related_rcsdroad_geometry: BaseGeometry | None = None
+    u_turn_rcsdroad_geometry: BaseGeometry | None = None
 
 
 @dataclass(frozen=True)

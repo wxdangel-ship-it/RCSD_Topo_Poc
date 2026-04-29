@@ -32,6 +32,7 @@ REQUIRED_FILL = (206, 18, 18, 120)
 REQUIRED_EDGE = (161, 13, 13, 255)
 SUPPORT_FILL = (232, 170, 45, 120)
 SUPPORT_EDGE = (189, 124, 9, 255)
+UTURN_EDGE = (38, 91, 167, 240)
 EXCLUDED_FILL = (110, 26, 89, 72)
 EXCLUDED_EDGE = (86, 19, 69, 255)
 FOREIGN_SWSD_FILL = (102, 102, 102, 54)
@@ -47,6 +48,8 @@ def _patch_bounds(context: AssociationContext, case_result: AssociationCaseResul
         focus.append(drivezone_focus.intersection(context.step3_allowed_space_geometry.buffer(40.0)))
         focus.append(context.step3_allowed_space_geometry)
     for geometry in (
+        case_result.output_geometries.related_rcsdroad_geometry,
+        case_result.output_geometries.u_turn_rcsdroad_geometry,
         case_result.output_geometries.required_rcsdroad_geometry,
         case_result.output_geometries.support_rcsdroad_geometry,
         case_result.output_geometries.excluded_rcsdroad_geometry,
@@ -91,8 +94,18 @@ def render_association_review_png(
         _draw_line(draw, road.geometry, bounds, fill=fill, width=width)
 
     _draw_line(draw, case_result.output_geometries.excluded_rcsdroad_geometry, bounds, fill=EXCLUDED_EDGE, width=5)
+    _draw_line(draw, case_result.output_geometries.u_turn_rcsdroad_geometry, bounds, fill=UTURN_EDGE, width=5)
     _draw_line(draw, case_result.output_geometries.support_rcsdroad_geometry, bounds, fill=SUPPORT_EDGE, width=6)
-    _draw_line(draw, case_result.output_geometries.required_rcsdroad_geometry, bounds, fill=REQUIRED_EDGE, width=7)
+    related_rcsdroad_geometry = case_result.output_geometries.related_rcsdroad_geometry
+    if related_rcsdroad_geometry is None or related_rcsdroad_geometry.is_empty:
+        related_rcsdroad_geometry = case_result.output_geometries.required_rcsdroad_geometry
+    _draw_line(
+        draw,
+        related_rcsdroad_geometry,
+        bounds,
+        fill=REQUIRED_EDGE,
+        width=7,
+    )
 
     _draw_point(draw, case_result.output_geometries.excluded_rcsdnode_geometry, bounds, fill=EXCLUDED_EDGE, radius=5)
     _draw_point(draw, case_result.output_geometries.support_rcsdnode_geometry, bounds, fill=SUPPORT_EDGE, radius=6)
@@ -110,7 +123,7 @@ def render_association_review_png(
             for geometry in (
                 context.step3_allowed_space_geometry,
                 case_result.output_geometries.required_hook_zone_geometry,
-                case_result.output_geometries.required_rcsdroad_geometry,
+                related_rcsdroad_geometry,
                 step1.representative_node.geometry.buffer(10.0),
             )
             if geometry is not None

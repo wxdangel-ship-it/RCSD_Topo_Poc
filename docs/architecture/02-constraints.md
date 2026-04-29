@@ -24,6 +24,8 @@
 - 输入字段治理约束：
   - 未在项目 / 模块源事实文档中正式启用的字段，不得直接进入 Step1 / Step2 强规则。
   - `Road.formway` 已正式启用；当前已确认可用于道路形态语义判断与 through incident degree 的裁剪。
+  - `RCSDRoad.formway` 已正式启用；在 T03 中当前确认 `1024` bit 表示调头口，判定表达式为 `(formway & 1024) != 0`，字段名大小写不敏感。
+  - T03 仅在 `RCSDRoad.formway` 不可用时允许几何调头口 fallback；该 fallback 必须要求 effective-degree=3 语义路口、两端主干平行和可信方向相反，方向不可用或不可信时只能审计不得直接过滤。
   - `formway` 具体启用位语义，必须在模块契约中明确登记；未确认位不得自行扩展为强规则。
 - 文档与实现必须分离：
   - 文档在 `modules/<module>/`

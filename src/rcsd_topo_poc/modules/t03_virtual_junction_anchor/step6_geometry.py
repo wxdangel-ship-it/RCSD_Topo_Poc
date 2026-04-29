@@ -27,6 +27,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models impor
 
 
 TARGET_NODE_BUFFER_M = 5.5
+SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M = 9.0
 REQUIRED_NODE_BUFFER_M = 5.5
 REQUIRED_ROAD_BUFFER_M = 6.0
 FOREIGN_MASK_BUFFER_M = 1.0
@@ -902,31 +903,85 @@ def _single_sided_horizontal_trace_decisions(
     )
     if not vertical_seed_ids or not traced_road_ids or not endpoint_nodes:
         return {}
+    connector_endpoint_node_ids = set(
+        association_case_result.extra_status_fields.get("degree2_connector_candidate_rcsdnode_ids") or []
+    ) | set(association_case_result.extra_status_fields.get("nonsemantic_connector_rcsdnode_ids") or [])
+    remote_terminal_node_ids = set(
+        association_case_result.extra_status_fields.get("single_sided_terminal_required_rcsdnode_ids") or []
+    )
+    excluded_trace_endpoint_node_ids = set(connector_endpoint_node_ids)
+    if remote_terminal_node_ids:
+        excluded_trace_endpoint_node_ids.update(
+            association_case_result.extra_status_fields.get("t_mouth_strong_related_overflow_rcsdnode_ids") or []
+        )
+        excluded_trace_endpoint_node_ids.update(remote_terminal_node_ids)
+    endpoint_nodes = [
+        node for node in endpoint_nodes if node.node_id not in excluded_trace_endpoint_node_ids
+    ]
+    if not endpoint_nodes:
+        return {}
 
     selected_roads = _selected_road_records(finalization_context)
     anchor_geometry = _target_anchor_geometry(finalization_context, geometry_cache=geometry_cache)
-    branch_hits: dict[tuple[str, int], list[tuple[NodeRecord, float]]] = {}
-    for road in selected_roads:
-        if road.road_id not in horizontal_pair_ids:
-            continue
-        for branch_index, branch_geometry, _anchor_distance in _road_directional_branches(road, anchor_geometry):
-            allowed_prefix = _contiguous_allowed_prefix(
-                branch_geometry,
-                allowed_space,
-                allowed_space_tolerance_geometry=allowed_space_tolerance_geometry,
-            )
-            if allowed_prefix is None or allowed_prefix.length <= 1e-6:
+
+    def _build_branch_hits(
+        candidate_endpoint_nodes: list[NodeRecord],
+    ) -> dict[tuple[str, int], list[tuple[NodeRecord, float]]]:
+        hits_by_branch: dict[tuple[str, int], list[tuple[NodeRecord, float]]] = {}
+        for road in selected_roads:
+            if road.road_id not in horizontal_pair_ids:
                 continue
-            hits: list[tuple[NodeRecord, float]] = []
-            for node in endpoint_nodes:
-                if allowed_prefix.distance(node.geometry) > SINGLE_SIDED_HORIZONTAL_ALIGNMENT_TOLERANCE_M:
+            for branch_index, branch_geometry, _anchor_distance in _road_directional_branches(road, anchor_geometry):
+                allowed_prefix = _contiguous_allowed_prefix(
+                    branch_geometry,
+                    allowed_space,
+                    allowed_space_tolerance_geometry=allowed_space_tolerance_geometry,
+                )
+                if allowed_prefix is None or allowed_prefix.length <= 1e-6:
                     continue
-                nearest_point = nearest_points(node.geometry, allowed_prefix)[1]
-                projection_distance = allowed_prefix.project(nearest_point)
-                if projection_distance <= NODE_COVER_TOLERANCE_M:
-                    continue
-                hits.append((node, projection_distance))
-            branch_hits[(road.road_id, branch_index)] = hits
+                hits: list[tuple[NodeRecord, float]] = []
+                for node in candidate_endpoint_nodes:
+                    if allowed_prefix.distance(node.geometry) > SINGLE_SIDED_HORIZONTAL_ALIGNMENT_TOLERANCE_M:
+                        continue
+                    nearest_point = nearest_points(node.geometry, allowed_prefix)[1]
+                    projection_distance = allowed_prefix.project(nearest_point)
+                    if projection_distance <= NODE_COVER_TOLERANCE_M:
+                        continue
+                    hits.append((node, projection_distance))
+                hits_by_branch[(road.road_id, branch_index)] = hits
+        return hits_by_branch
+
+    strong_related_rcsdnode_ids = set(
+        association_case_result.extra_status_fields.get("t_mouth_strong_related_rcsdnode_ids") or []
+    )
+    branch_hits = _build_branch_hits(endpoint_nodes)
+    if strong_related_rcsdnode_ids:
+        strong_endpoint_nodes = [
+            node
+            for node in endpoint_nodes
+            if node.node_id in strong_related_rcsdnode_ids
+        ]
+        strong_branch_hits = _build_branch_hits(strong_endpoint_nodes)
+        strong_hit_road_ids = {
+            road_id
+            for (road_id, _branch_index), hits in strong_branch_hits.items()
+            if hits
+        }
+        strong_hits_preserve_full_extent = True
+        for branch_key, hits in branch_hits.items():
+            if not hits:
+                continue
+            strong_hits = strong_branch_hits.get(branch_key) or []
+            if not strong_hits:
+                strong_hits_preserve_full_extent = False
+                break
+            full_extent = max(projection_distance for _node, projection_distance in hits)
+            strong_extent = max(projection_distance for _node, projection_distance in strong_hits)
+            if strong_extent + 1e-6 < full_extent:
+                strong_hits_preserve_full_extent = False
+                break
+        if len(strong_hit_road_ids) >= 2 and strong_hits_preserve_full_extent:
+            branch_hits = strong_branch_hits
 
     hit_road_ids = {
         road_id
@@ -1240,6 +1295,11 @@ def build_step6_result(
         geometry_cache=geometry_cache,
     )
     target_cover_geometry = _point_buffers(step1.target_group.nodes, TARGET_NODE_BUFFER_M)
+    support_only_seam_bridge_geometry = (
+        _point_buffers(step1.target_group.nodes, SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M)
+        if association_case_result.association_class == "B"
+        else None
+    )
     foreign_mask_geometry, foreign_mask_sources = _build_foreign_mask_geometry(
         finalization_context,
         geometry_cache=geometry_cache,
@@ -1323,7 +1383,11 @@ def build_step6_result(
         return result
 
     cleanup_started_perf = perf_counter()
-    direction_boundary_geometry = polygon_seed_geometry
+    direction_boundary_geometry = (
+        _union_geometries([polygon_seed_geometry, support_only_seam_bridge_geometry])
+        if support_only_seam_bridge_geometry is not None
+        else polygon_seed_geometry
+    )
     local_required_nodes = _local_required_node_records(
         finalization_context,
         direction_boundary_geometry,
@@ -1348,12 +1412,14 @@ def build_step6_result(
     must_cover_geometry = _union_geometries(
         [
             target_cover_geometry,
+            support_only_seam_bridge_geometry,
             required_node_cover_geometry,
             required_road_cover_geometry,
         ]
     )
     anchor_geometries = [
         target_cover_geometry,
+        support_only_seam_bridge_geometry,
         required_node_cover_geometry,
         required_road_cover_geometry,
     ]
@@ -1369,6 +1435,7 @@ def build_step6_result(
             [
                 polygon_seed_geometry,
                 target_cover_geometry,
+                support_only_seam_bridge_geometry,
                 required_node_cover_geometry,
                 required_road_cover_geometry,
             ]
@@ -1485,6 +1552,10 @@ def build_step6_result(
     pre_cleanup_metrics = _cached_shape_metrics(pre_cleanup_polygon, geometry_cache=geometry_cache)
     direction_clip_metrics = _cached_shape_metrics(direction_clip_geometry, geometry_cache=geometry_cache)
     bridge_metrics = _cached_shape_metrics(step3_two_node_t_bridge_geometry, geometry_cache=geometry_cache)
+    support_only_seam_bridge_metrics = _cached_shape_metrics(
+        support_only_seam_bridge_geometry,
+        geometry_cache=geometry_cache,
+    )
     if shape_metrics["hole_count"] > 0:
         review_signals.append("polygon_has_holes")
     if shape_metrics["component_count"] > 1:
@@ -1504,10 +1575,30 @@ def build_step6_result(
             "selected_road_ids": list(association_context.selected_road_ids),
             "required_rcsdnode_ids": list(association_case_result.extra_status_fields.get("required_rcsdnode_ids") or []),
             "required_rcsdroad_ids": list(association_case_result.extra_status_fields.get("required_rcsdroad_ids") or []),
+            "related_rcsdnode_ids": list(association_case_result.extra_status_fields.get("related_rcsdnode_ids") or []),
+            "related_rcsdroad_ids": list(association_case_result.extra_status_fields.get("related_rcsdroad_ids") or []),
+            "related_local_rcsdroad_ids": list(
+                association_case_result.extra_status_fields.get("related_local_rcsdroad_ids") or []
+            ),
+            "related_group_rcsdroad_ids": list(
+                association_case_result.extra_status_fields.get("related_group_rcsdroad_ids") or []
+            ),
+            "related_outside_scope_rcsdroad_ids": list(
+                association_case_result.extra_status_fields.get("related_outside_scope_rcsdroad_ids") or []
+            ),
+            "t_mouth_strong_related_rcsdnode_ids": list(
+                association_case_result.extra_status_fields.get("t_mouth_strong_related_rcsdnode_ids") or []
+            ),
+            "t_mouth_strong_related_overflow_rcsdnode_ids": list(
+                association_case_result.extra_status_fields.get("t_mouth_strong_related_overflow_rcsdnode_ids") or []
+            ),
             "local_required_rcsdnode_ids": [node.node_id for node in local_required_nodes],
             "local_required_rcsdroad_ids": [road.road_id for road in local_required_road_records],
             "support_rcsdroad_ids": list(association_case_result.extra_status_fields.get("support_rcsdroad_ids") or []),
             "excluded_rcsdroad_ids": list(association_case_result.extra_status_fields.get("excluded_rcsdroad_ids") or []),
+            "foreign_mask_source_rcsdroad_ids": list(
+                association_case_result.extra_status_fields.get("foreign_mask_source_rcsdroad_ids") or []
+            ),
         },
         "assembly": {
             "geometry_mode": "directional_selected_road_cut",
@@ -1517,6 +1608,9 @@ def build_step6_result(
             "direction_clip_metrics": direction_clip_metrics,
             "step3_two_node_t_bridge_inherited": step3_two_node_t_bridge_geometry is not None,
             "step3_two_node_t_bridge_metrics": bridge_metrics,
+            "support_only_seam_bridge_applied": support_only_seam_bridge_geometry is not None,
+            "support_only_seam_bridge_buffer_m": SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M,
+            "support_only_seam_bridge_metrics": support_only_seam_bridge_metrics,
             "directional_cut_rule": {
                 "mode": "directional_selected_road_cut",
                 "cut_distance_m": DIRECTIONAL_CUT_DISTANCE_M,
@@ -1572,6 +1666,24 @@ def build_step6_result(
         "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
         "required_rc_line_cover_ratio": round(required_rc_line_cover_ratio, 6),
         "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
+        "required_rcsdnode_ids": list(association_case_result.extra_status_fields.get("required_rcsdnode_ids") or []),
+        "required_rcsdroad_ids": list(association_case_result.extra_status_fields.get("required_rcsdroad_ids") or []),
+        "support_rcsdnode_ids": list(association_case_result.extra_status_fields.get("support_rcsdnode_ids") or []),
+        "support_rcsdroad_ids": list(association_case_result.extra_status_fields.get("support_rcsdroad_ids") or []),
+        "related_rcsdnode_ids": list(association_case_result.extra_status_fields.get("related_rcsdnode_ids") or []),
+        "related_rcsdroad_ids": list(association_case_result.extra_status_fields.get("related_rcsdroad_ids") or []),
+        "related_local_rcsdroad_ids": list(association_case_result.extra_status_fields.get("related_local_rcsdroad_ids") or []),
+        "related_group_rcsdroad_ids": list(
+            association_case_result.extra_status_fields.get("related_group_rcsdroad_ids") or []
+        ),
+        "related_outside_scope_rcsdroad_ids": list(
+            association_case_result.extra_status_fields.get("related_outside_scope_rcsdroad_ids") or []
+        ),
+        "local_required_rcsdnode_ids": [node.node_id for node in local_required_nodes],
+        "local_required_rcsdroad_ids": [road.road_id for road in local_required_road_records],
+        "foreign_mask_source_rcsdroad_ids": list(
+            association_case_result.extra_status_fields.get("foreign_mask_source_rcsdroad_ids") or []
+        ),
     }
 
     def _complete_failure_result(

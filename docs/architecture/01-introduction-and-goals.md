@@ -37,7 +37,7 @@
 
 当前项目级正式口径为：
 
-- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`
+- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`
 - `modules/_template/` 是模板目录，不属于业务模块
 - 当前共享代码除文本回传协议与基础 CLI 外，也承接已登记模块的实现入口

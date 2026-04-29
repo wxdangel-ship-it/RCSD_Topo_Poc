@@ -54,6 +54,7 @@ STEP67_STYLE = {
 VISIBLE_RC_ROAD_EDGE = (222, 112, 124, 220)
 REQUIRED_EDGE = (161, 13, 13, 255)
 SUPPORT_EDGE = (189, 124, 9, 255)
+UTURN_EDGE = (38, 91, 167, 240)
 FINAL_FILL = (40, 120, 85, 130)
 FINAL_EDGE = (15, 80, 52, 255)
 SEED_FILL = (54, 125, 181, 40)
@@ -72,6 +73,8 @@ def _patch_bounds(finalization_context: FinalizationContext, case_result: Finali
         case_result.step6_result.output_geometries.polygon_final_geometry,
         case_result.step6_result.output_geometries.foreign_mask_geometry,
         finalization_context.association_case_result.output_geometries.required_hook_zone_geometry,
+        finalization_context.association_case_result.output_geometries.related_rcsdroad_geometry,
+        finalization_context.association_case_result.output_geometries.u_turn_rcsdroad_geometry,
         finalization_context.association_case_result.output_geometries.required_rcsdroad_geometry,
         finalization_context.association_case_result.output_geometries.support_rcsdroad_geometry,
     ]
@@ -116,8 +119,18 @@ def render_finalization_review_png(
     for rcsd_road in step1.rcsd_roads:
         _draw_line(draw, rcsd_road.geometry, bounds, fill=VISIBLE_RC_ROAD_EDGE, width=4)
 
+    _draw_line(draw, association_result.output_geometries.u_turn_rcsdroad_geometry, bounds, fill=UTURN_EDGE, width=5)
     _draw_line(draw, association_result.output_geometries.support_rcsdroad_geometry, bounds, fill=SUPPORT_EDGE, width=5)
-    _draw_line(draw, association_result.output_geometries.required_rcsdroad_geometry, bounds, fill=REQUIRED_EDGE, width=6)
+    related_rcsdroad_geometry = association_result.output_geometries.related_rcsdroad_geometry
+    if related_rcsdroad_geometry is None or related_rcsdroad_geometry.is_empty:
+        related_rcsdroad_geometry = association_result.output_geometries.required_rcsdroad_geometry
+    _draw_line(
+        draw,
+        related_rcsdroad_geometry,
+        bounds,
+        fill=REQUIRED_EDGE,
+        width=6,
+    )
     _draw_point(draw, association_result.output_geometries.required_rcsdnode_geometry, bounds, fill=REQUIRED_EDGE, radius=7)
     _draw_point(
         draw,

@@ -43,6 +43,17 @@ REVIEW_INDEX_FIELDNAMES = [
     "review_state",
     "evidence_source",
     "position_source",
+    "has_main_evidence",
+    "main_evidence_type",
+    "reference_point_present",
+    "reference_point_source",
+    "section_reference_source",
+    "surface_scenario_type",
+    "rcsd_match_type",
+    "swsd_junction_present",
+    "fallback_rcsdroad_ids",
+    "surface_generation_mode",
+    "no_reference_point_reason",
     "reverse_tip_used",
     "rcsd_consistency_result",
     "positive_rcsd_support_level",
@@ -120,6 +131,7 @@ REVIEW_INDEX_FIELDNAMES = [
 def _geometry_features_for_case(case_result: T04CaseResult):
     features: list[dict] = []
     for event_unit in case_result.event_units:
+        surface_scenario = event_unit.surface_scenario
         for geometry_role, geometry in (
             ("pair_local_region_geometry", event_unit.pair_local_region_geometry),
             ("pair_local_structure_face_geometry", event_unit.pair_local_structure_face_geometry),
@@ -143,16 +155,25 @@ def _geometry_features_for_case(case_result: T04CaseResult):
         ):
             if geometry is None or geometry.is_empty:
                 continue
+            output_geometry_role = geometry_role
+            if geometry_role == "fact_reference_point" and not surface_scenario.reference_point_present:
+                output_geometry_role = "section_reference_geometry"
             features.append(
                 {
                     "properties": {
                         "case_id": case_result.case_spec.case_id,
                         "event_unit_id": event_unit.spec.event_unit_id,
-                        "geometry_role": geometry_role,
+                        "geometry_role": output_geometry_role,
                         "event_type": event_unit.spec.event_type,
                         "review_state": event_unit.review_state,
                         "candidate_id": str(event_unit.selected_evidence_summary.get("candidate_id") or ""),
                         "candidate_layer": str(event_unit.selected_evidence_summary.get("layer_label") or ""),
+                        "has_main_evidence": int(surface_scenario.has_main_evidence),
+                        "main_evidence_type": surface_scenario.main_evidence_type,
+                        "reference_point_present": int(surface_scenario.reference_point_present),
+                        "reference_point_source": surface_scenario.reference_point_source,
+                        "section_reference_source": surface_scenario.section_reference_source,
+                        "surface_scenario_type": surface_scenario.surface_scenario_type,
                     },
                     "geometry": geometry,
                 }
@@ -266,6 +287,7 @@ def write_case_outputs(
     rows: list[T04ReviewIndexRow] = []
     for event_unit in case_result.event_units:
         audit_summary = audit_by_unit.get(event_unit.spec.event_unit_id, {})
+        surface_scenario_doc = event_unit.surface_scenario_doc()
         step5_unit = step5_result.unit_result_by_id(event_unit.spec.event_unit_id)
         event_unit_dir = case_dir / "event_units" / event_unit.spec.event_unit_id
         event_unit_dir.mkdir(parents=True, exist_ok=True)
@@ -296,6 +318,7 @@ def write_case_outputs(
             {
                 "case_id": case_result.case_spec.case_id,
                 "event_unit_id": event_unit.spec.event_unit_id,
+                **surface_scenario_doc,
                 "pair_local_summary": dict(event_unit.pair_local_summary),
                 "audit_summary": dict(audit_summary),
                 "selected_evidence_state": event_unit.selected_evidence_state,
@@ -343,6 +366,7 @@ def write_case_outputs(
             {
                 "case_id": case_result.case_spec.case_id,
                 "event_unit_id": event_unit.spec.event_unit_id,
+                **surface_scenario_doc,
                 "audit_summary": dict(audit_summary),
                 "selected_evidence_state": event_unit.selected_evidence_state,
                 "selected_candidate_region": event_unit.selected_candidate_region,
@@ -408,6 +432,17 @@ def write_case_outputs(
                 review_state=event_unit.review_state,
                 evidence_source=event_unit.evidence_source,
                 position_source=event_unit.position_source,
+                has_main_evidence=bool(surface_scenario_doc["has_main_evidence"]),
+                main_evidence_type=str(surface_scenario_doc["main_evidence_type"]),
+                reference_point_present=bool(surface_scenario_doc["reference_point_present"]),
+                reference_point_source=str(surface_scenario_doc["reference_point_source"]),
+                section_reference_source=str(surface_scenario_doc["section_reference_source"]),
+                surface_scenario_type=str(surface_scenario_doc["surface_scenario_type"]),
+                rcsd_match_type=str(surface_scenario_doc["rcsd_match_type"]),
+                swsd_junction_present=bool(surface_scenario_doc["swsd_junction_present"]),
+                fallback_rcsdroad_ids=";".join(str(item) for item in surface_scenario_doc["fallback_rcsdroad_ids"]),
+                surface_generation_mode=str(surface_scenario_doc["surface_generation_mode"]),
+                no_reference_point_reason=str(surface_scenario_doc["no_reference_point_reason"]),
                 reverse_tip_used=event_unit.reverse_tip_used,
                 rcsd_consistency_result=event_unit.rcsd_consistency_result,
                 positive_rcsd_support_level=event_unit.positive_rcsd_support_level,
@@ -556,6 +591,9 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
     positive_rcsd_support_counts = Counter(row.positive_rcsd_support_level or "unknown" for row in rows)
     positive_rcsd_consistency_counts = Counter(row.positive_rcsd_consistency_level or "unknown" for row in rows)
     positive_rcsd_present_counts = Counter("yes" if row.positive_rcsd_present else "no" for row in rows)
+    surface_scenario_type_counts = Counter(row.surface_scenario_type or "unknown" for row in rows)
+    main_evidence_type_counts = Counter(row.main_evidence_type or "none" for row in rows)
+    section_reference_source_counts = Counter(row.section_reference_source or "none" for row in rows)
     pair_local_rcsd_empty_counts = Counter("yes" if row.pair_local_rcsd_empty else "no" for row in rows)
     local_rcsd_unit_kind_counts = Counter(row.local_rcsd_unit_kind or "none" for row in rows)
     axis_polarity_inverted_counts = Counter("yes" if row.axis_polarity_inverted else "no" for row in rows)
@@ -593,6 +631,9 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
         "positive_rcsd_support_level_counts": dict(sorted(positive_rcsd_support_counts.items())),
         "positive_rcsd_consistency_level_counts": dict(sorted(positive_rcsd_consistency_counts.items())),
         "positive_rcsd_present_counts": dict(sorted(positive_rcsd_present_counts.items())),
+        "surface_scenario_type_counts": dict(sorted(surface_scenario_type_counts.items())),
+        "main_evidence_type_counts": dict(sorted(main_evidence_type_counts.items())),
+        "section_reference_source_counts": dict(sorted(section_reference_source_counts.items())),
         "pair_local_rcsd_empty_counts": dict(sorted(pair_local_rcsd_empty_counts.items())),
         "local_rcsd_unit_kind_counts": dict(sorted(local_rcsd_unit_kind_counts.items())),
         "axis_polarity_inverted_counts": dict(sorted(axis_polarity_inverted_counts.items())),

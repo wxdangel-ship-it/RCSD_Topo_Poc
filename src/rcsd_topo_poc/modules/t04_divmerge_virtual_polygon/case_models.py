@@ -21,6 +21,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
     ParsedNode,
     ParsedRoad,
 )
+from .surface_scenario import SurfaceScenarioClassification, classify_surface_scenario
 
 
 def _json_safe(value: Any) -> Any:
@@ -345,7 +346,24 @@ class T04EventUnitResult:
         candidate_id = str(self.selected_evidence_summary.get("candidate_id") or "").strip()
         return "found" if candidate_id else "none"
 
+    @property
+    def surface_scenario(self) -> SurfaceScenarioClassification:
+        return classify_surface_scenario(
+            evidence_source=self.evidence_source,
+            selected_evidence_summary=self.selected_evidence_summary,
+            rcsd_selection_mode=self.rcsd_selection_mode,
+            required_rcsd_node=self.required_rcsd_node,
+            first_hit_rcsdroad_ids=self.first_hit_rcsdroad_ids,
+            selected_rcsdroad_ids=self.selected_rcsdroad_ids,
+            positive_rcsd_audit=self.positive_rcsd_audit,
+            fact_reference_point_present=self.fact_reference_point is not None,
+        )
+
+    def surface_scenario_doc(self) -> dict[str, Any]:
+        return self.surface_scenario.to_doc()
+
     def to_summary_doc(self) -> dict[str, Any]:
+        surface_scenario = self.surface_scenario_doc()
         return _json_safe({
             "event_unit_id": self.spec.event_unit_id,
             "event_type": self.spec.event_type,
@@ -356,6 +374,7 @@ class T04EventUnitResult:
             "review_reasons": list(self.all_review_reasons()),
             "evidence_source": self.evidence_source,
             "position_source": self.position_source,
+            **surface_scenario,
             "reverse_tip_used": self.reverse_tip_used,
             "rcsd_consistency_result": self.rcsd_consistency_result,
             "pair_local_rcsd_road_ids": list(self.pair_local_rcsd_road_ids),
@@ -441,6 +460,17 @@ class T04ReviewIndexRow:
     position_source: str
     reverse_tip_used: bool
     rcsd_consistency_result: str
+    has_main_evidence: bool = False
+    main_evidence_type: str = "none"
+    reference_point_present: bool = False
+    reference_point_source: str = "none"
+    section_reference_source: str = "none"
+    surface_scenario_type: str = "no_surface_reference"
+    rcsd_match_type: str = "none"
+    swsd_junction_present: bool = False
+    fallback_rcsdroad_ids: str = ""
+    surface_generation_mode: str = "no_surface"
+    no_reference_point_reason: str = "no_surface_reference"
     positive_rcsd_support_level: str = ""
     positive_rcsd_consistency_level: str = ""
     positive_rcsd_present: bool = False
@@ -521,6 +551,17 @@ class T04ReviewIndexRow:
             "review_state": self.review_state,
             "evidence_source": self.evidence_source,
             "position_source": self.position_source,
+            "has_main_evidence": int(self.has_main_evidence),
+            "main_evidence_type": self.main_evidence_type,
+            "reference_point_present": int(self.reference_point_present),
+            "reference_point_source": self.reference_point_source,
+            "section_reference_source": self.section_reference_source,
+            "surface_scenario_type": self.surface_scenario_type,
+            "rcsd_match_type": self.rcsd_match_type,
+            "swsd_junction_present": int(self.swsd_junction_present),
+            "fallback_rcsdroad_ids": self.fallback_rcsdroad_ids,
+            "surface_generation_mode": self.surface_generation_mode,
+            "no_reference_point_reason": self.no_reference_point_reason,
             "reverse_tip_used": int(self.reverse_tip_used),
             "rcsd_consistency_result": self.rcsd_consistency_result,
             "positive_rcsd_support_level": self.positive_rcsd_support_level,

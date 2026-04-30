@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -36,6 +37,62 @@ STEP7_REJECTED_INDEX_JSON_NAME = "step7_rejected_index.json"
 STEP7_CONSISTENCY_REPORT_NAME = "step7_consistency_report.json"
 STEP7_ALLOWED_TOLERANCE_AREA_M2 = 1e-6
 STEP7_REJECT_STUB_BUFFER_M = 2.5
+STEP7_ALLOWED_FINAL_STATES = {"accepted", "rejected"}
+
+STEP7_SURFACE_SCENARIO_AUDIT_FIELDS = (
+    "surface_scenario_type",
+    "section_reference_source",
+    "surface_generation_mode",
+    "reference_point_present",
+    "surface_lateral_limit_m",
+    "post_cleanup_allowed_growth_ok",
+    "post_cleanup_forbidden_ok",
+    "post_cleanup_terminal_cut_ok",
+    "post_cleanup_lateral_limit_ok",
+    "post_cleanup_must_cover_ok",
+    "post_cleanup_recheck_performed",
+    "no_surface_reference_guard",
+    "final_polygon_suppressed_by_no_surface_reference",
+    "fallback_rcsdroad_ids",
+    "fallback_rcsdroad_localized",
+    "fallback_domain_contained_by_allowed_growth",
+    "fallback_overexpansion_detected",
+    "fallback_overexpansion_area_m2",
+    "divstrip_negative_mask_present",
+    "divstrip_negative_overlap_area_m2",
+    "forbidden_domain_kept",
+    "unit_surface_count",
+    "unit_surface_merge_performed",
+    "merge_mode",
+    "final_case_polygon_component_count",
+    "single_connected_case_surface_ok",
+    "surface_scenario_missing",
+)
+
+STEP7_SURFACE_SCENARIO_SUMMARY_FIELDNAMES = [
+    "surface_scenario_type",
+    "section_reference_source",
+    "surface_generation_mode",
+    "reference_point_present",
+    "surface_lateral_limit_m",
+    "post_cleanup_allowed_growth_ok",
+    "post_cleanup_forbidden_ok",
+    "post_cleanup_terminal_cut_ok",
+    "post_cleanup_lateral_limit_ok",
+    "post_cleanup_must_cover_ok",
+    "post_cleanup_recheck_performed",
+    "no_surface_reference_guard",
+    "final_polygon_suppressed_by_no_surface_reference",
+    "fallback_rcsdroad_localized",
+    "fallback_overexpansion_detected",
+    "divstrip_negative_mask_present",
+    "forbidden_domain_kept",
+    "unit_surface_count",
+    "unit_surface_merge_performed",
+    "merge_mode",
+    "final_case_polygon_component_count",
+    "single_connected_case_surface_ok",
+]
 
 STEP7_SUMMARY_FIELDNAMES = [
     "case_id",
@@ -53,6 +110,7 @@ STEP7_SUMMARY_FIELDNAMES = [
     "geometry_path",
     "audit_path",
     "review_png_path",
+    *STEP7_SURFACE_SCENARIO_SUMMARY_FIELDNAMES,
 ]
 
 STEP7_REJECTED_INDEX_FIELDNAMES = [
@@ -67,6 +125,12 @@ STEP7_REJECTED_INDEX_FIELDNAMES = [
     "reject_index_path",
     "audit_path",
     "review_png_path",
+    "surface_scenario_type",
+    "section_reference_source",
+    "surface_generation_mode",
+    "no_surface_reference_guard",
+    "final_polygon_suppressed_by_no_surface_reference",
+    "fallback_overexpansion_detected",
 ]
 
 
@@ -105,6 +169,187 @@ def _geometry_summary(geometry: BaseGeometry | None) -> dict[str, Any]:
 
 def _primary_reject_reason(reject_reasons: tuple[str, ...]) -> str:
     return str(reject_reasons[0]) if reject_reasons else ""
+
+
+def _text_attr(obj: Any, name: str, default: str = "missing") -> str:
+    value = getattr(obj, name, default)
+    text = str(value or "").strip()
+    return text or default
+
+
+def _bool_attr(obj: Any, name: str, default: bool = False) -> bool:
+    return bool(getattr(obj, name, default))
+
+
+def _float_attr(obj: Any, name: str, default: float | None = None) -> float | None:
+    value = getattr(obj, name, default)
+    if value is None:
+        return default
+    return float(value)
+
+
+def _tuple_text_attr(obj: Any, name: str) -> tuple[str, ...]:
+    value = getattr(obj, name, ()) or ()
+    if isinstance(value, str):
+        return (value,) if value else ()
+    return tuple(str(item) for item in value if str(item or "").strip())
+
+
+def derive_step7_surface_scenario_publish_audit(step6_result: T04Step6Result) -> dict[str, Any]:
+    return {
+        "surface_scenario_type": _text_attr(step6_result, "surface_scenario_type"),
+        "section_reference_source": _text_attr(step6_result, "section_reference_source"),
+        "surface_generation_mode": _text_attr(step6_result, "surface_generation_mode"),
+        "reference_point_present": _bool_attr(step6_result, "reference_point_present"),
+        "surface_lateral_limit_m": _float_attr(step6_result, "surface_lateral_limit_m"),
+        "post_cleanup_allowed_growth_ok": _bool_attr(step6_result, "post_cleanup_allowed_growth_ok", True),
+        "post_cleanup_forbidden_ok": _bool_attr(step6_result, "post_cleanup_forbidden_ok", True),
+        "post_cleanup_terminal_cut_ok": _bool_attr(step6_result, "post_cleanup_terminal_cut_ok", True),
+        "post_cleanup_lateral_limit_ok": _bool_attr(step6_result, "post_cleanup_lateral_limit_ok", True),
+        "post_cleanup_must_cover_ok": _bool_attr(step6_result, "post_cleanup_must_cover_ok", True),
+        "post_cleanup_recheck_performed": _bool_attr(step6_result, "post_cleanup_recheck_performed"),
+        "no_surface_reference_guard": _bool_attr(step6_result, "no_surface_reference_guard"),
+        "final_polygon_suppressed_by_no_surface_reference": _bool_attr(
+            step6_result,
+            "final_polygon_suppressed_by_no_surface_reference",
+        ),
+        "fallback_rcsdroad_ids": list(_tuple_text_attr(step6_result, "fallback_rcsdroad_ids")),
+        "fallback_rcsdroad_localized": _bool_attr(step6_result, "fallback_rcsdroad_localized"),
+        "fallback_domain_contained_by_allowed_growth": _bool_attr(
+            step6_result,
+            "fallback_domain_contained_by_allowed_growth",
+            True,
+        ),
+        "fallback_overexpansion_detected": _bool_attr(step6_result, "fallback_overexpansion_detected"),
+        "fallback_overexpansion_area_m2": _float_attr(step6_result, "fallback_overexpansion_area_m2", 0.0),
+        "divstrip_negative_mask_present": _bool_attr(step6_result, "divstrip_negative_mask_present"),
+        "divstrip_negative_overlap_area_m2": _float_attr(step6_result, "divstrip_negative_overlap_area_m2", 0.0),
+        "forbidden_domain_kept": _bool_attr(step6_result, "forbidden_domain_kept"),
+        "unit_surface_count": int(getattr(step6_result, "unit_surface_count", 0) or 0),
+        "unit_surface_merge_performed": _bool_attr(step6_result, "unit_surface_merge_performed"),
+        "merge_mode": _text_attr(step6_result, "merge_mode", "case_level_assembly"),
+        "final_case_polygon_component_count": int(
+            getattr(step6_result, "final_case_polygon_component_count", 0) or 0
+        ),
+        "single_connected_case_surface_ok": _bool_attr(step6_result, "single_connected_case_surface_ok"),
+        "surface_scenario_missing": _bool_attr(step6_result, "surface_scenario_missing", True),
+    }
+
+
+def _step6_guard_feature_properties(step6_guard_audit: dict[str, Any]) -> dict[str, Any]:
+    properties = {
+        key: step6_guard_audit.get(key)
+        for key in STEP7_SURFACE_SCENARIO_AUDIT_FIELDS
+        if key in step6_guard_audit
+    }
+    properties["fallback_rcsdroad_ids"] = "|".join(
+        str(item) for item in step6_guard_audit.get("fallback_rcsdroad_ids", []) if str(item or "").strip()
+    )
+    return properties
+
+
+def _guard_doc_from_artifact(artifact: Any) -> dict[str, Any]:
+    audit_doc = dict(getattr(artifact, "audit_doc", {}) or {})
+    guard_doc = audit_doc.get("step6_guard_audit")
+    if isinstance(guard_doc, dict):
+        return dict(guard_doc)
+    return {
+        key: audit_doc.get(key)
+        for key in STEP7_SURFACE_SCENARIO_AUDIT_FIELDS
+        if key in audit_doc
+    }
+
+
+def collect_surface_scenario_summary_counts(artifacts: Iterable[Any]) -> dict[str, Any]:
+    ordered_artifacts = list(artifacts)
+    guard_docs = [_guard_doc_from_artifact(item) for item in ordered_artifacts]
+    final_state_counts = Counter(str(getattr(item, "final_state", "") or "missing") for item in ordered_artifacts)
+    surface_scenario_type_counts = Counter(
+        str(doc.get("surface_scenario_type") or "missing") for doc in guard_docs
+    )
+    section_reference_source_counts = Counter(
+        str(doc.get("section_reference_source") or "missing") for doc in guard_docs
+    )
+    surface_generation_mode_counts = Counter(
+        str(doc.get("surface_generation_mode") or "missing") for doc in guard_docs
+    )
+    no_surface_reference_case_ids = [
+        str(getattr(artifact, "case_id", ""))
+        for artifact, doc in zip(ordered_artifacts, guard_docs)
+        if doc.get("surface_scenario_type") == "no_surface_reference"
+        or bool(doc.get("no_surface_reference_guard"))
+    ]
+    return {
+        "step7_final_state_counts": dict(sorted(final_state_counts.items())),
+        "surface_scenario_type_counts": dict(sorted(surface_scenario_type_counts.items())),
+        "section_reference_source_counts": dict(sorted(section_reference_source_counts.items())),
+        "surface_generation_mode_counts": dict(sorted(surface_generation_mode_counts.items())),
+        "post_cleanup_allowed_growth_fail_count": sum(
+            1 for doc in guard_docs if doc.get("post_cleanup_allowed_growth_ok") is False
+        ),
+        "post_cleanup_forbidden_fail_count": sum(
+            1 for doc in guard_docs if doc.get("post_cleanup_forbidden_ok") is False
+        ),
+        "post_cleanup_terminal_cut_fail_count": sum(
+            1 for doc in guard_docs if doc.get("post_cleanup_terminal_cut_ok") is False
+        ),
+        "no_surface_reference_count": len(no_surface_reference_case_ids),
+        "no_surface_reference_case_ids": sorted(no_surface_reference_case_ids, key=sort_patch_key),
+        "fallback_overexpansion_count": sum(
+            1 for doc in guard_docs if bool(doc.get("fallback_overexpansion_detected"))
+        ),
+        "divstrip_negative_mask_present_count": sum(
+            1 for doc in guard_docs if bool(doc.get("divstrip_negative_mask_present"))
+        ),
+    }
+
+
+def _step7_guard_mapping_issues(artifacts: Iterable[T04Step7CaseArtifact]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for artifact in artifacts:
+        guard_doc = _guard_doc_from_artifact(artifact)
+        reject_reasons = set(str(reason) for reason in artifact.reject_reasons)
+        expected_checks = [
+            ("post_cleanup_allowed_growth_ok", "allowed_growth_conflict"),
+            ("post_cleanup_forbidden_ok", "forbidden_conflict"),
+            ("post_cleanup_terminal_cut_ok", "terminal_cut_conflict"),
+            ("post_cleanup_lateral_limit_ok", "allowed_growth_conflict"),
+            ("post_cleanup_must_cover_ok", "hard_must_cover_disconnected"),
+        ]
+        for field_name, expected_reason in expected_checks:
+            if guard_doc.get(field_name) is False and expected_reason not in reject_reasons:
+                issues.append(
+                    {
+                        "case_id": artifact.case_id,
+                        "field": field_name,
+                        "expected_reject_reason": expected_reason,
+                    }
+                )
+        if bool(guard_doc.get("fallback_overexpansion_detected")) and "fallback_overexpansion_detected" not in reject_reasons:
+            issues.append(
+                {
+                    "case_id": artifact.case_id,
+                    "field": "fallback_overexpansion_detected",
+                    "expected_reject_reason": "fallback_overexpansion_detected",
+                }
+            )
+        if bool(guard_doc.get("no_surface_reference_guard")) and "no_surface_reference" not in reject_reasons:
+            issues.append(
+                {
+                    "case_id": artifact.case_id,
+                    "field": "no_surface_reference_guard",
+                    "expected_reject_reason": "no_surface_reference",
+                }
+            )
+        if guard_doc.get("single_connected_case_surface_ok") is False and "multi_component_result" not in reject_reasons:
+            issues.append(
+                {
+                    "case_id": artifact.case_id,
+                    "field": "single_connected_case_surface_ok",
+                    "expected_reject_reason": "multi_component_result",
+                }
+            )
+    return issues
 
 
 def _flat_review_png_path(run_root: Path, case_id: str) -> Path:
@@ -244,17 +489,43 @@ def _reject_reasons(
     final_case_polygon = _normalize_geometry(step6_result.final_case_polygon)
     if final_case_polygon is None or final_case_polygon.is_empty:
         reasons.append("final_polygon_missing")
+    if (
+        getattr(step6_result, "no_surface_reference_guard", False)
+        or getattr(step6_result, "final_polygon_suppressed_by_no_surface_reference", False)
+        or getattr(step6_result, "surface_scenario_type", "") == "no_surface_reference"
+        or getattr(step6_result, "surface_generation_mode", "") == "no_surface"
+    ):
+        reasons.append("final_polygon_missing")
+        reasons.append("no_surface_reference")
+        if getattr(step6_result, "final_polygon_suppressed_by_no_surface_reference", False):
+            reasons.append("final_polygon_suppressed_by_no_surface_reference")
     if step6_result.component_count != 1:
         reasons.append("multi_component_result")
+    if not getattr(step6_result, "single_connected_case_surface_ok", step6_result.component_count == 1):
+        reasons.append("multi_component_result")
     if not step6_result.hard_must_cover_ok:
+        reasons.append("hard_must_cover_disconnected")
+    if not getattr(step6_result, "post_cleanup_must_cover_ok", True):
         reasons.append("hard_must_cover_disconnected")
     if not step6_result.b_node_target_covered:
         reasons.append("b_node_not_covered")
     if step6_result.forbidden_overlap_area_m2 > STEP7_ALLOWED_TOLERANCE_AREA_M2:
         reasons.append("forbidden_conflict")
+    if not getattr(step6_result, "post_cleanup_forbidden_ok", True):
+        reasons.append("forbidden_conflict")
     if allowed_outside_area_m2 > STEP7_ALLOWED_TOLERANCE_AREA_M2:
         reasons.append("allowed_growth_conflict")
+    if not getattr(step6_result, "post_cleanup_allowed_growth_ok", True):
+        reasons.append("allowed_growth_conflict")
+    if not getattr(step6_result, "post_cleanup_lateral_limit_ok", True):
+        reasons.append("allowed_growth_conflict")
+        reasons.append("lateral_limit_conflict")
+    if getattr(step6_result, "fallback_overexpansion_detected", False):
+        reasons.append("allowed_growth_conflict")
+        reasons.append("fallback_overexpansion_detected")
     if step6_result.cut_violation:
+        reasons.append("terminal_cut_conflict")
+    if not getattr(step6_result, "post_cleanup_terminal_cut_ok", True):
         reasons.append("terminal_cut_conflict")
     if step6_result.unexpected_hole_count > 0:
         reasons.append("unexpected_hole_present")
@@ -269,6 +540,23 @@ def _reject_reasons(
         seen.add(text)
         deduped.append(text)
     return tuple(deduped)
+
+
+def derive_step7_reject_reason_from_step6_guards(
+    step6_result: T04Step6Result,
+    *,
+    allowed_outside_area_m2: float = 0.0,
+) -> dict[str, Any]:
+    reject_reasons = _reject_reasons(
+        step6_result=step6_result,
+        allowed_outside_area_m2=allowed_outside_area_m2,
+    )
+    return {
+        "final_state": "accepted" if not reject_reasons else "rejected",
+        "reject_reasons": list(reject_reasons),
+        "reject_reason": _primary_reject_reason(reject_reasons),
+        "reject_reason_detail": "|".join(reject_reasons),
+    }
 
 
 @dataclass(frozen=True)
@@ -307,6 +595,8 @@ def build_step7_case_artifact(
     )
     final_state = "accepted" if not reject_reasons else "rejected"
     publish_target = "accepted_layer" if final_state == "accepted" else "rejected_index"
+    step6_guard_audit = derive_step7_surface_scenario_publish_audit(step6_result)
+    step6_guard_properties = _step6_guard_feature_properties(step6_guard_audit)
 
     required_rcsd_node_ids = _required_rcsd_node_ids(case_result)
     required_rcsd_node_ids_text = "|".join(required_rcsd_node_ids)
@@ -351,10 +641,13 @@ def build_step7_case_artifact(
         "reject_reasons": list(reject_reasons),
         "unit_states_rollup": unit_states_rollup,
         "published_layer_target": publish_target,
+        "step6_guard_audit": step6_guard_audit,
+        **step6_guard_audit,
     }
     audit_doc = {
         "case_id": case_result.case_spec.case_id,
         "assembly_state": step6_result.assembly_state,
+        "step6_guard_audit": step6_guard_audit,
         "hard_gate_checks": {
             "has_final_case_polygon": bool(final_case_polygon is not None and not final_case_polygon.is_empty),
             "single_component": step6_result.component_count == 1,
@@ -364,6 +657,14 @@ def build_step7_case_artifact(
             "allowed_growth_ok": allowed_outside_area_m2 <= STEP7_ALLOWED_TOLERANCE_AREA_M2,
             "cut_violation_free": not step6_result.cut_violation,
             "hole_valid": hole_valid,
+            "post_cleanup_allowed_growth_ok": step6_guard_audit["post_cleanup_allowed_growth_ok"],
+            "post_cleanup_forbidden_ok": step6_guard_audit["post_cleanup_forbidden_ok"],
+            "post_cleanup_terminal_cut_ok": step6_guard_audit["post_cleanup_terminal_cut_ok"],
+            "post_cleanup_lateral_limit_ok": step6_guard_audit["post_cleanup_lateral_limit_ok"],
+            "post_cleanup_must_cover_ok": step6_guard_audit["post_cleanup_must_cover_ok"],
+            "post_cleanup_recheck_performed": step6_guard_audit["post_cleanup_recheck_performed"],
+            "no_surface_reference_guard": step6_guard_audit["no_surface_reference_guard"],
+            "fallback_overexpansion_detected": step6_guard_audit["fallback_overexpansion_detected"],
         },
         "must_cover_coverage": {
             "hard_must_cover_ok": step6_result.hard_must_cover_ok,
@@ -395,6 +696,7 @@ def build_step7_case_artifact(
             "case_final_review_png_path": str(review_png_path),
         },
         "reject_reasons": list(reject_reasons),
+        **step6_guard_audit,
     }
     reject_index_doc = {
         "case_id": case_result.case_spec.case_id,
@@ -403,6 +705,7 @@ def build_step7_case_artifact(
         "reject_reason_detail": reject_reason_detail,
         "reject_stub_path": str(case_reject_stub_path),
         "published_layer_target": publish_target,
+        **step6_guard_audit,
     }
 
     accepted_feature = None
@@ -423,6 +726,7 @@ def build_step7_case_artifact(
                 "hole_count": step6_result.business_hole_count,
                 "area_m2": float(final_case_polygon.area),
                 "perimeter_m": float(final_case_polygon.length),
+                **step6_guard_properties,
             },
             "geometry": final_case_polygon,
         }
@@ -446,6 +750,7 @@ def build_step7_case_artifact(
                 "required_rcsd_node_ids": required_rcsd_node_ids_text,
                 "rcsd_profile": rcsd_profile,
                 "swsd_relation_type": swsd_relation_type,
+                **step6_guard_properties,
             },
             "geometry": reject_stub_geometry,
         }
@@ -472,6 +777,7 @@ def build_step7_case_artifact(
             "reject_reason": reject_reason,
             "reject_reason_detail": reject_reason_detail,
             "publish_target": publish_target,
+            **step6_guard_properties,
         },
         "geometry": audit_feature_geometry,
     }
@@ -497,6 +803,10 @@ def build_step7_case_artifact(
         "geometry_path": geometry_path,
         "audit_path": str(case_step7_audit_path),
         "review_png_path": str(review_png_path),
+        **{
+            key: step6_guard_properties.get(key)
+            for key in STEP7_SURFACE_SCENARIO_SUMMARY_FIELDNAMES
+        },
     }
     reject_stub_feature = (
         {
@@ -564,6 +874,7 @@ def write_step7_batch_outputs(
             case_review_png_path=str(item.summary_row["review_png_path"]),
         )
         summary_rows.append(row)
+    surface_scenario_summary_counts = collect_surface_scenario_summary_counts(ordered_artifacts)
 
     accepted_path = run_root / STEP7_ACCEPTED_LAYER_NAME
     rejected_path = run_root / STEP7_REJECTED_LAYER_NAME
@@ -586,6 +897,7 @@ def write_step7_batch_outputs(
             "row_count": len(summary_rows),
             "accepted_count": sum(1 for item in ordered_artifacts if item.final_state == "accepted"),
             "rejected_count": sum(1 for item in ordered_artifacts if item.final_state == "rejected"),
+            **surface_scenario_summary_counts,
             "rows": summary_rows,
         },
     )
@@ -606,6 +918,15 @@ def write_step7_batch_outputs(
                 case_id=item.case_id,
                 case_review_png_path=str(item.summary_row["review_png_path"]),
             ),
+            "surface_scenario_type": item.summary_row.get("surface_scenario_type", "missing"),
+            "section_reference_source": item.summary_row.get("section_reference_source", "missing"),
+            "surface_generation_mode": item.summary_row.get("surface_generation_mode", "missing"),
+            "no_surface_reference_guard": item.summary_row.get("no_surface_reference_guard", False),
+            "final_polygon_suppressed_by_no_surface_reference": item.summary_row.get(
+                "final_polygon_suppressed_by_no_surface_reference",
+                False,
+            ),
+            "fallback_overexpansion_detected": item.summary_row.get("fallback_overexpansion_detected", False),
         }
         for item in ordered_artifacts
         if item.final_state == "rejected"
@@ -634,6 +955,7 @@ def write_step7_batch_outputs(
         item.case_id
         for item in ordered_artifacts
         if item.final_state == "rejected"
+        and item.reject_stub_feature is not None
         and not Path(run_root / "cases" / item.case_id / "reject_stub.geojson").is_file()
     )
     missing_reject_index_case_ids = sorted(
@@ -652,6 +974,48 @@ def write_step7_batch_outputs(
         for item in ordered_artifacts
         if not Path(run_root / "cases" / item.case_id / "step7_audit.json").is_file()
     )
+    unexpected_final_state_values = sorted(
+        {
+            str(item.final_state)
+            for item in ordered_artifacts
+            if str(item.final_state) not in STEP7_ALLOWED_FINAL_STATES
+        }
+    )
+    accepted_layer_nonaccepted_count = sum(
+        1
+        for feature in accepted_features
+        if str((feature.get("properties") or {}).get("final_state") or "") != "accepted"
+    )
+    rejected_layer_nonrejected_count = sum(
+        1
+        for feature in rejected_features
+        if str((feature.get("properties") or {}).get("final_state") or "") != "rejected"
+    )
+    no_surface_reference_accepted_case_ids = sorted(
+        item.case_id
+        for item in ordered_artifacts
+        if item.final_state == "accepted"
+        and (
+            _guard_doc_from_artifact(item).get("surface_scenario_type") == "no_surface_reference"
+            or bool(_guard_doc_from_artifact(item).get("no_surface_reference_guard"))
+        )
+    )
+    step6_guard_field_missing_case_ids = sorted(
+        item.case_id
+        for item in ordered_artifacts
+        if any(field not in _guard_doc_from_artifact(item) for field in STEP7_SURFACE_SCENARIO_AUDIT_FIELDS)
+    )
+    step6_guard_mapping_issues = _step7_guard_mapping_issues(ordered_artifacts)
+    step7_guard_consistency_passed = not any(
+        [
+            unexpected_final_state_values,
+            accepted_layer_nonaccepted_count,
+            rejected_layer_nonrejected_count,
+            no_surface_reference_accepted_case_ids,
+            step6_guard_field_missing_case_ids,
+            step6_guard_mapping_issues,
+        ]
+    )
     consistency_report = {
         **batch_provenance,
         "passed": not any(
@@ -661,11 +1025,33 @@ def write_step7_batch_outputs(
                 missing_reject_index_case_ids,
                 missing_step7_status_case_ids,
                 missing_step7_audit_case_ids,
+                unexpected_final_state_values,
+                accepted_layer_nonaccepted_count,
+                rejected_layer_nonrejected_count,
+                no_surface_reference_accepted_case_ids,
+                step6_guard_field_missing_case_ids,
+                step6_guard_mapping_issues,
             ]
         ),
         "total_case_count": len(ordered_artifacts),
         "accepted_count": sum(1 for item in ordered_artifacts if item.final_state == "accepted"),
         "rejected_count": sum(1 for item in ordered_artifacts if item.final_state == "rejected"),
+        **surface_scenario_summary_counts,
+        "step7_allowed_final_states": sorted(STEP7_ALLOWED_FINAL_STATES),
+        "unexpected_final_state_values": unexpected_final_state_values,
+        "accepted_layer_only_accepted": accepted_layer_nonaccepted_count == 0,
+        "accepted_layer_nonaccepted_count": accepted_layer_nonaccepted_count,
+        "rejected_layer_only_rejected": rejected_layer_nonrejected_count == 0,
+        "rejected_layer_nonrejected_count": rejected_layer_nonrejected_count,
+        "no_surface_reference_accepted_case_ids": no_surface_reference_accepted_case_ids,
+        "step6_guard_fields_present": not step6_guard_field_missing_case_ids,
+        "step6_guard_field_missing_case_ids": step6_guard_field_missing_case_ids,
+        "step6_guard_failure_reject_mapping_passed": not step6_guard_mapping_issues,
+        "step6_guard_failure_reject_mapping_issues": step6_guard_mapping_issues,
+        "nodes_writeback_rule": "accepted->yes; rejected/runtime_failed/formal_result_missing->fail4",
+        "nodes_writeback_checked_in_step7_consistency_report": False,
+        "nodes_writeback_check_reason": "nodes_publish owns downstream node materialization and preserves the existing value domain",
+        "step7_guard_consistency_passed": step7_guard_consistency_passed,
         "accepted_layer_feature_count": len(accepted_features),
         "rejected_layer_feature_count": len(rejected_features),
         "audit_layer_feature_count": len(audit_features),
@@ -699,6 +1085,7 @@ def write_step7_batch_outputs(
         "consistency_report_path": str(consistency_report_path),
         "accepted_count": sum(1 for item in ordered_artifacts if item.final_state == "accepted"),
         "rejected_count": sum(1 for item in ordered_artifacts if item.final_state == "rejected"),
+        **surface_scenario_summary_counts,
     }
 
 
@@ -706,6 +1093,9 @@ __all__ = [
     "STEP7_CASE_FINAL_REVIEW_NAME",
     "T04Step7CaseArtifact",
     "build_step7_case_artifact",
+    "collect_surface_scenario_summary_counts",
+    "derive_step7_reject_reason_from_step6_guards",
+    "derive_step7_surface_scenario_publish_audit",
     "write_step7_batch_outputs",
     "write_step7_case_outputs",
 ]

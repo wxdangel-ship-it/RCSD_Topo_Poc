@@ -697,6 +697,14 @@ def write_summary(
                 "step7_consistency_report": step7_outputs.get("consistency_report_path"),
                 "step7_accepted_count": step7_outputs.get("accepted_count"),
                 "step7_rejected_count": step7_outputs.get("rejected_count"),
+                "step7_surface_scenario_type_counts": step7_outputs.get("surface_scenario_type_counts"),
+                "step7_section_reference_source_counts": step7_outputs.get("section_reference_source_counts"),
+                "step7_surface_generation_mode_counts": step7_outputs.get("surface_generation_mode_counts"),
+                "step7_no_surface_reference_count": step7_outputs.get("no_surface_reference_count"),
+                "step7_fallback_overexpansion_count": step7_outputs.get("fallback_overexpansion_count"),
+                "step7_divstrip_negative_mask_present_count": step7_outputs.get(
+                    "divstrip_negative_mask_present_count"
+                ),
             }
         )
     if nodes_outputs:

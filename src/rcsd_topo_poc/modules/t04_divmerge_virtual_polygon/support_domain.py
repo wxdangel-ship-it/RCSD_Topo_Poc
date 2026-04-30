@@ -12,6 +12,7 @@ from ._rcsd_selection_support import _as_point, _normalize_geometry, _union_geom
 from ._runtime_types_io import ParsedRoad
 from .case_models import T04CaseResult, T04EventUnitResult
 from .surface_scenario import (
+    SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
     SCENARIO_NO_SURFACE_REFERENCE,
     SECTION_REFERENCE_NONE,
     SECTION_REFERENCE_POINT,
@@ -1366,6 +1367,7 @@ class T04Step5UnitResult:
     no_virtual_reference_point_guard: bool = True
     divstrip_negative_mask_present: bool = False
     forbidden_domain_kept: bool = False
+    swsd_only_entity_support_domain: bool = False
 
     def to_status_doc(self) -> dict[str, Any]:
         return {
@@ -1395,6 +1397,7 @@ class T04Step5UnitResult:
             "no_virtual_reference_point_guard": self.no_virtual_reference_point_guard,
             "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
             "forbidden_domain_kept": self.forbidden_domain_kept,
+            "swsd_only_entity_support_domain": self.swsd_only_entity_support_domain,
             "surface_fill_mode": self.surface_fill_mode,
             "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
             "single_component_surface_seed": self.single_component_surface_seed,
@@ -1437,6 +1440,7 @@ class T04Step5UnitResult:
             "no_virtual_reference_point_guard": self.no_virtual_reference_point_guard,
             "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
             "forbidden_domain_kept": self.forbidden_domain_kept,
+            "swsd_only_entity_support_domain": self.swsd_only_entity_support_domain,
             "surface_fill_mode": self.surface_fill_mode,
             "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
             "single_component_surface_seed": self.single_component_surface_seed,
@@ -1936,6 +1940,15 @@ def _build_step5_unit_result(
         "target_b_node_patch_geometry": target_b_node_patch_geometry is not None,
     }
     fallback_summary = _geometry_summary(fallback_support_strip_geometry)
+    swsd_only_entity_support_domain = bool(
+        config.surface_scenario_type == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
+        and junction_full_road_fill_domain is not None
+        and not junction_full_road_fill_domain.is_empty
+        and unit_must_cover_domain is not None
+        and not unit_must_cover_domain.is_empty
+        and unit_allowed_growth_domain is not None
+        and not unit_allowed_growth_domain.is_empty
+    )
     return T04Step5UnitResult(
         event_unit_id=unit_result.spec.event_unit_id,
         event_type=unit_result.spec.event_type,
@@ -1985,6 +1998,7 @@ def _build_step5_unit_result(
         ),
         divstrip_negative_mask_present=divstrip_negative_mask_present,
         forbidden_domain_kept=case_external_forbidden_geometry is not None,
+        swsd_only_entity_support_domain=swsd_only_entity_support_domain,
     )
 
 

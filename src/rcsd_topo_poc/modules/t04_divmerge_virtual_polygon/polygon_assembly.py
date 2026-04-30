@@ -20,7 +20,11 @@ from ._runtime_types_io import (
 )
 from .case_models import T04CaseResult
 from .support_domain import T04Step5CaseResult, T04Step5UnitResult
-from .surface_scenario import SCENARIO_NO_SURFACE_REFERENCE, SURFACE_MODE_NO_SURFACE
+from .surface_scenario import (
+    SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
+    SCENARIO_NO_SURFACE_REFERENCE,
+    SURFACE_MODE_NO_SURFACE,
+)
 
 
 STEP6_GRID_MARGIN_M = 30.0
@@ -83,6 +87,10 @@ def _full_fill_target_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry
     return _normalize_geometry(
         _union_geometry(unit.junction_full_road_fill_domain for unit in step5_result.unit_results)
     )
+
+
+def _is_swsd_only_surface(guard_context: "Step6GuardContext") -> bool:
+    return guard_context.surface_scenario_type == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
 
 
 def _uses_single_component_surface_seed(step5_result: T04Step5CaseResult) -> bool:
@@ -668,6 +676,9 @@ class T04Step6Result:
     merged_case_surface_component_count: int = 0
     final_case_polygon_component_count: int = 0
     single_connected_case_surface_ok: bool = False
+    b_node_gate_applicable: bool = True
+    b_node_gate_skip_reason: str = ""
+    section_reference_window_covered: bool = True
 
     def to_status_doc(self) -> dict[str, Any]:
         return {
@@ -691,6 +702,9 @@ class T04Step6Result:
             "unexpected_hole_count": self.unexpected_hole_count,
             "hard_must_cover_ok": self.hard_must_cover_ok,
             "b_node_target_covered": self.b_node_target_covered,
+            "b_node_gate_applicable": self.b_node_gate_applicable,
+            "b_node_gate_skip_reason": self.b_node_gate_skip_reason,
+            "section_reference_window_covered": self.section_reference_window_covered,
             "forbidden_overlap_area_m2": self.forbidden_overlap_area_m2,
             "cut_violation": self.cut_violation,
             "post_cleanup_allowed_growth_ok": self.post_cleanup_allowed_growth_ok,
@@ -743,6 +757,9 @@ class T04Step6Result:
             "section_reference_source": self.section_reference_source,
             "surface_generation_mode": self.surface_generation_mode,
             "surface_lateral_limit_m": self.surface_lateral_limit_m,
+            "b_node_gate_applicable": self.b_node_gate_applicable,
+            "b_node_gate_skip_reason": self.b_node_gate_skip_reason,
+            "section_reference_window_covered": self.section_reference_window_covered,
             "surface_scenario_missing": self.surface_scenario_missing,
             "no_surface_reference_guard": self.no_surface_reference_guard,
             "final_polygon_suppressed_by_no_surface_reference": self.final_polygon_suppressed_by_no_surface_reference,
@@ -811,6 +828,9 @@ def build_step6_polygon_assembly(
             no_surface_reference_guard=True,
             final_polygon_suppressed_by_no_surface_reference=True,
             no_virtual_reference_point_guard=guard_context.no_virtual_reference_point_guard,
+            b_node_gate_applicable=False,
+            b_node_gate_skip_reason="no_surface_reference",
+            section_reference_window_covered=False,
             fallback_rcsdroad_ids=guard_context.fallback_rcsdroad_ids,
             fallback_rcsdroad_localized=guard_context.fallback_rcsdroad_localized,
             forbidden_domain_kept=guard_context.forbidden_domain_kept,
@@ -879,10 +899,15 @@ def build_step6_polygon_assembly(
     if full_fill_target_geometry is not None and not full_fill_target_geometry.is_empty:
         core_seed_requested_mask = _rasterize_geometries(grid, [core_hard_seed_geometry])
         full_fill_requested_mask = _rasterize_geometries(grid, [full_fill_target_geometry])
-        effective_full_fill_mask = _extract_seed_component(
-            full_fill_requested_mask & assembly_canvas_mask,
-            core_seed_requested_mask & assembly_canvas_mask,
-        )
+        full_fill_canvas_mask = full_fill_requested_mask & assembly_canvas_mask
+        core_seed_canvas_mask = core_seed_requested_mask & assembly_canvas_mask
+        if _is_swsd_only_surface(guard_context) and not core_seed_canvas_mask.any():
+            effective_full_fill_mask = full_fill_canvas_mask
+        else:
+            effective_full_fill_mask = _extract_seed_component(
+                full_fill_canvas_mask,
+                core_seed_canvas_mask,
+            )
         hard_seed_requested_mask = core_seed_requested_mask | effective_full_fill_mask
     hard_seed_mask = hard_seed_requested_mask & assembly_canvas_mask
     hard_seed_geometry = _constrain_geometry_to_case_limits(
@@ -1013,15 +1038,32 @@ def build_step6_polygon_assembly(
         and hard_seed_geometry is not None
         and final_case_polygon.buffer(1e-6).covers(hard_seed_geometry)
     )
-    b_node_target_covered = True
-    if final_case_polygon is None or final_case_polygon.is_empty:
-        b_node_target_covered = False
-    elif (
+    target_b_present = bool(
         target_b_effective_geometry is not None
         and not target_b_effective_geometry.is_empty
-        and not final_case_polygon.buffer(1e-6).covers(target_b_effective_geometry)
-    ):
+    )
+    b_node_gate_applicable = True
+    b_node_gate_skip_reason = ""
+    if not target_b_present and _is_swsd_only_surface(guard_context):
+        b_node_gate_applicable = False
+        b_node_gate_skip_reason = "swsd_only_without_b_target"
+
+    b_node_target_covered = True
+    if not b_node_gate_applicable:
+        b_node_target_covered = True
+    elif final_case_polygon is None or final_case_polygon.is_empty:
         b_node_target_covered = False
+    elif target_b_present and not final_case_polygon.buffer(1e-6).covers(target_b_effective_geometry):
+        b_node_target_covered = False
+    section_reference_window_covered = True
+    if _is_swsd_only_surface(guard_context):
+        section_reference_window_covered = bool(
+            final_case_polygon is not None
+            and not final_case_polygon.is_empty
+            and hard_seed_geometry is not None
+            and not hard_seed_geometry.is_empty
+            and final_case_polygon.buffer(1e-6).covers(hard_seed_geometry)
+        )
     post_checks = check_post_cleanup_constraints(
         final_case_polygon=final_case_polygon,
         step5_result=step5_result,
@@ -1050,7 +1092,7 @@ def build_step6_polygon_assembly(
         review_reasons.append("fallback_overexpansion")
     if unexpected_hole_count > 0:
         review_reasons.append("unexpected_hole_present")
-    if not b_node_target_covered:
+    if b_node_gate_applicable and not b_node_target_covered:
         review_reasons.append("b_node_not_covered")
     review_reasons = list(dict.fromkeys(review_reasons))
 
@@ -1076,6 +1118,9 @@ def build_step6_polygon_assembly(
         unexpected_hole_count=unexpected_hole_count,
         hard_must_cover_ok=hard_must_cover_ok,
         b_node_target_covered=b_node_target_covered,
+        b_node_gate_applicable=b_node_gate_applicable,
+        b_node_gate_skip_reason=b_node_gate_skip_reason,
+        section_reference_window_covered=section_reference_window_covered,
         forbidden_overlap_area_m2=forbidden_overlap_area_m2,
         cut_violation=cut_violation,
         assembly_state=assembly_state,

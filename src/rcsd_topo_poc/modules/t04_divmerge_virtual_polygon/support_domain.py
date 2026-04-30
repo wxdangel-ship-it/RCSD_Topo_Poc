@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import combinations
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
@@ -11,6 +11,19 @@ from shapely.ops import nearest_points
 from ._rcsd_selection_support import _as_point, _normalize_geometry, _union_geometry
 from ._runtime_types_io import ParsedRoad
 from .case_models import T04CaseResult, T04EventUnitResult
+from .surface_scenario import (
+    SCENARIO_NO_SURFACE_REFERENCE,
+    SECTION_REFERENCE_NONE,
+    SECTION_REFERENCE_POINT,
+    SECTION_REFERENCE_POINT_AND_RCSD,
+    SECTION_REFERENCE_RCSD,
+    SECTION_REFERENCE_SWSD,
+    SURFACE_MODE_NO_SURFACE,
+    SURFACE_MODE_RCSD_WINDOW,
+    SURFACE_MODE_SWSD_WINDOW,
+    SURFACE_MODE_SWSD_WITH_RCSDROAD,
+    classify_surface_scenario,
+)
 
 
 STEP5_POINT_PATCH_RADIUS_M = 2.5
@@ -31,10 +44,115 @@ STEP5_JUNCTION_WINDOW_HALF_LENGTH_M = 20.0
 STEP5_FULL_ROAD_FILL_AXIS_HALF_WIDTH_M = 20.0
 STEP5_FULL_FILL_BRIDGE_MAX_DISTANCE_M = 8.0
 STEP5_FULL_FILL_BRIDGE_MAX_EXISTING_OVERLAP_M2 = 25.0
+STEP5_SURFACE_SECTION_FORWARD_M = 20.0
+STEP5_SURFACE_SECTION_BACKWARD_M = 20.0
+STEP5_SURFACE_LATERAL_LIMIT_M = 20.0
 STEP5_JUNCTION_WINDOW_EVIDENCE_SOURCES = {
     "swsd_junction_window",
     "rcsd_junction_window",
 }
+
+
+@dataclass(frozen=True)
+class Step5SurfaceWindowConfig:
+    surface_scenario_type: str
+    section_reference_source: str
+    surface_generation_mode: str
+    reference_point_present: bool
+    has_main_evidence: bool
+    surface_scenario_missing: bool
+    support_domain_from_reference_kind: str
+    fallback_rcsdroad_ids: tuple[str, ...]
+    fallback_local_window_m: float | None
+    fallback_rcsdroad_localized: bool
+    no_virtual_reference_point_guard: bool
+    surface_section_forward_m: float = STEP5_SURFACE_SECTION_FORWARD_M
+    surface_section_backward_m: float = STEP5_SURFACE_SECTION_BACKWARD_M
+    surface_lateral_limit_m: float = STEP5_SURFACE_LATERAL_LIMIT_M
+
+    @property
+    def entity_support_enabled(self) -> bool:
+        return (
+            self.surface_scenario_type != SCENARIO_NO_SURFACE_REFERENCE
+            and self.section_reference_source != SECTION_REFERENCE_NONE
+            and self.surface_generation_mode != SURFACE_MODE_NO_SURFACE
+        )
+
+    def to_doc(self) -> dict[str, Any]:
+        return {
+            "surface_scenario_type": self.surface_scenario_type,
+            "section_reference_source": self.section_reference_source,
+            "surface_generation_mode": self.surface_generation_mode,
+            "reference_point_present": self.reference_point_present,
+            "has_main_evidence": self.has_main_evidence,
+            "surface_scenario_missing": self.surface_scenario_missing,
+            "support_domain_from_reference_kind": self.support_domain_from_reference_kind,
+            "fallback_rcsdroad_ids": list(self.fallback_rcsdroad_ids),
+            "fallback_local_window_m": self.fallback_local_window_m,
+            "fallback_rcsdroad_localized": self.fallback_rcsdroad_localized,
+            "no_virtual_reference_point_guard": self.no_virtual_reference_point_guard,
+            "surface_section_forward_m": self.surface_section_forward_m,
+            "surface_section_backward_m": self.surface_section_backward_m,
+            "surface_lateral_limit_m": self.surface_lateral_limit_m,
+        }
+
+
+def _clean_text(value: Any, default: str = "") -> str:
+    text = str(value or "").strip()
+    return text or default
+
+
+def _clean_ids(values: Sequence[Any] | None) -> tuple[str, ...]:
+    if not values:
+        return ()
+    ids: list[str] = []
+    for value in values:
+        text = _clean_text(value)
+        if text and text not in ids:
+            ids.append(text)
+    return tuple(ids)
+
+
+def derive_step5_surface_window_config(
+    surface_scenario: Mapping[str, Any] | None,
+    *,
+    surface_scenario_missing: bool = False,
+) -> Step5SurfaceWindowConfig:
+    scenario_doc = dict(surface_scenario or {})
+    scenario_type = _clean_text(
+        scenario_doc.get("surface_scenario_type"),
+        SCENARIO_NO_SURFACE_REFERENCE,
+    )
+    section_reference_source = _clean_text(
+        scenario_doc.get("section_reference_source"),
+        SECTION_REFERENCE_NONE,
+    )
+    surface_generation_mode = _clean_text(
+        scenario_doc.get("surface_generation_mode"),
+        SURFACE_MODE_NO_SURFACE,
+    )
+    has_main_evidence = bool(scenario_doc.get("has_main_evidence", False))
+    reference_point_present = bool(scenario_doc.get("reference_point_present", False))
+    fallback_rcsdroad_ids = _clean_ids(scenario_doc.get("fallback_rcsdroad_ids"))
+    no_virtual_reference_point_guard = not (reference_point_present and not has_main_evidence)
+    fallback_rcsdroad_localized = (
+        bool(fallback_rcsdroad_ids)
+        and scenario_type != SCENARIO_NO_SURFACE_REFERENCE
+        and surface_generation_mode != SURFACE_MODE_NO_SURFACE
+    )
+    return Step5SurfaceWindowConfig(
+        surface_scenario_type=scenario_type,
+        section_reference_source=section_reference_source,
+        surface_generation_mode=surface_generation_mode,
+        reference_point_present=reference_point_present,
+        has_main_evidence=has_main_evidence,
+        surface_scenario_missing=surface_scenario_missing,
+        support_domain_from_reference_kind=section_reference_source,
+        fallback_rcsdroad_ids=fallback_rcsdroad_ids,
+        fallback_local_window_m=STEP5_JUNCTION_WINDOW_HALF_LENGTH_M if fallback_rcsdroad_ids else None,
+        fallback_rcsdroad_localized=fallback_rcsdroad_localized,
+        no_virtual_reference_point_guard=no_virtual_reference_point_guard,
+    )
 
 
 def _iter_polygon_parts(geometry: BaseGeometry | None) -> Iterable[Polygon]:
@@ -83,6 +201,79 @@ def _buffered_patch(
     if point is None:
         return None
     return _clip_to_drivezone(point.buffer(radius_m), drivezone_union)
+
+
+def _surface_scenario_doc_for_unit(unit_result: T04EventUnitResult) -> tuple[dict[str, Any], bool]:
+    surface_scenario_doc = getattr(unit_result, "surface_scenario_doc", None)
+    if callable(surface_scenario_doc):
+        return (dict(surface_scenario_doc()), False)
+    scenario = classify_surface_scenario(
+        evidence_source=getattr(unit_result, "evidence_source", ""),
+        selected_evidence_summary=getattr(unit_result, "selected_evidence_summary", None),
+        rcsd_selection_mode=getattr(unit_result, "rcsd_selection_mode", ""),
+        required_rcsd_node=getattr(unit_result, "required_rcsd_node", None),
+        first_hit_rcsdroad_ids=getattr(unit_result, "first_hit_rcsdroad_ids", None),
+        selected_rcsdroad_ids=getattr(unit_result, "selected_rcsdroad_ids", None),
+        positive_rcsd_audit=getattr(unit_result, "positive_rcsd_audit", None),
+        fact_reference_point_present=getattr(unit_result, "fact_reference_point", None) is not None,
+    )
+    return (scenario.to_doc(), True)
+
+
+def _step5_surface_window_config(unit_result: T04EventUnitResult) -> Step5SurfaceWindowConfig:
+    scenario_doc, missing = _surface_scenario_doc_for_unit(unit_result)
+    return derive_step5_surface_window_config(
+        scenario_doc,
+        surface_scenario_missing=missing,
+    )
+
+
+def _section_reference_anchor_point(
+    unit_result: T04EventUnitResult,
+    config: Step5SurfaceWindowConfig | None = None,
+) -> Point | None:
+    config = config or _step5_surface_window_config(unit_result)
+    if config.reference_point_present:
+        point = _as_point(getattr(unit_result, "fact_reference_point", None))
+        if point is not None:
+            return point
+    if config.section_reference_source in {SECTION_REFERENCE_RCSD, SECTION_REFERENCE_POINT_AND_RCSD}:
+        for geometry in (
+            getattr(unit_result, "required_rcsd_node_geometry", None),
+            getattr(unit_result, "positive_rcsd_node_geometry", None),
+            getattr(unit_result, "primary_main_rc_node_geometry", None),
+            getattr(unit_result, "local_rcsd_unit_geometry", None),
+        ):
+            point = _as_point(geometry)
+            if point is not None:
+                return point
+    if config.section_reference_source == SECTION_REFERENCE_SWSD:
+        unit_context = getattr(unit_result, "unit_context", None)
+        representative_node = getattr(unit_context, "representative_node", None)
+        for geometry in (
+            getattr(unit_result, "review_materialized_point", None),
+            getattr(unit_result, "fact_reference_point", None),
+            getattr(representative_node, "geometry", None),
+        ):
+            point = _as_point(geometry)
+            if point is not None:
+                return point
+    if config.section_reference_source == SECTION_REFERENCE_POINT:
+        return _as_point(getattr(unit_result, "fact_reference_point", None))
+    if config.surface_scenario_missing:
+        return _as_point(getattr(unit_result, "fact_reference_point", None))
+    return None
+
+
+def _unit_axis_origin_point(unit_result: T04EventUnitResult) -> Point | None:
+    bridge = unit_result.interpretation.legacy_step5_bridge
+    bridge_origin = _as_point(bridge.event_origin_point)
+    if bridge_origin is not None:
+        return bridge_origin
+    section_anchor = _section_reference_anchor_point(unit_result)
+    if section_anchor is not None:
+        return section_anchor
+    return _as_point(unit_result.fact_reference_point)
 
 
 def _road_buffer_union(
@@ -169,10 +360,9 @@ def _event_axis_vector(unit_result: T04EventUnitResult) -> tuple[float, float] |
     vector = _vector_from_line(bridge.event_axis_centerline)
     if vector is not None:
         return vector
-    origin_point = _as_point(bridge.event_origin_point) or _as_point(unit_result.fact_reference_point)
     return _vector_from_roads(
         tuple(bridge.selected_event_roads) or tuple(bridge.selected_roads),
-        origin_point,
+        _unit_axis_origin_point(unit_result),
     )
 
 
@@ -245,7 +435,7 @@ def _axis_line_supports_semantic_anchors(
 
 def _event_axis_line(unit_result: T04EventUnitResult) -> LineString | None:
     bridge = unit_result.interpretation.legacy_step5_bridge
-    origin_point = _as_point(bridge.event_origin_point) or _as_point(unit_result.fact_reference_point)
+    origin_point = _unit_axis_origin_point(unit_result)
     axis_line = _ordered_line_by_origin(_line_geometry(bridge.event_axis_centerline), origin_point)
     if axis_line is not None:
         return axis_line
@@ -261,6 +451,9 @@ def _event_axis_line(unit_result: T04EventUnitResult) -> LineString | None:
 
 
 def _terminal_cut_semantic_anchors(unit_result: T04EventUnitResult) -> tuple[Point | None, Point | None]:
+    config = _step5_surface_window_config(unit_result)
+    if not config.reference_point_present and not config.surface_scenario_missing:
+        return (None, None)
     reference_point = _as_point(unit_result.fact_reference_point)
     rcsd_point = _as_point(unit_result.required_rcsd_node_geometry)
     if rcsd_point is None:
@@ -503,6 +696,9 @@ def _build_terminal_support_corridor(
 
 
 def _uses_junction_full_road_fill(unit_result: T04EventUnitResult) -> bool:
+    config = _step5_surface_window_config(unit_result)
+    if not config.reference_point_present and not config.surface_scenario_missing:
+        return False
     source = str(unit_result.evidence_source or "")
     return bool(
         source in {"rcsd_anchored_reverse", "road_surface_fork", "multibranch_event"}
@@ -513,10 +709,21 @@ def _uses_junction_full_road_fill(unit_result: T04EventUnitResult) -> bool:
 
 
 def _uses_junction_window(unit_result: T04EventUnitResult) -> bool:
+    config = _step5_surface_window_config(unit_result)
+    if config.surface_generation_mode in {
+        SURFACE_MODE_RCSD_WINDOW,
+        SURFACE_MODE_SWSD_WINDOW,
+        SURFACE_MODE_SWSD_WITH_RCSDROAD,
+    }:
+        return True
     return str(unit_result.evidence_source or "") in STEP5_JUNCTION_WINDOW_EVIDENCE_SOURCES
 
 
 def _junction_window_anchor_point(unit_result: T04EventUnitResult) -> Point | None:
+    config = _step5_surface_window_config(unit_result)
+    point = _section_reference_anchor_point(unit_result, config)
+    if point is not None:
+        return point
     source = str(unit_result.evidence_source or "")
     if source == "rcsd_junction_window":
         point = _as_point(unit_result.required_rcsd_node_geometry)
@@ -531,7 +738,11 @@ def _junction_window_anchor_point(unit_result: T04EventUnitResult) -> Point | No
 
 def _junction_window_axis_line(unit_result: T04EventUnitResult, anchor_point: Point) -> LineString | None:
     axis_line = None
-    if str(unit_result.evidence_source or "") == "rcsd_junction_window":
+    config = _step5_surface_window_config(unit_result)
+    if (
+        str(unit_result.evidence_source or "") == "rcsd_junction_window"
+        or config.section_reference_source == SECTION_REFERENCE_RCSD
+    ):
         axis_line = _ordered_line_by_origin(
             _line_geometry(unit_result.positive_rcsd_road_geometry)
             or _line_geometry(unit_result.local_rcsd_unit_geometry),
@@ -690,7 +901,8 @@ def _build_fallback_support_strip(
     *,
     drivezone_union: BaseGeometry | None,
 ) -> BaseGeometry | None:
-    center_point = _as_point(unit_result.fact_reference_point)
+    config = _step5_surface_window_config(unit_result)
+    center_point = _section_reference_anchor_point(unit_result, config)
     axis_vector = _event_axis_vector(unit_result)
     if center_point is None or axis_vector is None:
         return None
@@ -708,6 +920,29 @@ def _build_fallback_support_strip(
         join_style=2,
     )
     return _clip_to_drivezone(strip, drivezone_union)
+
+
+def _should_build_fallback_support_strip(
+    unit_result: T04EventUnitResult,
+    *,
+    config: Step5SurfaceWindowConfig,
+    junction_window_requested: bool,
+) -> bool:
+    if not config.entity_support_enabled:
+        return False
+    if config.fallback_rcsdroad_ids:
+        return True
+    return bool(
+        unit_result.evidence_source != "road_surface_fork"
+        and not junction_window_requested
+        and (
+            unit_result.positive_rcsd_consistency_level == "C"
+            or (
+                unit_result.positive_rcsd_consistency_level == "B"
+                and unit_result.required_rcsd_node in {None, ""}
+            )
+        )
+    )
 
 
 def _unique_roads(roads: Iterable[ParsedRoad]) -> tuple[ParsedRoad, ...]:
@@ -1115,6 +1350,22 @@ class T04Step5UnitResult:
     positive_rcsd_road_ids: tuple[str, ...] = ()
     positive_rcsd_node_ids: tuple[str, ...] = ()
     must_cover_components: dict[str, bool] = field(default_factory=dict)
+    surface_scenario_type: str = SCENARIO_NO_SURFACE_REFERENCE
+    section_reference_source: str = SECTION_REFERENCE_NONE
+    surface_generation_mode: str = SURFACE_MODE_NO_SURFACE
+    reference_point_present: bool = False
+    surface_scenario_missing: bool = False
+    support_domain_from_reference_kind: str = SECTION_REFERENCE_NONE
+    surface_section_forward_m: float = STEP5_SURFACE_SECTION_FORWARD_M
+    surface_section_backward_m: float = STEP5_SURFACE_SECTION_BACKWARD_M
+    surface_lateral_limit_m: float = STEP5_SURFACE_LATERAL_LIMIT_M
+    fallback_rcsdroad_ids: tuple[str, ...] = ()
+    fallback_local_window_m: float | None = None
+    fallback_support_strip_area_m2: float = 0.0
+    fallback_rcsdroad_localized: bool = False
+    no_virtual_reference_point_guard: bool = True
+    divstrip_negative_mask_present: bool = False
+    forbidden_domain_kept: bool = False
 
     def to_status_doc(self) -> dict[str, Any]:
         return {
@@ -1128,6 +1379,22 @@ class T04Step5UnitResult:
                 "ready": self.legacy_step5_ready,
                 "reasons": list(self.legacy_step5_reasons),
             },
+            "surface_scenario_type": self.surface_scenario_type,
+            "section_reference_source": self.section_reference_source,
+            "surface_generation_mode": self.surface_generation_mode,
+            "reference_point_present": self.reference_point_present,
+            "surface_scenario_missing": self.surface_scenario_missing,
+            "surface_section_forward_m": self.surface_section_forward_m,
+            "surface_section_backward_m": self.surface_section_backward_m,
+            "surface_lateral_limit_m": self.surface_lateral_limit_m,
+            "support_domain_from_reference_kind": self.support_domain_from_reference_kind,
+            "fallback_rcsdroad_ids": list(self.fallback_rcsdroad_ids),
+            "fallback_local_window_m": self.fallback_local_window_m,
+            "fallback_support_strip_area_m2": self.fallback_support_strip_area_m2,
+            "fallback_rcsdroad_localized": self.fallback_rcsdroad_localized,
+            "no_virtual_reference_point_guard": self.no_virtual_reference_point_guard,
+            "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
+            "forbidden_domain_kept": self.forbidden_domain_kept,
             "surface_fill_mode": self.surface_fill_mode,
             "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
             "single_component_surface_seed": self.single_component_surface_seed,
@@ -1154,6 +1421,22 @@ class T04Step5UnitResult:
             "support_event_road_ids": list(self.support_event_road_ids),
             "positive_rcsd_road_ids": list(self.positive_rcsd_road_ids),
             "positive_rcsd_node_ids": list(self.positive_rcsd_node_ids),
+            "surface_scenario_type": self.surface_scenario_type,
+            "section_reference_source": self.section_reference_source,
+            "surface_generation_mode": self.surface_generation_mode,
+            "reference_point_present": self.reference_point_present,
+            "surface_scenario_missing": self.surface_scenario_missing,
+            "surface_section_forward_m": self.surface_section_forward_m,
+            "surface_section_backward_m": self.surface_section_backward_m,
+            "surface_lateral_limit_m": self.surface_lateral_limit_m,
+            "support_domain_from_reference_kind": self.support_domain_from_reference_kind,
+            "fallback_rcsdroad_ids": list(self.fallback_rcsdroad_ids),
+            "fallback_local_window_m": self.fallback_local_window_m,
+            "fallback_support_strip_area_m2": self.fallback_support_strip_area_m2,
+            "fallback_rcsdroad_localized": self.fallback_rcsdroad_localized,
+            "no_virtual_reference_point_guard": self.no_virtual_reference_point_guard,
+            "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
+            "forbidden_domain_kept": self.forbidden_domain_kept,
             "surface_fill_mode": self.surface_fill_mode,
             "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
             "single_component_surface_seed": self.single_component_surface_seed,
@@ -1183,6 +1466,12 @@ class T04Step5CaseResult:
     drivezone_outside_enforced_by_allowed_domain: bool
     related_swsd_road_ids: tuple[str, ...] = ()
     related_rcsd_road_ids: tuple[str, ...] = ()
+    surface_section_forward_m: float = STEP5_SURFACE_SECTION_FORWARD_M
+    surface_section_backward_m: float = STEP5_SURFACE_SECTION_BACKWARD_M
+    surface_lateral_limit_m: float = STEP5_SURFACE_LATERAL_LIMIT_M
+    no_virtual_reference_point_guard: bool = True
+    forbidden_domain_kept: bool = False
+    divstrip_negative_mask_present: bool = False
 
     def unit_result_by_id(self, event_unit_id: str) -> T04Step5UnitResult:
         for unit_result in self.unit_results:
@@ -1196,6 +1485,12 @@ class T04Step5CaseResult:
             "case_id": self.case_id,
             "unit_count": len(self.unit_results),
             "legacy_step5_ready_unit_count": ready_count,
+            "surface_section_forward_m": self.surface_section_forward_m,
+            "surface_section_backward_m": self.surface_section_backward_m,
+            "surface_lateral_limit_m": self.surface_lateral_limit_m,
+            "no_virtual_reference_point_guard": self.no_virtual_reference_point_guard,
+            "forbidden_domain_kept": self.forbidden_domain_kept,
+            "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
             "case_must_cover_domain": _geometry_summary(self.case_must_cover_domain),
             "case_allowed_growth_domain": _geometry_summary(self.case_allowed_growth_domain),
             "case_forbidden_domain": _geometry_summary(self.case_forbidden_domain),
@@ -1210,6 +1505,12 @@ class T04Step5CaseResult:
         return {
             "case_id": self.case_id,
             "drivezone_outside_enforced_by_allowed_domain": self.drivezone_outside_enforced_by_allowed_domain,
+            "surface_section_forward_m": self.surface_section_forward_m,
+            "surface_section_backward_m": self.surface_section_backward_m,
+            "surface_lateral_limit_m": self.surface_lateral_limit_m,
+            "no_virtual_reference_point_guard": self.no_virtual_reference_point_guard,
+            "forbidden_domain_kept": self.forbidden_domain_kept,
+            "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
             "case_support_graph_geometry": _geometry_summary(self.case_support_graph_geometry),
             "unrelated_swsd_mask_geometry": _geometry_summary(self.unrelated_swsd_mask_geometry),
             "unrelated_rcsd_mask_geometry": _geometry_summary(self.unrelated_rcsd_mask_geometry),
@@ -1399,16 +1700,77 @@ def _build_step5_unit_result(
     drivezone_union: BaseGeometry | None,
     case_external_forbidden_geometry: BaseGeometry | None,
     other_unit_core_occupancy_geometry: BaseGeometry | None,
+    divstrip_negative_mask_present: bool,
 ) -> T04Step5UnitResult:
     bridge = unit_result.interpretation.legacy_step5_bridge
+    config = _step5_surface_window_config(unit_result)
+    if not config.entity_support_enabled:
+        return T04Step5UnitResult(
+            event_unit_id=unit_result.spec.event_unit_id,
+            event_type=unit_result.spec.event_type,
+            review_state=unit_result.review_state,
+            positive_rcsd_consistency_level=unit_result.positive_rcsd_consistency_level,
+            positive_rcsd_support_level=unit_result.positive_rcsd_support_level,
+            required_rcsd_node=unit_result.required_rcsd_node,
+            legacy_step5_ready=bool(unit_result.interpretation.legacy_step5_readiness.ready),
+            legacy_step5_reasons=tuple(unit_result.interpretation.legacy_step5_readiness.reasons),
+            localized_evidence_core_geometry=None,
+            fact_reference_patch_geometry=None,
+            required_rcsd_node_patch_geometry=None,
+            target_b_node_patch_geometry=None,
+            fallback_support_strip_geometry=None,
+            axis_lateral_band_geometry=None,
+            junction_full_road_fill_domain=None,
+            unit_must_cover_domain=None,
+            unit_allowed_growth_domain=None,
+            unit_forbidden_domain=case_external_forbidden_geometry,
+            unit_terminal_cut_constraints=None,
+            unit_terminal_window_domain=None,
+            terminal_support_corridor_geometry=None,
+            surface_fill_mode="no_surface",
+            surface_fill_axis_half_width_m=None,
+            single_component_surface_seed=False,
+            support_road_ids=tuple(bridge.selected_road_ids),
+            support_event_road_ids=tuple(bridge.selected_event_road_ids),
+            positive_rcsd_road_ids=tuple(unit_result.selected_rcsdroad_ids),
+            positive_rcsd_node_ids=tuple(unit_result.selected_rcsdnode_ids),
+            must_cover_components={
+                "localized_evidence_core_geometry": False,
+                "fact_reference_patch_geometry": False,
+                "required_rcsd_node_patch_geometry": False,
+                "junction_full_road_fill_domain": False,
+                "fallback_support_strip_geometry": False,
+                "target_b_node_patch_geometry": False,
+            },
+            surface_scenario_type=config.surface_scenario_type,
+            section_reference_source=config.section_reference_source,
+            surface_generation_mode=config.surface_generation_mode,
+            reference_point_present=config.reference_point_present,
+            surface_scenario_missing=config.surface_scenario_missing,
+            support_domain_from_reference_kind=config.support_domain_from_reference_kind,
+            surface_section_forward_m=config.surface_section_forward_m,
+            surface_section_backward_m=config.surface_section_backward_m,
+            surface_lateral_limit_m=config.surface_lateral_limit_m,
+            fallback_rcsdroad_ids=config.fallback_rcsdroad_ids,
+            fallback_local_window_m=config.fallback_local_window_m,
+            fallback_support_strip_area_m2=0.0,
+            fallback_rcsdroad_localized=False,
+            no_virtual_reference_point_guard=config.no_virtual_reference_point_guard,
+            divstrip_negative_mask_present=divstrip_negative_mask_present,
+            forbidden_domain_kept=case_external_forbidden_geometry is not None,
+        )
     localized_evidence_core_geometry = _clip_to_drivezone(
         unit_result.localized_evidence_core_geometry,
         drivezone_union,
     )
-    fact_reference_patch_geometry = _buffered_patch(
-        unit_result.fact_reference_point,
-        radius_m=STEP5_POINT_PATCH_RADIUS_M,
-        drivezone_union=drivezone_union,
+    fact_reference_patch_geometry = (
+        _buffered_patch(
+            unit_result.fact_reference_point,
+            radius_m=STEP5_POINT_PATCH_RADIUS_M,
+            drivezone_union=drivezone_union,
+        )
+        if config.reference_point_present or config.surface_scenario_missing
+        else None
     )
     full_road_fill_requested = _uses_junction_full_road_fill(unit_result)
     junction_window_requested = _uses_junction_window(unit_result)
@@ -1437,16 +1799,10 @@ def _build_step5_unit_result(
             drivezone_union=drivezone_union,
         )
     fallback_support_strip_geometry = None
-    if (
-        unit_result.evidence_source != "road_surface_fork"
-        and not junction_window_requested
-        and (
-            unit_result.positive_rcsd_consistency_level == "C"
-            or (
-                unit_result.positive_rcsd_consistency_level == "B"
-                and unit_result.required_rcsd_node in {None, ""}
-            )
-        )
+    if _should_build_fallback_support_strip(
+        unit_result,
+        config=config,
+        junction_window_requested=junction_window_requested,
     ):
         fallback_support_strip_geometry = _build_fallback_support_strip(
             unit_result,
@@ -1579,6 +1935,7 @@ def _build_step5_unit_result(
         "fallback_support_strip_geometry": fallback_support_strip_geometry is not None,
         "target_b_node_patch_geometry": target_b_node_patch_geometry is not None,
     }
+    fallback_summary = _geometry_summary(fallback_support_strip_geometry)
     return T04Step5UnitResult(
         event_unit_id=unit_result.spec.event_unit_id,
         event_type=unit_result.spec.event_type,
@@ -1609,6 +1966,25 @@ def _build_step5_unit_result(
         positive_rcsd_road_ids=tuple(unit_result.selected_rcsdroad_ids),
         positive_rcsd_node_ids=tuple(unit_result.selected_rcsdnode_ids),
         must_cover_components=must_cover_components,
+        surface_scenario_type=config.surface_scenario_type,
+        section_reference_source=config.section_reference_source,
+        surface_generation_mode=config.surface_generation_mode,
+        reference_point_present=config.reference_point_present,
+        surface_scenario_missing=config.surface_scenario_missing,
+        support_domain_from_reference_kind=config.support_domain_from_reference_kind,
+        surface_section_forward_m=config.surface_section_forward_m,
+        surface_section_backward_m=config.surface_section_backward_m,
+        surface_lateral_limit_m=config.surface_lateral_limit_m,
+        fallback_rcsdroad_ids=config.fallback_rcsdroad_ids,
+        fallback_local_window_m=config.fallback_local_window_m,
+        fallback_support_strip_area_m2=float(fallback_summary["area_m2"]),
+        fallback_rcsdroad_localized=bool(config.fallback_rcsdroad_ids and fallback_support_strip_geometry is not None),
+        no_virtual_reference_point_guard=(
+            config.no_virtual_reference_point_guard
+            and (config.reference_point_present or fact_reference_patch_geometry is None)
+        ),
+        divstrip_negative_mask_present=divstrip_negative_mask_present,
+        forbidden_domain_kept=case_external_forbidden_geometry is not None,
     )
 
 
@@ -1685,13 +2061,16 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
     unit_core_occupancies: dict[str, BaseGeometry | None] = {}
     precomputed_components: dict[str, dict[str, BaseGeometry | None]] = {}
     for event_unit in case_result.event_units:
+        config = _step5_surface_window_config(event_unit)
         junction_window_requested = _uses_junction_window(event_unit)
         localized_evidence_core_geometry = _clip_to_drivezone(
-            None if junction_window_requested else event_unit.localized_evidence_core_geometry,
+            None if junction_window_requested or not config.entity_support_enabled else event_unit.localized_evidence_core_geometry,
             drivezone_union,
         )
         required_rcsd_node_patch_geometry = None
         if (
+            config.entity_support_enabled
+            and
             (
                 event_unit.positive_rcsd_consistency_level == "A"
                 or _uses_junction_full_road_fill(event_unit)
@@ -1705,16 +2084,10 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
                 drivezone_union=drivezone_union,
             )
         fallback_support_strip_geometry = None
-        if (
-            event_unit.evidence_source != "road_surface_fork"
-            and not junction_window_requested
-            and (
-                event_unit.positive_rcsd_consistency_level == "C"
-                or (
-                    event_unit.positive_rcsd_consistency_level == "B"
-                    and event_unit.required_rcsd_node in {None, ""}
-                )
-            )
+        if _should_build_fallback_support_strip(
+            event_unit,
+            config=config,
+            junction_window_requested=junction_window_requested,
         ):
             fallback_support_strip_geometry = _build_fallback_support_strip(
                 event_unit,
@@ -1749,6 +2122,7 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
                 drivezone_union=drivezone_union,
                 case_external_forbidden_geometry=case_external_forbidden_geometry,
                 other_unit_core_occupancy_geometry=other_core_geometry,
+                divstrip_negative_mask_present=divstrip_void_mask_geometry is not None,
             )
         )
 
@@ -1859,11 +2233,19 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         drivezone_outside_enforced_by_allowed_domain=True,
         related_swsd_road_ids=tuple(sorted(related_swsd_road_ids)),
         related_rcsd_road_ids=tuple(sorted(related_rcsd_road_ids)),
+        surface_section_forward_m=STEP5_SURFACE_SECTION_FORWARD_M,
+        surface_section_backward_m=STEP5_SURFACE_SECTION_BACKWARD_M,
+        surface_lateral_limit_m=STEP5_SURFACE_LATERAL_LIMIT_M,
+        no_virtual_reference_point_guard=all(unit.no_virtual_reference_point_guard for unit in unit_results),
+        forbidden_domain_kept=case_forbidden_domain is not None,
+        divstrip_negative_mask_present=divstrip_void_mask_geometry is not None,
     )
 
 
 __all__ = [
+    "Step5SurfaceWindowConfig",
     "T04Step5CaseResult",
     "T04Step5UnitResult",
     "build_step5_support_domain",
+    "derive_step5_surface_window_config",
 ]

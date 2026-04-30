@@ -20,6 +20,7 @@ from ._runtime_types_io import (
 )
 from .case_models import T04CaseResult
 from .support_domain import T04Step5CaseResult, T04Step5UnitResult
+from .surface_scenario import SCENARIO_NO_SURFACE_REFERENCE, SURFACE_MODE_NO_SURFACE
 
 
 STEP6_GRID_MARGIN_M = 30.0
@@ -30,6 +31,7 @@ STEP6_CONNECTIVITY_NEIGHBORS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 STEP6_CLOSE_ITERATIONS = 1
 STEP6_FORBIDDEN_TOLERANCE_AREA_M2 = 1e-6
 STEP6_CUT_TOLERANCE_AREA_M2 = 1e-6
+STEP6_ALLOWED_TOLERANCE_AREA_M2 = 1e-6
 
 
 def _geometry_summary(geometry: BaseGeometry | None) -> dict[str, Any]:
@@ -445,6 +447,169 @@ def _target_b_seed_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry | 
     )
 
 
+def _merged_text(values: Iterable[Any], *, missing_value: str = "missing") -> str:
+    texts: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in texts:
+            texts.append(text)
+    if not texts:
+        return missing_value
+    return texts[0] if len(texts) == 1 else "mixed"
+
+
+def _step5_units_have_field(step5_result: T04Step5CaseResult, field_name: str) -> bool:
+    return bool(step5_result.unit_results) and all(hasattr(unit, field_name) for unit in step5_result.unit_results)
+
+
+@dataclass(frozen=True)
+class Step6GuardContext:
+    surface_scenario_type: str
+    section_reference_source: str
+    surface_generation_mode: str
+    reference_point_present: bool
+    surface_section_forward_m: float | None
+    surface_section_backward_m: float | None
+    surface_lateral_limit_m: float | None
+    fallback_rcsdroad_ids: tuple[str, ...]
+    fallback_rcsdroad_localized: bool
+    no_virtual_reference_point_guard: bool
+    forbidden_domain_kept: bool
+    divstrip_negative_mask_present: bool
+    surface_scenario_missing: bool
+    no_surface_reference_guard: bool
+
+
+def derive_step6_guard_context(step5_result: T04Step5CaseResult) -> Step6GuardContext:
+    units = tuple(step5_result.unit_results)
+    surface_scenario_missing = not (
+        _step5_units_have_field(step5_result, "surface_scenario_type")
+        and _step5_units_have_field(step5_result, "surface_generation_mode")
+    )
+    scenario_type = _merged_text(
+        getattr(unit, "surface_scenario_type", "") for unit in units
+    )
+    generation_mode = _merged_text(
+        getattr(unit, "surface_generation_mode", "") for unit in units
+    )
+    section_reference_source = _merged_text(
+        getattr(unit, "section_reference_source", "") for unit in units
+    )
+    fallback_ids: list[str] = []
+    for unit in units:
+        for road_id in getattr(unit, "fallback_rcsdroad_ids", ()) or ():
+            text = str(road_id or "").strip()
+            if text and text not in fallback_ids:
+                fallback_ids.append(text)
+    explicit_no_surface_units = [
+        unit
+        for unit in units
+        if str(getattr(unit, "surface_scenario_type", "") or "") == SCENARIO_NO_SURFACE_REFERENCE
+        or str(getattr(unit, "surface_generation_mode", "") or "") == SURFACE_MODE_NO_SURFACE
+    ]
+    no_surface_reference_guard = bool(units) and len(explicit_no_surface_units) == len(units)
+    return Step6GuardContext(
+        surface_scenario_type=scenario_type,
+        section_reference_source=section_reference_source,
+        surface_generation_mode=generation_mode,
+        reference_point_present=any(bool(getattr(unit, "reference_point_present", False)) for unit in units),
+        surface_section_forward_m=getattr(step5_result, "surface_section_forward_m", None),
+        surface_section_backward_m=getattr(step5_result, "surface_section_backward_m", None),
+        surface_lateral_limit_m=getattr(step5_result, "surface_lateral_limit_m", None),
+        fallback_rcsdroad_ids=tuple(fallback_ids),
+        fallback_rcsdroad_localized=any(bool(getattr(unit, "fallback_rcsdroad_localized", False)) for unit in units),
+        no_virtual_reference_point_guard=bool(getattr(step5_result, "no_virtual_reference_point_guard", True)),
+        forbidden_domain_kept=bool(
+            getattr(step5_result, "forbidden_domain_kept", False)
+            or step5_result.case_forbidden_domain is not None
+        ),
+        divstrip_negative_mask_present=bool(
+            getattr(step5_result, "divstrip_negative_mask_present", False)
+            or step5_result.divstrip_void_mask_geometry is not None
+        ),
+        surface_scenario_missing=surface_scenario_missing,
+        no_surface_reference_guard=no_surface_reference_guard,
+    )
+
+
+def _area_outside(container: BaseGeometry | None, geometry: BaseGeometry | None) -> float:
+    normalized_geometry = _normalize_geometry(geometry)
+    if normalized_geometry is None:
+        return 0.0
+    normalized_container = _normalize_geometry(container)
+    if normalized_container is None:
+        return float(getattr(normalized_geometry, "area", 0.0) or 0.0)
+    return float(normalized_geometry.difference(normalized_container).area)
+
+
+def _overlap_area(left: BaseGeometry | None, right: BaseGeometry | None) -> float:
+    normalized_left = _normalize_geometry(left)
+    normalized_right = _normalize_geometry(right)
+    if normalized_left is None or normalized_right is None:
+        return 0.0
+    return float(normalized_left.intersection(normalized_right).area)
+
+
+def _fallback_support_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry | None:
+    return _normalize_geometry(
+        _union_geometry(unit.fallback_support_strip_geometry for unit in step5_result.unit_results)
+    )
+
+
+def _unit_surface_count(step5_result: T04Step5CaseResult) -> int:
+    return sum(
+        1
+        for unit in step5_result.unit_results
+        if unit.unit_allowed_growth_domain is not None and not unit.unit_allowed_growth_domain.is_empty
+    )
+
+
+def check_post_cleanup_constraints(
+    *,
+    final_case_polygon: BaseGeometry | None,
+    step5_result: T04Step5CaseResult,
+    cut_barrier_geometry: BaseGeometry | None,
+    hard_seed_geometry: BaseGeometry | None,
+    guard_context: Step6GuardContext,
+) -> dict[str, Any]:
+    allowed_outside_area = _area_outside(step5_result.case_allowed_growth_domain, final_case_polygon)
+    forbidden_overlap_area = _overlap_area(final_case_polygon, step5_result.case_forbidden_domain)
+    terminal_cut_overlap_area = _overlap_area(final_case_polygon, cut_barrier_geometry)
+    hard_seed_missing = _normalize_geometry(hard_seed_geometry) is None
+    final_polygon = _normalize_geometry(final_case_polygon)
+    must_cover_ok = bool(
+        hard_seed_missing
+        or (
+            final_polygon is not None
+            and final_polygon.buffer(1e-6).covers(hard_seed_geometry)
+        )
+    )
+    divstrip_negative_overlap_area = _overlap_area(final_case_polygon, step5_result.divstrip_void_mask_geometry)
+    fallback_geometry = _fallback_support_geometry(step5_result)
+    fallback_outside_allowed_area = _area_outside(step5_result.case_allowed_growth_domain, fallback_geometry)
+    fallback_domain_contained = fallback_outside_allowed_area <= STEP6_ALLOWED_TOLERANCE_AREA_M2
+    fallback_overexpansion_area = allowed_outside_area if guard_context.fallback_rcsdroad_localized else 0.0
+    return {
+        "post_cleanup_allowed_growth_ok": allowed_outside_area <= STEP6_ALLOWED_TOLERANCE_AREA_M2,
+        "post_cleanup_forbidden_ok": forbidden_overlap_area <= STEP6_FORBIDDEN_TOLERANCE_AREA_M2,
+        "post_cleanup_terminal_cut_ok": terminal_cut_overlap_area <= STEP6_CUT_TOLERANCE_AREA_M2,
+        "post_cleanup_lateral_limit_ok": allowed_outside_area <= STEP6_ALLOWED_TOLERANCE_AREA_M2,
+        "post_cleanup_must_cover_ok": must_cover_ok,
+        "post_cleanup_recheck_performed": True,
+        "allowed_growth_outside_area_m2": allowed_outside_area,
+        "terminal_cut_overlap_area_m2": terminal_cut_overlap_area,
+        "lateral_limit_check_mode": "via_allowed_growth",
+        "negative_mask_check_mode": "total_forbidden_plus_divstrip_mask",
+        "divstrip_negative_overlap_area_m2": divstrip_negative_overlap_area,
+        "fallback_domain_contained_by_allowed_growth": fallback_domain_contained,
+        "fallback_overexpansion_detected": bool(
+            guard_context.fallback_rcsdroad_localized
+            and fallback_overexpansion_area > STEP6_ALLOWED_TOLERANCE_AREA_M2
+        ),
+        "fallback_overexpansion_area_m2": fallback_overexpansion_area,
+    }
+
+
 @dataclass(frozen=True)
 class T04Step6Result:
     case_id: str
@@ -468,12 +633,58 @@ class T04Step6Result:
     hard_connect_notes: tuple[str, ...]
     optional_connect_notes: tuple[str, ...]
     hole_details: tuple[dict[str, Any], ...]
+    post_cleanup_allowed_growth_ok: bool = True
+    post_cleanup_forbidden_ok: bool = True
+    post_cleanup_terminal_cut_ok: bool = True
+    post_cleanup_lateral_limit_ok: bool = True
+    post_cleanup_must_cover_ok: bool = True
+    post_cleanup_recheck_performed: bool = False
+    surface_scenario_type: str = "missing"
+    section_reference_source: str = "missing"
+    surface_generation_mode: str = "missing"
+    reference_point_present: bool = False
+    surface_section_forward_m: float | None = None
+    surface_section_backward_m: float | None = None
+    surface_lateral_limit_m: float | None = None
+    surface_scenario_missing: bool = True
+    no_surface_reference_guard: bool = False
+    final_polygon_suppressed_by_no_surface_reference: bool = False
+    no_virtual_reference_point_guard: bool = True
+    fallback_rcsdroad_ids: tuple[str, ...] = ()
+    fallback_rcsdroad_localized: bool = False
+    fallback_domain_contained_by_allowed_growth: bool = True
+    fallback_overexpansion_detected: bool = False
+    fallback_overexpansion_area_m2: float = 0.0
+    lateral_limit_check_mode: str = "via_allowed_growth"
+    negative_mask_check_mode: str = "total_forbidden_plus_divstrip_mask"
+    forbidden_domain_kept: bool = False
+    divstrip_negative_mask_present: bool = False
+    divstrip_negative_overlap_area_m2: float = 0.0
+    allowed_growth_outside_area_m2: float = 0.0
+    terminal_cut_overlap_area_m2: float = 0.0
+    unit_surface_count: int = 0
+    unit_surface_merge_performed: bool = False
+    merge_mode: str = "case_level_assembly"
+    merged_case_surface_component_count: int = 0
+    final_case_polygon_component_count: int = 0
+    single_connected_case_surface_ok: bool = False
 
     def to_status_doc(self) -> dict[str, Any]:
         return {
             "case_id": self.case_id,
             "assembly_state": self.assembly_state,
             "review_reasons": list(self.review_reasons),
+            "surface_scenario_type": self.surface_scenario_type,
+            "section_reference_source": self.section_reference_source,
+            "surface_generation_mode": self.surface_generation_mode,
+            "reference_point_present": self.reference_point_present,
+            "surface_section_forward_m": self.surface_section_forward_m,
+            "surface_section_backward_m": self.surface_section_backward_m,
+            "surface_lateral_limit_m": self.surface_lateral_limit_m,
+            "surface_scenario_missing": self.surface_scenario_missing,
+            "no_surface_reference_guard": self.no_surface_reference_guard,
+            "final_polygon_suppressed_by_no_surface_reference": self.final_polygon_suppressed_by_no_surface_reference,
+            "no_virtual_reference_point_guard": self.no_virtual_reference_point_guard,
             "component_count": self.component_count,
             "hole_count": self.hole_count,
             "business_hole_count": self.business_hole_count,
@@ -482,6 +693,27 @@ class T04Step6Result:
             "b_node_target_covered": self.b_node_target_covered,
             "forbidden_overlap_area_m2": self.forbidden_overlap_area_m2,
             "cut_violation": self.cut_violation,
+            "post_cleanup_allowed_growth_ok": self.post_cleanup_allowed_growth_ok,
+            "post_cleanup_forbidden_ok": self.post_cleanup_forbidden_ok,
+            "post_cleanup_terminal_cut_ok": self.post_cleanup_terminal_cut_ok,
+            "post_cleanup_lateral_limit_ok": self.post_cleanup_lateral_limit_ok,
+            "post_cleanup_must_cover_ok": self.post_cleanup_must_cover_ok,
+            "post_cleanup_recheck_performed": self.post_cleanup_recheck_performed,
+            "lateral_limit_check_mode": self.lateral_limit_check_mode,
+            "fallback_rcsdroad_ids": list(self.fallback_rcsdroad_ids),
+            "fallback_rcsdroad_localized": self.fallback_rcsdroad_localized,
+            "fallback_domain_contained_by_allowed_growth": self.fallback_domain_contained_by_allowed_growth,
+            "fallback_overexpansion_detected": self.fallback_overexpansion_detected,
+            "fallback_overexpansion_area_m2": self.fallback_overexpansion_area_m2,
+            "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
+            "divstrip_negative_overlap_area_m2": self.divstrip_negative_overlap_area_m2,
+            "forbidden_domain_kept": self.forbidden_domain_kept,
+            "unit_surface_count": self.unit_surface_count,
+            "unit_surface_merge_performed": self.unit_surface_merge_performed,
+            "merge_mode": self.merge_mode,
+            "merged_case_surface_component_count": self.merged_case_surface_component_count,
+            "final_case_polygon_component_count": self.final_case_polygon_component_count,
+            "single_connected_case_surface_ok": self.single_connected_case_surface_ok,
             "final_case_polygon": _geometry_summary(self.final_case_polygon),
             "final_case_holes": _geometry_summary(self.final_case_holes),
             "final_case_cut_lines": _geometry_summary(self.final_case_cut_lines),
@@ -497,6 +729,37 @@ class T04Step6Result:
             "hard_connect_notes": list(self.hard_connect_notes),
             "optional_connect_notes": list(self.optional_connect_notes),
             "hole_details": [dict(item) for item in self.hole_details],
+            "post_cleanup_allowed_growth_ok": self.post_cleanup_allowed_growth_ok,
+            "post_cleanup_forbidden_ok": self.post_cleanup_forbidden_ok,
+            "post_cleanup_terminal_cut_ok": self.post_cleanup_terminal_cut_ok,
+            "post_cleanup_lateral_limit_ok": self.post_cleanup_lateral_limit_ok,
+            "post_cleanup_must_cover_ok": self.post_cleanup_must_cover_ok,
+            "post_cleanup_recheck_performed": self.post_cleanup_recheck_performed,
+            "allowed_growth_outside_area_m2": self.allowed_growth_outside_area_m2,
+            "terminal_cut_overlap_area_m2": self.terminal_cut_overlap_area_m2,
+            "lateral_limit_check_mode": self.lateral_limit_check_mode,
+            "negative_mask_check_mode": self.negative_mask_check_mode,
+            "surface_scenario_type": self.surface_scenario_type,
+            "section_reference_source": self.section_reference_source,
+            "surface_generation_mode": self.surface_generation_mode,
+            "surface_lateral_limit_m": self.surface_lateral_limit_m,
+            "surface_scenario_missing": self.surface_scenario_missing,
+            "no_surface_reference_guard": self.no_surface_reference_guard,
+            "final_polygon_suppressed_by_no_surface_reference": self.final_polygon_suppressed_by_no_surface_reference,
+            "fallback_rcsdroad_ids": list(self.fallback_rcsdroad_ids),
+            "fallback_rcsdroad_localized": self.fallback_rcsdroad_localized,
+            "fallback_domain_contained_by_allowed_growth": self.fallback_domain_contained_by_allowed_growth,
+            "fallback_overexpansion_detected": self.fallback_overexpansion_detected,
+            "fallback_overexpansion_area_m2": self.fallback_overexpansion_area_m2,
+            "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
+            "divstrip_negative_overlap_area_m2": self.divstrip_negative_overlap_area_m2,
+            "forbidden_domain_kept": self.forbidden_domain_kept,
+            "unit_surface_count": self.unit_surface_count,
+            "unit_surface_merge_performed": self.unit_surface_merge_performed,
+            "merge_mode": self.merge_mode,
+            "merged_case_surface_component_count": self.merged_case_surface_component_count,
+            "final_case_polygon_component_count": self.final_case_polygon_component_count,
+            "single_connected_case_surface_ok": self.single_connected_case_surface_ok,
         }
 
 
@@ -504,6 +767,61 @@ def build_step6_polygon_assembly(
     case_result: T04CaseResult,
     step5_result: T04Step5CaseResult,
 ) -> T04Step6Result:
+    guard_context = derive_step6_guard_context(step5_result)
+    unit_surface_count = _unit_surface_count(step5_result)
+    if guard_context.no_surface_reference_guard:
+        post_checks = check_post_cleanup_constraints(
+            final_case_polygon=None,
+            step5_result=step5_result,
+            cut_barrier_geometry=None,
+            hard_seed_geometry=None,
+            guard_context=guard_context,
+        )
+        return T04Step6Result(
+            case_id=case_result.case_spec.case_id,
+            final_case_polygon=None,
+            final_case_holes=None,
+            final_case_cut_lines=_normalize_geometry(step5_result.case_terminal_cut_constraints),
+            final_case_forbidden_overlap=None,
+            assembly_canvas_geometry=None,
+            hard_seed_geometry=None,
+            weak_seed_geometry=None,
+            component_count=0,
+            hole_count=0,
+            business_hole_count=0,
+            unexpected_hole_count=0,
+            hard_must_cover_ok=True,
+            b_node_target_covered=True,
+            forbidden_overlap_area_m2=0.0,
+            cut_violation=False,
+            assembly_state="assembly_failed",
+            review_reasons=("no_surface_reference",),
+            hard_connect_notes=(),
+            optional_connect_notes=(),
+            hole_details=(),
+            **post_checks,
+            surface_scenario_type=guard_context.surface_scenario_type,
+            section_reference_source=guard_context.section_reference_source,
+            surface_generation_mode=guard_context.surface_generation_mode,
+            reference_point_present=guard_context.reference_point_present,
+            surface_section_forward_m=guard_context.surface_section_forward_m,
+            surface_section_backward_m=guard_context.surface_section_backward_m,
+            surface_lateral_limit_m=guard_context.surface_lateral_limit_m,
+            surface_scenario_missing=guard_context.surface_scenario_missing,
+            no_surface_reference_guard=True,
+            final_polygon_suppressed_by_no_surface_reference=True,
+            no_virtual_reference_point_guard=guard_context.no_virtual_reference_point_guard,
+            fallback_rcsdroad_ids=guard_context.fallback_rcsdroad_ids,
+            fallback_rcsdroad_localized=guard_context.fallback_rcsdroad_localized,
+            forbidden_domain_kept=guard_context.forbidden_domain_kept,
+            divstrip_negative_mask_present=guard_context.divstrip_negative_mask_present,
+            unit_surface_count=unit_surface_count,
+            unit_surface_merge_performed=False,
+            merge_mode="case_level_assembly",
+            merged_case_surface_component_count=0,
+            final_case_polygon_component_count=0,
+            single_connected_case_surface_ok=False,
+        )
     drivezone_union = _loaded_feature_union(case_result.case_bundle.drivezone_features)
     representative_point = case_result.case_bundle.representative_node.geometry
     assembly_source_geometry = _union_geometry(
@@ -704,6 +1022,14 @@ def build_step6_polygon_assembly(
         and not final_case_polygon.buffer(1e-6).covers(target_b_effective_geometry)
     ):
         b_node_target_covered = False
+    post_checks = check_post_cleanup_constraints(
+        final_case_polygon=final_case_polygon,
+        step5_result=step5_result,
+        cut_barrier_geometry=cut_barrier_geometry,
+        hard_seed_geometry=hard_seed_geometry,
+        guard_context=guard_context,
+    )
+    hard_must_cover_ok = bool(post_checks["post_cleanup_must_cover_ok"])
 
     review_reasons: list[str] = []
     if final_case_polygon is None or final_case_polygon.is_empty:
@@ -712,10 +1038,16 @@ def build_step6_polygon_assembly(
         review_reasons.append("multi_component_result")
     if not hard_must_cover_ok:
         review_reasons.append("hard_must_cover_disconnected")
+    if not bool(post_checks["post_cleanup_allowed_growth_ok"]):
+        review_reasons.append("allowed_growth_conflict")
     if forbidden_overlap_area_m2 > STEP6_FORBIDDEN_TOLERANCE_AREA_M2:
         review_reasons.append("forbidden_conflict")
     if cut_violation:
         review_reasons.append("terminal_cut_conflict")
+    if not bool(post_checks["post_cleanup_lateral_limit_ok"]):
+        review_reasons.append("lateral_limit_conflict")
+    if bool(post_checks["fallback_overexpansion_detected"]):
+        review_reasons.append("fallback_overexpansion")
     if unexpected_hole_count > 0:
         review_reasons.append("unexpected_hole_present")
     if not b_node_target_covered:
@@ -751,10 +1083,35 @@ def build_step6_polygon_assembly(
         hard_connect_notes=tuple(hard_connect_notes),
         optional_connect_notes=tuple(optional_connect_notes),
         hole_details=tuple(hole_details),
+        **post_checks,
+        surface_scenario_type=guard_context.surface_scenario_type,
+        section_reference_source=guard_context.section_reference_source,
+        surface_generation_mode=guard_context.surface_generation_mode,
+        reference_point_present=guard_context.reference_point_present,
+        surface_section_forward_m=guard_context.surface_section_forward_m,
+        surface_section_backward_m=guard_context.surface_section_backward_m,
+        surface_lateral_limit_m=guard_context.surface_lateral_limit_m,
+        surface_scenario_missing=guard_context.surface_scenario_missing,
+        no_surface_reference_guard=guard_context.no_surface_reference_guard,
+        final_polygon_suppressed_by_no_surface_reference=False,
+        no_virtual_reference_point_guard=guard_context.no_virtual_reference_point_guard,
+        fallback_rcsdroad_ids=guard_context.fallback_rcsdroad_ids,
+        fallback_rcsdroad_localized=guard_context.fallback_rcsdroad_localized,
+        forbidden_domain_kept=guard_context.forbidden_domain_kept,
+        divstrip_negative_mask_present=guard_context.divstrip_negative_mask_present,
+        unit_surface_count=unit_surface_count,
+        unit_surface_merge_performed=False,
+        merge_mode="case_level_assembly",
+        merged_case_surface_component_count=component_count,
+        final_case_polygon_component_count=component_count,
+        single_connected_case_surface_ok=component_count == 1,
     )
 
 
 __all__ = [
+    "Step6GuardContext",
     "T04Step6Result",
     "build_step6_polygon_assembly",
+    "check_post_cleanup_constraints",
+    "derive_step6_guard_context",
 ]

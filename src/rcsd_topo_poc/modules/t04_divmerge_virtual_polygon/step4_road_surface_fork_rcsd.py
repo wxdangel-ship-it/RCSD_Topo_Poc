@@ -32,6 +32,40 @@ def _strong_aggregated_unit(audit: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _strong_road_surface_fork_aggregated_unit(audit: dict[str, Any]) -> dict[str, Any] | None:
+    aggregate = _strong_aggregated_unit(audit)
+    if aggregate is not None:
+        return aggregate
+    published_mode = str(audit.get("published_rcsd_selection_mode") or "").strip()
+    if published_mode not in {
+        "aggregated_a_exact_required_node_unit_with_trace",
+        "aggregated_a_positive_node_units_with_trace",
+    }:
+        return None
+    for aggregate in audit.get("aggregated_rcsd_units") or ():
+        if not isinstance(aggregate, dict):
+            continue
+        decision_reason = str(aggregate.get("decision_reason") or "").strip()
+        if decision_reason in RELAXED_AGGREGATED_RCSD_REASONS:
+            continue
+        if decision_reason and decision_reason != "role_mapping_exact_aggregated":
+            continue
+        if str(aggregate.get("consistency_level") or "") != "A":
+            continue
+        if not str(aggregate.get("required_node_id") or "").strip():
+            continue
+        if str(aggregate.get("required_node_source") or "").strip() != "aggregated_node_centric":
+            continue
+        event_side_roads = set(_aggregate_ids(aggregate, "event_side_road_ids"))
+        axis_side_roads = set(_aggregate_ids(aggregate, "axis_side_road_ids"))
+        if len(event_side_roads & axis_side_roads) > 1:
+            continue
+        if not _has_road_surface_fork_role_support(aggregate):
+            continue
+        return aggregate
+    return None
+
+
 def _has_bifurcation_role_support(aggregate: dict[str, Any]) -> bool:
     labels = {
         str(label or "").strip()
@@ -58,6 +92,19 @@ def _has_bifurcation_role_support(aggregate: dict[str, Any]) -> bool:
             and str(assignment.get("road_id") or "").strip()
         }
     ) >= 2
+
+
+def _has_road_surface_fork_role_support(aggregate: dict[str, Any]) -> bool:
+    assignment_roles = {
+        str(assignment.get("role") or "").strip()
+        for assignment in aggregate.get("role_assignments") or ()
+        if isinstance(assignment, dict) and str(assignment.get("role") or "").strip()
+    }
+    if {"entering", "exiting"}.issubset(assignment_roles):
+        return True
+    return bool(_aggregate_ids(aggregate, "event_side_road_ids")) and bool(
+        _aggregate_ids(aggregate, "axis_side_road_ids")
+    )
 
 
 def _entry_uses_relaxed_rcsd(entry: T04CandidateAuditEntry) -> bool:

@@ -204,10 +204,12 @@ def run_t04_step14_batch(
         failed_case_ids=failed_case_ids,
         input_dataset_id=str(preflight.get("input_dataset_id") or ""),
     )
-    augment_step7_consistency_report(
-        consistency_report_path=Path(str(step7_outputs["consistency_report_path"])),
-        nodes_outputs=nodes_outputs,
-    )
+    consistency_report_path = step7_outputs.get("consistency_report_path")
+    if consistency_report_path:
+        augment_step7_consistency_report(
+            consistency_report_path=Path(str(consistency_report_path)),
+            nodes_outputs=nodes_outputs,
+        )
     write_summary(
         run_root=run_root,
         rows=materialized_rows,

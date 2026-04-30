@@ -117,8 +117,11 @@ def _selected_case_docs(selected_cases: Iterable[Mapping[str, Any]]) -> list[dic
 def load_case_package_node_features(case_specs: Iterable[Any]) -> list[LoadedFeature]:
     features: list[LoadedFeature] = []
     for spec in sorted(case_specs, key=lambda item: sort_patch_key(str(item.case_id))):
+        input_paths = getattr(spec, "input_paths", None)
+        if not isinstance(input_paths, Mapping) or not input_paths.get("nodes_path"):
+            continue
         layer = read_vector_layer_strict(
-            spec.input_paths["nodes_path"],
+            input_paths["nodes_path"],
             allow_null_geometry=False,
         )
         features.extend(layer.features)
@@ -127,9 +130,41 @@ def load_case_package_node_features(case_specs: Iterable[Any]) -> list[LoadedFea
 
 def selected_cases_from_specs(case_specs: Iterable[Any]) -> list[dict[str, str]]:
     return [
-        {"case_id": str(spec.case_id), "mainnodeid": str(spec.mainnodeid)}
+        {
+            "case_id": str(spec.case_id),
+            "mainnodeid": str(getattr(spec, "mainnodeid", spec.case_id)),
+        }
         for spec in sorted(case_specs, key=lambda item: sort_patch_key(str(item.case_id)))
     ]
+
+
+def _empty_nodes_outputs(*, run_root: Path, input_dataset_id: str | None = None) -> dict[str, Any]:
+    nodes_path = run_root / T04_NODES_LAYER_NAME
+    audit_csv_path = run_root / T04_NODES_AUDIT_CSV_NAME
+    audit_json_path = run_root / T04_NODES_AUDIT_JSON_NAME
+    write_csv(audit_csv_path, [], T04_NODES_AUDIT_FIELDNAMES)
+    write_json(
+        audit_json_path,
+        {
+            **provenance_doc(input_dataset_id=input_dataset_id),
+            "total_update_count": 0,
+            "updated_to_yes_count": 0,
+            "updated_to_fail4_count": 0,
+            "rows": [],
+        },
+    )
+    return {
+        "nodes_path": str(nodes_path),
+        "nodes_anchor_update_audit_csv_path": str(audit_csv_path),
+        "nodes_anchor_update_audit_json_path": str(audit_json_path),
+        "nodes_total_update_count": 0,
+        "nodes_updated_to_yes_count": 0,
+        "nodes_updated_to_fail4_count": 0,
+        "nodes_updated_feature_count": 0,
+        "nodes_consistency_passed": True,
+        "nodes_missing_case_ids": [],
+        "nodes_mismatch_case_ids": [],
+    }
 
 
 def write_t04_nodes_outputs(
@@ -242,6 +277,19 @@ def write_t04_nodes_outputs_for_case_packages(
     input_dataset_id: str | None = None,
 ) -> dict[str, Any]:
     specs = list(case_specs)
+    artifacts = list(artifacts)
+    if not specs or (
+        not artifacts
+        and not any(
+            isinstance(getattr(spec, "input_paths", None), Mapping)
+            and getattr(spec, "input_paths", {}).get("nodes_path")
+            for spec in specs
+        )
+    ):
+        return _empty_nodes_outputs(
+            run_root=run_root,
+            input_dataset_id=input_dataset_id,
+        )
     failure_status_by_case = {
         str(case_id): {"step7_state": "runtime_failed", "reason": "runtime_failed"}
         for case_id in failed_case_ids
@@ -250,7 +298,7 @@ def write_t04_nodes_outputs_for_case_packages(
         run_root=run_root,
         source_node_features=load_case_package_node_features(specs),
         selected_cases=selected_cases_from_specs(specs),
-        artifacts=list(artifacts),
+        artifacts=artifacts,
         failure_status_by_case=failure_status_by_case,
         input_dataset_id=input_dataset_id,
     )

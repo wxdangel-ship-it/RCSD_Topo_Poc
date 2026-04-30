@@ -33,6 +33,7 @@
 - Step4 每个 event unit 的事实依据与位置必须可解释。
 - `fact_reference_point`、`review_materialized_point`、`selected_component_union_geometry`、`localized_evidence_core_geometry`、`coarse_anchor_zone_geometry` 的语义边界必须可解释。
 - Step5 必须能稳定产出 Unit / Case 两级的 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints`，并对 `1m` hard negative mask、`fallback_support_strip`、`bridge zone` 与 `junction_full_road_fill_domain` 给出可追溯解释。
+- 对“下一个 SWSD 语义路口前无有效主证据、当前 case 无强 forward/reverse RCSD 路口锚定、但 junction window 内存在 RCSDRoad 支撑”的 `role_mapping_partial_aggregated` 退化场景，Step5 必须以下一个 SWSD 语义路口为成面锚点，把其前后 `20m` junction window 记为 protected support domain，避免 generic unrelated masks / 普通 terminal cut 把该窗口切成多面；`required_rcsd_node` 只保留为支撑审计事实，不得作为 must-cover 成面锚点；该保护不得突破 DriveZone 或 allowed growth。
 - 对 `rcsd_anchored_reverse` 且同时具备 `Reference Point + required_rcsd_node` 的路口面，Step5 必须在 DriveZone 内按语义主轴构造整幅路面填充域：Reference Point 与 RCSDNode 两端各保留 `20m` terminal window，主轴横向单侧不超过 `20m`，并继续受 forbidden masks / terminal cuts 硬裁剪。
 - Step6 必须能在不突破 Step5 约束的前提下生成单一连通面；只允许业务 hole，不允许算法洞。
 - Step7 必须把最终状态机压缩为 `accepted / rejected` 两态；审计材料可以保留，但不得冒充第三种正式状态。
@@ -222,6 +223,7 @@ Step7 legacy selected-case 发布冻结门槛：
   - `node_510222629__pair_02` 必须保持 `evidence_source = road_surface_fork`，不得被 `rcsd_junction_window` 抢占为独立 RCSD window。
 - `706629` 当前锁定为 `swsd_junction_window`：无主证据、无正向 RCSD 时，以 SWSD 路口前后 `20m` 构面。
 - `760984 / 788824` 当前锁定为 `rcsd_junction_window`：无主证据、但可召回正向 RCSD 时，以 RCSDNode 前后 `20m` 构面。
+- `706347` 当前锁定为 `rcsd_junction_window` 的 `role_mapping_partial_aggregated` 退化支撑场景：下一个 SWSD 语义路口前无有效主证据、无强 forward/reverse RCSD 锚定，但 junction window 内存在 RCSDRoad；Step5 必须以 SWSD 语义路口 `706346` 前后 `20m` 成面，启用 `case_junction_window_protection_domain`，且不得把 `required_rcsd_node = 5384371838320978` 当作 must-cover 成面锚点；Step6 必须输出单连通 accepted 面。
 - `760598 / 760936 / 857993` 当前保持 `rejected`；后续不得为了提高 accepted count 静默放宽 Step7 门禁。
 
 ### RCSD-anchored reverse 定向回归（2026-04-24）

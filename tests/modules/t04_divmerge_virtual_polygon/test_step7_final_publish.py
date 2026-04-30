@@ -43,117 +43,117 @@ ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426: dict[str, dict[str, object]
     "17943587": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "097768b3773369d094094ee6799977ca036d1fb3f876f3bd2639ff0e66030080",
+        "raw_scanline_sha256": "3998afd82688a2b96950ecad47e93501033178b67b4169f3d2e42429bbdbdca2",
     },
     "30434673": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "1b0d73e8d84ac35723ce8d35511a9bc52e9c7e35ddab4e80b8e038c80331c03c",
+        "raw_scanline_sha256": "f4307844b11d74408b5abdcd7690e4660690d813ac696216170336af987687f9",
     },
     "505078921": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "e882f788b0779f6b1c4261bd0e6b2be4d4974c0dab2ac14792fe05783fe28b00",
+        "raw_scanline_sha256": "baad123463204b60f0c82477c46c038c8456138542026a6f664cbf768785c8e4",
     },
     "698380": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "e96ff65515f999859a29fdb4d9792b0a8da88314f3de192d31ee23aea1145b5c",
+        "raw_scanline_sha256": "d343a87f8132253677c1fa5022964ce5c0de9b9e26fc8b8d1513e9f19147778f",
     },
     "698389": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "5bacc900b066fb385de3ef93229b88a22712fe6e4a4119f8922c572dc688bf35",
+        "raw_scanline_sha256": "0961401e1d70ca0d6cf77cc549fc60f797903743a8326be9582676a5abef2e6a",
     },
     "699870": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "c871c336d9a3e93b3912a94ee458dee7a534840d3ade1223eb5f47bb4245d2df",
+        "raw_scanline_sha256": "21ea3530c90f8c94df0adfad0ec352484bb6439f35acd9b66738da4fa4e11c0d",
     },
     "706629": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "42cbecefa9d37191cb5d69b0a1ca9b204647053ed08a9667061fa2700de6ee9b",
+        "raw_scanline_sha256": "f7e6a0a2c77dca52d8798f189567f535eb9ed79d82e7150da94d3f49edb82e69",
     },
     "723276": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "c2a2cb34ec55a8bde0300f05a03d811c227a90fbfa7ae9cbb5bd9aee681be003",
+        "raw_scanline_sha256": "030489082afa5c7420f7c7538d6f5e466df422c6bb9a6e50da6ea7508aaa0e6f",
     },
     "724067": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "636ab2be1d189d25bb8d3f84fc006653215f683e34d948a2d0c6fdac41d3d8a9",
+        "raw_scanline_sha256": "869216dcd3e9d5c0e144c108c6d1879ec20b56501b89247976853425f5290eda",
     },
     "724081": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "01d4168a7a1079b1c497b86d6c47a6a0e4654e00f48d3ac06c253419dd87234e",
+        "raw_scanline_sha256": "cd180a6c23cfb9513a90e47edbab148ce029c1d4f142ce167fd5c57af2a5fcdd",
     },
     "73462878": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "dc6ac748d4f67643772dadc4f27cba1d5ccaef662c1780ea2a961f86aa04ee99",
+        "raw_scanline_sha256": "d865bc8bbaaa31e8c5a5a8e47de63980a3f9f6236a8b1a12657d45326685b641",
     },
     "758784": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "7181aef5f5b5ccbb8a5b11a5ebb0bdb09fb0a569300c4b4b4e92c7fed74bf0e6",
+        "raw_scanline_sha256": "5404f3b9b3a8b48a7e88bc2fd42a675b7ca4eecc2b96bc1e8516c4121e366907",
     },
     "760213": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "b58ccd0162347882e7cb95d5cfd1957d520ef8b119eacd60f893ce967aa7161b",
+        "raw_scanline_sha256": "fc37812e6bbf0352d8ce213260cb2a015bf007fffc8ee93634d6751dadfe8425",
     },
     "760256": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "88e52b22974fade61645d9fddbe6048e3eb15a276d683ff1c13e4c831cf0c10b",
+        "raw_scanline_sha256": "28812ae1aa37ff6d53a78dc199f6cb36023d3e0fc4cd1b362152b2abe161b621",
     },
     "760598": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "9c42feecad96479bc915554cdcfc66fa3f1ded65b8c9dc4061e96f78c13baa99",
+        "raw_scanline_sha256": "70f63c354c9335f3752fcb89333adb2883748826d344a027e5ca1003c7dc942a",
     },
     "760936": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "68d492ce9aa6fdd8f1df64419cb267d3925f6a9bf922a435d291f2212971a953",
+        "raw_scanline_sha256": "ef1903b69a2e4738aa2b4e46daadbc61790adf15943607dac3744b13964c05cf",
     },
     "760984": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "4a169b8d5b43d1e0f469f9f7d104365858254b5e29ed97076a477044338bdac8",
+        "raw_scanline_sha256": "1cd89cece133bda030e4ae2112706c4ee8b6f339251cf15631b649a9a3fdb55b",
     },
     "785671": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "c465d9318bd5509dde2ce84c3ea9941444f90f6d262d02fd02707d5befff8964",
+        "raw_scanline_sha256": "6667fc887da4a896d41f1d3ff2ed9bb825b96aa334e88420c304f30d91b63dbd",
     },
     "785675": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "baca9612ae99e8f775ae0d7c621df75c088f48c40d360d93a8d809be744b8c9f",
+        "raw_scanline_sha256": "a6329a0b4eaa4a0f63e17a627af935ba99745c2cc2e522023cb4035c9736b29b",
     },
     "788824": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "18fa73d4e41d13f10dcf096a320346baee3a69773534558ea06f13d1fc7bcdb7",
+        "raw_scanline_sha256": "7ba1d2eff16a7340722e7ce7a426b02772fef2e5a2e1b23f320172da3508dd31",
     },
     "824002": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "6a88dd10be0cc23d2c20e2de4e677203539e5e299f51ff951bebce3c4ef065a4",
+        "raw_scanline_sha256": "0c890e0227ffd3335f7142cc6582153a8d512e46051bc85307300fa8e543f4de",
     },
     "857993": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "d0ab02fd5c77cb32fee5a0810c8320dcf31a7cecab4e107470539b8c27385240",
+        "raw_scanline_sha256": "b660a4a5e5ebe677eb23348ce211288b8c048edec2929fbabad005b26d65457f",
     },
     "987998": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "bbb870ab2ffccecf98f36c411acd41640f24f818e0425f5d7d0bc785e8f3fd56",
+        "raw_scanline_sha256": "d48eec48a5f3c25d2a1de0ace9a08aa129e66927d683518c971562bc1d4d462a",
     },
 }
 
@@ -891,6 +891,107 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(87.868, abs=1e-3)
 
     assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
+
+
+@pytest.mark.smoke
+def test_anchor2_visual_audit_new_cases_keep_continuous_divmerge_publishable(tmp_path: Path) -> None:
+    anchor2_case_ids = [
+        "706347",
+        "760230",
+        "760277",
+        "765050",
+        "765170",
+        "768680",
+    ]
+    missing_cases = [
+        case_id for case_id in anchor2_case_ids if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
+    ]
+    if missing_cases:
+        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=anchor2_case_ids,
+        out_root=tmp_path / "anchor2_visual_audit_new_cases",
+        run_id="anchor2_visual_audit_new_cases",
+    )
+
+    summary_payload = json.loads(
+        (run_root / "divmerge_virtual_anchor_surface_summary.json").read_text(encoding="utf-8")
+    )
+    rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
+
+    assert rows_by_case["760230"]["final_state"] == "accepted"
+    assert rows_by_case["760277"]["final_state"] == "accepted"
+    assert rows_by_case["765170"]["final_state"] == "accepted"
+    assert rows_by_case["768680"]["final_state"] == "accepted"
+    assert rows_by_case["706347"]["final_state"] == "accepted"
+    assert rows_by_case["765050"]["final_state"] == "rejected"
+
+    expected_a_level_required_nodes = {
+        "760230": "5381293925340534",
+        "760277": "5396321846626659",
+    }
+    for case_id, expected_node in expected_a_level_required_nodes.items():
+        step4_payload = json.loads(
+            (run_root / "cases" / case_id / "step4_event_interpretation.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        event_unit = step4_payload["event_units"][0]
+        assert event_unit["positive_rcsd_consistency_level"] == "A"
+        assert event_unit["positive_rcsd_support_level"] == "primary_support"
+        assert event_unit["rcsd_consistency_result"] == "positive_rcsd_strong_consistent"
+        assert event_unit["required_rcsd_node"] == expected_node
+        assert event_unit["rcsd_selection_mode"] == "road_surface_fork_forward_rcsd_binding"
+
+    for case_id in ("765170", "768680"):
+        step6_status = json.loads(
+            (run_root / "cases" / case_id / "step6_status.json").read_text(encoding="utf-8")
+        )
+        assert step6_status["assembly_state"] == "assembled"
+        assert step6_status["component_count"] == 1
+        assert step6_status["hole_count"] == 0
+        assert step6_status["cut_violation"] is False
+
+    step4_706347 = json.loads(
+        (run_root / "cases" / "706347" / "step4_event_interpretation.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    unit_706347 = step4_706347["event_units"][0]
+    assert unit_706347["evidence_source"] == "rcsd_junction_window"
+    assert unit_706347["required_rcsd_node"] == "5384371838320978"
+    assert unit_706347["positive_rcsd_consistency_level"] == "B"
+    assert unit_706347["rcsd_selection_mode"] == "rcsd_junction_window"
+
+    step5_706347 = json.loads(
+        (run_root / "cases" / "706347" / "step5_status.json").read_text(encoding="utf-8")
+    )
+    assert step5_706347["case_junction_window_protection_domain"]["present"] is True
+    unit_step5_706347 = step5_706347["unit_results"][0]
+    assert unit_step5_706347["surface_fill_mode"] == "junction_window"
+    assert unit_step5_706347["junction_window_anchor_source"] == "swsd_semantic_junction"
+    assert unit_step5_706347["junction_window_anchor_node_id"] == "706346"
+    assert unit_step5_706347["junction_window_anchor_patch_geometry"]["present"] is True
+    assert unit_step5_706347["required_rcsd_node_patch_geometry"]["present"] is False
+    assert unit_step5_706347["target_b_node_patch_geometry"]["present"] is False
+    assert unit_step5_706347["unit_terminal_cut_constraints"]["present"] is False
+
+    step6_706347 = json.loads(
+        (run_root / "cases" / "706347" / "step6_status.json").read_text(encoding="utf-8")
+    )
+    assert step6_706347["assembly_state"] == "assembled"
+    assert step6_706347["component_count"] == 1
+    assert step6_706347["cut_violation"] is False
+    assert step6_706347["forbidden_overlap_area_m2"] == pytest.approx(0.0, abs=1e-6)
+    assert step6_706347["final_case_polygon"]["area_m2"] == pytest.approx(1280.415, abs=1e-3)
+
+    step7_765050 = json.loads(
+        (run_root / "cases" / "765050" / "step7_status.json").read_text(encoding="utf-8")
+    )
+    assert step7_765050["final_state"] == "rejected"
+    assert "multi_component_result" in set(step7_765050["reject_reasons"])
 
 
 @pytest.mark.smoke

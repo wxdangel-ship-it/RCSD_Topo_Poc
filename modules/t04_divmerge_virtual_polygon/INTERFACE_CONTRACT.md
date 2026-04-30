@@ -136,6 +136,8 @@ Step4 允许以下内部审计态：
 - `rcsd_anchored_reverse`
 - `none`
 
+`rcsd_junction_window` 可覆盖下一个 SWSD 语义路口窗口内存在 RCSDRoad 支撑、但当前 case 正向/逆向均无法形成强 RCSD 路口锚定的退化场景。此时 selected RCSDRoad 只作为 junction-window 支撑证据，不等同于 A 类强锚定；对 `role_mapping_partial_aggregated` 退化窗口，Step5 成面锚点必须回到下一个 SWSD 语义路口，取该 SWSD 路口前后 `20m` 的路口面，不得把 `required_rcsd_node` 当成 must-cover 成面锚点。
+
 ### 3.3 Step4 position source
 
 `position_source` 允许值：
@@ -298,9 +300,12 @@ event-unit `step3_status.json` 表达 Step4 可执行 skeleton，至少说明：
 - `fallback_support_strip`
 - `bridge_zone`
 - `junction_full_road_fill_domain` 是否启用及原因
+- `case_junction_window_protection_domain` 是否启用及原因
 - `surface_fill_axis_half_width_m`（启用 full-fill 时）
 
 Step5 输出只定义约束，不发布最终 polygon。
+
+当 Step4 退化到 `rcsd_junction_window` 且 `rcsd_decision_reason = role_mapping_partial_aggregated` 时，Step5 必须把下一个 SWSD 语义路口前后 `20m` junction window 作为 protected support domain：generic unrelated SWSD/RCSD masks 与普通 terminal cut 不得把该 protected window 切碎；`required_rcsd_node` 仅保留为支撑审计事实，不进入 must-cover patch。DriveZone、allowed growth 与真实外部硬冲突仍然有效。`swsd_junction_window` 与 exact / relaxed RCSD window 继续沿用既有冻结口径。
 
 ### 4.6 Step6 输出
 

@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
 import numpy as np
-from shapely.geometry import GeometryCollection, MultiPolygon, Point, Polygon
+from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import nearest_points
 
 from ._rcsd_selection_support import _normalize_geometry, _union_geometry
 from ._runtime_polygon_cleanup import POLYGON_SMALL_HOLE_AREA_M2, _fill_small_polygon_holes, _polygon_components
@@ -30,6 +31,8 @@ STEP6_CONNECTIVITY_NEIGHBORS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 STEP6_CLOSE_ITERATIONS = 1
 STEP6_FORBIDDEN_TOLERANCE_AREA_M2 = 1e-6
 STEP6_CUT_TOLERANCE_AREA_M2 = 1e-6
+STEP6_CONTINUOUS_COMPONENT_BRIDGE_MAX_DISTANCE_M = 12.0
+STEP6_CONTINUOUS_COMPONENT_BRIDGE_HALF_WIDTH_M = 3.0
 
 
 def _geometry_summary(geometry: BaseGeometry | None) -> dict[str, Any]:
@@ -69,6 +72,7 @@ def _core_must_cover_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry 
             for unit in step5_result.unit_results
             for component in (
                 unit.localized_evidence_core_geometry,
+                unit.junction_window_anchor_patch_geometry,
                 unit.fact_reference_patch_geometry,
                 unit.required_rcsd_node_patch_geometry,
                 unit.fallback_support_strip_geometry,
@@ -445,6 +449,85 @@ def _target_b_seed_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry | 
     )
 
 
+def _continuous_component_bridge_enabled(step5_result: T04Step5CaseResult) -> bool:
+    if len(step5_result.unit_results) <= 1:
+        return False
+    return all(
+        unit.positive_rcsd_consistency_level in {"A", "B"}
+        for unit in step5_result.unit_results
+    )
+
+
+def _post_cleanup_limit_recheck_enabled(step5_result: T04Step5CaseResult) -> bool:
+    if _continuous_component_bridge_enabled(step5_result):
+        return False
+    if not step5_result.unit_results:
+        return True
+    protection_domain = getattr(step5_result, "case_junction_window_protection_domain", None)
+    return bool(protection_domain is not None and not protection_domain.is_empty)
+
+
+def _bridge_nearby_components(
+    geometry: BaseGeometry | None,
+    *,
+    step5_result: T04Step5CaseResult,
+    drivezone_union: BaseGeometry | None,
+    terminal_window_geometry: BaseGeometry | None,
+    cut_barrier_geometry: BaseGeometry | None,
+) -> BaseGeometry | None:
+    if not _continuous_component_bridge_enabled(step5_result):
+        return geometry
+    normalized = _normalize_geometry(geometry)
+    if normalized is None:
+        return None
+    merged = normalized
+    while True:
+        components = _polygon_components(merged)
+        if len(components) <= 1:
+            return _normalize_geometry(merged)
+        best_pair: tuple[Polygon, Polygon] | None = None
+        best_distance: float | None = None
+        for index, left in enumerate(components):
+            for right in components[index + 1 :]:
+                distance = float(left.distance(right))
+                if best_distance is None or distance < best_distance:
+                    best_distance = distance
+                    best_pair = (left, right)
+        if (
+            best_pair is None
+            or best_distance is None
+            or best_distance > STEP6_CONTINUOUS_COMPONENT_BRIDGE_MAX_DISTANCE_M
+        ):
+            return _normalize_geometry(merged)
+        left_point, right_point = nearest_points(best_pair[0], best_pair[1])
+        bridge_line = LineString([left_point, right_point])
+        bridge = _union_geometry(
+            [
+                bridge_line.buffer(
+                    STEP6_CONTINUOUS_COMPONENT_BRIDGE_HALF_WIDTH_M,
+                    cap_style=1,
+                    join_style=2,
+                ),
+                left_point.buffer(STEP6_CONTINUOUS_COMPONENT_BRIDGE_HALF_WIDTH_M),
+                right_point.buffer(STEP6_CONTINUOUS_COMPONENT_BRIDGE_HALF_WIDTH_M),
+            ]
+        )
+        constrained_bridge = _constrain_geometry_to_case_limits(
+            bridge,
+            drivezone_union=drivezone_union,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            terminal_window_geometry=None,
+            forbidden_geometry=None,
+            cut_barrier_geometry=None,
+        )
+        if constrained_bridge is None or constrained_bridge.is_empty:
+            return _normalize_geometry(merged)
+        bridged = _normalize_geometry(_union_geometry([merged, constrained_bridge]))
+        if bridged is None or len(_polygon_components(bridged)) >= len(components):
+            return _normalize_geometry(merged)
+        merged = bridged
+
+
 @dataclass(frozen=True)
 class T04Step6Result:
     case_id: str
@@ -650,7 +733,10 @@ def build_step6_polygon_assembly(
             final_case_polygon,
             forbidden_geometry=step5_result.case_forbidden_domain,
         )
-    if final_case_polygon is not None and not final_case_polygon.is_empty:
+    if (
+        final_case_polygon is not None
+        and not final_case_polygon.is_empty
+    ):
         final_case_polygon = _constrain_geometry_to_case_limits(
             final_case_polygon,
             drivezone_union=drivezone_union,
@@ -664,7 +750,38 @@ def build_step6_polygon_assembly(
             final_case_polygon,
             hard_seed_geometry,
         )
-    cut_checked_polygon = final_case_polygon
+    final_case_polygon = _bridge_nearby_components(
+        final_case_polygon,
+        step5_result=step5_result,
+        drivezone_union=drivezone_union,
+        terminal_window_geometry=terminal_window_geometry,
+        cut_barrier_geometry=cut_barrier_geometry,
+    )
+    if final_case_polygon is not None and not final_case_polygon.is_empty:
+        final_case_polygon = _normalize_geometry(
+            _fill_small_polygon_holes(
+                final_case_polygon or GeometryCollection(),
+                max_hole_area_m2=POLYGON_SMALL_HOLE_AREA_M2,
+            )
+        )
+    if final_case_polygon is not None and not final_case_polygon.is_empty:
+        final_case_polygon = _fill_unexpected_polygon_holes(
+            final_case_polygon,
+            forbidden_geometry=step5_result.case_forbidden_domain,
+        )
+    if (
+        final_case_polygon is not None
+        and not final_case_polygon.is_empty
+        and _post_cleanup_limit_recheck_enabled(step5_result)
+    ):
+        final_case_polygon = _constrain_geometry_to_case_limits(
+            final_case_polygon,
+            drivezone_union=drivezone_union,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            terminal_window_geometry=terminal_window_geometry,
+            forbidden_geometry=step5_result.case_forbidden_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
 
     component_count = len(_polygon_components(final_case_polygon or GeometryCollection()))
     hole_details, final_case_holes = _hole_details(

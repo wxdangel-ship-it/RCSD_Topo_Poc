@@ -50,6 +50,7 @@ from .step4_road_surface_fork_rcsd import (
     _same_case_rcsd_claim_conflict,
     _selected_surface_summary,
     _strong_aggregated_unit,
+    _strong_road_surface_fork_aggregated_unit,
     _weak_structure_surface_window_candidate,
 )
 
@@ -124,7 +125,18 @@ def _bind_strong_rcsd_to_surface(
         return None, None
     if event_unit.required_rcsd_node:
         return None, None
-    aggregate = _strong_aggregated_unit(event_unit.positive_rcsd_audit)
+    degraded_reasons = {
+        str(reason or "").strip()
+        for reason in event_unit.pair_local_summary.get("degraded_reasons") or ()
+        if str(reason or "").strip()
+    }
+    single_event_group = len(case_result.case_bundle.group_nodes) <= 1
+    stable_surface_rcsd_scope = "pair_local_scope_rcsdnode_outside_drivezone_filtered" not in degraded_reasons
+    aggregate = (
+        _strong_road_surface_fork_aggregated_unit(event_unit.positive_rcsd_audit)
+        if single_event_group and stable_surface_rcsd_scope
+        else _strong_aggregated_unit(event_unit.positive_rcsd_audit)
+    )
     if aggregate is None:
         return None, None
 

@@ -32,19 +32,29 @@
   - `intruding_road_ids`
 - Step4 每个 event unit 的事实依据与位置必须可解释。
 - `fact_reference_point`、`review_materialized_point`、`selected_component_union_geometry`、`localized_evidence_core_geometry`、`coarse_anchor_zone_geometry` 的语义边界必须可解释。
+- 主证据只允许来自导流带或道路面分叉；RCSD 语义路口、RCSDRoad、SWSD 语义路口、SWSD candidate、历史抽象 node、拓扑召回点和抽象路网代理点不得被写成主证据。
+- 无主证据时不得构造虚拟 Reference Point；`fact_reference_point` 必须为空，并以 `no_reference_point_reason` 审计原因。
+- Reference Point 必须能追溯到导流带真实决定分歧 / 合流的位置，或道路面形态真实切换的位置。
+- RCSD/SWSD 作为 `section_reference_source` 时必须显式标记，不得混写到 `reference_point_source`。
 - Step5 必须能稳定产出 Unit / Case 两级的 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints`，并对 `1m` hard negative mask、`fallback_support_strip`、`bridge zone` 与 `junction_full_road_fill_domain` 给出可追溯解释。
-- 对 `rcsd_anchored_reverse` 且同时具备 `Reference Point + required_rcsd_node` 的路口面，Step5 必须在 DriveZone 内按语义主轴构造整幅路面填充域：Reference Point 与 RCSDNode 两端各保留 `20m` terminal window，主轴横向单侧不超过 `20m`，并继续受 forbidden masks / terminal cuts 硬裁剪。
+- Step5 默认以前后 `20m` 横向截面确定构面窗口，横向截面垂直于道路面方向或语义主轴。
+- 路口面两侧横向扩展不得超过 `20m`，并且不得越过负向掩膜；负向掩膜包括导流带、hard negative mask、forbidden domain、terminal cut 与不可通行区域。
+- RCSDRoad fallback 不得导致沿整条 RCSDRoad 远距离扩面，只能覆盖与当前事实分歧 / 合流或当前 section reference 相关的局部段。
+- 对同时具备主证据 Reference Point 与 required RCSDNode 的路口面，Step5 必须在 DriveZone 内按语义主轴构造整幅路面填充域：Reference Point 与 RCSDNode 两端各保留 `20m` terminal window，主轴横向单侧不超过 `20m`，并继续受 forbidden masks / terminal cuts 硬裁剪；无主证据时只能使用 section reference，不得把 RCSDNode 推导为 Reference Point。
 - Step6 必须能在不突破 Step5 约束的前提下生成单一连通面；只允许业务 hole，不允许算法洞。
+- complex / multi 场景下，unit surface 合并后仍须保持 case 级单一连通，除非存在明确业务 hole。
 - Step7 必须把最终状态机压缩为 `accepted / rejected` 两态；审计材料可以保留，但不得冒充第三种正式状态。
+- Anchor_2 full baseline 的既有 `accepted / rejected` 语义不得静默放宽，不能为了提高 accepted count 弱化 Step7 门禁。
 
 ## 可审计性
 
-- Step4 review 图必须能直接表达当前事件单元的主证据、主轴、参考点与正向 RCSD。
+- Step4 review 图必须能直接表达当前事件单元的主证据、主轴、Reference Point、section reference 与正向 RCSD/SWSD 支持状态。
 - Step4 review 图必须能一眼区分：
   - `pair_local_rcsd_scope`
   - `selected_candidate_region` 这个空间容器
   - `selected_evidence`
   - `fact_reference_point / review_materialized_point`
+  - `section_reference_source / section_reference_geometry`
   - `first_hit RCSDRoad`
   - `local RCSD unit`
   - `positive RCSD road / node`
@@ -75,7 +85,7 @@
   - 是否构成 `aggregated_rcsd_unit`
   - 是否触发 `axis_polarity_inverted`
   - `positive_rcsd_present` 为什么成立或为什么不成立
-  - normalized role mapping 为什么得到 `A/B/C`
+  - normalized role mapping 为什么得到 `A/B/C`；该 `A/B/C` 只能作为 RCSD 支持强度、一致性、审计质量等级或人工复核优先级，不再作为 T04 主业务场景分类
   - `required_rcsd_node` 为什么输出或为什么为空
 - Step5 审计输出必须能明确举证：
   - 哪些区域进入 `must_cover_domain`
@@ -83,11 +93,14 @@
   - `fallback_support_strip` 与 `bridge zone` 如何物化
   - `terminal_cut_constraints` 如何从局部道路方向确定
   - `junction_full_road_fill_domain` 是否启用，以及其 `surface_fill_axis_half_width_m`、语义主轴横向带和面积
+  - `surface_section_forward_m / surface_section_backward_m / surface_lateral_limit_m` 是否保持默认 `20m` 或显式说明偏离原因
+  - RCSDRoad fallback 是否只覆盖相关局部段，且未造成远距离扩面
 - Step6 审计输出必须能明确举证：
   - `assembly_canvas` 如何构造
   - 哪些硬种子被写入
   - 最终是否单一连通
   - 是否存在 forbidden overlap / cut violation / 非业务 hole
+  - cleanup 后是否重新检查 allowed / forbidden / cut / 横向范围
 - Step7 审计输出必须能明确举证：
   - `accepted / rejected` 的最终判定依据
   - 发布层去向
@@ -146,6 +159,16 @@
   - side-label mismatch 不再单独把事实存在样本压到 `C`
   - `axis_polarity_inverted` 默认在 aggregated 级别识别
 - 复杂连续分歧、multi-diverge / multi-merge、simple 二分歧三类场景都必须有可复查样本。
+- 六类路口面业务场景和兜底场景必须逐步补齐回归样类：
+  - 主证据 + RCSD 语义路口：待补充，不强行给未知 case 归类。
+  - 主证据 + RCSDRoad fallback：待补充，不强行给未知 case 归类。
+  - 主证据 + 无 RCSD：待补充，不强行给未知 case 归类。
+  - 无主证据 + RCSD junction window：已知线索 `760984 / 788824`。
+  - 无主证据 + SWSD junction window：已知线索 `706629`。
+  - 无主证据 + SWSD junction window + RCSDRoad fallback：待补充，不强行给未知 case 归类。
+  - complex / multi unit surface 合并：待补充，不强行给未知 case 归类。
+  - 导流带作为负向掩膜：待补充，不强行给未知 case 归类。
+  - 横向超过 `20m` 的裁剪或拒绝样例：待补充，不强行给未知 case 归类。
 
 ### 当前 accepted baseline gate（2026-04-22）
 
@@ -220,14 +243,15 @@ Step7 legacy selected-case 发布冻结门槛：
   - `node_505078921` 必须保持 `required_rcsd_node = 5385438602535104`
   - `node_510222629` 必须保持 `required_rcsd_node = 5385438602535122`
   - `node_510222629__pair_02` 必须保持 `evidence_source = road_surface_fork`，不得被 `rcsd_junction_window` 抢占为独立 RCSD window。
-- `706629` 当前锁定为 `swsd_junction_window`：无主证据、无正向 RCSD 时，以 SWSD 路口前后 `20m` 构面。
-- `760984 / 788824` 当前锁定为 `rcsd_junction_window`：无主证据、但可召回正向 RCSD 时，以 RCSDNode 前后 `20m` 构面。
+- `706629` 当前锁定为 `swsd_junction_window`：无主证据、无正向 RCSD 时，以 SWSD 路口作为 section reference，前后 `20m` 构面；不得构造 Reference Point。
+- `760984 / 788824` 当前锁定为 `rcsd_junction_window`：无主证据、但可召回正向 RCSD 时，以 RCSDNode 作为 section reference，前后 `20m` 构面；不得构造 Reference Point。
 - `760598 / 760936 / 857993` 当前保持 `rejected`；后续不得为了提高 accepted count 静默放宽 Step7 门禁。
 
 ### RCSD-anchored reverse 定向回归（2026-04-24）
 
 - `699870` 当前属于 Anchor_2 full baseline 的 accepted case，同时也是 Step4 末段 `rcsd_anchored_reverse` 的定向真实回归样本。
 - `699870` 用于验证“前向主证据缺位，但 RCSD 端可稳定成团”的旁路能力；该旁路能力已经进入当前 `23 / 20 / 3` baseline 守门。
+- `699870` 的 RCSD 端能力不得被解释为 RCSD 推导 Reference Point；如无主证据，只能以 section reference、支撑域来源与审计字段表达。
 - 单 case 回归中，`699870` 必须触发 reverse，且 Step4 不得再以 `selected_evidence_state = none` 结束。
 - `699870` 的 Step5-7 必须能继续消费 Step4 写回的 `event_chosen_s_m / axis_position_m / selected_evidence_state` 与 legacy Step5 bridge 字段。
 - `699870` 的 Step5 必须启用 `junction_full_road_fill`，并以 `surface_fill_axis_half_width_m = 20.0` 约束整幅路面填充；最终 polygon 不得退化为仅覆盖 `terminal_support_corridor_geometry` 的窄带结果。

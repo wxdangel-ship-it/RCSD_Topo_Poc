@@ -30,7 +30,7 @@ T04 当前正式承接：
 - Step1 不做事实解释与几何裁决。
 - Step2 只组织 local context 与 SWSD negative context；RCSD 正向支持在 Step4 解释。
 - Step3 区分 `case coordination skeleton` 与 `unit-level executable skeleton`。
-- Step4 做 event-unit 事实解释、主证据、参考点、正向 RCSD 与受控恢复；不生成最终 polygon。
+- Step4 做 event-unit 事实解释、主证据、Reference Point、section reference、正向 RCSD / SWSD 支持与受控恢复；不生成最终 polygon。
 - Step5 定义 `must_cover / allowed_growth / forbidden / terminal_cut`。
 - Step6 在 Step5 约束内生成单一连通 case polygon。
 - Step7 只发布 `accepted / rejected` 二态最终结果。
@@ -150,7 +150,100 @@ Step4 允许以下内部审计态：
 - `rcsd_anchored_axis_projection`
 - `none`
 
-### 3.4 Step7 最终状态机
+既有 `evidence_source / position_source` 值域保持兼容：`swsd_junction_window / rcsd_junction_window / rcsd_anchored_reverse` 只能表达受控恢复、截面参考或支撑域来源，不得被解释为主证据或虚拟 Reference Point。
+
+### 3.4 主证据、Reference Point 与 section reference
+
+T04 的主证据只指真实世界物理空间证据，当前稳定值域为：
+
+`main_evidence_type`：
+
+- `divstrip`
+- `road_surface_fork`
+- `none`
+
+`fact_reference_point / Reference Point` 只在 `has_main_evidence = true` 时成立，且来源只能是主证据：
+
+`reference_point_source`：
+
+- `divstrip`
+- `road_surface_fork`
+- `none`
+
+约束：
+
+- 有导流带主证据时，Reference Point 来自导流带真实决定分歧 / 合流的位置。
+- 有道路面分叉主证据时，Reference Point 来自道路面形态真实切换的位置。
+- 无主证据时，`reference_point_present = false`，`fact_reference_point = null`，`reference_point_source = none`。
+- 不得从 RCSD 语义路口、RCSDRoad、SWSD 语义路口、SWSD candidate、历史抽象 node、拓扑召回点或仅由抽象路网推导出的代理点反推 Reference Point。
+
+`section reference / 截面参考对象` 用于确定路口面前后横向截面位置，不等同于 Reference Point。`section_reference_source` 允许值：
+
+- `reference_point`
+- `reference_point_and_rcsd_junction`
+- `rcsd_junction`
+- `swsd_junction`
+- `none`
+
+RCSD / SWSD 只能作为 `section_reference_source`、抽象路网参考、截面参考、支撑域约束或审计辅助；不得写成主证据或 Reference Point。
+
+### 3.5 路口面场景与生成模式
+
+`surface_scenario_type` 允许值：
+
+- `main_evidence_with_rcsd_junction`
+- `main_evidence_with_rcsdroad_fallback`
+- `main_evidence_without_rcsd`
+- `no_main_evidence_with_rcsd_junction`
+- `no_main_evidence_with_rcsdroad_fallback_and_swsd`
+- `no_main_evidence_with_swsd_only`
+- `no_surface_reference`
+
+场景语义：
+
+- `main_evidence_with_rcsd_junction`：有主证据 + RCSD 语义路口；Reference Point 由主证据决定，section reference 为 `Reference Point + RCSD 语义路口`。
+- `main_evidence_with_rcsdroad_fallback`：有主证据 + RCSDRoad fallback；Reference Point 由主证据决定，section reference 为 `Reference Point`，fallback 只覆盖相关局部段。
+- `main_evidence_without_rcsd`：有主证据 + 无 RCSD；Reference Point 由主证据决定，主证据独立驱动构面。
+- `no_main_evidence_with_rcsd_junction`：无主证据 + RCSD 语义路口；无 Reference Point，section reference 为 `RCSD 语义路口`。
+- `no_main_evidence_with_rcsdroad_fallback_and_swsd`：无主证据 + RCSDRoad fallback + SWSD 语义路口；无 Reference Point，section reference 为 `SWSD 语义路口`，fallback 只覆盖相关局部段。
+- `no_main_evidence_with_swsd_only`：无主证据 + 无 RCSD + SWSD 语义路口；无 Reference Point，SWSD-only 构面。
+- `no_surface_reference`：无主证据、无 RCSD 语义路口、无 RCSDRoad fallback、无 SWSD 语义路口；无 Reference Point、无 section reference，不生成实体路口面，不伪造 fake final polygon。
+
+`rcsd_match_type` 允许值：
+
+- `rcsd_junction`
+- `rcsdroad_fallback`
+- `none`
+
+`surface_generation_mode` 允许值：
+
+- `main_evidence_driven`
+- `rcsd_junction_window`
+- `swsd_junction_window`
+- `swsd_with_rcsdroad_fallback`
+- `no_surface`
+
+稳定字段登记：
+
+| 字段 | 层级 | 说明 |
+|---|---|---|
+| `has_main_evidence` | Step4 | 是否存在导流带或道路面分叉主证据。 |
+| `main_evidence_type` | Step4 | `divstrip / road_surface_fork / none`。 |
+| `reference_point_present` | Step4 | 是否存在真实 Reference Point。 |
+| `reference_point_source` | Step4 | `divstrip / road_surface_fork / none`。 |
+| `section_reference_source` | Step4/5 | 截面参考对象来源。 |
+| `section_reference_geometry` | Step4/5 | 截面参考对象几何；可来自 Reference Point、RCSD junction 或 SWSD junction。 |
+| `surface_scenario_type` | Step4/5/summary | 六类业务场景与兜底场景分类。 |
+| `rcsd_match_type` | Step4 | `rcsd_junction / rcsdroad_fallback / none`。 |
+| `swsd_junction_present` | Step4 | 是否存在可用 SWSD 语义路口。 |
+| `fallback_rcsdroad_ids` | Step4/5 | 参与 fallback 的 RCSDRoad 局部段。 |
+| `surface_generation_mode` | Step5/6 | 构面模式。 |
+| `no_reference_point_reason` | Step4 audit | 无 Reference Point 的原因，至少区分 `no_main_evidence`。 |
+| `surface_section_forward_m` | Step5 audit | 前向截面距离，默认 `20`。 |
+| `surface_section_backward_m` | Step5 audit | 后向截面距离，默认 `20`。 |
+| `surface_lateral_limit_m` | Step5 audit | 横向扩展限制，默认 `20`。 |
+
+### 3.6 Step7 最终状态机
 
 `final_state` 只允许：
 
@@ -159,7 +252,7 @@ Step4 允许以下内部审计态：
 
 `runtime_failed / formal result missing` 只能作为 batch closeout、failure doc、streamed terminal record 或 downstream nodes 写回原因出现，不得成为 Step7 正式最终状态。
 
-### 3.5 Step7 relation / reject values
+### 3.7 Step7 relation / reject values
 
 `swsd_relation_type` 允许值：
 
@@ -182,7 +275,7 @@ Step4 允许以下内部审计态：
 
 `reject_reason_detail` 可使用 `|` 串联多个拒绝原因；不得把 `857993` 的 `rejected` 解释为待提升 accepted 的缺陷。
 
-### 3.6 Downstream nodes values
+### 3.8 Downstream nodes values
 
 T04 downstream `nodes.gpkg` 只正式更新 `is_anchor`：
 
@@ -274,8 +367,9 @@ event-unit `step3_status.json` 表达 Step4 可执行 skeleton，至少说明：
 - Step4 state：`review_state / evidence_source / position_source`
 - topology：`event_branch_ids / boundary_branch_ids / preferred_axis_branch_id`
 - pair-local geometry：`pair_local_direction / branch_separation_* / stop_reason`
-- evidence：`selected_candidate_region / selected_evidence / fact_reference_point / review_materialized_point`
-- RCSD：`positive_rcsd_present / positive_rcsd_support_level / positive_rcsd_consistency_level / required_rcsd_node / rcsd_decision_reason`
+- evidence：`has_main_evidence / main_evidence_type / selected_candidate_region / selected_evidence / fact_reference_point / reference_point_present / reference_point_source / review_materialized_point`
+- section reference：`section_reference_source / section_reference_geometry / surface_scenario_type / surface_generation_mode / no_reference_point_reason`
+- RCSD/SWSD：`positive_rcsd_present / positive_rcsd_support_level / positive_rcsd_consistency_level / required_rcsd_node / rcsd_match_type / swsd_junction_present / fallback_rcsdroad_ids / rcsd_decision_reason`
 - focus：`needs_manual_review_focus / focus_reasons`
 
 `step4_review_summary.json` 至少汇总：
@@ -299,8 +393,10 @@ event-unit `step3_status.json` 表达 Step4 可执行 skeleton，至少说明：
 - `bridge_zone`
 - `junction_full_road_fill_domain` 是否启用及原因
 - `surface_fill_axis_half_width_m`（启用 full-fill 时）
+- `surface_section_forward_m / surface_section_backward_m / surface_lateral_limit_m`
+- section reference 到 `must_cover / allowed_growth / forbidden / terminal_cut` 的转换说明
 
-Step5 输出只定义约束，不发布最终 polygon。
+Step5 输出只定义约束，不发布最终 polygon。默认以前后 `20m` 横向截面、横向 `20m` 限制组织可通行道路面；负向掩膜包括导流带、hard negative mask、forbidden domain、terminal cut 与不可通行区域。
 
 ### 4.6 Step6 输出
 
@@ -308,6 +404,7 @@ Step5 输出只定义约束，不发布最终 polygon。
 
 - `assembly_state`
 - `component_count`
+- unit surface 到 case surface 的合并关系（complex / multi 场景）
 - `hard_must_cover_ok`
 - `b_node_target_covered`
 - `forbidden_overlap_area_m2`
@@ -316,7 +413,7 @@ Step5 输出只定义约束，不发布最终 polygon。
 - `final_case_polygon`
 - `review_reasons`
 
-Step6 必须在 Step5 约束内生成单一连通结果；cleanup 后必须重新核对 allowed / forbidden / cut。
+Step6 必须在 Step5 约束内生成单一连通结果；cleanup 后必须重新核对 allowed / forbidden / cut / 横向范围。最终 case surface 应保持单一连通，除非存在明确业务 hole。
 
 ### 4.7 Step7 输出
 

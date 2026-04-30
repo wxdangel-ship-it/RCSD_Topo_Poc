@@ -104,7 +104,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 
 业务目标：
 
-- 以 event unit 为单位解释局部事实事件，确定主证据、事实参考点、候选空间、正向 RCSD 支持与受控恢复路径。
+- 以 event unit 为单位解释局部事实事件，确定主证据、Reference Point、section reference、候选空间、正向 RCSD / SWSD 支持与受控恢复路径。
 - 为 Step5 提供可解释的几何与语义输入，而不是直接发布面。
 
 主要输入：
@@ -126,6 +126,17 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - 由 `event_interpretation.py` 作为 facade / composition root，调用私有 Step4 core、selection、branch variant、unit preparation、runtime support 与 postprocess 模块。
 - Step4 采用 branch-first + pair-local 策略：先确定当前 unit 的有序边界 pair `(L, R)`，再在合法 continuation 内形成 `pair_local_region / structure_face / selected_candidate_region`。
 - `selected_candidate_region` 表示合法候选空间容器；`selected_evidence`、`localized_evidence_core_geometry` 与 `fact_reference_point` 才承担主事实证据和位置语义。
+- T04 主证据只包括真实世界物理空间证据：导流带与道路面分叉；RCSD 语义路口、RCSDRoad、SWSD 语义路口、SWSD candidate、历史抽象 node、拓扑召回点和抽象路网代理点不属于主证据。
+- `fact_reference_point / Reference Point` 只能来自主证据：导流带主证据取真实决定分歧 / 合流的位置，道路面分叉主证据取道路面形态真实切换的位置；无主证据时 `fact_reference_point = null`，不得为了流程完整构造虚拟 Reference Point。
+- `section reference / 截面参考对象` 用于确定前后横向截面位置，可来自 Reference Point、`Reference Point + RCSD 语义路口`、RCSD 语义路口或 SWSD 语义路口；RCSD/SWSD junction window 只能作为 section reference 或支撑域辅助，不得命名为 Reference Point。
+- Step4 或 Step4/5 交界处必须输出 `surface_scenario_type`，按“主证据 × RCSD / SWSD 支持状态”区分六类业务场景与 `no_surface_reference` 兜底，而不是把 A / B / C 作为 T04 主场景分类。
+- 六类主业务场景固定为：
+  - `main_evidence_with_rcsd_junction`：有主证据 + RCSD 语义路口，section reference 为 Reference Point + RCSD 语义路口，强证据成功。
+  - `main_evidence_with_rcsdroad_fallback`：有主证据 + RCSDRoad fallback，section reference 为 Reference Point，fallback 只取相关局部段。
+  - `main_evidence_without_rcsd`：有主证据 + 无 RCSD，由主证据独立驱动构面。
+  - `no_main_evidence_with_rcsd_junction`：无主证据 + RCSD 语义路口，无 Reference Point，以 RCSD 语义路口作为 section reference。
+  - `no_main_evidence_with_rcsdroad_fallback_and_swsd`：无主证据 + RCSDRoad fallback + SWSD 语义路口，无 Reference Point，以 SWSD 语义路口作为 section reference，弱证据成功。
+  - `no_main_evidence_with_swsd_only`：无主证据 + 无 RCSD + SWSD 语义路口，无 Reference Point，SWSD-only 构面。
 - 正向 RCSD 只在当前 pair-local 语义框架内选择，不回退到 case-level RCSD 世界补证据。
 - reverse、road-surface fork、SWSD/RCSD junction window 与 `rcsd_anchored_reverse` 是受控恢复路径，由 `step4_postprocess` 归口。
 - complex / multi 的 local throat gate 必须使用当前 unit 的 `boundary_branch_ids`，不得静默退回 case-level main pair；若 throat pair 无法有效形成，必须写出 `degraded_scope_reason`。
@@ -139,6 +150,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - `STEP4_REVIEW` 在当前 full baseline 中是可解释的 soft-degrade 常态，不表示要把 `857993` 追修成 accepted。
 - candidate pruning 采用硬排除与显式 degraded state，不允许静默复用已被排除的 component。
 - Step4 不生成最终 polygon，也不决定最终发布层。
+- 无主证据时允许选择 RCSD/SWSD 作为 `section_reference_source`，但不得写入 `reference_point_source`，不得反推 `fact_reference_point`。
 
 ## 6. Step5 Geometric Support Domain
 
@@ -150,7 +162,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 主要输入：
 
 - Step4 unit / case 结果。
-- `selected_evidence`、`fact_reference_point`、正向 RCSD、DriveZone、road-surface fork 与 fallback support strip。
+- `selected_evidence`、`fact_reference_point`、section reference、正向 RCSD / SWSD、DriveZone、road-surface fork 与 fallback support strip。
 
 主要输出：
 
@@ -162,13 +174,18 @@ T04 采用“业务主链 + 工程编排层”的分工：
 
 - 由 `support_domain.py` 的 `build_step5_support_domain(...)` 构建支撑域。
 - 对主证据充分的单元，围绕 evidence core、fact reference patch 与 required RCSD 组织 must-cover。
-- 对证据弱但可解释的场景，使用 fallback support strip、bridge zone 或 junction window / full-fill domain，并显式审计启用原因。
-- 对 `rcsd_anchored_reverse` 且同时具备 Reference Point 与 required RCSDNode 的场景，在 DriveZone 内按语义主轴构造 `junction_full_road_fill_domain`，并受 forbidden masks 与 terminal cuts 硬约束。
+- 对证据弱但可解释的场景，使用 fallback support strip、bridge zone 或 junction window / full-fill domain，并显式审计启用原因；该类 section reference 不得反写为 Reference Point。
+- 将 `section_reference_source / section_reference_geometry` 转换为支撑域时，默认以前后 `20m` 生成横向截面，横向截面垂直于道路面方向或语义主轴。
+- 两个截面之间应铺满可通行道路面，路口面两侧横向扩展不得超过 `20m`。
+- 负向掩膜不得被越过，至少包括导流带、hard negative mask、forbidden domain、terminal cut 与不可通行区域。
+- RCSDRoad fallback 只能纳入与当前分歧 / 合流事实或当前 SWSD/RCSD section reference 相关的局部段，不得沿整条 RCSDRoad 远距离扩张。
+- 对同时具备主证据 Reference Point 与 required RCSDNode 的场景，可在 DriveZone 内按语义主轴构造 `junction_full_road_fill_domain`，并受 forbidden masks、terminal cuts 与横向 `20m` 限制硬约束；若无主证据，则只能记录 section reference 与支撑域来源。
 
 边界：
 
 - Step5 只定义约束，不直接生成最终面。
 - 不得用 review point 伪造几何真值；缺少正向 node 时必须退回已定义的道路末端约束或 fallback 支撑规则。
+- no_surface_reference 场景无 Reference Point、无 section reference，不生成实体路口面，只能进入当前正式状态机和审计规则允许的 rejected / no-effect 解释 / 空结果记录。
 
 ## 7. Step6 Polygon Assembly
 
@@ -192,12 +209,14 @@ T04 采用“业务主链 + 工程编排层”的分工：
 
 - 由 `polygon_assembly.py` 的 `build_step6_polygon_assembly(...)` 执行。
 - 采用 raster-first 单连通组装，再回到矢量 polygon 做连通性、洞、cut、forbidden overlap 检查。
+- complex / multi 场景可先生成 unit surface，再合并为一个 case 级完整 `final_case_polygon`。
 - 允许业务 hole；不允许算法 hole 或无审计 cleanup。
 
 边界：
 
 - Step6 不放宽 Step5 的硬边界。
-- 任何 polygon cleanup 都必须重新套用 allowed / forbidden / cut 约束。
+- 任何 polygon cleanup 都必须重新套用 allowed / forbidden / cut / 横向范围约束。
+- 最终 case surface 应保持单一连通，除非存在明确业务 hole；不得用 cleanup 静默修正拓扑不一致。
 
 ## 8. Step7 Final Acceptance And Publishing
 

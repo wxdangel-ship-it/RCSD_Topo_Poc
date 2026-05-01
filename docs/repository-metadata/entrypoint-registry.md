@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `67` 个。
+- 当前真实执行入口共 `68` 个。
 - 分布概览：
-  - repo 级入口文件：`43`（`Makefile` 1 + `scripts/` 41 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`44`（`Makefile` 1 + `scripts/` 42 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`24`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -58,6 +58,7 @@
 | `t04_run_internal_full_input_8workers.sh` | `scripts/t04_run_internal_full_input_8workers.sh` | repo 级 | T04 模块级内网 full-input 全量运行主脚本；输入全局 `nodes/roads/DriveZone/DivStripZone/RCSDRoad/RCSDNode`，执行 preflight / candidate discovery / shared bootstrap / direct Step1-7 case execution / batch closeout，并输出 `divmerge_virtual_anchor_surface*` 正式成果与 `visual_checks/final_*` 最终平铺目视审计入口；不新增 repo 官方 CLI 子命令 | `active` | 否 |
 | `t04_watch_internal_full_input.sh` | `scripts/t04_watch_internal_full_input.sh` | repo 级 | T04 内网 full-input 实时监控脚本；显示 `selected / completed / running / pending / accepted / rejected / runtime_failed / missing_status`、phase/status/message/entered_case_execution 与性能估算，并支持 `CASE_SCAN=auto/on/off` 降扫描 | `active` | 否 |
 | `t04_run_internal_full_input_innernet_flat_review.sh` | `scripts/t04_run_internal_full_input_innernet_flat_review.sh` | repo 级 | T04 内网 full-input 最终平铺目视审计运行包装；默认关闭 debug、启用 resume/retry/perf audit、使用 failed_only snapshot，并转发到 `t04_run_internal_full_input_8workers.sh` | `active` | 否 |
+| `t04_probe_706243_706247_innernet.py` | `scripts/t04_probe_706243_706247_innernet.py` | repo 级 | T04 内网专项诊断脚本；只读分析或重跑 `706243 / 706247`，输出 Step3/4/5/6/7、RCSD audit、候选与 GPKG 几何摘要，用于定位内网 full-input 与最新基线差异 | `active` | 是 |
 | `.venv/bin/python -m rcsd_topo_poc` | `src/rcsd_topo_poc/__main__.py` | repo 级 | Python 包入口 | `active` | 否 |
 | `doctor` | `src/rcsd_topo_poc/cli.py` | repo 级 | 检查 repo / docs / repo `.venv` / 锁文件 / 运行与开发依赖是否齐备 | `active` | 否 |
 | `qc-template` | `src/rcsd_topo_poc/cli.py` | repo 级 | 打印 `TEXT_QC_BUNDLE v1` 模板 | `active` | 否 |

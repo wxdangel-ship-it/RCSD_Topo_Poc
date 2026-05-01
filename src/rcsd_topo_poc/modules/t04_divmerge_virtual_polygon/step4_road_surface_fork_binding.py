@@ -331,6 +331,43 @@ def _surface_fork_branch_separation_m(
     return None
 
 
+def _has_bilateral_event_side_support(aggregate: dict[str, Any]) -> bool:
+    labels = {
+        str(label).strip().lower()
+        for label in aggregate.get("normalized_event_side_labels") or ()
+        if str(label).strip().lower() not in {"", "center"}
+    }
+    if len(labels) >= 2:
+        return True
+    for assignment in aggregate.get("role_assignments") or ():
+        if not isinstance(assignment, dict):
+            continue
+        if str(assignment.get("axis_side") or "").strip() != "event_side":
+            continue
+        label = str(assignment.get("side_label") or "").strip().lower()
+        if label and label != "center":
+            labels.add(label)
+    return len(labels) >= 2
+
+
+def _local_rcsd_unit_support(
+    audit: dict[str, Any],
+    *,
+    local_unit_id: str | None,
+    required_node: str,
+) -> dict[str, Any] | None:
+    for unit in audit.get("local_rcsd_units") or ():
+        if not isinstance(unit, dict):
+            continue
+        unit_id = str(unit.get("unit_id") or "").strip()
+        node_id = str(unit.get("node_id") or "").strip()
+        if local_unit_id and unit_id == local_unit_id:
+            return unit
+        if required_node and node_id == required_node:
+            return unit
+    return None
+
+
 def _reference_axis_vector(event_unit: T04EventUnitResult) -> tuple[float, float] | None:
     bridge = event_unit.interpretation.legacy_step5_bridge
     vector = getattr(bridge, "event_axis_unit_vector", None)
@@ -1190,11 +1227,41 @@ def _promote_selected_surface_rcsd_junction_window(
     if required_geometry is None:
         return None, None
 
+    aggregate_id = str(aggregate.get("unit_id") or audit.get("aggregated_rcsd_unit_id") or "").strip()
+    support_level = str(aggregate.get("support_level") or event_unit.positive_rcsd_support_level or "secondary_support")
+    consistency_level = str(aggregate.get("consistency_level") or event_unit.positive_rcsd_consistency_level or "B")
+    decision_reason = str(aggregate.get("decision_reason") or audit.get("rcsd_decision_reason") or "")
+    local_unit_id = _local_unit_id_for_node(aggregate, required_node) or _local_unit_id_for_node(aggregate, primary_node)
+    reference_point = event_unit.fact_reference_point if isinstance(event_unit.fact_reference_point, Point) else None
+    if reference_point is None and isinstance(entry.fact_reference_point, Point):
+        reference_point = entry.fact_reference_point
+    review_point = event_unit.review_materialized_point if isinstance(event_unit.review_materialized_point, Point) else None
+    if review_point is None:
+        review_point = reference_point
+    preserve_surface_main_evidence = bool(
+        _has_bilateral_event_side_support(aggregate)
+        and reference_point is not None
+        and (
+            event_unit.localized_evidence_core_geometry is not None
+            or entry.localized_evidence_core_geometry is not None
+            or event_unit.selected_component_union_geometry is not None
+            or entry.selected_component_union_geometry is not None
+        )
+    )
     road_ids = _aggregate_ids(aggregate, "road_ids")
     node_ids = _aggregate_ids(aggregate, "node_ids")
-    selected_roads = _dedupe(audit.get("published_rcsdroad_ids") or road_ids)
-    selected_nodes = _dedupe(audit.get("published_rcsdnode_ids") or node_ids)
-    aggregate_id = str(aggregate.get("unit_id") or audit.get("aggregated_rcsd_unit_id") or "").strip()
+    local_support = _local_rcsd_unit_support(
+        audit,
+        local_unit_id=local_unit_id,
+        required_node=required_node,
+    )
+    if preserve_surface_main_evidence and local_support is not None:
+        selected_roads = _dedupe(local_support.get("road_ids") or ())
+        selected_nodes = _dedupe(local_support.get("node_ids") or ())
+    else:
+        selected_roads = _dedupe(audit.get("published_rcsdroad_ids") or road_ids)
+        selected_nodes = _dedupe(audit.get("published_rcsdnode_ids") or node_ids)
+    first_hit = tuple(road_id for road_id in first_hit if road_id in set(selected_roads))
     if _same_case_rcsd_claim_conflict(
         case_result,
         event_unit,
@@ -1205,10 +1272,32 @@ def _promote_selected_surface_rcsd_junction_window(
         selected_nodes=selected_nodes,
     ):
         return None, None
-    support_level = str(aggregate.get("support_level") or event_unit.positive_rcsd_support_level or "secondary_support")
-    consistency_level = str(aggregate.get("consistency_level") or event_unit.positive_rcsd_consistency_level or "B")
-    decision_reason = str(aggregate.get("decision_reason") or audit.get("rcsd_decision_reason") or "")
-    local_unit_id = _local_unit_id_for_node(aggregate, required_node) or _local_unit_id_for_node(aggregate, primary_node)
+    evidence_source = "road_surface_fork" if preserve_surface_main_evidence else RCSD_JUNCTION_WINDOW_SOURCE
+    position_source = (
+        str(event_unit.position_source or entry.position_source or "road_surface_fork")
+        if preserve_surface_main_evidence
+        else RCSD_JUNCTION_WINDOW_POSITION_SOURCE
+    )
+    source_mode = (
+        str(selected_summary.get("source_mode") or evidence_source)
+        if preserve_surface_main_evidence
+        else RCSD_JUNCTION_WINDOW_SOURCE
+    )
+    rcsd_selection_mode = (
+        "road_surface_fork_rcsd_junction_local_unit_binding"
+        if preserve_surface_main_evidence
+        else RCSD_JUNCTION_WINDOW_SOURCE
+    )
+    rcsd_consistency_result = (
+        "positive_rcsd_partial_consistent"
+        if preserve_surface_main_evidence
+        else RCSD_JUNCTION_WINDOW_SOURCE
+    )
+    positive_reason = (
+        "road_surface_fork_rcsd_junction_local_unit_present"
+        if preserve_surface_main_evidence
+        else "rcsd_junction_window_forward_rcsd_present"
+    )
     detail = {
         "action": "bound_selected_surface_to_rcsd_junction_window",
         "candidate_id": entry.candidate_id,
@@ -1220,12 +1309,17 @@ def _promote_selected_surface_rcsd_junction_window(
         "first_hit_rcsdroad_ids": list(first_hit),
         "window_half_length_m": JUNCTION_WINDOW_HALF_LENGTH_M,
         "rcsd_decision_reason": decision_reason,
+        "preserved_surface_main_evidence": preserve_surface_main_evidence,
+        "selected_rcsd_scope": "required_node_local_unit" if preserve_surface_main_evidence else "published_aggregate",
+        "aggregate_context_rcsdroad_ids": list(road_ids),
+        "aggregate_context_rcsdnode_ids": list(node_ids),
     }
     review_reasons = _dedupe(
         [
             *event_unit.all_review_reasons(),
             "positive_rcsd_partial_consistent",
             RCSD_JUNCTION_WINDOW_REASON,
+            *([ROAD_SURFACE_FORK_BINDING_REASON] if preserve_surface_main_evidence else []),
         ]
     )
     summary = dict(selected_summary)
@@ -1233,13 +1327,13 @@ def _promote_selected_surface_rcsd_junction_window(
         {
             "review_reasons": list(review_reasons),
             "selected_evidence_state": "found",
-            "evidence_source": RCSD_JUNCTION_WINDOW_SOURCE,
-            "position_source": RCSD_JUNCTION_WINDOW_POSITION_SOURCE,
-            "source_mode": RCSD_JUNCTION_WINDOW_SOURCE,
+            "evidence_source": evidence_source,
+            "position_source": position_source,
+            "source_mode": source_mode,
             "road_surface_fork_binding": detail,
-            "rcsd_consistency_result": RCSD_JUNCTION_WINDOW_SOURCE,
+            "rcsd_consistency_result": rcsd_consistency_result,
             "positive_rcsd_present": True,
-            "positive_rcsd_present_reason": "rcsd_junction_window_forward_rcsd_present",
+            "positive_rcsd_present_reason": positive_reason,
             "positive_rcsd_support_level": support_level,
             "positive_rcsd_consistency_level": consistency_level,
             "required_rcsd_node": required_node,
@@ -1255,7 +1349,7 @@ def _promote_selected_surface_rcsd_junction_window(
             ),
             "primary_main_rc_node": primary_node,
             "primary_main_rc_node_id": primary_node,
-            "rcsd_selection_mode": RCSD_JUNCTION_WINDOW_SOURCE,
+            "rcsd_selection_mode": rcsd_selection_mode,
             "rcsd_decision_reason": decision_reason,
             "window_half_length_m": JUNCTION_WINDOW_HALF_LENGTH_M,
         }
@@ -1267,10 +1361,10 @@ def _promote_selected_surface_rcsd_junction_window(
             "road_surface_fork_binding": detail,
             "rcsd_junction_window": detail,
             "positive_rcsd_present": True,
-            "positive_rcsd_present_reason": "rcsd_junction_window_forward_rcsd_present",
+            "positive_rcsd_present_reason": positive_reason,
             "required_rcsd_node": required_node,
             "required_rcsd_node_source": RCSD_JUNCTION_WINDOW_SOURCE,
-            "rcsd_selection_mode": RCSD_JUNCTION_WINDOW_SOURCE,
+            "rcsd_selection_mode": rcsd_selection_mode,
             "rcsd_decision_reason": decision_reason,
         }
     )
@@ -1279,17 +1373,23 @@ def _promote_selected_surface_rcsd_junction_window(
         candidate_summary=dict(summary),
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,
-        evidence_source=RCSD_JUNCTION_WINDOW_SOURCE,
-        position_source=RCSD_JUNCTION_WINDOW_POSITION_SOURCE,
-        rcsd_consistency_result=RCSD_JUNCTION_WINDOW_SOURCE,
+        evidence_source=evidence_source,
+        position_source=position_source,
+        rcsd_consistency_result=rcsd_consistency_result,
         positive_rcsd_support_level=support_level,
         positive_rcsd_consistency_level=consistency_level,
         required_rcsd_node=required_node,
-        fact_reference_point=required_geometry,
-        review_materialized_point=required_geometry,
-        localized_evidence_core_geometry=None,
-        selected_component_union_geometry=None,
-        selected_evidence_region_geometry=None,
+        fact_reference_point=reference_point if preserve_surface_main_evidence else required_geometry,
+        review_materialized_point=review_point if preserve_surface_main_evidence else required_geometry,
+        localized_evidence_core_geometry=(
+            entry.localized_evidence_core_geometry if preserve_surface_main_evidence else None
+        ),
+        selected_component_union_geometry=(
+            entry.selected_component_union_geometry if preserve_surface_main_evidence else None
+        ),
+        selected_evidence_region_geometry=(
+            entry.selected_evidence_region_geometry if preserve_surface_main_evidence else None
+        ),
         first_hit_rcsdroad_ids=first_hit,
         selected_rcsdroad_ids=selected_roads,
         selected_rcsdnode_ids=selected_nodes,
@@ -1301,8 +1401,8 @@ def _promote_selected_surface_rcsd_junction_window(
             _dedupe(audit.get("aggregated_rcsd_unit_ids") or aggregate.get("member_unit_ids") or ())
         ),
         positive_rcsd_present=True,
-        positive_rcsd_present_reason="rcsd_junction_window_forward_rcsd_present",
-        rcsd_selection_mode=RCSD_JUNCTION_WINDOW_SOURCE,
+        positive_rcsd_present_reason=positive_reason,
+        rcsd_selection_mode=rcsd_selection_mode,
         required_rcsd_node_source=RCSD_JUNCTION_WINDOW_SOURCE,
         positive_rcsd_audit=updated_audit,
         pair_local_rcsd_scope_geometry=_road_geometries(case_result, event_unit.pair_local_rcsd_road_ids),
@@ -1328,14 +1428,26 @@ def _promote_selected_surface_rcsd_junction_window(
         event_unit,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,
-        evidence_source=RCSD_JUNCTION_WINDOW_SOURCE,
-        position_source=RCSD_JUNCTION_WINDOW_POSITION_SOURCE,
-        rcsd_consistency_result=RCSD_JUNCTION_WINDOW_SOURCE,
-        selected_component_union_geometry=None,
-        localized_evidence_core_geometry=None,
-        selected_evidence_region_geometry=None,
-        fact_reference_point=required_geometry,
-        review_materialized_point=required_geometry,
+        evidence_source=evidence_source,
+        position_source=position_source,
+        rcsd_consistency_result=rcsd_consistency_result,
+        selected_component_union_geometry=(
+            event_unit.selected_component_union_geometry
+            if preserve_surface_main_evidence
+            else None
+        ),
+        localized_evidence_core_geometry=(
+            event_unit.localized_evidence_core_geometry
+            if preserve_surface_main_evidence
+            else None
+        ),
+        selected_evidence_region_geometry=(
+            event_unit.selected_evidence_region_geometry
+            if preserve_surface_main_evidence
+            else None
+        ),
+        fact_reference_point=reference_point if preserve_surface_main_evidence else required_geometry,
+        review_materialized_point=review_point if preserve_surface_main_evidence else required_geometry,
         pair_local_rcsd_scope_geometry=_road_geometries(case_result, event_unit.pair_local_rcsd_road_ids),
         first_hit_rcsd_road_geometry=_road_geometries(case_result, first_hit),
         local_rcsd_unit_geometry=_road_geometries(case_result, selected_roads),
@@ -1360,8 +1472,8 @@ def _promote_selected_surface_rcsd_junction_window(
             _dedupe(audit.get("aggregated_rcsd_unit_ids") or aggregate.get("member_unit_ids") or ())
         ),
         positive_rcsd_present=True,
-        positive_rcsd_present_reason="rcsd_junction_window_forward_rcsd_present",
-        rcsd_selection_mode=RCSD_JUNCTION_WINDOW_SOURCE,
+        positive_rcsd_present_reason=positive_reason,
+        rcsd_selection_mode=rcsd_selection_mode,
         positive_rcsd_support_level=support_level,
         positive_rcsd_consistency_level=consistency_level,
         required_rcsd_node=required_node,

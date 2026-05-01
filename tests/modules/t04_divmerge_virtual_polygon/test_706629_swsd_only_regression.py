@@ -19,6 +19,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_road_surface_fork_
     _junction_window_aggregate,
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.surface_scenario import (
+    MAIN_EVIDENCE_ROAD_SURFACE_FORK,
     SCENARIO_MAIN_WITHOUT_RCSD,
     SCENARIO_MAIN_WITH_RCSD,
     SCENARIO_MAIN_WITH_RCSDROAD,
@@ -27,6 +28,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.surface_scenario import 
     SECTION_REFERENCE_POINT_AND_RCSD,
     SECTION_REFERENCE_RCSD,
     SECTION_REFERENCE_SWSD,
+    SURFACE_MODE_MAIN_EVIDENCE,
     SURFACE_MODE_SWSD_WINDOW,
 )
 
@@ -208,6 +210,53 @@ def test_real_706629_swsd_only_accepts_without_virtual_reference_point(tmp_path:
     assert step6_status["no_surface_reference_guard"] is False
     assert step6_status["final_polygon_suppressed_by_no_surface_reference"] is False
     assert step7_status["final_state"] == "accepted"
+
+
+@pytest.mark.smoke
+def test_real_768675_bilateral_road_surface_fork_accepts_as_main_evidence(tmp_path: Path) -> None:
+    if not (REAL_ANCHOR_2_ROOT / "768675").is_dir():
+        pytest.skip(f"missing real Anchor_2 case: {REAL_ANCHOR_2_ROOT / '768675'}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=["768675"],
+        out_root=tmp_path / "out_768675",
+        run_id="real_768675_road_surface_fork",
+    )
+    case_dir = run_root / "cases" / "768675"
+    step4_status = json.loads((case_dir / "step4_event_interpretation.json").read_text(encoding="utf-8"))
+    step5_status = json.loads((case_dir / "step5_status.json").read_text(encoding="utf-8"))
+    step6_status = json.loads((case_dir / "step6_status.json").read_text(encoding="utf-8"))
+    step7_status = json.loads((case_dir / "step7_status.json").read_text(encoding="utf-8"))
+    unit4 = step4_status["event_units"][0]
+    unit5 = step5_status["unit_results"][0]
+
+    assert step7_status["final_state"] == "accepted"
+    assert unit4["evidence_source"] == "road_surface_fork"
+    assert unit4["main_evidence_type"] == MAIN_EVIDENCE_ROAD_SURFACE_FORK
+    assert unit4["surface_scenario_type"] == SCENARIO_MAIN_WITH_RCSD
+    assert unit4["section_reference_source"] == SECTION_REFERENCE_POINT_AND_RCSD
+    assert unit4["surface_generation_mode"] == SURFACE_MODE_MAIN_EVIDENCE
+    assert unit4["reference_point_present"] is True
+    assert unit4["required_rcsd_node"] == "5384381972223566"
+    assert unit4["selected_evidence"]["candidate_scope"] == "road_surface_fork"
+    assert unit4["selected_evidence"]["road_surface_fork_binding"]["preserved_surface_main_evidence"] is True
+    assert unit4["selected_evidence"]["road_surface_fork_binding"]["selected_rcsd_scope"] == "required_node_local_unit"
+    assert unit4["rcsd_selection_mode"] == "road_surface_fork_rcsd_junction_local_unit_binding"
+    assert unit4["selected_rcsdroad_ids"] == [
+        "5384381570613670",
+        "5384381972223743",
+        "5384381972223834",
+    ]
+    assert unit4["first_hit_rcsdroad_ids"] == ["5384381972223834"]
+    assert unit5["localized_evidence_core_geometry"]["present"] is True
+    assert step6_status["assembly_state"] == "assembled"
+    assert step6_status["final_case_polygon_component_count"] == 1
+    assert step6_status["single_connected_case_surface_ok"] is True
+    assert step6_status["post_cleanup_allowed_growth_ok"] is True
+    assert step6_status["post_cleanup_forbidden_ok"] is True
+    assert step6_status["post_cleanup_terminal_cut_ok"] is True
+    assert step6_status["post_cleanup_lateral_limit_ok"] is True
 
 
 @pytest.mark.smoke

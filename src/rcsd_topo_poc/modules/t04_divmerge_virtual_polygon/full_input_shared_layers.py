@@ -274,10 +274,10 @@ def _case_local_polygon_clip_window(
 ) -> BaseGeometry:
     if selection_window is None or selection_window.is_empty:
         return GeometryCollection()
-    if seed is not None and not seed.is_empty:
-        anchor = seed.centroid
-    elif representative_geometry is not None and not representative_geometry.is_empty:
+    if representative_geometry is not None and not representative_geometry.is_empty:
         anchor = representative_geometry
+    elif seed is not None and not seed.is_empty:
+        anchor = seed.centroid
     else:
         anchor = selection_window.centroid
     min_x, min_y, max_x, max_y = selection_window.bounds

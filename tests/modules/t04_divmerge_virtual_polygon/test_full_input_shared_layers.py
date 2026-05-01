@@ -109,3 +109,26 @@ def test_collect_case_features_clips_full_input_polygon_layers_to_step6_safe_win
 
     assert selected["drivezone_features"][0].geometry.area < large_drivezone.geometry.area
     assert selected["divstrip_features"][0].geometry.area < large_divstrip.geometry.area
+
+
+def test_collect_case_features_keeps_node_local_divstrip_for_long_seed_roads() -> None:
+    representative = _node("706247", 0.0, 0.0)
+    long_seed_road = _road("962976", [(0.0, 0.0), (0.0, 2600.0)], snodeid="706247", enodeid="tail")
+    local_drivezone = _feature(1, box(-200.0, -120.0, 200.0, 160.0))
+    local_divstrip = _feature(2, box(-20.0, 10.0, 20.0, 80.0))
+
+    selected = collect_case_features(
+        layers=_layers(
+            nodes=(representative,),
+            roads=(long_seed_road,),
+            drivezones=(local_drivezone,),
+            divstrips=(local_divstrip,),
+        ),
+        case_id="706247",
+        local_query_buffer_m=360.0,
+    )
+
+    assert selected["selected_counts"]["divstripzone"] == 1
+    assert selected["selected_counts"]["drivezone"] == 1
+    assert selected["polygon_clip_window"].covers(representative.geometry)
+    assert selected["divstrip_features"][0].geometry.intersects(local_divstrip.geometry)

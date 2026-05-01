@@ -14,7 +14,9 @@
 | `无 RCSD 语义路口` | 可表示没有 RCSD 路口，也可表示存在 RCSD 数据但不是与当前 SWSD 路口语义一致的路口，例如缺少进入 / 退出道路、只有 RCSDRoad 趋势支持或仅形成弱聚合结果。该状态不等于无 RCSD 数据。 |
 | `RCSDRoad fallback` | 无 RCSD 语义路口或需 road fallback 时使用的 RCSDRoad 局部段支撑；可表达与 SWSD 路口对应道路趋势一致的局部 RCSDRoad，但只能覆盖相关局部段，不得沿整条 RCSDRoad 远距离扩张。 |
 | `SWSD 语义路口` | SWSD 侧可用于构面的语义路口，可作为 section reference，不是主证据，不得被称为 Reference Point。 |
-| `Anchor_2 full baseline` | 当前冻结业务基线：`23 case / accepted = 20 / rejected = 3`。 |
+| `Anchor_2 full baseline` | 历史 23-case frozen / visual gate：`23 case / accepted = 20 / rejected = 3`。 |
+| `Anchor_2 30-case surface scenario baseline` | 当前 surface scenario 后续正式扩展 gate：`30 case / accepted = 26 / rejected = 4`，rejected set 为 `760598 / 760936 / 857993 / 607602562`。 |
+| `607602562` | Anchor_2 30-case extended baseline 中的 rejected case；当前目视审计口径下不得为提高 accepted count 静默改成 accepted，详细原因以后续 case-level 审计材料为准。 |
 | `legacy selected-case baseline` | 2026-04-22 历史子集口径：`accepted = 7 / rejected = 1`，不再作为当前正式 acceptance 数字真相。 |
 | `representative node` | 当前 case 的代表节点；downstream `nodes.gpkg` 只更新 selected / effective case 的 representative node。 |
 
@@ -68,5 +70,6 @@
 | `case-package` | 单 case 输入包，包含 manifest、size report 与该 case 可见的 GPKG 输入层。 |
 | `internal full-input` | 一次性加载 full-layer source，发现候选并按 case 直跑 Step1-7 的 T04 私有执行面。 |
 | `batch closeout` | 所有 case Step7 完成后的根目录发布阶段，生成 surface、rejected、summary、audit、consistency report 与 downstream nodes 输出。 |
+| `visual fingerprint refresh` | 对 `final_review.png` raw scanline fingerprint 的显式基线刷新；仅在已有诊断报告和人工目视确认后允许，用于记录 intentional geometry / review-layer drift，不表示 Step7 accepted/rejected 业务失败。 |
 | `repo 官方 CLI` | `src/rcsd_topo_poc/cli.py` 暴露的稳定子命令；T04 当前不新增此类入口。 |
 | `repo 级脚本入口` | `scripts/t04_*` 包装脚本，已登记但不构成新的 CLI 子命令。 |

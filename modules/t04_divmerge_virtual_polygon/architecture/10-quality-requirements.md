@@ -239,6 +239,8 @@ Step7 legacy selected-case 发布冻结门槛：
 - 当前全量冻结结果：`row_count = 23`，`accepted = 20`，`rejected = 3`。
 - 冻结测试入口：`tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_full_20260426_baseline_gate`
 - 冻结测试还必须守住 T04 downstream `nodes.gpkg` 写回：20 个 accepted representative node 为 `yes`，3 个 rejected representative node 为 `fail4`，其中 `857993 = fail4`、`699870 = yes`。
+- 2026-05-01 已将 23-case `final_review.png` visual fingerprint 刷新到 surface scenario visual baseline。刷新原因是 H-01 已定位为 intentional geometry / review-layer drift：`surface_scenario / section_reference / case-level bridge / Step6 guard` 改造导致 8 个 case 的 review 几何真实变化；业务断言、accepted/rejected、nodes 写回与 Step7 consistency 仍必须通过。
+- PNG raw fingerprint 对几何与 review 层变化敏感，不等价于 accepted/rejected 业务失败；后续刷新必须具备诊断报告和人工目视确认，不得静默刷新。
 - 当前全量 final_state：
   - accepted：`17943587`、`30434673`、`505078921`、`698380`、`698389`、`699870`、`706629`、`723276`、`724067`、`724081`、`73462878`、`758784`、`760213`、`760256`、`760984`、`785671`、`785675`、`788824`、`824002`、`987998`
   - rejected：`760598`、`760936`、`857993`
@@ -250,6 +252,25 @@ Step7 legacy selected-case 发布冻结门槛：
 - `706347` 当前锁定为 `swsd_junction_window`：无主证据、无 RCSD 语义路口、有 SWSD 语义路口；即使存在 RCSD 数据或弱 RCSD 聚合，也不得把缺进入 / 退出语义一致性的 RCSD 结构登记为多分支 RCSD 路口。
 - `760984 / 788824` 当前锁定为 `rcsd_junction_window`：无主证据、但可召回正向 RCSD 时，以 RCSDNode 作为 section reference，前后 `20m` 构面；不得构造 Reference Point。
 - `760598 / 760936 / 857993` 当前保持 `rejected`；后续不得为了提高 accepted count 静默放宽 Step7 门禁。
+
+### Anchor_2 30-case surface scenario baseline gate（2026-05-01）
+
+- 基线输入集：`/mnt/e/TestData/POC_Data/T02/Anchor_2`
+- 当前需求来源：`RCSD_Topo_Poc_T04_REQUIREMENT.md` 的 Anchor_2 30-case 目视审计结论，以及对应 30-case run artifact。
+- 冻结测试入口：`tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_30case_surface_scenario_baseline_gate`
+- 当前全量扩展结果：`row_count = 30`，`accepted = 26`，`rejected = 4`。
+- rejected set：`760598`、`760936`、`857993`、`607602562`。
+- 30-case gate 必须守住：
+  - Step7 final_state 只允许 `accepted / rejected`
+  - `nodes.gpkg` 与 `nodes_anchor_update_audit.*` 一致：26 个 accepted representative node 为 `yes`，4 个 rejected representative node 为 `fail4`
+  - `706629 / 706347 / 760984 / 788824 / 760230 / 760277 / 765170 / 768680 / 699870 / 698389` 保持 accepted
+  - `607602562` 保持 rejected
+  - `no_surface_reference` 不得进入 accepted surface
+  - 无主证据场景不得出现虚拟 Reference Point
+  - `surface_scenario_type / section_reference_source / surface_generation_mode` 字段必须存在
+  - Step6 guard 字段必须进入 Step7 audit
+- `607602562` 在当前 Anchor_2 30-case 目视审计口径下为 `rejected`；详细原因以后续 case-level 审计材料为准，不写成待修复 bug。
+- 30-case gate 当前优先锁业务结构、发布层、Step6 guard、summary / consistency 与 nodes 写回，不立即增加 30 个 PNG raw hash hard assertion。23-case PNG fingerprint gate 继续承担视觉回归守门。
 
 ### RCSD-anchored reverse 定向回归（2026-04-24）
 

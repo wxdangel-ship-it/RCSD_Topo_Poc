@@ -496,7 +496,7 @@ repo 级包装脚本：
 
 ## 6. Acceptance
 
-当前正式业务冻结基线为 Anchor_2 full baseline：
+Anchor_2 23-case full baseline 作为历史 frozen / visual gate 保留：
 
 - `row_count = 23`
 - `accepted = 20`
@@ -538,3 +538,54 @@ rejected case：
 - 当前 full baseline 测试必须同时守住 surface 发布层与 downstream nodes 写回：20 个 accepted representative node 为 `yes`，3 个 rejected representative node 为 `fail4`。
 - `699870` 是 RCSD-anchored reverse 关键回归样本；当前 full baseline 中为 `accepted`，nodes 写回必须为 `yes`。
 - 2026-04-22 selected-case `accepted = 7 / rejected = 1` 仅为 legacy 子集口径，不再作为当前正式 acceptance 数字真相。
+
+当前 surface scenario 后续正式扩展 gate 为 Anchor_2 30-case baseline：
+
+- `row_count = 30`
+- `accepted = 26`
+- `rejected = 4`
+- rejected case：`760598`、`760936`、`857993`、`607602562`
+- downstream nodes 写回必须为 `yes = 26 / fail4 = 4`
+
+30-case accepted case：
+
+- `698380`
+- `698389`
+- `699870`
+- `706347`
+- `706629`
+- `723276`
+- `724067`
+- `724081`
+- `758784`
+- `760213`
+- `760230`
+- `760256`
+- `760277`
+- `760984`
+- `765050`
+- `765170`
+- `768680`
+- `785671`
+- `785675`
+- `788824`
+- `824002`
+- `987998`
+- `17943587`
+- `30434673`
+- `73462878`
+- `505078921`
+
+30-case rejected case：
+
+- `760598`
+- `760936`
+- `857993`
+- `607602562`
+
+30-case 额外验收约束：
+
+- `607602562` 在当前 Anchor_2 30-case 目视审计口径下为 `rejected`；详细原因以后续 case-level 审计材料为准。
+- `607602562` 属于当前数据条件 / 业务门禁下的正确 `rejected`，不得为提高 accepted count 静默改成 `accepted`。
+- `760598 / 760936 / 857993 / 607602562` 必须全部写为 `fail4`。
+- 30-case gate 是当前 T04 surface scenario 后续正式扩展 gate；23-case gate 继续承担历史 frozen / visual fingerprint 回归职责。

@@ -2,8 +2,10 @@
 
 ## 当前冻结前提
 
-- 当前业务基线为 Anchor_2 full baseline：`23 case / accepted = 20 / rejected = 3`。
+- Anchor_2 23-case full baseline 继续作为历史 frozen / visual gate：`23 case / accepted = 20 / rejected = 3`。
+- Anchor_2 surface scenario 后续正式扩展 gate 为：`30 case / accepted = 26 / rejected = 4`，rejected set 为 `760598 / 760936 / 857993 / 607602562`。
 - `857993 = rejected` 是人工验收确认后的正确业务结果，不作为待修成 `accepted` 的缺陷。
+- `607602562 = rejected` 是当前 Anchor_2 30-case 目视审计口径下的正确结果；详细原因以后续 case-level 审计材料为准，不作为提高 accepted count 的静默修复目标。
 - 最终发布状态机只允许 `accepted / rejected`，不得重新引入最终 `review / review_required`。
 - 本文件只登记治理风险与技术债，不改变 Step1-7 业务语义。
 
@@ -13,7 +15,7 @@
 - `architecture/04-solution-strategy.md` 承载 Step1-7 的正式业务策略表达，不再把完整业务需求塞回接口契约。
 - `architecture/10-quality-requirements.md` 维护质量门槛、回归门槛与 baseline gate。
 - 历史专题文件 `architecture/06-step34-repair-design.md` 已不再作为长期架构章节保留；其仍有效的 Step3/4 设计约束已收口到 `04` 与 `10`。
-- 若 acceptance 数字口径冲突，以当前 full baseline `23 / 20 / 3` 为准；`7 / 1` 仅保留为 2026-04-22 selected-case legacy 口径。
+- 若 acceptance 数字口径冲突，以当前 30-case extended gate `30 / 26 / 4` 为准；23-case `23 / 20 / 3` 保留为历史 frozen / visual gate，`7 / 1` 仅保留为 2026-04-22 selected-case legacy 口径。
 - `README.md` 只做操作者入口，不作为第二份需求源。
 
 ## 已知技术债
@@ -25,7 +27,8 @@
 | batch 异常可观测性不足 | `batch_runner` 已写 failure doc、traceback 与 summary failure reason | 失败 case 已可追踪；full-input 侧可在 Round 3 再统一审计口径 | Round 2 已补 failure doc |
 | `run_root` 删除风险 | `run_root` 删除前已有 protected-directory 与 immediate-child guard | 误配置风险下降 | Round 2 已增加 guard |
 | artifact 版本追踪不足 | batch / case 关键 JSON 已补 `produced_at / git_sha / input_dataset_id` | GPKG feature 层仍可在 Round 3 继续补强 | Round 2 已补最小追溯字段 |
-| 视觉黄金图守门 | Anchor_2 full baseline 已有 `final_review.png` 指纹守门 | 可发现明显视觉漂移，但不是像素级视觉语义 diff | 后续只在真实视觉需求扩大时再升级 |
+| H-01 视觉基线漂移 | 2026-05-01 已定位：23-case 中 8 个 `final_review.png` 指纹变化不是 pure renderer drift，而是 `surface_scenario / section_reference / case-level bridge / Step6 guard` 改造导致的 intentional geometry / visual baseline drift；用户已确认 30-case 目视通过 | PNG raw hash 对几何和 review 层敏感，可能先于业务断言暴露 intentional visual drift | 23-case PNG 指纹刷新到 2026-05-01 surface scenario visual baseline；30-case gate 优先锁业务结构、发布层、Step6 guard 与 nodes 写回，不立即增加 30-case PNG hard hash |
+| 视觉黄金图守门 | Anchor_2 23-case full baseline 已有 `final_review.png` 指纹守门 | 可发现明显视觉漂移，但不是像素级视觉语义 diff；刷新必须有诊断报告和人工确认 | 后续只在真实视觉需求扩大时再升级 |
 | case-package 与 full-input nodes 写回差异 | case-package 只能基于批次可见输入 node 层，full-input 基于整层 `nodes.gpkg` copy-on-write | 两种执行面的输出层级不同，容易被误读为语义差异 | 文档与测试必须持续强调：写回规则相同，source layer 边界不同 |
 | 历史 specs / audits 引用 `06-step34-repair-design.md` | 这些文件记录历史变更过程，可能仍提到已删除的专题文件 | 不影响当前模块 source-of-truth，但会在全文搜索中出现历史引用 | 不回写历史审计；当前正式阅读链以 README、INTERFACE_CONTRACT 与 architecture 现存文件为准 |
 

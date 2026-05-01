@@ -39,11 +39,88 @@ ANCHOR2_FULL_BASELINE_20260426: dict[str, str] = {
     "987998": "accepted",
 }
 
-ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426: dict[str, dict[str, object]] = {
+ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501: dict[str, str] = {
+    "698380": "accepted",
+    "698389": "accepted",
+    "699870": "accepted",
+    "706347": "accepted",
+    "706629": "accepted",
+    "723276": "accepted",
+    "724067": "accepted",
+    "724081": "accepted",
+    "758784": "accepted",
+    "760213": "accepted",
+    "760230": "accepted",
+    "760256": "accepted",
+    "760277": "accepted",
+    "760598": "rejected",
+    "760936": "rejected",
+    "760984": "accepted",
+    "765050": "accepted",
+    "765170": "accepted",
+    "768680": "accepted",
+    "785671": "accepted",
+    "785675": "accepted",
+    "788824": "accepted",
+    "824002": "accepted",
+    "857993": "rejected",
+    "987998": "accepted",
+    "17943587": "accepted",
+    "30434673": "accepted",
+    "73462878": "accepted",
+    "505078921": "accepted",
+    "607602562": "rejected",
+}
+
+ANCHOR2_30CASE_REJECTED_20260501 = {
+    "607602562",
+    "760598",
+    "760936",
+    "857993",
+}
+
+ANCHOR2_30CASE_KEY_ACCEPTED_20260501 = {
+    "706629",
+    "706347",
+    "760984",
+    "788824",
+    "760230",
+    "760277",
+    "765170",
+    "768680",
+    "699870",
+    "698389",
+}
+
+ANCHOR2_30CASE_STEP6_GUARD_FIELDS_20260501 = {
+    "surface_scenario_type",
+    "section_reference_source",
+    "surface_generation_mode",
+    "post_cleanup_allowed_growth_ok",
+    "post_cleanup_forbidden_ok",
+    "post_cleanup_terminal_cut_ok",
+    "post_cleanup_lateral_limit_ok",
+    "no_surface_reference_guard",
+    "final_polygon_suppressed_by_no_surface_reference",
+    "fallback_overexpansion_detected",
+}
+
+# The 23-case business gate remains the 2026-04-26 frozen Anchor_2 set,
+# but its final_review.png visual fingerprints were refreshed on 2026-05-01.
+# The previous PNG hashes came from the 2026-04-26 frozen visual baseline.
+# Surface-scenario, section-reference, case-level bridge, and Step6 guard
+# upgrades intentionally changed review geometry/layers for 8 of the 23 cases.
+# The 30-case visual audit was manually reviewed and accepted by the user; this
+# is not an algorithm change, a quiet refresh, or a relaxation of business gates.
+# Row counts, accepted/rejected states, nodes writeback, and Step7 consistency
+# assertions are still enforced below before these PNG hashes are checked.
+ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260501_SURFACE_SCENARIO: dict[
+    str, dict[str, object]
+] = {
     "17943587": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "097768b3773369d094094ee6799977ca036d1fb3f876f3bd2639ff0e66030080",
+        "raw_scanline_sha256": "3aa7529455b1a3d425b7e5232d3ffaeab91a6d664d8db583e2718fe4185104fe",
     },
     "30434673": {
         "width": 1720,
@@ -53,7 +130,7 @@ ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426: dict[str, dict[str, object]
     "505078921": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "e882f788b0779f6b1c4261bd0e6b2be4d4974c0dab2ac14792fe05783fe28b00",
+        "raw_scanline_sha256": "25411781090208b4429974564b25edc3098bd5b3febfd9f92a92a62a8a450234",
     },
     "698380": {
         "width": 1720,
@@ -63,7 +140,7 @@ ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426: dict[str, dict[str, object]
     "698389": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "5bacc900b066fb385de3ef93229b88a22712fe6e4a4119f8922c572dc688bf35",
+        "raw_scanline_sha256": "ce9b5d9acf5481642ac10f80eb7f4460363da8eca206fd561a029fed44841c25",
     },
     "699870": {
         "width": 1720,
@@ -73,7 +150,7 @@ ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426: dict[str, dict[str, object]
     "706629": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "42cbecefa9d37191cb5d69b0a1ca9b204647053ed08a9667061fa2700de6ee9b",
+        "raw_scanline_sha256": "383d5df26423a0bf86fdc9c5ede71607aed8f48495b4339d1e704331d4aeb03b",
     },
     "723276": {
         "width": 1720,
@@ -103,7 +180,7 @@ ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426: dict[str, dict[str, object]
     "760213": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "b58ccd0162347882e7cb95d5cfd1957d520ef8b119eacd60f893ce967aa7161b",
+        "raw_scanline_sha256": "9f9428603f054c88e1085d52d1c5aebebe7e355d2d5f77eb85644d56ce5ddd7f",
     },
     "760256": {
         "width": 1720,
@@ -113,7 +190,7 @@ ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426: dict[str, dict[str, object]
     "760598": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "9c42feecad96479bc915554cdcfc66fa3f1ded65b8c9dc4061e96f78c13baa99",
+        "raw_scanline_sha256": "0034347434d4badbfe5c8bf2bb0cff71846a38a346bf2e4477864465f3dee684",
     },
     "760936": {
         "width": 1720,
@@ -143,12 +220,12 @@ ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426: dict[str, dict[str, object]
     "824002": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "6a88dd10be0cc23d2c20e2de4e677203539e5e299f51ff951bebce3c4ef065a4",
+        "raw_scanline_sha256": "e08ef8a2e8dfaddf92a0aad7edd0f32be65dd91099ab2f2bff20b45856e6bfa5",
     },
     "857993": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "d0ab02fd5c77cb32fee5a0810c8320dcf31a7cecab4e107470539b8c27385240",
+        "raw_scanline_sha256": "f021dc4aa67f41c3759bcd0950dc52c7065eed27ca6b5a698c9d1e94a9de24e9",
     },
     "987998": {
         "width": 1720,
@@ -199,6 +276,28 @@ def _final_review_png_fingerprint(path: Path) -> dict[str, object]:
         "height": height,
         "raw_scanline_sha256": digest.hexdigest(),
     }
+
+
+def _assert_step6_guard_fields_enter_step7(doc: dict) -> None:
+    guard_audit = doc.get("step6_guard_audit")
+    assert isinstance(guard_audit, dict)
+    for field in ANCHOR2_30CASE_STEP6_GUARD_FIELDS_20260501:
+        assert field in doc
+        assert field in guard_audit
+    for field in [
+        "surface_scenario_type",
+        "section_reference_source",
+        "surface_generation_mode",
+    ]:
+        assert doc[field]
+        assert guard_audit[field] == doc[field]
+
+
+def _assert_no_main_evidence_has_no_virtual_reference_point(step4_doc: dict) -> None:
+    for unit in step4_doc["event_units"]:
+        if unit.get("has_main_evidence") is False or unit.get("main_evidence_type") == "none":
+            assert unit["reference_point_present"] is False
+            assert unit.get("reference_point_source") in {None, "", "none"}
 
 
 @pytest.mark.smoke
@@ -993,7 +1092,10 @@ def test_anchor2_full_20260426_baseline_gate(tmp_path: Path) -> None:
         assert audit_row["new_is_anchor"] == expected_is_anchor
         assert node_is_anchor_by_id[audit_row["representative_node_id"]] == expected_is_anchor
 
-    for case_id, expected_fingerprint in ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260426.items():
+    for (
+        case_id,
+        expected_fingerprint,
+    ) in ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260501_SURFACE_SCENARIO.items():
         png_path = Path(rows_by_case[case_id]["review_png_path"])
         assert png_path.is_file()
         assert _final_review_png_fingerprint(png_path) == expected_fingerprint
@@ -1073,3 +1175,166 @@ def test_anchor2_full_20260426_baseline_gate(tmp_path: Path) -> None:
         unit = step4_doc["event_units"][0]
         assert unit["evidence_source"] == "rcsd_junction_window"
         assert unit["required_rcsd_node"] == expected_node
+
+
+@pytest.mark.smoke
+def test_anchor2_30case_surface_scenario_baseline_gate(tmp_path: Path) -> None:
+    missing_cases = [
+        case_id
+        for case_id in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501
+        if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
+    ]
+    if missing_cases:
+        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=list(ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501),
+        out_root=tmp_path / "anchor2_30case_surface_scenario_baseline",
+        run_id="anchor2_30case_surface_scenario_baseline",
+    )
+
+    summary_payload = _load_json(run_root / "divmerge_virtual_anchor_surface_summary.json")
+    batch_summary = _load_json(run_root / "summary.json")
+    preflight = _load_json(run_root / "preflight.json")
+    consistency_payload = _load_json(run_root / "step7_consistency_report.json")
+    rejected_index_payload = _load_json(run_root / "step7_rejected_index.json")
+    nodes_audit_payload = _load_json(run_root / "nodes_anchor_update_audit.json")
+    rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
+    states_by_case = {case_id: row["final_state"] for case_id, row in rows_by_case.items()}
+    rejected_case_ids = {
+        case_id
+        for case_id, final_state in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501.items()
+        if final_state == "rejected"
+    }
+
+    _assert_provenance(preflight, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(batch_summary, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(summary_payload, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(consistency_payload, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(rejected_index_payload, input_dataset_id_prefix="case-package-stat-sha256:")
+    _assert_provenance(nodes_audit_payload, input_dataset_id_prefix="case-package-stat-sha256:")
+
+    assert batch_summary["failed_case_ids"] == []
+    assert batch_summary["step7_accepted_count"] == 26
+    assert batch_summary["step7_rejected_count"] == 4
+    assert batch_summary["nodes_gpkg"] == str(run_root / "nodes.gpkg")
+    assert batch_summary["nodes_total_update_count"] == 30
+    assert batch_summary["nodes_updated_to_yes_count"] == 26
+    assert batch_summary["nodes_updated_to_fail4_count"] == 4
+
+    assert summary_payload["row_count"] == 30
+    assert summary_payload["accepted_count"] == 26
+    assert summary_payload["rejected_count"] == 4
+    assert states_by_case == ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501
+    assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
+    assert rejected_case_ids == ANCHOR2_30CASE_REJECTED_20260501
+    assert {case_id for case_id, state in states_by_case.items() if state == "rejected"} == (
+        ANCHOR2_30CASE_REJECTED_20260501
+    )
+    for case_id in ANCHOR2_30CASE_KEY_ACCEPTED_20260501:
+        assert rows_by_case[case_id]["final_state"] == "accepted"
+    for case_id in ANCHOR2_30CASE_REJECTED_20260501:
+        assert rows_by_case[case_id]["final_state"] == "rejected"
+        assert rows_by_case[case_id]["publish_target"] == "rejected_index"
+    assert rows_by_case["607602562"]["final_state"] == "rejected"
+
+    assert set(summary_payload["no_surface_reference_case_ids"]) == {"607602562", "760598"}
+    assert consistency_payload["no_surface_reference_accepted_case_ids"] == []
+    assert set(consistency_payload["no_surface_reference_case_ids"]) == {"607602562", "760598"}
+    for row in summary_payload["rows"]:
+        assert row["surface_scenario_type"]
+        assert row["section_reference_source"]
+        assert row["surface_generation_mode"]
+        assert Path(row["review_png_path"]).is_file()
+        if row["final_state"] == "accepted":
+            assert row["surface_scenario_type"] != "no_surface_reference"
+            assert row["no_surface_reference_guard"] is False
+
+    assert consistency_payload["passed"] is True
+    assert consistency_payload["total_case_count"] == 30
+    assert consistency_payload["accepted_count"] == 26
+    assert consistency_payload["rejected_count"] == 4
+    assert consistency_payload["accepted_layer_feature_count"] == 26
+    assert consistency_payload["rejected_layer_feature_count"] == 4
+    assert consistency_payload["audit_layer_feature_count"] == 30
+    assert consistency_payload["summary_row_count"] == 30
+    assert consistency_payload["rejected_index_row_count"] == 4
+    assert consistency_payload["review_png_present_count"] == 30
+    assert consistency_payload["missing_review_png_case_ids"] == []
+    assert consistency_payload["missing_reject_stub_case_ids"] == []
+    assert consistency_payload["missing_reject_index_case_ids"] == []
+    assert consistency_payload["missing_step7_status_case_ids"] == []
+    assert consistency_payload["missing_step7_audit_case_ids"] == []
+    assert consistency_payload["step7_allowed_final_states"] == ["accepted", "rejected"]
+    assert consistency_payload["unexpected_final_state_values"] == []
+    assert consistency_payload["step6_guard_fields_present"] is True
+    assert consistency_payload["step6_guard_field_missing_case_ids"] == []
+    assert consistency_payload["step7_guard_consistency_passed"] is True
+    assert consistency_payload["step6_guard_failure_reject_mapping_passed"] is True
+    assert consistency_payload["step6_guard_failure_reject_mapping_issues"] == []
+    assert consistency_payload["nodes_consistency_passed"] is True
+    assert consistency_payload["nodes_total_update_count"] == 30
+    assert consistency_payload["nodes_updated_to_yes_count"] == 26
+    assert consistency_payload["nodes_updated_to_fail4_count"] == 4
+    assert consistency_payload["nodes_mismatch_case_ids"] == []
+    assert consistency_payload["nodes_missing_case_ids"] == []
+
+    assert rejected_index_payload["row_count"] == 4
+    assert {row["case_id"] for row in rejected_index_payload["rows"]} == rejected_case_ids
+    assert (run_root / "nodes.gpkg").is_file()
+    assert nodes_audit_payload["total_update_count"] == 30
+    assert nodes_audit_payload["updated_to_yes_count"] == 26
+    assert nodes_audit_payload["updated_to_fail4_count"] == 4
+    nodes_audit_by_case = {row["case_id"]: row for row in nodes_audit_payload["rows"]}
+    assert nodes_audit_by_case["607602562"]["step7_state"] == "rejected"
+    assert nodes_audit_by_case["607602562"]["new_is_anchor"] == "fail4"
+    assert nodes_audit_by_case["699870"]["step7_state"] == "accepted"
+    assert nodes_audit_by_case["699870"]["new_is_anchor"] == "yes"
+
+    fiona = pytest.importorskip("fiona")
+    with fiona.open(run_root / "nodes.gpkg") as src:
+        node_is_anchor_by_id = {
+            str(row["properties"]["id"]): row["properties"]["is_anchor"]
+            for row in src
+        }
+    for case_id, expected_state in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501.items():
+        expected_is_anchor = "yes" if expected_state == "accepted" else "fail4"
+        audit_row = nodes_audit_by_case[case_id]
+        assert audit_row["new_is_anchor"] == expected_is_anchor
+        assert node_is_anchor_by_id[audit_row["representative_node_id"]] == expected_is_anchor
+
+    for case_id, expected_state in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501.items():
+        case_dir = run_root / "cases" / case_id
+        for filename in [
+            "case_meta.json",
+            "step1_status.json",
+            "step3_status.json",
+            "step3_audit.json",
+            "step4_event_interpretation.json",
+            "step4_audit.json",
+            "step5_status.json",
+            "step5_audit.json",
+            "step6_status.json",
+            "step6_audit.json",
+            "step7_status.json",
+            "step7_audit.json",
+        ]:
+            _assert_provenance(
+                _load_json(case_dir / filename),
+                input_dataset_id_prefix="case-input-stat-sha256:",
+            )
+        step4_doc = _load_json(case_dir / "step4_event_interpretation.json")
+        step7_status = _load_json(case_dir / "step7_status.json")
+        step7_audit = _load_json(case_dir / "step7_audit.json")
+        assert step7_status["final_state"] == expected_state
+        assert step7_status["final_state"] in {"accepted", "rejected"}
+        _assert_no_main_evidence_has_no_virtual_reference_point(step4_doc)
+        _assert_step6_guard_fields_enter_step7(step7_status)
+        _assert_step6_guard_fields_enter_step7(step7_audit)
+        assert Path(rows_by_case[case_id]["audit_path"]).is_file()
+        if expected_state == "rejected":
+            _assert_provenance(
+                _load_json(case_dir / "reject_index.json"),
+                input_dataset_id_prefix="case-input-stat-sha256:",
+            )

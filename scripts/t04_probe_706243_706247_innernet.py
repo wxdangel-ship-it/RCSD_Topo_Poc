@@ -20,6 +20,39 @@ CASE_ROOT_CANDIDATES = (
     Path("/mnt/e/TestData/POC_Data/T02/Anchor_2"),
     Path("/mnt/c/TestData/POC_Data/T02/Anchor_2"),
 )
+FULL_INPUT_PATH_CANDIDATES = {
+    "nodes_path": (
+        Path("/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg"),
+        Path("/mnt/e/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg"),
+        Path("/mnt/c/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg"),
+    ),
+    "roads_path": (
+        Path("/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg"),
+        Path("/mnt/e/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg"),
+        Path("/mnt/c/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg"),
+    ),
+    "drivezone_path": (
+        Path("/mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg"),
+        Path("/mnt/e/TestData/POC_Data/patch_all/DriveZone.gpkg"),
+        Path("/mnt/c/TestData/POC_Data/patch_all/DriveZone.gpkg"),
+    ),
+    "divstripzone_path": (
+        Path("/mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg"),
+        Path("/mnt/e/TestData/POC_Data/patch_all/DivStripZone.gpkg"),
+        Path("/mnt/c/TestData/POC_Data/patch_all/DivStripZone.gpkg"),
+    ),
+    "rcsdroad_path": (
+        Path("/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg"),
+        Path("/mnt/e/TestData/POC_Data/RC4/RCSDRoad.gpkg"),
+        Path("/mnt/c/TestData/POC_Data/RC4/RCSDRoad.gpkg"),
+    ),
+    "rcsdnode_path": (
+        Path("/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg"),
+        Path("/mnt/e/TestData/POC_Data/RC4/RCSDNode.gpkg"),
+        Path("/mnt/c/TestData/POC_Data/RC4/RCSDNode.gpkg"),
+    ),
+}
+DEFAULT_FULL_INPUT_BUFFERS = (360.0, 600.0, 900.0, 1200.0, 1600.0, 2400.0)
 
 
 def _run_cmd(args: list[str], cwd: Path) -> dict[str, Any]:
@@ -283,6 +316,259 @@ def _resolve_case_root(value: str | None) -> Path | None:
     return next((path for path in CASE_ROOT_CANDIDATES if path.is_dir()), None)
 
 
+def _resolve_full_input_path(value: str, key: str) -> Path | None:
+    if value:
+        return Path(value).resolve()
+    return next((path for path in FULL_INPUT_PATH_CANDIDATES[key] if path.is_file()), None)
+
+
+def _parse_buffers(value: str) -> list[float]:
+    if not value.strip():
+        return list(DEFAULT_FULL_INPUT_BUFFERS)
+    buffers = []
+    for item in value.split(","):
+        text = item.strip()
+        if not text:
+            continue
+        buffers.append(float(text))
+    return buffers or list(DEFAULT_FULL_INPUT_BUFFERS)
+
+
+def _bounds(geometry: Any) -> list[float]:
+    if geometry is None or getattr(geometry, "is_empty", True):
+        return []
+    return [round(float(item), 6) for item in geometry.bounds]
+
+
+def _safe_distance(seed: Any, geometry: Any) -> float | None:
+    if seed is None or geometry is None or getattr(seed, "is_empty", True) or getattr(geometry, "is_empty", True):
+        return None
+    try:
+        return round(float(seed.distance(geometry)), 6)
+    except Exception:
+        return None
+
+
+def _compact_properties(properties: dict[str, Any]) -> dict[str, Any]:
+    preferred = (
+        "id",
+        "ID",
+        "road_id",
+        "node_id",
+        "mainnodeid",
+        "snodeid",
+        "enodeid",
+        "kind",
+        "kind_2",
+        "has_evd",
+        "is_anchor",
+        "layer",
+        "Layer",
+        "type",
+        "name",
+    )
+    compact: dict[str, Any] = {}
+    for key in preferred:
+        if key in properties:
+            compact[key] = properties.get(key)
+    if compact:
+        return compact
+    return {str(key): properties.get(key) for key in list(properties)[:12]}
+
+
+def _item_identity(item: Any) -> str:
+    for attr in ("node_id", "road_id"):
+        value = getattr(item, attr, None)
+        if value is not None:
+            return str(value)
+    properties = getattr(item, "properties", {}) or {}
+    for key in ("id", "ID", "road_id", "node_id"):
+        value = properties.get(key)
+        if value is not None:
+            return str(value)
+    return str(getattr(item, "feature_index", ""))
+
+
+def _compact_spatial_item(item: Any, *, seed: Any) -> dict[str, Any]:
+    geometry = getattr(item, "geometry", None)
+    return {
+        "id": _item_identity(item),
+        "feature_index": getattr(item, "feature_index", None),
+        "geometry_type": getattr(geometry, "geom_type", None),
+        "distance_to_seed_m": _safe_distance(seed, geometry),
+        "bounds": _bounds(geometry),
+        "properties": _compact_properties(dict(getattr(item, "properties", {}) or {})),
+    }
+
+
+def _nearest_items(index: Any, *, seed: Any, buffers: list[float], limit: int = 8) -> dict[str, Any]:
+    from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.full_input_shared_layers import query_spatial_index
+
+    for buffer_m in buffers:
+        window = seed.buffer(float(buffer_m), join_style=2)
+        hits = list(query_spatial_index(index, window))
+        if not hits:
+            continue
+        ordered = sorted(
+            hits,
+            key=lambda item: (
+                float("inf")
+                if _safe_distance(seed, getattr(item, "geometry", None)) is None
+                else float(_safe_distance(seed, getattr(item, "geometry", None)))
+            ),
+        )
+        return {
+            "first_non_empty_buffer_m": float(buffer_m),
+            "hit_count": len(hits),
+            "top_hits": [_compact_spatial_item(item, seed=seed) for item in ordered[:limit]],
+        }
+    return {"first_non_empty_buffer_m": None, "hit_count": 0, "top_hits": []}
+
+
+def _validity_summary(items: tuple[Any, ...] | list[Any]) -> dict[str, Any]:
+    geometries = [
+        getattr(item, "geometry", None)
+        for item in items
+        if getattr(item, "geometry", None) is not None and not getattr(item, "geometry", None).is_empty
+    ]
+    return {
+        "geometry_count": len(geometries),
+        "valid_all": all(bool(geometry.is_valid) for geometry in geometries),
+    }
+
+
+def _package_input_summaries(case_root: Path | None, case_ids: list[str]) -> dict[str, Any]:
+    if case_root is None:
+        return {"case_root": None, "available": False}
+    return {
+        "case_root": str(case_root),
+        "available": True,
+        "cases": {
+            case_id: {
+                "drivezone": _geo_summary(case_root / case_id / "drivezone.gpkg"),
+                "roads": _geo_summary(case_root / case_id / "roads.gpkg"),
+                "divstripzone": _geo_summary(case_root / case_id / "divstripzone.gpkg"),
+                "rcsdroad": _geo_summary(case_root / case_id / "rcsdroad.gpkg"),
+                "rcsdnode": _geo_summary(case_root / case_id / "rcsdnode.gpkg"),
+                "nodes": _geo_summary(case_root / case_id / "nodes.gpkg"),
+            }
+            for case_id in case_ids
+        },
+    }
+
+
+def _full_input_debug_report(args: argparse.Namespace, case_ids: list[str], case_root: Path | None) -> dict[str, Any]:
+    from shapely.geometry import GeometryCollection
+    from shapely.ops import unary_union
+
+    from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import _resolve_group
+    from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.full_input_shared_layers import (
+        collect_case_features,
+        load_shared_full_input_layers,
+        query_spatial_index,
+    )
+
+    input_paths = {
+        "nodes_path": _resolve_full_input_path(args.nodes_path, "nodes_path"),
+        "roads_path": _resolve_full_input_path(args.roads_path, "roads_path"),
+        "drivezone_path": _resolve_full_input_path(args.drivezone_path, "drivezone_path"),
+        "divstripzone_path": _resolve_full_input_path(args.divstripzone_path, "divstripzone_path"),
+        "rcsdroad_path": _resolve_full_input_path(args.rcsdroad_path, "rcsdroad_path"),
+        "rcsdnode_path": _resolve_full_input_path(args.rcsdnode_path, "rcsdnode_path"),
+    }
+    missing = [key for key, path in input_paths.items() if path is None or not path.is_file()]
+    if missing:
+        return {
+            "available": False,
+            "missing_input_keys": missing,
+            "resolved_paths": {key: str(path) if path is not None else None for key, path in input_paths.items()},
+        }
+
+    buffers = _parse_buffers(args.local_query_buffers)
+    shared_layers = load_shared_full_input_layers(**{key: value for key, value in input_paths.items() if value is not None})
+    cases: dict[str, Any] = {}
+    for case_id in case_ids:
+        representative, group_nodes = _resolve_group(mainnodeid=str(case_id), nodes=list(shared_layers.nodes))
+        member_ids = {node.node_id for node in group_nodes}
+        seed_roads = tuple(
+            road
+            for node_id in member_ids
+            for road in shared_layers.node_id_to_roads.get(node_id, ())
+        )
+        seed_geometries = [node.geometry for node in group_nodes]
+        seed_geometries.extend(
+            road.geometry for road in seed_roads if road.geometry is not None and not road.geometry.is_empty
+        )
+        seed = unary_union(seed_geometries) if seed_geometries else representative.geometry
+        if seed is None or seed.is_empty:
+            seed = GeometryCollection()
+
+        buffer_rows = []
+        for buffer_m in buffers:
+            selected = collect_case_features(
+                layers=shared_layers,
+                case_id=case_id,
+                local_query_buffer_m=float(buffer_m),
+            )
+            selection_window = selected["selection_window"]
+            polygon_clip_window = selected["polygon_clip_window"]
+            raw_selection_counts = {
+                "nodes": len(query_spatial_index(shared_layers.node_index, selection_window)),
+                "roads": len(query_spatial_index(shared_layers.road_index, selection_window)),
+                "drivezone": len(query_spatial_index(shared_layers.drivezone_index, selection_window)),
+                "divstripzone": len(query_spatial_index(shared_layers.divstrip_index, selection_window)),
+                "rcsdroad": len(query_spatial_index(shared_layers.rcsdroad_index, selection_window)),
+                "rcsdnode": len(query_spatial_index(shared_layers.rcsdnode_index, selection_window)),
+            }
+            polygon_clip_counts = {
+                "drivezone": len(query_spatial_index(shared_layers.drivezone_index, polygon_clip_window)),
+                "divstripzone": len(query_spatial_index(shared_layers.divstrip_index, polygon_clip_window)),
+            }
+            selected_validity = {
+                "nodes": _validity_summary(tuple(selected["nodes"])),
+                "roads": _validity_summary(tuple(selected["roads"])),
+                "drivezone": _validity_summary(tuple(selected["drivezone_features"])),
+                "divstripzone": _validity_summary(tuple(selected["divstrip_features"])),
+                "rcsdroad": _validity_summary(tuple(selected["rcsd_roads"])),
+                "rcsdnode": _validity_summary(tuple(selected["rcsd_nodes"])),
+            }
+            buffer_rows.append(
+                {
+                    "buffer_m": float(buffer_m),
+                    "selection_window_bounds": _bounds(selection_window),
+                    "polygon_clip_window_bounds": _bounds(polygon_clip_window),
+                    "raw_selection_counts": raw_selection_counts,
+                    "polygon_clip_counts": polygon_clip_counts,
+                    "selected_counts_after_clip": dict(selected["selected_counts"]),
+                    "selected_validity": selected_validity,
+                }
+            )
+
+        cases[str(case_id)] = {
+            "representative": _compact_spatial_item(representative, seed=seed),
+            "group_node_ids": [str(node.node_id) for node in group_nodes],
+            "seed_road_ids": [str(road.road_id) for road in seed_roads],
+            "seed_bounds": _bounds(seed),
+            "buffer_scan": buffer_rows,
+            "nearest_by_layer": {
+                "divstripzone": _nearest_items(shared_layers.divstrip_index, seed=seed, buffers=buffers),
+                "rcsdroad": _nearest_items(shared_layers.rcsdroad_index, seed=seed, buffers=buffers),
+                "rcsdnode": _nearest_items(shared_layers.rcsdnode_index, seed=seed, buffers=buffers),
+                "roads": _nearest_items(shared_layers.road_index, seed=seed, buffers=buffers),
+            },
+        }
+
+    return {
+        "available": True,
+        "mode": "shared_full_input_feature_window_debug",
+        "buffers_m": buffers,
+        "input_paths": {key: str(value) for key, value in input_paths.items()},
+        "shared_layer_manifest": shared_layers.layer_manifest(),
+        "package_input_compare": _package_input_summaries(case_root, case_ids),
+        "cases": cases,
+    }
+
+
 def _print_json(title: str, value: Any) -> None:
     print("\n" + "=" * 100)
     print(title)
@@ -297,6 +583,22 @@ def main() -> int:
     parser.add_argument("--run-root", default="", help="Existing T04 run root to inspect without rerun.")
     parser.add_argument("--case-ids", nargs="*", default=list(DEFAULT_CASE_IDS), help="Case ids to inspect.")
     parser.add_argument("--out-root", default="", help="Output root for a fresh rerun.")
+    parser.add_argument(
+        "--full-input-debug",
+        action="store_true",
+        help="Load global full-input layers and scan the shared-layer local feature windows for the cases.",
+    )
+    parser.add_argument(
+        "--local-query-buffers",
+        default=",".join(str(int(item)) for item in DEFAULT_FULL_INPUT_BUFFERS),
+        help="Comma-separated buffer sizes in meters for --full-input-debug.",
+    )
+    parser.add_argument("--nodes-path", default="", help="Full-input nodes.gpkg path.")
+    parser.add_argument("--roads-path", default="", help="Full-input roads.gpkg path.")
+    parser.add_argument("--drivezone-path", default="", help="Full-input DriveZone.gpkg path.")
+    parser.add_argument("--divstripzone-path", default="", help="Full-input DivStripZone.gpkg path.")
+    parser.add_argument("--rcsdroad-path", default="", help="Full-input RCSDRoad.gpkg path.")
+    parser.add_argument("--rcsdnode-path", default="", help="Full-input RCSDNode.gpkg path.")
     args = parser.parse_args()
 
     repo = Path.cwd().resolve()
@@ -377,10 +679,19 @@ def main() -> int:
             return 4
 
     _print_json("RUN", run_info)
+    case_root_for_compare = _resolve_case_root(args.case_root or None)
+    full_input_debug = (
+        _full_input_debug_report(args, case_ids, case_root_for_compare)
+        if args.full_input_debug
+        else {"enabled": False}
+    )
+    if args.full_input_debug:
+        _print_json("FULL_INPUT_DEBUG", full_input_debug)
     report = {
         "preflight": preflight,
         "run": run_info,
         "top_level": _top_level_report(run_root),
+        "full_input_debug": full_input_debug,
         "cases": {case_id: _case_report(run_root, case_id) for case_id in case_ids},
     }
     for case_id, case_report in report["cases"].items():

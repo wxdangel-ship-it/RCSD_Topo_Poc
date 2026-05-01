@@ -21,6 +21,7 @@ from ._runtime_types_io import (
 from .case_models import T04CaseResult
 from .support_domain import T04Step5CaseResult, T04Step5UnitResult
 from .surface_scenario import (
+    SCENARIO_NO_MAIN_WITH_RCSD,
     SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
     SCENARIO_NO_SURFACE_REFERENCE,
     SURFACE_MODE_NO_SURFACE,
@@ -36,6 +37,8 @@ STEP6_CLOSE_ITERATIONS = 1
 STEP6_FORBIDDEN_TOLERANCE_AREA_M2 = 1e-6
 STEP6_CUT_TOLERANCE_AREA_M2 = 1e-6
 STEP6_ALLOWED_TOLERANCE_AREA_M2 = 1e-6
+STEP6_INTER_UNIT_SECTION_BRIDGE_BUFFER_M = 8.0
+STEP6_INTER_UNIT_SECTION_BRIDGE_MAX_DISTANCE_M = 12.0
 
 
 def _geometry_summary(geometry: BaseGeometry | None) -> dict[str, Any]:
@@ -76,6 +79,7 @@ def _core_must_cover_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry 
             for component in (
                 unit.localized_evidence_core_geometry,
                 unit.fact_reference_patch_geometry,
+                unit.section_reference_patch_geometry,
                 unit.required_rcsd_node_patch_geometry,
                 unit.fallback_support_strip_geometry,
             )
@@ -93,11 +97,86 @@ def _is_swsd_only_surface(guard_context: "Step6GuardContext") -> bool:
     return guard_context.surface_scenario_type == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
 
 
+def _is_no_main_section_window_surface(guard_context: "Step6GuardContext") -> bool:
+    return guard_context.surface_scenario_type in {
+        SCENARIO_NO_MAIN_WITH_RCSD,
+        SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
+    }
+
+
 def _uses_single_component_surface_seed(step5_result: T04Step5CaseResult) -> bool:
     return bool(
         len(step5_result.unit_results) == 1
         and step5_result.unit_results[0].single_component_surface_seed
     )
+
+
+def _single_case_bridge_zone(step5_result: T04Step5CaseResult) -> BaseGeometry | None:
+    bridge = _normalize_geometry(step5_result.case_bridge_zone_geometry)
+    return bridge if isinstance(bridge, Polygon) else None
+
+
+def _line_parts(geometry: BaseGeometry | None) -> tuple[BaseGeometry, ...]:
+    normalized = _normalize_geometry(geometry)
+    if normalized is None:
+        return ()
+    if normalized.geom_type == "LineString":
+        return (normalized,)
+    if normalized.geom_type == "MultiLineString":
+        return tuple(part for part in normalized.geoms if not part.is_empty)
+    return ()
+
+
+def _inter_unit_section_bridge_surface(step5_result: T04Step5CaseResult) -> BaseGeometry | None:
+    if len(step5_result.unit_results) <= 1:
+        return None
+    entries: list[tuple[str, BaseGeometry]] = []
+    for unit in step5_result.unit_results:
+        for line in _line_parts(unit.unit_terminal_cut_constraints):
+            entries.append((unit.event_unit_id, line))
+    if len(entries) <= 1:
+        return None
+
+    best_pair: tuple[BaseGeometry, BaseGeometry] | None = None
+    best_distance: float | None = None
+    for left_index, (left_unit_id, left_line) in enumerate(entries):
+        for right_unit_id, right_line in entries[left_index + 1:]:
+            if left_unit_id == right_unit_id:
+                continue
+            distance = float(left_line.distance(right_line))
+            if best_distance is None or distance < best_distance:
+                best_distance = distance
+                best_pair = (left_line, right_line)
+    if (
+        best_pair is None
+        or best_distance is None
+        or best_distance > STEP6_INTER_UNIT_SECTION_BRIDGE_MAX_DISTANCE_M
+    ):
+        return None
+
+    bridge_surface = _normalize_geometry(
+        _union_geometry(best_pair).convex_hull.buffer(
+            STEP6_INTER_UNIT_SECTION_BRIDGE_BUFFER_M,
+            cap_style=2,
+            join_style=2,
+        )
+    )
+    if bridge_surface is None or bridge_surface.is_empty:
+        return None
+    fill_domains = [
+        unit.junction_full_road_fill_domain
+        for unit in step5_result.unit_results
+        if unit.junction_full_road_fill_domain is not None
+        and not unit.junction_full_road_fill_domain.is_empty
+    ]
+    touched_units = sum(
+        1
+        for fill_domain in fill_domains
+        if bridge_surface.buffer(1e-6).intersects(fill_domain)
+    )
+    if touched_units < 2:
+        return None
+    return _normalize_geometry(bridge_surface)
 
 
 def _seed_dominant_polygon_component(
@@ -869,12 +948,25 @@ def build_step6_polygon_assembly(
 
     allowed_mask = _rasterize_geometries(grid, [step5_result.case_allowed_growth_domain])
     terminal_window_geometry = step5_result.case_terminal_window_domain
+    forbidden_mask = _rasterize_geometries(grid, [step5_result.case_forbidden_domain])
+    inter_unit_bridge_surface = _inter_unit_section_bridge_surface(step5_result)
+    inter_unit_bridge_surface = _constrain_geometry_to_case_limits(
+        inter_unit_bridge_surface,
+        drivezone_union=drivezone_union,
+        allowed_geometry=step5_result.case_allowed_growth_domain,
+        terminal_window_geometry=None,
+        forbidden_geometry=step5_result.case_forbidden_domain,
+        cut_barrier_geometry=None,
+    )
+    if inter_unit_bridge_surface is not None and not inter_unit_bridge_surface.is_empty:
+        terminal_window_geometry = _normalize_geometry(
+            _union_geometry([terminal_window_geometry, inter_unit_bridge_surface])
+        )
     terminal_window_mask = (
         _rasterize_geometries(grid, [terminal_window_geometry])
         if terminal_window_geometry is not None and not terminal_window_geometry.is_empty
         else np.ones_like(allowed_mask, dtype=bool)
     )
-    forbidden_mask = _rasterize_geometries(grid, [step5_result.case_forbidden_domain])
     cut_barrier_geometry = None
     if step5_result.case_terminal_cut_constraints is not None and not step5_result.case_terminal_cut_constraints.is_empty:
         cut_barrier_geometry = step5_result.case_terminal_cut_constraints.buffer(
@@ -882,6 +974,20 @@ def build_step6_polygon_assembly(
             cap_style=2,
             join_style=2,
         )
+        single_bridge_zone = _single_case_bridge_zone(step5_result)
+        if single_bridge_zone is not None and not single_bridge_zone.is_empty:
+            cut_barrier_geometry = _normalize_geometry(
+                cut_barrier_geometry.difference(single_bridge_zone)
+            )
+        if inter_unit_bridge_surface is not None and not inter_unit_bridge_surface.is_empty:
+            inter_unit_cut_relief = inter_unit_bridge_surface.buffer(
+                STEP6_CUT_BARRIER_BUFFER_M,
+                cap_style=2,
+                join_style=2,
+            )
+            cut_barrier_geometry = _normalize_geometry(
+                cut_barrier_geometry.difference(inter_unit_cut_relief)
+            )
     cut_mask = _rasterize_geometries(grid, [cut_barrier_geometry]) if cut_barrier_geometry is not None else np.zeros_like(allowed_mask, dtype=bool)
     assembly_canvas_mask = allowed_mask & terminal_window_mask & ~forbidden_mask & ~cut_mask
     assembly_canvas_geometry = _constrain_geometry_to_case_limits(
@@ -894,22 +1000,38 @@ def build_step6_polygon_assembly(
     )
 
     core_hard_seed_geometry = _core_must_cover_geometry(step5_result)
-    hard_seed_requested_mask = _rasterize_geometries(grid, [step5_result.case_must_cover_domain])
+    case_must_requested_mask = _rasterize_geometries(grid, [step5_result.case_must_cover_domain])
+    hard_seed_requested_mask = case_must_requested_mask
+    bridge_requested_mask = _rasterize_geometries(grid, [_single_case_bridge_zone(step5_result)])
+    inter_unit_bridge_requested_mask = _rasterize_geometries(grid, [inter_unit_bridge_surface])
     full_fill_target_geometry = _full_fill_target_geometry(step5_result)
     if full_fill_target_geometry is not None and not full_fill_target_geometry.is_empty:
         core_seed_requested_mask = _rasterize_geometries(grid, [core_hard_seed_geometry])
         full_fill_requested_mask = _rasterize_geometries(grid, [full_fill_target_geometry])
         full_fill_canvas_mask = full_fill_requested_mask & assembly_canvas_mask
         core_seed_canvas_mask = core_seed_requested_mask & assembly_canvas_mask
-        if _is_swsd_only_surface(guard_context) and not core_seed_canvas_mask.any():
+        if (
+            _is_no_main_section_window_surface(guard_context)
+            and not (full_fill_canvas_mask & core_seed_canvas_mask).any()
+        ):
             effective_full_fill_mask = full_fill_canvas_mask
         else:
             effective_full_fill_mask = _extract_seed_component(
                 full_fill_canvas_mask,
                 core_seed_canvas_mask,
             )
-        hard_seed_requested_mask = core_seed_requested_mask | effective_full_fill_mask
+        hard_seed_requested_mask = (
+            core_seed_requested_mask
+            | effective_full_fill_mask
+            | bridge_requested_mask
+            | inter_unit_bridge_requested_mask
+        )
     hard_seed_mask = hard_seed_requested_mask & assembly_canvas_mask
+    if inter_unit_bridge_requested_mask.any() and bridge_requested_mask.any():
+        hard_seed_mask = _extract_seed_component(
+            hard_seed_mask,
+            bridge_requested_mask | inter_unit_bridge_requested_mask,
+        )
     hard_seed_geometry = _constrain_geometry_to_case_limits(
         _mask_to_geometry(hard_seed_mask, grid),
         drivezone_union=drivezone_union,
@@ -918,6 +1040,12 @@ def build_step6_polygon_assembly(
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
+    if inter_unit_bridge_surface is not None and not inter_unit_bridge_surface.is_empty:
+        hard_seed_geometry = _seed_dominant_polygon_component(
+            hard_seed_geometry,
+            _union_geometry([step5_result.case_bridge_zone_geometry, inter_unit_bridge_surface]),
+        )
+        hard_seed_mask = _rasterize_geometries(grid, [hard_seed_geometry]) & assembly_canvas_mask
     single_component_surface_seed = _uses_single_component_surface_seed(step5_result)
     if single_component_surface_seed:
         hard_seed_geometry = _seed_dominant_polygon_component(
@@ -1006,6 +1134,23 @@ def build_step6_polygon_assembly(
         final_case_polygon = _seed_dominant_polygon_component(
             final_case_polygon,
             hard_seed_geometry,
+        )
+    if inter_unit_bridge_surface is not None and not inter_unit_bridge_surface.is_empty:
+        final_case_polygon = _seed_dominant_polygon_component(
+            final_case_polygon,
+            _union_geometry([step5_result.case_bridge_zone_geometry, inter_unit_bridge_surface]),
+        )
+        final_case_polygon = _fill_unexpected_polygon_holes(
+            final_case_polygon,
+            forbidden_geometry=step5_result.case_forbidden_domain,
+        )
+        final_case_polygon = _constrain_geometry_to_case_limits(
+            final_case_polygon,
+            drivezone_union=drivezone_union,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            terminal_window_geometry=terminal_window_geometry,
+            forbidden_geometry=step5_result.case_forbidden_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
         )
     cut_checked_polygon = final_case_polygon
 

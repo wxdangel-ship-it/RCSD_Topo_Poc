@@ -10,8 +10,9 @@
 | `主证据` | 真实世界物理空间证据，当前只包括导流带与道路面分叉；RCSD/SWSD/RCSDRoad、历史抽象 node、拓扑召回点和抽象路网代理点都不是主证据。 |
 | `导流带主证据` | 由导流带表达真实分歧 / 合流或道路组织切换的主证据；导流带本体同时是负向掩膜，不作为可通行道路面。 |
 | `道路面分叉主证据` | 由可通行道路面形态真实分叉、合流或切换表达的主证据。 |
-| `RCSD 语义路口` | RCSD 抽象路网中的语义路口，可作为 section reference、抽象路网参考或支撑域约束，不是主证据，不得被称为 Reference Point。 |
-| `RCSDRoad fallback` | 无 RCSD 语义路口或需 road fallback 时使用的 RCSDRoad 局部段支撑；只能覆盖相关局部段，不得沿整条 RCSDRoad 远距离扩张。 |
+| `RCSD 语义路口` | 与当前 SWSD 路口语义一致的 RCSD 路口：进入道路、退出道路和角度趋势与当前事件对齐；可作为 section reference、抽象路网参考或支撑域约束，不是主证据，不得被称为 Reference Point。 |
+| `无 RCSD 语义路口` | 可表示没有 RCSD 路口，也可表示存在 RCSD 数据但不是与当前 SWSD 路口语义一致的路口，例如缺少进入 / 退出道路、只有 RCSDRoad 趋势支持或仅形成弱聚合结果。该状态不等于无 RCSD 数据。 |
+| `RCSDRoad fallback` | 无 RCSD 语义路口或需 road fallback 时使用的 RCSDRoad 局部段支撑；可表达与 SWSD 路口对应道路趋势一致的局部 RCSDRoad，但只能覆盖相关局部段，不得沿整条 RCSDRoad 远距离扩张。 |
 | `SWSD 语义路口` | SWSD 侧可用于构面的语义路口，可作为 section reference，不是主证据，不得被称为 Reference Point。 |
 | `Anchor_2 full baseline` | 当前冻结业务基线：`23 case / accepted = 20 / rejected = 3`。 |
 | `legacy selected-case baseline` | 2026-04-22 历史子集口径：`accepted = 7 / rejected = 1`，不再作为当前正式 acceptance 数字真相。 |

@@ -80,6 +80,65 @@ def test_road_surface_fork_without_rcsd_classifies_as_main_evidence_without_rcsd
     assert scenario.surface_scenario_type == SCENARIO_MAIN_WITHOUT_RCSD
 
 
+def test_road_surface_fork_no_support_published_roads_do_not_create_fallback() -> None:
+    scenario = classify_surface_scenario(
+        evidence_source="road_surface_fork",
+        selected_evidence_summary={"candidate_scope": "road_surface_fork"},
+        positive_rcsd_audit={
+            "positive_rcsd_present": False,
+            "positive_rcsd_present_reason": "road_surface_fork_structure_only_no_rcsd",
+            "published_rcsdroad_ids": ["road-1", "road-2"],
+            "first_hit_rcsdroad_ids": ["road-3"],
+        },
+    )
+
+    assert scenario.has_main_evidence is True
+    assert scenario.rcsd_match_type == "none"
+    assert scenario.fallback_rcsdroad_ids == ()
+    assert scenario.surface_scenario_type == SCENARIO_MAIN_WITHOUT_RCSD
+
+
+def test_rcsd_anchored_reverse_recovered_divstrip_is_main_evidence_with_rcsd() -> None:
+    scenario = classify_surface_scenario(
+        evidence_source="rcsd_anchored_reverse",
+        selected_evidence_summary={
+            "upper_evidence_kind": "divstrip",
+            "candidate_scope": "divstrip_component",
+            "rcsd_anchored_reverse_recovered_evidence": True,
+        },
+        rcsd_selection_mode="rcsd_anchored_reverse:aggregated_node_centric_from_first_hit",
+        required_rcsd_node="rcsd-node-1",
+        fact_reference_point_present=True,
+    )
+
+    assert scenario.has_main_evidence is True
+    assert scenario.main_evidence_type == "divstrip"
+    assert scenario.reference_point_present is True
+    assert scenario.reference_point_source == "divstrip"
+    assert scenario.section_reference_source == SECTION_REFERENCE_POINT_AND_RCSD
+    assert scenario.surface_scenario_type == SCENARIO_MAIN_WITH_RCSD
+    assert scenario.surface_generation_mode == SURFACE_MODE_MAIN_EVIDENCE
+
+
+def test_rcsd_anchored_reverse_without_recovered_evidence_is_not_main_evidence() -> None:
+    scenario = classify_surface_scenario(
+        evidence_source="rcsd_anchored_reverse",
+        selected_evidence_summary={
+            "upper_evidence_kind": "rcsd_anchor",
+            "candidate_scope": "rcsd_anchored_axis_projection",
+        },
+        rcsd_selection_mode="rcsd_anchored_reverse:aggregated_node_centric_from_first_hit",
+        required_rcsd_node="rcsd-node-1",
+        fact_reference_point_present=True,
+    )
+
+    assert scenario.has_main_evidence is False
+    assert scenario.main_evidence_type == MAIN_EVIDENCE_NONE
+    assert scenario.reference_point_present is False
+    assert scenario.section_reference_source == SECTION_REFERENCE_RCSD
+    assert scenario.surface_scenario_type == SCENARIO_NO_MAIN_WITH_RCSD
+
+
 def test_no_evidence_with_rcsd_junction_uses_rcsd_section_reference_only() -> None:
     scenario = classify_surface_scenario(
         evidence_source="rcsd_junction_window",

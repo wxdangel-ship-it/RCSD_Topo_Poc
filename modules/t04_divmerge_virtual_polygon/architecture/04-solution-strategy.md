@@ -129,14 +129,16 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - T04 主证据只包括真实世界物理空间证据：导流带与道路面分叉；RCSD 语义路口、RCSDRoad、SWSD 语义路口、SWSD candidate、历史抽象 node、拓扑召回点和抽象路网代理点不属于主证据。
 - `fact_reference_point / Reference Point` 只能来自主证据：导流带主证据取真实决定分歧 / 合流的位置，道路面分叉主证据取道路面形态真实切换的位置；无主证据时 `fact_reference_point = null`，不得为了流程完整构造虚拟 Reference Point。
 - `section reference / 截面参考对象` 用于确定前后横向截面位置，可来自 Reference Point、`Reference Point + RCSD 语义路口`、RCSD 语义路口或 SWSD 语义路口；RCSD/SWSD junction window 只能作为 section reference 或支撑域辅助，不得命名为 Reference Point。
+- `RCSD 语义路口` 必须表示召回 RCSD 路口与当前 SWSD 路口语义一致：进入道路、退出道路和角度趋势与当前事件对齐。仅存在 RCSD 数据、RCSDRoad 趋势一致、或 RCSD 聚合结果缺少进入 / 退出道路时，不得称为 RCSD 语义路口。
+- 无 RCSD 语义路口不等于无 RCSD 数据：该状态可包含趋势一致但不成路口的 RCSDRoad、缺进入 / 退出道路的 RCSD 局部结构或弱聚合结果；这些对象只能作为 fallback、趋势参考或审计辅助。
 - Step4 或 Step4/5 交界处必须输出 `surface_scenario_type`，按“主证据 × RCSD / SWSD 支持状态”区分六类业务场景与 `no_surface_reference` 兜底，而不是把 A / B / C 作为 T04 主场景分类。
 - 六类主业务场景固定为：
   - `main_evidence_with_rcsd_junction`：有主证据 + RCSD 语义路口，section reference 为 Reference Point + RCSD 语义路口，强证据成功。
-  - `main_evidence_with_rcsdroad_fallback`：有主证据 + RCSDRoad fallback，section reference 为 Reference Point，fallback 只取相关局部段。
-  - `main_evidence_without_rcsd`：有主证据 + 无 RCSD，由主证据独立驱动构面。
+  - `main_evidence_with_rcsdroad_fallback`：有主证据 + 无 RCSD 语义路口但存在 RCSDRoad fallback，section reference 为 Reference Point，fallback 只取相关局部段。
+  - `main_evidence_without_rcsd`：有主证据 + 无 RCSD 语义路口且无可用 RCSDRoad fallback，由主证据独立驱动构面。
   - `no_main_evidence_with_rcsd_junction`：无主证据 + RCSD 语义路口，无 Reference Point，以 RCSD 语义路口作为 section reference。
   - `no_main_evidence_with_rcsdroad_fallback_and_swsd`：无主证据 + RCSDRoad fallback + SWSD 语义路口，无 Reference Point，以 SWSD 语义路口作为 section reference，弱证据成功。
-  - `no_main_evidence_with_swsd_only`：无主证据 + 无 RCSD + SWSD 语义路口，无 Reference Point，SWSD-only 构面。
+  - `no_main_evidence_with_swsd_only`：无主证据 + 无 RCSD 语义路口 + SWSD 语义路口，无 Reference Point，SWSD-only 构面；可存在非语义路口的 RCSD 数据，但不得登记为 `rcsd_junction`。
 - 正向 RCSD 只在当前 pair-local 语义框架内选择，不回退到 case-level RCSD 世界补证据。
 - reverse、road-surface fork、SWSD/RCSD junction window 与 `rcsd_anchored_reverse` 是受控恢复路径，由 `step4_postprocess` 归口。
 - complex / multi 的 local throat gate 必须使用当前 unit 的 `boundary_branch_ids`，不得静默退回 case-level main pair；若 throat pair 无法有效形成，必须写出 `degraded_scope_reason`。
@@ -210,6 +212,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - 由 `polygon_assembly.py` 的 `build_step6_polygon_assembly(...)` 执行。
 - 采用 raster-first 单连通组装，再回到矢量 polygon 做连通性、洞、cut、forbidden overlap 检查。
 - complex / multi 场景可先生成 unit surface，再合并为一个 case 级完整 `final_case_polygon`。
+- 对先合流再分歧的 complex / multi 场景，如果两个相邻 unit 的最近横截线之间存在可通行道路面、且不与 forbidden / negative mask 冲突，Step6 可将该横截线间区域作为 inter-unit section bridge surface，并入有效 terminal window 与 hard seed，用于把相邻 unit surface 合并成单一 case surface；该桥接不得越过 allowed / forbidden / terminal cut 的后验复核。
 - 允许业务 hole；不允许算法 hole 或无审计 cleanup。
 
 边界：

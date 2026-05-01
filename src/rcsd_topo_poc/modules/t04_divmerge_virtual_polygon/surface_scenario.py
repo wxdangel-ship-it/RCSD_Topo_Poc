@@ -39,8 +39,12 @@ _MAIN_DIVSTRIP_SOURCES = {"divstrip_direct", "multibranch_event", "reverse_tip_r
 _NON_MAIN_REFERENCE_SOURCES = {
     "rcsd_junction_window",
     "swsd_junction_window",
-    "rcsd_anchored_reverse",
     "none",
+}
+_NON_FALLBACK_RCSD_REASONS = {
+    "road_surface_fork_structure_only_no_rcsd",
+    "road_surface_fork_without_bound_target_rcsd",
+    "unbound_road_surface_fork_without_bifurcation_rcsd",
 }
 
 
@@ -107,9 +111,21 @@ def _fallback_rcsdroad_ids(
 ) -> tuple[str, ...]:
     audit_roads: Sequence[Any] | None = None
     if positive_rcsd_audit:
-        audit_roads = positive_rcsd_audit.get("published_rcsdroad_ids") or positive_rcsd_audit.get(
-            "first_hit_rcsdroad_ids"
+        audit_reason = _clean_text(
+            positive_rcsd_audit.get("positive_rcsd_present_reason")
+            or positive_rcsd_audit.get("rcsd_decision_reason")
         )
+        audit_is_non_fallback = (
+            positive_rcsd_audit.get("positive_rcsd_present") is False
+            and (
+                audit_reason in _NON_FALLBACK_RCSD_REASONS
+                or any(bool(positive_rcsd_audit.get(key)) for key in _NON_FALLBACK_RCSD_REASONS)
+            )
+        )
+        if not audit_is_non_fallback:
+            audit_roads = positive_rcsd_audit.get("published_rcsdroad_ids") or positive_rcsd_audit.get(
+                "first_hit_rcsdroad_ids"
+            )
     return _tuple_str([*(_tuple_str(selected_rcsdroad_ids)), *(_tuple_str(first_hit_rcsdroad_ids)), *(_tuple_str(audit_roads))])
 
 

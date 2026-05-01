@@ -266,6 +266,23 @@ def _section_reference_anchor_point(
     return None
 
 
+def _section_reference_seed_point(
+    unit_result: T04EventUnitResult,
+    config: Step5SurfaceWindowConfig,
+) -> Point | None:
+    if config.reference_point_present:
+        return None
+    for geometry in (
+        getattr(unit_result, "review_materialized_point", None),
+        getattr(unit_result, "fact_reference_point", None),
+        _section_reference_anchor_point(unit_result, config),
+    ):
+        point = _as_point(geometry)
+        if point is not None:
+            return point
+    return None
+
+
 def _unit_axis_origin_point(unit_result: T04EventUnitResult) -> Point | None:
     bridge = unit_result.interpretation.legacy_step5_bridge
     bridge_origin = _as_point(bridge.event_origin_point)
@@ -453,11 +470,13 @@ def _event_axis_line(unit_result: T04EventUnitResult) -> LineString | None:
 
 def _terminal_cut_semantic_anchors(unit_result: T04EventUnitResult) -> tuple[Point | None, Point | None]:
     config = _step5_surface_window_config(unit_result)
-    if not config.reference_point_present and not config.surface_scenario_missing:
-        return (None, None)
-    reference_point = _as_point(unit_result.fact_reference_point)
+    reference_point = (
+        _as_point(unit_result.fact_reference_point)
+        if config.reference_point_present or config.surface_scenario_missing
+        else _section_reference_seed_point(unit_result, config)
+    )
     rcsd_point = _as_point(unit_result.required_rcsd_node_geometry)
-    if rcsd_point is None:
+    if reference_point is None or rcsd_point is None:
         return (None, None)
     kind_2 = unit_result.interpretation.kind_resolution.operational_kind_2
     if kind_2 == 16:
@@ -684,6 +703,16 @@ def _build_terminal_support_corridor(
     drivezone_union: BaseGeometry | None,
 ) -> BaseGeometry | None:
     window_centerline = _terminal_axis_window_centerline(unit_result)
+    if window_centerline is None and _uses_junction_window(unit_result):
+        anchor_point = _junction_window_anchor_point(unit_result)
+        axis_line = _junction_window_axis_line(unit_result, anchor_point) if anchor_point is not None else None
+        if axis_line is not None and anchor_point is not None:
+            anchor_s = float(axis_line.project(anchor_point))
+            window_centerline = _line_window_centerline(
+                axis_line,
+                start_distance_m=anchor_s - STEP5_JUNCTION_WINDOW_HALF_LENGTH_M,
+                end_distance_m=anchor_s + STEP5_JUNCTION_WINDOW_HALF_LENGTH_M,
+            )
     if window_centerline is None:
         return None
     return _clip_to_drivezone(
@@ -698,26 +727,40 @@ def _build_terminal_support_corridor(
 
 def _uses_junction_full_road_fill(unit_result: T04EventUnitResult) -> bool:
     config = _step5_surface_window_config(unit_result)
-    if not config.reference_point_present and not config.surface_scenario_missing:
-        return False
     source = str(unit_result.evidence_source or "")
+    if not config.reference_point_present and not config.surface_scenario_missing:
+        if not (
+            source == "rcsd_anchored_reverse"
+            and config.section_reference_source == SECTION_REFERENCE_RCSD
+        ):
+            return False
+        reference_point = _section_reference_seed_point(unit_result, config)
+    else:
+        reference_point = _as_point(unit_result.fact_reference_point)
     return bool(
         source in {"rcsd_anchored_reverse", "road_surface_fork", "multibranch_event"}
         and str(unit_result.required_rcsd_node or "").strip()
-        and _as_point(unit_result.fact_reference_point) is not None
+        and reference_point is not None
         and _as_point(unit_result.required_rcsd_node_geometry) is not None
     )
 
 
 def _uses_junction_window(unit_result: T04EventUnitResult) -> bool:
     config = _step5_surface_window_config(unit_result)
+    source = str(unit_result.evidence_source or "")
+    if (
+        source == "rcsd_anchored_reverse"
+        and config.surface_generation_mode == SURFACE_MODE_RCSD_WINDOW
+        and config.section_reference_source == SECTION_REFERENCE_RCSD
+    ):
+        return False
     if config.surface_generation_mode in {
         SURFACE_MODE_RCSD_WINDOW,
         SURFACE_MODE_SWSD_WINDOW,
         SURFACE_MODE_SWSD_WITH_RCSDROAD,
     }:
         return True
-    return str(unit_result.evidence_source or "") in STEP5_JUNCTION_WINDOW_EVIDENCE_SOURCES
+    return source in STEP5_JUNCTION_WINDOW_EVIDENCE_SOURCES
 
 
 def _junction_window_anchor_point(unit_result: T04EventUnitResult) -> Point | None:
@@ -1320,6 +1363,56 @@ def _multi_unit_full_fill_bridge_geometries(
     return bridges
 
 
+def _has_case_level_rcsd_bridge_support(unit_results: Sequence[T04Step5UnitResult]) -> bool:
+    if len(unit_results) <= 1:
+        return False
+    supported_unit_count = sum(
+        1
+        for unit in unit_results
+        if unit.required_rcsd_node
+        or unit.positive_rcsd_road_ids
+        or unit.fallback_rcsdroad_ids
+        or unit.fallback_support_strip_geometry is not None
+    )
+    return supported_unit_count >= 2
+
+
+def _case_level_rcsd_bridge_geometries(
+    unit_results: Sequence[T04Step5UnitResult],
+    *,
+    support_graph_geometry: BaseGeometry | None,
+    drivezone_union: BaseGeometry | None,
+) -> list[BaseGeometry]:
+    if not _has_case_level_rcsd_bridge_support(unit_results):
+        return []
+    components = [
+        unit.unit_must_cover_domain
+        for unit in unit_results
+        if unit.unit_must_cover_domain is not None and not unit.unit_must_cover_domain.is_empty
+    ]
+    if len(components) <= 1:
+        return []
+    bridges: list[BaseGeometry] = []
+    current_geometry = components[0]
+    for candidate in components[1:]:
+        bridge = _nearest_bridge_patch(
+            current_geometry,
+            candidate,
+            support_graph_geometry=support_graph_geometry,
+            drivezone_union=drivezone_union,
+            half_width_m=STEP5_SUPPORT_ROAD_BUFFER_M,
+            support_graph_pad_m=STEP5_FULL_ROAD_FILL_AXIS_HALF_WIDTH_M,
+        )
+        if bridge is not None and not bridge.is_empty:
+            bridge = _clip_to_drivezone(bridge.buffer(0.25), drivezone_union) or bridge
+            bridges.append(bridge)
+        current_geometry = _clip_to_drivezone(
+            _union_geometry([current_geometry, candidate, *bridges]),
+            drivezone_union,
+        ) or current_geometry
+    return bridges
+
+
 @dataclass(frozen=True)
 class T04Step5UnitResult:
     event_unit_id: str
@@ -1342,6 +1435,7 @@ class T04Step5UnitResult:
     unit_terminal_window_domain: BaseGeometry | None
     terminal_support_corridor_geometry: BaseGeometry | None
     axis_lateral_band_geometry: BaseGeometry | None = None
+    section_reference_patch_geometry: BaseGeometry | None = None
     junction_full_road_fill_domain: BaseGeometry | None = None
     surface_fill_mode: str = "standard"
     surface_fill_axis_half_width_m: float | None = None
@@ -1408,6 +1502,7 @@ class T04Step5UnitResult:
             "unit_terminal_cut_constraints": _geometry_summary(self.unit_terminal_cut_constraints),
             "unit_terminal_window_domain": _geometry_summary(self.unit_terminal_window_domain),
             "axis_lateral_band_geometry": _geometry_summary(self.axis_lateral_band_geometry),
+            "section_reference_patch_geometry": _geometry_summary(self.section_reference_patch_geometry),
             "junction_full_road_fill_domain": _geometry_summary(self.junction_full_road_fill_domain),
             "localized_evidence_core_geometry": _geometry_summary(self.localized_evidence_core_geometry),
             "fact_reference_patch_geometry": _geometry_summary(self.fact_reference_patch_geometry),
@@ -1447,6 +1542,7 @@ class T04Step5UnitResult:
             "must_cover_components": dict(self.must_cover_components),
             "unit_terminal_window_domain": _geometry_summary(self.unit_terminal_window_domain),
             "axis_lateral_band_geometry": _geometry_summary(self.axis_lateral_band_geometry),
+            "section_reference_patch_geometry": _geometry_summary(self.section_reference_patch_geometry),
             "junction_full_road_fill_domain": _geometry_summary(self.junction_full_road_fill_domain),
             "terminal_support_corridor_geometry": _geometry_summary(self.terminal_support_corridor_geometry),
         }
@@ -1678,6 +1774,13 @@ class T04Step5CaseResult:
                 scope="unit",
                 event_unit_id=unit.event_unit_id,
                 domain_role="unit_must_cover_domain",
+                component_role="section_reference_patch_geometry",
+                geometry=unit.section_reference_patch_geometry,
+            )
+            append_feature(
+                scope="unit",
+                event_unit_id=unit.event_unit_id,
+                domain_role="unit_must_cover_domain",
                 component_role="required_rcsd_node_patch_geometry",
                 geometry=unit.required_rcsd_node_patch_geometry,
             )
@@ -1776,6 +1879,17 @@ def _build_step5_unit_result(
         if config.reference_point_present or config.surface_scenario_missing
         else None
     )
+    section_reference_patch_geometry = (
+        _buffered_patch(
+            _section_reference_seed_point(unit_result, config),
+            radius_m=STEP5_POINT_PATCH_RADIUS_M,
+            drivezone_union=drivezone_union,
+        )
+        if not config.reference_point_present
+        and not config.surface_scenario_missing
+        and config.section_reference_source != SECTION_REFERENCE_NONE
+        else None
+    )
     full_road_fill_requested = _uses_junction_full_road_fill(unit_result)
     junction_window_requested = _uses_junction_window(unit_result)
     required_rcsd_node_patch_geometry = None
@@ -1829,6 +1943,7 @@ def _build_step5_unit_result(
         [
             localized_evidence_core_geometry,
             fact_reference_patch_geometry,
+            section_reference_patch_geometry,
             required_rcsd_node_patch_geometry,
             target_b_node_patch_geometry,
         ],
@@ -1888,6 +2003,7 @@ def _build_step5_unit_result(
             [
                 localized_evidence_core_geometry,
                 fact_reference_patch_geometry,
+                section_reference_patch_geometry,
                 required_rcsd_node_patch_geometry,
                 junction_full_road_fill_domain,
                 fallback_support_strip_geometry,
@@ -1934,6 +2050,7 @@ def _build_step5_unit_result(
     must_cover_components = {
         "localized_evidence_core_geometry": localized_evidence_core_geometry is not None,
         "fact_reference_patch_geometry": fact_reference_patch_geometry is not None,
+        "section_reference_patch_geometry": section_reference_patch_geometry is not None,
         "required_rcsd_node_patch_geometry": required_rcsd_node_patch_geometry is not None,
         "junction_full_road_fill_domain": junction_full_road_fill_domain is not None,
         "fallback_support_strip_geometry": fallback_support_strip_geometry is not None,
@@ -1964,6 +2081,7 @@ def _build_step5_unit_result(
         target_b_node_patch_geometry=target_b_node_patch_geometry,
         fallback_support_strip_geometry=fallback_support_strip_geometry,
         axis_lateral_band_geometry=axis_lateral_band_geometry,
+        section_reference_patch_geometry=section_reference_patch_geometry,
         junction_full_road_fill_domain=junction_full_road_fill_domain,
         unit_must_cover_domain=unit_must_cover_domain,
         unit_allowed_growth_domain=unit_allowed_growth_domain,
@@ -2140,7 +2258,7 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
             )
         )
 
-    case_must_cover_domain = _clip_to_drivezone(
+    base_case_must_cover_domain = _clip_to_drivezone(
         _union_geometry(unit.unit_must_cover_domain for unit in unit_results),
         drivezone_union,
     )
@@ -2162,6 +2280,15 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         unit_results,
         support_graph_geometry=case_support_graph_geometry,
         drivezone_union=drivezone_union,
+    )
+    case_level_rcsd_bridge_geometries = _case_level_rcsd_bridge_geometries(
+        unit_results,
+        support_graph_geometry=case_support_graph_geometry,
+        drivezone_union=drivezone_union,
+    )
+    case_must_cover_domain = _clip_to_drivezone(
+        _union_geometry([base_case_must_cover_domain, *case_level_rcsd_bridge_geometries]),
+        drivezone_union,
     )
     bridge_geometries: list[BaseGeometry] = []
     unit_allowed_non_empty = [
@@ -2199,7 +2326,9 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
                     drivezone_union,
                 ) or current_geometry
     case_bridge_zone_geometry = _clip_to_drivezone(
-        _union_geometry([*bridge_geometries, *full_fill_bridge_geometries]),
+        _union_geometry(
+            [*bridge_geometries, *full_fill_bridge_geometries, *case_level_rcsd_bridge_geometries]
+        ),
         drivezone_union,
     )
     case_allowed_growth_domain = _clip_to_drivezone(
@@ -2222,6 +2351,10 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
             [
                 *(unit.unit_terminal_window_domain for unit in unit_results),
                 *full_fill_bridge_geometries,
+                *case_level_rcsd_bridge_geometries,
+                case_bridge_zone_geometry
+                if _has_case_level_rcsd_bridge_support(unit_results)
+                else None,
             ]
         ),
         drivezone_union,

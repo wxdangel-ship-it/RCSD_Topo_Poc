@@ -13,7 +13,11 @@ from .step4_road_surface_fork_geometry import (
     _dedupe,
 )
 
-def _strong_aggregated_unit(audit: dict[str, Any]) -> dict[str, Any] | None:
+def _strong_aggregated_unit(
+    audit: dict[str, Any],
+    *,
+    allow_entering_exiting_role_support: bool = False,
+) -> dict[str, Any] | None:
     for aggregate in audit.get("aggregated_rcsd_units") or ():
         if not isinstance(aggregate, dict):
             continue
@@ -26,7 +30,13 @@ def _strong_aggregated_unit(audit: dict[str, Any]) -> dict[str, Any] | None:
             continue
         if not str(aggregate.get("required_node_id") or "").strip():
             continue
-        if not _has_bifurcation_role_support(aggregate):
+        if not (
+            _has_bifurcation_role_support(aggregate)
+            or (
+                allow_entering_exiting_role_support
+                and _has_entering_and_exiting_role_support(aggregate)
+            )
+        ):
             continue
         return aggregate
     return None
@@ -58,6 +68,20 @@ def _has_bifurcation_role_support(aggregate: dict[str, Any]) -> bool:
             and str(assignment.get("road_id") or "").strip()
         }
     ) >= 2
+
+
+def _has_entering_and_exiting_role_support(aggregate: dict[str, Any]) -> bool:
+    roles = {
+        str(assignment.get("role") or "").strip()
+        for assignment in aggregate.get("role_assignments") or ()
+        if isinstance(assignment, dict)
+        and str(assignment.get("road_id") or "").strip()
+    }
+    if {"entering", "exiting"}.issubset(roles):
+        return True
+    entering = {str(item or "").strip() for item in aggregate.get("entering_road_ids") or () if str(item or "").strip()}
+    exiting = {str(item or "").strip() for item in aggregate.get("exiting_road_ids") or () if str(item or "").strip()}
+    return bool(entering and exiting)
 
 
 def _entry_uses_relaxed_rcsd(entry: T04CandidateAuditEntry) -> bool:
@@ -117,6 +141,7 @@ def _relaxed_primary_aggregate(
             allow_exact_primary_fallback
             and decision_reason == "role_mapping_exact_aggregated"
             and consistency_level == "A"
+            and _has_entering_and_exiting_role_support(aggregate)
         ):
             return aggregate
     return None
@@ -133,11 +158,15 @@ def _junction_window_aggregate(audit: dict[str, Any]) -> dict[str, Any] | None:
     for aggregate in audit.get("aggregated_rcsd_units") or ():
         if not isinstance(aggregate, dict):
             continue
+        decision_reason = str(aggregate.get("decision_reason") or "").strip()
+        if decision_reason not in RELAXED_AGGREGATED_RCSD_REASONS:
+            continue
         primary_node = str(aggregate.get("primary_node_id") or "").strip()
         if not primary_node:
             continue
-        consistency_level = str(aggregate.get("consistency_level") or "").strip()
-        if consistency_level not in {"A", "B"}:
+        if str(aggregate.get("consistency_level") or "").strip() != "B":
+            continue
+        if not _has_entering_and_exiting_role_support(aggregate):
             continue
         aggregate_road_ids = set(_aggregate_ids(aggregate, "road_ids"))
         if first_hit_ids and not (first_hit_ids & aggregate_road_ids):

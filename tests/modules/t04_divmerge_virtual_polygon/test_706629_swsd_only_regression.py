@@ -20,7 +20,6 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_road_surface_fork_
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.surface_scenario import (
     MAIN_EVIDENCE_ROAD_SURFACE_FORK,
-    SCENARIO_MAIN_WITHOUT_RCSD,
     SCENARIO_MAIN_WITH_RCSD,
     SCENARIO_MAIN_WITH_RCSDROAD,
     SCENARIO_NO_MAIN_WITH_RCSD,
@@ -213,6 +212,45 @@ def test_real_706629_swsd_only_accepts_without_virtual_reference_point(tmp_path:
 
 
 @pytest.mark.smoke
+def test_real_706347_724081_swsd_only_windows_cover_full_swsd_section(tmp_path: Path) -> None:
+    case_ids = ["706347", "724081"]
+    missing = [case_id for case_id in case_ids if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()]
+    if missing:
+        pytest.skip(f"missing real Anchor_2 cases: {', '.join(missing)}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=case_ids,
+        out_root=tmp_path / "out_swsd_only_windows",
+        run_id="real_swsd_only_windows",
+    )
+
+    for case_id in case_ids:
+        case_dir = run_root / "cases" / case_id
+        step4_status = json.loads((case_dir / "step4_event_interpretation.json").read_text(encoding="utf-8"))
+        step5_status = json.loads((case_dir / "step5_status.json").read_text(encoding="utf-8"))
+        step6_status = json.loads((case_dir / "step6_status.json").read_text(encoding="utf-8"))
+        step7_status = json.loads((case_dir / "step7_status.json").read_text(encoding="utf-8"))
+        unit4 = step4_status["event_units"][0]
+        unit5 = step5_status["unit_results"][0]
+
+        assert step7_status["final_state"] == "accepted"
+        assert unit4["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
+        assert unit4["section_reference_source"] == SECTION_REFERENCE_SWSD
+        assert unit4["evidence_source"] == "swsd_junction_window"
+        assert unit4["main_evidence_type"] == "none"
+        assert unit4["reference_point_present"] is False
+        assert unit4["selected_rcsdroad_ids"] == []
+        assert unit5["surface_fill_mode"] == "junction_window"
+        assert unit5["unit_terminal_cut_constraints"]["present"] is False
+        assert unit5["junction_full_road_fill_domain"]["present"] is True
+        assert step6_status["assembly_state"] == "assembled"
+        assert step6_status["final_case_polygon_component_count"] == 1
+        assert step6_status["section_reference_window_covered"] is True
+        assert step6_status["post_cleanup_must_cover_ok"] is True
+
+
+@pytest.mark.smoke
 def test_real_768675_bilateral_road_surface_fork_accepts_as_main_evidence(tmp_path: Path) -> None:
     if not (REAL_ANCHOR_2_ROOT / "768675").is_dir():
         pytest.skip(f"missing real Anchor_2 case: {REAL_ANCHOR_2_ROOT / '768675'}")
@@ -342,11 +380,23 @@ def test_real_rcsd_window_and_no_support_fallback_regressions(tmp_path: Path) ->
     unit4_724081 = step4_724081["event_units"][0]
     unit5_724081 = step5_724081["unit_results"][0]
     assert step7_724081["final_state"] == "accepted"
-    assert unit4_724081["surface_scenario_type"] == SCENARIO_MAIN_WITHOUT_RCSD
+    assert unit4_724081["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
+    assert unit4_724081["section_reference_source"] == SECTION_REFERENCE_SWSD
+    assert unit4_724081["reference_point_present"] is False
+    assert unit4_724081["evidence_source"] == "swsd_junction_window"
+    assert unit4_724081["main_evidence_type"] == "none"
+    assert unit4_724081["selected_evidence"]["rcsd_decision_reason"] == "swsd_junction_window_no_rcsd"
+    assert unit4_724081["selected_evidence"]["road_surface_fork_binding"]["multi_semantic_rcsd_ambiguity"] is True
     assert unit4_724081["fallback_rcsdroad_ids"] == []
-    assert unit5_724081["fallback_rcsdroad_localized"] is False
-    assert unit5_724081["fallback_support_strip_geometry"]["present"] is False
-    assert 300.0 < step6_724081["final_case_polygon"]["area_m2"] < 390.0
+    assert unit5_724081["swsd_only_entity_support_domain"] is True
+    assert unit5_724081["surface_fill_mode"] == "junction_window"
+    assert unit5_724081["unit_terminal_cut_constraints"]["present"] is False
+    assert unit5_724081["junction_full_road_fill_domain"]["present"] is True
+    assert step6_724081["b_node_gate_applicable"] is False
+    assert step6_724081["b_node_gate_skip_reason"] == "swsd_only_without_b_target"
+    assert step6_724081["section_reference_window_covered"] is True
+    assert step6_724081["final_case_polygon_component_count"] == 1
+    assert 1000.0 < step6_724081["final_case_polygon"]["area_m2"] < 1050.0
 
     step4_698389, step5_698389, step6_698389, step7_698389 = _docs("698389")
     unit4_698389 = step4_698389["event_units"][0]

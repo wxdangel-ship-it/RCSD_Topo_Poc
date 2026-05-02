@@ -360,9 +360,13 @@ def _build_step5_unit_result(
         ),
         drivezone_union,
     )
-    unit_terminal_cut_constraints = _build_terminal_cut_constraints(
-        unit_result,
-        drivezone_union=drivezone_union,
+    unit_terminal_cut_constraints = (
+        None
+        if config.surface_scenario_type == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
+        else _build_terminal_cut_constraints(
+            unit_result,
+            drivezone_union=drivezone_union,
+        )
     )
     unit_terminal_window_domain = _build_terminal_window_domain(
         unit_result,
@@ -442,6 +446,10 @@ def _build_step5_unit_result(
 
 def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult:
     drivezone_union = _loaded_feature_union(case_result.case_bundle.drivezone_features)
+    surface_configs = {
+        event_unit.spec.event_unit_id: _step5_surface_window_config(event_unit)
+        for event_unit in case_result.event_units
+    }
     external_support_roads = _unique_roads(
         road
         for event_unit in case_result.event_units
@@ -459,7 +467,7 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
     seed_rcsd_road_ids: set[str] = set()
     expandable_rcsd_road_ids: set[str] = set()
     for event_unit in case_result.event_units:
-        config = _step5_surface_window_config(event_unit)
+        config = surface_configs[event_unit.spec.event_unit_id]
         mask_ids = {
             str(road_id)
             for road_id in _mask_rcsd_road_ids(event_unit, config)
@@ -520,7 +528,7 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
     unit_core_occupancies: dict[str, BaseGeometry | None] = {}
     precomputed_components: dict[str, dict[str, BaseGeometry | None]] = {}
     for event_unit in case_result.event_units:
-        config = _step5_surface_window_config(event_unit)
+        config = surface_configs[event_unit.spec.event_unit_id]
         junction_window_requested = _uses_junction_window(event_unit)
         localized_evidence_core_geometry = _clip_to_drivezone(
             None if junction_window_requested or not config.entity_support_enabled else event_unit.localized_evidence_core_geometry,

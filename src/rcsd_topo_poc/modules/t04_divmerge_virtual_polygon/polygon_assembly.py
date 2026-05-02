@@ -53,6 +53,8 @@ STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_RADIUS_M = 2.0
 STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_MIN_AREA_M2 = 30.0
 STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_MAX_AREA_M2 = 120.0
 STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_FORBIDDEN_TOLERANCE_M2 = 0.5
+STEP6_SWSD_WINDOW_TOUCH_CLOSE_RADIUS_M = 1.0
+STEP6_SWSD_WINDOW_TOUCH_CLOSE_MAX_AREA_DELTA_M2 = 30.0
 
 
 def _geometry_summary(geometry: BaseGeometry | None) -> dict[str, Any]:
@@ -728,6 +730,56 @@ def _junction_full_fill_slit_relief(
     return relief
 
 
+def _swsd_window_touch_close(
+    geometry: BaseGeometry | None,
+    *,
+    step5_result: T04Step5CaseResult,
+    hard_seed_geometry: BaseGeometry | None,
+    terminal_window_geometry: BaseGeometry | None,
+    forbidden_geometry: BaseGeometry | None,
+    cut_barrier_geometry: BaseGeometry | None,
+) -> BaseGeometry | None:
+    normalized = _normalize_geometry(geometry)
+    if normalized is None:
+        return None
+    base_geometry = _normalize_geometry(_union_geometry([normalized, hard_seed_geometry]))
+    if base_geometry is None:
+        return None
+    before_count = len(_polygon_components(base_geometry))
+    if before_count <= 1:
+        return None
+    closed = _normalize_geometry(
+        base_geometry.buffer(
+            STEP6_SWSD_WINDOW_TOUCH_CLOSE_RADIUS_M,
+            join_style=2,
+        ).buffer(
+            -STEP6_SWSD_WINDOW_TOUCH_CLOSE_RADIUS_M,
+            join_style=2,
+        )
+    )
+    if closed is None or closed.is_empty:
+        return None
+    closed = _normalize_geometry(_union_geometry([base_geometry, closed]))
+    if closed is None or closed.is_empty:
+        return None
+    closed = _constrain_geometry_to_case_limits(
+        closed,
+        drivezone_union=None,
+        allowed_geometry=step5_result.case_allowed_growth_domain,
+        terminal_window_geometry=terminal_window_geometry,
+        forbidden_geometry=forbidden_geometry,
+        cut_barrier_geometry=cut_barrier_geometry,
+    )
+    if closed is None or closed.is_empty:
+        return None
+    if len(_polygon_components(closed)) >= before_count:
+        return None
+    area_delta = float(closed.difference(base_geometry).area)
+    if area_delta > STEP6_SWSD_WINDOW_TOUCH_CLOSE_MAX_AREA_DELTA_M2:
+        return None
+    return closed
+
+
 def _target_b_seed_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry | None:
     return _union_geometry(
         unit.target_b_node_patch_geometry
@@ -1228,7 +1280,7 @@ def build_step6_polygon_assembly(
         full_fill_requested_mask = _rasterize_geometries(grid, [full_fill_target_geometry])
         full_fill_canvas_mask = full_fill_requested_mask & assembly_canvas_mask
         core_seed_canvas_mask = core_seed_requested_mask & assembly_canvas_mask
-        if (
+        if _is_swsd_only_surface(guard_context) or (
             _is_no_main_section_window_surface(guard_context)
             and not (full_fill_canvas_mask & core_seed_canvas_mask).any()
         ):
@@ -1258,7 +1310,19 @@ def build_step6_polygon_assembly(
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
-    if _is_no_main_section_window_surface(guard_context):
+    if _is_swsd_only_surface(guard_context):
+        hard_seed_geometry = _constrain_geometry_to_case_limits(
+            _normalize_geometry(
+                _union_geometry([hard_seed_geometry, step5_result.case_must_cover_domain])
+            ),
+            drivezone_union=drivezone_union,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            terminal_window_geometry=terminal_window_geometry,
+            forbidden_geometry=step5_result.case_forbidden_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
+        hard_seed_mask = _rasterize_geometries(grid, [hard_seed_geometry]) & assembly_canvas_mask
+    if _is_no_main_section_window_surface(guard_context) and not _is_swsd_only_surface(guard_context):
         hard_seed_geometry = _seed_dominant_polygon_component(
             hard_seed_geometry,
             core_hard_seed_geometry,
@@ -1350,6 +1414,22 @@ def build_step6_polygon_assembly(
     if final_case_polygon is not None and not final_case_polygon.is_empty:
         final_case_polygon = _constrain_geometry_to_case_limits(
             final_case_polygon,
+            drivezone_union=drivezone_union,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            terminal_window_geometry=terminal_window_geometry,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
+    if (
+        _is_swsd_only_surface(guard_context)
+        and final_case_polygon is not None
+        and not final_case_polygon.is_empty
+        and hard_seed_geometry is not None
+        and not hard_seed_geometry.is_empty
+        and not final_case_polygon.buffer(1e-6).covers(hard_seed_geometry)
+    ):
+        final_case_polygon = _constrain_geometry_to_case_limits(
+            _normalize_geometry(_union_geometry([final_case_polygon, hard_seed_geometry])),
             drivezone_union=drivezone_union,
             allowed_geometry=step5_result.case_allowed_growth_domain,
             terminal_window_geometry=terminal_window_geometry,
@@ -1547,6 +1627,24 @@ def build_step6_polygon_assembly(
                 final_case_polygon = relieved_polygon
                 cut_checked_polygon = final_case_polygon
                 hard_connect_notes.append("junction_full_fill_slit_relief")
+
+    if (
+        _is_swsd_only_surface(guard_context)
+        and final_case_polygon is not None
+        and not final_case_polygon.is_empty
+    ):
+        closed_polygon = _swsd_window_touch_close(
+            final_case_polygon,
+            step5_result=step5_result,
+            hard_seed_geometry=hard_seed_geometry,
+            terminal_window_geometry=terminal_window_geometry,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
+        if closed_polygon is not None and not closed_polygon.is_empty:
+            final_case_polygon = closed_polygon
+            cut_checked_polygon = final_case_polygon
+            hard_connect_notes.append("swsd_window_touch_close")
 
     component_count = len(_polygon_components(final_case_polygon or GeometryCollection()))
     if component_count > 1 and final_case_polygon is not None and not final_case_polygon.is_empty:

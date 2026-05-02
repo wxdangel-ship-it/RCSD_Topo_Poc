@@ -106,9 +106,16 @@ full-input 执行面使用 full-layer source：
 
 `RCSDNode.mainnodeid` 的 T04 使用语义：
 
-- 非 `0` / 非空 `mainnodeid` 表示该 RCSDNode 所属的 RCSD 语义路口组。
-- `0` / 空值表示该 RCSDNode 以自身 `id` 作为独立 RCSD 语义路口组。
-- 该字段只用于 RCSD 语义分组和多候选消歧，不得反向推导 SWSD 字段语义。
+- 非 `0` / 非空 `mainnodeid` 表示该 RCSDNode 属于一个多节点 RCSD 路口候选组。
+- `0` / 空值表示该 RCSDNode 以自身 `id` 作为单节点 RCSD 路口候选组。
+- `mainnodeid` 只表达单节点 / 多节点组织关系，不单独决定该候选组是否构成 RCSD 语义路口。
+- 该字段只用于 RCSD 节点分组和多候选消歧，不得反向推导 SWSD 字段语义。
+
+RCSD 与 SWSD 的基础语义路口 / 语义道路定义：
+
+- `RCSD 语义路口` 与 `SWSD 语义路口` 使用相同的基础判定口径：具有 `3` 条及以上道路进入或退出的路口，才称为语义路口。
+- 对 SWSD/RCSD 节点组而言，`mainnodeid = 0` 表示该路口候选只有 `1` 个节点；`mainnodeid != 0` 表示该路口候选由多个节点组成。该字段不替代 `3` 条及以上进入 / 退出道路的语义判定。
+- 两个语义路口之间的连续道路链视为一条路口间道路；因此上条中的道路数应按压缩后的语义道路 / 进入退出方向理解，不按原始 `roads.gpkg` 或 `RCSDRoad.gpkg` feature 条数机械计数。
 
 所有 copy-on-write 输出必须保留输入 geometry 与原字段；新增字段或覆盖字段必须在本契约或质量文档中说明。
 
@@ -193,10 +200,25 @@ T04 的主证据只指真实世界物理空间证据，当前稳定值域为：
 
 RCSD / SWSD 只能作为 `section_reference_source`、抽象路网参考、截面参考、支撑域约束或审计辅助；不得写成主证据或 Reference Point。
 
-`RCSD 语义路口` 是比“存在 RCSD 数据 / RCSDRoad”更强的概念：召回的 RCSD 路口必须与当前 SWSD 路口在语义上对齐，至少具备与当前事件一致的进入道路、退出道路和角度趋势。若只有 RCSDRoad 趋势支持，或 RCSD 路口相对 SWSD 路口缺少进入 / 退出道路，或只能形成 `role_mapping_partial_aggregated` 这类弱聚合，则不得登记为 `rcsd_junction`，只能作为 `rcsdroad_fallback`、趋势参考或审计辅助。
+`RCSD 语义路口` 是比“存在 RCSD 数据 / RCSDRoad”更强的概念：候选 RCSD 节点组必须先满足 2.3 中与 SWSD 相同的基础语义路口定义，再与当前 SWSD 路口在语义上对齐，至少具备与当前事件一致的进入道路、退出道路和角度趋势。若只有 RCSDRoad 趋势支持，或 RCSD 路口相对 SWSD 路口缺少进入 / 退出道路，或只能形成 `role_mapping_partial_aggregated` 这类弱聚合，则不得登记为 `rcsd_junction`，只能作为 `rcsdroad_fallback`、趋势参考或审计辅助。
 若聚合结果为 road-only partial 且没有 `required_rcsd_node`，无论是否触发 `axis_polarity_inverted`，该 RCSD 结果只能保留为 trace-only 审计线索，不得发布为 `positive_rcsd_present` 或写入 `selected_rcsdroad_ids / selected_rcsdnode_ids`。
-一个 SWSD event unit、复杂路口内的单个 unit、或一个简单二分歧 / 合流，最多只能发布一个对应的 RCSD 语义路口组。若局部窗口内同时命中多个 RCSD 语义组，Step4 必须先按当前 SWSD section / Reference Point / 进出方向角色完整性 / 距离 / 角度趋势进行唯一消歧；非选中的 RCSD 语义组只能作为上下文或 trace 审计信息，不得进入 `selected_rcsdroad_ids / selected_rcsdnode_ids` 或 `required_rcsd_node`。
-`aggregated_rcsd_unit` 只能聚合同一个 RCSD 语义路口组内的 node / road 证据；连接两个 RCSD 语义组的 connector road 不得把两个语义路口合并成一个发布的 RCSD 语义路口。
+一个 SWSD event unit、复杂路口内的单个 unit、或一个简单二分歧 / 合流，最多只能发布一个对应的 RCSD 语义路口。若局部窗口内同时命中多个 RCSD 语义路口，Step4 必须先按当前 SWSD section / Reference Point / 进出方向角色完整性 / 距离 / 角度趋势进行唯一消歧；非选中的 RCSD 语义路口只能作为上下文或 trace 审计信息，不得进入 `selected_rcsdroad_ids / selected_rcsdnode_ids` 或 `required_rcsd_node`。
+`aggregated_rcsd_unit` 只能聚合同一个 RCSD 语义路口内的 node / road 证据；连接两个 RCSD 语义路口的 connector road 不得把两个语义路口合并成一个发布的 RCSD 语义路口。
+
+RCSD 对齐与负向掩膜口径：
+
+- Step4 允许在解释过程中保留多个 RCSD 候选用于审计；但进入 Step5 前，必须完成 RCSD 对齐判定，输出唯一的 `rcsd_alignment_type`。Step5 及之后不再重新选择 RCSD 候选，只能消费 Step4 的唯一对齐结果并做几何约束、组装和发布 / 拒绝。
+- `rcsd_alignment_type` 至少区分：
+  - `rcsd_semantic_junction`：唯一对应的 RCSD 语义路口，完整正向召回。
+  - `rcsd_semantic_candidate_incomplete`：唯一对应的 RCSD 语义路口候选，但缺少可用于发布 / 构面的 RCSDRoad 或必要结构。
+  - `rcsd_inter_junction_road`：唯一对应的是两个 RCSD 语义路口之间的道路，而不是 RCSD 语义路口本身。
+  - `no_rcsd_alignment`：当前 event unit / case 没有任何可用 RCSD 正向对象。
+  - `ambiguous_rcsd_alignment`：存在多个 RCSD 候选且无法唯一消歧；该状态不得静默降级为无 RCSD，应阻断正常构面并进入审计 / 失败。
+- `RCSD 路口的正向召回` 表示当前 event unit 或当前复杂路口整体，已经找到唯一对应的 RCSD 语义路口。该语义路口相关的 RCSDNode / RCSDRoad 构成正向集合；与该唯一语义路口无关的 RCSDNode / RCSDRoad 必须进入负向掩膜输入。
+- `无 RCSD 语义路口` 不等于无 RCSD。该状态下仍应确认当前 event unit 或路口唯一对应的 RCSD 对象：可以是缺 RCSDRoad 的 RCSD 语义路口候选，或 RCSD 语义路口间道路。与该唯一对应对象无关的 RCSDNode / RCSDRoad 必须进入负向掩膜输入。
+- `无 RCSD` 表示当前 event unit 或路口没有任何可用 RCSD 正向对象；此时当前处理窗口内所有 RCSDNode / RCSDRoad 均为负向掩膜输入。
+- complex / multi 场景必须同时满足 unit 级对齐与 case 级整体对齐：每个 event unit 需要自己的唯一 RCSD 对齐结果，case 级结果需要证明各 unit 对齐结果之间不互相冲突、不跨多个不相关 RCSD 语义对象混聚。
+- 负向掩膜不只来自 RCSD。与当前输入 SWSD 语义路口无关的 SWSD nodes / roads，同样必须作为负向掩膜输入；不得只用 foreign node 小范围掩膜替代 unrelated SWSD road / arm / semantic-road 掩膜。
 
 ### 3.5 路口面场景与生成模式
 
@@ -407,7 +429,7 @@ event-unit `step3_status.json` 表达 Step4 可执行 skeleton，至少说明：
 - `surface_section_forward_m / surface_section_backward_m / surface_lateral_limit_m`
 - section reference 到 `must_cover / allowed_growth / forbidden / terminal_cut` 的转换说明
 
-Step5 输出只定义约束，不发布最终 polygon。默认以前后 `20m` 横向截面、横向 `20m` 限制组织可通行道路面；负向掩膜包括导流带、hard negative mask、forbidden domain、terminal cut 与不可通行区域。
+Step5 输出只定义约束，不发布最终 polygon。默认以前后 `20m` 横向截面、横向 `20m` 限制组织可通行道路面；负向掩膜包括导流带、hard negative mask、forbidden domain、terminal cut、不可通行区域、与当前输入 SWSD 语义路口无关的 SWSD nodes / roads，以及按 Step4 唯一 RCSD 对齐结果确定的 unrelated RCSDNode / RCSDRoad。
 
 ### 4.6 Step6 输出
 

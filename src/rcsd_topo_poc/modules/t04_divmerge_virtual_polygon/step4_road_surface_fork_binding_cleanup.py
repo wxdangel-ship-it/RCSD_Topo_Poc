@@ -44,6 +44,39 @@ def _stable_structure_only_surface_summary(summary: dict[str, Any]) -> bool:
         and pair_middle_ratio >= STRUCTURE_ONLY_SURFACE_MIN_PAIR_MIDDLE_RATIO
     )
 
+def _has_unpublished_multi_semantic_rcsd_ambiguity(event_unit: T04EventUnitResult) -> bool:
+    if event_unit.required_rcsd_node:
+        return False
+    if event_unit.selected_rcsdroad_ids or event_unit.selected_rcsdnode_ids:
+        return False
+    audit = dict(event_unit.positive_rcsd_audit or {})
+    first_hit_ids = {
+        str(road_id or "").strip()
+        for road_id in audit.get("first_hit_rcsdroad_ids") or ()
+        if str(road_id or "").strip()
+    }
+    for aggregate in audit.get("aggregated_rcsd_units") or ():
+        if not isinstance(aggregate, dict):
+            continue
+        semantic_group_ids = {
+            str(group_id or "").strip()
+            for group_id in aggregate.get("semantic_group_ids") or ()
+            if str(group_id or "").strip()
+        }
+        if len(semantic_group_ids) < 2:
+            continue
+        aggregate_road_ids = {
+            str(road_id or "").strip()
+            for road_id in aggregate.get("road_ids") or ()
+            if str(road_id or "").strip()
+        }
+        if first_hit_ids and not (first_hit_ids & aggregate_road_ids):
+            continue
+        if str(aggregate.get("consistency_level") or "") not in {"A", "B"}:
+            continue
+        return True
+    return False
+
 def _retain_structure_only_surface_candidate(
     event_unit: T04EventUnitResult,
 ) -> tuple[T04EventUnitResult | None, dict[str, Any] | None]:
@@ -67,7 +100,12 @@ def _retain_structure_only_surface_candidate(
     if entry is None:
         return None, None
 
-    use_swsd_window = _weak_structure_surface_window_candidate(selected_summary) or non_semantic_partial_rcsd
+    multi_semantic_rcsd_ambiguity = _has_unpublished_multi_semantic_rcsd_ambiguity(event_unit)
+    use_swsd_window = (
+        _weak_structure_surface_window_candidate(selected_summary)
+        or non_semantic_partial_rcsd
+        or multi_semantic_rcsd_ambiguity
+    )
     evidence_source = SWSD_JUNCTION_WINDOW_SOURCE if use_swsd_window else "road_surface_fork"
     position_source = (
         SWSD_JUNCTION_WINDOW_POSITION_SOURCE
@@ -91,6 +129,7 @@ def _retain_structure_only_surface_candidate(
         "axis_position_m": _as_float(selected_summary.get("axis_position_m")),
         "pair_middle_overlap_ratio": _as_float(selected_summary.get("pair_middle_overlap_ratio")),
         "throat_overlap_ratio": _as_float(selected_summary.get("throat_overlap_ratio")),
+        "multi_semantic_rcsd_ambiguity": multi_semantic_rcsd_ambiguity,
         "window_half_length_m": JUNCTION_WINDOW_HALF_LENGTH_M if use_swsd_window else None,
     }
     review_reasons = _dedupe([*event_unit.all_review_reasons(), reason])

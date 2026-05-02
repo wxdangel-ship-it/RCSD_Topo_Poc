@@ -1003,12 +1003,15 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert step6_706629["assembly_state"] == "assembled"
     assert step6_706629["component_count"] == 1
     assert step6_706629["hole_count"] == 0
-    assert step6_706629["final_case_polygon"]["area_m2"] == pytest.approx(552.368, abs=1e-3)
+    assert step6_706629["section_reference_window_covered"] is True
+    assert step6_706629["post_cleanup_must_cover_ok"] is True
+    assert step6_706629["final_case_polygon"]["area_m2"] == pytest.approx(560.184, abs=1e-3)
 
     record_724081 = surface_binding_by_case["724081"]
-    assert record_724081["action"] == "kept_structure_only_road_surface_fork"
+    assert record_724081["action"] == "kept_swsd_junction_window_no_rcsd"
     assert record_724081["post_state"] == "found"
     assert record_724081["positive_rcsd_consistency_level"] == "C"
+    assert record_724081["detail"]["multi_semantic_rcsd_ambiguity"] is True
 
     step4_724081 = json.loads(
         (run_root / "cases" / "724081" / "step4_event_interpretation.json").read_text(
@@ -1017,10 +1020,13 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     )
     unit_724081 = step4_724081["event_units"][0]
     assert unit_724081["selected_evidence_state"] == "found"
-    assert unit_724081["evidence_source"] == "road_surface_fork"
+    assert unit_724081["evidence_source"] == "swsd_junction_window"
+    assert unit_724081["main_evidence_type"] == "none"
     assert unit_724081["required_rcsd_node"] is None
-    assert unit_724081["rcsd_selection_mode"] == "road_surface_fork_structure_only_no_rcsd"
-    assert "road_surface_fork_structure_only_used" in set(unit_724081["review_reasons"])
+    assert unit_724081["surface_scenario_type"] == "no_main_evidence_with_swsd_only"
+    assert unit_724081["section_reference_source"] == "swsd_junction"
+    assert unit_724081["rcsd_selection_mode"] == "swsd_junction_window_no_rcsd"
+    assert "swsd_junction_window_no_rcsd_used" in set(unit_724081["review_reasons"])
 
     step5_724081 = json.loads(
         (run_root / "cases" / "724081" / "step5_status.json").read_text(encoding="utf-8")
@@ -1028,9 +1034,10 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     unit_step5_724081 = step5_724081["unit_results"][0]
     assert step5_724081["case_bridge_zone_geometry"]["present"] is False
     assert step5_724081["case_terminal_window_domain"]["present"] is False
-    assert unit_step5_724081["surface_fill_mode"] == "standard"
-    assert unit_step5_724081["single_component_surface_seed"] is True
-    assert unit_step5_724081["junction_full_road_fill_domain"]["present"] is False
+    assert unit_step5_724081["surface_fill_mode"] == "junction_window"
+    assert unit_step5_724081["single_component_surface_seed"] is False
+    assert unit_step5_724081["junction_full_road_fill_domain"]["present"] is True
+    assert unit_step5_724081["unit_terminal_cut_constraints"]["present"] is False
     assert unit_step5_724081["required_rcsd_node_patch_geometry"]["present"] is False
 
     step6_724081 = json.loads(
@@ -1039,9 +1046,11 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert step6_724081["assembly_state"] == "assembled"
     assert step6_724081["component_count"] == 1
     assert step6_724081["hole_count"] == 0
-    assert step5_724081["case_must_cover_domain"]["area_m2"] == pytest.approx(116.738, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(353.828, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(87.868, abs=1e-3)
+    assert step6_724081["section_reference_window_covered"] is True
+    assert step6_724081["post_cleanup_must_cover_ok"] is True
+    assert step5_724081["case_must_cover_domain"]["area_m2"] == pytest.approx(1019.806, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(1019.806, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(134.371, abs=1e-3)
 
     assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
 

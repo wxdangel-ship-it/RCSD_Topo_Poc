@@ -851,7 +851,11 @@ def write_step7_case_outputs(
     if artifact.final_state == "rejected":
         write_json(case_dir / "reject_index.json", {**artifact.reject_index_doc, **trace})
         if artifact.reject_stub_feature is not None:
-            write_vector(case_dir / "reject_stub.geojson", [artifact.reject_stub_feature])
+            write_vector(
+                case_dir / "reject_stub.geojson",
+                [artifact.reject_stub_feature],
+                crs_text="EPSG:3857",
+            )
 
 
 def write_step7_batch_outputs(
@@ -885,9 +889,9 @@ def write_step7_batch_outputs(
     rejected_index_json_path = run_root / STEP7_REJECTED_INDEX_JSON_NAME
     consistency_report_path = run_root / STEP7_CONSISTENCY_REPORT_NAME
 
-    write_vector(accepted_path, accepted_features)
-    write_vector(rejected_path, rejected_features)
-    write_vector(audit_path, audit_features)
+    write_vector(accepted_path, accepted_features, crs_text="EPSG:3857")
+    write_vector(rejected_path, rejected_features, crs_text="EPSG:3857")
+    write_vector(audit_path, audit_features, crs_text="EPSG:3857")
     write_csv(summary_csv_path, summary_rows, STEP7_SUMMARY_FIELDNAMES)
     write_json(
         summary_json_path,

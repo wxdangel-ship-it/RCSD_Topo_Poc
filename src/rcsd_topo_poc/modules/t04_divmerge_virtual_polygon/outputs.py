@@ -254,8 +254,16 @@ def write_case_outputs(
     write_json(case_dir / "step5_audit.json", _with_provenance(step5_result.to_audit_doc(), case_provenance))
     write_json(case_dir / "step6_status.json", _with_provenance(step6_result.to_status_doc(), case_provenance))
     write_json(case_dir / "step6_audit.json", _with_provenance(step6_result.to_audit_doc(), case_provenance))
-    write_vector(case_dir / "step4_event_evidence.gpkg", _geometry_features_for_case(case_result))
-    write_vector(case_dir / "step5_domains.gpkg", step5_result.to_vector_features())
+    write_vector(
+        case_dir / "step4_event_evidence.gpkg",
+        _geometry_features_for_case(case_result),
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        case_dir / "step5_domains.gpkg",
+        step5_result.to_vector_features(),
+        crs_text="EPSG:3857",
+    )
     if step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty:
         write_vector(
             case_dir / "final_case_polygon.gpkg",
@@ -270,6 +278,7 @@ def write_case_outputs(
                     "geometry": step6_result.final_case_polygon,
                 }
             ],
+            crs_text="EPSG:3857",
         )
     audit_by_unit = build_case_review_audit(case_result)
     final_review_path = case_dir / STEP7_CASE_FINAL_REVIEW_NAME

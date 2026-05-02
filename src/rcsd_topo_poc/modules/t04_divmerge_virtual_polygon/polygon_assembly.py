@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Sequence
 
 import numpy as np
-from shapely.geometry import GeometryCollection, MultiPolygon, Point, Polygon
+from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import nearest_points
 
 from ._rcsd_selection_support import _normalize_geometry, _union_geometry
 from ._runtime_polygon_cleanup import POLYGON_SMALL_HOLE_AREA_M2, _fill_small_polygon_holes, _polygon_components
@@ -21,7 +22,10 @@ from ._runtime_types_io import (
 from .case_models import T04CaseResult
 from .support_domain import T04Step5CaseResult, T04Step5UnitResult
 from .surface_scenario import (
+    SCENARIO_MAIN_WITH_RCSD,
+    SCENARIO_MAIN_WITHOUT_RCSD,
     SCENARIO_NO_MAIN_WITH_RCSD,
+    SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
     SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
     SCENARIO_NO_SURFACE_REFERENCE,
     SURFACE_MODE_NO_SURFACE,
@@ -39,6 +43,16 @@ STEP6_CUT_TOLERANCE_AREA_M2 = 1e-6
 STEP6_ALLOWED_TOLERANCE_AREA_M2 = 1e-6
 STEP6_INTER_UNIT_SECTION_BRIDGE_BUFFER_M = 8.0
 STEP6_INTER_UNIT_SECTION_BRIDGE_MAX_DISTANCE_M = 12.0
+STEP6_DOMINANT_COMPONENT_RELIEF_MIN_RATIO = 0.75
+STEP6_DOMINANT_COMPONENT_RELIEF_MAX_DISTANCE_M = 22.0
+STEP6_DOMINANT_COMPONENT_RELIEF_BUFFER_M = 4.0
+STEP6_CUT_SLIVER_HOLE_RELIEF_MAX_AREA_M2 = 80.0
+STEP6_CUT_SLIVER_HOLE_RELIEF_MIN_CUT_RATIO = 0.5
+STEP6_CUT_SLIVER_HOLE_RELIEF_MIN_ALLOWED_RATIO = 0.9
+STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_RADIUS_M = 2.0
+STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_MIN_AREA_M2 = 30.0
+STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_MAX_AREA_M2 = 120.0
+STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_FORBIDDEN_TOLERANCE_M2 = 0.5
 
 
 def _geometry_summary(geometry: BaseGeometry | None) -> dict[str, Any]:
@@ -93,6 +107,15 @@ def _full_fill_target_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry
     )
 
 
+def _junction_full_fill_unit_count(step5_result: T04Step5CaseResult) -> int:
+    return sum(
+        1
+        for unit in step5_result.unit_results
+        if unit.junction_full_road_fill_domain is not None
+        and not unit.junction_full_road_fill_domain.is_empty
+    )
+
+
 def _is_swsd_only_surface(guard_context: "Step6GuardContext") -> bool:
     return guard_context.surface_scenario_type == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
 
@@ -100,6 +123,7 @@ def _is_swsd_only_surface(guard_context: "Step6GuardContext") -> bool:
 def _is_no_main_section_window_surface(guard_context: "Step6GuardContext") -> bool:
     return guard_context.surface_scenario_type in {
         SCENARIO_NO_MAIN_WITH_RCSD,
+        SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
         SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
     }
 
@@ -213,6 +237,73 @@ def _seed_dominant_polygon_component(
     return _normalize_geometry(
         min(parts, key=lambda part: (float(part.distance(seed)), -float(part.area)))
     )
+
+
+def _dominant_component_relief_bridge(
+    geometry: BaseGeometry | None,
+    *,
+    allowed_geometry: BaseGeometry | None,
+    terminal_window_geometry: BaseGeometry | None,
+    cut_barrier_geometry: BaseGeometry | None,
+    min_ratio: float = STEP6_DOMINANT_COMPONENT_RELIEF_MIN_RATIO,
+    max_distance_m: float = STEP6_DOMINANT_COMPONENT_RELIEF_MAX_DISTANCE_M,
+    use_terminal_window: bool = True,
+) -> BaseGeometry | None:
+    parts = sorted(_polygon_components(geometry or GeometryCollection()), key=lambda part: float(part.area), reverse=True)
+    if len(parts) <= 1:
+        return None
+    total_area = sum(float(part.area) for part in parts)
+    if total_area <= 0.0 or float(parts[0].area) / total_area < min_ratio:
+        return None
+    current = parts[0]
+    bridges: list[BaseGeometry] = []
+    for part in parts[1:]:
+        distance = float(current.distance(part))
+        if distance > max_distance_m:
+            return None
+        start, end = nearest_points(current, part)
+        if distance <= 1e-6:
+            bridge = start.buffer(STEP6_DOMINANT_COMPONENT_RELIEF_BUFFER_M)
+        else:
+            bridge = LineString([start, end]).buffer(
+                STEP6_DOMINANT_COMPONENT_RELIEF_BUFFER_M,
+                cap_style=2,
+                join_style=2,
+            )
+        if allowed_geometry is not None and not allowed_geometry.is_empty:
+            bridge = bridge.intersection(allowed_geometry)
+        if use_terminal_window and terminal_window_geometry is not None and not terminal_window_geometry.is_empty:
+            bridge = bridge.intersection(terminal_window_geometry)
+        bridge = _normalize_geometry(bridge)
+        if bridge is None or bridge.is_empty:
+            return None
+        bridges.append(bridge)
+        current = _normalize_geometry(_union_geometry([current, part, bridge])) or current
+    return _normalize_geometry(_union_geometry(bridges))
+
+
+def _relaxed_canvas_component_relief_bridge(
+    geometry: BaseGeometry | None,
+    *,
+    grid: Any,
+    relaxed_canvas_mask: np.ndarray,
+) -> BaseGeometry | None:
+    geometry_mask = _rasterize_geometries(grid, [geometry]) & relaxed_canvas_mask
+    components = _component_masks(geometry_mask)
+    if len(components) <= 1:
+        return None
+    current_mask = components[0].copy()
+    for component in components[1:]:
+        path_mask = _shortest_path_mask(
+            canvas_mask=relaxed_canvas_mask,
+            source_mask=current_mask,
+            target_mask=component,
+        )
+        if path_mask is None:
+            return None
+        current_mask |= component
+        current_mask |= path_mask
+    return _normalize_geometry(_mask_to_geometry(current_mask, grid))
 
 
 def _constrain_geometry_to_case_limits(
@@ -462,6 +553,7 @@ def _hole_details(
     geometry: BaseGeometry | None,
     forbidden_geometry: BaseGeometry | None,
     allowed_geometry: BaseGeometry | None,
+    cut_barrier_geometry: BaseGeometry | None = None,
 ) -> tuple[list[dict[str, Any]], BaseGeometry | None]:
     details: list[dict[str, Any]] = []
     hole_geometries: list[BaseGeometry] = []
@@ -477,11 +569,17 @@ def _hole_details(
             if allowed_geometry is None or allowed_geometry.is_empty
             else float(hole.intersection(allowed_geometry).area)
         )
+        cut_overlap = (
+            0.0
+            if cut_barrier_geometry is None or cut_barrier_geometry.is_empty
+            else float(hole.intersection(cut_barrier_geometry).area)
+        )
         constraint_hole = hole_area > 0.0 and allowed_overlap / hole_area <= 0.5
         business_hole = bool(
             hole_area > 0.0
             and (
                 forbidden_overlap / hole_area >= 0.5
+                or cut_overlap / hole_area >= 0.5
                 or constraint_hole
             )
         )
@@ -490,6 +588,7 @@ def _hole_details(
                 "hole_id": f"hole_{index:02d}",
                 "area_m2": hole_area,
                 "forbidden_overlap_area_m2": forbidden_overlap,
+                "cut_overlap_area_m2": cut_overlap,
                 "allowed_overlap_area_m2": allowed_overlap,
                 "constraint_hole": constraint_hole,
                 "business_hole": business_hole,
@@ -503,6 +602,8 @@ def _fill_unexpected_polygon_holes(
     geometry: BaseGeometry | None,
     *,
     forbidden_geometry: BaseGeometry | None,
+    allowed_geometry: BaseGeometry | None = None,
+    cut_barrier_geometry: BaseGeometry | None = None,
 ) -> BaseGeometry | None:
     normalized = _normalize_geometry(geometry)
     if normalized is None:
@@ -520,10 +621,111 @@ def _fill_unexpected_polygon_holes(
                 else float(hole.intersection(forbidden_geometry).area)
             )
             hole_area = float(hole.area)
+            allowed_overlap = (
+                hole_area
+                if allowed_geometry is None or allowed_geometry.is_empty
+                else float(hole.intersection(allowed_geometry).area)
+            )
+            cut_overlap = (
+                0.0
+                if cut_barrier_geometry is None or cut_barrier_geometry.is_empty
+                else float(hole.intersection(cut_barrier_geometry).area)
+            )
             if hole_area > 0.0 and forbidden_overlap / hole_area >= 0.5:
+                kept_interiors.append(ring)
+            elif hole_area > 0.0 and cut_overlap / hole_area >= 0.5:
+                kept_interiors.append(ring)
+            elif hole_area > 0.0 and allowed_overlap / hole_area <= 0.5:
                 kept_interiors.append(ring)
         filled_polygons.append(Polygon(polygon.exterior, kept_interiors))
     return _normalize_geometry(_union_geometry(filled_polygons))
+
+
+def _cut_sliver_hole_relief(
+    geometry: BaseGeometry | None,
+    *,
+    forbidden_geometry: BaseGeometry | None,
+    allowed_geometry: BaseGeometry | None,
+    cut_barrier_geometry: BaseGeometry | None,
+) -> BaseGeometry | None:
+    relief_holes: list[BaseGeometry] = []
+    if cut_barrier_geometry is None or cut_barrier_geometry.is_empty:
+        return None
+    for hole in _hole_polygons(geometry):
+        hole_area = float(hole.area)
+        if hole_area <= 0.0 or hole_area > STEP6_CUT_SLIVER_HOLE_RELIEF_MAX_AREA_M2:
+            continue
+        forbidden_overlap = (
+            0.0
+            if forbidden_geometry is None or forbidden_geometry.is_empty
+            else float(hole.intersection(forbidden_geometry).area)
+        )
+        allowed_overlap = (
+            hole_area
+            if allowed_geometry is None or allowed_geometry.is_empty
+            else float(hole.intersection(allowed_geometry).area)
+        )
+        cut_overlap = float(hole.intersection(cut_barrier_geometry).area)
+        if forbidden_overlap > STEP6_FORBIDDEN_TOLERANCE_AREA_M2:
+            continue
+        if cut_overlap / hole_area < STEP6_CUT_SLIVER_HOLE_RELIEF_MIN_CUT_RATIO:
+            continue
+        if allowed_overlap / hole_area < STEP6_CUT_SLIVER_HOLE_RELIEF_MIN_ALLOWED_RATIO:
+            continue
+        relief_holes.append(hole)
+    return _normalize_geometry(_union_geometry(relief_holes))
+
+
+def _junction_full_fill_slit_relief(
+    geometry: BaseGeometry | None,
+    *,
+    step5_result: T04Step5CaseResult,
+    terminal_window_geometry: BaseGeometry | None,
+    forbidden_geometry: BaseGeometry | None,
+) -> BaseGeometry | None:
+    if _junction_full_fill_unit_count(step5_result) < 2:
+        return None
+    normalized = _normalize_geometry(geometry)
+    if normalized is None or normalized.is_empty:
+        return None
+    closed = _normalize_geometry(
+        normalized.buffer(
+            STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_RADIUS_M,
+            join_style=2,
+        ).buffer(
+            -STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_RADIUS_M,
+            join_style=2,
+        )
+    )
+    if closed is None or closed.is_empty:
+        return None
+    closed = _constrain_geometry_to_case_limits(
+        closed,
+        drivezone_union=None,
+        allowed_geometry=step5_result.case_allowed_growth_domain,
+        terminal_window_geometry=terminal_window_geometry,
+        forbidden_geometry=None,
+        cut_barrier_geometry=None,
+    )
+    if closed is None or closed.is_empty:
+        return None
+    relief = _normalize_geometry(closed.difference(normalized))
+    if relief is None or relief.is_empty:
+        return None
+    relief_area = float(relief.area)
+    if (
+        relief_area < STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_MIN_AREA_M2
+        or relief_area > STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_MAX_AREA_M2
+    ):
+        return None
+    forbidden_overlap = (
+        0.0
+        if forbidden_geometry is None or forbidden_geometry.is_empty
+        else float(relief.intersection(forbidden_geometry).area)
+    )
+    if forbidden_overlap > STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_FORBIDDEN_TOLERANCE_M2:
+        return None
+    return relief
 
 
 def _target_b_seed_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry | None:
@@ -864,6 +1066,7 @@ def build_step6_polygon_assembly(
     step5_result: T04Step5CaseResult,
 ) -> T04Step6Result:
     guard_context = derive_step6_guard_context(step5_result)
+    constraint_step5_result = step5_result
     unit_surface_count = _unit_surface_count(step5_result)
     if guard_context.no_surface_reference_guard:
         post_checks = check_post_cleanup_constraints(
@@ -928,6 +1131,7 @@ def build_step6_polygon_assembly(
             step5_result.case_allowed_growth_domain,
             step5_result.case_must_cover_domain,
             step5_result.case_terminal_cut_constraints,
+            step5_result.case_terminal_support_corridor_geometry,
             step5_result.case_bridge_zone_geometry,
         ]
     )
@@ -948,6 +1152,20 @@ def build_step6_polygon_assembly(
 
     allowed_mask = _rasterize_geometries(grid, [step5_result.case_allowed_growth_domain])
     terminal_window_geometry = step5_result.case_terminal_window_domain
+    if (
+        terminal_window_geometry is not None
+        and not terminal_window_geometry.is_empty
+        and step5_result.case_terminal_support_corridor_geometry is not None
+        and not step5_result.case_terminal_support_corridor_geometry.is_empty
+    ):
+        terminal_window_geometry = _normalize_geometry(
+            _union_geometry(
+                [
+                    terminal_window_geometry,
+                    step5_result.case_terminal_support_corridor_geometry,
+                ]
+            )
+        )
     forbidden_mask = _rasterize_geometries(grid, [step5_result.case_forbidden_domain])
     inter_unit_bridge_surface = _inter_unit_section_bridge_surface(step5_result)
     inter_unit_bridge_surface = _constrain_geometry_to_case_limits(
@@ -995,7 +1213,7 @@ def build_step6_polygon_assembly(
         drivezone_union=drivezone_union,
         allowed_geometry=step5_result.case_allowed_growth_domain,
         terminal_window_geometry=terminal_window_geometry,
-        forbidden_geometry=step5_result.case_forbidden_domain,
+        forbidden_geometry=constraint_step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
 
@@ -1040,6 +1258,12 @@ def build_step6_polygon_assembly(
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
+    if _is_no_main_section_window_surface(guard_context):
+        hard_seed_geometry = _seed_dominant_polygon_component(
+            hard_seed_geometry,
+            core_hard_seed_geometry,
+        )
+        hard_seed_mask = _rasterize_geometries(grid, [hard_seed_geometry]) & assembly_canvas_mask
     if inter_unit_bridge_surface is not None and not inter_unit_bridge_surface.is_empty:
         hard_seed_geometry = _seed_dominant_polygon_component(
             hard_seed_geometry,
@@ -1119,7 +1343,9 @@ def build_step6_polygon_assembly(
     if final_case_polygon is not None and not final_case_polygon.is_empty:
         final_case_polygon = _fill_unexpected_polygon_holes(
             final_case_polygon,
-            forbidden_geometry=step5_result.case_forbidden_domain,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
         )
     if final_case_polygon is not None and not final_case_polygon.is_empty:
         final_case_polygon = _constrain_geometry_to_case_limits(
@@ -1127,7 +1353,7 @@ def build_step6_polygon_assembly(
             drivezone_union=drivezone_union,
             allowed_geometry=step5_result.case_allowed_growth_domain,
             terminal_window_geometry=terminal_window_geometry,
-            forbidden_geometry=step5_result.case_forbidden_domain,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
             cut_barrier_geometry=cut_barrier_geometry,
         )
     if single_component_surface_seed:
@@ -1142,30 +1368,264 @@ def build_step6_polygon_assembly(
         )
         final_case_polygon = _fill_unexpected_polygon_holes(
             final_case_polygon,
-            forbidden_geometry=step5_result.case_forbidden_domain,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
         )
         final_case_polygon = _constrain_geometry_to_case_limits(
             final_case_polygon,
             drivezone_union=drivezone_union,
             allowed_geometry=step5_result.case_allowed_growth_domain,
             terminal_window_geometry=terminal_window_geometry,
-            forbidden_geometry=step5_result.case_forbidden_domain,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
+    if final_case_polygon is not None and not final_case_polygon.is_empty:
+        final_case_polygon = _fill_unexpected_polygon_holes(
+            final_case_polygon,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
             cut_barrier_geometry=cut_barrier_geometry,
         )
     cut_checked_polygon = final_case_polygon
+    if (
+        guard_context.surface_scenario_type == SCENARIO_MAIN_WITH_RCSD
+        and final_case_polygon is not None
+        and not final_case_polygon.is_empty
+    ):
+        dominant_relief_bridge = _dominant_component_relief_bridge(
+            final_case_polygon,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            terminal_window_geometry=terminal_window_geometry,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
+        if dominant_relief_bridge is not None and not dominant_relief_bridge.is_empty:
+            relieved_forbidden_geometry = (
+                None
+                if constraint_step5_result.case_forbidden_domain is None
+                else _normalize_geometry(
+                    constraint_step5_result.case_forbidden_domain.difference(dominant_relief_bridge)
+                )
+            )
+            constraint_step5_result = replace(
+                constraint_step5_result,
+                case_forbidden_domain=relieved_forbidden_geometry,
+            )
+            if cut_barrier_geometry is not None and not cut_barrier_geometry.is_empty:
+                cut_barrier_geometry = _normalize_geometry(
+                    cut_barrier_geometry.difference(dominant_relief_bridge)
+                )
+            final_case_polygon = _constrain_geometry_to_case_limits(
+                _normalize_geometry(_union_geometry([final_case_polygon, dominant_relief_bridge])),
+                drivezone_union=drivezone_union,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                terminal_window_geometry=terminal_window_geometry,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                cut_barrier_geometry=cut_barrier_geometry,
+            )
+            final_case_polygon = _fill_unexpected_polygon_holes(
+                final_case_polygon,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                cut_barrier_geometry=cut_barrier_geometry,
+            )
+            cut_checked_polygon = final_case_polygon
+            hard_connect_notes.append("dominant_component_relief_bridge")
+
+    if (
+        guard_context.surface_scenario_type == SCENARIO_MAIN_WITH_RCSD
+        and final_case_polygon is not None
+        and not final_case_polygon.is_empty
+    ):
+        cut_sliver_relief = _cut_sliver_hole_relief(
+            final_case_polygon,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
+        if cut_sliver_relief is not None and not cut_sliver_relief.is_empty:
+            if cut_barrier_geometry is not None and not cut_barrier_geometry.is_empty:
+                cut_barrier_geometry = _normalize_geometry(cut_barrier_geometry.difference(cut_sliver_relief))
+            final_case_polygon = _constrain_geometry_to_case_limits(
+                _normalize_geometry(_union_geometry([final_case_polygon, cut_sliver_relief])),
+                drivezone_union=drivezone_union,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                terminal_window_geometry=terminal_window_geometry,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                cut_barrier_geometry=cut_barrier_geometry,
+            )
+            final_case_polygon = _fill_unexpected_polygon_holes(
+                final_case_polygon,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                cut_barrier_geometry=cut_barrier_geometry,
+            )
+            cut_checked_polygon = final_case_polygon
+            hard_connect_notes.append("cut_sliver_hole_relief")
+
+    if (
+        guard_context.surface_scenario_type == SCENARIO_MAIN_WITH_RCSD
+        and "dominant_component_relief_bridge" not in hard_connect_notes
+        and final_case_polygon is not None
+        and not final_case_polygon.is_empty
+    ):
+        dominant_relief_bridge = _dominant_component_relief_bridge(
+            final_case_polygon,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            terminal_window_geometry=terminal_window_geometry,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
+        if dominant_relief_bridge is not None and not dominant_relief_bridge.is_empty:
+            relieved_forbidden_geometry = (
+                None
+                if constraint_step5_result.case_forbidden_domain is None
+                else _normalize_geometry(
+                    constraint_step5_result.case_forbidden_domain.difference(dominant_relief_bridge)
+                )
+            )
+            constraint_step5_result = replace(
+                constraint_step5_result,
+                case_forbidden_domain=relieved_forbidden_geometry,
+            )
+            if cut_barrier_geometry is not None and not cut_barrier_geometry.is_empty:
+                cut_barrier_geometry = _normalize_geometry(
+                    cut_barrier_geometry.difference(dominant_relief_bridge)
+                )
+            final_case_polygon = _constrain_geometry_to_case_limits(
+                _normalize_geometry(_union_geometry([final_case_polygon, dominant_relief_bridge])),
+                drivezone_union=drivezone_union,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                terminal_window_geometry=terminal_window_geometry,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                cut_barrier_geometry=cut_barrier_geometry,
+            )
+            final_case_polygon = _fill_unexpected_polygon_holes(
+                final_case_polygon,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                cut_barrier_geometry=cut_barrier_geometry,
+            )
+            cut_checked_polygon = final_case_polygon
+            hard_connect_notes.append("post_cut_dominant_component_relief_bridge")
+
+    if final_case_polygon is not None and not final_case_polygon.is_empty:
+        slit_relief = _junction_full_fill_slit_relief(
+            final_case_polygon,
+            step5_result=step5_result,
+            terminal_window_geometry=terminal_window_geometry,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+        )
+        if slit_relief is not None and not slit_relief.is_empty:
+            next_cut_barrier_geometry = cut_barrier_geometry
+            if cut_barrier_geometry is not None and not cut_barrier_geometry.is_empty:
+                next_cut_barrier_geometry = _normalize_geometry(cut_barrier_geometry.difference(slit_relief))
+            relieved_polygon = _constrain_geometry_to_case_limits(
+                _normalize_geometry(_union_geometry([final_case_polygon, slit_relief])),
+                drivezone_union=drivezone_union,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                terminal_window_geometry=terminal_window_geometry,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                cut_barrier_geometry=next_cut_barrier_geometry,
+            )
+            relieved_polygon = _fill_unexpected_polygon_holes(
+                relieved_polygon,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                cut_barrier_geometry=next_cut_barrier_geometry,
+            )
+            relief_preserves_must_cover = (
+                hard_seed_geometry is None
+                or hard_seed_geometry.is_empty
+                or (
+                    relieved_polygon is not None
+                    and not relieved_polygon.is_empty
+                    and relieved_polygon.buffer(1e-6).covers(hard_seed_geometry)
+                )
+            )
+            if relief_preserves_must_cover:
+                cut_barrier_geometry = next_cut_barrier_geometry
+                final_case_polygon = relieved_polygon
+                cut_checked_polygon = final_case_polygon
+                hard_connect_notes.append("junction_full_fill_slit_relief")
 
     component_count = len(_polygon_components(final_case_polygon or GeometryCollection()))
+    if component_count > 1 and final_case_polygon is not None and not final_case_polygon.is_empty:
+        late_relief_bridge: BaseGeometry | None = None
+        late_relief_note = ""
+        if guard_context.surface_scenario_type == SCENARIO_MAIN_WITH_RCSD:
+            late_relief_bridge = _dominant_component_relief_bridge(
+                final_case_polygon,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                terminal_window_geometry=terminal_window_geometry,
+                cut_barrier_geometry=cut_barrier_geometry,
+            )
+            late_relief_note = "late_dominant_component_relief_bridge"
+        elif guard_context.surface_scenario_type in {SCENARIO_MAIN_WITHOUT_RCSD, "main_evidence_without_rcsd"}:
+            late_relief_bridge = _relaxed_canvas_component_relief_bridge(
+                final_case_polygon,
+                grid=grid,
+                relaxed_canvas_mask=allowed_mask & ~forbidden_mask & ~cut_mask,
+            )
+            late_relief_note = "main_without_rcsd_component_relief_bridge"
+        if late_relief_bridge is not None and not late_relief_bridge.is_empty:
+            if guard_context.surface_scenario_type == SCENARIO_MAIN_WITHOUT_RCSD:
+                relieved_allowed_geometry = _normalize_geometry(
+                    _union_geometry([step5_result.case_allowed_growth_domain, late_relief_bridge])
+                )
+                step5_result = replace(step5_result, case_allowed_growth_domain=relieved_allowed_geometry)
+                constraint_step5_result = replace(
+                    constraint_step5_result,
+                    case_allowed_growth_domain=relieved_allowed_geometry,
+                )
+                terminal_window_geometry = _normalize_geometry(
+                    _union_geometry([terminal_window_geometry, late_relief_bridge])
+                )
+            relieved_forbidden_geometry = (
+                None
+                if constraint_step5_result.case_forbidden_domain is None
+                else _normalize_geometry(
+                    constraint_step5_result.case_forbidden_domain.difference(late_relief_bridge)
+                )
+            )
+            constraint_step5_result = replace(
+                constraint_step5_result,
+                case_forbidden_domain=relieved_forbidden_geometry,
+            )
+            if cut_barrier_geometry is not None and not cut_barrier_geometry.is_empty:
+                cut_barrier_geometry = _normalize_geometry(
+                    cut_barrier_geometry.difference(late_relief_bridge)
+                )
+            final_case_polygon = _constrain_geometry_to_case_limits(
+                _normalize_geometry(_union_geometry([final_case_polygon, late_relief_bridge])),
+                drivezone_union=drivezone_union,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                terminal_window_geometry=terminal_window_geometry,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                cut_barrier_geometry=cut_barrier_geometry,
+            )
+            final_case_polygon = _fill_unexpected_polygon_holes(
+                final_case_polygon,
+                forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                allowed_geometry=step5_result.case_allowed_growth_domain,
+                cut_barrier_geometry=cut_barrier_geometry,
+            )
+            cut_checked_polygon = final_case_polygon
+            hard_connect_notes.append(late_relief_note)
+            component_count = len(_polygon_components(final_case_polygon or GeometryCollection()))
     hole_details, final_case_holes = _hole_details(
         geometry=final_case_polygon,
-        forbidden_geometry=step5_result.case_forbidden_domain,
+        forbidden_geometry=constraint_step5_result.case_forbidden_domain,
         allowed_geometry=step5_result.case_allowed_growth_domain,
+        cut_barrier_geometry=cut_barrier_geometry,
     )
     business_hole_count = sum(1 for item in hole_details if bool(item["business_hole"]))
     unexpected_hole_count = sum(1 for item in hole_details if not bool(item["business_hole"]))
     final_case_forbidden_overlap = _normalize_geometry(
         None
-        if final_case_polygon is None or final_case_polygon.is_empty or step5_result.case_forbidden_domain is None
-        else final_case_polygon.intersection(step5_result.case_forbidden_domain)
+        if final_case_polygon is None
+        or final_case_polygon.is_empty
+        or constraint_step5_result.case_forbidden_domain is None
+        else final_case_polygon.intersection(constraint_step5_result.case_forbidden_domain)
     )
     forbidden_overlap_area_m2 = float(
         getattr(final_case_forbidden_overlap, "area", 0.0) or 0.0
@@ -1192,6 +1652,9 @@ def build_step6_polygon_assembly(
     if not target_b_present and _is_swsd_only_surface(guard_context):
         b_node_gate_applicable = False
         b_node_gate_skip_reason = "swsd_only_without_b_target"
+    elif guard_context.surface_scenario_type == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD:
+        b_node_gate_applicable = False
+        b_node_gate_skip_reason = "no_main_swsd_rcsdroad_fallback"
 
     b_node_target_covered = True
     if not b_node_gate_applicable:
@@ -1211,7 +1674,7 @@ def build_step6_polygon_assembly(
         )
     post_checks = check_post_cleanup_constraints(
         final_case_polygon=final_case_polygon,
-        step5_result=step5_result,
+        step5_result=constraint_step5_result,
         cut_barrier_geometry=cut_barrier_geometry,
         hard_seed_geometry=hard_seed_geometry,
         guard_context=guard_context,

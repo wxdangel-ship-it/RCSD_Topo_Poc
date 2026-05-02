@@ -131,7 +131,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - `section reference / 截面参考对象` 用于确定前后横向截面位置，可来自 Reference Point、`Reference Point + RCSD 语义路口`、RCSD 语义路口或 SWSD 语义路口；RCSD/SWSD junction window 只能作为 section reference 或支撑域辅助，不得命名为 Reference Point。
 - `RCSD 语义路口` 必须表示召回 RCSD 路口与当前 SWSD 路口语义一致：进入道路、退出道路和角度趋势与当前事件对齐。仅存在 RCSD 数据、RCSDRoad 趋势一致、或 RCSD 聚合结果缺少进入 / 退出道路时，不得称为 RCSD 语义路口。
 - 无 RCSD 语义路口不等于无 RCSD 数据：该状态可包含趋势一致但不成路口的 RCSDRoad、缺进入 / 退出道路的 RCSD 局部结构或弱聚合结果；这些对象只能作为 fallback、趋势参考或审计辅助。
-- Step4 或 Step4/5 交界处必须输出 `surface_scenario_type`，按“主证据 × RCSD / SWSD 支持状态”区分六类业务场景与 `no_surface_reference` 兜底，而不是把 A / B / C 作为 T04 主场景分类。
+- Step4 或 Step4/5 交界处必须输出 `surface_scenario_type`，按“主证据 × RCSD / SWSD 支持状态”区分六类业务场景；`no_surface_reference` 只作为防御性异常兜底，不是合法 Anchor_2 case 的正常业务分支。T04 正常输入来自 SWSD 语义路口 / SWSD 分合流候选，因此“无主证据 + 无 RCSD 语义路口”仍应保留 SWSD section reference，而不是直接停止构面。
 - 六类主业务场景固定为：
   - `main_evidence_with_rcsd_junction`：有主证据 + RCSD 语义路口，section reference 为 Reference Point + RCSD 语义路口，强证据成功。
   - `main_evidence_with_rcsdroad_fallback`：有主证据 + 无 RCSD 语义路口但存在 RCSDRoad fallback，section reference 为 Reference Point，fallback 只取相关局部段。
@@ -139,6 +139,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
   - `no_main_evidence_with_rcsd_junction`：无主证据 + RCSD 语义路口，无 Reference Point，以 RCSD 语义路口作为 section reference。
   - `no_main_evidence_with_rcsdroad_fallback_and_swsd`：无主证据 + RCSDRoad fallback + SWSD 语义路口，无 Reference Point，以 SWSD 语义路口作为 section reference，弱证据成功。
   - `no_main_evidence_with_swsd_only`：无主证据 + 无 RCSD 语义路口 + SWSD 语义路口，无 Reference Point，SWSD-only 构面；可存在非语义路口的 RCSD 数据，但不得登记为 `rcsd_junction`。
+- 若 Step4 无法物化 SWSD section reference，必须把它审计为输入 / 上游上下文异常或 Step4 恢复失败；不得把这种异常兜底误写成“无主证据 + 无 RCSD 语义路口”的正常结果。
 - 正向 RCSD 只在当前 pair-local 语义框架内选择，不回退到 case-level RCSD 世界补证据。
 - reverse、road-surface fork、SWSD/RCSD junction window 与 `rcsd_anchored_reverse` 是受控恢复路径，由 `step4_postprocess` 归口。
 - complex / multi 的 local throat gate 必须使用当前 unit 的 `boundary_branch_ids`，不得静默退回 case-level main pair；若 throat pair 无法有效形成，必须写出 `degraded_scope_reason`。

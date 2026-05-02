@@ -16,6 +16,7 @@ from ._rcsd_selection_support import (
     _first_hit_roads,
     _node_ids_for_roads,
     _node_lookup,
+    _node_semantic_group_map,
     _normalize_geometry,
     _normal_vector,
     _operational_event_type,
@@ -38,6 +39,7 @@ def _published_rcsd_subset(
     roads_by_id: dict[str, ParsedRoad],
     roads_by_node_id: dict[str, set[str]],
     node_points_by_id: dict[str, object],
+    node_semantic_group_by_id: dict[str, str],
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], str]:
     selected_road_ids: set[str] = set(selected_aggregated.road_ids)
     selected_node_ids: set[str] = {str(node_id) for node_id in selected_aggregated.node_ids if str(node_id)}
@@ -48,6 +50,20 @@ def _published_rcsd_subset(
         and selected_local_unit.consistency_level == "A"
         and str(selected_aggregated.required_node_id or "") == str(selected_local_unit.node_id or "")
     )
+    selected_semantic_group_ids = {
+        str(group_id)
+        for group_id in getattr(selected_aggregated, "semantic_group_ids", ())
+        if str(group_id)
+    }
+
+    def first_hit_belongs_to_selected_group(road_id: str) -> bool:
+        if not selected_semantic_group_ids:
+            return True
+        road_node_ids = _node_ids_for_roads([road_id], roads_by_id)
+        return any(
+            node_semantic_group_by_id.get(node_id) in selected_semantic_group_ids
+            for node_id in road_node_ids
+        )
 
     if selected_aggregated.consistency_level == "A":
         member_units_by_id = {unit.unit_id: unit for unit in local_units}
@@ -105,6 +121,9 @@ def _published_rcsd_subset(
                     roads_by_id=roads_by_id,
                     roads_by_node_id=roads_by_node_id,
                 )
+                if traced and not first_hit_belongs_to_selected_group(road_id):
+                    if not (exact_required_node_anchor and set(traced) & selected_road_ids):
+                        continue
                 if traced:
                     selected_road_ids.update(traced)
                     traced_to_required = True
@@ -119,6 +138,8 @@ def _published_rcsd_subset(
     else:
         if selected_aggregated.required_node_id is not None and first_hit_road_ids:
             for road_id in first_hit_road_ids:
+                if not first_hit_belongs_to_selected_group(road_id):
+                    continue
                 traced = _trace_path_to_node(
                     start_road_id=road_id,
                     target_node_id=selected_aggregated.required_node_id,
@@ -191,6 +212,7 @@ def resolve_positive_rcsd_selection(
         if (node_id := _safe_id(getattr(node, "node_id", None))) is not None
     }
     raw_nodes_by_id = _node_lookup(raw_node_features, roads=raw_roads_by_id.values())
+    node_semantic_group_by_id = _node_semantic_group_map(raw_node_features)
     raw_rcsd_road_ids = tuple(sorted(raw_roads_by_id))
     raw_rcsd_node_ids = tuple(sorted(actual_rcsd_node_ids))
     pair_local_rcsd_empty = not raw_rcsd_road_ids and not raw_rcsd_node_ids
@@ -377,6 +399,7 @@ def resolve_positive_rcsd_selection(
             axis_vector=axis_vector_tuple,
             normal_vector=normal_vector,
             first_hit_road_ids=set(first_hit_road_ids),
+            node_semantic_group_by_id=node_semantic_group_by_id,
         )
         local_units.append(unit)
 
@@ -396,6 +419,7 @@ def resolve_positive_rcsd_selection(
                 axis_vector=axis_vector_tuple,
                 normal_vector=normal_vector,
                 first_hit_road_ids=set(first_hit_road_ids),
+                node_semantic_group_by_id=node_semantic_group_by_id,
             )
         )
 
@@ -461,6 +485,8 @@ def resolve_positive_rcsd_selection(
         roads_by_node_id=roads_by_node_id,
         node_points_by_id=node_points_by_id,
         representative_point=representative_point,
+        reference_point=reference_point,
+        node_semantic_group_by_id=node_semantic_group_by_id,
     )
     if not aggregated_units:
         return PositiveRcsdSelectionDecision(
@@ -536,7 +562,37 @@ def resolve_positive_rcsd_selection(
         roads_by_id=roads_by_id,
         roads_by_node_id=roads_by_node_id,
         node_points_by_id=node_points_by_id,
+        node_semantic_group_by_id=node_semantic_group_by_id,
     )
+    trace_only_road_observation = bool(
+        selected_local_unit.unit_kind == "road_only"
+        and selected_aggregated.required_node_id is None
+        and selected_aggregated.support_level == "secondary_support"
+        and selected_aggregated.consistency_level == "B"
+        and selected_aggregated.decision_reason
+        in {
+            "role_mapping_partial_axis_polarity_inverted",
+            "role_mapping_partial_missing_arms",
+        }
+    )
+    published_positive_rcsd = bool(
+        selected_aggregated.positive_rcsd_present
+        and not trace_only_road_observation
+    )
+    positive_rcsd_present_reason = (
+        (
+            "aggregated_axis_polarity_inverted_without_required_node"
+            if selected_aggregated.axis_polarity_inverted
+            else "aggregated_road_only_without_required_node"
+        )
+        if trace_only_road_observation
+        else selected_aggregated.positive_rcsd_present_reason
+    )
+    if trace_only_road_observation:
+        selected_rcsd_roads = ()
+        selected_rcsd_nodes = ()
+        published_member_unit_ids = ()
+        publish_mode = "trace_only_road_observation"
     selected_road_geometry = _union_geometry(
         roads_by_id[road_id].geometry
         for road_id in selected_rcsd_roads
@@ -556,7 +612,9 @@ def resolve_positive_rcsd_selection(
     required_rcsd_node_geometry = None
     if required_rcsd_node is not None and required_rcsd_node in node_points_by_id:
         required_rcsd_node_geometry = node_points_by_id[required_rcsd_node]
-    if selected_aggregated.consistency_level == "A":
+    if not published_positive_rcsd:
+        consistency_result = "missing_positive_rcsd"
+    elif selected_aggregated.consistency_level == "A":
         consistency_result = "positive_rcsd_strong_consistent"
     elif selected_aggregated.consistency_level == "B":
         consistency_result = "positive_rcsd_partial_consistent"
@@ -571,10 +629,14 @@ def resolve_positive_rcsd_selection(
         selected_rcsdroad_ids=selected_rcsd_roads,
         selected_rcsdnode_ids=selected_rcsd_nodes,
         primary_main_rc_node_id=primary_main_rc_node_id,
-        positive_rcsd_present=selected_aggregated.positive_rcsd_present,
-        positive_rcsd_present_reason=selected_aggregated.positive_rcsd_present_reason,
-        positive_rcsd_support_level=selected_aggregated.support_level,
-        positive_rcsd_consistency_level=selected_aggregated.consistency_level,
+        positive_rcsd_present=published_positive_rcsd,
+        positive_rcsd_present_reason=positive_rcsd_present_reason,
+        positive_rcsd_support_level=(
+            "no_support" if trace_only_road_observation else selected_aggregated.support_level
+        ),
+        positive_rcsd_consistency_level=(
+            "C" if trace_only_road_observation else selected_aggregated.consistency_level
+        ),
         rcsd_consistency_result=consistency_result,
         required_rcsd_node=required_rcsd_node,
         required_rcsd_node_source=selected_aggregated.required_node_source,
@@ -616,8 +678,9 @@ def resolve_positive_rcsd_selection(
             "published_rcsdnode_ids": list(selected_rcsd_nodes),
             "published_member_unit_ids": list(published_member_unit_ids),
             "published_rcsd_selection_mode": publish_mode,
-            "positive_rcsd_present": selected_aggregated.positive_rcsd_present,
-            "positive_rcsd_present_reason": selected_aggregated.positive_rcsd_present_reason,
+            "positive_rcsd_present": published_positive_rcsd,
+            "positive_rcsd_present_reason": positive_rcsd_present_reason,
+            "trace_only_road_observation": trace_only_road_observation,
             "axis_polarity_inverted": selected_aggregated.axis_polarity_inverted,
             "required_rcsd_node_source": selected_aggregated.required_node_source,
             "rcsd_decision_reason": selected_aggregated.decision_reason,

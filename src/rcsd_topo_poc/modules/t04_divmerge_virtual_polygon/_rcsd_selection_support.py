@@ -21,6 +21,7 @@ RCSD_NODE_TOUCH_TOLERANCE_M = 2.5
 RCSD_FIRST_HIT_SIGN_TOLERANCE_M = 0.75
 RCSD_FIRST_HIT_MAX_DISTANCE_M = 24.0
 RCSD_TRACE_MAX_DEPTH = 4
+RCSD_SEMANTIC_GROUP_LOCAL_MAX_DISTANCE_M = 40.0
 
 
 def _normalize_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
@@ -63,6 +64,26 @@ def _safe_id(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _rcsd_semantic_group_id(node_id: Any, mainnodeid: Any) -> str | None:
+    node_text = _safe_id(node_id)
+    main_text = _safe_id(mainnodeid)
+    if main_text and main_text != "0":
+        return main_text
+    return node_text
+
+
+def _node_semantic_group_map(nodes: Iterable[ParsedNode]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for node in nodes:
+        node_id = _safe_id(getattr(node, "node_id", None))
+        if node_id is None:
+            continue
+        group_id = _rcsd_semantic_group_id(node_id, getattr(node, "mainnodeid", None))
+        if group_id is not None:
+            result[node_id] = group_id
+    return result
 
 
 def _operational_event_type(operational_kind_hint: int | None) -> str:
@@ -435,6 +456,8 @@ class _LocalRcsdUnit:
     unit_id: str
     unit_kind: str
     node_id: str | None
+    semantic_group_id: str | None
+    semantic_group_ids: tuple[str, ...]
     road_ids: tuple[str, ...]
     node_ids: tuple[str, ...]
     entering_road_ids: tuple[str, ...]
@@ -461,6 +484,8 @@ class _LocalRcsdUnit:
             "unit_id": self.unit_id,
             "unit_kind": self.unit_kind,
             "node_id": self.node_id,
+            "semantic_group_id": self.semantic_group_id,
+            "semantic_group_ids": list(self.semantic_group_ids),
             "road_ids": list(self.road_ids),
             "node_ids": list(self.node_ids),
             "entering_road_ids": list(self.entering_road_ids),
@@ -486,6 +511,8 @@ class _AggregatedRcsdUnit:
     unit_id: str
     member_unit_ids: tuple[str, ...]
     member_unit_kinds: tuple[str, ...]
+    semantic_group_ids: tuple[str, ...]
+    semantic_anchor_distance_m: float | None
     road_ids: tuple[str, ...]
     node_ids: tuple[str, ...]
     entering_road_ids: tuple[str, ...]
@@ -515,6 +542,8 @@ class _AggregatedRcsdUnit:
             "unit_id": self.unit_id,
             "member_unit_ids": list(self.member_unit_ids),
             "member_unit_kinds": list(self.member_unit_kinds),
+            "semantic_group_ids": list(self.semantic_group_ids),
+            "semantic_anchor_distance_m": self.semantic_anchor_distance_m,
             "road_ids": list(self.road_ids),
             "node_ids": list(self.node_ids),
             "entering_road_ids": list(self.entering_road_ids),
@@ -601,6 +630,48 @@ def _select_primary_node_id(
     return None if best is None else best[1]
 
 
+def _unit_primary_semantic_group_id(unit: _LocalRcsdUnit) -> str | None:
+    if unit.unit_kind == "node_centric" and unit.semantic_group_id:
+        return unit.semantic_group_id
+    if len(unit.semantic_group_ids) == 1:
+        return unit.semantic_group_ids[0]
+    return None
+
+
+def _units_can_aggregate_semantically(left_unit: _LocalRcsdUnit, right_unit: _LocalRcsdUnit) -> bool:
+    left_group = _unit_primary_semantic_group_id(left_unit)
+    right_group = _unit_primary_semantic_group_id(right_unit)
+    if left_group and right_group:
+        return left_group == right_group
+    if left_group and len(right_unit.semantic_group_ids) > 1:
+        return False
+    if right_group and len(left_unit.semantic_group_ids) > 1:
+        return False
+    return True
+
+
+def _semantic_anchor_distance(
+    *,
+    node_ids: Iterable[str],
+    node_points_by_id: dict[str, Point],
+    representative_point: Point,
+    reference_point: Point | None,
+) -> float | None:
+    points = [representative_point]
+    if reference_point is not None:
+        points.append(reference_point)
+    best: float | None = None
+    for node_id in node_ids:
+        node_point = node_points_by_id.get(str(node_id))
+        if node_point is None:
+            continue
+        for anchor_point in points:
+            distance_m = float(node_point.distance(anchor_point))
+            if best is None or distance_m < best:
+                best = distance_m
+    return best
+
+
 def _select_required_node_id(
     *,
     node_ids: Iterable[str],
@@ -683,6 +754,7 @@ def _unit_from_roads_and_node(
     axis_vector: tuple[float, float] | None,
     normal_vector: tuple[float, float] | None,
     first_hit_road_ids: set[str],
+    node_semantic_group_by_id: dict[str, str],
 ) -> _LocalRcsdUnit:
     ordered_road_ids = tuple(sorted({str(road_id) for road_id in road_ids if str(road_id) in roads_by_id}))
     event_side_role = str(expected_role_map.get("event_side_role") or "exiting")
@@ -803,6 +875,23 @@ def _unit_from_roads_and_node(
             ({node_id} if node_id is not None else set()) | (_node_ids_for_roads(ordered_road_ids, roads_by_id) & set(actual_node_ids))
         )
     )
+    semantic_group_id = (
+        node_semantic_group_by_id.get(node_id)
+        if node_id is not None
+        else None
+    )
+    if unit_kind == "node_centric" and semantic_group_id is not None:
+        semantic_group_ids = (semantic_group_id,)
+    else:
+        semantic_group_ids = tuple(
+            sorted(
+                {
+                    group_id
+                    for current_node_id in node_ids
+                    if (group_id := node_semantic_group_by_id.get(current_node_id)) is not None
+                }
+            )
+        )
     node_geometry = _union_geometry(
         node_points_by_id[node_id_value]
         for node_id_value in node_ids
@@ -823,6 +912,8 @@ def _unit_from_roads_and_node(
         unit_id=unit_id,
         unit_kind=unit_kind,
         node_id=node_id,
+        semantic_group_id=semantic_group_id,
+        semantic_group_ids=semantic_group_ids,
         road_ids=ordered_road_ids,
         node_ids=node_ids,
         entering_road_ids=tuple(
@@ -860,6 +951,8 @@ def _build_aggregated_rcsd_units(
     roads_by_node_id: dict[str, set[str]],
     node_points_by_id: dict[str, Point],
     representative_point: Point,
+    reference_point: Point | None,
+    node_semantic_group_by_id: dict[str, str],
 ) -> tuple[_AggregatedRcsdUnit, ...]:
     matched_units = [unit for unit in local_units if unit.positive_rcsd_present]
     if not matched_units:
@@ -869,6 +962,8 @@ def _build_aggregated_rcsd_units(
     for left_index, left_unit in enumerate(matched_units):
         for right_index in range(left_index + 1, len(matched_units)):
             right_unit = matched_units[right_index]
+            if not _units_can_aggregate_semantically(left_unit, right_unit):
+                continue
             if (
                 set(left_unit.road_ids) & set(right_unit.road_ids)
                 or set(left_unit.node_ids) & set(right_unit.node_ids)
@@ -902,11 +997,40 @@ def _build_aggregated_rcsd_units(
     expected_event_arm_count = max(1, len(expected_role_map.get("event_side_branch_ids") or ()))
     aggregated_units: list[_AggregatedRcsdUnit] = []
     first_hit_set = set(first_hit_road_ids)
+    matched_semantic_groups = {
+        group_id
+        for unit in matched_units
+        if (group_id := _unit_primary_semantic_group_id(unit)) is not None
+    }
+    multi_semantic_group_context = len(matched_semantic_groups) > 1
     for component_index, component_units in enumerate(components, start=1):
         component_units_sorted = sorted(component_units, key=lambda unit: unit.score, reverse=True)
         primary_local_unit = component_units_sorted[0]
+        semantic_group_ids = tuple(
+            sorted(
+                {
+                    group_id
+                    for unit in component_units_sorted
+                    if (group_id := _unit_primary_semantic_group_id(unit)) is not None
+                }
+            )
+        )
+        semantic_group_node_ids = {
+            node_id
+            for node_id, group_id in node_semantic_group_by_id.items()
+            if group_id in semantic_group_ids and node_id in node_points_by_id
+        }
         road_ids = tuple(sorted({road_id for unit in component_units_sorted for road_id in unit.road_ids}))
         node_ids = tuple(sorted({node_id for unit in component_units_sorted for node_id in unit.node_ids if node_id}))
+        if semantic_group_node_ids:
+            node_ids = tuple(sorted(semantic_group_node_ids))
+            semantic_incident_road_ids = {
+                road_id
+                for node_id in semantic_group_node_ids
+                for road_id in roads_by_node_id.get(node_id, set())
+                if road_id in roads_by_id
+            }
+            road_ids = tuple(sorted(set(road_ids) | semantic_incident_road_ids))
         event_side_road_ids = tuple(
             sorted({road_id for unit in component_units_sorted for road_id in unit.event_side_road_ids})
         )
@@ -1056,15 +1180,35 @@ def _build_aggregated_rcsd_units(
                     decision_reason = "role_mapping_partial_missing_arms"
                 else:
                     decision_reason = "role_mapping_partial_aggregated"
-        road_geometry = _union_geometry(unit.road_geometry for unit in component_units_sorted)
-        node_geometry = _union_geometry(unit.node_geometry for unit in component_units_sorted)
+        road_geometry = _union_geometry(
+            roads_by_id[road_id].geometry
+            for road_id in road_ids
+            if road_id in roads_by_id
+        )
+        node_geometry = _union_geometry(
+            node_points_by_id[node_id]
+            for node_id in node_ids
+            if node_id in node_points_by_id
+        )
         geometry = _union_geometry([road_geometry, node_geometry])
         role_assignments = tuple(
             assignment
             for unit in component_units_sorted
             for assignment in unit.role_assignments
         )
+        semantic_anchor_distance_m = _semantic_anchor_distance(
+            node_ids=node_ids,
+            node_points_by_id=node_points_by_id,
+            representative_point=representative_point,
+            reference_point=reference_point,
+        )
+        semantic_local_bonus = int(
+            multi_semantic_group_context
+            and semantic_anchor_distance_m is not None
+            and semantic_anchor_distance_m <= RCSD_SEMANTIC_GROUP_LOCAL_MAX_DISTANCE_M
+        )
         score = (
+            semantic_local_bonus,
             3 if consistency_level == "A" else 2 if consistency_level == "B" else 1,
             1 if positive_rcsd_present else 0,
             1 if has_node_centric else 0,
@@ -1087,6 +1231,8 @@ def _build_aggregated_rcsd_units(
                 unit_id=f"{event_unit_id}:aggregated:{component_index:02d}",
                 member_unit_ids=tuple(unit.unit_id for unit in component_units_sorted),
                 member_unit_kinds=tuple(sorted({unit.unit_kind for unit in component_units_sorted})),
+                semantic_group_ids=semantic_group_ids,
+                semantic_anchor_distance_m=semantic_anchor_distance_m,
                 road_ids=road_ids,
                 node_ids=node_ids,
                 entering_road_ids=entering_road_ids,

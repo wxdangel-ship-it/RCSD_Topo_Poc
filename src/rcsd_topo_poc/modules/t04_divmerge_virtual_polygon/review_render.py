@@ -33,6 +33,8 @@ ALL_RCSD_ROAD_COLOR = (235, 170, 176, 150)
 SELECTED_RCSD_ROAD_COLOR = (134, 23, 38, 255)
 FIRST_HIT_RCSD_ROAD_COLOR = ALL_RCSD_ROAD_COLOR
 SELECTED_RCSD_ROAD_HALO = (255, 255, 255, 0)
+SECTION_WINDOW_FILL = None
+SECTION_WINDOW_EDGE = (32, 103, 170, 92)
 RCSD_NODE_FILL = (255, 255, 255, 255)
 RCSD_NODE_RING = (189, 49, 49, 168)
 SELECTED_RCSD_NODE_RING = (189, 49, 49, 255)
@@ -324,6 +326,27 @@ def _ordered_roads_by_ids(roads: Iterable[Any], road_ids: Iterable[str]) -> tupl
     return tuple(ordered)
 
 
+def _node_lookup_by_id(nodes: Iterable[Any]) -> dict[str, Any]:
+    return {
+        str(node.node_id): node
+        for node in nodes
+        if str(getattr(node, "node_id", "")).strip()
+    }
+
+
+def _ordered_nodes_by_ids(nodes: Iterable[Any], node_ids: Iterable[str]) -> tuple[Any, ...]:
+    lookup = _node_lookup_by_id(nodes)
+    seen: set[str] = set()
+    ordered: list[Any] = []
+    for node_id in node_ids:
+        key = str(node_id).strip()
+        if not key or key in seen or key not in lookup:
+            continue
+        seen.add(key)
+        ordered.append(lookup[key])
+    return tuple(ordered)
+
+
 def _related_swsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
     seen: set[str] = set()
     ordered: list[str] = []
@@ -343,6 +366,19 @@ def _related_rcsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
     for unit_result in step5_result.unit_results:
         for road_id in unit_result.positive_rcsd_road_ids:
             key = str(road_id).strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            ordered.append(key)
+    return tuple(ordered)
+
+
+def _related_rcsd_node_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for unit_result in step5_result.unit_results:
+        for node_id in unit_result.positive_rcsd_node_ids:
+            key = str(node_id).strip()
             if not key or key in seen:
                 continue
             seen.add(key)
@@ -765,8 +801,10 @@ def render_case_final_review_png(
 
     related_swsd_road_ids = set(_related_swsd_road_ids(step5_result))
     related_rcsd_road_ids = set(_related_rcsd_road_ids(step5_result))
+    related_rcsd_node_ids = set(_related_rcsd_node_ids(step5_result))
     related_swsd_roads = _ordered_roads_by_ids(local_context.local_roads, related_swsd_road_ids)
     related_rcsd_roads = _ordered_roads_by_ids(local_context.local_rcsd_roads, related_rcsd_road_ids)
+    related_rcsd_nodes = _ordered_nodes_by_ids(local_context.local_rcsd_nodes, related_rcsd_node_ids)
     other_swsd_roads = tuple(
         road for road in local_context.local_roads if str(road.road_id) not in related_swsd_road_ids
     )
@@ -777,6 +815,14 @@ def render_case_final_review_png(
     _draw_polygon(draw, local_context.patch_drivezone_union, bounds, fill=DRIVEZONE_FILL, outline=DRIVEZONE_EDGE, width=2)
     for feature in local_context.patch_divstrip_features:
         _draw_polygon(draw, feature.geometry, bounds, fill=DIVSTRIP_FILL, outline=DIVSTRIP_EDGE, width=2)
+    _draw_polygon(
+        draw,
+        step5_result.case_terminal_window_domain,
+        bounds,
+        fill=SECTION_WINDOW_FILL,
+        outline=SECTION_WINDOW_EDGE,
+        width=1,
+    )
     for road in other_swsd_roads:
         _draw_line(draw, road.geometry, bounds, fill=AXIS_ROAD_COLOR, width=2)
     for road in related_swsd_roads:
@@ -785,8 +831,12 @@ def render_case_final_review_png(
         _draw_line(draw, road.geometry, bounds, fill=ALL_RCSD_ROAD_COLOR, width=2)
     for road in related_rcsd_roads:
         _draw_line(draw, road.geometry, bounds, fill=RCSD_ROAD_COLOR, width=6)
+    for node in related_rcsd_nodes:
+        _draw_point(draw, node.geometry, bounds, fill=RCSD_NODE_FILL, radius=6, ring=SELECTED_RCSD_NODE_RING)
+    for event_unit in case_result.event_units:
+        _draw_point(draw, event_unit.required_rcsd_node_geometry, bounds, fill=RCSD_NODE_FILL, radius=8, ring=REQUIRED_RCSD_RING)
     if step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty:
-        _draw_line(draw, step6_result.final_case_polygon.boundary, bounds, fill=BOUNDARY_ROAD_COLOR, width=6)
+        _draw_line(draw, step6_result.final_case_polygon.boundary, bounds, fill=BOUNDARY_ROAD_COLOR, width=3)
 
     _draw_legend(
         draw,
@@ -799,6 +849,7 @@ def render_case_final_review_png(
             ("SWSD Current", AXIS_ROAD_COLOR, "strong_line"),
             ("RCSD Other", ALL_RCSD_ROAD_COLOR, "line"),
             ("RCSD Current", RCSD_ROAD_COLOR, "strong_line"),
+            ("Section Window", SECTION_WINDOW_EDGE, "line"),
             ("Final Boundary", BOUNDARY_ROAD_COLOR, "strong_line"),
         ],
     )
@@ -813,6 +864,7 @@ def render_case_final_review_png(
         f"component_count: {step6_result.component_count}",
         f"swsd_current_roads: {len(related_swsd_roads)} / other={len(other_swsd_roads)}",
         f"rcsd_current_roads: {len(related_rcsd_roads)} / other={len(other_rcsd_roads)}",
+        f"rcsd_current_nodes: {len(related_rcsd_nodes)}",
         f"final_boundary_present: {bool(step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty)}",
     ]
     if reject_reason_list:

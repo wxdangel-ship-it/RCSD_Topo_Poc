@@ -146,6 +146,7 @@
   - `QA`
 - T04 可以参考 `t03_virtual_junction_anchor` 的实现逻辑、审计风格、产物组织与输出组织方式，但运行时不得直接 import / 调用 / 拷贝 T03 模块代码；正式执行逻辑必须保留在 T04 私有实现内。
 - T04 当前不新增 repo 官方 CLI；internal full-input shell/watch 交付面为 repo 级脚本入口，执行逻辑保留在 T04 私有实现内。
+- T04 在使用 RCSDNode 参与 RCSD 语义路口召回时，`RCSDNode.mainnodeid` 作为 RCSD 语义分组边界：非 `0` / 非空 `mainnodeid` 表示节点所属的 RCSD 语义路口组，`0` / 空值表示该 RCSDNode 以自身 `id` 作为独立语义组。一个 SWSD event unit、复杂路口内的单个 unit、或一个简单二分歧 / 合流，最多只能发布一个对应的 RCSD 语义路口组；若局部窗口内命中多个 RCSD 语义组，必须先按当前 SWSD section / Reference Point / 进出方向角色 / 距离与角度趋势消歧，非选中组只能作为上下文或 trace 审计信息。
 
 ---
 

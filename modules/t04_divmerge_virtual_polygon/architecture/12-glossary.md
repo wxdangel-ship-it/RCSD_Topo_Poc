@@ -11,6 +11,7 @@
 | `导流带主证据` | 由导流带表达真实分歧 / 合流或道路组织切换的主证据；导流带本体同时是负向掩膜，不作为可通行道路面。 |
 | `道路面分叉主证据` | 由可通行道路面形态真实分叉、合流或切换表达的主证据。 |
 | `RCSD 语义路口` | 与当前 SWSD 路口语义一致的 RCSD 路口：进入道路、退出道路和角度趋势与当前事件对齐；可作为 section reference、抽象路网参考或支撑域约束，不是主证据，不得被称为 Reference Point。 |
+| `RCSD 语义路口组` | T04 基于 `RCSDNode.mainnodeid` 识别的 RCSD 语义分组：非 `0` / 非空 `mainnodeid` 表示所属组，`0` / 空值表示以自身 `id` 作为独立组。一个 SWSD event unit 最多只能发布一个对应 RCSD 语义路口组。 |
 | `无 RCSD 语义路口` | 可表示没有 RCSD 路口，也可表示存在 RCSD 数据但不是与当前 SWSD 路口语义一致的路口，例如缺少进入 / 退出道路、只有 RCSDRoad 趋势支持或仅形成弱聚合结果。该状态不等于无 RCSD 数据。 |
 | `RCSDRoad fallback` | 无 RCSD 语义路口或需 road fallback 时使用的 RCSDRoad 局部段支撑；可表达与 SWSD 路口对应道路趋势一致的局部 RCSDRoad，但只能覆盖相关局部段，不得沿整条 RCSDRoad 远距离扩张。 |
 | `SWSD 语义路口` | SWSD 侧可用于构面的语义路口，可作为 section reference，不是主证据，不得被称为 Reference Point。 |
@@ -49,7 +50,7 @@
 | `terminal_cut_constraints` | Step5 定义的终端裁切约束，由 Step6 执行。 |
 | `final_case_polygon` | Step6 在 Step5 约束内生成的 Case 级单一连通面。 |
 | `surface_scenario_type` | T04 主业务场景分类，按主证据与 RCSD/SWSD 支持状态区分六类成功构面场景和 `no_surface_reference` 兜底场景。 |
-| `no_surface_reference` | 无主证据、无 RCSD 语义路口、无 RCSDRoad fallback、无 SWSD 语义路口；无 Reference Point、无 section reference，不生成实体路口面。 |
+| `no_surface_reference` | 防御性异常兜底；表示 Step4 未能从合法输入、Step3 拓扑或 Step4 候选中物化可用 SWSD / RCSD / 主证据 section reference，或输入已不满足 T04 case 的基本 SWSD 语义前提。正常 Anchor_2 业务 case 不应仅因“无主证据 + 无 RCSD 语义路口”落入该场景；该类 case 必须优先使用 SWSD section reference。 |
 | `accepted` | Step7 最终发布二态之一，表示通过最终业务验收并进入主发布层。 |
 | `rejected` | Step7 最终发布二态之一，表示未通过最终业务验收并进入 rejected 层或拒绝索引。 |
 | `reject_stub_geometry` | rejected case 的可定位 stub 几何，不是 fake final polygon。 |

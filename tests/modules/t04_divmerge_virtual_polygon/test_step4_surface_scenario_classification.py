@@ -185,6 +185,65 @@ def test_no_evidence_with_swsd_only_classifies_as_swsd_only() -> None:
     assert scenario.surface_generation_mode == SURFACE_MODE_SWSD_WINDOW
 
 
+def test_weak_road_surface_binding_promotes_local_required_node_to_rcsd_junction() -> None:
+    scenario = classify_surface_scenario(
+        evidence_source="road_surface_fork",
+        selected_evidence_summary={
+            "candidate_scope": "road_surface_fork",
+            "road_surface_fork_binding": {
+                "preserved_surface_main_evidence": True,
+                "selected_rcsd_scope": "required_node_local_unit",
+                "rcsd_decision_reason": "role_mapping_partial_relaxed_aggregated",
+            },
+        },
+        positive_rcsd_audit={
+            "positive_rcsd_support_level": "secondary_support",
+            "positive_rcsd_consistency_level": "B",
+        },
+        rcsd_selection_mode="road_surface_fork_rcsd_junction_local_unit_binding",
+        required_rcsd_node="rcsd-node-1",
+        selected_rcsdroad_ids=("rcsd-road-1",),
+        swsd_junction_present=True,
+        required_rcsd_node_distance_to_representative_m=6.0,
+    )
+
+    assert scenario.has_main_evidence is False
+    assert scenario.rcsd_match_type == "rcsd_junction"
+    assert scenario.section_reference_source == SECTION_REFERENCE_RCSD
+    assert scenario.surface_scenario_type == SCENARIO_NO_MAIN_WITH_RCSD
+    assert scenario.fallback_rcsdroad_ids == ()
+
+
+def test_weak_road_surface_binding_suppresses_far_required_node_rcsd_fallback() -> None:
+    scenario = classify_surface_scenario(
+        evidence_source="road_surface_fork",
+        selected_evidence_summary={
+            "candidate_scope": "road_surface_fork",
+            "road_surface_fork_binding": {
+                "preserved_surface_main_evidence": True,
+                "selected_rcsd_scope": "required_node_local_unit",
+                "rcsd_decision_reason": "role_mapping_partial_relaxed_aggregated",
+            },
+        },
+        positive_rcsd_audit={
+            "positive_rcsd_support_level": "secondary_support",
+            "positive_rcsd_consistency_level": "B",
+            "published_rcsdroad_ids": ["rcsd-road-1", "rcsd-road-2"],
+        },
+        rcsd_selection_mode="road_surface_fork_rcsd_junction_local_unit_binding",
+        required_rcsd_node="rcsd-node-1",
+        selected_rcsdroad_ids=("rcsd-road-1",),
+        swsd_junction_present=True,
+        required_rcsd_node_distance_to_representative_m=148.0,
+    )
+
+    assert scenario.has_main_evidence is False
+    assert scenario.rcsd_match_type == "none"
+    assert scenario.section_reference_source == SECTION_REFERENCE_SWSD
+    assert scenario.surface_scenario_type == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
+    assert scenario.fallback_rcsdroad_ids == ()
+
+
 def test_no_evidence_no_rcsd_no_swsd_classifies_as_no_surface_reference() -> None:
     scenario = classify_surface_scenario(evidence_source="none", fact_reference_point_present=True)
 

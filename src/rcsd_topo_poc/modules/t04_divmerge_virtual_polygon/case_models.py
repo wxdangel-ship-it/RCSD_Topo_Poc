@@ -24,6 +24,14 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
 from .surface_scenario import SurfaceScenarioClassification, classify_surface_scenario
 
 
+_COMPLEX_SWSD_ONLY_NO_MAIN_REASONS = {
+    "no_selected_evidence",
+    "road_surface_fork_structure_only_no_rcsd",
+    "road_surface_fork_without_bound_target_rcsd",
+    "unbound_road_surface_fork_without_bifurcation_rcsd",
+}
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, float):
         if math.isfinite(value):
@@ -348,15 +356,45 @@ class T04EventUnitResult:
 
     @property
     def surface_scenario(self) -> SurfaceScenarioClassification:
+        evidence_source = self.evidence_source
+        selected_evidence_summary = self.selected_evidence_summary
+        explicit_swsd_junction_present: bool | None = None
+        if (
+            self.spec.event_type == "complex_node"
+            and not self.positive_rcsd_present
+            and not str(self.required_rcsd_node or "").strip()
+            and self.unit_envelope.event_branch_ids
+        ):
+            explicit_swsd_junction_present = True
+            if self.rcsd_selection_mode in _COMPLEX_SWSD_ONLY_NO_MAIN_REASONS:
+                evidence_source = "swsd_junction_window"
+                selected_evidence_summary = {
+                    **self.selected_evidence_summary,
+                    "candidate_scope": "",
+                    "upper_evidence_kind": "",
+                }
+
+        required_node_distance_m: float | None = None
+        representative_geometry = getattr(self.unit_context.representative_node, "geometry", None)
+        if (
+            representative_geometry is not None
+            and self.required_rcsd_node_geometry is not None
+            and not representative_geometry.is_empty
+            and not self.required_rcsd_node_geometry.is_empty
+        ):
+            required_node_distance_m = float(representative_geometry.distance(self.required_rcsd_node_geometry))
+
         return classify_surface_scenario(
-            evidence_source=self.evidence_source,
-            selected_evidence_summary=self.selected_evidence_summary,
+            evidence_source=evidence_source,
+            selected_evidence_summary=selected_evidence_summary,
             rcsd_selection_mode=self.rcsd_selection_mode,
             required_rcsd_node=self.required_rcsd_node,
             first_hit_rcsdroad_ids=self.first_hit_rcsdroad_ids,
             selected_rcsdroad_ids=self.selected_rcsdroad_ids,
             positive_rcsd_audit=self.positive_rcsd_audit,
+            swsd_junction_present=explicit_swsd_junction_present,
             fact_reference_point_present=self.fact_reference_point is not None,
+            required_rcsd_node_distance_to_representative_m=required_node_distance_m,
         )
 
     def surface_scenario_doc(self) -> dict[str, Any]:

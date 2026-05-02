@@ -46,6 +46,15 @@ _NON_FALLBACK_RCSD_REASONS = {
     "road_surface_fork_without_bound_target_rcsd",
     "unbound_road_surface_fork_without_bifurcation_rcsd",
 }
+_WEAK_ROAD_SURFACE_FORK_LOCAL_BINDING = "road_surface_fork_rcsd_junction_local_unit_binding"
+_WEAK_ROAD_SURFACE_FORK_LOCAL_REQUIRED_NODE_MAX_DISTANCE_M = 60.0
+_RCSD_JUNCTION_WINDOW_MAX_SEMANTIC_ANCHOR_DISTANCE_M = 60.0
+_WEAK_DIVSTRIP_SWSD_REASONS = {
+    "aggregated_axis_polarity_inverted_without_required_node",
+    "aggregated_road_only_without_required_node",
+    "positive_rcsd_absent_after_local_units",
+    "role_mapping_partial_axis_polarity_inverted",
+}
 
 
 def _clean_text(value: Any) -> str:
@@ -69,12 +78,145 @@ def _mapping_bool(mapping: Mapping[str, Any] | None, key: str) -> bool:
     return bool(mapping.get(key))
 
 
+def _support_level(
+    *,
+    selected_evidence_summary: Mapping[str, Any] | None,
+    positive_rcsd_audit: Mapping[str, Any] | None,
+) -> str:
+    return _clean_text(
+        (positive_rcsd_audit or {}).get("positive_rcsd_support_level")
+        or (selected_evidence_summary or {}).get("positive_rcsd_support_level")
+    )
+
+
+def _consistency_level(
+    *,
+    selected_evidence_summary: Mapping[str, Any] | None,
+    positive_rcsd_audit: Mapping[str, Any] | None,
+) -> str:
+    return _clean_text(
+        (positive_rcsd_audit or {}).get("positive_rcsd_consistency_level")
+        or (selected_evidence_summary or {}).get("positive_rcsd_consistency_level")
+    )
+
+
+def _weak_road_surface_fork_local_binding(
+    *,
+    rcsd_selection_mode: str,
+    selected_evidence_summary: Mapping[str, Any] | None,
+    positive_rcsd_audit: Mapping[str, Any] | None,
+) -> bool:
+    if rcsd_selection_mode != _WEAK_ROAD_SURFACE_FORK_LOCAL_BINDING:
+        return False
+    binding = (positive_rcsd_audit or {}).get("road_surface_fork_binding") or (
+        selected_evidence_summary or {}
+    ).get("road_surface_fork_binding")
+    if not isinstance(binding, Mapping):
+        return False
+    return bool(
+        binding.get("preserved_surface_main_evidence") is True
+        and _clean_text(binding.get("selected_rcsd_scope")) == "required_node_local_unit"
+        and _clean_text(binding.get("rcsd_decision_reason")) == "role_mapping_partial_relaxed_aggregated"
+        and _support_level(
+            selected_evidence_summary=selected_evidence_summary,
+            positive_rcsd_audit=positive_rcsd_audit,
+        )
+        == "secondary_support"
+        and _consistency_level(
+            selected_evidence_summary=selected_evidence_summary,
+            positive_rcsd_audit=positive_rcsd_audit,
+        )
+        == "B"
+    )
+
+
+def _weak_road_surface_fork_required_node_is_local(distance_m: float | None) -> bool:
+    if distance_m is None:
+        return False
+    return float(distance_m) <= _WEAK_ROAD_SURFACE_FORK_LOCAL_REQUIRED_NODE_MAX_DISTANCE_M
+
+
+def _weak_divstrip_swsd_window_candidate(
+    *,
+    evidence_source: str,
+    selected_evidence_summary: Mapping[str, Any] | None,
+    positive_rcsd_audit: Mapping[str, Any] | None,
+) -> bool:
+    if evidence_source not in _MAIN_DIVSTRIP_SOURCES:
+        return False
+    if _clean_text((selected_evidence_summary or {}).get("upper_evidence_kind")) != MAIN_EVIDENCE_DIVSTRIP:
+        return False
+    if bool((selected_evidence_summary or {}).get("primary_eligible")):
+        return False
+    reason = _clean_text(
+        (positive_rcsd_audit or {}).get("rcsd_decision_reason")
+        or (positive_rcsd_audit or {}).get("positive_rcsd_present_reason")
+        or (selected_evidence_summary or {}).get("positive_rcsd_present_reason")
+    )
+    if reason in _WEAK_DIVSTRIP_SWSD_REASONS:
+        return True
+    aggregated_units = (positive_rcsd_audit or {}).get("aggregated_rcsd_units") or ()
+    for unit in aggregated_units:
+        if not isinstance(unit, Mapping):
+            continue
+        member_kinds = {_clean_text(item) for item in (unit.get("member_unit_kinds") or ())}
+        if (
+            member_kinds
+            and member_kinds <= {"road_only"}
+            and not _clean_text(unit.get("required_node_id"))
+            and _clean_text(unit.get("support_level")) == "secondary_support"
+            and _clean_text(unit.get("consistency_level")) == "B"
+        ):
+            return True
+    return False
+
+
+def _selected_aggregate_semantic_anchor_distance_m(
+    positive_rcsd_audit: Mapping[str, Any] | None,
+) -> float | None:
+    if not positive_rcsd_audit:
+        return None
+    selected_unit_id = _clean_text(positive_rcsd_audit.get("aggregated_rcsd_unit_id"))
+    if not selected_unit_id:
+        return None
+    for unit in positive_rcsd_audit.get("aggregated_rcsd_units") or ():
+        if not isinstance(unit, Mapping):
+            continue
+        if _clean_text(unit.get("unit_id")) != selected_unit_id:
+            continue
+        value = unit.get("semantic_anchor_distance_m")
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _main_evidence_type(
     *,
     evidence_source: str,
     selected_evidence_summary: Mapping[str, Any] | None,
+    positive_rcsd_audit: Mapping[str, Any] | None,
+    rcsd_selection_mode: str,
 ) -> str:
     if evidence_source in _NON_MAIN_REFERENCE_SOURCES:
+        return MAIN_EVIDENCE_NONE
+    if _weak_road_surface_fork_local_binding(
+        rcsd_selection_mode=rcsd_selection_mode,
+        selected_evidence_summary=selected_evidence_summary,
+        positive_rcsd_audit=positive_rcsd_audit,
+    ):
+        return MAIN_EVIDENCE_NONE
+    if _weak_divstrip_swsd_window_candidate(
+        evidence_source=evidence_source,
+        selected_evidence_summary=selected_evidence_summary,
+        positive_rcsd_audit=positive_rcsd_audit,
+    ):
+        return MAIN_EVIDENCE_NONE
+    source_mode = _clean_text((selected_evidence_summary or {}).get("source_mode"))
+    if "swsd_junction_window" in rcsd_selection_mode or source_mode in _SWSD_JUNCTION_SOURCES:
         return MAIN_EVIDENCE_NONE
     candidate_scope = _clean_text((selected_evidence_summary or {}).get("candidate_scope"))
     upper_evidence_kind = _clean_text((selected_evidence_summary or {}).get("upper_evidence_kind"))
@@ -99,6 +241,18 @@ def _swsd_junction_present(
         return True
     if _mapping_bool(positive_rcsd_audit, "swsd_junction_window_no_rcsd"):
         return True
+    if _weak_road_surface_fork_local_binding(
+        rcsd_selection_mode=rcsd_selection_mode,
+        selected_evidence_summary=selected_evidence_summary,
+        positive_rcsd_audit=positive_rcsd_audit,
+    ):
+        return True
+    if _weak_divstrip_swsd_window_candidate(
+        evidence_source=evidence_source,
+        selected_evidence_summary=selected_evidence_summary,
+        positive_rcsd_audit=positive_rcsd_audit,
+    ):
+        return True
     source_mode = _clean_text((selected_evidence_summary or {}).get("source_mode"))
     return source_mode in _SWSD_JUNCTION_SOURCES
 
@@ -111,17 +265,25 @@ def _fallback_rcsdroad_ids(
 ) -> tuple[str, ...]:
     audit_roads: Sequence[Any] | None = None
     if positive_rcsd_audit:
-        audit_reason = _clean_text(
-            positive_rcsd_audit.get("positive_rcsd_present_reason")
-            or positive_rcsd_audit.get("rcsd_decision_reason")
-        )
+        audit_reasons = {
+            _clean_text(positive_rcsd_audit.get("positive_rcsd_present_reason")),
+            _clean_text(positive_rcsd_audit.get("rcsd_decision_reason")),
+        }
+        audit_reasons.discard("")
         audit_is_non_fallback = (
             positive_rcsd_audit.get("positive_rcsd_present") is False
             and (
-                audit_reason in _NON_FALLBACK_RCSD_REASONS
+                bool(audit_reasons & _NON_FALLBACK_RCSD_REASONS)
+                or bool(audit_reasons & _WEAK_DIVSTRIP_SWSD_REASONS)
                 or any(bool(positive_rcsd_audit.get(key)) for key in _NON_FALLBACK_RCSD_REASONS)
             )
+        ) or (
+            bool(audit_reasons & _WEAK_DIVSTRIP_SWSD_REASONS)
+            and not _clean_text(positive_rcsd_audit.get("required_rcsd_node"))
+            and _clean_text(positive_rcsd_audit.get("local_rcsd_unit_kind")) == "road_only"
         )
+        if audit_is_non_fallback:
+            return ()
         if not audit_is_non_fallback:
             audit_roads = positive_rcsd_audit.get("published_rcsdroad_ids") or positive_rcsd_audit.get(
                 "first_hit_rcsdroad_ids"
@@ -135,8 +297,33 @@ def _rcsd_match_type(
     rcsd_selection_mode: str,
     required_rcsd_node: Any,
     fallback_rcsdroad_ids: tuple[str, ...],
+    selected_evidence_summary: Mapping[str, Any] | None,
+    positive_rcsd_audit: Mapping[str, Any] | None,
+    required_rcsd_node_distance_to_representative_m: float | None,
 ) -> str:
+    if _weak_road_surface_fork_local_binding(
+        rcsd_selection_mode=rcsd_selection_mode,
+        selected_evidence_summary=selected_evidence_summary,
+        positive_rcsd_audit=positive_rcsd_audit,
+    ):
+        if _clean_text(required_rcsd_node) and _weak_road_surface_fork_required_node_is_local(
+            required_rcsd_node_distance_to_representative_m
+        ):
+            return RCSD_MATCH_JUNCTION
+        return RCSD_MATCH_NONE
+    if _weak_divstrip_swsd_window_candidate(
+        evidence_source=evidence_source,
+        selected_evidence_summary=selected_evidence_summary,
+        positive_rcsd_audit=positive_rcsd_audit,
+    ):
+        return RCSD_MATCH_ROAD_FALLBACK if fallback_rcsdroad_ids else RCSD_MATCH_NONE
     if evidence_source in _RCSD_JUNCTION_SOURCES or rcsd_selection_mode == "rcsd_junction_window":
+        semantic_anchor_distance_m = _selected_aggregate_semantic_anchor_distance_m(positive_rcsd_audit)
+        if (
+            semantic_anchor_distance_m is not None
+            and semantic_anchor_distance_m > _RCSD_JUNCTION_WINDOW_MAX_SEMANTIC_ANCHOR_DISTANCE_M
+        ):
+            return RCSD_MATCH_NONE
         return RCSD_MATCH_JUNCTION
     if _clean_text(required_rcsd_node):
         return RCSD_MATCH_JUNCTION
@@ -186,12 +373,15 @@ def classify_surface_scenario(
     positive_rcsd_audit: Mapping[str, Any] | None = None,
     swsd_junction_present: bool | None = None,
     fact_reference_point_present: bool | None = None,
+    required_rcsd_node_distance_to_representative_m: float | None = None,
 ) -> SurfaceScenarioClassification:
     evidence_source = _clean_text(evidence_source)
     rcsd_selection_mode = _clean_text(rcsd_selection_mode)
     main_evidence_type = _main_evidence_type(
         evidence_source=evidence_source,
         selected_evidence_summary=selected_evidence_summary,
+        positive_rcsd_audit=positive_rcsd_audit,
+        rcsd_selection_mode=rcsd_selection_mode,
     )
     has_main_evidence = main_evidence_type != MAIN_EVIDENCE_NONE
     fallback_ids = _fallback_rcsdroad_ids(
@@ -204,6 +394,9 @@ def classify_surface_scenario(
         rcsd_selection_mode=rcsd_selection_mode,
         required_rcsd_node=required_rcsd_node,
         fallback_rcsdroad_ids=fallback_ids,
+        selected_evidence_summary=selected_evidence_summary,
+        positive_rcsd_audit=positive_rcsd_audit,
+        required_rcsd_node_distance_to_representative_m=required_rcsd_node_distance_to_representative_m,
     )
     swsd_present = _swsd_junction_present(
         evidence_source=evidence_source,

@@ -62,7 +62,19 @@
   - `step4_final_conflict_resolver`
     - same-case evidence、same-case RCSD claim、cross-case inventory / cleanup、final consistency
   - `step4_road_surface_fork_binding`
-    - road-surface fork 主证据绑定、SWSD/RCSD junction window、structure-only fallback
+    - road-surface fork 后处理 facade，保留 `apply_road_surface_fork_binding`
+  - `step4_road_surface_fork_binding_shared`
+    - road-surface fork 后处理共用 summary / candidate-selection helper
+  - `step4_road_surface_fork_binding_forward`
+    - strong RCSD forward binding
+  - `step4_road_surface_fork_binding_promotions`
+    - selected surface 的 RCSD / junction-window / partial-support promotion policy
+  - `step4_road_surface_fork_binding_recovery`
+    - invalid-divstrip 后的 road-surface recovery
+  - `step4_road_surface_fork_binding_cleanup`
+    - structure-only retention、SWSD window conversion 与 unbound cleanup
+  - `step4_road_surface_fork_binding_divstrip`
+    - wide surface fork 场景下的 divstrip primary restore 与 component disambiguation
   - `step4_road_surface_fork_geometry`
     - road-surface fork reference point、apex、surface geometry 与基础几何 helper
   - `step4_road_surface_fork_rcsd`
@@ -77,8 +89,23 @@
   - case / unit review signal aggregation
   - focus reason 与 conflict signal 汇总
 - `support_domain`
-  - Unit / Case 两级 `must_cover / allowed_growth / forbidden / terminal_cut`
-  - `fallback_support_strip` 与 `bridge zone` 物化
+  - Step5 support-domain facade，保留原 public import surface
+- `support_domain_scenario`
+  - Step5 surface window constants
+  - `Step5SurfaceWindowConfig`
+  - Step4 `surface_scenario` 到 Step5 window config 的纯映射
+- `support_domain_common`
+  - Step5 geometry summary、clip、axis、semantic anchor 与 line-window helper
+- `support_domain_windows`
+  - terminal window、junction window、fallback strip 与 single-component surface helper
+- `support_domain_cuts`
+  - road graph expansion、terminal cut 与 case-level cut constraints
+- `support_domain_bridges`
+  - multi-unit bridge patch 与 case-level RCSD bridge helper
+- `support_domain_models`
+  - `T04Step5UnitResult / T04Step5CaseResult` 与 vector feature export
+- `support_domain_builder`
+  - Unit / Case 两级 `must_cover / allowed_growth / forbidden / terminal_cut` 物化 orchestration
 - `polygon_assembly`
   - `assembly_canvas`
   - raster-first 单连通面组装

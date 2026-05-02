@@ -34,15 +34,22 @@
 - `fact_reference_point`、`review_materialized_point`、`selected_component_union_geometry`、`localized_evidence_core_geometry`、`coarse_anchor_zone_geometry` 的语义边界必须可解释。
 - 主证据只允许来自导流带或道路面分叉；RCSD 语义路口、RCSDRoad、SWSD 语义路口、SWSD candidate、历史抽象 node、拓扑召回点和抽象路网代理点不得被写成主证据。
 - 无主证据时不得构造虚拟 Reference Point；`fact_reference_point` 必须为空，并以 `no_reference_point_reason` 审计原因。
+- T04 合法输入默认携带 SWSD 语义路口 / SWSD 分合流候选上下文；“无主证据 + 无 RCSD 语义路口”不得自动落 `no_surface_reference`，应进入 `no_main_evidence_with_swsd_only` 或 `no_main_evidence_with_rcsdroad_fallback_and_swsd`。`no_surface_reference` 只允许作为防御性异常兜底，并必须说明 SWSD section reference 未能物化的原因。
 - Reference Point 必须能追溯到导流带真实决定分歧 / 合流的位置，或道路面形态真实切换的位置。
 - RCSD/SWSD 作为 `section_reference_source` 时必须显式标记，不得混写到 `reference_point_source`。
 - `rcsd_match_type = rcsd_junction` 只允许用于与当前 SWSD 路口语义一致的 RCSD 路口：进入道路、退出道路和角度趋势必须与当前事件对齐；仅有 RCSDRoad 趋势支持、缺进入 / 退出道路或弱聚合结果时不得标为 RCSD 语义路口。
+- 一个 SWSD event unit、复杂路口内的单个 unit、或简单二分歧 / 合流，最多只能发布一个 RCSD 语义路口组。若 pair-local / full-input 局部窗口召回多个 RCSD 语义组，Step4 必须先以当前 SWSD section、Reference Point、进出方向角色完整性、距离和角度趋势做唯一消歧；非选中 RCSD 语义组只能进入上下文或 trace 审计，不得进入 `selected_rcsdroad_ids / selected_rcsdnode_ids / required_rcsd_node`。
+- `aggregated_rcsd_unit` 不得跨 RCSD 语义组聚合；共享 connector road 只能作为候选判定上下文，不能把两个 RCSD 语义路口合并为一个 `rcsd_junction`。`RCSDNode.mainnodeid` 的非 `0` / 非空值为 RCSD 语义分组边界，`0` / 空值时以自身 `id` 作为独立组。
 - `role_mapping_partial_aggregated` 这类弱聚合不得单独触发 `rcsd_junction_window`；它只能作为 RCSDRoad fallback、趋势参考或审计辅助，具体 case 不得因此构造虚拟 Reference Point。
+- 无 `required_rcsd_node` 的 road-only partial 聚合只能作为 trace-only 审计线索；不得发布为 `positive_rcsd_present`，也不得进入 `selected_rcsdroad_ids` / `selected_rcsdnode_ids`。`axis_polarity_inverted` 只是该规则的一类触发原因。
 - Step5 必须能稳定产出 Unit / Case 两级的 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints`，并对 `1m` hard negative mask、`fallback_support_strip`、`bridge zone` 与 `junction_full_road_fill_domain` 给出可追溯解释。
 - Step5 默认以前后 `20m` 横向截面确定构面窗口，横向截面垂直于道路面方向或语义主轴。
 - 路口面两侧横向扩展不得超过 `20m`，并且不得越过负向掩膜；负向掩膜包括导流带、hard negative mask、forbidden domain、terminal cut 与不可通行区域。
 - RCSDRoad fallback 不得导致沿整条 RCSDRoad 远距离扩面，只能覆盖与当前事实分歧 / 合流或当前 section reference 相关的局部段。
 - 对同时具备主证据 Reference Point 与 required RCSDNode 的路口面，Step5 必须在 DriveZone 内按语义主轴构造整幅路面填充域：Reference Point 与 RCSDNode 两端各保留 `20m` terminal window，主轴横向单侧不超过 `20m`，并继续受 forbidden masks / terminal cuts 硬裁剪；无主证据时只能使用 section reference，不得把 RCSDNode 推导为 Reference Point。
+- `main_evidence_with_rcsd_junction` 的 Step5 full-fill 判定必须以 surface scenario 与 `section_reference_source = reference_point_and_rcsd_junction` 为准，不得因为 Step4 evidence source 是恢复 / 提升后的导流带、道路面分叉或 reverse 结果而降级为无 RCSD 语义路口；但 `continuous_chain_review` 保持旧的 `standard` 填充，除非后续人工审计明确要求 full-fill。
+- 弱 road-surface-fork RCSD 绑定只有在 required RCSD node 与代表节点 / 当前 SWSD section 局部对齐时才能升级为 `rcsd_junction`；远距离 required RCSD node 只能作为 trace-only 审计线索，不得激活 current RCSDRoad 渲染或 RCSD-driven publication。
+- 多 Unit full-fill 复杂路口允许 Step6 做受限窄缝 relief，但必须先通过 must-cover 预检查，并继续满足 allowed-growth、forbidden、terminal-cut 与 topology guard；`823826` 这类视觉细缝不得通过伪 accepted 掩盖。
 - Step6 必须能在不突破 Step5 约束的前提下生成单一连通面；只允许业务 hole，不允许算法洞。
 - complex / multi 场景下，unit surface 合并后仍须保持 case 级单一连通，除非存在明确业务 hole。
 - 对先合流再分歧的 complex / multi 场景，若相邻 unit 的最近横截线之间无 forbidden / negative mask 空间冲突，应允许以该横截线间区域生成可审计的 inter-unit section bridge surface；该桥接面必须保持在 allowed growth 内，并通过 post-cleanup allowed / forbidden / terminal cut / hole 复核。
@@ -252,6 +259,17 @@ Step7 legacy selected-case 发布冻结门槛：
 - `706347` 当前锁定为 `swsd_junction_window`：无主证据、无 RCSD 语义路口、有 SWSD 语义路口；即使存在 RCSD 数据或弱 RCSD 聚合，也不得把缺进入 / 退出语义一致性的 RCSD 结构登记为多分支 RCSD 路口。
 - `760984 / 788824` 当前锁定为 `rcsd_junction_window`：无主证据、但可召回正向 RCSD 时，以 RCSDNode 作为 section reference，前后 `20m` 构面；不得构造 Reference Point。
 - `760598 / 760936 / 857993` 当前保持 `rejected`；后续不得为了提高 accepted count 静默放宽 Step7 门禁。
+- Anchor_2 新增 6-case 修复目标：
+  - `785629`：按最新人工目视审计归类为“导流带主证据 + 无 RCSD 语义路口”；应保留导流带 Reference Point，不能降级为无主证据 SWSD-only / RCSDRoad fallback。
+  - `785731 / 795682`：按人工目视审计归类为“无主证据、无 RCSD 语义路口”；不得构造 Reference Point，不得伪造 RCSD 语义路口，应使用 SWSD section reference 构面，若存在局部 RCSDRoad fallback 只能作为局部支撑。
+  - `807908`：按最新人工目视审计归类为“导流带主证据 + 有 RCSD 语义路口”；应保留导流带 Reference Point 与 RCSD section reference，并且 RCSD 召回只能覆盖该语义路口链路，不得把同一局部 RCSD 图中的其他路口分支一起发布。
+  - `785631 / 823826`：按人工目视审计归类为“导流带主证据 + RCSD 语义路口”；应保留导流带 Reference Point 与 RCSD section reference，并在 Step6 中生成单一连通面。`823826` 应参考 `824002` 的平滑填充效果，细缝 / 小内洞必须被填平或被明确证明为真实业务 hole。
+- Anchor_2 2026-05-02 追加目视审计问题集：
+  - `698380`：最终路口面可接受，但 final review 必须正确渲染 active RCSDRoad / RCSDNode，不能表现为无 RCSD 语义路口。
+  - `698389 / 760277 / 807908`：有主证据且有 RCSD 语义路口，必须执行 `Reference Point + RCSD semantic junction` 构面；`807908` 还必须避免召回其他 RCSD 语义路口分支和 SWSD roads 侵入。
+  - `765050`：复杂路口内所有 Unit 均无主证据、无 RCSD 语义路口时，必须以 SWSD section window 构面并渲染 SWSD current roads；不得落入 `no_surface_reference`。
+  - `768675`：无主证据但有 RCSD 语义路口时，只允许当前 RCSD 语义链路参与构面，不得把非该语义路口的 RCSDRoad 并入。
+  - `765170 / 768680 / 823826`：主体正确时仍需检查异常小凹陷、细缝和小洞；若 relief 会破坏 must-cover 或 guard，则不得应用。
 
 ### Anchor_2 30-case surface scenario baseline gate（2026-05-01）
 

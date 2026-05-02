@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from shapely.geometry import Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.support_domain import (
     _build_fallback_support_strip,
@@ -207,6 +207,118 @@ def test_step5_fallback_strip_is_localized_around_swsd_section_reference() -> No
     assert strip.bounds[2] == pytest.approx(30.0, abs=1e-6)
     assert strip.bounds[3] - strip.bounds[1] == pytest.approx(6.0, abs=1e-6)
     assert not strip.covers(Point(-90.0, 0.0))
+
+
+def test_step5_main_evidence_with_rcsd_uses_scenario_not_evidence_source_for_full_fill() -> None:
+    legacy_bridge = SimpleNamespace(
+        event_axis_unit_vector=(1.0, 0.0),
+        event_axis_centerline=LineString([(0.0, 0.0), (40.0, 0.0)]),
+        event_origin_point=Point(0.0, 0.0),
+        selected_event_roads=(),
+        selected_roads=(),
+        selected_road_ids=(),
+        selected_event_road_ids=(),
+    )
+    unit_result = SimpleNamespace(
+        spec=SimpleNamespace(event_unit_id="event_unit_01", event_type="diverge"),
+        interpretation=SimpleNamespace(
+            legacy_step5_bridge=legacy_bridge,
+            legacy_step5_readiness=SimpleNamespace(ready=True, reasons=()),
+            kind_resolution=SimpleNamespace(operational_kind_2=8),
+        ),
+        review_state="STEP4_REVIEW",
+        all_review_reasons=lambda: (),
+        positive_rcsd_consistency_level="A",
+        positive_rcsd_support_level="primary_support",
+        required_rcsd_node="rcsd-node-1",
+        required_rcsd_node_geometry=Point(20.0, 0.0),
+        selected_rcsdroad_ids=("rcsd-road-1",),
+        selected_rcsdnode_ids=("rcsd-node-1",),
+        fact_reference_point=Point(0.0, 0.0),
+        review_materialized_point=Point(0.0, 0.0),
+        localized_evidence_core_geometry=Point(0.0, 0.0).buffer(2.0),
+        selected_candidate_region_geometry=Point(0.0, 0.0).buffer(3.0),
+        selected_component_union_geometry=Point(0.0, 0.0).buffer(3.0),
+        pair_local_structure_face_geometry=None,
+        evidence_source="reverse_tip_retry",
+        surface_scenario_doc=lambda: _scenario_doc(
+            scenario_type=SCENARIO_MAIN_WITH_RCSD,
+            section_reference_source=SECTION_REFERENCE_POINT_AND_RCSD,
+            surface_generation_mode=SURFACE_MODE_MAIN_EVIDENCE,
+            reference_point_present=True,
+            has_main_evidence=True,
+        ),
+    )
+    drivezone = Polygon([(-20, -20), (60, -20), (60, 20), (-20, 20), (-20, -20)])
+
+    step5_unit = _build_step5_unit_result(
+        unit_result,
+        drivezone_union=drivezone,
+        case_external_forbidden_geometry=None,
+        other_unit_core_occupancy_geometry=None,
+        divstrip_negative_mask_present=False,
+    )
+
+    assert step5_unit.surface_fill_mode == "junction_full_road_fill"
+    assert step5_unit.junction_full_road_fill_domain is not None
+    assert step5_unit.must_cover_components["junction_full_road_fill_domain"] is True
+    assert step5_unit.positive_rcsd_road_ids == ("rcsd-road-1",)
+
+
+def test_step5_main_evidence_with_rcsd_keeps_standard_fill_for_continuous_chain() -> None:
+    legacy_bridge = SimpleNamespace(
+        event_axis_unit_vector=(1.0, 0.0),
+        event_axis_centerline=LineString([(0.0, 0.0), (40.0, 0.0)]),
+        event_origin_point=Point(0.0, 0.0),
+        selected_event_roads=(),
+        selected_roads=(),
+        selected_road_ids=(),
+        selected_event_road_ids=(),
+    )
+    unit_result = SimpleNamespace(
+        spec=SimpleNamespace(event_unit_id="event_unit_01", event_type="diverge"),
+        interpretation=SimpleNamespace(
+            legacy_step5_bridge=legacy_bridge,
+            legacy_step5_readiness=SimpleNamespace(ready=True, reasons=()),
+            kind_resolution=SimpleNamespace(operational_kind_2=8),
+        ),
+        review_state="STEP4_REVIEW",
+        all_review_reasons=lambda: ("continuous_chain_review",),
+        positive_rcsd_consistency_level="A",
+        positive_rcsd_support_level="primary_support",
+        required_rcsd_node="rcsd-node-1",
+        required_rcsd_node_geometry=Point(20.0, 0.0),
+        selected_rcsdroad_ids=("rcsd-road-1",),
+        selected_rcsdnode_ids=("rcsd-node-1",),
+        fact_reference_point=Point(0.0, 0.0),
+        review_materialized_point=Point(0.0, 0.0),
+        localized_evidence_core_geometry=Point(0.0, 0.0).buffer(2.0),
+        selected_candidate_region_geometry=Point(0.0, 0.0).buffer(3.0),
+        selected_component_union_geometry=Point(0.0, 0.0).buffer(3.0),
+        pair_local_structure_face_geometry=None,
+        evidence_source="reverse_tip_retry",
+        surface_scenario_doc=lambda: _scenario_doc(
+            scenario_type=SCENARIO_MAIN_WITH_RCSD,
+            section_reference_source=SECTION_REFERENCE_POINT_AND_RCSD,
+            surface_generation_mode=SURFACE_MODE_MAIN_EVIDENCE,
+            reference_point_present=True,
+            has_main_evidence=True,
+        ),
+    )
+    drivezone = Polygon([(-20, -20), (60, -20), (60, 20), (-20, 20), (-20, -20)])
+
+    step5_unit = _build_step5_unit_result(
+        unit_result,
+        drivezone_union=drivezone,
+        case_external_forbidden_geometry=None,
+        other_unit_core_occupancy_geometry=None,
+        divstrip_negative_mask_present=False,
+    )
+
+    assert step5_unit.surface_fill_mode == "standard"
+    assert step5_unit.junction_full_road_fill_domain is None
+    assert step5_unit.must_cover_components["junction_full_road_fill_domain"] is False
+    assert step5_unit.positive_rcsd_road_ids == ("rcsd-road-1",)
 
 
 def test_step5_no_surface_reference_builds_no_entity_domain_and_keeps_audit() -> None:

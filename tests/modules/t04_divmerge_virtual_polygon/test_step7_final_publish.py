@@ -600,7 +600,7 @@ def test_anchor2_added_cases_recover_698389_road_surface_without_wrong_rcsd(tmp_
     assert reverse_699870["post_reverse_conflict_recheck"] == "passed"
     assert reverse_699870["post_state"] == "found"
     assert reverse_699870["reference_point_mode"] == "selected_divstrip_branch_tip"
-    assert reverse_699870["reference_point_axis_s"] == pytest.approx(0.0, abs=1e-3)
+    assert reverse_699870["reference_point_axis_s"] == pytest.approx(33.72, abs=1e-3)
 
     step5_699870 = json.loads(
         (run_root / "cases" / "699870" / "step5_status.json").read_text(encoding="utf-8")
@@ -867,7 +867,7 @@ def test_anchor2_724067_road_surface_fork_primary_evidence_keeps_known_rejects(t
         (run_root / "cases" / "857993" / "step7_status.json").read_text(encoding="utf-8")
     )
     assert status_760598["final_state"] == "rejected"
-    assert "assembly_failed" in set(status_760598["reject_reasons"])
+    assert "no_surface_reference" in set(status_760598["reject_reasons"])
     assert status_760936["final_state"] == "rejected"
     assert "multi_component_result" in set(status_760936["reject_reasons"])
     assert status_857993["final_state"] == "rejected"

@@ -462,8 +462,10 @@ def _promote_selected_surface_rcsd_junction_window(
     aggregate = _junction_window_aggregate(audit)
     if aggregate is None:
         return None, None
-    if _has_partial_rcsd_signal(event_unit) and str(aggregate.get("consistency_level") or "").strip().upper() == "B":
-        return None, None
+    partial_b_rcsd_signal = bool(
+        _has_partial_rcsd_signal(event_unit)
+        and str(aggregate.get("consistency_level") or "").strip().upper() == "B"
+    )
     semantic_anchor_distance = _semantic_anchor_distance_m(aggregate)
     if (
         semantic_anchor_distance is not None
@@ -512,6 +514,8 @@ def _promote_selected_surface_rcsd_junction_window(
             or entry.selected_component_union_geometry is not None
         )
     )
+    if partial_b_rcsd_signal and preserve_surface_main_evidence:
+        return None, None
     road_ids = _aggregate_ids(aggregate, "road_ids")
     node_ids = _aggregate_ids(aggregate, "node_ids")
     local_support = _local_rcsd_unit_support(

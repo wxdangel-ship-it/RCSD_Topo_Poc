@@ -22,6 +22,8 @@ RCSD_FIRST_HIT_SIGN_TOLERANCE_M = 0.75
 RCSD_FIRST_HIT_MAX_DISTANCE_M = 24.0
 RCSD_TRACE_MAX_DEPTH = 4
 RCSD_SEMANTIC_GROUP_LOCAL_MAX_DISTANCE_M = 40.0
+RCSD_SEMANTIC_JUNCTION_MIN_ROAD_COUNT = 3
+RCSD_DERIVED_NODE_SEMANTIC_GROUP_PREFIX = "node:"
 
 
 def _normalize_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
@@ -66,23 +68,67 @@ def _safe_id(value: Any) -> str | None:
     return text or None
 
 
-def _rcsd_semantic_group_id(node_id: Any, mainnodeid: Any) -> str | None:
-    node_text = _safe_id(node_id)
-    main_text = _safe_id(mainnodeid)
-    if main_text and main_text != "0":
-        return main_text
-    return node_text
+def _derived_node_semantic_group_id(node_id: str) -> str:
+    return f"{RCSD_DERIVED_NODE_SEMANTIC_GROUP_PREFIX}{node_id}"
 
 
-def _node_semantic_group_map(nodes: Iterable[ParsedNode]) -> dict[str, str]:
-    result: dict[str, str] = {}
+def _is_derived_node_semantic_group(group_id: Any) -> bool:
+    return str(group_id or "").startswith(RCSD_DERIVED_NODE_SEMANTIC_GROUP_PREFIX)
+
+
+def _public_semantic_group_id(group_id: Any) -> str:
+    text = str(group_id or "").strip()
+    if _is_derived_node_semantic_group(text):
+        return text[len(RCSD_DERIVED_NODE_SEMANTIC_GROUP_PREFIX):]
+    return text
+
+
+def _public_semantic_group_ids(group_ids: Iterable[Any]) -> list[str]:
+    return [
+        public_id
+        for public_id in (_public_semantic_group_id(group_id) for group_id in group_ids)
+        if public_id
+    ]
+
+
+def _node_semantic_group_map(
+    nodes: Iterable[ParsedNode],
+    *,
+    roads_by_node_id: dict[str, set[str]],
+) -> dict[str, str]:
+    node_by_id: dict[str, ParsedNode] = {}
+    explicit_group_nodes: dict[str, set[str]] = defaultdict(set)
     for node in nodes:
         node_id = _safe_id(getattr(node, "node_id", None))
         if node_id is None:
             continue
-        group_id = _rcsd_semantic_group_id(node_id, getattr(node, "mainnodeid", None))
-        if group_id is not None:
+        node_by_id[node_id] = node
+        main_text = _safe_id(getattr(node, "mainnodeid", None))
+        if main_text and main_text != "0":
+            explicit_group_nodes[main_text].add(node_id)
+
+    result: dict[str, str] = {}
+    for group_id, node_ids in explicit_group_nodes.items():
+        incident_road_ids = {
+            road_id
+            for node_id in node_ids
+            for road_id in roads_by_node_id.get(node_id, set())
+            if str(road_id)
+        }
+        if len(incident_road_ids) < RCSD_SEMANTIC_JUNCTION_MIN_ROAD_COUNT:
+            continue
+        for node_id in node_ids:
             result[node_id] = group_id
+
+    for node_id, node in node_by_id.items():
+        if node_id in result:
+            continue
+        main_text = _safe_id(getattr(node, "mainnodeid", None))
+        if main_text and main_text != "0":
+            continue
+        incident_road_ids = {road_id for road_id in roads_by_node_id.get(node_id, set()) if str(road_id)}
+        if len(incident_road_ids) >= RCSD_SEMANTIC_JUNCTION_MIN_ROAD_COUNT:
+            result[node_id] = _derived_node_semantic_group_id(node_id)
     return result
 
 
@@ -484,8 +530,12 @@ class _LocalRcsdUnit:
             "unit_id": self.unit_id,
             "unit_kind": self.unit_kind,
             "node_id": self.node_id,
-            "semantic_group_id": self.semantic_group_id,
-            "semantic_group_ids": list(self.semantic_group_ids),
+            "semantic_group_id": (
+                _public_semantic_group_id(self.semantic_group_id)
+                if self.semantic_group_id is not None
+                else None
+            ),
+            "semantic_group_ids": _public_semantic_group_ids(self.semantic_group_ids),
             "road_ids": list(self.road_ids),
             "node_ids": list(self.node_ids),
             "entering_road_ids": list(self.entering_road_ids),
@@ -542,7 +592,7 @@ class _AggregatedRcsdUnit:
             "unit_id": self.unit_id,
             "member_unit_ids": list(self.member_unit_ids),
             "member_unit_kinds": list(self.member_unit_kinds),
-            "semantic_group_ids": list(self.semantic_group_ids),
+            "semantic_group_ids": _public_semantic_group_ids(self.semantic_group_ids),
             "semantic_anchor_distance_m": self.semantic_anchor_distance_m,
             "road_ids": list(self.road_ids),
             "node_ids": list(self.node_ids),
@@ -639,14 +689,15 @@ def _unit_primary_semantic_group_id(unit: _LocalRcsdUnit) -> str | None:
 
 
 def _units_can_aggregate_semantically(left_unit: _LocalRcsdUnit, right_unit: _LocalRcsdUnit) -> bool:
-    left_group = _unit_primary_semantic_group_id(left_unit)
-    right_group = _unit_primary_semantic_group_id(right_unit)
-    if left_group and right_group:
-        return left_group == right_group
-    if left_group and len(right_unit.semantic_group_ids) > 1:
-        return False
-    if right_group and len(left_unit.semantic_group_ids) > 1:
-        return False
+    left_groups = {group_id for group_id in left_unit.semantic_group_ids if str(group_id)}
+    right_groups = {group_id for group_id in right_unit.semantic_group_ids if str(group_id)}
+    if left_groups and right_groups:
+        if left_groups == right_groups:
+            return True
+        return all(
+            _is_derived_node_semantic_group(group_id)
+            for group_id in left_groups | right_groups
+        )
     return True
 
 

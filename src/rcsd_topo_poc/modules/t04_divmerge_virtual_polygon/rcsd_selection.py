@@ -212,7 +212,6 @@ def resolve_positive_rcsd_selection(
         if (node_id := _safe_id(getattr(node, "node_id", None))) is not None
     }
     raw_nodes_by_id = _node_lookup(raw_node_features, roads=raw_roads_by_id.values())
-    node_semantic_group_by_id = _node_semantic_group_map(raw_node_features)
     raw_rcsd_road_ids = tuple(sorted(raw_roads_by_id))
     raw_rcsd_node_ids = tuple(sorted(actual_rcsd_node_ids))
     pair_local_rcsd_empty = not raw_rcsd_road_ids and not raw_rcsd_node_ids
@@ -310,6 +309,10 @@ def resolve_positive_rcsd_selection(
     }
     candidate_scope_road_ids.update(first_hit_road_ids)
     roads_by_node_id = _roads_by_node(raw_roads)
+    node_semantic_group_by_id = _node_semantic_group_map(
+        raw_node_features,
+        roads_by_node_id=roads_by_node_id,
+    )
     candidate_node_ids = _node_ids_for_roads(candidate_scope_road_ids or first_hit_road_ids, roads_by_id) & set(actual_rcsd_node_ids)
     if candidate_scope_geometry is not None:
         for node_id, geometry in node_points_by_id.items():

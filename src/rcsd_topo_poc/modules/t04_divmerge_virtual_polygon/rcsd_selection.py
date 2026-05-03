@@ -28,6 +28,11 @@ from ._rcsd_selection_support import (
     _union_geometry,
     _unit_from_roads_and_node,
 )
+from .rcsd_alignment import (
+    RCSD_ALIGNMENT_AMBIGUOUS,
+    RCSD_ALIGNMENT_NONE,
+    rcsd_alignment_type_from_selection,
+)
 
 
 def _published_rcsd_subset(
@@ -156,6 +161,37 @@ def _published_rcsd_subset(
     )
 
 
+def _ambiguous_top_aggregated_rcsd_units(
+    aggregated_units: Sequence[_AggregatedRcsdUnit],
+) -> tuple[_AggregatedRcsdUnit, ...]:
+    positive_units = [
+        unit
+        for unit in aggregated_units
+        if unit.positive_rcsd_present and unit.consistency_level in {"A", "B"}
+    ]
+    if len(positive_units) < 2:
+        return ()
+    top_score = positive_units[0].score
+    top_units = tuple(unit for unit in positive_units if unit.score == top_score)
+    if len(top_units) < 2:
+        return ()
+
+    def identity(unit: _AggregatedRcsdUnit) -> tuple[str, ...]:
+        semantic_groups = tuple(str(value) for value in unit.semantic_group_ids if str(value))
+        if semantic_groups:
+            return ("semantic_group", *semantic_groups)
+        if unit.required_node_id:
+            return ("required_node", str(unit.required_node_id))
+        node_ids = tuple(str(value) for value in unit.node_ids if str(value))
+        if node_ids:
+            return ("nodes", *node_ids)
+        return ("roads", *tuple(str(value) for value in unit.road_ids if str(value)))
+
+    if len({identity(unit) for unit in top_units}) < 2:
+        return ()
+    return top_units
+
+
 def resolve_positive_rcsd_selection(
     *,
     event_unit_id: str,
@@ -253,7 +289,9 @@ def resolve_positive_rcsd_selection(
             pair_local_rcsd_scope_geometry=candidate_scope_geometry,
             first_hit_rcsd_road_geometry=None,
             local_rcsd_unit_geometry=None,
+            rcsd_alignment_type=RCSD_ALIGNMENT_NONE,
             positive_rcsd_audit={
+                "rcsd_alignment_type": RCSD_ALIGNMENT_NONE,
                 "pair_local_rcsd_empty": True,
                 "operational_event_type": event_type,
                 "raw_observation_rcsdroad_ids": list(raw_rcsd_road_ids),
@@ -324,6 +362,12 @@ def resolve_positive_rcsd_selection(
     pair_local_rcsd_node_ids = tuple(sorted(candidate_node_ids))
     pair_local_rcsd_empty = not pair_local_rcsd_road_ids and not pair_local_rcsd_node_ids
     if pair_local_rcsd_empty:
+        alignment_type = rcsd_alignment_type_from_selection(
+            positive_rcsd_present=False,
+            fallback_rcsdroad_ids=first_hit_road_ids,
+            rcsd_decision_reason="candidate_scope_empty",
+            rcsd_selection_mode="pair_local_empty",
+        )
         return PositiveRcsdSelectionDecision(
             selected_rcsdroad_ids=(),
             selected_rcsdnode_ids=(),
@@ -354,7 +398,9 @@ def resolve_positive_rcsd_selection(
             pair_local_rcsd_scope_geometry=candidate_scope_geometry,
             first_hit_rcsd_road_geometry=first_hit_geometry,
             local_rcsd_unit_geometry=None,
+            rcsd_alignment_type=alignment_type,
             positive_rcsd_audit={
+                "rcsd_alignment_type": alignment_type,
                 "pair_local_rcsd_empty": True,
                 "operational_event_type": event_type,
                 "raw_observation_rcsdroad_ids": list(raw_rcsd_road_ids),
@@ -427,6 +473,12 @@ def resolve_positive_rcsd_selection(
         )
 
     if not local_units:
+        alignment_type = rcsd_alignment_type_from_selection(
+            positive_rcsd_present=False,
+            fallback_rcsdroad_ids=first_hit_road_ids,
+            rcsd_decision_reason="local_rcsd_unit_not_constructed",
+            rcsd_selection_mode="no_local_unit",
+        )
         return PositiveRcsdSelectionDecision(
             selected_rcsdroad_ids=(),
             selected_rcsdnode_ids=(),
@@ -457,7 +509,9 @@ def resolve_positive_rcsd_selection(
             pair_local_rcsd_scope_geometry=candidate_scope_geometry,
             first_hit_rcsd_road_geometry=first_hit_geometry,
             local_rcsd_unit_geometry=None,
+            rcsd_alignment_type=alignment_type,
             positive_rcsd_audit={
+                "rcsd_alignment_type": alignment_type,
                 "pair_local_rcsd_empty": False,
                 "operational_event_type": event_type,
                 "raw_observation_rcsdroad_ids": list(raw_rcsd_road_ids),
@@ -492,6 +546,12 @@ def resolve_positive_rcsd_selection(
         node_semantic_group_by_id=node_semantic_group_by_id,
     )
     if not aggregated_units:
+        alignment_type = rcsd_alignment_type_from_selection(
+            positive_rcsd_present=False,
+            fallback_rcsdroad_ids=first_hit_road_ids,
+            rcsd_decision_reason="positive_rcsd_absent_after_local_units",
+            rcsd_selection_mode="no_positive_present",
+        )
         return PositiveRcsdSelectionDecision(
             selected_rcsdroad_ids=(),
             selected_rcsdnode_ids=(),
@@ -522,7 +582,9 @@ def resolve_positive_rcsd_selection(
             pair_local_rcsd_scope_geometry=candidate_scope_geometry,
             first_hit_rcsd_road_geometry=first_hit_geometry,
             local_rcsd_unit_geometry=None,
+            rcsd_alignment_type=alignment_type,
             positive_rcsd_audit={
+                "rcsd_alignment_type": alignment_type,
                 "pair_local_rcsd_empty": False,
                 "operational_event_type": event_type,
                 "raw_observation_rcsdroad_ids": list(raw_rcsd_road_ids),
@@ -540,6 +602,65 @@ def resolve_positive_rcsd_selection(
                 "required_rcsd_node_source": None,
                 "rcsd_role_map": expected_role_map,
                 "rcsd_decision_reason": "positive_rcsd_absent_after_local_units",
+            },
+        )
+
+    ambiguous_units = _ambiguous_top_aggregated_rcsd_units(aggregated_units)
+    if ambiguous_units:
+        ambiguous_unit_ids = tuple(unit.unit_id for unit in ambiguous_units)
+        return PositiveRcsdSelectionDecision(
+            selected_rcsdroad_ids=(),
+            selected_rcsdnode_ids=(),
+            primary_main_rc_node_id=None,
+            positive_rcsd_present=False,
+            positive_rcsd_present_reason=RCSD_ALIGNMENT_AMBIGUOUS,
+            positive_rcsd_support_level="no_support",
+            positive_rcsd_consistency_level="C",
+            rcsd_consistency_result=RCSD_ALIGNMENT_AMBIGUOUS,
+            required_rcsd_node=None,
+            required_rcsd_node_source=None,
+            pair_local_rcsd_empty=False,
+            pair_local_rcsd_road_ids=pair_local_rcsd_road_ids,
+            pair_local_rcsd_node_ids=pair_local_rcsd_node_ids,
+            first_hit_rcsdroad_ids=tuple(first_hit_road_ids),
+            local_rcsd_unit_id=None,
+            local_rcsd_unit_kind=None,
+            aggregated_rcsd_unit_id=None,
+            aggregated_rcsd_unit_ids=ambiguous_unit_ids,
+            axis_polarity_inverted=False,
+            rcsd_selection_mode=RCSD_ALIGNMENT_AMBIGUOUS,
+            rcsd_decision_reason=RCSD_ALIGNMENT_AMBIGUOUS,
+            positive_rcsd_geometry=None,
+            positive_rcsd_road_geometry=None,
+            positive_rcsd_node_geometry=None,
+            primary_main_rc_node_geometry=None,
+            required_rcsd_node_geometry=None,
+            pair_local_rcsd_scope_geometry=candidate_scope_geometry,
+            first_hit_rcsd_road_geometry=first_hit_geometry,
+            local_rcsd_unit_geometry=None,
+            rcsd_alignment_type=RCSD_ALIGNMENT_AMBIGUOUS,
+            positive_rcsd_audit={
+                "rcsd_alignment_type": RCSD_ALIGNMENT_AMBIGUOUS,
+                "pair_local_rcsd_empty": False,
+                "operational_event_type": event_type,
+                "raw_observation_rcsdroad_ids": list(raw_rcsd_road_ids),
+                "raw_observation_rcsdnode_ids": list(raw_rcsd_node_ids),
+                "pair_local_rcsd_road_ids": list(pair_local_rcsd_road_ids),
+                "pair_local_rcsd_node_ids": list(pair_local_rcsd_node_ids),
+                "candidate_scope_rcsdroad_ids": list(pair_local_rcsd_road_ids),
+                "candidate_scope_rcsdnode_ids": list(pair_local_rcsd_node_ids),
+                "first_hit_rcsdroad_ids": list(first_hit_road_ids),
+                "ambiguous_aggregated_rcsd_unit_ids": list(ambiguous_unit_ids),
+                "ambiguous_aggregated_rcsd_units": [unit.to_doc() for unit in ambiguous_units],
+                "local_rcsd_units": [unit.to_doc() for unit in local_units],
+                "aggregated_rcsd_units": [unit.to_doc() for unit in aggregated_units],
+                "positive_rcsd_present": False,
+                "positive_rcsd_present_reason": RCSD_ALIGNMENT_AMBIGUOUS,
+                "axis_polarity_inverted": False,
+                "required_rcsd_node_source": None,
+                "rcsd_role_map": expected_role_map,
+                "rcsd_decision_reason": RCSD_ALIGNMENT_AMBIGUOUS,
+                "rcsd_selection_mode": RCSD_ALIGNMENT_AMBIGUOUS,
             },
         )
 
@@ -628,6 +749,20 @@ def resolve_positive_rcsd_selection(
         selection_mode = f"aggregated_{selected_local_unit.unit_kind}"
     if first_hit_road_ids:
         selection_mode = f"{selection_mode}_from_first_hit"
+    alignment_type = rcsd_alignment_type_from_selection(
+        positive_rcsd_present=published_positive_rcsd,
+        required_rcsd_node=required_rcsd_node,
+        selected_rcsdroad_ids=selected_rcsd_roads,
+        local_rcsd_unit_kind=selected_local_unit.unit_kind,
+        positive_rcsd_support_level=(
+            "no_support" if trace_only_road_observation else selected_aggregated.support_level
+        ),
+        positive_rcsd_consistency_level=(
+            "C" if trace_only_road_observation else selected_aggregated.consistency_level
+        ),
+        rcsd_decision_reason=selected_aggregated.decision_reason,
+        rcsd_selection_mode=selection_mode,
+    )
     return PositiveRcsdSelectionDecision(
         selected_rcsdroad_ids=selected_rcsd_roads,
         selected_rcsdnode_ids=selected_rcsd_nodes,
@@ -662,7 +797,9 @@ def resolve_positive_rcsd_selection(
         pair_local_rcsd_scope_geometry=candidate_scope_geometry,
         first_hit_rcsd_road_geometry=first_hit_geometry,
         local_rcsd_unit_geometry=selected_local_unit.geometry,
+        rcsd_alignment_type=alignment_type,
         positive_rcsd_audit={
+            "rcsd_alignment_type": alignment_type,
             "pair_local_rcsd_empty": False,
             "operational_event_type": event_type,
             "raw_observation_rcsdroad_ids": list(raw_rcsd_road_ids),

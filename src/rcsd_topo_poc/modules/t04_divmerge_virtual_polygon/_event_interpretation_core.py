@@ -69,6 +69,7 @@ from .event_interpretation_shared import (
     _stable_axis_signature,
     _stable_boundary_pair_signature,
 )
+from .rcsd_alignment import RCSD_ALIGNMENT_NONE
 
 from ._event_interpretation_unit_preparation import (
     DIVSTRIP_EVIDENCE_TIP_RADIUS_M,
@@ -1014,6 +1015,7 @@ def _build_result_from_interpretation(
         positive_rcsd_consistency_level=positive_rcsd_consistency_level,
         required_rcsd_node=required_rcsd_node,
         required_rcsd_node_source=positive_rcsd_decision.required_rcsd_node_source,
+        rcsd_alignment_type=positive_rcsd_decision.rcsd_alignment_type,
         event_axis_branch_id=bridge.event_axis_branch_id,
         event_chosen_s_m=event_chosen_s_m,
         pair_local_summary=dict(prepared.pair_local_summary),
@@ -1050,6 +1052,7 @@ def _build_result_from_interpretation(
                 "required_rcsd_node": None,
                 "required_rcsd_node_source": None,
                 "rcsd_selection_mode": "road_surface_fork_without_bound_target_rcsd",
+                "rcsd_alignment_type": RCSD_ALIGNMENT_NONE,
                 "rcsd_decision_reason": "road_surface_fork_without_bound_target_rcsd",
                 "review_reasons": review_reasons,
             }
@@ -1057,6 +1060,7 @@ def _build_result_from_interpretation(
         rcsd_audit = dict(result.positive_rcsd_audit)
         rcsd_audit["road_surface_fork_without_bound_target_rcsd"] = True
         rcsd_audit["rcsd_decision_reason"] = "road_surface_fork_without_bound_target_rcsd"
+        rcsd_audit["rcsd_alignment_type"] = RCSD_ALIGNMENT_NONE
         result = replace(
             result,
             review_reasons=tuple(review_reasons),
@@ -1085,6 +1089,7 @@ def _build_result_from_interpretation(
             positive_rcsd_consistency_level="C",
             required_rcsd_node=None,
             required_rcsd_node_source=None,
+            rcsd_alignment_type=RCSD_ALIGNMENT_NONE,
             selected_candidate_summary=summary,
             selected_evidence_summary=dict(summary),
             positive_rcsd_audit=rcsd_audit,

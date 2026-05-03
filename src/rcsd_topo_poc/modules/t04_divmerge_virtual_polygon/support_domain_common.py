@@ -19,12 +19,13 @@ from .support_domain_scenario import (
     derive_step5_surface_window_config,
 )
 from .surface_scenario import (
+    SCENARIO_NO_SURFACE_REFERENCE,
     SECTION_REFERENCE_NONE,
     SECTION_REFERENCE_POINT,
     SECTION_REFERENCE_POINT_AND_RCSD,
     SECTION_REFERENCE_RCSD,
     SECTION_REFERENCE_SWSD,
-    classify_surface_scenario,
+    SURFACE_MODE_NO_SURFACE,
 )
 
 
@@ -89,17 +90,17 @@ def _surface_scenario_doc_for_unit(unit_result: T04EventUnitResult) -> tuple[dic
     surface_scenario_doc = getattr(unit_result, "surface_scenario_doc", None)
     if callable(surface_scenario_doc):
         return (dict(surface_scenario_doc()), False)
-    scenario = classify_surface_scenario(
-        evidence_source=getattr(unit_result, "evidence_source", ""),
-        selected_evidence_summary=getattr(unit_result, "selected_evidence_summary", None),
-        rcsd_selection_mode=getattr(unit_result, "rcsd_selection_mode", ""),
-        required_rcsd_node=getattr(unit_result, "required_rcsd_node", None),
-        first_hit_rcsdroad_ids=getattr(unit_result, "first_hit_rcsdroad_ids", None),
-        selected_rcsdroad_ids=getattr(unit_result, "selected_rcsdroad_ids", None),
-        positive_rcsd_audit=getattr(unit_result, "positive_rcsd_audit", None),
-        fact_reference_point_present=getattr(unit_result, "fact_reference_point", None) is not None,
-    )
-    return (scenario.to_doc(), True)
+    return ({
+        "surface_scenario_type": SCENARIO_NO_SURFACE_REFERENCE,
+        "section_reference_source": SECTION_REFERENCE_NONE,
+        "surface_generation_mode": SURFACE_MODE_NO_SURFACE,
+        "reference_point_present": False,
+        "has_main_evidence": False,
+        "rcsd_alignment_type": "",
+        "rcsd_match_type": "none",
+        "fallback_rcsdroad_ids": [],
+        "surface_scenario_source": "missing_step4_frozen_result",
+    }, True)
 
 def _step5_surface_window_config(unit_result: T04EventUnitResult) -> Step5SurfaceWindowConfig:
     scenario_doc, missing = _surface_scenario_doc_for_unit(unit_result)

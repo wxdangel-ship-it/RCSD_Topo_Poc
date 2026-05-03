@@ -146,7 +146,7 @@
   - `QA`
 - T04 可以参考 `t03_virtual_junction_anchor` 的实现逻辑、审计风格、产物组织与输出组织方式，但运行时不得直接 import / 调用 / 拷贝 T03 模块代码；正式执行逻辑必须保留在 T04 私有实现内。
 - T04 当前不新增 repo 官方 CLI；internal full-input shell/watch 交付面为 repo 级脚本入口，执行逻辑保留在 T04 私有实现内。
-- T04 在使用 RCSDNode 参与 RCSD 语义路口召回时，`RCSDNode.mainnodeid` 作为 RCSD 语义分组边界：非 `0` / 非空 `mainnodeid` 表示节点所属的 RCSD 语义路口组，`0` / 空值表示该 RCSDNode 以自身 `id` 作为独立语义组。一个 SWSD event unit、复杂路口内的单个 unit、或一个简单二分歧 / 合流，最多只能发布一个对应的 RCSD 语义路口组；若局部窗口内命中多个 RCSD 语义组，必须先按当前 SWSD section / Reference Point / 进出方向角色 / 距离与角度趋势消歧，非选中组只能作为上下文或 trace 审计信息。
+- T04 在使用 RCSDNode / RCSDRoad 参与 RCSD 语义路口召回时，RCSD 与 SWSD 采用同一基础语义路口口径：具有 `3` 条及以上压缩语义道路进入或退出的路口，才称为语义路口；两个语义路口之间的连续道路链视为一条路口间道路。`RCSDNode.mainnodeid` 只表达候选路口的单节点 / 多节点组织关系：非 `0` / 非空 `mainnodeid` 表示多节点候选组，`0` / 空值表示单节点候选组；该字段不单独决定候选是否构成 RCSD 语义路口。一个 SWSD event unit、复杂路口内的单个 unit、或一个简单二分歧 / 合流，最多只能发布一个对应的 RCSD 对齐对象；若局部窗口内命中多个 RCSD 语义路口或候选对象，必须先按当前 SWSD section / Reference Point / 进出方向角色完整性 / 距离与角度趋势消歧，非选中对象只能作为上下文或 trace 审计信息，并按 Step4 唯一对齐结果参与负向掩膜。
 
 ---
 

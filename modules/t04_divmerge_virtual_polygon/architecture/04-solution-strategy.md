@@ -131,14 +131,15 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - `section reference / 截面参考对象` 用于确定前后横向截面位置，可来自 Reference Point、`Reference Point + RCSD 语义路口`、RCSD 语义路口或 SWSD 语义路口；RCSD/SWSD junction window 只能作为 section reference 或支撑域辅助，不得命名为 Reference Point。
 - `RCSD 语义路口` 必须表示召回 RCSD 路口与当前 SWSD 路口语义一致：进入道路、退出道路和角度趋势与当前事件对齐。仅存在 RCSD 数据、RCSDRoad 趋势一致、或 RCSD 聚合结果缺少进入 / 退出道路时，不得称为 RCSD 语义路口。
 - 无 RCSD 语义路口不等于无 RCSD 数据：该状态可包含趋势一致但不成路口的 RCSDRoad、缺进入 / 退出道路的 RCSD 局部结构或弱聚合结果；这些对象只能作为 fallback、趋势参考或审计辅助。
-- Step4 或 Step4/5 交界处必须输出 `surface_scenario_type`，按“主证据 × RCSD / SWSD 支持状态”区分六类业务场景；`no_surface_reference` 只作为防御性异常兜底，不是合法 Anchor_2 case 的正常业务分支。T04 正常输入来自 SWSD 语义路口 / SWSD 分合流候选，因此“无主证据 + 无 RCSD 语义路口”仍应保留 SWSD section reference，而不是直接停止构面。
-- 六类主业务场景固定为：
-  - `main_evidence_with_rcsd_junction`：有主证据 + RCSD 语义路口，section reference 为 Reference Point + RCSD 语义路口，强证据成功。
-  - `main_evidence_with_rcsdroad_fallback`：有主证据 + 无 RCSD 语义路口但存在 RCSDRoad fallback，section reference 为 Reference Point，fallback 只取相关局部段。
-  - `main_evidence_without_rcsd`：有主证据 + 无 RCSD 语义路口且无可用 RCSDRoad fallback，由主证据独立驱动构面。
-  - `no_main_evidence_with_rcsd_junction`：无主证据 + RCSD 语义路口，无 Reference Point，以 RCSD 语义路口作为 section reference。
-  - `no_main_evidence_with_rcsdroad_fallback_and_swsd`：无主证据 + RCSDRoad fallback + SWSD 语义路口，无 Reference Point，以 SWSD 语义路口作为 section reference，弱证据成功。
-  - `no_main_evidence_with_swsd_only`：无主证据 + 无 RCSD 语义路口 + SWSD 语义路口，无 Reference Point，SWSD-only 构面；可存在非语义路口的 RCSD 数据，但不得登记为 `rcsd_junction`。
+- Step4 或 Step4/5 交界处必须输出 `surface_scenario_type` 与唯一 `rcsd_alignment_type`。`surface_scenario_type` 按主证据、RCSD 对齐类型和 SWSD 可用性区分六类业务场景；`rcsd_alignment_type` 至少区分 `rcsd_semantic_junction / rcsd_junction_partial_alignment / rcsdroad_only_alignment / no_rcsd_alignment / ambiguous_rcsd_alignment`。Step5 及之后不重新选择 RCSD 候选，只消费 Step4 的唯一对齐结果。
+- 六类主业务场景的截面边界来源固定为：
+  - `main_evidence_with_rcsd_junction`：有主证据 + 完整 RCSD 语义路口。Reference Point 来自主证据；两个终止截面由 `Reference Point + RCSD 语义路口` 共同确定。SWSD 不参与截面边界构建。
+  - `main_evidence_with_rcsdroad_fallback`：有主证据 + 无完整 RCSD 语义路口但存在可用 RCSD 对齐对象。若 `rcsd_alignment_type = rcsd_junction_partial_alignment`，两个终止截面由 `Reference Point + RCSD partial junction` 共同确定；若 `rcsd_alignment_type = rcsdroad_only_alignment`，两个终止截面由 `Reference Point` 自身前后 `20m` 构成。SWSD 不参与截面边界构建。
+  - `main_evidence_without_rcsd`：有主证据 + `no_rcsd_alignment`。两个终止截面由 `Reference Point` 自身前后 `20m` 构成；所有 RCSDNode / RCSDRoad 均作为负向掩膜输入。SWSD 不参与截面边界构建。
+  - `no_main_evidence_with_rcsd_junction`：无主证据 + 完整 RCSD 语义路口。无 Reference Point，不得从 RCSD 反推虚拟 Reference Point；两个终止截面由 RCSD 语义路口自身前后 `20m` 构成。SWSD 不参与截面边界构建。
+  - `no_main_evidence_with_rcsdroad_fallback_and_swsd`：无主证据 + 无完整 RCSD 语义路口但存在可用 RCSD 对齐对象。若 `rcsd_alignment_type = rcsd_junction_partial_alignment`，两个终止截面由 RCSD partial junction 自身前后 `20m` 构成；若 `rcsd_alignment_type = rcsdroad_only_alignment`，两个终止截面由 SWSD 自身前后 `20m` 构成。
+  - `no_main_evidence_with_swsd_only`：无主证据 + `no_rcsd_alignment` + SWSD 语义路口。两个终止截面由 SWSD 自身前后 `20m` 构成；所有 RCSDNode / RCSDRoad 均作为负向掩膜输入。
+- 所有正常构面场景共享同一底层生成口径：单个 unit 以两个终止截面为边界，在两个边界之间铺满合法道路面；当前 unit 正相关的 SWSD roads 与该场景允许参与的 RCSDRoad 作为正向掩膜生长输入，生长范围控制在相关道路外侧约 `20m` 内，且不得侵入负向掩膜。负向掩膜是正向生长不可跨越的业务屏障：可以在生长阶段抑制，也可以在后处理裁剪，但最终面必须同时满足截面关系、allowed growth、forbidden/negative mask 后验复核。complex / multi 不是单独场景，而是上述场景的多 unit 形态；最终 case 面由各 unit 面和相邻 unit 间按同规则补齐的 inter-unit bridge surface 合成，并默认要求唯一联通。若唯一阻断来自真实负向掩膜，`barrier_separated_case_surface_ok` 只能记录该阻断事实，不得作为跳过 inter-unit bridge 或普通 MultiPolygon accepted 的通用放行条件。
 - 若 Step4 无法物化 SWSD section reference，必须把它审计为输入 / 上游上下文异常或 Step4 恢复失败；不得把这种异常兜底误写成“无主证据 + 无 RCSD 语义路口”的正常结果。
 - 正向 RCSD 只在当前 pair-local 语义框架内选择，不回退到 case-level RCSD 世界补证据。
 - reverse、road-surface fork、SWSD/RCSD junction window 与 `rcsd_anchored_reverse` 是受控恢复路径，由 `step4_postprocess` 归口。
@@ -212,8 +213,8 @@ T04 采用“业务主链 + 工程编排层”的分工：
 
 - 由 `polygon_assembly.py` 的 `build_step6_polygon_assembly(...)` 执行。
 - 采用 raster-first 单连通组装，再回到矢量 polygon 做连通性、洞、cut、forbidden overlap 检查。
-- complex / multi 场景可先生成 unit surface，再合并为一个 case 级完整 `final_case_polygon`。
-- 对先合流再分歧的 complex / multi 场景，如果两个相邻 unit 的最近横截线之间存在可通行道路面、且不与 forbidden / negative mask 冲突，Step6 可将该横截线间区域作为 inter-unit section bridge surface，并入有效 terminal window 与 hard seed，用于把相邻 unit surface 合并成单一 case surface；该桥接不得越过 allowed / forbidden / terminal cut 的后验复核。
+- complex / multi 场景先生成 unit surface，再按 Step3 / Step4 的 unit 邻接关系寻找相邻 unit 的两组临近截面边界，生成 inter-unit section bridge surface，最后合并为一个 case 级完整 `final_case_polygon`。
+- 对先合流再分歧或其他 multi-unit 场景，如果两个相邻 unit 的两组临近截面边界之间存在可通行道路面、且不与 forbidden / negative mask 冲突，Step6 必须将该截面边界间区域作为 inter-unit section bridge surface，并入有效 terminal window 与 hard seed，用于把相邻 unit surface 合并成单一 case surface；该桥接不得越过 allowed / forbidden / terminal cut 的后验复核。
 - 允许业务 hole；不允许算法 hole 或无审计 cleanup。
 
 边界：

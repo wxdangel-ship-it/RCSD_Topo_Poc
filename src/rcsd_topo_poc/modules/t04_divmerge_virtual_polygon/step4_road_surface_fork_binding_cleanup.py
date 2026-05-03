@@ -44,7 +44,7 @@ def _stable_structure_only_surface_summary(summary: dict[str, Any]) -> bool:
         and pair_middle_ratio >= STRUCTURE_ONLY_SURFACE_MIN_PAIR_MIDDLE_RATIO
     )
 
-def _has_unpublished_multi_semantic_rcsd_ambiguity(event_unit: T04EventUnitResult) -> bool:
+def _has_unpublished_multi_semantic_rcsd_context(event_unit: T04EventUnitResult) -> bool:
     if event_unit.required_rcsd_node:
         return False
     if event_unit.selected_rcsdroad_ids or event_unit.selected_rcsdnode_ids:
@@ -100,11 +100,11 @@ def _retain_structure_only_surface_candidate(
     if entry is None:
         return None, None
 
-    multi_semantic_rcsd_ambiguity = _has_unpublished_multi_semantic_rcsd_ambiguity(event_unit)
+    multi_semantic_rcsd_context = _has_unpublished_multi_semantic_rcsd_context(event_unit)
     use_swsd_window = (
         _weak_structure_surface_window_candidate(selected_summary)
         or non_semantic_partial_rcsd
-        or multi_semantic_rcsd_ambiguity
+        or multi_semantic_rcsd_context
     )
     evidence_source = SWSD_JUNCTION_WINDOW_SOURCE if use_swsd_window else "road_surface_fork"
     position_source = (
@@ -129,7 +129,7 @@ def _retain_structure_only_surface_candidate(
         "axis_position_m": _as_float(selected_summary.get("axis_position_m")),
         "pair_middle_overlap_ratio": _as_float(selected_summary.get("pair_middle_overlap_ratio")),
         "throat_overlap_ratio": _as_float(selected_summary.get("throat_overlap_ratio")),
-        "multi_semantic_rcsd_ambiguity": multi_semantic_rcsd_ambiguity,
+        "multi_semantic_rcsd_context": multi_semantic_rcsd_context,
         "window_half_length_m": JUNCTION_WINDOW_HALF_LENGTH_M if use_swsd_window else None,
     }
     review_reasons = _dedupe([*event_unit.all_review_reasons(), reason])

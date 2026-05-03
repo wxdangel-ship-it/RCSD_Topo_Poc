@@ -25,15 +25,22 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.surface_scenario import 
 )
 
 
-def _case_result(case_id: str = "guard_case", drivezone: Polygon | None = None) -> SimpleNamespace:
+def _case_result(
+    case_id: str = "guard_case",
+    drivezone: Polygon | None = None,
+    case_alignment_aggregate: dict | None = None,
+) -> SimpleNamespace:
     drivezone = drivezone or Polygon([(-20, -20), (80, -20), (80, 20), (-20, 20), (-20, -20)])
-    return SimpleNamespace(
+    result = SimpleNamespace(
         case_spec=SimpleNamespace(case_id=case_id),
         case_bundle=SimpleNamespace(
             representative_node=SimpleNamespace(geometry=Point(0, 0)),
             drivezone_features=(SimpleNamespace(geometry=drivezone),),
         ),
     )
+    if case_alignment_aggregate is not None:
+        result.case_alignment_aggregate_doc = lambda: dict(case_alignment_aggregate)
+    return result
 
 
 def _unit(
@@ -88,6 +95,10 @@ def _step5_result(
     allowed: Polygon | None,
     forbidden: Polygon | None = None,
     terminal_cut: LineString | None = None,
+    bridge_zone: Polygon | None = None,
+    unrelated_swsd_mask: Polygon | None = None,
+    unrelated_rcsd_mask: Polygon | None = None,
+    divstrip_body_mask: Polygon | None = None,
     divstrip_mask: Polygon | None = None,
 ) -> T04Step5CaseResult:
     return T04Step5CaseResult(
@@ -99,10 +110,11 @@ def _step5_result(
         case_terminal_cut_constraints=terminal_cut,
         case_terminal_window_domain=None,
         case_terminal_support_corridor_geometry=None,
-        case_bridge_zone_geometry=None,
+        case_bridge_zone_geometry=bridge_zone,
         case_support_graph_geometry=None,
-        unrelated_swsd_mask_geometry=None,
-        unrelated_rcsd_mask_geometry=None,
+        unrelated_swsd_mask_geometry=unrelated_swsd_mask,
+        unrelated_rcsd_mask_geometry=unrelated_rcsd_mask,
+        divstrip_body_mask_geometry=divstrip_body_mask,
         divstrip_void_mask_geometry=divstrip_mask,
         drivezone_outside_enforced_by_allowed_domain=True,
         surface_lateral_limit_m=20.0,
@@ -183,9 +195,91 @@ def test_step6_guard_audit_carries_lateral_and_negative_mask_fields() -> None:
     assert status["surface_lateral_limit_m"] == pytest.approx(20.0)
     assert status["post_cleanup_recheck_performed"] is True
     assert status["post_cleanup_forbidden_ok"] is True
-    assert audit["negative_mask_check_mode"] == "total_forbidden_plus_divstrip_mask"
+    assert audit["negative_mask_check_mode"] == "per_channel_negative_mask_overlap"
+    assert audit["relief_constraint_audit_entries"] == []
     assert status["divstrip_negative_mask_present"] is True
     assert status["divstrip_negative_overlap_area_m2"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_step6_post_cleanup_overlap_audit_is_split_by_mask_channel() -> None:
+    allowed = Polygon([(0, -5), (40, -5), (40, 5), (0, 5), (0, -5)])
+    final_polygon = Polygon([(0, -4), (30, -4), (30, 4), (0, 4), (0, -4)])
+    unrelated_swsd_mask = Point(10, 0).buffer(1.0)
+    unrelated_rcsd_mask = Point(50, 0).buffer(1.0)
+    divstrip_body_mask = Point(15, 0).buffer(1.0)
+    divstrip_void_mask = Point(20, 0).buffer(1.0)
+    terminal_cut = LineString([(25, -10), (25, 10)]).buffer(0.75, cap_style=2)
+    unit = _unit(must_cover=Point(2, 0).buffer(1.0), allowed=allowed)
+    step5 = _step5_result(
+        units=(unit,),
+        must_cover=Point(2, 0).buffer(1.0),
+        allowed=allowed,
+        forbidden=unary_union([unrelated_swsd_mask, divstrip_void_mask]),
+        terminal_cut=terminal_cut,
+        unrelated_swsd_mask=unrelated_swsd_mask,
+        unrelated_rcsd_mask=unrelated_rcsd_mask,
+        divstrip_body_mask=divstrip_body_mask,
+        divstrip_mask=divstrip_void_mask,
+    )
+    context = derive_step6_guard_context(step5)
+
+    audit = check_post_cleanup_constraints(
+        final_case_polygon=final_polygon,
+        step5_result=step5,
+        cut_barrier_geometry=terminal_cut,
+        hard_seed_geometry=Point(2, 0).buffer(1.0),
+        guard_context=context,
+    )
+    channels = audit["negative_mask_channel_overlaps"]
+
+    assert set(channels) == {
+        "unrelated_swsd",
+        "unrelated_rcsd",
+        "divstrip_body",
+        "divstrip_void",
+        "forbidden_domain",
+        "terminal_cut",
+    }
+    assert channels["unrelated_swsd"]["overlap_area_m2"] > 0.0
+    assert channels["unrelated_swsd"]["ok"] is False
+    assert channels["unrelated_rcsd"]["overlap_area_m2"] == pytest.approx(0.0, abs=1e-6)
+    assert channels["unrelated_rcsd"]["ok"] is True
+    assert channels["divstrip_body"]["applied_to_forbidden_domain"] is False
+    assert channels["divstrip_body"]["overlap_area_m2"] > 0.0
+    assert channels["divstrip_void"]["overlap_area_m2"] > 0.0
+    assert channels["terminal_cut"]["overlap_area_m2"] > 0.0
+
+
+def test_step6_bridge_negative_mask_crossing_is_audited_by_channel() -> None:
+    allowed = Polygon([(0, -5), (40, -5), (40, 5), (0, 5), (0, -5)])
+    bridge_zone = Polygon([(5, -1), (25, -1), (25, 1), (5, 1), (5, -1)])
+    unrelated_swsd_mask = Point(10, 0).buffer(1.0)
+    unrelated_rcsd_mask = Point(50, 0).buffer(1.0)
+    unit = _unit(must_cover=Point(2, 0).buffer(1.0), allowed=allowed)
+    step5 = _step5_result(
+        units=(unit,),
+        must_cover=Point(2, 0).buffer(1.0),
+        allowed=allowed,
+        bridge_zone=bridge_zone,
+        unrelated_swsd_mask=unrelated_swsd_mask,
+        unrelated_rcsd_mask=unrelated_rcsd_mask,
+    )
+    context = derive_step6_guard_context(step5)
+
+    audit = check_post_cleanup_constraints(
+        final_case_polygon=allowed,
+        step5_result=step5,
+        cut_barrier_geometry=None,
+        hard_seed_geometry=Point(2, 0).buffer(1.0),
+        guard_context=context,
+    )
+    channels = audit["bridge_negative_mask_channel_overlaps"]
+
+    assert audit["bridge_negative_mask_crossing_detected"] is True
+    assert channels["unrelated_swsd"]["overlap_area_m2"] > 0.0
+    assert channels["unrelated_swsd"]["ok"] is False
+    assert channels["unrelated_rcsd"]["overlap_area_m2"] == pytest.approx(0.0, abs=1e-6)
+    assert channels["unrelated_rcsd"]["ok"] is True
 
 
 def test_step6_fallback_overexpansion_guard_uses_allowed_growth() -> None:
@@ -238,3 +332,22 @@ def test_step6_multi_unit_case_records_case_level_merge_audit() -> None:
     assert status["merge_mode"] == "case_level_assembly"
     assert status["final_case_polygon_component_count"] == status["component_count"]
     assert status["single_connected_case_surface_ok"] == (status["component_count"] == 1)
+
+
+def test_step6_ambiguous_case_alignment_blocks_silent_merge() -> None:
+    seed = Point(5, 0).buffer(2.0)
+    allowed = Polygon([(0, -6), (20, -6), (20, 6), (0, 6), (0, -6)])
+    unit = _unit(must_cover=seed, allowed=allowed)
+    step5 = _step5_result(units=(unit,), must_cover=seed, allowed=allowed)
+    case_result = _case_result(
+        drivezone=allowed.buffer(10),
+        case_alignment_aggregate={"ambiguous_event_unit_ids": ["event_unit_01"]},
+    )
+
+    result = build_step6_polygon_assembly(case_result, step5)
+    status = result.to_status_doc()
+
+    assert status["assembly_state"] == "assembly_failed"
+    assert "ambiguous_case_rcsd_alignment" in status["review_reasons"]
+    assert status["case_alignment_review_reasons"] == ["ambiguous_case_rcsd_alignment"]
+    assert status["case_alignment_ambiguous_event_unit_ids"] == ["event_unit_01"]

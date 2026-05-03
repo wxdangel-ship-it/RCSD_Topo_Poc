@@ -6,6 +6,7 @@ from typing import Any
 from shapely.geometry import Point
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
+from .rcsd_alignment import rcsd_alignment_type_from_selection
 from .step4_road_surface_fork_binding_shared import _build_surface_summary, _candidate_entries_with_selection
 from .step4_road_surface_fork_geometry import (
     ROAD_SURFACE_FORK_BINDING_REASON,
@@ -60,11 +61,24 @@ def _bind_strong_rcsd_to_surface(
 
     support_level = str(aggregate.get("support_level") or "primary_support")
     consistency_level = str(aggregate.get("consistency_level") or "A")
+    selection_mode = "road_surface_fork_forward_rcsd_binding"
+    decision_reason = str(aggregate.get("decision_reason") or "")
+    alignment_type = rcsd_alignment_type_from_selection(
+        positive_rcsd_present=True,
+        required_rcsd_node=required_node,
+        selected_rcsdroad_ids=selected_roads,
+        local_rcsd_unit_kind="node_centric",
+        positive_rcsd_support_level=support_level,
+        positive_rcsd_consistency_level=consistency_level,
+        rcsd_decision_reason=decision_reason,
+        rcsd_selection_mode=selection_mode,
+    )
     bind_detail = {
         "action": "bound_forward_rcsd_to_road_surface_fork",
         "aggregated_rcsd_unit_id": str(aggregate.get("unit_id") or ""),
         "required_rcsd_node": required_node,
-        "rcsd_decision_reason": str(aggregate.get("decision_reason") or ""),
+        "rcsd_decision_reason": decision_reason,
+        "rcsd_alignment_type": alignment_type,
         "reference_point": dict(reference_detail),
     }
     summary = _build_surface_summary(
@@ -113,8 +127,9 @@ def _bind_strong_rcsd_to_surface(
             "selected_rcsdroad_ids": list(selected_roads),
             "selected_rcsdnode_ids": list(selected_nodes),
             "first_hit_rcsdroad_ids": list(first_hit),
-            "rcsd_selection_mode": "road_surface_fork_forward_rcsd_binding",
-            "rcsd_decision_reason": str(aggregate.get("decision_reason") or ""),
+            "rcsd_selection_mode": selection_mode,
+            "rcsd_alignment_type": alignment_type,
+            "rcsd_decision_reason": decision_reason,
         }
     )
     updated_audit = dict(event_unit.positive_rcsd_audit)
@@ -122,7 +137,8 @@ def _bind_strong_rcsd_to_surface(
         {
             "road_surface_fork_binding": bind_detail,
             "road_surface_fork_reference_point": dict(reference_detail),
-            "rcsd_decision_reason": str(aggregate.get("decision_reason") or ""),
+            "rcsd_decision_reason": decision_reason,
+            "rcsd_alignment_type": alignment_type,
             "required_rcsd_node_source": "road_surface_fork_forward_rcsd",
         }
     )
@@ -157,11 +173,12 @@ def _bind_strong_rcsd_to_surface(
         review_materialized_point=review_point,
         positive_rcsd_present=True,
         positive_rcsd_present_reason="road_surface_fork_forward_rcsd_present",
-        rcsd_selection_mode="road_surface_fork_forward_rcsd_binding",
+        rcsd_selection_mode=selection_mode,
         positive_rcsd_support_level=support_level,
         positive_rcsd_consistency_level=consistency_level,
         required_rcsd_node=required_node,
         required_rcsd_node_source="road_surface_fork_forward_rcsd",
+        rcsd_alignment_type=alignment_type,
         selected_candidate_summary=dict(summary),
         selected_evidence_summary=dict(summary),
         positive_rcsd_audit=updated_audit,

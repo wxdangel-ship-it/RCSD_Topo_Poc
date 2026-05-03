@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import geopandas as gpd
 import pytest
 from shapely.geometry import Point, Polygon
+from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon import run_t04_step14_batch
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.polygon_assembly import (
@@ -18,21 +20,61 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.support_domain import (
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_road_surface_fork_rcsd import (
     _junction_window_aggregate,
 )
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.support_domain_scenario import (
+    STEP5_NEGATIVE_MASK_BUFFER_M,
+)
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.rcsd_alignment import (
+    RCSD_ALIGNMENT_ROAD_ONLY,
+)
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.surface_scenario import (
     MAIN_EVIDENCE_ROAD_SURFACE_FORK,
     SCENARIO_MAIN_WITH_RCSD,
     SCENARIO_MAIN_WITH_RCSDROAD,
     SCENARIO_NO_MAIN_WITH_RCSD,
+    SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
     SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
     SECTION_REFERENCE_POINT_AND_RCSD,
     SECTION_REFERENCE_RCSD,
     SECTION_REFERENCE_SWSD,
     SURFACE_MODE_MAIN_EVIDENCE,
+    SURFACE_MODE_SWSD_WITH_RCSDROAD,
     SURFACE_MODE_SWSD_WINDOW,
 )
 
 
 REAL_ANCHOR_2_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor_2")
+
+
+def _raw_unrelated_road_mask_overlap_m2(
+    *,
+    case_id: str,
+    case_output_dir: Path,
+    step5_audit: dict[str, object],
+    layer: str,
+) -> float:
+    final_path = case_output_dir / "final_case_polygon.gpkg"
+    if not final_path.is_file():
+        return 0.0
+    source_file = "roads.gpkg" if layer == "swsd" else "rcsdroad.gpkg"
+    id_key = f"unrelated_{layer}_road_ids"
+    unrelated_values = step5_audit.get(id_key)
+    if unrelated_values is None:
+        unrelated_values = step5_audit["negative_mask_channels"][f"unrelated_{layer}"]["road_ids"]
+    unrelated_ids = {str(value) for value in unrelated_values}
+    if not unrelated_ids:
+        return 0.0
+    final_geometry = unary_union(list(gpd.read_file(final_path).geometry))
+    source_roads = gpd.read_file(REAL_ANCHOR_2_ROOT / case_id / source_file)
+    overlap_area = 0.0
+    for _, road in source_roads.iterrows():
+        if str(road["id"]) not in unrelated_ids:
+            continue
+        overlap_area += float(
+            final_geometry.intersection(
+                road.geometry.buffer(STEP5_NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2)
+            ).area
+        )
+    return overlap_area
 
 
 def _case_result() -> SimpleNamespace:
@@ -229,25 +271,46 @@ def test_real_706347_724081_swsd_only_windows_cover_full_swsd_section(tmp_path: 
         case_dir = run_root / "cases" / case_id
         step4_status = json.loads((case_dir / "step4_event_interpretation.json").read_text(encoding="utf-8"))
         step5_status = json.loads((case_dir / "step5_status.json").read_text(encoding="utf-8"))
+        step5_audit = json.loads((case_dir / "step5_audit.json").read_text(encoding="utf-8"))
         step6_status = json.loads((case_dir / "step6_status.json").read_text(encoding="utf-8"))
         step7_status = json.loads((case_dir / "step7_status.json").read_text(encoding="utf-8"))
         unit4 = step4_status["event_units"][0]
         unit5 = step5_status["unit_results"][0]
 
-        assert step7_status["final_state"] == "accepted"
-        assert unit4["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
+        assert step7_status["final_state"] == "rejected"
+        assert "multi_component_result" in step7_status["reject_reasons"]
+        assert unit4["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
         assert unit4["section_reference_source"] == SECTION_REFERENCE_SWSD
+        assert unit4["surface_generation_mode"] == SURFACE_MODE_SWSD_WITH_RCSDROAD
         assert unit4["evidence_source"] == "swsd_junction_window"
         assert unit4["main_evidence_type"] == "none"
         assert unit4["reference_point_present"] is False
         assert unit4["selected_rcsdroad_ids"] == []
+        assert unit4["fallback_rcsdroad_ids"]
         assert unit5["surface_fill_mode"] == "junction_window"
-        assert unit5["unit_terminal_cut_constraints"]["present"] is False
+        assert unit5["unit_terminal_cut_constraints"]["present"] is True
         assert unit5["junction_full_road_fill_domain"]["present"] is True
-        assert step6_status["assembly_state"] == "assembled"
-        assert step6_status["final_case_polygon_component_count"] == 1
+        assert set(unit5["fallback_rcsdroad_ids"]) == set(unit4["fallback_rcsdroad_ids"])
+        assert step6_status["assembly_state"] == "assembly_failed"
+        assert step6_status["final_case_polygon_component_count"] > 1
+        assert step6_status["single_connected_case_surface_ok"] is False
+        assert step6_status["barrier_separated_case_surface_ok"] is True
+        assert step6_status["post_cleanup_negative_mask_ok"] is True
+        assert step6_status["negative_mask_conflict_channel_names"] == []
         assert step6_status["section_reference_window_covered"] is True
         assert step6_status["post_cleanup_must_cover_ok"] is True
+        assert _raw_unrelated_road_mask_overlap_m2(
+            case_id=case_id,
+            case_output_dir=case_dir,
+            step5_audit=step5_audit,
+            layer="swsd",
+        ) <= 1e-6
+        assert _raw_unrelated_road_mask_overlap_m2(
+            case_id=case_id,
+            case_output_dir=case_dir,
+            step5_audit=step5_audit,
+            layer="rcsd",
+        ) <= 1e-6
 
 
 @pytest.mark.smoke
@@ -280,7 +343,7 @@ def test_real_768675_bilateral_road_surface_fork_accepts_as_main_evidence(tmp_pa
     assert unit4["selected_evidence"]["candidate_scope"] == "road_surface_fork"
     assert unit4["selected_evidence"]["road_surface_fork_binding"]["preserved_surface_main_evidence"] is True
     assert unit4["selected_evidence"]["road_surface_fork_binding"]["selected_rcsd_scope"] == "required_node_local_unit"
-    assert unit4["rcsd_selection_mode"] == "road_surface_fork_rcsd_junction_local_unit_binding"
+    assert unit4["rcsd_selection_mode"] == "road_surface_fork_relaxed_primary_rcsd_binding"
     assert unit4["selected_rcsdroad_ids"] == [
         "5384381570613670",
         "5384381972223743",
@@ -311,6 +374,7 @@ def test_real_rcsd_window_and_no_support_fallback_regressions(tmp_path: Path) ->
         "698389",
         "765170",
         "768680",
+        "765050",
     ]
     missing = [case_id for case_id in required_cases if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()]
     if missing:
@@ -332,6 +396,13 @@ def test_real_rcsd_window_and_no_support_fallback_regressions(tmp_path: Path) ->
             json.loads((case_dir / "step7_status.json").read_text(encoding="utf-8")),
         )
 
+    def case_dir(case_id: str) -> Path:
+        return run_root / "cases" / case_id
+
+    expected_scenario_by_case = {
+        "699870": SCENARIO_MAIN_WITH_RCSD,
+        "760256": SCENARIO_MAIN_WITH_RCSDROAD,
+    }
     for case_id, min_area in {
         "699870": 1000.0,
         "760256": 900.0,
@@ -340,7 +411,7 @@ def test_real_rcsd_window_and_no_support_fallback_regressions(tmp_path: Path) ->
         unit4 = step4["event_units"][0]
         assert step7["final_state"] == "accepted"
         assert unit4["evidence_source"] == "rcsd_anchored_reverse"
-        assert unit4["surface_scenario_type"] == SCENARIO_MAIN_WITH_RCSD
+        assert unit4["surface_scenario_type"] == expected_scenario_by_case[case_id]
         assert unit4["section_reference_source"] == SECTION_REFERENCE_POINT_AND_RCSD
         assert unit4["main_evidence_type"] == "divstrip"
         assert unit4["reference_point_present"] is True
@@ -364,39 +435,131 @@ def test_real_rcsd_window_and_no_support_fallback_regressions(tmp_path: Path) ->
     step4_706347, step5_706347, step6_706347, step7_706347 = _docs("706347")
     unit4_706347 = step4_706347["event_units"][0]
     unit5_706347 = step5_706347["unit_results"][0]
-    assert step7_706347["final_state"] == "accepted"
-    assert unit4_706347["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
+    assert step7_706347["final_state"] == "rejected"
+    assert "multi_component_result" in step7_706347["reject_reasons"]
+    assert unit4_706347["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
     assert unit4_706347["section_reference_source"] == SECTION_REFERENCE_SWSD
     assert unit4_706347["reference_point_present"] is False
     assert unit4_706347["evidence_source"] == "swsd_junction_window"
     assert unit4_706347["selected_evidence"]["rcsd_decision_reason"] == "swsd_junction_window_no_rcsd"
-    assert unit5_706347["swsd_only_entity_support_domain"] is True
+    assert unit4_706347["fallback_rcsdroad_ids"]
+    assert unit5_706347["surface_generation_mode"] == SURFACE_MODE_SWSD_WITH_RCSDROAD
+    assert set(unit5_706347["fallback_rcsdroad_ids"]) == set(unit4_706347["fallback_rcsdroad_ids"])
+    unrelated_rcsd_706347 = set(step5_706347["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
+    assert unit4_706347["fallback_rcsdroad_ids"] == [
+        "5384371838321302",
+        "5384371939968782",
+    ]
+    assert "5384371838321310" in unrelated_rcsd_706347
+    assert unrelated_rcsd_706347.isdisjoint(unit4_706347["fallback_rcsdroad_ids"])
     assert step6_706347["b_node_gate_applicable"] is False
-    assert step6_706347["b_node_gate_skip_reason"] == "swsd_only_without_b_target"
+    assert step6_706347["b_node_gate_skip_reason"] == "no_main_swsd_rcsdroad_fallback"
     assert step6_706347["section_reference_window_covered"] is True
+    assert step6_706347["component_count"] == 2
+    assert step6_706347["final_case_polygon_component_count"] == 2
+    assert step6_706347["single_connected_case_surface_ok"] is False
+    assert step6_706347["post_cleanup_negative_mask_ok"] is True
+    assert step6_706347["negative_mask_conflict_channel_names"] == []
+    assert step6_706347["barrier_separated_case_surface_ok"] is True
     assert step6_706347["final_case_polygon"]["present"] is True
+    assert _raw_unrelated_road_mask_overlap_m2(
+        case_id="706347",
+        case_output_dir=case_dir("706347"),
+        step5_audit=step5_706347,
+        layer="swsd",
+    ) <= 1e-6
+    assert _raw_unrelated_road_mask_overlap_m2(
+        case_id="706347",
+        case_output_dir=case_dir("706347"),
+        step5_audit=step5_706347,
+        layer="rcsd",
+    ) <= 1e-6
 
     step4_724081, step5_724081, step6_724081, step7_724081 = _docs("724081")
     unit4_724081 = step4_724081["event_units"][0]
     unit5_724081 = step5_724081["unit_results"][0]
-    assert step7_724081["final_state"] == "accepted"
-    assert unit4_724081["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
+    assert step7_724081["final_state"] == "rejected"
+    assert "multi_component_result" in step7_724081["reject_reasons"]
+    assert unit4_724081["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
     assert unit4_724081["section_reference_source"] == SECTION_REFERENCE_SWSD
     assert unit4_724081["reference_point_present"] is False
     assert unit4_724081["evidence_source"] == "swsd_junction_window"
     assert unit4_724081["main_evidence_type"] == "none"
     assert unit4_724081["selected_evidence"]["rcsd_decision_reason"] == "swsd_junction_window_no_rcsd"
-    assert unit4_724081["selected_evidence"]["road_surface_fork_binding"]["multi_semantic_rcsd_ambiguity"] is True
-    assert unit4_724081["fallback_rcsdroad_ids"] == []
-    assert unit5_724081["swsd_only_entity_support_domain"] is True
+    assert unit4_724081["selected_evidence"]["road_surface_fork_binding"]["multi_semantic_rcsd_context"] is True
+    assert unit4_724081["fallback_rcsdroad_ids"]
+    assert set(unit5_724081["fallback_rcsdroad_ids"]) == set(unit4_724081["fallback_rcsdroad_ids"])
+    unrelated_rcsd_724081 = set(step5_724081["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
+    assert unrelated_rcsd_724081.isdisjoint(unit4_724081["fallback_rcsdroad_ids"])
     assert unit5_724081["surface_fill_mode"] == "junction_window"
-    assert unit5_724081["unit_terminal_cut_constraints"]["present"] is False
+    assert unit5_724081["unit_terminal_cut_constraints"]["present"] is True
     assert unit5_724081["junction_full_road_fill_domain"]["present"] is True
     assert step6_724081["b_node_gate_applicable"] is False
-    assert step6_724081["b_node_gate_skip_reason"] == "swsd_only_without_b_target"
+    assert step6_724081["b_node_gate_skip_reason"] == "no_main_swsd_rcsdroad_fallback"
     assert step6_724081["section_reference_window_covered"] is True
-    assert step6_724081["final_case_polygon_component_count"] == 1
-    assert 1000.0 < step6_724081["final_case_polygon"]["area_m2"] < 1050.0
+    assert step6_724081["post_cleanup_negative_mask_ok"] is True
+    assert step6_724081["negative_mask_conflict_channel_names"] == []
+    assert step6_724081["component_count"] == 4
+    assert step6_724081["final_case_polygon_component_count"] == 4
+    assert step6_724081["single_connected_case_surface_ok"] is False
+    assert step6_724081["barrier_separated_case_surface_ok"] is True
+    assert step6_724081["final_case_polygon"]["present"] is True
+    assert _raw_unrelated_road_mask_overlap_m2(
+        case_id="724081",
+        case_output_dir=case_dir("724081"),
+        step5_audit=step5_724081,
+        layer="swsd",
+    ) <= 1e-6
+    assert _raw_unrelated_road_mask_overlap_m2(
+        case_id="724081",
+        case_output_dir=case_dir("724081"),
+        step5_audit=step5_724081,
+        layer="rcsd",
+    ) <= 1e-6
+
+    step4_765050, step5_765050, step6_765050, step7_765050 = _docs("765050")
+    units4_765050 = step4_765050["event_units"]
+    assert step7_765050["final_state"] == "rejected"
+    assert "multi_component_result" in step7_765050["reject_reasons"]
+    assert len(units4_765050) == 3
+    for unit4_765050 in units4_765050:
+        assert unit4_765050["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
+        assert unit4_765050["rcsd_alignment_type"] == RCSD_ALIGNMENT_ROAD_ONLY
+        assert unit4_765050["section_reference_source"] == SECTION_REFERENCE_SWSD
+        assert unit4_765050["surface_generation_mode"] == SURFACE_MODE_SWSD_WITH_RCSDROAD
+        assert unit4_765050["fallback_rcsdroad_ids"] == ["5392491910661086"]
+        assert unit4_765050["selected_evidence"]["rcsd_decision_reason"] == "swsd_junction_window_no_rcsd"
+        assert unit4_765050["selected_evidence"]["complex_swsd_shared_rcsdroad_alignment"]["road_id"] == (
+            "5392491910661086"
+        )
+    assert [
+        unit5_765050["fallback_rcsdroad_ids"]
+        for unit5_765050 in step5_765050["unit_results"]
+    ] == [["5392491910661086"], ["5392491910661086"], ["5392491910661086"]]
+    unrelated_rcsd_765050 = set(step5_765050["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
+    assert "5392491910661086" not in unrelated_rcsd_765050
+    assert step6_765050["post_cleanup_negative_mask_ok"] is True
+    assert step6_765050["negative_mask_conflict_channel_names"] == []
+    assert step5_765050["case_bridge_zone_geometry"]["present"] is True
+    assert step6_765050["unit_surface_count"] == 3
+    assert step6_765050["component_count"] == 2
+    assert step6_765050["final_case_polygon_component_count"] == 2
+    assert step6_765050["single_connected_case_surface_ok"] is False
+    assert step6_765050["barrier_separated_case_surface_ok"] is True
+    assert step6_765050["final_case_polygon"]["area_m2"] > 1500.0
+    assert step6_765050["final_case_polygon"]["present"] is True
+    assert _raw_unrelated_road_mask_overlap_m2(
+        case_id="765050",
+        case_output_dir=case_dir("765050"),
+        step5_audit=step5_765050,
+        layer="swsd",
+    ) <= 1e-6
+    assert _raw_unrelated_road_mask_overlap_m2(
+        case_id="765050",
+        case_output_dir=case_dir("765050"),
+        step5_audit=step5_765050,
+        layer="rcsd",
+    ) <= 1e-6
 
     step4_698389, step5_698389, step6_698389, step7_698389 = _docs("698389")
     unit4_698389 = step4_698389["event_units"][0]
@@ -409,9 +572,9 @@ def test_real_rcsd_window_and_no_support_fallback_regressions(tmp_path: Path) ->
     assert unit4_698389["resolution_reason"] == "divstrip_primary_over_wide_road_surface_fork"
     assert unit4_698389["selected_evidence"]["candidate_id"] == "event_unit_01:divstrip:1:01"
     assert unit4_698389["selected_evidence"]["selected_divstrip_component_index"] == 1
-    assert unit5_698389["junction_full_road_fill_domain"]["present"] is False
-    assert unit5_698389["unit_allowed_growth_domain"]["area_m2"] < 1000.0
-    assert 750.0 < step6_698389["final_case_polygon"]["area_m2"] < 1000.0
+    assert unit5_698389["junction_full_road_fill_domain"]["present"] is True
+    assert unit5_698389["unit_allowed_growth_domain"]["area_m2"] > 1500.0
+    assert 1500.0 < step6_698389["final_case_polygon"]["area_m2"] < 1800.0
     assert step6_698389["final_case_polygon_component_count"] == 1
     assert step6_698389["hole_count"] == 0
 

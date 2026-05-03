@@ -68,6 +68,7 @@ class T04Step5UnitResult:
     divstrip_negative_mask_present: bool = False
     forbidden_domain_kept: bool = False
     swsd_only_entity_support_domain: bool = False
+    swsd_only_negative_mask_relief_applied: bool = False
 
     def to_status_doc(self) -> dict[str, Any]:
         return {
@@ -98,6 +99,7 @@ class T04Step5UnitResult:
             "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
             "forbidden_domain_kept": self.forbidden_domain_kept,
             "swsd_only_entity_support_domain": self.swsd_only_entity_support_domain,
+            "swsd_only_negative_mask_relief_applied": self.swsd_only_negative_mask_relief_applied,
             "surface_fill_mode": self.surface_fill_mode,
             "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
             "single_component_surface_seed": self.single_component_surface_seed,
@@ -142,6 +144,7 @@ class T04Step5UnitResult:
             "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
             "forbidden_domain_kept": self.forbidden_domain_kept,
             "swsd_only_entity_support_domain": self.swsd_only_entity_support_domain,
+            "swsd_only_negative_mask_relief_applied": self.swsd_only_negative_mask_relief_applied,
             "surface_fill_mode": self.surface_fill_mode,
             "surface_fill_axis_half_width_m": self.surface_fill_axis_half_width_m,
             "single_component_surface_seed": self.single_component_surface_seed,
@@ -165,12 +168,17 @@ class T04Step5CaseResult:
     case_terminal_support_corridor_geometry: BaseGeometry | None
     case_bridge_zone_geometry: BaseGeometry | None
     case_support_graph_geometry: BaseGeometry | None
-    unrelated_swsd_mask_geometry: BaseGeometry | None
-    unrelated_rcsd_mask_geometry: BaseGeometry | None
-    divstrip_void_mask_geometry: BaseGeometry | None
-    drivezone_outside_enforced_by_allowed_domain: bool
+    unrelated_swsd_mask_geometry: BaseGeometry | None = None
+    unrelated_rcsd_mask_geometry: BaseGeometry | None = None
+    divstrip_body_mask_geometry: BaseGeometry | None = None
+    divstrip_void_mask_geometry: BaseGeometry | None = None
+    drivezone_outside_enforced_by_allowed_domain: bool = True
     related_swsd_road_ids: tuple[str, ...] = ()
     related_rcsd_road_ids: tuple[str, ...] = ()
+    unrelated_swsd_road_ids: tuple[str, ...] = ()
+    unrelated_swsd_node_ids: tuple[str, ...] = ()
+    unrelated_rcsd_road_ids: tuple[str, ...] = ()
+    unrelated_rcsd_node_ids: tuple[str, ...] = ()
     surface_section_forward_m: float = STEP5_SURFACE_SECTION_FORWARD_M
     surface_section_backward_m: float = STEP5_SURFACE_SECTION_BACKWARD_M
     surface_lateral_limit_m: float = STEP5_SURFACE_LATERAL_LIMIT_M
@@ -203,7 +211,40 @@ class T04Step5CaseResult:
             "case_terminal_window_domain": _geometry_summary(self.case_terminal_window_domain),
             "case_terminal_support_corridor_geometry": _geometry_summary(self.case_terminal_support_corridor_geometry),
             "case_bridge_zone_geometry": _geometry_summary(self.case_bridge_zone_geometry),
+            "negative_mask_channels": self.negative_mask_channel_status(),
             "unit_results": [unit.to_status_doc() for unit in self.unit_results],
+        }
+
+    def negative_mask_channel_status(self) -> dict[str, Any]:
+        return {
+            "unrelated_swsd": {
+                "road_ids": list(self.unrelated_swsd_road_ids),
+                "node_ids": list(self.unrelated_swsd_node_ids),
+                "geometry": _geometry_summary(self.unrelated_swsd_mask_geometry),
+                "applied_to_forbidden_domain": self.unrelated_swsd_mask_geometry is not None,
+            },
+            "unrelated_rcsd": {
+                "road_ids": list(self.unrelated_rcsd_road_ids),
+                "node_ids": list(self.unrelated_rcsd_node_ids),
+                "geometry": _geometry_summary(self.unrelated_rcsd_mask_geometry),
+                "applied_to_forbidden_domain": self.unrelated_rcsd_mask_geometry is not None,
+            },
+            "divstrip_body": {
+                "geometry": _geometry_summary(self.divstrip_body_mask_geometry),
+                "applied_to_forbidden_domain": False,
+            },
+            "divstrip_void": {
+                "geometry": _geometry_summary(self.divstrip_void_mask_geometry),
+                "applied_to_forbidden_domain": self.divstrip_void_mask_geometry is not None,
+            },
+            "forbidden_domain": {
+                "geometry": _geometry_summary(self.case_forbidden_domain),
+                "applied_to_forbidden_domain": self.case_forbidden_domain is not None,
+            },
+            "terminal_cut": {
+                "geometry": _geometry_summary(self.case_terminal_cut_constraints),
+                "applied_to_forbidden_domain": self.case_terminal_cut_constraints is not None,
+            },
         }
 
     def to_audit_doc(self) -> dict[str, Any]:
@@ -219,11 +260,17 @@ class T04Step5CaseResult:
             "case_support_graph_geometry": _geometry_summary(self.case_support_graph_geometry),
             "unrelated_swsd_mask_geometry": _geometry_summary(self.unrelated_swsd_mask_geometry),
             "unrelated_rcsd_mask_geometry": _geometry_summary(self.unrelated_rcsd_mask_geometry),
+            "divstrip_body_mask_geometry": _geometry_summary(self.divstrip_body_mask_geometry),
             "divstrip_void_mask_geometry": _geometry_summary(self.divstrip_void_mask_geometry),
             "case_terminal_window_domain": _geometry_summary(self.case_terminal_window_domain),
             "case_terminal_support_corridor_geometry": _geometry_summary(self.case_terminal_support_corridor_geometry),
             "related_swsd_road_ids": list(self.related_swsd_road_ids),
             "related_rcsd_road_ids": list(self.related_rcsd_road_ids),
+            "unrelated_swsd_road_ids": list(self.unrelated_swsd_road_ids),
+            "unrelated_swsd_node_ids": list(self.unrelated_swsd_node_ids),
+            "unrelated_rcsd_road_ids": list(self.unrelated_rcsd_road_ids),
+            "unrelated_rcsd_node_ids": list(self.unrelated_rcsd_node_ids),
+            "negative_mask_channels": self.negative_mask_channel_status(),
             "unit_results": [unit.to_audit_doc() for unit in self.unit_results],
         }
 
@@ -274,6 +321,34 @@ class T04Step5CaseResult:
             domain_role="case_forbidden_domain",
             component_role="case_forbidden_domain",
             geometry=self.case_forbidden_domain,
+        )
+        append_feature(
+            scope="case",
+            event_unit_id="",
+            domain_role="case_forbidden_domain",
+            component_role="unrelated_swsd_mask_geometry",
+            geometry=self.unrelated_swsd_mask_geometry,
+        )
+        append_feature(
+            scope="case",
+            event_unit_id="",
+            domain_role="case_forbidden_domain",
+            component_role="unrelated_rcsd_mask_geometry",
+            geometry=self.unrelated_rcsd_mask_geometry,
+        )
+        append_feature(
+            scope="case",
+            event_unit_id="",
+            domain_role="case_forbidden_domain",
+            component_role="divstrip_void_mask_geometry",
+            geometry=self.divstrip_void_mask_geometry,
+        )
+        append_feature(
+            scope="case",
+            event_unit_id="",
+            domain_role="case_audit_reference",
+            component_role="divstrip_body_mask_geometry",
+            geometry=self.divstrip_body_mask_geometry,
         )
         append_feature(
             scope="case",

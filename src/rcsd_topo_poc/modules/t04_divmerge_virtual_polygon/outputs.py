@@ -49,6 +49,7 @@ REVIEW_INDEX_FIELDNAMES = [
     "reference_point_source",
     "section_reference_source",
     "surface_scenario_type",
+    "rcsd_alignment_type",
     "rcsd_match_type",
     "swsd_junction_present",
     "fallback_rcsdroad_ids",
@@ -233,6 +234,7 @@ def write_case_outputs(
                 "case_id": case_result.case_spec.case_id,
                 "case_review_state": case_result.case_review_state,
                 "case_review_reasons": list(case_result.case_review_reasons),
+                "case_alignment_aggregate": case_result.case_alignment_aggregate_doc(),
                 "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
             },
             case_provenance,
@@ -245,6 +247,7 @@ def write_case_outputs(
                 "case_id": case_result.case_spec.case_id,
                 "step4_review_state": case_result.case_review_state,
                 "step4_review_reasons": list(case_result.case_review_reasons),
+                "case_alignment_aggregate": case_result.case_alignment_aggregate_doc(),
                 "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
             },
             case_provenance,
@@ -447,6 +450,7 @@ def write_case_outputs(
                 reference_point_source=str(surface_scenario_doc["reference_point_source"]),
                 section_reference_source=str(surface_scenario_doc["section_reference_source"]),
                 surface_scenario_type=str(surface_scenario_doc["surface_scenario_type"]),
+                rcsd_alignment_type=str(surface_scenario_doc["rcsd_alignment_type"]),
                 rcsd_match_type=str(surface_scenario_doc["rcsd_match_type"]),
                 swsd_junction_present=bool(surface_scenario_doc["swsd_junction_present"]),
                 fallback_rcsdroad_ids=";".join(str(item) for item in surface_scenario_doc["fallback_rcsdroad_ids"]),
@@ -601,6 +605,7 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
     positive_rcsd_consistency_counts = Counter(row.positive_rcsd_consistency_level or "unknown" for row in rows)
     positive_rcsd_present_counts = Counter("yes" if row.positive_rcsd_present else "no" for row in rows)
     surface_scenario_type_counts = Counter(row.surface_scenario_type or "unknown" for row in rows)
+    rcsd_alignment_type_counts = Counter(row.rcsd_alignment_type or "unknown" for row in rows)
     main_evidence_type_counts = Counter(row.main_evidence_type or "none" for row in rows)
     section_reference_source_counts = Counter(row.section_reference_source or "none" for row in rows)
     pair_local_rcsd_empty_counts = Counter("yes" if row.pair_local_rcsd_empty else "no" for row in rows)
@@ -641,6 +646,7 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
         "positive_rcsd_consistency_level_counts": dict(sorted(positive_rcsd_consistency_counts.items())),
         "positive_rcsd_present_counts": dict(sorted(positive_rcsd_present_counts.items())),
         "surface_scenario_type_counts": dict(sorted(surface_scenario_type_counts.items())),
+        "rcsd_alignment_type_counts": dict(sorted(rcsd_alignment_type_counts.items())),
         "main_evidence_type_counts": dict(sorted(main_evidence_type_counts.items())),
         "section_reference_source_counts": dict(sorted(section_reference_source_counts.items())),
         "pair_local_rcsd_empty_counts": dict(sorted(pair_local_rcsd_empty_counts.items())),
@@ -673,6 +679,7 @@ def write_summary(
     failed_cases: list[dict[str, Any]] | None = None,
     step7_outputs: dict[str, Any] | None = None,
     nodes_outputs: dict[str, Any] | None = None,
+    performance: dict[str, Any] | None = None,
 ) -> Path:
     cases_dir = run_root / "cases"
     summary_trace = provenance_doc(input_dataset_id=str(preflight.get("input_dataset_id") or ""))
@@ -692,6 +699,7 @@ def write_summary(
         "step4_review_index_csv": str(run_root / "step4_review_index.csv"),
         "step4_review_summary_json": str(run_root / "step4_review_summary.json"),
         "step4_review_flat_dir": str(run_root / "step4_review_flat"),
+        "performance": dict(performance or {}),
     }
     if step7_outputs:
         summary.update(

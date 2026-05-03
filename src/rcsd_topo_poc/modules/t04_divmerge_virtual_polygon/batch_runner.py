@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
@@ -36,6 +38,35 @@ from .step4_road_surface_fork_binding import apply_road_surface_fork_binding
 DEFAULT_CASE_ROOT = Path("/mnt/e/TestData/POC_Data/T02/Anchor_2")
 DEFAULT_OUT_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch")
 DANGEROUS_RUN_ROOT_MARKERS = (".git", "pyproject.toml", "src", "tests")
+DEFAULT_THRESHOLD_SECONDS_TOTAL = 240.0
+DEFAULT_THRESHOLD_AVG_COMPLETED_CASE_SECONDS = 6.5
+
+
+def _float_env(name: str, default: float) -> float:
+    raw_value = os.environ.get(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        return default
+
+
+def _performance_threshold_status(
+    *,
+    elapsed_seconds_total: float,
+    avg_completed_case_seconds: float | None,
+    threshold_seconds_total: float,
+    threshold_avg_completed_case_seconds: float,
+) -> str:
+    if elapsed_seconds_total > threshold_seconds_total:
+        return "exceeded_threshold"
+    if (
+        avg_completed_case_seconds is not None
+        and avg_completed_case_seconds > threshold_avg_completed_case_seconds
+    ):
+        return "exceeded_threshold"
+    return "within_threshold"
 
 
 def _now_text() -> str:
@@ -107,6 +138,7 @@ def run_t04_step14_batch(
     out_root: str | Path = DEFAULT_OUT_ROOT,
     run_id: str | None = None,
 ) -> Path:
+    batch_started_perf = perf_counter()
     resolved_case_root = normalize_runtime_path(case_root)
     resolved_out_root = normalize_runtime_path(out_root)
     resolved_run_id = run_id or build_run_id("t04_step14_batch")
@@ -142,12 +174,28 @@ def run_t04_step14_batch(
     failed_case_ids: list[str] = []
     failed_cases: list[dict[str, Any]] = []
     failure_records: list[dict[str, Any]] = []
+    case_elapsed_records: list[dict[str, Any]] = []
     failures_dir = run_root / "failures"
     for spec in specs:
+        case_started_perf = perf_counter()
         try:
             case_bundle = load_case_bundle(spec)
             case_results.append(build_case_result(case_bundle))
+            case_elapsed_records.append(
+                {
+                    "case_id": spec.case_id,
+                    "status": "completed",
+                    "elapsed_seconds": round(max(perf_counter() - case_started_perf, 0.0), 6),
+                }
+            )
         except Exception as exc:
+            case_elapsed_records.append(
+                {
+                    "case_id": spec.case_id,
+                    "status": "runtime_failed",
+                    "elapsed_seconds": round(max(perf_counter() - case_started_perf, 0.0), 6),
+                }
+            )
             failures_dir.mkdir(parents=True, exist_ok=True)
             failure_path = failures_dir / f"{spec.case_id}.failure.json"
             doc = _failure_doc(case_id=spec.case_id, exc=exc)
@@ -197,17 +245,61 @@ def run_t04_step14_batch(
         artifacts=step7_artifacts,
         input_dataset_id=str(preflight.get("input_dataset_id") or ""),
     )
-    nodes_outputs = write_t04_nodes_outputs_for_case_packages(
-        run_root=run_root,
-        case_specs=specs,
-        artifacts=step7_artifacts,
-        failed_case_ids=failed_case_ids,
-        input_dataset_id=str(preflight.get("input_dataset_id") or ""),
+    nodes_outputs = {}
+    if step7_outputs.get("consistency_report_path") and all(hasattr(spec, "input_paths") for spec in specs):
+        nodes_outputs = write_t04_nodes_outputs_for_case_packages(
+            run_root=run_root,
+            case_specs=specs,
+            artifacts=step7_artifacts,
+            failed_case_ids=failed_case_ids,
+            input_dataset_id=str(preflight.get("input_dataset_id") or ""),
+        )
+        augment_step7_consistency_report(
+            consistency_report_path=Path(str(step7_outputs["consistency_report_path"])),
+            nodes_outputs=nodes_outputs,
+        )
+    completed_case_times = [
+        float(record["elapsed_seconds"])
+        for record in case_elapsed_records
+        if record.get("status") == "completed"
+    ]
+    elapsed_seconds_total = round(max(perf_counter() - batch_started_perf, 0.0), 6)
+    case_build_elapsed_seconds_total = round(sum(completed_case_times), 6)
+    avg_completed_case_seconds = (
+        round(sum(completed_case_times) / len(completed_case_times), 6)
+        if completed_case_times
+        else None
     )
-    augment_step7_consistency_report(
-        consistency_report_path=Path(str(step7_outputs["consistency_report_path"])),
-        nodes_outputs=nodes_outputs,
+    threshold_seconds_total = _float_env(
+        "T04_CASE_PACKAGE_THRESHOLD_SECONDS_TOTAL",
+        DEFAULT_THRESHOLD_SECONDS_TOTAL,
     )
+    threshold_avg_completed_case_seconds = _float_env(
+        "T04_CASE_PACKAGE_THRESHOLD_AVG_COMPLETED_CASE_SECONDS",
+        DEFAULT_THRESHOLD_AVG_COMPLETED_CASE_SECONDS,
+    )
+    performance_summary = {
+        "performance_audit_version": "t04-case-package-performance-v1",
+        "elapsed_seconds_total": elapsed_seconds_total,
+        "case_build_elapsed_seconds_total": case_build_elapsed_seconds_total,
+        "avg_completed_case_seconds": avg_completed_case_seconds,
+        "completed_case_count": len(completed_case_times),
+        "runtime_failed_case_count": len(case_elapsed_records) - len(completed_case_times),
+        "slowest_cases": sorted(
+            case_elapsed_records,
+            key=lambda record: float(record.get("elapsed_seconds") or 0.0),
+            reverse=True,
+        )[:5],
+        "threshold_seconds_total": threshold_seconds_total,
+        "threshold_avg_completed_case_seconds": threshold_avg_completed_case_seconds,
+        "threshold_status": _performance_threshold_status(
+            elapsed_seconds_total=elapsed_seconds_total,
+            avg_completed_case_seconds=avg_completed_case_seconds,
+            threshold_seconds_total=threshold_seconds_total,
+            threshold_avg_completed_case_seconds=threshold_avg_completed_case_seconds,
+        ),
+        "threshold_source": "module_quality_requirement_default_or_env_override",
+    }
     write_summary(
         run_root=run_root,
         rows=materialized_rows,
@@ -217,6 +309,7 @@ def run_t04_step14_batch(
         failed_cases=failed_cases,
         step7_outputs=step7_outputs,
         nodes_outputs=nodes_outputs,
+        performance=performance_summary,
     )
     return run_root
 

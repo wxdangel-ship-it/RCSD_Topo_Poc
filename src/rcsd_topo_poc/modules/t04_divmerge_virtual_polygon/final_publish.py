@@ -66,6 +66,7 @@ STEP7_SURFACE_SCENARIO_AUDIT_FIELDS = (
     "merge_mode",
     "final_case_polygon_component_count",
     "single_connected_case_surface_ok",
+    "barrier_separated_case_surface_ok",
     "surface_scenario_missing",
 )
 
@@ -92,6 +93,7 @@ STEP7_SURFACE_SCENARIO_SUMMARY_FIELDNAMES = [
     "merge_mode",
     "final_case_polygon_component_count",
     "single_connected_case_surface_ok",
+    "barrier_separated_case_surface_ok",
 ]
 
 STEP7_SUMMARY_FIELDNAMES = [
@@ -232,6 +234,10 @@ def derive_step7_surface_scenario_publish_audit(step6_result: T04Step6Result) ->
             getattr(step6_result, "final_case_polygon_component_count", 0) or 0
         ),
         "single_connected_case_surface_ok": _bool_attr(step6_result, "single_connected_case_surface_ok"),
+        "barrier_separated_case_surface_ok": _bool_attr(
+            step6_result,
+            "barrier_separated_case_surface_ok",
+        ),
         "surface_scenario_missing": _bool_attr(step6_result, "surface_scenario_missing", True),
     }
 
@@ -341,7 +347,10 @@ def _step7_guard_mapping_issues(artifacts: Iterable[T04Step7CaseArtifact]) -> li
                     "expected_reject_reason": "no_surface_reference",
                 }
             )
-        if guard_doc.get("single_connected_case_surface_ok") is False and "multi_component_result" not in reject_reasons:
+        if (
+            guard_doc.get("single_connected_case_surface_ok") is False
+            and "multi_component_result" not in reject_reasons
+        ):
             issues.append(
                 {
                     "case_id": artifact.case_id,
@@ -501,7 +510,9 @@ def _reject_reasons(
             reasons.append("final_polygon_suppressed_by_no_surface_reference")
     if step6_result.component_count != 1:
         reasons.append("multi_component_result")
-    if not getattr(step6_result, "single_connected_case_surface_ok", step6_result.component_count == 1):
+    if (
+        not getattr(step6_result, "single_connected_case_surface_ok", step6_result.component_count == 1)
+    ):
         reasons.append("multi_component_result")
     if not step6_result.hard_must_cover_ok:
         reasons.append("hard_must_cover_disconnected")

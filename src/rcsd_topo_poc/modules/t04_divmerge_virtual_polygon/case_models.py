@@ -22,6 +22,14 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
     ParsedRoad,
 )
 from .surface_scenario import SurfaceScenarioClassification, classify_surface_scenario
+from .rcsd_alignment import (
+    RCSD_ALIGNMENT_AMBIGUOUS,
+    RCSD_ALIGNMENT_NONE,
+    RCSD_ALIGNMENT_ROAD_ONLY,
+    RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+    RCSDAlignmentResult,
+    normalize_rcsd_alignment_type,
+)
 
 
 _COMPLEX_SWSD_ONLY_NO_MAIN_REASONS = {
@@ -42,6 +50,66 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     return value
+
+
+def _clean_doc_ids(values: Any) -> tuple[str, ...]:
+    if not values:
+        return ()
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return tuple(result)
+
+
+def _audit_ids(mapping: dict[str, Any], *keys: str) -> tuple[str, ...]:
+    for key in keys:
+        ids = _clean_doc_ids(mapping.get(key))
+        if ids:
+            return ids
+    return ()
+
+
+def _alignment_signature(road_ids: tuple[str, ...], node_ids: tuple[str, ...]) -> str:
+    parts: list[str] = []
+    if road_ids:
+        parts.append(f"roads:{','.join(road_ids)}")
+    if node_ids:
+        parts.append(f"nodes:{','.join(node_ids)}")
+    return "|".join(parts)
+
+
+def _alignment_objects_related(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_roads = set(_clean_doc_ids(left.get("positive_rcsdroad_ids")))
+    right_roads = set(_clean_doc_ids(right.get("positive_rcsdroad_ids")))
+    left_nodes = set(_clean_doc_ids(left.get("positive_rcsdnode_ids")))
+    right_nodes = set(_clean_doc_ids(right.get("positive_rcsdnode_ids")))
+    return bool((left_roads & right_roads) or (left_nodes & right_nodes))
+
+
+def _alignment_object_cluster_count(objects: list[dict[str, Any]]) -> int:
+    if not objects:
+        return 0
+    parent = list(range(len(objects)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    for left_index, left_object in enumerate(objects):
+        for right_index in range(left_index + 1, len(objects)):
+            if _alignment_objects_related(left_object, objects[right_index]):
+                union(left_index, right_index)
+    return len({find(index) for index in range(len(objects))})
 
 
 @dataclass(frozen=True)
@@ -194,6 +262,7 @@ class T04CandidateAuditEntry:
     first_hit_rcsdroad_ids: tuple[str, ...] = ()
     selected_rcsdroad_ids: tuple[str, ...] = ()
     selected_rcsdnode_ids: tuple[str, ...] = ()
+    rcsd_alignment_type: str = RCSD_ALIGNMENT_NONE
     primary_main_rc_node_id: str | None = None
     local_rcsd_unit_id: str | None = None
     local_rcsd_unit_kind: str | None = None
@@ -236,6 +305,7 @@ class T04CandidateAuditEntry:
             "positive_rcsd_consistency_level": self.positive_rcsd_consistency_level,
             "required_rcsd_node": self.required_rcsd_node,
             "required_rcsd_node_source": self.required_rcsd_node_source,
+            "rcsd_alignment_type": self.rcsd_alignment_type,
             "selected_candidate_region": self.selected_candidate_region,
             "selected_rcsdroad_ids": list(self.selected_rcsdroad_ids),
             "selected_rcsdnode_ids": list(self.selected_rcsdnode_ids),
@@ -301,6 +371,7 @@ class T04EventUnitResult:
     pair_local_summary: dict[str, Any]
     selected_candidate_summary: dict[str, Any]
     positive_rcsd_audit: dict[str, Any] = field(default_factory=dict)
+    rcsd_alignment_type: str = ""
     selected_evidence_summary: dict[str, Any] = field(default_factory=dict)
     alternative_candidate_summaries: tuple[dict[str, Any], ...] = ()
     candidate_audit_entries: tuple[T04CandidateAuditEntry, ...] = ()
@@ -395,13 +466,64 @@ class T04EventUnitResult:
             swsd_junction_present=explicit_swsd_junction_present,
             fact_reference_point_present=self.fact_reference_point is not None,
             required_rcsd_node_distance_to_representative_m=required_node_distance_m,
+            rcsd_alignment_type=self.rcsd_alignment_type or None,
         )
 
     def surface_scenario_doc(self) -> dict[str, Any]:
         return self.surface_scenario.to_doc()
 
+    def rcsd_alignment_result(self) -> RCSDAlignmentResult:
+        audit = dict(self.positive_rcsd_audit or {})
+        selected_evidence = dict(self.selected_evidence_summary or {})
+        selected_candidate = dict(self.selected_candidate_summary or {})
+        alignment_type = normalize_rcsd_alignment_type(self.surface_scenario.rcsd_alignment_type)
+        scenario_fallback_roads = _clean_doc_ids(self.surface_scenario.fallback_rcsdroad_ids)
+        candidate_ids = _clean_doc_ids(
+            [
+                selected_candidate.get("candidate_id"),
+                selected_evidence.get("candidate_id"),
+                *[item.get("candidate_id") for item in self.alternative_candidate_summaries],
+            ]
+        )
+        ambiguity_reasons = []
+        if alignment_type == RCSD_ALIGNMENT_AMBIGUOUS:
+            ambiguity_reasons.append(str(self.positive_rcsd_present_reason or "ambiguous_rcsd_alignment"))
+        for key in ("ambiguity_reasons", "ambiguous_reasons"):
+            ambiguity_reasons.extend(_clean_doc_ids(audit.get(key)))
+        return RCSDAlignmentResult(
+            scope=RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+            scope_id=self.spec.event_unit_id,
+            rcsd_alignment_type=alignment_type,
+            positive_rcsdroad_ids=(
+                scenario_fallback_roads
+                if alignment_type == RCSD_ALIGNMENT_ROAD_ONLY and scenario_fallback_roads
+                else _clean_doc_ids(self.selected_rcsdroad_ids)
+            )
+            or _audit_ids(audit, "published_rcsdroad_ids", "selected_rcsdroad_ids"),
+            positive_rcsdnode_ids=_clean_doc_ids(self.selected_rcsdnode_ids)
+            or _audit_ids(audit, "published_rcsdnode_ids", "selected_rcsdnode_ids"),
+            candidate_rcsdroad_ids=_clean_doc_ids(self.pair_local_rcsd_road_ids)
+            or _audit_ids(audit, "pair_local_rcsd_road_ids", "candidate_rcsdroad_ids"),
+            candidate_rcsdnode_ids=_clean_doc_ids(self.pair_local_rcsd_node_ids)
+            or _audit_ids(audit, "pair_local_rcsd_node_ids", "candidate_rcsdnode_ids"),
+            candidate_alignment_ids=candidate_ids,
+            ambiguity_reasons=_clean_doc_ids(ambiguity_reasons),
+            conflict_reasons=_clean_doc_ids(
+                [
+                    self.evidence_conflict_type if self.evidence_conflict_type != "none" else "",
+                    self.rcsd_conflict_type if self.rcsd_conflict_type != "none" else "",
+                    *(self.conflict_audit.get("conflict_reasons") or ()),
+                ]
+            ),
+            decision_reason=str(self.positive_rcsd_present_reason or self.rcsd_selection_mode or ""),
+        )
+
+    def rcsd_alignment_result_doc(self) -> dict[str, Any]:
+        return self.rcsd_alignment_result().to_doc()
+
     def to_summary_doc(self) -> dict[str, Any]:
         surface_scenario = self.surface_scenario_doc()
+        alignment_result = self.rcsd_alignment_result_doc()
         return _json_safe({
             "event_unit_id": self.spec.event_unit_id,
             "event_type": self.spec.event_type,
@@ -427,6 +549,7 @@ class T04EventUnitResult:
             "aggregated_rcsd_unit_ids": list(self.aggregated_rcsd_unit_ids),
             "positive_rcsd_present": self.positive_rcsd_present,
             "positive_rcsd_present_reason": self.positive_rcsd_present_reason,
+            "rcsd_alignment_type": surface_scenario["rcsd_alignment_type"],
             "axis_polarity_inverted": self.axis_polarity_inverted,
             "rcsd_selection_mode": self.rcsd_selection_mode,
             "pair_local_rcsd_empty": self.pair_local_rcsd_empty,
@@ -441,6 +564,7 @@ class T04EventUnitResult:
             "event_chosen_s_m": self.event_chosen_s_m,
             "pair_local_summary": dict(self.pair_local_summary),
             "positive_rcsd_audit": _json_safe(dict(self.positive_rcsd_audit)),
+            "rcsd_alignment_result": alignment_result,
             "selected_candidate_region": self.selected_candidate_region,
             "selected_evidence_state": self.selected_evidence_state,
             "selected_evidence": dict(self.selected_evidence_summary),
@@ -473,6 +597,70 @@ class T04CaseResult:
     case_review_state: str
     case_review_reasons: tuple[str, ...]
 
+    def case_alignment_aggregate_doc(self) -> dict[str, Any]:
+        unit_alignment_docs = [unit.rcsd_alignment_result_doc() for unit in self.event_units]
+        positive_road_ids: list[str] = []
+        positive_node_ids: list[str] = []
+        candidate_road_ids: list[str] = []
+        candidate_node_ids: list[str] = []
+        candidate_alignment_ids: list[str] = []
+        aligned_object_ids: list[str] = []
+        positive_alignment_objects: list[dict[str, Any]] = []
+        ambiguous_unit_ids: list[str] = []
+        for unit, alignment_doc in zip(self.event_units, unit_alignment_docs):
+            for source, target in [
+                (alignment_doc.get("positive_rcsdroad_ids"), positive_road_ids),
+                (alignment_doc.get("positive_rcsdnode_ids"), positive_node_ids),
+                (alignment_doc.get("candidate_rcsdroad_ids"), candidate_road_ids),
+                (alignment_doc.get("candidate_rcsdnode_ids"), candidate_node_ids),
+                (alignment_doc.get("candidate_alignment_ids"), candidate_alignment_ids),
+            ]:
+                for item in _clean_doc_ids(source):
+                    if item not in target:
+                        target.append(item)
+            if alignment_doc.get("rcsd_alignment_type") == RCSD_ALIGNMENT_AMBIGUOUS:
+                ambiguous_unit_ids.append(unit.spec.event_unit_id)
+            unit_positive_roads = _clean_doc_ids(alignment_doc.get("positive_rcsdroad_ids"))
+            unit_positive_nodes = _clean_doc_ids(alignment_doc.get("positive_rcsdnode_ids"))
+            if unit_positive_roads or unit_positive_nodes:
+                signature = _alignment_signature(unit_positive_roads, unit_positive_nodes)
+                positive_alignment_objects.append(
+                    {
+                        "event_unit_id": unit.spec.event_unit_id,
+                        "alignment_signature": signature,
+                        "positive_rcsdroad_ids": list(unit_positive_roads),
+                        "positive_rcsdnode_ids": list(unit_positive_nodes),
+                    }
+                )
+                if signature and signature not in aligned_object_ids:
+                    aligned_object_ids.append(signature)
+        positive_alignment_object_cluster_count = _alignment_object_cluster_count(positive_alignment_objects)
+        conflict_reasons: list[str] = []
+        if ambiguous_unit_ids:
+            conflict_reasons.append("ambiguous_unit_alignment_present")
+        if positive_alignment_object_cluster_count > 1:
+            conflict_reasons.append("cross_unit_unrelated_rcsd_alignment_objects")
+        return _json_safe(
+            {
+                "case_id": self.case_spec.case_id,
+                "scope": "case",
+                "unit_count": len(self.event_units),
+                "unit_alignment_results": unit_alignment_docs,
+                "positive_rcsdroad_ids": positive_road_ids,
+                "positive_rcsdnode_ids": positive_node_ids,
+                "candidate_rcsdroad_ids": candidate_road_ids,
+                "candidate_rcsdnode_ids": candidate_node_ids,
+                "candidate_alignment_ids": candidate_alignment_ids,
+                "aligned_rcsd_object_ids": aligned_object_ids,
+                "positive_alignment_objects": positive_alignment_objects,
+                "positive_alignment_object_cluster_count": positive_alignment_object_cluster_count,
+                "ambiguous_event_unit_ids": ambiguous_unit_ids,
+                "conflict_present": bool(conflict_reasons),
+                "conflict_reasons": conflict_reasons,
+                "source": "step4_unit_alignment_results",
+            }
+        )
+
     def to_case_meta_doc(self) -> dict[str, Any]:
         provenance = provenance_doc(
             input_dataset_id=case_input_fingerprint(self.case_spec.input_paths)
@@ -504,6 +692,7 @@ class T04ReviewIndexRow:
     reference_point_source: str = "none"
     section_reference_source: str = "none"
     surface_scenario_type: str = "no_surface_reference"
+    rcsd_alignment_type: str = RCSD_ALIGNMENT_NONE
     rcsd_match_type: str = "none"
     swsd_junction_present: bool = False
     fallback_rcsdroad_ids: str = ""
@@ -595,6 +784,7 @@ class T04ReviewIndexRow:
             "reference_point_source": self.reference_point_source,
             "section_reference_source": self.section_reference_source,
             "surface_scenario_type": self.surface_scenario_type,
+            "rcsd_alignment_type": self.rcsd_alignment_type,
             "rcsd_match_type": self.rcsd_match_type,
             "swsd_junction_present": int(self.swsd_junction_present),
             "fallback_rcsdroad_ids": self.fallback_rcsdroad_ids,

@@ -10,6 +10,12 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.support_domain import (
     _build_step5_unit_result,
     derive_step5_surface_window_config,
 )
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.support_domain_common import (
+    _step5_surface_window_config,
+)
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.support_domain_windows import (
+    _build_junction_window_domain,
+)
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.surface_scenario import (
     SCENARIO_MAIN_WITHOUT_RCSD,
     SCENARIO_MAIN_WITH_RCSD,
@@ -177,6 +183,27 @@ def test_step5_rejects_virtual_reference_point_in_no_main_evidence_config() -> N
     assert config.no_virtual_reference_point_guard is False
 
 
+def test_step5_does_not_infer_surface_scenario_from_legacy_rcsd_fields() -> None:
+    unit_result = SimpleNamespace(
+        evidence_source="road_surface_fork",
+        selected_evidence_summary={"candidate_id": "candidate-1"},
+        rcsd_selection_mode="semantic_junction",
+        required_rcsd_node="rcsd-node-1",
+        first_hit_rcsdroad_ids=("rcsd-road-1", "rcsd-road-2", "rcsd-road-3"),
+        selected_rcsdroad_ids=("rcsd-road-1", "rcsd-road-2", "rcsd-road-3"),
+        positive_rcsd_audit={"rcsd_alignment_type": "rcsd_semantic_junction"},
+        fact_reference_point=Point(0.0, 0.0),
+    )
+
+    config = _step5_surface_window_config(unit_result)
+
+    assert config.surface_scenario_missing is True
+    assert config.surface_scenario_type == SCENARIO_NO_SURFACE_REFERENCE
+    assert config.section_reference_source == SECTION_REFERENCE_NONE
+    assert config.surface_generation_mode == SURFACE_MODE_NO_SURFACE
+    assert config.fallback_rcsdroad_ids == ()
+
+
 def test_step5_fallback_strip_is_localized_around_swsd_section_reference() -> None:
     legacy_bridge = SimpleNamespace(
         event_axis_unit_vector=(1.0, 0.0),
@@ -207,6 +234,77 @@ def test_step5_fallback_strip_is_localized_around_swsd_section_reference() -> No
     assert strip.bounds[2] == pytest.approx(30.0, abs=1e-6)
     assert strip.bounds[3] - strip.bounds[1] == pytest.approx(6.0, abs=1e-6)
     assert not strip.covers(Point(-90.0, 0.0))
+
+
+def test_step5_no_main_rcsd_junction_window_uses_rcsd_reference_not_swsd_reference() -> None:
+    legacy_bridge = SimpleNamespace(
+        event_axis_unit_vector=(1.0, 0.0),
+        event_axis_centerline=LineString([(-200.0, 0.0), (200.0, 0.0)]),
+        event_origin_point=None,
+        selected_event_roads=(),
+        selected_roads=(),
+    )
+    unit_result = SimpleNamespace(
+        evidence_source="swsd_junction_window",
+        interpretation=SimpleNamespace(legacy_step5_bridge=legacy_bridge),
+        required_rcsd_node_geometry=Point(100.0, 0.0),
+        positive_rcsd_node_geometry=None,
+        primary_main_rc_node_geometry=None,
+        local_rcsd_unit_geometry=None,
+        positive_rcsd_road_geometry=None,
+        review_materialized_point=Point(0.0, 0.0),
+        fact_reference_point=None,
+        unit_context=SimpleNamespace(representative_node=SimpleNamespace(geometry=Point(0.0, 0.0))),
+        surface_scenario_doc=lambda: _scenario_doc(
+            scenario_type=SCENARIO_NO_MAIN_WITH_RCSD,
+            section_reference_source=SECTION_REFERENCE_RCSD,
+            surface_generation_mode=SURFACE_MODE_RCSD_WINDOW,
+            reference_point_present=False,
+            has_main_evidence=False,
+        ),
+    )
+
+    domain = _build_junction_window_domain(unit_result, drivezone_union=None)
+
+    assert domain is not None
+    assert domain.covers(Point(100.0, 0.0))
+    assert not domain.covers(Point(0.0, 0.0))
+
+
+def test_step5_no_main_road_only_window_uses_swsd_reference_not_rcsd_road_reference() -> None:
+    legacy_bridge = SimpleNamespace(
+        event_axis_unit_vector=(1.0, 0.0),
+        event_axis_centerline=LineString([(-200.0, 0.0), (200.0, 0.0)]),
+        event_origin_point=None,
+        selected_event_roads=(),
+        selected_roads=(),
+    )
+    unit_result = SimpleNamespace(
+        evidence_source="swsd_junction_window",
+        interpretation=SimpleNamespace(legacy_step5_bridge=legacy_bridge),
+        required_rcsd_node_geometry=Point(100.0, 0.0),
+        positive_rcsd_node_geometry=None,
+        primary_main_rc_node_geometry=None,
+        local_rcsd_unit_geometry=None,
+        positive_rcsd_road_geometry=None,
+        review_materialized_point=Point(0.0, 0.0),
+        fact_reference_point=None,
+        unit_context=SimpleNamespace(representative_node=SimpleNamespace(geometry=Point(0.0, 0.0))),
+        surface_scenario_doc=lambda: _scenario_doc(
+            scenario_type=SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
+            section_reference_source=SECTION_REFERENCE_SWSD,
+            surface_generation_mode=SURFACE_MODE_SWSD_WITH_RCSDROAD,
+            reference_point_present=False,
+            has_main_evidence=False,
+            fallback_rcsdroad_ids=("rcsd-road-1",),
+        ),
+    )
+
+    domain = _build_junction_window_domain(unit_result, drivezone_union=None)
+
+    assert domain is not None
+    assert domain.covers(Point(0.0, 0.0))
+    assert not domain.covers(Point(100.0, 0.0))
 
 
 def test_step5_main_evidence_with_rcsd_uses_scenario_not_evidence_source_for_full_fill() -> None:

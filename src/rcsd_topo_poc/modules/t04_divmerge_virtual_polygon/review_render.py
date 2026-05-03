@@ -9,7 +9,13 @@ from shapely.geometry.base import BaseGeometry
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
 from .polygon_assembly import T04Step6Result
+from .rcsd_alignment import RCSD_ALIGNMENT_RENDER_RCSDROAD_TYPES
 from .review_audit import _candidate_entry_reference_zone, build_case_review_audit
+from .surface_scenario import (
+    SECTION_REFERENCE_POINT_AND_RCSD,
+    SECTION_REFERENCE_RCSD,
+    SECTION_REFERENCE_SWSD,
+)
 from .support_domain import T04Step5CaseResult
 
 
@@ -60,6 +66,8 @@ LOCALIZED_CORE_FILL = (84, 55, 128, 118)
 LOCALIZED_CORE_EDGE = (58, 35, 97, 255)
 FACT_POINT_FILL = (32, 103, 170, 255)
 FACT_POINT_EDGE = (255, 255, 255, 255)
+SECTION_REF_FILL = (255, 255, 255, 255)
+SECTION_REF_EDGE = (35, 119, 90, 255)
 REVIEW_POINT_EDGE = (32, 103, 170, 255)
 NODE_COLOR = (64, 64, 64, 255)
 GROUP_NODE_COLOR = (0, 0, 0, 255)
@@ -186,6 +194,26 @@ def _draw_crosshair(draw, point: Point | None, bounds, *, fill, outline, radius:
     draw.line((px - radius - 4, py, px + radius + 4, py), fill=outline, width=3)
     draw.line((px, py - radius - 4, px, py + radius + 4), fill=outline, width=3)
     draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=fill, outline=outline, width=2)
+
+
+def _draw_labeled_crosshair(
+    draw,
+    point: Point | None,
+    bounds,
+    *,
+    label: str,
+    fill,
+    outline,
+    radius: int = 7,
+) -> None:
+    if point is None:
+        return
+    _draw_crosshair(draw, point, bounds, fill=fill, outline=outline, radius=radius)
+    px, py = _project(bounds, float(point.x), float(point.y))
+    label_text = _truncate(label, limit=12)
+    text_width = 14 + max(len(label_text), 2) * 8
+    draw.rounded_rectangle((px + 9, py - 17, px + 9 + text_width, py + 8), radius=7, fill=outline)
+    draw.text((px + 16, py - 15), label_text, font=_font(14), fill=(255, 255, 255, 255))
 
 
 def _draw_hollow_marker(draw, point: Point | None, bounds, *, outline, radius: int = 7):
@@ -347,6 +375,18 @@ def _ordered_nodes_by_ids(nodes: Iterable[Any], node_ids: Iterable[str]) -> tupl
     return tuple(ordered)
 
 
+def _unique_texts(values: Iterable[Any]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        key = str(value or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(key)
+    return tuple(ordered)
+
+
 def _related_swsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
     seen: set[str] = set()
     ordered: list[str] = []
@@ -373,6 +413,39 @@ def _related_rcsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
     return tuple(ordered)
 
 
+def _event_unit_surface_doc(event_unit: T04EventUnitResult) -> dict[str, Any]:
+    try:
+        return event_unit.surface_scenario_doc()
+    except ValueError:
+        return {
+            "surface_scenario_type": "ambiguous_rcsd_alignment",
+            "section_reference_source": "none",
+            "rcsd_alignment_type": event_unit.rcsd_alignment_type or "ambiguous_rcsd_alignment",
+            "fallback_rcsdroad_ids": [],
+        }
+
+
+def _active_rcsd_alignment_ids(case_result: T04CaseResult) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    road_ids: list[Any] = []
+    node_ids: list[Any] = []
+    for event_unit in case_result.event_units:
+        surface_doc = _event_unit_surface_doc(event_unit)
+        alignment_type = str(surface_doc.get("rcsd_alignment_type") or event_unit.rcsd_alignment_type or "")
+        if alignment_type not in RCSD_ALIGNMENT_RENDER_RCSDROAD_TYPES:
+            continue
+        audit = event_unit.positive_rcsd_audit
+        fallback_road_ids = tuple(surface_doc.get("fallback_rcsdroad_ids") or ())
+        road_ids.extend(event_unit.selected_rcsdroad_ids)
+        road_ids.extend(fallback_road_ids)
+        if not fallback_road_ids:
+            road_ids.extend(audit.get("published_rcsdroad_ids") or ())
+        node_ids.extend(event_unit.selected_rcsdnode_ids)
+        node_ids.extend(audit.get("published_rcsdnode_ids") or ())
+        if event_unit.required_rcsd_node:
+            node_ids.append(event_unit.required_rcsd_node)
+    return _unique_texts(road_ids), _unique_texts(node_ids)
+
+
 def _related_rcsd_node_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
     seen: set[str] = set()
     ordered: list[str] = []
@@ -384,6 +457,29 @@ def _related_rcsd_node_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
             seen.add(key)
             ordered.append(key)
     return tuple(ordered)
+
+
+def _section_reference_markers(event_unit: T04EventUnitResult) -> tuple[tuple[str, Point], ...]:
+    surface_doc = _event_unit_surface_doc(event_unit)
+    section_reference_source = str(surface_doc.get("section_reference_source") or "")
+    markers: list[tuple[str, Point]] = []
+    if bool(surface_doc.get("reference_point_present")):
+        point = _first_point(event_unit.fact_reference_point) or _first_point(event_unit.review_materialized_point)
+        if point is not None:
+            markers.append(("RP", point))
+    if section_reference_source in {SECTION_REFERENCE_POINT_AND_RCSD, SECTION_REFERENCE_RCSD}:
+        point = (
+            _first_point(event_unit.required_rcsd_node_geometry)
+            or _first_point(event_unit.positive_rcsd_node_geometry)
+            or _representative_point(event_unit.local_rcsd_unit_geometry)
+        )
+        if point is not None:
+            markers.append(("RCSD", point))
+    elif section_reference_source == SECTION_REFERENCE_SWSD:
+        point = _first_point(event_unit.unit_context.representative_node.geometry)
+        if point is not None:
+            markers.append(("SWSD", point))
+    return tuple(markers)
 
 
 def _draw_context_layers(draw, event_unit: T04EventUnitResult, bounds) -> None:
@@ -800,8 +896,9 @@ def render_case_final_review_png(
     local_context = case_result.base_context.local_context
 
     related_swsd_road_ids = set(_related_swsd_road_ids(step5_result))
-    related_rcsd_road_ids = set(_related_rcsd_road_ids(step5_result))
-    related_rcsd_node_ids = set(_related_rcsd_node_ids(step5_result))
+    active_rcsd_road_ids, active_rcsd_node_ids = _active_rcsd_alignment_ids(case_result)
+    related_rcsd_road_ids = set(active_rcsd_road_ids)
+    related_rcsd_node_ids = set(active_rcsd_node_ids)
     related_swsd_roads = _ordered_roads_by_ids(local_context.local_roads, related_swsd_road_ids)
     related_rcsd_roads = _ordered_roads_by_ids(local_context.local_rcsd_roads, related_rcsd_road_ids)
     related_rcsd_nodes = _ordered_nodes_by_ids(local_context.local_rcsd_nodes, related_rcsd_node_ids)
@@ -830,13 +927,24 @@ def render_case_final_review_png(
     for road in other_rcsd_roads:
         _draw_line(draw, road.geometry, bounds, fill=ALL_RCSD_ROAD_COLOR, width=2)
     for road in related_rcsd_roads:
-        _draw_line(draw, road.geometry, bounds, fill=RCSD_ROAD_COLOR, width=6)
+        _draw_line(draw, road.geometry, bounds, fill=SELECTED_RCSD_ROAD_COLOR, width=9)
     for node in related_rcsd_nodes:
         _draw_point(draw, node.geometry, bounds, fill=RCSD_NODE_FILL, radius=6, ring=SELECTED_RCSD_NODE_RING)
     for event_unit in case_result.event_units:
         _draw_point(draw, event_unit.required_rcsd_node_geometry, bounds, fill=RCSD_NODE_FILL, radius=8, ring=REQUIRED_RCSD_RING)
     if step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty:
         _draw_line(draw, step6_result.final_case_polygon.boundary, bounds, fill=BOUNDARY_ROAD_COLOR, width=3)
+    for event_unit in case_result.event_units:
+        for label, point in _section_reference_markers(event_unit):
+            _draw_labeled_crosshair(
+                draw,
+                point,
+                bounds,
+                label=label,
+                fill=SECTION_REF_FILL,
+                outline=SECTION_REF_EDGE,
+                radius=6,
+            )
 
     _draw_legend(
         draw,
@@ -848,23 +956,39 @@ def render_case_final_review_png(
             ("SWSD Other", AXIS_ROAD_COLOR, "line"),
             ("SWSD Current", AXIS_ROAD_COLOR, "strong_line"),
             ("RCSD Other", ALL_RCSD_ROAD_COLOR, "line"),
-            ("RCSD Current", RCSD_ROAD_COLOR, "strong_line"),
+            ("RCSD Positive", SELECTED_RCSD_ROAD_COLOR, "strong_line"),
+            ("Section Ref", SECTION_REF_EDGE, "point"),
             ("Section Window", SECTION_WINDOW_EDGE, "line"),
             ("Final Boundary", BOUNDARY_ROAD_COLOR, "strong_line"),
         ],
     )
     reject_reason_list = [str(reason).strip() for reason in reject_reasons if str(reason).strip()]
+    scenario_types = _unique_texts(
+        _event_unit_surface_doc(event_unit).get("surface_scenario_type")
+        for event_unit in case_result.event_units
+    )
+    alignment_types = _unique_texts(
+        _event_unit_surface_doc(event_unit).get("rcsd_alignment_type")
+        for event_unit in case_result.event_units
+    )
+    section_references = _unique_texts(
+        _event_unit_surface_doc(event_unit).get("section_reference_source")
+        for event_unit in case_result.event_units
+    )
     final_review_lines = [
         f"case_id: {case_result.case_spec.case_id}",
         f"mainnodeid: {case_result.case_spec.mainnodeid}",
         f"final_state: {final_state}",
         f"publish_target: {publish_target or '-'}",
+        f"surface_scenarios: {_truncate(';'.join(scenario_types), limit=56)}",
+        f"rcsd_alignments: {_truncate(';'.join(alignment_types), limit=56)}",
+        f"section_refs: {_truncate(';'.join(section_references), limit=56)}",
         f"event_unit_count: {len(case_result.event_units)}",
         f"assembly_state: {step6_result.assembly_state}",
         f"component_count: {step6_result.component_count}",
         f"swsd_current_roads: {len(related_swsd_roads)} / other={len(other_swsd_roads)}",
-        f"rcsd_current_roads: {len(related_rcsd_roads)} / other={len(other_rcsd_roads)}",
-        f"rcsd_current_nodes: {len(related_rcsd_nodes)}",
+        f"positive_rcsd_roads: {len(related_rcsd_roads)} / other={len(other_rcsd_roads)}",
+        f"positive_rcsd_nodes: {len(related_rcsd_nodes)}",
         f"final_boundary_present: {bool(step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty)}",
     ]
     if reject_reason_list:

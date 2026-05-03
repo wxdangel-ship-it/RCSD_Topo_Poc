@@ -103,6 +103,7 @@ ANCHOR2_30CASE_STEP6_GUARD_FIELDS_20260501 = {
     "no_surface_reference_guard",
     "final_polygon_suppressed_by_no_surface_reference",
     "fallback_overexpansion_detected",
+    "barrier_separated_case_surface_ok",
 }
 
 ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502: dict[str, dict[str, object]] = {
@@ -122,6 +123,7 @@ ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502: dict[str, dict[str, object]] = {
         "step4_main_evidence_type": "divstrip",
     },
     "785731": {
+        "final_state": "rejected",
         "surface_scenario_type": "no_main_evidence_with_swsd_only",
         "section_reference_source": "swsd_junction",
         "surface_generation_mode": "swsd_junction_window",
@@ -129,6 +131,7 @@ ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502: dict[str, dict[str, object]] = {
         "step4_main_evidence_type": "none",
     },
     "795682": {
+        "final_state": "rejected",
         "surface_scenario_type": "no_main_evidence_with_swsd_only",
         "section_reference_source": "swsd_junction",
         "surface_generation_mode": "swsd_junction_window",
@@ -151,6 +154,48 @@ ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502: dict[str, dict[str, object]] = {
     },
 }
 
+ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260503: dict[str, tuple[str, str, str, str]] = {
+    "698380": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "698389": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "699870": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "706243": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "706247": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "706347": ("rejected", "no_main_evidence_with_rcsdroad_fallback_and_swsd", "swsd_junction", "swsd_with_rcsdroad_fallback"),
+    "706629": ("accepted", "no_main_evidence_with_swsd_only", "swsd_junction", "swsd_junction_window"),
+    "723276": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "724067": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "724081": ("rejected", "no_main_evidence_with_rcsdroad_fallback_and_swsd", "swsd_junction", "swsd_with_rcsdroad_fallback"),
+    "758784": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "760213": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "760230": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "760256": ("accepted", "main_evidence_with_rcsdroad_fallback", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "760277": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "760598": ("rejected", "no_surface_reference", "none", "no_surface"),
+    "760936": ("rejected", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "760984": ("accepted", "no_main_evidence_with_rcsd_junction", "rcsd_junction", "rcsd_junction_window"),
+    "765050": ("rejected", "no_main_evidence_with_rcsdroad_fallback_and_swsd", "swsd_junction", "swsd_with_rcsdroad_fallback"),
+    "765170": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "768675": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "768680": ("accepted", "mixed", "mixed", "main_evidence_driven"),
+    "785629": ("accepted", "mixed", "mixed", "mixed"),
+    "785631": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "785671": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "785675": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "785731": ("rejected", "no_main_evidence_with_swsd_only", "swsd_junction", "swsd_junction_window"),
+    "788824": ("accepted", "no_main_evidence_with_rcsd_junction", "rcsd_junction", "rcsd_junction_window"),
+    "795682": ("rejected", "no_main_evidence_with_swsd_only", "swsd_junction", "swsd_junction_window"),
+    "807908": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "823826": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "824002": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "857993": ("rejected", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "987998": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "17943587": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "30434673": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "73462878": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
+    "505078921": ("accepted", "mixed", "mixed", "main_evidence_driven"),
+    "607602562": ("rejected", "no_surface_reference", "none", "no_surface"),
+}
+
 # The 23-case business gate remains the 2026-04-26 frozen Anchor_2 set,
 # but its final_review.png visual fingerprints were refreshed on 2026-05-01.
 # The previous PNG hashes came from the 2026-04-26 frozen visual baseline.
@@ -166,117 +211,117 @@ ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260501_SURFACE_SCENARIO: dict[
     "17943587": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "3aa7529455b1a3d425b7e5232d3ffaeab91a6d664d8db583e2718fe4185104fe",
+        "raw_scanline_sha256": "71aea46d1c7889e686671adef3add2c5710864a87c7a79447c70aad62ecb506a",
     },
     "30434673": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "1b0d73e8d84ac35723ce8d35511a9bc52e9c7e35ddab4e80b8e038c80331c03c",
+        "raw_scanline_sha256": "5580ac00679a8729db2ffde678f3b1d0b8bd5a7b893e859af0ad90dbae702601",
     },
     "505078921": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "25411781090208b4429974564b25edc3098bd5b3febfd9f92a92a62a8a450234",
+        "raw_scanline_sha256": "7268a8d66a28eb10957076c5474348eeabd7c7dcf3ffbad500c00e0b0413860d",
     },
     "698380": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "e96ff65515f999859a29fdb4d9792b0a8da88314f3de192d31ee23aea1145b5c",
+        "raw_scanline_sha256": "341cc7272da654d2ca382d9a617b6d5c6d84214e26587b61ec4b921fd70e9831",
     },
     "698389": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "ce9b5d9acf5481642ac10f80eb7f4460363da8eca206fd561a029fed44841c25",
+        "raw_scanline_sha256": "acf815ad599016e5a8714153f7489437c402c71e13ecb9eda6de32a1496164d7",
     },
     "699870": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "c871c336d9a3e93b3912a94ee458dee7a534840d3ade1223eb5f47bb4245d2df",
+        "raw_scanline_sha256": "874519829036659088b24211f9bb35a4ec6dd900ef01b456f8450502bec0ebf3",
     },
     "706629": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "383d5df26423a0bf86fdc9c5ede71607aed8f48495b4339d1e704331d4aeb03b",
+        "raw_scanline_sha256": "e16b2edacb24f15c9e6662279a7c56af07c7ec4698c482d73a5ed8164fdf629f",
     },
     "723276": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "c2a2cb34ec55a8bde0300f05a03d811c227a90fbfa7ae9cbb5bd9aee681be003",
+        "raw_scanline_sha256": "e7e9f4075e9d7f20bd532fb452f5f585b75977ecd46c9e2ea2d2a3cd171b198f",
     },
     "724067": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "636ab2be1d189d25bb8d3f84fc006653215f683e34d948a2d0c6fdac41d3d8a9",
+        "raw_scanline_sha256": "ec4947eb0b0c5861928756711d19541f69c09cf822c6626bb44303e1c94c7d26",
     },
     "724081": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "01d4168a7a1079b1c497b86d6c47a6a0e4654e00f48d3ac06c253419dd87234e",
+        "raw_scanline_sha256": "f503ba2c2db775d56681d5340bae08bd3910ef2af812bb5cc18afe55cb177620",
     },
     "73462878": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "dc6ac748d4f67643772dadc4f27cba1d5ccaef662c1780ea2a961f86aa04ee99",
+        "raw_scanline_sha256": "e8926b9a22f58a81f4f2621ee6ee28d5b364a992cc0706027216a5743c5dc8c2",
     },
     "758784": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "7181aef5f5b5ccbb8a5b11a5ebb0bdb09fb0a569300c4b4b4e92c7fed74bf0e6",
+        "raw_scanline_sha256": "33832546c0de234cfd31b28aec811f3553f9be95f91188b09d5469ea5272a92a",
     },
     "760213": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "9f9428603f054c88e1085d52d1c5aebebe7e355d2d5f77eb85644d56ce5ddd7f",
+        "raw_scanline_sha256": "8ffc0a0edbc539b89ee6a09972161baea20d7c579521a1140b9e1eb7d5c1945e",
     },
     "760256": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "88e52b22974fade61645d9fddbe6048e3eb15a276d683ff1c13e4c831cf0c10b",
+        "raw_scanline_sha256": "32fcb9806ba8915cf1484fe208450c3d781f524c2adf49a357ed5be9a09ac911",
     },
     "760598": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "0034347434d4badbfe5c8bf2bb0cff71846a38a346bf2e4477864465f3dee684",
+        "raw_scanline_sha256": "b83cd88234695d62080418a1563268f5a89dd7dc9a9f35f740d93213cf90366b",
     },
     "760936": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "68d492ce9aa6fdd8f1df64419cb267d3925f6a9bf922a435d291f2212971a953",
+        "raw_scanline_sha256": "fe25cac43fcd1e7984e73995a13e576233fbbdd1f8c14f060cbf875dc5dae73f",
     },
     "760984": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "4a169b8d5b43d1e0f469f9f7d104365858254b5e29ed97076a477044338bdac8",
+        "raw_scanline_sha256": "710d33a8962b951c9550e897d67d444f903be3c1bf28ea9df1b3c0b634327361",
     },
     "785671": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "c465d9318bd5509dde2ce84c3ea9941444f90f6d262d02fd02707d5befff8964",
+        "raw_scanline_sha256": "03895696549bcbabd65253bc6927486c06437419d5802c0f62e7115e1d563344",
     },
     "785675": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "baca9612ae99e8f775ae0d7c621df75c088f48c40d360d93a8d809be744b8c9f",
+        "raw_scanline_sha256": "0445bf3cfcc077a29cc70d64ee931fd73150514610f4e4c0f2f7e5e08aad29c2",
     },
     "788824": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "18fa73d4e41d13f10dcf096a320346baee3a69773534558ea06f13d1fc7bcdb7",
+        "raw_scanline_sha256": "9ddf9e6f4df79aa462f65dd6a5aa26e04906c0cb8cf5995a0f0430d5244fdf1a",
     },
     "824002": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "e08ef8a2e8dfaddf92a0aad7edd0f32be65dd91099ab2f2bff20b45856e6bfa5",
+        "raw_scanline_sha256": "869e15bf1b5a856bc1bbc2df70580632cb1052c47a5a63c1fb77be331dba3d77",
     },
     "857993": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "f021dc4aa67f41c3759bcd0950dc52c7065eed27ca6b5a698c9d1e94a9de24e9",
+        "raw_scanline_sha256": "1cf6c3149cc9539e3e4892465eaad3907abc9d54541b7cab23725c783196fd75",
     },
     "987998": {
         "width": 1720,
         "height": 1040,
-        "raw_scanline_sha256": "bbb870ab2ffccecf98f36c411acd41640f24f818e0425f5d7d0bc785e8f3fd56",
+        "raw_scanline_sha256": "0621ac82ec25278c0847cf33e4715c2e8a18c787ebbe88b778e10dfa5a940903",
     },
 }
 
@@ -322,6 +367,38 @@ def _final_review_png_fingerprint(path: Path) -> dict[str, object]:
         "height": height,
         "raw_scanline_sha256": digest.hexdigest(),
     }
+
+
+def _assert_gpkg_crs_and_valid_features(path: Path, *, min_feature_count: int = 1) -> None:
+    fiona = pytest.importorskip("fiona")
+    from shapely.geometry import shape
+
+    assert path.is_file()
+    with fiona.open(path) as src:
+        assert str(src.crs).upper() == "EPSG:3857"
+        assert len(src) >= min_feature_count
+        for row in src:
+            geometry_payload = row.get("geometry")
+            assert geometry_payload is not None
+            geometry = shape(geometry_payload)
+            assert not geometry.is_empty
+            assert geometry.is_valid
+
+
+def _assert_case_package_performance_summary(doc: dict, *, expected_completed_cases: int) -> None:
+    performance = doc["performance"]
+    assert performance["performance_audit_version"] == "t04-case-package-performance-v1"
+    assert performance["elapsed_seconds_total"] >= 0.0
+    assert performance["case_build_elapsed_seconds_total"] >= 0.0
+    assert performance["completed_case_count"] == expected_completed_cases
+    assert performance["runtime_failed_case_count"] == 0
+    assert performance["avg_completed_case_seconds"] is not None
+    assert performance["avg_completed_case_seconds"] >= 0.0
+    assert 1 <= len(performance["slowest_cases"]) <= 5
+    assert performance["threshold_seconds_total"] == pytest.approx(240.0)
+    assert performance["threshold_avg_completed_case_seconds"] == pytest.approx(6.5)
+    assert performance["threshold_status"] in {"within_threshold", "exceeded_threshold"}
+    assert performance["threshold_source"] == "module_quality_requirement_default_or_env_override"
 
 
 def _assert_step6_guard_fields_enter_step7(doc: dict) -> None:
@@ -947,8 +1024,8 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert step6_824002["component_count"] == 1
     assert step6_824002["hole_count"] == 0
     assert step6_824002["hard_must_cover_ok"] is True
-    assert step6_824002["final_case_polygon"]["area_m2"] == pytest.approx(2735.149, abs=1e-3)
-    assert step6_824002["final_case_polygon"]["length_m"] == pytest.approx(333.511, abs=1e-3)
+    assert step6_824002["final_case_polygon"]["area_m2"] == pytest.approx(2741.967, abs=1e-3)
+    assert step6_824002["final_case_polygon"]["length_m"] == pytest.approx(322.802, abs=1e-3)
 
     geopandas = pytest.importorskip("geopandas")
     step5_domains_824002 = geopandas.read_file(run_root / "cases" / "824002" / "step5_domains.gpkg")
@@ -1011,7 +1088,7 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert record_724081["action"] == "kept_swsd_junction_window_no_rcsd"
     assert record_724081["post_state"] == "found"
     assert record_724081["positive_rcsd_consistency_level"] == "C"
-    assert record_724081["detail"]["multi_semantic_rcsd_ambiguity"] is True
+    assert record_724081["detail"]["multi_semantic_rcsd_context"] is True
 
     step4_724081 = json.loads(
         (run_root / "cases" / "724081" / "step4_event_interpretation.json").read_text(
@@ -1023,9 +1100,11 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert unit_724081["evidence_source"] == "swsd_junction_window"
     assert unit_724081["main_evidence_type"] == "none"
     assert unit_724081["required_rcsd_node"] is None
-    assert unit_724081["surface_scenario_type"] == "no_main_evidence_with_swsd_only"
+    assert unit_724081["surface_scenario_type"] == "no_main_evidence_with_rcsdroad_fallback_and_swsd"
     assert unit_724081["section_reference_source"] == "swsd_junction"
+    assert unit_724081["surface_generation_mode"] == "swsd_with_rcsdroad_fallback"
     assert unit_724081["rcsd_selection_mode"] == "swsd_junction_window_no_rcsd"
+    assert unit_724081["fallback_rcsdroad_ids"]
     assert "swsd_junction_window_no_rcsd_used" in set(unit_724081["review_reasons"])
 
     step5_724081 = json.loads(
@@ -1035,9 +1114,12 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert step5_724081["case_bridge_zone_geometry"]["present"] is False
     assert step5_724081["case_terminal_window_domain"]["present"] is False
     assert unit_step5_724081["surface_fill_mode"] == "junction_window"
+    assert set(unit_step5_724081["fallback_rcsdroad_ids"]) == set(unit_724081["fallback_rcsdroad_ids"])
+    unrelated_rcsd_724081 = set(step5_724081["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
+    assert unrelated_rcsd_724081.isdisjoint(unit_724081["fallback_rcsdroad_ids"])
     assert unit_step5_724081["single_component_surface_seed"] is False
     assert unit_step5_724081["junction_full_road_fill_domain"]["present"] is True
-    assert unit_step5_724081["unit_terminal_cut_constraints"]["present"] is False
+    assert unit_step5_724081["unit_terminal_cut_constraints"]["present"] is True
     assert unit_step5_724081["required_rcsd_node_patch_geometry"]["present"] is False
 
     step6_724081 = json.loads(
@@ -1045,12 +1127,14 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     )
     assert step6_724081["assembly_state"] == "assembled"
     assert step6_724081["component_count"] == 1
+    assert step6_724081["barrier_separated_case_surface_ok"] is False
+    assert step6_724081["post_cleanup_negative_mask_ok"] is True
     assert step6_724081["hole_count"] == 0
     assert step6_724081["section_reference_window_covered"] is True
     assert step6_724081["post_cleanup_must_cover_ok"] is True
     assert step5_724081["case_must_cover_domain"]["area_m2"] == pytest.approx(1019.806, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(1019.806, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(134.371, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(671.58, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(136.419, abs=1e-3)
 
     assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
 
@@ -1404,6 +1488,106 @@ def test_anchor2_30case_surface_scenario_baseline_gate(tmp_path: Path) -> None:
 
 
 @pytest.mark.smoke
+def test_anchor2_39case_official_surface_scenario_gate(tmp_path: Path) -> None:
+    if not REAL_ANCHOR_2_ROOT.is_dir():
+        pytest.skip(f"missing real Anchor_2 case root: {REAL_ANCHOR_2_ROOT}")
+    actual_case_ids = sorted(
+        path.name
+        for path in REAL_ANCHOR_2_ROOT.iterdir()
+        if path.is_dir() and path.name.isdigit()
+    )
+    expected_case_ids = sorted(ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260503)
+    assert actual_case_ids == expected_case_ids
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=expected_case_ids,
+        out_root=tmp_path / "anchor2_39case_official_surface_scenario",
+        run_id="anchor2_39case_official_surface_scenario",
+    )
+
+    summary_payload = _load_json(run_root / "divmerge_virtual_anchor_surface_summary.json")
+    batch_summary = _load_json(run_root / "summary.json")
+    consistency_payload = _load_json(run_root / "step7_consistency_report.json")
+    nodes_audit_payload = _load_json(run_root / "nodes_anchor_update_audit.json")
+    rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
+
+    assert batch_summary["failed_case_ids"] == []
+    assert summary_payload["row_count"] == 39
+    assert summary_payload["accepted_count"] == 30
+    assert summary_payload["rejected_count"] == 9
+    assert batch_summary["step7_accepted_count"] == 30
+    assert batch_summary["step7_rejected_count"] == 9
+    _assert_case_package_performance_summary(batch_summary, expected_completed_cases=39)
+    assert consistency_payload["passed"] is True
+    assert consistency_payload["total_case_count"] == 39
+    assert consistency_payload["accepted_count"] == 30
+    assert consistency_payload["rejected_count"] == 9
+    assert consistency_payload["review_png_present_count"] == 39
+    assert consistency_payload["missing_review_png_case_ids"] == []
+    assert consistency_payload["nodes_consistency_passed"] is True
+    assert consistency_payload["nodes_total_update_count"] == 39
+    assert consistency_payload["nodes_updated_to_yes_count"] == 30
+    assert consistency_payload["nodes_updated_to_fail4_count"] == 9
+    assert nodes_audit_payload["total_update_count"] == 39
+    assert nodes_audit_payload["updated_to_yes_count"] == 30
+    assert nodes_audit_payload["updated_to_fail4_count"] == 9
+    assert set(summary_payload["no_surface_reference_case_ids"]) == {"607602562", "760598"}
+    assert consistency_payload["no_surface_reference_accepted_case_ids"] == []
+
+    for case_id, expected in ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260503.items():
+        row = rows_by_case[case_id]
+        case_dir = run_root / "cases" / case_id
+        step5_audit = _load_json(case_dir / "step5_audit.json")
+        step4_doc = _load_json(case_dir / "step4_event_interpretation.json")
+        expected_state, expected_scenario, expected_section, expected_mode = expected
+        assert row["final_state"] == expected_state
+        assert row["surface_scenario_type"] == expected_scenario
+        assert row["section_reference_source"] == expected_section
+        assert row["surface_generation_mode"] == expected_mode
+        assert Path(row["review_png_path"]).is_file()
+        _assert_gpkg_crs_and_valid_features(case_dir / "step5_domains.gpkg")
+        mask_channels = step5_audit["negative_mask_channels"]
+        for channel_name in [
+            "unrelated_swsd",
+            "unrelated_rcsd",
+            "divstrip_body",
+            "divstrip_void",
+            "forbidden_domain",
+            "terminal_cut",
+        ]:
+            assert channel_name in mask_channels
+            assert "geometry" in mask_channels[channel_name]
+            assert "applied_to_forbidden_domain" in mask_channels[channel_name]
+        assert "unrelated_swsd_road_ids" in step5_audit
+        assert "unrelated_swsd_node_ids" in step5_audit
+        assert "unrelated_rcsd_road_ids" in step5_audit
+        assert "unrelated_rcsd_node_ids" in step5_audit
+        aggregate = step4_doc["case_alignment_aggregate"]
+        assert aggregate["case_id"] == case_id
+        assert aggregate["scope"] == "case"
+        assert aggregate["unit_count"] == len(step4_doc["event_units"])
+        assert len(aggregate["unit_alignment_results"]) == len(step4_doc["event_units"])
+        for unit in step4_doc["event_units"]:
+            alignment_result = unit["rcsd_alignment_result"]
+            assert alignment_result["scope"] == "event_unit"
+            assert alignment_result["scope_id"] == unit["event_unit_id"]
+            assert alignment_result["rcsd_alignment_type"] == unit["rcsd_alignment_type"]
+            assert "positive_rcsdroad_ids" in alignment_result
+            assert "candidate_rcsdroad_ids" in alignment_result
+            assert "ambiguity_reasons" in alignment_result
+        if expected_state == "accepted":
+            assert row["surface_scenario_type"] != "no_surface_reference"
+            assert row["no_surface_reference_guard"] is False
+            step6_status = _load_json(case_dir / "step6_status.json")
+            assert step6_status["component_count"] == 1
+            assert step6_status["final_case_polygon_component_count"] == 1
+            assert step6_status["single_connected_case_surface_ok"] is True
+            assert step6_status["barrier_separated_case_surface_ok"] is False
+            _assert_gpkg_crs_and_valid_features(case_dir / "final_case_polygon.gpkg")
+
+
+@pytest.mark.smoke
 def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
     missing_cases = [
         case_id
@@ -1428,16 +1612,18 @@ def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
     expected_case_ids = set(ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502)
 
     assert batch_summary["failed_case_ids"] == []
-    assert batch_summary["step7_accepted_count"] == 6
-    assert batch_summary["step7_rejected_count"] == 0
+    assert batch_summary["step7_accepted_count"] == 4
+    assert batch_summary["step7_rejected_count"] == 2
     assert summary_payload["row_count"] == 6
-    assert summary_payload["accepted_count"] == 6
-    assert summary_payload["rejected_count"] == 0
+    assert summary_payload["accepted_count"] == 4
+    assert summary_payload["rejected_count"] == 2
     assert set(rows_by_case) == expected_case_ids
     assert summary_payload["no_surface_reference_case_ids"] == []
     assert consistency_payload["passed"] is True
-    assert consistency_payload["nodes_updated_to_yes_count"] == 6
-    assert nodes_audit_payload["updated_to_yes_count"] == 6
+    assert consistency_payload["nodes_updated_to_yes_count"] == 4
+    assert consistency_payload["nodes_updated_to_fail4_count"] == 2
+    assert nodes_audit_payload["updated_to_yes_count"] == 4
+    assert nodes_audit_payload["updated_to_fail4_count"] == 2
 
     for case_id, expected in ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502.items():
         case_dir = run_root / "cases" / case_id
@@ -1447,12 +1633,13 @@ def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
         step7_status = _load_json(case_dir / "step7_status.json")
         unit = step4_doc["event_units"][0]
 
-        assert row["final_state"] == "accepted"
+        expected_final_state = str(expected.get("final_state") or "accepted")
+        assert row["final_state"] == expected_final_state
         assert row["surface_scenario_type"] == expected["surface_scenario_type"]
         assert row["section_reference_source"] == expected["section_reference_source"]
         assert row["surface_generation_mode"] == expected["surface_generation_mode"]
         assert row["no_surface_reference_guard"] is False
-        assert step7_status["final_state"] == "accepted"
+        assert step7_status["final_state"] == expected_final_state
         assert unit["evidence_source"] == expected["step4_evidence_source"]
         assert unit["main_evidence_type"] == expected["step4_main_evidence_type"]
         assert unit["surface_scenario_type"] == expected.get(
@@ -1461,8 +1648,19 @@ def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
         )
         _assert_no_main_evidence_has_no_virtual_reference_point(step4_doc)
 
-        assert step6_status["assembly_state"] == "assembled"
-        assert step6_status["component_count"] == 1
+        if expected_final_state == "accepted":
+            assert step6_status["assembly_state"] == "assembled"
+            assert step6_status["component_count"] == 1
+            assert step6_status["final_case_polygon_component_count"] == 1
+            assert step6_status["single_connected_case_surface_ok"] is True
+            assert step6_status["barrier_separated_case_surface_ok"] is False
+        else:
+            assert step6_status["assembly_state"] == "assembly_failed"
+            assert step6_status["component_count"] > 1
+            assert step6_status["final_case_polygon_component_count"] > 1
+            assert step6_status["single_connected_case_surface_ok"] is False
+            assert step6_status["barrier_separated_case_surface_ok"] is True
+            assert "multi_component_result" in step7_status["reject_reasons"]
         assert step6_status["post_cleanup_allowed_growth_ok"] is True
         assert step6_status["post_cleanup_forbidden_ok"] is True
         assert step6_status["post_cleanup_terminal_cut_ok"] is True

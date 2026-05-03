@@ -6,6 +6,7 @@ from typing import Any
 from shapely.geometry import Point
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
+from .rcsd_alignment import rcsd_alignment_type_from_selection
 from .step4_road_surface_fork_binding_shared import (
     _candidate_entries_with_selection,
     _has_partial_rcsd_signal,
@@ -283,9 +284,19 @@ def _promote_relaxed_primary_rcsd_binding(
 
     road_ids = _aggregate_ids(aggregate, "road_ids")
     node_ids = _aggregate_ids(aggregate, "node_ids")
-    selected_roads = _dedupe(audit.get("published_rcsdroad_ids") or road_ids)
-    selected_nodes = _dedupe(audit.get("published_rcsdnode_ids") or node_ids)
-    first_hit = _first_hit_ids(audit)
+    local_unit_id = _local_unit_id_for_node(aggregate, bound_node)
+    local_support = _local_rcsd_unit_support(
+        audit,
+        local_unit_id=local_unit_id,
+        required_node=bound_node,
+    )
+    if local_support is not None:
+        selected_roads = _dedupe(local_support.get("road_ids") or ())
+        selected_nodes = _dedupe(local_support.get("node_ids") or ())
+    else:
+        selected_roads = _dedupe(audit.get("published_rcsdroad_ids") or road_ids)
+        selected_nodes = _dedupe(audit.get("published_rcsdnode_ids") or node_ids)
+    first_hit = tuple(road_id for road_id in _first_hit_ids(audit) if road_id in set(selected_roads))
     support_level = str(aggregate.get("support_level") or "secondary_support")
     consistency_level = str(aggregate.get("consistency_level") or "B")
     decision_reason = str(aggregate.get("decision_reason") or "")
@@ -293,8 +304,17 @@ def _promote_relaxed_primary_rcsd_binding(
         consistency_level = "B"
         if support_level == "primary_support":
             support_level = "secondary_support"
+    alignment_type = rcsd_alignment_type_from_selection(
+        positive_rcsd_present=True,
+        required_rcsd_node=bound_node,
+        selected_rcsdroad_ids=selected_roads,
+        local_rcsd_unit_kind="node_centric",
+        positive_rcsd_support_level=support_level,
+        positive_rcsd_consistency_level=consistency_level,
+        rcsd_decision_reason=decision_reason,
+        rcsd_selection_mode=RELAXED_PRIMARY_BINDING_MODE,
+    )
     aggregate_id = str(aggregate.get("unit_id") or "").strip()
-    local_unit_id = _local_unit_id_for_node(aggregate, bound_node)
     promoted_detail = dict(bind_detail)
     promoted_detail.update(
         {
@@ -303,6 +323,8 @@ def _promote_relaxed_primary_rcsd_binding(
             ),
             "relaxed_rcsd_dropped": False,
             "relaxed_primary_rcsd_promoted": True,
+            "preserved_surface_main_evidence": True,
+            "selected_rcsd_scope": "required_node_local_unit",
             "aggregated_rcsd_unit_id": aggregate_id,
             "required_rcsd_node": bound_node,
             "primary_node_id": primary_node,
@@ -311,6 +333,7 @@ def _promote_relaxed_primary_rcsd_binding(
             "bound_node_strategy": "aggregate_required_node" if prefer_required_node else "aggregate_primary_node",
             "representative_distance_m": round(representative_distance, 3),
             "rcsd_decision_reason": decision_reason,
+            "rcsd_alignment_type": alignment_type,
         }
     )
     review_reasons = _dedupe(
@@ -344,6 +367,7 @@ def _promote_relaxed_primary_rcsd_binding(
             "primary_main_rc_node": primary_node,
             "primary_main_rc_node_id": primary_node,
             "rcsd_selection_mode": RELAXED_PRIMARY_BINDING_MODE,
+            "rcsd_alignment_type": alignment_type,
             "rcsd_decision_reason": decision_reason,
         }
     )
@@ -369,6 +393,7 @@ def _promote_relaxed_primary_rcsd_binding(
         positive_rcsd_present=True,
         positive_rcsd_present_reason="road_surface_fork_relaxed_primary_rcsd_present",
         rcsd_selection_mode=RELAXED_PRIMARY_BINDING_MODE,
+        rcsd_alignment_type=alignment_type,
         required_rcsd_node_source=RELAXED_PRIMARY_NODE_SOURCE,
         pair_local_rcsd_scope_geometry=_road_geometries(case_result, event_unit.pair_local_rcsd_road_ids),
         first_hit_rcsd_road_geometry=_road_geometries(case_result, first_hit),
@@ -400,6 +425,7 @@ def _promote_relaxed_primary_rcsd_binding(
             "required_rcsd_node_source": RELAXED_PRIMARY_NODE_SOURCE,
             "required_rcsd_node": bound_node,
             "rcsd_selection_mode": RELAXED_PRIMARY_BINDING_MODE,
+            "rcsd_alignment_type": alignment_type,
             "rcsd_decision_reason": decision_reason,
         }
     )
@@ -437,6 +463,7 @@ def _promote_relaxed_primary_rcsd_binding(
         positive_rcsd_consistency_level=consistency_level,
         required_rcsd_node=bound_node,
         required_rcsd_node_source=RELAXED_PRIMARY_NODE_SOURCE,
+        rcsd_alignment_type=alignment_type,
         selected_candidate_summary=dict(summary),
         selected_evidence_summary=dict(summary),
         positive_rcsd_audit=updated_audit,

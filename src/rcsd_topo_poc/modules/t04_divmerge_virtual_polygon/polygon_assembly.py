@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, replace
-from typing import Any, Iterable, Sequence
+from dataclasses import replace
+from typing import Any, Sequence
 
 import numpy as np
-from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Point, Polygon
+from shapely.geometry import GeometryCollection, LineString, Point, Polygon
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import nearest_points
 
 from ._rcsd_selection_support import _normalize_geometry, _union_geometry
 from ._runtime_polygon_cleanup import POLYGON_SMALL_HOLE_AREA_M2, _fill_small_polygon_holes, _polygon_components
@@ -20,6 +19,14 @@ from ._runtime_types_io import (
     _rasterize_geometries,
 )
 from .case_models import T04CaseResult
+from .polygon_assembly_guards import Step6GuardContext, derive_step6_guard_context
+from .polygon_assembly_models import T04Step6Result
+from .polygon_assembly_relief import (
+    cut_sliver_hole_relief as _cut_sliver_hole_relief,
+    dominant_component_relief_bridge as _dominant_component_relief_bridge,
+    hole_polygons as _hole_polygons,
+    seed_dominant_polygon_component as _seed_dominant_polygon_component,
+)
 from .support_domain import T04Step5CaseResult, T04Step5UnitResult
 from .surface_scenario import (
     SCENARIO_MAIN_WITH_RCSD,
@@ -27,8 +34,6 @@ from .surface_scenario import (
     SCENARIO_NO_MAIN_WITH_RCSD,
     SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
     SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
-    SCENARIO_NO_SURFACE_REFERENCE,
-    SURFACE_MODE_NO_SURFACE,
 )
 
 
@@ -43,35 +48,18 @@ STEP6_CUT_TOLERANCE_AREA_M2 = 1e-6
 STEP6_ALLOWED_TOLERANCE_AREA_M2 = 1e-6
 STEP6_INTER_UNIT_SECTION_BRIDGE_BUFFER_M = 8.0
 STEP6_INTER_UNIT_SECTION_BRIDGE_MAX_DISTANCE_M = 12.0
-STEP6_DOMINANT_COMPONENT_RELIEF_MIN_RATIO = 0.75
-STEP6_DOMINANT_COMPONENT_RELIEF_MAX_DISTANCE_M = 22.0
-STEP6_DOMINANT_COMPONENT_RELIEF_BUFFER_M = 4.0
-STEP6_CUT_SLIVER_HOLE_RELIEF_MAX_AREA_M2 = 80.0
-STEP6_CUT_SLIVER_HOLE_RELIEF_MIN_CUT_RATIO = 0.5
-STEP6_CUT_SLIVER_HOLE_RELIEF_MIN_ALLOWED_RATIO = 0.9
 STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_RADIUS_M = 2.0
 STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_MIN_AREA_M2 = 30.0
 STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_MAX_AREA_M2 = 120.0
 STEP6_JUNCTION_FULL_FILL_SLIT_RELIEF_FORBIDDEN_TOLERANCE_M2 = 0.5
 STEP6_SWSD_WINDOW_TOUCH_CLOSE_RADIUS_M = 1.0
 STEP6_SWSD_WINDOW_TOUCH_CLOSE_MAX_AREA_DELTA_M2 = 30.0
-
-
-def _geometry_summary(geometry: BaseGeometry | None) -> dict[str, Any]:
-    normalized = _normalize_geometry(geometry)
-    if normalized is None:
-        return {
-            "present": False,
-            "geometry_type": "",
-            "area_m2": 0.0,
-            "length_m": 0.0,
-        }
-    return {
-        "present": True,
-        "geometry_type": str(normalized.geom_type),
-        "area_m2": float(getattr(normalized, "area", 0.0) or 0.0),
-        "length_m": float(getattr(normalized, "length", 0.0) or 0.0),
-    }
+STEP6_BARRIER_SEPARATION_RELIEF_NOTES = {
+    "dominant_component_relief_bridge",
+    "post_cut_dominant_component_relief_bridge",
+    "main_without_rcsd_component_relief_bridge",
+    "swsd_window_touch_close",
+}
 
 
 def _loaded_feature_union(features: Sequence[Any]) -> BaseGeometry | None:
@@ -122,6 +110,13 @@ def _is_swsd_only_surface(guard_context: "Step6GuardContext") -> bool:
     return guard_context.surface_scenario_type == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
 
 
+def _is_swsd_section_window_surface(guard_context: "Step6GuardContext") -> bool:
+    return guard_context.surface_scenario_type in {
+        SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
+        SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
+    }
+
+
 def _is_no_main_section_window_surface(guard_context: "Step6GuardContext") -> bool:
     return guard_context.surface_scenario_type in {
         SCENARIO_NO_MAIN_WITH_RCSD,
@@ -139,7 +134,7 @@ def _uses_single_component_surface_seed(step5_result: T04Step5CaseResult) -> boo
 
 def _single_case_bridge_zone(step5_result: T04Step5CaseResult) -> BaseGeometry | None:
     bridge = _normalize_geometry(step5_result.case_bridge_zone_geometry)
-    return bridge if isinstance(bridge, Polygon) else None
+    return bridge if bridge is not None and bridge.geom_type in {"Polygon", "MultiPolygon"} else None
 
 
 def _line_parts(geometry: BaseGeometry | None) -> tuple[BaseGeometry, ...]:
@@ -203,85 +198,6 @@ def _inter_unit_section_bridge_surface(step5_result: T04Step5CaseResult) -> Base
     if touched_units < 2:
         return None
     return _normalize_geometry(bridge_surface)
-
-
-def _seed_dominant_polygon_component(
-    geometry: BaseGeometry | None,
-    seed_geometry: BaseGeometry | None,
-) -> BaseGeometry | None:
-    normalized = _normalize_geometry(geometry)
-    if normalized is None:
-        return None
-    parts = _polygon_components(normalized)
-    if len(parts) <= 1:
-        return normalized
-    seed = _normalize_geometry(seed_geometry)
-    if seed is None:
-        return _normalize_geometry(max(parts, key=lambda part: float(part.area)))
-    overlaps = [
-        (
-            float(part.intersection(seed).area),
-            float(part.area),
-            part,
-        )
-        for part in parts
-    ]
-    positive_overlaps = [item for item in overlaps if item[0] > 1e-6]
-    if positive_overlaps:
-        return _normalize_geometry(max(positive_overlaps, key=lambda item: (item[0], item[1]))[2])
-    touching = [
-        part
-        for part in parts
-        if part.buffer(1e-6).intersects(seed)
-    ]
-    if touching:
-        return _normalize_geometry(max(touching, key=lambda part: float(part.area)))
-    return _normalize_geometry(
-        min(parts, key=lambda part: (float(part.distance(seed)), -float(part.area)))
-    )
-
-
-def _dominant_component_relief_bridge(
-    geometry: BaseGeometry | None,
-    *,
-    allowed_geometry: BaseGeometry | None,
-    terminal_window_geometry: BaseGeometry | None,
-    cut_barrier_geometry: BaseGeometry | None,
-    min_ratio: float = STEP6_DOMINANT_COMPONENT_RELIEF_MIN_RATIO,
-    max_distance_m: float = STEP6_DOMINANT_COMPONENT_RELIEF_MAX_DISTANCE_M,
-    use_terminal_window: bool = True,
-) -> BaseGeometry | None:
-    parts = sorted(_polygon_components(geometry or GeometryCollection()), key=lambda part: float(part.area), reverse=True)
-    if len(parts) <= 1:
-        return None
-    total_area = sum(float(part.area) for part in parts)
-    if total_area <= 0.0 or float(parts[0].area) / total_area < min_ratio:
-        return None
-    current = parts[0]
-    bridges: list[BaseGeometry] = []
-    for part in parts[1:]:
-        distance = float(current.distance(part))
-        if distance > max_distance_m:
-            return None
-        start, end = nearest_points(current, part)
-        if distance <= 1e-6:
-            bridge = start.buffer(STEP6_DOMINANT_COMPONENT_RELIEF_BUFFER_M)
-        else:
-            bridge = LineString([start, end]).buffer(
-                STEP6_DOMINANT_COMPONENT_RELIEF_BUFFER_M,
-                cap_style=2,
-                join_style=2,
-            )
-        if allowed_geometry is not None and not allowed_geometry.is_empty:
-            bridge = bridge.intersection(allowed_geometry)
-        if use_terminal_window and terminal_window_geometry is not None and not terminal_window_geometry.is_empty:
-            bridge = bridge.intersection(terminal_window_geometry)
-        bridge = _normalize_geometry(bridge)
-        if bridge is None or bridge.is_empty:
-            return None
-        bridges.append(bridge)
-        current = _normalize_geometry(_union_geometry([current, part, bridge])) or current
-    return _normalize_geometry(_union_geometry(bridges))
 
 
 def _relaxed_canvas_component_relief_bridge(
@@ -540,16 +456,6 @@ def _connect_optional_seed_components(
     return current_mask, notes
 
 
-def _hole_polygons(geometry: BaseGeometry | None) -> list[Polygon]:
-    holes: list[Polygon] = []
-    for polygon in _polygon_components(geometry or GeometryCollection()):
-        for ring in polygon.interiors:
-            hole = Polygon(ring)
-            if not hole.is_empty:
-                holes.append(hole)
-    return holes
-
-
 def _hole_details(
     *,
     geometry: BaseGeometry | None,
@@ -641,41 +547,6 @@ def _fill_unexpected_polygon_holes(
                 kept_interiors.append(ring)
         filled_polygons.append(Polygon(polygon.exterior, kept_interiors))
     return _normalize_geometry(_union_geometry(filled_polygons))
-
-
-def _cut_sliver_hole_relief(
-    geometry: BaseGeometry | None,
-    *,
-    forbidden_geometry: BaseGeometry | None,
-    allowed_geometry: BaseGeometry | None,
-    cut_barrier_geometry: BaseGeometry | None,
-) -> BaseGeometry | None:
-    relief_holes: list[BaseGeometry] = []
-    if cut_barrier_geometry is None or cut_barrier_geometry.is_empty:
-        return None
-    for hole in _hole_polygons(geometry):
-        hole_area = float(hole.area)
-        if hole_area <= 0.0 or hole_area > STEP6_CUT_SLIVER_HOLE_RELIEF_MAX_AREA_M2:
-            continue
-        forbidden_overlap = (
-            0.0
-            if forbidden_geometry is None or forbidden_geometry.is_empty
-            else float(hole.intersection(forbidden_geometry).area)
-        )
-        allowed_overlap = (
-            hole_area
-            if allowed_geometry is None or allowed_geometry.is_empty
-            else float(hole.intersection(allowed_geometry).area)
-        )
-        cut_overlap = float(hole.intersection(cut_barrier_geometry).area)
-        if forbidden_overlap > STEP6_FORBIDDEN_TOLERANCE_AREA_M2:
-            continue
-        if cut_overlap / hole_area < STEP6_CUT_SLIVER_HOLE_RELIEF_MIN_CUT_RATIO:
-            continue
-        if allowed_overlap / hole_area < STEP6_CUT_SLIVER_HOLE_RELIEF_MIN_ALLOWED_RATIO:
-            continue
-        relief_holes.append(hole)
-    return _normalize_geometry(_union_geometry(relief_holes))
 
 
 def _junction_full_fill_slit_relief(
@@ -788,91 +659,6 @@ def _target_b_seed_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry | 
     )
 
 
-def _merged_text(values: Iterable[Any], *, missing_value: str = "missing") -> str:
-    texts: list[str] = []
-    for value in values:
-        text = str(value or "").strip()
-        if text and text not in texts:
-            texts.append(text)
-    if not texts:
-        return missing_value
-    return texts[0] if len(texts) == 1 else "mixed"
-
-
-def _step5_units_have_field(step5_result: T04Step5CaseResult, field_name: str) -> bool:
-    return bool(step5_result.unit_results) and all(hasattr(unit, field_name) for unit in step5_result.unit_results)
-
-
-@dataclass(frozen=True)
-class Step6GuardContext:
-    surface_scenario_type: str
-    section_reference_source: str
-    surface_generation_mode: str
-    reference_point_present: bool
-    surface_section_forward_m: float | None
-    surface_section_backward_m: float | None
-    surface_lateral_limit_m: float | None
-    fallback_rcsdroad_ids: tuple[str, ...]
-    fallback_rcsdroad_localized: bool
-    no_virtual_reference_point_guard: bool
-    forbidden_domain_kept: bool
-    divstrip_negative_mask_present: bool
-    surface_scenario_missing: bool
-    no_surface_reference_guard: bool
-
-
-def derive_step6_guard_context(step5_result: T04Step5CaseResult) -> Step6GuardContext:
-    units = tuple(step5_result.unit_results)
-    surface_scenario_missing = not (
-        _step5_units_have_field(step5_result, "surface_scenario_type")
-        and _step5_units_have_field(step5_result, "surface_generation_mode")
-    )
-    scenario_type = _merged_text(
-        getattr(unit, "surface_scenario_type", "") for unit in units
-    )
-    generation_mode = _merged_text(
-        getattr(unit, "surface_generation_mode", "") for unit in units
-    )
-    section_reference_source = _merged_text(
-        getattr(unit, "section_reference_source", "") for unit in units
-    )
-    fallback_ids: list[str] = []
-    for unit in units:
-        for road_id in getattr(unit, "fallback_rcsdroad_ids", ()) or ():
-            text = str(road_id or "").strip()
-            if text and text not in fallback_ids:
-                fallback_ids.append(text)
-    explicit_no_surface_units = [
-        unit
-        for unit in units
-        if str(getattr(unit, "surface_scenario_type", "") or "") == SCENARIO_NO_SURFACE_REFERENCE
-        or str(getattr(unit, "surface_generation_mode", "") or "") == SURFACE_MODE_NO_SURFACE
-    ]
-    no_surface_reference_guard = bool(units) and len(explicit_no_surface_units) == len(units)
-    return Step6GuardContext(
-        surface_scenario_type=scenario_type,
-        section_reference_source=section_reference_source,
-        surface_generation_mode=generation_mode,
-        reference_point_present=any(bool(getattr(unit, "reference_point_present", False)) for unit in units),
-        surface_section_forward_m=getattr(step5_result, "surface_section_forward_m", None),
-        surface_section_backward_m=getattr(step5_result, "surface_section_backward_m", None),
-        surface_lateral_limit_m=getattr(step5_result, "surface_lateral_limit_m", None),
-        fallback_rcsdroad_ids=tuple(fallback_ids),
-        fallback_rcsdroad_localized=any(bool(getattr(unit, "fallback_rcsdroad_localized", False)) for unit in units),
-        no_virtual_reference_point_guard=bool(getattr(step5_result, "no_virtual_reference_point_guard", True)),
-        forbidden_domain_kept=bool(
-            getattr(step5_result, "forbidden_domain_kept", False)
-            or step5_result.case_forbidden_domain is not None
-        ),
-        divstrip_negative_mask_present=bool(
-            getattr(step5_result, "divstrip_negative_mask_present", False)
-            or step5_result.divstrip_void_mask_geometry is not None
-        ),
-        surface_scenario_missing=surface_scenario_missing,
-        no_surface_reference_guard=no_surface_reference_guard,
-    )
-
-
 def _area_outside(container: BaseGeometry | None, geometry: BaseGeometry | None) -> float:
     normalized_geometry = _normalize_geometry(geometry)
     if normalized_geometry is None:
@@ -891,6 +677,127 @@ def _overlap_area(left: BaseGeometry | None, right: BaseGeometry | None) -> floa
     return float(normalized_left.intersection(normalized_right).area)
 
 
+def _geometry_area(geometry: BaseGeometry | None) -> float:
+    normalized = _normalize_geometry(geometry)
+    if normalized is None:
+        return 0.0
+    return float(getattr(normalized, "area", 0.0) or 0.0)
+
+
+def _relief_constraint_audit_entry(
+    *,
+    relief_note: str,
+    relief_geometry: BaseGeometry | None,
+    before_allowed_geometry: BaseGeometry | None,
+    after_allowed_geometry: BaseGeometry | None,
+    before_forbidden_geometry: BaseGeometry | None,
+    after_forbidden_geometry: BaseGeometry | None,
+    before_cut_barrier_geometry: BaseGeometry | None,
+    after_cut_barrier_geometry: BaseGeometry | None,
+) -> dict[str, Any]:
+    before_allowed_area = _geometry_area(before_allowed_geometry)
+    after_allowed_area = _geometry_area(after_allowed_geometry)
+    before_forbidden_area = _geometry_area(before_forbidden_geometry)
+    after_forbidden_area = _geometry_area(after_forbidden_geometry)
+    before_cut_area = _geometry_area(before_cut_barrier_geometry)
+    after_cut_area = _geometry_area(after_cut_barrier_geometry)
+    return {
+        "relief_note": relief_note,
+        "relief_area_m2": _geometry_area(relief_geometry),
+        "allowed_growth_area_delta_m2": after_allowed_area - before_allowed_area,
+        "forbidden_area_delta_m2": after_forbidden_area - before_forbidden_area,
+        "cut_barrier_area_delta_m2": after_cut_area - before_cut_area,
+        "allowed_growth_expanded": after_allowed_area > before_allowed_area + STEP6_ALLOWED_TOLERANCE_AREA_M2,
+        "forbidden_domain_weakened": after_forbidden_area < before_forbidden_area - STEP6_FORBIDDEN_TOLERANCE_AREA_M2,
+        "cut_barrier_weakened": after_cut_area < before_cut_area - STEP6_CUT_TOLERANCE_AREA_M2,
+        "source": "step6_relief_constraint_change",
+    }
+
+
+def _doc_ids(values: Any) -> tuple[str, ...]:
+    if not values:
+        return ()
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return tuple(result)
+
+
+def _case_alignment_aggregate_doc(case_result: T04CaseResult) -> dict[str, Any]:
+    getter = getattr(case_result, "case_alignment_aggregate_doc", None)
+    if not callable(getter):
+        return {}
+    doc = getter()
+    if isinstance(doc, dict):
+        return doc
+    return {}
+
+
+def _case_alignment_review_reasons(
+    case_alignment_aggregate: dict[str, Any],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    ambiguous_unit_ids = _doc_ids(case_alignment_aggregate.get("ambiguous_event_unit_ids"))
+    review_reasons: list[str] = []
+    if ambiguous_unit_ids:
+        review_reasons.append("ambiguous_case_rcsd_alignment")
+    return tuple(review_reasons), ambiguous_unit_ids
+
+
+def _negative_mask_channel_overlap_audit(
+    *,
+    final_case_polygon: BaseGeometry | None,
+    step5_result: T04Step5CaseResult,
+    cut_barrier_geometry: BaseGeometry | None,
+) -> dict[str, dict[str, Any]]:
+    channels = {
+        "unrelated_swsd": {
+            "geometry": getattr(step5_result, "unrelated_swsd_mask_geometry", None),
+            "applied_to_forbidden_domain": True,
+            "tolerance_area_m2": STEP6_FORBIDDEN_TOLERANCE_AREA_M2,
+        },
+        "unrelated_rcsd": {
+            "geometry": getattr(step5_result, "unrelated_rcsd_mask_geometry", None),
+            "applied_to_forbidden_domain": True,
+            "tolerance_area_m2": STEP6_FORBIDDEN_TOLERANCE_AREA_M2,
+        },
+        "divstrip_body": {
+            "geometry": getattr(step5_result, "divstrip_body_mask_geometry", None),
+            "applied_to_forbidden_domain": False,
+            "tolerance_area_m2": STEP6_FORBIDDEN_TOLERANCE_AREA_M2,
+        },
+        "divstrip_void": {
+            "geometry": getattr(step5_result, "divstrip_void_mask_geometry", None),
+            "applied_to_forbidden_domain": True,
+            "tolerance_area_m2": STEP6_FORBIDDEN_TOLERANCE_AREA_M2,
+        },
+        "forbidden_domain": {
+            "geometry": getattr(step5_result, "case_forbidden_domain", None),
+            "applied_to_forbidden_domain": True,
+            "tolerance_area_m2": STEP6_FORBIDDEN_TOLERANCE_AREA_M2,
+        },
+        "terminal_cut": {
+            "geometry": cut_barrier_geometry,
+            "applied_to_forbidden_domain": True,
+            "tolerance_area_m2": STEP6_CUT_TOLERANCE_AREA_M2,
+        },
+    }
+    audit: dict[str, dict[str, Any]] = {}
+    for channel_name, channel in channels.items():
+        geometry = _normalize_geometry(channel["geometry"])
+        overlap_area = _overlap_area(final_case_polygon, geometry)
+        tolerance_area = float(channel["tolerance_area_m2"])
+        audit[channel_name] = {
+            "present": geometry is not None,
+            "applied_to_forbidden_domain": bool(channel["applied_to_forbidden_domain"]),
+            "overlap_area_m2": overlap_area,
+            "tolerance_area_m2": tolerance_area,
+            "ok": overlap_area <= tolerance_area,
+        }
+    return audit
+
+
 def _fallback_support_geometry(step5_result: T04Step5CaseResult) -> BaseGeometry | None:
     return _normalize_geometry(
         _union_geometry(unit.fallback_support_strip_geometry for unit in step5_result.unit_results)
@@ -902,6 +809,51 @@ def _unit_surface_count(step5_result: T04Step5CaseResult) -> int:
         1
         for unit in step5_result.unit_results
         if unit.unit_allowed_growth_domain is not None and not unit.unit_allowed_growth_domain.is_empty
+    )
+
+
+def _barrier_separated_case_surface_ok(
+    *,
+    final_case_polygon: BaseGeometry | None,
+    assembly_canvas_geometry: BaseGeometry | None,
+    component_count: int,
+    guard_context: Step6GuardContext,
+    post_checks: dict[str, Any],
+    hard_must_cover_ok: bool,
+    b_node_target_covered: bool,
+    cut_violation: bool,
+    unexpected_hole_count: int,
+    case_alignment_review_reasons: tuple[str, ...],
+    hard_connect_notes: tuple[str, ...],
+) -> bool:
+    if guard_context.no_surface_reference_guard:
+        return False
+    if final_case_polygon is None or final_case_polygon.is_empty or component_count <= 1:
+        return False
+    canvas_component_count = len(_polygon_components(assembly_canvas_geometry or GeometryCollection()))
+    if canvas_component_count <= 1:
+        return False
+    required_checks = (
+        "post_cleanup_allowed_growth_ok",
+        "post_cleanup_forbidden_ok",
+        "post_cleanup_terminal_cut_ok",
+        "post_cleanup_lateral_limit_ok",
+        "post_cleanup_negative_mask_ok",
+        "post_cleanup_must_cover_ok",
+    )
+    if any(not bool(post_checks.get(check_name, True)) for check_name in required_checks):
+        return False
+    if guard_context.surface_scenario_type not in {
+        SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
+        SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
+    } and not (set(hard_connect_notes) & STEP6_BARRIER_SEPARATION_RELIEF_NOTES):
+        return False
+    return bool(
+        hard_must_cover_ok
+        and b_node_target_covered
+        and not cut_violation
+        and unexpected_hole_count == 0
+        and not case_alignment_review_reasons
     )
 
 
@@ -926,6 +878,25 @@ def check_post_cleanup_constraints(
         )
     )
     divstrip_negative_overlap_area = _overlap_area(final_case_polygon, step5_result.divstrip_void_mask_geometry)
+    negative_mask_channel_overlaps = _negative_mask_channel_overlap_audit(
+        final_case_polygon=final_case_polygon,
+        step5_result=step5_result,
+        cut_barrier_geometry=cut_barrier_geometry,
+    )
+    negative_mask_conflict_channel_names = tuple(
+        channel_name
+        for channel_name, channel in negative_mask_channel_overlaps.items()
+        if bool(channel["applied_to_forbidden_domain"]) and not bool(channel["ok"])
+    )
+    bridge_negative_mask_channel_overlaps = _negative_mask_channel_overlap_audit(
+        final_case_polygon=step5_result.case_bridge_zone_geometry,
+        step5_result=step5_result,
+        cut_barrier_geometry=cut_barrier_geometry,
+    )
+    bridge_negative_mask_crossing_detected = any(
+        not bool(bridge_negative_mask_channel_overlaps[channel]["ok"])
+        for channel in ("unrelated_swsd", "unrelated_rcsd")
+    )
     fallback_geometry = _fallback_support_geometry(step5_result)
     fallback_outside_allowed_area = _area_outside(step5_result.case_allowed_growth_domain, fallback_geometry)
     fallback_domain_contained = fallback_outside_allowed_area <= STEP6_ALLOWED_TOLERANCE_AREA_M2
@@ -935,12 +906,17 @@ def check_post_cleanup_constraints(
         "post_cleanup_forbidden_ok": forbidden_overlap_area <= STEP6_FORBIDDEN_TOLERANCE_AREA_M2,
         "post_cleanup_terminal_cut_ok": terminal_cut_overlap_area <= STEP6_CUT_TOLERANCE_AREA_M2,
         "post_cleanup_lateral_limit_ok": allowed_outside_area <= STEP6_ALLOWED_TOLERANCE_AREA_M2,
+        "post_cleanup_negative_mask_ok": not negative_mask_conflict_channel_names,
         "post_cleanup_must_cover_ok": must_cover_ok,
         "post_cleanup_recheck_performed": True,
         "allowed_growth_outside_area_m2": allowed_outside_area,
         "terminal_cut_overlap_area_m2": terminal_cut_overlap_area,
         "lateral_limit_check_mode": "via_allowed_growth",
-        "negative_mask_check_mode": "total_forbidden_plus_divstrip_mask",
+        "negative_mask_check_mode": "per_channel_negative_mask_overlap",
+        "negative_mask_channel_overlaps": negative_mask_channel_overlaps,
+        "negative_mask_conflict_channel_names": negative_mask_conflict_channel_names,
+        "bridge_negative_mask_channel_overlaps": bridge_negative_mask_channel_overlaps,
+        "bridge_negative_mask_crossing_detected": bridge_negative_mask_crossing_detected,
         "divstrip_negative_overlap_area_m2": divstrip_negative_overlap_area,
         "fallback_domain_contained_by_allowed_growth": fallback_domain_contained,
         "fallback_overexpansion_detected": bool(
@@ -951,173 +927,15 @@ def check_post_cleanup_constraints(
     }
 
 
-@dataclass(frozen=True)
-class T04Step6Result:
-    case_id: str
-    final_case_polygon: BaseGeometry | None
-    final_case_holes: BaseGeometry | None
-    final_case_cut_lines: BaseGeometry | None
-    final_case_forbidden_overlap: BaseGeometry | None
-    assembly_canvas_geometry: BaseGeometry | None
-    hard_seed_geometry: BaseGeometry | None
-    weak_seed_geometry: BaseGeometry | None
-    component_count: int
-    hole_count: int
-    business_hole_count: int
-    unexpected_hole_count: int
-    hard_must_cover_ok: bool
-    b_node_target_covered: bool
-    forbidden_overlap_area_m2: float
-    cut_violation: bool
-    assembly_state: str
-    review_reasons: tuple[str, ...]
-    hard_connect_notes: tuple[str, ...]
-    optional_connect_notes: tuple[str, ...]
-    hole_details: tuple[dict[str, Any], ...]
-    post_cleanup_allowed_growth_ok: bool = True
-    post_cleanup_forbidden_ok: bool = True
-    post_cleanup_terminal_cut_ok: bool = True
-    post_cleanup_lateral_limit_ok: bool = True
-    post_cleanup_must_cover_ok: bool = True
-    post_cleanup_recheck_performed: bool = False
-    surface_scenario_type: str = "missing"
-    section_reference_source: str = "missing"
-    surface_generation_mode: str = "missing"
-    reference_point_present: bool = False
-    surface_section_forward_m: float | None = None
-    surface_section_backward_m: float | None = None
-    surface_lateral_limit_m: float | None = None
-    surface_scenario_missing: bool = True
-    no_surface_reference_guard: bool = False
-    final_polygon_suppressed_by_no_surface_reference: bool = False
-    no_virtual_reference_point_guard: bool = True
-    fallback_rcsdroad_ids: tuple[str, ...] = ()
-    fallback_rcsdroad_localized: bool = False
-    fallback_domain_contained_by_allowed_growth: bool = True
-    fallback_overexpansion_detected: bool = False
-    fallback_overexpansion_area_m2: float = 0.0
-    lateral_limit_check_mode: str = "via_allowed_growth"
-    negative_mask_check_mode: str = "total_forbidden_plus_divstrip_mask"
-    forbidden_domain_kept: bool = False
-    divstrip_negative_mask_present: bool = False
-    divstrip_negative_overlap_area_m2: float = 0.0
-    allowed_growth_outside_area_m2: float = 0.0
-    terminal_cut_overlap_area_m2: float = 0.0
-    unit_surface_count: int = 0
-    unit_surface_merge_performed: bool = False
-    merge_mode: str = "case_level_assembly"
-    merged_case_surface_component_count: int = 0
-    final_case_polygon_component_count: int = 0
-    single_connected_case_surface_ok: bool = False
-    b_node_gate_applicable: bool = True
-    b_node_gate_skip_reason: str = ""
-    section_reference_window_covered: bool = True
-
-    def to_status_doc(self) -> dict[str, Any]:
-        return {
-            "case_id": self.case_id,
-            "assembly_state": self.assembly_state,
-            "review_reasons": list(self.review_reasons),
-            "surface_scenario_type": self.surface_scenario_type,
-            "section_reference_source": self.section_reference_source,
-            "surface_generation_mode": self.surface_generation_mode,
-            "reference_point_present": self.reference_point_present,
-            "surface_section_forward_m": self.surface_section_forward_m,
-            "surface_section_backward_m": self.surface_section_backward_m,
-            "surface_lateral_limit_m": self.surface_lateral_limit_m,
-            "surface_scenario_missing": self.surface_scenario_missing,
-            "no_surface_reference_guard": self.no_surface_reference_guard,
-            "final_polygon_suppressed_by_no_surface_reference": self.final_polygon_suppressed_by_no_surface_reference,
-            "no_virtual_reference_point_guard": self.no_virtual_reference_point_guard,
-            "component_count": self.component_count,
-            "hole_count": self.hole_count,
-            "business_hole_count": self.business_hole_count,
-            "unexpected_hole_count": self.unexpected_hole_count,
-            "hard_must_cover_ok": self.hard_must_cover_ok,
-            "b_node_target_covered": self.b_node_target_covered,
-            "b_node_gate_applicable": self.b_node_gate_applicable,
-            "b_node_gate_skip_reason": self.b_node_gate_skip_reason,
-            "section_reference_window_covered": self.section_reference_window_covered,
-            "forbidden_overlap_area_m2": self.forbidden_overlap_area_m2,
-            "cut_violation": self.cut_violation,
-            "post_cleanup_allowed_growth_ok": self.post_cleanup_allowed_growth_ok,
-            "post_cleanup_forbidden_ok": self.post_cleanup_forbidden_ok,
-            "post_cleanup_terminal_cut_ok": self.post_cleanup_terminal_cut_ok,
-            "post_cleanup_lateral_limit_ok": self.post_cleanup_lateral_limit_ok,
-            "post_cleanup_must_cover_ok": self.post_cleanup_must_cover_ok,
-            "post_cleanup_recheck_performed": self.post_cleanup_recheck_performed,
-            "lateral_limit_check_mode": self.lateral_limit_check_mode,
-            "fallback_rcsdroad_ids": list(self.fallback_rcsdroad_ids),
-            "fallback_rcsdroad_localized": self.fallback_rcsdroad_localized,
-            "fallback_domain_contained_by_allowed_growth": self.fallback_domain_contained_by_allowed_growth,
-            "fallback_overexpansion_detected": self.fallback_overexpansion_detected,
-            "fallback_overexpansion_area_m2": self.fallback_overexpansion_area_m2,
-            "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
-            "divstrip_negative_overlap_area_m2": self.divstrip_negative_overlap_area_m2,
-            "forbidden_domain_kept": self.forbidden_domain_kept,
-            "unit_surface_count": self.unit_surface_count,
-            "unit_surface_merge_performed": self.unit_surface_merge_performed,
-            "merge_mode": self.merge_mode,
-            "merged_case_surface_component_count": self.merged_case_surface_component_count,
-            "final_case_polygon_component_count": self.final_case_polygon_component_count,
-            "single_connected_case_surface_ok": self.single_connected_case_surface_ok,
-            "final_case_polygon": _geometry_summary(self.final_case_polygon),
-            "final_case_holes": _geometry_summary(self.final_case_holes),
-            "final_case_cut_lines": _geometry_summary(self.final_case_cut_lines),
-            "final_case_forbidden_overlap": _geometry_summary(self.final_case_forbidden_overlap),
-        }
-
-    def to_audit_doc(self) -> dict[str, Any]:
-        return {
-            "case_id": self.case_id,
-            "assembly_canvas_geometry": _geometry_summary(self.assembly_canvas_geometry),
-            "hard_seed_geometry": _geometry_summary(self.hard_seed_geometry),
-            "weak_seed_geometry": _geometry_summary(self.weak_seed_geometry),
-            "hard_connect_notes": list(self.hard_connect_notes),
-            "optional_connect_notes": list(self.optional_connect_notes),
-            "hole_details": [dict(item) for item in self.hole_details],
-            "post_cleanup_allowed_growth_ok": self.post_cleanup_allowed_growth_ok,
-            "post_cleanup_forbidden_ok": self.post_cleanup_forbidden_ok,
-            "post_cleanup_terminal_cut_ok": self.post_cleanup_terminal_cut_ok,
-            "post_cleanup_lateral_limit_ok": self.post_cleanup_lateral_limit_ok,
-            "post_cleanup_must_cover_ok": self.post_cleanup_must_cover_ok,
-            "post_cleanup_recheck_performed": self.post_cleanup_recheck_performed,
-            "allowed_growth_outside_area_m2": self.allowed_growth_outside_area_m2,
-            "terminal_cut_overlap_area_m2": self.terminal_cut_overlap_area_m2,
-            "lateral_limit_check_mode": self.lateral_limit_check_mode,
-            "negative_mask_check_mode": self.negative_mask_check_mode,
-            "surface_scenario_type": self.surface_scenario_type,
-            "section_reference_source": self.section_reference_source,
-            "surface_generation_mode": self.surface_generation_mode,
-            "surface_lateral_limit_m": self.surface_lateral_limit_m,
-            "b_node_gate_applicable": self.b_node_gate_applicable,
-            "b_node_gate_skip_reason": self.b_node_gate_skip_reason,
-            "section_reference_window_covered": self.section_reference_window_covered,
-            "surface_scenario_missing": self.surface_scenario_missing,
-            "no_surface_reference_guard": self.no_surface_reference_guard,
-            "final_polygon_suppressed_by_no_surface_reference": self.final_polygon_suppressed_by_no_surface_reference,
-            "fallback_rcsdroad_ids": list(self.fallback_rcsdroad_ids),
-            "fallback_rcsdroad_localized": self.fallback_rcsdroad_localized,
-            "fallback_domain_contained_by_allowed_growth": self.fallback_domain_contained_by_allowed_growth,
-            "fallback_overexpansion_detected": self.fallback_overexpansion_detected,
-            "fallback_overexpansion_area_m2": self.fallback_overexpansion_area_m2,
-            "divstrip_negative_mask_present": self.divstrip_negative_mask_present,
-            "divstrip_negative_overlap_area_m2": self.divstrip_negative_overlap_area_m2,
-            "forbidden_domain_kept": self.forbidden_domain_kept,
-            "unit_surface_count": self.unit_surface_count,
-            "unit_surface_merge_performed": self.unit_surface_merge_performed,
-            "merge_mode": self.merge_mode,
-            "merged_case_surface_component_count": self.merged_case_surface_component_count,
-            "final_case_polygon_component_count": self.final_case_polygon_component_count,
-            "single_connected_case_surface_ok": self.single_connected_case_surface_ok,
-        }
-
-
 def build_step6_polygon_assembly(
     case_result: T04CaseResult,
     step5_result: T04Step5CaseResult,
 ) -> T04Step6Result:
     guard_context = derive_step6_guard_context(step5_result)
+    case_alignment_aggregate = _case_alignment_aggregate_doc(case_result)
+    case_alignment_review_reasons, case_alignment_ambiguous_event_unit_ids = (
+        _case_alignment_review_reasons(case_alignment_aggregate)
+    )
     constraint_step5_result = step5_result
     unit_surface_count = _unit_surface_count(step5_result)
     if guard_context.no_surface_reference_guard:
@@ -1146,11 +964,13 @@ def build_step6_polygon_assembly(
             forbidden_overlap_area_m2=0.0,
             cut_violation=False,
             assembly_state="assembly_failed",
-            review_reasons=("no_surface_reference",),
+            review_reasons=("no_surface_reference", *case_alignment_review_reasons),
             hard_connect_notes=(),
             optional_connect_notes=(),
             hole_details=(),
             **post_checks,
+            case_alignment_review_reasons=case_alignment_review_reasons,
+            case_alignment_ambiguous_event_unit_ids=case_alignment_ambiguous_event_unit_ids,
             surface_scenario_type=guard_context.surface_scenario_type,
             section_reference_source=guard_context.section_reference_source,
             surface_generation_mode=guard_context.surface_generation_mode,
@@ -1218,6 +1038,16 @@ def build_step6_polygon_assembly(
                 ]
             )
         )
+    if _is_swsd_section_window_surface(guard_context):
+        terminal_window_geometry = _normalize_geometry(
+            _union_geometry(
+                [
+                    terminal_window_geometry,
+                    step5_result.case_allowed_growth_domain,
+                    step5_result.case_must_cover_domain,
+                ]
+            )
+        )
     forbidden_mask = _rasterize_geometries(grid, [step5_result.case_forbidden_domain])
     inter_unit_bridge_surface = _inter_unit_section_bridge_surface(step5_result)
     inter_unit_bridge_surface = _constrain_geometry_to_case_limits(
@@ -1258,6 +1088,10 @@ def build_step6_polygon_assembly(
             cut_barrier_geometry = _normalize_geometry(
                 cut_barrier_geometry.difference(inter_unit_cut_relief)
             )
+        if _is_swsd_section_window_surface(guard_context) and len(step5_result.unit_results) > 1:
+            cut_barrier_geometry = _normalize_geometry(
+                cut_barrier_geometry.difference(step5_result.case_allowed_growth_domain)
+            )
     cut_mask = _rasterize_geometries(grid, [cut_barrier_geometry]) if cut_barrier_geometry is not None else np.zeros_like(allowed_mask, dtype=bool)
     assembly_canvas_mask = allowed_mask & terminal_window_mask & ~forbidden_mask & ~cut_mask
     assembly_canvas_geometry = _constrain_geometry_to_case_limits(
@@ -1280,7 +1114,7 @@ def build_step6_polygon_assembly(
         full_fill_requested_mask = _rasterize_geometries(grid, [full_fill_target_geometry])
         full_fill_canvas_mask = full_fill_requested_mask & assembly_canvas_mask
         core_seed_canvas_mask = core_seed_requested_mask & assembly_canvas_mask
-        if _is_swsd_only_surface(guard_context) or (
+        if _is_swsd_section_window_surface(guard_context) or (
             _is_no_main_section_window_surface(guard_context)
             and not (full_fill_canvas_mask & core_seed_canvas_mask).any()
         ):
@@ -1310,7 +1144,7 @@ def build_step6_polygon_assembly(
         forbidden_geometry=step5_result.case_forbidden_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
-    if _is_swsd_only_surface(guard_context):
+    if _is_swsd_section_window_surface(guard_context):
         hard_seed_geometry = _constrain_geometry_to_case_limits(
             _normalize_geometry(
                 _union_geometry([hard_seed_geometry, step5_result.case_must_cover_domain])
@@ -1322,13 +1156,17 @@ def build_step6_polygon_assembly(
             cut_barrier_geometry=cut_barrier_geometry,
         )
         hard_seed_mask = _rasterize_geometries(grid, [hard_seed_geometry]) & assembly_canvas_mask
-    if _is_no_main_section_window_surface(guard_context) and not _is_swsd_only_surface(guard_context):
+    if _is_no_main_section_window_surface(guard_context) and not _is_swsd_section_window_surface(guard_context):
         hard_seed_geometry = _seed_dominant_polygon_component(
             hard_seed_geometry,
             core_hard_seed_geometry,
         )
         hard_seed_mask = _rasterize_geometries(grid, [hard_seed_geometry]) & assembly_canvas_mask
-    if inter_unit_bridge_surface is not None and not inter_unit_bridge_surface.is_empty:
+    if (
+        inter_unit_bridge_surface is not None
+        and not inter_unit_bridge_surface.is_empty
+        and not _is_swsd_section_window_surface(guard_context)
+    ):
         hard_seed_geometry = _seed_dominant_polygon_component(
             hard_seed_geometry,
             _union_geometry([step5_result.case_bridge_zone_geometry, inter_unit_bridge_surface]),
@@ -1378,6 +1216,7 @@ def build_step6_polygon_assembly(
         current_mask=current_mask,
         optional_seed_mask=weak_seed_mask,
     )
+    relief_constraint_audit_entries: list[dict[str, Any]] = []
     current_mask |= hard_seed_mask
     current_mask &= assembly_canvas_mask
     if current_mask.any():
@@ -1421,7 +1260,7 @@ def build_step6_polygon_assembly(
             cut_barrier_geometry=cut_barrier_geometry,
         )
     if (
-        _is_swsd_only_surface(guard_context)
+        _is_swsd_section_window_surface(guard_context)
         and final_case_polygon is not None
         and not final_case_polygon.is_empty
         and hard_seed_geometry is not None
@@ -1441,7 +1280,11 @@ def build_step6_polygon_assembly(
             final_case_polygon,
             hard_seed_geometry,
         )
-    if inter_unit_bridge_surface is not None and not inter_unit_bridge_surface.is_empty:
+    if (
+        inter_unit_bridge_surface is not None
+        and not inter_unit_bridge_surface.is_empty
+        and not _is_swsd_section_window_surface(guard_context)
+    ):
         final_case_polygon = _seed_dominant_polygon_component(
             final_case_polygon,
             _union_geometry([step5_result.case_bridge_zone_geometry, inter_unit_bridge_surface]),
@@ -1480,11 +1323,13 @@ def build_step6_polygon_assembly(
             cut_barrier_geometry=cut_barrier_geometry,
         )
         if dominant_relief_bridge is not None and not dominant_relief_bridge.is_empty:
+            before_forbidden_geometry = constraint_step5_result.case_forbidden_domain
+            before_cut_barrier_geometry = cut_barrier_geometry
             relieved_forbidden_geometry = (
                 None
-                if constraint_step5_result.case_forbidden_domain is None
+                if before_forbidden_geometry is None
                 else _normalize_geometry(
-                    constraint_step5_result.case_forbidden_domain.difference(dominant_relief_bridge)
+                    before_forbidden_geometry.difference(dominant_relief_bridge)
                 )
             )
             constraint_step5_result = replace(
@@ -1495,6 +1340,18 @@ def build_step6_polygon_assembly(
                 cut_barrier_geometry = _normalize_geometry(
                     cut_barrier_geometry.difference(dominant_relief_bridge)
                 )
+            relief_constraint_audit_entries.append(
+                _relief_constraint_audit_entry(
+                    relief_note="dominant_component_relief_bridge",
+                    relief_geometry=dominant_relief_bridge,
+                    before_allowed_geometry=step5_result.case_allowed_growth_domain,
+                    after_allowed_geometry=step5_result.case_allowed_growth_domain,
+                    before_forbidden_geometry=before_forbidden_geometry,
+                    after_forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                    before_cut_barrier_geometry=before_cut_barrier_geometry,
+                    after_cut_barrier_geometry=cut_barrier_geometry,
+                )
+            )
             final_case_polygon = _constrain_geometry_to_case_limits(
                 _normalize_geometry(_union_geometry([final_case_polygon, dominant_relief_bridge])),
                 drivezone_union=drivezone_union,
@@ -1524,8 +1381,21 @@ def build_step6_polygon_assembly(
             cut_barrier_geometry=cut_barrier_geometry,
         )
         if cut_sliver_relief is not None and not cut_sliver_relief.is_empty:
+            before_cut_barrier_geometry = cut_barrier_geometry
             if cut_barrier_geometry is not None and not cut_barrier_geometry.is_empty:
                 cut_barrier_geometry = _normalize_geometry(cut_barrier_geometry.difference(cut_sliver_relief))
+            relief_constraint_audit_entries.append(
+                _relief_constraint_audit_entry(
+                    relief_note="cut_sliver_hole_relief",
+                    relief_geometry=cut_sliver_relief,
+                    before_allowed_geometry=step5_result.case_allowed_growth_domain,
+                    after_allowed_geometry=step5_result.case_allowed_growth_domain,
+                    before_forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                    after_forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                    before_cut_barrier_geometry=before_cut_barrier_geometry,
+                    after_cut_barrier_geometry=cut_barrier_geometry,
+                )
+            )
             final_case_polygon = _constrain_geometry_to_case_limits(
                 _normalize_geometry(_union_geometry([final_case_polygon, cut_sliver_relief])),
                 drivezone_union=drivezone_union,
@@ -1556,11 +1426,13 @@ def build_step6_polygon_assembly(
             cut_barrier_geometry=cut_barrier_geometry,
         )
         if dominant_relief_bridge is not None and not dominant_relief_bridge.is_empty:
+            before_forbidden_geometry = constraint_step5_result.case_forbidden_domain
+            before_cut_barrier_geometry = cut_barrier_geometry
             relieved_forbidden_geometry = (
                 None
-                if constraint_step5_result.case_forbidden_domain is None
+                if before_forbidden_geometry is None
                 else _normalize_geometry(
-                    constraint_step5_result.case_forbidden_domain.difference(dominant_relief_bridge)
+                    before_forbidden_geometry.difference(dominant_relief_bridge)
                 )
             )
             constraint_step5_result = replace(
@@ -1571,6 +1443,18 @@ def build_step6_polygon_assembly(
                 cut_barrier_geometry = _normalize_geometry(
                     cut_barrier_geometry.difference(dominant_relief_bridge)
                 )
+            relief_constraint_audit_entries.append(
+                _relief_constraint_audit_entry(
+                    relief_note="post_cut_dominant_component_relief_bridge",
+                    relief_geometry=dominant_relief_bridge,
+                    before_allowed_geometry=step5_result.case_allowed_growth_domain,
+                    after_allowed_geometry=step5_result.case_allowed_growth_domain,
+                    before_forbidden_geometry=before_forbidden_geometry,
+                    after_forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                    before_cut_barrier_geometry=before_cut_barrier_geometry,
+                    after_cut_barrier_geometry=cut_barrier_geometry,
+                )
+            )
             final_case_polygon = _constrain_geometry_to_case_limits(
                 _normalize_geometry(_union_geometry([final_case_polygon, dominant_relief_bridge])),
                 drivezone_union=drivezone_union,
@@ -1596,6 +1480,7 @@ def build_step6_polygon_assembly(
             forbidden_geometry=constraint_step5_result.case_forbidden_domain,
         )
         if slit_relief is not None and not slit_relief.is_empty:
+            before_cut_barrier_geometry = cut_barrier_geometry
             next_cut_barrier_geometry = cut_barrier_geometry
             if cut_barrier_geometry is not None and not cut_barrier_geometry.is_empty:
                 next_cut_barrier_geometry = _normalize_geometry(cut_barrier_geometry.difference(slit_relief))
@@ -1623,13 +1508,25 @@ def build_step6_polygon_assembly(
                 )
             )
             if relief_preserves_must_cover:
+                relief_constraint_audit_entries.append(
+                    _relief_constraint_audit_entry(
+                        relief_note="junction_full_fill_slit_relief",
+                        relief_geometry=slit_relief,
+                        before_allowed_geometry=step5_result.case_allowed_growth_domain,
+                        after_allowed_geometry=step5_result.case_allowed_growth_domain,
+                        before_forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                        after_forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                        before_cut_barrier_geometry=before_cut_barrier_geometry,
+                        after_cut_barrier_geometry=next_cut_barrier_geometry,
+                    )
+                )
                 cut_barrier_geometry = next_cut_barrier_geometry
                 final_case_polygon = relieved_polygon
                 cut_checked_polygon = final_case_polygon
                 hard_connect_notes.append("junction_full_fill_slit_relief")
 
     if (
-        _is_swsd_only_surface(guard_context)
+        _is_swsd_section_window_surface(guard_context)
         and final_case_polygon is not None
         and not final_case_polygon.is_empty
     ):
@@ -1656,6 +1553,7 @@ def build_step6_polygon_assembly(
                 allowed_geometry=step5_result.case_allowed_growth_domain,
                 terminal_window_geometry=terminal_window_geometry,
                 cut_barrier_geometry=cut_barrier_geometry,
+                use_terminal_window=False,
             )
             late_relief_note = "late_dominant_component_relief_bridge"
         elif guard_context.surface_scenario_type in {SCENARIO_MAIN_WITHOUT_RCSD, "main_evidence_without_rcsd"}:
@@ -1666,6 +1564,9 @@ def build_step6_polygon_assembly(
             )
             late_relief_note = "main_without_rcsd_component_relief_bridge"
         if late_relief_bridge is not None and not late_relief_bridge.is_empty:
+            before_allowed_geometry = step5_result.case_allowed_growth_domain
+            before_forbidden_geometry = constraint_step5_result.case_forbidden_domain
+            before_cut_barrier_geometry = cut_barrier_geometry
             if guard_context.surface_scenario_type == SCENARIO_MAIN_WITHOUT_RCSD:
                 relieved_allowed_geometry = _normalize_geometry(
                     _union_geometry([step5_result.case_allowed_growth_domain, late_relief_bridge])
@@ -1693,6 +1594,18 @@ def build_step6_polygon_assembly(
                 cut_barrier_geometry = _normalize_geometry(
                     cut_barrier_geometry.difference(late_relief_bridge)
                 )
+            relief_constraint_audit_entries.append(
+                _relief_constraint_audit_entry(
+                    relief_note=late_relief_note,
+                    relief_geometry=late_relief_bridge,
+                    before_allowed_geometry=before_allowed_geometry,
+                    after_allowed_geometry=step5_result.case_allowed_growth_domain,
+                    before_forbidden_geometry=before_forbidden_geometry,
+                    after_forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+                    before_cut_barrier_geometry=before_cut_barrier_geometry,
+                    after_cut_barrier_geometry=cut_barrier_geometry,
+                )
+            )
             final_case_polygon = _constrain_geometry_to_case_limits(
                 _normalize_geometry(_union_geometry([final_case_polygon, late_relief_bridge])),
                 drivezone_union=drivezone_union,
@@ -1710,9 +1623,22 @@ def build_step6_polygon_assembly(
             cut_checked_polygon = final_case_polygon
             hard_connect_notes.append(late_relief_note)
             component_count = len(_polygon_components(final_case_polygon or GeometryCollection()))
+
+    if final_case_polygon is not None and not final_case_polygon.is_empty:
+        final_case_polygon = _constrain_geometry_to_case_limits(
+            final_case_polygon,
+            drivezone_union=drivezone_union,
+            allowed_geometry=step5_result.case_allowed_growth_domain,
+            terminal_window_geometry=terminal_window_geometry,
+            forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+            cut_barrier_geometry=cut_barrier_geometry,
+        )
+        cut_checked_polygon = final_case_polygon
+        component_count = len(_polygon_components(final_case_polygon or GeometryCollection()))
+    post_check_step5_result = constraint_step5_result
     hole_details, final_case_holes = _hole_details(
         geometry=final_case_polygon,
-        forbidden_geometry=constraint_step5_result.case_forbidden_domain,
+        forbidden_geometry=post_check_step5_result.case_forbidden_domain,
         allowed_geometry=step5_result.case_allowed_growth_domain,
         cut_barrier_geometry=cut_barrier_geometry,
     )
@@ -1722,8 +1648,8 @@ def build_step6_polygon_assembly(
         None
         if final_case_polygon is None
         or final_case_polygon.is_empty
-        or constraint_step5_result.case_forbidden_domain is None
-        else final_case_polygon.intersection(constraint_step5_result.case_forbidden_domain)
+        or post_check_step5_result.case_forbidden_domain is None
+        else final_case_polygon.intersection(post_check_step5_result.case_forbidden_domain)
     )
     forbidden_overlap_area_m2 = float(
         getattr(final_case_forbidden_overlap, "area", 0.0) or 0.0
@@ -1762,7 +1688,7 @@ def build_step6_polygon_assembly(
     elif target_b_present and not final_case_polygon.buffer(1e-6).covers(target_b_effective_geometry):
         b_node_target_covered = False
     section_reference_window_covered = True
-    if _is_swsd_only_surface(guard_context):
+    if _is_swsd_section_window_surface(guard_context):
         section_reference_window_covered = bool(
             final_case_polygon is not None
             and not final_case_polygon.is_empty
@@ -1772,17 +1698,34 @@ def build_step6_polygon_assembly(
         )
     post_checks = check_post_cleanup_constraints(
         final_case_polygon=final_case_polygon,
-        step5_result=constraint_step5_result,
+        step5_result=post_check_step5_result,
         cut_barrier_geometry=cut_barrier_geometry,
         hard_seed_geometry=hard_seed_geometry,
         guard_context=guard_context,
     )
     hard_must_cover_ok = bool(post_checks["post_cleanup_must_cover_ok"])
+    barrier_separated_case_surface_ok = _barrier_separated_case_surface_ok(
+        final_case_polygon=final_case_polygon,
+        assembly_canvas_geometry=assembly_canvas_geometry,
+        component_count=component_count,
+        guard_context=guard_context,
+        post_checks=post_checks,
+        hard_must_cover_ok=hard_must_cover_ok,
+        b_node_target_covered=b_node_target_covered,
+        cut_violation=cut_violation,
+        unexpected_hole_count=unexpected_hole_count,
+        case_alignment_review_reasons=case_alignment_review_reasons,
+        hard_connect_notes=tuple(hard_connect_notes),
+    )
 
     review_reasons: list[str] = []
     if final_case_polygon is None or final_case_polygon.is_empty:
         review_reasons.append("assembly_failed")
-    if component_count != 1 and final_case_polygon is not None and not final_case_polygon.is_empty:
+    if (
+        component_count != 1
+        and final_case_polygon is not None
+        and not final_case_polygon.is_empty
+    ):
         review_reasons.append("multi_component_result")
     if not hard_must_cover_ok:
         review_reasons.append("hard_must_cover_disconnected")
@@ -1794,12 +1737,15 @@ def build_step6_polygon_assembly(
         review_reasons.append("terminal_cut_conflict")
     if not bool(post_checks["post_cleanup_lateral_limit_ok"]):
         review_reasons.append("lateral_limit_conflict")
+    if not bool(post_checks["post_cleanup_negative_mask_ok"]):
+        review_reasons.append("negative_mask_conflict")
     if bool(post_checks["fallback_overexpansion_detected"]):
         review_reasons.append("fallback_overexpansion")
     if unexpected_hole_count > 0:
         review_reasons.append("unexpected_hole_present")
     if b_node_gate_applicable and not b_node_target_covered:
         review_reasons.append("b_node_not_covered")
+    review_reasons.extend(case_alignment_review_reasons)
     review_reasons = list(dict.fromkeys(review_reasons))
 
     if not review_reasons:
@@ -1834,7 +1780,10 @@ def build_step6_polygon_assembly(
         hard_connect_notes=tuple(hard_connect_notes),
         optional_connect_notes=tuple(optional_connect_notes),
         hole_details=tuple(hole_details),
+        relief_constraint_audit_entries=tuple(relief_constraint_audit_entries),
         **post_checks,
+        case_alignment_review_reasons=case_alignment_review_reasons,
+        case_alignment_ambiguous_event_unit_ids=case_alignment_ambiguous_event_unit_ids,
         surface_scenario_type=guard_context.surface_scenario_type,
         section_reference_source=guard_context.section_reference_source,
         surface_generation_mode=guard_context.surface_generation_mode,
@@ -1856,6 +1805,7 @@ def build_step6_polygon_assembly(
         merged_case_surface_component_count=component_count,
         final_case_polygon_component_count=component_count,
         single_connected_case_surface_ok=component_count == 1,
+        barrier_separated_case_surface_ok=barrier_separated_case_surface_ok,
     )
 
 

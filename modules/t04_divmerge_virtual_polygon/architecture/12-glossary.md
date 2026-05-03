@@ -10,11 +10,15 @@
 | `主证据` | 真实世界物理空间证据，当前只包括导流带与道路面分叉；RCSD/SWSD/RCSDRoad、历史抽象 node、拓扑召回点和抽象路网代理点都不是主证据。 |
 | `导流带主证据` | 由导流带表达真实分歧 / 合流或道路组织切换的主证据；导流带本体同时是负向掩膜，不作为可通行道路面。 |
 | `道路面分叉主证据` | 由可通行道路面形态真实分叉、合流或切换表达的主证据。 |
-| `RCSD 语义路口` | 与当前 SWSD 路口语义一致的 RCSD 路口：进入道路、退出道路和角度趋势与当前事件对齐；可作为 section reference、抽象路网参考或支撑域约束，不是主证据，不得被称为 Reference Point。 |
-| `RCSD 语义路口组` | T04 基于 `RCSDNode.mainnodeid` 识别的 RCSD 语义分组：非 `0` / 非空 `mainnodeid` 表示所属组，`0` / 空值表示以自身 `id` 作为独立组。一个 SWSD event unit 最多只能发布一个对应 RCSD 语义路口组。 |
-| `无 RCSD 语义路口` | 可表示没有 RCSD 路口，也可表示存在 RCSD 数据但不是与当前 SWSD 路口语义一致的路口，例如缺少进入 / 退出道路、只有 RCSDRoad 趋势支持或仅形成弱聚合结果。该状态不等于无 RCSD 数据。 |
-| `RCSDRoad fallback` | 无 RCSD 语义路口或需 road fallback 时使用的 RCSDRoad 局部段支撑；可表达与 SWSD 路口对应道路趋势一致的局部 RCSDRoad，但只能覆盖相关局部段，不得沿整条 RCSDRoad 远距离扩张。 |
-| `SWSD 语义路口` | SWSD 侧可用于构面的语义路口，可作为 section reference，不是主证据，不得被称为 Reference Point。 |
+| `RCSD 语义路口` | 与当前 SWSD 路口语义完整一致的 RCSD 路口：进入道路、退出道路和角度趋势与当前事件对齐；可作为 section reference、抽象路网参考或支撑域约束，不是主证据，不得被称为 Reference Point。 |
+| `RCSD 路口候选组` | T04 基于 `RCSDNode.mainnodeid` 和拓扑关系识别的 RCSD 路口候选节点组。`mainnodeid = 0` / 空值表示单节点候选，`mainnodeid != 0` 表示多节点候选；该字段只表达单节点 / 多节点组织关系，不单独决定候选是否构成 RCSD 语义路口。 |
+| `rcsd_alignment_type` | Step4 进入 Step5 前必须输出的唯一 RCSD 对齐分类，至少区分 `rcsd_semantic_junction / rcsd_junction_partial_alignment / rcsdroad_only_alignment / no_rcsd_alignment / ambiguous_rcsd_alignment`。 |
+| `rcsd_junction_partial_alignment` | RCSD 能召回路口级对象，但相对当前 SWSD 路口缺失部分进入 / 退出道路；剩余进入 / 退出道路的角度趋势和方向角色一致。该对象不能发布为完整 RCSD 语义路口，但可作为路口级截面参考对象。 |
+| `rcsdroad_only_alignment` | RCSD 不能召回路口级对象，仅存在与当前 unit / case 对齐的 RCSDRoad 或 RCSD 语义路口间道路；该对象可作为局部正向生长 / fallback 支撑，但不参与路口级截面边界构建，除非场景明确要求用 SWSD 自身前后 `20m`。 |
+| `RCSDRoad fallback` | `rcsdroad_only_alignment` 下可参与构面的 RCSDRoad 局部段支撑；只能覆盖当前 unit / case 相关局部段，不得沿整条 RCSDRoad 远距离扩张，也不得把自身提升为 RCSD 路口级截面参考对象。 |
+| `无 RCSD 语义路口` | 不等于无 RCSD 数据。可包括 `rcsd_junction_partial_alignment` 或 `rcsdroad_only_alignment`：前者是路口级对象不完整对齐，后者仅有 RCSDRoad / 路口间道路。 |
+| `无 RCSD` | 对当前 event unit / case 没有任何可用 RCSD 正向对象，即 `rcsd_alignment_type = no_rcsd_alignment`；当前处理窗口内所有 RCSDNode / RCSDRoad 均为负向掩膜输入。 |
+| `SWSD 语义路口` | SWSD 侧可用于构面的基础语义路口。SWSD 始终参与语义约束、正向 roads 解释、负向掩膜和审计；但只有在无主证据且无可召回 RCSD 路口级对象时，才作为截面边界来源。 |
 | `Anchor_2 full baseline` | 历史 23-case frozen / visual gate：`23 case / accepted = 20 / rejected = 3`。 |
 | `Anchor_2 30-case surface scenario baseline` | 当前 surface scenario 后续正式扩展 gate：`30 case / accepted = 26 / rejected = 4`，rejected set 为 `760598 / 760936 / 857993 / 607602562`。 |
 | `607602562` | Anchor_2 30-case extended baseline 中的 rejected case；当前目视审计口径下不得为提高 accepted count 静默改成 accepted，详细原因以后续 case-level 审计材料为准。 |
@@ -33,7 +37,7 @@
 | `selected_evidence` | Step4 当前选中的事实证据；只有导流带和道路面分叉可作为主证据来源。 |
 | `Reference Point` | 主证据上真实决定分歧、合流或道路形态切换的关键点；没有主证据就没有 Reference Point。 |
 | `fact_reference_point` | 与 `event_chosen_s_m` 对齐的事实参考点；必须来自导流带或道路面分叉主证据，不得由 RCSD/SWSD/RCSDRoad 虚构。 |
-| `section reference / 截面参考对象` | 用于确定路口面前后横向截面位置的参考对象；可来自 Reference Point、Reference Point + RCSD 语义路口、RCSD 语义路口或 SWSD 语义路口，不等同于 Reference Point。 |
+| `section reference / 截面参考对象` | 用于确定路口面前后横向截面位置的参考对象；来源由场景决定，可来自 Reference Point、Reference Point + RCSD 语义 / partial 路口、RCSD 语义 / partial 路口自身或 SWSD 语义路口自身，不等同于 Reference Point。 |
 | `review_materialized_point` | 仅用于 PNG 表达的可视化落点，不替代 `fact_reference_point`。 |
 | `localized_evidence_core_geometry` | 围绕当前事实点收敛出的局部核心证据几何。 |
 | `coarse_anchor_zone_geometry` | 审计与 review 用粗锚定区，不代理 component ownership。 |
@@ -46,9 +50,11 @@
 | `must_cover_domain` | Step5 定义的硬覆盖域，Step6 最终面必须覆盖。 |
 | `allowed_growth_domain` | Step5 定义的允许增长域，Step6 不得扩出该域。 |
 | `forbidden_domain` | Step5 定义的禁止域，包含 `1m` hard negative mask 等。 |
-| `负向掩膜` | 路口面不得越过或吞入的负向约束，包括导流带、hard negative mask、forbidden domain、terminal cut 与不可通行区域。 |
+| `负向掩膜` | 路口面不得越过或吞入的负向约束，包括导流带、hard negative mask、forbidden domain、terminal cut、不可通行区域、与当前输入 SWSD 语义路口无关的 SWSD nodes / roads，以及按 Step4 唯一 RCSD 对齐结果确定的 unrelated RCSDNode / RCSDRoad。 |
 | `terminal_cut_constraints` | Step5 定义的终端裁切约束，由 Step6 执行。 |
-| `final_case_polygon` | Step6 在 Step5 约束内生成的 Case 级单一连通面。 |
+| `inter-unit section bridge surface` | complex / multi 场景下，相邻 unit 的两组临近截面边界之间，按同一正向道路生长、`20m` 横向控制和负向掩膜规则生成的补面；用于把各 unit surface 合并成唯一联通的 case surface，不得越过 allowed / forbidden / terminal cut / negative mask。 |
+| `barrier_separated_case_surface_ok` | Step6 对真实负向掩膜阻断的审计标记；表示 unit 内部或相邻 unit 间的合法补面会侵入负向掩膜，因此不能形成唯一联通面。该字段不是 accepted 准出条件，多组件结果仍应进入 rejected / exception audit。 |
+| `final_case_polygon` | Step6 在 Step5 约束内生成的 Case 级唯一联通面；不以 MultiPolygon 作为 accepted 主发布形态，业务 hole 不改变外部唯一联通要求。complex / multi 场景必须先合成 unit surface 与 inter-unit section bridge surface。 |
 | `surface_scenario_type` | T04 主业务场景分类，按主证据与 RCSD/SWSD 支持状态区分六类成功构面场景和 `no_surface_reference` 兜底场景。 |
 | `no_surface_reference` | 防御性异常兜底；表示 Step4 未能从合法输入、Step3 拓扑或 Step4 候选中物化可用 SWSD / RCSD / 主证据 section reference，或输入已不满足 T04 case 的基本 SWSD 语义前提。正常 Anchor_2 业务 case 不应仅因“无主证据 + 无 RCSD 语义路口”落入该场景；该类 case 必须优先使用 SWSD section reference。 |
 | `accepted` | Step7 最终发布二态之一，表示通过最终业务验收并进入主发布层。 |
@@ -72,5 +78,8 @@
 | `internal full-input` | 一次性加载 full-layer source，发现候选并按 case 直跑 Step1-7 的 T04 私有执行面。 |
 | `batch closeout` | 所有 case Step7 完成后的根目录发布阶段，生成 surface、rejected、summary、audit、consistency report 与 downstream nodes 输出。 |
 | `visual fingerprint refresh` | 对 `final_review.png` raw scanline fingerprint 的显式基线刷新；仅在已有诊断报告和人工目视确认后允许，用于记录 intentional geometry / review-layer drift，不表示 Step7 accepted/rejected 业务失败。 |
+| `final review scenario label` | final review / visual audit 图上的 case 级场景标注，必须表达 `surface_scenario_type`；`no_rcsd_alignment` 的无 RCSD 正向召回语义由该场景标注表达，不额外绘制粗红 RCSDRoad。 |
+| `active RCSDRoad visual highlight` | final review / visual audit 中对唯一正向 RCSD 对齐结果的 RCSDRoad 粗红色线型表达；仅在 `rcsd_semantic_junction / rcsd_junction_partial_alignment / rcsdroad_only_alignment` 存在唯一正向对象时绘制。 |
+| `section reference visual marker` | final review / visual audit 中对截面边界参考对象的可视标注；来源可为 Reference Point、RCSD / RCSD partial junction 或 SWSD section reference，按场景规则决定。 |
 | `repo 官方 CLI` | `src/rcsd_topo_poc/cli.py` 暴露的稳定子命令；T04 当前不新增此类入口。 |
 | `repo 级脚本入口` | `scripts/t04_*` 包装脚本，已登记但不构成新的 CLI 子命令。 |

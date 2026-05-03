@@ -34,27 +34,37 @@
 - `fact_reference_point`、`review_materialized_point`、`selected_component_union_geometry`、`localized_evidence_core_geometry`、`coarse_anchor_zone_geometry` 的语义边界必须可解释。
 - 主证据只允许来自导流带或道路面分叉；RCSD 语义路口、RCSDRoad、SWSD 语义路口、SWSD candidate、历史抽象 node、拓扑召回点和抽象路网代理点不得被写成主证据。
 - 无主证据时不得构造虚拟 Reference Point；`fact_reference_point` 必须为空，并以 `no_reference_point_reason` 审计原因。
-- T04 合法输入默认携带 SWSD 语义路口 / SWSD 分合流候选上下文；“无主证据 + 无 RCSD 语义路口”不得自动落 `no_surface_reference`，应进入 `no_main_evidence_with_swsd_only` 或 `no_main_evidence_with_rcsdroad_fallback_and_swsd`。`no_surface_reference` 只允许作为防御性异常兜底，并必须说明 SWSD section reference 未能物化的原因。
+- T04 合法输入默认携带 SWSD 语义路口 / SWSD 分合流候选上下文；“无主证据 + 无完整 RCSD 语义路口”不得自动落 `no_surface_reference`。若 `rcsd_alignment_type = rcsdroad_only_alignment`，应进入 `no_main_evidence_with_rcsdroad_fallback_and_swsd`；若 `rcsd_alignment_type = no_rcsd_alignment` 且存在 SWSD 语义路口，应进入 `no_main_evidence_with_swsd_only`。`no_surface_reference` 只允许作为防御性异常兜底，并必须说明 section reference 未能物化的原因。
 - Reference Point 必须能追溯到导流带真实决定分歧 / 合流的位置，或道路面形态真实切换的位置。
 - RCSD/SWSD 作为 `section_reference_source` 时必须显式标记，不得混写到 `reference_point_source`。
-- `rcsd_match_type = rcsd_junction` 只允许用于与当前 SWSD 路口语义一致的 RCSD 路口：进入道路、退出道路和角度趋势必须与当前事件对齐；仅有 RCSDRoad 趋势支持、缺进入 / 退出道路或弱聚合结果时不得标为 RCSD 语义路口。
-- 一个 SWSD event unit、复杂路口内的单个 unit、或简单二分歧 / 合流，最多只能发布一个 RCSD 语义路口组。若 pair-local / full-input 局部窗口召回多个 RCSD 语义组，Step4 必须先以当前 SWSD section、Reference Point、进出方向角色完整性、距离和角度趋势做唯一消歧；非选中 RCSD 语义组只能进入上下文或 trace 审计，不得进入 `selected_rcsdroad_ids / selected_rcsdnode_ids / required_rcsd_node`。
-- `aggregated_rcsd_unit` 不得跨 RCSD 语义组聚合；共享 connector road 只能作为候选判定上下文，不能把两个 RCSD 语义路口合并为一个 `rcsd_junction`。`RCSDNode.mainnodeid` 的非 `0` / 非空值为 RCSD 语义分组边界，`0` / 空值时以自身 `id` 作为独立组。
-- `role_mapping_partial_aggregated` 这类弱聚合不得单独触发 `rcsd_junction_window`；它只能作为 RCSDRoad fallback、趋势参考或审计辅助，具体 case 不得因此构造虚拟 Reference Point。
+- `rcsd_match_type = rcsd_junction` 只允许用于与当前 SWSD 路口语义完整一致的 RCSD 路口：进入道路、退出道路和角度趋势必须与当前事件对齐。若 RCSD 能召回路口级对象但相对 SWSD 缺失部分进入 / 退出道路，且剩余道路的角度趋势和方向角色一致，应标为 `rcsd_alignment_type = rcsd_junction_partial_alignment`，不得发布为完整 `rcsd_junction`，但可作为路口级截面参考对象。
+- 一个 SWSD event unit、复杂路口内的单个 unit、或简单二分歧 / 合流，最多只能输出一个业务有效 RCSD 对齐结果。若 pair-local / full-input 局部窗口召回多个可作为当前对象正向 RCSD 对齐结果的候选，Step4 必须在进入 Step5 前完成唯一消歧；无法唯一消歧时必须输出 `ambiguous_rcsd_alignment` 并阻断正常构面，不得静默降级为无 RCSD。若多个 RCSD 语义对象只是位于处理窗口内但不对应当前对象，则它们是负向掩膜上下文，不构成正向候选歧义。
+- `aggregated_rcsd_unit` 不得跨 RCSD 语义路口聚合；共享 connector road 只能作为候选判定上下文，不能把两个 RCSD 语义路口合并为一个 `rcsd_junction`。`RCSDNode.mainnodeid` 只表达单节点 / 多节点组织关系，不单独决定候选是否构成 RCSD 语义路口。
+- `role_mapping_partial_aggregated` 这类弱聚合不得单独触发完整 `rcsd_junction`；它只能作为 `rcsd_junction_partial_alignment`、`rcsdroad_only_alignment`、趋势参考或审计辅助的候选输入，具体 case 不得因此构造虚拟 Reference Point。
 - 无 `required_rcsd_node` 的 road-only partial 聚合只能作为 trace-only 审计线索；不得发布为 `positive_rcsd_present`，也不得进入 `selected_rcsdroad_ids` / `selected_rcsdnode_ids`。`axis_polarity_inverted` 只是该规则的一类触发原因。
 - Step5 必须能稳定产出 Unit / Case 两级的 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints`，并对 `1m` hard negative mask、`fallback_support_strip`、`bridge zone` 与 `junction_full_road_fill_domain` 给出可追溯解释。
-- Step5 默认以前后 `20m` 横向截面确定构面窗口，横向截面垂直于道路面方向或语义主轴。
-- 路口面两侧横向扩展不得超过 `20m`，并且不得越过负向掩膜；负向掩膜包括导流带、hard negative mask、forbidden domain、terminal cut 与不可通行区域。
+- Step5 默认以前后 `20m` 横向截面确定构面窗口，横向截面垂直于道路面方向或语义主轴；截面边界来源必须由场景决定：有主证据时优先使用 Reference Point；无主证据但可召回 RCSD 路口级对象时使用 RCSD 路口自身前后 `20m`；无主证据且仅有 RCSDRoad 或无 RCSD 时使用 SWSD 自身前后 `20m`。SWSD 只在无主证据且无可召回 RCSD 路口级对象时参与截面边界构建。
+- 路口面两侧横向扩展不得超过相关 SWSD / RCSD 道路外侧约 `20m`，并且不得越过负向掩膜；负向掩膜包括导流带、hard negative mask、forbidden domain、terminal cut、不可通行区域、与当前输入 SWSD 语义路口无关的 SWSD nodes / roads，以及按 Step4 唯一 RCSD 对齐结果确定的 unrelated RCSDNode / RCSDRoad。
+- 负向掩膜不得被正向走廊、allowed growth、case bridge 或其它几何生长域削弱。实现只能先按对象身份把唯一正向 SWSD / RCSD 对齐对象排除出 unrelated 集合，再用剩余 unrelated 对象生成硬屏障；若正向生长域与这些硬屏障相交，必须裁剪最终面或拒绝，不得反向擦除掩膜。
+- 当负向掩膜作为硬屏障切分 unit 内或相邻 unit 间的正向结果时，Step6 不得通过弱化掩膜换取单连通，也不得以 `barrier_separated_case_surface_ok` 将 MultiPolygon 作为 accepted 准出。该字段只能记录真实负向掩膜阻断事实；Step7 应按 `multi_component_result` 或对应约束冲突拒绝，并在 `reject_reason_detail` 中注明阻断范围、负向掩膜来源、inter-unit bridge 尝试和失败原因。未证明真实负向掩膜阻断的多组件一律按普通多组件拒绝。
 - RCSDRoad fallback 不得导致沿整条 RCSDRoad 远距离扩面，只能覆盖与当前事实分歧 / 合流或当前 section reference 相关的局部段。
-- 对同时具备主证据 Reference Point 与 required RCSDNode 的路口面，Step5 必须在 DriveZone 内按语义主轴构造整幅路面填充域：Reference Point 与 RCSDNode 两端各保留 `20m` terminal window，主轴横向单侧不超过 `20m`，并继续受 forbidden masks / terminal cuts 硬裁剪；无主证据时只能使用 section reference，不得把 RCSDNode 推导为 Reference Point。
+- 对同时具备主证据 Reference Point 与完整或 partial RCSD 路口级参考对象的路口面，Step5 必须在 DriveZone 内按语义主轴构造两截面之间的整幅路面填充域：Reference Point 侧与 RCSD 路口侧各保留 `20m` terminal window，主轴横向单侧不超过 `20m`，并继续受 forbidden masks / terminal cuts 硬裁剪；无主证据时只能使用场景规定的 RCSD 或 SWSD section reference，不得把 RCSDNode 推导为 Reference Point。
 - `main_evidence_with_rcsd_junction` 的 Step5 full-fill 判定必须以 surface scenario 与 `section_reference_source = reference_point_and_rcsd_junction` 为准，不得因为 Step4 evidence source 是恢复 / 提升后的导流带、道路面分叉或 reverse 结果而降级为无 RCSD 语义路口；但 `continuous_chain_review` 保持旧的 `standard` 填充，除非后续人工审计明确要求 full-fill。
 - 弱 road-surface-fork RCSD 绑定只有在 required RCSD node 与代表节点 / 当前 SWSD section 局部对齐时才能升级为 `rcsd_junction`；远距离 required RCSD node 只能作为 trace-only 审计线索，不得激活 current RCSDRoad 渲染或 RCSD-driven publication。
 - 多 Unit full-fill 复杂路口允许 Step6 做受限窄缝 relief，但必须先通过 must-cover 预检查，并继续满足 allowed-growth、forbidden、terminal-cut 与 topology guard；`823826` 这类视觉细缝不得通过伪 accepted 掩盖。
-- Step6 必须能在不突破 Step5 约束的前提下生成单一连通面；只允许业务 hole，不允许算法洞。
-- complex / multi 场景下，unit surface 合并后仍须保持 case 级单一连通，除非存在明确业务 hole。
-- 对先合流再分歧的 complex / multi 场景，若相邻 unit 的最近横截线之间无 forbidden / negative mask 空间冲突，应允许以该横截线间区域生成可审计的 inter-unit section bridge surface；该桥接面必须保持在 allowed growth 内，并通过 post-cleanup allowed / forbidden / terminal cut / hole 复核。
+- Step6 必须优先在不突破 Step5 约束的前提下生成唯一联通面；只允许业务 hole，不允许算法洞。业务 hole 只能是单一外环内的可解释内部洞，不豁免 MultiPolygon。若唯一阻断来自真实负向掩膜硬屏障，应记录 `barrier_separated_case_surface_ok` 并进入 rejected / exception audit，不得接受为合法 MultiPolygon。
+- complex / multi 场景下，各 unit 独立构面后，必须按相邻 unit 的两组临近截面边界执行 inter-unit section bridge；若没有真实负向掩膜阻断，合并后的 `final_case_polygon` 必须是唯一联通面。只有真实负向掩膜阻断 unit 内或 unit 间构面时，才允许作为失败 / 例外审计；不得作为 accepted MultiPolygon 例外。
+- 对所有 complex / multi 场景，若相邻 unit 的两组临近截面边界之间存在可通行道路面，且无 forbidden / negative mask 空间冲突，Step6 必须使用同样的正向道路面生长、`20m` 横向控制和负向掩膜规则生成 inter-unit section bridge surface；该桥接面必须保持在 allowed growth 内，并通过 post-cleanup allowed / forbidden / terminal cut / hole / connectivity 复核。
 - Step7 必须把最终状态机压缩为 `accepted / rejected` 两态；审计材料可以保留，但不得冒充第三种正式状态。
 - Anchor_2 full baseline 的既有 `accepted / rejected` 语义不得静默放宽，不能为了提高 accepted count 弱化 Step7 门禁。
+
+## 性能可验证性
+
+- case-package 路径必须在 `summary.json.performance` 中输出 `performance_audit_version`、总耗时、完成 case 累计耗时、平均完成 case 耗时、最慢 case 清单与阈值状态。
+- 当前 39 Case QA 门禁的默认性能阈值为：`threshold_seconds_total = 240.0`、`threshold_avg_completed_case_seconds = 6.5`。该阈值用于发现明显退化，不替代 full-input 生产 SLO。
+- 默认阈值可通过环境变量 `T04_CASE_PACKAGE_THRESHOLD_SECONDS_TOTAL` 与 `T04_CASE_PACKAGE_THRESHOLD_AVG_COMPLETED_CASE_SECONDS` 覆盖；输出必须记录 `threshold_source = module_quality_requirement_default_or_env_override`。
+- `threshold_status` 只能取 `within_threshold / exceeded_threshold`。性能超阈值必须作为 QA 风险进入交付说明；是否阻断发布由正式 full-input SLO 或任务书决定。
+- 本轮本地 39 Case gate 实测约 `180s-184s`，低于默认 `240s` 总耗时阈值；后续若运行环境变化，应以同一命令的多次运行记录更新该经验值。
 
 ## 可审计性
 
@@ -267,14 +277,21 @@ Step7 legacy selected-case 发布冻结门槛：
 - Anchor_2 2026-05-02 追加目视审计问题集：
   - `698380`：最终路口面可接受，但 final review 必须正确渲染 active RCSDRoad / RCSDNode，不能表现为无 RCSD 语义路口。
   - `698389 / 760277 / 807908`：有主证据且有 RCSD 语义路口，必须执行 `Reference Point + RCSD semantic junction` 构面；`807908` 还必须避免召回其他 RCSD 语义路口分支和 SWSD roads 侵入。
-  - `765050`：复杂路口内所有 Unit 均无主证据、无 RCSD 语义路口时，必须以 SWSD section window 构面并渲染 SWSD current roads；不得落入 `no_surface_reference`。
+  - `765050`：复杂路口内所有 Unit 均无主证据、无当前对应的 RCSD 语义路口，但整体 SWSD 几何唯一对齐到 RCSDRoad `5392491910661086`；三个 Unit 均应进入 `no_main_evidence_with_rcsdroad_fallback_and_swsd`，共享该 `rcsdroad_only_alignment`，并以 SWSD section window 构面、渲染 SWSD current roads；`5392491910661086` 不得进入 unrelated RCSD 负向掩膜。
   - `768675`：无主证据但有 RCSD 语义路口时，只允许当前 RCSD 语义链路参与构面，不得把非该语义路口的 RCSDRoad 并入。
   - `765170 / 768680 / 823826`：主体正确时仍需检查异常小凹陷、细缝和小洞；若 relief 会破坏 must-cover 或 guard，则不得应用。
+- Anchor_2 当前正式 case 清单为 `/mnt/e/TestData/POC_Data/T02/Anchor_2` 下 39 个 case。Windows 侧等价路径为 `E:\TestData\POC_Data\T02\Anchor_2`。
+- `RCSD_Topo_Poc_T04_REQUIREMENT.md` 不作为更高优先级需求输入；当前正式需求以本模块源事实文档和 2026-05-02/2026-05-03 审计确认后的 SpecKit 变更工件为基础。
+- final review / visual audit 除原有图层外必须表达：
+  - case 所属 `surface_scenario_type`。
+  - 当存在唯一正向 RCSD 对齐对象时，相关 RCSDRoad 使用粗红色线型；这覆盖完整 RCSD 语义路口、partial junction 和 road-only alignment。
+  - `rcsd_alignment_type = no_rcsd_alignment` 时，不绘制粗红 RCSDRoad；无 RCSD 正向召回由 case 场景标注表达。
+  - 构成截面边界的参考对象必须标注，包括 Reference Point、RCSD / RCSD partial junction 或 SWSD section reference。
 
 ### Anchor_2 30-case surface scenario baseline gate（2026-05-01）
 
 - 基线输入集：`/mnt/e/TestData/POC_Data/T02/Anchor_2`
-- 当前需求来源：`RCSD_Topo_Poc_T04_REQUIREMENT.md` 的 Anchor_2 30-case 目视审计结论，以及对应 30-case run artifact。
+- 当前需求来源：本模块源事实文档与已确认的 Anchor_2 目视审计结论；`RCSD_Topo_Poc_T04_REQUIREMENT.md` 不作为更高优先级需求输入。
 - 冻结测试入口：`tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_30case_surface_scenario_baseline_gate`
 - 当前全量扩展结果：`row_count = 30`，`accepted = 26`，`rejected = 4`。
 - rejected set：`760598`、`760936`、`857993`、`607602562`。

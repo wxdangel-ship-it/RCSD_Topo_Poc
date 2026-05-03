@@ -17,6 +17,7 @@ from ._event_interpretation_core import (
 from .admission import build_step1_admission
 from .case_models import T04CandidateAuditEntry, T04CaseBundle, T04CaseResult, T04UnitContext
 from .event_units import build_event_unit_specs
+from .rcsd_alignment import RCSD_ALIGNMENT_NONE, RCSD_ALIGNMENT_SEMANTIC_JUNCTION
 
 
 def _candidate_state_key(summary: dict[str, object]) -> tuple[str, str, str, str]:
@@ -25,6 +26,75 @@ def _candidate_state_key(summary: dict[str, object]) -> tuple[str, str, str, str
         str(summary.get("layer_label") or summary.get("layer") or ""),
         str(summary.get("local_region_id") or ""),
         str(summary.get("point_signature") or ""),
+    )
+
+
+def _node_id_from_local_rcsd_unit(unit_id: str | None) -> str:
+    text = str(unit_id or "").strip()
+    if ":node:" not in text:
+        return ""
+    return text.rsplit(":node:", 1)[-1].strip()
+
+
+def _incident_rcsd_road_ids(case_bundle: T04CaseBundle, node_id: str) -> tuple[str, ...]:
+    if not node_id:
+        return ()
+    incident: list[str] = []
+    for road in case_bundle.rcsd_roads:
+        road_id = str(getattr(road, "road_id", "") or "").strip()
+        if not road_id:
+            continue
+        endpoint_ids = {
+            str(getattr(road, "snodeid", "") or "").strip(),
+            str(getattr(road, "enodeid", "") or "").strip(),
+        }
+        if node_id in endpoint_ids:
+            incident.append(road_id)
+    return tuple(dict.fromkeys(incident))
+
+
+def _rcsd_node_geometry(case_bundle: T04CaseBundle, node_id: str):
+    if not node_id:
+        return None
+    for node in case_bundle.rcsd_nodes:
+        if str(getattr(node, "node_id", "") or "").strip() == node_id:
+            return getattr(node, "geometry", None)
+    return None
+
+
+def _normalize_unique_local_rcsd_junction(
+    unit_result,
+    *,
+    case_bundle: T04CaseBundle,
+):
+    if unit_result.rcsd_alignment_type != RCSD_ALIGNMENT_SEMANTIC_JUNCTION:
+        return unit_result
+    local_node_id = _node_id_from_local_rcsd_unit(unit_result.local_rcsd_unit_id)
+    if not local_node_id or unit_result.local_rcsd_unit_kind != "node_centric":
+        return unit_result
+    incident_road_ids = set(_incident_rcsd_road_ids(case_bundle, local_node_id))
+    selected_road_ids = {
+        str(road_id).strip()
+        for road_id in unit_result.selected_rcsdroad_ids
+        if str(road_id).strip()
+    }
+    if len(incident_road_ids) < 3 or not selected_road_ids or not selected_road_ids <= incident_road_ids:
+        return unit_result
+    if unit_result.required_rcsd_node == local_node_id:
+        return unit_result
+
+    node_geometry = _rcsd_node_geometry(case_bundle, local_node_id)
+    audit = dict(unit_result.positive_rcsd_audit or {})
+    audit["required_rcsd_node_before_unique_local_junction"] = unit_result.required_rcsd_node
+    audit["required_rcsd_node_after_unique_local_junction"] = local_node_id
+    audit["required_rcsd_node_source"] = "unique_local_rcsd_semantic_junction"
+    audit["unique_local_rcsd_semantic_junction_node_id"] = local_node_id
+    return replace(
+        unit_result,
+        required_rcsd_node=local_node_id,
+        required_rcsd_node_source="unique_local_rcsd_semantic_junction",
+        required_rcsd_node_geometry=node_geometry,
+        positive_rcsd_audit=audit,
     )
 
 
@@ -131,6 +201,7 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                     rcsd_consistency_result=item.result.rcsd_consistency_result,
                     positive_rcsd_support_level=item.result.positive_rcsd_support_level,
                     positive_rcsd_consistency_level=item.result.positive_rcsd_consistency_level,
+                    rcsd_alignment_type=item.result.surface_scenario_doc()["rcsd_alignment_type"],
                     required_rcsd_node=item.result.required_rcsd_node,
                     candidate_region_geometry=item.result.selected_evidence_region_geometry,
                     fact_reference_point=item.result.fact_reference_point,
@@ -234,9 +305,11 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                     "positive_rcsd_present_reason": "no_selected_evidence_after_reselection",
                     "axis_polarity_inverted": False,
                     "required_rcsd_node_source": None,
+                    "rcsd_alignment_type": RCSD_ALIGNMENT_NONE,
                     "rcsd_role_map": {},
                     "rcsd_decision_reason": "no_selected_evidence_after_reselection",
                 },
+                rcsd_alignment_type=RCSD_ALIGNMENT_NONE,
                 selected_candidate_summary=dict(empty_summary),
                 selected_evidence_summary=dict(empty_summary),
                 alternative_candidate_summaries=alternative_candidates,
@@ -267,6 +340,10 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                 selected_evidence_summary=dict(selected_candidate_summary),
                 alternative_candidate_summaries=alternative_candidates,
                 candidate_audit_entries=tuple(candidate_audit_entries),
+            )
+            finalized_result = _normalize_unique_local_rcsd_junction(
+                finalized_result,
+                case_bundle=case_bundle,
             )
             if selection_rank is not None and selection_rank > 1:
                 finalized_result = replace(

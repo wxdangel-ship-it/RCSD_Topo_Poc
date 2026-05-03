@@ -3,6 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from .rcsd_alignment import (
+    RCSD_ALIGNMENT_AMBIGUOUS,
+    RCSD_ALIGNMENT_JUNCTION_PARTIAL,
+    RCSD_ALIGNMENT_NONE,
+    RCSD_ALIGNMENT_ROAD_ONLY,
+    RCSD_ALIGNMENT_SEMANTIC_JUNCTION,
+    normalize_rcsd_alignment_type,
+    rcsd_alignment_type_from_selection,
+    rcsd_match_type_for_alignment,
+)
+
 
 MAIN_EVIDENCE_DIVSTRIP = "divstrip"
 MAIN_EVIDENCE_ROAD_SURFACE_FORK = "road_surface_fork"
@@ -46,6 +57,7 @@ _NON_FALLBACK_RCSD_REASONS = {
     "road_surface_fork_without_bound_target_rcsd",
     "unbound_road_surface_fork_without_bifurcation_rcsd",
 }
+_SWSD_WINDOW_NO_RCSD_REASON = "swsd_junction_window_no_rcsd"
 _WEAK_ROAD_SURFACE_FORK_LOCAL_BINDING = "road_surface_fork_rcsd_junction_local_unit_binding"
 _WEAK_ROAD_SURFACE_FORK_LOCAL_REQUIRED_NODE_MAX_DISTANCE_M = 60.0
 _RCSD_JUNCTION_WINDOW_MAX_SEMANTIC_ANCHOR_DISTANCE_M = 60.0
@@ -57,8 +69,9 @@ _WEAK_DIVSTRIP_SWSD_REASONS = {
 }
 
 
-def _clean_text(value: Any) -> str:
-    return str(value or "").strip()
+def _clean_text(value: Any, default: str = "") -> str:
+    text = str(value or "").strip()
+    return text or default
 
 
 def _tuple_str(values: Sequence[Any] | None) -> tuple[str, ...]:
@@ -194,6 +207,66 @@ def _selected_aggregate_semantic_anchor_distance_m(
     return None
 
 
+def _unit_doc_by_id(
+    units: Sequence[Any] | None,
+    unit_id: str,
+) -> Mapping[str, Any] | None:
+    if not unit_id:
+        return None
+    for unit in units or ():
+        if not isinstance(unit, Mapping):
+            continue
+        if _clean_text(unit.get("unit_id")) == unit_id:
+            return unit
+    return None
+
+
+def _road_ids_from_unit(unit: Mapping[str, Any] | None) -> tuple[str, ...]:
+    if not unit:
+        return ()
+    return _tuple_str(unit.get("road_ids"))
+
+
+def _unique_swsd_window_fallback_roads(
+    positive_rcsd_audit: Mapping[str, Any],
+) -> tuple[str, ...]:
+    local_units = tuple(
+        unit for unit in (positive_rcsd_audit.get("local_rcsd_units") or ()) if isinstance(unit, Mapping)
+    )
+    aggregate_units = tuple(
+        unit for unit in (positive_rcsd_audit.get("aggregated_rcsd_units") or ()) if isinstance(unit, Mapping)
+    )
+    member_ids = _tuple_str(positive_rcsd_audit.get("published_member_unit_ids"))
+    if len(member_ids) == 1:
+        member_unit = _unit_doc_by_id(local_units, member_ids[0]) or _unit_doc_by_id(
+            aggregate_units,
+            member_ids[0],
+        )
+        member_roads = _road_ids_from_unit(member_unit)
+        if member_roads:
+            return member_roads
+
+    aggregate_id = _clean_text(positive_rcsd_audit.get("aggregated_rcsd_unit_id"))
+    aggregate = _unit_doc_by_id(aggregate_units, aggregate_id)
+    if aggregate:
+        primary_unit_id = _clean_text(aggregate.get("primary_local_unit_id"))
+        primary_roads = _road_ids_from_unit(_unit_doc_by_id(local_units, primary_unit_id))
+        if primary_roads:
+            return primary_roads
+        aggregate_member_ids = _tuple_str(aggregate.get("member_unit_ids"))
+        if len(aggregate_member_ids) == 1:
+            member_roads = _road_ids_from_unit(_unit_doc_by_id(local_units, aggregate_member_ids[0]))
+            if member_roads:
+                return member_roads
+
+    positive_local_units = tuple(
+        unit for unit in local_units if bool(unit.get("positive_rcsd_present"))
+    )
+    if len(positive_local_units) == 1:
+        return _road_ids_from_unit(positive_local_units[0])
+    return ()
+
+
 def _main_evidence_type(
     *,
     evidence_source: str,
@@ -265,11 +338,15 @@ def _fallback_rcsdroad_ids(
 ) -> tuple[str, ...]:
     audit_roads: Sequence[Any] | None = None
     if positive_rcsd_audit:
+        published_roads = _tuple_str(positive_rcsd_audit.get("published_rcsdroad_ids"))
         audit_reasons = {
             _clean_text(positive_rcsd_audit.get("positive_rcsd_present_reason")),
             _clean_text(positive_rcsd_audit.get("rcsd_decision_reason")),
         }
         audit_reasons.discard("")
+        swsd_window_rcsdroad_alignment = bool(
+            published_roads and _SWSD_WINDOW_NO_RCSD_REASON in audit_reasons
+        )
         audit_is_non_fallback = (
             positive_rcsd_audit.get("positive_rcsd_present") is False
             and (
@@ -277,17 +354,19 @@ def _fallback_rcsdroad_ids(
                 or bool(audit_reasons & _WEAK_DIVSTRIP_SWSD_REASONS)
                 or any(bool(positive_rcsd_audit.get(key)) for key in _NON_FALLBACK_RCSD_REASONS)
             )
+            and not swsd_window_rcsdroad_alignment
         ) or (
             bool(audit_reasons & _WEAK_DIVSTRIP_SWSD_REASONS)
             and not _clean_text(positive_rcsd_audit.get("required_rcsd_node"))
             and _clean_text(positive_rcsd_audit.get("local_rcsd_unit_kind")) == "road_only"
+            and not swsd_window_rcsdroad_alignment
         )
         if audit_is_non_fallback:
             return ()
-        if not audit_is_non_fallback:
-            audit_roads = positive_rcsd_audit.get("published_rcsdroad_ids") or positive_rcsd_audit.get(
-                "first_hit_rcsdroad_ids"
-            )
+        if swsd_window_rcsdroad_alignment:
+            audit_roads = _unique_swsd_window_fallback_roads(positive_rcsd_audit)
+        elif not audit_is_non_fallback:
+            audit_roads = published_roads or positive_rcsd_audit.get("first_hit_rcsdroad_ids")
     return _tuple_str([*(_tuple_str(selected_rcsdroad_ids)), *(_tuple_str(first_hit_rcsdroad_ids)), *(_tuple_str(audit_roads))])
 
 
@@ -340,6 +419,7 @@ class SurfaceScenarioClassification:
     reference_point_source: str
     section_reference_source: str
     surface_scenario_type: str
+    rcsd_alignment_type: str
     rcsd_match_type: str
     swsd_junction_present: bool
     fallback_rcsdroad_ids: tuple[str, ...]
@@ -354,12 +434,107 @@ class SurfaceScenarioClassification:
             "reference_point_source": self.reference_point_source,
             "section_reference_source": self.section_reference_source,
             "surface_scenario_type": self.surface_scenario_type,
+            "rcsd_alignment_type": self.rcsd_alignment_type,
             "rcsd_match_type": self.rcsd_match_type,
             "swsd_junction_present": self.swsd_junction_present,
             "fallback_rcsdroad_ids": list(self.fallback_rcsdroad_ids),
             "surface_generation_mode": self.surface_generation_mode,
             "no_reference_point_reason": self.no_reference_point_reason,
         }
+
+
+def classify_surface_scenario_from_alignment(
+    *,
+    has_main_evidence: bool,
+    rcsd_alignment_type: str,
+    swsd_junction_present: bool,
+    main_evidence_type: str | None = None,
+    reference_point_present: bool | None = None,
+    fallback_rcsdroad_ids: Sequence[Any] | None = None,
+    no_reference_point_reason: str | None = None,
+) -> SurfaceScenarioClassification:
+    alignment_type = normalize_rcsd_alignment_type(rcsd_alignment_type)
+    if alignment_type == RCSD_ALIGNMENT_AMBIGUOUS:
+        return SurfaceScenarioClassification(
+            has_main_evidence=bool(has_main_evidence),
+            main_evidence_type=_clean_text(main_evidence_type, MAIN_EVIDENCE_NONE),
+            reference_point_present=False,
+            reference_point_source=MAIN_EVIDENCE_NONE,
+            section_reference_source=SECTION_REFERENCE_NONE,
+            surface_scenario_type=SCENARIO_NO_SURFACE_REFERENCE,
+            rcsd_alignment_type=alignment_type,
+            rcsd_match_type="none",
+            swsd_junction_present=bool(swsd_junction_present),
+            fallback_rcsdroad_ids=(),
+            surface_generation_mode=SURFACE_MODE_NO_SURFACE,
+            no_reference_point_reason=RCSD_ALIGNMENT_AMBIGUOUS,
+        )
+    has_main = bool(has_main_evidence)
+    main_type = _clean_text(main_evidence_type, MAIN_EVIDENCE_NONE) if has_main else MAIN_EVIDENCE_NONE
+    if has_main and main_type == MAIN_EVIDENCE_NONE:
+        main_type = MAIN_EVIDENCE_DIVSTRIP
+    ref_present = has_main if reference_point_present is None else bool(reference_point_present and has_main)
+    ref_source = main_type if ref_present else MAIN_EVIDENCE_NONE
+    if has_main and not ref_present:
+        no_ref_reason = "missing_reference_point_geometry"
+    elif not has_main:
+        no_ref_reason = "no_main_evidence"
+    else:
+        no_ref_reason = "none"
+    if no_reference_point_reason:
+        no_ref_reason = str(no_reference_point_reason)
+
+    if has_main:
+        if alignment_type == RCSD_ALIGNMENT_SEMANTIC_JUNCTION:
+            scenario = SCENARIO_MAIN_WITH_RCSD
+            section_reference_source = SECTION_REFERENCE_POINT_AND_RCSD
+        elif alignment_type == RCSD_ALIGNMENT_JUNCTION_PARTIAL:
+            scenario = SCENARIO_MAIN_WITH_RCSDROAD
+            section_reference_source = SECTION_REFERENCE_POINT_AND_RCSD
+        elif alignment_type == RCSD_ALIGNMENT_ROAD_ONLY:
+            scenario = SCENARIO_MAIN_WITH_RCSDROAD
+            section_reference_source = SECTION_REFERENCE_POINT
+        else:
+            scenario = SCENARIO_MAIN_WITHOUT_RCSD
+            section_reference_source = SECTION_REFERENCE_POINT
+        surface_generation_mode = SURFACE_MODE_MAIN_EVIDENCE
+    elif alignment_type == RCSD_ALIGNMENT_SEMANTIC_JUNCTION:
+        scenario = SCENARIO_NO_MAIN_WITH_RCSD
+        section_reference_source = SECTION_REFERENCE_RCSD
+        surface_generation_mode = SURFACE_MODE_RCSD_WINDOW
+    elif alignment_type == RCSD_ALIGNMENT_JUNCTION_PARTIAL:
+        scenario = SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
+        section_reference_source = SECTION_REFERENCE_RCSD
+        surface_generation_mode = SURFACE_MODE_RCSD_WINDOW
+    elif alignment_type == RCSD_ALIGNMENT_ROAD_ONLY and swsd_junction_present:
+        scenario = SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
+        section_reference_source = SECTION_REFERENCE_SWSD
+        surface_generation_mode = SURFACE_MODE_SWSD_WITH_RCSDROAD
+    elif alignment_type == RCSD_ALIGNMENT_NONE and swsd_junction_present:
+        scenario = SCENARIO_NO_MAIN_WITH_SWSD_ONLY
+        section_reference_source = SECTION_REFERENCE_SWSD
+        surface_generation_mode = SURFACE_MODE_SWSD_WINDOW
+    else:
+        scenario = SCENARIO_NO_SURFACE_REFERENCE
+        section_reference_source = SECTION_REFERENCE_NONE
+        surface_generation_mode = SURFACE_MODE_NO_SURFACE
+        no_ref_reason = "no_surface_reference"
+
+    fallback_ids = _tuple_str(fallback_rcsdroad_ids) if alignment_type == RCSD_ALIGNMENT_ROAD_ONLY else ()
+    return SurfaceScenarioClassification(
+        has_main_evidence=has_main,
+        main_evidence_type=main_type,
+        reference_point_present=ref_present,
+        reference_point_source=ref_source,
+        section_reference_source=section_reference_source,
+        surface_scenario_type=scenario,
+        rcsd_alignment_type=alignment_type,
+        rcsd_match_type=rcsd_match_type_for_alignment(alignment_type),
+        swsd_junction_present=bool(swsd_junction_present),
+        fallback_rcsdroad_ids=fallback_ids,
+        surface_generation_mode=surface_generation_mode,
+        no_reference_point_reason=no_ref_reason,
+    )
 
 
 def classify_surface_scenario(
@@ -374,6 +549,7 @@ def classify_surface_scenario(
     swsd_junction_present: bool | None = None,
     fact_reference_point_present: bool | None = None,
     required_rcsd_node_distance_to_representative_m: float | None = None,
+    rcsd_alignment_type: str | None = None,
 ) -> SurfaceScenarioClassification:
     evidence_source = _clean_text(evidence_source)
     rcsd_selection_mode = _clean_text(rcsd_selection_mode)
@@ -398,6 +574,39 @@ def classify_surface_scenario(
         positive_rcsd_audit=positive_rcsd_audit,
         required_rcsd_node_distance_to_representative_m=required_rcsd_node_distance_to_representative_m,
     )
+    raw_alignment_type = (
+        rcsd_alignment_type
+        or (positive_rcsd_audit or {}).get("rcsd_alignment_type")
+        or (selected_evidence_summary or {}).get("rcsd_alignment_type")
+    )
+    if (
+        normalize_rcsd_alignment_type(raw_alignment_type) == RCSD_ALIGNMENT_NONE
+        and (
+            rcsd_match_type != RCSD_MATCH_NONE
+            or (_clean_text(required_rcsd_node) and _tuple_str(selected_rcsdroad_ids))
+        )
+    ):
+        raw_alignment_type = None
+    alignment_type = normalize_rcsd_alignment_type(
+        raw_alignment_type,
+        default=rcsd_alignment_type_from_selection(
+            positive_rcsd_present=rcsd_match_type == RCSD_MATCH_JUNCTION,
+            required_rcsd_node=required_rcsd_node,
+            selected_rcsdroad_ids=selected_rcsdroad_ids,
+            fallback_rcsdroad_ids=fallback_ids if rcsd_match_type == RCSD_MATCH_ROAD_FALLBACK else (),
+            local_rcsd_unit_kind=(positive_rcsd_audit or {}).get("local_rcsd_unit_kind"),
+            positive_rcsd_support_level=_support_level(
+                selected_evidence_summary=selected_evidence_summary,
+                positive_rcsd_audit=positive_rcsd_audit,
+            ),
+            positive_rcsd_consistency_level=_consistency_level(
+                selected_evidence_summary=selected_evidence_summary,
+                positive_rcsd_audit=positive_rcsd_audit,
+            ),
+            rcsd_decision_reason=(positive_rcsd_audit or {}).get("rcsd_decision_reason"),
+            rcsd_selection_mode=rcsd_selection_mode,
+        ),
+    )
     swsd_present = _swsd_junction_present(
         evidence_source=evidence_source,
         rcsd_selection_mode=rcsd_selection_mode,
@@ -415,45 +624,12 @@ def classify_surface_scenario(
     else:
         no_reference_point_reason = "none"
 
-    if has_main_evidence:
-        if rcsd_match_type == RCSD_MATCH_JUNCTION:
-            scenario = SCENARIO_MAIN_WITH_RCSD
-            section_reference_source = SECTION_REFERENCE_POINT_AND_RCSD
-        elif rcsd_match_type == RCSD_MATCH_ROAD_FALLBACK:
-            scenario = SCENARIO_MAIN_WITH_RCSDROAD
-            section_reference_source = SECTION_REFERENCE_POINT
-        else:
-            scenario = SCENARIO_MAIN_WITHOUT_RCSD
-            section_reference_source = SECTION_REFERENCE_POINT
-        surface_generation_mode = SURFACE_MODE_MAIN_EVIDENCE
-    elif rcsd_match_type == RCSD_MATCH_JUNCTION:
-        scenario = SCENARIO_NO_MAIN_WITH_RCSD
-        section_reference_source = SECTION_REFERENCE_RCSD
-        surface_generation_mode = SURFACE_MODE_RCSD_WINDOW
-    elif rcsd_match_type == RCSD_MATCH_ROAD_FALLBACK and swsd_present:
-        scenario = SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
-        section_reference_source = SECTION_REFERENCE_SWSD
-        surface_generation_mode = SURFACE_MODE_SWSD_WITH_RCSDROAD
-    elif swsd_present:
-        scenario = SCENARIO_NO_MAIN_WITH_SWSD_ONLY
-        section_reference_source = SECTION_REFERENCE_SWSD
-        surface_generation_mode = SURFACE_MODE_SWSD_WINDOW
-    else:
-        scenario = SCENARIO_NO_SURFACE_REFERENCE
-        section_reference_source = SECTION_REFERENCE_NONE
-        surface_generation_mode = SURFACE_MODE_NO_SURFACE
-        no_reference_point_reason = "no_surface_reference"
-
-    return SurfaceScenarioClassification(
+    return classify_surface_scenario_from_alignment(
         has_main_evidence=has_main_evidence,
         main_evidence_type=main_evidence_type,
         reference_point_present=reference_point_present,
-        reference_point_source=reference_point_source,
-        section_reference_source=section_reference_source,
-        surface_scenario_type=scenario,
-        rcsd_match_type=rcsd_match_type,
+        rcsd_alignment_type=alignment_type,
         swsd_junction_present=swsd_present,
-        fallback_rcsdroad_ids=fallback_ids if rcsd_match_type == RCSD_MATCH_ROAD_FALLBACK else (),
-        surface_generation_mode=surface_generation_mode,
         no_reference_point_reason=no_reference_point_reason,
+        fallback_rcsdroad_ids=fallback_ids,
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from shapely.geometry.base import BaseGeometry
 
 from ._rcsd_selection_support import _normalize_geometry, _union_geometry
@@ -52,6 +54,7 @@ from .support_domain_windows import (
     _uses_junction_window,
 )
 from .surface_scenario import (
+    SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
     SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
     SECTION_REFERENCE_NONE,
     SECTION_REFERENCE_POINT_AND_RCSD,
@@ -63,6 +66,8 @@ _ACTIVE_RCSD_SECTION_REFERENCES = {
     SECTION_REFERENCE_POINT_AND_RCSD,
     SECTION_REFERENCE_RCSD,
 }
+STEP5_SHARED_RCSDROAD_SWSD_ALIGNMENT_BUFFER_M = 8.0
+STEP5_SHARED_RCSDROAD_SWSD_MIN_OVERLAP_M = 20.0
 
 
 def _active_rcsd_road_ids(
@@ -103,8 +108,194 @@ def _mask_rcsd_road_ids(
     return tuple(ordered)
 
 
+def _node_buffer_union(
+    nodes,
+    *,
+    buffer_m: float,
+    drivezone_union: BaseGeometry | None,
+) -> BaseGeometry | None:
+    return _clip_to_drivezone(
+        _union_geometry(
+            getattr(node, "geometry", None).buffer(buffer_m, join_style=2)
+            for node in nodes
+            if getattr(node, "geometry", None) is not None
+            and not getattr(node, "geometry", None).is_empty
+        ),
+        drivezone_union,
+    )
+
+
+def _related_node_ids_from_roads(
+    *,
+    current_semantic_node_ids: set[str],
+    related_road_ids: set[str],
+    roads,
+) -> set[str]:
+    node_ids = set(current_semantic_node_ids)
+    for road in roads:
+        if str(road.road_id) not in related_road_ids:
+            continue
+        for node_id in (getattr(road, "snodeid", None), getattr(road, "enodeid", None)):
+            text = str(node_id or "").strip()
+            if text:
+                node_ids.add(text)
+    return node_ids
+
+
+def _unrelated_swsd_mask_inputs(
+    case_result: T04CaseResult,
+    *,
+    related_swsd_road_ids: set[str],
+    related_swsd_node_ids: set[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    unrelated_swsd_road_ids = tuple(
+        sorted(
+            str(road.road_id)
+            for road in case_result.case_bundle.roads
+            if str(road.road_id) not in related_swsd_road_ids
+        )
+    )
+    unrelated_swsd_node_ids = tuple(
+        sorted(
+            str(node.node_id)
+            for node in case_result.case_bundle.nodes
+            if str(node.node_id) not in related_swsd_node_ids
+        )
+    )
+    return unrelated_swsd_road_ids, unrelated_swsd_node_ids
+
+
+def _unrelated_swsd_mask_geometry(
+    case_result: T04CaseResult,
+    *,
+    unrelated_swsd_road_ids: tuple[str, ...],
+    unrelated_swsd_node_ids: tuple[str, ...],
+    drivezone_union: BaseGeometry | None,
+) -> BaseGeometry | None:
+    return _clip_to_drivezone(
+        _union_geometry(
+            [
+                *(
+                    road.geometry.buffer(STEP5_NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2)
+                    for road in case_result.case_bundle.roads
+                    if str(road.road_id) in unrelated_swsd_road_ids
+                ),
+                _node_buffer_union(
+                    [
+                        node
+                        for node in case_result.case_bundle.nodes
+                        if str(node.node_id) in unrelated_swsd_node_ids
+                    ],
+                    buffer_m=STEP5_NEGATIVE_MASK_BUFFER_M,
+                    drivezone_union=drivezone_union,
+                ),
+            ]
+        ),
+        drivezone_union,
+    )
+
+
+def _shared_rcsdroad_aligned_swsd_road_ids(
+    case_result: T04CaseResult,
+    *,
+    surface_configs: dict[str, object],
+    related_swsd_road_ids: set[str],
+    related_rcsd_road_ids: set[str],
+    support_domain: BaseGeometry | None,
+    drivezone_union: BaseGeometry | None,
+) -> set[str]:
+    if len(case_result.event_units) <= 1:
+        return set()
+    scenario_types = {
+        surface_configs[event_unit.spec.event_unit_id].surface_scenario_type
+        for event_unit in case_result.event_units
+    }
+    if scenario_types != {SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD}:
+        return set()
+    if not related_rcsd_road_ids or support_domain is None or support_domain.is_empty:
+        return set()
+    rcsd_alignment_corridor = _road_buffer_union(
+        [
+            road
+            for road in case_result.case_bundle.rcsd_roads
+            if str(getattr(road, "road_id", "") or "").strip() in related_rcsd_road_ids
+        ],
+        buffer_m=STEP5_SHARED_RCSDROAD_SWSD_ALIGNMENT_BUFFER_M,
+        drivezone_union=drivezone_union,
+    )
+    if rcsd_alignment_corridor is None or rcsd_alignment_corridor.is_empty:
+        return set()
+
+    aligned_road_ids: set[str] = set()
+    for road in case_result.case_bundle.roads:
+        road_id = str(getattr(road, "road_id", "") or "").strip()
+        if not road_id or road_id in related_swsd_road_ids:
+            continue
+        geometry = getattr(road, "geometry", None)
+        if geometry is None or geometry.is_empty:
+            continue
+        support_overlap_m = float(geometry.intersection(support_domain).length)
+        if support_overlap_m < STEP5_SHARED_RCSDROAD_SWSD_MIN_OVERLAP_M:
+            continue
+        rcsd_alignment_overlap_m = float(geometry.intersection(rcsd_alignment_corridor).length)
+        if rcsd_alignment_overlap_m < STEP5_SHARED_RCSDROAD_SWSD_MIN_OVERLAP_M:
+            continue
+        aligned_road_ids.add(road_id)
+    return aligned_road_ids
+
+
+def _unit_forbidden_domain_from_case(
+    *,
+    case_external_forbidden_geometry: BaseGeometry | None,
+    other_unit_core_occupancy_geometry: BaseGeometry | None,
+    drivezone_union: BaseGeometry | None,
+) -> BaseGeometry | None:
+    other_unit_mask = None
+    if other_unit_core_occupancy_geometry is not None and not other_unit_core_occupancy_geometry.is_empty:
+        other_unit_mask = _clip_to_drivezone(
+            other_unit_core_occupancy_geometry.buffer(STEP5_NEGATIVE_MASK_BUFFER_M),
+            drivezone_union,
+        )
+    return _clip_to_drivezone(
+        _union_geometry(
+            [
+                case_external_forbidden_geometry,
+                other_unit_mask,
+            ]
+        ),
+        drivezone_union,
+    )
+
+
 def _active_required_rcsd_node_enabled(config) -> bool:
     return config.section_reference_source in _ACTIVE_RCSD_SECTION_REFERENCES
+
+
+def _clip_negative_mask_out_of_swsd_only_fill(
+    mask_geometry: BaseGeometry | None,
+    swsd_only_fill_geometry: BaseGeometry | None,
+    *,
+    drivezone_union: BaseGeometry | None,
+) -> tuple[BaseGeometry | None, bool]:
+    if mask_geometry is None or mask_geometry.is_empty:
+        return mask_geometry, False
+    if swsd_only_fill_geometry is None or swsd_only_fill_geometry.is_empty:
+        return mask_geometry, False
+    cut_fill = _normalize_geometry(swsd_only_fill_geometry.difference(mask_geometry))
+    cut_component_count = (
+        len(cut_fill.geoms)
+        if cut_fill is not None and cut_fill.geom_type == "MultiPolygon"
+        else 1
+        if cut_fill is not None and not cut_fill.is_empty
+        else 0
+    )
+    if cut_component_count <= 1:
+        return mask_geometry, False
+    clipped = _clip_to_drivezone(
+        _normalize_geometry(mask_geometry.difference(swsd_only_fill_geometry)),
+        drivezone_union,
+    )
+    return clipped, True
 
 
 def _required_rcsd_patch_geometry(
@@ -351,10 +542,12 @@ def _build_step5_unit_result(
             other_unit_core_occupancy_geometry.buffer(STEP5_NEGATIVE_MASK_BUFFER_M),
             drivezone_union,
         )
+    effective_case_external_forbidden_geometry = case_external_forbidden_geometry
+    swsd_only_negative_mask_relief_applied = False
     unit_forbidden_domain = _clip_to_drivezone(
         _union_geometry(
             [
-                case_external_forbidden_geometry,
+                effective_case_external_forbidden_geometry,
                 other_unit_mask,
             ]
         ),
@@ -440,8 +633,9 @@ def _build_step5_unit_result(
             and (config.reference_point_present or fact_reference_patch_geometry is None)
         ),
         divstrip_negative_mask_present=divstrip_negative_mask_present,
-        forbidden_domain_kept=case_external_forbidden_geometry is not None,
+        forbidden_domain_kept=effective_case_external_forbidden_geometry is not None,
         swsd_only_entity_support_domain=swsd_only_entity_support_domain,
+        swsd_only_negative_mask_relief_applied=swsd_only_negative_mask_relief_applied,
     )
 
 def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult:
@@ -449,6 +643,11 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
     surface_configs = {
         event_unit.spec.event_unit_id: _step5_surface_window_config(event_unit)
         for event_unit in case_result.event_units
+    }
+    current_semantic_node_ids = {
+        str(node.node_id)
+        for node in (case_result.case_bundle.representative_node, *case_result.case_bundle.group_nodes)
+        if str(getattr(node, "node_id", "") or "").strip()
     }
     external_support_roads = _unique_roads(
         road
@@ -464,6 +663,15 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         for road in external_support_roads
         if str(getattr(road, "road_id", "") or "").strip()
     }
+    for road in case_result.case_bundle.roads:
+        endpoint_ids = {
+            str(getattr(road, "snodeid", "") or "").strip(),
+            str(getattr(road, "enodeid", "") or "").strip(),
+        }
+        if endpoint_ids & current_semantic_node_ids:
+            road_id = str(getattr(road, "road_id", "") or "").strip()
+            if road_id:
+                seed_swsd_road_ids.add(road_id)
     seed_rcsd_road_ids: set[str] = set()
     expandable_rcsd_road_ids: set[str] = set()
     for event_unit in case_result.event_units:
@@ -476,11 +684,6 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         seed_rcsd_road_ids.update(mask_ids)
         if config.section_reference_source == SECTION_REFERENCE_POINT_AND_RCSD and 0 < len(mask_ids) <= 4:
             expandable_rcsd_road_ids.update(mask_ids)
-    current_semantic_node_ids = {
-        str(node.node_id)
-        for node in (case_result.case_bundle.representative_node, *case_result.case_bundle.group_nodes)
-        if str(getattr(node, "node_id", "") or "").strip()
-    }
     related_swsd_road_ids = _expanded_related_road_ids(
         seed_road_ids=seed_swsd_road_ids,
         roads=case_result.case_bundle.roads,
@@ -495,20 +698,82 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
                 current_semantic_node_ids=current_semantic_node_ids,
             )
         )
-    unrelated_swsd_mask_geometry = _clip_to_drivezone(
-        _union_geometry(
-            road.geometry.buffer(STEP5_NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2)
+    related_swsd_node_ids = _related_node_ids_from_roads(
+        current_semantic_node_ids=current_semantic_node_ids,
+        related_road_ids=related_swsd_road_ids,
+        roads=case_result.case_bundle.roads,
+    )
+    related_rcsd_node_ids: set[str] = set()
+    for event_unit in case_result.event_units:
+        related_rcsd_node_ids.update(
+            str(node_id)
+            for node_id in event_unit.selected_rcsdnode_ids
+            if str(node_id).strip()
+        )
+    for road in case_result.case_bundle.rcsd_roads:
+        if str(road.road_id) not in related_rcsd_road_ids:
+            continue
+        for node_id in (getattr(road, "snodeid", None), getattr(road, "enodeid", None)):
+            text = str(node_id or "").strip()
+            if text:
+                related_rcsd_node_ids.add(text)
+    unrelated_swsd_road_ids = tuple(
+        sorted(
+            str(road.road_id)
             for road in case_result.case_bundle.roads
             if str(road.road_id) not in related_swsd_road_ids
-        ),
-        drivezone_union,
+        )
+    )
+    unrelated_swsd_node_ids = tuple(
+        sorted(
+            str(node.node_id)
+            for node in case_result.case_bundle.nodes
+            if str(node.node_id) not in related_swsd_node_ids
+        )
+    )
+    unrelated_rcsd_road_ids = tuple(
+        sorted(
+            str(road.road_id)
+            for road in case_result.case_bundle.rcsd_roads
+            if str(road.road_id) not in related_rcsd_road_ids
+        )
+    )
+    unrelated_rcsd_node_ids = tuple(
+        sorted(
+            str(node.node_id)
+            for node in case_result.case_bundle.rcsd_nodes
+            if str(node.node_id) not in related_rcsd_node_ids
+        )
+    )
+    unrelated_swsd_mask_geometry = _unrelated_swsd_mask_geometry(
+        case_result,
+        unrelated_swsd_road_ids=unrelated_swsd_road_ids,
+        unrelated_swsd_node_ids=unrelated_swsd_node_ids,
+        drivezone_union=drivezone_union,
     )
     unrelated_rcsd_mask_geometry = _clip_to_drivezone(
         _union_geometry(
-            road.geometry.buffer(STEP5_NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2)
-            for road in case_result.case_bundle.rcsd_roads
-            if str(road.road_id) not in related_rcsd_road_ids
+            [
+                *(
+                    road.geometry.buffer(STEP5_NEGATIVE_MASK_BUFFER_M, cap_style=2, join_style=2)
+                    for road in case_result.case_bundle.rcsd_roads
+                    if str(road.road_id) in unrelated_rcsd_road_ids
+                ),
+                _node_buffer_union(
+                    [
+                        node
+                        for node in case_result.case_bundle.rcsd_nodes
+                        if str(node.node_id) in unrelated_rcsd_node_ids
+                    ],
+                    buffer_m=STEP5_NEGATIVE_MASK_BUFFER_M,
+                    drivezone_union=drivezone_union,
+                ),
+            ]
         ),
+        drivezone_union,
+    )
+    divstrip_body_mask_geometry = _clip_to_drivezone(
+        _loaded_feature_union(case_result.case_bundle.divstrip_features),
         drivezone_union,
     )
     divstrip_void_mask_geometry = _divstrip_void_mask(
@@ -597,6 +862,58 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         _union_geometry(unit.unit_must_cover_domain for unit in unit_results),
         drivezone_union,
     )
+    shared_rcsdroad_swsd_road_ids = _shared_rcsdroad_aligned_swsd_road_ids(
+        case_result,
+        surface_configs=surface_configs,
+        related_swsd_road_ids=related_swsd_road_ids,
+        related_rcsd_road_ids=related_rcsd_road_ids,
+        support_domain=base_case_must_cover_domain,
+        drivezone_union=drivezone_union,
+    )
+    if shared_rcsdroad_swsd_road_ids - related_swsd_road_ids:
+        related_swsd_road_ids.update(shared_rcsdroad_swsd_road_ids)
+        related_swsd_node_ids = _related_node_ids_from_roads(
+            current_semantic_node_ids=current_semantic_node_ids,
+            related_road_ids=related_swsd_road_ids,
+            roads=case_result.case_bundle.roads,
+        )
+        unrelated_swsd_road_ids, unrelated_swsd_node_ids = _unrelated_swsd_mask_inputs(
+            case_result,
+            related_swsd_road_ids=related_swsd_road_ids,
+            related_swsd_node_ids=related_swsd_node_ids,
+        )
+        unrelated_swsd_mask_geometry = _unrelated_swsd_mask_geometry(
+            case_result,
+            unrelated_swsd_road_ids=unrelated_swsd_road_ids,
+            unrelated_swsd_node_ids=unrelated_swsd_node_ids,
+            drivezone_union=drivezone_union,
+        )
+        case_external_forbidden_geometry = _clip_to_drivezone(
+            _union_geometry(
+                [
+                    unrelated_swsd_mask_geometry,
+                    unrelated_rcsd_mask_geometry,
+                    divstrip_void_mask_geometry,
+                ]
+            ),
+            drivezone_union,
+        )
+        unit_results = [
+            replace(
+                unit,
+                unit_forbidden_domain=_unit_forbidden_domain_from_case(
+                    case_external_forbidden_geometry=case_external_forbidden_geometry,
+                    other_unit_core_occupancy_geometry=_union_geometry(
+                        geometry
+                        for other_unit_id, geometry in unit_core_occupancies.items()
+                        if other_unit_id != unit.event_unit_id
+                    ),
+                    drivezone_union=drivezone_union,
+                ),
+                forbidden_domain_kept=case_external_forbidden_geometry is not None,
+            )
+            for unit in unit_results
+        ]
     base_allowed_geometries = [unit.unit_allowed_growth_domain for unit in unit_results]
     case_support_graph_geometry = _clip_to_drivezone(
         _union_geometry(
@@ -711,10 +1028,15 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         case_support_graph_geometry=case_support_graph_geometry,
         unrelated_swsd_mask_geometry=unrelated_swsd_mask_geometry,
         unrelated_rcsd_mask_geometry=unrelated_rcsd_mask_geometry,
+        divstrip_body_mask_geometry=divstrip_body_mask_geometry,
         divstrip_void_mask_geometry=divstrip_void_mask_geometry,
         drivezone_outside_enforced_by_allowed_domain=True,
         related_swsd_road_ids=tuple(sorted(related_swsd_road_ids)),
         related_rcsd_road_ids=tuple(sorted(related_rcsd_road_ids)),
+        unrelated_swsd_road_ids=unrelated_swsd_road_ids,
+        unrelated_swsd_node_ids=unrelated_swsd_node_ids,
+        unrelated_rcsd_road_ids=unrelated_rcsd_road_ids,
+        unrelated_rcsd_node_ids=unrelated_rcsd_node_ids,
         surface_section_forward_m=STEP5_SURFACE_SECTION_FORWARD_M,
         surface_section_backward_m=STEP5_SURFACE_SECTION_BACKWARD_M,
         surface_lateral_limit_m=STEP5_SURFACE_LATERAL_LIMIT_M,

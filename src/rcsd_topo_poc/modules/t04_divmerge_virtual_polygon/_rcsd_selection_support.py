@@ -12,6 +12,9 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
     ParsedNode,
     ParsedRoad,
 )
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.rcsd_alignment import (
+    RCSD_ALIGNMENT_NONE,
+)
 
 
 RCSD_SCOPE_RELATION_PAD_M = 8.0
@@ -648,6 +651,7 @@ class PositiveRcsdSelectionDecision:
     pair_local_rcsd_scope_geometry: BaseGeometry | None
     first_hit_rcsd_road_geometry: BaseGeometry | None
     local_rcsd_unit_geometry: BaseGeometry | None
+    rcsd_alignment_type: str = RCSD_ALIGNMENT_NONE
     positive_rcsd_audit: dict[str, Any] = field(default_factory=dict)
 
 

@@ -848,6 +848,17 @@ def _barrier_separated_case_surface_ok(
         SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
     } and not (set(hard_connect_notes) & STEP6_BARRIER_SEPARATION_RELIEF_NOTES):
         return False
+    # 真实硬阻断举证：multi-component 只允许在 §1.4 A / B 两类路径下被标为 barrier-separated。
+    # 必须配 bridge_negative_mask_crossing_detected = true 或某个 channel overlap > tolerance；
+    # 否则按 INTERFACE_CONTRACT.md §3.7 第 336 行视为"普通多组件结果"，不允许该字段置 true。
+    bridge_crossing_detected = bool(post_checks.get("bridge_negative_mask_crossing_detected", False))
+    bridge_channel_overlaps = post_checks.get("bridge_negative_mask_channel_overlaps", {}) or {}
+    real_bridge_overlap_area_m2 = sum(
+        float((channel or {}).get("overlap_area_m2", 0.0) or 0.0)
+        for channel in bridge_channel_overlaps.values()
+    )
+    if not bridge_crossing_detected and real_bridge_overlap_area_m2 <= STEP6_FORBIDDEN_TOLERANCE_AREA_M2:
+        return False
     return bool(
         hard_must_cover_ok
         and b_node_target_covered
@@ -1094,6 +1105,30 @@ def build_step6_polygon_assembly(
             )
     cut_mask = _rasterize_geometries(grid, [cut_barrier_geometry]) if cut_barrier_geometry is not None else np.zeros_like(allowed_mask, dtype=bool)
     assembly_canvas_mask = allowed_mask & terminal_window_mask & ~forbidden_mask & ~cut_mask
+    # 连通性恢复（spec §1.4 / Bug-2 修复）：当 Step5 的 `case_allowed_growth_domain`
+    # 是单连通 Polygon、但 0.5m 栅格化后被狭窄段切成多 component 时，做一次 1-iter
+    # binary_close 把 ≤1m 的"假断开"缝合回去；再用 `allowed & terminal_window
+    # & ~forbidden & ~cut` 重新裁剪，确保不会越过任何负向掩膜或 allowed_growth 范围。
+    # 目的：让 SWSD-junction-window 与 RCSD-junction-window 等 narrow allowed_growth
+    # 场景在 §1.4 barrier-aware grow 下产生天然单连通面；不影响真正被掩膜阻断的多 component。
+    case_allowed_growth_domain = step5_result.case_allowed_growth_domain
+    if (
+        case_allowed_growth_domain is not None
+        and not case_allowed_growth_domain.is_empty
+        and case_allowed_growth_domain.geom_type == "Polygon"
+        and assembly_canvas_mask.any()
+    ):
+        canvas_components_pre = _component_masks(assembly_canvas_mask)
+        if len(canvas_components_pre) > 1:
+            closed_mask = (
+                _binary_close(assembly_canvas_mask, iterations=1)
+                & allowed_mask
+                & terminal_window_mask
+                & ~forbidden_mask
+                & ~cut_mask
+            )
+            if len(_component_masks(closed_mask)) < len(canvas_components_pre):
+                assembly_canvas_mask = closed_mask
     assembly_canvas_geometry = _constrain_geometry_to_case_limits(
         _mask_to_geometry(assembly_canvas_mask, grid),
         drivezone_union=drivezone_union,

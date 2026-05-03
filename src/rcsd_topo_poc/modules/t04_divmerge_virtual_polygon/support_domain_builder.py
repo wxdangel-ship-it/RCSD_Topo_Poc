@@ -1,10 +1,76 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 
 from shapely.geometry.base import BaseGeometry
 
 from ._rcsd_selection_support import _normalize_geometry, _union_geometry
+
+
+# Step5 D-2 全局原则（spec §1.4 / `architecture/04-solution-strategy.md` §6 / 契约第 47-48 行）：
+# 正向掩膜（must_cover / allowed_growth）不应在负向掩膜（forbidden_domain）内部出现。
+# 在交付给 Step6 之前，先扣掉与 forbidden 重叠的部分；如果 difference 结果是多 component，
+# 取与"业务锚点"（代表节点 / unit 代表节点）相交的那一块（或并集）；找不到时退到面积最大块。
+# 适用于所有 surface_scenario_type，不按场景分支。
+_STEP5_ANCHOR_INTERSECTS_TOLERANCE_M = 0.5
+
+
+def _must_cover_select_anchor_components(
+    geometry: BaseGeometry | None,
+    *,
+    forbidden_geometry: BaseGeometry | None,
+    anchor_points: Sequence[BaseGeometry],
+) -> BaseGeometry | None:
+    """Apply Step5 D-2 forbidden-aware cleanup to a positive-domain geometry.
+
+    1. ``geometry.difference(forbidden_geometry)``: subtract the negative mask;
+    2. If result is a single connected component, return it as-is;
+    3. Otherwise keep components that intersect any anchor (with a tolerance
+       buffer to absorb numerical noise);
+    4. If no component intersects any anchor, fall back to the largest component
+       to avoid an empty must_cover and let downstream auditing flag it.
+    """
+
+    if geometry is None or geometry.is_empty:
+        return geometry
+    if forbidden_geometry is None or forbidden_geometry.is_empty:
+        return geometry
+    cleaned = _normalize_geometry(geometry.difference(forbidden_geometry))
+    if cleaned is None or cleaned.is_empty:
+        return cleaned
+    if not hasattr(cleaned, "geoms"):
+        return cleaned
+
+    valid_anchors = [
+        anchor
+        for anchor in anchor_points
+        if anchor is not None and not getattr(anchor, "is_empty", True)
+    ]
+    if not valid_anchors:
+        components = list(cleaned.geoms)
+        if not components:
+            return cleaned
+        return max(components, key=lambda comp: comp.area)
+
+    kept: list[BaseGeometry] = []
+    for component in cleaned.geoms:
+        for anchor in valid_anchors:
+            try:
+                anchor_buffer = anchor.buffer(_STEP5_ANCHOR_INTERSECTS_TOLERANCE_M)
+            except Exception:
+                anchor_buffer = anchor
+            if component.intersects(anchor_buffer):
+                kept.append(component)
+                break
+    if not kept:
+        components = list(cleaned.geoms)
+        if not components:
+            return cleaned
+        return max(components, key=lambda comp: comp.area)
+    if len(kept) == 1:
+        return _normalize_geometry(kept[0])
+    return _normalize_geometry(_union_geometry(kept))
 from .case_models import T04CaseResult, T04EventUnitResult
 from .support_domain_bridges import (
     _case_level_rcsd_bridge_geometries,
@@ -553,6 +619,66 @@ def _build_step5_unit_result(
         ),
         drivezone_union,
     )
+    # Step5 D-2 全局应用（spec §1.4 / 契约第 47-48 行）：让正向掩膜在交付 Step6 前
+    # 主动避开负向掩膜——must_cover / allowed_growth 都先 difference forbidden，
+    # 再选包含代表节点的连通块。修复"几何半径模型 must_cover 横跨 unrelated road
+    # buffer 导致 Step6 装配产生 multi-component"的问题（706347 是典型样本）。
+    # 该处理对所有 surface_scenario_type 一律生效，不按场景分支。
+    representative_node_geometry = getattr(
+        getattr(unit_result.unit_context, "representative_node", None),
+        "geometry",
+        None,
+    )
+    unit_anchor_points: list[BaseGeometry] = []
+    if representative_node_geometry is not None and not getattr(representative_node_geometry, "is_empty", True):
+        unit_anchor_points.append(representative_node_geometry)
+    # 仅对 must_cover 做 D-2，不动 allowed_growth：
+    # - must_cover 单连通 → Step6 hard_seed 单连通 → flood-fill 输出天然单连通
+    # - allowed_growth 保持原值 → Step6 内部 `allowed & ~forbidden` 仍是 barrier-aware；
+    #   post-cleanup 检查 final_polygon 是否越过 allowed_growth 时不会假报。
+    unit_must_cover_domain = _must_cover_select_anchor_components(
+        unit_must_cover_domain,
+        forbidden_geometry=unit_forbidden_domain,
+        anchor_points=unit_anchor_points,
+    )
+    # Step6 还会单独读这些子字段作为 hard_seed（`_core_must_cover_geometry` /
+    # `_full_fill_target_geometry`），因此每个子字段也必须 forbidden-aware。
+    # 否则 must_cover 单连通而子字段仍跨 forbidden，hard_seed_mask 仍多 component。
+    localized_evidence_core_geometry = _must_cover_select_anchor_components(
+        localized_evidence_core_geometry,
+        forbidden_geometry=unit_forbidden_domain,
+        anchor_points=unit_anchor_points,
+    )
+    fact_reference_patch_geometry = _must_cover_select_anchor_components(
+        fact_reference_patch_geometry,
+        forbidden_geometry=unit_forbidden_domain,
+        anchor_points=unit_anchor_points,
+    )
+    section_reference_patch_geometry = _must_cover_select_anchor_components(
+        section_reference_patch_geometry,
+        forbidden_geometry=unit_forbidden_domain,
+        anchor_points=unit_anchor_points,
+    )
+    required_rcsd_node_patch_geometry = _must_cover_select_anchor_components(
+        required_rcsd_node_patch_geometry,
+        forbidden_geometry=unit_forbidden_domain,
+        anchor_points=unit_anchor_points,
+    )
+    target_b_node_patch_geometry = _must_cover_select_anchor_components(
+        target_b_node_patch_geometry,
+        forbidden_geometry=unit_forbidden_domain,
+        anchor_points=unit_anchor_points,
+    )
+    fallback_support_strip_geometry = _must_cover_select_anchor_components(
+        fallback_support_strip_geometry,
+        forbidden_geometry=unit_forbidden_domain,
+        anchor_points=unit_anchor_points,
+    )
+    junction_full_road_fill_domain = _must_cover_select_anchor_components(
+        junction_full_road_fill_domain,
+        forbidden_geometry=unit_forbidden_domain,
+        anchor_points=unit_anchor_points,
+    )
     unit_terminal_cut_constraints = (
         None
         if config.surface_scenario_type == SCENARIO_NO_MAIN_WITH_SWSD_ONLY
@@ -689,7 +815,25 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         roads=case_result.case_bundle.roads,
         current_semantic_node_ids=current_semantic_node_ids,
     )
-    related_rcsd_road_ids = set(seed_rcsd_road_ids)
+    # C-2 修复（spec §1.4 / FR-002）：把 Step4 case-level alignment aggregate 的
+    # positive 集合作为权威 positive 来源并入 `related_rcsd_*_ids`。这样在 SWSD-junction-
+    # window / RCSDroad-only 兜底路径（unit `selected_rcsdnode_ids` 为空）下，case 级聚合
+    # 已识别的正向 RCSDNode（如 706347 的 5384371838320977 / 5384371838320979）不会被
+    # 错误归入 unrelated_rcsd_mask，避免负向掩膜切穿 case_allowed_growth_domain。
+    # case-level aggregate 由 Step4 `case_result.case_alignment_aggregate_doc()` 给出，
+    # 是 Step4 → Step5 之间唯一权威的 positive 集合（INTERFACE_CONTRACT.md §3.4 末段）。
+    case_alignment_aggregate_doc = case_result.case_alignment_aggregate_doc()
+    case_positive_rcsd_road_ids: set[str] = {
+        str(rid).strip()
+        for rid in case_alignment_aggregate_doc.get("positive_rcsdroad_ids", [])
+        if str(rid).strip()
+    }
+    case_positive_rcsd_node_ids: set[str] = {
+        str(nid).strip()
+        for nid in case_alignment_aggregate_doc.get("positive_rcsdnode_ids", [])
+        if str(nid).strip()
+    }
+    related_rcsd_road_ids = set(seed_rcsd_road_ids) | case_positive_rcsd_road_ids
     if expandable_rcsd_road_ids:
         related_rcsd_road_ids.update(
             _expanded_related_road_ids(
@@ -703,7 +847,7 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         related_road_ids=related_swsd_road_ids,
         roads=case_result.case_bundle.roads,
     )
-    related_rcsd_node_ids: set[str] = set()
+    related_rcsd_node_ids: set[str] = set(case_positive_rcsd_node_ids)
     for event_unit in case_result.event_units:
         related_rcsd_node_ids.update(
             str(node_id)
@@ -942,6 +1086,32 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         _union_geometry([base_case_must_cover_domain, *case_level_rcsd_bridge_geometries]),
         drivezone_union,
     )
+    # Step5 D-2 全局应用（case 级）：与 unit 级同一原则，case_must_cover_domain 在
+    # 加入 case-level RCSD bridge 几何后，仍然要先扣 forbidden、再选含锚点连通块。
+    # case 级锚点 = 全部 unit 代表节点 + case bundle 代表节点；多 unit case 各自的
+    # 代表节点都会被保留（同时包含锚点的多 component 会被 union 回来），不会误删
+    # 其它 unit 的合法面。
+    case_anchor_points: list[BaseGeometry] = []
+    case_bundle_rep_geom = getattr(
+        getattr(case_result.case_bundle, "representative_node", None),
+        "geometry",
+        None,
+    )
+    if case_bundle_rep_geom is not None and not getattr(case_bundle_rep_geom, "is_empty", True):
+        case_anchor_points.append(case_bundle_rep_geom)
+    for event_unit in case_result.event_units:
+        unit_rep_geom = getattr(
+            getattr(getattr(event_unit, "unit_context", None), "representative_node", None),
+            "geometry",
+            None,
+        )
+        if unit_rep_geom is not None and not getattr(unit_rep_geom, "is_empty", True):
+            case_anchor_points.append(unit_rep_geom)
+    case_must_cover_domain = _must_cover_select_anchor_components(
+        case_must_cover_domain,
+        forbidden_geometry=case_external_forbidden_geometry,
+        anchor_points=case_anchor_points,
+    )
     bridge_geometries: list[BaseGeometry] = []
     unit_allowed_non_empty = [
         unit.unit_allowed_growth_domain
@@ -983,6 +1153,17 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         ),
         drivezone_union,
     )
+    # case_bridge_zone_geometry 也做 D-2 forbidden-aware 收缩：Step6 把它作为
+    # inter-unit hard_seed 之一（`_inter_unit_section_bridge_surface` /
+    # `_single_case_bridge_zone`），如果 bridge 跨过 forbidden（unrelated road），
+    # hard_seed_mask 会再次出现多 component；扣掉 forbidden 部分后保留含锚点的连通块，
+    # 才能保证整 case hard_seed 单连通。bridge 完全被掩膜阻断时 difference 后为空，
+    # 该情况按 §1.4 B 路径合法 multi-component 处理（Step6 仍会 reject）。
+    case_bridge_zone_geometry = _must_cover_select_anchor_components(
+        case_bridge_zone_geometry,
+        forbidden_geometry=case_external_forbidden_geometry,
+        anchor_points=case_anchor_points,
+    )
     case_allowed_growth_domain = _clip_to_drivezone(
         _union_geometry(
             [
@@ -992,6 +1173,9 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         ),
         drivezone_union,
     )
+    # 注意：case_allowed_growth_domain 不做 D-2 forbidden-aware 收缩——保留原值
+    # 让 Step6 在 `allowed & ~forbidden` 上做 barrier-aware grow；post-cleanup
+    # 检查 final_polygon 是否越过 allowed_growth 时也不会假报。
     case_forbidden_domain = case_external_forbidden_geometry
     case_terminal_cut_constraints = _build_case_terminal_cut_constraints(
         case_result,

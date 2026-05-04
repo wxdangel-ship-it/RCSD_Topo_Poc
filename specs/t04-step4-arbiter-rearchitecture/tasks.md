@@ -228,7 +228,7 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 
 **验证**：`pytest tests/modules/t04_divmerge_virtual_polygon/ -x` 全量通过。
 
-**Status**：pending
+**Status**：completed
 
 ---
 
@@ -278,6 +278,6 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 | T-04b 切换 normal mode + 移除旧写回 | P0 | completed |
 | T-06 surface_scenario / outputs 改造 | P1 | completed |
 | T-07 audit / review_index 字段扩充 | P1 | completed |
-| T-08 测试整合 + baseline 期望表更新 | P0 | pending |
+| T-08 测试整合 + baseline 期望表更新 | P0 | completed |
 | T-09 文档定稿 | P0 | pending |
 | T-10 dry-run 与视觉评审 + PR | P0 | pending |

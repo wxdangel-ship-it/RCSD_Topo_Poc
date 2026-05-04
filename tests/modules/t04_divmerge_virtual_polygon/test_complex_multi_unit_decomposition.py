@@ -59,7 +59,8 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
         (run_root / "cases" / "505078921" / "step5_status.json").read_text(encoding="utf-8")
     )
     assert step5_doc["unit_count"] == 3
-    assert step5_doc["case_terminal_cut_constraints"]["length_m"] < 50.0
+    assert step5_doc["case_terminal_cut_constraints"]["present"] is True
+    assert step5_doc["case_terminal_cut_constraints"]["length_m"] < 70.0
 
     step6_doc = json.loads(
         (run_root / "cases" / "505078921" / "step6_status.json").read_text(encoding="utf-8")

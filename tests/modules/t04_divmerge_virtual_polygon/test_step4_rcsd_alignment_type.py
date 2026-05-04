@@ -257,6 +257,89 @@ def test_rcsd_semantic_junction_pairs_all_swsd_arms() -> None:
     assert result.alignment_partial_missing_swsd_arm_ids == ()
 
 
+def test_rcsd_semantic_junction_keeps_published_single_node_group_scope() -> None:
+    module = _load_alignment_module()
+    local_rcsd_nodes = (
+        _parsed_rcsd_node("rc0", 0.0, 0.0),
+        _parsed_rcsd_node("rc_neighbor", 10.0, 0.0),
+        _parsed_rcsd_node("rc_n", 0.0, 10.0),
+        _parsed_rcsd_node("rc_s", 0.0, -10.0),
+    )
+    local_rcsd_roads = (
+        _parsed_rcsd_road(
+            "rc_to_neighbor",
+            "rc0",
+            "rc_neighbor",
+            [(0.0, 0.0), (10.0, 0.0)],
+        ),
+        _parsed_rcsd_road("rc_north", "rc0", "rc_n", [(0.0, 0.0), (0.0, 10.0)]),
+        _parsed_rcsd_road("rc_south", "rc0", "rc_s", [(0.0, 0.0), (0.0, -10.0)]),
+    )
+    unit_result = SimpleNamespace(
+        selected_rcsdnode_ids=("rc0",),
+        selected_rcsdroad_ids=("rc_to_neighbor", "rc_north", "rc_south"),
+        required_rcsd_node="rc0",
+        aggregated_rcsd_unit_id="rcsd_junction:rc0+neighbor",
+        aggregated_rcsd_unit_ids=("rcsd_junction:rc0+neighbor",),
+        positive_rcsd_audit={
+            "published_rcsdnode_ids": ["rc0"],
+            "published_member_unit_ids": ["event_unit_01:node:rc0"],
+            "selected_unit_role_assignments": [
+                {"road_id": "rc_to_neighbor", "role": "exiting"},
+                {"road_id": "rc_north", "role": "exiting"},
+                {"road_id": "rc_south", "role": "entering"},
+            ],
+            "aggregated_rcsd_units": [
+                {
+                    "unit_id": "rcsd_junction:rc0+neighbor",
+                    "node_ids": ["rc0", "rc_neighbor"],
+                    "required_node_id": "rc0",
+                    "road_ids": ["rc_to_neighbor", "rc_north", "rc_south"],
+                }
+            ],
+        },
+        unit_context=SimpleNamespace(
+            local_context=SimpleNamespace(
+                local_rcsd_nodes=local_rcsd_nodes,
+                local_rcsd_roads=local_rcsd_roads,
+            )
+        ),
+    )
+
+    result = module.build_rcsd_semantic_junction(
+        unit_result=unit_result,
+        swsd_semantic_junction=_swsd_junction(
+            (
+                ("arm_east", 0.0),
+                ("arm_north", 90.0),
+                ("arm_south", 270.0),
+            )
+        ),
+        rcsd_alignment_result=module.RCSDAlignmentResult(
+            scope=module.RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+            scope_id="event_unit_01",
+            rcsd_alignment_type=module.RCSD_ALIGNMENT_SEMANTIC_JUNCTION,
+            positive_rcsdroad_ids=("rc_to_neighbor", "rc_north", "rc_south"),
+            positive_rcsdnode_ids=("rc0",),
+        ),
+    )
+
+    assert result is not None
+    assert result.member_rcsdnode_ids == ("rc0",)
+    assert result.intra_junction_rcsdroad_ids == ()
+    assert [arm.first_rcsdroad_ids for arm in result.semantic_arms] == [
+        ("rc_to_neighbor",),
+        ("rc_north",),
+        ("rc_south",),
+    ]
+    assert result.paired_swsd_arm_mapping == {
+        "rcsd_arm_01": "arm_east",
+        "rcsd_arm_02": "arm_north",
+        "rcsd_arm_03": "arm_south",
+    }
+    assert result.alignment_partial_missing_swsd_arm_ids == ()
+
+
 def test_rcsd_junction_partial_alignment_records_missing_swsd_arm() -> None:
     module = _load_alignment_module()
     result = module.build_rcsd_semantic_junction(

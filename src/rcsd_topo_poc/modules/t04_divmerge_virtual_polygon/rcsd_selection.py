@@ -60,6 +60,11 @@ def _published_rcsd_subset(
         for group_id in getattr(selected_aggregated, "semantic_group_ids", ())
         if str(group_id)
     }
+    selected_local_semantic_group_ids = {
+        str(group_id)
+        for group_id in getattr(selected_local_unit, "semantic_group_ids", ())
+        if str(group_id)
+    }
 
     def first_hit_belongs_to_selected_group(road_id: str) -> bool:
         if not selected_semantic_group_ids:
@@ -134,9 +139,26 @@ def _published_rcsd_subset(
                     traced_to_required = True
             if traced_to_required:
                 publish_mode = f"{publish_mode}_with_trace"
+        publish_node_scope_ids = {
+            str(node_id)
+            for node_id in selected_aggregated.node_ids
+            if str(node_id)
+        }
+        if (
+            exact_required_node_anchor
+            and selected_local_semantic_group_ids
+            and len(selected_semantic_group_ids) > 1
+        ):
+            narrowed_node_scope_ids = {
+                node_id
+                for node_id, group_id in node_semantic_group_by_id.items()
+                if group_id in selected_local_semantic_group_ids and node_id in node_points_by_id
+            }
+            if narrowed_node_scope_ids:
+                publish_node_scope_ids = narrowed_node_scope_ids
         selected_node_ids = (
             _node_ids_for_roads(selected_road_ids, roads_by_id) & set(node_points_by_id)
-        ) & {str(node_id) for node_id in selected_aggregated.node_ids if str(node_id)}
+        ) & publish_node_scope_ids
         for node_id in (selected_aggregated.required_node_id, selected_aggregated.primary_node_id):
             if node_id is not None and node_id in node_points_by_id:
                 selected_node_ids.add(node_id)

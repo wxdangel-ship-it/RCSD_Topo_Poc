@@ -397,6 +397,17 @@ def _other_endpoint_id(road: ParsedRoad, node_id: str) -> str:
 
 
 def _direction_for_rcsdroad(road_id: str, audit: dict[str, Any]) -> str:
+    for assignment in audit.get("selected_unit_role_assignments") or ():
+        if (
+            not isinstance(assignment, dict)
+            or _clean_text(assignment.get("road_id")) != road_id
+        ):
+            continue
+        role = _clean_text(assignment.get("role"))
+        if role == "entering":
+            return "incoming"
+        if role == "exiting":
+            return "outgoing"
     for aggregate in audit.get("aggregated_rcsd_units") or ():
         if not isinstance(aggregate, dict):
             continue
@@ -430,13 +441,18 @@ def _selected_aggregate(unit_result: Any, audit: dict[str, Any]) -> dict[str, An
 def _member_rcsdnode_ids(unit_result: Any, local_nodes: tuple[ParsedNode, ...]) -> tuple[str, ...]:
     audit = dict(getattr(unit_result, "positive_rcsd_audit", {}) or {})
     aggregate = _selected_aggregate(unit_result, audit)
-    seed_node_ids = set(_clean_ids(getattr(unit_result, "selected_rcsdnode_ids", ())))
+    published_node_ids = set(_clean_ids(audit.get("published_rcsdnode_ids")))
+    if published_node_ids:
+        seed_node_ids = set(published_node_ids)
+    else:
+        seed_node_ids = set(_clean_ids(getattr(unit_result, "selected_rcsdnode_ids", ())))
     for key in ("required_rcsd_node", "primary_main_rc_node_id"):
         text = _clean_text(getattr(unit_result, key, None))
         if text:
             seed_node_ids.add(text)
     if aggregate is not None:
-        seed_node_ids.update(_clean_ids(aggregate.get("node_ids")))
+        if not published_node_ids and not _clean_ids(audit.get("published_member_unit_ids")):
+            seed_node_ids.update(_clean_ids(aggregate.get("node_ids")))
         seed_node_ids.update(_clean_ids([aggregate.get("required_node_id"), aggregate.get("primary_node_id")]))
     node_by_id = {_clean_text(node.node_id): node for node in local_nodes}
     seed_group_ids = {

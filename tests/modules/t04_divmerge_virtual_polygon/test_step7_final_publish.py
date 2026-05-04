@@ -433,6 +433,21 @@ def test_anchor2_added_cases_recover_698389_road_surface_without_wrong_rcsd(tmp_
     assert unit_698389["required_rcsd_node_source"] == "road_surface_fork_forward_rcsd"
     assert unit_698389["rcsd_selection_mode"] == "road_surface_fork_forward_rcsd_binding"
     assert "divstrip_primary_over_wide_road_surface_fork" in set(unit_698389["review_reasons"])
+    assert unit_698389["selected_rcsdnode_ids"] == ["5396318492905216"]
+    assert "5396318492905249" not in set(unit_698389["selected_rcsdnode_ids"])
+    audit_698389 = unit_698389["positive_rcsd_audit"]
+    assert audit_698389["published_rcsdnode_ids"] == ["5396318492905216"]
+    assert audit_698389["published_member_unit_ids"] == ["event_unit_01:node:5396318492905216"]
+    rcsd_junction_698389 = audit_698389["rcsd_semantic_junction"]
+    assert rcsd_junction_698389["member_rcsdnode_ids"] == ["5396318492905216"]
+    assert rcsd_junction_698389["intra_junction_rcsdroad_ids"] == []
+    arms_698389 = {
+        tuple(arm["first_rcsdroad_ids"]): arm
+        for arm in rcsd_junction_698389["semantic_arms"]
+    }
+    connector_arm_698389 = arms_698389[("5396319095619771",)]
+    assert connector_arm_698389["terminal_rcsdnode_id"] == "5396318492905249"
+    assert connector_arm_698389["terminal_kind"] == "semantic_neighbor"
 
     fiona = pytest.importorskip("fiona")
     from shapely.geometry import shape

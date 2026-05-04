@@ -745,6 +745,9 @@ class T04ReviewIndexRow:
     positive_rcsd_present_reason: str = ""
     pair_local_rcsd_empty: bool = False
     rcsd_selection_mode: str = ""
+    rcsd_decision_history_count: int = 0
+    rcsd_replacement_due_to_main_evidence: bool = False
+    aggregate_rcsd_consistency_score: str = "none"
     local_rcsd_unit_kind: str = ""
     local_rcsd_unit_id: str = ""
     aggregated_rcsd_unit_id: str = ""
@@ -839,6 +842,9 @@ class T04ReviewIndexRow:
             "positive_rcsd_present_reason": self.positive_rcsd_present_reason,
             "pair_local_rcsd_empty": int(self.pair_local_rcsd_empty),
             "rcsd_selection_mode": self.rcsd_selection_mode,
+            "rcsd_decision_history_count": self.rcsd_decision_history_count,
+            "rcsd_replacement_due_to_main_evidence": int(self.rcsd_replacement_due_to_main_evidence),
+            "aggregate_rcsd_consistency_score": self.aggregate_rcsd_consistency_score,
             "local_rcsd_unit_kind": self.local_rcsd_unit_kind,
             "local_rcsd_unit_id": self.local_rcsd_unit_id,
             "aggregated_rcsd_unit_id": self.aggregated_rcsd_unit_id,

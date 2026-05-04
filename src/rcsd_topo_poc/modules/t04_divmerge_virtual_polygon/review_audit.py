@@ -225,7 +225,12 @@ def _key_reason(event_unit: T04EventUnitResult, focus_reasons: list[str], better
     return str(event_unit.selected_evidence_summary.get("layer_reason") or "")
 
 
-def build_case_review_audit(case_result: T04CaseResult) -> dict[str, dict[str, Any]]:
+def build_case_review_audit(
+    case_result: T04CaseResult,
+    *,
+    arbitration_review_fields_by_unit: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    arbitration_review_fields_by_unit = arbitration_review_fields_by_unit or {}
     event_units = {unit.spec.event_unit_id: unit for unit in case_result.event_units}
     shared_object_units: dict[str, set[str]] = {unit_id: set() for unit_id in event_units}
     shared_region_units: dict[str, set[str]] = {unit_id: set() for unit_id in event_units}
@@ -321,6 +326,7 @@ def build_case_review_audit(case_result: T04CaseResult) -> dict[str, dict[str, A
         if shared_point_ids:
             conflict_signal_level = "point"
 
+        arbitration_review_fields = arbitration_review_fields_by_unit.get(unit_id, {})
         summaries[unit_id] = {
             "case_id": case_result.case_spec.case_id,
             "event_unit_id": unit_id,
@@ -333,6 +339,15 @@ def build_case_review_audit(case_result: T04CaseResult) -> dict[str, dict[str, A
             "positive_rcsd_present_reason": str(unit.positive_rcsd_present_reason or ""),
             "pair_local_rcsd_empty": bool(unit.pair_local_rcsd_empty),
             "rcsd_selection_mode": str(unit.rcsd_selection_mode or ""),
+            "rcsd_decision_history_count": int(
+                arbitration_review_fields.get("rcsd_decision_history_count") or 0
+            ),
+            "rcsd_replacement_due_to_main_evidence": bool(
+                arbitration_review_fields.get("rcsd_replacement_due_to_main_evidence")
+            ),
+            "aggregate_rcsd_consistency_score": str(
+                arbitration_review_fields.get("aggregate_rcsd_consistency_score") or "none"
+            ),
             "local_rcsd_unit_kind": str(unit.local_rcsd_unit_kind or ""),
             "local_rcsd_unit_id": str(unit.local_rcsd_unit_id or ""),
             "aggregated_rcsd_unit_id": str(unit.aggregated_rcsd_unit_id or ""),

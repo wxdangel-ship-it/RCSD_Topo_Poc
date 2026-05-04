@@ -109,6 +109,34 @@ def _step4_arbitration_shadow_docs(case_result: T04CaseResult) -> tuple[list[dic
     return traces, shadows
 
 
+def _format_aggregate_rcsd_consistency_score(value) -> str:
+    if value is None:
+        return "none"
+    try:
+        return f"{float(value):.6g}"
+    except (TypeError, ValueError):
+        return str(value or "none")
+
+
+def _arbitration_review_fields_by_unit(shadows: list[dict]) -> dict[str, dict]:
+    docs: dict[str, dict] = {}
+    for item in shadows:
+        unit_id = str(item.get("event_unit_id") or "")
+        if not unit_id:
+            continue
+        decision = dict(item.get("arbitration_decision_shadow") or {})
+        docs[unit_id] = {
+            "rcsd_decision_history_count": len(decision.get("decision_trace") or []),
+            "rcsd_replacement_due_to_main_evidence": bool(
+                decision.get("rcsd_replacement_due_to_main_evidence")
+            ),
+            "aggregate_rcsd_consistency_score": _format_aggregate_rcsd_consistency_score(
+                decision.get("aggregate_rcsd_consistency_score")
+            ),
+        }
+    return docs
+
+
 REVIEW_INDEX_FIELDNAMES = [
     "sequence_no",
     "case_id",
@@ -137,6 +165,9 @@ REVIEW_INDEX_FIELDNAMES = [
     "positive_rcsd_present_reason",
     "pair_local_rcsd_empty",
     "rcsd_selection_mode",
+    "rcsd_decision_history_count",
+    "rcsd_replacement_due_to_main_evidence",
+    "aggregate_rcsd_consistency_score",
     "local_rcsd_unit_kind",
     "local_rcsd_unit_id",
     "aggregated_rcsd_unit_id",
@@ -315,6 +346,7 @@ def write_case_outputs(
         ),
     )
     arbitration_decision_trace, arbitration_decision_shadow = _step4_arbitration_shadow_docs(case_result)
+    arbitration_review_fields = _arbitration_review_fields_by_unit(arbitration_decision_shadow)
     write_json(
         case_dir / "step4_audit.json",
         _with_provenance(
@@ -362,7 +394,10 @@ def write_case_outputs(
             ],
             crs_text="EPSG:3857",
         )
-    audit_by_unit = build_case_review_audit(case_result)
+    audit_by_unit = build_case_review_audit(
+        case_result,
+        arbitration_review_fields_by_unit=arbitration_review_fields,
+    )
     final_review_path = case_dir / STEP7_CASE_FINAL_REVIEW_NAME
     render_case_final_review_png(
         final_review_path,
@@ -543,6 +578,13 @@ def write_case_outputs(
                 positive_rcsd_present_reason=event_unit.positive_rcsd_present_reason,
                 pair_local_rcsd_empty=event_unit.pair_local_rcsd_empty,
                 rcsd_selection_mode=event_unit.rcsd_selection_mode,
+                rcsd_decision_history_count=int(audit_summary.get("rcsd_decision_history_count") or 0),
+                rcsd_replacement_due_to_main_evidence=bool(
+                    audit_summary.get("rcsd_replacement_due_to_main_evidence")
+                ),
+                aggregate_rcsd_consistency_score=str(
+                    audit_summary.get("aggregate_rcsd_consistency_score") or "none"
+                ),
                 local_rcsd_unit_kind=str(event_unit.local_rcsd_unit_kind or ""),
                 local_rcsd_unit_id=str(event_unit.local_rcsd_unit_id or ""),
                 aggregated_rcsd_unit_id=str(event_unit.aggregated_rcsd_unit_id or ""),
@@ -683,6 +725,9 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
     positive_rcsd_support_counts = Counter(row.positive_rcsd_support_level or "unknown" for row in rows)
     positive_rcsd_consistency_counts = Counter(row.positive_rcsd_consistency_level or "unknown" for row in rows)
     positive_rcsd_present_counts = Counter("yes" if row.positive_rcsd_present else "no" for row in rows)
+    rcsd_replacement_due_to_main_evidence_counts = Counter(
+        "yes" if row.rcsd_replacement_due_to_main_evidence else "no" for row in rows
+    )
     surface_scenario_type_counts = Counter(row.surface_scenario_type or "unknown" for row in rows)
     rcsd_alignment_type_counts = Counter(row.rcsd_alignment_type or "unknown" for row in rows)
     main_evidence_type_counts = Counter(row.main_evidence_type or "none" for row in rows)
@@ -715,6 +760,13 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
         "shared_point_signal_count": sum(1 for row in rows if row.shared_point_signal),
         "required_rcsd_node_count": sum(1 for row in rows if row.required_rcsd_node),
         "positive_rcsd_present_count": sum(1 for row in rows if row.positive_rcsd_present),
+        "rcsd_decision_history_total_count": sum(int(row.rcsd_decision_history_count or 0) for row in rows),
+        "rcsd_replacement_due_to_main_evidence_count": sum(
+            1 for row in rows if row.rcsd_replacement_due_to_main_evidence
+        ),
+        "aggregate_rcsd_consistency_score_filled_count": sum(
+            1 for row in rows if str(row.aggregate_rcsd_consistency_score or "none") != "none"
+        ),
         "pair_local_rcsd_empty_count": sum(1 for row in rows if row.pair_local_rcsd_empty),
         "flat_png_count": (
             len([entry for entry in flat_dir.iterdir() if entry.is_file() and entry.suffix.lower() == ".png"])
@@ -724,6 +776,9 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
         "positive_rcsd_support_level_counts": dict(sorted(positive_rcsd_support_counts.items())),
         "positive_rcsd_consistency_level_counts": dict(sorted(positive_rcsd_consistency_counts.items())),
         "positive_rcsd_present_counts": dict(sorted(positive_rcsd_present_counts.items())),
+        "rcsd_replacement_due_to_main_evidence_counts": dict(
+            sorted(rcsd_replacement_due_to_main_evidence_counts.items())
+        ),
         "surface_scenario_type_counts": dict(sorted(surface_scenario_type_counts.items())),
         "rcsd_alignment_type_counts": dict(sorted(rcsd_alignment_type_counts.items())),
         "main_evidence_type_counts": dict(sorted(main_evidence_type_counts.items())),

@@ -22,7 +22,11 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.case_loader import (
     load_case_specs,
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.event_interpretation import build_case_result
-from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.outputs import write_case_outputs
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.outputs import (
+    write_case_outputs,
+    write_review_index,
+    write_review_summary,
+)
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.rcsd_alignment import (
     RCSD_ALIGNMENT_NONE,
     RCSD_ALIGNMENT_ROAD_ONLY,
@@ -252,7 +256,9 @@ def test_scenario_reads_from_arbiter_not_derives(tmp_path) -> None:
     assert scenario_doc["surface_scenario_type"] == unit.surface_scenario_type
     assert scenario_doc["section_reference_source"] == unit.section_reference_source
     assert scenario_doc["rcsd_match_type"] == unit.rcsd_match_type
-    write_case_outputs(run_root=tmp_path, case_result=case_result)
+    rows, _artifact = write_case_outputs(run_root=tmp_path, case_result=case_result)
+    review_index_path = write_review_index(tmp_path, rows)
+    review_summary_path = write_review_summary(tmp_path, rows)
     audit = json.loads(
         (tmp_path / "cases" / case_result.case_spec.case_id / "step4_audit.json").read_text(encoding="utf-8")
     )
@@ -262,3 +268,15 @@ def test_scenario_reads_from_arbiter_not_derives(tmp_path) -> None:
     assert final_fields["section_reference_source"]
     assert final_fields["rcsd_match_type"] in {"rcsd_junction", "rcsdroad_fallback", "none"}
     assert final_fields["rcsd_alignment_type"] != RCSD_ALIGNMENT_NONE
+    review_index_text = review_index_path.read_text(encoding="utf-8-sig")
+    assert "rcsd_decision_history_count" in review_index_text.splitlines()[0]
+    assert "rcsd_replacement_due_to_main_evidence" in review_index_text.splitlines()[0]
+    assert "aggregate_rcsd_consistency_score" in review_index_text.splitlines()[0]
+    for row in rows:
+        csv_row = row.to_csv_row()
+        assert csv_row["rcsd_decision_history_count"] >= 1
+        assert csv_row["aggregate_rcsd_consistency_score"]
+    review_summary = json.loads(review_summary_path.read_text(encoding="utf-8"))
+    assert "rcsd_decision_history_total_count" in review_summary
+    assert "rcsd_replacement_due_to_main_evidence_count" in review_summary
+    assert "aggregate_rcsd_consistency_score_filled_count" in review_summary

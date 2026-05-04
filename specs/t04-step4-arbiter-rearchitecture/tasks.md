@@ -214,7 +214,7 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 
 **验证**：30-case dry-run 全部 case 含新顶层键 + csv 新字段 100% 填充。
 
-**Status**：pending
+**Status**：completed
 
 ---
 
@@ -277,7 +277,7 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 | T-05 仲裁器实现（shadow mode） | P0 | completed |
 | T-04b 切换 normal mode + 移除旧写回 | P0 | completed |
 | T-06 surface_scenario / outputs 改造 | P1 | completed |
-| T-07 audit / review_index 字段扩充 | P1 | pending |
+| T-07 audit / review_index 字段扩充 | P1 | completed |
 | T-08 测试整合 + baseline 期望表更新 | P0 | pending |
 | T-09 文档定稿 | P0 | pending |
 | T-10 dry-run 与视觉评审 + PR | P0 | pending |

@@ -50,7 +50,7 @@
 
 **完成后停机汇报**："T-02 草案 diff" → 等用户确认。
 
-**Status**：pending
+**Status**：completed
 
 ---
 
@@ -204,7 +204,7 @@
 | Task | 优先级 | 状态 |
 |---|---|---|
 | T-01 文件拆分前置 | P0 | completed |
-| T-02 契约修订草案 | P0 | pending |
+| T-02 契约修订草案 | P0 | completed |
 | T-03 ledger / scoring / arbiter 数据结构 | P0 | pending |
 | T-04 候选生成器降级 | P0 | pending |
 | T-05 仲裁器实现 | P0 | pending |

@@ -8,7 +8,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points
 
 from .case_models import T04CaseResult, T04EventUnitResult
-from ._step4_dual_write import append_dual_write_candidate
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .step4_road_surface_fork_binding_shared import (
     DIVSTRIP_PRIMARY_REFERENCE_WINDOW_HALF_LENGTH_M,
     DIVSTRIP_PRIMARY_REFERENCE_WINDOW_HALF_WIDTH_M,
@@ -238,7 +238,7 @@ def _restore_divstrip_primary_for_wide_surface_fork(
             "suppressed_road_surface_fork_branch_separation_m": round(float(branch_separation), 3),
         }
     )
-    updated_entry = replace(
+    updated_entry = replace_step4_pre_arbiter_candidate(
         divstrip_entry,
         selection_status="selected",
         decision_reason=DIVSTRIP_PRIMARY_WIDE_SURFACE_FORK_REASON,
@@ -288,7 +288,7 @@ def _restore_divstrip_primary_for_wide_surface_fork(
     )
     selected_region = _union_geometries([window_surface, localized_core]) or localized_core
     selected_component = selected_region
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         replacement,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,

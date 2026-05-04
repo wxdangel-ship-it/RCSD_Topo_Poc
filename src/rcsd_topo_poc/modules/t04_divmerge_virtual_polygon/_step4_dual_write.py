@@ -156,4 +156,12 @@ def append_dual_write_candidate(
     )
 
 
-__all__ = ["DEFAULT_FINAL_FIELDS_WRITTEN", "append_dual_write_candidate"]
+def replace_step4_pre_arbiter_candidate(instance, **field_updates):
+    return replace(instance, **field_updates)
+
+
+__all__ = [
+    "DEFAULT_FINAL_FIELDS_WRITTEN",
+    "append_dual_write_candidate",
+    "replace_step4_pre_arbiter_candidate",
+]

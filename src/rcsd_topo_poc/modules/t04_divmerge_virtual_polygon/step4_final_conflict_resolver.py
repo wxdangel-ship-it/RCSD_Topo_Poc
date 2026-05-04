@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
 from ._rcsd_selection_support import _trace_path_to_node
-from ._step4_dual_write import append_dual_write_candidate
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .case_models import T04CaseResult, T04EventUnitResult
 from .event_interpretation_selection import (
     EVENT_REFERENCE_CONFLICT_TOL_M,
@@ -500,7 +500,7 @@ def _apply_required_node_claim(
     updated_positive_rcsd_audit["second_pass_resolution_action"] = resolution_action
     updated_positive_rcsd_audit["second_pass_resolution_reason"] = resolution_reason
     updated_positive_rcsd_audit["required_rcsd_node_source"] = option.node_source
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         required_rcsd_node=option.node_id,
         required_rcsd_node_source=option.node_source,

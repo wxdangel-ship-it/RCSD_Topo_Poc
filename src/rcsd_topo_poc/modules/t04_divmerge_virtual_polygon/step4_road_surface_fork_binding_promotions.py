@@ -6,7 +6,7 @@ from typing import Any
 from shapely.geometry import Point
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
-from ._step4_dual_write import append_dual_write_candidate
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .rcsd_alignment import rcsd_alignment_type_from_selection
 from .step4_road_surface_fork_binding_shared import (
     _candidate_entries_with_selection,
@@ -166,7 +166,7 @@ def _downgrade_far_surface_rcsd_to_swsd_window(
             "rcsd_decision_reason": rcsd_mode,
         }
     )
-    updated_entry = replace(
+    updated_entry = replace_step4_pre_arbiter_candidate(
         entry,
         candidate_summary=dict(summary),
         review_state="STEP4_REVIEW",
@@ -209,7 +209,7 @@ def _downgrade_far_surface_rcsd_to_swsd_window(
         updated_entry,
         summary,
     )
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,
@@ -382,7 +382,7 @@ def _promote_relaxed_primary_rcsd_binding(
             "rcsd_decision_reason": decision_reason,
         }
     )
-    promoted_entry = replace(
+    promoted_entry = replace_step4_pre_arbiter_candidate(
         entry,
         candidate_summary=dict(summary),
         review_state="STEP4_REVIEW",
@@ -440,7 +440,7 @@ def _promote_relaxed_primary_rcsd_binding(
             "rcsd_decision_reason": decision_reason,
         }
     )
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_reasons=review_reasons,
         rcsd_consistency_result="positive_rcsd_partial_consistent",
@@ -684,7 +684,7 @@ def _promote_selected_surface_rcsd_junction_window(
             "rcsd_decision_reason": decision_reason,
         }
     )
-    updated_entry = replace(
+    updated_entry = replace_step4_pre_arbiter_candidate(
         entry,
         candidate_summary=dict(summary),
         review_state="STEP4_REVIEW",
@@ -740,7 +740,7 @@ def _promote_selected_surface_rcsd_junction_window(
         updated_entry,
         summary,
     )
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,
@@ -914,7 +914,7 @@ def _promote_selected_surface_partial_rcsd(
     )
     updated_entries = _candidate_entries_with_selection(
         event_unit.candidate_audit_entries,
-        replace(
+        replace_step4_pre_arbiter_candidate(
             entry,
             candidate_summary=dict(summary),
             review_state="STEP4_REVIEW",
@@ -967,7 +967,7 @@ def _promote_selected_surface_partial_rcsd(
             "rcsd_decision_reason": decision_reason,
         }
     )
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_reasons=review_reasons,
         rcsd_consistency_result="positive_rcsd_partial_consistent",

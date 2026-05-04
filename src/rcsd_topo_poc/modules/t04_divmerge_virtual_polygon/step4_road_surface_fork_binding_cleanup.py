@@ -4,7 +4,7 @@ from dataclasses import replace
 from typing import Any
 
 from .case_models import T04EventUnitResult
-from ._step4_dual_write import append_dual_write_candidate
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .step4_road_surface_fork_binding_shared import (
     _candidate_entries_with_selection,
     _has_non_semantic_partial_rcsd_signal,
@@ -161,7 +161,7 @@ def _retain_structure_only_surface_candidate(
     )
     updated_entries = _candidate_entries_with_selection(
         event_unit.candidate_audit_entries,
-        replace(
+        replace_step4_pre_arbiter_candidate(
             entry,
             candidate_summary=dict(summary),
             review_state="STEP4_REVIEW",
@@ -194,7 +194,7 @@ def _retain_structure_only_surface_candidate(
             "rcsd_decision_reason": rcsd_mode,
         }
     )
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,
@@ -302,7 +302,7 @@ def _clear_unbound_surface_candidate(
         )
         updated_entries = _candidate_entries_with_selection(
             event_unit.candidate_audit_entries,
-            replace(
+            replace_step4_pre_arbiter_candidate(
                 entry,
                 candidate_summary=dict(summary),
                 review_state="STEP4_REVIEW",
@@ -334,7 +334,7 @@ def _clear_unbound_surface_candidate(
                 "rcsd_decision_reason": rcsd_mode,
             }
         )
-        updated = replace(
+        updated = replace_step4_pre_arbiter_candidate(
             event_unit,
             review_state="STEP4_REVIEW",
             review_reasons=review_reasons,
@@ -420,7 +420,7 @@ def _clear_unbound_surface_candidate(
             "unbound_road_surface_fork_without_bifurcation_rcsd": True,
         }
     )
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,

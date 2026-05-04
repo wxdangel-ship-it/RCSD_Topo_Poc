@@ -4,7 +4,7 @@ from dataclasses import replace
 from typing import Any
 
 from .case_models import T04CaseResult, T04EventUnitResult
-from ._step4_dual_write import append_dual_write_candidate
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .rcsd_alignment import RCSD_ALIGNMENT_NONE, RCSD_ALIGNMENT_ROAD_ONLY
 from .step4_road_surface_fork_geometry import _dedupe
 from .surface_scenario import (
@@ -376,7 +376,7 @@ def _promote_unit_to_shared_rcsdroad(
         detail_key: detail,
         "review_reasons": list(review_reasons),
     }
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         unit,
         review_state="STEP4_REVIEW" if unit.review_state != "STEP4_FAIL" else unit.review_state,
         review_reasons=review_reasons,

@@ -6,7 +6,7 @@ from typing import Any
 from shapely.geometry.base import BaseGeometry
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
-from ._step4_dual_write import append_dual_write_candidate
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .step4_road_surface_fork_binding_forward import _bind_strong_rcsd_to_surface
 from .step4_road_surface_fork_binding_promotions import _promote_relaxed_primary_rcsd_binding
 from .step4_road_surface_fork_binding_shared import (
@@ -156,7 +156,7 @@ def _recovered_surface_entry_from_domain(
             "road_surface_fork_binding": bind_detail,
         }
     )
-    return replace(
+    return replace_step4_pre_arbiter_candidate(
         base_entry,
         candidate_id=candidate_id,
         pool_rank=max(1, int(base_entry.pool_rank or 1)),
@@ -277,7 +277,7 @@ def _recover_surface_from_candidate(
         seed_geometry,
     )
 
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,

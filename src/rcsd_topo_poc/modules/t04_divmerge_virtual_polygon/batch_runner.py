@@ -31,6 +31,7 @@ from .nodes_publish import (
     write_t04_nodes_outputs_for_case_packages,
 )
 from .step4_rcsd_anchored_reverse import apply_rcsd_anchored_reverse_lookup
+from ._step4_arbiter import apply_step4_arbitration_to_case_results
 from .step4_final_conflict_resolver import resolve_step4_final_conflicts
 from .step4_road_surface_fork_binding import apply_road_surface_fork_binding
 
@@ -226,6 +227,7 @@ def run_t04_step14_batch(
     finalized_case_results, resolution_doc = resolve_step4_final_conflicts(case_results)
     finalized_case_results, surface_binding_doc = apply_road_surface_fork_binding(finalized_case_results)
     finalized_case_results, reverse_doc = apply_rcsd_anchored_reverse_lookup(finalized_case_results)
+    finalized_case_results = apply_step4_arbitration_to_case_results(finalized_case_results)
     write_json(run_root / "second_pass_conflict_resolution.json", resolution_doc)
     write_json(run_root / "step4_road_surface_fork_binding.json", surface_binding_doc)
     write_json(run_root / "step4_rcsd_anchored_reverse.json", reverse_doc)

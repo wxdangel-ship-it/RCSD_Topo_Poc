@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +11,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._step4_arbiter import (
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._step4_arbiter_models import (
     T04ArbiterCaseContext,
+    ARBITER_FINAL_FIELD_NAMES,
     T04Step4Candidate,
     T04Step4CandidateLedger,
 )
@@ -30,6 +33,10 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_road_surface_fork_
     apply_road_surface_fork_binding,
 )
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import REAL_ANCHOR_2_ROOT
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+T04_SRC_ROOT = REPO_ROOT / "src" / "rcsd_topo_poc" / "modules" / "t04_divmerge_virtual_polygon"
 
 
 def _case_after_surface_binding(case_id: str):
@@ -90,6 +97,35 @@ def test_ledger_dual_write_parity(tmp_path) -> None:
     assert audit["dual_write_manifest"]
     assert "arbitration_decision_trace" in audit
     assert "arbitration_decision_shadow" in audit
+
+
+def test_ledger_append_only_no_writeback() -> None:
+    final_field_names = set(ARBITER_FINAL_FIELD_NAMES)
+    offenders: list[str] = []
+    for path in T04_SRC_ROOT.rglob("*.py"):
+        if path.name == "_step4_arbiter.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func_name = ""
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                func_name = node.func.attr
+            if func_name != "replace":
+                continue
+            written = sorted({keyword.arg for keyword in node.keywords if keyword.arg} & final_field_names)
+            if written:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}:{','.join(written)}")
+    assert offenders == []
+
+
+def test_arbiter_writes_final_fields_once() -> None:
+    arbiter_source = (T04_SRC_ROOT / "_step4_arbiter.py").read_text(encoding="utf-8")
+    assert "return replace(unit, **field_kwargs)" in arbiter_source
+    assert "apply_step4_arbitration_to_unit" in arbiter_source
 
 
 def test_destructive_downgrade_guard_whitelist() -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import os
+from dataclasses import fields, replace
 from typing import Any, Iterable, Mapping
 
 from shapely.geometry.base import BaseGeometry
@@ -41,6 +43,11 @@ _MAIN_EVIDENCE_REPLACEMENT_REASONS = frozenset(
         "cleanup_clear",
     }
 )
+_TRUE_TEXT = frozenset({"1", "true", "yes", "on"})
+
+
+def _shadow_mode_from_env() -> bool:
+    return _clean_text(os.environ.get("STEP4_ARBITER_SHADOW_MODE")).lower() in _TRUE_TEXT
 
 
 def _clean_text(value: Any) -> str:
@@ -461,6 +468,70 @@ def arbitrate_step4_unit(
     return _apply_destructive_downgrade_guard(unit, decision, winner=None, context=case_context)
 
 
+def apply_step4_arbitration_to_unit(
+    unit: T04EventUnitResult,
+    *,
+    case_id: str,
+    mainnodeid: str = "",
+    shadow_mode: bool | None = None,
+) -> T04EventUnitResult:
+    ledger = unit.step4_candidate_ledger
+    if ledger is None:
+        return unit
+    context = T04ArbiterCaseContext(
+        case_id=case_id,
+        unit_id=unit.spec.event_unit_id,
+        mainnodeid=mainnodeid or unit.spec.representative_node_id,
+        shadow_mode=_shadow_mode_from_env() if shadow_mode is None else bool(shadow_mode),
+    )
+    decision = arbitrate_step4_unit(unit, ledger, case_context=context)
+    if context.shadow_mode:
+        return unit
+    unit_field_names = {field.name for field in fields(unit)}
+    field_kwargs = {
+        field_name: value
+        for field_name, value in decision.as_field_kwargs().items()
+        if field_name in unit_field_names
+    }
+    return replace(unit, **field_kwargs)
+
+
+def apply_step4_arbitration_to_case_result(
+    case_result,
+    *,
+    shadow_mode: bool | None = None,
+):
+    units = [
+        apply_step4_arbitration_to_unit(
+            unit,
+            case_id=case_result.case_spec.case_id,
+            mainnodeid=case_result.case_spec.mainnodeid,
+            shadow_mode=shadow_mode,
+        )
+        for unit in case_result.event_units
+    ]
+    if all(unit is original for unit, original in zip(units, case_result.event_units)):
+        return case_result
+    state = "STEP4_OK"
+    if any(unit.review_state == "STEP4_FAIL" for unit in units):
+        state = "STEP4_FAIL"
+    elif any(unit.review_state == "STEP4_REVIEW" for unit in units):
+        state = "STEP4_REVIEW"
+    reasons = tuple(dict.fromkeys(reason for unit in units for reason in unit.all_review_reasons()))
+    return replace(case_result, event_units=units, case_review_state=state, case_review_reasons=reasons)
+
+
+def apply_step4_arbitration_to_case_results(
+    case_results: Iterable[Any],
+    *,
+    shadow_mode: bool | None = None,
+) -> list[Any]:
+    return [
+        apply_step4_arbitration_to_case_result(case_result, shadow_mode=shadow_mode)
+        for case_result in case_results
+    ]
+
+
 def shadow_diff_for_unit(unit: T04EventUnitResult, decision: T04ArbitrationDecision) -> dict[str, Any]:
     actual = _json_safe(_unit_final_fields(unit))
     proposed = _json_safe(decision.as_field_kwargs())
@@ -480,6 +551,9 @@ def shadow_actual_fields_for_unit(unit: T04EventUnitResult) -> dict[str, Any]:
 
 
 __all__ = [
+    "apply_step4_arbitration_to_case_result",
+    "apply_step4_arbitration_to_case_results",
+    "apply_step4_arbitration_to_unit",
     "arbitrate_step4_unit",
     "shadow_actual_fields_for_unit",
     "shadow_diff_for_unit",

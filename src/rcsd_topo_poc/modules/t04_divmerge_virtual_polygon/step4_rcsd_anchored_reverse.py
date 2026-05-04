@@ -10,7 +10,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge, nearest_points, unary_union
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
-from ._step4_dual_write import append_dual_write_candidate
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .event_interpretation_selection import (
     EVENT_REFERENCE_CONFLICT_TOL_M,
     SHARED_EVIDENCE_OVERLAP_AREA_M2,
@@ -247,7 +247,7 @@ def _apply_reverse_to_unit(
             "prune": prune_detail,
         },
     }
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         interpretation=updated_interpretation,
         review_state="STEP4_REVIEW",

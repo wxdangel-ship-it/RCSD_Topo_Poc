@@ -194,6 +194,7 @@ Step4 必须在唯一 `rcsd_alignment_type` 判定基础上，补齐 RCSD 侧可
 冻结约束：
 
 - `closed_between_two_rcsd_junctions` 在 Anchor_2 39-case 上允许 0 命中；若 Phase 6 实证为 0，仍作为契约预留状态保留，并在 `notes/run-log.md` 登记分布。
+- 2026-05-04 Phase 6 实证 run `outputs/_work/t04_step14_batch/codex_t04_step3_swsd_junction_20260504_131905` 中，Anchor_2 39-case 无 `closed_between_two_rcsd_junctions` 命中，实测分布为 `unresolved = 11`；该状态继续作为契约预留状态保留。
 - RCSDRoad-only chain 的 SWSD 方向一致性容差固定为 `30` 度，复用现有 `BRANCH_MATCH_TOLERANCE_DEG` 同源口径；`swsd_direction_evidence` 必须记录角度差与判定原因。
 
 ## 3. State Machines And Value Domains

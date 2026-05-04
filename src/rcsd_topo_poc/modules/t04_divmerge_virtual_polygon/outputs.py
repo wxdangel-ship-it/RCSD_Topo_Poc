@@ -15,6 +15,7 @@ from .case_models import T04CaseResult, T04ReviewIndexRow
 from .provenance import case_input_fingerprint, provenance_doc
 from .review_audit import build_case_review_audit
 from .review_render import (
+    build_final_review_render_audit,
     render_case_final_review_png,
     render_event_unit_candidate_compare_png,
     render_event_unit_positive_rcsd_review_png,
@@ -57,6 +58,7 @@ REVIEW_INDEX_FIELDNAMES = [
     "no_reference_point_reason",
     "reverse_tip_used",
     "rcsd_consistency_result",
+    "swsd_rcsd_alignment_consistent",
     "positive_rcsd_support_level",
     "positive_rcsd_consistency_level",
     "positive_rcsd_present",
@@ -294,12 +296,26 @@ def write_case_outputs(
         reject_reasons=step7_artifact.reject_reasons,
         publish_target=step7_artifact.publish_target,
     )
+    write_json(
+        case_dir / "final_review_render_audit.json",
+        _with_provenance(build_final_review_render_audit(case_result), case_provenance),
+    )
     write_step7_case_outputs(case_dir=case_dir, artifact=step7_artifact, provenance=case_provenance)
 
     rows: list[T04ReviewIndexRow] = []
     for event_unit in case_result.event_units:
         audit_summary = audit_by_unit.get(event_unit.spec.event_unit_id, {})
         surface_scenario_doc = event_unit.surface_scenario_doc()
+        rcsd_semantic_junction_doc = (
+            None
+            if event_unit.rcsd_semantic_junction is None
+            else event_unit.rcsd_semantic_junction.to_doc()
+        )
+        rcsdroad_only_chain_doc = (
+            None
+            if event_unit.rcsdroad_only_chain is None
+            else event_unit.rcsdroad_only_chain.to_doc()
+        )
         step5_unit = step5_result.unit_result_by_id(event_unit.spec.event_unit_id)
         event_unit_dir = case_dir / "event_units" / event_unit.spec.event_unit_id
         event_unit_dir.mkdir(parents=True, exist_ok=True)
@@ -367,6 +383,8 @@ def write_case_outputs(
                 "kept_by_baseline_guard": event_unit.kept_by_baseline_guard,
                 "conflict_audit": dict(event_unit.conflict_audit),
                 "positive_rcsd_audit": dict(event_unit.positive_rcsd_audit),
+                "rcsd_semantic_junction": rcsd_semantic_junction_doc,
+                "rcsdroad_only_chain": rcsdroad_only_chain_doc,
                 "selected_evidence": dict(event_unit.selected_evidence_summary),
                 "selected_candidate": dict(event_unit.selected_candidate_summary),
                 "alternative_candidates": [dict(item) for item in event_unit.alternative_candidate_summaries],
@@ -414,6 +432,8 @@ def write_case_outputs(
                 "kept_by_baseline_guard": event_unit.kept_by_baseline_guard,
                 "conflict_audit": dict(event_unit.conflict_audit),
                 "positive_rcsd_audit": dict(event_unit.positive_rcsd_audit),
+                "rcsd_semantic_junction": rcsd_semantic_junction_doc,
+                "rcsdroad_only_chain": rcsdroad_only_chain_doc,
                 "selected_evidence": dict(event_unit.selected_evidence_summary),
                 "selected_candidate": dict(event_unit.selected_candidate_summary),
                 "candidate_shortlist": [
@@ -458,6 +478,7 @@ def write_case_outputs(
                 no_reference_point_reason=str(surface_scenario_doc["no_reference_point_reason"]),
                 reverse_tip_used=event_unit.reverse_tip_used,
                 rcsd_consistency_result=event_unit.rcsd_consistency_result,
+                swsd_rcsd_alignment_consistent=str(event_unit.swsd_rcsd_alignment_consistent),
                 positive_rcsd_support_level=event_unit.positive_rcsd_support_level,
                 positive_rcsd_consistency_level=event_unit.positive_rcsd_consistency_level,
                 positive_rcsd_present=event_unit.positive_rcsd_present,
@@ -606,6 +627,9 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
     positive_rcsd_present_counts = Counter("yes" if row.positive_rcsd_present else "no" for row in rows)
     surface_scenario_type_counts = Counter(row.surface_scenario_type or "unknown" for row in rows)
     rcsd_alignment_type_counts = Counter(row.rcsd_alignment_type or "unknown" for row in rows)
+    swsd_rcsd_alignment_consistent_counts = Counter(
+        row.swsd_rcsd_alignment_consistent or "unknown" for row in rows
+    )
     main_evidence_type_counts = Counter(row.main_evidence_type or "none" for row in rows)
     section_reference_source_counts = Counter(row.section_reference_source or "none" for row in rows)
     pair_local_rcsd_empty_counts = Counter("yes" if row.pair_local_rcsd_empty else "no" for row in rows)
@@ -647,6 +671,7 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
         "positive_rcsd_present_counts": dict(sorted(positive_rcsd_present_counts.items())),
         "surface_scenario_type_counts": dict(sorted(surface_scenario_type_counts.items())),
         "rcsd_alignment_type_counts": dict(sorted(rcsd_alignment_type_counts.items())),
+        "swsd_rcsd_alignment_consistent_counts": dict(sorted(swsd_rcsd_alignment_consistent_counts.items())),
         "main_evidence_type_counts": dict(sorted(main_evidence_type_counts.items())),
         "section_reference_source_counts": dict(sorted(section_reference_source_counts.items())),
         "pair_local_rcsd_empty_counts": dict(sorted(pair_local_rcsd_empty_counts.items())),

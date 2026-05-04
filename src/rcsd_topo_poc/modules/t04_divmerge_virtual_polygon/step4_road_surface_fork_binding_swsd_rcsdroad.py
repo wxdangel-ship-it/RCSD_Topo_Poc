@@ -380,7 +380,7 @@ def _promote_unit_to_shared_rcsdroad(
         review_reasons=review_reasons,
         evidence_source="swsd_junction_window",
         position_source="swsd_junction_window",
-        rcsd_consistency_result=SWSD_WINDOW_NO_RCSD_MODE,
+        rcsd_consistency_result="none",
         first_hit_rcsd_road_geometry=road_geometry,
         local_rcsd_unit_geometry=road_geometry,
         positive_rcsd_geometry=road_geometry,

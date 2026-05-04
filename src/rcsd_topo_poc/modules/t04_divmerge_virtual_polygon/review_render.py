@@ -396,6 +396,24 @@ def _related_swsd_road_ids(case_result: T04CaseResult) -> tuple[str, ...]:
     )
 
 
+def build_final_review_render_audit(case_result: T04CaseResult) -> dict[str, Any]:
+    local_context = case_result.base_context.local_context
+    entity_road_ids = _related_swsd_road_ids(case_result)
+    rendered_roads = _ordered_roads_by_ids(local_context.local_roads, entity_road_ids)
+    rendered_road_ids = tuple(str(road.road_id) for road in rendered_roads)
+    missing_road_ids = tuple(sorted(set(entity_road_ids) - set(rendered_road_ids)))
+    return {
+        "case_id": case_result.case_spec.case_id,
+        "swsd_entity_road_ids": list(entity_road_ids),
+        "render_visible_road_ids": list(rendered_road_ids),
+        "missing_road_ids": list(missing_road_ids),
+        "swsd_entity_road_count": len(entity_road_ids),
+        "render_visible_road_count": len(rendered_road_ids),
+        "missing_road_count": len(missing_road_ids),
+        "source": "final_review_png_related_swsd_roads",
+    }
+
+
 def _related_rcsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
     seen: set[str] = set()
     ordered: list[str] = []

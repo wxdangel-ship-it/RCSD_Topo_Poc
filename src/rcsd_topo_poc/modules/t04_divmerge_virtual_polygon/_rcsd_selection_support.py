@@ -14,6 +14,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.rcsd_alignment import (
     RCSD_ALIGNMENT_NONE,
+    validate_rcsd_consistency_result,
 )
 
 
@@ -653,6 +654,13 @@ class PositiveRcsdSelectionDecision:
     local_rcsd_unit_geometry: BaseGeometry | None
     rcsd_alignment_type: str = RCSD_ALIGNMENT_NONE
     positive_rcsd_audit: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "rcsd_consistency_result",
+            validate_rcsd_consistency_result(self.rcsd_consistency_result),
+        )
 
 
 def _mirror_side_label(label: str) -> str:

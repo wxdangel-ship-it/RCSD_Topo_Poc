@@ -23,12 +23,17 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
 )
 from .surface_scenario import SurfaceScenarioClassification, classify_surface_scenario
 from .rcsd_alignment import (
+    ConsistencyVerdict,
     RCSD_ALIGNMENT_AMBIGUOUS,
     RCSD_ALIGNMENT_NONE,
     RCSD_ALIGNMENT_ROAD_ONLY,
     RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
     RCSDAlignmentResult,
+    RCSDRoadOnlyChain,
+    RCSDSemanticJunction,
+    compute_consistency_verdict,
     normalize_rcsd_alignment_type,
+    validate_rcsd_consistency_result,
 )
 
 
@@ -285,6 +290,18 @@ class T04CandidateAuditEntry:
     positive_rcsd_node_geometry: BaseGeometry | None = None
     primary_main_rc_node_geometry: BaseGeometry | None = None
     required_rcsd_node_geometry: BaseGeometry | None = None
+    rcsd_semantic_junction: RCSDSemanticJunction | None = None
+    rcsdroad_only_chain: RCSDRoadOnlyChain | None = None
+    swsd_rcsd_alignment_consistent: ConsistencyVerdict = ConsistencyVerdict.NOT_APPLICABLE
+
+    def __post_init__(self) -> None:
+        self.rcsd_consistency_result = validate_rcsd_consistency_result(self.rcsd_consistency_result)
+        self.swsd_rcsd_alignment_consistent = compute_consistency_verdict(
+            rcsd_alignment_type=self.rcsd_alignment_type,
+            positive_rcsd_consistency_level=self.positive_rcsd_consistency_level,
+            axis_polarity_inverted=self.axis_polarity_inverted,
+            rcsdroad_only_chain=self.rcsdroad_only_chain,
+        )
 
     def to_doc(self) -> dict[str, Any]:
         return _json_safe({
@@ -300,12 +317,23 @@ class T04CandidateAuditEntry:
             "position_source": self.position_source,
             "reverse_tip_used": self.reverse_tip_used,
             "rcsd_consistency_result": self.rcsd_consistency_result,
+            "swsd_rcsd_alignment_consistent": str(self.swsd_rcsd_alignment_consistent),
             "positive_rcsd_present": self.positive_rcsd_present,
             "positive_rcsd_support_level": self.positive_rcsd_support_level,
             "positive_rcsd_consistency_level": self.positive_rcsd_consistency_level,
             "required_rcsd_node": self.required_rcsd_node,
             "required_rcsd_node_source": self.required_rcsd_node_source,
             "rcsd_alignment_type": self.rcsd_alignment_type,
+            "rcsd_semantic_junction": (
+                None
+                if self.rcsd_semantic_junction is None
+                else self.rcsd_semantic_junction.to_doc()
+            ),
+            "rcsdroad_only_chain": (
+                None
+                if self.rcsdroad_only_chain is None
+                else self.rcsdroad_only_chain.to_doc()
+            ),
             "selected_candidate_region": self.selected_candidate_region,
             "selected_rcsdroad_ids": list(self.selected_rcsdroad_ids),
             "selected_rcsdnode_ids": list(self.selected_rcsdnode_ids),
@@ -372,6 +400,9 @@ class T04EventUnitResult:
     selected_candidate_summary: dict[str, Any]
     positive_rcsd_audit: dict[str, Any] = field(default_factory=dict)
     rcsd_alignment_type: str = ""
+    rcsd_semantic_junction: RCSDSemanticJunction | None = None
+    rcsdroad_only_chain: RCSDRoadOnlyChain | None = None
+    swsd_rcsd_alignment_consistent: ConsistencyVerdict = ConsistencyVerdict.NOT_APPLICABLE
     selected_evidence_summary: dict[str, Any] = field(default_factory=dict)
     alternative_candidate_summaries: tuple[dict[str, Any], ...] = ()
     candidate_audit_entries: tuple[T04CandidateAuditEntry, ...] = ()
@@ -396,6 +427,15 @@ class T04EventUnitResult:
     @property
     def selected_divstrip_geometry(self) -> BaseGeometry | None:
         return self.localized_evidence_core_geometry
+
+    def __post_init__(self) -> None:
+        self.rcsd_consistency_result = validate_rcsd_consistency_result(self.rcsd_consistency_result)
+        self.swsd_rcsd_alignment_consistent = compute_consistency_verdict(
+            rcsd_alignment_type=self.surface_scenario.rcsd_alignment_type,
+            positive_rcsd_consistency_level=self.positive_rcsd_consistency_level,
+            axis_polarity_inverted=self.axis_polarity_inverted,
+            rcsdroad_only_chain=self.rcsdroad_only_chain,
+        )
 
     @property
     def event_anchor_geometry(self) -> BaseGeometry | None:
@@ -537,6 +577,7 @@ class T04EventUnitResult:
             **surface_scenario,
             "reverse_tip_used": self.reverse_tip_used,
             "rcsd_consistency_result": self.rcsd_consistency_result,
+            "swsd_rcsd_alignment_consistent": str(self.swsd_rcsd_alignment_consistent),
             "pair_local_rcsd_road_ids": list(self.pair_local_rcsd_road_ids),
             "pair_local_rcsd_node_ids": list(self.pair_local_rcsd_node_ids),
             "first_hit_rcsdroad_ids": list(self.first_hit_rcsdroad_ids),
@@ -565,6 +606,16 @@ class T04EventUnitResult:
             "pair_local_summary": dict(self.pair_local_summary),
             "positive_rcsd_audit": _json_safe(dict(self.positive_rcsd_audit)),
             "rcsd_alignment_result": alignment_result,
+            "rcsd_semantic_junction": (
+                None
+                if self.rcsd_semantic_junction is None
+                else self.rcsd_semantic_junction.to_doc()
+            ),
+            "rcsdroad_only_chain": (
+                None
+                if self.rcsdroad_only_chain is None
+                else self.rcsdroad_only_chain.to_doc()
+            ),
             "selected_candidate_region": self.selected_candidate_region,
             "selected_evidence_state": self.selected_evidence_state,
             "selected_evidence": dict(self.selected_evidence_summary),
@@ -686,6 +737,7 @@ class T04ReviewIndexRow:
     position_source: str
     reverse_tip_used: bool
     rcsd_consistency_result: str
+    swsd_rcsd_alignment_consistent: str = ""
     has_main_evidence: bool = False
     main_evidence_type: str = "none"
     reference_point_present: bool = False
@@ -769,6 +821,17 @@ class T04ReviewIndexRow:
     sequence_no: int = 0
     case_overview_path: str = ""
 
+    def __post_init__(self) -> None:
+        self.rcsd_consistency_result = validate_rcsd_consistency_result(self.rcsd_consistency_result)
+        if not self.swsd_rcsd_alignment_consistent:
+            self.swsd_rcsd_alignment_consistent = str(
+                compute_consistency_verdict(
+                    rcsd_alignment_type=self.rcsd_alignment_type,
+                    positive_rcsd_consistency_level=self.positive_rcsd_consistency_level,
+                    axis_polarity_inverted=self.axis_polarity_inverted,
+                )
+            )
+
     def to_csv_row(self) -> dict[str, Any]:
         return {
             "sequence_no": self.sequence_no,
@@ -792,6 +855,7 @@ class T04ReviewIndexRow:
             "no_reference_point_reason": self.no_reference_point_reason,
             "reverse_tip_used": int(self.reverse_tip_used),
             "rcsd_consistency_result": self.rcsd_consistency_result,
+            "swsd_rcsd_alignment_consistent": self.swsd_rcsd_alignment_consistent,
             "positive_rcsd_support_level": self.positive_rcsd_support_level,
             "positive_rcsd_consistency_level": self.positive_rcsd_consistency_level,
             "positive_rcsd_present": int(self.positive_rcsd_present),

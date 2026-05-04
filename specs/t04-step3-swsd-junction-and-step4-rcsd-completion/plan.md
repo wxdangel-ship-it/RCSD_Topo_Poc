@@ -15,7 +15,7 @@
 |---|---|---|
 | Product | 守"SWSD 语义路口"的语义定义与渲染口径，给出对照案例 | case-by-case "应被召回道路集合"对照表（用户提供怀疑 case 后填充） |
 | Architecture | 定义 `SWSDSemanticJunction / RCSDSemanticJunction / RCSDRoadOnlyChain / ConsistencyVerdict` 边界与持久化协议；控制文件体量 | dataclass schema、模块拆分方案、契约 delta diff |
-| Development | 按切片实现 Step3 实体化 / Step4 完整性 / Step5 去重 / 渲染层迁移 | 小步可回滚 PR、audit 字段、向后兼容字段映射 |
+| Development | 按切片实现 Step3 实体化 / Step4 完整性 / Step5 去重 / 渲染层迁移 | 小步可回滚本地 checkpoint、audit 字段、向后兼容字段映射 |
 | Testing | 补 unit / synthetic / real-case 三层回归；锁 30-case 与 23-case baseline | pytest gates、fixtures、conftest 工具 |
 | QA | 守 CRS、几何 valid、性能不退化、视觉 fingerprint 刷新需 diff 报告、契约一致性 | release checklist、视觉 diff 报告、性能审计、契约一致性核查 |
 

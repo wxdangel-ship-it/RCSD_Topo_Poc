@@ -259,6 +259,7 @@ Step7 legacy selected-case 发布冻结门槛：
 - 2026-05-01 已将 23-case `final_review.png` visual fingerprint 刷新到 surface scenario visual baseline。刷新原因是 H-01 已定位为 intentional geometry / review-layer drift：`surface_scenario / section_reference / case-level bridge / Step6 guard` 改造导致 8 个 case 的 review 几何真实变化；业务断言、accepted/rejected、nodes 写回与 Step7 consistency 仍必须通过。
 - PNG raw fingerprint 对几何与 review 层变化敏感，不等价于 accepted/rejected 业务失败；后续刷新必须具备诊断报告和人工目视确认，不得静默刷新。
 - 本轮 `t04-step3-swsd-junction-and-step4-rcsd-completion` 已获用户授权，不再与 2026-05-01 的 23-case PNG raw fingerprint 做比对；Phase 6 跑出的 39-case `final_review.png` 作为本轮新人工目视审计参考基线，不新增 PNG hash hard assertion。
+- 2026-05-04 Phase 6 本地回归参考 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch/codex_t04_step3_swsd_junction_20260504_131905`。结果：`total_case_count = 39`，`accepted = 35`，`rejected = 4`，`review_png_present_count = 39`，`nodes_consistency_passed = true`，`performance.threshold_status = within_threshold`，`elapsed_seconds_total = 158.049974`。配套 render audit：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_swsd_render_audit/codex_t04_step3_swsd_junction_20260504_131905/render_audit.csv`，`missing_road_ids` 全 0。
 - 当前全量 final_state：
   - accepted：`17943587`、`30434673`、`505078921`、`698380`、`698389`、`699870`、`706629`、`723276`、`724067`、`724081`、`73462878`、`758784`、`760213`、`760256`、`760984`、`785671`、`785675`、`788824`、`824002`、`987998`
   - rejected：`760598`、`760936`、`857993`

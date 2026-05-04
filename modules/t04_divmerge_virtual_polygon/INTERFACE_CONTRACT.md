@@ -221,7 +221,7 @@ RCSD 对齐与负向掩膜口径：
 - 负向掩膜不只来自 RCSD。与当前输入 SWSD 语义路口无关的 SWSD nodes / roads，同样必须作为负向掩膜输入；不得只用 foreign node 小范围掩膜替代 unrelated SWSD road / arm / semantic-road 掩膜。
 - final review / visual audit 中，`surface_scenario_type` 必须作为 case 级可见标注表达当前 case 属于哪个构面场景。若 `rcsd_alignment_type` 为 `rcsd_semantic_junction / rcsd_junction_partial_alignment / rcsdroad_only_alignment`，唯一正向 RCSD 对齐对象对应的 RCSDRoad 必须用粗红色线型表达；若 `rcsd_alignment_type = no_rcsd_alignment`，无需额外绘制粗红 RCSDRoad，其“无 RCSD 正向召回”语义由场景标注表达。构成截面边界的 Reference Point、RCSD / RCSD partial junction 或 SWSD section reference 必须在图上标注。
 
-T-02 Step4 arbiter rearchitecture 草案约束：`section_reference_source / rcsd_alignment_type / rcsd_match_type` 由 Step4 仲裁层统一发布；候选生成层只能把 RCSD / SWSD / 主证据候选写入候选 ledger，不直接写最终 `selected_rcsd* / required_rcsd_node / positive_rcsd* / section_reference_source` 字段。Step5/6/7 只消费仲裁层发布结果，不重新选择 RCSD 候选或重新解释 section reference。本段不扩展任何值域，只收窄发布职责。
+Step4 arbiter rearchitecture 正式约束：`section_reference_source / rcsd_alignment_type / rcsd_match_type` 由 Step4 仲裁层统一发布；候选生成层只能把 RCSD / SWSD / 主证据候选写入候选 ledger，不直接写最终 `selected_rcsd* / required_rcsd_node / positive_rcsd* / section_reference_source` 字段。Step5/6/7 只消费仲裁层发布结果，不重新选择 RCSD 候选或重新解释 section reference。本段不扩展任何值域，只收窄发布职责。
 
 ### 3.5 路口面场景与生成模式
 
@@ -303,7 +303,7 @@ final review / visual audit 稳定表达：
 | `no_rcsd_alignment` | 不绘制粗红 RCSDRoad；无 RCSD 正向召回由 `surface_scenario_type` 标注表达。 |
 | 截面参考对象 | 构成截面边界的 Reference Point、RCSD / RCSD partial junction 或 SWSD section reference 必须进行可视标注。 |
 
-T-02 Step4 arbiter rearchitecture 草案约束：`surface_scenario_type / surface_generation_mode / section_reference_source / rcsd_match_type` 必须由 Step4 仲裁层基于 winner candidate 与最终主证据一次性发布；`surface_scenario.classify_surface_scenario` 与输出层只能读取已发布字段，不再独立派生场景或截面来源。Step5/6/7 不改变这些字段的业务语义，只在几何支撑域、组装和最终发布中消费。本段不新增 `surface_scenario_type / surface_generation_mode / rcsd_match_type` 值。
+Step4 arbiter rearchitecture 正式约束：`surface_scenario_type / surface_generation_mode / section_reference_source / rcsd_match_type` 必须由 Step4 仲裁层基于 winner candidate 与最终主证据一次性发布；`surface_scenario.classify_surface_scenario` 与输出层只能读取已发布字段，不再独立派生场景或截面来源。Step5/6/7 不改变这些字段的业务语义，只在几何支撑域、组装和最终发布中消费。本段不新增 `surface_scenario_type / surface_generation_mode / rcsd_match_type` 值。
 
 ### 3.6 Step7 最终状态机
 

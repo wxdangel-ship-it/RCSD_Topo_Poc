@@ -42,7 +42,7 @@
 - `aggregated_rcsd_unit` 不得跨 RCSD 语义路口聚合；共享 connector road 只能作为候选判定上下文，不能把两个 RCSD 语义路口合并为一个 `rcsd_junction`。`RCSDNode.mainnodeid` 只表达单节点 / 多节点组织关系，不单独决定候选是否构成 RCSD 语义路口。
 - `role_mapping_partial_aggregated` 这类弱聚合不得单独触发完整 `rcsd_junction`；它只能作为 `rcsd_junction_partial_alignment`、`rcsdroad_only_alignment`、趋势参考或审计辅助的候选输入，具体 case 不得因此构造虚拟 Reference Point。
 - 无 `required_rcsd_node` 的 road-only partial 聚合只能作为 trace-only 审计线索；不得发布为 `positive_rcsd_present`，也不得进入 `selected_rcsdroad_ids` / `selected_rcsdnode_ids`。`axis_polarity_inverted` 只是该规则的一类触发原因。
-- T-02 Step4 arbiter rearchitecture 草案新增质量门槛：
+- Step4 arbiter rearchitecture 新增质量门槛：
   - 候选生命周期必须可追溯：所有 Step4 RCSD / SWSD / 主证据候选进入 `step4_candidate_ledger`，并在 `arbitration_decision_trace` 记录来源、评分、reject / replacement reason 与最终 winner。
   - destructive downgrade 必须显式审计：当 pre 状态已有正向 RCSD 且 `required_rcsd_node` 非空、`rcsd_alignment_type` 属于完整或 partial junction 时，后续仲裁不得在无白名单理由下清空或降级；被拦截时必须写入 `rcsd_destructive_downgrade_blocked` 类 review 原因。
   - 主证据 replacement 必须触发 RCSD re-arbitration：`divstrip_primary_over_wide_road_surface_fork`、recovery 翻面或 cleanup 清空主证据后，RCSD 选择以新的 `fact_reference_point / selected_evidence_region_geometry` 重新评分，不得直接继承 replacement 前的 RCSD 字段。

@@ -38,3 +38,58 @@ PY
 
 - Phase 0 is documentation and governance only; no source or script files were modified.
 - `.md` files are not subject to `AGENTS.md §3` source/script 100 KB write threshold, but the PR description must still record that no source/script file was written.
+
+## Phase 1 — `SWSDSemanticJunction` Dataclass & Recall
+
+- Branch: `speckit/t04-step3-swsd-junction-phase1-swsd-junction-dataclass`
+- Base commit: `8809b5d`
+- Started: `2026-05-04 09:31:00 CST`
+- Completed: `2026-05-04 10:20:55 CST`
+- Commit: `aec0d4f` (Phase 1 content commit before run-log metadata update)
+- PR: `https://github.com/wxdangel-ship-it/RCSD_Topo_Poc/pull/3`
+- Run root: `outputs/_work/t04_step3_swsd_phase1_d2/phase1_d2_guard_20260504_002`
+
+### Phase 1 Evidence
+
+- Source/script byte-size prechecks were run before writes for `_runtime_step23_contracts.py`, `_runtime_step3_topology_skeleton.py`, `topology.py`, `test_step3_swsd_semantic_junction.py`, `test_step14_synthetic_batch.py`, and `test_step3_topology_skeleton.py`.
+- Source/script byte-size rechecks stayed below 100 KB:
+  - `_runtime_step23_contracts.py`: 11991 bytes.
+  - `_runtime_step3_topology_skeleton.py`: 32240 bytes.
+  - `topology.py`: 5782 bytes.
+  - `test_step3_swsd_semantic_junction.py`: 6859 bytes.
+  - `test_step14_synthetic_batch.py`: 17074 bytes.
+  - `test_step3_topology_skeleton.py`: 3350 bytes.
+- D2 guard run command:
+
+```bash
+.venv/bin/python - <<'PY'
+from pathlib import Path
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon import run_t04_step14_batch
+run_t04_step14_batch(
+    case_root=Path('/mnt/e/TestData/POC_Data/T02/Anchor_2'),
+    case_ids=['505078921', '17943587', '760213', '857993'],
+    out_root=Path('outputs/_work/t04_step3_swsd_phase1_d2'),
+    run_id='phase1_d2_guard_20260504_002',
+)
+PY
+```
+
+- D2 baseline comparison result:
+  - `505078921`: `unit_envelope diff = 0` across 3 event units.
+  - `17943587`: `unit_envelope diff = 0` across 4 event units.
+  - Summary: `total_case_count = 4`, `total_event_unit_count = 11`, `failed_case_ids = []`, `threshold_status = within_threshold`.
+- Semantic junction snapshots:
+  - `505078921`: `junction=505078921`, `arms=3`, `connectors=3`.
+  - `17943587`: `junction=17943587`, `arms=2`, `connectors=6`.
+  - `760213`: `junction=760213`, `arms=3`, `connectors=4`.
+  - `857993`: `junction=857993`, `arms=2`, `connectors=3`.
+- Test discipline:
+  - `test_step3_swsd_semantic_junction.py`: `6 passed`.
+  - `test_step3_topology_skeleton.py`: `2 passed`.
+  - `test_step14_synthetic_batch.py`: `5 passed`.
+  - `test_step14_real_regression.py`: `7 passed`.
+
+### Phase 1 Notes
+
+- The previously referenced `tests/modules/t04_divmerge_virtual_polygon/test_step3_topology_skeleton.py` was absent on the merged Phase 0 baseline, so Phase 1 added a small compatibility test under that path.
+- `outputs.write_case_outputs` was not edited directly; Step3 output persistence is synchronized through `topology.build_step3_status_doc` and `topology.build_unit_step3_status_doc`, which feed the existing output writer.

@@ -22,7 +22,7 @@ def build_step3_topology(
 
 
 def build_step3_status_doc(*, admission, topology_skeleton) -> dict:
-    return build_unit_step3_status_doc(
+    status_doc = build_unit_step3_status_doc(
         admission=admission,
         topology_skeleton=topology_skeleton,
         topology_scope="case_coordination",
@@ -36,6 +36,32 @@ def build_step3_status_doc(*, admission, topology_skeleton) -> dict:
         boundary_branch_ids=(),
         preferred_axis_branch_id=None,
         degraded_scope_reason=None,
+    )
+    status_doc["swsd_semantic_junction"] = topology_skeleton.swsd_semantic_junction.to_status_doc()
+    return status_doc
+
+
+def _swsd_arm_view_for_unit(
+    *,
+    topology_skeleton,
+    event_branch_ids,
+    boundary_branch_ids,
+) -> tuple[str, list[str], list[str]]:
+    swsd_junction = topology_skeleton.swsd_semantic_junction
+    active_branch_ids = {
+        str(branch_id)
+        for branch_id in (*tuple(event_branch_ids or ()), *tuple(boundary_branch_ids or ()))
+        if str(branch_id)
+    }
+    unit_owned_arm_ids: list[str] = []
+    sibling_unit_arm_ids: list[str] = []
+    for arm in swsd_junction.semantic_arms:
+        target = unit_owned_arm_ids if str(arm.first_branch_id) in active_branch_ids else sibling_unit_arm_ids
+        target.append(str(arm.arm_id))
+    return (
+        str(swsd_junction.junction_id),
+        sorted(unit_owned_arm_ids),
+        sorted(sibling_unit_arm_ids),
     )
 
 
@@ -80,6 +106,11 @@ def build_unit_step3_status_doc(
         else sorted(str(branch.branch_id) for branch in road_branches if getattr(branch, "has_outgoing_support", False))
     )
     unstable_reasons = tuple(topology_skeleton.stability.unstable_reasons)
+    swsd_junction_ref, unit_owned_arm_ids, sibling_unit_arm_ids = _swsd_arm_view_for_unit(
+        topology_skeleton=topology_skeleton,
+        event_branch_ids=event_branch_ids,
+        boundary_branch_ids=boundary_branch_ids,
+    )
     return {
         "scope": "t04_step3_topology_skeleton",
         "topology_scope": topology_scope,
@@ -110,5 +141,8 @@ def build_unit_step3_status_doc(
         "related_mainnodeids": list(topology_skeleton.chain_context.related_mainnodeids),
         "unstable_reasons": list(unstable_reasons),
         "degraded_scope_reason": degraded_scope_reason,
+        "swsd_junction_ref": swsd_junction_ref,
+        "unit_owned_arm_ids": unit_owned_arm_ids,
+        "sibling_unit_arm_ids": sibling_unit_arm_ids,
         "step3_state": "review_required" if unstable_reasons else "ready",
     }

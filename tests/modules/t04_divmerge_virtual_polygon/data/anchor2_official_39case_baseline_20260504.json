@@ -139,9 +139,9 @@
     {
       "case_id": "724081",
       "final_state": "accepted",
-      "surface_scenario_type": "no_main_evidence_with_swsd_only",
-      "section_reference_source": "swsd_junction",
-      "surface_generation_mode": "swsd_junction_window"
+      "surface_scenario_type": "no_main_evidence_with_rcsd_junction",
+      "section_reference_source": "rcsd_junction",
+      "surface_generation_mode": "rcsd_junction_window"
     },
     {
       "case_id": "758784",

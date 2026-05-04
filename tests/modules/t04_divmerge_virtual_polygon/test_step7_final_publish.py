@@ -837,31 +837,37 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     )
     unit_724081 = step4_724081["event_units"][0]
     assert unit_724081["selected_evidence_state"] == "found"
-    assert unit_724081["evidence_source"] == "swsd_junction_window"
+    assert unit_724081["evidence_source"] == "rcsd_junction_window"
     assert unit_724081["main_evidence_type"] == "none"
-    assert unit_724081["required_rcsd_node"] is None
-    assert unit_724081["surface_scenario_type"] == "no_main_evidence_with_swsd_only"
-    assert unit_724081["section_reference_source"] == "swsd_junction"
-    assert unit_724081["surface_generation_mode"] == "swsd_junction_window"
-    assert unit_724081["rcsd_selection_mode"] == ""
-    assert unit_724081["selected_evidence"]["rcsd_selection_mode"] == "swsd_junction_window_no_rcsd"
+    assert unit_724081["required_rcsd_node"] == "5384368047133784"
+    assert unit_724081["surface_scenario_type"] == "no_main_evidence_with_rcsd_junction"
+    assert unit_724081["section_reference_source"] == "rcsd_junction"
+    assert unit_724081["surface_generation_mode"] == "rcsd_junction_window"
+    assert unit_724081["rcsd_selection_mode"] == "rcsd_junction_window"
+    assert unit_724081["selected_evidence"]["rcsd_selection_mode"] == "rcsd_junction_window"
+    assert set(unit_724081["selected_rcsdroad_ids"]) == {
+        "5384368047133782",
+        "5384368047133783",
+        "5384368047133800",
+    }
     assert unit_724081["fallback_rcsdroad_ids"] == []
-    assert "swsd_junction_window_no_rcsd_used" in set(unit_724081["review_reasons"])
+    assert "rcsd_junction_window_used" in set(unit_724081["review_reasons"])
 
     step5_724081 = json.loads(
         (run_root / "cases" / "724081" / "step5_status.json").read_text(encoding="utf-8")
     )
     unit_step5_724081 = step5_724081["unit_results"][0]
     assert step5_724081["case_bridge_zone_geometry"]["present"] is False
-    assert step5_724081["case_terminal_window_domain"]["present"] is False
+    assert step5_724081["case_terminal_window_domain"]["present"] is True
     assert unit_step5_724081["surface_fill_mode"] == "junction_window"
     assert set(unit_step5_724081["fallback_rcsdroad_ids"]) == set(unit_724081["fallback_rcsdroad_ids"])
     unrelated_rcsd_724081 = set(step5_724081["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
     assert unrelated_rcsd_724081.isdisjoint(unit_724081["fallback_rcsdroad_ids"])
     assert unit_step5_724081["single_component_surface_seed"] is False
     assert unit_step5_724081["junction_full_road_fill_domain"]["present"] is True
-    assert unit_step5_724081["unit_terminal_cut_constraints"]["present"] is False
-    assert unit_step5_724081["required_rcsd_node_patch_geometry"]["present"] is False
+    assert unit_step5_724081["section_reference_patch_geometry"]["present"] is True
+    assert unit_step5_724081["unit_terminal_cut_constraints"]["present"] is True
+    assert unit_step5_724081["required_rcsd_node_patch_geometry"]["present"] is True
 
     step6_724081 = json.loads(
         (run_root / "cases" / "724081" / "step6_status.json").read_text(encoding="utf-8")

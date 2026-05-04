@@ -73,6 +73,32 @@ def _has_bilateral_event_side_support(aggregate: dict[str, Any]) -> bool:
             labels.add(label)
     return len(labels) >= 2
 
+
+def _has_exact_published_semantic_window(
+    audit: dict[str, Any],
+    aggregate: dict[str, Any],
+) -> bool:
+    if str(audit.get("published_rcsd_selection_mode") or "").strip() != "aggregated_a_exact_required_node_unit":
+        return False
+    if str(aggregate.get("decision_reason") or "").strip() != "role_mapping_exact_aggregated":
+        return False
+    if str(aggregate.get("consistency_level") or "").strip() != "A":
+        return False
+    published_roads = _dedupe(audit.get("published_rcsdroad_ids") or ())
+    published_nodes = _dedupe(audit.get("published_rcsdnode_ids") or ())
+    if len(published_roads) < 3 or not published_nodes:
+        return False
+    required_node = str(aggregate.get("required_node_id") or "").strip()
+    if required_node and required_node not in set(published_nodes):
+        return False
+    selected_assignments = tuple(
+        assignment
+        for assignment in (audit.get("selected_unit_role_assignments") or ())
+        if isinstance(assignment, dict)
+        and str(assignment.get("road_id") or "").strip() in set(published_roads)
+    )
+    return bool(str(audit.get("aggregated_rcsd_unit_id") or "").strip() and selected_assignments)
+
 def _local_rcsd_unit_support(
     audit: dict[str, Any],
     *,
@@ -527,10 +553,12 @@ def _promote_selected_surface_rcsd_junction_window(
         )
     selected_summary = _selected_surface_summary(event_unit)
     first_hit = _first_hit_ids(audit)
+    exact_published_semantic_window = _has_exact_published_semantic_window(audit, aggregate)
     if (
         str(aggregate.get("consistency_level") or "").strip() == "A"
         and len(first_hit) < 2
         and not _weak_structure_surface_window_candidate(selected_summary)
+        and not exact_published_semantic_window
     ):
         return None, None
     primary_node = str(aggregate.get("primary_node_id") or "").strip()
@@ -562,6 +590,12 @@ def _promote_selected_surface_rcsd_junction_window(
             or entry.selected_component_union_geometry is not None
         )
     )
+    if (
+        exact_published_semantic_window
+        and len(first_hit) < 2
+        and len(_dedupe(aggregate.get("semantic_group_ids") or ())) >= 2
+    ):
+        preserve_surface_main_evidence = False
     if partial_b_rcsd_signal and preserve_surface_main_evidence:
         return None, None
     road_ids = _aggregate_ids(aggregate, "road_ids")

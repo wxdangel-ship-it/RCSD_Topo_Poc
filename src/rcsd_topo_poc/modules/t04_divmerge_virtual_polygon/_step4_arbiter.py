@@ -21,9 +21,8 @@ from .rcsd_alignment import (
     RCSD_ALIGNMENT_JUNCTION_LEVEL_TYPES,
     RCSD_ALIGNMENT_NONE,
     RCSD_ALIGNMENT_POSITIVE_TYPES,
-    rcsd_match_type_for_alignment,
 )
-from .surface_scenario import classify_surface_scenario_from_alignment
+from .surface_scenario import classify_surface_scenario, classify_surface_scenario_from_alignment
 
 
 _SUPPORT_RANK = {
@@ -104,8 +103,17 @@ def _unit_final_fields(unit: T04EventUnitResult) -> dict[str, Any]:
         "selected_candidate_summary": dict(unit.selected_candidate_summary),
         "fact_reference_point": unit.fact_reference_point,
         "review_materialized_point": unit.review_materialized_point,
+        "surface_scenario_published": bool(unit.surface_scenario_published),
+        "has_main_evidence": bool(scenario["has_main_evidence"]),
+        "main_evidence_type": scenario["main_evidence_type"],
+        "reference_point_present": bool(scenario["reference_point_present"]),
+        "reference_point_source": scenario["reference_point_source"],
         "surface_scenario_type": scenario["surface_scenario_type"],
         "section_reference_source": scenario["section_reference_source"],
+        "swsd_junction_present": bool(scenario["swsd_junction_present"]),
+        "fallback_rcsdroad_ids": tuple(scenario["fallback_rcsdroad_ids"]),
+        "surface_generation_mode": scenario["surface_generation_mode"],
+        "no_reference_point_reason": scenario["no_reference_point_reason"],
     }
 
 
@@ -176,18 +184,55 @@ def _main_evidence_rearbitration_pool(
 
 
 def _candidate_scenario_doc(candidate: T04Step4Candidate, unit: T04EventUnitResult) -> dict[str, Any]:
-    current = unit.surface_scenario_doc()
-    has_main_evidence = _main_evidence_present(candidate, unit)
-    reference_point_present = candidate.reference_point is not None and not candidate.reference_point.is_empty
-    classification = classify_surface_scenario_from_alignment(
-        has_main_evidence=has_main_evidence,
-        rcsd_alignment_type=candidate.rcsd_alignment_type,
-        swsd_junction_present=bool(current["swsd_junction_present"]),
-        main_evidence_type=candidate.main_evidence_type,
-        reference_point_present=reference_point_present,
-        fallback_rcsdroad_ids=candidate.rcsdroad_ids,
+    candidate_snapshot = _candidate_unit_snapshot(candidate)
+    selected_evidence_summary = dict(
+        candidate_snapshot.get("selected_evidence_summary") or unit.selected_evidence_summary
     )
-    return classification.to_doc()
+    return classify_surface_scenario(
+        evidence_source=_clean_text(candidate_snapshot.get("evidence_source")) or candidate.evidence_type,
+        selected_evidence_summary=selected_evidence_summary,
+        rcsd_selection_mode=_clean_text(candidate_snapshot.get("rcsd_selection_mode")) or candidate.source_stage,
+        required_rcsd_node=candidate.required_rcsd_node,
+        first_hit_rcsdroad_ids=unit.first_hit_rcsdroad_ids,
+        selected_rcsdroad_ids=candidate.rcsdroad_ids,
+        positive_rcsd_audit=unit.positive_rcsd_audit,
+        fact_reference_point_present=candidate.reference_point is not None and not candidate.reference_point.is_empty,
+        rcsd_alignment_type=candidate.rcsd_alignment_type,
+    ).to_doc()
+
+
+def _scenario_decision_kwargs(scenario_doc: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "surface_scenario_published": True,
+        "has_main_evidence": bool(scenario_doc["has_main_evidence"]),
+        "main_evidence_type": scenario_doc["main_evidence_type"],
+        "reference_point_present": bool(scenario_doc["reference_point_present"]),
+        "reference_point_source": scenario_doc["reference_point_source"],
+        "surface_scenario_type": scenario_doc["surface_scenario_type"],
+        "section_reference_source": scenario_doc["section_reference_source"],
+        "swsd_junction_present": bool(scenario_doc["swsd_junction_present"]),
+        "fallback_rcsdroad_ids": tuple(scenario_doc["fallback_rcsdroad_ids"]),
+        "surface_generation_mode": scenario_doc["surface_generation_mode"],
+        "no_reference_point_reason": scenario_doc["no_reference_point_reason"],
+        "rcsd_match_type": scenario_doc["rcsd_match_type"],
+    }
+
+
+def _decision_kwargs_from_unit_fields(fields: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "surface_scenario_published": True,
+        "has_main_evidence": bool(fields["has_main_evidence"]),
+        "main_evidence_type": fields["main_evidence_type"],
+        "reference_point_present": bool(fields["reference_point_present"]),
+        "reference_point_source": fields["reference_point_source"],
+        "surface_scenario_type": fields["surface_scenario_type"],
+        "section_reference_source": fields["section_reference_source"],
+        "swsd_junction_present": bool(fields["swsd_junction_present"]),
+        "fallback_rcsdroad_ids": tuple(fields["fallback_rcsdroad_ids"]),
+        "surface_generation_mode": fields["surface_generation_mode"],
+        "no_reference_point_reason": fields["no_reference_point_reason"],
+        "rcsd_match_type": fields["rcsd_match_type"],
+    }
 
 
 def _candidate_positive(candidate: T04Step4Candidate) -> bool:
@@ -233,14 +278,12 @@ def _decision_from_unit(
         positive_rcsd_support_level=fields["positive_rcsd_support_level"],
         positive_rcsd_consistency_level=fields["positive_rcsd_consistency_level"],
         rcsd_alignment_type=fields["rcsd_alignment_type"],
-        rcsd_match_type=fields["rcsd_match_type"],
         rcsd_selection_mode=fields["rcsd_selection_mode"],
         selected_evidence_summary=fields["selected_evidence_summary"],
         selected_candidate_summary=fields["selected_candidate_summary"],
         fact_reference_point=fields["fact_reference_point"],
         review_materialized_point=fields["review_materialized_point"],
-        surface_scenario_type=fields["surface_scenario_type"],
-        section_reference_source=fields["section_reference_source"],
+        **_decision_kwargs_from_unit_fields(fields),
         decision_trace=trace,
         downgrade_from=downgrade_from,
         downgrade_to=downgrade_to,
@@ -290,7 +333,6 @@ def _decision_from_candidate(
         positive_rcsd_support_level=candidate.support_level,
         positive_rcsd_consistency_level=candidate.consistency_level,
         rcsd_alignment_type=candidate.rcsd_alignment_type or RCSD_ALIGNMENT_NONE,
-        rcsd_match_type=rcsd_match_type_for_alignment(candidate.rcsd_alignment_type),
         rcsd_selection_mode=(
             _clean_text(candidate_snapshot.get("rcsd_selection_mode"))
             or _clean_text(selected_evidence_summary.get("rcsd_selection_mode"))
@@ -306,8 +348,7 @@ def _decision_from_candidate(
         review_materialized_point=(
             candidate.reference_point if candidate.reference_point is not None else unit.review_materialized_point
         ),
-        surface_scenario_type=scenario_doc["surface_scenario_type"],
-        section_reference_source=scenario_doc["section_reference_source"],
+        **_scenario_decision_kwargs(scenario_doc),
         decision_trace=trace,
         rcsd_replacement_due_to_main_evidence=candidate.replacement_reason in _MAIN_EVIDENCE_REPLACEMENT_REASONS,
         aggregate_rcsd_consistency_score=candidate.aggregate_consistency_score,
@@ -461,8 +502,7 @@ def arbitrate_step4_unit(
         selected_candidate_summary=dict(unit.selected_candidate_summary),
         fact_reference_point=unit.fact_reference_point,
         review_materialized_point=unit.review_materialized_point,
-        surface_scenario_type=scenario_doc["surface_scenario_type"],
-        section_reference_source=scenario_doc["section_reference_source"],
+        **_scenario_decision_kwargs(scenario_doc),
         decision_trace=trace,
     )
     return _apply_destructive_downgrade_guard(unit, decision, winner=None, context=case_context)
@@ -475,9 +515,10 @@ def apply_step4_arbitration_to_unit(
     mainnodeid: str = "",
     shadow_mode: bool | None = None,
 ) -> T04EventUnitResult:
-    ledger = unit.step4_candidate_ledger
-    if ledger is None:
-        return unit
+    ledger = unit.step4_candidate_ledger or T04Step4CandidateLedger(
+        unit_id=unit.spec.event_unit_id,
+        case_id=case_id,
+    )
     context = T04ArbiterCaseContext(
         case_id=case_id,
         unit_id=unit.spec.event_unit_id,

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import ast
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._step4_arbiter import (
+    apply_step4_arbitration_to_case_result,
     arbitrate_step4_unit,
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._step4_arbiter_models import (
@@ -233,7 +235,23 @@ def test_main_evidence_replacement_triggers_rearbitration_698389(tmp_path) -> No
 
 
 def test_scenario_reads_from_arbiter_not_derives(tmp_path) -> None:
-    case_result = _case_after_surface_binding("724067")
+    case_result = apply_step4_arbitration_to_case_result(_case_after_surface_binding("724067"))
+    unit = case_result.event_units[0]
+    assert unit.surface_scenario_published is True
+    mutated_unit = replace(
+        unit,
+        evidence_source="none",
+        selected_evidence_summary={},
+        selected_rcsdroad_ids=(),
+        selected_rcsdnode_ids=(),
+        required_rcsd_node=None,
+        positive_rcsd_present=False,
+        rcsd_alignment_type=RCSD_ALIGNMENT_NONE,
+    )
+    scenario_doc = mutated_unit.surface_scenario_doc()
+    assert scenario_doc["surface_scenario_type"] == unit.surface_scenario_type
+    assert scenario_doc["section_reference_source"] == unit.section_reference_source
+    assert scenario_doc["rcsd_match_type"] == unit.rcsd_match_type
     write_case_outputs(run_root=tmp_path, case_result=case_result)
     audit = json.loads(
         (tmp_path / "cases" / case_result.case_spec.case_id / "step4_audit.json").read_text(encoding="utf-8")

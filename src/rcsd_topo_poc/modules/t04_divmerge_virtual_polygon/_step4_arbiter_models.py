@@ -42,8 +42,17 @@ ARBITER_FINAL_FIELD_NAMES: tuple[str, ...] = (
     "selected_candidate_summary",
     "fact_reference_point",
     "review_materialized_point",
+    "surface_scenario_published",
+    "has_main_evidence",
+    "main_evidence_type",
+    "reference_point_present",
+    "reference_point_source",
     "surface_scenario_type",
     "section_reference_source",
+    "swsd_junction_present",
+    "fallback_rcsdroad_ids",
+    "surface_generation_mode",
+    "no_reference_point_reason",
 )
 
 
@@ -302,8 +311,17 @@ class T04ArbitrationDecision:
     selected_candidate_summary: dict[str, Any] = field(default_factory=dict)
     fact_reference_point: BaseGeometry | None = None
     review_materialized_point: BaseGeometry | None = None
+    surface_scenario_published: bool = True
+    has_main_evidence: bool = False
+    main_evidence_type: str = "none"
+    reference_point_present: bool = False
+    reference_point_source: str = "none"
     surface_scenario_type: str = "no_surface_reference"
     section_reference_source: str = "none"
+    swsd_junction_present: bool = False
+    fallback_rcsdroad_ids: tuple[str, ...] = ()
+    surface_generation_mode: str = "no_surface"
+    no_reference_point_reason: str = "no_surface_reference"
     decision_trace: tuple[dict[str, Any], ...] = ()
     downgrade_from: dict[str, Any] | None = None
     downgrade_to: dict[str, Any] | None = None
@@ -317,11 +335,28 @@ class T04ArbitrationDecision:
         object.__setattr__(self, "selected_rcsdnode_ids", _clean_id_tuple(self.selected_rcsdnode_ids))
         object.__setattr__(self, "rcsd_alignment_type", str(self.rcsd_alignment_type or RCSD_ALIGNMENT_NONE).strip())
         object.__setattr__(self, "rcsd_match_type", str(self.rcsd_match_type or "none").strip() or "none")
+        object.__setattr__(self, "main_evidence_type", str(self.main_evidence_type or "none").strip() or "none")
+        object.__setattr__(
+            self,
+            "reference_point_source",
+            str(self.reference_point_source or "none").strip() or "none",
+        )
         object.__setattr__(self, "surface_scenario_type", str(self.surface_scenario_type or "").strip())
         object.__setattr__(
             self,
             "section_reference_source",
             str(self.section_reference_source or "none").strip() or "none",
+        )
+        object.__setattr__(self, "fallback_rcsdroad_ids", _clean_id_tuple(self.fallback_rcsdroad_ids))
+        object.__setattr__(
+            self,
+            "surface_generation_mode",
+            str(self.surface_generation_mode or "no_surface").strip() or "no_surface",
+        )
+        object.__setattr__(
+            self,
+            "no_reference_point_reason",
+            str(self.no_reference_point_reason or "no_surface_reference").strip() or "no_surface_reference",
         )
         object.__setattr__(self, "selected_evidence_summary", dict(self.selected_evidence_summary))
         object.__setattr__(self, "selected_candidate_summary", dict(self.selected_candidate_summary))

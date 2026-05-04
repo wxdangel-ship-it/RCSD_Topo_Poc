@@ -539,6 +539,18 @@ def classify_surface_scenario_from_alignment(
 
 def classify_surface_scenario(
     *,
+    published_surface_scenario_type: str | None = None,
+    published_section_reference_source: str | None = None,
+    published_rcsd_match_type: str | None = None,
+    published_has_main_evidence: bool | None = None,
+    published_main_evidence_type: str | None = None,
+    published_reference_point_present: bool | None = None,
+    published_reference_point_source: str | None = None,
+    published_rcsd_alignment_type: str | None = None,
+    published_swsd_junction_present: bool | None = None,
+    published_fallback_rcsdroad_ids: Sequence[Any] | None = None,
+    published_surface_generation_mode: str | None = None,
+    published_no_reference_point_reason: str | None = None,
     evidence_source: str = "",
     selected_evidence_summary: Mapping[str, Any] | None = None,
     rcsd_selection_mode: str = "",
@@ -551,6 +563,24 @@ def classify_surface_scenario(
     required_rcsd_node_distance_to_representative_m: float | None = None,
     rcsd_alignment_type: str | None = None,
 ) -> SurfaceScenarioClassification:
+    if published_surface_scenario_type:
+        return SurfaceScenarioClassification(
+            has_main_evidence=bool(published_has_main_evidence),
+            main_evidence_type=_clean_text(published_main_evidence_type, MAIN_EVIDENCE_NONE),
+            reference_point_present=bool(published_reference_point_present),
+            reference_point_source=_clean_text(published_reference_point_source, MAIN_EVIDENCE_NONE),
+            section_reference_source=_clean_text(published_section_reference_source, SECTION_REFERENCE_NONE),
+            surface_scenario_type=_clean_text(published_surface_scenario_type, SCENARIO_NO_SURFACE_REFERENCE),
+            rcsd_alignment_type=normalize_rcsd_alignment_type(published_rcsd_alignment_type),
+            rcsd_match_type=_clean_text(published_rcsd_match_type, RCSD_MATCH_NONE),
+            swsd_junction_present=bool(published_swsd_junction_present),
+            fallback_rcsdroad_ids=_tuple_str(published_fallback_rcsdroad_ids),
+            surface_generation_mode=_clean_text(published_surface_generation_mode, SURFACE_MODE_NO_SURFACE),
+            no_reference_point_reason=_clean_text(
+                published_no_reference_point_reason,
+                SCENARIO_NO_SURFACE_REFERENCE,
+            ),
+        )
     evidence_source = _clean_text(evidence_source)
     rcsd_selection_mode = _clean_text(rcsd_selection_mode)
     main_evidence_type = _main_evidence_type(

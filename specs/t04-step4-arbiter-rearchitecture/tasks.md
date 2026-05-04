@@ -199,7 +199,7 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 - `test_scenario_reads_from_arbiter_not_derives` 通过。
 - 30-case + 39-case scenario 与 baseline 一致。
 
-**Status**：pending
+**Status**：completed
 
 ---
 
@@ -276,7 +276,7 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 | T-04a 候选生成器 dual-write | P0 | completed |
 | T-05 仲裁器实现（shadow mode） | P0 | completed |
 | T-04b 切换 normal mode + 移除旧写回 | P0 | completed |
-| T-06 surface_scenario / outputs 改造 | P1 | pending |
+| T-06 surface_scenario / outputs 改造 | P1 | completed |
 | T-07 audit / review_index 字段扩充 | P1 | pending |
 | T-08 测试整合 + baseline 期望表更新 | P0 | pending |
 | T-09 文档定稿 | P0 | pending |

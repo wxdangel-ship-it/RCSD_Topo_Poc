@@ -395,6 +395,18 @@ class T04EventUnitResult:
     image_path: str = ""
     step4_candidate_ledger: T04Step4CandidateLedger | None = None
     dual_write_manifest: tuple[dict[str, Any], ...] = ()
+    surface_scenario_published: bool = False
+    has_main_evidence: bool = False
+    main_evidence_type: str = "none"
+    reference_point_present: bool = False
+    reference_point_source: str = "none"
+    section_reference_source: str = "none"
+    surface_scenario_type: str = "no_surface_reference"
+    rcsd_match_type: str = "none"
+    swsd_junction_present: bool = False
+    fallback_rcsdroad_ids: tuple[str, ...] = ()
+    surface_generation_mode: str = "no_surface"
+    no_reference_point_reason: str = "no_surface_reference"
 
     @property
     def selected_divstrip_geometry(self) -> BaseGeometry | None:
@@ -430,6 +442,21 @@ class T04EventUnitResult:
 
     @property
     def surface_scenario(self) -> SurfaceScenarioClassification:
+        if self.surface_scenario_published:
+            return classify_surface_scenario(
+                published_surface_scenario_type=self.surface_scenario_type,
+                published_section_reference_source=self.section_reference_source,
+                published_rcsd_match_type=self.rcsd_match_type,
+                published_has_main_evidence=self.has_main_evidence,
+                published_main_evidence_type=self.main_evidence_type,
+                published_reference_point_present=self.reference_point_present,
+                published_reference_point_source=self.reference_point_source,
+                published_rcsd_alignment_type=self.rcsd_alignment_type or RCSD_ALIGNMENT_NONE,
+                published_swsd_junction_present=self.swsd_junction_present,
+                published_fallback_rcsdroad_ids=self.fallback_rcsdroad_ids,
+                published_surface_generation_mode=self.surface_generation_mode,
+                published_no_reference_point_reason=self.no_reference_point_reason,
+            )
         evidence_source = self.evidence_source
         selected_evidence_summary = self.selected_evidence_summary
         explicit_swsd_junction_present: bool | None = None

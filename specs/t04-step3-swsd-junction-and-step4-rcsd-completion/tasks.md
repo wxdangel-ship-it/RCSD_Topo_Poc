@@ -12,7 +12,7 @@
 - [x] 确认 `spec.md §7` 五条冻结决策（D1–D5）已于 2026-05-04 由用户授权，implement 阶段直接遵守。
 - [x] **D2 守门 dry-run**（必须先做，再开始任何代码修改）：
   - [x] 用当前 main 分支跑 `505078921` 与 `17943587` 两个 case 的 Step3，导出 `event_units/<id>/step3_status.json` 中 `unit_envelope.to_status_doc()` 输出，落到 `notes/d2-baseline-505078921.json` 与 `notes/d2-baseline-17943587.json`。
-  - [ ] Phase 1 完成后再次导出，与 `notes/d2-baseline-*.json` **逐字段比对必须完全相同**；任何差异立即停机回报。
+  - [x] Phase 1 完成后再次导出，与 `notes/d2-baseline-*.json` **逐字段比对必须完全相同**；任何差异立即停机回报。
 - [x] 修订 `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md`：
   - [x] §2 增加 §2.4 *SWSD 语义路口实体* 与 §2.5 *RCSD 语义路口实体 / RCSDRoad-only chain*。
   - [x] §3 增加 §3.x *swsd_rcsd_alignment_consistent 枚举值域* 与 §3.x *rcsd_consistency_result 冻结值域*。
@@ -32,32 +32,32 @@
 
 ## Phase 1 — `SWSDSemanticJunction` Dataclass & Recall
 
-- [ ] 字节数前置自检：`_runtime_step23_contracts.py / _runtime_step3_topology_skeleton.py / topology.py`。
-- [ ] 在 `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step23_contracts.py` 新增：
-  - [ ] `@dataclass(frozen=True) class SWSDSemanticArm` —— `arm_id / direction / angle_deg / first_branch_id / first_road_ids / inter_junction_connector_road_ids / terminal_node_id / terminal_kind / neighbor_semantic_junction_id / continuation_through_micro_junction`。
-  - [ ] `@dataclass(frozen=True) class SWSDSemanticJunction` —— `junction_id / member_node_ids / intra_junction_road_ids / semantic_arms / unstable_reasons / source = "step3_topology_skeleton"`。
-  - [ ] `Stage4TopologySkeleton` 增字段 `swsd_semantic_junction: SWSDSemanticJunction`；`to_audit_summary` 同步输出。
-- [ ] 在 `_runtime_step3_topology_skeleton.py` 实现：
-  - [ ] `_collect_intra_junction_road_ids(local_roads, augmented_member_node_ids) -> tuple[str, ...]`：与现 `_build_road_branches_for_member_nodes.internal_road_ids` 行为对齐，但用 *augmented* member 集合。
-  - [ ] `_walk_arm_to_neighbor_semantic_junction(seed_branch, local_roads, member_node_ids, semantic_mainnodeids) -> tuple[tuple[str,...], str, str, str | None, bool]` —— 返回 `(connector_road_ids, terminal_node_id, terminal_kind, neighbor_junction_id, continuation_through_micro_junction)`。
+- [x] 字节数前置自检：`_runtime_step23_contracts.py / _runtime_step3_topology_skeleton.py / topology.py`。
+- [x] 在 `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step23_contracts.py` 新增：
+  - [x] `@dataclass(frozen=True) class SWSDSemanticArm` —— `arm_id / direction / angle_deg / first_branch_id / first_road_ids / inter_junction_connector_road_ids / terminal_node_id / terminal_kind / neighbor_semantic_junction_id / continuation_through_micro_junction`。
+  - [x] `@dataclass(frozen=True) class SWSDSemanticJunction` —— `junction_id / member_node_ids / intra_junction_road_ids / semantic_arms / unstable_reasons / source = "step3_topology_skeleton"`。
+  - [x] `Stage4TopologySkeleton` 增字段 `swsd_semantic_junction: SWSDSemanticJunction`；`to_audit_summary` 同步输出。
+- [x] 在 `_runtime_step3_topology_skeleton.py` 实现：
+  - [x] `_collect_intra_junction_road_ids(local_roads, augmented_member_node_ids) -> tuple[str, ...]`：与现 `_build_road_branches_for_member_nodes.internal_road_ids` 行为对齐，但用 *augmented* member 集合。
+  - [x] `_walk_arm_to_neighbor_semantic_junction(seed_branch, local_roads, member_node_ids, semantic_mainnodeids) -> tuple[tuple[str,...], str, str, str | None, bool]` —— 返回 `(connector_road_ids, terminal_node_id, terminal_kind, neighbor_junction_id, continuation_through_micro_junction)`。
     - 默认沿 degree==2 passthrough chain；
     - 遇 degree==3 时一次性穿透（角度连续 guard）；
     - 终止条件：`degree>=3 且不属于 member_node_ids` / `degree==1` / 退出 patch。
-  - [ ] `_build_swsd_semantic_junction(branch_result, local_roads, local_nodes, representative_node) -> SWSDSemanticJunction`。
-- [ ] `_build_stage4_topology_skeleton` 末段调用 `_build_swsd_semantic_junction`，写入 `Stage4TopologySkeleton.swsd_semantic_junction`。
-- [ ] 字节数复检：以上 `.py` 文件未首次跨 100 KB；如有，按 §3 拆分并同步 `code-size-audit.md`。
-- [ ] `topology.build_step3_status_doc` 顶层加 `swsd_semantic_junction` 字段。
-- [ ] `topology.build_unit_step3_status_doc` 加 `swsd_junction_ref / unit_owned_arm_ids / sibling_unit_arm_ids`（基于 unit 的 `event_branch_ids / boundary_branch_ids` 与 `swsd_semantic_arms[].first_branch_id` 配对）。
-- [ ] `outputs.write_case_outputs` 中 `step3_status.json` / `step3_audit.json` 写入点同步新字段。
-- [ ] 单元测试 `tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py`：
-  - [ ] 三 arm + 一条 internal road → `intra/connector` 拆分正确。
-  - [ ] degree==3 micro-junction 一次性穿透 → `continuation_through_micro_junction = true`。
-  - [ ] degree==1 dead end → `terminal_kind = dead_end`。
-  - [ ] 退出 patch → `terminal_kind = patch_boundary` 且 `inter_junction_connector_road_ids` 仅含 patch 内 ID（**D3 决策**）。
-  - [ ] sibling internal node（continuous complex）合并到 `member_node_ids`（**D2 决策范围**）。
-  - [ ] **D1 决策守门**：断言 `SWSDSemanticArm.angle_deg == 对应 BranchEvidence.angle_deg`（绝对相等，无浮点容差）。
-- [ ] **D2 决策守门**：跑完 Phase 1 后立即与 Phase 0 的 `notes/d2-baseline-505078921.json / d2-baseline-17943587.json` 逐字段比对；差异为 0 才能进入 Phase 2。任何差异 → 停机回报。
-- [ ] dry-run 守门 case：`505078921` / `17943587` / `760213` / `857993`；输出快照对比，确认 unit envelope sibling 切分未漂移。
+  - [x] `_build_swsd_semantic_junction(branch_result, local_roads, local_nodes, representative_node) -> SWSDSemanticJunction`。
+- [x] `_build_stage4_topology_skeleton` 末段调用 `_build_swsd_semantic_junction`，写入 `Stage4TopologySkeleton.swsd_semantic_junction`。
+- [x] 字节数复检：以上 `.py` 文件未首次跨 100 KB；如有，按 §3 拆分并同步 `code-size-audit.md`。
+- [x] `topology.build_step3_status_doc` 顶层加 `swsd_semantic_junction` 字段。
+- [x] `topology.build_unit_step3_status_doc` 加 `swsd_junction_ref / unit_owned_arm_ids / sibling_unit_arm_ids`（基于 unit 的 `event_branch_ids / boundary_branch_ids` 与 `swsd_semantic_arms[].first_branch_id` 配对）。
+- [x] `outputs.write_case_outputs` 中 `step3_status.json` / `step3_audit.json` 写入点同步新字段（通过 Step3 status doc 构造链路持久化，无需改动输出入口）。
+- [x] 单元测试 `tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py`：
+  - [x] 三 arm + 一条 internal road → `intra/connector` 拆分正确。
+  - [x] degree==3 micro-junction 一次性穿透 → `continuation_through_micro_junction = true`。
+  - [x] degree==1 dead end → `terminal_kind = dead_end`。
+  - [x] 退出 patch → `terminal_kind = patch_boundary` 且 `inter_junction_connector_road_ids` 仅含 patch 内 ID（**D3 决策**）。
+  - [x] sibling internal node（continuous complex）合并到 `member_node_ids`（**D2 决策范围**）。
+  - [x] **D1 决策守门**：断言 `SWSDSemanticArm.angle_deg == 对应 BranchEvidence.angle_deg`（绝对相等，无浮点容差）。
+- [x] **D2 决策守门**：跑完 Phase 1 后立即与 Phase 0 的 `notes/d2-baseline-505078921.json / d2-baseline-17943587.json` 逐字段比对；差异为 0 才能进入 Phase 2。任何差异 → 停机回报。
+- [x] dry-run 守门 case：`505078921` / `17943587` / `760213` / `857993`；输出快照对比，确认 unit envelope sibling 切分未漂移。
 
 完成回报：新增 dataclass schema + 测试结果 + 守门 case 快照差异（应为 0）。
 

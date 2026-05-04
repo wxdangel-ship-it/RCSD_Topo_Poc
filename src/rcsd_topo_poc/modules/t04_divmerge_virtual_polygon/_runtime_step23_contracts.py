@@ -133,6 +133,54 @@ class Stage4BranchResult:
 
 
 @dataclass(frozen=True)
+class SWSDSemanticArm:
+    arm_id: str
+    direction: str
+    angle_deg: float
+    first_branch_id: str
+    first_road_ids: tuple[str, ...]
+    inter_junction_connector_road_ids: tuple[str, ...]
+    terminal_node_id: str
+    terminal_kind: str
+    neighbor_semantic_junction_id: str | None
+    continuation_through_micro_junction: bool
+
+    def to_status_doc(self) -> dict[str, Any]:
+        return {
+            "arm_id": self.arm_id,
+            "direction": self.direction,
+            "angle_deg": self.angle_deg,
+            "first_branch_id": self.first_branch_id,
+            "first_road_ids": list(self.first_road_ids),
+            "inter_junction_connector_road_ids": list(self.inter_junction_connector_road_ids),
+            "terminal_node_id": self.terminal_node_id,
+            "terminal_kind": self.terminal_kind,
+            "neighbor_semantic_junction_id": self.neighbor_semantic_junction_id,
+            "continuation_through_micro_junction": self.continuation_through_micro_junction,
+        }
+
+
+@dataclass(frozen=True)
+class SWSDSemanticJunction:
+    junction_id: str
+    member_node_ids: tuple[str, ...]
+    intra_junction_road_ids: tuple[str, ...]
+    semantic_arms: tuple[SWSDSemanticArm, ...]
+    unstable_reasons: tuple[str, ...]
+    source: str = "step3_topology_skeleton"
+
+    def to_status_doc(self) -> dict[str, Any]:
+        return {
+            "junction_id": self.junction_id,
+            "member_node_ids": list(self.member_node_ids),
+            "intra_junction_road_ids": list(self.intra_junction_road_ids),
+            "semantic_arms": [arm.to_status_doc() for arm in self.semantic_arms],
+            "unstable_reasons": list(self.unstable_reasons),
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True)
 class Stage4ChainContext:
     chain_component_id: str | None
     related_mainnodeids: tuple[str, ...]
@@ -196,12 +244,14 @@ class Stage4TopologySkeleton:
     branch_result: Stage4BranchResult
     chain_context: Stage4ChainContext
     stability: Stage4SkeletonStability
+    swsd_semantic_junction: SWSDSemanticJunction
 
     def to_audit_summary(self) -> dict[str, Any]:
         return {
             "branch_result": self.branch_result.to_audit_summary(),
             "chain_context": self.chain_context.to_audit_summary(),
             "stability": self.stability.to_audit_summary(),
+            "swsd_semantic_junction": self.swsd_semantic_junction.to_status_doc(),
         }
 
 

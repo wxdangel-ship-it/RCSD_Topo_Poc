@@ -69,11 +69,20 @@ def test_t04_step14_batch_writes_unit_level_step3_and_candidate_docs(tmp_path: P
     evidence_audit_doc = json.loads((unit_dir / "step4_evidence_audit.json").read_text(encoding="utf-8"))
 
     assert case_step3["topology_scope"] == "case_coordination"
+    assert case_step3["swsd_semantic_junction"]["junction_id"] == "1001"
+    assert {
+        road_id
+        for arm in case_step3["swsd_semantic_junction"]["semantic_arms"]
+        for road_id in arm["inter_junction_connector_road_ids"]
+    } == {"1", "2", "3"}
     assert unit_step3["topology_scope"] == "case_coordination"
     assert unit_step3["event_branch_ids"] == ["road_3"]
     assert unit_step3["boundary_branch_ids"] == ["road_1", "road_2", "road_3"]
     assert unit_step3["preferred_axis_branch_id"] == "road_1"
     assert unit_step3["degraded_scope_reason"] == "pair_local_scope_roads_empty"
+    assert unit_step3["swsd_junction_ref"] == "1001"
+    assert unit_step3["unit_owned_arm_ids"]
+    assert unit_step3["sibling_unit_arm_ids"] == []
 
     selected_evidence = candidate_doc["selected_evidence"]
     assert candidate_doc["selected_evidence_state"] == "found"

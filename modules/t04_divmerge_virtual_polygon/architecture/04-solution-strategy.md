@@ -83,12 +83,14 @@ T04 采用“业务主链 + 工程编排层”的分工：
 
 - 顶层 `step3_status.json / step3_audit.json`。
 - event-unit 级 `event_units/<event_unit_id>/step3_status.json`。
+- case-level `SWSDSemanticJunction`，以及 unit 级 `swsd_junction_ref / unit_owned_arm_ids / sibling_unit_arm_ids`。
 
 实现策略：
 
 - 由 `topology.py` 的 `build_step3_topology(...)` 生成 skeleton。
 - 顶层 case coordination skeleton 负责 member population、chain context、event-unit population 和 case overview。
 - event-unit executable skeleton 才是 Step4 的执行输入，包含 `event_branch_ids / boundary_branch_ids / preferred_axis_branch_id` 等 unit-local 信息。
+- Step3 同步实体化 `SWSDSemanticJunction`：以 representative node `mainnodeid` 作为 `junction_id`，以 case-level 合并节点集合判定 `intra_junction_road_ids`，并沿 patch 内语义 arm 输出 `inter_junction_connector_road_ids` 与终端状态。
 - continuous complex / merge 场景下，unit population 仍锚定当前 representative node；但如果 same-case sibling internal node 之后仍保持同一 `(L, R)` pair-middle 语义，executable branch 允许沿合法 continuation 延续，硬上限为 `200m`。
 - sibling node 上的 continuation 选择顺序固定为：先对齐 `external associated road`，再确认 `L' / R'` 中间没有其他 road，保持左右顺序，最后才用最小转角做 tie-breaker。
 - multi-diverge / multi-merge 必须保留 `ordered_side_branch_ids / adjacent_side_pairs / unit_boundary_branch_ids / preferred_axis_branch_id`，不得把多方向过度压扁成单 pair。
@@ -118,6 +120,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - `step4_status.json / step4_audit.json`。
 - `event_units/<event_unit_id>/step4_status.json`。
 - `event_units/<event_unit_id>/step4_candidates.json`。
+- `RCSDSemanticJunction`、`RCSDRoadOnlyChain` 与 `swsd_rcsd_alignment_consistent` 一致性 verdict。
 - event-unit review PNG 与 flat mirror。
 
 实现策略：
@@ -132,6 +135,8 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - `RCSD 语义路口` 必须表示召回 RCSD 路口与当前 SWSD 路口语义一致：进入道路、退出道路和角度趋势与当前事件对齐。仅存在 RCSD 数据、RCSDRoad 趋势一致、或 RCSD 聚合结果缺少进入 / 退出道路时，不得称为 RCSD 语义路口。
 - 无 RCSD 语义路口不等于无 RCSD 数据：该状态可包含趋势一致但不成路口的 RCSDRoad、缺进入 / 退出道路的 RCSD 局部结构或弱聚合结果；这些对象只能作为 fallback、趋势参考或审计辅助。
 - Step4 或 Step4/5 交界处必须输出 `surface_scenario_type` 与唯一 `rcsd_alignment_type`。`surface_scenario_type` 按主证据、RCSD 对齐类型和 SWSD 可用性区分六类业务场景；`rcsd_alignment_type` 至少区分 `rcsd_semantic_junction / rcsd_junction_partial_alignment / rcsdroad_only_alignment / no_rcsd_alignment / ambiguous_rcsd_alignment`。Step5 及之后不重新选择 RCSD 候选，只消费 Step4 的唯一对齐结果。
+- 当 `rcsd_alignment_type` 指向完整或 partial 路口级对象时，Step4 必须输出可追溯的 `RCSDSemanticJunction`；当仅有 road-only 正向对象时，必须输出 `RCSDRoadOnlyChain` 的端点、闭合状态、方向一致性证据和唯一性证明。
+- Step4 必须把 RCSD/SWSD 关系聚合为单一 `swsd_rcsd_alignment_consistent` verdict，并保持 `rcsd_consistency_result` 只取冻结值域。
 - 六类主业务场景的截面边界来源固定为：
   - `main_evidence_with_rcsd_junction`：有主证据 + 完整 RCSD 语义路口。Reference Point 来自主证据；两个终止截面由 `Reference Point + RCSD 语义路口` 共同确定。SWSD 不参与截面边界构建。
   - `main_evidence_with_rcsdroad_fallback`：有主证据 + 无完整 RCSD 语义路口但存在可用 RCSD 对齐对象。若 `rcsd_alignment_type = rcsd_junction_partial_alignment`，两个终止截面由 `Reference Point + RCSD partial junction` 共同确定；若 `rcsd_alignment_type = rcsdroad_only_alignment`，两个终止截面由 `Reference Point` 自身前后 `20m` 构成。SWSD 不参与截面边界构建。
@@ -182,6 +187,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - 将 `section_reference_source / section_reference_geometry` 转换为支撑域时，默认以前后 `20m` 生成横向截面，横向截面垂直于道路面方向或语义主轴。
 - 两个截面之间应铺满可通行道路面，路口面两侧横向扩展不得超过 `20m`。
 - 负向掩膜不得被越过，至少包括导流带、hard negative mask、forbidden domain、terminal cut 与不可通行区域。
+- Step5 不再执行 SWSD 相关道路召回判定；相关 SWSD road / arm / semantic-road 集合必须消费 Step3 的 `SWSDSemanticJunction` 实体派生。
 - RCSDRoad fallback 只能纳入与当前分歧 / 合流事实或当前 SWSD/RCSD section reference 相关的局部段，不得沿整条 RCSDRoad 远距离扩张。
 - 对同时具备主证据 Reference Point 与 required RCSDNode 的场景，可在 DriveZone 内按语义主轴构造 `junction_full_road_fill_domain`，并受 forbidden masks、terminal cuts 与横向 `20m` 限制硬约束；若无主证据，则只能记录 section reference 与支撑域来源。
 

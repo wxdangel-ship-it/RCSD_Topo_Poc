@@ -1,0 +1,175 @@
+{
+  "node_505078921": {
+    "boundary_branch_ids": [
+      "road_2",
+      "road_3"
+    ],
+    "branch_bridge_node_ids": {
+      "road_1": [],
+      "road_2": [],
+      "road_3": [
+        "510222629"
+      ]
+    },
+    "branch_ids": [
+      "road_1",
+      "road_2",
+      "road_3"
+    ],
+    "branch_road_memberships": {
+      "road_1": [
+        "630032547"
+      ],
+      "road_2": [
+        "628821459"
+      ],
+      "road_3": [
+        "523221193",
+        "507356446"
+      ]
+    },
+    "context_augmented_node_ids": [],
+    "degraded_scope_fallback_used": true,
+    "degraded_scope_reason": "pair_local_scope_roads_empty",
+    "degraded_scope_severity": "soft",
+    "event_branch_ids": [
+      "road_2",
+      "road_3"
+    ],
+    "input_branch_ids": [
+      "road_1"
+    ],
+    "main_branch_ids": [
+      "road_1",
+      "road_2",
+      "road_3"
+    ],
+    "output_branch_ids": [
+      "road_2",
+      "road_3"
+    ],
+    "preferred_axis_branch_id": "road_1",
+    "topology_scope": "single_node_event_input",
+    "unit_population_node_ids": [
+      "505078921"
+    ]
+  },
+  "node_510222629": {
+    "boundary_branch_ids": [
+      "road_1",
+      "road_2"
+    ],
+    "branch_bridge_node_ids": {
+      "road_1": [],
+      "road_2": [],
+      "road_3": [],
+      "road_4": []
+    },
+    "branch_ids": [
+      "road_1",
+      "road_2",
+      "road_3",
+      "road_4"
+    ],
+    "branch_road_memberships": {
+      "road_1": [
+        "526176929"
+      ],
+      "road_2": [
+        "526176876"
+      ],
+      "road_3": [
+        "523221193"
+      ],
+      "road_4": [
+        "507356446"
+      ]
+    },
+    "context_augmented_node_ids": [],
+    "degraded_scope_fallback_used": true,
+    "degraded_scope_reason": "pair_local_scope_roads_empty",
+    "degraded_scope_severity": "soft",
+    "event_branch_ids": [
+      "road_1",
+      "road_2"
+    ],
+    "input_branch_ids": [
+      "road_1",
+      "road_2",
+      "road_3"
+    ],
+    "main_branch_ids": [
+      "road_1",
+      "road_2",
+      "road_3",
+      "road_4"
+    ],
+    "output_branch_ids": [
+      "road_4"
+    ],
+    "preferred_axis_branch_id": "road_4",
+    "topology_scope": "single_node_event_input",
+    "unit_population_node_ids": [
+      "510222629"
+    ]
+  },
+  "node_510222629__pair_02": {
+    "boundary_branch_ids": [
+      "road_2",
+      "road_3"
+    ],
+    "branch_bridge_node_ids": {
+      "road_1": [],
+      "road_2": [],
+      "road_3": [],
+      "road_4": []
+    },
+    "branch_ids": [
+      "road_1",
+      "road_2",
+      "road_3",
+      "road_4"
+    ],
+    "branch_road_memberships": {
+      "road_1": [
+        "526176929"
+      ],
+      "road_2": [
+        "526176876"
+      ],
+      "road_3": [
+        "523221193"
+      ],
+      "road_4": [
+        "507356446"
+      ]
+    },
+    "context_augmented_node_ids": [],
+    "degraded_scope_fallback_used": true,
+    "degraded_scope_reason": "pair_local_scope_roads_empty",
+    "degraded_scope_severity": "soft",
+    "event_branch_ids": [
+      "road_2",
+      "road_3"
+    ],
+    "input_branch_ids": [
+      "road_1",
+      "road_2",
+      "road_3"
+    ],
+    "main_branch_ids": [
+      "road_1",
+      "road_2",
+      "road_3",
+      "road_4"
+    ],
+    "output_branch_ids": [
+      "road_4"
+    ],
+    "preferred_axis_branch_id": "road_4",
+    "topology_scope": "single_node_event_input",
+    "unit_population_node_ids": [
+      "510222629"
+    ]
+  }
+}

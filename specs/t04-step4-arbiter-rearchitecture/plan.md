@@ -12,15 +12,17 @@ T-02 契约修订草案（INTERFACE_CONTRACT / architecture / code-size-audit）
    ↓
 T-03 ledger 数据结构 + 评分层 schema
    ↓
-T-04 候选生成器降级为只追加 ledger（不写 selected_*）
+T-04a 候选生成器 dual-write（保留旧 replace + 新增 ledger.append）
    ↓
-T-05 仲裁器实现（含 destructive_downgrade_guard + best-so-far + main-evidence re-arbitration）
+T-05 仲裁器实现（默认 shadow mode：只写 audit，不改 unit）
+   ↓
+T-04b 切换 normal mode + 移除旧写回（按 dual_write_manifest 逐项收缩）
    ↓
 T-06 surface_scenario / outputs 改为消费仲裁结果
    ↓
 T-07 audit / review_index / review_summary 字段扩充
    ↓
-T-08 测试用例落地（新增 7 个 + 30-case + 39-case 回归）
+T-08 测试整合 + baseline 期望表更新
    ↓
 T-09 文档定稿（契约修订正式落地、code-size-audit 同步）
    ↓
@@ -103,6 +105,10 @@ def arbitrate_step4_unit(
 ### 3.3 研发视角
 - T-01 拆分前置先行；候选生成器降级；仲裁器单一写入入口（评估后建议合为 `build_case_result` 末尾单次调用）。
 - 兼容层：`STEP4_ARBITER_SHADOW_MODE` 开关，shadow 时仲裁器只写 audit、不覆盖 unit 字段。
+- T-04 拆分为 T-04a（dual-write）/ T-05（shadow arbiter）/ T-04b（switch-over）三段，对应 Parallel Change（Expand-Migrate-Contract）模式。
+- T-04a 必须产出 `dual_write_manifest`（写入 `step4_audit.json` 顶层），作为 T-04b 收缩阶段的 checklist；T-04b 必须按 manifest 双向静态扫描（旧 replace 已死 + 新 append 完整）。
+- T-05 默认 shadow mode；shadow 期间 ledger 与 unit 字段双轨并存，仲裁器只读 ledger 只写 audit；30-case + 39-case 在 shadow 阶段必须与 baseline 完全一致。
+- T-04b 是真正的业务字段切换点；切换前必须在 T-05 stop 点完成 shadow diff 视觉确认。
 
 ### 3.4 测试视角
 

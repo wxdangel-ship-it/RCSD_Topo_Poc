@@ -71,22 +71,55 @@
 
 ---
 
-## T-04 候选生成器降级 · P0
+## T-04a 候选生成器 dual-write（ledger 影子捕获）· P0
 
-**目标**：所有候选生成器函数只产出 `list[T04Step4Candidate]`，不再写 `T04EventUnitResult.selected_*` 与 `positive_rcsd_*`。
+**目标**：候选生成器在保留现有 `replace(unit, selected_*=...) / replace(unit, positive_rcsd_*=...) / replace(unit, rcsd_alignment_type=...) / replace(unit, selected_evidence_summary=...)` 写回的**同时**，并行追加 `T04Step4CandidateLedger`。ledger 仅写入 audit；不影响 `T04EventUnitResult` 字段发布。
 
-**改造文件清单**：见 `plan.md §2.1`。
-- 所有 `_bind_strong_rcsd_to_surface / _promote_* / _downgrade_* / _recover_* / _retain_* / _clear_* / _restore_divstrip_primary_for_wide_surface_fork / align_*_swsd_unit_to_rcsdroad / apply_rcsd_anchored_reverse_lookup / resolve_step4_final_conflicts / _apply_required_node_claim` 改造为追加 ledger 候选 + 保留 audit blob。
-- `apply_road_surface_fork_binding` facade、`apply_rcsd_anchored_reverse_lookup`、`resolve_step4_final_conflicts` 签名锁定不变。
-- `_event_interpretation_core._evaluate_unit_candidate` 的 `no_bound_target_rcsd` 分支：改为追加候选 + 由仲裁器决定。
-- `event_interpretation.build_case_result`：构造 ledger + 调仲裁器（T-05 提供）。
+**改造文件**（仅追加 `ledger.append(...)`，不删除任何现有写回）：
+- `step4_road_surface_fork_binding_forward.py` `_bind_strong_rcsd_to_surface`
+- `step4_road_surface_fork_binding_promotions.py` `_promote_selected_surface_rcsd_junction_window / _promote_selected_surface_partial_rcsd / _downgrade_far_surface_rcsd_to_swsd_window / _promote_relaxed_primary_rcsd_binding`
+- `step4_road_surface_fork_binding_recovery.py` `_recover_surface_from_candidate`
+- `step4_road_surface_fork_binding_cleanup.py` `_retain_structure_only_surface_candidate / _clear_unbound_surface_candidate`
+- `step4_road_surface_fork_binding_divstrip.py` `_restore_divstrip_primary_for_wide_surface_fork`
+- `step4_road_surface_fork_binding_swsd_rcsdroad.py` `align_complex_swsd_units_to_shared_rcsdroad / align_single_swsd_unit_to_rcsdroad`
+- `step4_rcsd_anchored_reverse.py` `apply_rcsd_anchored_reverse_lookup`
+- `step4_final_conflict_resolver.py` `resolve_step4_final_conflicts / _apply_required_node_claim`
+- `_event_interpretation_core.py` `_evaluate_unit_candidate` 的 `no_bound_target_rcsd` 分支
+- `outputs.py`：把 ledger 写入 `step4_audit.json` 顶层 `step4_candidate_ledger` 键。
 
-**静态扫描断言**：仓库内 `replace(.*selected_rcsdroad_ids|selected_rcsdnode_ids|required_rcsd_node|positive_rcsd_present|rcsd_alignment_type|rcsd_selection_mode|selected_evidence_summary)` 写入点降到只剩仲裁器一处（旧 `_replace_unit` 工具函数保留，调用路径仅来自仲裁器）。
+**强制产物：dual_write_manifest**
+T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T-04b 的 checklist：
+
+```json
+{
+  "dual_write_manifest": [
+    {
+      "file": "step4_road_surface_fork_binding_forward.py",
+      "line": 164,
+      "function": "_bind_strong_rcsd_to_surface",
+      "source_stage": "forward_bind",
+      "fields_written": ["selected_rcsdroad_ids", "selected_rcsdnode_ids", "required_rcsd_node", "positive_rcsd_present", "rcsd_alignment_type", "rcsd_selection_mode"]
+    },
+    ...
+  ]
+}
+```
+
+每条记录对应"新增 ledger.append + 保留旧 replace"的一对位置。
+
+**约束**：
+- 不引入 `_step4_arbiter.py / _step4_candidate_scoring.py`。
+- 不调用任何仲裁器。
+- ledger.append 必须捕获完整 `T04Step4Candidate` 字段（spec FR-001 全集），含 `source_stage / candidate_id / source_audit_blob`。
+- 不修改 `T04EventUnitResult.selected_*` 任何写回路径的语义。
 
 **验证**：
-- `test_ledger_append_only_no_writeback` 通过。
-- `test_arbiter_writes_final_fields_once` 通过（静态扫描）。
-- 30-case + 39-case shadow mode dry-run 与 baseline 一致。
+- `pytest tests/modules/t04_divmerge_virtual_polygon/ -x` 全量通过。
+- 30-case + 39-case 全量回归与 baseline **完全一致**（dual-write 不改业务字段）。
+- `step4_audit.json` 100% case 含 `step4_candidate_ledger` 与 `dual_write_manifest` 顶层键。
+- 新增轻量测试 `test_ledger_dual_write_parity`：断言每次生成器写 unit 时 ledger 同步追加了对应候选，字段一致性校验。
+
+**完成后停机汇报**："T-04a 完成，dual_write_manifest 含 N 条记录，30-case + 39-case baseline 与 main 一致，等待 T-05 启动确认。"
 
 **Status**：pending
 
@@ -114,6 +147,40 @@
 - 关闭 shadow mode 后 30-case + 39-case 全量回归通过。
 
 **完成后停机汇报**：shadow mode dry-run 报告 + 决策差异列表 → 等用户确认后再切 normal mode。
+
+**与 T-04a / T-04b 的关系**：
+- T-05 进入时，T-04a 的 dual-write 已就位：每个生成器同时写 unit 字段（旧路径）与 ledger（新路径）。
+- T-05 默认开启 shadow mode：仲裁器读 ledger → 计算决策 → 仅写 `step4_audit.json` 的 `arbitration_decision_trace` 与 `arbitration_decision_shadow`。**不写** `T04EventUnitResult`，**不删除** T-04a 保留的旧写回。
+- shadow 期间 30-case + 39-case 全量回归仍与 baseline 完全一致。
+- T-05 stop 点的 dry-run 报告必须列出每个 case 的 `arbitration_decision_shadow` 与 unit 实际字段差异，按"预期变化（698389 类）/ rejected baseline 不变 / 其他差异"分类，等用户逐项确认。
+
+**Status**：pending
+
+---
+
+## T-04b 切换 normal mode + 移除旧写回 · P0
+
+**前置**：T-05 stop 点用户已确认 shadow diff 符合预期。
+
+**目标**：把仲裁器从 shadow mode 切到 normal mode，移除候选生成器内的旧 `replace(unit, ...)` 写回路径，使仲裁器成为 Step4 唯一写最终字段的位置。
+
+**改造**：
+- `event_interpretation.build_case_result` 末尾：仲裁器决策从"仅写 audit"改为 `replace(unit, **decision.as_field_kwargs())` 写入 unit。
+- 候选生成器（T-04a 改过的同一组文件）：按 T-04a 产出的 `dual_write_manifest` 逐项删除旧 `replace(unit, selected_*=...) / replace(unit, positive_rcsd_*=...) / replace(unit, rcsd_alignment_type=...) / replace(unit, selected_evidence_summary=...)` 等写回；**保留** ledger.append。
+- `_replace_unit` 工具函数保留，但调用方仅来自仲裁器。
+- shadow mode 开关默认值切换为 false（仅保留环境变量逃生口）。
+
+**双向静态扫描断言**（必须通过才算完成）：
+- 反向断言（旧路径已死）：仓库内对 `selected_rcsdroad_ids / selected_rcsdnode_ids / required_rcsd_node / required_rcsd_node_source / positive_rcsd_present / positive_rcsd_present_reason / positive_rcsd_support_level / positive_rcsd_consistency_level / rcsd_alignment_type / rcsd_match_type / rcsd_selection_mode / selected_evidence_summary / selected_candidate_summary / fact_reference_point / review_materialized_point / surface_scenario_type / section_reference_source` 字段族的 `replace(...)` 写入位置只剩仲裁器一处。
+- 正向断言（新路径完整）：T-04a `dual_write_manifest` 中每条记录对应的 `ledger.append(...)` 必须仍然存在；任意一条丢失即视为 T-04b 未完成。
+
+**验证**：
+- 双向静态扫描断言全部通过。
+- 新增测试 `test_ledger_append_only_no_writeback`、`test_arbiter_writes_final_fields_once` 通过。
+- 30-case + 39-case 全量回归通过；rejected baseline (`857993 / 760598 / 760936 / 607602562`) 维持 `rejected` 与 `is_anchor=fail4`。
+- 698389 的 `selected_rcsdroad_ids / required_rcsd_node` 变化在视觉评审通过；`final_state` 仍为 `accepted`。
+
+**完成后停机汇报**："T-04b 完成，双向静态扫描通过，30-case + 39-case 视觉差异已生成，等待用户视觉评审后进入 T-06。"
 
 **Status**：pending
 
@@ -206,10 +273,11 @@
 | T-01 文件拆分前置 | P0 | completed |
 | T-02 契约修订草案 | P0 | completed |
 | T-03 ledger / scoring / arbiter 数据结构 | P0 | completed |
-| T-04 候选生成器降级 | P0 | pending |
-| T-05 仲裁器实现 | P0 | pending |
+| T-04a 候选生成器 dual-write | P0 | pending |
+| T-05 仲裁器实现（shadow mode） | P0 | pending |
+| T-04b 切换 normal mode + 移除旧写回 | P0 | pending |
 | T-06 surface_scenario / outputs 改造 | P1 | pending |
 | T-07 audit / review_index 字段扩充 | P1 | pending |
-| T-08 测试落地 | P0 | pending |
+| T-08 测试整合 + baseline 期望表更新 | P0 | pending |
 | T-09 文档定稿 | P0 | pending |
-| T-10 dry-run 与视觉评审 | P0 | pending |
+| T-10 dry-run 与视觉评审 + PR | P0 | pending |

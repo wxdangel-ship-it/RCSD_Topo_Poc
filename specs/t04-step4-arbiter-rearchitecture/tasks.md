@@ -121,7 +121,7 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 
 **完成后停机汇报**："T-04a 完成，dual_write_manifest 含 N 条记录，30-case + 39-case baseline 与 main 一致，等待 T-05 启动确认。"
 
-**Status**：pending
+**Status**：completed
 
 ---
 
@@ -273,7 +273,7 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 | T-01 文件拆分前置 | P0 | completed |
 | T-02 契约修订草案 | P0 | completed |
 | T-03 ledger / scoring / arbiter 数据结构 | P0 | completed |
-| T-04a 候选生成器 dual-write | P0 | pending |
+| T-04a 候选生成器 dual-write | P0 | completed |
 | T-05 仲裁器实现（shadow mode） | P0 | pending |
 | T-04b 切换 normal mode + 移除旧写回 | P0 | pending |
 | T-06 surface_scenario / outputs 改造 | P1 | pending |

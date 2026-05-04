@@ -35,6 +35,37 @@ def _with_provenance(payload: dict, provenance: dict) -> dict:
     return {**payload, **provenance}
 
 
+def _step4_candidate_ledger_docs(case_result: T04CaseResult) -> list[dict]:
+    docs: list[dict] = []
+    for event_unit in case_result.event_units:
+        if event_unit.step4_candidate_ledger is None:
+            docs.append(
+                {
+                    "case_id": case_result.case_spec.case_id,
+                    "unit_id": event_unit.spec.event_unit_id,
+                    "candidate_count": 0,
+                    "candidates": [],
+                }
+            )
+            continue
+        docs.append(event_unit.step4_candidate_ledger.to_doc())
+    return docs
+
+
+def _dual_write_manifest_docs(case_result: T04CaseResult) -> list[dict]:
+    docs: list[dict] = []
+    for event_unit in case_result.event_units:
+        for item in event_unit.dual_write_manifest:
+            docs.append(
+                {
+                    "case_id": case_result.case_spec.case_id,
+                    "event_unit_id": event_unit.spec.event_unit_id,
+                    **dict(item),
+                }
+            )
+    return docs
+
+
 REVIEW_INDEX_FIELDNAMES = [
     "sequence_no",
     "case_id",
@@ -248,6 +279,8 @@ def write_case_outputs(
                 "step4_review_state": case_result.case_review_state,
                 "step4_review_reasons": list(case_result.case_review_reasons),
                 "case_alignment_aggregate": case_result.case_alignment_aggregate_doc(),
+                "step4_candidate_ledger": _step4_candidate_ledger_docs(case_result),
+                "dual_write_manifest": _dual_write_manifest_docs(case_result),
                 "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
             },
             case_provenance,

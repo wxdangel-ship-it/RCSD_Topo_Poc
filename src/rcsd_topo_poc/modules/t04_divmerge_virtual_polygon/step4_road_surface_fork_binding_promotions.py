@@ -6,6 +6,7 @@ from typing import Any
 from shapely.geometry import Point
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
+from ._step4_dual_write import append_dual_write_candidate
 from .rcsd_alignment import rcsd_alignment_type_from_selection
 from .step4_road_surface_fork_binding_shared import (
     _candidate_entries_with_selection,
@@ -94,6 +95,7 @@ def _downgrade_far_surface_rcsd_to_swsd_window(
     event_unit: T04EventUnitResult,
     entry: T04CandidateAuditEntry,
     *,
+    case_id: str,
     aggregate: dict[str, Any],
     semantic_anchor_distance_m: float,
 ) -> tuple[T04EventUnitResult, dict[str, Any]]:
@@ -251,7 +253,16 @@ def _downgrade_far_surface_rcsd_to_swsd_window(
         post_required_rcsd_node=None,
         resolution_reason=SWSD_JUNCTION_WINDOW_REASON,
     )
-    return updated, detail
+    return (
+            append_dual_write_candidate(
+                updated,
+                case_id=case_id,
+                source_stage="promotion",
+                source_audit_blob=detail,
+                replacement_reason=SWSD_JUNCTION_WINDOW_REASON,
+        ),
+        detail,
+    )
 
 
 def _promote_relaxed_primary_rcsd_binding(
@@ -470,7 +481,16 @@ def _promote_relaxed_primary_rcsd_binding(
         candidate_audit_entries=updated_entries,
         post_required_rcsd_node=bound_node,
     )
-    return updated, promoted_detail
+    return (
+        append_dual_write_candidate(
+            updated,
+            case_id=case_result.case_spec.case_id,
+            source_stage="promotion",
+            source_audit_blob=promoted_detail,
+            replacement_reason=ROAD_SURFACE_FORK_BINDING_REASON,
+        ),
+        promoted_detail,
+    )
 
 def _promote_selected_surface_rcsd_junction_window(
     case_result: T04CaseResult,
@@ -501,6 +521,7 @@ def _promote_selected_surface_rcsd_junction_window(
         return _downgrade_far_surface_rcsd_to_swsd_window(
             event_unit,
             entry,
+            case_id=case_result.case_spec.case_id,
             aggregate=aggregate,
             semantic_anchor_distance_m=semantic_anchor_distance,
         )
@@ -782,7 +803,16 @@ def _promote_selected_surface_rcsd_junction_window(
         post_required_rcsd_node=required_node,
         resolution_reason=RCSD_JUNCTION_WINDOW_REASON,
     )
-    return updated, detail
+    return (
+        append_dual_write_candidate(
+            updated,
+            case_id=case_result.case_spec.case_id,
+            source_stage="promotion",
+            source_audit_blob=detail,
+            replacement_reason=RCSD_JUNCTION_WINDOW_REASON,
+        ),
+        detail,
+    )
 
 def _promote_selected_surface_partial_rcsd(
     case_result: T04CaseResult,
@@ -976,4 +1006,13 @@ def _promote_selected_surface_partial_rcsd(
         positive_rcsd_audit=updated_audit,
         candidate_audit_entries=updated_entries,
     )
-    return updated, support_detail
+    return (
+        append_dual_write_candidate(
+            updated,
+            case_id=case_result.case_spec.case_id,
+            source_stage="promotion",
+            source_audit_blob=support_detail,
+            replacement_reason="road_surface_fork_partial_rcsd_support_only",
+        ),
+        support_detail,
+    )

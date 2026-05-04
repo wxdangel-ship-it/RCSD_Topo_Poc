@@ -8,6 +8,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points
 
 from .case_models import T04CaseResult, T04EventUnitResult
+from ._step4_dual_write import append_dual_write_candidate
 from .step4_road_surface_fork_binding_shared import (
     DIVSTRIP_PRIMARY_REFERENCE_WINDOW_HALF_LENGTH_M,
     DIVSTRIP_PRIMARY_REFERENCE_WINDOW_HALF_WIDTH_M,
@@ -315,4 +316,13 @@ def _restore_divstrip_primary_for_wide_surface_fork(
         post_resolution_candidate_id=candidate_id,
         resolution_reason=DIVSTRIP_PRIMARY_WIDE_SURFACE_FORK_REASON,
     )
-    return updated, bind_detail
+    return (
+        append_dual_write_candidate(
+            updated,
+            case_id=case_result.case_spec.case_id,
+            source_stage="divstrip",
+            source_audit_blob=bind_detail,
+            replacement_reason=DIVSTRIP_PRIMARY_WIDE_SURFACE_FORK_REASON,
+        ),
+        bind_detail,
+    )

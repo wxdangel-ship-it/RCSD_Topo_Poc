@@ -6,6 +6,7 @@ from typing import Any
 from shapely.geometry.base import BaseGeometry
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
+from ._step4_dual_write import append_dual_write_candidate
 from .step4_road_surface_fork_binding_forward import _bind_strong_rcsd_to_surface
 from .step4_road_surface_fork_binding_promotions import _promote_relaxed_primary_rcsd_binding
 from .step4_road_surface_fork_binding_shared import (
@@ -330,6 +331,13 @@ def _recover_surface_from_candidate(
         conflict_resolution_action="road_surface_fork_binding",
         post_resolution_candidate_id=entry.candidate_id,
         resolution_reason=ROAD_SURFACE_FORK_BINDING_REASON,
+    )
+    updated = append_dual_write_candidate(
+        updated,
+        case_id=case_result.case_spec.case_id,
+        source_stage="recovery",
+        source_audit_blob=bind_detail,
+        replacement_reason=ROAD_SURFACE_FORK_BINDING_REASON,
     )
     promoted, promoted_detail = _bind_strong_rcsd_to_surface(case_result, updated)
     if promoted is not None:

@@ -22,6 +22,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
     ParsedRoad,
 )
 from .surface_scenario import SurfaceScenarioClassification, classify_surface_scenario
+from ._step4_arbiter_models import T04Step4CandidateLedger
 from .rcsd_alignment import (
     RCSD_ALIGNMENT_AMBIGUOUS,
     RCSD_ALIGNMENT_NONE,
@@ -392,6 +393,8 @@ class T04EventUnitResult:
     compare_png_path: str = ""
     image_name: str = ""
     image_path: str = ""
+    step4_candidate_ledger: T04Step4CandidateLedger | None = None
+    dual_write_manifest: tuple[dict[str, Any], ...] = ()
 
     @property
     def selected_divstrip_geometry(self) -> BaseGeometry | None:
@@ -571,6 +574,17 @@ class T04EventUnitResult:
             "selected_candidate": dict(self.selected_candidate_summary),
             "alternative_candidates": [dict(item) for item in self.alternative_candidate_summaries],
             "candidate_audit_entries": [item.to_doc() for item in self.candidate_audit_entries],
+            "step4_candidate_ledger": (
+                self.step4_candidate_ledger.to_doc()
+                if self.step4_candidate_ledger is not None
+                else {
+                    "case_id": "",
+                    "unit_id": self.spec.event_unit_id,
+                    "candidate_count": 0,
+                    "candidates": [],
+                }
+            ),
+            "dual_write_manifest": [dict(item) for item in self.dual_write_manifest],
             "evidence_conflict_component_id": self.evidence_conflict_component_id,
             "rcsd_conflict_component_id": self.rcsd_conflict_component_id,
             "evidence_conflict_type": self.evidence_conflict_type,

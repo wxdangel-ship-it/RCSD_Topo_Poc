@@ -10,6 +10,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge, nearest_points, unary_union
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
+from ._step4_dual_write import append_dual_write_candidate
 from .event_interpretation_selection import (
     EVENT_REFERENCE_CONFLICT_TOL_M,
     SHARED_EVIDENCE_OVERLAP_AREA_M2,
@@ -314,7 +315,16 @@ def _apply_reverse_to_unit(
         "reference_point_axis_s": round(float(reference_s), 3),
         "terminal_continuation_expansion": continuation,
     }
-    return updated, detail
+    return (
+        append_dual_write_candidate(
+            updated,
+            case_id=case_result.case_spec.case_id,
+            source_stage="anchored_reverse",
+            source_audit_blob=detail,
+            replacement_reason=RCSD_ANCHORED_REVIEW_REASON,
+        ),
+        detail,
+    )
 
 
 def _record_base(case_result: T04CaseResult, event_unit: T04EventUnitResult) -> dict[str, Any]:

@@ -45,8 +45,8 @@ PY
 - Base commit: `8809b5d`
 - Started: `2026-05-04 09:31:00 CST`
 - Completed: `2026-05-04 10:20:55 CST`
-- Commit: `pending`
-- PR: `pending`
+- Commit: `aec0d4f` (Phase 1 content commit before run-log metadata update)
+- PR: `https://github.com/wxdangel-ship-it/RCSD_Topo_Poc/pull/3`
 - Run root: `outputs/_work/t04_step3_swsd_phase1_d2/phase1_d2_guard_20260504_002`
 
 ### Phase 1 Evidence

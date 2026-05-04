@@ -17,6 +17,10 @@ SHARED_RCSDROAD_MAX_ROAD_DISTANCE_M = 8.0
 SHARED_RCSDROAD_MAX_UNIT_DISTANCE_M = 8.0
 SHARED_RCSDROAD_MIN_SWSD_ROAD_SUPPORT = 3
 SHARED_RCSDROAD_REASON = "complex_swsd_shared_rcsdroad_alignment"
+SINGLE_RCSDROAD_MAX_ROAD_DISTANCE_M = 2.5
+SINGLE_RCSDROAD_MAX_UNIT_DISTANCE_M = 3.0
+SINGLE_RCSDROAD_MIN_SWSD_ROAD_SUPPORT = 3
+SINGLE_RCSDROAD_REASON = "single_swsd_rcsdroad_alignment"
 SWSD_WINDOW_NO_RCSD_MODE = "swsd_junction_window_no_rcsd"
 
 
@@ -71,6 +75,26 @@ def _eligible_complex_swsd_only_units(case_result: T04CaseResult) -> tuple[T04Ev
             return ()
         eligible.append(unit)
     return tuple(eligible)
+
+
+def _eligible_single_swsd_only_unit(case_result: T04CaseResult) -> T04EventUnitResult | None:
+    if len(case_result.event_units) != 1:
+        return None
+    unit = case_result.event_units[0]
+    if unit.spec.split_mode != "one_case_one_unit":
+        return None
+    scenario = unit.surface_scenario_doc()
+    if scenario.get("main_evidence_type") != MAIN_EVIDENCE_NONE:
+        return None
+    if scenario.get("rcsd_alignment_type") != RCSD_ALIGNMENT_NONE:
+        return None
+    if scenario.get("surface_scenario_type") != SCENARIO_NO_MAIN_WITH_SWSD_ONLY:
+        return None
+    if scenario.get("section_reference_source") != SECTION_REFERENCE_SWSD:
+        return None
+    if not _unit_branch_road_ids(unit):
+        return None
+    return unit
 
 
 def _related_swsd_roads(
@@ -174,13 +198,110 @@ def _score_shared_rcsdroad(
     return best
 
 
+def _score_single_rcsdroad(
+    case_result: T04CaseResult,
+    unit: T04EventUnitResult,
+) -> dict[str, Any] | None:
+    related_roads = _related_swsd_roads(case_result, (unit,))
+    unit_points = _unit_points((unit,))
+    if not related_roads or len(unit_points) != 1:
+        return None
+    unit_point = unit_points[0]
+
+    scores: list[dict[str, Any]] = []
+    for road in case_result.case_bundle.rcsd_roads:
+        geometry = getattr(road, "geometry", None)
+        if geometry is None or geometry.is_empty:
+            continue
+        road_distances = [float(geometry.distance(swsd.geometry)) for swsd in related_roads]
+        supported_distances = [
+            distance
+            for distance in road_distances
+            if distance <= SINGLE_RCSDROAD_MAX_ROAD_DISTANCE_M
+        ]
+        unit_distance = float(geometry.distance(unit_point))
+        if unit_distance > SINGLE_RCSDROAD_MAX_UNIT_DISTANCE_M:
+            continue
+        scores.append(
+            {
+                "road": road,
+                "road_id": str(road.road_id),
+                "road_support_count": len(supported_distances),
+                "unit_support_count": 1,
+                "mean_supported_road_distance_m": (
+                    sum(supported_distances) / len(supported_distances)
+                    if supported_distances
+                    else float("inf")
+                ),
+                "max_supported_road_distance_m": (
+                    max(supported_distances) if supported_distances else float("inf")
+                ),
+                "min_road_distance_m": min(road_distances),
+                "max_unit_distance_m": unit_distance,
+            }
+        )
+    if not scores:
+        return None
+
+    min_road_support = min(
+        max(SINGLE_RCSDROAD_MIN_SWSD_ROAD_SUPPORT, 1),
+        len(related_roads),
+    )
+    scores = [
+        score
+        for score in scores
+        if int(score["road_support_count"]) >= min_road_support
+    ]
+    if not scores:
+        return None
+
+    scores.sort(
+        key=lambda item: (
+            -int(item["road_support_count"]),
+            -int(item["unit_support_count"]),
+            float(item["mean_supported_road_distance_m"]),
+            float(item["max_supported_road_distance_m"]),
+            float(item["max_unit_distance_m"]),
+            str(item["road_id"]),
+        )
+    )
+    best = scores[0]
+    if len(scores) > 1:
+        second = scores[1]
+        same_support = (
+            int(second["road_support_count"]) == int(best["road_support_count"])
+            and int(second["unit_support_count"]) == int(best["unit_support_count"])
+        )
+        if same_support and (
+            float(second["mean_supported_road_distance_m"])
+            <= float(best["mean_supported_road_distance_m"]) + 1.0
+        ):
+            return None
+    return best
+
+
 def _shared_rcsdroad_audit(
     *,
     unit: T04EventUnitResult,
     road_id: str,
     score: dict[str, Any],
+    reason: str = SHARED_RCSDROAD_REASON,
+    detail_key: str = SHARED_RCSDROAD_REASON,
+    selection_mode: str = "complex_swsd_shared_rcsdroad",
+    unit_tag: str = "shared_rcsdroad",
 ) -> dict[str, Any]:
-    unit_id = f"{unit.spec.event_unit_id}:shared_rcsdroad:{road_id}"
+    unit_id = f"{unit.spec.event_unit_id}:{unit_tag}:{road_id}"
+    detail = {
+        "road_id": road_id,
+        "road_support_count": int(score["road_support_count"]),
+        "unit_support_count": int(score["unit_support_count"]),
+        "mean_supported_road_distance_m": round(float(score["mean_supported_road_distance_m"]), 6),
+        "max_unit_distance_m": (
+            round(float(score["max_unit_distance_m"]), 6)
+            if score.get("max_unit_distance_m") is not None
+            else None
+        ),
+    }
     return {
         **dict(unit.positive_rcsd_audit or {}),
         "rcsd_alignment_type": RCSD_ALIGNMENT_ROAD_ONLY,
@@ -193,8 +314,8 @@ def _shared_rcsdroad_audit(
                 "road_ids": [road_id],
                 "node_ids": [],
                 "positive_rcsd_present": True,
-                "positive_rcsd_present_reason": SHARED_RCSDROAD_REASON,
-                "decision_reason": SHARED_RCSDROAD_REASON,
+                "positive_rcsd_present_reason": reason,
+                "decision_reason": reason,
                 "road_support_count": int(score["road_support_count"]),
                 "unit_support_count": int(score["unit_support_count"]),
             }
@@ -207,7 +328,7 @@ def _shared_rcsdroad_audit(
         "published_rcsdroad_ids": [road_id],
         "published_rcsdnode_ids": [],
         "published_member_unit_ids": [unit_id],
-        "published_rcsd_selection_mode": "complex_swsd_shared_rcsdroad",
+        "published_rcsd_selection_mode": selection_mode,
         "positive_rcsd_present": False,
         "positive_rcsd_present_reason": SWSD_WINDOW_NO_RCSD_MODE,
         "positive_rcsd_support_level": "no_support",
@@ -216,17 +337,7 @@ def _shared_rcsdroad_audit(
         "rcsd_decision_reason": SWSD_WINDOW_NO_RCSD_MODE,
         "rcsd_selection_mode": SWSD_WINDOW_NO_RCSD_MODE,
         "swsd_junction_window_no_rcsd": True,
-        "complex_swsd_shared_rcsdroad_alignment": {
-            "road_id": road_id,
-            "road_support_count": int(score["road_support_count"]),
-            "unit_support_count": int(score["unit_support_count"]),
-            "mean_supported_road_distance_m": round(float(score["mean_supported_road_distance_m"]), 6),
-            "max_unit_distance_m": (
-                round(float(score["max_unit_distance_m"]), 6)
-                if score.get("max_unit_distance_m") is not None
-                else None
-            ),
-        },
+        detail_key: detail,
     }
 
 
@@ -236,8 +347,17 @@ def _promote_unit_to_shared_rcsdroad(
     road_id: str,
     road_geometry: Any,
     score: dict[str, Any],
+    reason: str = SHARED_RCSDROAD_REASON,
+    detail_key: str = SHARED_RCSDROAD_REASON,
+    selection_mode: str = "complex_swsd_shared_rcsdroad",
+    unit_tag: str = "shared_rcsdroad",
 ) -> T04EventUnitResult:
-    review_reasons = _dedupe([*unit.all_review_reasons(), SHARED_RCSDROAD_REASON])
+    review_reasons = _dedupe([*unit.all_review_reasons(), reason])
+    detail = {
+        "road_id": road_id,
+        "road_support_count": int(score["road_support_count"]),
+        "unit_support_count": int(score["unit_support_count"]),
+    }
     summary = {
         **dict(unit.selected_evidence_summary or unit.selected_candidate_summary or {}),
         "source_mode": "swsd_junction_window",
@@ -251,11 +371,7 @@ def _promote_unit_to_shared_rcsdroad(
         "rcsd_selection_mode": SWSD_WINDOW_NO_RCSD_MODE,
         "rcsd_decision_reason": SWSD_WINDOW_NO_RCSD_MODE,
         "fallback_rcsdroad_ids": [road_id],
-        "complex_swsd_shared_rcsdroad_alignment": {
-            "road_id": road_id,
-            "road_support_count": int(score["road_support_count"]),
-            "unit_support_count": int(score["unit_support_count"]),
-        },
+        detail_key: detail,
         "review_reasons": list(review_reasons),
     }
     return replace(
@@ -276,10 +392,10 @@ def _promote_unit_to_shared_rcsdroad(
         selected_rcsdroad_ids=(),
         selected_rcsdnode_ids=(),
         primary_main_rc_node_id=None,
-        local_rcsd_unit_id=f"{unit.spec.event_unit_id}:shared_rcsdroad:{road_id}",
+        local_rcsd_unit_id=f"{unit.spec.event_unit_id}:{unit_tag}:{road_id}",
         local_rcsd_unit_kind="road_only",
         aggregated_rcsd_unit_id=None,
-        aggregated_rcsd_unit_ids=(f"{unit.spec.event_unit_id}:shared_rcsdroad:{road_id}",),
+        aggregated_rcsd_unit_ids=(f"{unit.spec.event_unit_id}:{unit_tag}:{road_id}",),
         positive_rcsd_present=False,
         positive_rcsd_present_reason=SWSD_WINDOW_NO_RCSD_MODE,
         rcsd_selection_mode=SWSD_WINDOW_NO_RCSD_MODE,
@@ -287,7 +403,15 @@ def _promote_unit_to_shared_rcsdroad(
         positive_rcsd_consistency_level="C",
         required_rcsd_node=None,
         required_rcsd_node_source=None,
-        positive_rcsd_audit=_shared_rcsdroad_audit(unit=unit, road_id=road_id, score=score),
+        positive_rcsd_audit=_shared_rcsdroad_audit(
+            unit=unit,
+            road_id=road_id,
+            score=score,
+            reason=reason,
+            detail_key=detail_key,
+            selection_mode=selection_mode,
+            unit_tag=unit_tag,
+        ),
         rcsd_alignment_type=RCSD_ALIGNMENT_ROAD_ONLY,
         selected_candidate_summary=dict(summary),
         selected_evidence_summary=dict(summary),
@@ -358,4 +482,61 @@ def align_complex_swsd_units_to_shared_rcsdroad(
     return _replace_case_units(case_result, replacements), records
 
 
-__all__ = ["align_complex_swsd_units_to_shared_rcsdroad"]
+def align_single_swsd_unit_to_rcsdroad(
+    case_result: T04CaseResult,
+) -> tuple[T04CaseResult, list[dict[str, Any]]]:
+    unit = _eligible_single_swsd_only_unit(case_result)
+    if unit is None:
+        return case_result, []
+    score = _score_single_rcsdroad(case_result, unit)
+    if score is None:
+        return case_result, []
+    road_id = str(score["road_id"])
+    road = _rcsd_road_lookup(case_result).get(road_id)
+    if road is None:
+        return case_result, []
+
+    replacement = _promote_unit_to_shared_rcsdroad(
+        unit,
+        road_id=road_id,
+        road_geometry=road.geometry,
+        score=score,
+        reason=SINGLE_RCSDROAD_REASON,
+        detail_key=SINGLE_RCSDROAD_REASON,
+        selection_mode="single_swsd_rcsdroad",
+        unit_tag="single_rcsdroad",
+    )
+    return _replace_case_units(case_result, {unit.spec.event_unit_id: replacement}), [
+        {
+            "case_id": case_result.case_spec.case_id,
+            "unit_id": unit.spec.event_unit_id,
+            "pre_state": unit.selected_evidence_state,
+            "post_state": replacement.selected_evidence_state,
+            "pre_evidence_source": unit.evidence_source,
+            "post_evidence_source": "swsd_junction_window",
+            "action": SINGLE_RCSDROAD_REASON,
+            "skip_reason": None,
+            "required_rcsd_node": None,
+            "positive_rcsd_consistency_level": "C",
+            "detail": {
+                "road_id": road_id,
+                "road_support_count": int(score["road_support_count"]),
+                "unit_support_count": int(score["unit_support_count"]),
+                "mean_supported_road_distance_m": round(
+                    float(score["mean_supported_road_distance_m"]),
+                    6,
+                ),
+                "max_supported_road_distance_m": round(
+                    float(score["max_supported_road_distance_m"]),
+                    6,
+                ),
+                "max_unit_distance_m": round(float(score["max_unit_distance_m"]), 6),
+            },
+        }
+    ]
+
+
+__all__ = [
+    "align_complex_swsd_units_to_shared_rcsdroad",
+    "align_single_swsd_unit_to_rcsdroad",
+]

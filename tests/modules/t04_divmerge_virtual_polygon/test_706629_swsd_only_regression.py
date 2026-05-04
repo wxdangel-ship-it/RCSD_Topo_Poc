@@ -630,3 +630,40 @@ def test_real_rcsd_window_and_no_support_fallback_regressions(tmp_path: Path) ->
     assert len(fallback_units) == 1
     assert fallback_units[0]["fallback_rcsdroad_localized"] is True
     assert step6_768680["unit_surface_count"] == 3
+
+
+@pytest.mark.smoke
+def test_real_785731_single_swsd_rcsdroad_fallback_accepts(tmp_path: Path) -> None:
+    if not (REAL_ANCHOR_2_ROOT / "785731").is_dir():
+        pytest.skip("missing real Anchor_2 case: 785731")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=["785731"],
+        out_root=tmp_path / "out_785731_single_swsd_rcsdroad",
+        run_id="real_785731_single_swsd_rcsdroad",
+    )
+    case_dir = run_root / "cases" / "785731"
+    step4 = json.loads((case_dir / "step4_event_interpretation.json").read_text(encoding="utf-8"))
+    step5 = json.loads((case_dir / "step5_status.json").read_text(encoding="utf-8"))
+    step6 = json.loads((case_dir / "step6_status.json").read_text(encoding="utf-8"))
+    step7 = json.loads((case_dir / "step7_status.json").read_text(encoding="utf-8"))
+
+    unit4 = step4["event_units"][0]
+    unit5 = step5["unit_results"][0]
+    assert step7["final_state"] == "accepted"
+    assert unit4["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
+    assert unit4["rcsd_alignment_type"] == RCSD_ALIGNMENT_ROAD_ONLY
+    assert unit4["section_reference_source"] == SECTION_REFERENCE_SWSD
+    assert unit4["surface_generation_mode"] == SURFACE_MODE_SWSD_WITH_RCSDROAD
+    assert unit4["fallback_rcsdroad_ids"] == ["5395376082131816"]
+    assert unit4["selected_evidence"]["single_swsd_rcsdroad_alignment"]["road_id"] == (
+        "5395376082131816"
+    )
+    assert unit5["fallback_rcsdroad_ids"] == ["5395376082131816"]
+    unrelated_rcsd = set(step5["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
+    assert "5395376082131816" not in unrelated_rcsd
+    assert step6["post_cleanup_negative_mask_ok"] is True
+    assert step6["negative_mask_conflict_channel_names"] == []
+    assert step6["final_case_polygon_component_count"] == 1
+    assert step6["single_connected_case_surface_ok"] is True

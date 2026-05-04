@@ -17,6 +17,7 @@ from .step4_road_surface_fork_binding_promotions import (
 from .step4_road_surface_fork_binding_recovery import _recover_surface_from_candidate
 from .step4_road_surface_fork_binding_swsd_rcsdroad import (
     align_complex_swsd_units_to_shared_rcsdroad,
+    align_single_swsd_unit_to_rcsdroad,
 )
 from .step4_road_surface_fork_geometry import _dedupe
 
@@ -102,6 +103,10 @@ def apply_road_surface_fork_binding(
         if shared_rcsdroad_records:
             applied_count += len(shared_rcsdroad_records)
             records.extend(shared_rcsdroad_records)
+        current_case, single_rcsdroad_records = align_single_swsd_unit_to_rcsdroad(current_case)
+        if single_rcsdroad_records:
+            applied_count += len(single_rcsdroad_records)
+            records.extend(single_rcsdroad_records)
         updated_results[case_index] = current_case
     return updated_results, {
         "scope": "t04_step4_road_surface_fork_binding",

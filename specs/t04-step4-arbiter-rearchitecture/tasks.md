@@ -67,7 +67,7 @@
 
 **验证**：`pytest tests/modules/t04_divmerge_virtual_polygon/ -x` 通过（不应有任何回归）；静态扫描 ledger.append 是唯一写入路径。
 
-**Status**：pending
+**Status**：completed
 
 ---
 
@@ -205,7 +205,7 @@
 |---|---|---|
 | T-01 文件拆分前置 | P0 | completed |
 | T-02 契约修订草案 | P0 | completed |
-| T-03 ledger / scoring / arbiter 数据结构 | P0 | pending |
+| T-03 ledger / scoring / arbiter 数据结构 | P0 | completed |
 | T-04 候选生成器降级 | P0 | pending |
 | T-05 仲裁器实现 | P0 | pending |
 | T-06 surface_scenario / outputs 改造 | P1 | pending |

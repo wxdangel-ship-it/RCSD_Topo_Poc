@@ -7,7 +7,7 @@
 - Started: `2026-05-04 09:17:00 CST`
 - Completed: `2026-05-04 09:24:43 CST`
 - Commit: `5ddd44d` (Phase 0 content commit before run-log metadata update)
-- PR: `pending`
+- PR: `https://github.com/wxdangel-ship-it/RCSD_Topo_Poc/pull/2`
 - Run root: `outputs/_work/t04_step3_swsd_phase0_d2/phase0_d2_main_equivalent_20260504_001`
 
 ### Phase 0 Evidence

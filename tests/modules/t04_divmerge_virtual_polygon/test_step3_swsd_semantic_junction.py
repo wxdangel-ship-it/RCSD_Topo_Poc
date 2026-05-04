@@ -72,7 +72,7 @@ def test_swsd_semantic_junction_splits_intra_and_connector_roads() -> None:
     assert len(junction.semantic_arms) == 3
 
 
-def test_swsd_semantic_arm_can_cross_one_degree3_micro_junction() -> None:
+def test_swsd_semantic_arm_stops_at_degree3_semantic_boundary() -> None:
     nodes = [
         _parsed_node("j0", 0, 0, mainnodeid="j0", kind_2=16),
         _parsed_node("m", 20, 0),
@@ -91,10 +91,59 @@ def test_swsd_semantic_arm_can_cross_one_degree3_micro_junction() -> None:
 
     arm = _arm_by_road(_skeleton(nodes, roads).swsd_semantic_junction, "r_main")
 
+    assert arm.inter_junction_connector_road_ids == ("r_main",)
+    assert arm.terminal_node_id == "m"
+    assert arm.terminal_kind == "semantic_neighbor"
+    assert arm.neighbor_semantic_junction_id == "m"
+    assert arm.continuation_through_micro_junction is False
+
+
+def test_swsd_semantic_arm_uses_mainnode_group_boundary_degree() -> None:
+    nodes = [
+        _parsed_node("j0", 0, 0, mainnodeid="j0", kind_2=16),
+        _parsed_node("m_a", 20, 0, mainnodeid="m"),
+        _parsed_node("m_b", 20, 20, mainnodeid="m"),
+        _parsed_node("t", 45, 0),
+        _parsed_node("side", 45, 20),
+        _parsed_node("u", 0, 35),
+        _parsed_node("d", 0, -35),
+    ]
+    roads = [
+        _parsed_road("r_main", [(0, 0), (20, 0)], snodeid="j0", enodeid="m_a"),
+        _parsed_road("r_continue", [(20, 0), (45, 0)], snodeid="m_a", enodeid="t"),
+        _parsed_road("r_side", [(20, 20), (45, 20)], snodeid="m_b", enodeid="side"),
+        _parsed_road("r_up", [(0, 0), (0, 35)], snodeid="j0", enodeid="u"),
+        _parsed_road("r_down", [(0, 0), (0, -35)], snodeid="j0", enodeid="d"),
+    ]
+
+    arm = _arm_by_road(_skeleton(nodes, roads).swsd_semantic_junction, "r_main")
+
+    assert arm.inter_junction_connector_road_ids == ("r_main",)
+    assert arm.terminal_node_id == "m_a"
+    assert arm.terminal_kind == "semantic_neighbor"
+    assert arm.neighbor_semantic_junction_id == "m"
+
+
+def test_swsd_semantic_arm_allows_degree2_mainnode_group_passthrough() -> None:
+    nodes = [
+        _parsed_node("j0", 0, 0, mainnodeid="j0", kind_2=16),
+        _parsed_node("m_a", 20, 0, mainnodeid="m"),
+        _parsed_node("t", 45, 0),
+        _parsed_node("u", 0, 35),
+        _parsed_node("d", 0, -35),
+    ]
+    roads = [
+        _parsed_road("r_main", [(0, 0), (20, 0)], snodeid="j0", enodeid="m_a"),
+        _parsed_road("r_continue", [(20, 0), (45, 0)], snodeid="m_a", enodeid="t"),
+        _parsed_road("r_up", [(0, 0), (0, 35)], snodeid="j0", enodeid="u"),
+        _parsed_road("r_down", [(0, 0), (0, -35)], snodeid="j0", enodeid="d"),
+    ]
+
+    arm = _arm_by_road(_skeleton(nodes, roads).swsd_semantic_junction, "r_main")
+
     assert arm.inter_junction_connector_road_ids == ("r_main", "r_continue")
     assert arm.terminal_node_id == "t"
     assert arm.terminal_kind == "dead_end"
-    assert arm.continuation_through_micro_junction is True
 
 
 def test_swsd_semantic_arm_dead_end_terminal() -> None:
@@ -146,10 +195,8 @@ def test_swsd_semantic_arm_connector_contains_all_first_road_ids() -> None:
     junction = _build_swsd_semantic_junction(branch_result, roads, nodes, nodes[0])
 
     assert junction.semantic_arms[0].first_road_ids == ("r_seed", "r_first_extra")
-    assert set(junction.semantic_arms[0].inter_junction_connector_road_ids) >= {
-        "r_seed",
-        "r_first_extra",
-    }
+    assert junction.semantic_arms[0].inter_junction_connector_road_ids == ("r_seed",)
+    assert junction.semantic_arms[0].terminal_kind == "semantic_neighbor"
 
 
 def test_swsd_semantic_arm_patch_boundary_keeps_only_patch_road_ids() -> None:
@@ -238,6 +285,38 @@ def test_named_anchor2_swsd_semantic_junction_snapshots() -> None:
             "junction_id": "760213",
             "intra_junction_road_ids": ("41808703",),
             "connector_road_ids": ("55009919", "989396", "992474", "992475"),
+        },
+        "698380": {
+            "junction_id": "698380",
+            "intra_junction_road_ids": (),
+            "connector_road_ids": ("109815705", "612199387", "973749"),
+        },
+        "706243": {
+            "junction_id": "706243",
+            "intra_junction_road_ids": (),
+            "connector_road_ids": ("500994564", "607948942", "608954744"),
+        },
+        "724081": {
+            "junction_id": "724081",
+            "intra_junction_road_ids": (),
+            "connector_road_ids": ("516803728", "518742522", "5415248413000846"),
+        },
+        "785731": {
+            "junction_id": "785731",
+            "intra_junction_road_ids": (),
+            "connector_road_ids": ("33027407", "33027442", "981884"),
+        },
+        "17943587": {
+            "junction_id": "17943587",
+            "intra_junction_road_ids": ("41727506", "502953712", "607951495"),
+            "connector_road_ids": (
+                "510969745",
+                "528620938",
+                "529824990",
+                "605949403",
+                "607962170",
+                "620950831",
+            ),
         },
     }
     if not REAL_ANCHOR_2_ROOT.is_dir():

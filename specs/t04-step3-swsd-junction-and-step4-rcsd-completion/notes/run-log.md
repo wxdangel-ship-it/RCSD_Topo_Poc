@@ -480,3 +480,194 @@ No file-size audit table update is required because no source/script file crosse
 - No code-level blocker remains.
 - No GitHub push / PR / commit was performed after the user's "停止推送" and "后续任务，不再提交Github" instructions.
 - Awaiting user confirmation before any unified local commit.
+
+## Degree-2 Semantic Boundary 修订 — 2026-05-04
+
+- Branch: `codex/t04-degree2-semantic-boundary`
+- Base: `main` at `678e7ea`
+- Trigger: 用户目视指出 `698380` 中 `109815830` 越过其它 SWSD 语义路口被召回，并确认新业务口径：只有 `degree == 2` passthrough chain 可穿透；`degree >= 3` 立即作为 semantic boundary 停止。RCSD 同口径。
+- GitHub: not pushed in this revision yet.
+
+### Reading Confirmation
+
+已阅读 ✅：
+
+- [x] `AGENTS.md`
+- [x] `modules/t04_divmerge_virtual_polygon/AGENTS.md`
+- [x] `.agents/skills/default-imp/SKILL.md`
+- [x] `docs/repository-metadata/code-boundaries-and-entrypoints.md`
+- [x] `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/{spec.md, plan.md, tasks.md}`
+- [x] `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md`
+
+### 已修改
+
+- `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/spec.md`: 删除 degree==3 角度连续穿透口径，新增 degree==2-only semantic boundary 规则。
+- `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/plan.md`: 同步实现和测试计划，加入 `698380` snapshot。
+- `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/tasks.md`: 同步已完成任务描述，记录 2026-05-04 修订守门。
+- `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md`: 在 §2.4 冻结 SWSD / RCSD connector 只允许 degree==2 passthrough。
+- `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step3_topology_skeleton.py`: `_walk_arm_to_neighbor_semantic_junction` 遇 degree>=3 立即停止；seed road 只有确认直接触达当前 member 后才进入 connector。
+- `tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py`: 更新 degree>=3 boundary 单测，新增 `698380 / 17943587` 真实 snapshot。
+- `tests/modules/t04_divmerge_virtual_polygon/test_step4_rcsd_alignment_type.py`: 新增 RCSD degree>=3 boundary 对称守门测试。
+- `notes/release-notes.md` / `notes/run-log.md`: 记录本次修订。
+
+### 已验证
+
+- File-size pre/post check:
+  - `_runtime_step3_topology_skeleton.py`: `32228` bytes
+  - `rcsd_alignment.py`: `35312` bytes
+  - `test_step3_swsd_semantic_junction.py`: `10947` bytes
+  - `test_step4_rcsd_alignment_type.py`: `28108` bytes
+- `pytest -s tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py tests/modules/t04_divmerge_virtual_polygon/test_step4_rcsd_alignment_type.py -q` -> `22 passed in 9.59s`.
+- Single case `698380`:
+  - run root: `outputs/_work/t04_degree2_boundary/case_698380_degree2_boundary`
+  - `related_swsd_road_ids = [109815705, 612199387, 973749]`
+  - `109815830` is in `unrelated_swsd_road_ids`
+  - `final_review_render_audit.missing_road_ids = []`
+  - `final_review.png` panel: `swsd_current_roads: 3 / other=8`
+- Double case `17943587 / 698380`:
+  - run root: `outputs/_work/t04_degree2_boundary/cases_17943587_698380_degree2_boundary_v2`
+  - `17943587.related_swsd_road_ids = [41727506, 502953712, 510969745, 528620938, 529824990, 605949403, 607951495, 607962170, 620950831]`
+  - `17943587`: `29824276` is in `unrelated_swsd_road_ids`
+  - `698380`: `109815830` remains in `unrelated_swsd_road_ids`
+- 39-case official gate: `pytest -s tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_39case_official_surface_scenario_gate -q` -> `1 passed in 187.31s`.
+- Fixed 39-case output:
+  - run root: `outputs/_work/t04_degree2_boundary/anchor2_39case_degree2_boundary_v2`
+  - audit csv: `outputs/_work/t04_degree2_boundary/anchor2_39case_degree2_boundary_v2_render_audit/render_audit.csv`
+  - `total_case_count=39`, `accepted=35`, `rejected=4`, `failed_case_ids=[]`, `nodes_consistency_passed=true`
+  - `missing_road_ids` all empty
+  - changed over-recall cases: `17943587 / 698380 / 698389 / 699870 / 706347 / 706629 / 760230 / 760598 / 768675 / 768680 / 785629 / 785631 / 785671 / 785731 / 788824 / 807908 / 857993 / 987998`
+  - topology audit: non-direct connectors all have at least one `degree==2` endpoint; `violation_count=0`
+- 30-case gates: `pytest -s tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_full_20260426_baseline_gate tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_30case_surface_scenario_baseline_gate -q` -> `2 passed in 215.17s`.
+- `.venv/bin/python -m py_compile` on modified Python source/test files -> passed.
+- `git diff --check` -> passed.
+- Full module regression: `pytest -s tests/modules/t04_divmerge_virtual_polygon -q` -> `167 passed in 928.69s`.
+
+### 硬停机检查
+
+- [x] Did not trigger `AGENTS.md §1.1` after user authorization resolved the prior source/spec conflict.
+- [x] Did not trigger `§1.2` unauthorized protected module/interface change; this revision was explicitly authorized by user.
+- [x] Did not trigger `§1.3` new permanent entrypoint.
+- [x] Did not trigger `§1.4` source/script file-size violation.
+- [x] Did not trigger `§1.5` data-observation-driven upstream field semantics; the new rule is user-confirmed business logic.
+- [x] Did not trigger `§1.6` path mismatch; Anchor_2 Windows path maps to `/mnt/e/TestData/POC_Data/T02/Anchor_2` under bash.
+- [x] Did not trigger `§1.7` entrypoint registry mismatch.
+
+### 待确认
+
+- User visual confirmation for the new fixed 39-case PNG set.
+- No commit / push has been performed for this correction branch yet.
+
+## Semantic Group Degree Boundary 补充修订 — 2026-05-04
+
+- Branch: `codex/t04-degree2-semantic-boundary`
+- Trigger: 用户指出 `785731 / 706243 / 724081` 仍越过有 `mainnode` 且进入 / 退出道路数为 3 度及以上的 SWSD 语义路口，继续追溯路口后的 roads。
+- Root cause: 先前 degree-2 修订仍有路径按物理单节点 incident road 数判定 degree；当 `mainnodeid` 聚合组的代表节点物理 degree 为 2、但语义组进出道路 degree >= 3 时，arm walk 会误判为可穿透 passthrough chain。
+- Requirement freeze: 有 `mainnode` 与无 `mainnode` 使用同一口径；`degree` 必须按语义节点组的进入 / 退出道路数统计。有效 `mainnodeid` 按 `mainnodeid` 聚合；无有效 `mainnodeid` 按节点自身 `id` 成组；组内道路不计入 degree。SWSD 与 RCSD 同口径。
+- GitHub: 本轮不提交、不 push。
+
+### Reading Confirmation
+
+已阅读 ✅：
+
+- [x] `AGENTS.md`
+- [x] `modules/t04_divmerge_virtual_polygon/AGENTS.md`
+- [x] `.agents/skills/default-imp/SKILL.md`
+- [x] `docs/doc-governance/README.md`
+- [x] `docs/repository-metadata/code-boundaries-and-entrypoints.md`
+- [x] `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md`
+- [x] `modules/t04_divmerge_virtual_polygon/architecture/04-solution-strategy.md`
+- [x] `modules/t04_divmerge_virtual_polygon/architecture/10-quality-requirements.md`
+- [x] `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/{spec.md, plan.md, tasks.md}`
+
+### 已修改
+
+- `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md`: 冻结语义节点组 degree 定义，明确有 / 无 `mainnodeid` 都按进入 / 退出道路数判定。
+- `modules/t04_divmerge_virtual_polygon/architecture/04-solution-strategy.md`: Step3 实体化策略补充语义组 degree==2 passthrough / degree>=3 停止。
+- `modules/t04_divmerge_virtual_polygon/architecture/10-quality-requirements.md`: RCSD/SWSD 语义路口聚合不得退回物理单节点 degree。
+- `spec.md / plan.md / tasks.md`: SpecKit 工件同步语义节点组 degree 口径。
+- `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step3_topology_skeleton.py`: SWSD arm walk 使用语义节点组边界 degree；删除“存在其它 `mainnodeid` 即提前停止”的差异口径，使有 / 无 `mainnodeid` 都按 degree 判定。
+- `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/rcsd_alignment.py`: RCSD connector 与 RCSDRoad-only endpoint 使用同一语义节点组边界 degree。
+- `tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py`: 增加有 `mainnodeid` 语义组三度停止、语义组二度可穿透单测；加入 `706243 / 724081 / 785731` 真实 snapshot。
+- `tests/modules/t04_divmerge_virtual_polygon/test_step4_rcsd_alignment_type.py`: 增加 RCSD mainnode 语义组边界 degree 单测，覆盖 connector 与 road-only endpoint。
+- `notes/run-log.md / notes/release-notes.md`: 记录本轮根因、验证和待确认项。
+
+### 已验证
+
+- File-size pre/post check:
+  - `_runtime_step3_topology_skeleton.py`: `34623` bytes
+  - `rcsd_alignment.py`: `37693` bytes
+  - `test_step3_swsd_semantic_junction.py`: `13527` bytes
+  - `test_step4_rcsd_alignment_type.py`: `30076` bytes
+  - `test_step7_final_publish.py`: `83315` bytes
+- `pytest -s -q tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py tests/modules/t04_divmerge_virtual_polygon/test_step4_rcsd_alignment_type.py` -> `25 passed in 16.24s`.
+- Target/risk case run root: `outputs/_work/t04_degree2_boundary/anchor2_semantic_group_degree_target_cases`
+  - `accepted=5`, `rejected=0`.
+  - `785731.related_swsd_road_ids = [33027407, 33027442, 981884]`; `517308491 / 33027389` 均进入 `unrelated_swsd_road_ids`。
+  - `706243.related_swsd_road_ids = [500994564, 607948942, 608954744]`; `88046473` 进入 `unrelated_swsd_road_ids`。
+  - `724081.related_swsd_road_ids = [516803728, 518742522, 5415248413000846]`; `516795731` 进入 `unrelated_swsd_road_ids`。
+- New 39-case run root: `outputs/_work/t04_degree2_boundary/anchor2_39case_semantic_group_degree_20260504_001`
+  - `row_count=39`, `accepted=35`, `rejected=4`, rejected ids `760598 / 760936 / 857993 / 607602562`。
+  - `failed_case_ids=[]`, `review_png_present_count=39`, `nodes_consistency_passed=True`。
+  - `performance.threshold_status=within_threshold`, `elapsed_seconds_total=168.072287`, `avg_completed_case_seconds=1.461243`。
+  - `step4_review_flat/*final_review.png` count = `39`; case-level `final_review.png` count = `39`。
+  - Target cases Step3-derived SWSD related roads == `step5_audit.related_swsd_road_ids`。
+- GIS / topology checks for `785731 / 706243 / 724081`:
+  - Raw/input CRS all `EPSG:3857`; output `final_case_polygon.gpkg / step5_domains.gpkg` CRS all `EPSG:3857`。
+  - Raw/input geometry invalid count = `0`; output geometry invalid count = `0`。
+  - SWSD `roads.gpkg` endpoints all trace to `nodes.gpkg` (`endpoint_missing_count=0`)。
+  - RCSD local package contains existing patch-boundary external endpoints; endpoint ids are traceable and are handled as `patch_boundary`, without silent geometry fix.
+  - Boundary group degrees proving stop: `785731` terminal groups `785730 degree=6`, `26902277 degree=7`; `706243` terminal group `706245 degree=4`; `724081` terminal group `522008569 degree=4`。
+- `pytest -s -q tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_39case_official_surface_scenario_gate` -> `1 passed in 201.41s`。
+- `pytest -s -q tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_full_20260426_baseline_gate tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_30case_surface_scenario_baseline_gate` -> `2 passed in 244.05s`。
+- `pytest -s -q tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected` -> first exposed stale 724081 geometry expectation after correct over-recall removal; after updating expected values, `1 passed in 24.13s`。
+- `pytest -s -q tests/modules/t04_divmerge_virtual_polygon` -> `170 passed in 848.56s`。
+- `.venv/bin/python -m py_compile` on modified Python source files -> passed.
+- `git diff --check` -> passed.
+
+### 硬停机检查
+
+- [x] Did not trigger `AGENTS.md §1.1`; source/spec wording was updated under explicit user authorization.
+- [x] Did not trigger `§1.2`; module contract edits are within this authorized SpecKit correction.
+- [x] Did not trigger `§1.3`; no permanent entrypoint was added.
+- [x] Did not trigger `§1.4`; all touched source/test files remain below `100 KB`.
+- [x] Did not trigger `§1.5`; this is user-confirmed business logic, not inferred upstream field semantics.
+- [x] Did not trigger `§1.6`; Windows path `E:\TestData\POC_Data\T02\Anchor_2` is executed as `/mnt/e/TestData/POC_Data/T02/Anchor_2` under bash.
+- [x] Did not trigger `§1.7`; no entrypoint change.
+
+### 待确认
+
+- 需要用户目视确认新 39-case PNG，重点路径：`outputs/_work/t04_degree2_boundary/anchor2_39case_semantic_group_degree_20260504_001/step4_review_flat`。
+- 本轮仍未 commit / push，等待后续统一提交指令。
+
+## 2026-05-04 Baseline/Test Contract Cleanup
+
+### 背景
+
+- 用户确认：`E:\TestData\POC_Data\T02\Anchor_2` 是唯一 official Anchor_2 数据集；当前 bash 路径为 `/mnt/e/TestData/POC_Data/T02/Anchor_2`。
+- 该目录下当前 official case 清单为 `39` 个；历史 23-case 与 30-case 均为其中子集，不再作为独立 batch / PNG fingerprint 基线。
+
+### 已修改
+
+- 新增 `tests/modules/t04_divmerge_virtual_polygon/data/anchor2_official_39case_baseline_20260504.json`：集中维护 official 39-case baseline、legacy 23/30 subset 清单和 surface scenario matrix。
+- `tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py`：移除内联 39-case 大字典与历史 PNG raw fingerprint 断言；`test_anchor2_full_20260426_baseline_gate` 与 `test_anchor2_30case_surface_scenario_baseline_gate` 改为 legacy projection 轻量 gate；official 39-case gate 保持真实 batch 回归。
+- 模块契约 / README / architecture / glossary：统一声明 official 39-case 为唯一正式基线，23/30 仅从 manifest 投影。
+- SpecKit `spec.md / plan.md / tasks.md`：Phase 6 / §8.5 / §8.10 改为 official 39-case gate + legacy projection gate。
+- `docs/repository-metadata/code-size-audit.md`：刷新当前源码 / 脚本体量；记录 `test_step7_final_publish.py` 从约 `83 KB` 降到 `56366` bytes。
+
+### 已验证
+
+- `.venv/bin/python -m json.tool tests/modules/t04_divmerge_virtual_polygon/data/anchor2_official_39case_baseline_20260504.json` -> passed。
+- `.venv/bin/python -m py_compile tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py` -> passed。
+- `pytest -s -q tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_full_20260426_baseline_gate tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_30case_surface_scenario_baseline_gate` -> `2 passed in 3.10s`。
+- `pytest -s -q tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_39case_official_surface_scenario_gate` -> `1 passed in 173.71s`。
+- 文件体量复检：
+  - `test_step7_final_publish.py = 56366` bytes
+  - `_runtime_step3_topology_skeleton.py = 34623` bytes
+  - `rcsd_alignment.py = 37693` bytes
+  - `test_step3_swsd_semantic_junction.py = 13527` bytes
+  - `test_step4_rcsd_alignment_type.py = 30076` bytes
+
+### 待确认
+
+- 本轮清理没有 commit / push。
+- 本轮未重跑 `pytest tests/modules/t04_divmerge_virtual_polygon -q` 全模块；本次改动不触及运行时代码，已跑 official 39-case gate 与 legacy projection gate。

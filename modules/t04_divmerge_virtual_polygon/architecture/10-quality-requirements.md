@@ -39,7 +39,7 @@
 - RCSD/SWSD 作为 `section_reference_source` 时必须显式标记，不得混写到 `reference_point_source`。
 - `rcsd_match_type = rcsd_junction` 只允许用于与当前 SWSD 路口语义完整一致的 RCSD 路口：进入道路、退出道路和角度趋势必须与当前事件对齐。若 RCSD 能召回路口级对象但相对 SWSD 缺失部分进入 / 退出道路，且剩余道路的角度趋势和方向角色一致，应标为 `rcsd_alignment_type = rcsd_junction_partial_alignment`，不得发布为完整 `rcsd_junction`，但可作为路口级截面参考对象。
 - 一个 SWSD event unit、复杂路口内的单个 unit、或简单二分歧 / 合流，最多只能输出一个业务有效 RCSD 对齐结果。若 pair-local / full-input 局部窗口召回多个可作为当前对象正向 RCSD 对齐结果的候选，Step4 必须在进入 Step5 前完成唯一消歧；无法唯一消歧时必须输出 `ambiguous_rcsd_alignment` 并阻断正常构面，不得静默降级为无 RCSD。若多个 RCSD 语义对象只是位于处理窗口内但不对应当前对象，则它们是负向掩膜上下文，不构成正向候选歧义。
-- `aggregated_rcsd_unit` 不得跨 RCSD 语义路口聚合；共享 connector road 只能作为候选判定上下文，不能把两个 RCSD 语义路口合并为一个 `rcsd_junction`。`RCSDNode.mainnodeid` 只表达单节点 / 多节点组织关系，不单独决定候选是否构成 RCSD 语义路口。
+- `aggregated_rcsd_unit` 不得跨 RCSD 语义路口聚合；共享 connector road 只能作为候选判定上下文，不能把两个 RCSD 语义路口合并为一个 `rcsd_junction`。`RCSDNode.mainnodeid` 只表达单节点 / 多节点组织关系，不单独决定候选是否构成 RCSD 语义路口；RCSD 与 SWSD 均必须按语义节点组的进入 / 退出道路数判定 degree，有有效 `mainnodeid` 时按 `mainnodeid` 聚合，无有效 `mainnodeid` 时按节点自身 `id` 成组。
 - `role_mapping_partial_aggregated` 这类弱聚合不得单独触发完整 `rcsd_junction`；它只能作为 `rcsd_junction_partial_alignment`、`rcsdroad_only_alignment`、趋势参考或审计辅助的候选输入，具体 case 不得因此构造虚拟 Reference Point。
 - 无 `required_rcsd_node` 的 road-only partial 聚合只能作为 trace-only 审计线索；不得发布为 `positive_rcsd_present`，也不得进入 `selected_rcsdroad_ids` / `selected_rcsdnode_ids`。`axis_polarity_inverted` 只是该规则的一类触发原因。
 - Step5 必须能稳定产出 Unit / Case 两级的 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints`，并对 `1m` hard negative mask、`fallback_support_strip`、`bridge zone` 与 `junction_full_road_fill_domain` 给出可追溯解释。
@@ -56,7 +56,7 @@
 - complex / multi 场景下，各 unit 独立构面后，必须按相邻 unit 的两组临近截面边界执行 inter-unit section bridge；若没有真实负向掩膜阻断，合并后的 `final_case_polygon` 必须是唯一联通面。只有真实负向掩膜阻断 unit 内或 unit 间构面时，才允许作为失败 / 例外审计；不得作为 accepted MultiPolygon 例外。
 - 对所有 complex / multi 场景，若相邻 unit 的两组临近截面边界之间存在可通行道路面，且无 forbidden / negative mask 空间冲突，Step6 必须使用同样的正向道路面生长、`20m` 横向控制和负向掩膜规则生成 inter-unit section bridge surface；该桥接面必须保持在 allowed growth 内，并通过 post-cleanup allowed / forbidden / terminal cut / hole / connectivity 复核。
 - Step7 必须把最终状态机压缩为 `accepted / rejected` 两态；审计材料可以保留，但不得冒充第三种正式状态。
-- Anchor_2 full baseline 的既有 `accepted / rejected` 语义不得静默放宽，不能为了提高 accepted count 弱化 Step7 门禁。
+- Anchor_2 official 39-case baseline 的既有 `accepted / rejected` 语义不得静默放宽，不能为了提高 accepted count 弱化 Step7 门禁。
 
 ## 性能可验证性
 
@@ -125,7 +125,7 @@
   - `accepted / rejected` 的最终判定依据
   - 发布层去向
   - `divmerge_virtual_anchor_surface*` 成果与审计材料之间的映射关系
-- T04 full baseline 不只校验 `divmerge_virtual_anchor_surface*` surface 发布层，也必须校验 downstream `nodes.gpkg` 的 representative node `is_anchor` 写回结果与 Step7 `final_state` 一致：`accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
+- T04 official baseline 不只校验 `divmerge_virtual_anchor_surface*` surface 发布层，也必须校验 downstream `nodes.gpkg` 的 representative node `is_anchor` 写回结果与 Step7 `final_state` 一致：`accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
 - `nodes_anchor_update_audit.csv/json` 必须与 `nodes.gpkg` 实际写回、`divmerge_virtual_anchor_surface_summary.*` 和 `step7_consistency_report.json` 保持一致；`857993` 必须保持 `fail4`，`699870` 必须保持 `yes`。
 
 ## 可维护性
@@ -229,7 +229,7 @@
   - `positive RCSD support / consistency`
   - 不再使用 `selected_candidate = structure:middle:01` 作为正式守门条件
 - `17943587 / node_55353233` 不得回退到 `502953712 + 605949403`。
-- `17943587 / node_55353248` 当前 full baseline 锁定为 `605949403 / (41727506 + 620950831)` pair，不得回退到 trunk `502953712` 主导；旧 `607962170` continuation 口径仅作为 legacy selected-case 审计线索保留。
+- `17943587 / node_55353248` 当前 official baseline 锁定为 `605949403 / (41727506 + 620950831)` pair，不得回退到 trunk `502953712` 主导；旧 `607962170` continuation 口径仅作为 legacy selected-case 审计线索保留。
 - `857993 / node_870089` 不得回退到只剩 node 邻域小块或重新吸入非 pair 道路。
 
 Step4 final tuning 额外质量门槛：
@@ -238,7 +238,7 @@ Step4 final tuning 额外质量门槛：
   - `selected_evidence_state = found`
   - 主候选不回退
   - `positive_rcsd_present = true`
-  - `positive_rcsd_support_level / positive_rcsd_consistency_level` 以当前 full baseline 测试断言为准；`785671 / event_unit_01` 当前冻结为 `secondary_support / B`，不得再用 legacy 全量 `primary_support / A` 口径否决当前 `23 / 20 / 3` baseline。
+  - `positive_rcsd_support_level / positive_rcsd_consistency_level` 以当前 official 39-case baseline 测试断言为准；`785671 / event_unit_01` 当前冻结为 `secondary_support / B`，不得再用 legacy 全量 `primary_support / A` 口径否决当前 official baseline。
 
 Step7 legacy selected-case 发布冻结门槛：
 
@@ -249,73 +249,45 @@ Step7 legacy selected-case 发布冻结门槛：
 - `17943587` 允许在不改主证据、不断 support 的前提下，通过 second-pass claim reconcile 改写 `required_rcsd_node`；若发生该类变化，必须显式产出 pre/post compare，不允许 silent drift。
 - same-case non-conflict unit 进入 second-pass 后只能 `kept`，不得被误判成 hard conflict 或 baseline guard 降级。
 
-### Anchor_2 full baseline gate（2026-04-26）
+### Anchor_2 official 39-case baseline gate（2026-05-04）
 
-- 基线输入集：`/mnt/e/TestData/POC_Data/T02/Anchor_2`
-- 当前人工审计参考 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_anchor2_full_requested/anchor2_full_all_20260426_junction_window_guard`
-- 当前全量冻结结果：`row_count = 23`，`accepted = 20`，`rejected = 3`。
-- 冻结测试入口：`tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_full_20260426_baseline_gate`
-- 冻结测试还必须守住 T04 downstream `nodes.gpkg` 写回：20 个 accepted representative node 为 `yes`，3 个 rejected representative node 为 `fail4`，其中 `857993 = fail4`、`699870 = yes`。
-- 2026-05-01 已将 23-case `final_review.png` visual fingerprint 刷新到 surface scenario visual baseline。刷新原因是 H-01 已定位为 intentional geometry / review-layer drift：`surface_scenario / section_reference / case-level bridge / Step6 guard` 改造导致 8 个 case 的 review 几何真实变化；业务断言、accepted/rejected、nodes 写回与 Step7 consistency 仍必须通过。
-- PNG raw fingerprint 对几何与 review 层变化敏感，不等价于 accepted/rejected 业务失败；后续刷新必须具备诊断报告和人工目视确认，不得静默刷新。
-- 本轮 `t04-step3-swsd-junction-and-step4-rcsd-completion` 已获用户授权，不再与 2026-05-01 的 23-case PNG raw fingerprint 做比对；Phase 6 跑出的 39-case `final_review.png` 作为本轮新人工目视审计参考基线，不新增 PNG hash hard assertion。
-- 2026-05-04 Phase 6 本地回归参考 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_step14_batch/codex_t04_step3_swsd_junction_20260504_131905`。结果：`total_case_count = 39`，`accepted = 35`，`rejected = 4`，`review_png_present_count = 39`，`nodes_consistency_passed = true`，`performance.threshold_status = within_threshold`，`elapsed_seconds_total = 158.049974`。配套 render audit：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_swsd_render_audit/codex_t04_step3_swsd_junction_20260504_131905/render_audit.csv`，`missing_road_ids` 全 0。
-- 当前全量 final_state：
-  - accepted：`17943587`、`30434673`、`505078921`、`698380`、`698389`、`699870`、`706629`、`723276`、`724067`、`724081`、`73462878`、`758784`、`760213`、`760256`、`760984`、`785671`、`785675`、`788824`、`824002`、`987998`
-  - rejected：`760598`、`760936`、`857993`
-- `505078921` 当前作为 complex multi-unit 防回退重点样本：
-  - `node_505078921` 必须保持 `required_rcsd_node = 5385438602535104`
-  - `node_510222629` 必须保持 `required_rcsd_node = 5385438602535122`
-  - `node_510222629__pair_02` 必须保持 `evidence_source = road_surface_fork`，不得被 `rcsd_junction_window` 抢占为独立 RCSD window。
-- `706629` 当前锁定为 `swsd_junction_window`：无主证据、无正向 RCSD 时，以 SWSD 路口作为 section reference，前后 `20m` 构面；不得构造 Reference Point。
-- `706347` 当前锁定为 `swsd_junction_window`：无主证据、无 RCSD 语义路口、有 SWSD 语义路口；即使存在 RCSD 数据或弱 RCSD 聚合，也不得把缺进入 / 退出语义一致性的 RCSD 结构登记为多分支 RCSD 路口。
-- `760984 / 788824` 当前锁定为 `rcsd_junction_window`：无主证据、但可召回正向 RCSD 时，以 RCSDNode 作为 section reference，前后 `20m` 构面；不得构造 Reference Point。
-- `760598 / 760936 / 857993` 当前保持 `rejected`；后续不得为了提高 accepted count 静默放宽 Step7 门禁。
-- Anchor_2 新增 6-case 修复目标：
-  - `785629`：按最新人工目视审计归类为“导流带主证据 + 无 RCSD 语义路口”；应保留导流带 Reference Point，不能降级为无主证据 SWSD-only / RCSDRoad fallback。
-  - `785731 / 795682`：按人工目视审计归类为“无主证据、无 RCSD 语义路口”；不得构造 Reference Point，不得伪造 RCSD 语义路口，应使用 SWSD section reference 构面，若存在局部 RCSDRoad fallback 只能作为局部支撑。
-  - `807908`：按最新人工目视审计归类为“导流带主证据 + 有 RCSD 语义路口”；应保留导流带 Reference Point 与 RCSD section reference，并且 RCSD 召回只能覆盖该语义路口链路，不得把同一局部 RCSD 图中的其他路口分支一起发布。
-  - `785631 / 823826`：按人工目视审计归类为“导流带主证据 + RCSD 语义路口”；应保留导流带 Reference Point 与 RCSD section reference，并在 Step6 中生成单一连通面。`823826` 应参考 `824002` 的平滑填充效果，细缝 / 小内洞必须被填平或被明确证明为真实业务 hole。
-- Anchor_2 2026-05-02 追加目视审计问题集：
-  - `698380`：最终路口面可接受，但 final review 必须正确渲染 active RCSDRoad / RCSDNode，不能表现为无 RCSD 语义路口。
-  - `698389 / 760277 / 807908`：有主证据且有 RCSD 语义路口，必须执行 `Reference Point + RCSD semantic junction` 构面；`807908` 还必须避免召回其他 RCSD 语义路口分支和 SWSD roads 侵入。
-  - `765050`：复杂路口内所有 Unit 均无主证据、无当前对应的 RCSD 语义路口，但整体 SWSD 几何唯一对齐到 RCSDRoad `5392491910661086`；三个 Unit 均应进入 `no_main_evidence_with_rcsdroad_fallback_and_swsd`，共享该 `rcsdroad_only_alignment`，并以 SWSD section window 构面、渲染 SWSD current roads；`5392491910661086` 不得进入 unrelated RCSD 负向掩膜。
-  - `768675`：无主证据但有 RCSD 语义路口时，只允许当前 RCSD 语义链路参与构面，不得把非该语义路口的 RCSDRoad 并入。
-  - `765170 / 768680 / 823826`：主体正确时仍需检查异常小凹陷、细缝和小洞；若 relief 会破坏 must-cover 或 guard，则不得应用。
-- Anchor_2 当前正式 case 清单为 `/mnt/e/TestData/POC_Data/T02/Anchor_2` 下 39 个 case。Windows 侧等价路径为 `E:\TestData\POC_Data\T02\Anchor_2`。
-- `RCSD_Topo_Poc_T04_REQUIREMENT.md` 不作为更高优先级需求输入；当前正式需求以本模块源事实文档和 2026-05-02/2026-05-03 审计确认后的 SpecKit 变更工件为基础。
+- 唯一正式输入集：`/mnt/e/TestData/POC_Data/T02/Anchor_2`。Windows 侧等价路径为 `E:\TestData\POC_Data\T02\Anchor_2`。
+- 当前正式 case 清单为该目录下 `39` 个 case；23-case 与 30-case 只是历史审计推进过程中的子集，不再作为独立全量基线。
+- 当前需求来源：本模块源事实文档与已确认的 Anchor_2 目视审计结论；`RCSD_Topo_Poc_T04_REQUIREMENT.md` 不作为更高优先级需求输入。
+- 当前冻结测试入口：`tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_39case_official_surface_scenario_gate`。
+- 当前冻结结果：`row_count = 39`，`accepted = 35`，`rejected = 4`。
+- rejected set：`607602562`、`760598`、`760936`、`857993`。
+- 39-case gate 必须守住：
+  - Step7 final_state 只允许 `accepted / rejected`。
+  - `nodes.gpkg` 与 `nodes_anchor_update_audit.*` 一致：35 个 accepted representative node 为 `yes`，4 个 rejected representative node 为 `fail4`。
+  - `no_surface_reference` 不得进入 accepted surface。
+  - 无主证据场景不得出现虚拟 Reference Point。
+  - `surface_scenario_type / section_reference_source / surface_generation_mode` 字段必须存在并与 39-case manifest 对齐。
+  - Step5 negative mask channels、Step6 connectivity / guard、Step7 consistency report、CRS / geometry valid、performance threshold 必须通过。
+  - `review_png_present_count = 39`，`missing_review_png_case_ids = []`。
+- 当前 official manifest：`tests/modules/t04_divmerge_virtual_polygon/data/anchor2_official_39case_baseline_20260504.json`。该 manifest 是测试层对 39-case final_state 与 surface scenario matrix 的唯一冻结数据源。
+- 当前人工审计参考 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_degree2_boundary/anchor2_39case_semantic_group_degree_20260504_001`。结果：`total_case_count = 39`，`accepted = 35`，`rejected = 4`，`review_png_present_count = 39`，`nodes_consistency_passed = true`，`performance.threshold_status = within_threshold`。
 - final review / visual audit 除原有图层外必须表达：
   - case 所属 `surface_scenario_type`。
   - 当存在唯一正向 RCSD 对齐对象时，相关 RCSDRoad 使用粗红色线型；这覆盖完整 RCSD 语义路口、partial junction 和 road-only alignment。
   - `rcsd_alignment_type = no_rcsd_alignment` 时，不绘制粗红 RCSDRoad；无 RCSD 正向召回由 case 场景标注表达。
   - 构成截面边界的参考对象必须标注，包括 Reference Point、RCSD / RCSD partial junction 或 SWSD section reference。
+- PNG raw fingerprint 不再作为 hard gate。视觉 QA 只冻结 PNG 存在性、render audit 与人工目视确认的 run root；旧 23-case PNG hash 仅属于历史材料，不再进入当前测试。
 
-### Anchor_2 30-case surface scenario baseline gate（2026-05-01）
+### Anchor_2 legacy subset gates（2026-04-26 / 2026-05-01）
 
-- 基线输入集：`/mnt/e/TestData/POC_Data/T02/Anchor_2`
-- 当前需求来源：本模块源事实文档与已确认的 Anchor_2 目视审计结论；`RCSD_Topo_Poc_T04_REQUIREMENT.md` 不作为更高优先级需求输入。
-- 冻结测试入口：`tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_30case_surface_scenario_baseline_gate`
-- 当前全量扩展结果：`row_count = 30`，`accepted = 26`，`rejected = 4`。
-- rejected set：`760598`、`760936`、`857993`、`607602562`。
-- 30-case gate 必须守住：
-  - Step7 final_state 只允许 `accepted / rejected`
-  - `nodes.gpkg` 与 `nodes_anchor_update_audit.*` 一致：26 个 accepted representative node 为 `yes`，4 个 rejected representative node 为 `fail4`
-  - `706629 / 706347 / 760984 / 788824 / 760230 / 760277 / 765170 / 768680 / 699870 / 698389` 保持 accepted
-  - `607602562` 保持 rejected
-  - `no_surface_reference` 不得进入 accepted surface
-  - 无主证据场景不得出现虚拟 Reference Point
-  - `surface_scenario_type / section_reference_source / surface_generation_mode` 字段必须存在
-  - Step6 guard 字段必须进入 Step7 audit
-- `607602562` 在当前 Anchor_2 30-case 目视审计口径下为 `rejected`；详细原因以后续 case-level 审计材料为准，不写成待修复 bug。
-- 30-case gate 当前优先锁业务结构、发布层、Step6 guard、summary / consistency 与 nodes 写回，不立即增加 30 个 PNG raw hash hard assertion。历史 23-case PNG fingerprint 仅保留为既有基线说明；本轮 SpecKit 不执行该 fingerprint 比对，Phase 6 的 39-case `final_review.png` 作为新人工目视审计参考。
+- `legacy_23_20260426`：历史 23-case 子集，来源于 2026-04-26 全链路审计阶段；当前测试只断言它是 official 39-case manifest 的子集，并投影得到 `accepted = 20 / rejected = 3`，其中 `857993 = rejected`、`699870 = accepted`。
+- `legacy_30_20260501`：历史 30-case 子集，来源于 2026-05-01 surface scenario 审计阶段；当前测试只断言它是 official 39-case manifest 的子集，并投影得到 `accepted = 26 / rejected = 4`，rejected set 为 `607602562 / 760598 / 760936 / 857993`。
+- 23/30 子集不再重跑独立 batch，不再维护独立 accepted/rejected 真相，也不再维护 PNG raw fingerprint。它们用于说明历史审计覆盖演进，不替代 official 39-case baseline。
+- 若后续新增或移除 Anchor_2 case，必须先更新 official 39-case manifest（或新版本 official manifest）和本节，再由 legacy 子集从 official manifest 投影。
 
 ### RCSD-anchored reverse 定向回归（2026-04-24）
 
-- `699870` 当前属于 Anchor_2 full baseline 的 accepted case，同时也是 Step4 末段 `rcsd_anchored_reverse` 的定向真实回归样本。
-- `699870` 用于验证“前向主证据缺位，但 RCSD 端可稳定成团”的旁路能力；该旁路能力已经进入当前 `23 / 20 / 3` baseline 守门。
+- `699870` 当前属于 Anchor_2 official 39-case baseline 的 accepted case，同时也是 Step4 末段 `rcsd_anchored_reverse` 的定向真实回归样本。
+- `699870` 用于验证“前向主证据缺位，但 RCSD 端可稳定成团”的旁路能力；该旁路能力已经进入当前 official 39-case baseline 守门。
 - `699870` 的 RCSD 端能力不得被解释为 RCSD 推导 Reference Point；如无主证据，只能以 section reference、支撑域来源与审计字段表达。
 - 单 case 回归中，`699870` 必须触发 reverse，且 Step4 不得再以 `selected_evidence_state = none` 结束。
 - `699870` 的 Step5-7 必须能继续消费 Step4 写回的 `event_chosen_s_m / axis_position_m / selected_evidence_state` 与 legacy Step5 bridge 字段。
 - `699870` 的 Step5 必须启用 `junction_full_road_fill`，并以 `surface_fill_axis_half_width_m = 20.0` 约束整幅路面填充；最终 polygon 不得退化为仅覆盖 `terminal_support_corridor_geometry` 的窄带结果。
-- 当前 full baseline 中 `699870` 必须保持 `accepted`，且 downstream `nodes.gpkg` 必须写为 `yes`。
-- batch / full-input 混跑中，若 `699870` 的 reverse 结果命中 cross-case 已占用 RCSD claim 或 evidence ownership，必须通过 `post_reverse_conflict_recheck` 放弃本次 reverse；该 guard 不能被用于静默破坏当前 full baseline。
+- 当前 official 39-case baseline 中 `699870` 必须保持 `accepted`，且 downstream `nodes.gpkg` 必须写为 `yes`。
+- batch / full-input 混跑中，若 `699870` 的 reverse 结果命中 cross-case 已占用 RCSD claim 或 evidence ownership，必须通过 `post_reverse_conflict_recheck` 放弃本次 reverse；该 guard 不能被用于静默破坏当前 official baseline。

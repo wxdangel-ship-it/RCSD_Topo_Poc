@@ -23,9 +23,10 @@
 | `无 RCSD 语义路口` | 不等于无 RCSD 数据。可包括 `rcsd_junction_partial_alignment` 或 `rcsdroad_only_alignment`：前者是路口级对象不完整对齐，后者仅有 RCSDRoad / 路口间道路。 |
 | `无 RCSD` | 对当前 event unit / case 没有任何可用 RCSD 正向对象，即 `rcsd_alignment_type = no_rcsd_alignment`；当前处理窗口内所有 RCSDNode / RCSDRoad 均为负向掩膜输入。 |
 | `SWSD 语义路口` | SWSD 侧可用于构面的基础语义路口。SWSD 始终参与语义约束、正向 roads 解释、负向掩膜和审计；但只有在无主证据且无可召回 RCSD 路口级对象时，才作为截面边界来源。 |
-| `Anchor_2 full baseline` | 历史 23-case frozen / visual gate：`23 case / accepted = 20 / rejected = 3`。 |
-| `Anchor_2 30-case surface scenario baseline` | 当前 surface scenario 后续正式扩展 gate：`30 case / accepted = 26 / rejected = 4`，rejected set 为 `760598 / 760936 / 857993 / 607602562`。 |
-| `607602562` | Anchor_2 30-case extended baseline 中的 rejected case；当前目视审计口径下不得为提高 accepted count 静默改成 accepted，详细原因以后续 case-level 审计材料为准。 |
+| `Anchor_2 official 39-case baseline` | 当前唯一正式冻结基线：`39 case / accepted = 35 / rejected = 4`，rejected set 为 `607602562 / 760598 / 760936 / 857993`。 |
+| `Anchor_2 legacy 23-case subset` | official 39-case 的历史子集投影：`23 case / accepted = 20 / rejected = 3`；不再作为独立 batch 或 PNG fingerprint hard gate。 |
+| `Anchor_2 legacy 30-case subset` | official 39-case 的历史子集投影：`30 case / accepted = 26 / rejected = 4`，rejected set 为 `607602562 / 760598 / 760936 / 857993`。 |
+| `607602562` | Anchor_2 official 39-case 中的 rejected case；当前目视审计口径下不得为提高 accepted count 静默改成 accepted。 |
 | `legacy selected-case baseline` | 2026-04-22 历史子集口径：`accepted = 7 / rejected = 1`，不再作为当前正式 acceptance 数字真相。 |
 | `representative node` | 当前 case 的代表节点；downstream `nodes.gpkg` 只更新 selected / effective case 的 representative node。 |
 
@@ -45,7 +46,7 @@
 | `review_materialized_point` | 仅用于 PNG 表达的可视化落点，不替代 `fact_reference_point`。 |
 | `localized_evidence_core_geometry` | 围绕当前事实点收敛出的局部核心证据几何。 |
 | `coarse_anchor_zone_geometry` | 审计与 review 用粗锚定区，不代理 component ownership。 |
-| `STEP4_REVIEW` | Step4 内部审计态；在当前 full baseline 中可以是 soft-degrade 常态，不是 Step7 最终状态。 |
+| `STEP4_REVIEW` | Step4 内部审计态；在当前 official 39-case baseline 中可以是 soft-degrade 常态，不是 Step7 最终状态。 |
 
 ## Step5-7 术语
 
@@ -81,7 +82,7 @@
 | `case-package` | 单 case 输入包，包含 manifest、size report 与该 case 可见的 GPKG 输入层。 |
 | `internal full-input` | 一次性加载 full-layer source，发现候选并按 case 直跑 Step1-7 的 T04 私有执行面。 |
 | `batch closeout` | 所有 case Step7 完成后的根目录发布阶段，生成 surface、rejected、summary、audit、consistency report 与 downstream nodes 输出。 |
-| `visual fingerprint refresh` | 对 `final_review.png` raw scanline fingerprint 的显式基线刷新；仅在已有诊断报告和人工目视确认后允许，用于记录 intentional geometry / review-layer drift，不表示 Step7 accepted/rejected 业务失败。 |
+| `visual fingerprint refresh` | 历史上对 `final_review.png` raw scanline fingerprint 的显式基线刷新；当前 official 39-case gate 不再使用 PNG raw fingerprint hard assertion。 |
 | `final review scenario label` | final review / visual audit 图上的 case 级场景标注，必须表达 `surface_scenario_type`；`no_rcsd_alignment` 的无 RCSD 正向召回语义由该场景标注表达，不额外绘制粗红 RCSDRoad。 |
 | `active RCSDRoad visual highlight` | final review / visual audit 中对唯一正向 RCSD 对齐结果的 RCSDRoad 粗红色线型表达；仅在 `rcsd_semantic_junction / rcsd_junction_partial_alignment / rcsdroad_only_alignment` 存在唯一正向对象时绘制。 |
 | `section reference visual marker` | final review / visual audit 中对截面边界参考对象的可视标注；来源可为 Reference Point、RCSD / RCSD partial junction 或 SWSD section reference，按场景规则决定。 |

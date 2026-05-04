@@ -34,10 +34,10 @@
 
 真正的"语义路口相关道路全量召回"在 `support_domain_builder.build_step5_support_domain` 第 813–877 行通过 `support_domain_cuts._expanded_related_road_ids` 完成，**层次倒置**：Step5 在做拓扑事实判定，而 Step3 不输出该事实。
 
-已知漏召场景（导致渲染层"少画道路"）：
+已知漏召 / 过召场景（导致渲染层"少画道路"或"越过其它语义路口多画道路"）：
 
 - 场景 A：continuous complex / merge case 中，`current_semantic_node_ids` 只取代表节点 + group_nodes，未消费 Step3 的 `augmented_member_node_ids`，`_expanded_related_road_ids` 在 sibling internal node 处被 degree>2 截断。
-- 场景 B：arm 经过 degree==3 的 micro-junction，但角度连续仍属于本路口关联道路；纯 degree==2 判据无法穿透。
+- 场景 B：arm 遇到其它 SWSD 语义路口候选（语义节点组 `degree >= 3`）后仍按角度连续穿透，导致召回越界道路；2026-05-04 用户修订口径冻结为：**只有语义节点组 `degree == 2` passthrough chain 可继续穿透，语义节点组 `degree >= 3` 必须立即作为 semantic boundary 停止**。语义节点组按 `mainnodeid` 聚合；无有效 `mainnodeid` 时按节点自身 `id` 成组。
 - 场景 C：admission 阶段 group_nodes 收集不全 → seed 漏匹配 → 召回不全。
 
 ### 3.2 Step4 缺口
@@ -68,9 +68,9 @@
 - `arm_id`：稳定字符串（建议 `arm_<index>` 与 Step3 现有 `branch_id` 一一映射）。
 - `direction`：`in / out / bi`，沿用 `_road_flow_flags_for_group` 已有逻辑。
 - `angle_deg`：与 Step3 现有 `BranchEvidence.angle_deg` 对齐。
-- `inter_junction_connector_road_ids`：该 arm 沿 *合法 continuation* 从 `member_node_ids` 边界向外延伸到**第一个**满足任一条件的节点为止，全部 SWSD road id 的有序链：
-  1. 节点为 `degree >= 3` 且不属于 `member_node_ids`（命中下一个语义路口候选）；
-  2. 节点 `degree == 1`（道路死端）；
+- `inter_junction_connector_road_ids`：该 arm 沿 *合法 continuation* 从 `member_node_ids` 边界向外延伸到**第一个**满足任一条件的节点为止，全部 SWSD road id 的有序链。这里的 `degree` 必须按语义节点组进出道路数统计，`mainnodeid` 非 `0` / 非空时按 `mainnodeid` 聚合，`mainnodeid = 0` / 空值时按节点自身 `id` 成组，组内道路不计入度数：
+  1. 语义节点组为 `degree >= 3` 且不属于 `member_node_ids`（命中下一个语义路口候选）；
+  2. 语义节点组 `degree == 1`（道路死端）；
   3. 节点退出 case patch（local context 边界）。
 - `terminal_node_id`：该 arm chain 的末端节点 id。
 - `terminal_kind`：`semantic_neighbor / dead_end / patch_boundary` 三选一。
@@ -78,8 +78,9 @@
 
 延伸规则（"合法 continuation"定义）：
 
-- 默认：沿 degree==2 passthrough chain 延伸（与现 `_expanded_related_road_ids` 行为一致）。
-- 角度连续 guard：当遇到 degree==3 节点时，若可用 `_pick_chain_continuation_candidate` 找到一条满足 `CHAIN_CONTINUATION_MAX_TURN_DEG` 与 `CHAIN_CONTINUATION_MIN_MARGIN_DEG` 的延续方向，且该方向不指向另一 `member_node_ids` 节点，可继续延伸**至多一次**（避免无限制串通其他语义路口）。该一次性穿透必须写入 `Step3 audit.swsd_semantic_arm[].continuation_through_micro_junction = true`。
+- 默认：沿语义节点组 degree==2 passthrough chain 延伸（与现 `_expanded_related_road_ids` 行为一致）。
+- 禁止 degree>=3 穿透：当遇到语义节点组 `degree >= 3` 且不属于当前 `member_node_ids` 的节点时，必须立即停止并写 `terminal_kind = semantic_neighbor`。即使角度连续，也不得把该节点之后的 SWSDRoad 纳入当前 case 的 `inter_junction_connector_road_ids`。
+- `continuation_through_micro_junction` 保留为兼容审计字段；在本冻结口径下，Step3 不再把 `degree >= 3` 节点标为可穿透 micro-junction。
 
 ### 4.2 SWSD 语义路口在 unit 级 skeleton 中的视角
 
@@ -152,7 +153,7 @@
 
 - `step3_status.json` 顶层包含 `swsd_semantic_junction` 字段，结构符合 §4.1。
 - `event_units/<id>/step3_status.json` 包含 §4.2 的三个新字段。
-- `step3_audit.json` 给出 `swsd_semantic_junction.audit`：每条 arm 的 `inter_junction_connector_road_ids` 来源（degree==2 chain / one-shot micro-junction 穿透）。
+- `step3_audit.json` 给出 `swsd_semantic_junction.audit`：每条 arm 的 `inter_junction_connector_road_ids` 来源必须可追溯到当前路口 direct road 或语义节点组 degree==2 passthrough chain；不得包含越过语义节点组 degree>=3 semantic boundary 后的 road。
 - 对 Anchor_2 39-case 整套，每个 case 必有 `swsd_semantic_junction.junction_id != ""`；arm 数 < 3 的 case 必有 `unstable_reasons` 显式说明。
 - 验证：`intra_junction_road_ids ∩ Σ inter_junction_connector_road_ids = ∅`。
 - 验证：`Σ inter_junction_connector_road_ids` 在每条 arm 内顺序连贯（首尾节点配对）。
@@ -166,8 +167,8 @@
 
 ### 5.3 一致性与回归
 
-- Anchor_2 30-case baseline：`accepted = 26 / rejected = 4` 不变；`857993 = fail4 / 699870 = yes` 不变。
-- Anchor_2 23-case baseline：`accepted = 20 / rejected = 3` 不变；**本轮不再与历史 PNG visual fingerprint 比对**。Phase 6 重新跑 Anchor_2 39-case 后，新生成的 `final_review.png` 直接作为本轮目视审计图基线，由人工抽样确认；不强求与 2026-05-01 的 23-case fingerprint 一致。
+- Anchor_2 official 39-case baseline：`accepted = 35 / rejected = 4` 不变；`857993 / 607602562 / 760598 / 760936 = fail4`，`699870 = yes` 不变。
+- Anchor_2 23-case / 30-case baseline 只作为 official 39-case manifest 的历史子集投影：23-case 投影 `accepted = 20 / rejected = 3`，30-case 投影 `accepted = 26 / rejected = 4`。**本轮不再与历史 PNG visual fingerprint 比对**，也不再把 23/30 子集作为独立 batch gate。Phase 6 重新跑 Anchor_2 39-case 后，新生成的 `final_review.png` 直接作为本轮目视审计图基线，由人工抽样确认；不强求与 2026-05-01 的 23-case fingerprint 一致。
 - **命名回归 case**（用户人工核对发现 SWSD 路口某些道路在 `final_review.png` 中渲染缺失）：
   - `724067`
   - `758784`
@@ -197,7 +198,7 @@
 - 不改变 `divmerge_virtual_anchor_surface*` 主产物命名。
 - 不引入"SWSD 语义路口候选消歧"逻辑（admission/group 已确定的 mainnodeid 即为唯一 case-level 路口；本轮只做实体化）。
 - 不改 RCSD 语义路口的判定标准（沿用 `rcsd_alignment_type` 已冻结的五值域）。
-- 不修复 `_pick_chain_continuation_candidate` 现有阈值（沿用 `CHAIN_CONTINUATION_MAX_TURN_DEG / CHAIN_CONTINUATION_MIN_MARGIN_DEG`）。
+- 不把 `_pick_chain_continuation_candidate` 用作 SWSD/RCSD 语义路口 road 召回的 degree>=3 穿透依据；该函数若被其它已授权场景使用，保持其既有阈值，不在本轮调整。
 - 不把 `857993 = rejected` 改成 accepted；不为提高 accepted count 弱化 Step7 门禁。
 - 不引入新的 review state；保持 `STEP4_OK / STEP4_REVIEW / STEP4_FAIL` 三态。
 - 不改 `accepted / rejected` 二态最终结果机。
@@ -220,7 +221,7 @@
 
 - **不回写**到 `T04UnitEnvelope.unit_population_node_ids / event_branch_ids / boundary_branch_ids / preferred_axis_branch_id` 等 unit-level 边界字段。
 - Slice 0 强制 dry-run 守门：用 `505078921` 与 `17943587` 两个冻结 case 在改造前后比对 `unit_envelope.to_status_doc()` 的输出，必须**逐字段完全相同**；若有任何差异立即停机回报，不得带病进入 Slice 1。
-- 业务理由：复杂路口的 unit 切分逻辑已在 23-case + 30-case baseline 中冻结；本轮治理只新增 case-level 实体，不动 unit 切分。
+- 业务理由：复杂路口的 unit 切分逻辑已在 official 39-case baseline 中冻结；本轮治理只新增 case-level 实体，不动 unit 切分。
 
 ### D3 — arm 链走出 patch 边界时不外推
 

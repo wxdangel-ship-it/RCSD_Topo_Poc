@@ -79,6 +79,46 @@ def _build_semantic_adjacency(
     return dict(adjacency), degree_by_node_id, road_by_id
 
 
+def _semantic_group_id_for_node_id(
+    node_id: str,
+    *,
+    local_node_by_id: dict[str, ParsedNode],
+) -> str:
+    node = local_node_by_id.get(str(node_id))
+    if node is not None:
+        mainnodeid = normalize_id(node.mainnodeid or node.node_id)
+        if mainnodeid and mainnodeid != "0":
+            return mainnodeid
+    return normalize_id(node_id) or str(node_id)
+
+
+def _semantic_boundary_degree_by_node(
+    local_roads: list[ParsedRoad],
+    *,
+    local_node_by_id: dict[str, ParsedNode],
+) -> dict[str, int]:
+    node_ids = set(local_node_by_id)
+    boundary_road_ids_by_group: dict[str, set[str]] = defaultdict(set)
+    for road in local_roads:
+        road_id = str(road.road_id)
+        if not road_id:
+            continue
+        snodeid = str(road.snodeid)
+        enodeid = str(road.enodeid)
+        node_ids.update((snodeid, enodeid))
+        source_group_id = _semantic_group_id_for_node_id(snodeid, local_node_by_id=local_node_by_id)
+        target_group_id = _semantic_group_id_for_node_id(enodeid, local_node_by_id=local_node_by_id)
+        if source_group_id == target_group_id:
+            continue
+        boundary_road_ids_by_group[source_group_id].add(road_id)
+        boundary_road_ids_by_group[target_group_id].add(road_id)
+    degree_by_node_id: dict[str, int] = {}
+    for node_id in node_ids:
+        group_id = _semantic_group_id_for_node_id(node_id, local_node_by_id=local_node_by_id)
+        degree_by_node_id[node_id] = len(boundary_road_ids_by_group.get(group_id, set()))
+    return degree_by_node_id
+
+
 def _semantic_junction_id_for_node(
     node_id: str,
     *,
@@ -119,9 +159,14 @@ def _walk_arm_to_neighbor_semantic_junction(
     semantic_mainnodeids: set[str],
     *,
     local_nodes: list[ParsedNode] | None = None,
+    member_semantic_ids: set[str] | None = None,
 ) -> tuple[tuple[str, ...], str, str, str | None, bool]:
     adjacency, degree_by_node_id, road_by_id = _build_semantic_adjacency(local_roads)
     local_node_by_id = {str(node.node_id): node for node in (local_nodes or ())}
+    semantic_degree_by_node_id = _semantic_boundary_degree_by_node(
+        local_roads,
+        local_node_by_id=local_node_by_id,
+    )
     local_node_ids = set(local_node_by_id) if local_nodes is not None else set(adjacency)
     seed_road_ids = tuple(str(road_id) for road_id in getattr(seed_branch, "road_ids", ()) if str(road_id))
     connector_road_ids: list[str] = []
@@ -131,14 +176,14 @@ def _walk_arm_to_neighbor_semantic_junction(
     continuation_through_micro_junction = False
 
     for seed_road_id in seed_road_ids:
-        if seed_road_id in road_by_id and seed_road_id not in connector_road_ids:
-            connector_road_ids.append(seed_road_id)
         seed_road = road_by_id.get(seed_road_id)
         if seed_road is None:
             continue
         boundary = _road_member_boundary(seed_road, member_node_ids=member_node_ids)
         if boundary is None:
             continue
+        if seed_road_id not in connector_road_ids:
+            connector_road_ids.append(seed_road_id)
         prev_node_id, current_node_id = boundary
         previous_road = seed_road
         visited_nodes: set[str] = {str(prev_node_id)}
@@ -152,7 +197,7 @@ def _walk_arm_to_neighbor_semantic_junction(
                 neighbor_semantic_junction_id = None
                 break
 
-            degree = int(degree_by_node_id.get(current_node_id, 0))
+            degree = int(semantic_degree_by_node_id.get(current_node_id, degree_by_node_id.get(current_node_id, 0)))
             if degree <= 1:
                 terminal_kind = "dead_end"
                 neighbor_semantic_junction_id = None
@@ -167,24 +212,13 @@ def _walk_arm_to_neighbor_semantic_junction(
             ]
 
             if degree >= 3:
-                continuation = None
-                if not continuation_through_micro_junction and candidate_edges:
-                    continuation = _pick_chain_continuation_candidate(
-                        candidates=candidate_edges,
-                        prev_node_id=str(prev_node_id),
-                        current_node_id=current_node_id,
-                        previous_road=previous_road,
-                    )
-                if continuation is None:
-                    terminal_kind = "semantic_neighbor"
-                    neighbor_semantic_junction_id = _semantic_junction_id_for_node(
-                        current_node_id,
-                        local_node_by_id=local_node_by_id,
-                        semantic_mainnodeids=semantic_mainnodeids,
-                    )
-                    break
-                continuation_through_micro_junction = True
-                next_node_id, next_road = continuation
+                terminal_kind = "semantic_neighbor"
+                neighbor_semantic_junction_id = _semantic_junction_id_for_node(
+                    current_node_id,
+                    local_node_by_id=local_node_by_id,
+                    semantic_mainnodeids=semantic_mainnodeids,
+                )
+                break
             else:
                 if len(candidate_edges) != 1:
                     terminal_kind = "patch_boundary" if not candidate_edges else "semantic_neighbor"
@@ -253,11 +287,22 @@ def _build_swsd_semantic_junction(
         for node_id in (*branch_result.member_node_ids, *branch_result.augmented_member_node_ids)
         if str(node_id)
     }
+    local_node_by_id = {str(node.node_id): node for node in local_nodes}
+    member_semantic_ids = {
+        normalize_id(local_node_by_id[node_id].mainnodeid or local_node_by_id[node_id].node_id) or node_id
+        for node_id in member_node_ids
+        if node_id in local_node_by_id
+    }
     _adjacency, degree_by_node_id, _road_by_id = _build_semantic_adjacency(local_roads)
+    local_node_by_id = {str(node.node_id): node for node in local_nodes}
+    semantic_degree_by_node_id = _semantic_boundary_degree_by_node(
+        local_roads,
+        local_node_by_id=local_node_by_id,
+    )
     semantic_mainnodeids = {
         normalize_id(node.mainnodeid or node.node_id) or str(node.node_id)
         for node in local_nodes
-        if int(degree_by_node_id.get(str(node.node_id), 0)) >= 3
+        if int(semantic_degree_by_node_id.get(str(node.node_id), degree_by_node_id.get(str(node.node_id), 0))) >= 3
     }
     representative_junction_id = normalize_id(representative_node.mainnodeid or representative_node.node_id) or str(
         representative_node.node_id
@@ -276,12 +321,19 @@ def _build_swsd_semantic_junction(
                 member_node_ids,
                 semantic_mainnodeids,
                 local_nodes=local_nodes,
+                member_semantic_ids=member_semantic_ids,
             )
         )
         first_road_ids = tuple(str(road_id) for road_id in getattr(branch, "road_ids", ()) if str(road_id))
+        direct_first_road_ids = tuple(
+            road_id
+            for road_id in first_road_ids
+            if (road := _road_by_id.get(road_id)) is not None
+            and _road_member_boundary(road, member_node_ids=member_node_ids) is not None
+        )
         connector_road_ids = tuple(
             road_id
-            for road_id in dict.fromkeys((*first_road_ids, *connector_road_ids))
+            for road_id in dict.fromkeys((*direct_first_road_ids, *connector_road_ids))
             if road_id not in intra_junction_road_id_set
         )
         semantic_arms.append(

@@ -16,8 +16,8 @@
 | Product | 守"SWSD 语义路口"的语义定义与渲染口径，给出对照案例 | case-by-case "应被召回道路集合"对照表（用户提供怀疑 case 后填充） |
 | Architecture | 定义 `SWSDSemanticJunction / RCSDSemanticJunction / RCSDRoadOnlyChain / ConsistencyVerdict` 边界与持久化协议；控制文件体量 | dataclass schema、模块拆分方案、契约 delta diff |
 | Development | 按切片实现 Step3 实体化 / Step4 完整性 / Step5 去重 / 渲染层迁移 | 小步可回滚本地 checkpoint、audit 字段、向后兼容字段映射 |
-| Testing | 补 unit / synthetic / real-case 三层回归；锁 30-case 与 23-case baseline | pytest gates、fixtures、conftest 工具 |
-| QA | 守 CRS、几何 valid、性能不退化、视觉 fingerprint 刷新需 diff 报告、契约一致性 | release checklist、视觉 diff 报告、性能审计、契约一致性核查 |
+| Testing | 补 unit / synthetic / real-case 三层回归；锁 official 39-case baseline，并把 23/30 历史子集降为 manifest projection gate | pytest gates、fixtures、conftest 工具 |
+| QA | 守 CRS、几何 valid、性能不退化、render audit 与目视图可追溯、契约一致性 | release checklist、视觉审计记录、性能审计、契约一致性核查 |
 
 ## 3. Implementation Slices
 
@@ -38,7 +38,7 @@
 - 在 `_runtime_step23_contracts.py` 新增 `SWSDSemanticJunction / SWSDSemanticArm` frozen dataclass。
 - 在 `_runtime_step3_topology_skeleton.py` 实现 `_build_swsd_semantic_junction(...)`：
   - 内部道路：复用 `_build_road_branches_for_member_nodes` 已识别的 `internal_road_ids`，并把 `member_node_ids` 替换为 `branch_result.member_node_ids ∪ augmented_member_node_ids`。
-  - arm 延伸：复用 `_chain_candidates_from_topology / _pick_chain_continuation_candidate` 既有原语；新增 `_walk_arm_to_neighbor_semantic_junction(...)`，按 §4.1 "合法 continuation"规则走 chain，记录 `inter_junction_connector_road_ids` 与 `terminal_kind`。
+  - arm 延伸：新增 `_walk_arm_to_neighbor_semantic_junction(...)`，按 §4.1 "合法 continuation"规则走 chain；只允许语义节点组 `degree == 2` passthrough，遇语义节点组 `degree >= 3` 立即记录 `semantic_neighbor` 并停止；语义节点组按 `mainnodeid` 聚合，无有效 `mainnodeid` 时按节点自身 `id` 成组。
 - `Stage4TopologySkeleton` 增加 `swsd_semantic_junction: SWSDSemanticJunction` 字段；`to_audit_summary` 输出对应 audit 子树。
 - 在 `topology.build_step3_status_doc` 补输出 `swsd_semantic_junction`；`build_unit_step3_status_doc` 补 `swsd_junction_ref / unit_owned_arm_ids / sibling_unit_arm_ids`。
 
@@ -89,27 +89,28 @@
 
 - 新增 `tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py`：
   - 单 case 三 arm 路口 → `intra/connector` 拆分正确；
-  - degree==3 micro-junction 一次性穿透；
+  - degree>=3 semantic boundary 不穿透，越界 road 不进入当前路口 connector；
   - patch 边界终止；
   - sibling internal node（continuous complex / merge）合并到 `member_node_ids`；
-  - `505078921 / 17943587 / 760213 / 857993` 冻结守门 case 的 SWSD 实体快照。
+  - `505078921 / 17943587 / 760213 / 857993 / 698380` 冻结守门 case 的 SWSD 实体快照。
 - 扩展 `test_step4_rcsd_alignment_type.py`：
   - `rcsd_semantic_junction` 输出实体且 arm 配对完整；
   - `rcsd_junction_partial_alignment` 给出 `alignment_partial_missing_swsd_arm_ids`；
   - `rcsdroad_only_alignment` 输出 chain 且 `closure_status` 取值符合期望；
   - `swsd_rcsd_alignment_consistent` 五种取值至少各一例。
 - 新增 `test_step5_consumes_step3_swsd_junction.py`：Step5 不再调用 `_expanded_related_road_ids`；`related_swsd_road_ids` 与 Step3 实体派生一致。
-- Anchor_2 39-case baseline gate 增补：
+- Anchor_2 official 39-case baseline gate 增补：
   - 39 case 全部 `swsd_semantic_junction.junction_id != ""`；
-  - 30-case `accepted = 26 / rejected = 4` 不漂移；
-  - 23-case PNG fingerprint 若刷新，附 diff 报告（非测试断言，QA 阶段处理）。
+  - official 39-case `accepted = 35 / rejected = 4` 不漂移；
+  - 23/30 历史子集只从 official manifest 投影，不再独立重跑 batch；
+  - PNG raw fingerprint 不进入当前 hard gate，视觉 QA 以 PNG 存在性、render audit 与人工目视确认 run root 为准。
 
-完成判据：新增测试全绿；30-case / 23-case 既有 gate 不动。
+完成判据：新增测试全绿；official 39-case gate 全绿；23/30 legacy projection gate 与 official manifest 一致。
 
 ### Slice 7 — QA Gates
 
 - CRS / valid geometry / feature count / summary-audit 一致性断言扩展到新 `swsd_semantic_junction` 输出。
-- 23-case PNG fingerprint 刷新决议（`architecture/10-quality-requirements.md` 内的 visual baseline 段落）。
+- 39-case visual audit run root 登记到 `architecture/10-quality-requirements.md`；PNG raw fingerprint 不作为当前 hard gate。
 - 性能：39-case `summary.json.performance.threshold_status` 必须 `within_threshold`；新增字段不得让总耗时上涨超过 5%。
 - 视觉审计：`final_review.png` 中 `swsd_semantic_junction.intra_junction_road_ids` 与 `Σ inter_junction_connector_road_ids` 全部可见（采样 5 个 case 人工核对）。
 - `docs/repository-metadata/code-size-audit.md` 同轮更新（如发生拆分）。
@@ -124,8 +125,8 @@
 | Syntax | 修改的 `.py` `python -m py_compile`；MD 用 `markdownlint`（可选） |
 | Unit | `_build_swsd_semantic_junction / _walk_arm_to_neighbor_semantic_junction / _build_rcsd_semantic_junction / _build_rcsdroad_only_chain / compute_consistency_verdict` 的纯函数测试 |
 | Synthetic | 三 arm SWSD / 四 arm SWSD / partial RCSD / road-only chain / ambiguous block 各至少 1 例 |
-| Real case | 30-case baseline / 23-case baseline / 用户怀疑 case（待提供）/ 769184 等 multi-unit / 760984+788824 等 RCSD junction window |
-| QA | CRS、几何 valid、性能阈值、视觉刷新 diff、契约一致性、文件体量 |
+| Real case | official 39-case baseline / 23 & 30 legacy projection gate / 用户怀疑 case（待提供）/ 769184 等 multi-unit / 760984+788824 等 RCSD junction window |
+| QA | CRS、几何 valid、性能阈值、render audit、契约一致性、文件体量 |
 
 ## 5. Risks and Controls
 
@@ -147,7 +148,7 @@
 - 不改 `accepted / rejected` 二态最终结果机；不引入第三状态。
 - 不改 `kind / kind_2 / mainnodeid` 字段语义；只读消费。
 - 不引入 case-level SWSD 候选消歧（admission 决定唯一 mainnodeid 即唯一 SWSD 路口）。
-- 不修复 `_pick_chain_continuation_candidate` 的阈值；如需调整另起 SpecKit。
+- 不调整 `_pick_chain_continuation_candidate` 的阈值；SWSD/RCSD 语义路口 road 召回不再用该函数穿透语义节点组 `degree >= 3` semantic boundary。
 - 不动 Step6 `polygon_assembly` 主链；只在 Step5 输入侧消费 Step3 新实体。
 - 不动 Step7 `final_publish` / nodes_publish；下游字段保持兼容。
 
@@ -161,4 +162,4 @@
 4. 任何 Phase 中出现源事实冲突 → 立刻按 `AGENTS.md §1.1` 停机回报。
 5. 任何源码 / 脚本写入前 → 字节数自检（PowerShell `Get-ChildItem` 或 POSIX `stat -c%s`）；接近 100 KB 立刻按 §3 拆分流程。
 6. 每个 Phase 完成后跑该 Phase 对应的 pytest 子集；不得一次性等到最后才跑测试。
-7. 30-case / 23-case baseline gate 必须在 Phase 7 前完整跑过；超阈值或失败立刻停机。
+7. official 39-case baseline gate 必须在 Phase 7 前完整跑过；23/30 legacy projection gate 必须与 official manifest 一致；超阈值或失败立刻停机。

@@ -90,7 +90,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - 由 `topology.py` 的 `build_step3_topology(...)` 生成 skeleton。
 - 顶层 case coordination skeleton 负责 member population、chain context、event-unit population 和 case overview。
 - event-unit executable skeleton 才是 Step4 的执行输入，包含 `event_branch_ids / boundary_branch_ids / preferred_axis_branch_id` 等 unit-local 信息。
-- Step3 同步实体化 `SWSDSemanticJunction`：以 representative node `mainnodeid` 作为 `junction_id`，以 case-level 合并节点集合判定 `intra_junction_road_ids`，并沿 patch 内语义 arm 输出 `inter_junction_connector_road_ids` 与终端状态。
+- Step3 同步实体化 `SWSDSemanticJunction`：以 representative node `mainnodeid` 作为 `junction_id`，以 case-level 合并节点集合判定 `intra_junction_road_ids`，并沿 patch 内语义 arm 输出 `inter_junction_connector_road_ids` 与终端状态。arm 延伸的 `degree` 必须按语义节点组进出道路数统计：有有效 `mainnodeid` 时按 `mainnodeid` 聚合，无有效 `mainnodeid` 时按节点自身 `id` 成组；只允许语义组 degree==2 passthrough，语义组 degree>=3 立即停止。
 - continuous complex / merge 场景下，unit population 仍锚定当前 representative node；但如果 same-case sibling internal node 之后仍保持同一 `(L, R)` pair-middle 语义，executable branch 允许沿合法 continuation 延续，硬上限为 `200m`。
 - sibling node 上的 continuation 选择顺序固定为：先对齐 `external associated road`，再确认 `L' / R'` 中间没有其他 road，保持左右顺序，最后才用最小转角做 tie-breaker。
 - multi-diverge / multi-merge 必须保留 `ordered_side_branch_ids / adjacent_side_pairs / unit_boundary_branch_ids / preferred_axis_branch_id`，不得把多方向过度压扁成单 pair。
@@ -156,7 +156,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 边界：
 
 - Step4 可产生 `STEP4_OK / STEP4_REVIEW / STEP4_FAIL` 内部审计态，但这些状态不得进入 Step7 最终状态机。
-- `STEP4_REVIEW` 在当前 full baseline 中是可解释的 soft-degrade 常态，不表示要把 `857993` 追修成 accepted。
+- `STEP4_REVIEW` 在当前 official 39-case baseline 中是可解释的 soft-degrade 常态，不表示要把 `857993` 追修成 accepted。
 - candidate pruning 采用硬排除与显式 degraded state，不允许静默复用已被排除的 component。
 - Step4 不生成最终 polygon，也不决定最终发布层。
 - 无主证据时允许选择 RCSD/SWSD 作为 `section_reference_source`，但不得写入 `reference_point_source`，不得反推 `fact_reference_point`。

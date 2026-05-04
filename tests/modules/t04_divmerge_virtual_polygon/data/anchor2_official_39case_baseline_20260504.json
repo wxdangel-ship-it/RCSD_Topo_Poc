@@ -1,0 +1,350 @@
+{
+  "dataset": {
+    "name": "Anchor_2 official 39-case baseline",
+    "case_root_wsl": "/mnt/e/TestData/POC_Data/T02/Anchor_2",
+    "case_root_windows": "E:\\TestData\\POC_Data\\T02\\Anchor_2",
+    "case_count": 39,
+    "accepted_count": 35,
+    "rejected_count": 4,
+    "rejected_case_ids": [
+      "607602562",
+      "760598",
+      "760936",
+      "857993"
+    ]
+  },
+  "legacy_subsets": {
+    "legacy_23_20260426": [
+      "17943587",
+      "30434673",
+      "505078921",
+      "698380",
+      "698389",
+      "699870",
+      "706629",
+      "723276",
+      "724067",
+      "724081",
+      "73462878",
+      "758784",
+      "760213",
+      "760256",
+      "760598",
+      "760936",
+      "760984",
+      "785671",
+      "785675",
+      "788824",
+      "824002",
+      "857993",
+      "987998"
+    ],
+    "legacy_30_20260501": [
+      "698380",
+      "698389",
+      "699870",
+      "706347",
+      "706629",
+      "723276",
+      "724067",
+      "724081",
+      "758784",
+      "760213",
+      "760230",
+      "760256",
+      "760277",
+      "760598",
+      "760936",
+      "760984",
+      "765050",
+      "765170",
+      "768680",
+      "785671",
+      "785675",
+      "788824",
+      "824002",
+      "857993",
+      "987998",
+      "17943587",
+      "30434673",
+      "73462878",
+      "505078921",
+      "607602562"
+    ]
+  },
+  "cases": [
+    {
+      "case_id": "698380",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "698389",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "699870",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "706243",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "706247",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "706347",
+      "final_state": "accepted",
+      "surface_scenario_type": "no_main_evidence_with_rcsdroad_fallback_and_swsd",
+      "section_reference_source": "swsd_junction",
+      "surface_generation_mode": "swsd_with_rcsdroad_fallback"
+    },
+    {
+      "case_id": "706629",
+      "final_state": "accepted",
+      "surface_scenario_type": "no_main_evidence_with_swsd_only",
+      "section_reference_source": "swsd_junction",
+      "surface_generation_mode": "swsd_junction_window"
+    },
+    {
+      "case_id": "723276",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "724067",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "724081",
+      "final_state": "accepted",
+      "surface_scenario_type": "no_main_evidence_with_rcsdroad_fallback_and_swsd",
+      "section_reference_source": "swsd_junction",
+      "surface_generation_mode": "swsd_with_rcsdroad_fallback"
+    },
+    {
+      "case_id": "758784",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "760213",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "760230",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "760256",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsdroad_fallback",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "760277",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "760598",
+      "final_state": "rejected",
+      "surface_scenario_type": "no_surface_reference",
+      "section_reference_source": "none",
+      "surface_generation_mode": "no_surface"
+    },
+    {
+      "case_id": "760936",
+      "final_state": "rejected",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "760984",
+      "final_state": "accepted",
+      "surface_scenario_type": "no_main_evidence_with_rcsd_junction",
+      "section_reference_source": "rcsd_junction",
+      "surface_generation_mode": "rcsd_junction_window"
+    },
+    {
+      "case_id": "765050",
+      "final_state": "accepted",
+      "surface_scenario_type": "no_main_evidence_with_rcsdroad_fallback_and_swsd",
+      "section_reference_source": "swsd_junction",
+      "surface_generation_mode": "swsd_with_rcsdroad_fallback"
+    },
+    {
+      "case_id": "765170",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "768675",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "768680",
+      "final_state": "accepted",
+      "surface_scenario_type": "mixed",
+      "section_reference_source": "mixed",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "785629",
+      "final_state": "accepted",
+      "surface_scenario_type": "mixed",
+      "section_reference_source": "mixed",
+      "surface_generation_mode": "mixed"
+    },
+    {
+      "case_id": "785631",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "785671",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "785675",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "785731",
+      "final_state": "accepted",
+      "surface_scenario_type": "no_main_evidence_with_rcsdroad_fallback_and_swsd",
+      "section_reference_source": "swsd_junction",
+      "surface_generation_mode": "swsd_with_rcsdroad_fallback"
+    },
+    {
+      "case_id": "788824",
+      "final_state": "accepted",
+      "surface_scenario_type": "no_main_evidence_with_rcsd_junction",
+      "section_reference_source": "rcsd_junction",
+      "surface_generation_mode": "rcsd_junction_window"
+    },
+    {
+      "case_id": "795682",
+      "final_state": "accepted",
+      "surface_scenario_type": "no_main_evidence_with_swsd_only",
+      "section_reference_source": "swsd_junction",
+      "surface_generation_mode": "swsd_junction_window"
+    },
+    {
+      "case_id": "807908",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "823826",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "824002",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "857993",
+      "final_state": "rejected",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "987998",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "17943587",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "30434673",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "73462878",
+      "final_state": "accepted",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "505078921",
+      "final_state": "accepted",
+      "surface_scenario_type": "mixed",
+      "section_reference_source": "mixed",
+      "surface_generation_mode": "main_evidence_driven"
+    },
+    {
+      "case_id": "607602562",
+      "final_state": "rejected",
+      "surface_scenario_type": "no_surface_reference",
+      "section_reference_source": "none",
+      "surface_generation_mode": "no_surface"
+    }
+  ]
+}

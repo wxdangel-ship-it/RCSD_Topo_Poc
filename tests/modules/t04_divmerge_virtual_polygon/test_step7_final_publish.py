@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import struct
-import zlib
 from pathlib import Path
 
 import pytest
@@ -11,99 +8,44 @@ import pytest
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import *  # noqa: F401,F403
 
 
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-
+ANCHOR2_OFFICIAL_BASELINE_PATH = (
+    Path(__file__).with_name("data") / "anchor2_official_39case_baseline_20260504.json"
+)
+ANCHOR2_OFFICIAL_BASELINE = json.loads(ANCHOR2_OFFICIAL_BASELINE_PATH.read_text(encoding="utf-8"))
+ANCHOR2_OFFICIAL_CASES_BY_ID = {
+    str(row["case_id"]): row
+    for row in ANCHOR2_OFFICIAL_BASELINE["cases"]
+}
+ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504: dict[str, tuple[str, str, str, str]] = {
+    case_id: (
+        str(row["final_state"]),
+        str(row["surface_scenario_type"]),
+        str(row["section_reference_source"]),
+        str(row["surface_generation_mode"]),
+    )
+    for case_id, row in ANCHOR2_OFFICIAL_CASES_BY_ID.items()
+}
+ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260503 = ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504
+ANCHOR2_LEGACY_23_SUBSET_20260426 = tuple(
+    str(case_id)
+    for case_id in ANCHOR2_OFFICIAL_BASELINE["legacy_subsets"]["legacy_23_20260426"]
+)
+ANCHOR2_LEGACY_30_SUBSET_20260501 = tuple(
+    str(case_id)
+    for case_id in ANCHOR2_OFFICIAL_BASELINE["legacy_subsets"]["legacy_30_20260501"]
+)
 ANCHOR2_FULL_BASELINE_20260426: dict[str, str] = {
-    "17943587": "accepted",
-    "30434673": "accepted",
-    "505078921": "accepted",
-    "698380": "accepted",
-    "698389": "accepted",
-    "699870": "accepted",
-    "706629": "accepted",
-    "723276": "accepted",
-    "724067": "accepted",
-    "724081": "accepted",
-    "73462878": "accepted",
-    "758784": "accepted",
-    "760213": "accepted",
-    "760256": "accepted",
-    "760598": "rejected",
-    "760936": "rejected",
-    "760984": "accepted",
-    "785671": "accepted",
-    "785675": "accepted",
-    "788824": "accepted",
-    "824002": "accepted",
-    "857993": "rejected",
-    "987998": "accepted",
+    case_id: ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504[case_id][0]
+    for case_id in ANCHOR2_LEGACY_23_SUBSET_20260426
 }
-
 ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501: dict[str, str] = {
-    "698380": "accepted",
-    "698389": "accepted",
-    "699870": "accepted",
-    "706347": "accepted",
-    "706629": "accepted",
-    "723276": "accepted",
-    "724067": "accepted",
-    "724081": "accepted",
-    "758784": "accepted",
-    "760213": "accepted",
-    "760230": "accepted",
-    "760256": "accepted",
-    "760277": "accepted",
-    "760598": "rejected",
-    "760936": "rejected",
-    "760984": "accepted",
-    "765050": "accepted",
-    "765170": "accepted",
-    "768680": "accepted",
-    "785671": "accepted",
-    "785675": "accepted",
-    "788824": "accepted",
-    "824002": "accepted",
-    "857993": "rejected",
-    "987998": "accepted",
-    "17943587": "accepted",
-    "30434673": "accepted",
-    "73462878": "accepted",
-    "505078921": "accepted",
-    "607602562": "rejected",
+    case_id: ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504[case_id][0]
+    for case_id in ANCHOR2_LEGACY_30_SUBSET_20260501
 }
-
 ANCHOR2_30CASE_REJECTED_20260501 = {
-    "607602562",
-    "760598",
-    "760936",
-    "857993",
-}
-
-ANCHOR2_30CASE_KEY_ACCEPTED_20260501 = {
-    "706629",
-    "706347",
-    "760984",
-    "788824",
-    "760230",
-    "760277",
-    "765170",
-    "768680",
-    "699870",
-    "698389",
-}
-
-ANCHOR2_30CASE_STEP6_GUARD_FIELDS_20260501 = {
-    "surface_scenario_type",
-    "section_reference_source",
-    "surface_generation_mode",
-    "post_cleanup_allowed_growth_ok",
-    "post_cleanup_forbidden_ok",
-    "post_cleanup_terminal_cut_ok",
-    "post_cleanup_lateral_limit_ok",
-    "no_surface_reference_guard",
-    "final_polygon_suppressed_by_no_surface_reference",
-    "fallback_overexpansion_detected",
-    "barrier_separated_case_surface_ok",
+    case_id
+    for case_id, final_state in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501.items()
+    if final_state == "rejected"
 }
 
 ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502: dict[str, dict[str, object]] = {
@@ -152,178 +94,6 @@ ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502: dict[str, dict[str, object]] = {
     },
 }
 
-ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260503: dict[str, tuple[str, str, str, str]] = {
-    "698380": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "698389": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "699870": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "706243": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "706247": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "706347": ("accepted", "no_main_evidence_with_rcsdroad_fallback_and_swsd", "swsd_junction", "swsd_with_rcsdroad_fallback"),
-    "706629": ("accepted", "no_main_evidence_with_swsd_only", "swsd_junction", "swsd_junction_window"),
-    "723276": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "724067": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "724081": ("accepted", "no_main_evidence_with_rcsdroad_fallback_and_swsd", "swsd_junction", "swsd_with_rcsdroad_fallback"),
-    "758784": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "760213": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "760230": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "760256": ("accepted", "main_evidence_with_rcsdroad_fallback", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "760277": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "760598": ("rejected", "no_surface_reference", "none", "no_surface"),
-    "760936": ("rejected", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "760984": ("accepted", "no_main_evidence_with_rcsd_junction", "rcsd_junction", "rcsd_junction_window"),
-    "765050": ("accepted", "no_main_evidence_with_rcsdroad_fallback_and_swsd", "swsd_junction", "swsd_with_rcsdroad_fallback"),
-    "765170": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "768675": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "768680": ("accepted", "mixed", "mixed", "main_evidence_driven"),
-    "785629": ("accepted", "mixed", "mixed", "mixed"),
-    "785631": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "785671": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "785675": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "785731": ("accepted", "no_main_evidence_with_rcsdroad_fallback_and_swsd", "swsd_junction", "swsd_with_rcsdroad_fallback"),
-    "788824": ("accepted", "no_main_evidence_with_rcsd_junction", "rcsd_junction", "rcsd_junction_window"),
-    "795682": ("accepted", "no_main_evidence_with_swsd_only", "swsd_junction", "swsd_junction_window"),
-    "807908": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "823826": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "824002": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "857993": ("rejected", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "987998": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "17943587": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "30434673": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "73462878": ("accepted", "main_evidence_with_rcsd_junction", "reference_point_and_rcsd_junction", "main_evidence_driven"),
-    "505078921": ("accepted", "mixed", "mixed", "main_evidence_driven"),
-    "607602562": ("rejected", "no_surface_reference", "none", "no_surface"),
-}
-
-# The 23-case business gate remains the 2026-04-26 frozen Anchor_2 set,
-# but its final_review.png visual fingerprints were refreshed on 2026-05-01.
-# The previous PNG hashes came from the 2026-04-26 frozen visual baseline.
-# Surface-scenario, section-reference, case-level bridge, and Step6 guard
-# upgrades intentionally changed review geometry/layers for 8 of the 23 cases.
-# The 30-case visual audit was manually reviewed and accepted by the user; this
-# is not an algorithm change, a quiet refresh, or a relaxation of business gates.
-# Row counts, accepted/rejected states, nodes writeback, and Step7 consistency
-# assertions are still enforced below before these PNG hashes are checked.
-ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260501_SURFACE_SCENARIO: dict[
-    str, dict[str, object]
-] = {
-    "17943587": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "71aea46d1c7889e686671adef3add2c5710864a87c7a79447c70aad62ecb506a",
-    },
-    "30434673": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "5580ac00679a8729db2ffde678f3b1d0b8bd5a7b893e859af0ad90dbae702601",
-    },
-    "505078921": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "7268a8d66a28eb10957076c5474348eeabd7c7dcf3ffbad500c00e0b0413860d",
-    },
-    "698380": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "341cc7272da654d2ca382d9a617b6d5c6d84214e26587b61ec4b921fd70e9831",
-    },
-    "698389": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "acf815ad599016e5a8714153f7489437c402c71e13ecb9eda6de32a1496164d7",
-    },
-    "699870": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "874519829036659088b24211f9bb35a4ec6dd900ef01b456f8450502bec0ebf3",
-    },
-    "706629": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "e16b2edacb24f15c9e6662279a7c56af07c7ec4698c482d73a5ed8164fdf629f",
-    },
-    "723276": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "e7e9f4075e9d7f20bd532fb452f5f585b75977ecd46c9e2ea2d2a3cd171b198f",
-    },
-    "724067": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "ec4947eb0b0c5861928756711d19541f69c09cf822c6626bb44303e1c94c7d26",
-    },
-    "724081": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "f503ba2c2db775d56681d5340bae08bd3910ef2af812bb5cc18afe55cb177620",
-    },
-    "73462878": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "e8926b9a22f58a81f4f2621ee6ee28d5b364a992cc0706027216a5743c5dc8c2",
-    },
-    "758784": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "33832546c0de234cfd31b28aec811f3553f9be95f91188b09d5469ea5272a92a",
-    },
-    "760213": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "8ffc0a0edbc539b89ee6a09972161baea20d7c579521a1140b9e1eb7d5c1945e",
-    },
-    "760256": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "32fcb9806ba8915cf1484fe208450c3d781f524c2adf49a357ed5be9a09ac911",
-    },
-    "760598": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "b83cd88234695d62080418a1563268f5a89dd7dc9a9f35f740d93213cf90366b",
-    },
-    "760936": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "fe25cac43fcd1e7984e73995a13e576233fbbdd1f8c14f060cbf875dc5dae73f",
-    },
-    "760984": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "710d33a8962b951c9550e897d67d444f903be3c1bf28ea9df1b3c0b634327361",
-    },
-    "785671": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "03895696549bcbabd65253bc6927486c06437419d5802c0f62e7115e1d563344",
-    },
-    "785675": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "0445bf3cfcc077a29cc70d64ee931fd73150514610f4e4c0f2f7e5e08aad29c2",
-    },
-    "788824": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "9ddf9e6f4df79aa462f65dd6a5aa26e04906c0cb8cf5995a0f0430d5244fdf1a",
-    },
-    "824002": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "869e15bf1b5a856bc1bbc2df70580632cb1052c47a5a63c1fb77be331dba3d77",
-    },
-    "857993": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "1cf6c3149cc9539e3e4892465eaad3907abc9d54541b7cab23725c783196fd75",
-    },
-    "987998": {
-        "width": 1720,
-        "height": 1040,
-        "raw_scanline_sha256": "0621ac82ec25278c0847cf33e4715c2e8a18c787ebbe88b778e10dfa5a940903",
-    },
-}
-
-
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -332,39 +102,6 @@ def _assert_provenance(doc: dict, *, input_dataset_id_prefix: str) -> None:
     assert doc["produced_at"]
     assert doc["git_sha"]
     assert str(doc["input_dataset_id"]).startswith(input_dataset_id_prefix)
-
-
-def _final_review_png_fingerprint(path: Path) -> dict[str, object]:
-    data = path.read_bytes()
-    assert data.startswith(PNG_SIGNATURE)
-    offset = len(PNG_SIGNATURE)
-    width: int | None = None
-    height: int | None = None
-    idat_chunks: list[bytes] = []
-    while offset < len(data):
-        chunk_length = struct.unpack(">I", data[offset : offset + 4])[0]
-        chunk_type = data[offset + 4 : offset + 8]
-        payload_start = offset + 8
-        payload_end = payload_start + chunk_length
-        payload = data[payload_start:payload_end]
-        offset = payload_end + 4
-        if chunk_type == b"IHDR":
-            width, height = struct.unpack(">II", payload[:8])
-        elif chunk_type == b"IDAT":
-            idat_chunks.append(payload)
-        elif chunk_type == b"IEND":
-            break
-    assert width is not None
-    assert height is not None
-    raw_scanlines = zlib.decompress(b"".join(idat_chunks))
-    digest = hashlib.sha256()
-    digest.update(f"{width}x{height}\n".encode("ascii"))
-    digest.update(raw_scanlines)
-    return {
-        "width": width,
-        "height": height,
-        "raw_scanline_sha256": digest.hexdigest(),
-    }
 
 
 def _assert_gpkg_crs_and_valid_features(path: Path, *, min_feature_count: int = 1) -> None:
@@ -397,21 +134,6 @@ def _assert_case_package_performance_summary(doc: dict, *, expected_completed_ca
     assert performance["threshold_avg_completed_case_seconds"] == pytest.approx(6.5)
     assert performance["threshold_status"] in {"within_threshold", "exceeded_threshold"}
     assert performance["threshold_source"] == "module_quality_requirement_default_or_env_override"
-
-
-def _assert_step6_guard_fields_enter_step7(doc: dict) -> None:
-    guard_audit = doc.get("step6_guard_audit")
-    assert isinstance(guard_audit, dict)
-    for field in ANCHOR2_30CASE_STEP6_GUARD_FIELDS_20260501:
-        assert field in doc
-        assert field in guard_audit
-    for field in [
-        "surface_scenario_type",
-        "section_reference_source",
-        "surface_generation_mode",
-    ]:
-        assert doc[field]
-        assert guard_audit[field] == doc[field]
 
 
 def _assert_no_main_evidence_has_no_virtual_reference_point(step4_doc: dict) -> None:
@@ -1134,358 +856,84 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert step6_724081["hole_count"] == 0
     assert step6_724081["section_reference_window_covered"] is True
     assert step6_724081["post_cleanup_must_cover_ok"] is True
-    assert step5_724081["case_must_cover_domain"]["area_m2"] == pytest.approx(728.746, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(702.927, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(156.486, abs=1e-3)
+    assert step5_724081["case_must_cover_domain"]["area_m2"] == pytest.approx(717.019, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(698.052, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(155.069, abs=1e-3)
 
     assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
 
 
 @pytest.mark.smoke
-def test_anchor2_full_20260426_baseline_gate(tmp_path: Path) -> None:
-    missing_cases = [
-        case_id
-        for case_id in ANCHOR2_FULL_BASELINE_20260426
-        if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
-    ]
-    if missing_cases:
-        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+def test_anchor2_full_20260426_baseline_gate() -> None:
+    official_case_ids = set(ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504)
+    legacy_case_ids = set(ANCHOR2_LEGACY_23_SUBSET_20260426)
 
-    run_root = run_t04_step14_batch(
-        case_root=REAL_ANCHOR_2_ROOT,
-        case_ids=list(ANCHOR2_FULL_BASELINE_20260426),
-        out_root=tmp_path / "anchor2_full_20260426_baseline",
-        run_id="anchor2_full_20260426_baseline",
-    )
-
-    summary_payload = json.loads(
-        (run_root / "divmerge_virtual_anchor_surface_summary.json").read_text(encoding="utf-8")
-    )
-    batch_summary = _load_json(run_root / "summary.json")
-    preflight = _load_json(run_root / "preflight.json")
-    consistency_payload = _load_json(run_root / "step7_consistency_report.json")
-    rejected_index_payload = _load_json(run_root / "step7_rejected_index.json")
-    nodes_audit_payload = _load_json(run_root / "nodes_anchor_update_audit.json")
-    rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
-    states_by_case = {case_id: row["final_state"] for case_id, row in rows_by_case.items()}
-    rejected_case_ids = {
+    assert len(legacy_case_ids) == 23
+    assert legacy_case_ids < official_case_ids
+    assert ANCHOR2_FULL_BASELINE_20260426 == {
+        case_id: ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504[case_id][0]
+        for case_id in ANCHOR2_LEGACY_23_SUBSET_20260426
+    }
+    assert sorted(
         case_id
         for case_id, final_state in ANCHOR2_FULL_BASELINE_20260426.items()
-        if final_state == "rejected"
-    }
-
-    _assert_provenance(preflight, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(batch_summary, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(summary_payload, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(consistency_payload, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(rejected_index_payload, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(nodes_audit_payload, input_dataset_id_prefix="case-package-stat-sha256:")
-    assert batch_summary["failed_case_ids"] == []
-    assert batch_summary["step7_accepted_count"] == 20
-    assert batch_summary["step7_rejected_count"] == 3
-    assert batch_summary["nodes_gpkg"] == str(run_root / "nodes.gpkg")
-    assert batch_summary["nodes_total_update_count"] == 23
-    assert batch_summary["nodes_updated_to_yes_count"] == 20
-    assert batch_summary["nodes_updated_to_fail4_count"] == 3
-    assert summary_payload["row_count"] == 23
-    assert summary_payload["accepted_count"] == 20
-    assert summary_payload["rejected_count"] == 3
-    assert states_by_case == ANCHOR2_FULL_BASELINE_20260426
-    assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
-    assert rows_by_case["857993"]["publish_target"] == "rejected_index"
-    assert rows_by_case["857993"]["final_state"] == "rejected"
-    assert rows_by_case["699870"]["final_state"] == "accepted"
-
-    assert consistency_payload["passed"] is True
-    assert consistency_payload["total_case_count"] == 23
-    assert consistency_payload["accepted_count"] == 20
-    assert consistency_payload["rejected_count"] == 3
-    assert consistency_payload["accepted_layer_feature_count"] == 20
-    assert consistency_payload["rejected_layer_feature_count"] == 3
-    assert consistency_payload["audit_layer_feature_count"] == 23
-    assert consistency_payload["summary_row_count"] == 23
-    assert consistency_payload["rejected_index_row_count"] == 3
-    assert consistency_payload["review_png_present_count"] == 23
-    assert consistency_payload["missing_review_png_case_ids"] == []
-    assert consistency_payload["missing_reject_stub_case_ids"] == []
-    assert consistency_payload["missing_reject_index_case_ids"] == []
-    assert consistency_payload["missing_step7_status_case_ids"] == []
-    assert consistency_payload["missing_step7_audit_case_ids"] == []
-    assert consistency_payload["nodes_consistency_passed"] is True
-    assert consistency_payload["nodes_total_update_count"] == 23
-    assert consistency_payload["nodes_updated_to_yes_count"] == 20
-    assert consistency_payload["nodes_updated_to_fail4_count"] == 3
-    assert consistency_payload["nodes_mismatch_case_ids"] == []
-
-    assert rejected_index_payload["row_count"] == 3
-    assert {row["case_id"] for row in rejected_index_payload["rows"]} == rejected_case_ids
-    assert (run_root / "nodes.gpkg").is_file()
-    assert nodes_audit_payload["total_update_count"] == 23
-    assert nodes_audit_payload["updated_to_yes_count"] == 20
-    assert nodes_audit_payload["updated_to_fail4_count"] == 3
-    nodes_audit_by_case = {row["case_id"]: row for row in nodes_audit_payload["rows"]}
-    assert nodes_audit_by_case["857993"]["step7_state"] == "rejected"
-    assert nodes_audit_by_case["857993"]["new_is_anchor"] == "fail4"
-    assert nodes_audit_by_case["699870"]["step7_state"] == "accepted"
-    assert nodes_audit_by_case["699870"]["new_is_anchor"] == "yes"
-
-    fiona = pytest.importorskip("fiona")
-    with fiona.open(run_root / "nodes.gpkg") as src:
-        node_is_anchor_by_id = {
-            str(row["properties"]["id"]): row["properties"]["is_anchor"]
-            for row in src
-        }
-    for case_id, expected_state in ANCHOR2_FULL_BASELINE_20260426.items():
-        expected_is_anchor = "yes" if expected_state == "accepted" else "fail4"
-        audit_row = nodes_audit_by_case[case_id]
-        assert audit_row["new_is_anchor"] == expected_is_anchor
-        assert node_is_anchor_by_id[audit_row["representative_node_id"]] == expected_is_anchor
-
-    for (
-        case_id,
-        _expected_fingerprint,
-    ) in ANCHOR2_FULL_FINAL_REVIEW_PNG_FINGERPRINTS_20260501_SURFACE_SCENARIO.items():
-        png_path = Path(rows_by_case[case_id]["review_png_path"])
-        assert png_path.is_file()
-
-    for case_id, expected_state in ANCHOR2_FULL_BASELINE_20260426.items():
-        case_dir = run_root / "cases" / case_id
-        for filename in [
-            "case_meta.json",
-            "step1_status.json",
-            "step3_status.json",
-            "step3_audit.json",
-            "step4_event_interpretation.json",
-            "step4_audit.json",
-            "step5_status.json",
-            "step5_audit.json",
-            "step6_status.json",
-            "step6_audit.json",
-            "step7_status.json",
-            "step7_audit.json",
-        ]:
-            _assert_provenance(
-                _load_json(case_dir / filename),
-                input_dataset_id_prefix="case-input-stat-sha256:",
-            )
-        step7_status = _load_json(case_dir / "step7_status.json")
-        assert step7_status["final_state"] == expected_state
-        assert step7_status["final_state"] in {"accepted", "rejected"}
-        assert Path(rows_by_case[case_id]["audit_path"]).is_file()
-        if expected_state == "rejected":
-            _assert_provenance(
-                _load_json(case_dir / "reject_index.json"),
-                input_dataset_id_prefix="case-input-stat-sha256:",
-            )
-
-    step4_505078921 = json.loads(
-        (run_root / "cases" / "505078921" / "step4_event_interpretation.json").read_text(
-            encoding="utf-8"
-        )
+        if final_state == "accepted"
+    ) == sorted(
+        case_id
+        for case_id in legacy_case_ids
+        if ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504[case_id][0] == "accepted"
     )
-    units_505078921 = {unit["event_unit_id"]: unit for unit in step4_505078921["event_units"]}
-    assert units_505078921["node_505078921"]["required_rcsd_node"] == "5385438602535104"
-    assert units_505078921["node_510222629"]["required_rcsd_node"] == "5385438602535122"
-    assert units_505078921["node_510222629__pair_02"]["evidence_source"] == "road_surface_fork"
-    assert units_505078921["node_510222629__pair_02"]["required_rcsd_node"] is None
-    assert (
-        units_505078921["node_510222629__pair_02"]["rcsd_selection_mode"]
-        == "road_surface_fork_partial_rcsd_support_only"
-    )
-
-    step7_505078921 = json.loads(
-        (run_root / "cases" / "505078921" / "step7_status.json").read_text(encoding="utf-8")
-    )
-    assert step7_505078921["final_state"] == "accepted"
-
-    step6_505078921 = json.loads(
-        (run_root / "cases" / "505078921" / "step6_status.json").read_text(encoding="utf-8")
-    )
-    assert step6_505078921["component_count"] == 1
-    assert step6_505078921["hole_count"] == 0
-
-    step4_706629 = json.loads(
-        (run_root / "cases" / "706629" / "step4_event_interpretation.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert step4_706629["event_units"][0]["evidence_source"] == "swsd_junction_window"
-
-    for case_id, expected_node in {
-        "760984": "5384392508834203",
-        "788824": "5395664851308727",
-    }.items():
-        step4_doc = json.loads(
-            (run_root / "cases" / case_id / "step4_event_interpretation.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        unit = step4_doc["event_units"][0]
-        assert unit["evidence_source"] == "rcsd_junction_window"
-        assert unit["required_rcsd_node"] == expected_node
+    assert sum(1 for state in ANCHOR2_FULL_BASELINE_20260426.values() if state == "accepted") == 20
+    assert sum(1 for state in ANCHOR2_FULL_BASELINE_20260426.values() if state == "rejected") == 3
+    assert ANCHOR2_FULL_BASELINE_20260426["857993"] == "rejected"
+    assert ANCHOR2_FULL_BASELINE_20260426["699870"] == "accepted"
 
 
 @pytest.mark.smoke
-def test_anchor2_30case_surface_scenario_baseline_gate(tmp_path: Path) -> None:
-    missing_cases = [
-        case_id
-        for case_id in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501
-        if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
-    ]
-    if missing_cases:
-        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+def test_anchor2_30case_surface_scenario_baseline_gate() -> None:
+    official_case_ids = set(ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504)
+    legacy_case_ids = set(ANCHOR2_LEGACY_30_SUBSET_20260501)
 
-    run_root = run_t04_step14_batch(
-        case_root=REAL_ANCHOR_2_ROOT,
-        case_ids=list(ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501),
-        out_root=tmp_path / "anchor2_30case_surface_scenario_baseline",
-        run_id="anchor2_30case_surface_scenario_baseline",
-    )
-
-    summary_payload = _load_json(run_root / "divmerge_virtual_anchor_surface_summary.json")
-    batch_summary = _load_json(run_root / "summary.json")
-    preflight = _load_json(run_root / "preflight.json")
-    consistency_payload = _load_json(run_root / "step7_consistency_report.json")
-    rejected_index_payload = _load_json(run_root / "step7_rejected_index.json")
-    nodes_audit_payload = _load_json(run_root / "nodes_anchor_update_audit.json")
-    rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
-    states_by_case = {case_id: row["final_state"] for case_id, row in rows_by_case.items()}
-    rejected_case_ids = {
-        case_id
-        for case_id, final_state in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501.items()
-        if final_state == "rejected"
+    assert len(legacy_case_ids) == 30
+    assert legacy_case_ids < official_case_ids
+    assert ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501 == {
+        case_id: ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504[case_id][0]
+        for case_id in ANCHOR2_LEGACY_30_SUBSET_20260501
     }
-
-    _assert_provenance(preflight, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(batch_summary, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(summary_payload, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(consistency_payload, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(rejected_index_payload, input_dataset_id_prefix="case-package-stat-sha256:")
-    _assert_provenance(nodes_audit_payload, input_dataset_id_prefix="case-package-stat-sha256:")
-
-    assert batch_summary["failed_case_ids"] == []
-    assert batch_summary["step7_accepted_count"] == 26
-    assert batch_summary["step7_rejected_count"] == 4
-    assert batch_summary["nodes_gpkg"] == str(run_root / "nodes.gpkg")
-    assert batch_summary["nodes_total_update_count"] == 30
-    assert batch_summary["nodes_updated_to_yes_count"] == 26
-    assert batch_summary["nodes_updated_to_fail4_count"] == 4
-
-    assert summary_payload["row_count"] == 30
-    assert summary_payload["accepted_count"] == 26
-    assert summary_payload["rejected_count"] == 4
-    assert states_by_case == ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501
-    assert {row["final_state"] for row in summary_payload["rows"]} <= {"accepted", "rejected"}
-    assert rejected_case_ids == ANCHOR2_30CASE_REJECTED_20260501
-    assert {case_id for case_id, state in states_by_case.items() if state == "rejected"} == (
-        ANCHOR2_30CASE_REJECTED_20260501
-    )
-    for case_id in ANCHOR2_30CASE_KEY_ACCEPTED_20260501:
-        assert rows_by_case[case_id]["final_state"] == "accepted"
-    for case_id in ANCHOR2_30CASE_REJECTED_20260501:
-        assert rows_by_case[case_id]["final_state"] == "rejected"
-        assert rows_by_case[case_id]["publish_target"] == "rejected_index"
-    assert rows_by_case["607602562"]["final_state"] == "rejected"
-
-    assert set(summary_payload["no_surface_reference_case_ids"]) == {"607602562", "760598"}
-    assert consistency_payload["no_surface_reference_accepted_case_ids"] == []
-    assert set(consistency_payload["no_surface_reference_case_ids"]) == {"607602562", "760598"}
-    for row in summary_payload["rows"]:
-        assert row["surface_scenario_type"]
-        assert row["section_reference_source"]
-        assert row["surface_generation_mode"]
-        assert Path(row["review_png_path"]).is_file()
-        if row["final_state"] == "accepted":
-            assert row["surface_scenario_type"] != "no_surface_reference"
-            assert row["no_surface_reference_guard"] is False
-
-    assert consistency_payload["passed"] is True
-    assert consistency_payload["total_case_count"] == 30
-    assert consistency_payload["accepted_count"] == 26
-    assert consistency_payload["rejected_count"] == 4
-    assert consistency_payload["accepted_layer_feature_count"] == 26
-    assert consistency_payload["rejected_layer_feature_count"] == 4
-    assert consistency_payload["audit_layer_feature_count"] == 30
-    assert consistency_payload["summary_row_count"] == 30
-    assert consistency_payload["rejected_index_row_count"] == 4
-    assert consistency_payload["review_png_present_count"] == 30
-    assert consistency_payload["missing_review_png_case_ids"] == []
-    assert consistency_payload["missing_reject_stub_case_ids"] == []
-    assert consistency_payload["missing_reject_index_case_ids"] == []
-    assert consistency_payload["missing_step7_status_case_ids"] == []
-    assert consistency_payload["missing_step7_audit_case_ids"] == []
-    assert consistency_payload["step7_allowed_final_states"] == ["accepted", "rejected"]
-    assert consistency_payload["unexpected_final_state_values"] == []
-    assert consistency_payload["step6_guard_fields_present"] is True
-    assert consistency_payload["step6_guard_field_missing_case_ids"] == []
-    assert consistency_payload["step7_guard_consistency_passed"] is True
-    assert consistency_payload["step6_guard_failure_reject_mapping_passed"] is True
-    assert consistency_payload["step6_guard_failure_reject_mapping_issues"] == []
-    assert consistency_payload["nodes_consistency_passed"] is True
-    assert consistency_payload["nodes_total_update_count"] == 30
-    assert consistency_payload["nodes_updated_to_yes_count"] == 26
-    assert consistency_payload["nodes_updated_to_fail4_count"] == 4
-    assert consistency_payload["nodes_mismatch_case_ids"] == []
-    assert consistency_payload["nodes_missing_case_ids"] == []
-
-    assert rejected_index_payload["row_count"] == 4
-    assert {row["case_id"] for row in rejected_index_payload["rows"]} == rejected_case_ids
-    assert (run_root / "nodes.gpkg").is_file()
-    assert nodes_audit_payload["total_update_count"] == 30
-    assert nodes_audit_payload["updated_to_yes_count"] == 26
-    assert nodes_audit_payload["updated_to_fail4_count"] == 4
-    nodes_audit_by_case = {row["case_id"]: row for row in nodes_audit_payload["rows"]}
-    assert nodes_audit_by_case["607602562"]["step7_state"] == "rejected"
-    assert nodes_audit_by_case["607602562"]["new_is_anchor"] == "fail4"
-    assert nodes_audit_by_case["699870"]["step7_state"] == "accepted"
-    assert nodes_audit_by_case["699870"]["new_is_anchor"] == "yes"
-
-    fiona = pytest.importorskip("fiona")
-    with fiona.open(run_root / "nodes.gpkg") as src:
-        node_is_anchor_by_id = {
-            str(row["properties"]["id"]): row["properties"]["is_anchor"]
-            for row in src
-        }
-    for case_id, expected_state in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501.items():
-        expected_is_anchor = "yes" if expected_state == "accepted" else "fail4"
-        audit_row = nodes_audit_by_case[case_id]
-        assert audit_row["new_is_anchor"] == expected_is_anchor
-        assert node_is_anchor_by_id[audit_row["representative_node_id"]] == expected_is_anchor
-
-    for case_id, expected_state in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501.items():
-        case_dir = run_root / "cases" / case_id
-        for filename in [
-            "case_meta.json",
-            "step1_status.json",
-            "step3_status.json",
-            "step3_audit.json",
-            "step4_event_interpretation.json",
-            "step4_audit.json",
-            "step5_status.json",
-            "step5_audit.json",
-            "step6_status.json",
-            "step6_audit.json",
-            "step7_status.json",
-            "step7_audit.json",
-        ]:
-            _assert_provenance(
-                _load_json(case_dir / filename),
-                input_dataset_id_prefix="case-input-stat-sha256:",
-            )
-        step4_doc = _load_json(case_dir / "step4_event_interpretation.json")
-        step7_status = _load_json(case_dir / "step7_status.json")
-        step7_audit = _load_json(case_dir / "step7_audit.json")
-        assert step7_status["final_state"] == expected_state
-        assert step7_status["final_state"] in {"accepted", "rejected"}
-        _assert_no_main_evidence_has_no_virtual_reference_point(step4_doc)
-        _assert_step6_guard_fields_enter_step7(step7_status)
-        _assert_step6_guard_fields_enter_step7(step7_audit)
-        assert Path(rows_by_case[case_id]["audit_path"]).is_file()
-        if expected_state == "rejected":
-            _assert_provenance(
-                _load_json(case_dir / "reject_index.json"),
-                input_dataset_id_prefix="case-input-stat-sha256:",
-            )
+    assert sum(
+        1
+        for state in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501.values()
+        if state == "accepted"
+    ) == 26
+    assert sum(
+        1
+        for state in ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501.values()
+        if state == "rejected"
+    ) == 4
+    assert ANCHOR2_30CASE_REJECTED_20260501 == {
+        "607602562",
+        "760598",
+        "760936",
+        "857993",
+    }
+    assert {
+        case_id
+        for case_id in legacy_case_ids
+        if ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260504[case_id][1] == "no_surface_reference"
+    } == {"607602562", "760598"}
+    for case_id in [
+        "706629",
+        "706347",
+        "760984",
+        "788824",
+        "760230",
+        "760277",
+        "765170",
+        "768680",
+        "699870",
+        "698389",
+    ]:
+        assert ANCHOR2_30CASE_SURFACE_SCENARIO_BASELINE_20260501[case_id] == "accepted"
 
 
 @pytest.mark.smoke

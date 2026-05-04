@@ -92,23 +92,23 @@ internal full-input repo 级脚本入口：
 
 ## 5. 当前冻结基线
 
-Anchor_2 23-case full baseline 作为历史 frozen / visual gate 保留：
+Anchor_2 official 39-case baseline 是当前唯一正式冻结基线：
 
-- `row_count = 23`
-- `accepted = 20`
-- `rejected = 3`
-- `857993 = rejected`，且这是人工验收确认后的正确业务结论
+- 输入集：`/mnt/e/TestData/POC_Data/T02/Anchor_2`
+- Windows 等价路径：`E:\TestData\POC_Data\T02\Anchor_2`
+- `row_count = 39`
+- `accepted = 35`
+- `rejected = 4`
+- rejected set：`607602562`、`760598`、`760936`、`857993`
 - `699870 = accepted`，并作为 RCSD-anchored reverse 关键回归样本
 
-当前 surface scenario 后续正式扩展 gate 为 Anchor_2 30-case baseline：
+历史 23/30 case 只是 official 39-case 内的子集：
 
-- `row_count = 30`
-- `accepted = 26`
-- `rejected = 4`
-- rejected set：`760598`、`760936`、`857993`、`607602562`
-- `607602562` 在当前 Anchor_2 30-case 目视审计口径下为 `rejected`；详细原因以后续 case-level 审计材料为准，不得为提高 accepted count 静默改成 `accepted`
+- `legacy_23_20260426` 投影结果：`accepted = 20 / rejected = 3`
+- `legacy_30_20260501` 投影结果：`accepted = 26 / rejected = 4`
+- 子集定义与 official 39-case 结果统一维护在 `tests/modules/t04_divmerge_virtual_polygon/data/anchor2_official_39case_baseline_20260504.json`
 
-2026-05-01 已基于 H-01 诊断和用户 30-case 人工目视确认，刷新 23-case `final_review.png` visual fingerprint；该刷新记录 intentional geometry / review-layer drift，不改变 Step4-7 业务逻辑、accepted/rejected 结果或 nodes 写回规则。30-case gate 当前优先锁业务结构、发布层一致性、Step6 guard 与 nodes 写回，不额外增加 30 个 PNG raw hash hard assertion。
+PNG raw fingerprint 不再作为当前 hard gate。当前视觉 QA 锁定 `final_review.png` 存在性、render audit 与人工目视确认的 run root；历史 23-case PNG hash 只作为旧审计材料保留。
 
 Step7 最终状态机只允许 `accepted / rejected`。downstream `nodes.gpkg` 写回语义为 `accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
 

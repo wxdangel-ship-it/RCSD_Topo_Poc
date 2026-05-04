@@ -354,6 +354,14 @@ def _semantic_group_id(node: ParsedNode) -> str:
     return _clean_text(getattr(node, "node_id", None))
 
 
+def _semantic_group_id_for_node_id(node_id: str, *, node_by_id: dict[str, ParsedNode]) -> str:
+    normalized_node_id = _clean_text(node_id)
+    node = node_by_id.get(normalized_node_id)
+    if node is not None:
+        return _semantic_group_id(node)
+    return normalized_node_id
+
+
 def _road_endpoint_ids(road: ParsedRoad) -> tuple[str, str]:
     return (
         _clean_text(getattr(road, "snodeid", None)),
@@ -458,6 +466,35 @@ def _collect_intra_rcsdroad_ids(roads: tuple[ParsedRoad, ...], member_node_ids: 
     )
 
 
+def _semantic_boundary_degree_by_node(
+    roads: tuple[ParsedRoad, ...],
+    *,
+    node_by_id: dict[str, ParsedNode],
+) -> dict[str, int]:
+    node_ids = set(node_by_id)
+    boundary_road_ids_by_group: dict[str, set[str]] = {}
+    for road in roads:
+        road_id = _clean_text(road.road_id)
+        if not road_id:
+            continue
+        snodeid, enodeid = _road_endpoint_ids(road)
+        if snodeid:
+            node_ids.add(snodeid)
+        if enodeid:
+            node_ids.add(enodeid)
+        source_group_id = _semantic_group_id_for_node_id(snodeid, node_by_id=node_by_id)
+        target_group_id = _semantic_group_id_for_node_id(enodeid, node_by_id=node_by_id)
+        if not source_group_id or not target_group_id or source_group_id == target_group_id:
+            continue
+        boundary_road_ids_by_group.setdefault(source_group_id, set()).add(road_id)
+        boundary_road_ids_by_group.setdefault(target_group_id, set()).add(road_id)
+    degree_by_node_id: dict[str, int] = {}
+    for node_id in node_ids:
+        group_id = _semantic_group_id_for_node_id(node_id, node_by_id=node_by_id)
+        degree_by_node_id[node_id] = len(boundary_road_ids_by_group.get(group_id, set()))
+    return degree_by_node_id
+
+
 def _walk_rcsd_connector(
     seed_road: ParsedRoad,
     *,
@@ -466,6 +503,7 @@ def _walk_rcsd_connector(
     local_node_ids: set[str],
     member_node_ids: set[str],
     node_by_id: dict[str, ParsedNode],
+    semantic_degree_by_node: dict[str, int],
 ) -> tuple[tuple[str, ...], str, str, str | None, str]:
     seed_road_id = _clean_text(seed_road.road_id)
     snodeid, enodeid = _road_endpoint_ids(seed_road)
@@ -484,11 +522,16 @@ def _walk_rcsd_connector(
         if current_node_id not in local_node_ids:
             return tuple(connector_ids), current_node_id, "patch_boundary", None, member_node_id
         incident_roads = roads_by_node.get(current_node_id, [])
-        degree = len({_clean_text(road.road_id) for road in incident_roads if _clean_text(road.road_id)})
+        degree = int(
+            semantic_degree_by_node.get(
+                current_node_id,
+                len({_clean_text(road.road_id) for road in incident_roads if _clean_text(road.road_id)}),
+            )
+        )
         if degree <= 1:
             return tuple(connector_ids), current_node_id, "dead_end", None, member_node_id
         if degree >= 3:
-            neighbor_id = _semantic_group_id(node_by_id[current_node_id]) if current_node_id in node_by_id else None
+            neighbor_id = _semantic_group_id_for_node_id(current_node_id, node_by_id=node_by_id)
             return tuple(connector_ids), current_node_id, "semantic_neighbor", neighbor_id, member_node_id
         candidates: list[ParsedRoad] = []
         for road in incident_roads:
@@ -599,10 +642,16 @@ def _rcsd_endpoint_kind(
     *,
     local_node_ids: set[str],
     roads_by_node: dict[str, list[ParsedRoad]],
+    semantic_degree_by_node: dict[str, int],
 ) -> str:
     if node_id not in local_node_ids:
         return "rcsd_patch_boundary"
-    degree = len({_clean_text(road.road_id) for road in roads_by_node.get(node_id, ()) if _clean_text(road.road_id)})
+    degree = int(
+        semantic_degree_by_node.get(
+            node_id,
+            len({_clean_text(road.road_id) for road in roads_by_node.get(node_id, ()) if _clean_text(road.road_id)}),
+        )
+    )
     if degree >= 3:
         return "rcsd_semantic_junction_member"
     if degree <= 1:
@@ -702,9 +751,21 @@ def build_rcsdroad_only_chain(
             if node_id:
                 roads_by_node.setdefault(node_id, []).append(road)
     local_node_ids = {_clean_text(node.node_id) for node in local_nodes if _clean_text(node.node_id)}
+    node_by_id = {_clean_text(node.node_id): node for node in local_nodes if _clean_text(node.node_id)}
+    semantic_degree_by_node = _semantic_boundary_degree_by_node(local_roads, node_by_id=node_by_id)
     endpoint_kinds = (
-        _rcsd_endpoint_kind(start_node_id, local_node_ids=local_node_ids, roads_by_node=roads_by_node),
-        _rcsd_endpoint_kind(end_node_id, local_node_ids=local_node_ids, roads_by_node=roads_by_node),
+        _rcsd_endpoint_kind(
+            start_node_id,
+            local_node_ids=local_node_ids,
+            roads_by_node=roads_by_node,
+            semantic_degree_by_node=semantic_degree_by_node,
+        ),
+        _rcsd_endpoint_kind(
+            end_node_id,
+            local_node_ids=local_node_ids,
+            roads_by_node=roads_by_node,
+            semantic_degree_by_node=semantic_degree_by_node,
+        ),
     )
     direction_consistent, direction_evidence = _direction_evidence_for_chain(
         chain_road_ids=ordered_road_ids,
@@ -795,6 +856,7 @@ def build_rcsd_semantic_junction(
                 roads_by_node.setdefault(node_id, []).append(road)
     node_by_id = {_clean_text(node.node_id): node for node in local_nodes if _clean_text(node.node_id)}
     local_node_ids = set(node_by_id)
+    semantic_degree_by_node = _semantic_boundary_degree_by_node(local_roads, node_by_id=node_by_id)
     positive_road_ids = _clean_ids(rcsd_alignment_result.positive_rcsdroad_ids)
     semantic_arms: list[RCSDSemanticArm] = []
     for road_id in positive_road_ids:
@@ -811,6 +873,7 @@ def build_rcsd_semantic_junction(
             local_node_ids=local_node_ids,
             member_node_ids=member_node_set,
             node_by_id=node_by_id,
+            semantic_degree_by_node=semantic_degree_by_node,
         )
         semantic_arms.append(
             RCSDSemanticArm(

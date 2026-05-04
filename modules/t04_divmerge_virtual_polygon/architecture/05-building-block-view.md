@@ -11,6 +11,7 @@
   - 组织 SWSD negative context
 - `topology`
   - 生成 member / passthrough / branch / main pair / chain context
+  - 实体化 case-level `SWSDSemanticJunction` 与 unit-level arm ownership 引用
 - `event_units`
   - 将 case 拆成 Step4 event units
 - `event_interpretation`
@@ -40,10 +41,12 @@
     - runtime data object、GeoJSON/GPKG IO 与 review-side raster helper
   - `_runtime_step23_contracts`
     - Step2 / Step3 runtime contract
+    - `SWSDSemanticJunction / SWSDSemanticArm` schema
   - `_runtime_step2_local_context`
     - patch-scoped local context implementation
   - `_runtime_step3_topology_skeleton`
     - case coordination skeleton 与 unit-level executable skeleton implementation
+    - SWSD intra-junction road 与 inter-junction connector arm walker
   - `_runtime_step4_contracts`
     - Step4 runtime contract / adapter objects
   - `_runtime_step4_geometry_core`
@@ -106,6 +109,7 @@
   - `T04Step5UnitResult / T04Step5CaseResult` 与 vector feature export
 - `support_domain_builder`
   - Unit / Case 两级 `must_cover / allowed_growth / forbidden / terminal_cut` 物化 orchestration
+  - 消费 Step3 `SWSDSemanticJunction` 派生相关 SWSD roads，不再自建 SWSD road 召回
 - `polygon_assembly`
   - `assembly_canvas`
   - raster-first 单连通面组装

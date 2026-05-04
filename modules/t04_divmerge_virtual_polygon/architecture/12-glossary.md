@@ -16,6 +16,10 @@
 | `rcsd_junction_partial_alignment` | RCSD 能召回路口级对象，但相对当前 SWSD 路口缺失部分进入 / 退出道路；剩余进入 / 退出道路的角度趋势和方向角色一致。该对象不能发布为完整 RCSD 语义路口，但可作为路口级截面参考对象。 |
 | `rcsdroad_only_alignment` | RCSD 不能召回路口级对象，仅存在与当前 unit / case 对齐的 RCSDRoad 或 RCSD 语义路口间道路；该对象可作为局部正向生长 / fallback 支撑，但不参与路口级截面边界构建，除非场景明确要求用 SWSD 自身前后 `20m`。 |
 | `RCSDRoad fallback` | `rcsdroad_only_alignment` 下可参与构面的 RCSDRoad 局部段支撑；只能覆盖当前 unit / case 相关局部段，不得沿整条 RCSDRoad 远距离扩张，也不得把自身提升为 RCSD 路口级截面参考对象。 |
+| `intra_junction_road` | 两端均落在同一个 SWSD 或 RCSD 语义路口 member node 集合内的路口内道路；用于表达路口本体，不作为路口间 arm connector。 |
+| `inter_junction_connector_road` | 从当前语义路口 arm 向外延伸、连接相邻语义路口或终止于 dead end / patch boundary 的路口间道路链成员；Step3/Step4 只持久化当前 patch 内可追溯 ID。 |
+| `rcsdroad_only_chain` | `rcsdroad_only_alignment` 下唯一选中的 RCSDRoad 路口间道路链，必须带端点、闭合状态、SWSD 方向一致性证据和唯一性证明。 |
+| `swsd_rcsd_alignment_consistent` | Step4 输出的 SWSD/RCSD 单一一致性 verdict，取值为 `strong_consistent / partial_consistent / direction_only_consistent / not_applicable / inconsistent / blocked`。 |
 | `无 RCSD 语义路口` | 不等于无 RCSD 数据。可包括 `rcsd_junction_partial_alignment` 或 `rcsdroad_only_alignment`：前者是路口级对象不完整对齐，后者仅有 RCSDRoad / 路口间道路。 |
 | `无 RCSD` | 对当前 event unit / case 没有任何可用 RCSD 正向对象，即 `rcsd_alignment_type = no_rcsd_alignment`；当前处理窗口内所有 RCSDNode / RCSDRoad 均为负向掩膜输入。 |
 | `SWSD 语义路口` | SWSD 侧可用于构面的基础语义路口。SWSD 始终参与语义约束、正向 roads 解释、负向掩膜和审计；但只有在无主证据且无可召回 RCSD 路口级对象时，才作为截面边界来源。 |

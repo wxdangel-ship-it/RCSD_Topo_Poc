@@ -258,6 +258,7 @@ Step7 legacy selected-case 发布冻结门槛：
 - 冻结测试还必须守住 T04 downstream `nodes.gpkg` 写回：20 个 accepted representative node 为 `yes`，3 个 rejected representative node 为 `fail4`，其中 `857993 = fail4`、`699870 = yes`。
 - 2026-05-01 已将 23-case `final_review.png` visual fingerprint 刷新到 surface scenario visual baseline。刷新原因是 H-01 已定位为 intentional geometry / review-layer drift：`surface_scenario / section_reference / case-level bridge / Step6 guard` 改造导致 8 个 case 的 review 几何真实变化；业务断言、accepted/rejected、nodes 写回与 Step7 consistency 仍必须通过。
 - PNG raw fingerprint 对几何与 review 层变化敏感，不等价于 accepted/rejected 业务失败；后续刷新必须具备诊断报告和人工目视确认，不得静默刷新。
+- 本轮 `t04-step3-swsd-junction-and-step4-rcsd-completion` 已获用户授权，不再与 2026-05-01 的 23-case PNG raw fingerprint 做比对；Phase 6 跑出的 39-case `final_review.png` 作为本轮新人工目视审计参考基线，不新增 PNG hash hard assertion。
 - 当前全量 final_state：
   - accepted：`17943587`、`30434673`、`505078921`、`698380`、`698389`、`699870`、`706629`、`723276`、`724067`、`724081`、`73462878`、`758784`、`760213`、`760256`、`760984`、`785671`、`785675`、`788824`、`824002`、`987998`
   - rejected：`760598`、`760936`、`857993`
@@ -305,7 +306,7 @@ Step7 legacy selected-case 发布冻结门槛：
   - `surface_scenario_type / section_reference_source / surface_generation_mode` 字段必须存在
   - Step6 guard 字段必须进入 Step7 audit
 - `607602562` 在当前 Anchor_2 30-case 目视审计口径下为 `rejected`；详细原因以后续 case-level 审计材料为准，不写成待修复 bug。
-- 30-case gate 当前优先锁业务结构、发布层、Step6 guard、summary / consistency 与 nodes 写回，不立即增加 30 个 PNG raw hash hard assertion。23-case PNG fingerprint gate 继续承担视觉回归守门。
+- 30-case gate 当前优先锁业务结构、发布层、Step6 guard、summary / consistency 与 nodes 写回，不立即增加 30 个 PNG raw hash hard assertion。历史 23-case PNG fingerprint 仅保留为既有基线说明；本轮 SpecKit 不执行该 fingerprint 比对，Phase 6 的 39-case `final_review.png` 作为新人工目视审计参考。
 
 ### RCSD-anchored reverse 定向回归（2026-04-24）
 

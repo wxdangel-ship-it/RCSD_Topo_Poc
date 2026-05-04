@@ -7,8 +7,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon import surface_scenario
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step23_contracts import (
+    SWSDSemanticArm,
+    SWSDSemanticJunction,
+)
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import ParsedNode, ParsedRoad
 
 
 EXPECTED_ALIGNMENT_TYPES = {
@@ -61,6 +67,119 @@ def _field(result: Any, name: str) -> Any:
     return getattr(result, name)
 
 
+def _parsed_rcsd_node(node_id: str, x: float, y: float, mainnodeid: str | None = None) -> ParsedNode:
+    return ParsedNode(
+        feature_index=0,
+        properties={"id": node_id},
+        geometry=Point(x, y),
+        node_id=node_id,
+        mainnodeid=mainnodeid,
+        has_evd=None,
+        is_anchor=None,
+        kind_2=None,
+        grade_2=None,
+    )
+
+
+def _parsed_rcsd_road(
+    road_id: str,
+    snodeid: str,
+    enodeid: str,
+    coords: list[tuple[float, float]],
+) -> ParsedRoad:
+    return ParsedRoad(
+        feature_index=0,
+        properties={"id": road_id},
+        geometry=LineString(coords),
+        road_id=road_id,
+        snodeid=snodeid,
+        enodeid=enodeid,
+        direction=2,
+    )
+
+
+def _swsd_junction(arm_rows: tuple[tuple[str, float], ...]) -> SWSDSemanticJunction:
+    return SWSDSemanticJunction(
+        junction_id="swsd_junction",
+        member_node_ids=("swsd_center",),
+        intra_junction_road_ids=(),
+        semantic_arms=tuple(
+            SWSDSemanticArm(
+                arm_id=arm_id,
+                direction="unknown",
+                angle_deg=angle_deg,
+                first_branch_id=f"{arm_id}_branch",
+                first_road_ids=(f"{arm_id}_road",),
+                inter_junction_connector_road_ids=(f"{arm_id}_road",),
+                terminal_node_id=f"{arm_id}_terminal",
+                terminal_kind="dead_end",
+                neighbor_semantic_junction_id=None,
+                continuation_through_micro_junction=False,
+            )
+            for arm_id, angle_deg in arm_rows
+        ),
+        unstable_reasons=(),
+    )
+
+
+def _rcsd_unit_result(*, road_ids: tuple[str, ...]) -> Any:
+    local_rcsd_nodes = (
+        _parsed_rcsd_node("rc0", 0.0, 0.0, "rc_main"),
+        _parsed_rcsd_node("rc_e", 10.0, 0.0),
+        _parsed_rcsd_node("rc_n", 0.0, 10.0),
+        _parsed_rcsd_node("rc_s", 0.0, -10.0),
+    )
+    local_rcsd_roads = (
+        _parsed_rcsd_road("rc_east", "rc0", "rc_e", [(0.0, 0.0), (10.0, 0.0)]),
+        _parsed_rcsd_road("rc_north", "rc0", "rc_n", [(0.0, 0.0), (0.0, 10.0)]),
+        _parsed_rcsd_road("rc_south", "rc0", "rc_s", [(0.0, 0.0), (0.0, -10.0)]),
+    )
+    return SimpleNamespace(
+        selected_rcsdnode_ids=("rc0",),
+        selected_rcsdroad_ids=road_ids,
+        required_rcsd_node="rc0",
+        aggregated_rcsd_unit_id="rcsd_junction:rc0",
+        aggregated_rcsd_unit_ids=("rcsd_junction:rc0",),
+        positive_rcsd_audit={
+            "aggregated_rcsd_units": [
+                {
+                    "unit_id": "rcsd_junction:rc0",
+                    "node_ids": ["rc0"],
+                    "required_node_id": "rc0",
+                    "road_ids": list(road_ids),
+                }
+            ]
+        },
+        unit_context=SimpleNamespace(
+            local_context=SimpleNamespace(
+                local_rcsd_nodes=local_rcsd_nodes,
+                local_rcsd_roads=local_rcsd_roads,
+            )
+        ),
+    )
+
+
+def _rcsd_road_only_unit_result(
+    *,
+    local_rcsd_nodes: tuple[ParsedNode, ...],
+    local_rcsd_roads: tuple[ParsedRoad, ...],
+    road_ids: tuple[str, ...],
+) -> Any:
+    return SimpleNamespace(
+        selected_rcsdnode_ids=(),
+        selected_rcsdroad_ids=road_ids,
+        first_hit_rcsdroad_ids=road_ids,
+        required_rcsd_node=None,
+        positive_rcsd_audit={},
+        unit_context=SimpleNamespace(
+            local_context=SimpleNamespace(
+                local_rcsd_nodes=local_rcsd_nodes,
+                local_rcsd_roads=local_rcsd_roads,
+            )
+        ),
+    )
+
+
 def test_rcsd_alignment_type_value_domain_is_explicit() -> None:
     module = _load_alignment_module()
 
@@ -100,6 +219,232 @@ def test_rcsd_alignment_result_serializes_positive_candidate_and_ambiguity_field
     assert doc["ambiguity_reasons"] == ["multi_rcsd_semantic_junction"]
     assert doc["conflict_reasons"] == ["unrelated_rcsd_conflict"]
     assert doc["source"] == "step4_frozen_result"
+
+
+def test_rcsd_semantic_junction_pairs_all_swsd_arms() -> None:
+    module = _load_alignment_module()
+    result = module.build_rcsd_semantic_junction(
+        unit_result=_rcsd_unit_result(road_ids=("rc_east", "rc_north", "rc_south")),
+        swsd_semantic_junction=_swsd_junction(
+            (
+                ("arm_east", 0.0),
+                ("arm_north", 90.0),
+                ("arm_south", 270.0),
+            )
+        ),
+        rcsd_alignment_result=module.RCSDAlignmentResult(
+            scope=module.RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+            scope_id="event_unit_01",
+            rcsd_alignment_type=module.RCSD_ALIGNMENT_SEMANTIC_JUNCTION,
+            positive_rcsdroad_ids=("rc_east", "rc_north", "rc_south"),
+            positive_rcsdnode_ids=("rc0",),
+        ),
+    )
+
+    assert result is not None
+    assert result.junction_id == "rcsd_junction:rc0"
+    assert result.member_rcsdnode_ids == ("rc0",)
+    assert [arm.arm_id for arm in result.semantic_arms] == [
+        "rcsd_arm_01",
+        "rcsd_arm_02",
+        "rcsd_arm_03",
+    ]
+    assert result.paired_swsd_arm_mapping == {
+        "rcsd_arm_01": "arm_east",
+        "rcsd_arm_02": "arm_north",
+        "rcsd_arm_03": "arm_south",
+    }
+    assert result.alignment_partial_missing_swsd_arm_ids == ()
+
+
+def test_rcsd_junction_partial_alignment_records_missing_swsd_arm() -> None:
+    module = _load_alignment_module()
+    result = module.build_rcsd_semantic_junction(
+        unit_result=_rcsd_unit_result(road_ids=("rc_east", "rc_north")),
+        swsd_semantic_junction=_swsd_junction(
+            (
+                ("arm_east", 0.0),
+                ("arm_north", 90.0),
+                ("arm_south", 270.0),
+            )
+        ),
+        rcsd_alignment_result=module.RCSDAlignmentResult(
+            scope=module.RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+            scope_id="event_unit_01",
+            rcsd_alignment_type=module.RCSD_ALIGNMENT_JUNCTION_PARTIAL,
+            positive_rcsdroad_ids=("rc_east", "rc_north"),
+            positive_rcsdnode_ids=("rc0",),
+        ),
+    )
+
+    assert result is not None
+    assert result.paired_swsd_arm_mapping == {
+        "rcsd_arm_01": "arm_east",
+        "rcsd_arm_02": "arm_north",
+    }
+    assert result.alignment_partial_missing_swsd_arm_ids == ("arm_south",)
+
+
+def test_rcsd_semantic_junction_records_ambiguous_swsd_arm_pairing() -> None:
+    module = _load_alignment_module()
+    result = module.build_rcsd_semantic_junction(
+        unit_result=_rcsd_unit_result(road_ids=("rc_east",)),
+        swsd_semantic_junction=_swsd_junction(
+            (
+                ("arm_east_a", 5.0),
+                ("arm_east_b", 10.0),
+            )
+        ),
+        rcsd_alignment_result=module.RCSDAlignmentResult(
+            scope=module.RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+            scope_id="event_unit_01",
+            rcsd_alignment_type=module.RCSD_ALIGNMENT_SEMANTIC_JUNCTION,
+            positive_rcsdroad_ids=("rc_east",),
+            positive_rcsdnode_ids=("rc0",),
+        ),
+    )
+
+    assert result is not None
+    assert result.paired_swsd_arm_mapping == {"rcsd_arm_01": None}
+    assert result.pairing_ambiguous_arm_ids == ("rcsd_arm_01",)
+    assert result.to_doc()["paired_swsd_arm_mapping"] == {"rcsd_arm_01": None}
+
+
+def test_rcsdroad_only_chain_records_closed_between_two_rcsd_junctions_and_direction_match() -> None:
+    module = _load_alignment_module()
+    nodes = (
+        _parsed_rcsd_node("j1", 0.0, 0.0),
+        _parsed_rcsd_node("mid", 10.0, 0.0),
+        _parsed_rcsd_node("j2", 20.0, 0.0),
+        _parsed_rcsd_node("j1_s1", 0.0, 10.0),
+        _parsed_rcsd_node("j1_s2", 0.0, -10.0),
+        _parsed_rcsd_node("j2_s1", 20.0, 10.0),
+        _parsed_rcsd_node("j2_s2", 20.0, -10.0),
+    )
+    roads = (
+        _parsed_rcsd_road("chain_a", "j1", "mid", [(0.0, 0.0), (10.0, 0.0)]),
+        _parsed_rcsd_road("chain_b", "mid", "j2", [(10.0, 0.0), (20.0, 0.0)]),
+        _parsed_rcsd_road("j1_spur_1", "j1", "j1_s1", [(0.0, 0.0), (0.0, 10.0)]),
+        _parsed_rcsd_road("j1_spur_2", "j1", "j1_s2", [(0.0, 0.0), (0.0, -10.0)]),
+        _parsed_rcsd_road("j2_spur_1", "j2", "j2_s1", [(20.0, 0.0), (20.0, 10.0)]),
+        _parsed_rcsd_road("j2_spur_2", "j2", "j2_s2", [(20.0, 0.0), (20.0, -10.0)]),
+    )
+
+    result = module.build_rcsdroad_only_chain(
+        unit_result=_rcsd_road_only_unit_result(
+            local_rcsd_nodes=nodes,
+            local_rcsd_roads=roads,
+            road_ids=("chain_a", "chain_b"),
+        ),
+        swsd_semantic_junction=_swsd_junction((("arm_east", 0.0),)),
+        rcsd_alignment_result=module.RCSDAlignmentResult(
+            scope=module.RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+            scope_id="event_unit_01",
+            rcsd_alignment_type=module.RCSD_ALIGNMENT_ROAD_ONLY,
+            positive_rcsdroad_ids=("chain_a", "chain_b"),
+        ),
+    )
+
+    assert result is not None
+    assert result.chain_road_ids == ("chain_a", "chain_b")
+    assert result.chain_endpoint_node_ids == ("j1", "j2")
+    assert result.chain_endpoint_kinds == (
+        "rcsd_semantic_junction_member",
+        "rcsd_semantic_junction_member",
+    )
+    assert result.closure_status == "closed_between_two_rcsd_junctions"
+    assert result.swsd_direction_consistent is True
+    assert result.swsd_direction_evidence["matched_swsd_arm_id"] == "arm_east"
+    assert result.selection_uniqueness_proof["selected_chain_component_count"] == 1
+    assert result.selection_uniqueness_proof["angle_tolerance_deg"] == module.BRANCH_MATCH_TOLERANCE_DEG
+
+
+def test_rcsdroad_only_chain_records_dead_end_and_patch_boundary() -> None:
+    module = _load_alignment_module()
+    dead_nodes = (
+        _parsed_rcsd_node("dead_a", 0.0, 0.0),
+        _parsed_rcsd_node("dead_b", 10.0, 0.0),
+        _parsed_rcsd_node("dead_s1", 0.0, 10.0),
+        _parsed_rcsd_node("dead_s2", 0.0, -10.0),
+    )
+    dead_roads = (
+        _parsed_rcsd_road("dead_chain", "dead_a", "dead_b", [(0.0, 0.0), (10.0, 0.0)]),
+        _parsed_rcsd_road("dead_spur_1", "dead_a", "dead_s1", [(0.0, 0.0), (0.0, 10.0)]),
+        _parsed_rcsd_road("dead_spur_2", "dead_a", "dead_s2", [(0.0, 0.0), (0.0, -10.0)]),
+    )
+    dead_chain = module.build_rcsdroad_only_chain(
+        unit_result=_rcsd_road_only_unit_result(
+            local_rcsd_nodes=dead_nodes,
+            local_rcsd_roads=dead_roads,
+            road_ids=("dead_chain",),
+        ),
+        swsd_semantic_junction=_swsd_junction((("arm_east", 0.0),)),
+        rcsd_alignment_result=module.RCSDAlignmentResult(
+            scope=module.RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+            scope_id="event_unit_01",
+            rcsd_alignment_type=module.RCSD_ALIGNMENT_ROAD_ONLY,
+            positive_rcsdroad_ids=("dead_chain",),
+        ),
+    )
+
+    assert dead_chain is not None
+    assert dead_chain.closure_status == "open_dead_end"
+
+    patch_nodes = (
+        _parsed_rcsd_node("patch_a", 0.0, 0.0),
+        _parsed_rcsd_node("patch_s1", 0.0, 10.0),
+        _parsed_rcsd_node("patch_s2", 0.0, -10.0),
+    )
+    patch_roads = (
+        _parsed_rcsd_road("patch_chain", "patch_a", "patch_missing", [(0.0, 0.0), (10.0, 0.0)]),
+        _parsed_rcsd_road("patch_spur_1", "patch_a", "patch_s1", [(0.0, 0.0), (0.0, 10.0)]),
+        _parsed_rcsd_road("patch_spur_2", "patch_a", "patch_s2", [(0.0, 0.0), (0.0, -10.0)]),
+    )
+    patch_chain = module.build_rcsdroad_only_chain(
+        unit_result=_rcsd_road_only_unit_result(
+            local_rcsd_nodes=patch_nodes,
+            local_rcsd_roads=patch_roads,
+            road_ids=("patch_chain",),
+        ),
+        swsd_semantic_junction=_swsd_junction((("arm_east", 0.0),)),
+        rcsd_alignment_result=module.RCSDAlignmentResult(
+            scope=module.RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+            scope_id="event_unit_01",
+            rcsd_alignment_type=module.RCSD_ALIGNMENT_ROAD_ONLY,
+            positive_rcsdroad_ids=("patch_chain",),
+        ),
+    )
+
+    assert patch_chain is not None
+    assert patch_chain.closure_status == "open_patch_boundary"
+
+
+def test_rcsdroad_only_chain_records_direction_inconsistency() -> None:
+    module = _load_alignment_module()
+    nodes = (
+        _parsed_rcsd_node("d_a", 0.0, 0.0),
+        _parsed_rcsd_node("d_b", 10.0, 0.0),
+    )
+    roads = (_parsed_rcsd_road("east_chain", "d_a", "d_b", [(0.0, 0.0), (10.0, 0.0)]),)
+    result = module.build_rcsdroad_only_chain(
+        unit_result=_rcsd_road_only_unit_result(
+            local_rcsd_nodes=nodes,
+            local_rcsd_roads=roads,
+            road_ids=("east_chain",),
+        ),
+        swsd_semantic_junction=_swsd_junction((("arm_north", 90.0),)),
+        rcsd_alignment_result=module.RCSDAlignmentResult(
+            scope=module.RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
+            scope_id="event_unit_01",
+            rcsd_alignment_type=module.RCSD_ALIGNMENT_ROAD_ONLY,
+            positive_rcsdroad_ids=("east_chain",),
+        ),
+    )
+
+    assert result is not None
+    assert result.swsd_direction_consistent is False
+    assert result.swsd_direction_evidence["angle_gap_deg"] == 90.0
+    assert result.swsd_direction_evidence["consistency_decision_reason"] == "exceeds_branch_match_tolerance"
 
 
 def _case_alignment_doc(unit_docs: list[dict[str, Any]]) -> dict[str, Any]:

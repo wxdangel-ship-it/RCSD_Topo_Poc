@@ -263,6 +263,8 @@ def _build_swsd_semantic_junction(
         representative_node.node_id
     )
     semantic_mainnodeids.add(representative_junction_id)
+    intra_junction_road_ids = _collect_intra_junction_road_ids(local_roads, member_node_ids)
+    intra_junction_road_id_set = set(intra_junction_road_ids)
 
     semantic_arms: list[SWSDSemanticArm] = []
     road_branches = sorted(branch_result.road_branches, key=lambda branch: str(branch.branch_id))
@@ -276,13 +278,19 @@ def _build_swsd_semantic_junction(
                 local_nodes=local_nodes,
             )
         )
+        first_road_ids = tuple(str(road_id) for road_id in getattr(branch, "road_ids", ()) if str(road_id))
+        connector_road_ids = tuple(
+            road_id
+            for road_id in dict.fromkeys((*first_road_ids, *connector_road_ids))
+            if road_id not in intra_junction_road_id_set
+        )
         semantic_arms.append(
             SWSDSemanticArm(
                 arm_id=f"arm_{index:02d}",
                 direction=_swsd_arm_direction(branch),
                 angle_deg=float(branch.angle_deg),
                 first_branch_id=str(branch.branch_id),
-                first_road_ids=tuple(str(road_id) for road_id in getattr(branch, "road_ids", ()) if str(road_id)),
+                first_road_ids=first_road_ids,
                 inter_junction_connector_road_ids=connector_road_ids,
                 terminal_node_id=terminal_node_id,
                 terminal_kind=terminal_kind,
@@ -297,7 +305,7 @@ def _build_swsd_semantic_junction(
     return SWSDSemanticJunction(
         junction_id=representative_junction_id,
         member_node_ids=tuple(sorted(member_node_ids)),
-        intra_junction_road_ids=_collect_intra_junction_road_ids(local_roads, member_node_ids),
+        intra_junction_road_ids=intra_junction_road_ids,
         semantic_arms=tuple(semantic_arms),
         unstable_reasons=tuple(unstable_reasons),
     )

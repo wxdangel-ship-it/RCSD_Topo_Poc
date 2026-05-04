@@ -93,3 +93,390 @@ PY
 
 - The previously referenced `tests/modules/t04_divmerge_virtual_polygon/test_step3_topology_skeleton.py` was absent on the merged Phase 0 baseline, so Phase 1 added a small compatibility test under that path.
 - `outputs.write_case_outputs` was not edited directly; Step3 output persistence is synchronized through `topology.build_step3_status_doc` and `topology.build_unit_step3_status_doc`, which feed the existing output writer.
+
+## Phase 2 — Step5 / Render 去重迁移
+
+- Branch: `speckit/t04-step3-swsd-junction-phase2-step5-render-migration`
+- Base commit: `8f27794`
+- Started: `2026-05-04 10:31:00 CST`
+- Completed: `2026-05-04 11:05:33 CST`
+- Commit: `0046d17` (Phase 2 content commit before run-log metadata update)
+- PR: `https://github.com/wxdangel-ship-it/RCSD_Topo_Poc/pull/4`
+- Run root: `n/a` (Phase 2 uses unit / synthetic pytest outputs under pytest temp dirs)
+
+### Phase 2 Evidence
+
+- Source/script byte-size prechecks were run before writes for `support_domain_builder.py`, `support_domain_cuts.py`, `review_render.py`, `support_domain_common.py`, and `test_step5_consumes_step3_swsd_junction.py`.
+- Source/script byte-size rechecks stayed below 100 KB:
+  - `support_domain_builder.py`: 46587 bytes.
+  - `support_domain_cuts.py`: 10401 bytes.
+  - `review_render.py`: 41920 bytes.
+  - `support_domain_common.py`: 22931 bytes.
+  - `test_step5_consumes_step3_swsd_junction.py`: 3073 bytes.
+- `rg "_expanded_related_road_ids" --type py` result:
+  - `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/support_domain_cuts.py:40:def _expanded_related_road_ids(`.
+  - Step5 / render / outputs no longer call this deprecated helper.
+- Test discipline:
+  - `test_step5_consumes_step3_swsd_junction.py`: `2 passed in 8.64s`.
+  - `test_step5_consumes_step3_swsd_junction.py + test_step5_support_domain.py + test_step14_synthetic_batch.py`: `12 passed in 59.42s`.
+  - `test_step14_real_regression.py`: `7 passed in 23.21s`.
+
+### Phase 2 Notes
+
+- Step5 now derives `related_swsd_road_ids` exclusively from `case_result.base_context.topology_skeleton.swsd_semantic_junction`.
+- Render now highlights SWSD related roads from the same Step3 entity instead of re-deriving them from Step5 unit support roads.
+- The legacy `_expanded_related_road_ids` function remains only as a deprecated compatibility shadow and is excluded from `support_domain_cuts.__all__`.
+
+## Protocol Update — Local Serial Execution
+
+- Timestamp: `2026-05-04 11:28:00 CST`
+- User instruction: 后续任务不再提交 GitHub，均在本地进行；待本次完成后统一提交。
+- Effective scope: Phase 3–7 and any remaining cleanup in this SpecKit round.
+- GitHub operation status: stopped. Phase 2 PR `https://github.com/wxdangel-ship-it/RCSD_Topo_Poc/pull/4` was already created before this instruction and will not be updated or used as a gating dependency.
+- Local branch at protocol switch: `speckit/t04-step3-swsd-junction-phase2-step5-render-migration`.
+- Local HEAD at protocol switch: `c1ee12b`.
+- Execution rule after switch: no `git push`, no GitHub PR creation, no user-side GitHub merge steps; continue Phase checklist locally and perform one final local commit only after the full round is complete unless the user explicitly changes this instruction.
+
+## Phase 3 — RCSDSemanticJunction Dataclass & Mapping
+
+- Branch: `speckit/t04-step3-swsd-junction-phase2-step5-render-migration`
+- Base local HEAD: `c1ee12b`
+- Started: `2026-05-04 11:29:00 CST`
+- Completed: `2026-05-04 11:55:46 CST`
+- Commit: `n/a` (local serial mode; final commit deferred)
+- PR: `n/a` (local serial mode)
+- Run root: `n/a` (Phase 3 uses unit / real pytest)
+
+### Phase 3 Evidence
+
+- Source/script byte-size prechecks were run before writes for `rcsd_alignment.py`, `_event_interpretation_core.py`, `step4_road_surface_fork_rcsd.py`, `case_models.py`, `outputs.py`, `event_interpretation.py`, and `test_step4_rcsd_alignment_type.py`.
+- Source/script byte-size rechecks stayed below 100 KB:
+  - `rcsd_alignment.py`: 22276 bytes.
+  - `_event_interpretation_core.py`: 56642 bytes.
+  - `step4_road_surface_fork_rcsd.py`: 9636 bytes.
+  - `case_models.py`: 39727 bytes.
+  - `outputs.py`: 42007 bytes.
+  - `event_interpretation.py`: 18832 bytes.
+  - `test_step4_rcsd_alignment_type.py`: 19030 bytes.
+- Syntax / whitespace:
+  - `py_compile` passed for the six modified Python files plus the extended Step4 test.
+  - `git diff --check` passed.
+- Test discipline:
+  - `test_step4_rcsd_alignment_type.py`: `10 passed in 3.18s`.
+  - `test_step14_real_regression.py`: `7 passed in 22.59s`.
+
+### Phase 3 Notes
+
+- `RCSDSemanticJunction` is emitted only for junction-level `rcsd_alignment_type` values: `rcsd_semantic_junction` and `rcsd_junction_partial_alignment`.
+- The builder consumes Step4's frozen RCSD alignment result, selected RCSD roads/nodes, local RCSD topology, and the Step3 `SWSDSemanticJunction`.
+- `paired_swsd_arm_mapping` uses the existing `BRANCH_MATCH_TOLERANCE_DEG = 30.0`; ambiguous arm matches are serialized as `null` and listed in `pairing_ambiguous_arm_ids`.
+- Real RCSDRoad geometry may carry 3D coordinates; Phase 3 angle extraction now explicitly uses the first two coordinate dimensions.
+
+## Phase 4 — RCSDRoadOnlyChain Dataclass & Closure Proof
+
+- Branch: `speckit/t04-step3-swsd-junction-phase2-step5-render-migration`
+- Base local HEAD: `c1ee12b`
+- Started: `2026-05-04 11:56:00 CST`
+- Completed: `2026-05-04 12:06:40 CST`
+- Commit: `n/a` (local serial mode; final commit deferred)
+- PR: `n/a` (local serial mode)
+- Run root: `n/a` (Phase 4 uses unit / real pytest)
+
+### Phase 4 Evidence
+
+- Source/script byte-size prechecks were run before writes for `rcsd_alignment.py`, `_event_interpretation_core.py`, `step4_road_surface_fork_rcsd.py`, `case_models.py`, `outputs.py`, `event_interpretation.py`, and `test_step4_rcsd_alignment_type.py`.
+- Source/script byte-size rechecks stayed below 100 KB:
+  - `rcsd_alignment.py`: 32817 bytes.
+  - `_event_interpretation_core.py`: 57231 bytes.
+  - `step4_road_surface_fork_rcsd.py`: 9636 bytes.
+  - `case_models.py`: 40224 bytes.
+  - `outputs.py`: 42309 bytes.
+  - `event_interpretation.py`: 18947 bytes.
+  - `test_step4_rcsd_alignment_type.py`: 25512 bytes.
+- Syntax / whitespace:
+  - `py_compile` passed for the six modified Python files plus the extended Step4 test.
+  - `git diff --check` passed.
+- Test discipline:
+  - `test_step4_rcsd_alignment_type.py`: `13 passed in 3.23s`.
+  - `test_step14_real_regression.py`: `7 passed in 22.93s`.
+
+### Phase 4 Notes
+
+- `RCSDRoadOnlyChain` is emitted only for `rcsd_alignment_type = rcsdroad_only_alignment`.
+- Candidate road IDs are derived from the frozen alignment positive roads plus `first_hit_rcsdroad_ids` / `selected_rcsdroad_ids`, then ordered as a local RCSDRoad chain.
+- `closure_status` supports `closed_between_two_rcsd_junctions`, `open_dead_end`, `open_patch_boundary`, and `unresolved`; D4 real-data distribution remains pending until Phase 6.
+- Direction evidence uses the existing `BRANCH_MATCH_TOLERANCE_DEG = 30.0` and writes all D5 audit keys: `chain_head_angle_deg`, `chain_tail_angle_deg`, `matched_swsd_arm_id`, `angle_gap_deg`, and `consistency_decision_reason`.
+
+## Phase 5 — Consistency Verdict 聚合 + 取值域冻结
+
+- Branch: `speckit/t04-step3-swsd-junction-phase2-step5-render-migration`
+- Base local HEAD: `c1ee12b`
+- Started: `2026-05-04 12:07:00 CST`
+- Completed: `2026-05-04 12:26:56 CST`
+- Commit: `n/a` (local serial mode; final commit deferred)
+- PR: `n/a` (local serial mode)
+- Run root: `n/a` (Phase 5 uses unit / synthetic / real pytest)
+
+### Phase 5 Evidence
+
+- Source/script byte-size prechecks were run before writes for `rcsd_alignment.py`, `case_models.py`, `outputs.py`, `_rcsd_selection_support.py`, `rcsd_selection.py`, `step4_road_surface_fork_binding_promotions.py`, `step4_road_surface_fork_binding_cleanup.py`, `step4_road_surface_fork_binding_swsd_rcsdroad.py`, and the new `test_consistency_verdict.py`.
+- Source/script byte-size rechecks stayed below 100 KB:
+  - `rcsd_alignment.py`: 35312 bytes.
+  - `case_models.py`: 42331 bytes.
+  - `outputs.py`: 42683 bytes.
+  - `_rcsd_selection_support.py`: 53171 bytes.
+  - `rcsd_selection.py`: 39060 bytes.
+  - `step4_road_surface_fork_binding_promotions.py`: 43812 bytes.
+  - `step4_road_surface_fork_binding_cleanup.py`: 19021 bytes.
+  - `step4_road_surface_fork_binding_swsd_rcsdroad.py`: 19993 bytes.
+  - `test_consistency_verdict.py`: 3356 bytes.
+  - `test_step4_rcsd_alignment_type.py`: 25512 bytes.
+- Write-point scan:
+  - `rg "rcsd_consistency_result\\s*=" --type py src tests` was used to enumerate Python write sites.
+  - Actual writes now pass through `validate_rcsd_consistency_result(...)` on `PositiveRcsdSelectionDecision`, `T04CandidateAuditEntry`, `T04EventUnitResult`, and `T04ReviewIndexRow`.
+  - Historical reason strings such as `swsd_junction_window_no_rcsd`, `road_surface_fork_structure_only_no_rcsd`, and `unbound_road_surface_fork_without_bifurcation_rcsd` remain in reason / mode fields, but no longer enter `rcsd_consistency_result`.
+- Syntax / whitespace:
+  - `py_compile` passed for modified Phase 5 Python files and tests.
+  - `git diff --check` passed.
+- Test discipline:
+  - `test_consistency_verdict.py + test_step4_rcsd_alignment_type.py`: `16 passed in 3.12s`.
+  - `test_step14_real_regression.py`: `7 passed in 21.19s`.
+  - `test_step14_synthetic_batch.py`: `5 passed in 33.42s`.
+
+### Phase 5 Notes
+
+- `swsd_rcsd_alignment_consistent` is now serialized in event-unit summary docs, candidate audit entries, `step4_review_index.csv`, and `step4_review_summary.json` counts.
+- `RCSD_CONSISTENCY_RESULT_VALUES` is frozen to the seven values in `INTERFACE_CONTRACT.md §3.7`.
+- Road-only verdicts depend on `RCSDRoadOnlyChain.swsd_direction_consistent`; Phase 6 will provide the real 39-case distribution.
+
+## Phase 6 — Real Case Regression
+
+- Branch: `speckit/t04-step3-swsd-junction-phase2-step5-render-migration`
+- Base local HEAD: `c1ee12b`
+- Started: `2026-05-04 12:27:00 CST`
+- Completed: `2026-05-04 13:36:00 CST`
+- Commit: `n/a` (local serial mode; final commit deferred)
+- PR: `n/a` (local serial mode)
+- Formal run root: `outputs/_work/t04_step14_batch/codex_t04_step3_swsd_junction_20260504_131905`
+- Render audit root: `outputs/_work/t04_swsd_render_audit/codex_t04_step3_swsd_junction_20260504_131905`
+
+### Phase 6 Reading Confirmation
+
+- [x] `AGENTS.md`
+- [x] `modules/t04_divmerge_virtual_polygon/AGENTS.md`
+- [x] `.agents/skills/default-imp/SKILL.md`
+- [x] `INTERFACE_CONTRACT.md §2.3 / §3.4 / §3.5 / §4.4`
+- [x] `architecture/04-solution-strategy.md §4 / §5 / §6`
+- [x] `architecture/10-quality-requirements.md`
+- [x] `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/{spec.md, plan.md, tasks.md}`
+
+### Phase 6 Modified
+
+- `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step3_topology_skeleton.py`: filtered `inter_junction_connector_road_ids` to exclude `intra_junction_road_ids` while preserving non-intra `first_road_ids` needed by Step5/render related-road derivation.
+- `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/case_models.py`: computes `T04EventUnitResult.swsd_rcsd_alignment_consistent` from the final `surface_scenario.rcsd_alignment_type`, so verdicts match serialized alignment type.
+- `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/review_render.py`: added `build_final_review_render_audit(...)` to expose the exact SWSD road IDs used by final review rendering.
+- `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/outputs.py`: writes per-case `final_review_render_audit.json`.
+- `tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py`: added real Anchor_2 snapshots for `724067 / 758784 / 760213`.
+- `tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py`: kept PNG presence checks while not asserting legacy 23-case raw PNG fingerprints for this SpecKit round.
+- `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md`: recorded D4 real-data distribution with `closed_between_two_rcsd_junctions = 0`.
+- `modules/t04_divmerge_virtual_polygon/architecture/10-quality-requirements.md`: registered the 2026-05-04 Phase 6 39-case run root as the new manual visual-audit reference.
+- `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/tasks.md`: marked Phase 6 checklist complete and corrected remaining GitHub/PR wording to local serial execution.
+- `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/plan.md`: corrected development output wording from PR checkpoint to local checkpoint.
+
+### Phase 6 Byte-Size Checks
+
+- `_runtime_step3_topology_skeleton.py`: `32600` bytes.
+- `case_models.py`: `42348` bytes.
+- `review_render.py`: `42832` bytes.
+- `outputs.py`: `42884` bytes.
+- `test_step3_swsd_semantic_junction.py`: `10311` bytes.
+- All checked source/script files remain below 100 KB.
+
+### Phase 6 Verification
+
+- `python -m py_compile` on modified Phase 6 Python files passed.
+- `pytest -s tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py tests/modules/t04_divmerge_virtual_polygon/test_consistency_verdict.py tests/modules/t04_divmerge_virtual_polygon/test_step4_rcsd_alignment_type.py -q` -> `23 passed in 3.48s`.
+- `pytest -s tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py -q` -> `8 passed in 7.48s`.
+- `pytest -s tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_full_20260426_baseline_gate -x` -> `1 passed in 102.49s`.
+- `pytest -s tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_30case_surface_scenario_baseline_gate -x` -> `1 passed in 136.33s`.
+- Anchor_2 39-case full run:
+  - `run_root = outputs/_work/t04_step14_batch/codex_t04_step3_swsd_junction_20260504_131905`
+  - `total_case_count = 39`
+  - `accepted = 35`
+  - `rejected = 4`
+  - `failed_case_ids = []`
+  - `review_png_present_count = 39`
+  - `nodes_consistency_passed = true`
+  - `performance.threshold_status = within_threshold`
+  - `elapsed_seconds_total = 158.049974`
+- Phase 6 automatic audit:
+  - `outputs/_work/t04_swsd_render_audit/codex_t04_step3_swsd_junction_20260504_131905/phase6_auto_audit_summary.json`
+  - `errors = []`
+  - `render_missing_case_count = 0`
+  - every case has non-empty `swsd_semantic_junction.junction_id`
+  - every case has `intra_junction_road_ids ∩ Σ inter_junction_connector_road_ids = ∅`
+  - every case Step5 `related_swsd_road_ids` equals Step3 `intra ∪ connector`
+  - every event unit has non-empty `swsd_rcsd_alignment_consistent` matching final alignment / consistency / polarity / chain derivation.
+
+### Phase 6 Named Case Evidence
+
+| case_id | swsd_entity_road_count | render_visible_road_count | missing_road_ids |
+|---|---:|---:|---|
+| `724067` | 3 | 3 | none |
+| `758784` | 3 | 3 | none |
+| `760213` | 5 | 5 | none |
+
+Final review PNGs for `724067 / 758784 / 760213` were opened locally and show `ACCEPTED`; the panel `swsd_current_roads` counts match `render_audit.csv`.
+
+### Phase 6 D4 Closure Distribution
+
+| closure_status | count |
+|---|---:|
+| `closed_between_two_rcsd_junctions` | 0 |
+| `open_dead_end` | 0 |
+| `open_patch_boundary` | 0 |
+| `unresolved` | 11 |
+
+Because `closed_between_two_rcsd_junctions = 0`, `INTERFACE_CONTRACT.md §2.5` now records that the current Anchor_2 39-case dataset has no real-data hit for that status and keeps it as a reserved contract state.
+
+### Phase 6 D5 Angle Distribution
+
+| case_id | event_unit_id | chain_head | chain_tail | matched_swsd_arm | angle_gap_deg | consistent |
+|---|---|---:|---:|---|---:|---|
+| `505078921` | `node_510222629__pair_02` | 332.457717 | 25.057615 | `arm_01` | 2.693169 | true |
+| `706347` | `event_unit_01` | 45.666865 | 142.715402 | `arm_03` | 0.093654 | true |
+| `724067` | `event_unit_01` | 61.561981 | 156.078417 | `arm_02` | 41.104506 | false |
+| `724081` | `event_unit_01` | 270.038792 | 323.587765 | `arm_01` | 9.786425 | true |
+| `760598` | `event_unit_01` | 344.172858 | 347.026118 | `arm_03` | 0.832063 | true |
+| `760984` | `event_unit_01` | 277.196621 | 253.230556 | `arm_02` | 16.145656 | true |
+| `768675` | `event_unit_01` | 68.198591 | 247.684897 | `arm_01` | 0.124814 | true |
+| `768680` | `node_768680` | 275.003410 | 233.736188 | `arm_01` | 9.125822 | true |
+| `768680` | `node_768683` | 17.592425 | 247.702842 | `arm_03` | 12.496168 | true |
+| `785731` | `event_unit_01` | 332.073966 | 157.285588 | `arm_02` | 5.024822 | true |
+| `788824` | `event_unit_01` | 219.281174 | 128.807123 | `arm_03` | 0.666766 | true |
+
+No dense cluster appears in the 25-35 degree tolerance boundary range. `724067` is a single inconsistent outlier at `41.104506` and is retained as inconsistent; this Phase does not adjust D5 tolerance.
+
+### Phase 6 Hard Stop Check
+
+- [x] Did not trigger `AGENTS.md §1.1` source-fact conflict.
+- [x] Did not trigger `§1.2` unauthorized protected module/interface change beyond this SpecKit task.
+- [x] Did not trigger `§1.3` new permanent entrypoint.
+- [x] Did not trigger `§1.4` source/script file-size violation.
+- [x] Did not trigger `§1.5` data-observation-driven upstream field semantics.
+- [x] Did not trigger `§1.6` path mismatch; Windows path `E:\TestData\POC_Data\T02\Anchor_2` was executed as bash path `/mnt/e/TestData/POC_Data/T02/Anchor_2`.
+- [x] Did not trigger `§1.7` entrypoint registry mismatch.
+
+### Phase 6 Pending Confirmation
+
+- No code-level blocker remains for Phase 6.
+- User manual visual confirmation is still welcome for the 39-case `final_review.png` set under the formal run root; machine render audit reports `missing_road_ids = 0` for all 39 cases.
+
+## Phase 7 — QA / Documentation Closeout
+
+- Branch: `speckit/t04-step3-swsd-junction-phase2-step5-render-migration`
+- Local HEAD: `c1ee12b`
+- Started: `2026-05-04 13:40:00 CST`
+- Completed: `2026-05-04 15:44:42 CST`
+- Commit: `n/a` (local serial mode; final commit deferred)
+- GitHub: `n/a` (no push / no PR by user instruction)
+- Formal run root: `outputs/_work/t04_step14_batch/codex_t04_step3_swsd_junction_20260504_131905`
+- QA summary: `outputs/_work/t04_swsd_render_audit/codex_t04_step3_swsd_junction_20260504_131905/phase7_qa_summary.json`
+- Release notes: `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/notes/release-notes.md`
+
+### Phase 7 Reading Confirmation
+
+已阅读 ✅：
+
+- [x] `AGENTS.md`
+- [x] `modules/t04_divmerge_virtual_polygon/AGENTS.md`
+- [x] `.agents/skills/default-imp/SKILL.md`
+- [x] `INTERFACE_CONTRACT.md §2.3 / §3.4 / §3.5 / §4.4`
+- [x] `architecture/04-solution-strategy.md §4 / §5 / §6`
+- [x] `architecture/10-quality-requirements.md`
+- [x] `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/{spec.md, plan.md, tasks.md}`
+
+### Phase 7 Modified
+
+- `tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py`: updated stale user-audit six-case expectations to the current formal output: `785731` is accepted as `no_main_evidence_with_rcsdroad_fallback_and_swsd`; `795682` is accepted as `no_main_evidence_with_swsd_only`; total accepted/rejected counts are `6/0`.
+- `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/tasks.md`: marked Phase 7 QA checklist complete.
+- `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/notes/release-notes.md`: added final local release notes with `已修改 / 已验证 / 待确认`.
+- `specs/t04-step3-swsd-junction-and-step4-rcsd-completion/notes/run-log.md`: appended this Phase 7 execution record.
+
+### Phase 7 Byte-Size Checks
+
+All modified Python source/test files remain below the 100 KB hard threshold:
+
+| path | bytes |
+|---|---:|
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_event_interpretation_core.py` | 57231 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_rcsd_selection_support.py` | 53171 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step3_topology_skeleton.py` | 32600 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/case_models.py` | 42348 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/event_interpretation.py` | 18947 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/outputs.py` | 42884 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/rcsd_alignment.py` | 35312 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/rcsd_selection.py` | 39060 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/review_render.py` | 42832 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/step4_road_surface_fork_binding_cleanup.py` | 19021 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/step4_road_surface_fork_binding_promotions.py` | 43812 |
+| `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/step4_road_surface_fork_binding_swsd_rcsdroad.py` | 19993 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_706629_swsd_only_regression.py` | 32060 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_complex_multi_unit_decomposition.py` | 3322 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_consistency_verdict.py` | 3356 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_real_anchor2_699870_rcsd_anchored_reverse.py` | 3780 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_step3_swsd_semantic_junction.py` | 10311 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_step4_rcsd_alignment_type.py` | 25512 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_step5_surface_scenario_support_domain.py` | 19292 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_step6_polygon_assembly.py` | 13434 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py` | 83315 |
+
+No file-size audit table update is required because no source/script file crossed or approached the 100 KB threshold by this round's edits.
+
+### Phase 7 Verification
+
+- Phase 7 QA script summary:
+  - `crs_checks = 118`, failures `0`, all `EPSG:3857`.
+  - `geometry_valid_checks = 118`, failures `0`, invalid feature count `0`.
+  - `provenance_checks = 3`, failures `0`.
+  - `performance.threshold_status = within_threshold`.
+  - `threshold_source = module_quality_requirement_default_or_env_override`.
+  - `errors = []`.
+- Visual sample opened locally:
+  - `17943587 / 706347 / 785731 / 823826 / 987998`: `final_review.png` status/count panels matched the render audit.
+  - Named cases `724067 / 758784 / 760213`: `final_review.png` status `ACCEPTED`, `swsd_current_roads` counts matched `render_audit.csv`.
+- `pytest -s tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_new6_user_audit_surface_scenario_gate -q` -> `1 passed in 29.01s`.
+- `pytest -s tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_39case_official_surface_scenario_gate -q` -> `1 passed in 172.34s`.
+- `pytest -s tests/modules/t04_divmerge_virtual_polygon -q` -> `166 passed in 797.40s`.
+- `python3 -m py_compile` on all modified Python source/test files -> passed.
+- `git diff --check` -> passed.
+- `git status --short --branch`:
+  - `## speckit/t04-step3-swsd-junction-phase2-step5-render-migration...origin/speckit/t04-step3-swsd-junction-phase2-step5-render-migration [ahead 1]`
+  - Modified files remain local; no commit/push performed.
+
+### Phase 7 Tasks Checklist
+
+- [x] 验证 CRS：所有新增 `step3_status / step4_event_interpretation / step5_status` 写出未改 CRS。
+- [x] 验证 geometry valid：新增字段不引入 geometry；纯 ID + 元数据，无 valid 风险。
+- [x] 验证文件体量：再次运行 `stat -c%s` 自检，所有源码 `.py` 不跨 100 KB；未发生拆分，`docs/repository-metadata/code-size-audit.md` 无需同步。
+- [x] 验证契约一致性：`step4_review_index.csv` 列序与 `INTERFACE_CONTRACT.md §4.4` 一致；`step3_status.json` schema 与 §2.4 一致；`step4_event_interpretation.json` schema 与 §2.5 一致。
+- [x] 性能审计：`summary.json.performance` 字段齐全；`threshold_source = module_quality_requirement_default_or_env_override`；`threshold_status = within_threshold`。
+- [x] 视觉审计采样：从 39-case 中抽查 `17943587 / 706347 / 785731 / 823826 / 987998`，并复核命名 case `724067 / 758784 / 760213`。
+- [x] 生成 Release Notes 草稿：`notes/release-notes.md`。
+- [x] 治理工件登记：本 run-log 条目已写入。
+
+### Phase 7 Hard Stop Check
+
+- [x] Did not trigger `AGENTS.md §1.1` source-fact conflict.
+- [x] Did not trigger `§1.2` unauthorized protected module/interface change beyond this SpecKit task.
+- [x] Did not trigger `§1.3` new permanent entrypoint.
+- [x] Did not trigger `§1.4` source/script file-size violation.
+- [x] Did not trigger `§1.5` data-observation-driven upstream field semantics.
+- [x] Did not trigger `§1.6` path mismatch; Windows path `E:\TestData\POC_Data\T02\Anchor_2` is executed as bash path `/mnt/e/TestData/POC_Data/T02/Anchor_2`.
+- [x] Did not trigger `§1.7` entrypoint registry mismatch.
+
+### Phase 7 Pending Confirmation
+
+- No code-level blocker remains.
+- No GitHub push / PR / commit was performed after the user's "停止推送" and "后续任务，不再提交Github" instructions.
+- Awaiting user confirmation before any unified local commit.

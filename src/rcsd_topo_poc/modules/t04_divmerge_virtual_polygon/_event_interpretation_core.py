@@ -69,7 +69,7 @@ from .event_interpretation_shared import (
     _stable_axis_signature,
     _stable_boundary_pair_signature,
 )
-from .rcsd_alignment import RCSD_ALIGNMENT_NONE
+from .rcsd_alignment import RCSD_ALIGNMENT_NONE, build_rcsd_semantic_junction, build_rcsdroad_only_chain
 
 from ._event_interpretation_unit_preparation import (
     DIVSTRIP_EVIDENCE_TIP_RADIUS_M,
@@ -1104,6 +1104,36 @@ def _build_result_from_interpretation(
             result,
             review_state="STEP4_REVIEW" if result.review_state == "STEP4_OK" else result.review_state,
             extra_review_notes=tuple(dict.fromkeys(extra_review_notes)),
+        )
+    rcsd_semantic_junction = build_rcsd_semantic_junction(
+        unit_result=result,
+        swsd_semantic_junction=result.unit_context.topology_skeleton.swsd_semantic_junction,
+        rcsd_alignment_result=result.rcsd_alignment_result(),
+    )
+    if rcsd_semantic_junction is not None:
+        rcsd_audit = dict(result.positive_rcsd_audit)
+        rcsd_audit["rcsd_semantic_junction"] = rcsd_semantic_junction.to_doc()
+        if rcsd_semantic_junction.pairing_ambiguous_arm_ids:
+            rcsd_audit["pairing_ambiguous_arm_ids"] = list(
+                rcsd_semantic_junction.pairing_ambiguous_arm_ids
+            )
+        result = replace(
+            result,
+            rcsd_semantic_junction=rcsd_semantic_junction,
+            positive_rcsd_audit=rcsd_audit,
+        )
+    rcsdroad_only_chain = build_rcsdroad_only_chain(
+        unit_result=result,
+        swsd_semantic_junction=result.unit_context.topology_skeleton.swsd_semantic_junction,
+        rcsd_alignment_result=result.rcsd_alignment_result(),
+    )
+    if rcsdroad_only_chain is not None:
+        rcsd_audit = dict(result.positive_rcsd_audit)
+        rcsd_audit["rcsdroad_only_chain"] = rcsdroad_only_chain.to_doc()
+        result = replace(
+            result,
+            rcsdroad_only_chain=rcsdroad_only_chain,
+            positive_rcsd_audit=rcsd_audit,
         )
     return result
 

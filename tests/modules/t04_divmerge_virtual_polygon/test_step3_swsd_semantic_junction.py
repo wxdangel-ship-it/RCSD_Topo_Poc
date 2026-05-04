@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from shapely.geometry import Point, Polygon
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step23_contracts import Stage4BranchResult
@@ -9,7 +10,14 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step3_topology_
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import BranchEvidence
 
-from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import _parsed_node, _parsed_road
+from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import (
+    REAL_ANCHOR_2_ROOT,
+    build_case_result,
+    load_case_bundle,
+    load_case_specs,
+    _parsed_node,
+    _parsed_road,
+)
 
 
 DRIVEZONE = Polygon([(-120, -120), (120, -120), (120, 120), (-120, 120), (-120, -120)])
@@ -103,6 +111,47 @@ def test_swsd_semantic_arm_dead_end_terminal() -> None:
     assert arm.terminal_kind == "dead_end"
 
 
+def test_swsd_semantic_arm_connector_contains_all_first_road_ids() -> None:
+    nodes = [
+        _parsed_node("j0", 0, 0, mainnodeid="j0", kind_2=16),
+        _parsed_node("split", 12, 0),
+        _parsed_node("left", 30, 8),
+        _parsed_node("right", 30, -8),
+    ]
+    roads = [
+        _parsed_road("r_seed", [(0, 0), (12, 0)], snodeid="j0", enodeid="split"),
+        _parsed_road("r_first_extra", [(12, 0), (30, 8)], snodeid="split", enodeid="left"),
+        _parsed_road("r_other", [(12, 0), (30, -8)], snodeid="split", enodeid="right"),
+    ]
+    branch_result = Stage4BranchResult(
+        member_node_ids=("j0",),
+        augmented_member_node_ids=("j0",),
+        road_branches=(
+            BranchEvidence(
+                branch_id="road_1",
+                angle_deg=0.0,
+                branch_type="road",
+                road_ids=["r_seed", "r_first_extra"],
+                has_outgoing_support=True,
+            ),
+        ),
+        road_branch_ids=("road_1",),
+        road_to_branch={},
+        road_branches_by_id={},
+        main_branch_ids=("road_1",),
+        through_node_policy="degree2_passthrough_does_not_break_branch",
+        through_node_candidate_ids=(),
+    )
+
+    junction = _build_swsd_semantic_junction(branch_result, roads, nodes, nodes[0])
+
+    assert junction.semantic_arms[0].first_road_ids == ("r_seed", "r_first_extra")
+    assert set(junction.semantic_arms[0].inter_junction_connector_road_ids) >= {
+        "r_seed",
+        "r_first_extra",
+    }
+
+
 def test_swsd_semantic_arm_patch_boundary_keeps_only_patch_road_ids() -> None:
     nodes = [_parsed_node("j0", 0, 0, mainnodeid="j0", kind_2=16)]
     roads = [_parsed_road("r_patch", [(0, 0), (50, 0)], snodeid="j0", enodeid="outside_patch")]
@@ -171,3 +220,53 @@ def test_swsd_semantic_arm_angle_reuses_branch_evidence_value_exactly() -> None:
 
     for arm in skeleton.swsd_semantic_junction.semantic_arms:
         assert arm.angle_deg == branch_angle_by_id[arm.first_branch_id]
+
+
+def test_named_anchor2_swsd_semantic_junction_snapshots() -> None:
+    expected_snapshots = {
+        "724067": {
+            "junction_id": "724067",
+            "intra_junction_road_ids": (),
+            "connector_road_ids": ("18386573", "611600880", "71629388"),
+        },
+        "758784": {
+            "junction_id": "758784",
+            "intra_junction_road_ids": (),
+            "connector_road_ids": ("39119257", "618801962", "627455843"),
+        },
+        "760213": {
+            "junction_id": "760213",
+            "intra_junction_road_ids": ("41808703",),
+            "connector_road_ids": ("55009919", "989396", "992474", "992475"),
+        },
+    }
+    if not REAL_ANCHOR_2_ROOT.is_dir():
+        pytest.skip(f"missing real Anchor_2 case root: {REAL_ANCHOR_2_ROOT}")
+    missing_cases = [
+        case_id for case_id in expected_snapshots if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
+    ]
+    if missing_cases:
+        pytest.skip(f"missing real case package(s): {', '.join(sorted(missing_cases))}")
+
+    specs, _ = load_case_specs(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=list(expected_snapshots),
+    )
+
+    for spec in specs:
+        case_result = build_case_result(load_case_bundle(spec))
+        junction = case_result.base_context.topology_skeleton.swsd_semantic_junction
+        connector_road_ids = tuple(
+            sorted(
+                {
+                    road_id
+                    for arm in junction.semantic_arms
+                    for road_id in arm.inter_junction_connector_road_ids
+                }
+            )
+        )
+        assert {
+            "junction_id": junction.junction_id,
+            "intra_junction_road_ids": tuple(junction.intra_junction_road_ids),
+            "connector_road_ids": connector_road_ids,
+        } == expected_snapshots[spec.case_id]

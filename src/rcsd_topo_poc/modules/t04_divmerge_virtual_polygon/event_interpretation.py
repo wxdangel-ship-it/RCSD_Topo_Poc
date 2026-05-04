@@ -232,6 +232,8 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                     event_axis_branch_id=item.result.event_axis_branch_id,
                     event_chosen_s_m=item.result.event_chosen_s_m,
                     positive_rcsd_audit=dict(item.result.positive_rcsd_audit),
+                    rcsd_semantic_junction=item.result.rcsd_semantic_junction,
+                    rcsdroad_only_chain=item.result.rcsdroad_only_chain,
                     pair_local_rcsd_scope_geometry=item.result.pair_local_rcsd_scope_geometry,
                     first_hit_rcsd_road_geometry=item.result.first_hit_rcsd_road_geometry,
                     local_rcsd_unit_geometry=item.result.local_rcsd_unit_geometry,
@@ -314,6 +316,8 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                 selected_evidence_summary=dict(empty_summary),
                 alternative_candidate_summaries=alternative_candidates,
                 candidate_audit_entries=tuple(candidate_audit_entries),
+                rcsd_semantic_junction=None,
+                rcsdroad_only_chain=None,
                 extra_review_notes=tuple(
                     dict.fromkeys(
                         [*template_result.extra_review_notes, "no_selected_evidence_after_reselection"]

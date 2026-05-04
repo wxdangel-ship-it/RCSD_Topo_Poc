@@ -319,6 +319,7 @@ def test_step5_main_evidence_with_rcsd_uses_scenario_not_evidence_source_for_ful
     )
     unit_result = SimpleNamespace(
         spec=SimpleNamespace(event_unit_id="event_unit_01", event_type="diverge"),
+        unit_context=SimpleNamespace(representative_node=SimpleNamespace(geometry=Point(0.0, 0.0))),
         interpretation=SimpleNamespace(
             legacy_step5_bridge=legacy_bridge,
             legacy_step5_readiness=SimpleNamespace(ready=True, reasons=()),
@@ -375,6 +376,7 @@ def test_step5_main_evidence_with_rcsd_keeps_standard_fill_for_continuous_chain(
     )
     unit_result = SimpleNamespace(
         spec=SimpleNamespace(event_unit_id="event_unit_01", event_type="diverge"),
+        unit_context=SimpleNamespace(representative_node=SimpleNamespace(geometry=Point(0.0, 0.0))),
         interpretation=SimpleNamespace(
             legacy_step5_bridge=legacy_bridge,
             legacy_step5_readiness=SimpleNamespace(ready=True, reasons=()),

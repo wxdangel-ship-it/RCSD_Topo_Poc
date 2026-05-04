@@ -123,7 +123,7 @@ def _downgrade_far_surface_rcsd_to_swsd_window(
             "position_source": SWSD_JUNCTION_WINDOW_POSITION_SOURCE,
             "source_mode": "swsd_junction_window",
             "road_surface_fork_binding": detail,
-            "rcsd_consistency_result": rcsd_mode,
+            "rcsd_consistency_result": "none",
             "positive_rcsd_present": False,
             "positive_rcsd_present_reason": rcsd_mode,
             "positive_rcsd_support_level": "no_support",
@@ -171,7 +171,7 @@ def _downgrade_far_surface_rcsd_to_swsd_window(
         review_reasons=review_reasons,
         evidence_source="road_surface_fork",
         position_source=SWSD_JUNCTION_WINDOW_POSITION_SOURCE,
-        rcsd_consistency_result=rcsd_mode,
+        rcsd_consistency_result="none",
         positive_rcsd_support_level="no_support",
         positive_rcsd_consistency_level="C",
         required_rcsd_node=None,
@@ -213,7 +213,7 @@ def _downgrade_far_surface_rcsd_to_swsd_window(
         review_reasons=review_reasons,
         evidence_source="road_surface_fork",
         position_source=SWSD_JUNCTION_WINDOW_POSITION_SOURCE,
-        rcsd_consistency_result=rcsd_mode,
+        rcsd_consistency_result="none",
         selected_component_union_geometry=None,
         localized_evidence_core_geometry=None,
         selected_evidence_region_geometry=None,
@@ -586,7 +586,7 @@ def _promote_selected_surface_rcsd_junction_window(
     rcsd_consistency_result = (
         "positive_rcsd_partial_consistent"
         if preserve_surface_main_evidence
-        else RCSD_JUNCTION_WINDOW_SOURCE
+        else "positive_rcsd_partial_consistent"
     )
     positive_reason = (
         "road_surface_fork_rcsd_junction_local_unit_present"

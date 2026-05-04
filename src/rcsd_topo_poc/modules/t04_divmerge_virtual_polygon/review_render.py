@@ -16,6 +16,7 @@ from .surface_scenario import (
     SECTION_REFERENCE_RCSD,
     SECTION_REFERENCE_SWSD,
 )
+from .support_domain_common import _derive_related_swsd_road_ids_from_topology
 from .support_domain import T04Step5CaseResult
 
 
@@ -387,17 +388,30 @@ def _unique_texts(values: Iterable[Any]) -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def _related_swsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for unit_result in step5_result.unit_results:
-        for road_id in (*unit_result.support_road_ids, *unit_result.support_event_road_ids):
-            key = str(road_id).strip()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            ordered.append(key)
-    return tuple(ordered)
+def _related_swsd_road_ids(case_result: T04CaseResult) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            _derive_related_swsd_road_ids_from_topology(case_result.base_context.topology_skeleton)
+        )
+    )
+
+
+def build_final_review_render_audit(case_result: T04CaseResult) -> dict[str, Any]:
+    local_context = case_result.base_context.local_context
+    entity_road_ids = _related_swsd_road_ids(case_result)
+    rendered_roads = _ordered_roads_by_ids(local_context.local_roads, entity_road_ids)
+    rendered_road_ids = tuple(str(road.road_id) for road in rendered_roads)
+    missing_road_ids = tuple(sorted(set(entity_road_ids) - set(rendered_road_ids)))
+    return {
+        "case_id": case_result.case_spec.case_id,
+        "swsd_entity_road_ids": list(entity_road_ids),
+        "render_visible_road_ids": list(rendered_road_ids),
+        "missing_road_ids": list(missing_road_ids),
+        "swsd_entity_road_count": len(entity_road_ids),
+        "render_visible_road_count": len(rendered_road_ids),
+        "missing_road_count": len(missing_road_ids),
+        "source": "final_review_png_related_swsd_roads",
+    }
 
 
 def _related_rcsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
@@ -895,7 +909,7 @@ def render_case_final_review_png(
     bounds = _base_bounds(case_result.event_units[0])
     local_context = case_result.base_context.local_context
 
-    related_swsd_road_ids = set(_related_swsd_road_ids(step5_result))
+    related_swsd_road_ids = set(_related_swsd_road_ids(case_result))
     active_rcsd_road_ids, active_rcsd_node_ids = _active_rcsd_alignment_ids(case_result)
     related_rcsd_road_ids = set(active_rcsd_road_ids)
     related_rcsd_node_ids = set(active_rcsd_node_ids)

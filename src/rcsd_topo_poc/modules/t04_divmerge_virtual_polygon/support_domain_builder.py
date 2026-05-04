@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
 
 from shapely.geometry.base import BaseGeometry
 
@@ -81,7 +80,10 @@ from .support_domain_bridges import (
 from .support_domain_common import (
     _buffered_patch,
     _clip_to_drivezone,
+    _derive_related_swsd_road_ids_from_topology,
+    _derive_unrelated_swsd_ids,
     _divstrip_void_mask,
+    _expand_related_road_ids_through_degree2,
     _geometry_summary,
     _loaded_feature_union,
     _required_rcsd_anchor_point,
@@ -92,7 +94,6 @@ from .support_domain_common import (
 from .support_domain_cuts import (
     _build_case_terminal_cut_constraints,
     _build_terminal_cut_constraints,
-    _expanded_related_road_ids,
     _unique_roads,
 )
 from .support_domain_models import T04Step5CaseResult, T04Step5UnitResult
@@ -120,7 +121,6 @@ from .support_domain_windows import (
     _uses_junction_window,
 )
 from .surface_scenario import (
-    SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
     SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
     SECTION_REFERENCE_NONE,
     SECTION_REFERENCE_POINT_AND_RCSD,
@@ -132,8 +132,6 @@ _ACTIVE_RCSD_SECTION_REFERENCES = {
     SECTION_REFERENCE_POINT_AND_RCSD,
     SECTION_REFERENCE_RCSD,
 }
-STEP5_SHARED_RCSDROAD_SWSD_ALIGNMENT_BUFFER_M = 8.0
-STEP5_SHARED_RCSDROAD_SWSD_MIN_OVERLAP_M = 20.0
 
 
 def _active_rcsd_road_ids(
@@ -208,29 +206,6 @@ def _related_node_ids_from_roads(
     return node_ids
 
 
-def _unrelated_swsd_mask_inputs(
-    case_result: T04CaseResult,
-    *,
-    related_swsd_road_ids: set[str],
-    related_swsd_node_ids: set[str],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    unrelated_swsd_road_ids = tuple(
-        sorted(
-            str(road.road_id)
-            for road in case_result.case_bundle.roads
-            if str(road.road_id) not in related_swsd_road_ids
-        )
-    )
-    unrelated_swsd_node_ids = tuple(
-        sorted(
-            str(node.node_id)
-            for node in case_result.case_bundle.nodes
-            if str(node.node_id) not in related_swsd_node_ids
-        )
-    )
-    return unrelated_swsd_road_ids, unrelated_swsd_node_ids
-
-
 def _unrelated_swsd_mask_geometry(
     case_result: T04CaseResult,
     *,
@@ -259,55 +234,6 @@ def _unrelated_swsd_mask_geometry(
         ),
         drivezone_union,
     )
-
-
-def _shared_rcsdroad_aligned_swsd_road_ids(
-    case_result: T04CaseResult,
-    *,
-    surface_configs: dict[str, object],
-    related_swsd_road_ids: set[str],
-    related_rcsd_road_ids: set[str],
-    support_domain: BaseGeometry | None,
-    drivezone_union: BaseGeometry | None,
-) -> set[str]:
-    if len(case_result.event_units) <= 1:
-        return set()
-    scenario_types = {
-        surface_configs[event_unit.spec.event_unit_id].surface_scenario_type
-        for event_unit in case_result.event_units
-    }
-    if scenario_types != {SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD}:
-        return set()
-    if not related_rcsd_road_ids or support_domain is None or support_domain.is_empty:
-        return set()
-    rcsd_alignment_corridor = _road_buffer_union(
-        [
-            road
-            for road in case_result.case_bundle.rcsd_roads
-            if str(getattr(road, "road_id", "") or "").strip() in related_rcsd_road_ids
-        ],
-        buffer_m=STEP5_SHARED_RCSDROAD_SWSD_ALIGNMENT_BUFFER_M,
-        drivezone_union=drivezone_union,
-    )
-    if rcsd_alignment_corridor is None or rcsd_alignment_corridor.is_empty:
-        return set()
-
-    aligned_road_ids: set[str] = set()
-    for road in case_result.case_bundle.roads:
-        road_id = str(getattr(road, "road_id", "") or "").strip()
-        if not road_id or road_id in related_swsd_road_ids:
-            continue
-        geometry = getattr(road, "geometry", None)
-        if geometry is None or geometry.is_empty:
-            continue
-        support_overlap_m = float(geometry.intersection(support_domain).length)
-        if support_overlap_m < STEP5_SHARED_RCSDROAD_SWSD_MIN_OVERLAP_M:
-            continue
-        rcsd_alignment_overlap_m = float(geometry.intersection(rcsd_alignment_corridor).length)
-        if rcsd_alignment_overlap_m < STEP5_SHARED_RCSDROAD_SWSD_MIN_OVERLAP_M:
-            continue
-        aligned_road_ids.add(road_id)
-    return aligned_road_ids
 
 
 def _unit_forbidden_domain_from_case(
@@ -770,10 +696,11 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         event_unit.spec.event_unit_id: _step5_surface_window_config(event_unit)
         for event_unit in case_result.event_units
     }
+    swsd_junction = case_result.base_context.topology_skeleton.swsd_semantic_junction
     current_semantic_node_ids = {
-        str(node.node_id)
-        for node in (case_result.case_bundle.representative_node, *case_result.case_bundle.group_nodes)
-        if str(getattr(node, "node_id", "") or "").strip()
+        str(node_id).strip()
+        for node_id in swsd_junction.member_node_ids
+        if str(node_id).strip()
     }
     external_support_roads = _unique_roads(
         road
@@ -784,20 +711,6 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
             *event_unit.interpretation.legacy_step5_bridge.complex_local_support_roads,
         )
     )
-    seed_swsd_road_ids = {
-        str(getattr(road, "road_id", "") or "").strip()
-        for road in external_support_roads
-        if str(getattr(road, "road_id", "") or "").strip()
-    }
-    for road in case_result.case_bundle.roads:
-        endpoint_ids = {
-            str(getattr(road, "snodeid", "") or "").strip(),
-            str(getattr(road, "enodeid", "") or "").strip(),
-        }
-        if endpoint_ids & current_semantic_node_ids:
-            road_id = str(getattr(road, "road_id", "") or "").strip()
-            if road_id:
-                seed_swsd_road_ids.add(road_id)
     seed_rcsd_road_ids: set[str] = set()
     expandable_rcsd_road_ids: set[str] = set()
     for event_unit in case_result.event_units:
@@ -810,11 +723,7 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         seed_rcsd_road_ids.update(mask_ids)
         if config.section_reference_source == SECTION_REFERENCE_POINT_AND_RCSD and 0 < len(mask_ids) <= 4:
             expandable_rcsd_road_ids.update(mask_ids)
-    related_swsd_road_ids = _expanded_related_road_ids(
-        seed_road_ids=seed_swsd_road_ids,
-        roads=case_result.case_bundle.roads,
-        current_semantic_node_ids=current_semantic_node_ids,
-    )
+    related_swsd_road_ids = _derive_related_swsd_road_ids_from_topology(case_result.base_context.topology_skeleton)
     # C-2 修复（spec §1.4 / FR-002）：把 Step4 case-level alignment aggregate 的
     # positive 集合作为权威 positive 来源并入 `related_rcsd_*_ids`。这样在 SWSD-junction-
     # window / RCSDroad-only 兜底路径（unit `selected_rcsdnode_ids` 为空）下，case 级聚合
@@ -836,7 +745,7 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
     related_rcsd_road_ids = set(seed_rcsd_road_ids) | case_positive_rcsd_road_ids
     if expandable_rcsd_road_ids:
         related_rcsd_road_ids.update(
-            _expanded_related_road_ids(
+            _expand_related_road_ids_through_degree2(
                 seed_road_ids=expandable_rcsd_road_ids,
                 roads=case_result.case_bundle.rcsd_roads,
                 current_semantic_node_ids=current_semantic_node_ids,
@@ -861,19 +770,11 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
             text = str(node_id or "").strip()
             if text:
                 related_rcsd_node_ids.add(text)
-    unrelated_swsd_road_ids = tuple(
-        sorted(
-            str(road.road_id)
-            for road in case_result.case_bundle.roads
-            if str(road.road_id) not in related_swsd_road_ids
-        )
-    )
-    unrelated_swsd_node_ids = tuple(
-        sorted(
-            str(node.node_id)
-            for node in case_result.case_bundle.nodes
-            if str(node.node_id) not in related_swsd_node_ids
-        )
+    unrelated_swsd_road_ids, unrelated_swsd_node_ids = _derive_unrelated_swsd_ids(
+        roads=case_result.case_bundle.roads,
+        nodes=case_result.case_bundle.nodes,
+        related_swsd_road_ids=related_swsd_road_ids,
+        related_swsd_node_ids=related_swsd_node_ids,
     )
     unrelated_rcsd_road_ids = tuple(
         sorted(
@@ -1006,58 +907,6 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         _union_geometry(unit.unit_must_cover_domain for unit in unit_results),
         drivezone_union,
     )
-    shared_rcsdroad_swsd_road_ids = _shared_rcsdroad_aligned_swsd_road_ids(
-        case_result,
-        surface_configs=surface_configs,
-        related_swsd_road_ids=related_swsd_road_ids,
-        related_rcsd_road_ids=related_rcsd_road_ids,
-        support_domain=base_case_must_cover_domain,
-        drivezone_union=drivezone_union,
-    )
-    if shared_rcsdroad_swsd_road_ids - related_swsd_road_ids:
-        related_swsd_road_ids.update(shared_rcsdroad_swsd_road_ids)
-        related_swsd_node_ids = _related_node_ids_from_roads(
-            current_semantic_node_ids=current_semantic_node_ids,
-            related_road_ids=related_swsd_road_ids,
-            roads=case_result.case_bundle.roads,
-        )
-        unrelated_swsd_road_ids, unrelated_swsd_node_ids = _unrelated_swsd_mask_inputs(
-            case_result,
-            related_swsd_road_ids=related_swsd_road_ids,
-            related_swsd_node_ids=related_swsd_node_ids,
-        )
-        unrelated_swsd_mask_geometry = _unrelated_swsd_mask_geometry(
-            case_result,
-            unrelated_swsd_road_ids=unrelated_swsd_road_ids,
-            unrelated_swsd_node_ids=unrelated_swsd_node_ids,
-            drivezone_union=drivezone_union,
-        )
-        case_external_forbidden_geometry = _clip_to_drivezone(
-            _union_geometry(
-                [
-                    unrelated_swsd_mask_geometry,
-                    unrelated_rcsd_mask_geometry,
-                    divstrip_void_mask_geometry,
-                ]
-            ),
-            drivezone_union,
-        )
-        unit_results = [
-            replace(
-                unit,
-                unit_forbidden_domain=_unit_forbidden_domain_from_case(
-                    case_external_forbidden_geometry=case_external_forbidden_geometry,
-                    other_unit_core_occupancy_geometry=_union_geometry(
-                        geometry
-                        for other_unit_id, geometry in unit_core_occupancies.items()
-                        if other_unit_id != unit.event_unit_id
-                    ),
-                    drivezone_union=drivezone_union,
-                ),
-                forbidden_domain_kept=case_external_forbidden_geometry is not None,
-            )
-            for unit in unit_results
-        ]
     base_allowed_geometries = [unit.unit_allowed_growth_domain for unit in unit_results]
     case_support_graph_geometry = _clip_to_drivezone(
         _union_geometry(

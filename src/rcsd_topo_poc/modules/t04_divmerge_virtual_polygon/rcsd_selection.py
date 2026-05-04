@@ -616,7 +616,7 @@ def resolve_positive_rcsd_selection(
             positive_rcsd_present_reason=RCSD_ALIGNMENT_AMBIGUOUS,
             positive_rcsd_support_level="no_support",
             positive_rcsd_consistency_level="C",
-            rcsd_consistency_result=RCSD_ALIGNMENT_AMBIGUOUS,
+            rcsd_consistency_result="positive_rcsd_inconsistent",
             required_rcsd_node=None,
             required_rcsd_node_source=None,
             pair_local_rcsd_empty=False,

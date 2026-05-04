@@ -185,6 +185,108 @@ def _road_buffer_union(
         geometries.append(geometry.buffer(buffer_m, cap_style=2, join_style=2))
     return _clip_to_drivezone(_union_geometry(geometries), drivezone_union)
 
+
+def _derive_related_swsd_road_ids_from_topology(topology_skeleton: Any) -> set[str]:
+    swsd_junction = getattr(topology_skeleton, "swsd_semantic_junction", None)
+    if swsd_junction is None:
+        return set()
+    related_road_ids = {
+        str(road_id).strip()
+        for road_id in getattr(swsd_junction, "intra_junction_road_ids", ())
+        if str(road_id).strip()
+    }
+    for arm in getattr(swsd_junction, "semantic_arms", ()):
+        related_road_ids.update(
+            str(road_id).strip()
+            for road_id in getattr(arm, "inter_junction_connector_road_ids", ())
+            if str(road_id).strip()
+        )
+    return related_road_ids
+
+
+def _derive_unrelated_swsd_ids(
+    *,
+    roads: Sequence[ParsedRoad],
+    nodes: Sequence[Any],
+    related_swsd_road_ids: set[str],
+    related_swsd_node_ids: set[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    unrelated_swsd_road_ids = tuple(
+        sorted(
+            str(road.road_id)
+            for road in roads
+            if str(road.road_id) not in related_swsd_road_ids
+        )
+    )
+    unrelated_swsd_node_ids = tuple(
+        sorted(
+            str(node.node_id)
+            for node in nodes
+            if str(node.node_id) not in related_swsd_node_ids
+        )
+    )
+    return unrelated_swsd_road_ids, unrelated_swsd_node_ids
+
+
+def _road_endpoint_node_ids(road: ParsedRoad) -> tuple[str, str]:
+    return (
+        str(getattr(road, "snodeid", "") or "").strip(),
+        str(getattr(road, "enodeid", "") or "").strip(),
+    )
+
+
+def _road_lookup(roads: Iterable[ParsedRoad]) -> dict[str, ParsedRoad]:
+    return {
+        road_id: road
+        for road in roads
+        if (road_id := str(getattr(road, "road_id", "") or "").strip())
+    }
+
+
+def _roads_by_node(roads: Iterable[ParsedRoad]) -> dict[str, set[str]]:
+    mapping: dict[str, set[str]] = {}
+    for road in roads:
+        road_id = str(getattr(road, "road_id", "") or "").strip()
+        if not road_id:
+            continue
+        for node_id in _road_endpoint_node_ids(road):
+            if not node_id:
+                continue
+            mapping.setdefault(node_id, set()).add(road_id)
+    return mapping
+
+
+def _expand_related_road_ids_through_degree2(
+    *,
+    seed_road_ids: Iterable[str],
+    roads: Sequence[ParsedRoad],
+    current_semantic_node_ids: Iterable[str],
+) -> set[str]:
+    roads_by_id = _road_lookup(roads)
+    roads_by_node = _roads_by_node(roads)
+    current_nodes = {str(node_id) for node_id in current_semantic_node_ids if str(node_id)}
+    queue = [str(road_id) for road_id in seed_road_ids if str(road_id) in roads_by_id]
+    related: set[str] = set()
+    while queue:
+        road_id = queue.pop(0)
+        if road_id in related:
+            continue
+        road = roads_by_id.get(road_id)
+        if road is None:
+            continue
+        related.add(road_id)
+        for node_id in _road_endpoint_node_ids(road):
+            if not node_id:
+                continue
+            incident_road_ids = roads_by_node.get(node_id, set())
+            if node_id not in current_nodes and len(incident_road_ids) != 2:
+                continue
+            for next_road_id in sorted(incident_road_ids):
+                if next_road_id not in related:
+                    queue.append(next_road_id)
+    return related
+
+
 def _loaded_feature_union(features: Sequence[Any]) -> BaseGeometry | None:
     return _union_geometry(getattr(feature, "geometry", None) for feature in features)
 

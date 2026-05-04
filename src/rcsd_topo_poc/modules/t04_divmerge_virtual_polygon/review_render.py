@@ -16,6 +16,7 @@ from .surface_scenario import (
     SECTION_REFERENCE_RCSD,
     SECTION_REFERENCE_SWSD,
 )
+from .support_domain_common import _derive_related_swsd_road_ids_from_topology
 from .support_domain import T04Step5CaseResult
 
 
@@ -387,17 +388,12 @@ def _unique_texts(values: Iterable[Any]) -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def _related_swsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for unit_result in step5_result.unit_results:
-        for road_id in (*unit_result.support_road_ids, *unit_result.support_event_road_ids):
-            key = str(road_id).strip()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            ordered.append(key)
-    return tuple(ordered)
+def _related_swsd_road_ids(case_result: T04CaseResult) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            _derive_related_swsd_road_ids_from_topology(case_result.base_context.topology_skeleton)
+        )
+    )
 
 
 def _related_rcsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
@@ -895,7 +891,7 @@ def render_case_final_review_png(
     bounds = _base_bounds(case_result.event_units[0])
     local_context = case_result.base_context.local_context
 
-    related_swsd_road_ids = set(_related_swsd_road_ids(step5_result))
+    related_swsd_road_ids = set(_related_swsd_road_ids(case_result))
     active_rcsd_road_ids, active_rcsd_node_ids = _active_rcsd_alignment_ids(case_result)
     related_rcsd_road_ids = set(active_rcsd_road_ids)
     related_rcsd_node_ids = set(active_rcsd_node_ids)

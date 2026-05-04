@@ -10,6 +10,7 @@ from ._runtime_types_io import ParsedRoad
 from .case_models import T04CaseResult, T04EventUnitResult
 from .support_domain_common import (
     _clip_to_drivezone,
+    _expand_related_road_ids_through_degree2,
     _event_axis_line,
     _event_axis_vector,
     _line_point_and_tangent,
@@ -18,6 +19,12 @@ from .support_domain_common import (
     _terminal_semantic_axis_line,
 )
 from .support_domain_scenario import STEP5_TERMINAL_CUT_HALF_WIDTH_M, STEP5_TERMINAL_CUT_WINDOW_MARGIN_M
+
+__all__ = (
+    "_build_case_terminal_cut_constraints",
+    "_build_terminal_cut_constraints",
+    "_unique_roads",
+)
 
 
 def _unique_roads(roads: Iterable[ParsedRoad]) -> tuple[ParsedRoad, ...]:
@@ -29,60 +36,18 @@ def _unique_roads(roads: Iterable[ParsedRoad]) -> tuple[ParsedRoad, ...]:
         deduped[road_id] = road
     return tuple(deduped.values())
 
-def _road_endpoint_node_ids(road: ParsedRoad) -> tuple[str, str]:
-    return (
-        str(getattr(road, "snodeid", "") or "").strip(),
-        str(getattr(road, "enodeid", "") or "").strip(),
-    )
-
-def _road_lookup(roads: Iterable[ParsedRoad]) -> dict[str, ParsedRoad]:
-    return {
-        road_id: road
-        for road in roads
-        if (road_id := str(getattr(road, "road_id", "") or "").strip())
-    }
-
-def _roads_by_node(roads: Iterable[ParsedRoad]) -> dict[str, set[str]]:
-    mapping: dict[str, set[str]] = {}
-    for road in roads:
-        road_id = str(getattr(road, "road_id", "") or "").strip()
-        if not road_id:
-            continue
-        for node_id in _road_endpoint_node_ids(road):
-            if not node_id:
-                continue
-            mapping.setdefault(node_id, set()).add(road_id)
-    return mapping
-
+# DEPRECATED: moved to _runtime_step3_topology_skeleton._walk_arm_to_neighbor_semantic_junction.
 def _expanded_related_road_ids(
     *,
     seed_road_ids: Iterable[str],
     roads: Sequence[ParsedRoad],
     current_semantic_node_ids: Iterable[str],
 ) -> set[str]:
-    roads_by_id = _road_lookup(roads)
-    roads_by_node = _roads_by_node(roads)
-    current_nodes = {str(node_id) for node_id in current_semantic_node_ids if str(node_id)}
-    queue = [str(road_id) for road_id in seed_road_ids if str(road_id) in roads_by_id]
-    related: set[str] = set()
-    while queue:
-        road_id = queue.pop(0)
-        if road_id in related:
-            continue
-        road = roads_by_id.get(road_id)
-        if road is None:
-            continue
-        related.add(road_id)
-        for node_id in _road_endpoint_node_ids(road):
-            if not node_id:
-                continue
-            incident_road_ids = roads_by_node.get(node_id, set())
-            if node_id not in current_nodes and len(incident_road_ids) != 2:
-                continue
-            for next_road_id in sorted(incident_road_ids):
-                if next_road_id not in related:
-                    queue.append(next_road_id)
-    return related
+    return _expand_related_road_ids_through_degree2(
+        seed_road_ids=seed_road_ids,
+        roads=roads,
+        current_semantic_node_ids=current_semantic_node_ids,
+    )
 
 def _road_terminal_point_and_tangent(
     road: ParsedRoad,

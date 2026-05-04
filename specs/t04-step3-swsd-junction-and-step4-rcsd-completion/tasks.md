@@ -65,22 +65,22 @@
 
 ## Phase 2 — Step5 / Render 去重迁移
 
-- [ ] 字节数前置自检：`support_domain_builder.py / support_domain_cuts.py / review_render.py`。
-- [ ] `support_domain_builder.build_step5_support_domain`：
-  - [ ] 删除第 787–800 行 `seed_swsd_road_ids` 计算块。
-  - [ ] 删除第 813–817 行 `_expanded_related_road_ids` 调用。
-  - [ ] 改为：`related_swsd_road_ids = case_result.base_context.topology_skeleton.swsd_semantic_junction` 派生（intra ∪ Σ connector）。
-  - [ ] `unrelated_swsd_road_ids` 与 `unrelated_swsd_node_ids` 仍按"补集"派生，但调用 `support_domain_common._derive_unrelated_swsd_ids(...)` 纯函数（如不存在则新建）。
-- [ ] `support_domain_cuts._expanded_related_road_ids`：
-  - [ ] 标记 `# DEPRECATED: moved to _runtime_step3_topology_skeleton._walk_arm_to_neighbor_semantic_junction` 并在文件头加 `__all__` 排除。
-  - [ ] 主代码路径不再调用；仅保留为兼容残留（下一轮 SpecKit 删除）。
-- [ ] `review_render._related_swsd_road_ids(step5_result)`：
-  - [ ] 改签名为 `_related_swsd_road_ids(case_result)`，从 Step3 实体取道路集合。
-  - [ ] 所有调用点同步更新。
-- [ ] 验证全仓 `rg "_expanded_related_road_ids" --type py` 仅命中 `_runtime_step3_topology_skeleton.py` 与 deprecated 阴影点；Step5 / render / outputs 不再直接调用。
-- [ ] 单元测试 `tests/modules/t04_divmerge_virtual_polygon/test_step5_consumes_step3_swsd_junction.py`：
-  - [ ] 给定 fixture Step3 输出 → Step5 `related_swsd_road_ids` = Step3 派生集合。
-  - [ ] 修改 Step3 fixture 的 connector → Step5 输出对应变化。
+- [x] 字节数前置自检：`support_domain_builder.py / support_domain_cuts.py / review_render.py`。
+- [x] `support_domain_builder.build_step5_support_domain`：
+  - [x] 删除第 787–800 行 `seed_swsd_road_ids` 计算块。
+  - [x] 删除第 813–817 行 `_expanded_related_road_ids` 调用。
+  - [x] 改为：`related_swsd_road_ids = case_result.base_context.topology_skeleton.swsd_semantic_junction` 派生（intra ∪ Σ connector）。
+  - [x] `unrelated_swsd_road_ids` 与 `unrelated_swsd_node_ids` 仍按"补集"派生，但调用 `support_domain_common._derive_unrelated_swsd_ids(...)` 纯函数（如不存在则新建）。
+- [x] `support_domain_cuts._expanded_related_road_ids`：
+  - [x] 标记 `# DEPRECATED: moved to _runtime_step3_topology_skeleton._walk_arm_to_neighbor_semantic_junction` 并在文件头加 `__all__` 排除。
+  - [x] 主代码路径不再调用；仅保留为兼容残留（下一轮 SpecKit 删除）。
+- [x] `review_render._related_swsd_road_ids(step5_result)`：
+  - [x] 改签名为 `_related_swsd_road_ids(case_result)`，从 Step3 实体取道路集合。
+  - [x] 所有调用点同步更新。
+- [x] 验证全仓 `rg "_expanded_related_road_ids" --type py` 仅命中 deprecated 阴影点；Step5 / render / outputs 不再直接调用。
+- [x] 单元测试 `tests/modules/t04_divmerge_virtual_polygon/test_step5_consumes_step3_swsd_junction.py`：
+  - [x] 给定 fixture Step3 输出 → Step5 `related_swsd_road_ids` = Step3 派生集合。
+  - [x] 修改 Step3 fixture 的 connector → Step5 输出对应变化。
 
 完成回报：Step5 / render 改造点清单 + `rg` 检索证据 + 测试结果。
 

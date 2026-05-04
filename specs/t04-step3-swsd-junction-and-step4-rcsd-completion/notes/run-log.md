@@ -93,3 +93,36 @@ PY
 
 - The previously referenced `tests/modules/t04_divmerge_virtual_polygon/test_step3_topology_skeleton.py` was absent on the merged Phase 0 baseline, so Phase 1 added a small compatibility test under that path.
 - `outputs.write_case_outputs` was not edited directly; Step3 output persistence is synchronized through `topology.build_step3_status_doc` and `topology.build_unit_step3_status_doc`, which feed the existing output writer.
+
+## Phase 2 — Step5 / Render 去重迁移
+
+- Branch: `speckit/t04-step3-swsd-junction-phase2-step5-render-migration`
+- Base commit: `8f27794`
+- Started: `2026-05-04 10:31:00 CST`
+- Completed: `2026-05-04 11:05:33 CST`
+- Commit: `pending`
+- PR: `pending`
+- Run root: `n/a` (Phase 2 uses unit / synthetic pytest outputs under pytest temp dirs)
+
+### Phase 2 Evidence
+
+- Source/script byte-size prechecks were run before writes for `support_domain_builder.py`, `support_domain_cuts.py`, `review_render.py`, `support_domain_common.py`, and `test_step5_consumes_step3_swsd_junction.py`.
+- Source/script byte-size rechecks stayed below 100 KB:
+  - `support_domain_builder.py`: 46587 bytes.
+  - `support_domain_cuts.py`: 10401 bytes.
+  - `review_render.py`: 41920 bytes.
+  - `support_domain_common.py`: 22931 bytes.
+  - `test_step5_consumes_step3_swsd_junction.py`: 3073 bytes.
+- `rg "_expanded_related_road_ids" --type py` result:
+  - `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/support_domain_cuts.py:40:def _expanded_related_road_ids(`.
+  - Step5 / render / outputs no longer call this deprecated helper.
+- Test discipline:
+  - `test_step5_consumes_step3_swsd_junction.py`: `2 passed in 8.64s`.
+  - `test_step5_consumes_step3_swsd_junction.py + test_step5_support_domain.py + test_step14_synthetic_batch.py`: `12 passed in 59.42s`.
+  - `test_step14_real_regression.py`: `7 passed in 23.21s`.
+
+### Phase 2 Notes
+
+- Step5 now derives `related_swsd_road_ids` exclusively from `case_result.base_context.topology_skeleton.swsd_semantic_junction`.
+- Render now highlights SWSD related roads from the same Step3 entity instead of re-deriving them from Step5 unit support roads.
+- The legacy `_expanded_related_road_ids` function remains only as a deprecated compatibility shadow and is excluded from `support_domain_cuts.__all__`.

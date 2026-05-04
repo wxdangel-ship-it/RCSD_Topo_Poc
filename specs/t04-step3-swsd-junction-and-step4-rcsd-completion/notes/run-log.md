@@ -100,8 +100,8 @@ PY
 - Base commit: `8f27794`
 - Started: `2026-05-04 10:31:00 CST`
 - Completed: `2026-05-04 11:05:33 CST`
-- Commit: `pending`
-- PR: `pending`
+- Commit: `0046d17` (Phase 2 content commit before run-log metadata update)
+- PR: `https://github.com/wxdangel-ship-it/RCSD_Topo_Poc/pull/4`
 - Run root: `n/a` (Phase 2 uses unit / synthetic pytest outputs under pytest temp dirs)
 
 ### Phase 2 Evidence

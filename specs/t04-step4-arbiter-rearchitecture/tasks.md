@@ -154,7 +154,7 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 - shadow 期间 30-case + 39-case 全量回归仍与 baseline 完全一致。
 - T-05 stop 点的 dry-run 报告必须列出每个 case 的 `arbitration_decision_shadow` 与 unit 实际字段差异，按"预期变化（698389 类）/ rejected baseline 不变 / 其他差异"分类，等用户逐项确认。
 
-**Status**：pending
+**Status**：completed
 
 ---
 
@@ -274,7 +274,7 @@ T-04a 必须在 `step4_audit.json` 顶层写出 `dual_write_manifest`，作为 T
 | T-02 契约修订草案 | P0 | completed |
 | T-03 ledger / scoring / arbiter 数据结构 | P0 | completed |
 | T-04a 候选生成器 dual-write | P0 | completed |
-| T-05 仲裁器实现（shadow mode） | P0 | pending |
+| T-05 仲裁器实现（shadow mode） | P0 | completed |
 | T-04b 切换 normal mode + 移除旧写回 | P0 | pending |
 | T-06 surface_scenario / outputs 改造 | P1 | pending |
 | T-07 audit / review_index 字段扩充 | P1 | pending |

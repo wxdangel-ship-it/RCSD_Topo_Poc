@@ -4,12 +4,25 @@ import json
 
 import pytest
 
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._step4_arbiter import (
+    arbitrate_step4_unit,
+)
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._step4_arbiter_models import (
+    T04ArbiterCaseContext,
+    T04Step4Candidate,
+    T04Step4CandidateLedger,
+)
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.case_loader import (
     load_case_bundle,
     load_case_specs,
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.event_interpretation import build_case_result
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.outputs import write_case_outputs
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.rcsd_alignment import (
+    RCSD_ALIGNMENT_NONE,
+    RCSD_ALIGNMENT_ROAD_ONLY,
+    RCSD_ALIGNMENT_SEMANTIC_JUNCTION,
+)
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_final_conflict_resolver import (
     resolve_step4_final_conflicts,
 )
@@ -28,6 +41,20 @@ def _case_after_surface_binding(case_id: str):
     resolved, _resolution_doc = resolve_step4_final_conflicts([case_result])
     surface_results, _surface_doc = apply_road_surface_fork_binding(resolved)
     return surface_results[0]
+
+
+def _ledger_for(unit, case_id: str, *candidates: T04Step4Candidate) -> T04Step4CandidateLedger:
+    ledger = T04Step4CandidateLedger(unit_id=unit.spec.event_unit_id, case_id=case_id)
+    return ledger.extend(candidates)
+
+
+def _context_for(unit, case_id: str) -> T04ArbiterCaseContext:
+    return T04ArbiterCaseContext(
+        case_id=case_id,
+        unit_id=unit.spec.event_unit_id,
+        mainnodeid=unit.spec.representative_node_id,
+        shadow_mode=True,
+    )
 
 
 def test_ledger_dual_write_parity(tmp_path) -> None:
@@ -61,3 +88,123 @@ def test_ledger_dual_write_parity(tmp_path) -> None:
     assert "dual_write_manifest" in audit
     assert len(audit["step4_candidate_ledger"]) == len(case_result.event_units)
     assert audit["dual_write_manifest"]
+    assert "arbitration_decision_trace" in audit
+    assert "arbitration_decision_shadow" in audit
+
+
+def test_destructive_downgrade_guard_whitelist() -> None:
+    case_result = _case_after_surface_binding("724067")
+    unit = case_result.event_units[0]
+    assert unit.positive_rcsd_present
+    assert unit.required_rcsd_node
+    assert unit.surface_scenario_doc()["rcsd_alignment_type"] == RCSD_ALIGNMENT_SEMANTIC_JUNCTION
+
+    blocked_candidate = T04Step4Candidate(
+        candidate_id="blocked-road-only",
+        source_stage="cleanup",
+        rcsd_alignment_type=RCSD_ALIGNMENT_ROAD_ONLY,
+        rcsdroad_ids=("road-a",),
+        support_level="secondary_support",
+        consistency_level="B",
+        aggregate_consistency_score=0.75,
+        replacement_reason="cleanup_clear",
+    )
+    blocked_decision = arbitrate_step4_unit(
+        unit,
+        _ledger_for(unit, case_result.case_spec.case_id, blocked_candidate),
+        case_context=_context_for(unit, case_result.case_spec.case_id),
+    )
+    assert blocked_decision.downgrade_reason == "rcsd_destructive_downgrade_blocked"
+    assert blocked_decision.required_rcsd_node == unit.required_rcsd_node
+    assert blocked_decision.selected_rcsdroad_ids == unit.selected_rcsdroad_ids
+
+    allowed_candidate = T04Step4Candidate(
+        candidate_id="allowed-road-only",
+        source_stage="cleanup",
+        rcsd_alignment_type=RCSD_ALIGNMENT_ROAD_ONLY,
+        rcsdroad_ids=("road-a",),
+        support_level="secondary_support",
+        consistency_level="B",
+        aggregate_consistency_score=0.75,
+        replacement_reason="explicit_role_conflict",
+    )
+    allowed_decision = arbitrate_step4_unit(
+        unit,
+        _ledger_for(unit, case_result.case_spec.case_id, allowed_candidate),
+        case_context=_context_for(unit, case_result.case_spec.case_id),
+    )
+    assert allowed_decision.downgrade_reason == "explicit_role_conflict"
+    assert allowed_decision.required_rcsd_node is None
+    assert allowed_decision.selected_rcsdroad_ids == ("road-a",)
+
+
+def test_best_so_far_score_tiebreak() -> None:
+    case_result = _case_after_surface_binding("724067")
+    unit = case_result.event_units[0]
+    recovery_candidate = T04Step4Candidate(
+        candidate_id="recovery-candidate",
+        source_stage="recovery",
+        rcsd_alignment_type=RCSD_ALIGNMENT_SEMANTIC_JUNCTION,
+        rcsdroad_ids=("recovery-road",),
+        rcsdnode_ids=("recovery-node",),
+        required_rcsd_node="recovery-node",
+        support_level="primary_support",
+        consistency_level="A",
+        aggregate_consistency_score=0.7,
+    )
+    forward_candidate = T04Step4Candidate(
+        candidate_id="forward-candidate",
+        source_stage="forward_bind",
+        rcsd_alignment_type=RCSD_ALIGNMENT_SEMANTIC_JUNCTION,
+        rcsdroad_ids=("forward-road",),
+        rcsdnode_ids=("forward-node",),
+        required_rcsd_node="forward-node",
+        support_level="primary_support",
+        consistency_level="A",
+        aggregate_consistency_score=0.7,
+    )
+
+    decision = arbitrate_step4_unit(
+        unit,
+        _ledger_for(unit, case_result.case_spec.case_id, recovery_candidate, forward_candidate),
+        case_context=_context_for(unit, case_result.case_spec.case_id),
+    )
+
+    assert decision.required_rcsd_node == "forward-node"
+    selected_trace = [item for item in decision.decision_trace if item.get("selected")]
+    assert selected_trace[0]["candidate"]["candidate_id"] == "forward-candidate"
+
+
+def test_main_evidence_replacement_triggers_rearbitration_698389(tmp_path) -> None:
+    case_result = _case_after_surface_binding("698389")
+    unit = case_result.event_units[0]
+    assert unit.step4_candidate_ledger is not None
+    assert unit.step4_candidate_ledger.candidates
+
+    write_case_outputs(run_root=tmp_path, case_result=case_result)
+    audit = json.loads(
+        (tmp_path / "cases" / case_result.case_spec.case_id / "step4_audit.json").read_text(encoding="utf-8")
+    )
+    shadows = audit["arbitration_decision_shadow"]
+    assert len(shadows) == len(case_result.event_units)
+    shadow = shadows[0]["arbitration_decision_shadow"]
+    assert shadow["decision_trace"]
+    selected = [item for item in shadow["decision_trace"] if item.get("selected")]
+    assert selected[0]["candidate"]["source_stage"] == "divstrip"
+    assert shadow["rcsd_replacement_due_to_main_evidence"] is True
+    assert "aggregate_rcsd_consistency_score" in shadow
+    assert shadows[0]["unit_actual"]["required_rcsd_node"] == "5396318492905216"
+
+
+def test_scenario_reads_from_arbiter_not_derives(tmp_path) -> None:
+    case_result = _case_after_surface_binding("724067")
+    write_case_outputs(run_root=tmp_path, case_result=case_result)
+    audit = json.loads(
+        (tmp_path / "cases" / case_result.case_spec.case_id / "step4_audit.json").read_text(encoding="utf-8")
+    )
+    shadow = audit["arbitration_decision_shadow"][0]
+    final_fields = shadow["arbitration_decision_shadow"]["final_fields"]
+    assert final_fields["surface_scenario_type"]
+    assert final_fields["section_reference_source"]
+    assert final_fields["rcsd_match_type"] in {"rcsd_junction", "rcsdroad_fallback", "none"}
+    assert final_fields["rcsd_alignment_type"] != RCSD_ALIGNMENT_NONE

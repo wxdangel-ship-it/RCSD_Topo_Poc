@@ -12,6 +12,12 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
 
 from .case_models import T04CaseResult, T04ReviewIndexRow
+from ._step4_arbiter import (
+    arbitrate_step4_unit,
+    shadow_actual_fields_for_unit,
+    shadow_diff_for_unit,
+)
+from ._step4_arbiter_models import T04ArbiterCaseContext, T04Step4CandidateLedger
 from .provenance import case_input_fingerprint, provenance_doc
 from .review_audit import build_case_review_audit
 from .review_render import (
@@ -64,6 +70,43 @@ def _dual_write_manifest_docs(case_result: T04CaseResult) -> list[dict]:
                 }
             )
     return docs
+
+
+def _step4_arbitration_shadow_docs(case_result: T04CaseResult) -> tuple[list[dict], list[dict]]:
+    traces: list[dict] = []
+    shadows: list[dict] = []
+    for event_unit in case_result.event_units:
+        ledger = event_unit.step4_candidate_ledger or T04Step4CandidateLedger(
+            unit_id=event_unit.spec.event_unit_id,
+            case_id=case_result.case_spec.case_id,
+        )
+        context = T04ArbiterCaseContext(
+            case_id=case_result.case_spec.case_id,
+            unit_id=event_unit.spec.event_unit_id,
+            mainnodeid=event_unit.spec.representative_node_id,
+            shadow_mode=True,
+        )
+        decision = arbitrate_step4_unit(event_unit, ledger, case_context=context)
+        traces.append(
+            {
+                "case_id": case_result.case_spec.case_id,
+                "event_unit_id": event_unit.spec.event_unit_id,
+                "candidate_count": len(ledger.candidates),
+                "arbitration_context": context.to_doc(),
+                "decision_trace": list(decision.decision_trace),
+            }
+        )
+        shadows.append(
+            {
+                "case_id": case_result.case_spec.case_id,
+                "event_unit_id": event_unit.spec.event_unit_id,
+                "shadow_mode": True,
+                "unit_actual": shadow_actual_fields_for_unit(event_unit),
+                "arbitration_decision_shadow": decision.to_audit_doc(),
+                "field_diffs": shadow_diff_for_unit(event_unit, decision),
+            }
+        )
+    return traces, shadows
 
 
 REVIEW_INDEX_FIELDNAMES = [
@@ -271,6 +314,7 @@ def write_case_outputs(
             case_provenance,
         ),
     )
+    arbitration_decision_trace, arbitration_decision_shadow = _step4_arbitration_shadow_docs(case_result)
     write_json(
         case_dir / "step4_audit.json",
         _with_provenance(
@@ -281,6 +325,8 @@ def write_case_outputs(
                 "case_alignment_aggregate": case_result.case_alignment_aggregate_doc(),
                 "step4_candidate_ledger": _step4_candidate_ledger_docs(case_result),
                 "dual_write_manifest": _dual_write_manifest_docs(case_result),
+                "arbitration_decision_trace": arbitration_decision_trace,
+                "arbitration_decision_shadow": arbitration_decision_shadow,
                 "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
             },
             case_provenance,

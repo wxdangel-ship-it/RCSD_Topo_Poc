@@ -6,6 +6,7 @@ from typing import Any
 from shapely.geometry import Point
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .rcsd_alignment import rcsd_alignment_type_from_selection
 from .step4_road_surface_fork_binding_shared import _build_surface_summary, _candidate_entries_with_selection
 from .step4_road_surface_fork_geometry import (
@@ -143,7 +144,7 @@ def _bind_strong_rcsd_to_surface(
         }
     )
     review_reasons = _dedupe([*event_unit.all_review_reasons(), ROAD_SURFACE_FORK_BINDING_REASON])
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,
@@ -187,4 +188,13 @@ def _bind_strong_rcsd_to_surface(
         post_required_rcsd_node=required_node,
         resolution_reason=ROAD_SURFACE_FORK_BINDING_REASON,
     )
-    return updated, bind_detail
+    return (
+        append_dual_write_candidate(
+            updated,
+            case_id=case_result.case_spec.case_id,
+            source_stage="forward_bind",
+            source_audit_blob=bind_detail,
+            replacement_reason=ROAD_SURFACE_FORK_BINDING_REASON,
+        ),
+        bind_detail,
+    )

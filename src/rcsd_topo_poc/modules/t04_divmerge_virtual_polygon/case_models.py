@@ -22,6 +22,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
     ParsedRoad,
 )
 from .surface_scenario import SurfaceScenarioClassification, classify_surface_scenario
+from ._step4_arbiter_models import T04Step4CandidateLedger
 from .rcsd_alignment import (
     ConsistencyVerdict,
     RCSD_ALIGNMENT_AMBIGUOUS,
@@ -423,6 +424,20 @@ class T04EventUnitResult:
     compare_png_path: str = ""
     image_name: str = ""
     image_path: str = ""
+    step4_candidate_ledger: T04Step4CandidateLedger | None = None
+    dual_write_manifest: tuple[dict[str, Any], ...] = ()
+    surface_scenario_published: bool = False
+    has_main_evidence: bool = False
+    main_evidence_type: str = "none"
+    reference_point_present: bool = False
+    reference_point_source: str = "none"
+    section_reference_source: str = "none"
+    surface_scenario_type: str = "no_surface_reference"
+    rcsd_match_type: str = "none"
+    swsd_junction_present: bool = False
+    fallback_rcsdroad_ids: tuple[str, ...] = ()
+    surface_generation_mode: str = "no_surface"
+    no_reference_point_reason: str = "no_surface_reference"
 
     @property
     def selected_divstrip_geometry(self) -> BaseGeometry | None:
@@ -467,6 +482,21 @@ class T04EventUnitResult:
 
     @property
     def surface_scenario(self) -> SurfaceScenarioClassification:
+        if self.surface_scenario_published:
+            return classify_surface_scenario(
+                published_surface_scenario_type=self.surface_scenario_type,
+                published_section_reference_source=self.section_reference_source,
+                published_rcsd_match_type=self.rcsd_match_type,
+                published_has_main_evidence=self.has_main_evidence,
+                published_main_evidence_type=self.main_evidence_type,
+                published_reference_point_present=self.reference_point_present,
+                published_reference_point_source=self.reference_point_source,
+                published_rcsd_alignment_type=self.rcsd_alignment_type or RCSD_ALIGNMENT_NONE,
+                published_swsd_junction_present=self.swsd_junction_present,
+                published_fallback_rcsdroad_ids=self.fallback_rcsdroad_ids,
+                published_surface_generation_mode=self.surface_generation_mode,
+                published_no_reference_point_reason=self.no_reference_point_reason,
+            )
         evidence_source = self.evidence_source
         selected_evidence_summary = self.selected_evidence_summary
         explicit_swsd_junction_present: bool | None = None
@@ -622,6 +652,17 @@ class T04EventUnitResult:
             "selected_candidate": dict(self.selected_candidate_summary),
             "alternative_candidates": [dict(item) for item in self.alternative_candidate_summaries],
             "candidate_audit_entries": [item.to_doc() for item in self.candidate_audit_entries],
+            "step4_candidate_ledger": (
+                self.step4_candidate_ledger.to_doc()
+                if self.step4_candidate_ledger is not None
+                else {
+                    "case_id": "",
+                    "unit_id": self.spec.event_unit_id,
+                    "candidate_count": 0,
+                    "candidates": [],
+                }
+            ),
+            "dual_write_manifest": [dict(item) for item in self.dual_write_manifest],
             "evidence_conflict_component_id": self.evidence_conflict_component_id,
             "rcsd_conflict_component_id": self.rcsd_conflict_component_id,
             "evidence_conflict_type": self.evidence_conflict_type,
@@ -756,6 +797,9 @@ class T04ReviewIndexRow:
     positive_rcsd_present_reason: str = ""
     pair_local_rcsd_empty: bool = False
     rcsd_selection_mode: str = ""
+    rcsd_decision_history_count: int = 0
+    rcsd_replacement_due_to_main_evidence: bool = False
+    aggregate_rcsd_consistency_score: str = "none"
     local_rcsd_unit_kind: str = ""
     local_rcsd_unit_id: str = ""
     aggregated_rcsd_unit_id: str = ""
@@ -862,6 +906,9 @@ class T04ReviewIndexRow:
             "positive_rcsd_present_reason": self.positive_rcsd_present_reason,
             "pair_local_rcsd_empty": int(self.pair_local_rcsd_empty),
             "rcsd_selection_mode": self.rcsd_selection_mode,
+            "rcsd_decision_history_count": self.rcsd_decision_history_count,
+            "rcsd_replacement_due_to_main_evidence": int(self.rcsd_replacement_due_to_main_evidence),
+            "aggregate_rcsd_consistency_score": self.aggregate_rcsd_consistency_score,
             "local_rcsd_unit_kind": self.local_rcsd_unit_kind,
             "local_rcsd_unit_id": self.local_rcsd_unit_id,
             "aggregated_rcsd_unit_id": self.aggregated_rcsd_unit_id,

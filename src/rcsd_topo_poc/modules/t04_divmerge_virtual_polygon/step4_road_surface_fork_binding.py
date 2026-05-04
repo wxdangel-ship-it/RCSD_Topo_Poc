@@ -68,9 +68,15 @@ def apply_road_surface_fork_binding(
             if replacement is None:
                 replacement, detail = _recover_surface_from_candidate(current_case, event_unit)
             if replacement is None:
-                replacement, detail = _retain_structure_only_surface_candidate(event_unit)
+                replacement, detail = _retain_structure_only_surface_candidate(
+                    event_unit,
+                    case_id=current_case.case_spec.case_id,
+                )
             if replacement is None:
-                replacement, detail = _clear_unbound_surface_candidate(event_unit)
+                replacement, detail = _clear_unbound_surface_candidate(
+                    event_unit,
+                    case_id=current_case.case_spec.case_id,
+                )
             if replacement is None:
                 skipped_count += 1
                 record["skip_reason"] = "skipped_no_surface_binding_candidate"

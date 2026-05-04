@@ -784,7 +784,8 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert unit_706629["selected_evidence_state"] == "found"
     assert unit_706629["evidence_source"] == "swsd_junction_window"
     assert unit_706629["required_rcsd_node"] is None
-    assert unit_706629["rcsd_selection_mode"] == "swsd_junction_window_no_rcsd"
+    assert unit_706629["rcsd_selection_mode"] == ""
+    assert unit_706629["selected_evidence"]["rcsd_selection_mode"] == "swsd_junction_window_no_rcsd"
     assert "swsd_junction_window_no_rcsd_used" in set(unit_706629["review_reasons"])
 
     step5_706629 = json.loads(
@@ -824,11 +825,12 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert unit_724081["evidence_source"] == "swsd_junction_window"
     assert unit_724081["main_evidence_type"] == "none"
     assert unit_724081["required_rcsd_node"] is None
-    assert unit_724081["surface_scenario_type"] == "no_main_evidence_with_rcsdroad_fallback_and_swsd"
+    assert unit_724081["surface_scenario_type"] == "no_main_evidence_with_swsd_only"
     assert unit_724081["section_reference_source"] == "swsd_junction"
-    assert unit_724081["surface_generation_mode"] == "swsd_with_rcsdroad_fallback"
-    assert unit_724081["rcsd_selection_mode"] == "swsd_junction_window_no_rcsd"
-    assert unit_724081["fallback_rcsdroad_ids"]
+    assert unit_724081["surface_generation_mode"] == "swsd_junction_window"
+    assert unit_724081["rcsd_selection_mode"] == ""
+    assert unit_724081["selected_evidence"]["rcsd_selection_mode"] == "swsd_junction_window_no_rcsd"
+    assert unit_724081["fallback_rcsdroad_ids"] == []
     assert "swsd_junction_window_no_rcsd_used" in set(unit_724081["review_reasons"])
 
     step5_724081 = json.loads(
@@ -843,7 +845,7 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert unrelated_rcsd_724081.isdisjoint(unit_724081["fallback_rcsdroad_ids"])
     assert unit_step5_724081["single_component_surface_seed"] is False
     assert unit_step5_724081["junction_full_road_fill_domain"]["present"] is True
-    assert unit_step5_724081["unit_terminal_cut_constraints"]["present"] is True
+    assert unit_step5_724081["unit_terminal_cut_constraints"]["present"] is False
     assert unit_step5_724081["required_rcsd_node_patch_geometry"]["present"] is False
 
     step6_724081 = json.loads(
@@ -857,8 +859,8 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert step6_724081["section_reference_window_covered"] is True
     assert step6_724081["post_cleanup_must_cover_ok"] is True
     assert step5_724081["case_must_cover_domain"]["area_m2"] == pytest.approx(717.019, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(698.052, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(155.069, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(717.019, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(132.091, abs=1e-3)
 
     assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
 
@@ -981,6 +983,10 @@ def test_anchor2_39case_official_surface_scenario_gate(tmp_path: Path) -> None:
     assert nodes_audit_payload["total_update_count"] == 39
     assert nodes_audit_payload["updated_to_yes_count"] == 35
     assert nodes_audit_payload["updated_to_fail4_count"] == 4
+    nodes_audit_by_case = {row["case_id"]: row for row in nodes_audit_payload["rows"]}
+    for rejected_case_id in ANCHOR2_30CASE_REJECTED_20260501:
+        assert rows_by_case[rejected_case_id]["final_state"] == "rejected"
+        assert nodes_audit_by_case[rejected_case_id]["new_is_anchor"] == "fail4"
     assert set(summary_payload["no_surface_reference_case_ids"]) == {"607602562", "760598"}
     assert consistency_payload["no_surface_reference_accepted_case_ids"] == []
 

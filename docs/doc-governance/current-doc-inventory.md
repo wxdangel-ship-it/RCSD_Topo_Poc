@@ -50,10 +50,10 @@
 | `modules/t03_virtual_junction_anchor/AGENTS.md` | T03 durable guidance | `durable_guidance` | 只保留模块级边界、`Step1~Step7` 主链、冻结前置约束、`Association / Finalization` 实现阶段命名边界与当前执行边界 |
 | `modules/t03_virtual_junction_anchor/history/*` | T03 模块级历史 closeout | `history` | 记录阶段性 closeout 与准备材料；不替代当前 `INTERFACE_CONTRACT.md` 与 `architecture/*` 源事实 |
 | `specs/t03-*` | T03 spec-kit 变更工件 | `history_or_active_change_artifact` | T03 历史与当前定向治理规格目录，目录名保留创建时语境；不替代模块长期真相 |
-| `modules/t04_divmerge_virtual_polygon/architecture/*` | T04 模块长期架构真相 | `source_of_truth` | T04 正式模块的长期文档主表面；当前正式范围为 `Step1-4`，明确 `admission / local_context / topology / event_interpretation / review_render / outputs / batch_runner` 分层与 Step4 审计输出 |
-| `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md` | T04 稳定契约面 | `source_of_truth` | 固化 case-package 输入、Step1-4 业务边界、event-unit 规则、Step4 review PNG / flat mirror / index / summary 输出与当前无 repo 官方 CLI 的入口状态 |
+| `modules/t04_divmerge_virtual_polygon/architecture/*` | T04 模块长期架构真相 | `source_of_truth` | T04 正式模块的长期文档主表面；当前正式范围覆盖 `Step1-7` 主链，明确 `admission / local_context / topology / event_interpretation / arbiter / support_domain / polygon_assembly / final_publish / review_render / outputs / batch_runner` 分层、Step4 候选 ledger / 仲裁发布与 Step5-7 消费边界 |
+| `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md` | T04 稳定契约面 | `source_of_truth` | 固化 case-package 输入、Step1-7 业务边界、event-unit 规则、Step4 arbiter 发布字段、review PNG / flat mirror / index / summary 输出、Step7 accepted/rejected 发布与当前无 repo 官方 CLI 的入口状态 |
 | `modules/t04_divmerge_virtual_polygon/README.md` | T04 操作者入口 | `operator_guide` | 说明默认 case root、默认输出根、模块内 runner 与 Step4 review 产物位置 |
-| `modules/t04_divmerge_virtual_polygon/AGENTS.md` | T04 durable guidance | `durable_guidance` | 只保留 T04 当前只到 Step1-4、不得顺手推进 Step5-7 与不得新增 repo 官方入口的模块边界 |
+| `modules/t04_divmerge_virtual_polygon/AGENTS.md` | T04 durable guidance | `durable_guidance` | 只保留 T04 当前正式范围已扩展到 `Step1-7`、Step5-7 研发走 SpecKit、不得新增 repo 官方入口的模块边界 |
 | `specs/t04-step14-speckit-refactor/*` | T04 Step1-4 治理变更工件 | `active_change_artifact` | 记录 T04 doc-first formalization、架构规划、任务拆解与重构计划，不替代模块长期真相 |
 | `specs/t04-step34-repair-formalization/*` | T04 Step3/Step4 修复方案变更工件 | `active_change_artifact` | 记录 Step3 粗骨架分层、Step4 complex/multi 修复方案、契约冲突冻结与后续实现任务，不替代模块长期真相 |
 

@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Any
 
 from .case_models import T04CaseResult, T04EventUnitResult
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .rcsd_alignment import RCSD_ALIGNMENT_NONE, RCSD_ALIGNMENT_ROAD_ONLY
 from .step4_road_surface_fork_geometry import _dedupe
 from .surface_scenario import (
@@ -344,6 +345,7 @@ def _shared_rcsdroad_audit(
 def _promote_unit_to_shared_rcsdroad(
     unit: T04EventUnitResult,
     *,
+    case_id: str,
     road_id: str,
     road_geometry: Any,
     score: dict[str, Any],
@@ -374,7 +376,7 @@ def _promote_unit_to_shared_rcsdroad(
         detail_key: detail,
         "review_reasons": list(review_reasons),
     }
-    return replace(
+    updated = replace_step4_pre_arbiter_candidate(
         unit,
         review_state="STEP4_REVIEW" if unit.review_state != "STEP4_FAIL" else unit.review_state,
         review_reasons=review_reasons,
@@ -416,6 +418,13 @@ def _promote_unit_to_shared_rcsdroad(
         selected_candidate_summary=dict(summary),
         selected_evidence_summary=dict(summary),
     )
+    return append_dual_write_candidate(
+        updated,
+        case_id=case_id,
+        source_stage="swsd_rcsdroad",
+        source_audit_blob={detail_key: detail},
+        replacement_reason=reason,
+    )
 
 
 def _replace_case_units(
@@ -452,6 +461,7 @@ def align_complex_swsd_units_to_shared_rcsdroad(
     replacements = {
         unit.spec.event_unit_id: _promote_unit_to_shared_rcsdroad(
             unit,
+            case_id=case_result.case_spec.case_id,
             road_id=road_id,
             road_geometry=road.geometry,
             score=score,
@@ -498,6 +508,7 @@ def align_single_swsd_unit_to_rcsdroad(
 
     replacement = _promote_unit_to_shared_rcsdroad(
         unit,
+        case_id=case_result.case_spec.case_id,
         road_id=road_id,
         road_geometry=road.geometry,
         score=score,

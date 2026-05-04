@@ -31,6 +31,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_types_io import
     _resolve_group,
 )
 
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .admission import build_step1_admission
 from .case_models import (
     T04CandidateAuditEntry,
@@ -1061,7 +1062,7 @@ def _build_result_from_interpretation(
         rcsd_audit["road_surface_fork_without_bound_target_rcsd"] = True
         rcsd_audit["rcsd_decision_reason"] = "road_surface_fork_without_bound_target_rcsd"
         rcsd_audit["rcsd_alignment_type"] = RCSD_ALIGNMENT_NONE
-        result = replace(
+        result = replace_step4_pre_arbiter_candidate(
             result,
             review_reasons=tuple(review_reasons),
             rcsd_consistency_result="road_surface_fork_without_bound_target_rcsd",
@@ -1093,6 +1094,17 @@ def _build_result_from_interpretation(
             selected_candidate_summary=summary,
             selected_evidence_summary=dict(summary),
             positive_rcsd_audit=rcsd_audit,
+        )
+        result = append_dual_write_candidate(
+            result,
+            case_id=prepared.case_bundle.case_spec.case_id,
+            source_stage="event_interpretation_no_bound_target_rcsd",
+            source_audit_blob={
+                "no_bound_target_rcsd": True,
+                "filtered_partial_rcsd": filtered_partial_rcsd,
+                "rcsd_decision_reason": "road_surface_fork_without_bound_target_rcsd",
+            },
+            replacement_reason="road_surface_fork_without_bound_target_rcsd",
         )
     if not bool(selected_candidate_summary.get("primary_eligible")):
         extra_review_notes = list(result.extra_review_notes)
@@ -1218,7 +1230,7 @@ def _evaluate_unit_candidate(
             and note in {"layer3_candidate_not_primary_eligible", "node_fallback_candidate_not_primary_eligible"}
         )
     )
-    result = replace(
+    result = replace_step4_pre_arbiter_candidate(
         base_result,
         selected_candidate_summary=merged_candidate_summary,
         selected_evidence_summary=dict(merged_candidate_summary),

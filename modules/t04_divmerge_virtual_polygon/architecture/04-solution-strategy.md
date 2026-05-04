@@ -137,6 +137,26 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - Step4 或 Step4/5 交界处必须输出 `surface_scenario_type` 与唯一 `rcsd_alignment_type`。`surface_scenario_type` 按主证据、RCSD 对齐类型和 SWSD 可用性区分六类业务场景；`rcsd_alignment_type` 至少区分 `rcsd_semantic_junction / rcsd_junction_partial_alignment / rcsdroad_only_alignment / no_rcsd_alignment / ambiguous_rcsd_alignment`。Step5 及之后不重新选择 RCSD 候选，只消费 Step4 的唯一对齐结果。
 - 当 `rcsd_alignment_type` 指向完整或 partial 路口级对象时，Step4 必须输出可追溯的 `RCSDSemanticJunction`；当仅有 road-only 正向对象时，必须输出 `RCSDRoadOnlyChain` 的端点、闭合状态、方向一致性证据和唯一性证明。
 - Step4 必须把 RCSD/SWSD 关系聚合为单一 `swsd_rcsd_alignment_consistent` verdict，并保持 `rcsd_consistency_result` 只取冻结值域。
+- Step4 arbiter rearchitecture 将 Step4 内部发布职责收窄为四层数据流：
+
+```text
+候选生成层
+  forward / promotion / recovery / cleanup / divstrip / swsd_rcsdroad / anchored_reverse / conflict_resolver
+  只追加 T04Step4Candidate 到 ledger
+        ↓
+候选评分层
+  SWSD-RCSD 趋势、角色完整性、reference distance、跨语义对象惩罚、近邻候选惩罚
+        ↓
+唯一仲裁层
+  destructive_downgrade_guard + best-so-far + main-evidence re-arbitration
+  发布 selected_rcsd* / positive_rcsd* / rcsd_alignment_type / rcsd_match_type
+  发布 fact_reference_point / section_reference_source / surface_scenario_type
+        ↓
+发布消费层
+  surface_scenario / outputs / Step5 / Step6 / Step7 只消费仲裁结果
+```
+
+- 数据流约束：生成器不直接 `replace()` 最终字段；ledger 记录所有候选与来源；评分层只写 candidate score；仲裁器是 `surface_scenario_type / rcsd_alignment_type / rcsd_match_type / section_reference_source` 的唯一发布层。该架构约束不新增正式入口、不改变 `run_t04_step14_batch / run_t04_step14_case / run_t04_internal_full_input` 签名。
 - 六类主业务场景的截面边界来源固定为：
   - `main_evidence_with_rcsd_junction`：有主证据 + 完整 RCSD 语义路口。Reference Point 来自主证据；两个终止截面由 `Reference Point + RCSD 语义路口` 共同确定。SWSD 不参与截面边界构建。
   - `main_evidence_with_rcsdroad_fallback`：有主证据 + 无完整 RCSD 语义路口但存在可用 RCSD 对齐对象。若 `rcsd_alignment_type = rcsd_junction_partial_alignment`，两个终止截面由 `Reference Point + RCSD partial junction` 共同确定；若 `rcsd_alignment_type = rcsdroad_only_alignment`，两个终止截面由 `Reference Point` 自身前后 `20m` 构成。SWSD 不参与截面边界构建。

@@ -14,6 +14,7 @@ from ._event_interpretation_core import (
     _rank_candidate_pool,
     _select_case_assignment,
 )
+from ._step4_dual_write import replace_step4_pre_arbiter_candidate
 from .admission import build_step1_admission
 from .case_models import T04CandidateAuditEntry, T04CaseBundle, T04CaseResult, T04UnitContext
 from .event_units import build_event_unit_specs
@@ -89,7 +90,7 @@ def _normalize_unique_local_rcsd_junction(
     audit["required_rcsd_node_after_unique_local_junction"] = local_node_id
     audit["required_rcsd_node_source"] = "unique_local_rcsd_semantic_junction"
     audit["unique_local_rcsd_semantic_junction_node_id"] = local_node_id
-    return replace(
+    return replace_step4_pre_arbiter_candidate(
         unit_result,
         required_rcsd_node=local_node_id,
         required_rcsd_node_source="unique_local_rcsd_semantic_junction",
@@ -255,7 +256,7 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                 if all(item.result.review_state == "STEP4_FAIL" for item in evaluations)
                 else "STEP4_REVIEW"
             )
-            finalized_result = replace(
+            finalized_result = replace_step4_pre_arbiter_candidate(
                 template_result,
                 review_state=review_state,
                 evidence_source="none",
@@ -338,7 +339,7 @@ def build_case_result(case_bundle: T04CaseBundle) -> T04CaseResult:
                 if selection_rank is not None and selection_rank > 1
                 else "top_rank_selected"
             )
-            finalized_result = replace(
+            finalized_result = replace_step4_pre_arbiter_candidate(
                 selected_eval.result,
                 selected_candidate_summary=selected_candidate_summary,
                 selected_evidence_summary=dict(selected_candidate_summary),

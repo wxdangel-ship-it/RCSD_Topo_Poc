@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
 from ._rcsd_selection_support import _trace_path_to_node
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .case_models import T04CaseResult, T04EventUnitResult
 from .event_interpretation_selection import (
     EVENT_REFERENCE_CONFLICT_TOL_M,
@@ -499,7 +500,7 @@ def _apply_required_node_claim(
     updated_positive_rcsd_audit["second_pass_resolution_action"] = resolution_action
     updated_positive_rcsd_audit["second_pass_resolution_reason"] = resolution_reason
     updated_positive_rcsd_audit["required_rcsd_node_source"] = option.node_source
-    return replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         required_rcsd_node=option.node_id,
         required_rcsd_node_source=option.node_source,
@@ -523,6 +524,31 @@ def _apply_required_node_claim(
                 "strength": list(option.strength),
             },
         },
+    )
+    return append_dual_write_candidate(
+        updated,
+        case_id=case_result.case_spec.case_id,
+        source_stage="final_conflict_resolver",
+        fields_written=(
+            "required_rcsd_node",
+            "required_rcsd_node_source",
+            "selected_candidate_summary",
+            "selected_evidence_summary",
+        ),
+        source_audit_blob={
+            "component_id": component_id,
+            "component_type": component_type,
+            "resolution_action": resolution_action,
+            "resolution_reason": resolution_reason,
+            "selected_claim_option": {
+                "node_id": option.node_id,
+                "node_source": option.node_source,
+                "clear_claim": option.clear_claim,
+                "reason": option.reason,
+                "strength": list(option.strength),
+            },
+        },
+        replacement_reason=resolution_reason,
     )
 
 

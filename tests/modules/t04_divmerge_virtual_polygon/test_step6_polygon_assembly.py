@@ -313,10 +313,11 @@ def test_t04_step6_multi_event_case_reports_conflict_without_breaking_constraint
     assert step5_status["case_bridge_zone_geometry"]["present"] is True
     assert step6_status["assembly_state"] == "assembly_failed"
     assert step6_status["component_count"] == 0
+    assert step6_status["final_case_polygon"]["present"] is False
     assert step6_status["hard_must_cover_ok"] is True
-    assert step6_status["b_node_target_covered"] is False
     assert step6_status["forbidden_overlap_area_m2"] == pytest.approx(0.0, abs=1e-6)
     assert step6_status["cut_violation"] is False
+    assert "assembly_failed" in set(step6_status["review_reasons"])
     assert "b_node_not_covered" in set(step6_status["review_reasons"])
     assert "hard_must_cover_disconnected" not in set(step6_status["review_reasons"])
     assert not (result_case_dir / "final_case_polygon.gpkg").exists()

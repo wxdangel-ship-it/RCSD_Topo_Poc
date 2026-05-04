@@ -12,6 +12,12 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
 
 from .case_models import T04CaseResult, T04ReviewIndexRow
+from ._step4_arbiter import (
+    arbitrate_step4_unit,
+    shadow_actual_fields_for_unit,
+    shadow_diff_for_unit,
+)
+from ._step4_arbiter_models import T04ArbiterCaseContext, T04Step4CandidateLedger
 from .provenance import case_input_fingerprint, provenance_doc
 from .review_audit import build_case_review_audit
 from .review_render import (
@@ -34,6 +40,102 @@ from .topology import build_step3_status_doc, build_unit_step3_status_doc
 
 def _with_provenance(payload: dict, provenance: dict) -> dict:
     return {**payload, **provenance}
+
+
+def _step4_candidate_ledger_docs(case_result: T04CaseResult) -> list[dict]:
+    docs: list[dict] = []
+    for event_unit in case_result.event_units:
+        if event_unit.step4_candidate_ledger is None:
+            docs.append(
+                {
+                    "case_id": case_result.case_spec.case_id,
+                    "unit_id": event_unit.spec.event_unit_id,
+                    "candidate_count": 0,
+                    "candidates": [],
+                }
+            )
+            continue
+        docs.append(event_unit.step4_candidate_ledger.to_doc())
+    return docs
+
+
+def _dual_write_manifest_docs(case_result: T04CaseResult) -> list[dict]:
+    docs: list[dict] = []
+    for event_unit in case_result.event_units:
+        for item in event_unit.dual_write_manifest:
+            docs.append(
+                {
+                    "case_id": case_result.case_spec.case_id,
+                    "event_unit_id": event_unit.spec.event_unit_id,
+                    **dict(item),
+                }
+            )
+    return docs
+
+
+def _step4_arbitration_shadow_docs(case_result: T04CaseResult) -> tuple[list[dict], list[dict]]:
+    traces: list[dict] = []
+    shadows: list[dict] = []
+    for event_unit in case_result.event_units:
+        ledger = event_unit.step4_candidate_ledger or T04Step4CandidateLedger(
+            unit_id=event_unit.spec.event_unit_id,
+            case_id=case_result.case_spec.case_id,
+        )
+        context = T04ArbiterCaseContext(
+            case_id=case_result.case_spec.case_id,
+            unit_id=event_unit.spec.event_unit_id,
+            mainnodeid=event_unit.spec.representative_node_id,
+            shadow_mode=True,
+        )
+        decision = arbitrate_step4_unit(event_unit, ledger, case_context=context)
+        traces.append(
+            {
+                "case_id": case_result.case_spec.case_id,
+                "event_unit_id": event_unit.spec.event_unit_id,
+                "candidate_count": len(ledger.candidates),
+                "arbitration_context": context.to_doc(),
+                "decision_trace": list(decision.decision_trace),
+            }
+        )
+        shadows.append(
+            {
+                "case_id": case_result.case_spec.case_id,
+                "event_unit_id": event_unit.spec.event_unit_id,
+                "shadow_mode": True,
+                "unit_actual": shadow_actual_fields_for_unit(event_unit),
+                "arbitration_decision_shadow": decision.to_audit_doc(),
+                "field_diffs": shadow_diff_for_unit(event_unit, decision),
+            }
+        )
+    return traces, shadows
+
+
+def _format_aggregate_rcsd_consistency_score(value) -> str:
+    if value is None:
+        return "none"
+    try:
+        return f"{float(value):.6g}"
+    except (TypeError, ValueError):
+        return str(value or "none")
+
+
+def _arbitration_review_fields_by_unit(shadows: list[dict]) -> dict[str, dict]:
+    docs: dict[str, dict] = {}
+    for item in shadows:
+        unit_id = str(item.get("event_unit_id") or "")
+        if not unit_id:
+            continue
+        decision = dict(item.get("arbitration_decision_shadow") or {})
+        docs[unit_id] = {
+            "rcsd_decision_history_count": len(decision.get("decision_trace") or []),
+            "rcsd_replacement_due_to_main_evidence": bool(
+                decision.get("rcsd_replacement_due_to_main_evidence")
+            ),
+            "aggregate_rcsd_consistency_score": _format_aggregate_rcsd_consistency_score(
+                decision.get("aggregate_rcsd_consistency_score")
+            ),
+        }
+    return docs
 
 
 REVIEW_INDEX_FIELDNAMES = [
@@ -65,6 +167,9 @@ REVIEW_INDEX_FIELDNAMES = [
     "positive_rcsd_present_reason",
     "pair_local_rcsd_empty",
     "rcsd_selection_mode",
+    "rcsd_decision_history_count",
+    "rcsd_replacement_due_to_main_evidence",
+    "aggregate_rcsd_consistency_score",
     "local_rcsd_unit_kind",
     "local_rcsd_unit_id",
     "aggregated_rcsd_unit_id",
@@ -242,6 +347,8 @@ def write_case_outputs(
             case_provenance,
         ),
     )
+    arbitration_decision_trace, arbitration_decision_shadow = _step4_arbitration_shadow_docs(case_result)
+    arbitration_review_fields = _arbitration_review_fields_by_unit(arbitration_decision_shadow)
     write_json(
         case_dir / "step4_audit.json",
         _with_provenance(
@@ -250,6 +357,10 @@ def write_case_outputs(
                 "step4_review_state": case_result.case_review_state,
                 "step4_review_reasons": list(case_result.case_review_reasons),
                 "case_alignment_aggregate": case_result.case_alignment_aggregate_doc(),
+                "step4_candidate_ledger": _step4_candidate_ledger_docs(case_result),
+                "dual_write_manifest": _dual_write_manifest_docs(case_result),
+                "arbitration_decision_trace": arbitration_decision_trace,
+                "arbitration_decision_shadow": arbitration_decision_shadow,
                 "event_units": [event_unit.to_summary_doc() for event_unit in case_result.event_units],
             },
             case_provenance,
@@ -285,7 +396,10 @@ def write_case_outputs(
             ],
             crs_text="EPSG:3857",
         )
-    audit_by_unit = build_case_review_audit(case_result)
+    audit_by_unit = build_case_review_audit(
+        case_result,
+        arbitration_review_fields_by_unit=arbitration_review_fields,
+    )
     final_review_path = case_dir / STEP7_CASE_FINAL_REVIEW_NAME
     render_case_final_review_png(
         final_review_path,
@@ -485,6 +599,13 @@ def write_case_outputs(
                 positive_rcsd_present_reason=event_unit.positive_rcsd_present_reason,
                 pair_local_rcsd_empty=event_unit.pair_local_rcsd_empty,
                 rcsd_selection_mode=event_unit.rcsd_selection_mode,
+                rcsd_decision_history_count=int(audit_summary.get("rcsd_decision_history_count") or 0),
+                rcsd_replacement_due_to_main_evidence=bool(
+                    audit_summary.get("rcsd_replacement_due_to_main_evidence")
+                ),
+                aggregate_rcsd_consistency_score=str(
+                    audit_summary.get("aggregate_rcsd_consistency_score") or "none"
+                ),
                 local_rcsd_unit_kind=str(event_unit.local_rcsd_unit_kind or ""),
                 local_rcsd_unit_id=str(event_unit.local_rcsd_unit_id or ""),
                 aggregated_rcsd_unit_id=str(event_unit.aggregated_rcsd_unit_id or ""),
@@ -625,6 +746,9 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
     positive_rcsd_support_counts = Counter(row.positive_rcsd_support_level or "unknown" for row in rows)
     positive_rcsd_consistency_counts = Counter(row.positive_rcsd_consistency_level or "unknown" for row in rows)
     positive_rcsd_present_counts = Counter("yes" if row.positive_rcsd_present else "no" for row in rows)
+    rcsd_replacement_due_to_main_evidence_counts = Counter(
+        "yes" if row.rcsd_replacement_due_to_main_evidence else "no" for row in rows
+    )
     surface_scenario_type_counts = Counter(row.surface_scenario_type or "unknown" for row in rows)
     rcsd_alignment_type_counts = Counter(row.rcsd_alignment_type or "unknown" for row in rows)
     swsd_rcsd_alignment_consistent_counts = Counter(
@@ -660,6 +784,13 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
         "shared_point_signal_count": sum(1 for row in rows if row.shared_point_signal),
         "required_rcsd_node_count": sum(1 for row in rows if row.required_rcsd_node),
         "positive_rcsd_present_count": sum(1 for row in rows if row.positive_rcsd_present),
+        "rcsd_decision_history_total_count": sum(int(row.rcsd_decision_history_count or 0) for row in rows),
+        "rcsd_replacement_due_to_main_evidence_count": sum(
+            1 for row in rows if row.rcsd_replacement_due_to_main_evidence
+        ),
+        "aggregate_rcsd_consistency_score_filled_count": sum(
+            1 for row in rows if str(row.aggregate_rcsd_consistency_score or "none") != "none"
+        ),
         "pair_local_rcsd_empty_count": sum(1 for row in rows if row.pair_local_rcsd_empty),
         "flat_png_count": (
             len([entry for entry in flat_dir.iterdir() if entry.is_file() and entry.suffix.lower() == ".png"])
@@ -669,6 +800,9 @@ def write_review_summary(run_root: Path, rows: list[T04ReviewIndexRow]) -> Path:
         "positive_rcsd_support_level_counts": dict(sorted(positive_rcsd_support_counts.items())),
         "positive_rcsd_consistency_level_counts": dict(sorted(positive_rcsd_consistency_counts.items())),
         "positive_rcsd_present_counts": dict(sorted(positive_rcsd_present_counts.items())),
+        "rcsd_replacement_due_to_main_evidence_counts": dict(
+            sorted(rcsd_replacement_due_to_main_evidence_counts.items())
+        ),
         "surface_scenario_type_counts": dict(sorted(surface_scenario_type_counts.items())),
         "rcsd_alignment_type_counts": dict(sorted(rcsd_alignment_type_counts.items())),
         "swsd_rcsd_alignment_consistent_counts": dict(sorted(swsd_rcsd_alignment_consistent_counts.items())),

@@ -11,6 +11,7 @@ from .event_interpretation import build_case_result
 from .full_input_shared_layers import T04SharedFullInputLayers, collect_case_features
 from .outputs import write_case_outputs
 from .step4_rcsd_anchored_reverse import apply_rcsd_anchored_reverse_lookup
+from ._step4_arbiter import apply_step4_arbitration_to_case_results
 from .step4_final_conflict_resolver import resolve_step4_final_conflicts
 from .step4_road_surface_fork_binding import apply_road_surface_fork_binding
 
@@ -91,6 +92,7 @@ def run_single_case_direct(
     resolved_results, resolution_doc = resolve_step4_final_conflicts([case_result])
     surface_results, surface_binding_doc = apply_road_surface_fork_binding(resolved_results)
     reverse_results, reverse_doc = apply_rcsd_anchored_reverse_lookup(surface_results)
+    reverse_results = apply_step4_arbitration_to_case_results(reverse_results)
     resolved_case_result = reverse_results[0] if reverse_results else case_result
     stage_timers["same_case_resolution"] = round(perf_counter() - resolution_started, 6)
 

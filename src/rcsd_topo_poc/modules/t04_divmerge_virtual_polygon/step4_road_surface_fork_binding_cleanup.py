@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Any
 
 from .case_models import T04EventUnitResult
+from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
 from .step4_road_surface_fork_binding_shared import (
     _candidate_entries_with_selection,
     _has_non_semantic_partial_rcsd_signal,
@@ -79,6 +80,8 @@ def _has_unpublished_multi_semantic_rcsd_context(event_unit: T04EventUnitResult)
 
 def _retain_structure_only_surface_candidate(
     event_unit: T04EventUnitResult,
+    *,
+    case_id: str = "",
 ) -> tuple[T04EventUnitResult | None, dict[str, Any] | None]:
     if event_unit.selected_evidence_state == "none":
         return None, None
@@ -158,7 +161,7 @@ def _retain_structure_only_surface_candidate(
     )
     updated_entries = _candidate_entries_with_selection(
         event_unit.candidate_audit_entries,
-        replace(
+        replace_step4_pre_arbiter_candidate(
             entry,
             candidate_summary=dict(summary),
             review_state="STEP4_REVIEW",
@@ -191,7 +194,7 @@ def _retain_structure_only_surface_candidate(
             "rcsd_decision_reason": rcsd_mode,
         }
     )
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,
@@ -216,10 +219,21 @@ def _retain_structure_only_surface_candidate(
         post_resolution_candidate_id=entry.candidate_id,
         resolution_reason=reason,
     )
-    return updated, detail
+    return (
+        append_dual_write_candidate(
+            updated,
+            case_id=case_id,
+            source_stage="cleanup",
+            source_audit_blob=detail,
+            replacement_reason=reason,
+        ),
+        detail,
+    )
 
 def _clear_unbound_surface_candidate(
     event_unit: T04EventUnitResult,
+    *,
+    case_id: str = "",
 ) -> tuple[T04EventUnitResult | None, dict[str, Any] | None]:
     if event_unit.selected_evidence_state == "none":
         return None, None
@@ -288,7 +302,7 @@ def _clear_unbound_surface_candidate(
         )
         updated_entries = _candidate_entries_with_selection(
             event_unit.candidate_audit_entries,
-            replace(
+            replace_step4_pre_arbiter_candidate(
                 entry,
                 candidate_summary=dict(summary),
                 review_state="STEP4_REVIEW",
@@ -320,7 +334,7 @@ def _clear_unbound_surface_candidate(
                 "rcsd_decision_reason": rcsd_mode,
             }
         )
-        updated = replace(
+        updated = replace_step4_pre_arbiter_candidate(
             event_unit,
             review_state="STEP4_REVIEW",
             review_reasons=review_reasons,
@@ -364,7 +378,16 @@ def _clear_unbound_surface_candidate(
             post_resolution_candidate_id=entry.candidate_id,
             resolution_reason=SWSD_JUNCTION_WINDOW_REASON,
         )
-        return updated, detail
+        return (
+            append_dual_write_candidate(
+                updated,
+                case_id=case_id,
+                source_stage="cleanup",
+                source_audit_blob=detail,
+                replacement_reason=SWSD_JUNCTION_WINDOW_REASON,
+            ),
+            detail,
+        )
 
     detail = {
         "action": "cleared_unbound_road_surface_fork",
@@ -397,7 +420,7 @@ def _clear_unbound_surface_candidate(
             "unbound_road_surface_fork_without_bifurcation_rcsd": True,
         }
     )
-    updated = replace(
+    updated = replace_step4_pre_arbiter_candidate(
         event_unit,
         review_state="STEP4_REVIEW",
         review_reasons=review_reasons,
@@ -448,4 +471,13 @@ def _clear_unbound_surface_candidate(
         post_resolution_candidate_id="",
         resolution_reason=UNBOUND_ROAD_SURFACE_FORK_REASON,
     )
-    return updated, detail
+    return (
+        append_dual_write_candidate(
+            updated,
+            case_id=case_id,
+            source_stage="cleanup",
+            source_audit_blob=detail,
+            replacement_reason=UNBOUND_ROAD_SURFACE_FORK_REASON,
+        ),
+        detail,
+    )

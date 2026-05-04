@@ -227,6 +227,31 @@ def _road_ids_from_unit(unit: Mapping[str, Any] | None) -> tuple[str, ...]:
     return _tuple_str(unit.get("road_ids"))
 
 
+def _direct_hit_fallback_roads(
+    positive_rcsd_audit: Mapping[str, Any],
+    road_ids: Sequence[Any] | None,
+) -> tuple[str, ...]:
+    roads = _tuple_str(road_ids)
+    if len(roads) <= 1:
+        return roads
+    road_set = set(roads)
+    assignment_hit_roads = _tuple_str(
+        assignment.get("road_id")
+        for assignment in (positive_rcsd_audit.get("selected_unit_role_assignments") or ())
+        if isinstance(assignment, Mapping)
+        and bool(assignment.get("first_hit"))
+        and _clean_text(assignment.get("road_id")) in road_set
+    )
+    if assignment_hit_roads:
+        return assignment_hit_roads
+    first_hit_roads = tuple(
+        road_id
+        for road_id in _tuple_str(positive_rcsd_audit.get("first_hit_rcsdroad_ids"))
+        if road_id in road_set
+    )
+    return first_hit_roads or roads
+
+
 def _unique_swsd_window_fallback_roads(
     positive_rcsd_audit: Mapping[str, Any],
 ) -> tuple[str, ...]:
@@ -244,7 +269,7 @@ def _unique_swsd_window_fallback_roads(
         )
         member_roads = _road_ids_from_unit(member_unit)
         if member_roads:
-            return member_roads
+            return _direct_hit_fallback_roads(positive_rcsd_audit, member_roads)
 
     aggregate_id = _clean_text(positive_rcsd_audit.get("aggregated_rcsd_unit_id"))
     aggregate = _unit_doc_by_id(aggregate_units, aggregate_id)
@@ -252,18 +277,21 @@ def _unique_swsd_window_fallback_roads(
         primary_unit_id = _clean_text(aggregate.get("primary_local_unit_id"))
         primary_roads = _road_ids_from_unit(_unit_doc_by_id(local_units, primary_unit_id))
         if primary_roads:
-            return primary_roads
+            return _direct_hit_fallback_roads(positive_rcsd_audit, primary_roads)
         aggregate_member_ids = _tuple_str(aggregate.get("member_unit_ids"))
         if len(aggregate_member_ids) == 1:
             member_roads = _road_ids_from_unit(_unit_doc_by_id(local_units, aggregate_member_ids[0]))
             if member_roads:
-                return member_roads
+                return _direct_hit_fallback_roads(positive_rcsd_audit, member_roads)
 
     positive_local_units = tuple(
         unit for unit in local_units if bool(unit.get("positive_rcsd_present"))
     )
     if len(positive_local_units) == 1:
-        return _road_ids_from_unit(positive_local_units[0])
+        return _direct_hit_fallback_roads(
+            positive_rcsd_audit,
+            _road_ids_from_unit(positive_local_units[0]),
+        )
     return ()
 
 

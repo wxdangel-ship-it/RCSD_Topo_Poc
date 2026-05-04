@@ -21,6 +21,7 @@ from .rcsd_alignment import (
     RCSD_ALIGNMENT_JUNCTION_LEVEL_TYPES,
     RCSD_ALIGNMENT_NONE,
     RCSD_ALIGNMENT_POSITIVE_TYPES,
+    RCSD_ALIGNMENT_ROAD_ONLY,
 )
 from .surface_scenario import classify_surface_scenario, classify_surface_scenario_from_alignment
 
@@ -490,11 +491,33 @@ def arbitrate_step4_unit(
             "shadow_mode": case_context.shadow_mode,
         },
     )
+    unit_scenario_doc = unit.surface_scenario_doc()
+    fallback_rcsdroad_ids = _clean_ids(unit_scenario_doc.get("fallback_rcsdroad_ids"))
+    if (
+        _clean_text(unit_scenario_doc.get("rcsd_alignment_type")) == RCSD_ALIGNMENT_ROAD_ONLY
+        and bool(fallback_rcsdroad_ids)
+        and bool(unit_scenario_doc.get("swsd_junction_present"))
+        and not bool(unit_scenario_doc.get("has_main_evidence"))
+    ):
+        decision = _decision_from_unit(
+            unit,
+            trace=(
+                *trace,
+                {
+                    "event": "preserve_swsd_rcsdroad_fallback_without_positive_candidate",
+                    "case_id": case_context.case_id,
+                    "unit_id": case_context.unit_id,
+                    "fallback_rcsdroad_ids": list(fallback_rcsdroad_ids),
+                },
+            ),
+        )
+        return _apply_destructive_downgrade_guard(unit, decision, winner=None, context=case_context)
+
     scenario_doc = classify_surface_scenario_from_alignment(
-        has_main_evidence=bool(unit.surface_scenario_doc()["has_main_evidence"]),
+        has_main_evidence=bool(unit_scenario_doc["has_main_evidence"]),
         rcsd_alignment_type=RCSD_ALIGNMENT_NONE,
-        swsd_junction_present=bool(unit.surface_scenario_doc()["swsd_junction_present"]),
-        main_evidence_type=unit.surface_scenario_doc()["main_evidence_type"],
+        swsd_junction_present=bool(unit_scenario_doc["swsd_junction_present"]),
+        main_evidence_type=unit_scenario_doc["main_evidence_type"],
         reference_point_present=unit.fact_reference_point is not None,
     ).to_doc()
     decision = T04ArbitrationDecision(

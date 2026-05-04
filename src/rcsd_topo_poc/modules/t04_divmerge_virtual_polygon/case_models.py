@@ -560,18 +560,29 @@ class T04EventUnitResult:
             ambiguity_reasons.append(str(self.positive_rcsd_present_reason or "ambiguous_rcsd_alignment"))
         for key in ("ambiguity_reasons", "ambiguous_reasons"):
             ambiguity_reasons.extend(_clean_doc_ids(audit.get(key)))
+        if alignment_type == RCSD_ALIGNMENT_NONE:
+            positive_rcsdroad_ids: tuple[str, ...] = ()
+            positive_rcsdnode_ids: tuple[str, ...] = ()
+        elif alignment_type == RCSD_ALIGNMENT_ROAD_ONLY and scenario_fallback_roads:
+            positive_rcsdroad_ids = scenario_fallback_roads
+            positive_rcsdnode_ids = _clean_doc_ids(self.selected_rcsdnode_ids)
+        else:
+            positive_rcsdroad_ids = _clean_doc_ids(self.selected_rcsdroad_ids) or _audit_ids(
+                audit,
+                "published_rcsdroad_ids",
+                "selected_rcsdroad_ids",
+            )
+            positive_rcsdnode_ids = _clean_doc_ids(self.selected_rcsdnode_ids) or _audit_ids(
+                audit,
+                "published_rcsdnode_ids",
+                "selected_rcsdnode_ids",
+            )
         return RCSDAlignmentResult(
             scope=RCSD_ALIGNMENT_SCOPE_EVENT_UNIT,
             scope_id=self.spec.event_unit_id,
             rcsd_alignment_type=alignment_type,
-            positive_rcsdroad_ids=(
-                scenario_fallback_roads
-                if alignment_type == RCSD_ALIGNMENT_ROAD_ONLY and scenario_fallback_roads
-                else _clean_doc_ids(self.selected_rcsdroad_ids)
-            )
-            or _audit_ids(audit, "published_rcsdroad_ids", "selected_rcsdroad_ids"),
-            positive_rcsdnode_ids=_clean_doc_ids(self.selected_rcsdnode_ids)
-            or _audit_ids(audit, "published_rcsdnode_ids", "selected_rcsdnode_ids"),
+            positive_rcsdroad_ids=positive_rcsdroad_ids,
+            positive_rcsdnode_ids=positive_rcsdnode_ids,
             candidate_rcsdroad_ids=_clean_doc_ids(self.pair_local_rcsd_road_ids)
             or _audit_ids(audit, "pair_local_rcsd_road_ids", "candidate_rcsdroad_ids"),
             candidate_rcsdnode_ids=_clean_doc_ids(self.pair_local_rcsd_node_ids)

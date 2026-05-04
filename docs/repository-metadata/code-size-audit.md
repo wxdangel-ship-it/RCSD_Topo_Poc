@@ -24,7 +24,7 @@
 |---|---:|---|---|
 | `src/rcsd_topo_poc/modules/t02_junction_anchor/stage4_divmerge_virtual_polygon.py` | `82546` bytes | T02 Stage4 脚本当前低于硬阈值但仍偏大，历史审计记录已刷新 | 后续若继续触碰，需附拆分计划或豁免说明 |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_event_interpretation_core.py` | `57911` bytes | Step4 event interpretation core 仍在 57 KB 档；本轮合并 semantic-boundary 与 arbiter 逻辑后仍低于硬阈值 | 后续保持 case orchestration / candidate pool / evaluation 职责，不回填 unit preparation |
-| `tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py` | `56800` bytes | official 39-case baseline 已下沉到 manifest，legacy 23/30 gate 维持轻量 projection；合并后仍低于硬阈值 | 后续新增真实 Case 回归优先扩展 manifest 或按场景分文件 |
+| `tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py` | `58003` bytes | official 39-case baseline 已下沉到 manifest，legacy 23/30 gate 维持轻量 projection；RCSDRoad fallback 裁剪回归更新后仍低于硬阈值 | 后续新增真实 Case 回归优先扩展 manifest 或按场景分文件 |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step4_kernel.py` | `56445` bytes | Step4 runtime kernel 仍承接 final event interpretation 主流程，低于硬阈值但偏大 | 后续若扩展 kernel 主流程，优先拆 multibranch / event-interpretation orchestration |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_rcsd_selection_support.py` | `53171` bytes | RCSD selection support 聚合 semantic group、local/aggregated unit 与 role mapping 支撑逻辑 | 后续扩展 RCSD 选择支撑前先评估 local-unit / aggregated-unit helper 拆分 |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/polygon_assembly.py` | `49351` bytes | T-01 已拆出 raster/path helper，主 assembly 文件降至 50 KB 以下 | 后续继续保持主流程不回填低层 raster/path helper |

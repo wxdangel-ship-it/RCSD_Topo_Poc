@@ -38,6 +38,9 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_final_conflict_res
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_road_surface_fork_binding import (
     apply_road_surface_fork_binding,
 )
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.surface_scenario import (
+    SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
+)
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import REAL_ANCHOR_2_ROOT
 
 
@@ -236,6 +239,24 @@ def test_main_evidence_replacement_triggers_rearbitration_698389(tmp_path) -> No
     assert shadow["rcsd_replacement_due_to_main_evidence"] is True
     assert "aggregate_rcsd_consistency_score" in shadow
     assert shadows[0]["unit_actual"]["required_rcsd_node"] == "5396318492905216"
+
+
+def test_arbiter_preserves_trimmed_swsd_rcsdroad_fallback_706347() -> None:
+    pre_arbitration = _case_after_surface_binding("706347")
+    pre_unit = pre_arbitration.event_units[0]
+    assert pre_unit.surface_scenario_doc()["rcsd_alignment_type"] == RCSD_ALIGNMENT_ROAD_ONLY
+    assert pre_unit.surface_scenario_doc()["fallback_rcsdroad_ids"] == ["5384371838321302"]
+
+    case_result = apply_step4_arbitration_to_case_result(pre_arbitration)
+    unit = case_result.event_units[0]
+    scenario_doc = unit.surface_scenario_doc()
+
+    assert unit.rcsd_alignment_type == RCSD_ALIGNMENT_ROAD_ONLY
+    assert unit.fallback_rcsdroad_ids == ("5384371838321302",)
+    assert unit.rcsd_alignment_result_doc()["positive_rcsdroad_ids"] == ["5384371838321302"]
+    assert scenario_doc["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
+    assert scenario_doc["rcsd_alignment_type"] == RCSD_ALIGNMENT_ROAD_ONLY
+    assert scenario_doc["fallback_rcsdroad_ids"] == ["5384371838321302"]
 
 
 def test_scenario_reads_from_arbiter_not_derives(tmp_path) -> None:

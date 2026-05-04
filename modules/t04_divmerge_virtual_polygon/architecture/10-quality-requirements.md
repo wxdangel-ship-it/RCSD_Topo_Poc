@@ -188,8 +188,8 @@
   - 主证据 + RCSDRoad fallback：待补充，不强行给未知 case 归类。
   - 主证据 + 无 RCSD：待补充，不强行给未知 case 归类。
   - 无主证据 + RCSD junction window：已知线索 `760984 / 788824`。
-  - 无主证据 + SWSD junction window：已知线索 `706629 / 706347`。
-  - 无主证据 + SWSD junction window + RCSDRoad fallback：待补充，不强行给未知 case 归类。
+  - 无主证据 + SWSD junction window：已知线索 `706629`。
+  - 无主证据 + SWSD junction window + RCSDRoad fallback：已知线索 `706347 / 765050 / 785731`；fallback 只能发布当前 SWSD 路口截面直接命中的 RCSDRoad，不得把同一 RCSD 语义路口后的相邻 road 一并召回。
   - complex / multi unit surface 合并：待补充，不强行给未知 case 归类。
   - 导流带作为负向掩膜：待补充，不强行给未知 case 归类。
   - 横向超过 `20m` 的裁剪或拒绝样例：待补充，不强行给未知 case 归类。

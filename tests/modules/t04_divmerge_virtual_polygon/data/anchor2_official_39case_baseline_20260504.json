@@ -111,9 +111,9 @@
     {
       "case_id": "706347",
       "final_state": "accepted",
-      "surface_scenario_type": "no_main_evidence_with_swsd_only",
+      "surface_scenario_type": "no_main_evidence_with_rcsdroad_fallback_and_swsd",
       "section_reference_source": "swsd_junction",
-      "surface_generation_mode": "swsd_junction_window"
+      "surface_generation_mode": "swsd_with_rcsdroad_fallback"
     },
     {
       "case_id": "706629",

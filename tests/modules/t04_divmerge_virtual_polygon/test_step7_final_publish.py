@@ -825,10 +825,10 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert step6_706629["final_case_polygon"]["area_m2"] == pytest.approx(560.184, abs=1e-3)
 
     record_724081 = surface_binding_by_case["724081"]
-    assert record_724081["action"] == "kept_swsd_junction_window_no_rcsd"
+    assert record_724081["action"] == "bound_selected_surface_to_rcsd_junction_window"
     assert record_724081["post_state"] == "found"
-    assert record_724081["positive_rcsd_consistency_level"] == "C"
-    assert record_724081["detail"]["multi_semantic_rcsd_context"] is True
+    assert record_724081["positive_rcsd_consistency_level"] == "A"
+    assert record_724081["detail"]["selected_rcsd_scope"] == "published_aggregate"
 
     step4_724081 = json.loads(
         (run_root / "cases" / "724081" / "step4_event_interpretation.json").read_text(
@@ -879,9 +879,9 @@ def test_anchor2_new_structure_only_road_surface_forks_keep_760598_rejected(tmp_
     assert step6_724081["hole_count"] == 0
     assert step6_724081["section_reference_window_covered"] is True
     assert step6_724081["post_cleanup_must_cover_ok"] is True
-    assert step5_724081["case_must_cover_domain"]["area_m2"] == pytest.approx(717.019, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(717.019, abs=1e-3)
-    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(132.091, abs=1e-3)
+    assert step5_724081["case_must_cover_domain"]["area_m2"] == pytest.approx(760.946, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["area_m2"] == pytest.approx(614.191, abs=1e-3)
+    assert step6_724081["final_case_polygon"]["length_m"] == pytest.approx(150.685, abs=1e-3)
 
     assert surface_binding_by_case["760598"]["action"] == "cleared_unbound_road_surface_fork"
 

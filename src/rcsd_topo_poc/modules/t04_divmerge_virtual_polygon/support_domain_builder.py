@@ -170,6 +170,62 @@ def _mask_rcsd_road_ids(
     return tuple(ordered)
 
 
+def _clean_doc_id_set(values: object) -> set[str]:
+    if values is None:
+        return set()
+    if isinstance(values, str):
+        values = (values,)
+    try:
+        iterator = iter(values)
+    except TypeError:
+        iterator = iter((values,))
+    return {
+        text
+        for value in iterator
+        if (text := str(value or "").strip())
+    }
+
+
+def _case_candidate_rcsd_road_ids_for_negative_mask(
+    case_alignment_aggregate_doc: dict[str, object],
+) -> set[str]:
+    candidate_road_ids = _clean_doc_id_set(
+        case_alignment_aggregate_doc.get("candidate_rcsdroad_ids")
+    )
+    if not candidate_road_ids:
+        return set()
+    if not _clean_doc_id_set(case_alignment_aggregate_doc.get("positive_rcsdroad_ids")):
+        return set()
+    if bool(case_alignment_aggregate_doc.get("conflict_present")):
+        return set()
+    if _clean_doc_id_set(case_alignment_aggregate_doc.get("conflict_reasons")):
+        return set()
+    if _clean_doc_id_set(case_alignment_aggregate_doc.get("ambiguous_event_unit_ids")):
+        return set()
+    cluster_count = case_alignment_aggregate_doc.get("positive_alignment_object_cluster_count")
+    if cluster_count is not None:
+        try:
+            if int(cluster_count) > 1:
+                return set()
+        except (TypeError, ValueError):
+            return set()
+    return candidate_road_ids
+
+
+def _rcsd_semantic_entity_road_ids(event_unit: T04EventUnitResult) -> set[str]:
+    road_ids: list[object] = []
+    rcsd_junction = event_unit.rcsd_semantic_junction
+    if rcsd_junction is not None:
+        road_ids.extend(getattr(rcsd_junction, "intra_junction_rcsdroad_ids", ()) or ())
+        for arm in getattr(rcsd_junction, "semantic_arms", ()) or ():
+            road_ids.extend(getattr(arm, "first_rcsdroad_ids", ()) or ())
+            road_ids.extend(getattr(arm, "inter_junction_connector_rcsdroad_ids", ()) or ())
+    rcsdroad_only_chain = getattr(event_unit, "rcsdroad_only_chain", None)
+    if rcsdroad_only_chain is not None:
+        road_ids.extend(getattr(rcsdroad_only_chain, "chain_road_ids", ()) or ())
+    return _clean_doc_id_set(road_ids)
+
+
 def _node_buffer_union(
     nodes,
     *,
@@ -740,15 +796,35 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         for nid in case_alignment_aggregate_doc.get("positive_rcsdnode_ids", [])
         if str(nid).strip()
     }
-    related_rcsd_road_ids = set(seed_rcsd_road_ids) | case_positive_rcsd_road_ids
+    candidate_mask_protected_rcsd_road_ids = _case_candidate_rcsd_road_ids_for_negative_mask(
+        case_alignment_aggregate_doc
+    )
+    semantic_entity_rcsd_road_ids = {
+        road_id
+        for event_unit in case_result.event_units
+        for road_id in _rcsd_semantic_entity_road_ids(event_unit)
+    }
+    rcsd_negative_mask_protected_road_ids = (
+        set(seed_rcsd_road_ids)
+        | case_positive_rcsd_road_ids
+        | candidate_mask_protected_rcsd_road_ids
+        | semantic_entity_rcsd_road_ids
+    )
+    related_rcsd_road_ids = set(rcsd_negative_mask_protected_road_ids)
     if expandable_rcsd_road_ids:
-        related_rcsd_road_ids.update(
-            _expand_related_road_ids_through_degree2(
-                seed_road_ids=expandable_rcsd_road_ids,
-                roads=case_result.case_bundle.rcsd_roads,
-                current_semantic_node_ids=current_semantic_node_ids,
-            )
+        expanded_related_rcsd_road_ids = _expand_related_road_ids_through_degree2(
+            seed_road_ids=expandable_rcsd_road_ids,
+            roads=case_result.case_bundle.rcsd_roads,
+            current_semantic_node_ids=current_semantic_node_ids,
         )
+        expansion_limit_ids = candidate_mask_protected_rcsd_road_ids | semantic_entity_rcsd_road_ids
+        if expansion_limit_ids:
+            expanded_related_rcsd_road_ids &= (
+                expansion_limit_ids
+                | set(seed_rcsd_road_ids)
+                | case_positive_rcsd_road_ids
+            )
+        related_rcsd_road_ids.update(expanded_related_rcsd_road_ids)
     related_swsd_node_ids = _related_node_ids_from_roads(
         current_semantic_node_ids=current_semantic_node_ids,
         related_road_ids=related_swsd_road_ids,
@@ -1064,6 +1140,9 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
         drivezone_outside_enforced_by_allowed_domain=True,
         related_swsd_road_ids=tuple(sorted(related_swsd_road_ids)),
         related_rcsd_road_ids=tuple(sorted(related_rcsd_road_ids)),
+        rcsd_negative_mask_protected_road_ids=tuple(
+            sorted(rcsd_negative_mask_protected_road_ids)
+        ),
         unrelated_swsd_road_ids=unrelated_swsd_road_ids,
         unrelated_swsd_node_ids=unrelated_swsd_node_ids,
         unrelated_rcsd_road_ids=unrelated_rcsd_road_ids,

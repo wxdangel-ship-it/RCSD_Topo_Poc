@@ -57,13 +57,50 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
     }
     assert {"5385458768741661", "5385458768741681"} <= semantic_arm_roads
     assert units["node_510222629"]["selected_evidence_state"] == "found"
+    assert set(units["node_510222629"]["selected_rcsdroad_ids"]) == {
+        "5385438602535159",
+        "5385438602535182",
+        "5385438602535183",
+        "5385458768741628",
+        "5385458768741632",
+        "5385458768741641",
+        "5385458768741659",
+        "5385458768741665",
+        "5385458768741668",
+        "5385458768741671",
+        "5385458768741679",
+    }
+    assert (
+        units["node_510222629"]["positive_rcsd_audit"]["published_rcsd_selection_mode"]
+        == "aggregated_partial_relaxed_component"
+    )
     assert units["node_510222629__pair_02"]["selected_evidence_state"] == "found"
-    assert units["node_510222629__pair_02"]["evidence_source"] == "road_surface_fork"
+    assert units["node_510222629__pair_02"]["evidence_source"] == "swsd_junction_window"
     assert units["node_510222629__pair_02"]["selected_evidence"]["candidate_scope"] == "road_surface_fork"
-    assert units["node_510222629__pair_02"]["positive_rcsd_present"] is True
-    assert units["node_510222629__pair_02"]["positive_rcsd_consistency_level"] == "B"
-    assert units["node_510222629__pair_02"]["selected_rcsdroad_ids"]
-    assert units["node_510222629__pair_02"]["selected_rcsdnode_ids"]
+    assert units["node_510222629__pair_02"]["has_main_evidence"] is False
+    assert units["node_510222629__pair_02"]["main_evidence_type"] == "none"
+    assert units["node_510222629__pair_02"]["reference_point_present"] is False
+    assert (
+        units["node_510222629__pair_02"]["surface_scenario_type"]
+        == "no_main_evidence_with_rcsdroad_fallback_and_swsd"
+    )
+    assert units["node_510222629__pair_02"]["positive_rcsd_present"] is False
+    assert units["node_510222629__pair_02"]["positive_rcsd_consistency_level"] == "C"
+    assert units["node_510222629__pair_02"]["selected_rcsdroad_ids"] == []
+    assert units["node_510222629__pair_02"]["selected_rcsdnode_ids"] == []
+    assert {
+        "5390015124868049",
+        "5390015124868090",
+        "5390050624274574",
+    } <= set(units["node_510222629__pair_02"]["fallback_rcsdroad_ids"])
+    assert (
+        units["node_510222629__pair_02"]["selected_evidence"]["road_surface_fork_binding"]["action"]
+        == "demoted_duplicate_point_road_surface_fork_to_swsd_rcsdroad"
+    )
+    assert (
+        units["node_510222629__pair_02"]["selected_evidence"]["duplicate_point_owner_unit_id"]
+        == "node_510222629"
+    )
 
     step5_doc = json.loads(
         (run_root / "cases" / "505078921" / "step5_status.json").read_text(encoding="utf-8")
@@ -71,6 +108,29 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
     assert step5_doc["unit_count"] == 3
     assert step5_doc["case_terminal_cut_constraints"]["present"] is True
     assert step5_doc["case_terminal_cut_constraints"]["length_m"] < 70.0
+    step5_audit_doc = json.loads(
+        (run_root / "cases" / "505078921" / "step5_audit.json").read_text(encoding="utf-8")
+    )
+    gap_closing_rcsd_roads = {
+        "5385438602535159",
+        "5385438602535182",
+        "5385458768741641",
+        "5385458768741679",
+    }
+    opposite_rcsd_roads = {
+        "5390050624274443",
+        "5390050624274524",
+        "5390050624274582",
+        "5390050624274602",
+    }
+    related_rcsd_roads = set(step5_audit_doc["related_rcsd_road_ids"])
+    protected_rcsd_roads = set(step5_audit_doc["rcsd_negative_mask_protected_road_ids"])
+    unrelated_rcsd_roads = set(step5_audit_doc["unrelated_rcsd_road_ids"])
+    assert gap_closing_rcsd_roads <= related_rcsd_roads
+    assert gap_closing_rcsd_roads <= protected_rcsd_roads
+    assert gap_closing_rcsd_roads.isdisjoint(unrelated_rcsd_roads)
+    assert opposite_rcsd_roads <= unrelated_rcsd_roads
+    assert opposite_rcsd_roads.isdisjoint(related_rcsd_roads)
 
     step6_doc = json.loads(
         (run_root / "cases" / "505078921" / "step6_status.json").read_text(encoding="utf-8")
@@ -78,7 +138,7 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
     assert step6_doc["hole_count"] == 0
     assert step6_doc["cut_violation"] is False
     assert step6_doc["component_count"] == 1
-    assert step6_doc["final_case_polygon"]["area_m2"] > 2400.0
+    assert step6_doc["final_case_polygon"]["area_m2"] > 2500.0
 
     step7_doc = json.loads(
         (run_root / "cases" / "505078921" / "step7_status.json").read_text(encoding="utf-8")
@@ -91,20 +151,18 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
         )
     )
     visible_rcsd_roads = set(render_audit_doc["render_visible_rcsd_road_ids"])
-    assert render_audit_doc["missing_rcsd_road_ids"] == [
-        "5390050624274443",
-        "5390050624274524",
-        "5390050624274582",
-        "5390050624274602",
-    ]
+    assert render_audit_doc["missing_rcsd_road_ids"] == []
     assert {
         "5385438602535183",
+        "5385458768741641",
         "5385458768741661",
         "5385458768741668",
+        "5385458768741679",
         "5385458768741681",
         "5390015124868049",
         "5390015124868090",
         "5390050624274574",
     } <= visible_rcsd_roads
-    assert render_audit_doc["rcsd_entity_road_count"] == 17
-    assert render_audit_doc["render_visible_rcsd_road_count"] == 13
+    assert opposite_rcsd_roads.isdisjoint(visible_rcsd_roads)
+    assert render_audit_doc["rcsd_entity_road_count"] == 16
+    assert render_audit_doc["render_visible_rcsd_road_count"] == 16

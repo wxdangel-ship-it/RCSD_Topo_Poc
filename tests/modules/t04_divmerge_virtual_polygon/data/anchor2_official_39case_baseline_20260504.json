@@ -338,7 +338,7 @@
       "final_state": "accepted",
       "surface_scenario_type": "mixed",
       "section_reference_source": "mixed",
-      "surface_generation_mode": "main_evidence_driven"
+      "surface_generation_mode": "mixed"
     },
     {
       "case_id": "607602562",

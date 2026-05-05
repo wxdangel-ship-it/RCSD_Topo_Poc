@@ -173,11 +173,22 @@ def _published_rcsd_subset(
                 selected_node_ids.add(node_id)
     else:
         required_unit = local_unit_for_node(selected_aggregated.required_node_id)
-        if required_unit is not None and required_unit.unit_id:
+        keep_partial_aggregate_component = bool(
+            required_unit is not None
+            and required_unit.unit_id
+            and selected_aggregated.decision_reason == "role_mapping_partial_relaxed_aggregated"
+            and selected_local_unit.unit_kind == "node_centric"
+            and not selected_local_semantic_group_ids
+            and len(selected_semantic_group_ids) > 1
+            and str(required_unit.unit_id or "") != str(selected_local_unit.unit_id or "")
+        )
+        if required_unit is not None and required_unit.unit_id and not keep_partial_aggregate_component:
             selected_road_ids = {str(road_id) for road_id in required_unit.road_ids if str(road_id)}
             selected_node_ids = {str(node_id) for node_id in required_unit.node_ids if str(node_id)}
             published_member_unit_ids = (required_unit.unit_id,)
             publish_mode = "aggregated_partial_required_node_unit"
+        elif keep_partial_aggregate_component:
+            publish_mode = "aggregated_partial_relaxed_component"
         if selected_aggregated.required_node_id is not None and first_hit_road_ids:
             for road_id in first_hit_road_ids:
                 if not first_hit_belongs_to_selected_group(road_id):

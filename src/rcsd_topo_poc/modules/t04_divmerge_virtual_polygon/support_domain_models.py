@@ -175,6 +175,7 @@ class T04Step5CaseResult:
     drivezone_outside_enforced_by_allowed_domain: bool = True
     related_swsd_road_ids: tuple[str, ...] = ()
     related_rcsd_road_ids: tuple[str, ...] = ()
+    rcsd_negative_mask_protected_road_ids: tuple[str, ...] = ()
     unrelated_swsd_road_ids: tuple[str, ...] = ()
     unrelated_swsd_node_ids: tuple[str, ...] = ()
     unrelated_rcsd_road_ids: tuple[str, ...] = ()
@@ -266,6 +267,9 @@ class T04Step5CaseResult:
             "case_terminal_support_corridor_geometry": _geometry_summary(self.case_terminal_support_corridor_geometry),
             "related_swsd_road_ids": list(self.related_swsd_road_ids),
             "related_rcsd_road_ids": list(self.related_rcsd_road_ids),
+            "rcsd_negative_mask_protected_road_ids": list(
+                self.rcsd_negative_mask_protected_road_ids
+            ),
             "unrelated_swsd_road_ids": list(self.unrelated_swsd_road_ids),
             "unrelated_swsd_node_ids": list(self.unrelated_swsd_node_ids),
             "unrelated_rcsd_road_ids": list(self.unrelated_rcsd_road_ids),

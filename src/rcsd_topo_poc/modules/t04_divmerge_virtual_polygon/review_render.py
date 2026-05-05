@@ -448,11 +448,9 @@ def _final_review_rcsd_road_ids(
     step5_result: T04Step5CaseResult | None,
 ) -> tuple[str, ...]:
     active_rcsd_road_ids, _ = _active_rcsd_alignment_ids(case_result)
-    if active_rcsd_road_ids:
-        return active_rcsd_road_ids
     if step5_result is not None:
-        return _related_rcsd_road_ids(step5_result)
-    return ()
+        return _unique_texts((*active_rcsd_road_ids, *_related_rcsd_road_ids(step5_result)))
+    return active_rcsd_road_ids
 
 
 def _final_review_rcsd_node_ids(

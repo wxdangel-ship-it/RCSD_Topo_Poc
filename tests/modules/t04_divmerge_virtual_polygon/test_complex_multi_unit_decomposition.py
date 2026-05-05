@@ -88,11 +88,7 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
     assert units["node_510222629__pair_02"]["positive_rcsd_consistency_level"] == "C"
     assert units["node_510222629__pair_02"]["selected_rcsdroad_ids"] == []
     assert units["node_510222629__pair_02"]["selected_rcsdnode_ids"] == []
-    assert {
-        "5390015124868049",
-        "5390015124868090",
-        "5390050624274574",
-    } <= set(units["node_510222629__pair_02"]["fallback_rcsdroad_ids"])
+    assert units["node_510222629__pair_02"]["fallback_rcsdroad_ids"] == ["5390015124868049"]
     assert (
         units["node_510222629__pair_02"]["selected_evidence"]["road_surface_fork_binding"]["action"]
         == "demoted_duplicate_point_road_surface_fork_to_swsd_rcsdroad"
@@ -160,9 +156,7 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
         "5385458768741679",
         "5385458768741681",
         "5390015124868049",
-        "5390015124868090",
-        "5390050624274574",
     } <= visible_rcsd_roads
     assert opposite_rcsd_roads.isdisjoint(visible_rcsd_roads)
-    assert render_audit_doc["rcsd_entity_road_count"] == 16
-    assert render_audit_doc["render_visible_rcsd_road_count"] == 16
+    assert render_audit_doc["rcsd_entity_road_count"] == 14
+    assert render_audit_doc["render_visible_rcsd_road_count"] == 14

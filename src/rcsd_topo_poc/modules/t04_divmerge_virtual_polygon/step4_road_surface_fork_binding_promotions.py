@@ -52,6 +52,10 @@ DUPLICATE_POINT_SURFACE_DEMOTION_REASON = "duplicate_point_surface_demoted_to_sw
 DUPLICATE_POINT_SURFACE_DEMOTION_ACTION = (
     "demoted_duplicate_point_road_surface_fork_to_swsd_rcsdroad"
 )
+PARTIAL_SURFACE_DIRECT_FALLBACK_REASON = "road_surface_fork_direct_rcsdroad_fallback_only"
+PARTIAL_SURFACE_DIRECT_FALLBACK_ACTION = (
+    "retained_road_surface_fork_with_direct_rcsdroad_fallback_only"
+)
 
 
 def _semantic_anchor_distance_m(aggregate: dict[str, Any]) -> float | None:
@@ -201,6 +205,15 @@ def _duplicate_same_point_owner(
         ):
             return owner
     return None
+
+
+def _direct_first_hit_fallback_roads(
+    first_hit: tuple[str, ...],
+    *,
+    allowed_roads: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    allowed = set(_dedupe(allowed_roads))
+    return _dedupe(road_id for road_id in first_hit if not allowed or road_id in allowed)
 
 def _local_rcsd_unit_support(
     audit: dict[str, Any],
@@ -1030,11 +1043,8 @@ def _demote_duplicate_point_surface_to_swsd_rcsdroad(
     duplicate_owner: T04EventUnitResult,
     decision_reason: str,
 ) -> tuple[T04EventUnitResult, dict[str, Any]]:
-    fallback_roads = _dedupe(selected_roads or first_hit)
-    fallback_road_set = set(fallback_roads)
-    fallback_first_hit = _dedupe(road_id for road_id in first_hit if road_id in fallback_road_set)
-    if not fallback_first_hit and fallback_roads:
-        fallback_first_hit = (fallback_roads[0],)
+    fallback_roads = _direct_first_hit_fallback_roads(first_hit, allowed_roads=selected_roads)
+    fallback_first_hit = fallback_roads
     rcsd_mode = DUPLICATE_POINT_SURFACE_DEMOTION_REASON
     detail = {
         "action": DUPLICATE_POINT_SURFACE_DEMOTION_ACTION,
@@ -1157,6 +1167,7 @@ def _demote_duplicate_point_surface_to_swsd_rcsdroad(
         positive_rcsd_geometry=_road_geometries(case_result, fallback_roads),
         positive_rcsd_road_geometry=_road_geometries(case_result, fallback_roads),
         positive_rcsd_node_geometry=None,
+        rcsdroad_only_chain=None,
         primary_main_rc_node_geometry=None,
         required_rcsd_node_geometry=None,
     )
@@ -1204,6 +1215,8 @@ def _demote_duplicate_point_surface_to_swsd_rcsdroad(
         selected_candidate_summary=dict(summary),
         selected_evidence_summary=dict(summary),
         positive_rcsd_audit=updated_audit,
+        rcsdroad_only_chain=None,
+        surface_scenario_published=False,
         candidate_audit_entries=updated_entries,
         conflict_resolution_action="road_surface_fork_binding",
         post_resolution_candidate_id=entry.candidate_id,
@@ -1219,6 +1232,189 @@ def _demote_duplicate_point_surface_to_swsd_rcsdroad(
             replacement_reason=DUPLICATE_POINT_SURFACE_DEMOTION_REASON,
         ),
         detail,
+    )
+
+
+def _retain_surface_direct_rcsdroad_fallback_only(
+    case_result: T04CaseResult,
+    event_unit: T04EventUnitResult,
+    entry: T04CandidateAuditEntry,
+    *,
+    aggregate_id: str,
+    primary_node: str | None,
+    selected_roads: tuple[str, ...],
+    selected_nodes: tuple[str, ...],
+    first_hit: tuple[str, ...],
+    decision_reason: str,
+) -> tuple[T04EventUnitResult | None, dict[str, Any] | None]:
+    fallback_roads = _direct_first_hit_fallback_roads(first_hit)
+    if not fallback_roads:
+        return None, None
+    support_detail = {
+        "action": PARTIAL_SURFACE_DIRECT_FALLBACK_ACTION,
+        "promoted_action": "bound_selected_road_surface_fork_with_relaxed_required_rcsd",
+        "candidate_id": entry.candidate_id,
+        "candidate_scope": str(entry.candidate_summary.get("candidate_scope") or ""),
+        "selected_surface_existing": True,
+        "partial_rcsd_support_only": True,
+        "published_as_fallback_only": True,
+        "aggregated_rcsd_unit_id": aggregate_id,
+        "primary_node_id": primary_node,
+        "required_rcsd_node": None,
+        "direct_first_hit_rcsdroad_ids": list(fallback_roads),
+        "demoted_aggregate_rcsdroad_ids": list(selected_roads),
+        "demoted_aggregate_rcsdnode_ids": list(selected_nodes),
+        "rcsd_decision_reason": decision_reason,
+    }
+    review_reasons = _dedupe(
+        [
+            *event_unit.all_review_reasons(),
+            PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+            ROAD_SURFACE_FORK_BINDING_REASON,
+        ]
+    )
+    summary = dict(event_unit.selected_candidate_summary)
+    summary.update(
+        {
+            "review_reasons": list(review_reasons),
+            "road_surface_fork_binding": support_detail,
+            "rcsd_consistency_result": "none",
+            "positive_rcsd_present": False,
+            "positive_rcsd_present_reason": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+            "positive_rcsd_support_level": "no_support",
+            "positive_rcsd_consistency_level": "C",
+            "required_rcsd_node": None,
+            "required_rcsd_node_source": None,
+            "selected_rcsdroad_ids": [],
+            "selected_rcsdnode_ids": [],
+            "first_hit_rcsdroad_ids": list(fallback_roads),
+            "fallback_rcsdroad_ids": list(fallback_roads),
+            "local_rcsd_unit_id": None,
+            "local_rcsd_unit_kind": None,
+            "aggregated_rcsd_unit_id": None,
+            "aggregated_rcsd_unit_ids": [],
+            "primary_main_rc_node": None,
+            "primary_main_rc_node_id": None,
+            "rcsd_alignment_type": RCSD_ALIGNMENT_NONE,
+            "rcsd_selection_mode": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+            "rcsd_decision_reason": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+        }
+    )
+    updated_audit = dict(event_unit.positive_rcsd_audit)
+    updated_audit.pop("road_surface_fork_without_bound_target_rcsd", None)
+    updated_audit.update(
+        {
+            "road_surface_fork_binding": support_detail,
+            PARTIAL_SURFACE_DIRECT_FALLBACK_REASON: support_detail,
+            "positive_rcsd_present": False,
+            "positive_rcsd_present_reason": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+            "positive_rcsd_support_level": "no_support",
+            "positive_rcsd_consistency_level": "C",
+            "required_rcsd_node_source": None,
+            "required_rcsd_node": None,
+            "published_rcsdroad_ids": list(fallback_roads),
+            "published_rcsdnode_ids": [],
+            "published_member_unit_ids": [],
+            "published_rcsd_selection_mode": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+            "first_hit_rcsdroad_ids": list(fallback_roads),
+            "selected_unit_role_assignments": [
+                assignment
+                for assignment in updated_audit.get("selected_unit_role_assignments") or ()
+                if isinstance(assignment, dict)
+                and str(assignment.get("road_id") or "").strip() in set(fallback_roads)
+            ],
+            "local_rcsd_unit_id": None,
+            "local_rcsd_unit_kind": None,
+            "aggregated_rcsd_unit_id": None,
+            "aggregated_rcsd_unit_ids": [],
+            "rcsd_alignment_type": RCSD_ALIGNMENT_NONE,
+            "rcsd_selection_mode": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+            "rcsd_decision_reason": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+        }
+    )
+    updated_entries = _candidate_entries_with_selection(
+        event_unit.candidate_audit_entries,
+        replace_step4_pre_arbiter_candidate(
+            entry,
+            candidate_summary=dict(summary),
+            review_state="STEP4_REVIEW",
+            review_reasons=review_reasons,
+            rcsd_consistency_result="none",
+            positive_rcsd_support_level="no_support",
+            positive_rcsd_consistency_level="C",
+            required_rcsd_node=None,
+            first_hit_rcsdroad_ids=fallback_roads,
+            selected_rcsdroad_ids=fallback_roads,
+            selected_rcsdnode_ids=(),
+            primary_main_rc_node_id=None,
+            local_rcsd_unit_id=None,
+            local_rcsd_unit_kind=None,
+            aggregated_rcsd_unit_id=None,
+            aggregated_rcsd_unit_ids=(),
+            positive_rcsd_present=False,
+            positive_rcsd_present_reason=PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+            rcsd_selection_mode=PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+            required_rcsd_node_source=None,
+            positive_rcsd_audit=updated_audit,
+            pair_local_rcsd_scope_geometry=_road_geometries(case_result, event_unit.pair_local_rcsd_road_ids),
+            first_hit_rcsd_road_geometry=_road_geometries(case_result, fallback_roads),
+            local_rcsd_unit_geometry=_road_geometries(case_result, fallback_roads),
+            positive_rcsd_geometry=_road_geometries(case_result, fallback_roads),
+            positive_rcsd_road_geometry=_road_geometries(case_result, fallback_roads),
+            positive_rcsd_node_geometry=None,
+            rcsdroad_only_chain=None,
+            primary_main_rc_node_geometry=None,
+            required_rcsd_node_geometry=None,
+        ),
+        summary,
+    )
+    updated = replace_step4_pre_arbiter_candidate(
+        event_unit,
+        review_reasons=review_reasons,
+        rcsd_consistency_result="none",
+        pair_local_rcsd_scope_geometry=_road_geometries(case_result, event_unit.pair_local_rcsd_road_ids),
+        first_hit_rcsd_road_geometry=_road_geometries(case_result, fallback_roads),
+        local_rcsd_unit_geometry=_road_geometries(case_result, fallback_roads),
+        positive_rcsd_geometry=_road_geometries(case_result, fallback_roads),
+        positive_rcsd_road_geometry=_road_geometries(case_result, fallback_roads),
+        positive_rcsd_node_geometry=None,
+        primary_main_rc_node_geometry=None,
+        required_rcsd_node_geometry=None,
+        first_hit_rcsdroad_ids=fallback_roads,
+        selected_rcsdroad_ids=fallback_roads,
+        selected_rcsdnode_ids=(),
+        primary_main_rc_node_id=None,
+        local_rcsd_unit_id=None,
+        local_rcsd_unit_kind=None,
+        aggregated_rcsd_unit_id=None,
+        aggregated_rcsd_unit_ids=(),
+        positive_rcsd_present=False,
+        positive_rcsd_present_reason=PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+        rcsd_selection_mode=PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+        positive_rcsd_support_level="no_support",
+        positive_rcsd_consistency_level="C",
+        required_rcsd_node=None,
+        required_rcsd_node_source=None,
+        selected_candidate_summary=dict(summary),
+        selected_evidence_summary=dict(summary),
+        positive_rcsd_audit=updated_audit,
+        rcsdroad_only_chain=None,
+        surface_scenario_published=False,
+        candidate_audit_entries=updated_entries,
+        conflict_resolution_action="road_surface_fork_binding",
+        post_resolution_candidate_id=entry.candidate_id,
+        post_required_rcsd_node=None,
+        resolution_reason=PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+    )
+    return (
+        append_dual_write_candidate(
+            updated,
+            case_id=case_result.case_spec.case_id,
+            source_stage="promotion",
+            source_audit_blob=support_detail,
+            replacement_reason=PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
+        ),
+        support_detail,
     )
 
 
@@ -1289,6 +1485,19 @@ def _promote_selected_surface_partial_rcsd(
             duplicate_owner=duplicate_owner,
             decision_reason=decision_reason,
         )
+    fallback_only, fallback_detail = _retain_surface_direct_rcsdroad_fallback_only(
+        case_result,
+        event_unit,
+        entry,
+        aggregate_id=aggregate_id,
+        primary_node=primary_node,
+        selected_roads=selected_roads,
+        selected_nodes=selected_nodes,
+        first_hit=first_hit,
+        decision_reason=decision_reason,
+    )
+    if fallback_only is not None:
+        return fallback_only, fallback_detail
     support_detail = dict(bind_detail)
     support_detail.update(
         {

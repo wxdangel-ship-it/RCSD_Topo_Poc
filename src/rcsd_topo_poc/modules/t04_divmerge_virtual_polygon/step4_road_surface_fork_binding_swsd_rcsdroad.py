@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 from typing import Any
 
 from .case_models import T04CaseResult, T04EventUnitResult
@@ -20,6 +21,9 @@ SHARED_RCSDROAD_MIN_SWSD_ROAD_SUPPORT = 3
 SHARED_RCSDROAD_REASON = "complex_swsd_shared_rcsdroad_alignment"
 SINGLE_RCSDROAD_MAX_ROAD_DISTANCE_M = 2.5
 SINGLE_RCSDROAD_MAX_UNIT_DISTANCE_M = 3.0
+SINGLE_RCSDROAD_RELAXED_MAX_ROAD_DISTANCE_M = 8.0
+SINGLE_RCSDROAD_RELAXED_MAX_UNIT_DISTANCE_M = 8.0
+SINGLE_RCSDROAD_MAX_DIRECTION_DELTA_DEG = 30.0
 SINGLE_RCSDROAD_MIN_SWSD_ROAD_SUPPORT = 3
 SINGLE_RCSDROAD_REASON = "single_swsd_rcsdroad_alignment"
 SWSD_WINDOW_NO_RCSD_MODE = "swsd_junction_window_no_rcsd"
@@ -128,6 +132,65 @@ def _unit_points(units: tuple[T04EventUnitResult, ...]) -> tuple[Any, ...]:
     return tuple(points)
 
 
+def _geometry_orientation_deg(geometry: Any) -> float | None:
+    if geometry is None or geometry.is_empty:
+        return None
+    target = geometry
+    if not hasattr(target, "coords"):
+        geoms = tuple(getattr(target, "geoms", ()) or ())
+        line_geoms = [geom for geom in geoms if hasattr(geom, "coords") and not geom.is_empty]
+        if not line_geoms:
+            return None
+        target = max(line_geoms, key=lambda geom: float(getattr(geom, "length", 0.0)))
+    coords = list(target.coords)
+    if len(coords) < 2:
+        return None
+    start = coords[0]
+    end = coords[-1]
+    dx = float(end[0]) - float(start[0])
+    dy = float(end[1]) - float(start[1])
+    if abs(dx) <= 1e-9 and abs(dy) <= 1e-9:
+        return None
+    return math.degrees(math.atan2(dy, dx)) % 180.0
+
+
+def _direction_delta_deg(a: float | None, b: float | None) -> float | None:
+    if a is None or b is None:
+        return None
+    delta = abs(float(a) - float(b)) % 180.0
+    return min(delta, 180.0 - delta)
+
+
+def _single_rcsdroad_supported_distances(
+    rcsd_geometry: Any,
+    related_roads: tuple[Any, ...],
+    *,
+    max_distance_m: float,
+    require_direction_match: bool,
+) -> tuple[list[float], list[float]]:
+    rcsd_orientation = _geometry_orientation_deg(rcsd_geometry)
+    supported_distances: list[float] = []
+    direction_deltas: list[float] = []
+    for swsd in related_roads:
+        swsd_geometry = getattr(swsd, "geometry", None)
+        if swsd_geometry is None or swsd_geometry.is_empty:
+            continue
+        distance = float(rcsd_geometry.distance(swsd_geometry))
+        direction_delta = _direction_delta_deg(rcsd_orientation, _geometry_orientation_deg(swsd_geometry))
+        if distance > max_distance_m:
+            continue
+        if (
+            require_direction_match
+            and direction_delta is not None
+            and direction_delta > SINGLE_RCSDROAD_MAX_DIRECTION_DELTA_DEG
+        ):
+            continue
+        supported_distances.append(distance)
+        if direction_delta is not None:
+            direction_deltas.append(direction_delta)
+    return supported_distances, direction_deltas
+
+
 def _score_shared_rcsdroad(
     case_result: T04CaseResult,
     units: tuple[T04EventUnitResult, ...],
@@ -209,19 +272,50 @@ def _score_single_rcsdroad(
         return None
     unit_point = unit_points[0]
 
+    min_road_support = min(
+        max(SINGLE_RCSDROAD_MIN_SWSD_ROAD_SUPPORT, 1),
+        len(related_roads),
+    )
     scores: list[dict[str, Any]] = []
     for road in case_result.case_bundle.rcsd_roads:
         geometry = getattr(road, "geometry", None)
         if geometry is None or geometry.is_empty:
             continue
         road_distances = [float(geometry.distance(swsd.geometry)) for swsd in related_roads]
-        supported_distances = [
-            distance
-            for distance in road_distances
-            if distance <= SINGLE_RCSDROAD_MAX_ROAD_DISTANCE_M
-        ]
         unit_distance = float(geometry.distance(unit_point))
-        if unit_distance > SINGLE_RCSDROAD_MAX_UNIT_DISTANCE_M:
+        strict_supported_distances, strict_direction_deltas = _single_rcsdroad_supported_distances(
+            geometry,
+            related_roads,
+            max_distance_m=SINGLE_RCSDROAD_MAX_ROAD_DISTANCE_M,
+            require_direction_match=False,
+        )
+        relaxed_supported_distances, relaxed_direction_deltas = _single_rcsdroad_supported_distances(
+            geometry,
+            related_roads,
+            max_distance_m=SINGLE_RCSDROAD_RELAXED_MAX_ROAD_DISTANCE_M,
+            require_direction_match=True,
+        )
+        strict_ok = (
+            unit_distance <= SINGLE_RCSDROAD_MAX_UNIT_DISTANCE_M
+            and len(strict_supported_distances) >= min_road_support
+        )
+        relaxed_ok = (
+            unit_distance <= SINGLE_RCSDROAD_RELAXED_MAX_UNIT_DISTANCE_M
+            and len(relaxed_supported_distances) >= min_road_support
+        )
+        if strict_ok:
+            supported_distances = strict_supported_distances
+            direction_deltas = strict_direction_deltas
+            support_mode = "strict"
+            support_distance_threshold_m = SINGLE_RCSDROAD_MAX_ROAD_DISTANCE_M
+            unit_distance_threshold_m = SINGLE_RCSDROAD_MAX_UNIT_DISTANCE_M
+        elif relaxed_ok:
+            supported_distances = relaxed_supported_distances
+            direction_deltas = relaxed_direction_deltas
+            support_mode = "relaxed_directional"
+            support_distance_threshold_m = SINGLE_RCSDROAD_RELAXED_MAX_ROAD_DISTANCE_M
+            unit_distance_threshold_m = SINGLE_RCSDROAD_RELAXED_MAX_UNIT_DISTANCE_M
+        else:
             continue
         scores.append(
             {
@@ -239,15 +333,17 @@ def _score_single_rcsdroad(
                 ),
                 "min_road_distance_m": min(road_distances),
                 "max_unit_distance_m": unit_distance,
+                "support_mode": support_mode,
+                "support_distance_threshold_m": support_distance_threshold_m,
+                "unit_distance_threshold_m": unit_distance_threshold_m,
+                "max_direction_delta_deg": (
+                    max(direction_deltas) if direction_deltas else None
+                ),
             }
         )
     if not scores:
         return None
 
-    min_road_support = min(
-        max(SINGLE_RCSDROAD_MIN_SWSD_ROAD_SUPPORT, 1),
-        len(related_roads),
-    )
     scores = [
         score
         for score in scores
@@ -260,6 +356,7 @@ def _score_single_rcsdroad(
         key=lambda item: (
             -int(item["road_support_count"]),
             -int(item["unit_support_count"]),
+            0 if item.get("support_mode") == "strict" else 1,
             float(item["mean_supported_road_distance_m"]),
             float(item["max_supported_road_distance_m"]),
             float(item["max_unit_distance_m"]),
@@ -300,6 +397,22 @@ def _shared_rcsdroad_audit(
         "max_unit_distance_m": (
             round(float(score["max_unit_distance_m"]), 6)
             if score.get("max_unit_distance_m") is not None
+            else None
+        ),
+        "support_mode": str(score.get("support_mode") or ""),
+        "support_distance_threshold_m": (
+            round(float(score["support_distance_threshold_m"]), 6)
+            if score.get("support_distance_threshold_m") is not None
+            else None
+        ),
+        "unit_distance_threshold_m": (
+            round(float(score["unit_distance_threshold_m"]), 6)
+            if score.get("unit_distance_threshold_m") is not None
+            else None
+        ),
+        "max_direction_delta_deg": (
+            round(float(score["max_direction_delta_deg"]), 6)
+            if score.get("max_direction_delta_deg") is not None
             else None
         ),
     }
@@ -359,6 +472,22 @@ def _promote_unit_to_shared_rcsdroad(
         "road_id": road_id,
         "road_support_count": int(score["road_support_count"]),
         "unit_support_count": int(score["unit_support_count"]),
+        "support_mode": str(score.get("support_mode") or ""),
+        "support_distance_threshold_m": (
+            round(float(score["support_distance_threshold_m"]), 6)
+            if score.get("support_distance_threshold_m") is not None
+            else None
+        ),
+        "unit_distance_threshold_m": (
+            round(float(score["unit_distance_threshold_m"]), 6)
+            if score.get("unit_distance_threshold_m") is not None
+            else None
+        ),
+        "max_direction_delta_deg": (
+            round(float(score["max_direction_delta_deg"]), 6)
+            if score.get("max_direction_delta_deg") is not None
+            else None
+        ),
     }
     summary = {
         **dict(unit.selected_evidence_summary or unit.selected_candidate_summary or {}),
@@ -542,6 +671,20 @@ def align_single_swsd_unit_to_rcsdroad(
                     6,
                 ),
                 "max_unit_distance_m": round(float(score["max_unit_distance_m"]), 6),
+                "support_mode": str(score.get("support_mode") or ""),
+                "support_distance_threshold_m": round(
+                    float(score["support_distance_threshold_m"]),
+                    6,
+                ),
+                "unit_distance_threshold_m": round(
+                    float(score["unit_distance_threshold_m"]),
+                    6,
+                ),
+                "max_direction_delta_deg": (
+                    round(float(score["max_direction_delta_deg"]), 6)
+                    if score.get("max_direction_delta_deg") is not None
+                    else None
+                ),
             },
         }
     ]

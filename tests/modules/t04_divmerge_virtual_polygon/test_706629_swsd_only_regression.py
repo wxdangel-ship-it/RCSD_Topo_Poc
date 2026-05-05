@@ -360,10 +360,12 @@ def test_real_768675_bilateral_road_surface_fork_accepts_as_main_evidence(tmp_pa
     case_dir = run_root / "cases" / "768675"
     step4_status = json.loads((case_dir / "step4_event_interpretation.json").read_text(encoding="utf-8"))
     step5_status = json.loads((case_dir / "step5_status.json").read_text(encoding="utf-8"))
+    step5_audit = json.loads((case_dir / "step5_audit.json").read_text(encoding="utf-8"))
     step6_status = json.loads((case_dir / "step6_status.json").read_text(encoding="utf-8"))
     step7_status = json.loads((case_dir / "step7_status.json").read_text(encoding="utf-8"))
     unit4 = step4_status["event_units"][0]
     unit5 = step5_status["unit_results"][0]
+    audit4 = unit4["positive_rcsd_audit"]
 
     assert step7_status["final_state"] == "accepted"
     assert unit4["evidence_source"] == "road_surface_fork"
@@ -382,7 +384,17 @@ def test_real_768675_bilateral_road_surface_fork_accepts_as_main_evidence(tmp_pa
         "5384381972223743",
         "5384381972223834",
     ]
-    assert unit4["first_hit_rcsdroad_ids"] == ["5384381972223834"]
+    assert audit4["published_rcsdroad_ids"] == unit4["selected_rcsdroad_ids"]
+    assert audit4["published_member_unit_ids"] == ["event_unit_01:node:5384381972223566"]
+    unrelated_neighbor_roads = {
+        "5384381570613791",
+        "5384381972223798",
+        "5384381972223841",
+    }
+    assert unrelated_neighbor_roads.isdisjoint(set(step5_audit["related_rcsd_road_ids"]))
+    assert unrelated_neighbor_roads <= set(step5_audit["unrelated_rcsd_road_ids"])
+    assert set(unit4["first_hit_rcsdroad_ids"]) <= set(unit4["selected_rcsdroad_ids"])
+    assert "5384381972223834" in set(unit4["first_hit_rcsdroad_ids"])
     assert unit5["localized_evidence_core_geometry"]["present"] is True
     assert step6_status["assembly_state"] == "assembled"
     assert step6_status["final_case_polygon_component_count"] == 1
@@ -703,6 +715,49 @@ def test_real_785731_single_swsd_rcsdroad_fallback_accepts(tmp_path: Path) -> No
     assert unit5["fallback_rcsdroad_ids"] == ["5395376082131816"]
     unrelated_rcsd = set(step5["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
     assert "5395376082131816" not in unrelated_rcsd
+    assert step6["post_cleanup_negative_mask_ok"] is True
+    assert step6["negative_mask_conflict_channel_names"] == []
+    assert step6["final_case_polygon_component_count"] == 1
+    assert step6["single_connected_case_surface_ok"] is True
+
+
+@pytest.mark.smoke
+def test_real_795682_single_swsd_rcsdroad_fallback_accepts(tmp_path: Path) -> None:
+    if not (REAL_ANCHOR_2_ROOT / "795682").is_dir():
+        pytest.skip("missing real Anchor_2 case: 795682")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=["795682"],
+        out_root=tmp_path / "out_795682_single_swsd_rcsdroad",
+        run_id="real_795682_single_swsd_rcsdroad",
+    )
+    case_dir = run_root / "cases" / "795682"
+    step4 = json.loads((case_dir / "step4_event_interpretation.json").read_text(encoding="utf-8"))
+    step5 = json.loads((case_dir / "step5_status.json").read_text(encoding="utf-8"))
+    step6 = json.loads((case_dir / "step6_status.json").read_text(encoding="utf-8"))
+    step7 = json.loads((case_dir / "step7_status.json").read_text(encoding="utf-8"))
+
+    unit4 = step4["event_units"][0]
+    unit5 = step5["unit_results"][0]
+    assert step7["final_state"] == "accepted"
+    assert unit4["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
+    assert unit4["rcsd_alignment_type"] == RCSD_ALIGNMENT_ROAD_ONLY
+    assert unit4["section_reference_source"] == SECTION_REFERENCE_SWSD
+    assert unit4["surface_generation_mode"] == SURFACE_MODE_SWSD_WITH_RCSDROAD
+    assert unit4["reference_point_present"] is False
+    assert unit4.get("fact_reference_point") is None
+    assert unit4["fallback_rcsdroad_ids"] == ["5396443247022856"]
+    alignment = unit4["selected_evidence"]["single_swsd_rcsdroad_alignment"]
+    assert alignment["road_id"] == "5396443247022856"
+    assert alignment["support_mode"] == "relaxed_directional"
+    assert alignment["road_support_count"] == 3
+    assert alignment["max_direction_delta_deg"] <= 30.0
+    assert unit5["fallback_rcsdroad_ids"] == ["5396443247022856"]
+    unrelated_rcsd = set(step5["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
+    assert "5396443247022856" not in unrelated_rcsd
+    assert step6["b_node_gate_applicable"] is False
+    assert step6["b_node_gate_skip_reason"] == "no_main_swsd_rcsdroad_fallback"
     assert step6["post_cleanup_negative_mask_ok"] is True
     assert step6["negative_mask_conflict_channel_names"] == []
     assert step6["final_case_polygon_component_count"] == 1

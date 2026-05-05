@@ -227,6 +227,68 @@ def _road_ids_from_unit(unit: Mapping[str, Any] | None) -> tuple[str, ...]:
     return _tuple_str(unit.get("road_ids"))
 
 
+def _road_only_alignment_roads(
+    positive_rcsd_audit: Mapping[str, Any],
+) -> tuple[str, ...]:
+    raw_alignment_type = _clean_text(positive_rcsd_audit.get("rcsd_alignment_type"))
+    if (
+        raw_alignment_type
+        and normalize_rcsd_alignment_type(raw_alignment_type)
+        != RCSD_ALIGNMENT_ROAD_ONLY
+    ):
+        return ()
+    if _clean_text(positive_rcsd_audit.get("required_rcsd_node")):
+        return ()
+
+    local_units = tuple(
+        unit for unit in (positive_rcsd_audit.get("local_rcsd_units") or ()) if isinstance(unit, Mapping)
+    )
+    aggregate_units = tuple(
+        unit for unit in (positive_rcsd_audit.get("aggregated_rcsd_units") or ()) if isinstance(unit, Mapping)
+    )
+
+    def is_road_only(unit: Mapping[str, Any] | None) -> bool:
+        if not unit:
+            return False
+        if _clean_text(unit.get("required_node_id")):
+            return False
+        member_kinds = {_clean_text(item) for item in (unit.get("member_unit_kinds") or ())}
+        unit_kind = _clean_text(unit.get("unit_kind"))
+        return bool(_road_ids_from_unit(unit)) and (
+            unit_kind == "road_only"
+            or (bool(member_kinds) and member_kinds <= {"road_only"})
+        )
+
+    aggregate = _unit_doc_by_id(
+        aggregate_units,
+        _clean_text(positive_rcsd_audit.get("aggregated_rcsd_unit_id")),
+    )
+    if is_road_only(aggregate):
+        return _direct_hit_fallback_roads(positive_rcsd_audit, _road_ids_from_unit(aggregate))
+
+    local = _unit_doc_by_id(local_units, _clean_text(positive_rcsd_audit.get("local_rcsd_unit_id")))
+    if is_road_only(local):
+        return _direct_hit_fallback_roads(positive_rcsd_audit, _road_ids_from_unit(local))
+
+    road_only_units = tuple(unit for unit in local_units if is_road_only(unit))
+    positive_units = tuple(unit for unit in road_only_units if bool(unit.get("positive_rcsd_present")))
+    if len(positive_units) == 1:
+        return _direct_hit_fallback_roads(positive_rcsd_audit, _road_ids_from_unit(positive_units[0]))
+
+    first_hit_roads = set(_tuple_str(positive_rcsd_audit.get("first_hit_rcsdroad_ids")))
+    first_hit_units = tuple(
+        unit
+        for unit in road_only_units
+        if bool(first_hit_roads & set(_road_ids_from_unit(unit)))
+    )
+    if len(first_hit_units) == 1:
+        return _direct_hit_fallback_roads(positive_rcsd_audit, _road_ids_from_unit(first_hit_units[0]))
+
+    if len(road_only_units) == 1:
+        return _direct_hit_fallback_roads(positive_rcsd_audit, _road_ids_from_unit(road_only_units[0]))
+    return ()
+
+
 def _direct_hit_fallback_roads(
     positive_rcsd_audit: Mapping[str, Any],
     road_ids: Sequence[Any] | None,
@@ -367,6 +429,7 @@ def _fallback_rcsdroad_ids(
     audit_roads: Sequence[Any] | None = None
     if positive_rcsd_audit:
         published_roads = _tuple_str(positive_rcsd_audit.get("published_rcsdroad_ids"))
+        road_only_roads = _road_only_alignment_roads(positive_rcsd_audit)
         audit_reasons = {
             _clean_text(positive_rcsd_audit.get("positive_rcsd_present_reason")),
             _clean_text(positive_rcsd_audit.get("rcsd_decision_reason")),
@@ -389,10 +452,12 @@ def _fallback_rcsdroad_ids(
             and _clean_text(positive_rcsd_audit.get("local_rcsd_unit_kind")) == "road_only"
             and not swsd_window_rcsdroad_alignment
         )
-        if audit_is_non_fallback:
+        if audit_is_non_fallback and not road_only_roads:
             return ()
         if swsd_window_rcsdroad_alignment:
             audit_roads = _unique_swsd_window_fallback_roads(positive_rcsd_audit)
+        elif road_only_roads:
+            audit_roads = road_only_roads
         elif not audit_is_non_fallback:
             audit_roads = published_roads or positive_rcsd_audit.get("first_hit_rcsdroad_ids")
     return _tuple_str([*(_tuple_str(selected_rcsdroad_ids)), *(_tuple_str(first_hit_rcsdroad_ids)), *(_tuple_str(audit_roads))])

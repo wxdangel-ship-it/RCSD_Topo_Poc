@@ -21,6 +21,9 @@ NODE_FALLBACK_DISTANCE_MAX_M = 3.0
 DEGRADED_REVERSE_DIVSTRIP_MAX_REFERENCE_DISTANCE_M = 60.0
 DEGRADED_REVERSE_DIVSTRIP_MAX_MIDDLE_RATIO = 0.10
 DEGRADED_REVERSE_DIVSTRIP_MIN_THROAT_RATIO = 0.05
+DEGRADED_REMOTE_DIVSTRIP_MAX_REFERENCE_DISTANCE_M = 60.0
+DEGRADED_REMOTE_DIVSTRIP_MAX_MIDDLE_RATIO = 0.02
+DEGRADED_REMOTE_DIVSTRIP_MIN_THROAT_RATIO = 0.05
 ROAD_SURFACE_FORK_SCOPE = "road_surface_fork"
 INVALID_PRIMARY_REASONS = {
     "event_reference_outside_branch_middle",
@@ -32,7 +35,7 @@ INVALID_PRIMARY_REASONS = {
 
 def _has_degraded_pair_local_scope(result: T04EventUnitResult) -> bool:
     return any(
-        str(reason).strip() == "degraded_scope:pair_local_scope_roads_empty"
+        "pair_local_scope_roads_empty" in str(reason or "").strip()
         for reason in result.all_review_reasons()
     )
 
@@ -57,6 +60,29 @@ def _degraded_reverse_divstrip_far_from_throat(
         reference_distance > DEGRADED_REVERSE_DIVSTRIP_MAX_REFERENCE_DISTANCE_M
         and middle_ratio < DEGRADED_REVERSE_DIVSTRIP_MAX_MIDDLE_RATIO
         and throat_ratio < DEGRADED_REVERSE_DIVSTRIP_MIN_THROAT_RATIO
+    )
+
+
+def _degraded_remote_divstrip_weakly_attached(
+    candidate_summary: dict,
+    result: T04EventUnitResult,
+) -> bool:
+    if str(candidate_summary.get("candidate_scope") or "") != "divstrip_component":
+        return False
+    if bool(result.positive_rcsd_present):
+        return False
+    if not _has_degraded_pair_local_scope(result):
+        return False
+    try:
+        reference_distance = float(candidate_summary.get("reference_distance_to_origin_m") or 0.0)
+        middle_ratio = float(candidate_summary.get("pair_middle_overlap_ratio") or 0.0)
+        throat_ratio = float(candidate_summary.get("throat_overlap_ratio") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        reference_distance > DEGRADED_REMOTE_DIVSTRIP_MAX_REFERENCE_DISTANCE_M
+        and middle_ratio < DEGRADED_REMOTE_DIVSTRIP_MAX_MIDDLE_RATIO
+        and throat_ratio < DEGRADED_REMOTE_DIVSTRIP_MIN_THROAT_RATIO
     )
 
 
@@ -150,6 +176,12 @@ def _merge_candidate_evaluation(candidate_summary: dict, result: T04EventUnitRes
         merged["degraded_reverse_divstrip_far_from_throat"] = True
         review_reasons = list(merged.get("review_reasons") or result.all_review_reasons())
         review_reasons.append("degraded_reverse_divstrip_far_from_throat")
+        merged["review_reasons"] = list(dict.fromkeys(str(reason) for reason in review_reasons))
+    if _degraded_remote_divstrip_weakly_attached(merged, result):
+        merged["primary_eligible"] = False
+        merged["degraded_remote_divstrip_weakly_attached"] = True
+        review_reasons = list(merged.get("review_reasons") or result.all_review_reasons())
+        review_reasons.append("degraded_remote_divstrip_weakly_attached")
         merged["review_reasons"] = list(dict.fromkeys(str(reason) for reason in review_reasons))
     support_level = result.positive_rcsd_support_level
     consistency_level = result.positive_rcsd_consistency_level

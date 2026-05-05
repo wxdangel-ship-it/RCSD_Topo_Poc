@@ -497,14 +497,18 @@ def arbitrate_step4_unit(
         _clean_text(unit_scenario_doc.get("rcsd_alignment_type")) == RCSD_ALIGNMENT_ROAD_ONLY
         and bool(fallback_rcsdroad_ids)
         and bool(unit_scenario_doc.get("swsd_junction_present"))
-        and not bool(unit_scenario_doc.get("has_main_evidence"))
     ):
+        event_name = (
+            "preserve_main_evidence_rcsdroad_fallback_without_positive_candidate"
+            if bool(unit_scenario_doc.get("has_main_evidence"))
+            else "preserve_swsd_rcsdroad_fallback_without_positive_candidate"
+        )
         decision = _decision_from_unit(
             unit,
             trace=(
                 *trace,
                 {
-                    "event": "preserve_swsd_rcsdroad_fallback_without_positive_candidate",
+                    "event": event_name,
                     "case_id": case_context.case_id,
                     "unit_id": case_context.unit_id,
                     "fallback_rcsdroad_ids": list(fallback_rcsdroad_ids),

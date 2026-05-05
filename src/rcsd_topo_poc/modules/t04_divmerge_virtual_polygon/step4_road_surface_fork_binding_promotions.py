@@ -117,6 +117,55 @@ def _local_rcsd_unit_support(
     return None
 
 
+def _published_member_unit_ids_for_selection(
+    audit: dict[str, Any],
+    *,
+    local_unit_id: str | None,
+    required_node: str | None,
+) -> tuple[str, ...]:
+    local_unit_text = str(local_unit_id or "").strip()
+    if local_unit_text:
+        return (local_unit_text,)
+    required_node_text = str(required_node or "").strip()
+    if not required_node_text:
+        return ()
+    for unit in audit.get("local_rcsd_units") or ():
+        if not isinstance(unit, dict):
+            continue
+        unit_id = str(unit.get("unit_id") or "").strip()
+        node_id = str(unit.get("node_id") or "").strip()
+        if unit_id and node_id == required_node_text:
+            return (unit_id,)
+    return ()
+
+
+def _with_unique_positive_rcsd_publish(
+    audit: dict[str, Any],
+    *,
+    selected_roads: tuple[str, ...],
+    selected_nodes: tuple[str, ...],
+    local_unit_id: str | None,
+    required_node: str | None,
+    publish_mode: str,
+) -> dict[str, Any]:
+    updated = dict(audit)
+    updated.update(
+        {
+            "published_rcsdroad_ids": list(_dedupe(selected_roads)),
+            "published_rcsdnode_ids": list(_dedupe(selected_nodes)),
+            "published_member_unit_ids": list(
+                _published_member_unit_ids_for_selection(
+                    audit,
+                    local_unit_id=local_unit_id,
+                    required_node=required_node,
+                )
+            ),
+            "published_rcsd_selection_mode": publish_mode,
+        }
+    )
+    return updated
+
+
 def _downgrade_far_surface_rcsd_to_swsd_window(
     event_unit: T04EventUnitResult,
     entry: T04CandidateAuditEntry,
@@ -380,6 +429,28 @@ def _promote_relaxed_primary_rcsd_binding(
             ROAD_SURFACE_FORK_BINDING_REASON,
         ]
     )
+    updated_audit = _with_unique_positive_rcsd_publish(
+        event_unit.positive_rcsd_audit,
+        selected_roads=selected_roads,
+        selected_nodes=selected_nodes,
+        local_unit_id=local_unit_id,
+        required_node=bound_node,
+        publish_mode="required_node_local_unit",
+    )
+    updated_audit.pop("road_surface_fork_without_bound_target_rcsd", None)
+    updated_audit.update(
+        {
+            "road_surface_fork_binding": promoted_detail,
+            "road_surface_fork_relaxed_primary_rcsd_binding": promoted_detail,
+            "positive_rcsd_present": True,
+            "positive_rcsd_present_reason": "road_surface_fork_relaxed_primary_rcsd_present",
+            "required_rcsd_node_source": RELAXED_PRIMARY_NODE_SOURCE,
+            "required_rcsd_node": bound_node,
+            "rcsd_selection_mode": RELAXED_PRIMARY_BINDING_MODE,
+            "rcsd_alignment_type": alignment_type,
+            "rcsd_decision_reason": decision_reason,
+        }
+    )
     summary = dict(event_unit.selected_candidate_summary)
     summary.update(
         {
@@ -432,6 +503,7 @@ def _promote_relaxed_primary_rcsd_binding(
         rcsd_selection_mode=RELAXED_PRIMARY_BINDING_MODE,
         rcsd_alignment_type=alignment_type,
         required_rcsd_node_source=RELAXED_PRIMARY_NODE_SOURCE,
+        positive_rcsd_audit=updated_audit,
         pair_local_rcsd_scope_geometry=_road_geometries(case_result, event_unit.pair_local_rcsd_road_ids),
         first_hit_rcsd_road_geometry=_road_geometries(case_result, first_hit),
         local_rcsd_unit_geometry=_road_geometries(case_result, selected_roads),
@@ -450,21 +522,6 @@ def _promote_relaxed_primary_rcsd_binding(
         event_unit.candidate_audit_entries,
         promoted_entry,
         summary,
-    )
-    updated_audit = dict(event_unit.positive_rcsd_audit)
-    updated_audit.pop("road_surface_fork_without_bound_target_rcsd", None)
-    updated_audit.update(
-        {
-            "road_surface_fork_binding": promoted_detail,
-            "road_surface_fork_relaxed_primary_rcsd_binding": promoted_detail,
-            "positive_rcsd_present": True,
-            "positive_rcsd_present_reason": "road_surface_fork_relaxed_primary_rcsd_present",
-            "required_rcsd_node_source": RELAXED_PRIMARY_NODE_SOURCE,
-            "required_rcsd_node": bound_node,
-            "rcsd_selection_mode": RELAXED_PRIMARY_BINDING_MODE,
-            "rcsd_alignment_type": alignment_type,
-            "rcsd_decision_reason": decision_reason,
-        }
     )
     updated = replace_step4_pre_arbiter_candidate(
         event_unit,
@@ -605,7 +662,7 @@ def _promote_selected_surface_rcsd_junction_window(
         local_unit_id=local_unit_id,
         required_node=required_node,
     )
-    if preserve_surface_main_evidence and local_support is not None:
+    if local_support is not None:
         selected_roads = _dedupe(local_support.get("road_ids") or ())
         selected_nodes = _dedupe(local_support.get("node_ids") or ())
     else:
@@ -660,7 +717,7 @@ def _promote_selected_surface_rcsd_junction_window(
         "window_half_length_m": JUNCTION_WINDOW_HALF_LENGTH_M,
         "rcsd_decision_reason": decision_reason,
         "preserved_surface_main_evidence": preserve_surface_main_evidence,
-        "selected_rcsd_scope": "required_node_local_unit" if preserve_surface_main_evidence else "published_aggregate",
+        "selected_rcsd_scope": "required_node_local_unit" if local_support is not None else "published_aggregate",
         "aggregate_context_rcsdroad_ids": list(road_ids),
         "aggregate_context_rcsdnode_ids": list(node_ids),
     }
@@ -705,6 +762,14 @@ def _promote_selected_surface_rcsd_junction_window(
         }
     )
     updated_audit = dict(audit)
+    updated_audit = _with_unique_positive_rcsd_publish(
+        updated_audit,
+        selected_roads=selected_roads,
+        selected_nodes=selected_nodes,
+        local_unit_id=local_unit_id,
+        required_node=required_node,
+        publish_mode="required_node_local_unit" if local_support is not None else "published_aggregate",
+    )
     updated_audit.pop("road_surface_fork_without_bound_target_rcsd", None)
     updated_audit.update(
         {
@@ -912,6 +977,27 @@ def _promote_selected_surface_partial_rcsd(
             "rcsd_decision_reason": decision_reason,
         }
     )
+    updated_audit = _with_unique_positive_rcsd_publish(
+        event_unit.positive_rcsd_audit,
+        selected_roads=selected_roads,
+        selected_nodes=selected_nodes,
+        local_unit_id=local_unit_id,
+        required_node=None,
+        publish_mode="road_surface_fork_partial_rcsd_support_only",
+    )
+    updated_audit.pop("road_surface_fork_without_bound_target_rcsd", None)
+    updated_audit.update(
+        {
+            "road_surface_fork_binding": support_detail,
+            "road_surface_fork_partial_rcsd_support_only": support_detail,
+            "positive_rcsd_present": True,
+            "positive_rcsd_present_reason": "road_surface_fork_partial_rcsd_support_only",
+            "required_rcsd_node_source": None,
+            "required_rcsd_node": None,
+            "rcsd_selection_mode": "road_surface_fork_partial_rcsd_support_only",
+            "rcsd_decision_reason": decision_reason,
+        }
+    )
     review_reasons = _dedupe(
         [
             *event_unit.all_review_reasons(),
@@ -971,6 +1057,7 @@ def _promote_selected_surface_partial_rcsd(
             positive_rcsd_present_reason="road_surface_fork_partial_rcsd_support_only",
             rcsd_selection_mode="road_surface_fork_partial_rcsd_support_only",
             required_rcsd_node_source=None,
+            positive_rcsd_audit=updated_audit,
             pair_local_rcsd_scope_geometry=_road_geometries(case_result, event_unit.pair_local_rcsd_road_ids),
             first_hit_rcsd_road_geometry=_road_geometries(case_result, first_hit),
             local_rcsd_unit_geometry=_road_geometries(case_result, selected_roads),
@@ -986,20 +1073,6 @@ def _promote_selected_surface_partial_rcsd(
             required_rcsd_node_geometry=None,
         ),
         summary,
-    )
-    updated_audit = dict(event_unit.positive_rcsd_audit)
-    updated_audit.pop("road_surface_fork_without_bound_target_rcsd", None)
-    updated_audit.update(
-        {
-            "road_surface_fork_binding": support_detail,
-            "road_surface_fork_partial_rcsd_support_only": support_detail,
-            "positive_rcsd_present": True,
-            "positive_rcsd_present_reason": "road_surface_fork_partial_rcsd_support_only",
-            "required_rcsd_node_source": None,
-            "required_rcsd_node": None,
-            "rcsd_selection_mode": "road_surface_fork_partial_rcsd_support_only",
-            "rcsd_decision_reason": decision_reason,
-        }
     )
     updated = replace_step4_pre_arbiter_candidate(
         event_unit,

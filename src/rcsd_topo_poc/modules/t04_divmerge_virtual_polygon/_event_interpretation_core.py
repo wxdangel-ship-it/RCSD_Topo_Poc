@@ -4,7 +4,7 @@ import inspect
 from dataclasses import replace
 from typing import Any, Iterable
 
-from shapely.geometry import GeometryCollection, Point
+from shapely.geometry import GeometryCollection, LineString, Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points, unary_union
 
@@ -88,11 +88,17 @@ from ._event_interpretation_unit_preparation import (
 )
 from .local_context import build_step2_local_context
 from .rcsd_selection import resolve_positive_rcsd_selection
+from .step4_road_surface_fork_geometry import (
+    _ordered_line_from_point,
+    _surface_fork_boundary_apex_point,
+)
 from .topology import build_step3_topology
 from .variant_ranking import (
     _pair_interval_variant_metrics_from_data,
     _prepared_variant_rank,
 )
+
+SIMPLE_SURFACE_FORK_MAX_REFERENCE_DISTANCE_M = 80.0
 
 
 def _singleton_group(node) -> tuple:
@@ -333,6 +339,67 @@ def _reference_point_from_region(
     except Exception:
         return None
     return None if representative_point is None or representative_point.is_empty else representative_point
+
+
+def _boundary_pair_road_ids_from_summary(summary: dict[str, Any]) -> tuple[str, str] | None:
+    signature = str(summary.get("boundary_pair_signature") or "").strip()
+    if not signature:
+        return None
+    parts = tuple(part.strip() for part in signature.split("__") if part.strip())
+    if len(parts) != 2:
+        return None
+    return parts[0], parts[1]
+
+
+def _road_linestring(road: ParsedRoad | None) -> LineString | None:
+    geometry = getattr(road, "geometry", None)
+    if isinstance(geometry, LineString) and not geometry.is_empty and geometry.length > 1e-6:
+        return geometry
+    parts = [
+        part
+        for part in getattr(geometry, "geoms", ())
+        if isinstance(part, LineString) and not part.is_empty and part.length > 1e-6
+    ]
+    if not parts:
+        return None
+    return max(parts, key=lambda part: float(part.length))
+
+
+def _road_surface_fork_apex_reference(
+    *,
+    surface_domain: BaseGeometry,
+    axis_origin: BaseGeometry | None,
+    pair_local_summary: dict[str, Any],
+    case_road_lookup: dict[str, ParsedRoad],
+) -> tuple[Point | None, dict[str, Any]]:
+    if not isinstance(axis_origin, Point):
+        return None, {"road_surface_fork_reference_point_mode": "apex_origin_unavailable"}
+    boundary_pair = _boundary_pair_road_ids_from_summary(pair_local_summary)
+    if boundary_pair is None:
+        return None, {"road_surface_fork_reference_point_mode": "apex_boundary_pair_unavailable"}
+    line_a = _road_linestring(case_road_lookup.get(boundary_pair[0]))
+    line_b = _road_linestring(case_road_lookup.get(boundary_pair[1]))
+    if line_a is None or line_b is None:
+        return None, {
+            "road_surface_fork_reference_point_mode": "apex_boundary_road_unavailable",
+            "boundary_pair_road_ids": list(boundary_pair),
+        }
+    seed_point = surface_domain.representative_point()
+    apex_point, apex_detail = _surface_fork_boundary_apex_point(
+        surface_domain,
+        ordered_a=_ordered_line_from_point(line_a, axis_origin),
+        ordered_b=_ordered_line_from_point(line_b, axis_origin),
+        origin=axis_origin,
+    )
+    if apex_point is None:
+        apex_detail["boundary_pair_road_ids"] = list(boundary_pair)
+        return None, apex_detail
+    apex_detail["boundary_pair_road_ids"] = list(boundary_pair)
+    apex_detail["road_surface_fork_seed_point_xy"] = [
+        round(float(seed_point.x), 3),
+        round(float(seed_point.y), 3),
+    ]
+    return apex_point, apex_detail
 
 
 def _candidate_summary(
@@ -614,15 +681,37 @@ def _build_candidate_pool(prepared: _PreparedUnitInputs) -> list[dict[str, Any]]
         properties: dict[str, Any] | None,
         reference_strategy: str = "nearest",
         force_empty_divstrip: bool = False,
+        require_surface_fork_apex: bool = False,
     ) -> None:
         normalized_region = _safe_normalize_geometry(region_geometry)
         if normalized_region is None:
             return
-        reference_point = _reference_point_from_region(
-            region_geometry=normalized_region,
-            axis_origin_point=axis_origin,
-            reference_strategy=reference_strategy,
-        )
+        reference_detail: dict[str, Any] = {}
+        if candidate_scope == ROAD_SURFACE_FORK_SCOPE and reference_strategy == "road_surface_fork_apex":
+            reference_point, reference_detail = _road_surface_fork_apex_reference(
+                surface_domain=normalized_region,
+                axis_origin=axis_origin,
+                pair_local_summary=prepared.pair_local_summary,
+                case_road_lookup=case_road_lookup,
+            )
+            if reference_point is None and require_surface_fork_apex:
+                return
+            try:
+                reference_distance = float(reference_detail.get("road_surface_fork_reference_distance_m"))
+            except (TypeError, ValueError):
+                reference_distance = None
+            if (
+                require_surface_fork_apex
+                and reference_distance is not None
+                and reference_distance > SIMPLE_SURFACE_FORK_MAX_REFERENCE_DISTANCE_M
+            ):
+                return
+        else:
+            reference_point = _reference_point_from_region(
+                region_geometry=normalized_region,
+                axis_origin_point=axis_origin,
+                reference_strategy=reference_strategy,
+            )
         axis_position_basis, axis_position_m = _stable_axis_position(
             point_geometry=reference_point,
             branch_id=prepared.preferred_axis_branch_id,
@@ -648,6 +737,8 @@ def _build_candidate_pool(prepared: _PreparedUnitInputs) -> list[dict[str, Any]]
             axis_origin_point=axis_origin,
             axis_unit_vector=axis_unit_vector,
         )
+        if reference_detail:
+            summary.update(reference_detail)
         dedupe_key = (
             str(summary["upper_evidence_object_id"]),
             str(summary["point_signature"]),
@@ -705,6 +796,26 @@ def _build_candidate_pool(prepared: _PreparedUnitInputs) -> list[dict[str, Any]]
         prepared.event_unit_spec.split_mode == "complex_one_node_one_unit"
         and len(prepared.explicit_event_branch_ids) >= 2
     )
+    allow_simple_surface_fork = (
+        prepared.event_unit_spec.split_mode == "one_case_one_unit"
+        and _boundary_pair_road_ids_from_summary(prepared.pair_local_summary) is not None
+        and not has_primary_candidate
+    )
+    if allow_simple_surface_fork and structure_face is not None and not structure_face.is_empty:
+        for index, component in enumerate(_explode_polygon_geometries(structure_face), start=1):
+            _append_candidate(
+                candidate_id=f"{prepared.event_unit_spec.event_unit_id}:structure:road_surface_fork:surface:{index:02d}",
+                source_mode="pair_local_structure_mode",
+                upper_evidence_kind="structure_face",
+                upper_evidence_object_id=prepared.pair_local_summary["region_id"],
+                candidate_scope=ROAD_SURFACE_FORK_SCOPE,
+                region_geometry=component,
+                feature_index=-10,
+                properties={"candidate_scope": ROAD_SURFACE_FORK_SCOPE},
+                reference_strategy="road_surface_fork_apex",
+                force_empty_divstrip=True,
+                require_surface_fork_apex=True,
+            )
     if (
         throat_core is not None
         and not throat_core.is_empty
@@ -899,6 +1010,7 @@ def _build_result_from_interpretation(
         scoped_output_branch_ids=prepared.scoped_output_branch_ids,
         branch_road_memberships=prepared.branch_road_memberships,
         axis_vector=rcsd_axis_vector,
+        allow_semantic_endpoint_expansion=road_surface_fork_candidate,
     )
     positive_rcsd_support_level = positive_rcsd_decision.positive_rcsd_support_level
     positive_rcsd_consistency_level = positive_rcsd_decision.positive_rcsd_consistency_level

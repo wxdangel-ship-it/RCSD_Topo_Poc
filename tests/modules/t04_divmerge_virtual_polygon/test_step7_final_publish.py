@@ -72,9 +72,9 @@ ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502: dict[str, dict[str, object]] = {
         "step4_main_evidence_type": "none",
     },
     "795682": {
-        "surface_scenario_type": "no_main_evidence_with_swsd_only",
+        "surface_scenario_type": "no_main_evidence_with_rcsdroad_fallback_and_swsd",
         "section_reference_source": "swsd_junction",
-        "surface_generation_mode": "swsd_junction_window",
+        "surface_generation_mode": "swsd_with_rcsdroad_fallback",
         "step4_evidence_source": "swsd_junction_window",
         "step4_main_evidence_type": "none",
     },
@@ -1052,6 +1052,46 @@ def test_anchor2_39case_official_surface_scenario_gate(tmp_path: Path) -> None:
             assert "positive_rcsdroad_ids" in alignment_result
             assert "candidate_rcsdroad_ids" in alignment_result
             assert "ambiguity_reasons" in alignment_result
+        if case_id == "760256":
+            assert len(step4_doc["event_units"]) == 1
+            unit_760256 = step4_doc["event_units"][0]
+            assert unit_760256["evidence_source"] == "road_surface_fork"
+            assert unit_760256["position_source"] == "road_surface_fork"
+            assert unit_760256["main_evidence_type"] == "road_surface_fork"
+            assert unit_760256["required_rcsd_node"] == "5395166300816825"
+            assert unit_760256["required_rcsd_node_source"] == "road_surface_fork_forward_rcsd"
+            assert unit_760256["rcsd_alignment_type"] == "rcsd_semantic_junction"
+            assert unit_760256["positive_rcsd_consistency_level"] == "A"
+            assert unit_760256["selected_rcsdnode_ids"] == ["5395166300816825"]
+            assert unit_760256["selected_rcsdroad_ids"] == [
+                "5395167139463556",
+                "5395167139463560",
+                "5395167139463565",
+            ]
+            assert unit_760256["selected_evidence"]["candidate_scope"] == "road_surface_fork"
+            assert (
+                unit_760256["selected_evidence"]["road_surface_fork_reference_point_mode"]
+                == "road_surface_fork_boundary_apex"
+            )
+            assert unit_760256["selected_evidence"]["boundary_pair_road_ids"] == [
+                "1001446",
+                "992475",
+            ]
+            audit_760256 = unit_760256["positive_rcsd_audit"]
+            assert audit_760256["published_rcsdnode_ids"] == ["5395166300816825"]
+            assert audit_760256["published_member_unit_ids"] == [
+                "event_unit_01:node:5395166300816825"
+            ]
+            assert audit_760256["semantic_endpoint_expanded_node_ids"] == [
+                "5395166300816825"
+            ]
+            assert audit_760256["semantic_endpoint_expanded_rcsdroad_ids"] == [
+                "5395167139463556",
+                "5395167139463560",
+            ]
+            rcsd_junction_760256 = unit_760256["rcsd_semantic_junction"]
+            assert rcsd_junction_760256["member_rcsdnode_ids"] == ["5395166300816825"]
+            assert len(rcsd_junction_760256["semantic_arms"]) == 3
         if expected_state == "accepted":
             assert row["surface_scenario_type"] != "no_surface_reference"
             assert row["no_surface_reference_guard"] is False
@@ -1177,6 +1217,52 @@ def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
     assert step6_823826["hole_count"] == 0
     assert step6_823826["business_hole_count"] == 0
     assert step6_823826["unexpected_hole_count"] == 0
+
+
+@pytest.mark.smoke
+def test_real_760256_road_surface_fork_binds_correct_rcsd_junction(
+    tmp_path: Path,
+) -> None:
+    if not (REAL_ANCHOR_2_ROOT / "760256").is_dir():
+        pytest.skip(f"missing real case package: {REAL_ANCHOR_2_ROOT / '760256'}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=["760256"],
+        out_root=tmp_path / "anchor2_760256_road_surface_fork_rcsd",
+        run_id="anchor2_760256_road_surface_fork_rcsd",
+    )
+
+    case_dir = run_root / "cases" / "760256"
+    step4_doc = _load_json(case_dir / "step4_event_interpretation.json")
+    step6_status = _load_json(case_dir / "step6_status.json")
+    step7_status = _load_json(case_dir / "step7_status.json")
+    unit = step4_doc["event_units"][0]
+
+    assert step7_status["final_state"] == "accepted"
+    assert step6_status["assembly_state"] == "assembled"
+    assert step6_status["component_count"] == 1
+    assert unit["surface_scenario_type"] == "main_evidence_with_rcsd_junction"
+    assert unit["evidence_source"] == "road_surface_fork"
+    assert unit["position_source"] == "road_surface_fork"
+    assert unit["main_evidence_type"] == "road_surface_fork"
+    assert unit["selected_evidence"]["candidate_scope"] == "road_surface_fork"
+    assert (
+        unit["selected_evidence"]["road_surface_fork_reference_point_mode"]
+        == "road_surface_fork_boundary_apex"
+    )
+    assert unit["required_rcsd_node"] == "5395166300816825"
+    assert unit["selected_rcsdnode_ids"] == ["5395166300816825"]
+    assert unit["selected_rcsdroad_ids"] == [
+        "5395167139463556",
+        "5395167139463560",
+        "5395167139463565",
+    ]
+    assert unit["rcsd_alignment_type"] == "rcsd_semantic_junction"
+    assert unit["positive_rcsd_consistency_level"] == "A"
+    assert unit["rcsd_semantic_junction"]["member_rcsdnode_ids"] == [
+        "5395166300816825"
+    ]
 
 
 @pytest.mark.smoke

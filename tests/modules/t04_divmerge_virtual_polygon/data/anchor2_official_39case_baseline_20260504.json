@@ -167,7 +167,7 @@
     {
       "case_id": "760256",
       "final_state": "accepted",
-      "surface_scenario_type": "main_evidence_with_rcsdroad_fallback",
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
       "section_reference_source": "reference_point_and_rcsd_junction",
       "surface_generation_mode": "main_evidence_driven"
     },
@@ -272,9 +272,9 @@
     {
       "case_id": "795682",
       "final_state": "accepted",
-      "surface_scenario_type": "no_main_evidence_with_swsd_only",
+      "surface_scenario_type": "no_main_evidence_with_rcsdroad_fallback_and_swsd",
       "section_reference_source": "swsd_junction",
-      "surface_generation_mode": "swsd_junction_window"
+      "surface_generation_mode": "swsd_with_rcsdroad_fallback"
     },
     {
       "case_id": "807908",

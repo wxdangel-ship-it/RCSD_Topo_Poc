@@ -103,6 +103,86 @@ def test_road_surface_fork_no_support_published_roads_do_not_create_fallback() -
     assert scenario.surface_scenario_type == SCENARIO_MAIN_WITHOUT_RCSD
 
 
+def test_divstrip_partial_road_only_local_unit_keeps_rcsdroad_fallback() -> None:
+    scenario = classify_surface_scenario(
+        evidence_source="multibranch_event",
+        selected_evidence_summary={"upper_evidence_kind": "divstrip", "primary_eligible": True},
+        first_hit_rcsdroad_ids=("road-1",),
+        positive_rcsd_audit={
+            "positive_rcsd_present": False,
+            "positive_rcsd_present_reason": "positive_rcsd_absent_after_local_units",
+            "rcsd_decision_reason": "positive_rcsd_absent_after_local_units",
+            "first_hit_rcsdroad_ids": ["road-1"],
+            "local_rcsd_units": [
+                {
+                    "unit_id": "road-only-unit",
+                    "unit_kind": "road_only",
+                    "road_ids": ["road-1"],
+                    "required_node_id": None,
+                    "positive_rcsd_present": False,
+                    "positive_rcsd_present_reason": "matched_event_side_partial",
+                    "role_match_result": "partial",
+                    "support_level": "secondary_support",
+                    "consistency_level": "B",
+                }
+            ],
+        },
+        swsd_junction_present=True,
+    )
+
+    assert scenario.has_main_evidence is True
+    assert scenario.rcsd_alignment_type == RCSD_ALIGNMENT_ROAD_ONLY
+    assert scenario.rcsd_match_type == "rcsdroad_fallback"
+    assert scenario.fallback_rcsdroad_ids == ("road-1",)
+    assert scenario.section_reference_source == SECTION_REFERENCE_POINT
+    assert scenario.surface_scenario_type == SCENARIO_MAIN_WITH_RCSDROAD
+
+
+def test_road_surface_fork_axis_inverted_road_only_aggregate_keeps_swsd_rcsdroad_fallback() -> None:
+    scenario = classify_surface_scenario(
+        evidence_source="swsd_junction_window",
+        selected_evidence_summary={"candidate_scope": "road_surface_fork"},
+        positive_rcsd_audit={
+            "positive_rcsd_present_reason": "aggregated_axis_polarity_inverted_without_required_node",
+            "rcsd_decision_reason": "road_surface_fork_without_bound_target_rcsd",
+            "local_rcsd_unit_kind": "road_only",
+            "aggregated_rcsd_unit_id": "agg-1",
+            "first_hit_rcsdroad_ids": ["road-a", "road-b"],
+            "local_rcsd_units": [
+                {
+                    "unit_id": "road-only-unit",
+                    "unit_kind": "road_only",
+                    "road_ids": ["road-a", "road-b"],
+                    "required_node_id": None,
+                    "positive_rcsd_present": True,
+                    "support_level": "secondary_support",
+                    "consistency_level": "B",
+                }
+            ],
+            "aggregated_rcsd_units": [
+                {
+                    "unit_id": "agg-1",
+                    "member_unit_ids": ["road-only-unit"],
+                    "member_unit_kinds": ["road_only"],
+                    "road_ids": ["road-a", "road-b"],
+                    "required_node_id": None,
+                    "positive_rcsd_present": True,
+                    "support_level": "secondary_support",
+                    "consistency_level": "B",
+                }
+            ],
+        },
+        swsd_junction_present=True,
+    )
+
+    assert scenario.has_main_evidence is False
+    assert scenario.rcsd_alignment_type == RCSD_ALIGNMENT_ROAD_ONLY
+    assert scenario.rcsd_match_type == "rcsdroad_fallback"
+    assert scenario.fallback_rcsdroad_ids == ("road-a", "road-b")
+    assert scenario.section_reference_source == SECTION_REFERENCE_SWSD
+    assert scenario.surface_scenario_type == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
+
+
 def test_swsd_window_published_roads_create_no_main_rcsdroad_fallback() -> None:
     scenario = classify_surface_scenario(
         evidence_source="swsd_junction_window",

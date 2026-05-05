@@ -405,6 +405,8 @@ def _trace_path_to_node(
         for node_id in _node_ids_for_roads([road_id], roads_by_id):
             if node_id == target_node_id:
                 return path
+            if len(roads_by_node_id.get(node_id, set())) != 2:
+                continue
             for next_road_id in sorted(roads_by_node_id.get(node_id, ())):
                 if next_road_id in seen_roads:
                     continue

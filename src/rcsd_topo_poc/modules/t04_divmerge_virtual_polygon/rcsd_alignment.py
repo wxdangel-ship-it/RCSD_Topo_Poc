@@ -212,10 +212,10 @@ def rcsd_alignment_type_from_selection(
             return RCSD_ALIGNMENT_SEMANTIC_JUNCTION
         if selected_roads or unit_kind == "road_only":
             return RCSD_ALIGNMENT_ROAD_ONLY
-    if reason in {"positive_rcsd_absent_after_local_units", "local_rcsd_unit_not_constructed"}:
-        return RCSD_ALIGNMENT_NONE
     if fallback_roads:
         return RCSD_ALIGNMENT_ROAD_ONLY
+    if reason in {"positive_rcsd_absent_after_local_units", "local_rcsd_unit_not_constructed"}:
+        return RCSD_ALIGNMENT_NONE
     return RCSD_ALIGNMENT_NONE
 
 

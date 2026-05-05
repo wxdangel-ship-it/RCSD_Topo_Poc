@@ -75,6 +75,15 @@ def _published_rcsd_subset(
             for node_id in road_node_ids
         )
 
+    def local_unit_for_node(node_id: str | None) -> _LocalRcsdUnit | None:
+        if node_id is None:
+            return None
+        node_text = str(node_id)
+        for unit in local_units:
+            if unit.unit_kind == "node_centric" and str(unit.node_id or "") == node_text:
+                return unit
+        return None
+
     if selected_aggregated.consistency_level == "A":
         member_units_by_id = {unit.unit_id: unit for unit in local_units}
         selected_road_ids = {
@@ -163,6 +172,12 @@ def _published_rcsd_subset(
             if node_id is not None and node_id in node_points_by_id:
                 selected_node_ids.add(node_id)
     else:
+        required_unit = local_unit_for_node(selected_aggregated.required_node_id)
+        if required_unit is not None and required_unit.unit_id:
+            selected_road_ids = {str(road_id) for road_id in required_unit.road_ids if str(road_id)}
+            selected_node_ids = {str(node_id) for node_id in required_unit.node_ids if str(node_id)}
+            published_member_unit_ids = (required_unit.unit_id,)
+            publish_mode = "aggregated_partial_required_node_unit"
         if selected_aggregated.required_node_id is not None and first_hit_road_ids:
             for road_id in first_hit_road_ids:
                 if not first_hit_belongs_to_selected_group(road_id):
@@ -214,6 +229,38 @@ def _ambiguous_top_aggregated_rcsd_units(
     return top_units
 
 
+def _expand_raw_roads_with_semantic_endpoints(
+    raw_roads_by_id: dict[str, ParsedRoad],
+    scoped_rcsd_roads: Sequence[ParsedRoad],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if not raw_roads_by_id or not scoped_rcsd_roads:
+        return (), ()
+    original_road_ids = set(raw_roads_by_id)
+    scoped_roads_by_node_id = _roads_by_node(scoped_rcsd_roads)
+    raw_endpoint_node_ids = _node_ids_for_roads(raw_roads_by_id.keys(), raw_roads_by_id)
+    expanded_node_ids: set[str] = set()
+    for node_id in raw_endpoint_node_ids:
+        scoped_incident_road_ids = scoped_roads_by_node_id.get(node_id, set())
+        if len(scoped_incident_road_ids) < 3:
+            continue
+        raw_incident_road_ids = scoped_incident_road_ids & original_road_ids
+        if len(raw_incident_road_ids) < len(scoped_incident_road_ids):
+            expanded_node_ids.add(node_id)
+    if not expanded_node_ids:
+        return (), ()
+    for road in scoped_rcsd_roads:
+        road_id = _safe_id(getattr(road, "road_id", None))
+        if road_id is None or road_id in raw_roads_by_id:
+            continue
+        endpoint_ids = {
+            _safe_id(getattr(road, "snodeid", None)),
+            _safe_id(getattr(road, "enodeid", None)),
+        }
+        if endpoint_ids & expanded_node_ids:
+            raw_roads_by_id[road_id] = road
+    return tuple(sorted(expanded_node_ids)), tuple(sorted(set(raw_roads_by_id) - original_road_ids))
+
+
 def resolve_positive_rcsd_selection(
     *,
     event_unit_id: str,
@@ -234,6 +281,7 @@ def resolve_positive_rcsd_selection(
     scoped_output_branch_ids: Sequence[str],
     branch_road_memberships: dict[str, Sequence[str]],
     axis_vector: tuple[float, float] | None,
+    allow_semantic_endpoint_expansion: bool = False,
 ) -> PositiveRcsdSelectionDecision:
     representative_point = _as_point(getattr(representative_node, "geometry", None))
     reference_point = _as_point(fact_reference_point)
@@ -254,6 +302,12 @@ def resolve_positive_rcsd_selection(
                 continue
             if { _safe_id(getattr(road, "snodeid", None)), _safe_id(getattr(road, "enodeid", None)) } & pair_local_seed_node_ids:
                 raw_roads_by_id[road_id] = road
+    semantic_endpoint_expanded_node_ids: tuple[str, ...] = ()
+    semantic_endpoint_expanded_road_ids: tuple[str, ...] = ()
+    if allow_semantic_endpoint_expansion:
+        semantic_endpoint_expanded_node_ids, semantic_endpoint_expanded_road_ids = (
+            _expand_raw_roads_with_semantic_endpoints(raw_roads_by_id, scoped_rcsd_roads)
+        )
     raw_road_endpoint_node_ids = _node_ids_for_roads(raw_roads_by_id.keys(), raw_roads_by_id)
     raw_node_features: list[ParsedNode] = []
     seen_raw_node_ids: set[str] = set()
@@ -848,6 +902,8 @@ def resolve_positive_rcsd_selection(
             "rcsd_decision_reason": selected_aggregated.decision_reason,
             "rcsd_role_map": expected_role_map,
             "selected_unit_role_assignments": list(selected_local_unit.role_assignments),
+            "semantic_endpoint_expanded_node_ids": list(semantic_endpoint_expanded_node_ids),
+            "semantic_endpoint_expanded_rcsdroad_ids": list(semantic_endpoint_expanded_road_ids),
             "local_rcsd_units": [unit.to_doc() for unit in local_units],
             "aggregated_rcsd_units": [unit.to_doc() for unit in aggregated_units],
         },

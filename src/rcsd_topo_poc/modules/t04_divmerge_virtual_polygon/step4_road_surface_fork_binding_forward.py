@@ -7,7 +7,7 @@ from shapely.geometry import Point
 
 from .case_models import T04CandidateAuditEntry, T04CaseResult, T04EventUnitResult
 from ._step4_dual_write import append_dual_write_candidate, replace_step4_pre_arbiter_candidate
-from .rcsd_alignment import rcsd_alignment_type_from_selection
+from .rcsd_alignment import build_rcsd_semantic_junction, rcsd_alignment_type_from_selection
 from .step4_road_surface_fork_binding_shared import _build_surface_summary, _candidate_entries_with_selection
 from .step4_road_surface_fork_geometry import (
     ROAD_SURFACE_FORK_BINDING_REASON,
@@ -19,6 +19,64 @@ from .step4_road_surface_fork_geometry import (
     _union_geometries,
 )
 from .step4_road_surface_fork_rcsd import _strong_aggregated_unit
+
+
+def _selected_surface_reference_point(
+    event_unit: T04EventUnitResult,
+) -> tuple[Point, dict[str, Any]] | None:
+    selected_summary = event_unit.selected_candidate_summary
+    if str(selected_summary.get("road_surface_fork_reference_point_mode") or "") != "road_surface_fork_boundary_apex":
+        return None
+    if not isinstance(event_unit.fact_reference_point, Point):
+        return None
+    detail_keys = (
+        "road_surface_fork_reference_point_mode",
+        "road_surface_fork_reference_distance_m",
+        "road_surface_fork_reference_sample_s_m",
+        "road_surface_fork_branch_separation_m",
+        "road_surface_fork_apex_midline_distance_m",
+        "road_surface_fork_apex_transverse_alignment",
+        "road_surface_fork_apex_polygon_index",
+        "road_surface_fork_apex_segment_index",
+        "boundary_pair_road_ids",
+        "road_surface_fork_seed_point_xy",
+    )
+    return event_unit.fact_reference_point, {
+        key: selected_summary[key]
+        for key in detail_keys
+        if key in selected_summary
+    }
+
+
+def _with_case_scoped_semantic_junction(
+    case_result: T04CaseResult,
+    event_unit: T04EventUnitResult,
+) -> T04EventUnitResult:
+    local_context = replace(
+        event_unit.unit_context.local_context,
+        local_rcsd_roads=tuple(case_result.case_bundle.rcsd_roads),
+        local_rcsd_nodes=tuple(case_result.case_bundle.rcsd_nodes),
+    )
+    unit_context = replace(event_unit.unit_context, local_context=local_context)
+    scoped_unit = replace(event_unit, unit_context=unit_context)
+    rcsd_semantic_junction = build_rcsd_semantic_junction(
+        unit_result=scoped_unit,
+        swsd_semantic_junction=event_unit.unit_context.topology_skeleton.swsd_semantic_junction,
+        rcsd_alignment_result=event_unit.rcsd_alignment_result(),
+    )
+    if rcsd_semantic_junction is None:
+        return event_unit
+    rcsd_audit = dict(event_unit.positive_rcsd_audit)
+    rcsd_audit["rcsd_semantic_junction"] = rcsd_semantic_junction.to_doc()
+    if rcsd_semantic_junction.pairing_ambiguous_arm_ids:
+        rcsd_audit["pairing_ambiguous_arm_ids"] = list(
+            rcsd_semantic_junction.pairing_ambiguous_arm_ids
+        )
+    return replace(
+        event_unit,
+        rcsd_semantic_junction=rcsd_semantic_junction,
+        positive_rcsd_audit=rcsd_audit,
+    )
 
 
 def _bind_strong_rcsd_to_surface(
@@ -55,7 +113,11 @@ def _bind_strong_rcsd_to_surface(
     required_geometry = _point_geometry(case_result, required_node)
     if required_geometry is None:
         return None, None
-    reference_point, reference_detail = _road_surface_fork_reference_point(case_result, event_unit)
+    selected_reference = _selected_surface_reference_point(event_unit)
+    if selected_reference is not None:
+        reference_point, reference_detail = selected_reference
+    else:
+        reference_point, reference_detail = _road_surface_fork_reference_point(case_result, event_unit)
     if reference_point is None:
         reference_point = event_unit.fact_reference_point if isinstance(event_unit.fact_reference_point, Point) else None
     review_point = reference_point if reference_point is not None else event_unit.review_materialized_point
@@ -188,6 +250,7 @@ def _bind_strong_rcsd_to_surface(
         post_required_rcsd_node=required_node,
         resolution_reason=ROAD_SURFACE_FORK_BINDING_REASON,
     )
+    updated = _with_case_scoped_semantic_junction(case_result, updated)
     return (
         append_dual_write_candidate(
             updated,

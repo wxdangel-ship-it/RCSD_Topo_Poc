@@ -1213,15 +1213,21 @@ def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
     assert rows_by_case["807908"]["surface_scenario_type"] == "main_evidence_with_rcsd_junction"
     step4_807908 = _load_json(run_root / "cases" / "807908" / "step4_event_interpretation.json")
     unit_807908 = step4_807908["event_units"][0]
-    assert unit_807908["selected_rcsdroad_ids"] == ["5395541068551367"]
+    expected_rcsd_807908 = {
+        "5395523385822740",
+        "5395523385822742",
+        "5395541068551367",
+    }
+    assert set(unit_807908["selected_rcsdroad_ids"]) == expected_rcsd_807908
     step5_807908 = _load_json(run_root / "cases" / "807908" / "step5_audit.json")
     related_rcsd_807908 = set(step5_807908["related_rcsd_road_ids"])
     unrelated_rcsd_807908 = set(
         step5_807908["negative_mask_channels"]["unrelated_rcsd"]["road_ids"]
     )
-    assert "5395541068551367" in related_rcsd_807908
-    assert "5395541068551367" not in unrelated_rcsd_807908
-    for road_id in ("5395523385822740", "5395523385822742"):
+    for road_id in expected_rcsd_807908:
+        assert road_id in related_rcsd_807908
+        assert road_id not in unrelated_rcsd_807908
+    for road_id in ("5395523385822744", "5395523385822746", "5395541068551328"):
         assert road_id not in related_rcsd_807908
         assert road_id in unrelated_rcsd_807908
     step4_785629 = _load_json(run_root / "cases" / "785629" / "step4_event_interpretation.json")
@@ -1304,6 +1310,7 @@ def test_real_807908_rcsd_semantic_junction_roads_are_not_negative_mask(
     step5_audit = _load_json(case_dir / "step5_audit.json")
     step6_status = _load_json(case_dir / "step6_status.json")
     step7_status = _load_json(case_dir / "step7_status.json")
+    render_audit = _load_json(case_dir / "final_review_render_audit.json")
     unit = step4_doc["event_units"][0]
 
     assert unit["surface_scenario_type"] == "main_evidence_with_rcsd_junction"
@@ -1311,15 +1318,26 @@ def test_real_807908_rcsd_semantic_junction_roads_are_not_negative_mask(
     assert unit["required_rcsd_node"] == "5395523385822712"
     assert unit["rcsd_alignment_type"] == "rcsd_semantic_junction"
 
-    related_rcsd = set(step5_audit["related_rcsd_road_ids"])
-    unrelated_rcsd = set(step5_audit["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
-    for road_id in (
+    expected_rcsd = {
         "5395523385822740",
         "5395523385822742",
         "5395541068551367",
-    ):
+    }
+    assert set(unit["selected_rcsdroad_ids"]) == expected_rcsd
+    assert unit["selected_evidence"]["rcsd_anchored_reverse_prune"]["mode"] == (
+        "required_node_semantic_junction_direct_arms"
+    )
+    related_rcsd = set(step5_audit["related_rcsd_road_ids"])
+    unrelated_rcsd = set(step5_audit["negative_mask_channels"]["unrelated_rcsd"]["road_ids"])
+    for road_id in expected_rcsd:
         assert road_id in related_rcsd
         assert road_id not in unrelated_rcsd
+    for road_id in ("5395523385822744", "5395523385822746", "5395541068551328"):
+        assert road_id not in related_rcsd
+        assert road_id in unrelated_rcsd
+    assert set(render_audit["rcsd_entity_road_ids"]) == expected_rcsd
+    assert set(render_audit["render_visible_rcsd_road_ids"]) == expected_rcsd
+    assert render_audit["missing_rcsd_road_ids"] == []
 
     assert step6_status["assembly_state"] == "assembled"
     assert step6_status["component_count"] == 1

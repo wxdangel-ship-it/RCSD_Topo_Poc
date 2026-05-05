@@ -170,6 +170,42 @@ def _shortest_selected_rcsd_path(
     return ()
 
 
+def _direct_selected_rcsd_roads_at_node(
+    *,
+    roads_by_id: dict[str, Any],
+    selected_rcsdroad_ids: Sequence[str],
+    node_id: str,
+) -> tuple[str, ...]:
+    direct_road_ids: list[str] = []
+    for road_id in selected_rcsdroad_ids:
+        road = roads_by_id.get(str(road_id))
+        if road is None:
+            continue
+        if node_id in {endpoint for endpoint in _road_endpoint_ids(road) if endpoint}:
+            direct_road_ids.append(str(road_id))
+    return _dedupe(direct_road_ids)
+
+
+def _pruned_rcsd_node_ids_for_roads(
+    *,
+    required_node_id: str,
+    selected_rcsdnode_ids: Sequence[str],
+    kept_road_ids: Sequence[str],
+    roads_by_id: dict[str, Any],
+) -> tuple[str, ...]:
+    kept_endpoint_node_ids = _road_endpoint_node_ids(kept_road_ids, roads_by_id)
+    return _dedupe(
+        [
+            required_node_id,
+            *(
+                node_id
+                for node_id in selected_rcsdnode_ids
+                if node_id in kept_endpoint_node_ids
+            ),
+        ]
+    )
+
+
 def _prune_aggregated_node_centric_reverse_roads(
     case_result: T04CaseResult,
     mother: T04CandidateAuditEntry,
@@ -190,6 +226,36 @@ def _prune_aggregated_node_centric_reverse_roads(
     selected_set = {str(item) for item in selected_rcsdroad_ids if str(item) in roads_by_id}
     if not selected_set:
         return tuple(selected_rcsdroad_ids), tuple(selected_rcsdnode_ids), {"used": False, "skip_reason": "empty_selection"}
+    direct_required_road_ids = _direct_selected_rcsd_roads_at_node(
+        roads_by_id=roads_by_id,
+        selected_rcsdroad_ids=selected_rcsdroad_ids,
+        node_id=required_node_id,
+    )
+    if len(direct_required_road_ids) >= 3:
+        direct_required_set = set(direct_required_road_ids)
+        pruned_road_ids = _dedupe(
+            road_id for road_id in selected_rcsdroad_ids if road_id in direct_required_set
+        )
+        pruned_node_ids = _pruned_rcsd_node_ids_for_roads(
+            required_node_id=required_node_id,
+            selected_rcsdnode_ids=selected_rcsdnode_ids,
+            kept_road_ids=pruned_road_ids,
+            roads_by_id=roads_by_id,
+        )
+        return (
+            pruned_road_ids,
+            pruned_node_ids,
+            {
+                "used": set(pruned_road_ids) != set(selected_rcsdroad_ids),
+                "mode": "required_node_semantic_junction_direct_arms",
+                "required_rcsd_node": required_node_id,
+                "first_hit_rcsdroad_ids": list(first_hit_ids),
+                "direct_required_rcsdroad_ids": list(direct_required_road_ids),
+                "pre_prune_road_ids": list(selected_rcsdroad_ids),
+                "post_prune_road_ids": list(pruned_road_ids),
+                "post_prune_node_ids": list(pruned_node_ids),
+            },
+        )
     kept_ids: set[str] = set()
     for road_id in first_hit_ids:
         road = roads_by_id.get(road_id)
@@ -214,15 +280,11 @@ def _prune_aggregated_node_centric_reverse_roads(
     if not kept_ids:
         return tuple(selected_rcsdroad_ids), tuple(selected_rcsdnode_ids), {"used": False, "skip_reason": "no_path"}
     pruned_road_ids = _dedupe(road_id for road_id in selected_rcsdroad_ids if road_id in kept_ids)
-    pruned_node_ids = _dedupe(
-        [
-            required_node_id,
-            *(
-                node_id
-                for node_id in selected_rcsdnode_ids
-                if node_id in _road_endpoint_node_ids(pruned_road_ids, roads_by_id)
-            ),
-        ]
+    pruned_node_ids = _pruned_rcsd_node_ids_for_roads(
+        required_node_id=required_node_id,
+        selected_rcsdnode_ids=selected_rcsdnode_ids,
+        kept_road_ids=pruned_road_ids,
+        roads_by_id=roads_by_id,
     )
     return (
         pruned_road_ids,

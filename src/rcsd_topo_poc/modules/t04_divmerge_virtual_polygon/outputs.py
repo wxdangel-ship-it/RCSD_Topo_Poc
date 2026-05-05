@@ -412,7 +412,7 @@ def write_case_outputs(
     )
     write_json(
         case_dir / "final_review_render_audit.json",
-        _with_provenance(build_final_review_render_audit(case_result), case_provenance),
+        _with_provenance(build_final_review_render_audit(case_result, step5_result), case_provenance),
     )
     write_step7_case_outputs(case_dir=case_dir, artifact=step7_artifact, provenance=case_provenance)
 

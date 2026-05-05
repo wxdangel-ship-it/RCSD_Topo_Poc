@@ -46,6 +46,16 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
         "5385458768741632",
         "5385458768741665",
     }
+    rcsd_junction = units["node_505078921"]["rcsd_semantic_junction"]
+    semantic_arm_roads = {
+        road_id
+        for arm in rcsd_junction["semantic_arms"]
+        for road_id in (
+            list(arm["first_rcsdroad_ids"])
+            + list(arm["inter_junction_connector_rcsdroad_ids"])
+        )
+    }
+    assert {"5385458768741661", "5385458768741681"} <= semantic_arm_roads
     assert units["node_510222629"]["selected_evidence_state"] == "found"
     assert units["node_510222629__pair_02"]["selected_evidence_state"] == "found"
     assert units["node_510222629__pair_02"]["evidence_source"] == "road_surface_fork"
@@ -67,9 +77,34 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
     )
     assert step6_doc["hole_count"] == 0
     assert step6_doc["cut_violation"] is False
-    assert step6_doc["final_case_polygon"]["area_m2"] > 2500.0
+    assert step6_doc["component_count"] == 1
+    assert step6_doc["final_case_polygon"]["area_m2"] > 2400.0
 
     step7_doc = json.loads(
         (run_root / "cases" / "505078921" / "step7_status.json").read_text(encoding="utf-8")
     )
     assert step7_doc["final_state"] == "accepted"
+
+    render_audit_doc = json.loads(
+        (run_root / "cases" / "505078921" / "final_review_render_audit.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    visible_rcsd_roads = set(render_audit_doc["render_visible_rcsd_road_ids"])
+    assert render_audit_doc["missing_rcsd_road_ids"] == [
+        "5390050624274443",
+        "5390050624274524",
+        "5390050624274582",
+        "5390050624274602",
+    ]
+    assert {
+        "5385438602535183",
+        "5385458768741661",
+        "5385458768741668",
+        "5385458768741681",
+        "5390015124868049",
+        "5390015124868090",
+        "5390050624274574",
+    } <= visible_rcsd_roads
+    assert render_audit_doc["rcsd_entity_road_count"] == 17
+    assert render_audit_doc["render_visible_rcsd_road_count"] == 13

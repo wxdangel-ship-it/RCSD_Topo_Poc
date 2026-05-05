@@ -396,12 +396,19 @@ def _related_swsd_road_ids(case_result: T04CaseResult) -> tuple[str, ...]:
     )
 
 
-def build_final_review_render_audit(case_result: T04CaseResult) -> dict[str, Any]:
+def build_final_review_render_audit(
+    case_result: T04CaseResult,
+    step5_result: T04Step5CaseResult | None = None,
+) -> dict[str, Any]:
     local_context = case_result.base_context.local_context
     entity_road_ids = _related_swsd_road_ids(case_result)
     rendered_roads = _ordered_roads_by_ids(local_context.local_roads, entity_road_ids)
     rendered_road_ids = tuple(str(road.road_id) for road in rendered_roads)
     missing_road_ids = tuple(sorted(set(entity_road_ids) - set(rendered_road_ids)))
+    rcsd_entity_road_ids = _final_review_rcsd_road_ids(case_result, step5_result)
+    rendered_rcsd_roads = _ordered_roads_by_ids(local_context.local_rcsd_roads, rcsd_entity_road_ids)
+    rendered_rcsd_road_ids = tuple(str(road.road_id) for road in rendered_rcsd_roads)
+    missing_rcsd_road_ids = tuple(sorted(set(rcsd_entity_road_ids) - set(rendered_rcsd_road_ids)))
     return {
         "case_id": case_result.case_spec.case_id,
         "swsd_entity_road_ids": list(entity_road_ids),
@@ -410,11 +417,20 @@ def build_final_review_render_audit(case_result: T04CaseResult) -> dict[str, Any
         "swsd_entity_road_count": len(entity_road_ids),
         "render_visible_road_count": len(rendered_road_ids),
         "missing_road_count": len(missing_road_ids),
-        "source": "final_review_png_related_swsd_roads",
+        "rcsd_entity_road_ids": list(rcsd_entity_road_ids),
+        "render_visible_rcsd_road_ids": list(rendered_rcsd_road_ids),
+        "missing_rcsd_road_ids": list(missing_rcsd_road_ids),
+        "rcsd_entity_road_count": len(rcsd_entity_road_ids),
+        "render_visible_rcsd_road_count": len(rendered_rcsd_road_ids),
+        "missing_rcsd_road_count": len(missing_rcsd_road_ids),
+        "source": "final_review_png_related_swsd_and_rcsd_roads",
     }
 
 
 def _related_rcsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
+    case_related_road_ids = _unique_texts(getattr(step5_result, "related_rcsd_road_ids", ()))
+    if case_related_road_ids:
+        return case_related_road_ids
     seen: set[str] = set()
     ordered: list[str] = []
     for unit_result in step5_result.unit_results:
@@ -425,6 +441,30 @@ def _related_rcsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
             seen.add(key)
             ordered.append(key)
     return tuple(ordered)
+
+
+def _final_review_rcsd_road_ids(
+    case_result: T04CaseResult,
+    step5_result: T04Step5CaseResult | None,
+) -> tuple[str, ...]:
+    active_rcsd_road_ids, _ = _active_rcsd_alignment_ids(case_result)
+    if active_rcsd_road_ids:
+        return active_rcsd_road_ids
+    if step5_result is not None:
+        return _related_rcsd_road_ids(step5_result)
+    return ()
+
+
+def _final_review_rcsd_node_ids(
+    case_result: T04CaseResult,
+    step5_result: T04Step5CaseResult | None,
+) -> tuple[str, ...]:
+    _, active_rcsd_node_ids = _active_rcsd_alignment_ids(case_result)
+    if active_rcsd_node_ids:
+        return active_rcsd_node_ids
+    if step5_result is not None:
+        return _related_rcsd_node_ids(step5_result)
+    return ()
 
 
 def _event_unit_surface_doc(event_unit: T04EventUnitResult) -> dict[str, Any]:
@@ -439,6 +479,17 @@ def _event_unit_surface_doc(event_unit: T04EventUnitResult) -> dict[str, Any]:
         }
 
 
+def _rcsd_semantic_junction_road_ids(event_unit: T04EventUnitResult) -> tuple[str, ...]:
+    rcsd_junction = event_unit.rcsd_semantic_junction
+    if rcsd_junction is None:
+        return ()
+    road_ids: list[Any] = list(rcsd_junction.intra_junction_rcsdroad_ids)
+    for arm in rcsd_junction.semantic_arms:
+        road_ids.extend(arm.first_rcsdroad_ids)
+        road_ids.extend(arm.inter_junction_connector_rcsdroad_ids)
+    return _unique_texts(road_ids)
+
+
 def _active_rcsd_alignment_ids(case_result: T04CaseResult) -> tuple[tuple[str, ...], tuple[str, ...]]:
     road_ids: list[Any] = []
     node_ids: list[Any] = []
@@ -451,8 +502,8 @@ def _active_rcsd_alignment_ids(case_result: T04CaseResult) -> tuple[tuple[str, .
         fallback_road_ids = tuple(surface_doc.get("fallback_rcsdroad_ids") or ())
         road_ids.extend(event_unit.selected_rcsdroad_ids)
         road_ids.extend(fallback_road_ids)
-        if not fallback_road_ids:
-            road_ids.extend(audit.get("published_rcsdroad_ids") or ())
+        road_ids.extend(audit.get("published_rcsdroad_ids") or ())
+        road_ids.extend(_rcsd_semantic_junction_road_ids(event_unit))
         node_ids.extend(event_unit.selected_rcsdnode_ids)
         node_ids.extend(audit.get("published_rcsdnode_ids") or ())
         if event_unit.required_rcsd_node:
@@ -461,6 +512,9 @@ def _active_rcsd_alignment_ids(case_result: T04CaseResult) -> tuple[tuple[str, .
 
 
 def _related_rcsd_node_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
+    case_related_node_ids = _unique_texts(getattr(step5_result, "related_rcsd_node_ids", ()))
+    if case_related_node_ids:
+        return case_related_node_ids
     seen: set[str] = set()
     ordered: list[str] = []
     for unit_result in step5_result.unit_results:
@@ -910,7 +964,8 @@ def render_case_final_review_png(
     local_context = case_result.base_context.local_context
 
     related_swsd_road_ids = set(_related_swsd_road_ids(case_result))
-    active_rcsd_road_ids, active_rcsd_node_ids = _active_rcsd_alignment_ids(case_result)
+    active_rcsd_road_ids = _final_review_rcsd_road_ids(case_result, step5_result)
+    active_rcsd_node_ids = _final_review_rcsd_node_ids(case_result, step5_result)
     related_rcsd_road_ids = set(active_rcsd_road_ids)
     related_rcsd_node_ids = set(active_rcsd_node_ids)
     related_swsd_roads = _ordered_roads_by_ids(local_context.local_roads, related_swsd_road_ids)

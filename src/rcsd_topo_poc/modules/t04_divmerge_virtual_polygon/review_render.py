@@ -450,6 +450,7 @@ def _active_rcsd_alignment_ids(case_result: T04CaseResult) -> tuple[tuple[str, .
         audit = event_unit.positive_rcsd_audit
         fallback_road_ids = tuple(surface_doc.get("fallback_rcsdroad_ids") or ())
         road_ids.extend(event_unit.selected_rcsdroad_ids)
+        road_ids.extend(_published_member_rcsd_unit_road_ids(event_unit))
         road_ids.extend(fallback_road_ids)
         if not fallback_road_ids:
             road_ids.extend(audit.get("published_rcsdroad_ids") or ())
@@ -458,6 +459,32 @@ def _active_rcsd_alignment_ids(case_result: T04CaseResult) -> tuple[tuple[str, .
         if event_unit.required_rcsd_node:
             node_ids.append(event_unit.required_rcsd_node)
     return _unique_texts(road_ids), _unique_texts(node_ids)
+
+
+def _published_member_rcsd_unit_road_ids(event_unit: T04EventUnitResult) -> tuple[str, ...]:
+    audit = dict(event_unit.positive_rcsd_audit or {})
+    published_member_unit_ids = {
+        str(unit_id).strip()
+        for unit_id in audit.get("published_member_unit_ids", [])
+        if str(unit_id).strip()
+    }
+    required_rcsd_node = str(event_unit.required_rcsd_node or "").strip()
+    road_ids: list[str] = []
+    for local_unit in audit.get("local_rcsd_units", []) or []:
+        if not isinstance(local_unit, dict):
+            continue
+        unit_id = str(local_unit.get("unit_id") or "").strip()
+        node_id = str(local_unit.get("node_id") or "").strip()
+        is_published_unit = bool(unit_id and unit_id in published_member_unit_ids)
+        is_required_node_unit = bool(required_rcsd_node and node_id == required_rcsd_node)
+        if not is_published_unit and not is_required_node_unit:
+            continue
+        road_ids.extend(
+            str(road_id)
+            for road_id in local_unit.get("road_ids", [])
+            if str(road_id).strip()
+        )
+    return _unique_texts(road_ids)
 
 
 def _related_rcsd_node_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:

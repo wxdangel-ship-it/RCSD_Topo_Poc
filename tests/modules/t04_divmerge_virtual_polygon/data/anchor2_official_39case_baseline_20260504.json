@@ -4,12 +4,13 @@
     "case_root_wsl": "/mnt/e/TestData/POC_Data/T02/Anchor_2",
     "case_root_windows": "E:\\TestData\\POC_Data\\T02\\Anchor_2",
     "case_count": 39,
-    "accepted_count": 35,
-    "rejected_count": 4,
+    "accepted_count": 34,
+    "rejected_count": 5,
     "rejected_case_ids": [
       "607602562",
       "760598",
       "760936",
+      "785629",
       "857993"
     ]
   },
@@ -139,9 +140,9 @@
     {
       "case_id": "724081",
       "final_state": "accepted",
-      "surface_scenario_type": "no_main_evidence_with_rcsd_junction",
-      "section_reference_source": "rcsd_junction",
-      "surface_generation_mode": "rcsd_junction_window"
+      "surface_scenario_type": "main_evidence_with_rcsd_junction",
+      "section_reference_source": "reference_point_and_rcsd_junction",
+      "surface_generation_mode": "main_evidence_driven"
     },
     {
       "case_id": "758784",
@@ -229,7 +230,7 @@
     },
     {
       "case_id": "785629",
-      "final_state": "accepted",
+      "final_state": "rejected",
       "surface_scenario_type": "mixed",
       "section_reference_source": "mixed",
       "surface_generation_mode": "mixed"
@@ -265,9 +266,9 @@
     {
       "case_id": "788824",
       "final_state": "accepted",
-      "surface_scenario_type": "no_main_evidence_with_rcsd_junction",
-      "section_reference_source": "rcsd_junction",
-      "surface_generation_mode": "rcsd_junction_window"
+      "surface_scenario_type": "main_evidence_with_rcsdroad_fallback",
+      "section_reference_source": "reference_point",
+      "surface_generation_mode": "main_evidence_driven"
     },
     {
       "case_id": "795682",

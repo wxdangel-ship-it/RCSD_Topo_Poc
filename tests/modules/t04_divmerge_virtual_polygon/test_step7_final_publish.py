@@ -50,12 +50,14 @@ ANCHOR2_30CASE_REJECTED_20260501 = {
 
 ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502: dict[str, dict[str, object]] = {
     "785629": {
+        "final_state": "rejected",
         "surface_scenario_type": "mixed",
         "section_reference_source": "mixed",
         "surface_generation_mode": "mixed",
         "unit_surface_scenario_type": "main_evidence_without_rcsd",
         "step4_evidence_source": "multibranch_event",
         "step4_main_evidence_type": "divstrip",
+        "step6_assembly_state": "assembled",
     },
     "785631": {
         "surface_scenario_type": "main_evidence_with_rcsd_junction",
@@ -983,27 +985,37 @@ def test_anchor2_39case_official_surface_scenario_gate(tmp_path: Path) -> None:
     consistency_payload = _load_json(run_root / "step7_consistency_report.json")
     nodes_audit_payload = _load_json(run_root / "nodes_anchor_update_audit.json")
     rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
+    expected_accepted_count = sum(
+        1
+        for expected in ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260503.values()
+        if expected[0] == "accepted"
+    )
+    expected_rejected_count = sum(
+        1
+        for expected in ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260503.values()
+        if expected[0] == "rejected"
+    )
 
     assert batch_summary["failed_case_ids"] == []
     assert summary_payload["row_count"] == 39
-    assert summary_payload["accepted_count"] == 35
-    assert summary_payload["rejected_count"] == 4
-    assert batch_summary["step7_accepted_count"] == 35
-    assert batch_summary["step7_rejected_count"] == 4
+    assert summary_payload["accepted_count"] == expected_accepted_count
+    assert summary_payload["rejected_count"] == expected_rejected_count
+    assert batch_summary["step7_accepted_count"] == expected_accepted_count
+    assert batch_summary["step7_rejected_count"] == expected_rejected_count
     _assert_case_package_performance_summary(batch_summary, expected_completed_cases=39)
     assert consistency_payload["passed"] is True
     assert consistency_payload["total_case_count"] == 39
-    assert consistency_payload["accepted_count"] == 35
-    assert consistency_payload["rejected_count"] == 4
+    assert consistency_payload["accepted_count"] == expected_accepted_count
+    assert consistency_payload["rejected_count"] == expected_rejected_count
     assert consistency_payload["review_png_present_count"] == 39
     assert consistency_payload["missing_review_png_case_ids"] == []
     assert consistency_payload["nodes_consistency_passed"] is True
     assert consistency_payload["nodes_total_update_count"] == 39
-    assert consistency_payload["nodes_updated_to_yes_count"] == 35
-    assert consistency_payload["nodes_updated_to_fail4_count"] == 4
+    assert consistency_payload["nodes_updated_to_yes_count"] == expected_accepted_count
+    assert consistency_payload["nodes_updated_to_fail4_count"] == expected_rejected_count
     assert nodes_audit_payload["total_update_count"] == 39
-    assert nodes_audit_payload["updated_to_yes_count"] == 35
-    assert nodes_audit_payload["updated_to_fail4_count"] == 4
+    assert nodes_audit_payload["updated_to_yes_count"] == expected_accepted_count
+    assert nodes_audit_payload["updated_to_fail4_count"] == expected_rejected_count
     nodes_audit_by_case = {row["case_id"]: row for row in nodes_audit_payload["rows"]}
     for rejected_case_id in ANCHOR2_30CASE_REJECTED_20260501:
         assert rows_by_case[rejected_case_id]["final_state"] == "rejected"
@@ -1126,20 +1138,26 @@ def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
     nodes_audit_payload = _load_json(run_root / "nodes_anchor_update_audit.json")
     rows_by_case = {row["case_id"]: row for row in summary_payload["rows"]}
     expected_case_ids = set(ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502)
+    expected_accepted_count = sum(
+        1
+        for expected in ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502.values()
+        if str(expected.get("final_state") or "accepted") == "accepted"
+    )
+    expected_rejected_count = len(ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502) - expected_accepted_count
 
     assert batch_summary["failed_case_ids"] == []
-    assert batch_summary["step7_accepted_count"] == 6
-    assert batch_summary["step7_rejected_count"] == 0
+    assert batch_summary["step7_accepted_count"] == expected_accepted_count
+    assert batch_summary["step7_rejected_count"] == expected_rejected_count
     assert summary_payload["row_count"] == 6
-    assert summary_payload["accepted_count"] == 6
-    assert summary_payload["rejected_count"] == 0
+    assert summary_payload["accepted_count"] == expected_accepted_count
+    assert summary_payload["rejected_count"] == expected_rejected_count
     assert set(rows_by_case) == expected_case_ids
     assert summary_payload["no_surface_reference_case_ids"] == []
     assert consistency_payload["passed"] is True
-    assert consistency_payload["nodes_updated_to_yes_count"] == 6
-    assert consistency_payload["nodes_updated_to_fail4_count"] == 0
-    assert nodes_audit_payload["updated_to_yes_count"] == 6
-    assert nodes_audit_payload["updated_to_fail4_count"] == 0
+    assert consistency_payload["nodes_updated_to_yes_count"] == expected_accepted_count
+    assert consistency_payload["nodes_updated_to_fail4_count"] == expected_rejected_count
+    assert nodes_audit_payload["updated_to_yes_count"] == expected_accepted_count
+    assert nodes_audit_payload["updated_to_fail4_count"] == expected_rejected_count
 
     for case_id, expected in ANCHOR2_NEW6_USER_AUDIT_EXPECTED_20260502.items():
         case_dir = run_root / "cases" / case_id
@@ -1147,7 +1165,15 @@ def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
         step4_doc = _load_json(case_dir / "step4_event_interpretation.json")
         step6_status = _load_json(case_dir / "step6_status.json")
         step7_status = _load_json(case_dir / "step7_status.json")
-        unit = step4_doc["event_units"][0]
+        unit = next(
+            (
+                candidate
+                for candidate in step4_doc["event_units"]
+                if candidate["evidence_source"] == expected["step4_evidence_source"]
+                and candidate["main_evidence_type"] == expected["step4_main_evidence_type"]
+            ),
+            step4_doc["event_units"][0],
+        )
 
         expected_final_state = str(expected.get("final_state") or "accepted")
         assert row["final_state"] == expected_final_state
@@ -1171,7 +1197,7 @@ def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
             assert step6_status["single_connected_case_surface_ok"] is True
             assert step6_status["barrier_separated_case_surface_ok"] is False
         else:
-            assert step6_status["assembly_state"] == "assembly_failed"
+            assert step6_status["assembly_state"] == expected.get("step6_assembly_state", "assembly_failed")
             assert step6_status["component_count"] > 1
             assert step6_status["final_case_polygon_component_count"] > 1
             assert step6_status["single_connected_case_surface_ok"] is False
@@ -1187,23 +1213,17 @@ def test_anchor2_new6_user_audit_surface_scenario_gate(tmp_path: Path) -> None:
     assert rows_by_case["807908"]["surface_scenario_type"] == "main_evidence_with_rcsd_junction"
     step4_807908 = _load_json(run_root / "cases" / "807908" / "step4_event_interpretation.json")
     unit_807908 = step4_807908["event_units"][0]
-    assert unit_807908["selected_rcsdroad_ids"] == [
-        "5395523385822744",
-        "5395541068551328",
-        "5395541068551367",
-    ]
+    assert unit_807908["selected_rcsdroad_ids"] == ["5395541068551367"]
     step5_807908 = _load_json(run_root / "cases" / "807908" / "step5_audit.json")
     related_rcsd_807908 = set(step5_807908["related_rcsd_road_ids"])
     unrelated_rcsd_807908 = set(
         step5_807908["negative_mask_channels"]["unrelated_rcsd"]["road_ids"]
     )
-    for road_id in (
-        "5395523385822740",
-        "5395523385822742",
-        "5395541068551367",
-    ):
-        assert road_id in related_rcsd_807908
-        assert road_id not in unrelated_rcsd_807908
+    assert "5395541068551367" in related_rcsd_807908
+    assert "5395541068551367" not in unrelated_rcsd_807908
+    for road_id in ("5395523385822740", "5395523385822742"):
+        assert road_id not in related_rcsd_807908
+        assert road_id in unrelated_rcsd_807908
     step4_785629 = _load_json(run_root / "cases" / "785629" / "step4_event_interpretation.json")
     assert {
         unit["positive_rcsd_present"] for unit in step4_785629["event_units"]

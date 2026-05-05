@@ -349,7 +349,6 @@ def _step7_guard_mapping_issues(artifacts: Iterable[T04Step7CaseArtifact]) -> li
             )
         if (
             guard_doc.get("single_connected_case_surface_ok") is False
-            and guard_doc.get("barrier_separated_case_surface_ok") is not True
             and "multi_component_result" not in reject_reasons
         ):
             issues.append(
@@ -497,7 +496,6 @@ def _reject_reasons(
 ) -> tuple[str, ...]:
     reasons: list[str] = []
     final_case_polygon = _normalize_geometry(step6_result.final_case_polygon)
-    barrier_separated_ok = bool(getattr(step6_result, "barrier_separated_case_surface_ok", False))
     if final_case_polygon is None or final_case_polygon.is_empty:
         reasons.append("final_polygon_missing")
     if (
@@ -510,12 +508,9 @@ def _reject_reasons(
         reasons.append("no_surface_reference")
         if getattr(step6_result, "final_polygon_suppressed_by_no_surface_reference", False):
             reasons.append("final_polygon_suppressed_by_no_surface_reference")
-    if step6_result.component_count != 1 and not barrier_separated_ok:
+    if step6_result.component_count != 1:
         reasons.append("multi_component_result")
-    if (
-        not getattr(step6_result, "single_connected_case_surface_ok", step6_result.component_count == 1)
-        and not barrier_separated_ok
-    ):
+    if not getattr(step6_result, "single_connected_case_surface_ok", step6_result.component_count == 1):
         reasons.append("multi_component_result")
     if not step6_result.hard_must_cover_ok:
         reasons.append("hard_must_cover_disconnected")

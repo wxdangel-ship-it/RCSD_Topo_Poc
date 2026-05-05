@@ -893,6 +893,7 @@ def build_step6_polygon_assembly(
         component_count != 1
         and final_case_polygon is not None
         and not final_case_polygon.is_empty
+        and not barrier_separated_case_surface_ok
     ):
         review_reasons.append("multi_component_result")
     if not hard_must_cover_ok:

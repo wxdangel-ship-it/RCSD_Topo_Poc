@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-from shapely.geometry import GeometryCollection, Polygon
+from shapely.geometry import GeometryCollection, LineString, Polygon
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import nearest_points
 
 from ._rcsd_selection_support import _normalize_geometry, _union_geometry
 from ._runtime_polygon_cleanup import _polygon_components
@@ -568,6 +569,66 @@ def _unit_surface_count(step5_result: T04Step5CaseResult) -> int:
     )
 
 
+def _component_gap_negative_mask_audit(
+    final_case_polygon: BaseGeometry | None,
+    forbidden_geometry: BaseGeometry | None,
+) -> dict[str, Any]:
+    components = tuple(_polygon_components(final_case_polygon or GeometryCollection()))
+    component_count = len(components)
+    gap_count = max(0, component_count - 1)
+    forbidden = _normalize_geometry(forbidden_geometry)
+    if component_count <= 1 or forbidden is None or forbidden.is_empty:
+        return {
+            "component_gap_negative_mask_crossing_detected": False,
+            "component_gap_negative_mask_all_gaps_blocked": False,
+            "component_gap_negative_mask_crossing_count": 0,
+            "component_gap_negative_mask_gap_count": gap_count,
+            "component_gap_negative_mask_crossing_length_m": 0.0,
+            "component_gap_negative_mask_gap_length_m": 0.0,
+        }
+
+    connected = {0}
+    remaining = set(range(1, component_count))
+    crossing_count = 0
+    segment_count = 0
+    crossing_length = 0.0
+    gap_length = 0.0
+    while remaining:
+        best: tuple[float, int, int, LineString | None] | None = None
+        for left_index in connected:
+            left = components[left_index]
+            for right_index in remaining:
+                right = components[right_index]
+                left_point, right_point = nearest_points(left, right)
+                segment = LineString([left_point, right_point])
+                distance = float(segment.length or left.distance(right))
+                if best is None or distance < best[0]:
+                    best = (distance, left_index, right_index, segment)
+        if best is None:
+            break
+        _, _, right_index, segment = best
+        connected.add(right_index)
+        remaining.remove(right_index)
+        if segment is None or segment.length <= 1e-6:
+            continue
+        segment_count += 1
+        segment_length = float(segment.length)
+        gap_length += segment_length
+        blocked_length = float(segment.intersection(forbidden).length)
+        if blocked_length > 1e-6:
+            crossing_count += 1
+            crossing_length += blocked_length
+
+    return {
+        "component_gap_negative_mask_crossing_detected": crossing_count > 0,
+        "component_gap_negative_mask_all_gaps_blocked": segment_count > 0 and crossing_count == segment_count,
+        "component_gap_negative_mask_crossing_count": crossing_count,
+        "component_gap_negative_mask_gap_count": gap_count,
+        "component_gap_negative_mask_crossing_length_m": crossing_length,
+        "component_gap_negative_mask_gap_length_m": gap_length,
+    }
+
+
 def _barrier_separated_case_surface_ok(
     *,
     final_case_polygon: BaseGeometry | None,
@@ -599,10 +660,12 @@ def _barrier_separated_case_surface_ok(
     )
     if any(not bool(post_checks.get(check_name, True)) for check_name in required_checks):
         return False
+    component_gap_crossing_detected = bool(post_checks.get("component_gap_negative_mask_crossing_detected", False))
+    component_gap_all_blocked = bool(post_checks.get("component_gap_negative_mask_all_gaps_blocked", False))
     if guard_context.surface_scenario_type not in {
         SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
         SCENARIO_NO_MAIN_WITH_SWSD_ONLY,
-    } and not (set(hard_connect_notes) & STEP6_BARRIER_SEPARATION_RELIEF_NOTES):
+    } and not component_gap_crossing_detected and not (set(hard_connect_notes) & STEP6_BARRIER_SEPARATION_RELIEF_NOTES):
         return False
     # 真实硬阻断举证：multi-component 只允许在 §1.4 A / B 两类路径下被标为 barrier-separated。
     # 必须配 bridge_negative_mask_crossing_detected = true 或某个 channel overlap > tolerance；
@@ -613,7 +676,9 @@ def _barrier_separated_case_surface_ok(
         float((channel or {}).get("overlap_area_m2", 0.0) or 0.0)
         for channel in bridge_channel_overlaps.values()
     )
-    if not bridge_crossing_detected and real_bridge_overlap_area_m2 <= STEP6_FORBIDDEN_TOLERANCE_AREA_M2:
+    real_component_gap_block = component_gap_crossing_detected and component_gap_all_blocked
+    real_bridge_block = bridge_crossing_detected or real_bridge_overlap_area_m2 > STEP6_FORBIDDEN_TOLERANCE_AREA_M2
+    if not real_component_gap_block and not real_bridge_block:
         return False
     return bool(
         hard_must_cover_ok
@@ -668,6 +733,10 @@ def check_post_cleanup_constraints(
     fallback_outside_allowed_area = _area_outside(step5_result.case_allowed_growth_domain, fallback_geometry)
     fallback_domain_contained = fallback_outside_allowed_area <= STEP6_ALLOWED_TOLERANCE_AREA_M2
     fallback_overexpansion_area = allowed_outside_area if guard_context.fallback_rcsdroad_localized else 0.0
+    component_gap_negative_mask_audit = _component_gap_negative_mask_audit(
+        final_case_polygon,
+        step5_result.case_forbidden_domain,
+    )
     return {
         "post_cleanup_allowed_growth_ok": allowed_outside_area <= STEP6_ALLOWED_TOLERANCE_AREA_M2,
         "post_cleanup_forbidden_ok": forbidden_overlap_area <= STEP6_FORBIDDEN_TOLERANCE_AREA_M2,
@@ -684,6 +753,7 @@ def check_post_cleanup_constraints(
         "negative_mask_conflict_channel_names": negative_mask_conflict_channel_names,
         "bridge_negative_mask_channel_overlaps": bridge_negative_mask_channel_overlaps,
         "bridge_negative_mask_crossing_detected": bridge_negative_mask_crossing_detected,
+        **component_gap_negative_mask_audit,
         "divstrip_negative_overlap_area_m2": divstrip_negative_overlap_area,
         "fallback_domain_contained_by_allowed_growth": fallback_domain_contained,
         "fallback_overexpansion_detected": bool(

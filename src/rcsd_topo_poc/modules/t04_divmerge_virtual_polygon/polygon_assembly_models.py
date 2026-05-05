@@ -78,6 +78,12 @@ class T04Step6Result:
     negative_mask_conflict_channel_names: tuple[str, ...] = ()
     bridge_negative_mask_channel_overlaps: dict[str, dict[str, Any]] | None = None
     bridge_negative_mask_crossing_detected: bool = False
+    component_gap_negative_mask_crossing_detected: bool = False
+    component_gap_negative_mask_all_gaps_blocked: bool = False
+    component_gap_negative_mask_crossing_count: int = 0
+    component_gap_negative_mask_gap_count: int = 0
+    component_gap_negative_mask_crossing_length_m: float = 0.0
+    component_gap_negative_mask_gap_length_m: float = 0.0
     case_alignment_review_reasons: tuple[str, ...] = ()
     case_alignment_ambiguous_event_unit_ids: tuple[str, ...] = ()
     forbidden_domain_kept: bool = False
@@ -136,6 +142,12 @@ class T04Step6Result:
             "negative_mask_conflict_channel_names": list(self.negative_mask_conflict_channel_names),
             "bridge_negative_mask_channel_overlaps": self.bridge_negative_mask_channel_overlaps or {},
             "bridge_negative_mask_crossing_detected": self.bridge_negative_mask_crossing_detected,
+            "component_gap_negative_mask_crossing_detected": self.component_gap_negative_mask_crossing_detected,
+            "component_gap_negative_mask_all_gaps_blocked": self.component_gap_negative_mask_all_gaps_blocked,
+            "component_gap_negative_mask_crossing_count": self.component_gap_negative_mask_crossing_count,
+            "component_gap_negative_mask_gap_count": self.component_gap_negative_mask_gap_count,
+            "component_gap_negative_mask_crossing_length_m": self.component_gap_negative_mask_crossing_length_m,
+            "component_gap_negative_mask_gap_length_m": self.component_gap_negative_mask_gap_length_m,
             "case_alignment_review_reasons": list(self.case_alignment_review_reasons),
             "case_alignment_ambiguous_event_unit_ids": list(self.case_alignment_ambiguous_event_unit_ids),
             "relief_constraint_audit_count": len(self.relief_constraint_audit_entries),
@@ -185,6 +197,12 @@ class T04Step6Result:
             "negative_mask_conflict_channel_names": list(self.negative_mask_conflict_channel_names),
             "bridge_negative_mask_channel_overlaps": self.bridge_negative_mask_channel_overlaps or {},
             "bridge_negative_mask_crossing_detected": self.bridge_negative_mask_crossing_detected,
+            "component_gap_negative_mask_crossing_detected": self.component_gap_negative_mask_crossing_detected,
+            "component_gap_negative_mask_all_gaps_blocked": self.component_gap_negative_mask_all_gaps_blocked,
+            "component_gap_negative_mask_crossing_count": self.component_gap_negative_mask_crossing_count,
+            "component_gap_negative_mask_gap_count": self.component_gap_negative_mask_gap_count,
+            "component_gap_negative_mask_crossing_length_m": self.component_gap_negative_mask_crossing_length_m,
+            "component_gap_negative_mask_gap_length_m": self.component_gap_negative_mask_gap_length_m,
             "case_alignment_review_reasons": list(self.case_alignment_review_reasons),
             "case_alignment_ambiguous_event_unit_ids": list(self.case_alignment_ambiguous_event_unit_ids),
             "surface_scenario_type": self.surface_scenario_type,

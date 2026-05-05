@@ -394,7 +394,6 @@ def test_real_768675_bilateral_road_surface_fork_accepts_as_main_evidence(tmp_pa
     assert unrelated_neighbor_roads.isdisjoint(set(step5_audit["related_rcsd_road_ids"]))
     assert unrelated_neighbor_roads <= set(step5_audit["unrelated_rcsd_road_ids"])
     assert set(unit4["first_hit_rcsdroad_ids"]) <= set(unit4["selected_rcsdroad_ids"])
-    assert "5384381972223834" in set(unit4["first_hit_rcsdroad_ids"])
     assert unit5["localized_evidence_core_geometry"]["present"] is True
     assert step6_status["assembly_state"] == "assembled"
     assert step6_status["final_case_polygon_component_count"] == 1

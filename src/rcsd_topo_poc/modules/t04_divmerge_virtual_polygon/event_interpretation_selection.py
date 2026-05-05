@@ -271,6 +271,12 @@ def _candidate_priority_score(candidate_summary: dict, result: T04EventUnitResul
         (result.localized_evidence_core_geometry is not None and not result.localized_evidence_core_geometry.is_empty)
         or (result.selected_component_union_geometry is not None and not result.selected_component_union_geometry.is_empty)
     ) else 0
+    main_evidence_bonus = 80 if str(candidate_summary.get("upper_evidence_kind") or "") == "divstrip" else 0
+    unsupported_surface_penalty = (
+        80
+        if road_surface_fork_candidate and not bool(result.positive_rcsd_present)
+        else 0
+    )
     node_penalty = 220 if bool(candidate_summary.get("node_fallback_only")) else 0
     return int(
         primary_bonus
@@ -280,7 +286,9 @@ def _candidate_priority_score(candidate_summary: dict, result: T04EventUnitResul
         + throat_bonus
         + rcsd_bonus
         + evidence_bonus
+        + main_evidence_bonus
         - node_penalty
+        - unsupported_surface_penalty
     )
 
 

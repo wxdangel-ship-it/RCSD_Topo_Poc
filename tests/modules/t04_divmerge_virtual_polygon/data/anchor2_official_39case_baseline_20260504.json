@@ -266,9 +266,9 @@
     {
       "case_id": "788824",
       "final_state": "accepted",
-      "surface_scenario_type": "main_evidence_with_rcsdroad_fallback",
-      "section_reference_source": "reference_point",
-      "surface_generation_mode": "main_evidence_driven"
+      "surface_scenario_type": "no_main_evidence_with_rcsd_junction",
+      "section_reference_source": "rcsd_junction",
+      "surface_generation_mode": "rcsd_junction_window"
     },
     {
       "case_id": "795682",

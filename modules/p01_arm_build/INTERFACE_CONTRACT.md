@@ -28,6 +28,17 @@ exit_code = run_p01_arm_build_from_args([
 
 该调用面不登记为当前仓库正式执行入口；后续如需正式 CLI，必须同步更新入口注册表、CLI、README 与本契约。
 
+当前还提供单路口文本证据包 dev helper，用于外部复现与内网 case 取证，不登记为正式 CLI：
+
+```python
+from rcsd_topo_poc.modules.p01_arm_build.text_bundle import (
+    run_p01_decode_text_bundle_from_args,
+    run_p01_export_text_bundle_from_args,
+)
+```
+
+打包和解包均可通过 `python -c` 单命令调用。helper 使用 `zip + base85 + checksum` 文本包装，默认上限 `250 KiB`；上下文选择基于当前语义路口 Road 拓扑 BFS，不做简单空间裁剪。
+
 ## 3. 输入契约
 
 ### 3.1 数据路径
@@ -82,6 +93,37 @@ Road 最少字段：
 - `formway`
 
 `grade / grade_2` 禁止进入 Arm 构建主规则。
+
+### 3.5 文本证据包 helper 参数
+
+打包 helper 参数：
+
+- `--swsd-nodes`
+- `--swsd-roads`
+- `--rcsd-nodes`
+- `--rcsd-roads`
+- `--frcsd-nodes`
+- `--frcsd-roads`
+- `--junction-group <swsd_junction_id>,<rcsd_junction_id>,<frcsd_junction_id>`
+- `--out-txt`
+- `--bfs-depth`：默认 `2`
+- `--max-text-size-bytes`：默认 `256000`
+
+解包 helper 参数：
+
+- `--bundle-txt`
+- `--out-dir`
+
+解包输出：
+
+- `manifest.json`
+- `size_report.json`
+- `SWSD/nodes.gpkg`
+- `SWSD/roads.gpkg`
+- `RCSD/nodes.gpkg`
+- `RCSD/roads.gpkg`
+- `FRCSD/nodes.gpkg`
+- `FRCSD/roads.gpkg`
 
 ## 4. 业务对象契约
 

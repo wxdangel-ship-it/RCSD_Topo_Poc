@@ -16,6 +16,10 @@
 
 负责 dataset review PNG、compare PNG、trace review PNG 的像素级渲染。
 
+## `text_bundle.py`
+
+负责单 junction-group 文本证据包打包 / 解包。该模块复用 T02 的文本包装思路，但 P01 的范围选择基于 Road 拓扑 BFS，不作为正式 CLI 入口。
+
 ## `runner.py`
 
 负责参数解析、批处理、summary、review index 与输出编排。当前为模块内可调用 runner，不是正式 CLI。

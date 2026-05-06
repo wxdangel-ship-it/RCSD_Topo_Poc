@@ -17,6 +17,11 @@ from rcsd_topo_poc.modules.p01_arm_build.review import (
     _trace_review_context,
 )
 from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_args
+from rcsd_topo_poc.modules.p01_arm_build.text_bundle import (
+    P01_TEXT_BUNDLE_LIMIT_BYTES,
+    run_p01_decode_text_bundle,
+    run_p01_export_text_bundle,
+)
 from rcsd_topo_poc.modules.p01_arm_build.topology import build_dataset_arm_result
 
 
@@ -64,6 +69,11 @@ def _write_roads(path: Path, features: list[tuple[str, str, str, int, str, list[
                     },
                 }
             )
+
+
+def _feature_ids(path: Path) -> set[str]:
+    with fiona.open(path) as src:
+        return {str(feature["properties"]["id"]) for feature in src}
 
 
 def _case_nodes(prefix: str, index: int, dx: float) -> list[tuple[str, str | None, float, float]]:
@@ -270,6 +280,44 @@ def test_dataset_review_context_stays_near_junction_for_long_traces(tmp_path: Pa
     assert any("S1_far_trace" in trace.traced_road_ids for trace in result.traces)
     assert "S1_far_trace" not in road_ids
     assert bounds[2] < 120.0
+
+
+def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _write_dataset(tmp_path, "S", include_far_noise=True)
+    rcsd_nodes, rcsd_roads = _write_dataset(tmp_path, "R", include_far_noise=True)
+    frcsd_nodes, frcsd_roads = _write_dataset(tmp_path, "F", include_far_noise=True)
+    bundle_path = tmp_path / "p01_case_bundle.txt"
+
+    artifacts = run_p01_export_text_bundle(
+        swsd_nodes=swsd_nodes,
+        swsd_roads=swsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_roads=rcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        frcsd_roads=frcsd_roads,
+        junction_group="S1,R1,F1",
+        out_txt=bundle_path,
+        bfs_depth=1,
+    )
+
+    assert artifacts.success, artifacts.failure_detail
+    assert bundle_path.is_file()
+    assert artifacts.bundle_size_bytes <= P01_TEXT_BUNDLE_LIMIT_BYTES
+
+    decoded = run_p01_decode_text_bundle(bundle_txt=bundle_path, out_dir=tmp_path / "decoded_bundle")
+    assert decoded.success
+    swsd_decoded = decoded.out_dir / "SWSD"
+    road_ids = _feature_ids(swsd_decoded / "roads.gpkg")
+    node_ids = _feature_ids(swsd_decoded / "nodes.gpkg")
+
+    assert "S1_east_seed" in road_ids
+    assert "S1_east_continue" in road_ids
+    assert "S_far_noise" not in road_ids
+    assert "Sfar_a" not in node_ids
+
+    manifest = json.loads(decoded.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["encoder_info"]["selection"] == "semantic-road-topology-bfs"
+    assert manifest["datasets"]["SWSD"]["selected_road_count"] < 10
 
 
 def test_review_line_points_accepts_3d_coordinates() -> None:

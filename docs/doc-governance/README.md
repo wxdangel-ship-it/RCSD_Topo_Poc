@@ -38,6 +38,7 @@
   - `t02_junction_anchor`
   - `t03_virtual_junction_anchor`
   - `t04_divmerge_virtual_polygon`
+  - `p01_arm_build`
 - Support Retained：
   - `t00_utility_toolbox`
 - 模板目录：
@@ -51,6 +52,7 @@
 - `t03_virtual_junction_anchor` 当前进入 Active 模块集合；其正式业务主链按 `Step1~Step7` 表达，覆盖 case 受理、模板归类、合法空间冻结、RCSD 关联、foreign / excluded 负向约束、受约束几何与最终发布。
 - `t03_virtual_junction_anchor` 当前 repo 官方入口保留 `t03-step3-legal-space` 与 `t03-rcsd-association`；`Association / Finalization` 只作为实现阶段与输出命名保留，不再作为正式需求主结构。
 - `t04_divmerge_virtual_polygon` 当前进入 Active 模块集合；其正式范围为 `Step1-7` 的模块化实现、Step7 发布层与 internal full-input repo 级脚本包装；不新增 repo 官方 CLI 子命令。
+- `p01_arm_build` 当前进入 Active 模块集合；其正式范围为 `P01-A / Arm 构建` POC 验证模块，当前仅提供模块内可调用 runner，不新增 repo 官方 CLI 子命令或 `scripts/` 常驻脚本。
 - 未在模块生命周期文档中登记的模块目录，不自动视为当前正式治理对象。
 
 ## 哪些文档不是主入口

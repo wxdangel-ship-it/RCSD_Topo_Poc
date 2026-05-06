@@ -5,3 +5,4 @@ t01_data_preprocess,modules/t01_data_preprocess,active,formal-module-surface,kee
 t02_junction_anchor,modules/t02_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,stage1-stage2-stage3-active-independent-refactor-managed-separately
 t03_virtual_junction_anchor,modules/t03_virtual_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,step1-step7-formal-chain-association-finalization-canonical-names-no-new-public-finalization-cli
 t04_divmerge_virtual_polygon,modules/t04_divmerge_virtual_polygon,active,formal-module-surface,keep-in-sync-with-step14-implementation,step1-step4-active-step4-review-outputs-no-public-cli-step34-repair-formalization-open
+p01_arm_build,modules/p01_arm_build,active,formal-module-surface,keep-in-sync-with-p01-a-implementation,p01-a-arm-build-poc-validation-no-public-cli

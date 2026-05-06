@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+
+import fiona
+from shapely.geometry import LineString, Point, mapping
+
+from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_args
+
+
+def _write_nodes(path: Path, features: list[tuple[str, str | None, float, float]]) -> None:
+    schema = {"geometry": "Point", "properties": {"id": "str", "mainnodeid": "str", "kind": "str", "grade": "int"}}
+    with fiona.open(path, "w", driver="GPKG", schema=schema, crs="EPSG:3857") as sink:
+        for node_id, mainnodeid, x, y in features:
+            sink.write(
+                {
+                    "geometry": mapping(Point(x, y)),
+                    "properties": {
+                        "id": node_id,
+                        "mainnodeid": mainnodeid,
+                        "kind": "4",
+                        "grade": 9,
+                    },
+                }
+            )
+
+
+def _write_roads(path: Path, features: list[tuple[str, str, str, int, str, list[tuple[float, float]]]]) -> None:
+    schema = {
+        "geometry": "LineString",
+        "properties": {
+            "id": "str",
+            "snodeid": "str",
+            "enodeid": "str",
+            "direction": "int",
+            "formway": "str",
+            "grade_2": "int",
+        },
+    }
+    with fiona.open(path, "w", driver="GPKG", schema=schema, crs="EPSG:3857") as sink:
+        for road_id, snodeid, enodeid, direction, formway, coords in features:
+            sink.write(
+                {
+                    "geometry": mapping(LineString(coords)),
+                    "properties": {
+                        "id": road_id,
+                        "snodeid": snodeid,
+                        "enodeid": enodeid,
+                        "direction": direction,
+                        "formway": formway,
+                        "grade_2": 7,
+                    },
+                }
+            )
+
+
+def _case_nodes(prefix: str, index: int, dx: float) -> list[tuple[str, str | None, float, float]]:
+    jid = f"{prefix}{index}"
+    return [
+        (jid, jid, dx, 0.0),
+        (f"{jid}b", jid, dx + 5.0, 0.0),
+        (f"{jid}n", None, dx, 30.0),
+        (f"{jid}s", None, dx, -30.0),
+        (f"{jid}w", None, dx - 30.0, 0.0),
+        (f"{jid}e1", None, dx + 35.0, 0.0),
+        (f"{jid}e2", None, dx + 65.0, 0.0),
+        (f"{jid}rt", None, dx + 25.0, -22.0),
+    ]
+
+
+def _case_roads(prefix: str, index: int, dx: float) -> list[tuple[str, str, str, int, str, list[tuple[float, float]]]]:
+    jid = f"{prefix}{index}"
+    return [
+        (f"{jid}_internal", jid, f"{jid}b", 0, "0", [(dx, 0.0), (dx + 5.0, 0.0)]),
+        (f"{jid}_in", f"{jid}n", jid, 2, "0", [(dx, 30.0), (dx, 0.0)]),
+        (f"{jid}_out", jid, f"{jid}s", 2, "0", [(dx, 0.0), (dx, -30.0)]),
+        (f"{jid}_bi", f"{jid}b", f"{jid}w", 0, "0", [(dx + 5.0, 0.0), (dx - 30.0, 0.0)]),
+        (f"{jid}_east_seed", f"{jid}b", f"{jid}e1", 2, "0", [(dx + 5.0, 0.0), (dx + 35.0, 0.0)]),
+        (f"{jid}_east_continue", f"{jid}e1", f"{jid}e2", 2, "0", [(dx + 35.0, 0.0), (dx + 65.0, 0.0)]),
+        (f"{jid}_right_turn", jid, f"{jid}rt", 2, "128", [(dx, 0.0), (dx + 25.0, -22.0)]),
+    ]
+
+
+def _write_dataset(tmp_path: Path, prefix: str) -> tuple[Path, Path]:
+    nodes_path = tmp_path / f"{prefix.lower()}_nodes.gpkg"
+    roads_path = tmp_path / f"{prefix.lower()}_roads.gpkg"
+    nodes = _case_nodes(prefix, 1, 0.0) + _case_nodes(prefix, 2, 160.0)
+    roads = _case_roads(prefix, 1, 0.0) + _case_roads(prefix, 2, 160.0)
+    _write_nodes(nodes_path, nodes)
+    _write_roads(roads_path, roads)
+    return nodes_path, roads_path
+
+
+def _run_args(tmp_path: Path, out_root: Path, *, include_right_turn_value: bool = True) -> list[str]:
+    swsd_nodes, swsd_roads = _write_dataset(tmp_path, "S")
+    rcsd_nodes, rcsd_roads = _write_dataset(tmp_path, "R")
+    frcsd_nodes, frcsd_roads = _write_dataset(tmp_path, "F")
+    args = [
+        "--swsd-nodes",
+        str(swsd_nodes),
+        "--swsd-roads",
+        str(swsd_roads),
+        "--rcsd-nodes",
+        str(rcsd_nodes),
+        "--rcsd-roads",
+        str(rcsd_roads),
+        "--frcsd-nodes",
+        str(frcsd_nodes),
+        "--frcsd-roads",
+        str(frcsd_roads),
+        "--junction-group",
+        "S1,R1,F1",
+        "--junction-group",
+        "S2,R2,F2",
+        "--out-root",
+        str(out_root),
+        "--run-id",
+        "test_run",
+    ]
+    if include_right_turn_value:
+        args.extend(["--right-turn-formway-value", "128"])
+    return args
+
+
+def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> None:
+    out_root = tmp_path / "out"
+    assert run_p01_arm_build_from_args(_run_args(tmp_path, out_root)) == 0
+
+    run_root = out_root / "test_run"
+    assert (run_root / "preflight.json").is_file()
+    assert (run_root / "p01_arm_build_summary.json").is_file()
+    assert (run_root / "p01_arm_build_review_index.csv").is_file()
+    assert (run_root / "cases" / "group_0001" / "case_input.json").is_file()
+    assert (run_root / "cases" / "group_0002" / "case_summary.json").is_file()
+
+    swsd_dir = run_root / "cases" / "group_0001" / "SWSD"
+    context = json.loads((swsd_dir / "junction_context.json").read_text(encoding="utf-8"))
+    assert context["member_node_ids"] == ["S1", "S1b"]
+    assert context["internal_road_ids"] == ["S1_internal"]
+    assert context["excluded_right_turn_road_ids"] == ["S1_right_turn"]
+
+    initial_arms = json.loads((swsd_dir / "initial_arms.json").read_text(encoding="utf-8"))
+    assert len(initial_arms) == 4
+    assert any("S1_east_continue" in arm["connector_road_ids"] for arm in initial_arms)
+
+    decisions = json.loads((swsd_dir / "through_decisions.json").read_text(encoding="utf-8"))
+    assert any(decision["status"] == "simple_through" for decision in decisions)
+    assert any(decision["status"] == "dead_end" for decision in decisions)
+
+    assert (swsd_dir / "p01_arm_review.png").is_file()
+    assert (swsd_dir / "review_layers.gpkg").is_file()
+    assert (run_root / "cases" / "group_0001" / "compare" / "p01_arm_compare.png").is_file()
+    assert (run_root / "cases" / "group_0001" / "compare" / "p01_arm_compare_layers.gpkg").is_file()
+    assert set(fiona.listlayers(swsd_dir / "review_layers.gpkg")) >= {
+        "current_junction_nodes",
+        "arm_roads",
+        "through_decision_nodes",
+        "excluded_right_turn_roads",
+    }
+
+    with (run_root / "p01_arm_build_review_index.csv").open(encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert len(rows) == 6
+    assert {row["junction_group_id"] for row in rows} == {"group_0001", "group_0002"}
+    assert {row["dataset"] for row in rows} == {"SWSD", "RCSD", "FRCSD"}
+    assert all(row["review_priority"] in {"P0", "P1", "P2", "P3"} for row in rows)
+
+
+def test_right_turn_is_not_excluded_without_explicit_field_value(tmp_path: Path) -> None:
+    out_root = tmp_path / "out_no_rt"
+    assert run_p01_arm_build_from_args(_run_args(tmp_path, out_root, include_right_turn_value=False)) == 0
+    context = json.loads(
+        (out_root / "test_run" / "cases" / "group_0001" / "SWSD" / "junction_context.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert context["excluded_right_turn_road_ids"] == []
+    initial_arms = json.loads(
+        (out_root / "test_run" / "cases" / "group_0001" / "SWSD" / "initial_arms.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert any("S1_right_turn" in arm["seed_road_ids"] for arm in initial_arms)
+
+
+def test_p01_source_does_not_reference_grade_fields() -> None:
+    source_dir = Path("src/rcsd_topo_poc/modules/p01_arm_build")
+    source_text = "\n".join(path.read_text(encoding="utf-8") for path in source_dir.glob("*.py"))
+    assert "grade" not in source_text.lower()

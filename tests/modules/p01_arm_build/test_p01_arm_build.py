@@ -9,7 +9,13 @@ from shapely.geometry import LineString, Point, mapping
 
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset
 from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput
-from rcsd_topo_poc.modules.p01_arm_build.review import _geometry_bounds, _line_points, _projector, _trace_review_context
+from rcsd_topo_poc.modules.p01_arm_build.review import (
+    _dataset_review_context,
+    _geometry_bounds,
+    _line_points,
+    _projector,
+    _trace_review_context,
+)
 from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_args
 from rcsd_topo_poc.modules.p01_arm_build.topology import build_dataset_arm_result
 
@@ -87,7 +93,13 @@ def _case_roads(prefix: str, index: int, dx: float) -> list[tuple[str, str, str,
     ]
 
 
-def _write_dataset(tmp_path: Path, prefix: str, *, include_far_noise: bool = False) -> tuple[Path, Path]:
+def _write_dataset(
+    tmp_path: Path,
+    prefix: str,
+    *,
+    include_far_noise: bool = False,
+    include_far_trace: bool = False,
+) -> tuple[Path, Path]:
     nodes_path = tmp_path / f"{prefix.lower()}_nodes.gpkg"
     roads_path = tmp_path / f"{prefix.lower()}_roads.gpkg"
     nodes = _case_nodes(prefix, 1, 0.0) + _case_nodes(prefix, 2, 160.0)
@@ -107,6 +119,18 @@ def _write_dataset(tmp_path: Path, prefix: str, *, include_far_noise: bool = Fal
                 2,
                 "0",
                 [(100000.0, 100000.0), (100050.0, 100000.0)],
+            )
+        )
+    if include_far_trace:
+        nodes.append((f"{prefix}1far_trace", None, 100000.0, 0.0))
+        roads.append(
+            (
+                f"{prefix}1_far_trace",
+                f"{prefix}1e2",
+                f"{prefix}1far_trace",
+                2,
+                "0",
+                [(65.0, 0.0), (100000.0, 0.0)],
             )
         )
     _write_nodes(nodes_path, nodes)
@@ -219,6 +243,33 @@ def test_trace_review_context_excludes_far_unrelated_roads(tmp_path: Path) -> No
     assert "Sfar_a" not in node_ids
     assert bounds[2] < 120.0
     assert bounds[3] < 60.0
+
+
+def test_dataset_review_context_excludes_far_unrelated_roads(tmp_path: Path) -> None:
+    nodes_path, roads_path = _write_dataset(tmp_path, "S", include_far_noise=True)
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+    result = build_dataset_arm_result(loaded, junction_id="S1", right_turn_formway_values={"128"})
+
+    geometries, road_ids, node_ids = _dataset_review_context(loaded, result)
+    bounds = _geometry_bounds(geometries)
+
+    assert "S_far_noise" not in road_ids
+    assert "Sfar_a" not in node_ids
+    assert bounds[2] < 120.0
+    assert bounds[3] < 60.0
+
+
+def test_dataset_review_context_stays_near_junction_for_long_traces(tmp_path: Path) -> None:
+    nodes_path, roads_path = _write_dataset(tmp_path, "S", include_far_trace=True)
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+    result = build_dataset_arm_result(loaded, junction_id="S1", right_turn_formway_values={"128"})
+
+    geometries, road_ids, _ = _dataset_review_context(loaded, result)
+    bounds = _geometry_bounds(geometries)
+
+    assert any("S1_far_trace" in trace.traced_road_ids for trace in result.traces)
+    assert "S1_far_trace" not in road_ids
+    assert bounds[2] < 120.0
 
 
 def test_review_line_points_accepts_3d_coordinates() -> None:

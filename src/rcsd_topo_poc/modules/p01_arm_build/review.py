@@ -127,6 +127,8 @@ def _draw_dataset_panel(
     result: DatasetBuildResult,
     *,
     bounds: tuple[float, float, float, float],
+    road_ids: set[str],
+    node_ids: set[str],
     panel: tuple[int, int, int, int],
     title: str,
     font,
@@ -142,7 +144,10 @@ def _draw_dataset_panel(
     excluded_ids = set(result.context.excluded_right_turn_road_ids)
     member_nodes = set(result.context.member_node_ids)
 
-    for road in loaded.roads.values():
+    for road_id in sorted(road_ids):
+        road = loaded.roads.get(road_id)
+        if road is None:
+            continue
         color = ROAD_GREY
         width_px = 2
         if road.road_id in internal_ids:
@@ -156,7 +161,7 @@ def _draw_dataset_panel(
             width_px = 4
         _draw_line(draw, road.geometry, project, fill=color, width=width_px)
 
-    for node_id in member_nodes:
+    for node_id in sorted(node_ids & member_nodes):
         node = loaded.nodes.get(node_id)
         if node:
             _draw_point(draw, node.geometry, project, fill=NODE_BLUE, radius=6)
@@ -192,6 +197,8 @@ def _draw_dataset_panel(
     }
     for decision in result.decisions:
         for node_id in decision.member_node_ids[:1]:
+            if node_id not in node_ids:
+                continue
             node = loaded.nodes.get(node_id)
             if node:
                 center = node.geometry.centroid
@@ -204,7 +211,7 @@ def render_dataset_review_png(path: Path, loaded: LoadedDataset, result: Dataset
     image = Image.new("RGBA", (width, height), (250, 250, 248, 255))
     draw = ImageDraw.Draw(image, "RGBA")
     font = ImageFont.load_default()
-    geometries = [road.geometry for road in loaded.roads.values()] + [node.geometry for node in loaded.nodes.values()]
+    geometries, road_ids, node_ids = _dataset_review_context(loaded, result)
     bounds = _geometry_bounds(geometries)
     metrics = result.metrics
     title = (
@@ -212,7 +219,17 @@ def render_dataset_review_png(path: Path, loaded: LoadedDataset, result: Dataset
         f"arms={metrics['initial_arm_count']} stable={metrics['stable_arm_count']} "
         f"issue={metrics['issue_count']} excluded_rt={metrics['excluded_right_turn_road_count']}"
     )
-    _draw_dataset_panel(draw, loaded, result, bounds=bounds, panel=(0, 0, width, height), title=title, font=font)
+    _draw_dataset_panel(
+        draw,
+        loaded,
+        result,
+        bounds=bounds,
+        road_ids=road_ids,
+        node_ids=node_ids,
+        panel=(0, 0, width, height),
+        title=title,
+        font=font,
+    )
     image.convert("RGB").save(path)
 
 
@@ -226,10 +243,11 @@ def render_compare_png(
     image = Image.new("RGBA", (panel_w * 3, height), (250, 250, 248, 255))
     draw = ImageDraw.Draw(image, "RGBA")
     font = ImageFont.load_default()
+    contexts: dict[str, tuple[list[BaseGeometry], set[str], set[str]]] = {}
     geometries: list[BaseGeometry] = []
-    for loaded in loaded_by_dataset.values():
-        geometries.extend(road.geometry for road in loaded.roads.values())
-        geometries.extend(node.geometry for node in loaded.nodes.values())
+    for dataset in ("SWSD", "RCSD", "FRCSD"):
+        contexts[dataset] = _dataset_review_context(loaded_by_dataset[dataset], result_by_dataset[dataset])
+        geometries.extend(contexts[dataset][0])
     bounds = _geometry_bounds(geometries)
     for idx, dataset in enumerate(("SWSD", "RCSD", "FRCSD")):
         loaded = loaded_by_dataset[dataset]
@@ -245,6 +263,8 @@ def render_compare_png(
             loaded,
             result,
             bounds=bounds,
+            road_ids=contexts[dataset][1],
+            node_ids=contexts[dataset][2],
             panel=(idx * panel_w, 0, panel_w, height),
             title=title,
             font=font,
@@ -318,6 +338,49 @@ def _trace_review_context(
     # Add one-hop road context around the current trace nodes. This keeps the
     # trace review focused on the junction area without losing adjacent branch
     # evidence that can explain a boundary decision.
+    for road in loaded.roads.values():
+        if road.snodeid in context_node_ids or road.enodeid in context_node_ids:
+            context_road_ids.add(road.road_id)
+
+    geometries: list[BaseGeometry] = []
+    for road_id in sorted(context_road_ids):
+        road = loaded.roads.get(road_id)
+        if road:
+            geometries.append(road.geometry)
+            context_node_ids.add(road.snodeid)
+            context_node_ids.add(road.enodeid)
+    for node_id in sorted(context_node_ids):
+        node = loaded.nodes.get(node_id)
+        if node:
+            geometries.append(node.geometry)
+    return geometries, context_road_ids, context_node_ids
+
+
+def _dataset_review_context(
+    loaded: LoadedDataset,
+    result: DatasetBuildResult,
+) -> tuple[list[BaseGeometry], set[str], set[str]]:
+    context_node_ids = set(result.context.member_node_ids)
+    context_road_ids = set(result.context.internal_road_ids)
+    context_road_ids.update(result.context.excluded_right_turn_road_ids)
+
+    seed_road_ids = {trace.seed_road_id for trace in result.traces}
+    context_road_ids.update(seed_road_ids)
+
+    for trace in result.traces:
+        context_node_ids.update(trace.traced_node_ids[:1])
+
+    first_decisions: dict[str, Any] = {}
+    for decision in result.decisions:
+        first_decisions.setdefault(decision.trace_id, decision)
+    for decision in first_decisions.values():
+        context_node_ids.update(decision.member_node_ids)
+        context_road_ids.update(decision.incident_road_ids)
+
+    # Dataset review should explain the built arms, not render the whole source
+    # layer. Keep this overview near the current junction: seed roads, one
+    # continuation hop, and the first audited decision are enough for fast visual
+    # review, while full trace details remain in trace_review images.
     for road in loaded.roads.values():
         if road.snodeid in context_node_ids or road.enodeid in context_node_ids:
             context_road_ids.add(road.road_id)

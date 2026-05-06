@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 from collections import Counter
 from datetime import datetime
@@ -51,6 +52,10 @@ REVIEW_INDEX_FIELDS = [
 ]
 
 PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+
+
+def _progress(message: str) -> None:
+    print(f"[p01] {message}", file=sys.stderr, flush=True)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -262,7 +267,7 @@ def _summary_payload(
         "p0_review_count": priority_counts.get("P0", 0),
         "p1_review_count": priority_counts.get("P1", 0),
         "failed_group_count": sum(1 for row in rows if str(row["review_priority"]) == "P0"),
-        "duration_seconds": round(time.time() - started_at, 3),
+        "duration_seconds": round(time.perf_counter() - started_at, 3),
     }
 
 
@@ -272,13 +277,30 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
     run_id = args.run_id or "p01_arm_build_" + datetime.now().strftime("%Y%m%d_%H%M%S")
     run_root = Path(args.out_root) / run_id
     run_root.mkdir(parents=True, exist_ok=True)
-    started_at = time.time()
+    started_at = time.perf_counter()
 
     groups = _parse_junction_groups(args.junction_group)
     dataset_inputs = _dataset_inputs_from_args(args)
-    loaded = {dataset: load_dataset(dataset_input) for dataset, dataset_input in dataset_inputs.items()}
     right_turn_formway_values = {normalise_id(value) for value in args.right_turn_formway_value if normalise_id(value)}
+    _progress(
+        f"start run_id={run_id} groups={len(groups)} "
+        f"out_root={Path(args.out_root)} right_turn_values={sorted(right_turn_formway_values) or '<none>'}"
+    )
+    loaded: dict[str, Any] = {}
+    for dataset_index, dataset in enumerate(DATASETS, start=1):
+        dataset_input = dataset_inputs[dataset]
+        load_started_at = time.perf_counter()
+        _progress(
+            f"load dataset {dataset_index}/{len(DATASETS)} {dataset} "
+            f"nodes={dataset_input.nodes_path} roads={dataset_input.roads_path}"
+        )
+        loaded[dataset] = load_dataset(dataset_input)
+        _progress(
+            f"loaded {dataset}: nodes={len(loaded[dataset].nodes)} roads={len(loaded[dataset].roads)} "
+            f"duration={time.perf_counter() - load_started_at:.1f}s"
+        )
 
+    _progress(f"write preflight {run_root / 'preflight.json'}")
     write_json(
         run_root / "preflight.json",
         _preflight_payload(
@@ -292,7 +314,12 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
 
     review_rows: list[dict[str, Any]] = []
     case_results: list[dict[str, Any]] = []
-    for group in groups:
+    for group_index, group in enumerate(groups, start=1):
+        group_started_at = time.perf_counter()
+        _progress(
+            f"group {group_index}/{len(groups)} {group.group_id} "
+            f"ids={group.swsd_junction_id},{group.rcsd_junction_id},{group.frcsd_junction_id}"
+        )
         case_dir = run_root / "cases" / group.group_id
         compare_dir = case_dir / "compare"
         trace_dir = case_dir / "trace_review"
@@ -300,8 +327,10 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         result_by_dataset: dict[str, Any] = {}
         dataset_output_paths: dict[str, dict[str, str]] = {}
         trace_review_paths: list[str] = []
-        for dataset in DATASETS:
+        for dataset_index, dataset in enumerate(DATASETS, start=1):
             junction_id = group.junction_id_for(dataset)
+            dataset_started_at = time.perf_counter()
+            _progress(f"{group.group_id} dataset {dataset_index}/{len(DATASETS)} {dataset} build junction={junction_id}")
             result = build_dataset_arm_result(
                 loaded[dataset],
                 junction_id=junction_id,
@@ -309,6 +338,11 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
             )
             result_by_dataset[dataset] = result
             dataset_dir = case_dir / dataset
+            _progress(
+                f"{group.group_id} {dataset} built arms={result.metrics['initial_arm_count']} "
+                f"stable={result.metrics['stable_arm_count']} issues={result.metrics['issue_count']} "
+                f"priority={result.review_priority}; writing outputs"
+            )
             png_path, gpkg_path = _write_dataset_outputs(dataset_dir=dataset_dir, loaded=loaded[dataset], result=result)
             trace_review_paths.extend(_write_trace_review_outputs(trace_dir=trace_dir, loaded=loaded[dataset], result=result))
             dataset_output_paths[dataset] = {"review_png_path": str(png_path), "review_gpkg_path": str(gpkg_path)}
@@ -322,10 +356,16 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
                     review_gpkg_path=gpkg_path,
                 )
             )
+            _progress(
+                f"{group.group_id} {dataset} done duration={time.perf_counter() - dataset_started_at:.1f}s "
+                f"png={png_path} gpkg={gpkg_path}"
+            )
 
         compare_png = compare_dir / "p01_arm_compare.png"
+        _progress(f"{group.group_id} write compare png={compare_png}")
         render_compare_png(compare_png, loaded, result_by_dataset)
         compare_gpkg = compare_dir / "p01_arm_compare_layers.gpkg"
+        _progress(f"{group.group_id} write compare gpkg={compare_gpkg}")
         write_gpkg_layers(
             compare_gpkg,
             layers=build_compare_layers(loaded, result_by_dataset),
@@ -348,7 +388,9 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         }
         write_json(case_dir / "case_summary.json", case_summary)
         case_results.append(case_summary)
+        _progress(f"group {group.group_id} complete duration={time.perf_counter() - group_started_at:.1f}s")
 
+    _progress("finalize review priorities and summary")
     _apply_cross_dataset_priority(review_rows)
     write_csv(run_root / "p01_arm_build_review_index.csv", review_rows, REVIEW_INDEX_FIELDS)
     write_json(
@@ -366,4 +408,5 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         ),
     )
     write_json(run_root / "case_results.json", case_results)
+    _progress(f"complete run_id={run_id} duration={time.perf_counter() - started_at:.1f}s run_root={run_root}")
     return 0

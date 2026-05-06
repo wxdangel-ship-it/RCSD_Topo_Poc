@@ -29,6 +29,11 @@ RCSD_SEMANTIC_GROUP_LOCAL_MAX_DISTANCE_M = 40.0
 RCSD_SEMANTIC_JUNCTION_MIN_ROAD_COUNT = 3
 RCSD_DERIVED_NODE_SEMANTIC_GROUP_PREFIX = "node:"
 
+# 当某节点直接拥有的 first-hit road 数 >= 该阈值时，被视作 unit 的 first-hit
+# ownership 锚点；M1 / M2 用此阈值判定是否将该节点强制为 `required_node_id`，
+# 优先于"角色完美但 first-hit 未命中"的相邻 A 级 RCSD 路口。
+STRONG_FIRST_HIT_ANCHOR_MIN_COUNT = 2
+
 
 def _normalize_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
     if geometry is None or geometry.is_empty:
@@ -787,8 +792,20 @@ def _select_required_node_id(
             else (1 if local_event_arm_count > 0 else 0)
         )
         structural_event_completion = int(local_event_arm_count >= max(1, expected_event_arm_count))
+        # M1（INTERFACE_CONTRACT §3.4 / quality §41）：当某候选节点直接拥有
+        # `direct_first_hit_count >= STRONG_FIRST_HIT_ANCHOR_MIN_COUNT` 条
+        # first-hit 道路时，它就是当前 unit 的 first-hit ownership 锚点；这一
+        # 信号应当**优先于** `consistency_level == "A"` 的"角色完美"。否则会
+        # 出现 case 823826 这种问题：first-hit 全部命中节点 5384370798600282
+        # （consistency=B），却被相邻节点 5384370798600273（consistency=A 但
+        # 实际属于另一 sub-unit 的 RCSD 路口）以 A>B 优先级压过，让本 unit
+        # 错配到非自身的 RCSD 语义路口。
+        strong_first_hit_anchor = (
+            1 if direct_first_hit_count >= STRONG_FIRST_HIT_ANCHOR_MIN_COUNT else 0
+        )
         candidate = (
             structural_event_completion,
+            strong_first_hit_anchor,
             1 if local_unit is not None and local_unit.consistency_level == "A" else 0,
             traced_first_hit_count,
             local_event_arm_count,
@@ -1177,6 +1194,28 @@ def _build_aggregated_rcsd_units(
             if has_node_centric and positive_rcsd_present
             else None
         )
+        # M2（与 M1 配套，INTERFACE_CONTRACT §3.4）：sanity check —— `primary_node`
+        # 与 `required_node` 应该指向同一个 RCSD 语义路口节点。当前 unit 的
+        # primary_node 若是 first-hit ownership 锚点（incident roads 中含
+        # >= STRONG_FIRST_HIT_ANCHOR_MIN_COUNT 条 first-hit road），就必须被
+        # 选为 required_node；否则 unit 会错配到非自身物理位置上的相邻 RCSD 路口
+        # （case 823826 即此问题）。仅在两者属于 candidate_node_ids（已剔除
+        # expansion 节点）时干预，避免与上一轮 expansion 防回归冲突。
+        if (
+            required_node_id is not None
+            and primary_node_id is not None
+            and required_node_id != primary_node_id
+            and primary_node_id in set(candidate_node_ids)
+        ):
+            primary_incident_roads = (
+                set(roads_by_node_id.get(primary_node_id, set()))
+                & set(road_ids)
+            )
+            primary_first_hit_count = len(
+                primary_incident_roads & set(first_hit_road_ids)
+            )
+            if primary_first_hit_count >= STRONG_FIRST_HIT_ANCHOR_MIN_COUNT:
+                required_node_id = primary_node_id
         required_node_source = None
         if required_node_id is not None:
             required_node_source = (

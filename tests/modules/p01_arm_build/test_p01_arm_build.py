@@ -9,7 +9,7 @@ from shapely.geometry import LineString, Point, mapping
 
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset
 from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput
-from rcsd_topo_poc.modules.p01_arm_build.review import _geometry_bounds, _trace_review_context
+from rcsd_topo_poc.modules.p01_arm_build.review import _geometry_bounds, _line_points, _projector, _trace_review_context
 from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_args
 from rcsd_topo_poc.modules.p01_arm_build.topology import build_dataset_arm_result
 
@@ -219,6 +219,15 @@ def test_trace_review_context_excludes_far_unrelated_roads(tmp_path: Path) -> No
     assert "Sfar_a" not in node_ids
     assert bounds[2] < 120.0
     assert bounds[3] < 60.0
+
+
+def test_review_line_points_accepts_3d_coordinates() -> None:
+    project = _projector((0.0, 0.0, 10.0, 10.0), left=0, top=0, width=100, height=100)
+
+    points = _line_points(LineString([(0.0, 0.0, 5.0), (10.0, 10.0, 6.0)]), project)
+
+    assert len(points) == 2
+    assert all(len(point) == 2 for point in points)
 
 
 def test_p01_source_does_not_reference_grade_fields() -> None:

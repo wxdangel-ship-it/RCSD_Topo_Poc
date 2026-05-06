@@ -72,14 +72,18 @@ def _projector(
 
 def _line_points(geometry: BaseGeometry, project) -> list[tuple[int, int]]:
     if geometry.geom_type == "LineString":
-        return [project(float(x), float(y)) for x, y in geometry.coords]
+        return [_project_coord(coord, project) for coord in geometry.coords]
     if geometry.geom_type == "MultiLineString":
         points: list[tuple[int, int]] = []
         for part in geometry.geoms:
-            points.extend(project(float(x), float(y)) for x, y in part.coords)
+            points.extend(_project_coord(coord, project) for coord in part.coords)
         return points
     center = geometry.centroid
     return [project(float(center.x), float(center.y))]
+
+
+def _project_coord(coord, project) -> tuple[int, int]:
+    return project(float(coord[0]), float(coord[1]))
 
 
 def _draw_line(draw: ImageDraw.ImageDraw, geometry: BaseGeometry, project, *, fill, width: int = 3) -> None:

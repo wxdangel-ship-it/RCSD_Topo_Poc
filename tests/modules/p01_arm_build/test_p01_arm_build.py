@@ -7,7 +7,11 @@ from pathlib import Path
 import fiona
 from shapely.geometry import LineString, Point, mapping
 
+from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset
+from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput
+from rcsd_topo_poc.modules.p01_arm_build.review import _geometry_bounds, _trace_review_context
 from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_args
+from rcsd_topo_poc.modules.p01_arm_build.topology import build_dataset_arm_result
 
 
 def _write_nodes(path: Path, features: list[tuple[str, str | None, float, float]]) -> None:
@@ -83,11 +87,28 @@ def _case_roads(prefix: str, index: int, dx: float) -> list[tuple[str, str, str,
     ]
 
 
-def _write_dataset(tmp_path: Path, prefix: str) -> tuple[Path, Path]:
+def _write_dataset(tmp_path: Path, prefix: str, *, include_far_noise: bool = False) -> tuple[Path, Path]:
     nodes_path = tmp_path / f"{prefix.lower()}_nodes.gpkg"
     roads_path = tmp_path / f"{prefix.lower()}_roads.gpkg"
     nodes = _case_nodes(prefix, 1, 0.0) + _case_nodes(prefix, 2, 160.0)
     roads = _case_roads(prefix, 1, 0.0) + _case_roads(prefix, 2, 160.0)
+    if include_far_noise:
+        nodes.extend(
+            [
+                (f"{prefix}far_a", None, 100000.0, 100000.0),
+                (f"{prefix}far_b", None, 100050.0, 100000.0),
+            ]
+        )
+        roads.append(
+            (
+                f"{prefix}_far_noise",
+                f"{prefix}far_a",
+                f"{prefix}far_b",
+                2,
+                "0",
+                [(100000.0, 100000.0), (100050.0, 100000.0)],
+            )
+        )
     _write_nodes(nodes_path, nodes)
     _write_roads(roads_path, roads)
     return nodes_path, roads_path
@@ -183,6 +204,21 @@ def test_right_turn_is_not_excluded_without_explicit_field_value(tmp_path: Path)
         )
     )
     assert any("S1_right_turn" in arm["seed_road_ids"] for arm in initial_arms)
+
+
+def test_trace_review_context_excludes_far_unrelated_roads(tmp_path: Path) -> None:
+    nodes_path, roads_path = _write_dataset(tmp_path, "S", include_far_noise=True)
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+    result = build_dataset_arm_result(loaded, junction_id="S1", right_turn_formway_values={"128"})
+    trace_id = result.traces[0].trace_id
+
+    geometries, road_ids, node_ids = _trace_review_context(loaded, result, trace_id)
+    bounds = _geometry_bounds(geometries)
+
+    assert "S_far_noise" not in road_ids
+    assert "Sfar_a" not in node_ids
+    assert bounds[2] < 120.0
+    assert bounds[3] < 60.0
 
 
 def test_p01_source_does_not_reference_grade_fields() -> None:

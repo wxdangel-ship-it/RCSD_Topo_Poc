@@ -257,17 +257,28 @@ def render_trace_review_png(path: Path, loaded: LoadedDataset, result: DatasetBu
     image = Image.new("RGBA", (width, height), (250, 250, 248, 255))
     draw = ImageDraw.Draw(image, "RGBA")
     font = ImageFont.load_default()
-    geometries = [road.geometry for road in loaded.roads.values()] + [node.geometry for node in loaded.nodes.values()]
+    geometries, context_road_ids, context_node_ids = _trace_review_context(loaded, result, trace_id)
     bounds = _geometry_bounds(geometries)
     project = _projector(bounds, left=0, top=36, width=width, height=height - 36)
     _text(draw, (8, 8), f"{result.dataset} {trace.trace_id} stop={trace.stop_type}", font=font)
-    for road in loaded.roads.values():
+    excluded_ids = set(result.context.excluded_right_turn_road_ids)
+    for road_id in sorted(context_road_ids):
+        road = loaded.roads.get(road_id)
+        if road is None:
+            continue
         color = (185, 185, 185, 180)
         width_px = 2
         if road.road_id in trace.traced_road_ids:
             color = (214, 39, 40, 255)
             width_px = 5
+        elif road.road_id in excluded_ids:
+            color = EXCLUDED_RED
+            width_px = 4
         _draw_line(draw, road.geometry, project, fill=color, width=width_px)
+    for node_id in sorted(context_node_ids & set(result.context.member_node_ids)):
+        node = loaded.nodes.get(node_id)
+        if node:
+            _draw_point(draw, node.geometry, project, fill=NODE_BLUE, radius=6)
     for decision in result.decisions:
         if decision.trace_id != trace.trace_id:
             continue
@@ -278,6 +289,47 @@ def render_trace_review_png(path: Path, loaded: LoadedDataset, result: DatasetBu
                 center = node.geometry.centroid
                 _text(draw, project(float(center.x), float(center.y)), decision.status, font=font)
     image.convert("RGB").save(path)
+
+
+def _trace_review_context(
+    loaded: LoadedDataset,
+    result: DatasetBuildResult,
+    trace_id: str,
+) -> tuple[list[BaseGeometry], set[str], set[str]]:
+    trace = next((item for item in result.traces if item.trace_id == trace_id), None)
+    if trace is None:
+        return [], set(), set()
+
+    context_node_ids = set(result.context.member_node_ids)
+    context_node_ids.update(trace.traced_node_ids)
+    context_road_ids = set(trace.traced_road_ids)
+    context_road_ids.update(result.context.excluded_right_turn_road_ids)
+
+    for decision in result.decisions:
+        if decision.trace_id != trace.trace_id:
+            continue
+        context_node_ids.update(decision.member_node_ids)
+        context_road_ids.update(decision.incident_road_ids)
+
+    # Add one-hop road context around the current trace nodes. This keeps the
+    # trace review focused on the junction area without losing adjacent branch
+    # evidence that can explain a boundary decision.
+    for road in loaded.roads.values():
+        if road.snodeid in context_node_ids or road.enodeid in context_node_ids:
+            context_road_ids.add(road.road_id)
+
+    geometries: list[BaseGeometry] = []
+    for road_id in sorted(context_road_ids):
+        road = loaded.roads.get(road_id)
+        if road:
+            geometries.append(road.geometry)
+            context_node_ids.add(road.snodeid)
+            context_node_ids.add(road.enodeid)
+    for node_id in sorted(context_node_ids):
+        node = loaded.nodes.get(node_id)
+        if node:
+            geometries.append(node.geometry)
+    return geometries, context_road_ids, context_node_ids
 
 
 def build_dataset_review_layers(

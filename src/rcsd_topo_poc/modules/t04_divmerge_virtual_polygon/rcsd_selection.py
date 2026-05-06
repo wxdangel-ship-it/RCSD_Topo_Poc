@@ -631,6 +631,7 @@ def resolve_positive_rcsd_selection(
         representative_point=representative_point,
         reference_point=reference_point,
         node_semantic_group_by_id=node_semantic_group_by_id,
+        semantic_endpoint_expanded_node_ids=frozenset(semantic_endpoint_expanded_node_ids),
     )
     if not aggregated_units:
         alignment_type = rcsd_alignment_type_from_selection(

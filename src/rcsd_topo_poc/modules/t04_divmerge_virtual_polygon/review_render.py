@@ -428,6 +428,11 @@ def build_final_review_render_audit(
 
 
 def _related_rcsd_road_ids(step5_result: T04Step5CaseResult) -> tuple[str, ...]:
+    """Step5 related RCSDRoad ids (expanded for negative-mask protection).
+
+    本函数仅保留为契约审计 / 旧调用方兼容，不再用于决定 final review 上的"正向召回"
+    可视集合。final review 的粗红 RCSDRoad 必须严格等于 Step4 仲裁层发布的唯一正向
+    `positive_rcsdroad_ids`（详见 INTERFACE_CONTRACT §3.4）。"""
     case_related_road_ids = _unique_texts(getattr(step5_result, "related_rcsd_road_ids", ()))
     if case_related_road_ids:
         return case_related_road_ids
@@ -447,9 +452,8 @@ def _final_review_rcsd_road_ids(
     case_result: T04CaseResult,
     step5_result: T04Step5CaseResult | None,
 ) -> tuple[str, ...]:
+    del step5_result
     active_rcsd_road_ids, _ = _active_rcsd_alignment_ids(case_result)
-    if step5_result is not None:
-        return _unique_texts((*active_rcsd_road_ids, *_related_rcsd_road_ids(step5_result)))
     return active_rcsd_road_ids
 
 
@@ -457,12 +461,9 @@ def _final_review_rcsd_node_ids(
     case_result: T04CaseResult,
     step5_result: T04Step5CaseResult | None,
 ) -> tuple[str, ...]:
+    del step5_result
     _, active_rcsd_node_ids = _active_rcsd_alignment_ids(case_result)
-    if active_rcsd_node_ids:
-        return active_rcsd_node_ids
-    if step5_result is not None:
-        return _related_rcsd_node_ids(step5_result)
-    return ()
+    return active_rcsd_node_ids
 
 
 def _event_unit_surface_doc(event_unit: T04EventUnitResult) -> dict[str, Any]:
@@ -478,6 +479,13 @@ def _event_unit_surface_doc(event_unit: T04EventUnitResult) -> dict[str, Any]:
 
 
 def _rcsd_semantic_junction_road_ids(event_unit: T04EventUnitResult) -> tuple[str, ...]:
+    """Return all RCSDRoad ids constituting the unit's RCSD semantic junction.
+
+    包含 `intra_junction_rcsdroad_ids` 与每个 arm 的 `first_rcsdroad_ids` /
+    `inter_junction_connector_rcsdroad_ids`。本函数只用于审计 / 上下文展开，**不**
+    作为 final review 粗红 RCSDRoad 的来源；final review 必须严格使用 Step4 仲裁层
+    `positive_rcsdroad_ids`（INTERFACE_CONTRACT §3.4）。
+    """
     rcsd_junction = event_unit.rcsd_semantic_junction
     if rcsd_junction is None:
         return ()
@@ -489,23 +497,29 @@ def _rcsd_semantic_junction_road_ids(event_unit: T04EventUnitResult) -> tuple[st
 
 
 def _active_rcsd_alignment_ids(case_result: T04CaseResult) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the canonical positive RCSDRoad / RCSDNode ids used for visual review.
+
+    口径冻结（INTERFACE_CONTRACT §3.4）：
+
+    - 仅当 `rcsd_alignment_type ∈ {rcsd_semantic_junction,
+      rcsd_junction_partial_alignment, rcsdroad_only_alignment}` 时该 unit 才贡献
+      正向集合；其余（含 `no_rcsd_alignment / ambiguous_rcsd_alignment`）必须返回空。
+    - 正向集合直接来自 `event_unit.rcsd_alignment_result()` 发布的
+      `positive_rcsdroad_ids / positive_rcsdnode_ids`；不再混入
+      `selected_rcsdroad_ids` / `audit.published_rcsdroad_ids` 旧字段，也不再混入
+      `_rcsd_semantic_junction_road_ids` 中的 `inter_junction_connector_rcsdroad_ids`
+      （连接相邻语义路口的 connector 不属于"唯一正向 RCSD 对齐对象"）。
+    - `required_rcsd_node` 已被 Step4 仲裁层并入 `positive_rcsdnode_ids` 时自然包含；
+      不再单独追加 `required_rcsd_node`，避免与正向集合脱节。
+    """
     road_ids: list[Any] = []
     node_ids: list[Any] = []
     for event_unit in case_result.event_units:
-        surface_doc = _event_unit_surface_doc(event_unit)
-        alignment_type = str(surface_doc.get("rcsd_alignment_type") or event_unit.rcsd_alignment_type or "")
-        if alignment_type not in RCSD_ALIGNMENT_RENDER_RCSDROAD_TYPES:
+        alignment = event_unit.rcsd_alignment_result()
+        if alignment.rcsd_alignment_type not in RCSD_ALIGNMENT_RENDER_RCSDROAD_TYPES:
             continue
-        audit = event_unit.positive_rcsd_audit
-        fallback_road_ids = tuple(surface_doc.get("fallback_rcsdroad_ids") or ())
-        road_ids.extend(event_unit.selected_rcsdroad_ids)
-        road_ids.extend(fallback_road_ids)
-        road_ids.extend(audit.get("published_rcsdroad_ids") or ())
-        road_ids.extend(_rcsd_semantic_junction_road_ids(event_unit))
-        node_ids.extend(event_unit.selected_rcsdnode_ids)
-        node_ids.extend(audit.get("published_rcsdnode_ids") or ())
-        if event_unit.required_rcsd_node:
-            node_ids.append(event_unit.required_rcsd_node)
+        road_ids.extend(alignment.positive_rcsdroad_ids)
+        node_ids.extend(alignment.positive_rcsdnode_ids)
     return _unique_texts(road_ids), _unique_texts(node_ids)
 
 

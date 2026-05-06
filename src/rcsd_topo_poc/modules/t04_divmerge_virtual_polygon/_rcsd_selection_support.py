@@ -1018,6 +1018,7 @@ def _build_aggregated_rcsd_units(
     representative_point: Point,
     reference_point: Point | None,
     node_semantic_group_by_id: dict[str, str],
+    semantic_endpoint_expanded_node_ids: frozenset[str] = frozenset(),
 ) -> tuple[_AggregatedRcsdUnit, ...]:
     matched_units = [unit for unit in local_units if unit.positive_rcsd_present]
     if not matched_units:
@@ -1147,9 +1148,22 @@ def _build_aggregated_rcsd_units(
             node_points_by_id=node_points_by_id,
             representative_point=representative_point,
         )
+        # 当 raw_roads 已经被 _expand_raw_roads_with_semantic_endpoints 拉入语义端点
+        # 道路时，那些 endpoint 节点对应的 node-centric local_unit 仅是 RCSDRoad 召回
+        # 的副产物，不应直接挤掉与当前 SWSD 路口本体匹配的 primary_node。当组件中存在
+        # 任何非 expansion 节点候选时，把 expansion-only 节点从 `_select_required_node_id`
+        # 候选池中剔除；当所有候选都来自 expansion（如 760256：唯一 node_centric 单元
+        # 本身就在 expansion 节点上）时退回原候选集，确保 expansion 仍可作为 required。
+        candidate_node_ids = node_ids
+        if semantic_endpoint_expanded_node_ids:
+            non_expanded = tuple(
+                nid for nid in node_ids if nid not in semantic_endpoint_expanded_node_ids
+            )
+            if non_expanded:
+                candidate_node_ids = non_expanded
         required_node_id = (
             _select_required_node_id(
-                node_ids=node_ids,
+                node_ids=candidate_node_ids,
                 local_units=component_units_sorted,
                 road_ids=road_ids,
                 roads_by_id=roads_by_id,

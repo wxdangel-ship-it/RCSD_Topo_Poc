@@ -68,18 +68,45 @@ def _semantic_anchor_distance_m(aggregate: dict[str, Any]) -> float | None:
         return None
 
 
-def _has_bilateral_event_side_support(aggregate: dict[str, Any]) -> bool:
-    labels = {
-        str(label).strip().lower()
-        for label in aggregate.get("normalized_event_side_labels") or ()
-        if str(label).strip().lower() not in {"", "center"}
-    }
-    if len(labels) >= 2:
-        return True
+def _has_bilateral_event_side_support(
+    aggregate: dict[str, Any],
+    *,
+    expanded_road_ids: set[str] | None = None,
+) -> bool:
+    """判断 aggregate 是否具有真双侧 (event_side) 支持。
+
+    `expanded_road_ids` 为 `_expand_raw_roads_with_semantic_endpoints` 在
+    `rcsd_selection.resolve_positive_rcsd_selection` 中扩展进 raw_roads 的
+    semantic-endpoint 道路集合。这些道路与当前 road_surface_fork 的局部主证据
+    无几何邻接关系，仅由语义路口扩展拉入；它们贡献的 `event_side` 标签**不**
+    应被视作 road_surface_fork 主证据自身的双侧支持，否则会让
+    `_promote_selected_surface_rcsd_junction_window` 误触发
+    `partial_b_rcsd_signal AND preserve_surface_main_evidence` 早返回 gate，
+    把本应进入 `no_main_evidence_with_rcsd_junction` 的 case（如 788824）
+    回归为 `main_evidence_with_rcsdroad_fallback + no_rcsd_alignment`。
+
+    口径：当 `expanded_road_ids` 非空时，**忽略** aggregate 已聚合的
+    `normalized_event_side_labels`，直接从 `role_assignments` 重新统计
+    `event_side` 非 center 标签，并排除 `road_id ∈ expanded_road_ids` 的
+    assignment。当 `expanded_road_ids` 为空 / None 时保持既有行为。
+    """
+    expanded_set = {str(road_id) for road_id in (expanded_road_ids or ()) if str(road_id)}
+    if expanded_set:
+        labels: set[str] = set()
+    else:
+        labels = {
+            str(label).strip().lower()
+            for label in aggregate.get("normalized_event_side_labels") or ()
+            if str(label).strip().lower() not in {"", "center"}
+        }
+        if len(labels) >= 2:
+            return True
     for assignment in aggregate.get("role_assignments") or ():
         if not isinstance(assignment, dict):
             continue
         if str(assignment.get("axis_side") or "").strip() != "event_side":
+            continue
+        if expanded_set and str(assignment.get("road_id") or "").strip() in expanded_set:
             continue
         label = str(assignment.get("side_label") or "").strip().lower()
         if label and label != "center":
@@ -753,8 +780,16 @@ def _promote_selected_surface_rcsd_junction_window(
     review_point = event_unit.review_materialized_point if isinstance(event_unit.review_materialized_point, Point) else None
     if review_point is None:
         review_point = reference_point
+    semantic_endpoint_expanded_road_ids = {
+        str(road_id)
+        for road_id in audit.get("semantic_endpoint_expanded_rcsdroad_ids") or ()
+        if str(road_id)
+    }
     preserve_surface_main_evidence = bool(
-        _has_bilateral_event_side_support(aggregate)
+        _has_bilateral_event_side_support(
+            aggregate,
+            expanded_road_ids=semantic_endpoint_expanded_road_ids,
+        )
         and reference_point is not None
         and (
             event_unit.localized_evidence_core_geometry is not None

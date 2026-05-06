@@ -148,15 +148,19 @@ def test_real_case_505078921_splits_complex_three_merge_and_keeps_internal_cuts_
     )
     visible_rcsd_roads = set(render_audit_doc["render_visible_rcsd_road_ids"])
     assert render_audit_doc["missing_rcsd_road_ids"] == []
+    # final review 仅渲染 Step4 仲裁层发布的唯一正向 `positive_rcsdroad_ids`
+    # （INTERFACE_CONTRACT §3.4）。连接相邻 RCSD 语义路口的 connector road
+    # （此前的 5385458768741661 / 5385458768741681）属于 RCSD semantic arm 上下文，
+    # 不属于唯一正向 RCSD 对齐对象，禁止再以粗红色出现在 final review。
     assert {
         "5385438602535183",
         "5385458768741641",
-        "5385458768741661",
         "5385458768741668",
         "5385458768741679",
-        "5385458768741681",
         "5390015124868049",
     } <= visible_rcsd_roads
+    assert "5385458768741661" not in visible_rcsd_roads
+    assert "5385458768741681" not in visible_rcsd_roads
     assert opposite_rcsd_roads.isdisjoint(visible_rcsd_roads)
-    assert render_audit_doc["rcsd_entity_road_count"] == 14
-    assert render_audit_doc["render_visible_rcsd_road_count"] == 14
+    assert render_audit_doc["rcsd_entity_road_count"] == 12
+    assert render_audit_doc["render_visible_rcsd_road_count"] == 12

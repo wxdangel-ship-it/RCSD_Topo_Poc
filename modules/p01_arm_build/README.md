@@ -64,6 +64,8 @@ P01 提供模块内 dev helper，用于把单个 junction-group 的三套 Node /
 
 默认单个文本包上限为 `250 KiB`。范围选择不是空间裁剪，而是从当前语义路口出发按 Road 拓扑 BFS 选取相关道路；`--bfs-depth` 可固定指定，`--auto-fit --max-bfs-depth N` 会逐圈计算大小。选定范围超过单文件上限时会自动拆成多个文本分片，第一片仍写到 `--out-txt`，其余分片写在同目录；解包时传入任一分片即可自动合并。分片合并后的内容必须仍包含 SWSD / RCSD / F-RCSD 三套数据。
 
+`--junction-group` 会保留原始输入 ID。解析时先精确匹配；若 RCSD 精确匹配失败且 ID 以 `R` 开头，会再尝试去掉首字母 `R`；若 F-RCSD 精确匹配失败且 ID 以 `F` 开头，会再尝试去掉首字母 `F`。
+
 ## 主要文档
 
 - `INTERFACE_CONTRACT.md`

@@ -58,15 +58,22 @@ def resolve_junction_members(
     nodes: dict[str, NodeRecord],
     *,
     junction_id: str,
+    dataset: str | None = None,
 ) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
     groups, node_to_group = build_node_groups(nodes)
     target = normalise_id(junction_id)
     issues: list[str] = []
-    if target in groups:
-        return target, groups[target], tuple(issues)
-    if target in nodes:
-        group_id = node_to_group[target]
-        return group_id, groups[group_id], tuple(issues)
+    candidate_ids = [target]
+    if dataset == "RCSD" and target.startswith("R") and len(target) > 1:
+        candidate_ids.append(target[1:])
+    if dataset == "FRCSD" and target.startswith("F") and len(target) > 1:
+        candidate_ids.append(target[1:])
+    for candidate_id in dict.fromkeys(candidate_ids):
+        if candidate_id in groups:
+            return candidate_id, groups[candidate_id], tuple(issues)
+        if candidate_id in nodes:
+            group_id = node_to_group[candidate_id]
+            return group_id, groups[group_id], tuple(issues)
     issues.append("junction_member_nodes_not_found")
     return target, tuple(), tuple(issues)
 
@@ -953,7 +960,11 @@ def build_dataset_arm_result(
     right_turn_formway_values: set[str],
 ) -> DatasetBuildResult:
     groups, _ = build_node_groups(loaded.nodes)
-    resolved_junction_id, member_node_ids, input_flags = resolve_junction_members(loaded.nodes, junction_id=junction_id)
+    resolved_junction_id, member_node_ids, input_flags = resolve_junction_members(
+        loaded.nodes,
+        junction_id=junction_id,
+        dataset=loaded.dataset,
+    )
     member_set = set(member_node_ids)
     issues: list[dict[str, Any]] = []
     for flag in input_flags:

@@ -394,6 +394,36 @@ def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_pa
     assert manifest["datasets"]["SWSD"]["selected_road_count"] < 10
 
 
+def test_p01_text_bundle_resolves_dataset_junction_id_prefixes(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _write_dataset(tmp_path, "S")
+    rcsd_nodes, rcsd_roads = _write_dataset(tmp_path, "C")
+    frcsd_nodes, frcsd_roads = _write_dataset(tmp_path, "D")
+    bundle_path = tmp_path / "p01_prefixed_bundle.txt"
+
+    artifacts = run_p01_export_text_bundle(
+        swsd_nodes=swsd_nodes,
+        swsd_roads=swsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_roads=rcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        frcsd_roads=frcsd_roads,
+        junction_group="S1,RC1,FD1",
+        out_txt=bundle_path,
+        bfs_depth=1,
+    )
+
+    assert artifacts.success, artifacts.failure_detail
+
+    decoded = run_p01_decode_text_bundle(bundle_txt=bundle_path, out_dir=tmp_path / "decoded_prefixed")
+    manifest = json.loads(decoded.manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["junction_group"] == {"SWSD": "S1", "RCSD": "RC1", "FRCSD": "FD1"}
+    assert manifest["datasets"]["RCSD"]["resolved_group_id"] == "C1"
+    assert manifest["datasets"]["FRCSD"]["resolved_group_id"] == "D1"
+    assert _feature_ids(decoded.out_dir / "RCSD" / "nodes.gpkg")
+    assert _feature_ids(decoded.out_dir / "FRCSD" / "roads.gpkg")
+
+
 def test_p01_text_bundle_auto_fit_expands_to_deeper_trace_context(tmp_path: Path) -> None:
     swsd_nodes, swsd_roads = _write_dataset(tmp_path, "S", include_far_trace=True)
     rcsd_nodes, rcsd_roads = _write_dataset(tmp_path, "R", include_far_trace=True)

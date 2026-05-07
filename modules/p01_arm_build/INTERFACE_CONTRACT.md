@@ -113,6 +113,8 @@ Road 最少字段：
 - `--max-bfs-depth`：默认 `8`
 - `--max-text-size-bytes`：默认 `256000`
 
+`--junction-group` 输出中保留原始输入 ID。解析时先按原始 ID 精确匹配；若 RCSD 精确匹配失败且 ID 以 `R` 开头，再尝试去掉首字母 `R`；若 F-RCSD 精确匹配失败且 ID 以 `F` 开头，再尝试去掉首字母 `F`。该兜底只用于参数前缀兼容，不改变数据集内 Node / Road ID。
+
 解包 helper 参数：
 
 - `--bundle-txt`

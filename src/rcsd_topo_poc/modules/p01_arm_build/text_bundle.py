@@ -172,7 +172,11 @@ def _select_bfs_context(
     junction_id: str,
     bfs_depth: int,
 ) -> tuple[set[str], set[str], dict[str, Any]]:
-    resolved_group_id, member_node_ids, input_flags = resolve_junction_members(loaded.nodes, junction_id=junction_id)
+    resolved_group_id, member_node_ids, input_flags = resolve_junction_members(
+        loaded.nodes,
+        junction_id=junction_id,
+        dataset=loaded.dataset,
+    )
     groups, _ = build_node_groups(loaded.nodes)
     adjacency: dict[str, list[tuple[str, str]]] = {}
     road_groups: dict[str, tuple[str, str]] = {}

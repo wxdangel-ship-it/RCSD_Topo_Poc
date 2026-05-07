@@ -4,7 +4,7 @@
 
 - 只做 P01-A，不扩展 P01-B。
 - 不实现 Arm 配准、Movement、禁行迁移或通行能力裁决。
-- `FinalArm = InitialArm`，Arm 级兜底合并只保留占位。
+- `InitialArm` 保留原始 trace 终端归并；`FinalArm` 默认等于 `InitialArm`，但允许在 trace 过度切碎且 `LocalArmCandidate` 完整覆盖时采用局部趋势兜底聚合。
 - 右转专用道 / 渠化右转只有字段明确可识别时才排除。
 - `kind` 参与追溯停止主口径：非 `4` 类型原则继续，`2048` 按 T 型横/竖裁决，`4` 先评估 T 型特征后再决定停止或继续。
 - `grade / grade_2` 不进入 Arm 构建主规则。

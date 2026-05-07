@@ -28,6 +28,7 @@ LOCAL_CANDIDATE_STUB_ANGLE_TOLERANCE_DEG = 25.0
 LOCAL_CANDIDATE_STUB_MAX_HOPS = 1
 THROUGH_MAINLINE_MAX_ANGLE_DEG = 25.0
 THROUGH_MAINLINE_MIN_MARGIN_DEG = 12.0
+THROUGH_DEAD_END_TIE_BREAK_MAX_EXTRA_DEG = 5.0
 NON_RISK_TRACE_FLAGS = {"right_turn_excluded"}
 
 
@@ -370,13 +371,57 @@ def _continuation_records(
     return records, tuple(sorted(loop_road_ids))
 
 
-def _mainline_record(records: list[dict[str, Any]], *, allow_parallel_pair: bool) -> dict[str, Any] | None:
+def _candidate_enters_one_hop_dead_end(
+    record: dict[str, Any],
+    *,
+    current_group_id: str,
+    nodes: dict[str, NodeRecord],
+    roads: dict[str, RoadRecord],
+) -> bool:
+    next_group_id = str(record["next_group_id"])
+    road_id = str(record["road_id"])
+    for candidate_id, candidate_road in roads.items():
+        if candidate_id == road_id:
+            continue
+        start_group, end_group = _road_endpoint_groups(candidate_road, nodes)
+        if start_group == end_group or next_group_id not in {start_group, end_group}:
+            continue
+        other_group_id = end_group if start_group == next_group_id else start_group
+        if other_group_id != current_group_id:
+            return False
+    return True
+
+
+def _mainline_record(
+    records: list[dict[str, Any]],
+    *,
+    allow_parallel_pair: bool,
+    current_group_id: str,
+    nodes: dict[str, NodeRecord],
+    roads: dict[str, RoadRecord],
+) -> dict[str, Any] | None:
     if not records:
         return None
     best = records[0]
     best_delta = best.get("angle_delta")
     if best_delta is None or float(best_delta) > THROUGH_MAINLINE_MAX_ANGLE_DEG:
         return None
+    if _candidate_enters_one_hop_dead_end(best, current_group_id=current_group_id, nodes=nodes, roads=roads):
+        for candidate in records[1:]:
+            candidate_delta = candidate.get("angle_delta")
+            if candidate_delta is None or float(candidate_delta) > THROUGH_MAINLINE_MAX_ANGLE_DEG:
+                continue
+            if float(candidate_delta) - float(best_delta) > THROUGH_DEAD_END_TIE_BREAK_MAX_EXTRA_DEG:
+                break
+            if not _candidate_enters_one_hop_dead_end(
+                candidate,
+                current_group_id=current_group_id,
+                nodes=nodes,
+                roads=roads,
+            ):
+                selected = dict(candidate)
+                selected["tie_break"] = "near_parallel_non_dead_end_over_one_hop_dead_end"
+                return selected
     if allow_parallel_pair or len(records) == 1:
         return best
     second_delta = records[1].get("angle_delta") if len(records) > 1 else None
@@ -399,6 +444,8 @@ def _decision_reason(
         delta_text = "unknown" if delta is None else f"{float(delta):.1f}"
         parts.append(f"selected={selected['road_id']}")
         parts.append(f"angle_delta={delta_text}")
+        if selected.get("tie_break"):
+            parts.append(f"tie_break={selected['tie_break']}")
     if excluded_right_turn_ids:
         parts.append("excluded_right_turn=" + ",".join(excluded_right_turn_ids))
     if loop_road_ids:
@@ -434,7 +481,13 @@ def _decide_through(
 
     is_t_like_topology = len(incident_ids) >= 3 and len(records) <= 3
     allow_parallel_pair = kind_category == "kind_continue" or is_t_like_topology
-    selected = _mainline_record(records, allow_parallel_pair=allow_parallel_pair)
+    selected = _mainline_record(
+        records,
+        allow_parallel_pair=allow_parallel_pair,
+        current_group_id=current_group_id,
+        nodes=nodes,
+        roads=roads,
+    )
 
     if kind_category == "kind_2048":
         if selected:
@@ -452,7 +505,13 @@ def _decide_through(
                 _decision_reason("kind_4_t_like_mainline_through", kind_values=kind_values, selected=selected, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids),
                 str(selected["road_id"]),
             )
-        strict_selected = _mainline_record(records, allow_parallel_pair=False)
+        strict_selected = _mainline_record(
+            records,
+            allow_parallel_pair=False,
+            current_group_id=current_group_id,
+            nodes=nodes,
+            roads=roads,
+        )
         if len(incident_ids) >= 3 and strict_selected:
             return (
                 "t_mainline_through",
@@ -757,7 +816,62 @@ def _build_initial_arms(
     return tuple(arms), tuple(sorted(assigned_traces, key=lambda trace: trace.trace_id)), issues
 
 
-def _build_final_arms(initial_arms: tuple[InitialArm, ...]) -> tuple[FinalArm, ...]:
+def _initial_arm_final_payload(arm: InitialArm) -> dict[str, Any]:
+    return {
+        "initial_arm_id": arm.initial_arm_id,
+        "member_road_ids": arm.member_road_ids,
+        "seed_road_ids": arm.seed_road_ids,
+        "terminal_type": arm.terminal_type,
+        "terminal_junction_id": arm.terminal_junction_id,
+    }
+
+
+def _should_apply_local_candidate_fallback(
+    initial_arms: tuple[InitialArm, ...],
+    local_arm_candidates: tuple[LocalArmCandidate, ...],
+) -> bool:
+    if not local_arm_candidates or len(local_arm_candidates) >= len(initial_arms):
+        return False
+    initial_ids = {arm.initial_arm_id for arm in initial_arms}
+    candidate_source_ids = {
+        source_id
+        for candidate in local_arm_candidates
+        for source_id in candidate.source_initial_arm_ids
+    }
+    if not initial_ids or candidate_source_ids != initial_ids:
+        return False
+    return any(len(candidate.source_initial_arm_ids) > 1 for candidate in local_arm_candidates)
+
+
+def _build_final_arms(
+    initial_arms: tuple[InitialArm, ...],
+    local_arm_candidates: tuple[LocalArmCandidate, ...],
+) -> tuple[FinalArm, ...]:
+    initial_by_id = {arm.initial_arm_id: arm for arm in initial_arms}
+    if _should_apply_local_candidate_fallback(initial_arms, local_arm_candidates):
+        final_arms: list[FinalArm] = []
+        for index, candidate in enumerate(local_arm_candidates, start=1):
+            source_arms = [initial_by_id[arm_id] for arm_id in candidate.source_initial_arm_ids if arm_id in initial_by_id]
+            member_road_ids = tuple(sorted({road_id for arm in source_arms for road_id in arm.member_road_ids}))
+            final_arms.append(
+                FinalArm(
+                    dataset=candidate.dataset,
+                    current_junction_id=candidate.current_junction_id,
+                    final_arm_id=f"F{index}",
+                    source_initial_arm_ids=candidate.source_initial_arm_ids,
+                    merge_status="local_candidate_fallback",
+                    merge_reason="current_junction_seed_local_trend_fragmentation_fallback",
+                    initial_arm={
+                        "local_arm_candidate_id": candidate.local_arm_candidate_id,
+                        "member_road_ids": member_road_ids,
+                        "seed_road_ids": candidate.source_seed_road_ids,
+                        "local_stub_road_ids": candidate.local_stub_road_ids,
+                        "source_initial_arms": [_initial_arm_final_payload(arm) for arm in source_arms],
+                    },
+                )
+            )
+        return tuple(final_arms)
+
     final_arms: list[FinalArm] = []
     for arm in initial_arms:
         final_arms.append(
@@ -768,12 +882,7 @@ def _build_final_arms(initial_arms: tuple[InitialArm, ...]) -> tuple[FinalArm, .
                 source_initial_arm_ids=(arm.initial_arm_id,),
                 merge_status="not_applied",
                 merge_reason="reserved_for_future_case_based_rules",
-                initial_arm={
-                    "initial_arm_id": arm.initial_arm_id,
-                    "member_road_ids": arm.member_road_ids,
-                    "terminal_type": arm.terminal_type,
-                    "terminal_junction_id": arm.terminal_junction_id,
-                },
+                initial_arm=_initial_arm_final_payload(arm),
             )
         )
     return tuple(final_arms)
@@ -1058,7 +1167,6 @@ def build_dataset_arm_result(
         trace_terminals=trace_terminals,
     )
     issues.extend(arm_issues)
-    final_arms = _build_final_arms(initial_arms)
     local_arm_candidates = _build_local_arm_candidates(
         dataset=loaded.dataset,
         junction_id=junction_id,
@@ -1072,6 +1180,7 @@ def build_dataset_arm_result(
         internal_road_ids=set(internal_road_ids),
         right_turn_formway_values=right_turn_formway_values,
     )
+    final_arms = _build_final_arms(initial_arms, local_arm_candidates)
     issue_counts = dict(Counter(str(issue.get("issue_type")) for issue in issues))
     issue_report = IssueReport(
         dataset=loaded.dataset,

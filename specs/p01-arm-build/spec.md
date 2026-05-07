@@ -21,9 +21,9 @@
 - 识别当前路口 internal roads、inbound / outbound / bidirectional seed roads。
 - 仅在字段明确可识别时排除右转专用道 / 渠化右转，并把排除结果写入审计输出。
 - 从当前路口 seed road 出发按拓扑追溯，输出 InitialArm。
-- 当前阶段 `FinalArm = InitialArm`，仅保留合并占位字段。
+- `InitialArm` 保留原始 trace 终端归并事实；`FinalArm` 默认等同 `InitialArm`，但当 trace 过度切碎且 `LocalArmCandidate` 完整覆盖时，可采用局部趋势兜底聚合。
 - 输出 `JunctionContext / InitialArm / FinalArm / LocalArmCandidate / ArmTrace / ThroughDecisionAudit / ArmBuildIssueReport`。
-- 输出 `LocalArmCandidate` 审计候选：仅基于当前语义路口 seed roads 的局部出入口趋势分组，用于人工判断 trace 过度切碎，不替代 FinalArm。
+- 输出 `LocalArmCandidate` 审计候选：仅基于当前语义路口 seed roads 的局部出入口趋势分组，用于人工判断 trace 过度切碎，并可在完整覆盖时作为 FinalArm 兜底依据。
 - 输出 review PNG、compare PNG、review GPKG、summary、review index 与 P0/P1 trace review PNG。
 - 实现自动结构检查、批量统计检查和人工目视优先级分类。
 
@@ -182,12 +182,17 @@ cases/group_0001/trace_review/<trace_id>.png
 
 ### FinalArm
 
-当前版本 `FinalArm = InitialArm`，并额外保留：
+当前版本 `FinalArm` 默认与 `InitialArm` 一一对应；当 `LocalArmCandidate` 完整覆盖全部 `InitialArm` 且存在 trace 碎片化时，允许按局部趋势兜底聚合。
 
 - `final_arm_id`
 - `source_initial_arm_ids`
-- `merge_status = not_applied`
-- `merge_reason = reserved_for_future_case_based_rules`
+- `merge_status`
+- `merge_reason`
+
+当前允许 `merge_status`：
+
+- `not_applied`
+- `local_candidate_fallback`
 
 ### LocalArmCandidate
 

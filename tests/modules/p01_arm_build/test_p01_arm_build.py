@@ -294,12 +294,13 @@ def test_dataset_review_context_stays_near_junction_for_long_traces(tmp_path: Pa
     assert bounds[2] < 120.0
 
 
-def test_local_arm_candidates_group_current_seed_trends_without_merging_outputs(tmp_path: Path) -> None:
+def test_local_arm_candidates_group_current_seed_trends_with_optional_final_fallback(tmp_path: Path) -> None:
     nodes_path, roads_path = _write_dataset(tmp_path, "S")
     loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
     result = build_dataset_arm_result(loaded, junction_id="S1", right_turn_formway_values={"128"})
 
     assert len(result.final_arms) == len(result.initial_arms)
+    assert {arm.merge_status for arm in result.final_arms} == {"not_applied"}
     assert len(result.local_arm_candidates) == 4
     west = next(item for item in result.local_arm_candidates if item.bidirectional_seed_road_ids == ("S1_bi",))
     east = next(item for item in result.local_arm_candidates if item.outbound_seed_road_ids == ("S1_east_seed",))
@@ -308,6 +309,71 @@ def test_local_arm_candidates_group_current_seed_trends_without_merging_outputs(
     assert east.local_stub_road_ids == ("S1_east_continue", "S1_east_seed")
     assert "S1_right_turn" not in {seed for item in result.local_arm_candidates for seed in item.source_seed_road_ids}
     assert result.metrics["local_arm_candidate_count"] == 4
+
+
+def test_final_arms_use_local_candidate_fallback_when_trace_fragments_same_local_arm(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "fallback_nodes.gpkg"
+    roads_path = tmp_path / "fallback_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("D", None, 20.0, 0.0, "0"),
+            ("B", None, 10.0, 0.5, "1"),
+            ("T", "T", 20.0, 0.8, "4"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("dead_seed", "C", "D", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("live_seed", "C", "B", 2, "0", [(0.0, 0.0), (10.0, 0.5)]),
+            ("live_continue", "B", "T", 2, "0", [(10.0, 0.5), (20.0, 0.8)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+
+    assert len(result.initial_arms) == 2
+    assert len(result.local_arm_candidates) == 1
+    assert len(result.final_arms) == 1
+    assert result.final_arms[0].source_initial_arm_ids == ("A1", "A2")
+    assert result.final_arms[0].merge_status == "local_candidate_fallback"
+    assert result.metrics["final_arm_count"] == 1
+    assert result.metrics["local_arm_fragmentation_gap"] == 1
+
+
+def test_through_tie_break_avoids_near_parallel_one_hop_dead_end(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "tie_nodes.gpkg"
+    roads_path = tmp_path / "tie_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("G", None, 10.0, 0.0, "1"),
+            ("D", None, 20.0, 0.1, "0"),
+            ("L", None, 20.0, 0.5, "1"),
+            ("T", "T", 30.0, 1.0, "4"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("seed", "C", "G", 2, "0", [(0.0, 0.0), (10.0, 0.0)]),
+            ("dead_candidate", "G", "D", 2, "0", [(10.0, 0.0), (20.0, 0.1)]),
+            ("live_candidate", "G", "L", 2, "0", [(10.0, 0.0), (20.0, 0.5)]),
+            ("live_continue", "L", "T", 2, "0", [(20.0, 0.5), (30.0, 1.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("FRCSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+
+    assert result.traces[0].traced_road_ids == ("seed", "live_candidate", "live_continue")
+    assert "dead_candidate" not in result.traces[0].traced_road_ids
+    assert result.decisions[0].outgoing_road_id == "live_candidate"
+    assert "tie_break=near_parallel_non_dead_end_over_one_hop_dead_end" in result.decisions[0].decision_reason
 
 
 def test_kind_aware_t_junction_and_kind4_stop_rules(tmp_path: Path) -> None:

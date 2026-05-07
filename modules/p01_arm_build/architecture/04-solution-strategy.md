@@ -31,11 +31,11 @@ trace 从 seed 外侧端点继续。每步只沿拓扑连接向外追溯：
 
 ## Arm 聚合
 
-按 trace 的终端类型与终端语义路口 ID 聚合 InitialArm。当前 FinalArm 复制 InitialArm 并写入合并占位字段。
+按 trace 的终端类型与终端语义路口 ID 聚合 InitialArm。FinalArm 默认复制 InitialArm 并写入 `not_applied`；当 InitialArm 数量大于 LocalArmCandidate 数量、LocalArmCandidate 完整覆盖全部 InitialArm，且至少一个候选对应多个 InitialArm 时，FinalArm 采用局部趋势兜底聚合并写入 `local_candidate_fallback`。
 
 ## 局部趋势候选
 
-为辅助识别 trace 在 T 型或 ambiguous boundary 前被过度切碎的 case，模块额外输出 `LocalArmCandidate`。该候选只基于当前语义路口 seed road 从 member node 指向外侧 node 的局部趋势，把同侧进入 / 退出 / 双向 seed 归为参考分组，并可保留少量方向一致的外侧 stub road 作为目视证据。它不使用目标 case ID，不进入 FinalArm 合并规则。
+为辅助识别 trace 在 T 型或 ambiguous boundary 前被过度切碎的 case，模块额外输出 `LocalArmCandidate`。该候选只基于当前语义路口 seed road 从 member node 指向外侧 node 的局部趋势，把同侧进入 / 退出 / 双向 seed 归为参考分组，并可保留少量方向一致的外侧 stub road 作为目视证据。它不使用目标 case ID；当候选完整覆盖 InitialArm 时可进入 FinalArm 兜底聚合。
 
 ## 输出与 QA
 

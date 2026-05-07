@@ -170,12 +170,17 @@ Road 最少字段：
 
 ### 4.3 FinalArm
 
-当前阶段 `FinalArm = InitialArm`，并保留：
+`InitialArm` 始终保留原始 trace 终端归并事实。`FinalArm` 默认与 `InitialArm` 一一对应；当 `InitialArm` 被局部 trace boundary 过度切碎，且 `LocalArmCandidate` 完整覆盖全部 `InitialArm` 时，`FinalArm` 可采用局部趋势兜底聚合。
 
 - `final_arm_id`
 - `source_initial_arm_ids`
-- `merge_status = not_applied`
-- `merge_reason = reserved_for_future_case_based_rules`
+- `merge_status`
+- `merge_reason`
+
+当前允许的 `merge_status`：
+
+- `not_applied`
+- `local_candidate_fallback`
 
 ### 4.4 LocalArmCandidate
 
@@ -199,7 +204,7 @@ Road 最少字段：
 - `build_status`
 - `risk_flags`
 
-该对象用于定位 `InitialArm` 可能被 trace boundary 过度切碎的 case；当前 `FinalArm` 仍与 `InitialArm` 一一对应。
+该对象用于定位 `InitialArm` 可能被 trace boundary 过度切碎的 case；当其完整覆盖全部 `InitialArm` 时，可作为 `FinalArm` 的兜底聚合依据。
 
 ### 4.5 ArmTrace
 

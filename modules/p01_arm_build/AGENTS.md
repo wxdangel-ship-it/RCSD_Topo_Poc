@@ -4,7 +4,7 @@
 
 - 本模块只承载 `P01-A / Arm 构建`。
 - 当前阶段三套数据 SWSD / RCSD / F-RCSD 独立构建 Arm，不做跨数据 Arm 配准。
-- 当前阶段 `FinalArm = InitialArm`，仅保留合并占位字段。
+- `InitialArm` 保留原始 trace 终端归并事实；当 trace 被局部边界过度切碎且 `LocalArmCandidate` 完整覆盖 InitialArm 时，`FinalArm` 可采用局部趋势兜底聚合并写明 `merge_status / merge_reason`。
 
 ## 禁止事项
 

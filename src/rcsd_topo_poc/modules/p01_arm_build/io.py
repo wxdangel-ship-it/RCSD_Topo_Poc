@@ -167,7 +167,13 @@ def write_gpkg_layers(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        path.unlink()
+        try:
+            path.unlink()
+        except PermissionError as exc:
+            raise RuntimeError(
+                f"Cannot overwrite existing GPKG {path}. Close any GIS/viewer process using this file, "
+                "delete the old output, or rerun with a new --run-id."
+            ) from exc
     for layer_name, geometry_type, records in layers:
         schema = _schema_for(records, geometry_type)
         kwargs: dict[str, Any] = {

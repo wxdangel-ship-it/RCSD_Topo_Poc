@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 
 import fiona
+import pytest
 from shapely.geometry import LineString, Point, mapping
 
-from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset
+from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset, write_gpkg_layers
 from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput
 from rcsd_topo_poc.modules.p01_arm_build.review import (
     _dataset_review_context,
@@ -496,6 +497,22 @@ def test_review_line_points_accepts_3d_coordinates() -> None:
 
     assert len(points) == 2
     assert all(len(point) == 2 for point in points)
+
+
+def test_write_gpkg_layers_reports_locked_existing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    gpkg_path = tmp_path / "review_layers.gpkg"
+    gpkg_path.write_bytes(b"locked")
+    original_unlink = Path.unlink
+
+    def locked_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path == gpkg_path:
+            raise PermissionError("locked")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+    with pytest.raises(RuntimeError, match="new --run-id"):
+        write_gpkg_layers(gpkg_path, layers=[], crs=None, crs_wkt=None)
 
 
 def test_p01_source_does_not_reference_grade_fields() -> None:

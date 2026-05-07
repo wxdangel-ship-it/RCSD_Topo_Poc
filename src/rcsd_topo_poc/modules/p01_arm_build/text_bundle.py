@@ -61,6 +61,8 @@ class P01TextBundleExportArtifacts:
     failure_reason: str | None = None
     failure_detail: str | None = None
     selected_bfs_depth: int | None = None
+    part_txt_paths: tuple[Path, ...] = ()
+    max_part_size_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -323,6 +325,73 @@ def _out_size_report_path(out_txt: Path) -> Path:
     return out_txt.with_suffix(out_txt.suffix + ".size_report.json")
 
 
+def _part_txt_paths(out_txt: Path, part_count: int) -> tuple[Path, ...]:
+    if part_count <= 1:
+        return (out_txt,)
+    suffix = out_txt.suffix or ".txt"
+    return tuple(
+        out_txt if index == 1 else out_txt.with_name(f"{out_txt.stem}.part_{index:04d}_of_{part_count:04d}{suffix}")
+        for index in range(1, part_count + 1)
+    )
+
+
+def _remove_existing_bundle_outputs(out_txt: Path) -> None:
+    if out_txt.exists():
+        out_txt.unlink()
+    suffix = out_txt.suffix or ".txt"
+    for path in out_txt.parent.glob(f"{out_txt.stem}.part_*_of_*{suffix}"):
+        if path != out_txt and path.is_file():
+            path.unlink()
+
+
+def _split_payload_bundle_texts(
+    *,
+    out_txt: Path,
+    meta: dict[str, Any],
+    payload_bytes: bytes,
+    max_text_size_bytes: int,
+) -> tuple[tuple[Path, str, int], ...]:
+    if max_text_size_bytes <= 0:
+        raise P01TextBundleError("invalid_max_text_size", "max_text_size_bytes must be > 0.")
+
+    full_payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()
+
+    def build_parts(chunk_size: int) -> tuple[tuple[Path, str, int], ...]:
+        chunks = [payload_bytes[index : index + chunk_size] for index in range(0, len(payload_bytes), chunk_size)]
+        part_paths = _part_txt_paths(out_txt, len(chunks))
+        part_filenames = [path.name for path in part_paths]
+        parts: list[tuple[Path, str, int]] = []
+        for index, chunk in enumerate(chunks, start=1):
+            part_meta = {
+                **meta,
+                "split_bundle": {
+                    "enabled": True,
+                    "bundle_id": full_payload_sha256,
+                    "part_index": index,
+                    "part_count": len(chunks),
+                    "part_filenames": part_filenames,
+                    "full_payload_sha256": full_payload_sha256,
+                },
+            }
+            text, size = _build_bundle_text(meta=part_meta, payload_bytes=chunk)
+            parts.append((part_paths[index - 1], text, size))
+        return tuple(parts)
+
+    low, high = 1, max(1, len(payload_bytes))
+    best: tuple[tuple[Path, str, int], ...] | None = None
+    while low <= high:
+        mid = (low + high) // 2
+        parts = build_parts(mid)
+        if max(size for _, _, size in parts) <= max_text_size_bytes:
+            best = parts
+            low = mid + 1
+        else:
+            high = mid - 1
+    if best is None:
+        raise P01TextBundleError("bundle_part_too_large", f"Bundle part metadata cannot fit limit {max_text_size_bytes}.")
+    return best
+
+
 def _build_text_bundle_for_depth(
     *,
     dataset_inputs: dict[str, DatasetInput],
@@ -421,6 +490,37 @@ def _build_text_bundle_for_depth(
     return bundle_text, bundle_size_bytes, size_report
 
 
+def _payload_and_meta_from_bundle_text(bundle_text: str) -> tuple[dict[str, Any], bytes]:
+    return _parse_text_bundle(bundle_text)
+
+
+def _write_split_bundle(
+    *,
+    out_txt_path: Path,
+    bundle_text: str,
+    size_report: dict[str, Any],
+    max_text_size_bytes: int,
+) -> tuple[tuple[Path, ...], int]:
+    meta, payload_bytes = _payload_and_meta_from_bundle_text(bundle_text)
+    parts = _split_payload_bundle_texts(
+        out_txt=out_txt_path,
+        meta=meta,
+        payload_bytes=payload_bytes,
+        max_text_size_bytes=max_text_size_bytes,
+    )
+    for path, text, _size in parts:
+        path.write_text(text, encoding="utf-8")
+    split_report = {
+        "enabled": True,
+        "part_count": len(parts),
+        "part_files": [str(path) for path, _text, _size in parts],
+        "part_size_bytes": {path.name: size for path, _text, size in parts},
+        "max_part_size_bytes": max(size for _path, _text, size in parts),
+    }
+    size_report["split_bundle"] = split_report
+    return tuple(path for path, _text, _size in parts), int(split_report["max_part_size_bytes"])
+
+
 def _attempt_summary(
     *,
     bfs_depth: int,
@@ -478,8 +578,7 @@ def run_p01_export_text_bundle(
 ) -> P01TextBundleExportArtifacts:
     out_txt_path = Path(out_txt)
     out_txt_path.parent.mkdir(parents=True, exist_ok=True)
-    if out_txt_path.exists():
-        out_txt_path.unlink()
+    _remove_existing_bundle_outputs(out_txt_path)
     size_report_path = _out_size_report_path(out_txt_path)
     if size_report_path.exists():
         size_report_path.unlink()
@@ -509,6 +608,9 @@ def run_p01_export_text_bundle(
         selected_size = 0
         selected_report: dict[str, Any] | None = None
         last_report: dict[str, Any] | None = None
+        last_text = ""
+        last_size = 0
+        last_depth = bfs_depth
         depths = range(bfs_depth, max_bfs_depth + 1) if auto_fit else (bfs_depth,)
         for current_depth in depths:
             bundle_text, bundle_size_bytes, size_report = _build_text_bundle_for_depth(
@@ -525,6 +627,9 @@ def run_p01_export_text_bundle(
                 max_text_size_bytes=max_text_size_bytes,
             )
             last_report = size_report
+            last_text = bundle_text
+            last_size = bundle_size_bytes
+            last_depth = current_depth
             attempts.append(attempt)
             if verbose:
                 _print_attempt(attempt)
@@ -559,27 +664,45 @@ def run_p01_export_text_bundle(
                 }
                 size_report_path.write_text(json.dumps(sidecar_report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 
+        if last_report is not None and last_text and (selected_report is None or (auto_fit and last_size > max_text_size_bytes)):
+            selected_depth = last_depth
+            selected_text = last_text
+            selected_size = last_size
+            selected_report = last_report
+
         if selected_report is None:
-            failure_report = attempts[-1] if attempts else {}
             detail_report = dict(last_report or {})
             detail_report["auto_fit_attempts"] = attempts
-            size_report_path.write_text(json.dumps(detail_report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
             return P01TextBundleExportArtifacts(
                 success=False,
                 bundle_txt_path=out_txt_path,
-                size_report_path=size_report_path,
-                bundle_size_bytes=int(failure_report.get("bundle_size_bytes") or 0),
-                failure_reason="bundle_too_large",
-                failure_detail=f"No BFS depth in requested range fits limit {max_text_size_bytes}.",
+                size_report_path=size_report_path if size_report_path.exists() else None,
+                bundle_size_bytes=0,
+                failure_reason="bundle_build_failed",
+                failure_detail="No bundle payload was generated.",
             )
 
-        out_txt_path.write_text(selected_text, encoding="utf-8")
+        part_paths: tuple[Path, ...] = ()
+        max_part_size_bytes = selected_size
+        if selected_size <= max_text_size_bytes:
+            out_txt_path.write_text(selected_text, encoding="utf-8")
+            part_paths = (out_txt_path,)
+        else:
+            part_paths, max_part_size_bytes = _write_split_bundle(
+                out_txt_path=out_txt_path,
+                bundle_text=selected_text,
+                size_report=selected_report,
+                max_text_size_bytes=max_text_size_bytes,
+            )
+            size_report_path.write_text(json.dumps(selected_report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
         return P01TextBundleExportArtifacts(
             success=True,
             bundle_txt_path=out_txt_path,
             size_report_path=size_report_path if size_report_path.exists() else None,
             bundle_size_bytes=selected_size,
             selected_bfs_depth=selected_depth,
+            part_txt_paths=part_paths,
+            max_part_size_bytes=max_part_size_bytes,
         )
     except Exception as exc:
         reason = getattr(exc, "reason", "bundle_export_failed")
@@ -611,8 +734,51 @@ def _restore_vector_file(
     write_vector(target_path, features, crs_text=crs_text, layer_name=target_path.stem)
 
 
+def _bundle_payload_from_text_file(bundle_txt: Path) -> tuple[bytes, dict[str, Any] | None]:
+    meta, payload_bytes = _parse_text_bundle(bundle_txt.read_text(encoding="utf-8"))
+    split_meta = meta.get("split_bundle") or {}
+    if not split_meta.get("enabled"):
+        return payload_bytes, None
+
+    part_count = int(split_meta.get("part_count") or 0)
+    part_filenames = [str(name) for name in split_meta.get("part_filenames") or ()]
+    full_payload_sha256 = str(split_meta.get("full_payload_sha256") or split_meta.get("bundle_id") or "")
+    if part_count <= 0 or len(part_filenames) != part_count or not full_payload_sha256:
+        raise P01TextBundleError("invalid_split_bundle", "Split bundle metadata is incomplete.")
+
+    chunks: dict[int, bytes] = {}
+    for filename in part_filenames:
+        part_path = bundle_txt.parent / filename
+        if not part_path.is_file():
+            raise P01TextBundleError("bundle_part_missing", f"Split bundle part missing: {part_path}")
+        part_meta, part_payload = _parse_text_bundle(part_path.read_text(encoding="utf-8"))
+        part_split = part_meta.get("split_bundle") or {}
+        if str(part_split.get("full_payload_sha256") or part_split.get("bundle_id") or "") != full_payload_sha256:
+            raise P01TextBundleError("split_bundle_mismatch", f"Split bundle id mismatch: {part_path}")
+        if int(part_split.get("part_count") or 0) != part_count:
+            raise P01TextBundleError("split_bundle_mismatch", f"Split bundle part count mismatch: {part_path}")
+        part_index = int(part_split.get("part_index") or 0)
+        if part_index < 1 or part_index > part_count or part_index in chunks:
+            raise P01TextBundleError("invalid_split_bundle", f"Invalid split bundle part index: {part_path}")
+        chunks[part_index] = part_payload
+
+    if len(chunks) != part_count:
+        raise P01TextBundleError("bundle_part_missing", "Split bundle parts are incomplete.")
+    full_payload = b"".join(chunks[index] for index in range(1, part_count + 1))
+    if hashlib.sha256(full_payload).hexdigest() != full_payload_sha256:
+        raise P01TextBundleError("checksum_mismatch", "Split bundle full payload checksum validation failed.")
+    split_report = {
+        "enabled": True,
+        "part_count": part_count,
+        "part_files": [str(bundle_txt.parent / filename) for filename in part_filenames],
+        "part_size_bytes": {filename: (bundle_txt.parent / filename).stat().st_size for filename in part_filenames},
+        "max_part_size_bytes": max((bundle_txt.parent / filename).stat().st_size for filename in part_filenames),
+    }
+    return full_payload, split_report
+
+
 def _extract_and_verify_bundle(bundle_txt: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
-    _meta, payload_bytes = _parse_text_bundle(bundle_txt.read_text(encoding="utf-8"))
+    payload_bytes, split_report = _bundle_payload_from_text_file(bundle_txt)
     with zipfile.ZipFile(io.BytesIO(payload_bytes), "r") as zf:
         names = set(zf.namelist())
         missing = [name for name in P01_BUNDLE_FILES if name not in names]
@@ -627,6 +793,10 @@ def _extract_and_verify_bundle(bundle_txt: Path) -> tuple[dict[str, Any], dict[s
         expected = checksums.get(name)
         if expected and hashlib.sha256(content).hexdigest() != expected:
             raise P01TextBundleError("checksum_mismatch", f"Checksum mismatch for {name}.")
+    if split_report is not None:
+        size_report = json.loads(files["size_report.json"])
+        size_report["split_bundle"] = split_report
+        files["size_report.json"] = json.dumps(size_report, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
     return manifest, files
 
 
@@ -727,6 +897,11 @@ def run_p01_export_text_bundle_from_args(argv: list[str] | None = None) -> int:
         return 1
     print(f"P01 text bundle written to: {artifacts.bundle_txt_path}")
     print(f"bundle_size_bytes={artifacts.bundle_size_bytes}")
+    if artifacts.part_txt_paths:
+        print(f"bundle_part_count={len(artifacts.part_txt_paths)}")
+        print(f"max_part_size_bytes={artifacts.max_part_size_bytes}")
+        for path in artifacts.part_txt_paths:
+            print(f"bundle_part={path}")
     if artifacts.selected_bfs_depth is not None:
         print(f"selected_bfs_depth={artifacts.selected_bfs_depth}")
     if artifacts.size_report_path is not None:

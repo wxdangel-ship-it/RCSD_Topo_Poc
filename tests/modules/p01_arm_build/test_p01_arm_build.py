@@ -425,6 +425,40 @@ def test_p01_text_bundle_auto_fit_expands_to_deeper_trace_context(tmp_path: Path
     assert [attempt["bfs_depth"] for attempt in manifest["auto_fit"]["attempts"]] == [1, 2]
 
 
+def test_p01_text_bundle_splits_when_text_limit_is_too_small(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _write_dataset(tmp_path, "S", include_far_trace=True)
+    rcsd_nodes, rcsd_roads = _write_dataset(tmp_path, "R", include_far_trace=True)
+    frcsd_nodes, frcsd_roads = _write_dataset(tmp_path, "F", include_far_trace=True)
+    bundle_path = tmp_path / "p01_split_bundle.txt"
+
+    artifacts = run_p01_export_text_bundle(
+        swsd_nodes=swsd_nodes,
+        swsd_roads=swsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_roads=rcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        frcsd_roads=frcsd_roads,
+        junction_group="S1,R1,F1",
+        out_txt=bundle_path,
+        bfs_depth=2,
+        max_text_size_bytes=40_000,
+    )
+
+    assert artifacts.success, artifacts.failure_detail
+    assert len(artifacts.part_txt_paths) > 1
+    assert all(path.is_file() and path.stat().st_size <= 40_000 for path in artifacts.part_txt_paths)
+
+    decoded = run_p01_decode_text_bundle(bundle_txt=artifacts.part_txt_paths[-1], out_dir=tmp_path / "decoded_split")
+    manifest = json.loads(decoded.manifest_path.read_text(encoding="utf-8"))
+
+    assert set(manifest["datasets"]) == {"SWSD", "RCSD", "FRCSD"}
+    assert (decoded.out_dir / "SWSD" / "roads.gpkg").is_file()
+    assert (decoded.out_dir / "RCSD" / "roads.gpkg").is_file()
+    assert (decoded.out_dir / "FRCSD" / "roads.gpkg").is_file()
+    size_report = json.loads((decoded.out_dir / "size_report.json").read_text(encoding="utf-8"))
+    assert size_report["split_bundle"]["enabled"] is True
+
+
 def test_review_line_points_accepts_3d_coordinates() -> None:
     project = _projector((0.0, 0.0, 10.0, 10.0), left=0, top=0, width=100, height=100)
 

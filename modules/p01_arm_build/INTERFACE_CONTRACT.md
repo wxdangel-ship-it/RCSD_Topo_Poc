@@ -37,7 +37,7 @@ from rcsd_topo_poc.modules.p01_arm_build.text_bundle import (
 )
 ```
 
-打包和解包均可通过 `python -c` 单命令调用。helper 使用 `zip + base85 + checksum` 文本包装，默认上限 `250 KiB`；上下文选择基于当前语义路口 Road 拓扑 BFS，不做简单空间裁剪。打包支持 `--auto-fit --max-bfs-depth N`，用于逐圈估算并选择不超过上限的最大 BFS 范围。
+打包和解包均可通过 `python -c` 单命令调用。helper 使用 `zip + base85 + checksum` 文本包装，默认单文件上限 `250 KiB`；上下文选择基于当前语义路口 Road 拓扑 BFS，不做简单空间裁剪。打包支持 `--auto-fit --max-bfs-depth N`。若选定范围无法放入单个 250 KiB 文本文件，helper 会自动拆分为多个文本分片；分片合并后仍包含 SWSD / RCSD / F-RCSD 三套数据。
 
 ## 3. 输入契约
 
@@ -117,6 +117,8 @@ Road 最少字段：
 
 - `--bundle-txt`
 - `--out-dir`
+
+`--bundle-txt` 可指向单文件 bundle，也可指向任一 split 分片。split 分片必须保留在同一目录下，解包时会按分片元数据自动合并。
 
 解包输出：
 

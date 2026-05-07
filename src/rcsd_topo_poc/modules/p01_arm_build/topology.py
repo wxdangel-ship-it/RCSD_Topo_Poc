@@ -26,6 +26,9 @@ RISK_STOP_TYPES = {"ambiguous_boundary", "patch_boundary", "loop_to_current_junc
 LOCAL_CANDIDATE_ANGLE_TOLERANCE_DEG = 35.0
 LOCAL_CANDIDATE_STUB_ANGLE_TOLERANCE_DEG = 25.0
 LOCAL_CANDIDATE_STUB_MAX_HOPS = 1
+THROUGH_MAINLINE_MAX_ANGLE_DEG = 25.0
+THROUGH_MAINLINE_MIN_MARGIN_DEG = 12.0
+NON_RISK_TRACE_FLAGS = {"right_turn_excluded"}
 
 
 def valid_mainnodeid(value: str | None) -> str | None:
@@ -122,10 +125,13 @@ def _incident_active_roads(
     nodes: dict[str, NodeRecord],
     excluded_road_ids: set[str],
     current_internal_road_ids: set[str],
+    right_turn_formway_values: set[str] | None = None,
 ) -> tuple[str, ...]:
     incident: list[str] = []
     for road_id, road in roads.items():
         if road_id in excluded_road_ids or road_id in current_internal_road_ids:
+            continue
+        if right_turn_formway_values and _is_right_turn_road(road, right_turn_formway_values):
             continue
         start_group, end_group = _road_endpoint_groups(road, nodes)
         if start_group == end_group:
@@ -227,6 +233,28 @@ def _road_trend_angle_from_group(
     return angle, (from_node_id, to_node_id)
 
 
+def _road_trend_angle_to_group(
+    road: RoadRecord,
+    to_group_id: str,
+    nodes: dict[str, NodeRecord],
+) -> tuple[float, tuple[str, str]] | None:
+    start_group, end_group = _road_endpoint_groups(road, nodes)
+    if start_group == to_group_id and end_group != to_group_id:
+        from_node_id, to_node_id = road.enodeid, road.snodeid
+    elif end_group == to_group_id and start_group != to_group_id:
+        from_node_id, to_node_id = road.snodeid, road.enodeid
+    else:
+        return None
+    from_xy = _node_xy(nodes, from_node_id)
+    to_xy = _node_xy(nodes, to_node_id)
+    if from_xy is None or to_xy is None:
+        return None
+    angle = _angle_from_xy(from_xy, to_xy)
+    if angle is None:
+        return None
+    return angle, (from_node_id, to_node_id)
+
+
 def _local_stub_for_seed(
     *,
     seed_road: RoadRecord,
@@ -236,6 +264,7 @@ def _local_stub_for_seed(
     roads: dict[str, RoadRecord],
     excluded_road_ids: set[str],
     internal_road_ids: set[str],
+    right_turn_formway_values: set[str],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     road_ids = [seed_road.road_id]
     node_ids = {seed_road.snodeid, seed_road.enodeid}
@@ -251,6 +280,7 @@ def _local_stub_for_seed(
             nodes=nodes,
             excluded_road_ids=excluded_road_ids,
             current_internal_road_ids=internal_road_ids,
+            right_turn_formway_values=right_turn_formway_values,
         )
         next_candidates = [road_id for road_id in incident_ids if road_id != previous_road_id]
         if len(incident_ids) != 2 or len(next_candidates) != 1:
@@ -273,6 +303,175 @@ def _local_stub_for_seed(
     return tuple(road_ids), tuple(sorted(node_ids))
 
 
+def _kind_values_for_group(group_id: str, groups: dict[str, tuple[str, ...]], nodes: dict[str, NodeRecord]) -> tuple[str, ...]:
+    kinds = {
+        normalise_id(nodes[node_id].kind)
+        for node_id in _node_ids_for_group(group_id, groups)
+        if node_id in nodes and normalise_id(nodes[node_id].kind)
+    }
+    return tuple(sorted(kinds))
+
+
+def _kind_category(kind_values: tuple[str, ...]) -> str:
+    if "2048" in kind_values:
+        return "kind_2048"
+    if "4" in kind_values:
+        return "kind_4"
+    return "kind_continue"
+
+
+def _continuation_records(
+    *,
+    group_id: str,
+    current_group_id: str,
+    previous_road_id: str,
+    incident_ids: tuple[str, ...],
+    nodes: dict[str, NodeRecord],
+    roads: dict[str, RoadRecord],
+) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+    incoming_trend = _road_trend_angle_to_group(roads[previous_road_id], group_id, nodes)
+    incoming_angle = incoming_trend[0] if incoming_trend else None
+    loop_road_ids: list[str] = []
+    records: list[dict[str, Any]] = []
+    for road_id in incident_ids:
+        if road_id == previous_road_id:
+            continue
+        road = roads[road_id]
+        next_group_id = _other_group_for_road(road, group_id, nodes)
+        if next_group_id is None:
+            continue
+        if next_group_id == current_group_id:
+            loop_road_ids.append(road_id)
+            continue
+        outgoing_trend = _road_trend_angle_from_group(road, group_id, nodes)
+        outgoing_angle = outgoing_trend[0] if outgoing_trend else None
+        angle_delta = (
+            _angular_distance(incoming_angle, outgoing_angle)
+            if incoming_angle is not None and outgoing_angle is not None
+            else None
+        )
+        records.append(
+            {
+                "road_id": road_id,
+                "next_group_id": next_group_id,
+                "incoming_angle": incoming_angle,
+                "outgoing_angle": outgoing_angle,
+                "angle_delta": angle_delta,
+            }
+        )
+    records.sort(key=lambda item: (float(item["angle_delta"]) if item["angle_delta"] is not None else 999.0, str(item["road_id"])))
+    return records, tuple(sorted(loop_road_ids))
+
+
+def _mainline_record(records: list[dict[str, Any]], *, allow_parallel_pair: bool) -> dict[str, Any] | None:
+    if not records:
+        return None
+    best = records[0]
+    best_delta = best.get("angle_delta")
+    if best_delta is None or float(best_delta) > THROUGH_MAINLINE_MAX_ANGLE_DEG:
+        return None
+    if allow_parallel_pair or len(records) == 1:
+        return best
+    second_delta = records[1].get("angle_delta") if len(records) > 1 else None
+    if second_delta is None or float(second_delta) - float(best_delta) >= THROUGH_MAINLINE_MIN_MARGIN_DEG:
+        return best
+    return None
+
+
+def _decision_reason(
+    base: str,
+    *,
+    kind_values: tuple[str, ...],
+    selected: dict[str, Any] | None,
+    excluded_right_turn_ids: tuple[str, ...],
+    loop_road_ids: tuple[str, ...],
+) -> str:
+    parts = [base, f"kind={','.join(kind_values) or '<missing>'}"]
+    if selected:
+        delta = selected.get("angle_delta")
+        delta_text = "unknown" if delta is None else f"{float(delta):.1f}"
+        parts.append(f"selected={selected['road_id']}")
+        parts.append(f"angle_delta={delta_text}")
+    if excluded_right_turn_ids:
+        parts.append("excluded_right_turn=" + ",".join(excluded_right_turn_ids))
+    if loop_road_ids:
+        parts.append("loop_candidates=" + ",".join(loop_road_ids))
+    return "|".join(parts)
+
+
+def _decide_through(
+    *,
+    group_id: str,
+    current_group_id: str,
+    previous_road_id: str,
+    incident_ids: tuple[str, ...],
+    excluded_right_turn_ids: tuple[str, ...],
+    groups: dict[str, tuple[str, ...]],
+    nodes: dict[str, NodeRecord],
+    roads: dict[str, RoadRecord],
+) -> tuple[str, str, str | None]:
+    kind_values = _kind_values_for_group(group_id, groups, nodes)
+    kind_category = _kind_category(kind_values)
+    records, loop_road_ids = _continuation_records(
+        group_id=group_id,
+        current_group_id=current_group_id,
+        previous_road_id=previous_road_id,
+        incident_ids=incident_ids,
+        nodes=nodes,
+        roads=roads,
+    )
+    if not records:
+        status = "loop_to_current_junction" if loop_road_ids else "dead_end"
+        reason = "only_loop_continuations" if loop_road_ids else "no_continuation_after_seed"
+        return status, _decision_reason(reason, kind_values=kind_values, selected=None, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids), None
+
+    is_t_like_topology = len(incident_ids) >= 3 and len(records) <= 3
+    allow_parallel_pair = kind_category == "kind_continue" or is_t_like_topology
+    selected = _mainline_record(records, allow_parallel_pair=allow_parallel_pair)
+
+    if kind_category == "kind_2048":
+        if selected:
+            return (
+                "t_mainline_through",
+                _decision_reason("kind_2048_t_mainline_through", kind_values=kind_values, selected=selected, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids),
+                str(selected["road_id"]),
+            )
+        return "t_side_terminal", _decision_reason("kind_2048_t_side_terminal", kind_values=kind_values, selected=None, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids), None
+
+    if kind_category == "kind_4":
+        if is_t_like_topology and selected:
+            return (
+                "t_mainline_through",
+                _decision_reason("kind_4_t_like_mainline_through", kind_values=kind_values, selected=selected, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids),
+                str(selected["road_id"]),
+            )
+        strict_selected = _mainline_record(records, allow_parallel_pair=False)
+        if len(incident_ids) >= 3 and strict_selected:
+            return (
+                "t_mainline_through",
+                _decision_reason("kind_4_directional_t_mainline_through", kind_values=kind_values, selected=strict_selected, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids),
+                str(strict_selected["road_id"]),
+            )
+        if is_t_like_topology:
+            return "t_side_terminal", _decision_reason("kind_4_t_like_side_terminal", kind_values=kind_values, selected=None, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids), None
+        return "semantic_boundary", _decision_reason("kind_4_non_t_semantic_boundary", kind_values=kind_values, selected=None, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids), None
+
+    if len(records) == 1:
+        selected = records[0]
+        return (
+            "simple_through",
+            _decision_reason("kind_continue_single_continuation", kind_values=kind_values, selected=selected, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids),
+            str(selected["road_id"]),
+        )
+    if selected:
+        return (
+            "t_mainline_through",
+            _decision_reason("kind_continue_directional_mainline", kind_values=kind_values, selected=selected, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids),
+            str(selected["road_id"]),
+        )
+    return "ambiguous_boundary", _decision_reason("kind_continue_no_unique_continuation", kind_values=kind_values, selected=None, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids), None
+
+
 def _add_issue(issues: list[dict[str, Any]], issue_type: str, **payload: Any) -> None:
     issues.append({"issue_type": issue_type, **payload})
 
@@ -291,6 +490,7 @@ def _build_trace(
     roads: dict[str, RoadRecord],
     excluded_road_ids: set[str],
     internal_road_ids: set[str],
+    right_turn_formway_values: set[str],
 ) -> tuple[ArmTrace, tuple[ThroughDecisionAudit, ...], str | None, tuple[str, ...], tuple[dict[str, Any], ...]]:
     trace_id = f"{dataset.lower()}_{junction_id}_trace_{trace_index:04d}"
     traced_road_ids: list[str] = [seed_road.road_id]
@@ -376,29 +576,34 @@ def _build_trace(
                 tuple(trace_issues),
             )
 
-        incident_ids = _incident_active_roads(
+        raw_incident_ids = _incident_active_roads(
             group_id=group_id,
             roads=roads,
             nodes=nodes,
             excluded_road_ids=excluded_road_ids,
             current_internal_road_ids=internal_road_ids,
         )
-        next_candidates = [road_id for road_id in incident_ids if road_id != previous_road_id]
-        if len(incident_ids) <= 1:
-            status = "dead_end"
-            reason = "no_continuation_after_seed"
-            outgoing_road_id = None
-        elif len(incident_ids) == 2 and len(next_candidates) == 1:
-            status = "simple_through"
-            reason = "semantic_degree_2_passthrough"
-            outgoing_road_id = next_candidates[0]
-        else:
-            status = "ambiguous_boundary" if len(incident_ids) == 3 else "semantic_boundary"
-            reason = "t_junction_uncertain" if len(incident_ids) == 3 else "semantic_degree_ge_3_boundary"
-            outgoing_road_id = None
-            if len(incident_ids) == 3:
-                _add_issue(trace_issues, "t_junction_uncertain", trace_id=trace_id, node_group_id=group_id)
-                _add_issue(trace_issues, "ambiguous_boundary", trace_id=trace_id, node_group_id=group_id)
+        through_excluded_right_turn_ids = tuple(
+            sorted(road_id for road_id in raw_incident_ids if _is_right_turn_road(roads[road_id], right_turn_formway_values))
+        )
+        for road_id in through_excluded_right_turn_ids:
+            _add_issue(trace_issues, "right_turn_excluded", trace_id=trace_id, node_group_id=group_id, road_id=road_id, formway=roads[road_id].formway)
+        incident_ids = tuple(road_id for road_id in raw_incident_ids if road_id not in set(through_excluded_right_turn_ids))
+        status, reason, outgoing_road_id = _decide_through(
+            group_id=group_id,
+            current_group_id=current_group_id,
+            previous_road_id=previous_road_id,
+            incident_ids=incident_ids,
+            excluded_right_turn_ids=through_excluded_right_turn_ids,
+            groups=groups,
+            nodes=nodes,
+            roads=roads,
+        )
+        if status == "ambiguous_boundary":
+            _add_issue(trace_issues, "t_junction_uncertain", trace_id=trace_id, node_group_id=group_id)
+            _add_issue(trace_issues, "ambiguous_boundary", trace_id=trace_id, node_group_id=group_id)
+        if status == "t_side_terminal":
+            _add_issue(trace_issues, "t_side_terminal", trace_id=trace_id, node_group_id=group_id)
 
         decision = ThroughDecisionAudit(
             dataset=dataset,
@@ -517,7 +722,7 @@ def _build_initial_arms(
         inbound = tuple(sorted(trace.seed_road_id for trace in arm_traces if trace.seed_role == "inbound"))
         outbound = tuple(sorted(trace.seed_road_id for trace in arm_traces if trace.seed_role == "outbound"))
         bidirectional = tuple(sorted(trace.seed_road_id for trace in arm_traces if trace.seed_role == "bidirectional"))
-        risk_flags = tuple(sorted({flag for trace in arm_traces for flag in trace.issue_flags}))
+        risk_flags = tuple(sorted({flag for trace in arm_traces for flag in trace.issue_flags if flag not in NON_RISK_TRACE_FLAGS}))
         build_status = "unstable" if terminal_type in RISK_STOP_TYPES or risk_flags else "stable"
         terminal_members = trace_terminals.get(arm_traces[0].trace_id, (None, tuple()))[1]
         arm = InitialArm(
@@ -579,6 +784,7 @@ def _build_local_arm_candidates(
     roads: dict[str, RoadRecord],
     excluded_road_ids: set[str],
     internal_road_ids: set[str],
+    right_turn_formway_values: set[str],
 ) -> tuple[LocalArmCandidate, ...]:
     trace_by_seed = {trace.seed_road_id: trace for trace in assigned_traces}
     seed_items: list[dict[str, Any]] = []
@@ -595,6 +801,7 @@ def _build_local_arm_candidates(
             roads=roads,
             excluded_road_ids=excluded_road_ids,
             internal_road_ids=internal_road_ids,
+            right_turn_formway_values=right_turn_formway_values,
         )
         seed_items.append(
             {
@@ -826,6 +1033,7 @@ def build_dataset_arm_result(
             roads=loaded.roads,
             excluded_road_ids=set(excluded_right_turn_ids),
             internal_road_ids=set(internal_road_ids),
+            right_turn_formway_values=right_turn_formway_values,
         )
         traces.append(trace)
         decisions.extend(trace_decisions)
@@ -851,6 +1059,7 @@ def build_dataset_arm_result(
         roads=loaded.roads,
         excluded_road_ids=set(excluded_right_turn_ids),
         internal_road_ids=set(internal_road_ids),
+        right_turn_formway_values=right_turn_formway_values,
     )
     issue_counts = dict(Counter(str(issue.get("issue_type")) for issue in issues))
     issue_report = IssueReport(

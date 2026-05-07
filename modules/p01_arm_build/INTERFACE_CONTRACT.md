@@ -80,6 +80,8 @@ Node 最少字段：
 
 - `kind`
 
+`kind` 参与 P01-A 追溯停止主口径：非 `4` 类型原则上继续追溯；`2048` 作为明确 T 型路口按当前追溯方向裁决横向主通道 through 与竖向侧支 terminal；`4` 需要先评估实际拓扑是否符合 T 型特征，不符合时作为语义边界停止。
+
 Road 最少字段：
 
 - `id`
@@ -224,6 +226,13 @@ Road 最少字段：
 - `dead_end`
 - `patch_boundary`
 - `loop_to_current_junction`
+
+through 裁决必须记录业务状态，不得只输出 true / false。当前口径为：
+
+- `kind != 4`：原则继续追溯；拓扑不可继续、缺失或回到当前路口时仍硬停。
+- `kind = 2048`：T 型路口，横向主通道 `t_mainline_through`，竖向侧支 `t_side_terminal`。
+- `kind = 4`：先判断是否具备 T 型特征；具备时按 T 型规则，不具备时 `semantic_boundary`。
+- T 型判断必须结合当前 incoming road 与候选 outgoing road 的方向关系，不能稳定确认时输出 `ambiguous_boundary` 并审计。
 
 ### 4.7 IssueReport
 

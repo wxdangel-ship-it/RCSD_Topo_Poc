@@ -82,7 +82,13 @@ through 判断发生在语义节点组 / 语义路口层面，不发生在孤立
 
 允许继续追溯的状态只有 `simple_through` 与 `t_mainline_through`。其余状态必须停止并审计。
 
-T 型判断必须结合当前追溯方向、拓扑结构与可用辅助提示。`kind` 只能作为提示，不能单独裁决；`grade / grade_2` 禁止进入主规则。
+Kind 参与追溯停止主口径：
+
+- `kind != 4` 的语义节点组原则上需要继续追溯；但 `dead_end / patch_boundary / loop_to_current_junction` 仍为拓扑硬停止。
+- `kind = 2048` 视为明确 T 型路口，必须结合当前追溯方向判断横向主通道与竖向侧支：横向主通道输出 `t_mainline_through` 并继续，竖向侧支输出 `t_side_terminal` 并停止。
+- `kind = 4` 不立即停止，必须先评估实际拓扑是否符合 T 型路口特征；若符合 T 型则按 T 型规则裁决，若不符合则输出 `semantic_boundary` 并停止。
+
+T 型判断必须结合当前追溯方向、拓扑结构和候选 continuation 的方向关系。`grade / grade_2` 禁止进入主规则。
 
 ## 5. Inputs
 

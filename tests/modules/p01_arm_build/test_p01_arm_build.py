@@ -25,17 +25,22 @@ from rcsd_topo_poc.modules.p01_arm_build.text_bundle import (
 from rcsd_topo_poc.modules.p01_arm_build.topology import build_dataset_arm_result
 
 
-def _write_nodes(path: Path, features: list[tuple[str, str | None, float, float]]) -> None:
+def _write_nodes(path: Path, features: list[tuple]) -> None:
     schema = {"geometry": "Point", "properties": {"id": "str", "mainnodeid": "str", "kind": "str", "grade": "int"}}
     with fiona.open(path, "w", driver="GPKG", schema=schema, crs="EPSG:3857") as sink:
-        for node_id, mainnodeid, x, y in features:
+        for feature in features:
+            if len(feature) == 5:
+                node_id, mainnodeid, x, y, kind = feature
+            else:
+                node_id, mainnodeid, x, y = feature
+                kind = "4" if mainnodeid and node_id == mainnodeid else "1"
             sink.write(
                 {
                     "geometry": mapping(Point(x, y)),
                     "properties": {
                         "id": node_id,
                         "mainnodeid": mainnodeid,
-                        "kind": "4",
+                        "kind": kind,
                         "grade": 9,
                     },
                 }
@@ -302,6 +307,53 @@ def test_local_arm_candidates_group_current_seed_trends_without_merging_outputs(
     assert east.local_stub_road_ids == ("S1_east_continue", "S1_east_seed")
     assert "S1_right_turn" not in {seed for item in result.local_arm_candidates for seed in item.source_seed_road_ids}
     assert result.metrics["local_arm_candidate_count"] == 4
+
+
+def test_kind_aware_t_junction_and_kind4_stop_rules(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "kind_nodes.gpkg"
+    roads_path = tmp_path / "kind_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("JM", "JM", 0.0, 0.0, "4"),
+            ("TM", None, 10.0, 0.0, "2048"),
+            ("EM", None, 20.0, 0.0, "1"),
+            ("NM", None, 10.0, 10.0, "1"),
+            ("JS", "JS", 0.0, 40.0, "4"),
+            ("TS", None, 0.0, 50.0, "2048"),
+            ("WS", None, -10.0, 50.0, "1"),
+            ("ES", None, 10.0, 50.0, "1"),
+            ("JK", "JK", 0.0, 80.0, "4"),
+            ("K4", None, 10.0, 80.0, "4"),
+            ("EK", None, 20.0, 80.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("main_seed", "JM", "TM", 2, "0", [(0.0, 0.0), (10.0, 0.0)]),
+            ("main_continue", "TM", "EM", 2, "0", [(10.0, 0.0), (20.0, 0.0)]),
+            ("main_side", "TM", "NM", 2, "0", [(10.0, 0.0), (10.0, 10.0)]),
+            ("side_seed", "JS", "TS", 2, "0", [(0.0, 40.0), (0.0, 50.0)]),
+            ("side_left", "WS", "TS", 2, "0", [(-10.0, 50.0), (0.0, 50.0)]),
+            ("side_right", "TS", "ES", 2, "0", [(0.0, 50.0), (10.0, 50.0)]),
+            ("kind4_seed", "JK", "K4", 2, "0", [(0.0, 80.0), (10.0, 80.0)]),
+            ("kind4_continue", "K4", "EK", 2, "0", [(10.0, 80.0), (20.0, 80.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    mainline = build_dataset_arm_result(loaded, junction_id="JM", right_turn_formway_values={"128"})
+    assert any(decision.status == "t_mainline_through" for decision in mainline.decisions)
+    assert any("main_continue" in trace.traced_road_ids for trace in mainline.traces)
+
+    side = build_dataset_arm_result(loaded, junction_id="JS", right_turn_formway_values={"128"})
+    assert side.traces[0].stop_type == "t_side_terminal"
+    assert side.traces[0].traced_road_ids == ("side_seed",)
+
+    kind4 = build_dataset_arm_result(loaded, junction_id="JK", right_turn_formway_values={"128"})
+    assert kind4.traces[0].stop_type == "semantic_boundary"
+    assert kind4.traces[0].traced_road_ids == ("kind4_seed",)
 
 
 def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_path: Path) -> None:

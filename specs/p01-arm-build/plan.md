@@ -71,7 +71,8 @@ rcsd_topo_poc.modules.p01_arm_build.runner.run_p01_arm_build_from_args(argv)
 
 - 从每条 seed road 沿外侧拓扑追溯。
 - 支持 `simple_through`、`semantic_boundary`、`dead_end`、`patch_boundary`、`loop_to_current_junction`。
-- 当前 T 型主通道 / 侧向判断保守实现：若存在三分支且主侧向无法稳定确认，输出 `ambiguous_boundary` / `t_junction_uncertain`，不强行 through。
+- 追溯停止采用 kind-aware 口径：`kind != 4` 原则继续，`kind = 2048` 按 T 型横向主通道 through / 竖向侧支 terminal，`kind = 4` 先判别是否具备 T 型特征，不具备则作为语义边界停止。
+- T 型主通道 / 侧向判断必须结合当前追溯方向和 continuation 角度；不能稳定确认时输出 `ambiguous_boundary` / `t_junction_uncertain`，不静默 through。
 - 按终端归并 InitialArm。
 - FinalArm 仅做占位映射。
 
@@ -121,6 +122,6 @@ rcsd_topo_poc.modules.p01_arm_build.runner.run_p01_arm_build_from_args(argv)
 ## 8. Known Boundaries
 
 - 真实数据路径尚未作为本轮命令输入提供；真实数据运行验证待用户提供。
-- 当前最小实现对 T 型主通道采用保守策略：不能稳定确认时停止并审计，不静默穿越。
+- 当前实现对 T 型主通道采用可审计方向裁决：可唯一确认横向主通道时继续，不能稳定确认时停止并审计，不静默穿越。
 - 当前不做 Arm 配准，因此 compare 只展示三套数据同视野审查与统计差异。
 - `LocalArmCandidate` 用于解释 trace 碎片化风险；正式 `FinalArm` 仍保持 `InitialArm` 一一映射。

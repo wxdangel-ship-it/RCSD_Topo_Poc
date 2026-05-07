@@ -22,7 +22,8 @@
 - 仅在字段明确可识别时排除右转专用道 / 渠化右转，并把排除结果写入审计输出。
 - 从当前路口 seed road 出发按拓扑追溯，输出 InitialArm。
 - 当前阶段 `FinalArm = InitialArm`，仅保留合并占位字段。
-- 输出 `JunctionContext / InitialArm / FinalArm / ArmTrace / ThroughDecisionAudit / ArmBuildIssueReport`。
+- 输出 `JunctionContext / InitialArm / FinalArm / LocalArmCandidate / ArmTrace / ThroughDecisionAudit / ArmBuildIssueReport`。
+- 输出 `LocalArmCandidate` 审计候选：仅基于当前语义路口 seed roads 的局部出入口趋势分组，用于人工判断 trace 过度切碎，不替代 FinalArm。
 - 输出 review PNG、compare PNG、review GPKG、summary、review index 与 P0/P1 trace review PNG。
 - 实现自动结构检查、批量统计检查和人工目视优先级分类。
 
@@ -35,6 +36,7 @@
 - F-RCSD 通行能力裁决。
 - P01-B。
 - 复杂 Arm 级兜底合并规则。
+- 将局部趋势候选直接固化为正式 Arm 合并结果。
 - 基于几何形态反推右转专用道。
 - 使用 `grade / grade_2` 作为 Arm 构建规则。
 - 新增 repo CLI 子命令、`scripts/` 常驻脚本、模块 `__main__.py` 或模块 `run.py`。
@@ -123,6 +125,7 @@ cases/group_0001/case_summary.json
 cases/group_0001/SWSD/junction_context.json
 cases/group_0001/SWSD/initial_arms.json
 cases/group_0001/SWSD/final_arms.json
+cases/group_0001/SWSD/local_arm_candidates.json
 cases/group_0001/SWSD/arm_traces.json
 cases/group_0001/SWSD/through_decisions.json
 cases/group_0001/SWSD/issue_report.json
@@ -179,6 +182,28 @@ cases/group_0001/trace_review/<trace_id>.png
 - `source_initial_arm_ids`
 - `merge_status = not_applied`
 - `merge_reason = reserved_for_future_case_based_rules`
+
+### LocalArmCandidate
+
+`LocalArmCandidate` 是审计候选，不是正式 Arm 输出。它只基于当前语义路口 seed road 从 member node 指向外侧 node 的局部趋势角，把同侧进入 / 退出 / 双向 seed 汇总成参考分组；可额外保留少量方向一致的外侧 stub road 作为趋势证据。
+
+至少包含：
+
+- `dataset`
+- `current_junction_id`
+- `local_arm_candidate_id`
+- `source_seed_road_ids`
+- `source_initial_arm_ids`
+- `local_stub_road_ids`
+- `inbound_seed_road_ids`
+- `outbound_seed_road_ids`
+- `bidirectional_seed_road_ids`
+- `member_node_ids`
+- `trend_angle_deg`
+- `angular_spread_deg`
+- `grouping_reason`
+- `build_status`
+- `risk_flags`
 
 ### ArmTrace
 

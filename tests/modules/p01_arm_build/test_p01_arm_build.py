@@ -200,6 +200,11 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert len(initial_arms) == 4
     assert any("S1_east_continue" in arm["connector_road_ids"] for arm in initial_arms)
 
+    local_candidates = json.loads((swsd_dir / "local_arm_candidates.json").read_text(encoding="utf-8"))
+    assert len(local_candidates) == 4
+    assert all("S1_right_turn" not in item["source_seed_road_ids"] for item in local_candidates)
+    assert any(item["local_stub_road_ids"] == ["S1_east_continue", "S1_east_seed"] for item in local_candidates)
+
     decisions = json.loads((swsd_dir / "through_decisions.json").read_text(encoding="utf-8"))
     assert any(decision["status"] == "simple_through" for decision in decisions)
     assert any(decision["status"] == "dead_end" for decision in decisions)
@@ -211,6 +216,7 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert set(fiona.listlayers(swsd_dir / "review_layers.gpkg")) >= {
         "current_junction_nodes",
         "arm_roads",
+        "local_arm_candidate_roads",
         "through_decision_nodes",
         "excluded_right_turn_roads",
     }
@@ -280,6 +286,22 @@ def test_dataset_review_context_stays_near_junction_for_long_traces(tmp_path: Pa
     assert any("S1_far_trace" in trace.traced_road_ids for trace in result.traces)
     assert "S1_far_trace" not in road_ids
     assert bounds[2] < 120.0
+
+
+def test_local_arm_candidates_group_current_seed_trends_without_merging_outputs(tmp_path: Path) -> None:
+    nodes_path, roads_path = _write_dataset(tmp_path, "S")
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+    result = build_dataset_arm_result(loaded, junction_id="S1", right_turn_formway_values={"128"})
+
+    assert len(result.final_arms) == len(result.initial_arms)
+    assert len(result.local_arm_candidates) == 4
+    west = next(item for item in result.local_arm_candidates if item.bidirectional_seed_road_ids == ("S1_bi",))
+    east = next(item for item in result.local_arm_candidates if item.outbound_seed_road_ids == ("S1_east_seed",))
+
+    assert west.build_status == "candidate"
+    assert east.local_stub_road_ids == ("S1_east_continue", "S1_east_seed")
+    assert "S1_right_turn" not in {seed for item in result.local_arm_candidates for seed in item.source_seed_road_ids}
+    assert result.metrics["local_arm_candidate_count"] == 4
 
 
 def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_path: Path) -> None:

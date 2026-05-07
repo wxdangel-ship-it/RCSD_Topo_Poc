@@ -35,6 +35,8 @@ REVIEW_INDEX_FIELDS = [
     "excluded_right_turn_road_count",
     "initial_arm_count",
     "final_arm_count",
+    "local_arm_candidate_count",
+    "local_arm_fragmentation_gap",
     "stable_arm_count",
     "partial_arm_count",
     "unstable_arm_count",
@@ -190,6 +192,7 @@ def _write_dataset_outputs(
     write_json(dataset_dir / "junction_context.json", result.context)
     write_json(dataset_dir / "initial_arms.json", result.initial_arms)
     write_json(dataset_dir / "final_arms.json", result.final_arms)
+    write_json(dataset_dir / "local_arm_candidates.json", result.local_arm_candidates)
     write_json(dataset_dir / "arm_traces.json", result.traces)
     write_json(dataset_dir / "through_decisions.json", result.decisions)
     write_json(dataset_dir / "issue_report.json", result.issue_report)
@@ -255,6 +258,7 @@ def _summary_payload(
         "arm_count_distribution": {
             "total_initial_arms": arm_total,
             "total_final_arms": sum(int(row["final_arm_count"]) for row in rows),
+            "total_local_arm_candidates": sum(int(row["local_arm_candidate_count"]) for row in rows),
         },
         "stable_rate": stable_total / arm_total if arm_total else 0.0,
         "unstable_rate": unstable_total / arm_total if arm_total else 0.0,
@@ -340,6 +344,7 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
             dataset_dir = case_dir / dataset
             _progress(
                 f"{group.group_id} {dataset} built arms={result.metrics['initial_arm_count']} "
+                f"local_candidates={result.metrics['local_arm_candidate_count']} "
                 f"stable={result.metrics['stable_arm_count']} issues={result.metrics['issue_count']} "
                 f"priority={result.review_priority}; writing outputs"
             )

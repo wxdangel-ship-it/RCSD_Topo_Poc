@@ -8,6 +8,7 @@
 - 基于语义路口成员 Node 集合构建，不只用 mainnode 单点。
 - 字段明确可识别时排除右转专用道 / 渠化右转。
 - 输出 InitialArm、FinalArm、ArmTrace、ThroughDecisionAudit、IssueReport。
+- 输出 LocalArmCandidate 局部趋势审计候选，用于识别 trace 过度切碎，不替代 FinalArm。
 - 输出 review PNG、compare PNG、review GPKG、summary 与 review index。
 
 ## 非范围

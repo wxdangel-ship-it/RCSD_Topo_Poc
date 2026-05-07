@@ -145,6 +145,25 @@ class InitialArm:
 
 
 @dataclass(frozen=True)
+class LocalArmCandidate:
+    dataset: str
+    current_junction_id: str
+    local_arm_candidate_id: str
+    source_seed_road_ids: tuple[str, ...]
+    source_initial_arm_ids: tuple[str, ...]
+    local_stub_road_ids: tuple[str, ...]
+    inbound_seed_road_ids: tuple[str, ...]
+    outbound_seed_road_ids: tuple[str, ...]
+    bidirectional_seed_road_ids: tuple[str, ...]
+    member_node_ids: tuple[str, ...]
+    trend_angle_deg: float
+    angular_spread_deg: float
+    grouping_reason: str
+    build_status: str
+    risk_flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class FinalArm:
     dataset: str
     current_junction_id: str
@@ -170,6 +189,7 @@ class DatasetBuildResult:
     context: JunctionContext
     initial_arms: tuple[InitialArm, ...]
     final_arms: tuple[FinalArm, ...]
+    local_arm_candidates: tuple[LocalArmCandidate, ...]
     traces: tuple[ArmTrace, ...]
     decisions: tuple[ThroughDecisionAudit, ...]
     issue_report: IssueReport

@@ -171,7 +171,31 @@ Road 最少字段：
 - `merge_status = not_applied`
 - `merge_reason = reserved_for_future_case_based_rules`
 
-### 4.4 ArmTrace
+### 4.4 LocalArmCandidate
+
+`LocalArmCandidate` 是局部趋势审计候选，不是正式 Arm 合并结果。它只从当前语义路口的 seed roads 出发，把从 member node 指向外侧 node 的局部趋势相近的进入 / 退出 / 双向 seed 归为一组，并保留少量方向一致的外侧 stub road 作为目视参考。
+
+字段：
+
+- `dataset`
+- `current_junction_id`
+- `local_arm_candidate_id`
+- `source_seed_road_ids`
+- `source_initial_arm_ids`
+- `local_stub_road_ids`
+- `inbound_seed_road_ids`
+- `outbound_seed_road_ids`
+- `bidirectional_seed_road_ids`
+- `member_node_ids`
+- `trend_angle_deg`
+- `angular_spread_deg`
+- `grouping_reason`
+- `build_status`
+- `risk_flags`
+
+该对象用于定位 `InitialArm` 可能被 trace boundary 过度切碎的 case；当前 `FinalArm` 仍与 `InitialArm` 一一对应。
+
+### 4.5 ArmTrace
 
 字段：
 
@@ -188,7 +212,7 @@ Road 最少字段：
 - `assigned_initial_arm_id`
 - `issue_flags`
 
-### 4.5 ThroughDecisionAudit
+### 4.6 ThroughDecisionAudit
 
 允许状态：
 
@@ -201,7 +225,7 @@ Road 最少字段：
 - `patch_boundary`
 - `loop_to_current_junction`
 
-### 4.6 IssueReport
+### 4.7 IssueReport
 
 典型 issue：
 
@@ -237,6 +261,7 @@ Road 最少字段：
 - `cases/<group_id>/<dataset>/junction_context.json`
 - `cases/<group_id>/<dataset>/initial_arms.json`
 - `cases/<group_id>/<dataset>/final_arms.json`
+- `cases/<group_id>/<dataset>/local_arm_candidates.json`
 - `cases/<group_id>/<dataset>/arm_traces.json`
 - `cases/<group_id>/<dataset>/through_decisions.json`
 - `cases/<group_id>/<dataset>/issue_report.json`

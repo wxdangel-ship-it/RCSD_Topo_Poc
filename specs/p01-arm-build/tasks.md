@@ -50,6 +50,8 @@
 - [x] 新增 `review.py`：PNG 渲染和 compare 渲染。
 - [x] 新增 `runner.py`：参数解析、批处理、summary/review index。
 - [x] 新增 `__init__.py`。
+- [x] 新增 `LocalArmCandidate` 审计输出，用当前语义路口 seed 局部趋势辅助识别 trace 过度切碎。
+- [x] 保持 `FinalArm = InitialArm`，不把局部候选固化为正式兜底合并。
 - [x] 不修改 T01 / T02 / T03 / T04 既有业务语义。
 - [x] 不使用 `grade / grade_2` 参与 Arm 构建。
 - [x] 不通过几何形态反推右转专用道。
@@ -62,6 +64,7 @@
 - [x] 单元测试：语义路口组装。
 - [x] 单元测试：右转排除与审计。
 - [x] 单元测试：trace 连续性和 through 状态。
+- [x] 单元测试：LocalArmCandidate 输出、右转排除后不进入候选、FinalArm 不被候选替换。
 - [x] 单元测试：禁止 Grade 源码扫描。
 - [x] 集成测试：至少一组 synthetic case。
 - [x] 集成测试：至少一组多 junction-group 输入。

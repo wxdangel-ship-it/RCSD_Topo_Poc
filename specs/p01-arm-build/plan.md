@@ -78,6 +78,7 @@ rcsd_topo_poc.modules.p01_arm_build.runner.run_p01_arm_build_from_args(argv)
 ### Slice 5: Outputs and Review
 
 - 写 JSON 输出。
+- 写 `LocalArmCandidate` 审计候选输出；该候选只服务目视与问题归纳，不参与 FinalArm 合并。
 - 写 dataset review GPKG。
 - 写 dataset review PNG。
 - 写 compare PNG / compare GPKG。
@@ -113,6 +114,7 @@ rcsd_topo_poc.modules.p01_arm_build.runner.run_p01_arm_build_from_args(argv)
 - CRS：读取输入 CRS 并写入 preflight；输出 GPKG 沿用输入 CRS，PNG 使用同一数据集 bounds 做可视化坐标转换。
 - 拓扑一致性：trace 每步必须通过共享语义节点组连接；不做 silent fix。
 - 几何语义：几何仅用于 review 与低优先级定位，不作为 Arm 主规则或右转反推依据。
+- 局部候选：只使用当前语义路口 seed 的出入口局部趋势做审计候选，不把样例目标路口 ID 固化为策略。
 - 审计可追溯：preflight、case_input、trace、decision、issue、summary 均记录输入路径、参数和 run id。
 - 性能可验证：summary 写入 group/dataset 计数与运行耗时。
 
@@ -121,3 +123,4 @@ rcsd_topo_poc.modules.p01_arm_build.runner.run_p01_arm_build_from_args(argv)
 - 真实数据路径尚未作为本轮命令输入提供；真实数据运行验证待用户提供。
 - 当前最小实现对 T 型主通道采用保守策略：不能稳定确认时停止并审计，不静默穿越。
 - 当前不做 Arm 配准，因此 compare 只展示三套数据同视野审查与统计差异。
+- `LocalArmCandidate` 用于解释 trace 碎片化风险；正式 `FinalArm` 仍保持 `InitialArm` 一一映射。

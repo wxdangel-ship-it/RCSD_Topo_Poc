@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import Counter, defaultdict
 from dataclasses import replace
 from typing import Any
@@ -13,6 +14,7 @@ from rcsd_topo_poc.modules.p01_arm_build.models import (
     IssueReport,
     JunctionContext,
     LoadedDataset,
+    LocalArmCandidate,
     NodeRecord,
     RoadRecord,
     ThroughDecisionAudit,
@@ -21,6 +23,9 @@ from rcsd_topo_poc.modules.p01_arm_build.models import (
 
 CONTINUE_STATUSES = {"simple_through", "t_mainline_through"}
 RISK_STOP_TYPES = {"ambiguous_boundary", "patch_boundary", "loop_to_current_junction", "unresolved"}
+LOCAL_CANDIDATE_ANGLE_TOLERANCE_DEG = 35.0
+LOCAL_CANDIDATE_STUB_ANGLE_TOLERANCE_DEG = 25.0
+LOCAL_CANDIDATE_STUB_MAX_HOPS = 1
 
 
 def valid_mainnodeid(value: str | None) -> str | None:
@@ -141,6 +146,131 @@ def _other_group_for_road(road: RoadRecord, group_id: str, nodes: dict[str, Node
 
 def _node_ids_for_group(group_id: str, groups: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
     return groups.get(group_id, (group_id,))
+
+
+def _node_xy(nodes: dict[str, NodeRecord], node_id: str) -> tuple[float, float] | None:
+    node = nodes.get(node_id)
+    if node is None or node.geometry is None or node.geometry.is_empty:
+        return None
+    center = node.geometry.centroid
+    return float(center.x), float(center.y)
+
+
+def _angle_from_xy(start: tuple[float, float], end: tuple[float, float]) -> float | None:
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+        return None
+    return math.degrees(math.atan2(dy, dx)) % 360.0
+
+
+def _angular_distance(a: float, b: float) -> float:
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def _mean_angle(angles: list[float]) -> float:
+    if not angles:
+        return 0.0
+    x = sum(math.cos(math.radians(angle)) for angle in angles)
+    y = sum(math.sin(math.radians(angle)) for angle in angles)
+    return math.degrees(math.atan2(y, x)) % 360.0
+
+
+def _angular_spread(angles: list[float], mean_angle: float) -> float:
+    if not angles:
+        return 0.0
+    return max(_angular_distance(angle, mean_angle) for angle in angles)
+
+
+def _seed_trend_angle(
+    road: RoadRecord,
+    member_node_ids: set[str],
+    nodes: dict[str, NodeRecord],
+) -> tuple[float, tuple[str, str]] | None:
+    snode_inside = road.snodeid in member_node_ids
+    enode_inside = road.enodeid in member_node_ids
+    if snode_inside and not enode_inside:
+        inside_node_id, outside_node_id = road.snodeid, road.enodeid
+    elif enode_inside and not snode_inside:
+        inside_node_id, outside_node_id = road.enodeid, road.snodeid
+    else:
+        return None
+    inside_xy = _node_xy(nodes, inside_node_id)
+    outside_xy = _node_xy(nodes, outside_node_id)
+    if inside_xy is None or outside_xy is None:
+        return None
+    angle = _angle_from_xy(inside_xy, outside_xy)
+    if angle is None:
+        return None
+    return angle, (inside_node_id, outside_node_id)
+
+
+def _road_trend_angle_from_group(
+    road: RoadRecord,
+    from_group_id: str,
+    nodes: dict[str, NodeRecord],
+) -> tuple[float, tuple[str, str]] | None:
+    start_group, end_group = _road_endpoint_groups(road, nodes)
+    if start_group == from_group_id and end_group != from_group_id:
+        from_node_id, to_node_id = road.snodeid, road.enodeid
+    elif end_group == from_group_id and start_group != from_group_id:
+        from_node_id, to_node_id = road.enodeid, road.snodeid
+    else:
+        return None
+    from_xy = _node_xy(nodes, from_node_id)
+    to_xy = _node_xy(nodes, to_node_id)
+    if from_xy is None or to_xy is None:
+        return None
+    angle = _angle_from_xy(from_xy, to_xy)
+    if angle is None:
+        return None
+    return angle, (from_node_id, to_node_id)
+
+
+def _local_stub_for_seed(
+    *,
+    seed_road: RoadRecord,
+    base_angle: float,
+    current_group_id: str,
+    nodes: dict[str, NodeRecord],
+    roads: dict[str, RoadRecord],
+    excluded_road_ids: set[str],
+    internal_road_ids: set[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    road_ids = [seed_road.road_id]
+    node_ids = {seed_road.snodeid, seed_road.enodeid}
+    group_id = _other_group_for_road(seed_road, current_group_id, nodes)
+    previous_road_id = seed_road.road_id
+    if group_id is None:
+        return tuple(road_ids), tuple(sorted(node_ids))
+
+    for _ in range(LOCAL_CANDIDATE_STUB_MAX_HOPS):
+        incident_ids = _incident_active_roads(
+            group_id=group_id,
+            roads=roads,
+            nodes=nodes,
+            excluded_road_ids=excluded_road_ids,
+            current_internal_road_ids=internal_road_ids,
+        )
+        next_candidates = [road_id for road_id in incident_ids if road_id != previous_road_id]
+        if len(incident_ids) != 2 or len(next_candidates) != 1:
+            break
+        next_road = roads[next_candidates[0]]
+        next_trend = _road_trend_angle_from_group(next_road, group_id, nodes)
+        if next_trend is None:
+            break
+        next_angle, (from_node_id, to_node_id) = next_trend
+        if _angular_distance(base_angle, next_angle) > LOCAL_CANDIDATE_STUB_ANGLE_TOLERANCE_DEG:
+            break
+        road_ids.append(next_road.road_id)
+        node_ids.update((from_node_id, to_node_id))
+        next_group_id = _other_group_for_road(next_road, group_id, nodes)
+        if next_group_id is None or next_group_id == current_group_id:
+            break
+        previous_road_id = next_road.road_id
+        group_id = next_group_id
+
+    return tuple(road_ids), tuple(sorted(node_ids))
 
 
 def _add_issue(issues: list[dict[str, Any]], issue_type: str, **payload: Any) -> None:
@@ -437,11 +567,120 @@ def _build_final_arms(initial_arms: tuple[InitialArm, ...]) -> tuple[FinalArm, .
     return tuple(final_arms)
 
 
+def _build_local_arm_candidates(
+    *,
+    dataset: str,
+    junction_id: str,
+    current_group_id: str,
+    current_member_node_ids: set[str],
+    seed_roads: list[tuple[RoadRecord, str]],
+    assigned_traces: tuple[ArmTrace, ...],
+    nodes: dict[str, NodeRecord],
+    roads: dict[str, RoadRecord],
+    excluded_road_ids: set[str],
+    internal_road_ids: set[str],
+) -> tuple[LocalArmCandidate, ...]:
+    trace_by_seed = {trace.seed_road_id: trace for trace in assigned_traces}
+    seed_items: list[dict[str, Any]] = []
+    for road, role in seed_roads:
+        trend = _seed_trend_angle(road, current_member_node_ids, nodes)
+        if trend is None:
+            continue
+        angle, node_pair = trend
+        stub_road_ids, stub_node_ids = _local_stub_for_seed(
+            seed_road=road,
+            base_angle=angle,
+            current_group_id=current_group_id,
+            nodes=nodes,
+            roads=roads,
+            excluded_road_ids=excluded_road_ids,
+            internal_road_ids=internal_road_ids,
+        )
+        seed_items.append(
+            {
+                "road_id": road.road_id,
+                "role": role,
+                "angle": angle,
+                "node_ids": tuple(sorted(set(node_pair) | set(stub_node_ids))),
+                "stub_road_ids": stub_road_ids,
+            }
+        )
+
+    groups: list[dict[str, Any]] = []
+    for item in sorted(seed_items, key=lambda value: (float(value["angle"]), str(value["road_id"]))):
+        best_index: int | None = None
+        best_distance = LOCAL_CANDIDATE_ANGLE_TOLERANCE_DEG + 1.0
+        for index, group in enumerate(groups):
+            distance = _angular_distance(float(item["angle"]), float(group["mean_angle"]))
+            if distance <= LOCAL_CANDIDATE_ANGLE_TOLERANCE_DEG and distance < best_distance:
+                best_index = index
+                best_distance = distance
+        if best_index is None:
+            groups.append({"items": [item], "mean_angle": float(item["angle"])})
+        else:
+            groups[best_index]["items"].append(item)
+            angles = [float(seed_item["angle"]) for seed_item in groups[best_index]["items"]]
+            groups[best_index]["mean_angle"] = _mean_angle(angles)
+
+    candidates: list[LocalArmCandidate] = []
+    for index, group in enumerate(sorted(groups, key=lambda value: float(value["mean_angle"])), start=1):
+        items = list(group["items"])
+        seed_ids = tuple(sorted(str(item["road_id"]) for item in items))
+        inbound = tuple(sorted(str(item["road_id"]) for item in items if item["role"] == "inbound"))
+        outbound = tuple(sorted(str(item["road_id"]) for item in items if item["role"] == "outbound"))
+        bidirectional = tuple(sorted(str(item["road_id"]) for item in items if item["role"] == "bidirectional"))
+        stub_ids = tuple(sorted({road_id for item in items for road_id in item["stub_road_ids"]}))
+        node_ids = tuple(sorted({node_id for item in items for node_id in item["node_ids"] if node_id in nodes}))
+        initial_arm_ids = tuple(
+            sorted(
+                {
+                    trace_by_seed[seed_id].assigned_initial_arm_id
+                    for seed_id in seed_ids
+                    if seed_id in trace_by_seed and trace_by_seed[seed_id].assigned_initial_arm_id
+                }
+            )
+        )
+        angles = [float(item["angle"]) for item in items]
+        mean_angle = _mean_angle(angles)
+        risk_flags: list[str] = []
+        has_inbound = bool(inbound or bidirectional)
+        has_outbound = bool(outbound or bidirectional)
+        if len(seed_ids) == 1 and not bidirectional:
+            risk_flags.append("single_seed_candidate")
+        if not has_inbound:
+            risk_flags.append("no_inbound_seed")
+        if not has_outbound:
+            risk_flags.append("no_outbound_seed")
+        if len(initial_arm_ids) > 1:
+            risk_flags.append("primary_trace_fragmented")
+        candidates.append(
+            LocalArmCandidate(
+                dataset=dataset,
+                current_junction_id=junction_id,
+                local_arm_candidate_id=f"L{index}",
+                source_seed_road_ids=seed_ids,
+                source_initial_arm_ids=initial_arm_ids,
+                local_stub_road_ids=stub_ids,
+                inbound_seed_road_ids=inbound,
+                outbound_seed_road_ids=outbound,
+                bidirectional_seed_road_ids=bidirectional,
+                member_node_ids=node_ids,
+                trend_angle_deg=round(mean_angle, 3),
+                angular_spread_deg=round(_angular_spread(angles, mean_angle), 3),
+                grouping_reason="current_junction_seed_local_trend",
+                build_status="candidate_unstable" if risk_flags else "candidate",
+                risk_flags=tuple(sorted(risk_flags)),
+            )
+        )
+    return tuple(candidates)
+
+
 def _metrics_for(
     *,
     context: JunctionContext,
     initial_arms: tuple[InitialArm, ...],
     final_arms: tuple[FinalArm, ...],
+    local_arm_candidates: tuple[LocalArmCandidate, ...],
     traces: tuple[ArmTrace, ...],
     decisions: tuple[ThroughDecisionAudit, ...],
     issue_counts: dict[str, int],
@@ -461,6 +700,8 @@ def _metrics_for(
         "excluded_right_turn_road_count": len(context.excluded_right_turn_road_ids),
         "initial_arm_count": len(initial_arms),
         "final_arm_count": len(final_arms),
+        "local_arm_candidate_count": len(local_arm_candidates),
+        "local_arm_fragmentation_gap": max(0, len(initial_arms) - len(local_arm_candidates)),
         "stable_arm_count": stable,
         "partial_arm_count": sum(1 for arm in initial_arms if arm.terminal_type == "patch_boundary"),
         "unstable_arm_count": unstable,
@@ -599,6 +840,18 @@ def build_dataset_arm_result(
     )
     issues.extend(arm_issues)
     final_arms = _build_final_arms(initial_arms)
+    local_arm_candidates = _build_local_arm_candidates(
+        dataset=loaded.dataset,
+        junction_id=junction_id,
+        current_group_id=resolved_junction_id,
+        current_member_node_ids=member_set,
+        seed_roads=seed_roads,
+        assigned_traces=assigned_traces,
+        nodes=loaded.nodes,
+        roads=loaded.roads,
+        excluded_road_ids=set(excluded_right_turn_ids),
+        internal_road_ids=set(internal_road_ids),
+    )
     issue_counts = dict(Counter(str(issue.get("issue_type")) for issue in issues))
     issue_report = IssueReport(
         dataset=loaded.dataset,
@@ -610,6 +863,7 @@ def build_dataset_arm_result(
         context=context,
         initial_arms=initial_arms,
         final_arms=final_arms,
+        local_arm_candidates=local_arm_candidates,
         traces=assigned_traces,
         decisions=tuple(decisions),
         issue_counts=issue_counts,
@@ -620,6 +874,7 @@ def build_dataset_arm_result(
         context=context,
         initial_arms=initial_arms,
         final_arms=final_arms,
+        local_arm_candidates=local_arm_candidates,
         traces=assigned_traces,
         decisions=tuple(decisions),
         issue_report=issue_report,

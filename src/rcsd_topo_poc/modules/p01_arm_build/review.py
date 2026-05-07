@@ -179,6 +179,12 @@ def _draw_dataset_panel(
                 font=font,
             )
 
+    for candidate in result.local_arm_candidates:
+        first_road = loaded.roads.get(candidate.source_seed_road_ids[0]) if candidate.source_seed_road_ids else None
+        if first_road:
+            center = first_road.geometry.interpolate(0.7, normalized=True)
+            _text(draw, project(float(center.x), float(center.y)), candidate.local_arm_candidate_id, font=font)
+
     for road_id, role in seed_roles.items():
         road = loaded.roads.get(road_id)
         if road:
@@ -366,6 +372,8 @@ def _dataset_review_context(
 
     seed_road_ids = {trace.seed_road_id for trace in result.traces}
     context_road_ids.update(seed_road_ids)
+    for candidate in result.local_arm_candidates:
+        context_road_ids.update(candidate.local_stub_road_ids)
 
     for trace in result.traces:
         context_node_ids.update(trace.traced_node_ids[:1])
@@ -419,6 +427,22 @@ def build_dataset_review_layers(
             road = loaded.roads.get(road_id)
             if road:
                 arm_roads.append((road.geometry, {"road_id": road_id, "arm_id": arm.initial_arm_id, "terminal_type": arm.terminal_type}))
+    local_candidate_roads = []
+    for candidate in result.local_arm_candidates:
+        for road_id in candidate.local_stub_road_ids:
+            road = loaded.roads.get(road_id)
+            if road:
+                local_candidate_roads.append(
+                    (
+                        road.geometry,
+                        {
+                            "road_id": road_id,
+                            "candidate_id": candidate.local_arm_candidate_id,
+                            "source_seeds": ",".join(candidate.source_seed_road_ids),
+                            "status": candidate.build_status,
+                        },
+                    )
+                )
     traces = []
     for trace in result.traces:
         for road_id in trace.traced_road_ids:
@@ -459,6 +483,7 @@ def build_dataset_review_layers(
         ("current_junction_nodes", "Point", member_nodes),
         ("current_junction_internal_roads", "LineString", internal_roads),
         ("arm_roads", "LineString", arm_roads),
+        ("local_arm_candidate_roads", "LineString", local_candidate_roads),
         ("arm_traces", "LineString", traces),
         ("terminal_nodes", "Point", terminal_nodes),
         ("through_decision_nodes", "Point", decision_nodes),

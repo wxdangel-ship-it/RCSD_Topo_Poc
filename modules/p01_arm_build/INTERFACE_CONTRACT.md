@@ -37,7 +37,7 @@ from rcsd_topo_poc.modules.p01_arm_build.text_bundle import (
 )
 ```
 
-打包和解包均可通过 `python -c` 单命令调用。helper 使用 `zip + base85 + checksum` 文本包装，默认上限 `250 KiB`；上下文选择基于当前语义路口 Road 拓扑 BFS，不做简单空间裁剪。
+打包和解包均可通过 `python -c` 单命令调用。helper 使用 `zip + base85 + checksum` 文本包装，默认上限 `250 KiB`；上下文选择基于当前语义路口 Road 拓扑 BFS，不做简单空间裁剪。打包支持 `--auto-fit --max-bfs-depth N`，用于逐圈估算并选择不超过上限的最大 BFS 范围。
 
 ## 3. 输入契约
 
@@ -107,6 +107,8 @@ Road 最少字段：
 - `--junction-group <swsd_junction_id>,<rcsd_junction_id>,<frcsd_junction_id>`
 - `--out-txt`
 - `--bfs-depth`：默认 `2`
+- `--auto-fit`：可选；启用后从 `--bfs-depth` 起逐圈尝试到 `--max-bfs-depth`
+- `--max-bfs-depth`：默认 `8`
 - `--max-text-size-bytes`：默认 `256000`
 
 解包 helper 参数：

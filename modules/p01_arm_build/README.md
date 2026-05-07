@@ -52,7 +52,7 @@ P01 提供模块内 dev helper，用于把单个 junction-group 的三套 Node /
 打包一条命令：
 
 ```bash
-.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.p01_arm_build.text_bundle import run_p01_export_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" --swsd-nodes <SWSD_NODES> --swsd-roads <SWSD_ROADS> --rcsd-nodes <RCSD_NODES> --rcsd-roads <RCSD_ROADS> --frcsd-nodes <FRCSD_NODES> --frcsd-roads <FRCSD_ROADS> --junction-group <SWSD_ID>,<RCSD_ID>,<FRCSD_ID> --bfs-depth 2 --out-txt outputs/_work/p01_arm_build_bundle/p01_case_bundle.txt
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.p01_arm_build.text_bundle import run_p01_export_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" --swsd-nodes <SWSD_NODES> --swsd-roads <SWSD_ROADS> --rcsd-nodes <RCSD_NODES> --rcsd-roads <RCSD_ROADS> --frcsd-nodes <FRCSD_NODES> --frcsd-roads <FRCSD_ROADS> --junction-group <SWSD_ID>,<RCSD_ID>,<FRCSD_ID> --bfs-depth 2 --auto-fit --max-bfs-depth 8 --out-txt outputs/_work/p01_arm_build_bundle/p01_case_bundle.txt
 ```
 
 解包一条命令：
@@ -61,7 +61,7 @@ P01 提供模块内 dev helper，用于把单个 junction-group 的三套 Node /
 .venv/bin/python -c "import sys; from rcsd_topo_poc.modules.p01_arm_build.text_bundle import run_p01_decode_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" --bundle-txt outputs/_work/p01_arm_build_bundle/p01_case_bundle.txt --out-dir outputs/_work/p01_arm_build_bundle/decoded
 ```
 
-默认文本包上限为 `250 KiB`。范围选择不是空间裁剪，而是从当前语义路口出发按 Road 拓扑 BFS 选取相关道路；`--bfs-depth` 可调。超过上限时不会写 bundle，会写同名 `.size_report.json` 供判断需要缩小到几跳。
+默认文本包上限为 `250 KiB`。范围选择不是空间裁剪，而是从当前语义路口出发按 Road 拓扑 BFS 选取相关道路；`--bfs-depth` 可固定指定，`--auto-fit --max-bfs-depth N` 会逐圈计算大小并选择不超过上限的最大 depth。超过上限时不会写 bundle，会写同名 `.size_report.json` 供判断需要缩小到几跳。
 
 ## 主要文档
 

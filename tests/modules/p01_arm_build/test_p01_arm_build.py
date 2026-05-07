@@ -320,6 +320,37 @@ def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_pa
     assert manifest["datasets"]["SWSD"]["selected_road_count"] < 10
 
 
+def test_p01_text_bundle_auto_fit_expands_to_deeper_trace_context(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _write_dataset(tmp_path, "S", include_far_trace=True)
+    rcsd_nodes, rcsd_roads = _write_dataset(tmp_path, "R", include_far_trace=True)
+    frcsd_nodes, frcsd_roads = _write_dataset(tmp_path, "F", include_far_trace=True)
+    bundle_path = tmp_path / "p01_auto_fit_bundle.txt"
+
+    artifacts = run_p01_export_text_bundle(
+        swsd_nodes=swsd_nodes,
+        swsd_roads=swsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_roads=rcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        frcsd_roads=frcsd_roads,
+        junction_group="S1,R1,F1",
+        out_txt=bundle_path,
+        bfs_depth=1,
+        auto_fit=True,
+        max_bfs_depth=2,
+    )
+
+    assert artifacts.success, artifacts.failure_detail
+    assert artifacts.selected_bfs_depth == 2
+    decoded = run_p01_decode_text_bundle(bundle_txt=bundle_path, out_dir=tmp_path / "decoded_auto_fit")
+    road_ids = _feature_ids(decoded.out_dir / "SWSD" / "roads.gpkg")
+    manifest = json.loads(decoded.manifest_path.read_text(encoding="utf-8"))
+
+    assert "S1_far_trace" in road_ids
+    assert manifest["auto_fit"]["selected_bfs_depth"] == 2
+    assert [attempt["bfs_depth"] for attempt in manifest["auto_fit"]["attempts"]] == [1, 2]
+
+
 def test_review_line_points_accepts_3d_coordinates() -> None:
     project = _projector((0.0, 0.0, 10.0, 10.0), left=0, top=0, width=100, height=100)
 

@@ -60,6 +60,7 @@ class P01TextBundleExportArtifacts:
     bundle_size_bytes: int
     failure_reason: str | None = None
     failure_detail: str | None = None
+    selected_bfs_depth: int | None = None
 
 
 @dataclass(frozen=True)
@@ -322,6 +323,143 @@ def _out_size_report_path(out_txt: Path) -> Path:
     return out_txt.with_suffix(out_txt.suffix + ".size_report.json")
 
 
+def _build_text_bundle_for_depth(
+    *,
+    dataset_inputs: dict[str, DatasetInput],
+    loaded_by_dataset: dict[str, LoadedDataset],
+    junction_ids: dict[str, str],
+    bfs_depth: int,
+    max_text_size_bytes: int,
+    auto_fit_attempts: list[dict[str, Any]] | None = None,
+) -> tuple[str, int, dict[str, Any]]:
+    files: dict[str, bytes] = {}
+    dataset_audits: dict[str, Any] = {}
+    for dataset in DATASETS:
+        loaded = loaded_by_dataset[dataset]
+        dataset_files, audit = _prepare_dataset_files(
+            loaded,
+            junction_id=junction_ids[dataset],
+            bfs_depth=bfs_depth,
+        )
+        files.update(dataset_files)
+        dataset_audits[dataset] = {
+            **audit,
+            "input_nodes_path": str(dataset_inputs[dataset].nodes_path),
+            "input_roads_path": str(dataset_inputs[dataset].roads_path),
+        }
+
+    auto_fit_payload = None
+    if auto_fit_attempts is not None:
+        auto_fit_payload = {
+            "enabled": True,
+            "selected_bfs_depth": bfs_depth,
+            "attempts": auto_fit_attempts,
+        }
+
+    manifest = {
+        "bundle_version": P01_TEXT_BUNDLE_VERSION,
+        "bundle_type": "p01_arm_build_single_junction_bfs_context",
+        "junction_group": junction_ids,
+        "bfs_depth": bfs_depth,
+        "auto_fit": auto_fit_payload or {"enabled": False},
+        "datasets": dataset_audits,
+        "file_list": list(P01_BUNDLE_FILES),
+        "checksum": {},
+        "encoder_info": {
+            "archive_format": "zip",
+            "compression": "deflate",
+            "text_encoding": "base85",
+            "line_width": P01_TEXT_BUNDLE_LINE_WIDTH,
+            "max_text_size_bytes": max_text_size_bytes,
+            "selection": "semantic-road-topology-bfs",
+            "decoded_vector_format": "GeoPackage",
+        },
+        "created_at": _now_text(),
+    }
+
+    files["size_report.json"] = b"{}"
+    files["manifest.json"] = b"{}"
+    bundle_text = ""
+    bundle_size_bytes = 0
+    size_report: dict[str, Any] | None = None
+    for _ in range(4):
+        manifest["checksum"] = {
+            name: hashlib.sha256(content).hexdigest()
+            for name, content in files.items()
+            if name != "manifest.json"
+        }
+        files["manifest.json"] = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        payload_bytes, per_file_compressed = _zip_bytes(files)
+        meta = {
+            "bundle_version": P01_TEXT_BUNDLE_VERSION,
+            "bundle_type": manifest["bundle_type"],
+            "junction_group": junction_ids,
+            "bfs_depth": bfs_depth,
+            "archive_format": "zip",
+            "encoding": "base85",
+            "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
+            "created_at": _now_text(),
+        }
+        bundle_text, bundle_size_bytes = _build_bundle_text(meta=meta, payload_bytes=payload_bytes)
+        next_size_report = _build_size_report(
+            total_text_size_bytes=bundle_size_bytes,
+            payload_size_bytes=len(payload_bytes),
+            per_file_raw_size_bytes={name: len(content) for name, content in files.items()},
+            per_file_compressed_size_bytes=per_file_compressed,
+            dataset_audits=dataset_audits,
+            limit_bytes=max_text_size_bytes,
+        )
+        if auto_fit_payload is not None:
+            next_size_report["auto_fit"] = auto_fit_payload
+        next_bytes = json.dumps(next_size_report, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
+        if next_size_report == size_report:
+            break
+        size_report = next_size_report
+        files["size_report.json"] = next_bytes
+
+    assert size_report is not None
+    return bundle_text, bundle_size_bytes, size_report
+
+
+def _attempt_summary(
+    *,
+    bfs_depth: int,
+    bundle_size_bytes: int,
+    size_report: dict[str, Any],
+    max_text_size_bytes: int,
+) -> dict[str, Any]:
+    dataset_counts = {}
+    for dataset, audit in (size_report.get("dataset_audits") or {}).items():
+        dataset_counts[dataset] = {
+            "selected_node_count": audit.get("selected_node_count"),
+            "selected_road_count": audit.get("selected_road_count"),
+            "visited_group_count": audit.get("visited_group_count"),
+        }
+    return {
+        "bfs_depth": bfs_depth,
+        "bundle_size_bytes": bundle_size_bytes,
+        "within_limit": bundle_size_bytes <= max_text_size_bytes,
+        "dataset_counts": dataset_counts,
+        "dominant_size_source": size_report.get("dominant_size_source"),
+    }
+
+
+def _print_attempt(attempt: dict[str, Any]) -> None:
+    dataset_bits = []
+    for dataset in DATASETS:
+        counts = attempt.get("dataset_counts", {}).get(dataset, {})
+        dataset_bits.append(
+            f"{dataset}:roads={counts.get('selected_road_count')} nodes={counts.get('selected_node_count')}"
+        )
+    print(
+        "[p01-bundle] "
+        f"depth={attempt['bfs_depth']} size={attempt['bundle_size_bytes']} "
+        f"within_limit={attempt['within_limit']} {'; '.join(dataset_bits)}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def run_p01_export_text_bundle(
     *,
     swsd_nodes: str | Path,
@@ -333,7 +471,10 @@ def run_p01_export_text_bundle(
     junction_group: str,
     out_txt: str | Path,
     bfs_depth: int = 2,
+    auto_fit: bool = False,
+    max_bfs_depth: int = 8,
     max_text_size_bytes: int = P01_TEXT_BUNDLE_LIMIT_BYTES,
+    verbose: bool = False,
 ) -> P01TextBundleExportArtifacts:
     out_txt_path = Path(out_txt)
     out_txt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -346,6 +487,8 @@ def run_p01_export_text_bundle(
     try:
         if bfs_depth < 0:
             raise P01TextBundleError("invalid_bfs_depth", "bfs_depth must be >= 0.")
+        if max_bfs_depth < bfs_depth:
+            raise P01TextBundleError("invalid_bfs_depth", "max_bfs_depth must be >= bfs_depth.")
         junction_ids = _parse_junction_group(junction_group)
         dataset_inputs = _dataset_inputs_from_paths(
             swsd_nodes=swsd_nodes,
@@ -355,97 +498,88 @@ def run_p01_export_text_bundle(
             frcsd_nodes=frcsd_nodes,
             frcsd_roads=frcsd_roads,
         )
-        files: dict[str, bytes] = {}
-        dataset_audits: dict[str, Any] = {}
-        for dataset in DATASETS:
-            loaded = load_dataset(dataset_inputs[dataset])
-            dataset_files, audit = _prepare_dataset_files(
-                loaded,
-                junction_id=junction_ids[dataset],
-                bfs_depth=bfs_depth,
-            )
-            files.update(dataset_files)
-            dataset_audits[dataset] = {
-                **audit,
-                "input_nodes_path": str(dataset_inputs[dataset].nodes_path),
-                "input_roads_path": str(dataset_inputs[dataset].roads_path),
-            }
-
-        manifest = {
-            "bundle_version": P01_TEXT_BUNDLE_VERSION,
-            "bundle_type": "p01_arm_build_single_junction_bfs_context",
-            "junction_group": junction_ids,
-            "bfs_depth": bfs_depth,
-            "datasets": dataset_audits,
-            "file_list": list(P01_BUNDLE_FILES),
-            "checksum": {},
-            "encoder_info": {
-                "archive_format": "zip",
-                "compression": "deflate",
-                "text_encoding": "base85",
-                "line_width": P01_TEXT_BUNDLE_LINE_WIDTH,
-                "max_text_size_bytes": max_text_size_bytes,
-                "selection": "semantic-road-topology-bfs",
-                "decoded_vector_format": "GeoPackage",
-            },
-            "created_at": _now_text(),
+        loaded_by_dataset = {
+            dataset: load_dataset(dataset_inputs[dataset])
+            for dataset in DATASETS
         }
 
-        files["size_report.json"] = b"{}"
-        files["manifest.json"] = b"{}"
-        bundle_text = ""
-        bundle_size_bytes = 0
-        size_report: dict[str, Any] | None = None
-        for _ in range(4):
-            manifest["checksum"] = {
-                name: hashlib.sha256(content).hexdigest()
-                for name, content in files.items()
-                if name != "manifest.json"
-            }
-            files["manifest.json"] = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
-            payload_bytes, per_file_compressed = _zip_bytes(files)
-            meta = {
-                "bundle_version": P01_TEXT_BUNDLE_VERSION,
-                "bundle_type": manifest["bundle_type"],
-                "junction_group": junction_ids,
-                "archive_format": "zip",
-                "encoding": "base85",
-                "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
-                "created_at": _now_text(),
-            }
-            bundle_text, bundle_size_bytes = _build_bundle_text(meta=meta, payload_bytes=payload_bytes)
-            next_size_report = _build_size_report(
-                total_text_size_bytes=bundle_size_bytes,
-                payload_size_bytes=len(payload_bytes),
-                per_file_raw_size_bytes={name: len(content) for name, content in files.items()},
-                per_file_compressed_size_bytes=per_file_compressed,
-                dataset_audits=dataset_audits,
-                limit_bytes=max_text_size_bytes,
+        attempts: list[dict[str, Any]] = []
+        selected_depth = bfs_depth
+        selected_text = ""
+        selected_size = 0
+        selected_report: dict[str, Any] | None = None
+        last_report: dict[str, Any] | None = None
+        depths = range(bfs_depth, max_bfs_depth + 1) if auto_fit else (bfs_depth,)
+        for current_depth in depths:
+            bundle_text, bundle_size_bytes, size_report = _build_text_bundle_for_depth(
+                dataset_inputs=dataset_inputs,
+                loaded_by_dataset=loaded_by_dataset,
+                junction_ids=junction_ids,
+                bfs_depth=current_depth,
+                max_text_size_bytes=max_text_size_bytes,
             )
-            next_bytes = json.dumps(next_size_report, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
-            if next_size_report == size_report:
-                break
-            size_report = next_size_report
-            files["size_report.json"] = next_bytes
+            attempt = _attempt_summary(
+                bfs_depth=current_depth,
+                bundle_size_bytes=bundle_size_bytes,
+                size_report=size_report,
+                max_text_size_bytes=max_text_size_bytes,
+            )
+            last_report = size_report
+            attempts.append(attempt)
+            if verbose:
+                _print_attempt(attempt)
+            if bundle_size_bytes <= max_text_size_bytes:
+                selected_depth = current_depth
+                selected_text = bundle_text
+                selected_size = bundle_size_bytes
+                selected_report = size_report
 
-        if bundle_size_bytes > max_text_size_bytes:
-            assert size_report is not None
-            size_report_path.write_text(json.dumps(size_report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        if auto_fit and selected_report is not None:
+            base_selected_text = selected_text
+            base_selected_size = selected_size
+            rebuilt_text, rebuilt_size, rebuilt_report = _build_text_bundle_for_depth(
+                dataset_inputs=dataset_inputs,
+                loaded_by_dataset=loaded_by_dataset,
+                junction_ids=junction_ids,
+                bfs_depth=selected_depth,
+                max_text_size_bytes=max_text_size_bytes,
+                auto_fit_attempts=attempts,
+            )
+            if rebuilt_size <= max_text_size_bytes:
+                selected_text = rebuilt_text
+                selected_size = rebuilt_size
+                selected_report = rebuilt_report
+            else:
+                selected_text = base_selected_text
+                selected_size = base_selected_size
+                sidecar_report = {
+                    "auto_fit_selected_depth": selected_depth,
+                    "auto_fit_attempts": attempts,
+                    "note": "auto_fit attempt details kept outside bundle because embedding them would exceed the text size limit",
+                }
+                size_report_path.write_text(json.dumps(sidecar_report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+        if selected_report is None:
+            failure_report = attempts[-1] if attempts else {}
+            detail_report = dict(last_report or {})
+            detail_report["auto_fit_attempts"] = attempts
+            size_report_path.write_text(json.dumps(detail_report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
             return P01TextBundleExportArtifacts(
                 success=False,
                 bundle_txt_path=out_txt_path,
                 size_report_path=size_report_path,
-                bundle_size_bytes=bundle_size_bytes,
+                bundle_size_bytes=int(failure_report.get("bundle_size_bytes") or 0),
                 failure_reason="bundle_too_large",
-                failure_detail=f"Bundle text size {bundle_size_bytes} exceeds limit {max_text_size_bytes}.",
+                failure_detail=f"No BFS depth in requested range fits limit {max_text_size_bytes}.",
             )
 
-        out_txt_path.write_text(bundle_text, encoding="utf-8")
+        out_txt_path.write_text(selected_text, encoding="utf-8")
         return P01TextBundleExportArtifacts(
             success=True,
             bundle_txt_path=out_txt_path,
-            size_report_path=None,
-            bundle_size_bytes=bundle_size_bytes,
+            size_report_path=size_report_path if size_report_path.exists() else None,
+            bundle_size_bytes=selected_size,
+            selected_bfs_depth=selected_depth,
         )
     except Exception as exc:
         reason = getattr(exc, "reason", "bundle_export_failed")
@@ -556,6 +690,8 @@ def _build_export_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--junction-group", required=True)
     parser.add_argument("--out-txt", required=True)
     parser.add_argument("--bfs-depth", type=int, default=2)
+    parser.add_argument("--auto-fit", action="store_true")
+    parser.add_argument("--max-bfs-depth", type=int, default=8)
     parser.add_argument("--max-text-size-bytes", type=int, default=P01_TEXT_BUNDLE_LIMIT_BYTES)
     return parser
 
@@ -579,7 +715,10 @@ def run_p01_export_text_bundle_from_args(argv: list[str] | None = None) -> int:
         junction_group=args.junction_group,
         out_txt=args.out_txt,
         bfs_depth=args.bfs_depth,
+        auto_fit=args.auto_fit,
+        max_bfs_depth=args.max_bfs_depth,
         max_text_size_bytes=args.max_text_size_bytes,
+        verbose=True,
     )
     if not artifacts.success:
         print(f"P01 text bundle export failed: {artifacts.failure_detail}", file=sys.stderr)
@@ -588,6 +727,10 @@ def run_p01_export_text_bundle_from_args(argv: list[str] | None = None) -> int:
         return 1
     print(f"P01 text bundle written to: {artifacts.bundle_txt_path}")
     print(f"bundle_size_bytes={artifacts.bundle_size_bytes}")
+    if artifacts.selected_bfs_depth is not None:
+        print(f"selected_bfs_depth={artifacts.selected_bfs_depth}")
+    if artifacts.size_report_path is not None:
+        print(f"size_report={artifacts.size_report_path}")
     return 0
 
 

@@ -24,7 +24,7 @@
 - `InitialArm` 保留原始 trace 终端归并事实；`FinalArm` 默认等同 `InitialArm`，但当 trace 过度切碎且 `LocalArmCandidate` 完整覆盖时，可采用局部趋势兜底聚合。
 - 输出 `JunctionContext / InitialArm / FinalArm / LocalArmCandidate / ArmTrace / ThroughDecisionAudit / ArmBuildIssueReport`。
 - 输出 `LocalArmCandidate` 审计候选：仅基于当前语义路口 seed roads 的局部出入口趋势分组，用于人工判断 trace 过度切碎，并可在完整覆盖时作为 FinalArm 兜底依据。
-- 输出 review PNG、compare PNG、review GPKG、summary、review index 与 P0/P1 trace review PNG。
+- 输出 review PNG、compare PNG、review GPKG、summary 与 review index。
 - 实现自动结构检查、批量统计检查和人工目视优先级分类。
 
 ## 3. Out of Scope
@@ -142,7 +142,6 @@ cases/group_0001/FRCSD/...
 cases/group_0001/compare/p01_arm_compare.png
 cases/group_0001/compare/p01_arm_compare_summary.json
 cases/group_0001/compare/p01_arm_compare_layers.gpkg
-cases/group_0001/trace_review/<trace_id>.png
 ```
 
 ## 7. Required Business Objects

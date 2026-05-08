@@ -83,7 +83,6 @@ rcsd_topo_poc.modules.p01_arm_build.runner.run_p01_arm_build_from_args(argv)
 - 写 dataset review GPKG。
 - 写 dataset review PNG。
 - 写 compare PNG / compare GPKG。
-- 写 P0/P1 trace review PNG。
 - 写 summary 与 review index。
 
 ### Slice 6: Checks and Tests

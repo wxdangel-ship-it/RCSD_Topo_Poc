@@ -15,7 +15,6 @@ from rcsd_topo_poc.modules.p01_arm_build.review import (
     build_dataset_review_layers,
     render_compare_png,
     render_dataset_review_png,
-    render_trace_review_png,
 )
 from rcsd_topo_poc.modules.p01_arm_build.topology import build_dataset_arm_result
 
@@ -208,29 +207,6 @@ def _write_dataset_outputs(
     return png_path, gpkg_path
 
 
-def _write_trace_review_outputs(
-    *,
-    trace_dir: Path,
-    loaded: Any,
-    result: Any,
-) -> list[str]:
-    triggers = {
-        "ambiguous_boundary",
-        "loop_to_current_junction",
-        "t_junction_uncertain",
-        "seed_road_unassigned",
-    }
-    written: list[str] = []
-    for trace in result.traces:
-        should_write = bool(set(trace.issue_flags) & triggers)
-        should_write = should_write or result.metrics["stable_arm_count"] == 0
-        if should_write and result.review_priority in {"P0", "P1"}:
-            path = trace_dir / f"{trace.trace_id}.png"
-            render_trace_review_png(path, loaded, result, trace.trace_id)
-            written.append(str(path))
-    return written
-
-
 def _summary_payload(
     *,
     run_id: str,
@@ -326,11 +302,9 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         )
         case_dir = run_root / "cases" / group.group_id
         compare_dir = case_dir / "compare"
-        trace_dir = case_dir / "trace_review"
         write_json(case_dir / "case_input.json", group)
         result_by_dataset: dict[str, Any] = {}
         dataset_output_paths: dict[str, dict[str, str]] = {}
-        trace_review_paths: list[str] = []
         for dataset_index, dataset in enumerate(DATASETS, start=1):
             junction_id = group.junction_id_for(dataset)
             dataset_started_at = time.perf_counter()
@@ -349,7 +323,6 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
                 f"priority={result.review_priority}; writing outputs"
             )
             png_path, gpkg_path = _write_dataset_outputs(dataset_dir=dataset_dir, loaded=loaded[dataset], result=result)
-            trace_review_paths.extend(_write_trace_review_outputs(trace_dir=trace_dir, loaded=loaded[dataset], result=result))
             dataset_output_paths[dataset] = {"review_png_path": str(png_path), "review_gpkg_path": str(gpkg_path)}
             review_rows.append(
                 _review_index_row(
@@ -389,7 +362,6 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
             "datasets": {dataset: result_by_dataset[dataset].metrics for dataset in DATASETS},
             "dataset_outputs": dataset_output_paths,
             "compare_outputs": compare_summary,
-            "trace_review_png_paths": trace_review_paths,
         }
         write_json(case_dir / "case_summary.json", case_summary)
         case_results.append(case_summary)

@@ -2,7 +2,7 @@
 
 ## 总体策略
 
-P01-A 按“输入读取 -> 语义路口 -> seed -> trace -> arm 聚合 -> 输出审计 -> 目视审查”的顺序实现。所有构建规则优先基于拓扑字段，不通过几何形态推导业务语义。
+P01-A1 按“输入读取 -> 语义路口 -> seed -> trace -> arm 聚合 -> 输出审计 -> 目视审查”的顺序实现。P01-A2 按“读取 A1 run root -> ArmProfile -> candidate evidence -> evidence graph -> LogicalArmGroup -> 输出审计 -> 目视审查”的顺序实现。所有构建与配准规则优先基于 A1 结构证据，不通过几何形态推导业务语义。
 
 ## 数据读取
 
@@ -40,3 +40,9 @@ trace 从 seed 外侧端点继续。每步只沿拓扑连接向外追溯：
 ## 输出与 QA
 
 JSON 输出承担机器审计，GPKG 输出承担 GIS 审查，PNG 输出承担快速目视判断。summary 与 review index 承担批量筛查和人工优先级排序。
+
+## A2 Arm 配准
+
+A2 以 F-RCSD FinalArm 为目标承载体。每个 FinalArm 先归一化为 ArmProfile，汇总 InitialArm、LocalArmCandidate、ArmTrace 与 ThroughDecisionAudit 证据。候选边覆盖 FRCSD-SWSD、FRCSD-RCSD 与 SWSD-RCSD，评分由 seed role、局部趋势、trace / terminal、road coverage 和 geometry 辅助证据组成。
+
+几何只作为辅助分数；非几何证据不足时不得 high confidence。A2 形成跨三源 LogicalArmGroup，并显式区分 source_missing / source_partial 与 over_split / over_merged / conflict / uncertain。over_merged 不自动拆分，只输出 ArmBuildFeedback。

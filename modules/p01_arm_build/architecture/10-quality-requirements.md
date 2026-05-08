@@ -25,6 +25,7 @@
 
 - summary 记录总 group 数、dataset junction 数和运行耗时。
 - synthetic 多组输入应在本地测试中稳定完成。
+- A2 summary 记录 LogicalArmGroup、candidate、feedback、source_extra 和耗时。
 
 ## 验证
 
@@ -34,3 +35,5 @@
 - synthetic multi group。
 - 输出结构、summary、review index、PNG、GPKG 检查。
 - 禁止 Grade 源码扫描。
+- A2 synthetic 覆盖 stable、missing、partial、over_split、over_merged、conflict / uncertain 和多 group。
+- A2 真实 case 至少验证 1019789，或明确记录真实数据未验证。

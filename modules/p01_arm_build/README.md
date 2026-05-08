@@ -1,19 +1,21 @@
 # P01 Arm Build
 
-`p01_arm_build` 是 P01 POC 验证模块，当前只落地 `P01-A / Arm 构建`。
+`p01_arm_build` 是 P01 POC 验证模块，当前落地 `P01-A1 / Arm 构建` 与 `P01-A2 / Arm 配准与 LogicalArmGroup 构建`。
 
 ## 当前范围
 
-- 三套数据 SWSD / RCSD / F-RCSD 独立构建 Arm。
+- A1：三套数据 SWSD / RCSD / F-RCSD 独立构建 Arm。
 - 基于语义路口成员 Node 集合构建，不只用 mainnode 单点。
 - 字段明确可识别时排除右转专用道 / 渠化右转。
 - 输出 InitialArm、FinalArm、ArmTrace、ThroughDecisionAudit、IssueReport。
 - 输出 LocalArmCandidate 局部趋势审计候选；当 trace 过度切碎且候选完整覆盖 InitialArm 时，可用于 FinalArm 兜底聚合。
 - 输出 review PNG、compare PNG、review GPKG、summary 与 review index。
+- A2：读取 A1 run root，以 F-RCSD FinalArm 为承载核心，构建 SWSD / RCSD / F-RCSD 跨源 `LogicalArmGroup`。
+- A2：输出 ArmProfile、候选矩阵、RawArmAlignment、ArmBuildFeedback、source_extra、review PNG/GPKG、summary 与 review index。
+- A2：区分可接受的 coverage missing / partial 与不可接受的 over_split / over_merged / conflict / uncertain。
 
 ## 非范围
 
-- Arm 配准。
 - Movement。
 - 禁行迁移。
 - 通行能力裁决。
@@ -23,13 +25,15 @@
 
 ## 当前调用方式
 
-本轮不新增正式 CLI 或 scripts 入口。开发验收通过模块内 runner 函数调用：
+本轮不新增正式 CLI 或 scripts 入口。开发验收通过模块内 runner 函数调用。
+
+A1 Arm 构建：
 
 ```python
 from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_args
 ```
 
-参数形态与未来 CLI 保持一致：
+A1 参数形态与未来 CLI 保持一致：
 
 ```text
 --swsd-nodes
@@ -45,6 +49,22 @@ from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_ar
 ```
 
 `--right-turn-formway-value` 是可选显式声明参数；未传入时不会把 `formway` 示例值或几何形态当作右转专用道强规则。
+
+A2 Arm 配准：
+
+```python
+from rcsd_topo_poc.modules.p01_arm_build.alignment_runner import run_p01_arm_alignment_from_args
+```
+
+A2 参数形态：
+
+```text
+--arm-build-run-root <P01_A1_RUN_ROOT>
+--out-root
+--run-id
+```
+
+A2 主输入是 A1 run root；原始 Node / Road 路径从 A1 `preflight.json` 读取，不要求用户重新传六类基础数据路径。
 
 ## 单路口文本证据包
 

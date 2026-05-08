@@ -15,7 +15,6 @@ from rcsd_topo_poc.modules.p01_arm_build.review import (
     _geometry_bounds,
     _line_points,
     _projector,
-    _trace_review_context,
 )
 from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_args
 from rcsd_topo_poc.modules.p01_arm_build.text_bundle import (
@@ -219,6 +218,9 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert (swsd_dir / "review_layers.gpkg").is_file()
     assert (run_root / "cases" / "group_0001" / "compare" / "p01_arm_compare.png").is_file()
     assert (run_root / "cases" / "group_0001" / "compare" / "p01_arm_compare_layers.gpkg").is_file()
+    case_summary = json.loads((run_root / "cases" / "group_0001" / "case_summary.json").read_text(encoding="utf-8"))
+    assert "trace_review_png_paths" not in case_summary
+    assert not (run_root / "cases" / "group_0001" / "trace_review").exists()
     assert set(fiona.listlayers(swsd_dir / "review_layers.gpkg")) >= {
         "current_junction_nodes",
         "arm_roads",
@@ -250,21 +252,6 @@ def test_right_turn_is_not_excluded_without_explicit_field_value(tmp_path: Path)
         )
     )
     assert any("S1_right_turn" in arm["seed_road_ids"] for arm in initial_arms)
-
-
-def test_trace_review_context_excludes_far_unrelated_roads(tmp_path: Path) -> None:
-    nodes_path, roads_path = _write_dataset(tmp_path, "S", include_far_noise=True)
-    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
-    result = build_dataset_arm_result(loaded, junction_id="S1", right_turn_formway_values={"128"})
-    trace_id = result.traces[0].trace_id
-
-    geometries, road_ids, node_ids = _trace_review_context(loaded, result, trace_id)
-    bounds = _geometry_bounds(geometries)
-
-    assert "S_far_noise" not in road_ids
-    assert "Sfar_a" not in node_ids
-    assert bounds[2] < 120.0
-    assert bounds[3] < 60.0
 
 
 def test_dataset_review_context_excludes_far_unrelated_roads(tmp_path: Path) -> None:

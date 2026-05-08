@@ -20,7 +20,7 @@
 - `t02_junction_anchor` 项目级登记与仓库级入口索引
 - `t03_virtual_junction_anchor` 项目级登记、Step1~Step7 正式业务主链与 internal full-input 交付面
 - `t04_divmerge_virtual_polygon` 项目级登记、Step1~Step7 正式文档面与 internal full-input 交付面
-- `p01_arm_build` 项目级登记、P01-A Arm 构建文档契约、模块内 callable runner 与 review 交付面
+- `p01_arm_build` 项目级登记、P01-A1 Arm 构建与 P01-A2 Arm 配准文档契约、模块内 callable runner 与 review 交付面
 
 ## 当前范围外
 

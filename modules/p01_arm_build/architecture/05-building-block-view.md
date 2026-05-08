@@ -14,7 +14,7 @@
 
 ## `review.py`
 
-负责 dataset review PNG、compare PNG、trace review PNG 的像素级渲染。
+负责 dataset review PNG 与 compare PNG 的像素级渲染。
 
 ## `text_bundle.py`
 
@@ -23,3 +23,23 @@
 ## `runner.py`
 
 负责参数解析、批处理、summary、review index 与输出编排。当前为模块内可调用 runner，不是正式 CLI。
+
+## `alignment_models.py`
+
+定义 A2 ArmProfile、candidate edge、LogicalArmGroup、RawArmAlignment、ArmBuildFeedback 与 source_extra 对象。
+
+## `alignment_io.py`
+
+负责读取 A1 run root、读取 A1 case/dataset JSON，并从 A1 preflight 加载原始 Node / Road 几何。
+
+## `alignment.py`
+
+负责 A2 profile 构建、候选评分、LogicalArmGroup 构建、RawArmAlignment、feedback、source_extra 与 issue 分类。
+
+## `alignment_review.py`
+
+负责 A2 source alignment PNG、三源 compare PNG 与 alignment GPKG 图层。
+
+## `alignment_runner.py`
+
+负责 A2 参数解析、批处理、summary、review index 与输出编排。当前为模块内可调用 runner，不是正式 CLI。

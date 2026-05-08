@@ -54,13 +54,14 @@
 | `modules/t04_divmerge_virtual_polygon/INTERFACE_CONTRACT.md` | T04 稳定契约面 | `source_of_truth` | 固化 case-package 输入、Step1-7 业务边界、event-unit 规则、Step4 arbiter 发布字段、review PNG / flat mirror / index / summary 输出、Step7 accepted/rejected 发布与当前无 repo 官方 CLI 的入口状态 |
 | `modules/t04_divmerge_virtual_polygon/README.md` | T04 操作者入口 | `operator_guide` | 说明默认 case root、默认输出根、模块内 runner 与 Step4 review 产物位置 |
 | `modules/t04_divmerge_virtual_polygon/AGENTS.md` | T04 durable guidance | `durable_guidance` | 只保留 T04 当前正式范围已扩展到 `Step1-7`、Step5-7 研发走 SpecKit、不得新增 repo 官方入口的模块边界 |
-| `modules/p01_arm_build/architecture/*` | P01 模块长期架构真相 | `source_of_truth` | P01 POC 验证模块的长期文档主表面；当前正式范围只覆盖 `P01-A / Arm 构建`，不包含 Arm 配准、Movement、禁行迁移或 P01-B |
-| `modules/p01_arm_build/INTERFACE_CONTRACT.md` | P01 稳定契约面 | `source_of_truth` | 固化六类 Node/Road 输入、多 `junction-group`、语义路口组装、InitialArm/FinalArm/Trace/Decision/Issue 输出、review PNG/GPKG/summary/index 与当前无 repo 官方 CLI 的入口状态 |
-| `modules/p01_arm_build/README.md` | P01 操作者入口 | `operator_guide` | 说明 P01-A 模块定位、非范围、当前模块内 callable runner 与主要文档 |
-| `modules/p01_arm_build/AGENTS.md` | P01 durable guidance | `durable_guidance` | 只保留 P01-A 边界、禁止 Grade/几何右转反推/Movement/P01-B 以及不得新增正式入口的模块规则 |
+| `modules/p01_arm_build/architecture/*` | P01 模块长期架构真相 | `source_of_truth` | P01 POC 验证模块的长期文档主表面；当前正式范围覆盖 `P01-A1 / Arm 构建` 与 `P01-A2 / Arm 配准`，不包含 Movement、禁行迁移或 P01-B |
+| `modules/p01_arm_build/INTERFACE_CONTRACT.md` | P01 稳定契约面 | `source_of_truth` | 固化 A1 六类 Node/Road 输入、多 `junction-group`、Arm 构建输出，以及 A2 A1 run root 输入、LogicalArmGroup/RawArmAlignment/ArmBuildFeedback 输出、review PNG/GPKG/summary/index 与当前无 repo 官方 CLI 的入口状态 |
+| `modules/p01_arm_build/README.md` | P01 操作者入口 | `operator_guide` | 说明 P01-A1/A2 模块定位、非范围、当前模块内 callable runner 与主要文档 |
+| `modules/p01_arm_build/AGENTS.md` | P01 durable guidance | `durable_guidance` | 只保留 P01-A1/A2 边界、禁止 Grade/几何右转反推/几何-only high confidence/Movement/P01-B 以及不得新增正式入口的模块规则 |
 | `specs/t04-step14-speckit-refactor/*` | T04 Step1-4 治理变更工件 | `active_change_artifact` | 记录 T04 doc-first formalization、架构规划、任务拆解与重构计划，不替代模块长期真相 |
 | `specs/t04-step34-repair-formalization/*` | T04 Step3/Step4 修复方案变更工件 | `active_change_artifact` | 记录 Step3 粗骨架分层、Step4 complex/multi 修复方案、契约冲突冻结与后续实现任务，不替代模块长期真相 |
-| `specs/p01-arm-build/*` | P01-A 变更工件 | `active_change_artifact` | 记录 P01-A Arm 构建的需求规格、计划与任务拆解，不替代模块长期真相 |
+| `specs/p01-arm-build/*` | P01-A1 变更工件 | `active_change_artifact` | 记录 P01-A1 Arm 构建的需求规格、计划与任务拆解，不替代模块长期真相 |
+| `specs/p01-arm-alignment/*` | P01-A2 变更工件 | `active_change_artifact` | 记录 P01-A2 Arm 配准与 LogicalArmGroup 构建的需求规格、计划与任务拆解，不替代模块长期真相 |
 
 ## 当前模块模板文档面
 

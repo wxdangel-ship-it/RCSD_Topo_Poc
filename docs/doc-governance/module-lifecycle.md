@@ -37,7 +37,7 @@
 | `t02_junction_anchor` | `modules/t02_junction_anchor` | `DriveZone / has_evd gate` + `anchor recognition / anchor existence` + `virtual intersection anchoring` baseline；文本证据包与 `t02-fix-node-error-2` 为独立支撑入口 | `stage1/stage2/stage3 baseline active / independent refactor may continue outside this governance round` |
 | `t03_virtual_junction_anchor` | `modules/t03_virtual_junction_anchor` | `Step1~Step7` 正式业务主链；仅处理 `center_junction / single_sided_t_mouth`，消费 Anchor61 `case-package` 或 internal full-input 局部上下文，输出 RCSD 关联/负向约束中间结果、最终虚拟路口面、平铺 PNG、索引、summary、batch aggregate polygons、downstream `nodes.gpkg` 与 terminal case records | `step1-step7 formal chain active / 58-case correctness baseline accepted / association-finalization implementation names canonical / no new public finalization cli` |
 | `t04_divmerge_virtual_polygon` | `modules/t04_divmerge_virtual_polygon` | `Step1-7` doc-first formalization；消费包含 `divstripzone.gpkg` 的 case-package 或 internal full-input，输出 admission/local-context/topology/event-unit interpretation、Step5 支撑域约束、Step6 最终组装结果，以及 Step7 `accepted/rejected` 发布层与审计汇总 | `step1-step4 stable / step5-step7 formal implementation active / internal full-input script wrapper active / no public cli` |
-| `p01_arm_build` | `modules/p01_arm_build` | `P01-A / Arm 构建` POC 验证模块；读取 SWSD / RCSD / F-RCSD Node/Road，按多组对应路口 ID 分别构建 InitialArm / FinalArm、Trace、ThroughDecisionAudit、IssueReport 与 review PNG/GPKG/summary/index | `p01-a speckit landed / callable module runner only / no public cli` |
+| `p01_arm_build` | `modules/p01_arm_build` | `P01-A1 / Arm 构建` 与 `P01-A2 / Arm 配准` POC 验证模块；A1 构建三源 InitialArm / FinalArm、Trace、ThroughDecisionAudit、IssueReport，A2 基于 A1 run root 构建 LogicalArmGroup、RawArmAlignment、ArmBuildFeedback 与 review PNG/GPKG/summary/index | `p01-a1/a2 speckit landed / callable module runners only / no public cli` |
 
 ### Retired
 
@@ -62,7 +62,7 @@
 - `t02_junction_anchor` 当前已具备 stage1、stage2 与 stage3 的最小实现闭环；其模块正文若在独立重构中，应在独立轮次维护。
 - `t03_virtual_junction_anchor` 当前作为 T03 新模块进入 Active，正式范围按 `Step1~Step7` 业务主链表达，历史 `Association / Finalization` 命名只保留在实现映射、兼容输出与 closeout 追溯中。
 - `t04_divmerge_virtual_polygon` 当前作为 T04 新模块进入 Active，正式范围已扩展到 `Step1-7`；其中 `Step1-4` 维持稳定上游中间结果与 Step4 审计工件，`Step5-7` 进入正式研发实现阶段，并默认按 SpecKit 的 `Product / Architecture / Development / Testing / QA` 五视角推进；internal full-input 通过 repo 级 shell/watch 包装 + T04 私有 runner 交付，不新增 repo 官方 CLI。
-- `p01_arm_build` 当前作为 P01 POC 验证模块进入 Active；目录结构与 T0X 模块一致，本阶段只覆盖 P01-A Arm 构建，不新增 repo 官方 CLI 或常驻脚本入口。
+- `p01_arm_build` 当前作为 P01 POC 验证模块进入 Active；目录结构与 T0X 模块一致，本阶段覆盖 P01-A1 Arm 构建与 P01-A2 Arm 配准，不新增 repo 官方 CLI 或常驻脚本入口。
 - stage3 `virtual intersection anchoring` 纳入当前 baseline，不等于最终唯一锚定决策闭环或正式产线闭环。
 - 单 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑入口保留。
 - `t02-fix-node-error-2` 当前作为 stage2 之后的独立离线修复工具保留，不纳入主阶段链。

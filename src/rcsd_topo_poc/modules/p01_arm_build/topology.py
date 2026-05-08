@@ -19,6 +19,14 @@ from rcsd_topo_poc.modules.p01_arm_build.models import (
     RoadRecord,
     ThroughDecisionAudit,
 )
+from rcsd_topo_poc.modules.p01_arm_build.special_roads import (
+    build_advance_right_turn_relations,
+    build_special_road_flag_index,
+    is_advance_left_turn_road,
+    is_advance_right_turn_road,
+    road_ids_touching_nodes,
+)
+from rcsd_topo_poc.modules.p01_arm_build.trunk import build_trunk_for_arm
 
 
 CONTINUE_STATUSES = {"simple_through", "t_mainline_through"}
@@ -119,6 +127,8 @@ def _outside_node_for_seed(road: RoadRecord, member_node_ids: set[str]) -> str |
 def _is_right_turn_road(road: RoadRecord, right_turn_formway_values: set[str]) -> bool:
     if not right_turn_formway_values or road.formway is None:
         return False
+    if is_advance_right_turn_road(road):
+        return False
     return normalise_id(road.formway) in right_turn_formway_values
 
 
@@ -138,6 +148,8 @@ def _incident_active_roads(
     incident: list[str] = []
     for road_id, road in roads.items():
         if road_id in excluded_road_ids or road_id in current_internal_road_ids:
+            continue
+        if is_advance_right_turn_road(road):
             continue
         if right_turn_formway_values and _is_right_turn_road(road, right_turn_formway_values):
             continue
@@ -816,6 +828,81 @@ def _build_initial_arms(
     return tuple(arms), tuple(sorted(assigned_traces, key=lambda trace: trace.trace_id)), issues
 
 
+def _enrich_traces_with_special_fields(
+    traces: tuple[ArmTrace, ...],
+    roads: dict[str, RoadRecord],
+) -> tuple[ArmTrace, ...]:
+    enriched: list[ArmTrace] = []
+    for trace in traces:
+        advance_left_ids = tuple(
+            sorted(road_id for road_id in trace.traced_road_ids if road_id in roads and is_advance_left_turn_road(roads[road_id]))
+        )
+        trunk_candidate_ids = tuple(
+            sorted(
+                road_id
+                for road_id in trace.traced_road_ids
+                if road_id in roads and not is_advance_left_turn_road(roads[road_id]) and not is_advance_right_turn_road(roads[road_id])
+            )
+        )
+        enriched.append(
+            replace(
+                trace,
+                advance_left_turn_road_ids_in_trace=advance_left_ids,
+                trunk_candidate_road_ids=trunk_candidate_ids,
+            )
+        )
+    return tuple(enriched)
+
+
+def _enrich_initial_arms_with_trunk(
+    initial_arms: tuple[InitialArm, ...],
+    roads: dict[str, RoadRecord],
+) -> tuple[InitialArm, ...]:
+    enriched: list[InitialArm] = []
+    for arm in initial_arms:
+        trunk = build_trunk_for_arm(arm, roads)
+        enriched.append(
+            replace(
+                arm,
+                has_advance_left_turn=bool(trunk.advance_left_turn_road_ids),
+                advance_left_turn_road_ids=trunk.advance_left_turn_road_ids,
+                trunk_road_ids=trunk.trunk_road_ids,
+                trunk_status=trunk.trunk_status,
+                trunk_reason=trunk.trunk_reason,
+                non_trunk_member_road_ids=trunk.non_trunk_member_road_ids,
+            )
+        )
+    return tuple(enriched)
+
+
+def _initial_to_final_arm_id(final_arms: tuple[FinalArm, ...]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for final_arm in final_arms:
+        for initial_id in final_arm.source_initial_arm_ids:
+            mapping[initial_id] = final_arm.final_arm_id
+    return mapping
+
+
+def _enrich_initial_arms_with_advance_right_relations(
+    initial_arms: tuple[InitialArm, ...],
+    initial_to_final_arm_id: dict[str, str],
+    relations,
+) -> tuple[InitialArm, ...]:
+    enriched: list[InitialArm] = []
+    for arm in initial_arms:
+        final_id = initial_to_final_arm_id.get(arm.initial_arm_id)
+        arm_relations = [relation for relation in relations if relation.from_arm_id == final_id]
+        enriched.append(
+            replace(
+                arm,
+                has_inbound_advance_right_turn=bool(arm_relations),
+                advance_right_turn_relation_ids=tuple(sorted(relation.relation_id for relation in arm_relations)),
+                advance_right_turn_target_arm_ids=tuple(sorted({relation.to_arm_id for relation in arm_relations if relation.to_arm_id})),
+            )
+        )
+    return tuple(enriched)
+
+
 def _initial_arm_final_payload(arm: InitialArm) -> dict[str, Any]:
     return {
         "initial_arm_id": arm.initial_arm_id,
@@ -823,6 +910,15 @@ def _initial_arm_final_payload(arm: InitialArm) -> dict[str, Any]:
         "seed_road_ids": arm.seed_road_ids,
         "terminal_type": arm.terminal_type,
         "terminal_junction_id": arm.terminal_junction_id,
+        "has_advance_left_turn": arm.has_advance_left_turn,
+        "advance_left_turn_road_ids": arm.advance_left_turn_road_ids,
+        "trunk_road_ids": arm.trunk_road_ids,
+        "trunk_status": arm.trunk_status,
+        "trunk_reason": arm.trunk_reason,
+        "non_trunk_member_road_ids": arm.non_trunk_member_road_ids,
+        "has_inbound_advance_right_turn": arm.has_inbound_advance_right_turn,
+        "advance_right_turn_relation_ids": arm.advance_right_turn_relation_ids,
+        "advance_right_turn_target_arm_ids": arm.advance_right_turn_target_arm_ids,
     }
 
 
@@ -841,6 +937,35 @@ def _should_apply_local_candidate_fallback(
     if not initial_ids or candidate_source_ids != initial_ids:
         return False
     return any(len(candidate.source_initial_arm_ids) > 1 for candidate in local_arm_candidates)
+
+
+def _merged_trunk_status(source_arms: list[InitialArm]) -> tuple[str, str]:
+    statuses = {arm.trunk_status for arm in source_arms}
+    if len(statuses) == 1:
+        status = next(iter(statuses))
+        return status, "aggregated_from_single_trunk_status"
+    if "ambiguous" in statuses:
+        return "ambiguous", "aggregated_local_candidate_contains_ambiguous_trunk"
+    if "complete_min_loop" in statuses:
+        return "partial", "aggregated_local_candidate_mixed_trunk_status"
+    if "partial" in statuses:
+        return "partial", "aggregated_local_candidate_partial_trunk"
+    return "none", "aggregated_local_candidate_no_trunk"
+
+
+def _final_special_fields(source_arms: list[InitialArm]) -> dict[str, Any]:
+    trunk_status, trunk_reason = _merged_trunk_status(source_arms)
+    return {
+        "has_advance_left_turn": any(arm.has_advance_left_turn for arm in source_arms),
+        "advance_left_turn_road_ids": tuple(sorted({road_id for arm in source_arms for road_id in arm.advance_left_turn_road_ids})),
+        "trunk_road_ids": tuple(sorted({road_id for arm in source_arms for road_id in arm.trunk_road_ids})),
+        "trunk_status": trunk_status,
+        "trunk_reason": trunk_reason,
+        "non_trunk_member_road_ids": tuple(sorted({road_id for arm in source_arms for road_id in arm.non_trunk_member_road_ids})),
+        "has_inbound_advance_right_turn": any(arm.has_inbound_advance_right_turn for arm in source_arms),
+        "advance_right_turn_relation_ids": tuple(sorted({item for arm in source_arms for item in arm.advance_right_turn_relation_ids})),
+        "advance_right_turn_target_arm_ids": tuple(sorted({item for arm in source_arms for item in arm.advance_right_turn_target_arm_ids})),
+    }
 
 
 def _build_final_arms(
@@ -868,6 +993,7 @@ def _build_final_arms(
                         "local_stub_road_ids": candidate.local_stub_road_ids,
                         "source_initial_arms": [_initial_arm_final_payload(arm) for arm in source_arms],
                     },
+                    **_final_special_fields(source_arms),
                 )
             )
         return tuple(final_arms)
@@ -883,6 +1009,7 @@ def _build_final_arms(
                 merge_status="not_applied",
                 merge_reason="reserved_for_future_case_based_rules",
                 initial_arm=_initial_arm_final_payload(arm),
+                **_final_special_fields([arm]),
             )
         )
     return tuple(final_arms)
@@ -1003,12 +1130,14 @@ def _metrics_for(
     context: JunctionContext,
     initial_arms: tuple[InitialArm, ...],
     final_arms: tuple[FinalArm, ...],
+    advance_right_turn_relation_count: int,
     local_arm_candidates: tuple[LocalArmCandidate, ...],
     traces: tuple[ArmTrace, ...],
     decisions: tuple[ThroughDecisionAudit, ...],
     issue_counts: dict[str, int],
 ) -> dict[str, Any]:
     decision_counts = Counter(decision.status for decision in decisions)
+    trunk_counts = Counter(arm.trunk_status for arm in initial_arms)
     stable = sum(1 for arm in initial_arms if arm.build_status == "stable")
     unstable = sum(1 for arm in initial_arms if arm.build_status == "unstable")
     seed_count = (
@@ -1021,6 +1150,19 @@ def _metrics_for(
         "internal_road_count": len(context.internal_road_ids),
         "seed_road_count": seed_count,
         "excluded_right_turn_road_count": len(context.excluded_right_turn_road_ids),
+        "advance_left_turn_road_count": len(context.advance_left_turn_road_ids),
+        "advance_right_turn_road_count": len(context.advance_right_turn_road_ids),
+        "advance_right_turn_relation_count": advance_right_turn_relation_count,
+        "advance_right_turn_unresolved_count": issue_counts.get("advance_right_turn_target_arm_not_found", 0)
+        + issue_counts.get("advance_right_turn_ambiguous", 0)
+        + issue_counts.get("advance_right_turn_patch_boundary", 0)
+        + issue_counts.get("advance_right_turn_loop", 0),
+        "trunk_complete_count": trunk_counts.get("complete_min_loop", 0),
+        "trunk_partial_count": trunk_counts.get("partial", 0),
+        "trunk_none_count": trunk_counts.get("none", 0),
+        "trunk_ambiguous_count": trunk_counts.get("ambiguous", 0),
+        "formway_missing_count": len(context.formway_missing_road_ids),
+        "formway_unparseable_count": len(context.formway_unparseable_road_ids),
         "initial_arm_count": len(initial_arms),
         "final_arm_count": len(final_arms),
         "local_arm_candidate_count": len(local_arm_candidates),
@@ -1047,6 +1189,9 @@ def review_priority_from_metrics(metrics: dict[str, Any]) -> str:
         or metrics["ambiguous_trace_count"] > 0
         or metrics["loop_count"] > 0
         or metrics["seed_unassigned_count"] > 0
+        or metrics["trunk_ambiguous_count"] > 0
+        or metrics["formway_unparseable_count"] > max(3, metrics["seed_road_count"])
+        or metrics["advance_right_turn_unresolved_count"] > max(3, metrics["advance_right_turn_road_count"])
     ):
         return "P0"
     if (
@@ -1055,6 +1200,10 @@ def review_priority_from_metrics(metrics: dict[str, Any]) -> str:
         or metrics["excluded_right_turn_road_count"] > max(3, metrics["seed_road_count"])
         or metrics["t_mainline_through_count"] > 4
         or metrics["t_side_terminal_count"] > 4
+        or metrics["trunk_partial_count"] > 0
+        or metrics["trunk_none_count"] > 0
+        or metrics["advance_right_turn_unresolved_count"] > 0
+        or metrics["formway_missing_count"] > 0
     ):
         return "P1"
     if metrics["issue_count"] == 0:
@@ -1097,6 +1246,8 @@ def build_dataset_arm_result(
             continue
         if not (snode_inside or enode_inside):
             continue
+        if is_advance_right_turn_road(road):
+            continue
         if _is_right_turn_road(road, right_turn_formway_values):
             excluded_right_turn_ids.append(road.road_id)
             _add_issue(issues, "right_turn_excluded", road_id=road.road_id, formway=road.formway)
@@ -1112,6 +1263,19 @@ def build_dataset_arm_result(
         else:
             bidirectional_seed_ids.append(road.road_id)
         seed_roads.append((road, role))
+
+    outside_seed_node_ids = {
+        outside_node_id
+        for road, _ in seed_roads
+        for outside_node_id in [_outside_node_for_seed(road, member_set)]
+        if outside_node_id
+    }
+    special_road_ids = road_ids_touching_nodes(loaded.roads, member_set) | road_ids_touching_nodes(loaded.roads, outside_seed_node_ids)
+    special_index = build_special_road_flag_index(loaded.roads, special_road_ids)
+    for road_id in special_index.formway_missing_road_ids:
+        _add_issue(issues, "formway_missing", road_id=road_id)
+    for road_id in special_index.formway_unparseable_road_ids:
+        _add_issue(issues, "formway_unparseable", road_id=road_id, formway=loaded.roads[road_id].formway)
 
     if not member_node_ids:
         _add_issue(issues, "junction_member_nodes_not_found", junction_id=junction_id)
@@ -1133,6 +1297,11 @@ def build_dataset_arm_result(
         outbound_seed_road_ids=tuple(sorted(outbound_seed_ids)),
         bidirectional_seed_road_ids=tuple(sorted(bidirectional_seed_ids)),
         excluded_right_turn_road_ids=tuple(sorted(excluded_right_turn_ids)),
+        advance_left_turn_road_ids=special_index.advance_left_turn_road_ids,
+        advance_right_turn_road_ids=special_index.advance_right_turn_road_ids,
+        formway_missing_road_ids=special_index.formway_missing_road_ids,
+        formway_unparseable_road_ids=special_index.formway_unparseable_road_ids,
+        special_formway_issue_flags=special_index.issue_flags,
         input_issue_flags=tuple(sorted(set(input_flags))),
     )
 
@@ -1166,6 +1335,13 @@ def build_dataset_arm_result(
         traces=traces,
         trace_terminals=trace_terminals,
     )
+    assigned_traces = _enrich_traces_with_special_fields(assigned_traces, loaded.roads)
+    initial_arms = _enrich_initial_arms_with_trunk(initial_arms, loaded.roads)
+    arm_advance_left_ids = tuple(sorted({road_id for arm in initial_arms for road_id in arm.advance_left_turn_road_ids}))
+    context = replace(
+        context,
+        advance_left_turn_road_ids=arm_advance_left_ids,
+    )
     issues.extend(arm_issues)
     local_arm_candidates = _build_local_arm_candidates(
         dataset=loaded.dataset,
@@ -1180,7 +1356,38 @@ def build_dataset_arm_result(
         internal_road_ids=set(internal_road_ids),
         right_turn_formway_values=right_turn_formway_values,
     )
+    preliminary_final_arms = _build_final_arms(initial_arms, local_arm_candidates)
+    initial_to_final = _initial_to_final_arm_id(preliminary_final_arms)
+    advance_right_turn_relations, relation_issues = build_advance_right_turn_relations(
+        dataset=loaded.dataset,
+        junction_id=junction_id,
+        advance_right_turn_road_ids=special_index.advance_right_turn_road_ids,
+        current_member_node_ids=member_set,
+        roads=loaded.roads,
+        nodes=loaded.nodes,
+        initial_arms=initial_arms,
+        initial_to_final_arm_id=initial_to_final,
+    )
+    issues.extend(relation_issues)
+    initial_arms = _enrich_initial_arms_with_advance_right_relations(
+        initial_arms,
+        initial_to_final,
+        advance_right_turn_relations,
+    )
     final_arms = _build_final_arms(initial_arms, local_arm_candidates)
+    for arm in initial_arms:
+        for road_id in arm.member_road_ids:
+            road = loaded.roads.get(road_id)
+            if road and is_advance_right_turn_road(road):
+                _add_issue(issues, "advance_right_turn_in_arm_member_error", arm_id=arm.initial_arm_id, road_id=road_id)
+        for road_id in arm.trunk_road_ids:
+            road = loaded.roads.get(road_id)
+            if road and is_advance_left_turn_road(road):
+                _add_issue(issues, "advance_left_turn_in_trunk_error", arm_id=arm.initial_arm_id, road_id=road_id)
+        if arm.trunk_status in {"partial", "none"}:
+            _add_issue(issues, "trunk_min_loop_not_found", arm_id=arm.initial_arm_id, trunk_status=arm.trunk_status)
+        if arm.trunk_status == "ambiguous":
+            _add_issue(issues, "trunk_min_loop_ambiguous", arm_id=arm.initial_arm_id)
     issue_counts = dict(Counter(str(issue.get("issue_type")) for issue in issues))
     issue_report = IssueReport(
         dataset=loaded.dataset,
@@ -1192,6 +1399,7 @@ def build_dataset_arm_result(
         context=context,
         initial_arms=initial_arms,
         final_arms=final_arms,
+        advance_right_turn_relation_count=len(advance_right_turn_relations),
         local_arm_candidates=local_arm_candidates,
         traces=assigned_traces,
         decisions=tuple(decisions),
@@ -1203,6 +1411,7 @@ def build_dataset_arm_result(
         context=context,
         initial_arms=initial_arms,
         final_arms=final_arms,
+        advance_right_turn_relations=advance_right_turn_relations,
         local_arm_candidates=local_arm_candidates,
         traces=assigned_traces,
         decisions=tuple(decisions),

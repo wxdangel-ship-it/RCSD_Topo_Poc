@@ -77,3 +77,29 @@
 - [x] 运行 py_compile。
 - [x] 运行 `pytest tests/modules/p01_arm_build`。
 - [x] 说明真实数据未验证或记录真实数据验证结果。
+
+## Phase 6: P01-A1 v0.3.0 Special Turn and Trunk Revision
+
+- [x] 读取 P01 v0.3.0 需求文档并确认本轮不是新增 A1.1，也不是 A2。
+- [x] 更新 A1 spec / plan / tasks 与模块契约。
+- [x] 保持 A1 callable runner 参数形态不变，不新增正式 CLI。
+- [x] 保留 `--right-turn-formway-value` 作为 legacy 兼容排除参数。
+- [x] 实现 `formway` bit7 / bit8 位运算解析。
+- [x] 审计 `formway_missing` 与 `formway_unparseable`。
+- [x] 构建 `SpecialRoadFlagIndex`。
+- [x] 提前左转 road 保留在 Arm member 中并从 trunk 排除。
+- [x] 提前右转 road 从 seed / member / connector / trunk 排除。
+- [x] 扩展提前右转识别到非特殊 inbound / bidirectional seed 外侧节点相邻 bit7 road。
+- [x] 连续 bit7 road 链归并为一条 Arm 级提前右转 relation。
+- [x] 仅将进入 Arm member 的 bit8 road 计入当前路口提前左转。
+- [x] 输出 `advance_right_turn_relations.json`。
+- [x] 每条当前路口 bit7 road 生成 relation 或明确 issue。
+- [x] 实现 `trunk_road_ids / trunk_status / trunk_reason / non_trunk_member_road_ids`。
+- [x] 无完整闭环但存在非特殊 local seed 时输出 `trunk_status = partial`。
+- [x] 增强 `JunctionContext / InitialArm / FinalArm / ArmTrace / IssueReport`。
+- [x] FinalArm local fallback 聚合来源 InitialArm 的特殊转向、trunk 与 relation 字段。
+- [x] 增强 review GPKG 特殊转向、trunk、relation、issue 图层。
+- [x] 增强 review PNG 的 `TRUNK / AdvL / R7` 标注。
+- [x] 增强 summary / review index 特殊转向与 trunk 统计。
+- [x] 新增 bit7 / bit8 / seed 外侧提前右转 / 连续 bit7 链归并 / relation / trunk fallback / formway audit 测试。
+- [x] 回归 A1 既有测试。

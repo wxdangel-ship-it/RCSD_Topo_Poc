@@ -32,6 +32,16 @@ REVIEW_INDEX_FIELDS = [
     "internal_road_count",
     "seed_road_count",
     "excluded_right_turn_road_count",
+    "advance_left_turn_road_count",
+    "advance_right_turn_road_count",
+    "advance_right_turn_relation_count",
+    "advance_right_turn_unresolved_count",
+    "trunk_complete_count",
+    "trunk_partial_count",
+    "trunk_none_count",
+    "trunk_ambiguous_count",
+    "formway_missing_count",
+    "formway_unparseable_count",
     "initial_arm_count",
     "final_arm_count",
     "local_arm_candidate_count",
@@ -191,6 +201,7 @@ def _write_dataset_outputs(
     write_json(dataset_dir / "junction_context.json", result.context)
     write_json(dataset_dir / "initial_arms.json", result.initial_arms)
     write_json(dataset_dir / "final_arms.json", result.final_arms)
+    write_json(dataset_dir / "advance_right_turn_relations.json", result.advance_right_turn_relations)
     write_json(dataset_dir / "local_arm_candidates.json", result.local_arm_candidates)
     write_json(dataset_dir / "arm_traces.json", result.traces)
     write_json(dataset_dir / "through_decisions.json", result.decisions)
@@ -239,6 +250,16 @@ def _summary_payload(
         "stable_rate": stable_total / arm_total if arm_total else 0.0,
         "unstable_rate": unstable_total / arm_total if arm_total else 0.0,
         "right_turn_exclusion_count": sum(int(row["excluded_right_turn_road_count"]) for row in rows),
+        "advance_left_turn_road_count": sum(int(row["advance_left_turn_road_count"]) for row in rows),
+        "advance_right_turn_road_count": sum(int(row["advance_right_turn_road_count"]) for row in rows),
+        "advance_right_turn_relation_count": sum(int(row["advance_right_turn_relation_count"]) for row in rows),
+        "advance_right_turn_unresolved_count": sum(int(row["advance_right_turn_unresolved_count"]) for row in rows),
+        "trunk_complete_count": sum(int(row["trunk_complete_count"]) for row in rows),
+        "trunk_partial_count": sum(int(row["trunk_partial_count"]) for row in rows),
+        "trunk_none_count": sum(int(row["trunk_none_count"]) for row in rows),
+        "trunk_ambiguous_count": sum(int(row["trunk_ambiguous_count"]) for row in rows),
+        "formway_missing_count": sum(int(row["formway_missing_count"]) for row in rows),
+        "formway_unparseable_count": sum(int(row["formway_unparseable_count"]) for row in rows),
         "ambiguous_boundary_count": sum(int(row["ambiguous_trace_count"]) for row in rows),
         "t_mainline_through_count": sum(int(row["t_mainline_through_count"]) for row in rows),
         "t_side_terminal_count": sum(int(row["t_side_terminal_count"]) for row in rows),

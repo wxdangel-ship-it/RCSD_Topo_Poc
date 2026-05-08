@@ -13,6 +13,9 @@ from rcsd_topo_poc.modules.p01_arm_build.models import DatasetBuildResult, Loade
 ROAD_GREY = (160, 160, 160, 255)
 INTERNAL_ORANGE = (245, 147, 66, 255)
 EXCLUDED_RED = (210, 45, 45, 255)
+ADVANCE_LEFT_PURPLE = (126, 63, 178, 255)
+ADVANCE_RIGHT_MAGENTA = (214, 39, 135, 255)
+TRUNK_DARK = (25, 25, 25, 255)
 NODE_BLUE = (35, 95, 190, 255)
 TEXT = (20, 20, 20, 255)
 ARM_COLORS = [
@@ -142,6 +145,9 @@ def _draw_dataset_panel(
     seed_roles = _role_by_seed(result)
     internal_ids = set(result.context.internal_road_ids)
     excluded_ids = set(result.context.excluded_right_turn_road_ids)
+    advance_left_ids = set(result.context.advance_left_turn_road_ids)
+    advance_right_ids = set(result.context.advance_right_turn_road_ids)
+    trunk_ids = {road_id for arm in result.initial_arms for road_id in arm.trunk_road_ids}
     member_nodes = set(result.context.member_node_ids)
 
     for road_id in sorted(road_ids):
@@ -150,7 +156,16 @@ def _draw_dataset_panel(
             continue
         color = ROAD_GREY
         width_px = 2
-        if road.road_id in internal_ids:
+        if road.road_id in advance_right_ids:
+            color = ADVANCE_RIGHT_MAGENTA
+            width_px = 5
+        elif road.road_id in advance_left_ids:
+            color = ADVANCE_LEFT_PURPLE
+            width_px = 5
+        elif road.road_id in trunk_ids:
+            color = TRUNK_DARK
+            width_px = 6
+        elif road.road_id in internal_ids:
             color = INTERNAL_ORANGE
             width_px = 5
         elif road.road_id in excluded_ids:
@@ -191,6 +206,33 @@ def _draw_dataset_panel(
             center = road.geometry.interpolate(0.25, normalized=True)
             _text(draw, project(float(center.x), float(center.y)), role, font=font)
 
+    for road_id in sorted(trunk_ids):
+        road = loaded.roads.get(road_id)
+        if road and road_id in road_ids:
+            center = road.geometry.interpolate(0.55, normalized=True)
+            _text(draw, project(float(center.x), float(center.y)), "TRUNK", font=font)
+
+    for road_id in sorted(advance_left_ids):
+        road = loaded.roads.get(road_id)
+        if road and road_id in road_ids:
+            center = road.geometry.interpolate(0.62, normalized=True)
+            _text(draw, project(float(center.x), float(center.y)), "AdvL", font=font, fill=ADVANCE_LEFT_PURPLE)
+
+    relation_by_road = {
+        road_id: relation
+        for relation in result.advance_right_turn_relations
+        for road_id in relation.advance_right_turn_road_ids
+    }
+    for road_id in sorted(advance_right_ids):
+        road = loaded.roads.get(road_id)
+        if road and road_id in road_ids:
+            relation = relation_by_road.get(road_id)
+            label = "R7:?"
+            if relation and relation.from_arm_id and relation.to_arm_id:
+                label = f"R7:{relation.from_arm_id}->{relation.to_arm_id}"
+            center = road.geometry.interpolate(0.7, normalized=True)
+            _text(draw, project(float(center.x), float(center.y)), label, font=font, fill=ADVANCE_RIGHT_MAGENTA)
+
     decision_labels = {
         "simple_through": "S",
         "t_mainline_through": "T",
@@ -223,7 +265,8 @@ def render_dataset_review_png(path: Path, loaded: LoadedDataset, result: Dataset
     title = (
         f"{result.dataset} junction={result.junction_id} "
         f"arms={metrics['initial_arm_count']} stable={metrics['stable_arm_count']} "
-        f"issue={metrics['issue_count']} excluded_rt={metrics['excluded_right_turn_road_count']}"
+        f"issue={metrics['issue_count']} R7={metrics['advance_right_turn_road_count']} "
+        f"L8={metrics['advance_left_turn_road_count']}"
     )
     _draw_dataset_panel(
         draw,
@@ -262,7 +305,7 @@ def render_compare_png(
         title = (
             f"{dataset} arms={metrics['initial_arm_count']} stable={metrics['stable_arm_count']} "
             f"partial={metrics['partial_arm_count']} issue={metrics['issue_count']} "
-            f"excluded_rt={metrics['excluded_right_turn_road_count']}"
+            f"R7={metrics['advance_right_turn_road_count']} L8={metrics['advance_left_turn_road_count']}"
         )
         _draw_dataset_panel(
             draw,
@@ -285,6 +328,13 @@ def _dataset_review_context(
     context_node_ids = set(result.context.member_node_ids)
     context_road_ids = set(result.context.internal_road_ids)
     context_road_ids.update(result.context.excluded_right_turn_road_ids)
+    context_road_ids.update(result.context.advance_left_turn_road_ids)
+    context_road_ids.update(result.context.advance_right_turn_road_ids)
+    for arm in result.initial_arms:
+        context_road_ids.update(arm.trunk_road_ids)
+    for relation in result.advance_right_turn_relations:
+        context_road_ids.update(relation.trace_road_ids)
+        context_node_ids.update(relation.trace_node_ids[:2])
 
     seed_road_ids = {trace.seed_road_id for trace in result.traces}
     context_road_ids.update(seed_road_ids)
@@ -343,6 +393,23 @@ def build_dataset_review_layers(
             road = loaded.roads.get(road_id)
             if road:
                 arm_roads.append((road.geometry, {"road_id": road_id, "arm_id": arm.initial_arm_id, "terminal_type": arm.terminal_type}))
+    arm_trunk_roads = []
+    for arm in result.initial_arms:
+        for road_id in arm.trunk_road_ids:
+            road = loaded.roads.get(road_id)
+            if road:
+                arm_trunk_roads.append(
+                    (
+                        road.geometry,
+                        {
+                            "dataset": result.dataset,
+                            "junction_id": result.junction_id,
+                            "arm_id": arm.initial_arm_id,
+                            "road_id": road_id,
+                            "trunk_status": arm.trunk_status,
+                        },
+                    )
+                )
     local_candidate_roads = []
     for candidate in result.local_arm_candidates:
         for road_id in candidate.local_stub_road_ids:
@@ -382,7 +449,61 @@ def build_dataset_review_layers(
         for road_id in result.context.excluded_right_turn_road_ids
         if road_id in loaded.roads
     ]
+    road_to_arm = {road_id: arm.initial_arm_id for arm in result.initial_arms for road_id in arm.member_road_ids}
+    advance_left_roads = [
+        (
+            loaded.roads[road_id].geometry,
+            {
+                "dataset": result.dataset,
+                "junction_id": result.junction_id,
+                "road_id": road_id,
+                "arm_id": road_to_arm.get(road_id, ""),
+                "formway": loaded.roads[road_id].formway,
+                "in_trunk": road_id in {item for arm in result.initial_arms for item in arm.trunk_road_ids},
+            },
+        )
+        for road_id in result.context.advance_left_turn_road_ids
+        if road_id in loaded.roads
+    ]
+    relation_by_road = {
+        road_id: relation
+        for relation in result.advance_right_turn_relations
+        for road_id in relation.advance_right_turn_road_ids
+    }
+    advance_right_roads = [
+        (
+            loaded.roads[road_id].geometry,
+            {
+                "dataset": result.dataset,
+                "junction_id": result.junction_id,
+                "road_id": road_id,
+                "formway": loaded.roads[road_id].formway,
+                "relation_id": relation_by_road[road_id].relation_id if road_id in relation_by_road else "",
+                "trace_status": relation_by_road[road_id].trace_status if road_id in relation_by_road else "target_arm_not_found",
+            },
+        )
+        for road_id in result.context.advance_right_turn_road_ids
+        if road_id in loaded.roads
+    ]
+    advance_right_relations = []
+    for relation in result.advance_right_turn_relations:
+        for road_id in relation.trace_road_ids:
+            road = loaded.roads.get(road_id)
+            if road:
+                advance_right_relations.append(
+                    (
+                        road.geometry,
+                        {
+                            "relation_id": relation.relation_id,
+                            "from_arm_id": relation.from_arm_id or "",
+                            "to_arm_id": relation.to_arm_id or "",
+                            "trace_status": relation.trace_status,
+                            "confidence": relation.confidence,
+                        },
+                    )
+                )
     issue_points = []
+    special_issue_points = []
     fallback_point = None
     if result.context.member_node_ids:
         node = loaded.nodes.get(result.context.member_node_ids[0])
@@ -392,18 +513,28 @@ def build_dataset_review_layers(
         node_id = issue.get("node_id") or issue.get("missing_node_id")
         if node_id and node_id in loaded.nodes:
             point = loaded.nodes[node_id].geometry
+        road_id = issue.get("road_id")
+        if road_id and road_id in loaded.roads:
+            point = loaded.roads[road_id].geometry.centroid
         if point is None:
             point = Point(0.0, 0.0)
         issue_points.append((point, {"issue_type": issue.get("issue_type", ""), "detail": str(issue)[:180]}))
+        if str(issue.get("issue_type", "")).startswith(("formway_", "advance_right_turn_", "trunk_")):
+            special_issue_points.append((point, {"issue_type": issue.get("issue_type", ""), "detail": str(issue)[:180]}))
     return [
         ("current_junction_nodes", "Point", member_nodes),
         ("current_junction_internal_roads", "LineString", internal_roads),
         ("arm_roads", "LineString", arm_roads),
+        ("arm_trunk_roads", "LineString", arm_trunk_roads),
         ("local_arm_candidate_roads", "LineString", local_candidate_roads),
         ("arm_traces", "LineString", traces),
         ("terminal_nodes", "Point", terminal_nodes),
         ("through_decision_nodes", "Point", decision_nodes),
         ("excluded_right_turn_roads", "LineString", excluded_roads),
+        ("advance_left_turn_roads", "LineString", advance_left_roads),
+        ("advance_right_turn_roads", "LineString", advance_right_roads),
+        ("advance_right_turn_relations", "LineString", advance_right_relations),
+        ("special_formway_issue_points", "Point", special_issue_points),
         ("issue_points", "Point", issue_points),
     ]
 

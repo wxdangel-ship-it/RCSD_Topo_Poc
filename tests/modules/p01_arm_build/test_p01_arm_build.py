@@ -199,11 +199,22 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     context = json.loads((swsd_dir / "junction_context.json").read_text(encoding="utf-8"))
     assert context["member_node_ids"] == ["S1", "S1b"]
     assert context["internal_road_ids"] == ["S1_internal"]
-    assert context["excluded_right_turn_road_ids"] == ["S1_right_turn"]
+    assert context["excluded_right_turn_road_ids"] == []
+    assert context["advance_right_turn_road_ids"] == ["S1_right_turn"]
+    assert context["formway_missing_road_ids"] == []
+    assert context["formway_unparseable_road_ids"] == []
 
     initial_arms = json.loads((swsd_dir / "initial_arms.json").read_text(encoding="utf-8"))
     assert len(initial_arms) == 4
     assert any("S1_east_continue" in arm["connector_road_ids"] for arm in initial_arms)
+    assert all("S1_right_turn" not in arm["member_road_ids"] for arm in initial_arms)
+    assert all("trunk_status" in arm for arm in initial_arms)
+    assert all("S1_right_turn" not in arm["trunk_road_ids"] for arm in initial_arms)
+
+    advance_right_relations = json.loads((swsd_dir / "advance_right_turn_relations.json").read_text(encoding="utf-8"))
+    assert len(advance_right_relations) == 1
+    assert advance_right_relations[0]["advance_right_turn_road_ids"] == ["S1_right_turn"]
+    assert advance_right_relations[0]["trace_status"] in {"target_arm_not_found", "ambiguous", "partial", "resolved"}
 
     local_candidates = json.loads((swsd_dir / "local_arm_candidates.json").read_text(encoding="utf-8"))
     assert len(local_candidates) == 4
@@ -227,6 +238,11 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
         "local_arm_candidate_roads",
         "through_decision_nodes",
         "excluded_right_turn_roads",
+        "advance_left_turn_roads",
+        "advance_right_turn_roads",
+        "arm_trunk_roads",
+        "advance_right_turn_relations",
+        "special_formway_issue_points",
     }
 
     with (run_root / "p01_arm_build_review_index.csv").open(encoding="utf-8", newline="") as fh:
@@ -235,9 +251,11 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert {row["junction_group_id"] for row in rows} == {"group_0001", "group_0002"}
     assert {row["dataset"] for row in rows} == {"SWSD", "RCSD", "FRCSD"}
     assert all(row["review_priority"] in {"P0", "P1", "P2", "P3"} for row in rows)
+    assert all("advance_right_turn_road_count" in row for row in rows)
+    assert all("trunk_partial_count" in row for row in rows)
 
 
-def test_right_turn_is_not_excluded_without_explicit_field_value(tmp_path: Path) -> None:
+def test_advance_right_turn_bit7_is_detected_without_explicit_field_value(tmp_path: Path) -> None:
     out_root = tmp_path / "out_no_rt"
     assert run_p01_arm_build_from_args(_run_args(tmp_path, out_root, include_right_turn_value=False)) == 0
     context = json.loads(
@@ -246,12 +264,213 @@ def test_right_turn_is_not_excluded_without_explicit_field_value(tmp_path: Path)
         )
     )
     assert context["excluded_right_turn_road_ids"] == []
+    assert context["advance_right_turn_road_ids"] == ["S1_right_turn"]
     initial_arms = json.loads(
         (out_root / "test_run" / "cases" / "group_0001" / "SWSD" / "initial_arms.json").read_text(
             encoding="utf-8"
         )
     )
-    assert any("S1_right_turn" in arm["seed_road_ids"] for arm in initial_arms)
+    assert all("S1_right_turn" not in arm["seed_road_ids"] for arm in initial_arms)
+    assert all("S1_right_turn" not in arm["member_road_ids"] for arm in initial_arms)
+
+
+def test_advance_left_turn_bit8_stays_in_arm_but_not_trunk(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "adv_left_nodes.gpkg"
+    roads_path = tmp_path / "adv_left_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+            ("L", None, 40.0, 10.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("in", "N", "C", 2, "0", [(0.0, 20.0), (0.0, 0.0)]),
+            ("out", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("adv_left", "E", "L", 2, "256", [(20.0, 0.0), (40.0, 10.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+
+    assert "adv_left" in result.context.advance_left_turn_road_ids
+    arm = next(item for item in result.initial_arms if "adv_left" in item.member_road_ids)
+    assert arm.has_advance_left_turn is True
+    assert arm.advance_left_turn_road_ids == ("adv_left",)
+    assert "adv_left" not in arm.trunk_road_ids
+    assert "adv_left" in arm.non_trunk_member_road_ids
+
+
+def test_advance_right_turn_relation_resolves_to_outbound_arm(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "adv_right_nodes.gpkg"
+    roads_path = tmp_path / "adv_right_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+            ("M", None, 20.0, -12.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("in", "N", "C", 2, "0", [(0.0, 20.0), (0.0, 0.0)]),
+            ("out", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("adv_right", "C", "M", 2, "128", [(0.0, 0.0), (20.0, -12.0)]),
+            ("adv_right_link", "M", "E", 2, "0", [(20.0, -12.0), (20.0, 0.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+
+    assert "adv_right" in result.context.advance_right_turn_road_ids
+    assert all("adv_right" not in arm.member_road_ids for arm in result.initial_arms)
+    assert len(result.advance_right_turn_relations) == 1
+    relation = result.advance_right_turn_relations[0]
+    assert relation.trace_status == "resolved"
+    assert relation.from_arm_id
+    assert relation.to_arm_id
+    assert relation.advance_right_turn_road_ids == ("adv_right",)
+    assert relation.trace_road_ids[:2] == ("adv_right", "adv_right_link")
+    assert any(relation.relation_id in arm.advance_right_turn_relation_ids for arm in result.initial_arms)
+
+
+def test_advance_right_turn_adjacent_to_seed_outside_node_is_detected(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "adjacent_adv_right_nodes.gpkg"
+    roads_path = tmp_path / "adjacent_adv_right_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("in", "N", "C", 2, "0", [(0.0, 20.0), (0.0, 0.0)]),
+            ("out", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("adjacent_adv_right", "N", "E", 2, "128", [(0.0, 20.0), (20.0, 0.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+
+    assert result.context.advance_right_turn_road_ids == ("adjacent_adv_right",)
+    assert all("adjacent_adv_right" not in arm.member_road_ids for arm in result.initial_arms)
+    assert len(result.advance_right_turn_relations) == 1
+    relation = result.advance_right_turn_relations[0]
+    assert relation.trace_status == "resolved"
+    assert relation.advance_right_turn_road_ids == ("adjacent_adv_right",)
+    assert relation.from_arm_id
+    assert relation.to_arm_id
+
+
+def test_contiguous_advance_right_turn_roads_form_one_relation(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "chain_adv_right_nodes.gpkg"
+    roads_path = tmp_path / "chain_adv_right_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("M", None, 12.0, 12.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("in", "N", "C", 2, "0", [(0.0, 20.0), (0.0, 0.0)]),
+            ("out", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("adv_right_1", "N", "M", 2, "128", [(0.0, 20.0), (12.0, 12.0)]),
+            ("adv_right_2", "M", "E", 2, "128", [(12.0, 12.0), (20.0, 0.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+
+    assert result.context.advance_right_turn_road_ids == ("adv_right_1", "adv_right_2")
+    assert len(result.advance_right_turn_relations) == 1
+    relation = result.advance_right_turn_relations[0]
+    assert relation.trace_status == "resolved"
+    assert relation.advance_right_turn_road_ids == ("adv_right_1", "adv_right_2")
+    assert relation.trace_road_ids[:3] == ("adv_right_1", "adv_right_2", "out")
+    assert all("adv_right_1" not in arm.member_road_ids for arm in result.initial_arms)
+    assert all("adv_right_2" not in arm.member_road_ids for arm in result.initial_arms)
+
+
+def test_trunk_falls_back_to_local_non_special_seed_roads(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "local_trunk_nodes.gpkg"
+    roads_path = tmp_path / "local_trunk_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+            ("L", None, 40.0, 10.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("in", "N", "C", 2, "0", [(0.0, 20.0), (0.0, 0.0)]),
+            ("out", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("adv_left", "E", "L", 2, "256", [(20.0, 0.0), (40.0, 10.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+
+    assert any(arm.trunk_road_ids for arm in result.initial_arms)
+    for arm in result.initial_arms:
+        assert "adv_left" not in arm.trunk_road_ids
+        if set(arm.seed_road_ids) & {"in", "out"}:
+            assert arm.trunk_status == "partial"
+            assert set(arm.trunk_road_ids) <= {"in", "out"}
+
+
+def test_formway_missing_and_unparseable_are_audited(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "formway_nodes.gpkg"
+    roads_path = tmp_path / "formway_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("missing_formway", "N", "C", 2, "", [(0.0, 20.0), (0.0, 0.0)]),
+            ("bad_formway", "C", "E", 2, "abc", [(0.0, 0.0), (20.0, 0.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+
+    assert result.context.formway_missing_road_ids == ("missing_formway",)
+    assert result.context.formway_unparseable_road_ids == ("bad_formway",)
+    assert result.issue_report.issue_counts["formway_missing"] == 1
+    assert result.issue_report.issue_counts["formway_unparseable"] == 1
+    assert result.metrics["formway_missing_count"] == 1
+    assert result.metrics["formway_unparseable_count"] == 1
 
 
 def test_dataset_review_context_excludes_far_unrelated_roads(tmp_path: Path) -> None:

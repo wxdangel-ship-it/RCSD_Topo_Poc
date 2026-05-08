@@ -5,6 +5,9 @@
 - 语义路口必须基于 member node 集合。
 - internal road 不进入 Arm。
 - seed road 不得静默丢失。
+- bit7 提前右转 road 不得进入 Arm member / seed / connector / trunk，必须生成 relation 或 issue。
+- bit8 提前左转 road 可以进入 Arm member，但不得进入 trunk。
+- trunk 状态必须显式输出；`complete_min_loop` 需要可由 trunk road ids 解释。
 - 每个 through 判断必须输出业务状态。
 - 同一 Road 不应跨多个 Arm 重复占用，双向 Road 在同一 Arm 内承担双角色除外。
 
@@ -14,11 +17,14 @@
 - case_input 保留原始三套路口 ID。
 - arm_traces 记录 seed、路径、节点、decision、stop、issue。
 - issue_report 记录异常与风险。
+- advance_right_turn_relations 记录提前右转 from Arm、to Arm、trace road/node、状态和风险。
+- review index 与 summary 记录特殊转向、trunk、formway 缺失 / 不可解析统计。
 
 ## GIS QA
 
 - 输出 GPKG 使用输入 CRS。
 - PNG 使用同一数据集 bounds；compare PNG 三栏使用同一视野范围。
+- review GPKG / PNG 必须能目视区分 trunk、提前左转、提前右转与未解析 relation。
 - 不进行 silent geometry fix。
 
 ## 性能

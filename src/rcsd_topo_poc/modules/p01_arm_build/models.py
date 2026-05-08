@@ -93,6 +93,11 @@ class JunctionContext:
     outbound_seed_road_ids: tuple[str, ...]
     bidirectional_seed_road_ids: tuple[str, ...]
     excluded_right_turn_road_ids: tuple[str, ...]
+    advance_left_turn_road_ids: tuple[str, ...]
+    advance_right_turn_road_ids: tuple[str, ...]
+    formway_missing_road_ids: tuple[str, ...]
+    formway_unparseable_road_ids: tuple[str, ...]
+    special_formway_issue_flags: tuple[str, ...]
     input_issue_flags: tuple[str, ...]
 
 
@@ -124,6 +129,9 @@ class ArmTrace:
     stop_reason: str
     assigned_initial_arm_id: str | None
     issue_flags: tuple[str, ...]
+    advance_left_turn_road_ids_in_trace: tuple[str, ...] = tuple()
+    advance_right_turn_road_ids_adjacent: tuple[str, ...] = tuple()
+    trunk_candidate_road_ids: tuple[str, ...] = tuple()
 
 
 @dataclass(frozen=True)
@@ -142,6 +150,15 @@ class InitialArm:
     bidirectional_member_road_ids: tuple[str, ...]
     build_status: str
     risk_flags: tuple[str, ...]
+    has_advance_left_turn: bool = False
+    advance_left_turn_road_ids: tuple[str, ...] = tuple()
+    trunk_road_ids: tuple[str, ...] = tuple()
+    trunk_status: str = "none"
+    trunk_reason: str = "not_evaluated"
+    non_trunk_member_road_ids: tuple[str, ...] = tuple()
+    has_inbound_advance_right_turn: bool = False
+    advance_right_turn_relation_ids: tuple[str, ...] = tuple()
+    advance_right_turn_target_arm_ids: tuple[str, ...] = tuple()
 
 
 @dataclass(frozen=True)
@@ -172,6 +189,33 @@ class FinalArm:
     merge_status: str
     merge_reason: str
     initial_arm: dict[str, Any]
+    has_advance_left_turn: bool = False
+    advance_left_turn_road_ids: tuple[str, ...] = tuple()
+    trunk_road_ids: tuple[str, ...] = tuple()
+    trunk_status: str = "none"
+    trunk_reason: str = "not_evaluated"
+    non_trunk_member_road_ids: tuple[str, ...] = tuple()
+    has_inbound_advance_right_turn: bool = False
+    advance_right_turn_relation_ids: tuple[str, ...] = tuple()
+    advance_right_turn_target_arm_ids: tuple[str, ...] = tuple()
+
+
+@dataclass(frozen=True)
+class AdvanceRightTurnRelation:
+    relation_id: str
+    dataset: str
+    current_junction_id: str
+    from_arm_id: str | None
+    from_inbound_road_ids: tuple[str, ...]
+    advance_right_turn_road_ids: tuple[str, ...]
+    to_arm_id: str | None
+    to_outbound_road_ids: tuple[str, ...]
+    trace_road_ids: tuple[str, ...]
+    trace_node_ids: tuple[str, ...]
+    trace_status: str
+    trace_reason: str
+    confidence: str
+    risk_flags: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -189,6 +233,7 @@ class DatasetBuildResult:
     context: JunctionContext
     initial_arms: tuple[InitialArm, ...]
     final_arms: tuple[FinalArm, ...]
+    advance_right_turn_relations: tuple[AdvanceRightTurnRelation, ...]
     local_arm_candidates: tuple[LocalArmCandidate, ...]
     traces: tuple[ArmTrace, ...]
     decisions: tuple[ThroughDecisionAudit, ...]

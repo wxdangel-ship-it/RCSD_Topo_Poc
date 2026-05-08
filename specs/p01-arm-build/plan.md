@@ -12,9 +12,9 @@
 - 项目级源事实：`SPEC.md`、`docs/PROJECT_BRIEF.md`、`docs/architecture/*`、`docs/doc-governance/module-lifecycle.md`
 - 模块模板：`modules/_template/*`
 - 默认实现纪律：`.agents/skills/default-imp/SKILL.md`
-- P01-A 需求文档：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/RCSD_Topo_Poc__P01_ArmBuild__REQUIREMENT.md`
+- P01 v0.3.0 需求文档：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/RCSD_Topo_Poc__P01__REQUIREMENT.md`
 
-Windows 路径 `E:\_chatgpt_sync\RCSD_Topo_Poc\P01_1\RCSD_Topo_Poc__P01_ArmBuild__REQUIREMENT.md` 已按当前 bash / WSL 环境换算并确认存在。
+Windows 路径 `E:\_chatgpt_sync\RCSD_Topo_Poc\P01_1\RCSD_Topo_Poc__P01__REQUIREMENT.md` 已按当前 bash / WSL 环境换算并确认存在。
 
 ## 2. Module Placement
 
@@ -42,7 +42,7 @@ rcsd_topo_poc.modules.p01_arm_build.runner.run_p01_arm_build_from_args(argv)
 ```
 
 该函数用于测试、开发验收和后续正式入口接入准备；当前不作为仓库正式执行入口登记。
-右转专用道 / 渠化右转字段值不硬编码；通过可选 `--right-turn-formway-value` 显式传入已确认值，未传入时不按几何或示例值排除。
+P01-A1 正式特殊转向识别使用 `formway` bit 运算；`--right-turn-formway-value` 仅保留 legacy 显式右转 / 渠化右转排除兼容能力，未传入时不按几何或示例值排除 legacy 右转。
 
 ## 4. Implementation Slices
 
@@ -60,12 +60,18 @@ rcsd_topo_poc.modules.p01_arm_build.runner.run_p01_arm_build_from_args(argv)
 - 构建 Node / Road dataclass。
 - 不引入新依赖。
 
-### Slice 3: Semantic Junction and Seeds
+### Slice 3: Semantic Junction, Seeds and Special Roads
 
 - 按 `mainnodeid` 组装语义路口。
 - 识别 internal roads。
 - 识别 seed road role：`inbound / outbound / bidirectional`。
-- 仅用已知字段值识别右转专用道；字段缺失输出 audit。
+- 使用 bit 运算识别 `formway bit7` 提前右转和 `formway bit8` 提前左转。
+- bit7 road 从 seed / member / connector / trunk 中排除，后续生成 `AdvanceRightTurnRelation` 或 issue。
+- bit7 候选范围覆盖当前语义路口 member node 直接连接 road，以及非特殊 inbound / bidirectional seed 外侧节点相邻 bit7 road。
+- 连续 bit7 road 链归并为一条 Arm 级 relation，road segment 级数量与 relation 数量分开统计。
+- bit8 road 可进入 Arm member，但从 trunk 中排除。
+- bit8 只在进入 Arm member 后计入当前路口提前左转统计。
+- legacy `--right-turn-formway-value` 仅用于非 bit7 的显式右转 / 渠化右转排除；字段缺失或不可解析输出 audit。
 
 ### Slice 4: Trace and InitialArm
 
@@ -75,19 +81,22 @@ rcsd_topo_poc.modules.p01_arm_build.runner.run_p01_arm_build_from_args(argv)
 - T 型主通道 / 侧向判断必须结合当前追溯方向和 continuation 角度；不能稳定确认时输出 `ambiguous_boundary` / `t_junction_uncertain`，不静默 through。
 - 按终端归并 InitialArm。
 - FinalArm 默认做占位映射；当 LocalArmCandidate 完整覆盖 InitialArm 且存在碎片化时，采用局部趋势兜底聚合。
+- 为 InitialArm / FinalArm 聚合特殊转向字段、trunk 字段和提前右转 relation 字段。
+- 识别 trunk：唯一最小闭环为 `complete_min_loop`；无完整闭环但有主链或非特殊 local seed 时为 `partial`；无主链为 `none`；多条等价闭环为 `ambiguous`。
 
 ### Slice 5: Outputs and Review
 
 - 写 JSON 输出。
+- 写 `advance_right_turn_relations.json`。
 - 写 `LocalArmCandidate` 审计候选输出；该候选服务目视与问题归纳，并可在完整覆盖时参与 FinalArm 兜底聚合。
-- 写 dataset review GPKG。
-- 写 dataset review PNG。
+- 写 dataset review GPKG，包含提前左转、提前右转、trunk、relation 和特殊 issue 图层。
+- 写 dataset review PNG，标注 `TRUNK`、`AdvL`、`R7` relation 与未解析状态。
 - 写 compare PNG / compare GPKG。
 - 写 summary 与 review index。
 
 ### Slice 6: Checks and Tests
 
-- 单元测试覆盖语义路口、右转排除、禁止 Grade、trace 连续、issue 分类。
+- 单元测试覆盖语义路口、bit7 / bit8、legacy 右转排除、trunk、relation、禁止 Grade、trace 连续、issue 分类。
 - synthetic fixture 生成三套数据并跑一组 / 多组输入。
 - 验证输出目录结构、PNG/GPKG 存在性、summary/review index 内容。
 

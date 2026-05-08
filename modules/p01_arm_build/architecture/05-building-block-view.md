@@ -12,6 +12,14 @@
 
 负责语义路口组装、seed 识别、右转排除、trace、through decision、InitialArm / FinalArm 构建与自动结构检查。
 
+## `special_roads.py`
+
+负责 `formway` bit7 / bit8 解析、当前路口特殊道路索引、提前右转 relation 追溯与 relation issue 生成。
+
+## `trunk.py`
+
+负责从 InitialArm member roads 中排除特殊转向 road，并识别 trunk road ids、trunk 状态与非 trunk member roads。
+
 ## `review.py`
 
 负责 dataset review PNG 与 compare PNG 的像素级渲染。

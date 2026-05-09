@@ -134,11 +134,13 @@ P01-A1 正式特殊转向识别使用 `formway` bit 运算；`--right-turn-formw
 - 当前不做 Arm 配准，因此 compare 只展示三套数据同视野审查与统计差异。
 - `LocalArmCandidate` 用于解释 trace 碎片化风险；当其完整覆盖 InitialArm 时，正式 `FinalArm` 可采用兜底聚合。
 
-## 9. P01-A1 v0.4.0 RoadNextRoad-aware ArmMovement Plan
+## 9. P01-A1 / P01-Final v0.5.0 RoadNextRoad-aware ArmMovement Plan
 
 - 在现有 `p01_arm_build` 内修订 A1，不新建业务模块，不新增正式 CLI。
-- 新增内部 helper：`road_next_road.py` 读取 JSON / GeoJSON，`movement.py` 生成 RoadMovementEvidence、ArmMovement、receiving role 和 corrected trunk。
-- runner 增加三个可选 RoadNextRoad 输入；未提供时输出 no-op correction，既有 A1 行为不回退。
+- 内部 helper：`road_next_road.py` 读取 SWSD / RCSD / F-RCSD JSON / GeoJSON，`movement.py` 生成 RoadMovementEvidence、ArmMovement、receiving role 和 corrected trunk。
+- 新增内部 helper：`final_road_next_road.py` 承载 P01-Final Source mapping、source policy、same-source inheritance、cross-source primary source、RCSD -> SWSD fallback、final GeoJSON / audit / issue / review。
+- runner 增加三个可选 RoadNextRoad 输入；未提供时输出 no-op correction，既有 A1 行为不回退；P01-Final 若缺少源 evidence 则不生成对应 final RoadNextRoad 并审计。
 - review 输出增加 movement/evidence/receiving/corrected trunk 图层；summary / review index 增加 movement 与 correction 统计。
+- FRCSD 输出增加 final RoadNextRoad GeoJSON、source map、source policy、final audit、issue report、review GPKG / PNG。
 - 文件体量策略：避免继续扩张 `topology.py`，新增 helper 控制在 50 KB 以下。
-- 测试策略：新增 SWSD JSON、RCSD GeoJSON、全量 movement、turnType 禁用、allowed evidence 投影、advance-left-only trunk correction、straight evidence priority、无 straight evidence 不排除 trunk、GPKG/PNG/summary 字段检查；F-RCSD RoadNextRoad 不作为 A1 输入。
+- 测试策略：新增 SWSD JSON、RCSD/FRCSD GeoJSON、全量 movement、turnType 禁用、allowed evidence 投影、advance-left-only trunk correction、stable straight 限制、Source + geometry exact mapping、same-source inheritance、cross-source primary source、RCSD -> SWSD fallback、ambiguous/missing issue、final GeoJSON schema、duplicate 防护、GPKG/PNG/summary 字段检查。

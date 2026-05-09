@@ -338,13 +338,27 @@ cases/group_0001/compare/p01_arm_compare_layers.gpkg
 
 ## 9. P01-A1 v0.4.0 RoadNextRoad-aware ArmMovement 与 Trunk 修正
 
-本轮继续修订 A1，不新增独立阶段，不实现 A2 / A3 / P01-B。
+本节已由 v0.5.0 扩展为 A1 + P01-Final 范围，不新增独立阶段，不实现 A2 新业务扩展 / A3 / P01-B。
 
-- A1 runner 新增可选 `--swsd-road-next-road / --rcsd-road-next-road`；F-RCSD RoadNextRoad 是业务结果输出，不作为 A1 输入。
+- A1 runner 新增可选 `--swsd-road-next-road / --rcsd-road-next-road / --frcsd-road-next-road`。
 - RoadNextRoad 归一化为 `RoadMovementEvidence`，只表达 allowed evidence；缺失只表示 `no_allowed_evidence`，不得解释为 prohibited。
 - `turnType / turntype` 只保留到 `raw_turn_type` 与审计 summary，禁止用于 `movement_type` 判定。
 - 每套数据每个路口输出全量 `from_final_arm x to_final_arm` ArmMovement。
-- `movement_type` 支持 `straight / left / right / uturn / unknown`，按 same-arm、trunk / LocalArmCandidate 主交通流连续性、RoadNextRoad trunk evidence 与相对左右侧判定。
+- `movement_type` 支持 `straight / left / right / uturn / unknown`，按 same-arm、唯一 stable straight target、trunk / LocalArmCandidate 主交通流连续性、RoadNextRoad trunk evidence 与相对左右侧判定。
 - 输出 `arm_movements.json / road_movement_evidence.json / arm_receiving_road_roles.json / trunk_corrections.json / corrected_final_arms.json`。
 - corrected trunk 只允许排除 advance-left-only receiving road；目标 Arm 无 straight receiving evidence 时不得排除，必须输出 `straight_evidence_missing`。
 - review GPKG 增加 movement、evidence、receiving road、movement-excluded trunk 和 corrected trunk 图层。
+
+## 10. P01-Final v0.5.0 F-RCSD RoadNextRoad 还原
+
+本轮在 A1 runner 内输出 P01-Final 产物，不新增正式 CLI。
+
+- 读取 F-RCSD:Road `Source` 字段，`1 = RCSD`，`2 = SWSD`。
+- 使用 `Source + 几何完全一致` 建立 F-RCSD Road 到源 Road 的映射。
+- Source 异常、source geometry missing、ambiguous source geometry match 均进入 issue，不参与静默生成。
+- 基于 SWSD / RCSD RoadNextRoad evidence 构建 SourceMovementPolicy。
+- 同源 F-RCSD road pair 直接继承源 RoadNextRoad；源侧 RoadNextRoad 缺失则不生成。
+- 不同源 road pair 以进入 road 的 Source 为 primary source，使用 primary source role-level policy 生成。
+- 当前唯一 fallback：`from Source = 1`、`to Source = 2`、RCSD 无 policy 且 SWSD 有 policy；生成前必须检查 entering arm road count。
+- 输出 `frcsd_road_next_road.geojson / frcsd_source_road_map.json / source_movement_policy_swsd.json / source_movement_policy_rcsd.json / frcsd_road_next_road_audit.json / frcsd_road_next_road_issue_report.json`。
+- 最终 `turntype` 输出映射为 `unknown=0 / straight=1 / left=2 / right=3 / uturn=4`，该映射不得用于 movement_type 输入判断。

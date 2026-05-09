@@ -129,7 +129,7 @@ class ArmTrace:
     stop_type: str
     stop_reason: str
     assigned_initial_arm_id: str | None
-    issue_flags: tuple[str, ...]
+    issue_flags: tuple[str, ...] = tuple()
     advance_left_turn_road_ids_in_trace: tuple[str, ...] = tuple()
     advance_right_turn_road_ids_adjacent: tuple[str, ...] = tuple()
     trunk_candidate_road_ids: tuple[str, ...] = tuple()
@@ -269,7 +269,10 @@ class ArmMovement:
     turn_type_summary: dict[str, int]
     has_advance_left_road_evidence: bool
     related_advance_right_relation_ids: tuple[str, ...]
-    issue_flags: tuple[str, ...]
+    post_shape_label: str = ""
+    straight_target_status: str = ""
+    straight_target_evidence: tuple[str, ...] = tuple()
+    issue_flags: tuple[str, ...] = tuple()
 
 
 @dataclass(frozen=True)

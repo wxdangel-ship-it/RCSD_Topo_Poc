@@ -8,6 +8,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import (
+    build_frcsd_road_next_road,
+    final_review_layers,
+    render_final_review_png,
+    write_final_geojson,
+)
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset, normalise_id, write_csv, write_gpkg_layers, write_json
 from rcsd_topo_poc.modules.p01_arm_build.models import DATASETS, DatasetInput, JunctionGroup, to_plain
 from rcsd_topo_poc.modules.p01_arm_build.road_next_road import read_road_next_road
@@ -56,6 +62,13 @@ REVIEW_INDEX_FIELDS = [
     "corrected_trunk_partial_count",
     "corrected_trunk_none_count",
     "corrected_trunk_ambiguous_count",
+    "frcsd_generated_road_next_road_count",
+    "frcsd_source_geometry_match_missing_count",
+    "frcsd_source_geometry_match_ambiguous_count",
+    "frcsd_same_source_inherited_count",
+    "frcsd_cross_source_generated_count",
+    "frcsd_fallback_to_swsd_count",
+    "frcsd_manual_review_required_count",
     "initial_arm_count",
     "final_arm_count",
     "local_arm_candidate_count",
@@ -93,6 +106,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frcsd-roads", required=True)
     parser.add_argument("--swsd-road-next-road")
     parser.add_argument("--rcsd-road-next-road")
+    parser.add_argument("--frcsd-road-next-road")
     parser.add_argument("--junction-group", action="append", required=True)
     parser.add_argument("--out-root", required=True)
     parser.add_argument("--run-id")
@@ -131,7 +145,7 @@ def _dataset_inputs_from_args(args: argparse.Namespace) -> dict[str, DatasetInpu
     return {
         "SWSD": DatasetInput("SWSD", Path(args.swsd_nodes), Path(args.swsd_roads), Path(args.swsd_road_next_road) if args.swsd_road_next_road else None),
         "RCSD": DatasetInput("RCSD", Path(args.rcsd_nodes), Path(args.rcsd_roads), Path(args.rcsd_road_next_road) if args.rcsd_road_next_road else None),
-        "FRCSD": DatasetInput("FRCSD", Path(args.frcsd_nodes), Path(args.frcsd_roads)),
+        "FRCSD": DatasetInput("FRCSD", Path(args.frcsd_nodes), Path(args.frcsd_roads), Path(args.frcsd_road_next_road) if args.frcsd_road_next_road else None),
     }
 
 
@@ -298,6 +312,13 @@ def _summary_payload(
         "corrected_trunk_partial_count": sum(int(row["corrected_trunk_partial_count"]) for row in rows),
         "corrected_trunk_none_count": sum(int(row["corrected_trunk_none_count"]) for row in rows),
         "corrected_trunk_ambiguous_count": sum(int(row["corrected_trunk_ambiguous_count"]) for row in rows),
+        "frcsd_generated_road_next_road_count": sum(int(row.get("frcsd_generated_road_next_road_count") or 0) for row in rows),
+        "frcsd_source_geometry_match_missing_count": sum(int(row.get("frcsd_source_geometry_match_missing_count") or 0) for row in rows),
+        "frcsd_source_geometry_match_ambiguous_count": sum(int(row.get("frcsd_source_geometry_match_ambiguous_count") or 0) for row in rows),
+        "frcsd_same_source_inherited_count": sum(int(row.get("frcsd_same_source_inherited_count") or 0) for row in rows),
+        "frcsd_cross_source_generated_count": sum(int(row.get("frcsd_cross_source_generated_count") or 0) for row in rows),
+        "frcsd_fallback_to_swsd_count": sum(int(row.get("frcsd_fallback_to_swsd_count") or 0) for row in rows),
+        "frcsd_manual_review_required_count": sum(int(row.get("frcsd_manual_review_required_count") or 0) for row in rows),
         "ambiguous_boundary_count": sum(int(row["ambiguous_trace_count"]) for row in rows),
         "t_mainline_through_count": sum(int(row["t_mainline_through_count"]) for row in rows),
         "t_side_terminal_count": sum(int(row["t_side_terminal_count"]) for row in rows),
@@ -402,6 +423,49 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
                 f"png={png_path} gpkg={gpkg_path}"
             )
 
+        frcsd_final = build_frcsd_road_next_road(
+            loaded_by_dataset=loaded,
+            result_by_dataset=result_by_dataset,
+            road_next_road_by_dataset=road_next_road_by_dataset,
+        )
+        frcsd_dir = case_dir / "FRCSD"
+        _progress(
+            f"{group.group_id} generate FRCSD RoadNextRoad "
+            f"count={frcsd_final.metrics['frcsd_generated_road_next_road_count']} "
+            f"manual_review={frcsd_final.metrics['frcsd_manual_review_required_count']}"
+        )
+        write_final_geojson(frcsd_dir / "frcsd_road_next_road.geojson", frcsd_final)
+        write_json(frcsd_dir / "frcsd_source_road_map.json", frcsd_final.source_road_map)
+        write_json(frcsd_dir / "source_movement_policy_swsd.json", frcsd_final.source_movement_policy_swsd)
+        write_json(frcsd_dir / "source_movement_policy_rcsd.json", frcsd_final.source_movement_policy_rcsd)
+        write_json(frcsd_dir / "frcsd_road_next_road_audit.json", frcsd_final.audit)
+        write_json(frcsd_dir / "frcsd_road_next_road_issue_report.json", frcsd_final.issue_report)
+        final_gpkg = frcsd_dir / "frcsd_road_next_road_review_layers.gpkg"
+        write_gpkg_layers(
+            final_gpkg,
+            layers=final_review_layers(loaded_frcsd=loaded["FRCSD"], result=frcsd_final),
+            crs=loaded["FRCSD"].road_layer.crs or loaded["FRCSD"].node_layer.crs,
+            crs_wkt=loaded["FRCSD"].road_layer.crs_wkt or loaded["FRCSD"].node_layer.crs_wkt,
+        )
+        final_png = frcsd_dir / "frcsd_road_next_road_review.png"
+        render_final_review_png(final_png, frcsd_final)
+        dataset_output_paths.setdefault("FRCSD", {}).update(
+            {
+                "frcsd_road_next_road_geojson_path": str(frcsd_dir / "frcsd_road_next_road.geojson"),
+                "frcsd_road_next_road_review_gpkg_path": str(final_gpkg),
+                "frcsd_road_next_road_review_png_path": str(final_png),
+            }
+        )
+        result_by_dataset["FRCSD"].metrics.update(frcsd_final.metrics)
+        for row in reversed(review_rows):
+            if row["junction_group_id"] == group.group_id and row["dataset"] == "FRCSD":
+                row.update(frcsd_final.metrics)
+                if frcsd_final.metrics["frcsd_source_geometry_match_missing_count"] or frcsd_final.metrics["frcsd_source_geometry_match_ambiguous_count"]:
+                    row["review_priority"] = _priority_min(str(row["review_priority"]), "P0")
+                elif frcsd_final.metrics["frcsd_manual_review_required_count"]:
+                    row["review_priority"] = _priority_min(str(row["review_priority"]), "P1")
+                break
+
         compare_png = compare_dir / "p01_arm_compare.png"
         _progress(f"{group.group_id} write compare png={compare_png}")
         render_compare_png(compare_png, loaded, result_by_dataset)
@@ -442,7 +506,11 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
             rows=review_rows,
             groups=groups,
             input_paths={
-                dataset: {"nodes": str(item.nodes_path), "roads": str(item.roads_path)}
+                dataset: {
+                    "nodes": str(item.nodes_path),
+                    "roads": str(item.roads_path),
+                    "road_next_road": str(item.road_next_road_path) if item.road_next_road_path else None,
+                }
                 for dataset, item in dataset_inputs.items()
             },
         ),

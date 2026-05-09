@@ -20,6 +20,18 @@
 
 负责从 InitialArm member roads 中排除特殊转向 road，并识别 trunk road ids、trunk 状态与非 trunk member roads。
 
+## `road_next_road.py`
+
+负责读取 SWSD / RCSD / F-RCSD RoadNextRoad JSON / GeoJSON，并归一化 raw road pair、raw type、raw turn type 与 source 审计字段。
+
+## `movement.py`
+
+负责 RoadNextRoad evidence 投影、全量 ArmMovement 候选、stable straight 审计字段、receiving road role 与 movement-aware corrected trunk。
+
+## `final_road_next_road.py`
+
+负责 P01-Final：F-RCSD Source + geometry exact source road mapping、SourceMovementPolicy、同源继承、跨源 primary source generation、RCSD -> SWSD fallback、final GeoJSON / audit / issue / review 输出辅助。
+
 ## `review.py`
 
 负责 dataset review PNG 与 compare PNG 的像素级渲染。

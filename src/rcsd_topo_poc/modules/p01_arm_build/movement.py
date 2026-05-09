@@ -294,6 +294,51 @@ def _movement_type(
     return "right", "relative_side_after_straight_resolved", "medium", "target_arm_on_right_side_of_entering_flow"
 
 
+def _straight_targets(
+    final_arms: tuple[FinalArm, ...],
+    vectors: dict[str, tuple[float, float]],
+    evidence_by_pair: dict[tuple[str, str], list[RoadMovementEvidence]],
+    arm_by_id: dict[str, FinalArm],
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for from_arm in final_arms:
+        candidates: list[tuple[str, str]] = []
+        from_vector = vectors.get(from_arm.final_arm_id)
+        if from_vector is None:
+            result[from_arm.final_arm_id] = {"status": "no_straight_target", "target": None, "evidence": tuple()}
+            continue
+        incoming = (-from_vector[0], -from_vector[1])
+        for to_arm in final_arms:
+            if from_arm.final_arm_id == to_arm.final_arm_id:
+                continue
+            to_vector = vectors.get(to_arm.final_arm_id)
+            if to_vector is None:
+                continue
+            if _angle_between(incoming, to_vector) <= 35.0:
+                pair = (from_arm.final_arm_id, to_arm.final_arm_id)
+                has_evidence = any(
+                    item.road_id in set(from_arm.trunk_road_ids) and item.next_road_id in set(arm_by_id[to_arm.final_arm_id].trunk_road_ids)
+                    for item in evidence_by_pair.get(pair, [])
+                )
+                candidates.append((to_arm.final_arm_id, "road_next_road_trunk_evidence" if has_evidence else "local_arm_candidate_continuity"))
+        if len(candidates) == 1:
+            target, source = candidates[0]
+            result[from_arm.final_arm_id] = {
+                "status": "unique_straight_target",
+                "target": target,
+                "evidence": (source,),
+            }
+        elif candidates:
+            result[from_arm.final_arm_id] = {
+                "status": "uncertain_straight_target",
+                "target": None,
+                "evidence": tuple(f"{target}:{source}" for target, source in candidates),
+            }
+        else:
+            result[from_arm.final_arm_id] = {"status": "no_straight_target", "target": None, "evidence": tuple()}
+    return result
+
+
 def _build_arm_movements(
     *,
     dataset: str,
@@ -311,6 +356,7 @@ def _build_arm_movements(
             evidence_by_pair[(item.from_arm_id, item.to_arm_id)].append(item)
     vectors = _arm_vectors(final_arms=final_arms, local_candidates=local_candidates, roads=roads)
     arm_by_id = {arm.final_arm_id: arm for arm in final_arms}
+    straight_targets = _straight_targets(final_arms, vectors, evidence_by_pair, arm_by_id)
     movements: list[ArmMovement] = []
     movement_index = 1
     for from_arm in final_arms:
@@ -326,6 +372,32 @@ def _build_arm_movements(
                 vectors=vectors,
                 has_trunk_evidence=has_trunk_evidence,
             )
+            straight_info = straight_targets.get(from_arm.final_arm_id, {})
+            straight_status = str(straight_info.get("status") or "")
+            straight_evidence = tuple(str(item) for item in straight_info.get("evidence", tuple()))
+            if from_arm.final_arm_id == to_arm.final_arm_id:
+                straight_status = "not_applicable_uturn"
+            elif straight_status == "unique_straight_target":
+                if straight_info.get("target") == to_arm.final_arm_id:
+                    movement_type = "straight"
+                    if has_trunk_evidence:
+                        type_source = "road_next_road_trunk_evidence"
+                        confidence = "high"
+                        reason = "unique_straight_target_with_trunk_road_next_road_evidence"
+                    else:
+                        type_source = "local_arm_candidate_continuity"
+                        confidence = "stable"
+                        reason = "unique_straight_target_by_corridor_direction_continuity"
+                elif movement_type == "straight":
+                    movement_type = "unknown"
+                    type_source = "insufficient_evidence"
+                    confidence = "low"
+                    reason = "straight_target_resolved_to_other_arm"
+            elif movement_type == "straight":
+                movement_type = "unknown"
+                type_source = "insufficient_evidence"
+                confidence = "low"
+                reason = "straight_target_not_unique"
             if not has_road_next_road_input:
                 permission_status = "out_of_scope"
             elif pair_evidence:
@@ -361,6 +433,9 @@ def _build_arm_movements(
                     turn_type_summary=dict(sorted(turn_summary.items())),
                     has_advance_left_road_evidence=any(item.road_id in advance_left_ids for item in pair_evidence),
                     related_advance_right_relation_ids=related_r7,
+                    post_shape_label="",
+                    straight_target_status=straight_status,
+                    straight_target_evidence=straight_evidence,
                     issue_flags=issue_flags,
                 )
             )
@@ -383,7 +458,12 @@ def _receiving_roles(
             if evidence is None:
                 continue
             key = (movement.to_arm_id, evidence.next_road_id)
-            if movement.movement_type == "straight":
+            stable_straight = (
+                movement.movement_type == "straight"
+                and movement.straight_target_status == "unique_straight_target"
+                and movement.movement_type_confidence in {"high", "stable"}
+            )
+            if stable_straight:
                 stats[key]["straight_receiving_road"] += 1
                 target_has_straight[movement.to_arm_id] += 1
             elif movement.movement_type == "left":

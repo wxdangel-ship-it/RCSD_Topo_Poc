@@ -8,6 +8,10 @@ import fiona
 import pytest
 from shapely.geometry import LineString, Point, mapping
 
+from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import (
+    build_frcsd_road_next_road,
+    final_geojson,
+)
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset, write_gpkg_layers
 from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput
 from rcsd_topo_poc.modules.p01_arm_build.review import (
@@ -72,6 +76,38 @@ def _write_roads(path: Path, features: list[tuple[str, str, str, int, str, list[
                         "direction": direction,
                         "formway": formway,
                         "grade_2": 7,
+                    },
+                }
+            )
+
+
+def _write_roads_with_source(
+    path: Path,
+    features: list[tuple[str, str, str, int, str, str, list[tuple[float, float]]]],
+) -> None:
+    schema = {
+        "geometry": "LineString",
+        "properties": {
+            "id": "str",
+            "snodeid": "str",
+            "enodeid": "str",
+            "direction": "int",
+            "formway": "str",
+            "Source": "str",
+        },
+    }
+    with fiona.open(path, "w", driver="GPKG", schema=schema, crs="EPSG:3857") as sink:
+        for road_id, snodeid, enodeid, direction, formway, source, coords in features:
+            sink.write(
+                {
+                    "geometry": mapping(LineString(coords)),
+                    "properties": {
+                        "id": road_id,
+                        "snodeid": snodeid,
+                        "enodeid": enodeid,
+                        "direction": direction,
+                        "formway": formway,
+                        "Source": source,
                     },
                 }
             )
@@ -237,6 +273,15 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
 
     assert (swsd_dir / "p01_arm_review.png").is_file()
     assert (swsd_dir / "review_layers.gpkg").is_file()
+    frcsd_dir = run_root / "cases" / "group_0001" / "FRCSD"
+    assert (frcsd_dir / "frcsd_road_next_road.geojson").is_file()
+    assert (frcsd_dir / "frcsd_source_road_map.json").is_file()
+    assert (frcsd_dir / "source_movement_policy_swsd.json").is_file()
+    assert (frcsd_dir / "source_movement_policy_rcsd.json").is_file()
+    assert (frcsd_dir / "frcsd_road_next_road_audit.json").is_file()
+    assert (frcsd_dir / "frcsd_road_next_road_issue_report.json").is_file()
+    assert (frcsd_dir / "frcsd_road_next_road_review_layers.gpkg").is_file()
+    assert (frcsd_dir / "frcsd_road_next_road_review.png").is_file()
     assert (run_root / "cases" / "group_0001" / "compare" / "p01_arm_compare.png").is_file()
     assert (run_root / "cases" / "group_0001" / "compare" / "p01_arm_compare_layers.gpkg").is_file()
     case_summary = json.loads((run_root / "cases" / "group_0001" / "case_summary.json").read_text(encoding="utf-8"))
@@ -271,6 +316,7 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert all("trunk_partial_count" in row for row in rows)
     assert all("arm_movement_count" in row for row in rows)
     assert all("trunk_correction_count" in row for row in rows)
+    assert all("frcsd_generated_road_next_road_count" in row for row in rows)
 
 
 def test_advance_right_turn_bit7_is_detected_without_explicit_field_value(tmp_path: Path) -> None:
@@ -515,11 +561,71 @@ def _movement_fixture(tmp_path: Path) -> tuple[Path, Path]:
     return nodes_path, roads_path
 
 
+def _frcsd_source_fixture(tmp_path: Path, *, from_source: str = "2", to_source: str = "2") -> tuple[Path, Path]:
+    nodes_path = tmp_path / f"frcsd_{from_source}_{to_source}_nodes.gpkg"
+    roads_path = tmp_path / f"frcsd_{from_source}_{to_source}_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("W", None, -20.0, 0.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+        ],
+    )
+    _write_roads_with_source(
+        roads_path,
+        [
+            ("f_n_adv_left", "N", "C", 2, "256", from_source, [(0.0, 20.0), (0.0, 0.0)]),
+            ("f_w_in", "W", "C", 2, "0", from_source, [(-20.0, 0.0), (0.0, 0.0)]),
+            ("f_e_main", "C", "E", 2, "0", to_source, [(0.0, 0.0), (20.0, 0.0)]),
+            ("f_e_left_recv", "C", "E", 2, "0", to_source, [(0.0, 1.0), (20.0, 1.0)]),
+        ],
+    )
+    return nodes_path, roads_path
+
+
+def _renamed_source_fixture(tmp_path: Path, prefix: str) -> tuple[Path, Path]:
+    nodes_path = tmp_path / f"{prefix.lower()}_source_nodes.gpkg"
+    roads_path = tmp_path / f"{prefix.lower()}_source_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("W", None, -20.0, 0.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            (f"{prefix}_n_adv_left", "N", "C", 2, "256", [(0.0, 20.0), (0.0, 0.0)]),
+            (f"{prefix}_w_in", "W", "C", 2, "0", [(-20.0, 0.0), (0.0, 0.0)]),
+            (f"{prefix}_e_main", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            (f"{prefix}_e_left_recv", "C", "E", 2, "0", [(0.0, 1.0), (20.0, 1.0)]),
+        ],
+    )
+    return nodes_path, roads_path
+
+
 def _arm_id_by_seed(result, seed_road_id: str) -> str:
     for arm in result.final_arms:
         if seed_road_id in arm.initial_arm["seed_road_ids"]:
             return arm.final_arm_id
     raise AssertionError(f"seed road not found: {seed_road_id}")
+
+
+def _build_result(dataset: str, nodes_path: Path, roads_path: Path, rnr_records=tuple()):
+    loaded = load_dataset(DatasetInput(dataset, nodes_path, roads_path))
+    result = build_dataset_arm_result(
+        loaded,
+        junction_id="C",
+        right_turn_formway_values={"128"},
+        road_next_road_records=tuple(rnr_records),
+        has_road_next_road_input=bool(rnr_records),
+    )
+    return loaded, result
 
 
 def test_road_next_road_json_and_geojson_are_normalised(tmp_path: Path) -> None:
@@ -645,6 +751,139 @@ def test_road_next_road_without_straight_receiving_does_not_exclude_trunk(tmp_pa
     assert correction.trunk_correction_status == "straight_evidence_missing"
     assert correction.movement_excluded_receiving_road_ids == tuple()
     assert "e_left_recv" in correction.corrected_trunk_road_ids
+
+
+def test_frcsd_road_next_road_same_source_inheritance(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
+    swsd_rnr = tmp_path / "swsd_rnr.json"
+    swsd_rnr.write_text(
+        json.dumps([{"id": "s_allowed", "road_id": "s_w_in", "next_road_id": "s_e_main", "turnType": 9}]),
+        encoding="utf-8",
+    )
+    swsd_records = read_road_next_road(swsd_rnr)
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+    )
+    geojson = final_geojson(final)
+
+    pairs = {(feature["properties"]["road_id"], feature["properties"]["next_road_id"]) for feature in geojson["features"]}
+    assert ("f_w_in", "f_e_main") in pairs
+    assert final.metrics["frcsd_same_source_inherited_count"] >= 1
+    assert all(item.match_status == "matched" for item in final.source_road_map)
+    assert geojson["features"][0]["geometry"] is None
+    assert {"id", "road_id", "next_road_id", "type", "source", "turntype", "city_code"} <= set(
+        geojson["features"][0]["properties"]
+    )
+
+
+def test_frcsd_road_next_road_cross_source_uses_primary_source(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="1", to_source="2")
+    rcsd_rnr = tmp_path / "rcsd_rnr.geojson"
+    rcsd_rnr.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": None,
+                        "properties": {"id": "r_allowed", "road_id": "r_w_in", "next_road_id": "r_e_main", "turntype": 1},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    rcsd_records = read_road_next_road(rcsd_rnr)
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads, rcsd_records)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": tuple(), "RCSD": rcsd_records, "FRCSD": tuple()},
+    )
+
+    generated = [
+        item
+        for item in final.audit
+        if item.f_road_id == "f_w_in" and item.f_next_road_id == "f_e_main" and item.permission_status == "allowed"
+    ]
+    assert generated
+    assert generated[0].primary_source == "RCSD"
+    assert generated[0].generation_rule == "cross_source_primary_source_policy"
+    assert final.metrics["frcsd_cross_source_generated_count"] >= 1
+
+
+def test_frcsd_road_next_road_rcsd_to_swsd_fallback(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="1", to_source="2")
+    swsd_rnr = tmp_path / "swsd_fallback_rnr.json"
+    swsd_rnr.write_text(
+        json.dumps([{"id": "s_fallback", "road_id": "s_w_in", "next_road_id": "s_e_main", "turnType": 1}]),
+        encoding="utf-8",
+    )
+    swsd_records = read_road_next_road(swsd_rnr)
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    fallback = [
+        item
+        for item in final.audit
+        if item.f_road_id == "f_w_in" and item.f_next_road_id == "f_e_main" and item.permission_status == "allowed"
+    ]
+    assert fallback
+    assert fallback[0].generation_rule == "rcsd_to_swsd_fallback"
+    assert fallback[0].reference_source == "SWSD"
+    assert final.metrics["frcsd_fallback_to_swsd_count"] >= 1
+
+
+def test_frcsd_source_geometry_mapping_missing_and_ambiguous_are_issues(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    duplicate_path = tmp_path / "s_duplicate_roads.gpkg"
+    _write_roads(
+        duplicate_path,
+        [
+            ("s_w_in", "W", "C", 2, "0", [(-20.0, 0.0), (0.0, 0.0)]),
+            ("s_w_in_dup", "W", "C", 2, "0", [(-20.0, 0.0), (0.0, 0.0)]),
+            ("s_e_main", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("s_e_left_recv", "C", "E", 2, "0", [(0.0, 1.0), (20.0, 1.0)]),
+            ("s_n_adv_left", "N", "C", 2, "256", [(0.0, 20.0), (0.0, 0.0)]),
+        ],
+    )
+    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, duplicate_path)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": tuple(), "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    assert final.metrics["frcsd_source_geometry_match_ambiguous_count"] >= 1
+    assert "ambiguous_source_geometry_match" in final.issue_report["issue_counts"]
 
 
 def test_dataset_review_context_excludes_far_unrelated_roads(tmp_path: Path) -> None:

@@ -19,12 +19,14 @@
 - issue_report 记录异常与风险。
 - advance_right_turn_relations 记录提前右转 from Arm、to Arm、trace road/node、状态和风险。
 - review index 与 summary 记录特殊转向、trunk、formway 缺失 / 不可解析统计。
+- P01-Final 记录 F-RCSD source map、source policy、final RoadNextRoad audit、issue report 与 generation metrics。
 
 ## GIS QA
 
 - 输出 GPKG 使用输入 CRS。
 - PNG 使用同一数据集 bounds；compare PNG 三栏使用同一视野范围。
 - review GPKG / PNG 必须能目视区分 trunk、提前左转、提前右转与未解析 relation。
+- P01-Final review GPKG / PNG 必须能定位 generated RoadNextRoad、source map 与 final issue。
 - 不进行 silent geometry fix。
 
 ## 性能
@@ -43,3 +45,4 @@
 - 禁止 Grade 源码扫描。
 - A2 synthetic 覆盖 stable、missing、partial、over_split、over_merged、conflict / uncertain 和多 group。
 - A2 真实 case 至少验证 1019789，或明确记录真实数据未验证。
+- P01-Final synthetic 覆盖 Source + geometry exact mapping、同源继承、跨源 primary source、RCSD -> SWSD fallback、缺失 / 多匹配 issue 与 duplicate 防护。

@@ -2,8 +2,9 @@
 
 ## 业务约束
 
-- 只做 P01-A1 / P01-A2，不扩展 P01-B。
-- 不实现 Movement、禁行迁移或通行能力裁决。
+- 只做 P01-A1 / P01-A2 / P01-Final，不扩展 P01-B。
+- A1 允许输出 ArmMovement 候选与 RoadNextRoad evidence 审计；P01-Final 允许生成最终 F-RCSD RoadNextRoad。
+- 不实现 P01-A3 正式跨源 Movement 空间、禁行迁移或通行能力裁决。
 - `InitialArm` 保留原始 trace 终端归并；`FinalArm` 默认等于 `InitialArm`，但允许在 trace 过度切碎且 `LocalArmCandidate` 完整覆盖时采用局部趋势兜底聚合。
 - 右转专用道 / 渠化右转只有字段明确可识别时才排除。
 - `kind` 参与追溯停止主口径：非 `4` 类型原则继续，`2048` 按 T 型横/竖裁决，`4` 先评估 T 型特征后再决定停止或继续。
@@ -11,6 +12,8 @@
 - A2 读取 A1 run root，不重新实现 A1，不自动修复 A1 输出。
 - A2 不能仅凭几何最近输出 high confidence 配准。
 - A2 不自动拆分 over-merged Arm，只输出 ArmBuildFeedback。
+- P01-Final 只能用 `F-RCSD:Road.Source + 几何完全一致` 做源 Road 强匹配，不得用空间接近替代。
+- `turnType / turntype` 只作为 raw audit 字段，不得用于 movement_type 判定。
 
 ## 工程约束
 

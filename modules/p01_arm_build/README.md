@@ -1,6 +1,6 @@
 # P01 Arm Build
 
-`p01_arm_build` 是 P01 POC 验证模块，当前落地 `P01-A1 / Arm 构建` 与 `P01-A2 / Arm 配准与 LogicalArmGroup 构建`。
+`p01_arm_build` 是 P01 POC 验证模块，当前落地 `P01-A1 / Arm 构建`、`P01-A2 / Arm 配准与 LogicalArmGroup 构建` 与 `P01-Final / F-RCSD RoadNextRoad 还原`。
 
 ## 当前范围
 
@@ -9,14 +9,16 @@
 - 字段明确可识别时排除右转专用道 / 渠化右转。
 - 输出 InitialArm、FinalArm、ArmTrace、ThroughDecisionAudit、IssueReport。
 - 输出 LocalArmCandidate 局部趋势审计候选；当 trace 过度切碎且候选完整覆盖 InitialArm 时，可用于 FinalArm 兜底聚合。
+- 输出 RoadNextRoad-aware ArmMovement、receiving road role、corrected trunk 与 `corrected_final_arms.json`。
 - 输出 review PNG、compare PNG、review GPKG、summary 与 review index。
+- P01-Final：基于 F-RCSD:Road.Source、几何完全一致 source road mapping 与 SWSD / RCSD RoadNextRoad evidence，生成 `frcsd_road_next_road.geojson`。
 - A2：读取 A1 run root，以 F-RCSD FinalArm 为承载核心，构建 SWSD / RCSD / F-RCSD 跨源 `LogicalArmGroup`。
 - A2：输出 ArmProfile、候选矩阵、RawArmAlignment、ArmBuildFeedback、source_extra、review PNG/GPKG、summary 与 review index。
 - A2：区分可接受的 coverage missing / partial 与不可接受的 over_split / over_merged / conflict / uncertain。
 
 ## 非范围
 
-- Movement。
+- P01-A3 正式跨源 Movement 空间。
 - 禁行迁移。
 - 通行能力裁决。
 - P01-B。
@@ -46,6 +48,9 @@ A1 参数形态与未来 CLI 保持一致：
 --out-root
 --run-id
 --right-turn-formway-value
+--swsd-road-next-road
+--rcsd-road-next-road
+--frcsd-road-next-road
 ```
 
 `--right-turn-formway-value` 是可选显式声明参数；未传入时不会把 `formway` 示例值或几何形态当作右转专用道强规则。

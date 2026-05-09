@@ -121,3 +121,22 @@
 - [x] 增强 JSON / GPKG / PNG / summary / review index 输出。
 - [x] 新增 synthetic 测试覆盖 RoadNextRoad 读取、movement、trunk correction。
 - [x] 回归 A1 / A2 既有测试。
+
+## Phase 8: P01-A1 / P01-Final v0.5.0 RoadNextRoad-aware final generation
+
+- [x] 修订基准需求文档执行范围，授权 P01-Final 正式编码。
+- [x] 更新 A1 / P01-Final spec / plan / tasks 与模块契约。
+- [x] 恢复 `--frcsd-road-next-road` 可选输入用于 A1 FRCSD evidence 审计。
+- [x] 增强 ArmMovement stable straight 审计字段。
+- [x] 限制 trunk correction 只使用 stable straight receiving evidence。
+- [x] 新增 F-RCSD Source 字段读取与校验。
+- [x] 新增 F-RCSD Source + geometry exact source road mapping。
+- [x] 新增 SourceMovementPolicy 构建。
+- [x] 新增 same-source direct inheritance。
+- [x] 新增 cross-source primary source generation。
+- [x] 新增 RCSD -> SWSD fallback。
+- [x] 新增 final `frcsd_road_next_road.geojson` 输出。
+- [x] 新增 final audit / issue / source map / source policy 输出。
+- [x] 新增 final review GPKG / PNG 输出。
+- [x] 新增 final generation metrics 到 summary / review index。
+- [x] 新增 synthetic 测试覆盖 source mapping、same-source、cross-source、fallback、ambiguous issue。

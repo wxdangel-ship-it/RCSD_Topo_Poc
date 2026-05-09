@@ -54,6 +54,7 @@ class DatasetInput:
     dataset: str
     nodes_path: Path
     roads_path: Path
+    road_next_road_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +220,92 @@ class AdvanceRightTurnRelation:
 
 
 @dataclass(frozen=True)
+class RawRoadNextRoad:
+    raw_id: str
+    road_id: str
+    next_road_id: str
+    raw_type: str
+    raw_turn_type: str
+    source: str
+    raw_properties: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RoadMovementEvidence:
+    evidence_id: str
+    dataset: str
+    current_junction_id: str
+    raw_id: str
+    road_id: str
+    next_road_id: str
+    raw_type: str
+    raw_turn_type: str
+    source: str
+    raw_properties: dict[str, Any]
+    from_arm_id: str | None
+    to_arm_id: str | None
+    from_road_role: str
+    to_road_role: str
+    mapping_status: str
+    issue_flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ArmMovement:
+    movement_id: str
+    dataset: str
+    current_junction_id: str
+    from_arm_id: str
+    to_arm_id: str
+    movement_type: str
+    movement_type_source: str
+    movement_type_confidence: str
+    movement_type_reason: str
+    permission_evidence_status: str
+    road_movement_evidence_ids: tuple[str, ...]
+    from_road_ids: tuple[str, ...]
+    to_road_ids: tuple[str, ...]
+    evidence_count: int
+    turn_type_summary: dict[str, int]
+    has_advance_left_road_evidence: bool
+    related_advance_right_relation_ids: tuple[str, ...]
+    issue_flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ArmReceivingRoadRole:
+    target_arm_id: str
+    road_id: str
+    receiving_roles: tuple[str, ...]
+    straight_evidence_count: int
+    left_evidence_count: int
+    advance_left_evidence_count: int
+    right_evidence_count: int
+    unknown_evidence_count: int
+    exclude_from_trunk: bool
+    exclude_reason: str
+
+
+@dataclass(frozen=True)
+class TrunkCorrection:
+    arm_id: str
+    original_trunk_road_ids: tuple[str, ...]
+    movement_excluded_receiving_road_ids: tuple[str, ...]
+    corrected_trunk_road_ids: tuple[str, ...]
+    trunk_correction_status: str
+    trunk_correction_reason: str
+
+
+@dataclass(frozen=True)
+class CorrectedFinalArm:
+    final_arm: dict[str, Any]
+    original_trunk_road_ids: tuple[str, ...]
+    corrected_trunk_road_ids: tuple[str, ...]
+    trunk_correction_status: str
+    trunk_correction_reason: str
+
+
+@dataclass(frozen=True)
 class IssueReport:
     dataset: str
     current_junction_id: str
@@ -233,7 +320,12 @@ class DatasetBuildResult:
     context: JunctionContext
     initial_arms: tuple[InitialArm, ...]
     final_arms: tuple[FinalArm, ...]
+    corrected_final_arms: tuple[CorrectedFinalArm, ...]
     advance_right_turn_relations: tuple[AdvanceRightTurnRelation, ...]
+    road_movement_evidence: tuple[RoadMovementEvidence, ...]
+    arm_movements: tuple[ArmMovement, ...]
+    arm_receiving_road_roles: tuple[ArmReceivingRoadRole, ...]
+    trunk_corrections: tuple[TrunkCorrection, ...]
     local_arm_candidates: tuple[LocalArmCandidate, ...]
     traces: tuple[ArmTrace, ...]
     decisions: tuple[ThroughDecisionAudit, ...]

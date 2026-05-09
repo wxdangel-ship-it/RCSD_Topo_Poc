@@ -16,9 +16,11 @@ from rcsd_topo_poc.modules.p01_arm_build.models import (
     LoadedDataset,
     LocalArmCandidate,
     NodeRecord,
+    RawRoadNextRoad,
     RoadRecord,
     ThroughDecisionAudit,
 )
+from rcsd_topo_poc.modules.p01_arm_build.movement import build_movement_outputs
 from rcsd_topo_poc.modules.p01_arm_build.special_roads import (
     build_advance_right_turn_relations,
     build_special_road_flag_index,
@@ -908,6 +910,10 @@ def _initial_arm_final_payload(arm: InitialArm) -> dict[str, Any]:
         "initial_arm_id": arm.initial_arm_id,
         "member_road_ids": arm.member_road_ids,
         "seed_road_ids": arm.seed_road_ids,
+        "connector_road_ids": arm.connector_road_ids,
+        "inbound_member_road_ids": arm.inbound_member_road_ids,
+        "outbound_member_road_ids": arm.outbound_member_road_ids,
+        "bidirectional_member_road_ids": arm.bidirectional_member_road_ids,
         "terminal_type": arm.terminal_type,
         "terminal_junction_id": arm.terminal_junction_id,
         "has_advance_left_turn": arm.has_advance_left_turn,
@@ -978,6 +984,11 @@ def _build_final_arms(
         for index, candidate in enumerate(local_arm_candidates, start=1):
             source_arms = [initial_by_id[arm_id] for arm_id in candidate.source_initial_arm_ids if arm_id in initial_by_id]
             member_road_ids = tuple(sorted({road_id for arm in source_arms for road_id in arm.member_road_ids}))
+            seed_road_ids = tuple(sorted({road_id for arm in source_arms for road_id in arm.seed_road_ids}))
+            connector_road_ids = tuple(sorted({road_id for arm in source_arms for road_id in arm.connector_road_ids}))
+            inbound_road_ids = tuple(sorted({road_id for arm in source_arms for road_id in arm.inbound_member_road_ids}))
+            outbound_road_ids = tuple(sorted({road_id for arm in source_arms for road_id in arm.outbound_member_road_ids}))
+            bidirectional_road_ids = tuple(sorted({road_id for arm in source_arms for road_id in arm.bidirectional_member_road_ids}))
             final_arms.append(
                 FinalArm(
                     dataset=candidate.dataset,
@@ -989,7 +1000,11 @@ def _build_final_arms(
                     initial_arm={
                         "local_arm_candidate_id": candidate.local_arm_candidate_id,
                         "member_road_ids": member_road_ids,
-                        "seed_road_ids": candidate.source_seed_road_ids,
+                        "seed_road_ids": seed_road_ids,
+                        "connector_road_ids": connector_road_ids,
+                        "inbound_member_road_ids": inbound_road_ids,
+                        "outbound_member_road_ids": outbound_road_ids,
+                        "bidirectional_member_road_ids": bidirectional_road_ids,
                         "local_stub_road_ids": candidate.local_stub_road_ids,
                         "source_initial_arms": [_initial_arm_final_payload(arm) for arm in source_arms],
                     },
@@ -1204,6 +1219,9 @@ def review_priority_from_metrics(metrics: dict[str, Any]) -> str:
         or metrics["trunk_none_count"] > 0
         or metrics["advance_right_turn_unresolved_count"] > 0
         or metrics["formway_missing_count"] > 0
+        or metrics.get("road_movement_unmapped_count", 0) > 0
+        or metrics.get("trunk_correction_count", 0) > 0
+        or metrics.get("trunk_correction_straight_evidence_missing_count", 0) > 0
     ):
         return "P1"
     if metrics["issue_count"] == 0:
@@ -1216,6 +1234,8 @@ def build_dataset_arm_result(
     *,
     junction_id: str,
     right_turn_formway_values: set[str],
+    road_next_road_records: tuple[RawRoadNextRoad, ...] = tuple(),
+    has_road_next_road_input: bool = False,
 ) -> DatasetBuildResult:
     groups, _ = build_node_groups(loaded.nodes)
     resolved_junction_id, member_node_ids, input_flags = resolve_junction_members(
@@ -1388,6 +1408,17 @@ def build_dataset_arm_result(
             _add_issue(issues, "trunk_min_loop_not_found", arm_id=arm.initial_arm_id, trunk_status=arm.trunk_status)
         if arm.trunk_status == "ambiguous":
             _add_issue(issues, "trunk_min_loop_ambiguous", arm_id=arm.initial_arm_id)
+    movement_result = build_movement_outputs(
+        dataset=loaded.dataset,
+        junction_id=junction_id,
+        roads=loaded.roads,
+        final_arms=final_arms,
+        local_arm_candidates=local_arm_candidates,
+        advance_right_turn_relations=advance_right_turn_relations,
+        road_next_road_records=road_next_road_records,
+        has_road_next_road_input=has_road_next_road_input,
+    )
+    issues.extend(movement_result.issues)
     issue_counts = dict(Counter(str(issue.get("issue_type")) for issue in issues))
     issue_report = IssueReport(
         dataset=loaded.dataset,
@@ -1405,13 +1436,19 @@ def build_dataset_arm_result(
         decisions=tuple(decisions),
         issue_counts=issue_counts,
     )
+    metrics.update(movement_result.metrics)
     return DatasetBuildResult(
         dataset=loaded.dataset,
         junction_id=junction_id,
         context=context,
         initial_arms=initial_arms,
         final_arms=final_arms,
+        corrected_final_arms=movement_result.corrected_final_arms,
         advance_right_turn_relations=advance_right_turn_relations,
+        road_movement_evidence=movement_result.road_movement_evidence,
+        arm_movements=movement_result.arm_movements,
+        arm_receiving_road_roles=movement_result.arm_receiving_road_roles,
+        trunk_corrections=movement_result.trunk_corrections,
         local_arm_candidates=local_arm_candidates,
         traces=assigned_traces,
         decisions=tuple(decisions),

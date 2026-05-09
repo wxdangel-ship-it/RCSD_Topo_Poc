@@ -63,14 +63,20 @@ def _seed_nodes(seed_ids: set[str], roads: dict[str, RoadRecord]) -> set[str]:
     return _road_nodes(seed_ids, roads)
 
 
-def build_trunk_for_arm(arm: InitialArm, roads: dict[str, RoadRecord]) -> TrunkBuildResult:
+def build_trunk_for_arm(
+    arm: InitialArm,
+    roads: dict[str, RoadRecord],
+    *,
+    additional_blocked_road_ids: set[str] | None = None,
+) -> TrunkBuildResult:
     member_ids = set(arm.member_road_ids)
     advance_left_ids = {road_id for road_id in member_ids if road_id in roads and is_advance_left_turn_road(roads[road_id])}
+    extra_blocked_ids = set(additional_blocked_road_ids or set())
     blocked_ids = {
         road_id
         for road_id in member_ids
         if road_id in roads and (is_advance_left_turn_road(roads[road_id]) or is_advance_right_turn_road(roads[road_id]))
-    }
+    } | extra_blocked_ids
     candidate_ids = {road_id for road_id in member_ids if road_id not in blocked_ids and road_id in roads}
     if not candidate_ids:
         return TrunkBuildResult(

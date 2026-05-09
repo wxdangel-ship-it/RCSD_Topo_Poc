@@ -335,3 +335,16 @@ cases/group_0001/compare/p01_arm_compare_layers.gpkg
 - 自动检查能发现关键异常。
 - 代码中不使用 `grade / grade_2` 参与 Arm 构建主规则。
 - 完成 py_compile、单元测试、synthetic case、多 junction-group、输出结构、PNG/GPKG 存在性与审计检查。
+
+## 9. P01-A1 v0.4.0 RoadNextRoad-aware ArmMovement 与 Trunk 修正
+
+本轮继续修订 A1，不新增独立阶段，不实现 A2 / A3 / P01-B。
+
+- A1 runner 新增可选 `--swsd-road-next-road / --rcsd-road-next-road`；F-RCSD RoadNextRoad 是业务结果输出，不作为 A1 输入。
+- RoadNextRoad 归一化为 `RoadMovementEvidence`，只表达 allowed evidence；缺失只表示 `no_allowed_evidence`，不得解释为 prohibited。
+- `turnType / turntype` 只保留到 `raw_turn_type` 与审计 summary，禁止用于 `movement_type` 判定。
+- 每套数据每个路口输出全量 `from_final_arm x to_final_arm` ArmMovement。
+- `movement_type` 支持 `straight / left / right / uturn / unknown`，按 same-arm、trunk / LocalArmCandidate 主交通流连续性、RoadNextRoad trunk evidence 与相对左右侧判定。
+- 输出 `arm_movements.json / road_movement_evidence.json / arm_receiving_road_roles.json / trunk_corrections.json / corrected_final_arms.json`。
+- corrected trunk 只允许排除 advance-left-only receiving road；目标 Arm 无 straight receiving evidence 时不得排除，必须输出 `straight_evidence_missing`。
+- review GPKG 增加 movement、evidence、receiving road、movement-excluded trunk 和 corrected trunk 图层。

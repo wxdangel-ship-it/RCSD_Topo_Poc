@@ -10,6 +10,7 @@ from typing import Any
 
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset, normalise_id, write_csv, write_gpkg_layers, write_json
 from rcsd_topo_poc.modules.p01_arm_build.models import DATASETS, DatasetInput, JunctionGroup, to_plain
+from rcsd_topo_poc.modules.p01_arm_build.road_next_road import read_road_next_road
 from rcsd_topo_poc.modules.p01_arm_build.review import (
     build_compare_layers,
     build_dataset_review_layers,
@@ -42,6 +43,19 @@ REVIEW_INDEX_FIELDS = [
     "trunk_ambiguous_count",
     "formway_missing_count",
     "formway_unparseable_count",
+    "arm_movement_count",
+    "road_movement_evidence_count",
+    "road_movement_mapped_count",
+    "road_movement_unmapped_count",
+    "straight_receiving_road_count",
+    "advance_left_receiving_road_count",
+    "trunk_correction_count",
+    "trunk_correction_excluded_road_count",
+    "trunk_correction_straight_evidence_missing_count",
+    "corrected_trunk_complete_count",
+    "corrected_trunk_partial_count",
+    "corrected_trunk_none_count",
+    "corrected_trunk_ambiguous_count",
     "initial_arm_count",
     "final_arm_count",
     "local_arm_candidate_count",
@@ -77,6 +91,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rcsd-roads", required=True)
     parser.add_argument("--frcsd-nodes", required=True)
     parser.add_argument("--frcsd-roads", required=True)
+    parser.add_argument("--swsd-road-next-road")
+    parser.add_argument("--rcsd-road-next-road")
     parser.add_argument("--junction-group", action="append", required=True)
     parser.add_argument("--out-root", required=True)
     parser.add_argument("--run-id")
@@ -113,8 +129,8 @@ def _priority_min(current: str, candidate: str) -> str:
 
 def _dataset_inputs_from_args(args: argparse.Namespace) -> dict[str, DatasetInput]:
     return {
-        "SWSD": DatasetInput("SWSD", Path(args.swsd_nodes), Path(args.swsd_roads)),
-        "RCSD": DatasetInput("RCSD", Path(args.rcsd_nodes), Path(args.rcsd_roads)),
+        "SWSD": DatasetInput("SWSD", Path(args.swsd_nodes), Path(args.swsd_roads), Path(args.swsd_road_next_road) if args.swsd_road_next_road else None),
+        "RCSD": DatasetInput("RCSD", Path(args.rcsd_nodes), Path(args.rcsd_roads), Path(args.rcsd_road_next_road) if args.rcsd_road_next_road else None),
         "FRCSD": DatasetInput("FRCSD", Path(args.frcsd_nodes), Path(args.frcsd_roads)),
     }
 
@@ -130,7 +146,11 @@ def _preflight_payload(
     return {
         "run_id": run_id,
         "input_paths": {
-            dataset: {"nodes": str(item.nodes_path), "roads": str(item.roads_path)}
+            dataset: {
+                "nodes": str(item.nodes_path),
+                "roads": str(item.roads_path),
+                "road_next_road": str(item.road_next_road_path) if item.road_next_road_path else None,
+            }
             for dataset, item in dataset_inputs.items()
         },
         "right_turn_formway_values": sorted(right_turn_formway_values),
@@ -201,7 +221,12 @@ def _write_dataset_outputs(
     write_json(dataset_dir / "junction_context.json", result.context)
     write_json(dataset_dir / "initial_arms.json", result.initial_arms)
     write_json(dataset_dir / "final_arms.json", result.final_arms)
+    write_json(dataset_dir / "corrected_final_arms.json", result.corrected_final_arms)
     write_json(dataset_dir / "advance_right_turn_relations.json", result.advance_right_turn_relations)
+    write_json(dataset_dir / "arm_movements.json", result.arm_movements)
+    write_json(dataset_dir / "road_movement_evidence.json", result.road_movement_evidence)
+    write_json(dataset_dir / "arm_receiving_road_roles.json", result.arm_receiving_road_roles)
+    write_json(dataset_dir / "trunk_corrections.json", result.trunk_corrections)
     write_json(dataset_dir / "local_arm_candidates.json", result.local_arm_candidates)
     write_json(dataset_dir / "arm_traces.json", result.traces)
     write_json(dataset_dir / "through_decisions.json", result.decisions)
@@ -260,6 +285,19 @@ def _summary_payload(
         "trunk_ambiguous_count": sum(int(row["trunk_ambiguous_count"]) for row in rows),
         "formway_missing_count": sum(int(row["formway_missing_count"]) for row in rows),
         "formway_unparseable_count": sum(int(row["formway_unparseable_count"]) for row in rows),
+        "arm_movement_count": sum(int(row["arm_movement_count"]) for row in rows),
+        "road_movement_evidence_count": sum(int(row["road_movement_evidence_count"]) for row in rows),
+        "road_movement_mapped_count": sum(int(row["road_movement_mapped_count"]) for row in rows),
+        "road_movement_unmapped_count": sum(int(row["road_movement_unmapped_count"]) for row in rows),
+        "straight_receiving_road_count": sum(int(row["straight_receiving_road_count"]) for row in rows),
+        "advance_left_receiving_road_count": sum(int(row["advance_left_receiving_road_count"]) for row in rows),
+        "trunk_correction_count": sum(int(row["trunk_correction_count"]) for row in rows),
+        "trunk_correction_excluded_road_count": sum(int(row["trunk_correction_excluded_road_count"]) for row in rows),
+        "trunk_correction_straight_evidence_missing_count": sum(int(row["trunk_correction_straight_evidence_missing_count"]) for row in rows),
+        "corrected_trunk_complete_count": sum(int(row["corrected_trunk_complete_count"]) for row in rows),
+        "corrected_trunk_partial_count": sum(int(row["corrected_trunk_partial_count"]) for row in rows),
+        "corrected_trunk_none_count": sum(int(row["corrected_trunk_none_count"]) for row in rows),
+        "corrected_trunk_ambiguous_count": sum(int(row["corrected_trunk_ambiguous_count"]) for row in rows),
         "ambiguous_boundary_count": sum(int(row["ambiguous_trace_count"]) for row in rows),
         "t_mainline_through_count": sum(int(row["t_mainline_through_count"]) for row in rows),
         "t_side_terminal_count": sum(int(row["t_side_terminal_count"]) for row in rows),
@@ -288,6 +326,7 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         f"out_root={Path(args.out_root)} right_turn_values={sorted(right_turn_formway_values) or '<none>'}"
     )
     loaded: dict[str, Any] = {}
+    road_next_road_by_dataset: dict[str, Any] = {}
     for dataset_index, dataset in enumerate(DATASETS, start=1):
         dataset_input = dataset_inputs[dataset]
         load_started_at = time.perf_counter()
@@ -296,9 +335,10 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
             f"nodes={dataset_input.nodes_path} roads={dataset_input.roads_path}"
         )
         loaded[dataset] = load_dataset(dataset_input)
+        road_next_road_by_dataset[dataset] = read_road_next_road(dataset_input.road_next_road_path)
         _progress(
             f"loaded {dataset}: nodes={len(loaded[dataset].nodes)} roads={len(loaded[dataset].roads)} "
-            f"duration={time.perf_counter() - load_started_at:.1f}s"
+            f"road_next_road={len(road_next_road_by_dataset[dataset])} duration={time.perf_counter() - load_started_at:.1f}s"
         )
 
     _progress(f"write preflight {run_root / 'preflight.json'}")
@@ -334,6 +374,8 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
                 loaded[dataset],
                 junction_id=junction_id,
                 right_turn_formway_values=right_turn_formway_values,
+                road_next_road_records=road_next_road_by_dataset[dataset],
+                has_road_next_road_input=dataset_inputs[dataset].road_next_road_path is not None,
             )
             result_by_dataset[dataset] = result
             dataset_dir = case_dir / dataset

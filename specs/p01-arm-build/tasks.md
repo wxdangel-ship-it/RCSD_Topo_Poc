@@ -103,3 +103,21 @@
 - [x] 增强 summary / review index 特殊转向与 trunk 统计。
 - [x] 新增 bit7 / bit8 / seed 外侧提前右转 / 连续 bit7 链归并 / relation / trunk fallback / formway audit 测试。
 - [x] 回归 A1 既有测试。
+
+## Phase 7: P01-A1 v0.4.0 RoadNextRoad-aware ArmMovement and Trunk Correction
+
+- [x] 读取 P01 v0.4.0 需求文档并确认本轮仍是 A1 修订。
+- [x] 更新 A1 spec / plan / tasks 与模块契约。
+- [x] 保持 A1 callable runner，不新增正式 CLI。
+- [x] 新增 `--swsd-road-next-road / --rcsd-road-next-road` 可选参数；F-RCSD RoadNextRoad 不作为 A1 输入。
+- [x] 实现 SWSD JSON 与 RCSD GeoJSON RoadNextRoad 读取。
+- [x] 归一化 `RoadMovementEvidence` 并保留 raw turn type 审计。
+- [x] 生成全量 `from_final_arm x to_final_arm` ArmMovement。
+- [x] 不使用 `turnType / turntype` 判定 movement_type。
+- [x] 将 RoadNextRoad allowed evidence 投影到 ArmMovement。
+- [x] 统计 receiving road role。
+- [x] 识别 advance-left-only receiving road。
+- [x] 实现 corrected trunk 与 `corrected_final_arms.json`。
+- [x] 增强 JSON / GPKG / PNG / summary / review index 输出。
+- [x] 新增 synthetic 测试覆盖 RoadNextRoad 读取、movement、trunk correction。
+- [x] 回归 A1 / A2 既有测试。

@@ -133,3 +133,12 @@ P01-A1 正式特殊转向识别使用 `formway` bit 运算；`--right-turn-formw
 - 当前实现对 T 型主通道采用可审计方向裁决：可唯一确认横向主通道时继续，不能稳定确认时停止并审计，不静默穿越。
 - 当前不做 Arm 配准，因此 compare 只展示三套数据同视野审查与统计差异。
 - `LocalArmCandidate` 用于解释 trace 碎片化风险；当其完整覆盖 InitialArm 时，正式 `FinalArm` 可采用兜底聚合。
+
+## 9. P01-A1 v0.4.0 RoadNextRoad-aware ArmMovement Plan
+
+- 在现有 `p01_arm_build` 内修订 A1，不新建业务模块，不新增正式 CLI。
+- 新增内部 helper：`road_next_road.py` 读取 JSON / GeoJSON，`movement.py` 生成 RoadMovementEvidence、ArmMovement、receiving role 和 corrected trunk。
+- runner 增加三个可选 RoadNextRoad 输入；未提供时输出 no-op correction，既有 A1 行为不回退。
+- review 输出增加 movement/evidence/receiving/corrected trunk 图层；summary / review index 增加 movement 与 correction 统计。
+- 文件体量策略：避免继续扩张 `topology.py`，新增 helper 控制在 50 KB 以下。
+- 测试策略：新增 SWSD JSON、RCSD GeoJSON、全量 movement、turnType 禁用、allowed evidence 投影、advance-left-only trunk correction、straight evidence priority、无 straight evidence 不排除 trunk、GPKG/PNG/summary 字段检查；F-RCSD RoadNextRoad 不作为 A1 输入。

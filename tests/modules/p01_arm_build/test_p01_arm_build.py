@@ -17,6 +17,7 @@ from rcsd_topo_poc.modules.p01_arm_build.review import (
     _projector,
 )
 from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_args
+from rcsd_topo_poc.modules.p01_arm_build.road_next_road import read_road_next_road
 from rcsd_topo_poc.modules.p01_arm_build.text_bundle import (
     P01_TEXT_BUNDLE_LIMIT_BYTES,
     run_p01_decode_text_bundle,
@@ -215,6 +216,15 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert len(advance_right_relations) == 1
     assert advance_right_relations[0]["advance_right_turn_road_ids"] == ["S1_right_turn"]
     assert advance_right_relations[0]["trace_status"] in {"target_arm_not_found", "ambiguous", "partial", "resolved"}
+    assert (swsd_dir / "arm_movements.json").is_file()
+    assert (swsd_dir / "road_movement_evidence.json").is_file()
+    assert (swsd_dir / "arm_receiving_road_roles.json").is_file()
+    assert (swsd_dir / "trunk_corrections.json").is_file()
+    assert (swsd_dir / "corrected_final_arms.json").is_file()
+    trunk_corrections = json.loads((swsd_dir / "trunk_corrections.json").read_text(encoding="utf-8"))
+    assert {item["trunk_correction_status"] for item in trunk_corrections} == {
+        "not_evaluated_no_road_next_road_input"
+    }
 
     local_candidates = json.loads((swsd_dir / "local_arm_candidates.json").read_text(encoding="utf-8"))
     assert len(local_candidates) == 4
@@ -242,6 +252,12 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
         "advance_right_turn_roads",
         "arm_trunk_roads",
         "advance_right_turn_relations",
+        "arm_movements",
+        "road_movement_evidence",
+        "straight_receiving_roads",
+        "advance_left_receiving_roads",
+        "trunk_excluded_by_movement_roads",
+        "corrected_trunk_roads",
         "special_formway_issue_points",
     }
 
@@ -253,6 +269,8 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert all(row["review_priority"] in {"P0", "P1", "P2", "P3"} for row in rows)
     assert all("advance_right_turn_road_count" in row for row in rows)
     assert all("trunk_partial_count" in row for row in rows)
+    assert all("arm_movement_count" in row for row in rows)
+    assert all("trunk_correction_count" in row for row in rows)
 
 
 def test_advance_right_turn_bit7_is_detected_without_explicit_field_value(tmp_path: Path) -> None:
@@ -471,6 +489,162 @@ def test_formway_missing_and_unparseable_are_audited(tmp_path: Path) -> None:
     assert result.issue_report.issue_counts["formway_unparseable"] == 1
     assert result.metrics["formway_missing_count"] == 1
     assert result.metrics["formway_unparseable_count"] == 1
+
+
+def _movement_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    nodes_path = tmp_path / "movement_nodes.gpkg"
+    roads_path = tmp_path / "movement_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("W", None, -20.0, 0.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("n_adv_left", "N", "C", 2, "256", [(0.0, 20.0), (0.0, 0.0)]),
+            ("w_in", "W", "C", 2, "0", [(-20.0, 0.0), (0.0, 0.0)]),
+            ("e_main", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("e_left_recv", "C", "E", 2, "0", [(0.0, 1.0), (20.0, 1.0)]),
+        ],
+    )
+    return nodes_path, roads_path
+
+
+def _arm_id_by_seed(result, seed_road_id: str) -> str:
+    for arm in result.final_arms:
+        if seed_road_id in arm.initial_arm["seed_road_ids"]:
+            return arm.final_arm_id
+    raise AssertionError(f"seed road not found: {seed_road_id}")
+
+
+def test_road_next_road_json_and_geojson_are_normalised(tmp_path: Path) -> None:
+    swsd_path = tmp_path / "RoadNextRoad.json"
+    swsd_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": 1,
+                    "roadId": -1,
+                    "nextRoadId": -2,
+                    "road_id": "r1",
+                    "next_road_id": "r2",
+                    "turnType": 8,
+                    "type": 1,
+                    "source": 2,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    geojson_path = tmp_path / "RoadNextRoad.geojson"
+    geojson_path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "id": 2,
+                            "road_id": "r3",
+                            "next_road_id": "r4",
+                            "turntype": 4,
+                            "source": 1,
+                        },
+                        "geometry": None,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    swsd = read_road_next_road(swsd_path)
+    rcsd = read_road_next_road(geojson_path)
+
+    assert swsd[0].road_id == "r1"
+    assert swsd[0].next_road_id == "r2"
+    assert swsd[0].raw_turn_type == "8"
+    assert rcsd[0].road_id == "r3"
+    assert rcsd[0].next_road_id == "r4"
+    assert rcsd[0].raw_turn_type == "4"
+
+
+def test_road_next_road_movement_excludes_advance_left_only_receiving_trunk(tmp_path: Path) -> None:
+    nodes_path, roads_path = _movement_fixture(tmp_path)
+    rnr_path = tmp_path / "RoadNextRoad.json"
+    rnr_path.write_text(
+        json.dumps(
+            [
+                {"id": "straight", "road_id": "w_in", "next_road_id": "e_main", "turnType": "left_code"},
+                {"id": "adv_left", "road_id": "n_adv_left", "next_road_id": "e_left_recv", "turnType": "straight_code"},
+                {"id": "outside", "road_id": "outside_a", "next_road_id": "outside_b", "turnType": "4"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(
+        loaded,
+        junction_id="C",
+        right_turn_formway_values={"128"},
+        road_next_road_records=read_road_next_road(rnr_path),
+        has_road_next_road_input=True,
+    )
+
+    from_w = _arm_id_by_seed(result, "w_in")
+    from_n = _arm_id_by_seed(result, "n_adv_left")
+    to_e = _arm_id_by_seed(result, "e_main")
+    straight = next(item for item in result.arm_movements if item.from_arm_id == from_w and item.to_arm_id == to_e)
+    left = next(item for item in result.arm_movements if item.from_arm_id == from_n and item.to_arm_id == to_e)
+    correction = next(item for item in result.trunk_corrections if item.arm_id == to_e)
+
+    assert len(result.arm_movements) == len(result.final_arms) * len(result.final_arms)
+    assert result.metrics["road_movement_evidence_count"] == 3
+    assert result.metrics["road_movement_mapped_count"] == 2
+    assert result.metrics["road_movement_unmapped_count"] == 1
+    assert straight.movement_type == "straight"
+    assert straight.permission_evidence_status == "allowed_supported"
+    assert left.movement_type == "left"
+    assert left.has_advance_left_road_evidence is True
+    assert correction.trunk_correction_status == "corrected"
+    assert correction.movement_excluded_receiving_road_ids == ("e_left_recv",)
+    assert "e_left_recv" not in correction.corrected_trunk_road_ids
+    assert "e_main" in correction.corrected_trunk_road_ids
+    assert any(role.road_id == "e_left_recv" and role.exclude_from_trunk for role in result.arm_receiving_road_roles)
+    assert result.corrected_final_arms
+    assert result.corrected_final_arms[0].final_arm["advance_left_turn_road_ids"] is not None
+
+
+def test_road_next_road_without_straight_receiving_does_not_exclude_trunk(tmp_path: Path) -> None:
+    nodes_path, roads_path = _movement_fixture(tmp_path)
+    rnr_path = tmp_path / "RoadNextRoad.json"
+    rnr_path.write_text(
+        json.dumps([{"id": "adv_left", "road_id": "n_adv_left", "next_road_id": "e_left_recv", "turnType": 1}]),
+        encoding="utf-8",
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(
+        loaded,
+        junction_id="C",
+        right_turn_formway_values={"128"},
+        road_next_road_records=read_road_next_road(rnr_path),
+        has_road_next_road_input=True,
+    )
+
+    to_e = _arm_id_by_seed(result, "e_main")
+    correction = next(item for item in result.trunk_corrections if item.arm_id == to_e)
+
+    assert correction.trunk_correction_status == "straight_evidence_missing"
+    assert correction.movement_excluded_receiving_road_ids == tuple()
+    assert "e_left_recv" in correction.corrected_trunk_road_ids
 
 
 def test_dataset_review_context_excludes_far_unrelated_roads(tmp_path: Path) -> None:

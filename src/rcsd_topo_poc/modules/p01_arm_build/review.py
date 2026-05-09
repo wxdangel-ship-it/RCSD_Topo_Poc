@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.p01_arm_build.models import DatasetBuildResult, LoadedDataset
@@ -148,6 +148,10 @@ def _draw_dataset_panel(
     advance_left_ids = set(result.context.advance_left_turn_road_ids)
     advance_right_ids = set(result.context.advance_right_turn_road_ids)
     trunk_ids = {road_id for arm in result.initial_arms for road_id in arm.trunk_road_ids}
+    corrected_trunk_ids = {road_id for correction in result.trunk_corrections for road_id in correction.corrected_trunk_road_ids}
+    movement_excluded_ids = {
+        road_id for correction in result.trunk_corrections for road_id in correction.movement_excluded_receiving_road_ids
+    }
     member_nodes = set(result.context.member_node_ids)
 
     for road_id in sorted(road_ids):
@@ -165,6 +169,9 @@ def _draw_dataset_panel(
         elif road.road_id in trunk_ids:
             color = TRUNK_DARK
             width_px = 6
+        elif road.road_id in corrected_trunk_ids:
+            color = TRUNK_DARK
+            width_px = 5
         elif road.road_id in internal_ids:
             color = INTERNAL_ORANGE
             width_px = 5
@@ -211,6 +218,16 @@ def _draw_dataset_panel(
         if road and road_id in road_ids:
             center = road.geometry.interpolate(0.55, normalized=True)
             _text(draw, project(float(center.x), float(center.y)), "TRUNK", font=font)
+    for road_id in sorted(corrected_trunk_ids - trunk_ids):
+        road = loaded.roads.get(road_id)
+        if road and road_id in road_ids:
+            center = road.geometry.interpolate(0.5, normalized=True)
+            _text(draw, project(float(center.x), float(center.y)), "Corrected trunk", font=font)
+    for road_id in sorted(movement_excluded_ids):
+        road = loaded.roads.get(road_id)
+        if road and road_id in road_ids:
+            center = road.geometry.interpolate(0.45, normalized=True)
+            _text(draw, project(float(center.x), float(center.y)), "AdvL-only recv", font=font, fill=EXCLUDED_RED)
 
     for road_id in sorted(advance_left_ids):
         road = loaded.roads.get(road_id)
@@ -266,7 +283,8 @@ def render_dataset_review_png(path: Path, loaded: LoadedDataset, result: Dataset
         f"{result.dataset} junction={result.junction_id} "
         f"arms={metrics['initial_arm_count']} stable={metrics['stable_arm_count']} "
         f"issue={metrics['issue_count']} R7={metrics['advance_right_turn_road_count']} "
-        f"L8={metrics['advance_left_turn_road_count']}"
+        f"L8={metrics['advance_left_turn_road_count']} mov={metrics['arm_movement_count']} "
+        f"corr={metrics['trunk_correction_count']}"
     )
     _draw_dataset_panel(
         draw,
@@ -335,6 +353,12 @@ def _dataset_review_context(
     for relation in result.advance_right_turn_relations:
         context_road_ids.update(relation.trace_road_ids)
         context_node_ids.update(relation.trace_node_ids[:2])
+    for evidence in result.road_movement_evidence:
+        context_road_ids.add(evidence.road_id)
+        context_road_ids.add(evidence.next_road_id)
+    for correction in result.trunk_corrections:
+        context_road_ids.update(correction.corrected_trunk_road_ids)
+        context_road_ids.update(correction.movement_excluded_receiving_road_ids)
 
     seed_road_ids = {trace.seed_road_id for trace in result.traces}
     context_road_ids.update(seed_road_ids)
@@ -502,6 +526,96 @@ def build_dataset_review_layers(
                         },
                     )
                 )
+    road_centroids = {road_id: road.geometry.centroid for road_id, road in loaded.roads.items()}
+    arm_anchor: dict[str, Point] = {}
+    for arm in result.final_arms:
+        road_ids = list(arm.trunk_road_ids) or list(arm.initial_arm.get("seed_road_ids", []))
+        points = [road_centroids[road_id] for road_id in road_ids if road_id in road_centroids]
+        if points:
+            arm_anchor[arm.final_arm_id] = Point(
+                sum(point.x for point in points) / len(points),
+                sum(point.y for point in points) / len(points),
+            )
+    arm_movements = []
+    for movement in result.arm_movements:
+        from_point = arm_anchor.get(movement.from_arm_id)
+        to_point = arm_anchor.get(movement.to_arm_id)
+        if from_point and to_point:
+            arm_movements.append(
+                (
+                    LineString([from_point, to_point]),
+                    {
+                        "movement_id": movement.movement_id,
+                        "from_arm_id": movement.from_arm_id,
+                        "to_arm_id": movement.to_arm_id,
+                        "movement_type": movement.movement_type,
+                        "permission": movement.permission_evidence_status,
+                    },
+                )
+            )
+    road_movement_evidence = []
+    for evidence in result.road_movement_evidence:
+        from_point = road_centroids.get(evidence.road_id)
+        to_point = road_centroids.get(evidence.next_road_id)
+        if from_point and to_point:
+            road_movement_evidence.append(
+                (
+                    LineString([from_point, to_point]),
+                    {
+                        "evidence_id": evidence.evidence_id,
+                        "from_arm_id": evidence.from_arm_id or "",
+                        "to_arm_id": evidence.to_arm_id or "",
+                        "mapping_status": evidence.mapping_status,
+                    },
+                )
+            )
+    straight_receiving_roads = []
+    advance_left_receiving_roads = []
+    for role in result.arm_receiving_road_roles:
+        road = loaded.roads.get(role.road_id)
+        if not road:
+            continue
+        record = (
+            road.geometry,
+            {
+                "target_arm": role.target_arm_id,
+                "road_id": role.road_id,
+                "roles": ",".join(role.receiving_roles),
+                "exclude": role.exclude_from_trunk,
+                "reason": role.exclude_reason,
+            },
+        )
+        if role.straight_evidence_count > 0:
+            straight_receiving_roads.append(record)
+        if role.advance_left_evidence_count > 0:
+            advance_left_receiving_roads.append(record)
+    trunk_excluded_by_movement_roads = [
+        (
+            loaded.roads[road_id].geometry,
+            {
+                "target_arm": correction.arm_id,
+                "road_id": road_id,
+                "reason": "advance_left_receiving_only_not_straight_receiving",
+            },
+        )
+        for correction in result.trunk_corrections
+        for road_id in correction.movement_excluded_receiving_road_ids
+        if road_id in loaded.roads
+    ]
+    corrected_trunk_roads = [
+        (
+            loaded.roads[road_id].geometry,
+            {
+                "arm_id": correction.arm_id,
+                "road_id": road_id,
+                "status": correction.trunk_correction_status,
+                "reason": correction.trunk_correction_reason,
+            },
+        )
+        for correction in result.trunk_corrections
+        for road_id in correction.corrected_trunk_road_ids
+        if road_id in loaded.roads
+    ]
     issue_points = []
     special_issue_points = []
     fallback_point = None
@@ -534,6 +648,12 @@ def build_dataset_review_layers(
         ("advance_left_turn_roads", "LineString", advance_left_roads),
         ("advance_right_turn_roads", "LineString", advance_right_roads),
         ("advance_right_turn_relations", "LineString", advance_right_relations),
+        ("arm_movements", "LineString", arm_movements),
+        ("road_movement_evidence", "LineString", road_movement_evidence),
+        ("straight_receiving_roads", "LineString", straight_receiving_roads),
+        ("advance_left_receiving_roads", "LineString", advance_left_receiving_roads),
+        ("trunk_excluded_by_movement_roads", "LineString", trunk_excluded_by_movement_roads),
+        ("corrected_trunk_roads", "LineString", corrected_trunk_roads),
         ("special_formway_issue_points", "Point", special_issue_points),
         ("issue_points", "Point", issue_points),
     ]

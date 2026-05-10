@@ -278,6 +278,7 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert (frcsd_dir / "frcsd_source_road_map.json").is_file()
     assert (frcsd_dir / "source_movement_policy_swsd.json").is_file()
     assert (frcsd_dir / "source_movement_policy_rcsd.json").is_file()
+    assert (frcsd_dir / "parallel_branch_alignment.json").is_file()
     assert (frcsd_dir / "frcsd_road_next_road_audit.json").is_file()
     assert (frcsd_dir / "frcsd_road_next_road_issue_report.json").is_file()
     assert (frcsd_dir / "frcsd_road_next_road_review_layers.gpkg").is_file()
@@ -317,6 +318,7 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert all("arm_movement_count" in row for row in rows)
     assert all("trunk_correction_count" in row for row in rows)
     assert all("frcsd_generated_road_next_road_count" in row for row in rows)
+    assert all("frcsd_parallel_branch_alignment_count" in row for row in rows)
 
 
 def test_advance_right_turn_bit7_is_detected_without_explicit_field_value(tmp_path: Path) -> None:
@@ -759,18 +761,34 @@ def test_frcsd_road_next_road_same_source_inheritance(tmp_path: Path) -> None:
     frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
     swsd_rnr = tmp_path / "swsd_rnr.json"
     swsd_rnr.write_text(
-        json.dumps([{"id": "s_allowed", "road_id": "s_w_in", "next_road_id": "s_e_main", "turnType": 9}]),
+        json.dumps(
+            [
+                {"id": "s_allowed", "road_id": "s_w_in", "next_road_id": "s_e_main", "turnType": 9},
+                {"id": "s_adv_left", "road_id": "s_n_adv_left", "next_road_id": "s_e_left_recv", "turnType": 9},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    frcsd_rnr = tmp_path / "frcsd_rnr.json"
+    frcsd_rnr.write_text(
+        json.dumps(
+            [
+                {"id": "f_allowed", "road_id": "f_w_in", "next_road_id": "f_e_main", "turnType": 9},
+                {"id": "f_adv_left", "road_id": "f_n_adv_left", "next_road_id": "f_e_left_recv", "turnType": 9},
+            ]
+        ),
         encoding="utf-8",
     )
     swsd_records = read_road_next_road(swsd_rnr)
+    frcsd_records = read_road_next_road(frcsd_rnr)
     loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
     loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
-    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads, frcsd_records)
 
     final = build_frcsd_road_next_road(
         loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
         result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
-        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": frcsd_records},
     )
     geojson = final_geojson(final)
 
@@ -781,6 +799,15 @@ def test_frcsd_road_next_road_same_source_inheritance(tmp_path: Path) -> None:
     assert geojson["features"][0]["geometry"] is None
     assert {"id", "road_id", "next_road_id", "type", "source", "turntype", "city_code"} <= set(
         geojson["features"][0]["properties"]
+    )
+    assert any(
+        item.source_dataset == "SWSD"
+        and item.alignment_status == "count_matched_ordered"
+        and any(
+            pair["frcsd_road_id"] == "f_e_left_recv" and pair["source_road_id"] == "s_e_left_recv"
+            for pair in item.aligned_pairs
+        )
+        for item in final.parallel_branch_alignment
     )
 
 

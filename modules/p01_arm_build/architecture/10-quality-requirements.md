@@ -19,7 +19,7 @@
 - issue_report 记录异常与风险。
 - advance_right_turn_relations 记录提前右转 from Arm、to Arm、trace road/node、状态和风险。
 - review index 与 summary 记录特殊转向、trunk、formway 缺失 / 不可解析统计。
-- P01-Final 记录 F-RCSD source map、source policy、final RoadNextRoad audit、issue report 与 generation metrics。
+- P01-Final 记录 F-RCSD source map、source policy、parallel branch alignment、final RoadNextRoad audit、issue report 与 generation metrics。
 
 ## GIS QA
 

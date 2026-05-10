@@ -54,6 +54,7 @@
 - [x] entering arm road count mismatch manual review。
 - [x] parallel_branch count mismatch data error。
 - [x] source parallel branch missing in F-RCSD audit。
+- [x] parallel_branch alignment 独立审计对象。
 - [x] missing right-turn carrier issue。
 - [x] final `frcsd_road_next_road.geojson`。
 - [x] final source map、audit、issue report。
@@ -69,3 +70,4 @@
 - [x] turnType / turntype movement_type 禁用检查。
 - [x] 文档过程性措辞扫描。
 - [ ] 真实 1019789 RoadNextRoad case 本地执行；依赖可访问的真实 RoadNextRoad 与内网数据路径。
+- [ ] 真实 RCSD `turntype` 输出编码规范确认；仓库已按模块契约映射输出。

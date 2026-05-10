@@ -69,6 +69,9 @@ REVIEW_INDEX_FIELDS = [
     "frcsd_cross_source_generated_count",
     "frcsd_fallback_to_swsd_count",
     "frcsd_manual_review_required_count",
+    "frcsd_parallel_branch_alignment_count",
+    "frcsd_parallel_branch_count_matched_ordered_count",
+    "frcsd_parallel_branch_manual_review_required_count",
     "initial_arm_count",
     "final_arm_count",
     "local_arm_candidate_count",
@@ -319,6 +322,13 @@ def _summary_payload(
         "frcsd_cross_source_generated_count": sum(int(row.get("frcsd_cross_source_generated_count") or 0) for row in rows),
         "frcsd_fallback_to_swsd_count": sum(int(row.get("frcsd_fallback_to_swsd_count") or 0) for row in rows),
         "frcsd_manual_review_required_count": sum(int(row.get("frcsd_manual_review_required_count") or 0) for row in rows),
+        "frcsd_parallel_branch_alignment_count": sum(int(row.get("frcsd_parallel_branch_alignment_count") or 0) for row in rows),
+        "frcsd_parallel_branch_count_matched_ordered_count": sum(
+            int(row.get("frcsd_parallel_branch_count_matched_ordered_count") or 0) for row in rows
+        ),
+        "frcsd_parallel_branch_manual_review_required_count": sum(
+            int(row.get("frcsd_parallel_branch_manual_review_required_count") or 0) for row in rows
+        ),
         "ambiguous_boundary_count": sum(int(row["ambiguous_trace_count"]) for row in rows),
         "t_mainline_through_count": sum(int(row["t_mainline_through_count"]) for row in rows),
         "t_side_terminal_count": sum(int(row["t_side_terminal_count"]) for row in rows),
@@ -427,6 +437,7 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
             loaded_by_dataset=loaded,
             result_by_dataset=result_by_dataset,
             road_next_road_by_dataset=road_next_road_by_dataset,
+            junction_group_id=group.group_id,
         )
         frcsd_dir = case_dir / "FRCSD"
         _progress(
@@ -438,6 +449,7 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         write_json(frcsd_dir / "frcsd_source_road_map.json", frcsd_final.source_road_map)
         write_json(frcsd_dir / "source_movement_policy_swsd.json", frcsd_final.source_movement_policy_swsd)
         write_json(frcsd_dir / "source_movement_policy_rcsd.json", frcsd_final.source_movement_policy_rcsd)
+        write_json(frcsd_dir / "parallel_branch_alignment.json", frcsd_final.parallel_branch_alignment)
         write_json(frcsd_dir / "frcsd_road_next_road_audit.json", frcsd_final.audit)
         write_json(frcsd_dir / "frcsd_road_next_road_issue_report.json", frcsd_final.issue_report)
         final_gpkg = frcsd_dir / "frcsd_road_next_road_review_layers.gpkg"

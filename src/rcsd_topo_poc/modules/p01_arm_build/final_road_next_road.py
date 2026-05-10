@@ -80,11 +80,26 @@ class FrcsdGenerationAudit:
 
 
 @dataclass(frozen=True)
+class ParallelBranchAlignment:
+    dataset: str
+    junction_group_id: str
+    source_dataset: str
+    arm_id: str
+    frcsd_parallel_branch_road_ids: tuple[str, ...]
+    source_parallel_branch_road_ids: tuple[str, ...]
+    alignment_status: str
+    alignment_order_rule: str
+    aligned_pairs: tuple[dict[str, str], ...]
+    issue_flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class FrcsdRoadNextRoadFinalResult:
     features: tuple[dict[str, Any], ...]
     source_road_map: tuple[SourceRoadMap, ...]
     source_movement_policy_swsd: tuple[SourceMovementPolicy, ...]
     source_movement_policy_rcsd: tuple[SourceMovementPolicy, ...]
+    parallel_branch_alignment: tuple[ParallelBranchAlignment, ...]
     audit: tuple[FrcsdGenerationAudit, ...]
     issue_report: dict[str, Any]
     metrics: dict[str, int]
@@ -158,6 +173,11 @@ def _parallel_count_by_arm(roles: dict[str, RoadRole]) -> Counter[str]:
         if role.road_role == "parallel_branch":
             counts[role.arm_id] += 1
     return counts
+
+
+def _road_order_key(road_id: str, roads: dict[str, RoadRecord]) -> tuple[float, float, str]:
+    point = _road_midpoint(roads.get(road_id))
+    return (round(float(point.x), 6), round(float(point.y), 6), road_id)
 
 
 def _raw_pair_index(records: tuple[RawRoadNextRoad, ...]) -> dict[tuple[str, str], tuple[RawRoadNextRoad, ...]]:
@@ -316,6 +336,95 @@ def _policy_index(policy: tuple[SourceMovementPolicy, ...]) -> dict[tuple[str, s
     return {key: tuple(value) for key, value in grouped.items()}
 
 
+def _parallel_branch_alignment(
+    *,
+    junction_group_id: str,
+    loaded_by_dataset: dict[str, LoadedDataset],
+    roles: dict[str, dict[str, RoadRole]],
+    source_map: tuple[SourceRoadMap, ...],
+) -> tuple[ParallelBranchAlignment, ...]:
+    source_map_by_f = {item.f_road_id: item for item in source_map}
+    f_arm_ids = sorted({role.arm_id for role in roles["FRCSD"].values()})
+    rows: list[ParallelBranchAlignment] = []
+    for arm_id in f_arm_ids:
+        f_arm_roles = [role for role in roles["FRCSD"].values() if role.arm_id == arm_id]
+        for source_dataset in ("SWSD", "RCSD"):
+            source_arm_ids: set[str] = set()
+            f_parallel_roles: list[RoadRole] = []
+            mapped_source_by_f: dict[str, str] = {}
+            for f_role in f_arm_roles:
+                source_item = source_map_by_f.get(f_role.road_id)
+                if not source_item or source_item.match_status != "matched" or source_item.source_dataset != source_dataset:
+                    continue
+                source_role = roles[source_dataset].get(source_item.source_road_id or "")
+                if source_role is None:
+                    continue
+                source_arm_ids.add(source_role.arm_id)
+                if f_role.road_role == "parallel_branch":
+                    f_parallel_roles.append(f_role)
+                    mapped_source_by_f[f_role.road_id] = source_item.source_road_id or ""
+            source_parallel_roles = [
+                role
+                for role in roles[source_dataset].values()
+                if role.arm_id in source_arm_ids and role.road_role == "parallel_branch"
+            ]
+            if not source_arm_ids and not f_parallel_roles:
+                continue
+            f_ids = tuple(sorted((role.road_id for role in f_parallel_roles), key=lambda item: _road_order_key(item, loaded_by_dataset["FRCSD"].roads)))
+            source_ids = tuple(
+                sorted(
+                    (role.road_id for role in source_parallel_roles),
+                    key=lambda item: _road_order_key(item, loaded_by_dataset[source_dataset].roads),
+                )
+            )
+            issue_flags: tuple[str, ...] = tuple()
+            aligned_pairs: tuple[dict[str, str], ...] = tuple()
+            order_rule = "source_exact_geometry_match_then_midpoint_xy_road_id"
+            if not f_ids and not source_ids:
+                status = "not_needed"
+                order_rule = "not_needed_no_parallel_branch"
+            elif source_ids and not f_ids:
+                status = "source_missing_in_frcsd"
+                issue_flags = ("source_parallel_branch_missing_in_frcsd",)
+            elif len(f_ids) != len(source_ids):
+                status = "count_mismatch_manual_review_required"
+                issue_flags = ("parallel_branch_count_mismatch_manual_review_required", "data_error")
+            else:
+                pair_rows: list[dict[str, str]] = []
+                mapped_source_ids = []
+                for order_index, f_road_id in enumerate(f_ids, start=1):
+                    source_road_id = mapped_source_by_f.get(f_road_id, "")
+                    mapped_source_ids.append(source_road_id)
+                    pair_rows.append(
+                        {
+                            "order_index": str(order_index),
+                            "frcsd_road_id": f_road_id,
+                            "source_road_id": source_road_id,
+                        }
+                    )
+                if set(mapped_source_ids) == set(source_ids) and all(mapped_source_ids):
+                    status = "count_matched_ordered"
+                    aligned_pairs = tuple(pair_rows)
+                else:
+                    status = "insufficient_geometry_for_ordering"
+                    issue_flags = ("insufficient_geometry_for_ordering",)
+            rows.append(
+                ParallelBranchAlignment(
+                    dataset="FRCSD",
+                    junction_group_id=junction_group_id,
+                    source_dataset=source_dataset,
+                    arm_id=arm_id,
+                    frcsd_parallel_branch_road_ids=f_ids,
+                    source_parallel_branch_road_ids=source_ids,
+                    alignment_status=status,
+                    alignment_order_rule=order_rule,
+                    aligned_pairs=aligned_pairs,
+                    issue_flags=issue_flags,
+                )
+            )
+    return tuple(rows)
+
+
 def _raw_by_id(records: tuple[RawRoadNextRoad, ...]) -> dict[str, RawRoadNextRoad]:
     return {record.raw_id: record for record in records}
 
@@ -387,6 +496,7 @@ def _audit(
 
 def _issues_from_audit(
     source_map: tuple[SourceRoadMap, ...],
+    parallel_branch_alignment: tuple[ParallelBranchAlignment, ...],
     audit_rows: list[FrcsdGenerationAudit],
     duplicate_count: int,
 ) -> dict[str, Any]:
@@ -394,6 +504,16 @@ def _issues_from_audit(
     for row in source_map:
         for flag in row.issue_flags:
             issues.append({"issue_type": flag, "f_road_id": row.f_road_id, "match_status": row.match_status})
+    for row in parallel_branch_alignment:
+        for flag in row.issue_flags:
+            issues.append(
+                {
+                    "issue_type": flag,
+                    "arm_id": row.arm_id,
+                    "source_dataset": row.source_dataset,
+                    "alignment_status": row.alignment_status,
+                }
+            )
     for row in audit_rows:
         for flag in row.issue_flags:
             issues.append(
@@ -414,12 +534,19 @@ def build_frcsd_road_next_road(
     loaded_by_dataset: dict[str, LoadedDataset],
     result_by_dataset: dict[str, DatasetBuildResult],
     road_next_road_by_dataset: dict[str, tuple[RawRoadNextRoad, ...]],
+    junction_group_id: str = "",
 ) -> FrcsdRoadNextRoadFinalResult:
     roles = {dataset: _road_roles(result_by_dataset[dataset]) for dataset in DATASETS}
     source_map = _source_road_map(
         frcsd_roads=loaded_by_dataset["FRCSD"].roads,
         source_roads={"SWSD": loaded_by_dataset["SWSD"].roads, "RCSD": loaded_by_dataset["RCSD"].roads},
         f_roles=roles["FRCSD"],
+    )
+    parallel_alignment = _parallel_branch_alignment(
+        junction_group_id=junction_group_id,
+        loaded_by_dataset=loaded_by_dataset,
+        roles=roles,
+        source_map=source_map,
     )
     source_map_by_f = {item.f_road_id: item for item in source_map}
     raw_pairs = {dataset: _raw_pair_index(road_next_road_by_dataset.get(dataset, tuple())) for dataset in ("SWSD", "RCSD")}
@@ -637,9 +764,10 @@ def build_frcsd_road_next_road(
                         issue_flags=issue_flags,
                     )
                 )
-    issue_report = _issues_from_audit(source_map, audit_rows, duplicate_count)
+    issue_report = _issues_from_audit(source_map, parallel_alignment, audit_rows, duplicate_count)
     source_counts = Counter(item.match_status for item in source_map)
     audit_counts = Counter(item.generation_rule for item in audit_rows if item.permission_status == "allowed")
+    parallel_counts = Counter(item.alignment_status for item in parallel_alignment)
     metrics = {
         "frcsd_generated_road_next_road_count": len(features),
         "frcsd_source_geometry_match_missing_count": source_counts.get("source_geometry_match_missing", 0),
@@ -648,12 +776,23 @@ def build_frcsd_road_next_road(
         "frcsd_cross_source_generated_count": audit_counts.get("cross_source_primary_source_policy", 0),
         "frcsd_fallback_to_swsd_count": audit_counts.get("rcsd_to_swsd_fallback", 0),
         "frcsd_manual_review_required_count": sum(1 for item in audit_rows if item.permission_status == "manual_review_required"),
+        "frcsd_parallel_branch_alignment_count": len(parallel_alignment),
+        "frcsd_parallel_branch_count_matched_ordered_count": parallel_counts.get("count_matched_ordered", 0),
+        "frcsd_parallel_branch_manual_review_required_count": sum(
+            parallel_counts.get(status, 0)
+            for status in (
+                "source_missing_in_frcsd",
+                "count_mismatch_manual_review_required",
+                "insufficient_geometry_for_ordering",
+            )
+        ),
     }
     return FrcsdRoadNextRoadFinalResult(
         features=tuple(features),
         source_road_map=source_map,
         source_movement_policy_swsd=policies["SWSD"],
         source_movement_policy_rcsd=policies["RCSD"],
+        parallel_branch_alignment=parallel_alignment,
         audit=tuple(audit_rows),
         issue_report=issue_report,
         metrics=metrics,

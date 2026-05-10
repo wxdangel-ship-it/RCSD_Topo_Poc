@@ -1,6 +1,6 @@
 # P01 v1.0.0 需求覆盖审计
 
-审计主源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/RCSD_Topo_Poc__P01__REQUIREMENT_v1.0.0.md`
+审计主源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/RCSD_Topo_Poc__P01__REQUIREMENT.md`，文档版本 `v1.0.0`。
 
 审计对象：`p01_arm_build` 模块文档、SpecKit、A1 / A2 / P01-Final 实现与测试。
 
@@ -30,12 +30,12 @@
 | 20 | 同源继承 | 已实现 | 同源 pair 直接查源 RoadNextRoad evidence；tests 覆盖 same-source inheritance。 |
 | 21 | 不同源 primary source | 已实现 | 跨源 pair 使用 from road Source 选择 primary source；tests 覆盖 cross-source generation。 |
 | 22 | 最终生成阶段 RoadNextRoad 缺失视为不通 | 已实现 | SourceMovementPolicy 输出 prohibited；final GeoJSON 不生成缺失 pair；tests 覆盖 missing no generation。 |
-| 23 | 平行支路数量一致性 | 部分实现 | count mismatch 输出 `parallel_branch_count_mismatch_manual_review_required` 与 `data_error`；源有平行支路而 F-RCSD 没有输出 `source_parallel_branch_missing_in_frcsd`。稳定顺序配准未作为独立对象输出，role-level policy 承担生成决策。 |
+| 23 | 平行支路数量一致性 | 已实现 | `parallel_branch_alignment.json` 输出 source_missing、count_matched_ordered、count_mismatch 与 insufficient_geometry 审计；count mismatch 输出 `parallel_branch_count_mismatch_manual_review_required` 与 `data_error`；源有平行支路而 F-RCSD 没有输出 `source_parallel_branch_missing_in_frcsd`。 |
 | 24 | RCSD -> SWSD fallback | 已实现 | `final_road_next_road.py` 限定 from Source=1/to Source=2 且 primary to_arm 缺失时 fallback，并检查 entering arm road count；tests 覆盖。 |
 | 25 | frcsd_road_next_road.geojson | 已实现 | final FeatureCollection 使用 `geometry=null` 与 `id/road_id/next_road_id/type/source/turntype/city_code` properties，包含 duplicate 防护。 |
 | 26 | audit / issue report | 已实现 | 输出 `frcsd_source_road_map.json`、`source_movement_policy_swsd.json`、`source_movement_policy_rcsd.json`、`frcsd_road_next_road_audit.json`、`frcsd_road_next_road_issue_report.json`。 |
 
 ## 未完全闭合项
 
-- 平行支路稳定顺序配准未形成独立审计对象；实现以 role-level policy、count mismatch issue 与 manual review 防护完成生成约束。
-- 真实 1019789 RoadNextRoad case 依赖内网数据路径；本地可访问路径不存在时，只能完成 synthetic / fixture 验证并提供内网命令。
+- 真实 1019789 RoadNextRoad case 依赖内网 RoadNextRoad 路径；本地路径不可访问时，只能完成 synthetic / fixture 验证并提供内网命令。
+- final RoadNextRoad `turntype` 输出编码已按模块契约固定为 `unknown=0 / straight=1 / left=2 / right=3 / uturn=4`；真实 RCSD 编码规范仍需用户提供权威材料确认。

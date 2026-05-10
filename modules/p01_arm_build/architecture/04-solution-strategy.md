@@ -62,4 +62,4 @@ RoadNextRoad 在 A1 阶段只表达 allowed evidence；缺失只输出 `no_allow
 
 trunk correction 只允许 stable straight receiving evidence 参与：`movement_type = straight`、`straight_target_status = unique_straight_target`，且置信度为 high / stable。
 
-P01-Final 中，RoadNextRoad 缺失进入最终产物语义：源侧 RoadNextRoad 缺失则不生成 F-RCSD RoadNextRoad。F-RCSD road 必须先用 `Source + 几何完全一致` 映射到 SWSD / RCSD 源 road；Source 异常、匹配缺失或多匹配均进入 issue，不生成相关 final RoadNextRoad。
+P01-Final 中，RoadNextRoad 缺失进入最终产物语义：源侧 RoadNextRoad 缺失则不生成 F-RCSD RoadNextRoad。F-RCSD road 必须先用 `Source + 几何完全一致` 映射到 SWSD / RCSD 源 road；Source 异常、匹配缺失或多匹配均进入 issue，不生成相关 final RoadNextRoad。平行支路以 `parallel_branch_alignment.json` 独立记录 source missing、count matched ordered、count mismatch 与 insufficient geometry ordering 状态。

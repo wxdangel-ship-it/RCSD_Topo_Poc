@@ -7,7 +7,7 @@
 - A1：读取 SWSD / RCSD / F-RCSD Node、Road 与可选 RoadNextRoad，按语义路口构建 InitialArm / FinalArm / corrected_final_arms。
 - A1：用 `formway` bit7 / bit8 识别提前右转、提前左转，输出 `AdvanceRightTurnRelation`、trunk、ArmMovement、RoadMovementEvidence、ReceivingRoadRole 与 trunk correction。
 - A2：读取 A1 run root，构建 ArmProfile、候选矩阵、RawArmAlignment、LogicalArmGroup、ArmBuildFeedback、source_extra 与配准审查产物。
-- P01-Final：基于 F-RCSD:Road.Source、几何完全一致源 Road 映射、SWSD / RCSD SourceMovementPolicy、同源继承、跨源 primary source 与 RCSD -> SWSD fallback，生成 `frcsd_road_next_road.geojson`。
+- P01-Final：基于 F-RCSD:Road.Source、几何完全一致源 Road 映射、SWSD / RCSD SourceMovementPolicy、平行支路稳定顺序审计、同源继承、跨源 primary source 与 RCSD -> SWSD fallback，生成 `frcsd_road_next_road.geojson`。
 - 输出 JSON、GeoJSON、PNG、GPKG、summary、review index、audit 与 issue report。
 
 ## 边界

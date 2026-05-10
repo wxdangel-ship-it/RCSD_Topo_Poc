@@ -211,6 +211,7 @@ P01-Final：
 - `cases/<group_id>/FRCSD/frcsd_source_road_map.json`
 - `cases/<group_id>/FRCSD/source_movement_policy_swsd.json`
 - `cases/<group_id>/FRCSD/source_movement_policy_rcsd.json`
+- `cases/<group_id>/FRCSD/parallel_branch_alignment.json`
 - `cases/<group_id>/FRCSD/frcsd_road_next_road_audit.json`
 - `cases/<group_id>/FRCSD/frcsd_road_next_road_issue_report.json`
 

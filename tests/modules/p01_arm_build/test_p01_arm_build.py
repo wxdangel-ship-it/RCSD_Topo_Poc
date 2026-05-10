@@ -1047,6 +1047,49 @@ def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_pa
     rcsd_nodes, rcsd_roads = _write_dataset(tmp_path, "R", include_far_noise=True)
     frcsd_nodes, frcsd_roads = _write_dataset(tmp_path, "F", include_far_noise=True)
     bundle_path = tmp_path / "p01_case_bundle.txt"
+    swsd_road_node_road = tmp_path / "SWSD_RoadNodeRoad.json"
+    swsd_road_node_road.write_text(
+        json.dumps(
+            [
+                {"id": "s_keep", "road_id": "S1_in", "next_road_id": "S1_out", "turnType": "raw_keep"},
+                {"id": "s_far", "road_id": "S_far_noise", "next_road_id": "S_far_other", "turnType": "raw_far"},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    rcsd_road_next_road = tmp_path / "RCSD_RoadNextRoad.geojson"
+    rcsd_road_next_road.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": None,
+                        "properties": {
+                            "id": "r_keep",
+                            "road_id": "R1_in",
+                            "next_road_id": "R1_out",
+                            "turntype": "audit_only",
+                        },
+                    },
+                    {
+                        "type": "Feature",
+                        "geometry": None,
+                        "properties": {
+                            "id": "r_far",
+                            "road_id": "R_far_noise",
+                            "next_road_id": "R_far_other",
+                            "turntype": "audit_far",
+                        },
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     artifacts = run_p01_export_text_bundle(
         swsd_nodes=swsd_nodes,
@@ -1055,6 +1098,8 @@ def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_pa
         rcsd_roads=rcsd_roads,
         frcsd_nodes=frcsd_nodes,
         frcsd_roads=frcsd_roads,
+        swsd_road_node_road=swsd_road_node_road,
+        rcsd_road_next_road=rcsd_road_next_road,
         junction_group="S1,R1,F1",
         out_txt=bundle_path,
         bfs_depth=1,
@@ -1074,10 +1119,16 @@ def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_pa
     assert "S1_east_continue" in road_ids
     assert "S_far_noise" not in road_ids
     assert "Sfar_a" not in node_ids
+    swsd_rnr_payload = json.loads((decoded.out_dir / "SWSD" / "RoadNodeRoad.json").read_text(encoding="utf-8"))
+    assert [item["id"] for item in swsd_rnr_payload] == ["s_keep"]
+    rcsd_rnr_payload = json.loads((decoded.out_dir / "RCSD" / "RoadNextRoad.geojson").read_text(encoding="utf-8"))
+    assert [feature["properties"]["id"] for feature in rcsd_rnr_payload["features"]] == ["r_keep"]
 
     manifest = json.loads(decoded.manifest_path.read_text(encoding="utf-8"))
     assert manifest["encoder_info"]["selection"] == "semantic-road-topology-bfs"
     assert manifest["datasets"]["SWSD"]["selected_road_count"] < 10
+    assert manifest["datasets"]["SWSD"]["optional_relation_inputs"]["RoadNodeRoad.json"]["included_record_count"] == 1
+    assert manifest["datasets"]["RCSD"]["optional_relation_inputs"]["RoadNextRoad.geojson"]["included_record_count"] == 1
 
 
 def test_p01_text_bundle_resolves_dataset_junction_id_prefixes(tmp_path: Path) -> None:

@@ -43,6 +43,11 @@ P01_BUNDLE_FILES = (
     "FRCSD/nodes.gpkg",
     "FRCSD/roads.gpkg",
 )
+P01_OPTIONAL_RELATION_BUNDLE_NAMES = {
+    "swsd_road_node_road": ("SWSD", "SWSD/RoadNodeRoad.json"),
+    "swsd_road_next_road": ("SWSD", "SWSD/RoadNextRoad.json"),
+    "rcsd_road_next_road": ("RCSD", "RCSD/RoadNextRoad.geojson"),
+}
 
 
 class P01TextBundleError(ValueError):
@@ -266,6 +271,104 @@ def _road_feature(road: RoadRecord, *, origin_x: float, origin_y: float) -> dict
     }
 
 
+def _first_present_payload(properties: dict[str, Any], names: tuple[str, ...]) -> Any:
+    lower = {str(key).lower(): value for key, value in properties.items()}
+    for name in names:
+        if name in properties:
+            return properties[name]
+        value = lower.get(name.lower())
+        if value is not None:
+            return value
+    return None
+
+
+def _relation_properties(record: Any) -> dict[str, Any]:
+    if not isinstance(record, dict):
+        return {}
+    if isinstance(record.get("properties"), dict):
+        properties = dict(record["properties"])
+        if "id" not in properties and record.get("id") is not None:
+            properties["id"] = record.get("id")
+        return properties
+    return dict(record)
+
+
+def _relation_record_count(payload: Any) -> int:
+    if isinstance(payload, list):
+        return sum(1 for item in payload if isinstance(item, dict))
+    if not isinstance(payload, dict):
+        return 0
+    if isinstance(payload.get("features"), list):
+        return sum(1 for item in payload["features"] if isinstance(item, dict))
+    for key in ("records", "data", "items", "roadNodeRoads", "road_next_roads", "RoadNextRoad"):
+        if isinstance(payload.get(key), list):
+            return sum(1 for item in payload[key] if isinstance(item, dict))
+    return 1
+
+
+def _relation_touches_selected_road(record: Any, selected_road_ids: set[str]) -> bool:
+    properties = _relation_properties(record)
+    road_id = normalise_id(_first_present_payload(properties, ("road_id", "roadId", "roadid")))
+    next_road_id = normalise_id(
+        _first_present_payload(properties, ("next_road_id", "nextRoadId", "nextroadid"))
+    )
+    return bool((road_id and road_id in selected_road_ids) or (next_road_id and next_road_id in selected_road_ids))
+
+
+def _filter_relation_payload(payload: Any, *, selected_road_ids: set[str]) -> tuple[Any, int, int]:
+    raw_count = _relation_record_count(payload)
+    if isinstance(payload, list):
+        filtered = [
+            item for item in payload if isinstance(item, dict) and _relation_touches_selected_road(item, selected_road_ids)
+        ]
+        return filtered, raw_count, len(filtered)
+    if not isinstance(payload, dict):
+        return [], raw_count, 0
+    if isinstance(payload.get("features"), list):
+        filtered_features = [
+            item
+            for item in payload["features"]
+            if isinstance(item, dict) and _relation_touches_selected_road(item, selected_road_ids)
+        ]
+        filtered_payload = dict(payload)
+        filtered_payload["features"] = filtered_features
+        return filtered_payload, raw_count, len(filtered_features)
+    for key in ("records", "data", "items", "roadNodeRoads", "road_next_roads", "RoadNextRoad"):
+        if isinstance(payload.get(key), list):
+            filtered_items = [
+                item
+                for item in payload[key]
+                if isinstance(item, dict) and _relation_touches_selected_road(item, selected_road_ids)
+            ]
+            filtered_payload = dict(payload)
+            filtered_payload[key] = filtered_items
+            return filtered_payload, raw_count, len(filtered_items)
+    if _relation_touches_selected_road(payload, selected_road_ids):
+        return payload, raw_count, 1
+    return {}, raw_count, 0
+
+
+def _prepare_optional_relation_file(
+    *,
+    source_path: Path,
+    selected_road_ids: set[str],
+) -> tuple[bytes, dict[str, Any]]:
+    if not source_path.is_file():
+        raise P01TextBundleError("optional_relation_input_missing", f"Optional relation file missing: {source_path}")
+    payload = json.loads(source_path.read_text(encoding="utf-8"))
+    filtered_payload, raw_count, included_count = _filter_relation_payload(
+        payload,
+        selected_road_ids=selected_road_ids,
+    )
+    content = json.dumps(filtered_payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return content, {
+        "input_path": str(source_path),
+        "raw_record_count": raw_count,
+        "included_record_count": included_count,
+        "filter": "road_id_or_next_road_id_intersects_selected_bfs_roads",
+    }
+
+
 def _vector_bytes(filename: str, features: list[dict[str, Any]], *, crs_text: str | None) -> bytes:
     with tempfile.TemporaryDirectory() as temp_dir:
         vector_path = Path(temp_dir) / filename
@@ -278,7 +381,7 @@ def _prepare_dataset_files(
     *,
     junction_id: str,
     bfs_depth: int,
-) -> tuple[dict[str, bytes], dict[str, Any]]:
+) -> tuple[dict[str, bytes], dict[str, Any], set[str]]:
     node_ids, road_ids, audit = _select_bfs_context(loaded, junction_id=junction_id, bfs_depth=bfs_depth)
     selected_nodes = [loaded.nodes[node_id] for node_id in sorted(node_ids)]
     selected_roads = [loaded.roads[road_id] for road_id in sorted(road_ids)]
@@ -298,7 +401,7 @@ def _prepare_dataset_files(
             "road_crs": _crs_text(loaded.road_layer),
         }
     )
-    return files, audit
+    return files, audit, set(road_ids)
 
 
 def _build_size_report(
@@ -403,23 +506,36 @@ def _build_text_bundle_for_depth(
     junction_ids: dict[str, str],
     bfs_depth: int,
     max_text_size_bytes: int,
+    optional_relation_paths: dict[str, Path] | None = None,
     auto_fit_attempts: list[dict[str, Any]] | None = None,
 ) -> tuple[str, int, dict[str, Any]]:
     files: dict[str, bytes] = {}
     dataset_audits: dict[str, Any] = {}
+    selected_roads_by_dataset: dict[str, set[str]] = {}
     for dataset in DATASETS:
         loaded = loaded_by_dataset[dataset]
-        dataset_files, audit = _prepare_dataset_files(
+        dataset_files, audit, selected_road_ids = _prepare_dataset_files(
             loaded,
             junction_id=junction_ids[dataset],
             bfs_depth=bfs_depth,
         )
         files.update(dataset_files)
+        selected_roads_by_dataset[dataset] = selected_road_ids
         dataset_audits[dataset] = {
             **audit,
             "input_nodes_path": str(dataset_inputs[dataset].nodes_path),
             "input_roads_path": str(dataset_inputs[dataset].roads_path),
         }
+
+    optional_relation_paths = optional_relation_paths or {}
+    for bundle_name, source_path in optional_relation_paths.items():
+        dataset = bundle_name.split("/", 1)[0]
+        content, relation_audit = _prepare_optional_relation_file(
+            source_path=source_path,
+            selected_road_ids=selected_roads_by_dataset.get(dataset, set()),
+        )
+        files[bundle_name] = content
+        dataset_audits.setdefault(dataset, {}).setdefault("optional_relation_inputs", {})[Path(bundle_name).name] = relation_audit
 
     auto_fit_payload = None
     if auto_fit_attempts is not None:
@@ -436,7 +552,7 @@ def _build_text_bundle_for_depth(
         "bfs_depth": bfs_depth,
         "auto_fit": auto_fit_payload or {"enabled": False},
         "datasets": dataset_audits,
-        "file_list": list(P01_BUNDLE_FILES),
+        "file_list": sorted(set(P01_BUNDLE_FILES).union(files)),
         "checksum": {},
         "encoder_info": {
             "archive_format": "zip",
@@ -572,6 +688,9 @@ def run_p01_export_text_bundle(
     rcsd_roads: str | Path,
     frcsd_nodes: str | Path,
     frcsd_roads: str | Path,
+    swsd_road_node_road: str | Path | None = None,
+    swsd_road_next_road: str | Path | None = None,
+    rcsd_road_next_road: str | Path | None = None,
     junction_group: str,
     out_txt: str | Path,
     bfs_depth: int = 2,
@@ -601,6 +720,15 @@ def run_p01_export_text_bundle(
             frcsd_nodes=frcsd_nodes,
             frcsd_roads=frcsd_roads,
         )
+        optional_relation_paths = {
+            P01_OPTIONAL_RELATION_BUNDLE_NAMES[key][1]: Path(value)
+            for key, value in {
+                "swsd_road_node_road": swsd_road_node_road,
+                "swsd_road_next_road": swsd_road_next_road,
+                "rcsd_road_next_road": rcsd_road_next_road,
+            }.items()
+            if value is not None
+        }
         loaded_by_dataset = {
             dataset: load_dataset(dataset_inputs[dataset])
             for dataset in DATASETS
@@ -623,6 +751,7 @@ def run_p01_export_text_bundle(
                 junction_ids=junction_ids,
                 bfs_depth=current_depth,
                 max_text_size_bytes=max_text_size_bytes,
+                optional_relation_paths=optional_relation_paths,
             )
             attempt = _attempt_summary(
                 bfs_depth=current_depth,
@@ -652,6 +781,7 @@ def run_p01_export_text_bundle(
                 junction_ids=junction_ids,
                 bfs_depth=selected_depth,
                 max_text_size_bytes=max_text_size_bytes,
+                optional_relation_paths=optional_relation_paths,
                 auto_fit_attempts=attempts,
             )
             if rebuilt_size <= max_text_size_bytes:
@@ -788,7 +918,11 @@ def _extract_and_verify_bundle(bundle_txt: Path) -> tuple[dict[str, Any], dict[s
         missing = [name for name in P01_BUNDLE_FILES if name not in names]
         if missing:
             raise P01TextBundleError("bundle_missing_files", f"Bundle is missing required files: {','.join(missing)}")
-        files = {name: zf.read(name) for name in P01_BUNDLE_FILES}
+        for name in names:
+            parts = Path(name).parts
+            if Path(name).is_absolute() or ".." in parts:
+                raise P01TextBundleError("invalid_bundle_path", f"Bundle file path is not safe: {name}")
+        files = {name: zf.read(name) for name in names}
     manifest = json.loads(files["manifest.json"])
     checksums = dict(manifest.get("checksum") or {})
     for name, content in files.items():
@@ -841,6 +975,12 @@ def run_p01_decode_text_bundle(
                 origin_y=float(origin["y"]),
                 crs_text=dataset_meta.get("road_crs"),
             )
+        for name, content in files.items():
+            if name in P01_BUNDLE_FILES:
+                continue
+            target_path = out_dir_path / name
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(content)
 
     manifest["decoded_output"] = {
         "vector_coordinates": "absolute_source_coordinates",
@@ -861,6 +1001,9 @@ def _build_export_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rcsd-roads", required=True)
     parser.add_argument("--frcsd-nodes", required=True)
     parser.add_argument("--frcsd-roads", required=True)
+    parser.add_argument("--swsd-road-node-road")
+    parser.add_argument("--swsd-road-next-road")
+    parser.add_argument("--rcsd-road-next-road")
     parser.add_argument("--junction-group", required=True)
     parser.add_argument("--out-txt", required=True)
     parser.add_argument("--bfs-depth", type=int, default=2)
@@ -886,6 +1029,9 @@ def run_p01_export_text_bundle_from_args(argv: list[str] | None = None) -> int:
         rcsd_roads=args.rcsd_roads,
         frcsd_nodes=args.frcsd_nodes,
         frcsd_roads=args.frcsd_roads,
+        swsd_road_node_road=args.swsd_road_node_road,
+        swsd_road_next_road=args.swsd_road_next_road,
+        rcsd_road_next_road=args.rcsd_road_next_road,
         junction_group=args.junction_group,
         out_txt=args.out_txt,
         bfs_depth=args.bfs_depth,

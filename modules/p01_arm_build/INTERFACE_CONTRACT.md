@@ -227,7 +227,7 @@ P01-Final 规则：
 - `--swsd-road-next-road`
 - `--rcsd-road-next-road`
 
-解包时恢复对应文件到 `SWSD/` 或 `RCSD/` 目录。`modules/p01_arm_build/dev_helpers/run_p01_case_full.sh` 可消费已解包 case 目录或文本证据包，自动调用 A1 / P01-Final runner。该脚本不是 repo 官方 CLI。
+打包后的 Node / Road GPKG 必须保留原始属性，并补齐 P01 消费的规范字段：Node 至少包含 `id / mainnodeid / kind`，Road 至少包含 `id / snodeid / enodeid / direction / formway`；F-RCSD Road 如有 `Source/source` 字段必须随包保留。解包时恢复对应文件到 `SWSD/`、`RCSD/` 或 `FRCSD/` 目录。`modules/p01_arm_build/dev_helpers/run_p01_case_full.sh` 可消费已解包 case 目录或文本证据包，自动调用 A1 / P01-Final runner。该脚本不是 repo 官方 CLI。
 
 ## 10. 自动检查与 QA
 

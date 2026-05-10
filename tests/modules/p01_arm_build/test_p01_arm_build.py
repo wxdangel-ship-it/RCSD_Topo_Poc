@@ -52,31 +52,42 @@ def _write_nodes(path: Path, features: list[tuple]) -> None:
             )
 
 
-def _write_roads(path: Path, features: list[tuple[str, str, str, int, str, list[tuple[float, float]]]]) -> None:
+def _write_roads(
+    path: Path,
+    features: list[tuple[str, str, str, int, str, list[tuple[float, float]]]],
+    *,
+    source: str | None = None,
+) -> None:
+    properties_schema = {
+        "id": "str",
+        "snodeid": "str",
+        "enodeid": "str",
+        "direction": "int",
+        "formway": "str",
+        "grade_2": "int",
+    }
+    if source is not None:
+        properties_schema["Source"] = "str"
     schema = {
         "geometry": "LineString",
-        "properties": {
-            "id": "str",
-            "snodeid": "str",
-            "enodeid": "str",
-            "direction": "int",
-            "formway": "str",
-            "grade_2": "int",
-        },
+        "properties": properties_schema,
     }
     with fiona.open(path, "w", driver="GPKG", schema=schema, crs="EPSG:3857") as sink:
         for road_id, snodeid, enodeid, direction, formway, coords in features:
+            properties = {
+                "id": road_id,
+                "snodeid": snodeid,
+                "enodeid": enodeid,
+                "direction": direction,
+                "formway": formway,
+                "grade_2": 7,
+            }
+            if source is not None:
+                properties["Source"] = source
             sink.write(
                 {
                     "geometry": mapping(LineString(coords)),
-                    "properties": {
-                        "id": road_id,
-                        "snodeid": snodeid,
-                        "enodeid": enodeid,
-                        "direction": direction,
-                        "formway": formway,
-                        "grade_2": 7,
-                    },
+                    "properties": properties,
                 }
             )
 
@@ -151,6 +162,7 @@ def _write_dataset(
     *,
     include_far_noise: bool = False,
     include_far_trace: bool = False,
+    road_source: str | None = None,
 ) -> tuple[Path, Path]:
     nodes_path = tmp_path / f"{prefix.lower()}_nodes.gpkg"
     roads_path = tmp_path / f"{prefix.lower()}_roads.gpkg"
@@ -186,7 +198,7 @@ def _write_dataset(
             )
         )
     _write_nodes(nodes_path, nodes)
-    _write_roads(roads_path, roads)
+    _write_roads(roads_path, roads, source=road_source)
     return nodes_path, roads_path
 
 
@@ -1097,7 +1109,7 @@ def test_kind_aware_t_junction_and_kind4_stop_rules(tmp_path: Path) -> None:
 def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_path: Path) -> None:
     swsd_nodes, swsd_roads = _write_dataset(tmp_path, "S", include_far_noise=True)
     rcsd_nodes, rcsd_roads = _write_dataset(tmp_path, "R", include_far_noise=True)
-    frcsd_nodes, frcsd_roads = _write_dataset(tmp_path, "F", include_far_noise=True)
+    frcsd_nodes, frcsd_roads = _write_dataset(tmp_path, "F", include_far_noise=True, road_source="2")
     bundle_path = tmp_path / "p01_case_bundle.txt"
     swsd_road_node_road = tmp_path / "SWSD_RoadNodeRoad.json"
     swsd_road_node_road.write_text(
@@ -1171,6 +1183,12 @@ def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_pa
     assert "S1_east_continue" in road_ids
     assert "S_far_noise" not in road_ids
     assert "Sfar_a" not in node_ids
+    with fiona.open(decoded.out_dir / "FRCSD" / "roads.gpkg") as src:
+        schema_keys = {key.lower() for key in src.schema["properties"]}
+        decoded_roads = [dict(feature["properties"]) for feature in src]
+    assert "source" in schema_keys
+    assert "grade_2" in schema_keys
+    assert {str(item.get("source") or item.get("Source")) for item in decoded_roads} == {"2"}
     swsd_rnr_payload = json.loads((decoded.out_dir / "SWSD" / "RoadNodeRoad.json").read_text(encoding="utf-8"))
     assert [item["id"] for item in swsd_rnr_payload] == ["s_keep"]
     rcsd_rnr_payload = json.loads((decoded.out_dir / "RCSD" / "RoadNextRoad.geojson").read_text(encoding="utf-8"))

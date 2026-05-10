@@ -60,7 +60,7 @@ from rcsd_topo_poc.modules.p01_arm_build.alignment_runner import run_p01_arm_ali
 
 ## 单路口文本证据包
 
-文本证据包 helper 用于外部复现与内网 case 取证，不登记为正式 CLI。范围选择基于当前语义路口 Road 拓扑 BFS，不做简单空间裁剪。可选随包带入 SWSD `RoadNodeRoad` / `RoadNextRoad` 与 RCSD `RoadNextRoad`。
+文本证据包 helper 用于外部复现与内网 case 取证，不登记为正式 CLI。范围选择基于当前语义路口 Road 拓扑 BFS，不做简单空间裁剪。Node / Road GPKG 保留原始属性，并补齐 P01 所需规范字段；F-RCSD Road 的 `Source/source` 会随包保留。可选随包带入 SWSD `RoadNodeRoad` / `RoadNextRoad` 与 RCSD `RoadNextRoad`。
 
 打包：
 

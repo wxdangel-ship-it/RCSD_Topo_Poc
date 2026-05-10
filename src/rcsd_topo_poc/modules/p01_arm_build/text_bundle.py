@@ -248,25 +248,33 @@ def _localized_geometry(geometry: BaseGeometry, *, origin_x: float, origin_y: fl
 
 
 def _node_feature(node: NodeRecord, *, origin_x: float, origin_y: float) -> dict[str, Any]:
-    return {
-        "properties": {
+    properties = dict(node.properties)
+    properties.update(
+        {
             "id": node.node_id,
             "mainnodeid": node.mainnodeid,
             "kind": node.kind,
-        },
+        }
+    )
+    return {
+        "properties": properties,
         "geometry": _localized_geometry(node.geometry, origin_x=origin_x, origin_y=origin_y),
     }
 
 
 def _road_feature(road: RoadRecord, *, origin_x: float, origin_y: float) -> dict[str, Any]:
-    return {
-        "properties": {
+    properties = dict(road.properties)
+    properties.update(
+        {
             "id": road.road_id,
             "snodeid": road.snodeid,
             "enodeid": road.enodeid,
             "direction": road.direction,
             "formway": road.formway,
-        },
+        }
+    )
+    return {
+        "properties": properties,
         "geometry": _localized_geometry(road.geometry, origin_x=origin_x, origin_y=origin_y),
     }
 

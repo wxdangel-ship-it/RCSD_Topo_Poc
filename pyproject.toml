@@ -19,7 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "geopandas>=1.1,<2",
-  "pytest>=7.0",
+  "pytest>=7.0,<9",
 ]
 
 [tool.setuptools]
@@ -30,7 +30,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-p no:cacheprovider"
+addopts = "-p no:cacheprovider -s"
 markers = [
   "smoke: minimal end-to-end checks that only write under outputs/_work",
 ]

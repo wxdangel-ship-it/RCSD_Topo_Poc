@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
+from pyproj import CRS, Transformer
 from shapely.geometry import LineString, Point
+from shapely.geometry.base import BaseGeometry
+from shapely.ops import transform as transform_geometry
 
 from rcsd_topo_poc.modules.p01_arm_build.models import (
     DATASETS,
@@ -23,6 +26,7 @@ from rcsd_topo_poc.modules.p01_arm_build.models import (
 SOURCE_TO_DATASET = {"1": "RCSD", "2": "SWSD"}
 DATASET_TO_SOURCE = {"RCSD": "1", "SWSD": "2"}
 MOVEMENT_TURNTYPE = {"unknown": "0", "straight": "1", "left": "2", "right": "3", "uturn": "4"}
+SOURCE_GEOMETRY_MATCH_DECIMALS = 7
 
 
 @dataclass(frozen=True)
@@ -112,8 +116,39 @@ def _norm(value: Any) -> str:
     return text[:-2] if text.endswith(".0") else text
 
 
-def _geometry_key(road: RoadRecord) -> str:
-    return road.geometry.wkb_hex
+def _layer_crs(layer: Any) -> CRS | None:
+    for candidate in (getattr(layer, "crs_wkt", None), getattr(layer, "crs", None)):
+        if candidate:
+            try:
+                return CRS.from_user_input(candidate)
+            except Exception:
+                continue
+    return None
+
+
+def _geometry_in_target_crs(geometry: BaseGeometry, *, source_crs: CRS | None, target_crs: CRS | None) -> BaseGeometry:
+    if source_crs is None or target_crs is None or source_crs == target_crs:
+        return geometry
+    transformer = Transformer.from_crs(source_crs, target_crs, always_xy=True)
+    return transform_geometry(transformer.transform, geometry)
+
+
+def _rounded_linestring_key(geometry: BaseGeometry) -> tuple[Any, ...]:
+    if geometry.geom_type == "LineString":
+        coords = tuple(
+            (round(float(coord[0]), SOURCE_GEOMETRY_MATCH_DECIMALS), round(float(coord[1]), SOURCE_GEOMETRY_MATCH_DECIMALS))
+            for coord in geometry.coords
+        )
+        return ("LineString", min(coords, tuple(reversed(coords))))
+    if geometry.geom_type == "MultiLineString":
+        parts = tuple(sorted(_rounded_linestring_key(part)[1] for part in geometry.geoms))
+        return ("MultiLineString", parts)
+    return (geometry.geom_type, geometry.wkb_hex)
+
+
+def _source_geometry_key(road: RoadRecord, *, source_crs: CRS | None, target_crs: CRS | None) -> tuple[Any, ...]:
+    geometry = _geometry_in_target_crs(road.geometry, source_crs=source_crs, target_crs=target_crs)
+    return _rounded_linestring_key(geometry)
 
 
 def _road_midpoint(road: RoadRecord | None) -> Point:
@@ -201,19 +236,21 @@ def _movement_by_evidence(result: DatasetBuildResult) -> dict[str, ArmMovement]:
 
 def _source_road_map(
     *,
-    frcsd_roads: dict[str, RoadRecord],
-    source_roads: dict[str, dict[str, RoadRecord]],
+    loaded_by_dataset: dict[str, LoadedDataset],
     f_roles: dict[str, RoadRole],
 ) -> tuple[SourceRoadMap, ...]:
-    source_index: dict[str, dict[str, list[str]]] = {}
+    frcsd_loaded = loaded_by_dataset["FRCSD"]
+    target_crs = _layer_crs(frcsd_loaded.road_layer)
+    source_index: dict[str, dict[tuple[Any, ...], list[str]]] = {}
     for dataset in ("RCSD", "SWSD"):
-        by_geometry: dict[str, list[str]] = defaultdict(list)
-        for road_id, road in source_roads[dataset].items():
-            by_geometry[_geometry_key(road)].append(road_id)
+        source_crs = _layer_crs(loaded_by_dataset[dataset].road_layer)
+        by_geometry: dict[tuple[Any, ...], list[str]] = defaultdict(list)
+        for road_id, road in loaded_by_dataset[dataset].roads.items():
+            by_geometry[_source_geometry_key(road, source_crs=source_crs, target_crs=target_crs)].append(road_id)
         source_index[dataset] = by_geometry
     rows: list[SourceRoadMap] = []
     for f_road_id in sorted(f_roles):
-        road = frcsd_roads.get(f_road_id)
+        road = frcsd_loaded.roads.get(f_road_id)
         raw_source = _norm((road.properties if road else {}).get("source"))
         issue_flags: list[str] = []
         source_dataset = SOURCE_TO_DATASET.get(raw_source, "")
@@ -223,18 +260,22 @@ def _source_road_map(
             reason = "source_missing_or_not_in_allowed_values"
             issue_flags.append("frcsd_source_invalid")
         else:
-            matches = source_index[source_dataset].get(_geometry_key(road), []) if road else []
+            matches = (
+                source_index[source_dataset].get(_source_geometry_key(road, source_crs=target_crs, target_crs=target_crs), [])
+                if road
+                else []
+            )
             if len(matches) == 1:
                 status = "matched"
-                reason = "source_limited_exact_geometry_match"
+                reason = "source_limited_crs_normalized_rounded_exact_geometry_match"
                 source_road_id = matches[0]
             elif len(matches) > 1:
                 status = "ambiguous_source_geometry_match"
-                reason = "multiple_source_roads_have_exact_same_geometry"
+                reason = "multiple_source_roads_have_same_crs_normalized_rounded_geometry"
                 issue_flags.append("ambiguous_source_geometry_match")
             else:
                 status = "source_geometry_match_missing"
-                reason = "no_source_road_has_exact_same_geometry"
+                reason = "no_source_road_has_same_crs_normalized_rounded_geometry"
                 issue_flags.append("source_geometry_match_missing")
         rows.append(
             SourceRoadMap(
@@ -538,8 +579,7 @@ def build_frcsd_road_next_road(
 ) -> FrcsdRoadNextRoadFinalResult:
     roles = {dataset: _road_roles(result_by_dataset[dataset]) for dataset in DATASETS}
     source_map = _source_road_map(
-        frcsd_roads=loaded_by_dataset["FRCSD"].roads,
-        source_roads={"SWSD": loaded_by_dataset["SWSD"].roads, "RCSD": loaded_by_dataset["RCSD"].roads},
+        loaded_by_dataset=loaded_by_dataset,
         f_roles=roles["FRCSD"],
     )
     parallel_alignment = _parallel_branch_alignment(

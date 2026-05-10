@@ -2,7 +2,7 @@
 
 ## 总体策略
 
-P01-A1 按“输入读取 -> 语义路口 -> seed -> trace -> arm 聚合 -> RoadNextRoad-aware movement -> corrected trunk -> 输出审计 -> 目视审查”的顺序实现。P01-A2 按“读取 A1 run root -> ArmProfile -> candidate evidence -> evidence graph -> LogicalArmGroup -> 输出审计 -> 目视审查”的顺序实现。P01-Final 按“F-RCSD Source 读取 -> source road exact geometry mapping -> source policy -> 同源继承 / 跨源 primary source / fallback -> final RoadNextRoad 输出”的顺序实现。所有构建与配准规则优先基于结构证据，不通过几何形态反推业务语义。
+P01-A1 按“输入读取 -> 语义路口 -> seed -> trace -> arm 聚合 -> RoadNextRoad-aware movement -> corrected trunk -> 输出审计 -> 目视审查”的顺序实现。P01-A2 按“读取 A1 run root -> ArmProfile -> candidate evidence -> evidence graph -> LogicalArmGroup -> 输出审计 -> 目视审查”的顺序实现。P01-Final 按“F-RCSD Source 读取 -> source road CRS-normalized rounded exact mapping -> source policy -> 同源继承 / 跨源 primary source / fallback -> final RoadNextRoad 输出”的顺序实现。所有构建与配准规则优先基于结构证据，不通过几何形态反推业务语义。
 
 ## 数据读取
 
@@ -62,4 +62,4 @@ RoadNextRoad 在 A1 阶段只表达 allowed evidence；缺失只输出 `no_allow
 
 trunk correction 只允许 stable straight receiving evidence 参与：`movement_type = straight`、`straight_target_status = unique_straight_target`，且置信度为 high / stable。
 
-P01-Final 中，RoadNextRoad 缺失进入最终产物语义：源侧 RoadNextRoad 缺失则不生成 F-RCSD RoadNextRoad。F-RCSD road 必须先用 `Source + 几何完全一致` 映射到 SWSD / RCSD 源 road；Source 异常、匹配缺失或多匹配均进入 issue，不生成相关 final RoadNextRoad。平行支路以 `parallel_branch_alignment.json` 独立记录 source missing、count matched ordered、count mismatch 与 insufficient geometry ordering 状态。
+P01-Final 中，RoadNextRoad 缺失进入最终产物语义：源侧 RoadNextRoad 缺失则不生成 F-RCSD RoadNextRoad。F-RCSD road 必须先用 `Source + CRS 归一化 rounded exact geometry` 映射到 SWSD / RCSD 源 road；Source 异常、匹配缺失或多匹配均进入 issue，不生成相关 final RoadNextRoad。平行支路以 `parallel_branch_alignment.json` 独立记录 source missing、count matched ordered、count mismatch 与 insufficient geometry ordering 状态。

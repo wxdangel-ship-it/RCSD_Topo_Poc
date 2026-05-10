@@ -22,7 +22,7 @@ P01 的成果目标是为 F-RCSD 重建路口级 RoadNextRoad。P01-A1 提供单
 - RoadMovementEvidence。
 - ReceivingRoadRole。
 - Movement-aware trunk correction。
-- F-RCSD Source + geometry exact source road mapping。
+- F-RCSD Source + CRS-normalized rounded exact source road mapping。
 - SourceMovementPolicy。
 - 同源继承、跨源 primary source 与 RCSD -> SWSD fallback。
 - `frcsd_road_next_road.geojson`、final audit、issue report、review GPKG / PNG。

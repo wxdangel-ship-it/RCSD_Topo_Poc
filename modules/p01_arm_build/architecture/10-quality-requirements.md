@@ -45,4 +45,4 @@
 - 禁止 Grade 源码扫描。
 - A2 synthetic 覆盖 stable、missing、partial、over_split、over_merged、conflict / uncertain 和多 group。
 - A2 真实 case 至少验证 1019789，或明确记录真实数据未验证。
-- P01-Final synthetic 覆盖 Source + geometry exact mapping、同源继承、跨源 primary source、RCSD -> SWSD fallback、缺失 / 多匹配 issue 与 duplicate 防护。
+- P01-Final synthetic 覆盖 Source + CRS-normalized rounded exact mapping、同源继承、跨源 primary source、RCSD -> SWSD fallback、缺失 / 多匹配 issue 与 duplicate 防护。

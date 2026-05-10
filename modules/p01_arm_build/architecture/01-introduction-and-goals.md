@@ -16,7 +16,7 @@ P01 的最终成果是面向 F-RCSD Road 的路口级允许通行关系。模块
 - 用 `formway` bit7 / bit8 识别提前右转、提前左转，并输出 `AdvanceRightTurnRelation`。
 - 基于 RoadNextRoad allowed evidence 生成同源 ArmMovement、ReceivingRoadRole 与 corrected trunk。
 - 基于 A1 输出构建跨三源 LogicalArmGroup，并区分 coverage missing 与 grouping error。
-- 基于 F-RCSD:Road.Source 和几何完全一致关系映射源 Road，审计平行支路稳定顺序，生成最终 F-RCSD RoadNextRoad。
+- 基于 F-RCSD:Road.Source 和 CRS 归一化 rounded exact geometry 映射源 Road，审计平行支路稳定顺序，生成最终 F-RCSD RoadNextRoad。
 - 输出 JSON / GeoJSON / PNG / GPKG / summary / review index / audit / issue report。
 
 ## 成功标准

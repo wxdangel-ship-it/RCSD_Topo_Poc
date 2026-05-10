@@ -15,7 +15,7 @@
 - RoadNextRoad 在 A1 ArmMovement 阶段只表达 allowed evidence；缺失不等于禁止。
 - RoadNextRoad 在 P01-Final 生成阶段作为最终允许通行证据；源侧缺失则不生成 F-RCSD RoadNextRoad。
 - `turnType / turntype` 只作为 raw audit 字段，不得用于 `movement_type` 判定。
-- P01-Final 只能用 `F-RCSD:Road.Source + 几何完全一致` 做源 Road 强匹配，不得用空间接近替代。
+- P01-Final 只能用 `F-RCSD:Road.Source + CRS 归一化 rounded exact geometry` 做源 Road 强匹配，不得用空间接近或最近邻替代。
 
 ## 工程约束
 
@@ -29,6 +29,6 @@
 
 - CRS 必须写入 preflight 与输出审计。
 - trace 必须保持拓扑连续，不做 silent fix。
-- 几何只用于 review、辅助证据和 exact geometry source mapping，不用于右转反推、Arm 主构建或单独 high confidence 配准。
+- 几何只用于 review、辅助证据和 CRS-normalized rounded exact source mapping，不用于右转反推、Arm 主构建或单独 high confidence 配准。
 - 输出必须记录输入、参数、run id、case id、trace、decision、source mapping、generation audit 与 issue。
 - A2 必须记录 candidate score、selection reason、LogicalArmGroup、source_extra 与 feedback。

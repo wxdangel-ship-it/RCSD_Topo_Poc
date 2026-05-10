@@ -40,7 +40,7 @@ A2 不重新实现 A1，不静默修复 A1 结果。A2 反馈通过 ArmBuildFeed
 `final_road_next_road.py` 承载 final generation：
 
 - 读取 F-RCSD Road `Source`。
-- 通过 Source 限定源数据集，并使用几何完全一致映射 SWSD / RCSD 源 Road。
+- 通过 Source 限定源数据集，并使用 CRS 归一化后的 rounded exact geometry 映射 SWSD / RCSD 源 Road。
 - 从 SWSD / RCSD RoadNextRoad 与 road role 构建 SourceMovementPolicy。
 - 同源 F-RCSD road pair 直接继承源 RoadNextRoad。
 - 不同源 pair 使用进入 road 的 Source 作为 primary source。
@@ -71,7 +71,7 @@ A2 不重新实现 A1，不静默修复 A1 结果。A2 反馈通过 ArmBuildFeed
 - 治理扫描：`grade / grade_2` 不进入 P01 主规则；`turnType / turntype` 不进入 `movement_type` 判定函数。
 - A1 synthetic：语义路口、trace、kind-aware through、bit7 / bit8、AdvanceRightTurnRelation、trunk、RoadNextRoad-aware movement、ReceivingRoadRole、corrected trunk。
 - A2 synthetic：stable、source_missing、source_partial、over_split、over_merged、conflict / uncertain、多 group。
-- P01-Final synthetic：Source + geometry exact mapping、missing / ambiguous mapping、same-source inheritance、cross-source primary source、RCSD -> SWSD fallback、parallel_branch alignment、right-turn carrier issue、final GeoJSON schema、duplicate 防护。
+- P01-Final synthetic：Source + CRS-normalized rounded exact mapping、missing / ambiguous mapping、same-source inheritance、cross-source primary source、RCSD -> SWSD fallback、parallel_branch alignment、right-turn carrier issue、final GeoJSON schema、duplicate 防护。
 - 输出检查：JSON / GeoJSON / PNG / GPKG / summary / review index / audit / issue report。
 
 ## 8. 真实 case QA

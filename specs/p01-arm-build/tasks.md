@@ -45,7 +45,7 @@
 ## 4. P01-Final
 
 - [x] F-RCSD Road `Source` 读取与校验。
-- [x] Source + geometry exact source road mapping。
+- [x] Source + CRS-normalized rounded exact source road mapping。
 - [x] missing / ambiguous source geometry mapping issue。
 - [x] SWSD / RCSD SourceMovementPolicy。
 - [x] 同源继承源 RoadNextRoad。
@@ -71,3 +71,4 @@
 - [x] 文档过程性措辞扫描。
 - [ ] 真实 1019789 RoadNextRoad case 本地执行；依赖可访问的真实 RoadNextRoad 与内网数据路径。
 - [ ] 真实 RCSD `turntype` 输出编码规范确认；仓库已按模块契约映射输出。
+- [ ] `950044` A1 / A2 分组冲突修复；当前作为后续 case 处理，不在 P01-Final source mapping 修复中混入。

@@ -211,7 +211,8 @@ P01-Final 规则：
 
 - F-RCSD:Road.Source = `1` 表示来源 RCSD，`2` 表示来源 SWSD。
 - Source 缺失、非法、几何匹配缺失或多匹配不得静默生成 RoadNextRoad，必须进入 issue。
-- Source + 几何完全一致是强匹配依据；不得使用空间接近替代。
+- Source + CRS 归一化后的 rounded exact geometry 是强匹配依据；不得使用空间接近或最近邻替代。
+- 当前 F-RCSD 未提供可作为权威来源映射的 source road id 字段；`baseroadid` 在已验证 case 中为空，不作为来源映射依据。
 - 同源 F-RCSD road pair 直接继承源 RoadNextRoad；源侧缺失则不生成。
 - 不同源 road pair 使用进入 road 的 Source 作为 primary source，按 SourceMovementPolicy 判断 role-level 是否 allowed。
 - 最终生成阶段源 RoadNextRoad 缺失表示不生成 F-RCSD RoadNextRoad；这不改变 A1 ArmMovement 阶段 `no_allowed_evidence != prohibited`。

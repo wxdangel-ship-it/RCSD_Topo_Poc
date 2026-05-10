@@ -138,12 +138,13 @@ A2 必须区分：
 
 ### 5.1 Source road mapping
 
-F-RCSD Road 使用 `Source + 几何完全一致` 映射源 Road：
+F-RCSD Road 使用 `Source + CRS 归一化后的 rounded exact geometry` 映射源 Road：
 
-- `Source = 1` 只在 RCSD Road 中查找几何完全一致。
-- `Source = 2` 只在 SWSD Road 中查找几何完全一致。
+- `Source = 1` 只在 RCSD Road 中查找 CRS 归一化后的 rounded exact geometry。
+- `Source = 2` 只在 SWSD Road 中查找 CRS 归一化后的 rounded exact geometry。
+- 当前 F-RCSD 没有可作为权威依据的 source road id；`baseroadid` 在验证 case 中为空，不进入来源映射规则。
 
-同源多匹配输出 `ambiguous_source_geometry_match`。找不到源 Road 输出 `source_geometry_match_missing`。不得用空间接近替代 exact mapping。
+同源多匹配输出 `ambiguous_source_geometry_match`。找不到源 Road 输出 `source_geometry_match_missing`。不得用空间接近或最近邻替代 rounded exact mapping。
 
 ### 5.2 SourceMovementPolicy
 
@@ -236,5 +237,5 @@ A2：
 - `turnType / turntype` 不参与 `movement_type` 判定。
 - ReceivingRoadRole 与 corrected trunk 可审计。
 - A2 输出 LogicalArmGroup、RawArmAlignment、ArmBuildFeedback 与 source_extra。
-- P01-Final 能执行 Source + geometry exact mapping、同源继承、跨源 primary source、RCSD -> SWSD fallback 与 final GeoJSON 输出。
+- P01-Final 能执行 Source + CRS-normalized rounded exact mapping、同源继承、跨源 primary source、RCSD -> SWSD fallback 与 final GeoJSON 输出。
 - JSON / GeoJSON / PNG / GPKG / summary / review index / audit / issue report 均可定位输入、参数、case、规则与风险。

@@ -26,7 +26,7 @@
 | 16 | corrected_final_arms | 已实现 | `runner.py` 写出 `corrected_final_arms.json`；tests 覆盖字段保留与输出。 |
 | 17 | P01-A2 LogicalArmGroup | 已实现 | `alignment.py` 构建 LogicalArmGroup、RawArmAlignment、ArmBuildFeedback；`test_p01_arm_alignment.py` 覆盖 stable/missing/partial/conflict 等场景。 |
 | 18 | F-RCSD:Road.Source | 已实现 | `final_road_next_road.py` 读取并校验 Source；异常进入 issue，不生成相关 final pair。 |
-| 19 | Source + 几何完全一致映射 | 已实现 | `final_road_next_road.py` 使用 exact geometry key 按 Source 限定源数据集；missing / ambiguous 进入 issue；tests 覆盖。 |
+| 19 | Source + CRS-normalized rounded exact geometry 映射 | 已实现 | `final_road_next_road.py` 按 Source 限定源数据集，并在 F-RCSD 目标 CRS 下使用 rounded exact geometry key；missing / ambiguous 进入 issue；tests 覆盖。 |
 | 20 | 同源继承 | 已实现 | 同源 pair 直接查源 RoadNextRoad evidence；tests 覆盖 same-source inheritance。 |
 | 21 | 不同源 primary source | 已实现 | 跨源 pair 使用 from road Source 选择 primary source；tests 覆盖 cross-source generation。 |
 | 22 | 最终生成阶段 RoadNextRoad 缺失视为不通 | 已实现 | SourceMovementPolicy 输出 prohibited；final GeoJSON 不生成缺失 pair；tests 覆盖 missing no generation。 |
@@ -39,3 +39,4 @@
 
 - 真实 1019789 RoadNextRoad case 依赖内网 RoadNextRoad 路径；本地路径不可访问时，只能完成 synthetic / fixture 验证并提供内网命令。
 - final RoadNextRoad `turntype` 输出编码已按模块契约固定为 `unknown=0 / straight=1 / left=2 / right=3 / uturn=4`；真实 RCSD 编码规范仍需用户提供权威材料确认。
+- `950044` 已确认为 A1 / A2 后续修复 case；当前不与 P01-Final source mapping 修复混合处理。

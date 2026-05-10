@@ -30,7 +30,7 @@
 
 ## `final_road_next_road.py`
 
-负责 P01-Final：F-RCSD Source + geometry exact source road mapping、SourceMovementPolicy、parallel branch alignment、同源继承、跨源 primary source generation、RCSD -> SWSD fallback、final GeoJSON、audit、issue 与 review 输出辅助。
+负责 P01-Final：F-RCSD Source + CRS-normalized rounded exact source road mapping、SourceMovementPolicy、parallel branch alignment、同源继承、跨源 primary source generation、RCSD -> SWSD fallback、final GeoJSON、audit、issue 与 review 输出辅助。
 
 ## `review.py`
 

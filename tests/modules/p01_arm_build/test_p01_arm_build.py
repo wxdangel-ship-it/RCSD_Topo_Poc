@@ -6,6 +6,7 @@ from pathlib import Path
 
 import fiona
 import pytest
+from pyproj import Transformer
 from shapely.geometry import LineString, Point, mapping
 
 from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import (
@@ -30,9 +31,9 @@ from rcsd_topo_poc.modules.p01_arm_build.text_bundle import (
 from rcsd_topo_poc.modules.p01_arm_build.topology import build_dataset_arm_result
 
 
-def _write_nodes(path: Path, features: list[tuple]) -> None:
+def _write_nodes(path: Path, features: list[tuple], *, crs: str = "EPSG:3857") -> None:
     schema = {"geometry": "Point", "properties": {"id": "str", "mainnodeid": "str", "kind": "str", "grade": "int"}}
-    with fiona.open(path, "w", driver="GPKG", schema=schema, crs="EPSG:3857") as sink:
+    with fiona.open(path, "w", driver="GPKG", schema=schema, crs=crs) as sink:
         for feature in features:
             if len(feature) == 5:
                 node_id, mainnodeid, x, y, kind = feature
@@ -57,6 +58,7 @@ def _write_roads(
     features: list[tuple[str, str, str, int, str, list[tuple[float, float]]]],
     *,
     source: str | None = None,
+    crs: str = "EPSG:3857",
 ) -> None:
     properties_schema = {
         "id": "str",
@@ -72,7 +74,7 @@ def _write_roads(
         "geometry": "LineString",
         "properties": properties_schema,
     }
-    with fiona.open(path, "w", driver="GPKG", schema=schema, crs="EPSG:3857") as sink:
+    with fiona.open(path, "w", driver="GPKG", schema=schema, crs=crs) as sink:
         for road_id, snodeid, enodeid, direction, formway, coords in features:
             properties = {
                 "id": road_id,
@@ -95,6 +97,8 @@ def _write_roads(
 def _write_roads_with_source(
     path: Path,
     features: list[tuple[str, str, str, int, str, str, list[tuple[float, float]]]],
+    *,
+    crs: str = "EPSG:3857",
 ) -> None:
     schema = {
         "geometry": "LineString",
@@ -107,7 +111,7 @@ def _write_roads_with_source(
             "Source": "str",
         },
     }
-    with fiona.open(path, "w", driver="GPKG", schema=schema, crs="EPSG:3857") as sink:
+    with fiona.open(path, "w", driver="GPKG", schema=schema, crs=crs) as sink:
         for road_id, snodeid, enodeid, direction, formway, source, coords in features:
             sink.write(
                 {
@@ -821,6 +825,68 @@ def test_frcsd_road_next_road_same_source_inheritance(tmp_path: Path) -> None:
         )
         for item in final.parallel_branch_alignment
     )
+
+
+def test_frcsd_source_geometry_mapping_normalises_crs_before_rounded_exact_match(tmp_path: Path) -> None:
+    to_3857 = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True).transform
+    lonlat_nodes = {
+        "C": (114.0, 22.0),
+        "N": (114.0, 22.001),
+        "W": (113.999, 22.0),
+        "E": (114.001, 22.0),
+    }
+    source_nodes = [(node_id, mainnode, *to_3857(x, y), kind) for node_id, mainnode, x, y, kind in [
+        ("C", "C", *lonlat_nodes["C"], "4"),
+        ("N", None, *lonlat_nodes["N"], "1"),
+        ("W", None, *lonlat_nodes["W"], "1"),
+        ("E", None, *lonlat_nodes["E"], "1"),
+    ]]
+    source_roads = [
+        ("s_n_adv_left", "N", "C", 2, "256", [to_3857(*lonlat_nodes["N"]), to_3857(*lonlat_nodes["C"])]),
+        ("s_w_in", "W", "C", 2, "0", [to_3857(*lonlat_nodes["W"]), to_3857(*lonlat_nodes["C"])]),
+        ("s_e_main", "C", "E", 2, "0", [to_3857(*lonlat_nodes["C"]), to_3857(*lonlat_nodes["E"])]),
+    ]
+    frcsd_nodes = [(node_id, mainnode, x, y, kind) for node_id, mainnode, x, y, kind in [
+        ("C", "C", *lonlat_nodes["C"], "4"),
+        ("N", None, *lonlat_nodes["N"], "1"),
+        ("W", None, *lonlat_nodes["W"], "1"),
+        ("E", None, *lonlat_nodes["E"], "1"),
+    ]]
+    frcsd_roads = [
+        ("f_n_adv_left", "N", "C", 2, "256", "2", [lonlat_nodes["N"], lonlat_nodes["C"]]),
+        ("f_w_in", "W", "C", 2, "0", "2", [lonlat_nodes["W"], lonlat_nodes["C"]]),
+        ("f_e_main", "C", "E", 2, "0", "2", [lonlat_nodes["C"], lonlat_nodes["E"]]),
+    ]
+
+    swsd_nodes = tmp_path / "swsd_nodes_3857.gpkg"
+    swsd_roads = tmp_path / "swsd_roads_3857.gpkg"
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    f_nodes = tmp_path / "frcsd_nodes_4326.gpkg"
+    f_roads = tmp_path / "frcsd_roads_4326.gpkg"
+    _write_nodes(swsd_nodes, source_nodes, crs="EPSG:3857")
+    _write_roads(swsd_roads, source_roads, crs="EPSG:3857")
+    _write_nodes(f_nodes, frcsd_nodes, crs="EPSG:4326")
+    _write_roads_with_source(f_roads, frcsd_roads, crs="EPSG:4326")
+    swsd_rnr = tmp_path / "swsd_rnr.json"
+    swsd_rnr.write_text(
+        json.dumps([{"id": "s_allowed", "road_id": "s_w_in", "next_road_id": "s_e_main"}]),
+        encoding="utf-8",
+    )
+    swsd_records = read_road_next_road(swsd_rnr)
+
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", f_nodes, f_roads)
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    assert all(item.match_status == "matched" for item in final.source_road_map)
+    assert any(item.source_road_id == "s_w_in" for item in final.source_road_map)
+    assert final.metrics["frcsd_same_source_inherited_count"] >= 1
 
 
 def test_frcsd_source_policy_records_prohibited_and_missing_right_carrier_issue(tmp_path: Path) -> None:

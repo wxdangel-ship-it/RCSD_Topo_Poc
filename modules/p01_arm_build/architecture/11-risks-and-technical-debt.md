@@ -7,7 +7,8 @@
 - T 型主通道 / 侧向判断在缺少可靠方向与配对证据时采用保守策略，输出 ambiguous 而不是强行 through。
 - A2 无 lineage 证据时主要依赖 A1 输出结构、局部趋势与几何辅助，跨源 ID 不一致时置信度需要 review index 引导人工抽检。
 - A2 不自动拆分 over-merged Arm，需通过 ArmBuildFeedback 暴露给 A1 / 数据修复流程。
-- P01-Final 依赖 F-RCSD:Road.Source 与几何完全一致；Source 缺失、几何微小漂移或源侧重复几何会进入 issue / 人工复核，不做空间近似兜底。
+- P01-Final 依赖 F-RCSD:Road.Source 与 CRS 归一化后的 rounded exact geometry；Source 缺失、归一化后仍无法匹配或源侧重复几何会进入 issue / 人工复核，不做空间近似兜底。
+- `950044` 已确认为 A1 / A2 后续修复 case；当前 A2 输出存在 `source_over_merged_unresolved / conflict` 与 recommended split / merge feedback。
 - RCSD -> SWSD fallback 仅覆盖 P01 v1.0.0 定义的异常场景，其它跨源补关系需要需求基准授权。
 
 ## 缓解方式

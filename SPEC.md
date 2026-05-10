@@ -22,7 +22,7 @@
 - 当前已登记正式业务模块 `t02_junction_anchor`
 - 当前已登记正式业务模块 `t03_virtual_junction_anchor`
 - 当前已登记正式业务模块 `t04_divmerge_virtual_polygon`
-- 当前已登记 POC 验证模块 `p01_arm_build`
+- 当前已登记 P01 成果模块 `p01_arm_build`
 - 当前已纳入治理的工具集合模块 `t00_utility_toolbox`
 
 当前原则是优先复用 `Highway_Topo_Poc` 中已经验证有效的仓库骨架、治理方式与协作约束，但不迁移任何高速场景业务模块实现。
@@ -45,7 +45,7 @@
 - 让 `t03_virtual_junction_anchor` 的 `Step1~Step7` 正式业务主链、冻结 `Step3 legal-space baseline` 与仓库级入口事实保持一致
 - 让 `t03_virtual_junction_anchor` 的 internal full-input repo 级脚本交付面、批次根目录正式成果与 project-level 文档登记保持一致
 - 让 `t04_divmerge_virtual_polygon` 的 Step1-7 模块文档、领域分层实现、Step4 审计输出与最终发布契约保持一致
-- 让 `p01_arm_build` 的 P01-A1 Arm 构建与 P01-A2 Arm 配准 SpecKit 工件、模块文档契约、最小 callable runner、review PNG/GPKG 与 summary/index 交付面保持一致
+- 让 `p01_arm_build` 的 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原 SpecKit 工件、模块文档契约、callable runner、review PNG/GPKG、summary/index 与 final audit 交付面保持一致
 
 ### 2.2 当前阶段明确不做
 
@@ -69,7 +69,7 @@
 - 已登记正式模块 `t02_junction_anchor` 的项目级登记状态与仓库级入口索引
 - 已登记正式模块 `t03_virtual_junction_anchor` 的 `Step1~Step7` 正式业务主链、冻结 `Step3 legal-space baseline`、repo 级 internal full-input shell/watch 交付面、批量审查产物与入口索引
 - 已登记正式模块 `t04_divmerge_virtual_polygon` 的 Step1-7 正式文档面、模块化实现、Step4 review 输出与最终发布契约
-- 已登记 POC 验证模块 `p01_arm_build` 的 P01-A1 Arm 构建、P01-A2 Arm 配准文档契约、模块内 callable runner、自动检查与人工目视审查产物
+- 已登记 P01 成果模块 `p01_arm_build` 的 P01-A1 Arm 构建、P01-A2 Arm 配准、P01-Final F-RCSD RoadNextRoad 还原文档契约、模块内 callable runner、自动检查与人工目视审查产物
 
 ### 3.2 当前非目标（不包含）
 
@@ -151,18 +151,21 @@
 - T04 当前不新增 repo 官方 CLI；internal full-input shell/watch 交付面为 repo 级脚本入口，执行逻辑保留在 T04 私有实现内。
 - T04 在使用 RCSDNode / RCSDRoad 参与 RCSD 语义路口召回时，RCSD 与 SWSD 采用同一基础语义路口口径：具有 `3` 条及以上压缩语义道路进入或退出的路口，才称为语义路口；两个语义路口之间的连续道路链视为一条路口间道路。`RCSDNode.mainnodeid` 只表达候选路口的单节点 / 多节点组织关系：非 `0` / 非空 `mainnodeid` 表示多节点候选组，`0` / 空值表示单节点候选组；该字段不单独决定候选是否构成 RCSD 语义路口。一个 SWSD event unit、复杂路口内的单个 unit、或一个简单二分歧 / 合流，最多只能发布一个对应的 RCSD 对齐对象；若局部窗口内命中多个 RCSD 语义路口或候选对象，必须先按当前 SWSD section / Reference Point / 进出方向角色完整性 / 距离与角度趋势消歧，非选中对象只能作为上下文或 trace 审计信息，并按 Step4 唯一对齐结果参与负向掩膜。
 
-### 4.6 P01-A Arm 构建约束
+### 4.6 P01 Arm 构建、配准与 RoadNextRoad 还原约束
 
-- `p01_arm_build` 是 P01 POC 验证模块，目录结构与 T0X 模块一致。
-- P01-A 当前包含 A1 Arm 构建与 A2 Arm 配准：A1 三套数据 SWSD / RCSD / F-RCSD 独立构建 Arm；A2 读取 A1 run root，以 F-RCSD FinalArm 为承载核心构建跨三源 LogicalArmGroup。
-- P01-A 输入为六类 Node/Road 路径与一个或多个三段式 `--junction-group <swsd>,<rcsd>,<frcsd>`。
-- P01-A 语义路口按 `mainnodeid` 聚合；`mainnodeid = null / 空字符串 / 0` 视为无有效值并退化为单节点语义路口。
-- P01-A 当前先排除字段明确可识别的右转专用道 / 渠化右转；字段缺失时不得通过几何形态反推。
-- P01-A 禁止使用 `grade / grade_2` 作为 Arm 构建规则；`kind` 只能作为提示，不能单独裁决。
-- P01-A1 当前 `InitialArm` 保留原始 trace 终端归并事实；`FinalArm` 默认等同 InitialArm，但当 LocalArmCandidate 完整覆盖碎片化 InitialArm 时可采用局部趋势兜底聚合。
-- P01-A2 禁止仅凭几何最近输出 high confidence 配准；禁止自动拆分 over-merged Arm；禁止静默丢弃 FRCSD FinalArm 或 source_extra Arm。
-- P01-A2 后续 Movement 预备接口只输出 LogicalArmGroup，不实现 Movement，且 Movement 只能消费 `acceptable_for_downstream = true` 的 LogicalArmGroup。
-- P01-A 当前不新增 repo 官方 CLI、`scripts/` 常驻脚本、模块 `__main__.py` 或模块 `run.py`；仅提供模块内 callable runner 用于开发验收与后续正式入口准备。
+- `p01_arm_build` 承载 P01-A1 / P01-A2 / P01-Final 成果链路，目录结构与 T0X 模块一致。
+- A1 在 SWSD / RCSD / F-RCSD 三套数据中独立构建 Arm、特殊转向、ArmMovement 与 corrected trunk。
+- A2 读取 A1 run root，以 F-RCSD FinalArm 为承载核心构建跨三源 LogicalArmGroup。
+- P01-Final 基于 F-RCSD:Road.Source、几何完全一致源 Road 映射、SWSD / RCSD SourceMovementPolicy、同源继承、跨源 primary source 与 RCSD -> SWSD fallback 生成最终 `frcsd_road_next_road.geojson`。
+- P01 输入为六类 Node/Road 路径、可选 RoadNextRoad 路径与一个或多个三段式 `--junction-group <swsd>,<rcsd>,<frcsd>`。
+- P01 语义路口按 `mainnodeid` 聚合；`mainnodeid = null / 空字符串 / 0` 视为无有效值并退化为单节点语义路口。
+- 特殊转向使用 `formway` bit 运算：bit7 表达提前右转，bit8 表达提前左转；字段缺失时不得通过几何形态反推。
+- P01 禁止使用 `grade / grade_2` 作为主规则；`kind` 可参与 T 型判断但不能单独裁决。
+- A1 `InitialArm` 保留原始 trace 终端归并事实；`FinalArm` 默认等同 InitialArm，但当 LocalArmCandidate 完整覆盖碎片化 InitialArm 时可采用局部趋势兜底聚合。
+- RoadNextRoad 在 A1 ArmMovement 阶段只表达 allowed evidence，缺失不等于禁止；在 P01-Final 生成阶段，源侧缺失则不生成最终 F-RCSD RoadNextRoad。
+- RoadNextRoad `turnType / turntype` 不得用于 `movement_type` 判定。
+- A2 禁止仅凭几何最近输出 high confidence 配准；禁止自动拆分 over-merged Arm；禁止静默丢弃 FRCSD FinalArm 或 source_extra Arm。
+- 仓库不提供 P01 repo 官方 CLI、`scripts/` 常驻命令、模块 `__main__.py` 或模块 `run.py`；模块内 callable runner 用于开发验收与后续正式入口准备。
 
 ---
 
@@ -233,7 +236,7 @@
 ## 9. 当前结论
 
 - RCSD 当前已从纯骨架阶段进入“工程治理 + 正式业务模块并行”阶段。
-- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`；当前已登记 POC 验证模块：`p01_arm_build`。
+- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`；当前已登记 P01 成果模块：`p01_arm_build`。
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`，其定位为非业务生产模块。
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小闭环。
 - `t02_junction_anchor` 当前仍是 Active 正式业务模块；其模块正文可在独立轮次中维护，但项目级登记与仓库级入口必须保持一致。
@@ -241,5 +244,5 @@
 - `t03_virtual_junction_anchor` 当前保留 `t03-rcsd-association` 官方 CLI；其业务含义对应 `Step4 + Step5` 关联阶段。其内网批量执行与监控当前通过 repo 级 `t03_run_internal_full_input_8workers.sh` / `t03_watch_internal_full_input.sh` 交付，历史 finalization shell wrapper 已退役。
 - `t03_virtual_junction_anchor` 的 internal full-input 当前正式批次根目录成果包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`；其中 `nodes.gpkg` 仅更新代表 node，`fail3` 只代表 T03 downstream output 语义。
 - `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围已扩展到 `Step1-7`，其中 `Step1-4` 维持既有稳定执行面，`Step5-7` 进入正式研发实现阶段；internal full-input 通过 repo 级脚本包装 + T04 私有 runner 交付，不新增 repo 官方 CLI。
-- `p01_arm_build` 当前作为 Active POC 验证模块进入治理；正式范围覆盖 `P01-A1 / Arm 构建` 与 `P01-A2 / Arm 配准与 LogicalArmGroup 构建`，不包含 Movement、禁行迁移、F-RCSD 通行能力裁决或 P01-B。
+- `p01_arm_build` 当前作为 Active P01 成果模块进入治理；正式范围覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原，不包含 P01-A3 正式跨源 Movement 空间、禁行迁移、F-RCSD 通行能力最终裁决或 P01-B。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

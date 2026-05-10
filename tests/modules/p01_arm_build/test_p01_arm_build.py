@@ -784,6 +784,31 @@ def test_frcsd_road_next_road_same_source_inheritance(tmp_path: Path) -> None:
     )
 
 
+def test_frcsd_source_policy_records_prohibited_and_missing_right_carrier_issue(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": tuple(), "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    assert any(item.permission_status == "prohibited" for item in final.source_movement_policy_swsd)
+    assert any(item.permission_status == "prohibited" for item in final.source_movement_policy_rcsd)
+    assert "data_error_or_missing_right_turn_carrier" in final.issue_report["issue_counts"]
+    assert any(
+        item.movement_type == "right"
+        and item.permission_status == "manual_review_required"
+        and "data_error_or_missing_right_turn_carrier" in item.issue_flags
+        for item in final.audit
+    )
+
+
 def test_frcsd_road_next_road_cross_source_uses_primary_source(tmp_path: Path) -> None:
     swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
     rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")

@@ -1,364 +1,239 @@
-# P01-A Arm 构建 Spec
+# P01 v1.0.0 Specification
 
-## 1. Scope
+## 1. 业务目标
 
-本 SpecKit 任务只覆盖 `P01-A / Arm 构建`。P01-A 的目标是在已知 SWSD / RCSD / F-RCSD 三套数据对应路口 ID 的前提下，分别在三套数据中构建当前语义路口的 Arm，并产出可自动检查与人工目视审查的结果包。
+P01 的成果目标是生成最终 `F-RCSD:RoadNextRoad.geojson`，并保留可审计、可复现、可人工检查的结构证据链。仓库模块 `p01_arm_build` 承载三段能力：
 
-本轮业务需求主源为用户提供的本地需求文档：
+- `P01-A1`：单源 Arm 构建、特殊转向识别、ArmMovement 与 trunk 修正。
+- `P01-A2`：三源 Arm 配准与 LogicalArmGroup 构建。
+- `P01-Final`：F-RCSD RoadNextRoad 还原。
 
-```text
-/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/RCSD_Topo_Poc__P01__REQUIREMENT.md
-```
+P01 不以单点 Node 表示路口，而以语义路口 member node 集合作为 Arm、Movement 和最终 RoadNextRoad 的上下文。
 
-本轮仓库落地采用 `p01_arm_build` 模块 ID；`P01` 表示 POC 验证模块，目录结构与现有 `T0X` 正式模块保持一致。
+## 2. 输入
 
-## 2. In Scope
+### 2.1 A1 / P01-Final
 
-- 读取 SWSD / RCSD / F-RCSD 三套 Node 与 Road 基础数据。
-- 支持重复传入多个三段式 `--junction-group <swsd>,<rcsd>,<frcsd>`。
-- 按输入顺序生成 `group_0001`、`group_0002` 等稳定组 ID。
-- 按 `mainnodeid` 组装语义路口：有效 `mainnodeid` 聚合，`null / "" / 0` 作为无效值并退化为单节点语义路口。
-- 识别当前路口 internal roads、inbound / outbound / bidirectional seed roads。
-- 使用 `formway` bit7 / bit8 识别提前右转、提前左转，并把特殊道路索引写入审计输出。
-- 仅在字段明确可识别时排除 legacy 右转专用道 / 渠化右转，并把排除结果写入审计输出。
-- 从当前路口 seed road 出发按拓扑追溯，输出 InitialArm。
-- `InitialArm` 保留原始 trace 终端归并事实；`FinalArm` 默认等同 `InitialArm`，但当 trace 过度切碎且 `LocalArmCandidate` 完整覆盖时，可采用局部趋势兜底聚合。
-- 识别 `trunk_road_ids`，提前左转 road 可在 Arm member 中但不得进入 trunk。
-- 提前右转 road 不进入 Arm member / seed / connector / trunk，必须输出 `AdvanceRightTurnRelation` 或 issue。
-- 输出 `JunctionContext / InitialArm / FinalArm / AdvanceRightTurnRelation / LocalArmCandidate / ArmTrace / ThroughDecisionAudit / ArmBuildIssueReport`。
-- 输出 `LocalArmCandidate` 审计候选：仅基于当前语义路口 seed roads 的局部出入口趋势分组，用于人工判断 trace 过度切碎，并可在完整覆盖时作为 FinalArm 兜底依据。
-- 输出 review PNG、compare PNG、review GPKG、summary 与 review index。
-- 实现自动结构检查、批量统计检查和人工目视优先级分类。
+必选输入：
 
-## 3. Out of Scope
+- `--swsd-nodes`
+- `--swsd-roads`
+- `--rcsd-nodes`
+- `--rcsd-roads`
+- `--frcsd-nodes`
+- `--frcsd-roads`
+- `--junction-group <swsd_junction_id>,<rcsd_junction_id>,<frcsd_junction_id>`，可重复。
+- `--out-root`
 
-- Arm 配准。
-- Movement 空间建模。
-- SWSD / RCSD 禁行信息提取。
-- 禁行证据投影。
-- F-RCSD 通行能力裁决。
-- P01-B。
-- 复杂 Arm 级兜底合并规则。
-- 将局部趋势候选直接固化为正式 Arm 合并结果。
-- 基于几何形态反推右转专用道。
-- 使用 `grade / grade_2` 作为 Arm 构建规则。
-- 新增 repo CLI 子命令、`scripts/` 常驻脚本、模块 `__main__.py` 或模块 `run.py`。
+可选输入：
 
-## 4. Core Business Rules
+- `--run-id`
+- `--right-turn-formway-value`
+- `--swsd-road-next-road`
+- `--rcsd-road-next-road`
+- `--frcsd-road-next-road`
 
-### 4.1 Semantic Junction
+RoadNextRoad 作为 A1 ArmMovement 的 allowed evidence。SWSD 支持 JSON / RoadNodeRoad JSON 形态，RCSD / F-RCSD 支持 GeoJSON 或同类 JSON 结构。F-RCSD RoadNextRoad 输入仅用于同源 evidence 审计；最终 F-RCSD RoadNextRoad 由 P01-Final 生成。
 
-路口是语义路口而不是单个 Node 点。对每套数据：
+F-RCSD Road 必须读取 `Source`：
 
-- 若目标 Node 或其同组 Node 存在有效 `mainnodeid`，则所有相同 `mainnodeid` 的 Node 构成当前语义路口。
-- `mainnodeid = null / "" / 0` 视为无有效 `mainnodeid`。
-- 无有效 `mainnodeid` 时，输入 ID 对应 Node 自身构成单节点语义路口。
-- Arm 构建基于当前语义路口成员 Node 集合，而不是只基于代表 Node。
+- `Source = 1`：来源 RCSD。
+- `Source = 2`：来源 SWSD。
 
-### 4.2 Arm
+Source 缺失、不可解析或超出允许值时，相关 final RoadNextRoad 不生成，并写入 issue。
 
-Arm 是从当前语义路口出发，沿进入 / 退出当前路口的 Road 进行拓扑追溯，最终到达同一个终端语义路口或终端边界的一组道路链。
+### 2.2 A2
 
-Arm 不是几何方向聚类、Road heading 聚类、Port、Family、Movement 或全局 Segment。
+A2 主输入是 A1 run root：
 
-### 4.3 特殊转向与 Right-Turn Exclusion
+- `--arm-build-run-root <P01_A1_RUN_ROOT>`
+- `--out-root`
+- `--run-id`
 
-P01-A1 v0.3.0 将特殊转向直接并入 Arm 构建，不新增独立阶段。
+A2 从 A1 `preflight.json` 读取原始数据路径，从 `cases/<group>/<dataset>/` 读取 A1 JSON 输出。
 
-`formway` 必须先尝试解析为整数，正式特殊转向规则为：
+## 3. A1 规则
+
+### 3.1 语义路口
+
+- 有有效 `mainnodeid`：按 `mainnodeid` 聚合为多节点语义路口。
+- `mainnodeid = null / 空字符串 / 0`：Node 自身作为单节点语义路口。
+- `mainnode` 只是代表 Node，不等于整个路口。
+
+### 3.2 Arm
+
+Arm 是从当前语义路口出发，沿进入 / 退出当前路口的 Road 进行拓扑追溯，最终到达同一个终端路口或终端边界的一组道路链。Arm 不是几何方向聚类、Port、Family、Movement 或全局 Segment。
+
+### 3.3 特殊转向
+
+`formway` 使用 bit 运算：
 
 - 提前右转：`(formway & 128) != 0`
 - 提前左转：`(formway & 256) != 0`
 
-提前右转 road 不属于任何 Arm 的 `member_road_ids / seed_road_ids / connector_road_ids / trunk_road_ids`。bit7 候选范围包括直接连接当前语义路口 member node 的 road，以及 Arm 非特殊 inbound / bidirectional seed 外侧节点相邻的 bit7 road。连续 bit7 road 链按一条 Arm 级 `AdvanceRightTurnRelation` 输出，链内所有 bit7 road 写入同一条 relation 的 `advance_right_turn_road_ids`。每条当前路口 bit7 road 必须形成 relation，或输出 `target_arm_not_found / ambiguous / patch_boundary / loop` 等 issue。
+提前右转 road 不进入 Arm `member_road_ids / seed_road_ids / connector_road_ids / trunk_road_ids`，必须进入 `AdvanceRightTurnRelation` 或 issue。提前左转 road 可以进入 Arm member，但必须从 trunk 中排除。
 
-提前左转 road 可以属于 `member_road_ids`，但必须写入 `advance_left_turn_road_ids`，并从 `trunk_road_ids` 中排除。`JunctionContext.advance_left_turn_road_ids` 只统计已进入 Arm member 的 bit8 road，不把 seed 外侧节点相邻但未进入 Arm 的 bit8 road 计入当前路口提前左转。
+`--right-turn-formway-value` 只用于 legacy 显式右转 / 渠化右转排除兼容；bit7 提前右转优先进入 relation 或 issue。
 
-当前版本先排除右转专用道 / 渠化右转：
+### 3.4 Through 判断
 
-- 只有字段明确可识别时才排除。
-- 字段缺失时不通过几何形态反推。
-- 被排除 Road 不进入 seed、connector、through 判断或 T 型判断。
-- 被排除 Road 必须写入 `excluded_right_turn_road_ids` 与 issue/audit 输出。
-- `--right-turn-formway-value` 只作为 legacy 兼容排除参数；bit7 优先于 legacy 参数，不作为 legacy 排除静默丢弃。
+through 判断发生在语义节点组 / 语义路口层面。允许继续追溯的状态包括 `simple_through` 和 `t_mainline_through`。停止状态包括 `t_side_terminal`、`semantic_boundary`、`ambiguous_boundary`、`dead_end`、`patch_boundary`、`loop_to_current_junction`。
 
-### 4.4 Through Decision
+T 型判断必须结合 `kind`、拓扑结构、当前追溯方向、Arm / trunk / RoadNextRoad 证据；`kind` 不能单独裁决。`grade / grade_2` 不进入 P01 主规则。
 
-through 判断发生在语义节点组 / 语义路口层面，不发生在孤立物理 Node 层面。允许状态固定为：
+### 3.5 ArmMovement
 
-- `simple_through`
-- `t_mainline_through`
-- `t_side_terminal`
-- `semantic_boundary`
-- `ambiguous_boundary`
-- `dead_end`
-- `patch_boundary`
-- `loop_to_current_junction`
+ArmMovement 是同源 `from_arm -> to_arm` 的客观动作候选，按全量 `from_arm × to_arm` 输出。RoadNextRoad 在 A1 中只表达 allowed evidence：
 
-允许继续追溯的状态只有 `simple_through` 与 `t_mainline_through`。其余状态必须停止并审计。
+- 有映射 evidence：`allowed_supported`
+- 无映射 evidence：`no_allowed_evidence`
+- 输入未覆盖：`out_of_scope`
+- 映射冲突：`mapping_unresolved` 或 `role_conflict`
 
-Kind 参与追溯停止主口径：
+RoadNextRoad 缺失在 A1 阶段不表示禁止。
 
-- `kind != 4` 的语义节点组原则上需要继续追溯；但 `dead_end / patch_boundary / loop_to_current_junction` 仍为拓扑硬停止。
-- `kind = 2048` 视为明确 T 型路口，必须结合当前追溯方向判断横向主通道与竖向侧支：横向主通道输出 `t_mainline_through` 并继续，竖向侧支输出 `t_side_terminal` 并停止。
-- `kind = 4` 不立即停止，必须先评估实际拓扑是否符合 T 型路口特征；若符合 T 型则按 T 型规则裁决，若不符合则输出 `semantic_boundary` 并停止。
+`movement_type` 支持 `straight / left / right / uturn / unknown`。判定优先级：
 
-T 型判断必须结合当前追溯方向、拓扑结构和候选 continuation 的方向关系。`grade / grade_2` 禁止进入主规则。
+1. `from_arm_id == to_arm_id` -> `uturn`
+2. 同一主交通流 / 同一道路走廊连续 -> `straight`
+3. 非直行、非调头时，目标 Arm 在进入交通流左侧 -> `left`
+4. 非直行、非调头时，目标 Arm 在进入交通流右侧 -> `right`
+5. 证据不足 -> `unknown`
 
-## 5. Inputs
+RoadNextRoad `turnType / turntype` 只保留在 raw audit 和 turn type summary 中，不得用于 `movement_type` 判定。Y-like、skew-like、diverge-like、merge-like、curved-mainline-like 只能作为后验审计标签，不得作为判定入口。
 
-模块 runner 参数形态：
+### 3.6 ReceivingRoadRole 与 corrected trunk
 
-```text
---swsd-nodes
---swsd-roads
---rcsd-nodes
---rcsd-roads
---frcsd-nodes
---frcsd-roads
---junction-group <swsd_junction_id>,<rcsd_junction_id>,<frcsd_junction_id>
---out-root
---run-id
---right-turn-formway-value
-```
+ReceivingRoadRole 统计目标 Arm 内每条 Road 被哪些 movement evidence 接入，角色包括：
 
-`--run-id` 可选；缺失时自动生成并写入 summary。
-`--right-turn-formway-value` 可重复传入，用于声明 legacy 右转专用道 / 渠化右转的 `formway` 字段值；未传入时不得仅凭几何或示例值排除 Road。bit7 / bit8 特殊转向不依赖该参数。
+- `straight_receiving_road`
+- `left_turn_receiving_road`
+- `advance_left_receiving_road`
+- `right_turn_receiving_road`
+- `unknown_receiving_road`
 
-输入文件支持 Fiona 可读取的矢量数据源。Node 至少需要 `id / mainnodeid / geometry`，`kind` 可选；Road 至少需要 `id / snodeid / enodeid / direction / geometry`，`formway` 可选。
+只有 stable straight evidence 非空时，才允许基于 advance-left-only receiving road 排除 trunk candidate。若目标 Arm 无 stable straight receiving evidence，不得排除 trunk，只能输出 `straight_receiving_evidence_missing`。
 
-## 6. Outputs
+Corrected trunk 输出：
 
-输出根目录为：
+- `original_trunk_road_ids`
+- `movement_excluded_receiving_road_ids`
+- `corrected_trunk_road_ids`
+- `trunk_correction_status`
+- `trunk_correction_reason`
 
-```text
-<out-root>/<run-id>/
-```
+## 4. A2 规则
 
-本轮仓库落地使用 `cases/<junction_group_id>/` 作为 case 目录，保留三套原始路口 ID：
+A2 将 FinalArm 转换为 ArmProfile，生成 FRCSD-SWSD、FRCSD-RCSD、SWSD-RCSD 候选关系，构建跨三源 evidence graph，并形成 LogicalArmGroup。
 
-```text
-preflight.json
-p01_arm_build_summary.json
-p01_arm_build_review_index.csv
-cases/group_0001/case_input.json
-cases/group_0001/case_summary.json
-cases/group_0001/SWSD/junction_context.json
-cases/group_0001/SWSD/initial_arms.json
-cases/group_0001/SWSD/final_arms.json
-cases/group_0001/SWSD/advance_right_turn_relations.json
-cases/group_0001/SWSD/local_arm_candidates.json
-cases/group_0001/SWSD/arm_traces.json
-cases/group_0001/SWSD/through_decisions.json
-cases/group_0001/SWSD/issue_report.json
-cases/group_0001/SWSD/review_layers.gpkg
-cases/group_0001/SWSD/p01_arm_review.png
-cases/group_0001/RCSD/...
-cases/group_0001/FRCSD/...
-cases/group_0001/compare/p01_arm_compare.png
-cases/group_0001/compare/p01_arm_compare_summary.json
-cases/group_0001/compare/p01_arm_compare_layers.gpkg
-```
+A2 必须区分：
 
-## 7. Required Business Objects
+- 可接受 coverage 差异：`source_missing`、`source_partial`
+- 可接受且已解释的分组差异：`source_over_split_resolved`
+- 不可接受或需人工审查的分组错误：`source_over_split_unresolved`、`source_over_merged_unresolved`、`conflict`、`uncertain`
 
-### JunctionContext
+后续阶段只能消费 `acceptable_for_downstream = true` 的 LogicalArmGroup。
 
-至少包含：
+## 5. P01-Final 规则
 
-- `dataset`
-- `junction_id`
-- `member_node_ids`
-- `internal_road_ids`
-- `inbound_seed_road_ids`
-- `outbound_seed_road_ids`
-- `bidirectional_seed_road_ids`
-- `excluded_right_turn_road_ids`
-- `advance_left_turn_road_ids`
-- `advance_right_turn_road_ids`
-- `formway_missing_road_ids`
-- `formway_unparseable_road_ids`
-- `special_formway_issue_flags`
-- `input_issue_flags`
+### 5.1 Source road mapping
 
-### InitialArm
+F-RCSD Road 使用 `Source + 几何完全一致` 映射源 Road：
 
-至少包含：
+- `Source = 1` 只在 RCSD Road 中查找几何完全一致。
+- `Source = 2` 只在 SWSD Road 中查找几何完全一致。
 
-- `dataset`
-- `current_junction_id`
-- `initial_arm_id`
-- `terminal_type`
-- `terminal_junction_id`
-- `terminal_member_node_ids`
-- `member_road_ids`
-- `seed_road_ids`
-- `connector_road_ids`
-- `inbound_member_road_ids`
-- `outbound_member_road_ids`
-- `bidirectional_member_road_ids`
-- `build_status`
-- `risk_flags`
-- `has_advance_left_turn`
-- `advance_left_turn_road_ids`
-- `trunk_road_ids`
-- `trunk_status`
-- `trunk_reason`
-- `non_trunk_member_road_ids`
-- `has_inbound_advance_right_turn`
-- `advance_right_turn_relation_ids`
-- `advance_right_turn_target_arm_ids`
+同源多匹配输出 `ambiguous_source_geometry_match`。找不到源 Road 输出 `source_geometry_match_missing`。不得用空间接近替代 exact mapping。
 
-### FinalArm
+### 5.2 SourceMovementPolicy
 
-当前版本 `FinalArm` 默认与 `InitialArm` 一一对应；当 `LocalArmCandidate` 完整覆盖全部 `InitialArm` 且存在 trace 碎片化时，允许按局部趋势兜底聚合。
+SWSD / RCSD SourceMovementPolicy 由源侧 RoadNextRoad evidence 与 role-level road roles 构建。最终生成阶段中：
 
-- `final_arm_id`
-- `source_initial_arm_ids`
-- `merge_status`
-- `merge_reason`
-- `has_advance_left_turn`
-- `advance_left_turn_road_ids`
-- `trunk_road_ids`
-- `trunk_status`
-- `trunk_reason`
-- `non_trunk_member_road_ids`
-- `has_inbound_advance_right_turn`
-- `advance_right_turn_relation_ids`
-- `advance_right_turn_target_arm_ids`
+- 源 RoadNextRoad 存在 -> `permission_status = allowed`
+- 源 RoadNextRoad 缺失 -> `permission_status = prohibited`
 
-当前允许 `merge_status`：
+这里的 `prohibited` 是 final generation 语义，不等同于 A1 ArmMovement 的 `no_allowed_evidence`。
 
-- `not_applied`
-- `local_candidate_fallback`
+### 5.3 final generation
 
-### AdvanceRightTurnRelation
+同源 F-RCSD from/to road pair 直接继承对应源 RoadNextRoad。不同源 pair 以进入 road 的 Source 作为 primary source，使用 primary source 的 SourceMovementPolicy 判断 role pair 是否 allowed。
 
-至少包含：
+RCSD -> SWSD fallback 只允许以下场景：
 
-- `relation_id`
-- `dataset`
-- `current_junction_id`
-- `from_arm_id`
-- `from_inbound_road_ids`
-- `advance_right_turn_road_ids`
-- `to_arm_id`
-- `to_outbound_road_ids`
-- `trace_road_ids`
-- `trace_node_ids`
-- `trace_status`
-- `trace_reason`
-- `confidence`
-- `risk_flags`
+- `from_road.Source = 1`
+- `to_road.Source = 2`
+- RCSD 中没有对应 to_arm
+- SWSD 中存在对应 to_arm
+- `RCSD from_arm road count == SWSD from_arm road count`
 
-### LocalArmCandidate
+平行支路数量不一致必须进入 `data_error / manual_review_required`，不得静默生成对应平行支路 RoadNextRoad。trunk -> right Arm 不通且 F-RCSD 缺少 parallel_branch 或提前右转 carrier 时，输出 `data_error_or_missing_right_turn_carrier`。
 
-`LocalArmCandidate` 是审计候选，不是正式 Arm 输出。它只基于当前语义路口 seed road 从 member node 指向外侧 node 的局部趋势角，把同侧进入 / 退出 / 双向 seed 汇总成参考分组；可额外保留少量方向一致的外侧 stub road 作为趋势证据。
+最终 `frcsd_road_next_road.geojson` 使用 RCSD RoadNextRoad GeoJSON 形态：
 
-至少包含：
+- `geometry = null`
+- properties 至少包含 `id / road_id / next_road_id / type / source / turntype / city_code`
+- `(road_id, next_road_id)` 不重复
 
-- `dataset`
-- `current_junction_id`
-- `local_arm_candidate_id`
-- `source_seed_road_ids`
-- `source_initial_arm_ids`
-- `local_stub_road_ids`
-- `inbound_seed_road_ids`
-- `outbound_seed_road_ids`
-- `bidirectional_seed_road_ids`
-- `member_node_ids`
-- `trend_angle_deg`
-- `angular_spread_deg`
-- `grouping_reason`
-- `build_status`
-- `risk_flags`
+`turntype` 是输出编码，不参与 `movement_type` 判定。
 
-### ArmTrace
+## 6. 输出
 
-每条 seed road 一条 trace，至少包含：
+A1 / P01-Final run root：
 
-- `dataset`
-- `current_junction_id`
-- `trace_id`
-- `seed_road_id`
-- `seed_role`
-- `traced_road_ids`
-- `traced_node_ids`
-- `through_decisions`
-- `stop_type`
-- `stop_reason`
-- `assigned_initial_arm_id`
-- `issue_flags`
+- `preflight.json`
+- `case_results.json`
+- `p01_arm_build_summary.json`
+- `p01_arm_build_review_index.csv`
+- `cases/<group_id>/case_input.json`
+- `cases/<group_id>/case_summary.json`
 
-### ThroughDecisionAudit
+每个 dataset：
 
-必须输出业务状态，不得只输出 true / false。
+- `junction_context.json`
+- `initial_arms.json`
+- `final_arms.json`
+- `corrected_final_arms.json`
+- `advance_right_turn_relations.json`
+- `local_arm_candidates.json`
+- `arm_traces.json`
+- `through_decisions.json`
+- `issue_report.json`
+- `arm_movements.json`
+- `road_movement_evidence.json`
+- `arm_receiving_road_roles.json`
+- `trunk_corrections.json`
+- `review_layers.gpkg`
+- `p01_arm_review.png`
 
-### ArmBuildIssueReport
+P01-Final：
 
-至少覆盖：
+- `cases/<group_id>/FRCSD/frcsd_road_next_road.geojson`
+- `cases/<group_id>/FRCSD/frcsd_source_road_map.json`
+- `cases/<group_id>/FRCSD/source_movement_policy_swsd.json`
+- `cases/<group_id>/FRCSD/source_movement_policy_rcsd.json`
+- `cases/<group_id>/FRCSD/frcsd_road_next_road_audit.json`
+- `cases/<group_id>/FRCSD/frcsd_road_next_road_issue_report.json`
 
-- `junction_member_nodes_not_found`
-- `seed_road_missing`
-- `all_seed_roads_excluded`
-- `seed_road_unassigned`
-- `road_assigned_to_multiple_arms`
-- `ambiguous_boundary`
-- `patch_boundary`
-- `loop_to_current_junction`
-- `t_junction_uncertain`
-- `kind_topology_conflict`
-- `right_turn_field_missing`
-- `formway_missing`
-- `formway_unparseable`
-- `advance_right_turn_target_arm_not_found`
-- `advance_right_turn_ambiguous`
-- `advance_right_turn_patch_boundary`
-- `advance_right_turn_loop`
-- `advance_right_turn_in_arm_member_error`
-- `advance_left_turn_in_trunk_error`
-- `trunk_min_loop_not_found`
-- `trunk_min_loop_ambiguous`
-- `rcsd_structure_incomplete`
-- `frcsd_structure_incomplete`
+A2：
 
-## 8. Acceptance Criteria
+- `p01_arm_alignment_summary.json`
+- `p01_arm_alignment_review_index.csv`
+- `cases/<group_id>/logical_arm_groups.json`
+- `cases/<group_id>/arm_build_feedback.json`
+- `cases/<group_id>/source_extra_arms.json`
+- `cases/<group_id>/arm_alignment_candidates.json`
+- `cases/<group_id>/<dataset>/raw_arm_alignment.json`
+- `cases/<group_id>/<dataset>/arm_alignment_issue_report.json`
+- `cases/<group_id>/<dataset>/arm_alignment_review_layers.gpkg`
+- `cases/<group_id>/<dataset>/p01_arm_alignment_review.png`
+- `cases/<group_id>/compare/p01_arm_alignment_compare.png`
 
-- 能读取三套 Node / Road 基础数据。
-- 能处理多个 `--junction-group`。
-- 每组分别输出 SWSD / RCSD / FRCSD Arm 构建结果。
-- 每条 seed road 有归属或明确 issue。
-- 每个 through 判断有可审计状态。
-- 输出 JSON / PNG / GPKG / summary / review index。
-- 输出 `advance_right_turn_relations.json`，每条 bit7 road 有 relation 或明确 issue。
-- `InitialArm / FinalArm` 输出提前左转、提前右转 relation 与 trunk 字段。
-- 自动检查能发现关键异常。
-- 代码中不使用 `grade / grade_2` 参与 Arm 构建主规则。
-- 完成 py_compile、单元测试、synthetic case、多 junction-group、输出结构、PNG/GPKG 存在性与审计检查。
+## 7. 验收
 
-## 9. P01-A1 v0.4.0 RoadNextRoad-aware ArmMovement 与 Trunk 修正
-
-本节已由 v0.5.0 扩展为 A1 + P01-Final 范围，不新增独立阶段，不实现 A2 新业务扩展 / A3 / P01-B。
-
-- A1 runner 新增可选 `--swsd-road-next-road / --rcsd-road-next-road / --frcsd-road-next-road`。
-- RoadNextRoad 归一化为 `RoadMovementEvidence`，只表达 allowed evidence；缺失只表示 `no_allowed_evidence`，不得解释为 prohibited。
-- `turnType / turntype` 只保留到 `raw_turn_type` 与审计 summary，禁止用于 `movement_type` 判定。
-- 每套数据每个路口输出全量 `from_final_arm x to_final_arm` ArmMovement。
-- `movement_type` 支持 `straight / left / right / uturn / unknown`，按 same-arm、唯一 stable straight target、trunk / LocalArmCandidate 主交通流连续性、RoadNextRoad trunk evidence 与相对左右侧判定。
-- 输出 `arm_movements.json / road_movement_evidence.json / arm_receiving_road_roles.json / trunk_corrections.json / corrected_final_arms.json`。
-- corrected trunk 只允许排除 advance-left-only receiving road；目标 Arm 无 straight receiving evidence 时不得排除，必须输出 `straight_evidence_missing`。
-- review GPKG 增加 movement、evidence、receiving road、movement-excluded trunk 和 corrected trunk 图层。
-
-## 10. P01-Final v0.5.0 F-RCSD RoadNextRoad 还原
-
-本轮在 A1 runner 内输出 P01-Final 产物，不新增正式 CLI。
-
-- 读取 F-RCSD:Road `Source` 字段，`1 = RCSD`，`2 = SWSD`。
-- 使用 `Source + 几何完全一致` 建立 F-RCSD Road 到源 Road 的映射。
-- Source 异常、source geometry missing、ambiguous source geometry match 均进入 issue，不参与静默生成。
-- 基于 SWSD / RCSD RoadNextRoad evidence 构建 SourceMovementPolicy。
-- 同源 F-RCSD road pair 直接继承源 RoadNextRoad；源侧 RoadNextRoad 缺失则不生成。
-- 不同源 road pair 以进入 road 的 Source 为 primary source，使用 primary source role-level policy 生成。
-- 当前唯一 fallback：`from Source = 1`、`to Source = 2`、RCSD 无 policy 且 SWSD 有 policy；生成前必须检查 entering arm road count。
-- 输出 `frcsd_road_next_road.geojson / frcsd_source_road_map.json / source_movement_policy_swsd.json / source_movement_policy_rcsd.json / frcsd_road_next_road_audit.json / frcsd_road_next_road_issue_report.json`。
-- 最终 `turntype` 输出映射为 `unknown=0 / straight=1 / left=2 / right=3 / uturn=4`，该映射不得用于 movement_type 输入判断。
+- A1 能读取三源 Node / Road，并处理多个 junction group。
+- RoadNextRoad-aware ArmMovement 输出全量候选。
+- `turnType / turntype` 不参与 `movement_type` 判定。
+- ReceivingRoadRole 与 corrected trunk 可审计。
+- A2 输出 LogicalArmGroup、RawArmAlignment、ArmBuildFeedback 与 source_extra。
+- P01-Final 能执行 Source + geometry exact mapping、同源继承、跨源 primary source、RCSD -> SWSD fallback 与 final GeoJSON 输出。
+- JSON / GeoJSON / PNG / GPKG / summary / review index / audit / issue report 均可定位输入、参数、case、规则与风险。

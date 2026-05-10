@@ -237,7 +237,26 @@ def _source_policy(
     roles: dict[str, RoadRole],
 ) -> tuple[SourceMovementPolicy, ...]:
     movement_by_evidence = _movement_by_evidence(result)
-    grouped: dict[tuple[str, str, str, str, str], dict[str, set[str]]] = {}
+    roles_by_arm: dict[str, list[RoadRole]] = defaultdict(list)
+    for role in roles.values():
+        roles_by_arm[role.arm_id].append(role)
+    candidate_grouped: dict[tuple[str, str, str, str, str], dict[str, set[str]]] = {}
+    for movement in result.arm_movements:
+        for from_role in roles_by_arm.get(movement.from_arm_id, []):
+            for to_role in roles_by_arm.get(movement.to_arm_id, []):
+                if from_role.road_id == to_role.road_id:
+                    continue
+                key = (
+                    movement.from_arm_id,
+                    movement.to_arm_id,
+                    movement.movement_type,
+                    from_role.road_role,
+                    to_role.target_role,
+                )
+                bucket = candidate_grouped.setdefault(key, {"from": set(), "to": set(), "evidence": set()})
+                bucket["from"].add(from_role.road_id)
+                bucket["to"].add(to_role.road_id)
+    allowed_grouped: dict[tuple[str, str, str, str, str], dict[str, set[str]]] = {}
     for evidence in result.road_movement_evidence:
         if evidence.mapping_status != "mapped" or not evidence.from_arm_id or not evidence.to_arm_id:
             continue
@@ -255,12 +274,23 @@ def _source_policy(
             from_role.road_role,
             to_role.target_role,
         )
-        bucket = grouped.setdefault(key, {"from": set(), "to": set(), "evidence": set()})
+        bucket = allowed_grouped.setdefault(key, {"from": set(), "to": set(), "evidence": set()})
         bucket["from"].add(evidence.road_id)
         bucket["to"].add(evidence.next_road_id)
         bucket["evidence"].add(evidence.raw_id or evidence.evidence_id)
     rows: list[SourceMovementPolicy] = []
-    for key, bucket in sorted(grouped.items()):
+    for key, bucket in sorted(candidate_grouped.items()):
+        allowed_bucket = allowed_grouped.get(key)
+        if allowed_bucket:
+            from_ids = allowed_bucket["from"]
+            to_ids = allowed_bucket["to"]
+            evidence_ids = allowed_bucket["evidence"]
+            permission_status = "allowed"
+        else:
+            from_ids = bucket["from"]
+            to_ids = bucket["to"]
+            evidence_ids = set()
+            permission_status = "prohibited"
         rows.append(
             SourceMovementPolicy(
                 source_dataset=source_dataset,
@@ -269,10 +299,10 @@ def _source_policy(
                 movement_type=key[2],
                 from_road_role=key[3],
                 to_road_role=key[4],
-                from_source_road_ids=tuple(sorted(bucket["from"])),
-                to_source_road_ids=tuple(sorted(bucket["to"])),
-                permission_status="allowed",
-                source_road_next_road_ids=tuple(sorted(bucket["evidence"])),
+                from_source_road_ids=tuple(sorted(from_ids)),
+                to_source_road_ids=tuple(sorted(to_ids)),
+                permission_status=permission_status,
+                source_road_next_road_ids=tuple(sorted(evidence_ids)),
             )
         )
     return tuple(rows)
@@ -403,6 +433,11 @@ def build_frcsd_road_next_road(
     source_parallel_counts = {dataset: _parallel_count_by_arm(roles[dataset]) for dataset in ("SWSD", "RCSD")}
     f_parallel_counts = _parallel_count_by_arm(roles["FRCSD"])
     f_movements = _movement_by_pair(result_by_dataset["FRCSD"])
+    advance_right_pairs = {
+        (relation.from_arm_id, relation.to_arm_id)
+        for relation in result_by_dataset["FRCSD"].advance_right_turn_relations
+        if relation.from_arm_id and relation.to_arm_id
+    }
     features: list[dict[str, Any]] = []
     audit_rows: list[FrcsdGenerationAudit] = []
     generated_pairs: set[tuple[str, str]] = set()
@@ -425,6 +460,35 @@ def build_frcsd_road_next_road(
             raw_by_source=raw_by_source,
         )
         features.append({"type": "Feature", "properties": props, "geometry": None})
+
+    def right_turn_carrier_issues(movement: ArmMovement, from_role: RoadRole) -> tuple[str, ...]:
+        if movement.movement_type != "right" or from_role.road_role != "trunk":
+            return tuple()
+        has_parallel_carrier = f_parallel_counts[movement.to_arm_id] > 0
+        has_advance_right_carrier = (movement.from_arm_id, movement.to_arm_id) in advance_right_pairs
+        if has_parallel_carrier or has_advance_right_carrier:
+            return tuple()
+        return ("data_error_or_missing_right_turn_carrier", "data_error")
+
+    def source_parallel_missing_issues(
+        *,
+        source_dataset: str,
+        movement: ArmMovement,
+        from_role: RoadRole,
+        to_role: RoadRole,
+    ) -> tuple[str, ...]:
+        issues: list[str] = []
+        if (
+            f_parallel_counts[movement.from_arm_id] == 0
+            and policy_indexes[source_dataset].get((movement.movement_type, "parallel_branch", to_role.target_role), tuple())
+        ):
+            issues.append("source_parallel_branch_missing_in_frcsd")
+        if (
+            f_parallel_counts[movement.to_arm_id] == 0
+            and policy_indexes[source_dataset].get((movement.movement_type, from_role.road_role, "parallel_branch"), tuple())
+        ):
+            issues.append("source_parallel_branch_missing_in_frcsd")
+        return tuple(sorted(set(issues)))
 
     for movement in result_by_dataset["FRCSD"].arm_movements:
         from_roads = [role for role in roles["FRCSD"].values() if role.arm_id == movement.from_arm_id]
@@ -464,11 +528,18 @@ def build_frcsd_road_next_road(
                         permission = "allowed"
                         rule = "same_source_inherited"
                         confidence = "high"
+                        issue_flags = source_parallel_missing_issues(
+                            source_dataset=primary_source,
+                            movement=movement,
+                            from_role=from_role,
+                            to_role=to_role,
+                        )
                     else:
                         evidence_ids = tuple()
-                        permission = "prohibited"
+                        issue_flags = right_turn_carrier_issues(movement, from_role)
+                        permission = "manual_review_required" if issue_flags else "prohibited"
                         rule = "same_source_missing_source_road_next_road"
-                        confidence = "high"
+                        confidence = "none" if issue_flags else "high"
                     audit_rows.append(
                         _audit(
                             f_road_id=from_role.road_id,
@@ -484,6 +555,7 @@ def build_frcsd_road_next_road(
                             permission_status=permission,
                             evidence_ids=evidence_ids,
                             confidence=confidence,
+                            issue_flags=issue_flags,
                         )
                     )
                     continue
@@ -521,8 +593,14 @@ def build_frcsd_road_next_road(
                             for item in allowed
                         }
                         if source_counts and f_count not in source_counts:
-                            issue_flags = ("parallel_branch_count_mismatch_manual_review_required",)
+                            issue_flags = ("parallel_branch_count_mismatch_manual_review_required", "data_error")
                     if not issue_flags:
+                        issue_flags = source_parallel_missing_issues(
+                            source_dataset=reference_source,
+                            movement=movement,
+                            from_role=from_role,
+                            to_role=to_role,
+                        )
                         evidence_ids = tuple(sorted({eid for item in allowed for eid in item.source_road_next_road_ids}))
                         append_feature(from_role.road_id, to_role.road_id, movement, reference_source, evidence_ids)
                         permission = "allowed"
@@ -535,6 +613,12 @@ def build_frcsd_road_next_road(
                     evidence_ids = tuple()
                     permission = "manual_review_required" if issue_flags else "prohibited"
                     confidence = "none" if issue_flags else "medium"
+                if permission == "prohibited":
+                    carrier_issues = right_turn_carrier_issues(movement, from_role)
+                    if carrier_issues:
+                        issue_flags = tuple(sorted(set(issue_flags).union(carrier_issues)))
+                        permission = "manual_review_required"
+                        confidence = "none"
                 audit_rows.append(
                     _audit(
                         f_road_id=from_role.road_id,

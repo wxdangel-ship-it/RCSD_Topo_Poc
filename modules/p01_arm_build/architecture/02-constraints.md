@@ -2,31 +2,33 @@
 
 ## 业务约束
 
-- 只做 P01-A1 / P01-A2 / P01-Final，不扩展 P01-B。
-- A1 允许输出 ArmMovement 候选与 RoadNextRoad evidence 审计；P01-Final 允许生成最终 F-RCSD RoadNextRoad。
-- 不实现 P01-A3 正式跨源 Movement 空间、禁行迁移或通行能力裁决。
-- `InitialArm` 保留原始 trace 终端归并；`FinalArm` 默认等于 `InitialArm`，但允许在 trace 过度切碎且 `LocalArmCandidate` 完整覆盖时采用局部趋势兜底聚合。
+- 范围限定为 P01-A1 / P01-A2 / P01-Final。
+- P01-A3 正式跨源 Movement 空间、P01-B、禁行迁移与通行能力最终裁决不由本模块实现。
+- `InitialArm` 保留原始 trace 终端归并事实；`FinalArm` 默认等同 `InitialArm`，也可在 `LocalArmCandidate` 完整覆盖碎片化 InitialArm 时采用局部趋势兜底聚合。
 - 右转专用道 / 渠化右转只有字段明确可识别时才排除。
-- `kind` 参与追溯停止主口径：非 `4` 类型原则继续，`2048` 按 T 型横/竖裁决，`4` 先评估 T 型特征后再决定停止或继续。
-- `grade / grade_2` 不进入 Arm 构建主规则。
+- 特殊转向使用 `formway` bit 运算：bit7 = 提前右转，bit8 = 提前左转。
+- `kind` 可参与追溯停止判断；T 型判断必须结合拓扑、追溯方向与 Arm 结构，不能由 `kind` 单独裁决。
+- `grade / grade_2` 不进入 P01 主规则。
 - A2 读取 A1 run root，不重新实现 A1，不自动修复 A1 输出。
 - A2 不能仅凭几何最近输出 high confidence 配准。
 - A2 不自动拆分 over-merged Arm，只输出 ArmBuildFeedback。
+- RoadNextRoad 在 A1 ArmMovement 阶段只表达 allowed evidence；缺失不等于禁止。
+- RoadNextRoad 在 P01-Final 生成阶段作为最终允许通行证据；源侧缺失则不生成 F-RCSD RoadNextRoad。
+- `turnType / turntype` 只作为 raw audit 字段，不得用于 `movement_type` 判定。
 - P01-Final 只能用 `F-RCSD:Road.Source + 几何完全一致` 做源 Road 强匹配，不得用空间接近替代。
-- `turnType / turntype` 只作为 raw audit 字段，不得用于 movement_type 判定。
 
 ## 工程约束
 
 - 文档在 `modules/p01_arm_build/`。
 - 实现在 `src/rcsd_topo_poc/modules/p01_arm_build/`。
 - 测试在 `tests/modules/p01_arm_build/`。
-- 本轮不新增正式 CLI、scripts、Makefile 目标、模块 `__main__.py` 或模块 `run.py`。
+- 仓库不提供 P01 repo 官方 CLI、`scripts/` 常驻命令、Makefile 目标、模块 `__main__.py` 或模块 `run.py`。
 - 源码文件写入前必须做字节数自检。
 
 ## GIS / 拓扑约束
 
 - CRS 必须写入 preflight 与输出审计。
 - trace 必须保持拓扑连续，不做 silent fix。
-- 几何只用于 review 和辅助定位，不用于右转反推、Arm 主构建或单独 high confidence 配准。
-- 输出必须记录输入、参数、run id、case id、trace、decision、issue。
+- 几何只用于 review、辅助证据和 exact geometry source mapping，不用于右转反推、Arm 主构建或单独 high confidence 配准。
+- 输出必须记录输入、参数、run id、case id、trace、decision、source mapping、generation audit 与 issue。
 - A2 必须记录 candidate score、selection reason、LogicalArmGroup、source_extra 与 feedback。

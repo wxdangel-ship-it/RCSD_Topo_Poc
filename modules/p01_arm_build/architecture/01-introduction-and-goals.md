@@ -1,23 +1,31 @@
 # 01 引言与目标
 
-## 状态
+## 模块定位
 
-- 当前状态：P01-A 模块源事实
-- 模块：`p01_arm_build`
-- 阶段：`P01-A1 / Arm 构建`、`P01-A2 / Arm 配准` 与 `P01-Final / F-RCSD RoadNextRoad 还原`
+`p01_arm_build` 是 P01 v1.0.0 的结构构建、跨源 Arm 配准与 F-RCSD RoadNextRoad 还原模块。模块覆盖：
+
+- `P01-A1`：单源 Arm 构建、特殊转向识别、ArmMovement 与 trunk 修正。
+- `P01-A2`：三源 Arm 配准与 `LogicalArmGroup` 构建。
+- `P01-Final`：最终 `F-RCSD:RoadNextRoad.geojson` 生成。
+
+P01 的最终成果是面向 F-RCSD Road 的路口级允许通行关系。模块必须同时输出机器可消费结果、审计链路、GIS 图层与目视检查材料。
 
 ## 目标
 
-本模块为 P01 POC 验证链路提供 Arm 结构基础与最终 F-RCSD RoadNextRoad 还原能力：A1 在已知 SWSD / RCSD / F-RCSD 对应路口 ID 的前提下分别构建当前语义路口 Arm；A2 读取 A1 run root，以 F-RCSD FinalArm 为目标承载体，构建跨三源 LogicalArmGroup；P01-Final 基于 A1 RoadNextRoad-aware 输出、F-RCSD Road.Source 与源 RoadNextRoad evidence 生成最终 F-RCSD RoadNextRoad。
+- 从 SWSD / RCSD / F-RCSD Node、Road 与可选 RoadNextRoad 中构建语义路口 Arm。
+- 用 `formway` bit7 / bit8 识别提前右转、提前左转，并输出 `AdvanceRightTurnRelation`。
+- 基于 RoadNextRoad allowed evidence 生成同源 ArmMovement、ReceivingRoadRole 与 corrected trunk。
+- 基于 A1 输出构建跨三源 LogicalArmGroup，并区分 coverage missing 与 grouping error。
+- 基于 F-RCSD:Road.Source 和几何完全一致关系映射源 Road，生成最终 F-RCSD RoadNextRoad。
+- 输出 JSON / GeoJSON / PNG / GPKG / summary / review index / audit / issue report。
 
 ## 成功标准
 
 - 多组路口输入可批处理。
-- 三套数据各自输出 Arm 构建结果。
-- 每条 seed road 有归属或 issue。
-- through 判断输出业务状态。
-- review PNG / compare PNG / review GPKG 可用于人工判断。
-- summary / review index 可支持批量筛查。
+- A1 每套数据输出 Arm、trace、through decision、特殊转向、movement、corrected trunk 与 issue。
 - A2 每个 FRCSD FinalArm 进入 LogicalArmGroup 或输出明确不可用原因。
-- A2 后续 Movement 只消费 `acceptable_for_downstream = true` 的 LogicalArmGroup。
-- P01-Final 输出 `frcsd_road_next_road.geojson`、source map、source policy、audit 与 issue report。
+- P01-Final 输出去重后的 `frcsd_road_next_road.geojson`、source map、source policy、audit 与 issue report。
+- RoadNextRoad `turnType / turntype` 不参与 `movement_type` 判定。
+- `grade / grade_2` 不进入 P01 主规则。
+- review PNG / compare PNG / review GPKG 可用于人工判断。
+- summary / review index 可支持批量筛查和优先级排序。

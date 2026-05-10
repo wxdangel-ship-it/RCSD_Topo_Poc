@@ -2,15 +2,15 @@
 
 ## `models.py`
 
-定义输入 Node / Road、业务输出对象、case result、summary row 等 dataclass。
+定义输入 Node / Road、A1 输出对象、RoadNextRoad movement 对象、final generation 对象、case result 与 summary row 等 dataclass。
 
 ## `io.py`
 
-负责矢量读取、JSON/CSV/GPKG 写入、输出目录创建与 CRS/preflight 辅助信息。
+负责矢量读取、JSON/CSV/GPKG 写入、输出目录创建与 CRS / preflight 辅助信息。
 
 ## `topology.py`
 
-负责语义路口组装、seed 识别、右转排除、trace、through decision、InitialArm / FinalArm 构建与自动结构检查。
+负责语义路口组装、seed 识别、显式右转排除、trace、through decision、InitialArm / FinalArm 构建与自动结构检查。
 
 ## `special_roads.py`
 
@@ -30,7 +30,7 @@
 
 ## `final_road_next_road.py`
 
-负责 P01-Final：F-RCSD Source + geometry exact source road mapping、SourceMovementPolicy、同源继承、跨源 primary source generation、RCSD -> SWSD fallback、final GeoJSON / audit / issue / review 输出辅助。
+负责 P01-Final：F-RCSD Source + geometry exact source road mapping、SourceMovementPolicy、同源继承、跨源 primary source generation、RCSD -> SWSD fallback、final GeoJSON、audit、issue 与 review 输出辅助。
 
 ## `review.py`
 
@@ -38,11 +38,11 @@
 
 ## `text_bundle.py`
 
-负责单 junction-group 文本证据包打包 / 解包。该模块复用 T02 的文本包装思路，但 P01 的范围选择基于 Road 拓扑 BFS，不作为正式 CLI 入口。
+负责单 junction-group 文本证据包打包 / 解包。范围选择基于 Road 拓扑 BFS，不作为正式 CLI 入口。
 
 ## `runner.py`
 
-负责参数解析、批处理、summary、review index 与输出编排。当前为模块内可调用 runner，不是正式 CLI。
+负责 A1 / P01-Final 参数解析、批处理、summary、review index 与输出编排。该文件提供模块内 callable runner，不是正式 CLI。
 
 ## `alignment_models.py`
 
@@ -50,7 +50,7 @@
 
 ## `alignment_io.py`
 
-负责读取 A1 run root、读取 A1 case/dataset JSON，并从 A1 preflight 加载原始 Node / Road 几何。
+负责读取 A1 run root、读取 A1 case / dataset JSON，并从 A1 preflight 加载原始 Node / Road 几何。
 
 ## `alignment.py`
 
@@ -62,4 +62,4 @@
 
 ## `alignment_runner.py`
 
-负责 A2 参数解析、批处理、summary、review index 与输出编排。当前为模块内可调用 runner，不是正式 CLI。
+负责 A2 参数解析、批处理、summary、review index 与输出编排。该文件提供模块内 callable runner，不是正式 CLI。

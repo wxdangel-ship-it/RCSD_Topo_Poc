@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import fiona
@@ -10,11 +11,14 @@ from pyproj import Transformer
 from shapely.geometry import LineString, Point, mapping
 
 from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import (
+    ArmSourceProfile,
+    _choose_reference_source,
     build_frcsd_road_next_road,
     final_geojson,
 )
+from rcsd_topo_poc.modules.p01_arm_build.final_arm_validation import build_final_arm_validation
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset, write_gpkg_layers
-from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput
+from rcsd_topo_poc.modules.p01_arm_build.models import ArmTrace, DatasetInput, FinalArm, InitialArm, NodeRecord, RoadRecord
 from rcsd_topo_poc.modules.p01_arm_build.review import (
     _dataset_review_context,
     _geometry_bounds,
@@ -92,6 +96,97 @@ def _write_roads(
                     "properties": properties,
                 }
             )
+
+
+def _validation_nodes(*, same_terminal: bool = True) -> dict[str, NodeRecord]:
+    base = {
+        "C": NodeRecord("C", "C", "4", Point(0.0, 0.0)),
+        "T1": NodeRecord("T1", None, "1", Point(10.0, 0.0)),
+        "T2": NodeRecord("T2", None, "1", Point(0.0, 10.0)),
+        "X": NodeRecord("X", "X", "4", Point(20.0, 0.0)),
+        "D": NodeRecord("D", None, "1", Point(30.0, 0.0)),
+    }
+    if not same_terminal:
+        base["Y"] = NodeRecord("Y", "Y", "4", Point(0.0, 20.0))
+    return base
+
+
+def _validation_roads(*, same_terminal: bool = True, include_continuations: bool = True) -> dict[str, RoadRecord]:
+    roads = {
+        "s1": RoadRecord("s1", "C", "T1", 2, "0", LineString([(0.0, 0.0), (10.0, 0.0)])),
+        "s2": RoadRecord("s2", "C", "T2", 2, "0", LineString([(0.0, 0.0), (0.0, 10.0)])),
+    }
+    if include_continuations:
+        roads["c1"] = RoadRecord("c1", "T1", "X", 2, "0", LineString([(10.0, 0.0), (20.0, 0.0)]))
+        target = "X" if same_terminal else "Y"
+        roads["c2"] = RoadRecord("c2", "T2", target, 2, "0", LineString([(0.0, 10.0), (0.0, 20.0)]))
+    else:
+        roads["s1"] = RoadRecord("s1", "C", "D", 2, "0", LineString([(0.0, 0.0), (30.0, 0.0)]))
+        roads["s2"] = RoadRecord("s2", "C", "D", 2, "0", LineString([(0.0, 1.0), (30.0, 1.0)]))
+    return roads
+
+
+def _validation_groups(nodes: dict[str, NodeRecord]) -> dict[str, tuple[str, ...]]:
+    groups: dict[str, tuple[str, ...]] = {}
+    for node_id, node in nodes.items():
+        group_id = node.mainnodeid if node.mainnodeid else node_id
+        groups.setdefault(group_id, tuple())
+        groups[group_id] = tuple(sorted(set(groups[group_id]) | {node_id}))
+    return groups
+
+
+def _validation_initial(initial_id: str, terminal_id: str, seed_id: str, *, terminal_type: str = "semantic_boundary") -> InitialArm:
+    return InitialArm(
+        dataset="SWSD",
+        current_junction_id="C",
+        initial_arm_id=initial_id,
+        terminal_type=terminal_type,
+        terminal_junction_id=terminal_id,
+        terminal_member_node_ids=(terminal_id,),
+        member_road_ids=(seed_id,),
+        seed_road_ids=(seed_id,),
+        connector_road_ids=tuple(),
+        inbound_member_road_ids=(seed_id,),
+        outbound_member_road_ids=tuple(),
+        bidirectional_member_road_ids=tuple(),
+        build_status="unstable",
+        risk_flags=tuple(),
+    )
+
+
+def _validation_trace(initial_id: str, terminal_id: str, seed_id: str, *, stop_type: str = "semantic_boundary") -> ArmTrace:
+    return ArmTrace(
+        dataset="SWSD",
+        current_junction_id="C",
+        trace_id=f"trace_{initial_id}",
+        seed_road_id=seed_id,
+        seed_role="inbound",
+        traced_road_ids=(seed_id,),
+        traced_node_ids=(terminal_id,),
+        through_decisions=(stop_type,),
+        stop_type=stop_type,
+        stop_reason="fixture",
+        assigned_initial_arm_id=initial_id,
+    )
+
+
+def _validation_final(source_ids: tuple[str, ...], *, merge_status: str = "local_candidate_fallback") -> FinalArm:
+    return FinalArm(
+        dataset="SWSD",
+        current_junction_id="C",
+        final_arm_id="F1",
+        source_initial_arm_ids=source_ids,
+        merge_status=merge_status,
+        merge_reason="fixture",
+        initial_arm={
+            "member_road_ids": ["s1", "s2"],
+            "seed_road_ids": ["s1", "s2"],
+            "connector_road_ids": [],
+            "inbound_member_road_ids": ["s1", "s2"],
+            "outbound_member_road_ids": [],
+            "bidirectional_member_road_ids": [],
+        },
+    )
 
 
 def _write_roads_with_source(
@@ -237,6 +332,343 @@ def _run_args(tmp_path: Path, out_root: Path, *, include_right_turn_value: bool 
     return args
 
 
+def test_final_arm_validation_not_required_for_single_source_final_arm() -> None:
+    nodes = _validation_nodes()
+    roads = _validation_roads()
+    initial = (_validation_initial("A1", "T1", "s1"),)
+    traces = (_validation_trace("A1", "T1", "s1"),)
+
+    for merge_status in ("not_applied", "local_candidate_fallback"):
+        result = build_final_arm_validation(
+            dataset="SWSD",
+            junction_id="C",
+            current_group_id="C",
+            groups=_validation_groups(nodes),
+            nodes=nodes,
+            roads=roads,
+            initial_arms=initial,
+            final_arms=(_validation_final(("A1",), merge_status=merge_status),),
+            traces=traces,
+            excluded_road_ids=set(),
+            internal_road_ids=set(),
+        )
+
+        assert result.validations[0].validation_status == "not_required"
+        assert result.final_arms[0].validation_status == "not_required"
+        assert result.metrics["final_arm_validation_count"] == 1
+
+
+def test_final_arm_validation_validated_when_relaxed_traces_converge() -> None:
+    nodes = _validation_nodes()
+    roads = _validation_roads(same_terminal=True)
+    initial = (
+        _validation_initial("A1", "T1", "s1"),
+        _validation_initial("A2", "T2", "s2"),
+    )
+    final = (_validation_final(("A1", "A2")),)
+    traces = (_validation_trace("A1", "T1", "s1"), _validation_trace("A2", "T2", "s2"))
+
+    result = build_final_arm_validation(
+        dataset="SWSD",
+        junction_id="C",
+        current_group_id="C",
+        groups=_validation_groups(nodes),
+        nodes=nodes,
+        roads=roads,
+        initial_arms=initial,
+        final_arms=final,
+        traces=traces,
+        excluded_road_ids=set(),
+        internal_road_ids=set(),
+    )
+
+    validation = result.validations[0]
+    assert validation.validation_status == "validated"
+    assert validation.convergence_status == "same_semantic_junction"
+    assert validation.relaxed_trace_terminal_junction_ids == ("X",)
+    assert result.final_arms[0].validation_confidence == "high"
+
+
+def test_final_arm_validation_continues_through_clear_transition_junction() -> None:
+    nodes = {
+        "C": NodeRecord("C", "C", "4", Point(0.0, 0.0)),
+        "X": NodeRecord("X", "X", "4", Point(40.0, 0.0)),
+        "T": NodeRecord("T", "T", "4", Point(20.0, 1.0)),
+        "S": NodeRecord("S", None, "1", Point(20.0, 20.0)),
+    }
+    roads = {
+        "s1": RoadRecord("s1", "C", "X", 2, "0", LineString([(0.0, 0.0), (40.0, 0.0)])),
+        "s2": RoadRecord("s2", "C", "T", 2, "0", LineString([(0.0, 1.0), (20.0, 1.0)])),
+        "c2": RoadRecord("c2", "T", "X", 2, "0", LineString([(20.0, 1.0), (40.0, 0.0)])),
+        "side": RoadRecord("side", "T", "S", 2, "0", LineString([(20.0, 1.0), (20.0, 20.0)])),
+    }
+    initial = (
+        _validation_initial("A1", "X", "s1"),
+        _validation_initial("A2", "T", "s2"),
+    )
+    final = (_validation_final(("A1", "A2")),)
+    traces = (_validation_trace("A1", "X", "s1"), _validation_trace("A2", "T", "s2"))
+
+    result = build_final_arm_validation(
+        dataset="SWSD",
+        junction_id="C",
+        current_group_id="C",
+        groups=_validation_groups(nodes),
+        nodes=nodes,
+        roads=roads,
+        initial_arms=initial,
+        final_arms=final,
+        traces=traces,
+        excluded_road_ids=set(),
+        internal_road_ids=set(),
+    )
+
+    validation = result.validations[0]
+    assert validation.validation_status == "validated"
+    assert validation.relaxed_trace_terminal_junction_ids == ("X",)
+    assert validation.relaxed_trace_road_ids_by_initial_arm["A2"] == ("c2", "s2")
+
+
+def test_final_arm_validation_refines_weak_transition_to_unique_strong_terminal() -> None:
+    nodes = {
+        "C": NodeRecord("C", "C", "4", Point(0.0, 0.0)),
+        "X": NodeRecord("X", "X", "4", Point(40.0, 0.0)),
+        "X2": NodeRecord("X2", "X", "0", Point(40.0, 1.0)),
+        "X3": NodeRecord("X3", "X", "0", Point(41.0, 0.0)),
+        "W": NodeRecord("W", None, "8", Point(20.0, 0.0)),
+        "Q": NodeRecord("Q", None, "1", Point(40.0, 1.0)),
+    }
+    roads = {
+        "s1": RoadRecord("s1", "C", "X", 2, "0", LineString([(0.0, 0.0), (40.0, 0.0)])),
+        "s2": RoadRecord("s2", "C", "W", 2, "0", LineString([(0.0, 1.0), (20.0, 0.0)])),
+        "to_x": RoadRecord("to_x", "W", "X", 2, "0", LineString([(20.0, 0.0), (40.0, 0.0)])),
+        "to_q": RoadRecord("to_q", "W", "Q", 2, "0", LineString([(20.0, 0.0), (40.0, 1.0)])),
+    }
+    initial = (
+        _validation_initial("A1", "X", "s1"),
+        _validation_initial("A2", "W", "s2"),
+    )
+    final = (_validation_final(("A1", "A2")),)
+    traces = (_validation_trace("A1", "X", "s1"), _validation_trace("A2", "W", "s2"))
+
+    result = build_final_arm_validation(
+        dataset="SWSD",
+        junction_id="C",
+        current_group_id="C",
+        groups=_validation_groups(nodes),
+        nodes=nodes,
+        roads=roads,
+        initial_arms=initial,
+        final_arms=final,
+        traces=traces,
+        excluded_road_ids=set(),
+        internal_road_ids=set(),
+    )
+
+    validation = result.validations[0]
+    assert validation.validation_status == "validated"
+    assert validation.relaxed_trace_terminal_junction_ids == ("X",)
+    assert "relaxed_trace_weak_terminal_refined" in validation.risk_flags
+
+
+def test_final_arm_validation_consensus_target_allows_same_final_arm_current_bridge() -> None:
+    nodes = {
+        "C": NodeRecord("C", "C", "4", Point(0.0, 0.0)),
+        "X": NodeRecord("X", "X", "4", Point(30.0, 0.0)),
+        "X2": NodeRecord("X2", "X", "0", Point(30.0, 1.0)),
+        "X3": NodeRecord("X3", "X", "0", Point(31.0, 0.0)),
+        "W": NodeRecord("W", None, "8", Point(0.0, 10.0)),
+    }
+    roads = {
+        "s1": RoadRecord("s1", "C", "X", 2, "0", LineString([(0.0, 0.0), (30.0, 0.0)])),
+        "s2": RoadRecord("s2", "C", "W", 2, "0", LineString([(0.0, 0.0), (0.0, 10.0)])),
+    }
+    initial = (
+        _validation_initial("A1", "X", "s1"),
+        _validation_initial("A2", "W", "s2"),
+    )
+
+    result = build_final_arm_validation(
+        dataset="SWSD",
+        junction_id="C",
+        current_group_id="C",
+        groups=_validation_groups(nodes),
+        nodes=nodes,
+        roads=roads,
+        initial_arms=initial,
+        final_arms=(_validation_final(("A1", "A2")),),
+        traces=(_validation_trace("A1", "X", "s1"), _validation_trace("A2", "W", "s2")),
+        excluded_road_ids=set(),
+        internal_road_ids=set(),
+    )
+
+    validation = result.validations[0]
+    assert validation.validation_status == "validated"
+    assert validation.relaxed_trace_terminal_junction_ids == ("X",)
+    assert "relaxed_trace_consensus_target_convergence" in validation.risk_flags
+
+
+def test_final_arm_validation_weak_validated_for_same_dead_end_terminal() -> None:
+    nodes = _validation_nodes()
+    roads = _validation_roads(include_continuations=False)
+    initial = (
+        _validation_initial("A1", "D", "s1", terminal_type="dead_end"),
+        _validation_initial("A2", "D", "s2", terminal_type="dead_end"),
+    )
+    final = (_validation_final(("A1", "A2")),)
+    traces = (
+        _validation_trace("A1", "D", "s1", stop_type="dead_end"),
+        _validation_trace("A2", "D", "s2", stop_type="dead_end"),
+    )
+
+    result = build_final_arm_validation(
+        dataset="SWSD",
+        junction_id="C",
+        current_group_id="C",
+        groups=_validation_groups(nodes),
+        nodes=nodes,
+        roads=roads,
+        initial_arms=initial,
+        final_arms=final,
+        traces=traces,
+        excluded_road_ids=set(),
+        internal_road_ids=set(),
+    )
+
+    validation = result.validations[0]
+    assert validation.validation_status == "weak_validated"
+    assert validation.convergence_status in {"same_terminal_boundary", "partial_same_corridor"}
+    assert "final_arm_validation_weak" in validation.issue_flags
+
+
+def test_final_arm_validation_unvalidated_when_source_trace_missing() -> None:
+    nodes = _validation_nodes()
+    roads = _validation_roads()
+    initial = (
+        _validation_initial("A1", "T1", "s1"),
+        _validation_initial("A2", "", "s2"),
+    )
+    final = (_validation_final(("A1", "A2")),)
+    traces = (_validation_trace("A1", "T1", "s1"),)
+
+    result = build_final_arm_validation(
+        dataset="SWSD",
+        junction_id="C",
+        current_group_id="C",
+        groups=_validation_groups(nodes),
+        nodes=nodes,
+        roads=roads,
+        initial_arms=initial,
+        final_arms=final,
+        traces=traces,
+        excluded_road_ids=set(),
+        internal_road_ids=set(),
+    )
+
+    validation = result.validations[0]
+    assert validation.validation_status == "unvalidated"
+    assert "final_arm_validation_unvalidated" in validation.issue_flags
+    assert result.issues[0]["issue_type"] == "final_arm_validation_unvalidated"
+
+
+def test_final_arm_validation_conflict_when_relaxed_terminals_differ() -> None:
+    nodes = _validation_nodes(same_terminal=False)
+    roads = _validation_roads(same_terminal=False)
+    initial = (
+        _validation_initial("A1", "T1", "s1"),
+        _validation_initial("A2", "T2", "s2"),
+    )
+    final = (_validation_final(("A1", "A2")),)
+    traces = (_validation_trace("A1", "T1", "s1"), _validation_trace("A2", "T2", "s2"))
+
+    result = build_final_arm_validation(
+        dataset="SWSD",
+        junction_id="C",
+        current_group_id="C",
+        groups=_validation_groups(nodes),
+        nodes=nodes,
+        roads=roads,
+        initial_arms=initial,
+        final_arms=final,
+        traces=traces,
+        excluded_road_ids=set(),
+        internal_road_ids=set(),
+    )
+
+    validation = result.validations[0]
+    assert validation.validation_status == "conflict"
+    assert validation.convergence_status == "conflicting_terminals"
+    assert validation.confidence == "none"
+    assert "final_arm_validation_conflict" in validation.issue_flags
+
+
+def test_seed_first_hop_non_kind4_continues_by_forward_rule(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "single_road_nodes.gpkg"
+    roads_path = tmp_path / "single_road_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("J", None, 20.0, 0.0, "8"),
+            ("D", None, 40.0, 0.0, "1"),
+            ("S", None, 20.0, 20.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("seed", "C", "J", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("continue", "J", "D", 2, "0", [(20.0, 0.0), (40.0, 0.0)]),
+            ("side", "J", "S", 2, "0", [(20.0, 0.0), (20.0, 20.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+    trace = next(item for item in result.traces if item.seed_road_id == "seed")
+
+    assert "first_hop_non_minor_kind_terminal" not in trace.stop_reason
+    assert trace.traced_road_ids[:2] == ("seed", "continue")
+    assert trace.through_decisions[0] == "t_mainline_through"
+    assert trace.traced_node_ids[0] == "J"
+
+
+def test_seed_first_hop_non_minor_kind_continues_when_entry_node_is_not_three_degree(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "non_three_degree_nodes.gpkg"
+    roads_path = tmp_path / "non_three_degree_roads.gpkg"
+    _write_nodes(
+        nodes_path,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("J", None, 20.0, 0.0, "8"),
+            ("D", None, 40.0, 0.0, "4"),
+            ("D2", "D", 40.0, 1.0, "0"),
+            ("D3", "D", 41.0, 0.0, "0"),
+            ("E1", None, 60.0, 0.0, "1"),
+            ("E2", None, 40.0, 20.0, "1"),
+        ],
+    )
+    _write_roads(
+        roads_path,
+        [
+            ("seed", "C", "J", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+            ("continue", "J", "D", 2, "0", [(20.0, 0.0), (40.0, 0.0)]),
+            ("d_side_1", "D", "E1", 2, "0", [(40.0, 0.0), (60.0, 0.0)]),
+            ("d_side_2", "D", "E2", 2, "0", [(40.0, 0.0), (40.0, 20.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+
+    result = build_dataset_arm_result(loaded, junction_id="C", right_turn_formway_values={"128"})
+    trace = next(item for item in result.traces if item.seed_road_id == "seed")
+
+    assert "first_hop_non_minor_kind_terminal" not in trace.stop_reason
+    assert trace.traced_road_ids[:2] == ("seed", "continue")
+    assert trace.through_decisions[0] == "simple_through"
+    assert trace.traced_node_ids[0] == "J"
+    assert trace.stop_type != "semantic_boundary" or trace.stop_reason != "first_hop_non_minor_kind_terminal|kind=8"
+
+
 def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> None:
     out_root = tmp_path / "out"
     assert run_p01_arm_build_from_args(_run_args(tmp_path, out_root)) == 0
@@ -263,6 +695,11 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert all("S1_right_turn" not in arm["member_road_ids"] for arm in initial_arms)
     assert all("trunk_status" in arm for arm in initial_arms)
     assert all("S1_right_turn" not in arm["trunk_road_ids"] for arm in initial_arms)
+    final_arms = json.loads((swsd_dir / "final_arms.json").read_text(encoding="utf-8"))
+    assert all("validation_status" in arm for arm in final_arms)
+    validations = json.loads((swsd_dir / "final_arm_validation.json").read_text(encoding="utf-8"))
+    assert len(validations) == len(final_arms)
+    assert all(item["validation_status"] in {"not_required", "validated", "weak_validated", "unvalidated", "conflict"} for item in validations)
 
     advance_right_relations = json.loads((swsd_dir / "advance_right_turn_relations.json").read_text(encoding="utf-8"))
     assert len(advance_right_relations) == 1
@@ -273,6 +710,8 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert (swsd_dir / "arm_receiving_road_roles.json").is_file()
     assert (swsd_dir / "trunk_corrections.json").is_file()
     assert (swsd_dir / "corrected_final_arms.json").is_file()
+    corrected_final_arms = json.loads((swsd_dir / "corrected_final_arms.json").read_text(encoding="utf-8"))
+    assert all("validation_status" in item["final_arm"] for item in corrected_final_arms)
     trunk_corrections = json.loads((swsd_dir / "trunk_corrections.json").read_text(encoding="utf-8"))
     assert {item["trunk_correction_status"] for item in trunk_corrections} == {
         "not_evaluated_no_road_next_road_input"
@@ -294,6 +733,10 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert (frcsd_dir / "frcsd_source_road_map.json").is_file()
     assert (frcsd_dir / "source_movement_policy_swsd.json").is_file()
     assert (frcsd_dir / "source_movement_policy_rcsd.json").is_file()
+    assert (frcsd_dir / "arm_source_profiles.json").is_file()
+    assert (frcsd_dir / "source_arm_pass_rules_swsd.json").is_file()
+    assert (frcsd_dir / "source_arm_pass_rules_rcsd.json").is_file()
+    assert (frcsd_dir / "final_generation_decisions.json").is_file()
     assert (frcsd_dir / "parallel_branch_alignment.json").is_file()
     assert (frcsd_dir / "frcsd_road_next_road_audit.json").is_file()
     assert (frcsd_dir / "frcsd_road_next_road_issue_report.json").is_file()
@@ -320,6 +763,9 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
         "advance_left_receiving_roads",
         "trunk_excluded_by_movement_roads",
         "corrected_trunk_roads",
+        "final_arm_validation",
+        "relaxed_trace_roads",
+        "relaxed_trace_terminals",
         "special_formway_issue_points",
     }
 
@@ -332,8 +778,12 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert all("advance_right_turn_road_count" in row for row in rows)
     assert all("trunk_partial_count" in row for row in rows)
     assert all("arm_movement_count" in row for row in rows)
+    assert all("final_arm_validation_count" in row for row in rows)
+    assert all("final_arm_validation_conflict_count" in row for row in rows)
     assert all("trunk_correction_count" in row for row in rows)
     assert all("frcsd_generated_road_next_road_count" in row for row in rows)
+    assert all("frcsd_rule_projected_count" in row for row in rows)
+    assert all("frcsd_data_error_partial_target_coverage_count" in row for row in rows)
     assert all("frcsd_parallel_branch_alignment_count" in row for row in rows)
 
 
@@ -646,6 +1096,64 @@ def _build_result(dataset: str, nodes_path: Path, roads_path: Path, rnr_records=
     return loaded, result
 
 
+def _with_left_recv_as_parallel(result, prefix: str):
+    target_arm_id = _arm_id_by_seed(result, f"{prefix}_e_main")
+    main_id = f"{prefix}_e_main"
+    branch_id = f"{prefix}_e_left_recv"
+    return replace(
+        result,
+        final_arms=tuple(
+            replace(
+                arm,
+                trunk_road_ids=(main_id,),
+                non_trunk_member_road_ids=(branch_id,),
+            )
+            if arm.final_arm_id == target_arm_id
+            else arm
+            for arm in result.final_arms
+        ),
+        trunk_corrections=tuple(
+            replace(correction, corrected_trunk_road_ids=(main_id,))
+            if correction.arm_id == target_arm_id
+            else correction
+            for correction in result.trunk_corrections
+        ),
+    )
+
+
+def test_frcsd_mixed_source_reference_source_priority() -> None:
+    profile = ArmSourceProfile(
+        dataset="FRCSD",
+        arm_id="F_A",
+        source_distribution={"1": 1, "2": 1},
+        trunk_source_distribution={"1": 1},
+        advance_left_source_distribution={},
+        parallel_branch_source_distribution={"2": 1},
+        source_mixed=True,
+        risk_flags=("mixed_source_arm",),
+    )
+
+    reference, reason, issues = _choose_reference_source(
+        profile,
+        {"SWSD": ("S_A", "structure_matched"), "RCSD": ("R_A", "structure_matched")},
+    )
+    assert (reference, reason) == ("SWSD", "mixed_source_structure_matched_swsd")
+    assert "mixed_source_arm" in issues
+
+    reference, reason, _ = _choose_reference_source(
+        profile,
+        {"SWSD": (None, "unmatched"), "RCSD": ("R_A", "structure_matched")},
+    )
+    assert (reference, reason) == ("RCSD", "mixed_source_structure_matched_rcsd")
+
+    reference, reason, issues = _choose_reference_source(
+        profile,
+        {"SWSD": (None, "unmatched"), "RCSD": (None, "unmatched")},
+    )
+    assert (reference, reason) == ("SWSD", "mixed_source_swsd_basic_rule_fallback")
+    assert "low_confidence_swsd_basic_rule" in issues
+
+
 def test_road_next_road_json_and_geojson_are_normalised(tmp_path: Path) -> None:
     swsd_path = tmp_path / "RoadNextRoad.json"
     swsd_path.write_text(
@@ -780,6 +1288,7 @@ def test_frcsd_road_next_road_same_source_inheritance(tmp_path: Path) -> None:
         json.dumps(
             [
                 {"id": "s_allowed", "road_id": "s_w_in", "next_road_id": "s_e_main", "turnType": 9},
+                {"id": "s_allowed_all_exit", "road_id": "s_w_in", "next_road_id": "s_e_left_recv", "turnType": 9},
                 {"id": "s_adv_left", "road_id": "s_n_adv_left", "next_road_id": "s_e_left_recv", "turnType": 9},
             ]
         ),
@@ -790,6 +1299,7 @@ def test_frcsd_road_next_road_same_source_inheritance(tmp_path: Path) -> None:
         json.dumps(
             [
                 {"id": "f_allowed", "road_id": "f_w_in", "next_road_id": "f_e_main", "turnType": 9},
+                {"id": "f_allowed_all_exit", "road_id": "f_w_in", "next_road_id": "f_e_left_recv", "turnType": 9},
                 {"id": "f_adv_left", "road_id": "f_n_adv_left", "next_road_id": "f_e_left_recv", "turnType": 9},
             ]
         ),
@@ -810,21 +1320,30 @@ def test_frcsd_road_next_road_same_source_inheritance(tmp_path: Path) -> None:
 
     pairs = {(feature["properties"]["road_id"], feature["properties"]["next_road_id"]) for feature in geojson["features"]}
     assert ("f_w_in", "f_e_main") in pairs
+    assert ("f_w_in", "f_e_left_recv") in pairs
     assert final.metrics["frcsd_same_source_inherited_count"] >= 1
     assert all(item.match_status == "matched" for item in final.source_road_map)
     assert geojson["features"][0]["geometry"] is None
     assert {"id", "road_id", "next_road_id", "type", "source", "turntype", "city_code"} <= set(
         geojson["features"][0]["properties"]
     )
-    assert any(
-        item.source_dataset == "SWSD"
-        and item.alignment_status == "count_matched_ordered"
-        and any(
-            pair["frcsd_road_id"] == "f_e_left_recv" and pair["source_road_id"] == "s_e_left_recv"
-            for pair in item.aligned_pairs
-        )
-        for item in final.parallel_branch_alignment
+    assert all(set(profile.source_distribution) <= {"2"} for profile in final.arm_source_profiles)
+    assert any(rule.rule_status == "full_allowed" for rule in final.source_arm_pass_rules_swsd)
+    assert any(decision.generation_scope == "all_target_exit_roads" for decision in final.final_generation_decisions)
+    conflict_result_f = replace(
+        result_f,
+        final_arms=tuple(
+            replace(arm, validation_status="conflict", validation_id="validation_conflict", validation_confidence="none")
+            for arm in result_f.final_arms
+        ),
     )
+    conflict_final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": conflict_result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": frcsd_records},
+    )
+    assert "final_arm_validation_conflict" in conflict_final.issue_report["issue_counts"]
+    assert any("final_arm_validation_conflict" in item.issue_flags for item in conflict_final.audit)
 
 
 def test_frcsd_source_geometry_mapping_normalises_crs_before_rounded_exact_match(tmp_path: Path) -> None:
@@ -905,13 +1424,8 @@ def test_frcsd_source_policy_records_prohibited_and_missing_right_carrier_issue(
 
     assert any(item.permission_status == "prohibited" for item in final.source_movement_policy_swsd)
     assert any(item.permission_status == "prohibited" for item in final.source_movement_policy_rcsd)
-    assert "data_error_or_missing_right_turn_carrier" in final.issue_report["issue_counts"]
-    assert any(
-        item.movement_type == "right"
-        and item.permission_status == "manual_review_required"
-        and "data_error_or_missing_right_turn_carrier" in item.issue_flags
-        for item in final.audit
-    )
+    assert any(item.rule_status == "prohibited" for item in final.final_generation_decisions)
+    assert final.metrics["frcsd_generated_road_next_road_count"] == 0
 
 
 def test_frcsd_road_next_road_cross_source_uses_primary_source(tmp_path: Path) -> None:
@@ -928,7 +1442,12 @@ def test_frcsd_road_next_road_cross_source_uses_primary_source(tmp_path: Path) -
                         "type": "Feature",
                         "geometry": None,
                         "properties": {"id": "r_allowed", "road_id": "r_w_in", "next_road_id": "r_e_main", "turntype": 1},
-                    }
+                    },
+                    {
+                        "type": "Feature",
+                        "geometry": None,
+                        "properties": {"id": "r_allowed_all_exit", "road_id": "r_w_in", "next_road_id": "r_e_left_recv", "turntype": 1},
+                    },
                 ],
             }
         ),
@@ -962,12 +1481,27 @@ def test_frcsd_road_next_road_rcsd_to_swsd_fallback(tmp_path: Path) -> None:
     frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="1", to_source="2")
     swsd_rnr = tmp_path / "swsd_fallback_rnr.json"
     swsd_rnr.write_text(
-        json.dumps([{"id": "s_fallback", "road_id": "s_w_in", "next_road_id": "s_e_main", "turnType": 1}]),
+        json.dumps(
+            [
+                {"id": "s_fallback", "road_id": "s_w_in", "next_road_id": "s_e_main", "turnType": 1},
+                {"id": "s_fallback_all_exit", "road_id": "s_w_in", "next_road_id": "s_e_left_recv", "turnType": 1},
+            ]
+        ),
         encoding="utf-8",
     )
     swsd_records = read_road_next_road(swsd_rnr)
     loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
     loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    rcsd_target_arm = _arm_id_by_seed(result_r, "r_e_main")
+    result_r = replace(
+        result_r,
+        final_arms=tuple(arm for arm in result_r.final_arms if arm.final_arm_id != rcsd_target_arm),
+        arm_movements=tuple(
+            movement
+            for movement in result_r.arm_movements
+            if movement.from_arm_id != rcsd_target_arm and movement.to_arm_id != rcsd_target_arm
+        ),
+    )
     loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
 
     final = build_frcsd_road_next_road(
@@ -985,6 +1519,184 @@ def test_frcsd_road_next_road_rcsd_to_swsd_fallback(tmp_path: Path) -> None:
     assert fallback[0].generation_rule == "rcsd_to_swsd_fallback"
     assert fallback[0].reference_source == "SWSD"
     assert final.metrics["frcsd_fallback_to_swsd_count"] >= 1
+
+
+def test_frcsd_rule_projection_does_not_require_exact_source_match(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    frcsd_nodes = tmp_path / "frcsd_shifted_nodes.gpkg"
+    frcsd_roads = tmp_path / "frcsd_shifted_roads.gpkg"
+    _write_nodes(
+        frcsd_nodes,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("W", None, -20.0, 0.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+        ],
+    )
+    _write_roads_with_source(
+        frcsd_roads,
+        [
+            ("f_n_adv_left", "N", "C", 2, "256", "2", [(0.0, 20.0), (0.0, 0.0)]),
+            ("f_w_in", "W", "C", 2, "0", "2", [(-20.0, 0.05), (0.0, 0.05)]),
+            ("f_e_main", "C", "E", 2, "0", "2", [(0.0, 0.0), (20.0, 0.0)]),
+            ("f_e_left_recv", "C", "E", 2, "0", "2", [(0.0, 1.0), (20.0, 1.0)]),
+        ],
+    )
+    swsd_rnr = tmp_path / "swsd_full_rnr.json"
+    swsd_rnr.write_text(
+        json.dumps(
+            [
+                {"id": "s_allowed_main", "road_id": "s_w_in", "next_road_id": "s_e_main"},
+                {"id": "s_allowed_branch", "road_id": "s_w_in", "next_road_id": "s_e_left_recv"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    swsd_records = read_road_next_road(swsd_rnr)
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+    result_s = _with_left_recv_as_parallel(result_s, "s")
+    result_f = _with_left_recv_as_parallel(result_f, "f")
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    pairs = {(feature["properties"]["road_id"], feature["properties"]["next_road_id"]) for feature in final_geojson(final)["features"]}
+    assert {("f_w_in", "f_e_main"), ("f_w_in", "f_e_left_recv")} <= pairs
+    assert any(item.f_road_id == "f_w_in" and item.match_status == "source_geometry_match_missing" for item in final.source_road_map)
+    assert any(item.generation_basis == "rule_projected" for item in final.audit)
+
+
+def test_frcsd_rule_projection_reports_trunk_partial_target_coverage(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
+    swsd_rnr = tmp_path / "swsd_partial_rnr.json"
+    swsd_rnr.write_text(json.dumps([{"id": "s_partial", "road_id": "s_w_in", "next_road_id": "s_e_main"}]), encoding="utf-8")
+    swsd_records = read_road_next_road(swsd_rnr)
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+    result_s = _with_left_recv_as_parallel(result_s, "s")
+    result_f = _with_left_recv_as_parallel(result_f, "f")
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    pairs = {(feature["properties"]["road_id"], feature["properties"]["next_road_id"]) for feature in final_geojson(final)["features"]}
+    assert ("f_w_in", "f_e_main") not in pairs
+    assert "data_error_partial_target_coverage" in final.issue_report["issue_counts"]
+    assert final.metrics["frcsd_data_error_partial_target_coverage_count"] >= 1
+
+
+def test_frcsd_rule_projection_reports_parallel_branch_partial_target_coverage(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
+    swsd_rnr = tmp_path / "swsd_parallel_partial_rnr.json"
+    swsd_rnr.write_text(
+        json.dumps([{"id": "s_parallel_partial", "road_id": "s_e_left_recv", "next_road_id": "s_e_main"}]),
+        encoding="utf-8",
+    )
+    swsd_records = read_road_next_road(swsd_rnr)
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+    result_s = _with_left_recv_as_parallel(result_s, "s")
+    result_f = _with_left_recv_as_parallel(result_f, "f")
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    pairs = {(feature["properties"]["road_id"], feature["properties"]["next_road_id"]) for feature in final_geojson(final)["features"]}
+    assert ("f_e_left_recv", "f_e_main") not in pairs
+    assert any(
+        decision.from_road_role == "parallel_branch"
+        and decision.rule_status == "data_error_partial_target_coverage"
+        for decision in final.final_generation_decisions
+    )
+    assert "data_error_partial_target_coverage" in final.issue_report["issue_counts"]
+
+
+def test_frcsd_rule_projection_allows_advance_left_and_uturn_special_scopes(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
+    swsd_rnr = tmp_path / "swsd_special_scope_rnr.json"
+    swsd_rnr.write_text(
+        json.dumps(
+            [
+                {"id": "s_adv_left_only", "road_id": "s_n_adv_left", "next_road_id": "s_e_left_recv"},
+                {"id": "s_uturn_trunk_only", "road_id": "s_e_main", "next_road_id": "s_e_main"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    swsd_records = read_road_next_road(swsd_rnr)
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+    result_s = _with_left_recv_as_parallel(result_s, "s")
+    result_f = _with_left_recv_as_parallel(result_f, "f")
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    assert any(
+        decision.from_road_role == "advance_left"
+        and decision.rule_status == "left_receiving_only_allowed"
+        and decision.generation_scope == "left_receiving_only"
+        for decision in final.final_generation_decisions
+    )
+    assert any(
+        decision.movement_type == "uturn"
+        and decision.from_road_role == "trunk"
+        and decision.rule_status == "trunk_only_allowed"
+        for decision in final.final_generation_decisions
+    )
+    assert "data_error_partial_target_coverage" not in final.issue_report["issue_counts"]
+
+
+def test_frcsd_rule_projection_parallel_branch_full_allowed(tmp_path: Path) -> None:
+    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
+    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
+    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
+    swsd_rnr = tmp_path / "swsd_parallel_rnr.json"
+    swsd_rnr.write_text(json.dumps([{"id": "s_parallel", "road_id": "s_e_left_recv", "next_road_id": "s_w_in"}]), encoding="utf-8")
+    swsd_records = read_road_next_road(swsd_rnr)
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
+    result_s = _with_left_recv_as_parallel(result_s, "s")
+    result_f = _with_left_recv_as_parallel(result_f, "f")
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    assert any(
+        decision.from_road_role == "parallel_branch"
+        and decision.rule_status == "full_allowed"
+        and decision.generated_road_ids == ("f_e_left_recv",)
+        for decision in final.final_generation_decisions
+    )
 
 
 def test_frcsd_source_geometry_mapping_missing_and_ambiguous_are_issues(tmp_path: Path) -> None:
@@ -1168,8 +1880,8 @@ def test_kind_aware_t_junction_and_kind4_stop_rules(tmp_path: Path) -> None:
     assert side.traces[0].traced_road_ids == ("side_seed",)
 
     kind4 = build_dataset_arm_result(loaded, junction_id="JK", right_turn_formway_values={"128"})
-    assert kind4.traces[0].stop_type == "semantic_boundary"
-    assert kind4.traces[0].traced_road_ids == ("kind4_seed",)
+    assert kind4.traces[0].stop_type == "dead_end"
+    assert kind4.traces[0].traced_road_ids == ("kind4_seed", "kind4_continue")
 
 
 def test_p01_text_bundle_roundtrip_uses_bfs_context_not_far_spatial_noise(tmp_path: Path) -> None:

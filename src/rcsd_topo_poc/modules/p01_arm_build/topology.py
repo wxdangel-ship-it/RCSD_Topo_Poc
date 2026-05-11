@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import Any
 
 from rcsd_topo_poc.modules.p01_arm_build.io import normalise_id
+from rcsd_topo_poc.modules.p01_arm_build.final_arm_validation import build_final_arm_validation
 from rcsd_topo_poc.modules.p01_arm_build.models import (
     ArmTrace,
     DatasetBuildResult,
@@ -170,6 +171,48 @@ def _other_group_for_road(road: RoadRecord, group_id: str, nodes: dict[str, Node
     if end_group == group_id and start_group != group_id:
         return start_group
     return None
+
+
+def _entry_node_for_road_group(road: RoadRecord, group_id: str, nodes: dict[str, NodeRecord]) -> str | None:
+    if semantic_group_id(nodes.get(road.snodeid), road.snodeid) == group_id:
+        return road.snodeid
+    if semantic_group_id(nodes.get(road.enodeid), road.enodeid) == group_id:
+        return road.enodeid
+    return None
+
+
+def _entry_node_degree(
+    *,
+    group_id: str,
+    previous_road_id: str,
+    incident_ids: tuple[str, ...],
+    nodes: dict[str, NodeRecord],
+    roads: dict[str, RoadRecord],
+) -> int:
+    previous_road = roads.get(previous_road_id)
+    if previous_road is None:
+        return len(incident_ids)
+    entry_node_id = _entry_node_for_road_group(previous_road, group_id, nodes)
+    if entry_node_id is None:
+        return len(incident_ids)
+    return sum(1 for road_id in incident_ids if roads[road_id].snodeid == entry_node_id or roads[road_id].enodeid == entry_node_id)
+
+
+def _entry_node_has_three_degree(
+    *,
+    group_id: str,
+    previous_road_id: str,
+    incident_ids: tuple[str, ...],
+    nodes: dict[str, NodeRecord],
+    roads: dict[str, RoadRecord],
+) -> bool:
+    return _entry_node_degree(
+        group_id=group_id,
+        previous_road_id=previous_road_id,
+        incident_ids=incident_ids,
+        nodes=nodes,
+        roads=roads,
+    ) >= 3
 
 
 def _node_ids_for_group(group_id: str, groups: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
@@ -513,6 +556,13 @@ def _decide_through(
         return "t_side_terminal", _decision_reason("kind_2048_t_side_terminal", kind_values=kind_values, selected=None, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids), None
 
     if kind_category == "kind_4":
+        has_three_degree = _entry_node_has_three_degree(
+            group_id=group_id,
+            previous_road_id=previous_road_id,
+            incident_ids=incident_ids,
+            nodes=nodes,
+            roads=roads,
+        )
         if is_t_like_topology and selected:
             return (
                 "t_mainline_through",
@@ -534,6 +584,12 @@ def _decide_through(
             )
         if is_t_like_topology:
             return "t_side_terminal", _decision_reason("kind_4_t_like_side_terminal", kind_values=kind_values, selected=None, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids), None
+        if not has_three_degree and selected:
+            return (
+                "simple_through",
+                _decision_reason("kind_4_non_three_degree_through", kind_values=kind_values, selected=selected, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids),
+                str(selected["road_id"]),
+            )
         return "semantic_boundary", _decision_reason("kind_4_non_t_semantic_boundary", kind_values=kind_values, selected=None, excluded_right_turn_ids=excluded_right_turn_ids, loop_road_ids=loop_road_ids), None
 
     if len(records) == 1:
@@ -656,6 +712,7 @@ def _build_trace(
                 tuple(trace_issues),
             )
 
+        kind_values = _kind_values_for_group(group_id, groups, nodes)
         raw_incident_ids = _incident_active_roads(
             group_id=group_id,
             roads=roads,
@@ -1145,6 +1202,7 @@ def _metrics_for(
     context: JunctionContext,
     initial_arms: tuple[InitialArm, ...],
     final_arms: tuple[FinalArm, ...],
+    validation_metrics: dict[str, int],
     advance_right_turn_relation_count: int,
     local_arm_candidates: tuple[LocalArmCandidate, ...],
     traces: tuple[ArmTrace, ...],
@@ -1180,6 +1238,11 @@ def _metrics_for(
         "formway_unparseable_count": len(context.formway_unparseable_road_ids),
         "initial_arm_count": len(initial_arms),
         "final_arm_count": len(final_arms),
+        "final_arm_validation_count": validation_metrics.get("final_arm_validation_count", 0),
+        "final_arm_validated_count": validation_metrics.get("final_arm_validated_count", 0),
+        "final_arm_weak_validated_count": validation_metrics.get("final_arm_weak_validated_count", 0),
+        "final_arm_unvalidated_count": validation_metrics.get("final_arm_unvalidated_count", 0),
+        "final_arm_validation_conflict_count": validation_metrics.get("final_arm_validation_conflict_count", 0),
         "local_arm_candidate_count": len(local_arm_candidates),
         "local_arm_fragmentation_gap": max(0, len(initial_arms) - len(local_arm_candidates)),
         "stable_arm_count": stable,
@@ -1205,6 +1268,7 @@ def review_priority_from_metrics(metrics: dict[str, Any]) -> str:
         or metrics["loop_count"] > 0
         or metrics["seed_unassigned_count"] > 0
         or metrics["trunk_ambiguous_count"] > 0
+        or metrics.get("final_arm_validation_conflict_count", 0) > 0
         or metrics["formway_unparseable_count"] > max(3, metrics["seed_road_count"])
         or metrics["advance_right_turn_unresolved_count"] > max(3, metrics["advance_right_turn_road_count"])
     ):
@@ -1217,6 +1281,8 @@ def review_priority_from_metrics(metrics: dict[str, Any]) -> str:
         or metrics["t_side_terminal_count"] > 4
         or metrics["trunk_partial_count"] > 0
         or metrics["trunk_none_count"] > 0
+        or metrics.get("final_arm_unvalidated_count", 0) > 0
+        or metrics.get("final_arm_weak_validated_count", 0) > 0
         or metrics["advance_right_turn_unresolved_count"] > 0
         or metrics["formway_missing_count"] > 0
         or metrics.get("road_movement_unmapped_count", 0) > 0
@@ -1395,6 +1461,21 @@ def build_dataset_arm_result(
         advance_right_turn_relations,
     )
     final_arms = _build_final_arms(initial_arms, local_arm_candidates)
+    validation_result = build_final_arm_validation(
+        dataset=loaded.dataset,
+        junction_id=junction_id,
+        current_group_id=resolved_junction_id,
+        groups=groups,
+        nodes=loaded.nodes,
+        roads=loaded.roads,
+        initial_arms=initial_arms,
+        final_arms=final_arms,
+        traces=assigned_traces,
+        excluded_road_ids=set(excluded_right_turn_ids),
+        internal_road_ids=set(internal_road_ids),
+    )
+    final_arms = validation_result.final_arms
+    issues.extend(validation_result.issues)
     for arm in initial_arms:
         for road_id in arm.member_road_ids:
             road = loaded.roads.get(road_id)
@@ -1430,6 +1511,7 @@ def build_dataset_arm_result(
         context=context,
         initial_arms=initial_arms,
         final_arms=final_arms,
+        validation_metrics=validation_result.metrics,
         advance_right_turn_relation_count=len(advance_right_turn_relations),
         local_arm_candidates=local_arm_candidates,
         traces=assigned_traces,
@@ -1443,6 +1525,7 @@ def build_dataset_arm_result(
         context=context,
         initial_arms=initial_arms,
         final_arms=final_arms,
+        final_arm_validation=validation_result.validations,
         corrected_final_arms=movement_result.corrected_final_arms,
         advance_right_turn_relations=advance_right_turn_relations,
         road_movement_evidence=movement_result.road_movement_evidence,

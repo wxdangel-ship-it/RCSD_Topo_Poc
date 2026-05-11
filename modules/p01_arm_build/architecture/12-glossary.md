@@ -19,5 +19,8 @@
 - **LogicalArmGroup**：A2 跨 SWSD / RCSD / F-RCSD 后认为表达同一个真实 Arm 的逻辑分组。
 - **RawArmAlignment**：A2 以 F-RCSD 为目标承载体输出的源 Arm 直接配准关系。
 - **ArmBuildFeedback**：A2 对 A1 可能 over_split、over_merged 或规则不足的反馈对象；不直接改写 A1 输出。
-- **SourceMovementPolicy**：P01-Final 中由 SWSD / RCSD RoadNextRoad evidence 形成的 role-level permission policy。
+- **ArmSourceProfile**：P01-Final 中描述 F-RCSD Arm 内 Road 级 Source 分布、混源状态与风险标记的审计对象。
+- **SourceArmPassRule**：P01-Final 中由 SWSD / RCSD ArmMovement、RoadNextRoad evidence、进入道路角色与目标 Arm 退出道路集合抽象出的规则级通行能力。
+- **FinalGenerationDecision**：P01-Final 中解释某个 from Arm / to Arm / movement / from road role 是否生成 RoadNextRoad、采用哪个规则源、生成范围与 issue 的审计对象。
+- **SourceMovementPolicy**：P01-Final 兼容审计对象；不再作为唯一生成前提。
 - **F-RCSD RoadNextRoad**：P01-Final 生成的最终 F-RCSD 道路级允许通行关系。

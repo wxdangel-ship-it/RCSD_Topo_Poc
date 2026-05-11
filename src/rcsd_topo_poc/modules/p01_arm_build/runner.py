@@ -50,6 +50,11 @@ REVIEW_INDEX_FIELDS = [
     "formway_missing_count",
     "formway_unparseable_count",
     "arm_movement_count",
+    "final_arm_validation_count",
+    "final_arm_validated_count",
+    "final_arm_weak_validated_count",
+    "final_arm_unvalidated_count",
+    "final_arm_validation_conflict_count",
     "road_movement_evidence_count",
     "road_movement_mapped_count",
     "road_movement_unmapped_count",
@@ -68,6 +73,9 @@ REVIEW_INDEX_FIELDS = [
     "frcsd_same_source_inherited_count",
     "frcsd_cross_source_generated_count",
     "frcsd_fallback_to_swsd_count",
+    "frcsd_swsd_basic_rule_count",
+    "frcsd_rule_projected_count",
+    "frcsd_data_error_partial_target_coverage_count",
     "frcsd_manual_review_required_count",
     "frcsd_parallel_branch_alignment_count",
     "frcsd_parallel_branch_count_matched_ordered_count",
@@ -238,6 +246,7 @@ def _write_dataset_outputs(
     write_json(dataset_dir / "junction_context.json", result.context)
     write_json(dataset_dir / "initial_arms.json", result.initial_arms)
     write_json(dataset_dir / "final_arms.json", result.final_arms)
+    write_json(dataset_dir / "final_arm_validation.json", result.final_arm_validation)
     write_json(dataset_dir / "corrected_final_arms.json", result.corrected_final_arms)
     write_json(dataset_dir / "advance_right_turn_relations.json", result.advance_right_turn_relations)
     write_json(dataset_dir / "arm_movements.json", result.arm_movements)
@@ -303,6 +312,11 @@ def _summary_payload(
         "formway_missing_count": sum(int(row["formway_missing_count"]) for row in rows),
         "formway_unparseable_count": sum(int(row["formway_unparseable_count"]) for row in rows),
         "arm_movement_count": sum(int(row["arm_movement_count"]) for row in rows),
+        "final_arm_validation_count": sum(int(row["final_arm_validation_count"]) for row in rows),
+        "final_arm_validated_count": sum(int(row["final_arm_validated_count"]) for row in rows),
+        "final_arm_weak_validated_count": sum(int(row["final_arm_weak_validated_count"]) for row in rows),
+        "final_arm_unvalidated_count": sum(int(row["final_arm_unvalidated_count"]) for row in rows),
+        "final_arm_validation_conflict_count": sum(int(row["final_arm_validation_conflict_count"]) for row in rows),
         "road_movement_evidence_count": sum(int(row["road_movement_evidence_count"]) for row in rows),
         "road_movement_mapped_count": sum(int(row["road_movement_mapped_count"]) for row in rows),
         "road_movement_unmapped_count": sum(int(row["road_movement_unmapped_count"]) for row in rows),
@@ -321,6 +335,11 @@ def _summary_payload(
         "frcsd_same_source_inherited_count": sum(int(row.get("frcsd_same_source_inherited_count") or 0) for row in rows),
         "frcsd_cross_source_generated_count": sum(int(row.get("frcsd_cross_source_generated_count") or 0) for row in rows),
         "frcsd_fallback_to_swsd_count": sum(int(row.get("frcsd_fallback_to_swsd_count") or 0) for row in rows),
+        "frcsd_swsd_basic_rule_count": sum(int(row.get("frcsd_swsd_basic_rule_count") or 0) for row in rows),
+        "frcsd_rule_projected_count": sum(int(row.get("frcsd_rule_projected_count") or 0) for row in rows),
+        "frcsd_data_error_partial_target_coverage_count": sum(
+            int(row.get("frcsd_data_error_partial_target_coverage_count") or 0) for row in rows
+        ),
         "frcsd_manual_review_required_count": sum(int(row.get("frcsd_manual_review_required_count") or 0) for row in rows),
         "frcsd_parallel_branch_alignment_count": sum(int(row.get("frcsd_parallel_branch_alignment_count") or 0) for row in rows),
         "frcsd_parallel_branch_count_matched_ordered_count": sum(
@@ -449,6 +468,10 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         write_json(frcsd_dir / "frcsd_source_road_map.json", frcsd_final.source_road_map)
         write_json(frcsd_dir / "source_movement_policy_swsd.json", frcsd_final.source_movement_policy_swsd)
         write_json(frcsd_dir / "source_movement_policy_rcsd.json", frcsd_final.source_movement_policy_rcsd)
+        write_json(frcsd_dir / "arm_source_profiles.json", frcsd_final.arm_source_profiles)
+        write_json(frcsd_dir / "source_arm_pass_rules_swsd.json", frcsd_final.source_arm_pass_rules_swsd)
+        write_json(frcsd_dir / "source_arm_pass_rules_rcsd.json", frcsd_final.source_arm_pass_rules_rcsd)
+        write_json(frcsd_dir / "final_generation_decisions.json", frcsd_final.final_generation_decisions)
         write_json(frcsd_dir / "parallel_branch_alignment.json", frcsd_final.parallel_branch_alignment)
         write_json(frcsd_dir / "frcsd_road_next_road_audit.json", frcsd_final.audit)
         write_json(frcsd_dir / "frcsd_road_next_road_issue_report.json", frcsd_final.issue_report)

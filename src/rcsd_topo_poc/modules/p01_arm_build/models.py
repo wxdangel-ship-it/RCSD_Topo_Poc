@@ -199,6 +199,31 @@ class FinalArm:
     has_inbound_advance_right_turn: bool = False
     advance_right_turn_relation_ids: tuple[str, ...] = tuple()
     advance_right_turn_target_arm_ids: tuple[str, ...] = tuple()
+    validation_status: str = "not_required"
+    validation_id: str = ""
+    validation_confidence: str = "high"
+    validation_risk_flags: tuple[str, ...] = tuple()
+
+
+@dataclass(frozen=True)
+class FinalArmValidation:
+    validation_id: str
+    dataset: str
+    current_junction_id: str
+    final_arm_id: str
+    merge_status: str
+    source_initial_arm_ids: tuple[str, ...]
+    validation_status: str
+    convergence_status: str
+    relaxed_trace_terminal_junction_ids: tuple[str, ...]
+    relaxed_trace_terminal_types: tuple[str, ...]
+    relaxed_trace_ids: tuple[str, ...]
+    relaxed_trace_road_ids_by_initial_arm: dict[str, tuple[str, ...]]
+    relaxed_trace_node_ids_by_initial_arm: dict[str, tuple[str, ...]]
+    validation_reason: str
+    confidence: str
+    risk_flags: tuple[str, ...]
+    issue_flags: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -323,6 +348,7 @@ class DatasetBuildResult:
     context: JunctionContext
     initial_arms: tuple[InitialArm, ...]
     final_arms: tuple[FinalArm, ...]
+    final_arm_validation: tuple[FinalArmValidation, ...]
     corrected_final_arms: tuple[CorrectedFinalArm, ...]
     advance_right_turn_relations: tuple[AdvanceRightTurnRelation, ...]
     road_movement_evidence: tuple[RoadMovementEvidence, ...]

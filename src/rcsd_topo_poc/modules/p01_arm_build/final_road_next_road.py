@@ -64,6 +64,45 @@ class SourceMovementPolicy:
 
 
 @dataclass(frozen=True)
+class ArmSourceProfile:
+    dataset: str
+    arm_id: str
+    source_distribution: dict[str, int]
+    trunk_source_distribution: dict[str, int]
+    advance_left_source_distribution: dict[str, int]
+    parallel_branch_source_distribution: dict[str, int]
+    source_mixed: bool
+    risk_flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SourceArmPassRule:
+    source_dataset: str
+    from_arm_id: str
+    to_arm_id: str
+    movement_type: str
+    from_road_role: str
+    rule_status: str
+    generation_scope: str
+    source_evidence_ids: tuple[str, ...]
+    issue_flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FinalGenerationDecision:
+    from_arm_id: str
+    to_arm_id: str
+    movement_type: str
+    from_road_role: str
+    reference_source: str
+    rule_status: str
+    generation_scope: str
+    generated_road_ids: tuple[str, ...]
+    generated_next_road_ids: tuple[str, ...]
+    issue_flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class FrcsdGenerationAudit:
     f_road_id: str
     f_next_road_id: str
@@ -81,6 +120,10 @@ class FrcsdGenerationAudit:
     source_evidence_ids: tuple[str, ...]
     confidence: str
     issue_flags: tuple[str, ...]
+    rule_status: str = ""
+    generation_scope: str = ""
+    generation_basis: str = ""
+    source_match_status: str = ""
 
 
 @dataclass(frozen=True)
@@ -103,6 +146,10 @@ class FrcsdRoadNextRoadFinalResult:
     source_road_map: tuple[SourceRoadMap, ...]
     source_movement_policy_swsd: tuple[SourceMovementPolicy, ...]
     source_movement_policy_rcsd: tuple[SourceMovementPolicy, ...]
+    arm_source_profiles: tuple[ArmSourceProfile, ...]
+    source_arm_pass_rules_swsd: tuple[SourceArmPassRule, ...]
+    source_arm_pass_rules_rcsd: tuple[SourceArmPassRule, ...]
+    final_generation_decisions: tuple[FinalGenerationDecision, ...]
     parallel_branch_alignment: tuple[ParallelBranchAlignment, ...]
     audit: tuple[FrcsdGenerationAudit, ...]
     issue_report: dict[str, Any]
@@ -369,12 +416,312 @@ def _source_policy(
     return tuple(rows)
 
 
+def _roles_by_arm(roles: dict[str, RoadRole]) -> dict[str, tuple[RoadRole, ...]]:
+    grouped: dict[str, list[RoadRole]] = defaultdict(list)
+    for role in roles.values():
+        grouped[role.arm_id].append(role)
+    return {arm_id: tuple(sorted(items, key=lambda item: item.road_id)) for arm_id, items in grouped.items()}
+
+
+def _arm_by_id(result: DatasetBuildResult) -> dict[str, Any]:
+    return {arm.final_arm_id: arm for arm in result.final_arms}
+
+
+def _arm_member_ids(result: DatasetBuildResult, arm_id: str) -> tuple[str, ...]:
+    arm = _arm_by_id(result).get(arm_id)
+    if arm is None:
+        return tuple()
+    return tuple(str(item) for item in (_arm_payload(arm).get("member_road_ids", []) or []))
+
+
+def _arm_entering_ids(result: DatasetBuildResult, arm_id: str) -> tuple[str, ...]:
+    arm = _arm_by_id(result).get(arm_id)
+    if arm is None:
+        return tuple()
+    payload = _arm_payload(arm)
+    inbound = tuple(str(item) for item in (payload.get("inbound_member_road_ids", []) or []))
+    bidirectional = tuple(str(item) for item in (payload.get("bidirectional_member_road_ids", []) or []))
+    return tuple(sorted(set(inbound).union(bidirectional)))
+
+
+def _target_exit_roles(result: DatasetBuildResult, roles: dict[str, RoadRole], arm_id: str) -> tuple[RoadRole, ...]:
+    arm = _arm_by_id(result).get(arm_id)
+    if arm is None:
+        return tuple()
+    payload = _arm_payload(arm)
+    outbound = {str(item) for item in (payload.get("outbound_member_road_ids", []) or [])}
+    bidirectional = {str(item) for item in (payload.get("bidirectional_member_road_ids", []) or [])}
+    trunk = {role.road_id for role in roles.values() if role.arm_id == arm_id and role.road_role == "trunk"}
+    exit_ids = outbound.union(bidirectional).union(trunk)
+    return tuple(sorted((role for role in roles.values() if role.arm_id == arm_id and role.road_id in exit_ids), key=lambda item: item.road_id))
+
+
+def _arm_structure_signature(result: DatasetBuildResult, roles: dict[str, RoadRole], arm_id: str) -> tuple[int, int, int, int, int]:
+    arm_roles = [role for role in roles.values() if role.arm_id == arm_id]
+    counts = Counter(role.road_role for role in arm_roles)
+    return (
+        len(_arm_member_ids(result, arm_id)),
+        counts.get("trunk", 0),
+        counts.get("advance_left", 0),
+        counts.get("parallel_branch", 0),
+        len(_arm_entering_ids(result, arm_id)),
+    )
+
+
+def _arm_source_profiles(
+    *,
+    loaded_frcsd: LoadedDataset,
+    result_frcsd: DatasetBuildResult,
+    f_roles: dict[str, RoadRole],
+) -> tuple[ArmSourceProfile, ...]:
+    profiles: list[ArmSourceProfile] = []
+    roles_by_arm = _roles_by_arm(f_roles)
+    for arm_id in sorted(roles_by_arm):
+        distributions: dict[str, Counter[str]] = {
+            "all": Counter(),
+            "trunk": Counter(),
+            "advance_left": Counter(),
+            "parallel_branch": Counter(),
+        }
+        risk_flags: list[str] = []
+        for role in roles_by_arm[arm_id]:
+            road = loaded_frcsd.roads.get(role.road_id)
+            source = _norm((road.properties if road else {}).get("source"))
+            if source not in SOURCE_TO_DATASET:
+                source = "invalid"
+                risk_flags.append("frcsd_source_invalid")
+            distributions["all"][source] += 1
+            distributions.setdefault(role.road_role, Counter())[source] += 1
+        source_keys = {key for key, count in distributions["all"].items() if count > 0 and key in SOURCE_TO_DATASET}
+        if len(source_keys) > 1:
+            risk_flags.append("mixed_source_arm")
+        profiles.append(
+            ArmSourceProfile(
+                dataset="FRCSD",
+                arm_id=arm_id,
+                source_distribution=dict(sorted(distributions["all"].items())),
+                trunk_source_distribution=dict(sorted(distributions["trunk"].items())),
+                advance_left_source_distribution=dict(sorted(distributions["advance_left"].items())),
+                parallel_branch_source_distribution=dict(sorted(distributions["parallel_branch"].items())),
+                source_mixed=len(source_keys) > 1,
+                risk_flags=tuple(sorted(set(risk_flags))),
+            )
+        )
+    for arm in result_frcsd.final_arms:
+        if arm.final_arm_id not in roles_by_arm:
+            profiles.append(
+                ArmSourceProfile(
+                    dataset="FRCSD",
+                    arm_id=arm.final_arm_id,
+                    source_distribution={},
+                    trunk_source_distribution={},
+                    advance_left_source_distribution={},
+                    parallel_branch_source_distribution={},
+                    source_mixed=False,
+                    risk_flags=("empty_arm_source_profile",),
+                )
+            )
+    return tuple(sorted(profiles, key=lambda item: item.arm_id))
+
+
+def _source_arm_pass_rules(
+    *,
+    source_dataset: str,
+    result: DatasetBuildResult,
+    roles: dict[str, RoadRole],
+) -> tuple[SourceArmPassRule, ...]:
+    roles_by_arm = _roles_by_arm(roles)
+    evidence_by_key: dict[tuple[str, str, str], list[RoadMovementEvidence]] = defaultdict(list)
+    for evidence in result.road_movement_evidence:
+        from_role = roles.get(evidence.road_id)
+        to_role = roles.get(evidence.next_road_id)
+        to_arm_id = evidence.to_arm_id or (to_role.arm_id if to_role else None)
+        if from_role is None or not to_arm_id:
+            continue
+        if evidence.mapping_status == "mapped" and evidence.from_arm_id:
+            evidence_by_key[(evidence.from_arm_id, to_arm_id, from_role.road_role)].append(evidence)
+        elif evidence.mapping_status in {"from_road_role_conflict", "to_road_role_conflict", "role_conflict"}:
+            evidence_by_key[(from_role.arm_id, to_arm_id, from_role.road_role)].append(evidence)
+
+    rows: list[SourceArmPassRule] = []
+    for movement in result.arm_movements:
+        target_exit_roles = _target_exit_roles(result, roles, movement.to_arm_id)
+        target_exit_ids = {role.road_id for role in target_exit_roles}
+        target_trunk_ids = {role.road_id for role in target_exit_roles if role.road_role == "trunk"}
+        left_receiving_ids = {role.road_id for role in target_exit_roles if role.target_role == "left_receiving"}
+        from_role_types = sorted({role.road_role for role in roles_by_arm.get(movement.from_arm_id, tuple())})
+        for from_road_role in from_role_types:
+            evidence = tuple(evidence_by_key.get((movement.from_arm_id, movement.to_arm_id, from_road_role), tuple()))
+            covered = {item.next_road_id for item in evidence if item.next_road_id in target_exit_ids}
+            evidence_ids = tuple(sorted(item.raw_id or item.evidence_id for item in evidence))
+            issue_flags: list[str] = []
+            if not target_exit_ids:
+                rule_status = "insufficient"
+                generation_scope = "none"
+                issue_flags.append("target_arm_exit_roads_missing")
+            elif not covered:
+                rule_status = "prohibited"
+                generation_scope = "none"
+            elif covered == target_exit_ids:
+                rule_status = "full_allowed"
+                generation_scope = "all_target_exit_roads"
+            elif movement.movement_type == "uturn" and from_road_role == "trunk" and target_trunk_ids and covered == target_trunk_ids:
+                rule_status = "trunk_only_allowed"
+                generation_scope = "trunk_only"
+            elif movement.movement_type == "left" and from_road_role == "advance_left" and target_trunk_ids and covered == target_trunk_ids:
+                rule_status = "trunk_only_allowed"
+                generation_scope = "trunk_only"
+            elif movement.movement_type == "left" and from_road_role == "advance_left" and left_receiving_ids and covered == left_receiving_ids:
+                rule_status = "left_receiving_only_allowed"
+                generation_scope = "left_receiving_only"
+            elif from_road_role in {"trunk", "parallel_branch"}:
+                rule_status = "data_error_partial_target_coverage"
+                generation_scope = "none"
+                issue_flags.append("data_error_partial_target_coverage")
+                issue_flags.append("manual_review_required")
+            else:
+                rule_status = "conflict"
+                generation_scope = "none"
+                issue_flags.append("manual_review_required")
+            rows.append(
+                SourceArmPassRule(
+                    source_dataset=source_dataset,
+                    from_arm_id=movement.from_arm_id,
+                    to_arm_id=movement.to_arm_id,
+                    movement_type=movement.movement_type,
+                    from_road_role=from_road_role,
+                    rule_status=rule_status,
+                    generation_scope=generation_scope,
+                    source_evidence_ids=evidence_ids,
+                    issue_flags=tuple(sorted(set(issue_flags))),
+                )
+            )
+    return tuple(rows)
+
+
 def _policy_index(policy: tuple[SourceMovementPolicy, ...]) -> dict[tuple[str, str, str], tuple[SourceMovementPolicy, ...]]:
     grouped: dict[tuple[str, str, str], list[SourceMovementPolicy]] = defaultdict(list)
     for item in policy:
         if item.permission_status == "allowed":
             grouped[(item.movement_type, item.from_road_role, item.to_road_role)].append(item)
     return {key: tuple(value) for key, value in grouped.items()}
+
+
+def _rule_index(rules: tuple[SourceArmPassRule, ...]) -> dict[tuple[str, str, str, str], SourceArmPassRule]:
+    indexed: dict[tuple[str, str, str, str], SourceArmPassRule] = {}
+    for rule in rules:
+        indexed[(rule.from_arm_id, rule.to_arm_id, rule.movement_type, rule.from_road_role)] = rule
+    return indexed
+
+
+def _structure_matched_arm(
+    *,
+    f_arm_id: str,
+    source_dataset: str,
+    result_by_dataset: dict[str, DatasetBuildResult],
+    roles: dict[str, dict[str, RoadRole]],
+) -> str | None:
+    f_signature = _arm_structure_signature(result_by_dataset["FRCSD"], roles["FRCSD"], f_arm_id)
+    matches = [
+        arm.final_arm_id
+        for arm in result_by_dataset[source_dataset].final_arms
+        if _arm_structure_signature(result_by_dataset[source_dataset], roles[source_dataset], arm.final_arm_id) == f_signature
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _geometry_matched_arm(
+    *,
+    f_arm_id: str,
+    source_dataset: str,
+    f_roles: dict[str, RoadRole],
+    source_roles: dict[str, RoadRole],
+    source_map_by_f: dict[str, SourceRoadMap],
+) -> str | None:
+    counts: Counter[str] = Counter()
+    for f_role in f_roles.values():
+        if f_role.arm_id != f_arm_id:
+            continue
+        source_item = source_map_by_f.get(f_role.road_id)
+        if not source_item or source_item.match_status != "matched" or source_item.source_dataset != source_dataset:
+            continue
+        source_role = source_roles.get(source_item.source_road_id or "")
+        if source_role:
+            counts[source_role.arm_id] += 1
+    if not counts:
+        return None
+    top_count = max(counts.values())
+    top = sorted(arm_id for arm_id, count in counts.items() if count == top_count)
+    return top[0] if len(top) == 1 else None
+
+
+def _matched_source_arm(
+    *,
+    f_arm_id: str,
+    source_dataset: str,
+    result_by_dataset: dict[str, DatasetBuildResult],
+    roles: dict[str, dict[str, RoadRole]],
+    source_map_by_f: dict[str, SourceRoadMap],
+) -> tuple[str | None, str]:
+    geometry_match = _geometry_matched_arm(
+        f_arm_id=f_arm_id,
+        source_dataset=source_dataset,
+        f_roles=roles["FRCSD"],
+        source_roles=roles[source_dataset],
+        source_map_by_f=source_map_by_f,
+    )
+    if geometry_match:
+        return geometry_match, "exact_road_match_audit"
+    structure_match = _structure_matched_arm(
+        f_arm_id=f_arm_id,
+        source_dataset=source_dataset,
+        result_by_dataset=result_by_dataset,
+        roles=roles,
+    )
+    if structure_match:
+        return structure_match, "structure_matched"
+    return None, "source_arm_unmatched"
+
+
+def _choose_reference_source(profile: ArmSourceProfile, source_arm_matches: dict[str, tuple[str | None, str]]) -> tuple[str, str, tuple[str, ...]]:
+    valid_sources = {source for source, count in profile.source_distribution.items() if count > 0 and source in SOURCE_TO_DATASET}
+    if valid_sources == {"1"}:
+        return "RCSD", "single_source_rcsd", tuple()
+    if valid_sources == {"2"}:
+        return "SWSD", "single_source_swsd", tuple()
+    issues: list[str] = []
+    swsd_arm, swsd_reason = source_arm_matches["SWSD"]
+    rcsd_arm, rcsd_reason = source_arm_matches["RCSD"]
+    if swsd_arm and swsd_reason == "structure_matched":
+        return "SWSD", "mixed_source_structure_matched_swsd", ("mixed_source_arm",)
+    if rcsd_arm and rcsd_reason == "structure_matched":
+        return "RCSD", "mixed_source_structure_matched_rcsd", ("mixed_source_arm",)
+    if swsd_arm:
+        return "SWSD", "mixed_source_exact_audit_matched_swsd", ("mixed_source_arm",)
+    if rcsd_arm:
+        return "RCSD", "mixed_source_exact_audit_matched_rcsd", ("mixed_source_arm",)
+    issues.extend(("mixed_source_arm", "low_confidence_swsd_basic_rule"))
+    return "SWSD", "mixed_source_swsd_basic_rule_fallback", tuple(sorted(set(issues)))
+
+
+def _generation_target_roles(
+    *,
+    result_frcsd: DatasetBuildResult,
+    f_roles: dict[str, RoadRole],
+    to_arm_id: str,
+    generation_scope: str,
+) -> tuple[RoadRole, ...]:
+    exit_roles = _target_exit_roles(result_frcsd, f_roles, to_arm_id)
+    if generation_scope == "all_target_exit_roads":
+        return exit_roles
+    if generation_scope == "trunk_only":
+        return tuple(role for role in exit_roles if role.road_role == "trunk")
+    if generation_scope == "left_receiving_only":
+        left_receiving = tuple(role for role in exit_roles if role.target_role == "left_receiving")
+        if left_receiving:
+            return left_receiving
+        return tuple(role for role in exit_roles if role.road_role == "trunk")
+    return tuple()
 
 
 def _parallel_branch_alignment(
@@ -514,6 +861,10 @@ def _audit(
     evidence_ids: tuple[str, ...],
     confidence: str,
     issue_flags: tuple[str, ...] = tuple(),
+    rule_status: str = "",
+    generation_scope: str = "",
+    generation_basis: str = "",
+    source_match_status: str = "",
 ) -> FrcsdGenerationAudit:
     return FrcsdGenerationAudit(
         f_road_id=f_road_id,
@@ -532,6 +883,10 @@ def _audit(
         source_evidence_ids=evidence_ids,
         confidence=confidence,
         issue_flags=issue_flags,
+        rule_status=rule_status,
+        generation_scope=generation_scope,
+        generation_basis=generation_basis,
+        source_match_status=source_match_status,
     )
 
 
@@ -578,8 +933,14 @@ def build_frcsd_road_next_road(
     junction_group_id: str = "",
 ) -> FrcsdRoadNextRoadFinalResult:
     roles = {dataset: _road_roles(result_by_dataset[dataset]) for dataset in DATASETS}
+    f_roles_by_arm = _roles_by_arm(roles["FRCSD"])
     source_map = _source_road_map(
         loaded_by_dataset=loaded_by_dataset,
+        f_roles=roles["FRCSD"],
+    )
+    arm_source_profiles = _arm_source_profiles(
+        loaded_frcsd=loaded_by_dataset["FRCSD"],
+        result_frcsd=result_by_dataset["FRCSD"],
         f_roles=roles["FRCSD"],
     )
     parallel_alignment = _parallel_branch_alignment(
@@ -595,11 +956,29 @@ def build_frcsd_road_next_road(
         "SWSD": _source_policy(source_dataset="SWSD", result=result_by_dataset["SWSD"], roles=roles["SWSD"]),
         "RCSD": _source_policy(source_dataset="RCSD", result=result_by_dataset["RCSD"], roles=roles["RCSD"]),
     }
+    source_arm_pass_rules = {
+        "SWSD": _source_arm_pass_rules(source_dataset="SWSD", result=result_by_dataset["SWSD"], roles=roles["SWSD"]),
+        "RCSD": _source_arm_pass_rules(source_dataset="RCSD", result=result_by_dataset["RCSD"], roles=roles["RCSD"]),
+    }
+    rule_indexes = {dataset: _rule_index(source_arm_pass_rules[dataset]) for dataset in ("SWSD", "RCSD")}
     policy_indexes = {dataset: _policy_index(policies[dataset]) for dataset in ("SWSD", "RCSD")}
-    source_roles_by_road = {dataset: roles[dataset] for dataset in ("SWSD", "RCSD")}
     source_parallel_counts = {dataset: _parallel_count_by_arm(roles[dataset]) for dataset in ("SWSD", "RCSD")}
     f_parallel_counts = _parallel_count_by_arm(roles["FRCSD"])
-    f_movements = _movement_by_pair(result_by_dataset["FRCSD"])
+    validation_status_by_arm = {arm.final_arm_id: arm.validation_status for arm in result_by_dataset["FRCSD"].final_arms}
+    profile_by_arm = {profile.arm_id: profile for profile in arm_source_profiles}
+    source_arm_matches = {
+        arm.final_arm_id: {
+            dataset: _matched_source_arm(
+                f_arm_id=arm.final_arm_id,
+                source_dataset=dataset,
+                result_by_dataset=result_by_dataset,
+                roles=roles,
+                source_map_by_f=source_map_by_f,
+            )
+            for dataset in ("SWSD", "RCSD")
+        }
+        for arm in result_by_dataset["FRCSD"].final_arms
+    }
     advance_right_pairs = {
         (relation.from_arm_id, relation.to_arm_id)
         for relation in result_by_dataset["FRCSD"].advance_right_turn_relations
@@ -607,15 +986,16 @@ def build_frcsd_road_next_road(
     }
     features: list[dict[str, Any]] = []
     audit_rows: list[FrcsdGenerationAudit] = []
+    decisions: list[FinalGenerationDecision] = []
     generated_pairs: set[tuple[str, str]] = set()
     duplicate_count = 0
 
-    def append_feature(f_from: str, f_to: str, movement: ArmMovement, reference_source: str, evidence_ids: tuple[str, ...]) -> None:
+    def append_feature(f_from: str, f_to: str, movement: ArmMovement, reference_source: str, evidence_ids: tuple[str, ...]) -> bool:
         nonlocal duplicate_count
         pair = (f_from, f_to)
         if pair in generated_pairs:
             duplicate_count += 1
-            return
+            return False
         generated_pairs.add(pair)
         props = _feature_properties(
             index=len(features) + 1,
@@ -627,6 +1007,7 @@ def build_frcsd_road_next_road(
             raw_by_source=raw_by_source,
         )
         features.append({"type": "Feature", "properties": props, "geometry": None})
+        return True
 
     def right_turn_carrier_issues(movement: ArmMovement, from_role: RoadRole) -> tuple[str, ...]:
         if movement.movement_type != "right" or from_role.road_role != "trunk":
@@ -637,177 +1018,265 @@ def build_frcsd_road_next_road(
             return tuple()
         return ("data_error_or_missing_right_turn_carrier", "data_error")
 
-    def source_parallel_missing_issues(
+    def final_arm_validation_issues(movement: ArmMovement) -> tuple[str, ...]:
+        flags: list[str] = []
+        for arm_id in (movement.from_arm_id, movement.to_arm_id):
+            status = validation_status_by_arm.get(arm_id)
+            if status == "conflict":
+                flags.append("final_arm_validation_conflict")
+            elif status == "unvalidated":
+                flags.append("final_arm_validation_unvalidated")
+            elif status == "weak_validated":
+                flags.append("final_arm_validation_weak")
+        return tuple(sorted(set(flags)))
+
+    def with_validation_issues(movement: ArmMovement, issue_flags: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(sorted(set(issue_flags).union(final_arm_validation_issues(movement))))
+
+    def has_blocking_issue(issue_flags: tuple[str, ...]) -> bool:
+        blocking = {
+            "data_error",
+            "manual_review_required",
+            "parallel_branch_count_mismatch_manual_review_required",
+            "data_error_partial_target_coverage",
+            "target_arm_exit_roads_missing",
+        }
+        return any(flag in blocking for flag in issue_flags)
+
+    def basic_swsd_rule(movement: ArmMovement, from_road_role: str) -> SourceArmPassRule | None:
+        if from_road_role == "parallel_branch":
+            return None
+        candidates = [
+            rule
+            for rule in source_arm_pass_rules["SWSD"]
+            if rule.movement_type == movement.movement_type
+            and rule.from_road_role == from_road_role
+            and rule.rule_status in {"full_allowed", "trunk_only_allowed", "left_receiving_only_allowed"}
+        ]
+        candidates.sort(
+            key=lambda item: (
+                {"full_allowed": 0, "trunk_only_allowed": 1, "left_receiving_only_allowed": 2}.get(item.rule_status, 9),
+                item.from_arm_id,
+                item.to_arm_id,
+            )
+        )
+        return candidates[0] if candidates else None
+
+    def rule_for(
         *,
-        source_dataset: str,
         movement: ArmMovement,
-        from_role: RoadRole,
-        to_role: RoadRole,
-    ) -> tuple[str, ...]:
+        from_road_role: str,
+        reference_source: str,
+        reference_reason: str,
+    ) -> tuple[SourceArmPassRule | None, str, str, tuple[str, ...]]:
         issues: list[str] = []
-        if (
-            f_parallel_counts[movement.from_arm_id] == 0
-            and policy_indexes[source_dataset].get((movement.movement_type, "parallel_branch", to_role.target_role), tuple())
-        ):
-            issues.append("source_parallel_branch_missing_in_frcsd")
-        if (
-            f_parallel_counts[movement.to_arm_id] == 0
-            and policy_indexes[source_dataset].get((movement.movement_type, from_role.road_role, "parallel_branch"), tuple())
-        ):
-            issues.append("source_parallel_branch_missing_in_frcsd")
-        return tuple(sorted(set(issues)))
+        source_from_arm, from_match_reason = source_arm_matches[movement.from_arm_id][reference_source]
+        source_to_arm, to_match_reason = source_arm_matches[movement.to_arm_id][reference_source]
+        effective_source = reference_source
+        generation_rule = "structure_matched_source_rule"
+        if reference_reason in {"single_source_rcsd", "single_source_swsd"}:
+            generation_rule = "same_source_inherited"
+        if source_from_arm and source_to_arm:
+            rule = rule_indexes[reference_source].get((source_from_arm, source_to_arm, movement.movement_type, from_road_role))
+            if rule:
+                return rule, effective_source, generation_rule, tuple()
+        if reference_source == "RCSD" and source_from_arm and not source_to_arm:
+            issues.extend(("rcsd_target_arm_missing", "fallback_to_swsd_basic_rule"))
+            fallback = basic_swsd_rule(movement, from_road_role)
+            if fallback:
+                return fallback, "SWSD", "rcsd_to_swsd_fallback", tuple(sorted(set(issues)))
+        if reference_reason == "mixed_source_swsd_basic_rule_fallback" or not source_from_arm or not source_to_arm:
+            issues.append("low_confidence_swsd_basic_rule")
+            fallback = basic_swsd_rule(movement, from_road_role)
+            if fallback:
+                return fallback, "SWSD", "swsd_basic_rule", tuple(sorted(set(issues)))
+        issues.append(f"{reference_source.lower()}_source_arm_rule_missing")
+        if not source_from_arm:
+            issues.append(f"{reference_source.lower()}_from_arm_unmatched")
+        if not source_to_arm:
+            issues.append(f"{reference_source.lower()}_to_arm_unmatched")
+        return None, effective_source, generation_rule, tuple(sorted(set(issues)))
+
+    def source_parallel_missing_decisions(movement: ArmMovement, reference_source: str) -> None:
+        if f_parallel_counts[movement.from_arm_id] != 0:
+            return
+        source_from_arm, _ = source_arm_matches[movement.from_arm_id][reference_source]
+        source_to_arm, _ = source_arm_matches[movement.to_arm_id][reference_source]
+        if not source_from_arm or not source_to_arm:
+            return
+        rule = rule_indexes[reference_source].get((source_from_arm, source_to_arm, movement.movement_type, "parallel_branch"))
+        if rule and rule.rule_status in {"full_allowed", "trunk_only_allowed", "left_receiving_only_allowed"}:
+            issues = with_validation_issues(movement, ("source_parallel_branch_missing_in_frcsd",))
+            decisions.append(
+                FinalGenerationDecision(
+                    from_arm_id=movement.from_arm_id,
+                    to_arm_id=movement.to_arm_id,
+                    movement_type=movement.movement_type,
+                    from_road_role="parallel_branch",
+                    reference_source=reference_source,
+                    rule_status=rule.rule_status,
+                    generation_scope="none",
+                    generated_road_ids=tuple(),
+                    generated_next_road_ids=tuple(),
+                    issue_flags=issues,
+                )
+            )
 
     for movement in result_by_dataset["FRCSD"].arm_movements:
-        from_roads = [role for role in roles["FRCSD"].values() if role.arm_id == movement.from_arm_id]
-        to_roads = [role for role in roles["FRCSD"].values() if role.arm_id == movement.to_arm_id]
-        for from_role in from_roads:
-            for to_role in to_roads:
-                if from_role.road_id == to_role.road_id:
-                    continue
-                from_map = source_map_by_f.get(from_role.road_id)
-                to_map = source_map_by_f.get(to_role.road_id)
-                if not from_map or not to_map or from_map.match_status != "matched" or to_map.match_status != "matched":
-                    audit_rows.append(
-                        _audit(
-                            f_road_id=from_role.road_id,
-                            f_next_road_id=to_role.road_id,
-                            movement=movement,
-                            from_role=from_role,
-                            to_role=to_role,
-                            from_source=from_map.f_road_source if from_map else "",
-                            to_source=to_map.f_road_source if to_map else "",
-                            primary_source="",
-                            reference_source="",
-                            generation_rule="source_mapping_unresolved",
-                            permission_status="manual_review_required",
-                            evidence_ids=tuple(),
-                            confidence="none",
-                            issue_flags=("source_mapping_unresolved",),
-                        )
+        profile = profile_by_arm.get(
+            movement.from_arm_id,
+            ArmSourceProfile("FRCSD", movement.from_arm_id, {}, {}, {}, {}, False, ("empty_arm_source_profile",)),
+        )
+        reference_source, reference_reason, reference_issues = _choose_reference_source(
+            profile, source_arm_matches[movement.from_arm_id]
+        )
+        source_parallel_missing_decisions(movement, reference_source)
+        from_roles = tuple(f_roles_by_arm.get(movement.from_arm_id, tuple()))
+        from_role_types = sorted({role.road_role for role in from_roles})
+        for from_road_role in from_role_types:
+            source_rule, effective_source, generation_rule, rule_lookup_issues = rule_for(
+                movement=movement,
+                from_road_role=from_road_role,
+                reference_source=reference_source,
+                reference_reason=reference_reason,
+            )
+            issue_flags = tuple(sorted(set(reference_issues).union(rule_lookup_issues)))
+            if source_rule is None:
+                rule_status = "insufficient"
+                generation_scope = "none"
+                evidence_ids: tuple[str, ...] = tuple()
+            else:
+                rule_status = source_rule.rule_status
+                generation_scope = source_rule.generation_scope
+                evidence_ids = source_rule.source_evidence_ids
+                issue_flags = tuple(sorted(set(issue_flags).union(source_rule.issue_flags)))
+            role_from_roads = tuple(role for role in from_roles if role.road_role == from_road_role)
+            target_roles = _generation_target_roles(
+                result_frcsd=result_by_dataset["FRCSD"],
+                f_roles=roles["FRCSD"],
+                to_arm_id=movement.to_arm_id,
+                generation_scope=generation_scope,
+            )
+            if from_road_role == "parallel_branch" and source_rule is not None and rule_status != "prohibited":
+                source_from_arm = source_rule.from_arm_id
+                if source_parallel_counts[effective_source][source_from_arm] != f_parallel_counts[movement.from_arm_id]:
+                    issue_flags = tuple(
+                        sorted(set(issue_flags).union({"parallel_branch_count_mismatch_manual_review_required", "data_error"}))
                     )
-                    continue
-                primary_source = SOURCE_TO_DATASET[from_map.f_road_source]
-                if from_map.f_road_source == to_map.f_road_source:
-                    pair_records = raw_pairs[primary_source].get((from_map.source_road_id or "", to_map.source_road_id or ""), tuple())
-                    if pair_records:
-                        evidence_ids = tuple(record.raw_id for record in pair_records)
-                        append_feature(from_role.road_id, to_role.road_id, movement, primary_source, evidence_ids)
-                        permission = "allowed"
-                        rule = "same_source_inherited"
-                        confidence = "high"
-                        issue_flags = source_parallel_missing_issues(
-                            source_dataset=primary_source,
-                            movement=movement,
-                            from_role=from_role,
-                            to_role=to_role,
-                        )
-                    else:
-                        evidence_ids = tuple()
-                        issue_flags = right_turn_carrier_issues(movement, from_role)
-                        permission = "manual_review_required" if issue_flags else "prohibited"
-                        rule = "same_source_missing_source_road_next_road"
-                        confidence = "none" if issue_flags else "high"
-                    audit_rows.append(
-                        _audit(
-                            f_road_id=from_role.road_id,
-                            f_next_road_id=to_role.road_id,
-                            movement=movement,
-                            from_role=from_role,
-                            to_role=to_role,
-                            from_source=from_map.f_road_source,
-                            to_source=to_map.f_road_source,
-                            primary_source=primary_source,
-                            reference_source=primary_source,
-                            generation_rule=rule,
-                            permission_status=permission,
-                            evidence_ids=evidence_ids,
-                            confidence=confidence,
-                            issue_flags=issue_flags,
-                        )
-                    )
-                    continue
-                key = (movement.movement_type, from_role.road_role, to_role.target_role)
-                allowed = policy_indexes[primary_source].get(key, tuple())
-                reference_source = primary_source
-                rule = "cross_source_primary_source_policy"
-                issue_flags: tuple[str, ...] = tuple()
-                if not allowed and from_map.f_road_source == "1" and to_map.f_road_source == "2":
-                    fallback_allowed = policy_indexes["SWSD"].get(key, tuple())
-                    if fallback_allowed:
-                        source_from_role = source_roles_by_road["RCSD"].get(from_map.source_road_id or "")
-                        primary_count = (
-                            sum(1 for role in source_roles_by_road["RCSD"].values() if role.arm_id == source_from_role.arm_id)
-                            if source_from_role
-                            else -1
-                        )
-                        fallback_counts = {
-                            sum(1 for role in source_roles_by_road["SWSD"].values() if role.arm_id == item.from_arm_id)
-                            for item in fallback_allowed
-                        }
-                        if primary_count in fallback_counts:
-                            allowed = fallback_allowed
-                            reference_source = "SWSD"
-                            rule = "rcsd_to_swsd_fallback"
-                        else:
-                            issue_flags = ("entering_arm_road_count_mismatch_between_primary_and_fallback_source",)
-                if allowed and not issue_flags:
-                    if "parallel_branch" in {from_role.road_role, to_role.target_role}:
-                        f_count = f_parallel_counts[movement.from_arm_id if from_role.road_role == "parallel_branch" else movement.to_arm_id]
-                        source_counts = {
-                            source_parallel_counts[reference_source][
-                                item.from_arm_id if from_role.road_role == "parallel_branch" else item.to_arm_id
-                            ]
-                            for item in allowed
-                        }
-                        if source_counts and f_count not in source_counts:
-                            issue_flags = ("parallel_branch_count_mismatch_manual_review_required", "data_error")
-                    if not issue_flags:
-                        issue_flags = source_parallel_missing_issues(
-                            source_dataset=reference_source,
-                            movement=movement,
-                            from_role=from_role,
-                            to_role=to_role,
-                        )
-                        evidence_ids = tuple(sorted({eid for item in allowed for eid in item.source_road_next_road_ids}))
-                        append_feature(from_role.road_id, to_role.road_id, movement, reference_source, evidence_ids)
-                        permission = "allowed"
-                        confidence = "medium" if rule == "cross_source_primary_source_policy" else "low"
-                    else:
-                        evidence_ids = tuple()
-                        permission = "manual_review_required"
-                        confidence = "none"
-                else:
-                    evidence_ids = tuple()
-                    permission = "manual_review_required" if issue_flags else "prohibited"
-                    confidence = "none" if issue_flags else "medium"
-                if permission == "prohibited":
+                    rule_status = "data_error_partial_target_coverage"
+                    generation_scope = "none"
+                    target_roles = tuple()
+            permission = (
+                "allowed"
+                if rule_status in {"full_allowed", "trunk_only_allowed", "left_receiving_only_allowed"}
+                and not has_blocking_issue(issue_flags)
+                else "prohibited"
+            )
+            if rule_status in {"data_error_partial_target_coverage", "insufficient", "conflict"}:
+                permission = "manual_review_required"
+            generated_from_ids: list[str] = []
+            generated_to_ids: list[str] = []
+            if permission in {"prohibited", "manual_review_required"}:
+                for from_role in role_from_roads:
                     carrier_issues = right_turn_carrier_issues(movement, from_role)
                     if carrier_issues:
                         issue_flags = tuple(sorted(set(issue_flags).union(carrier_issues)))
                         permission = "manual_review_required"
-                        confidence = "none"
-                audit_rows.append(
-                    _audit(
-                        f_road_id=from_role.road_id,
-                        f_next_road_id=to_role.road_id,
-                        movement=movement,
-                        from_role=from_role,
-                        to_role=to_role,
-                        from_source=from_map.f_road_source,
-                        to_source=to_map.f_road_source,
-                        primary_source=primary_source,
-                        reference_source=reference_source if permission == "allowed" else "",
-                        generation_rule=rule,
-                        permission_status=permission,
-                        evidence_ids=evidence_ids,
-                        confidence=confidence,
-                        issue_flags=issue_flags,
+                        rule_status = "data_error_partial_target_coverage" if "data_error" in carrier_issues else rule_status
+                        break
+            if permission == "allowed":
+                for from_role in role_from_roads:
+                    for to_role in target_roles:
+                        if from_role.road_id == to_role.road_id:
+                            continue
+                        from_map = source_map_by_f.get(from_role.road_id)
+                        to_map = source_map_by_f.get(to_role.road_id)
+                        from_source = _norm((loaded_by_dataset["FRCSD"].roads.get(from_role.road_id).properties or {}).get("source")) if from_role.road_id in loaded_by_dataset["FRCSD"].roads else ""
+                        to_source = _norm((loaded_by_dataset["FRCSD"].roads.get(to_role.road_id).properties or {}).get("source")) if to_role.road_id in loaded_by_dataset["FRCSD"].roads else ""
+                        pair_rule = generation_rule
+                        if generation_rule == "same_source_inherited" and from_source != to_source:
+                            pair_rule = "cross_source_primary_source_policy"
+                        if generation_rule == "structure_matched_source_rule" and reference_reason.startswith("mixed_source"):
+                            pair_rule = "structure_matched_source_rule"
+                        source_match_status = ",".join(
+                            item
+                            for item in (
+                                from_map.match_status if from_map else "from_source_map_missing",
+                                to_map.match_status if to_map else "to_source_map_missing",
+                            )
+                            if item
+                        )
+                        appended = append_feature(from_role.road_id, to_role.road_id, movement, effective_source, evidence_ids)
+                        if appended:
+                            generated_from_ids.append(from_role.road_id)
+                            generated_to_ids.append(to_role.road_id)
+                        audit_rows.append(
+                            _audit(
+                                f_road_id=from_role.road_id,
+                                f_next_road_id=to_role.road_id,
+                                movement=movement,
+                                from_role=from_role,
+                                to_role=to_role,
+                                from_source=from_source,
+                                to_source=to_source,
+                                primary_source=reference_source,
+                                reference_source=effective_source,
+                                generation_rule=pair_rule,
+                                permission_status="allowed",
+                                evidence_ids=evidence_ids,
+                                confidence="high" if source_match_status == "matched,matched" else ("low" if generation_rule == "swsd_basic_rule" else "medium"),
+                                issue_flags=with_validation_issues(movement, issue_flags),
+                                rule_status=rule_status,
+                                generation_scope=generation_scope,
+                                generation_basis="rule_projected",
+                                source_match_status=source_match_status,
+                            )
+                        )
+            else:
+                for from_role in role_from_roads:
+                    from_map = source_map_by_f.get(from_role.road_id)
+                    from_source = _norm((loaded_by_dataset["FRCSD"].roads.get(from_role.road_id).properties or {}).get("source")) if from_role.road_id in loaded_by_dataset["FRCSD"].roads else ""
+                    audit_rows.append(
+                        _audit(
+                            f_road_id=from_role.road_id,
+                            f_next_road_id="",
+                            movement=movement,
+                            from_role=from_role,
+                            to_role=RoadRole("FRCSD", movement.to_arm_id, "", "", ""),
+                            from_source=from_source,
+                            to_source="",
+                            primary_source=reference_source,
+                            reference_source=effective_source if permission == "manual_review_required" else "",
+                            generation_rule=generation_rule,
+                            permission_status=permission,
+                            evidence_ids=evidence_ids,
+                            confidence="none" if permission == "manual_review_required" else "medium",
+                            issue_flags=with_validation_issues(movement, issue_flags),
+                            rule_status=rule_status,
+                            generation_scope=generation_scope,
+                            generation_basis="rule_projected",
+                            source_match_status=from_map.match_status if from_map else "from_source_map_missing",
+                        )
                     )
+            decisions.append(
+                FinalGenerationDecision(
+                    from_arm_id=movement.from_arm_id,
+                    to_arm_id=movement.to_arm_id,
+                    movement_type=movement.movement_type,
+                    from_road_role=from_road_role,
+                    reference_source=effective_source if source_rule is not None else reference_source,
+                    rule_status=rule_status,
+                    generation_scope=generation_scope,
+                    generated_road_ids=tuple(sorted(set(generated_from_ids))),
+                    generated_next_road_ids=tuple(sorted(set(generated_to_ids))),
+                    issue_flags=with_validation_issues(movement, issue_flags),
                 )
+            )
     issue_report = _issues_from_audit(source_map, parallel_alignment, audit_rows, duplicate_count)
     source_counts = Counter(item.match_status for item in source_map)
     audit_counts = Counter(item.generation_rule for item in audit_rows if item.permission_status == "allowed")
     parallel_counts = Counter(item.alignment_status for item in parallel_alignment)
+    rule_status_counts = Counter(item.rule_status for item in decisions)
     metrics = {
         "frcsd_generated_road_next_road_count": len(features),
         "frcsd_source_geometry_match_missing_count": source_counts.get("source_geometry_match_missing", 0),
@@ -815,6 +1284,9 @@ def build_frcsd_road_next_road(
         "frcsd_same_source_inherited_count": audit_counts.get("same_source_inherited", 0),
         "frcsd_cross_source_generated_count": audit_counts.get("cross_source_primary_source_policy", 0),
         "frcsd_fallback_to_swsd_count": audit_counts.get("rcsd_to_swsd_fallback", 0),
+        "frcsd_swsd_basic_rule_count": audit_counts.get("swsd_basic_rule", 0),
+        "frcsd_rule_projected_count": sum(1 for item in audit_rows if item.permission_status == "allowed"),
+        "frcsd_data_error_partial_target_coverage_count": rule_status_counts.get("data_error_partial_target_coverage", 0),
         "frcsd_manual_review_required_count": sum(1 for item in audit_rows if item.permission_status == "manual_review_required"),
         "frcsd_parallel_branch_alignment_count": len(parallel_alignment),
         "frcsd_parallel_branch_count_matched_ordered_count": parallel_counts.get("count_matched_ordered", 0),
@@ -832,6 +1304,10 @@ def build_frcsd_road_next_road(
         source_road_map=source_map,
         source_movement_policy_swsd=policies["SWSD"],
         source_movement_policy_rcsd=policies["RCSD"],
+        arm_source_profiles=arm_source_profiles,
+        source_arm_pass_rules_swsd=source_arm_pass_rules["SWSD"],
+        source_arm_pass_rules_rcsd=source_arm_pass_rules["RCSD"],
+        final_generation_decisions=tuple(decisions),
         parallel_branch_alignment=parallel_alignment,
         audit=tuple(audit_rows),
         issue_report=issue_report,
@@ -861,6 +1337,14 @@ def final_review_layers(
         road = roads.get(item.f_road_id)
         if road:
             source_map.append((road.geometry, to_plain(item)))
+    decisions = []
+    for item in result.final_generation_decisions:
+        arm_roads = [roads[road_id] for road_id in item.generated_road_ids if road_id in roads]
+        if arm_roads:
+            point = _road_midpoint(arm_roads[0])
+        else:
+            point = Point(0.0, 0.0)
+        decisions.append((point, to_plain(item)))
     issues = []
     for issue in result.issue_report.get("issues", []):
         road = roads.get(str(issue.get("f_road_id", "")))
@@ -868,6 +1352,7 @@ def final_review_layers(
     return [
         ("frcsd_generated_road_next_road", "LineString", generated),
         ("frcsd_source_road_map", "LineString", source_map),
+        ("final_generation_decisions", "Point", decisions),
         ("frcsd_road_next_road_issues", "Point", issues),
     ]
 
@@ -883,6 +1368,8 @@ def render_final_review_png(path: Path, result: FrcsdRoadNextRoadFinalResult) ->
         f"same_source={result.metrics['frcsd_same_source_inherited_count']}",
         f"cross_source={result.metrics['frcsd_cross_source_generated_count']}",
         f"fallback_swsd={result.metrics['frcsd_fallback_to_swsd_count']}",
+        f"swsd_basic={result.metrics['frcsd_swsd_basic_rule_count']}",
+        f"partial_error={result.metrics['frcsd_data_error_partial_target_coverage_count']}",
         f"manual_review={result.metrics['frcsd_manual_review_required_count']}",
         f"source_missing={result.metrics['frcsd_source_geometry_match_missing_count']}",
         f"source_ambiguous={result.metrics['frcsd_source_geometry_match_ambiguous_count']}",

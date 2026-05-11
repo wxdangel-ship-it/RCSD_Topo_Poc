@@ -284,7 +284,8 @@ def render_dataset_review_png(path: Path, loaded: LoadedDataset, result: Dataset
         f"arms={metrics['initial_arm_count']} stable={metrics['stable_arm_count']} "
         f"issue={metrics['issue_count']} R7={metrics['advance_right_turn_road_count']} "
         f"L8={metrics['advance_left_turn_road_count']} mov={metrics['arm_movement_count']} "
-        f"corr={metrics['trunk_correction_count']}"
+        f"corr={metrics['trunk_correction_count']} "
+        f"valC={metrics['final_arm_validation_conflict_count']}"
     )
     _draw_dataset_panel(
         draw,
@@ -359,6 +360,11 @@ def _dataset_review_context(
     for correction in result.trunk_corrections:
         context_road_ids.update(correction.corrected_trunk_road_ids)
         context_road_ids.update(correction.movement_excluded_receiving_road_ids)
+    for validation in result.final_arm_validation:
+        for road_ids in validation.relaxed_trace_road_ids_by_initial_arm.values():
+            context_road_ids.update(road_ids)
+        for node_ids in validation.relaxed_trace_node_ids_by_initial_arm.values():
+            context_node_ids.update(node_ids[-1:])
 
     seed_road_ids = {trace.seed_road_id for trace in result.traces}
     context_road_ids.update(seed_road_ids)
@@ -616,12 +622,74 @@ def build_dataset_review_layers(
         for road_id in correction.corrected_trunk_road_ids
         if road_id in loaded.roads
     ]
-    issue_points = []
-    special_issue_points = []
     fallback_point = None
     if result.context.member_node_ids:
         node = loaded.nodes.get(result.context.member_node_ids[0])
         fallback_point = node.geometry if node else None
+    final_arm_validation = []
+    relaxed_trace_roads = []
+    relaxed_trace_terminals = []
+    for validation in result.final_arm_validation:
+        anchor_point = None
+        arm = next((item for item in result.final_arms if item.final_arm_id == validation.final_arm_id), None)
+        if arm:
+            anchor_ids = list(arm.trunk_road_ids) or list(arm.initial_arm.get("seed_road_ids", []))
+            anchor_points = [road_centroids[road_id] for road_id in anchor_ids if road_id in road_centroids]
+            if anchor_points:
+                anchor_point = Point(
+                    sum(point.x for point in anchor_points) / len(anchor_points),
+                    sum(point.y for point in anchor_points) / len(anchor_points),
+                )
+        if anchor_point is None:
+            anchor_point = fallback_point or Point(0.0, 0.0)
+        final_arm_validation.append(
+            (
+                anchor_point,
+                {
+                    "validation_id": validation.validation_id,
+                    "final_arm_id": validation.final_arm_id,
+                    "validation_status": validation.validation_status,
+                    "convergence_status": validation.convergence_status,
+                    "source_initial_arm_ids": ",".join(validation.source_initial_arm_ids),
+                    "terminal_ids": ",".join(validation.relaxed_trace_terminal_junction_ids),
+                    "risk_flags": ",".join(validation.risk_flags),
+                },
+            )
+        )
+        for initial_id, road_ids in validation.relaxed_trace_road_ids_by_initial_arm.items():
+            for road_id in road_ids:
+                road = loaded.roads.get(road_id)
+                if road:
+                    relaxed_trace_roads.append(
+                        (
+                            road.geometry,
+                            {
+                                "validation_id": validation.validation_id,
+                                "final_arm_id": validation.final_arm_id,
+                                "initial_arm_id": initial_id,
+                                "validation_status": validation.validation_status,
+                                "road_id": road_id,
+                            },
+                        )
+                    )
+        for initial_id, node_ids in validation.relaxed_trace_node_ids_by_initial_arm.items():
+            terminal_node_id = node_ids[-1] if node_ids else ""
+            node = loaded.nodes.get(terminal_node_id)
+            if node:
+                relaxed_trace_terminals.append(
+                    (
+                        node.geometry,
+                        {
+                            "validation_id": validation.validation_id,
+                            "final_arm_id": validation.final_arm_id,
+                            "initial_arm_id": initial_id,
+                            "validation_status": validation.validation_status,
+                            "terminal_node_id": terminal_node_id,
+                        },
+                    )
+                )
+    issue_points = []
+    special_issue_points = []
     for issue in result.issue_report.issues:
         point = fallback_point
         node_id = issue.get("node_id") or issue.get("missing_node_id")
@@ -633,7 +701,7 @@ def build_dataset_review_layers(
         if point is None:
             point = Point(0.0, 0.0)
         issue_points.append((point, {"issue_type": issue.get("issue_type", ""), "detail": str(issue)[:180]}))
-        if str(issue.get("issue_type", "")).startswith(("formway_", "advance_right_turn_", "trunk_")):
+        if str(issue.get("issue_type", "")).startswith(("formway_", "advance_right_turn_", "trunk_", "final_arm_validation_", "relaxed_trace_")):
             special_issue_points.append((point, {"issue_type": issue.get("issue_type", ""), "detail": str(issue)[:180]}))
     return [
         ("current_junction_nodes", "Point", member_nodes),
@@ -654,6 +722,9 @@ def build_dataset_review_layers(
         ("advance_left_receiving_roads", "LineString", advance_left_receiving_roads),
         ("trunk_excluded_by_movement_roads", "LineString", trunk_excluded_by_movement_roads),
         ("corrected_trunk_roads", "LineString", corrected_trunk_roads),
+        ("final_arm_validation", "Point", final_arm_validation),
+        ("relaxed_trace_roads", "LineString", relaxed_trace_roads),
+        ("relaxed_trace_terminals", "Point", relaxed_trace_terminals),
         ("special_formway_issue_points", "Point", special_issue_points),
         ("issue_points", "Point", issue_points),
     ]

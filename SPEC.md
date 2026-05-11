@@ -156,7 +156,8 @@
 - `p01_arm_build` 承载 P01-A1 / P01-A2 / P01-Final 成果链路，目录结构与 T0X 模块一致。
 - A1 在 SWSD / RCSD / F-RCSD 三套数据中独立构建 Arm、特殊转向、ArmMovement 与 corrected trunk。
 - A2 读取 A1 run root，以 F-RCSD FinalArm 为承载核心构建跨三源 LogicalArmGroup。
-- P01-Final 基于 F-RCSD:Road.Source、几何完全一致源 Road 映射、SWSD / RCSD SourceMovementPolicy、同源继承、跨源 primary source 与 RCSD -> SWSD fallback 生成最终 `frcsd_road_next_road.geojson`。
+- P01-Final 基于 SWSD / RCSD 源侧 ArmMovement 通行规则抽象、F-RCSD 道路角色投影与 ArmSourceProfile 审计生成最终 `frcsd_road_next_road.geojson`；F-RCSD Arm 可混源，`Source` 只在 Road 级解释，精确源 Road 映射仅作为审计 / 置信增强证据，不作为生成前提。
+- P01-Final 中“全通”表示某类进入道路通向目标 Arm 的全部退出 Road；主干道路和平行支路只覆盖部分目标退出 Road 时必须进入 `data_error_partial_target_coverage` / 人工复核，不得作为正常 partial 规则投影。advance-left 与 uturn 的主干 / 左转接收道路范围是明确特例。
 - P01 输入为六类 Node/Road 路径、可选 RoadNextRoad 路径与一个或多个三段式 `--junction-group <swsd>,<rcsd>,<frcsd>`。
 - P01 语义路口按 `mainnodeid` 聚合；`mainnodeid = null / 空字符串 / 0` 视为无有效值并退化为单节点语义路口。
 - 特殊转向使用 `formway` bit 运算：bit7 表达提前右转，bit8 表达提前左转；字段缺失时不得通过几何形态反推。

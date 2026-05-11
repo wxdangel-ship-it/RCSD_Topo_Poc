@@ -4,10 +4,10 @@
 
 ## 能力范围
 
-- A1：读取 SWSD / RCSD / F-RCSD Node、Road 与可选 RoadNextRoad，按语义路口构建 InitialArm / FinalArm / corrected_final_arms。
+- A1：读取 SWSD / RCSD / F-RCSD Node、Road 与可选 RoadNextRoad，按语义路口构建 InitialArm / FinalArm / final_arm_validation / corrected_final_arms。
 - A1：用 `formway` bit7 / bit8 识别提前右转、提前左转，输出 `AdvanceRightTurnRelation`、trunk、ArmMovement、RoadMovementEvidence、ReceivingRoadRole 与 trunk correction。
 - A2：读取 A1 run root，构建 ArmProfile、候选矩阵、RawArmAlignment、LogicalArmGroup、ArmBuildFeedback、source_extra 与配准审查产物。
-- P01-Final：基于 F-RCSD:Road.Source、CRS 归一化 rounded exact 源 Road 映射、SWSD / RCSD SourceMovementPolicy、平行支路稳定顺序审计、同源继承、跨源 primary source 与 RCSD -> SWSD fallback，生成 `frcsd_road_next_road.geojson`。
+- P01-Final：基于 SWSD / RCSD 源侧 ArmMovement 通行规则抽象、F-RCSD 道路角色投影、ArmSourceProfile、SourceArmPassRule 与 final generation decision，生成 `frcsd_road_next_road.geojson`；精确源 Road 映射保留为审计 / 置信增强证据。
 - 输出 JSON、GeoJSON、PNG、GPKG、summary、review index、audit 与 issue report。
 
 ## 边界
@@ -15,7 +15,8 @@
 - P01-A3 正式跨源 Movement 空间、P01-B 禁行证据迁移与条件通行裁决不由本模块实现。
 - 不使用 `grade / grade_2` 作为 P01 主规则。
 - 不使用 RoadNextRoad `turnType / turntype` 判断 `movement_type`。
-- 不通过空间接近替代 F-RCSD Source + CRS 归一化 rounded exact 源 Road 映射。
+- 不把 F-RCSD Source + CRS 归一化 rounded exact 源 Road 映射作为 P01-Final 生成前提，也不通过空间接近替代该审计证据。
+- 不把主干道路 / 平行支路只覆盖部分目标退出 Road 作为正常 partial 规则投影。
 - 不提供 repo 官方 CLI；当前入口均为模块内 callable runner 或 dev helper。
 
 ## A1 / P01-Final 调用

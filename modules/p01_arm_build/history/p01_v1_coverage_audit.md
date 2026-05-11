@@ -2,6 +2,8 @@
 
 审计主源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/RCSD_Topo_Poc__P01__REQUIREMENT.md`，文档版本 `v1.0.0`。
 
+P01-Final 规则级修正源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/P01_Final_RoadNextRoad_Rule_Model_Discussion.md`。
+
 审计对象：`p01_arm_build` 模块文档、SpecKit、A1 / A2 / P01-Final 实现与测试。
 
 状态取值：已实现 / 部分实现 / 未实现 / 不适用 / 需确认。
@@ -23,20 +25,21 @@
 | 13 | stable straight 参与 trunk 修正 | 已实现 | `movement.py` 仅使用 `unique_straight_target` 且高置信 straight evidence 生成 straight receiving。 |
 | 14 | ReceivingRoadRole | 已实现 | `movement.py` 输出 `arm_receiving_road_roles.json`，包含 straight / left / advance_left / right / unknown roles。 |
 | 15 | advance-left-only receiving road 排除 trunk | 已实现 | `movement.py` 在 stable straight receiving 非空且 road 未被 straight 接入时排除；tests 覆盖排除和 straight priority。 |
-| 16 | corrected_final_arms | 已实现 | `runner.py` 写出 `corrected_final_arms.json`；tests 覆盖字段保留与输出。 |
-| 17 | P01-A2 LogicalArmGroup | 已实现 | `alignment.py` 构建 LogicalArmGroup、RawArmAlignment、ArmBuildFeedback；`test_p01_arm_alignment.py` 覆盖 stable/missing/partial/conflict 等场景。 |
-| 18 | F-RCSD:Road.Source | 已实现 | `final_road_next_road.py` 读取并校验 Source；异常进入 issue，不生成相关 final pair。 |
-| 19 | Source + CRS-normalized rounded exact geometry 映射 | 已实现 | `final_road_next_road.py` 按 Source 限定源数据集，并在 F-RCSD 目标 CRS 下使用 rounded exact geometry key；missing / ambiguous 进入 issue；tests 覆盖。 |
-| 20 | 同源继承 | 已实现 | 同源 pair 直接查源 RoadNextRoad evidence；tests 覆盖 same-source inheritance。 |
-| 21 | 不同源 primary source | 已实现 | 跨源 pair 使用 from road Source 选择 primary source；tests 覆盖 cross-source generation。 |
-| 22 | 最终生成阶段 RoadNextRoad 缺失视为不通 | 已实现 | SourceMovementPolicy 输出 prohibited；final GeoJSON 不生成缺失 pair；tests 覆盖 missing no generation。 |
-| 23 | 平行支路数量一致性 | 已实现 | `parallel_branch_alignment.json` 输出 source_missing、count_matched_ordered、count_mismatch 与 insufficient_geometry 审计；count mismatch 输出 `parallel_branch_count_mismatch_manual_review_required` 与 `data_error`；源有平行支路而 F-RCSD 没有输出 `source_parallel_branch_missing_in_frcsd`。 |
-| 24 | RCSD -> SWSD fallback | 已实现 | `final_road_next_road.py` 限定 from Source=1/to Source=2 且 primary to_arm 缺失时 fallback，并检查 entering arm road count；tests 覆盖。 |
-| 25 | frcsd_road_next_road.geojson | 已实现 | final FeatureCollection 使用 `geometry=null` 与 `id/road_id/next_road_id/type/source/turntype/city_code` properties，包含 duplicate 防护。 |
-| 26 | audit / issue report | 已实现 | 输出 `frcsd_source_road_map.json`、`source_movement_policy_swsd.json`、`source_movement_policy_rcsd.json`、`frcsd_road_next_road_audit.json`、`frcsd_road_next_road_issue_report.json`。 |
+| 16 | FinalArm fallback validation | 已实现 | `final_arm_validation.py` 对兜底 FinalArm 做 relaxed reverse / supplemental trace validation；`runner.py` 写出 `final_arm_validation.json`；tests 覆盖 not_required / validated / weak_validated / unvalidated / conflict。 |
+| 17 | corrected_final_arms | 已实现 | `runner.py` 写出 `corrected_final_arms.json`；tests 覆盖字段保留与 validation 状态输出。 |
+| 18 | P01-A2 LogicalArmGroup | 已实现 | `alignment.py` 构建 LogicalArmGroup、RawArmAlignment、ArmBuildFeedback；`test_p01_arm_alignment.py` 覆盖 stable/missing/partial/conflict 等场景。 |
+| 19 | F-RCSD:Road.Source | 已实现 | `final_road_next_road.py` 读取并校验 Source；ArmSourceProfile 按 Road 级统计 Source 分布，支持混源 Arm 审计。 |
+| 20 | Source + CRS-normalized rounded exact geometry 映射 | 已实现 | `final_road_next_road.py` 按 Source 尝试 rounded exact geometry mapping；missing / ambiguous 进入 issue，但该映射仅作为 audit / confidence evidence，不再作为生成前提；tests 覆盖精确匹配缺失仍可规则生成。 |
+| 21 | 源侧规则抽象 | 已实现 | `SourceArmPassRule` 从 SWSD / RCSD RoadNextRoad、ArmMovement、进入道路角色与目标 Arm 退出道路集合抽象 `full_allowed / prohibited / trunk_only_allowed / left_receiving_only_allowed / data_error_partial_target_coverage` 等状态；tests 覆盖。 |
+| 22 | 全通投影 | 已实现 | `full_allowed` 生成进入道路角色到目标 Arm 所有退出 Road；tests 覆盖目标 Arm 多退出 Road。 |
+| 23 | 部分目标覆盖异常 | 已实现 | 主干道路 / 平行支路部分目标覆盖输出 `data_error_partial_target_coverage / manual_review_required`，不自动投影；advance-left 和 uturn 特例不误报；tests 覆盖。 |
+| 24 | 平行支路数量一致性 | 已实现 | `parallel_branch_alignment.json` 输出 source_missing、count_matched_ordered、count_mismatch 与 insufficient_geometry 审计；count mismatch 输出 `parallel_branch_count_mismatch_manual_review_required` 与 `data_error`；源有平行支路而 F-RCSD 没有输出 `source_parallel_branch_missing_in_frcsd`。 |
+| 25 | 混源 Arm 规则源选择与 fallback | 已实现 | 混源进入 Arm 按 SWSD 结构匹配、RCSD 结构匹配、SWSD basic rule 兜底选择；参考 RCSD 但目标 Arm 缺失时 fallback 到 SWSD basic rule；tests 覆盖。 |
+| 26 | frcsd_road_next_road.geojson | 已实现 | final FeatureCollection 使用 `geometry=null` 与 `id/road_id/next_road_id/type/source/turntype/city_code` properties，包含 duplicate 防护。 |
+| 27 | audit / issue report | 已实现 | 输出 `arm_source_profiles.json`、`source_arm_pass_rules_swsd.json`、`source_arm_pass_rules_rcsd.json`、`final_generation_decisions.json`、`frcsd_source_road_map.json`、兼容 `source_movement_policy_swsd.json` / `source_movement_policy_rcsd.json`、`frcsd_road_next_road_audit.json` 与 `frcsd_road_next_road_issue_report.json`。 |
 
 ## 未完全闭合项
 
-- 真实 1019789 RoadNextRoad case 依赖内网 RoadNextRoad 路径；本地路径不可访问时，只能完成 synthetic / fixture 验证并提供内网命令。
+- 真实 1019789 RoadNextRoad case 依赖内网 RoadNextRoad 路径；本地路径不可访问时，只能完成规则级 synthetic / fixture 验证并提供内网命令。
 - final RoadNextRoad `turntype` 输出编码已按模块契约固定为 `unknown=0 / straight=1 / left=2 / right=3 / uturn=4`；真实 RCSD 编码规范仍需用户提供权威材料确认。
 - `950044` 已确认为 A1 / A2 后续修复 case；当前不与 P01-Final source mapping 修复混合处理。

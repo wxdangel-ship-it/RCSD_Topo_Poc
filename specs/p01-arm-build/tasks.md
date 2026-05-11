@@ -20,6 +20,7 @@
 - [x] 提前右转 road 排除出 Arm member / seed / connector / trunk。
 - [x] `AdvanceRightTurnRelation` 输出与 issue 审计。
 - [x] InitialArm / FinalArm / LocalArmCandidate / ArmTrace / ThroughDecisionAudit / IssueReport 输出。
+- [x] FinalArm fallback validation 输出 `final_arm_validation.json`，并将 validation 状态写入 FinalArm / corrected_final_arms / summary / review index。
 - [x] trunk_road_ids / trunk_status / trunk_reason 输出。
 - [x] RoadNextRoad 读取与归一化。
 - [x] RoadMovementEvidence 映射与 issue 审计。
@@ -45,25 +46,31 @@
 ## 4. P01-Final
 
 - [x] F-RCSD Road `Source` 读取与校验。
-- [x] Source + CRS-normalized rounded exact source road mapping。
+- [x] ArmSourceProfile 混源审计。
+- [x] SourceArmPassRule 源侧规则抽象。
+- [x] Source + CRS-normalized rounded exact source road mapping 审计。
 - [x] missing / ambiguous source geometry mapping issue。
-- [x] SWSD / RCSD SourceMovementPolicy。
-- [x] 同源继承源 RoadNextRoad。
-- [x] 跨源 primary source generation。
-- [x] RCSD -> SWSD fallback。
+- [x] SWSD / RCSD SourceMovementPolicy 兼容审计。
+- [x] 规则级 full_allowed 生成到目标 Arm 所有退出 Road。
+- [x] 主干 / 平行支路部分目标覆盖报错。
+- [x] advance-left / uturn 特殊合法范围。
+- [x] 混源 Arm SWSD 优先、RCSD 次之、SWSD basic rule 兜底。
+- [x] RCSD 目标 Arm 缺失时 SWSD basic fallback。
+- [x] 精确源 Road 匹配缺失仍可规则生成。
 - [x] entering arm road count mismatch manual review。
 - [x] parallel_branch count mismatch data error。
 - [x] source parallel branch missing in F-RCSD audit。
 - [x] parallel_branch alignment 独立审计对象。
 - [x] missing right-turn carrier issue。
 - [x] final `frcsd_road_next_road.geojson`。
-- [x] final source map、audit、issue report。
+- [x] final source map、ArmSourceProfile、SourceArmPassRule、final generation decision、audit、issue report。
 - [x] duplicate `(road_id, next_road_id)` 防护。
 
 ## 5. 验证
 
 - [x] py_compile。
 - [x] A1 regression tests。
+- [x] FinalArm validation not_required / validated / weak_validated / unvalidated / conflict tests。
 - [x] A2 regression tests。
 - [x] P01-Final synthetic tests。
 - [x] Grade / grade_2 源码扫描。

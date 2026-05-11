@@ -2,7 +2,7 @@
 
 ## 上下文
 
-P01 的成果目标是为 F-RCSD 重建路口级 RoadNextRoad。P01-A1 提供单源 Arm、特殊转向、movement 与 corrected trunk；P01-A2 提供跨三源 LogicalArmGroup；P01-Final 使用 F-RCSD Road、Source 映射与源 RoadNextRoad evidence 生成最终 F-RCSD RoadNextRoad。
+P01 的成果目标是为 F-RCSD 重建路口级 RoadNextRoad。P01-A1 提供单源 Arm、特殊转向、movement 与 corrected trunk；P01-A2 提供跨三源 LogicalArmGroup；P01-Final 使用 SWSD / RCSD 源侧 ArmMovement 通行规则抽象与 F-RCSD 道路角色投影生成最终 F-RCSD RoadNextRoad，精确源 Road 映射仅保留为审计证据。
 
 ## 范围
 
@@ -22,9 +22,10 @@ P01 的成果目标是为 F-RCSD 重建路口级 RoadNextRoad。P01-A1 提供单
 - RoadMovementEvidence。
 - ReceivingRoadRole。
 - Movement-aware trunk correction。
-- F-RCSD Source + CRS-normalized rounded exact source road mapping。
-- SourceMovementPolicy。
-- 同源继承、跨源 primary source 与 RCSD -> SWSD fallback。
+- ArmSourceProfile。
+- SourceArmPassRule。
+- F-RCSD Source + CRS-normalized rounded exact source road mapping 审计。
+- 规则源选择、SWSD basic fallback 与 final generation decision。
 - `frcsd_road_next_road.geojson`、final audit、issue report、review GPKG / PNG。
 - A2 ArmProfile、candidate edge、RawArmAlignment、LogicalArmGroup、ArmBuildFeedback 与 source_extra。
 - A2 配准 review PNG / compare PNG / review GPKG / summary / review index。

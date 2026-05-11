@@ -12,6 +12,10 @@
 
 负责语义路口组装、seed 识别、显式右转排除、trace、through decision、InitialArm / FinalArm 构建与自动结构检查。
 
+## `final_arm_validation.py`
+
+负责 A1 内部 FinalArm 兜底聚合后的 relaxed reverse / supplemental trace validation，输出 validation 状态、收敛状态、relaxed trace evidence、metrics 与 issue。该构建块不修改原始 InitialArm、ArmTrace 或 ThroughDecisionAudit。
+
 ## `special_roads.py`
 
 负责 `formway` bit7 / bit8 解析、当前路口特殊道路索引、提前右转 relation 追溯与 relation issue 生成。
@@ -30,7 +34,7 @@
 
 ## `final_road_next_road.py`
 
-负责 P01-Final：F-RCSD Source + CRS-normalized rounded exact source road mapping、SourceMovementPolicy、parallel branch alignment、同源继承、跨源 primary source generation、RCSD -> SWSD fallback、final GeoJSON、audit、issue 与 review 输出辅助。
+负责 P01-Final：ArmSourceProfile、SourceArmPassRule、规则源选择、F-RCSD 道路角色投影、CRS-normalized rounded exact source road mapping 审计、parallel branch alignment、SWSD basic fallback、final generation decision、final GeoJSON、audit、issue 与 review 输出辅助。SourceMovementPolicy 与 source map 保留为兼容审计对象。
 
 ## `review.py`
 

@@ -2,7 +2,7 @@
 
 ## 总体策略
 
-P01-A1 按“输入读取 -> 语义路口 -> seed -> trace -> arm 聚合 -> RoadNextRoad-aware movement -> corrected trunk -> 输出审计 -> 目视审查”的顺序实现。P01-A2 按“读取 A1 run root -> ArmProfile -> candidate evidence -> evidence graph -> LogicalArmGroup -> 输出审计 -> 目视审查”的顺序实现。P01-Final 按“F-RCSD Source 读取 -> source road CRS-normalized rounded exact mapping -> source policy -> 同源继承 / 跨源 primary source / fallback -> final RoadNextRoad 输出”的顺序实现。所有构建与配准规则优先基于结构证据，不通过几何形态反推业务语义。
+P01-A1 按“输入读取 -> 语义路口 -> seed -> trace -> arm 聚合 -> FinalArm 兜底验证 -> RoadNextRoad-aware movement -> corrected trunk -> 输出审计 -> 目视审查”的顺序实现。P01-A2 按“读取 A1 run root -> ArmProfile -> candidate evidence -> evidence graph -> LogicalArmGroup -> 输出审计 -> 目视审查”的顺序实现。P01-Final 按“ArmSourceProfile -> SWSD / RCSD SourceArmPassRule -> 规则源选择 -> F-RCSD 道路角色投影 -> final RoadNextRoad 输出”的顺序实现。精确源 Road 映射只作为审计 / 置信增强证据。所有构建与配准规则优先基于结构证据，不通过几何形态反推业务语义。
 
 ## 数据读取
 
@@ -40,6 +40,8 @@ trace 从 seed 外侧端点继续。每步只沿拓扑连接向外追溯：
 
 按 trace 的终端类型与终端语义路口 ID 聚合 InitialArm。FinalArm 默认复制 InitialArm 并写入 `not_applied`；当 InitialArm 数量大于 LocalArmCandidate 数量、LocalArmCandidate 完整覆盖全部 InitialArm，且至少一个候选对应多个 InitialArm 时，FinalArm 采用局部趋势兜底聚合并写入 `local_candidate_fallback`。
 
+经过兜底聚合或包含多个 source InitialArm 的 FinalArm 会执行 relaxed reverse / supplemental trace validation。该验证只尝试放宽 `ambiguous_boundary / semantic_boundary / t_side_terminal / dead_end` 等保守停止点来评估 source InitialArm 是否收敛到同一语义路口或合理终端，不改写原始 trace 和 through decision。`conflict` 进入 P0；`weak_validated / unvalidated` 至少进入 P1，并作为下游 audit risk 透传。
+
 每个 Arm 在 member road 中排除提前左转 / 提前右转后计算 trunk。唯一最小闭环输出 `complete_min_loop`；无完整闭环但存在可解释主链输出 `partial`；没有完整闭环但 Arm 有非特殊 seed road 时，退回这些局部 seed 作为 `partial` 主干审计结果；无可用主链输出 `none`；多条等价最小闭环输出 `ambiguous`。FinalArm fallback 合并时必须聚合来源 InitialArm 的特殊转向、trunk 与 relation 字段。
 
 ## 局部趋势候选
@@ -62,4 +64,4 @@ RoadNextRoad 在 A1 阶段只表达 allowed evidence；缺失只输出 `no_allow
 
 trunk correction 只允许 stable straight receiving evidence 参与：`movement_type = straight`、`straight_target_status = unique_straight_target`，且置信度为 high / stable。
 
-P01-Final 中，RoadNextRoad 缺失进入最终产物语义：源侧 RoadNextRoad 缺失则不生成 F-RCSD RoadNextRoad。F-RCSD road 必须先用 `Source + CRS 归一化 rounded exact geometry` 映射到 SWSD / RCSD 源 road；Source 异常、匹配缺失或多匹配均进入 issue，不生成相关 final RoadNextRoad。平行支路以 `parallel_branch_alignment.json` 独立记录 source missing、count matched ordered、count mismatch 与 insufficient geometry ordering 状态。
+P01-Final 中，SWSD / RCSD RoadNextRoad 先抽象为进入道路角色到目标 Arm 的通行规则。`full_allowed` 生成到目标 Arm 全部退出 Road；`prohibited` 不生成；主干道路 / 平行支路的部分目标覆盖进入 `data_error_partial_target_coverage`，不自动投影。advance-left left-receiving only 与 uturn trunk only 是合法特殊范围。F-RCSD Arm 可以混源，规则源按 SWSD 结构匹配、RCSD 结构匹配、SWSD basic rule 兜底选择；参考 RCSD 但目标 Arm 缺失时 fallback 到 SWSD basic rule。精确源 Road 映射、source map 与旧 SourceMovementPolicy 只用于审计和兼容解释。平行支路以 `parallel_branch_alignment.json` 独立记录 source missing、count matched ordered、count mismatch 与 insufficient geometry ordering 状态。

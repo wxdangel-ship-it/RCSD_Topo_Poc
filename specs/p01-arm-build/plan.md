@@ -17,6 +17,7 @@ A1 使用以下内部构建块：
 
 - `io.py`：读取 Node / Road、写出 JSON / CSV / GPKG、生成 preflight。
 - `topology.py`：语义路口、seed、trace、through decision、InitialArm / FinalArm。
+- `final_arm_validation.py`：FinalArm 兜底聚合后的 relaxed reverse / supplemental trace validation、validation metrics 与 issue。
 - `special_roads.py`：`formway` bit7 / bit8、AdvanceRightTurnRelation 与特殊转向 issue。
 - `trunk.py`：trunk road ids、trunk 状态与非 trunk member roads。
 - `road_next_road.py`：SWSD / RCSD / F-RCSD RoadNextRoad 读取与归一化。
@@ -40,12 +41,12 @@ A2 不重新实现 A1，不静默修复 A1 结果。A2 反馈通过 ArmBuildFeed
 `final_road_next_road.py` 承载 final generation：
 
 - 读取 F-RCSD Road `Source`。
-- 通过 Source 限定源数据集，并使用 CRS 归一化后的 rounded exact geometry 映射 SWSD / RCSD 源 Road。
-- 从 SWSD / RCSD RoadNextRoad 与 road role 构建 SourceMovementPolicy。
-- 同源 F-RCSD road pair 直接继承源 RoadNextRoad。
-- 不同源 pair 使用进入 road 的 Source 作为 primary source。
-- RCSD -> SWSD fallback 按 v1.0.0 限定场景执行，并检查 entering arm road count。
-- 生成 `frcsd_road_next_road.geojson`、source map、source policy、audit、issue 与 final review 图层。
+- 输出 ArmSourceProfile，表达 F-RCSD Arm 内 Road 级 Source 分布与混源风险。
+- 从 SWSD / RCSD RoadNextRoad、ArmMovement、进入道路角色与目标 Arm 退出道路集合抽象 SourceArmPassRule。
+- 按同源优先、混源 SWSD 结构匹配、RCSD 结构匹配、SWSD basic rule 兜底选择规则源。
+- 精确源 Road mapping 仅作为 audit / confidence evidence；匹配缺失不得直接阻断规则级生成。
+- `full_allowed` 投影到目标 Arm 全部退出 Road；主干 / 平行支路部分目标覆盖输出 `data_error_partial_target_coverage`，advance-left 与 uturn 特例保留。
+- 生成 `frcsd_road_next_road.geojson`、ArmSourceProfile、SourceArmPassRule、final generation decision、source map、兼容 source policy、audit、issue 与 final review 图层。
 
 ## 5. turntype 输出
 
@@ -69,9 +70,9 @@ A2 不重新实现 A1，不静默修复 A1 结果。A2 反馈通过 ArmBuildFeed
 
 - 静态检查：`py_compile`。
 - 治理扫描：`grade / grade_2` 不进入 P01 主规则；`turnType / turntype` 不进入 `movement_type` 判定函数。
-- A1 synthetic：语义路口、trace、kind-aware through、bit7 / bit8、AdvanceRightTurnRelation、trunk、RoadNextRoad-aware movement、ReceivingRoadRole、corrected trunk。
+- A1 synthetic：语义路口、trace、kind-aware through、bit7 / bit8、AdvanceRightTurnRelation、FinalArm validation、trunk、RoadNextRoad-aware movement、ReceivingRoadRole、corrected trunk。
 - A2 synthetic：stable、source_missing、source_partial、over_split、over_merged、conflict / uncertain、多 group。
-- P01-Final synthetic：Source + CRS-normalized rounded exact mapping、missing / ambiguous mapping、same-source inheritance、cross-source primary source、RCSD -> SWSD fallback、parallel_branch alignment、right-turn carrier issue、final GeoJSON schema、duplicate 防护。
+- P01-Final synthetic：规则级 full_allowed 投影到全部目标退出 Road、主干 / 平行支路部分覆盖报错、advance-left 与 uturn 特例、混源规则源选择、RCSD 目标 Arm 缺失 fallback、精确源 Road 匹配缺失仍可规则生成、Source + CRS-normalized rounded exact mapping 审计、missing / ambiguous mapping、parallel_branch alignment、right-turn carrier issue、final GeoJSON schema、duplicate 防护。
 - 输出检查：JSON / GeoJSON / PNG / GPKG / summary / review index / audit / issue report。
 
 ## 8. 真实 case QA

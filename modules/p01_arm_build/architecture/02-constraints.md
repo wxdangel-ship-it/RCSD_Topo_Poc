@@ -13,9 +13,12 @@
 - A2 不能仅凭几何最近输出 high confidence 配准。
 - A2 不自动拆分 over-merged Arm，只输出 ArmBuildFeedback。
 - RoadNextRoad 在 A1 ArmMovement 阶段只表达 allowed evidence；缺失不等于禁止。
-- RoadNextRoad 在 P01-Final 生成阶段作为最终允许通行证据；源侧缺失则不生成 F-RCSD RoadNextRoad。
+- RoadNextRoad 在 P01-Final 生成阶段先抽象为源侧 Arm 级通行规则；源侧规则缺失或判断不通时不生成 F-RCSD RoadNextRoad。
 - `turnType / turntype` 只作为 raw audit 字段，不得用于 `movement_type` 判定。
-- P01-Final 只能用 `F-RCSD:Road.Source + CRS 归一化 rounded exact geometry` 做源 Road 强匹配，不得用空间接近或最近邻替代。
+- P01-Final 不得把 `F-RCSD:Road.Source + CRS 归一化 rounded exact geometry` 精确源 Road 映射作为生成前提；该映射只作为 audit / confidence evidence，且不得用空间接近或最近邻替代。
+- F-RCSD Arm 可以混源；`Source` 只能在 Road 级解释。
+- `full_allowed` 必须生成到目标 Arm 所有退出 Road；主干道路 / 平行支路部分目标覆盖必须进入 `data_error_partial_target_coverage`，advance-left 与 uturn 的明确特殊范围除外。
+- 混源进入 Arm 规则源选择顺序为 SWSD 结构匹配、RCSD 结构匹配、SWSD basic rule 兜底。
 
 ## 工程约束
 
@@ -29,6 +32,6 @@
 
 - CRS 必须写入 preflight 与输出审计。
 - trace 必须保持拓扑连续，不做 silent fix。
-- 几何只用于 review、辅助证据和 CRS-normalized rounded exact source mapping，不用于右转反推、Arm 主构建或单独 high confidence 配准。
-- 输出必须记录输入、参数、run id、case id、trace、decision、source mapping、generation audit 与 issue。
+- 几何只用于 review、辅助证据和 CRS-normalized rounded exact source mapping 审计，不用于右转反推、Arm 主构建或单独 high confidence 配准。
+- 输出必须记录输入、参数、run id、case id、trace、decision、ArmSourceProfile、SourceArmPassRule、source mapping、generation audit 与 issue。
 - A2 必须记录 candidate score、selection reason、LogicalArmGroup、source_extra 与 feedback。

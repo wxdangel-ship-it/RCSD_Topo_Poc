@@ -1,0 +1,291 @@
+{
+  "issue_counts": {
+    "fallback_to_swsd_basic_rule": 2,
+    "low_confidence_swsd_basic_rule": 5,
+    "mixed_source_arm": 8,
+    "rcsd_source_arm_rule_missing": 1,
+    "rcsd_target_arm_missing": 2,
+    "rcsd_to_arm_unmatched": 1,
+    "source_geometry_match_missing": 30,
+    "swsd_source_arm_rule_missing": 1,
+    "swsd_to_arm_unmatched": 1
+  },
+  "issues": [
+    {
+      "f_road_id": "1038701",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1073751",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1084465",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1090533",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "14687159",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "34915195",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "42174146",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "43025612",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "521655931",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5384397004145633",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5384397977560092",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389822354654080",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389822354654313",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389822354654325",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389824132259110",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389824132259119",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389824132259125",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389824132259137",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389824132259142",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389824132259226",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5389824132259230",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5396481935175592",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5396481935175679",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5396481935175707",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5396481935175725",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "68049356",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "76043664",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "87801480",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "981767",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "984691",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389822354654080",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "fallback_to_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389822354654080",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389822354654080",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "rcsd_source_arm_rule_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389822354654080",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "rcsd_target_arm_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389822354654080",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "rcsd_to_arm_unmatched"
+    },
+    {
+      "f_next_road_id": "5389824132259125",
+      "f_road_id": "1090533",
+      "generation_rule": "swsd_basic_rule",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "5389822354654313",
+      "f_road_id": "1090533",
+      "generation_rule": "swsd_basic_rule",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "5389824132259125",
+      "f_road_id": "5389822354654325",
+      "generation_rule": "swsd_basic_rule",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "5389824132259125",
+      "f_road_id": "5389822354654325",
+      "generation_rule": "swsd_basic_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "1038701",
+      "f_road_id": "5389822354654325",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "521655931",
+      "f_road_id": "5389822354654325",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389822354654325",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389822354654325",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389822354654325",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "swsd_source_arm_rule_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389822354654325",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "swsd_to_arm_unmatched"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "5389824132259142",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "1038701",
+      "f_road_id": "5389824132259142",
+      "generation_rule": "rcsd_to_swsd_fallback",
+      "issue_type": "fallback_to_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "1038701",
+      "f_road_id": "5389824132259142",
+      "generation_rule": "rcsd_to_swsd_fallback",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "1038701",
+      "f_road_id": "5389824132259142",
+      "generation_rule": "rcsd_to_swsd_fallback",
+      "issue_type": "rcsd_target_arm_missing"
+    },
+    {
+      "f_next_road_id": "521655931",
+      "f_road_id": "5389824132259142",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "5389822354654313",
+      "f_road_id": "5389824132259142",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    }
+  ]
+}

@@ -1,0 +1,314 @@
+[
+  {
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [],
+    "movement_type": "uturn",
+    "reference_source": "RCSD",
+    "rule_status": "prohibited",
+    "to_arm_id": "F1"
+  },
+  {
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "1054394"
+    ],
+    "generated_road_ids": [
+      "5395240824210294"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "fallback_to_swsd_basic_rule",
+      "rcsd_target_arm_missing"
+    ],
+    "movement_type": "right",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F2"
+  },
+  {
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "fallback_to_swsd_basic_rule",
+      "rcsd_target_arm_missing"
+    ],
+    "movement_type": "straight",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F3"
+  },
+  {
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "617826765"
+    ],
+    "generated_road_ids": [
+      "5395240824210294"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "fallback_to_swsd_basic_rule",
+      "rcsd_target_arm_missing"
+    ],
+    "movement_type": "left",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F4"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "advance_left",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule",
+      "swsd_source_arm_rule_missing",
+      "swsd_to_arm_unmatched"
+    ],
+    "movement_type": "straight",
+    "reference_source": "SWSD",
+    "rule_status": "insufficient",
+    "to_arm_id": "F1"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "parallel_branch",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule",
+      "swsd_source_arm_rule_missing",
+      "swsd_to_arm_unmatched"
+    ],
+    "movement_type": "straight",
+    "reference_source": "SWSD",
+    "rule_status": "insufficient",
+    "to_arm_id": "F1"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "5395240824210284"
+    ],
+    "generated_road_ids": [
+      "511440408",
+      "611442720"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule"
+    ],
+    "movement_type": "straight",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F1"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "advance_left",
+    "generated_next_road_ids": [
+      "1054394"
+    ],
+    "generated_road_ids": [
+      "621439446"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "left",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F2"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "parallel_branch",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [],
+    "movement_type": "left",
+    "reference_source": "SWSD",
+    "rule_status": "prohibited",
+    "to_arm_id": "F2"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "1054394"
+    ],
+    "generated_road_ids": [
+      "511440408",
+      "611442720"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "left",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F2"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "advance_left",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [
+      "target_arm_exit_roads_missing"
+    ],
+    "movement_type": "uturn",
+    "reference_source": "SWSD",
+    "rule_status": "insufficient",
+    "to_arm_id": "F3"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "parallel_branch",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [
+      "target_arm_exit_roads_missing"
+    ],
+    "movement_type": "uturn",
+    "reference_source": "SWSD",
+    "rule_status": "insufficient",
+    "to_arm_id": "F3"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [
+      "target_arm_exit_roads_missing"
+    ],
+    "movement_type": "uturn",
+    "reference_source": "SWSD",
+    "rule_status": "insufficient",
+    "to_arm_id": "F3"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "advance_left",
+    "generated_next_road_ids": [
+      "617826765"
+    ],
+    "generated_road_ids": [
+      "621439446"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "right",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F4"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "parallel_branch",
+    "generated_next_road_ids": [
+      "617826765"
+    ],
+    "generated_road_ids": [
+      "621439810"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "right",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F4"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "617826765"
+    ],
+    "generated_road_ids": [
+      "511440408",
+      "611442720"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "right",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F4"
+  },
+  {
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "5395240824210284"
+    ],
+    "generated_road_ids": [
+      "1051078"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule"
+    ],
+    "movement_type": "right",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F1"
+  },
+  {
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "1054394"
+    ],
+    "generated_road_ids": [
+      "1051078"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "straight",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F2"
+  },
+  {
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [
+      "target_arm_exit_roads_missing"
+    ],
+    "movement_type": "left",
+    "reference_source": "SWSD",
+    "rule_status": "insufficient",
+    "to_arm_id": "F3"
+  },
+  {
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [],
+    "movement_type": "uturn",
+    "reference_source": "SWSD",
+    "rule_status": "prohibited",
+    "to_arm_id": "F4"
+  }
+]

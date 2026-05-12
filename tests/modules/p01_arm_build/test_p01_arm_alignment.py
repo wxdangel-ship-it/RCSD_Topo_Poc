@@ -8,7 +8,8 @@ from pathlib import Path
 import fiona
 from shapely.geometry import LineString, Point, mapping
 
-from rcsd_topo_poc.modules.p01_arm_build.alignment_models import ArmProfile
+from rcsd_topo_poc.modules.p01_arm_build.alignment import _build_logical_groups
+from rcsd_topo_poc.modules.p01_arm_build.alignment_models import ArmAlignmentCandidate, ArmProfile
 from rcsd_topo_poc.modules.p01_arm_build.alignment_review import _profile_review_road_geometries
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset
 from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput
@@ -16,6 +17,64 @@ from rcsd_topo_poc.modules.p01_arm_build.alignment_runner import run_p01_arm_ali
 
 
 DATASETS = ("SWSD", "RCSD", "FRCSD")
+
+
+def _alignment_profile(dataset: str, arm_id: str) -> ArmProfile:
+    return ArmProfile(
+        dataset=dataset,
+        junction_group_id="group_0001",
+        current_junction_id=f"{dataset}_J",
+        arm_id=arm_id,
+        source_final_arm_id=arm_id,
+        source_initial_arm_ids=(f"I_{arm_id}",),
+        member_road_ids=(f"{dataset}_{arm_id}_r1",),
+        seed_road_ids=(f"{dataset}_{arm_id}_r1",),
+        connector_road_ids=(),
+        inbound_seed_road_ids=(f"{dataset}_{arm_id}_r1",),
+        outbound_seed_road_ids=(),
+        bidirectional_seed_road_ids=(),
+        terminal_type="semantic_boundary",
+        terminal_junction_id=f"T_{arm_id}",
+        terminal_member_node_ids=(f"T_{arm_id}",),
+        build_status="stable",
+        risk_flags=(),
+        merge_status="not_applied",
+        merge_reason="test_fixture",
+        local_candidate_ids=(f"L_{arm_id}",),
+        local_trend_angle_deg=0.0,
+        local_stub_road_ids=(f"{dataset}_{arm_id}_r1",),
+        trace_ids=(f"{dataset}_{arm_id}_trace",),
+        trace_stop_types=("semantic_boundary",),
+        through_decision_summary={"semantic_boundary": 1},
+        geometry_summary={},
+        lineage_summary={},
+    )
+
+
+def _alignment_candidate(
+    candidate_id: str,
+    f_arm_id: str,
+    source_dataset: str,
+    source_arm_id: str,
+    score: float,
+) -> ArmAlignmentCandidate:
+    return ArmAlignmentCandidate(
+        candidate_id=candidate_id,
+        junction_group_id="group_0001",
+        left_dataset="FRCSD",
+        right_dataset=source_dataset,
+        left_arm_id=f_arm_id,
+        right_arm_id=source_arm_id,
+        score=score,
+        confidence="high",
+        seed_role_score=25.0,
+        local_candidate_score=25.0,
+        trace_terminal_score=20.0,
+        road_coverage_score=20.0,
+        geometry_score=max(0.0, score - 90.0),
+        evidence_flags=(),
+        conflict_flags=(),
+    )
 
 
 def _write_nodes(path: Path, features: list[tuple[str, float, float]]) -> None:
@@ -330,6 +389,35 @@ def test_p01_arm_alignment_outputs_statuses_and_review_artifacts(tmp_path: Path)
     summary = json.loads((run_root / "p01_arm_alignment_summary.json").read_text(encoding="utf-8"))
     assert summary["logical_arm_group_count"] >= 8
     assert summary["feedback_count"] >= 2
+
+
+def test_alignment_prefers_exclusive_source_binding_when_alternate_candidate_exists() -> None:
+    profiles_by_dataset = {
+        "FRCSD": (_alignment_profile("FRCSD", "F2"), _alignment_profile("FRCSD", "F3")),
+        "SWSD": (_alignment_profile("SWSD", "S1"), _alignment_profile("SWSD", "S2")),
+        "RCSD": (_alignment_profile("RCSD", "R2"), _alignment_profile("RCSD", "R3")),
+    }
+    candidates = (
+        _alignment_candidate("cand_s1", "F2", "SWSD", "S1", 94.97),
+        _alignment_candidate("cand_s2", "F3", "SWSD", "S2", 104.99),
+        _alignment_candidate("cand_r2_owner", "F2", "RCSD", "R2", 104.82),
+        _alignment_candidate("cand_r2_reused", "F3", "RCSD", "R2", 102.77),
+        _alignment_candidate("cand_r3_alt", "F3", "RCSD", "R3", 85.40),
+    )
+
+    groups, selected_candidates, feedback = _build_logical_groups("group_0001", profiles_by_dataset, candidates)
+
+    groups_by_f = {group.frcsd_arm_ids[0]: group for group in groups}
+    assert groups_by_f["F2"].rcsd_arm_ids == ("R2",)
+    assert groups_by_f["F3"].rcsd_arm_ids == ("R3",)
+    assert all("rcsd_over_merged_unresolved" not in group.risk_flags for group in groups)
+    assert not [item for item in feedback if item.dataset == "RCSD" and item.feedback_type == "recommended_split"]
+    assert {candidate.candidate_id for candidate in selected_candidates if candidate.selected} == {
+        "cand_s1",
+        "cand_s2",
+        "cand_r2_owner",
+        "cand_r3_alt",
+    }
 
 
 def test_alignment_png_review_context_uses_local_stub_not_full_trace(tmp_path: Path) -> None:

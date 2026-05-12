@@ -1,0 +1,161 @@
+{
+  "features": [
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "A200",
+        "id": "frcsd_rnr_000001",
+        "next_road_id": "5389824132259125",
+        "road_id": "5389822354654080",
+        "source": "1",
+        "turntype": "4",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "A200",
+        "id": "frcsd_rnr_000002",
+        "next_road_id": "521655931",
+        "road_id": "5389822354654080",
+        "source": "1",
+        "turntype": "1",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "A200",
+        "id": "frcsd_rnr_000003",
+        "next_road_id": "5389822354654313",
+        "road_id": "5389822354654080",
+        "source": "1",
+        "turntype": "2",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "",
+        "id": "frcsd_rnr_000004",
+        "next_road_id": "5389824132259125",
+        "road_id": "1090533",
+        "source": "2",
+        "turntype": "2",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "",
+        "id": "frcsd_rnr_000005",
+        "next_road_id": "1038701",
+        "road_id": "1090533",
+        "source": "2",
+        "turntype": "4",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "",
+        "id": "frcsd_rnr_000006",
+        "next_road_id": "5389822354654313",
+        "road_id": "1090533",
+        "source": "2",
+        "turntype": "1",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "",
+        "id": "frcsd_rnr_000007",
+        "next_road_id": "5389824132259125",
+        "road_id": "5389822354654325",
+        "source": "2",
+        "turntype": "1",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "",
+        "id": "frcsd_rnr_000008",
+        "next_road_id": "1038701",
+        "road_id": "5389822354654325",
+        "source": "2",
+        "turntype": "2",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "",
+        "id": "frcsd_rnr_000009",
+        "next_road_id": "521655931",
+        "road_id": "5389822354654325",
+        "source": "2",
+        "turntype": "4",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "",
+        "id": "frcsd_rnr_000010",
+        "next_road_id": "1038701",
+        "road_id": "5389824132259142",
+        "source": "2",
+        "turntype": "1",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "A200",
+        "id": "frcsd_rnr_000011",
+        "next_road_id": "521655931",
+        "road_id": "5389824132259142",
+        "source": "1",
+        "turntype": "2",
+        "type": "1"
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": null,
+      "properties": {
+        "city_code": "A200",
+        "id": "frcsd_rnr_000012",
+        "next_road_id": "5389822354654313",
+        "road_id": "5389824132259142",
+        "source": "1",
+        "turntype": "4",
+        "type": "1"
+      },
+      "type": "Feature"
+    }
+  ],
+  "type": "FeatureCollection"
+}

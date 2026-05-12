@@ -1,0 +1,177 @@
+{
+  "issue_counts": {
+    "data_error": 2,
+    "data_error_or_missing_right_turn_carrier": 2,
+    "mixed_source_arm": 8,
+    "source_geometry_match_missing": 19
+  },
+  "issues": [
+    {
+      "f_road_id": "1037429",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1075247",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1079987",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "29848400",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "40154776",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "40154778",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "40154780",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "502243732",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "507283082",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "508244721",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "605188719",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "606188169",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "606243742",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "618726495",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "67766059",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "68049573",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "9386373",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "989206",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "990748",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "608517685",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "data_error"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "608517685",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "data_error_or_missing_right_turn_carrier"
+    },
+    {
+      "f_next_road_id": "521498944",
+      "f_road_id": "629520068",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "513924456",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "629520068",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "513924456",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "629520068",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "513924456",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "629520068",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "1037307",
+      "f_road_id": "513924456",
+      "generation_rule": "structure_matched_source_rule",
+      "issue_type": "mixed_source_arm"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "521097695",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "data_error"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "521097695",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "data_error_or_missing_right_turn_carrier"
+    }
+  ]
+}

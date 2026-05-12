@@ -1100,12 +1100,13 @@ def _with_left_recv_as_parallel(result, prefix: str):
     target_arm_id = _arm_id_by_seed(result, f"{prefix}_e_main")
     main_id = f"{prefix}_e_main"
     branch_id = f"{prefix}_e_left_recv"
+    trunk_ids = lambda items: tuple(sorted(set(item for item in items if item != branch_id).union({main_id})))
     return replace(
         result,
         final_arms=tuple(
             replace(
                 arm,
-                trunk_road_ids=(main_id,),
+                trunk_road_ids=trunk_ids(arm.trunk_road_ids),
                 non_trunk_member_road_ids=(branch_id,),
             )
             if arm.final_arm_id == target_arm_id
@@ -1113,8 +1114,31 @@ def _with_left_recv_as_parallel(result, prefix: str):
             for arm in result.final_arms
         ),
         trunk_corrections=tuple(
-            replace(correction, corrected_trunk_road_ids=(main_id,))
+            replace(correction, corrected_trunk_road_ids=trunk_ids(correction.corrected_trunk_road_ids))
             if correction.arm_id == target_arm_id
+            else correction
+            for correction in result.trunk_corrections
+        ),
+    )
+
+
+def _with_road_as_parallel(result, road_id: str):
+    arm_id = _arm_id_by_seed(result, road_id)
+    return replace(
+        result,
+        final_arms=tuple(
+            replace(
+                arm,
+                trunk_road_ids=tuple(item for item in arm.trunk_road_ids if item != road_id),
+                non_trunk_member_road_ids=tuple(sorted(set(arm.non_trunk_member_road_ids).union({road_id}))),
+            )
+            if arm.final_arm_id == arm_id
+            else arm
+            for arm in result.final_arms
+        ),
+        trunk_corrections=tuple(
+            replace(correction, corrected_trunk_road_ids=tuple(item for item in correction.corrected_trunk_road_ids if item != road_id))
+            if correction.arm_id == arm_id
             else correction
             for correction in result.trunk_corrections
         ),
@@ -1344,6 +1368,76 @@ def test_frcsd_road_next_road_same_source_inheritance(tmp_path: Path) -> None:
     )
     assert "final_arm_validation_conflict" in conflict_final.issue_report["issue_counts"]
     assert any("final_arm_validation_conflict" in item.issue_flags for item in conflict_final.audit)
+
+
+def test_frcsd_rule_projection_uses_entering_from_roads_and_exiting_target_roads(tmp_path: Path) -> None:
+    def write_source_fixture(prefix: str) -> tuple[Path, Path]:
+        nodes_path = tmp_path / f"{prefix}_opposed_nodes.gpkg"
+        roads_path = tmp_path / f"{prefix}_opposed_roads.gpkg"
+        _write_nodes(
+            nodes_path,
+            [
+                ("C", "C", 0.0, 0.0, "4"),
+                ("W", None, -20.0, 0.0, "1"),
+                ("E", None, 20.0, 0.0, "1"),
+            ],
+        )
+        _write_roads(
+            roads_path,
+            [
+                (f"{prefix}_w_in", "W", "C", 2, "0", [(-20.0, 0.0), (0.0, 0.0)]),
+                (f"{prefix}_e_out", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+                (f"{prefix}_e_in", "E", "C", 2, "0", [(20.0, 1.0), (0.0, 1.0)]),
+            ],
+        )
+        return nodes_path, roads_path
+
+    f_nodes = tmp_path / "f_opposed_nodes.gpkg"
+    f_roads = tmp_path / "f_opposed_roads.gpkg"
+    _write_nodes(
+        f_nodes,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("W", None, -20.0, 0.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+        ],
+    )
+    _write_roads_with_source(
+        f_roads,
+        [
+            ("f_w_in", "W", "C", 2, "0", "2", [(-20.0, 0.0), (0.0, 0.0)]),
+            ("f_e_out", "C", "E", 2, "0", "2", [(0.0, 0.0), (20.0, 0.0)]),
+            ("f_e_in", "E", "C", 2, "0", "2", [(20.0, 1.0), (0.0, 1.0)]),
+        ],
+    )
+    swsd_nodes, swsd_roads = write_source_fixture("s")
+    rcsd_nodes, rcsd_roads = write_source_fixture("r")
+    swsd_rnr = tmp_path / "swsd_direction_filtered_rnr.json"
+    swsd_rnr.write_text(
+        json.dumps(
+            [
+                {"id": "s_allowed_exit", "road_id": "s_w_in", "next_road_id": "s_e_out"},
+                {"id": "s_ignore_inbound_target", "road_id": "s_w_in", "next_road_id": "s_e_in"},
+                {"id": "s_ignore_outbound_from", "road_id": "s_e_out", "next_road_id": "s_w_in"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    swsd_records = read_road_next_road(swsd_rnr)
+    loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
+    loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
+    loaded_f, result_f = _build_result("FRCSD", f_nodes, f_roads)
+
+    final = build_frcsd_road_next_road(
+        loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
+        result_by_dataset={"SWSD": result_s, "RCSD": result_r, "FRCSD": result_f},
+        road_next_road_by_dataset={"SWSD": swsd_records, "RCSD": tuple(), "FRCSD": tuple()},
+    )
+
+    pairs = {(feature["properties"]["road_id"], feature["properties"]["next_road_id"]) for feature in final_geojson(final)["features"]}
+    assert ("f_w_in", "f_e_out") in pairs
+    assert ("f_w_in", "f_e_in") not in pairs
+    assert all(from_road_id != "f_e_out" for from_road_id, _ in pairs)
 
 
 def test_frcsd_source_geometry_mapping_normalises_crs_before_rounded_exact_match(tmp_path: Path) -> None:
@@ -1604,7 +1698,7 @@ def test_frcsd_rule_projection_reports_parallel_branch_partial_target_coverage(t
     frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
     swsd_rnr = tmp_path / "swsd_parallel_partial_rnr.json"
     swsd_rnr.write_text(
-        json.dumps([{"id": "s_parallel_partial", "road_id": "s_e_left_recv", "next_road_id": "s_e_main"}]),
+        json.dumps([{"id": "s_parallel_partial", "road_id": "s_w_in", "next_road_id": "s_e_main"}]),
         encoding="utf-8",
     )
     swsd_records = read_road_next_road(swsd_rnr)
@@ -1613,6 +1707,8 @@ def test_frcsd_rule_projection_reports_parallel_branch_partial_target_coverage(t
     loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
     result_s = _with_left_recv_as_parallel(result_s, "s")
     result_f = _with_left_recv_as_parallel(result_f, "f")
+    result_s = _with_road_as_parallel(result_s, "s_w_in")
+    result_f = _with_road_as_parallel(result_f, "f_w_in")
 
     final = build_frcsd_road_next_road(
         loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
@@ -1631,15 +1727,55 @@ def test_frcsd_rule_projection_reports_parallel_branch_partial_target_coverage(t
 
 
 def test_frcsd_rule_projection_allows_advance_left_and_uturn_special_scopes(tmp_path: Path) -> None:
-    swsd_nodes, swsd_roads = _renamed_source_fixture(tmp_path, "s")
-    rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
-    frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
+    def write_source_fixture(prefix: str) -> tuple[Path, Path]:
+        nodes_path = tmp_path / f"{prefix}_special_nodes.gpkg"
+        roads_path = tmp_path / f"{prefix}_special_roads.gpkg"
+        _write_nodes(
+            nodes_path,
+            [
+                ("C", "C", 0.0, 0.0, "4"),
+                ("N", None, 0.0, 20.0, "1"),
+                ("E", None, 20.0, 0.0, "1"),
+            ],
+        )
+        _write_roads(
+            roads_path,
+            [
+                (f"{prefix}_n_adv_left", "N", "C", 2, "256", [(0.0, 20.0), (0.0, 0.0)]),
+                (f"{prefix}_e_in", "E", "C", 2, "0", [(20.0, 0.0), (0.0, 0.0)]),
+                (f"{prefix}_e_main", "C", "E", 2, "0", [(0.0, 0.0), (20.0, 0.0)]),
+                (f"{prefix}_e_left_recv", "C", "E", 2, "0", [(0.0, 1.0), (20.0, 1.0)]),
+            ],
+        )
+        return nodes_path, roads_path
+
+    swsd_nodes, swsd_roads = write_source_fixture("s")
+    rcsd_nodes, rcsd_roads = write_source_fixture("r")
+    frcsd_nodes = tmp_path / "f_special_nodes.gpkg"
+    frcsd_roads = tmp_path / "f_special_roads.gpkg"
+    _write_nodes(
+        frcsd_nodes,
+        [
+            ("C", "C", 0.0, 0.0, "4"),
+            ("N", None, 0.0, 20.0, "1"),
+            ("E", None, 20.0, 0.0, "1"),
+        ],
+    )
+    _write_roads_with_source(
+        frcsd_roads,
+        [
+            ("f_n_adv_left", "N", "C", 2, "256", "2", [(0.0, 20.0), (0.0, 0.0)]),
+            ("f_e_in", "E", "C", 2, "0", "2", [(20.0, 0.0), (0.0, 0.0)]),
+            ("f_e_main", "C", "E", 2, "0", "2", [(0.0, 0.0), (20.0, 0.0)]),
+            ("f_e_left_recv", "C", "E", 2, "0", "2", [(0.0, 1.0), (20.0, 1.0)]),
+        ],
+    )
     swsd_rnr = tmp_path / "swsd_special_scope_rnr.json"
     swsd_rnr.write_text(
         json.dumps(
             [
                 {"id": "s_adv_left_only", "road_id": "s_n_adv_left", "next_road_id": "s_e_left_recv"},
-                {"id": "s_uturn_trunk_only", "road_id": "s_e_main", "next_road_id": "s_e_main"},
+                {"id": "s_uturn_trunk_only", "road_id": "s_e_in", "next_road_id": "s_e_main"},
             ]
         ),
         encoding="utf-8",
@@ -1677,13 +1813,23 @@ def test_frcsd_rule_projection_parallel_branch_full_allowed(tmp_path: Path) -> N
     rcsd_nodes, rcsd_roads = _renamed_source_fixture(tmp_path, "r")
     frcsd_nodes, frcsd_roads = _frcsd_source_fixture(tmp_path, from_source="2", to_source="2")
     swsd_rnr = tmp_path / "swsd_parallel_rnr.json"
-    swsd_rnr.write_text(json.dumps([{"id": "s_parallel", "road_id": "s_e_left_recv", "next_road_id": "s_w_in"}]), encoding="utf-8")
+    swsd_rnr.write_text(
+        json.dumps(
+            [
+                {"id": "s_parallel_main", "road_id": "s_w_in", "next_road_id": "s_e_main"},
+                {"id": "s_parallel_branch", "road_id": "s_w_in", "next_road_id": "s_e_left_recv"},
+            ]
+        ),
+        encoding="utf-8",
+    )
     swsd_records = read_road_next_road(swsd_rnr)
     loaded_s, result_s = _build_result("SWSD", swsd_nodes, swsd_roads, swsd_records)
     loaded_r, result_r = _build_result("RCSD", rcsd_nodes, rcsd_roads)
     loaded_f, result_f = _build_result("FRCSD", frcsd_nodes, frcsd_roads)
     result_s = _with_left_recv_as_parallel(result_s, "s")
     result_f = _with_left_recv_as_parallel(result_f, "f")
+    result_s = _with_road_as_parallel(result_s, "s_w_in")
+    result_f = _with_road_as_parallel(result_f, "f_w_in")
 
     final = build_frcsd_road_next_road(
         loaded_by_dataset={"SWSD": loaded_s, "RCSD": loaded_r, "FRCSD": loaded_f},
@@ -1694,7 +1840,7 @@ def test_frcsd_rule_projection_parallel_branch_full_allowed(tmp_path: Path) -> N
     assert any(
         decision.from_road_role == "parallel_branch"
         and decision.rule_status == "full_allowed"
-        and decision.generated_road_ids == ("f_e_left_recv",)
+        and decision.generated_road_ids == ("f_w_in",)
         for decision in final.final_generation_decisions
     )
 

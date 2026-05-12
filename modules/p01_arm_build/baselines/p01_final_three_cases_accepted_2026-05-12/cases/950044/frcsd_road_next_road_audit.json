@@ -1,0 +1,410 @@
+[
+  {
+    "confidence": "medium",
+    "f_next_road_id": "5389824132259125",
+    "f_road_id": "5389822354654080",
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "same_source_inherited",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "uturn",
+    "permission_status": "allowed",
+    "primary_source": "RCSD",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5389822354655105"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F1",
+    "to_road_role": "trunk",
+    "to_road_source": "1"
+  },
+  {
+    "confidence": "none",
+    "f_next_road_id": "",
+    "f_road_id": "5389822354654080",
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "same_source_inherited",
+    "generation_scope": "none",
+    "issue_flags": [
+      "fallback_to_swsd_basic_rule",
+      "low_confidence_swsd_basic_rule",
+      "rcsd_source_arm_rule_missing",
+      "rcsd_target_arm_missing",
+      "rcsd_to_arm_unmatched"
+    ],
+    "movement_type": "right",
+    "permission_status": "manual_review_required",
+    "primary_source": "RCSD",
+    "reference_source": "RCSD",
+    "rule_status": "insufficient",
+    "source_evidence_ids": [],
+    "source_match_status": "source_geometry_match_missing",
+    "to_arm_id": "F2",
+    "to_road_role": "",
+    "to_road_source": ""
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "521655931",
+    "f_road_id": "5389822354654080",
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "cross_source_primary_source_policy",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "straight",
+    "permission_status": "allowed",
+    "primary_source": "RCSD",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5389822354655052"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F3",
+    "to_road_role": "trunk",
+    "to_road_source": "2"
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "5389822354654313",
+    "f_road_id": "5389822354654080",
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "same_source_inherited",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "left",
+    "permission_status": "allowed",
+    "primary_source": "RCSD",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5389822354655005"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F4",
+    "to_road_role": "trunk",
+    "to_road_source": "1"
+  },
+  {
+    "confidence": "low",
+    "f_next_road_id": "5389824132259125",
+    "f_road_id": "1090533",
+    "from_arm_id": "F2",
+    "from_road_role": "trunk",
+    "from_road_source": "2",
+    "generation_basis": "rule_projected",
+    "generation_rule": "swsd_basic_rule",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule"
+    ],
+    "movement_type": "left",
+    "permission_status": "allowed",
+    "primary_source": "SWSD",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5843227"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F1",
+    "to_road_role": "trunk",
+    "to_road_source": "1"
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "1038701",
+    "f_road_id": "1090533",
+    "from_arm_id": "F2",
+    "from_road_role": "trunk",
+    "from_road_source": "2",
+    "generation_basis": "rule_projected",
+    "generation_rule": "same_source_inherited",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "uturn",
+    "permission_status": "allowed",
+    "primary_source": "SWSD",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5843232"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F2",
+    "to_road_role": "trunk",
+    "to_road_source": "2"
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "",
+    "f_road_id": "1090533",
+    "from_arm_id": "F2",
+    "from_road_role": "trunk",
+    "from_road_source": "2",
+    "generation_basis": "rule_projected",
+    "generation_rule": "same_source_inherited",
+    "generation_scope": "none",
+    "issue_flags": [],
+    "movement_type": "right",
+    "permission_status": "prohibited",
+    "primary_source": "SWSD",
+    "reference_source": "",
+    "rule_status": "prohibited",
+    "source_evidence_ids": [],
+    "source_match_status": "source_geometry_match_missing",
+    "to_arm_id": "F3",
+    "to_road_role": "",
+    "to_road_source": ""
+  },
+  {
+    "confidence": "low",
+    "f_next_road_id": "5389822354654313",
+    "f_road_id": "1090533",
+    "from_arm_id": "F2",
+    "from_road_role": "trunk",
+    "from_road_source": "2",
+    "generation_basis": "rule_projected",
+    "generation_rule": "swsd_basic_rule",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule"
+    ],
+    "movement_type": "straight",
+    "permission_status": "allowed",
+    "primary_source": "SWSD",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5843236"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F4",
+    "to_road_role": "trunk",
+    "to_road_source": "1"
+  },
+  {
+    "confidence": "low",
+    "f_next_road_id": "5389824132259125",
+    "f_road_id": "5389822354654325",
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "swsd_basic_rule",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule",
+      "mixed_source_arm"
+    ],
+    "movement_type": "straight",
+    "permission_status": "allowed",
+    "primary_source": "SWSD",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5843236"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F1",
+    "to_road_role": "trunk",
+    "to_road_source": "1"
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "1038701",
+    "f_road_id": "5389822354654325",
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "structure_matched_source_rule",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "left",
+    "permission_status": "allowed",
+    "primary_source": "SWSD",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5843231"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F2",
+    "to_road_role": "trunk",
+    "to_road_source": "2"
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "521655931",
+    "f_road_id": "5389822354654325",
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "structure_matched_source_rule",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "uturn",
+    "permission_status": "allowed",
+    "primary_source": "SWSD",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5843229"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F3",
+    "to_road_role": "trunk",
+    "to_road_source": "2"
+  },
+  {
+    "confidence": "none",
+    "f_next_road_id": "",
+    "f_road_id": "5389822354654325",
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "structure_matched_source_rule",
+    "generation_scope": "none",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule",
+      "mixed_source_arm",
+      "swsd_source_arm_rule_missing",
+      "swsd_to_arm_unmatched"
+    ],
+    "movement_type": "right",
+    "permission_status": "manual_review_required",
+    "primary_source": "SWSD",
+    "reference_source": "SWSD",
+    "rule_status": "insufficient",
+    "source_evidence_ids": [],
+    "source_match_status": "source_geometry_match_missing",
+    "to_arm_id": "F4",
+    "to_road_role": "",
+    "to_road_source": ""
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "",
+    "f_road_id": "5389824132259142",
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "structure_matched_source_rule",
+    "generation_scope": "none",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "right",
+    "permission_status": "prohibited",
+    "primary_source": "RCSD",
+    "reference_source": "",
+    "rule_status": "prohibited",
+    "source_evidence_ids": [],
+    "source_match_status": "source_geometry_match_missing",
+    "to_arm_id": "F1",
+    "to_road_role": "",
+    "to_road_source": ""
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "1038701",
+    "f_road_id": "5389824132259142",
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "rcsd_to_swsd_fallback",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "fallback_to_swsd_basic_rule",
+      "mixed_source_arm",
+      "rcsd_target_arm_missing"
+    ],
+    "movement_type": "straight",
+    "permission_status": "allowed",
+    "primary_source": "RCSD",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5843236"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F2",
+    "to_road_role": "trunk",
+    "to_road_source": "2"
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "521655931",
+    "f_road_id": "5389824132259142",
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "structure_matched_source_rule",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "left",
+    "permission_status": "allowed",
+    "primary_source": "RCSD",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5389822354655069"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F3",
+    "to_road_role": "trunk",
+    "to_road_source": "2"
+  },
+  {
+    "confidence": "medium",
+    "f_next_road_id": "5389822354654313",
+    "f_road_id": "5389824132259142",
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "from_road_source": "1",
+    "generation_basis": "rule_projected",
+    "generation_rule": "structure_matched_source_rule",
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "uturn",
+    "permission_status": "allowed",
+    "primary_source": "RCSD",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "source_evidence_ids": [
+      "5389822354655142"
+    ],
+    "source_match_status": "source_geometry_match_missing,source_geometry_match_missing",
+    "to_arm_id": "F4",
+    "to_road_role": "trunk",
+    "to_road_source": "1"
+  }
+]

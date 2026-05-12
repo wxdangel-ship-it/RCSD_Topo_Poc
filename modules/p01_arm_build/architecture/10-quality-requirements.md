@@ -5,7 +5,7 @@
 - 语义路口必须基于 member node 集合。
 - internal road 不进入 Arm。
 - seed road 不得静默丢失。
-- bit7 提前右转 road 不得进入 Arm member / seed / connector / trunk，必须生成 relation 或 issue。
+- bit7 提前右转 road 必须按是否进入当前语义路口区分：路口内进入路口者可进入 Arm member / seed 但不得进入 trunk；路口前不进入路口者不得进入 Arm member / seed / connector / trunk，必须生成 relation 或 issue。
 - bit8 提前左转 road 可以进入 Arm member，但不得进入 trunk。
 - trunk 状态必须显式输出；`complete_min_loop` 需要可由 trunk road ids 解释。
 - 每个 through 判断必须输出业务状态。

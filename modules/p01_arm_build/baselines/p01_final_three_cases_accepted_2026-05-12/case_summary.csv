@@ -1,0 +1,4 @@
+case_id,source_run_id,generated_count,allowed_audit_count,manual_review_required_count,prohibited_count,duplicate_pair_count,acceptance_status,acceptance_note
+1019789,p01_1019789_adv_right_inside_v001,10,10,2,12,0,accepted_frozen,Accepted because current result is identical to previously visually accepted direction-fix run.
+38724646,p01_38724646_adv_right_inside_v002,13,13,7,3,0,accepted_frozen,Accepted overall; current baseline adds inside advance-right relation 621439810->617826765 with direct SWSD evidence 5930602. Low-confidence fallback decisions are retained as audit state.
+950044,p01_950044_adv_right_inside_v001,12,12,2,2,0,accepted_frozen,Accepted overall; final RoadNextRoad is unchanged from previous direction-fix run. Low-confidence fallback decisions are retained as audit state.

@@ -17,7 +17,7 @@
 - [x] kind-aware through / stop 判断。
 - [x] `formway` bit7 / bit8 位运算识别。
 - [x] 提前左转 road 标记并排除出 trunk。
-- [x] 提前右转 road 排除出 Arm member / seed / connector / trunk。
+- [x] 提前右转 road 按是否进入当前路口分流：路口内进入者进入 Arm member / seed 但排除 trunk；路口前不进入者排除出 Arm 并进入 relation / issue。
 - [x] `AdvanceRightTurnRelation` 输出与 issue 审计。
 - [x] InitialArm / FinalArm / LocalArmCandidate / ArmTrace / ThroughDecisionAudit / IssueReport 输出。
 - [x] FinalArm fallback validation 输出 `final_arm_validation.json`，并将 validation 状态写入 FinalArm / corrected_final_arms / summary / review index。
@@ -78,4 +78,4 @@
 - [x] 文档过程性措辞扫描。
 - [ ] 真实 1019789 RoadNextRoad case 本地执行；依赖可访问的真实 RoadNextRoad 与内网数据路径。
 - [ ] 真实 RCSD `turntype` 输出编码规范确认；仓库已按模块契约映射输出。
-- [ ] `950044` A1 / A2 分组冲突修复；当前作为后续 case 处理，不在 P01-Final source mapping 修复中混入。
+- [x] `950044` A2 source Arm 复用误绑定修复；通过 source Arm 互斥优先分配回归覆盖。

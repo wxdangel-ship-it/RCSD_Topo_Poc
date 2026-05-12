@@ -1,0 +1,319 @@
+{
+  "baseline_id": "p01_final_three_cases_accepted_2026-05-12",
+  "module": "p01_arm_build",
+  "scope": "P01-Final F-RCSD RoadNextRoad accepted baseline for three real cases",
+  "frozen_date": "2026-05-12",
+  "status": "accepted_frozen",
+  "acceptance_basis": [
+    "User accepted overall state after raw data and real-world intersection review.",
+    "Case 1019789 is unchanged from the previously visually accepted direction-fix result.",
+    "Case 38724646 is accepted with the inside advance-right correction: 621439810 belongs to F3 and generates 621439810->617826765.",
+    "Case 950044 is unchanged from the previous direction-fix result; low-confidence fallback relations remain auditable."
+  ],
+  "baseline_contents": {
+    "final_pass_relations_with_original_evidence.csv": "9cbb86808c6506d32edd0d07c44a1c490efb974214963c3a1553098ef140ebbf",
+    "case_outputs": "cases/<case_id>/{frcsd_road_next_road.geojson, frcsd_road_next_road_audit.json, frcsd_road_next_road_issue_report.json, final_generation_decisions.json}"
+  },
+  "relation_count_in_evidence_csv": 35,
+  "cases": {
+    "1019789": {
+      "acceptance_status": "accepted_frozen",
+      "acceptance_note": "Accepted because current result is identical to previously visually accepted direction-fix run.",
+      "source_run_id": "p01_1019789_adv_right_inside_v001",
+      "source_run_root": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/p01_adv_right_inside_fix/p01_1019789_adv_right_inside_v001",
+      "input_case_root": "/mnt/e/TestData/POC_Data/Interestion/1019789",
+      "generated_road_next_road_count": 10,
+      "duplicate_pair_count": 0,
+      "allowed_audit_count": 10,
+      "manual_review_required_count": 2,
+      "prohibited_count": 12,
+      "final_generation_decision_count": 24,
+      "issue_counts": {
+        "data_error": 2,
+        "data_error_or_missing_right_turn_carrier": 2,
+        "mixed_source_arm": 8,
+        "source_geometry_match_missing": 19
+      },
+      "generated_pairs": [
+        {
+          "road_id": "506284310",
+          "next_road_id": "602517960",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "513924456",
+          "next_road_id": "1037307",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "521097695",
+          "next_road_id": "503283139",
+          "turntype": "4",
+          "source": "2"
+        },
+        {
+          "road_id": "521097695",
+          "next_road_id": "521498944",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "521097695",
+          "next_road_id": "602517960",
+          "turntype": "2",
+          "source": "2"
+        },
+        {
+          "road_id": "608517685",
+          "next_road_id": "1037307",
+          "turntype": "2",
+          "source": "2"
+        },
+        {
+          "road_id": "608517685",
+          "next_road_id": "503283139",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "608517685",
+          "next_road_id": "521498944",
+          "turntype": "4",
+          "source": "2"
+        },
+        {
+          "road_id": "618462855",
+          "next_road_id": "503283139",
+          "turntype": "2",
+          "source": "2"
+        },
+        {
+          "road_id": "629520068",
+          "next_road_id": "521498944",
+          "turntype": "2",
+          "source": "2"
+        }
+      ],
+      "baseline_files": {
+        "frcsd_road_next_road.geojson": "4ec9a871df98c9c56219b544e8ba9137fc6ec28cf026f25243c73a0eadbea4ad",
+        "frcsd_road_next_road_audit.json": "7f0584cb52fc141e3534580a795d30e0a059062582ac8f9d6763b082c7ca6ee7",
+        "frcsd_road_next_road_issue_report.json": "301da190fcd7a55a222722b207d5b8898992f52e933c7301198f0f7e259efdac",
+        "final_generation_decisions.json": "51111ccaa90708e696aa2289bf07ff29d2e3be7c8aa386fffde457c1916ced16"
+      }
+    },
+    "38724646": {
+      "acceptance_status": "accepted_frozen",
+      "acceptance_note": "Accepted overall; current baseline adds inside advance-right relation 621439810->617826765 with direct SWSD evidence 5930602. Low-confidence fallback decisions are retained as audit state.",
+      "source_run_id": "p01_38724646_adv_right_inside_v002",
+      "source_run_root": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/p01_adv_right_inside_fix/p01_38724646_adv_right_inside_v002",
+      "input_case_root": "/mnt/e/TestData/POC_Data/Interestion/38724646",
+      "generated_road_next_road_count": 13,
+      "duplicate_pair_count": 0,
+      "allowed_audit_count": 13,
+      "manual_review_required_count": 7,
+      "prohibited_count": 3,
+      "final_generation_decision_count": 20,
+      "issue_counts": {
+        "fallback_to_swsd_basic_rule": 2,
+        "low_confidence_swsd_basic_rule": 5,
+        "rcsd_target_arm_missing": 2,
+        "source_geometry_match_missing": 18,
+        "swsd_source_arm_rule_missing": 2,
+        "swsd_to_arm_unmatched": 2,
+        "target_arm_exit_roads_missing": 5
+      },
+      "generated_pairs": [
+        {
+          "road_id": "1051078",
+          "next_road_id": "1054394",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "1051078",
+          "next_road_id": "5395240824210284",
+          "turntype": "3",
+          "source": "2"
+        },
+        {
+          "road_id": "511440408",
+          "next_road_id": "1054394",
+          "turntype": "2",
+          "source": "2"
+        },
+        {
+          "road_id": "511440408",
+          "next_road_id": "5395240824210284",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "511440408",
+          "next_road_id": "617826765",
+          "turntype": "3",
+          "source": "2"
+        },
+        {
+          "road_id": "5395240824210294",
+          "next_road_id": "1054394",
+          "turntype": "3",
+          "source": "2"
+        },
+        {
+          "road_id": "5395240824210294",
+          "next_road_id": "617826765",
+          "turntype": "2",
+          "source": "2"
+        },
+        {
+          "road_id": "611442720",
+          "next_road_id": "1054394",
+          "turntype": "2",
+          "source": "2"
+        },
+        {
+          "road_id": "611442720",
+          "next_road_id": "5395240824210284",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "611442720",
+          "next_road_id": "617826765",
+          "turntype": "3",
+          "source": "2"
+        },
+        {
+          "road_id": "621439446",
+          "next_road_id": "1054394",
+          "turntype": "2",
+          "source": "2"
+        },
+        {
+          "road_id": "621439446",
+          "next_road_id": "617826765",
+          "turntype": "3",
+          "source": "2"
+        },
+        {
+          "road_id": "621439810",
+          "next_road_id": "617826765",
+          "turntype": "3",
+          "source": "2"
+        }
+      ],
+      "baseline_files": {
+        "frcsd_road_next_road.geojson": "313b2d337ab9f69487afb98c2d38094a91607021ac5c30fdcb9b2bd53fe4faab",
+        "frcsd_road_next_road_audit.json": "debbeac7580e0e1ffa71bc7c8895e3afee029235d2a6ac6364b7effb06d39ca9",
+        "frcsd_road_next_road_issue_report.json": "d4925a473df7289946b462755bdc3f1692de379b160e4624cfb27422ea170c7e",
+        "final_generation_decisions.json": "640394c70616abb9c64fd0ceb847f695e30083209b998a96035c9dc284a003eb"
+      }
+    },
+    "950044": {
+      "acceptance_status": "accepted_frozen",
+      "acceptance_note": "Accepted overall; final RoadNextRoad is unchanged from previous direction-fix run. Low-confidence fallback decisions are retained as audit state.",
+      "source_run_id": "p01_950044_adv_right_inside_v001",
+      "source_run_root": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/p01_adv_right_inside_fix/p01_950044_adv_right_inside_v001",
+      "input_case_root": "/mnt/e/TestData/POC_Data/Interestion/950044",
+      "generated_road_next_road_count": 12,
+      "duplicate_pair_count": 0,
+      "allowed_audit_count": 12,
+      "manual_review_required_count": 2,
+      "prohibited_count": 2,
+      "final_generation_decision_count": 16,
+      "issue_counts": {
+        "fallback_to_swsd_basic_rule": 2,
+        "low_confidence_swsd_basic_rule": 5,
+        "mixed_source_arm": 8,
+        "rcsd_source_arm_rule_missing": 1,
+        "rcsd_target_arm_missing": 2,
+        "rcsd_to_arm_unmatched": 1,
+        "source_geometry_match_missing": 30,
+        "swsd_source_arm_rule_missing": 1,
+        "swsd_to_arm_unmatched": 1
+      },
+      "generated_pairs": [
+        {
+          "road_id": "1090533",
+          "next_road_id": "1038701",
+          "turntype": "4",
+          "source": "2"
+        },
+        {
+          "road_id": "1090533",
+          "next_road_id": "5389822354654313",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "1090533",
+          "next_road_id": "5389824132259125",
+          "turntype": "2",
+          "source": "2"
+        },
+        {
+          "road_id": "5389822354654080",
+          "next_road_id": "521655931",
+          "turntype": "1",
+          "source": "1"
+        },
+        {
+          "road_id": "5389822354654080",
+          "next_road_id": "5389822354654313",
+          "turntype": "2",
+          "source": "1"
+        },
+        {
+          "road_id": "5389822354654080",
+          "next_road_id": "5389824132259125",
+          "turntype": "4",
+          "source": "1"
+        },
+        {
+          "road_id": "5389822354654325",
+          "next_road_id": "1038701",
+          "turntype": "2",
+          "source": "2"
+        },
+        {
+          "road_id": "5389822354654325",
+          "next_road_id": "521655931",
+          "turntype": "4",
+          "source": "2"
+        },
+        {
+          "road_id": "5389822354654325",
+          "next_road_id": "5389824132259125",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "5389824132259142",
+          "next_road_id": "1038701",
+          "turntype": "1",
+          "source": "2"
+        },
+        {
+          "road_id": "5389824132259142",
+          "next_road_id": "521655931",
+          "turntype": "2",
+          "source": "1"
+        },
+        {
+          "road_id": "5389824132259142",
+          "next_road_id": "5389822354654313",
+          "turntype": "4",
+          "source": "1"
+        }
+      ],
+      "baseline_files": {
+        "frcsd_road_next_road.geojson": "f9adfa1f317e936271bfd63c75def225d11fdcb24014f5ffb04a584444a3e62f",
+        "frcsd_road_next_road_audit.json": "d9568802063bee97875c2b624c7a4d54f27260add885109c4459d4898f4ca1b3",
+        "frcsd_road_next_road_issue_report.json": "ef37da15a0d4b5e094a9a10a518fc2d0278527badbb9826750332a3ebed63a09",
+        "final_generation_decisions.json": "32347083e116ef252dce57037588adf1b742fda7a4102043067d9afad8207ffa"
+      }
+    }
+  }
+}

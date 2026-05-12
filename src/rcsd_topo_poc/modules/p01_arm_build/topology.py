@@ -135,6 +135,11 @@ def _is_right_turn_road(road: RoadRecord, right_turn_formway_values: set[str]) -
     return normalise_id(road.formway) in right_turn_formway_values
 
 
+def _advance_right_turn_enters_current_junction(road: RoadRecord, member_node_ids: set[str]) -> bool:
+    role = seed_role_for_road(road, member_node_ids)
+    return role in {"inbound", "bidirectional"}
+
+
 def _road_endpoint_groups(road: RoadRecord, nodes: dict[str, NodeRecord]) -> tuple[str, str]:
     return semantic_group_id(nodes.get(road.snodeid), road.snodeid), semantic_group_id(nodes.get(road.enodeid), road.enodeid)
 
@@ -1332,13 +1337,13 @@ def build_dataset_arm_result(
             continue
         if not (snode_inside or enode_inside):
             continue
-        if is_advance_right_turn_road(road):
-            continue
         if _is_right_turn_road(road, right_turn_formway_values):
             excluded_right_turn_ids.append(road.road_id)
             _add_issue(issues, "right_turn_excluded", road_id=road.road_id, formway=road.formway)
             continue
         role = seed_role_for_road(road, member_set)
+        if is_advance_right_turn_road(road) and not _advance_right_turn_enters_current_junction(road, member_set):
+            continue
         if role is None:
             _add_issue(issues, "seed_road_unassigned", road_id=road.road_id, reason="direction_not_parseable")
             continue
@@ -1362,6 +1367,14 @@ def build_dataset_arm_result(
         _add_issue(issues, "formway_missing", road_id=road_id)
     for road_id in special_index.formway_unparseable_road_ids:
         _add_issue(issues, "formway_unparseable", road_id=road_id, formway=loaded.roads[road_id].formway)
+    arm_member_advance_right_turn_ids = {
+        road.road_id for road, _role in seed_roads if is_advance_right_turn_road(road)
+    }
+    relation_advance_right_turn_ids = tuple(
+        road_id
+        for road_id in special_index.advance_right_turn_road_ids
+        if road_id not in arm_member_advance_right_turn_ids
+    )
 
     if not member_node_ids:
         _add_issue(issues, "junction_member_nodes_not_found", junction_id=junction_id)
@@ -1447,7 +1460,7 @@ def build_dataset_arm_result(
     advance_right_turn_relations, relation_issues = build_advance_right_turn_relations(
         dataset=loaded.dataset,
         junction_id=junction_id,
-        advance_right_turn_road_ids=special_index.advance_right_turn_road_ids,
+        advance_right_turn_road_ids=relation_advance_right_turn_ids,
         current_member_node_ids=member_set,
         roads=loaded.roads,
         nodes=loaded.nodes,
@@ -1479,7 +1492,7 @@ def build_dataset_arm_result(
     for arm in initial_arms:
         for road_id in arm.member_road_ids:
             road = loaded.roads.get(road_id)
-            if road and is_advance_right_turn_road(road):
+            if road and is_advance_right_turn_road(road) and road_id not in arm_member_advance_right_turn_ids:
                 _add_issue(issues, "advance_right_turn_in_arm_member_error", arm_id=arm.initial_arm_id, road_id=road_id)
         for road_id in arm.trunk_road_ids:
             road = loaded.roads.get(road_id)

@@ -25,6 +25,11 @@ from rcsd_topo_poc.modules.p01_arm_build.alignment_models import (
 from rcsd_topo_poc.modules.p01_arm_build.models import LoadedDataset
 
 
+SOURCE_CANDIDATE_MIN_SCORE = 60.0
+SOURCE_CANDIDATE_SELECTION_MARGIN = 20.0
+SOURCE_ASSIGNMENT_EXHAUSTIVE_LIMIT = 12
+
+
 def build_case_alignment(case: CaseA1Artifacts, loaded_by_dataset: dict[str, LoadedDataset]) -> CaseAlignmentResult:
     profiles_by_dataset = {
         dataset: tuple(build_arm_profiles(case.group_id, dataset, case.datasets[dataset], loaded_by_dataset.get(dataset)))
@@ -232,19 +237,25 @@ def _build_logical_groups(
     profiles_by_dataset: dict[str, tuple[ArmProfile, ...]],
     candidates: tuple[ArmAlignmentCandidate, ...],
 ) -> tuple[list[LogicalArmGroup], list[ArmAlignmentCandidate], list[ArmBuildFeedback]]:
-    selected_ids: set[str] = set()
-    source_selection: dict[str, dict[str, list[str]]] = {dataset: defaultdict(list) for dataset in SOURCE_DATASETS}
     provisional: list[dict[str, Any]] = []
     for index, f_profile in enumerate(profiles_by_dataset["FRCSD"], start=1):
         selected_by_source = {
             source_dataset: _select_source_candidates(f_profile, source_dataset, candidates)
             for source_dataset in SOURCE_DATASETS
         }
+        provisional.append({"index": index, "f": f_profile, "selected": selected_by_source})
+
+    _resolve_source_candidate_reuse(provisional)
+
+    selected_ids: set[str] = set()
+    source_selection: dict[str, dict[str, list[str]]] = {dataset: defaultdict(list) for dataset in SOURCE_DATASETS}
+    for item in provisional:
+        f_profile: ArmProfile = item["f"]
+        selected_by_source: dict[str, tuple[ArmAlignmentCandidate, ...]] = item["selected"]
         for source_dataset, items in selected_by_source.items():
             for candidate in items:
                 selected_ids.add(candidate.candidate_id)
                 source_selection[source_dataset][candidate.arm_id_for(source_dataset)].append(f_profile.arm_id)
-        provisional.append({"index": index, "f": f_profile, "selected": selected_by_source})
 
     over_merged_by_dataset = {
         dataset: {
@@ -296,10 +307,166 @@ def _select_source_candidates(
         return tuple()
     pool = sorted(pool, key=lambda item: item.score, reverse=True)
     top = pool[0]
-    if top.confidence == "conflict" or top.score < 60.0:
+    if top.confidence == "conflict" or top.score < SOURCE_CANDIDATE_MIN_SCORE:
         return (top,)
-    selected = [candidate for candidate in pool if candidate.score >= 60.0 and top.score - candidate.score <= 20.0]
+    selected = [
+        candidate
+        for candidate in pool
+        if candidate.score >= SOURCE_CANDIDATE_MIN_SCORE
+        and top.score - candidate.score <= SOURCE_CANDIDATE_SELECTION_MARGIN
+    ]
     return tuple(selected or [top])
+
+
+def _resolve_source_candidate_reuse(provisional: list[dict[str, Any]]) -> None:
+    for source_dataset in SOURCE_DATASETS:
+        assigned_by_f = _exclusive_source_assignments(provisional, source_dataset)
+        assigned_owner_by_source = {
+            candidate.arm_id_for(source_dataset): f_arm_id for f_arm_id, candidate in assigned_by_f.items()
+        }
+        for item in provisional:
+            f_profile: ArmProfile = item["f"]
+            selected_by_source: dict[str, tuple[ArmAlignmentCandidate, ...]] = item["selected"]
+            selected = selected_by_source[source_dataset]
+            assigned = assigned_by_f.get(f_profile.arm_id)
+            if assigned is None:
+                continue
+            resolved = [assigned]
+            for candidate in selected:
+                if candidate.candidate_id == assigned.candidate_id:
+                    continue
+                source_arm_id = candidate.arm_id_for(source_dataset)
+                owner_f_arm_id = assigned_owner_by_source.get(source_arm_id)
+                if owner_f_arm_id is not None and owner_f_arm_id != f_profile.arm_id:
+                    continue
+                if _candidate_can_resolve_source_reuse(candidate):
+                    resolved.append(candidate)
+            selected_by_source[source_dataset] = tuple(_dedupe_candidates(resolved))
+
+
+def _exclusive_source_assignments(
+    provisional: list[dict[str, Any]],
+    source_dataset: str,
+) -> dict[str, ArmAlignmentCandidate]:
+    candidates_by_f = [
+        (
+            item["f"].arm_id,
+            tuple(
+                sorted(
+                    (
+                        candidate
+                        for candidate in item["selected"][source_dataset]
+                        if _candidate_can_resolve_source_reuse(candidate)
+                    ),
+                    key=lambda candidate: _candidate_assignment_sort_key(candidate, source_dataset),
+                    reverse=True,
+                )
+            ),
+        )
+        for item in provisional
+    ]
+    if not any(items for _, items in candidates_by_f):
+        return {}
+    source_count = len({candidate.arm_id_for(source_dataset) for _, items in candidates_by_f for candidate in items})
+    if len(candidates_by_f) <= SOURCE_ASSIGNMENT_EXHAUSTIVE_LIMIT and source_count <= SOURCE_ASSIGNMENT_EXHAUSTIVE_LIMIT:
+        return _best_exclusive_source_assignment(candidates_by_f, source_dataset)
+    return _greedy_exclusive_source_assignment(candidates_by_f, source_dataset)
+
+
+def _best_exclusive_source_assignment(
+    candidates_by_f: list[tuple[str, tuple[ArmAlignmentCandidate, ...]]],
+    source_dataset: str,
+) -> dict[str, ArmAlignmentCandidate]:
+    best_score = -1.0
+    best_count = -1
+    best_assignment: dict[str, ArmAlignmentCandidate] = {}
+
+    def visit(
+        index: int,
+        used_source_arm_ids: set[str],
+        assignment: dict[str, ArmAlignmentCandidate],
+        score: float,
+    ) -> None:
+        nonlocal best_count, best_score, best_assignment
+        if len(assignment) + len(candidates_by_f) - index < best_count:
+            return
+        if index == len(candidates_by_f):
+            count = len(assignment)
+            rounded_score = round(score, 2)
+            if count > best_count or (count == best_count and rounded_score > best_score):
+                best_count = count
+                best_score = rounded_score
+                best_assignment = dict(assignment)
+            return
+
+        f_arm_id, candidates = candidates_by_f[index]
+        visit(index + 1, used_source_arm_ids, assignment, score)
+        for candidate in candidates:
+            source_arm_id = candidate.arm_id_for(source_dataset)
+            if source_arm_id in used_source_arm_ids:
+                continue
+            used_source_arm_ids.add(source_arm_id)
+            assignment[f_arm_id] = candidate
+            visit(index + 1, used_source_arm_ids, assignment, score + candidate.score)
+            assignment.pop(f_arm_id, None)
+            used_source_arm_ids.remove(source_arm_id)
+
+    visit(0, set(), {}, 0.0)
+    return best_assignment
+
+
+def _greedy_exclusive_source_assignment(
+    candidates_by_f: list[tuple[str, tuple[ArmAlignmentCandidate, ...]]],
+    source_dataset: str,
+) -> dict[str, ArmAlignmentCandidate]:
+    assignment: dict[str, ArmAlignmentCandidate] = {}
+    used_source_arm_ids: set[str] = set()
+    ordered = sorted(
+        candidates_by_f,
+        key=lambda item: _candidate_assignment_sort_key(item[1][0], source_dataset) if item[1] else (-1.0, 0, 0, ""),
+        reverse=True,
+    )
+    for f_arm_id, candidates in ordered:
+        for candidate in candidates:
+            source_arm_id = candidate.arm_id_for(source_dataset)
+            if source_arm_id in used_source_arm_ids:
+                continue
+            assignment[f_arm_id] = candidate
+            used_source_arm_ids.add(source_arm_id)
+            break
+    return assignment
+
+
+def _candidate_can_resolve_source_reuse(candidate: ArmAlignmentCandidate) -> bool:
+    return candidate.score >= SOURCE_CANDIDATE_MIN_SCORE and candidate.confidence != "conflict" and not candidate.conflict_flags
+
+
+def _candidate_assignment_sort_key(candidate: ArmAlignmentCandidate, source_dataset: str) -> tuple[float, int, int, str]:
+    return (
+        candidate.score,
+        -_candidate_rank_for_dataset(candidate, "FRCSD"),
+        -_candidate_rank_for_dataset(candidate, source_dataset),
+        candidate.candidate_id,
+    )
+
+
+def _candidate_rank_for_dataset(candidate: ArmAlignmentCandidate, dataset: str) -> int:
+    if dataset == candidate.left_dataset:
+        return candidate.rank_for_left_arm or 9999
+    if dataset == candidate.right_dataset:
+        return candidate.rank_for_right_arm or 9999
+    return 9999
+
+
+def _dedupe_candidates(candidates: list[ArmAlignmentCandidate]) -> list[ArmAlignmentCandidate]:
+    result: list[ArmAlignmentCandidate] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate.candidate_id in seen:
+            continue
+        seen.add(candidate.candidate_id)
+        result.append(candidate)
+    return result
 
 
 def _logical_group_from_selection(

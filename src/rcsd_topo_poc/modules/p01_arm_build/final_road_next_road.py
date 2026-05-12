@@ -249,11 +249,12 @@ def _road_roles(result: DatasetBuildResult) -> dict[str, RoadRole]:
     return roles
 
 
-def _parallel_count_by_arm(roles: dict[str, RoadRole]) -> Counter[str]:
+def _parallel_count_by_entering_arm(result: DatasetBuildResult, roles: dict[str, RoadRole]) -> Counter[str]:
     counts: Counter[str] = Counter()
-    for role in roles.values():
-        if role.road_role == "parallel_branch":
-            counts[role.arm_id] += 1
+    for arm in result.final_arms:
+        for role in _arm_entering_roles(result, roles, arm.final_arm_id):
+            if role.road_role == "parallel_branch":
+                counts[role.arm_id] += 1
     return counts
 
 
@@ -345,13 +346,18 @@ def _source_policy(
     roles: dict[str, RoadRole],
 ) -> tuple[SourceMovementPolicy, ...]:
     movement_by_evidence = _movement_by_evidence(result)
-    roles_by_arm: dict[str, list[RoadRole]] = defaultdict(list)
-    for role in roles.values():
-        roles_by_arm[role.arm_id].append(role)
+    entering_roles_by_arm = {
+        arm.final_arm_id: _arm_entering_roles(result, roles, arm.final_arm_id) for arm in result.final_arms
+    }
+    exit_roles_by_arm = {arm.final_arm_id: _target_exit_roles(result, roles, arm.final_arm_id) for arm in result.final_arms}
+    entering_ids_by_arm = {
+        arm_id: {role.road_id for role in arm_roles} for arm_id, arm_roles in entering_roles_by_arm.items()
+    }
+    exit_ids_by_arm = {arm_id: {role.road_id for role in arm_roles} for arm_id, arm_roles in exit_roles_by_arm.items()}
     candidate_grouped: dict[tuple[str, str, str, str, str], dict[str, set[str]]] = {}
     for movement in result.arm_movements:
-        for from_role in roles_by_arm.get(movement.from_arm_id, []):
-            for to_role in roles_by_arm.get(movement.to_arm_id, []):
+        for from_role in entering_roles_by_arm.get(movement.from_arm_id, []):
+            for to_role in exit_roles_by_arm.get(movement.to_arm_id, []):
                 if from_role.road_id == to_role.road_id:
                     continue
                 key = (
@@ -374,6 +380,10 @@ def _source_policy(
         from_role = roles.get(evidence.road_id)
         to_role = roles.get(evidence.next_road_id)
         if from_role is None or to_role is None:
+            continue
+        if evidence.road_id not in entering_ids_by_arm.get(evidence.from_arm_id, set()):
+            continue
+        if evidence.next_road_id not in exit_ids_by_arm.get(evidence.to_arm_id, set()):
             continue
         key = (
             evidence.from_arm_id,
@@ -444,15 +454,28 @@ def _arm_entering_ids(result: DatasetBuildResult, arm_id: str) -> tuple[str, ...
     return tuple(sorted(set(inbound).union(bidirectional)))
 
 
-def _target_exit_roles(result: DatasetBuildResult, roles: dict[str, RoadRole], arm_id: str) -> tuple[RoadRole, ...]:
+def _arm_exit_ids(result: DatasetBuildResult, arm_id: str) -> tuple[str, ...]:
     arm = _arm_by_id(result).get(arm_id)
     if arm is None:
         return tuple()
     payload = _arm_payload(arm)
-    outbound = {str(item) for item in (payload.get("outbound_member_road_ids", []) or [])}
-    bidirectional = {str(item) for item in (payload.get("bidirectional_member_road_ids", []) or [])}
-    trunk = {role.road_id for role in roles.values() if role.arm_id == arm_id and role.road_role == "trunk"}
-    exit_ids = outbound.union(bidirectional).union(trunk)
+    outbound = tuple(str(item) for item in (payload.get("outbound_member_road_ids", []) or []))
+    bidirectional = tuple(str(item) for item in (payload.get("bidirectional_member_road_ids", []) or []))
+    return tuple(sorted(set(outbound).union(bidirectional)))
+
+
+def _arm_entering_roles(result: DatasetBuildResult, roles: dict[str, RoadRole], arm_id: str) -> tuple[RoadRole, ...]:
+    entering_ids = set(_arm_entering_ids(result, arm_id))
+    return tuple(
+        sorted(
+            (role for role in roles.values() if role.arm_id == arm_id and role.road_id in entering_ids),
+            key=lambda item: item.road_id,
+        )
+    )
+
+
+def _target_exit_roles(result: DatasetBuildResult, roles: dict[str, RoadRole], arm_id: str) -> tuple[RoadRole, ...]:
+    exit_ids = set(_arm_exit_ids(result, arm_id))
     return tuple(sorted((role for role in roles.values() if role.arm_id == arm_id and role.road_id in exit_ids), key=lambda item: item.road_id))
 
 
@@ -530,7 +553,13 @@ def _source_arm_pass_rules(
     result: DatasetBuildResult,
     roles: dict[str, RoadRole],
 ) -> tuple[SourceArmPassRule, ...]:
-    roles_by_arm = _roles_by_arm(roles)
+    entering_roles_by_arm = {
+        arm.final_arm_id: _arm_entering_roles(result, roles, arm.final_arm_id) for arm in result.final_arms
+    }
+    entering_ids_by_arm = {
+        arm_id: {role.road_id for role in arm_roles} for arm_id, arm_roles in entering_roles_by_arm.items()
+    }
+    exit_ids_by_arm = {arm.final_arm_id: set(_arm_exit_ids(result, arm.final_arm_id)) for arm in result.final_arms}
     evidence_by_key: dict[tuple[str, str, str], list[RoadMovementEvidence]] = defaultdict(list)
     for evidence in result.road_movement_evidence:
         from_role = roles.get(evidence.road_id)
@@ -539,8 +568,16 @@ def _source_arm_pass_rules(
         if from_role is None or not to_arm_id:
             continue
         if evidence.mapping_status == "mapped" and evidence.from_arm_id:
+            if evidence.road_id not in entering_ids_by_arm.get(evidence.from_arm_id, set()):
+                continue
+            if evidence.next_road_id not in exit_ids_by_arm.get(to_arm_id, set()):
+                continue
             evidence_by_key[(evidence.from_arm_id, to_arm_id, from_role.road_role)].append(evidence)
         elif evidence.mapping_status in {"from_road_role_conflict", "to_road_role_conflict", "role_conflict"}:
+            if evidence.road_id not in entering_ids_by_arm.get(from_role.arm_id, set()):
+                continue
+            if evidence.next_road_id not in exit_ids_by_arm.get(to_arm_id, set()):
+                continue
             evidence_by_key[(from_role.arm_id, to_arm_id, from_role.road_role)].append(evidence)
 
     rows: list[SourceArmPassRule] = []
@@ -549,7 +586,7 @@ def _source_arm_pass_rules(
         target_exit_ids = {role.road_id for role in target_exit_roles}
         target_trunk_ids = {role.road_id for role in target_exit_roles if role.road_role == "trunk"}
         left_receiving_ids = {role.road_id for role in target_exit_roles if role.target_role == "left_receiving"}
-        from_role_types = sorted({role.road_role for role in roles_by_arm.get(movement.from_arm_id, tuple())})
+        from_role_types = sorted({role.road_role for role in entering_roles_by_arm.get(movement.from_arm_id, tuple())})
         for from_road_role in from_role_types:
             evidence = tuple(evidence_by_key.get((movement.from_arm_id, movement.to_arm_id, from_road_role), tuple()))
             covered = {item.next_road_id for item in evidence if item.next_road_id in target_exit_ids}
@@ -728,14 +765,15 @@ def _parallel_branch_alignment(
     *,
     junction_group_id: str,
     loaded_by_dataset: dict[str, LoadedDataset],
+    result_by_dataset: dict[str, DatasetBuildResult],
     roles: dict[str, dict[str, RoadRole]],
     source_map: tuple[SourceRoadMap, ...],
 ) -> tuple[ParallelBranchAlignment, ...]:
     source_map_by_f = {item.f_road_id: item for item in source_map}
-    f_arm_ids = sorted({role.arm_id for role in roles["FRCSD"].values()})
+    f_arm_ids = sorted(arm.final_arm_id for arm in result_by_dataset["FRCSD"].final_arms)
     rows: list[ParallelBranchAlignment] = []
     for arm_id in f_arm_ids:
-        f_arm_roles = [role for role in roles["FRCSD"].values() if role.arm_id == arm_id]
+        f_arm_roles = list(_arm_entering_roles(result_by_dataset["FRCSD"], roles["FRCSD"], arm_id))
         for source_dataset in ("SWSD", "RCSD"):
             source_arm_ids: set[str] = set()
             f_parallel_roles: list[RoadRole] = []
@@ -751,10 +789,15 @@ def _parallel_branch_alignment(
                 if f_role.road_role == "parallel_branch":
                     f_parallel_roles.append(f_role)
                     mapped_source_by_f[f_role.road_id] = source_item.source_road_id or ""
+            source_entering_ids_by_arm = {
+                source_arm_id: set(_arm_entering_ids(result_by_dataset[source_dataset], source_arm_id))
+                for source_arm_id in source_arm_ids
+            }
             source_parallel_roles = [
                 role
                 for role in roles[source_dataset].values()
                 if role.arm_id in source_arm_ids and role.road_role == "parallel_branch"
+                and role.road_id in source_entering_ids_by_arm.get(role.arm_id, set())
             ]
             if not source_arm_ids and not f_parallel_roles:
                 continue
@@ -933,7 +976,6 @@ def build_frcsd_road_next_road(
     junction_group_id: str = "",
 ) -> FrcsdRoadNextRoadFinalResult:
     roles = {dataset: _road_roles(result_by_dataset[dataset]) for dataset in DATASETS}
-    f_roles_by_arm = _roles_by_arm(roles["FRCSD"])
     source_map = _source_road_map(
         loaded_by_dataset=loaded_by_dataset,
         f_roles=roles["FRCSD"],
@@ -946,6 +988,7 @@ def build_frcsd_road_next_road(
     parallel_alignment = _parallel_branch_alignment(
         junction_group_id=junction_group_id,
         loaded_by_dataset=loaded_by_dataset,
+        result_by_dataset=result_by_dataset,
         roles=roles,
         source_map=source_map,
     )
@@ -962,8 +1005,10 @@ def build_frcsd_road_next_road(
     }
     rule_indexes = {dataset: _rule_index(source_arm_pass_rules[dataset]) for dataset in ("SWSD", "RCSD")}
     policy_indexes = {dataset: _policy_index(policies[dataset]) for dataset in ("SWSD", "RCSD")}
-    source_parallel_counts = {dataset: _parallel_count_by_arm(roles[dataset]) for dataset in ("SWSD", "RCSD")}
-    f_parallel_counts = _parallel_count_by_arm(roles["FRCSD"])
+    source_parallel_counts = {
+        dataset: _parallel_count_by_entering_arm(result_by_dataset[dataset], roles[dataset]) for dataset in ("SWSD", "RCSD")
+    }
+    f_parallel_counts = _parallel_count_by_entering_arm(result_by_dataset["FRCSD"], roles["FRCSD"])
     validation_status_by_arm = {arm.final_arm_id: arm.validation_status for arm in result_by_dataset["FRCSD"].final_arms}
     profile_by_arm = {profile.arm_id: profile for profile in arm_source_profiles}
     source_arm_matches = {
@@ -1012,7 +1057,7 @@ def build_frcsd_road_next_road(
     def right_turn_carrier_issues(movement: ArmMovement, from_role: RoadRole) -> tuple[str, ...]:
         if movement.movement_type != "right" or from_role.road_role != "trunk":
             return tuple()
-        has_parallel_carrier = f_parallel_counts[movement.to_arm_id] > 0
+        has_parallel_carrier = f_parallel_counts[movement.from_arm_id] > 0
         has_advance_right_carrier = (movement.from_arm_id, movement.to_arm_id) in advance_right_pairs
         if has_parallel_carrier or has_advance_right_carrier:
             return tuple()
@@ -1131,7 +1176,7 @@ def build_frcsd_road_next_road(
             profile, source_arm_matches[movement.from_arm_id]
         )
         source_parallel_missing_decisions(movement, reference_source)
-        from_roles = tuple(f_roles_by_arm.get(movement.from_arm_id, tuple()))
+        from_roles = _arm_entering_roles(result_by_dataset["FRCSD"], roles["FRCSD"], movement.from_arm_id)
         from_role_types = sorted({role.road_role for role in from_roles})
         for from_road_role in from_role_types:
             source_rule, effective_source, generation_rule, rule_lookup_issues = rule_for(

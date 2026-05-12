@@ -1,0 +1,274 @@
+[
+  {
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "5389824132259125"
+    ],
+    "generated_road_ids": [
+      "5389822354654080"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "uturn",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F1"
+  },
+  {
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [
+      "fallback_to_swsd_basic_rule",
+      "low_confidence_swsd_basic_rule",
+      "rcsd_source_arm_rule_missing",
+      "rcsd_target_arm_missing",
+      "rcsd_to_arm_unmatched"
+    ],
+    "movement_type": "right",
+    "reference_source": "RCSD",
+    "rule_status": "insufficient",
+    "to_arm_id": "F2"
+  },
+  {
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "521655931"
+    ],
+    "generated_road_ids": [
+      "5389822354654080"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "straight",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F3"
+  },
+  {
+    "from_arm_id": "F1",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "5389822354654313"
+    ],
+    "generated_road_ids": [
+      "5389822354654080"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "left",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F4"
+  },
+  {
+    "from_arm_id": "F2",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "5389824132259125"
+    ],
+    "generated_road_ids": [
+      "1090533"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule"
+    ],
+    "movement_type": "left",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F1"
+  },
+  {
+    "from_arm_id": "F2",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "1038701"
+    ],
+    "generated_road_ids": [
+      "1090533"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [],
+    "movement_type": "uturn",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F2"
+  },
+  {
+    "from_arm_id": "F2",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [],
+    "movement_type": "right",
+    "reference_source": "SWSD",
+    "rule_status": "prohibited",
+    "to_arm_id": "F3"
+  },
+  {
+    "from_arm_id": "F2",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "5389822354654313"
+    ],
+    "generated_road_ids": [
+      "1090533"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule"
+    ],
+    "movement_type": "straight",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F4"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "5389824132259125"
+    ],
+    "generated_road_ids": [
+      "5389822354654325"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule",
+      "mixed_source_arm"
+    ],
+    "movement_type": "straight",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F1"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "1038701"
+    ],
+    "generated_road_ids": [
+      "5389822354654325"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "left",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F2"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "521655931"
+    ],
+    "generated_road_ids": [
+      "5389822354654325"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "uturn",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F3"
+  },
+  {
+    "from_arm_id": "F3",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [
+      "low_confidence_swsd_basic_rule",
+      "mixed_source_arm",
+      "swsd_source_arm_rule_missing",
+      "swsd_to_arm_unmatched"
+    ],
+    "movement_type": "right",
+    "reference_source": "SWSD",
+    "rule_status": "insufficient",
+    "to_arm_id": "F4"
+  },
+  {
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [],
+    "generated_road_ids": [],
+    "generation_scope": "none",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "right",
+    "reference_source": "RCSD",
+    "rule_status": "prohibited",
+    "to_arm_id": "F1"
+  },
+  {
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "1038701"
+    ],
+    "generated_road_ids": [
+      "5389824132259142"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "fallback_to_swsd_basic_rule",
+      "mixed_source_arm",
+      "rcsd_target_arm_missing"
+    ],
+    "movement_type": "straight",
+    "reference_source": "SWSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F2"
+  },
+  {
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "521655931"
+    ],
+    "generated_road_ids": [
+      "5389824132259142"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "left",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F3"
+  },
+  {
+    "from_arm_id": "F4",
+    "from_road_role": "trunk",
+    "generated_next_road_ids": [
+      "5389822354654313"
+    ],
+    "generated_road_ids": [
+      "5389824132259142"
+    ],
+    "generation_scope": "all_target_exit_roads",
+    "issue_flags": [
+      "mixed_source_arm"
+    ],
+    "movement_type": "uturn",
+    "reference_source": "RCSD",
+    "rule_status": "full_allowed",
+    "to_arm_id": "F4"
+  }
+]

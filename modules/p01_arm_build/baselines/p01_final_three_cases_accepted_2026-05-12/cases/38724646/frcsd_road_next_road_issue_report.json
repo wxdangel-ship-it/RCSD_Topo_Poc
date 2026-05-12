@@ -1,0 +1,211 @@
+{
+  "issue_counts": {
+    "fallback_to_swsd_basic_rule": 2,
+    "low_confidence_swsd_basic_rule": 5,
+    "rcsd_target_arm_missing": 2,
+    "source_geometry_match_missing": 18,
+    "swsd_source_arm_rule_missing": 2,
+    "swsd_to_arm_unmatched": 2,
+    "target_arm_exit_roads_missing": 5
+  },
+  "issues": [
+    {
+      "f_road_id": "1017308",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1017324",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1040546",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1047564",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1051078",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "1054394",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "505406194",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "511440408",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "522155580",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5395240824210284",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5395240824210294",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5395259110659311",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "5396562433607060",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "606047020",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "611442720",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "617826765",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "621439446",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_road_id": "621439810",
+      "issue_type": "source_geometry_match_missing",
+      "match_status": "source_geometry_match_missing"
+    },
+    {
+      "f_next_road_id": "1054394",
+      "f_road_id": "5395240824210294",
+      "generation_rule": "rcsd_to_swsd_fallback",
+      "issue_type": "fallback_to_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "1054394",
+      "f_road_id": "5395240824210294",
+      "generation_rule": "rcsd_to_swsd_fallback",
+      "issue_type": "rcsd_target_arm_missing"
+    },
+    {
+      "f_next_road_id": "617826765",
+      "f_road_id": "5395240824210294",
+      "generation_rule": "rcsd_to_swsd_fallback",
+      "issue_type": "fallback_to_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "617826765",
+      "f_road_id": "5395240824210294",
+      "generation_rule": "rcsd_to_swsd_fallback",
+      "issue_type": "rcsd_target_arm_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "621439446",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "621439446",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "swsd_source_arm_rule_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "621439446",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "swsd_to_arm_unmatched"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "621439810",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "621439810",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "swsd_source_arm_rule_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "621439810",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "swsd_to_arm_unmatched"
+    },
+    {
+      "f_next_road_id": "5395240824210284",
+      "f_road_id": "511440408",
+      "generation_rule": "swsd_basic_rule",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "5395240824210284",
+      "f_road_id": "611442720",
+      "generation_rule": "swsd_basic_rule",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "621439446",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "target_arm_exit_roads_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "621439810",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "target_arm_exit_roads_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "511440408",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "target_arm_exit_roads_missing"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "611442720",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "target_arm_exit_roads_missing"
+    },
+    {
+      "f_next_road_id": "5395240824210284",
+      "f_road_id": "1051078",
+      "generation_rule": "swsd_basic_rule",
+      "issue_type": "low_confidence_swsd_basic_rule"
+    },
+    {
+      "f_next_road_id": "",
+      "f_road_id": "1051078",
+      "generation_rule": "same_source_inherited",
+      "issue_type": "target_arm_exit_roads_missing"
+    }
+  ]
+}

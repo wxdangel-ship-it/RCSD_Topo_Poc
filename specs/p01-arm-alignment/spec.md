@@ -201,7 +201,7 @@ case_summary.json
 - `conflict`
 - `uncertain`
 
-`source_over_split_resolved` 必须输出 `recommended_merge` feedback。`source_over_merged_unresolved` 不自动拆分，必须输出 `recommended_split` feedback。
+A2 候选选择必须先按 source dataset 做 source Arm 互斥优先分配；当某个 F-RCSD Arm 存在可用替代候选时，不复用已被更优 F-RCSD Arm 占用的 source Arm。`source_over_split_resolved` 必须输出 `recommended_merge` feedback。无法通过可用替代候选解除的 `source_over_merged_unresolved` 不自动拆分，必须输出 `recommended_split` feedback。
 
 ## 7. Outputs
 

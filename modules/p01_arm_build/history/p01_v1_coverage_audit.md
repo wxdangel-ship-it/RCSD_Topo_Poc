@@ -14,7 +14,7 @@ P01-Final 规则级修正源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/P01_Fin
 | 2 | 语义路口定义 | 已实现 | `topology.py` 按有效 `mainnodeid` 聚合，无效值退化为单节点；A1 tests 覆盖 semantic junction。 |
 | 3 | Arm 基于拓扑追溯 | 已实现 | `topology.py` 输出 InitialArm / FinalArm / ArmTrace / ThroughDecisionAudit；tests 覆盖 trace 与 kind-aware stop。 |
 | 4 | formway bit7 / bit8 位运算 | 已实现 | `special_roads.py` 解析整数 formway 并使用 bit7 / bit8；tests 覆盖 bit 运算与缺失 / 不可解析 audit。 |
-| 5 | 提前左转 / 提前右转规则 | 已实现 | bit8 road 可进入 Arm member 且排除 trunk；bit7 road 排除 member / seed / connector / trunk。 |
+| 5 | 提前左转 / 提前右转规则 | 已实现 | bit8 road 可进入 Arm member 且排除 trunk；bit7 road 按是否进入当前路口分流，路口内进入者可进入 Arm member / seed 但排除 trunk，路口前不进入者排除 member / seed / connector / trunk 并进入 relation / issue。 |
 | 6 | AdvanceRightTurnRelation | 已实现 | `special_roads.py` 输出 relation；`runner.py` 写出 `advance_right_turn_relations.json`；tests 覆盖 resolved / unresolved。 |
 | 7 | trunk_road_ids 与 trunk_status | 已实现 | `trunk.py` 输出 trunk ids、status、reason、non-trunk member；A1 tests 覆盖 complete / partial / none / ambiguous。 |
 | 8 | RoadNextRoad allowed evidence | 已实现 | `road_next_road.py` 归一化 RoadNextRoad；`movement.py` 将其投影为 RoadMovementEvidence；缺失不作为禁止。 |
@@ -38,8 +38,17 @@ P01-Final 规则级修正源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/P01_Fin
 | 26 | frcsd_road_next_road.geojson | 已实现 | final FeatureCollection 使用 `geometry=null` 与 `id/road_id/next_road_id/type/source/turntype/city_code` properties，包含 duplicate 防护。 |
 | 27 | audit / issue report | 已实现 | 输出 `arm_source_profiles.json`、`source_arm_pass_rules_swsd.json`、`source_arm_pass_rules_rcsd.json`、`final_generation_decisions.json`、`frcsd_source_road_map.json`、兼容 `source_movement_policy_swsd.json` / `source_movement_policy_rcsd.json`、`frcsd_road_next_road_audit.json` 与 `frcsd_road_next_road_issue_report.json`。 |
 
+## 已冻结真实 Case 基线
+
+`1019789 / 38724646 / 950044` 三个真实 Case 的 P01-Final 结果已冻结为 accepted baseline：
+
+- 基线目录：`modules/p01_arm_build/baselines/p01_final_three_cases_accepted_2026-05-12/`
+- 冻结源 run root：`outputs/_work/p01_adv_right_inside_fix/`
+- `1019789`：本轮结果与上一轮用户已目视确认正确的 direction-fix 结果完全一致，冻结为 accepted。
+- `38724646`：本轮包含路口内提前右转修正，`621439810` 进入 F3 Arm 并生成 `621439810 -> 617826765`，原始证据为 `SWSD#5930602`；整体冻结为 accepted。
+- `950044`：本轮结果与上一轮 direction-fix 结果完全一致，冻结为 accepted；低置信 SWSD basic fallback 关系保留审计标记，不阻断验收。
+- 三个 Case 的冻结输出均无重复 `road_id + next_road_id`。
+
 ## 未完全闭合项
 
-- 真实 1019789 RoadNextRoad case 依赖内网 RoadNextRoad 路径；本地路径不可访问时，只能完成规则级 synthetic / fixture 验证并提供内网命令。
 - final RoadNextRoad `turntype` 输出编码已按模块契约固定为 `unknown=0 / straight=1 / left=2 / right=3 / uturn=4`；真实 RCSD 编码规范仍需用户提供权威材料确认。
-- `950044` 已确认为 A1 / A2 后续修复 case；当前不与 P01-Final source mapping 修复混合处理。

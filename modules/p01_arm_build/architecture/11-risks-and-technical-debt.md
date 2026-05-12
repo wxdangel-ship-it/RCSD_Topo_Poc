@@ -7,9 +7,9 @@
 - T 型主通道 / 侧向判断在缺少可靠方向与配对证据时采用保守策略，输出 ambiguous 而不是强行 through。
 - LocalArmCandidate 兜底合并可能掩盖 trace 过度切碎或错误合并；FinalArm validation 通过 relaxed reverse / supplemental trace evidence 暴露 weak、unvalidated 与 conflict 风险，但不替代原始 through 规则。
 - A2 无 lineage 证据时主要依赖 A1 输出结构、局部趋势与几何辅助，跨源 ID 不一致时置信度需要 review index 引导人工抽检。
-- A2 不自动拆分 over-merged Arm，需通过 ArmBuildFeedback 暴露给 A1 / 数据修复流程。
+- A2 优先通过 source Arm 互斥分配消除可解释的候选复用；无法由可用替代候选消除的 over-merged Arm 不自动拆分，需通过 ArmBuildFeedback 暴露给 A1 / 数据修复流程。
 - P01-Final 不再依赖精确源 Road 匹配作为生成前提；F-RCSD:Road.Source 与 CRS 归一化后的 rounded exact geometry 仅作为审计 / 置信增强证据。Source 缺失、归一化后仍无法匹配或源侧重复几何会进入 issue / 人工复核，不做空间近似兜底。
-- `950044` 已确认为 A1 / A2 后续修复 case；当前 A2 输出存在 `source_over_merged_unresolved / conflict` 与 recommended split / merge feedback。
+- `950044` 曾暴露 A2 source Arm 复用误绑定风险；当前通过 source Arm 互斥优先分配回归覆盖，不再将可替代的 `SWSD F2` 同时绑定到多个 F-RCSD Arm。
 - SWSD basic fallback 只允许稳定基础规则；多平行支路细节、局部 partial 规则或 F-RCSD 中没有承载道路的规则不得静默投影。
 
 ## 缓解方式

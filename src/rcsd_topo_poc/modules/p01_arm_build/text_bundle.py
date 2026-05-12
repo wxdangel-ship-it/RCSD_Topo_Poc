@@ -77,6 +77,12 @@ class P01TextBundleDecodeArtifacts:
     manifest_path: Path
 
 
+@dataclass(frozen=True)
+class _OptionalRelationPayload:
+    source_path: Path
+    payload: Any
+
+
 def _now_text() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
@@ -356,21 +362,25 @@ def _filter_relation_payload(payload: Any, *, selected_road_ids: set[str]) -> tu
     return {}, raw_count, 0
 
 
-def _prepare_optional_relation_file(
-    *,
-    source_path: Path,
-    selected_road_ids: set[str],
-) -> tuple[bytes, dict[str, Any]]:
+def _load_optional_relation_payload(source_path: Path) -> _OptionalRelationPayload:
     if not source_path.is_file():
         raise P01TextBundleError("optional_relation_input_missing", f"Optional relation file missing: {source_path}")
     payload = json.loads(source_path.read_text(encoding="utf-8"))
+    return _OptionalRelationPayload(source_path=source_path, payload=payload)
+
+
+def _prepare_optional_relation_file(
+    *,
+    relation_payload: _OptionalRelationPayload,
+    selected_road_ids: set[str],
+) -> tuple[bytes, dict[str, Any]]:
     filtered_payload, raw_count, included_count = _filter_relation_payload(
-        payload,
+        relation_payload.payload,
         selected_road_ids=selected_road_ids,
     )
     content = json.dumps(filtered_payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return content, {
-        "input_path": str(source_path),
+        "input_path": str(relation_payload.source_path),
         "raw_record_count": raw_count,
         "included_record_count": included_count,
         "filter": "road_id_or_next_road_id_intersects_selected_bfs_roads",
@@ -514,7 +524,7 @@ def _build_text_bundle_for_depth(
     junction_ids: dict[str, str],
     bfs_depth: int,
     max_text_size_bytes: int,
-    optional_relation_paths: dict[str, Path] | None = None,
+    optional_relation_payloads: dict[str, _OptionalRelationPayload] | None = None,
     auto_fit_attempts: list[dict[str, Any]] | None = None,
 ) -> tuple[str, int, dict[str, Any]]:
     files: dict[str, bytes] = {}
@@ -535,11 +545,11 @@ def _build_text_bundle_for_depth(
             "input_roads_path": str(dataset_inputs[dataset].roads_path),
         }
 
-    optional_relation_paths = optional_relation_paths or {}
-    for bundle_name, source_path in optional_relation_paths.items():
+    optional_relation_payloads = optional_relation_payloads or {}
+    for bundle_name, relation_payload in optional_relation_payloads.items():
         dataset = bundle_name.split("/", 1)[0]
         content, relation_audit = _prepare_optional_relation_file(
-            source_path=source_path,
+            relation_payload=relation_payload,
             selected_road_ids=selected_roads_by_dataset.get(dataset, set()),
         )
         files[bundle_name] = content
@@ -737,6 +747,10 @@ def run_p01_export_text_bundle(
             }.items()
             if value is not None
         }
+        optional_relation_payloads = {
+            bundle_name: _load_optional_relation_payload(source_path)
+            for bundle_name, source_path in optional_relation_paths.items()
+        }
         loaded_by_dataset = {
             dataset: load_dataset(dataset_inputs[dataset])
             for dataset in DATASETS
@@ -751,7 +765,7 @@ def run_p01_export_text_bundle(
         last_text = ""
         last_size = 0
         last_depth = bfs_depth
-        depths = range(bfs_depth, max_bfs_depth + 1) if auto_fit else (bfs_depth,)
+        depths = (max_bfs_depth,) if auto_fit else (bfs_depth,)
         for current_depth in depths:
             bundle_text, bundle_size_bytes, size_report = _build_text_bundle_for_depth(
                 dataset_inputs=dataset_inputs,
@@ -759,7 +773,7 @@ def run_p01_export_text_bundle(
                 junction_ids=junction_ids,
                 bfs_depth=current_depth,
                 max_text_size_bytes=max_text_size_bytes,
-                optional_relation_paths=optional_relation_paths,
+                optional_relation_payloads=optional_relation_payloads,
             )
             attempt = _attempt_summary(
                 bfs_depth=current_depth,
@@ -774,7 +788,7 @@ def run_p01_export_text_bundle(
             attempts.append(attempt)
             if verbose:
                 _print_attempt(attempt)
-            if bundle_size_bytes <= max_text_size_bytes:
+            if bundle_size_bytes <= max_text_size_bytes or auto_fit:
                 selected_depth = current_depth
                 selected_text = bundle_text
                 selected_size = bundle_size_bytes
@@ -789,7 +803,7 @@ def run_p01_export_text_bundle(
                 junction_ids=junction_ids,
                 bfs_depth=selected_depth,
                 max_text_size_bytes=max_text_size_bytes,
-                optional_relation_paths=optional_relation_paths,
+                optional_relation_payloads=optional_relation_payloads,
                 auto_fit_attempts=attempts,
             )
             if rebuilt_size <= max_text_size_bytes:

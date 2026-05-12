@@ -62,11 +62,12 @@ from rcsd_topo_poc.modules.p01_arm_build.alignment_runner import run_p01_arm_ali
 ## 单路口文本证据包
 
 文本证据包 helper 用于外部复现与内网 case 取证，不登记为正式 CLI。范围选择基于当前语义路口 Road 拓扑 BFS，不做简单空间裁剪。Node / Road GPKG 保留原始属性，并补齐 P01 所需规范字段；F-RCSD Road 的 `Source/source` 会随包保留。可选随包带入 SWSD `RoadNodeRoad` / `RoadNextRoad` 与 RCSD `RoadNextRoad`。
+大数据打包优先使用固定 `--bfs-depth`；如需更大范围可手工提高 depth。`--auto-fit` 会直接构建 `--max-bfs-depth` 目标范围并依靠拆包保证文本大小上限。
 
 打包：
 
 ```bash
-.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.p01_arm_build.text_bundle import run_p01_export_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" --swsd-nodes <SWSD_NODES> --swsd-roads <SWSD_ROADS> --rcsd-nodes <RCSD_NODES> --rcsd-roads <RCSD_ROADS> --frcsd-nodes <FRCSD_NODES> --frcsd-roads <FRCSD_ROADS> --swsd-road-node-road <SWSD_RoadNodeRoad.json> --rcsd-road-next-road <RCSD_RoadNextRoad.geojson> --junction-group <SWSD_ID>,<RCSD_ID>,<FRCSD_ID> --bfs-depth 2 --auto-fit --max-bfs-depth 8 --out-txt outputs/_work/p01_arm_build_bundle/p01_case_bundle.txt
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.p01_arm_build.text_bundle import run_p01_export_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" --swsd-nodes <SWSD_NODES> --swsd-roads <SWSD_ROADS> --rcsd-nodes <RCSD_NODES> --rcsd-roads <RCSD_ROADS> --frcsd-nodes <FRCSD_NODES> --frcsd-roads <FRCSD_ROADS> --swsd-road-node-road <SWSD_RoadNodeRoad.json> --rcsd-road-next-road <RCSD_RoadNextRoad.geojson> --junction-group <SWSD_ID>,<RCSD_ID>,<FRCSD_ID> --bfs-depth 2 --out-txt outputs/_work/p01_arm_build_bundle/p01_case_bundle.txt
 ```
 
 解包：

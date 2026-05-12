@@ -2183,7 +2183,7 @@ def test_p01_text_bundle_auto_fit_expands_to_deeper_trace_context(tmp_path: Path
 
     assert "S1_far_trace" in road_ids
     assert manifest["auto_fit"]["selected_bfs_depth"] == 2
-    assert [attempt["bfs_depth"] for attempt in manifest["auto_fit"]["attempts"]] == [1, 2]
+    assert [attempt["bfs_depth"] for attempt in manifest["auto_fit"]["attempts"]] == [2]
 
 
 def test_p01_text_bundle_splits_when_text_limit_is_too_small(tmp_path: Path) -> None:

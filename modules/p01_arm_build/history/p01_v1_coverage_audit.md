@@ -1,12 +1,14 @@
 # P01 v1.0.0 需求覆盖审计
 
-审计主源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/RCSD_Topo_Poc__P01__REQUIREMENT.md`，文档版本 `v1.0.0`。
+审计主源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/RCSD_Topo_Poc__P01__REQUIREMENT.md`，文档版本 `v1.0.0（2026-05-12 修订版）`。
 
 P01-Final 规则级修正源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/P01_Final_RoadNextRoad_Rule_Model_Discussion.md`。
 
 审计对象：`p01_arm_build` 模块文档、SpecKit、A1 / A2 / P01-Final 实现与测试。
 
 状态取值：已实现 / 部分实现 / 未实现 / 不适用 / 需确认。
+
+2026-05-12 已按当前仓库实现和 accepted baseline，将外部 P01 基准需求文档重写为 Step 1-16 的业务链路结构，并同步纳入路口前 / 路口内提前右转、规则级 P01-Final、三 Case accepted baseline 等已确认口径。
 
 | 序号 | 需求项 | 状态 | 实现 / 测试事实 |
 | --- | --- | --- | --- |

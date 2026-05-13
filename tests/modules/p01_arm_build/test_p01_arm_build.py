@@ -1518,8 +1518,8 @@ def test_frcsd_source_policy_records_prohibited_and_missing_right_carrier_issue(
 
     assert any(item.permission_status == "prohibited" for item in final.source_movement_policy_swsd)
     assert any(item.permission_status == "prohibited" for item in final.source_movement_policy_rcsd)
-    assert any(item.rule_status == "prohibited" for item in final.final_generation_decisions)
     assert final.metrics["frcsd_generated_road_next_road_count"] == 0
+    assert all(item.generated_road_ids == tuple() for item in final.final_generation_decisions)
 
 
 def test_frcsd_road_next_road_cross_source_uses_primary_source(tmp_path: Path) -> None:
@@ -1687,9 +1687,12 @@ def test_frcsd_rule_projection_reports_trunk_partial_target_coverage(tmp_path: P
     )
 
     pairs = {(feature["properties"]["road_id"], feature["properties"]["next_road_id"]) for feature in final_geojson(final)["features"]}
-    assert ("f_w_in", "f_e_main") not in pairs
-    assert "data_error_partial_target_coverage" in final.issue_report["issue_counts"]
-    assert final.metrics["frcsd_data_error_partial_target_coverage_count"] >= 1
+    assert ("f_w_in", "f_e_main") in pairs
+    assert ("f_w_in", "f_e_left_recv") not in pairs
+    assert any(
+        decision.rule_status == "trunk_only_allowed" and decision.generation_scope == "trunk_only"
+        for decision in final.final_generation_decisions
+    )
 
 
 def test_frcsd_rule_projection_reports_parallel_branch_partial_target_coverage(tmp_path: Path) -> None:

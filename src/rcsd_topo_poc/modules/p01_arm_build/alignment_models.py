@@ -40,6 +40,9 @@ class ArmProfile:
     through_decision_summary: dict[str, int]
     geometry_summary: dict[str, Any]
     lineage_summary: dict[str, Any] = field(default_factory=dict)
+    corridor_angle_deg: float | None = None
+    corridor_support_road_ids: tuple[str, ...] = tuple()
+    corridor_status: str = ""
 
 
 @dataclass(frozen=True)

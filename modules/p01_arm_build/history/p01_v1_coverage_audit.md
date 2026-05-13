@@ -16,7 +16,7 @@ P01-Final 规则级修正源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/P01_Fin
 | 2 | 语义路口定义 | 已实现 | `topology.py` 按有效 `mainnodeid` 聚合，无效值退化为单节点；A1 tests 覆盖 semantic junction。 |
 | 3 | Arm 基于拓扑追溯 | 已实现 | `topology.py` 输出 InitialArm / FinalArm / ArmTrace / ThroughDecisionAudit；tests 覆盖 trace 与 kind-aware stop。 |
 | 4 | formway bit7 / bit8 位运算 | 已实现 | `special_roads.py` 解析整数 formway 并使用 bit7 / bit8；tests 覆盖 bit 运算与缺失 / 不可解析 audit。 |
-| 5 | 提前左转 / 提前右转规则 | 已实现 | bit8 road 可进入 Arm member 且排除 trunk；bit7 road 按是否进入当前路口分流，路口内进入者可进入 Arm member / seed 但排除 trunk，路口前不进入者排除 member / seed / connector / trunk 并进入 relation / issue。 |
+| 5 | 提前左转 / 提前右转规则 | 已实现 | bit8 road 可进入 Arm member 且排除 trunk；bit7 road 按路口前 / 路口内分流，路口前不进入 member / seed / connector / trunk 并进入 relation / issue，路口内进入 Arm member / seed 且排除 trunk，不进入 relation。 |
 | 6 | AdvanceRightTurnRelation | 已实现 | `special_roads.py` 输出 relation；`runner.py` 写出 `advance_right_turn_relations.json`；tests 覆盖 resolved / unresolved。 |
 | 7 | trunk_road_ids 与 trunk_status | 已实现 | `trunk.py` 输出 trunk ids、status、reason、non-trunk member；A1 tests 覆盖 complete / partial / none / ambiguous。 |
 | 8 | RoadNextRoad allowed evidence | 已实现 | `road_next_road.py` 归一化 RoadNextRoad；`movement.py` 将其投影为 RoadMovementEvidence；缺失不作为禁止。 |
@@ -28,6 +28,7 @@ P01-Final 规则级修正源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/P01_Fin
 | 14 | ReceivingRoadRole | 已实现 | `movement.py` 输出 `arm_receiving_road_roles.json`，包含 straight / left / advance_left / right / unknown roles。 |
 | 15 | advance-left-only receiving road 排除 trunk | 已实现 | `movement.py` 在 stable straight receiving 非空且 road 未被 straight 接入时排除；tests 覆盖排除和 straight priority。 |
 | 16 | FinalArm fallback validation | 已实现 | `final_arm_validation.py` 对兜底 FinalArm 做 relaxed reverse / supplemental trace validation；`runner.py` 写出 `final_arm_validation.json`；tests 覆盖 not_required / validated / weak_validated / unvalidated / conflict。 |
+| 16a | FinalArm 远端走廊证据 | 已实现 | `corridor.py` 输出 `arm_corridor_evidence.json`；A2 ArmProfile 和 Movement 方向向量消费该证据；review GPKG / PNG 增加 corridor support roads。 |
 | 17 | corrected_final_arms | 已实现 | `runner.py` 写出 `corrected_final_arms.json`；tests 覆盖字段保留与 validation 状态输出。 |
 | 18 | P01-A2 LogicalArmGroup | 已实现 | `alignment.py` 构建 LogicalArmGroup、RawArmAlignment、ArmBuildFeedback；`test_p01_arm_alignment.py` 覆盖 stable/missing/partial/conflict 等场景。 |
 | 19 | F-RCSD:Road.Source | 已实现 | `final_road_next_road.py` 读取并校验 Source；ArmSourceProfile 按 Road 级统计 Source 分布，支持混源 Arm 审计。 |
@@ -36,7 +37,7 @@ P01-Final 规则级修正源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/P01_Fin
 | 22 | 全通投影 | 已实现 | `full_allowed` 生成进入道路角色到目标 Arm 所有退出 Road；tests 覆盖目标 Arm 多退出 Road。 |
 | 23 | 部分目标覆盖异常 | 已实现 | 主干道路 / 平行支路部分目标覆盖输出 `data_error_partial_target_coverage / manual_review_required`，不自动投影；advance-left 和 uturn 特例不误报；tests 覆盖。 |
 | 24 | 平行支路数量一致性 | 已实现 | `parallel_branch_alignment.json` 输出 source_missing、count_matched_ordered、count_mismatch 与 insufficient_geometry 审计；count mismatch 输出 `parallel_branch_count_mismatch_manual_review_required` 与 `data_error`；源有平行支路而 F-RCSD 没有输出 `source_parallel_branch_missing_in_frcsd`。 |
-| 25 | 混源 Arm 规则源选择与 fallback | 已实现 | 混源进入 Arm 按 SWSD 结构匹配、RCSD 结构匹配、SWSD basic rule 兜底选择；参考 RCSD 但目标 Arm 缺失时 fallback 到 SWSD basic rule；tests 覆盖。 |
+| 25 | 混源 Arm 规则源选择与 fallback | 已实现 | 混源进入 Arm 按 SWSD 结构匹配、RCSD 结构匹配、SWSD basic rule 兜底选择；primary source 无可生成规则时可用 alternate source Arm role / corridor ordinal 低置信投影；参考 RCSD 但目标 Arm 缺失时 fallback 到 SWSD basic rule；tests 覆盖。 |
 | 26 | frcsd_road_next_road.geojson | 已实现 | final FeatureCollection 使用 `geometry=null` 与 `id/road_id/next_road_id/type/source/turntype/city_code` properties，包含 duplicate 防护。 |
 | 27 | audit / issue report | 已实现 | 输出 `arm_source_profiles.json`、`source_arm_pass_rules_swsd.json`、`source_arm_pass_rules_rcsd.json`、`final_generation_decisions.json`、`frcsd_source_road_map.json`、兼容 `source_movement_policy_swsd.json` / `source_movement_policy_rcsd.json`、`frcsd_road_next_road_audit.json` 与 `frcsd_road_next_road_issue_report.json`。 |
 

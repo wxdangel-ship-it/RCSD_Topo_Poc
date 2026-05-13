@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from dataclasses import replace
 from typing import Any
 
+from rcsd_topo_poc.modules.p01_arm_build.corridor import build_arm_corridor_evidence
 from rcsd_topo_poc.modules.p01_arm_build.io import normalise_id
 from rcsd_topo_poc.modules.p01_arm_build.final_arm_validation import build_final_arm_validation
 from rcsd_topo_poc.modules.p01_arm_build.models import (
@@ -34,7 +35,9 @@ from rcsd_topo_poc.modules.p01_arm_build.trunk import build_trunk_for_arm
 
 CONTINUE_STATUSES = {"simple_through", "t_mainline_through"}
 RISK_STOP_TYPES = {"ambiguous_boundary", "patch_boundary", "loop_to_current_junction", "unresolved"}
-LOCAL_CANDIDATE_ANGLE_TOLERANCE_DEG = 35.0
+LOCAL_CANDIDATE_SAME_ROLE_BUNDLE_TOLERANCE_DEG = 15.0
+LOCAL_CANDIDATE_SAME_DIRECTION_PAIR_TOLERANCE_DEG = 18.0
+LOCAL_CANDIDATE_OUTBOUND_TO_INBOUND_MAX_GAP_DEG = 80.0
 LOCAL_CANDIDATE_STUB_ANGLE_TOLERANCE_DEG = 25.0
 LOCAL_CANDIDATE_STUB_MAX_HOPS = 1
 THROUGH_MAINLINE_MAX_ANGLE_DEG = 25.0
@@ -1092,6 +1095,178 @@ def _build_final_arms(
     return tuple(final_arms)
 
 
+def _clockwise_delta(start_angle: float, end_angle: float) -> float:
+    return (end_angle - start_angle) % 360.0
+
+
+def _role_seed_bundles(seed_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    bundles: list[dict[str, Any]] = []
+    for item in sorted(seed_items, key=lambda value: (str(value["role"]), float(value["angle"]), str(value["road_id"]))):
+        best_index: int | None = None
+        best_distance = LOCAL_CANDIDATE_SAME_ROLE_BUNDLE_TOLERANCE_DEG + 1.0
+        for index, bundle in enumerate(bundles):
+            if bundle["role"] != item["role"]:
+                continue
+            distance = abs(float(item["angle"]) - float(bundle["mean_angle"]))
+            if distance <= LOCAL_CANDIDATE_SAME_ROLE_BUNDLE_TOLERANCE_DEG and distance < best_distance:
+                best_index = index
+                best_distance = distance
+        if best_index is None:
+            bundles.append({"items": [item], "role": item["role"], "mean_angle": float(item["angle"])})
+        else:
+            bundles[best_index]["items"].append(item)
+            bundles[best_index]["mean_angle"] = _mean_angle([float(seed_item["angle"]) for seed_item in bundles[best_index]["items"]])
+    return bundles
+
+
+def _directional_local_seed_groups(seed_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    bundles = _role_seed_bundles(seed_items)
+    seed_groups: list[dict[str, Any]] = []
+    used_bundle_ids: set[int] = set()
+
+    bidirectional_bundles = [bundle for bundle in bundles if bundle["role"] == "bidirectional"]
+    for bundle in sorted(bidirectional_bundles, key=lambda value: (float(value["mean_angle"]), str(value["items"][0]["road_id"]))):
+        used_bundle_ids.add(id(bundle))
+        seed_groups.append(
+            {
+                "items": list(bundle["items"]),
+                "mean_angle": float(bundle["mean_angle"]),
+                "grouping_reason": "bidirectional_seed_directional_corridor",
+            }
+        )
+
+    outbound_bundles = sorted(
+        [bundle for bundle in bundles if bundle["role"] == "outbound"],
+        key=lambda value: (float(value["mean_angle"]), str(value["items"][0]["road_id"])),
+    )
+    inbound_bundles = sorted(
+        [bundle for bundle in bundles if bundle["role"] == "inbound"],
+        key=lambda value: (float(value["mean_angle"]), str(value["items"][0]["road_id"])),
+    )
+    for outbound in outbound_bundles:
+        if id(outbound) in used_bundle_ids:
+            continue
+        same_direction_candidates = [
+            (float(_angular_distance(float(outbound["mean_angle"]), float(inbound["mean_angle"]))), inbound)
+            for inbound in inbound_bundles
+            if id(inbound) not in used_bundle_ids
+            and _angular_distance(float(outbound["mean_angle"]), float(inbound["mean_angle"])) <= LOCAL_CANDIDATE_SAME_DIRECTION_PAIR_TOLERANCE_DEG
+        ]
+        if not same_direction_candidates:
+            continue
+        selected_inbound = min(same_direction_candidates, key=lambda item: (item[0], str(item[1]["items"][0]["road_id"])))[1]
+        items = list(outbound["items"]) + list(selected_inbound["items"])
+        used_bundle_ids.add(id(outbound))
+        used_bundle_ids.add(id(selected_inbound))
+        seed_groups.append(
+            {
+                "items": items,
+                "mean_angle": _mean_angle([float(item["angle"]) for item in items]),
+                "grouping_reason": "same_direction_inbound_outbound_corridor",
+            }
+        )
+
+    for outbound in outbound_bundles:
+        if id(outbound) in used_bundle_ids:
+            continue
+        out_angle = float(outbound["mean_angle"])
+        next_outbound_delta = min(
+            (
+                _clockwise_delta(out_angle, float(other["mean_angle"]))
+                for other in outbound_bundles
+                if other is not outbound and _clockwise_delta(out_angle, float(other["mean_angle"])) > 0.0
+            ),
+            default=360.0,
+        )
+        inbound_candidates: list[tuple[float, dict[str, Any]]] = []
+        for inbound in inbound_bundles:
+            if id(inbound) in used_bundle_ids:
+                continue
+            delta = _clockwise_delta(out_angle, float(inbound["mean_angle"]))
+            if 0.0 < delta <= LOCAL_CANDIDATE_OUTBOUND_TO_INBOUND_MAX_GAP_DEG and delta < next_outbound_delta:
+                inbound_candidates.append((delta, inbound))
+        selected_inbound = min(inbound_candidates, key=lambda item: (item[0], str(item[1]["items"][0]["road_id"])))[1] if inbound_candidates else None
+        items = list(outbound["items"])
+        reason = "outbound_to_clockwise_inbound_directional_corridor"
+        if selected_inbound is not None:
+            items.extend(selected_inbound["items"])
+            used_bundle_ids.add(id(selected_inbound))
+        else:
+            reason = "outbound_only_directional_corridor"
+        used_bundle_ids.add(id(outbound))
+        seed_groups.append({"items": items, "mean_angle": _mean_angle([float(item["angle"]) for item in items]), "grouping_reason": reason})
+
+    for inbound in inbound_bundles:
+        if id(inbound) in used_bundle_ids:
+            continue
+        used_bundle_ids.add(id(inbound))
+        seed_groups.append(
+            {
+                "items": list(inbound["items"]),
+                "mean_angle": float(inbound["mean_angle"]),
+                "grouping_reason": "inbound_only_directional_corridor",
+            }
+        )
+
+    return _merge_seed_groups_by_initial_arm(seed_items, seed_groups)
+
+
+def _merge_seed_groups_by_initial_arm(seed_items: list[dict[str, Any]], seed_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    group_keys: list[set[str]] = []
+    group_reasons: list[set[str]] = []
+    for group in seed_groups:
+        keys = {
+            str(item.get("initial_arm_id") or f"road:{item['road_id']}")
+            for item in group["items"]
+        }
+        merged_index: int | None = None
+        for index, existing_keys in enumerate(group_keys):
+            if keys & existing_keys:
+                merged_index = index
+                break
+        if merged_index is None:
+            group_keys.append(set(keys))
+            group_reasons.append({str(group.get("grouping_reason", "current_junction_seed_directional_corridor"))})
+        else:
+            group_keys[merged_index].update(keys)
+            group_reasons[merged_index].add(str(group.get("grouping_reason", "current_junction_seed_directional_corridor")))
+
+    changed = True
+    while changed:
+        changed = False
+        for left in range(len(group_keys)):
+            for right in range(left + 1, len(group_keys)):
+                if group_keys[left] & group_keys[right]:
+                    group_keys[left].update(group_keys[right])
+                    group_reasons[left].update(group_reasons[right])
+                    del group_keys[right]
+                    del group_reasons[right]
+                    changed = True
+                    break
+            if changed:
+                break
+
+    item_by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in seed_items:
+        item_by_key[str(item.get("initial_arm_id") or f"road:{item['road_id']}")].append(item)
+
+    groups: list[dict[str, Any]] = []
+    for keys, reasons in zip(group_keys, group_reasons, strict=False):
+        items_by_road: dict[str, dict[str, Any]] = {}
+        for key in keys:
+            for item in item_by_key.get(key, []):
+                items_by_road[str(item["road_id"])] = item
+        items = list(items_by_road.values())
+        groups.append(
+            {
+                "items": items,
+                "mean_angle": _mean_angle([float(item["angle"]) for item in items]),
+                "grouping_reason": "+".join(sorted(reasons)),
+            }
+        )
+    return sorted(groups, key=lambda value: (float(value["mean_angle"]), str(value["items"][0]["road_id"])))
+
+
 def _build_local_arm_candidates(
     *,
     dataset: str,
@@ -1128,26 +1303,13 @@ def _build_local_arm_candidates(
                 "road_id": road.road_id,
                 "role": role,
                 "angle": angle,
+                "initial_arm_id": trace_by_seed[road.road_id].assigned_initial_arm_id if road.road_id in trace_by_seed else None,
                 "node_ids": tuple(sorted(set(node_pair) | set(stub_node_ids))),
                 "stub_road_ids": stub_road_ids,
             }
         )
 
-    groups: list[dict[str, Any]] = []
-    for item in sorted(seed_items, key=lambda value: (float(value["angle"]), str(value["road_id"]))):
-        best_index: int | None = None
-        best_distance = LOCAL_CANDIDATE_ANGLE_TOLERANCE_DEG + 1.0
-        for index, group in enumerate(groups):
-            distance = _angular_distance(float(item["angle"]), float(group["mean_angle"]))
-            if distance <= LOCAL_CANDIDATE_ANGLE_TOLERANCE_DEG and distance < best_distance:
-                best_index = index
-                best_distance = distance
-        if best_index is None:
-            groups.append({"items": [item], "mean_angle": float(item["angle"])})
-        else:
-            groups[best_index]["items"].append(item)
-            angles = [float(seed_item["angle"]) for seed_item in groups[best_index]["items"]]
-            groups[best_index]["mean_angle"] = _mean_angle(angles)
+    groups = _directional_local_seed_groups(seed_items)
 
     candidates: list[LocalArmCandidate] = []
     for index, group in enumerate(sorted(groups, key=lambda value: float(value["mean_angle"])), start=1):
@@ -1194,7 +1356,7 @@ def _build_local_arm_candidates(
                 member_node_ids=node_ids,
                 trend_angle_deg=round(mean_angle, 3),
                 angular_spread_deg=round(_angular_spread(angles, mean_angle), 3),
-                grouping_reason="current_junction_seed_local_trend",
+                grouping_reason=str(group.get("grouping_reason", "current_junction_seed_directional_corridor")),
                 build_status="candidate_unstable" if risk_flags else "candidate",
                 risk_flags=tuple(sorted(risk_flags)),
             )
@@ -1208,6 +1370,7 @@ def _metrics_for(
     initial_arms: tuple[InitialArm, ...],
     final_arms: tuple[FinalArm, ...],
     validation_metrics: dict[str, int],
+    arm_corridor_evidence: tuple[Any, ...],
     advance_right_turn_relation_count: int,
     local_arm_candidates: tuple[LocalArmCandidate, ...],
     traces: tuple[ArmTrace, ...],
@@ -1248,6 +1411,10 @@ def _metrics_for(
         "final_arm_weak_validated_count": validation_metrics.get("final_arm_weak_validated_count", 0),
         "final_arm_unvalidated_count": validation_metrics.get("final_arm_unvalidated_count", 0),
         "final_arm_validation_conflict_count": validation_metrics.get("final_arm_validation_conflict_count", 0),
+        "arm_corridor_evidence_count": len(arm_corridor_evidence),
+        "arm_corridor_extended_count": sum(1 for item in arm_corridor_evidence if item.corridor_status == "extended"),
+        "arm_corridor_seed_only_count": sum(1 for item in arm_corridor_evidence if item.corridor_status == "seed_only"),
+        "arm_corridor_ambiguous_count": sum(1 for item in arm_corridor_evidence if item.corridor_status == "ambiguous"),
         "local_arm_candidate_count": len(local_arm_candidates),
         "local_arm_fragmentation_gap": max(0, len(initial_arms) - len(local_arm_candidates)),
         "stable_arm_count": stable,
@@ -1489,6 +1656,16 @@ def build_dataset_arm_result(
     )
     final_arms = validation_result.final_arms
     issues.extend(validation_result.issues)
+    arm_corridor_evidence = build_arm_corridor_evidence(
+        dataset=loaded.dataset,
+        junction_id=junction_id,
+        current_member_node_ids=member_set,
+        groups=groups,
+        nodes=loaded.nodes,
+        roads=loaded.roads,
+        final_arms=final_arms,
+        local_arm_candidates=local_arm_candidates,
+    )
     for arm in initial_arms:
         for road_id in arm.member_road_ids:
             road = loaded.roads.get(road_id)
@@ -1508,6 +1685,7 @@ def build_dataset_arm_result(
         roads=loaded.roads,
         final_arms=final_arms,
         local_arm_candidates=local_arm_candidates,
+        arm_corridor_evidence=arm_corridor_evidence,
         advance_right_turn_relations=advance_right_turn_relations,
         road_next_road_records=road_next_road_records,
         has_road_next_road_input=has_road_next_road_input,
@@ -1525,6 +1703,7 @@ def build_dataset_arm_result(
         initial_arms=initial_arms,
         final_arms=final_arms,
         validation_metrics=validation_result.metrics,
+        arm_corridor_evidence=arm_corridor_evidence,
         advance_right_turn_relation_count=len(advance_right_turn_relations),
         local_arm_candidates=local_arm_candidates,
         traces=assigned_traces,
@@ -1539,6 +1718,7 @@ def build_dataset_arm_result(
         initial_arms=initial_arms,
         final_arms=final_arms,
         final_arm_validation=validation_result.validations,
+        arm_corridor_evidence=arm_corridor_evidence,
         corrected_final_arms=movement_result.corrected_final_arms,
         advance_right_turn_relations=advance_right_turn_relations,
         road_movement_evidence=movement_result.road_movement_evidence,

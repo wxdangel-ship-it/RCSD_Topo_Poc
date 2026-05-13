@@ -83,6 +83,10 @@ def build_arm_profiles(
     for candidate in artifacts.local_arm_candidates:
         for initial_id in candidate.get("source_initial_arm_ids", []) or []:
             local_by_initial[str(initial_id)].append(candidate)
+    corridor_by_arm = {
+        str(item.get("final_arm_id")): item
+        for item in getattr(artifacts, "arm_corridor_evidence", []) or []
+    }
 
     profiles: list[ArmProfile] = []
     for final in artifacts.final_arms:
@@ -122,6 +126,14 @@ def build_arm_profiles(
             for item in local_candidates
             if item.get("trend_angle_deg") is not None
         ]
+        corridor = corridor_by_arm.get(str(final.get("final_arm_id", "")), {})
+        corridor_angle = (
+            float(corridor["corridor_angle_deg"])
+            if corridor.get("corridor_angle_deg") is not None
+            else None
+        )
+        corridor_support_roads = tuple(str(item) for item in corridor.get("support_road_ids", []) or [])
+        profile_angle = corridor_angle if corridor_angle is not None else (_mean_angle(local_angles) if local_angles else None)
         profiles.append(
             ArmProfile(
                 dataset=dataset,
@@ -144,12 +156,15 @@ def build_arm_profiles(
                 merge_status=str(final.get("merge_status", "unknown")),
                 merge_reason=str(final.get("merge_reason", "")),
                 local_candidate_ids=local_candidate_ids,
-                local_trend_angle_deg=_mean_angle(local_angles) if local_angles else None,
+                local_trend_angle_deg=profile_angle,
                 local_stub_road_ids=local_stub_roads,
+                corridor_angle_deg=corridor_angle,
+                corridor_support_road_ids=corridor_support_roads,
+                corridor_status=str(corridor.get("corridor_status", "")),
                 trace_ids=trace_ids,
                 trace_stop_types=trace_stop_types,
                 through_decision_summary=dict(sorted(decision_summary.items())),
-                geometry_summary=_geometry_summary(member_roads or seed_roads, loaded),
+                geometry_summary=_geometry_summary(corridor_support_roads or member_roads or seed_roads, loaded),
                 lineage_summary={},
             )
         )
@@ -896,7 +911,13 @@ def _coverage_status(group: LogicalArmGroup, dataset: str, match_type: str) -> s
 
 
 def _has_structural_evidence(profile: ArmProfile) -> bool:
-    return bool(profile.member_road_ids or profile.seed_road_ids or profile.trace_ids or profile.local_candidate_ids)
+    return bool(
+        profile.member_road_ids
+        or profile.seed_road_ids
+        or profile.trace_ids
+        or profile.local_candidate_ids
+        or profile.corridor_support_road_ids
+    )
 
 
 def _role_set(profile: ArmProfile) -> set[str]:

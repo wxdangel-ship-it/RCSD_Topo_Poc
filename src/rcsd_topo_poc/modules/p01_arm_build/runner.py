@@ -55,6 +55,10 @@ REVIEW_INDEX_FIELDS = [
     "final_arm_weak_validated_count",
     "final_arm_unvalidated_count",
     "final_arm_validation_conflict_count",
+    "arm_corridor_evidence_count",
+    "arm_corridor_extended_count",
+    "arm_corridor_seed_only_count",
+    "arm_corridor_ambiguous_count",
     "road_movement_evidence_count",
     "road_movement_mapped_count",
     "road_movement_unmapped_count",
@@ -73,6 +77,7 @@ REVIEW_INDEX_FIELDS = [
     "frcsd_same_source_inherited_count",
     "frcsd_cross_source_generated_count",
     "frcsd_fallback_to_swsd_count",
+    "frcsd_alternate_source_projected_count",
     "frcsd_swsd_basic_rule_count",
     "frcsd_rule_projected_count",
     "frcsd_data_error_partial_target_coverage_count",
@@ -247,6 +252,7 @@ def _write_dataset_outputs(
     write_json(dataset_dir / "initial_arms.json", result.initial_arms)
     write_json(dataset_dir / "final_arms.json", result.final_arms)
     write_json(dataset_dir / "final_arm_validation.json", result.final_arm_validation)
+    write_json(dataset_dir / "arm_corridor_evidence.json", result.arm_corridor_evidence)
     write_json(dataset_dir / "corrected_final_arms.json", result.corrected_final_arms)
     write_json(dataset_dir / "advance_right_turn_relations.json", result.advance_right_turn_relations)
     write_json(dataset_dir / "arm_movements.json", result.arm_movements)
@@ -317,6 +323,10 @@ def _summary_payload(
         "final_arm_weak_validated_count": sum(int(row["final_arm_weak_validated_count"]) for row in rows),
         "final_arm_unvalidated_count": sum(int(row["final_arm_unvalidated_count"]) for row in rows),
         "final_arm_validation_conflict_count": sum(int(row["final_arm_validation_conflict_count"]) for row in rows),
+        "arm_corridor_evidence_count": sum(int(row["arm_corridor_evidence_count"]) for row in rows),
+        "arm_corridor_extended_count": sum(int(row["arm_corridor_extended_count"]) for row in rows),
+        "arm_corridor_seed_only_count": sum(int(row["arm_corridor_seed_only_count"]) for row in rows),
+        "arm_corridor_ambiguous_count": sum(int(row["arm_corridor_ambiguous_count"]) for row in rows),
         "road_movement_evidence_count": sum(int(row["road_movement_evidence_count"]) for row in rows),
         "road_movement_mapped_count": sum(int(row["road_movement_mapped_count"]) for row in rows),
         "road_movement_unmapped_count": sum(int(row["road_movement_unmapped_count"]) for row in rows),
@@ -335,6 +345,9 @@ def _summary_payload(
         "frcsd_same_source_inherited_count": sum(int(row.get("frcsd_same_source_inherited_count") or 0) for row in rows),
         "frcsd_cross_source_generated_count": sum(int(row.get("frcsd_cross_source_generated_count") or 0) for row in rows),
         "frcsd_fallback_to_swsd_count": sum(int(row.get("frcsd_fallback_to_swsd_count") or 0) for row in rows),
+        "frcsd_alternate_source_projected_count": sum(
+            int(row.get("frcsd_alternate_source_projected_count") or 0) for row in rows
+        ),
         "frcsd_swsd_basic_rule_count": sum(int(row.get("frcsd_swsd_basic_rule_count") or 0) for row in rows),
         "frcsd_rule_projected_count": sum(int(row.get("frcsd_rule_projected_count") or 0) for row in rows),
         "frcsd_data_error_partial_target_coverage_count": sum(

@@ -18,6 +18,7 @@ A1 使用以下内部构建块：
 - `io.py`：读取 Node / Road、写出 JSON / CSV / GPKG、生成 preflight。
 - `topology.py`：语义路口、seed、trace、through decision、InitialArm / FinalArm。
 - `final_arm_validation.py`：FinalArm 兜底聚合后的 relaxed reverse / supplemental trace validation、validation metrics 与 issue。
+- `corridor.py`：FinalArm 非 member 远端走廊证据，用于 A2 配准、Movement 方向判断和审计图层。
 - `special_roads.py`：`formway` bit7 / bit8、AdvanceRightTurnRelation 与特殊转向 issue。
 - `trunk.py`：trunk road ids、trunk 状态与非 trunk member roads。
 - `road_next_road.py`：SWSD / RCSD / F-RCSD RoadNextRoad 读取与归一化。
@@ -63,16 +64,16 @@ A2 不重新实现 A1，不静默修复 A1 结果。A2 反馈通过 ArmBuildFeed
 ## 6. 文件体量策略
 
 - `topology.py` 不承载 RoadNextRoad、movement 或 final generation 逻辑。
-- RoadNextRoad、movement、special roads、trunk、final generation 分别由独立 helper 承载。
+- RoadNextRoad、movement、special roads、trunk、corridor evidence、final generation 分别由独立 helper 承载。
 - 对 `.py` / `.sh` 写入前执行字节数自检，确保单文件不越过 100 KB。
 
 ## 7. 测试策略
 
 - 静态检查：`py_compile`。
 - 治理扫描：`grade / grade_2` 不进入 P01 主规则；`turnType / turntype` 不进入 `movement_type` 判定函数。
-- A1 synthetic：语义路口、trace、kind-aware through、bit7 / bit8、AdvanceRightTurnRelation、FinalArm validation、trunk、RoadNextRoad-aware movement、ReceivingRoadRole、corrected trunk。
+- A1 synthetic：语义路口、trace、kind-aware through、bit7 / bit8、AdvanceRightTurnRelation、方向性 LocalArmCandidate fallback、FinalArm validation、ArmCorridorEvidence、trunk、RoadNextRoad-aware movement、ReceivingRoadRole、corrected trunk。
 - A2 synthetic：stable、source_missing、source_partial、over_split、over_merged、conflict / uncertain、多 group。
-- P01-Final synthetic：规则级 full_allowed 投影到全部目标退出 Road、主干 / 平行支路部分覆盖报错、advance-left 与 uturn 特例、混源规则源选择、RCSD 目标 Arm 缺失 fallback、精确源 Road 匹配缺失仍可规则生成、Source + CRS-normalized rounded exact mapping 审计、missing / ambiguous mapping、parallel_branch alignment、right-turn carrier issue、final GeoJSON schema、duplicate 防护。
+- P01-Final synthetic：规则级 full_allowed 投影到全部目标退出 Road、主干目标 trunk 完整覆盖时的 trunk_only 投影、主干 / 平行支路无法解释的部分覆盖报错、advance-left 与 uturn 特例、混源规则源选择、alternate source role / corridor ordinal 低置信投影、RCSD 目标 Arm 缺失 fallback、精确源 Road 匹配缺失仍可规则生成、Source + CRS-normalized rounded exact mapping 审计、missing / ambiguous mapping、parallel_branch alignment、right-turn carrier issue、final GeoJSON schema、duplicate 防护。
 - 输出检查：JSON / GeoJSON / PNG / GPKG / summary / review index / audit / issue report。
 
 ## 8. 真实 case QA

@@ -9,6 +9,7 @@ from shapely.geometry import LineString
 
 from rcsd_topo_poc.modules.p01_arm_build.models import (
     AdvanceRightTurnRelation,
+    ArmCorridorEvidence,
     ArmMovement,
     ArmReceivingRoadRole,
     CorrectedFinalArm,
@@ -223,9 +224,17 @@ def _arm_vectors(
     final_arms: tuple[FinalArm, ...],
     local_candidates: tuple[LocalArmCandidate, ...],
     roads: dict[str, RoadRecord],
+    arm_corridor_evidence: tuple[ArmCorridorEvidence, ...] = tuple(),
 ) -> dict[str, tuple[float, float]]:
     vectors: dict[str, tuple[float, float]] = {}
+    corridor_by_arm = {item.final_arm_id: item for item in arm_corridor_evidence}
     for arm in final_arms:
+        corridor = corridor_by_arm.get(arm.final_arm_id)
+        if corridor and corridor.corridor_angle_deg is not None:
+            vector = _angle_to_vector(float(corridor.corridor_angle_deg))
+            if vector:
+                vectors[arm.final_arm_id] = vector
+                continue
         source_initials = set(arm.source_initial_arm_ids)
         candidate_vectors = [
             _angle_to_vector(candidate.trend_angle_deg)
@@ -345,6 +354,7 @@ def _build_arm_movements(
     junction_id: str,
     final_arms: tuple[FinalArm, ...],
     local_candidates: tuple[LocalArmCandidate, ...],
+    arm_corridor_evidence: tuple[ArmCorridorEvidence, ...],
     roads: dict[str, RoadRecord],
     evidence: tuple[RoadMovementEvidence, ...],
     advance_right_turn_relations: tuple[AdvanceRightTurnRelation, ...],
@@ -354,7 +364,12 @@ def _build_arm_movements(
     for item in evidence:
         if item.mapping_status == "mapped" and item.from_arm_id and item.to_arm_id:
             evidence_by_pair[(item.from_arm_id, item.to_arm_id)].append(item)
-    vectors = _arm_vectors(final_arms=final_arms, local_candidates=local_candidates, roads=roads)
+    vectors = _arm_vectors(
+        final_arms=final_arms,
+        local_candidates=local_candidates,
+        arm_corridor_evidence=arm_corridor_evidence,
+        roads=roads,
+    )
     arm_by_id = {arm.final_arm_id: arm for arm in final_arms}
     straight_targets = _straight_targets(final_arms, vectors, evidence_by_pair, arm_by_id)
     movements: list[ArmMovement] = []
@@ -604,6 +619,7 @@ def build_movement_outputs(
     advance_right_turn_relations: tuple[AdvanceRightTurnRelation, ...],
     road_next_road_records: tuple[RawRoadNextRoad, ...],
     has_road_next_road_input: bool,
+    arm_corridor_evidence: tuple[ArmCorridorEvidence, ...] = tuple(),
 ) -> MovementBuildResult:
     evidence, mapping_issues = _map_raw_evidence(
         dataset=dataset,
@@ -616,6 +632,7 @@ def build_movement_outputs(
         junction_id=junction_id,
         final_arms=final_arms,
         local_candidates=local_arm_candidates,
+        arm_corridor_evidence=arm_corridor_evidence,
         roads=roads,
         evidence=evidence,
         advance_right_turn_relations=advance_right_turn_relations,

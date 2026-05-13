@@ -46,7 +46,7 @@ from rcsd_topo_poc.modules.p01_arm_build.alignment_runner import run_p01_arm_ali
 可选参数：
 
 - `--run-id`
-- `--right-turn-formway-value`：legacy 显式右转 / 渠化右转排除兼容参数；不进入当前路口的 bit7 提前右转优先进入 `AdvanceRightTurnRelation` 或 issue。
+- `--right-turn-formway-value`：legacy 显式右转 / 渠化右转排除兼容参数；不定义 bit7 提前右转。bit7 必须按 formway 位运算识别，且不得被静默写入 `excluded_right_turn_road_ids`。
 - `--swsd-road-next-road`：SWSD `RoadNextRoad.json` / `RoadNodeRoad.json` / GeoJSON。
 - `--rcsd-road-next-road`：RCSD `RoadNextRoad.geojson` / JSON。
 - `--frcsd-road-next-road`：F-RCSD RoadNextRoad JSON / GeoJSON；仅用于 A1 同源 movement evidence 审计，P01-Final 仍生成新的 `frcsd_road_next_road.geojson`。
@@ -76,6 +76,7 @@ A2 从 A1 `preflight.json` 读取原始数据路径，从 `cases/<group>/<datase
 - `initial_arms.json`
 - `final_arms.json`
 - `final_arm_validation.json`
+- `arm_corridor_evidence.json`
 - `corrected_final_arms.json`
 - `advance_right_turn_relations.json`
 - `local_arm_candidates.json`
@@ -104,6 +105,7 @@ run root 输出：
 - `JunctionContext`：member nodes、internal roads、seed roads、excluded right-turn roads、advance left/right roads、formway audit 与 input issue flags。
 - `InitialArm / FinalArm / corrected_final_arms`：member roads、seed/connector roads、inbound/outbound/bidirectional roads、terminal、build status、risk flags、advance-left fields、trunk fields、advance-right relation refs、FinalArm validation refs。
 - `FinalArmValidation`：兜底 FinalArm 的 relaxed reverse / supplemental trace validation 状态、收敛状态、relaxed trace road/node evidence、terminal、confidence、risk 与 issue flags。
+- `ArmCorridorEvidence`：FinalArm 的非 member 远端走廊证据，包含 support roads/nodes、corridor angle、terminal、status 与 risk flags；只供 A2 配准、Movement 方向判断和 review 使用，不改变 Arm member、seed、connector 或 trunk。
 - `AdvanceRightTurnRelation`：from/to arm、advance right turn roads、trace roads/nodes、trace status、confidence、risk flags。
 - `ArmTrace / ThroughDecisionAudit`：seed、trace path、decision status、stop type/reason、issue flags。
 - `RoadMovementEvidence / ArmMovement / ReceivingRoadRole / TrunkCorrection`：RoadNextRoad mapping、full from_arm x to_arm movements、movement type audit、receiving roles、corrected trunk reason。
@@ -114,13 +116,14 @@ run root 输出：
 - internal road 两端均在当前 member nodes 内，不进入 Arm。
 - seed road 一端在当前语义路口、一端在外部。
 - `formway` bit 识别必须使用位运算：`bit7 = 128` 为提前右转，`bit8 = 256` 为提前左转。
-- bit7 road 分两类：进入当前语义路口的路口内提前右转进入 Arm `member / seed`，但不得进入 `trunk_road_ids`；不进入当前语义路口的路口前提前右转不得进入 Arm `member / seed / connector / trunk`，必须进入 `AdvanceRightTurnRelation` 或 issue。
+- bit7 road 分为两类：路口前提前右转不进入当前语义路口，不进入 Arm `member / seed / connector / trunk`，必须进入 `AdvanceRightTurnRelation` 或 issue；路口内提前右转按 `direction` 进入当前语义路口，进入 Arm `member / seed`，不进入 `trunk_road_ids`，不进入 `AdvanceRightTurnRelation`。
 - bit8 road 可进入 Arm member，但不得进入 `trunk_road_ids`。
 - trace 发生在语义路口层面；允许继续追溯的状态只有 `simple_through` 与 `t_mainline_through`。
 - `kind != 4` 原则继续追溯；`kind = 2048` 作为明确 T 型路口按当前追溯方向裁决；`kind = 4` 先评估 T 型特征再决定停止或继续。
-- `FinalArm` 默认与 `InitialArm` 一一对应；trace 过度切碎且 `LocalArmCandidate` 完整覆盖时可采用局部趋势兜底聚合。
+- `FinalArm` 默认与 `InitialArm` 一一对应；trace 过度切碎且 `LocalArmCandidate` 完整覆盖时可采用方向性 seed corridor 兜底聚合。该聚合必须同时考虑 seed 进入 / 退出角色、局部趋势、同向 inbound/outbound 配对、顺时针 outbound->inbound 成对关系，以及 source InitialArm 唯一覆盖，避免同一 InitialArm 被多个 FinalArm 复用。
 - `FinalArmValidation` 是 A1 内部健壮性验证，不是新阶段，也不是 A2 / P01-Final。它只对 `local_candidate_fallback` 或多 source InitialArm 的 FinalArm 做放宽终止条件的反向 / 补充追溯验证，不覆盖原始 InitialArm、ArmTrace 或 ThroughDecisionAudit。
 - `FinalArmValidation.validation_status` 支持 `not_required / validated / weak_validated / unvalidated / conflict`。`conflict` 触发 P0，`weak_validated / unvalidated` 至少触发 P1，并在下游 audit 中保留 validation risk。
+- `ArmCorridorEvidence` 在 FinalArm 形成后生成，沿 seed 外侧同向、非 bit7 拓扑 continuation 记录较长走廊支持证据。它不是 Arm 成员扩张，不覆盖原始 trace 终止事实。
 - `trunk_status` 至少支持 `complete_min_loop / partial / none / ambiguous`。
 
 ## 6. RoadNextRoad-aware ArmMovement
@@ -135,7 +138,7 @@ RoadNextRoad 表达 `road_id -> next_road_id` 的允许通行 evidence。
 
 `raw_turn_type` 只保存 `turnType / turntype` 审计字段，不得用于 `movement_type` 判定。
 
-`movement_type` 支持 `straight / left / right / uturn / unknown`，按 same-arm、唯一稳定 straight target、trunk / LocalArmCandidate 走廊连续性、RoadNextRoad trunk evidence 与相对侧向关系判定。T 型可作为语义结构参与判断；Y-like / skew-like / diverge-like / merge-like / curved-mainline-like 只能作为后验审计标签。
+`movement_type` 支持 `straight / left / right / uturn / unknown`，按 same-arm、唯一稳定 straight target、trunk / ArmCorridorEvidence / LocalArmCandidate 走廊连续性、RoadNextRoad trunk evidence 与相对侧向关系判定。T 型可作为语义结构参与判断；Y-like / skew-like / diverge-like / merge-like / curved-mainline-like 只能作为后验审计标签。
 
 trunk 修正只使用 stable straight receiving evidence：`movement_type = straight`、`straight_target_status = unique_straight_target`、confidence high/stable 且 RoadNextRoad 成功映射到目标 Arm 退出道路。无 stable straight receiving evidence 时不得排除 trunk。
 
@@ -224,10 +227,11 @@ P01-Final 规则：
 - Source + CRS 归一化后的 rounded exact geometry 只作为审计强证据；不得使用空间接近或最近邻替代。
 - 当前 F-RCSD 未提供可作为权威来源映射的 source road id 字段；`baseroadid` 在已验证 case 中为空，不作为来源映射依据。
 - `full_allowed` 的生成范围是进入道路角色到目标 Arm 全部退出 Road，不是只生成到目标主干 Road。
-- 主干道路 / 平行支路若只覆盖部分目标退出 Road，必须进入 `data_error_partial_target_coverage / manual_review_required`，不得作为正常 partial 规则投影。
+- 主干道路 / 平行支路若只覆盖部分目标退出 Road，默认进入 `data_error_partial_target_coverage / manual_review_required`；但主干 evidence 完整覆盖目标 trunk road 且仅未覆盖其它退出支路时，输出 `trunk_only_allowed`，只投影到目标 trunk。
 - advance-left left-receiving only、advance-left trunk only 与 uturn trunk only 是合法特殊范围，不按 partial coverage error 处理。
 - 完全同源进入 Arm 优先采用对应源规则；混源进入 Arm 先匹配 SWSD 结构，其次 RCSD 结构，均不吻合时使用 SWSD basic rule 并记录低置信审计。
 - 参考 RCSD 但 RCSD 目标 Arm 缺失时，fallback 到 SWSD basic rule；SWSD basic 也无法支撑时不生成并进入人工审计。
+- primary source 没有可生成规则时，允许使用 alternate source 的 Arm role / corridor ordinal 证据进行低置信投影，输出 `alternate_source_role_ordinal_projection`，并保留 primary source rule 不可用、alternate source 与 corridor ordinal 审计标记。
 - 平行支路数量不一致进入 `data_error / manual_review_required`；source 有平行支路而 F-RCSD 没有时以主路逻辑为主，并写入 `source_parallel_branch_missing_in_frcsd` 审计。
 - trunk -> right Arm 不通且没有 parallel_branch、路口内提前右转 Arm member 或 advance_right relation 承载时，输出 `data_error_or_missing_right_turn_carrier`。
 - `source_movement_policy_swsd.json` / `source_movement_policy_rcsd.json` 保留为兼容审计对象，不得作为唯一生成前提。

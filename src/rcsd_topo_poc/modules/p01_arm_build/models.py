@@ -227,6 +227,22 @@ class FinalArmValidation:
 
 
 @dataclass(frozen=True)
+class ArmCorridorEvidence:
+    dataset: str
+    current_junction_id: str
+    final_arm_id: str
+    source_seed_road_ids: tuple[str, ...]
+    support_road_ids: tuple[str, ...]
+    support_node_ids: tuple[str, ...]
+    corridor_terminal_junction_id: str | None
+    corridor_terminal_type: str
+    corridor_angle_deg: float | None
+    corridor_length: float
+    corridor_status: str
+    risk_flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class AdvanceRightTurnRelation:
     relation_id: str
     dataset: str
@@ -349,6 +365,7 @@ class DatasetBuildResult:
     initial_arms: tuple[InitialArm, ...]
     final_arms: tuple[FinalArm, ...]
     final_arm_validation: tuple[FinalArmValidation, ...]
+    arm_corridor_evidence: tuple[ArmCorridorEvidence, ...]
     corrected_final_arms: tuple[CorrectedFinalArm, ...]
     advance_right_turn_relations: tuple[AdvanceRightTurnRelation, ...]
     road_movement_evidence: tuple[RoadMovementEvidence, ...]

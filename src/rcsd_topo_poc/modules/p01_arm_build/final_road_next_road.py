@@ -27,6 +27,7 @@ SOURCE_TO_DATASET = {"1": "RCSD", "2": "SWSD"}
 DATASET_TO_SOURCE = {"RCSD": "1", "SWSD": "2"}
 MOVEMENT_TURNTYPE = {"unknown": "0", "straight": "1", "left": "2", "right": "3", "uturn": "4"}
 SOURCE_GEOMETRY_MATCH_DECIMALS = 7
+GENERATABLE_RULE_STATUSES = {"full_allowed", "trunk_only_allowed", "left_receiving_only_allowed"}
 
 
 @dataclass(frozen=True)
@@ -491,6 +492,44 @@ def _arm_structure_signature(result: DatasetBuildResult, roles: dict[str, RoadRo
     )
 
 
+def _corridor_angle_by_arm(result: DatasetBuildResult) -> dict[str, float]:
+    return {
+        item.final_arm_id: float(item.corridor_angle_deg)
+        for item in result.arm_corridor_evidence
+        if item.corridor_angle_deg is not None
+    }
+
+
+def _angle_delta(a: float, b: float) -> float:
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def _corridor_ordinal_matched_arm(
+    *,
+    f_arm_id: str,
+    source_dataset: str,
+    result_by_dataset: dict[str, DatasetBuildResult],
+) -> str | None:
+    f_arms = tuple(sorted(arm.final_arm_id for arm in result_by_dataset["FRCSD"].final_arms))
+    source_arms = tuple(sorted(arm.final_arm_id for arm in result_by_dataset[source_dataset].final_arms))
+    if len(f_arms) != len(source_arms) or len(f_arms) < 2:
+        return None
+    f_angles = _corridor_angle_by_arm(result_by_dataset["FRCSD"])
+    source_angles = _corridor_angle_by_arm(result_by_dataset[source_dataset])
+    if any(arm_id not in f_angles for arm_id in f_arms) or any(arm_id not in source_angles for arm_id in source_arms):
+        return None
+    f_order = tuple(sorted(f_arms, key=lambda arm_id: (f_angles[arm_id] % 360.0, arm_id)))
+    source_order = tuple(sorted(source_arms, key=lambda arm_id: (source_angles[arm_id] % 360.0, arm_id)))
+    try:
+        index = f_order.index(f_arm_id)
+    except ValueError:
+        return None
+    candidate = source_order[index]
+    if _angle_delta(f_angles[f_arm_id], source_angles[candidate]) > 55.0:
+        return None
+    return candidate
+
+
 def _arm_source_profiles(
     *,
     loaded_frcsd: LoadedDataset,
@@ -602,6 +641,9 @@ def _source_arm_pass_rules(
             elif covered == target_exit_ids:
                 rule_status = "full_allowed"
                 generation_scope = "all_target_exit_roads"
+            elif from_road_role == "trunk" and target_trunk_ids and covered == target_trunk_ids:
+                rule_status = "trunk_only_allowed"
+                generation_scope = "trunk_only"
             elif movement.movement_type == "uturn" and from_road_role == "trunk" and target_trunk_ids and covered == target_trunk_ids:
                 rule_status = "trunk_only_allowed"
                 generation_scope = "trunk_only"
@@ -717,6 +759,13 @@ def _matched_source_arm(
     )
     if structure_match:
         return structure_match, "structure_matched"
+    corridor_match = _corridor_ordinal_matched_arm(
+        f_arm_id=f_arm_id,
+        source_dataset=source_dataset,
+        result_by_dataset=result_by_dataset,
+    )
+    if corridor_match:
+        return corridor_match, "corridor_ordinal_matched"
     return None, "source_arm_unmatched"
 
 
@@ -1121,20 +1170,50 @@ def build_frcsd_road_next_road(
         generation_rule = "structure_matched_source_rule"
         if reference_reason in {"single_source_rcsd", "single_source_swsd"}:
             generation_rule = "same_source_inherited"
+        primary_rule: SourceArmPassRule | None = None
         if source_from_arm and source_to_arm:
-            rule = rule_indexes[reference_source].get((source_from_arm, source_to_arm, movement.movement_type, from_road_role))
-            if rule:
-                return rule, effective_source, generation_rule, tuple()
+            primary_rule = rule_indexes[reference_source].get((source_from_arm, source_to_arm, movement.movement_type, from_road_role))
+            if primary_rule and primary_rule.rule_status in GENERATABLE_RULE_STATUSES:
+                return primary_rule, effective_source, generation_rule, tuple()
+            if primary_rule:
+                issues.append(f"{reference_source.lower()}_primary_source_rule_{primary_rule.rule_status}")
+
         if reference_source == "RCSD" and source_from_arm and not source_to_arm:
             issues.extend(("rcsd_target_arm_missing", "fallback_to_swsd_basic_rule"))
             fallback = basic_swsd_rule(movement, from_road_role)
             if fallback:
                 return fallback, "SWSD", "rcsd_to_swsd_fallback", tuple(sorted(set(issues)))
+        alternate_source = "RCSD" if reference_source == "SWSD" else "SWSD"
+        alternate_from_arm, alternate_from_reason = source_arm_matches[movement.from_arm_id][alternate_source]
+        alternate_to_arm, alternate_to_reason = source_arm_matches[movement.to_arm_id][alternate_source]
+        if alternate_from_arm and alternate_to_arm:
+            alternate_rule = rule_indexes[alternate_source].get(
+                (alternate_from_arm, alternate_to_arm, movement.movement_type, from_road_role)
+            )
+            if alternate_rule and alternate_rule.rule_status in GENERATABLE_RULE_STATUSES:
+                alternate_issues = set(issues)
+                alternate_issues.add("alternate_source_role_ordinal_projection")
+                if "corridor_ordinal_matched" in {alternate_from_reason, alternate_to_reason}:
+                    alternate_issues.add("corridor_ordinal_source_arm_projection")
+                if not source_from_arm:
+                    alternate_issues.add(f"{reference_source.lower()}_from_arm_unmatched")
+                if not source_to_arm:
+                    alternate_issues.add(f"{reference_source.lower()}_to_arm_unmatched")
+                if not issues:
+                    alternate_issues.add(f"{reference_source.lower()}_source_rule_unavailable")
+                return (
+                    alternate_rule,
+                    alternate_source,
+                    "alternate_source_role_ordinal_projection",
+                    tuple(sorted(alternate_issues)),
+                )
         if reference_reason == "mixed_source_swsd_basic_rule_fallback" or not source_from_arm or not source_to_arm:
             issues.append("low_confidence_swsd_basic_rule")
             fallback = basic_swsd_rule(movement, from_road_role)
             if fallback:
                 return fallback, "SWSD", "swsd_basic_rule", tuple(sorted(set(issues)))
+        if primary_rule:
+            return primary_rule, effective_source, generation_rule, tuple(sorted(set(issues)))
         issues.append(f"{reference_source.lower()}_source_arm_rule_missing")
         if not source_from_arm:
             issues.append(f"{reference_source.lower()}_from_arm_unmatched")
@@ -1269,7 +1348,15 @@ def build_frcsd_road_next_road(
                                 generation_rule=pair_rule,
                                 permission_status="allowed",
                                 evidence_ids=evidence_ids,
-                                confidence="high" if source_match_status == "matched,matched" else ("low" if generation_rule == "swsd_basic_rule" else "medium"),
+                                confidence=(
+                                    "high"
+                                    if source_match_status == "matched,matched"
+                                    else (
+                                        "low"
+                                        if generation_rule in {"swsd_basic_rule", "alternate_source_role_ordinal_projection"}
+                                        else "medium"
+                                    )
+                                ),
                                 issue_flags=with_validation_issues(movement, issue_flags),
                                 rule_status=rule_status,
                                 generation_scope=generation_scope,
@@ -1329,6 +1416,7 @@ def build_frcsd_road_next_road(
         "frcsd_same_source_inherited_count": audit_counts.get("same_source_inherited", 0),
         "frcsd_cross_source_generated_count": audit_counts.get("cross_source_primary_source_policy", 0),
         "frcsd_fallback_to_swsd_count": audit_counts.get("rcsd_to_swsd_fallback", 0),
+        "frcsd_alternate_source_projected_count": audit_counts.get("alternate_source_role_ordinal_projection", 0),
         "frcsd_swsd_basic_rule_count": audit_counts.get("swsd_basic_rule", 0),
         "frcsd_rule_projected_count": sum(1 for item in audit_rows if item.permission_status == "allowed"),
         "frcsd_data_error_partial_target_coverage_count": rule_status_counts.get("data_error_partial_target_coverage", 0),

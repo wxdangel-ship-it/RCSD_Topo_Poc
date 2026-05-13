@@ -14,6 +14,7 @@ class DatasetA1Artifacts:
     context: dict[str, Any]
     initial_arms: list[dict[str, Any]]
     final_arms: list[dict[str, Any]]
+    arm_corridor_evidence: list[dict[str, Any]]
     local_arm_candidates: list[dict[str, Any]]
     arm_traces: list[dict[str, Any]]
     through_decisions: list[dict[str, Any]]
@@ -73,6 +74,9 @@ def read_a1_run_root(run_root: Path) -> A1RunArtifacts:
                 context=read_json(dataset_dir / "junction_context.json"),
                 initial_arms=read_json(dataset_dir / "initial_arms.json"),
                 final_arms=read_json(dataset_dir / "final_arms.json"),
+                arm_corridor_evidence=read_json(dataset_dir / "arm_corridor_evidence.json")
+                if (dataset_dir / "arm_corridor_evidence.json").exists()
+                else [],
                 local_arm_candidates=read_json(dataset_dir / "local_arm_candidates.json"),
                 arm_traces=read_json(dataset_dir / "arm_traces.json"),
                 through_decisions=read_json(dataset_dir / "through_decisions.json"),

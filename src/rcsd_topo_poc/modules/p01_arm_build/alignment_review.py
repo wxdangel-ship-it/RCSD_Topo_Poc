@@ -135,6 +135,27 @@ def build_alignment_layers(
 
     raw_edges = _alignment_edge_records(result, loaded_by_dataset, selected_only=True)
     candidate_edges = _alignment_edge_records(result, loaded_by_dataset, selected_only=False)
+    corridor_records: list[tuple[BaseGeometry, dict[str, Any]]] = []
+    for dataset, profiles in result.profiles_by_dataset.items():
+        loaded = loaded_by_dataset.get(dataset)
+        if loaded is None:
+            continue
+        for profile in profiles:
+            for road_id in profile.corridor_support_road_ids:
+                road = loaded.roads.get(road_id)
+                if road is not None and road.geometry is not None and not road.geometry.is_empty:
+                    corridor_records.append(
+                        (
+                            road.geometry,
+                            {
+                                "dataset": dataset,
+                                "arm_id": profile.arm_id,
+                                "road_id": road_id,
+                                "corridor_status": profile.corridor_status,
+                                "corridor_angle_deg": profile.corridor_angle_deg,
+                            },
+                        )
+                    )
     source_extra_records = []
     for extra in result.source_extra_arms:
         profile = _profile_by_id(result, extra.dataset, extra.source_arm_id)
@@ -187,6 +208,7 @@ def build_alignment_layers(
 
     return [
         ("logical_arm_groups", "LineString", logical_records),
+        ("arm_corridor_support_roads", "LineString", corridor_records),
         ("raw_alignment_edges", "LineString", raw_edges),
         ("candidate_edges", "LineString", candidate_edges),
         ("source_extra_arms", "LineString", source_extra_records),
@@ -245,7 +267,7 @@ def _profiles_review_geometries(profiles: tuple[ArmProfile, ...], loaded: Loaded
 def _profile_review_road_geometries(profile: ArmProfile, loaded: LoadedDataset | None) -> list[BaseGeometry]:
     if loaded is None:
         return []
-    road_ids = tuple(dict.fromkeys(profile.local_stub_road_ids + profile.seed_road_ids))
+    road_ids = tuple(dict.fromkeys(profile.corridor_support_road_ids + profile.local_stub_road_ids + profile.seed_road_ids))
     if not road_ids:
         road_ids = tuple(profile.member_road_ids[:2])
     geometries = []

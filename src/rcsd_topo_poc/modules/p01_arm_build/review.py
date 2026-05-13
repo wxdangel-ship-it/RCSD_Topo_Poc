@@ -16,6 +16,7 @@ EXCLUDED_RED = (210, 45, 45, 255)
 ADVANCE_LEFT_PURPLE = (126, 63, 178, 255)
 ADVANCE_RIGHT_MAGENTA = (214, 39, 135, 255)
 TRUNK_DARK = (25, 25, 25, 255)
+CORRIDOR_CYAN = (38, 146, 170, 255)
 NODE_BLUE = (35, 95, 190, 255)
 TEXT = (20, 20, 20, 255)
 ARM_COLORS = [
@@ -148,6 +149,7 @@ def _draw_dataset_panel(
     advance_left_ids = set(result.context.advance_left_turn_road_ids)
     advance_right_ids = set(result.context.advance_right_turn_road_ids)
     trunk_ids = {road_id for arm in result.initial_arms for road_id in arm.trunk_road_ids}
+    corridor_ids = {road_id for evidence in result.arm_corridor_evidence for road_id in evidence.support_road_ids}
     corrected_trunk_ids = {road_id for correction in result.trunk_corrections for road_id in correction.corrected_trunk_road_ids}
     movement_excluded_ids = {
         road_id for correction in result.trunk_corrections for road_id in correction.movement_excluded_receiving_road_ids
@@ -181,6 +183,9 @@ def _draw_dataset_panel(
         elif road.road_id in arm_colors:
             color = arm_colors[road.road_id]
             width_px = 4
+        elif road.road_id in corridor_ids:
+            color = CORRIDOR_CYAN
+            width_px = 3
         _draw_line(draw, road.geometry, project, fill=color, width=width_px)
 
     for node_id in sorted(node_ids & member_nodes):
@@ -456,6 +461,26 @@ def build_dataset_review_layers(
                         },
                     )
                 )
+    arm_corridor_support_roads = []
+    for evidence in result.arm_corridor_evidence:
+        for road_id in evidence.support_road_ids:
+            road = loaded.roads.get(road_id)
+            if road:
+                arm_corridor_support_roads.append(
+                    (
+                        road.geometry,
+                        {
+                            "dataset": result.dataset,
+                            "junction_id": result.junction_id,
+                            "final_arm_id": evidence.final_arm_id,
+                            "road_id": road_id,
+                            "corridor_status": evidence.corridor_status,
+                            "corridor_angle_deg": evidence.corridor_angle_deg,
+                            "terminal_junction_id": evidence.corridor_terminal_junction_id or "",
+                            "risk_flags": ",".join(evidence.risk_flags),
+                        },
+                    )
+                )
     traces = []
     for trace in result.traces:
         for road_id in trace.traced_road_ids:
@@ -709,6 +734,7 @@ def build_dataset_review_layers(
         ("arm_roads", "LineString", arm_roads),
         ("arm_trunk_roads", "LineString", arm_trunk_roads),
         ("local_arm_candidate_roads", "LineString", local_candidate_roads),
+        ("arm_corridor_support_roads", "LineString", arm_corridor_support_roads),
         ("arm_traces", "LineString", traces),
         ("terminal_nodes", "Point", terminal_nodes),
         ("through_decision_nodes", "Point", decision_nodes),
@@ -735,6 +761,7 @@ def build_compare_layers(
     result_by_dataset: dict[str, DatasetBuildResult],
 ) -> list[tuple[str, str, list[tuple[BaseGeometry, dict[str, Any]]]]]:
     records: list[tuple[BaseGeometry, dict[str, Any]]] = []
+    corridor_records: list[tuple[BaseGeometry, dict[str, Any]]] = []
     for dataset, result in result_by_dataset.items():
         loaded = loaded_by_dataset[dataset]
         for arm in result.initial_arms:
@@ -742,4 +769,19 @@ def build_compare_layers(
                 road = loaded.roads.get(road_id)
                 if road:
                     records.append((road.geometry, {"dataset": dataset, "arm_id": arm.initial_arm_id, "road_id": road_id, "status": arm.build_status}))
-    return [("compare_arm_roads", "LineString", records)]
+        for evidence in result.arm_corridor_evidence:
+            for road_id in evidence.support_road_ids:
+                road = loaded.roads.get(road_id)
+                if road:
+                    corridor_records.append(
+                        (
+                            road.geometry,
+                            {
+                                "dataset": dataset,
+                                "final_arm_id": evidence.final_arm_id,
+                                "road_id": road_id,
+                                "corridor_status": evidence.corridor_status,
+                            },
+                        )
+                    )
+    return [("compare_arm_roads", "LineString", records), ("compare_arm_corridor_support_roads", "LineString", corridor_records)]

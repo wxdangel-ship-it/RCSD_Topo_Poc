@@ -17,10 +17,12 @@
 - [x] kind-aware through / stop 判断。
 - [x] `formway` bit7 / bit8 位运算识别。
 - [x] 提前左转 road 标记并排除出 trunk。
-- [x] 提前右转 road 按是否进入当前路口分流：路口内进入者进入 Arm member / seed 但排除 trunk；路口前不进入者排除出 Arm 并进入 relation / issue。
+- [x] 提前右转 road 按路口前 / 路口内分流：路口前不进入普通 Arm member / seed / connector / trunk，进入 AdvanceRightTurnRelation 或 issue；路口内进入 Arm member / seed，排除出 trunk。
 - [x] `AdvanceRightTurnRelation` 输出与 issue 审计。
 - [x] InitialArm / FinalArm / LocalArmCandidate / ArmTrace / ThroughDecisionAudit / IssueReport 输出。
+- [x] LocalArmCandidate 使用方向性 seed corridor 兜底分组，综合进入 / 退出角色、局部趋势和远端道路一致性，避免 InitialArm 复用。
 - [x] FinalArm fallback validation 输出 `final_arm_validation.json`，并将 validation 状态写入 FinalArm / corrected_final_arms / summary / review index。
+- [x] FinalArm 输出 `arm_corridor_evidence.json`，以非 member 远端走廊证据增强 A2 配准和 Movement 方向判断。
 - [x] trunk_road_ids / trunk_status / trunk_reason 输出。
 - [x] RoadNextRoad 读取与归一化。
 - [x] RoadMovementEvidence 映射与 issue 审计。
@@ -52,9 +54,10 @@
 - [x] missing / ambiguous source geometry mapping issue。
 - [x] SWSD / RCSD SourceMovementPolicy 兼容审计。
 - [x] 规则级 full_allowed 生成到目标 Arm 所有退出 Road。
-- [x] 主干 / 平行支路部分目标覆盖报错。
+- [x] 主干目标 trunk 完整覆盖时 trunk_only 投影；其它无法解释的主干 / 平行支路部分目标覆盖报错。
 - [x] advance-left / uturn 特殊合法范围。
 - [x] 混源 Arm SWSD 优先、RCSD 次之、SWSD basic rule 兜底。
+- [x] primary source 无可生成规则时 alternate source role / corridor ordinal 低置信投影。
 - [x] RCSD 目标 Arm 缺失时 SWSD basic fallback。
 - [x] 精确源 Road 匹配缺失仍可规则生成。
 - [x] entering arm road count mismatch manual review。

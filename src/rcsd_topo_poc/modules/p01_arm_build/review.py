@@ -577,8 +577,10 @@ def build_dataset_review_layers(
             )
     road_movement_evidence = []
     for evidence in result.road_movement_evidence:
-        from_point = road_centroids.get(evidence.road_id)
-        to_point = road_centroids.get(evidence.next_road_id)
+        from_road = loaded.roads.get(evidence.road_id)
+        to_road = loaded.roads.get(evidence.next_road_id)
+        from_point = from_road.geometry.centroid if from_road else None
+        to_point = to_road.geometry.centroid if to_road else None
         if from_point and to_point:
             road_movement_evidence.append(
                 (

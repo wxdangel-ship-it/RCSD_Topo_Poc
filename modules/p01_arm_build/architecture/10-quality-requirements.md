@@ -36,6 +36,7 @@
 ## 性能
 
 - summary 记录总 group 数、dataset junction 数和运行耗时。
+- 单 Case 使用全量 RoadNextRoad 输入时，完全不相交的 out-of-scope 记录必须只计入 skipped metrics，不得逐条进入 Case issue report。
 - synthetic 多组输入应在本地测试中稳定完成。
 - A2 summary 记录 LogicalArmGroup、candidate、feedback、source_extra 和耗时。
 

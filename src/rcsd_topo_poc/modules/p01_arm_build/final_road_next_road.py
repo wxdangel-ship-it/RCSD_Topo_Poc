@@ -264,13 +264,6 @@ def _road_order_key(road_id: str, roads: dict[str, RoadRecord]) -> tuple[float, 
     return (round(float(point.x), 6), round(float(point.y), 6), road_id)
 
 
-def _raw_pair_index(records: tuple[RawRoadNextRoad, ...]) -> dict[tuple[str, str], tuple[RawRoadNextRoad, ...]]:
-    pairs: dict[tuple[str, str], list[RawRoadNextRoad]] = defaultdict(list)
-    for record in records:
-        pairs[(record.road_id, record.next_road_id)].append(record)
-    return {key: tuple(value) for key, value in pairs.items()}
-
-
 def _movement_by_pair(result: DatasetBuildResult) -> dict[tuple[str, str], ArmMovement]:
     return {(item.from_arm_id, item.to_arm_id): item for item in result.arm_movements}
 
@@ -905,8 +898,10 @@ def _parallel_branch_alignment(
     return tuple(rows)
 
 
-def _raw_by_id(records: tuple[RawRoadNextRoad, ...]) -> dict[str, RawRoadNextRoad]:
-    return {record.raw_id: record for record in records}
+def _raw_by_needed_id(records: tuple[RawRoadNextRoad, ...], needed_ids: set[str]) -> dict[str, RawRoadNextRoad]:
+    if not needed_ids:
+        return {}
+    return {record.raw_id: record for record in records if record.raw_id in needed_ids}
 
 
 def _feature_properties(
@@ -1042,8 +1037,6 @@ def build_frcsd_road_next_road(
         source_map=source_map,
     )
     source_map_by_f = {item.f_road_id: item for item in source_map}
-    raw_pairs = {dataset: _raw_pair_index(road_next_road_by_dataset.get(dataset, tuple())) for dataset in ("SWSD", "RCSD")}
-    raw_by_source = {dataset: _raw_by_id(road_next_road_by_dataset.get(dataset, tuple())) for dataset in ("SWSD", "RCSD")}
     policies = {
         "SWSD": _source_policy(source_dataset="SWSD", result=result_by_dataset["SWSD"], roles=roles["SWSD"]),
         "RCSD": _source_policy(source_dataset="RCSD", result=result_by_dataset["RCSD"], roles=roles["RCSD"]),
@@ -1051,6 +1044,18 @@ def build_frcsd_road_next_road(
     source_arm_pass_rules = {
         "SWSD": _source_arm_pass_rules(source_dataset="SWSD", result=result_by_dataset["SWSD"], roles=roles["SWSD"]),
         "RCSD": _source_arm_pass_rules(source_dataset="RCSD", result=result_by_dataset["RCSD"], roles=roles["RCSD"]),
+    }
+    needed_raw_ids = {
+        dataset: {
+            evidence_id
+            for rule in source_arm_pass_rules[dataset]
+            for evidence_id in rule.source_evidence_ids
+        }
+        for dataset in ("SWSD", "RCSD")
+    }
+    raw_by_source = {
+        dataset: _raw_by_needed_id(road_next_road_by_dataset.get(dataset, tuple()), needed_raw_ids[dataset])
+        for dataset in ("SWSD", "RCSD")
     }
     rule_indexes = {dataset: _rule_index(source_arm_pass_rules[dataset]) for dataset in ("SWSD", "RCSD")}
     policy_indexes = {dataset: _policy_index(policies[dataset]) for dataset in ("SWSD", "RCSD")}

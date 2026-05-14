@@ -128,13 +128,17 @@ def _map_raw_evidence(
     junction_id: str,
     raw_records: tuple[RawRoadNextRoad, ...],
     final_arms: tuple[FinalArm, ...],
-) -> tuple[tuple[RoadMovementEvidence, ...], tuple[dict[str, Any], ...]]:
+) -> tuple[tuple[RoadMovementEvidence, ...], tuple[dict[str, Any], ...], dict[str, int]]:
     from_valid, from_conflicts = _road_mapping(final_arms, mode="from")
     to_valid, to_conflicts = _road_mapping(final_arms, mode="to")
     arm_road_universe = set(from_valid) | set(to_valid) | set(from_conflicts) | set(to_conflicts)
     evidence: list[RoadMovementEvidence] = []
     issues: list[dict[str, Any]] = []
+    skipped_out_of_scope = 0
     for index, raw in enumerate(raw_records, start=1):
+        if raw.road_id not in arm_road_universe and raw.next_road_id not in arm_road_universe:
+            skipped_out_of_scope += 1
+            continue
         issue_flags: list[str] = []
         from_matches = from_valid.get(raw.road_id, tuple())
         to_matches = to_valid.get(raw.next_road_id, tuple())
@@ -183,7 +187,15 @@ def _map_raw_evidence(
                     "next_road_id": raw.next_road_id,
                 }
             )
-    return tuple(evidence), tuple(issues)
+    return (
+        tuple(evidence),
+        tuple(issues),
+        {
+            "road_movement_input_record_count": len(raw_records),
+            "road_movement_case_scoped_record_count": len(evidence),
+            "road_movement_out_of_scope_skipped_count": skipped_out_of_scope,
+        },
+    )
 
 
 def _angle_to_vector(angle_deg: float) -> tuple[float, float]:
@@ -621,7 +633,7 @@ def build_movement_outputs(
     has_road_next_road_input: bool,
     arm_corridor_evidence: tuple[ArmCorridorEvidence, ...] = tuple(),
 ) -> MovementBuildResult:
-    evidence, mapping_issues = _map_raw_evidence(
+    evidence, mapping_issues, filter_metrics = _map_raw_evidence(
         dataset=dataset,
         junction_id=junction_id,
         raw_records=road_next_road_records,
@@ -665,6 +677,7 @@ def build_movement_outputs(
         "corrected_trunk_none_count": corrected_trunk_counts.get("none", 0),
         "corrected_trunk_ambiguous_count": 0,
     }
+    metrics.update(filter_metrics)
     return MovementBuildResult(
         road_movement_evidence=evidence,
         arm_movements=arm_movements,

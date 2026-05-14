@@ -1262,9 +1262,13 @@ def test_road_next_road_movement_excludes_advance_left_only_receiving_trunk(tmp_
     correction = next(item for item in result.trunk_corrections if item.arm_id == to_e)
 
     assert len(result.arm_movements) == len(result.final_arms) * len(result.final_arms)
-    assert result.metrics["road_movement_evidence_count"] == 3
+    assert result.metrics["road_movement_input_record_count"] == 3
+    assert result.metrics["road_movement_case_scoped_record_count"] == 2
+    assert result.metrics["road_movement_out_of_scope_skipped_count"] == 1
+    assert result.metrics["road_movement_evidence_count"] == 2
     assert result.metrics["road_movement_mapped_count"] == 2
-    assert result.metrics["road_movement_unmapped_count"] == 1
+    assert result.metrics["road_movement_unmapped_count"] == 0
+    assert "road_movement_cross_junction_or_out_of_scope" not in result.issue_report.issue_counts
     assert straight.movement_type == "straight"
     assert straight.permission_evidence_status == "allowed_supported"
     assert left.movement_type == "left"

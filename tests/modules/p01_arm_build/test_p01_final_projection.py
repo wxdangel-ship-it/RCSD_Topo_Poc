@@ -52,3 +52,25 @@ def test_frcsd_final_uses_alternate_source_role_ordinal_projection_when_primary_
     assert ("f_w_in", "f_e_main") in pairs
     assert any(item.generation_rule == "alternate_source_role_ordinal_projection" for item in final.audit)
     assert final.metrics["frcsd_alternate_source_projected_count"] >= 1
+
+
+def test_road_next_road_out_of_scope_records_are_skipped_from_case_mapping(tmp_path: Path) -> None:
+    nodes_path, roads_path = _renamed_source_fixture(tmp_path, "s")
+    road_next_road = tmp_path / "large_scope_rnr.json"
+    road_next_road.write_text(
+        json.dumps(
+            [
+                {"id": "case_evidence", "road_id": "s_w_in", "next_road_id": "s_e_main"},
+                {"id": "noise_1", "road_id": "far_road_1", "next_road_id": "far_road_2"},
+                {"id": "noise_2", "road_id": "far_road_3", "next_road_id": "far_road_4"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    records = read_road_next_road(road_next_road)
+    _, result = _build_result("SWSD", nodes_path, roads_path, records)
+
+    assert result.metrics["road_movement_input_record_count"] == 3
+    assert result.metrics["road_movement_case_scoped_record_count"] == 1
+    assert result.metrics["road_movement_out_of_scope_skipped_count"] == 2
+    assert "road_movement_cross_junction_or_out_of_scope" not in result.issue_report.issue_counts

@@ -135,6 +135,7 @@ RoadNextRoad 表达 `road_id -> next_road_id` 的允许通行 evidence。
 - RoadNextRoad 存在：`allowed_supported`
 - RoadNextRoad 缺失：`no_allowed_evidence`
 - `no_allowed_evidence` 不等于 prohibited。
+- 对单 Case 运行，RoadNextRoad 先按当前 Case Arm road universe 过滤；`road_id / next_road_id` 均不命中当前 Case 的记录作为 out-of-scope 跳过，只进入 metrics，不逐条写入 `RoadMovementEvidence` 或 issue。
 
 `raw_turn_type` 只保存 `turnType / turntype` 审计字段，不得用于 `movement_type` 判定。
 

@@ -92,6 +92,8 @@ ArmMovement 是同源 `from_arm -> to_arm` 的客观动作候选，按全量 `fr
 
 RoadNextRoad 缺失在 A1 阶段不表示禁止。
 
+单 Case 运行时，RoadNextRoad 只对当前 Case Arm road universe 相交记录执行 mapping；完全不相交的全量记录记入 `road_movement_out_of_scope_skipped_count`，不逐条写入 evidence 或 issue，避免全量 RoadNextRoad 污染 Case 审计。
+
 `movement_type` 支持 `straight / left / right / uturn / unknown`。判定优先级：
 
 1. `from_arm_id == to_arm_id` -> `uturn`

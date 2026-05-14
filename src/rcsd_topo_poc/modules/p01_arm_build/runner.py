@@ -59,6 +59,9 @@ REVIEW_INDEX_FIELDS = [
     "arm_corridor_extended_count",
     "arm_corridor_seed_only_count",
     "arm_corridor_ambiguous_count",
+    "road_movement_input_record_count",
+    "road_movement_case_scoped_record_count",
+    "road_movement_out_of_scope_skipped_count",
     "road_movement_evidence_count",
     "road_movement_mapped_count",
     "road_movement_unmapped_count",
@@ -327,6 +330,13 @@ def _summary_payload(
         "arm_corridor_extended_count": sum(int(row["arm_corridor_extended_count"]) for row in rows),
         "arm_corridor_seed_only_count": sum(int(row["arm_corridor_seed_only_count"]) for row in rows),
         "arm_corridor_ambiguous_count": sum(int(row["arm_corridor_ambiguous_count"]) for row in rows),
+        "road_movement_input_record_count": sum(int(row.get("road_movement_input_record_count") or 0) for row in rows),
+        "road_movement_case_scoped_record_count": sum(
+            int(row.get("road_movement_case_scoped_record_count") or 0) for row in rows
+        ),
+        "road_movement_out_of_scope_skipped_count": sum(
+            int(row.get("road_movement_out_of_scope_skipped_count") or 0) for row in rows
+        ),
         "road_movement_evidence_count": sum(int(row["road_movement_evidence_count"]) for row in rows),
         "road_movement_mapped_count": sum(int(row["road_movement_mapped_count"]) for row in rows),
         "road_movement_unmapped_count": sum(int(row["road_movement_unmapped_count"]) for row in rows),

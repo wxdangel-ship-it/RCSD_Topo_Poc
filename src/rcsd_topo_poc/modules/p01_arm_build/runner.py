@@ -449,6 +449,9 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
                 right_turn_formway_values=right_turn_formway_values,
                 road_next_road_records=road_next_road_by_dataset[dataset],
                 has_road_next_road_input=dataset_inputs[dataset].road_next_road_path is not None,
+                progress=lambda message, group_id=group.group_id, dataset=dataset: _progress(
+                    f"{group_id} {dataset} {message}"
+                ),
             )
             result_by_dataset[dataset] = result
             dataset_dir = case_dir / dataset

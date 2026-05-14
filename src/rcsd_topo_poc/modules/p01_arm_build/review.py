@@ -386,14 +386,6 @@ def _dataset_review_context(
         context_node_ids.update(decision.member_node_ids)
         context_road_ids.update(decision.incident_road_ids)
 
-    # Dataset review should explain the built arms, not render the whole source
-    # layer. Keep this overview near the current junction: seed roads, one
-    # continuation hop, and the first audited decision are enough for fast visual
-    # review.
-    for road in loaded.roads.values():
-        if road.snodeid in context_node_ids or road.enodeid in context_node_ids:
-            context_road_ids.add(road.road_id)
-
     geometries: list[BaseGeometry] = []
     for road_id in sorted(context_road_ids):
         road = loaded.roads.get(road_id)
@@ -557,11 +549,10 @@ def build_dataset_review_layers(
                         },
                     )
                 )
-    road_centroids = {road_id: road.geometry.centroid for road_id, road in loaded.roads.items()}
     arm_anchor: dict[str, Point] = {}
     for arm in result.final_arms:
         road_ids = list(arm.trunk_road_ids) or list(arm.initial_arm.get("seed_road_ids", []))
-        points = [road_centroids[road_id] for road_id in road_ids if road_id in road_centroids]
+        points = [loaded.roads[road_id].geometry.centroid for road_id in road_ids if road_id in loaded.roads]
         if points:
             arm_anchor[arm.final_arm_id] = Point(
                 sum(point.x for point in points) / len(points),
@@ -659,7 +650,7 @@ def build_dataset_review_layers(
         arm = next((item for item in result.final_arms if item.final_arm_id == validation.final_arm_id), None)
         if arm:
             anchor_ids = list(arm.trunk_road_ids) or list(arm.initial_arm.get("seed_road_ids", []))
-            anchor_points = [road_centroids[road_id] for road_id in anchor_ids if road_id in road_centroids]
+            anchor_points = [loaded.roads[road_id].geometry.centroid for road_id in anchor_ids if road_id in loaded.roads]
             if anchor_points:
                 anchor_point = Point(
                     sum(point.x for point in anchor_points) / len(anchor_points),

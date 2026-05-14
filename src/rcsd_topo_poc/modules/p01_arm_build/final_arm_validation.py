@@ -84,6 +84,36 @@ def _road_endpoint_groups(road: RoadRecord, nodes: dict[str, NodeRecord]) -> tup
     return _semantic_group_id(nodes.get(road.snodeid), road.snodeid), _semantic_group_id(nodes.get(road.enodeid), road.enodeid)
 
 
+_VALIDATION_INCIDENT_ROAD_IDS_BY_GROUP_CACHE: dict[tuple[int, int, str, int, int, str], dict[str, tuple[str, ...]]] = {}
+
+
+def _road_group_cache_key(
+    roads: dict[str, RoadRecord],
+    nodes: dict[str, NodeRecord],
+) -> tuple[int, int, str, int, int, str]:
+    return (id(roads), len(roads), next(iter(roads), ""), id(nodes), len(nodes), next(iter(nodes), ""))
+
+
+def _validation_incident_road_ids_by_group(
+    roads: dict[str, RoadRecord],
+    nodes: dict[str, NodeRecord],
+) -> dict[str, tuple[str, ...]]:
+    cache_key = _road_group_cache_key(roads, nodes)
+    cached = _VALIDATION_INCIDENT_ROAD_IDS_BY_GROUP_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    by_group: dict[str, list[str]] = {}
+    for road_id, road in roads.items():
+        start_group, end_group = _road_endpoint_groups(road, nodes)
+        if start_group == end_group:
+            continue
+        by_group.setdefault(start_group, []).append(road_id)
+        by_group.setdefault(end_group, []).append(road_id)
+    indexed = {group_id: tuple(sorted(road_ids)) for group_id, road_ids in by_group.items()}
+    _VALIDATION_INCIDENT_ROAD_IDS_BY_GROUP_CACHE[cache_key] = indexed
+    return indexed
+
+
 def _other_group_for_road(road: RoadRecord, group_id: str, nodes: dict[str, NodeRecord]) -> str | None:
     start_group, end_group = _road_endpoint_groups(road, nodes)
     if start_group == group_id and end_group != group_id:
@@ -819,14 +849,11 @@ def _incident_validation_roads(
     internal_road_ids: set[str],
 ) -> tuple[str, ...]:
     incident: list[str] = []
-    for road_id, road in roads.items():
+    for road_id in _validation_incident_road_ids_by_group(roads, nodes).get(group_id, tuple()):
+        road = roads[road_id]
         if road_id in excluded_road_ids or road_id in internal_road_ids or is_advance_right_turn_road(road):
             continue
-        start_group, end_group = _road_endpoint_groups(road, nodes)
-        if start_group == end_group:
-            continue
-        if group_id in {start_group, end_group}:
-            incident.append(road_id)
+        incident.append(road_id)
     return tuple(sorted(incident))
 
 

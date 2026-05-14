@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections import Counter, defaultdict
 from dataclasses import replace
-from typing import Any
+from typing import Any, Callable
 
 from rcsd_topo_poc.modules.p01_arm_build.corridor import build_arm_corridor_evidence
 from rcsd_topo_poc.modules.p01_arm_build.io import normalise_id
@@ -147,6 +147,33 @@ def _road_endpoint_groups(road: RoadRecord, nodes: dict[str, NodeRecord]) -> tup
     return semantic_group_id(nodes.get(road.snodeid), road.snodeid), semantic_group_id(nodes.get(road.enodeid), road.enodeid)
 
 
+_INCIDENT_ROAD_IDS_BY_GROUP_CACHE: dict[tuple[int, int, str, int, int, str], dict[str, tuple[str, ...]]] = {}
+
+
+def _road_group_cache_key(
+    roads: dict[str, RoadRecord],
+    nodes: dict[str, NodeRecord],
+) -> tuple[int, int, str, int, int, str]:
+    return (id(roads), len(roads), next(iter(roads), ""), id(nodes), len(nodes), next(iter(nodes), ""))
+
+
+def _incident_road_ids_by_group(roads: dict[str, RoadRecord], nodes: dict[str, NodeRecord]) -> dict[str, tuple[str, ...]]:
+    cache_key = _road_group_cache_key(roads, nodes)
+    cached = _INCIDENT_ROAD_IDS_BY_GROUP_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    by_group: dict[str, list[str]] = defaultdict(list)
+    for road_id, road in roads.items():
+        start_group, end_group = _road_endpoint_groups(road, nodes)
+        if start_group == end_group:
+            continue
+        by_group[start_group].append(road_id)
+        by_group[end_group].append(road_id)
+    indexed = {group_id: tuple(sorted(road_ids)) for group_id, road_ids in by_group.items()}
+    _INCIDENT_ROAD_IDS_BY_GROUP_CACHE[cache_key] = indexed
+    return indexed
+
+
 def _incident_active_roads(
     *,
     group_id: str,
@@ -157,18 +184,15 @@ def _incident_active_roads(
     right_turn_formway_values: set[str] | None = None,
 ) -> tuple[str, ...]:
     incident: list[str] = []
-    for road_id, road in roads.items():
+    for road_id in _incident_road_ids_by_group(roads, nodes).get(group_id, tuple()):
+        road = roads[road_id]
         if road_id in excluded_road_ids or road_id in current_internal_road_ids:
             continue
         if is_advance_right_turn_road(road):
             continue
         if right_turn_formway_values and _is_right_turn_road(road, right_turn_formway_values):
             continue
-        start_group, end_group = _road_endpoint_groups(road, nodes)
-        if start_group == end_group:
-            continue
-        if group_id in {start_group, end_group}:
-            incident.append(road_id)
+        incident.append(road_id)
     return tuple(sorted(incident))
 
 
@@ -445,11 +469,12 @@ def _candidate_enters_one_hop_dead_end(
 ) -> bool:
     next_group_id = str(record["next_group_id"])
     road_id = str(record["road_id"])
-    for candidate_id, candidate_road in roads.items():
+    for candidate_id in _incident_road_ids_by_group(roads, nodes).get(next_group_id, tuple()):
         if candidate_id == road_id:
             continue
+        candidate_road = roads[candidate_id]
         start_group, end_group = _road_endpoint_groups(candidate_road, nodes)
-        if start_group == end_group or next_group_id not in {start_group, end_group}:
+        if start_group == end_group:
             continue
         other_group_id = end_group if start_group == next_group_id else start_group
         if other_group_id != current_group_id:
@@ -1474,7 +1499,12 @@ def build_dataset_arm_result(
     right_turn_formway_values: set[str],
     road_next_road_records: tuple[RawRoadNextRoad, ...] = tuple(),
     has_road_next_road_input: bool = False,
+    progress: Callable[[str], None] | None = None,
 ) -> DatasetBuildResult:
+    def _phase(message: str) -> None:
+        if progress is not None:
+            progress(message)
+
     groups, _ = build_node_groups(loaded.nodes)
     resolved_junction_id, member_node_ids, input_flags = resolve_junction_members(
         loaded.nodes,
@@ -1496,7 +1526,8 @@ def build_dataset_arm_result(
     excluded_right_turn_ids: list[str] = []
     seed_roads: list[tuple[RoadRecord, str]] = []
 
-    for road in loaded.roads.values():
+    for road_id in sorted(road_ids_touching_nodes(loaded.roads, member_set)):
+        road = loaded.roads[road_id]
         snode_inside = road.snodeid in member_set
         enode_inside = road.enodeid in member_set
         if snode_inside and enode_inside:
@@ -1521,6 +1552,11 @@ def build_dataset_arm_result(
         else:
             bidirectional_seed_ids.append(road.road_id)
         seed_roads.append((road, role))
+    _phase(
+        "seed scan done "
+        f"members={len(member_node_ids)} seeds={len(seed_roads)} internal={len(internal_road_ids)} "
+        f"excluded_rt={len(excluded_right_turn_ids)}"
+    )
 
     outside_seed_node_ids = {
         outside_node_id
@@ -1574,6 +1610,7 @@ def build_dataset_arm_result(
     traces: list[ArmTrace] = []
     decisions: list[ThroughDecisionAudit] = []
     trace_terminals: dict[str, tuple[str | None, tuple[str, ...]]] = {}
+    _phase(f"trace start seeds={len(seed_roads)}")
     for index, (road, role) in enumerate(seed_roads, start=1):
         trace, trace_decisions, terminal_group_id, terminal_members, trace_issues = _build_trace(
             dataset=loaded.dataset,
@@ -1594,6 +1631,7 @@ def build_dataset_arm_result(
         decisions.extend(trace_decisions)
         trace_terminals[trace.trace_id] = (terminal_group_id, terminal_members)
         issues.extend(trace_issues)
+    _phase(f"trace done traces={len(traces)} decisions={len(decisions)}")
 
     initial_arms, assigned_traces, arm_issues = _build_initial_arms(
         dataset=loaded.dataset,
@@ -1635,12 +1673,14 @@ def build_dataset_arm_result(
         initial_to_final_arm_id=initial_to_final,
     )
     issues.extend(relation_issues)
+    _phase(f"advance right done relations={len(advance_right_turn_relations)}")
     initial_arms = _enrich_initial_arms_with_advance_right_relations(
         initial_arms,
         initial_to_final,
         advance_right_turn_relations,
     )
     final_arms = _build_final_arms(initial_arms, local_arm_candidates)
+    _phase(f"validation start final_arms={len(final_arms)}")
     validation_result = build_final_arm_validation(
         dataset=loaded.dataset,
         junction_id=junction_id,
@@ -1656,6 +1696,11 @@ def build_dataset_arm_result(
     )
     final_arms = validation_result.final_arms
     issues.extend(validation_result.issues)
+    _phase(
+        "validation done "
+        f"records={len(validation_result.validations)} conflicts={validation_result.metrics.get('final_arm_validation_conflict_count', 0)}"
+    )
+    _phase("corridor evidence start")
     arm_corridor_evidence = build_arm_corridor_evidence(
         dataset=loaded.dataset,
         junction_id=junction_id,
@@ -1666,6 +1711,7 @@ def build_dataset_arm_result(
         final_arms=final_arms,
         local_arm_candidates=local_arm_candidates,
     )
+    _phase(f"corridor evidence done records={len(arm_corridor_evidence)}")
     for arm in initial_arms:
         for road_id in arm.member_road_ids:
             road = loaded.roads.get(road_id)
@@ -1679,6 +1725,7 @@ def build_dataset_arm_result(
             _add_issue(issues, "trunk_min_loop_not_found", arm_id=arm.initial_arm_id, trunk_status=arm.trunk_status)
         if arm.trunk_status == "ambiguous":
             _add_issue(issues, "trunk_min_loop_ambiguous", arm_id=arm.initial_arm_id)
+    _phase(f"movement start road_next_road={len(road_next_road_records)}")
     movement_result = build_movement_outputs(
         dataset=loaded.dataset,
         junction_id=junction_id,
@@ -1689,6 +1736,11 @@ def build_dataset_arm_result(
         advance_right_turn_relations=advance_right_turn_relations,
         road_next_road_records=road_next_road_records,
         has_road_next_road_input=has_road_next_road_input,
+    )
+    _phase(
+        "movement done "
+        f"evidence={len(movement_result.road_movement_evidence)} "
+        f"skipped={movement_result.metrics.get('road_movement_out_of_scope_skipped_count', 0)}"
     )
     issues.extend(movement_result.issues)
     issue_counts = dict(Counter(str(issue.get("issue_type")) for issue in issues))

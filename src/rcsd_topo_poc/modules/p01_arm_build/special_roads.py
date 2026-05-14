@@ -91,8 +91,30 @@ def build_special_road_flag_index(
     )
 
 
+_ROAD_IDS_BY_NODE_CACHE: dict[tuple[int, int, str], dict[str, tuple[str, ...]]] = {}
+
+
+def _roads_cache_key(roads: dict[str, RoadRecord]) -> tuple[int, int, str]:
+    return (id(roads), len(roads), next(iter(roads), ""))
+
+
+def _road_ids_by_node(roads: dict[str, RoadRecord]) -> dict[str, tuple[str, ...]]:
+    cache_key = _roads_cache_key(roads)
+    cached = _ROAD_IDS_BY_NODE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    by_node: dict[str, list[str]] = {}
+    for road in roads.values():
+        by_node.setdefault(road.snodeid, []).append(road.road_id)
+        by_node.setdefault(road.enodeid, []).append(road.road_id)
+    indexed = {node_id: tuple(sorted(road_ids)) for node_id, road_ids in by_node.items()}
+    _ROAD_IDS_BY_NODE_CACHE[cache_key] = indexed
+    return indexed
+
+
 def road_ids_touching_nodes(roads: dict[str, RoadRecord], node_ids: set[str]) -> set[str]:
-    return {road.road_id for road in roads.values() if road.snodeid in node_ids or road.enodeid in node_ids}
+    by_node = _road_ids_by_node(roads)
+    return {road_id for node_id in node_ids for road_id in by_node.get(node_id, tuple())}
 
 
 def _road_other_node(road: RoadRecord, node_id: str) -> str | None:

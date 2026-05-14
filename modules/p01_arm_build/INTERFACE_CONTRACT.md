@@ -46,6 +46,7 @@ from rcsd_topo_poc.modules.p01_arm_build.alignment_runner import run_p01_arm_ali
 可选参数：
 
 - `--run-id`
+- `--case-scope-bfs-depth`：按语义路口道路拓扑 BFS 裁剪单 Case 子图后再执行 A1 / P01-Final，默认 `8`；设为 `0` 时使用全量 Node / Road / RoadNextRoad 加载。子图裁剪只改变读取范围，不改变 Arm 构建、through、trunk、Movement 或 final generation 业务规则。
 - `--right-turn-formway-value`：legacy 显式右转 / 渠化右转排除兼容参数；不定义 bit7 提前右转。bit7 必须按 formway 位运算识别，且不得被静默写入 `excluded_right_turn_road_ids`。
 - `--swsd-road-next-road`：SWSD `RoadNextRoad.json` / `RoadNodeRoad.json` / GeoJSON。
 - `--rcsd-road-next-road`：RCSD `RoadNextRoad.geojson` / JSON。
@@ -249,7 +250,8 @@ P01-Final 规则：
 
 ## 10. 自动检查与 QA
 
-- CRS、输入路径、字段、feature count 写入 preflight。
+- CRS、输入路径、字段、feature count、case-scope BFS 参数写入 preflight。
+- 默认 case-scope BFS 深度为 `8`，RoadNextRoad 只读取 `road_id / next_road_id` 与子图 road ids 相交的记录；不相交记录属于当前 Case 范围外数据，不逐条写入 evidence 或 issue。
 - RoadNextRoad 记录必须进入 mapped 或明确 mapping issue。
 - `turnType / turntype` 不参与 movement_type。
 - `grade / grade_2` 不参与 P01 主规则。

@@ -32,8 +32,11 @@ P01 不以单点 Node 表示路口，而以语义路口 member node 集合作为
 - `--swsd-road-next-road`
 - `--rcsd-road-next-road`
 - `--frcsd-road-next-road`
+- `--case-scope-bfs-depth`，默认 `8`；设为 `0` 时关闭 case-scope 子图加载。
 
 RoadNextRoad 作为 A1 ArmMovement 的 allowed evidence。SWSD 支持 JSON / RoadNodeRoad JSON 形态，RCSD / F-RCSD 支持 GeoJSON 或同类 JSON 结构。F-RCSD RoadNextRoad 输入仅用于同源 evidence 审计；最终 F-RCSD RoadNextRoad 由 P01-Final 生成。
+
+单 Case 执行默认按当前语义路口做道路拓扑 BFS 子图读取，BFS 深度为 `8`。该子图读取沿用文本证据包的业务选择口径：按语义路口 group 进行道路拓扑 BFS，保留访问 group 及相邻 selected roads，并仅读取与 selected road ids 相交的 RoadNextRoad 记录。子图读取是性能边界，不改变 Arm、through、trunk、Movement 或 P01-Final 规则。
 
 F-RCSD Road 必须读取 `Source`：
 

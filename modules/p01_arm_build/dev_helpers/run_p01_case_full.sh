@@ -54,6 +54,7 @@ fi
 
 out_root="${OUT_ROOT:-$repo_root/outputs/_work/p01_case_full}"
 run_id="${RUN_ID:-p01_case_full_$(date +%Y%m%d_%H%M%S)}"
+case_scope_bfs_depth="${CASE_SCOPE_BFS_DEPTH:-8}"
 
 swsd_nodes="${SWSD_NODES:-$case_root/SWSD/nodes.gpkg}"
 swsd_roads="${SWSD_ROADS:-$case_root/SWSD/roads.gpkg}"
@@ -112,6 +113,7 @@ args=(
   --frcsd-roads "$frcsd_roads"
   --out-root "$out_root"
   --run-id "$run_id"
+  --case-scope-bfs-depth "$case_scope_bfs_depth"
 )
 
 while IFS= read -r group; do
@@ -139,6 +141,7 @@ fi
 
 echo "[p01-case-full] case_root=$case_root" >&2
 echo "[p01-case-full] run_root=$out_root/$run_id" >&2
+echo "[p01-case-full] case_scope_bfs_depth=$case_scope_bfs_depth" >&2
 "$python_bin" - "${args[@]}" <<'PY'
 import sys
 from rcsd_topo_poc.modules.p01_arm_build.runner import run_p01_arm_build_from_args

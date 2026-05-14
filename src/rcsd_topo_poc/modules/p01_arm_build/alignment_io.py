@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from rcsd_topo_poc.modules.p01_arm_build.case_scope import load_case_scoped_dataset
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset
 from rcsd_topo_poc.modules.p01_arm_build.models import DATASETS, DatasetInput, LoadedDataset
 
@@ -111,9 +112,38 @@ def dataset_inputs_from_preflight(preflight: dict[str, Any]) -> dict[str, Datase
     return dataset_inputs
 
 
+def _junction_id_for_group(group: dict[str, Any], dataset: str) -> str:
+    if dataset == "SWSD":
+        return str(group.get("swsd_junction_id", ""))
+    if dataset == "RCSD":
+        return str(group.get("rcsd_junction_id", ""))
+    if dataset == "FRCSD":
+        return str(group.get("frcsd_junction_id", ""))
+    return ""
+
+
 def load_datasets_from_a1_preflight(preflight: dict[str, Any]) -> tuple[dict[str, LoadedDataset], dict[str, str]]:
     loaded: dict[str, LoadedDataset] = {}
     load_errors: dict[str, str] = {}
+    case_scope = preflight.get("case_scope") if isinstance(preflight.get("case_scope"), dict) else {}
+    groups = preflight.get("junction_groups") if isinstance(preflight.get("junction_groups"), list) else []
+    if case_scope.get("enabled") and len(groups) == 1:
+        try:
+            bfs_depth = int(case_scope.get("bfs_depth") or 8)
+        except (TypeError, ValueError):
+            bfs_depth = 8
+        group = dict(groups[0] or {})
+        for dataset, dataset_input in dataset_inputs_from_preflight(preflight).items():
+            try:
+                scoped = load_case_scoped_dataset(
+                    dataset_input,
+                    junction_id=_junction_id_for_group(group, dataset),
+                    bfs_depth=bfs_depth,
+                )
+                loaded[dataset] = scoped.loaded
+            except Exception as exc:  # noqa: BLE001 - persisted in preflight for auditability
+                load_errors[dataset] = str(exc)
+        return loaded, load_errors
     for dataset, dataset_input in dataset_inputs_from_preflight(preflight).items():
         try:
             loaded[dataset] = load_dataset(dataset_input)

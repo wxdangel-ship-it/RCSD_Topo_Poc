@@ -25,6 +25,7 @@
 - [x] FinalArm 输出 `arm_corridor_evidence.json`，以非 member 远端走廊证据增强 A2 配准和 Movement 方向判断。
 - [x] trunk_road_ids / trunk_status / trunk_reason 输出。
 - [x] RoadNextRoad 读取与归一化。
+- [x] 单 Case 默认按语义道路拓扑 BFS=8 子图加载 Node / Road，并按 selected road ids 流式过滤 RoadNextRoad。
 - [x] RoadMovementEvidence 映射与 issue 审计。
 - [x] 全量 ArmMovement 候选。
 - [x] `movement_type` 不使用 `turnType / turntype`。

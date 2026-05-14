@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from rcsd_topo_poc.modules.p01_arm_build.case_scope import load_case_scoped_dataset
 from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import (
     build_frcsd_road_next_road,
     final_review_layers,
@@ -130,6 +131,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-root", required=True)
     parser.add_argument("--run-id")
     parser.add_argument(
+        "--case-scope-bfs-depth",
+        type=int,
+        default=8,
+        help="Load each junction group as a semantic-road-topology BFS subgraph. Use 0 to disable case-scoped loading.",
+    )
+    parser.add_argument(
         "--right-turn-formway-value",
         action="append",
         default=[],
@@ -175,6 +182,7 @@ def _preflight_payload(
     loaded: dict[str, Any],
     groups: list[JunctionGroup],
     right_turn_formway_values: set[str],
+    case_scope_bfs_depth: int,
 ) -> dict[str, Any]:
     return {
         "run_id": run_id,
@@ -187,6 +195,12 @@ def _preflight_payload(
             for dataset, item in dataset_inputs.items()
         },
         "right_turn_formway_values": sorted(right_turn_formway_values),
+        "case_scope": {
+            "enabled": case_scope_bfs_depth > 0,
+            "bfs_depth": case_scope_bfs_depth,
+            "selection": "semantic-road-topology-bfs",
+            "road_next_road_filter": "road_id_or_next_road_id_intersects_selected_bfs_roads",
+        },
         "junction_groups": [to_plain(group) for group in groups],
         "datasets": {
             dataset: {
@@ -386,6 +400,8 @@ def _summary_payload(
 def run_p01_arm_build_from_args(argv: list[str]) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    if args.case_scope_bfs_depth < 0:
+        parser.error("--case-scope-bfs-depth must be >= 0")
     run_id = args.run_id or "p01_arm_build_" + datetime.now().strftime("%Y%m%d_%H%M%S")
     run_root = Path(args.out_root) / run_id
     run_root.mkdir(parents=True, exist_ok=True)
@@ -394,25 +410,28 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
     groups = _parse_junction_groups(args.junction_group)
     dataset_inputs = _dataset_inputs_from_args(args)
     right_turn_formway_values = {normalise_id(value) for value in args.right_turn_formway_value if normalise_id(value)}
+    case_scope_enabled = args.case_scope_bfs_depth > 0
     _progress(
         f"start run_id={run_id} groups={len(groups)} "
-        f"out_root={Path(args.out_root)} right_turn_values={sorted(right_turn_formway_values) or '<none>'}"
+        f"out_root={Path(args.out_root)} right_turn_values={sorted(right_turn_formway_values) or '<none>'} "
+        f"case_scope_bfs_depth={args.case_scope_bfs_depth}"
     )
     loaded: dict[str, Any] = {}
     road_next_road_by_dataset: dict[str, Any] = {}
-    for dataset_index, dataset in enumerate(DATASETS, start=1):
-        dataset_input = dataset_inputs[dataset]
-        load_started_at = time.perf_counter()
-        _progress(
-            f"load dataset {dataset_index}/{len(DATASETS)} {dataset} "
-            f"nodes={dataset_input.nodes_path} roads={dataset_input.roads_path}"
-        )
-        loaded[dataset] = load_dataset(dataset_input)
-        road_next_road_by_dataset[dataset] = read_road_next_road(dataset_input.road_next_road_path)
-        _progress(
-            f"loaded {dataset}: nodes={len(loaded[dataset].nodes)} roads={len(loaded[dataset].roads)} "
-            f"road_next_road={len(road_next_road_by_dataset[dataset])} duration={time.perf_counter() - load_started_at:.1f}s"
-        )
+    if not case_scope_enabled:
+        for dataset_index, dataset in enumerate(DATASETS, start=1):
+            dataset_input = dataset_inputs[dataset]
+            load_started_at = time.perf_counter()
+            _progress(
+                f"load dataset {dataset_index}/{len(DATASETS)} {dataset} "
+                f"nodes={dataset_input.nodes_path} roads={dataset_input.roads_path}"
+            )
+            loaded[dataset] = load_dataset(dataset_input)
+            road_next_road_by_dataset[dataset] = read_road_next_road(dataset_input.road_next_road_path)
+            _progress(
+                f"loaded {dataset}: nodes={len(loaded[dataset].nodes)} roads={len(loaded[dataset].roads)} "
+                f"road_next_road={len(road_next_road_by_dataset[dataset])} duration={time.perf_counter() - load_started_at:.1f}s"
+            )
 
     _progress(f"write preflight {run_root / 'preflight.json'}")
     write_json(
@@ -423,6 +442,7 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
             loaded=loaded,
             groups=groups,
             right_turn_formway_values=right_turn_formway_values,
+            case_scope_bfs_depth=args.case_scope_bfs_depth,
         ),
     )
 
@@ -437,6 +457,37 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         case_dir = run_root / "cases" / group.group_id
         compare_dir = case_dir / "compare"
         write_json(case_dir / "case_input.json", group)
+        case_scope_audits: dict[str, Any] = {}
+        if case_scope_enabled:
+            loaded = {}
+            road_next_road_by_dataset = {}
+            for dataset_index, dataset in enumerate(DATASETS, start=1):
+                dataset_input = dataset_inputs[dataset]
+                junction_id = group.junction_id_for(dataset)
+                load_started_at = time.perf_counter()
+                _progress(
+                    f"{group.group_id} load scoped dataset {dataset_index}/{len(DATASETS)} {dataset} "
+                    f"junction={junction_id} bfs_depth={args.case_scope_bfs_depth}"
+                )
+                scoped = load_case_scoped_dataset(
+                    dataset_input,
+                    junction_id=junction_id,
+                    bfs_depth=args.case_scope_bfs_depth,
+                )
+                loaded[dataset] = scoped.loaded
+                road_next_road_by_dataset[dataset] = read_road_next_road(
+                    dataset_input.road_next_road_path,
+                    selected_road_ids=scoped.selected_road_ids,
+                )
+                case_scope_audits[dataset] = scoped.audit
+                _progress(
+                    f"{group.group_id} loaded scoped {dataset}: "
+                    f"nodes={len(scoped.loaded.nodes)}/{scoped.audit['source_node_feature_count']} "
+                    f"roads={len(scoped.loaded.roads)}/{scoped.audit['source_road_feature_count']} "
+                    f"road_next_road={len(road_next_road_by_dataset[dataset])} "
+                    f"duration={time.perf_counter() - load_started_at:.1f}s"
+                )
+            write_json(case_dir / "case_scope.json", case_scope_audits)
         result_by_dataset: dict[str, Any] = {}
         dataset_output_paths: dict[str, dict[str, str]] = {}
         for dataset_index, dataset in enumerate(DATASETS, start=1):
@@ -548,6 +599,7 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         write_json(compare_dir / "p01_arm_compare_summary.json", compare_summary)
         case_summary = {
             "group": to_plain(group),
+            "case_scope": case_scope_audits,
             "datasets": {dataset: result_by_dataset[dataset].metrics for dataset in DATASETS},
             "dataset_outputs": dataset_output_paths,
             "compare_outputs": compare_summary,

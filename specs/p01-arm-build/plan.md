@@ -16,12 +16,13 @@ P01 由现有 `p01_arm_build` 模块承载，不建立额外业务模块。
 A1 使用以下内部构建块：
 
 - `io.py`：读取 Node / Road、写出 JSON / CSV / GPKG、生成 preflight。
+- `case_scope.py`：按语义路口道路拓扑 BFS 生成单 Case 子图加载范围，默认深度 `8`，用于避免全量城市级数据进入每个 Case 的执行链路。
 - `topology.py`：语义路口、seed、trace、through decision、InitialArm / FinalArm。
 - `final_arm_validation.py`：FinalArm 兜底聚合后的 relaxed reverse / supplemental trace validation、validation metrics 与 issue。
 - `corridor.py`：FinalArm 非 member 远端走廊证据，用于 A2 配准、Movement 方向判断和审计图层。
 - `special_roads.py`：`formway` bit7 / bit8、AdvanceRightTurnRelation 与特殊转向 issue。
 - `trunk.py`：trunk road ids、trunk 状态与非 trunk member roads。
-- `road_next_road.py`：SWSD / RCSD / F-RCSD RoadNextRoad 读取与归一化。
+- `road_next_road.py`：SWSD / RCSD / F-RCSD RoadNextRoad 读取、按 Case selected road ids 流式过滤与归一化。
 - `movement.py`：RoadMovementEvidence、ArmMovement、ReceivingRoadRole 与 corrected trunk。
 - `review.py`：A1 review PNG、compare PNG 与 review GPKG。
 - `runner.py`：A1 / P01-Final 批处理与输出编排。
@@ -30,7 +31,7 @@ A1 使用以下内部构建块：
 
 A2 使用 A1 run root 作为主输入：
 
-- `alignment_io.py` 读取 A1 输出与原始几何。
+- `alignment_io.py` 读取 A1 输出与原始几何；当 A1 preflight 表明单 Case 使用 case-scope BFS 时，A2 复用相同 BFS 深度加载审计几何。
 - `alignment.py` 构建 ArmProfile、candidate edge、evidence graph、LogicalArmGroup、RawArmAlignment、ArmBuildFeedback 与 source_extra。
 - `alignment_review.py` 输出配准 PNG / GPKG。
 - `alignment_runner.py` 编排 A2 summary 与 review index。

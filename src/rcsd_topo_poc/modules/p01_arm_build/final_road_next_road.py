@@ -4,7 +4,7 @@ import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image, ImageDraw, ImageFont
 from pyproj import CRS, Transformer
@@ -181,6 +181,16 @@ def _geometry_in_target_crs(geometry: BaseGeometry, *, source_crs: CRS | None, t
     return transform_geometry(transformer.transform, geometry)
 
 
+def _rounded_bounds(geometry: BaseGeometry) -> tuple[float, float, float, float]:
+    minx, miny, maxx, maxy = geometry.bounds
+    return (
+        round(float(minx), SOURCE_GEOMETRY_MATCH_DECIMALS),
+        round(float(miny), SOURCE_GEOMETRY_MATCH_DECIMALS),
+        round(float(maxx), SOURCE_GEOMETRY_MATCH_DECIMALS),
+        round(float(maxy), SOURCE_GEOMETRY_MATCH_DECIMALS),
+    )
+
+
 def _rounded_linestring_key(geometry: BaseGeometry) -> tuple[Any, ...]:
     if geometry.geom_type == "LineString":
         coords = tuple(
@@ -280,33 +290,60 @@ def _source_road_map(
     *,
     loaded_by_dataset: dict[str, LoadedDataset],
     f_roles: dict[str, RoadRole],
+    progress: Callable[[str], None] | None = None,
 ) -> tuple[SourceRoadMap, ...]:
+    def _phase(message: str) -> None:
+        if progress is not None:
+            progress(message)
+
     frcsd_loaded = loaded_by_dataset["FRCSD"]
     target_crs = _layer_crs(frcsd_loaded.road_layer)
-    source_index: dict[str, dict[tuple[Any, ...], list[str]]] = {}
-    for dataset in ("RCSD", "SWSD"):
-        source_crs = _layer_crs(loaded_by_dataset[dataset].road_layer)
-        by_geometry: dict[tuple[Any, ...], list[str]] = defaultdict(list)
-        for road_id, road in loaded_by_dataset[dataset].roads.items():
-            by_geometry[_source_geometry_key(road, source_crs=source_crs, target_crs=target_crs)].append(road_id)
-        source_index[dataset] = by_geometry
-    rows: list[SourceRoadMap] = []
+    needed_keys: dict[str, set[tuple[Any, ...]]] = {"RCSD": set(), "SWSD": set()}
+    needed_bounds: dict[str, set[tuple[float, float, float, float]]] = {"RCSD": set(), "SWSD": set()}
+    f_lookup: dict[str, tuple[RoadRecord | None, str, str, tuple[Any, ...] | None]] = {}
     for f_road_id in sorted(f_roles):
         road = frcsd_loaded.roads.get(f_road_id)
         raw_source = _norm((road.properties if road else {}).get("source"))
-        issue_flags: list[str] = []
         source_dataset = SOURCE_TO_DATASET.get(raw_source, "")
+        key = _source_geometry_key(road, source_crs=target_crs, target_crs=target_crs) if road and source_dataset else None
+        f_lookup[f_road_id] = (road, raw_source, source_dataset, key)
+        if road and source_dataset and key is not None:
+            needed_keys[source_dataset].add(key)
+            needed_bounds[source_dataset].add(_rounded_bounds(road.geometry))
+
+    source_index: dict[str, dict[tuple[Any, ...], list[str]]] = {}
+    for dataset in ("RCSD", "SWSD"):
+        if not needed_keys[dataset]:
+            source_index[dataset] = {}
+            _phase(f"source map skip {dataset}: no FRCSD role requires this source")
+            continue
+        source_crs = _layer_crs(loaded_by_dataset[dataset].road_layer)
+        same_crs = source_crs is None or target_crs is None or source_crs == target_crs
+        by_geometry: dict[tuple[Any, ...], list[str]] = defaultdict(list)
+        scanned_count = 0
+        candidate_count = 0
+        for road_id, road in loaded_by_dataset[dataset].roads.items():
+            scanned_count += 1
+            geometry = road.geometry if same_crs else _geometry_in_target_crs(road.geometry, source_crs=source_crs, target_crs=target_crs)
+            if _rounded_bounds(geometry) not in needed_bounds[dataset]:
+                continue
+            candidate_count += 1
+            key = _rounded_linestring_key(geometry)
+            if key in needed_keys[dataset]:
+                by_geometry[key].append(road_id)
+        _phase(f"source map indexed {dataset}: scanned={scanned_count} bounds_candidates={candidate_count} matched_keys={len(by_geometry)}")
+        source_index[dataset] = by_geometry
+    rows: list[SourceRoadMap] = []
+    for f_road_id in sorted(f_roles):
+        road, raw_source, source_dataset, key = f_lookup[f_road_id]
+        issue_flags: list[str] = []
         source_road_id: str | None = None
         if raw_source not in SOURCE_TO_DATASET:
             status = "source_invalid"
             reason = "source_missing_or_not_in_allowed_values"
             issue_flags.append("frcsd_source_invalid")
         else:
-            matches = (
-                source_index[source_dataset].get(_source_geometry_key(road, source_crs=target_crs, target_crs=target_crs), [])
-                if road
-                else []
-            )
+            matches = source_index[source_dataset].get(key, []) if key is not None else []
             if len(matches) == 1:
                 status = "matched"
                 reason = "source_limited_crs_normalized_rounded_exact_geometry_match"
@@ -1018,17 +1055,30 @@ def build_frcsd_road_next_road(
     result_by_dataset: dict[str, DatasetBuildResult],
     road_next_road_by_dataset: dict[str, tuple[RawRoadNextRoad, ...]],
     junction_group_id: str = "",
+    progress: Callable[[str], None] | None = None,
 ) -> FrcsdRoadNextRoadFinalResult:
+    def _phase(message: str) -> None:
+        if progress is not None:
+            progress(message)
+
+    _phase("roles start")
     roles = {dataset: _road_roles(result_by_dataset[dataset]) for dataset in DATASETS}
+    _phase(
+        "roles done "
+        + " ".join(f"{dataset}={len(roles[dataset])}" for dataset in DATASETS)
+    )
     source_map = _source_road_map(
         loaded_by_dataset=loaded_by_dataset,
         f_roles=roles["FRCSD"],
+        progress=lambda message: _phase(message),
     )
+    _phase(f"source map done records={len(source_map)}")
     arm_source_profiles = _arm_source_profiles(
         loaded_frcsd=loaded_by_dataset["FRCSD"],
         result_frcsd=result_by_dataset["FRCSD"],
         f_roles=roles["FRCSD"],
     )
+    _phase(f"arm source profiles done records={len(arm_source_profiles)}")
     parallel_alignment = _parallel_branch_alignment(
         junction_group_id=junction_group_id,
         loaded_by_dataset=loaded_by_dataset,
@@ -1036,7 +1086,9 @@ def build_frcsd_road_next_road(
         roles=roles,
         source_map=source_map,
     )
+    _phase(f"parallel branch alignment done records={len(parallel_alignment)}")
     source_map_by_f = {item.f_road_id: item for item in source_map}
+    _phase("source policy start")
     policies = {
         "SWSD": _source_policy(source_dataset="SWSD", result=result_by_dataset["SWSD"], roles=roles["SWSD"]),
         "RCSD": _source_policy(source_dataset="RCSD", result=result_by_dataset["RCSD"], roles=roles["RCSD"]),
@@ -1045,6 +1097,11 @@ def build_frcsd_road_next_road(
         "SWSD": _source_arm_pass_rules(source_dataset="SWSD", result=result_by_dataset["SWSD"], roles=roles["SWSD"]),
         "RCSD": _source_arm_pass_rules(source_dataset="RCSD", result=result_by_dataset["RCSD"], roles=roles["RCSD"]),
     }
+    _phase(
+        "source policy done "
+        f"swsd_policy={len(policies['SWSD'])} rcsd_policy={len(policies['RCSD'])} "
+        f"swsd_rules={len(source_arm_pass_rules['SWSD'])} rcsd_rules={len(source_arm_pass_rules['RCSD'])}"
+    )
     needed_raw_ids = {
         dataset: {
             evidence_id
@@ -1078,6 +1135,7 @@ def build_frcsd_road_next_road(
         }
         for arm in result_by_dataset["FRCSD"].final_arms
     }
+    _phase(f"source arm matches done arms={len(source_arm_matches)}")
     advance_right_pairs = {
         (relation.from_arm_id, relation.to_arm_id)
         for relation in result_by_dataset["FRCSD"].advance_right_turn_relations
@@ -1251,7 +1309,11 @@ def build_frcsd_road_next_road(
                 )
             )
 
-    for movement in result_by_dataset["FRCSD"].arm_movements:
+    movements = result_by_dataset["FRCSD"].arm_movements
+    _phase(f"generation loop start movements={len(movements)}")
+    for movement_index, movement in enumerate(movements, start=1):
+        if movement_index == 1 or movement_index == len(movements) or movement_index % 10 == 0:
+            _phase(f"generation loop progress {movement_index}/{len(movements)}")
         profile = profile_by_arm.get(
             movement.from_arm_id,
             ArmSourceProfile("FRCSD", movement.from_arm_id, {}, {}, {}, {}, False, ("empty_arm_source_profile",)),
@@ -1409,6 +1471,7 @@ def build_frcsd_road_next_road(
                     issue_flags=with_validation_issues(movement, issue_flags),
                 )
             )
+    _phase(f"generation loop done features={len(features)} audit={len(audit_rows)} decisions={len(decisions)}")
     issue_report = _issues_from_audit(source_map, parallel_alignment, audit_rows, duplicate_count)
     source_counts = Counter(item.match_status for item in source_map)
     audit_counts = Counter(item.generation_rule for item in audit_rows if item.permission_status == "allowed")

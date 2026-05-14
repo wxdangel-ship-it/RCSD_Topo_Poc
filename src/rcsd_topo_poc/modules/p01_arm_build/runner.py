@@ -483,6 +483,7 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
             result_by_dataset=result_by_dataset,
             road_next_road_by_dataset=road_next_road_by_dataset,
             junction_group_id=group.group_id,
+            progress=lambda message, group_id=group.group_id: _progress(f"{group_id} FRCSD final {message}"),
         )
         frcsd_dir = case_dir / "FRCSD"
         _progress(

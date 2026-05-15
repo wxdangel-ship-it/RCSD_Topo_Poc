@@ -164,6 +164,8 @@ A2 输出根目录 `<out-root>/<run-id>/`，至少包含：
 - `cases/<group_id>/compare/p01_arm_alignment_compare.png`
 - `cases/<group_id>/compare/p01_arm_alignment_compare_layers.gpkg`
 
+`p01_arm_alignment_compare_layers.gpkg` 至少包含 LogicalArmGroup road、Arm corridor support road、Arm corridor semantic connector、raw/candidate alignment edge、source_extra、feedback 与 issue 图层。`arm_corridor_semantic_connectors` 仅表达同一 Arm corridor trace 中跨语义节点组的无 Road 几何小间隙，用于审计图连续性，不进入 Arm member / seed / connector / trunk，也不作为配准评分道路证据。
+
 `LogicalArmGroup` 至少包含 `logical_arm_group_id / junction_group_id / frcsd_arm_ids / swsd_arm_ids / rcsd_arm_ids / group_status / acceptable_for_downstream / missing_datasets / partial_datasets / over_split_datasets / over_merged_datasets / evidence_summary / risk_flags / review_priority`。
 
 A2 必须区分 coverage missing / partial 与 grouping error；over-merged 不自动拆分，只输出 `ArmBuildFeedback`。

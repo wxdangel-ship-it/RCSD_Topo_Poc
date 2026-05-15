@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import fiona
@@ -10,7 +11,11 @@ from shapely.geometry import LineString, Point, mapping
 
 from rcsd_topo_poc.modules.p01_arm_build.alignment import _build_logical_groups
 from rcsd_topo_poc.modules.p01_arm_build.alignment_models import ArmAlignmentCandidate, ArmProfile
-from rcsd_topo_poc.modules.p01_arm_build.alignment_review import _compare_local_bounds, _profile_review_road_geometries
+from rcsd_topo_poc.modules.p01_arm_build.alignment_review import (
+    _compare_local_bounds,
+    _profile_review_connector_geometries,
+    _profile_review_road_geometries,
+)
 from rcsd_topo_poc.modules.p01_arm_build.corridor import _trace_seed_corridor
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset
 from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput, NodeRecord, RoadRecord
@@ -175,6 +180,32 @@ def test_compare_alignment_bounds_are_centered_on_junction(tmp_path: Path) -> No
     assert bounds[0] == -100.0
     assert bounds[2] == 300.0
     assert round((bounds[1] + bounds[3]) / 2, 6) == 200.0
+
+
+def test_profile_review_adds_semantic_connectors_for_small_trace_gaps(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.gpkg"
+    roads_path = tmp_path / "roads.gpkg"
+    _write_nodes(nodes_path, [("SWSD_J", 1000.0, 0.0), ("A", 1000.0, 0.0), ("B", 1020.0, 0.0), ("C", 1055.0, 0.0), ("D", 1100.0, 0.0)])
+    _write_roads(
+        roads_path,
+        [
+            ("SWSD_A1_r1", "A", "B", [(1000.0, 0.0), (1020.0, 0.0)]),
+            ("SWSD_A1_r2", "C", "D", [(1055.0, 0.0), (1100.0, 0.0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+    profile = replace(
+        _alignment_profile("SWSD", "A1"),
+        corridor_support_road_ids=("SWSD_A1_r1", "SWSD_A1_r2"),
+        local_stub_road_ids=(),
+        seed_road_ids=("SWSD_A1_r1",),
+    )
+
+    connectors = _profile_review_connector_geometries(profile, loaded)
+
+    assert len(connectors) == 1
+    assert connectors[0][1] == 35.0
+    assert list(connectors[0][0].coords) == [(1020.0, 0.0), (1055.0, 0.0)]
 
 
 def _write_dataset_a1(case_dir: Path, dataset: str, arms: list[dict]) -> None:

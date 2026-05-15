@@ -42,7 +42,7 @@ trace 从 seed 外侧端点继续。每步只沿拓扑连接向外追溯：
 
 经过兜底聚合或包含多个 source InitialArm 的 FinalArm 会执行 relaxed reverse / supplemental trace validation。该验证只尝试放宽 `ambiguous_boundary / semantic_boundary / t_side_terminal / dead_end` 等保守停止点来评估 source InitialArm 是否收敛到同一语义路口或合理终端，不改写原始 trace 和 through decision。`conflict` 进入 P0；`weak_validated / unvalidated` 至少进入 P1，并作为下游 audit risk 透传。
 
-FinalArm 形成后，模块输出 `ArmCorridorEvidence`。该证据从 seed 外侧沿同向、非 bit7 拓扑 continuation 提取远端 support roads / nodes / corridor angle / terminal，用于 A2 candidate scoring、ArmMovement 方向向量和 review GPKG / PNG。它不扩张 Arm 成员，不改变 `InitialArm / FinalArm` 的 member、seed、connector 或 trunk 结果。
+FinalArm 形成后，模块输出 `ArmCorridorEvidence`。该证据从 seed 外侧沿同向、非 bit7 拓扑 continuation 提取远端 support roads / nodes / corridor angle / terminal，用于 A2 candidate scoring、ArmMovement 方向向量和 review GPKG / PNG。它不扩张 Arm 成员，不改变 `InitialArm / FinalArm` 的 member、seed、connector 或 trunk 结果。A2 review 可基于有序 support roads 输出 semantic connector 虚线，用于表达跨语义节点组但无 Road 几何的小间隙；该 connector 是审计表达，不是道路成员或配准评分证据。
 
 每个 Arm 在 member road 中排除提前左转 / 路口内提前右转后计算 trunk。唯一最小闭环输出 `complete_min_loop`；无完整闭环但存在可解释主链输出 `partial`；没有完整闭环但 Arm 有非特殊 seed road 时，退回这些局部 seed 作为 `partial` 主干审计结果；无可用主链输出 `none`；多条等价最小闭环输出 `ambiguous`。FinalArm fallback 合并时必须聚合来源 InitialArm 的特殊转向、trunk 与 relation 字段。
 

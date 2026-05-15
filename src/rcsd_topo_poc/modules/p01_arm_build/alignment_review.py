@@ -11,7 +11,7 @@ from shapely.ops import clip_by_rect
 
 from rcsd_topo_poc.modules.p01_arm_build.alignment_models import ArmProfile, CaseAlignmentResult
 from rcsd_topo_poc.modules.p01_arm_build.models import LoadedDataset
-from rcsd_topo_poc.modules.p01_arm_build.review import _draw_line, _geometry_bounds, _projector, _text
+from rcsd_topo_poc.modules.p01_arm_build.review import _draw_line, _geometry_bounds, _line_points, _projector, _text
 
 
 COLORS = [
@@ -25,6 +25,8 @@ COLORS = [
 GREY = (170, 170, 170, 180)
 TEXT = (20, 20, 20, 255)
 COMPARE_LOCAL_VIEW_HALF_WIDTH = 200.0
+SEMANTIC_CONNECTOR_MIN_GAP_METERS = 2.0
+SEMANTIC_CONNECTOR_MAX_GAP_METERS = 90.0
 
 
 def render_source_alignment_png(
@@ -219,6 +221,7 @@ def build_alignment_layers(
     return [
         ("logical_arm_groups", "LineString", logical_records),
         ("arm_corridor_support_roads", "LineString", corridor_records),
+        ("arm_corridor_semantic_connectors", "LineString", _corridor_connector_records(result, loaded_by_dataset)),
         ("raw_alignment_edges", "LineString", raw_edges),
         ("candidate_edges", "LineString", candidate_edges),
         ("source_extra_arms", "LineString", source_extra_records),
@@ -254,6 +257,8 @@ def _draw_profile_panel(
         color = group_color.get(profile.arm_id, GREY)
         for geom in _profile_review_road_geometries(profile, loaded):
             _draw_line_in_bounds(draw, geom, bounds, project, fill=color, width=4)
+        for geom, _gap_m in _profile_review_connector_geometries(profile, loaded):
+            _draw_dashed_line_in_bounds(draw, geom, bounds, project, fill=color, width=2)
         point = _profile_review_point(profile, loaded)
         if point is not None and _point_in_bounds(point, bounds):
             _text(draw, _panel_text_xy(project(float(point.x), float(point.y)), panel), profile.arm_id, font=font)
@@ -284,6 +289,56 @@ def _draw_line_in_bounds(
     if hasattr(clipped, "geoms"):
         for part in clipped.geoms:
             _draw_line_in_bounds(draw, part, bounds, project, fill=fill, width=width)
+
+
+def _draw_dashed_line_in_bounds(
+    draw: ImageDraw.ImageDraw,
+    geometry: BaseGeometry,
+    bounds: tuple[float, float, float, float],
+    project,
+    *,
+    fill,
+    width: int,
+) -> None:
+    if geometry is None or geometry.is_empty:
+        return
+    minx, miny, maxx, maxy = bounds
+    clipped = clip_by_rect(geometry, minx, miny, maxx, maxy)
+    if clipped.is_empty:
+        return
+    if clipped.geom_type == "LineString":
+        _draw_dashed_line(draw, clipped, project, fill=fill, width=width)
+        return
+    if clipped.geom_type == "MultiLineString":
+        for part in clipped.geoms:
+            _draw_dashed_line(draw, part, project, fill=fill, width=width)
+        return
+    if hasattr(clipped, "geoms"):
+        for part in clipped.geoms:
+            _draw_dashed_line_in_bounds(draw, part, bounds, project, fill=fill, width=width)
+
+
+def _draw_dashed_line(draw: ImageDraw.ImageDraw, geometry: BaseGeometry, project, *, fill, width: int) -> None:
+    points = _line_points(geometry, project)
+    if len(points) < 2:
+        return
+    dash_px = 8.0
+    gap_px = 5.0
+    for start, end in zip(points, points[1:]):
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        length = math.hypot(dx, dy)
+        if length <= 1e-6:
+            continue
+        ux = dx / length
+        uy = dy / length
+        offset = 0.0
+        while offset < length:
+            dash_end = min(offset + dash_px, length)
+            p0 = (start[0] + ux * offset, start[1] + uy * offset)
+            p1 = (start[0] + ux * dash_end, start[1] + uy * dash_end)
+            draw.line((p0, p1), fill=fill, width=width)
+            offset += dash_px + gap_px
 
 
 def _point_in_bounds(point: Point, bounds: tuple[float, float, float, float]) -> bool:
@@ -419,6 +474,7 @@ def _profiles_review_geometries(profiles: tuple[ArmProfile, ...], loaded: Loaded
     geometries: list[BaseGeometry] = []
     for profile in profiles:
         geometries.extend(_profile_review_road_geometries(profile, loaded))
+        geometries.extend(geom for geom, _gap_m in _profile_review_connector_geometries(profile, loaded))
     return geometries
 
 
@@ -438,6 +494,81 @@ def _profile_review_road_geometries(profile: ArmProfile, loaded: LoadedDataset |
     return geometries
 
 
+def _profile_review_connector_geometries(
+    profile: ArmProfile,
+    loaded: LoadedDataset | None,
+) -> list[tuple[LineString, float]]:
+    if loaded is None:
+        return []
+    road_ids = tuple(dict.fromkeys(profile.corridor_support_road_ids + profile.local_stub_road_ids + profile.seed_road_ids))
+    connectors: list[tuple[LineString, float]] = []
+    previous_geom: BaseGeometry | None = None
+    for road_id in road_ids:
+        road = loaded.roads.get(road_id)
+        if road is None or road.geometry is None or road.geometry.is_empty:
+            continue
+        if previous_geom is not None:
+            connector = _nearest_endpoint_connector(previous_geom, road.geometry, loaded)
+            if connector is not None:
+                connectors.append(connector)
+        previous_geom = road.geometry
+    return connectors
+
+
+def _nearest_endpoint_connector(
+    left: BaseGeometry,
+    right: BaseGeometry,
+    loaded: LoadedDataset | None,
+) -> tuple[LineString, float] | None:
+    left_points = _geometry_endpoints(left)
+    right_points = _geometry_endpoints(right)
+    if not left_points or not right_points:
+        return None
+    best: tuple[float, Point, Point] | None = None
+    for left_point in left_points:
+        for right_point in right_points:
+            distance_m = _point_distance_meters(left_point, right_point, loaded)
+            if best is None or distance_m < best[0]:
+                best = (distance_m, left_point, right_point)
+    if best is None:
+        return None
+    distance_m, left_point, right_point = best
+    if distance_m < SEMANTIC_CONNECTOR_MIN_GAP_METERS or distance_m > SEMANTIC_CONNECTOR_MAX_GAP_METERS:
+        return None
+    return (LineString([(float(left_point.x), float(left_point.y)), (float(right_point.x), float(right_point.y))]), round(distance_m, 3))
+
+
+def _geometry_endpoints(geometry: BaseGeometry) -> list[Point]:
+    if geometry.geom_type == "LineString":
+        coords = list(geometry.coords)
+        if not coords:
+            return []
+        return [Point(coords[0][0], coords[0][1]), Point(coords[-1][0], coords[-1][1])]
+    if geometry.geom_type == "MultiLineString":
+        points: list[Point] = []
+        for part in geometry.geoms:
+            points.extend(_geometry_endpoints(part))
+        return points
+    if hasattr(geometry, "geoms"):
+        points: list[Point] = []
+        for part in geometry.geoms:
+            points.extend(_geometry_endpoints(part))
+        return points
+    center = geometry.centroid
+    return [Point(float(center.x), float(center.y))]
+
+
+def _point_distance_meters(left: Point, right: Point, loaded: LoadedDataset | None) -> float:
+    if not _uses_geographic_coordinates(left, loaded):
+        return float(left.distance(right))
+    lat = (float(left.y) + float(right.y)) / 2.0
+    meters_per_degree_x = max(111_320.0 * abs(math.cos(math.radians(lat))), 1.0)
+    meters_per_degree_y = 110_540.0
+    dx = (float(right.x) - float(left.x)) * meters_per_degree_x
+    dy = (float(right.y) - float(left.y)) * meters_per_degree_y
+    return math.hypot(dx, dy)
+
+
 def _profile_road_geometries(profile: ArmProfile, loaded: LoadedDataset | None) -> list[BaseGeometry]:
     if loaded is None:
         return []
@@ -447,6 +578,30 @@ def _profile_road_geometries(profile: ArmProfile, loaded: LoadedDataset | None) 
         if road is not None and road.geometry is not None and not road.geometry.is_empty:
             geometries.append(road.geometry)
     return geometries
+
+
+def _corridor_connector_records(
+    result: CaseAlignmentResult,
+    loaded_by_dataset: dict[str, LoadedDataset],
+) -> list[tuple[BaseGeometry, dict[str, Any]]]:
+    records: list[tuple[BaseGeometry, dict[str, Any]]] = []
+    for dataset, profiles in result.profiles_by_dataset.items():
+        loaded = loaded_by_dataset.get(dataset)
+        for profile in profiles:
+            for index, (geometry, gap_m) in enumerate(_profile_review_connector_geometries(profile, loaded), start=1):
+                records.append(
+                    (
+                        geometry,
+                        {
+                            "dataset": dataset,
+                            "arm_id": profile.arm_id,
+                            "connector_index": index,
+                            "gap_m": gap_m,
+                            "reason": "semantic_trace_gap_visualization",
+                        },
+                    )
+                )
+    return records
 
 
 def _profile_review_point(profile: ArmProfile, loaded: LoadedDataset | None) -> Point | None:

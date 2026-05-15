@@ -40,6 +40,9 @@ P01-Final 规则级修正源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/P01_Fin
 | 25 | 混源 Arm 规则源选择与 fallback | 已实现 | 混源进入 Arm 按 SWSD 结构匹配、RCSD 结构匹配、SWSD basic rule 兜底选择；primary source 无可生成规则时可用 alternate source Arm role / corridor ordinal 低置信投影；参考 RCSD 但目标 Arm 缺失时 fallback 到 SWSD basic rule；tests 覆盖。 |
 | 26 | frcsd_road_next_road.geojson | 已实现 | final FeatureCollection 使用 `geometry=null` 与 `id/road_id/next_road_id/type/source/turntype/city_code` properties，包含 duplicate 防护。 |
 | 27 | audit / issue report | 已实现 | 输出 `arm_source_profiles.json`、`source_arm_pass_rules_swsd.json`、`source_arm_pass_rules_rcsd.json`、`final_generation_decisions.json`、`frcsd_source_road_map.json`、兼容 `source_movement_policy_swsd.json` / `source_movement_policy_rcsd.json`、`frcsd_road_next_road_audit.json` 与 `frcsd_road_next_road_issue_report.json`。 |
+| 28 | `baseroadid` 字段语义裁定 | 已裁定（2026-05-15） | 实测 7 case F-RCSD `roads.gpkg` `baseroadid` = JSON 空数组字符串 `"[]"`，业务语义即为空；不作为来源映射依据；契约 §8 措辞已精确化；spec `p01-four-case-closure-and-field-semantics` C-1=A。 |
+| 29 | 未列举 `kind` 值兜底裁定 | 已裁定（2026-05-15） | 独立位 1/4/8/16/2048/8192 与复合值 12/20 在实测中出现；bit2 (kind=4) / bit11 (kind=2048) 维持既有规则；其它独立位按 `kind != 4` 默认 continue trace 兜底（行为不变）；`junction_context.json` 增 `kind_distribution` audit 字段；spec C-2=D。 |
+| 30 | `turntype` 编码权威性 | 标 NEEDS_CLARIFICATION_FROM_RCSD_SPEC（2026-05-15） | 现行 `0/1/2/3/4` 序号编码无 RCSD 规范权威依据；原始上游 `turnType` 为位标志值域 `{0,1,2,4,8,16}`；下游不得强解释；编码值与代码不变；spec C-3=α。 |
 
 ## 已冻结真实 Case 基线
 
@@ -54,4 +57,16 @@ P01-Final 规则级修正源：`/mnt/e/_chatgpt_sync/RCSD_Topo_Poc/P01_1/P01_Fin
 
 ## 未完全闭合项
 
-- final RoadNextRoad `turntype` 输出编码已按模块契约固定为 `unknown=0 / straight=1 / left=2 / right=3 / uturn=4`；真实 RCSD 编码规范仍需用户提供权威材料确认。
+- final RoadNextRoad `turntype` 输出编码已按模块契约固定为 `unknown=0 / straight=1 / left=2 / right=3 / uturn=4`；真实 RCSD 编码规范仍需用户提供权威材料确认。2026-05-15 已在契约 §8 与本文件第 30 行标注 `NEEDS_CLARIFICATION_FROM_RCSD_SPEC`，下游消费方在权威规范确定前不得对该字段做强语义解释。
+
+## 7 case 业务诉求满足度独立判定（2026-05-15）
+
+基于原始数据独立评估，与仓库实现 e2e 输出对照（详见 `outputs/_work/p01_audit_2026-05-15/P01_business_correctness_report.md`）：
+
+- `1019789 / 38724646 / 950044`：三源 RoadNextRoad 完整，三源 arm 数对齐，仓库输出与上游意图量级一致；2026-05-12 已 accepted。
+- `5312848`：SWSD 中心路口 RoadNextRoad **仅 2 条**；仓库 31 条规则主要来自 RCSD 同源继承 + alternate projection，属 `full_allowed` 投影到 F-RCSD 多目标退出 Road 的合规放大。
+- `5595587`：SWSD 中心路口 RoadNextRoad **仅 1 条**；仓库 19 条与 RCSD 20 条强对齐，业务诉求基本满足。
+- `5659051`：SWSD 中心路口 RoadNextRoad **0 条**（完全缺失）；仓库 13 条 100% 走 `alternate_source_role_ordinal_projection` 合规退化。
+- `612654679`：SWSD 中心路口 RoadNextRoad **0 条**（完全缺失）；仓库 13 条 100% 走 `alternate_source_role_ordinal_projection` 合规退化。
+
+四个未签收 case 的"未达预期"现象**根因为上游 SWSD 数据缺失，不在 P01 内部修复**；用户裁决接受该边界。observed baseline 已规划落档 `baselines/p01_final_seven_cases_observed_2026-05-15/`（见 spec `p01-four-case-closure-and-field-semantics`）。后续 accepted 升级需业务侧补齐 SWSD 上游数据后重跑 P01，不属于本任务。

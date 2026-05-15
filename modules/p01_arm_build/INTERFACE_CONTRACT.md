@@ -202,6 +202,8 @@ uturn -> 4
 
 该映射是仓库内已冻结的输出编码。真实 RCSD 规范若提供不同编码，应以规范更新为独立入口变更任务，并同步修改本契约、实现和回归测试。
 
+> **NEEDS_CLARIFICATION_FROM_RCSD_SPEC**（2026-05-15 加入）：以上 `0/1/2/3/4` 序号编码是**仓库内部审计编码**，无外部 RCSD 规范权威依据。原始 SWSD / RCSD `RoadNextRoad.turnType` 字段实测值域为位标志集合 `{null, 0, 1, 2, 4, 8, 16}`，与本映射的序号空间**不直接同构**。在 RCSD 官方编码规范确认之前，**下游消费方不得对该字段做强语义解释**；未来取得权威规范后，需独立 SpecKit 任务修订本段、`final_road_next_road.py` 映射逻辑与既有 accepted baseline 全量回归。
+
 `parallel_branch_alignment.json` 记录 F-RCSD 平行支路与源侧平行支路的稳定顺序配准审计，字段包括：
 
 - `dataset`
@@ -230,7 +232,7 @@ P01-Final 规则：
 - P01-Final 先从 SWSD / RCSD RoadNextRoad、ArmMovement、进入道路角色与目标 Arm 退出道路集合抽象 `SourceArmPassRule`，再把规则投影到 F-RCSD 道路角色。
 - 精确源 Road 映射降级为 audit / confidence evidence；Source 缺失、非法、几何匹配缺失或多匹配必须进入 issue，但不得在规则明确且承载道路明确时直接阻断规则级生成。
 - Source + CRS 归一化后的 rounded exact geometry 只作为审计强证据；不得使用空间接近或最近邻替代。
-- 当前 F-RCSD 未提供可作为权威来源映射的 source road id 字段；`baseroadid` 在已验证 case 中为空，不作为来源映射依据。
+- 当前 F-RCSD 未提供可作为权威来源映射的 source road id 字段；`baseroadid` 在 7 个本地验证 case（`1019789 / 38724646 / 5312848 / 5595587 / 5659051 / 612654679 / 950044`）的 F-RCSD `roads.gpkg` 中实测为 JSON 空数组的字符串字面值 `"[]"`，业务语义即为空；其设计意图是 F-RCSD road 的多源 base road id 合并链路审计字段，当前 F-RCSD 数据未填充。**不**作为来源映射依据；映射仍走 `Source + CRS 归一化 rounded exact geometry`。
 - `full_allowed` 的生成范围是进入道路角色到目标 Arm 全部退出 Road，不是只生成到目标主干 Road。
 - 主干道路 / 平行支路若只覆盖部分目标退出 Road，默认进入 `data_error_partial_target_coverage / manual_review_required`；但主干 evidence 完整覆盖目标 trunk road 且仅未覆盖其它退出支路时，输出 `trunk_only_allowed`，只投影到目标 trunk。
 - advance-left left-receiving only、advance-left trunk only 与 uturn trunk only 是合法特殊范围，不按 partial coverage error 处理。

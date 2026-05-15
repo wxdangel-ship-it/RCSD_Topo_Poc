@@ -36,6 +36,8 @@ trace 从 seed 外侧端点继续。每步只沿拓扑连接向外追溯：
 - 回到当前路口输出 `loop_to_current_junction`。
 - 找不到下一条可用 Road 输出 `patch_boundary`。
 
+**未列举 kind 值的兜底语义**（2026-05-15 显式声明，行为与既有实现一致，不改主判定路径）：实测 7 个本地 case 中出现的 `kind` 值包括独立位 `{1, 4, 8, 16, 2048, 8192}` 与复合值 `{12 = 4|8, 20 = 4|16}`。其中 bit2 (`kind & 4 != 0`) 维持上述边界候选规则；bit11 (`kind = 2048`) 维持上述 T 型规则；其它独立位（bit0 = 1、bit3 = 8、bit4 = 16、bit13 = 8192）与复合值若未命中 bit2，按 `kind != 4` 默认 continue trace 兜底。A1 输出 `junction_context.json` 必须包含 `kind_distribution` audit 字段（key=`kind` 原始字符串值，含 `"null"` 桶位以保留 missing kind 节点；value=对应 member node 计数），便于后续上游字段语义裁定。若未来某独立位需要新的停止 / through 语义，须独立 SpecKit 任务。
+
 ## Arm 聚合
 
 按 trace 的终端类型与终端语义路口 ID 聚合 InitialArm。FinalArm 默认复制 InitialArm 并写入 `not_applied`；当 InitialArm 数量大于 LocalArmCandidate 数量、LocalArmCandidate 完整覆盖全部 InitialArm，且至少一个候选对应多个 InitialArm 时，FinalArm 采用局部趋势兜底聚合并写入 `local_candidate_fallback`。

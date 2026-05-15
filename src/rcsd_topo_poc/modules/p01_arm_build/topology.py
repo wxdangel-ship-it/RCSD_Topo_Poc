@@ -1590,6 +1590,12 @@ def build_dataset_arm_result(
     if loaded.dataset == "FRCSD" and not loaded.nodes:
         _add_issue(issues, "frcsd_structure_incomplete", junction_id=junction_id)
 
+    kind_distribution: dict[str, int] = {}
+    for _member_node_id in member_node_ids:
+        _node = loaded.nodes.get(_member_node_id)
+        _kind_key = "null" if _node is None or _node.kind is None else str(_node.kind)
+        kind_distribution[_kind_key] = kind_distribution.get(_kind_key, 0) + 1
+
     context = JunctionContext(
         dataset=loaded.dataset,
         junction_id=junction_id,
@@ -1605,6 +1611,7 @@ def build_dataset_arm_result(
         formway_unparseable_road_ids=special_index.formway_unparseable_road_ids,
         special_formway_issue_flags=special_index.issue_flags,
         input_issue_flags=tuple(sorted(set(input_flags))),
+        kind_distribution=dict(sorted(kind_distribution.items())),
     )
 
     traces: list[ArmTrace] = []

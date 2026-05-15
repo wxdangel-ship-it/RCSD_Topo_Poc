@@ -100,6 +100,7 @@ class JunctionContext:
     formway_unparseable_road_ids: tuple[str, ...]
     special_formway_issue_flags: tuple[str, ...]
     input_issue_flags: tuple[str, ...]
+    kind_distribution: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

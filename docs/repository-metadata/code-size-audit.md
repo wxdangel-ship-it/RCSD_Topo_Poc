@@ -32,6 +32,11 @@
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/outputs.py` | `48524` bytes | T04 输出层新增 arbiter ledger / decision trace / review index 字段后接近 50 KB | 后续新增输出字段前优先拆 review-index writer / audit writer helper |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/final_publish.py` | `47805` bytes | Step7 发布层接近 50 KB，但仍低于硬阈值 | 后续新增发布字段前先评估 summary / nodes audit helper 下沉 |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_event_interpretation_unit_preparation.py` | `41565` bytes | Round 2 新拆出的 unit preparation / pair-local materialization 模块 | 后续仅承接 preparation 与 scope materialization，不承接 candidate selection |
+| `tests/modules/p01_arm_build/test_p01_arm_build.py` | `96794` bytes | P01 主功能集成测试已逼近 100 KB 硬阈值（差 ~3.2 KB）；本轮 (`p01-four-case-closure-and-field-semantics`) 未追加该文件 | 后续任何 P01 新增测试**禁止**追加到本文件；按场景新建独立测试文件，参考 `tests/modules/p01_arm_build/test_p01_kind_audit.py` |
+| `src/rcsd_topo_poc/modules/p01_arm_build/topology.py` | `78424` bytes | 本轮新增 `kind_distribution` audit 字段计算后体量 +371 bytes（从 `78053` 增至 `78424`），仍低于硬阈值；spec `p01-four-case-closure-and-field-semantics` C-2=D | 后续 P01 trace / through 主路径若继续扩展，优先拆分 trace helper / arm aggregation / context build 职责 |
+| `src/rcsd_topo_poc/modules/p01_arm_build/final_road_next_road.py` | `72780` bytes | P01-Final 主实现接近 75 KB，承载 `SourceArmPassRule` / ArmSourceProfile / generation decision / source map 多类职责 | 后续若继续扩展 final generation 规则，优先拆出 rule abstraction / projection / source mapping helper |
+| `src/rcsd_topo_poc/modules/p01_arm_build/final_arm_validation.py` | `53011` bytes | FinalArm relaxed reverse / supplemental trace validation 实现 | 后续若继续扩展 validation 分支，优先拆 validation builder 与 evidence helper |
+| `src/rcsd_topo_poc/modules/p01_arm_build/review.py` | `52972` bytes | P01 retained audit PNG / review GPKG 图层 helper | 后续 review 输出扩展先评估 layer builder / png renderer 拆分 |
 
 ## 本轮已拆分降险记录
 

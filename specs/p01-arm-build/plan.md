@@ -24,7 +24,7 @@ A1 使用以下内部构建块：
 - `trunk.py`：trunk road ids、trunk 状态与非 trunk member roads。
 - `road_next_road.py`：SWSD / RCSD / F-RCSD RoadNextRoad 读取、按 Case selected road ids 流式过滤与归一化。
 - `movement.py`：RoadMovementEvidence、ArmMovement、ReceivingRoadRole 与 corrected trunk。
-- `review.py`：A1 review PNG、compare PNG 与 review GPKG。
+- `review.py`：A1 retained audit PNG 与 review GPKG；dataset 级 `p01_arm_review.png`、A1 `p01_arm_compare.png` 与 F-RCSD `frcsd_road_next_road_review.png` 不作为正式业务输出。
 - `runner.py`：A1 / P01-Final 批处理与输出编排。
 
 ## 3. A2 架构
@@ -85,6 +85,6 @@ A2 不重新实现 A1，不静默修复 A1 结果。A2 反馈通过 ArmBuildFeed
 - `frcsd_road_next_road_audit.json`
 - `frcsd_road_next_road_issue_report.json`
 - summary / review index
-- review PNG / GPKG
+- retained review PNG / GPKG
 
 无法访问真实内网数据时，交付回报必须明确真实 case 未由 Agent 本地验证，并提供内网执行命令边界。

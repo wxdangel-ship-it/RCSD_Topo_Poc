@@ -10,9 +10,10 @@ from shapely.geometry import LineString, Point, mapping
 
 from rcsd_topo_poc.modules.p01_arm_build.alignment import _build_logical_groups
 from rcsd_topo_poc.modules.p01_arm_build.alignment_models import ArmAlignmentCandidate, ArmProfile
-from rcsd_topo_poc.modules.p01_arm_build.alignment_review import _profile_review_road_geometries
+from rcsd_topo_poc.modules.p01_arm_build.alignment_review import _compare_local_bounds, _profile_review_road_geometries
+from rcsd_topo_poc.modules.p01_arm_build.corridor import _trace_seed_corridor
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset
-from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput
+from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput, NodeRecord, RoadRecord
 from rcsd_topo_poc.modules.p01_arm_build.alignment_runner import run_p01_arm_alignment_from_args
 
 
@@ -159,6 +160,21 @@ def _write_raw_dataset(tmp_path: Path, dataset: str, arms: list[dict]) -> tuple[
     _write_nodes(nodes_path, nodes)
     _write_roads(roads_path, roads)
     return nodes_path, roads_path
+
+
+def test_compare_alignment_bounds_are_centered_on_junction(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.gpkg"
+    roads_path = tmp_path / "roads.gpkg"
+    _write_nodes(nodes_path, [("SWSD_J", 100.0, 200.0), ("A", 5000.0, 5000.0), ("B", 5200.0, 5000.0)])
+    _write_roads(roads_path, [("SWSD_A1_r1", "A", "B", [(5000.0, 5000.0), (5200.0, 5000.0)])])
+    loaded = load_dataset(DatasetInput("SWSD", nodes_path, roads_path))
+    profile = _alignment_profile("SWSD", "A1")
+
+    bounds = _compare_local_bounds((profile,), loaded, panel_width=520, panel_height=608)
+
+    assert bounds[0] == -100.0
+    assert bounds[2] == 300.0
+    assert round((bounds[1] + bounds[3]) / 2, 6) == 200.0
 
 
 def _write_dataset_a1(case_dir: Path, dataset: str, arms: list[dict]) -> None:
@@ -464,3 +480,94 @@ def test_alignment_png_review_context_uses_local_stub_not_full_trace(tmp_path: P
 
     geometries = _profile_review_road_geometries(profile, loaded)
     assert [round(geom.length) for geom in geometries] == [20]
+
+
+def test_alignment_png_review_context_falls_back_to_members_for_seed_only_corridor(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.gpkg"
+    roads_path = tmp_path / "roads.gpkg"
+    _write_nodes(nodes_path, [("n0", 0, 0), ("n1", 20, 0), ("n2", 60, 0)])
+    _write_roads(
+        roads_path,
+        [
+            ("near", "n0", "n1", [(0, 0), (20, 0)]),
+            ("connector", "n1", "n2", [(20, 0), (60, 0)]),
+        ],
+    )
+    loaded = load_dataset(DatasetInput("FRCSD", nodes_path, roads_path))
+    profile = ArmProfile(
+        dataset="FRCSD",
+        junction_group_id="group_0001",
+        current_junction_id="J",
+        arm_id="F1",
+        source_final_arm_id="F1",
+        source_initial_arm_ids=("A1",),
+        member_road_ids=("near", "connector"),
+        seed_road_ids=("near",),
+        connector_road_ids=("connector",),
+        inbound_seed_road_ids=(),
+        outbound_seed_road_ids=(),
+        bidirectional_seed_road_ids=("near",),
+        terminal_type="semantic_boundary",
+        terminal_junction_id="T",
+        terminal_member_node_ids=("T",),
+        build_status="stable",
+        risk_flags=(),
+        merge_status="local_candidate_fallback",
+        merge_reason="test",
+        local_candidate_ids=("L1",),
+        local_trend_angle_deg=0.0,
+        local_stub_road_ids=("near",),
+        trace_ids=("trace1",),
+        trace_stop_types=("semantic_boundary",),
+        through_decision_summary={"semantic_boundary": 1},
+        geometry_summary={},
+        lineage_summary={},
+        corridor_angle_deg=0.0,
+        corridor_support_road_ids=("near",),
+        corridor_status="seed_only",
+    )
+
+    geometries = _profile_review_road_geometries(profile, loaded)
+    assert [round(geom.length) for geom in geometries] == [20, 40]
+
+
+def test_corridor_trace_can_continue_from_same_semantic_terminal_group() -> None:
+    nodes = {
+        "current": NodeRecord("current", "current", "4", Point(0, 0)),
+        "terminal_a": NodeRecord("terminal_a", "terminal", "4", Point(10, 0)),
+        "terminal_b": NodeRecord("terminal_b", "terminal", "4", Point(10, 2)),
+        "preferred_out": NodeRecord("preferred_out", None, "1", Point(30, 2)),
+        "nonpreferred_out": NodeRecord("nonpreferred_out", None, "1", Point(30, 0)),
+    }
+    roads = {
+        "seed": RoadRecord("seed", "current", "terminal_a", 2, "0", LineString([(0, 0), (10, 0)])),
+        "preferred": RoadRecord("preferred", "terminal_b", "preferred_out", 2, "0", LineString([(10, 2), (30, 2)])),
+        "nonpreferred": RoadRecord(
+            "nonpreferred",
+            "terminal_a",
+            "nonpreferred_out",
+            2,
+            "0",
+            LineString([(10, 0), (30, 0)]),
+        ),
+    }
+    incident_by_node = {
+        "current": ("seed",),
+        "terminal_a": ("nonpreferred", "seed"),
+        "terminal_b": ("preferred",),
+        "preferred_out": ("preferred",),
+        "nonpreferred_out": ("nonpreferred",),
+    }
+
+    result = _trace_seed_corridor(
+        seed_road=roads["seed"],
+        current_member_node_ids={"current"},
+        current_centroid=(0.0, 0.0),
+        nodes=nodes,
+        roads=roads,
+        incident_by_node=incident_by_node,
+        groups={"current": ("current",), "terminal": ("terminal_a", "terminal_b")},
+        preferred_road_ids={"seed", "preferred"},
+    )
+
+    assert result["road_ids"][:2] == ["seed", "preferred"]

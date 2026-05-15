@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,14 @@ ARM_COLORS = [
     (23, 190, 207, 255),
     (214, 39, 40, 255),
 ]
+TURN_COLORS = {
+    "straight": (44, 160, 44, 255),
+    "left": (255, 127, 14, 255),
+    "right": (31, 119, 180, 255),
+    "unknown": (110, 110, 110, 255),
+}
+MOVEMENT_AUDIT_HALF_WIDTH_METERS = 200.0
+PASS_AUDIT_HALF_WIDTH_METERS = 60.0
 
 
 def _geometry_bounds(geometries: list[BaseGeometry]) -> tuple[float, float, float, float]:
@@ -107,6 +116,302 @@ def _text(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, *, font, fi
     bbox = draw.textbbox((x, y), text, font=font)
     draw.rectangle((bbox[0] - 2, bbox[1] - 1, bbox[2] + 2, bbox[3] + 1), fill=(255, 255, 255, 210))
     draw.text((x, y), text, font=font, fill=fill)
+
+
+def _is_geographic_dataset(loaded: LoadedDataset) -> bool:
+    text = f"{loaded.road_layer.crs or ''} {loaded.road_layer.crs_wkt or ''} {loaded.node_layer.crs or ''} {loaded.node_layer.crs_wkt or ''}".lower()
+    return "4326" in text or "crs84" in text or "longlat" in text or "degree" in text
+
+
+def _junction_center(loaded: LoadedDataset, result: DatasetBuildResult) -> Point:
+    points = [
+        loaded.nodes[node_id].geometry.centroid
+        for node_id in result.context.member_node_ids
+        if node_id in loaded.nodes and loaded.nodes[node_id].geometry is not None and not loaded.nodes[node_id].geometry.is_empty
+    ]
+    if points:
+        return Point(sum(point.x for point in points) / len(points), sum(point.y for point in points) / len(points))
+    geometries = [road.geometry for road in loaded.roads.values() if road.geometry is not None and not road.geometry.is_empty]
+    if geometries:
+        centroid = geometries[0].centroid
+        return Point(float(centroid.x), float(centroid.y))
+    return Point(0.0, 0.0)
+
+
+def _local_meter_bounds(
+    loaded: LoadedDataset,
+    result: DatasetBuildResult,
+    *,
+    half_width_meters: float,
+    aspect_width: int,
+    aspect_height: int,
+) -> tuple[float, float, float, float]:
+    center = _junction_center(loaded, result)
+    aspect = aspect_height / max(aspect_width, 1)
+    if _is_geographic_dataset(loaded):
+        lat_rad = math.radians(float(center.y))
+        half_x = half_width_meters / max(111_320.0 * max(math.cos(lat_rad), 0.1), 1e-9)
+        half_y = half_width_meters * aspect / 110_540.0
+    else:
+        half_x = half_width_meters
+        half_y = half_width_meters * aspect
+    return (float(center.x) - half_x, float(center.y) - half_y, float(center.x) + half_x, float(center.y) + half_y)
+
+
+def _point_in_bounds(point: Point, bounds: tuple[float, float, float, float]) -> bool:
+    minx, miny, maxx, maxy = bounds
+    return minx <= float(point.x) <= maxx and miny <= float(point.y) <= maxy
+
+
+def _road_midpoint(loaded: LoadedDataset, road_id: str) -> Point | None:
+    road = loaded.roads.get(road_id)
+    if road is None or road.geometry is None or road.geometry.is_empty:
+        return None
+    return road.geometry.interpolate(0.5, normalized=True)
+
+
+def _road_local_point(loaded: LoadedDataset, road_id: str, center: Point, *, offset_ratio: float = 0.14) -> Point | None:
+    road = loaded.roads.get(road_id)
+    if road is None or road.geometry is None or road.geometry.is_empty or road.geometry.geom_type != "LineString":
+        return _road_midpoint(loaded, road_id)
+    coords = list(road.geometry.coords)
+    if len(coords) < 2:
+        return _road_midpoint(loaded, road_id)
+    start = Point(float(coords[0][0]), float(coords[0][1]))
+    end = Point(float(coords[-1][0]), float(coords[-1][1]))
+    near, far = (start, end) if start.distance(center) <= end.distance(center) else (end, start)
+    return Point(
+        float(near.x) + (float(far.x) - float(near.x)) * offset_ratio,
+        float(near.y) + (float(far.y) - float(near.y)) * offset_ratio,
+    )
+
+
+def _road_endpoints(loaded: LoadedDataset, road_id: str) -> tuple[Point, Point] | None:
+    road = loaded.roads.get(road_id)
+    if road is None or road.geometry is None or road.geometry.is_empty:
+        return None
+    geometry = road.geometry
+    if geometry.geom_type == "LineString":
+        coords = list(geometry.coords)
+    elif geometry.geom_type == "MultiLineString":
+        parts = [part for part in geometry.geoms if not part.is_empty and len(part.coords) >= 2]
+        if not parts:
+            return None
+        longest = max(parts, key=lambda item: item.length)
+        coords = list(longest.coords)
+    else:
+        return None
+    if len(coords) < 2:
+        return None
+    return Point(float(coords[0][0]), float(coords[0][1])), Point(float(coords[-1][0]), float(coords[-1][1]))
+
+
+def _road_junction_endpoint(loaded: LoadedDataset, road_id: str, center: Point) -> Point | None:
+    endpoints = _road_endpoints(loaded, road_id)
+    if endpoints is None:
+        return _road_midpoint(loaded, road_id)
+    start, end = endpoints
+    return start if start.distance(center) <= end.distance(center) else end
+
+
+def _road_near_segment(
+    loaded: LoadedDataset,
+    road_id: str,
+    center: Point,
+    *,
+    ratio: float = 1.0,
+    max_length_meters: float = 50.0,
+) -> LineString | None:
+    endpoints = _road_endpoints(loaded, road_id)
+    if endpoints is None:
+        return None
+    start, end = endpoints
+    near, far = (start, end) if start.distance(center) <= end.distance(center) else (end, start)
+    if _is_geographic_dataset(loaded):
+        lat_rad = math.radians(float(near.y))
+        dx_m = (float(far.x) - float(near.x)) * 111_320.0 * max(math.cos(lat_rad), 0.1)
+        dy_m = (float(far.y) - float(near.y)) * 110_540.0
+        length_for_clip = max(math.hypot(dx_m, dy_m), 1e-9)
+    else:
+        length_for_clip = max(near.distance(far), 1e-9)
+    clip_ratio = min(ratio, max_length_meters / length_for_clip)
+    clipped = Point(
+        float(near.x) + (float(far.x) - float(near.x)) * clip_ratio,
+        float(near.y) + (float(far.y) - float(near.y)) * clip_ratio,
+    )
+    return LineString([near, clipped])
+
+
+def _final_arm_road_ids(arm: Any) -> tuple[str, ...]:
+    payload = arm.initial_arm if hasattr(arm, "initial_arm") else {}
+    return tuple(str(item) for item in (payload.get("member_road_ids", []) or arm.trunk_road_ids or payload.get("seed_road_ids", [])))
+
+
+def _final_arm_display_road_ids(arm: Any) -> tuple[str, ...]:
+    payload = arm.initial_arm if hasattr(arm, "initial_arm") else {}
+    values: list[str] = []
+    for key in (
+        "member_road_ids",
+        "seed_road_ids",
+        "connector_road_ids",
+        "inbound_member_road_ids",
+        "outbound_member_road_ids",
+        "bidirectional_member_road_ids",
+    ):
+        values.extend(str(item) for item in payload.get(key, []) or ())
+    values.extend(str(item) for item in getattr(arm, "trunk_road_ids", tuple()) or ())
+    values.extend(str(item) for item in getattr(arm, "non_trunk_member_road_ids", tuple()) or ())
+    return tuple(dict.fromkeys(values))
+
+
+def _final_arm_color_map(result: DatasetBuildResult) -> dict[str, tuple[int, int, int, int]]:
+    return {arm.final_arm_id: ARM_COLORS[index % len(ARM_COLORS)] for index, arm in enumerate(result.final_arms)}
+
+
+def _draw_arrow(
+    draw: ImageDraw.ImageDraw,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    *,
+    fill: tuple[int, int, int, int],
+    width: int,
+    dashed: bool = False,
+    label: str | None = None,
+) -> None:
+    sx, sy = start
+    ex, ey = end
+    if math.hypot(ex - sx, ey - sy) < 8:
+        return
+    if dashed:
+        total = math.hypot(ex - sx, ey - sy)
+        dash_len = 10
+        gap_len = 7
+        pos = 0.0
+        while pos < total:
+            end_pos = min(pos + dash_len, total)
+            t1 = pos / total
+            t2 = end_pos / total
+            draw.line(
+                (sx + (ex - sx) * t1, sy + (ey - sy) * t1, sx + (ex - sx) * t2, sy + (ey - sy) * t2),
+                fill=fill,
+                width=width,
+            )
+            pos += dash_len + gap_len
+    else:
+        draw.line((sx, sy, ex, ey), fill=fill, width=width)
+    angle = math.atan2(ey - sy, ex - sx)
+    size = 7
+    left = (ex - size * math.cos(angle - math.pi / 6), ey - size * math.sin(angle - math.pi / 6))
+    right = (ex - size * math.cos(angle + math.pi / 6), ey - size * math.sin(angle + math.pi / 6))
+    draw.polygon([(ex, ey), left, right], fill=fill)
+    if label:
+        mx, my = (sx + ex) / 2, (sy + ey) / 2
+        draw.text((mx + 4, my + 4), label, font=ImageFont.load_default(), fill=fill)
+
+
+def _offset_segment(
+    start: tuple[int, int],
+    end: tuple[int, int],
+    *,
+    offset_px: float,
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    sx, sy = start
+    ex, ey = end
+    length = math.hypot(ex - sx, ey - sy)
+    if length < 1e-6 or abs(offset_px) < 1e-6:
+        return start, end
+    nx = -(ey - sy) / length
+    ny = (ex - sx) / length
+    return (
+        (round(sx + nx * offset_px), round(sy + ny * offset_px)),
+        (round(ex + nx * offset_px), round(ey + ny * offset_px)),
+    )
+
+
+def _segment_overlap_key(start: tuple[int, int], end: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int]]:
+    a = (round(start[0] / 2) * 2, round(start[1] / 2) * 2)
+    b = (round(end[0] / 2) * 2, round(end[1] / 2) * 2)
+    return (a, b) if a <= b else (b, a)
+
+
+def _draw_same_endpoint_marker(
+    draw: ImageDraw.ImageDraw,
+    point: tuple[int, int],
+    *,
+    fill: tuple[int, int, int, int],
+    index: int,
+    total: int,
+    dashed: bool,
+    label: str | None = None,
+) -> None:
+    cx, cy = point
+    if total <= 1:
+        angle = -math.pi / 4
+    else:
+        angle = -math.pi / 2 + (2 * math.pi * index / total)
+    inner = 7
+    outer = 20 + (index // 8) * 6
+    start = (round(cx + math.cos(angle) * inner), round(cy + math.sin(angle) * inner))
+    end = (round(cx + math.cos(angle) * outer), round(cy + math.sin(angle) * outer))
+    draw.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), outline=fill, width=2)
+    _draw_arrow(draw, start, end, fill=fill, width=2, dashed=dashed, label=label)
+
+
+def _draw_final_arm_near_roads(
+    draw: ImageDraw.ImageDraw,
+    loaded: LoadedDataset,
+    result: DatasetBuildResult,
+    *,
+    project,
+    bounds: tuple[float, float, float, float],
+    width: int,
+    label: bool,
+    font,
+) -> dict[str, tuple[int, int, int, int]]:
+    colors = _final_arm_color_map(result)
+    center = _junction_center(loaded, result)
+    corridor_by_arm = {item.final_arm_id: item.support_road_ids for item in result.arm_corridor_evidence}
+    for arm in result.final_arms:
+        color = colors[arm.final_arm_id]
+        road_ids = tuple(dict.fromkeys(_final_arm_display_road_ids(arm) + tuple(corridor_by_arm.get(arm.final_arm_id, tuple()))))
+        label_point = None
+        for road_id in road_ids:
+            segment = _road_near_segment(loaded, road_id, center)
+            if segment is None or not segment.intersects(LineString([(bounds[0], bounds[1]), (bounds[2], bounds[1]), (bounds[2], bounds[3]), (bounds[0], bounds[3])]).envelope):
+                continue
+            _draw_line(draw, segment, project, fill=color, width=width)
+            label_point = label_point or segment.interpolate(0.85, normalized=True)
+        if label and label_point is not None:
+            _text(draw, project(float(label_point.x), float(label_point.y)), arm.final_arm_id, font=font)
+    return colors
+
+
+def _draw_final_arm_roads(
+    draw: ImageDraw.ImageDraw,
+    loaded: LoadedDataset,
+    result: DatasetBuildResult,
+    *,
+    project,
+    bounds: tuple[float, float, float, float],
+    width: int,
+    label: bool,
+    font,
+) -> dict[str, tuple[int, int, int, int]]:
+    colors = _final_arm_color_map(result)
+    corridor_by_arm = {item.final_arm_id: item.support_road_ids for item in result.arm_corridor_evidence}
+    for arm in result.final_arms:
+        color = colors[arm.final_arm_id]
+        road_ids = tuple(dict.fromkeys(_final_arm_road_ids(arm) + tuple(corridor_by_arm.get(arm.final_arm_id, tuple()))))
+        label_point = None
+        for road_id in road_ids:
+            road = loaded.roads.get(road_id)
+            if road is None or road.geometry is None or road.geometry.is_empty or not road.geometry.intersects(LineString([(bounds[0], bounds[1]), (bounds[2], bounds[1]), (bounds[2], bounds[3]), (bounds[0], bounds[3])]).envelope):
+                continue
+            _draw_line(draw, road.geometry, project, fill=color, width=width)
+            label_point = label_point or road.geometry.interpolate(0.55, normalized=True)
+        if label and label_point is not None:
+            _text(draw, project(float(label_point.x), float(label_point.y)), arm.final_arm_id, font=font)
+    return colors
 
 
 def _arm_color_map(result: DatasetBuildResult) -> dict[str, tuple[int, int, int, int]]:
@@ -303,6 +608,163 @@ def render_dataset_review_png(path: Path, loaded: LoadedDataset, result: Dataset
         title=title,
         font=font,
     )
+    image.convert("RGB").save(path)
+
+
+def render_movement_turn_audit_png(path: Path, loaded: LoadedDataset, result: DatasetBuildResult) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    width, height = 1220, 760
+    legend_w = 390
+    map_w = width - legend_w
+    image = Image.new("RGBA", (width, height), (250, 250, 248, 255))
+    draw = ImageDraw.Draw(image, "RGBA")
+    font = ImageFont.load_default()
+    bounds = _local_meter_bounds(
+        loaded,
+        result,
+        half_width_meters=MOVEMENT_AUDIT_HALF_WIDTH_METERS,
+        aspect_width=map_w,
+        aspect_height=height,
+    )
+    project = _projector(bounds, left=0, top=32, width=map_w, height=height - 32, margin=26)
+    draw.rectangle((0, 0, map_w - 1, height - 1), outline=(210, 210, 210, 255), width=1)
+    _text(draw, (8, 8), f"{result.dataset} movement turn audit junction={result.junction_id}", font=font)
+    arm_colors = _draw_final_arm_roads(draw, loaded, result, project=project, bounds=bounds, width=7, label=True, font=font)
+    center = _junction_center(loaded, result)
+    if _point_in_bounds(center, bounds):
+        _draw_point(draw, center, project, fill=(0, 0, 0, 255), radius=4)
+
+    legend_left = map_w + 14
+    draw.rectangle((map_w, 0, width - 1, height - 1), fill=(255, 255, 255, 255), outline=(210, 210, 210, 255))
+    _text(draw, (legend_left, 10), "Arm color", font=font)
+    y = 34
+    for arm_id, color in arm_colors.items():
+        draw.rectangle((legend_left, y + 2, legend_left + 18, y + 14), fill=color)
+        draw.text((legend_left + 26, y), arm_id, font=font, fill=TEXT)
+        y += 20
+    y += 8
+    _text(draw, (legend_left, y), "Turn legend", font=font)
+    y += 24
+    movements = [
+        movement
+        for movement in result.arm_movements
+        if movement.from_arm_id != movement.to_arm_id and movement.movement_type in {"straight", "left", "right", "unknown"}
+    ]
+    for movement in sorted(movements, key=lambda item: (item.from_arm_id, item.to_arm_id))[:30]:
+        from_color = arm_colors.get(movement.from_arm_id, ROAD_GREY)
+        to_color = arm_colors.get(movement.to_arm_id, ROAD_GREY)
+        turn_color = TURN_COLORS.get(movement.movement_type, TURN_COLORS["unknown"])
+        draw.rectangle((legend_left, y + 3, legend_left + 15, y + 15), fill=from_color)
+        draw.text((legend_left + 19, y), "->", font=font, fill=TEXT)
+        draw.rectangle((legend_left + 38, y + 3, legend_left + 53, y + 15), fill=to_color)
+        unknown_mark = "? " if movement.movement_type == "unknown" else ""
+        label = (
+            f"{movement.from_arm_id}->{movement.to_arm_id} {unknown_mark}{movement.movement_type} "
+            f"{movement.permission_evidence_status}"
+        )
+        draw.text((legend_left + 60, y), label[:48], font=font, fill=turn_color)
+        y += 19
+        if y > height - 28:
+            draw.text((legend_left, y), "...", font=font, fill=TEXT)
+            break
+    image.convert("RGB").save(path)
+
+
+def render_pass_capability_audit_png(
+    path: Path,
+    loaded_frcsd: LoadedDataset,
+    result_frcsd: DatasetBuildResult,
+    final_result: Any,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    width, height = 1100, 900
+    image = Image.new("RGBA", (width, height), (250, 250, 248, 255))
+    draw = ImageDraw.Draw(image, "RGBA")
+    font = ImageFont.load_default()
+    bounds = _local_meter_bounds(
+        loaded_frcsd,
+        result_frcsd,
+        half_width_meters=PASS_AUDIT_HALF_WIDTH_METERS,
+        aspect_width=width,
+        aspect_height=height,
+    )
+    project = _projector(bounds, left=0, top=40, width=width, height=height - 40, margin=32)
+    _text(
+        draw,
+        (8, 10),
+        f"FRCSD pass capability audit junction={result_frcsd.junction_id} generated={final_result.metrics.get('frcsd_generated_road_next_road_count', 0)}",
+        font=font,
+    )
+    arm_colors = _draw_final_arm_near_roads(
+        draw,
+        loaded_frcsd,
+        result_frcsd,
+        project=project,
+        bounds=bounds,
+        width=12,
+        label=True,
+        font=font,
+    )
+    center = _junction_center(loaded_frcsd, result_frcsd)
+    if _point_in_bounds(center, bounds):
+        _draw_point(draw, center, project, fill=(0, 0, 0, 255), radius=5)
+
+    drawable_items: list[dict[str, Any]] = []
+    overlap_groups: dict[tuple[tuple[int, int], tuple[int, int]], list[int]] = {}
+    for item in final_result.audit:
+        if item.permission_status != "allowed" or item.movement_type == "uturn":
+            continue
+        from_point = _road_junction_endpoint(loaded_frcsd, item.f_road_id, center)
+        to_point = _road_junction_endpoint(loaded_frcsd, item.f_next_road_id, center)
+        if from_point is None or to_point is None:
+            continue
+        if not (_point_in_bounds(from_point, bounds) and _point_in_bounds(to_point, bounds)):
+            continue
+        start = project(float(from_point.x), float(from_point.y))
+        end = project(float(to_point.x), float(to_point.y))
+        color = arm_colors.get(item.from_arm_id, TURN_COLORS.get(item.movement_type, TURN_COLORS["unknown"]))
+        index = len(drawable_items)
+        drawable_items.append(
+            {
+                "start": start,
+                "end": end,
+                "color": color,
+                "movement_type": item.movement_type,
+            }
+        )
+        overlap_groups.setdefault(_segment_overlap_key(start, end), []).append(index)
+
+    parallel_count = sum(max(0, len(indexes) - 1) for indexes in overlap_groups.values())
+    same_endpoint_count = 0
+    for indexes in overlap_groups.values():
+        group_size = len(indexes)
+        for position, item_index in enumerate(indexes):
+            item = drawable_items[item_index]
+            if math.hypot(item["end"][0] - item["start"][0], item["end"][1] - item["start"][1]) < 8:
+                _draw_same_endpoint_marker(
+                    draw,
+                    item["start"],
+                    fill=item["color"],
+                    index=position,
+                    total=group_size,
+                    dashed=item["movement_type"] == "unknown",
+                    label="?" if item["movement_type"] == "unknown" else None,
+                )
+                same_endpoint_count += 1
+                continue
+            offset = 0.0 if group_size == 1 else (position - (group_size - 1) / 2) * 7.0
+            start, end = _offset_segment(item["start"], item["end"], offset_px=offset)
+            _draw_arrow(
+                draw,
+                start,
+                end,
+                fill=item["color"],
+                width=2,
+                dashed=item["movement_type"] == "unknown",
+                label="?" if item["movement_type"] == "unknown" else None,
+            )
+    if same_endpoint_count:
+        _text(draw, (8, 26), f"same-endpoint pass markers={same_endpoint_count}; parallel={parallel_count}", font=font)
     image.convert("RGB").save(path)
 
 

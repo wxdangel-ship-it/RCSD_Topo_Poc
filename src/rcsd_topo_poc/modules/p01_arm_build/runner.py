@@ -12,7 +12,6 @@ from rcsd_topo_poc.modules.p01_arm_build.case_scope import load_case_scoped_data
 from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import (
     build_frcsd_road_next_road,
     final_review_layers,
-    render_final_review_png,
     write_final_geojson,
 )
 from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset, normalise_id, write_csv, write_gpkg_layers, write_json
@@ -21,8 +20,8 @@ from rcsd_topo_poc.modules.p01_arm_build.road_next_road import read_road_next_ro
 from rcsd_topo_poc.modules.p01_arm_build.review import (
     build_compare_layers,
     build_dataset_review_layers,
-    render_compare_png,
-    render_dataset_review_png,
+    render_movement_turn_audit_png,
+    render_pass_capability_audit_png,
 )
 from rcsd_topo_poc.modules.p01_arm_build.topology import build_dataset_arm_result
 
@@ -114,6 +113,11 @@ PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 def _progress(message: str) -> None:
     print(f"[p01] {message}", file=sys.stderr, flush=True)
+
+
+def _remove_retired_png(path: Path) -> None:
+    if path.exists():
+        path.unlink()
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -222,7 +226,7 @@ def _review_index_row(
     group: JunctionGroup,
     dataset: str,
     result: Any,
-    review_png_path: Path,
+    review_png_path: Path | None,
     review_gpkg_path: Path,
 ) -> dict[str, Any]:
     metrics = result.metrics
@@ -236,7 +240,7 @@ def _review_index_row(
         "rcsd_junction_id": group.rcsd_junction_id,
         "frcsd_junction_id": group.frcsd_junction_id,
         "review_priority": result.review_priority,
-        "review_png_path": str(review_png_path),
+        "review_png_path": str(review_png_path) if review_png_path else "",
         "review_gpkg_path": str(review_gpkg_path),
         **metrics,
     }
@@ -264,7 +268,7 @@ def _write_dataset_outputs(
     dataset_dir: Path,
     loaded: Any,
     result: Any,
-) -> tuple[Path, Path]:
+) -> dict[str, Path | None]:
     write_json(dataset_dir / "junction_context.json", result.context)
     write_json(dataset_dir / "initial_arms.json", result.initial_arms)
     write_json(dataset_dir / "final_arms.json", result.final_arms)
@@ -287,9 +291,18 @@ def _write_dataset_outputs(
         crs=loaded.road_layer.crs or loaded.node_layer.crs,
         crs_wkt=loaded.road_layer.crs_wkt or loaded.node_layer.crs_wkt,
     )
-    png_path = dataset_dir / "p01_arm_review.png"
-    render_dataset_review_png(png_path, loaded, result)
-    return png_path, gpkg_path
+    _remove_retired_png(dataset_dir / "p01_arm_review.png")
+    movement_png_path: Path | None = None
+    if result.dataset == "FRCSD":
+        movement_png_path = dataset_dir / "p01_arm_movement_turn_audit.png"
+        render_movement_turn_audit_png(movement_png_path, loaded, result)
+    else:
+        _remove_retired_png(dataset_dir / "p01_arm_movement_turn_audit.png")
+    return {
+        "review_png_path": None,
+        "review_gpkg_path": gpkg_path,
+        "movement_turn_audit_png_path": movement_png_path,
+    }
 
 
 def _summary_payload(
@@ -512,21 +525,25 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
                 f"stable={result.metrics['stable_arm_count']} issues={result.metrics['issue_count']} "
                 f"priority={result.review_priority}; writing outputs"
             )
-            png_path, gpkg_path = _write_dataset_outputs(dataset_dir=dataset_dir, loaded=loaded[dataset], result=result)
-            dataset_output_paths[dataset] = {"review_png_path": str(png_path), "review_gpkg_path": str(gpkg_path)}
+            output_paths = _write_dataset_outputs(dataset_dir=dataset_dir, loaded=loaded[dataset], result=result)
+            dataset_output_paths[dataset] = {
+                "review_png_path": None,
+                "review_gpkg_path": str(output_paths["review_gpkg_path"]),
+                "movement_turn_audit_png_path": str(output_paths["movement_turn_audit_png_path"]) if output_paths["movement_turn_audit_png_path"] else None,
+            }
             review_rows.append(
                 _review_index_row(
                     run_id=run_id,
                     group=group,
                     dataset=dataset,
                     result=result,
-                    review_png_path=png_path,
-                    review_gpkg_path=gpkg_path,
+                    review_png_path=None,
+                    review_gpkg_path=output_paths["review_gpkg_path"],
                 )
             )
             _progress(
                 f"{group.group_id} {dataset} done duration={time.perf_counter() - dataset_started_at:.1f}s "
-                f"png={png_path} gpkg={gpkg_path}"
+                f"gpkg={output_paths['review_gpkg_path']}"
             )
 
         frcsd_final = build_frcsd_road_next_road(
@@ -560,13 +577,15 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
             crs=loaded["FRCSD"].road_layer.crs or loaded["FRCSD"].node_layer.crs,
             crs_wkt=loaded["FRCSD"].road_layer.crs_wkt or loaded["FRCSD"].node_layer.crs_wkt,
         )
-        final_png = frcsd_dir / "frcsd_road_next_road_review.png"
-        render_final_review_png(final_png, frcsd_final)
+        _remove_retired_png(frcsd_dir / "frcsd_road_next_road_review.png")
+        final_pass_png = frcsd_dir / "frcsd_pass_capability_audit.png"
+        render_pass_capability_audit_png(final_pass_png, loaded["FRCSD"], result_by_dataset["FRCSD"], frcsd_final)
         dataset_output_paths.setdefault("FRCSD", {}).update(
             {
                 "frcsd_road_next_road_geojson_path": str(frcsd_dir / "frcsd_road_next_road.geojson"),
                 "frcsd_road_next_road_review_gpkg_path": str(final_gpkg),
-                "frcsd_road_next_road_review_png_path": str(final_png),
+                "frcsd_road_next_road_review_png_path": None,
+                "frcsd_pass_capability_audit_png_path": str(final_pass_png),
             }
         )
         result_by_dataset["FRCSD"].metrics.update(frcsd_final.metrics)
@@ -579,9 +598,7 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
                     row["review_priority"] = _priority_min(str(row["review_priority"]), "P1")
                 break
 
-        compare_png = compare_dir / "p01_arm_compare.png"
-        _progress(f"{group.group_id} write compare png={compare_png}")
-        render_compare_png(compare_png, loaded, result_by_dataset)
+        _remove_retired_png(compare_dir / "p01_arm_compare.png")
         compare_gpkg = compare_dir / "p01_arm_compare_layers.gpkg"
         _progress(f"{group.group_id} write compare gpkg={compare_gpkg}")
         write_gpkg_layers(
@@ -593,7 +610,7 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         compare_summary = {
             "group_id": group.group_id,
             "datasets": {dataset: result_by_dataset[dataset].metrics for dataset in DATASETS},
-            "compare_png_path": str(compare_png),
+            "compare_png_path": None,
             "compare_gpkg_path": str(compare_gpkg),
         }
         write_json(compare_dir / "p01_arm_compare_summary.json", compare_summary)

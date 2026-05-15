@@ -16,7 +16,7 @@ P01 的成果目标是为 F-RCSD 重建路口级 RoadNextRoad。P01-A1 提供单
 - InitialArm / FinalArm / corrected_final_arms 输出。
 - ThroughDecisionAudit。
 - IssueReport。
-- Review PNG / compare PNG / review GPKG。
+- Retained audit PNG / review GPKG。
 - Summary / review index。
 - RoadNextRoad-aware ArmMovement。
 - RoadMovementEvidence。
@@ -26,7 +26,7 @@ P01 的成果目标是为 F-RCSD 重建路口级 RoadNextRoad。P01-A1 提供单
 - SourceArmPassRule。
 - F-RCSD Source + CRS-normalized rounded exact source road mapping 审计。
 - 规则源选择、SWSD basic fallback 与 final generation decision。
-- `frcsd_road_next_road.geojson`、final audit、issue report、review GPKG / PNG。
+- `frcsd_road_next_road.geojson`、final audit、issue report、review GPKG 与 F-RCSD pass capability audit PNG。
 - A2 ArmProfile、candidate edge、RawArmAlignment、LogicalArmGroup、ArmBuildFeedback 与 source_extra。
 - A2 配准 review PNG / compare PNG / review GPKG / summary / review index。
 

@@ -726,9 +726,15 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert any(decision["status"] == "simple_through" for decision in decisions)
     assert any(decision["status"] == "dead_end" for decision in decisions)
 
-    assert (swsd_dir / "p01_arm_review.png").is_file()
+    assert not (swsd_dir / "p01_arm_review.png").exists()
+    assert not (swsd_dir / "p01_arm_movement_turn_audit.png").exists()
     assert (swsd_dir / "review_layers.gpkg").is_file()
+    rcsd_dir = run_root / "cases" / "group_0001" / "RCSD"
+    assert not (rcsd_dir / "p01_arm_review.png").exists()
+    assert not (rcsd_dir / "p01_arm_movement_turn_audit.png").exists()
     frcsd_dir = run_root / "cases" / "group_0001" / "FRCSD"
+    assert not (frcsd_dir / "p01_arm_review.png").exists()
+    assert (frcsd_dir / "p01_arm_movement_turn_audit.png").is_file()
     assert (frcsd_dir / "frcsd_road_next_road.geojson").is_file()
     assert (frcsd_dir / "frcsd_source_road_map.json").is_file()
     assert (frcsd_dir / "source_movement_policy_swsd.json").is_file()
@@ -741,10 +747,14 @@ def test_p01_arm_build_outputs_multi_group_review_artifacts(tmp_path: Path) -> N
     assert (frcsd_dir / "frcsd_road_next_road_audit.json").is_file()
     assert (frcsd_dir / "frcsd_road_next_road_issue_report.json").is_file()
     assert (frcsd_dir / "frcsd_road_next_road_review_layers.gpkg").is_file()
-    assert (frcsd_dir / "frcsd_road_next_road_review.png").is_file()
-    assert (run_root / "cases" / "group_0001" / "compare" / "p01_arm_compare.png").is_file()
+    assert not (frcsd_dir / "frcsd_road_next_road_review.png").exists()
+    assert (frcsd_dir / "frcsd_pass_capability_audit.png").is_file()
+    assert not (run_root / "cases" / "group_0001" / "compare" / "p01_arm_compare.png").exists()
     assert (run_root / "cases" / "group_0001" / "compare" / "p01_arm_compare_layers.gpkg").is_file()
     case_summary = json.loads((run_root / "cases" / "group_0001" / "case_summary.json").read_text(encoding="utf-8"))
+    assert case_summary["datasets"]["FRCSD"]["frcsd_generated_road_next_road_count"] >= 0
+    assert case_summary["dataset_outputs"]["FRCSD"]["frcsd_road_next_road_review_png_path"] is None
+    assert case_summary["compare_outputs"]["compare_png_path"] is None
     assert "trace_review_png_paths" not in case_summary
     assert not (run_root / "cases" / "group_0001" / "trace_review").exists()
     assert set(fiona.listlayers(swsd_dir / "review_layers.gpkg")) >= {

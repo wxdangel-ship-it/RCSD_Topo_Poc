@@ -27,5 +27,5 @@ P01 的最终成果是面向 F-RCSD Road 的路口级允许通行关系。模块
 - P01-Final 输出去重后的 `frcsd_road_next_road.geojson`、ArmSourceProfile、SourceArmPassRule、final generation decision、source map、兼容 source policy、audit 与 issue report。
 - RoadNextRoad `turnType / turntype` 不参与 `movement_type` 判定。
 - `grade / grade_2` 不进入 P01 主规则。
-- review PNG / compare PNG / review GPKG 可用于人工判断。
+- retained audit PNG / review GPKG 可用于人工判断；低价值的 dataset Arm review、A1 compare 与 F-RCSD RoadNextRoad review PNG 不作为正式输出。
 - summary / review index 可支持批量筛查和优先级排序。

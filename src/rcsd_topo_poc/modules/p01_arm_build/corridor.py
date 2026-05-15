@@ -140,6 +140,20 @@ def _node_vector(
     return (end[0] - start[0], end[1] - start[1])
 
 
+def _continuation_anchor_node_ids(
+    node_id: str,
+    *,
+    current_member_node_ids: set[str],
+    nodes: dict[str, NodeRecord],
+    groups: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    group_id = _semantic_group_id(nodes.get(node_id), node_id)
+    group_nodes = tuple(groups.get(group_id, (node_id,)))
+    if any(member_node_id in current_member_node_ids for member_node_id in group_nodes):
+        return (node_id,)
+    return group_nodes
+
+
 def _trace_seed_corridor(
     *,
     seed_road: RoadRecord,
@@ -149,6 +163,7 @@ def _trace_seed_corridor(
     roads: dict[str, RoadRecord],
     incident_by_node: dict[str, tuple[str, ...]],
     groups: dict[str, tuple[str, ...]],
+    preferred_road_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     outside_node_id = _seed_outside_node(seed_road, current_member_node_ids)
     if outside_node_id is None:
@@ -184,22 +199,33 @@ def _trace_seed_corridor(
 
     for _step in range(CORRIDOR_MAX_HOPS):
         simple_passthrough_node = _is_simple_passthrough_node(current_node_id, nodes=nodes, groups=groups)
-        candidates: list[tuple[float, str, str, tuple[float, float]]] = []
-        for road_id in incident_by_node.get(current_node_id, tuple()):
-            if road_id == previous_road_id:
-                continue
-            road = roads.get(road_id)
-            if road is None or is_advance_right_turn_road(road):
-                continue
-            next_node_id = _other_node_id(road, current_node_id)
-            if not next_node_id or next_node_id in current_member_node_ids:
-                continue
-            vector = _node_vector(nodes, current_node_id, next_node_id)
-            if vector is None:
-                continue
-            angle_delta = _angle_between(current_vector or vector, vector)
-            if angle_delta <= CORRIDOR_MAX_CONTINUATION_ANGLE_DEG:
-                candidates.append((angle_delta, road_id, next_node_id, vector))
+        candidates: list[tuple[float, str, str, tuple[float, float], str]] = []
+        for anchor_node_id in _continuation_anchor_node_ids(
+            current_node_id,
+            current_member_node_ids=current_member_node_ids,
+            nodes=nodes,
+            groups=groups,
+        ):
+            for road_id in incident_by_node.get(anchor_node_id, tuple()):
+                if road_id == previous_road_id:
+                    continue
+                road = roads.get(road_id)
+                if road is None or is_advance_right_turn_road(road):
+                    continue
+                next_node_id = _other_node_id(road, anchor_node_id)
+                if not next_node_id or next_node_id in current_member_node_ids:
+                    continue
+                vector = _node_vector(nodes, anchor_node_id, next_node_id)
+                if vector is None:
+                    continue
+                angle_delta = _angle_between(current_vector or vector, vector)
+                if angle_delta <= CORRIDOR_MAX_CONTINUATION_ANGLE_DEG:
+                    candidates.append((angle_delta, road_id, next_node_id, vector, anchor_node_id))
+        preferred_candidates = [
+            candidate for candidate in candidates if preferred_road_ids and candidate[1] in preferred_road_ids
+        ]
+        if preferred_candidates:
+            candidates = preferred_candidates
         if not candidates:
             terminal_id = _semantic_group_id(nodes.get(current_node_id), current_node_id)
             terminal_type = "no_continuation" if simple_passthrough_node else "semantic_terminal"
@@ -210,8 +236,10 @@ def _trace_seed_corridor(
             terminal_type = "ambiguous_continuation"
             risk_flags.append("corridor_ambiguous_continuation")
             break
-        _angle_delta, next_road_id, next_node_id, next_vector = candidates[0]
+        _angle_delta, next_road_id, next_node_id, next_vector, anchor_node_id = candidates[0]
         road_ids.append(next_road_id)
+        if anchor_node_id != current_node_id:
+            node_ids.append(anchor_node_id)
         node_ids.append(next_node_id)
         next_angle = _angle(next_vector)
         if next_angle is not None:
@@ -287,6 +315,7 @@ def build_arm_corridor_evidence(
                 roads=roads,
                 incident_by_node=incident_tuple,
                 groups=groups,
+                preferred_road_ids=set(str(item) for item in payload.get("member_road_ids", []) or []),
             )
             support_road_ids.extend(trace["road_ids"])
             support_node_ids.extend(trace["node_ids"])

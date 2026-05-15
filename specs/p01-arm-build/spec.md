@@ -258,7 +258,7 @@ A1 / P01-Final run root：
 - `arm_receiving_road_roles.json`
 - `trunk_corrections.json`
 - `review_layers.gpkg`
-- `p01_arm_review.png`
+- `p01_arm_movement_turn_audit.png`（仅 F-RCSD）
 
 P01-Final：
 
@@ -273,6 +273,8 @@ P01-Final：
 - `cases/<group_id>/FRCSD/parallel_branch_alignment.json`
 - `cases/<group_id>/FRCSD/frcsd_road_next_road_audit.json`
 - `cases/<group_id>/FRCSD/frcsd_road_next_road_issue_report.json`
+- `cases/<group_id>/FRCSD/frcsd_road_next_road_review_layers.gpkg`
+- `cases/<group_id>/FRCSD/frcsd_pass_capability_audit.png`
 
 A2：
 

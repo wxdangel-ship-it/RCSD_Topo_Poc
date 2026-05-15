@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import clip_by_rect
 
 from rcsd_topo_poc.modules.p01_arm_build.alignment_models import ArmProfile, CaseAlignmentResult
 from rcsd_topo_poc.modules.p01_arm_build.models import LoadedDataset
@@ -22,6 +24,7 @@ COLORS = [
 ]
 GREY = (170, 170, 170, 180)
 TEXT = (20, 20, 20, 255)
+COMPARE_LOCAL_VIEW_HALF_WIDTH = 200.0
 
 
 def render_source_alignment_png(
@@ -81,8 +84,14 @@ def render_compare_alignment_png(
     image = Image.new("RGBA", (panel_w * 3, height), (250, 250, 248, 255))
     draw = ImageDraw.Draw(image, "RGBA")
     font = ImageFont.load_default()
+    panel_h = height - 24
     bounds_by_dataset = {
-        dataset: _geometry_bounds(_profiles_review_geometries(result.profiles_by_dataset[dataset], loaded_by_dataset.get(dataset)))
+        dataset: _compare_local_bounds(
+            result.profiles_by_dataset[dataset],
+            loaded_by_dataset.get(dataset),
+            panel_width=panel_w,
+            panel_height=panel_h - 28,
+        )
         for dataset in ("SWSD", "FRCSD", "RCSD")
     }
     summary = (
@@ -102,6 +111,7 @@ def render_compare_alignment_png(
             loaded=loaded_by_dataset.get(dataset),
             result=result,
             font=font,
+            show_junction_center=True,
         )
     image.convert("RGB").save(path)
 
@@ -228,19 +238,167 @@ def _draw_profile_panel(
     loaded: LoadedDataset | None,
     result: CaseAlignmentResult,
     font,
+    show_junction_center: bool = False,
 ) -> None:
     left, top, width, height = panel
     draw.rectangle((left, top, left + width - 1, top + height - 1), outline=(210, 210, 210, 255), width=1)
     _text(draw, (left + 8, top + 8), title, font=font)
     project = _projector(bounds, left=left, top=top + 28, width=width, height=height - 28)
+    if show_junction_center:
+        center = _junction_center(profiles, loaded)
+        if center is not None:
+            cx, cy = project(float(center.x), float(center.y))
+            draw.ellipse((cx - 4, cy - 4, cx + 4, cy + 4), fill=(20, 20, 20, 230), outline=(255, 255, 255, 255))
     group_color = _group_color_map(result, dataset)
     for profile in profiles:
         color = group_color.get(profile.arm_id, GREY)
         for geom in _profile_review_road_geometries(profile, loaded):
-            _draw_line(draw, geom, project, fill=color, width=4)
+            _draw_line_in_bounds(draw, geom, bounds, project, fill=color, width=4)
         point = _profile_review_point(profile, loaded)
-        if point is not None:
-            _text(draw, project(float(point.x), float(point.y)), profile.arm_id, font=font)
+        if point is not None and _point_in_bounds(point, bounds):
+            _text(draw, _panel_text_xy(project(float(point.x), float(point.y)), panel), profile.arm_id, font=font)
+
+
+def _draw_line_in_bounds(
+    draw: ImageDraw.ImageDraw,
+    geometry: BaseGeometry,
+    bounds: tuple[float, float, float, float],
+    project,
+    *,
+    fill,
+    width: int,
+) -> None:
+    if geometry is None or geometry.is_empty:
+        return
+    minx, miny, maxx, maxy = bounds
+    clipped = clip_by_rect(geometry, minx, miny, maxx, maxy)
+    if clipped.is_empty:
+        return
+    if clipped.geom_type == "LineString":
+        _draw_line(draw, clipped, project, fill=fill, width=width)
+        return
+    if clipped.geom_type == "MultiLineString":
+        for part in clipped.geoms:
+            _draw_line(draw, part, project, fill=fill, width=width)
+        return
+    if hasattr(clipped, "geoms"):
+        for part in clipped.geoms:
+            _draw_line_in_bounds(draw, part, bounds, project, fill=fill, width=width)
+
+
+def _point_in_bounds(point: Point, bounds: tuple[float, float, float, float]) -> bool:
+    minx, miny, maxx, maxy = bounds
+    return minx <= float(point.x) <= maxx and miny <= float(point.y) <= maxy
+
+
+def _panel_text_xy(xy: tuple[int, int], panel: tuple[int, int, int, int]) -> tuple[int, int]:
+    left, top, width, height = panel
+    x, y = xy
+    return min(max(x, left + 3), left + width - 42), min(max(y, top + 22), top + height - 18)
+
+
+def _compare_local_bounds(
+    profiles: tuple[ArmProfile, ...],
+    loaded: LoadedDataset | None,
+    *,
+    panel_width: int,
+    panel_height: int,
+) -> tuple[float, float, float, float]:
+    center = _junction_center(profiles, loaded) or _profiles_center(profiles, loaded)
+    if center is None:
+        return _geometry_bounds(_profiles_review_geometries(profiles, loaded))
+    half_width, half_height = _local_view_half_spans(
+        center,
+        loaded,
+        panel_width=panel_width,
+        panel_height=panel_height,
+    )
+    return (
+        float(center.x) - half_width,
+        float(center.y) - half_height,
+        float(center.x) + half_width,
+        float(center.y) + half_height,
+    )
+
+
+def _local_view_half_spans(
+    center: Point,
+    loaded: LoadedDataset | None,
+    *,
+    panel_width: int,
+    panel_height: int,
+) -> tuple[float, float]:
+    half_width_m = COMPARE_LOCAL_VIEW_HALF_WIDTH
+    half_height_m = half_width_m * max(panel_height, 1) / max(panel_width, 1)
+    if not _uses_geographic_coordinates(center, loaded):
+        return half_width_m, half_height_m
+    lat_rad = math.radians(float(center.y))
+    meters_per_degree_x = max(111_320.0 * abs(math.cos(lat_rad)), 1.0)
+    meters_per_degree_y = 110_540.0
+    return half_width_m / meters_per_degree_x, half_height_m / meters_per_degree_y
+
+
+def _uses_geographic_coordinates(center: Point, loaded: LoadedDataset | None) -> bool:
+    crs_text = ""
+    wkt_text = ""
+    if loaded is not None:
+        crs_text = f"{loaded.node_layer.crs or ''} {loaded.road_layer.crs or ''}"
+        wkt_text = f"{loaded.node_layer.crs_wkt or ''} {loaded.road_layer.crs_wkt or ''}".lstrip()
+    if "4326" in crs_text or "CRS84" in crs_text.upper():
+        return True
+    if wkt_text.upper().startswith("GEOGCRS") and ("4326" in wkt_text or "CRS84" in wkt_text.upper()):
+        return True
+    return -180.0 <= float(center.x) <= 180.0 and -90.0 <= float(center.y) <= 90.0
+
+
+def _junction_center(profiles: tuple[ArmProfile, ...], loaded: LoadedDataset | None) -> Point | None:
+    if loaded is None or not profiles:
+        return None
+    junction_id = profiles[0].current_junction_id
+    candidate_ids = [junction_id]
+    if loaded.dataset == "RCSD" and junction_id.startswith("R") and len(junction_id) > 1:
+        candidate_ids.append(junction_id[1:])
+    if loaded.dataset == "FRCSD" and junction_id.startswith("F") and len(junction_id) > 1:
+        candidate_ids.append(junction_id[1:])
+    for candidate_id in dict.fromkeys(candidate_ids):
+        if candidate_id in loaded.nodes:
+            group_id = _node_group_id(loaded.nodes[candidate_id])
+            return _nodes_centroid(
+                node
+                for node in loaded.nodes.values()
+                if _node_group_id(node) == group_id
+            )
+        matching_nodes = [node for node in loaded.nodes.values() if _node_group_id(node) == candidate_id]
+        if matching_nodes:
+            return _nodes_centroid(iter(matching_nodes))
+    return None
+
+
+def _profiles_center(profiles: tuple[ArmProfile, ...], loaded: LoadedDataset | None) -> Point | None:
+    points = [point for profile in profiles if (point := _profile_point(profile, loaded)) is not None]
+    if not points:
+        return None
+    return Point(
+        sum(float(point.x) for point in points) / len(points),
+        sum(float(point.y) for point in points) / len(points),
+    )
+
+
+def _node_group_id(node: Any) -> str:
+    mainnodeid = str(node.mainnodeid or "").strip()
+    if not mainnodeid or mainnodeid.lower() in {"0", "0.0", "none", "null", "nan"}:
+        return str(node.node_id)
+    return mainnodeid[:-2] if mainnodeid.endswith(".0") else mainnodeid
+
+
+def _nodes_centroid(nodes: Any) -> Point | None:
+    items = [node for node in nodes if node.geometry is not None and not node.geometry.is_empty]
+    if not items:
+        return None
+    return Point(
+        sum(float(node.geometry.x) for node in items) / len(items),
+        sum(float(node.geometry.y) for node in items) / len(items),
+    )
 
 
 def _group_color_map(result: CaseAlignmentResult, dataset: str) -> dict[str, tuple[int, int, int, int]]:
@@ -268,6 +426,8 @@ def _profile_review_road_geometries(profile: ArmProfile, loaded: LoadedDataset |
     if loaded is None:
         return []
     road_ids = tuple(dict.fromkeys(profile.corridor_support_road_ids + profile.local_stub_road_ids + profile.seed_road_ids))
+    if profile.corridor_status == "seed_only":
+        road_ids = tuple(dict.fromkeys(road_ids + profile.member_road_ids))
     if not road_ids:
         road_ids = tuple(profile.member_road_ids[:2])
     geometries = []

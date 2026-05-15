@@ -28,9 +28,9 @@
 ## GIS QA
 
 - 输出 GPKG 使用输入 CRS。
-- PNG 使用同一数据集 bounds；compare PNG 三栏使用同一视野范围。
-- review GPKG / PNG 必须能目视区分 trunk、提前左转、提前右转、Arm corridor support roads 与未解析 relation。
-- P01-Final review GPKG / PNG 必须能定位 ArmSourceProfile、SourceArmPassRule、final generation decision、generated RoadNextRoad、source map 与 final issue。
+- retained audit PNG 使用固定局部视野；A2 compare PNG 三栏使用同一视野范围。
+- review GPKG 与 retained audit PNG 必须能目视区分 trunk、提前左转、提前右转、Arm corridor support roads 与未解析 relation。
+- P01-Final review GPKG 与 pass capability audit PNG 必须能定位 ArmSourceProfile、SourceArmPassRule、final generation decision、generated RoadNextRoad、source map 与 final issue。
 - 不进行 silent geometry fix。
 
 ## 性能

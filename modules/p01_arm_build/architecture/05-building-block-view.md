@@ -38,7 +38,7 @@
 
 ## `review.py`
 
-负责 dataset review PNG 与 compare PNG 的像素级渲染。
+负责保留的 audit PNG 与 review GPKG 图层辅助；dataset 级 Arm review PNG、A1 compare PNG 与 F-RCSD RoadNextRoad review PNG 不作为正式输出。
 
 ## `text_bundle.py`
 

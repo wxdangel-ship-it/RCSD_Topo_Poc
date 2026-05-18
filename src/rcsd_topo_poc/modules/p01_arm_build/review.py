@@ -275,6 +275,7 @@ def _draw_arrow(
     *,
     fill: tuple[int, int, int, int],
     width: int,
+    head_size: int = 7,
     dashed: bool = False,
     label: str | None = None,
 ) -> None:
@@ -300,7 +301,7 @@ def _draw_arrow(
     else:
         draw.line((sx, sy, ex, ey), fill=fill, width=width)
     angle = math.atan2(ey - sy, ex - sx)
-    size = 7
+    size = head_size
     left = (ex - size * math.cos(angle - math.pi / 6), ey - size * math.sin(angle - math.pi / 6))
     right = (ex - size * math.cos(angle + math.pi / 6), ey - size * math.sin(angle + math.pi / 6))
     draw.polygon([(ex, ey), left, right], fill=fill)
@@ -711,25 +712,40 @@ def render_pass_capability_audit_png(
 
     drawable_items: list[dict[str, Any]] = []
     overlap_groups: dict[tuple[tuple[int, int], tuple[int, int]], list[int]] = {}
-    for item in final_result.audit:
-        if item.permission_status != "allowed" or item.movement_type == "uturn":
+    audit_by_pair = {
+        (item.f_road_id, item.f_next_road_id): item
+        for item in final_result.audit
+        if item.permission_status == "allowed"
+    }
+    from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import generated_road_next_road_review_records
+
+    for line, properties in generated_road_next_road_review_records(
+        loaded_frcsd=loaded_frcsd,
+        result_frcsd=result_frcsd,
+        result=final_result,
+    ):
+        coords = list(line.coords)
+        if len(coords) < 2:
             continue
-        from_point = _road_junction_endpoint(loaded_frcsd, item.f_road_id, center)
-        to_point = _road_junction_endpoint(loaded_frcsd, item.f_next_road_id, center)
-        if from_point is None or to_point is None:
-            continue
+        from_road_id = str(properties.get("road_id", ""))
+        next_road_id = str(properties.get("next_road_id", ""))
+        audit = audit_by_pair.get((from_road_id, next_road_id))
+        movement_type = getattr(audit, "movement_type", "unknown")
+        from_arm_id = getattr(audit, "from_arm_id", "")
+        from_point = Point(float(coords[0][0]), float(coords[0][1]))
+        to_point = Point(float(coords[-1][0]), float(coords[-1][1]))
         if not (_point_in_bounds(from_point, bounds) and _point_in_bounds(to_point, bounds)):
             continue
         start = project(float(from_point.x), float(from_point.y))
         end = project(float(to_point.x), float(to_point.y))
-        color = arm_colors.get(item.from_arm_id, TURN_COLORS.get(item.movement_type, TURN_COLORS["unknown"]))
+        color = arm_colors.get(from_arm_id, TURN_COLORS.get(movement_type, TURN_COLORS["unknown"]))
         index = len(drawable_items)
         drawable_items.append(
             {
                 "start": start,
                 "end": end,
                 "color": color,
-                "movement_type": item.movement_type,
+                "movement_type": movement_type,
             }
         )
         overlap_groups.setdefault(_segment_overlap_key(start, end), []).append(index)
@@ -759,7 +775,8 @@ def render_pass_capability_audit_png(
                 start,
                 end,
                 fill=item["color"],
-                width=2,
+                width=3,
+                head_size=18,
                 dashed=item["movement_type"] == "unknown",
                 label="?" if item["movement_type"] == "unknown" else None,
             )

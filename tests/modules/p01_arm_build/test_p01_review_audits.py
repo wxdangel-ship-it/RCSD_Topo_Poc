@@ -8,6 +8,7 @@ from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import (
     FrcsdGenerationAudit,
     FrcsdRoadNextRoadFinalResult,
 )
+from rcsd_topo_poc.modules.p01_arm_build import review as review_module
 from rcsd_topo_poc.modules.p01_arm_build.models import (
     ArmMovement,
     DatasetBuildResult,
@@ -160,7 +161,21 @@ def _final_result() -> FrcsdRoadNextRoadFinalResult:
         issue_flags=(),
     )
     return FrcsdRoadNextRoadFinalResult(
-        features=(),
+        features=(
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": "frcsd_rnr_000001",
+                    "road_id": "r_e",
+                    "next_road_id": "r_n",
+                    "type": "1",
+                    "source": "1",
+                    "turntype": "2",
+                    "city_code": "",
+                },
+                "geometry": None,
+            },
+        ),
         source_road_map=(),
         source_movement_policy_swsd=(),
         source_movement_policy_rcsd=(),
@@ -186,3 +201,23 @@ def test_review_audit_pngs_are_rendered(tmp_path: Path) -> None:
 
     assert movement_path.stat().st_size > 0
     assert pass_path.stat().st_size > 0
+
+
+def test_pass_capability_png_uses_generated_review_layer_geometry(tmp_path: Path, monkeypatch) -> None:
+    loaded = _loaded(tmp_path)
+    result = _result()
+    pass_path = tmp_path / "pass_layer_geometry.png"
+    calls = []
+    original_draw_arrow = review_module._draw_arrow
+
+    def spy_draw_arrow(*args, **kwargs):
+        calls.append(kwargs)
+        return original_draw_arrow(*args, **kwargs)
+
+    monkeypatch.setattr(review_module, "_draw_arrow", spy_draw_arrow)
+
+    render_pass_capability_audit_png(pass_path, loaded, result, _final_result())
+
+    assert calls
+    assert calls[0]["head_size"] == 18
+    assert calls[0]["width"] == 3

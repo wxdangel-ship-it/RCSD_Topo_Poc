@@ -1648,14 +1648,11 @@ def final_review_layers(
     result: FrcsdRoadNextRoadFinalResult,
 ) -> list[tuple[str, str, list[tuple[Any, dict[str, Any]]]]]:
     roads = loaded_frcsd.roads
-    center = _junction_center(loaded_frcsd, result_frcsd)
-    generated = []
-    for feature in result.features:
-        props = feature["properties"]
-        from_road = roads.get(str(props.get("road_id", "")))
-        to_road = roads.get(str(props.get("next_road_id", "")))
-        line, review_geometry = _generated_review_line(from_road, to_road, center)
-        generated.append((line, {**props, "review_geometry": review_geometry}))
+    generated = generated_road_next_road_review_records(
+        loaded_frcsd=loaded_frcsd,
+        result_frcsd=result_frcsd,
+        result=result,
+    )
     source_map = []
     for item in result.source_road_map:
         road = roads.get(item.f_road_id)
@@ -1679,6 +1676,24 @@ def final_review_layers(
         ("final_generation_decisions", "Point", decisions),
         ("frcsd_road_next_road_issues", "Point", issues),
     ]
+
+
+def generated_road_next_road_review_records(
+    *,
+    loaded_frcsd: LoadedDataset,
+    result_frcsd: DatasetBuildResult | None = None,
+    result: FrcsdRoadNextRoadFinalResult,
+) -> list[tuple[LineString, dict[str, Any]]]:
+    roads = loaded_frcsd.roads
+    center = _junction_center(loaded_frcsd, result_frcsd)
+    records = []
+    for feature in result.features:
+        props = feature["properties"]
+        from_road = roads.get(str(props.get("road_id", "")))
+        to_road = roads.get(str(props.get("next_road_id", "")))
+        line, review_geometry = _generated_review_line(from_road, to_road, center)
+        records.append((line, {**props, "review_geometry": review_geometry}))
+    return records
 
 
 def render_final_review_png(path: Path, result: FrcsdRoadNextRoadFinalResult) -> None:

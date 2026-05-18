@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -723,6 +723,14 @@ def _rule_index(rules: tuple[SourceArmPassRule, ...]) -> dict[tuple[str, str, st
     return indexed
 
 
+def _movement_type_index(result: DatasetBuildResult) -> dict[tuple[str, str], tuple[str, ...]]:
+    grouped: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for movement in result.arm_movements:
+        if movement.movement_type != "unknown":
+            grouped[(movement.from_arm_id, movement.to_arm_id)].add(movement.movement_type)
+    return {key: tuple(sorted(value)) for key, value in grouped.items()}
+
+
 def _structure_matched_arm(
     *,
     f_arm_id: str,
@@ -1115,6 +1123,7 @@ def build_frcsd_road_next_road(
         for dataset in ("SWSD", "RCSD")
     }
     rule_indexes = {dataset: _rule_index(source_arm_pass_rules[dataset]) for dataset in ("SWSD", "RCSD")}
+    movement_type_indexes = {dataset: _movement_type_index(result_by_dataset[dataset]) for dataset in ("SWSD", "RCSD")}
     policy_indexes = {dataset: _policy_index(policies[dataset]) for dataset in ("SWSD", "RCSD")}
     source_parallel_counts = {
         dataset: _parallel_count_by_entering_arm(result_by_dataset[dataset], roles[dataset]) for dataset in ("SWSD", "RCSD")
@@ -1200,13 +1209,42 @@ def build_frcsd_road_next_road(
         }
         return any(flag in blocking for flag in issue_flags)
 
-    def basic_swsd_rule(movement: ArmMovement, from_road_role: str) -> SourceArmPassRule | None:
+    def resolve_source_movement_type(
+        movement: ArmMovement,
+        reference_source: str,
+        source_from_arm: str | None,
+        source_to_arm: str | None,
+    ) -> tuple[str, tuple[str, ...]]:
+        if movement.movement_type != "unknown" or not source_from_arm or not source_to_arm:
+            return movement.movement_type, tuple()
+        candidates = movement_type_indexes[reference_source].get((source_from_arm, source_to_arm), tuple())
+        if len(candidates) == 1:
+            return candidates[0], (
+                "movement_type_resolved_from_reference_source",
+                f"movement_type_resolved_from_{reference_source.lower()}",
+            )
+        if len(candidates) > 1:
+            return movement.movement_type, ("source_movement_type_conflict", "manual_review_required")
+        return movement.movement_type, tuple()
+
+    def output_movement(movement: ArmMovement, source_rule: SourceArmPassRule | None) -> ArmMovement:
+        if source_rule is None or source_rule.movement_type == movement.movement_type:
+            return movement
+        return replace(
+            movement,
+            movement_type=source_rule.movement_type,
+            movement_type_source="reference_source_arm_movement",
+            movement_type_confidence="medium",
+            movement_type_reason="resolved_from_reference_source_rule",
+        )
+
+    def basic_swsd_rule(movement_type: str, from_road_role: str) -> SourceArmPassRule | None:
         if from_road_role == "parallel_branch":
             return None
         candidates = [
             rule
             for rule in source_arm_pass_rules["SWSD"]
-            if rule.movement_type == movement.movement_type
+            if rule.movement_type == movement_type
             and rule.from_road_role == from_road_role
             and rule.rule_status in {"full_allowed", "trunk_only_allowed", "left_receiving_only_allowed"}
         ]
@@ -1234,27 +1272,36 @@ def build_frcsd_road_next_road(
         if reference_reason in {"single_source_rcsd", "single_source_swsd"}:
             generation_rule = "same_source_inherited"
         primary_rule: SourceArmPassRule | None = None
+        primary_movement_type = movement.movement_type
         if source_from_arm and source_to_arm:
-            primary_rule = rule_indexes[reference_source].get((source_from_arm, source_to_arm, movement.movement_type, from_road_role))
+            primary_movement_type, movement_type_issues = resolve_source_movement_type(
+                movement, reference_source, source_from_arm, source_to_arm
+            )
+            issues.extend(movement_type_issues)
+            primary_rule = rule_indexes[reference_source].get((source_from_arm, source_to_arm, primary_movement_type, from_road_role))
             if primary_rule and primary_rule.rule_status in GENERATABLE_RULE_STATUSES:
-                return primary_rule, effective_source, generation_rule, tuple()
+                return primary_rule, effective_source, generation_rule, tuple(sorted(set(movement_type_issues)))
             if primary_rule:
                 issues.append(f"{reference_source.lower()}_primary_source_rule_{primary_rule.rule_status}")
 
         if reference_source == "RCSD" and source_from_arm and not source_to_arm:
             issues.extend(("rcsd_target_arm_missing", "fallback_to_swsd_basic_rule"))
-            fallback = basic_swsd_rule(movement, from_road_role)
+            fallback = basic_swsd_rule(primary_movement_type, from_road_role)
             if fallback:
                 return fallback, "SWSD", "rcsd_to_swsd_fallback", tuple(sorted(set(issues)))
         alternate_source = "RCSD" if reference_source == "SWSD" else "SWSD"
         alternate_from_arm, alternate_from_reason = source_arm_matches[movement.from_arm_id][alternate_source]
         alternate_to_arm, alternate_to_reason = source_arm_matches[movement.to_arm_id][alternate_source]
         if alternate_from_arm and alternate_to_arm:
+            alternate_movement_type, alternate_movement_type_issues = resolve_source_movement_type(
+                movement, alternate_source, alternate_from_arm, alternate_to_arm
+            )
             alternate_rule = rule_indexes[alternate_source].get(
-                (alternate_from_arm, alternate_to_arm, movement.movement_type, from_road_role)
+                (alternate_from_arm, alternate_to_arm, alternate_movement_type, from_road_role)
             )
             if alternate_rule and alternate_rule.rule_status in GENERATABLE_RULE_STATUSES:
                 alternate_issues = set(issues)
+                alternate_issues.update(alternate_movement_type_issues)
                 alternate_issues.add("alternate_source_role_ordinal_projection")
                 if "corridor_ordinal_matched" in {alternate_from_reason, alternate_to_reason}:
                     alternate_issues.add("corridor_ordinal_source_arm_projection")
@@ -1272,7 +1319,7 @@ def build_frcsd_road_next_road(
                 )
         if reference_reason == "mixed_source_swsd_basic_rule_fallback" or not source_from_arm or not source_to_arm:
             issues.append("low_confidence_swsd_basic_rule")
-            fallback = basic_swsd_rule(movement, from_road_role)
+            fallback = basic_swsd_rule(primary_movement_type, from_road_role)
             if fallback:
                 return fallback, "SWSD", "swsd_basic_rule", tuple(sorted(set(issues)))
         if primary_rule:
@@ -1291,14 +1338,20 @@ def build_frcsd_road_next_road(
         source_to_arm, _ = source_arm_matches[movement.to_arm_id][reference_source]
         if not source_from_arm or not source_to_arm:
             return
-        rule = rule_indexes[reference_source].get((source_from_arm, source_to_arm, movement.movement_type, "parallel_branch"))
+        source_movement_type, movement_type_issues = resolve_source_movement_type(
+            movement, reference_source, source_from_arm, source_to_arm
+        )
+        rule = rule_indexes[reference_source].get((source_from_arm, source_to_arm, source_movement_type, "parallel_branch"))
         if rule and rule.rule_status in {"full_allowed", "trunk_only_allowed", "left_receiving_only_allowed"}:
-            issues = with_validation_issues(movement, ("source_parallel_branch_missing_in_frcsd",))
+            issues = with_validation_issues(
+                movement,
+                tuple(sorted(set(movement_type_issues).union({"source_parallel_branch_missing_in_frcsd"}))),
+            )
             decisions.append(
                 FinalGenerationDecision(
                     from_arm_id=movement.from_arm_id,
                     to_arm_id=movement.to_arm_id,
-                    movement_type=movement.movement_type,
+                    movement_type=rule.movement_type,
                     from_road_role="parallel_branch",
                     reference_source=reference_source,
                     rule_status=rule.rule_status,
@@ -1341,6 +1394,7 @@ def build_frcsd_road_next_road(
                 generation_scope = source_rule.generation_scope
                 evidence_ids = source_rule.source_evidence_ids
                 issue_flags = tuple(sorted(set(issue_flags).union(source_rule.issue_flags)))
+            movement_for_output = output_movement(movement, source_rule)
             role_from_roads = tuple(role for role in from_roles if role.road_role == from_road_role)
             target_roles = _generation_target_roles(
                 result_frcsd=result_by_dataset["FRCSD"],
@@ -1369,7 +1423,7 @@ def build_frcsd_road_next_road(
             generated_to_ids: list[str] = []
             if permission in {"prohibited", "manual_review_required"}:
                 for from_role in role_from_roads:
-                    carrier_issues = right_turn_carrier_issues(movement, from_role)
+                    carrier_issues = right_turn_carrier_issues(movement_for_output, from_role)
                     if carrier_issues:
                         issue_flags = tuple(sorted(set(issue_flags).union(carrier_issues)))
                         permission = "manual_review_required"
@@ -1397,7 +1451,7 @@ def build_frcsd_road_next_road(
                             )
                             if item
                         )
-                        appended = append_feature(from_role.road_id, to_role.road_id, movement, effective_source, evidence_ids)
+                        appended = append_feature(from_role.road_id, to_role.road_id, movement_for_output, effective_source, evidence_ids)
                         if appended:
                             generated_from_ids.append(from_role.road_id)
                             generated_to_ids.append(to_role.road_id)
@@ -1405,7 +1459,7 @@ def build_frcsd_road_next_road(
                             _audit(
                                 f_road_id=from_role.road_id,
                                 f_next_road_id=to_role.road_id,
-                                movement=movement,
+                                movement=movement_for_output,
                                 from_role=from_role,
                                 to_role=to_role,
                                 from_source=from_source,
@@ -1424,7 +1478,7 @@ def build_frcsd_road_next_road(
                                         else "medium"
                                     )
                                 ),
-                                issue_flags=with_validation_issues(movement, issue_flags),
+                                issue_flags=with_validation_issues(movement_for_output, issue_flags),
                                 rule_status=rule_status,
                                 generation_scope=generation_scope,
                                 generation_basis="rule_projected",
@@ -1439,7 +1493,7 @@ def build_frcsd_road_next_road(
                         _audit(
                             f_road_id=from_role.road_id,
                             f_next_road_id="",
-                            movement=movement,
+                            movement=movement_for_output,
                             from_role=from_role,
                             to_role=RoadRole("FRCSD", movement.to_arm_id, "", "", ""),
                             from_source=from_source,
@@ -1450,7 +1504,7 @@ def build_frcsd_road_next_road(
                             permission_status=permission,
                             evidence_ids=evidence_ids,
                             confidence="none" if permission == "manual_review_required" else "medium",
-                            issue_flags=with_validation_issues(movement, issue_flags),
+                            issue_flags=with_validation_issues(movement_for_output, issue_flags),
                             rule_status=rule_status,
                             generation_scope=generation_scope,
                             generation_basis="rule_projected",
@@ -1461,14 +1515,14 @@ def build_frcsd_road_next_road(
                 FinalGenerationDecision(
                     from_arm_id=movement.from_arm_id,
                     to_arm_id=movement.to_arm_id,
-                    movement_type=movement.movement_type,
+                    movement_type=movement_for_output.movement_type,
                     from_road_role=from_road_role,
                     reference_source=effective_source if source_rule is not None else reference_source,
                     rule_status=rule_status,
                     generation_scope=generation_scope,
                     generated_road_ids=tuple(sorted(set(generated_from_ids))),
                     generated_next_road_ids=tuple(sorted(set(generated_to_ids))),
-                    issue_flags=with_validation_issues(movement, issue_flags),
+                    issue_flags=with_validation_issues(movement_for_output, issue_flags),
                 )
             )
     _phase(f"generation loop done features={len(features)} audit={len(audit_rows)} decisions={len(decisions)}")

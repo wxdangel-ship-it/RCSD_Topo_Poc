@@ -24,6 +24,10 @@ from rcsd_topo_poc.modules.p01_arm_build.models import (
 from rcsd_topo_poc.modules.p01_arm_build.trunk import build_trunk_for_arm
 
 
+STRAIGHT_TARGET_MAX_ANGLE_DEG = 35.0
+STRAIGHT_TARGET_MIN_MARGIN_DEG = 5.0
+
+
 @dataclass(frozen=True)
 class MovementBuildResult:
     road_movement_evidence: tuple[RoadMovementEvidence, ...]
@@ -303,7 +307,7 @@ def _movement_type(
         return "unknown", "insufficient_evidence", "low", "arm_direction_vector_missing"
     incoming = (-from_vector[0], -from_vector[1])
     straight_angle = _angle_between(incoming, to_vector)
-    if straight_angle <= 35.0:
+    if straight_angle <= STRAIGHT_TARGET_MAX_ANGLE_DEG:
         if has_trunk_evidence:
             return "straight", "road_next_road_trunk_evidence", "high", "trunk_road_next_road_evidence_and_direction_continuity"
         return "straight", "local_arm_candidate_continuity", "medium", "opposite_arm_corridor_direction_continuity"
@@ -315,6 +319,24 @@ def _movement_type(
     return "right", "relative_side_after_straight_resolved", "medium", "target_arm_on_right_side_of_entering_flow"
 
 
+def _unique_best_by_angle(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if len(candidates) == 1:
+        return candidates[0]
+    ordered = sorted(candidates, key=lambda item: (float(item["angle_deg"]), str(item["target"])))
+    if float(ordered[1]["angle_deg"]) - float(ordered[0]["angle_deg"]) >= STRAIGHT_TARGET_MIN_MARGIN_DEG:
+        return ordered[0]
+    return None
+
+
+def _select_straight_target_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    trunk_evidence_candidates = [candidate for candidate in candidates if candidate["has_trunk_evidence"]]
+    if trunk_evidence_candidates:
+        return _unique_best_by_angle(trunk_evidence_candidates)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 def _straight_targets(
     final_arms: tuple[FinalArm, ...],
     vectors: dict[str, tuple[float, float]],
@@ -323,7 +345,7 @@ def _straight_targets(
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for from_arm in final_arms:
-        candidates: list[tuple[str, str]] = []
+        candidates: list[dict[str, Any]] = []
         from_vector = vectors.get(from_arm.final_arm_id)
         if from_vector is None:
             result[from_arm.final_arm_id] = {"status": "no_straight_target", "target": None, "evidence": tuple()}
@@ -335,25 +357,33 @@ def _straight_targets(
             to_vector = vectors.get(to_arm.final_arm_id)
             if to_vector is None:
                 continue
-            if _angle_between(incoming, to_vector) <= 35.0:
+            straight_angle = _angle_between(incoming, to_vector)
+            if straight_angle <= STRAIGHT_TARGET_MAX_ANGLE_DEG:
                 pair = (from_arm.final_arm_id, to_arm.final_arm_id)
                 has_evidence = any(
                     item.road_id in set(from_arm.trunk_road_ids) and item.next_road_id in set(arm_by_id[to_arm.final_arm_id].trunk_road_ids)
                     for item in evidence_by_pair.get(pair, [])
                 )
-                candidates.append((to_arm.final_arm_id, "road_next_road_trunk_evidence" if has_evidence else "local_arm_candidate_continuity"))
-        if len(candidates) == 1:
-            target, source = candidates[0]
+                candidates.append(
+                    {
+                        "target": to_arm.final_arm_id,
+                        "source": "road_next_road_trunk_evidence" if has_evidence else "local_arm_candidate_continuity",
+                        "angle_deg": straight_angle,
+                        "has_trunk_evidence": has_evidence,
+                    }
+                )
+        selected = _select_straight_target_candidate(candidates)
+        if selected is not None:
             result[from_arm.final_arm_id] = {
                 "status": "unique_straight_target",
-                "target": target,
-                "evidence": (source,),
+                "target": str(selected["target"]),
+                "evidence": (str(selected["source"]),),
             }
         elif candidates:
             result[from_arm.final_arm_id] = {
                 "status": "uncertain_straight_target",
                 "target": None,
-                "evidence": tuple(f"{target}:{source}" for target, source in candidates),
+                "evidence": tuple(f"{candidate['target']}:{candidate['source']}" for candidate in candidates),
             }
         else:
             result[from_arm.final_arm_id] = {"status": "no_straight_target", "target": None, "evidence": tuple()}

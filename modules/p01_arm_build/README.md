@@ -17,7 +17,7 @@
 - 不使用 RoadNextRoad `turnType / turntype` 判断 `movement_type`。
 - 不把 F-RCSD Source + CRS 归一化 rounded exact 源 Road 映射作为 P01-Final 生成前提，也不通过空间接近替代该审计证据。
 - 不把主干道路 / 平行支路只覆盖部分目标退出 Road 作为正常 partial 规则投影。
-- 不提供 repo 官方 CLI；当前入口均为模块内 callable runner 或 dev helper。
+- 不提供 repo 官方 CLI；内网单 Case 端到端执行使用 repo 级正式脚本 `scripts/p01_run_innernet_case.sh`，其它调用面为模块内 callable runner 或 dev helper。
 
 ## A1 / P01-Final 调用
 
@@ -58,6 +58,27 @@ from rcsd_topo_poc.modules.p01_arm_build.alignment_runner import run_p01_arm_ali
 --out-root
 --run-id
 ```
+
+## 内网单 Case 端到端执行
+
+正式脚本：
+
+```bash
+scripts/p01_run_innernet_case.sh
+```
+
+该脚本直接消费内网全量 SH 输入，不做文本包打包 / 解包。对外输出以 `<OUT_ROOT>/<CASE_ID>/` 为主目录；A1 / P01-Final 与 A2 原始 run root 只保留在 `_raw/` 下，便于追溯。
+
+```bash
+CASE_ID=5659051 \
+RCSD_JUNCTION_ID=R5367435540563507 \
+FRCSD_JUNCTION_ID=F114509913817929 \
+OUT_ROOT=outputs/_work/p01_case_e2e \
+RUN_ID=p01_5659051_e2e_v001 \
+scripts/p01_run_innernet_case.sh
+```
+
+默认输入路径为 `/mnt/d/TestData/SH/...`，可用 `SWSD_NODES / SWSD_ROADS / RCSD_NODES / RCSD_ROADS / FRCSD_NODES / FRCSD_ROADS / SWSD_ROAD_NEXT_ROAD / RCSD_ROAD_NEXT_ROAD / FRCSD_ROAD_NEXT_ROAD` 覆盖。`CASE_SCOPE_BFS_DEPTH` 默认 `8`，`RIGHT_TURN_FORMWAY_VALUE` 默认 `128`，`RUN_A2=0` 可跳过 A2 审计输出。
 
 ## 单路口文本证据包
 

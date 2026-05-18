@@ -218,6 +218,73 @@ def _road_midpoint(road: RoadRecord | None) -> Point:
         return road.geometry.representative_point()
 
 
+def _junction_center(loaded: LoadedDataset, result: DatasetBuildResult | None) -> Point:
+    if result is not None:
+        points = [
+            loaded.nodes[node_id].geometry.centroid
+            for node_id in result.context.member_node_ids
+            if node_id in loaded.nodes and loaded.nodes[node_id].geometry is not None and not loaded.nodes[node_id].geometry.is_empty
+        ]
+        if points:
+            return Point(sum(point.x for point in points) / len(points), sum(point.y for point in points) / len(points))
+    geometries = [road.geometry for road in loaded.roads.values() if road.geometry is not None and not road.geometry.is_empty]
+    if geometries:
+        centroid = geometries[0].centroid
+        return Point(float(centroid.x), float(centroid.y))
+    return Point(0.0, 0.0)
+
+
+def _road_endpoints(road: RoadRecord | None) -> tuple[Point, Point] | None:
+    if road is None or road.geometry is None or road.geometry.is_empty:
+        return None
+    geometry = road.geometry
+    if geometry.geom_type == "LineString":
+        coords = list(geometry.coords)
+    elif geometry.geom_type == "MultiLineString":
+        parts = [part for part in geometry.geoms if not part.is_empty and len(part.coords) >= 2]
+        if not parts:
+            return None
+        coords = list(max(parts, key=lambda item: item.length).coords)
+    else:
+        return None
+    if len(coords) < 2:
+        return None
+    return Point(float(coords[0][0]), float(coords[0][1])), Point(float(coords[-1][0]), float(coords[-1][1]))
+
+
+def _road_junction_endpoint(road: RoadRecord | None, center: Point) -> Point:
+    endpoints = _road_endpoints(road)
+    if endpoints is None:
+        return _road_midpoint(road)
+    start, end = endpoints
+    return start if start.distance(center) <= end.distance(center) else end
+
+
+def _road_local_point(road: RoadRecord | None, center: Point, *, offset_ratio: float = 0.14) -> Point:
+    endpoints = _road_endpoints(road)
+    if endpoints is None:
+        return _road_midpoint(road)
+    start, end = endpoints
+    near, far = (start, end) if start.distance(center) <= end.distance(center) else (end, start)
+    return Point(
+        float(near.x) + (float(far.x) - float(near.x)) * offset_ratio,
+        float(near.y) + (float(far.y) - float(near.y)) * offset_ratio,
+    )
+
+
+def _generated_review_line(from_road: RoadRecord | None, to_road: RoadRecord | None, center: Point) -> tuple[LineString, str]:
+    start = _road_junction_endpoint(from_road, center)
+    end = _road_junction_endpoint(to_road, center)
+    if start.distance(end) > 1e-9:
+        return LineString([start, end]), "junction_endpoint"
+    local_start = _road_local_point(from_road, center)
+    local_end = _road_local_point(to_road, center)
+    if local_start.distance(local_end) > 1e-9:
+        return LineString([local_start, local_end]), "junction_local_marker"
+    fallback_end = Point(float(start.x) + 1e-6, float(start.y) + 1e-6)
+    return LineString([start, fallback_end]), "junction_zero_length_marker"
+
+
 def _arm_payload(arm: Any) -> dict[str, Any]:
     return dict(getattr(arm, "initial_arm", {}) or {})
 
@@ -1577,16 +1644,18 @@ def final_geojson(result: FrcsdRoadNextRoadFinalResult) -> dict[str, Any]:
 def final_review_layers(
     *,
     loaded_frcsd: LoadedDataset,
+    result_frcsd: DatasetBuildResult | None = None,
     result: FrcsdRoadNextRoadFinalResult,
 ) -> list[tuple[str, str, list[tuple[Any, dict[str, Any]]]]]:
     roads = loaded_frcsd.roads
+    center = _junction_center(loaded_frcsd, result_frcsd)
     generated = []
     for feature in result.features:
         props = feature["properties"]
         from_road = roads.get(str(props.get("road_id", "")))
         to_road = roads.get(str(props.get("next_road_id", "")))
-        line = LineString([_road_midpoint(from_road), _road_midpoint(to_road)])
-        generated.append((line, props))
+        line, review_geometry = _generated_review_line(from_road, to_road, center)
+        generated.append((line, {**props, "review_geometry": review_geometry}))
     source_map = []
     for item in result.source_road_map:
         road = roads.get(item.f_road_id)

@@ -4,7 +4,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import build_frcsd_road_next_road, final_geojson
+from rcsd_topo_poc.modules.p01_arm_build.final_road_next_road import build_frcsd_road_next_road, final_geojson, final_review_layers
 from rcsd_topo_poc.modules.p01_arm_build.road_next_road import read_road_next_road
 from tests.modules.p01_arm_build.test_p01_arm_build import (
     _arm_id_by_seed,
@@ -130,3 +130,12 @@ def test_final_projection_resolves_unknown_frcsd_movement_from_reference_source(
     assert generated
     assert all(item.movement_type == "straight" for item in generated)
     assert any("movement_type_resolved_from_reference_source" in item.issue_flags for item in generated)
+    layers = final_review_layers(loaded_frcsd=loaded_f, result_frcsd=result_f, result=final)
+    generated_layer = dict((name, records) for name, _, records in layers)["frcsd_generated_road_next_road"]
+    line, props = next(
+        (geometry, properties)
+        for geometry, properties in generated_layer
+        if properties["road_id"] == "f_w_in" and properties["next_road_id"] == "f_e_main"
+    )
+    assert props["review_geometry"] == "junction_local_marker"
+    assert tuple((round(x, 3), round(y, 3)) for x, y in line.coords) == ((-2.8, 0.0), (2.8, 0.0))

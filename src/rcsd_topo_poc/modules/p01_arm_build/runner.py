@@ -573,7 +573,11 @@ def run_p01_arm_build_from_args(argv: list[str]) -> int:
         final_gpkg = frcsd_dir / "frcsd_road_next_road_review_layers.gpkg"
         write_gpkg_layers(
             final_gpkg,
-            layers=final_review_layers(loaded_frcsd=loaded["FRCSD"], result=frcsd_final),
+            layers=final_review_layers(
+                loaded_frcsd=loaded["FRCSD"],
+                result_frcsd=result_by_dataset["FRCSD"],
+                result=frcsd_final,
+            ),
             crs=loaded["FRCSD"].road_layer.crs or loaded["FRCSD"].node_layer.crs,
             crs_wkt=loaded["FRCSD"].road_layer.crs_wkt or loaded["FRCSD"].node_layer.crs_wkt,
         )

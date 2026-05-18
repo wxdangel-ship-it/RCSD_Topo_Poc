@@ -93,6 +93,7 @@ clean_case_outputs() {
     "$case_dir/FRCSD" \
     "$case_dir/compare" \
     "$case_dir/alignment" \
+    "$case_dir/review" \
     "$case_dir/summary" \
     "$case_dir/case_input.json" \
     "$case_dir/case_scope.json" \
@@ -161,6 +162,17 @@ raise SystemExit(
 PY
 }
 
+publish_review_aliases() {
+  local review_dir="$case_dir/review"
+  mkdir -p "$review_dir"
+  copy_file_if_exists \
+    "$case_dir/FRCSD/p01_arm_movement_turn_audit.png" \
+    "$review_dir/visual_1_frcsd_arm_movement_turn_audit.png"
+  copy_file_if_exists \
+    "$case_dir/FRCSD/frcsd_pass_capability_audit.png" \
+    "$review_dir/visual_2_frcsd_pass_capability_audit.png"
+}
+
 mirror_outputs() {
   local group_dir="$raw_a1_run_root/cases/group_0001"
 
@@ -176,6 +188,7 @@ mirror_outputs() {
   copy_tree_contents "$group_dir/RCSD" "$case_dir/RCSD"
   copy_tree_contents "$group_dir/FRCSD" "$case_dir/FRCSD"
   copy_tree_contents "$group_dir/compare" "$case_dir/compare"
+  publish_review_aliases
 
   if [[ ! "$run_a2" == "0" && ! "$run_a2" == "false" && ! "$run_a2" == "FALSE" && -d "$raw_a2_run_root" ]]; then
     copy_file_if_exists "$raw_a2_run_root/preflight.json" "$case_dir/alignment/preflight.json"
@@ -219,15 +232,24 @@ run_alignment
 mirror_outputs
 
 final_geojson="$case_dir/FRCSD/frcsd_road_next_road.geojson"
+visual_1="$case_dir/review/visual_1_frcsd_arm_movement_turn_audit.png"
+visual_2="$case_dir/review/visual_2_frcsd_pass_capability_audit.png"
 count="missing"
 if [[ -f "$final_geojson" ]]; then
   count="$(feature_count "$final_geojson")"
 fi
+for visual_path in "$visual_1" "$visual_2"; do
+  if [[ ! -f "$visual_path" ]]; then
+    echo "[p01-innernet-case][WARN] expected visual output is missing: $visual_path" >&2
+  fi
+done
 
 echo "[p01-innernet-case] case_dir=$case_dir" >&2
 echo "[p01-innernet-case] final_geojson=$final_geojson" >&2
 echo "[p01-innernet-case] final_feature_count=$count" >&2
 echo "[p01-innernet-case] final_audit=$case_dir/FRCSD/frcsd_road_next_road_audit.json" >&2
+echo "[p01-innernet-case] visual_1=$visual_1" >&2
+echo "[p01-innernet-case] visual_2=$visual_2" >&2
 echo "[p01-innernet-case] alignment_dir=$case_dir/alignment" >&2
 echo "[p01-innernet-case] raw_a1_run_root=$raw_a1_run_root" >&2
 if [[ ! "$run_a2" == "0" && ! "$run_a2" == "false" && ! "$run_a2" == "FALSE" ]]; then

@@ -43,15 +43,19 @@ def _node_feature(
     has_evd: str | None,
     kind_2: int | None = 4,
     grade_2: int | None = 1,
+    extra_properties: dict | None = None,
 ) -> dict:
+    properties = {
+        "id": node_id,
+        "mainnodeid": mainnodeid,
+        "has_evd": has_evd,
+        "kind_2": kind_2,
+        "grade_2": grade_2,
+    }
+    if extra_properties:
+        properties.update(extra_properties)
     return {
-        "properties": {
-            "id": node_id,
-            "mainnodeid": mainnodeid,
-            "has_evd": has_evd,
-            "kind_2": kind_2,
-            "grade_2": grade_2,
-        },
+        "properties": properties,
         "geometry": Point(x, y),
     }
 
@@ -154,6 +158,33 @@ def test_stage2_marks_representative_yes_for_single_hit(tmp_path: Path) -> None:
 
     assert _load_geojson(artifacts.node_error_1_path)["features"] == []
     assert _load_geojson(artifacts.node_error_2_path)["features"] == []
+
+
+def test_stage2_preserves_subordinate_status_fields_and_geometry(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(1, 0.0, 0.0, mainnodeid=1, has_evd="yes"),
+            _node_feature(
+                101,
+                1.0,
+                0.0,
+                mainnodeid=1,
+                has_evd=None,
+                extra_properties={"is_anchor": "legacy_subordinate_value", "anchor_reason": "legacy_reason"},
+            ),
+        ],
+        intersections=[_intersection_feature(-0.5, -0.5, 1.5, 0.5, properties={"id": "A"})],
+        segments=[_segment_feature("seg-1", pair_nodes="1", junc_nodes="")],
+        run_id="copy_on_write_case",
+    )
+
+    nodes_doc = _load_geojson(artifacts.nodes_path)
+    nodes_by_id = {str(feature["properties"]["id"]): feature for feature in nodes_doc["features"]}
+    assert nodes_by_id["1"]["properties"]["is_anchor"] == "yes"
+    assert nodes_by_id["101"]["properties"]["is_anchor"] == "legacy_subordinate_value"
+    assert nodes_by_id["101"]["properties"]["anchor_reason"] == "legacy_reason"
+    assert nodes_by_id["101"]["geometry"]["coordinates"] == (1.0, 0.0)
 
 
 def test_stage2_marks_representative_no_when_no_intersection_hits(tmp_path: Path) -> None:
@@ -433,6 +464,39 @@ def test_stage2_keeps_null_for_has_evd_not_yes_groups(tmp_path: Path) -> None:
     assert node_props_by_id["101"]["anchor_reason"] is None
     assert _load_geojson(artifacts.node_error_1_path)["features"] == []
     assert _load_geojson(artifacts.node_error_2_path)["features"] == []
+
+
+def test_stage2_clears_stale_representative_status_when_has_evd_is_not_yes(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(
+                1,
+                0.0,
+                0.0,
+                mainnodeid=1,
+                has_evd="no",
+                extra_properties={"is_anchor": "stale_yes", "anchor_reason": "stale_reason"},
+            ),
+            _node_feature(
+                101,
+                0.2,
+                0.0,
+                mainnodeid=1,
+                has_evd=None,
+                extra_properties={"is_anchor": "sub_keep", "anchor_reason": "sub_reason"},
+            ),
+        ],
+        intersections=[_intersection_feature(-1.0, -1.0, 1.0, 1.0, properties={"id": "A"})],
+        segments=[_segment_feature("seg-1", pair_nodes="1", junc_nodes="")],
+        run_id="skip_stale_case",
+    )
+
+    node_props_by_id = _node_props_by_id(_load_geojson(artifacts.nodes_path))
+    assert node_props_by_id["1"]["is_anchor"] is None
+    assert node_props_by_id["1"]["anchor_reason"] is None
+    assert node_props_by_id["101"]["is_anchor"] == "sub_keep"
+    assert node_props_by_id["101"]["anchor_reason"] == "sub_reason"
 
 
 def test_stage2_accepts_semantic_only_divmerge_group_when_it_meets_anchor_rule(tmp_path: Path) -> None:

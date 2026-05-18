@@ -103,6 +103,10 @@ STEP7_SUMMARY_FIELDNAMES = [
     "source_module",
     "scene_family",
     "scene_type",
+    "junction_type",
+    "kind_2",
+    "patch_id",
+    "patch_id_source",
     "final_state",
     "unit_count",
     "required_rcsd_node_count",
@@ -610,6 +614,11 @@ def build_step7_case_artifact(
     required_rcsd_node_ids = _required_rcsd_node_ids(case_result)
     required_rcsd_node_ids_text = "|".join(required_rcsd_node_ids)
     scene_type = _scene_type(case_result)
+    source_kind_2 = case_result.admission.source_kind_2
+    junction_type = scene_type
+    local_context = getattr(case_result.base_context, "local_context", None)
+    patch_id = getattr(local_context, "current_patch_id", None)
+    patch_id_source = "stage4_local_context.current_patch_id" if patch_id is not None else "unresolved"
     swsd_relation_type = _swsd_relation_type(
         final_case_polygon=final_case_polygon,
         case_result=case_result,
@@ -729,6 +738,10 @@ def build_step7_case_artifact(
                 "source_module": STEP7_SOURCE_MODULE,
                 "scene_family": STEP7_SCENE_FAMILY,
                 "scene_type": scene_type,
+                "junction_type": junction_type,
+                "kind_2": source_kind_2,
+                "patch_id": patch_id,
+                "patch_id_source": patch_id_source,
                 "final_state": "accepted",
                 "swsd_relation_type": swsd_relation_type,
                 "component_count": step6_result.component_count,
@@ -752,6 +765,10 @@ def build_step7_case_artifact(
                 "source_module": STEP7_SOURCE_MODULE,
                 "scene_family": STEP7_SCENE_FAMILY,
                 "scene_type": scene_type,
+                "junction_type": junction_type,
+                "kind_2": source_kind_2,
+                "patch_id": patch_id,
+                "patch_id_source": patch_id_source,
                 "final_state": "rejected",
                 "reject_reason": reject_reason,
                 "reject_reason_detail": reject_reason_detail,
@@ -803,6 +820,10 @@ def build_step7_case_artifact(
         "source_module": STEP7_SOURCE_MODULE,
         "scene_family": STEP7_SCENE_FAMILY,
         "scene_type": scene_type,
+        "junction_type": junction_type,
+        "kind_2": source_kind_2,
+        "patch_id": patch_id,
+        "patch_id_source": patch_id_source,
         "final_state": final_state,
         "unit_count": len(case_result.event_units),
         "required_rcsd_node_count": len(required_rcsd_node_ids),

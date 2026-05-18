@@ -17,11 +17,6 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_contract import (
     resolve_stage3_output_kind,
     resolve_stage3_output_kind_source,
 )
-from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_facts import (
-    acceptance_class_from_business_outcome,
-    business_outcome_from_visual_review_class,
-    success_flag_from_business_outcome,
-)
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import ReviewIndexRow
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_streamed_results import (
     T03StreamedCaseResult,
@@ -364,13 +359,13 @@ def _build_virtual_intersection_polygon_feature(
     if polygon_geometry is None or polygon_geometry.is_empty:
         return None
 
-    visual_review_class = streamed_result.visual_class
-    business_outcome_class = business_outcome_from_visual_review_class(visual_review_class)
-    if business_outcome_class == "failure":
+    if streamed_result.step7_state != "accepted":
         return None
 
-    acceptance_class = acceptance_class_from_business_outcome(business_outcome_class)
-    success = success_flag_from_business_outcome(business_outcome_class)
+    visual_review_class = streamed_result.visual_class
+    business_outcome_class = "success"
+    acceptance_class = "accepted"
+    success = True
     representative_properties = dict(representative_feature.properties)
     representative_node_id = feature_id(representative_feature) or streamed_result.case_id
     mainnodeid = feature_mainnodeid(representative_feature) or representative_node_id

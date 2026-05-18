@@ -40,6 +40,7 @@ def _node_feature(
     mainnodeid: int | None,
     kind_2: int | None = None,
     grade_2: int | None = None,
+    extra_properties: dict | None = None,
 ) -> dict:
     properties = {
         "id": node_id,
@@ -49,6 +50,8 @@ def _node_feature(
         properties["kind_2"] = kind_2
     if grade_2 is not None:
         properties["grade_2"] = grade_2
+    if extra_properties:
+        properties.update(extra_properties)
     return {
         "properties": properties,
         "geometry": Point(x, y),
@@ -137,6 +140,43 @@ def test_stage1_marks_representative_yes_and_segment_yes(tmp_path: Path) -> None
         "junction_count": 1,
         "junction_has_evd_count": 1,
     }
+
+
+def test_stage1_preserves_subordinate_node_status_fields_and_geometry(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.geojson"
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+
+    write_geojson(segment_path, [_segment_feature("seg-1", pair_nodes="1", junc_nodes="")])
+    write_geojson(
+        nodes_path,
+        [
+            _node_feature(1, 0.0, 0.0, mainnodeid=1, extra_properties={"source_tag": "rep"}),
+            _node_feature(
+                101,
+                1.0,
+                0.0,
+                mainnodeid=1,
+                extra_properties={"has_evd": "legacy_subordinate_value", "source_tag": "sub"},
+            ),
+        ],
+    )
+    write_geojson(drivezone_path, [_drivezone_feature(-0.5, -0.5, 1.5, 0.5)])
+
+    artifacts = run_t02_stage1_drivezone_gate(
+        segment_path=segment_path,
+        nodes_path=nodes_path,
+        drivezone_path=drivezone_path,
+        out_root=tmp_path / "out",
+        run_id="copy_on_write_case",
+    )
+
+    nodes_doc = _load_geojson(artifacts.nodes_path)
+    nodes_by_id = {str(feature["properties"]["id"]): feature for feature in nodes_doc["features"]}
+    assert nodes_by_id["1"]["properties"]["has_evd"] == "yes"
+    assert nodes_by_id["101"]["properties"]["has_evd"] == "legacy_subordinate_value"
+    assert nodes_by_id["101"]["properties"]["source_tag"] == "sub"
+    assert nodes_by_id["101"]["geometry"]["coordinates"] == (1.0, 0.0)
 
 
 def test_stage1_marks_representative_no_when_drivezone_misses(tmp_path: Path) -> None:

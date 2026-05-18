@@ -534,8 +534,8 @@ def run_t02_stage2_anchor_recognition(
         singleton_nodes_by_id: dict[str, list[NodeRecord]] = {}
 
         for output_index, feature in enumerate(nodes_layer_data.features):
-            feature.properties["is_anchor"] = None
-            feature.properties["anchor_reason"] = None
+            feature.properties.setdefault("is_anchor", None)
+            feature.properties.setdefault("anchor_reason", None)
 
             missing_fields: list[str] = []
             if "id" not in feature.properties:
@@ -700,6 +700,8 @@ def run_t02_stage2_anchor_recognition(
             representative_properties = nodes_layer_data.features[representative.output_index].properties
             representative_has_evd = normalize_id(representative_properties.get("has_evd"))
             if representative_has_evd != "yes":
+                representative_properties["is_anchor"] = None
+                representative_properties["anchor_reason"] = None
                 group_results[junction_id] = AnchorGroupResult(
                     junction_id=junction_id,
                     representative_output_index=representative.output_index,

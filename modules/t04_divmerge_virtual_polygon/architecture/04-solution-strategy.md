@@ -21,7 +21,8 @@ T04 采用“业务主链 + 工程编排层”的分工：
 
 - representative node。
 - group nodes。
-- node 字段中的 `mainnodeid / has_evd / is_anchor / kind / kind_2`。
+- node 字段中的 `mainnodeid / has_evd / is_anchor / kind_2`。
+- `kind` 仅作为 case-package legacy 兼容或审计字段，不参与 full-input 正式候选发现主路由。
 
 主要输出：
 
@@ -31,7 +32,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 实现策略：
 
 - 由 `admission.py` 的 `build_step1_admission(...)` 执行准入 gate。
-- 当前支持 `kind_2 in {8, 16, 128}` 或 `kind = 128` 的分歧 / 合流 / continuous complex 候选。
+- full-input 正式候选发现只支持 `kind_2 in {8, 16, 128}` 的分歧 / 合流 / continuous complex 候选；`kind = 128` 不得在 `kind_2` 缺失或不属于该集合时使 node 进入正式候选。
 - `has_evd` 与 `is_anchor` 用于确认候选仍需 T04 生成虚拟锚定结果。
 
 边界：
@@ -271,6 +272,8 @@ T04 采用“业务主链 + 工程编排层”的分工：
 实现策略：
 
 - 由 `final_publish.py` 的 Step7 artifact / batch outputs 逻辑发布 surface 主成果。
+- `divmerge_virtual_anchor_surface.gpkg` 只发布 `final_state = accepted` 的 surface candidate；rejected layer / reject stub 仅用于定位与审计。
+- 发布层与 summary 应保留或可追溯 `mainnodeid / kind_2 / junction_type / patch_id / final_state`，为后续 T05 映射做准备。
 - 由 `nodes_publish.py` 在 Step7 closeout 后消费最终状态，基于输入 `nodes.gpkg` 做 copy-on-write，只更新当前 selected / effective case 的 representative node `is_anchor`。
 - nodes 写回固定为 `accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
 

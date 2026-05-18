@@ -74,11 +74,12 @@ def _step6(**overrides: object) -> T04Step6Result:
     return T04Step6Result(**values)  # type: ignore[arg-type]
 
 
-def _case_result() -> SimpleNamespace:
+def _case_result(*, source_kind_2: int = 16, patch_id: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         case_spec=SimpleNamespace(case_id="step7_case", mainnodeid="step7_case"),
-        admission=SimpleNamespace(source_kind_2=16),
+        admission=SimpleNamespace(source_kind_2=source_kind_2),
         base_context=SimpleNamespace(
+            local_context=SimpleNamespace(current_patch_id=patch_id),
             topology_skeleton=SimpleNamespace(
                 chain_context=SimpleNamespace(
                     related_mainnodeids=[],
@@ -132,6 +133,28 @@ def test_step7_no_surface_reference_is_rejected_without_accepted_feature(tmp_pat
     assert artifact.reject_index_doc["reject_reason"] == "final_polygon_missing"
     assert "no_surface_reference" in artifact.reject_index_doc["reject_reason_detail"]
     assert "final_polygon_suppressed_by_no_surface_reference" in artifact.reject_index_doc["reject_reason_detail"]
+
+
+def test_step7_accepted_surface_candidate_keeps_t05_mapping_fields(tmp_path) -> None:
+    artifact = build_step7_case_artifact(
+        run_root=tmp_path,
+        case_dir=tmp_path / "cases" / "step7_case",
+        case_result=_case_result(source_kind_2=8, patch_id="p1"),
+        step5_result=SimpleNamespace(case_allowed_growth_domain=None),
+        step6_result=_step6(),
+    )
+
+    assert artifact.final_state == "accepted"
+    assert artifact.accepted_feature is not None
+    properties = artifact.accepted_feature["properties"]
+    assert properties["final_state"] == "accepted"
+    assert properties["kind_2"] == 8
+    assert properties["junction_type"] == "merge"
+    assert properties["patch_id"] == "p1"
+    assert properties["patch_id_source"] == "stage4_local_context.current_patch_id"
+    assert artifact.summary_row["kind_2"] == 8
+    assert artifact.summary_row["junction_type"] == "merge"
+    assert artifact.summary_row["patch_id"] == "p1"
 
 
 @pytest.mark.parametrize(

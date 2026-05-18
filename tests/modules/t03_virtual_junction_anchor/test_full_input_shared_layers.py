@@ -8,6 +8,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers import (
     SharedFullInputLayers,
     collect_case_features,
+    discover_candidate_case_ids,
     feature_enodeid,
     feature_id,
     feature_mainnodeid,
@@ -372,3 +373,26 @@ def test_target_group_and_rcsd_group_caches_match_linear_group_members(tmp_path:
     assert _feature_labels(shared_layers.rcsd_mainnodeid_to_member_features["100001"]) == _feature_labels(
         linear_rcsd_group_nodes
     )
+
+
+def test_discover_candidate_case_ids_uses_nodespec_gate(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.gpkg"
+    write_vector(
+        nodes_path,
+        [
+            {"properties": {"id": "100001", "mainnodeid": "100001", "has_evd": "yes", "is_anchor": "no", "kind_2": 4, "grade_2": 1}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": "100002", "mainnodeid": "100002", "has_evd": "yes", "is_anchor": "no", "kind_2": 2048, "grade_2": 1}, "geometry": Point(10.0, 0.0)},
+            {"properties": {"id": "100003", "mainnodeid": "100003", "has_evd": "yes", "is_anchor": "no", "kind_2": 8, "grade_2": 1}, "geometry": Point(20.0, 0.0)},
+            {"properties": {"id": "100004", "mainnodeid": "100004", "has_evd": "yes", "is_anchor": "yes", "kind_2": 4, "grade_2": 1}, "geometry": Point(30.0, 0.0)},
+            {"properties": {"id": "100005", "mainnodeid": "100005", "has_evd": "yes", "is_anchor": "fail1", "kind_2": 4, "grade_2": 1}, "geometry": Point(40.0, 0.0)},
+            {"properties": {"id": "100006", "mainnodeid": None, "has_evd": "yes", "is_anchor": "no", "kind_2": 4, "grade_2": 1}, "geometry": Point(50.0, 0.0)},
+            {"properties": {"id": "100007_aux", "mainnodeid": "100007", "has_evd": "yes", "is_anchor": "no", "kind_2": 4, "grade_2": 1}, "geometry": Point(60.0, 0.0)},
+            {"properties": {"id": "100008", "mainnodeid": "100008", "has_evd": "no", "is_anchor": "no", "kind_2": 4, "grade_2": 1}, "geometry": Point(70.0, 0.0)},
+            {"properties": {"id": "100009", "mainnodeid": "100009", "has_evd": "yes", "is_anchor": None, "kind_2": 4, "grade_2": 1}, "geometry": Point(80.0, 0.0)},
+            {"properties": {"id": "100010", "mainnodeid": "100010", "has_evd": "yes", "is_anchor": "fail3", "kind_2": 4, "grade_2": 1}, "geometry": Point(90.0, 0.0)},
+            {"properties": {"id": "100011", "mainnodeid": "100011", "has_evd": "yes", "is_anchor": "fail4", "kind_2": 4, "grade_2": 1}, "geometry": Point(100.0, 0.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+
+    assert discover_candidate_case_ids(load_shared_nodes(nodes_path=nodes_path)) == ["100001", "100002", "100006"]

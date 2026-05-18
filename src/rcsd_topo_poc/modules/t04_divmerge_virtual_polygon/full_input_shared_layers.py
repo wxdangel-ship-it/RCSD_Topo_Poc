@@ -232,13 +232,13 @@ def discover_candidate_case_ids(layers: T04SharedFullInputLayers) -> list[str]:
     for node in layers.nodes:
         node_id = normalize_text(node.node_id)
         mainnodeid = normalize_text(node.mainnodeid)
-        kind = _coerce_int(node.kind)
+        kind_2 = _coerce_int(node.kind_2)
         if (
             node_id is not None
             and _is_representative_candidate(node)
             and normalize_text(node.has_evd) == "yes"
             and normalize_text(node.is_anchor) == "no"
-            and (node.kind_2 in T04_ALLOWED_KIND_2_VALUES or kind == 128)
+            and kind_2 in T04_ALLOWED_KIND_2_VALUES
         ):
             case_ids.append(mainnodeid or node_id)
     return stable_case_ids(case_ids)

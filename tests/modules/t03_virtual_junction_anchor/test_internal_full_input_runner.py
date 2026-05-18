@@ -12,6 +12,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor import internal_full_input_runner
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_streamed_results import (
+    T03StreamedCaseResult,
     load_closeout_case_results,
     load_streamed_case_results,
     load_terminal_case_records,
@@ -715,6 +716,78 @@ def test_internal_full_input_runner_writes_fail3_for_rejected_case_only_on_repre
     ]
     assert polygons == []
     assert terminal_records["100001"].terminal_state == "rejected"
+
+
+def test_write_virtual_intersection_polygons_is_formal_first(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    cases_root = run_root / "cases"
+    cases_root.mkdir(parents=True)
+    nodes_path = tmp_path / "nodes.gpkg"
+    accepted_polygon_path = cases_root / "100001" / "step7_final_polygon.gpkg"
+    rejected_polygon_path = cases_root / "100002" / "step7_final_polygon.gpkg"
+    accepted_polygon_path.parent.mkdir(parents=True)
+    rejected_polygon_path.parent.mkdir(parents=True)
+
+    write_vector(
+        nodes_path,
+        [
+            {"properties": {"id": "100001", "mainnodeid": "100001", "has_evd": "yes", "is_anchor": "no", "kind_2": 4, "grade_2": 1}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": "100002", "mainnodeid": "100002", "has_evd": "yes", "is_anchor": "no", "kind_2": 4, "grade_2": 1}, "geometry": Point(10.0, 0.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(accepted_polygon_path, [{"properties": {"case_id": "100001"}, "geometry": box(0.0, 0.0, 1.0, 1.0)}], crs_text="EPSG:3857")
+    write_vector(rejected_polygon_path, [{"properties": {"case_id": "100002"}, "geometry": box(2.0, 2.0, 3.0, 3.0)}], crs_text="EPSG:3857")
+
+    streamed_results = {
+        "100001": T03StreamedCaseResult(
+            case_id="100001",
+            representative_node_id="100001",
+            representative_mainnodeid="100001",
+            template_class="center_junction",
+            association_class="A",
+            association_state="established",
+            step6_state="geometry_established",
+            step7_state="accepted",
+            visual_class="V5 明确失败",
+            reason="accepted_by_formal_step7",
+            note="",
+            root_cause_layer=None,
+            root_cause_type=None,
+            source_png_path="",
+            final_polygon_path=str(accepted_polygon_path),
+        ),
+        "100002": T03StreamedCaseResult(
+            case_id="100002",
+            representative_node_id="100002",
+            representative_mainnodeid="100002",
+            template_class="center_junction",
+            association_class="A",
+            association_state="established",
+            step6_state="geometry_established",
+            step7_state="rejected",
+            visual_class="V1 认可成功",
+            reason="rejected_by_formal_step7",
+            note="",
+            root_cause_layer="step7",
+            root_cause_type="formal_rejected",
+            source_png_path="",
+            final_polygon_path=str(rejected_polygon_path),
+        ),
+    }
+
+    polygons_path = write_virtual_intersection_polygons(
+        run_root=run_root,
+        shared_nodes=load_shared_nodes(nodes_path=nodes_path),
+        streamed_results=streamed_results,
+    )
+
+    polygons = read_vector_layer(polygons_path).features
+    assert len(polygons) == 1
+    assert polygons[0].properties["mainnodeid"] == "100001"
+    assert polygons[0].properties["business_outcome_class"] == "success"
+    assert polygons[0].properties["acceptance_class"] == "accepted"
+    assert polygons[0].properties["visual_review_class"] == "V5 明确失败"
 
 
 def test_internal_full_input_runner_writes_failure_artifact_on_prepare_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -84,6 +84,14 @@ internal full-input 当前主链是：
 5. terminal record / streamed append log 写出
 6. batch closeout
 
+candidate discovery 只允许发现满足以下条件的代表 node：
+
+- `has_evd = yes`
+- `is_anchor = no`
+- `kind_2 in {4, 2048}`
+
+`is_anchor in {yes, null, fail1, fail2, fail3, fail4}` 与 `kind_2 in {8, 16, 128}` 均不得进入 T03 full-input 候选。
+
 ### 2.3 字段与 CRS 前提
 
 - 所有空间处理统一使用 `EPSG:3857`。
@@ -510,10 +518,11 @@ review PNG 当前颜色语义：
 `virtual_intersection_polygons.gpkg`：
 
 - 属于当前 batch / full-input 的正式聚合成果图层。
-- 聚合来源是各 case 最终 formal polygon；当前实现只纳入最终业务结果为非 failure 的 case。
+- 聚合来源是各 case 最终 formal polygon；只有 `step7_state = accepted` 的 case 可以进入该图层。
 - 输出 CRS 固定为 `EPSG:3857`。
 - 当前字段集合由 T03 internal full-input 正式聚合成果层定义。
-- `visual_review_class / official_review_eligible / failure_bucket` 属于 batch aggregate compatibility 字段，只允许停留在该聚合图层。
+- `visual_review_class / official_review_eligible / failure_bucket` 属于 batch aggregate compatibility 字段，只允许停留在该聚合图层，不得反向覆盖或决定 formal publishing eligibility。
+- 后续 T05 可从该图层与 case status / terminal record 追溯 `mainnodeid / kind_2 / geometry / step7_state = accepted`，并由 `kind_2` 或 `template_class` 映射 `junction_type`。
 
 `nodes.gpkg`：
 
@@ -525,6 +534,7 @@ review PNG 当前颜色语义：
   - `runtime_failed / formal result missing -> fail3`
 - 非代表 node 与未选中 node 保持输入值不变。
 - `is_anchor = fail3` 只属于 T03 internal full-input 下游输出语义，不回写输入原始 nodes，也不修改上游输入字段契约。
+- T03 输出给 T04 的正式边界只包含 downstream `nodes.gpkg`；`virtual_intersection_polygons.gpkg` 只作为后续 T05 的 T03 面源候选，不作为 T04 输入。
 
 `nodes_anchor_update_audit.csv / nodes_anchor_update_audit.json`：
 

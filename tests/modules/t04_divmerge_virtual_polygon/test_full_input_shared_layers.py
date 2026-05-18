@@ -11,20 +11,32 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.full_input_shared_layers
     _build_road_adjacency,
     _build_spatial_index,
     collect_case_features,
+    discover_candidate_case_ids,
 )
 
 
-def _node(node_id: str, x: float, y: float) -> ParsedNode:
+def _node(
+    node_id: str,
+    x: float,
+    y: float,
+    *,
+    mainnodeid: str | None = None,
+    has_evd: str = "yes",
+    is_anchor: str | None = "no",
+    kind_2: int | None = 128,
+    kind: int | None = None,
+) -> ParsedNode:
     return ParsedNode(
         feature_index=0,
-        properties={"id": node_id, "mainnodeid": node_id},
+        properties={"id": node_id, "mainnodeid": mainnodeid if mainnodeid is not None else node_id, "kind": kind},
         geometry=Point(x, y),
         node_id=node_id,
-        mainnodeid=node_id,
-        has_evd="yes",
-        is_anchor="no",
-        kind_2=128,
+        mainnodeid=mainnodeid if mainnodeid is not None else node_id,
+        has_evd=has_evd,
+        is_anchor=is_anchor,
+        kind_2=kind_2,
         grade_2=0,
+        kind=kind,
     )
 
 
@@ -132,3 +144,24 @@ def test_collect_case_features_keeps_node_local_divstrip_for_long_seed_roads() -
     assert selected["selected_counts"]["drivezone"] == 1
     assert selected["polygon_clip_window"].covers(representative.geometry)
     assert selected["divstrip_features"][0].geometry.intersects(local_divstrip.geometry)
+
+
+def test_discover_candidate_case_ids_requires_kind_2_not_legacy_kind() -> None:
+    layers = _layers(
+        nodes=(
+            _node("8001", 0.0, 0.0, kind_2=8),
+            _node("16001", 10.0, 0.0, kind_2=16),
+            _node("128001", 20.0, 0.0, kind_2=128),
+            _node("4001", 30.0, 0.0, kind_2=4),
+            _node("legacy128", 40.0, 0.0, kind_2=None, kind=128),
+            _node("anchored", 50.0, 0.0, kind_2=8, is_anchor="yes"),
+            _node("fail3", 60.0, 0.0, kind_2=8, is_anchor="fail3"),
+            _node("noevd", 70.0, 0.0, kind_2=8, has_evd="no"),
+            _node("child", 80.0, 0.0, mainnodeid="missing_rep", kind_2=8),
+        ),
+        roads=(),
+        drivezones=(),
+        divstrips=(),
+    )
+
+    assert discover_candidate_case_ids(layers) == ["8001", "16001", "128001"]

@@ -161,6 +161,7 @@
   - `mainnode` 只是当前 `semantic_junction_set` 的代表，不等于整个语义路口
   - 若代表 node 缺失，记 `representative_node_missing`，不允许 fallback
   - 环岛场景当前继承 T01 既有逻辑，不由 T02 自行扩写
+  - `has_evd / is_anchor / anchor_reason` 的业务状态只写代表 node；从属 node 的空值不是失败、未处理结果或候选状态
 - 多节点语义组：
   - 若 `semantic_junction_set` 为多节点组，则后续合法 polygon 必须一次性直接覆盖组内全部 node
   - 若最终 polygon 不能一次性直接覆盖整组所有 node，则该 case 属于问题 case，不是合法变体
@@ -176,6 +177,7 @@
 - DriveZone 判定：
   - `nodes` 与 `DriveZone` 在 `EPSG:3857` 下做空间关系判断
   - 任一组内 node 落入或接触 `DriveZone` 边界，即 `has_evd = yes`
+  - stage1 只更新代表 node 的 `has_evd`；非代表 node 保持输入值或空值
 - 路口组不存在：
   - 记 `junction_nodes_not_found`
   - 业务结果按 `has_evd = no`
@@ -208,13 +210,16 @@
 - `nodes` 全表新增字段：
   - `is_anchor`
   - `anchor_reason`
-- `is_anchor` 与 `anchor_reason` 只对代表 node 写值；同组其它从属 node 与非代表 node 保持 `null`。
-- `is_anchor` 允许值冻结为：
-  - `yes`
+- `is_anchor` 与 `anchor_reason` 只对代表 node 写值；同组其它从属 node 与非代表 node 保持输入值或空值，空值不得解释为业务失败。
+- `is_anchor` 最终 SWSD nodes 值域冻结为：
+  - `null`
   - `no`
+  - `yes`
   - `fail1`
   - `fail2`
-  - `null`
+  - `fail3`
+  - `fail4`
+- T02 stage2 只写 `yes / no / fail1 / fail2 / null`；`fail3 / fail4` 保留给 T03 / T04 downstream nodes 写回。
 - `anchor_reason` 当前最小值域冻结为：
   - `roundabout`
   - `t`
@@ -804,17 +809,18 @@ outputs/_work/t02_stage1_drivezone_gate
 - 继承输入 `nodes` properties
 - 新增字段：`has_evd`
 - 阶段二文档基线新增字段：`is_anchor`、`anchor_reason`
-- `is_anchor` 值域：`yes / no / fail1 / fail2 / null`
+- `is_anchor` 最终 SWSD nodes 值域：`null / no / yes / fail1 / fail2 / fail3 / fail4`
+- T02 stage2 只写：`null / no / yes / fail1 / fail2`
 - `anchor_reason` 当前最小值域：`roundabout / t / null`
 - 只有代表 node 写 `has_evd / is_anchor / anchor_reason`
-- 非代表 node 保持 `null`
+- 非代表 node 保持输入值或 `null`；非代表 node 的 `null` 不表达失败或候选状态
 - 输出 geometry CRS：`EPSG:3857`
 
 说明：
 
 - `has_evd` 是 stage1 gate 字段。
 - `is_anchor` 与 `anchor_reason` 是 stage2 anchor recognition 字段。
-- `is_anchor` 业务值域冻结为 `yes / no / fail1 / fail2 / null`。
+- `is_anchor` 最终 SWSD nodes 业务值域冻结为 `null / no / yes / fail1 / fail2 / fail3 / fail4`；T02 stage2 不写 `fail3 / fail4`。
 - `anchor_reason` 当前最小值域冻结为 `roundabout / t / null`。
 
 #### `segment.gpkg`

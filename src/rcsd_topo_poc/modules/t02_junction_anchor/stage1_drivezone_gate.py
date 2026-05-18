@@ -598,7 +598,7 @@ def run_t02_stage1_drivezone_gate(
         singleton_nodes_by_id: dict[str, list[NodeRecord]] = {}
 
         for output_index, feature in enumerate(nodes_layer_data.features):
-            feature.properties["has_evd"] = None
+            feature.properties.setdefault("has_evd", None)
 
             missing_fields: list[str] = []
             if "id" not in feature.properties:

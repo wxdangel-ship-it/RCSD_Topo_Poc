@@ -25,8 +25,10 @@ T04 当前正式输出包括：
 - batch / full-input 级 `divmerge_virtual_anchor_surface*` surface 发布层。
 - rejected layer、summary、audit layer、`step7_rejected_index.*`、`step7_consistency_report.json`。
 - downstream `nodes.gpkg` 与 `nodes_anchor_update_audit.csv/json`。
+- `t04_swsd_rcsd_relation_evidence.csv/json`，作为后续 T05 合成 `intersection_match_all.geojson` 的 handoff 输入。
 
 `divmerge_virtual_anchor_surface.gpkg` 是正式几何真值；`nodes.gpkg` 是输入 node 层的 copy-on-write 状态回写副本，仅更新当前 selected / effective case 的 representative node。
+`t04_swsd_rcsd_relation_evidence.csv/json` 不是最终关系表；它只表达 T04 Step4/Step7 已知的 required / selected / profile 关系证据，并保留 `EPSG:3857` 坐标供 T05 后续统一转换。
 
 ## 4. 范围外事项
 

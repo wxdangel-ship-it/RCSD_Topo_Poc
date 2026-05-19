@@ -129,6 +129,7 @@
   - `accepted / rejected` 的最终判定依据
   - 发布层去向
   - `divmerge_virtual_anchor_surface*` 成果与审计材料之间的映射关系
+- `t04_swsd_rcsd_relation_evidence.csv/json` 必须可追溯到 Step4/Step7 证据；`status_suggested=0` 只允许在 accepted 且能确定 RCSD semantic junction candidate 时出现，support-only / road-only 证据必须保持失败建议状态。
 - T04 official baseline 不只校验 `divmerge_virtual_anchor_surface*` surface 发布层，也必须校验 downstream `nodes.gpkg` 的 representative node `is_anchor` 写回结果与 Step7 `final_state` 一致：`accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
 - `nodes_anchor_update_audit.csv/json` 必须与 `nodes.gpkg` 实际写回、`divmerge_virtual_anchor_surface_summary.*` 和 `step7_consistency_report.json` 保持一致；`857993` 必须保持 `fail4`，`699870` 必须保持 `yes`。
 

@@ -35,6 +35,8 @@ STEP7_CASE_FINAL_REVIEW_NAME = "final_review.png"
 STEP7_REJECTED_INDEX_CSV_NAME = "step7_rejected_index.csv"
 STEP7_REJECTED_INDEX_JSON_NAME = "step7_rejected_index.json"
 STEP7_CONSISTENCY_REPORT_NAME = "step7_consistency_report.json"
+RELATION_EVIDENCE_CSV_NAME = "t04_swsd_rcsd_relation_evidence.csv"
+RELATION_EVIDENCE_JSON_NAME = "t04_swsd_rcsd_relation_evidence.json"
 STEP7_ALLOWED_TOLERANCE_AREA_M2 = 1e-6
 STEP7_REJECT_STUB_BUFFER_M = 2.5
 STEP7_ALLOWED_FINAL_STATES = {"accepted", "rejected"}
@@ -139,6 +141,32 @@ STEP7_REJECTED_INDEX_FIELDNAMES = [
     "fallback_overexpansion_detected",
 ]
 
+RELATION_EVIDENCE_FIELDNAMES = [
+    "target_id",
+    "case_id",
+    "junction_type",
+    "scene_type",
+    "final_state",
+    "swsd_relation_type",
+    "required_rcsd_node_ids",
+    "selected_rcsdnode_ids",
+    "selected_rcsdroad_ids",
+    "rcsd_profile",
+    "has_c_unit",
+    "surface_candidate_present",
+    "base_id_candidate",
+    "status_suggested",
+    "relation_state",
+    "reason",
+    "level",
+    "is_highway",
+    "patch_id",
+    "swsd_point_x",
+    "swsd_point_y",
+    "rcsd_point_x",
+    "rcsd_point_y",
+]
+
 
 def _dedupe_sorted_text(values: Iterable[str | None]) -> list[str]:
     normalized = {
@@ -154,6 +182,76 @@ def _pipe_join(values: Iterable[str | None], *, fallback: str = "") -> str:
     if not parts:
         return fallback
     return "|".join(parts)
+
+
+def _point_xy(geometry: BaseGeometry | None) -> tuple[float | str, float | str]:
+    if geometry is None or geometry.is_empty:
+        return "", ""
+    point = geometry if getattr(geometry, "geom_type", "") == "Point" else geometry.representative_point()
+    return float(point.x), float(point.y)
+
+
+def _node_level(properties: dict[str, Any]) -> Any:
+    value = properties.get("grade")
+    return value if value not in (None, "") else -1
+
+
+def _node_is_highway(properties: dict[str, Any]) -> Any:
+    value = properties.get("closed_con")
+    return value if value not in (None, "") else -1
+
+
+def _event_unit_values(case_result: T04CaseResult, field_name: str) -> list[str]:
+    values: list[str] = []
+    for event_unit in case_result.event_units:
+        value = getattr(event_unit, field_name, ()) or ()
+        if isinstance(value, str):
+            iterable = (value,)
+        else:
+            iterable = value
+        for item in iterable:
+            text = str(item or "").strip()
+            if text and text not in values:
+                values.append(text)
+    return sorted(values, key=sort_patch_key)
+
+
+def _first_required_rcsd_point(case_result: T04CaseResult) -> tuple[float | str, float | str]:
+    for event_unit in case_result.event_units:
+        geometry = getattr(event_unit, "required_rcsd_node_geometry", None)
+        x, y = _point_xy(geometry)
+        if x != "" and y != "":
+            return x, y
+    return "", ""
+
+
+def _has_ambiguous_rcsd_alignment(case_result: T04CaseResult) -> bool:
+    return any(
+        str(getattr(event_unit, "rcsd_alignment_type", "") or "") == "ambiguous_rcsd_alignment"
+        for event_unit in case_result.event_units
+    )
+
+
+def _t04_relation_state(
+    *,
+    final_state: str,
+    swsd_relation_type: str,
+    required_rcsd_node_ids: list[str],
+    selected_rcsdnode_ids: list[str],
+    selected_rcsdroad_ids: list[str],
+    ambiguous_rcsd_alignment: bool,
+) -> tuple[str, int, Any]:
+    if final_state != "accepted":
+        return "geometry_not_accepted", 1, -1
+    if ambiguous_rcsd_alignment:
+        return "ambiguous_review", 1, -1
+    if required_rcsd_node_ids:
+        if swsd_relation_type == "offset_fact":
+            return "success_offset_fact_with_rcsd_junction", 0, "|".join(required_rcsd_node_ids)
+        return "success_required_rcsd_junction", 0, "|".join(required_rcsd_node_ids)
+    if selected_rcsdnode_ids or selected_rcsdroad_ids:
+        return "rcsd_present_not_junction", 1, -1
+    return "no_related_rcsd", 1, -1
 
 
 def _geometry_summary(geometry: BaseGeometry | None) -> dict[str, Any]:
@@ -586,6 +684,7 @@ class T04Step7CaseArtifact:
     audit_doc: dict[str, Any]
     reject_index_doc: dict[str, Any]
     reject_stub_feature: dict[str, Any] | None
+    relation_evidence_row: dict[str, Any]
 
 
 def build_step7_case_artifact(
@@ -628,6 +727,8 @@ def build_step7_case_artifact(
     mainnodeid = case_result.case_spec.mainnodeid
     related_mainnodeids_text = _related_mainnodeids_text(case_result)
     rcsd_profile = _rcsd_profile(case_result)
+    selected_rcsdnode_ids = _event_unit_values(case_result, "selected_rcsdnode_ids")
+    selected_rcsdroad_ids = _event_unit_values(case_result, "selected_rcsdroad_ids")
     has_c_unit = any(
         str(event_unit.positive_rcsd_consistency_level or "").strip().upper() == "C"
         for event_unit in case_result.event_units
@@ -838,6 +939,42 @@ def build_step7_case_artifact(
             for key in STEP7_SURFACE_SCENARIO_SUMMARY_FIELDNAMES
         },
     }
+    representative_properties = dict(case_result.case_bundle.representative_node.properties)
+    swsd_point_x, swsd_point_y = _point_xy(case_result.case_bundle.representative_node.geometry)
+    rcsd_point_x, rcsd_point_y = _first_required_rcsd_point(case_result)
+    relation_state, status_suggested, base_id_candidate = _t04_relation_state(
+        final_state=final_state,
+        swsd_relation_type=swsd_relation_type,
+        required_rcsd_node_ids=required_rcsd_node_ids,
+        selected_rcsdnode_ids=selected_rcsdnode_ids,
+        selected_rcsdroad_ids=selected_rcsdroad_ids,
+        ambiguous_rcsd_alignment=_has_ambiguous_rcsd_alignment(case_result),
+    )
+    relation_evidence_row = {
+        "target_id": mainnodeid or case_result.admission.representative_node_id,
+        "case_id": case_result.case_spec.case_id,
+        "junction_type": junction_type,
+        "scene_type": scene_type,
+        "final_state": final_state,
+        "swsd_relation_type": swsd_relation_type,
+        "required_rcsd_node_ids": required_rcsd_node_ids_text,
+        "selected_rcsdnode_ids": "|".join(selected_rcsdnode_ids),
+        "selected_rcsdroad_ids": "|".join(selected_rcsdroad_ids),
+        "rcsd_profile": rcsd_profile,
+        "has_c_unit": int(has_c_unit),
+        "surface_candidate_present": int(final_state == "accepted"),
+        "base_id_candidate": base_id_candidate,
+        "status_suggested": status_suggested,
+        "relation_state": relation_state,
+        "reason": reject_reason_detail or relation_state,
+        "level": _node_level(representative_properties),
+        "is_highway": _node_is_highway(representative_properties),
+        "patch_id": patch_id,
+        "swsd_point_x": swsd_point_x,
+        "swsd_point_y": swsd_point_y,
+        "rcsd_point_x": rcsd_point_x if status_suggested == 0 else "",
+        "rcsd_point_y": rcsd_point_y if status_suggested == 0 else "",
+    }
     reject_stub_feature = (
         {
             "properties": {
@@ -866,6 +1003,7 @@ def build_step7_case_artifact(
         audit_doc=audit_doc,
         reject_index_doc=reject_index_doc,
         reject_stub_feature=reject_stub_feature,
+        relation_evidence_row=relation_evidence_row,
     )
 
 
@@ -918,11 +1056,25 @@ def write_step7_batch_outputs(
     rejected_index_csv_path = run_root / STEP7_REJECTED_INDEX_CSV_NAME
     rejected_index_json_path = run_root / STEP7_REJECTED_INDEX_JSON_NAME
     consistency_report_path = run_root / STEP7_CONSISTENCY_REPORT_NAME
+    relation_evidence_csv_path = run_root / RELATION_EVIDENCE_CSV_NAME
+    relation_evidence_json_path = run_root / RELATION_EVIDENCE_JSON_NAME
+    relation_evidence_rows = [dict(item.relation_evidence_row) for item in ordered_artifacts]
 
     write_vector(accepted_path, accepted_features, crs_text="EPSG:3857")
     write_vector(rejected_path, rejected_features, crs_text="EPSG:3857")
     write_vector(audit_path, audit_features, crs_text="EPSG:3857")
     write_csv(summary_csv_path, summary_rows, STEP7_SUMMARY_FIELDNAMES)
+    write_csv(relation_evidence_csv_path, relation_evidence_rows, RELATION_EVIDENCE_FIELDNAMES)
+    write_json(
+        relation_evidence_json_path,
+        {
+            **batch_provenance,
+            "target_crs": "EPSG:3857",
+            "row_count": len(relation_evidence_rows),
+            "fieldnames": RELATION_EVIDENCE_FIELDNAMES,
+            "rows": relation_evidence_rows,
+        },
+    )
     write_json(
         summary_json_path,
         {
@@ -931,6 +1083,13 @@ def write_step7_batch_outputs(
             "row_count": len(summary_rows),
             "accepted_count": sum(1 for item in ordered_artifacts if item.final_state == "accepted"),
             "rejected_count": sum(1 for item in ordered_artifacts if item.final_state == "rejected"),
+            "relation_evidence": {
+                "csv_path": str(relation_evidence_csv_path),
+                "json_path": str(relation_evidence_json_path),
+                "row_count": len(relation_evidence_rows),
+                "target_crs": "EPSG:3857",
+                "handoff_target": "T05 intersection_match_all.geojson source evidence",
+            },
             **surface_scenario_summary_counts,
             "rows": summary_rows,
         },
@@ -1106,6 +1265,9 @@ def write_step7_batch_outputs(
         "summary_json_path": str(summary_json_path),
         "rejected_index_csv_path": str(rejected_index_csv_path),
         "rejected_index_json_path": str(rejected_index_json_path),
+        "relation_evidence_csv_path": str(relation_evidence_csv_path),
+        "relation_evidence_json_path": str(relation_evidence_json_path),
+        "relation_evidence_row_count": len(relation_evidence_rows),
     }
     write_json(consistency_report_path, consistency_report)
     return {
@@ -1117,6 +1279,8 @@ def write_step7_batch_outputs(
         "rejected_index_csv_path": str(rejected_index_csv_path),
         "rejected_index_json_path": str(rejected_index_json_path),
         "consistency_report_path": str(consistency_report_path),
+        "relation_evidence_csv_path": str(relation_evidence_csv_path),
+        "relation_evidence_json_path": str(relation_evidence_json_path),
         "accepted_count": sum(1 for item in ordered_artifacts if item.final_state == "accepted"),
         "rejected_count": sum(1 for item in ordered_artifacts if item.final_state == "rejected"),
         **surface_scenario_summary_counts,

@@ -160,6 +160,49 @@ def test_stage2_marks_representative_yes_for_single_hit(tmp_path: Path) -> None:
     assert _load_geojson(artifacts.node_error_2_path)["features"] == []
 
 
+def test_stage2_writes_swsd_rcsd_relation_evidence(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(1, 0.0, 0.0, mainnodeid=1, has_evd="yes", extra_properties={"grade": 2, "closed_con": 1}),
+            _node_feature(2, 10.0, 0.0, mainnodeid=2, has_evd="yes"),
+            _node_feature(3, 20.0, 0.0, mainnodeid=3, has_evd="yes"),
+            _node_feature(301, 21.0, 0.0, mainnodeid=3, has_evd=None),
+            _node_feature(4, 40.0, 0.0, mainnodeid=4, has_evd="yes"),
+            _node_feature(5, 45.0, 0.0, mainnodeid=5, has_evd="yes"),
+            _node_feature(6, 60.0, 0.0, mainnodeid=6, has_evd="no"),
+        ],
+        intersections=[
+            _intersection_feature(-1.0, -1.0, 1.0, 1.0, properties={"id": "A"}),
+            _intersection_feature(19.0, -1.0, 22.0, 1.0, properties={"id": "B1"}),
+            _intersection_feature(19.5, -1.5, 22.5, 1.5, properties={"id": "B2"}),
+            _intersection_feature(39.0, -1.0, 46.0, 1.0, properties={"id": "C"}),
+        ],
+        segments=[_segment_feature("seg-1", pair_nodes="1,2,3,4,5,6", junc_nodes="")],
+        run_id="relation_evidence_case",
+    )
+
+    payload = _load_json(artifacts.relation_evidence_json_path)
+    rows = {str(row["target_id"]): row for row in payload["rows"]}
+
+    assert artifacts.relation_evidence_csv_path.is_file()
+    assert payload["target_crs"] == "EPSG:3857"
+    assert rows["1"]["relation_state"] == "existing_rcsdintersection_matched"
+    assert rows["1"]["status_suggested"] == 0
+    assert rows["1"]["base_id_candidate"] == "A"
+    assert rows["1"]["level"] == "2"
+    assert rows["1"]["is_highway"] == "1"
+    assert rows["2"]["relation_state"] == "no_existing_rcsdintersection"
+    assert rows["2"]["status_suggested"] == 1
+    assert rows["3"]["relation_state"] == "multiple_intersections_for_group"
+    assert rows["4"]["relation_state"] == "intersection_shared_by_multiple_groups"
+    assert rows["5"]["relation_state"] == "intersection_shared_by_multiple_groups"
+    assert rows["6"]["relation_state"] == "not_evaluated_no_evidence"
+    summary_doc = _load_json(artifacts.summary_path)
+    assert "t02_swsd_rcsd_relation_evidence.csv" in summary_doc["output_files"]
+    assert summary_doc["counts"]["relation_evidence_row_count"] == len(rows)
+
+
 def test_stage2_preserves_subordinate_status_fields_and_geometry(tmp_path: Path) -> None:
     artifacts = _run_case(
         tmp_path,

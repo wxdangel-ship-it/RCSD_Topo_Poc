@@ -62,6 +62,37 @@ REVIEW_SUMMARY_VISUAL_CLASSES = (
     "V5 明确失败",
 )
 
+RELATION_EVIDENCE_CSV_NAME = "t03_swsd_rcsd_relation_evidence.csv"
+RELATION_EVIDENCE_JSON_NAME = "t03_swsd_rcsd_relation_evidence.json"
+RELATION_EVIDENCE_FIELDNAMES = [
+    "target_id",
+    "case_id",
+    "junction_type",
+    "template_class",
+    "association_class",
+    "required_rcsdnode_ids",
+    "required_rcsdroad_ids",
+    "support_rcsdnode_ids",
+    "support_rcsdroad_ids",
+    "excluded_rcsdnode_ids",
+    "excluded_rcsdroad_ids",
+    "nonsemantic_connector_rcsdnode_ids",
+    "true_foreign_rcsdnode_ids",
+    "degree2_merged_rcsdroad_groups",
+    "step7_state",
+    "surface_candidate_present",
+    "base_id_candidate",
+    "status_suggested",
+    "relation_state",
+    "reason",
+    "level",
+    "is_highway",
+    "swsd_point_x",
+    "swsd_point_y",
+    "rcsd_point_x",
+    "rcsd_point_y",
+]
+
 
 def _stable_sort_key(case_id: str) -> tuple[int, int | str]:
     return (0, int(case_id)) if case_id.isdigit() else (1, case_id)
@@ -79,6 +110,99 @@ def _short_label(row: FinalizationReviewIndexRow) -> str:
     if row.step7_state == "accepted" and row.visual_class == "V1 认可成功":
         return _sanitize_slug(row.template_class or "accepted")
     return _sanitize_slug(row.reason)
+
+
+def _point_xy(geometry: Any) -> tuple[float | str, float | str]:
+    if geometry is None or geometry.is_empty:
+        return "", ""
+    point = geometry if getattr(geometry, "geom_type", "") == "Point" else geometry.representative_point()
+    return float(point.x), float(point.y)
+
+
+def _json_text(value: Any) -> str:
+    if value in (None, "", [], {}, ()):
+        return ""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _pipe_join(values: Any) -> str:
+    if values is None:
+        return ""
+    if isinstance(values, str):
+        return values
+    return "|".join(str(value) for value in values if str(value or "").strip())
+
+
+def _node_level(properties: dict[str, Any]) -> Any:
+    value = properties.get("grade")
+    return value if value not in (None, "") else -1
+
+
+def _node_is_highway(properties: dict[str, Any]) -> Any:
+    value = properties.get("closed_con")
+    return value if value not in (None, "") else -1
+
+
+def _junction_type_from_template(template_class: str | None) -> str:
+    if template_class == "single_sided_t_mouth":
+        return "single_sided_t_mouth"
+    if template_class == "center_junction":
+        return "center_junction"
+    return str(template_class or "")
+
+
+def _read_json_if_exists(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _required_rcsd_point(case_dir: Path) -> tuple[float | str, float | str]:
+    required_path = case_dir / "association_required_rcsdnode.gpkg"
+    if not required_path.is_file():
+        return "", ""
+    features = read_vector_layer(required_path).features
+    if not features:
+        return "", ""
+    return _point_xy(features[0].geometry)
+
+
+def _t03_relation_state(
+    *,
+    step7_state: str,
+    association_class: str,
+    required_rcsdnode_ids: list[Any],
+) -> tuple[str, int, Any]:
+    if step7_state != "accepted":
+        return "geometry_not_accepted", 1, -1
+    if association_class == "A" and required_rcsdnode_ids:
+        return "success_required_rcsd_junction", 0, _pipe_join(required_rcsdnode_ids)
+    if association_class == "B":
+        return "rcsd_present_not_junction", 1, -1
+    if association_class == "C":
+        return "no_related_rcsd", 1, -1
+    return "ambiguous_review", 1, -1
+
+
+def _update_t03_summary_with_relation_evidence(
+    *,
+    run_root: Path,
+    csv_path: Path,
+    json_path: Path,
+    row_count: int,
+) -> None:
+    summary_path = run_root / "summary.json"
+    if not summary_path.is_file():
+        return
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["relation_evidence"] = {
+        "csv_path": str(csv_path),
+        "json_path": str(json_path),
+        "row_count": row_count,
+        "target_crs": "EPSG:3857",
+        "handoff_target": "T05 intersection_match_all.geojson source evidence",
+    }
+    write_json(summary_path, summary)
 
 
 def materialize_t03_review_gallery(run_root: Path, rows: list[FinalizationReviewIndexRow]) -> list[FinalizationReviewIndexRow]:
@@ -436,6 +560,96 @@ def write_virtual_intersection_polygons(
     return output_path
 
 
+def write_t03_relation_evidence(
+    *,
+    run_root: Path,
+    shared_nodes: tuple[LayerFeature, ...],
+    selected_case_ids: list[str],
+    streamed_results: dict[str, T03StreamedCaseResult],
+    failed_case_ids: list[str],
+) -> dict[str, Path]:
+    failed_case_id_set = {str(case_id) for case_id in failed_case_ids}
+    rows: list[dict[str, Any]] = []
+    for case_id in sorted(selected_case_ids, key=sort_patch_key):
+        representative_feature = resolve_representative_feature(shared_nodes, case_id)
+        representative_properties = dict(representative_feature.properties)
+        representative_node_id = feature_id(representative_feature) or case_id
+        target_id = feature_mainnodeid(representative_feature) or representative_node_id
+        swsd_point_x, swsd_point_y = _point_xy(representative_feature.geometry)
+        case_dir = run_root / "cases" / case_id
+        status_doc = _read_json_if_exists(case_dir / "association_status.json")
+        record = streamed_results.get(case_id)
+        if record is None:
+            step7_state = "runtime_failed" if case_id in failed_case_id_set else "formal_result_missing"
+            association_class = str(status_doc.get("association_class") or "")
+            template_class = status_doc.get("template_class")
+            reason = step7_state
+        else:
+            step7_state = record.step7_state
+            association_class = record.association_class
+            template_class = record.template_class
+            reason = record.reason
+        required_rcsdnode_ids = list(status_doc.get("required_rcsdnode_ids") or [])
+        required_rcsdroad_ids = list(status_doc.get("required_rcsdroad_ids") or [])
+        support_rcsdnode_ids = list(status_doc.get("support_rcsdnode_ids") or [])
+        support_rcsdroad_ids = list(status_doc.get("support_rcsdroad_ids") or [])
+        relation_state, status_suggested, base_id_candidate = _t03_relation_state(
+            step7_state=step7_state,
+            association_class=association_class,
+            required_rcsdnode_ids=required_rcsdnode_ids,
+        )
+        rcsd_point_x, rcsd_point_y = _required_rcsd_point(case_dir) if status_suggested == 0 else ("", "")
+        rows.append(
+            {
+                "target_id": target_id,
+                "case_id": case_id,
+                "junction_type": _junction_type_from_template(template_class),
+                "template_class": template_class or "",
+                "association_class": association_class,
+                "required_rcsdnode_ids": _pipe_join(required_rcsdnode_ids),
+                "required_rcsdroad_ids": _pipe_join(required_rcsdroad_ids),
+                "support_rcsdnode_ids": _pipe_join(support_rcsdnode_ids),
+                "support_rcsdroad_ids": _pipe_join(support_rcsdroad_ids),
+                "excluded_rcsdnode_ids": _pipe_join(status_doc.get("excluded_rcsdnode_ids")),
+                "excluded_rcsdroad_ids": _pipe_join(status_doc.get("excluded_rcsdroad_ids")),
+                "nonsemantic_connector_rcsdnode_ids": _pipe_join(status_doc.get("nonsemantic_connector_rcsdnode_ids")),
+                "true_foreign_rcsdnode_ids": _pipe_join(status_doc.get("true_foreign_rcsdnode_ids")),
+                "degree2_merged_rcsdroad_groups": _json_text(status_doc.get("degree2_merged_rcsdroad_groups")),
+                "step7_state": step7_state,
+                "surface_candidate_present": int(step7_state == "accepted"),
+                "base_id_candidate": base_id_candidate,
+                "status_suggested": status_suggested,
+                "relation_state": relation_state,
+                "reason": reason or relation_state,
+                "level": _node_level(representative_properties),
+                "is_highway": _node_is_highway(representative_properties),
+                "swsd_point_x": swsd_point_x,
+                "swsd_point_y": swsd_point_y,
+                "rcsd_point_x": rcsd_point_x,
+                "rcsd_point_y": rcsd_point_y,
+            }
+        )
+    csv_path = run_root / RELATION_EVIDENCE_CSV_NAME
+    json_path = run_root / RELATION_EVIDENCE_JSON_NAME
+    write_csv(csv_path, rows, RELATION_EVIDENCE_FIELDNAMES)
+    write_json(
+        json_path,
+        {
+            "target_crs": "EPSG:3857",
+            "row_count": len(rows),
+            "fieldnames": RELATION_EVIDENCE_FIELDNAMES,
+            "rows": rows,
+        },
+    )
+    _update_t03_summary_with_relation_evidence(
+        run_root=run_root,
+        csv_path=csv_path,
+        json_path=json_path,
+        row_count=len(rows),
+    )
+    return {"relation_evidence_csv_path": csv_path, "relation_evidence_json_path": json_path}
+
+
 def write_updated_nodes_outputs(
     *,
     run_root: Path,
@@ -508,10 +722,18 @@ def write_updated_nodes_outputs(
             "rows": audit_rows,
         },
     )
+    relation_outputs = write_t03_relation_evidence(
+        run_root=run_root,
+        shared_nodes=shared_nodes,
+        selected_case_ids=selected_case_ids,
+        streamed_results=streamed_results,
+        failed_case_ids=failed_case_ids,
+    )
     return {
         "nodes_path": nodes_output_path,
         "audit_csv_path": audit_csv_path,
         "audit_json_path": audit_json_path,
+        **relation_outputs,
     }
 
 
@@ -530,6 +752,7 @@ __all__ = [
     "write_t03_review_index",
     "write_t03_review_summary",
     "write_t03_summary",
+    "write_t03_relation_evidence",
     "write_updated_nodes_outputs",
     "write_virtual_intersection_polygons",
 ]

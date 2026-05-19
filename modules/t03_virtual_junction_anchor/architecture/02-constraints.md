@@ -29,6 +29,8 @@
   - `nodes.gpkg`
   - `nodes_anchor_update_audit.csv`
   - `nodes_anchor_update_audit.json`
+  - `t03_swsd_rcsd_relation_evidence.csv/json`
 - `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义，不回写输入原始 nodes，也不修改上游输入字段契约
+- `t03_swsd_rcsd_relation_evidence.csv/json` 是 T05 handoff 输入，不是最终 `intersection_match_all.geojson`；成功建议状态只允许来自 formal `step7_state=accepted` 且具备 required RCSD semantic junction 证据的 case，support-only / road-only 证据不得写成成功匹配
 - 不新增 T03 repo 官方 finalization CLI
 - 不提交 `outputs/_work`、批量 PNG、线程同步文件到 Git

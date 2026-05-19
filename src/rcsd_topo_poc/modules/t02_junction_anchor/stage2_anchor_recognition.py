@@ -7,7 +7,7 @@ import tracemalloc
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Iterable, Optional, Union
 
 from shapely.strtree import STRtree
 
@@ -57,6 +57,24 @@ INTERSECTION_ID_FIELDS = (
     "OBJECTID",
 )
 
+RELATION_EVIDENCE_FIELDNAMES = [
+    "target_id",
+    "representative_node_id",
+    "relation_source",
+    "relation_target_type",
+    "matched_rcsdintersection_ids",
+    "relation_state",
+    "status_suggested",
+    "base_id_candidate",
+    "reason",
+    "level",
+    "is_highway",
+    "swsd_point_x",
+    "swsd_point_y",
+    "rcsd_point_x",
+    "rcsd_point_y",
+]
+
 
 class Stage2RunError(T02RunError):
     pass
@@ -66,6 +84,7 @@ class Stage2RunError(T02RunError):
 class IntersectionRecord:
     feature_index: int
     intersection_id: str
+    base_id_candidate: str | None
     geometry: Any
 
 
@@ -103,6 +122,8 @@ class Stage2Artifacts:
     node_error_2_audit_json_path: Path
     audit_csv_path: Path
     audit_json_path: Path
+    relation_evidence_csv_path: Path
+    relation_evidence_json_path: Path
     log_path: Path
     progress_path: Path
     perf_json_path: Path
@@ -207,6 +228,151 @@ def _intersection_identity(properties: dict[str, Any], feature_index: int) -> st
         if value is not None:
             return f"{field}:{value}"
     return f"feature_index:{feature_index}"
+
+
+def _intersection_base_id_candidate(properties: dict[str, Any]) -> str | None:
+    return normalize_id(properties.get("id"))
+
+
+def _point_xy(geometry: Any) -> tuple[float | str, float | str]:
+    if geometry is None or geometry.is_empty:
+        return "", ""
+    point = geometry if getattr(geometry, "geom_type", "") == "Point" else geometry.representative_point()
+    return float(point.x), float(point.y)
+
+
+def _value_or_minus_one(value: Any) -> Any:
+    text = normalize_id(value)
+    return text if text is not None else -1
+
+
+def _pipe_join_text(values: Iterable[Any]) -> str:
+    parts = [str(value) for value in values if str(value or "").strip()]
+    return "|".join(parts)
+
+
+def _intersection_points(
+    intersection_ids: list[str],
+    intersection_by_id: dict[str, IntersectionRecord],
+) -> tuple[str | float, str | float]:
+    x_values: list[str] = []
+    y_values: list[str] = []
+    for intersection_id in intersection_ids:
+        record = intersection_by_id.get(intersection_id)
+        if record is None:
+            continue
+        x, y = _point_xy(record.geometry)
+        if x == "" or y == "":
+            continue
+        x_values.append(str(x))
+        y_values.append(str(y))
+    if not x_values:
+        return "", ""
+    if len(x_values) == 1:
+        return float(x_values[0]), float(y_values[0])
+    return "|".join(x_values), "|".join(y_values)
+
+
+def _stage2_relation_state(
+    *,
+    participates: bool,
+    final_state: str | None,
+    representative_has_evd: str | None,
+    representative_missing: bool,
+) -> str:
+    if representative_missing:
+        return REASON_REPRESENTATIVE_NODE_MISSING
+    if not participates or representative_has_evd != "yes":
+        return "not_evaluated_no_evidence"
+    if final_state == "yes":
+        return "existing_rcsdintersection_matched"
+    if final_state == "no":
+        return "no_existing_rcsdintersection"
+    if final_state == "fail1":
+        return "multiple_intersections_for_group"
+    if final_state == "fail2":
+        return "intersection_shared_by_multiple_groups"
+    return "not_evaluated_no_evidence"
+
+
+def _write_relation_evidence_outputs(
+    *,
+    csv_path: Path,
+    json_path: Path,
+    run_id: str,
+    nodes_features: list[Any],
+    group_results: dict[str, AnchorGroupResult],
+    candidate_junction_ids: list[str],
+    intersection_by_id: dict[str, IntersectionRecord],
+    junction_to_fail2_intersection_ids: dict[str, set[str]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for junction_id in candidate_junction_ids:
+        group_result = group_results.get(junction_id)
+        if group_result is None:
+            continue
+        representative_missing = group_result.representative_output_index is None
+        representative_properties: dict[str, Any] = {}
+        swsd_point_x: float | str = ""
+        swsd_point_y: float | str = ""
+        if not representative_missing:
+            representative_feature = nodes_features[group_result.representative_output_index]  # type: ignore[index]
+            representative_properties = representative_feature.properties
+            swsd_point_x, swsd_point_y = _point_xy(representative_feature.geometry)
+
+        representative_node_id = group_result.representative_node_id or ""
+        target_id = normalize_id(representative_properties.get("mainnodeid")) or representative_node_id or junction_id
+        representative_has_evd = normalize_id(representative_properties.get("has_evd"))
+        final_state = normalize_id(representative_properties.get("is_anchor"))
+        relation_state = _stage2_relation_state(
+            participates=group_result.participates,
+            final_state=final_state,
+            representative_has_evd=representative_has_evd,
+            representative_missing=representative_missing,
+        )
+        if final_state == "fail2":
+            matched_intersection_ids = sorted(junction_to_fail2_intersection_ids.get(junction_id, set()))
+        else:
+            matched_intersection_ids = list(group_result.intersection_ids)
+        status_suggested = 0 if relation_state == "existing_rcsdintersection_matched" else 1
+        base_candidates = [
+            record.base_id_candidate
+            for intersection_id in matched_intersection_ids
+            if (record := intersection_by_id.get(intersection_id)) is not None and record.base_id_candidate
+        ]
+        base_id_candidate = _pipe_join_text(base_candidates) if status_suggested == 0 and base_candidates else -1
+        rcsd_point_x, rcsd_point_y = _intersection_points(matched_intersection_ids, intersection_by_id)
+        rows.append(
+            {
+                "target_id": target_id,
+                "representative_node_id": representative_node_id,
+                "relation_source": "T02_INPUT",
+                "relation_target_type": "RCSDIntersection",
+                "matched_rcsdintersection_ids": _pipe_join_text(matched_intersection_ids),
+                "relation_state": relation_state,
+                "status_suggested": status_suggested,
+                "base_id_candidate": base_id_candidate,
+                "reason": relation_state,
+                "level": _value_or_minus_one(representative_properties.get("grade")),
+                "is_highway": _value_or_minus_one(representative_properties.get("closed_con")),
+                "swsd_point_x": swsd_point_x,
+                "swsd_point_y": swsd_point_y,
+                "rcsd_point_x": rcsd_point_x,
+                "rcsd_point_y": rcsd_point_y,
+            }
+        )
+    write_csv(csv_path, rows, RELATION_EVIDENCE_FIELDNAMES)
+    write_json(
+        json_path,
+        {
+            "run_id": run_id,
+            "target_crs": TARGET_CRS.to_string(),
+            "row_count": len(rows),
+            "fieldnames": RELATION_EVIDENCE_FIELDNAMES,
+            "rows": rows,
+        },
+    )
+    return rows
 
 
 def _error_audit_row(
@@ -408,6 +574,8 @@ def run_t02_stage2_anchor_recognition(
     node_error_2_audit_json_path = resolved_out_root / "node_error_2_audit.json"
     audit_csv_path = resolved_out_root / "t02_stage2_audit.csv"
     audit_json_path = resolved_out_root / "t02_stage2_audit.json"
+    relation_evidence_csv_path = resolved_out_root / "t02_swsd_rcsd_relation_evidence.csv"
+    relation_evidence_json_path = resolved_out_root / "t02_swsd_rcsd_relation_evidence.json"
 
     logger = build_logger(log_path, f"t02_stage2_anchor_recognition.{resolved_run_id}")
     audit_rows: list[dict[str, Any]] = []
@@ -512,6 +680,7 @@ def run_t02_stage2_anchor_recognition(
                 IntersectionRecord(
                     feature_index=feature.feature_index,
                     intersection_id=_intersection_identity(feature.properties, feature.feature_index),
+                    base_id_candidate=_intersection_base_id_candidate(feature.properties),
                     geometry=feature.geometry,
                 )
             )
@@ -521,6 +690,7 @@ def run_t02_stage2_anchor_recognition(
                 "RCSDIntersection layer has no non-empty geometry features after projection to EPSG:3857.",
             )
         intersection_tree = STRtree([record.geometry for record in intersection_records])
+        intersection_by_id = {record.intersection_id: record for record in intersection_records}
         announce(
             logger,
             "[T02] intersections prepared "
@@ -1027,8 +1197,18 @@ def run_t02_stage2_anchor_recognition(
                 "rows": audit_rows,
             },
         )
+        relation_evidence_rows = _write_relation_evidence_outputs(
+            csv_path=relation_evidence_csv_path,
+            json_path=relation_evidence_json_path,
+            run_id=resolved_run_id,
+            nodes_features=nodes_layer_data.features,
+            group_results=group_results,
+            candidate_junction_ids=candidate_junction_ids,
+            intersection_by_id=intersection_by_id,
+            junction_to_fail2_intersection_ids=junction_to_fail2_intersection_ids,
+        )
         announce(logger, "[T02] error outputs written")
-        _snapshot("running", "error_outputs_written", "Error outputs written.")
+        _snapshot("running", "error_outputs_written", "Error and relation evidence outputs written.")
         _mark_stage("error_outputs_written", error_write_started_at)
 
         summary_write_started_at = time.perf_counter()
@@ -1062,6 +1242,7 @@ def run_t02_stage2_anchor_recognition(
                     "anchored_junction_count": stage_counts["kind_grade_anchored_junction_count"],
                     "unclassified_kind_grade_junction_count": stage_counts["kind_grade_unclassified_junction_count"],
                     "unknown_s_grade_segment_count": stage_counts["unknown_s_grade_segment_count"],
+                    "relation_evidence_row_count": len(relation_evidence_rows),
                 },
                 "summary_scope": {
                     "anchor_summary_by_s_grade": "segment_referenced_junction_set",
@@ -1080,6 +1261,8 @@ def run_t02_stage2_anchor_recognition(
                     node_error_2_audit_json_path.name,
                     audit_csv_path.name,
                     audit_json_path.name,
+                    relation_evidence_csv_path.name,
+                    relation_evidence_json_path.name,
                     log_path.name,
                     progress_path.name,
                     perf_json_path.name,
@@ -1118,6 +1301,8 @@ def run_t02_stage2_anchor_recognition(
                     node_error_2_audit_json_path.name,
                     audit_csv_path.name,
                     audit_json_path.name,
+                    relation_evidence_csv_path.name,
+                    relation_evidence_json_path.name,
                     log_path.name,
                     progress_path.name,
                     perf_json_path.name,
@@ -1152,6 +1337,8 @@ def run_t02_stage2_anchor_recognition(
             node_error_2_audit_json_path=node_error_2_audit_json_path,
             audit_csv_path=audit_csv_path,
             audit_json_path=audit_json_path,
+            relation_evidence_csv_path=relation_evidence_csv_path,
+            relation_evidence_json_path=relation_evidence_json_path,
             log_path=log_path,
             progress_path=progress_path,
             perf_json_path=perf_json_path,
@@ -1240,6 +1427,8 @@ def run_t02_stage2_anchor_recognition(
             node_error_2_audit_json_path=node_error_2_audit_json_path,
             audit_csv_path=audit_csv_path,
             audit_json_path=audit_json_path,
+            relation_evidence_csv_path=relation_evidence_csv_path,
+            relation_evidence_json_path=relation_evidence_json_path,
             log_path=log_path,
             progress_path=progress_path,
             perf_json_path=perf_json_path,

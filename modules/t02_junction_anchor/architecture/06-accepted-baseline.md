@@ -295,6 +295,10 @@
   - `anchor_reason`
 - `node_error_1.gpkg` 与对应审计输出
 - `node_error_2.gpkg` 与对应审计输出
+- `t02_swsd_rcsd_relation_evidence.csv/json`：
+  - T05 handoff 输入，不是最终 `intersection_match_all.geojson`
+  - 只表达 SWSD 语义路口与既有 `RCSDIntersection` 的关系证据
+  - 输出坐标 CRS 为 `EPSG:3857`，后续 T05 负责转换到 CRS84
 - `t02_stage2_summary.json`：
   - `anchor_summary_by_s_grade`
   - `anchor_summary_by_kind_grade`

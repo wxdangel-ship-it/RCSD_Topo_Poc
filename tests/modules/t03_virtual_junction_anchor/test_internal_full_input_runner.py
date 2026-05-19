@@ -790,6 +790,149 @@ def test_write_virtual_intersection_polygons_is_formal_first(tmp_path: Path) -> 
     assert polygons[0].properties["visual_review_class"] == "V5 明确失败"
 
 
+def test_write_updated_nodes_outputs_writes_relation_evidence(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    cases_root = run_root / "cases"
+    cases_root.mkdir(parents=True)
+    nodes_path = tmp_path / "nodes.gpkg"
+    write_vector(
+        nodes_path,
+        [
+            {
+                "properties": {"id": "100001", "mainnodeid": "100001", "has_evd": "yes", "is_anchor": "no", "kind_2": 4, "grade": 1, "closed_con": 0},
+                "geometry": Point(0.0, 0.0),
+            },
+            {
+                "properties": {"id": "100002", "mainnodeid": "100002", "has_evd": "yes", "is_anchor": "no", "kind_2": 4},
+                "geometry": Point(10.0, 0.0),
+            },
+            {
+                "properties": {"id": "100003", "mainnodeid": "100003", "has_evd": "yes", "is_anchor": "no", "kind_2": 2048},
+                "geometry": Point(20.0, 0.0),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+    (run_root / "summary.json").write_text(json.dumps({"total_case_count": 3}), encoding="utf-8")
+    for case_id, status_doc in {
+        "100001": {
+            "template_class": "center_junction",
+            "association_class": "A",
+            "required_rcsdnode_ids": ["rc_junction_1"],
+            "required_rcsdroad_ids": ["rc_road_1"],
+            "support_rcsdnode_ids": [],
+            "support_rcsdroad_ids": [],
+            "excluded_rcsdnode_ids": [],
+            "excluded_rcsdroad_ids": [],
+            "nonsemantic_connector_rcsdnode_ids": ["rc_connector"],
+            "true_foreign_rcsdnode_ids": [],
+            "degree2_merged_rcsdroad_groups": {"g1": ["rc_road_1"]},
+        },
+        "100002": {
+            "template_class": "center_junction",
+            "association_class": "B",
+            "required_rcsdnode_ids": [],
+            "required_rcsdroad_ids": [],
+            "support_rcsdnode_ids": ["rc_support_node"],
+            "support_rcsdroad_ids": ["rc_support_road"],
+            "excluded_rcsdnode_ids": [],
+            "excluded_rcsdroad_ids": [],
+        },
+        "100003": {
+            "template_class": "single_sided_t_mouth",
+            "association_class": "A",
+            "required_rcsdnode_ids": ["rc_junction_3"],
+            "required_rcsdroad_ids": ["rc_road_3"],
+        },
+    }.items():
+        case_dir = cases_root / case_id
+        case_dir.mkdir(parents=True)
+        (case_dir / "association_status.json").write_text(json.dumps(status_doc), encoding="utf-8")
+    write_vector(
+        cases_root / "100001" / "association_required_rcsdnode.gpkg",
+        [{"properties": {"id": "rc_junction_1"}, "geometry": Point(5.0, 5.0)}],
+        crs_text="EPSG:3857",
+    )
+
+    streamed_results = {
+        "100001": T03StreamedCaseResult(
+            case_id="100001",
+            representative_node_id="100001",
+            representative_mainnodeid="100001",
+            template_class="center_junction",
+            association_class="A",
+            association_state="established",
+            step6_state="established",
+            step7_state="accepted",
+            visual_class="V1 认可成功",
+            reason="accepted",
+            note="",
+            root_cause_layer=None,
+            root_cause_type=None,
+            source_png_path="",
+            final_polygon_path="",
+        ),
+        "100002": T03StreamedCaseResult(
+            case_id="100002",
+            representative_node_id="100002",
+            representative_mainnodeid="100002",
+            template_class="center_junction",
+            association_class="B",
+            association_state="review",
+            step6_state="established",
+            step7_state="accepted",
+            visual_class="V1 认可成功",
+            reason="support_only",
+            note="",
+            root_cause_layer=None,
+            root_cause_type=None,
+            source_png_path="",
+            final_polygon_path="",
+        ),
+        "100003": T03StreamedCaseResult(
+            case_id="100003",
+            representative_node_id="100003",
+            representative_mainnodeid="100003",
+            template_class="single_sided_t_mouth",
+            association_class="A",
+            association_state="established",
+            step6_state="not_established",
+            step7_state="rejected",
+            visual_class="V5 明确失败",
+            reason="formal_rejected",
+            note="",
+            root_cause_layer="step7",
+            root_cause_type="formal_rejected",
+            source_png_path="",
+            final_polygon_path="",
+        ),
+    }
+
+    outputs = write_updated_nodes_outputs(
+        run_root=run_root,
+        shared_nodes=load_shared_nodes(nodes_path=nodes_path),
+        selected_case_ids=["100001", "100002", "100003"],
+        streamed_results=streamed_results,
+        failed_case_ids=[],
+    )
+    evidence = json.loads(outputs["relation_evidence_json_path"].read_text(encoding="utf-8"))
+    rows = {row["case_id"]: row for row in evidence["rows"]}
+
+    assert outputs["relation_evidence_csv_path"].is_file()
+    assert evidence["target_crs"] == "EPSG:3857"
+    assert rows["100001"]["relation_state"] == "success_required_rcsd_junction"
+    assert rows["100001"]["status_suggested"] == 0
+    assert rows["100001"]["base_id_candidate"] == "rc_junction_1"
+    assert rows["100001"]["level"] == 1
+    assert rows["100001"]["is_highway"] == 0
+    assert rows["100001"]["rcsd_point_x"] == 5.0
+    assert rows["100002"]["relation_state"] == "rcsd_present_not_junction"
+    assert rows["100002"]["status_suggested"] == 1
+    assert rows["100003"]["relation_state"] == "geometry_not_accepted"
+    summary_doc = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+    assert summary_doc["relation_evidence"]["row_count"] == 3
+
+
 def test_internal_full_input_runner_writes_failure_artifact_on_prepare_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     inputs_dir = tmp_path / "inputs"
     out_root = tmp_path / "out"

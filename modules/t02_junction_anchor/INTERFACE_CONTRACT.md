@@ -739,6 +739,13 @@ outputs/_work/t02_stage1_drivezone_gate
 - `t02_stage1_progress.json`
 - `t02_stage1_perf.json`
 - `t02_stage1_perf_markers.jsonl`
+- `node_error_1.gpkg`
+- `node_error_2.gpkg`
+- `t02_stage2_audit.csv`
+- `t02_stage2_audit.json`
+- `t02_stage2_summary.json`
+- `t02_swsd_rcsd_relation_evidence.csv`
+- `t02_swsd_rcsd_relation_evidence.json`
 - `virtual_intersection_polygon.gpkg`
 - `branch_evidence.json`
 - `branch_evidence.gpkg`
@@ -812,6 +819,7 @@ outputs/_work/t02_stage1_drivezone_gate
 - `is_anchor` 最终 SWSD nodes 值域：`null / no / yes / fail1 / fail2 / fail3 / fail4`
 - T02 stage2 只写：`null / no / yes / fail1 / fail2`
 - `anchor_reason` 当前最小值域：`roundabout / t / null`
+- `grade / closed_con` 若输入存在必须 copy-on-write 保留；本阶段不反推缺失语义，后续 T05 可按缺失填 `-1`
 - 只有代表 node 写 `has_evd / is_anchor / anchor_reason`
 - 非代表 node 保持输入值或 `null`；非代表 node 的 `null` 不表达失败或候选状态
 - 输出 geometry CRS：`EPSG:3857`
@@ -947,6 +955,36 @@ outputs/_work/t02_stage1_drivezone_gate
   - `kind_2 in {8, 16}` -> `kind2_8_16`
   - `anchored_junction_count` 仅统计 `is_anchor = yes`
   - 代表 node 无法确定、`kind_2 / grade_2` 缺失或未落入四类时，不新增正式 bucket，仅记未分类数量提示
+
+#### `t02_swsd_rcsd_relation_evidence.csv / .json`
+
+- 属于 T05 handoff 输入，不是最终 `intersection_match_all.geojson`。
+- 输出坐标 CRS 为 `EPSG:3857`；JSON metadata 必须显式记录 `target_crs = EPSG:3857`，后续 T05 负责转换到 CRS84。
+- 每个 stage2 候选语义路口至少输出一条 summary row，稳定字段包括：
+  - `target_id`
+  - `representative_node_id`
+  - `relation_source`
+  - `relation_target_type`
+  - `matched_rcsdintersection_ids`
+  - `relation_state`
+  - `status_suggested`
+  - `base_id_candidate`
+  - `reason`
+  - `level`
+  - `is_highway`
+  - `swsd_point_x / swsd_point_y`
+  - `rcsd_point_x / rcsd_point_y`
+- `target_id` 优先取 SWSD `mainnodeid`，为空时取代表 node `id`。
+- `level` 来自代表 node `grade`，`is_highway` 来自代表 node `closed_con`；缺失时填 `-1`，不得反推。
+- `relation_source = T02_INPUT`，`relation_target_type = RCSDIntersection`。
+- `relation_state` 值域：
+  - `existing_rcsdintersection_matched`
+  - `no_existing_rcsdintersection`
+  - `multiple_intersections_for_group`
+  - `intersection_shared_by_multiple_groups`
+  - `not_evaluated_no_evidence`
+  - `representative_node_missing`
+- T02 只输出既有 `RCSDIntersection` 关系证据，不输出 RCSDRoad / RCSDNode 级关系证据。
 
 #### `t02_stage1.log`
 

@@ -24,6 +24,7 @@ T04 当前正式承接：
   - `divmerge_virtual_anchor_surface*`
   - rejected / summary / audit / consistency report
   - downstream `nodes.gpkg` 与 `nodes_anchor_update_audit.csv/json`
+  - `t04_swsd_rcsd_relation_evidence.csv/json`
 
 正式边界：
 
@@ -94,6 +95,8 @@ full-input 执行面使用 full-layer source：
 - `is_anchor`
 - `kind_2`
 - `grade_2`（若输入提供则必须保留）
+- `grade`（若输入提供则保留，后续 T05 `level` 可消费；缺失不阻塞 T04）
+- `closed_con`（若输入提供则保留，后续 T05 `is_highway` 可消费；缺失不阻塞 T04）
 
 `kind` 可作为 case-package legacy 兼容或审计字段保留，但不作为 full-input 正式候选发现的主输入字段。
 
@@ -495,6 +498,8 @@ batch / full-input run root 至少包含：
 - `nodes.gpkg`
 - `nodes_anchor_update_audit.csv`
 - `nodes_anchor_update_audit.json`
+- `t04_swsd_rcsd_relation_evidence.csv`
+- `t04_swsd_rcsd_relation_evidence.json`
 
 `preflight.json / summary.json` 必须保留最小 provenance：
 
@@ -636,6 +641,44 @@ accepted surface 主层与 summary 至少应保留或可追溯：
 - `final_state = accepted`
 
 `patch_id` 优先继承来源面；若当前面无来源字段，可从关联 roads / DriveZone / DivStripZone 的 `patchid / patch_id` 或 Step4 local context 反查。无法反查时允许为空，但必须在 summary / audit 中保留 `patch_id_source = unresolved` 或等价原因。
+
+`t04_swsd_rcsd_relation_evidence.csv / t04_swsd_rcsd_relation_evidence.json`：
+
+- 属于 T05 handoff 输入，不是最终 `intersection_match_all.geojson`。
+- 输出坐标 CRS 为 `EPSG:3857`；JSON metadata 必须显式记录 `target_crs = EPSG:3857`，后续 T05 负责转换到 CRS84。
+- 每个 Step7 case 至少输出一条 summary row，稳定字段包括：
+  - `target_id`
+  - `case_id`
+  - `junction_type`
+  - `scene_type`
+  - `final_state`
+  - `swsd_relation_type`
+  - `required_rcsd_node_ids`
+  - `selected_rcsdnode_ids / selected_rcsdroad_ids`
+  - `rcsd_profile`
+  - `has_c_unit`
+  - `surface_candidate_present`
+  - `base_id_candidate`
+  - `status_suggested`
+  - `relation_state`
+  - `reason`
+  - `level`
+  - `is_highway`
+  - `patch_id`
+  - `swsd_point_x / swsd_point_y`
+  - `rcsd_point_x / rcsd_point_y`
+- `target_id` 优先取 SWSD `mainnodeid`，为空时取代表 node `id`。
+- `level` 来自代表 node `grade`，`is_highway` 来自代表 node `closed_con`；缺失时填 `-1`，不得反推。
+- `relation_state` 值域：
+  - `success_required_rcsd_junction`
+  - `success_offset_fact_with_rcsd_junction`
+  - `rcsd_present_not_junction`
+  - `no_related_rcsd`
+  - `geometry_not_accepted`
+  - `ambiguous_review`
+- `status_suggested = 0` 只允许在 `final_state = accepted` 且能确定 RCSD semantic junction candidate 时出现。
+- 只有 RCSDRoad / RCSDNode 支持但不构成 RCSD 语义路口时，必须输出 `rcsd_present_not_junction / status_suggested = 1`，不得伪造成成功匹配。
+- `surface_candidate_present = 1` 仅表示存在 T04 accepted surface candidate；它不等同于最终 SWSD-RCSD semantic junction 匹配成功。
 
 ### 4.8 Downstream nodes 输出
 

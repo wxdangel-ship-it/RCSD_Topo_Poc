@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,7 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.final_publish import (
     derive_step7_reject_reason_from_step6_guards,
     derive_step7_surface_scenario_publish_audit,
     build_step7_case_artifact,
+    write_step7_batch_outputs,
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.polygon_assembly import T04Step6Result
 
@@ -74,10 +76,31 @@ def _step6(**overrides: object) -> T04Step6Result:
     return T04Step6Result(**values)  # type: ignore[arg-type]
 
 
-def _case_result(*, source_kind_2: int = 16, patch_id: str | None = None) -> SimpleNamespace:
+def _case_result(
+    *,
+    case_id: str = "step7_case",
+    source_kind_2: int = 16,
+    patch_id: str | None = None,
+    representative_properties: dict[str, object] | None = None,
+    representative_geometry: Point | None = None,
+    localized_evidence_core_geometry: object | None = None,
+    required_rcsd_node: str | None = None,
+    required_rcsd_node_geometry: Point | None = None,
+    selected_rcsdnode_ids: tuple[str, ...] = (),
+    selected_rcsdroad_ids: tuple[str, ...] = (),
+    positive_rcsd_consistency_level: str = "B",
+    rcsd_alignment_type: str | None = None,
+) -> SimpleNamespace:
+    mainnodeid = case_id
     return SimpleNamespace(
-        case_spec=SimpleNamespace(case_id="step7_case", mainnodeid="step7_case"),
-        admission=SimpleNamespace(source_kind_2=source_kind_2),
+        case_spec=SimpleNamespace(case_id=case_id, mainnodeid=mainnodeid),
+        admission=SimpleNamespace(source_kind_2=source_kind_2, representative_node_id=mainnodeid),
+        case_bundle=SimpleNamespace(
+            representative_node=SimpleNamespace(
+                properties=dict(representative_properties or {}),
+                geometry=representative_geometry or Point(0, 0),
+            )
+        ),
         base_context=SimpleNamespace(
             local_context=SimpleNamespace(current_patch_id=patch_id),
             topology_skeleton=SimpleNamespace(
@@ -89,11 +112,19 @@ def _case_result(*, source_kind_2: int = 16, patch_id: str | None = None) -> Sim
         ),
         event_units=[
             SimpleNamespace(
-                localized_evidence_core_geometry=Point(1, 0).buffer(1.0),
+                localized_evidence_core_geometry=(
+                    localized_evidence_core_geometry
+                    if localized_evidence_core_geometry is not None
+                    else Point(1, 0).buffer(1.0)
+                ),
                 selected_candidate_region_geometry=Point(1, 0).buffer(2.0),
                 fact_reference_point=Point(1, 0),
-                required_rcsd_node=None,
-                positive_rcsd_consistency_level="B",
+                required_rcsd_node=required_rcsd_node,
+                required_rcsd_node_geometry=required_rcsd_node_geometry,
+                selected_rcsdnode_ids=selected_rcsdnode_ids,
+                selected_rcsdroad_ids=selected_rcsdroad_ids,
+                positive_rcsd_consistency_level=positive_rcsd_consistency_level,
+                rcsd_alignment_type=rcsd_alignment_type,
                 review_state="STEP4_OK",
             )
         ],
@@ -155,6 +186,107 @@ def test_step7_accepted_surface_candidate_keeps_t05_mapping_fields(tmp_path) -> 
     assert artifact.summary_row["kind_2"] == 8
     assert artifact.summary_row["junction_type"] == "merge"
     assert artifact.summary_row["patch_id"] == "p1"
+    assert artifact.relation_evidence_row["surface_candidate_present"] == 1
+    assert artifact.relation_evidence_row["patch_id"] == "p1"
+
+
+def test_step7_writes_swsd_rcsd_relation_evidence_for_t05_handoff(tmp_path) -> None:
+    cases = [
+        (
+            _case_result(
+                case_id="success_required",
+                source_kind_2=8,
+                patch_id="p_required",
+                representative_properties={"grade": 2, "closed_con": 1},
+                required_rcsd_node="rc_node_1",
+                required_rcsd_node_geometry=Point(9, 0),
+                positive_rcsd_consistency_level="A",
+            ),
+            _step6(),
+            "success_required_rcsd_junction",
+            0,
+            "rc_node_1",
+        ),
+        (
+            _case_result(
+                case_id="success_offset",
+                required_rcsd_node="rc_node_2",
+                required_rcsd_node_geometry=Point(30, 0),
+                localized_evidence_core_geometry=Point(100, 0).buffer(1.0),
+                positive_rcsd_consistency_level="A",
+            ),
+            _step6(),
+            "success_offset_fact_with_rcsd_junction",
+            0,
+            "rc_node_2",
+        ),
+        (
+            _case_result(case_id="support_only", selected_rcsdroad_ids=("rc_road_1",)),
+            _step6(),
+            "rcsd_present_not_junction",
+            1,
+            -1,
+        ),
+        (
+            _case_result(case_id="no_related"),
+            _step6(),
+            "no_related_rcsd",
+            1,
+            -1,
+        ),
+        (
+            _case_result(case_id="geometry_rejected", required_rcsd_node="rc_node_3"),
+            _step6(final_case_polygon=None, assembly_canvas_geometry=None, component_count=0),
+            "geometry_not_accepted",
+            1,
+            -1,
+        ),
+        (
+            _case_result(
+                case_id="ambiguous",
+                required_rcsd_node="rc_node_4",
+                rcsd_alignment_type="ambiguous_rcsd_alignment",
+            ),
+            _step6(),
+            "ambiguous_review",
+            1,
+            -1,
+        ),
+    ]
+    artifacts = [
+        build_step7_case_artifact(
+            run_root=tmp_path,
+            case_dir=tmp_path / "cases" / case_result.case_spec.case_id,
+            case_result=case_result,
+            step5_result=SimpleNamespace(case_allowed_growth_domain=None),
+            step6_result=step6,
+        )
+        for case_result, step6, _state, _status, _base in cases
+    ]
+
+    rows_by_case = {artifact.case_id: artifact.relation_evidence_row for artifact in artifacts}
+    for case_result, _step6_result, expected_state, expected_status, expected_base in cases:
+        row = rows_by_case[case_result.case_spec.case_id]
+        assert row["relation_state"] == expected_state
+        assert row["status_suggested"] == expected_status
+        assert row["base_id_candidate"] == expected_base
+
+    assert rows_by_case["success_required"]["level"] == 2
+    assert rows_by_case["success_required"]["is_highway"] == 1
+    assert rows_by_case["success_required"]["rcsd_point_x"] == 9.0
+    assert rows_by_case["support_only"]["selected_rcsdroad_ids"] == "rc_road_1"
+    assert rows_by_case["geometry_rejected"]["surface_candidate_present"] == 0
+
+    outputs = write_step7_batch_outputs(run_root=tmp_path, artifacts=artifacts)
+    payload = json.loads((tmp_path / "t04_swsd_rcsd_relation_evidence.json").read_text(encoding="utf-8"))
+    summary = json.loads((tmp_path / "divmerge_virtual_anchor_surface_summary.json").read_text(encoding="utf-8"))
+    consistency = json.loads((tmp_path / "step7_consistency_report.json").read_text(encoding="utf-8"))
+
+    assert payload["target_crs"] == "EPSG:3857"
+    assert payload["row_count"] == len(artifacts)
+    assert summary["relation_evidence"]["row_count"] == len(artifacts)
+    assert consistency["relation_evidence_row_count"] == len(artifacts)
+    assert outputs["relation_evidence_csv_path"].endswith("t04_swsd_rcsd_relation_evidence.csv")
 
 
 @pytest.mark.parametrize(

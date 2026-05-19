@@ -198,9 +198,60 @@ def test_stage2_writes_swsd_rcsd_relation_evidence(tmp_path: Path) -> None:
     assert rows["4"]["relation_state"] == "intersection_shared_by_multiple_groups"
     assert rows["5"]["relation_state"] == "intersection_shared_by_multiple_groups"
     assert rows["6"]["relation_state"] == "not_evaluated_no_evidence"
+    surface_doc = _load_geojson(artifacts.surface_candidates_path)
+    assert artifacts.surface_candidates_summary_csv_path.is_file()
+    surface_summary = _load_json(artifacts.surface_candidates_summary_json_path)
+    assert surface_summary["target_crs"] == "EPSG:3857"
+    assert surface_summary["row_count"] == 1
+    assert len(surface_doc["features"]) == 1
+    surface_props = surface_doc["features"][0]["properties"]
+    assert surface_props["mainnodeid"] == "1"
+    assert surface_props["source_module"] == "T02_INPUT"
+    assert surface_props["source_surface_type"] == "RCSDIntersection"
+    assert surface_props["final_state"] == "accepted"
+    assert surface_props["relation_state"] == "existing_rcsdintersection_matched"
+    assert surface_props["base_id_candidate"] == "A"
+    assert surface_props["junction_type"] == "center_junction"
+    assert surface_props["patch_id_source"] == "unresolved"
     summary_doc = _load_json(artifacts.summary_path)
     assert "t02_swsd_rcsd_relation_evidence.csv" in summary_doc["output_files"]
+    assert "t02_rcsdintersection_anchor_surface.gpkg" in summary_doc["output_files"]
     assert summary_doc["counts"]["relation_evidence_row_count"] == len(rows)
+    assert summary_doc["counts"]["surface_candidate_count"] == 1
+
+
+def test_stage2_surface_candidates_keep_all_accepted_rcsdintersection_hits(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        nodes=[
+            _node_feature(
+                1,
+                0.0,
+                0.0,
+                mainnodeid=1,
+                has_evd="yes",
+                extra_properties={"grade": 3, "closed_con": 0},
+            ),
+        ],
+        intersections=[
+            _intersection_feature(-1.0, -1.0, 1.0, 1.0, properties={"id": "A", "patch_id": "p1"}),
+            _intersection_feature(-2.0, -2.0, 2.0, 2.0, properties={"id": "B", "patchid": "p2"}),
+        ],
+        segments=[_segment_feature("seg-1", pair_nodes="1", junc_nodes="")],
+        run_id="surface_multi_hit_case",
+    )
+
+    nodes_doc = _load_geojson(artifacts.nodes_path)
+    assert _node_props_by_id(nodes_doc)["1"]["is_anchor"] == "yes"
+    surface_doc = _load_geojson(artifacts.surface_candidates_path)
+    assert len(surface_doc["features"]) == 2
+    props_by_base_id = {feature["properties"]["base_id_candidate"]: feature["properties"] for feature in surface_doc["features"]}
+    assert set(props_by_base_id) == {"A", "B"}
+    assert props_by_base_id["A"]["patch_id"] == "p1"
+    assert props_by_base_id["A"]["patch_id_source"] == "RCSDIntersection.patch_id"
+    assert props_by_base_id["B"]["patch_id"] == "p2"
+    assert props_by_base_id["B"]["patch_id_source"] == "RCSDIntersection.patchid"
+    assert all(props["status_suggested"] == 0 for props in props_by_base_id.values())
 
 
 def test_stage2_preserves_subordinate_status_fields_and_geometry(tmp_path: Path) -> None:

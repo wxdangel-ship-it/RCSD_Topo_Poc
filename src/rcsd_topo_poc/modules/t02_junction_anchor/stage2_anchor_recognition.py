@@ -56,6 +56,7 @@ INTERSECTION_ID_FIELDS = (
     "objectid",
     "OBJECTID",
 )
+PATCH_ID_FIELDS = ("patch_id", "patchid", "PATCH_ID", "PATCHID")
 
 RELATION_EVIDENCE_FIELDNAMES = [
     "target_id",
@@ -75,6 +76,34 @@ RELATION_EVIDENCE_FIELDNAMES = [
     "rcsd_point_y",
 ]
 
+SURFACE_CANDIDATE_FIELDNAMES = [
+    "surface_candidate_id",
+    "target_id",
+    "mainnodeid",
+    "representative_node_id",
+    "source_module",
+    "source_surface_type",
+    "source_rcsdintersection_id",
+    "source_surface_id",
+    "matched_rcsdintersection_ids",
+    "junction_type",
+    "kind_2",
+    "grade_2",
+    "patch_id",
+    "patch_id_source",
+    "final_state",
+    "anchor_reason",
+    "base_id_candidate",
+    "relation_state",
+    "status_suggested",
+    "level",
+    "is_highway",
+    "swsd_point_x",
+    "swsd_point_y",
+    "rcsd_point_x",
+    "rcsd_point_y",
+]
+
 
 class Stage2RunError(T02RunError):
     pass
@@ -85,6 +114,7 @@ class IntersectionRecord:
     feature_index: int
     intersection_id: str
     base_id_candidate: str | None
+    properties: dict[str, Any]
     geometry: Any
 
 
@@ -124,6 +154,9 @@ class Stage2Artifacts:
     audit_json_path: Path
     relation_evidence_csv_path: Path
     relation_evidence_json_path: Path
+    surface_candidates_path: Path
+    surface_candidates_summary_csv_path: Path
+    surface_candidates_summary_json_path: Path
     log_path: Path
     progress_path: Path
     perf_json_path: Path
@@ -375,6 +408,136 @@ def _write_relation_evidence_outputs(
     return rows
 
 
+def _first_text_property(properties: dict[str, Any], field_names: Iterable[str]) -> tuple[str | None, str | None]:
+    for field_name in field_names:
+        value = normalize_id(properties.get(field_name))
+        if value is not None:
+            return value, field_name
+    return None, None
+
+
+def _junction_type_from_kind_2(kind_2: str | None) -> str:
+    if kind_2 == "4":
+        return "center_junction"
+    if kind_2 == "2048":
+        return "single_sided_t_mouth"
+    if kind_2 == "8":
+        return "merge"
+    if kind_2 == "16":
+        return "diverge"
+    if kind_2 == "128":
+        return "complex_divmerge"
+    if kind_2 == "64":
+        return "roundabout"
+    return ""
+
+
+def _surface_candidate_id(target_id: str, intersection_id: str) -> str:
+    raw = f"T02_INPUT__{target_id}__{intersection_id}"
+    return "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in raw)
+
+
+def _surface_candidate_row(
+    *,
+    representative_feature: Any,
+    representative_node_id: str,
+    target_id: str,
+    matched_intersection_ids: list[str],
+    intersection_record: IntersectionRecord,
+) -> dict[str, Any]:
+    representative_properties = representative_feature.properties
+    kind_2 = normalize_id(representative_properties.get("kind_2"))
+    patch_id, patch_id_field = _first_text_property(intersection_record.properties, PATCH_ID_FIELDS)
+    rcsd_point_x, rcsd_point_y = _point_xy(intersection_record.geometry)
+    swsd_point_x, swsd_point_y = _point_xy(representative_feature.geometry)
+    base_id_candidate = intersection_record.base_id_candidate or -1
+    return {
+        "surface_candidate_id": _surface_candidate_id(target_id, intersection_record.intersection_id),
+        "target_id": target_id,
+        "mainnodeid": target_id,
+        "representative_node_id": representative_node_id,
+        "source_module": "T02_INPUT",
+        "source_surface_type": "RCSDIntersection",
+        "source_rcsdintersection_id": intersection_record.intersection_id,
+        "source_surface_id": base_id_candidate,
+        "matched_rcsdintersection_ids": _pipe_join_text(matched_intersection_ids),
+        "junction_type": _junction_type_from_kind_2(kind_2),
+        "kind_2": kind_2 or "",
+        "grade_2": _value_or_minus_one(representative_properties.get("grade_2")),
+        "patch_id": patch_id or "",
+        "patch_id_source": f"RCSDIntersection.{patch_id_field}" if patch_id_field else "unresolved",
+        "final_state": "accepted",
+        "anchor_reason": normalize_id(representative_properties.get("anchor_reason")) or "",
+        "base_id_candidate": base_id_candidate,
+        "relation_state": "existing_rcsdintersection_matched",
+        "status_suggested": 0,
+        "level": _value_or_minus_one(representative_properties.get("grade")),
+        "is_highway": _value_or_minus_one(representative_properties.get("closed_con")),
+        "swsd_point_x": swsd_point_x,
+        "swsd_point_y": swsd_point_y,
+        "rcsd_point_x": rcsd_point_x,
+        "rcsd_point_y": rcsd_point_y,
+    }
+
+
+def _write_surface_candidate_outputs(
+    *,
+    surface_path: Path,
+    summary_csv_path: Path,
+    summary_json_path: Path,
+    run_id: str,
+    nodes_features: list[Any],
+    group_results: dict[str, AnchorGroupResult],
+    candidate_junction_ids: list[str],
+    intersection_by_id: dict[str, IntersectionRecord],
+) -> list[dict[str, Any]]:
+    surface_features: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    for junction_id in candidate_junction_ids:
+        group_result = group_results.get(junction_id)
+        if group_result is None or group_result.representative_output_index is None:
+            continue
+        representative_feature = nodes_features[group_result.representative_output_index]
+        representative_properties = representative_feature.properties
+        if normalize_id(representative_properties.get("is_anchor")) != "yes":
+            continue
+        representative_node_id = group_result.representative_node_id or ""
+        target_id = normalize_id(representative_properties.get("mainnodeid")) or representative_node_id or junction_id
+        matched_intersection_ids = list(group_result.intersection_ids)
+        for intersection_id in matched_intersection_ids:
+            intersection_record = intersection_by_id.get(intersection_id)
+            if intersection_record is None:
+                continue
+            row = _surface_candidate_row(
+                representative_feature=representative_feature,
+                representative_node_id=representative_node_id,
+                target_id=target_id,
+                matched_intersection_ids=matched_intersection_ids,
+                intersection_record=intersection_record,
+            )
+            surface_properties = dict(intersection_record.properties)
+            surface_properties.update(row)
+            surface_features.append({"properties": surface_properties, "geometry": intersection_record.geometry})
+            rows.append(row)
+
+    write_vector(surface_path, surface_features, crs_text=TARGET_CRS.to_string())
+    write_csv(summary_csv_path, rows, SURFACE_CANDIDATE_FIELDNAMES)
+    write_json(
+        summary_json_path,
+        {
+            "run_id": run_id,
+            "target_crs": TARGET_CRS.to_string(),
+            "source_module": "T02_INPUT",
+            "source_surface_type": "RCSDIntersection",
+            "accepted_condition": "representative node is_anchor == yes after T02 Step2",
+            "row_count": len(rows),
+            "fieldnames": SURFACE_CANDIDATE_FIELDNAMES,
+            "rows": rows,
+        },
+    )
+    return rows
+
+
 def _error_audit_row(
     *,
     error_type: str,
@@ -576,6 +739,9 @@ def run_t02_stage2_anchor_recognition(
     audit_json_path = resolved_out_root / "t02_stage2_audit.json"
     relation_evidence_csv_path = resolved_out_root / "t02_swsd_rcsd_relation_evidence.csv"
     relation_evidence_json_path = resolved_out_root / "t02_swsd_rcsd_relation_evidence.json"
+    surface_candidates_path = resolved_out_root / "t02_rcsdintersection_anchor_surface.gpkg"
+    surface_candidates_summary_csv_path = resolved_out_root / "t02_rcsdintersection_anchor_surface_summary.csv"
+    surface_candidates_summary_json_path = resolved_out_root / "t02_rcsdintersection_anchor_surface_summary.json"
 
     logger = build_logger(log_path, f"t02_stage2_anchor_recognition.{resolved_run_id}")
     audit_rows: list[dict[str, Any]] = []
@@ -681,6 +847,7 @@ def run_t02_stage2_anchor_recognition(
                     feature_index=feature.feature_index,
                     intersection_id=_intersection_identity(feature.properties, feature.feature_index),
                     base_id_candidate=_intersection_base_id_candidate(feature.properties),
+                    properties=dict(feature.properties),
                     geometry=feature.geometry,
                 )
             )
@@ -1207,6 +1374,16 @@ def run_t02_stage2_anchor_recognition(
             intersection_by_id=intersection_by_id,
             junction_to_fail2_intersection_ids=junction_to_fail2_intersection_ids,
         )
+        surface_candidate_rows = _write_surface_candidate_outputs(
+            surface_path=surface_candidates_path,
+            summary_csv_path=surface_candidates_summary_csv_path,
+            summary_json_path=surface_candidates_summary_json_path,
+            run_id=resolved_run_id,
+            nodes_features=nodes_layer_data.features,
+            group_results=group_results,
+            candidate_junction_ids=candidate_junction_ids,
+            intersection_by_id=intersection_by_id,
+        )
         announce(logger, "[T02] error outputs written")
         _snapshot("running", "error_outputs_written", "Error and relation evidence outputs written.")
         _mark_stage("error_outputs_written", error_write_started_at)
@@ -1243,6 +1420,7 @@ def run_t02_stage2_anchor_recognition(
                     "unclassified_kind_grade_junction_count": stage_counts["kind_grade_unclassified_junction_count"],
                     "unknown_s_grade_segment_count": stage_counts["unknown_s_grade_segment_count"],
                     "relation_evidence_row_count": len(relation_evidence_rows),
+                    "surface_candidate_count": len(surface_candidate_rows),
                 },
                 "summary_scope": {
                     "anchor_summary_by_s_grade": "segment_referenced_junction_set",
@@ -1263,6 +1441,9 @@ def run_t02_stage2_anchor_recognition(
                     audit_json_path.name,
                     relation_evidence_csv_path.name,
                     relation_evidence_json_path.name,
+                    surface_candidates_path.name,
+                    surface_candidates_summary_csv_path.name,
+                    surface_candidates_summary_json_path.name,
                     log_path.name,
                     progress_path.name,
                     perf_json_path.name,
@@ -1303,6 +1484,9 @@ def run_t02_stage2_anchor_recognition(
                     audit_json_path.name,
                     relation_evidence_csv_path.name,
                     relation_evidence_json_path.name,
+                    surface_candidates_path.name,
+                    surface_candidates_summary_csv_path.name,
+                    surface_candidates_summary_json_path.name,
                     log_path.name,
                     progress_path.name,
                     perf_json_path.name,
@@ -1339,6 +1523,9 @@ def run_t02_stage2_anchor_recognition(
             audit_json_path=audit_json_path,
             relation_evidence_csv_path=relation_evidence_csv_path,
             relation_evidence_json_path=relation_evidence_json_path,
+            surface_candidates_path=surface_candidates_path,
+            surface_candidates_summary_csv_path=surface_candidates_summary_csv_path,
+            surface_candidates_summary_json_path=surface_candidates_summary_json_path,
             log_path=log_path,
             progress_path=progress_path,
             perf_json_path=perf_json_path,
@@ -1373,6 +1560,16 @@ def run_t02_stage2_anchor_recognition(
             feature_metadata={},
             audit_rows=[],
             run_id=resolved_run_id,
+        )
+        _write_surface_candidate_outputs(
+            surface_path=surface_candidates_path,
+            summary_csv_path=surface_candidates_summary_csv_path,
+            summary_json_path=surface_candidates_summary_json_path,
+            run_id=resolved_run_id,
+            nodes_features=[],
+            group_results={},
+            candidate_junction_ids=[],
+            intersection_by_id={},
         )
         write_csv(
             audit_csv_path,
@@ -1429,6 +1626,9 @@ def run_t02_stage2_anchor_recognition(
             audit_json_path=audit_json_path,
             relation_evidence_csv_path=relation_evidence_csv_path,
             relation_evidence_json_path=relation_evidence_json_path,
+            surface_candidates_path=surface_candidates_path,
+            surface_candidates_summary_csv_path=surface_candidates_summary_csv_path,
+            surface_candidates_summary_json_path=surface_candidates_summary_json_path,
             log_path=log_path,
             progress_path=progress_path,
             perf_json_path=perf_json_path,

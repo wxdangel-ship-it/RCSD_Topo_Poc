@@ -26,7 +26,7 @@
   - 独立连续分歧 / 合流聚合工具 `t02-aggregate-continuous-divmerge`
   - 消费 T01 `segment` 与 `nodes`
   - 消费 `DriveZone`、`RCSDIntersection`、`roads`、`RCSDRoad`、`RCSDNode`
-  - 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit/log` 与 stage3 产物
+  - 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit/log`、T02_INPUT accepted surface candidate 与 stage3 产物
 - stage4 额外消费：
   - `nodes`
   - `roads`
@@ -746,6 +746,9 @@ outputs/_work/t02_stage1_drivezone_gate
 - `t02_stage2_summary.json`
 - `t02_swsd_rcsd_relation_evidence.csv`
 - `t02_swsd_rcsd_relation_evidence.json`
+- `t02_rcsdintersection_anchor_surface.gpkg`
+- `t02_rcsdintersection_anchor_surface_summary.csv`
+- `t02_rcsdintersection_anchor_surface_summary.json`
 - `virtual_intersection_polygon.gpkg`
 - `branch_evidence.json`
 - `branch_evidence.gpkg`
@@ -985,6 +988,40 @@ outputs/_work/t02_stage1_drivezone_gate
   - `not_evaluated_no_evidence`
   - `representative_node_missing`
 - T02 只输出既有 `RCSDIntersection` 关系证据，不输出 RCSDRoad / RCSDNode 级关系证据。
+
+#### `t02_rcsdintersection_anchor_surface.gpkg`
+
+- 属于 T05 handoff 的 T02_INPUT accepted surface candidate 主层，不是最终 `junction_anchor_surface.gpkg`。
+- 该层不生成新几何，不修改输入 `RCSDIntersection`；只将 T02 Step2 后代表 node `is_anchor = yes` 且命中的既有 `RCSDIntersection` 面复制为 accepted candidate。
+- `is_anchor = no / fail1 / fail2 / null`、`node_error_1`、`node_error_2`、未进入 Step2 的组均不得进入该主层。
+- 单个 accepted SWSD 语义路口命中多个已接受 `RCSDIntersection` 时，按源 `RCSDIntersection` 一面一条 candidate 输出，并通过 `matched_rcsdintersection_ids` 保留同组命中集合，交由 T05 后续统一决策 / 融合。
+- 输出 CRS 为 `EPSG:3857`；candidate geometry 必须保持来源 `RCSDIntersection` geometry，不允许 silent fix。
+- 主层与 summary 至少保留或可追溯：
+  - `surface_candidate_id`
+  - `target_id`
+  - `mainnodeid`
+  - `representative_node_id`
+  - `source_module = T02_INPUT`
+  - `source_surface_type = RCSDIntersection`
+  - `source_rcsdintersection_id`
+  - `source_surface_id`
+  - `matched_rcsdintersection_ids`
+  - `junction_type`
+  - `kind_2`
+  - `grade_2`
+  - `patch_id`
+  - `patch_id_source`
+  - `final_state = accepted`
+  - `anchor_reason`
+  - `base_id_candidate`
+  - `relation_state = existing_rcsdintersection_matched`
+  - `status_suggested = 0`
+  - `level`
+  - `is_highway`
+  - `swsd_point_x / swsd_point_y`
+  - `rcsd_point_x / rcsd_point_y`
+- `patch_id` 只从来源 `RCSDIntersection.patch_id / patchid` 继承；缺失时允许为空，并写 `patch_id_source = unresolved`，不得在 T02 内通过全量 join 反推。
+- `t02_rcsdintersection_anchor_surface_summary.csv / .json` 是机器可读 summary；JSON metadata 必须记录 `target_crs = EPSG:3857`、`source_module = T02_INPUT` 与 `accepted_condition`。
 
 #### `t02_stage1.log`
 

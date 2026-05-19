@@ -18,6 +18,7 @@
   - `nodes.is_anchor`
   - `nodes.anchor_reason`
   - `segment.has_evd`
+  - T02_INPUT 既有 `RCSDIntersection` accepted surface candidate
   - stage3 虚拟路口面与审计输出
   - stage4 div/merge 虚拟路口面与关联审计输出
 - 保持输出可审计、可复现、可 smoke，而不是把异常、歧义与人工复核信息藏进黑箱逻辑。
@@ -299,6 +300,14 @@
   - T05 handoff 输入，不是最终 `intersection_match_all.geojson`
   - 只表达 SWSD 语义路口与既有 `RCSDIntersection` 的关系证据
   - 输出坐标 CRS 为 `EPSG:3857`，后续 T05 负责转换到 CRS84
+- `t02_rcsdintersection_anchor_surface.gpkg`：
+  - T05 handoff 输入，不是最终 `junction_anchor_surface.gpkg`
+  - 只包含 stage2 后代表 node `is_anchor = yes` 的既有 `RCSDIntersection` 面
+  - 不生成新几何，不修改输入 `RCSDIntersection`，geometry 统一写 `EPSG:3857`
+  - `is_anchor = no / fail1 / fail2 / null`、`node_error_1 / node_error_2` 与未进入 stage2 的组不进入 accepted surface 主层
+  - 至少保留或可追溯 `mainnodeid / kind_2 / junction_type / patch_id / final_state = accepted`
+- `t02_rcsdintersection_anchor_surface_summary.csv/json`：
+  - 机器可读 summary，记录 `source_module = T02_INPUT`、`source_surface_type = RCSDIntersection`、`patch_id_source` 与 accepted 条件
 - `t02_stage2_summary.json`：
   - `anchor_summary_by_s_grade`
   - `anchor_summary_by_kind_grade`

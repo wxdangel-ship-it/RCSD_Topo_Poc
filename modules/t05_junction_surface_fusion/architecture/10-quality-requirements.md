@@ -1,0 +1,95 @@
+# 10 Quality Requirements
+
+## Phase 1 正确性
+
+- CRS 与坐标变换必须统一到 `EPSG:3857`。
+- 不得用几何相交单独决定不同 `mainnodeid` 的业务合并。
+- T03/T04 非 accepted 输入不得进入主发布层。
+- 未锚定到 SWSD 语义路口、无法解析 `mainnodeid` 的输入面不得进入主发布层。
+- 主图层只保留 7 字段 schema。
+- `surface_sources` 必须只表达最终几何实际使用的来源。
+- `is_multi_source_merged = 1` 时必须存在多来源 union；primary 替代不算多源合并。
+- 主图层 `mainnodeid` 必须非空，`surface_id` 必须为 `JAS:{mainnodeid}`。
+- `kind_2` 与 `junction_type` 映射冲突必须 audit，不得静默修正。
+
+## GIS / 拓扑检查项
+
+- CRS 与坐标变换正确性：输入读取时统一 CRS，输出 CRS 固定 `EPSG:3857`。
+- 拓扑一致性：只允许最小合法化，不允许 silent fix 改变业务边界。
+- 几何语义可解释性：融合只按 `mainnodeid` 与来源 formal 状态推进，几何只做辅助判断。
+- 审计可追溯性：summary 记录输入、输出、计数、冲突、缺失字段与 consistency。
+- 性能可验证性：当前 Phase 1 以线性分组和局部 union 为主，后续真实 full-input 可通过 summary 计数与测试样例扩展性能门槛。
+
+## 输出一致性
+
+`summary.json.consistency` 必须至少覆盖：
+
+- `junction_anchor_surface.gpkg` feature count 与 `published_surface_count` 一致。
+- 每个 feature 有非空 `surface_id`、`mainnodeid` 与 `junction_type`。
+- `surface_sources` 在允许值域内。
+- `is_multi_source_merged` 为 `0 / 1`。
+- 多源标志与 `surface_sources` 中的 `|` 一致。
+- `mainnodeid` 与 `surface_id` 规则一致。
+- `kind_2` 与 `junction_type` 映射一致。
+- 输出 CRS 为 `EPSG:3857`。
+- 不生成 `intersection_match_all.geojson`。
+
+## 回归要求
+
+测试至少覆盖：
+
+- 主图层 schema 与 CRS。
+- T02_INPUT、T03 accepted、T04 accepted 单源发布。
+- T03/T04 rejected 或 non-accepted 过滤。
+- 未锚定到 SWSD 语义路口的来源面被 skipped，不进入主图层。
+- T02+T03、T02+T04 多源合并。
+- T03+T04 同 `mainnodeid` 冲突 audit。
+- 不同 `mainnodeid` 几何相交不自动合并。
+- `kind_2` 到 `junction_type` 的映射。
+- `patch_id` 来源继承、nodes 反查与冲突审计。
+- 不生成关系表、RCSD split 输出或 RCSDNode insert 输出。
+- runner 不修改输入 nodes 或上游 surface。
+
+## Phase 2 正确性
+
+- `intersection_match_all.geojson` 字段固定为 `target_id / base_id / status / level / is_highway`。
+- `intersection_match_all.geojson` 输出 CRS 必须为 CRS84 / WGS84 lon-lat。
+- 失败关系必须 `status = 1` 且 `base_id = 0`。
+- 成功关系必须 `status = 0` 且 `base_id != 0`。
+- 不得把普通 RCSDRoad id 写入 `base_id`。
+- RCSDRoad / RCSDNode 输入只读，所有拓扑变化通过 copy-on-write 输出表达。
+- 被 split 的原始 RCSDRoad 不进入 active `rcsdroad_out.gpkg`。
+- 新增 RCSDRoad / RCSDNode id 必须全局唯一且稳定递增。
+- T03-A 多 RCSDNode 和 T04 complex 多 RCSDNode 必须先归组再建关系，不打断 road。
+- T03 road-only 与 T04 fallback road-only 才能进入 RCSDRoad split。
+- Road-only 投影点靠近 RCSDRoad 端点时必须复用已有端点 RCSDNode 或审计失败，不得生成极短 road 段。
+- `target_id` 必须唯一，一个 SWSD 语义路口只输出一条 relation。
+- `level = grade - 1`，缺失、为空或非法时为 `-1`。
+- `is_highway = closed_con - 1`，缺失、为空或非法时为 `-1`。
+- 多个 `base_id` 无法合并时必须 blocking error，不得输出多条 relation，也不得写成普通失败关系。
+- T03 handoff 补齐只能读取 T03 已输出的 relation evidence 与 case 级 `step6_status/step6_audit` 字段，不得反推或新增 T03 业务语义。
+- T03 handoff 补齐必须输出独立 backfilled evidence、audit 与 summary，不覆盖原始 T03 输出。
+
+## Phase 2 GIS / 拓扑检查项
+
+- CRS 与坐标变换正确性：处理过程使用 `EPSG:3857`，最终关系 GeoJSON 转为 CRS84。
+- 拓扑一致性：split 点过近或靠近端点必须跳过或失败并 audit，不允许 silent fix。
+- 几何语义可解释性：投影来源必须来自 relation evidence 的 fact reference 或 SWSD semantic point。
+- 审计可追溯性：junctionization audit 记录 target、surface、source evidence、原 road/node、新 road/node、动作、失败原因。
+- 性能可验证性：summary 记录 feature count、split count、generated/grouped node count 与 consistency。
+
+## Phase 2 一致性
+
+`summary.json.consistency` 必须至少覆盖：
+
+- 所有 `status = 1` 的 `base_id` 均为 `0`。
+- 所有 `status = 0` 的 `base_id` 均非 `0`。
+- `target_id` 无重复。
+- 新增 RCSDRoad / RCSDNode id 唯一。
+- 被 split 原始 RCSDRoad 不在 active 输出。
+- 新 RCSDRoad 的 `snodeid / enodeid` 均存在于 `rcsdnode_out.gpkg`。
+- 新增和归组 RCSDNode 均存在于 `rcsdnode_out.gpkg`。
+- 输出 CRS 正确。
+- 输入文件未被原地修改。
+- 如果存在 `multiple_base_id_unmergeable`，`summary.passed` 必须为 `false`。
+- T03 handoff 补齐后的 evidence 能驱动 Phase 2 中 T03-A RCSDNode grouping 与 T03 road-only RCSDRoad split。

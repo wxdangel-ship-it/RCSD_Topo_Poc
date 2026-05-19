@@ -1,0 +1,126 @@
+# T05 Junction Surface Fusion
+
+`t05_junction_surface_fusion` 包含 T05 两个独立阶段：Phase 1 负责统一路口面融合发布，Phase 2 消费 Phase 1 成果执行 RCSD junctionization 与 SWSD-RCSD 关系生产。
+
+## 阶段边界
+
+T05 分两个阶段：
+
+- Phase 1：消费已锚定到 SWSD 语义路口的 T02_INPUT / T03 / T04 路口面候选，完成归一化、分组、去重、合并与发布。
+- Phase 2：独立消费 Phase 1 成果、final nodes、原始 RCSDRoad/RCSDNode 与 T02/T03/T04 relation evidence，输出 copy-on-write RCSD 成果和 `intersection_match_all.geojson`。
+
+Phase 1 不输出 `intersection_match_all.geojson`，不建立关系表，不打断 RCSDRoad，不新增 RCSDNode。Phase 2 允许 RCSDRoad split、RCSDNode insert 与 RCSDNode grouping，但不得修改 Phase 1 融合结果，也不得原地修改输入文件。
+
+## Callable Runner
+
+当前没有 repo CLI。Phase 1 / Phase 2 主执行面仍是模块内 callable runner：
+
+```python
+from rcsd_topo_poc.modules.t05_junction_surface_fusion import run_t05_junction_surface_fusion
+
+artifacts = run_t05_junction_surface_fusion(
+    t02_rcsdintersection_path="RCSDIntersection.gpkg",
+    t03_surface_path="virtual_intersection_polygons.gpkg",
+    t04_surface_path="divmerge_virtual_anchor_surface.gpkg",
+    nodes_path="nodes.gpkg",
+    out_root="outputs/_work/t05_junction_surface_fusion",
+    run_id="manual_run",
+)
+```
+
+Phase 2 callable runner：
+
+```python
+from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_runner import (
+    run_t05_phase2_rcsd_junctionization_and_relation,
+)
+
+artifacts = run_t05_phase2_rcsd_junctionization_and_relation(
+    junction_surface_path="junction_anchor_surface.gpkg",
+    fusion_audit_path="junction_anchor_surface_fusion_audit.csv",
+    nodes_path="nodes.gpkg",
+    rcsdroad_path="RCSDRoad.gpkg",
+    rcsdnode_path="RCSDNode.gpkg",
+    t02_relation_evidence_path="t02_swsd_rcsd_relation_evidence.csv",
+    t03_relation_evidence_path="t03_swsd_rcsd_relation_evidence.csv",
+    t04_relation_evidence_path="t04_swsd_rcsd_relation_evidence.csv",
+    t04_surface_path="divmerge_virtual_anchor_surface.gpkg",
+    t04_summary_path="divmerge_virtual_anchor_surface_summary.csv",
+    t04_audit_path="divmerge_virtual_anchor_surface_audit.gpkg",
+    t04_case_root="cases",
+    out_root="outputs/_work/t05_phase2",
+    run_id="manual_run",
+)
+```
+
+T03 -> T05 Phase 2 handoff 补齐提供一个内网脚本入口。该脚本只读取现有 T03 run root 中的 `t03_swsd_rcsd_relation_evidence.*` 与 `cases/<case_id>/step6_status.json` / `step6_audit.json`，写出补齐后的 T05 可消费 evidence，不修改 T03 主链或原始输出：
+
+```bash
+.venv/bin/python scripts/t05_backfill_t03_relation_evidence_innernet.py \
+  --t03-run-root /path/to/t03/run \
+  --relation-evidence-path /path/to/t03_swsd_rcsd_relation_evidence.csv \
+  --out-root /path/to/t05_phase2_handoff \
+  --accepted-only
+```
+
+## 输入
+
+- `T02_INPUT`：外部既有 `RCSDIntersection` 面；必须可解析到 `mainnodeid`。
+- `T03`：`virtual_intersection_polygons.gpkg` 中 formal accepted surface candidate。
+- `T04`：`divmerge_virtual_anchor_surface.gpkg` 中 `final_state = accepted` 的 surface。
+- `nodes.gpkg`：可选，用于补充 `mainnodeid / kind_2 / patch_id`。若缺失且来源面无法提供 `mainnodeid`，该面不会进入主图层。
+
+## 输出
+
+`<out_root>/<run_id>/` 下输出：
+
+- `junction_anchor_surface.gpkg`
+- `junction_anchor_surface_fusion_audit.csv`
+- `junction_anchor_surface_fusion_audit.json`
+- `summary.json`
+- 可选 `junction_anchor_surface_skipped.*`
+- 可选 `junction_anchor_surface_conflicts.gpkg`
+
+主图层只发布 7 个字段：
+
+- `surface_id`
+- `mainnodeid`
+- `patch_id`
+- `junction_type`
+- `kind_2`
+- `surface_sources`
+- `is_multi_source_merged`
+
+`junction_anchor_surface.gpkg` 是 Phase 2 的核心输入。
+
+未能锚定到 SWSD 语义路口的来源面不会发布到主图层，只写入 `junction_anchor_surface_skipped.*`。
+
+## Phase 2 输出
+
+`<out_root>/<run_id>/` 下输出：
+
+- `intersection_match_all.geojson`
+- `rcsdroad_out.gpkg`
+- `rcsdnode_out.gpkg`
+- `rcsdroad_split.gpkg`
+- `rcsdnode_generated.gpkg`
+- `rcsdnode_grouped.gpkg`
+- `rcsd_junctionization_audit.csv/json`
+- `intersection_match_all_audit.csv/json`
+- `blocking_errors.csv/json`
+- `summary.json`
+
+失败关系统一 `base_id = 0`。如果同一 SWSD 路口只生成 1 个 RCSDNode，则 `mainnodeid = null`；如果生成或归组多个 RCSDNode，则组内所有 RCSDNode 包括主节点自己 `mainnodeid` 都填主节点 id。
+
+`intersection_match_all.geojson` 中 `target_id` 必须唯一，一个 SWSD 语义路口只输出一条 relation。多个 RCSD 候选可合并时先归组；无法合并时写 `blocking_errors.*`，不在主表中输出该 `target_id`。`level` 使用 final nodes 的 `grade - 1`，`is_highway` 使用 `closed_con - 1`；缺失或非法时填 `-1`。
+
+Road-only 场景中，若投影点距离 RCSDRoad 起终点小于 `min_endpoint_gap_m`，Phase 2 不生成极短 split 段，改为复用对应 `snodeid / enodeid` 的已有 RCSDNode；多个端点节点命中同一 SWSD 路口时先归组，再输出唯一 relation。
+
+## T03 Evidence 补齐
+
+T03 当前部分运行路径会在 case 级 `step6_status.json` 中产出 `required_rcsdnode_ids / support_rcsdroad_ids`，但批次级 `t03_swsd_rcsd_relation_evidence.*` 未必携带这些字段值。T05 提供 `backfill_t03_relation_evidence(...)` 与 `scripts/t05_backfill_t03_relation_evidence_innernet.py` 用于方案 1 handoff 补齐：
+
+- `required_rcsdnode_ids` 非空时，补齐为已有 RCSD 语义核心，Phase 2 将直接关联或归组 RCSDNode。
+- `support_rcsdroad_ids` 非空且无 `required_rcsdnode_ids` 时，补齐为 `relation_state = rcsd_present_not_junction`，Phase 2 将进入 T03 road-only split。
+- 补齐输出为独立 `t03_swsd_rcsd_relation_evidence_backfilled.csv/json`，并写 `t03_swsd_rcsd_relation_evidence_backfill_audit.*` 与 summary。
+- 标准 run root 使用 `cases/<case_id>/step6_status.json`；测试包或聚合目录可使用一层嵌套的 `*/cases/<case_id>/step6_status.json`。

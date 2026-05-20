@@ -264,11 +264,12 @@ T05 提供 repo 级内网联合实验入口：
   --rcsdroad /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
   --rcsdnode /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
   --nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
-  --t02-input /mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.gpkg \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment \
   --readonly-workers 4 \
   --progress-interval 1000
 ```
+
+`--t02-input` 是可选覆盖参数；默认从 `--t02-dir` 自动发现 `t02_rcsdintersection_anchor_surface.gpkg`。该文件是 T02 Step2 已锚定到 SWSD 语义路口的 T05 handoff 面，不应默认使用原始 `RCSDIntersection.gpkg`。
 
 该入口顺序执行：
 

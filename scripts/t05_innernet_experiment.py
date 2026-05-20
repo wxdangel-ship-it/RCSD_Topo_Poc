@@ -27,8 +27,8 @@ DEFAULT_T04_DIR = "/mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t04_internal_full_inp
 DEFAULT_RCSDROAD = "/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg"
 DEFAULT_RCSDNODE = "/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg"
 DEFAULT_NODES = "/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg"
-DEFAULT_T02_INPUT = "/mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.gpkg"
 DEFAULT_OUT_ROOT = "/mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment"
+T02_ANCHOR_SURFACE_FILENAME = "t02_rcsdintersection_anchor_surface.gpkg"
 
 
 def main() -> int:
@@ -39,6 +39,7 @@ def main() -> int:
     out_root = Path(args.out_root)
 
     t02_evidence = _resolve_file(args.t02_evidence, t02_dir, "t02_swsd_rcsd_relation_evidence.csv")
+    t02_input = _resolve_file(args.t02_input, t02_dir, T02_ANCHOR_SURFACE_FILENAME)
     t03_evidence = _resolve_file(args.t03_evidence, t03_dir, "t03_swsd_rcsd_relation_evidence.csv")
     t04_evidence = _resolve_file(args.t04_evidence, t04_dir, "t04_swsd_rcsd_relation_evidence.csv")
     t03_surface = _resolve_file(args.t03_surface, t03_dir, "virtual_intersection_polygons.gpkg")
@@ -61,7 +62,7 @@ def main() -> int:
 
     print("[T05 innernet] run Phase 1", flush=True)
     phase1 = run_t05_junction_surface_fusion(
-        t02_rcsdintersection_path=args.t02_input,
+        t02_rcsdintersection_path=t02_input,
         t03_surface_path=t03_surface,
         t04_surface_path=t04_surface,
         nodes_path=args.nodes,
@@ -102,7 +103,7 @@ def main() -> int:
                     "rcsdroad": str(args.rcsdroad),
                     "rcsdnode": str(args.rcsdnode),
                     "nodes": str(args.nodes),
-                    "t02_input": str(args.t02_input),
+                    "t02_input": str(t02_input),
                 },
                 "phase1": {
                     "run_root": str(phase1.run_root),
@@ -141,7 +142,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--rcsdroad", default=DEFAULT_RCSDROAD)
     parser.add_argument("--rcsdnode", default=DEFAULT_RCSDNODE)
     parser.add_argument("--nodes", default=DEFAULT_NODES)
-    parser.add_argument("--t02-input", default=DEFAULT_T02_INPUT)
+    parser.add_argument(
+        "--t02-input",
+        default=None,
+        help=(
+            "Optional explicit T02_INPUT surface path. Defaults to "
+            f"{T02_ANCHOR_SURFACE_FILENAME} discovered under --t02-dir."
+        ),
+    )
     parser.add_argument("--out-root", default=DEFAULT_OUT_ROOT)
     parser.add_argument("--t02-evidence", default=None)
     parser.add_argument("--t03-evidence", default=None)

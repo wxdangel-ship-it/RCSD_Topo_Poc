@@ -76,13 +76,12 @@ T05 Phase 1 + Phase 2 内网联合实验提供 repo 级入口。该入口把 T02
   --rcsdroad /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
   --rcsdnode /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
   --nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
-  --t02-input /mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.gpkg \
   --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment \
   --readonly-workers 4 \
   --progress-interval 1000
 ```
 
-上述路径已作为脚本默认值固化；只改参数值即可切换批次或输入文件。
+上述路径已作为脚本默认值固化；只改参数值即可切换批次或输入文件。`--t02-input` 默认从 `--t02-dir` 自动发现 `t02_rcsdintersection_anchor_surface.gpkg`，不再默认使用原始 `RCSDIntersection.gpkg`。
 
 ## 输入
 

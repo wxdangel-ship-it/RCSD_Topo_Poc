@@ -31,6 +31,21 @@ BLOCKING_ERROR_FIELDS = [
     "notes",
 ]
 
+MODULE_RELATION_AUDIT_FIELDS = [
+    "source_module",
+    "input_count",
+    "classified_input_count",
+    "unclassified_input_count",
+    "phase2_target_input_count",
+    "scenario",
+    "scenario_input_count",
+    "relation_success_count",
+    "relation_failure_count",
+    "missing_relation_count",
+    "blocking_error_count",
+    "overall_failure_count",
+]
+
 JUNCTIONIZATION_AUDIT_FIELDS = [
     "target_id",
     "surface_id",
@@ -120,6 +135,8 @@ class T05Phase2Artifacts:
     relation_audit_json_path: Path
     blocking_errors_csv_path: Path
     blocking_errors_json_path: Path
+    module_relation_audit_csv_path: Path
+    module_relation_audit_json_path: Path
     summary_path: Path
     relation_count: int
     success_count: int

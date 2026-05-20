@@ -425,6 +425,17 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     )
     blocking_errors.extend(duplicate_blocking_rows)
     audit_rows.extend(duplicate_audit_rows)
+    module_relation_audit_rows = _module_relation_audit_summary(
+        evidence_rows=evidence_rows,
+        source_input_counts={
+            "T02_INPUT": len(t02_rows),
+            "T03": len(t03_rows),
+            "T04": len(t04_rows),
+        },
+        context_by_target=context_by_target,
+        relation_features=relation_features,
+        blocking_errors=blocking_errors,
+    )
 
     write_started = perf_counter()
     log("writing outputs")
@@ -454,6 +465,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         grouped_node_features=grouped_node_features,
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
+        module_relation_audit_rows=module_relation_audit_rows,
         original_split_road_ids=original_split_road_ids,
         performance={
             "data_volume": data_volume,
@@ -484,6 +496,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         relation_audit_json_path=outputs["relation_audit_json_path"],
         blocking_errors_csv_path=outputs["blocking_errors_csv_path"],
         blocking_errors_json_path=outputs["blocking_errors_json_path"],
+        module_relation_audit_csv_path=outputs["module_relation_audit_csv_path"],
+        module_relation_audit_json_path=outputs["module_relation_audit_json_path"],
         summary_path=outputs["summary_path"],
         relation_count=summary["intersection_match_all_feature_count"],
         success_count=summary["status_0_count"],
@@ -742,6 +756,97 @@ def _is_readonly_plan(decisions: list[Any], actionable: list[Any]) -> bool:
     if decision.scene in {SCENE_NO_RCSD, SCENE_FAILURE}:
         return True
     return decision.scene == SCENE_DIRECT and len(_candidate_ids(actionable)) <= 1
+
+
+def _module_relation_audit_summary(
+    *,
+    evidence_rows: list[Any],
+    source_input_counts: dict[str, int],
+    context_by_target: dict[str, SwsdTargetContext],
+    relation_features: list[dict[str, Any]],
+    blocking_errors: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    scenarios = (
+        "pre_failed_no_relation_overall_failure",
+        "pre_success_rcsd_semantic_relation",
+        "pre_success_rcsdroad_junctionization",
+        "pre_success_no_rcsd_overall_failure",
+    )
+    source_modules = ("T02_INPUT", "T03", "T04")
+    classified_counts: Counter[str] = Counter()
+    target_input_counts: Counter[str] = Counter()
+    counters: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    relation_status_by_target = {
+        _text((feature.get("properties") or {}).get("target_id")): int((feature.get("properties") or {}).get("status"))
+        for feature in relation_features
+        if _text((feature.get("properties") or {}).get("target_id"))
+    }
+    blocking_targets = {
+        _text(row.get("target_id"))
+        for row in blocking_errors
+        if _text(row.get("target_id"))
+    }
+
+    for evidence in evidence_rows:
+        source = _text(getattr(evidence, "source_module", ""))
+        if source not in source_modules:
+            continue
+        classified_counts[source] += 1
+        context = context_by_target.get(evidence.target_id)
+        if context is not None:
+            target_input_counts[source] += 1
+        junction_type = context.junction_type if context is not None else _text(evidence.row.get("junction_type"))
+        decision = classify_evidence(evidence, junction_type=junction_type)
+        scenario = _module_audit_scenario(decision)
+        key = (source, scenario)
+        counters[key]["scenario_input_count"] += 1
+        if evidence.target_id in blocking_targets:
+            counters[key]["blocking_error_count"] += 1
+            continue
+        relation_status = relation_status_by_target.get(evidence.target_id)
+        if relation_status == STATUS_SUCCESS:
+            counters[key]["relation_success_count"] += 1
+        elif relation_status == STATUS_FAILURE:
+            counters[key]["relation_failure_count"] += 1
+        else:
+            counters[key]["missing_relation_count"] += 1
+
+    rows: list[dict[str, Any]] = []
+    for source in source_modules:
+        input_count = int(source_input_counts.get(source, 0))
+        classified_input_count = int(classified_counts[source])
+        for scenario in scenarios:
+            counter = counters[(source, scenario)]
+            relation_failure_count = int(counter["relation_failure_count"])
+            missing_relation_count = int(counter["missing_relation_count"])
+            blocking_error_count = int(counter["blocking_error_count"])
+            rows.append(
+                {
+                    "source_module": source,
+                    "input_count": input_count,
+                    "classified_input_count": classified_input_count,
+                    "unclassified_input_count": max(0, input_count - classified_input_count),
+                    "phase2_target_input_count": int(target_input_counts[source]),
+                    "scenario": scenario,
+                    "scenario_input_count": int(counter["scenario_input_count"]),
+                    "relation_success_count": int(counter["relation_success_count"]),
+                    "relation_failure_count": relation_failure_count,
+                    "missing_relation_count": missing_relation_count,
+                    "blocking_error_count": blocking_error_count,
+                    "overall_failure_count": relation_failure_count + missing_relation_count + blocking_error_count,
+                }
+            )
+    return rows
+
+
+def _module_audit_scenario(decision: Any) -> str:
+    if decision.scene in {SCENE_DIRECT, SCENE_GROUP_EXISTING}:
+        return "pre_success_rcsd_semantic_relation"
+    if decision.scene == SCENE_ROAD_SPLIT:
+        return "pre_success_rcsdroad_junctionization"
+    if decision.scene == SCENE_NO_RCSD:
+        return "pre_success_no_rcsd_overall_failure"
+    return "pre_failed_no_relation_overall_failure"
 
 
 def _add_supplement(supplements: dict[str, dict[str, Any]], properties: dict[str, Any]) -> None:

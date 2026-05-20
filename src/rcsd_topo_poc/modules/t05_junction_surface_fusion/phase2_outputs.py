@@ -9,6 +9,7 @@ from .phase2_io import write_csv, write_gpkg, write_json, write_relation_geojson
 from .phase2_models import (
     BLOCKING_ERROR_FIELDS,
     JUNCTIONIZATION_AUDIT_FIELDS,
+    MODULE_RELATION_AUDIT_FIELDS,
     RELATION_FIELDS,
     STATUS_FAILURE,
     STATUS_SUCCESS,
@@ -28,6 +29,8 @@ RELATION_AUDIT_CSV = "intersection_match_all_audit.csv"
 RELATION_AUDIT_JSON = "intersection_match_all_audit.json"
 BLOCKING_ERRORS_CSV = "blocking_errors.csv"
 BLOCKING_ERRORS_JSON = "blocking_errors.json"
+MODULE_RELATION_AUDIT_CSV = "module_relation_audit_summary.csv"
+MODULE_RELATION_AUDIT_JSON = "module_relation_audit_summary.json"
 SUMMARY_FILENAME = "summary.json"
 
 
@@ -45,6 +48,7 @@ def write_phase2_outputs(
     grouped_node_features: list[dict[str, Any]],
     audit_rows: list[dict[str, Any]],
     blocking_errors: list[dict[str, Any]],
+    module_relation_audit_rows: list[dict[str, Any]],
     original_split_road_ids: set[int],
     performance: dict[str, Any] | None = None,
     progress_logger: Callable[[str], None] | None = None,
@@ -61,6 +65,8 @@ def write_phase2_outputs(
     relation_audit_json_path = run_root / RELATION_AUDIT_JSON
     blocking_errors_csv_path = run_root / BLOCKING_ERRORS_CSV
     blocking_errors_json_path = run_root / BLOCKING_ERRORS_JSON
+    module_relation_audit_csv_path = run_root / MODULE_RELATION_AUDIT_CSV
+    module_relation_audit_json_path = run_root / MODULE_RELATION_AUDIT_JSON
     summary_path = run_root / SUMMARY_FILENAME
 
     relation_output_features = [
@@ -179,6 +185,27 @@ def write_phase2_outputs(
         output_timings_sec=output_timings_sec,
         output_sizes_bytes=output_sizes_bytes,
     )
+    _write_with_timing(
+        "module_relation_audit_summary_csv",
+        module_relation_audit_csv_path,
+        len(module_relation_audit_rows),
+        lambda: write_csv(module_relation_audit_csv_path, module_relation_audit_rows, MODULE_RELATION_AUDIT_FIELDS),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "module_relation_audit_summary_json",
+        module_relation_audit_json_path,
+        len(module_relation_audit_rows),
+        lambda: write_json(
+            module_relation_audit_json_path,
+            {"row_count": len(module_relation_audit_rows), "rows": module_relation_audit_rows},
+        ),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
     performance_data["output_timings_sec"] = output_timings_sec
     performance_data["output_sizes_bytes"] = output_sizes_bytes
 
@@ -194,6 +221,7 @@ def write_phase2_outputs(
         grouped_node_features=grouped_node_features,
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
+        module_relation_audit_rows=module_relation_audit_rows,
         original_split_road_ids=original_split_road_ids,
         performance=performance_data,
         output_paths={
@@ -209,6 +237,8 @@ def write_phase2_outputs(
             "intersection_match_all_audit_json": str(relation_audit_json_path),
             "blocking_errors_csv": str(blocking_errors_csv_path),
             "blocking_errors_json": str(blocking_errors_json_path),
+            "module_relation_audit_summary_csv": str(module_relation_audit_csv_path),
+            "module_relation_audit_summary_json": str(module_relation_audit_json_path),
             "summary": str(summary_path),
         },
     )
@@ -226,6 +256,8 @@ def write_phase2_outputs(
         "relation_audit_json_path": relation_audit_json_path,
         "blocking_errors_csv_path": blocking_errors_csv_path,
         "blocking_errors_json_path": blocking_errors_json_path,
+        "module_relation_audit_csv_path": module_relation_audit_csv_path,
+        "module_relation_audit_json_path": module_relation_audit_json_path,
         "summary_path": summary_path,
         "summary": summary,
     }
@@ -267,6 +299,7 @@ def _summary(
     grouped_node_features: list[dict[str, Any]],
     audit_rows: list[dict[str, Any]],
     blocking_errors: list[dict[str, Any]],
+    module_relation_audit_rows: list[dict[str, Any]],
     original_split_road_ids: set[int],
     performance: dict[str, Any],
 ) -> dict[str, Any]:
@@ -298,6 +331,7 @@ def _summary(
         "rcsdnode_grouped_count": len(grouped_node_features),
         "audit_row_count": len(audit_rows),
         "blocking_error_count": len(blocking_errors),
+        "module_relation_audit_summary": module_relation_audit_rows,
         "passed": consistency["passed"],
         "crs": {"process": "EPSG:3857", "intersection_match_all": "CRS84"},
         "performance": performance,

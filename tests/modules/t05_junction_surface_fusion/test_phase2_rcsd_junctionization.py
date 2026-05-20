@@ -315,6 +315,15 @@ def test_phase2_progress_and_performance_summary_are_sparse(tmp_path: Path, caps
     assert "rcsdroad_out" in performance["output_timings_sec"]
     assert performance["output_sizes_bytes"]["rcsdroad_out"] > 0
     assert "total_sec" in performance["timings_sec"]
+    module_audit = _summary(artifacts)["module_relation_audit_summary"]
+    t03_semantic = [
+        row for row in module_audit
+        if row["source_module"] == "T03" and row["scenario"] == "pre_success_rcsd_semantic_relation"
+    ][0]
+    assert t03_semantic["input_count"] == 1
+    assert t03_semantic["scenario_input_count"] == 1
+    assert t03_semantic["relation_success_count"] == 1
+    assert artifacts.module_relation_audit_csv_path.is_file()
 
 
 def test_t04_fact_reference_fallback_controls_split_location(tmp_path: Path) -> None:

@@ -226,6 +226,7 @@ Phase 2 输出：
 - `rcsdroad_out.gpkg`、`rcsdnode_out.gpkg`。
 - `rcsdroad_split.gpkg`、`rcsdnode_generated.gpkg`、`rcsdnode_grouped.gpkg`。
 - `rcsd_junctionization_audit.csv/json`、`intersection_match_all_audit.csv/json`、`blocking_errors.csv/json`、`summary.json`。
+- `module_relation_audit_summary.csv/json`：按 T02/T03/T04 输入与场景统计最终关系生产效果。
 
 Phase 2 失败统一 `status = 1`、`base_id = 0`。成功关系的 `base_id` 必须是 RCSD 语义路口主 node id，不得写普通 RCSDRoad id。T03-A 多 RCSDNode 与 T04 complex 多 RCSDNode 先归组再建关系；T03 road-only 与 T04 fallback road-only 才进入 RCSDRoad split。被 split 的原始 RCSDRoad 不进入 active `rcsdroad_out.gpkg`。
 
@@ -251,6 +252,18 @@ T04 fallback 场景可补读 `divmerge_virtual_anchor_surface.gpkg`、summary、
 - `summary.performance.timings_sec` 记录阶段级耗时，不记录 per-target 明细，避免大数据下打点体量失控。
 - `summary.performance.output_timings_sec` 与 `summary.performance.output_sizes_bytes` 记录逐输出文件耗时与大小；`progress=True` 时逐文件打印 `writing/done`。
 - 大体量 GPKG 输出使用分批 `writerecords` 写出，保持 copy-on-write 完整输出，不跳过 `rcsdroad_out.gpkg / rcsdnode_out.gpkg`。
+
+模块关系审计统计：
+
+- `source_module`：`T02_INPUT / T03 / T04`。
+- `input_count`：该模块 relation evidence 输入行数。
+- `classified_input_count / unclassified_input_count`：可进入 T05 场景分类的输入行数与缺少 `target_id` 等无法分类的行数。
+- `phase2_target_input_count`：输入 target 已进入 Phase 1 surface 并参与 Phase 2 的行数。
+- `scenario = pre_failed_no_relation_overall_failure`：前置失败、无可用 RCSD 关联。
+- `scenario = pre_success_rcsd_semantic_relation`：前置成功，存在 RCSD 语义路口或可归组 RCSDNode。
+- `scenario = pre_success_rcsdroad_junctionization`：前置成功，只有 RCSDRoad，需要构建 RCSD 路口。
+- `scenario = pre_success_no_rcsd_overall_failure`：前置成功，但确认无 RCSD 关联，最终应为失败关系。
+- 每个 scenario 输出 `relation_success_count / relation_failure_count / missing_relation_count / blocking_error_count / overall_failure_count`。
 
 ## 8. Innernet Experiment Entrypoint
 

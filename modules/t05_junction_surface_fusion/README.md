@@ -128,6 +128,7 @@ T05 Phase 1 + Phase 2 内网联合实验提供 repo 级入口。该入口把 T02
 - `rcsd_junctionization_audit.csv/json`
 - `intersection_match_all_audit.csv/json`
 - `blocking_errors.csv/json`
+- `module_relation_audit_summary.csv/json`
 - `summary.json`
 
 失败关系统一 `base_id = 0`。如果同一 SWSD 路口只生成 1 个 RCSDNode，则 `mainnodeid = null`；如果生成或归组多个 RCSDNode，则组内所有 RCSDNode 包括主节点自己 `mainnodeid` 都填主节点 id。
@@ -141,6 +142,8 @@ Road-only 场景中，若投影点距离 RCSDRoad 起终点小于 `min_endpoint_
 `readonly_workers` 仅并行处理不修改 RCSDRoad / RCSDNode 的只读关系分支，包括已有单一 RCSD 语义路口直接关联、无 RCSD 普通失败、缺少 evidence 普通失败等。RCSDNode grouping 与 RCSDRoad split 当前仍串行执行，以保持新增 id 分配和 copy-on-write 拓扑更新稳定。
 
 输出阶段会逐文件打印 `writing/done` 进度，并在 `summary.performance.output_timings_sec` 与 `summary.performance.output_sizes_bytes` 中记录每个输出文件的耗时与大小。大体量 `rcsdroad_out.gpkg / rcsdnode_out.gpkg` 使用分批 GPKG 写出，避免逐 feature 写入成为瓶颈。
+
+`module_relation_audit_summary.csv/json` 按 `T02_INPUT / T03 / T04` 统计输入 evidence 总量与四类结果：前置失败无关联、前置成功且有 RCSD 语义路口、前置成功且有 RCSDRoad、前置成功但无 RCSD 关联。每类记录 relation 成功数、失败数、缺失 relation 数与 blocking error 数，用于验证最终关系生产是否符合预期。
 
 ## T03 Evidence 补齐
 

@@ -462,6 +462,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
             "progress_interval": progress_every,
             "readonly_workers": readonly_workers,
         },
+        progress_logger=log if progress else None,
     )
     mark("write_outputs_sec", write_started)
     timings_sec["total_sec"] = round(perf_counter() - run_started, 6)

@@ -12,7 +12,6 @@ from shapely.geometry import mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform as shapely_transform
 
-from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerReadResult, read_vector_layer
 
 from .phase2_models import PROCESS_CRS_TEXT
@@ -84,13 +83,19 @@ def write_gpkg(
     *,
     empty_fields: list[str] | None = None,
     geometry_type: str = "Unknown",
-) -> None:
+    batch_size: int = 10000,
+) -> dict[str, Any]:
     feature_list = list(features)
     out_path = Path(path)
     if feature_list:
-        write_vector(out_path, feature_list, crs_text=PROCESS_CRS_TEXT)
-        return
+        return _write_gpkg_records(
+            out_path,
+            feature_list,
+            geometry_type=geometry_type,
+            batch_size=batch_size,
+        )
     _write_empty_gpkg(out_path, empty_fields or [], geometry_type=geometry_type)
+    return {"feature_count": 0, "size_bytes": out_path.stat().st_size if out_path.exists() else 0}
 
 
 def write_relation_geojson_crs84(path: str | Path, features: Iterable[dict[str, Any]]) -> None:
@@ -132,6 +137,112 @@ def _write_empty_gpkg(path: Path, fields: list[str], *, geometry_type: str) -> N
         encoding="utf-8",
     ):
         pass
+
+
+def _write_gpkg_records(
+    path: Path,
+    features: list[dict[str, Any]],
+    *,
+    geometry_type: str,
+    batch_size: int,
+) -> dict[str, Any]:
+    records = [_prepare_fiona_record(feature) for feature in features]
+    schema = _build_fiona_schema(records, geometry_type=geometry_type)
+    schema_property_names = list(schema["properties"].keys())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    with fiona.open(
+        str(path),
+        mode="w",
+        driver="GPKG",
+        layer=path.stem,
+        schema=schema,
+        crs=PROCESS_CRS_TEXT,
+        encoding="utf-8",
+    ) as sink:
+        batch: list[dict[str, Any]] = []
+        batch_limit = max(1, int(batch_size))
+        for record in records:
+            batch.append(
+                {
+                    "type": "Feature",
+                    "properties": {
+                        key: record["properties"].get(key)
+                        for key in schema_property_names
+                    },
+                    "geometry": _geometry_payload(record["geometry"]),
+                }
+            )
+            if len(batch) >= batch_limit:
+                sink.writerecords(batch)
+                batch.clear()
+        if batch:
+            sink.writerecords(batch)
+    return {"feature_count": len(records), "size_bytes": path.stat().st_size if path.exists() else 0}
+
+
+def _prepare_fiona_record(feature: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "properties": {
+            str(key): _vector_property_value(value)
+            for key, value in (feature.get("properties") or {}).items()
+        },
+        "geometry": feature.get("geometry"),
+    }
+
+
+def _build_fiona_schema(records: list[dict[str, Any]], *, geometry_type: str) -> dict[str, Any]:
+    field_order: list[str] = []
+    field_types: dict[str, str] = {}
+    for record in records:
+        for key, value in record["properties"].items():
+            if key not in field_order:
+                field_order.append(key)
+            if key not in field_types and value is not None:
+                field_types[key] = _vector_property_type(value)
+    for key in field_order:
+        field_types.setdefault(key, "str")
+    return {
+        "geometry": geometry_type,
+        "properties": {key: field_types[key] for key in field_order},
+    }
+
+
+def _vector_property_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def _vector_property_type(value: Any) -> str:
+    if value is None:
+        return "str"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    return "str"
+
+
+def _geometry_payload(geometry: Any) -> Any:
+    if geometry is None:
+        return None
+    if isinstance(geometry, dict):
+        return geometry
+    return mapping(geometry)
 
 
 def feature_from_mapping(feature: dict[str, Any]) -> dict[str, Any]:

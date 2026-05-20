@@ -312,6 +312,8 @@ def test_phase2_progress_and_performance_summary_are_sparse(tmp_path: Path, caps
     assert performance["plan"]["direct_target_count"] == 1
     assert performance["plan"]["readonly_target_count"] == 1
     assert performance["readonly_workers"] == 2
+    assert "rcsdroad_out" in performance["output_timings_sec"]
+    assert performance["output_sizes_bytes"]["rcsdroad_out"] > 0
     assert "total_sec" in performance["timings_sec"]
 
 

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from time import perf_counter
+from typing import Any, Callable
 
 from .phase2_io import write_csv, write_gpkg, write_json, write_relation_geojson_crs84
 from .phase2_models import (
@@ -46,6 +47,7 @@ def write_phase2_outputs(
     blocking_errors: list[dict[str, Any]],
     original_split_road_ids: set[int],
     performance: dict[str, Any] | None = None,
+    progress_logger: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     relation_path = run_root / RELATION_FILENAME
     rcsdroad_out_path = run_root / RCSDROAD_OUT_FILENAME
@@ -65,18 +67,120 @@ def write_phase2_outputs(
         {"properties": relation_properties(feature), "geometry": feature.get("geometry")}
         for feature in relation_features
     ]
-    write_relation_geojson_crs84(relation_path, relation_output_features)
-    write_gpkg(rcsdroad_out_path, rcsdroad_out_features, geometry_type="LineString")
-    write_gpkg(rcsdnode_out_path, rcsdnode_out_features, geometry_type="Point")
-    write_gpkg(rcsdroad_split_path, split_road_features, geometry_type="LineString")
-    write_gpkg(rcsdnode_generated_path, generated_node_features, geometry_type="Point")
-    write_gpkg(rcsdnode_grouped_path, grouped_node_features, geometry_type="Point")
-    write_csv(junction_audit_csv_path, audit_rows, JUNCTIONIZATION_AUDIT_FIELDS)
-    write_json(junction_audit_json_path, {"row_count": len(audit_rows), "rows": audit_rows})
-    write_csv(relation_audit_csv_path, audit_rows, JUNCTIONIZATION_AUDIT_FIELDS)
-    write_json(relation_audit_json_path, {"row_count": len(audit_rows), "rows": audit_rows})
-    write_csv(blocking_errors_csv_path, blocking_errors, BLOCKING_ERROR_FIELDS)
-    write_json(blocking_errors_json_path, {"row_count": len(blocking_errors), "rows": blocking_errors})
+    performance_data = dict(performance or {})
+    output_timings_sec: dict[str, float] = dict(performance_data.get("output_timings_sec") or {})
+    output_sizes_bytes: dict[str, int] = dict(performance_data.get("output_sizes_bytes") or {})
+
+    _write_with_timing(
+        "intersection_match_all",
+        relation_path,
+        len(relation_output_features),
+        lambda: write_relation_geojson_crs84(relation_path, relation_output_features),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "rcsdroad_out",
+        rcsdroad_out_path,
+        len(rcsdroad_out_features),
+        lambda: write_gpkg(rcsdroad_out_path, rcsdroad_out_features, geometry_type="LineString"),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "rcsdnode_out",
+        rcsdnode_out_path,
+        len(rcsdnode_out_features),
+        lambda: write_gpkg(rcsdnode_out_path, rcsdnode_out_features, geometry_type="Point"),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "rcsdroad_split",
+        rcsdroad_split_path,
+        len(split_road_features),
+        lambda: write_gpkg(rcsdroad_split_path, split_road_features, geometry_type="LineString"),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "rcsdnode_generated",
+        rcsdnode_generated_path,
+        len(generated_node_features),
+        lambda: write_gpkg(rcsdnode_generated_path, generated_node_features, geometry_type="Point"),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "rcsdnode_grouped",
+        rcsdnode_grouped_path,
+        len(grouped_node_features),
+        lambda: write_gpkg(rcsdnode_grouped_path, grouped_node_features, geometry_type="Point"),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "rcsd_junctionization_audit_csv",
+        junction_audit_csv_path,
+        len(audit_rows),
+        lambda: write_csv(junction_audit_csv_path, audit_rows, JUNCTIONIZATION_AUDIT_FIELDS),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "rcsd_junctionization_audit_json",
+        junction_audit_json_path,
+        len(audit_rows),
+        lambda: write_json(junction_audit_json_path, {"row_count": len(audit_rows), "rows": audit_rows}),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "intersection_match_all_audit_csv",
+        relation_audit_csv_path,
+        len(audit_rows),
+        lambda: write_csv(relation_audit_csv_path, audit_rows, JUNCTIONIZATION_AUDIT_FIELDS),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "intersection_match_all_audit_json",
+        relation_audit_json_path,
+        len(audit_rows),
+        lambda: write_json(relation_audit_json_path, {"row_count": len(audit_rows), "rows": audit_rows}),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "blocking_errors_csv",
+        blocking_errors_csv_path,
+        len(blocking_errors),
+        lambda: write_csv(blocking_errors_csv_path, blocking_errors, BLOCKING_ERROR_FIELDS),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "blocking_errors_json",
+        blocking_errors_json_path,
+        len(blocking_errors),
+        lambda: write_json(blocking_errors_json_path, {"row_count": len(blocking_errors), "rows": blocking_errors}),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    performance_data["output_timings_sec"] = output_timings_sec
+    performance_data["output_sizes_bytes"] = output_sizes_bytes
 
     summary = _summary(
         produced_at=produced_at,
@@ -91,7 +195,7 @@ def write_phase2_outputs(
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
         original_split_road_ids=original_split_road_ids,
-        performance=performance or {},
+        performance=performance_data,
         output_paths={
             "intersection_match_all": str(relation_path),
             "rcsdroad_out": str(rcsdroad_out_path),
@@ -125,6 +229,28 @@ def write_phase2_outputs(
         "summary_path": summary_path,
         "summary": summary,
     }
+
+
+def _write_with_timing(
+    label: str,
+    path: Path,
+    feature_count: int,
+    writer: Callable[[], Any],
+    *,
+    progress_logger: Callable[[str], None] | None,
+    output_timings_sec: dict[str, float],
+    output_sizes_bytes: dict[str, int],
+) -> None:
+    if progress_logger is not None:
+        progress_logger(f"writing {label} count={feature_count}")
+    started = perf_counter()
+    writer()
+    elapsed_sec = round(perf_counter() - started, 6)
+    size_bytes = path.stat().st_size if path.exists() else 0
+    output_timings_sec[label] = elapsed_sec
+    output_sizes_bytes[label] = size_bytes
+    if progress_logger is not None:
+        progress_logger(f"done {label} sec={elapsed_sec} size_bytes={size_bytes}")
 
 
 def _summary(

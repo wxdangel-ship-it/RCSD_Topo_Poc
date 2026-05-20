@@ -141,6 +141,8 @@ Road-only 场景中，若投影点距离 RCSDRoad 起终点小于 `min_endpoint_
 
 `readonly_workers` 仅并行处理不修改 RCSDRoad / RCSDNode 的只读关系分支，包括已有单一 RCSD 语义路口直接关联、无 RCSD 普通失败、缺少 evidence 普通失败等。RCSDNode grouping 与 RCSDRoad split 当前仍串行执行，以保持新增 id 分配和 copy-on-write 拓扑更新稳定。
 
+输出阶段会逐文件打印 `writing/done` 进度，并在 `summary.performance.output_timings_sec` 与 `summary.performance.output_sizes_bytes` 中记录每个输出文件的耗时与大小。大体量 `rcsdroad_out.gpkg / rcsdnode_out.gpkg` 使用分批 GPKG 写出，避免逐 feature 写入成为瓶颈。
+
 ## T03 Evidence 补齐
 
 T03 当前部分运行路径会在 case 级 `step6_status.json` 中产出 `required_rcsdnode_ids / support_rcsdroad_ids`，但批次级 `t03_swsd_rcsd_relation_evidence.*` 未必携带这些字段值。T05 提供 `backfill_t03_relation_evidence(...)` 与 `scripts/t05_backfill_t03_relation_evidence_innernet.py` 用于方案 1 handoff 补齐：

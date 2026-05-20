@@ -249,6 +249,8 @@ T04 fallback 场景可补读 `divmerge_virtual_anchor_surface.gpkg`、summary、
 - `summary.performance.data_volume` 记录输入 feature / evidence 体量。
 - `summary.performance.plan` 记录 direct / grouping / road_split / no_related 等预分类计数，以及 unique split road / group node 候选数。
 - `summary.performance.timings_sec` 记录阶段级耗时，不记录 per-target 明细，避免大数据下打点体量失控。
+- `summary.performance.output_timings_sec` 与 `summary.performance.output_sizes_bytes` 记录逐输出文件耗时与大小；`progress=True` 时逐文件打印 `writing/done`。
+- 大体量 GPKG 输出使用分批 `writerecords` 写出，保持 copy-on-write 完整输出，不跳过 `rcsdroad_out.gpkg / rcsdnode_out.gpkg`。
 
 ## 8. Innernet Experiment Entrypoint
 

@@ -78,6 +78,7 @@
 - 审计可追溯性：junctionization audit 记录 target、surface、source evidence、原 road/node、新 road/node、动作、失败原因。
 - 性能可验证性：summary 记录 feature count、split count、generated/grouped node count、预分类 plan、只读/可变 target 计数、阶段级耗时与 consistency。
 - 控制台进度输出必须稀疏，按 `progress_interval` 汇报 target 进度，不输出 per-target 明细。
+- 输出阶段必须记录逐文件耗时与文件大小，`progress=True` 时打印逐文件 `writing/done`，便于定位 `rcsdroad_out.gpkg / rcsdnode_out.gpkg` 等大文件写出瓶颈。
 - 只读关系构建允许通过 `readonly_workers` 并行；涉及 RCSDRoad split、RCSDNode grouping、新增 id 分配的分支当前保持串行。
 
 ## Phase 2 一致性

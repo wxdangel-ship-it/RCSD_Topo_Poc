@@ -407,6 +407,52 @@ def test_t04_fact_reference_fallback_controls_split_location(tmp_path: Path) -> 
     assert _relation_features(artifacts.relation_geojson_path)[0]["properties"]["status"] == 0
 
 
+def test_t04_fact_reference_fallback_reads_case_event_evidence_point(tmp_path: Path) -> None:
+    case_root = tmp_path / "t04_cases"
+    case_dir = case_root / "500"
+    case_dir.mkdir(parents=True)
+    _write(
+        case_dir / "step4_event_evidence.gpkg",
+        [
+            {
+                "properties": {
+                    "case_id": "500",
+                    "event_unit_id": "event_unit_01",
+                    "geometry_role": "fact_reference_point",
+                    "surface_scenario_type": "main_evidence_with_rcsdroad_fallback",
+                },
+                "geometry": Point(50, 5),
+            }
+        ],
+    )
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("500")],
+        swsd_nodes=[_node(500, 0, 10, mainnodeid="500")],
+        rcsd_roads=[_road(1, (0, 0), (100, 0))],
+        rcsd_nodes=[_node(1, 0, 0), _node(2, 100, 0)],
+        t04_rows=[
+            {
+                "target_id": "500",
+                "case_id": "500",
+                "junction_type": "merge",
+                "surface_scenario_type": "main_evidence_with_rcsdroad_fallback",
+                "rcsd_alignment_type": "rcsdroad_only_alignment",
+                "final_state": "accepted",
+                "selected_rcsdroad_ids": "1",
+                "relation_state": "rcsd_present_not_junction",
+                "status_suggested": 1,
+            }
+        ],
+        runner_kwargs={"t04_case_root": case_root},
+    )
+
+    generated_feature = read_vector_layer(artifacts.rcsdnode_generated_path).features[0]
+    assert round(generated_feature.geometry.x, 6) == 50
+    assert round(generated_feature.geometry.y, 6) == 0
+    assert _relation_features(artifacts.relation_geojson_path)[0]["properties"]["status"] == 0
+
+
 def test_t04_surface_scenario_fallback_splits_even_when_evidence_state_is_no_related_rcsd(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,

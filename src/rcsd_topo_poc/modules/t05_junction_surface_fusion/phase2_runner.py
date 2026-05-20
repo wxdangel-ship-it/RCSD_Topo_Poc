@@ -95,6 +95,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     t04_base_rows = read_table(_required_path(t04_relation_evidence_path, "t04_relation_evidence_path"))
     t04_target_case_ids = _target_case_ids(t04_base_rows)
     t04_supplements = _load_t04_supplements(
+        t04_base_rows=t04_base_rows,
         t04_surface_path=t04_surface_path,
         t04_summary_path=t04_summary_path,
         t04_audit_path=t04_audit_path,
@@ -579,6 +580,7 @@ def _required_path(path: str | Path | None, label: str) -> Path:
 
 def _load_t04_supplements(
     *,
+    t04_base_rows: list[dict[str, Any]],
     t04_surface_path: str | Path | None,
     t04_summary_path: str | Path | None,
     t04_audit_path: str | Path | None,
@@ -587,6 +589,8 @@ def _load_t04_supplements(
     crs_override: str | None,
 ) -> dict[str, dict[str, Any]]:
     supplements: dict[str, dict[str, Any]] = {}
+    for row in t04_base_rows:
+        _add_supplement(supplements, row)
     if t04_surface_path is not None:
         for feature in read_vector_3857(t04_surface_path, crs_override=crs_override).features:
             _add_supplement(supplements, feature.properties)
@@ -611,6 +615,9 @@ def _load_t04_supplements(
                         _add_supplement(supplements, _t04_step4_supplement(payload))
                     else:
                         _add_supplement(supplements, payload)
+        fact_reference_case_ids = _t04_fact_reference_case_ids(supplements, target_case_ids)
+        for evidence_path in _iter_t04_case_audit_paths(root, "step4_event_evidence.gpkg", fact_reference_case_ids):
+            _add_supplement(supplements, _t04_step4_evidence_supplement(evidence_path, crs_override=crs_override))
     return supplements
 
 
@@ -638,6 +645,46 @@ def _iter_t04_case_audit_paths(root: Path, name: str, target_case_ids: set[str] 
                 seen.add(candidate)
                 paths.append(candidate)
     return paths
+
+
+def _t04_fact_reference_case_ids(
+    supplements: dict[str, dict[str, Any]],
+    target_case_ids: set[str] | None,
+) -> set[str]:
+    case_ids: set[str] = set()
+    for case_id, props in supplements.items():
+        if target_case_ids and case_id not in target_case_ids:
+            continue
+        scene_type = _text(props.get("surface_scenario_type") or props.get("scene_type"))
+        if scene_type != "main_evidence_with_rcsdroad_fallback":
+            continue
+        if _text(props.get("fact_reference_x")) and _text(props.get("fact_reference_y")):
+            continue
+        case_ids.add(case_id)
+    return case_ids
+
+
+def _t04_step4_evidence_supplement(path: Path, *, crs_override: str | None) -> dict[str, Any]:
+    case_id = path.parent.name
+    points: list[Point] = []
+    for feature in read_vector_3857(path, crs_override=crs_override).features:
+        props = feature.properties
+        if _text(props.get("geometry_role")) != "fact_reference_point":
+            continue
+        geometry = feature.geometry
+        if isinstance(geometry, Point) and not geometry.is_empty:
+            points.append(geometry)
+            case_id = _text(props.get("case_id")) or case_id
+    supplement: dict[str, Any] = {
+        "case_id": case_id,
+        "fact_reference_point_count": len(points),
+        "fact_reference_source": "step4_event_evidence.gpkg",
+    }
+    if len(points) == 1:
+        point = points[0]
+        supplement["fact_reference_x"] = float(point.x)
+        supplement["fact_reference_y"] = float(point.y)
+    return supplement
 
 
 def _merge_t04_supplements(rows: list[dict[str, Any]], supplements: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:

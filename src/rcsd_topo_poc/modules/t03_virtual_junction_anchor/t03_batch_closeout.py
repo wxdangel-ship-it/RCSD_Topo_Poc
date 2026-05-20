@@ -11,6 +11,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     write_json,
     write_vector,
 )
+from rcsd_topo_poc.modules.t00_utility_toolbox.gpkg_update import copy_gpkg_and_update_field_by_id
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature, read_vector_layer, write_csv
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_contract import (
     derive_stage3_official_review_decision,
@@ -96,6 +97,20 @@ RELATION_EVIDENCE_FIELDNAMES = [
 
 def _stable_sort_key(case_id: str) -> tuple[int, int | str]:
     return (0, int(case_id)) if case_id.isdigit() else (1, case_id)
+
+
+def _representative_lookup(shared_nodes: tuple[LayerFeature, ...]) -> dict[str, LayerFeature]:
+    representatives: dict[str, LayerFeature] = {}
+    for feature in shared_nodes:
+        node_id = feature_id(feature)
+        if node_id is not None:
+            representatives.setdefault(node_id, feature)
+    for feature in shared_nodes:
+        node_id = feature_id(feature)
+        mainnodeid = feature_mainnodeid(feature)
+        if node_id is not None and mainnodeid is not None and node_id == mainnodeid:
+            representatives.setdefault(mainnodeid, feature)
+    return representatives
 
 
 def _sanitize_slug(value: str | None) -> str:
@@ -205,12 +220,21 @@ def _update_t03_summary_with_relation_evidence(
     write_json(summary_path, summary)
 
 
-def materialize_t03_review_gallery(run_root: Path, rows: list[FinalizationReviewIndexRow]) -> list[FinalizationReviewIndexRow]:
+def materialize_t03_review_gallery(
+    run_root: Path,
+    rows: list[FinalizationReviewIndexRow],
+    *,
+    target_dir: Path | None = None,
+    layout: str = "legacy",
+) -> list[FinalizationReviewIndexRow]:
+    if layout not in {"legacy", "flat"}:
+        raise ValueError(f"unsupported T03 review gallery layout: {layout}")
     accepted_dir = run_root / T03_REVIEW_ACCEPTED_DIRNAME
     rejected_dir = run_root / T03_REVIEW_REJECTED_DIRNAME
     v2_risk_dir = run_root / T03_REVIEW_V2_RISK_DIRNAME
-    flat_dir = run_root / T03_REVIEW_FLAT_DIRNAME
-    for path in (accepted_dir, rejected_dir, v2_risk_dir, flat_dir):
+    flat_dir = target_dir if target_dir is not None else run_root / T03_REVIEW_FLAT_DIRNAME
+    target_dirs = (accepted_dir, rejected_dir, v2_risk_dir, flat_dir) if layout == "legacy" else (flat_dir,)
+    for path in target_dirs:
         path.mkdir(parents=True, exist_ok=True)
         for existing_png in path.glob("*.png"):
             if existing_png.is_file():
@@ -225,13 +249,13 @@ def materialize_t03_review_gallery(run_root: Path, rows: list[FinalizationReview
         output_image_path = ""
         if source_path is not None and source_path.is_file():
             output_image_name = image_name
-            target_dir = accepted_dir if row.step7_state == "accepted" else rejected_dir
-            target_path = target_dir / image_name
             flat_path = flat_dir / image_name
-            shutil.copy2(source_path, target_path)
             shutil.copy2(source_path, flat_path)
             output_image_path = str(flat_path)
-            if row.visual_class == "V2 业务正确但几何待修":
+            if layout == "legacy":
+                categorized_dir = accepted_dir if row.step7_state == "accepted" else rejected_dir
+                shutil.copy2(source_path, categorized_dir / image_name)
+            if layout == "legacy" and row.visual_class == "V2 业务正确但几何待修":
                 shutil.copy2(source_path, v2_risk_dir / image_name)
         categorized_rows.append(
             replace(
@@ -312,6 +336,7 @@ def write_t03_summary(
     explicit_case_selection: bool = False,
     failed_case_ids: list[str],
     rerun_cleaned_before_write: bool,
+    visual_outputs: dict[str, Any] | None = None,
 ) -> Path:
     cases_dir = run_root / "cases"
     flat_dir = run_root / T03_REVIEW_FLAT_DIRNAME
@@ -368,6 +393,11 @@ def write_t03_summary(
         "rerun_cleaned_before_write": rerun_cleaned_before_write,
         "run_root": str(run_root),
         "t03_review_flat_dir": str(flat_dir),
+        "visual_outputs": visual_outputs or {
+            "enabled": True,
+            "layout": "legacy",
+            "directory": str(flat_dir),
+        },
         "structure": {
             "cases_dir": str(cases_dir),
             "review_index_csv": str(run_root / T03_REVIEW_INDEX_FILENAME),
@@ -569,9 +599,10 @@ def write_t03_relation_evidence(
     failed_case_ids: list[str],
 ) -> dict[str, Path]:
     failed_case_id_set = {str(case_id) for case_id in failed_case_ids}
+    representative_by_case_id = _representative_lookup(shared_nodes)
     rows: list[dict[str, Any]] = []
     for case_id in sorted(selected_case_ids, key=sort_patch_key):
-        representative_feature = resolve_representative_feature(shared_nodes, case_id)
+        representative_feature = representative_by_case_id.get(case_id) or resolve_representative_feature(shared_nodes, case_id)
         representative_properties = dict(representative_feature.properties)
         representative_node_id = feature_id(representative_feature) or case_id
         target_id = feature_mainnodeid(representative_feature) or representative_node_id
@@ -657,13 +688,15 @@ def write_updated_nodes_outputs(
     selected_case_ids: list[str],
     streamed_results: dict[str, T03StreamedCaseResult],
     failed_case_ids: list[str],
+    input_nodes_path: Path | str | None = None,
 ) -> dict[str, Path]:
     updates_by_node_id: dict[str, str] = {}
     audit_rows: list[dict[str, Any]] = []
     failed_case_id_set = {str(case_id) for case_id in failed_case_ids}
+    representative_by_case_id = _representative_lookup(shared_nodes)
 
     for case_id in sorted(selected_case_ids, key=sort_patch_key):
-        representative_feature = resolve_representative_feature(shared_nodes, case_id)
+        representative_feature = representative_by_case_id.get(case_id) or resolve_representative_feature(shared_nodes, case_id)
         representative_node_id = feature_id(representative_feature) or case_id
         previous_is_anchor = representative_feature.properties.get("is_anchor")
         if case_id in streamed_results:
@@ -689,18 +722,32 @@ def write_updated_nodes_outputs(
             }
         )
 
-    nodes_features = []
-    for feature in shared_nodes:
-        properties = dict(feature.properties)
-        node_id = feature_id(feature)
-        if node_id is not None and node_id in updates_by_node_id:
-            properties["is_anchor"] = updates_by_node_id[node_id]
-        nodes_features.append({"properties": properties, "geometry": feature.geometry})
-
     nodes_output_path = run_root / "nodes.gpkg"
     audit_csv_path = run_root / "nodes_anchor_update_audit.csv"
     audit_json_path = run_root / "nodes_anchor_update_audit.json"
-    write_vector(nodes_output_path, nodes_features, crs_text="EPSG:3857")
+    if input_nodes_path is not None:
+        nodes_update_result = copy_gpkg_and_update_field_by_id(
+            source_path=input_nodes_path,
+            output_path=nodes_output_path,
+            updates_by_id=updates_by_node_id,
+            id_field="id",
+            update_field="is_anchor",
+        )
+    else:
+        nodes_features = []
+        for feature in shared_nodes:
+            properties = dict(feature.properties)
+            node_id = feature_id(feature)
+            if node_id is not None and node_id in updates_by_node_id:
+                properties["is_anchor"] = updates_by_node_id[node_id]
+            nodes_features.append({"properties": properties, "geometry": feature.geometry})
+        write_vector(nodes_output_path, nodes_features, crs_text="EPSG:3857")
+        nodes_update_result = {
+            "strategy": "fiona_full_rewrite",
+            "layer_name": "nodes",
+            "requested_update_count": len(updates_by_node_id),
+            "sqlite_changed_row_count": "",
+        }
     write_csv(
         audit_csv_path,
         audit_rows,
@@ -719,6 +766,7 @@ def write_updated_nodes_outputs(
             "total_update_count": len(audit_rows),
             "updated_to_yes_count": sum(1 for row in audit_rows if row["new_is_anchor"] == "yes"),
             "updated_to_fail3_count": sum(1 for row in audit_rows if row["new_is_anchor"] == "fail3"),
+            "nodes_update_result": nodes_update_result,
             "rows": audit_rows,
         },
     )
@@ -733,6 +781,7 @@ def write_updated_nodes_outputs(
         "nodes_path": nodes_output_path,
         "audit_csv_path": audit_csv_path,
         "audit_json_path": audit_json_path,
+        "nodes_update_result": nodes_update_result,
         **relation_outputs,
     }
 

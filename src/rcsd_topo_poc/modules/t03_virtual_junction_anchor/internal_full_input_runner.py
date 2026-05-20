@@ -69,11 +69,9 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers 
     stable_case_ids,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.t03_batch_closeout import (
-    T03_REVIEW_FLAT_DIRNAME,
     build_finalization_review_rows,
     load_step3_review_rows,
     materialize_t03_review_gallery,
-    mirror_visual_checks,
     publish_incremental_visual_check,
     write_t03_review_index,
     write_t03_review_summary,
@@ -134,7 +132,6 @@ _write_internal_failure = write_internal_failure
 _write_internal_manifest = write_internal_manifest
 _write_case_watch_status = write_case_watch_status
 _publish_incremental_visual_check = publish_incremental_visual_check
-_mirror_visual_checks = mirror_visual_checks
 _write_virtual_intersection_polygons = write_virtual_intersection_polygons
 _write_updated_nodes_outputs = write_updated_nodes_outputs
 _run_single_case_direct = run_single_case_direct
@@ -1090,7 +1087,29 @@ def run_t03_internal_full_input(
         )
         finalization_rows = build_finalization_review_rows(closeout_case_results)
         output_write_started_perf = perf_counter()
-        categorized_rows = materialize_t03_review_gallery(run_root, finalization_rows)
+        review_gallery_started_perf = perf_counter()
+        if effective_render_review_png:
+            categorized_rows = materialize_t03_review_gallery(
+                run_root,
+                finalization_rows,
+                target_dir=resolved_visual_check_dir,
+                layout="flat",
+            )
+            visual_outputs = {
+                "enabled": True,
+                "layout": "flat",
+                "directory": str(resolved_visual_check_dir),
+                "png_count": len(list(resolved_visual_check_dir.glob("*.png"))),
+            }
+        else:
+            categorized_rows = finalization_rows
+            visual_outputs = {
+                "enabled": False,
+                "layout": "disabled",
+                "directory": str(resolved_visual_check_dir),
+                "png_count": 0,
+            }
+        _record_stage_timer("review_gallery", perf_counter() - review_gallery_started_perf)
         write_step3_review_index(step3_run_root, step3_rows)
         write_step3_summary(
             step3_run_root,
@@ -1123,26 +1142,26 @@ def run_t03_internal_full_input(
             explicit_case_selection=False,
             failed_case_ids=list(failed_case_ids),
             rerun_cleaned_before_write=rerun_cleaned_before_write,
+            visual_outputs=visual_outputs,
         )
+        surface_write_started_perf = perf_counter()
         polygons_path = _write_virtual_intersection_polygons(
             run_root=run_root,
             shared_nodes=shared_nodes,
             streamed_results=closeout_case_results,
         )
+        _record_stage_timer("surface_candidate_write", perf_counter() - surface_write_started_perf)
+        nodes_update_started_perf = perf_counter()
         nodes_outputs = _write_updated_nodes_outputs(
             run_root=run_root,
             shared_nodes=shared_nodes,
             selected_case_ids=selected_case_ids,
             streamed_results=closeout_case_results,
             failed_case_ids=failed_case_ids,
+            input_nodes_path=input_paths["nodes_path"],
         )
+        _record_stage_timer("nodes_update", perf_counter() - nodes_update_started_perf)
         _record_stage_timer("output_write", perf_counter() - output_write_started_perf)
-        visual_copy_started_perf = perf_counter()
-        _mirror_visual_checks(
-            source_dir=run_root / T03_REVIEW_FLAT_DIRNAME,
-            target_dir=resolved_visual_check_dir,
-        )
-        _record_stage_timer("visual_copy", perf_counter() - visual_copy_started_perf)
 
         _set_phase(
             "completed",

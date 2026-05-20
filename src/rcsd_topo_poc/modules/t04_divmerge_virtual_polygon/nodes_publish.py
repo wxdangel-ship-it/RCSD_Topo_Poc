@@ -9,6 +9,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     write_json,
     write_vector,
 )
+from rcsd_topo_poc.modules.t00_utility_toolbox.gpkg_update import copy_gpkg_and_update_field_by_id
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
 
 from ._runtime_shared import LoadedFeature, normalize_id, read_vector_layer_strict
@@ -140,11 +141,18 @@ def write_t04_nodes_outputs(
     artifacts: Iterable[Any],
     failure_status_by_case: Mapping[str, Any] | None = None,
     input_dataset_id: str | None = None,
+    input_nodes_path: str | Path | None = None,
 ) -> dict[str, Any]:
     features = list(source_node_features)
     cases = _selected_case_docs(selected_cases)
     artifact_by_case = {str(item.case_id): item for item in artifacts}
     failure_status_by_case = {} if failure_status_by_case is None else dict(failure_status_by_case)
+    feature_by_node_id = {
+        node_id: feature
+        for feature in features
+        for node_id in [_node_id(feature)]
+        if node_id is not None
+    }
 
     updates_by_node_id: dict[str, str] = {}
     audit_rows: list[dict[str, Any]] = []
@@ -164,7 +172,11 @@ def write_t04_nodes_outputs(
             step7_state, reason = _failure_status(failure_status_by_case.get(case_id))
 
         new_is_anchor = T04_NODES_ACCEPTED_VALUE if step7_state == "accepted" else T04_NODES_FAILED_VALUE
-        representative = _resolve_representative_feature(features, case_id=case_id, mainnodeid=mainnodeid)
+        representative = (
+            feature_by_node_id.get(mainnodeid)
+            or feature_by_node_id.get(case_id)
+            or _resolve_representative_feature(features, case_id=case_id, mainnodeid=mainnodeid)
+        )
         if representative is None:
             missing_case_ids.append(case_id)
             continue
@@ -187,15 +199,9 @@ def write_t04_nodes_outputs(
     if missing_case_ids:
         raise ValueError(f"missing representative node for T04 case(s): {', '.join(missing_case_ids)}")
 
-    updated_feature_node_ids: set[str] = set()
-    output_features: list[dict[str, Any]] = []
-    for feature in features:
-        properties = _properties(feature)
-        node_id = normalize_id(properties.get("id"))
-        if node_id is not None and node_id in updates_by_node_id:
-            properties["is_anchor"] = updates_by_node_id[node_id]
-            updated_feature_node_ids.add(node_id)
-        output_features.append({"properties": properties, "geometry": _geometry(feature)})
+    updated_feature_node_ids: set[str] = {
+        node_id for node_id in updates_by_node_id if node_id in feature_by_node_id
+    }
 
     mismatch_case_ids = sorted(
         row["case_id"]
@@ -208,13 +214,36 @@ def write_t04_nodes_outputs(
     nodes_path = run_root / T04_NODES_LAYER_NAME
     audit_csv_path = run_root / T04_NODES_AUDIT_CSV_NAME
     audit_json_path = run_root / T04_NODES_AUDIT_JSON_NAME
-    write_vector(nodes_path, output_features, crs_text="EPSG:3857")
+    if input_nodes_path is not None:
+        nodes_update_result = copy_gpkg_and_update_field_by_id(
+            source_path=input_nodes_path,
+            output_path=nodes_path,
+            updates_by_id=updates_by_node_id,
+            id_field="id",
+            update_field="is_anchor",
+        )
+    else:
+        output_features: list[dict[str, Any]] = []
+        for feature in features:
+            properties = _properties(feature)
+            node_id = normalize_id(properties.get("id"))
+            if node_id is not None and node_id in updates_by_node_id:
+                properties["is_anchor"] = updates_by_node_id[node_id]
+            output_features.append({"properties": properties, "geometry": _geometry(feature)})
+        write_vector(nodes_path, output_features, crs_text="EPSG:3857")
+        nodes_update_result = {
+            "strategy": "fiona_full_rewrite",
+            "layer_name": "nodes",
+            "requested_update_count": len(updates_by_node_id),
+            "sqlite_changed_row_count": "",
+        }
     write_csv(audit_csv_path, audit_rows, T04_NODES_AUDIT_FIELDNAMES)
     audit_payload = {
         **provenance_doc(input_dataset_id=input_dataset_id),
         "total_update_count": len(audit_rows),
         "updated_to_yes_count": sum(1 for row in audit_rows if row["new_is_anchor"] == T04_NODES_ACCEPTED_VALUE),
         "updated_to_fail4_count": sum(1 for row in audit_rows if row["new_is_anchor"] == T04_NODES_FAILED_VALUE),
+        "nodes_update_result": nodes_update_result,
         "rows": audit_rows,
     }
     write_json(audit_json_path, audit_payload)
@@ -230,6 +259,7 @@ def write_t04_nodes_outputs(
         "nodes_consistency_passed": nodes_consistency_passed,
         "nodes_missing_case_ids": [],
         "nodes_mismatch_case_ids": mismatch_case_ids,
+        "nodes_update_result": nodes_update_result,
     }
 
 

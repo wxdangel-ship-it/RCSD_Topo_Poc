@@ -293,6 +293,7 @@ def write_case_outputs(
     *,
     run_root: Path,
     case_result: T04CaseResult,
+    render_review_png: bool = True,
 ) -> tuple[list[T04ReviewIndexRow], T04Step7CaseArtifact]:
     case_dir = run_root / "cases" / case_result.case_spec.case_id
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -401,19 +402,20 @@ def write_case_outputs(
         arbitration_review_fields_by_unit=arbitration_review_fields,
     )
     final_review_path = case_dir / STEP7_CASE_FINAL_REVIEW_NAME
-    render_case_final_review_png(
-        final_review_path,
-        case_result,
-        step5_result,
-        step6_result,
-        final_state=step7_artifact.final_state,
-        reject_reasons=step7_artifact.reject_reasons,
-        publish_target=step7_artifact.publish_target,
-    )
-    write_json(
-        case_dir / "final_review_render_audit.json",
-        _with_provenance(build_final_review_render_audit(case_result, step5_result), case_provenance),
-    )
+    if render_review_png:
+        render_case_final_review_png(
+            final_review_path,
+            case_result,
+            step5_result,
+            step6_result,
+            final_state=step7_artifact.final_state,
+            reject_reasons=step7_artifact.reject_reasons,
+            publish_target=step7_artifact.publish_target,
+        )
+        write_json(
+            case_dir / "final_review_render_audit.json",
+            _with_provenance(build_final_review_render_audit(case_result, step5_result), case_provenance),
+        )
     write_step7_case_outputs(case_dir=case_dir, artifact=step7_artifact, provenance=case_provenance)
 
     rows: list[T04ReviewIndexRow] = []
@@ -559,17 +561,21 @@ def write_case_outputs(
             },
         )
         png_path = event_unit_dir / "step4_review.png"
-        render_event_unit_review_png(png_path, event_unit, audit_summary=audit_summary)
         compare_png_path = event_unit_dir / "step4_candidate_compare.png"
-        render_event_unit_candidate_compare_png(compare_png_path, event_unit, audit_summary=audit_summary)
         positive_rcsd_png_path = event_unit_dir / "step4_positive_rcsd_review.png"
-        render_event_unit_positive_rcsd_review_png(
-            positive_rcsd_png_path,
-            event_unit,
-            audit_summary=audit_summary,
-        )
-        event_unit.source_png_path = str(png_path)
-        event_unit.compare_png_path = str(compare_png_path)
+        if render_review_png:
+            render_event_unit_review_png(png_path, event_unit, audit_summary=audit_summary)
+            render_event_unit_candidate_compare_png(compare_png_path, event_unit, audit_summary=audit_summary)
+            render_event_unit_positive_rcsd_review_png(
+                positive_rcsd_png_path,
+                event_unit,
+                audit_summary=audit_summary,
+            )
+            event_unit.source_png_path = str(png_path)
+            event_unit.compare_png_path = str(compare_png_path)
+        else:
+            event_unit.source_png_path = ""
+            event_unit.compare_png_path = ""
         rows.append(
             T04ReviewIndexRow(
                 case_id=case_result.case_spec.case_id,
@@ -674,10 +680,10 @@ def write_case_outputs(
                 post_required_rcsd_node=event_unit.post_required_rcsd_node,
                 resolution_reason=event_unit.resolution_reason,
                 kept_by_baseline_guard=event_unit.kept_by_baseline_guard,
-                image_path=str(png_path),
-                compare_image_path=str(compare_png_path),
-                positive_rcsd_image_path=str(positive_rcsd_png_path),
-                case_overview_path=str(final_review_path),
+                image_path=str(png_path) if render_review_png else "",
+                compare_image_path=str(compare_png_path) if render_review_png else "",
+                positive_rcsd_image_path=str(positive_rcsd_png_path) if render_review_png else "",
+                case_overview_path=str(final_review_path) if render_review_png else "",
             )
         )
     return rows, step7_artifact

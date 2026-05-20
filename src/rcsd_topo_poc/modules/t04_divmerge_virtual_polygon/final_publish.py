@@ -1031,6 +1031,7 @@ def write_step7_batch_outputs(
     run_root: Path,
     artifacts: list[T04Step7CaseArtifact],
     input_dataset_id: str | None = None,
+    review_outputs_enabled: bool = True,
 ) -> dict[str, Any]:
     batch_provenance = provenance_doc(input_dataset_id=input_dataset_id)
     ordered_artifacts = sorted(artifacts, key=lambda item: sort_patch_key(item.case_id))
@@ -1040,10 +1041,14 @@ def write_step7_batch_outputs(
     summary_rows = []
     for item in ordered_artifacts:
         row = dict(item.summary_row)
-        row["review_png_path"] = _resolved_review_png_path(
-            run_root,
-            case_id=item.case_id,
-            case_review_png_path=str(item.summary_row["review_png_path"]),
+        row["review_png_path"] = (
+            _resolved_review_png_path(
+                run_root,
+                case_id=item.case_id,
+                case_review_png_path=str(item.summary_row["review_png_path"]),
+            )
+            if review_outputs_enabled
+            else ""
         )
         summary_rows.append(row)
     surface_scenario_summary_counts = collect_surface_scenario_summary_counts(ordered_artifacts)
@@ -1106,10 +1111,14 @@ def write_step7_batch_outputs(
             "reject_stub_path": str(run_root / "cases" / item.case_id / "reject_stub.geojson"),
             "reject_index_path": str(run_root / "cases" / item.case_id / "reject_index.json"),
             "audit_path": item.summary_row["audit_path"],
-            "review_png_path": _resolved_review_png_path(
-                run_root,
-                case_id=item.case_id,
-                case_review_png_path=str(item.summary_row["review_png_path"]),
+            "review_png_path": (
+                _resolved_review_png_path(
+                    run_root,
+                    case_id=item.case_id,
+                    case_review_png_path=str(item.summary_row["review_png_path"]),
+                )
+                if review_outputs_enabled
+                else ""
             ),
             "surface_scenario_type": item.summary_row.get("surface_scenario_type", "missing"),
             "section_reference_source": item.summary_row.get("section_reference_source", "missing"),
@@ -1133,16 +1142,20 @@ def write_step7_batch_outputs(
             "rows": rejected_index_rows,
         },
     )
-    missing_review_png_case_ids = sorted(
-        item.case_id
-        for item in ordered_artifacts
-        if not Path(
-            _resolved_review_png_path(
-                run_root,
-                case_id=item.case_id,
-                case_review_png_path=str(item.summary_row["review_png_path"]),
-            )
-        ).is_file()
+    missing_review_png_case_ids = (
+        sorted(
+            item.case_id
+            for item in ordered_artifacts
+            if not Path(
+                _resolved_review_png_path(
+                    run_root,
+                    case_id=item.case_id,
+                    case_review_png_path=str(item.summary_row["review_png_path"]),
+                )
+            ).is_file()
+        )
+        if review_outputs_enabled
+        else []
     )
     missing_reject_stub_case_ids = sorted(
         item.case_id
@@ -1245,6 +1258,7 @@ def write_step7_batch_outputs(
         "nodes_writeback_checked_in_step7_consistency_report": False,
         "nodes_writeback_check_reason": "nodes_publish owns downstream node materialization and preserves the existing value domain",
         "step7_guard_consistency_passed": step7_guard_consistency_passed,
+        "review_outputs_enabled": bool(review_outputs_enabled),
         "accepted_layer_feature_count": len(accepted_features),
         "rejected_layer_feature_count": len(rejected_features),
         "audit_layer_feature_count": len(audit_features),
@@ -1252,7 +1266,11 @@ def write_step7_batch_outputs(
         "rejected_index_row_count": len(rejected_index_rows),
         "step4_review_flat_dir": str(run_root / "step4_review_flat"),
         "step4_review_flat_dir_exists": bool((run_root / "step4_review_flat").is_dir()),
-        "review_png_present_count": len(ordered_artifacts) - len(missing_review_png_case_ids),
+        "review_png_present_count": (
+            len(ordered_artifacts) - len(missing_review_png_case_ids)
+            if review_outputs_enabled
+            else 0
+        ),
         "missing_review_png_case_ids": missing_review_png_case_ids,
         "missing_reject_stub_case_ids": missing_reject_stub_case_ids,
         "missing_reject_index_case_ids": missing_reject_index_case_ids,

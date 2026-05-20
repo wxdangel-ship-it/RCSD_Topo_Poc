@@ -324,9 +324,12 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_finalization
     assert terminal_record_path.is_file()
     assert summary_doc["effective_case_ids"] == ["100001"]
     assert summary_doc["flat_png_count"] == 0
+    assert summary_doc["visual_outputs"]["enabled"] is False
+    assert summary_doc["visual_outputs"]["layout"] == "disabled"
     assert "visual_v1_count" not in summary_doc
     assert review_summary_doc["visual_class_counts"]["V1 认可成功"] == 1
     assert list(visual_check_dir.glob("*.png")) == []
+    assert nodes_audit_doc["nodes_update_result"]["strategy"] == "sqlite_copy_update"
     assert internal_progress["phase"] == "completed"
     assert internal_progress["status"] == "completed"
     assert internal_progress["execution_mode"] == "direct_shared_handle_local_query"
@@ -361,6 +364,9 @@ def test_internal_full_input_runner_prepares_case_packages_and_runs_finalization
         "step6_finalize_validation",
         "step6_finalize_status",
         "step7",
+        "review_gallery",
+        "surface_candidate_write",
+        "nodes_update",
         "output_write",
         "visual_copy",
         "root_observability_write",
@@ -914,11 +920,13 @@ def test_write_updated_nodes_outputs_writes_relation_evidence(tmp_path: Path) ->
         selected_case_ids=["100001", "100002", "100003"],
         streamed_results=streamed_results,
         failed_case_ids=[],
+        input_nodes_path=nodes_path,
     )
     evidence = json.loads(outputs["relation_evidence_json_path"].read_text(encoding="utf-8"))
     rows = {row["case_id"]: row for row in evidence["rows"]}
 
     assert outputs["relation_evidence_csv_path"].is_file()
+    assert outputs["nodes_update_result"]["strategy"] == "sqlite_copy_update"
     assert evidence["target_crs"] == "EPSG:3857"
     assert rows["100001"]["relation_state"] == "success_required_rcsd_junction"
     assert rows["100001"]["status_suggested"] == 0

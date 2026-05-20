@@ -466,6 +466,7 @@ def run_t04_internal_full_input(
                     input_paths=input_paths,
                     run_root=run_root,
                     local_query_buffer_m=local_query_buffer_m,
+                    render_review_png=debug,
                 )
                 artifact = result["step7_artifact"]
                 record = terminal_case_record_from_artifact(run_root=run_root, artifact=artifact)
@@ -476,6 +477,8 @@ def run_t04_internal_full_input(
                         run_root=run_root,
                         record=record,
                         visual_check_dir=resolved_visual_check_dir,
+                        enabled=debug,
+                        layout="flat",
                     )
                 with artifact_lock:
                     artifacts.append(artifact)
@@ -639,11 +642,14 @@ def run_t04_internal_full_input(
             run_root=run_root,
             artifacts=ordered_artifacts,
             input_dataset_id=str(preflight_doc.get("input_dataset_id") or ""),
+            review_outputs_enabled=debug,
         )
         visual_outputs = materialize_final_visual_checks(
             run_root=run_root,
             artifacts=ordered_artifacts,
             visual_check_dir=resolved_visual_check_dir,
+            enabled=debug,
+            layout="flat",
         )
         failure_status_by_case = {
             case_id: {"step7_state": "runtime_failed", "reason": "runtime_failed"}
@@ -668,6 +674,7 @@ def run_t04_internal_full_input(
             artifacts=ordered_artifacts,
             failure_status_by_case=failure_status_by_case,
             input_dataset_id=str(preflight_doc.get("input_dataset_id") or ""),
+            input_nodes_path=input_paths["nodes_path"],
         )
         augment_step7_consistency_report(
             consistency_report_path=Path(str(step7_outputs["consistency_report_path"])),

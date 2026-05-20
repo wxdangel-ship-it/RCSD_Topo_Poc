@@ -155,10 +155,22 @@ def materialize_streamed_case_visual_check(
     run_root: Path,
     record: T04TerminalCaseRecord,
     visual_check_dir: Path | None = None,
+    enabled: bool = True,
+    layout: str = "legacy",
 ) -> dict[str, Any]:
+    if layout not in {"legacy", "flat"}:
+        raise ValueError(f"unsupported T04 visual check layout: {layout}")
     visual_root = visual_check_dir or (run_root / "visual_checks")
     final_state = str(record.final_state or record.terminal_state or "unknown")
     image_name = f"case__{record.case_id}__{final_state}.png"
+    if not enabled:
+        return {
+            "case_id": record.case_id,
+            "final_state": final_state,
+            "copied": False,
+            "enabled": False,
+            "layout": "disabled",
+        }
     source_image = Path(record.source_image_path) if record.source_image_path else (
         run_root / "cases" / record.case_id / STEP7_CASE_FINAL_REVIEW_NAME
     )
@@ -167,7 +179,23 @@ def materialize_streamed_case_visual_check(
             "case_id": record.case_id,
             "final_state": final_state,
             "copied": False,
+            "enabled": True,
+            "layout": layout,
             "source_image_path": str(source_image),
+        }
+
+    if layout == "flat":
+        visual_image = visual_root / image_name
+        visual_image.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_image, visual_image)
+        return {
+            "case_id": record.case_id,
+            "final_state": final_state,
+            "copied": True,
+            "enabled": True,
+            "layout": layout,
+            "source_image_path": str(source_image),
+            "visual_image_path": str(visual_image),
         }
 
     step4_flat_image = run_root / "step4_review_flat" / f"case__{record.case_id}__final_review.png"
@@ -182,6 +210,8 @@ def materialize_streamed_case_visual_check(
         "case_id": record.case_id,
         "final_state": final_state,
         "copied": True,
+        "enabled": True,
+        "layout": layout,
         "source_image_path": str(source_image),
         "step4_flat_image_path": str(step4_flat_image),
         "visual_flat_image_path": str(visual_flat_image),
@@ -194,8 +224,82 @@ def materialize_final_visual_checks(
     run_root: Path,
     artifacts: list[T04Step7CaseArtifact],
     visual_check_dir: Path | None = None,
+    enabled: bool = True,
+    layout: str = "legacy",
 ) -> dict[str, Any]:
+    if layout not in {"legacy", "flat"}:
+        raise ValueError(f"unsupported T04 final visual check layout: {layout}")
     visual_root = visual_check_dir or (run_root / "visual_checks")
+    if not enabled:
+        return {
+            "enabled": False,
+            "layout": "disabled",
+            "visual_check_dir": str(visual_root),
+            "final_flat_dir": "",
+            "final_by_state_accepted_dir": "",
+            "final_by_state_rejected_dir": "",
+            "final_index_csv_path": "",
+            "final_index_json_path": "",
+            "final_flat_png_count": 0,
+            "accepted_png_count": 0,
+            "rejected_png_count": 0,
+        }
+
+    if layout == "flat":
+        visual_root.mkdir(parents=True, exist_ok=True)
+        for png_path in visual_root.glob("*.png"):
+            png_path.unlink()
+        rows: list[dict[str, Any]] = []
+        ordered = sorted(artifacts, key=lambda item: sort_patch_key(item.case_id))
+        for sequence_no, artifact in enumerate(ordered, start=1):
+            final_state = artifact.final_state
+            image_name = f"{sequence_no:04d}__{artifact.case_id}__{final_state}.png"
+            source_image = run_root / "cases" / artifact.case_id / STEP7_CASE_FINAL_REVIEW_NAME
+            flat_image = visual_root / image_name
+            _copy_if_present(source_image, flat_image)
+            rows.append(
+                {
+                    "sequence_no": sequence_no,
+                    "case_id": artifact.case_id,
+                    "final_state": final_state,
+                    "image_path": str(flat_image),
+                    "state_image_path": str(flat_image),
+                    "step7_status_path": str(run_root / "cases" / artifact.case_id / "step7_status.json"),
+                    "audit_path": str(run_root / "cases" / artifact.case_id / "step7_audit.json"),
+                    "reject_reason": str(artifact.reject_reasons[0]) if artifact.reject_reasons else "",
+                }
+            )
+        index_csv_path = visual_root / "final_index.csv"
+        with index_csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=FINAL_INDEX_FIELDNAMES)
+            writer.writeheader()
+            writer.writerows(rows)
+        index_json_path = visual_root / "final_index.json"
+        write_json_atomic(
+            index_json_path,
+            {
+                "enabled": True,
+                "layout": layout,
+                "row_count": len(rows),
+                "accepted_count": sum(1 for row in rows if row["final_state"] == "accepted"),
+                "rejected_count": sum(1 for row in rows if row["final_state"] == "rejected"),
+                "rows": rows,
+            },
+        )
+        return {
+            "enabled": True,
+            "layout": layout,
+            "visual_check_dir": str(visual_root),
+            "final_flat_dir": str(visual_root),
+            "final_by_state_accepted_dir": "",
+            "final_by_state_rejected_dir": "",
+            "final_index_csv_path": str(index_csv_path),
+            "final_index_json_path": str(index_json_path),
+            "final_flat_png_count": len(list(visual_root.glob("*.png"))),
+            "accepted_png_count": sum(1 for row in rows if row["final_state"] == "accepted"),
+            "rejected_png_count": sum(1 for row in rows if row["final_state"] == "rejected"),
+        }
+
     final_flat = visual_root / "final_flat"
     accepted_dir = visual_root / "final_by_state" / "accepted"
     rejected_dir = visual_root / "final_by_state" / "rejected"
@@ -244,6 +348,8 @@ def materialize_final_visual_checks(
     )
     return {
         "visual_check_dir": str(visual_root),
+        "enabled": True,
+        "layout": layout,
         "final_flat_dir": str(final_flat),
         "final_by_state_accepted_dir": str(accepted_dir),
         "final_by_state_rejected_dir": str(rejected_dir),

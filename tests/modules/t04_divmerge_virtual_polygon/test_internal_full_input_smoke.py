@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import os
 import subprocess
@@ -73,6 +72,8 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     assert summary["runtime_failed_count"] == 0
     assert consistency["passed"] is True
     assert consistency["nodes_consistency_passed"] is True
+    assert consistency["review_outputs_enabled"] is False
+    assert consistency["review_png_present_count"] == 0
 
     assert (run_root / "divmerge_virtual_anchor_surface.gpkg").is_file()
     assert (run_root / "divmerge_virtual_anchor_surface_rejected.geojson").is_file()
@@ -87,6 +88,7 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     assert summary["nodes_gpkg"] == str(run_root / "nodes.gpkg")
     assert summary["nodes_total_update_count"] == 1
     assert nodes_audit["total_update_count"] == 1
+    assert nodes_audit["nodes_update_result"]["strategy"] == "sqlite_copy_update"
     node_audit_row = nodes_audit["rows"][0]
     assert node_audit_row["case_id"] == "1001"
     expected_is_anchor = "yes" if node_audit_row["step7_state"] == "accepted" else "fail4"
@@ -99,25 +101,9 @@ def test_t04_internal_full_input_smoke_outputs_final_flat_review(tmp_path: Path)
     assert nodes_by_id["2001"]["is_anchor"] == "no"
 
     visual_root = run_root / "visual_checks"
-    assert (run_root / "step4_review_flat" / "case__1001__final_review.png").is_file()
-    assert (visual_root / "final_by_state" / "accepted").is_dir()
-    assert (visual_root / "final_by_state" / "rejected").is_dir()
-    assert (visual_root / "final_flat").is_dir()
-    flat_pngs = sorted((visual_root / "final_flat").glob("*.png"))
-    assert len(flat_pngs) == 1
-    assert flat_pngs[0].name.startswith("0001__1001__")
-    assert flat_pngs[0].name.endswith(".png")
-    assert "__review__" not in flat_pngs[0].name
-
-    with (visual_root / "final_index.csv").open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    assert len(rows) == 1
-    assert rows[0]["case_id"] == "1001"
-    assert rows[0]["final_state"] in {"accepted", "rejected"}
-    assert Path(rows[0]["image_path"]).is_file()
-    assert Path(rows[0]["step7_status_path"]).is_file()
-    assert Path(rows[0]["audit_path"]).is_file()
-    assert (visual_root / "final_index.json").is_file()
+    assert not (run_root / "cases" / "1001" / "final_review.png").exists()
+    assert not list(visual_root.glob("*.png"))
+    assert not (visual_root / "final_index.csv").exists()
 
 
 def test_t04_internal_full_input_streams_final_review_flat_png(tmp_path: Path) -> None:
@@ -140,14 +126,14 @@ def test_t04_internal_full_input_streams_final_review_flat_png(tmp_path: Path) -
         run_root=run_root,
         record=record,
         visual_check_dir=run_root / "visual_checks",
+        layout="flat",
     )
 
     assert result["copied"] is True
-    assert (run_root / "step4_review_flat" / "case__1001__final_review.png").is_file()
-    assert (run_root / "visual_checks" / "final_flat" / "case__1001__accepted.png").is_file()
-    assert (
-        run_root / "visual_checks" / "final_by_state" / "accepted" / "case__1001__accepted.png"
-    ).is_file()
+    assert result["layout"] == "flat"
+    assert (run_root / "visual_checks" / "case__1001__accepted.png").is_file()
+    assert not (run_root / "step4_review_flat" / "case__1001__final_review.png").exists()
+    assert not (run_root / "visual_checks" / "final_by_state").exists()
 
 
 @pytest.mark.smoke

@@ -426,17 +426,18 @@ review PNG 当前颜色语义：
 - `cases/`
 - `t03_review_index.csv`
 - `t03_review_summary.json`
-- `t03_review_accepted/`
-- `t03_review_rejected/`
-- `t03_review_v2_risk/`
-- `t03_review_flat/`
-- `visual_checks/`
 - `virtual_intersection_polygons.gpkg`
 - `nodes.gpkg`
 - `nodes_anchor_update_audit.csv`
 - `nodes_anchor_update_audit.json`
 - `t03_swsd_rcsd_relation_evidence.csv`
 - `t03_swsd_rcsd_relation_evidence.json`
+
+internal full-input review PNG 输出按运行模式区分：
+
+- Release / `DEBUG_VISUAL != 1`：不生成最终审计图片，不 materialize `visual_checks` 下的 PNG。
+- Debug / `DEBUG_VISUAL = 1`：只使用一个最终平铺目录承载审计图片，默认是 `visual_checks/`；不得同时维护 `t03_review_accepted/`、`t03_review_rejected/`、`t03_review_v2_risk/`、`t03_review_flat/` 等多个最终图片目录。
+- 兼容 batch / legacy 调用若仍显式请求旧 layout，可保留旧 review 目录，但不得作为 internal full-input Release 默认输出。
 
 ### 5.4 status / audit 字段
 
@@ -533,6 +534,7 @@ review PNG 当前颜色语义：
 
 - 属于当前 batch / full-input 的正式成果图层。
 - 基于 full-input 输入整层 `nodes.gpkg` copy-on-write 生成。
+- full-input 正式实现可采用“复制输入 GeoPackage + SQLite 批量属性 UPDATE”方式生成，要求仍然保持 copy-on-write 语义：不得重写 geometry、不得丢 CRS、不得改变非目标字段。
 - 只允许更新当前批次 selected / effective case 对应代表 node 的 `is_anchor`：
   - `step7_state = accepted -> yes`
   - `step7_state = rejected -> fail3`

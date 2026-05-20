@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from shapely.geometry import Point
 
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.nodes_publish import (
     T04_NODES_FAILED_VALUE,
     augment_step7_consistency_report,
@@ -89,6 +90,8 @@ def test_t04_nodes_publish_copy_on_write_and_audit_consistency(tmp_path: Path) -
             "geometry": Point(9, 0),
         },
     ]
+    input_nodes_path = tmp_path / "input_nodes.gpkg"
+    write_vector(input_nodes_path, source_features, crs_text="EPSG:3857", layer_name="nodes")
 
     nodes_outputs = write_t04_nodes_outputs(
         run_root=run_root,
@@ -101,6 +104,7 @@ def test_t04_nodes_publish_copy_on_write_and_audit_consistency(tmp_path: Path) -
         artifacts=artifacts,
         failure_status_by_case={"3003": {"step7_state": "runtime_failed", "reason": "runtime_failed"}},
         input_dataset_id="unit-test-input",
+        input_nodes_path=input_nodes_path,
     )
     consistency = augment_step7_consistency_report(
         consistency_report_path=consistency_report_path,
@@ -121,6 +125,7 @@ def test_t04_nodes_publish_copy_on_write_and_audit_consistency(tmp_path: Path) -
 
     assert len(csv_rows) == 3
     assert audit_json["input_dataset_id"] == "unit-test-input"
+    assert audit_json["nodes_update_result"]["strategy"] == "sqlite_copy_update"
     assert audit_json["total_update_count"] == 3
     assert audit_json["updated_to_yes_count"] == 1
     assert audit_json["updated_to_fail4_count"] == 2

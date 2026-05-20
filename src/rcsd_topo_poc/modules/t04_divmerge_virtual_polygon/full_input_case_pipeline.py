@@ -66,6 +66,7 @@ def run_single_case_direct(
     input_paths: dict[str, Path],
     run_root: Path,
     local_query_buffer_m: float,
+    render_review_png: bool = True,
 ) -> dict[str, Any]:
     stage_timers = {
         "local_feature_selection": 0.0,
@@ -103,6 +104,7 @@ def run_single_case_direct(
     review_rows, step7_artifact = write_case_outputs(
         run_root=run_root,
         case_result=resolved_case_result,
+        render_review_png=render_review_png,
     )
     stage_timers["step5_7_output_write"] = round(perf_counter() - output_started, 6)
 

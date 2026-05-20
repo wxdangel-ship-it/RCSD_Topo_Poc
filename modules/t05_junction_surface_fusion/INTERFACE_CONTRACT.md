@@ -250,7 +250,31 @@ T04 fallback 场景可补读 `divmerge_virtual_anchor_surface.gpkg`、summary、
 - `summary.performance.plan` 记录 direct / grouping / road_split / no_related 等预分类计数，以及 unique split road / group node 候选数。
 - `summary.performance.timings_sec` 记录阶段级耗时，不记录 per-target 明细，避免大数据下打点体量失控。
 
-## 8. T03 Relation Evidence Backfill
+## 8. Innernet Experiment Entrypoint
+
+T05 提供 repo 级内网联合实验入口：
+
+```bash
+.venv/bin/python scripts/t05_innernet_experiment.py \
+  --t02-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_internal_step1_step2/stage2/t02_stage2_internal_20260519_115056 \
+  --t03-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t03_internal_full_input/t03_internal_full_input_innernet_flat_review_20260519_130230 \
+  --t04-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t04_internal_full_input/t04_internal_full_20260520_000716 \
+  --rcsdroad /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
+  --nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
+  --t02-input /mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.gpkg \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment \
+  --readonly-workers 4 \
+  --progress-interval 1000
+```
+
+该入口顺序执行：
+
+1. T03 relation evidence handoff 补齐，默认 `--t03-accepted-only`。
+2. Phase 1 `junction_anchor_surface.gpkg` 发布。
+3. Phase 2 `intersection_match_all.geojson`、copy-on-write RCSD 输出和审计发布。
+
+## 9. T03 Relation Evidence Backfill
 
 T05 提供 T03 -> Phase 2 handoff 补齐工具：
 

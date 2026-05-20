@@ -74,12 +74,15 @@ Phase 2 使用“读取 Phase 1 surface -> 消费 relation evidence -> 场景分
 
 1. 读取 `junction_anchor_surface.gpkg`、fusion audit、final `nodes.gpkg`、原始 `RCSDRoad.gpkg / RCSDNode.gpkg` 与 T02/T03/T04 relation evidence。
 2. 以 Phase 1 surface 的 `mainnodeid` 作为 Phase 2 target 主键。
-3. 已有 RCSD 语义路口直接输出关系。
-4. T03-A 多 RCSDNode 与 T04 complex 多 RCSDNode 执行 RCSDNode grouping，不打断 road。
-5. T03 road-only 与 T04 fallback road-only 进入 RCSDRoad split，生成 RCSDNode，再建立关系。
-6. 完全无 RCSD 或 split/grouping 失败时输出失败关系，统一 `status = 1 / base_id = 0`。
-7. 多个 RCSD 候选可合并时归组为一个 RCSD 语义路口；无法合并时输出 blocking error，不写主表 relation。
-8. 输出 `intersection_match_all.geojson`、copy-on-write RCSDRoad/RCSDNode、增量层、audit、blocking errors 与 summary。
+3. 预先构建 target 级 decision plan，并统计 direct / grouping / road_split / no_related、只读 target、可变 target 等体量。
+4. 先并行处理无需修改 RCSDRoad / RCSDNode 的只读关系构建分支。
+5. 再串行处理 T03-A 多 RCSDNode、T04 complex 多 RCSDNode、T03/T04 road-only 等会修改 copy-on-write RCSD 状态的分支。
+6. 已有 RCSD 语义路口直接输出关系。
+7. T03-A 多 RCSDNode 与 T04 complex 多 RCSDNode 执行 RCSDNode grouping，不打断 road。
+8. T03 road-only 与 T04 fallback road-only 进入 RCSDRoad split，生成 RCSDNode，再建立关系。
+9. 完全无 RCSD 或 split/grouping 失败时输出失败关系，统一 `status = 1 / base_id = 0`。
+10. 多个 RCSD 候选可合并时归组为一个 RCSD 语义路口；无法合并时输出 blocking error，不写主表 relation。
+11. 输出 `intersection_match_all.geojson`、copy-on-write RCSDRoad/RCSDNode、增量层、audit、blocking errors、summary 与聚合 performance 打点。
 
 Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gpkg`，不修改 T02/T03/T04 主链，也不原地修改输入 RCSD 文件。
 
@@ -109,3 +112,5 @@ Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gp
 - `intersection_match_all.geojson` 中 `target_id` 必须唯一，一个 SWSD 语义路口只允许输出一条 relation。
 - `level = grade - 1`，`is_highway = closed_con - 1`；缺失或非法时为 `-1`。
 - 多 `base_id` 无法合并时写 `blocking_errors.csv/json` 并令 `summary.passed = false`。
+- 全量运行时以 `progress_interval` 控制控制台输出频率，summary 只记录阶段级耗时和聚合体量，不记录 per-target 打点。
+- `readonly_workers` 只并行直接关系、无 RCSD 普通失败、缺少 evidence 普通失败等只读分支；RCSDRoad split 与 RCSDNode grouping 当前保持串行，避免新增 id 与拓扑状态更新并发冲突。

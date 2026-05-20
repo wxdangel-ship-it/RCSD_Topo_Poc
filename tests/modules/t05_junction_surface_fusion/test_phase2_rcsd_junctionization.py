@@ -66,6 +66,7 @@ def _run_phase2(
     t02_rows: list[dict] | None = None,
     t03_rows: list[dict] | None = None,
     t04_rows: list[dict] | None = None,
+    runner_kwargs: dict | None = None,
 ):
     inputs = tmp_path / "inputs"
     inputs.mkdir()
@@ -89,6 +90,7 @@ def _run_phase2(
         t04_relation_evidence_path=t04_path,
         out_root=tmp_path / "out",
         run_id="run",
+        **(runner_kwargs or {}),
     )
     after = {path: (path.stat().st_size, path.stat().st_mtime_ns) for path in (surface_path, nodes_path, rcsdroad_path, rcsdnode_path)}
     assert after == before
@@ -278,6 +280,39 @@ def test_t03_road_only_near_endpoint_reuses_existing_rcsdnode(tmp_path: Path) ->
     audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
     assert audit_rows[0]["reason"] == "road_only_projection_near_endpoint_reuse_rcsdnode"
     assert audit_rows[0]["original_rcsdnode_ids"] == "1"
+
+
+def test_phase2_progress_and_performance_summary_are_sparse(tmp_path: Path, capsys) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("475")],
+        swsd_nodes=[_node(475, 0, 0, mainnodeid="475")],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0), _node(30, 0, 0)],
+        t03_rows=[
+            {
+                "target_id": "475",
+                "case_id": "475",
+                "association_class": "A",
+                "required_rcsdnode_ids": "30",
+                "step7_state": "accepted",
+                "relation_state": "success_required_rcsd_junction",
+                "status_suggested": 0,
+            }
+        ],
+        runner_kwargs={"progress": True, "progress_interval": 1, "readonly_workers": 2},
+    )
+
+    output = capsys.readouterr().out
+    assert "[T05 Phase2] data volume" in output
+    assert "[T05 Phase2] plan" in output
+    assert "[T05 Phase2] done" in output
+    performance = _summary(artifacts)["performance"]
+    assert performance["data_volume"]["surface_count"] == 1
+    assert performance["plan"]["direct_target_count"] == 1
+    assert performance["plan"]["readonly_target_count"] == 1
+    assert performance["readonly_workers"] == 2
+    assert "total_sec" in performance["timings_sec"]
 
 
 def test_t04_fact_reference_fallback_controls_split_location(tmp_path: Path) -> None:

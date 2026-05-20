@@ -76,7 +76,9 @@
 - 拓扑一致性：split 点过近或靠近端点必须跳过或失败并 audit，不允许 silent fix。
 - 几何语义可解释性：投影来源必须来自 relation evidence 的 fact reference 或 SWSD semantic point。
 - 审计可追溯性：junctionization audit 记录 target、surface、source evidence、原 road/node、新 road/node、动作、失败原因。
-- 性能可验证性：summary 记录 feature count、split count、generated/grouped node count 与 consistency。
+- 性能可验证性：summary 记录 feature count、split count、generated/grouped node count、预分类 plan、只读/可变 target 计数、阶段级耗时与 consistency。
+- 控制台进度输出必须稀疏，按 `progress_interval` 汇报 target 进度，不输出 per-target 明细。
+- 只读关系构建允许通过 `readonly_workers` 并行；涉及 RCSDRoad split、RCSDNode grouping、新增 id 分配的分支当前保持串行。
 
 ## Phase 2 一致性
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ def write_phase2_outputs(
     audit_rows: list[dict[str, Any]],
     blocking_errors: list[dict[str, Any]],
     original_split_road_ids: set[int],
+    performance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     relation_path = run_root / RELATION_FILENAME
     rcsdroad_out_path = run_root / RCSDROAD_OUT_FILENAME
@@ -89,6 +91,7 @@ def write_phase2_outputs(
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
         original_split_road_ids=original_split_road_ids,
+        performance=performance or {},
         output_paths={
             "intersection_match_all": str(relation_path),
             "rcsdroad_out": str(rcsdroad_out_path),
@@ -139,6 +142,7 @@ def _summary(
     audit_rows: list[dict[str, Any]],
     blocking_errors: list[dict[str, Any]],
     original_split_road_ids: set[int],
+    performance: dict[str, Any],
 ) -> dict[str, Any]:
     relation_rows = [feature.get("properties") or {} for feature in relation_features]
     success_count = sum(1 for row in relation_rows if row.get("status") == STATUS_SUCCESS)
@@ -170,6 +174,7 @@ def _summary(
         "blocking_error_count": len(blocking_errors),
         "passed": consistency["passed"],
         "crs": {"process": "EPSG:3857", "intersection_match_all": "CRS84"},
+        "performance": performance,
         "consistency": consistency,
     }
 
@@ -190,7 +195,8 @@ def _consistency(
     out_road_ids = {_feature_id(feature) for feature in rcsdroad_out_features}
     out_node_ids = {_feature_id(feature) for feature in rcsdnode_out_features}
     target_ids = [str(row.get("target_id") or "") for row in relation_rows]
-    duplicate_target_ids = sorted({target_id for target_id in target_ids if target_ids.count(target_id) > 1})
+    target_counter = Counter(target_ids)
+    duplicate_target_ids = sorted(target_id for target_id, count in target_counter.items() if target_id and count > 1)
     split_endpoint_ids = {
         int(value)
         for feature in split_road_features

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from shapely.geometry import Point
@@ -12,7 +14,9 @@ from shapely.ops import unary_union
 from .phase2_io import prepare_run_root, produced_at_utc, read_table, read_vector_3857
 from .phase2_models import (
     SCENE_DIRECT,
+    SCENE_FAILURE,
     SCENE_GROUP_EXISTING,
+    SCENE_NO_RCSD,
     SCENE_ROAD_SPLIT,
     STATUS_FAILURE,
     STATUS_SUCCESS,
@@ -50,42 +54,93 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     crs_override: str | None = None,
     min_split_gap_m: float = 2.0,
     min_endpoint_gap_m: float = 2.0,
+    progress: bool = False,
+    progress_interval: int = 1000,
+    readonly_workers: int = 1,
 ) -> T05Phase2Artifacts:
+    run_started = perf_counter()
+    timings_sec: dict[str, float] = {}
+    progress_every = max(1, int(progress_interval))
+
+    def mark(name: str, started_at: float) -> None:
+        timings_sec[name] = round(perf_counter() - started_at, 6)
+
+    def log(message: str) -> None:
+        if progress:
+            print(f"[T05 Phase2] {message}", flush=True)
+
+    log("start")
     run_root = prepare_run_root(out_root, run_id)
     produced_at = produced_at_utc()
 
+    read_started = perf_counter()
     surfaces = _feature_dicts(read_vector_3857(junction_surface_path, layer_name=junction_surface_layer, crs_override=crs_override).features)
     swsd_nodes = _feature_dicts(read_vector_3857(nodes_path, layer_name=nodes_layer, crs_override=crs_override).features)
     original_roads = _feature_dicts(read_vector_3857(rcsdroad_path, layer_name=rcsdroad_layer, crs_override=crs_override).features)
     original_rcsdnodes = _feature_dicts(read_vector_3857(rcsdnode_path, layer_name=rcsdnode_layer, crs_override=crs_override).features)
     _ = read_table(_required_path(fusion_audit_path, "fusion_audit_path"))
+    mark("read_vectors_sec", read_started)
 
+    index_started = perf_counter()
     roads_by_id = _features_by_int_id(original_roads, "RCSDRoad")
     node_out_by_id = _features_by_int_id([_copy_feature(feature) for feature in original_rcsdnodes], "RCSDNode")
     node_template = dict((original_rcsdnodes[0].get("properties") or {}) if original_rcsdnodes else {"id": None, "mainnodeid": None})
     next_road_id = max(roads_by_id.keys(), default=0) + 1
     next_node_id = max(node_out_by_id.keys(), default=0) + 1
+    mark("build_indexes_sec", index_started)
 
+    evidence_started = perf_counter()
+    t02_rows = read_table(_required_path(t02_relation_evidence_path, "t02_relation_evidence_path"))
+    t03_rows = read_table(_required_path(t03_relation_evidence_path, "t03_relation_evidence_path"))
+    t04_base_rows = read_table(_required_path(t04_relation_evidence_path, "t04_relation_evidence_path"))
+    t04_target_case_ids = _target_case_ids(t04_base_rows)
+    t04_supplements = _load_t04_supplements(
+        t04_surface_path=t04_surface_path,
+        t04_summary_path=t04_summary_path,
+        t04_audit_path=t04_audit_path,
+        t04_case_root=t04_case_root,
+        target_case_ids=t04_target_case_ids,
+        crs_override=crs_override,
+    )
     t04_rows = _merge_t04_supplements(
-        read_table(_required_path(t04_relation_evidence_path, "t04_relation_evidence_path")),
-        _load_t04_supplements(
-            t04_surface_path=t04_surface_path,
-            t04_summary_path=t04_summary_path,
-            t04_audit_path=t04_audit_path,
-            t04_case_root=t04_case_root,
-            crs_override=crs_override,
-        ),
+        t04_base_rows,
+        t04_supplements,
     )
     evidence_rows = build_evidence_rows(
-        t02_rows=read_table(_required_path(t02_relation_evidence_path, "t02_relation_evidence_path")),
-        t03_rows=read_table(_required_path(t03_relation_evidence_path, "t03_relation_evidence_path")),
+        t02_rows=t02_rows,
+        t03_rows=t03_rows,
         t04_rows=t04_rows,
     )
     evidence_by_target: dict[str, list[Any]] = defaultdict(list)
     for evidence in evidence_rows:
         evidence_by_target[evidence.target_id].append(evidence)
+    mark("read_evidence_sec", evidence_started)
 
+    plan_started = perf_counter()
     contexts = _target_contexts(surfaces, swsd_nodes)
+    sorted_contexts = sorted(contexts, key=lambda item: item.target_id)
+    decision_plan, plan_stats = _build_decision_plan(sorted_contexts, evidence_by_target)
+    mark("build_plan_sec", plan_started)
+    data_volume = {
+        "surface_count": len(surfaces),
+        "swsd_node_count": len(swsd_nodes),
+        "rcsdroad_count": len(original_roads),
+        "rcsdnode_count": len(original_rcsdnodes),
+        "t02_evidence_row_count": len(t02_rows),
+        "t03_evidence_row_count": len(t03_rows),
+        "t04_evidence_row_count": len(t04_rows),
+        "t04_supplement_target_count": len(t04_supplements),
+        "phase2_target_count": len(sorted_contexts),
+    }
+    log(
+        "data volume "
+        + " ".join(f"{key}={value}" for key, value in data_volume.items())
+    )
+    log(
+        "plan "
+        + " ".join(f"{key}={value}" for key, value in plan_stats.items())
+    )
+
     relation_features: list[dict[str, Any]] = []
     split_road_features: list[dict[str, Any]] = []
     generated_node_features: list[dict[str, Any]] = []
@@ -95,12 +150,33 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     original_split_road_ids: set[int] = set()
     context_by_target = {context.target_id: context for context in contexts}
 
-    for context in sorted(contexts, key=lambda item: item.target_id):
-        decisions = [
-            classify_evidence(evidence, junction_type=context.junction_type)
-            for evidence in evidence_by_target.get(context.target_id, [])
-        ]
-        actionable = choose_actionable_decisions(decisions)
+    process_started = perf_counter()
+    total_targets = len(sorted_contexts)
+    readonly_workers = max(1, int(readonly_workers))
+    readonly_started = perf_counter()
+    readonly_results = _build_readonly_relation_results(
+        contexts=sorted_contexts,
+        decision_plan=decision_plan,
+        evidence_by_target=evidence_by_target,
+        node_features_by_id=node_out_by_id,
+        readonly_workers=readonly_workers,
+    )
+    mark("process_readonly_targets_sec", readonly_started)
+    log(
+        f"readonly targets={len(readonly_results)} readonly_workers={readonly_workers} "
+        f"mutable_targets={total_targets - len(readonly_results)}"
+    )
+    mutable_started = perf_counter()
+    for index, context in enumerate(sorted_contexts, start=1):
+        if index == 1 or index == total_targets or index % progress_every == 0:
+            log(f"processing target {index}/{total_targets}")
+        readonly_result = readonly_results.get(context.target_id)
+        if readonly_result is not None:
+            relation, audit_row = readonly_result
+            relation_features.append(relation)
+            audit_rows.append(audit_row)
+            continue
+        decisions, actionable = decision_plan.get(context.target_id, ([], []))
         if not actionable:
             relation = failure_relation_feature(context=context)
             relation_features.append(relation)
@@ -341,6 +417,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
             relation_features.append(relation)
             audit_rows.append(_audit_row(context=context, decision=decision, relation=relation))
 
+    mark("process_mutable_targets_sec", mutable_started)
+    mark("process_targets_sec", process_started)
     relation_features, duplicate_blocking_rows, duplicate_audit_rows = _enforce_unique_relation_targets(
         relation_features,
         context_by_target=context_by_target,
@@ -348,6 +426,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     blocking_errors.extend(duplicate_blocking_rows)
     audit_rows.extend(duplicate_audit_rows)
 
+    write_started = perf_counter()
+    log("writing outputs")
     outputs = write_phase2_outputs(
         run_root=run_root,
         produced_at=produced_at,
@@ -375,8 +455,20 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
         original_split_road_ids=original_split_road_ids,
+        performance={
+            "data_volume": data_volume,
+            "plan": plan_stats,
+            "timings_sec": timings_sec,
+            "progress_interval": progress_every,
+            "readonly_workers": readonly_workers,
+        },
     )
+    mark("write_outputs_sec", write_started)
+    timings_sec["total_sec"] = round(perf_counter() - run_started, 6)
+    log(f"done total_sec={timings_sec['total_sec']}")
     summary = outputs["summary"]
+    summary.setdefault("performance", {})["timings_sec"] = dict(timings_sec)
+    outputs["summary_path"].write_text(json.dumps(summary, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     return T05Phase2Artifacts(
         run_root=run_root,
         relation_geojson_path=outputs["relation_geojson_path"],
@@ -446,6 +538,7 @@ def _load_t04_supplements(
     t04_summary_path: str | Path | None,
     t04_audit_path: str | Path | None,
     t04_case_root: str | Path | None,
+    target_case_ids: set[str] | None,
     crs_override: str | None,
 ) -> dict[str, dict[str, Any]]:
     supplements: dict[str, dict[str, Any]] = {}
@@ -466,7 +559,7 @@ def _load_t04_supplements(
     if t04_case_root is not None:
         root = Path(t04_case_root)
         for name in ("step7_audit.json", "step6_audit.json", "reject_index.json", "step4_event_interpretation.json"):
-            for audit_path in root.glob(f"**/{name}"):
+            for audit_path in _iter_t04_case_audit_paths(root, name, target_case_ids):
                 payload = json.loads(audit_path.read_text(encoding="utf-8"))
                 if isinstance(payload, dict):
                     if name == "step4_event_interpretation.json":
@@ -474,6 +567,32 @@ def _load_t04_supplements(
                     else:
                         _add_supplement(supplements, payload)
     return supplements
+
+
+def _target_case_ids(rows: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for row in rows:
+        for value in (row.get("case_id"), row.get("target_id")):
+            text = _text(value)
+            if text:
+                result.add(text)
+    return result
+
+
+def _iter_t04_case_audit_paths(root: Path, name: str, target_case_ids: set[str] | None) -> list[Path]:
+    if not target_case_ids:
+        return sorted(root.glob(f"**/{name}"))
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for case_id in sorted(target_case_ids):
+        for candidate in (
+            root / case_id / name,
+            root / "cases" / case_id / name,
+        ):
+            if candidate.is_file() and candidate not in seen:
+                seen.add(candidate)
+                paths.append(candidate)
+    return paths
 
 
 def _merge_t04_supplements(rows: list[dict[str, Any]], supplements: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -491,6 +610,137 @@ def _merge_t04_supplements(rows: list[dict[str, Any]], supplements: dict[str, di
                 merged["scene_type"] = supplement.get("surface_scenario_type")
         merged_rows.append(merged)
     return merged_rows
+
+
+def _build_decision_plan(
+    contexts: list[SwsdTargetContext],
+    evidence_by_target: dict[str, list[Any]],
+) -> tuple[dict[str, tuple[list[Any], list[Any]]], dict[str, int]]:
+    plan: dict[str, tuple[list[Any], list[Any]]] = {}
+    scene_counts: Counter[str] = Counter()
+    source_counts: Counter[str] = Counter()
+    split_road_ids: set[int] = set()
+    grouped_node_ids: set[int] = set()
+    multi_actionable_count = 0
+    readonly_target_count = 0
+    for context in contexts:
+        decisions = [
+            classify_evidence(evidence, junction_type=context.junction_type)
+            for evidence in evidence_by_target.get(context.target_id, [])
+        ]
+        actionable = choose_actionable_decisions(decisions)
+        plan[context.target_id] = (decisions, actionable)
+        if _is_readonly_plan(decisions, actionable):
+            readonly_target_count += 1
+        if not actionable:
+            scene_counts["missing_relation_evidence"] += 1
+            continue
+        if len(actionable) > 1:
+            multi_actionable_count += 1
+        for decision in actionable:
+            scene_counts[decision.scene] += 1
+            if decision.source_module:
+                source_counts[decision.source_module] += 1
+            if decision.scene == SCENE_ROAD_SPLIT:
+                split_road_ids.update(decision.rcsdroad_ids)
+            if decision.scene == SCENE_GROUP_EXISTING:
+                grouped_node_ids.update(decision.rcsdnode_ids)
+    return (
+        plan,
+        {
+            "target_count": len(contexts),
+            "direct_target_count": scene_counts[SCENE_DIRECT],
+            "group_existing_target_count": scene_counts[SCENE_GROUP_EXISTING],
+            "road_split_target_count": scene_counts[SCENE_ROAD_SPLIT],
+            "no_related_target_count": scene_counts[SCENE_NO_RCSD],
+            "failure_target_count": scene_counts[SCENE_FAILURE],
+            "missing_evidence_target_count": scene_counts["missing_relation_evidence"],
+            "multi_actionable_target_count": multi_actionable_count,
+            "t02_actionable_count": source_counts["T02_INPUT"],
+            "t03_actionable_count": source_counts["T03"],
+            "t04_actionable_count": source_counts["T04"],
+            "unique_split_road_candidate_count": len(split_road_ids),
+            "unique_group_node_candidate_count": len(grouped_node_ids),
+            "readonly_target_count": readonly_target_count,
+            "mutable_target_count": len(contexts) - readonly_target_count,
+        },
+    )
+
+
+def _build_readonly_relation_results(
+    *,
+    contexts: list[SwsdTargetContext],
+    decision_plan: dict[str, tuple[list[Any], list[Any]]],
+    evidence_by_target: dict[str, list[Any]],
+    node_features_by_id: dict[int, dict[str, Any]],
+    readonly_workers: int,
+) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    readonly_contexts = [
+        context
+        for context in contexts
+        if _is_readonly_plan(*decision_plan.get(context.target_id, ([], [])))
+    ]
+    if not readonly_contexts:
+        return {}
+
+    def build(context: SwsdTargetContext) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        return _readonly_relation_for_context(
+            context=context,
+            decision_plan=decision_plan,
+            evidence_by_target=evidence_by_target,
+            node_features_by_id=node_features_by_id,
+        )
+
+    if readonly_workers <= 1 or len(readonly_contexts) <= 1:
+        rows = [build(context) for context in readonly_contexts]
+    else:
+        with ThreadPoolExecutor(max_workers=readonly_workers) as executor:
+            rows = list(executor.map(build, readonly_contexts))
+    return {target_id: (relation, audit_row) for target_id, relation, audit_row in rows}
+
+
+def _readonly_relation_for_context(
+    *,
+    context: SwsdTargetContext,
+    decision_plan: dict[str, tuple[list[Any], list[Any]]],
+    evidence_by_target: dict[str, list[Any]],
+    node_features_by_id: dict[int, dict[str, Any]],
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    _, actionable = decision_plan.get(context.target_id, ([], []))
+    if not actionable:
+        relation = failure_relation_feature(context=context)
+        return (
+            context.target_id,
+            relation,
+            _audit_row(context=context, decision=None, relation=relation, reason="missing_relation_evidence"),
+        )
+    decision = actionable[0]
+    if decision.scene == SCENE_DIRECT:
+        if not decision.base_id_candidates:
+            relation = failure_relation_feature(context=context)
+            return (
+                context.target_id,
+                relation,
+                _audit_row(context=context, decision=decision, relation=relation, reason="missing_base_id_candidate"),
+            )
+        base_id = decision.base_id_candidates[0]
+        evidence = _first_evidence_row(evidence_by_target.get(context.target_id, []), decision)
+        rcsd_point = _node_point(node_features_by_id.get(base_id)) or _evidence_rcsd_point(evidence)
+        relation = success_relation_feature(context=context, base_id=base_id, rcsd_point=rcsd_point)
+        return context.target_id, relation, _audit_row(context=context, decision=decision, relation=relation)
+    relation = failure_relation_feature(context=context)
+    return context.target_id, relation, _audit_row(context=context, decision=decision, relation=relation)
+
+
+def _is_readonly_plan(decisions: list[Any], actionable: list[Any]) -> bool:
+    if not actionable:
+        return True
+    if len(actionable) != 1:
+        return False
+    decision = actionable[0]
+    if decision.scene in {SCENE_NO_RCSD, SCENE_FAILURE}:
+        return True
+    return decision.scene == SCENE_DIRECT and len(_candidate_ids(actionable)) <= 1
 
 
 def _add_supplement(supplements: dict[str, dict[str, Any]], properties: dict[str, Any]) -> None:

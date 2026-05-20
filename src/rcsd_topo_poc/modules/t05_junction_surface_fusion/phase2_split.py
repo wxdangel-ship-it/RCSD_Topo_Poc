@@ -23,6 +23,7 @@ def split_roads(
     new_roads: list[dict[str, Any]] = []
     new_nodes: list[dict[str, Any]] = []
     original_road_ids: list[int] = []
+    new_road_ids_by_original_road_id: dict[int, list[int]] = {}
     skipped: list[str] = []
     for road_id in sorted(split_points_by_road):
         road_feature = roads_by_id.get(road_id)
@@ -61,6 +62,7 @@ def split_roads(
             *split_node_ids,
             _property_value(road_feature["properties"], "enodeid"),
         ]
+        new_road_ids_for_source: list[int] = []
         for index in range(len(segment_boundaries) - 1):
             start_m = segment_boundaries[index]
             end_m = segment_boundaries[index + 1]
@@ -79,14 +81,17 @@ def split_roads(
                     geometry=segment,
                 )
             )
+            new_road_ids_for_source.append(next_road_id)
             next_road_id += 1
         original_road_ids.append(road_id)
+        new_road_ids_by_original_road_id[road_id] = new_road_ids_for_source
     return (
         RoadSplitResult(
             new_road_features=new_roads,
             new_node_features=new_nodes,
             original_road_ids=original_road_ids,
             skipped_reasons=skipped,
+            new_road_ids_by_original_road_id=new_road_ids_by_original_road_id,
         ),
         next_road_id,
         next_node_id,

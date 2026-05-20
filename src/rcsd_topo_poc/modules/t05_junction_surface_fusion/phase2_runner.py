@@ -25,7 +25,7 @@ from .phase2_models import (
 )
 from .phase2_node_grouping import apply_mainnodeid_grouping, choose_primary_node_id
 from .phase2_outputs import write_phase2_outputs
-from .phase2_projection import project_points_to_roads, projection_points_for_decision
+from .phase2_projection import project_points_to_active_roads, projection_points_for_decision
 from .phase2_relation import failure_relation_feature, success_relation_feature
 from .phase2_scene_classifier import build_evidence_rows, choose_actionable_decisions, classify_evidence
 from .phase2_split import split_roads
@@ -142,12 +142,15 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     )
 
     relation_features: list[dict[str, Any]] = []
-    split_road_features: list[dict[str, Any]] = []
+    split_road_features_by_id: dict[int, dict[str, Any]] = {}
     generated_node_features: list[dict[str, Any]] = []
     grouped_node_features: list[dict[str, Any]] = []
     audit_rows: list[dict[str, Any]] = []
     blocking_errors: list[dict[str, Any]] = []
     original_split_road_ids: set[int] = set()
+    original_input_road_ids = set(roads_by_id)
+    active_road_ids_by_source_id: dict[int, set[int]] = {road_id: {road_id} for road_id in roads_by_id}
+    source_road_ids_by_active_id: dict[int, set[int]] = {road_id: {road_id} for road_id in roads_by_id}
     context_by_target = {context.target_id: context for context in contexts}
 
     process_started = perf_counter()
@@ -300,9 +303,10 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         )
                     )
                     continue
-                projected = project_points_to_roads(
-                    road_ids=decision.rcsdroad_ids,
+                projected = project_points_to_active_roads(
+                    source_road_ids=decision.rcsdroad_ids,
                     roads_by_id=roads_by_id,
+                    active_road_ids_by_source_id=active_road_ids_by_source_id,
                     points=points,
                     junction_type=context.junction_type,
                 )
@@ -357,6 +361,14 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                     relation = failure_relation_feature(context=context)
                     relation_features.append(relation)
                     skipped_reasons = list(split_result.skipped_reasons)
+                    if not projected:
+                        skipped_reasons.extend(
+                            _projection_skipped_reasons(
+                                decision.rcsdroad_ids,
+                                active_road_ids_by_source_id=active_road_ids_by_source_id,
+                                roads_by_id=roads_by_id,
+                            )
+                        )
                     if missing_endpoint_node_ids:
                         skipped_reasons.append(
                             "missing_endpoint_rcsdnode_ids:" + "|".join(str(item) for item in missing_endpoint_node_ids)
@@ -373,11 +385,22 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         )
                     )
                     continue
-                original_split_road_ids.update(split_result.original_road_ids)
+                split_source_ids_by_active_road = {
+                    road_id: set(source_road_ids_by_active_id.get(road_id, {road_id}))
+                    for road_id in split_result.original_road_ids
+                }
+                new_road_ids = [_int_id(feature, "RCSDRoad") for feature in split_result.new_road_features]
+                original_split_road_ids.update(
+                    road_id for road_id in split_result.original_road_ids if road_id in original_input_road_ids
+                )
                 for road_id in split_result.original_road_ids:
                     roads_by_id.pop(road_id, None)
+                    split_road_features_by_id.pop(road_id, None)
+                    source_road_ids_by_active_id.pop(road_id, None)
                 for road_feature in split_result.new_road_features:
-                    roads_by_id[_int_id(road_feature, "RCSDRoad")] = road_feature
+                    new_road_id = _int_id(road_feature, "RCSDRoad")
+                    roads_by_id[new_road_id] = road_feature
+                    split_road_features_by_id[new_road_id] = _copy_feature(road_feature)
                 new_node_ids = []
                 for node_feature in split_result.new_node_features:
                     node_id = _int_id(node_feature, "RCSDNode")
@@ -388,12 +411,19 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                     nodes_by_id=node_out_by_id,
                     reference_point=context.point,
                 )
+                for split_road_id, source_ids in split_source_ids_by_active_road.items():
+                    replacement_road_ids = split_result.new_road_ids_by_original_road_id.get(split_road_id, [])
+                    for source_id in source_ids:
+                        active_ids = active_road_ids_by_source_id.setdefault(source_id, set())
+                        active_ids.discard(split_road_id)
+                        active_ids.update(replacement_road_ids)
+                    for new_road_id in replacement_road_ids:
+                        source_road_ids_by_active_id.setdefault(new_road_id, set()).update(source_ids)
                 grouped = apply_mainnodeid_grouping(
                     node_ids=new_node_ids,
                     primary_node_id=primary,
                     node_features_by_id=node_out_by_id,
                 )
-                split_road_features.extend(_copy_feature(feature) for feature in split_result.new_road_features)
                 generated_node_features.extend(_copy_feature(feature) for feature in split_result.new_node_features)
                 grouped_node_features.extend(_copy_feature(feature) for feature in grouped)
                 relation = success_relation_feature(context=context, base_id=primary, rcsd_point=_node_point(node_out_by_id[primary]))
@@ -403,8 +433,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         context=context,
                         decision=decision,
                         relation=relation,
-                        original_road_ids=split_result.original_road_ids,
-                        new_road_ids=[_int_id(feature, "RCSDRoad") for feature in split_result.new_road_features],
+                        original_road_ids=list(decision.rcsdroad_ids),
+                        new_road_ids=new_road_ids,
                         new_node_ids=new_node_ids,
                         grouped_node_ids=new_node_ids if len(new_node_ids) > 1 else [],
                         selected_main_node_id=primary,
@@ -460,7 +490,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         relation_features=relation_features,
         rcsdroad_out_features=[_copy_feature(feature) for feature in roads_by_id.values()],
         rcsdnode_out_features=[_copy_feature(feature) for feature in node_out_by_id.values()],
-        split_road_features=split_road_features,
+        split_road_features=list(split_road_features_by_id.values()),
         generated_node_features=generated_node_features,
         grouped_node_features=grouped_node_features,
         audit_rows=audit_rows,
@@ -1027,6 +1057,29 @@ def _endpoint_reuse_node_ids(
                 seen.add(endpoint_node_id)
                 node_ids.append(endpoint_node_id)
     return node_ids, missing_node_ids
+
+
+def _projection_skipped_reasons(
+    road_ids: tuple[int, ...],
+    *,
+    active_road_ids_by_source_id: dict[int, set[int]],
+    roads_by_id: dict[int, dict[str, Any]],
+) -> list[str]:
+    reasons: list[str] = []
+    for road_id in road_ids:
+        active_ids = active_road_ids_by_source_id.get(road_id) or {road_id}
+        existing_ids = [active_id for active_id in active_ids if active_id in roads_by_id]
+        if not existing_ids:
+            reasons.append(f"missing_rcsdroad_id:{road_id}")
+            continue
+        if not any(_road_has_projectable_geometry(roads_by_id[active_id]) for active_id in existing_ids):
+            reasons.append(f"non_projectable_rcsdroad_id:{road_id}")
+    return reasons or ["no_projected_split_points"]
+
+
+def _road_has_projectable_geometry(road_feature: dict[str, Any]) -> bool:
+    geometry = road_feature.get("geometry")
+    return geometry is not None and not geometry.is_empty and getattr(geometry, "length", 0.0) > 0
 
 
 def _semantic_point(nodes: list[dict[str, Any]], surface_geometry: BaseGeometry | None) -> Point:

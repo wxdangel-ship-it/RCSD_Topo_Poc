@@ -282,6 +282,56 @@ def test_t03_road_only_near_endpoint_reuses_existing_rcsdnode(tmp_path: Path) ->
     assert audit_rows[0]["original_rcsdnode_ids"] == "1"
 
 
+def test_t03_road_only_reuses_active_descendant_when_source_road_was_split(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("400"), _surface("401", x=6.0)],
+        swsd_nodes=[
+            _node(400, -3, 0, mainnodeid="400", kind_2=4),
+            _node(401, 6, 0, mainnodeid="401", kind_2=4),
+        ],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0), snodeid=1, enodeid=2)],
+        rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0)],
+        t03_rows=[
+            {
+                "target_id": "400",
+                "case_id": "400",
+                "junction_type": "center_junction",
+                "association_class": "B",
+                "support_rcsdroad_ids": "1",
+                "step7_state": "accepted",
+                "relation_state": "rcsd_present_not_junction",
+                "status_suggested": 1,
+            },
+            {
+                "target_id": "401",
+                "case_id": "401",
+                "junction_type": "center_junction",
+                "association_class": "B",
+                "support_rcsdroad_ids": "1",
+                "step7_state": "accepted",
+                "relation_state": "rcsd_present_not_junction",
+                "status_suggested": 1,
+            },
+        ],
+    )
+
+    relations = sorted(_relation_features(artifacts.relation_geojson_path), key=lambda item: item["properties"]["target_id"])
+    assert [row["properties"]["status"] for row in relations] == [0, 0]
+    assert [row["properties"]["base_id"] for row in relations] == [3, 4]
+    out_road_ids = {row["id"] for row in _layer_props(artifacts.rcsdroad_out_path)}
+    assert 1 not in out_road_ids
+    assert len(out_road_ids) == 3
+    split_road_ids = {row["id"] for row in _layer_props(artifacts.rcsdroad_split_path)}
+    assert split_road_ids == out_road_ids
+    audit_rows = {
+        row["target_id"]: row
+        for row in csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8"))
+    }
+    assert audit_rows["401"]["projection_point_count"] == "1"
+    assert audit_rows["401"]["split_point_count"] == "1"
+
+
 def test_phase2_progress_and_performance_summary_are_sparse(tmp_path: Path, capsys) -> None:
     artifacts = _run_phase2(
         tmp_path,

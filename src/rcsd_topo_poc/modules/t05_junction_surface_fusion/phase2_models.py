@@ -118,6 +118,7 @@ class RoadSplitResult:
     new_node_features: list[dict[str, Any]]
     original_road_ids: list[int]
     skipped_reasons: list[str]
+    new_road_ids_by_original_road_id: dict[int, list[int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

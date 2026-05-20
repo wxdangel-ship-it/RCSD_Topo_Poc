@@ -71,6 +71,71 @@ def project_points_to_roads(
     return result
 
 
+def project_points_to_active_roads(
+    *,
+    source_road_ids: tuple[int, ...],
+    roads_by_id: dict[int, dict[str, Any]],
+    active_road_ids_by_source_id: dict[int, set[int]],
+    points: tuple[BaseGeometry, ...],
+    junction_type: str,
+) -> dict[int, list[SplitPoint]]:
+    distances_by_active_road: dict[int, list[float]] = {}
+    usable_points = [point for point in points if point is not None and not point.is_empty]
+    for source_road_id in source_road_ids:
+        candidate_lines = _candidate_lines(
+            source_road_id=source_road_id,
+            roads_by_id=roads_by_id,
+            active_road_ids_by_source_id=active_road_ids_by_source_id,
+        )
+        if not candidate_lines:
+            continue
+        for point in usable_points:
+            projected_point = _as_point(point)
+            active_road_id, line = min(
+                candidate_lines,
+                key=lambda item: item[1].distance(projected_point),
+            )
+            distances_by_active_road.setdefault(active_road_id, []).append(float(line.project(projected_point)))
+    return {
+        road_id: [
+            SplitPoint(road_id=road_id, distance_m=distance, geometry=_as_line(roads_by_id[road_id]["geometry"]).interpolate(distance))
+            for distance in _selected_distances(distances, junction_type)
+        ]
+        for road_id, distances in distances_by_active_road.items()
+        if road_id in roads_by_id and _as_line(roads_by_id[road_id].get("geometry")) is not None
+    }
+
+
+def _candidate_lines(
+    *,
+    source_road_id: int,
+    roads_by_id: dict[int, dict[str, Any]],
+    active_road_ids_by_source_id: dict[int, set[int]],
+) -> list[tuple[int, BaseGeometry]]:
+    candidate_ids = sorted(active_road_ids_by_source_id.get(source_road_id) or {source_road_id})
+    candidates: list[tuple[int, BaseGeometry]] = []
+    for road_id in candidate_ids:
+        road_feature = roads_by_id.get(road_id)
+        if road_feature is None:
+            continue
+        line = _as_line(road_feature.get("geometry"))
+        if line is None or line.is_empty:
+            continue
+        candidates.append((road_id, line))
+    return candidates
+
+
+def _selected_distances(distances: list[float], junction_type: str) -> list[float]:
+    if not distances:
+        return []
+    if junction_type == "center_junction" and len(distances) > 1:
+        selected = [min(distances), max(distances)]
+        if abs(selected[0] - selected[1]) < 1e-9:
+            return [selected[0]]
+        return selected
+    return [sum(distances) / len(distances)]
+
+
 def _point_from_pair(x_value: Any, y_value: Any) -> Point | None:
     try:
         if x_value in (None, "") or y_value in (None, ""):

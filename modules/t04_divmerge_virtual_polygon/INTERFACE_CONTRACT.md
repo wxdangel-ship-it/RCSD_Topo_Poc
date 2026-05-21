@@ -745,6 +745,7 @@ repo 级包装脚本：
 - `scripts/t04_run_internal_full_input_8workers.sh`
 - `scripts/t04_watch_internal_full_input.sh`
 - `scripts/t04_run_internal_full_input_innernet_flat_review.sh`
+- `scripts/t04_fallback_postprocess_existing.sh`：postprocess-existing 内网脚本；以既有 T04 run root 为参数，补齐 fallback relation evidence 并把成功 fallback 的 representative node 写为 `fail4_fallback`；不重跑 Step1-7、不生成新路口面。
 
 这些脚本已登记，但不构成新的 CLI 子命令；不得通过本模块文档暗示新增 repo 官方入口。
 

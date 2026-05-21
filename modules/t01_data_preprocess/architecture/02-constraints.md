@@ -2,7 +2,7 @@
 
 ## 全局业务约束
 - 当前模块以非封闭式道路场景下的双向 Segment 构建为主流程。
-- 当前已登记的后续路径仅包括：`Step5` 后基于 refreshed `nodes / roads` 的单向补段 continuation。
+- 当前已登记的后续路径仅包括：`Step5` 后基于 refreshed `nodes / roads` 的单向补段 continuation，以及该 continuation 内受控的 dead-end leaf 补段。
 - 当前不覆盖：
   - 封闭式道路场景
   - 脱离 `Step5` refreshed 结果的独立单向 Segment 求解
@@ -11,8 +11,10 @@
 - node：
   - `closed_con in {2,3}`
 - road：
-  - `road_kind != 1`
   - `formway != 128`
+  - 双向 `Step1-Step5C` 构段继续使用 `road_kind != 1`
+  - `Step5` 后单向补段允许 `road_kind = 1`，用于封闭式 / 高速相关单向 road 的补段
+  - dead-end leaf 补段中的单条双向 road 继续遵守 `road_kind != 1`；两条方向互补单向 road bundle 允许沿用单向补段的 `road_kind = 1` 口径
 
 ## 字段启用约束
 - 后续业务判断统一使用：

@@ -24,11 +24,12 @@
   - `GeoJSON(.geojson/.json)` 与 `Shapefile(.shp)` 继续兼容
 
 ### 3.2 输入约束
-- 当前模块仅处理双向道路路段构建，不覆盖封闭式道路场景。
+- 当前双向 `Step1-Step5C` 主流程仅处理非封闭式道路路段构建。
+- `Step5` 后单向补段允许处理 `road_kind = 1` 的封闭式 / 高速相关 road。
 - node 侧输入约束：
   - `closed_con in {2,3}`
 - road 侧输入约束：
-  - `road_kind != 1`
+  - 双向 `Step1-Step5C` 构段继续使用 `road_kind != 1`
   - `formway != 128`
 
 ### 3.3 working layers
@@ -358,6 +359,43 @@
 - Node 刷新规则与 Step4 一致
 - 新构成 road：`sgrade = 0-2双`
 
+### 11.5 Step5 后单向补段
+- 执行位置：
+  - 在 `Step5C` refreshed `nodes / roads` 之后
+  - 在 `Step6` 聚合之前
+- 作用边界：
+  - 仅补齐仍未被双向 Segment 构成的单向 road
+  - 不回写 `Step2 / Step4 / Step5A / Step5B / Step5C` 的双向构段规则
+- road 过滤：
+  - 已有非空 `segmentid` 的 road 不再进入单向阶段
+  - `formway = 128` 与右转专用道不参与
+  - `road_kind = 1` 允许进入单向阶段，仅用于封闭式 / 高速相关单向补段
+- 阶段定义：
+  - `0-0单`：`closed_con in {1,3}`、`kind_2 in {8,16}`、`grade_2 = 1`
+  - `0-1单`：`closed_con in {2,3}`、`kind_2 in {4,8,16,64,128,2048}`、`grade_2 in {1,2}`
+  - `0-2单`：`closed_con in {2,3}`、`kind_2 in {4,8,16,64,128,2048}`、`grade_2 in {1,2,3}`
+- `kind_2 = 128` 代表复杂分歧 / 合流路口；当前仅纳入 `0-1单 / 0-2单`，不纳入 `0-0单`。
+- 新构成 road：`sgrade = 0-0单 / 0-1单 / 0-2单`
+- dead-end leaf 补段：
+  - 在常规单向 terminate-to-terminate 补段之后、`Step6` 之前执行
+  - 只处理仍未构段且满足排除规则的 residual road bundle
+  - 支持两种 bundle 形态：
+    - 单条 `direction in {0,1}` 的双向 road，且继续遵守双向 `road_kind != 1`
+    - 两条方向互补的 `direction in {2,3}` 单向 road，允许沿用单向阶段的 `road_kind = 1` 放开口径
+  - bundle 两端必须恰有一端满足合法语义端点，另一端为 leaf node
+  - leaf node 端不得存在该 bundle 之外的其他有效 residual 延展
+  - 单条未成对单向 road 暂不作为 dead-end leaf Segment 构建
+  - 新构成 road：`sgrade = 0-2双`
+  - 新构成 road 写入审计 / 发布保护字段：
+    - `segment_build_source = dead_end_leaf`
+    - `leaf_node_id = <leaf semantic node id>`
+    - `dead_end_bundle_type in {bidirectional, reciprocal_oneway}`
+- 未构段 road 审计：
+  - `unsegmented_roads.csv` 输出 `formway_has_bit7_or_bit8` 与 `audit_reason`
+  - `unsegmented_roads_summary.json` 统计最终仍未构段且 `formway` 不含 bit7 / bit8 的 road 数量
+  - 同一 summary 输出上述非 bit7 / bit8 未构段 road 的 `audit_reason` 分布
+  - 该审计口径只解释最终 residual road，不回写构段规则
+
 ## 12. 阶段六：Step6
 
 ### 12.1 输入
@@ -395,6 +433,7 @@
 ### 12.5 Step6 规则
 - 规则1：
   - 若某 Segment 两端路口 `grade_2` 都为 `1`，且 `sgrade != 0-0双`，则将其 `sgrade` 调整为 `0-0双`
+  - 但单向 Segment 与 dead-end leaf Segment 不适用该提升规则
 - 规则2：
   - 对所有 `sgrade = 0-0双` 的 Segment，其 `junc_nodes` 下的所有路口类型都不能为：
     - `grade_2 = 1`

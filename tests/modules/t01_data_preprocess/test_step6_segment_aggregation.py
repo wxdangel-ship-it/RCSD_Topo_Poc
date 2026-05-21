@@ -49,6 +49,8 @@ def _road_feature(
     road_kind: int = 2,
     sgrade: str | None = None,
     segmentid: str | None = None,
+    segment_build_source: str | None = None,
+    leaf_node_id: str | None = None,
     multiline: bool = False,
 ) -> dict:
     if coords is None:
@@ -72,6 +74,8 @@ def _road_feature(
             "road_kind": road_kind,
             "sgrade": sgrade,
             "segmentid": segmentid,
+            "segment_build_source": segment_build_source,
+            "leaf_node_id": leaf_node_id,
         },
         "geometry": geometry,
     }
@@ -269,4 +273,84 @@ def test_step6_keeps_oneway_grade_without_promoting_to_bidirectional(tmp_path: P
     segment_props = segment_doc["features"][0]["properties"]
     assert segment_props["id"] == "10_12"
     assert segment_props["sgrade"] == "0-0单"
+    assert artifacts.summary["sgrade_adjusted_count"] == 0
+
+
+def test_step6_counts_road_kind_1_oneway_roads_for_inner_node_detection(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(2, 1.0, 0.0, kind_2=0, grade_2=0, closed_con=0),
+            _node_feature(3, 2.0, 0.0, kind_2=128, grade_2=2, closed_con=3),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("hw1", 1, 2, [(0.0, 0.0), (1.0, 0.0)], road_kind=1, sgrade="0-1单", segmentid="1_3"),
+            _road_feature("hw2", 2, 3, [(1.0, 0.0), (2.0, 0.0)], road_kind=1, sgrade="0-1单", segmentid="1_3"),
+        ],
+    )
+
+    artifacts = run_step6_segment_aggregation(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=tmp_path / "out",
+        run_id="oneway_road_kind_1_step6",
+    )
+
+    segment_doc = _load_geojson(artifacts.segment_path)
+    segment_props = segment_doc["features"][0]["properties"]
+    assert segment_props["id"] == "1_3"
+    assert segment_props["sgrade"] == "0-1单"
+    assert segment_props["junc_nodes"] in (None, "")
+    inner_doc = _load_geojson(artifacts.inner_nodes_path)
+    assert [feature["properties"]["id"] for feature in inner_doc["features"]] == [2]
+
+
+def test_step6_keeps_dead_end_leaf_grade_without_promoting_to_zero_zero(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind=4, grade=1, kind_2=4, grade_2=1),
+            _node_feature(2, 1.0, 0.0, kind=4, grade=1, kind_2=4, grade_2=1),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature(
+                "dead_dual",
+                1,
+                2,
+                [(0.0, 0.0), (1.0, 0.0)],
+                direction=1,
+                sgrade="0-2双",
+                segmentid="1_2",
+                segment_build_source="dead_end_leaf",
+                leaf_node_id="2",
+            ),
+        ],
+    )
+
+    artifacts = run_step6_segment_aggregation(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=tmp_path / "out",
+        run_id="dead_end_leaf_step6",
+    )
+
+    segment_doc = _load_geojson(artifacts.segment_path)
+    segment_props = segment_doc["features"][0]["properties"]
+    assert segment_props["id"] == "1_2"
+    assert segment_props["sgrade"] == "0-2双"
+    assert segment_props["junc_nodes"] in (None, "")
+    assert artifacts.summary["dead_end_segment_count"] == 1
     assert artifacts.summary["sgrade_adjusted_count"] == 0

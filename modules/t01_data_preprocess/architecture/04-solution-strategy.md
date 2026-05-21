@@ -20,6 +20,8 @@
 - Step5A / Step5B / Step5C 按顺序执行，并在每个子阶段后立即 refresh
 - Step5C 使用 adaptive barrier fallback，Step5A / Step5B 仍保持严格 terminate 逻辑
 - 单向补段 continuation 只消化 `Step5` refreshed 结果，不回写 `Step1-Step5` 的双向 accepted baseline 语义
+- 单向补段允许 `road_kind = 1` 的封闭式 / 高速相关 road 进入候选，并将 `kind_2 = 128` 作为 `0-1单 / 0-2单` 的复杂分歧 / 合流 terminate
+- dead-end leaf 补段作为单向补段 continuation 内的受控收尾：只处理单条双向 road 或两条方向互补单向 road bundle，要求一端为合法语义端点、另一端为无其他有效延展的 leaf node
 - Step6 只消费最新 refreshed 结果，不重新做构段搜索
 
 ## same-stage arbitration

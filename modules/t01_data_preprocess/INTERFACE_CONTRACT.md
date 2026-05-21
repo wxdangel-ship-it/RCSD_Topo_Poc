@@ -18,8 +18,9 @@
 - node 输入约束：
   - `closed_con in {2,3}`
 - road 输入约束：
-  - `road_kind != 1`
+  - 双向 `Step1-Step5C` 构段继续使用 `road_kind != 1`
   - `formway != 128`
+  - `Step5` 后单向补段允许 `road_kind = 1` 进入候选；该字段在 SWSD 中代表封闭式道路，多数场景为高速 / 高速相关道路
 
 ## 2.1 官方 runner / 诊断契约
 - 运行前先在 repo root 执行：
@@ -276,10 +277,10 @@
   - 仅补齐仍未被双向 Segment 构成的单向 road
   - 不回写 `Step2 / Step4 / Step5A / Step5B / Step5C` 的双向构段规则
 - 共享过滤：
-  - `road_kind != 1`
   - `formway != 128`
   - 右转专用道不参与
   - 已有非空 `segmentid` 的 road 不再进入单向阶段
+  - `road_kind = 1` 允许进入单向阶段，仅用于封闭式 / 高速相关单向补段，不回写双向 `Step1-Step5C` 的 `road_kind != 1` 约束
 - 业务判断统一使用：
   - `kind_2`
   - `grade_2`
@@ -291,10 +292,25 @@
   - 当前节点未命中 terminate 时，候选前进 road 中仅选择与当前行进方向夹角最小的一条继续
 - 阶段定义：
   - `0-0单`：`closed_con in {1,3}`、`kind_2 in {8,16}`、`grade_2 = 1`
-  - `0-1单`：`closed_con in {2,3}`、`kind_2 in {4,8,16,64,2048}`、`grade_2 in {1,2}`
-  - `0-2单`：`closed_con in {2,3}`、`kind_2 in {4,8,16,64,2048}`、`grade_2 in {1,2,3}`
+  - `0-1单`：`closed_con in {2,3}`、`kind_2 in {4,8,16,64,128,2048}`、`grade_2 in {1,2}`
+  - `0-2单`：`closed_con in {2,3}`、`kind_2 in {4,8,16,64,128,2048}`、`grade_2 in {1,2,3}`
+  - `kind_2 = 128` 代表复杂分歧 / 合流路口；当前仅纳入 `0-1单 / 0-2单`，不纳入 `0-0单`
 - 新构成 road：
   - `sgrade = 0-0单 / 0-1单 / 0-2单`
+- dead-end leaf 补段：
+  - 在常规单向 terminate-to-terminate 补段之后、`Step6` 之前执行
+  - 只处理仍未构段且满足排除规则的 residual road bundle
+  - 支持两种 bundle 形态：
+    - 一条 `direction in {0,1}` 的双向 road，且继续遵守双向 `road_kind != 1`
+    - 两条方向互补的 `direction in {2,3}` 单向 road，允许沿用单向阶段的 `road_kind = 1` 放开口径
+  - bundle 两端必须恰有一端满足合法语义端点，另一端为 leaf node
+  - leaf node 端不得存在该 bundle 之外的其他有效 residual 延展
+  - 单条未成对单向 road 暂不作为 dead-end leaf Segment 构建
+  - 新构成 road：`sgrade = 0-2双`
+  - 新构成 road 写入审计 / 发布保护字段：
+    - `segment_build_source = dead_end_leaf`
+    - `leaf_node_id = <leaf semantic node id>`
+    - `dead_end_bundle_type in {bidirectional, reciprocal_oneway}`
 - 新增 runner 对外产物：
   - `oneway_segment_roads.gpkg`
   - `oneway_segment_build_table.csv`
@@ -305,6 +321,12 @@
 - `unsegmented_roads.*` 口径：
   - 统计双向 + 单向全部阶段完成后仍未形成 Segment 的 road
   - 必须排除 `formway = 128`
+  - `unsegmented_roads.csv` 必须包含 `formway_has_bit7_or_bit8` 与 `audit_reason`
+  - `unsegmented_roads_summary.json` 必须统计：
+    - `unsegmented_formway_bit7_or_bit8_count`
+    - `unsegmented_non_formway_bit7_or_bit8_count`
+    - `unsegmented_non_formway_bit7_or_bit8_reason_counts`
+  - `formway` bit7 / bit8 仅作为最终未构段审计分组口径；不改变已确认的构段过滤规则
 
 ## 6. Step6 契约
 
@@ -337,6 +359,7 @@
 - 规则1：
   - 若某 Segment 两端路口 `grade_2` 都为 `1`，且 `sgrade != 0-0双`，则调整为 `0-0双`
   - 但 `sgrade in {0-0单,0-1单,0-2单}` 的单向 Segment 不适用该提升规则
+  - dead-end leaf Segment 不适用该提升规则
 - 规则2：
   - 对所有 `sgrade = 0-0双` 的 Segment，若其中间 `junc_nodes` 存在：
     - `grade_2 = 1`

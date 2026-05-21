@@ -34,6 +34,7 @@ STEP6_ERROR_TYPE_S_GRADE_CONFLICT = "s_grade_conflict"
 STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT = "grade_kind_conflict"
 STEP6_ONEWAY_SEGMENT_GRADE_VALUES = ("0-0单", "0-1单", "0-2单")
 STEP6_S_GRADE_PRIORITY_ORDER = ("0-0双", "0-0单", "0-1双", "0-1单", "0-2双", "0-2单")
+DEAD_END_BUILD_SOURCE = "dead_end_leaf"
 STEP6_ERROR_LAYER_FILENAMES = {
     STEP6_ERROR_TYPE_S_GRADE_CONFLICT: "segment_error_s_grade_conflict.gpkg",
     STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT: "segment_error_grade_kind_conflict.gpkg",
@@ -67,6 +68,7 @@ class SegmentRecord:
     adjusted: bool
     adjust_reason: Optional[str]
     sgrade_conflict_values: tuple[str, ...]
+    dead_end_leaf: bool
     error_type: Optional[str]
     error_desc: Optional[str]
 
@@ -178,6 +180,23 @@ def _resolve_highest_s_grade(values: tuple[str, ...]) -> Optional[str]:
     return sorted(values, key=_sort_key)[0]
 
 
+def _is_oneway_sgrade(value: Optional[str]) -> bool:
+    return value in STEP6_ONEWAY_SEGMENT_GRADE_VALUES
+
+
+def _is_allowed_step6_incident_road(properties: dict[str, Any], road: RoadFeatureRecord) -> bool:
+    road_kind = _coerce_int(properties.get("road_kind")) if "road_kind" in properties else road.road_kind
+    if is_allowed_road_kind(road_kind):
+        return True
+    if _normalize_text(properties.get("segment_build_source")) == DEAD_END_BUILD_SOURCE and _normalize_text(
+        get_road_segmentid(properties)
+    ) is not None:
+        return True
+    return _is_oneway_sgrade(_normalize_text(get_road_sgrade(properties))) and _normalize_text(
+        get_road_segmentid(properties)
+    ) is not None
+
+
 def _build_group_to_allowed_road_ids(
     *,
     nodes: list[NodeFeatureRecord],
@@ -188,7 +207,7 @@ def _build_group_to_allowed_road_ids(
     group_to_allowed_road_ids: dict[str, set[str]] = defaultdict(set)
     for road in roads:
         current_props = road.properties if road_properties_map is None else road_properties_map.get(road.road_id, road.properties)
-        if not is_allowed_road_kind(_coerce_int(current_props.get("road_kind")) if "road_kind" in current_props else road.road_kind):
+        if not _is_allowed_step6_incident_road(current_props, road):
             continue
         for node_id in (road.snodeid, road.enodeid):
             node = node_by_id.get(node_id)
@@ -235,12 +254,18 @@ def _collect_segment_records(
         segment_roads = roads_by_segment_id[segment_id]
         pair_nodes = _parse_segment_pair_nodes(segment_id)
         road_ids = tuple(sorted({road.road_id for road in segment_roads}, key=_sort_key))
+        segment_road_properties = [
+            road.properties if road_properties_map is None else road_properties_map.get(road.road_id, road.properties)
+            for road in segment_roads
+        ]
+        dead_end_leaf = any(
+            _normalize_text(properties.get("segment_build_source")) == DEAD_END_BUILD_SOURCE
+            for properties in segment_road_properties
+        )
 
         sgrade_values = {
-            _normalize_text(
-                get_road_sgrade(road.properties if road_properties_map is None else road_properties_map.get(road.road_id, road.properties))
-            )
-            for road in segment_roads
+            _normalize_text(get_road_sgrade(properties))
+            for properties in segment_road_properties
         }
         sgrade_conflict_values = tuple(sorted(_display_optional_value(value) for value in sgrade_values))
         contains_oneway_sgrade = any(value in STEP6_ONEWAY_SEGMENT_GRADE_VALUES for value in sgrade_values if value is not None)
@@ -303,7 +328,13 @@ def _collect_segment_records(
             )
             pair_grade_values.append(_coerce_int(current_node_props.get("grade_2")))
 
-        if error_type is None and pair_grade_values == [1, 1] and sgrade_old != STEP6_SEGMENT_GRADE_VALUE and not contains_oneway_sgrade:
+        if (
+            error_type is None
+            and pair_grade_values == [1, 1]
+            and sgrade_old != STEP6_SEGMENT_GRADE_VALUE
+            and not contains_oneway_sgrade
+            and not dead_end_leaf
+        ):
             adjusted = True
             sgrade_new = STEP6_SEGMENT_GRADE_VALUE
             adjust_reason = "both_pair_nodes_grade_2_eq_1"
@@ -342,6 +373,7 @@ def _collect_segment_records(
                 adjusted=adjusted,
                 adjust_reason=adjust_reason,
                 sgrade_conflict_values=sgrade_conflict_values,
+                dead_end_leaf=dead_end_leaf,
                 error_type=error_type,
                 error_desc=error_desc,
             )
@@ -376,6 +408,7 @@ def _segment_error_feature(record: SegmentRecord) -> dict[str, Any]:
             "old_sgrade": record.sgrade_old,
             "new_sgrade": record.sgrade_new,
             "sgrade_conflict_values": _join_ids(record.sgrade_conflict_values),
+            "dead_end_leaf": record.dead_end_leaf,
             "flag_s_grade_conflict": record.error_type == STEP6_ERROR_TYPE_S_GRADE_CONFLICT,
             "flag_grade_kind_conflict": record.error_type == STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT,
         },
@@ -437,6 +470,7 @@ def _write_step6_outputs(
         "segment_count": len(segment_records),
         "segment_with_junc_count": sum(1 for record in segment_records if record.junc_nodes),
         "segment_with_inner_nodes_count": sum(1 for record in segment_records if record.inner_group_ids),
+        "dead_end_segment_count": sum(1 for record in segment_records if record.dead_end_leaf),
         "segment_error_count": len(segment_error_records),
         "sgrade_adjusted_count": sum(1 for record in segment_records if record.adjusted),
         "sgrade_conflict_count": sum(
@@ -467,6 +501,7 @@ def _write_step6_outputs(
             "sgrade_old": record.sgrade_old,
             "sgrade_new": record.sgrade_new,
             "sgrade_conflict_values": _join_ids(record.sgrade_conflict_values),
+            "dead_end_leaf": record.dead_end_leaf,
             "adjust_reason": record.adjust_reason,
             "error_type": record.error_type,
             "has_error": record.error_type is not None,
@@ -485,6 +520,7 @@ def _write_step6_outputs(
             "sgrade_old",
             "sgrade_new",
             "sgrade_conflict_values",
+            "dead_end_leaf",
             "adjust_reason",
             "error_type",
             "has_error",

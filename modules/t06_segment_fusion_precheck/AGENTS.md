@@ -11,7 +11,8 @@
 
 ## 禁止事项
 
-- 不新增 repo CLI、`scripts/`、`tools/`、`Makefile`、模块 `run.py` 或模块 `__main__.py`。
+- 不新增 repo CLI、`tools/`、`Makefile`、模块 `run.py` 或模块 `__main__.py`。
+- 当前唯一 T06 repo 级脚本入口是 `scripts/t06_run_innernet_precheck.py`，只作为内网 Step1 + Step2 运行包装，底层仍调用模块内 runner。
 - 不原地修改 `segment.gpkg`、`nodes.gpkg`、`intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg` 或 `swsd_roads_path`。
 - 不根据局部数据反推上游字段语义；字段语义以 T01 / T05 / T06 契约为准。
 - 不把 `pair_nodes` 顺序或 `segmentid A_B` 顺序当作 SWSD 单向方向。
@@ -22,6 +23,7 @@
   - `run_t06_step1_identify_fusion_units(...)`
   - `run_t06_step2_extract_rcsd_segments(...)`
   - `run_t06_segment_fusion_precheck(...)`
+- 内网执行脚本 `scripts/t06_run_innernet_precheck.py` 只能转发到 `run_t06_segment_fusion_precheck(...)`，不得内置替代业务逻辑。
 - Step1 按 `pair_nodes + junc_nodes` 的语义路口 ID 集合判断 EVD 与 anchor/fallback 资格。
 - Step2 只接受 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id > 0` 的 relation。
 - `junc_nodes` 在 RCSD 抽取中是内部通过 + 侧向阻断，不是 hard-stop。

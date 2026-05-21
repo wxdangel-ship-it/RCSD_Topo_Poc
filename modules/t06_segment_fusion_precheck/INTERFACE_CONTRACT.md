@@ -27,7 +27,8 @@
 - 不执行 SWSD Segment 替换。
 - 不重塑路口。
 - 不修改 T01 主链、T05 主链或任何输入成果。
-- 不新增 repo CLI、`scripts/`、`tools`、`Makefile`、模块 `run.py` 或模块 `__main__.py`。
+- 不新增 repo CLI、`tools`、`Makefile`、模块 `run.py` 或模块 `__main__.py`。
+- 除 `scripts/t06_run_innernet_precheck.py` 这个内网运行包装外，不新增其它 repo 级脚本入口。
 - 不使用精细几何拟合指标作为第一版核心硬门槛。
 
 ## 2. Inputs
@@ -179,7 +180,7 @@ run_t06_step2_extract_rcsd_segments(
 
 ## 4. EntryPoints
 
-T06 当前不新增 repo 官方入口。稳定执行面仅为模块内 callable runner。
+T06 当前不新增 repo CLI。稳定执行面包括模块内 callable runner 与一个已登记的内网运行包装脚本。
 
 ```python
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (
@@ -187,6 +188,19 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (
     run_t06_step2_extract_rcsd_segments,
 )
 ```
+
+内网脚本入口：
+
+```bash
+.venv/bin/python scripts/t06_run_innernet_precheck.py \
+  --swsd-segment /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --swsd-roads /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
+  --swsd-nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
+  --t05-phase2-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment/t05_phase2_innernet \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck
+```
+
+脚本默认从 `--t05-phase2-root` 自动发现 `intersection_match_all.geojson`、`rcsdroad_out.gpkg` 与 `rcsdnode_out.gpkg`；三者也可以通过显式参数覆盖。
 
 ## 5. Params
 

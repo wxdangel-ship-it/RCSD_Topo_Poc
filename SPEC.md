@@ -253,5 +253,5 @@
 - `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围已扩展到 `Step1-7`，其中 `Step1-4` 维持既有稳定执行面，`Step5-7` 进入正式研发实现阶段；internal full-input 通过 repo 级脚本包装 + T04 私有 runner 交付，不新增 repo 官方 CLI。
 - `p01_arm_build` 当前作为 Active P01 成果模块进入治理；正式范围覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原，不包含 P01-A3 正式跨源 Movement 空间、禁行迁移、F-RCSD 通行能力最终裁决或 P01-B。
 - `t05_junction_surface_fusion` 当前作为 Active 正式业务模块进入治理；正式范围覆盖 Phase 1 多源路口面融合发布与 Phase 2 RCSD junctionization / SWSD-RCSD relation 生产。Phase 2 输出 `intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg` 与审计汇总；其 RCSDRoad / RCSDNode 变化只通过 copy-on-write 输出表达，不原地修改输入。
-- `t06_segment_fusion_precheck` 当前作为 Active 正式业务模块启动；正式范围仅覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换，不重塑路口，不修改 T01 / T05 输出。
+- `t06_segment_fusion_precheck` 当前作为 Active 正式业务模块启动；正式范围仅覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换，不重塑路口，不修改 T01 / T05 输出；当前提供模块内 callable runner 与 `scripts/t06_run_innernet_precheck.py` 内网运行包装，不新增 repo 官方 CLI。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

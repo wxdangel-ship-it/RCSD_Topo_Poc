@@ -12,7 +12,8 @@
 - 不执行 Segment 替换。
 - 不重塑路口。
 - 不修改 T01 / T05 输出。
-- 不新增 repo CLI 或脚本入口。
+- 不新增 repo CLI。
+- 仅保留一个内网运行包装脚本：`scripts/t06_run_innernet_precheck.py`。
 
 ## Callable Runner
 
@@ -32,6 +33,19 @@ artifacts = run_t06_segment_fusion_precheck(
     run_id="manual_run",
 )
 ```
+
+## 内网脚本
+
+```bash
+.venv/bin/python scripts/t06_run_innernet_precheck.py \
+  --swsd-segment /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --swsd-roads /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
+  --swsd-nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
+  --t05-phase2-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment/t05_phase2_innernet \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck
+```
+
+脚本会运行 Step1 + Step2，并在 stdout 打印包含输入路径、输出路径与核心计数的 JSON 摘要。
 
 ## 关键规则
 

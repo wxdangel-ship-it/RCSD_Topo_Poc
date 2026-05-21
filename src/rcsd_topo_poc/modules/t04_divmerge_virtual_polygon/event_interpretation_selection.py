@@ -362,6 +362,36 @@ def _rank_candidate_pool(evaluations: list[_CandidateEvaluation]) -> list[_Candi
     )
 
 
+def _case_assignment_score(candidate_eval: _CandidateEvaluation) -> int:
+    base_score = int(candidate_eval.priority_score)
+    if base_score <= -1000:
+        return base_score
+    result = candidate_eval.result
+    consistency_rank = {"A": 3, "B": 2, "C": 1}.get(
+        str(result.positive_rcsd_consistency_level or "C").strip().upper(),
+        1,
+    )
+    candidate_summary = result.selected_candidate_summary
+    primary_eligible = bool(candidate_summary.get("primary_eligible"))
+    candidate_scope = str(candidate_summary.get("candidate_scope") or "").strip()
+    if not primary_eligible and not (
+        candidate_scope == "throat_core"
+        and consistency_rank == 2
+        and result.positive_rcsd_present
+        and result.required_rcsd_node
+    ):
+        return base_score
+    if result.positive_rcsd_present and result.required_rcsd_node:
+        rcsd_rank = 3
+    elif result.positive_rcsd_present and result.selected_rcsdnode_ids:
+        rcsd_rank = 2
+    elif result.positive_rcsd_present and result.selected_rcsdroad_ids:
+        rcsd_rank = 1
+    else:
+        rcsd_rank = 0
+    return base_score + rcsd_rank * 30_000 + consistency_rank * 1_000
+
+
 def _select_case_assignment(
     candidate_pools: list[list[_CandidateEvaluation]],
 ) -> list[_CandidateEvaluation | None]:
@@ -391,7 +421,7 @@ def _select_case_assignment(
                 _search(
                     order_pos + 1,
                     [*chosen, candidate_eval],
-                    score + int(candidate_eval.priority_score),
+                    score + _case_assignment_score(candidate_eval),
                 )
             else:
                 _search(order_pos + 1, [*chosen, None], score)

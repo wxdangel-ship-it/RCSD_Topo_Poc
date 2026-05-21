@@ -6,5 +6,5 @@ t02_junction_anchor,modules/t02_junction_anchor,active,formal-module-surface,kee
 t03_virtual_junction_anchor,modules/t03_virtual_junction_anchor,active,formal-module-surface,keep-in-sync-with-implementation,step1-step7-formal-chain-association-finalization-canonical-names-no-new-public-finalization-cli
 t04_divmerge_virtual_polygon,modules/t04_divmerge_virtual_polygon,active,formal-module-surface,keep-in-sync-with-step14-implementation,step1-step4-active-step4-review-outputs-no-public-cli-step34-repair-formalization-open
 t05_junction_surface_fusion,modules/t05_junction_surface_fusion,active,formal-module-surface,keep-in-sync-with-phase1-phase2-implementation,phase1-phase2-relation-and-copy-on-write-rcsd-network-no-public-cli
-t06_segment_fusion_precheck,modules/t06_segment_fusion_precheck,active,formal-module-surface,keep-in-sync-with-step1-step2-implementation,step1-step2-segment-fusion-precheck-callable-runners-no-public-cli
+t06_segment_fusion_precheck,modules/t06_segment_fusion_precheck,active,formal-module-surface,keep-in-sync-with-step1-step2-implementation,step1-step2-segment-fusion-precheck-callable-runners-innernet-script-no-public-cli
 p01_arm_build,modules/p01_arm_build,active,formal-module-surface,keep-in-sync-with-p01-v1-a1-a2-final-implementation,p01-v1-arm-build-alignment-final-road-next-road-no-public-cli

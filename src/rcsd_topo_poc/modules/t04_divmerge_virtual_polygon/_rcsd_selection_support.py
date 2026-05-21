@@ -801,19 +801,22 @@ def _select_required_node_id(
         # 实际属于另一 sub-unit 的 RCSD 路口）以 A>B 优先级压过，让本 unit
         # 错配到非自身的 RCSD 语义路口。
         strong_first_hit_anchor = (
-            1 if direct_first_hit_count >= STRONG_FIRST_HIT_ANCHOR_MIN_COUNT else 0
+            1
+            if local_unit is not None
+            and direct_first_hit_count >= STRONG_FIRST_HIT_ANCHOR_MIN_COUNT
+            else 0
         )
         candidate = (
             structural_event_completion,
             strong_first_hit_anchor,
             1 if local_unit is not None and local_unit.consistency_level == "A" else 0,
+            1 if node_id in local_node_ids else 0,
             traced_first_hit_count,
             local_event_arm_count,
             matched_event_label_count,
             len(incident_road_ids),
             direct_first_hit_count,
             1 if local_unit is not None and local_unit.trunk_present else 0,
-            1 if node_id in local_node_ids else 0,
             -int(round(float(point.distance(representative_point)) * 10.0)),
             node_id,
         )
@@ -1207,6 +1210,11 @@ def _build_aggregated_rcsd_units(
             and required_node_id != primary_node_id
             and primary_node_id in set(candidate_node_ids)
         ):
+            component_local_node_ids = {
+                str(unit.node_id)
+                for unit in component_units_sorted
+                if unit.unit_kind == "node_centric" and unit.node_id is not None
+            }
             primary_incident_roads = (
                 set(roads_by_node_id.get(primary_node_id, set()))
                 & set(road_ids)
@@ -1214,7 +1222,10 @@ def _build_aggregated_rcsd_units(
             primary_first_hit_count = len(
                 primary_incident_roads & set(first_hit_road_ids)
             )
-            if primary_first_hit_count >= STRONG_FIRST_HIT_ANCHOR_MIN_COUNT:
+            if (
+                primary_node_id in component_local_node_ids
+                and primary_first_hit_count >= STRONG_FIRST_HIT_ANCHOR_MIN_COUNT
+            ):
                 required_node_id = primary_node_id
         required_node_source = None
         if required_node_id is not None:

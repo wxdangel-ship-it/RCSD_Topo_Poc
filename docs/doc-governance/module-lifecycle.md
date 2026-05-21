@@ -38,7 +38,7 @@
 | `t03_virtual_junction_anchor` | `modules/t03_virtual_junction_anchor` | `Step1~Step7` 正式业务主链；仅处理 `center_junction / single_sided_t_mouth`，消费 Anchor61 `case-package` 或 internal full-input 局部上下文，输出 RCSD 关联/负向约束中间结果、最终虚拟路口面、平铺 PNG、索引、summary、batch aggregate polygons、downstream `nodes.gpkg` 与 terminal case records | `step1-step7 formal chain active / 58-case correctness baseline accepted / association-finalization implementation names canonical / no new public finalization cli` |
 | `t04_divmerge_virtual_polygon` | `modules/t04_divmerge_virtual_polygon` | `Step1-7` doc-first formalization；消费包含 `divstripzone.gpkg` 的 case-package 或 internal full-input，输出 admission/local-context/topology/event-unit interpretation、Step5 支撑域约束、Step6 最终组装结果，以及 Step7 `accepted/rejected` 发布层与审计汇总 | `step1-step4 stable / step5-step7 formal implementation active / internal full-input script wrapper active / no public cli` |
 | `t05_junction_surface_fusion` | `modules/t05_junction_surface_fusion` | Phase 1 多源路口面融合发布；Phase 2 消费 Phase 1 成果、final nodes、原始 RCSDRoad/RCSDNode 与 relation evidence，输出 `intersection_match_all.geojson`、copy-on-write `rcsdroad_out.gpkg / rcsdnode_out.gpkg`、junctionization audit 与 summary | `phase1-phase2 active / callable module runners / innernet helper scripts registered / no public cli` |
-| `t06_segment_fusion_precheck` | `modules/t06_segment_fusion_precheck` | T06 前两步：Step1 识别可参与融合的 SWSD Segment 单元；Step2 基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络抽取 RCSD Segment candidate，执行方向、junc、主轴、粗长度与唯一性趋势硬筛，输出 candidates / replaceable / rejected / summary | `step1-step2 formal startup / callable module runners only / no public cli` |
+| `t06_segment_fusion_precheck` | `modules/t06_segment_fusion_precheck` | T06 前两步：Step1 识别可参与融合的 SWSD Segment 单元；Step2 基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络抽取 RCSD Segment candidate，执行方向、junc、主轴、粗长度与唯一性趋势硬筛，输出 candidates / replaceable / rejected / summary | `step1-step2 active / callable module runners / innernet script registered / no public cli` |
 | `p01_arm_build` | `modules/p01_arm_build` | P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原；A1 构建三源 Arm、特殊转向、ArmMovement、corrected trunk，A2 构建 LogicalArmGroup / RawArmAlignment / ArmBuildFeedback，P01-Final 输出 `frcsd_road_next_road.geojson`、source map、source policy、audit 与 issue | `p01-v1-a1-a2-final / callable module runners only / no public cli` |
 
 ### Retired
@@ -65,7 +65,7 @@
 - `t03_virtual_junction_anchor` 当前作为 T03 新模块进入 Active，正式范围按 `Step1~Step7` 业务主链表达，历史 `Association / Finalization` 命名只保留在实现映射、兼容输出与 closeout 追溯中。
 - `t04_divmerge_virtual_polygon` 当前作为 T04 新模块进入 Active，正式范围已扩展到 `Step1-7`；其中 `Step1-4` 维持稳定上游中间结果与 Step4 审计工件，`Step5-7` 进入正式研发实现阶段，并默认按 SpecKit 的 `Product / Architecture / Development / Testing / QA` 五视角推进；internal full-input 通过 repo 级 shell/watch 包装 + T04 私有 runner 交付，不新增 repo 官方 CLI。
 - `t05_junction_surface_fusion` 当前作为 T05 正式模块进入 Active，Phase 1 发布统一路口面，Phase 2 发布 SWSD-RCSD relation 与 copy-on-write RCSD 网络成果；Phase 2 成功 relation 的 `base_id` 必须是 RCSD 语义路口主 node id。
-- `t06_segment_fusion_precheck` 当前作为 T06 正式模块启动，范围只到 Segment 替换前置检查，不回改 T01/T05 输出，不新增 repo 官方 CLI 或常驻脚本入口。
+- `t06_segment_fusion_precheck` 当前作为 T06 正式模块启动，范围只到 Segment 替换前置检查，不回改 T01/T05 输出；当前不新增 repo 官方 CLI，内网执行通过 `scripts/t06_run_innernet_precheck.py` 包装模块内 runner。
 - `p01_arm_build` 当前作为 P01 成果模块进入 Active；目录结构与 T0X 模块一致，覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原，不提供 repo 官方 CLI 或常驻脚本入口。
 - stage3 `virtual intersection anchoring` 纳入当前 baseline，不等于最终唯一锚定决策闭环或正式产线闭环。
 - 单 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑入口保留。

@@ -11,6 +11,7 @@ from .rcsd_alignment import build_rcsd_semantic_junction, rcsd_alignment_type_fr
 from .step4_road_surface_fork_binding_shared import _build_surface_summary, _candidate_entries_with_selection
 from .step4_road_surface_fork_geometry import (
     ROAD_SURFACE_FORK_BINDING_REASON,
+    _as_float,
     _dedupe,
     _node_geometries,
     _point_geometry,
@@ -19,6 +20,8 @@ from .step4_road_surface_fork_geometry import (
     _union_geometries,
 )
 from .step4_road_surface_fork_rcsd import _strong_aggregated_unit
+
+MULTI_SEMANTIC_GROUP_LOCAL_WINDOW_MAX_DISTANCE_M = 40.0
 
 
 def _selected_surface_reference_point(
@@ -101,6 +104,19 @@ def _bind_strong_rcsd_to_surface(
         allow_entering_exiting_role_support=allow_recovered_same_side_fork,
     )
     if aggregate is None:
+        return None, None
+    semantic_group_ids = {
+        str(group_id).strip()
+        for group_id in aggregate.get("semantic_group_ids") or ()
+        if str(group_id).strip()
+    }
+    semantic_anchor_distance = _as_float(aggregate.get("semantic_anchor_distance_m"))
+    if (
+        not allow_recovered_same_side_fork
+        and len(semantic_group_ids) > 1
+        and semantic_anchor_distance is not None
+        and semantic_anchor_distance <= MULTI_SEMANTIC_GROUP_LOCAL_WINDOW_MAX_DISTANCE_M
+    ):
         return None, None
 
     required_node = str(aggregate.get("required_node_id") or "").strip()

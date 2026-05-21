@@ -800,7 +800,6 @@ def _promote_selected_surface_rcsd_junction_window(
     )
     if (
         exact_published_semantic_window
-        and len(first_hit) < 2
         and len(_dedupe(aggregate.get("semantic_group_ids") or ())) >= 2
     ):
         preserve_surface_main_evidence = False
@@ -813,6 +812,11 @@ def _promote_selected_surface_rcsd_junction_window(
         local_unit_id=local_unit_id,
         required_node=required_node,
     )
+    if (
+        exact_published_semantic_window
+        and len(_dedupe(aggregate.get("semantic_group_ids") or ())) >= 2
+    ):
+        local_support = None
     if local_support is not None:
         selected_roads = _dedupe(local_support.get("road_ids") or ())
         selected_nodes = _dedupe(local_support.get("node_ids") or ())
@@ -1461,11 +1465,7 @@ def _promote_selected_surface_partial_rcsd(
         return None, None
     if event_unit.evidence_source != "road_surface_fork":
         return None, None
-    force_partial_support_only = bool(
-        event_unit.required_rcsd_node
-        and str(event_unit.positive_rcsd_consistency_level or "").strip().upper() == "B"
-    )
-    if event_unit.required_rcsd_node and not force_partial_support_only:
+    if event_unit.required_rcsd_node:
         return None, None
     if not _has_partial_rcsd_signal(event_unit):
         return None, None
@@ -1480,16 +1480,15 @@ def _promote_selected_surface_partial_rcsd(
         "selected_surface_existing": True,
         "relaxed_rcsd_dropped": False,
     }
-    if not force_partial_support_only:
-        promoted, promoted_detail = _promote_relaxed_primary_rcsd_binding(
-            case_result,
-            event_unit,
-            entry,
-            bind_detail,
-            prefer_required_node=True,
-        )
-        if promoted is not None:
-            return promoted, promoted_detail
+    promoted, promoted_detail = _promote_relaxed_primary_rcsd_binding(
+        case_result,
+        event_unit,
+        entry,
+        bind_detail,
+        prefer_required_node=True,
+    )
+    if promoted is not None:
+        return promoted, promoted_detail
 
     audit = dict(entry.positive_rcsd_audit)
     aggregate = _relaxed_primary_aggregate(audit)

@@ -88,6 +88,9 @@ from ._event_interpretation_unit_preparation import (
 )
 from .local_context import build_step2_local_context
 from .rcsd_selection import resolve_positive_rcsd_selection
+
+
+ROAD_SURFACE_RELAXED_RCSD_MAX_SEMANTIC_DISTANCE_M = 60.0
 from .step4_road_surface_fork_geometry import (
     _ordered_line_from_point,
     _surface_fork_boundary_apex_point,
@@ -1136,8 +1139,74 @@ def _build_result_from_interpretation(
         positive_rcsd_audit=dict(positive_rcsd_decision.positive_rcsd_audit),
         selected_evidence_summary=dict(selected_candidate_summary),
     )
+    positive_audit = dict(positive_rcsd_decision.positive_rcsd_audit or {})
+    selected_local_unit_id = str(positive_audit.get("local_rcsd_unit_id") or "").strip()
+    selected_local_unit_exact = False
+    for local_unit_doc in positive_audit.get("local_rcsd_units") or ():
+        if not isinstance(local_unit_doc, dict):
+            continue
+        if str(local_unit_doc.get("unit_id") or "").strip() != selected_local_unit_id:
+            continue
+        selected_local_unit_exact = str(local_unit_doc.get("role_match_result") or "").strip() == "exact"
+        break
+    rcsd_decision_reason = str(positive_audit.get("rcsd_decision_reason") or "").strip()
+    exact_aggregate_without_exact_local = bool(
+        rcsd_decision_reason == "role_mapping_exact_aggregated"
+        and not selected_local_unit_exact
+    )
+    selected_aggregate_id = str(positive_audit.get("aggregated_rcsd_unit_id") or "").strip()
+    selected_aggregate_doc = next(
+        (
+            aggregate_doc
+            for aggregate_doc in positive_audit.get("aggregated_rcsd_units") or ()
+            if isinstance(aggregate_doc, dict)
+            and str(aggregate_doc.get("unit_id") or "").strip() == selected_aggregate_id
+        ),
+        {},
+    )
+    try:
+        aggregate_semantic_anchor_distance = float(
+            selected_aggregate_doc.get("semantic_anchor_distance_m")
+        )
+    except (TypeError, ValueError):
+        aggregate_semantic_anchor_distance = None
+    selected_aggregate_semantic_group_count = len(
+        {
+            str(group_id).strip()
+            for group_id in selected_aggregate_doc.get("semantic_group_ids") or ()
+            if str(group_id).strip()
+        }
+    )
+    selected_aggregate_first_hit_count = len(
+        {
+            str(road_id).strip()
+            for road_id in positive_audit.get("first_hit_rcsdroad_ids") or ()
+            if str(road_id).strip()
+        }
+    )
+    relaxed_aggregate_too_far = bool(
+        rcsd_decision_reason
+        in {"role_mapping_partial_relaxed_aggregated", "role_mapping_partial_missing_arms"}
+        and aggregate_semantic_anchor_distance is not None
+        and aggregate_semantic_anchor_distance > ROAD_SURFACE_RELAXED_RCSD_MAX_SEMANTIC_DISTANCE_M
+    )
+    relaxed_multi_group_single_first_hit = bool(
+        rcsd_decision_reason == "role_mapping_partial_relaxed_aggregated"
+        and selected_aggregate_semantic_group_count > 1
+        and selected_aggregate_first_hit_count < 2
+    )
+    positive_rcsd_bound_to_junction = bool(
+        positive_rcsd_decision.positive_rcsd_present
+        and positive_rcsd_decision.required_rcsd_node
+        and positive_rcsd_decision.required_rcsd_node_source == "aggregated_node_centric"
+        and str(positive_rcsd_decision.positive_rcsd_consistency_level or "").strip().upper() == "B"
+        and not exact_aggregate_without_exact_local
+        and not relaxed_aggregate_too_far
+        and not relaxed_multi_group_single_first_hit
+    )
     no_bound_target_rcsd = bool(
         road_surface_fork_candidate
+        and not positive_rcsd_bound_to_junction
         and not prepared.unit_context.local_context.direct_target_rc_nodes
         and not prepared.unit_context.local_context.exact_target_rc_nodes
         and prepared.unit_context.local_context.primary_main_rc_node is None

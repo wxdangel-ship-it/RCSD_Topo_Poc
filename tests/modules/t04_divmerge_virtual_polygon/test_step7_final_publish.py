@@ -971,7 +971,7 @@ def test_anchor2_39case_official_surface_scenario_gate(tmp_path: Path) -> None:
         if path.is_dir() and path.name.isdigit()
     )
     expected_case_ids = sorted(ANCHOR2_39CASE_OFFICIAL_EXPECTED_20260503)
-    assert actual_case_ids == expected_case_ids
+    assert sorted(set(expected_case_ids) - set(actual_case_ids)) == []
 
     run_root = run_t04_step14_batch(
         case_root=REAL_ANCHOR_2_ROOT,
@@ -1289,6 +1289,58 @@ def test_real_760256_road_surface_fork_binds_correct_rcsd_junction(
     assert unit["rcsd_semantic_junction"]["member_rcsdnode_ids"] == [
         "5395166300816825"
     ]
+
+
+@pytest.mark.smoke
+def test_real_new_anchor2_rcsd_junction_cases_keep_required_node(
+    tmp_path: Path,
+) -> None:
+    expected_required_nodes = {
+        "699952": "5389859095909003",
+        "724743": "5395796452837745",
+        "758704": "5395099124659921",
+    }
+    missing = [
+        case_id
+        for case_id in expected_required_nodes
+        if not (REAL_ANCHOR_2_ROOT / case_id).is_dir()
+    ]
+    if missing:
+        pytest.skip(f"missing real case packages under {REAL_ANCHOR_2_ROOT}: {missing}")
+
+    run_root = run_t04_step14_batch(
+        case_root=REAL_ANCHOR_2_ROOT,
+        case_ids=list(expected_required_nodes),
+        out_root=tmp_path / "anchor2_new_rcsd_required_nodes",
+        run_id="anchor2_new_rcsd_required_nodes",
+    )
+
+    for case_id, expected_node in expected_required_nodes.items():
+        case_dir = run_root / "cases" / case_id
+        step4_doc = _load_json(case_dir / "step4_event_interpretation.json")
+        step7_status = _load_json(case_dir / "step7_status.json")
+        unit = step4_doc["event_units"][0]
+
+        assert step7_status["final_state"] == "accepted"
+        assert unit["required_rcsd_node"] == expected_node
+        assert expected_node in unit["selected_rcsdnode_ids"]
+        assert unit["positive_rcsd_present"] is True
+        assert unit["rcsd_alignment_type"] == "rcsd_semantic_junction"
+
+    for case_id in ("724743", "758704"):
+        unit = _load_json(
+            run_root / "cases" / case_id / "step4_event_interpretation.json"
+        )["event_units"][0]
+        assert unit["surface_scenario_type"] == "main_evidence_with_rcsd_junction"
+        assert unit["evidence_source"] == "road_surface_fork"
+        assert unit["main_evidence_type"] == "road_surface_fork"
+        assert "road_surface_fork_direct_rcsdroad_fallback_only" not in unit["review_reasons"]
+
+    unit_699952 = _load_json(
+        run_root / "cases" / "699952" / "step4_event_interpretation.json"
+    )["event_units"][0]
+    assert unit_699952["surface_scenario_type"] == "no_main_evidence_with_rcsd_junction"
+    assert unit_699952["selected_evidence"]["candidate_id"] == "event_unit_01:structure:throat:01"
 
 
 @pytest.mark.smoke

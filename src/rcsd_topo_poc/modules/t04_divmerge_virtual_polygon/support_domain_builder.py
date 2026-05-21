@@ -194,8 +194,36 @@ def _case_candidate_rcsd_road_ids_for_negative_mask(
     )
     if not candidate_road_ids:
         return set()
-    if not _clean_doc_id_set(case_alignment_aggregate_doc.get("positive_rcsdroad_ids")):
+    positive_road_ids = _clean_doc_id_set(case_alignment_aggregate_doc.get("positive_rcsdroad_ids"))
+    if not positive_road_ids:
         return set()
+    unit_alignment_results = case_alignment_aggregate_doc.get("unit_alignment_results")
+    if isinstance(unit_alignment_results, list) and unit_alignment_results:
+        rcsd_junction_window_only = all(
+            isinstance(record, dict)
+            and str(record.get("rcsd_alignment_type") or "").strip() == "rcsd_semantic_junction"
+            and str(record.get("decision_reason") or "").strip()
+            == "rcsd_junction_window_forward_rcsd_present"
+            for record in unit_alignment_results
+        )
+        if rcsd_junction_window_only:
+            return set()
+        forward_semantic_units_only = all(
+            isinstance(record, dict)
+            and str(record.get("rcsd_alignment_type") or "").strip() == "rcsd_semantic_junction"
+            and str(record.get("decision_reason") or "").strip()
+            == "aggregated_forward_rcsd_present"
+            for record in unit_alignment_results
+        )
+        conflict_reasons = _clean_doc_id_set(case_alignment_aggregate_doc.get("conflict_reasons"))
+        if (
+            forward_semantic_units_only
+            and len(unit_alignment_results) > 1
+            and bool(case_alignment_aggregate_doc.get("conflict_present"))
+            and conflict_reasons <= {"cross_unit_unrelated_rcsd_alignment_objects"}
+            and len(candidate_road_ids - positive_road_ids) <= 2
+        ):
+            return candidate_road_ids
     if bool(case_alignment_aggregate_doc.get("conflict_present")):
         return set()
     if _clean_doc_id_set(case_alignment_aggregate_doc.get("conflict_reasons")):
@@ -799,6 +827,13 @@ def build_step5_support_domain(case_result: T04CaseResult) -> T04Step5CaseResult
     candidate_mask_protected_rcsd_road_ids = _case_candidate_rcsd_road_ids_for_negative_mask(
         case_alignment_aggregate_doc
     )
+    anchored_reverse_units = [
+        unit
+        for unit in case_result.event_units
+        if str(unit.evidence_source or "").strip() == "rcsd_anchored_reverse"
+    ]
+    if anchored_reverse_units and len(anchored_reverse_units) == len(case_result.event_units):
+        candidate_mask_protected_rcsd_road_ids &= case_positive_rcsd_road_ids
     semantic_entity_rcsd_road_ids = {
         road_id
         for event_unit in case_result.event_units

@@ -9,4 +9,5 @@ __all__ = [
     "step4_residual_graph",
     "step5_staged_residual_graph",
     "skill_v1",
+    "text_bundle",
 ]

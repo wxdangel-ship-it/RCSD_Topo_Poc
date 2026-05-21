@@ -22,6 +22,8 @@
 - 当前已登记正式业务模块 `t02_junction_anchor`
 - 当前已登记正式业务模块 `t03_virtual_junction_anchor`
 - 当前已登记正式业务模块 `t04_divmerge_virtual_polygon`
+- 当前已登记正式业务模块 `t05_junction_surface_fusion`
+- 当前已登记正式业务模块 `t06_segment_fusion_precheck`
 - 当前已登记 P01 成果模块 `p01_arm_build`
 - 当前已纳入治理的工具集合模块 `t00_utility_toolbox`
 
@@ -45,6 +47,8 @@
 - 让 `t03_virtual_junction_anchor` 的 `Step1~Step7` 正式业务主链、冻结 `Step3 legal-space baseline` 与仓库级入口事实保持一致
 - 让 `t03_virtual_junction_anchor` 的 internal full-input repo 级脚本交付面、批次根目录正式成果与 project-level 文档登记保持一致
 - 让 `t04_divmerge_virtual_polygon` 的 Step1-7 模块文档、领域分层实现、Step4 审计输出与最终发布契约保持一致
+- 让 `t05_junction_surface_fusion` 的 Phase 1 路口面融合发布、Phase 2 RCSD junctionization 与 SWSD-RCSD 关系生产、copy-on-write 输出和模块内 callable runner 保持一致
+- 启动 `t06_segment_fusion_precheck`，完成 SWSD 可融合 Segment 识别、RCSD Segment 抽取与趋势硬筛的 Step1 / Step2 文档契约、模块内 callable runner 与最小测试闭环
 - 让 `p01_arm_build` 的 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原 SpecKit 工件、模块文档契约、callable runner、review PNG/GPKG、summary/index 与 final audit 交付面保持一致
 
 ### 2.2 当前阶段明确不做
@@ -69,6 +73,8 @@
 - 已登记正式模块 `t02_junction_anchor` 的项目级登记状态与仓库级入口索引
 - 已登记正式模块 `t03_virtual_junction_anchor` 的 `Step1~Step7` 正式业务主链、冻结 `Step3 legal-space baseline`、repo 级 internal full-input shell/watch 交付面、批量审查产物与入口索引
 - 已登记正式模块 `t04_divmerge_virtual_polygon` 的 Step1-7 正式文档面、模块化实现、Step4 review 输出与最终发布契约
+- 已登记正式模块 `t05_junction_surface_fusion` 的 Phase 1 路口面融合发布、Phase 2 SWSD-RCSD relation 发布与 copy-on-write RCSD 网络输出
+- 已登记正式模块 `t06_segment_fusion_precheck` 的 Step1 / Step2 Segment 融合前置识别、RCSD candidate 抽取、趋势硬筛与错误分析
 - 已登记 P01 成果模块 `p01_arm_build` 的 P01-A1 Arm 构建、P01-A2 Arm 配准、P01-Final F-RCSD RoadNextRoad 还原文档契约、模块内 callable runner、自动检查与人工目视审查产物
 
 ### 3.2 当前非目标（不包含）
@@ -246,4 +252,6 @@
 - `t03_virtual_junction_anchor` 的 internal full-input 当前正式批次根目录成果包括 `virtual_intersection_polygons.gpkg` 与 `nodes.gpkg`；其中 `nodes.gpkg` 仅更新代表 node，`fail3` 只代表 T03 downstream output 语义。
 - `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围已扩展到 `Step1-7`，其中 `Step1-4` 维持既有稳定执行面，`Step5-7` 进入正式研发实现阶段；internal full-input 通过 repo 级脚本包装 + T04 私有 runner 交付，不新增 repo 官方 CLI。
 - `p01_arm_build` 当前作为 Active P01 成果模块进入治理；正式范围覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原，不包含 P01-A3 正式跨源 Movement 空间、禁行迁移、F-RCSD 通行能力最终裁决或 P01-B。
+- `t05_junction_surface_fusion` 当前作为 Active 正式业务模块进入治理；正式范围覆盖 Phase 1 多源路口面融合发布与 Phase 2 RCSD junctionization / SWSD-RCSD relation 生产。Phase 2 输出 `intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg` 与审计汇总；其 RCSDRoad / RCSDNode 变化只通过 copy-on-write 输出表达，不原地修改输入。
+- `t06_segment_fusion_precheck` 当前作为 Active 正式业务模块启动；正式范围仅覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换，不重塑路口，不修改 T01 / T05 输出。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

@@ -53,6 +53,8 @@
   - `t01_skill_v1_perf_markers.jsonl`
   - `distance_gate_scope_check.json`
   - `all_stage_segment_roads/`
+  - `t01_skill_v1_evidence_bundle.txt`
+  - `t01_skill_v1_evidence_bundle_size_report.json`
 - `trace_validation_pair_ids`：
   - 仅作为 Step2 progress / perf trace 透传参数
   - 不是业务输入
@@ -70,6 +72,13 @@
   - 不回退重跑 `Step1-Step5`
   - `--out-root` 必须是新的结果目录，不得与 source dir 或解析出的 `Step5` stage dir 重叠
   - `--compare-freeze-dir` 仅在输入是完整 `Skill v1` out_root 或完整 `debug/` 目录且同时含 `step2/step4/step5/` 时允许使用
+
+- 文本证据包 helper：
+  - 对齐 P01 的单文件文本证据包形式：`zip` 压缩 payload、`base85` 文本编码、payload checksum 与 begin / end marker
+  - helper 不登记为正式 CLI，可通过 `.venv/bin/python -c` 调用 `rcsd_topo_poc.modules.t01_data_preprocess.text_bundle`
+  - 默认 compact 包只覆盖 Skill v1 轻量证据、关键 summary / CSV / hash 与审计 JSON，不默认携带大体量 GPKG
+  - `--include-vectors` 才纳入最终向量 GPKG，`--include-stage-segment-roads` 才纳入 `all_stage_segment_roads/`
+  - 解包必须校验 payload checksum 与包内文件 checksum，并拒绝绝对路径或包含 `..` 的不安全包内路径
 
 ## 3. Working Layers
 

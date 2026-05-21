@@ -85,6 +85,24 @@
 - `unsegmented_roads.gpkg`
 - `unsegmented_roads.csv`
 - `unsegmented_roads_summary.json`
+- `t01_skill_v1_evidence_bundle.txt`
+- `t01_skill_v1_evidence_bundle_size_report.json`
+
+## 文本证据包 helper（非官方 CLI）
+
+文本证据包 helper 用于内外网结果回传与轻量审计取证，不登记为正式 CLI。默认 compact 包只包含 Skill v1 freeze compare 轻量包、关键 summary / CSV / hash 与可用审计 JSON；不默认带入大体量 GPKG。需要完整向量时显式加 `--include-vectors`，需要各阶段 segment body 证据时显式加 `--include-stage-segment-roads`。
+
+打包：
+
+```bash
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t01_data_preprocess.text_bundle import run_t01_export_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" --bundle-root <T01_OUT_ROOT> --out-txt <T01_OUT_ROOT>/t01_skill_v1_evidence_bundle.txt
+```
+
+解包：
+
+```bash
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t01_data_preprocess.text_bundle import run_t01_decode_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" --bundle-txt <T01_OUT_ROOT>/t01_skill_v1_evidence_bundle.txt --out-dir <DECODED_DIR>
+```
 
 ## 文档索引
 

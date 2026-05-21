@@ -5,7 +5,7 @@ import json
 import shutil
 import time
 import tracemalloc
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -31,6 +31,10 @@ from rcsd_topo_poc.modules.t02_junction_anchor.stage4_geometry_utils import (
     Stage4RunError,
 )
 from rcsd_topo_poc.modules.t02_junction_anchor.stage4_geometry_utils import *
+from rcsd_topo_poc.modules.t02_junction_anchor.stage4_rcsdnode_real_evidence import (
+    apply_selected_rcsdroad_real_evidence_tolerance,
+    suppress_weak_evidence_risks_for_real_rcsdnode_evidence,
+)
 from rcsd_topo_poc.modules.t02_junction_anchor.stage4_step2_step3_contract import (
     Stage4LegacyStep4Bridge,
     Stage4LegacyStep4Readiness,
@@ -619,6 +623,33 @@ def run_t02_stage4_divmerge_virtual_polygon(
             support_clip_geometry=support_clip_geometry,
             preferred_trunk_branch_id=event_axis_branch_id,
         )
+        primary_rcsdnode_tolerance = apply_selected_rcsdroad_real_evidence_tolerance(
+            polygon_geometry=polygon_geometry,
+            primary_main_rc_node=primary_main_rc_node,
+            primary_rcsdnode_tolerance=primary_rcsdnode_tolerance,
+            selected_rcsd_roads=selected_rcsd_roads,
+            drivezone_union=drivezone_union,
+            rcsdnode_seed_mode=rcsdnode_seed_mode,
+        )
+        filtered_risk_signals = suppress_weak_evidence_risks_for_real_rcsdnode_evidence(
+            risk_signals=step4_event_interpretation.risk_signals,
+            primary_rcsdnode_tolerance=primary_rcsdnode_tolerance,
+            rcsdnode_seed_mode=rcsdnode_seed_mode,
+        )
+        if filtered_risk_signals != step4_event_interpretation.risk_signals:
+            filtered_evidence_risks = suppress_weak_evidence_risks_for_real_rcsdnode_evidence(
+                risk_signals=step4_event_interpretation.evidence_decision.risk_signals,
+                primary_rcsdnode_tolerance=primary_rcsdnode_tolerance,
+                rcsdnode_seed_mode=rcsdnode_seed_mode,
+            )
+            step4_event_interpretation = replace(
+                step4_event_interpretation,
+                risk_signals=filtered_risk_signals,
+                evidence_decision=replace(
+                    step4_event_interpretation.evidence_decision,
+                    risk_signals=filtered_evidence_risks,
+                ),
+            )
         polygon_geometry = primary_rcsdnode_tolerance["extended_polygon_geometry"]
         if (
             primary_main_rc_node is not None

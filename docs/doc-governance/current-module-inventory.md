@@ -12,6 +12,8 @@
   - `t02_junction_anchor`
   - `t03_virtual_junction_anchor`
   - `t04_divmerge_virtual_polygon`
+  - `t05_junction_surface_fusion`
+  - `t06_segment_fusion_precheck`
   - `p01_arm_build`
 - `Historical Reference`：无
 - `Retired`：无
@@ -26,6 +28,8 @@
 | `t02_junction_anchor` | `modules/t02_junction_anchor` | stage1 `DriveZone / has_evd gate` + stage2 `anchor recognition / anchor existence` + stage3 `virtual intersection anchoring` baseline；文本证据包与 `t02-fix-node-error-2` 为独立支撑入口 | 已补齐标准 architecture 文档组、`06-accepted-baseline.md`、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | stage1 / stage2 / stage3 已实现；`t02-virtual-intersection-poc` 已支持 `case-package` 唯一正式验收基线与 `full-input` 完整数据 `fixture / dev-only / regression` 模式 | T01 是其上游事实源之一；模块正文可在独立重构轮次中维护，本盘点只保留项目级登记与入口索引 |
 | `t03_virtual_junction_anchor` | `modules/t03_virtual_junction_anchor` | `Step1~Step7` 正式业务主链；Anchor61 `case-package` / internal full-input 局部上下文输入、合法空间冻结、RCSD 关联、foreign / excluded 负向约束、受约束几何、最终发布、平铺 PNG、索引、summary、batch aggregate polygons、downstream `nodes.gpkg` 与 terminal case records | 已补齐标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md`，并新增业务步骤到实现阶段映射文档 | `t03-step3-legal-space` 作为冻结前置入口保留，`t03-rcsd-association` 为当前 RCSD 关联 CLI；`Association / Finalization` 作为实现/输出命名保留，不再作为正式需求主结构 | T03 当前已完成正式继承与重构收口；当前剩余 `707913 / 954218 / 520394575` 已人工确认属于输入数据错误 |
 | `t04_divmerge_virtual_polygon` | `modules/t04_divmerge_virtual_polygon` | `Step1-4` doc-first formalization；case-package 输入、admission/local-context/topology/event-unit interpretation、Step4 overview/event-unit review、flat mirror、index、summary | 已补齐标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | T04 Step1-4 runner 已模块化实现，优先复用 T02 Stage4 内核与 T03 review closeout 组织，不新增 repo 官方 CLI | 当前仅正式覆盖 Step1-4；Step5-7 仍留待后续轮次承接 |
+| `t05_junction_surface_fusion` | `modules/t05_junction_surface_fusion` | Phase 1 多源路口面融合发布；Phase 2 RCSD junctionization、SWSD-RCSD relation 生产与 copy-on-write `rcsdroad_out.gpkg / rcsdnode_out.gpkg` 输出 | 已具备 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | Phase 1 / Phase 2 模块内 callable runner 已实现；T05 内网 helper / experiment 脚本已登记为 repo 级脚本入口 | 当前补齐项目级登记，T06 Step2 正式消费 Phase 2 relation 与 copy-on-write RCSD 网络成果 |
+| `t06_segment_fusion_precheck` | `modules/t06_segment_fusion_precheck` | Step1 SWSD 可融合 Segment 识别；Step2 RCSD Segment candidate 抽取、趋势硬筛、可替换集合与错误分析 | 本轮按新模块启动要求建立 `INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` 与 architecture 文档 | 本轮提供模块内 callable runner，不新增 repo CLI、`scripts/`、`tools/`、`Makefile` 或模块 `run.py` / `__main__.py` | 当前范围不执行 Segment 替换，不重塑路口，不修改 T01/T05 输出 |
 | `p01_arm_build` | `modules/p01_arm_build` | P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原；输出 Arm / Movement / LogicalArmGroup / final GeoJSON / audit / review PNG / review GPKG / summary / review index | 已建立标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | A1、A2 与 P01-Final 模块内 callable runner 落地；不提供 repo CLI、`scripts/` 常驻脚本、模块 `run.py` 或 `__main__.py` | P01 目录结构与 T0X 模块一致 |
 
 ## 当前 Support Retained 模块
@@ -42,7 +46,7 @@
 
 ## 当前结论
 
-1. 当前仓库已登记正式业务模块 `t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon` 与 P01 成果模块 `p01_arm_build`。
+1. 当前仓库已登记正式业务模块 `t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck` 与 P01 成果模块 `p01_arm_build`。
 2. `t00_utility_toolbox` 已纳入治理，定位为工具集合模块 / 非业务生产模块。
 3. `_template` 仍是后续新模块启动模板，不属于业务模块生命周期对象。
 4. 后续任何新增 RCSD 模块仍应先按模板建立文档契约，再进入实现阶段。

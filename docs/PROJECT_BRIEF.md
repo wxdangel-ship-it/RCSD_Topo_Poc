@@ -24,6 +24,8 @@
 - 维护当前已登记正式模块 `t02_junction_anchor`
 - 维护当前已登记正式模块 `t03_virtual_junction_anchor`
 - 维护当前已登记正式模块 `t04_divmerge_virtual_polygon`
+- 维护当前已登记正式模块 `t05_junction_surface_fusion`
+- 启动并维护当前已登记正式模块 `t06_segment_fusion_precheck`
 - 维护当前已登记 P01 成果模块 `p01_arm_build`
 
 ## 3. 当前非目标
@@ -34,7 +36,7 @@
 
 ## 4. 当前结构性结论
 
-- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`
+- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`
 - 当前已登记 P01 成果模块：`p01_arm_build`
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`
 - `t00_utility_toolbox` 的定位是工具集合模块 / 非业务生产模块
@@ -47,6 +49,8 @@
 - `t03_virtual_junction_anchor` 当前 `nodes.gpkg` 仅更新代表 node 的 `is_anchor`：`accepted => yes`，`rejected / runtime_failed => fail3`；其中 `fail3` 只属于 T03 downstream output 语义，不回写输入原始 `nodes.gpkg`，也不反向修改 T02 上游契约
 - `t03_watch_internal_full_input.sh` 当前采用 T02 风格的 formal-first 监控口径，默认关注 `total / completed / running / pending / success / failed`
 - `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围已扩展到 `Step1-7`，其中 `Step1-4` 维持既有 `case-package` 输入下的 Step4 review PNG、flat mirror、index 与 summary，`Step5-7` 进入正式研发实现阶段，且默认遵循 SpecKit 的 `Product / Architecture / Development / Testing / QA` 五视角覆盖；internal full-input 通过 repo 级 shell/watch 包装 + T04 私有 runner 交付，不新增 repo 官方 CLI
+- `t05_junction_surface_fusion` 当前作为 Active 正式业务模块进入治理；Phase 1 负责多源路口面融合发布，Phase 2 负责 RCSD junctionization、SWSD-RCSD relation 生产与 copy-on-write `rcsdroad_out.gpkg / rcsdnode_out.gpkg` 输出
+- `t06_segment_fusion_precheck` 当前作为 Active 正式业务模块启动；本轮只覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment 抽取、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换或路口重塑
 - `p01_arm_build` 当前作为 Active P01 成果模块进入治理；正式范围覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 规则级还原，输出 Trace / ThroughDecisionAudit / IssueReport / LogicalArmGroup / RawArmAlignment / ArmBuildFeedback / corrected_final_arms / arm_source_profiles / source_arm_pass_rules / final_generation_decisions / frcsd_road_next_road.geojson / final audit / review PNG / review GPKG / summary / review index，不提供 repo 官方 CLI 或 `scripts/` 常驻命令
 - `_template` 仅是模板目录，不属于模块生命周期盘点对象
 - 模块根目录不放 `SKILL.md`

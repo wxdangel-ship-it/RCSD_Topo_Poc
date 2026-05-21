@@ -15,6 +15,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     write_json,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _find_repo_root
+from rcsd_topo_poc.modules.t01_data_preprocess.text_bundle import run_t01_export_text_bundle
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     ROAD_S_GRADE_FIELD,
     get_road_segmentid,
@@ -465,6 +466,10 @@ def write_skill_v1_bundle(
             encoding="utf-8",
         )
 
+    text_bundle = run_t01_export_text_bundle(bundle_root=resolved_out_dir, mode=mode)
+    if not text_bundle.success:
+        raise ValueError(f"T01 text evidence bundle export failed: {text_bundle.failure_detail}")
+
     return {
         "manifest_path": str(manifest_path.resolve()),
         "summary_path": str(summary_path.resolve()),
@@ -473,6 +478,11 @@ def write_skill_v1_bundle(
         "trunk_membership_path": str(trunk_path.resolve()),
         "nodes_hash_path": str(nodes_hash_path.resolve()),
         "roads_hash_path": str(roads_hash_path.resolve()),
+        "text_bundle_path": str(text_bundle.bundle_txt_path.resolve()),
+        "text_bundle_size_report_path": (
+            str(text_bundle.size_report_path.resolve()) if text_bundle.size_report_path is not None else None
+        ),
+        "text_bundle_size_bytes": text_bundle.bundle_size_bytes,
         "summary": summary,
     }
 

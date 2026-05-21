@@ -50,8 +50,10 @@
 ## 聚合与审计
 - [step6_segment_aggregation.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/step6_segment_aggregation.py)
 - [freeze_compare.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/freeze_compare.py)
+- [text_bundle.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/text_bundle.py)
 - [slice_builder.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t01_data_preprocess/slice_builder.py)
 - 职责：
   - Step6 Segment 聚合
   - compare / slice / 审计辅助
+  - 单文件文本证据包打包 / 解包 helper
   - 单向补段启用后继续以 Step5 双向输出做 active baseline 守护

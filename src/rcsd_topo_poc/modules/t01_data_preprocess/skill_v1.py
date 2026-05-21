@@ -392,6 +392,8 @@ def _write_summary_md(*, out_path: Path, summary: dict[str, Any]) -> None:
             lines.append(f"- distance_gate_scope_check_path: `{summary['distance_gate_scope_check_path']}`")
         if summary.get("all_stage_segment_roads_path"):
             lines.append(f"- all_stage_segment_roads_path: `{summary['all_stage_segment_roads_path']}`")
+        if summary.get("text_bundle_path"):
+            lines.append(f"- text_bundle_path: `{summary['text_bundle_path']}`")
         if summary.get("oneway_segment_summary_path"):
             lines.append(f"- oneway_segment_summary_path: `{summary['oneway_segment_summary_path']}`")
         if summary.get("unsegmented_roads_path"):
@@ -929,6 +931,9 @@ def run_t01_skill_v1(
                 "final_roads_path": str(final_roads_path.resolve()),
                 "bundle_manifest_path": bundle_info.get("manifest_path"),
                 "bundle_summary_path": bundle_info.get("summary_path"),
+                "text_bundle_path": bundle_info.get("text_bundle_path"),
+                "text_bundle_size_report_path": bundle_info.get("text_bundle_size_report_path"),
+                "text_bundle_size_bytes": bundle_info.get("text_bundle_size_bytes"),
                 "all_stage_segment_roads_path": bundle_info.get("all_stage_segment_roads_path"),
                 "segment_path": bundle_info.get("segment_path"),
                 "inner_nodes_path": bundle_info.get("inner_nodes_path"),
@@ -1086,6 +1091,9 @@ def run_t01_skill_v1(
                 "final_roads_path": None,
                 "bundle_manifest_path": None,
                 "bundle_summary_path": None,
+                "text_bundle_path": None,
+                "text_bundle_size_report_path": None,
+                "text_bundle_size_bytes": None,
                 "all_stage_segment_roads_path": None,
                 "segment_path": None,
                 "inner_nodes_path": None,
@@ -1311,6 +1319,9 @@ def run_t01_skill_v1(
             "final_roads_path": str(final_roads_path.resolve()),
             "bundle_manifest_path": bundle_info["manifest_path"],
             "bundle_summary_path": bundle_info["summary_path"],
+            "text_bundle_path": bundle_info.get("text_bundle_path"),
+            "text_bundle_size_report_path": bundle_info.get("text_bundle_size_report_path"),
+            "text_bundle_size_bytes": bundle_info.get("text_bundle_size_bytes"),
             "all_stage_segment_roads_path": bundle_info.get("all_stage_segment_roads_path"),
             "segment_path": bundle_info.get("segment_path"),
             "inner_nodes_path": bundle_info.get("inner_nodes_path"),
@@ -1724,6 +1735,9 @@ def run_t01_skill_v1_continue_oneway(
             "final_roads_path": str(final_roads_path.resolve()),
             "bundle_manifest_path": bundle_info.get("manifest_path"),
             "bundle_summary_path": bundle_info.get("summary_path"),
+            "text_bundle_path": bundle_info.get("text_bundle_path"),
+            "text_bundle_size_report_path": bundle_info.get("text_bundle_size_report_path"),
+            "text_bundle_size_bytes": bundle_info.get("text_bundle_size_bytes"),
             "all_stage_segment_roads_path": bundle_info.get("all_stage_segment_roads_path"),
             "segment_path": bundle_info.get("segment_path"),
             "inner_nodes_path": bundle_info.get("inner_nodes_path"),

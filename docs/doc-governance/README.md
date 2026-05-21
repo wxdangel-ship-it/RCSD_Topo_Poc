@@ -38,6 +38,8 @@
   - `t02_junction_anchor`
   - `t03_virtual_junction_anchor`
   - `t04_divmerge_virtual_polygon`
+  - `t05_junction_surface_fusion`
+  - `t06_segment_fusion_precheck`
   - `p01_arm_build`
 - Support Retained：
   - `t00_utility_toolbox`
@@ -52,6 +54,8 @@
 - `t03_virtual_junction_anchor` 当前进入 Active 模块集合；其正式业务主链按 `Step1~Step7` 表达，覆盖 case 受理、模板归类、合法空间冻结、RCSD 关联、foreign / excluded 负向约束、受约束几何与最终发布。
 - `t03_virtual_junction_anchor` 当前 repo 官方入口保留 `t03-step3-legal-space` 与 `t03-rcsd-association`；`Association / Finalization` 只作为实现阶段与输出命名保留，不再作为正式需求主结构。
 - `t04_divmerge_virtual_polygon` 当前进入 Active 模块集合；其正式范围为 `Step1-7` 的模块化实现、Step7 发布层与 internal full-input repo 级脚本包装；不新增 repo 官方 CLI 子命令。
+- `t05_junction_surface_fusion` 当前进入 Active 模块集合；其正式范围覆盖 Phase 1 路口面融合发布与 Phase 2 RCSD junctionization / SWSD-RCSD relation 生产，Phase 2 以 copy-on-write 输出表达 RCSD 网络变化。
+- `t06_segment_fusion_precheck` 当前进入 Active 模块集合；其正式范围仅覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换。
 - `p01_arm_build` 当前进入 Active 模块集合；其正式范围为 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原，当前仅提供模块内可调用 runner，不提供 repo 官方 CLI 子命令或 `scripts/` 常驻命令。
 - 未在模块生命周期文档中登记的模块目录，不自动视为当前正式治理对象。
 

@@ -275,7 +275,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - `divmerge_virtual_anchor_surface.gpkg` 只发布 `final_state = accepted` 的 surface candidate；rejected layer / reject stub 仅用于定位与审计。
 - 发布层与 summary 应保留或可追溯 `mainnodeid / kind_2 / junction_type / patch_id / final_state`，为后续 T05 映射做准备。
 - 由 `nodes_publish.py` 在 Step7 closeout 后消费最终状态，基于输入 `nodes.gpkg` 做 copy-on-write，只更新当前 selected / effective case 的 representative node `is_anchor`。
-- nodes 写回固定为 `accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
+- nodes 写回固定为 `accepted -> yes`，Step8 fallback relation 成功 -> `fail4_fallback`，其余 `rejected / runtime_failed / formal result missing -> fail4`。
 
 边界：
 

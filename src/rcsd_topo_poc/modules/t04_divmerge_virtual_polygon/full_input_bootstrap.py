@@ -94,7 +94,6 @@ def build_preflight_doc(
             "has_evd": "yes",
             "is_anchor": "no",
             "kind_2_in": [8, 16, 128],
-            "or_kind": 128,
         },
         "raw_case_count": len(discovered_case_ids),
         "raw_case_ids": list(discovered_case_ids),
@@ -126,7 +125,7 @@ def write_candidate_artifacts(
         candidate_manifest_path,
         {
             "generated_at": now_text(),
-            "candidate_discovery_rule": "representative node, has_evd=yes, is_anchor=no, kind_2 in {8,16,128} or kind=128",
+            "candidate_discovery_rule": "representative node, has_evd=yes, is_anchor=no, kind_2 in {8,16,128}",
             "discovered_case_count": len(discovered_case_ids),
             "discovered_case_ids": list(discovered_case_ids),
             "selected_case_count": len(selected_case_ids),

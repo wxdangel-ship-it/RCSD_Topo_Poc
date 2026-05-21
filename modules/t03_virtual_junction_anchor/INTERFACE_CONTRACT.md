@@ -91,7 +91,7 @@ candidate discovery 只允许发现满足以下条件的代表 node：
 - `is_anchor = no`
 - `kind_2 in {4, 2048}`
 
-`is_anchor in {yes, null, fail1, fail2, fail3, fail4}` 与 `kind_2 in {8, 16, 128}` 均不得进入 T03 full-input 候选。
+`is_anchor in {yes, null, fail1, fail2, fail3, fail4, fail4_fallback}` 与 `kind_2 in {8, 16, 128}` 均不得进入 T03 full-input 候选。
 
 ### 2.3 字段与 CRS 前提
 

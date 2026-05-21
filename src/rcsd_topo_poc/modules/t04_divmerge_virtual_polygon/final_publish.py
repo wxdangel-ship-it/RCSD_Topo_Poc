@@ -1254,7 +1254,7 @@ def write_step7_batch_outputs(
         "step6_guard_field_missing_case_ids": step6_guard_field_missing_case_ids,
         "step6_guard_failure_reject_mapping_passed": not step6_guard_mapping_issues,
         "step6_guard_failure_reject_mapping_issues": step6_guard_mapping_issues,
-        "nodes_writeback_rule": "accepted->yes; rejected/runtime_failed/formal_result_missing->fail4",
+        "nodes_writeback_rule": "accepted->yes; fallback_success->fail4_fallback; rejected/runtime_failed/formal_result_missing->fail4",
         "nodes_writeback_checked_in_step7_consistency_report": False,
         "nodes_writeback_check_reason": "nodes_publish owns downstream node materialization and preserves the existing value domain",
         "step7_guard_consistency_passed": step7_guard_consistency_passed,

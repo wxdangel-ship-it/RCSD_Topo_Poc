@@ -81,7 +81,7 @@ full-input 执行面使用 full-layer source：
 - candidate discovery 只负责发现 representative candidates，不替代 Step1 admission。
 - full-input 正式 candidate discovery 只允许发现满足 `has_evd = yes`、`is_anchor = no`、`kind_2 in {8, 16, 128}` 的 representative node。
 - `kind` 只允许作为 legacy 兼容或审计字段，不得在 `kind_2` 缺失或 `kind_2` 不属于 `{8, 16, 128}` 时使 node 进入正式 full-input 候选。
-- `is_anchor in {yes, null, fail1, fail2, fail3, fail4}` 与 `kind_2 in {4, 2048}` 均不得进入 T04 full-input 候选。
+- `is_anchor in {yes, null, fail1, fail2, fail3, fail4, fail4_fallback}` 与 `kind_2 in {4, 2048}` 均不得进入 T04 full-input 候选。
 - full-input 先 preload shared layers 与 spatial index，再按 case 收集局部 feature 并直跑 Step1-7。
 - downstream `nodes.gpkg` 必须基于 full-input 输入整层 `nodes.gpkg` 做 copy-on-write。
 
@@ -468,10 +468,11 @@ Step4 arbiter rearchitecture 正式约束：`surface_scenario_type / surface_gen
 T04 downstream `nodes.gpkg` 只正式更新 `is_anchor`：
 
 - Step7 `accepted` -> `is_anchor = yes`
+- Step8 fallback relation 成功且能映射到 RCSD 语义路口 group id -> `is_anchor = fail4_fallback`
 - Step7 `rejected` -> `is_anchor = fail4`
 - `runtime_failed / formal result missing` -> `is_anchor = fail4`
 
-`fail4` 是 T04 downstream nodes 写回值域，不改变 T03 的 `fail3` 语义。
+`fail4_fallback` 是 T04 downstream nodes 私有关系补齐状态，表示不生产新的 T04 路口面但已确认 SWSD-RCSD 语义路口关系；`fail4` 仍表示 T04 失败且未 fallback 成功。二者均不改变 T03 的 `fail3` 语义。
 
 ## 4. Outputs
 
@@ -681,7 +682,7 @@ accepted surface 主层与 summary 至少应保留或可追溯：
   - `no_related_rcsd`
   - `geometry_not_accepted`
   - `ambiguous_review`
-- `status_suggested = 0` 只允许在 `final_state = accepted` 且能确定 RCSD semantic junction candidate 时出现。
+- `status_suggested = 0` 只允许在 `final_state = accepted` 且能确定 RCSD semantic junction candidate，或 Step8 fallback relation 成功且 `base_id_candidate` 已映射为 RCSD 语义路口 group id 时出现。
 - 只有 RCSDRoad / RCSDNode 支持但不构成 RCSD 语义路口时，必须输出 `rcsd_present_not_junction / status_suggested = 1`，不得伪造成成功匹配。
 - `surface_candidate_present = 1` 仅表示存在 T04 accepted surface candidate；它不等同于最终 SWSD-RCSD semantic junction 匹配成功。
 
@@ -705,6 +706,8 @@ accepted surface 主层与 summary 至少应保留或可追溯：
 - `previous_is_anchor`
 - `new_is_anchor`
 - `step7_state`
+- `fallback_base_id_candidate`
+- `fallback_relation_state`
 - `reason`
 
 `nodes_anchor_update_audit.json` 至少包含：
@@ -715,14 +718,15 @@ accepted surface 主层与 summary 至少应保留或可追溯：
 - `total_update_count`
 - `updated_to_yes_count`
 - `updated_to_fail4_count`
+- `updated_to_fail4_fallback_count`
 - `rows`
 
 一致性要求：
 
-- `nodes.gpkg` 中 representative node 的 `is_anchor` 必须与 Step7 final_state 映射一致。
+- `nodes.gpkg` 中 representative node 的 `is_anchor` 必须与 Step7 final_state 和 Step8 fallback relation 结果映射一致。
 - audit csv/json 必须与 `nodes.gpkg` 实际更新一致。
 - audit csv/json 必须与 `divmerge_virtual_anchor_surface_summary.*` 和 `step7_consistency_report.json` 一致。
-- `857993` 必须写为 `fail4`。
+- 未触发 Step8 fallback relation 成功的失败 case 必须写为 `fail4`。
 - `699870` 当前 baseline 中为 accepted，必须写为 `yes`。
 
 ## 5. EntryPoints
@@ -734,6 +738,7 @@ accepted surface 主层与 summary 至少应保留或可追溯：
 - `run_t04_step14_batch(...)`
 - `run_t04_step14_case(...)`
 - `run_t04_internal_full_input(...)`
+- `enrich_t04_relation_evidence_with_fallback(...)`：postprocess-existing 策略，消费既有 T04 run root 与输入 nodes / RCSDNode，覆盖写回 `t04_swsd_rcsd_relation_evidence.csv/json` 并产出 fallback audit；不生产新路口面。
 
 repo 级包装脚本：
 
@@ -752,7 +757,7 @@ Anchor_2 official 39-case baseline 是当前唯一正式验收基线：
 - `accepted = 35`
 - `rejected = 4`
 - rejected case：`607602562`、`760598`、`760936`、`857993`
-- downstream nodes 写回必须为 `yes = 35 / fail4 = 4`
+- downstream nodes 写回必须满足：accepted 为 `yes`；Step8 fallback relation 成功的失败 case 为 `fail4_fallback`；其余 failed case 为 `fail4`
 - 冻结 manifest：`tests/modules/t04_divmerge_virtual_polygon/data/anchor2_official_39case_baseline_20260504.json`
 - 冻结测试入口：`tests/modules/t04_divmerge_virtual_polygon/test_step7_final_publish.py::test_anchor2_39case_official_surface_scenario_gate`
 

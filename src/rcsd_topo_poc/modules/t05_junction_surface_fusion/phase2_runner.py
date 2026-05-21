@@ -118,7 +118,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     mark("read_evidence_sec", evidence_started)
 
     plan_started = perf_counter()
-    contexts = _target_contexts(surfaces, swsd_nodes)
+    contexts = _target_contexts(surfaces, swsd_nodes, evidence_rows=evidence_rows)
     sorted_contexts = sorted(contexts, key=lambda item: item.target_id)
     decision_plan, plan_stats = _build_decision_plan(sorted_contexts, evidence_by_target)
     mark("build_plan_sec", plan_started)
@@ -536,7 +536,12 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     )
 
 
-def _target_contexts(surfaces: list[dict[str, Any]], swsd_nodes: list[dict[str, Any]]) -> list[SwsdTargetContext]:
+def _target_contexts(
+    surfaces: list[dict[str, Any]],
+    swsd_nodes: list[dict[str, Any]],
+    *,
+    evidence_rows: list[Any] | None = None,
+) -> list[SwsdTargetContext]:
     nodes_by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for node in swsd_nodes:
         props = node.get("properties") or {}
@@ -566,7 +571,42 @@ def _target_contexts(surfaces: list[dict[str, Any]], swsd_nodes: list[dict[str, 
                 representative_properties=rep_props,
             )
         )
+    known_targets = {context.target_id for context in contexts}
+    for evidence in evidence_rows or []:
+        if evidence.target_id in known_targets or not _is_t04_fallback_relation(evidence):
+            continue
+        nodes = nodes_by_target.get(evidence.target_id, [])
+        representative = _representative_node(nodes, evidence.target_id)
+        rep_props = dict(representative.get("properties") or {}) if representative else {}
+        if _text(_field_value(rep_props, "is_anchor")) != "fail4_fallback":
+            continue
+        point = _semantic_point(nodes, None)
+        projection_points = tuple(_point_of(node.get("geometry")) for node in nodes if node.get("geometry") is not None)
+        contexts.append(
+            SwsdTargetContext(
+                target_id=evidence.target_id,
+                surface_id=f"T04_FALLBACK:{evidence.target_id}",
+                junction_type=_text(evidence.row.get("junction_type")) or "unknown",
+                point=point,
+                projection_points=projection_points or (point,),
+                level=_minus_one_or_missing(_field_value(rep_props, "grade")),
+                is_highway=_minus_one_or_missing(_field_value(rep_props, "closed_con")),
+                representative_properties=rep_props,
+            )
+        )
+        known_targets.add(evidence.target_id)
     return contexts
+
+
+def _is_t04_fallback_relation(evidence: Any) -> bool:
+    row = getattr(evidence, "row", {}) or {}
+    surface_candidate_present = str(row.get("surface_candidate_present", "")).strip()
+    return (
+        getattr(evidence, "source_module", "") == "T04"
+        and _text(row.get("status_suggested")) == "0"
+        and surface_candidate_present in {"0", "false", "False"}
+        and _text(row.get("relation_state")).startswith("success_")
+    )
 
 
 def _required_path(path: str | Path | None, label: str) -> Path:

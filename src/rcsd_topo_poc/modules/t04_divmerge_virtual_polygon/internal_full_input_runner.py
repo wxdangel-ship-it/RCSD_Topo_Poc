@@ -49,6 +49,7 @@ from .full_input_streamed_results import (
     write_terminal_case_record,
 )
 from .nodes_publish import augment_step7_consistency_report, write_t04_nodes_outputs
+from .relation_fallback import enrich_t04_relation_evidence_with_fallback
 
 
 DEFAULT_OUT_ROOT = Path("/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t04_internal_full_input")
@@ -200,7 +201,9 @@ def _write_summary(
         "nodes_total_update_count": nodes_outputs.get("nodes_total_update_count"),
         "nodes_updated_to_yes_count": nodes_outputs.get("nodes_updated_to_yes_count"),
         "nodes_updated_to_fail4_count": nodes_outputs.get("nodes_updated_to_fail4_count"),
+        "nodes_updated_to_fail4_fallback_count": nodes_outputs.get("nodes_updated_to_fail4_fallback_count"),
         "nodes_consistency_passed": nodes_outputs.get("nodes_consistency_passed"),
+        "relation_fallback": step7_outputs.get("relation_fallback", {}),
         **visual_outputs,
     }
     summary_path = run_root / "summary.json"
@@ -664,17 +667,30 @@ def run_t04_internal_full_input(
                     or "formal_result_missing"
                 ),
             }
+        selected_case_docs = [
+            {"case_id": case_id, "mainnodeid": case_id}
+            for case_id in selected_case_ids
+        ]
+        relation_fallback_outputs = enrich_t04_relation_evidence_with_fallback(
+            run_root=run_root,
+            selected_cases=selected_case_docs,
+            source_node_features=shared_layers.node_layer.features,
+            rcsdnode_features=shared_layers.rcsdnode_layer.features,
+            failure_status_by_case=failure_status_by_case,
+            input_dataset_id=str(preflight_doc.get("input_dataset_id") or ""),
+        )
+        step7_outputs["relation_fallback"] = relation_fallback_outputs
         nodes_outputs = write_t04_nodes_outputs(
             run_root=run_root,
             source_node_features=shared_layers.node_layer.features,
-            selected_cases=[
-                {"case_id": case_id, "mainnodeid": case_id}
-                for case_id in selected_case_ids
-            ],
+            selected_cases=selected_case_docs,
             artifacts=ordered_artifacts,
             failure_status_by_case=failure_status_by_case,
             input_dataset_id=str(preflight_doc.get("input_dataset_id") or ""),
             input_nodes_path=input_paths["nodes_path"],
+            fallback_success_case_ids=relation_fallback_outputs["fallback_success_case_ids"],
+            fallback_reason_by_case=relation_fallback_outputs["fallback_reason_by_case"],
+            fallback_base_id_by_case=relation_fallback_outputs["fallback_base_id_by_case"],
         )
         augment_step7_consistency_report(
             consistency_report_path=Path(str(step7_outputs["consistency_report_path"])),

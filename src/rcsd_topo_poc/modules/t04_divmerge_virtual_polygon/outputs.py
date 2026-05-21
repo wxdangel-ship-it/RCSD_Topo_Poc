@@ -898,6 +898,7 @@ def write_summary(
                 "nodes_total_update_count": nodes_outputs.get("nodes_total_update_count"),
                 "nodes_updated_to_yes_count": nodes_outputs.get("nodes_updated_to_yes_count"),
                 "nodes_updated_to_fail4_count": nodes_outputs.get("nodes_updated_to_fail4_count"),
+                "nodes_updated_to_fail4_fallback_count": nodes_outputs.get("nodes_updated_to_fail4_fallback_count"),
                 "nodes_consistency_passed": nodes_outputs.get("nodes_consistency_passed"),
             }
         )

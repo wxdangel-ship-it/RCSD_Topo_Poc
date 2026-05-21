@@ -130,8 +130,8 @@
   - 发布层去向
   - `divmerge_virtual_anchor_surface*` 成果与审计材料之间的映射关系
 - `t04_swsd_rcsd_relation_evidence.csv/json` 必须可追溯到 Step4/Step7 证据；`status_suggested=0` 只允许在 accepted 且能确定 RCSD semantic junction candidate 时出现，support-only / road-only 证据必须保持失败建议状态。
-- T04 official baseline 不只校验 `divmerge_virtual_anchor_surface*` surface 发布层，也必须校验 downstream `nodes.gpkg` 的 representative node `is_anchor` 写回结果与 Step7 `final_state` 一致：`accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
-- `nodes_anchor_update_audit.csv/json` 必须与 `nodes.gpkg` 实际写回、`divmerge_virtual_anchor_surface_summary.*` 和 `step7_consistency_report.json` 保持一致；`857993` 必须保持 `fail4`，`699870` 必须保持 `yes`。
+- T04 official baseline 不只校验 `divmerge_virtual_anchor_surface*` surface 发布层，也必须校验 downstream `nodes.gpkg` 的 representative node `is_anchor` 写回结果与 Step7 / Step8 一致：`accepted -> yes`，Step8 fallback relation 成功 -> `fail4_fallback`，其余 `rejected / runtime_failed / formal result missing -> fail4`。
+- `nodes_anchor_update_audit.csv/json` 必须与 `nodes.gpkg` 实际写回、`divmerge_virtual_anchor_surface_summary.*` 和 `step7_consistency_report.json` 保持一致；未触发 fallback 的失败 case 必须保持 `fail4`，accepted case 必须保持 `yes`。
 
 ## 可维护性
 
@@ -140,7 +140,7 @@
 - 与 T02/T03 的复用边界显式写入文档。
 - 可以参考 T02 的 topology / event interpretation 经验，但正式运行时语义必须在 T04 私有层内封装清楚，不把 T02 runtime 依赖作为质量前提。
 - 可以参考 T03 的实现逻辑与产物风格，但 T04 的 `Step5-7` 正式执行逻辑必须保留在模块私有实现内，不得直接 import / 调用 / 硬拷贝 T03 模块代码。
-- `nodes_publish.py` 是 T04 私有 downstream 写回层；`fail4` 不得上溢到 T03 语义。
+- `nodes_publish.py` 是 T04 私有 downstream 写回层；`fail4 / fail4_fallback` 不得上溢到 T03 语义。
 
 ## 可回归性
 
@@ -264,7 +264,7 @@ Step7 legacy selected-case 发布冻结门槛：
 - rejected set：`607602562`、`760598`、`760936`、`857993`。
 - 39-case gate 必须守住：
   - Step7 final_state 只允许 `accepted / rejected`。
-  - `nodes.gpkg` 与 `nodes_anchor_update_audit.*` 一致：35 个 accepted representative node 为 `yes`，4 个 rejected representative node 为 `fail4`。
+  - `nodes.gpkg` 与 `nodes_anchor_update_audit.*` 一致：accepted representative node 为 `yes`，fallback relation 成功的失败 case 为 `fail4_fallback`，其余 rejected representative node 为 `fail4`。
   - `no_surface_reference` 不得进入 accepted surface。
   - 无主证据场景不得出现虚拟 Reference Point。
   - `surface_scenario_type / section_reference_source / surface_generation_mode` 字段必须存在并与 39-case manifest 对齐。

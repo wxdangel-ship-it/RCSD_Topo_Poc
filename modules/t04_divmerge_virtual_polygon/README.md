@@ -110,7 +110,7 @@ Anchor_2 official 39-case baseline 是当前唯一正式冻结基线：
 
 PNG raw fingerprint 不再作为当前 hard gate。当前视觉 QA 锁定 `final_review.png` 存在性、render audit 与人工目视确认的 run root；历史 23-case PNG hash 只作为旧审计材料保留。
 
-Step7 最终状态机只允许 `accepted / rejected`。downstream `nodes.gpkg` 写回语义为 `accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail4`。
+Step7 最终状态机只允许 `accepted / rejected`。downstream `nodes.gpkg` 写回语义为 `accepted -> yes`，Step8 fallback relation 成功时写 `fail4_fallback`，其余 `rejected / runtime_failed / formal result missing` 写 `fail4`。
 
 ## 6. 文档阅读顺序
 

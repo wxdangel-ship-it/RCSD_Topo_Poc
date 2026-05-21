@@ -185,6 +185,48 @@ def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> No
     assert coords[0] == coords[1]
 
 
+def test_t04_fail4_fallback_relation_without_surface_outputs_success(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("999", x=50)],
+        swsd_nodes=[
+            _node(999, 50, 0, mainnodeid="999"),
+            _node(800, 0, 0, mainnodeid="800", is_anchor="fail4_fallback", grade=2, closed_con=1),
+        ],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[
+            _node(1, -10, 0),
+            _node(2, 10, 0),
+            _node(20, 5, 0, mainnodeid="20"),
+            _node(21, 6, 0, mainnodeid="20"),
+        ],
+        t04_rows=[
+            {
+                "target_id": "800",
+                "case_id": "800",
+                "junction_type": "diverge",
+                "final_state": "rejected",
+                "required_rcsd_node_ids": "21",
+                "surface_candidate_present": 0,
+                "base_id_candidate": 20,
+                "status_suggested": 0,
+                "relation_state": "success_required_rcsd_junction",
+                "reason": "fail4_fallback:required_rcsd_node_group_resolved",
+                "swsd_point_x": 0,
+                "swsd_point_y": 0,
+                "rcsd_point_x": 5,
+                "rcsd_point_y": 0,
+            }
+        ],
+    )
+
+    relations = {feature["properties"]["target_id"]: feature for feature in _relation_features(artifacts.relation_geojson_path)}
+    assert relations["800"]["properties"]["status"] == 0
+    assert relations["800"]["properties"]["base_id"] == 20
+    assert relations["800"]["properties"]["level"] == 1
+    assert relations["800"]["properties"]["is_highway"] == 0
+
+
 def test_t03_a_multi_rcsdnode_grouping_does_not_split_road(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,
@@ -627,6 +669,7 @@ _T04_FIELDS = [
     "selected_rcsdnode_ids",
     "selected_rcsdroad_ids",
     "fallback_rcsdroad_ids",
+    "surface_candidate_present",
     "base_id_candidate",
     "status_suggested",
     "relation_state",

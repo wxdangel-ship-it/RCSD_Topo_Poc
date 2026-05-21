@@ -73,6 +73,17 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
             )
         return _failure_or_no_rcsd(evidence, relation_state or "t02_no_existing_rcsdintersection")
 
+    if source == "T04" and base_ids and status_suggested == "0" and _t04_relation_only_success(row):
+        return SceneDecision(
+            scene=SCENE_DIRECT,
+            action="direct_relation",
+            reason=relation_state or "t04_relation_only_fallback",
+            source_module=source,
+            source_case_id=case_id,
+            base_id_candidates=base_ids,
+            multi_base_relation=len(base_ids) > 1,
+        )
+
     if required_nodes:
         if len(required_nodes) == 1:
             return SceneDecision(
@@ -194,6 +205,13 @@ def _t04_fallback_scene(row: dict[str, Any]) -> str | None:
         if value in T04_FALLBACK_SCENES:
             return value
     return None
+
+
+def _t04_relation_only_success(row: dict[str, Any]) -> bool:
+    return (
+        str(row.get("surface_candidate_present", "")).strip() in {"0", "false", "False"}
+        and _text(row.get("relation_state")).startswith("success_")
+    )
 
 
 def _failure_or_no_rcsd(evidence: Phase2Evidence, reason: str) -> SceneDecision:

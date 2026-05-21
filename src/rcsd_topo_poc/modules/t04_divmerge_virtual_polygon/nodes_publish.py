@@ -21,6 +21,7 @@ T04_NODES_AUDIT_CSV_NAME = "nodes_anchor_update_audit.csv"
 T04_NODES_AUDIT_JSON_NAME = "nodes_anchor_update_audit.json"
 T04_NODES_ACCEPTED_VALUE = "yes"
 T04_NODES_FAILED_VALUE = "fail4"
+T04_NODES_FALLBACK_VALUE = "fail4_fallback"
 T04_NODES_ACCEPTED_REASON = "accepted_divmerge_virtual_anchor_surface"
 T04_NODES_AUDIT_FIELDNAMES = [
     "case_id",
@@ -29,6 +30,8 @@ T04_NODES_AUDIT_FIELDNAMES = [
     "previous_is_anchor",
     "new_is_anchor",
     "step7_state",
+    "fallback_base_id_candidate",
+    "fallback_relation_state",
     "reason",
 ]
 
@@ -142,11 +145,17 @@ def write_t04_nodes_outputs(
     failure_status_by_case: Mapping[str, Any] | None = None,
     input_dataset_id: str | None = None,
     input_nodes_path: str | Path | None = None,
+    fallback_success_case_ids: Iterable[str] | None = None,
+    fallback_reason_by_case: Mapping[str, str] | None = None,
+    fallback_base_id_by_case: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     features = list(source_node_features)
     cases = _selected_case_docs(selected_cases)
     artifact_by_case = {str(item.case_id): item for item in artifacts}
     failure_status_by_case = {} if failure_status_by_case is None else dict(failure_status_by_case)
+    fallback_case_ids = {str(case_id) for case_id in (fallback_success_case_ids or [])}
+    fallback_reason_by_case = {} if fallback_reason_by_case is None else dict(fallback_reason_by_case)
+    fallback_base_id_by_case = {} if fallback_base_id_by_case is None else dict(fallback_base_id_by_case)
     feature_by_node_id = {
         node_id: feature
         for feature in features
@@ -171,7 +180,19 @@ def write_t04_nodes_outputs(
         else:
             step7_state, reason = _failure_status(failure_status_by_case.get(case_id))
 
-        new_is_anchor = T04_NODES_ACCEPTED_VALUE if step7_state == "accepted" else T04_NODES_FAILED_VALUE
+        if step7_state == "accepted":
+            new_is_anchor = T04_NODES_ACCEPTED_VALUE
+            fallback_base_id_candidate = ""
+            fallback_relation_state = ""
+        elif case_id in fallback_case_ids:
+            new_is_anchor = T04_NODES_FALLBACK_VALUE
+            fallback_base_id_candidate = str(fallback_base_id_by_case.get(case_id) or "")
+            fallback_relation_state = "success_required_rcsd_junction"
+            reason = fallback_reason_by_case.get(case_id) or "fail4_fallback"
+        else:
+            new_is_anchor = T04_NODES_FAILED_VALUE
+            fallback_base_id_candidate = ""
+            fallback_relation_state = ""
         representative = (
             feature_by_node_id.get(mainnodeid)
             or feature_by_node_id.get(case_id)
@@ -192,6 +213,8 @@ def write_t04_nodes_outputs(
                 "previous_is_anchor": previous_is_anchor,
                 "new_is_anchor": new_is_anchor,
                 "step7_state": step7_state,
+                "fallback_base_id_candidate": fallback_base_id_candidate,
+                "fallback_relation_state": fallback_relation_state,
                 "reason": reason or step7_state,
             }
         )
@@ -243,6 +266,9 @@ def write_t04_nodes_outputs(
         "total_update_count": len(audit_rows),
         "updated_to_yes_count": sum(1 for row in audit_rows if row["new_is_anchor"] == T04_NODES_ACCEPTED_VALUE),
         "updated_to_fail4_count": sum(1 for row in audit_rows if row["new_is_anchor"] == T04_NODES_FAILED_VALUE),
+        "updated_to_fail4_fallback_count": sum(
+            1 for row in audit_rows if row["new_is_anchor"] == T04_NODES_FALLBACK_VALUE
+        ),
         "nodes_update_result": nodes_update_result,
         "rows": audit_rows,
     }
@@ -255,6 +281,7 @@ def write_t04_nodes_outputs(
         "nodes_total_update_count": len(audit_rows),
         "nodes_updated_to_yes_count": audit_payload["updated_to_yes_count"],
         "nodes_updated_to_fail4_count": audit_payload["updated_to_fail4_count"],
+        "nodes_updated_to_fail4_fallback_count": audit_payload["updated_to_fail4_fallback_count"],
         "nodes_updated_feature_count": len(updated_feature_node_ids),
         "nodes_consistency_passed": nodes_consistency_passed,
         "nodes_missing_case_ids": [],
@@ -302,6 +329,7 @@ def augment_step7_consistency_report(
             "nodes_total_update_count": nodes_outputs.get("nodes_total_update_count"),
             "nodes_updated_to_yes_count": nodes_outputs.get("nodes_updated_to_yes_count"),
             "nodes_updated_to_fail4_count": nodes_outputs.get("nodes_updated_to_fail4_count"),
+            "nodes_updated_to_fail4_fallback_count": nodes_outputs.get("nodes_updated_to_fail4_fallback_count"),
             "nodes_updated_feature_count": nodes_outputs.get("nodes_updated_feature_count"),
             "nodes_consistency_passed": nodes_passed,
             "nodes_missing_case_ids": list(nodes_outputs.get("nodes_missing_case_ids") or []),
@@ -317,6 +345,7 @@ __all__ = [
     "T04_NODES_AUDIT_CSV_NAME",
     "T04_NODES_AUDIT_JSON_NAME",
     "T04_NODES_FAILED_VALUE",
+    "T04_NODES_FALLBACK_VALUE",
     "T04_NODES_LAYER_NAME",
     "augment_step7_consistency_report",
     "load_case_package_node_features",

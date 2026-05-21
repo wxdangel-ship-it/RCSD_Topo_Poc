@@ -71,6 +71,7 @@
 | `nodes.gpkg` | T04 downstream 状态回写副本，基于输入 node 层 copy-on-write，只更新 representative node 的 `is_anchor`。 |
 | `nodes_anchor_update_audit.csv/json` | T04 downstream nodes 写回审计，记录旧值、新值、Step7 state 与 reason，并与 summary / consistency report 保持一致。 |
 | `fail4` | T04 downstream `nodes.gpkg` 中表示 `rejected / runtime_failed / formal result missing` 的 `is_anchor` 写回值；不属于 T03 `fail3` 语义。 |
+| `fail4_fallback` | T04 downstream `nodes.gpkg` 中表示 surface 未 accepted、未生产新的 T04 路口面，但 Step8 fallback relation 已确认 SWSD-RCSD 语义路口关系的 `is_anchor` 写回值。 |
 
 ## 执行与治理术语
 

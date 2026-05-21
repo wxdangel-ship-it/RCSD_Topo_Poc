@@ -219,7 +219,8 @@
   - `fail2`
   - `fail3`
   - `fail4`
-- T02 stage2 只写 `yes / no / fail1 / fail2 / null`；`fail3 / fail4` 保留给 T03 / T04 downstream nodes 写回。
+  - `fail4_fallback`
+- T02 stage2 只写 `yes / no / fail1 / fail2 / null`；`fail3 / fail4 / fail4_fallback` 保留给 T03 / T04 downstream nodes 写回。
 - `anchor_reason` 当前最小值域冻结为：
   - `roundabout`
   - `t`
@@ -819,7 +820,7 @@ outputs/_work/t02_stage1_drivezone_gate
 - 继承输入 `nodes` properties
 - 新增字段：`has_evd`
 - 阶段二文档基线新增字段：`is_anchor`、`anchor_reason`
-- `is_anchor` 最终 SWSD nodes 值域：`null / no / yes / fail1 / fail2 / fail3 / fail4`
+- `is_anchor` 最终 SWSD nodes 值域：`null / no / yes / fail1 / fail2 / fail3 / fail4 / fail4_fallback`
 - T02 stage2 只写：`null / no / yes / fail1 / fail2`
 - `anchor_reason` 当前最小值域：`roundabout / t / null`
 - `grade / closed_con` 若输入存在必须 copy-on-write 保留；本阶段不反推缺失语义，后续 T05 可按缺失填 `-1`
@@ -831,7 +832,7 @@ outputs/_work/t02_stage1_drivezone_gate
 
 - `has_evd` 是 stage1 gate 字段。
 - `is_anchor` 与 `anchor_reason` 是 stage2 anchor recognition 字段。
-- `is_anchor` 最终 SWSD nodes 业务值域冻结为 `null / no / yes / fail1 / fail2 / fail3 / fail4`；T02 stage2 不写 `fail3 / fail4`。
+- `is_anchor` 最终 SWSD nodes 业务值域冻结为 `null / no / yes / fail1 / fail2 / fail3 / fail4 / fail4_fallback`；T02 stage2 不写 `fail3 / fail4 / fail4_fallback`。
 - `anchor_reason` 当前最小值域冻结为 `roundabout / t / null`。
 
 #### `segment.gpkg`

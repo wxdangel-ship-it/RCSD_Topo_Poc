@@ -11,6 +11,7 @@ from shapely.geometry import Point
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.nodes_publish import (
     T04_NODES_FAILED_VALUE,
+    T04_NODES_FALLBACK_VALUE,
     augment_step7_consistency_report,
     write_t04_nodes_outputs,
 )
@@ -105,6 +106,9 @@ def test_t04_nodes_publish_copy_on_write_and_audit_consistency(tmp_path: Path) -
         failure_status_by_case={"3003": {"step7_state": "runtime_failed", "reason": "runtime_failed"}},
         input_dataset_id="unit-test-input",
         input_nodes_path=input_nodes_path,
+        fallback_success_case_ids=["2002"],
+        fallback_reason_by_case={"2002": "fail4_fallback:required_rcsd_node_group_resolved"},
+        fallback_base_id_by_case={"2002": "9002"},
     )
     consistency = augment_step7_consistency_report(
         consistency_report_path=consistency_report_path,
@@ -114,7 +118,7 @@ def test_t04_nodes_publish_copy_on_write_and_audit_consistency(tmp_path: Path) -
     rows_by_id = _node_rows_by_id(run_root / "nodes.gpkg")
     assert rows_by_id["1001"]["is_anchor"] == "yes"
     assert rows_by_id["1101"]["is_anchor"] == "no"
-    assert rows_by_id["2002"]["is_anchor"] == T04_NODES_FAILED_VALUE
+    assert rows_by_id["2002"]["is_anchor"] == T04_NODES_FALLBACK_VALUE
     assert rows_by_id["3003"]["is_anchor"] == T04_NODES_FAILED_VALUE
     assert rows_by_id["9999"]["is_anchor"] == "no"
 
@@ -128,15 +132,19 @@ def test_t04_nodes_publish_copy_on_write_and_audit_consistency(tmp_path: Path) -
     assert audit_json["nodes_update_result"]["strategy"] == "sqlite_copy_update"
     assert audit_json["total_update_count"] == 3
     assert audit_json["updated_to_yes_count"] == 1
-    assert audit_json["updated_to_fail4_count"] == 2
+    assert audit_json["updated_to_fail4_count"] == 1
+    assert audit_json["updated_to_fail4_fallback_count"] == 1
     assert rows_by_case["1001"]["new_is_anchor"] == "yes"
     assert rows_by_case["1001"]["reason"] == "accepted_divmerge_virtual_anchor_surface"
-    assert rows_by_case["2002"]["new_is_anchor"] == T04_NODES_FAILED_VALUE
-    assert rows_by_case["2002"]["reason"] == "multi_component_result"
+    assert rows_by_case["2002"]["new_is_anchor"] == T04_NODES_FALLBACK_VALUE
+    assert rows_by_case["2002"]["fallback_base_id_candidate"] == "9002"
+    assert rows_by_case["2002"]["fallback_relation_state"] == "success_required_rcsd_junction"
     assert rows_by_case["3003"]["step7_state"] == "runtime_failed"
     assert rows_by_case["3003"]["new_is_anchor"] == T04_NODES_FAILED_VALUE
 
     assert nodes_outputs["nodes_consistency_passed"] is True
+    assert nodes_outputs["nodes_updated_to_fail4_fallback_count"] == 1
     assert consistency["passed"] is True
     assert consistency["nodes_consistency_passed"] is True
     assert consistency["nodes_total_update_count"] == 3
+    assert consistency["nodes_updated_to_fail4_fallback_count"] == 1

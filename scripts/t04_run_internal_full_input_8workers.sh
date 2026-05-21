@@ -124,7 +124,7 @@ echo "[RUN] WORKERS=$WORKERS MAX_CASES=${MAX_CASES:-<all eligible cases>}"
 echo "[RUN] DEBUG_FLAG=$DEBUG_FLAG RESUME=$RESUME RETRY_FAILED=$RETRY_FAILED PERF_AUDIT=$PERF_AUDIT"
 echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
 echo "[RUN] CASE_SCAN=$CASE_SCAN CASE_SCAN_THRESHOLD=$CASE_SCAN_THRESHOLD"
-echo "[RUN] Candidate discovery: representative node, has_evd=yes, is_anchor=no, kind_2 in {8,16,128} or kind=128."
+echo "[RUN] Candidate discovery: representative node, has_evd=yes, is_anchor=no, kind_2 in {8,16,128}."
 
 export NODES_PATH ROADS_PATH DRIVEZONE_PATH DIVSTRIPZONE_PATH RCSDROAD_PATH RCSDNODE_PATH
 export NODES_LAYER NODES_CRS ROADS_LAYER ROADS_CRS DRIVEZONE_LAYER DRIVEZONE_CRS

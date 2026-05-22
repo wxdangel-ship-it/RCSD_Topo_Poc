@@ -39,7 +39,7 @@ The implementation sequence is:
 Tool1 callable API:
 
 ```python
-from rcsd_topo_poc.modules.t08_preprocess import run_t08_tool1_shp_to_gpkg
+from rcsd_topo_poc.modules.t08_preprocess import run_t08_tool1_conversions
 ```
 
 Tool2 callable API:

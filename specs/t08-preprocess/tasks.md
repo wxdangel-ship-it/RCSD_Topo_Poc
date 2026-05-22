@@ -20,7 +20,7 @@
 
 - [x] Before each `.py` write, record current file byte size.
 - [x] Create `src/rcsd_topo_poc/modules/t08_preprocess/__init__.py`.
-- [x] Implement Tool1 multiple Shapefile to GPKG conversion.
+- [x] Implement Tool1 SHP / GeoJSON to GPKG and GPKG to GeoJSON conversion.
 - [x] Implement Tool2 Road PatchID join.
 - [x] Implement Tool2 Road Kind enrichment.
 - [x] Implement Tool2 combined callable runner and artifact dataclass.
@@ -33,7 +33,7 @@
 ## Phase 3 - Tests
 
 - [x] Add focused synthetic tests under `tests/modules/t08_preprocess/`.
-- [x] Cover Tool1 multi-Shapefile GPKG output.
+- [x] Cover Tool1 same-directory SHP / GeoJSON to GPKG and GPKG to GeoJSON output.
 - [x] Cover Tool2 GPKG-only inputs.
 - [x] Cover Tool2 `EPSG:3857` output CRS.
 - [x] Cover Tool3 `EPSG:3857` output CRS.

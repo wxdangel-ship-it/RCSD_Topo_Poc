@@ -50,7 +50,7 @@
 - 让 `t04_divmerge_virtual_polygon` 的 Step1-7 模块文档、领域分层实现、Step4 审计输出与最终发布契约保持一致
 - 让 `t05_junction_surface_fusion` 的 Phase 1 路口面融合发布、Phase 2 RCSD junctionization 与 SWSD-RCSD 关系生产、copy-on-write 输出和模块内 callable runner 保持一致
 - 启动 `t06_segment_fusion_precheck`，完成 SWSD 可融合 Segment 识别、RCSD Segment 抽取与趋势硬筛的 Step1 / Step2 文档契约、模块内 callable runner 与最小测试闭环
-- 启动 `t08_preprocess`，完成 Tool1 多 Shapefile 转 GPKG、Tool2 Road GPKG 预处理与 Tool3 Nodes 类型聚合的文档契约、模块内 callable runner、内网执行脚本与最小测试闭环
+- 启动 `t08_preprocess`，完成 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理与 Tool3 Nodes 类型聚合的文档契约、模块内 callable runner、内网执行脚本与最小测试闭环
 - 让 `p01_arm_build` 的 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原 SpecKit 工件、模块文档契约、callable runner、review PNG/GPKG、summary/index 与 final audit 交付面保持一致
 
 ### 2.2 当前阶段明确不做
@@ -78,7 +78,7 @@
 - 已登记正式模块 `t04_divmerge_virtual_polygon` 的 Step1-7 正式文档面、模块化实现、Step4 review 输出与最终发布契约
 - 已登记正式模块 `t05_junction_surface_fusion` 的 Phase 1 路口面融合发布、Phase 2 SWSD-RCSD relation 发布与 copy-on-write RCSD 网络输出
 - 已登记正式模块 `t06_segment_fusion_precheck` 的 Step1 / Step2 Segment 融合前置识别、RCSD candidate 抽取、趋势硬筛与错误分析
-- 已登记正式模块 `t08_preprocess` 的 Tool1 多 Shapefile 转 GPKG、Tool2 Road GPKG 预处理与 Tool3 Nodes 类型聚合；Tool2 补充 `patch_id / kind`，Tool3 补充 `kind_2 / grade_2` 并处理环岛、复杂分歧 / 合流 mainnode，输出 `EPSG:3857` GPKG
+- 已登记正式模块 `t08_preprocess` 的 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理与 Tool3 Nodes 类型聚合；Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出均写回输入目录下同名文件；Tool2 补充 `patch_id / kind`，Tool3 补充 `kind_2 / grade_2` 并处理环岛、复杂分歧 / 合流 mainnode，输出 `EPSG:3857` GPKG
 - T06 正式启用 final `nodes.gpkg.kind_2` 的 junc-node 豁免语义：仅当 `junc_nodes` 中节点的 `kind_2 in {1,4096,8192}` 时，该 junc node 不参与 Step1 的 `has_evd / is_anchor` eligibility 判定，并在 Step2 中不作为 T05 relation 必检映射节点；该语义不适用于 `pair_nodes`，不改变 `junc_nodes / semantic_node_set` 输出。
 - 已登记 P01 成果模块 `p01_arm_build` 的 P01-A1 Arm 构建、P01-A2 Arm 配准、P01-Final F-RCSD RoadNextRoad 还原文档契约、模块内 callable runner、自动检查与人工目视审查产物
 
@@ -260,6 +260,6 @@
 - `p01_arm_build` 当前作为 Active P01 成果模块进入治理；正式范围覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原，不包含 P01-A3 正式跨源 Movement 空间、禁行迁移、F-RCSD 通行能力最终裁决或 P01-B。
 - `t05_junction_surface_fusion` 当前作为 Active 正式业务模块进入治理；正式范围覆盖 Phase 1 多源路口面融合发布与 Phase 2 RCSD junctionization / SWSD-RCSD relation 生产。Phase 2 输出 `intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg` 与审计汇总；其 RCSDRoad / RCSDNode 变化只通过 copy-on-write 输出表达，不原地修改输入。
 - `t06_segment_fusion_precheck` 当前作为 Active 正式业务模块启动；正式范围仅覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换，不重塑路口，不修改 T01 / T05 输出；当前提供模块内 callable runner 与 `scripts/t06_run_innernet_precheck.py` 内网运行包装，不新增 repo 官方 CLI。
-- `t08_preprocess` 当前作为 Active 正式预处理模块启动；当前覆盖 Tool1 多 Shapefile 转 GPKG、Tool2 Road GPKG 预处理与 Tool3 Nodes 类型聚合，Tool2 只消费 GPKG 输入、补充 `patch_id / kind` 并输出 `EPSG:3857` GPKG，Tool3 只消费 GPKG Nodes/Roads 输入、补充 `kind_2 / grade_2` 并处理环岛、复杂分歧 / 合流 mainnode，输出 `EPSG:3857` Nodes GPKG；当前提供模块内 callable runner 与 `scripts/t08_tool1_shp_to_gpkg.py`、`scripts/t08_tool2_road_preprocess.py`、`scripts/t08_tool3_nodes_type_aggregation.py` 内网脚本，Tool3 以外的 Node 预处理仍待后续定义。
+- `t08_preprocess` 当前作为 Active 正式预处理模块启动；当前覆盖 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理与 Tool3 Nodes 类型聚合，Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出均写回输入目录下同名文件，Tool2 只消费 GPKG 输入、补充 `patch_id / kind` 并输出 `EPSG:3857` GPKG，Tool3 只消费 GPKG Nodes/Roads 输入、补充 `kind_2 / grade_2` 并处理环岛、复杂分歧 / 合流 mainnode，输出 `EPSG:3857` Nodes GPKG；当前提供模块内 callable runner 与 `scripts/t08_tool1_shp_to_gpkg.py`、`scripts/t08_tool2_road_preprocess.py`、`scripts/t08_tool3_nodes_type_aggregation.py` 内网脚本，Tool3 以外的 Node 预处理仍待后续定义。
 - T06 中 final `nodes.gpkg.kind_2 in {1,4096,8192}` 只作为 `junc_nodes` 的豁免字段：命中节点不参与 Step1 `has_evd / is_anchor` 判定，也不进入 Step2 T05 relation 必检映射集合；`pair_nodes` 仍必须按原规则判定并校验 T05 relation。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

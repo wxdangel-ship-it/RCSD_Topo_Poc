@@ -2,7 +2,7 @@
 
 ## Tool1
 
-Tool1 使用参数化 Shapefile 列表作为输入，逐个读取、可选重投影，并写出到指定输出目录下的同名 GPKG。
+Tool1 使用参数化 SHP / GeoJSON / GPKG 列表作为输入，逐个读取、可选重投影，并将输出写回输入目录下的同名目标格式文件：SHP / GeoJSON 输出 GPKG，GPKG 输出 GeoJSON。
 
 ## Tool2
 
@@ -20,7 +20,7 @@ Tool3 先将 Nodes `kind / grade` 复制到 `kind_2 / grade_2`，再执行两类
 
 ## 输出策略
 
-- Tool1 输出 GPKG 与 summary。
+- Tool1 输出同目录同名目标格式文件与 summary。
 - Tool2 输出三个 GPKG 与三个 summary。
 - Tool3 输出一个 copy-on-write Nodes GPKG 与 summary，不输出或改写 Roads。
 - 所有路径由命令参数提供。

@@ -8,6 +8,8 @@ from rcsd_topo_poc.modules.t08_preprocess.nodes_type_aggregation import (
 )
 from rcsd_topo_poc.modules.t08_preprocess.shp_to_gpkg import (
     ShpToGpkgResult,
+    Tool1ConversionResult,
+    run_t08_tool1_conversions,
     run_t08_tool1_shp_to_gpkg,
 )
 
@@ -15,7 +17,9 @@ __all__ = [
     "ShpToGpkgResult",
     "T08NodesTypeAggregationArtifacts",
     "T08RoadPreprocessArtifacts",
+    "Tool1ConversionResult",
     "run_t08_nodes_type_aggregation",
     "run_t08_road_preprocess",
+    "run_t08_tool1_conversions",
     "run_t08_tool1_shp_to_gpkg",
 ]

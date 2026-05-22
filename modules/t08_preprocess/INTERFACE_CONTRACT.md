@@ -6,15 +6,18 @@
 
 ## 1. 当前工具
 
-### Tool1：Shapefile 转 GPKG
+### Tool1：基础矢量格式转换
 
-- 输入：一个或多个 `.shp` 文件，全部通过参数提供。
-- 输出：每个输入 Shapefile 对应一个同名 `.gpkg` 文件，写入参数指定的输出目录，路径固定为 `<out-dir>/<input_stem>.gpkg`。
-- 输出边界：不合并多个 Shapefile，不提供逐文件自定义输出路径参数。
+- 输入：一个或多个 `.shp / .geojson / .json / .gpkg` 文件，全部通过参数提供。
+- 支持转换：
+  - `.shp -> <input_dir>/<input_stem>.gpkg`
+  - `.geojson / .json -> <input_dir>/<input_stem>.gpkg`
+  - `.gpkg -> <input_dir>/<input_stem>.geojson`
+- 输出边界：所有输出均写回输入文件所在目录下的同名目标格式文件；不合并多个输入，不提供输出目录参数，不提供逐文件自定义输出路径参数；若同一轮输入会导致重复输出或输出覆盖本轮任一输入，必须报错停止。
 - CRS：
   - 默认保留输入 CRS。
   - 如传入 `--target-epsg`，则输出投影到该 EPSG。
-  - Shapefile 缺失 `.prj` 时，必须通过 `--default-crs` 提供 CRS。
+  - 输入缺失 CRS 时，必须通过 `--default-crs` 提供 CRS。
 - 输出摘要：JSON summary，记录输入、输出、CRS、图层名、要素数与失败原因。
 
 ### Tool2：Road 数据预处理
@@ -61,7 +64,8 @@ Tool1：
 .venv/bin/python scripts/t08_tool1_shp_to_gpkg.py \
   --input-shp /mnt/d/TestData/POC_Data/input/A.shp \
   --input-shp /mnt/d/TestData/POC_Data/input/B.shp \
-  --out-dir /mnt/d/TestData/POC_Data/t08_preprocess/tool1_gpkg
+  --input-geojson /mnt/d/TestData/POC_Data/input/C.geojson \
+  --input-gpkg /mnt/d/TestData/POC_Data/input/D.gpkg
 ```
 
 Tool2：
@@ -87,9 +91,10 @@ Tool3：
 
 ## 3. Tool1 Params
 
-- `--input-shp`：可重复传入多个 Shapefile。
-- `--out-dir`：GPKG 输出目录；每个输入写为 `<input_stem>.gpkg`。
-- `--summary-output`：可选 summary JSON 输出路径；默认写入输出目录。
+- `--input-shp`：可重复传入多个 Shapefile，输出为输入目录下同名 `.gpkg`。
+- `--input-geojson`：可重复传入多个 GeoJSON，输出为输入目录下同名 `.gpkg`。
+- `--input-gpkg`：可重复传入多个 GPKG，输出为输入目录下同名 `.geojson`。
+- `--summary-output`：可选 summary JSON 输出路径；默认写入首个输入文件所在目录。
 - `--target-epsg`：可选输出 EPSG；不提供时保留输入 CRS。
 - `--default-crs`：当输入缺失 CRS 时使用。
 - 覆盖口径：同名输出已存在时先删除再重建。
@@ -121,7 +126,7 @@ Tool3：
 
 ## 6. Acceptance
 
-1. Tool1 支持多个 Shapefile 输入，并为每个输入输出同名 GPKG。
+1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，所有输出均为输入目录下同名目标格式文件。
 2. Tool2 只接受 GPKG 输入。
 3. Tool2 三个主输出均为 GPKG 且 CRS 为 `EPSG:3857`。
 4. Tool2 `patch_id` 多值按逗号拼接。

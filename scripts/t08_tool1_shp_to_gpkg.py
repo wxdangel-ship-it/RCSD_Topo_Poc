@@ -16,12 +16,16 @@ def _find_repo_root(start: Path) -> Path | None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="T08 Tool1: convert one or more Shapefiles to GPKG.")
-    parser.add_argument("--input-shp", action="append", required=True, help="Input .shp path. Repeat for multiple inputs.")
-    parser.add_argument("--out-dir", required=True, help="Output directory; each input writes <input_stem>.gpkg.")
+    parser = argparse.ArgumentParser(
+        description="T08 Tool1: convert SHP/GeoJSON to GPKG and GPKG to GeoJSON next to each input file."
+    )
+    parser.add_argument("--input-shp", action="append", default=[], help="Input .shp path. Repeat for multiple inputs.")
+    parser.add_argument("--input-geojson", action="append", default=[], help="Input .geojson/.json path. Repeat for multiple inputs.")
+    parser.add_argument("--input-gpkg", action="append", default=[], help="Input .gpkg path. Repeat for multiple inputs.")
     parser.add_argument("--summary-output", help="Optional summary JSON output path.")
     parser.add_argument("--target-epsg", type=int, help="Optional target EPSG. Omit to preserve source CRS.")
-    parser.add_argument("--default-crs", help="Default CRS for Shapefiles without .prj, e.g. EPSG:4326.")
+    parser.add_argument("--default-crs", help="Default CRS for inputs without CRS, e.g. EPSG:4326.")
+    parser.add_argument("--out-dir", help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
@@ -34,13 +38,17 @@ def main(argv: list[str] | None = None) -> int:
     if str(src_root) not in sys.path:
         sys.path.insert(0, str(src_root))
 
-    from rcsd_topo_poc.modules.t08_preprocess import run_t08_tool1_shp_to_gpkg
+    from rcsd_topo_poc.modules.t08_preprocess import run_t08_tool1_conversions
 
     args = _parse_args(argv)
+    if args.out_dir:
+        print("ERROR: --out-dir is no longer supported; Tool1 writes outputs next to each input file.", file=sys.stderr)
+        return 2
     try:
-        summary = run_t08_tool1_shp_to_gpkg(
+        summary = run_t08_tool1_conversions(
             input_shp_paths=[Path(value) for value in args.input_shp],
-            out_dir=Path(args.out_dir),
+            input_geojson_paths=[Path(value) for value in args.input_geojson],
+            input_gpkg_paths=[Path(value) for value in args.input_gpkg],
             summary_output=Path(args.summary_output) if args.summary_output else None,
             target_epsg=args.target_epsg,
             default_crs_text=args.default_crs,

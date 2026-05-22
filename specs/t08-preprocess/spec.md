@@ -12,16 +12,19 @@ T08 is not a temporary utility toolbox. It may expose tool-style command scripts
 
 ## 2. Current Scope
 
-### 2.1 Tool1 - Shapefile To GPKG
+### 2.1 Tool1 - Basic Vector Format Conversion
 
-Tool1 converts one or more Shapefile inputs to same-name GPKG outputs.
+Tool1 converts one or more vector inputs between the current preprocessing exchange formats.
 
 - Inputs MUST be provided as WSL paths by command parameters.
-- Multiple `.shp` inputs are accepted in one run.
-- Outputs MUST be GPKG files written under an explicit output directory as `<input_stem>.gpkg`.
-- Tool1 MUST NOT merge multiple Shapefiles into one GPKG and MUST NOT require per-input output path parameters.
+- Multiple `.shp`, `.geojson`, `.json`, and `.gpkg` inputs are accepted in one run.
+- `.shp` inputs MUST output `<input_dir>/<input_stem>.gpkg`.
+- `.geojson / .json` inputs MUST output `<input_dir>/<input_stem>.gpkg`.
+- `.gpkg` inputs MUST output `<input_dir>/<input_stem>.geojson`.
+- Tool1 MUST NOT merge multiple inputs into one output and MUST NOT require an output directory or per-input output path parameters.
+- Tool1 MUST fail before writing if same-run inputs would create duplicate output paths or overwrite another same-run input.
 - Tool1 preserves input CRS by default; a target EPSG may be supplied when an explicit reprojection is needed.
-- If an input Shapefile has no `.prj`, the caller MUST provide a default CRS parameter.
+- If an input has no CRS metadata, the caller MUST provide a default CRS parameter.
 
 ### 2.2 Tool2 - Road Preprocess
 
@@ -82,7 +85,7 @@ Both scripts MUST accept WSL paths and MUST NOT contain internal hard-coded data
 
 Users need a reusable preprocessing module for Road and Node data. For this round, the user must be able to execute three innernet scripts with explicit WSL paths:
 
-- Tool1 converts multiple Shapefiles to GPKG.
+- Tool1 converts SHP / GeoJSON to GPKG and GPKG to GeoJSON, writing outputs next to each input file.
 - Tool2 preprocesses Road data using GPKG inputs and writes GIS-ready `EPSG:3857` GPKG outputs.
 - Tool3 preprocesses Nodes type fields using Nodes/Roads GPKG inputs and writes GIS-ready `EPSG:3857` Nodes GPKG output.
 
@@ -137,8 +140,8 @@ Implementation may refactor shared vector read/write helpers inside T08 only if 
 
 Tool1 implementation must:
 
-- read one or more Shapefile inputs;
-- write one same-name GPKG per input under the output directory;
+- read one or more SHP / GeoJSON / GPKG inputs;
+- write one same-directory, same-stem output per input using the supported target format;
 - record per-file summary rows;
 - avoid changing CRS unless `target_epsg` is explicitly provided.
 
@@ -157,7 +160,7 @@ Tool3 implementation must:
 Tests must be synthetic and local:
 
 - create temp Shapefile / GeoJSON / GPKG inputs;
-- assert Tool1 writes GPKG outputs for multiple Shapefiles;
+- assert Tool1 writes same-directory GPKG outputs for SHP / GeoJSON inputs and same-directory GeoJSON outputs for GPKG inputs;
 - assert Tool2 output suffixes are `.gpkg`;
 - assert Tool2 output CRS resolves to `EPSG:3857`;
 - assert Tool3 output CRS resolves to `EPSG:3857`;
@@ -183,7 +186,7 @@ Closeout must explicitly report:
 1. T08 module definition is documented before implementation.
 2. Tool1, Tool2, and Tool3 are implemented as T08 formal preprocessing tools.
 3. Node preprocessing outside Tool3 remains explicitly deferred.
-4. Tool1 converts multiple Shapefiles to same-name GPKG files with parameterized inputs and output directory.
+4. Tool1 converts SHP / GeoJSON to same-directory same-name GPKG files and GPKG to same-directory same-name GeoJSON files with parameterized inputs only.
 5. Tool2 uses only GPKG inputs and writes GPKG `EPSG:3857` outputs.
 6. Tool3 uses only GPKG inputs and writes Nodes GPKG `EPSG:3857` output.
 7. Focused tests cover Tool1, Tool2, and Tool3 behavior without internal data.

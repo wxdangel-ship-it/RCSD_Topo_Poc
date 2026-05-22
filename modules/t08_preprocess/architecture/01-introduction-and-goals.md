@@ -6,7 +6,7 @@
 
 ## 当前目标
 
-1. 提供 Shapefile 到 GPKG 的正式转换工具。
+1. 提供 SHP / GeoJSON / GPKG 基础矢量格式转换工具。
 2. 提供 Road `patch_id / kind` 补充工具。
 3. 提供 Nodes `kind_2 / grade_2` 类型聚合工具，处理环岛与复杂分歧 / 合流 mainnode。
 4. 让预处理工具通过参数化脚本运行，避免硬编码内网路径。

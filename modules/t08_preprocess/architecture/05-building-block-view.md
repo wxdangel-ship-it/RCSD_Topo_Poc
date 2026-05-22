@@ -2,8 +2,8 @@
 
 ## 实现构件
 
-- `vector_io.py`：共享 GPKG / Shapefile 读写、CRS 处理与字段解析。
-- `shp_to_gpkg.py`：Tool1 callable runner。
+- `vector_io.py`：共享 GPKG / Shapefile / GeoJSON 读写、CRS 处理与字段解析。
+- `shp_to_gpkg.py`：Tool1 基础矢量格式转换 callable runner。
 - `road_preprocess.py`：Tool2 callable runner。
 - `nodes_type_aggregation.py`：Tool3 callable runner。
 

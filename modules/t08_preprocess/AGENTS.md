@@ -8,7 +8,7 @@
 
 ## 当前范围
 
-- Tool1：多个 Shapefile 输入转换为 GPKG 输出。
+- Tool1：基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出均写回输入目录下同名文件。
 - Tool2：Road 数据预处理，基于 GPKG 输入补充 `patch_id` 与原始 `kind`，最终输出 `EPSG:3857` GPKG。
 - Tool3：Nodes 类型聚合，基于 GPKG Nodes/Roads 输入补充 `kind_2 / grade_2` 并处理环岛、复杂分歧 / 合流 mainnode，最终输出 `EPSG:3857` Nodes GPKG。
 - Tool3 以外的 Node 预处理仍作为后续模块职责保留。

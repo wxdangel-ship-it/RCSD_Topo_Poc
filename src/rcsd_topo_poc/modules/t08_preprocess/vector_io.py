@@ -14,6 +14,7 @@ from shapely.ops import transform as shapely_transform
 
 PROCESS_CRS_TEXT = "EPSG:3857"
 GPKG_SUFFIX = ".gpkg"
+GEOJSON_SUFFIXES = frozenset({".geojson", ".json"})
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,13 @@ def ensure_shp_path(path: str | Path, *, label: str) -> Path:
     resolved = Path(path).expanduser().resolve()
     if resolved.suffix.lower() != ".shp":
         raise ValueError(f"{label} must be a .shp path: {resolved}")
+    return resolved
+
+
+def ensure_geojson_path(path: str | Path, *, label: str) -> Path:
+    resolved = Path(path).expanduser().resolve()
+    if resolved.suffix.lower() not in GEOJSON_SUFFIXES:
+        raise ValueError(f"{label} must be a .geojson or .json path: {resolved}")
     return resolved
 
 
@@ -114,6 +122,44 @@ def write_gpkg(
         mode="w",
         driver="GPKG",
         layer=layer_name or output_path.stem,
+        schema=schema,
+        crs=crs_text,
+        encoding="utf-8",
+    ) as sink:
+        for record in records:
+            sink.write(
+                {
+                    "type": "Feature",
+                    "properties": {name: _get_property_case_insensitive(record["properties"], name) for name in property_names},
+                    "geometry": _geometry_payload(record["geometry"]),
+                }
+            )
+
+    return {"feature_count": len(records), "size_bytes": output_path.stat().st_size if output_path.exists() else 0}
+
+
+def write_geojson(
+    path: str | Path,
+    features: Iterable[dict[str, Any]],
+    *,
+    crs_text: str,
+    empty_fields: Iterable[str] = (),
+    geometry_type: str = "Unknown",
+) -> dict[str, Any]:
+    output_path = ensure_geojson_path(path, label="GeoJSON output")
+    feature_list = list(features)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        output_path.unlink()
+
+    records = [_prepare_record(feature) for feature in feature_list]
+    schema = _build_schema(records, empty_fields=empty_fields, geometry_type=geometry_type)
+    property_names = list(schema["properties"].keys())
+
+    with fiona.open(
+        str(output_path),
+        mode="w",
+        driver="GeoJSON",
         schema=schema,
         crs=crs_text,
         encoding="utf-8",

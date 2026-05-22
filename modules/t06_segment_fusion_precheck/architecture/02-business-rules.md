@@ -21,7 +21,8 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 
 - relation mapping 使用 `intersection_match_all.geojson` 的 `target_id -> base_id`。
 - 只接受 `status = 0` 且 `base_id > 0`。
-- `pair_nodes` 和 `junc_nodes` 都必须映射成功。
+- `pair_nodes` 和非豁免 `junc_nodes` 都必须映射成功。
+- `junc_kind2_exempt_nodes` 不参与 Step2 relation 必检集合，也不参与后续 mapped junc 覆盖、内部通过与语义顺序检查。
 - RCSD 网络通过 runner 参数传入，不硬编码路径。
 - `junc_nodes` 表示内部通过 + 侧向阻断，不是 hard-stop。
 - SWSD 单向方向必须从 `swsd_roads_path` 的 road body 推导。

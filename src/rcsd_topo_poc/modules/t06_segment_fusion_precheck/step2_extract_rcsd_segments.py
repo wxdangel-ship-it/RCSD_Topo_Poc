@@ -9,7 +9,7 @@ from .graph_builders import build_road_graph
 from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list
 from .rcsd_candidate_extraction import extract_rcsd_candidates
-from .relation_mapping import accepted_base_ids, build_relation_map, check_segment_relations
+from .relation_mapping import RelationRecord, accepted_base_ids, build_relation_map, check_segment_relations
 from .schemas import (
     STEP2_CANDIDATE_FIELDS,
     STEP2_CANDIDATES_STEM,
@@ -59,6 +59,8 @@ def run_t06_step2_extract_rcsd_segments(
     single_input_count = 0
     dual_input_count = 0
     ambiguous_count = 0
+    junc_kind2_relation_exempt_segment_count = 0
+    junc_kind2_relation_exempt_node_count = 0
 
     for index, unit in enumerate(fusion_units, start=1):
         if progress and index % 1000 == 0:
@@ -67,12 +69,17 @@ def run_t06_step2_extract_rcsd_segments(
         segment_id = str(props.get("swsd_segment_id") or props.get("id") or f"segment_{index}")
         segment = segments.get(segment_id, unit)
         segment_props = dict(segment.get("properties") or {})
-        pair_nodes, junc_nodes, roads, parse_reason = _parse_unit_lists(props, segment_props)
+        pair_nodes, junc_nodes, junc_kind2_exempt_nodes, roads, parse_reason = _parse_unit_lists(props, segment_props)
         if parse_reason is not None:
             rejected_rows.append(_reject(segment_id, None, "parse", parse_reason))
             continue
+        relation_junc_nodes = _relation_required_junc_nodes(junc_nodes, junc_kind2_exempt_nodes)
+        all_base_ids_for_segment = all_base_ids - _accepted_base_ids_for_nodes(junc_kind2_exempt_nodes, relation_map)
+        if junc_kind2_exempt_nodes:
+            junc_kind2_relation_exempt_segment_count += 1
+            junc_kind2_relation_exempt_node_count += len(junc_kind2_exempt_nodes)
 
-        relation = check_segment_relations(pair_nodes=pair_nodes, junc_nodes=junc_nodes, relation_map=relation_map)
+        relation = check_segment_relations(pair_nodes=pair_nodes, junc_nodes=relation_junc_nodes, relation_map=relation_map)
         if not relation.ok:
             rejected_rows.append(
                 _reject(
@@ -82,6 +89,7 @@ def run_t06_step2_extract_rcsd_segments(
                     relation.reject_reason or "relation_mapping_failed",
                     failed_pair_nodes=relation.failed_pair_nodes or [],
                     failed_junc_nodes=relation.failed_junc_nodes or [],
+                    junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
                 )
             )
             continue
@@ -89,14 +97,30 @@ def run_t06_step2_extract_rcsd_segments(
 
         directionality = directionality_from_sgrade(segment_props.get("sgrade") or props.get("sgrade"))
         if directionality is None:
-            rejected_rows.append(_reject(segment_id, None, "swsd_direction_inference", "missing_swsd_oneway_direction"))
+            rejected_rows.append(
+                _reject(
+                    segment_id,
+                    None,
+                    "swsd_direction_inference",
+                    "missing_swsd_oneway_direction",
+                    junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                )
+            )
             continue
         swsd_to_rcsd = {swsd: rcsd for swsd, rcsd in zip(pair_nodes, relation.rcsd_pair_nodes)}
         if directionality == "single":
             single_input_count += 1
             inference = infer_swsd_oneway_direction(pair_nodes=pair_nodes, segment_road_ids=roads, swsd_road_features=swsd_roads)
             if inference.status != "unique" or inference.source_node is None or inference.target_node is None:
-                rejected_rows.append(_reject(segment_id, None, "swsd_direction_inference", inference.reject_reason or "missing_swsd_oneway_direction"))
+                rejected_rows.append(
+                    _reject(
+                        segment_id,
+                        None,
+                        "swsd_direction_inference",
+                        inference.reject_reason or "missing_swsd_oneway_direction",
+                        junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                    )
+                )
                 continue
             swsd_pair_order = [inference.source_node, inference.target_node]
         else:
@@ -112,7 +136,15 @@ def run_t06_step2_extract_rcsd_segments(
             swsd_directionality=directionality,
         )
         if extraction.reject_reason is not None:
-            rejected_rows.append(_reject(segment_id, None, "rcsd_candidate_connectivity", extraction.reject_reason))
+            rejected_rows.append(
+                _reject(
+                    segment_id,
+                    None,
+                    "rcsd_candidate_connectivity",
+                    extraction.reject_reason,
+                    junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                )
+            )
             continue
 
         passed_candidates: list[dict[str, Any]] = []
@@ -121,10 +153,10 @@ def run_t06_step2_extract_rcsd_segments(
                 candidate=candidate,
                 swsd_directionality=directionality,
                 swsd_pair_nodes=swsd_pair_order,
-                swsd_junc_nodes=junc_nodes,
+                swsd_junc_nodes=relation_junc_nodes,
                 rcsd_pair_nodes=rcsd_pair_order,
                 rcsd_junc_nodes=relation.rcsd_junc_nodes,
-                all_relation_base_ids=all_base_ids,
+                all_relation_base_ids=all_base_ids_for_segment,
                 swsd_geometry=segment.get("geometry"),
                 swsd_node_geometries=swsd_nodes,
                 rcsd_node_geometries=rcsd_nodes,
@@ -133,15 +165,36 @@ def run_t06_step2_extract_rcsd_segments(
                 max_coarse_length_ratio=max_coarse_length_ratio,
             )
             row = _candidate_row(segment_id, props, directionality, inference, relation, candidate, trend)
+            row["swsd_pair_nodes"] = pair_nodes
+            row["swsd_junc_nodes"] = junc_nodes
+            row["junc_kind2_exempt_nodes"] = junc_kind2_exempt_nodes
             candidate_rows.append(feature(row, candidate.path.geometry))
             if trend.passed:
                 passed_candidates.append(feature(row, candidate.path.geometry))
             else:
-                rejected_rows.append(_reject(segment_id, candidate.candidate_id, "trend_filter", trend.reason, failed_metric_name=_metric_name(trend.reason), failed_metric_value=_metric_value(trend.metrics, trend.reason)))
+                rejected_rows.append(
+                    _reject(
+                        segment_id,
+                        candidate.candidate_id,
+                        "trend_filter",
+                        trend.reason,
+                        failed_metric_name=_metric_name(trend.reason),
+                        failed_metric_value=_metric_value(trend.metrics, trend.reason),
+                        junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                    )
+                )
 
         if len(passed_candidates) > 1:
             ambiguous_count += 1
-            rejected_rows.append(_reject(segment_id, None, "uniqueness_filter", "ambiguous_rcsd_candidates"))
+            rejected_rows.append(
+                _reject(
+                    segment_id,
+                    None,
+                    "uniqueness_filter",
+                    "ambiguous_rcsd_candidates",
+                    junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                )
+            )
             continue
         if len(passed_candidates) == 1:
             replaceable_rows.append(_replaceable_row(passed_candidates[0]))
@@ -171,6 +224,8 @@ def run_t06_step2_extract_rcsd_segments(
             "input_fusion_unit_count": len(fusion_units),
             "relation_success_count": relation_success_count,
             "relation_failure_count": len(fusion_units) - relation_success_count,
+            "junc_kind2_relation_exempt_segment_count": junc_kind2_relation_exempt_segment_count,
+            "junc_kind2_relation_exempt_node_count": junc_kind2_relation_exempt_node_count,
             "rcsd_candidate_count": len(candidate_rows),
             "replaceable_count": len(replaceable_rows),
             "rejected_count": len(rejected_rows),
@@ -215,22 +270,41 @@ def _node_geometry_index(features: list[dict[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _parse_unit_lists(props: dict[str, Any], segment_props: dict[str, Any]) -> tuple[list[str], list[str], list[str], str | None]:
+def _parse_unit_lists(props: dict[str, Any], segment_props: dict[str, Any]) -> tuple[list[str], list[str], list[str], list[str], str | None]:
     try:
         pair_nodes = parse_id_list(props.get("pair_nodes", segment_props.get("pair_nodes")), allow_empty=False)
         if len(pair_nodes) != 2:
-            return [], [], [], "invalid_pair_nodes"
+            return [], [], [], [], "invalid_pair_nodes"
     except ParseError:
-        return [], [], [], "invalid_pair_nodes"
+        return [], [], [], [], "invalid_pair_nodes"
     try:
         junc_nodes = parse_id_list(props.get("junc_nodes", segment_props.get("junc_nodes")), allow_empty=True)
     except ParseError:
-        return [], [], [], "invalid_junc_nodes"
+        return [], [], [], [], "invalid_junc_nodes"
+    try:
+        junc_kind2_exempt_nodes = parse_id_list(props.get("junc_kind2_exempt_nodes"), allow_empty=True)
+    except ParseError:
+        junc_kind2_exempt_nodes = []
     try:
         roads = parse_id_list(props.get("roads", segment_props.get("roads")), allow_empty=True)
     except ParseError:
         roads = []
-    return pair_nodes, junc_nodes, roads, None
+    return pair_nodes, junc_nodes, junc_kind2_exempt_nodes, roads, None
+
+
+def _relation_required_junc_nodes(junc_nodes: list[str], junc_kind2_exempt_nodes: list[str]) -> list[str]:
+    exempt = set(junc_kind2_exempt_nodes)
+    return [node_id for node_id in junc_nodes if node_id not in exempt]
+
+
+def _accepted_base_ids_for_nodes(node_ids: list[str], relation_map: dict[str, RelationRecord]) -> set[str]:
+    result: set[str] = set()
+    for node_id in node_ids:
+        relation = relation_map.get(node_id)
+        if relation is None or relation.status != 0 or relation.base_id <= 0:
+            continue
+        result.add(str(relation.base_id))
+    return result
 
 
 def _candidate_row(segment_id: str, props: dict[str, Any], directionality: str, inference: Any, relation: Any, candidate: Any, trend: Any) -> dict[str, Any]:
@@ -247,6 +321,7 @@ def _candidate_row(segment_id: str, props: dict[str, Any], directionality: str, 
         "swsd_pair_nodes": props.get("pair_nodes"),
         "rcsd_pair_nodes": relation.rcsd_pair_nodes,
         "swsd_junc_nodes": props.get("junc_nodes"),
+        "junc_kind2_exempt_nodes": props.get("junc_kind2_exempt_nodes"),
         "rcsd_junc_nodes": relation.rcsd_junc_nodes,
         "rcsd_road_ids": candidate.road_ids,
         "rcsd_node_path": candidate.path.node_path,
@@ -277,6 +352,7 @@ def _replaceable_row(candidate_feature: dict[str, Any]) -> dict[str, Any]:
             "swsd_pair_nodes": props.get("swsd_pair_nodes"),
             "rcsd_pair_nodes": props.get("rcsd_pair_nodes"),
             "swsd_junc_nodes": props.get("swsd_junc_nodes"),
+            "junc_kind2_exempt_nodes": props.get("junc_kind2_exempt_nodes"),
             "rcsd_junc_nodes": props.get("rcsd_junc_nodes"),
             "rcsd_road_ids": props.get("rcsd_road_ids"),
             "trend_filter_passed": True,
@@ -294,6 +370,7 @@ def _reject(
     *,
     failed_pair_nodes: list[str] | None = None,
     failed_junc_nodes: list[str] | None = None,
+    junc_kind2_exempt_nodes: list[str] | None = None,
     failed_metric_name: str | None = None,
     failed_metric_value: Any = None,
     threshold_value: Any = None,
@@ -307,6 +384,7 @@ def _reject(
             "reject_reason": reason,
             "failed_pair_nodes": failed_pair_nodes or [],
             "failed_junc_nodes": failed_junc_nodes or [],
+            "junc_kind2_exempt_nodes": junc_kind2_exempt_nodes or [],
             "failed_metric_name": failed_metric_name,
             "failed_metric_value": failed_metric_value,
             "threshold_value": threshold_value,

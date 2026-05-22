@@ -50,9 +50,9 @@ artifacts = run_t06_segment_fusion_precheck(
 ## 关键规则
 
 - `pair_nodes + junc_nodes` 按语义路口 ID 判定。
-- Step1 中 `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过；`pair_nodes` 不适用该豁免。
+- `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 Step1 `has_evd / is_anchor` 判定，也不进入 Step2 T05 relation 必检映射集合；`pair_nodes` 不适用该豁免。
 - `is_anchor = fail4_fallback` 视为可融合 anchor。
-- Step2 relation 只接受 `status = 0` 且 `base_id > 0`。
+- Step2 relation 只接受 `status = 0` 且 `base_id > 0`；必检集合为 `pair_nodes + 非豁免 junc_nodes`。
 - `junc_nodes` 是内部通过 + 侧向阻断，不是 hard-stop。
 - SWSD 单向方向从 `swsd_roads_path` 的 road body 推导。
 - SWSD 单向 + RCSD 双向判为不一致。

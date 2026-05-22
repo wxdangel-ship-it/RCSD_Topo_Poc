@@ -15,13 +15,13 @@
 
 - 消费 T01 `segment.gpkg` 与 final `nodes.gpkg`。
 - 按 `pair_nodes + junc_nodes` 的语义路口 ID 集合判断 Segment 是否具备 EVD 与 anchor/fallback 基础。
-- Step1 对 `junc_nodes` 启用 `kind_2 in {1,4096,8192}` 豁免：命中 junc node 不参与 `has_evd / is_anchor` 判定并视为通过；该豁免不适用于 `pair_nodes`。
+- 对 `junc_nodes` 启用 `kind_2 in {1,4096,8192}` 豁免：命中 junc node 不参与 Step1 `has_evd / is_anchor` 判定，也不作为 Step2 T05 relation 必检映射节点；该豁免不适用于 `pair_nodes`。
 - 将 `is_anchor = fail4_fallback` 视为可融合 anchor。
 - 消费 T05 Phase 2 `intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg`。
 - 基于 relation 映射与 RCSD directed graph 抽取 Segment candidate。
 - 支持 SWSD / RCSD 双向 Segment 与单向 Segment。
 - 对 SWSD 单向 Segment 从 `swsd_roads_path` 的 road body 推导方向。
-- 对 RCSD candidate 执行 relation、方向、junc、语义路口顺序、主轴、粗长度与唯一性硬筛。
+- 对 RCSD candidate 执行 relation、方向、非豁免 junc、语义路口顺序、主轴、粗长度与唯一性硬筛。
 
 ### 1.2 当前非目标
 
@@ -89,7 +89,7 @@ run_t06_step2_extract_rcsd_segments(
 
 - `pair_nodes + junc_nodes` 按语义路口 ID 判定，不按物理 node 展开作为主判断。
 - Step1 解析 final `nodes.gpkg` 时，语义节点属性优先使用 `id` 精确匹配记录；只有不存在对应 `id` 记录时，才使用 `mainnodeid` 命中的组内记录作为 fallback。
-- Step1 中 `kind_2 in {1,4096,8192}` 只对 `junc_nodes` 生效：命中 junc node 从 `has_evd / is_anchor` eligibility 检查集合中移除，但仍保留在 `junc_nodes / semantic_node_set` 输出中；`pair_nodes` 命中这些 `kind_2` 也不豁免。
+- `kind_2 in {1,4096,8192}` 只对 `junc_nodes` 生效：命中 junc node 从 Step1 `has_evd / is_anchor` eligibility 检查集合与 Step2 T05 relation 必检映射集合中移除，但仍保留在 `junc_nodes / semantic_node_set` 输出中；`pair_nodes` 命中这些 `kind_2` 也不豁免。
 - `intersection_match_all.geojson` 中只有 `status = 0` 且 `base_id > 0` 的 relation 可用。
 - `base_id` 必须是 RCSD 语义路口主 node id。
 - `direction in {0,1}` 表示双向；`direction = 2` 表示 `snodeid -> enodeid`；`direction = 3` 表示 `enodeid -> snodeid`。
@@ -167,6 +167,7 @@ run_t06_step2_extract_rcsd_segments(
 - `swsd_pair_nodes`
 - `rcsd_pair_nodes`
 - `swsd_junc_nodes`
+- `junc_kind2_exempt_nodes`
 - `rcsd_junc_nodes`
 - `rcsd_road_ids`
 - `rcsd_node_path`
@@ -182,6 +183,8 @@ run_t06_step2_extract_rcsd_segments(
 - `candidate_status`
 - `candidate_reason`
 - `geometry`
+
+`replaceable` 输出保留同名 `swsd_pair_nodes / rcsd_pair_nodes / swsd_junc_nodes / junc_kind2_exempt_nodes / rcsd_junc_nodes / rcsd_road_ids` 字段；`rejected` 输出保留 `failed_pair_nodes / failed_junc_nodes / junc_kind2_exempt_nodes`，用于定位 relation 必检集合与豁免集合。
 
 ## 4. EntryPoints
 
@@ -219,8 +222,8 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (
 
 1. Step1 runner 可独立运行并输出 EVD candidates、fusion units、rejected 与 summary。
 2. Step2 runner 可独立运行并输出 RCSD candidates、replaceable、rejected 与 summary。
-3. `fail4_fallback` 能进入 Step1 final fusion units，但 Step2 仍必须校验 T05 relation。
-4. Step1 中 `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过；同值 `pair_nodes` 仍按原规则判定。
+3. `fail4_fallback` 能进入 Step1 final fusion units，但 Step2 对 relation 必检集合仍必须校验 T05 relation。
+4. `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 Step1 `has_evd / is_anchor` 判定，也不进入 Step2 T05 relation 必检映射集合；同值 `pair_nodes` 仍按原规则判定并映射。
 5. SWSD 单向方向从 road body 推导，不依赖 `pair_nodes` 顺序。
 6. SWSD 单向 + RCSD 双向 rejected 为 `directionality_mismatch_rcsd_bidirectional_for_swsd_oneway`。
 7. `junc_nodes` 执行内部通过 + 侧向阻断。

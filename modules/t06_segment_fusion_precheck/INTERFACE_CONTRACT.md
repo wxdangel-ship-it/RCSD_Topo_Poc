@@ -88,6 +88,7 @@ run_t06_step2_extract_rcsd_segments(
 ### 2.3 关键输入语义
 
 - `pair_nodes + junc_nodes` 按语义路口 ID 判定，不按物理 node 展开作为主判断。
+- Step1 解析 final `nodes.gpkg` 时，语义节点属性优先使用 `id` 精确匹配记录；只有不存在对应 `id` 记录时，才使用 `mainnodeid` 命中的组内记录作为 fallback。
 - Step1 中 `kind_2 in {1,4096,8192}` 只对 `pair_nodes` 生效：命中 pair node 从 `has_evd / is_anchor` eligibility 检查集合中移除，但仍保留在 `pair_nodes / semantic_node_set` 输出中；`junc_nodes` 命中这些 `kind_2` 也不豁免。
 - `intersection_match_all.geojson` 中只有 `status = 0` 且 `base_id > 0` 的 relation 可用。
 - `base_id` 必须是 RCSD 语义路口主 node id。

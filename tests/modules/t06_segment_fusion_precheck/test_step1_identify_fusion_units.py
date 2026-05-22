@@ -28,8 +28,14 @@ def _seg(seg_id: str, pair_nodes, junc_nodes, sgrade: str = "主双"):
     }
 
 
-def _node(node_id: int, has_evd: str | None, is_anchor: str | None, kind_2: int | str | None = None):
-    props = {"id": node_id, "mainnodeid": 0}
+def _node(
+    node_id: int,
+    has_evd: str | None,
+    is_anchor: str | None,
+    kind_2: int | str | None = None,
+    mainnodeid: int = 0,
+):
+    props = {"id": node_id, "mainnodeid": mainnodeid}
     if has_evd is not None:
         props["has_evd"] = has_evd
     if is_anchor is not None:
@@ -144,3 +150,33 @@ def test_step1_exempts_pair_kind2_nodes_from_evd_and_anchor_checks(tmp_path: Pat
     rejected_rows = {item["properties"]["swsd_segment_id"]: item["properties"] for item in rejected_payload["features"]}
     assert rejected_rows["junc_kind2_still_checked"]["reject_reason"] == "has_evd_missing"
     assert rejected_rows["junc_kind2_still_checked"]["failed_node_ids"] == ["100"]
+
+
+def test_step1_prefers_exact_node_id_over_earlier_mainnodeid_fallback(tmp_path: Path) -> None:
+    segment_path = _write(tmp_path / "segment.gpkg", [_seg("representative_pair", [100, 200], [])])
+    nodes_path = _write(
+        tmp_path / "nodes.gpkg",
+        [
+            _node(10001, None, None, kind_2=0, mainnodeid=100),
+            _node(20001, None, None, kind_2=0, mainnodeid=200),
+            _node(100, "yes", "yes", kind_2=4, mainnodeid=100),
+            _node(200, "yes", "yes", kind_2=4, mainnodeid=200),
+        ],
+    )
+
+    artifacts = run_t06_step1_identify_fusion_units(
+        swsd_segment_path=segment_path,
+        swsd_nodes_path=nodes_path,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["evd_candidate_count"] == 1
+    assert summary["final_fusion_unit_count"] == 1
+    assert summary["reject_reason_counts"] == {}
+
+    fusion_payload = json.loads(artifacts.fusion_units_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
+    row = fusion_payload["features"][0]["properties"]
+    assert row["swsd_segment_id"] == "representative_pair"
+    assert row["pair_kind2_exempt_nodes"] == []

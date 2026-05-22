@@ -142,12 +142,18 @@ def _node_index(nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     for node in nodes:
         props = dict(node.get("properties") or {})
-        for field in ("id", "mainnodeid"):
-            try:
-                node_id = normalize_id(props.get(field))
-            except ParseError:
-                continue
-            index.setdefault(node_id, props)
+        try:
+            node_id = normalize_id(props.get("id"))
+        except ParseError:
+            continue
+        index.setdefault(node_id, props)
+    for node in nodes:
+        props = dict(node.get("properties") or {})
+        try:
+            node_id = normalize_id(props.get("mainnodeid"))
+        except ParseError:
+            continue
+        index.setdefault(node_id, props)
     return index
 
 

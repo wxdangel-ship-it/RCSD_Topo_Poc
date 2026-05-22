@@ -135,6 +135,8 @@ Tool2 implementation must preserve these validated T00 behaviors:
 - `kind` values are split by `|`, deduplicated, and joined by `|`;
 - missing Road-to-Patch join is reported in an unmatched output layer;
 - CRS normalization happens before spatial matching.
+- command scripts print stage progress while preserving machine-readable artifact output;
+- summary records total elapsed time, stage elapsed time, throughput, and spatial candidate counts.
 
 Implementation may refactor shared vector read/write helpers inside T08 only if it keeps files below repository size limits.
 
@@ -156,6 +158,9 @@ Tool3 implementation must:
 - apply T04/T02 complex div/merge mainnode aggregation from continuous directed road chains;
 - preserve raw `kind / grade` and leave Roads untouched;
 - record summary counts and group audit rows.
+- command scripts print stage progress while preserving machine-readable artifact output;
+- summary records total elapsed time, stage timings, throughput, candidate counts, chain counts, and updated node counts.
+- continuous-chain component assembly should avoid repeated full edge scans per component.
 
 ## 8. Testing View
 
@@ -170,6 +175,7 @@ Tests must be synthetic and local:
 - assert `patch_id`, unmatched reason, and `kind` values;
 - assert Tool3 writes `kind_2 / grade_2 / mainnodeid` for roundabout and complex div/merge groups;
 - assert JSON summary counts.
+- assert Tool2 / Tool3 progress output and performance summary fields.
 
 No test may require internal data paths.
 

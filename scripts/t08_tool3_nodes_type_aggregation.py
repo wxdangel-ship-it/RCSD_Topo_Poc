@@ -28,6 +28,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--roads-default-crs", help="Default CRS for Roads input if missing.")
     parser.add_argument("--skip-roundabout", action="store_true", help="Skip roundabout aggregation.")
     parser.add_argument("--skip-complex-divmerge", action="store_true", help="Skip complex div/merge aggregation.")
+    parser.add_argument("--progress-interval", type=int, default=10000, help="Print progress every N features. Default: 10000.")
     return parser.parse_args(argv)
 
 
@@ -56,12 +57,18 @@ def main(argv: list[str] | None = None) -> int:
             roads_default_crs_text=args.roads_default_crs,
             enable_roundabout=not args.skip_roundabout,
             enable_complex_divmerge=not args.skip_complex_divmerge,
+            progress_callback=_print_progress,
+            progress_interval=args.progress_interval,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     print(json.dumps({key: str(value) for key, value in artifacts.__dict__.items()}, ensure_ascii=False, indent=2))
     return 0
+
+
+def _print_progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

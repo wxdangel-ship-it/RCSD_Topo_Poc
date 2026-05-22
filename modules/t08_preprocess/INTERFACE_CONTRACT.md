@@ -112,6 +112,8 @@ Tool3：
 - `--patch-summary-output / --kind-summary-output / --summary-output`：可选 summary 输出路径。
 - `--buffer-distance-meters`：Kind 空间匹配缓冲距离，默认 `1.0`。
 - `--spatial-predicate`：Kind 空间匹配谓词，默认 `covers`。
+- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次；Patch join / Kind enrich 开始、读取、处理、写出与完成状态均输出进度信息。
+- summary 性能字段：总 summary 写入 `performance.elapsed_seconds / roads_per_second / patch_join_elapsed_seconds / kind_enrich_elapsed_seconds / spatial_candidate_count`；阶段 summary 写入阶段耗时与吞吐。
 
 ## 5. Tool3 Params
 
@@ -124,6 +126,8 @@ Tool3：
 - `--nodes-default-crs / --roads-default-crs`：输入缺失 CRS 时使用。
 - `--skip-roundabout`：跳过环岛聚合，仅初始化 `kind_2 / grade_2` 并继续后续步骤。
 - `--skip-complex-divmerge`：跳过复杂分歧 / 合流聚合。
+- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次；读取、字段初始化、环岛聚合、复杂分歧 / 合流聚合、写出与完成状态均输出进度信息。
+- summary 性能字段：写入 `performance.elapsed_seconds / nodes_per_second / stage_timings`，用于定位读取、初始化、环岛聚合、复杂分歧 / 合流聚合与写出耗时。
 
 ## 6. Acceptance
 
@@ -134,6 +138,6 @@ Tool3：
 5. Tool2 `kind` 多值按 `|` 去重拼接。
 6. Tool3 输出 Nodes GPKG 且 CRS 为 `EPSG:3857`。
 7. Tool3 保留原始 `kind / grade`，只在 copy-on-write 输出中写入 `kind_2 / grade_2 / mainnodeid / subnodeid`。
-8. Tool3 summary 可追溯环岛组、复杂链路组、候选计数、更新节点数、CRS 与字段解析。
+8. Tool3 summary 可追溯环岛组、复杂链路组、候选计数、更新节点数、CRS、字段解析与阶段性能。
 9. 所有路径均由参数提供，不写死内网目录。
 10. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。

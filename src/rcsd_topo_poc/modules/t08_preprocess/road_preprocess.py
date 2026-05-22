@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -20,6 +22,9 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     write_gpkg,
     write_json,
 )
+
+
+ProgressCallback = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -52,7 +57,10 @@ def run_t08_road_preprocess(
     raw_kind_road_default_crs_text: str | None = None,
     buffer_distance_meters: float = 1.0,
     spatial_predicate: str = "covers",
+    progress_callback: ProgressCallback | None = None,
+    progress_interval: int = 10000,
 ) -> T08RoadPreprocessArtifacts:
+    started = time.perf_counter()
     road_path = ensure_gpkg_path(road_gpkg, label="--road-gpkg")
     patch_road_path = ensure_gpkg_path(patch_road_gpkg, label="--patch-road-gpkg")
     raw_kind_road_path = ensure_gpkg_path(raw_kind_road_gpkg, label="--raw-kind-road-gpkg")
@@ -76,6 +84,7 @@ def run_t08_road_preprocess(
         else kind_path.with_name("t08_road_preprocess_summary.json")
     )
 
+    _emit_progress(progress_callback, f"[T08 Tool2] start road={road_path} patch={patch_road_path} raw_kind={raw_kind_road_path}")
     patch_summary, road_patch_features = _run_patch_join(
         road_gpkg=road_path,
         patch_road_gpkg=patch_road_path,
@@ -87,6 +96,8 @@ def run_t08_road_preprocess(
         target_epsg=target_epsg,
         road_default_crs_text=road_default_crs_text,
         patch_road_default_crs_text=patch_road_default_crs_text,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
     )
     kind_summary = _run_kind_enrich(
         road_patch_features=road_patch_features,
@@ -99,7 +110,10 @@ def run_t08_road_preprocess(
         raw_kind_road_default_crs_text=raw_kind_road_default_crs_text,
         buffer_distance_meters=buffer_distance_meters,
         spatial_predicate=spatial_predicate,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
     )
+    elapsed_seconds = time.perf_counter() - started
     combined_summary = {
         "tool": "T08 Tool2",
         "target_epsg": target_epsg,
@@ -131,8 +145,23 @@ def run_t08_road_preprocess(
             "patch_road_layer": patch_road_layer,
             "raw_kind_road_layer": raw_kind_road_layer,
         },
+        "performance": {
+            "elapsed_seconds": round(elapsed_seconds, 6),
+            "roads_per_second": _items_per_second(patch_summary["total_road_count"], elapsed_seconds),
+            "patch_join_elapsed_seconds": patch_summary["elapsed_seconds"],
+            "kind_enrich_elapsed_seconds": kind_summary["elapsed_seconds"],
+            "spatial_candidate_count": kind_summary["spatial_candidate_count"],
+        },
     }
     write_json(combined_summary_path, combined_summary)
+    _emit_progress(
+        progress_callback,
+        (
+            f"[T08 Tool2] finished matched_patch={patch_summary['matched_count']} "
+            f"matched_kind={kind_summary['matched_kind_count']} elapsed={elapsed_seconds:.2f}s "
+            f"summary={combined_summary_path}"
+        ),
+    )
     return T08RoadPreprocessArtifacts(
         road_patch_output=road_patch_path,
         road_patch_unmatched_output=unmatched_path,
@@ -155,7 +184,11 @@ def _run_patch_join(
     target_epsg: int,
     road_default_crs_text: str | None,
     patch_road_default_crs_text: str | None,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    started = time.perf_counter()
+    _emit_progress(progress_callback, "[T08 Tool2] patch_join: reading Road and Patch Road")
     road_result = read_vector(
         road_gpkg,
         layer_name=road_layer,
@@ -172,6 +205,10 @@ def _run_patch_join(
         raise ValueError("Road input contains no features")
     if not patch_road_result.features:
         raise ValueError("Patch road input contains no features")
+    _emit_progress(
+        progress_callback,
+        f"[T08 Tool2] patch_join: loaded roads={len(road_result.features)} patch_roads={len(patch_road_result.features)}",
+    )
 
     road_id_field = resolve_field_name(road_result.features, ["id"], "road input")
     patch_road_id_field = resolve_field_name(patch_road_result.features, ["road_id"], "patch road input")
@@ -179,7 +216,7 @@ def _run_patch_join(
 
     patch_mapping: dict[str, dict[str, Any]] = {}
     invalid_patch_record_count = 0
-    for feature in patch_road_result.features:
+    for index, feature in enumerate(patch_road_result.features, start=1):
         road_key = _normalize_join_value(feature.properties.get(patch_road_id_field))
         patch_key = _normalize_join_value(feature.properties.get(patch_id_field))
         if road_key is None or patch_key is None:
@@ -188,11 +225,13 @@ def _run_patch_join(
         entry = patch_mapping.setdefault(road_key, {"record_count": 0, "patch_values": {}})
         entry["record_count"] += 1
         entry["patch_values"][patch_key] = feature.properties.get(patch_id_field)
+        if _should_emit_progress(index, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool2] patch_join: indexed {index} patch road feature(s)")
 
     matched_features: list[dict[str, Any]] = []
     unmatched_features: list[dict[str, Any]] = []
     multi_patch_assignment_count = 0
-    for feature in road_result.features:
+    for index, feature in enumerate(road_result.features, start=1):
         properties = dict(feature.properties)
         road_key = _normalize_join_value(properties.get(road_id_field))
         unmatched_reason: str | None = None
@@ -214,14 +253,21 @@ def _run_patch_join(
             properties["patch_id"] = None
             properties["unmatched_reason"] = unmatched_reason
             unmatched_features.append({"properties": properties, "geometry": feature.geometry})
+        if _should_emit_progress(index, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool2] patch_join: processed {index} road feature(s)")
 
     road_fields = unique_field_names(road_result.field_names, extra=("patch_id",))
     unmatched_fields = unique_field_names(road_result.field_names, extra=("patch_id", "unmatched_reason"))
+    _emit_progress(
+        progress_callback,
+        f"[T08 Tool2] patch_join: writing matched={len(matched_features)} unmatched={len(unmatched_features)}",
+    )
     write_gpkg(road_patch_output, matched_features, crs_text=PROCESS_CRS_TEXT, empty_fields=road_fields)
     write_gpkg(road_patch_unmatched_output, unmatched_features, crs_text=PROCESS_CRS_TEXT, empty_fields=unmatched_fields)
 
     duplicate_road_id_count = sum(1 for entry in patch_mapping.values() if entry["record_count"] > 1)
     conflicting_patch_id_count = sum(1 for entry in patch_mapping.values() if len(entry["patch_values"]) > 1)
+    elapsed_seconds = time.perf_counter() - started
     summary = {
         "tool": "T08 Tool2",
         "stage": "patch_join",
@@ -252,8 +298,11 @@ def _run_patch_join(
         "matched_output_bounds": aggregate_bounds(feature["geometry"] for feature in matched_features),
         "unmatched_output_bounds": aggregate_bounds(feature["geometry"] for feature in unmatched_features),
         "unmatched_reason_summary": _reason_counter(unmatched_features),
+        "elapsed_seconds": round(elapsed_seconds, 6),
+        "roads_per_second": _items_per_second(len(road_result.features), elapsed_seconds),
     }
     write_json(summary_output, summary)
+    _emit_progress(progress_callback, f"[T08 Tool2] patch_join: done elapsed={elapsed_seconds:.2f}s summary={summary_output}")
     return to_plain(summary), matched_features
 
 
@@ -269,7 +318,11 @@ def _run_kind_enrich(
     raw_kind_road_default_crs_text: str | None,
     buffer_distance_meters: float,
     spatial_predicate: str,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
+    _emit_progress(progress_callback, "[T08 Tool2] kind_enrich: reading raw Kind Road")
     raw_kind_result = read_vector(
         raw_kind_road_gpkg,
         layer_name=raw_kind_road_layer,
@@ -280,7 +333,15 @@ def _run_kind_enrich(
         raise ValueError("Raw kind road input contains no features")
     kind_field = resolve_field_name(raw_kind_result.features, ["Kind", "kind"], "raw kind road input")
     raw_geometries = [feature.geometry for feature in raw_kind_result.features]
+    raw_kind_tokens = [
+        _split_kind_tokens(get_case_insensitive_property(feature.properties, ["Kind", "kind"], preferred=kind_field))
+        for feature in raw_kind_result.features
+    ]
     raw_tree = STRtree(raw_geometries)
+    _emit_progress(
+        progress_callback,
+        f"[T08 Tool2] kind_enrich: loaded road_patch={len(road_patch_features)} raw_kind={len(raw_kind_result.features)}",
+    )
 
     output_features: list[dict[str, Any]] = []
     matched_kind_count = 0
@@ -289,24 +350,19 @@ def _run_kind_enrich(
     spatial_candidate_count = 0
     error_counter = Counter()
 
-    for feature in road_patch_features:
+    for index, feature in enumerate(road_patch_features, start=1):
         properties = dict(feature["properties"])
         kind_value: str | None = None
         try:
             search_geometry = feature["geometry"].buffer(buffer_distance_meters)
-            candidate_indexes = list(raw_tree.query(search_geometry, predicate=spatial_predicate))
+            candidate_indexes = raw_tree.query(search_geometry, predicate=spatial_predicate)
             spatial_candidate_count += len(candidate_indexes)
-            if not candidate_indexes:
+            if len(candidate_indexes) == 0:
                 unmatched_kind_count += 1
             else:
                 tokens: list[str] = []
                 for candidate_index in candidate_indexes:
-                    raw_properties = raw_kind_result.features[int(candidate_index)].properties
-                    tokens.extend(
-                        _split_kind_tokens(
-                            get_case_insensitive_property(raw_properties, ["Kind", "kind"], preferred=kind_field)
-                        )
-                    )
+                    tokens.extend(raw_kind_tokens[int(candidate_index)])
                 unique_tokens = _unique_preserve_order(tokens)
                 if unique_tokens:
                     kind_value = "|".join(unique_tokens)
@@ -317,9 +373,13 @@ def _run_kind_enrich(
             error_counter[str(exc)] += 1
         properties["kind"] = kind_value
         output_features.append({"properties": properties, "geometry": feature["geometry"]})
+        if _should_emit_progress(index, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool2] kind_enrich: processed {index} road feature(s)")
 
     output_fields = unique_field_names(road_patch_field_names, extra=("patch_id", "kind"))
+    _emit_progress(progress_callback, f"[T08 Tool2] kind_enrich: writing output={len(output_features)}")
     write_gpkg(road_patch_kind_output, output_features, crs_text=PROCESS_CRS_TEXT, empty_fields=output_fields)
+    elapsed_seconds = time.perf_counter() - started
     summary = {
         "tool": "T08 Tool2",
         "stage": "kind_enrich",
@@ -343,8 +403,11 @@ def _run_kind_enrich(
         "output_feature_count": len(output_features),
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in output_features),
         "error_reason_summary": dict(error_counter),
+        "elapsed_seconds": round(elapsed_seconds, 6),
+        "roads_per_second": _items_per_second(len(road_patch_features), elapsed_seconds),
     }
     write_json(summary_output, summary)
+    _emit_progress(progress_callback, f"[T08 Tool2] kind_enrich: done elapsed={elapsed_seconds:.2f}s summary={summary_output}")
     return to_plain(summary)
 
 
@@ -401,3 +464,18 @@ def _unique_preserve_order(tokens: Iterable[str]) -> list[str]:
             seen.add(token)
             ordered.append(token)
     return ordered
+
+
+def _should_emit_progress(index: int, progress_interval: int) -> bool:
+    return progress_interval > 0 and index % progress_interval == 0
+
+
+def _items_per_second(item_count: int, elapsed_seconds: float) -> float | None:
+    if elapsed_seconds <= 0:
+        return None
+    return round(float(item_count) / elapsed_seconds, 3)
+
+
+def _emit_progress(progress_callback: ProgressCallback | None, message: str) -> None:
+    if progress_callback is not None:
+        progress_callback(message)

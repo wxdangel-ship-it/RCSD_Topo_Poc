@@ -81,6 +81,8 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
             str(kind_output),
             "--summary-output",
             str(summary_output),
+            "--progress-interval",
+            "1",
         ],
         cwd=Path(__file__).resolve().parents[3],
         text=True,
@@ -90,6 +92,7 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
     )
 
     assert result.returncode == 0, result.stderr
+    assert "[T08 Tool2]" in result.stderr
     patch_epsg, patch_features = _read_gpkg(road_patch_output)
     unmatched_epsg, unmatched_features = _read_gpkg(unmatched_output)
     kind_epsg, kind_features = _read_gpkg(kind_output)
@@ -120,3 +123,6 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
     assert summary["counts"]["patch_join_matched_count"] == 2
     assert summary["counts"]["patch_join_unmatched_count"] == 1
     assert summary["counts"]["kind_matched_count"] == 2
+    assert summary["performance"]["elapsed_seconds"] >= 0
+    assert summary["performance"]["roads_per_second"] is not None
+    assert summary["performance"]["spatial_candidate_count"] >= 2

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import time
 from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,9 @@ COMPLEX_DIVMERGE_KIND_VALUE = 128
 COMPLEX_CANDIDATE_KIND_VALUES = frozenset({8, 16})
 CONTINUOUS_DIST_MAX_M = 50.0
 CONTINUOUS_DIVERGE_THEN_MERGE_DIST_MAX_M = 75.0
+
+
+ProgressCallback = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -106,7 +111,11 @@ def run_t08_nodes_type_aggregation(
     roads_default_crs_text: str | None = None,
     enable_roundabout: bool = True,
     enable_complex_divmerge: bool = True,
+    progress_callback: ProgressCallback | None = None,
+    progress_interval: int = 10000,
 ) -> T08NodesTypeAggregationArtifacts:
+    started = time.perf_counter()
+    stage_timings: dict[str, float] = {}
     nodes_path = ensure_gpkg_path(nodes_gpkg, label="--nodes-gpkg")
     roads_path = ensure_gpkg_path(roads_gpkg, label="--roads-gpkg")
     output_path = ensure_gpkg_path(nodes_output, label="--nodes-output")
@@ -116,6 +125,8 @@ def run_t08_nodes_type_aggregation(
         else output_path.with_name("t08_nodes_type_aggregation_summary.json")
     )
 
+    _emit_progress(progress_callback, f"[T08 Tool3] start nodes={nodes_path} roads={roads_path}")
+    stage_started = time.perf_counter()
     nodes_result = read_vector(
         nodes_path,
         layer_name=nodes_layer,
@@ -130,7 +141,13 @@ def run_t08_nodes_type_aggregation(
     )
     if not nodes_result.features:
         raise ValueError("Nodes input contains no features")
+    stage_timings["read_inputs_seconds"] = _elapsed_since(stage_started)
+    _emit_progress(
+        progress_callback,
+        f"[T08 Tool3] loaded nodes={len(nodes_result.features)} roads={len(roads_result.features)}",
+    )
 
+    stage_started = time.perf_counter()
     node_id_field = resolve_field_name(nodes_result.features, ["id"], "nodes input")
     node_kind_field = resolve_field_name(nodes_result.features, ["kind"], "nodes input")
     node_grade_field = resolve_field_name(nodes_result.features, ["grade"], "nodes input")
@@ -157,10 +174,15 @@ def run_t08_nodes_type_aggregation(
         node_features=node_features,
         kind_field=node_kind_field,
         grade_field=node_grade_field,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
     )
+    stage_timings["initialize_fields_seconds"] = _elapsed_since(stage_started)
 
     roundabout_summary: dict[str, Any] = _empty_roundabout_summary()
     if enable_roundabout:
+        stage_started = time.perf_counter()
+        _emit_progress(progress_callback, "[T08 Tool3] roundabout: start")
         roundabout_summary = _apply_roundabout_aggregation(
             node_features=node_features,
             road_features=road_features,
@@ -170,10 +192,23 @@ def run_t08_nodes_type_aggregation(
             road_enode_field=road_enode_field,
             kind_sample=kind_sample,
             grade_sample=grade_sample,
+            progress_callback=progress_callback,
+            progress_interval=progress_interval,
+        )
+        stage_timings["roundabout_seconds"] = _elapsed_since(stage_started)
+        _emit_progress(
+            progress_callback,
+            (
+                f"[T08 Tool3] roundabout: groups={roundabout_summary['roundabout_group_count']} "
+                f"updated_nodes={roundabout_summary['roundabout_updated_node_count']} "
+                f"elapsed={stage_timings['roundabout_seconds']:.2f}s"
+            ),
         )
 
     complex_summary: dict[str, Any] = _empty_complex_summary()
     if enable_complex_divmerge:
+        stage_started = time.perf_counter()
+        _emit_progress(progress_callback, "[T08 Tool3] complex_divmerge: start")
         complex_summary = _apply_complex_divmerge_aggregation(
             node_features=node_features,
             road_features=road_features,
@@ -186,13 +221,28 @@ def run_t08_nodes_type_aggregation(
             road_direction_field=road_direction_field,
             kind_sample=kind_sample,
             grade_sample=grade_sample,
+            progress_callback=progress_callback,
+            progress_interval=progress_interval,
+        )
+        stage_timings["complex_divmerge_seconds"] = _elapsed_since(stage_started)
+        _emit_progress(
+            progress_callback,
+            (
+                f"[T08 Tool3] complex_divmerge: junctions={complex_summary['complex_junction_count']} "
+                f"updated_nodes={complex_summary['updated_node_count']} "
+                f"elapsed={stage_timings['complex_divmerge_seconds']:.2f}s"
+            ),
         )
 
     output_fields = unique_field_names(
         nodes_result.field_names,
         extra=("kind_2", "grade_2", "mainnodeid", "subnodeid"),
     )
+    stage_started = time.perf_counter()
+    _emit_progress(progress_callback, f"[T08 Tool3] writing nodes output={output_path}")
     write_gpkg(output_path, node_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields)
+    stage_timings["write_output_seconds"] = _elapsed_since(stage_started)
+    elapsed_seconds = _elapsed_since(started)
 
     summary = {
         "tool": "T08 Tool3",
@@ -230,10 +280,22 @@ def run_t08_nodes_type_aggregation(
             "complex_updated_node_count": complex_summary["updated_node_count"],
         },
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in node_features),
+        "performance": {
+            "elapsed_seconds": round(elapsed_seconds, 6),
+            "nodes_per_second": _items_per_second(len(node_features), elapsed_seconds),
+            "stage_timings": {key: round(value, 6) for key, value in stage_timings.items()},
+        },
         "roundabout": roundabout_summary,
         "complex_divmerge": complex_summary,
     }
     write_json(summary_path, summary)
+    _emit_progress(
+        progress_callback,
+        (
+            f"[T08 Tool3] finished nodes={len(node_features)} roads={len(road_features)} "
+            f"elapsed={elapsed_seconds:.2f}s summary={summary_path}"
+        ),
+    )
     return T08NodesTypeAggregationArtifacts(nodes_output=output_path, summary_output=summary_path)
 
 
@@ -242,11 +304,15 @@ def _initialize_working_type_fields(
     node_features: list[dict[str, Any]],
     kind_field: str,
     grade_field: str,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> None:
-    for feature in node_features:
+    for index, feature in enumerate(node_features, start=1):
         props = feature["properties"]
         props["kind_2"] = props.get(kind_field)
         props["grade_2"] = props.get(grade_field)
+        if _should_emit_progress(index, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool3] initialized {index} node feature(s)")
 
 
 def _apply_roundabout_aggregation(
@@ -259,6 +325,8 @@ def _apply_roundabout_aggregation(
     road_enode_field: str,
     kind_sample: Any,
     grade_sample: Any,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> dict[str, Any]:
     groups, issue_rows, base_summary = _build_roundabout_groups(
         node_features=node_features,
@@ -267,16 +335,18 @@ def _apply_roundabout_aggregation(
         road_id_field=road_id_field,
         road_snode_field=road_snode_field,
         road_enode_field=road_enode_field,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
     )
     node_index_by_id = {
         _normalize_id(feature["properties"].get(node_id_field)): index
         for index, feature in enumerate(node_features)
     }
     updated_node_ids: set[str] = set()
-    for group in groups:
+    for group_index, group in enumerate(groups, start=1):
         for node_id in group.node_ids:
             index = node_index_by_id[node_id]
-            props = dict(node_features[index]["properties"])
+            props = node_features[index]["properties"]
             props["mainnodeid"] = group.mainnode_id
             if node_id == group.mainnode_id:
                 props["grade_2"] = _typed_like(grade_sample, 1)
@@ -284,8 +354,9 @@ def _apply_roundabout_aggregation(
             else:
                 props["grade_2"] = _typed_like(grade_sample, 0)
                 props["kind_2"] = _typed_like(kind_sample, 0)
-            node_features[index] = {"properties": props, "geometry": node_features[index]["geometry"]}
             updated_node_ids.add(node_id)
+        if _should_emit_progress(group_index, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool3] roundabout: applied {group_index} group(s)")
 
     return {
         **base_summary,
@@ -312,6 +383,8 @@ def _build_roundabout_groups(
     road_id_field: str,
     road_snode_field: str,
     road_enode_field: str,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> tuple[list[RoundaboutGroup], list[dict[str, Any]], dict[str, Any]]:
     node_ids = {_normalize_id(feature["properties"].get(node_id_field)) for feature in node_features}
     node_ids.discard(None)
@@ -324,7 +397,7 @@ def _build_roundabout_groups(
     invalid_count = 0
     if roadtype_field is None:
         missing_count = len(road_features)
-    for feature in road_features:
+    for index, feature in enumerate(road_features, start=1):
         props = feature["properties"]
         road_id = _required_id(props.get(road_id_field), "road id")
         snodeid = _required_id(props.get(road_snode_field), f"road '{road_id}' snodeid")
@@ -348,11 +421,17 @@ def _build_roundabout_groups(
         if roadtype is None or not _bit_enabled(roadtype, ROUNDABOUT_ROADTYPE_BIT):
             continue
         roundabout_roads[road_id] = {"road_id": road_id, "snodeid": snodeid, "enodeid": enodeid}
+        if _should_emit_progress(index, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool3] roundabout: scanned {index} road feature(s)")
 
     node_to_road_ids: dict[str, set[str]] = defaultdict(set)
     for road in roundabout_roads.values():
         node_to_road_ids[road["snodeid"]].add(road["road_id"])
         node_to_road_ids[road["enodeid"]].add(road["road_id"])
+    sorted_node_to_road_ids = {
+        node_id: tuple(sorted(road_ids, key=_sort_key))
+        for node_id, road_ids in node_to_road_ids.items()
+    }
 
     groups: list[RoundaboutGroup] = []
     visited: set[str] = set()
@@ -371,7 +450,7 @@ def _build_roundabout_groups(
             component_road_ids.add(road_id)
             component_node_ids.update((road["snodeid"], road["enodeid"]))
             for node_id in (road["snodeid"], road["enodeid"]):
-                for next_road_id in sorted(node_to_road_ids[node_id], key=_sort_key):
+                for next_road_id in sorted_node_to_road_ids.get(node_id, ()):
                     if next_road_id not in visited:
                         queue.append(next_road_id)
         if component_node_ids:
@@ -412,6 +491,8 @@ def _apply_complex_divmerge_aggregation(
     road_direction_field: str,
     kind_sample: Any,
     grade_sample: Any,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> dict[str, Any]:
     has_evd_field = _optional_field_from_dict_features(node_features, ["has_evd"])
     is_anchor_field = _optional_field_from_dict_features(node_features, ["is_anchor"])
@@ -422,6 +503,8 @@ def _apply_complex_divmerge_aggregation(
         node_grade_field=node_grade_field,
         has_evd_field=has_evd_field,
         is_anchor_field=is_anchor_field,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
     )
     parsed_roads = _parse_roads(
         road_features=road_features,
@@ -429,6 +512,8 @@ def _apply_complex_divmerge_aggregation(
         road_snode_field=road_snode_field,
         road_enode_field=road_enode_field,
         road_direction_field=road_direction_field,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
     )
     node_by_id = {node.node_id: node for node in parsed_nodes}
     candidate_nodes = [
@@ -443,11 +528,13 @@ def _apply_complex_divmerge_aggregation(
         starts_set=candidate_node_ids,
         nodes_kind=candidate_kind_map,
         roads=parsed_roads,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
     )
 
     rows: list[dict[str, Any]] = []
     updated_node_ids: set[str] = set()
-    for component in chain_components:
+    for component_index, component in enumerate(chain_components, start=1):
         component_nodes = [node_by_id[node_id] for node_id in component.node_ids if node_id in node_by_id]
         if len(component_nodes) < 2:
             continue
@@ -472,7 +559,7 @@ def _apply_complex_divmerge_aggregation(
         changed_road_ids = sorted({parsed_roads[index].road_id for index in changed_road_indices}, key=_sort_key)
 
         for node in component_nodes:
-            props = dict(node_features[node.feature_index]["properties"])
+            props = node_features[node.feature_index]["properties"]
             props["mainnodeid"] = chosen_mainnodeid
             if node.node_id == chosen_mainnodeid:
                 props["kind_2"] = _typed_like(kind_sample, COMPLEX_DIVMERGE_KIND_VALUE)
@@ -483,7 +570,6 @@ def _apply_complex_divmerge_aggregation(
                 props["grade_2"] = _typed_like(grade_sample, 0)
                 props["kind_2"] = _typed_like(kind_sample, 0)
                 props["subnodeid"] = None
-            node_features[node.feature_index] = {"properties": props, "geometry": node_features[node.feature_index]["geometry"]}
             updated_node_ids.add(node.node_id)
 
         rows.append(
@@ -501,6 +587,8 @@ def _apply_complex_divmerge_aggregation(
                 "topology": topology_diag,
             }
         )
+        if _should_emit_progress(component_index, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool3] complex_divmerge: processed {component_index} chain component(s)")
 
     complex_mainnodeids = tuple(
         sorted(
@@ -536,6 +624,8 @@ def _parse_nodes(
     node_grade_field: str,
     has_evd_field: str | None,
     is_anchor_field: str | None,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> list[ParsedNode]:
     parsed: list[ParsedNode] = []
     seen_ids: set[str] = set()
@@ -562,6 +652,8 @@ def _parse_nodes(
                 grade_2=_coerce_int(props.get("grade_2")),
             )
         )
+        if _should_emit_progress(index + 1, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool3] complex_divmerge: parsed {index + 1} node feature(s)")
     return parsed
 
 
@@ -572,6 +664,8 @@ def _parse_roads(
     road_snode_field: str,
     road_enode_field: str,
     road_direction_field: str,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> list[ParsedRoad]:
     parsed: list[ParsedRoad] = []
     seen_ids: set[str] = set()
@@ -594,6 +688,8 @@ def _parse_roads(
                 length_m=float(feature["geometry"].length),
             )
         )
+        if _should_emit_progress(index + 1, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool3] complex_divmerge: parsed {index + 1} road feature(s)")
     return parsed
 
 
@@ -615,6 +711,8 @@ def _build_continuous_graph(
     starts_set: set[str],
     nodes_kind: dict[str, int],
     roads: list[ParsedRoad],
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> tuple[list[ChainEdge], list[ChainComponent], dict[str, Any]]:
     adjacency_out, incident_map, direction_errors = _build_effective_directed_edges(roads)
     search_limit_m = max(CONTINUOUS_DIST_MAX_M, CONTINUOUS_DIVERGE_THEN_MERGE_DIST_MAX_M)
@@ -623,11 +721,13 @@ def _build_continuous_graph(
     seen_expand: set[str] = set()
     trace_diag: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
+    processed_seed_count = 0
     while visit_queue:
         src = visit_queue.popleft()
         if src in seen_expand:
             continue
         seen_expand.add(src)
+        processed_seed_count += 1
         src_kind = nodes_kind.get(src)
         for first_edge in adjacency_out.get(src, []):
             result = _follow_to_next_deg3(
@@ -665,12 +765,24 @@ def _build_continuous_graph(
                 edges_map[key] = current
             if dst not in seen_expand:
                 visit_queue.append(dst)
+        if _should_emit_progress(processed_seed_count, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool3] complex_divmerge: expanded {processed_seed_count} candidate node(s)")
 
     chain_edges = sorted(edges_map.values(), key=lambda item: (_sort_key(item.src), _sort_key(item.dst), item.dist_m))
     component_nodes = {node_id for edge in chain_edges for node_id in (edge.src, edge.dst)}
     components: list[ChainComponent] = []
-    for index, nodes in enumerate(_connected_components(component_nodes, chain_edges)):
-        component_edges = [edge for edge in chain_edges if edge.src in nodes and edge.dst in nodes]
+    component_sets = _connected_components(component_nodes, chain_edges)
+    node_to_component_index: dict[str, int] = {}
+    for index, nodes in enumerate(component_sets):
+        for node_id in nodes:
+            node_to_component_index[node_id] = index
+    component_edges_by_index: dict[int, list[ChainEdge]] = defaultdict(list)
+    for edge in chain_edges:
+        component_index = node_to_component_index.get(edge.src)
+        if component_index is not None and node_to_component_index.get(edge.dst) == component_index:
+            component_edges_by_index[component_index].append(edge)
+    for index, nodes in enumerate(component_sets):
+        component_edges = component_edges_by_index.get(index, [])
         offsets_m, predecessors, topology_diag = _topo_offsets(component_nodes=nodes, component_edges=component_edges)
         components.append(
             ChainComponent(
@@ -682,6 +794,8 @@ def _build_continuous_graph(
                 diag={"topology": topology_diag},
             )
         )
+        if _should_emit_progress(index + 1, progress_interval):
+            _emit_progress(progress_callback, f"[T08 Tool3] complex_divmerge: built {index + 1} chain component(s)")
 
     return chain_edges, components, {
         "direction_errors": direction_errors,
@@ -977,6 +1091,25 @@ def _sort_key(value: str) -> tuple[int, int | str]:
         return (0, int(text))
     except ValueError:
         return (1, text)
+
+
+def _elapsed_since(started: float) -> float:
+    return time.perf_counter() - started
+
+
+def _should_emit_progress(index: int, progress_interval: int) -> bool:
+    return progress_interval > 0 and index % progress_interval == 0
+
+
+def _items_per_second(item_count: int, elapsed_seconds: float) -> float | None:
+    if elapsed_seconds <= 0:
+        return None
+    return round(float(item_count) / elapsed_seconds, 3)
+
+
+def _emit_progress(progress_callback: ProgressCallback | None, message: str) -> None:
+    if progress_callback is not None:
+        progress_callback(message)
 
 
 __all__ = [

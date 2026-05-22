@@ -79,6 +79,8 @@ def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> Non
             str(nodes_output),
             "--summary-output",
             str(summary_output),
+            "--progress-interval",
+            "1",
         ],
         cwd=Path(__file__).resolve().parents[3],
         text=True,
@@ -88,6 +90,7 @@ def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> Non
     )
 
     assert result.returncode == 0, result.stderr
+    assert "[T08 Tool3]" in result.stderr
     epsg, props_by_id = _read_features(nodes_output)
     assert epsg == 3857
 
@@ -111,3 +114,6 @@ def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> Non
     assert summary["counts"]["roundabout_group_count"] == 1
     assert summary["counts"]["complex_junction_count"] == 1
     assert summary["complex_divmerge"]["complex_mainnodeids"] == ["200"]
+    assert summary["performance"]["elapsed_seconds"] >= 0
+    assert summary["performance"]["nodes_per_second"] is not None
+    assert "complex_divmerge_seconds" in summary["performance"]["stage_timings"]

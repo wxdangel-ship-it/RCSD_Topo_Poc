@@ -35,6 +35,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--raw-kind-road-default-crs", help="Default CRS for raw Kind Road input if missing.")
     parser.add_argument("--buffer-distance-meters", type=float, default=1.0, help="Spatial match buffer distance.")
     parser.add_argument("--spatial-predicate", default="covers", help="STRtree spatial predicate. Default: covers.")
+    parser.add_argument("--progress-interval", type=int, default=10000, help="Print progress every N features. Default: 10000.")
     return parser.parse_args(argv)
 
 
@@ -70,12 +71,18 @@ def main(argv: list[str] | None = None) -> int:
             raw_kind_road_default_crs_text=args.raw_kind_road_default_crs,
             buffer_distance_meters=args.buffer_distance_meters,
             spatial_predicate=args.spatial_predicate,
+            progress_callback=_print_progress,
+            progress_interval=args.progress_interval,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     print(json.dumps({key: str(value) for key, value in artifacts.__dict__.items()}, ensure_ascii=False, indent=2))
     return 0
+
+
+def _print_progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

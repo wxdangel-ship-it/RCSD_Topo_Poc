@@ -12,7 +12,7 @@ import fiona
 from fiona.model import to_dict as fiona_to_dict
 from fiona.transform import transform_geom
 from pyproj import CRS, Transformer
-from shapely import to_wkb
+from shapely import from_wkb, to_wkb
 from shapely.geometry import mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform as shapely_transform
@@ -77,6 +77,16 @@ def read_vector(
     resolved = Path(path).expanduser().resolve()
     if not resolved.is_file():
         raise ValueError(f"Vector input does not exist: {resolved}")
+
+    if resolved.suffix.lower() == GPKG_SUFFIX:
+        fast_result = _try_read_gpkg_sqlite(
+            resolved,
+            layer_name=layer_name,
+            default_crs_text=default_crs_text,
+            target_epsg=target_epsg,
+        )
+        if fast_result is not None:
+            return fast_result
 
     with fiona.open(str(resolved), layer=layer_name) as source:
         source_crs, crs_source = resolve_source_crs(
@@ -378,6 +388,151 @@ def resolve_source_crs(
     if default_crs_text:
         return CRS.from_user_input(default_crs_text), "default"
     raise ValueError(f"CRS not found and no default CRS configured: {path}")
+
+
+def _try_read_gpkg_sqlite(
+    path: Path,
+    *,
+    layer_name: str | None,
+    default_crs_text: str | None,
+    target_epsg: int | None,
+) -> VectorReadResult | None:
+    try:
+        with sqlite3.connect(path) as conn:
+            table_info = _resolve_gpkg_layer_info(conn, layer_name=layer_name)
+            if table_info is None:
+                return None
+            table_name, geometry_column, srs_id = table_info
+            columns = _gpkg_table_columns(conn, table_name=table_name, geometry_column=geometry_column)
+            if columns is None:
+                return None
+            source_crs, crs_source = _resolve_gpkg_crs(
+                conn,
+                srs_id=srs_id,
+                default_crs_text=default_crs_text,
+            )
+            output_crs = CRS.from_epsg(target_epsg) if target_epsg is not None else source_crs
+            select_columns = [*columns, geometry_column]
+            rows = conn.execute(
+                f"SELECT {', '.join(_quote_identifier(column) for column in select_columns)} "
+                f"FROM {_quote_identifier(table_name)}"
+            )
+            features: list[VectorFeature] = []
+            for index, row in enumerate(rows, start=1):
+                values = list(row)
+                geometry_blob = values[-1]
+                if geometry_blob is None:
+                    raise ValueError(f"Feature {index} in {path} has no geometry")
+                geometry = _geometry_from_gpkg_blob(geometry_blob)
+                if geometry.is_empty:
+                    raise ValueError(f"Feature {index} in {path} has empty geometry")
+                geometry = _transform_geometry(geometry, source_crs, output_crs)
+                features.append(
+                    VectorFeature(
+                        properties={column: values[column_index] for column_index, column in enumerate(columns)},
+                        geometry=geometry,
+                    )
+                )
+    except sqlite3.Error:
+        return None
+
+    return VectorReadResult(
+        path=path,
+        features=features,
+        source_crs=source_crs,
+        output_crs=output_crs,
+        crs_source=crs_source,
+        field_names=tuple(columns),
+        layer_name=table_name,
+    )
+
+
+def _resolve_gpkg_layer_info(conn: sqlite3.Connection, *, layer_name: str | None) -> tuple[str, str, int] | None:
+    if layer_name is None:
+        row = conn.execute(
+            """
+            SELECT table_name, column_name, srs_id
+            FROM gpkg_geometry_columns
+            ORDER BY table_name
+            LIMIT 1
+            """
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT table_name, column_name, srs_id
+            FROM gpkg_geometry_columns
+            WHERE lower(table_name) = lower(?)
+            LIMIT 1
+            """,
+            (layer_name,),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row[0]), str(row[1]), int(row[2])
+
+
+def _gpkg_table_columns(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str,
+    geometry_column: str,
+) -> list[str] | None:
+    rows = conn.execute(f"PRAGMA table_info({_quote_identifier(table_name)})").fetchall()
+    if not rows:
+        return None
+    columns: list[str] = []
+    geometry_lower = geometry_column.lower()
+    for row in rows:
+        name = str(row[1])
+        is_pk = int(row[5] or 0) > 0
+        if name.lower() == geometry_lower:
+            continue
+        if is_pk and name.lower() in {GPKG_FID_COLUMN, "ogc_fid"}:
+            continue
+        columns.append(name)
+    return columns
+
+
+def _resolve_gpkg_crs(
+    conn: sqlite3.Connection,
+    *,
+    srs_id: int,
+    default_crs_text: str | None,
+) -> tuple[CRS, str]:
+    row = conn.execute(
+        """
+        SELECT organization, organization_coordsys_id, definition, srs_name
+        FROM gpkg_spatial_ref_sys
+        WHERE srs_id = ?
+        """,
+        (srs_id,),
+    ).fetchone()
+    if row is not None:
+        organization = str(row[0] or "").upper()
+        coordsys_id = int(row[1]) if row[1] is not None else None
+        definition = str(row[2] or "").strip()
+        if organization == "EPSG" and coordsys_id and coordsys_id > 0:
+            return CRS.from_epsg(coordsys_id), "gpkg_spatial_ref_sys"
+        if definition and definition.lower() != "undefined":
+            try:
+                return CRS.from_user_input(definition), "gpkg_spatial_ref_sys"
+            except Exception:
+                pass
+    if default_crs_text:
+        return CRS.from_user_input(default_crs_text), "default"
+    raise ValueError("GPKG CRS not found and no default CRS configured")
+
+
+def _geometry_from_gpkg_blob(blob: Any) -> BaseGeometry:
+    payload = bytes(blob)
+    if len(payload) < 8 or payload[:2] != b"GP":
+        return from_wkb(payload)
+    flags = payload[3]
+    envelope_code = (flags >> 1) & 0b111
+    envelope_sizes = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}
+    offset = 8 + envelope_sizes.get(envelope_code, 0)
+    return from_wkb(payload[offset:])
 
 
 def _resolve_source_crs(

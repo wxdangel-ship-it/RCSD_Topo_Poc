@@ -126,3 +126,10 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
     assert summary["performance"]["elapsed_seconds"] >= 0
     assert summary["performance"]["roads_per_second"] is not None
     assert summary["performance"]["spatial_candidate_count"] >= 2
+    patch_summary = json.loads((tmp_path / "out" / "t08_road_patch_summary.json").read_text(encoding="utf-8"))
+    kind_summary = json.loads((tmp_path / "out" / "t08_road_kind_summary.json").read_text(encoding="utf-8"))
+    assert patch_summary["stage_timings"]["read_patch_attributes_seconds"] >= 0
+    assert patch_summary["stage_timings"]["join_roads_seconds"] >= 0
+    assert kind_summary["stage_timings"]["buffer_build_seconds"] >= 0
+    assert kind_summary["stage_timings"]["spatial_query_seconds"] >= 0
+    assert kind_summary["spatial_query_chunk_size"] == 5000

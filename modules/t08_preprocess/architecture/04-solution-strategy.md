@@ -13,7 +13,7 @@ Tool2 分两步执行：
 1. Patch join：按 `road.id = patch_road.road_id` 为 Road 写入 `patch_id`，未命中记录写入 unmatched 图层。
 2. Kind enrich：对 Patch join 输出和原始 Kind Road 统一投影到 `EPSG:3857` 后执行空间匹配，写入 `kind`。
 
-Tool2 命令脚本输出 Patch join / Kind enrich 阶段进度；Kind enrich 复用 raw Kind token 缓存与 STRtree 查询结果，summary 记录阶段耗时、吞吐与空间候选数；三个 GPKG 输出统一复用 T08 共享直接 SQLite GeoPackage 写出路径。
+Tool2 命令脚本输出 Patch join / Kind enrich 阶段进度；Road / Raw Kind GPKG 优先采用直接 SQLite GeoPackage 快读，无法识别标准 GPKG 元数据时回退 Fiona；Patch join 对 Patch Road 采用属性流式索引，只读取 `road_id / patch_id` 并跳过几何构造与投影；Kind enrich 复用 raw Kind token 缓存与 STRtree 分块批量查询结果，summary 记录阶段耗时、吞吐与空间候选数；三个 GPKG 输出统一复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
 ## Tool3
 

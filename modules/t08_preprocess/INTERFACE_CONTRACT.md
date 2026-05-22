@@ -61,7 +61,7 @@ make doctor
 Tool1：
 
 ```bash
-.venv/bin/python scripts/t08_tool1_shp_to_gpkg.py \
+.venv/bin/python scripts/t08_tool1_vector_convert.py \
   --input-shp /mnt/d/TestData/POC_Data/input/A.shp \
   --input-shp /mnt/d/TestData/POC_Data/input/B.shp \
   --input-geojson /mnt/d/TestData/POC_Data/input/C.geojson \
@@ -97,6 +97,7 @@ Tool3：
 - `--summary-output`：可选 summary JSON 输出路径；默认写入首个输入文件所在目录。
 - `--target-epsg`：可选输出 EPSG；不提供时保留输入 CRS。
 - `--default-crs`：当输入缺失 CRS 时使用。
+- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次；单文件开始、结束、失败与总完成状态均输出进度信息。
 - 覆盖口径：同名输出已存在时先删除再重建。
 
 ## 4. Tool2 Params

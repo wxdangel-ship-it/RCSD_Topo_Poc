@@ -67,7 +67,7 @@ def read_vector(
         raise ValueError(f"Vector input does not exist: {resolved}")
 
     with fiona.open(str(resolved), layer=layer_name) as source:
-        source_crs, crs_source = _resolve_source_crs(
+        source_crs, crs_source = resolve_source_crs(
             path=resolved,
             default_crs_text=default_crs_text,
             crs_wkt=getattr(source, "crs_wkt", None),
@@ -262,7 +262,7 @@ def unique_field_names(*groups: Iterable[str], extra: Iterable[str] = ()) -> lis
     return names
 
 
-def _resolve_source_crs(
+def resolve_source_crs(
     *,
     path: Path,
     default_crs_text: str | None,
@@ -282,6 +282,21 @@ def _resolve_source_crs(
     if default_crs_text:
         return CRS.from_user_input(default_crs_text), "default"
     raise ValueError(f"CRS not found and no default CRS configured: {path}")
+
+
+def _resolve_source_crs(
+    *,
+    path: Path,
+    default_crs_text: str | None,
+    crs_wkt: str | None,
+    crs_mapping: Any,
+) -> tuple[CRS, str]:
+    return resolve_source_crs(
+        path=path,
+        default_crs_text=default_crs_text,
+        crs_wkt=crs_wkt,
+        crs_mapping=crs_mapping,
+    )
 
 
 def _transform_geometry(geometry: BaseGeometry, source_crs: CRS, output_crs: CRS) -> BaseGeometry:

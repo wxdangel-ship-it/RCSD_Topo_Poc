@@ -2,7 +2,7 @@
 
 ## Tool1
 
-Tool1 使用参数化 SHP / GeoJSON / GPKG 列表作为输入，逐个读取、可选重投影，并将输出写回输入目录下的同名目标格式文件：SHP / GeoJSON 输出 GPKG，GPKG 输出 GeoJSON。
+Tool1 使用参数化 SHP / GeoJSON / GPKG 列表作为输入，逐个流式读取、可选重投影，并将输出写回输入目录下的同名目标格式文件：SHP / GeoJSON 输出 GPKG，GPKG 输出 GeoJSON。命令脚本会输出单文件开始、定量要素转换进度、结束与失败信息。
 
 ## Tool2
 

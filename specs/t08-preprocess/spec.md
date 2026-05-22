@@ -67,7 +67,7 @@ Other Node preprocessing remains deferred until a later task defines:
 
 This round adds three repo-level scripts, all explicitly authorized by the task:
 
-- `.venv/bin/python scripts/t08_tool1_shp_to_gpkg.py`
+- `.venv/bin/python scripts/t08_tool1_vector_convert.py`
 - `.venv/bin/python scripts/t08_tool2_road_preprocess.py`
 - `.venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py`
 
@@ -142,6 +142,8 @@ Tool1 implementation must:
 
 - read one or more SHP / GeoJSON / GPKG inputs;
 - write one same-directory, same-stem output per input using the supported target format;
+- stream features from source to target to avoid loading full inputs into memory;
+- print progress from the command script while preserving machine-readable summary output;
 - record per-file summary rows;
 - avoid changing CRS unless `target_epsg` is explicitly provided.
 

@@ -25,6 +25,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--summary-output", help="Optional summary JSON output path.")
     parser.add_argument("--target-epsg", type=int, help="Optional target EPSG. Omit to preserve source CRS.")
     parser.add_argument("--default-crs", help="Default CRS for inputs without CRS, e.g. EPSG:4326.")
+    parser.add_argument("--progress-interval", type=int, default=10000, help="Print progress every N features. Default: 10000.")
     parser.add_argument("--out-dir", help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
@@ -52,12 +53,18 @@ def main(argv: list[str] | None = None) -> int:
             summary_output=Path(args.summary_output) if args.summary_output else None,
             target_epsg=args.target_epsg,
             default_crs_text=args.default_crs,
+            progress_callback=_print_progress,
+            progress_interval=args.progress_interval,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0 if summary["failed_count"] == 0 else 1
+
+
+def _print_progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

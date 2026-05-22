@@ -58,7 +58,7 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
     result = subprocess.run(
         [
             sys.executable,
-            "scripts/t08_tool1_shp_to_gpkg.py",
+            "scripts/t08_tool1_vector_convert.py",
             "--input-shp",
             str(shp_a),
             "--input-shp",
@@ -71,6 +71,8 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
             str(summary_path),
             "--target-epsg",
             "3857",
+            "--progress-interval",
+            "1",
         ],
         cwd=Path(__file__).resolve().parents[3],
         text=True,
@@ -80,6 +82,7 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
     )
 
     assert result.returncode == 0, result.stderr
+    assert "[T08 Tool1]" in result.stderr
     assert (tmp_path / "input" / "a_roads.gpkg").is_file()
     assert (tmp_path / "input" / "b_roads.gpkg").is_file()
     assert (tmp_path / "input" / "c_roads.gpkg").is_file()
@@ -100,8 +103,12 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
     assert summary["converted_count"] == 4
     assert summary["failed_count"] == 0
     assert summary["total_feature_count"] == 4
+    assert summary["elapsed_seconds"] >= 0
+    assert summary["features_per_second"] is not None
     conversions = {row["conversion"] for row in summary["file_results"]}
     assert conversions == {"shp_to_gpkg", "geojson_to_gpkg", "gpkg_to_geojson"}
+    assert all(row["source_feature_count"] == 1 for row in summary["file_results"])
+    assert all(row["features_per_second"] is not None for row in summary["file_results"])
     assert all(Path(row["output_path"]).parent == Path(row["input_path"]).parent for row in summary["file_results"])
 
 

@@ -21,7 +21,7 @@ The implementation sequence is:
 - `modules/t08_preprocess/**`
 - `src/rcsd_topo_poc/modules/t08_preprocess/**`
 - `tests/modules/t08_preprocess/**`
-- `scripts/t08_tool1_shp_to_gpkg.py`
+- `scripts/t08_tool1_vector_convert.py`
 - `scripts/t08_tool2_road_preprocess.py`
 - `scripts/t08_tool3_nodes_type_aggregation.py`
 - project source facts and module inventories needed to register T08
@@ -88,7 +88,7 @@ Minimum commands:
 
 ```bash
 .venv/bin/python -m pytest tests/modules/t08_preprocess
-.venv/bin/python scripts/t08_tool1_shp_to_gpkg.py --help
+.venv/bin/python scripts/t08_tool1_vector_convert.py --help
 .venv/bin/python scripts/t08_tool2_road_preprocess.py --help
 .venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py --help
 git diff --check

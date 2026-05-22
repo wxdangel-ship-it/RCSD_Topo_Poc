@@ -25,7 +25,7 @@
 - [x] Implement Tool2 Road Kind enrichment.
 - [x] Implement Tool2 combined callable runner and artifact dataclass.
 - [x] Implement Tool3 Nodes type aggregation.
-- [x] Add `scripts/t08_tool1_shp_to_gpkg.py`.
+- [x] Add `scripts/t08_tool1_vector_convert.py`.
 - [x] Add `scripts/t08_tool2_road_preprocess.py`.
 - [x] Add `scripts/t08_tool3_nodes_type_aggregation.py`.
 - [x] Register T08 scripts in `docs/repository-metadata/entrypoint-registry.md`.
@@ -44,7 +44,7 @@
 ## Phase 4 - QA And Closeout
 
 - [x] Run `.venv/bin/python -m pytest tests/modules/t08_preprocess`.
-- [x] Run `.venv/bin/python scripts/t08_tool1_shp_to_gpkg.py --help`.
+- [x] Run `.venv/bin/python scripts/t08_tool1_vector_convert.py --help`.
 - [x] Run `.venv/bin/python scripts/t08_tool2_road_preprocess.py --help`.
 - [x] Run `.venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py --help`.
 - [x] Run `git diff --check`.

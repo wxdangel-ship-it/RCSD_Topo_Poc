@@ -9,7 +9,7 @@
 ## 运行入口
 
 ```bash
-.venv/bin/python scripts/t08_tool1_shp_to_gpkg.py --help
+.venv/bin/python scripts/t08_tool1_vector_convert.py --help
 .venv/bin/python scripts/t08_tool2_road_preprocess.py --help
 .venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py --help
 ```
@@ -17,7 +17,7 @@
 ## 内网示例
 
 ```bash
-.venv/bin/python scripts/t08_tool1_shp_to_gpkg.py \
+.venv/bin/python scripts/t08_tool1_vector_convert.py \
   --input-shp /mnt/d/TestData/POC_Data/input/A200_road.shp \
   --input-shp /mnt/d/TestData/POC_Data/input/A200_node.shp \
   --input-geojson /mnt/d/TestData/POC_Data/input/A200_area.geojson \

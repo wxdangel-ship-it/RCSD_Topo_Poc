@@ -18,7 +18,7 @@
 - `modules/t08_preprocess/**`
 - `src/rcsd_topo_poc/modules/t08_preprocess/**`
 - `tests/modules/t08_preprocess/**`
-- `scripts/t08_tool1_shp_to_gpkg.py`
+- `scripts/t08_tool1_vector_convert.py`
 - `scripts/t08_tool2_road_preprocess.py`
 - `scripts/t08_tool3_nodes_type_aggregation.py`
 - 与 T08 登记、入口登记直接相关的项目级文档

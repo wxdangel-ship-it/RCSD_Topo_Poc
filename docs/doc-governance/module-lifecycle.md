@@ -67,7 +67,7 @@
 - `t04_divmerge_virtual_polygon` 当前作为 T04 新模块进入 Active，正式范围已扩展到 `Step1-7`；其中 `Step1-4` 维持稳定上游中间结果与 Step4 审计工件，`Step5-7` 进入正式研发实现阶段，并默认按 SpecKit 的 `Product / Architecture / Development / Testing / QA` 五视角推进；internal full-input 通过 repo 级 shell/watch 包装 + T04 私有 runner 交付，不新增 repo 官方 CLI。
 - `t05_junction_surface_fusion` 当前作为 T05 正式模块进入 Active，Phase 1 发布统一路口面，Phase 2 发布 SWSD-RCSD relation 与 copy-on-write RCSD 网络成果；Phase 2 成功 relation 的 `base_id` 必须是 RCSD 语义路口主 node id。
 - `t06_segment_fusion_precheck` 当前作为 T06 正式模块启动，范围只到 Segment 替换前置检查，不回改 T01/T05 输出；当前不新增 repo 官方 CLI，内网执行通过 `scripts/t06_run_innernet_precheck.py` 包装模块内 runner。
-- `t08_preprocess` 当前作为 T08 正式预处理模块启动；工具形态属于项目正式组成部分，当前内网执行通过 `scripts/t08_tool1_shp_to_gpkg.py`、`scripts/t08_tool2_road_preprocess.py` 与 `scripts/t08_tool3_nodes_type_aggregation.py`，Tool3 以外的 Node 预处理暂不实现。
+- `t08_preprocess` 当前作为 T08 正式预处理模块启动；工具形态属于项目正式组成部分，当前内网执行通过 `scripts/t08_tool1_vector_convert.py`、`scripts/t08_tool2_road_preprocess.py` 与 `scripts/t08_tool3_nodes_type_aggregation.py`，Tool3 以外的 Node 预处理暂不实现。
 - `p01_arm_build` 当前作为 P01 成果模块进入 Active；目录结构与 T0X 模块一致，覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原，不提供 repo 官方 CLI 或常驻脚本入口。
 - stage3 `virtual intersection anchoring` 纳入当前 baseline，不等于最终唯一锚定决策闭环或正式产线闭环。
 - 单 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑入口保留。

@@ -24,9 +24,22 @@ Tool3 先将 Nodes `kind / grade` 复制到 `kind_2 / grade_2`，再执行两类
 
 Tool3 命令脚本输出读取、初始化、环岛聚合、复杂链聚合与写出进度；复杂链 component 组装使用 node-to-component 索引归集边，避免按组件反复全量扫描链路边；Nodes GPKG 输出复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
+## Tool4
+
+Tool4 读取 Tool3 之后的 Nodes 与对应 Roads，按语义路口分组计算入度 / 出度并识别三类类型错误：
+
+1. `kind_2 = 2048` 的 T 型路口，若入度或出度任一不为 `2`，输出为错误 T 型路口。
+2. `kind_2 = 4` 的交叉路口，若入度和出度均为 `2`，输出为错误交叉路口。
+3. `kind_2 = 16` 分歧与 `kind_2 = 8` 合流在 `100m` 内构成连续分歧合流且符合 T 型拓扑特征时，输出为错误分歧合流路口。
+
+入度 / 出度按 Road `direction` 计算：`direction in {0,1}` 视为双向，出度和入度各加 `1`；`direction = 2` 为 `snodeid -> enodeid`；`direction = 3` 为 `enodeid -> snodeid`。Tool4 不回写 Nodes，不重塑 Roads，只输出 `nodes_error.gpkg` 与 summary。
+
+连续分歧合流的第一版几何判定不引入未确认上游左右字段：以入向 road 与两个退出 road 的夹角最小者作为横向 / 左侧候选，另一条作为竖向 / 右侧候选，并在 summary 中记录相关 road 与角度参数，便于后续如有明确左右字段时替换。
+
 ## 输出策略
 
 - Tool1 输出同目录同名目标格式文件与 summary。
 - Tool2 输出三个 GPKG 与三个 summary，summary 包含阶段性能字段。
 - Tool3 输出一个 copy-on-write Nodes GPKG 与 summary，不输出或改写 Roads，summary 包含阶段性能字段。
+- Tool4 输出 `nodes_error.gpkg` 与 summary，不输出修复后 Nodes/Roads。
 - 所有路径由命令参数提供。

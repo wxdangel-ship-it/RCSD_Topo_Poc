@@ -12,9 +12,10 @@
 
 - [x] Create `modules/t08_preprocess/AGENTS.md`.
 - [x] Create `modules/t08_preprocess/INTERFACE_CONTRACT.md`.
-- [x] Create required architecture docs for Tool1 / Tool2 / Tool3.
-- [x] Keep Tool3 以外的 Node preprocessing deferred in the contract.
+- [x] Create required architecture docs for Tool1 / Tool2 / Tool3 / Tool4.
+- [x] Keep automatic Node repair outside Tool4 deferred in the contract.
 - [x] Revise docs for Tool3 Nodes type aggregation and keep other Node preprocessing deferred.
+- [x] Revise docs for Tool4 junction type error detection and keep automatic Node repair deferred.
 
 ## Phase 2 - Tool Implementation
 
@@ -25,9 +26,11 @@
 - [x] Implement Tool2 Road Kind enrichment.
 - [x] Implement Tool2 combined callable runner and artifact dataclass.
 - [x] Implement Tool3 Nodes type aggregation.
+- [x] Implement Tool4 junction type error detection.
 - [x] Add `scripts/t08_tool1_vector_convert.py`.
 - [x] Add `scripts/t08_tool2_road_preprocess.py`.
 - [x] Add `scripts/t08_tool3_nodes_type_aggregation.py`.
+- [x] Add `scripts/t08_tool4_junction_type_repair.py`.
 - [x] Register T08 scripts in `docs/repository-metadata/entrypoint-registry.md`.
 
 ## Phase 3 - Tests
@@ -40,6 +43,7 @@
 - [x] Cover script parameterized paths.
 - [x] Cover Tool2 `patch_id`, unmatched audit, and `kind`.
 - [x] Cover Tool3 `kind_2 / grade_2 / mainnodeid` aggregation for roundabout and complex div/merge.
+- [x] Cover Tool4 `nodes_error.gpkg` rows for wrong T, wrong cross, and continuous divmerge-as-T errors.
 
 ## Phase 4 - QA And Closeout
 
@@ -47,6 +51,7 @@
 - [x] Run `.venv/bin/python scripts/t08_tool1_vector_convert.py --help`.
 - [x] Run `.venv/bin/python scripts/t08_tool2_road_preprocess.py --help`.
 - [x] Run `.venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py --help`.
+- [x] Run `.venv/bin/python scripts/t08_tool4_junction_type_repair.py --help`.
 - [x] Run `git diff --check`.
 - [x] Report CRS correctness.
 - [x] Report topology consistency.

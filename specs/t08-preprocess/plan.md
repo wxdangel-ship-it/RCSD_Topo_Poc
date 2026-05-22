@@ -6,11 +6,11 @@ Redefine T08 as the project preprocessing module for base vector layers.
 
 The implementation sequence is:
 
-1. Freeze T08 module contract, Tool1 behavior, Tool2 behavior, and Tool3 behavior.
+1. Freeze T08 module contract, Tool1 behavior, Tool2 behavior, Tool3 behavior, and Tool4 behavior.
 2. Create T08 module docs from the repository template.
-3. Implement Tool1 / Tool2 / Tool3 module callable runners.
+3. Implement Tool1 / Tool2 / Tool3 / Tool4 module callable runners.
 4. Add focused tests with synthetic vector inputs.
-5. Add three root innernet scripts and register them.
+5. Add four root innernet scripts and register them.
 6. Register T08 as an Active formal module in project source facts.
 7. Run QA checks and report GIS requirements explicitly.
 
@@ -24,13 +24,14 @@ The implementation sequence is:
 - `scripts/t08_tool1_vector_convert.py`
 - `scripts/t08_tool2_road_preprocess.py`
 - `scripts/t08_tool3_nodes_type_aggregation.py`
+- `scripts/t08_tool4_junction_type_repair.py`
 - project source facts and module inventories needed to register T08
 - `docs/repository-metadata/entrypoint-registry.md`
 - `specs/t08-preprocess/**`
 
 ### Not Allowed In This Round
 
-- Node implementation outside Tool3 Nodes type aggregation.
+- Automatic Node repair outside Tool4 error detection.
 - Repo CLI / tools / Makefile entrypoints.
 - T00 contract changes.
 
@@ -82,6 +83,20 @@ Tool3 recommended outputs:
   t08_nodes_type_aggregation_summary.json
 ```
 
+Tool4 callable API:
+
+```python
+from rcsd_topo_poc.modules.t08_preprocess import run_t08_junction_type_repair
+```
+
+Tool4 recommended outputs:
+
+```text
+<out_root>/<run_id>/nodes_preprocess/
+  nodes_error.gpkg
+  t08_junction_type_repair_summary.json
+```
+
 ## 4. Verification
 
 Minimum commands:
@@ -91,6 +106,7 @@ Minimum commands:
 .venv/bin/python scripts/t08_tool1_vector_convert.py --help
 .venv/bin/python scripts/t08_tool2_road_preprocess.py --help
 .venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py --help
+.venv/bin/python scripts/t08_tool4_junction_type_repair.py --help
 git diff --check
 ```
 

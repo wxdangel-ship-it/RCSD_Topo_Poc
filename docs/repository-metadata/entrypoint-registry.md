@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `74` 个。
+- 当前真实执行入口共 `75` 个。
 - 分布概览：
-  - repo 级入口文件：`50`（`Makefile` 1 + `scripts/` 48 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`51`（`Makefile` 1 + `scripts/` 49 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`24`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -101,6 +101,7 @@
 | `t08_tool1_vector_convert.py` | `scripts/t08_tool1_vector_convert.py` | repo 级 | T08 Tool1 基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出写回输入目录下同名文件，采用流式转换并输出进度，支持可选目标 EPSG 与 summary 输出 | `active` | 否 |
 | `t08_tool2_road_preprocess.py` | `scripts/t08_tool2_road_preprocess.py` | repo 级 | T08 Tool2 Road GPKG 预处理，补充 `patch_id` 与原始 `kind` 并输出 `EPSG:3857` GPKG | `active` | 否 |
 | `t08_tool3_nodes_type_aggregation.py` | `scripts/t08_tool3_nodes_type_aggregation.py` | repo 级 | T08 Tool3 Nodes 类型聚合，补充 `kind_2 / grade_2` 并处理环岛、复杂分歧 / 合流 mainnode，输出 `EPSG:3857` Nodes GPKG | `active` | 否 |
+| `t08_tool4_junction_type_repair.py` | `scripts/t08_tool4_junction_type_repair.py` | repo 级 | T08 Tool4 路口类型错误识别，校验 `kind_2=2048 / 4 / 16+8` 语义路口类型并输出 `nodes_error.gpkg` 与 summary，不改写输入 Nodes/Roads | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

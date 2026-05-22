@@ -1,7 +1,7 @@
 # T08 Preprocess Specification
 
 **Feature Branch**: `codex/t08-redefinition`
-**Status**: Implementing - Tool1 / Tool2 / Tool3
+**Status**: Implementing - Tool1 / Tool2 / Tool3 / Tool4
 **Scope Mode**: SpecKit implementation
 
 ## 1. Module Definition
@@ -55,7 +55,20 @@ Tool3 depends on these fields:
 - Nodes: `id / kind / grade`, optional `mainnodeid / has_evd / is_anchor / subnodeid`.
 - Roads: `id / snodeid / enodeid / direction`, optional `roadtype`.
 
-Other Node preprocessing remains deferred until a later task defines:
+### 2.4 Tool4 - Junction Type Repair Error Detection
+
+Tool4 implements the first frozen junction type repair scope. This round only detects errors and outputs audit rows; it does not automatically fix `kind_2`.
+
+- Inputs MUST be GPKG.
+- Nodes input depends on `id / kind_2`, with optional `mainnodeid`.
+- Roads input depends on `id / snodeid / enodeid / direction`.
+- Output MUST be `nodes_error.gpkg` in `EPSG:3857`.
+- Summary MUST record input/output paths, field audit, CRS, semantic node count, error count by type, direction errors, and performance timings.
+- T-junction error: `kind_2 = 2048` with either `in_degree != 2` or `out_degree != 2`.
+- Cross-junction error: `kind_2 = 4` with `in_degree = 2` and `out_degree = 2`.
+- Continuous divmerge error: `kind_2 = 16` diverge with two outgoing roads, traced through degree-2 connectors to a `kind_2 = 8` merge within `100m` with two incoming roads, and matching T-shape topology.
+
+Other automatic Node repair remains deferred until a later task defines:
 
 - target Node fields to add/update;
 - source field semantics;
@@ -65,17 +78,18 @@ Other Node preprocessing remains deferred until a later task defines:
 
 ## 3. EntryPoints
 
-This round adds three repo-level scripts, all explicitly authorized by the task:
+This round adds four repo-level scripts, all explicitly authorized by the task:
 
 - `.venv/bin/python scripts/t08_tool1_vector_convert.py`
 - `.venv/bin/python scripts/t08_tool2_road_preprocess.py`
 - `.venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py`
+- `.venv/bin/python scripts/t08_tool4_junction_type_repair.py`
 
 Both scripts MUST accept WSL paths and MUST NOT contain internal hard-coded data paths.
 
 ## 4. Non-Goals
 
-- Do not implement Node preprocessing outside Tool3 Nodes type aggregation.
+- Do not implement automatic Node repair outside the explicitly defined Tool4 error detection output.
 - Do not add repo CLI, `tools`, `Makefile` targets, module `run.py`, or module `__main__.py`.
 - Do not modify T00 Tool4 / Tool5 contracts.
 - Do not infer upstream field semantics from local samples or smoke outputs.
@@ -83,11 +97,12 @@ Both scripts MUST accept WSL paths and MUST NOT contain internal hard-coded data
 
 ## 5. Product View
 
-Users need a reusable preprocessing module for Road and Node data. For this round, the user must be able to execute three innernet scripts with explicit WSL paths:
+Users need a reusable preprocessing module for Road and Node data. For this round, the user must be able to execute four innernet scripts with explicit WSL paths:
 
 - Tool1 converts SHP / GeoJSON to GPKG and GPKG to GeoJSON, writing outputs next to each input file.
 - Tool2 preprocesses Road data using GPKG inputs and writes GIS-ready `EPSG:3857` GPKG outputs.
 - Tool3 preprocesses Nodes type fields using Nodes/Roads GPKG inputs and writes GIS-ready `EPSG:3857` Nodes GPKG output.
+- Tool4 detects junction type errors using Nodes/Roads GPKG inputs and writes GIS-ready `EPSG:3857` `nodes_error.gpkg`.
 
 Tool2 accepted outcome:
 
@@ -100,6 +115,11 @@ Tool3 accepted outcome:
 
 - `nodes_type_aggregation.gpkg`: Nodes copy-on-write output with `kind_2 / grade_2 / mainnodeid / subnodeid`.
 - `nodes_type_aggregation_summary.json`: field audit, CRS audit, roundabout groups, complex div/merge groups, candidate counts, chain counts, and updated node counts.
+
+Tool4 accepted outcome:
+
+- `nodes_error.gpkg`: error semantic junction rows with `error_type / error_reason / in_degree / out_degree / related_node_ids / related_road_ids`.
+- `junction_type_repair_summary.json`: field audit, CRS audit, semantic node count, error count by type, direction errors, and performance timings.
 
 ## 6. Architecture View
 
@@ -120,11 +140,11 @@ The implementation should keep the write set narrow:
 - T08 module docs;
 - T08 implementation package;
 - T08 focused tests;
-- three root scripts;
+- four root scripts;
 - entrypoint registry;
 - this SpecKit task directory.
 
-The three root scripts are official entrypoints and MUST be registered in `docs/repository-metadata/entrypoint-registry.md`.
+The four root scripts are official entrypoints and MUST be registered in `docs/repository-metadata/entrypoint-registry.md`.
 
 ## 7. Development View
 
@@ -162,6 +182,15 @@ Tool3 implementation must:
 - summary records total elapsed time, stage timings, throughput, candidate counts, chain counts, and updated node counts.
 - continuous-chain component assembly should avoid repeated full edge scans per component.
 
+Tool4 implementation must:
+
+- read Nodes/Roads GPKG inputs;
+- write one `nodes_error.gpkg` output in `EPSG:3857`;
+- compute semantic junction in/out degree from Road `direction`;
+- detect wrong T, wrong cross, and continuous divmerge-as-T errors;
+- preserve raw inputs and leave Roads untouched;
+- record summary counts, error rows, field audit, CRS audit, direction errors, and performance timings.
+
 ## 8. Testing View
 
 Tests must be synthetic and local:
@@ -174,8 +203,9 @@ Tests must be synthetic and local:
 - assert scripts use parameterized temp paths;
 - assert `patch_id`, unmatched reason, and `kind` values;
 - assert Tool3 writes `kind_2 / grade_2 / mainnodeid` for roundabout and complex div/merge groups;
+- assert Tool4 writes wrong T, wrong cross, and continuous divmerge error rows into `nodes_error.gpkg`;
 - assert JSON summary counts.
-- assert Tool2 / Tool3 progress output and performance summary fields.
+- assert Tool2 / Tool3 / Tool4 progress output and performance summary fields.
 
 No test may require internal data paths.
 
@@ -184,17 +214,18 @@ No test may require internal data paths.
 Closeout must explicitly report:
 
 - **CRS correctness**: source CRS resolution, reprojection to `EPSG:3857`, output CRS metadata.
-- **Topology consistency**: no silent geometry-topology rewrite for Tool1 conversion, Tool2 Road preprocessing, or Tool3 Nodes type aggregation.
-- **Geometry semantic explainability**: `kind` comes from declared source Road spatial match; Tool3 `kind_2` aggregation comes from declared T01/T04 topology rules, not sample inference.
+- **Topology consistency**: no silent geometry-topology rewrite for Tool1 conversion, Tool2 Road preprocessing, Tool3 Nodes type aggregation, or Tool4 error detection.
+- **Geometry semantic explainability**: `kind` comes from declared source Road spatial match; Tool3 `kind_2` aggregation comes from declared T01/T04 topology rules; Tool4 errors come from declared degree and continuous-divmerge rules, not sample inference.
 - **Audit traceability**: input paths, output paths, parameters, field resolution, counts, and unmatched reasons are recorded.
 - **Performance verifiability**: source/target feature counts and spatial-index candidate matching counts are available in summary.
 
 ## 10. Acceptance Criteria
 
 1. T08 module definition is documented before implementation.
-2. Tool1, Tool2, and Tool3 are implemented as T08 formal preprocessing tools.
-3. Node preprocessing outside Tool3 remains explicitly deferred.
+2. Tool1, Tool2, Tool3, and Tool4 are implemented as T08 formal preprocessing tools.
+3. Automatic Node repair outside Tool4 error detection remains explicitly deferred.
 4. Tool1 converts SHP / GeoJSON to same-directory same-name GPKG files and GPKG to same-directory same-name GeoJSON files with parameterized inputs only.
 5. Tool2 uses only GPKG inputs and writes GPKG `EPSG:3857` outputs.
 6. Tool3 uses only GPKG inputs and writes Nodes GPKG `EPSG:3857` output.
-7. Focused tests cover Tool1, Tool2, and Tool3 behavior without internal data.
+7. Tool4 uses only GPKG inputs and writes `nodes_error.gpkg` `EPSG:3857` output.
+8. Focused tests cover Tool1, Tool2, Tool3, and Tool4 behavior without internal data.

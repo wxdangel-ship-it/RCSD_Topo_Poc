@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import fiona
-from fiona.model import to_dict as fiona_to_dict
-from fiona.transform import transform_geom
 from pyproj import CRS
 
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
@@ -17,6 +15,8 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     ensure_shp_path,
     resolve_source_crs,
     to_plain,
+    write_geojson_from_fiona_collection,
+    write_gpkg_from_fiona_collection,
     write_json,
 )
 
@@ -240,34 +240,31 @@ def _convert_vector_streaming(
             crs_mapping=getattr(source, "crs", None),
         )
         output_crs = CRS.from_epsg(target_epsg) if target_epsg is not None else source_crs
-        schema = _copy_schema(source.schema)
         source_count = _safe_feature_count(source)
         layer_name = getattr(source, "name", None) or input_path.stem
-        write_kwargs = _write_kwargs(output_path=output_path, schema=schema, output_crs=output_crs, layer_name=input_path.stem)
-        feature_count = 0
-        with fiona.open(**write_kwargs) as sink:
-            for feature_count, feature in enumerate(source, start=1):
-                geometry = feature.get("geometry")
-                if geometry is None:
-                    raise ValueError(f"Feature {feature_count} in {input_path} has no geometry")
-                geometry_payload = fiona_to_dict(geometry)
-                if source_crs != output_crs:
-                    geometry_payload = transform_geom(source_crs.to_string(), output_crs.to_string(), geometry_payload)
-                sink.write(
-                    {
-                        "type": "Feature",
-                        "properties": dict(feature.get("properties") or {}),
-                        "geometry": geometry_payload,
-                    }
-                )
-                if progress_callback is not None and progress_interval > 0 and feature_count % progress_interval == 0:
-                    total_text = f"/{source_count}" if source_count is not None else ""
-                    _emit_progress(
-                        progress_callback,
-                        f"[T08 Tool1] {input_path.name}: converted {feature_count}{total_text} feature(s)",
-                    )
+        if output_path.suffix.lower() == ".gpkg":
+            write_result = write_gpkg_from_fiona_collection(
+                output_path,
+                source,
+                source_crs=source_crs,
+                output_crs=output_crs,
+                layer_name=input_path.stem,
+                progress_callback=progress_callback,
+                progress_interval=progress_interval,
+            )
+        else:
+            write_result = write_geojson_from_fiona_collection(
+                output_path,
+                source,
+                source_crs=source_crs,
+                output_crs=output_crs,
+                layer_name=input_path.stem,
+                progress_callback=progress_callback,
+                progress_interval=progress_interval,
+            )
 
     elapsed_seconds = time.perf_counter() - started
+    feature_count = int(write_result["feature_count"])
     return {
         "input_crs": source_crs.to_string(),
         "output_crs": output_crs.to_string(),
@@ -275,37 +272,9 @@ def _convert_vector_streaming(
         "feature_count": feature_count,
         "layer_name": layer_name,
         "source_feature_count": source_count,
-        "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
+        "size_bytes": write_result["size_bytes"],
         "elapsed_seconds": round(elapsed_seconds, 6),
         "features_per_second": _features_per_second(feature_count, elapsed_seconds),
-    }
-
-
-def _copy_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "geometry": schema.get("geometry") or "Unknown",
-        "properties": dict(schema.get("properties") or {}),
-    }
-
-
-def _write_kwargs(*, output_path: Path, schema: dict[str, Any], output_crs: CRS, layer_name: str) -> dict[str, Any]:
-    if output_path.suffix.lower() == ".gpkg":
-        return {
-            "fp": str(output_path),
-            "mode": "w",
-            "driver": "GPKG",
-            "layer": layer_name,
-            "schema": schema,
-            "crs": output_crs.to_string(),
-            "encoding": "utf-8",
-        }
-    return {
-        "fp": str(output_path),
-        "mode": "w",
-        "driver": "GeoJSON",
-        "schema": schema,
-        "crs": output_crs.to_string(),
-        "encoding": "utf-8",
     }
 
 

@@ -19,6 +19,7 @@
   - 如传入 `--target-epsg`，则输出投影到该 EPSG。
   - 输入缺失 CRS 时，必须通过 `--default-crs` 提供 CRS。
 - 输出摘要：JSON summary，记录输入、输出、CRS、图层名、要素数与失败原因。
+- 性能口径：SHP / GeoJSON 转 GPKG 使用直接 SQLite GeoPackage 写出路径，GPKG 转 GeoJSON 使用流式 JSON 写出路径；转换过程不得依赖 Fiona 逐要素 sink 写出作为主路径。
 
 ### Tool2：Road 数据预处理
 
@@ -114,6 +115,7 @@ Tool3：
 - `--spatial-predicate`：Kind 空间匹配谓词，默认 `covers`。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次；Patch join / Kind enrich 开始、读取、处理、写出与完成状态均输出进度信息。
 - summary 性能字段：总 summary 写入 `performance.elapsed_seconds / roads_per_second / patch_join_elapsed_seconds / kind_enrich_elapsed_seconds / spatial_candidate_count`；阶段 summary 写入阶段耗时与吞吐。
+- GPKG 输出写出：复用 T08 共享直接 SQLite GeoPackage 写出路径，避免 Fiona 逐要素 sink 写出。
 
 ## 5. Tool3 Params
 
@@ -128,6 +130,7 @@ Tool3：
 - `--skip-complex-divmerge`：跳过复杂分歧 / 合流聚合。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次；读取、字段初始化、环岛聚合、复杂分歧 / 合流聚合、写出与完成状态均输出进度信息。
 - summary 性能字段：写入 `performance.elapsed_seconds / nodes_per_second / stage_timings`，用于定位读取、初始化、环岛聚合、复杂分歧 / 合流聚合与写出耗时。
+- GPKG 输出写出：复用 T08 共享直接 SQLite GeoPackage 写出路径，避免 Fiona 逐要素 sink 写出。
 
 ## 6. Acceptance
 

@@ -18,6 +18,7 @@ summary 必须记录输入、输出、参数、字段解析、CRS、要素计数
 
 ## 性能
 
+Tool1 的 GPKG 输出必须使用直接 SQLite GeoPackage 写出路径；GeoJSON 输出必须使用流式 JSON 写出路径。summary 必须记录要素数、耗时与吞吐，命令脚本必须输出进度信息。
 Tool2 Kind enrich 必须使用空间索引，并记录空间匹配候选计数。
-Tool2 / Tool3 命令脚本必须输出阶段进度，并在 summary 记录耗时与吞吐。
+Tool2 / Tool3 命令脚本必须输出阶段进度，并在 summary 记录耗时与吞吐；GPKG 输出必须复用共享直接 SQLite GeoPackage 写出路径。
 Tool3 复杂分歧 / 合流聚合必须使用 Road 拓扑链路搜索，并记录候选数、链路数、聚合组与更新节点数；复杂链 component 组装不得按组件反复全量扫描链路边。

@@ -13,6 +13,7 @@ def failed_attrs(node_ids: list[str], node_index: dict[str, dict[str, Any]]) -> 
         node_id: {
             "has_evd": node_index.get(node_id, {}).get("has_evd"),
             "is_anchor": node_index.get(node_id, {}).get("is_anchor"),
+            "kind_2": node_index.get(node_id, {}).get("kind_2"),
         }
         for node_id in node_ids
     }

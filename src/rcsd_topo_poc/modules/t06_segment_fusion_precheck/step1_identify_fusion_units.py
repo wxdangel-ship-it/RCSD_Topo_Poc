@@ -20,6 +20,9 @@ from .schemas import (
 )
 
 
+PAIR_NODE_KIND2_STEP1_EXEMPT_VALUES = {1, 4096, 8192}
+
+
 def run_t06_step1_identify_fusion_units(
     *,
     swsd_segment_path: str | Path,
@@ -54,28 +57,33 @@ def run_t06_step1_identify_fusion_units(
         if missing:
             rejected.append(_rejected(segment_id, "before_evd", "missing_node_reference", missing, props, segment.get("geometry"), node_index))
             continue
-        has_evd_missing = [node_id for node_id in semantic_nodes if node_index[node_id].get("has_evd") in (None, "")]
+        pair_kind2_exempt_nodes = _pair_kind2_exempt_nodes(pair_nodes, node_index)
+        pair_kind2_exempt_node_set = set(pair_kind2_exempt_nodes)
+        eligibility_nodes = unique_preserve_order(
+            [node_id for node_id in pair_nodes if node_id not in pair_kind2_exempt_node_set] + junc_nodes
+        )
+        has_evd_missing = [node_id for node_id in eligibility_nodes if node_index[node_id].get("has_evd") in (None, "")]
         if has_evd_missing:
             rejected.append(_rejected(segment_id, "before_evd", "has_evd_missing", has_evd_missing, props, segment.get("geometry"), node_index))
             continue
-        has_evd_failed = [node_id for node_id in semantic_nodes if not yes_value(node_index[node_id].get("has_evd"))]
+        has_evd_failed = [node_id for node_id in eligibility_nodes if not yes_value(node_index[node_id].get("has_evd"))]
         if has_evd_failed:
             rejected.append(_rejected(segment_id, "before_evd", "has_evd_not_yes", has_evd_failed, props, segment.get("geometry"), node_index))
             continue
 
-        row = _fusion_row(segment_id, props, pair_nodes, junc_nodes, semantic_nodes)
+        row = _fusion_row(segment_id, props, pair_nodes, junc_nodes, semantic_nodes, pair_kind2_exempt_nodes)
         row["has_fail4_fallback"] = any(
             str(node_index[node_id].get("is_anchor") or "").strip().lower() == "fail4_fallback"
             for node_id in semantic_nodes
         )
         evd_candidates.append(feature(row, segment.get("geometry")))
 
-        anchor_missing = [node_id for node_id in semantic_nodes if node_index[node_id].get("is_anchor") in (None, "")]
+        anchor_missing = [node_id for node_id in eligibility_nodes if node_index[node_id].get("is_anchor") in (None, "")]
         if anchor_missing:
             candidate_not_final.append(segment_id)
             rejected.append(_rejected(segment_id, "after_evd", "is_anchor_missing", anchor_missing, props, segment.get("geometry"), node_index))
             continue
-        anchor_failed = [node_id for node_id in semantic_nodes if not anchor_eligible(node_index[node_id].get("is_anchor"))]
+        anchor_failed = [node_id for node_id in eligibility_nodes if not anchor_eligible(node_index[node_id].get("is_anchor"))]
         if anchor_failed:
             candidate_not_final.append(segment_id)
             rejected.append(_rejected(segment_id, "after_evd", "is_anchor_not_eligible", anchor_failed, props, segment.get("geometry"), node_index))
@@ -99,6 +107,8 @@ def run_t06_step1_identify_fusion_units(
             "rejected_after_evd_count": sum(1 for item in rejected if item["properties"].get("reject_stage") == "after_evd"),
             "reject_reason_counts": dict(reject_counts),
             "candidate_not_final_segment_ids": candidate_not_final,
+            "pair_kind2_exempt_segment_count": sum(1 for item in fusion_units if item["properties"].get("pair_kind2_exempt_nodes")),
+            "pair_kind2_exempt_node_count": sum(len(item["properties"].get("pair_kind2_exempt_nodes") or []) for item in fusion_units),
             "has_fail4_fallback_segment_count": sum(1 for item in fusion_units if item["properties"].get("has_fail4_fallback")),
             "outputs": {**{f"evd_candidates_{k}": str(v) for k, v in evd_paths.items()}, **{f"fusion_units_{k}": str(v) for k, v in fusion_paths.items()}, **{f"rejected_{k}": str(v) for k, v in rejected_paths.items()}},
             "gis_topology_checks": {
@@ -111,6 +121,21 @@ def run_t06_step1_identify_fusion_units(
         },
     )
     return T06Step1Artifacts(resolved_run_id, run_root, step_root, evd_paths["gpkg"], fusion_paths["gpkg"], rejected_paths["gpkg"], summary_path)
+
+
+def _pair_kind2_exempt_nodes(pair_nodes: list[str], node_index: dict[str, dict[str, Any]]) -> list[str]:
+    return [
+        node_id
+        for node_id in pair_nodes
+        if _parse_kind2(node_index[node_id].get("kind_2")) in PAIR_NODE_KIND2_STEP1_EXEMPT_VALUES
+    ]
+
+
+def _parse_kind2(value: Any) -> int | None:
+    try:
+        return int(float(str(value).strip()))
+    except Exception:
+        return None
 
 
 def _node_index(nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -153,6 +178,7 @@ def _fusion_row(
     pair_nodes: list[str],
     junc_nodes: list[str],
     semantic_nodes: list[str],
+    pair_kind2_exempt_nodes: list[str],
 ) -> dict[str, Any]:
     roads = []
     try:
@@ -168,6 +194,7 @@ def _fusion_row(
         "roads": roads,
         "pair_node_count": len(pair_nodes),
         "junc_node_count": len(junc_nodes),
+        "pair_kind2_exempt_nodes": pair_kind2_exempt_nodes,
         "has_fail4_fallback": False,
     }
 
@@ -188,9 +215,22 @@ def _rejected(
             "reject_reason": reason,
             "failed_node_ids": failed_nodes,
             "failed_node_attrs": failed_attrs(failed_nodes, node_index),
+            "pair_kind2_exempt_nodes": _pair_kind2_exempt_nodes_from_props(props, node_index),
             "pair_nodes": props.get("pair_nodes"),
             "junc_nodes": props.get("junc_nodes"),
             "sgrade": props.get("sgrade"),
         },
         geometry,
     )
+
+
+def _pair_kind2_exempt_nodes_from_props(props: dict[str, Any], node_index: dict[str, dict[str, Any]]) -> list[str]:
+    try:
+        pair_nodes = parse_id_list(props.get("pair_nodes"), allow_empty=False)
+    except ParseError:
+        return []
+    return [
+        node_id
+        for node_id in pair_nodes
+        if node_id in node_index and _parse_kind2(node_index[node_id].get("kind_2")) in PAIR_NODE_KIND2_STEP1_EXEMPT_VALUES
+    ]

@@ -10,8 +10,10 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 
 - `pair_nodes` 必须解析出两个语义路口 ID。
 - `junc_nodes` 可以为空。
-- 全部语义路口 `has_evd = yes` 时进入 EVD candidates。
-- 在 EVD candidates 中，全部语义路口 `is_anchor in {yes, fail4_fallback}` 时进入 fusion units。
+- `pair_nodes` 中 `kind_2 in {1,4096,8192}` 的节点从 Step1 eligibility 检查集合中移除，视为通过 `has_evd / is_anchor` 判定。
+- `kind_2` 豁免不适用于 `junc_nodes`，也不改变 `pair_nodes / semantic_node_set` 输出。
+- eligibility 检查集合内全部语义路口 `has_evd = yes` 时进入 EVD candidates。
+- 在 EVD candidates 中，eligibility 检查集合内全部语义路口 `is_anchor in {yes, fail4_fallback}` 时进入 fusion units。
 - `fail4_fallback` 必须视为可融合 anchor。
 
 ## Step2

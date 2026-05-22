@@ -63,7 +63,7 @@ Tool4 implements the first frozen junction type repair scope. This round only de
 - Nodes input depends on `id / kind_2`, with optional `mainnodeid`.
 - Roads input depends on `id / snodeid / enodeid / direction`.
 - Output MUST be `nodes_error.gpkg` in `EPSG:3857`.
-- Summary MUST record input/output paths, field audit, CRS, semantic node count, error count by type, direction errors, and performance timings.
+- Summary MUST record input/output paths, field audit, CRS, semantic node count, error count by type, direction errors, performance timings, and Road read mode.
 - T-junction error: `kind_2 = 2048` with either `in_degree != 2` or `out_degree != 2`.
 - Cross-junction error: `kind_2 = 4` with `in_degree = 2` and `out_degree = 2`.
 - Continuous divmerge error: `kind_2 = 16` diverge with two outgoing roads, traced through degree-2 connectors to a `kind_2 = 8` merge within `100m` with two incoming roads, and matching T-shape topology.
@@ -185,6 +185,7 @@ Tool3 implementation must:
 Tool4 implementation must:
 
 - read Nodes/Roads GPKG inputs;
+- read Road GPKG through the lightweight SQLite path when standard GPKG metadata is available, keeping only required fields, length, and direction vector for topology;
 - write one `nodes_error.gpkg` output in `EPSG:3857`;
 - compute semantic junction in/out degree from Road `direction`;
 - detect wrong T, wrong cross, and continuous divmerge-as-T errors;

@@ -71,6 +71,7 @@
   - 若后续上游正式提供左右字段，必须在本契约同轮更新后才能替换该代理规则。
 - 输出字段至少包含 `id / semantic_node_id / source_node_id / kind_2 / error_type / error_reason / error_group_id / in_degree / out_degree / related_node_ids / related_road_ids / audit_json`。
 - 输出边界：Tool4 只输出错误识别结果，不修改输入 Nodes/Roads，不输出修复后 Nodes/Roads。
+- 性能口径：Tool4 Road GPKG 优先使用直接 SQLite 轻量读取，只读取 `id / snodeid / enodeid / direction / geometry`，进入拓扑前仅保留 road 长度与方向向量，不长期持有完整 Road 几何；无法识别标准 GPKG 元数据时回退共享 `read_vector`。
 - 所有输入、输出路径必须通过参数提供。
 
 ## 2. EntryPoints
@@ -177,7 +178,7 @@ Tool4：
 - `--trace-distance-m`：连续分歧合流追踪距离，默认 `100` 米。
 - `--angle-tolerance-degrees`：横向 / 平行几何判定角度容差，默认 `35` 度。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个语义路口输出一次。
-- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings`，用于定位读取、拓扑构建、错误识别与写出耗时。
+- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings / road_read_mode`，用于定位读取、拓扑构建、错误识别与写出耗时，并记录 Road 读取模式。
 - GPKG 输出写出：复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
 ## 7. Acceptance

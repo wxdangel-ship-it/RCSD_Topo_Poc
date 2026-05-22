@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -8,11 +9,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pyproj import CRS
 from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     VectorFeature,
+    _build_geometry_transform,
+    _geometry_from_gpkg_blob,
+    _gpkg_table_columns,
+    _quote_identifier,
+    _resolve_gpkg_crs,
+    _resolve_gpkg_layer_info,
+    _transform_geometry_prepared,
     aggregate_bounds,
     ensure_gpkg_path,
     read_vector,
@@ -50,7 +59,6 @@ class ParsedNode:
     node_id: str
     semantic_id: str
     kind_2: int | None
-    properties: dict[str, Any]
     geometry: Point
 
 
@@ -68,8 +76,23 @@ class ParsedRoad:
     snodeid: str
     enodeid: str
     direction: int | None
-    geometry: BaseGeometry
     length_m: float
+    forward_vector: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class RoadReadAudit:
+    source_crs: CRS
+    output_crs: CRS
+    crs_source: str
+    layer_name: str | None
+    road_id_field: str
+    road_snode_field: str
+    road_enode_field: str
+    road_direction_field: str
+    reader: str
+    selected_fields_only: bool
+    geometry_stored: bool
 
 
 @dataclass(frozen=True)
@@ -131,35 +154,41 @@ def run_t08_junction_type_repair(
     )
 
     _emit_progress(progress_callback, f"[T08 Tool4] start nodes={nodes_path} roads={roads_path}")
-    stage_started = time.perf_counter()
+    read_started = time.perf_counter()
     nodes_result = read_vector(
         nodes_path,
         layer_name=nodes_layer,
         default_crs_text=nodes_default_crs_text,
         target_epsg=target_epsg,
     )
-    roads_result = read_vector(
+    if not nodes_result.features:
+        raise ValueError("Nodes input contains no features")
+    node_feature_count = len(nodes_result.features)
+    node_source_crs_text = nodes_result.source_crs.to_string()
+    node_crs_source = nodes_result.crs_source
+    stage_timings["read_nodes_seconds"] = _elapsed_since(read_started)
+
+    read_started = time.perf_counter()
+    parsed_roads, roads_audit = _read_roads_for_tool4(
         roads_path,
         layer_name=roads_layer,
         default_crs_text=roads_default_crs_text,
         target_epsg=target_epsg,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
     )
-    if not nodes_result.features:
-        raise ValueError("Nodes input contains no features")
-    stage_timings["read_inputs_seconds"] = _elapsed_since(stage_started)
+    stage_timings["read_roads_seconds"] = _elapsed_since(read_started)
+    stage_timings["read_inputs_seconds"] = stage_timings["read_nodes_seconds"] + stage_timings["read_roads_seconds"]
     _emit_progress(
         progress_callback,
-        f"[T08 Tool4] loaded nodes={len(nodes_result.features)} roads={len(roads_result.features)}",
+        f"[T08 Tool4] loaded nodes={node_feature_count} roads={len(parsed_roads)} "
+        f"road_reader={roads_audit.reader}",
     )
 
     stage_started = time.perf_counter()
     node_id_field = resolve_field_name(nodes_result.features, ["id"], "nodes input")
     node_kind_2_field = resolve_field_name(nodes_result.features, ["kind_2"], "nodes input")
     node_mainnodeid_field = _optional_field(nodes_result.features, ["mainnodeid"])
-    road_id_field = resolve_field_name(roads_result.features, ["id"], "roads input")
-    road_snode_field = resolve_field_name(roads_result.features, ["snodeid"], "roads input")
-    road_enode_field = resolve_field_name(roads_result.features, ["enodeid"], "roads input")
-    road_direction_field = resolve_field_name(roads_result.features, ["direction"], "roads input")
     parsed_nodes = _parse_nodes(
         nodes_result.features,
         node_id_field=node_id_field,
@@ -168,16 +197,8 @@ def run_t08_junction_type_repair(
         progress_callback=progress_callback,
         progress_interval=progress_interval,
     )
+    del nodes_result
     semantic_nodes = _build_semantic_nodes(parsed_nodes)
-    parsed_roads = _parse_roads(
-        roads_result.features,
-        road_id_field=road_id_field,
-        road_snode_field=road_snode_field,
-        road_enode_field=road_enode_field,
-        road_direction_field=road_direction_field,
-        progress_callback=progress_callback,
-        progress_interval=progress_interval,
-    )
     node_to_semantic = {node.node_id: node.semantic_id for node in parsed_nodes}
     topology = _build_topology(parsed_roads, node_to_semantic=node_to_semantic)
     stage_timings["build_topology_seconds"] = _elapsed_since(stage_started)
@@ -226,10 +247,10 @@ def run_t08_junction_type_repair(
         "input_paths": {"nodes_gpkg": nodes_path, "roads_gpkg": roads_path},
         "output_paths": {"nodes_error_output": output_path, "summary_output": summary_path},
         "input_crs": {
-            "nodes": nodes_result.source_crs.to_string(),
-            "nodes_crs_source": nodes_result.crs_source,
-            "roads": roads_result.source_crs.to_string(),
-            "roads_crs_source": roads_result.crs_source,
+            "nodes": node_source_crs_text,
+            "nodes_crs_source": node_crs_source,
+            "roads": roads_audit.source_crs.to_string(),
+            "roads_crs_source": roads_audit.crs_source,
         },
         "params": {
             "nodes_layer": nodes_layer,
@@ -241,15 +262,15 @@ def run_t08_junction_type_repair(
             "node_id_field": node_id_field,
             "node_kind_2_field": node_kind_2_field,
             "node_mainnodeid_field": node_mainnodeid_field,
-            "road_id_field": road_id_field,
-            "road_snode_field": road_snode_field,
-            "road_enode_field": road_enode_field,
-            "road_direction_field": road_direction_field,
+            "road_id_field": roads_audit.road_id_field,
+            "road_snode_field": roads_audit.road_snode_field,
+            "road_enode_field": roads_audit.road_enode_field,
+            "road_direction_field": roads_audit.road_direction_field,
         },
         "counts": {
-            "node_feature_count": len(nodes_result.features),
+            "node_feature_count": node_feature_count,
             "semantic_node_count": len(semantic_nodes),
-            "road_feature_count": len(roads_result.features),
+            "road_feature_count": len(parsed_roads),
             "error_feature_count": len(errors),
             "error_count_by_type": dict(sorted(counts_by_type.items())),
             "internal_road_count": topology.internal_road_count,
@@ -261,6 +282,13 @@ def run_t08_junction_type_repair(
             "elapsed_seconds": round(elapsed_seconds, 6),
             "semantic_nodes_per_second": _items_per_second(len(semantic_nodes), elapsed_seconds),
             "stage_timings": {key: round(value, 6) for key, value in stage_timings.items()},
+            "road_read_mode": {
+                "reader": roads_audit.reader,
+                "selected_fields_only": roads_audit.selected_fields_only,
+                "geometry_stored": roads_audit.geometry_stored,
+                "output_crs": roads_audit.output_crs.to_string(),
+                "layer_name": roads_audit.layer_name,
+            },
         },
         "errors": [_summary_error_row(row) for row in errors],
     }
@@ -303,7 +331,6 @@ def _parse_nodes(
                 node_id=node_id,
                 semantic_id=semantic_id,
                 kind_2=_coerce_int(feature.properties.get(node_kind_2_field)),
-                properties=dict(feature.properties),
                 geometry=Point(float(centroid.x), float(centroid.y)),
             )
         )
@@ -338,6 +365,152 @@ def _choose_representative(semantic_id: str, members: list[ParsedNode]) -> Parse
     return sorted(members, key=lambda node: (_sort_key(node.node_id), node.feature_index))[0]
 
 
+def _read_roads_for_tool4(
+    path: Path,
+    *,
+    layer_name: str | None,
+    default_crs_text: str | None,
+    target_epsg: int,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
+) -> tuple[list[ParsedRoad], RoadReadAudit]:
+    sqlite_result = _try_read_roads_light_gpkg(
+        path,
+        layer_name=layer_name,
+        default_crs_text=default_crs_text,
+        target_epsg=target_epsg,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
+    )
+    if sqlite_result is not None:
+        return sqlite_result
+
+    roads_result = read_vector(
+        path,
+        layer_name=layer_name,
+        default_crs_text=default_crs_text,
+        target_epsg=target_epsg,
+    )
+    road_id_field = resolve_field_name(roads_result.features, ["id"], "roads input")
+    road_snode_field = resolve_field_name(roads_result.features, ["snodeid"], "roads input")
+    road_enode_field = resolve_field_name(roads_result.features, ["enodeid"], "roads input")
+    road_direction_field = resolve_field_name(roads_result.features, ["direction"], "roads input")
+    parsed_roads = _parse_roads(
+        roads_result.features,
+        road_id_field=road_id_field,
+        road_snode_field=road_snode_field,
+        road_enode_field=road_enode_field,
+        road_direction_field=road_direction_field,
+        progress_callback=progress_callback,
+        progress_interval=progress_interval,
+    )
+    return parsed_roads, RoadReadAudit(
+        source_crs=roads_result.source_crs,
+        output_crs=roads_result.output_crs,
+        crs_source=roads_result.crs_source,
+        layer_name=roads_result.layer_name,
+        road_id_field=road_id_field,
+        road_snode_field=road_snode_field,
+        road_enode_field=road_enode_field,
+        road_direction_field=road_direction_field,
+        reader="vector_fallback",
+        selected_fields_only=False,
+        geometry_stored=False,
+    )
+
+
+def _try_read_roads_light_gpkg(
+    path: Path,
+    *,
+    layer_name: str | None,
+    default_crs_text: str | None,
+    target_epsg: int,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
+) -> tuple[list[ParsedRoad], RoadReadAudit] | None:
+    try:
+        with sqlite3.connect(path) as conn:
+            table_info = _resolve_gpkg_layer_info(conn, layer_name=layer_name)
+            if table_info is None:
+                return None
+            table_name, geometry_column, srs_id = table_info
+            columns = _gpkg_table_columns(conn, table_name=table_name, geometry_column=geometry_column)
+            if columns is None:
+                return None
+            road_id_field = _resolve_required_column(columns, ["id"], "roads input")
+            road_snode_field = _resolve_required_column(columns, ["snodeid"], "roads input")
+            road_enode_field = _resolve_required_column(columns, ["enodeid"], "roads input")
+            road_direction_field = _resolve_required_column(columns, ["direction"], "roads input")
+            source_crs, crs_source = _resolve_gpkg_crs(
+                conn,
+                srs_id=srs_id,
+                default_crs_text=default_crs_text,
+            )
+            output_crs = CRS.from_epsg(target_epsg)
+            transform_func = _build_geometry_transform(source_crs, output_crs)
+            property_columns = [road_id_field, road_snode_field, road_enode_field, road_direction_field]
+            select_columns = [*property_columns, geometry_column]
+            rows = conn.execute(
+                f"SELECT {', '.join(_quote_identifier(column) for column in select_columns)} "
+                f"FROM {_quote_identifier(table_name)}"
+            )
+            parsed_roads: list[ParsedRoad] = []
+            seen_ids: set[str] = set()
+            for index, row in enumerate(rows):
+                values = list(row)
+                geometry_blob = values[-1]
+                if geometry_blob is None:
+                    raise ValueError(f"Feature {index + 1} in {path} has no geometry")
+                geometry = _geometry_from_gpkg_blob(geometry_blob)
+                if geometry.is_empty:
+                    raise ValueError(f"Feature {index + 1} in {path} has empty geometry")
+                geometry = _transform_geometry_prepared(geometry, transform_func)
+                properties = {column: values[column_index] for column_index, column in enumerate(property_columns)}
+                road_id = _required_id(properties.get(road_id_field), "road id")
+                if road_id in seen_ids:
+                    raise ValueError(f"Roads input has duplicate id '{road_id}'.")
+                seen_ids.add(road_id)
+                length_m, forward_vector = _line_metrics_from_geometry(geometry)
+                parsed_roads.append(
+                    ParsedRoad(
+                        feature_index=index,
+                        road_id=road_id,
+                        snodeid=_required_id(properties.get(road_snode_field), f"road '{road_id}' snodeid"),
+                        enodeid=_required_id(properties.get(road_enode_field), f"road '{road_id}' enodeid"),
+                        direction=_coerce_int(properties.get(road_direction_field)),
+                        length_m=length_m,
+                        forward_vector=forward_vector,
+                    )
+                )
+                if _should_emit_progress(index + 1, progress_interval):
+                    _emit_progress(progress_callback, f"[T08 Tool4] parsed {index + 1} road feature(s)")
+    except sqlite3.Error:
+        return None
+
+    return parsed_roads, RoadReadAudit(
+        source_crs=source_crs,
+        output_crs=output_crs,
+        crs_source=crs_source,
+        layer_name=table_name,
+        road_id_field=road_id_field,
+        road_snode_field=road_snode_field,
+        road_enode_field=road_enode_field,
+        road_direction_field=road_direction_field,
+        reader="gpkg_sqlite_light",
+        selected_fields_only=True,
+        geometry_stored=False,
+    )
+
+
+def _resolve_required_column(columns: list[str], candidates: list[str], label: str) -> str:
+    lower_map = {column.lower(): column for column in columns}
+    for candidate in candidates:
+        resolved = lower_map.get(candidate.lower())
+        if resolved is not None:
+            return resolved
+    raise ValueError(f"Required field {candidates} not found in {label}")
+
+
 def _parse_roads(
     features: list[VectorFeature],
     *,
@@ -355,6 +528,7 @@ def _parse_roads(
         if road_id in seen_ids:
             raise ValueError(f"Roads input has duplicate id '{road_id}'.")
         seen_ids.add(road_id)
+        length_m, forward_vector = _line_metrics_from_geometry(feature.geometry)
         parsed.append(
             ParsedRoad(
                 feature_index=index,
@@ -362,8 +536,8 @@ def _parse_roads(
                 snodeid=_required_id(feature.properties.get(road_snode_field), f"road '{road_id}' snodeid"),
                 enodeid=_required_id(feature.properties.get(road_enode_field), f"road '{road_id}' enodeid"),
                 direction=_coerce_int(feature.properties.get(road_direction_field)),
-                geometry=feature.geometry,
-                length_m=float(feature.geometry.length),
+                length_m=length_m,
+                forward_vector=forward_vector,
             )
         )
         if _should_emit_progress(index + 1, progress_interval):
@@ -393,7 +567,7 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
         incident_road_indices[source_semantic].add(road_index)
         incident_road_indices[target_semantic].add(road_index)
         if road.direction in {0, 1}:
-            forward_vector = _road_vector_for_direction(road, src_is_snode=True)
+            forward_vector = road.forward_vector
             _add_directed_edge(
                 road=road,
                 road_index=road_index,
@@ -424,7 +598,7 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
                 road_index=road_index,
                 src=source_semantic,
                 dst=target_semantic,
-                vector=_road_vector_for_direction(road, src_is_snode=True),
+                vector=road.forward_vector,
                 in_degree=in_degree,
                 out_degree=out_degree,
                 in_edges=in_edges,
@@ -432,12 +606,13 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
                 reverse_edges=reverse_edges,
             )
         elif road.direction == 3:
+            reverse_vector = (-road.forward_vector[0], -road.forward_vector[1])
             _add_directed_edge(
                 road=road,
                 road_index=road_index,
                 src=target_semantic,
                 dst=source_semantic,
-                vector=_road_vector_for_direction(road, src_is_snode=False),
+                vector=reverse_vector,
                 in_degree=in_degree,
                 out_degree=out_degree,
                 in_edges=in_edges,
@@ -872,15 +1047,27 @@ def _summary_error_row(row: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in row.items() if key != "geometry"}
 
 
-def _road_vector_for_direction(road: ParsedRoad, *, src_is_snode: bool) -> tuple[float, float]:
-    coords = list(road.geometry.coords) if hasattr(road.geometry, "coords") else list(road.geometry.boundary.coords)
-    if len(coords) < 2:
-        return (0.0, 0.0)
-    start = coords[0]
-    end = coords[-1]
-    if src_is_snode:
-        return _unit_vector((float(end[0]) - float(start[0]), float(end[1]) - float(start[1])))
-    return _unit_vector((float(start[0]) - float(end[0]), float(start[1]) - float(end[1])))
+def _line_metrics_from_geometry(geometry: BaseGeometry) -> tuple[float, tuple[float, float]]:
+    endpoints = _line_endpoints(geometry)
+    if endpoints is None:
+        return float(geometry.length), (0.0, 0.0)
+    start, end = endpoints
+    forward_vector = _unit_vector((float(end[0]) - float(start[0]), float(end[1]) - float(start[1])))
+    return float(geometry.length), forward_vector
+
+
+def _line_endpoints(geometry: BaseGeometry) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    try:
+        coords = list(geometry.coords) if hasattr(geometry, "coords") else []
+    except NotImplementedError:
+        coords = []
+    if len(coords) >= 2:
+        return (float(coords[0][0]), float(coords[0][1])), (float(coords[-1][0]), float(coords[-1][1]))
+    for part in getattr(geometry, "geoms", ()):
+        endpoints = _line_endpoints(part)
+        if endpoints is not None:
+            return endpoints
+    return None
 
 
 def _reverse_edge(edge: DirectedEdge) -> DirectedEdge:

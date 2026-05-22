@@ -122,6 +122,13 @@ def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
     }
     assert summary["performance"]["elapsed_seconds"] >= 0
     assert "detect_errors_seconds" in summary["performance"]["stage_timings"]
+    assert summary["performance"]["road_read_mode"] == {
+        "reader": "gpkg_sqlite_light",
+        "selected_fields_only": True,
+        "geometry_stored": False,
+        "output_crs": "EPSG:3857",
+        "layer_name": "roads",
+    }
 
 
 def test_tool4_script_help() -> None:

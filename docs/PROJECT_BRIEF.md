@@ -52,7 +52,7 @@
 - `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围已扩展到 `Step1-7`，其中 `Step1-4` 维持既有 `case-package` 输入下的 Step4 review PNG、flat mirror、index 与 summary，`Step5-7` 进入正式研发实现阶段，且默认遵循 SpecKit 的 `Product / Architecture / Development / Testing / QA` 五视角覆盖；internal full-input 通过 repo 级 shell/watch 包装 + T04 私有 runner 交付，不新增 repo 官方 CLI
 - `t05_junction_surface_fusion` 当前作为 Active 正式业务模块进入治理；Phase 1 负责多源路口面融合发布，Phase 2 负责 RCSD junctionization、SWSD-RCSD relation 生产与 copy-on-write `rcsdroad_out.gpkg / rcsdnode_out.gpkg` 输出
 - `t06_segment_fusion_precheck` 当前作为 Active 正式业务模块启动；本轮只覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment 抽取、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换或路口重塑
-- T06 Step1 正式启用 final `nodes.gpkg.kind_2` 的 pair-node 豁免语义：仅 `pair_nodes` 中 `kind_2 in {1,4096,8192}` 的节点可跳过 `has_evd / is_anchor` eligibility 判定；`junc_nodes` 不适用该豁免，Step2 relation mapping 不受影响
+- T06 Step1 正式启用 final `nodes.gpkg.kind_2` 的 junc-node 豁免语义：仅 `junc_nodes` 中 `kind_2 in {1,4096,8192}` 的节点可跳过 `has_evd / is_anchor` eligibility 判定；`pair_nodes` 不适用该豁免，Step2 relation mapping 不受影响
 - `p01_arm_build` 当前作为 Active P01 成果模块进入治理；正式范围覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 规则级还原，输出 Trace / ThroughDecisionAudit / IssueReport / LogicalArmGroup / RawArmAlignment / ArmBuildFeedback / corrected_final_arms / arm_source_profiles / source_arm_pass_rules / final_generation_decisions / frcsd_road_next_road.geojson / final audit / review PNG / review GPKG / summary / review index，不提供 repo 官方 CLI 或 `scripts/` 常驻命令
 - `_template` 仅是模板目录，不属于模块生命周期盘点对象
 - 模块根目录不放 `SKILL.md`

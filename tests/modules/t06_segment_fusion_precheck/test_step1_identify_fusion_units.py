@@ -103,14 +103,14 @@ def test_step1_rejects_missing_node_and_missing_fields(tmp_path: Path) -> None:
     assert summary["reject_reason_counts"]["is_anchor_missing"] == 1
 
 
-def test_step1_exempts_pair_kind2_nodes_from_evd_and_anchor_checks(tmp_path: Path) -> None:
+def test_step1_exempts_junc_kind2_nodes_from_evd_and_anchor_checks(tmp_path: Path) -> None:
     segment_path = _write(
         tmp_path / "segment.gpkg",
         [
-            _seg("pair_kind2_missing_attrs", [100, 2], []),
-            _seg("pair_kind2_bad_attrs", [101, 2], []),
-            _seg("pair_kind2_value_one", [102, 2], []),
-            _seg("junc_kind2_still_checked", [1, 2], [100]),
+            _seg("junc_kind2_missing_attrs", [1, 2], [100]),
+            _seg("junc_kind2_bad_attrs", [1, 2], [101]),
+            _seg("junc_kind2_value_one", [1, 2], [102]),
+            _seg("pair_kind2_still_checked", [100, 2], []),
         ],
     )
     nodes_path = _write(
@@ -136,20 +136,20 @@ def test_step1_exempts_pair_kind2_nodes_from_evd_and_anchor_checks(tmp_path: Pat
     assert summary["evd_candidate_count"] == 3
     assert summary["final_fusion_unit_count"] == 3
     assert summary["reject_reason_counts"]["has_evd_missing"] == 1
-    assert summary["pair_kind2_exempt_segment_count"] == 3
-    assert summary["pair_kind2_exempt_node_count"] == 3
+    assert summary["junc_kind2_exempt_segment_count"] == 3
+    assert summary["junc_kind2_exempt_node_count"] == 3
 
     fusion_payload = json.loads(artifacts.fusion_units_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
     fusion_rows = {item["properties"]["swsd_segment_id"]: item["properties"] for item in fusion_payload["features"]}
-    assert set(fusion_rows) == {"pair_kind2_missing_attrs", "pair_kind2_bad_attrs", "pair_kind2_value_one"}
-    assert fusion_rows["pair_kind2_missing_attrs"]["pair_kind2_exempt_nodes"] == ["100"]
-    assert fusion_rows["pair_kind2_bad_attrs"]["pair_kind2_exempt_nodes"] == ["101"]
-    assert fusion_rows["pair_kind2_value_one"]["pair_kind2_exempt_nodes"] == ["102"]
+    assert set(fusion_rows) == {"junc_kind2_missing_attrs", "junc_kind2_bad_attrs", "junc_kind2_value_one"}
+    assert fusion_rows["junc_kind2_missing_attrs"]["junc_kind2_exempt_nodes"] == ["100"]
+    assert fusion_rows["junc_kind2_bad_attrs"]["junc_kind2_exempt_nodes"] == ["101"]
+    assert fusion_rows["junc_kind2_value_one"]["junc_kind2_exempt_nodes"] == ["102"]
 
     rejected_payload = json.loads(artifacts.rejected_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
     rejected_rows = {item["properties"]["swsd_segment_id"]: item["properties"] for item in rejected_payload["features"]}
-    assert rejected_rows["junc_kind2_still_checked"]["reject_reason"] == "has_evd_missing"
-    assert rejected_rows["junc_kind2_still_checked"]["failed_node_ids"] == ["100"]
+    assert rejected_rows["pair_kind2_still_checked"]["reject_reason"] == "has_evd_missing"
+    assert rejected_rows["pair_kind2_still_checked"]["failed_node_ids"] == ["100"]
 
 
 def test_step1_prefers_exact_node_id_over_earlier_mainnodeid_fallback(tmp_path: Path) -> None:
@@ -179,4 +179,4 @@ def test_step1_prefers_exact_node_id_over_earlier_mainnodeid_fallback(tmp_path: 
     fusion_payload = json.loads(artifacts.fusion_units_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
     row = fusion_payload["features"][0]["properties"]
     assert row["swsd_segment_id"] == "representative_pair"
-    assert row["pair_kind2_exempt_nodes"] == []
+    assert row["junc_kind2_exempt_nodes"] == []

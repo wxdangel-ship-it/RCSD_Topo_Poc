@@ -29,7 +29,7 @@ FUSION_UNIT_FIELDS = [
     "roads",
     "pair_node_count",
     "junc_node_count",
-    "pair_kind2_exempt_nodes",
+    "junc_kind2_exempt_nodes",
     "has_fail4_fallback",
 ]
 
@@ -39,7 +39,7 @@ STEP1_REJECTED_FIELDS = [
     "reject_reason",
     "failed_node_ids",
     "failed_node_attrs",
-    "pair_kind2_exempt_nodes",
+    "junc_kind2_exempt_nodes",
     "pair_nodes",
     "junc_nodes",
     "sgrade",

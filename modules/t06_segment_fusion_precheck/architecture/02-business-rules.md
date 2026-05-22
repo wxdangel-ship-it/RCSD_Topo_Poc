@@ -11,8 +11,8 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 - `pair_nodes` 必须解析出两个语义路口 ID。
 - `junc_nodes` 可以为空。
 - Step1 读取节点属性时优先使用 `id` 精确匹配的代表记录；仅在缺少对应 `id` 记录时使用 `mainnodeid` fallback。
-- `pair_nodes` 中 `kind_2 in {1,4096,8192}` 的节点从 Step1 eligibility 检查集合中移除，视为通过 `has_evd / is_anchor` 判定。
-- `kind_2` 豁免不适用于 `junc_nodes`，也不改变 `pair_nodes / semantic_node_set` 输出。
+- `junc_nodes` 中 `kind_2 in {1,4096,8192}` 的节点从 Step1 eligibility 检查集合中移除，视为通过 `has_evd / is_anchor` 判定。
+- `kind_2` 豁免不适用于 `pair_nodes`，也不改变 `junc_nodes / semantic_node_set` 输出。
 - eligibility 检查集合内全部语义路口 `has_evd = yes` 时进入 EVD candidates。
 - 在 EVD candidates 中，eligibility 检查集合内全部语义路口 `is_anchor in {yes, fail4_fallback}` 时进入 fusion units。
 - `fail4_fallback` 必须视为可融合 anchor。

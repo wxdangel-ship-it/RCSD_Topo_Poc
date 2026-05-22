@@ -24,7 +24,7 @@
   - `run_t06_step2_extract_rcsd_segments(...)`
   - `run_t06_segment_fusion_precheck(...)`
 - 内网执行脚本 `scripts/t06_run_innernet_precheck.py` 只能转发到 `run_t06_segment_fusion_precheck(...)`，不得内置替代业务逻辑。
-- Step1 按 `pair_nodes + junc_nodes` 的语义路口 ID 集合判断 EVD 与 anchor/fallback 资格；其中 `pair_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过，`junc_nodes` 不适用该豁免。
+- Step1 按 `pair_nodes + junc_nodes` 的语义路口 ID 集合判断 EVD 与 anchor/fallback 资格；其中 `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过，`pair_nodes` 不适用该豁免。
 - Step2 只接受 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id > 0` 的 relation。
 - `junc_nodes` 在 RCSD 抽取中是内部通过 + 侧向阻断，不是 hard-stop。
 - SWSD 单向方向必须从 `swsd_roads_path` 中 Segment road body 推导。

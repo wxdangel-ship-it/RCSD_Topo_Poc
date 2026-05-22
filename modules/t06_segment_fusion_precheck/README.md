@@ -50,7 +50,7 @@ artifacts = run_t06_segment_fusion_precheck(
 ## 关键规则
 
 - `pair_nodes + junc_nodes` 按语义路口 ID 判定。
-- Step1 中 `pair_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过；`junc_nodes` 不适用该豁免。
+- Step1 中 `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过；`pair_nodes` 不适用该豁免。
 - `is_anchor = fail4_fallback` 视为可融合 anchor。
 - Step2 relation 只接受 `status = 0` 且 `base_id > 0`。
 - `junc_nodes` 是内部通过 + 侧向阻断，不是 hard-stop。

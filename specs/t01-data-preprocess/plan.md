@@ -5,18 +5,21 @@
 - `step 2 workspace cleanup completed`
 - `step 3 Step2 performance/memory audit completed`
 - `step 4 Step2 optimization implemented on branch`
+- `step 5 kind_2=128 bidirectional traversal audit in progress`
 
 ## 当前目标
 1. 先把最新已合入的 T01 代码行为回写到正式需求基线文档。
 2. 在文档提交后清理本地脏数据，恢复本地/远端一致。
 3. 独立审计 Step2 的性能、内存与死机风险热点。
 4. 再切分支做 Step2 优化，确保业务结果与当前人工验收基线一致。
+5. 增加 `kind_2 = 128` 在双向 Segment candidate / validation 过程中的穿越审计，不改变构段业务结果。
 
 ## 当前状态
 - `main` 上的文档一致性审计、提交与清理已完成。
 - `codex/t01-step2-perf-opt` 上已完成 Step2 性能 / 内存审计与首轮优化实现。
 - 主要优化点已收敛到 exact arbitration solver 的递归/排序/冲突集合开销。
 - 当前分支的 `XXXS1-8` 已与 accepted baseline 对齐，业务效果无回退。
+- 当前新增需求确认：`kind_2 = 128` 在双向 Segment 构建中允许穿越，本轮仅做受控审计可见化。
 
 ## 实施批次
 
@@ -53,11 +56,19 @@
   - exact solver 已改为预排序 + bitmask conflict + 增量 score 汇总
   - `debug=False` 路径的过早 compaction 已修正为 tighten 后再 release compaction
 
+### 批次 F：`kind_2 = 128` 双向穿越审计
+- 不修改 S2 的 `seed / terminate / hard-stop` 规则。
+- 不把 `kind_2 = 128` 写入 `through_node_ids`。
+- 在 Step1 candidate 输出中记录 `crosses_kind_2_128` 与 `kind_2_128_node_ids`。
+- 在 Step2 validation 输出中统计经过 `kind_2 = 128` 的 candidate、validated、rejected 与 `dual_carriageway_separation_exceeded`。
+- 用定向单测验证审计字段存在且不改变 through 语义。
+
 ## 依赖与风险
 - 当前工作区存在与 T01 无关的脏数据，main 收口前必须避免误提交。
 - T01 文档当前最大的风险不是缺文档，而是“文档仍描述旧逻辑”，容易误导后续治理。
 - Step2 优化若直接改变 pair / trunk 仲裁策略，容易破坏已通过样例；性能优化必须优先聚焦结构与数据流，而非业务门控。
 - 内网死机历史说明 Step2 可能同时存在 CPU 与内存双重瓶颈，审计阶段不能只看耗时。
+- `kind_2 = 128` 穿越审计若误接入 `through_node_ids`，会触发 through-collapsed corridor 逻辑并改变业务结果；本轮必须避免。
 
 ## 回归策略
 1. 文档阶段：
@@ -73,6 +84,10 @@
    - 单测先行
    - 再跑 `XXXS1-8`
    - 以人工已通过样例为非回退基线
+5. `kind_2 = 128` 审计阶段：
+   - 跑新增定向单测
+   - 跑 T01 Step1 / Step2 相关单测
+   - 内网全量结果由内网执行回传后再判定性能与候选规模变化
 
 ## 文档落点
 - 过程文档：

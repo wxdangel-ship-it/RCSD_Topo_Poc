@@ -873,6 +873,22 @@ def _tighten_validated_segment_components(
 
     return tightened
 
+
+def _pair_kind_2_128_support_info(pair: PairRecord) -> dict[str, Any]:
+    return {
+        "crosses_kind_2_128": bool(pair.kind_2_128_node_ids),
+        "kind_2_128_node_ids": list(pair.kind_2_128_node_ids),
+        "forward_kind_2_128_node_ids": list(pair.forward_kind_2_128_node_ids),
+        "reverse_kind_2_128_node_ids": list(pair.reverse_kind_2_128_node_ids),
+    }
+
+
+def _with_pair_kind_2_128_support_info(pair: PairRecord, support_info: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(support_info)
+    merged.update(_pair_kind_2_128_support_info(pair))
+    return merged
+
+
 def _validate_pair_candidates(
     execution: Step1StrategyExecution,
     *,
@@ -988,7 +1004,10 @@ def _validate_pair_candidates(
                 branch_cut_road_ids=(),
                 boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
                 transition_same_dir_blocked=False,
-                support_info={"boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key)},
+                support_info=_with_pair_kind_2_128_support_info(
+                    pair,
+                    {"boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key)},
+                ),
             )
             continue
 
@@ -1027,12 +1046,15 @@ def _validate_pair_candidates(
                 branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
                 boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
                 transition_same_dir_blocked=False,
-                support_info={
-                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
-                    "branch_cut_infos": branch_cut_infos,
-                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
-                },
+                support_info=_with_pair_kind_2_128_support_info(
+                    pair,
+                    {
+                        "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                        "branch_cut_infos": branch_cut_infos,
+                        "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                        "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                    },
+                ),
             )
             continue
 
@@ -1076,13 +1098,16 @@ def _validate_pair_candidates(
                 branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
                 boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
                 transition_same_dir_blocked=False,
-                support_info={
-                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
-                    "branch_cut_infos": branch_cut_infos,
-                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
-                    **trunk_gate_info,
-                },
+                support_info=_with_pair_kind_2_128_support_info(
+                    pair,
+                    {
+                        "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                        "branch_cut_infos": branch_cut_infos,
+                        "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                        "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                        **trunk_gate_info,
+                    },
+                ),
             )
             continue
 
@@ -1124,13 +1149,16 @@ def _validate_pair_candidates(
                     branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
                     boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
                     transition_same_dir_blocked=False,
-                    support_info={
-                        "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
-                        "branch_cut_infos": branch_cut_infos,
-                        "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                        "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
-                        "historical_boundary_node_ids": list(internal_boundary_node_ids),
-                    },
+                    support_info=_with_pair_kind_2_128_support_info(
+                        pair,
+                        {
+                            "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                            "branch_cut_infos": branch_cut_infos,
+                            "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                            "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                            "historical_boundary_node_ids": list(internal_boundary_node_ids),
+                        },
+                    ),
                 )
                 continue
 
@@ -1160,13 +1188,16 @@ def _validate_pair_candidates(
                     branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
                     boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
                     transition_same_dir_blocked=False,
-                    support_info={
-                        "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
-                        "branch_cut_infos": branch_cut_infos,
-                        "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                        "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
-                        "current_terminate_node_ids": list(current_boundary_terminate_node_ids),
-                    },
+                    support_info=_with_pair_kind_2_128_support_info(
+                        pair,
+                        {
+                            "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                            "branch_cut_infos": branch_cut_infos,
+                            "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                            "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                            "current_terminate_node_ids": list(current_boundary_terminate_node_ids),
+                        },
+                    ),
                 )
                 continue
 
@@ -1242,29 +1273,32 @@ def _validate_pair_candidates(
                     option_id=option_id,
                 )
 
-            support_info = {
-                "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
-                "branch_cut_infos": branch_cut_infos,
-                "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
-                "pair_support_road_ids": sorted(
-                    set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
-                    key=_sort_key,
-                ),
-                "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
-                "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
-                "trunk_signed_area": trunk_candidate.signed_area,
-                "trunk_mode": trunk_mode,
-                "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
-                "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
-                "endpoint_priority_grades": list(endpoint_priority_grades),
-                **choice.support_info,
-                **trunk_gate_info,
-                "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
-                "segment_body_candidate_road_ids": list(segment_candidate_road_ids),
-                "segment_body_candidate_cut_infos": segment_cut_infos,
-                "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
-            }
+            support_info = _with_pair_kind_2_128_support_info(
+                pair,
+                {
+                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                    "branch_cut_infos": branch_cut_infos,
+                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                    "pair_support_road_ids": sorted(
+                        set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids),
+                        key=_sort_key,
+                    ),
+                    "forward_path_road_ids": list(trunk_candidate.forward_path.road_ids),
+                    "reverse_path_road_ids": list(trunk_candidate.reverse_path.road_ids),
+                    "trunk_signed_area": trunk_candidate.signed_area,
+                    "trunk_mode": trunk_mode,
+                    "bidirectional_minimal_loop": trunk_candidate.is_bidirectional_minimal_loop,
+                    "semantic_node_group_closure": trunk_candidate.is_semantic_node_group_closure,
+                    "endpoint_priority_grades": list(endpoint_priority_grades),
+                    **choice.support_info,
+                    **trunk_gate_info,
+                    "alternative_trunk_only_road_ids": sorted(alternative_trunk_only_road_ids, key=_sort_key),
+                    "segment_body_candidate_road_ids": list(segment_candidate_road_ids),
+                    "segment_body_candidate_cut_infos": segment_cut_infos,
+                    "left_turn_road_ids": list(trunk_candidate.left_turn_road_ids),
+                },
+            )
             pair_options.append(
                 PairArbitrationOption(
                     option_id=option_id,
@@ -1311,12 +1345,15 @@ def _validate_pair_candidates(
                 branch_cut_road_ids=tuple(sorted((info["road_id"] for info in branch_cut_infos), key=_sort_key)),
                 boundary_terminate_node_ids=tuple(sorted(boundary_terminate_ids, key=_sort_key)),
                 transition_same_dir_blocked=False,
-                support_info={
-                    "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
-                    "branch_cut_infos": branch_cut_infos,
-                    "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
-                    "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
-                },
+                support_info=_with_pair_kind_2_128_support_info(
+                    pair,
+                    {
+                        "boundary_terminate_node_ids": sorted(boundary_terminate_ids, key=_sort_key),
+                        "branch_cut_infos": branch_cut_infos,
+                        "candidate_channel_road_ids": sorted(candidate_road_ids, key=_sort_key),
+                        "pruned_road_ids": sorted(pruned_road_ids, key=_sort_key),
+                    },
+                ),
             )
         illegal_validations_by_pair_id[pair.pair_id] = pair_fallback_validation
 

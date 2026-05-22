@@ -116,6 +116,10 @@ def _compact_support_info_for_release(
         "residual_road_count",
         "branch_cut_road_count",
         "boundary_terminate_node_count",
+        "crosses_kind_2_128",
+        "kind_2_128_node_ids",
+        "forward_kind_2_128_node_ids",
+        "reverse_kind_2_128_node_ids",
     )
     for key in passthrough_keys:
         if key in support_info:
@@ -217,6 +221,10 @@ def _compact_option_support_info_for_runtime(
         "dual_carriageway_separation_gate_limit_m",
         "dual_carriageway_max_separation_m",
         "endpoint_priority_grades",
+        "crosses_kind_2_128",
+        "kind_2_128_node_ids",
+        "forward_kind_2_128_node_ids",
+        "reverse_kind_2_128_node_ids",
     )
     for key in passthrough_keys:
         if key in support_info:

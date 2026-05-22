@@ -14,6 +14,7 @@
 
 ## 当前治理主题
 - `T01 accepted baseline doc audit + Step2 performance audit and optimization`
+- 补充主题：`kind_2 = 128 bidirectional complex junction traversal audit`
 
 ## 当前治理目标
 1. 审计 T01 最新代码与正式需求基线文档的一致性，修正文档滞后项。
@@ -21,6 +22,7 @@
 3. 在文档对齐后，清理本地脏数据，恢复本地与远端一致状态。
 4. 对 Step2 阶段的性能、内存占用与高风险路径做专项审计，定位内网死机的主要来源。
 5. 在独立分支上实施 Step2 优化，并以现有样例集确保业务效果不变。
+6. 对双向 Segment 中允许穿越的 `kind_2 = 128` 复杂分歧 / 合流路口组合增加 candidate / validation 级审计，辅助解释内网候选规模变化和 Step2 慢簇。
 
 ## 范围
 - in-scope：
@@ -33,6 +35,7 @@
     - `plan.md`
     - `tasks.md`
   - Step2 性能 / 内存审计与后续优化实现
+  - `kind_2 = 128` 双向穿越审计字段与统计
   - T01 相关测试与样例回归
 - out-of-scope：
   - T01 新业务规则扩张
@@ -45,6 +48,7 @@
 - `kind_2 = 2048` 的业务语义已从“泛化 t-like barrier”收窄回“真实 T 型/旁向单通路口语义”；文档不得继续沿用旧的泛化叙述。
 - `bootstrap node retyping` 只允许改写 `grade_2 / kind_2`，不改原始 `grade / kind`。
 - Step2 性能优化阶段不得通过改变构段业务结果来换性能；业务结果以当前人工验收通过样例为基线。
+- `kind_2 = 128` 双向审计阶段不得把该值改为 `seed / terminate / hard-stop`，也不得把它写入 `through_node_ids`；本轮只增加可追溯审计。
 - 在样例未重新人工确认前，不更新 freeze baseline。
 
 ## 当前验收口径
@@ -60,6 +64,10 @@
 - 性能层：
   - 形成 Step2 的性能 / 内存审计结论
   - 给出可执行的优化点拆分与验证策略
+- 审计层：
+  - `pair_candidates.csv / pair_table.csv` 输出 `crosses_kind_2_128 / kind_2_128_node_ids`
+  - `pair_summary.json / segment_summary.json` 输出 `kind_2_128_*` 汇总统计
+  - `validated_pairs.csv / rejected_pair_candidates.csv / pair_validation_table.csv` 保留 validation 级穿越标记
 - 优化层：
   - 在独立分支上完成 Step2 优化
   - 基于 `XXXS1-8` 与相关单测确认业务无回退

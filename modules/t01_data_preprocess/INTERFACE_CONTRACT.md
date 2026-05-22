@@ -189,12 +189,15 @@
   - 首轮 `grade_2 in {1}`
   - `kind_2 in {4,64}`
   - `closed_con in {2,3}`
+- `kind_2 = 128` 在双向首轮不作为 `seed / terminate / hard-stop`，允许被图搜索穿越；穿越必须写入 `pair_candidates.csv / pair_table.csv / pair_summary.json` 的 `kind_2_128_*` 审计字段。
+- `kind_2 = 128` 穿越审计不得回写或扩展 `through_node_ids` 语义；`through_node_ids` 继续只表达 degree-based through 规则。
 - 输出：
   - `pair_candidates`
 
 ### 5.5 Step2
 - 输入 / terminate 规则与首轮 Step1 一致。
 - 合法 `seed / terminate` 节点不得被 `through_node` 吞掉。
+- `kind_2 = 128` 穿越审计不改变 Step2 trunk / segment_body 判定，但必须在 `pair_validation_table.csv / validated_pairs.csv / rejected_pair_candidates.csv / segment_summary.json` 中保留 candidate 穿越标记、节点列表和 validated / rejected 分组统计。
 - 输出：
   - `validated`
   - `rejected`

@@ -211,6 +211,11 @@ def _validation_road_count(
 def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
     validated_pair_count = 0
     rejected_pair_count = 0
+    kind_2_128_candidate_pair_count = 0
+    kind_2_128_validated_pair_count = 0
+    kind_2_128_rejected_pair_count = 0
+    kind_2_128_dual_carriageway_separation_reject_count = 0
+    kind_2_128_path_node_hit_count = 0
     total_branch_cut_count = 0
     clockwise_reject_count = 0
     left_turn_trunk_reject_count = 0
@@ -226,10 +231,18 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
     side_access_distance_block_keys: set[tuple[str, str]] = set()
 
     for validation in validations:
+        kind_2_128_node_ids = tuple(validation.support_info.get("kind_2_128_node_ids", ()) or ())
+        if kind_2_128_node_ids:
+            kind_2_128_candidate_pair_count += 1
+            kind_2_128_path_node_hit_count += len(kind_2_128_node_ids)
         if validation.validated_status == "validated":
             validated_pair_count += 1
+            if kind_2_128_node_ids:
+                kind_2_128_validated_pair_count += 1
         else:
             rejected_pair_count += 1
+            if kind_2_128_node_ids:
+                kind_2_128_rejected_pair_count += 1
 
         if validation.reject_reason == "only_clockwise_loop":
             clockwise_reject_count += 1
@@ -241,6 +254,8 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
             shared_trunk_conflict_count += 1
         if validation.reject_reason == "dual_carriageway_separation_exceeded":
             dual_carriageway_separation_reject_count += 1
+            if kind_2_128_node_ids:
+                kind_2_128_dual_carriageway_separation_reject_count += 1
         if "formway_unreliable_warning" in validation.warning_codes:
             formway_warning_count += 1
 
@@ -273,6 +288,13 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
         "candidate_pair_count": len(validations),
         "validated_pair_count": validated_pair_count,
         "rejected_pair_count": rejected_pair_count,
+        "kind_2_128_candidate_pair_count": kind_2_128_candidate_pair_count,
+        "kind_2_128_validated_pair_count": kind_2_128_validated_pair_count,
+        "kind_2_128_rejected_pair_count": kind_2_128_rejected_pair_count,
+        "kind_2_128_dual_carriageway_separation_reject_count": (
+            kind_2_128_dual_carriageway_separation_reject_count
+        ),
+        "kind_2_128_path_node_hit_count": kind_2_128_path_node_hit_count,
         "branch_cut_component_count": len(branch_cut_component_keys),
         "other_terminate_cut_count": len(other_terminate_cut_keys),
         "other_trunk_conflict_count": len(other_trunk_conflict_keys),
@@ -291,6 +313,7 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
 
 def _iter_validation_rows(validations: list[Any]) -> Iterable[dict[str, Any]]:
     for validation in validations:
+        kind_2_128_node_ids = tuple(validation.support_info.get("kind_2_128_node_ids", ()) or ())
         yield {
             "pair_id": validation.pair_id,
             "a_node_id": validation.a_node_id,
@@ -313,6 +336,8 @@ def _iter_validation_rows(validations: list[Any]) -> Iterable[dict[str, Any]]:
             ),
             "transition_same_dir_blocked": validation.transition_same_dir_blocked,
             "left_turn_excluded_mode": validation.left_turn_excluded_mode,
+            "crosses_kind_2_128": bool(kind_2_128_node_ids),
+            "kind_2_128_node_ids": ";".join(str(node_id) for node_id in kind_2_128_node_ids),
             "support_info": _compact_json(dict(validation.support_info)),
         }
 
@@ -321,6 +346,7 @@ def _iter_validated_rows(validations: list[Any]) -> Iterable[dict[str, Any]]:
     for validation in validations:
         if validation.validated_status != "validated":
             continue
+        kind_2_128_node_ids = tuple(validation.support_info.get("kind_2_128_node_ids", ()) or ())
         yield {
             "pair_id": validation.pair_id,
             "a_node_id": validation.a_node_id,
@@ -328,6 +354,8 @@ def _iter_validated_rows(validations: list[Any]) -> Iterable[dict[str, Any]]:
             "trunk_mode": validation.trunk_mode,
             "left_turn_excluded_mode": validation.left_turn_excluded_mode,
             "warning_codes": ";".join(validation.warning_codes),
+            "crosses_kind_2_128": bool(kind_2_128_node_ids),
+            "kind_2_128_node_ids": ";".join(str(node_id) for node_id in kind_2_128_node_ids),
             "segment_body_road_count": _validation_road_count(
                 validation.segment_road_ids,
                 validation.support_info,
@@ -345,12 +373,15 @@ def _iter_rejected_rows(validations: list[Any]) -> Iterable[dict[str, Any]]:
     for validation in validations:
         if validation.validated_status == "validated":
             continue
+        kind_2_128_node_ids = tuple(validation.support_info.get("kind_2_128_node_ids", ()) or ())
         yield {
             "pair_id": validation.pair_id,
             "a_node_id": validation.a_node_id,
             "b_node_id": validation.b_node_id,
             "reject_reason": validation.reject_reason or "",
             "warning_codes": ";".join(validation.warning_codes),
+            "crosses_kind_2_128": bool(kind_2_128_node_ids),
+            "kind_2_128_node_ids": ";".join(str(node_id) for node_id in kind_2_128_node_ids),
             "conflict_pair_id": validation.conflict_pair_id or "",
         }
 
@@ -761,6 +792,8 @@ def _write_step2_outputs_bundle(
             "trunk_mode",
             "left_turn_excluded_mode",
             "warning_codes",
+            "crosses_kind_2_128",
+            "kind_2_128_node_ids",
             "segment_body_road_count",
             "residual_road_count",
         ],
@@ -768,7 +801,16 @@ def _write_step2_outputs_bundle(
     write_csv(
         rejected_pairs_path,
         _iter_rejected_rows(validations),
-        ["pair_id", "a_node_id", "b_node_id", "reject_reason", "warning_codes", "conflict_pair_id"],
+        [
+            "pair_id",
+            "a_node_id",
+            "b_node_id",
+            "reject_reason",
+            "warning_codes",
+            "crosses_kind_2_128",
+            "kind_2_128_node_ids",
+            "conflict_pair_id",
+        ],
     )
     write_csv(
         validated_pairs_final_path,
@@ -849,6 +891,8 @@ def _write_step2_outputs_bundle(
             "residual_road_count",
             "transition_same_dir_blocked",
             "left_turn_excluded_mode",
+            "crosses_kind_2_128",
+            "kind_2_128_node_ids",
             "support_info",
         ],
     )

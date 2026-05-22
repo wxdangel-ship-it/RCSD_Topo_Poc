@@ -28,6 +28,7 @@ REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction", "formway")
 REQUIRED_NODE_FIELDS = ("id", "kind", "grade", "kind_2", "grade_2", "closed_con")
 DEFAULT_RUN_ID_PREFIX = "t01_step1_pair_poc_"
 SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE = 100
+COMPLEX_JUNCTION_KIND_2 = 128
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,9 @@ class PairRecord:
     reverse_path_road_ids: tuple[str, ...]
     through_node_ids: tuple[str, ...]
     used_mirrored_reverse_confirm_fallback: bool = False
+    kind_2_128_node_ids: tuple[str, ...] = ()
+    forward_kind_2_128_node_ids: tuple[str, ...] = ()
+    reverse_kind_2_128_node_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -798,6 +802,32 @@ def _matches_through_rule(
     return False
 
 
+def _is_complex_junction_semantic_node(
+    node: SemanticNodeRecord,
+    *,
+    physical_nodes: dict[str, NodeRecord],
+) -> bool:
+    if node.kind_2 == COMPLEX_JUNCTION_KIND_2:
+        return True
+    for member_node_id in node.member_node_ids:
+        member = physical_nodes.get(member_node_id)
+        if member is not None and member.kind_2 == COMPLEX_JUNCTION_KIND_2:
+            return True
+    return False
+
+
+def _complex_junction_semantic_node_ids(
+    semantic_nodes: dict[str, SemanticNodeRecord],
+    *,
+    physical_nodes: dict[str, NodeRecord],
+) -> set[str]:
+    return {
+        node_id
+        for node_id, node in semantic_nodes.items()
+        if _is_complex_junction_semantic_node(node, physical_nodes=physical_nodes)
+    }
+
+
 def _road_matches_any_formway_bit(road: RoadRecord, bits: tuple[int, ...]) -> bool:
     if not bits or road.formway is None:
         return False
@@ -1000,6 +1030,8 @@ def _build_pair_records(
     event_counts: dict[str, int],
     event_samples: list[dict[str, Any]],
     sample_counts: dict[str, int],
+    *,
+    complex_junction_node_ids: set[str],
 ) -> list[PairRecord]:
     pairs: dict[str, PairRecord] = {}
     force_terminate_node_ids = set(strategy.force_terminate_node_ids)
@@ -1065,6 +1097,17 @@ def _build_pair_records(
                 forward_candidate = reverse_candidate
                 backward_candidate = candidate
 
+            forward_complex_junction_node_ids = tuple(
+                node_id
+                for node_id in forward_candidate.path_node_ids[1:-1]
+                if node_id in complex_junction_node_ids
+            )
+            reverse_complex_junction_node_ids = tuple(
+                node_id
+                for node_id in backward_candidate.path_node_ids[1:-1]
+                if node_id in complex_junction_node_ids
+            )
+
             pairs[pair_id] = PairRecord(
                 pair_id=pair_id,
                 a_node_id=a_node_id,
@@ -1082,6 +1125,14 @@ def _build_pair_records(
                     )
                 ),
                 used_mirrored_reverse_confirm_fallback=used_mirrored_reverse_confirm_fallback,
+                kind_2_128_node_ids=tuple(
+                    sorted(
+                        set(forward_complex_junction_node_ids + reverse_complex_junction_node_ids),
+                        key=_sort_key,
+                    )
+                ),
+                forward_kind_2_128_node_ids=forward_complex_junction_node_ids,
+                reverse_kind_2_128_node_ids=reverse_complex_junction_node_ids,
             )
 
     return sorted(pairs.values(), key=lambda pair: (_sort_key(pair.a_node_id), _sort_key(pair.b_node_id)))
@@ -1253,6 +1304,10 @@ def run_step1_strategy(
         search_event_counts,
         search_event_samples,
         search_event_sample_counts,
+        complex_junction_node_ids=_complex_junction_semantic_node_ids(
+            context.semantic_nodes,
+            physical_nodes=context.physical_nodes,
+        ),
     )
 
     return Step1StrategyExecution(
@@ -1420,6 +1475,8 @@ def write_step1_candidate_outputs(
                 "strategy_id": pair.strategy_id,
                 "candidate_status": "candidate",
                 "reverse_confirmed": pair.reverse_confirmed,
+                "crosses_kind_2_128": bool(pair.kind_2_128_node_ids),
+                "kind_2_128_node_ids": ";".join(pair.kind_2_128_node_ids),
                 "support_info": _compact_json(
                     {
                         "forward_path_node_ids": pair.forward_path_node_ids,
@@ -1427,6 +1484,10 @@ def write_step1_candidate_outputs(
                         "reverse_path_node_ids": pair.reverse_path_node_ids,
                         "reverse_path_road_ids": pair.reverse_path_road_ids,
                         "through_node_ids": pair.through_node_ids,
+                        "crosses_kind_2_128": bool(pair.kind_2_128_node_ids),
+                        "kind_2_128_node_ids": pair.kind_2_128_node_ids,
+                        "forward_kind_2_128_node_ids": pair.forward_kind_2_128_node_ids,
+                        "reverse_kind_2_128_node_ids": pair.reverse_kind_2_128_node_ids,
                     }
                 ),
             }
@@ -1452,7 +1513,17 @@ def write_step1_candidate_outputs(
     write_csv(
         pair_candidates_path,
         pair_table_rows,
-        ["pair_id", "a_node_id", "b_node_id", "strategy_id", "candidate_status", "reverse_confirmed", "support_info"],
+        [
+            "pair_id",
+            "a_node_id",
+            "b_node_id",
+            "strategy_id",
+            "candidate_status",
+            "reverse_confirmed",
+            "crosses_kind_2_128",
+            "kind_2_128_node_ids",
+            "support_info",
+        ],
     )
     if debug:
         write_vector(out_dir / "pair_nodes.gpkg", pair_node_features)
@@ -1460,7 +1531,17 @@ def write_step1_candidate_outputs(
         write_csv(
             out_dir / "pair_table.csv",
             pair_table_rows,
-            ["pair_id", "a_node_id", "b_node_id", "strategy_id", "candidate_status", "reverse_confirmed", "support_info"],
+            [
+                "pair_id",
+                "a_node_id",
+                "b_node_id",
+                "strategy_id",
+                "candidate_status",
+                "reverse_confirmed",
+                "crosses_kind_2_128",
+                "kind_2_128_node_ids",
+                "support_info",
+            ],
         )
 
     rule_audit_rows = []
@@ -1503,6 +1584,11 @@ def write_step1_candidate_outputs(
     no_terminal_hit_count = search_event_counts.get("no_terminal_hit", 0)
     through_pass_count = search_event_counts.get("through_continue", 0)
     direction_block_count = search_event_counts.get("direction_blocked", 0)
+    complex_junction_node_ids = _complex_junction_semantic_node_ids(
+        semantic_nodes,
+        physical_nodes=physical_nodes,
+    )
+    kind_2_128_candidate_pairs = [pair for pair in pairs if pair.kind_2_128_node_ids]
 
     pair_summary = {
         "strategy_id": strategy.strategy_id,
@@ -1520,6 +1606,18 @@ def write_step1_candidate_outputs(
         "terminate_count": len(terminate_ids),
         "candidate_pair_count": len(pairs),
         "pair_count": len(pairs),
+        "kind_2_128_semantic_node_count": len(complex_junction_node_ids),
+        "kind_2_128_candidate_pair_count": len(kind_2_128_candidate_pairs),
+        "kind_2_128_forward_candidate_pair_count": sum(
+            1 for pair in pairs if pair.forward_kind_2_128_node_ids
+        ),
+        "kind_2_128_reverse_candidate_pair_count": sum(
+            1 for pair in pairs if pair.reverse_kind_2_128_node_ids
+        ),
+        "kind_2_128_path_node_hit_count": sum(
+            len(pair.forward_kind_2_128_node_ids) + len(pair.reverse_kind_2_128_node_ids)
+            for pair in pairs
+        ),
         "reverse_confirm_fail_count": reverse_confirm_fail_count,
         "no_terminal_hit_count": no_terminal_hit_count,
         "through_pass_count": through_pass_count,

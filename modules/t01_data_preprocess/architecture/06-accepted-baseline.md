@@ -151,6 +151,8 @@
 - `grade_2 in {1}`
 - `kind_2 in {4,64}`
 - `closed_con in {2,3}`
+- `kind_2 = 128` 代表复杂分歧 / 合流路口组合；在双向首轮中不纳入 `seed / terminate / hard-stop`，允许按现有图搜索穿越，并通过 `kind_2_128_*` 审计字段记录穿越情况。
+- `kind_2 = 128` 穿越审计独立于 `through_node_ids`：`through_node_ids` 仍只表达当前 degree-based through 规则命中的节点，不被扩展为复杂路口语义标签。
 
 ## 8. 阶段二：Step2
 
@@ -161,6 +163,7 @@
   - `kind_2 in {4,64}`
   - `closed_con in {2,3}`
 - 当前轮合法 `seed / terminate` 节点，不得被 `through_node` 吞掉。
+- Step2 不因 `kind_2 = 128` 穿越审计改变 trunk / segment_body 判定；`segment_summary.json` 与 pair table 必须统计经过 `kind_2 = 128` 的 candidate、validated、rejected 与 `dual_carriageway_separation_exceeded` 数量，用于定位复杂分歧 / 合流穿越对候选规模和性能的影响。
 - 输出：
   - `validated`
   - `rejected`

@@ -28,8 +28,8 @@ def prepare_run_roots(out_root: str | Path, run_id: str | None, step_dir: str) -
     return resolved_run_id, run_root, step_root
 
 
-def read_features(path: str | Path) -> list[dict[str, Any]]:
-    result = read_vector_layer(path)
+def read_features(path: str | Path, *, crs_override: str | None = None) -> list[dict[str, Any]]:
+    result = read_vector_layer(path, crs_override=crs_override)
     return [{"properties": dict(item.properties), "geometry": item.geometry} for item in result.features]
 
 

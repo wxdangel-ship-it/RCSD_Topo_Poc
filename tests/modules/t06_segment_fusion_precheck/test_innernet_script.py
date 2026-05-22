@@ -19,6 +19,29 @@ def _write(path: Path, features: list[dict]) -> Path:
     return path
 
 
+def _write_crs84_relation(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "type": "FeatureCollection",
+        "name": path.stem,
+        "crs": {"type": "name", "properties": {"name": "CRS84"}},
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"target_id": 1, "base_id": 10, "status": 0, "level": 1, "is_highway": 0},
+                "geometry": {"type": "Point", "coordinates": [1.0, 0.0]},
+            },
+            {
+                "type": "Feature",
+                "properties": {"target_id": 2, "base_id": 20, "status": 0, "level": 1, "is_highway": 0},
+                "geometry": {"type": "Point", "coordinates": [2.0, 0.0]},
+            },
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
 def test_innernet_script_runs_t06_precheck_with_explicit_paths(tmp_path: Path) -> None:
     segment = _write(
         tmp_path / "segment.gpkg",
@@ -41,13 +64,7 @@ def test_innernet_script_runs_t06_precheck_with_explicit_paths(tmp_path: Path) -
         [{"properties": {"id": "sr1", "snodeid": 1, "enodeid": 2, "direction": 0}, "geometry": LineString([(1, 0), (2, 0)])}],
     )
     t05_root = tmp_path / "t05_phase2"
-    relation = _write(
-        t05_root / "intersection_match_all.geojson",
-        [
-            {"properties": {"target_id": 1, "base_id": 10, "status": 0, "level": 1, "is_highway": 0}, "geometry": Point(1, 0)},
-            {"properties": {"target_id": 2, "base_id": 20, "status": 0, "level": 1, "is_highway": 0}, "geometry": Point(2, 0)},
-        ],
-    )
+    relation = _write_crs84_relation(t05_root / "intersection_match_all.geojson")
     rcsdnode = _write(
         t05_root / "rcsdnode_out.gpkg",
         [

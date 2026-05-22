@@ -46,7 +46,7 @@ def run_t06_step2_extract_rcsd_segments(
     segments = _segment_index(read_features(swsd_segment_path))
     swsd_roads = read_features(swsd_roads_path)
     swsd_nodes = _node_geometry_index(read_features(swsd_nodes_path))
-    relation_map = build_relation_map(read_features(intersection_match_path))
+    relation_map = build_relation_map(read_features(intersection_match_path, crs_override="EPSG:4326"))
     rcsd_roads = read_features(rcsdroad_path)
     rcsd_nodes = _node_geometry_index(read_features(rcsdnode_path))
     rcsd_graph = build_road_graph(rcsd_roads)

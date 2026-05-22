@@ -58,7 +58,7 @@ class ParsedNode:
     feature_index: int
     node_id: str
     semantic_id: str
-    kind_2: int | None
+    kind: int | None
     geometry: Point
 
 
@@ -187,12 +187,12 @@ def run_t08_junction_type_repair(
 
     stage_started = time.perf_counter()
     node_id_field = resolve_field_name(nodes_result.features, ["id"], "nodes input")
-    node_kind_2_field = resolve_field_name(nodes_result.features, ["kind_2"], "nodes input")
+    node_kind_field = resolve_field_name(nodes_result.features, ["kind"], "nodes input")
     node_mainnodeid_field = _optional_field(nodes_result.features, ["mainnodeid"])
     parsed_nodes = _parse_nodes(
         nodes_result.features,
         node_id_field=node_id_field,
-        node_kind_2_field=node_kind_2_field,
+        node_kind_field=node_kind_field,
         node_mainnodeid_field=node_mainnodeid_field,
         progress_callback=progress_callback,
         progress_interval=progress_interval,
@@ -221,7 +221,7 @@ def run_t08_junction_type_repair(
         "id",
         "semantic_node_id",
         "source_node_id",
-        "kind_2",
+        "kind",
         "error_type",
         "error_reason",
         "error_group_id",
@@ -260,7 +260,7 @@ def run_t08_junction_type_repair(
         },
         "field_audit": {
             "node_id_field": node_id_field,
-            "node_kind_2_field": node_kind_2_field,
+            "node_kind_field": node_kind_field,
             "node_mainnodeid_field": node_mainnodeid_field,
             "road_id_field": roads_audit.road_id_field,
             "road_snode_field": roads_audit.road_snode_field,
@@ -307,7 +307,7 @@ def _parse_nodes(
     features: list[VectorFeature],
     *,
     node_id_field: str,
-    node_kind_2_field: str,
+    node_kind_field: str,
     node_mainnodeid_field: str | None,
     progress_callback: ProgressCallback | None,
     progress_interval: int,
@@ -330,7 +330,7 @@ def _parse_nodes(
                 feature_index=index,
                 node_id=node_id,
                 semantic_id=semantic_id,
-                kind_2=_coerce_int(feature.properties.get(node_kind_2_field)),
+                kind=_coerce_int(feature.properties.get(node_kind_field)),
                 geometry=Point(float(centroid.x), float(centroid.y)),
             )
         )
@@ -359,7 +359,7 @@ def _choose_representative(semantic_id: str, members: list[ParsedNode]) -> Parse
     exact = [node for node in members if node.node_id == semantic_id]
     if exact:
         return sorted(exact, key=lambda node: node.feature_index)[0]
-    non_zero_kind = [node for node in members if int(node.kind_2 or 0) != 0]
+    non_zero_kind = [node for node in members if int(node.kind or 0) != 0]
     if non_zero_kind:
         return sorted(non_zero_kind, key=lambda node: (_sort_key(node.node_id), node.feature_index))[0]
     return sorted(members, key=lambda node: (_sort_key(node.node_id), node.feature_index))[0]
@@ -684,10 +684,10 @@ def _detect_junction_type_errors(
     seen_error_keys: set[tuple[str, str, str]] = set()
 
     for index, semantic in enumerate(semantic_nodes.values(), start=1):
-        kind_2 = semantic.representative.kind_2
+        kind = semantic.representative.kind
         in_count = int(topology.in_degree.get(semantic.semantic_id, 0))
         out_count = int(topology.out_degree.get(semantic.semantic_id, 0))
-        if kind_2 == T_KIND_VALUE and (in_count != 2 or out_count != 2):
+        if kind == T_KIND_VALUE and (in_count != 2 or out_count != 2):
             _append_error(
                 errors,
                 seen_error_keys=seen_error_keys,
@@ -695,13 +695,13 @@ def _detect_junction_type_errors(
                 topology=topology,
                 parsed_roads=parsed_roads,
                 error_type=ERROR_T_JUNCTION,
-                error_reason="kind_2=2048 requires in_degree=2 and out_degree=2",
+                error_reason="kind=2048 requires in_degree=2 and out_degree=2",
                 group_id=f"t_error_{semantic.semantic_id}",
                 related_node_ids=(semantic.semantic_id,),
                 related_road_indices=topology.incident_road_indices.get(semantic.semantic_id, frozenset()),
                 audit={"in_degree": in_count, "out_degree": out_count},
             )
-        if kind_2 == CROSS_KIND_VALUE and in_count == 2 and out_count == 2:
+        if kind == CROSS_KIND_VALUE and in_count == 2 and out_count == 2:
             _append_error(
                 errors,
                 seen_error_keys=seen_error_keys,
@@ -709,7 +709,7 @@ def _detect_junction_type_errors(
                 topology=topology,
                 parsed_roads=parsed_roads,
                 error_type=ERROR_CROSS_JUNCTION,
-                error_reason="kind_2=4 has T-junction degree signature in_degree=2 and out_degree=2",
+                error_reason="kind=4 has T-junction degree signature in_degree=2 and out_degree=2",
                 group_id=f"cross_error_{semantic.semantic_id}",
                 related_node_ids=(semantic.semantic_id,),
                 related_road_indices=topology.incident_road_indices.get(semantic.semantic_id, frozenset()),
@@ -735,7 +735,7 @@ def _detect_junction_type_errors(
                 topology=topology,
                 parsed_roads=parsed_roads,
                 error_type=ERROR_DIVMERGE_JUNCTION,
-                error_reason="kind_2=16/8 continuous divmerge has T-junction topology signature",
+                error_reason="kind=16/8 continuous divmerge has T-junction topology signature",
                 group_id=row["group_id"],
                 related_node_ids=tuple(row["related_node_ids"]),
                 related_road_indices=frozenset(row["related_road_indices"]),
@@ -756,7 +756,7 @@ def _detect_continuous_divmerge_as_t(
     rows: list[dict[str, Any]] = []
     seen_pairs: set[tuple[str, str]] = set()
     for semantic_id, semantic in sorted(semantic_nodes.items(), key=lambda item: _sort_key(item[0])):
-        if semantic.representative.kind_2 != DIVERGE_KIND_VALUE:
+        if semantic.representative.kind != DIVERGE_KIND_VALUE:
             continue
         if int(topology.out_degree.get(semantic_id, 0)) != 2:
             continue
@@ -778,7 +778,7 @@ def _detect_continuous_divmerge_as_t(
             continue
         merge_id = main_trace.node_id
         merge = semantic_nodes.get(merge_id)
-        if merge is None or merge.representative.kind_2 != MERGE_KIND_VALUE:
+        if merge is None or merge.representative.kind != MERGE_KIND_VALUE:
             continue
         if int(topology.in_degree.get(merge_id, 0)) != 2:
             continue
@@ -908,7 +908,7 @@ def _trace_forward_to_kind(
         incident_road_indices=topology.incident_road_indices,
         max_distance_m=max_distance_m,
         stop_predicate=lambda node_id: semantic_nodes.get(node_id) is not None
-        and semantic_nodes[node_id].representative.kind_2 == target_kind,
+        and semantic_nodes[node_id].representative.kind == target_kind,
     )
 
 
@@ -1021,7 +1021,7 @@ def _append_error(
             "id": f"{semantic.semantic_id}_{len(errors) + 1}",
             "semantic_node_id": semantic.semantic_id,
             "source_node_id": semantic.representative.node_id,
-            "kind_2": semantic.representative.kind_2,
+            "kind": semantic.representative.kind,
             "error_type": error_type,
             "error_reason": error_reason,
             "error_group_id": group_id,

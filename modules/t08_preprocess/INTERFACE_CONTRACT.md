@@ -52,7 +52,7 @@
 
 ### Tool4：路口类型错误识别
 
-- 输入一：Nodes GPKG，依赖字段 `id / kind_2`，可选字段 `mainnodeid`。
+- 输入一：Nodes GPKG，依赖字段 `id / kind`，可选字段 `mainnodeid`。
 - 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`。
 - 输出：
   - `nodes_error.gpkg`
@@ -63,13 +63,13 @@
   - `direction = 2` 表示 `snodeid -> enodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
   - `direction = 3` 表示 `enodeid -> snodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
 - 错误识别：
-  - `kind_2 = 2048`：若入度或出度任一不为 `2`，输出 `error_type = 错误T型路口`。
-  - `kind_2 = 4`：若入度和出度均为 `2`，输出 `error_type = 错误交叉路口`。
-  - `kind_2 = 16`：若出度为 `2`，沿横向 / 左侧候选 road 忽略二度连接，在 `100m` 内找到 `kind_2 = 8` 且入度为 `2` 的合流路口，并满足横向与竖向 T 型特征，则分歧与合流代表 node 均输出 `error_type = 错误分歧合流路口`。
+  - `kind = 2048`：若入度或出度任一不为 `2`，输出 `error_type = 错误T型路口`。
+  - `kind = 4`：若入度和出度均为 `2`，输出 `error_type = 错误交叉路口`。
+  - `kind = 16`：若出度为 `2`，沿横向 / 左侧候选 road 忽略二度连接，在 `100m` 内找到 `kind = 8` 且入度为 `2` 的合流路口，并满足横向与竖向 T 型特征，则分歧与合流代表 node 均输出 `error_type = 错误分歧合流路口`。
 - 连续分歧合流左右候选：
   - 当前输入字段未提供显式 left/right road 标识，第一版使用“入向 road 与两个退出 road 的夹角最小者”为横向 / 左侧候选，另一条为竖向 / 右侧候选。
   - 若后续上游正式提供左右字段，必须在本契约同轮更新后才能替换该代理规则。
-- 输出字段至少包含 `id / semantic_node_id / source_node_id / kind_2 / error_type / error_reason / error_group_id / in_degree / out_degree / related_node_ids / related_road_ids / audit_json`。
+- 输出字段至少包含 `id / semantic_node_id / source_node_id / kind / error_type / error_reason / error_group_id / in_degree / out_degree / related_node_ids / related_road_ids / audit_json`。
 - 输出边界：Tool4 只输出错误识别结果，不修改输入 Nodes/Roads，不输出修复后 Nodes/Roads。
 - 性能口径：Tool4 Road GPKG 优先使用直接 SQLite 轻量读取，只读取 `id / snodeid / enodeid / direction / geometry`，进入拓扑前仅保留 road 长度与方向向量，不长期持有完整 Road 几何；无法识别标准 GPKG 元数据时回退共享 `read_vector`。
 - 所有输入、输出路径必须通过参数提供。

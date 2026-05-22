@@ -12,13 +12,12 @@ from shapely.geometry import LineString, Point
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg
 
 
-def _node(node_id: str, kind_2: int, x: float, y: float) -> dict:
+def _node(node_id: str, kind: int, x: float, y: float) -> dict:
     return {
         "properties": {
             "id": node_id,
-            "kind": kind_2,
+            "kind": kind,
             "grade": 1,
-            "kind_2": kind_2,
             "grade_2": 1,
             "mainnodeid": node_id,
         },
@@ -109,6 +108,8 @@ def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
     epsg, rows = _read_rows(nodes_error_output)
     assert epsg == 3857
     assert rows["500"]["error_type"] == "错误T型路口"
+    assert rows["500"]["kind"] == 2048
+    assert "kind_2" not in rows["500"]
     assert rows["400"]["error_type"] == "错误交叉路口"
     assert rows["100"]["error_type"] == "错误分歧合流路口"
     assert rows["200"]["error_type"] == "错误分歧合流路口"
@@ -120,6 +121,8 @@ def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
         "错误交叉路口": 1,
         "错误分歧合流路口": 2,
     }
+    assert summary["field_audit"]["node_kind_field"] == "kind"
+    assert "node_kind_2_field" not in summary["field_audit"]
     assert summary["performance"]["elapsed_seconds"] >= 0
     assert "detect_errors_seconds" in summary["performance"]["stage_timings"]
     assert summary["performance"]["road_read_mode"] == {

@@ -17,7 +17,7 @@ def _find_repo_root(start: Path) -> Path | None:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="T08 Tool4: detect SWSD junction type errors.")
-    parser.add_argument("--nodes-gpkg", required=True, help="Input Nodes GPKG with id/kind_2 fields.")
+    parser.add_argument("--nodes-gpkg", required=True, help="Input Nodes GPKG with id/kind fields.")
     parser.add_argument("--roads-gpkg", required=True, help="Input Roads GPKG with id/snodeid/enodeid/direction fields.")
     parser.add_argument("--nodes-error-output", required=True, help="Output nodes_error GPKG.")
     parser.add_argument("--nodes-layer", help="Optional Nodes input layer name.")

@@ -22,6 +22,7 @@
 - `t04_divmerge_virtual_polygon` 项目级登记、Step1~Step7 正式文档面与 internal full-input 交付面
 - `t05_junction_surface_fusion` 项目级登记、Phase 1 路口面融合发布、Phase 2 SWSD-RCSD relation 生产与 copy-on-write RCSD 网络输出
 - `t06_segment_fusion_precheck` 项目级登记、Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取 / 趋势硬筛
+- `t08_preprocess` 项目级登记、Tool1 多 Shapefile 转 GPKG、Tool2 Road GPKG 预处理与 Tool3 Nodes 类型聚合入口、契约与测试
 - `p01_arm_build` 项目级登记、P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 规则级还原文档契约、模块内 callable runner 与 review / final audit 交付面
 
 ## 当前范围外

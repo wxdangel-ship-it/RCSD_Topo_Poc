@@ -96,6 +96,7 @@ def read_vector(
             crs_mapping=getattr(source, "crs", None),
         )
         output_crs = CRS.from_epsg(target_epsg) if target_epsg is not None else source_crs
+        transform_func = _build_geometry_transform(source_crs, output_crs)
         field_names = tuple(str(key) for key in (source.schema.get("properties") or {}).keys())
         resolved_layer_name = getattr(source, "name", None) or layer_name
         features: list[VectorFeature] = []
@@ -106,7 +107,7 @@ def read_vector(
             geometry = shape(geometry_payload)
             if geometry.is_empty:
                 raise ValueError(f"Feature {index} in {resolved} has empty geometry")
-            geometry = _transform_geometry(geometry, source_crs, output_crs)
+            geometry = _transform_geometry_prepared(geometry, transform_func)
             features.append(VectorFeature(properties=dict(feature.get("properties") or {}), geometry=geometry))
 
     return VectorReadResult(
@@ -412,6 +413,7 @@ def _try_read_gpkg_sqlite(
                 default_crs_text=default_crs_text,
             )
             output_crs = CRS.from_epsg(target_epsg) if target_epsg is not None else source_crs
+            transform_func = _build_geometry_transform(source_crs, output_crs)
             select_columns = [*columns, geometry_column]
             rows = conn.execute(
                 f"SELECT {', '.join(_quote_identifier(column) for column in select_columns)} "
@@ -426,7 +428,7 @@ def _try_read_gpkg_sqlite(
                 geometry = _geometry_from_gpkg_blob(geometry_blob)
                 if geometry.is_empty:
                     raise ValueError(f"Feature {index} in {path} has empty geometry")
-                geometry = _transform_geometry(geometry, source_crs, output_crs)
+                geometry = _transform_geometry_prepared(geometry, transform_func)
                 features.append(
                     VectorFeature(
                         properties={column: values[column_index] for column_index, column in enumerate(columns)},
@@ -551,10 +553,19 @@ def _resolve_source_crs(
 
 
 def _transform_geometry(geometry: BaseGeometry, source_crs: CRS, output_crs: CRS) -> BaseGeometry:
+    return _transform_geometry_prepared(geometry, _build_geometry_transform(source_crs, output_crs))
+
+
+def _build_geometry_transform(source_crs: CRS, output_crs: CRS) -> Any:
     if source_crs == output_crs:
+        return None
+    return Transformer.from_crs(source_crs, output_crs, always_xy=True).transform
+
+
+def _transform_geometry_prepared(geometry: BaseGeometry, transform_func: Any) -> BaseGeometry:
+    if transform_func is None:
         return geometry
-    transformer = Transformer.from_crs(source_crs, output_crs, always_xy=True)
-    return shapely_transform(transformer.transform, geometry)
+    return shapely_transform(transform_func, geometry)
 
 
 def _prepare_record(feature: dict[str, Any]) -> dict[str, Any]:

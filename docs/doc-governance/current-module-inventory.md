@@ -14,6 +14,7 @@
   - `t04_divmerge_virtual_polygon`
   - `t05_junction_surface_fusion`
   - `t06_segment_fusion_precheck`
+  - `t07_semantic_junction_anchor`
   - `t08_preprocess`
   - `p01_arm_build`
 - `Historical Reference`：无
@@ -31,6 +32,7 @@
 | `t04_divmerge_virtual_polygon` | `modules/t04_divmerge_virtual_polygon` | `Step1-4` doc-first formalization；case-package 输入、admission/local-context/topology/event-unit interpretation、Step4 overview/event-unit review、flat mirror、index、summary | 已补齐标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | T04 Step1-4 runner 已模块化实现，优先复用 T02 Stage4 内核与 T03 review closeout 组织，不新增 repo 官方 CLI | 当前仅正式覆盖 Step1-4；Step5-7 仍留待后续轮次承接 |
 | `t05_junction_surface_fusion` | `modules/t05_junction_surface_fusion` | Phase 1 多源路口面融合发布；Phase 2 RCSD junctionization、SWSD-RCSD relation 生产与 copy-on-write `rcsdroad_out.gpkg / rcsdnode_out.gpkg` 输出 | 已具备 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | Phase 1 / Phase 2 模块内 callable runner 已实现；T05 内网 helper / experiment 脚本已登记为 repo 级脚本入口 | 当前补齐项目级登记，T06 Step2 正式消费 Phase 2 relation 与 copy-on-write RCSD 网络成果 |
 | `t06_segment_fusion_precheck` | `modules/t06_segment_fusion_precheck` | Step1 SWSD 可融合 Segment 识别；Step2 RCSD Segment candidate 抽取、趋势硬筛、可替换集合与错误分析 | 本轮按新模块启动要求建立 `INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` 与 architecture 文档 | 提供模块内 callable runner 与 `scripts/t06_run_innernet_precheck.py` 内网运行包装；不新增 repo CLI、`tools/`、`Makefile` 或模块 `run.py` / `__main__.py` | 当前范围不执行 Segment 替换，不重塑路口，不修改 T01/T05 输出 |
+| `t07_semantic_junction_anchor` | `modules/t07_semantic_junction_anchor` | T02 Step1 / Step2 的语义路口级重构；只消费 `nodes / DriveZone / RCSDIntersection`，输出代表 node 的 `has_evd / is_anchor / anchor_reason`，不处理 Segment | 已建立 `INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` 与 architecture 文档 | 提供模块内 callable runner 与 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 内网运行包装；不新增 repo CLI、`tools/`、`Makefile` 或模块 `run.py` / `__main__.py` | 仅处理代表 node `kind_2 in {4,8,16,64,128,2048}`；其它 `kind_2` 三字段为 `NULL` |
 | `t08_preprocess` | `modules/t08_preprocess` | Tool1 基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出均写回输入目录下同名文件，采用流式转换并输出进度；Tool2 Road GPKG 预处理，补充 `patch_id / kind` 并输出阶段性能；Tool3 Nodes 类型聚合，补充 `kind_2 / grade_2` 并处理环岛 mainnode；Tool4 路口类型错误识别，输出 `nodes_error.gpkg`；Tool5 复杂路口预处理，构建复杂分歧 / 合流路口并可处理错误 1 对多路口；输出 `EPSG:3857` GPKG | 已建立 `INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` 与 architecture 文档 | 提供模块内 callable runner 与 `scripts/t08_tool1_vector_convert.py`、`scripts/t08_tool2_road_preprocess.py`、`scripts/t08_tool3_nodes_type_aggregation.py`、`scripts/t08_tool4_junction_type_repair.py`、`scripts/t08_tool5_complex_junction_preprocess.py` 内网运行脚本 | 工具形态属于项目正式组成部分；Tool4 只识别错误并输出审计，不自动修复 |
 | `p01_arm_build` | `modules/p01_arm_build` | P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原；输出 Arm / Movement / LogicalArmGroup / final GeoJSON / audit / review PNG / review GPKG / summary / review index | 已建立标准 architecture 文档组、`INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` | A1、A2 与 P01-Final 模块内 callable runner 落地；不提供 repo CLI、`scripts/` 常驻脚本、模块 `run.py` 或 `__main__.py` | P01 目录结构与 T0X 模块一致 |
 
@@ -48,7 +50,7 @@
 
 ## 当前结论
 
-1. 当前仓库已登记正式业务模块 `t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t08_preprocess` 与 P01 成果模块 `p01_arm_build`。
+1. 当前仓库已登记正式业务模块 `t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess` 与 P01 成果模块 `p01_arm_build`。
 2. `t00_utility_toolbox` 已纳入治理，定位为工具集合模块 / 非业务生产模块。
 3. `_template` 仍是后续新模块启动模板，不属于业务模块生命周期对象。
 4. 后续任何新增 RCSD 模块仍应先按模板建立文档契约，再进入实现阶段。

@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `76` 个。
+- 当前真实执行入口共 `77` 个。
 - 分布概览：
-  - repo 级入口文件：`52`（`Makefile` 1 + `scripts/` 50 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`53`（`Makefile` 1 + `scripts/` 51 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`24`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -59,6 +59,7 @@
 | `t05_backfill_t03_relation_evidence_innernet.py` | `scripts/t05_backfill_t03_relation_evidence_innernet.py` | repo 级 | T05 Phase 2 内网 handoff 补齐脚本；读取 T03 run root 的批次 relation evidence 与 case 级 `step6_status/step6_audit`，输出补齐后的 `t03_swsd_rcsd_relation_evidence_backfilled.*`、audit 与 summary，不修改 T03 主链或原始输出 | `active` | 否 |
 | `t05_innernet_experiment.py` | `scripts/t05_innernet_experiment.py` | repo 级 | T05 内网 Phase 1 + Phase 2 联合实验入口；以 T02/T03/T04 成果目录、原始 RCSDRoad/RCSDNode、final nodes 与 RCSDIntersection 为参数，先执行 T03 evidence handoff 补齐，再运行 junction surface fusion 与 one-to-one relation 发布 | `active` | 否 |
 | `t06_run_innernet_precheck.py` | `scripts/t06_run_innernet_precheck.py` | repo 级 | T06 内网 Step1 + Step2 运行包装脚本；读取 T01 `segment.gpkg / roads.gpkg`、final `nodes.gpkg` 与 T05 Phase 2 `intersection_match_all.geojson / rcsdroad_out.gpkg / rcsdnode_out.gpkg`，输出 T06 candidates / replaceable / rejected / summary，不修改输入文件 | `active` | 否 |
+| `t07_run_semantic_junction_anchor_innernet.sh` | `scripts/t07_run_semantic_junction_anchor_innernet.sh` | repo 级 | T07 内网语义路口级 Step1 / Step2 执行脚本；读取 `nodes / DriveZone / RCSDIntersection`，调用模块内 callable runner 输出代表 node 的 `has_evd / is_anchor / anchor_reason`，不处理 Segment | `active` | 否 |
 | `t04_run_internal_full_input_8workers.sh` | `scripts/t04_run_internal_full_input_8workers.sh` | repo 级 | T04 模块级内网 full-input 全量运行主脚本；输入全局 `nodes/roads/DriveZone/DivStripZone/RCSDRoad/RCSDNode`，执行 preflight / candidate discovery / shared bootstrap / direct Step1-7 case execution / batch closeout，并输出 `divmerge_virtual_anchor_surface*` 正式成果与 `visual_checks/final_*` 最终平铺目视审计入口；不新增 repo 官方 CLI 子命令 | `active` | 否 |
 | `t04_watch_internal_full_input.sh` | `scripts/t04_watch_internal_full_input.sh` | repo 级 | T04 内网 full-input 实时监控脚本；显示 `selected / completed / running / pending / accepted / rejected / runtime_failed / missing_status`、phase/status/message/entered_case_execution 与性能估算，并支持 `CASE_SCAN=auto/on/off` 降扫描 | `active` | 否 |
 | `t04_run_internal_full_input_innernet_flat_review.sh` | `scripts/t04_run_internal_full_input_innernet_flat_review.sh` | repo 级 | T04 内网 full-input 最终平铺目视审计运行包装；默认关闭 debug、启用 resume/retry/perf audit、使用 failed_only snapshot，并转发到 `t04_run_internal_full_input_8workers.sh` | `active` | 否 |

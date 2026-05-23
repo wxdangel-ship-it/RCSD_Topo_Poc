@@ -24,6 +24,7 @@
 - 当前已登记正式业务模块 `t04_divmerge_virtual_polygon`
 - 当前已登记正式业务模块 `t05_junction_surface_fusion`
 - 当前已登记正式业务模块 `t06_segment_fusion_precheck`
+- 当前已登记正式业务模块 `t07_semantic_junction_anchor`
 - 当前已登记正式业务模块 `t08_preprocess`
 - 当前已登记 P01 成果模块 `p01_arm_build`
 - 当前已纳入治理的工具集合模块 `t00_utility_toolbox`
@@ -50,6 +51,7 @@
 - 让 `t04_divmerge_virtual_polygon` 的 Step1-7 模块文档、领域分层实现、Step4 审计输出与最终发布契约保持一致
 - 让 `t05_junction_surface_fusion` 的 Phase 1 路口面融合发布、Phase 2 RCSD junctionization 与 SWSD-RCSD 关系生产、copy-on-write 输出和模块内 callable runner 保持一致
 - 启动 `t06_segment_fusion_precheck`，完成 SWSD 可融合 Segment 识别、RCSD Segment 抽取与趋势硬筛的 Step1 / Step2 文档契约、模块内 callable runner 与最小测试闭环
+- 启动 `t07_semantic_junction_anchor`，完成 T02 Step1 / Step2 的语义路口级重构：只处理代表 node 的 `has_evd / is_anchor / anchor_reason`，不读取、生成或统计 Segment，并提供模块内 callable runner 与内网执行脚本
 - 启动 `t08_preprocess`，完成 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理、Tool3 Nodes 类型聚合、Tool4 路口类型错误识别与 Tool5 复杂路口预处理的文档契约、模块内 callable runner、内网执行脚本与最小测试闭环
 - 让 `p01_arm_build` 的 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原 SpecKit 工件、模块文档契约、callable runner、review PNG/GPKG、summary/index 与 final audit 交付面保持一致
 
@@ -78,6 +80,7 @@
 - 已登记正式模块 `t04_divmerge_virtual_polygon` 的 Step1-7 正式文档面、模块化实现、Step4 review 输出与最终发布契约
 - 已登记正式模块 `t05_junction_surface_fusion` 的 Phase 1 路口面融合发布、Phase 2 SWSD-RCSD relation 发布与 copy-on-write RCSD 网络输出
 - 已登记正式模块 `t06_segment_fusion_precheck` 的 Step1 / Step2 Segment 融合前置识别、RCSD candidate 抽取、趋势硬筛与错误分析
+- 已登记正式模块 `t07_semantic_junction_anchor` 的语义路口级 Step1 / Step2：`DriveZone / has_evd gate` 与 `RCSDIntersection / is_anchor / anchor_reason` 判定，不处理 Segment
 - 已登记正式模块 `t08_preprocess` 的 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理、Tool3 Nodes 类型聚合、Tool4 路口类型错误识别与 Tool5 复杂路口预处理；Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出均写回输入目录下同名文件；Tool2 补充 `patch_id / kind`，Tool3 补充 `kind_2 / grade_2` 并处理环岛 mainnode，Tool4 输出 `nodes_error.gpkg` 记录错误语义路口类型，Tool5 构建复杂分歧 / 合流路口并可处理错误 1 对多路口，输出 `EPSG:3857` GPKG
 - T06 正式启用 final `nodes.gpkg.kind_2` 的 junc-node 豁免语义：仅当 `junc_nodes` 中节点的 `kind_2 in {1,4096,8192}` 时，该 junc node 不参与 Step1 的 `has_evd / is_anchor` eligibility 判定，并在 Step2 中不作为 T05 relation 必检映射节点；该语义不适用于 `pair_nodes`，不改变 `junc_nodes / semantic_node_set` 输出。
 - 已登记 P01 成果模块 `p01_arm_build` 的 P01-A1 Arm 构建、P01-A2 Arm 配准、P01-Final F-RCSD RoadNextRoad 还原文档契约、模块内 callable runner、自动检查与人工目视审查产物
@@ -179,6 +182,15 @@
 - A2 禁止仅凭几何最近输出 high confidence 配准；禁止自动拆分 over-merged Arm；禁止静默丢弃 FRCSD FinalArm 或 source_extra Arm。
 - 仓库不提供 P01 repo 官方 CLI、`scripts/` 常驻命令、模块 `__main__.py` 或模块 `run.py`；模块内 callable runner 用于开发验收与后续正式入口准备。
 
+### 4.7 T07 语义路口级 Step1 / Step2 约束
+
+- `t07_semantic_junction_anchor` 承载 T02 Step1 / Step2 的语义路口级重构，只处理代表 node 的 `has_evd / is_anchor / anchor_reason`。
+- T07 只读取 `nodes / DriveZone / RCSDIntersection`，不读取、生成或统计 `segment.gpkg`，不解析 `pair_nodes / junc_nodes`，不输出 `segment.has_evd`、`summary_by_s_grade` 或 `anchor_summary_by_s_grade`。
+- T07 的类型判断字段固定为 `kind_2`；不兼容 `Kind_2`。
+- T07 Step1 仅处理代表 node `kind_2 in {4,8,16,64,128,2048}` 的语义路口；其它 `kind_2` 的代表 node 写或保持 `has_evd = NULL`，且不进入 Step2，`is_anchor / anchor_reason` 均为 `NULL`。
+- T07 Step2 仅处理代表 node `has_evd = yes` 的语义路口，保留 T02 Step2 的 `yes / no / fail1 / fail2`、`fail2 > fail1` 与 `roundabout / t` 原因语义。
+- T07 当前提供模块内 callable runner 与 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 内网执行包装；不新增 repo 官方 CLI、`tools/`、`Makefile` 目标、模块 `run.py` 或模块 `__main__.py`。
+
 ---
 
 ## 5. 协作与治理方式
@@ -248,7 +260,7 @@
 ## 9. 当前结论
 
 - RCSD 当前已从纯骨架阶段进入“工程治理 + 正式业务模块并行”阶段。
-- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t08_preprocess`；当前已登记 P01 成果模块：`p01_arm_build`。
+- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`；当前已登记 P01 成果模块：`p01_arm_build`。
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`，其定位为非业务生产模块。
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小闭环。
 - T01 双向 Segment 构建中，`kind_2 = 128` 表达复杂分歧 / 合流路口组合的可穿越审计语义：允许穿越但必须输出 candidate / validation 级 `kind_2_128_*` 统计，用于定位复杂路口穿越对候选规模、拒绝原因与性能的影响；Step2 对复杂穿越热点优先采用 `kind2_128_local_corridor` 局部 port 判定，避免在复杂路口内部全局追溯；兜底搜索预算耗尽时不得静默跳过，必须输出 `trunk_search_budget_exceeded`。
@@ -260,6 +272,7 @@
 - `p01_arm_build` 当前作为 Active P01 成果模块进入治理；正式范围覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原，不包含 P01-A3 正式跨源 Movement 空间、禁行迁移、F-RCSD 通行能力最终裁决或 P01-B。
 - `t05_junction_surface_fusion` 当前作为 Active 正式业务模块进入治理；正式范围覆盖 Phase 1 多源路口面融合发布与 Phase 2 RCSD junctionization / SWSD-RCSD relation 生产。Phase 2 输出 `intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg` 与审计汇总；其 RCSDRoad / RCSDNode 变化只通过 copy-on-write 输出表达，不原地修改输入。
 - `t06_segment_fusion_precheck` 当前作为 Active 正式业务模块启动；正式范围仅覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换，不重塑路口，不修改 T01 / T05 输出；当前提供模块内 callable runner 与 `scripts/t06_run_innernet_precheck.py` 内网运行包装，不新增 repo 官方 CLI。
+- `t07_semantic_junction_anchor` 当前作为 Active 正式业务模块启动；正式范围仅覆盖 T02 Step1 / Step2 的语义路口级重构，输出代表 node 的 `has_evd / is_anchor / anchor_reason`，只消费 `nodes / DriveZone / RCSDIntersection`，不处理 Segment；当前提供模块内 callable runner 与 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 内网运行包装，不新增 repo 官方 CLI。
 - `t08_preprocess` 当前作为 Active 正式预处理模块启动；当前覆盖 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理、Tool3 Nodes 类型聚合、Tool4 路口类型错误识别与 Tool5 复杂路口预处理，Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出均写回输入目录下同名文件，并采用流式读写输出控制台进度，Tool2 只消费 GPKG 输入、补充 `patch_id / kind` 并输出 `EPSG:3857` GPKG，Tool2 / Tool3 / Tool4 / Tool5 均输出阶段进度与性能 summary，Tool3 只消费 GPKG Nodes/Roads 输入、补充 `kind_2 / grade_2` 并处理环岛 mainnode，Tool4 只消费 GPKG Nodes/Roads 输入、输出 `nodes_error.gpkg` 记录错误语义路口类型，Tool5 构建复杂分歧 / 合流路口并可基于 `node_error_2 / RCSDIntersection` 处理错误 1 对多路口；当前提供模块内 callable runner 与 `scripts/t08_tool1_vector_convert.py`、`scripts/t08_tool2_road_preprocess.py`、`scripts/t08_tool3_nodes_type_aggregation.py`、`scripts/t08_tool4_junction_type_repair.py`、`scripts/t08_tool5_complex_junction_preprocess.py` 内网脚本，Tool4 不自动修复。
 - T06 中 final `nodes.gpkg.kind_2 in {1,4096,8192}` 只作为 `junc_nodes` 的豁免字段：命中节点不参与 Step1 `has_evd / is_anchor` 判定，也不进入 Step2 T05 relation 必检映射集合；`pair_nodes` 仍必须按原规则判定并校验 T05 relation。
 - 未来新增模块必须先按模板建文档契约，再进入实现阶段。

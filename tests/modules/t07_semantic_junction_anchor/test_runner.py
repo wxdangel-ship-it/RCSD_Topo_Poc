@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import fiona
+import pytest
+from shapely.geometry import Point, Polygon, mapping
+
+from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
+    T07RunError,
+    run_t07_semantic_junction_anchor,
+    run_t07_step1_has_evd,
+    run_t07_step2_anchor_recognition,
+)
+
+
+def _feature(properties: dict[str, Any], geometry: Any) -> dict[str, Any]:
+    return {"type": "Feature", "properties": properties, "geometry": mapping(geometry)}
+
+
+def _write_geojson(path: Path, features: list[dict[str, Any]]) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+                "features": features,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_geojson_without_crs(path: Path, features: list[dict[str, Any]]) -> None:
+    path.write_text(
+        json.dumps({"type": "FeatureCollection", "features": features}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _read_gpkg_properties_by_id(path: Path) -> dict[str, dict[str, Any]]:
+    with fiona.open(str(path)) as src:
+        return {
+            str(dict(feature["properties"])["id"]): dict(feature["properties"])
+            for feature in src
+        }
+
+
+def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+    _write_geojson(
+        nodes_path,
+        [
+            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4}, Point(0, 0)),
+            _feature({"id": 101, "mainnodeid": 1, "kind_2": 0}, Point(1, 0)),
+            _feature({"id": 2, "mainnodeid": 2, "kind_2": 8}, Point(100, 0)),
+            _feature({"id": 3, "mainnodeid": 3, "kind_2": 1}, Point(0, 0)),
+        ],
+    )
+    _write_geojson(
+        drivezone_path,
+        [_feature({"id": "dz"}, Polygon([(-10, -10), (10, -10), (10, 10), (-10, 10), (-10, -10)]))],
+    )
+
+    artifacts = run_t07_step1_has_evd(
+        nodes_path=nodes_path,
+        drivezone_path=drivezone_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    props = _read_gpkg_properties_by_id(artifacts.nodes_path)
+    assert props["1"]["has_evd"] == "yes"
+    assert props["101"]["has_evd"] is None
+    assert props["2"]["has_evd"] == "no"
+    assert props["3"]["has_evd"] is None
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["processed_kind2_count"] == 2
+    assert summary["skipped_kind2_count"] == 1
+    assert summary["has_evd_yes_count"] == 1
+    assert summary["has_evd_no_count"] == 1
+    assert summary["has_evd_null_count"] == 1
+
+
+def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    intersections_path = tmp_path / "intersections.geojson"
+    _write_geojson(
+        nodes_path,
+        [
+            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes"}, Point(0, 0)),
+            _feature({"id": 2, "mainnodeid": 2, "kind_2": 4, "has_evd": "yes"}, Point(100, 0)),
+            _feature({"id": 3, "mainnodeid": 3, "kind_2": 64, "has_evd": "yes"}, Point(200, 0)),
+            _feature({"id": 301, "mainnodeid": 3, "kind_2": 0, "has_evd": None}, Point(202, 0)),
+            _feature({"id": 4, "mainnodeid": 4, "kind_2": 2048, "has_evd": "yes"}, Point(300, 0)),
+            _feature({"id": 401, "mainnodeid": 4, "kind_2": 0, "has_evd": None}, Point(302, 0)),
+            _feature({"id": 5, "mainnodeid": 5, "kind_2": 4, "has_evd": "yes"}, Point(400, 0)),
+            _feature({"id": 501, "mainnodeid": 5, "kind_2": 0, "has_evd": None}, Point(430, 0)),
+            _feature({"id": 6, "mainnodeid": 6, "kind_2": 4, "has_evd": "yes"}, Point(500, 0)),
+            _feature({"id": 7, "mainnodeid": 7, "kind_2": 4, "has_evd": "yes"}, Point(502, 0)),
+            _feature({"id": 8, "mainnodeid": 8, "kind_2": 4, "has_evd": "no"}, Point(0, 100)),
+        ],
+    )
+    _write_geojson(
+        intersections_path,
+        [
+            _feature({"id": "a"}, Polygon([(-10, -10), (10, -10), (10, 10), (-10, 10), (-10, -10)])),
+            _feature({"id": "roundabout"}, Polygon([(190, -10), (210, -10), (210, 10), (190, 10), (190, -10)])),
+            _feature({"id": "t"}, Polygon([(290, -10), (310, -10), (310, 10), (290, 10), (290, -10)])),
+            _feature({"id": "fail1a"}, Polygon([(390, -10), (410, -10), (410, 10), (390, 10), (390, -10)])),
+            _feature({"id": "fail1b"}, Polygon([(420, -10), (440, -10), (440, 10), (420, 10), (420, -10)])),
+            _feature({"id": "shared"}, Polygon([(490, -10), (510, -10), (510, 10), (490, 10), (490, -10)])),
+        ],
+    )
+
+    artifacts = run_t07_step2_anchor_recognition(
+        nodes_path=nodes_path,
+        intersection_path=intersections_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    props = _read_gpkg_properties_by_id(artifacts.nodes_path)
+    assert props["1"]["is_anchor"] == "yes"
+    assert props["2"]["is_anchor"] == "no"
+    assert props["3"]["is_anchor"] == "yes"
+    assert props["3"]["anchor_reason"] == "roundabout"
+    assert props["4"]["is_anchor"] == "yes"
+    assert props["4"]["anchor_reason"] == "t"
+    assert props["5"]["is_anchor"] == "fail1"
+    assert props["6"]["is_anchor"] == "fail2"
+    assert props["7"]["is_anchor"] == "fail2"
+    assert props["8"]["is_anchor"] is None
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["anchor_yes_count"] == 3
+    assert summary["anchor_no_count"] == 1
+    assert summary["anchor_fail1_count"] == 1
+    assert summary["anchor_fail2_count"] == 2
+    assert summary["anchor_null_count"] == 1
+
+
+def test_combined_runner_has_no_segment_dependency_or_outputs(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+    intersections_path = tmp_path / "intersections.geojson"
+    _write_geojson(nodes_path, [_feature({"id": 1, "mainnodeid": 1, "kind_2": 4}, Point(0, 0))])
+    _write_geojson(
+        drivezone_path,
+        [_feature({"id": "dz"}, Polygon([(-10, -10), (10, -10), (10, 10), (-10, 10), (-10, -10)]))],
+    )
+    _write_geojson(
+        intersections_path,
+        [_feature({"id": "a"}, Polygon([(-5, -5), (5, -5), (5, 5), (-5, 5), (-5, -5)]))],
+    )
+
+    artifacts = run_t07_semantic_junction_anchor(
+        nodes_path=nodes_path,
+        drivezone_path=drivezone_path,
+        intersection_path=intersections_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    assert artifacts.step1.nodes_path.is_file()
+    assert artifacts.step2.nodes_path.is_file()
+    assert not list(artifacts.run_root.rglob("segment.gpkg"))
+
+    step1_summary = json.loads(artifacts.step1.summary_path.read_text(encoding="utf-8"))
+    step2_summary = json.loads(artifacts.step2.summary_path.read_text(encoding="utf-8"))
+    assert "summary_by_s_grade" not in step1_summary
+    assert "anchor_summary_by_s_grade" not in step2_summary
+
+
+def test_geojson_without_crs_fails_explicitly(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+    _write_geojson_without_crs(nodes_path, [_feature({"id": 1, "mainnodeid": 1, "kind_2": 4}, Point(0, 0))])
+    _write_geojson(
+        drivezone_path,
+        [_feature({"id": "dz"}, Polygon([(-10, -10), (10, -10), (10, 10), (-10, 10), (-10, -10)]))],
+    )
+
+    with pytest.raises(T07RunError) as excinfo:
+        run_t07_step1_has_evd(
+            nodes_path=nodes_path,
+            drivezone_path=drivezone_path,
+            out_root=tmp_path / "out",
+            run_id="case",
+        )
+    assert excinfo.value.reason == "invalid_crs_or_unprojectable"
+
+
+def test_missing_required_field_is_audited_not_business_no(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+    _write_geojson(nodes_path, [_feature({"id": 1, "mainnodeid": 1}, Point(0, 0))])
+    _write_geojson(
+        drivezone_path,
+        [_feature({"id": "dz"}, Polygon([(-10, -10), (10, -10), (10, 10), (-10, 10), (-10, -10)]))],
+    )
+
+    artifacts = run_t07_step1_has_evd(
+        nodes_path=nodes_path,
+        drivezone_path=drivezone_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    audit = json.loads(artifacts.audit_json_path.read_text(encoding="utf-8"))
+    assert audit["rows"][0]["reason"] == "missing_required_field"
+    assert "kind_2" in audit["rows"][0]["detail"]
+
+
+def test_invalid_geometry_topology_fails_without_silent_fix(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    drivezone_path = tmp_path / "drivezone.geojson"
+    invalid_bowtie = Polygon([(0, 0), (10, 10), (0, 10), (10, 0), (0, 0)])
+    _write_geojson(nodes_path, [_feature({"id": 1, "mainnodeid": 1, "kind_2": 4}, Point(0, 0))])
+    _write_geojson(drivezone_path, [_feature({"id": "dz"}, invalid_bowtie)])
+
+    with pytest.raises(T07RunError) as excinfo:
+        run_t07_step1_has_evd(
+            nodes_path=nodes_path,
+            drivezone_path=drivezone_path,
+            out_root=tmp_path / "out",
+            run_id="case",
+        )
+    assert excinfo.value.reason == "invalid_geometry_topology"

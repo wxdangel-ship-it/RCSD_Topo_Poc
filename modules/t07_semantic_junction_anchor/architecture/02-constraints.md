@@ -22,5 +22,6 @@
 - 不读取 `segment.gpkg`。
 - 不解析 `pair_nodes / junc_nodes`。
 - 不输出 Segment 工件。
-- 不新增 repo CLI、root `scripts/`、`tools/`、模块 `run.py` 或模块 `__main__.py`。
+- 不新增 repo CLI、`tools/`、模块 `run.py` 或模块 `__main__.py`。
+- 除已登记的 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 外，不新增其它 repo 级脚本入口。
 - 不根据样本反推字段语义。

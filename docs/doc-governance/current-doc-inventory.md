@@ -62,6 +62,10 @@
 | `modules/t06_segment_fusion_precheck/INTERFACE_CONTRACT.md` | T06 稳定契约面 | `source_of_truth` | 固化 Step1 / Step2 callable runner、T01/T05 输入、输出文件、字段、失败原因与验收标准 |
 | `modules/t06_segment_fusion_precheck/README.md` | T06 操作者入口 | `operator_guide` | 说明模块内 runner、内网脚本入口、输入输出、非目标和审计产物 |
 | `modules/t06_segment_fusion_precheck/AGENTS.md` | T06 durable guidance | `durable_guidance` | 只保留 T06 Step1 / Step2 范围、内网脚本包装边界、不回改 T01/T05 输出的模块边界 |
+| `modules/t07_semantic_junction_anchor/architecture/*` | T07 模块长期架构真相 | `source_of_truth` | T07 Step1 / Step2 长期文档主表面；覆盖语义路口级 `has_evd / is_anchor / anchor_reason`，不处理 Segment |
+| `modules/t07_semantic_junction_anchor/INTERFACE_CONTRACT.md` | T07 稳定契约面 | `source_of_truth` | 固化 Step1 / Step2 callable runner、`nodes / DriveZone / RCSDIntersection` 输入、字段、输出文件、审计、失败原因与验收标准 |
+| `modules/t07_semantic_junction_anchor/README.md` | T07 操作者入口 | `operator_guide` | 说明模块内 runner、内网脚本入口、输入输出、非目标和审计产物 |
+| `modules/t07_semantic_junction_anchor/AGENTS.md` | T07 durable guidance | `durable_guidance` | 只保留 T07 Step1 / Step2 范围、内网脚本包装边界、`kind_2` 口径与无 Segment 依赖 |
 | `modules/t08_preprocess/architecture/*` | T08 模块长期架构真相 | `source_of_truth` | T08 正式预处理模块长期文档主表面；当前覆盖 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理、Tool3 Nodes 类型聚合与 Tool4 路口类型错误识别 |
 | `modules/t08_preprocess/INTERFACE_CONTRACT.md` | T08 稳定契约面 | `source_of_truth` | 固化 Tool1 / Tool2 / Tool3 / Tool4 输入、输出、入口、参数、CRS、summary 与验收标准 |
 | `modules/t08_preprocess/README.md` | T08 操作者入口 | `operator_guide` | 说明 Tool1 / Tool2 / Tool3 / Tool4 内网脚本、示例路径、输出与主要文档 |
@@ -96,7 +100,7 @@
 ## 当前结论
 
 1. 主阅读路径已经收口到项目级源事实、治理入口、结构元数据、T01 / T02 正式模块文档面与模块模板。
-2. 当前已存在正式业务模块文档面：`modules/t01_data_preprocess/*`、`modules/t02_junction_anchor/*`、`modules/t03_virtual_junction_anchor/*`、`modules/t04_divmerge_virtual_polygon/*`、`modules/t05_junction_surface_fusion/*`、`modules/t06_segment_fusion_precheck/*`、`modules/t08_preprocess/*` 与 P01 成果模块文档面 `modules/p01_arm_build/*`。
+2. 当前已存在正式业务模块文档面：`modules/t01_data_preprocess/*`、`modules/t02_junction_anchor/*`、`modules/t03_virtual_junction_anchor/*`、`modules/t04_divmerge_virtual_polygon/*`、`modules/t05_junction_surface_fusion/*`、`modules/t06_segment_fusion_precheck/*`、`modules/t07_semantic_junction_anchor/*`、`modules/t08_preprocess/*` 与 P01 成果模块文档面 `modules/p01_arm_build/*`。
 3. `t00_utility_toolbox` 当前作为已纳入治理的工具集合模块文档面存在。
 4. `_template` 继续承担新模块启动模板职责。
 5. 模块根目录不放 `SKILL.md` 的规则已经写回仓库级文档。

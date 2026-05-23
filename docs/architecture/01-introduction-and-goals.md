@@ -37,7 +37,7 @@
 
 当前项目级正式口径为：
 
-- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t08_preprocess`
+- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`
 - 当前已登记 P01 成果模块：`p01_arm_build`
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`
 - `modules/_template/` 是模板目录，不属于业务模块

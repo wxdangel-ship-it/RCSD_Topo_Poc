@@ -7,7 +7,7 @@
 
 ## 可运行
 
-- 后续 runner 必须能在无 Segment 输入下运行。
+- runner 必须能在无 Segment 输入下运行。
 - Step1 / Step2 应可独立运行，也应可组合运行。
 
 ## 可诊断
@@ -23,7 +23,8 @@
 
 ## 可治理
 
-- 不新增 repo 官方入口。
+- 不新增 repo 官方 CLI。
+- 除已登记的 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 外，不新增其它 repo 级脚本入口。
 - 不把 T02 Stage3 / Stage4 或 Segment 逻辑带入 T07。
 - 模块文档、实现与测试必须保持一致。
 

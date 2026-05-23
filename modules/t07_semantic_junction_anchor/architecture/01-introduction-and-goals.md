@@ -22,4 +22,4 @@ T07 当前目标是在 T02 Step1 / Step2 已确认业务口径基础上，形成
 - 不执行 Segment 相关处理。
 - 不执行 T02 Stage3 / Stage4。
 - 不执行最终唯一锚定决策。
-- 不新增 repo 官方入口。
+- 不新增 repo 官方 CLI；内网执行仅通过已登记脚本包装模块内 callable runner。

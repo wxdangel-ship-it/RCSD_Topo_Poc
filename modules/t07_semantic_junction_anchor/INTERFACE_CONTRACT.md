@@ -29,7 +29,8 @@
 - 不生成 Segment 视角 summary。
 - 不执行 T02 Stage3 virtual intersection anchoring。
 - 不执行 T02 Stage4 div/merge virtual polygon。
-- 不新增 repo CLI、`scripts/`、`tools`、`Makefile`、模块 `run.py` 或模块 `__main__.py`。
+- 不新增 repo CLI、`tools`、`Makefile`、模块 `run.py` 或模块 `__main__.py`。
+- 除已登记的 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 外，不新增其它 repo 级脚本入口。
 
 ## 2. Inputs
 
@@ -203,9 +204,9 @@ Step2 summary 至少记录：
 
 ## 5. EntryPoints
 
-T07 当前不新增 repo 官方入口。稳定执行面仅允许后续实现模块内 callable runner。
+T07 当前不新增 repo 官方 CLI。稳定执行面为模块内 callable runner，并由已登记的内网脚本包装。
 
-计划 callable runner：
+Callable runner：
 
 ```python
 from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
@@ -215,17 +216,24 @@ from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
 )
 ```
 
+内网脚本：
+
+```bash
+scripts/t07_run_semantic_junction_anchor_innernet.sh
+```
+
 说明：
 
-- 当前登记不代表上述 runner 已实现。
-- 若后续要新增 repo CLI、root `scripts/`、`tools/`、模块 `run.py` 或模块 `__main__.py`，必须另行获得用户授权，并同步 `docs/repository-metadata/entrypoint-registry.md`。
+- 脚本默认读取内网 `nodes / DriveZone / RCSDIntersection` 路径，可通过 `NODES_PATH / DRIVEZONE_PATH / INTERSECTION_PATH` 覆盖。
+- 脚本可通过 `NODES_LAYER / DRIVEZONE_LAYER / INTERSECTION_LAYER` 与 `NODES_CRS / DRIVEZONE_CRS / INTERSECTION_CRS` 覆盖图层名和 CRS。
+- 脚本不接受 `SEGMENT_PATH`，不读取、不生成、不统计 Segment。
+- 若后续要新增 repo CLI、其它 repo 级脚本、`tools/`、模块 `run.py` 或模块 `__main__.py`，必须另行获得用户授权，并同步 `docs/repository-metadata/entrypoint-registry.md`。
 
 ## 6. Params
 
 - `run_id`：可选运行 ID；为空时自动生成。
 - `nodes_layer / drivezone_layer / intersection_layer`：可选图层名。
 - `nodes_crs / drivezone_crs / intersection_crs`：可选 CRS override。
-- `progress`：是否打印稀疏进度。
 
 ## 7. Acceptance
 

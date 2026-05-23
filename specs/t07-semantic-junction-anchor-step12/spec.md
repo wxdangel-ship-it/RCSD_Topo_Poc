@@ -7,7 +7,7 @@
 
 ## Context
 
-- 当前仓库尚未登记 `t07` 正式模块；本 spec 只冻结本轮已确认的拟启动业务诉求，不自动修改项目级 source-of-truth。
+- 2026-05-23 更新：用户已选择授权路径 `1`，允许登记 `t07_semantic_junction_anchor`、同步项目级 source-of-truth 与入口治理，并新增内网执行脚本。
 - T02 当前 Step1/Step2 同时包含语义路口集合与 Segment 引用路口集合，且会输出 `segment.has_evd` 与 Segment 视角 summary。
 - T07 的业务诉求是从 T02 Step1/Step2 中抽取“语义路口级资料 gate + anchor recognition”，并剥离全部 Segment 处理。
 - 用户已确认：
@@ -84,7 +84,7 @@
 - **FR-010**: T07 Step2 MUST set `anchor_reason = roundabout` only for representative `kind_2 = 64` when all group nodes hit any `RCSDIntersection`.
 - **FR-011**: T07 Step2 MUST set `anchor_reason = t` only for representative `kind_2 = 2048` when all group nodes hit any `RCSDIntersection`.
 - **FR-012**: T07 MUST NOT implement T02 Stage3/Stage4 virtual polygon logic in this scope.
-- **FR-013**: T07 MUST NOT add a repo-level CLI, `scripts/`, `tools/`, module `run.py`, or module `__main__.py` entrypoint unless a later approved task explicitly authorizes entrypoint governance updates.
+- **FR-013**: T07 MUST NOT add a repo-level CLI, `tools/`, module `run.py`, or module `__main__.py` entrypoint. The only approved repo-level script for this round is `scripts/t07_run_semantic_junction_anchor_innernet.sh`.
 - **FR-014**: T07 outputs MUST be auditable at semantic-junction level and MUST distinguish business `no` from execution failures.
 - **FR-015**: T07 implementation MUST cover CRS correctness, topology consistency, geometry semantic explainability, audit traceability, and performance verifiability before closeout.
 

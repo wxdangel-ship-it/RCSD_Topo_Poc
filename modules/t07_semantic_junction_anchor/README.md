@@ -16,21 +16,29 @@
 - 不输出 `segment.has_evd`。
 - 不生成虚拟路口面。
 - 不执行 div/merge polygon。
-- 不新增 repo CLI 或脚本入口。
+- 不新增 repo CLI；除已登记的内网包装脚本外，不新增其它 repo 脚本入口。
 
 ## 当前入口状态
 
-当前模块只完成正式文档登记，后续实现仅允许模块内 callable runner，除非另行授权入口治理变更。
+当前模块提供模块内 callable runner；内网执行通过已登记脚本 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 包装。仓库不新增 repo 官方 CLI。
 
-计划 callable runner：
+Callable runner：
 
 ```python
 from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
     run_t07_semantic_junction_anchor,
+    run_t07_step1_has_evd,
+    run_t07_step2_anchor_recognition,
 )
 ```
 
-上述 runner 当前尚未实现。
+内网脚本默认读取：
+
+- `NODES_PATH=/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/nodes.gpkg`
+- `DRIVEZONE_PATH=/mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg`
+- `INTERSECTION_PATH=/mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.gpkg`
+
+上述路径均可通过同名环境变量覆盖；脚本不接受或读取 Segment 输入。
 
 ## 关键规则
 
@@ -45,14 +53,14 @@ from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
 
 ## 输出
 
-计划 Step1 输出：
+Step1 输出：
 
 - `nodes.gpkg`
 - `t07_step1_summary.json`
 - `t07_step1_audit.csv/json`
 - `t07_step1_perf.json`
 
-计划 Step2 输出：
+Step2 输出：
 
 - `nodes.gpkg`
 - `node_error_1.gpkg/csv/json`

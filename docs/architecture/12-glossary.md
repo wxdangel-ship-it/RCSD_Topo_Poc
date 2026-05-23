@@ -7,6 +7,5 @@
 - **Patch**：当前初始化阶段沿用的最小数据处理单位目录组织。
 - **Road.kind**：道路种别字段，单个 token 为 `XXXX`，前两位表示道路等级，后两位表示道路类型；多个道路种别以 `|` 分隔。
 - **辅路 Road**：`Road.kind` 任一 token 后两位为 `0a` 的 Road，大小写不敏感。
-- **出入口 Road**：`Road.kind` 任一 token 后两位为 `17` 的 Road。
 - **模块启动模板**：`modules/_template/` 中提供的新模块初始文档契约骨架。
 - **Support Retained**：已纳入仓库治理、但不属于当前业务生产闭环的支撑 / 工具集合模块。

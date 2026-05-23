@@ -163,15 +163,12 @@ def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
     assert rows["500"]["kind_2"] == 2048
     assert "kind" not in rows["500"]
     assert "400" not in rows
-    assert rows["100"]["error_type"] == "错误分歧合流路口"
-    assert rows["200"]["error_type"] == "错误分歧合流路口"
+    assert "100" not in rows
+    assert "200" not in rows
 
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
-    assert summary["counts"]["error_feature_count"] == 3
-    assert summary["counts"]["error_count_by_type"] == {
-        "错误T型路口": 1,
-        "错误分歧合流路口": 2,
-    }
+    assert summary["counts"]["error_feature_count"] == 1
+    assert summary["counts"]["error_count_by_type"] == {"错误T型路口": 1}
     assert summary["field_audit"]["node_kind_2_field"] == "kind_2"
     assert "node_kind_field" not in summary["field_audit"]
     assert summary["performance"]["elapsed_seconds"] >= 0
@@ -208,120 +205,6 @@ def test_tool4_counts_internal_road_as_in_and_out_degree(tmp_path: Path) -> None
     assert rows == {}
     assert summary["counts"]["internal_road_count"] == 1
     assert summary["counts"]["error_feature_count"] == 0
-
-
-def test_tool4_parallel_shortening_requires_20m_end_distance(tmp_path: Path) -> None:
-    def build_case(merge_back_node: tuple[float, float]) -> tuple[list[dict], list[dict]]:
-        nodes = [
-            _node("10", 1, -20.0, 0.0),
-            _node("100", 16, 0.0, 0.0),
-            _node("150", 1, 40.0, 0.0),
-            _node("200", 8, 80.0, 0.0),
-            _node("210", 1, 100.0, 0.0),
-            _node("300", 1, 95.0, -9.5),
-            _node("301", 1, merge_back_node[0], merge_back_node[1]),
-        ]
-        roads = [
-            _road("r-in-div", "10", "100", [(-20.0, 0.0), (0.0, 0.0)]),
-            _road("r-main-1", "100", "150", [(0.0, 0.0), (40.0, 0.0)]),
-            _road("r-main-2", "150", "200", [(40.0, 0.0), (80.0, 0.0)]),
-            _road("r-merge-out", "200", "210", [(80.0, 0.0), (100.0, 0.0)]),
-            _road("r-side-div", "100", "300", [(0.0, 0.0), (95.0, -9.5)]),
-            _road("r-side-merge", "301", "200", [merge_back_node, (80.0, 0.0)]),
-        ]
-        return nodes, roads
-
-    ok_nodes, ok_roads = build_case((95.0, -1.5))
-    ok_rows, ok_summary = _run_tool4_case(
-        tmp_path,
-        case_name="parallel_within_20m",
-        nodes=ok_nodes,
-        roads=ok_roads,
-    )
-    assert ok_rows["100"]["error_type"] == "错误分歧合流路口"
-    assert ok_rows["200"]["error_type"] == "错误分歧合流路口"
-    ok_audit = ok_summary["errors"][0]["audit_json"]
-    assert ok_audit["vertical_parallel_shortening"] is True
-    assert ok_audit["end_distance_m"] == 8.0
-    assert ok_audit["parallel_distance_threshold_m"] == 20.0
-
-    far_nodes, far_roads = build_case((115.0, -3.5))
-    far_rows, far_summary = _run_tool4_case(
-        tmp_path,
-        case_name="parallel_over_20m",
-        nodes=far_nodes,
-        roads=far_roads,
-    )
-    assert far_rows == {}
-    assert far_summary["counts"]["error_feature_count"] == 0
-
-
-def test_tool4_suppresses_divmerge_error_when_related_road_kind_is_entrance_exit(tmp_path: Path) -> None:
-    nodes = [
-        _node("10", 1, -20.0, 0.0),
-        _node("100", 16, 0.0, 0.0),
-        _node("150", 1, 40.0, 0.0),
-        _node("200", 8, 80.0, 0.0),
-        _node("210", 1, 100.0, 0.0),
-        _node("300", 1, 40.0, -40.0),
-    ]
-    roads = [
-        _road("r-in-div", "10", "100", [(-20.0, 0.0), (0.0, 0.0)], kind="0100"),
-        _road("r-main-1", "100", "150", [(0.0, 0.0), (40.0, 0.0)], kind="0100"),
-        _road("r-main-2", "150", "200", [(40.0, 0.0), (80.0, 0.0)], kind="0100"),
-        _road("r-merge-out", "200", "210", [(80.0, 0.0), (100.0, 0.0)], kind="0100"),
-        _road("r-side-div", "100", "300", [(0.0, 0.0), (40.0, -40.0)], kind="0117"),
-        _road("r-side-merge", "300", "200", [(40.0, -40.0), (80.0, 0.0)], kind="0100"),
-    ]
-
-    rows, summary = _run_tool4_case(
-        tmp_path,
-        case_name="divmerge_entrance_exit_road",
-        nodes=nodes,
-        roads=roads,
-    )
-
-    assert rows == {}
-    assert summary["counts"]["entrance_exit_road_count"] == 1
-    assert summary["counts"]["divmerge_entrance_exit_suppressed_count"] == 1
-    suppressed = summary["divmerge_entrance_exit_suppressed"][0]
-    assert suppressed["reason"] == "related_road_kind_suffix_17"
-    assert suppressed["entrance_exit_road_ids"] == ["r-side-div"]
-
-
-def test_tool4_suppresses_divmerge_error_when_vertical_road_is_left_side(tmp_path: Path) -> None:
-    nodes = [
-        _node("10", 1, -20.0, 0.0),
-        _node("100", 16, 0.0, 0.0),
-        _node("150", 1, 40.0, 0.0),
-        _node("200", 8, 80.0, 0.0),
-        _node("210", 1, 100.0, 0.0),
-        _node("300", 1, 40.0, 40.0),
-    ]
-    roads = [
-        _road("r-in-div", "10", "100", [(-20.0, 0.0), (0.0, 0.0)]),
-        _road("r-main-1", "100", "150", [(0.0, 0.0), (40.0, 0.0)]),
-        _road("r-main-2", "150", "200", [(40.0, 0.0), (80.0, 0.0)]),
-        _road("r-merge-out", "200", "210", [(80.0, 0.0), (100.0, 0.0)]),
-        _road("r-side-div", "100", "300", [(0.0, 0.0), (40.0, 40.0)]),
-        _road("r-side-merge", "300", "200", [(40.0, 40.0), (80.0, 0.0)]),
-    ]
-
-    rows, summary = _run_tool4_case(
-        tmp_path,
-        case_name="divmerge_left_side_road",
-        nodes=nodes,
-        roads=roads,
-    )
-
-    assert rows == {}
-    assert summary["counts"]["divmerge_right_side_suppressed_count"] == 1
-    suppressed = summary["divmerge_right_side_suppressed"][0]
-    assert suppressed["reason"] == "vertical_road_not_right_side"
-    assert suppressed["diverge_side_is_right"] is False
-    assert suppressed["merge_side_is_right"] is False
-
-
 def test_tool4_script_help() -> None:
     result = subprocess.run(
         [sys.executable, "scripts/t08_tool4_junction_type_repair.py", "--help"],

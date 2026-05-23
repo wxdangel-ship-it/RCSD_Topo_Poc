@@ -101,8 +101,8 @@
 | `t08_tool1_vector_convert.py` | `scripts/t08_tool1_vector_convert.py` | repo 级 | T08 Tool1 基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出写回输入目录下同名文件，采用流式转换并输出进度，支持可选目标 EPSG 与 summary 输出 | `active` | 否 |
 | `t08_tool2_road_preprocess.py` | `scripts/t08_tool2_road_preprocess.py` | repo 级 | T08 Tool2 Road GPKG 预处理，补充 `patch_id` 与原始 `kind` 并输出 `EPSG:3857` GPKG | `active` | 否 |
 | `t08_tool3_nodes_type_aggregation.py` | `scripts/t08_tool3_nodes_type_aggregation.py` | repo 级 | T08 Tool3 Nodes 类型聚合，补充 `kind_2 / grade_2` 并处理环岛 mainnode，输出 `EPSG:3857` Nodes GPKG | `active` | 否 |
-| `t08_tool4_junction_type_repair.py` | `scripts/t08_tool4_junction_type_repair.py` | repo 级 | T08 Tool4 路口类型错误识别，校验 `kind_2=2048 / 16+8` 语义路口类型并输出 `nodes_error.gpkg` 与 summary，不改写输入 Nodes/Roads | `active` | 否 |
-| `t08_tool5_complex_junction_preprocess.py` | `scripts/t08_tool5_complex_junction_preprocess.py` | repo 级 | T08 Tool5 复杂路口预处理，构建复杂分歧 / 合流路口，并可基于 `node_error_2 / RCSDIntersection` 处理错误 1 对多路口，copy-on-write 输出 `EPSG:3857` Nodes/Roads GPKG 与 summary | `active` | 否 |
+| `t08_tool4_junction_type_repair.py` | `scripts/t08_tool4_junction_type_repair.py` | repo 级 | T08 Tool4 路口类型错误识别，校验 `kind_2=2048` T 型语义路口并输出 `nodes_error.gpkg` 与 summary，不改写输入 Nodes/Roads | `active` | 否 |
+| `t08_tool5_complex_junction_preprocess.py` | `scripts/t08_tool5_complex_junction_preprocess.py` | repo 级 | T08 Tool5 复杂路口预处理，构建复杂分歧 / 合流路口，并可基于 `node_error_2 / RCSDIntersection` 处理错误 1 对多路口，copy-on-write 输出 `EPSG:3857` Nodes/Roads/audit Nodes GPKG 与 summary | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

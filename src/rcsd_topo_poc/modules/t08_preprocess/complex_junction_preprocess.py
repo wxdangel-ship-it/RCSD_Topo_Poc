@@ -36,6 +36,7 @@ ProgressCallback = Callable[[str], None]
 class T08ComplexJunctionPreprocessArtifacts:
     nodes_output: Path
     roads_output: Path
+    audit_nodes_output: Path
     summary_output: Path
 
 
@@ -45,6 +46,7 @@ def run_t08_complex_junction_preprocess(
     roads_gpkg: str | Path,
     nodes_output: str | Path,
     roads_output: str | Path,
+    audit_nodes_output: str | Path,
     node_error2_gpkg: str | Path | None = None,
     intersection_gpkg: str | Path | None = None,
     nodes_layer: str | None = None,
@@ -68,6 +70,7 @@ def run_t08_complex_junction_preprocess(
     roads_path = ensure_gpkg_path(roads_gpkg, label="--roads-gpkg")
     output_nodes_path = ensure_gpkg_path(nodes_output, label="--nodes-output")
     output_roads_path = ensure_gpkg_path(roads_output, label="--roads-output")
+    output_audit_nodes_path = ensure_gpkg_path(audit_nodes_output, label="--audit-nodes-output")
     node_error2_path = (
         ensure_gpkg_path(node_error2_gpkg, label="--node-error2-gpkg") if node_error2_gpkg is not None else None
     )
@@ -173,6 +176,8 @@ def run_t08_complex_junction_preprocess(
         extra=("kind_2", "grade_2", "mainnodeid", "subnodeid"),
     )
     output_fields_roads = unique_field_names(roads_result.field_names)
+    final_node_features: list[dict[str, Any]]
+    final_road_features: list[dict[str, Any]]
     if one_to_many_enabled:
         stage_started = time.perf_counter()
         _emit_progress(progress_callback, "[T08 Tool5] one_to_many: start")
@@ -209,15 +214,21 @@ def run_t08_complex_junction_preprocess(
             }
             nodes_fix_result = read_vector(tmp_nodes_fix, default_crs_text=f"EPSG:{target_epsg}", target_epsg=target_epsg)
             roads_fix_result = read_vector(tmp_roads_fix, default_crs_text=f"EPSG:{target_epsg}", target_epsg=target_epsg)
+            final_node_features = [
+                {"properties": dict(feature.properties), "geometry": feature.geometry} for feature in nodes_fix_result.features
+            ]
+            final_road_features = [
+                {"properties": dict(feature.properties), "geometry": feature.geometry} for feature in roads_fix_result.features
+            ]
             write_gpkg(
                 output_nodes_path,
-                [{"properties": dict(feature.properties), "geometry": feature.geometry} for feature in nodes_fix_result.features],
+                final_node_features,
                 crs_text=f"EPSG:{target_epsg}",
                 empty_fields=output_fields_nodes,
             )
             write_gpkg(
                 output_roads_path,
-                [{"properties": dict(feature.properties), "geometry": feature.geometry} for feature in roads_fix_result.features],
+                final_road_features,
                 crs_text=f"EPSG:{target_epsg}",
                 empty_fields=output_fields_roads,
             )
@@ -233,6 +244,8 @@ def run_t08_complex_junction_preprocess(
     else:
         stage_started = time.perf_counter()
         _emit_progress(progress_callback, f"[T08 Tool5] writing outputs nodes={output_nodes_path} roads={output_roads_path}")
+        final_node_features = node_features
+        final_road_features = road_features
         write_gpkg(output_nodes_path, node_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields_nodes)
         write_gpkg(output_roads_path, road_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields_roads)
         stage_timings["write_output_seconds"] = _elapsed_since(stage_started)
@@ -248,6 +261,34 @@ def run_t08_complex_junction_preprocess(
             "rows": [],
         }
 
+    stage_started = time.perf_counter()
+    audit_node_features = _build_audit_node_features(
+        final_node_features=final_node_features,
+        node_id_field=node_id_field,
+        complex_summary=complex_summary,
+        one_to_many_summary=one_to_many_summary,
+    )
+    audit_output_fields = unique_field_names(
+        output_fields_nodes,
+        extra=(
+            "audit_id",
+            "audit_process",
+            "audit_group_id",
+            "audit_role",
+            "audit_mainnodeid",
+            "audit_source_node_id",
+        ),
+    )
+    _emit_progress(progress_callback, f"[T08 Tool5] writing audit nodes={output_audit_nodes_path}")
+    write_gpkg(
+        output_audit_nodes_path,
+        audit_node_features,
+        crs_text=f"EPSG:{target_epsg}",
+        empty_fields=audit_output_fields,
+        geometry_type="Point",
+    )
+    stage_timings["write_audit_nodes_seconds"] = _elapsed_since(stage_started)
+
     elapsed_seconds = _elapsed_since(started)
     summary = {
         "tool": "T08 Tool5",
@@ -262,6 +303,7 @@ def run_t08_complex_junction_preprocess(
         "output_paths": {
             "nodes_output": output_nodes_path,
             "roads_output": output_roads_path,
+            "audit_nodes_output": output_audit_nodes_path,
             "summary_output": summary_path,
         },
         "input_crs": {
@@ -298,8 +340,10 @@ def run_t08_complex_junction_preprocess(
                 "merged_intersection_count", 0
             ),
             "one_to_many_deleted_road_count": one_to_many_summary.get("counts", {}).get("deleted_road_count", 0),
+            "audit_node_feature_count": len(audit_node_features),
         },
-        "output_bounds": aggregate_bounds(feature["geometry"] for feature in node_features),
+        "output_bounds": aggregate_bounds(feature["geometry"] for feature in final_node_features),
+        "audit_nodes_bounds": aggregate_bounds(feature["geometry"] for feature in audit_node_features),
         "performance": {
             "elapsed_seconds": round(elapsed_seconds, 6),
             "nodes_per_second": _items_per_second(len(node_features), elapsed_seconds),
@@ -319,6 +363,7 @@ def run_t08_complex_junction_preprocess(
     return T08ComplexJunctionPreprocessArtifacts(
         nodes_output=output_nodes_path,
         roads_output=output_roads_path,
+        audit_nodes_output=output_audit_nodes_path,
         summary_output=summary_path,
     )
 
@@ -343,6 +388,78 @@ def _ensure_type_2_fields(
         if _should_emit_progress(index, progress_interval):
             _emit_progress(progress_callback, f"[T08 Tool5] prepared {index} node feature(s)")
     return initialized
+
+
+def _build_audit_node_features(
+    *,
+    final_node_features: list[dict[str, Any]],
+    node_id_field: str,
+    complex_summary: dict[str, Any],
+    one_to_many_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    node_by_id = {
+        str(feature["properties"].get(node_id_field)): feature
+        for feature in final_node_features
+        if feature["properties"].get(node_id_field) is not None
+    }
+    audit_rows: list[dict[str, str | None]] = []
+    for row in complex_summary.get("rows", []):
+        if row.get("status") != "aggregated":
+            continue
+        group_id = str(row.get("component_id") or "")
+        mainnodeid = str(row.get("mainnodeid") or "")
+        for node_id in row.get("node_ids") or []:
+            source_node_id = str(node_id)
+            audit_rows.append(
+                {
+                    "process": "complex_divmerge",
+                    "group_id": group_id,
+                    "source_node_id": source_node_id,
+                    "mainnodeid": mainnodeid,
+                    "role": "main" if source_node_id == mainnodeid else "member",
+                }
+            )
+    for row in one_to_many_summary.get("rows", []):
+        if row.get("status") != "merged":
+            continue
+        group_id = str(row.get("intersection_id") or "")
+        mainnodeid = str(row.get("chosen_mainnodeid") or "")
+        for node_id in row.get("merged_node_ids") or []:
+            source_node_id = str(node_id)
+            audit_rows.append(
+                {
+                    "process": "one_to_many",
+                    "group_id": group_id,
+                    "source_node_id": source_node_id,
+                    "mainnodeid": mainnodeid,
+                    "role": "main" if source_node_id == mainnodeid else "member",
+                }
+            )
+
+    audit_features: list[dict[str, Any]] = []
+    seen_audit_ids: set[str] = set()
+    for row in audit_rows:
+        source_node_id = str(row["source_node_id"])
+        source_feature = node_by_id.get(source_node_id)
+        if source_feature is None:
+            continue
+        audit_id = f"{row['process']}:{row['group_id']}:{source_node_id}"
+        if audit_id in seen_audit_ids:
+            continue
+        seen_audit_ids.add(audit_id)
+        properties = dict(source_feature["properties"])
+        properties.update(
+            {
+                "audit_id": audit_id,
+                "audit_process": row["process"],
+                "audit_group_id": row["group_id"],
+                "audit_role": row["role"],
+                "audit_mainnodeid": row["mainnodeid"],
+                "audit_source_node_id": source_node_id,
+            }
+        )
+        audit_features.append({"properties": properties, "geometry": source_feature["geometry"]})
+    return audit_features
 
 
 def _emit_progress(callback: ProgressCallback | None, message: str) -> None:

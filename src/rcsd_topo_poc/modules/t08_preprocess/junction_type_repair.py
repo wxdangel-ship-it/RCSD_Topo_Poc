@@ -33,18 +33,10 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
 
 
 T_KIND_VALUE = 2048
-DIVERGE_KIND_VALUE = 16
-MERGE_KIND_VALUE = 8
 ADVANCE_RIGHT_TURN_FORMWAY_BIT = 128
 AUXILIARY_ROAD_KIND_SUFFIX = "0a"
-ENTRANCE_EXIT_ROAD_KIND_SUFFIX = "17"
 
 ERROR_T_JUNCTION = "错误T型路口"
-ERROR_DIVMERGE_JUNCTION = "错误分歧合流路口"
-
-DEFAULT_TRACE_DISTANCE_M = 100.0
-DEFAULT_ANGLE_TOLERANCE_DEGREES = 35.0
-DEFAULT_PARALLEL_DISTANCE_THRESHOLD_M = 20.0
 
 ProgressCallback = Callable[[str], None]
 
@@ -125,15 +117,6 @@ class Topology:
     direction_errors: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class TraceResult:
-    node_id: str
-    distance_m: float
-    path_road_indices: tuple[int, ...]
-    first_vector: tuple[float, float]
-    last_vector: tuple[float, float]
-
-
 def run_t08_junction_type_repair(
     *,
     nodes_gpkg: str | Path,
@@ -145,8 +128,6 @@ def run_t08_junction_type_repair(
     target_epsg: int = 3857,
     nodes_default_crs_text: str | None = None,
     roads_default_crs_text: str | None = None,
-    trace_distance_m: float = DEFAULT_TRACE_DISTANCE_M,
-    angle_tolerance_degrees: float = DEFAULT_ANGLE_TOLERANCE_DEGREES,
     progress_callback: ProgressCallback | None = None,
     progress_interval: int = 10000,
 ) -> T08JunctionTypeRepairArtifacts:
@@ -220,19 +201,11 @@ def run_t08_junction_type_repair(
     stage_timings["build_topology_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
-    (
-        errors,
-        degree_exception_rows,
-        divmerge_entrance_exit_suppressed_rows,
-        divmerge_right_side_suppressed_rows,
-    ) = _detect_junction_type_errors(
+    errors, degree_exception_rows = _detect_junction_type_errors(
         semantic_nodes=semantic_nodes,
         parsed_roads=parsed_roads,
         topology=topology,
         degree_exception_topology=degree_exception_topology,
-        trace_distance_m=float(trace_distance_m),
-        angle_tolerance_degrees=float(angle_tolerance_degrees),
-        parallel_distance_threshold_m=DEFAULT_PARALLEL_DISTANCE_THRESHOLD_M,
         progress_callback=progress_callback,
         progress_interval=progress_interval,
     )
@@ -278,9 +251,6 @@ def run_t08_junction_type_repair(
         "params": {
             "nodes_layer": nodes_layer,
             "roads_layer": roads_layer,
-            "trace_distance_m": float(trace_distance_m),
-            "angle_tolerance_degrees": float(angle_tolerance_degrees),
-            "parallel_distance_threshold_m": DEFAULT_PARALLEL_DISTANCE_THRESHOLD_M,
         },
         "field_audit": {
             "node_id_field": node_id_field,
@@ -303,15 +273,10 @@ def run_t08_junction_type_repair(
             "direction_error_count": len(topology.direction_errors),
             "advance_right_turn_road_count": sum(1 for road in parsed_roads if road.is_advance_right_turn),
             "auxiliary_road_count": sum(1 for road in parsed_roads if road.is_auxiliary),
-            "entrance_exit_road_count": sum(1 for road in parsed_roads if _is_entrance_exit_road_kind(road.kind)),
             "degree_exception_suppressed_count": sum(1 for row in degree_exception_rows if row["status"] == "suppressed"),
-            "divmerge_entrance_exit_suppressed_count": len(divmerge_entrance_exit_suppressed_rows),
-            "divmerge_right_side_suppressed_count": len(divmerge_right_side_suppressed_rows),
         },
         "direction_errors": list(topology.direction_errors),
         "degree_exceptions": degree_exception_rows,
-        "divmerge_entrance_exit_suppressed": divmerge_entrance_exit_suppressed_rows,
-        "divmerge_right_side_suppressed": divmerge_right_side_suppressed_rows,
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in output_features),
         "performance": {
             "elapsed_seconds": round(elapsed_seconds, 6),
@@ -759,12 +724,9 @@ def _detect_junction_type_errors(
     parsed_roads: list[ParsedRoad],
     topology: Topology,
     degree_exception_topology: Topology,
-    trace_distance_m: float,
-    angle_tolerance_degrees: float,
-    parallel_distance_threshold_m: float,
     progress_callback: ProgressCallback | None,
     progress_interval: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     errors: list[dict[str, Any]] = []
     degree_exception_rows: list[dict[str, Any]] = []
     seen_error_keys: set[tuple[str, str, str]] = set()
@@ -806,40 +768,9 @@ def _detect_junction_type_errors(
         if _should_emit_progress(index, progress_interval):
             _emit_progress(progress_callback, f"[T08 Tool4] checked {index} semantic junction(s)")
 
-    (
-        divmerge_rows,
-        divmerge_entrance_exit_suppressed_rows,
-        divmerge_right_side_suppressed_rows,
-    ) = _detect_continuous_divmerge_as_t(
-        semantic_nodes=semantic_nodes,
-        parsed_roads=parsed_roads,
-        topology=topology,
-        trace_distance_m=trace_distance_m,
-        angle_tolerance_degrees=angle_tolerance_degrees,
-        parallel_distance_threshold_m=parallel_distance_threshold_m,
-    )
-    for row in divmerge_rows:
-        for semantic_id in row["related_node_ids"]:
-            semantic = semantic_nodes[semantic_id]
-            _append_error(
-                errors,
-                seen_error_keys=seen_error_keys,
-                semantic=semantic,
-                topology=topology,
-                parsed_roads=parsed_roads,
-                error_type=ERROR_DIVMERGE_JUNCTION,
-                error_reason="kind_2=16/8 continuous divmerge has T-junction topology signature",
-                group_id=row["group_id"],
-                related_node_ids=tuple(row["related_node_ids"]),
-                related_road_indices=frozenset(row["related_road_indices"]),
-                audit=row["audit"],
-            )
-
     return (
         sorted(errors, key=lambda row: (_sort_key(str(row["semantic_node_id"])), str(row["error_type"]))),
         sorted(degree_exception_rows, key=lambda row: (_sort_key(str(row["semantic_node_id"])), str(row["error_type"]))),
-        divmerge_entrance_exit_suppressed_rows,
-        divmerge_right_side_suppressed_rows,
     )
 
 
@@ -882,303 +813,6 @@ def _is_suppressed_by_degree_exception(degree_exception: dict[str, Any] | None) 
         and int(degree_exception.get("effective_in_degree", -1)) == 2
         and int(degree_exception.get("effective_out_degree", -1)) == 2
     )
-
-
-def _detect_continuous_divmerge_as_t(
-    *,
-    semantic_nodes: dict[str, SemanticNode],
-    parsed_roads: list[ParsedRoad],
-    topology: Topology,
-    trace_distance_m: float,
-    angle_tolerance_degrees: float,
-    parallel_distance_threshold_m: float,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    rows: list[dict[str, Any]] = []
-    entrance_exit_suppressed_rows: list[dict[str, Any]] = []
-    right_side_suppressed_rows: list[dict[str, Any]] = []
-    seen_pairs: set[tuple[str, str]] = set()
-    for semantic_id, semantic in sorted(semantic_nodes.items(), key=lambda item: _sort_key(item[0])):
-        if semantic.representative.kind_2 != DIVERGE_KIND_VALUE:
-            continue
-        if int(topology.out_degree.get(semantic_id, 0)) != 2:
-            continue
-        incoming_edges = sorted(topology.in_edges.get(semantic_id, ()), key=_edge_sort_key)
-        outgoing_edges = sorted(topology.out_edges.get(semantic_id, ()), key=_edge_sort_key)
-        if len(outgoing_edges) != 2 or not incoming_edges:
-            continue
-        incoming_edge = max(incoming_edges, key=lambda edge: (edge.length_m, str(edge.road_id)))
-        main_edge, side_edge = _split_main_and_side_edges(incoming_edge, outgoing_edges)
-        main_trace = _trace_forward_to_kind(
-            start_node_id=semantic_id,
-            first_edge=main_edge,
-            target_kind=MERGE_KIND_VALUE,
-            semantic_nodes=semantic_nodes,
-            topology=topology,
-            max_distance_m=trace_distance_m,
-        )
-        if main_trace is None:
-            continue
-        merge_id = main_trace.node_id
-        merge = semantic_nodes.get(merge_id)
-        if merge is None or merge.representative.kind_2 != MERGE_KIND_VALUE:
-            continue
-        if int(topology.in_degree.get(merge_id, 0)) != 2:
-            continue
-        pair_key = (semantic_id, merge_id)
-        if pair_key in seen_pairs:
-            continue
-        seen_pairs.add(pair_key)
-
-        merge_out_edges = sorted(topology.out_edges.get(merge_id, ()), key=_edge_sort_key)
-        if not merge_out_edges:
-            continue
-        merge_out = min(merge_out_edges, key=lambda edge: (_angle_between(main_trace.last_vector, edge.vector), _edge_sort_key(edge)))
-        horizontal_ok = (
-            _angle_between(incoming_edge.vector, main_edge.vector) <= angle_tolerance_degrees
-            and _angle_between(main_trace.last_vector, merge_out.vector) <= angle_tolerance_degrees
-        )
-        if not horizontal_ok:
-            continue
-
-        main_path_roads = set(main_trace.path_road_indices)
-        merge_side_inputs = [
-            edge for edge in sorted(topology.in_edges.get(merge_id, ()), key=_edge_sort_key) if edge.road_idx not in main_path_roads
-        ]
-        if not merge_side_inputs:
-            continue
-        merge_side_in = merge_side_inputs[0]
-        merge_back_first = _reverse_edge(merge_side_in)
-        diverge_side_is_right = _is_right_side(main_edge.vector, side_edge.vector)
-        merge_side_is_right = _is_right_side(merge_out.vector, merge_back_first.vector)
-        if not (diverge_side_is_right and merge_side_is_right):
-            right_side_suppressed_rows.append(
-                {
-                    "status": "suppressed",
-                    "reason": "vertical_road_not_right_side",
-                    "diverge_node_id": semantic_id,
-                    "merge_node_id": merge_id,
-                    "main_branch_road_id": main_edge.road_id,
-                    "side_branch_road_id": side_edge.road_id,
-                    "merge_side_road_id": merge_side_in.road_id,
-                    "merge_out_road_id": merge_out.road_id,
-                    "diverge_side_is_right": diverge_side_is_right,
-                    "merge_side_is_right": merge_side_is_right,
-                }
-            )
-            continue
-        immediate_same_node = side_edge.dst == merge_back_first.dst
-        if immediate_same_node:
-            side_trace = TraceResult(
-                node_id=side_edge.dst,
-                distance_m=side_edge.length_m,
-                path_road_indices=(side_edge.road_idx,),
-                first_vector=side_edge.vector,
-                last_vector=side_edge.vector,
-            )
-            merge_back_trace = TraceResult(
-                node_id=merge_back_first.dst,
-                distance_m=merge_back_first.length_m,
-                path_road_indices=(merge_back_first.road_idx,),
-                first_vector=merge_back_first.vector,
-                last_vector=merge_back_first.vector,
-            )
-        else:
-            side_trace = _trace_through_degree2(
-                first_edge=side_edge,
-                topology=topology,
-                max_distance_m=trace_distance_m,
-                forward=True,
-            )
-            merge_back_trace = _trace_through_degree2(
-                first_edge=merge_back_first,
-                topology=topology,
-                max_distance_m=trace_distance_m,
-                forward=False,
-            )
-        if side_trace is None or merge_back_trace is None:
-            continue
-        start_distance = semantic.representative.geometry.distance(merge.representative.geometry)
-        end_distance = semantic_nodes[side_trace.node_id].representative.geometry.distance(
-            semantic_nodes[merge_back_trace.node_id].representative.geometry
-        )
-        vertical_same_node = immediate_same_node or side_trace.node_id == merge_back_trace.node_id
-        vertical_parallel_angle = _angle_between(side_trace.first_vector, merge_back_trace.first_vector)
-        vertical_parallel_shortening = (
-            end_distance <= parallel_distance_threshold_m + 1e-9
-            and end_distance < start_distance
-            and vertical_parallel_angle <= angle_tolerance_degrees
-        )
-        if not (vertical_same_node or vertical_parallel_shortening):
-            continue
-
-        related_road_indices = set(main_trace.path_road_indices)
-        related_road_indices.update(side_trace.path_road_indices)
-        related_road_indices.update(merge_back_trace.path_road_indices)
-        related_road_indices.add(incoming_edge.road_idx)
-        related_road_indices.add(merge_out.road_idx)
-        entrance_exit_road_ids = _road_ids_with_kind_suffix(
-            parsed_roads,
-            related_road_indices,
-            ENTRANCE_EXIT_ROAD_KIND_SUFFIX,
-        )
-        if entrance_exit_road_ids:
-            entrance_exit_suppressed_rows.append(
-                {
-                    "status": "suppressed",
-                    "reason": "related_road_kind_suffix_17",
-                    "diverge_node_id": semantic_id,
-                    "merge_node_id": merge_id,
-                    "related_road_ids": [
-                        parsed_roads[index].road_id
-                        for index in sorted(related_road_indices, key=lambda item: _sort_key(parsed_roads[item].road_id))
-                    ],
-                    "entrance_exit_road_ids": list(entrance_exit_road_ids),
-                }
-            )
-            continue
-        rows.append(
-            {
-                "group_id": f"divmerge_as_t_{semantic_id}_{merge_id}",
-                "related_node_ids": (semantic_id, merge_id),
-                "related_road_indices": tuple(sorted(related_road_indices)),
-                "audit": {
-                    "diverge_node_id": semantic_id,
-                    "merge_node_id": merge_id,
-                    "incoming_road_id": incoming_edge.road_id,
-                    "main_branch_road_id": main_edge.road_id,
-                    "side_branch_road_id": side_edge.road_id,
-                    "merge_side_road_id": merge_side_in.road_id,
-                    "merge_out_road_id": merge_out.road_id,
-                    "diverge_side_is_right": diverge_side_is_right,
-                    "merge_side_is_right": merge_side_is_right,
-                    "main_trace_distance_m": round(main_trace.distance_m, 3),
-                    "side_trace_node_id": side_trace.node_id,
-                    "merge_back_trace_node_id": merge_back_trace.node_id,
-                    "vertical_same_node": vertical_same_node,
-                    "vertical_parallel_shortening": vertical_parallel_shortening,
-                    "start_distance_m": round(float(start_distance), 3),
-                    "end_distance_m": round(float(end_distance), 3),
-                    "parallel_distance_threshold_m": float(parallel_distance_threshold_m),
-                    "vertical_parallel_angle_degrees": round(float(vertical_parallel_angle), 3),
-                    "angle_tolerance_degrees": float(angle_tolerance_degrees),
-                },
-            }
-        )
-    return rows, entrance_exit_suppressed_rows, right_side_suppressed_rows
-
-
-def _split_main_and_side_edges(
-    incoming_edge: DirectedEdge,
-    outgoing_edges: list[DirectedEdge],
-) -> tuple[DirectedEdge, DirectedEdge]:
-    sorted_edges = sorted(
-        outgoing_edges,
-        key=lambda edge: (_angle_between(incoming_edge.vector, edge.vector), _edge_sort_key(edge)),
-    )
-    return sorted_edges[0], sorted_edges[1]
-
-
-def _trace_forward_to_kind(
-    *,
-    start_node_id: str,
-    first_edge: DirectedEdge,
-    target_kind: int,
-    semantic_nodes: dict[str, SemanticNode],
-    topology: Topology,
-    max_distance_m: float,
-) -> TraceResult | None:
-    return _trace_edges(
-        start_node_id=start_node_id,
-        first_edge=first_edge,
-        edge_map=topology.out_edges,
-        incident_road_indices=topology.incident_road_indices,
-        max_distance_m=max_distance_m,
-        stop_predicate=lambda node_id: semantic_nodes.get(node_id) is not None
-        and semantic_nodes[node_id].representative.kind_2 == target_kind,
-    )
-
-
-def _trace_through_degree2(
-    *,
-    first_edge: DirectedEdge,
-    topology: Topology,
-    max_distance_m: float,
-    forward: bool,
-) -> TraceResult | None:
-    edge_map = topology.out_edges if forward else topology.reverse_edges
-    return _trace_edges(
-        start_node_id=first_edge.src,
-        first_edge=first_edge,
-        edge_map=edge_map,
-        incident_road_indices=topology.incident_road_indices,
-        max_distance_m=max_distance_m,
-        stop_predicate=lambda _node_id: False,
-        return_on_non_degree2=True,
-    )
-
-
-def _trace_edges(
-    *,
-    start_node_id: str,
-    first_edge: DirectedEdge,
-    edge_map: dict[str, tuple[DirectedEdge, ...]],
-    incident_road_indices: dict[str, frozenset[int]],
-    max_distance_m: float,
-    stop_predicate: Callable[[str], bool],
-    return_on_non_degree2: bool = False,
-) -> TraceResult | None:
-    total = float(max(0.0, first_edge.length_m))
-    if total > max_distance_m + 1e-9:
-        return None
-    prev_node = start_node_id
-    curr_node = first_edge.dst
-    path_roads = [first_edge.road_idx]
-    last_vector = first_edge.vector
-
-    for _ in range(256):
-        if stop_predicate(curr_node):
-            return TraceResult(
-                node_id=curr_node,
-                distance_m=total,
-                path_road_indices=tuple(path_roads),
-                first_vector=first_edge.vector,
-                last_vector=last_vector,
-            )
-        incident_degree = len(incident_road_indices.get(curr_node, frozenset()))
-        if incident_degree != 2:
-            if return_on_non_degree2:
-                return TraceResult(
-                    node_id=curr_node,
-                    distance_m=total,
-                    path_road_indices=tuple(path_roads),
-                    first_vector=first_edge.vector,
-                    last_vector=last_vector,
-                )
-            return None
-        candidates = [
-            edge
-            for edge in edge_map.get(curr_node, ())
-            if edge.road_idx not in path_roads and edge.dst != prev_node
-        ]
-        if len(candidates) != 1:
-            if return_on_non_degree2:
-                return TraceResult(
-                    node_id=curr_node,
-                    distance_m=total,
-                    path_road_indices=tuple(path_roads),
-                    first_vector=first_edge.vector,
-                    last_vector=last_vector,
-                )
-            return None
-        next_edge = candidates[0]
-        total += float(max(0.0, next_edge.length_m))
-        if total > max_distance_m + 1e-9:
-            return None
-        path_roads.append(next_edge.road_idx)
-        prev_node = curr_node
-        curr_node = next_edge.dst
-        last_vector = next_edge.vector
-    return None
 
 
 def _append_error(
@@ -1256,36 +890,6 @@ def _line_endpoints(geometry: BaseGeometry) -> tuple[tuple[float, float], tuple[
     return None
 
 
-def _reverse_edge(edge: DirectedEdge) -> DirectedEdge:
-    return DirectedEdge(
-        src=edge.dst,
-        dst=edge.src,
-        road_idx=edge.road_idx,
-        road_id=edge.road_id,
-        length_m=edge.length_m,
-        vector=(-edge.vector[0], -edge.vector[1]),
-    )
-
-
-def _angle_between(left: tuple[float, float], right: tuple[float, float]) -> float:
-    left_len = math.hypot(left[0], left[1])
-    right_len = math.hypot(right[0], right[1])
-    if left_len <= 1e-12 or right_len <= 1e-12:
-        return 180.0
-    dot = (left[0] * right[0] + left[1] * right[1]) / (left_len * right_len)
-    dot = max(-1.0, min(1.0, dot))
-    return math.degrees(math.acos(dot))
-
-
-def _is_right_side(forward: tuple[float, float], candidate: tuple[float, float]) -> bool:
-    forward_len = math.hypot(forward[0], forward[1])
-    candidate_len = math.hypot(candidate[0], candidate[1])
-    if forward_len <= 1e-12 or candidate_len <= 1e-12:
-        return False
-    cross = forward[0] * candidate[1] - forward[1] * candidate[0]
-    return cross < -1e-9
-
-
 def _unit_vector(value: tuple[float, float]) -> tuple[float, float]:
     length = math.hypot(value[0], value[1])
     if length <= 1e-12:
@@ -1346,22 +950,6 @@ def _normalize_road_kind(value: Any) -> str | None:
 
 def _is_auxiliary_road_kind(kind: str | None) -> bool:
     return _has_road_kind_suffix(kind, AUXILIARY_ROAD_KIND_SUFFIX)
-
-
-def _is_entrance_exit_road_kind(kind: str | None) -> bool:
-    return _has_road_kind_suffix(kind, ENTRANCE_EXIT_ROAD_KIND_SUFFIX)
-
-
-def _road_ids_with_kind_suffix(
-    parsed_roads: list[ParsedRoad],
-    road_indices: set[int] | frozenset[int] | tuple[int, ...],
-    suffix: str,
-) -> tuple[str, ...]:
-    return tuple(
-        parsed_roads[index].road_id
-        for index in sorted(road_indices, key=lambda item: _sort_key(parsed_roads[item].road_id))
-        if _has_road_kind_suffix(parsed_roads[index].kind, suffix)
-    )
 
 
 def _has_road_kind_suffix(kind: str | None, suffix: str) -> bool:

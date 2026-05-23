@@ -25,6 +25,11 @@ def _read_features(path: Path) -> dict[str, dict]:
         return {str(feature["properties"]["id"]): dict(feature["properties"]) for feature in source}
 
 
+def _read_features_by_field(path: Path, field_name: str) -> dict[str, dict]:
+    with fiona.open(path) as source:
+        return {str(feature["properties"][field_name]): dict(feature["properties"]) for feature in source}
+
+
 def _read_ids(path: Path) -> set[str]:
     with fiona.open(path) as source:
         return {str(feature["properties"]["id"]) for feature in source}
@@ -43,6 +48,7 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
     intersection_gpkg = tmp_path / "input" / "RCSDIntersection.gpkg"
     nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
     roads_output = tmp_path / "out" / "roads_fix.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
     summary_output = tmp_path / "out" / "tool5_summary.json"
 
     base_node = {"mainnodeid": None, "has_evd": "no", "is_anchor": "no", "subnodeid": None}
@@ -112,6 +118,8 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
             str(nodes_output),
             "--roads-output",
             str(roads_output),
+            "--audit-nodes-output",
+            str(audit_nodes_output),
             "--summary-output",
             str(summary_output),
             "--progress-interval",
@@ -128,8 +136,10 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
     assert "[T08 Tool5]" in result.stderr
     assert _read_epsg(nodes_output) == 3857
     assert _read_epsg(roads_output) == 3857
+    assert _read_epsg(audit_nodes_output) == 3857
     nodes_fix = _read_features(nodes_output)
     roads_fix_ids = _read_ids(roads_output)
+    audit_nodes = _read_features_by_field(audit_nodes_output, "audit_id")
 
     assert nodes_fix["200"]["kind"] == 8
     assert nodes_fix["200"]["kind_2"] == 128
@@ -146,9 +156,21 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
     assert "r-10-20" not in roads_fix_ids
     assert "r-20-keep" in roads_fix_ids
     assert "r-main-1" in roads_fix_ids
+    assert set(audit_nodes) == {
+        "complex_divmerge:chain_000:100",
+        "complex_divmerge:chain_000:200",
+        "one_to_many:id:A:10",
+        "one_to_many:id:A:20",
+    }
+    assert audit_nodes["complex_divmerge:chain_000:200"]["audit_role"] == "main"
+    assert audit_nodes["complex_divmerge:chain_000:100"]["audit_role"] == "member"
+    assert audit_nodes["one_to_many:id:A:10"]["audit_role"] == "main"
+    assert audit_nodes["one_to_many:id:A:20"]["audit_role"] == "member"
 
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
     assert summary["counts"]["complex_junction_count"] == 1
     assert summary["counts"]["one_to_many_merged_intersection_count"] == 1
     assert summary["counts"]["one_to_many_deleted_road_count"] == 1
+    assert summary["counts"]["audit_node_feature_count"] == 4
+    assert summary["output_paths"]["audit_nodes_output"] == str(audit_nodes_output.resolve())
     assert summary["complex_divmerge"]["complex_mainnodeids"] == ["200"]

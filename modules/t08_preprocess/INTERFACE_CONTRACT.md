@@ -64,18 +64,10 @@
   - 若 Road 两端属于同一语义路口，则该 Road 既视为进入该语义路口也视为退出该语义路口，`in_degree + 1 / out_degree + 1`；双向 Road 同样只按该 Road 对入度和出度各加 `1`。
 - 错误识别：
   - `kind_2 = 2048`：若入度或出度任一不为 `2`，输出 `error_type = 错误T型路口`。
-  - `kind_2 = 16`：若出度为 `2`，沿横向 / 左侧候选 road 忽略二度连接，在 `100m` 内找到 `kind_2 = 8` 且入度为 `2` 的合流路口，并满足横向与竖向 T 型特征，则分歧与合流代表 node 均输出 `error_type = 错误分歧合流路口`；若该分歧 / 合流关联 Road 中存在 `road.kind` 任一 token 后两位为 `17` 的出入口 Road，则忽略该候选，不输出错误。
 - 异常豁免：
   - 若语义路口存在提前右转 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入提前右转 Road；提前右转 Road 以 `formway bit7 = 128` 判定。
   - 若语义路口存在辅路 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入辅路 Road；辅路 Road 以 `road.kind` 任一 `|` 分隔 token 的后两位为 `0a` 判定，大小写不敏感。
   - 对原本将输出的 `错误T型路口` 候选，若排除提前右转 / 辅路后 `in_degree = 2 / out_degree = 2`，则不输出错误，并在 summary `degree_exceptions` 中记录 suppressed 审计。
-- 连续分歧合流左右候选：
-  - 当前输入字段未提供显式 left/right road 标识，第一版使用“入向 road 与两个退出 road 的夹角最小者”为横向 / 左侧候选，另一条为竖向 / 右侧候选。
-  - 竖方向候选 Road 必须位于横方向前进方向右侧；若不在右侧，则忽略该候选，不输出错误。
-  - “距离缩短且相对平行”判定需同时满足末端距离小于起始距离、末端距离不超过 `20m`、平行夹角不超过 `35` 度。
-  - 候选相关 Road 中存在出入口 Road 时，summary `divmerge_entrance_exit_suppressed` 记录 suppressed 审计。
-  - 竖方向不在右侧时，summary `divmerge_right_side_suppressed` 记录 suppressed 审计。
-  - 若后续上游正式提供左右字段，必须在本契约同轮更新后才能替换该代理规则。
 - 输出字段至少包含 `id / semantic_node_id / source_node_id / kind_2 / error_type / error_reason / error_group_id / in_degree / out_degree / related_node_ids / related_road_ids / audit_json`。
 - 输出边界：Tool4 只输出错误识别结果，不修改输入 Nodes/Roads，不输出修复后 Nodes/Roads。
 - 性能口径：Tool4 Road GPKG 优先使用直接 SQLite 轻量读取，只读取 `id / snodeid / enodeid / direction / formway / kind / geometry`，进入拓扑前仅保留 road 长度、方向向量与异常豁免标记，不长期持有完整 Road 几何；无法识别标准 GPKG 元数据时回退共享 `read_vector`。
@@ -90,10 +82,12 @@
 - 输出：
   - `t08_complex_junction_nodes.gpkg`
   - `t08_complex_junction_roads.gpkg`
+  - `t08_complex_junction_audit_nodes.gpkg`
   - `t08_complex_junction_preprocess_summary.json`
 - 输出 CRS：`EPSG:3857`。
 - 复杂分歧 / 合流聚合：从 Tool3 移出，参考 T04 full-input 候选与连续链路口口径，对 representative node 的 `kind_2 in {8, 16}` 候选沿 Road 有向拓扑识别连续链，聚合后 mainnode 写 `kind_2 = 128`，成员写 `grade_2 = 0 / kind_2 = 0`，全组 `mainnodeid` 写为 mainnode。若输入存在 `has_evd / is_anchor` 字段，则候选需满足 `has_evd = yes / is_anchor = no`。
 - 错误 1 对多路口处理：参考 T02 `node_error_2` 离线修复逻辑，在同一 `RCSDIntersection` 面内聚合剩余错误组，忽略代表 `kind_2 = 1` 的组；选择最小 junction group 作为 mainnode，mainnode 写 `kind_2 = 4`，成员写 `kind_2 = 0 / grade_2 = 0`，删除 intersection 面内被合并组之间的内部 Road。
+- 审计 Nodes 输出：将复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node 输出为 audit Nodes GPKG，保留最终 Nodes 属性并补充 `audit_id / audit_process / audit_group_id / audit_role / audit_mainnodeid / audit_source_node_id`。
 - 输出边界：Tool5 copy-on-write 输出 Nodes 与 Roads，不修改输入文件；若未传入 `node_error_2 / RCSDIntersection`，只执行复杂分歧 / 合流聚合并复制输出 Roads。
 - 所有输入、输出路径必须通过参数提供。
 
@@ -155,7 +149,8 @@ Tool5：
   --node-error2-gpkg /mnt/d/TestData/POC_Data/input/node_error_2.gpkg \
   --intersection-gpkg /mnt/d/TestData/POC_Data/input/RCSDIntersection.gpkg \
   --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_nodes.gpkg \
-  --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_roads.gpkg
+  --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_roads.gpkg \
+  --audit-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_audit_nodes.gpkg
 ```
 
 ## 3. Tool1 Params
@@ -209,11 +204,8 @@ Tool5：
 - `--summary-output`：可选 summary JSON 输出路径。
 - `--target-epsg`：最终输出 EPSG，默认 `3857`。
 - `--nodes-default-crs / --roads-default-crs`：输入缺失 CRS 时使用。
-- `--trace-distance-m`：连续分歧合流追踪距离，默认 `100` 米。
-- `--angle-tolerance-degrees`：横向 / 平行几何判定角度容差，默认 `35` 度。
-- 平行距离阈值：固定 `20` 米，不作为 CLI 参数暴露，写入 summary `params.parallel_distance_threshold_m` 与错误 audit。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个语义路口输出一次。
-- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings / road_read_mode`，用于定位读取、拓扑构建、错误识别与写出耗时，并记录 Road 读取模式；summary 还必须记录 `degree_exceptions`、提前右转 / 辅路 / 出入口 Road 计数、degree suppressed 计数、出入口 Road 抑制的分歧合流候选、右侧判定抑制的分歧合流候选。
+- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings / road_read_mode`，用于定位读取、拓扑构建、错误识别与写出耗时，并记录 Road 读取模式；summary 还必须记录 `degree_exceptions`、提前右转 / 辅路 Road 计数与 degree suppressed 计数。
 - GPKG 输出写出：复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
 ## 7. Tool5 Params
@@ -222,6 +214,7 @@ Tool5：
 - `--roads-gpkg`：Roads 输入 GPKG。
 - `--nodes-output`：Nodes 输出 GPKG。
 - `--roads-output`：Roads 输出 GPKG。
+- `--audit-nodes-output`：审计 Nodes 输出 GPKG，记录 Tool5 两个处理过程实际涉及的 node。
 - `--node-error2-gpkg`：可选 `node_error_2` 输入 GPKG；与 `--intersection-gpkg` 成对提供时执行错误 1 对多处理。
 - `--intersection-gpkg`：可选 `RCSDIntersection` 输入 GPKG；与 `--node-error2-gpkg` 成对提供时执行错误 1 对多处理。
 - `--nodes-layer / --roads-layer / --node-error2-layer / --intersection-layer`：可选图层名。
@@ -244,10 +237,10 @@ Tool5：
 7. Tool3 保留原始 `kind / grade`，只在 copy-on-write 输出中写入 `kind_2 / grade_2 / mainnodeid / subnodeid`。
 8. Tool3 summary 可追溯环岛组、更新节点数、CRS、字段解析与阶段性能；Tool3 不再构造复杂分歧 / 合流路口。
 9. Tool4 输出 `nodes_error.gpkg` 且 CRS 为 `EPSG:3857`。
-10. Tool4 至少识别错误 T 型路口、错误分歧合流路口两类 `error_type`。
+10. Tool4 识别错误 T 型路口 `error_type`。
 11. Tool4 对提前右转与辅路 Road 执行入出度异常豁免；候选错误被豁免时不写入 `nodes_error.gpkg`，必须写入 summary `degree_exceptions`。
 12. Tool4 不修改输入 Nodes/Roads，不输出修复后 Nodes/Roads。
-13. Tool5 输出 Nodes / Roads GPKG 且 CRS 为 `EPSG:3857`。
-14. Tool5 summary 可追溯复杂分歧 / 合流组、错误 1 对多合并组、删除 Road、CRS、字段解析与阶段性能。
+13. Tool5 输出 Nodes / Roads / audit Nodes GPKG 且 CRS 为 `EPSG:3857`。
+14. Tool5 summary 可追溯复杂分歧 / 合流组、错误 1 对多合并组、删除 Road、audit node 数量、CRS、字段解析与阶段性能。
 15. 所有路径均由参数提供，不写死内网目录。
 16. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。

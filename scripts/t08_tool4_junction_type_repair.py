@@ -16,7 +16,7 @@ def _find_repo_root(start: Path) -> Path | None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="T08 Tool4: detect SWSD junction type errors.")
+    parser = argparse.ArgumentParser(description="T08 Tool4: detect junction type errors.")
     parser.add_argument("--nodes-gpkg", required=True, help="Input Nodes GPKG with id/kind_2 fields.")
     parser.add_argument(
         "--roads-gpkg",
@@ -30,13 +30,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-epsg", type=int, default=3857, help="Final target EPSG. Default: 3857.")
     parser.add_argument("--nodes-default-crs", help="Default CRS for Nodes input if missing.")
     parser.add_argument("--roads-default-crs", help="Default CRS for Roads input if missing.")
-    parser.add_argument("--trace-distance-m", type=float, default=100.0, help="Max trace distance for continuous divmerge checks. Default: 100.")
-    parser.add_argument(
-        "--angle-tolerance-degrees",
-        type=float,
-        default=35.0,
-        help="Angle tolerance for T-shape horizontal/parallel checks. Default: 35.",
-    )
     parser.add_argument("--progress-interval", type=int, default=10000, help="Print progress every N features. Default: 10000.")
     return parser.parse_args(argv)
 
@@ -64,8 +57,6 @@ def main(argv: list[str] | None = None) -> int:
             target_epsg=args.target_epsg,
             nodes_default_crs_text=args.nodes_default_crs,
             roads_default_crs_text=args.roads_default_crs,
-            trace_distance_m=args.trace_distance_m,
-            angle_tolerance_degrees=args.angle_tolerance_degrees,
             progress_callback=_print_progress,
             progress_interval=args.progress_interval,
         )

@@ -21,6 +21,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--roads-gpkg", required=True, help="Input Roads GPKG.")
     parser.add_argument("--nodes-output", required=True, help="Output Nodes GPKG.")
     parser.add_argument("--roads-output", required=True, help="Output Roads GPKG.")
+    parser.add_argument("--audit-nodes-output", required=True, help="Output audit Nodes GPKG for nodes touched by Tool5 processes.")
     parser.add_argument("--node-error2-gpkg", help="Optional node_error_2 GPKG for one-to-many repair.")
     parser.add_argument("--intersection-gpkg", help="Optional RCSDIntersection GPKG for one-to-many repair.")
     parser.add_argument("--nodes-layer", help="Optional Nodes input layer name.")
@@ -57,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
             roads_gpkg=Path(args.roads_gpkg),
             nodes_output=Path(args.nodes_output),
             roads_output=Path(args.roads_output),
+            audit_nodes_output=Path(args.audit_nodes_output),
             node_error2_gpkg=Path(args.node_error2_gpkg) if args.node_error2_gpkg else None,
             intersection_gpkg=Path(args.intersection_gpkg) if args.intersection_gpkg else None,
             nodes_layer=args.nodes_layer,

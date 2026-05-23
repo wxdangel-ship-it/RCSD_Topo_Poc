@@ -220,7 +220,12 @@ def run_t08_junction_type_repair(
     stage_timings["build_topology_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
-    errors, degree_exception_rows, divmerge_entrance_exit_suppressed_rows = _detect_junction_type_errors(
+    (
+        errors,
+        degree_exception_rows,
+        divmerge_entrance_exit_suppressed_rows,
+        divmerge_right_side_suppressed_rows,
+    ) = _detect_junction_type_errors(
         semantic_nodes=semantic_nodes,
         parsed_roads=parsed_roads,
         topology=topology,
@@ -301,10 +306,12 @@ def run_t08_junction_type_repair(
             "entrance_exit_road_count": sum(1 for road in parsed_roads if _is_entrance_exit_road_kind(road.kind)),
             "degree_exception_suppressed_count": sum(1 for row in degree_exception_rows if row["status"] == "suppressed"),
             "divmerge_entrance_exit_suppressed_count": len(divmerge_entrance_exit_suppressed_rows),
+            "divmerge_right_side_suppressed_count": len(divmerge_right_side_suppressed_rows),
         },
         "direction_errors": list(topology.direction_errors),
         "degree_exceptions": degree_exception_rows,
         "divmerge_entrance_exit_suppressed": divmerge_entrance_exit_suppressed_rows,
+        "divmerge_right_side_suppressed": divmerge_right_side_suppressed_rows,
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in output_features),
         "performance": {
             "elapsed_seconds": round(elapsed_seconds, 6),
@@ -757,7 +764,7 @@ def _detect_junction_type_errors(
     parallel_distance_threshold_m: float,
     progress_callback: ProgressCallback | None,
     progress_interval: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     errors: list[dict[str, Any]] = []
     degree_exception_rows: list[dict[str, Any]] = []
     seen_error_keys: set[tuple[str, str, str]] = set()
@@ -799,7 +806,11 @@ def _detect_junction_type_errors(
         if _should_emit_progress(index, progress_interval):
             _emit_progress(progress_callback, f"[T08 Tool4] checked {index} semantic junction(s)")
 
-    divmerge_rows, divmerge_entrance_exit_suppressed_rows = _detect_continuous_divmerge_as_t(
+    (
+        divmerge_rows,
+        divmerge_entrance_exit_suppressed_rows,
+        divmerge_right_side_suppressed_rows,
+    ) = _detect_continuous_divmerge_as_t(
         semantic_nodes=semantic_nodes,
         parsed_roads=parsed_roads,
         topology=topology,
@@ -828,6 +839,7 @@ def _detect_junction_type_errors(
         sorted(errors, key=lambda row: (_sort_key(str(row["semantic_node_id"])), str(row["error_type"]))),
         sorted(degree_exception_rows, key=lambda row: (_sort_key(str(row["semantic_node_id"])), str(row["error_type"]))),
         divmerge_entrance_exit_suppressed_rows,
+        divmerge_right_side_suppressed_rows,
     )
 
 
@@ -880,9 +892,10 @@ def _detect_continuous_divmerge_as_t(
     trace_distance_m: float,
     angle_tolerance_degrees: float,
     parallel_distance_threshold_m: float,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
     entrance_exit_suppressed_rows: list[dict[str, Any]] = []
+    right_side_suppressed_rows: list[dict[str, Any]] = []
     seen_pairs: set[tuple[str, str]] = set()
     for semantic_id, semantic in sorted(semantic_nodes.items(), key=lambda item: _sort_key(item[0])):
         if semantic.representative.kind_2 != DIVERGE_KIND_VALUE:
@@ -935,6 +948,24 @@ def _detect_continuous_divmerge_as_t(
             continue
         merge_side_in = merge_side_inputs[0]
         merge_back_first = _reverse_edge(merge_side_in)
+        diverge_side_is_right = _is_right_side(main_edge.vector, side_edge.vector)
+        merge_side_is_right = _is_right_side(merge_out.vector, merge_back_first.vector)
+        if not (diverge_side_is_right and merge_side_is_right):
+            right_side_suppressed_rows.append(
+                {
+                    "status": "suppressed",
+                    "reason": "vertical_road_not_right_side",
+                    "diverge_node_id": semantic_id,
+                    "merge_node_id": merge_id,
+                    "main_branch_road_id": main_edge.road_id,
+                    "side_branch_road_id": side_edge.road_id,
+                    "merge_side_road_id": merge_side_in.road_id,
+                    "merge_out_road_id": merge_out.road_id,
+                    "diverge_side_is_right": diverge_side_is_right,
+                    "merge_side_is_right": merge_side_is_right,
+                }
+            )
+            continue
         immediate_same_node = side_edge.dst == merge_back_first.dst
         if immediate_same_node:
             side_trace = TraceResult(
@@ -1018,6 +1049,8 @@ def _detect_continuous_divmerge_as_t(
                     "side_branch_road_id": side_edge.road_id,
                     "merge_side_road_id": merge_side_in.road_id,
                     "merge_out_road_id": merge_out.road_id,
+                    "diverge_side_is_right": diverge_side_is_right,
+                    "merge_side_is_right": merge_side_is_right,
                     "main_trace_distance_m": round(main_trace.distance_m, 3),
                     "side_trace_node_id": side_trace.node_id,
                     "merge_back_trace_node_id": merge_back_trace.node_id,
@@ -1031,7 +1064,7 @@ def _detect_continuous_divmerge_as_t(
                 },
             }
         )
-    return rows, entrance_exit_suppressed_rows
+    return rows, entrance_exit_suppressed_rows, right_side_suppressed_rows
 
 
 def _split_main_and_side_edges(
@@ -1242,6 +1275,15 @@ def _angle_between(left: tuple[float, float], right: tuple[float, float]) -> flo
     dot = (left[0] * right[0] + left[1] * right[1]) / (left_len * right_len)
     dot = max(-1.0, min(1.0, dot))
     return math.degrees(math.acos(dot))
+
+
+def _is_right_side(forward: tuple[float, float], candidate: tuple[float, float]) -> bool:
+    forward_len = math.hypot(forward[0], forward[1])
+    candidate_len = math.hypot(candidate[0], candidate[1])
+    if forward_len <= 1e-12 or candidate_len <= 1e-12:
+        return False
+    cross = forward[0] * candidate[1] - forward[1] * candidate[0]
+    return cross < -1e-9
 
 
 def _unit_vector(value: tuple[float, float]) -> tuple[float, float]:

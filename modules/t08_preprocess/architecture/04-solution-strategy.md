@@ -32,7 +32,7 @@ Tool4 读取 Tool3 之后的 Nodes 与对应 Roads，按语义路口分组计算
 
 入度 / 出度按 Road `direction` 计算：`direction in {0,1}` 视为双向，出度和入度各加 `1`；`direction = 2` 为 `snodeid -> enodeid`；`direction = 3` 为 `enodeid -> snodeid`。若 Road 两端属于同一语义路口，则该 Road 既视为进入该语义路口也视为退出该语义路口，入度和出度各加 `1`。Tool4 不回写 Nodes，不重塑 Roads，只输出 `nodes_error.gpkg` 与 summary。
 
-连续分歧合流的第一版几何判定不引入未确认上游左右字段：以入向 road 与两个退出 road 的夹角最小者作为横向 / 左侧候选，另一条作为竖向 / 右侧候选；“距离缩短且相对平行”需满足末端距离小于起始距离、末端距离不超过 `20m`、平行夹角不超过 `35` 度。若候选相关 Road 中存在 `road.kind` 任一 token 后两位为 `17` 的出入口 Road，则忽略该候选并在 summary 记录 suppressed 审计；其余命中候选在 summary 中记录相关 road、距离与角度参数，便于后续如有明确左右字段时替换。
+连续分歧合流的第一版几何判定不引入未确认上游左右字段：以入向 road 与两个退出 road 的夹角最小者作为横向 / 左侧候选，另一条作为竖向 / 右侧候选；竖方向候选 Road 必须位于横方向前进方向右侧；“距离缩短且相对平行”需满足末端距离小于起始距离、末端距离不超过 `20m`、平行夹角不超过 `35` 度。若候选相关 Road 中存在 `road.kind` 任一 token 后两位为 `17` 的出入口 Road，或竖方向不在横方向右侧，则忽略该候选并在 summary 记录 suppressed 审计；其余命中候选在 summary 中记录相关 road、距离与角度参数，便于后续如有明确左右字段时替换。
 
 Tool4 对 `错误T型路口` 候选增加入出度异常豁免：若当前语义路口存在 `formway bit7 = 128` 的提前右转 Road，或 `road.kind` 任一 `|` 分隔 token 后两位为 `0a` 的辅路 Road，则排除这些 Road 后复算入度 / 出度；复算结果为 `in_degree = 2 / out_degree = 2` 时不输出错误，summary 记录 suppressed 审计。
 

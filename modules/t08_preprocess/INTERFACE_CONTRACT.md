@@ -71,8 +71,10 @@
   - 对原本将输出的 `错误T型路口` 候选，若排除提前右转 / 辅路后 `in_degree = 2 / out_degree = 2`，则不输出错误，并在 summary `degree_exceptions` 中记录 suppressed 审计。
 - 连续分歧合流左右候选：
   - 当前输入字段未提供显式 left/right road 标识，第一版使用“入向 road 与两个退出 road 的夹角最小者”为横向 / 左侧候选，另一条为竖向 / 右侧候选。
+  - 竖方向候选 Road 必须位于横方向前进方向右侧；若不在右侧，则忽略该候选，不输出错误。
   - “距离缩短且相对平行”判定需同时满足末端距离小于起始距离、末端距离不超过 `20m`、平行夹角不超过 `35` 度。
   - 候选相关 Road 中存在出入口 Road 时，summary `divmerge_entrance_exit_suppressed` 记录 suppressed 审计。
+  - 竖方向不在右侧时，summary `divmerge_right_side_suppressed` 记录 suppressed 审计。
   - 若后续上游正式提供左右字段，必须在本契约同轮更新后才能替换该代理规则。
 - 输出字段至少包含 `id / semantic_node_id / source_node_id / kind_2 / error_type / error_reason / error_group_id / in_degree / out_degree / related_node_ids / related_road_ids / audit_json`。
 - 输出边界：Tool4 只输出错误识别结果，不修改输入 Nodes/Roads，不输出修复后 Nodes/Roads。
@@ -211,7 +213,7 @@ Tool5：
 - `--angle-tolerance-degrees`：横向 / 平行几何判定角度容差，默认 `35` 度。
 - 平行距离阈值：固定 `20` 米，不作为 CLI 参数暴露，写入 summary `params.parallel_distance_threshold_m` 与错误 audit。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个语义路口输出一次。
-- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings / road_read_mode`，用于定位读取、拓扑构建、错误识别与写出耗时，并记录 Road 读取模式；summary 还必须记录 `degree_exceptions`、提前右转 / 辅路 / 出入口 Road 计数、degree suppressed 计数与出入口 Road 抑制的分歧合流候选。
+- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings / road_read_mode`，用于定位读取、拓扑构建、错误识别与写出耗时，并记录 Road 读取模式；summary 还必须记录 `degree_exceptions`、提前右转 / 辅路 / 出入口 Road 计数、degree suppressed 计数、出入口 Road 抑制的分歧合流候选、右侧判定抑制的分歧合流候选。
 - GPKG 输出写出：复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
 ## 7. Tool5 Params

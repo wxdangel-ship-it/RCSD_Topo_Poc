@@ -289,6 +289,39 @@ def test_tool4_suppresses_divmerge_error_when_related_road_kind_is_entrance_exit
     assert suppressed["entrance_exit_road_ids"] == ["r-side-div"]
 
 
+def test_tool4_suppresses_divmerge_error_when_vertical_road_is_left_side(tmp_path: Path) -> None:
+    nodes = [
+        _node("10", 1, -20.0, 0.0),
+        _node("100", 16, 0.0, 0.0),
+        _node("150", 1, 40.0, 0.0),
+        _node("200", 8, 80.0, 0.0),
+        _node("210", 1, 100.0, 0.0),
+        _node("300", 1, 40.0, 40.0),
+    ]
+    roads = [
+        _road("r-in-div", "10", "100", [(-20.0, 0.0), (0.0, 0.0)]),
+        _road("r-main-1", "100", "150", [(0.0, 0.0), (40.0, 0.0)]),
+        _road("r-main-2", "150", "200", [(40.0, 0.0), (80.0, 0.0)]),
+        _road("r-merge-out", "200", "210", [(80.0, 0.0), (100.0, 0.0)]),
+        _road("r-side-div", "100", "300", [(0.0, 0.0), (40.0, 40.0)]),
+        _road("r-side-merge", "300", "200", [(40.0, 40.0), (80.0, 0.0)]),
+    ]
+
+    rows, summary = _run_tool4_case(
+        tmp_path,
+        case_name="divmerge_left_side_road",
+        nodes=nodes,
+        roads=roads,
+    )
+
+    assert rows == {}
+    assert summary["counts"]["divmerge_right_side_suppressed_count"] == 1
+    suppressed = summary["divmerge_right_side_suppressed"][0]
+    assert suppressed["reason"] == "vertical_road_not_right_side"
+    assert suppressed["diverge_side_is_right"] is False
+    assert suppressed["merge_side_is_right"] is False
+
+
 def test_tool4_script_help() -> None:
     result = subprocess.run(
         [sys.executable, "scripts/t08_tool4_junction_type_repair.py", "--help"],

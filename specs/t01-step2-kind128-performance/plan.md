@@ -12,16 +12,21 @@
    - `pair.crosses_kind_2_128`
    - `len(pair.kind_2_128_node_ids)` 达到阈值
    - `len(pruned_road_ids)` 达到阈值
-4. 复杂穿越 pair 使用受限 path budget。
-5. budget exhausted 时直接返回：
+4. 对复杂组合先构造 `kind2_128_local_corridor`：
+   - 使用 Step1 已确认的 forward / reverse support path 作为进入 / 退出 port corridor。
+   - 小型 case 保留既有精确判定回退。
+   - 命中终止阈值的大型复杂组合不再回退到全局 simple-path 枚举。
+5. 剩余复杂穿越 pair 使用受限 path budget。
+6. budget exhausted 时直接返回：
    - `reject_reason = trunk_search_budget_exceeded`
    - support info 包含预算配置、消耗计数、pair 复杂度与阶段。
-6. 在 Step2 summary 增加预算超限计数。
-7. 增加单元测试与 XS1 pair 43 性能复测。
+7. 在 Step2 summary 增加预算超限计数。
+8. 增加单元测试与 XS 性能复测。
 
 ## Risk Control
 
 - 不改变普通 pair 的 path 枚举默认行为。
-- 仅在复杂 `kind_2 = 128` 热点 pair 上启用预算限制。
+- 仅在复杂 `kind_2 = 128` pair 上启用局部 corridor 或预算限制。
+- 局部 corridor 不改变 Step1 seed / terminate / hard-stop，也不扩展 `through_node_ids`。
 - 预算超限作为 rejected candidate 输出，不生成 segment body。
 - 结果可通过 `pair_validation_table.csv`、`rejected_pair_candidates.csv`、`segment_summary.json` 审计。

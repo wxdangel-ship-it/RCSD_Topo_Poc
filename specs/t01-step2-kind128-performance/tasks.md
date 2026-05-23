@@ -7,3 +7,5 @@
 - [x] T5: 增加单元测试覆盖预算超限。
 - [x] T6: 运行相关 pytest。
 - [x] T7: 用 XS1 pair 43 和 XS2 前 100 pair 做性能回归。
+- [x] T8: 增加 `kind2_128_local_corridor` 局部 port corridor 策略，避免复杂路口内部全局追溯。
+- [x] T9: 增加局部 corridor validated / rejected 单元测试，并用 XS1 复杂热点区间做性能对比。

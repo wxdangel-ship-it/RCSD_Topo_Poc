@@ -507,7 +507,11 @@ def _tighten_validated_segment_components(
         pruned_road_id_set = set(validation.pruned_road_ids)
         trunk_geometry = _line_geometry_from_road_ids(validation.trunk_road_ids, roads=context.roads)
 
-        if validation.trunk_mode in {"through_collapsed_corridor", "mirrored_one_sided_corridor"}:
+        if validation.trunk_mode in {
+            "through_collapsed_corridor",
+            "mirrored_one_sided_corridor",
+            "kind2_128_local_corridor",
+        }:
             body_candidate_road_ids = set(validation.trunk_road_ids)
             refine_cut_infos: list[dict[str, Any]] = []
         elif "segment_body_candidate_road_ids" in support_info:
@@ -1202,7 +1206,11 @@ def _validate_pair_candidates(
                 continue
 
             trunk_mode = _trunk_candidate_mode(trunk_candidate)
-            if trunk_mode in {"through_collapsed_corridor", "mirrored_one_sided_corridor"}:
+            if trunk_mode in {
+                "through_collapsed_corridor",
+                "mirrored_one_sided_corridor",
+                "kind2_128_local_corridor",
+            }:
                 segment_candidate_road_ids = trunk_candidate.road_ids
                 segment_road_ids = trunk_candidate.road_ids
                 segment_cut_infos: list[dict[str, Any]] = []

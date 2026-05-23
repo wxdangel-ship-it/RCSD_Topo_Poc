@@ -72,7 +72,7 @@
 - 基础测试与 smoke 模式
 - `t00_utility_toolbox` 作为工具集合模块的治理与固定脚本入口
 - 已登记正式模块 `t01_data_preprocess` 的 accepted baseline、official end-to-end 与 freeze compare
-- T01 双向 Segment 构建正式启用 `kind_2 = 128` 的复杂分歧 / 合流穿越审计语义：该值在双向首轮不作为 `seed / terminate / hard-stop`，允许被图搜索穿越；穿越结果必须通过 `kind_2_128_*` 输出字段可追溯，不改变 `through_node_ids` 的 degree-based 语义；Step2 对穿越大量 `kind_2 = 128` 且 pruned channel 过大的热点 pair 可启用 trunk search budget，超限时以 `trunk_search_budget_exceeded` 拒绝并输出预算审计。
+- T01 双向 Segment 构建正式启用 `kind_2 = 128` 的复杂分歧 / 合流穿越审计语义：该值在双向首轮不作为 `seed / terminate / hard-stop`，允许被图搜索穿越；穿越结果必须通过 `kind_2_128_*` 输出字段可追溯，不改变 `through_node_ids` 的 degree-based 语义；Step2 将复杂 `kind_2 = 128` 组合优先作为局部分歧 / 合流 port corridor 判定，不在复杂路口内部做全局 simple-path 追溯；局部 corridor 不适用或预算超限时必须输出可审计拒绝原因。
 - 已登记正式模块 `t02_junction_anchor` 的项目级登记状态与仓库级入口索引
 - 已登记正式模块 `t03_virtual_junction_anchor` 的 `Step1~Step7` 正式业务主链、冻结 `Step3 legal-space baseline`、repo 级 internal full-input shell/watch 交付面、批量审查产物与入口索引
 - 已登记正式模块 `t04_divmerge_virtual_polygon` 的 Step1-7 正式文档面、模块化实现、Step4 review 输出与最终发布契约
@@ -251,7 +251,7 @@
 - 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t08_preprocess`；当前已登记 P01 成果模块：`p01_arm_build`。
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`，其定位为非业务生产模块。
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小闭环。
-- T01 双向 Segment 构建中，`kind_2 = 128` 表达复杂分歧 / 合流路口组合的可穿越审计语义：允许穿越但必须输出 candidate / validation 级 `kind_2_128_*` 统计，用于定位复杂路口穿越对候选规模、拒绝原因与性能的影响；Step2 对复杂穿越热点启用可审计搜索预算，预算耗尽时不得静默跳过，必须输出 `trunk_search_budget_exceeded`。
+- T01 双向 Segment 构建中，`kind_2 = 128` 表达复杂分歧 / 合流路口组合的可穿越审计语义：允许穿越但必须输出 candidate / validation 级 `kind_2_128_*` 统计，用于定位复杂路口穿越对候选规模、拒绝原因与性能的影响；Step2 对复杂穿越热点优先采用 `kind2_128_local_corridor` 局部 port 判定，避免在复杂路口内部全局追溯；兜底搜索预算耗尽时不得静默跳过，必须输出 `trunk_search_budget_exceeded`。
 - `t02_junction_anchor` 当前仍是 Active 正式业务模块；其模块正文可在独立轮次中维护，但项目级登记与仓库级入口必须保持一致。
 - `t03_virtual_junction_anchor` 当前作为 Active 正式业务模块；当前正式范围按 `Step1~Step7` 业务主链表达（仅 `center_junction / single_sided_t_mouth`），默认正式全量 `58` case 的业务正确性基线已满足人工目视审计，少量 accepted case 的几何形状优化保留为长期迭代方向。
 - `t03_virtual_junction_anchor` 当前保留 `t03-rcsd-association` 官方 CLI；其业务含义对应 `Step4 + Step5` 关联阶段。其内网批量执行与监控当前通过 repo 级 `t03_run_internal_full_input_8workers.sh` / `t03_watch_internal_full_input.sh` 交付，历史 finalization shell wrapper 已退役。

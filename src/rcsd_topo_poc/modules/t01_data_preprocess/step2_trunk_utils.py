@@ -37,6 +37,8 @@ KIND2_128_LOCALIZED_SEARCH_MIN_NODE_COUNT = 24
 KIND2_128_LOCALIZED_SEARCH_MIN_PRUNED_ROAD_COUNT = 192
 KIND2_128_LOCALIZED_SEARCH_MAX_EXPANDED_STATES = 500
 KIND2_128_LOCALIZED_SEARCH_MAX_FRONTIER_SIZE = 500
+KIND2_128_LOCAL_CORRIDOR_TERMINAL_MIN_NODE_COUNT = 12
+KIND2_128_LOCAL_CORRIDOR_TERMINAL_MIN_ROAD_COUNT = 48
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,7 @@ class TrunkCandidate:
     max_dual_carriageway_separation_m: float
     is_through_collapsed_corridor: bool = False
     is_mirrored_one_sided_corridor: bool = False
+    is_kind2_128_local_corridor: bool = False
     is_bidirectional_minimal_loop: bool = False
     is_semantic_node_group_closure: bool = False
 
@@ -1293,6 +1296,8 @@ def _trunk_candidate_mode(candidate: TrunkCandidate) -> str:
         return "through_collapsed_corridor"
     if candidate.is_mirrored_one_sided_corridor:
         return "mirrored_one_sided_corridor"
+    if candidate.is_kind2_128_local_corridor:
+        return "kind2_128_local_corridor"
     return "counterclockwise_loop"
 
 
@@ -1300,6 +1305,7 @@ def _trunk_candidate_counterclockwise_ok(candidate: TrunkCandidate) -> bool:
     return (
         candidate.is_bidirectional_minimal_loop
         or candidate.is_semantic_node_group_closure
+        or candidate.is_kind2_128_local_corridor
         or candidate.signed_area > 1e-6
     )
 
@@ -1781,6 +1787,183 @@ def _trunk_search_budget_audit(
     }
 
 
+def _pair_support_directed_path(
+    *,
+    node_ids: tuple[str, ...],
+    road_ids: tuple[str, ...],
+    roads: dict[str, RoadRecord],
+) -> Optional[DirectedPath]:
+    if len(node_ids) != len(road_ids) + 1:
+        return None
+    total_length = 0.0
+    for road_id in road_ids:
+        road = roads.get(road_id)
+        if road is None:
+            return None
+        total_length += _geometry_length(road.geometry)
+    return DirectedPath(node_ids=node_ids, road_ids=road_ids, total_length=total_length)
+
+
+def _kind_2_128_local_corridor_support_info(candidate: TrunkCandidate) -> dict[str, Any]:
+    return {
+        **_dual_separation_support_info(candidate),
+        "kind_2_128_local_corridor": True,
+        "kind_2_128_local_corridor_road_count": len(candidate.road_ids),
+        "kind_2_128_local_corridor_forward_road_count": len(candidate.forward_path.road_ids),
+        "kind_2_128_local_corridor_reverse_road_count": len(candidate.reverse_path.road_ids),
+    }
+
+
+def _kind_2_128_local_corridor_is_terminal(pair: PairRecord, candidate: TrunkCandidate) -> bool:
+    return (
+        len(pair.kind_2_128_node_ids) >= KIND2_128_LOCAL_CORRIDOR_TERMINAL_MIN_NODE_COUNT
+        and len(candidate.road_ids) >= KIND2_128_LOCAL_CORRIDOR_TERMINAL_MIN_ROAD_COUNT
+    )
+
+
+def _evaluate_kind_2_128_local_corridor(
+    pair: PairRecord,
+    *,
+    context: Step1GraphContext,
+    pruned_road_ids: set[str],
+    formway_mode: str,
+    left_turn_formway_bit: int,
+) -> tuple[Optional[TrunkCandidate], tuple[str, ...]]:
+    if not pair.kind_2_128_node_ids:
+        return None, ()
+
+    support_road_ids = tuple(sorted(set(pair.forward_path_road_ids + pair.reverse_path_road_ids), key=_sort_key))
+    if not support_road_ids:
+        return None, ()
+    if any(road_id not in pruned_road_ids for road_id in support_road_ids):
+        return None, ()
+
+    forward_path = _pair_support_directed_path(
+        node_ids=tuple(pair.forward_path_node_ids),
+        road_ids=tuple(pair.forward_path_road_ids),
+        roads=context.roads,
+    )
+    reverse_path = _pair_support_directed_path(
+        node_ids=tuple(pair.reverse_path_node_ids),
+        road_ids=tuple(pair.reverse_path_road_ids),
+        roads=context.roads,
+    )
+    if forward_path is None or reverse_path is None:
+        return None, ()
+
+    left_turn_road_ids = tuple(
+        road_id for road_id in support_road_ids if _road_matches_formway_bit(context.roads[road_id], left_turn_formway_bit)
+    )
+    warnings: tuple[str, ...] = ()
+    if formway_mode == "audit_only" and left_turn_road_ids:
+        warnings = ("formway_unreliable_warning",)
+
+    return (
+        TrunkCandidate(
+            forward_path=forward_path,
+            reverse_path=reverse_path,
+            road_ids=support_road_ids,
+            signed_area=0.0,
+            total_length=forward_path.total_length + reverse_path.total_length,
+            left_turn_road_ids=left_turn_road_ids,
+            max_dual_carriageway_separation_m=_dual_carriageway_separation_m(
+                forward_path=forward_path,
+                reverse_path=reverse_path,
+                roads=context.roads,
+            ),
+            is_kind2_128_local_corridor=True,
+        ),
+        warnings,
+    )
+
+
+def _evaluate_kind_2_128_local_corridor_choices(
+    pair: PairRecord,
+    *,
+    context: Step1GraphContext,
+    pruned_road_ids: set[str],
+    formway_mode: str,
+    left_turn_formway_bit: int,
+) -> Optional[tuple[list[_TrunkEvaluationChoice], Optional[str], tuple[str, ...], dict[str, Any]]]:
+    candidate, warnings = _evaluate_kind_2_128_local_corridor(
+        pair,
+        context=context,
+        pruned_road_ids=pruned_road_ids,
+        formway_mode=formway_mode,
+        left_turn_formway_bit=left_turn_formway_bit,
+    )
+    if candidate is None:
+        return None
+
+    terminal_local_corridor = _kind_2_128_local_corridor_is_terminal(pair, candidate)
+    support_info = {
+        **_kind_2_128_local_corridor_support_info(candidate),
+        "kind_2_128_local_corridor_terminal": terminal_local_corridor,
+        "kind_2_128_local_corridor_terminal_min_node_count": (
+            KIND2_128_LOCAL_CORRIDOR_TERMINAL_MIN_NODE_COUNT
+        ),
+        "kind_2_128_local_corridor_terminal_min_road_count": (
+            KIND2_128_LOCAL_CORRIDOR_TERMINAL_MIN_ROAD_COUNT
+        ),
+    }
+    if formway_mode == "strict" and candidate.left_turn_road_ids:
+        if not terminal_local_corridor:
+            return None
+        return [], "left_turn_only_polluted_trunk", (), {
+            **support_info,
+            "left_turn_road_ids": list(candidate.left_turn_road_ids),
+        }
+
+    passed_candidates, failed_candidates = _split_dual_separation_candidates([candidate])
+    passed_candidates, tjunction_blocked = _split_tjunction_vertical_tracking_candidates(
+        pair,
+        candidates=passed_candidates,
+        context=context,
+    )
+    passed_candidates, lasso_blocked = _split_bidirectional_minimal_loop_lasso_candidates(
+        pair,
+        candidates=passed_candidates,
+    )
+    passed_candidates, mixed_kind_wedge_blocked = _split_counterclockwise_mixed_kind_wedge_candidates(
+        pair,
+        candidates=passed_candidates,
+        context=context,
+    )
+    if passed_candidates:
+        choice = _TrunkEvaluationChoice(
+            candidate=passed_candidates[0],
+            warning_codes=warnings,
+            support_info=support_info,
+        )
+        return [choice], None, warnings, support_info
+    if tjunction_blocked:
+        if not terminal_local_corridor:
+            return None
+        return [], "t_junction_vertical_tracking", (), {
+            **support_info,
+            **tjunction_blocked[0][1],
+        }
+    if lasso_blocked:
+        if not terminal_local_corridor:
+            return None
+        return [], "bidirectional_minimal_loop_lasso", (), {
+            **support_info,
+            **lasso_blocked[0][1],
+        }
+    if mixed_kind_wedge_blocked:
+        if not terminal_local_corridor:
+            return None
+        return [], "counterclockwise_mixed_kind_wedge", (), {
+            **support_info,
+            **mixed_kind_wedge_blocked[0][1],
+        }
+    if failed_candidates:
+        if not terminal_local_corridor:
+            return None
+        return [], "dual_carriageway_separation_exceeded", (), support_info
+    return [], "no_valid_trunk", (), support_info
+
+
 def _evaluate_trunk_choices(
     pair: PairRecord,
     *,
@@ -1842,6 +2025,16 @@ def _evaluate_trunk_choices(
                 support_info=_dual_separation_support_info(mirrored_candidate),
             )
         ], None, mirrored_warnings, _dual_separation_support_info(mirrored_candidate)
+
+    kind2_128_local_corridor_result = _evaluate_kind_2_128_local_corridor_choices(
+        pair,
+        context=context,
+        pruned_road_ids=pruned_road_ids,
+        formway_mode=formway_mode,
+        left_turn_formway_bit=left_turn_formway_bit,
+    )
+    if kind2_128_local_corridor_result is not None:
+        return kind2_128_local_corridor_result
 
     localized_search_enabled = _kind_2_128_localized_search_enabled(
         pair,

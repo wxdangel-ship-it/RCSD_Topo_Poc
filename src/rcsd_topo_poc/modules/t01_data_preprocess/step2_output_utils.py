@@ -224,6 +224,8 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
     dual_carriageway_separation_reject_count = 0
     trunk_search_budget_exceeded_count = 0
     kind_2_128_trunk_search_budget_exceeded_count = 0
+    kind_2_128_local_corridor_count = 0
+    kind_2_128_local_corridor_terminal_count = 0
     formway_warning_count = 0
     branch_cut_component_keys: set[tuple[str, str]] = set()
     other_terminate_cut_keys: set[tuple[str, str]] = set()
@@ -262,6 +264,10 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
             trunk_search_budget_exceeded_count += 1
             if kind_2_128_node_ids:
                 kind_2_128_trunk_search_budget_exceeded_count += 1
+        if validation.support_info.get("kind_2_128_local_corridor"):
+            kind_2_128_local_corridor_count += 1
+            if validation.support_info.get("kind_2_128_local_corridor_terminal"):
+                kind_2_128_local_corridor_terminal_count += 1
         if "formway_unreliable_warning" in validation.warning_codes:
             formway_warning_count += 1
 
@@ -316,6 +322,8 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
         "kind_2_128_trunk_search_budget_exceeded_count": (
             kind_2_128_trunk_search_budget_exceeded_count
         ),
+        "kind_2_128_local_corridor_count": kind_2_128_local_corridor_count,
+        "kind_2_128_local_corridor_terminal_count": kind_2_128_local_corridor_terminal_count,
         "side_access_distance_block_count": len(side_access_distance_block_keys),
         "formway_warning_count": formway_warning_count,
     }

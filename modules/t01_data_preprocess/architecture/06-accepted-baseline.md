@@ -151,7 +151,7 @@
 - `grade_2 in {1}`
 - `kind_2 in {4,64}`
 - `closed_con in {2,3}`
-- `kind_2 = 128` 代表复杂分歧 / 合流路口组合；在双向首轮中不纳入 `seed / terminate / hard-stop`，允许按现有图搜索穿越，并通过 `kind_2_128_*` 审计字段记录穿越情况。
+- `kind_2 = 128` 代表复杂分歧 / 合流路口组合；在双向首轮中不纳入 `seed / terminate / hard-stop`，允许图搜索穿越，并通过 `kind_2_128_*` 审计字段记录穿越情况；Step2 不把复杂组合内部作为全局可枚举路口网处理，而优先按局部分歧 / 合流 port corridor 判定。
 - `kind_2 = 128` 穿越审计独立于 `through_node_ids`：`through_node_ids` 仍只表达当前 degree-based through 规则命中的节点，不被扩展为复杂路口语义标签。
 
 ## 8. 阶段二：Step2
@@ -164,9 +164,10 @@
   - `closed_con in {2,3}`
 - 当前轮合法 `seed / terminate` 节点，不得被 `through_node` 吞掉。
 - Step2 不因 `kind_2 = 128` 穿越审计改变 `seed / terminate / hard-stop` 规则，也不扩展 `through_node_ids` 语义。
-- Step2 对穿越大量 `kind_2 = 128` 且 pruned channel 过大的复杂热点 pair 可启用 trunk search budget，避免在复杂路口内部无限展开 simple-path 搜索。
-- trunk search budget 超限时，该 pair 以 `trunk_search_budget_exceeded` 进入 rejected 输出，不生成 segment body，并在 pair table 的 `support_info` 与 `segment_summary.json` 中保留预算配置、消耗、candidate/pruned road 数和 `kind_2 = 128` 节点数。
-- `segment_summary.json` 与 pair table 必须统计经过 `kind_2 = 128` 的 candidate、validated、rejected、`dual_carriageway_separation_exceeded` 与 `trunk_search_budget_exceeded` 数量，用于定位复杂分歧 / 合流穿越对候选规模和性能的影响。
+- Step2 对复杂 `kind_2 = 128` 组合优先采用 `kind2_128_local_corridor` 局部 port 判定：只基于 Step1 已确认的进入 / 退出支持路径及其局部门禁判断，不在复杂路口内部展开全局 simple-path 追溯。
+- 当局部 corridor 本身未形成可终止的复杂组合，仍允许回退到既有精确判定；当局部 corridor 命中可终止复杂组合且门禁失败时，该 pair 以明确 reject reason 进入 rejected 输出，不再回退到复杂路口内部全局追溯。
+- trunk search budget 保留为兜底保护；预算超限时，该 pair 以 `trunk_search_budget_exceeded` 进入 rejected 输出，不生成 segment body，并在 pair table 的 `support_info` 与 `segment_summary.json` 中保留预算配置、消耗、candidate/pruned road 数和 `kind_2 = 128` 节点数。
+- `segment_summary.json` 与 pair table 必须统计经过 `kind_2 = 128` 的 candidate、validated、rejected、`dual_carriageway_separation_exceeded`、`kind2_128_local_corridor` 与 `trunk_search_budget_exceeded` 数量，用于定位复杂分歧 / 合流穿越对候选规模和性能的影响。
 - 输出：
   - `validated`
   - `rejected`

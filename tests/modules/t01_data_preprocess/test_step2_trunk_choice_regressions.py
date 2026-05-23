@@ -192,7 +192,7 @@ def test_evaluate_trunk_choices_rejects_kind2_128_hotspot_when_path_budget_exhau
     ]
     context = _context(roads)
     road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
-    pruned_road_ids = {f"r{i}" for i in range(260)} | {road.road_id for road in roads}
+    pruned_road_ids = {f"r{i}" for i in range(225)} | {road.road_id for road in roads}
 
     def _fake_enumerate_simple_paths(**kwargs):
         budget = kwargs.get("budget")
@@ -222,7 +222,7 @@ def test_evaluate_trunk_choices_rejects_kind2_128_hotspot_when_path_budget_exhau
     assert warnings == ()
     assert support_info["trunk_search_budget_exceeded"] is True
     assert support_info["kind_2_128_count"] == 30
-    assert support_info["pruned_road_count"] >= 260
+    assert support_info["pruned_road_count"] >= 225
     assert support_info["path_search_budgets"][0]["exhausted"] is True
 
 

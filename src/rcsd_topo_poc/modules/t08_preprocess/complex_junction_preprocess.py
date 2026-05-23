@@ -204,19 +204,20 @@ def run_t08_complex_junction_preprocess(
     if one_to_many_requested:
         stage_started = time.perf_counter()
         _emit_progress(progress_callback, "[T08 Tool5] one_to_many: start")
-        with tempfile.TemporaryDirectory(prefix="t08_tool5_", dir=str(summary_path.parent)) as tmpdir:
+        with tempfile.TemporaryDirectory(prefix="t08_tool5_") as tmpdir:
             tmp_root = Path(tmpdir)
+            _emit_progress(progress_callback, f"[T08 Tool5] one_to_many: temp workspace={tmp_root}")
             tmp_nodes = tmp_root / "nodes_after_complex.gpkg"
             tmp_roads = tmp_root / "roads_after_complex.gpkg"
             tmp_generated_node_error2 = tmp_root / "generated_node_error_2.gpkg"
             tmp_nodes_fix = tmp_root / "nodes_after_one_to_many.gpkg"
             tmp_roads_fix = tmp_root / "roads_after_one_to_many.gpkg"
             tmp_report = tmp_root / "one_to_many_report.json"
-            write_gpkg(tmp_nodes, node_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields_nodes)
-            write_gpkg(tmp_roads, road_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields_roads)
             effective_node_error2_path = node_error2_path
             effective_node_error2_crs = node_error2_crs_text
             if effective_node_error2_path is None:
+                sub_stage_started = time.perf_counter()
+                _emit_progress(progress_callback, "[T08 Tool5] node_error_2: generating from intersections")
                 generated = _build_node_error2_from_intersections(
                     node_features=node_features,
                     intersection_path=intersection_path,
@@ -224,9 +225,16 @@ def run_t08_complex_junction_preprocess(
                     intersection_layer=intersection_layer,
                     intersection_crs_text=intersection_crs_text,
                     target_epsg=target_epsg,
+                    progress_callback=progress_callback,
+                    progress_interval=progress_interval,
                 )
+                stage_timings["one_to_many_generate_node_error2_seconds"] = _elapsed_since(sub_stage_started)
                 node_error2_detection_summary = generated.summary
                 if generated.features:
+                    _emit_progress(
+                        progress_callback,
+                        f"[T08 Tool5] node_error_2: writing generated features={len(generated.features)}",
+                    )
                     generated_fields = unique_field_names(
                         output_fields_nodes,
                         extra=("junction_id", "error_type", "error_reason", "intersection_ids", "intersection_count"),
@@ -240,6 +248,8 @@ def run_t08_complex_junction_preprocess(
                     )
                     effective_node_error2_path = tmp_generated_node_error2
                     effective_node_error2_crs = f"EPSG:{target_epsg}"
+                else:
+                    _emit_progress(progress_callback, "[T08 Tool5] node_error_2: no generated candidates")
             else:
                 node_error2_detection_summary = _empty_node_error2_detection_summary(
                     status="provided",
@@ -248,6 +258,13 @@ def run_t08_complex_junction_preprocess(
                 )
 
             if effective_node_error2_path is not None:
+                sub_stage_started = time.perf_counter()
+                _emit_progress(progress_callback, "[T08 Tool5] one_to_many: writing temporary inputs")
+                write_gpkg(tmp_nodes, node_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields_nodes)
+                write_gpkg(tmp_roads, road_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields_roads)
+                stage_timings["one_to_many_write_temp_inputs_seconds"] = _elapsed_since(sub_stage_started)
+                sub_stage_started = time.perf_counter()
+                _emit_progress(progress_callback, "[T08 Tool5] one_to_many: running T02 node_error_2 repair")
                 run_t02_fix_node_error_2(
                     node_error2_path=effective_node_error2_path,
                     nodes_path=tmp_nodes,
@@ -265,12 +282,15 @@ def run_t08_complex_junction_preprocess(
                     roads_crs=f"EPSG:{target_epsg}",
                     intersection_crs=intersection_crs_text,
                 )
+                stage_timings["one_to_many_t02_fix_seconds"] = _elapsed_since(sub_stage_started)
                 one_to_many_executed = True
                 one_to_many_summary = json.loads(tmp_report.read_text(encoding="utf-8"))
                 one_to_many_summary["output_files"] = {
                     "nodes_fix_path": str(output_nodes_path),
                     "roads_fix_path": str(output_roads_path),
                 }
+                sub_stage_started = time.perf_counter()
+                _emit_progress(progress_callback, "[T08 Tool5] one_to_many: reading temporary outputs")
                 nodes_fix_result = read_vector(tmp_nodes_fix, default_crs_text=f"EPSG:{target_epsg}", target_epsg=target_epsg)
                 roads_fix_result = read_vector(tmp_roads_fix, default_crs_text=f"EPSG:{target_epsg}", target_epsg=target_epsg)
                 final_node_features = [
@@ -279,6 +299,7 @@ def run_t08_complex_junction_preprocess(
                 final_road_features = [
                     {"properties": dict(feature.properties), "geometry": feature.geometry} for feature in roads_fix_result.features
                 ]
+                stage_timings["one_to_many_read_temp_outputs_seconds"] = _elapsed_since(sub_stage_started)
             else:
                 final_node_features = node_features
                 final_road_features = road_features
@@ -296,6 +317,8 @@ def run_t08_complex_junction_preprocess(
                     "rows": node_error2_detection_summary["rows"],
                 }
 
+            sub_stage_started = time.perf_counter()
+            _emit_progress(progress_callback, "[T08 Tool5] one_to_many: writing final outputs")
             write_gpkg(
                 output_nodes_path,
                 final_node_features,
@@ -308,6 +331,7 @@ def run_t08_complex_junction_preprocess(
                 crs_text=f"EPSG:{target_epsg}",
                 empty_fields=output_fields_roads,
             )
+            stage_timings["one_to_many_write_final_outputs_seconds"] = _elapsed_since(sub_stage_started)
         stage_timings["one_to_many_seconds"] = _elapsed_since(stage_started)
         _emit_progress(
             progress_callback,
@@ -481,7 +505,10 @@ def _build_node_error2_from_intersections(
     intersection_layer: str | None,
     intersection_crs_text: str | None,
     target_epsg: int,
+    progress_callback: ProgressCallback | None,
+    progress_interval: int,
 ) -> _GeneratedNodeError2:
+    _emit_progress(progress_callback, f"[T08 Tool5] node_error_2: reading intersections={intersection_path}")
     intersection_result = read_vector(
         intersection_path,
         layer_name=intersection_layer,
@@ -524,6 +551,13 @@ def _build_node_error2_from_intersections(
     node_tree = STRtree(node_geometries)
     group_to_intersection_ids: dict[str, set[str]] = {}
     rows: list[dict[str, Any]] = []
+    _emit_progress(
+        progress_callback,
+        (
+            f"[T08 Tool5] node_error_2: loaded intersections={len(intersection_result.features)} "
+            f"semantic_groups={len(groups_by_id)} indexed_nodes={len(node_tree_records)}"
+        ),
+    )
 
     for intersection_index, intersection in enumerate(intersection_result.features):
         intersection_id = _intersection_identity(intersection.properties, intersection_index)
@@ -582,6 +616,11 @@ def _build_node_error2_from_intersections(
             for group_id in remaining_group_ids:
                 group_to_intersection_ids.setdefault(group_id, set()).add(intersection_id)
         rows.append(row)
+        if _should_emit_progress(intersection_index + 1, progress_interval):
+            _emit_progress(
+                progress_callback,
+                f"[T08 Tool5] node_error_2: checked {intersection_index + 1} intersection feature(s)",
+            )
 
     generated_features: list[dict[str, Any]] = []
     for group_id in sorted(group_to_intersection_ids, key=_sort_key):
@@ -622,6 +661,13 @@ def _build_node_error2_from_intersections(
         },
         "rows": rows,
     }
+    _emit_progress(
+        progress_callback,
+        (
+            f"[T08 Tool5] node_error_2: generated_groups={len(group_to_intersection_ids)} "
+            f"generated_features={len(generated_features)}"
+        ),
+    )
     return _GeneratedNodeError2(features=generated_features, summary=summary)
 
 
@@ -731,9 +777,9 @@ def _build_audit_node_features(
     one_to_many_summary: dict[str, Any],
 ) -> list[dict[str, Any]]:
     node_by_id = {
-        str(feature["properties"].get(node_id_field)): feature
+        normalized_id: feature
         for feature in final_node_features
-        if feature["properties"].get(node_id_field) is not None
+        if (normalized_id := _normalize_id(feature["properties"].get(node_id_field))) is not None
     }
     audit_rows: list[dict[str, str | None]] = []
     for row in complex_summary.get("rows", []):
@@ -772,7 +818,7 @@ def _build_audit_node_features(
     audit_features: list[dict[str, Any]] = []
     seen_audit_ids: set[str] = set()
     for row in audit_rows:
-        source_node_id = str(row["source_node_id"])
+        source_node_id = _normalize_id(row["source_node_id"]) or str(row["source_node_id"])
         source_feature = node_by_id.get(source_node_id)
         if source_feature is None:
             continue

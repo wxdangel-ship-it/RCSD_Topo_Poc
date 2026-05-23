@@ -943,15 +943,20 @@ def _build_audit_node_features(
     repair_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     node_by_id = {
-        str(feature["properties"].get(node_id_field)): feature
+        normalized_id: feature
         for feature in final_node_features
-        if feature["properties"].get(node_id_field) is not None
+        if (normalized_id := _normalize_id(feature["properties"].get(node_id_field))) is not None
     }
     audit_features: list[dict[str, Any]] = []
     seen_audit_ids: set[str] = set()
     for row in repair_rows:
         source_node_id = str(row["source_node_id"])
-        source_feature = node_by_id.get(source_node_id)
+        source_feature = None
+        feature_index = int(row.get("source_feature_index", -1))
+        if 0 <= feature_index < len(final_node_features):
+            source_feature = final_node_features[feature_index]
+        if source_feature is None:
+            source_feature = node_by_id.get(source_node_id)
         if source_feature is None:
             continue
         audit_id = f"t_junction_repair:{row['error_group_id']}:{source_node_id}"

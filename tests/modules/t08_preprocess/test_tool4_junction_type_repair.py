@@ -205,6 +205,37 @@ def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
     }
 
 
+def test_tool4_writes_audit_for_numeric_node_ids(tmp_path: Path) -> None:
+    nodes = [
+        {
+            "properties": {"id": 500.0, "kind": 0, "kind_2": 2048, "grade": 1, "grade_2": 1, "mainnodeid": 500.0},
+            "geometry": Point(0.0, 0.0),
+        },
+        {
+            "properties": {"id": 510.0, "kind": 0, "kind_2": 1, "grade": 1, "grade_2": 1, "mainnodeid": 510.0},
+            "geometry": Point(-10.0, 0.0),
+        },
+    ]
+    roads = [
+        {
+            "properties": {"id": 1.0, "snodeid": 510.0, "enodeid": 500.0, "direction": 2},
+            "geometry": LineString([(-10.0, 0.0), (0.0, 0.0)]),
+        }
+    ]
+
+    _, audit_rows, summary = _run_tool4_case(
+        tmp_path,
+        case_name="numeric_node_ids",
+        nodes=nodes,
+        roads=roads,
+    )
+
+    assert set(audit_rows) == {"t_junction_repair:t_error_500:500"}
+    assert audit_rows["t_junction_repair:t_error_500:500"]["audit_source_node_id"] == "500"
+    assert summary["counts"]["repaired_semantic_node_count"] == 1
+    assert summary["counts"]["audit_node_feature_count"] == 1
+
+
 def test_tool4_counts_internal_road_as_in_and_out_degree(tmp_path: Path) -> None:
     nodes = [
         _node("500", 2048, 0.0, 0.0),

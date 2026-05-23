@@ -123,6 +123,8 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
 
     assert result.returncode == 0, result.stderr
     assert "[T08 Tool5]" in result.stderr
+    assert "[T08 Tool5] node_error_2: checked 1 intersection feature(s)" in result.stderr
+    assert "[T08 Tool5] one_to_many: running T02 node_error_2 repair" in result.stderr
     assert _read_epsg(nodes_output) == 3857
     assert _read_epsg(roads_output) == 3857
     assert _read_epsg(audit_nodes_output) == 3857
@@ -167,6 +169,8 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
     assert summary["complex_divmerge"]["complex_mainnodeids"] == ["200"]
     assert summary["node_error_2_detection"]["node_error2_source"] == "generated_from_intersection"
     assert summary["params"]["one_to_many_executed"] is True
+    assert "one_to_many_generate_node_error2_seconds" in summary["performance"]["stage_timings"]
+    assert "one_to_many_write_temp_inputs_seconds" in summary["performance"]["stage_timings"]
 
 
 def test_tool5_detects_one_to_many_but_skips_disconnected_groups(tmp_path: Path) -> None:

@@ -85,6 +85,12 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
     assert summary["has_evd_yes_count"] == 1
     assert summary["has_evd_no_count"] == 1
     assert summary["has_evd_null_count"] == 1
+    assert "stage_timings" in summary["performance"]
+    assert "write_nodes_seconds" in summary["performance"]["stage_timings"]
+
+    perf = json.loads(artifacts.perf_json_path.read_text(encoding="utf-8"))
+    assert "stage_timings" in perf
+    assert "read_inputs_seconds" in perf["stage_timings"]
 
 
 def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> None:
@@ -143,6 +149,8 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert summary["anchor_fail1_count"] == 1
     assert summary["anchor_fail2_count"] == 2
     assert summary["anchor_null_count"] == 1
+    assert "stage_timings" in summary["performance"]
+    assert "build_intersection_index_seconds" in summary["performance"]["stage_timings"]
 
 
 def test_combined_runner_has_no_segment_dependency_or_outputs(tmp_path: Path) -> None:

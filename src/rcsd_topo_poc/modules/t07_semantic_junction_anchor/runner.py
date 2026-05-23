@@ -24,8 +24,8 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     prefer_vector_input_path,
     transform_geometry_to_target,
     write_json,
-    write_vector,
 )
+from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg as write_gpkg_sqlite
 
 
 ALLOWED_KIND2 = {"4", "8", "16", "64", "128", "2048"}
@@ -392,8 +392,12 @@ def _stage_root(out_root: str | Path, run_id: str | None, stage_name: str) -> tu
     return run_root, run_root / stage_name, resolved_run_id
 
 
+def _elapsed_since(started_at: float) -> float:
+    return round(time.perf_counter() - started_at, 6)
+
+
 def _write_nodes(path: Path, features: list[LoadedFeature]) -> None:
-    write_vector(
+    write_gpkg_sqlite(
         path,
         ({"properties": feature.properties, "geometry": feature.geometry} for feature in features),
         crs_text=TARGET_CRS.to_string(),
@@ -412,10 +416,12 @@ def run_t07_step1_has_evd(
     drivezone_crs: str | None = None,
 ) -> T07StageArtifacts:
     started_at = time.perf_counter()
+    stage_timings: dict[str, float] = {}
     run_root, stage_root, resolved_run_id = _stage_root(out_root, run_id, "step1_has_evd")
     stage_root.mkdir(parents=True, exist_ok=True)
     audit_rows: list[dict[str, Any]] = []
 
+    stage_started = time.perf_counter()
     nodes_layer_data = _read_vector_layer(
         nodes_path,
         layer_name=nodes_layer,
@@ -428,6 +434,9 @@ def run_t07_step1_has_evd(
         crs_override=drivezone_crs,
         allow_null_geometry=False,
     )
+    stage_timings["read_inputs_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
     drivezone_geoms = [feature.geometry for feature in drivezone_layer_data.features if feature.geometry is not None and not feature.geometry.is_empty]
     if not drivezone_geoms:
         raise T07RunError("missing_required_field", "DriveZone layer has no non-empty geometry.")
@@ -435,6 +444,7 @@ def run_t07_step1_has_evd(
 
     by_mainnodeid, singleton_by_id = _build_node_index(nodes_layer_data.features, audit_rows)
     junction_ids = _candidate_junction_ids(by_mainnodeid, singleton_by_id)
+    stage_timings["prepare_semantic_junctions_seconds"] = _elapsed_since(stage_started)
     counts = {
         "semantic_junction_count": len(junction_ids),
         "processed_kind2_count": 0,
@@ -445,6 +455,7 @@ def run_t07_step1_has_evd(
         "representative_missing_count": 0,
     }
 
+    stage_started = time.perf_counter()
     for junction_id in junction_ids:
         group = _resolve_group(junction_id, by_mainnodeid=by_mainnodeid, singleton_by_id=singleton_by_id)
         if group.representative is None:
@@ -488,6 +499,7 @@ def run_t07_step1_has_evd(
             counts["has_evd_yes_count"] += 1
         else:
             counts["has_evd_no_count"] += 1
+    stage_timings["process_has_evd_seconds"] = _elapsed_since(stage_started)
 
     nodes_output_path = stage_root / "nodes.gpkg"
     summary_path = stage_root / "t07_step1_summary.json"
@@ -495,7 +507,9 @@ def run_t07_step1_has_evd(
     audit_json_path = stage_root / "t07_step1_audit.json"
     perf_path = stage_root / "t07_step1_perf.json"
 
+    stage_started = time.perf_counter()
     _write_nodes(nodes_output_path, nodes_layer_data.features)
+    stage_timings["write_nodes_seconds"] = _elapsed_since(stage_started)
     summary = {
         "run_id": resolved_run_id,
         **counts,
@@ -503,11 +517,25 @@ def run_t07_step1_has_evd(
         "output_paths": {"nodes": str(nodes_output_path)},
         "target_crs": TARGET_CRS.to_string(),
         "audit_count": len(audit_rows),
+        "performance": {
+            "elapsed_seconds": _elapsed_since(started_at),
+            "stage_timings": stage_timings,
+        },
     }
+    stage_started = time.perf_counter()
     write_json(summary_path, summary)
     _write_csv(audit_csv_path, audit_rows, ["scope", "junction_id", "node_id", "status", "reason", "detail", "kind_2"])
     write_json(audit_json_path, {"run_id": resolved_run_id, "rows": audit_rows})
-    write_json(perf_path, {"run_id": resolved_run_id, "elapsed_sec": round(time.perf_counter() - started_at, 6), **counts})
+    stage_timings["write_audit_summary_seconds"] = _elapsed_since(stage_started)
+    write_json(
+        perf_path,
+        {
+            "run_id": resolved_run_id,
+            "elapsed_sec": _elapsed_since(started_at),
+            "stage_timings": stage_timings,
+            **counts,
+        },
+    )
     return T07StageArtifacts(run_root, stage_root, nodes_output_path, summary_path, audit_csv_path, audit_json_path, perf_path)
 
 
@@ -547,7 +575,7 @@ def _write_error_outputs(
     rows: list[dict[str, Any]],
     run_id: str,
 ) -> None:
-    write_vector(
+    write_gpkg_sqlite(
         vector_path,
         (
             {
@@ -578,10 +606,12 @@ def run_t07_step2_anchor_recognition(
     intersection_crs: str | None = None,
 ) -> T07StageArtifacts:
     started_at = time.perf_counter()
+    stage_timings: dict[str, float] = {}
     run_root, stage_root, resolved_run_id = _stage_root(out_root, run_id, "step2_anchor_recognition")
     stage_root.mkdir(parents=True, exist_ok=True)
     audit_rows: list[dict[str, Any]] = []
 
+    stage_started = time.perf_counter()
     nodes_layer_data = _read_vector_layer(nodes_path, layer_name=nodes_layer, crs_override=nodes_crs, allow_null_geometry=True)
     intersection_layer_data = _read_vector_layer(
         intersection_path,
@@ -589,11 +619,17 @@ def run_t07_step2_anchor_recognition(
         crs_override=intersection_crs,
         allow_null_geometry=False,
     )
+    stage_timings["read_inputs_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
     intersections = _read_intersections(intersection_layer_data)
     intersection_tree = STRtree([record.geometry for record in intersections])
+    stage_timings["build_intersection_index_seconds"] = _elapsed_since(stage_started)
 
+    stage_started = time.perf_counter()
     by_mainnodeid, singleton_by_id = _build_node_index(nodes_layer_data.features, audit_rows)
     junction_ids = _candidate_junction_ids(by_mainnodeid, singleton_by_id)
+    stage_timings["prepare_semantic_junctions_seconds"] = _elapsed_since(stage_started)
     counts = {
         "semantic_junction_count": len(junction_ids),
         "stage2_candidate_count": 0,
@@ -612,6 +648,7 @@ def run_t07_step2_anchor_recognition(
     error1_metadata: dict[int, dict[str, Any]] = {}
     node_hit_cache: dict[int, tuple[str, ...]] = {}
 
+    stage_started = time.perf_counter()
     for junction_id in junction_ids:
         group = _resolve_group(junction_id, by_mainnodeid=by_mainnodeid, singleton_by_id=singleton_by_id)
         if group.representative is None:
@@ -697,7 +734,9 @@ def run_t07_step2_anchor_recognition(
             "provisional_reason": provisional_reason if provisional_state == "yes" else None,
             "intersection_ids": sorted_hits,
         }
+    stage_timings["process_anchor_candidates_seconds"] = _elapsed_since(stage_started)
 
+    stage_started = time.perf_counter()
     fail2_by_junction: dict[str, set[str]] = {}
     for intersection_id, linked_junction_ids in intersection_to_junctions.items():
         filtered = []
@@ -773,6 +812,7 @@ def run_t07_step2_anchor_recognition(
             counts["roundabout_reason_count"] += 1
         elif final_reason == "t":
             counts["t_reason_count"] += 1
+    stage_timings["resolve_conflicts_seconds"] = _elapsed_since(stage_started)
 
     nodes_output_path = stage_root / "nodes.gpkg"
     summary_path = stage_root / "t07_step2_summary.json"
@@ -782,7 +822,11 @@ def run_t07_step2_anchor_recognition(
     node_error_1_path = stage_root / "node_error_1.gpkg"
     node_error_2_path = stage_root / "node_error_2.gpkg"
 
+    stage_started = time.perf_counter()
     _write_nodes(nodes_output_path, nodes_layer_data.features)
+    stage_timings["write_nodes_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
     _write_error_outputs(
         vector_path=node_error_1_path,
         audit_csv_path=stage_root / "node_error_1_audit.csv",
@@ -803,6 +847,7 @@ def run_t07_step2_anchor_recognition(
         rows=error2_rows,
         run_id=resolved_run_id,
     )
+    stage_timings["write_error_outputs_seconds"] = _elapsed_since(stage_started)
     summary = {
         "run_id": resolved_run_id,
         **counts,
@@ -814,11 +859,25 @@ def run_t07_step2_anchor_recognition(
         },
         "target_crs": TARGET_CRS.to_string(),
         "audit_count": len(audit_rows),
+        "performance": {
+            "elapsed_seconds": _elapsed_since(started_at),
+            "stage_timings": stage_timings,
+        },
     }
+    stage_started = time.perf_counter()
     write_json(summary_path, summary)
     _write_csv(audit_csv_path, audit_rows, ["scope", "junction_id", "node_id", "status", "reason", "detail"])
     write_json(audit_json_path, {"run_id": resolved_run_id, "rows": audit_rows})
-    write_json(perf_path, {"run_id": resolved_run_id, "elapsed_sec": round(time.perf_counter() - started_at, 6), **counts})
+    stage_timings["write_audit_summary_seconds"] = _elapsed_since(stage_started)
+    write_json(
+        perf_path,
+        {
+            "run_id": resolved_run_id,
+            "elapsed_sec": _elapsed_since(started_at),
+            "stage_timings": stage_timings,
+            **counts,
+        },
+    )
     return T07StageArtifacts(run_root, stage_root, nodes_output_path, summary_path, audit_csv_path, audit_json_path, perf_path)
 
 

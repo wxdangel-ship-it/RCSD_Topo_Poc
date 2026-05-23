@@ -189,7 +189,9 @@
   - 首轮 `grade_2 in {1}`
   - `kind_2 in {4,64}`
   - `closed_con in {2,3}`
-- `kind_2 = 128` 在双向首轮不作为 `seed / terminate / hard-stop`，允许被图搜索穿越；穿越必须写入 `pair_candidates.csv / pair_table.csv / pair_summary.json` 的 `kind_2_128_*` 审计字段。
+- `kind_2 = 128` 在双向首轮表达复杂分歧 / 合流 mainnode 组；Step1 对该组不使用 `mainnodeid` 聚合，改用各物理 `node.id` 建图。
+- 双向首轮中，属于 `kind_2 = 128` 复杂 mainnode 组的物理 node 使用 raw `kind / grade` 作为有效 `kind_2 / grade_2` 规则字段，以恢复组内独立分歧 / 合流语义。
+- 复杂 mainnode 组的穿越必须写入 `pair_candidates.csv / pair_table.csv / pair_summary.json` 的 `kind_2_128_*` 审计字段。
 - `kind_2 = 128` 穿越审计不得回写或扩展 `through_node_ids` 语义；`through_node_ids` 继续只表达 degree-based through 规则。
 - 输出：
   - `pair_candidates`
@@ -197,7 +199,7 @@
 ### 5.5 Step2
 - 输入 / terminate 规则与首轮 Step1 一致。
 - 合法 `seed / terminate` 节点不得被 `through_node` 吞掉。
-- `kind_2 = 128` 穿越审计不改变 `seed / terminate / hard-stop` 规则，也不扩展 `through_node_ids` 语义。
+- `kind_2 = 128` 复杂 mainnode 组已在 Step1 拆回物理 node 级参与 candidate search；Step2 沿用 Step1 输出的物理 node 级 pair 支持路径，不扩展 `through_node_ids` 语义。
 - Step2 对复杂 `kind_2 = 128` 组合优先采用 `kind2_128_local_corridor` 局部 port 判定：只基于 Step1 已确认的进入 / 退出支持路径及其局部门禁判断，不在复杂路口内部展开全局 simple-path 追溯。
 - 当局部 corridor 本身未形成可终止的复杂组合，仍允许回退到既有精确判定；当局部 corridor 命中可终止复杂组合且门禁失败时，该 pair 以明确 reject reason 进入 rejected 输出，不再回退到复杂路口内部全局追溯。
 - trunk search budget 保留为兜底保护；预算超限时，该 pair 必须以 `trunk_search_budget_exceeded` 进入 rejected 输出，不生成 segment body，并在 `pair_validation_table.csv` 的 `support_info` 与 `segment_summary.json` 中保留预算配置、消耗、candidate/pruned road 数和 `kind_2 = 128` 节点数。

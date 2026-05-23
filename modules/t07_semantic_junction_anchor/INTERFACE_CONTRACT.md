@@ -169,6 +169,8 @@ Step1 summary 至少记录：
 - `input_paths`
 - `output_paths`
 - `target_crs`
+- `performance.elapsed_seconds`
+- `performance.stage_timings`，至少区分读取、语义路口准备、业务处理、`nodes.gpkg` 写出与审计 / summary 写出。
 
 ### 4.2 Step2 输出
 
@@ -201,6 +203,8 @@ Step2 summary 至少记录：
 - `input_paths`
 - `output_paths`
 - `target_crs`
+- `performance.elapsed_seconds`
+- `performance.stage_timings`，至少区分读取、`RCSDIntersection` 空间索引、语义路口准备、候选判定、冲突处理、`nodes.gpkg` 写出、error 输出与审计 / summary 写出。
 
 ## 5. EntryPoints
 
@@ -228,6 +232,12 @@ scripts/t07_run_semantic_junction_anchor_innernet.sh
 - 脚本可通过 `NODES_LAYER / DRIVEZONE_LAYER / INTERSECTION_LAYER` 与 `NODES_CRS / DRIVEZONE_CRS / INTERSECTION_CRS` 覆盖图层名和 CRS。
 - 脚本不接受 `SEGMENT_PATH`，不读取、不生成、不统计 Segment。
 - 若后续要新增 repo CLI、其它 repo 级脚本、`tools/`、模块 `run.py` 或模块 `__main__.py`，必须另行获得用户授权，并同步 `docs/repository-metadata/entrypoint-registry.md`。
+
+## 5.1 Performance
+
+- T07 GPKG 输出复用 T08 的直接 SQLite GeoPackage 写出路径，避免 Fiona 逐要素 sink 写出。
+- `nodes.gpkg / node_error_1.gpkg / node_error_2.gpkg` 均按 copy-on-write 输出，不修改输入。
+- perf JSON 必须记录 `stage_timings`，用于定位 full-input 下的读取、空间索引、业务处理与写出耗时。
 
 ## 6. Params
 

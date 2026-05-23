@@ -20,16 +20,27 @@ def _write_geojson(path: Path, *, features: list[dict]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _node(node_id: int, x: float, y: float, *, kind_2: int, grade_2: int = 1) -> dict:
+def _node(
+    node_id: int,
+    x: float,
+    y: float,
+    *,
+    kind_2: int,
+    grade_2: int = 1,
+    kind: int | None = None,
+    grade: int | None = None,
+    mainnodeid: int | None = None,
+) -> dict:
     return {
         "type": "Feature",
         "properties": {
             "id": node_id,
-            "kind": kind_2,
-            "grade": grade_2,
+            "kind": kind_2 if kind is None else kind,
+            "grade": grade_2 if grade is None else grade,
             "kind_2": kind_2,
             "grade_2": grade_2,
             "closed_con": 2,
+            "mainnodeid": mainnodeid,
         },
         "geometry": {"type": "Point", "coordinates": [x, y]},
     }
@@ -51,7 +62,7 @@ def _road(road_id: str, snodeid: int, enodeid: int, coords: list[list[float]]) -
 
 
 def _strategy() -> step1_pair_poc.StrategySpec:
-    rule = step1_pair_poc.RuleSpec(kind_bits_all=(2,), grade_eq=1, closed_con_in=(2, 3))
+    rule = step1_pair_poc.RuleSpec(kind_bits_all=(), kind_bits_any=(2, 6), grade_eq=1, closed_con_in=(2, 3))
     return step1_pair_poc.StrategySpec(
         strategy_id="S2X",
         description="kind_2=128 audit fixture",
@@ -118,6 +129,44 @@ def test_step1_records_kind_2_128_crossing_without_marking_it_as_through(tmp_pat
     assert row["crosses_kind_2_128"] == "True"
     assert row["kind_2_128_node_ids"] == "2"
     assert json.loads(row["support_info"])["kind_2_128_node_ids"] == ["2"]
+
+
+def test_step1_splits_kind_2_128_mainnode_group_to_physical_raw_kind_nodes(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+    _write_geojson(
+        node_path,
+        features=[
+            _node(1, 0.0, 0.0, kind_2=4),
+            _node(20, 20.0, 0.0, kind=4, grade=1, kind_2=128, grade_2=1, mainnodeid=20),
+            _node(21, 10.0, 0.0, kind=64, grade=1, kind_2=0, grade_2=0, mainnodeid=20),
+            _node(22, 10.0, 10.0, kind_2=1),
+            _node(3, 30.0, 0.0, kind_2=4),
+        ],
+    )
+    _write_geojson(
+        road_path,
+        features=[
+            _road("r1_21", 1, 21, [[0.0, 0.0], [10.0, 0.0]]),
+            _road("r21_20", 21, 20, [[10.0, 0.0], [20.0, 0.0]]),
+            _road("r21_22", 21, 22, [[10.0, 0.0], [10.0, 10.0]]),
+            _road("r20_3", 20, 3, [[20.0, 0.0], [30.0, 0.0]]),
+        ],
+    )
+
+    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    execution = step1_pair_poc.run_step1_strategy(context, _strategy())
+    pair_ids = {pair.pair_id for pair in execution.pair_candidates}
+
+    assert context.physical_to_semantic["20"] == "20"
+    assert context.physical_to_semantic["21"] == "21"
+    assert context.semantic_nodes["20"].kind_2 == 4
+    assert context.semantic_nodes["20"].grade_2 == 1
+    assert context.semantic_nodes["21"].kind_2 == 64
+    assert context.semantic_nodes["21"].grade_2 == 1
+    assert "S2X:1__21" in pair_ids
+    assert "S2X:1__3" not in pair_ids
+    assert any(event["event"] == "complex_kind_2_128_physical_semantics" for event in context.graph_audit_events)
 
 
 def _validation(

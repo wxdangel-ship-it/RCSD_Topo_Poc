@@ -464,13 +464,29 @@ def _prepare_nodes(raw_features: list[dict[str, Any]], audit_events: list[dict[s
     return nodes
 
 
+def _complex_junction_mainnode_ids(physical_nodes: dict[str, NodeRecord]) -> set[str]:
+    return {
+        node.mainnodeid or node.node_id
+        for node in physical_nodes.values()
+        if node.kind_2 == COMPLEX_JUNCTION_KIND_2
+    }
+
+
+def _uses_complex_junction_physical_semantics(node: NodeRecord, complex_mainnode_ids: set[str]) -> bool:
+    return (node.mainnodeid or node.node_id) in complex_mainnode_ids
+
+
 def _build_semantic_nodes(
     physical_nodes: dict[str, NodeRecord],
     audit_events: list[dict[str, Any]],
 ) -> tuple[dict[str, SemanticNodeRecord], dict[str, str]]:
+    complex_mainnode_ids = _complex_junction_mainnode_ids(physical_nodes)
     group_members: dict[str, list[str]] = defaultdict(list)
     for node in physical_nodes.values():
-        semantic_node_id = node.mainnodeid or node.node_id
+        if _uses_complex_junction_physical_semantics(node, complex_mainnode_ids):
+            semantic_node_id = node.node_id
+        else:
+            semantic_node_id = node.mainnodeid or node.node_id
         group_members[semantic_node_id].append(node.node_id)
 
     semantic_nodes: dict[str, SemanticNodeRecord] = {}
@@ -504,14 +520,34 @@ def _build_semantic_nodes(
                 }
             )
 
+        use_complex_physical_semantics = any(
+            _uses_complex_junction_physical_semantics(physical_nodes[member_id], complex_mainnode_ids)
+            for member_id in sorted_member_ids
+        )
+        if use_complex_physical_semantics:
+            audit_events.append(
+                {
+                    "event": "complex_kind_2_128_physical_semantics",
+                    "semantic_node_id": semantic_node_id,
+                    "representative_node_id": representative_node.node_id,
+                    "member_node_ids": list(sorted_member_ids),
+                    "source_mainnodeid": representative_node.mainnodeid,
+                    "raw_kind": representative_node.raw_kind,
+                    "raw_grade": representative_node.raw_grade,
+                    "kind_2": representative_node.kind_2,
+                    "grade_2": representative_node.grade_2,
+                    "message": "kind_2=128 complex junction member uses physical node id and raw kind/grade in bidirectional Step1.",
+                }
+            )
+
         semantic_nodes[semantic_node_id] = SemanticNodeRecord(
             semantic_node_id=semantic_node_id,
             representative_node_id=representative_node.node_id,
             member_node_ids=sorted_member_ids,
             raw_kind=representative_node.raw_kind,
             raw_grade=representative_node.raw_grade,
-            kind_2=representative_node.kind_2,
-            grade_2=representative_node.grade_2,
+            kind_2=representative_node.raw_kind if use_complex_physical_semantics else representative_node.kind_2,
+            grade_2=representative_node.raw_grade if use_complex_physical_semantics else representative_node.grade_2,
             closed_con=representative_node.closed_con,
             geometry=representative_node.geometry,
             raw_properties=dict(representative_node.raw_properties),
@@ -809,9 +845,12 @@ def _is_complex_junction_semantic_node(
 ) -> bool:
     if node.kind_2 == COMPLEX_JUNCTION_KIND_2:
         return True
+    complex_mainnode_ids = _complex_junction_mainnode_ids(physical_nodes)
     for member_node_id in node.member_node_ids:
         member = physical_nodes.get(member_node_id)
         if member is not None and member.kind_2 == COMPLEX_JUNCTION_KIND_2:
+            return True
+        if member is not None and _uses_complex_junction_physical_semantics(member, complex_mainnode_ids):
             return True
     return False
 

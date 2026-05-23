@@ -43,7 +43,7 @@
 - 当前已纳入治理的工具集合模块：`t00_utility_toolbox`
 - `t00_utility_toolbox` 的定位是工具集合模块 / 非业务生产模块
 - `t01_data_preprocess` 当前已具备 official end-to-end、Step6 聚合与 freeze compare 的最小实现闭环
-- `t01_data_preprocess` 双向 Segment 构建允许穿越 `kind_2 = 128` 复杂分歧 / 合流路口组合，但必须输出 `kind_2_128_*` 审计字段；该审计不改变 `seed / terminate / hard-stop` 规则，也不扩展 `through_node_ids` 语义；Step2 对复杂穿越热点优先采用 `kind2_128_local_corridor` 局部 port 判定，避免在复杂路口内部全局追溯，兜底 trunk search budget 超限时输出 `trunk_search_budget_exceeded` 并保留预算审计信息
+- `t01_data_preprocess` 双向 Segment 构建对 `kind_2 = 128` 复杂分歧 / 合流 mainnode 组采用物理 node 级建图：Step1 使用 `node.id` 而非 `mainnodeid`，并以 raw `kind / grade` 作为该轮有效规则字段，同时保留 `kind_2_128_*` 审计字段；该审计不扩展 `through_node_ids` 语义；Step2 对复杂热点优先采用 `kind2_128_local_corridor` 局部 port 判定，避免在复杂路口内部全局追溯，兜底 trunk search budget 超限时输出 `trunk_search_budget_exceeded` 并保留预算审计信息
 - `t02_junction_anchor` 当前仍为 Active 正式业务模块；模块正文如在独立重构中，应在独立轮次中维护
 - `t03_virtual_junction_anchor` 当前仍为 Active 正式业务模块；正式范围按 `Step1~Step7` 业务主链表达，仅处理 `center_junction / single_sided_t_mouth`，默认正式全量 `58` case 的业务正确性基线已满足人工目视审计
 - `t03_virtual_junction_anchor` 当前少量 accepted case 仍存在几何形状优化空间，但这属于后续长期迭代方向，不再构成当前正式准出阻塞项

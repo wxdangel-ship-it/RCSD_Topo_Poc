@@ -77,6 +77,7 @@ def _pair(
     reverse_path_node_ids: tuple[str, ...],
     reverse_path_road_ids: tuple[str, ...],
     through_node_ids: tuple[str, ...] = (),
+    kind_2_128_node_ids: tuple[str, ...] = (),
 ) -> step1_pair_poc.PairRecord:
     return step1_pair_poc.PairRecord(
         pair_id=pair_id,
@@ -89,6 +90,7 @@ def _pair(
         reverse_path_node_ids=reverse_path_node_ids,
         reverse_path_road_ids=reverse_path_road_ids,
         through_node_ids=through_node_ids,
+        kind_2_128_node_ids=kind_2_128_node_ids,
     )
 
 
@@ -169,6 +171,59 @@ def test_evaluate_trunk_choices_keeps_direct_single_road_oneway_pair_with_endpoi
     assert warnings == ()
     assert [choice.candidate.road_ids for choice in choices] == [("ab", "ba")]
     assert choices[0].candidate.max_dual_carriageway_separation_m < 50.0
+
+
+def test_evaluate_trunk_choices_rejects_kind2_128_hotspot_when_path_budget_exhausts(monkeypatch) -> None:
+    pair = _pair(
+        "PAIR_KIND128_BUDGET",
+        a_node_id="A",
+        b_node_id="B",
+        forward_path_node_ids=("A", "K1", "B"),
+        forward_path_road_ids=("ak1", "k1b"),
+        reverse_path_node_ids=("B", "K2", "A"),
+        reverse_path_road_ids=("bk2", "k2a"),
+        kind_2_128_node_ids=tuple(f"K{i}" for i in range(30)),
+    )
+    roads = [
+        _road("ak1", "A", "K1", direction=2, coords=((0.0, 0.0), (1.0, 0.0))),
+        _road("k1b", "K1", "B", direction=2, coords=((1.0, 0.0), (2.0, 0.0))),
+        _road("bk2", "B", "K2", direction=2, coords=((2.0, 0.0), (1.0, 1.0))),
+        _road("k2a", "K2", "A", direction=2, coords=((1.0, 1.0), (0.0, 0.0))),
+    ]
+    context = _context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+    pruned_road_ids = {f"r{i}" for i in range(260)} | {road.road_id for road in roads}
+
+    def _fake_enumerate_simple_paths(**kwargs):
+        budget = kwargs.get("budget")
+        if budget is not None:
+            budget.expanded_states = budget.max_expanded_states
+            budget.max_observed_frontier_size = budget.max_frontier_size
+            budget.exhausted = True
+            budget.exhausted_reason = "expanded_states"
+        return []
+
+    monkeypatch.setattr(step2_trunk_utils, "_enumerate_simple_paths", _fake_enumerate_simple_paths)
+
+    choices, reject_reason, warnings, support_info = step2_segment_poc._evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids=pruned_road_ids,
+        pruned_road_ids=pruned_road_ids,
+        branch_cut_infos=[],
+        road_endpoints=road_endpoints,
+        through_rule=step1_pair_poc.ThroughRuleSpec(),
+        formway_mode="strict",
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert choices == []
+    assert reject_reason == "trunk_search_budget_exceeded"
+    assert warnings == ()
+    assert support_info["trunk_search_budget_exceeded"] is True
+    assert support_info["kind_2_128_count"] == 30
+    assert support_info["pruned_road_count"] >= 260
+    assert support_info["path_search_budgets"][0]["exhausted"] is True
 
 
 def test_dual_carriageway_separation_keeps_long_unmatched_tail_blocked() -> None:

@@ -197,7 +197,10 @@
 ### 5.5 Step2
 - 输入 / terminate 规则与首轮 Step1 一致。
 - 合法 `seed / terminate` 节点不得被 `through_node` 吞掉。
-- `kind_2 = 128` 穿越审计不改变 Step2 trunk / segment_body 判定，但必须在 `pair_validation_table.csv / validated_pairs.csv / rejected_pair_candidates.csv / segment_summary.json` 中保留 candidate 穿越标记、节点列表和 validated / rejected 分组统计。
+- `kind_2 = 128` 穿越审计不改变 `seed / terminate / hard-stop` 规则，也不扩展 `through_node_ids` 语义。
+- Step2 对穿越大量 `kind_2 = 128` 且 pruned channel 过大的复杂热点 pair 可启用 trunk search budget，避免在复杂路口内部无限展开 simple-path 搜索。
+- trunk search budget 超限时，该 pair 必须以 `trunk_search_budget_exceeded` 进入 rejected 输出，不生成 segment body，并在 `pair_validation_table.csv` 的 `support_info` 与 `segment_summary.json` 中保留预算配置、消耗、candidate/pruned road 数和 `kind_2 = 128` 节点数。
+- `pair_validation_table.csv / validated_pairs.csv / rejected_pair_candidates.csv / segment_summary.json` 必须保留 candidate 穿越标记、节点列表和 validated / rejected 分组统计。
 - 输出：
   - `validated`
   - `rejected`

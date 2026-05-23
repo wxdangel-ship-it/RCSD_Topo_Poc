@@ -33,6 +33,10 @@ MAX_PATH_DEPTH = 64
 SIDE_ACCESS_SAMPLE_STEP_M = MAX_SIDE_ACCESS_DISTANCE_M / 2.0
 STEP5C_STRATEGY_ID = "STEP5C"
 MAX_DIRECT_ONEWAY_TAIL_RELAXATION_M = 5.0
+KIND2_128_LOCALIZED_SEARCH_MIN_NODE_COUNT = 24
+KIND2_128_LOCALIZED_SEARCH_MIN_PRUNED_ROAD_COUNT = 256
+KIND2_128_LOCALIZED_SEARCH_MAX_EXPANDED_STATES = 2500
+KIND2_128_LOCALIZED_SEARCH_MAX_FRONTIER_SIZE = 2500
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,17 @@ class _TrunkEvaluationChoice:
     candidate: TrunkCandidate
     warning_codes: tuple[str, ...]
     support_info: dict[str, Any]
+
+
+@dataclass
+class _PathSearchBudget:
+    phase: str
+    max_expanded_states: int
+    max_frontier_size: int
+    expanded_states: int = 0
+    max_observed_frontier_size: int = 0
+    exhausted: bool = False
+    exhausted_reason: str = ""
 
 
 def _geometry_length(geometry: BaseGeometry) -> float:
@@ -478,6 +493,7 @@ def _enumerate_simple_paths(
     end_node_id: str,
     max_paths: int = MAX_PATHS_PER_DIRECTION,
     max_depth: int = MAX_PATH_DEPTH,
+    budget: Optional[_PathSearchBudget] = None,
 ) -> list[DirectedPath]:
     results: list[DirectedPath] = []
     sequence = count()
@@ -494,9 +510,17 @@ def _enumerate_simple_paths(
             frozenset({start_node_id}),
         ),
     )
+    if budget is not None:
+        budget.max_observed_frontier_size = max(budget.max_observed_frontier_size, len(heap))
 
     while heap and len(results) < max_paths:
+        if budget is not None and budget.expanded_states >= budget.max_expanded_states:
+            budget.exhausted = True
+            budget.exhausted_reason = "expanded_states"
+            break
         total_length, depth, _index, current_node_id, node_ids, road_ids, visited_nodes = heappop(heap)
+        if budget is not None:
+            budget.expanded_states += 1
         if current_node_id == end_node_id and road_ids:
             results.append(DirectedPath(node_ids=node_ids, road_ids=road_ids, total_length=total_length))
             continue
@@ -504,6 +528,10 @@ def _enumerate_simple_paths(
             continue
 
         for edge in adjacency.get(current_node_id, ()):
+            if budget is not None and len(heap) >= budget.max_frontier_size:
+                budget.exhausted = True
+                budget.exhausted_reason = "frontier_size"
+                break
             if edge.to_node in visited_nodes:
                 continue
             road = roads.get(edge.road_id)
@@ -521,6 +549,13 @@ def _enumerate_simple_paths(
                     visited_nodes | {edge.to_node},
                 ),
             )
+            if budget is not None:
+                budget.max_observed_frontier_size = max(
+                    budget.max_observed_frontier_size,
+                    len(heap),
+                )
+        if budget is not None and budget.exhausted:
+            break
 
     return results
 
@@ -1682,6 +1717,70 @@ def _split_minimal_loop_long_branch_candidates(
     return kept, blocked
 
 
+def _kind_2_128_localized_search_enabled(
+    pair: PairRecord,
+    *,
+    pruned_road_ids: set[str],
+) -> bool:
+    return (
+        len(pair.kind_2_128_node_ids) >= KIND2_128_LOCALIZED_SEARCH_MIN_NODE_COUNT
+        and len(pruned_road_ids) >= KIND2_128_LOCALIZED_SEARCH_MIN_PRUNED_ROAD_COUNT
+    )
+
+
+def _new_kind_2_128_search_budget(phase: str, *, enabled: bool) -> Optional[_PathSearchBudget]:
+    if not enabled:
+        return None
+    return _PathSearchBudget(
+        phase=phase,
+        max_expanded_states=KIND2_128_LOCALIZED_SEARCH_MAX_EXPANDED_STATES,
+        max_frontier_size=KIND2_128_LOCALIZED_SEARCH_MAX_FRONTIER_SIZE,
+    )
+
+
+def _trunk_search_budget_audit(
+    *,
+    pair: PairRecord,
+    candidate_road_ids: set[str],
+    pruned_road_ids: set[str],
+    budgets: tuple[Optional[_PathSearchBudget], ...],
+    localized_search_enabled: bool,
+) -> Optional[dict[str, Any]]:
+    budget_records: list[dict[str, Any]] = []
+    exhausted = False
+    for budget in budgets:
+        if budget is None:
+            continue
+        exhausted = exhausted or budget.exhausted
+        budget_records.append(
+            {
+                "phase": budget.phase,
+                "expanded_states": budget.expanded_states,
+                "max_expanded_states": budget.max_expanded_states,
+                "max_frontier_size": budget.max_frontier_size,
+                "max_observed_frontier_size": budget.max_observed_frontier_size,
+                "exhausted": budget.exhausted,
+                "exhausted_reason": budget.exhausted_reason,
+            }
+        )
+
+    if not exhausted:
+        return None
+
+    return {
+        "trunk_search_budget_exceeded": True,
+        "kind_2_128_localized_search_enabled": localized_search_enabled,
+        "kind_2_128_localized_search_min_node_count": KIND2_128_LOCALIZED_SEARCH_MIN_NODE_COUNT,
+        "kind_2_128_localized_search_min_pruned_road_count": (
+            KIND2_128_LOCALIZED_SEARCH_MIN_PRUNED_ROAD_COUNT
+        ),
+        "kind_2_128_count": len(pair.kind_2_128_node_ids),
+        "candidate_road_count": len(candidate_road_ids),
+        "pruned_road_count": len(pruned_road_ids),
+        "path_search_budgets": budget_records,
+    }
+
+
 def _evaluate_trunk_choices(
     pair: PairRecord,
     *,
@@ -1727,6 +1826,35 @@ def _evaluate_trunk_choices(
             left_turn_formway_bit=left_turn_formway_bit,
         )
 
+    if collapsed_candidate is not None:
+        return [
+            _TrunkEvaluationChoice(
+                candidate=collapsed_candidate,
+                warning_codes=collapsed_warnings,
+                support_info=_dual_separation_support_info(collapsed_candidate),
+            )
+        ], None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
+    if mirrored_candidate is not None:
+        return [
+            _TrunkEvaluationChoice(
+                candidate=mirrored_candidate,
+                warning_codes=mirrored_warnings,
+                support_info=_dual_separation_support_info(mirrored_candidate),
+            )
+        ], None, mirrored_warnings, _dual_separation_support_info(mirrored_candidate)
+
+    localized_search_enabled = _kind_2_128_localized_search_enabled(
+        pair,
+        pruned_road_ids=pruned_road_ids,
+    )
+    base_forward_budget = _new_kind_2_128_search_budget(
+        "base_forward_paths",
+        enabled=localized_search_enabled,
+    )
+    base_reverse_budget = _new_kind_2_128_search_budget(
+        "base_reverse_paths",
+        enabled=localized_search_enabled,
+    )
     base_adjacency = _build_filtered_directed_adjacency(
         context.roads,
         road_endpoints=road_endpoints,
@@ -1740,12 +1868,14 @@ def _evaluate_trunk_choices(
         roads=context.roads,
         start_node_id=pair.a_node_id,
         end_node_id=pair.b_node_id,
+        budget=base_forward_budget,
     )
     base_reverse_paths = _enumerate_simple_paths(
         adjacency=base_adjacency,
         roads=context.roads,
         start_node_id=pair.b_node_id,
         end_node_id=pair.a_node_id,
+        budget=base_reverse_budget,
     )
     base_candidates, base_clockwise_only = _collect_trunk_candidates(
         forward_paths=base_forward_paths,
@@ -1767,6 +1897,14 @@ def _evaluate_trunk_choices(
     )
 
     if formway_mode == "strict":
+        strict_forward_budget = _new_kind_2_128_search_budget(
+            "strict_forward_paths",
+            enabled=localized_search_enabled,
+        )
+        strict_reverse_budget = _new_kind_2_128_search_budget(
+            "strict_reverse_paths",
+            enabled=localized_search_enabled,
+        )
         strict_adjacency = _build_filtered_directed_adjacency(
             context.roads,
             road_endpoints=road_endpoints,
@@ -1780,12 +1918,14 @@ def _evaluate_trunk_choices(
             roads=context.roads,
             start_node_id=pair.a_node_id,
             end_node_id=pair.b_node_id,
+            budget=strict_forward_budget,
         )
         strict_reverse_paths = _enumerate_simple_paths(
             adjacency=strict_adjacency,
             roads=context.roads,
             start_node_id=pair.b_node_id,
             end_node_id=pair.a_node_id,
+            budget=strict_reverse_budget,
         )
         strict_candidates, strict_clockwise_only = _collect_trunk_candidates(
             forward_paths=strict_forward_paths,
@@ -1845,22 +1985,6 @@ def _evaluate_trunk_choices(
             candidates=base_passed_candidates,
             context=context,
         )
-        if collapsed_candidate is not None:
-            return [
-                _TrunkEvaluationChoice(
-                    candidate=collapsed_candidate,
-                    warning_codes=collapsed_warnings,
-                    support_info=_dual_separation_support_info(collapsed_candidate),
-                )
-            ], None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
-        if mirrored_candidate is not None:
-            return [
-                _TrunkEvaluationChoice(
-                    candidate=mirrored_candidate,
-                    warning_codes=mirrored_warnings,
-                    support_info=_dual_separation_support_info(mirrored_candidate),
-                )
-            ], None, mirrored_warnings, _dual_separation_support_info(mirrored_candidate)
         if strict_passed_candidates:
             choices = [
                 _TrunkEvaluationChoice(
@@ -1871,6 +1995,18 @@ def _evaluate_trunk_choices(
                 for candidate in strict_passed_candidates
             ]
             return choices, None, (), choices[0].support_info
+        budget_audit = _trunk_search_budget_audit(
+            pair=pair,
+            candidate_road_ids=candidate_road_ids,
+            pruned_road_ids=pruned_road_ids,
+            budgets=(base_forward_budget, base_reverse_budget, strict_forward_budget, strict_reverse_budget),
+            localized_search_enabled=localized_search_enabled,
+        )
+        if budget_audit is not None:
+            return [], "trunk_search_budget_exceeded", (), {
+                **_dual_separation_support_info(None),
+                **budget_audit,
+            }
         if base_passed_candidates:
             return [], "left_turn_only_polluted_trunk", (), _dual_separation_support_info(base_passed_candidates[0])
         if strict_tjunction_blocked or base_tjunction_blocked:
@@ -1893,22 +2029,6 @@ def _evaluate_trunk_choices(
             return [], "only_clockwise_loop", (), _dual_separation_support_info(None)
         return [], "no_valid_trunk", (), _dual_separation_support_info(None)
 
-    if collapsed_candidate is not None:
-        return [
-            _TrunkEvaluationChoice(
-                candidate=collapsed_candidate,
-                warning_codes=collapsed_warnings,
-                support_info=_dual_separation_support_info(collapsed_candidate),
-            )
-        ], None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
-    if mirrored_candidate is not None:
-        return [
-            _TrunkEvaluationChoice(
-                candidate=mirrored_candidate,
-                warning_codes=mirrored_warnings,
-                support_info=_dual_separation_support_info(mirrored_candidate),
-            )
-        ], None, mirrored_warnings, _dual_separation_support_info(mirrored_candidate)
     base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(base_candidates)
     base_passed_candidates = _prefer_same_endpoint_direct_bidirectional_candidates(
         pair,
@@ -1935,6 +2055,18 @@ def _evaluate_trunk_choices(
         context=context,
     )
     if not base_passed_candidates:
+        budget_audit = _trunk_search_budget_audit(
+            pair=pair,
+            candidate_road_ids=candidate_road_ids,
+            pruned_road_ids=pruned_road_ids,
+            budgets=(base_forward_budget, base_reverse_budget),
+            localized_search_enabled=localized_search_enabled,
+        )
+        if budget_audit is not None:
+            return [], "trunk_search_budget_exceeded", (), {
+                **_dual_separation_support_info(None),
+                **budget_audit,
+            }
         if base_tjunction_blocked:
             return [], "t_junction_vertical_tracking", (), base_tjunction_blocked[0][1]
         if base_lasso_blocked:

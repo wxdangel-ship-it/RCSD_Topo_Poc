@@ -163,7 +163,10 @@
   - `kind_2 in {4,64}`
   - `closed_con in {2,3}`
 - 当前轮合法 `seed / terminate` 节点，不得被 `through_node` 吞掉。
-- Step2 不因 `kind_2 = 128` 穿越审计改变 trunk / segment_body 判定；`segment_summary.json` 与 pair table 必须统计经过 `kind_2 = 128` 的 candidate、validated、rejected 与 `dual_carriageway_separation_exceeded` 数量，用于定位复杂分歧 / 合流穿越对候选规模和性能的影响。
+- Step2 不因 `kind_2 = 128` 穿越审计改变 `seed / terminate / hard-stop` 规则，也不扩展 `through_node_ids` 语义。
+- Step2 对穿越大量 `kind_2 = 128` 且 pruned channel 过大的复杂热点 pair 可启用 trunk search budget，避免在复杂路口内部无限展开 simple-path 搜索。
+- trunk search budget 超限时，该 pair 以 `trunk_search_budget_exceeded` 进入 rejected 输出，不生成 segment body，并在 pair table 的 `support_info` 与 `segment_summary.json` 中保留预算配置、消耗、candidate/pruned road 数和 `kind_2 = 128` 节点数。
+- `segment_summary.json` 与 pair table 必须统计经过 `kind_2 = 128` 的 candidate、validated、rejected、`dual_carriageway_separation_exceeded` 与 `trunk_search_budget_exceeded` 数量，用于定位复杂分歧 / 合流穿越对候选规模和性能的影响。
 - 输出：
   - `validated`
   - `rejected`

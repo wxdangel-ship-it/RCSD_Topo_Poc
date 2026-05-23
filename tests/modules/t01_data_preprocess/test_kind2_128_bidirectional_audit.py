@@ -164,15 +164,23 @@ def test_step2_summary_groups_validation_results_by_kind_2_128_crossing() -> Non
                 reject_reason="dual_carriageway_separation_exceeded",
                 kind_2_128_node_ids=("8",),
             ),
+            _validation(
+                "p4",
+                validated_status="rejected",
+                reject_reason="trunk_search_budget_exceeded",
+                kind_2_128_node_ids=("9",),
+            ),
             _validation("p3", validated_status="rejected", reject_reason="no_valid_trunk"),
         ]
     )
 
-    assert summary["kind_2_128_candidate_pair_count"] == 2
+    assert summary["kind_2_128_candidate_pair_count"] == 3
     assert summary["kind_2_128_validated_pair_count"] == 1
-    assert summary["kind_2_128_rejected_pair_count"] == 1
+    assert summary["kind_2_128_rejected_pair_count"] == 2
     assert summary["kind_2_128_dual_carriageway_separation_reject_count"] == 1
-    assert summary["kind_2_128_path_node_hit_count"] == 2
+    assert summary["trunk_search_budget_exceeded_count"] == 1
+    assert summary["kind_2_128_trunk_search_budget_exceeded_count"] == 1
+    assert summary["kind_2_128_path_node_hit_count"] == 3
 
     rows = list(
         step2_output_utils._iter_validation_rows(

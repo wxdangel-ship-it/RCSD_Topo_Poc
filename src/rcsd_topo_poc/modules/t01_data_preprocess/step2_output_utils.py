@@ -222,6 +222,8 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
     disconnected_after_prune_count = 0
     shared_trunk_conflict_count = 0
     dual_carriageway_separation_reject_count = 0
+    trunk_search_budget_exceeded_count = 0
+    kind_2_128_trunk_search_budget_exceeded_count = 0
     formway_warning_count = 0
     branch_cut_component_keys: set[tuple[str, str]] = set()
     other_terminate_cut_keys: set[tuple[str, str]] = set()
@@ -256,6 +258,10 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
             dual_carriageway_separation_reject_count += 1
             if kind_2_128_node_ids:
                 kind_2_128_dual_carriageway_separation_reject_count += 1
+        if validation.reject_reason == "trunk_search_budget_exceeded":
+            trunk_search_budget_exceeded_count += 1
+            if kind_2_128_node_ids:
+                kind_2_128_trunk_search_budget_exceeded_count += 1
         if "formway_unreliable_warning" in validation.warning_codes:
             formway_warning_count += 1
 
@@ -306,6 +312,10 @@ def _collect_validation_summary(validations: list[Any]) -> dict[str, Any]:
         "disconnected_after_prune_count": disconnected_after_prune_count,
         "shared_trunk_conflict_count": shared_trunk_conflict_count,
         "dual_carriageway_separation_reject_count": dual_carriageway_separation_reject_count,
+        "trunk_search_budget_exceeded_count": trunk_search_budget_exceeded_count,
+        "kind_2_128_trunk_search_budget_exceeded_count": (
+            kind_2_128_trunk_search_budget_exceeded_count
+        ),
         "side_access_distance_block_count": len(side_access_distance_block_keys),
         "formway_warning_count": formway_warning_count,
     }

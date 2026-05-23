@@ -3,10 +3,10 @@
 ## 当前风险
 
 - Tool2 Kind enrich 沿用 T00 的空间匹配口径，后续如果业务需要更强匹配规则，必须独立冻结契约。
-- Tool3 当前冻结 Nodes 类型聚合，Tool4 当前冻结路口类型错误识别，Tool5 当前冻结复杂路口预处理；其它 Node 预处理字段语义尚未定义，不能提前实现。
+- Tool3 当前冻结 Nodes 类型聚合，Tool4 当前冻结 T 型路口错误修复，Tool5 当前冻结复杂路口预处理；其它 Node 预处理字段语义尚未定义，不能提前实现。
 - Tool5 复杂分歧 / 合流聚合依赖 Road 有向拓扑与候选字段质量，内网运行后需要通过 summary 复核聚合组。
 - Tool4 已取消连续分歧合流错误识别；相关复杂分歧 / 合流处理由 Tool5 承接。
-- Tool5 错误 1 对多处理复用 T02 `node_error_2` 口径，依赖 `node_error_2 / RCSDIntersection` 输入质量；删除 Road 必须通过 summary 复核。
+- Tool5 错误 1 对多处理复用 T02 `node_error_2` 生成与修复口径，依赖 `RCSDIntersection` 输入质量；删除 Road 必须通过 summary 复核。
 
 ## 缓解方式
 

@@ -44,11 +44,11 @@ def _road(
     return {"properties": properties, "geometry": LineString(coords)}
 
 
-def _read_rows(path: Path) -> tuple[int | None, dict[str, dict]]:
+def _read_rows(path: Path, *, key_field: str = "semantic_node_id") -> tuple[int | None, dict[str, dict]]:
     with fiona.open(path) as source:
         crs_value = source.crs_wkt or source.crs
         epsg = CRS.from_user_input(crs_value).to_epsg() if crs_value else None
-        rows = {str(feature["properties"]["semantic_node_id"]): dict(feature["properties"]) for feature in source}
+        rows = {str(feature["properties"][key_field]): dict(feature["properties"]) for feature in source}
     return epsg, rows
 
 
@@ -58,11 +58,12 @@ def _run_tool4_case(
     case_name: str,
     nodes: list[dict],
     roads: list[dict],
-) -> tuple[dict[str, dict], dict]:
+) -> tuple[dict[str, dict], dict[str, dict], dict]:
     nodes_gpkg = tmp_path / case_name / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / case_name / "input" / "roads.gpkg"
-    nodes_error_output = tmp_path / case_name / "out" / "nodes_error.gpkg"
-    summary_output = tmp_path / case_name / "out" / "nodes_error_summary.json"
+    nodes_output = tmp_path / case_name / "out" / "nodes_fix.gpkg"
+    audit_nodes_output = tmp_path / case_name / "out" / "audit_nodes.gpkg"
+    summary_output = tmp_path / case_name / "out" / "tool4_summary.json"
     write_gpkg(nodes_gpkg, nodes, crs_text="EPSG:3857")
     write_gpkg(roads_gpkg, roads, crs_text="EPSG:3857")
 
@@ -74,8 +75,10 @@ def _run_tool4_case(
             str(nodes_gpkg),
             "--roads-gpkg",
             str(roads_gpkg),
-            "--nodes-error-output",
-            str(nodes_error_output),
+            "--nodes-output",
+            str(nodes_output),
+            "--audit-nodes-output",
+            str(audit_nodes_output),
             "--summary-output",
             str(summary_output),
         ],
@@ -87,16 +90,18 @@ def _run_tool4_case(
     )
 
     assert result.returncode == 0, result.stderr
-    _, rows = _read_rows(nodes_error_output)
+    _, nodes_rows = _read_rows(nodes_output, key_field="id")
+    _, audit_rows = _read_rows(audit_nodes_output, key_field="audit_id")
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
-    return rows, summary
+    return nodes_rows, audit_rows, summary
 
 
 def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
-    nodes_error_output = tmp_path / "out" / "nodes_error.gpkg"
-    summary_output = tmp_path / "out" / "nodes_error_summary.json"
+    nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
+    summary_output = tmp_path / "out" / "tool4_summary.json"
 
     nodes = [
         _node("10", 1, -20.0, 0.0),
@@ -114,6 +119,7 @@ def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
         _node("510", 1, -10.0, 200.0),
         _node("520", 1, 10.0, 200.0),
         _node("521", 1, 0.0, 210.0),
+        _node("700", 2048, 1000.0, 1000.0),
     ]
     roads = [
         _road("r-in-div", "10", "100", [(-20.0, 0.0), (0.0, 0.0)]),
@@ -141,8 +147,10 @@ def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
             str(nodes_gpkg),
             "--roads-gpkg",
             str(roads_gpkg),
-            "--nodes-error-output",
-            str(nodes_error_output),
+            "--nodes-output",
+            str(nodes_output),
+            "--audit-nodes-output",
+            str(audit_nodes_output),
             "--summary-output",
             str(summary_output),
             "--progress-interval",
@@ -157,20 +165,35 @@ def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "[T08 Tool4]" in result.stderr
-    epsg, rows = _read_rows(nodes_error_output)
+    epsg, nodes_fix = _read_rows(nodes_output, key_field="id")
     assert epsg == 3857
-    assert rows["500"]["error_type"] == "错误T型路口"
-    assert rows["500"]["kind_2"] == 2048
-    assert "kind" not in rows["500"]
-    assert "400" not in rows
-    assert "100" not in rows
-    assert "200" not in rows
+    audit_epsg, audit_rows = _read_rows(audit_nodes_output, key_field="audit_id")
+    assert audit_epsg == 3857
+    assert nodes_fix["500"]["kind_2"] == 4
+    assert nodes_fix["700"]["kind_2"] == 1
+    assert nodes_fix["400"]["kind_2"] == 4
+    assert nodes_fix["100"]["kind_2"] == 16
+    assert nodes_fix["200"]["kind_2"] == 8
+    assert set(audit_rows) == {
+        "t_junction_repair:t_error_500:500",
+        "t_junction_repair:t_error_700:700",
+    }
+    assert audit_rows["t_junction_repair:t_error_500:500"]["audit_process"] == "t_junction_repair"
+    assert audit_rows["t_junction_repair:t_error_500:500"]["audit_role"] == "main"
+    assert audit_rows["t_junction_repair:t_error_500:500"]["audit_mainnodeid"] == "500"
+    assert audit_rows["t_junction_repair:t_error_500:500"]["audit_source_node_id"] == "500"
+    assert "audit_before_kind_2" not in audit_rows["t_junction_repair:t_error_500:500"]
+    assert "audit_after_kind_2" not in audit_rows["t_junction_repair:t_error_500:500"]
 
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
-    assert summary["counts"]["error_feature_count"] == 1
-    assert summary["counts"]["error_count_by_type"] == {"错误T型路口": 1}
+    assert summary["counts"]["error_feature_count"] == 2
+    assert summary["counts"]["repaired_semantic_node_count"] == 2
+    assert summary["counts"]["audit_node_feature_count"] == 2
+    assert summary["counts"]["error_count_by_type"] == {"错误T型路口": 2}
     assert summary["field_audit"]["node_kind_2_field"] == "kind_2"
     assert "node_kind_field" not in summary["field_audit"]
+    assert summary["repairs"][0]["after_kind_2"] == 4
+    assert summary["repairs"][1]["after_kind_2"] == 1
     assert summary["performance"]["elapsed_seconds"] >= 0
     assert "detect_errors_seconds" in summary["performance"]["stage_timings"]
     assert summary["performance"]["road_read_mode"] == {
@@ -195,16 +218,18 @@ def test_tool4_counts_internal_road_as_in_and_out_degree(tmp_path: Path) -> None
         _road("r-out", "501", "520", [(1.0, 0.0), (10.0, 0.0)], direction=2),
     ]
 
-    rows, summary = _run_tool4_case(
+    nodes_fix, audit_rows, summary = _run_tool4_case(
         tmp_path,
         case_name="internal_road_degree",
         nodes=nodes,
         roads=roads,
     )
 
-    assert rows == {}
+    assert nodes_fix["500"]["kind_2"] == 2048
+    assert audit_rows == {}
     assert summary["counts"]["internal_road_count"] == 1
     assert summary["counts"]["error_feature_count"] == 0
+    assert summary["counts"]["repaired_semantic_node_count"] == 0
 def test_tool4_script_help() -> None:
     result = subprocess.run(
         [sys.executable, "scripts/t08_tool4_junction_type_repair.py", "--help"],
@@ -216,15 +241,17 @@ def test_tool4_script_help() -> None:
     )
 
     assert result.returncode == 0
-    assert "--nodes-error-output" in result.stdout
+    assert "--nodes-output" in result.stdout
+    assert "--audit-nodes-output" in result.stdout
     assert "id/kind_2" in result.stdout
 
 
 def test_tool4_suppresses_t_error_when_advance_right_turn_excluded_degree_is_2_2(tmp_path: Path) -> None:
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
-    nodes_error_output = tmp_path / "out" / "nodes_error.gpkg"
-    summary_output = tmp_path / "out" / "nodes_error_summary.json"
+    nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
+    summary_output = tmp_path / "out" / "tool4_summary.json"
 
     nodes = [
         _node("500", 2048, 0.0, 0.0),
@@ -252,8 +279,10 @@ def test_tool4_suppresses_t_error_when_advance_right_turn_excluded_degree_is_2_2
             str(nodes_gpkg),
             "--roads-gpkg",
             str(roads_gpkg),
-            "--nodes-error-output",
-            str(nodes_error_output),
+            "--nodes-output",
+            str(nodes_output),
+            "--audit-nodes-output",
+            str(audit_nodes_output),
             "--summary-output",
             str(summary_output),
         ],
@@ -265,8 +294,10 @@ def test_tool4_suppresses_t_error_when_advance_right_turn_excluded_degree_is_2_2
     )
 
     assert result.returncode == 0, result.stderr
-    _, rows = _read_rows(nodes_error_output)
-    assert rows == {}
+    _, nodes_fix = _read_rows(nodes_output, key_field="id")
+    _, audit_rows = _read_rows(audit_nodes_output, key_field="audit_id")
+    assert nodes_fix["500"]["kind_2"] == 2048
+    assert audit_rows == {}
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
     assert summary["counts"]["error_feature_count"] == 0
     assert summary["counts"]["advance_right_turn_road_count"] == 1
@@ -282,8 +313,9 @@ def test_tool4_suppresses_t_error_when_advance_right_turn_excluded_degree_is_2_2
 def test_tool4_suppresses_t_error_when_auxiliary_road_excluded_degree_is_2_2(tmp_path: Path) -> None:
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
-    nodes_error_output = tmp_path / "out" / "nodes_error.gpkg"
-    summary_output = tmp_path / "out" / "nodes_error_summary.json"
+    nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
+    summary_output = tmp_path / "out" / "tool4_summary.json"
 
     nodes = [
         _node("600", 2048, 0.0, 0.0),
@@ -311,8 +343,10 @@ def test_tool4_suppresses_t_error_when_auxiliary_road_excluded_degree_is_2_2(tmp
             str(nodes_gpkg),
             "--roads-gpkg",
             str(roads_gpkg),
-            "--nodes-error-output",
-            str(nodes_error_output),
+            "--nodes-output",
+            str(nodes_output),
+            "--audit-nodes-output",
+            str(audit_nodes_output),
             "--summary-output",
             str(summary_output),
         ],
@@ -324,8 +358,10 @@ def test_tool4_suppresses_t_error_when_auxiliary_road_excluded_degree_is_2_2(tmp
     )
 
     assert result.returncode == 0, result.stderr
-    _, rows = _read_rows(nodes_error_output)
-    assert rows == {}
+    _, nodes_fix = _read_rows(nodes_output, key_field="id")
+    _, audit_rows = _read_rows(audit_nodes_output, key_field="audit_id")
+    assert nodes_fix["600"]["kind_2"] == 2048
+    assert audit_rows == {}
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
     assert summary["counts"]["error_feature_count"] == 0
     assert summary["counts"]["auxiliary_road_count"] == 1

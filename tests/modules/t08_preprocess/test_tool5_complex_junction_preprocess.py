@@ -44,7 +44,6 @@ def _read_epsg(path: Path) -> int | None:
 def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -> None:
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
-    node_error2_gpkg = tmp_path / "input" / "node_error_2.gpkg"
     intersection_gpkg = tmp_path / "input" / "RCSDIntersection.gpkg"
     nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
     roads_output = tmp_path / "out" / "roads_fix.gpkg"
@@ -84,14 +83,6 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
         crs_text="EPSG:3857",
     )
     write_gpkg(
-        node_error2_gpkg,
-        [
-            _node({"id": "10", "junction_id": "10", "error_type": "node_error_2"}, 0.0, 100.0),
-            _node({"id": "20", "junction_id": "20", "error_type": "node_error_2"}, 10.0, 100.0),
-        ],
-        crs_text="EPSG:3857",
-    )
-    write_gpkg(
         intersection_gpkg,
         [
             {
@@ -110,8 +101,6 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
             str(nodes_gpkg),
             "--roads-gpkg",
             str(roads_gpkg),
-            "--node-error2-gpkg",
-            str(node_error2_gpkg),
             "--intersection-gpkg",
             str(intersection_gpkg),
             "--nodes-output",
@@ -171,6 +160,85 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
     assert summary["counts"]["complex_junction_count"] == 1
     assert summary["counts"]["one_to_many_merged_intersection_count"] == 1
     assert summary["counts"]["one_to_many_deleted_road_count"] == 1
+    assert summary["counts"]["node_error_2_detected_group_count"] == 2
+    assert summary["counts"]["node_error_2_generated_feature_count"] == 2
     assert summary["counts"]["audit_node_feature_count"] == 4
     assert summary["output_paths"]["audit_nodes_output"] == str(audit_nodes_output.resolve())
     assert summary["complex_divmerge"]["complex_mainnodeids"] == ["200"]
+    assert summary["node_error_2_detection"]["node_error2_source"] == "generated_from_intersection"
+    assert summary["params"]["one_to_many_executed"] is True
+
+
+def test_tool5_detects_one_to_many_but_skips_disconnected_groups(tmp_path: Path) -> None:
+    nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
+    roads_gpkg = tmp_path / "input" / "roads.gpkg"
+    intersection_gpkg = tmp_path / "input" / "RCSDIntersection.gpkg"
+    nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
+    roads_output = tmp_path / "out" / "roads_fix.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
+    summary_output = tmp_path / "out" / "tool5_summary.json"
+
+    write_gpkg(
+        nodes_gpkg,
+        [
+            _node({"id": "10", "kind": 4, "grade": 1, "mainnodeid": "10", "subnodeid": None}, 0.0, 0.0),
+            _node({"id": "20", "kind": 4, "grade": 1, "mainnodeid": "20", "subnodeid": None}, 10.0, 0.0),
+            _node({"id": "30", "kind": 1, "grade": 1, "mainnodeid": "30", "subnodeid": None}, 20.0, 0.0),
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_gpkg(
+        roads_gpkg,
+        [
+            _road({"id": "r-unrelated", "snodeid": "20", "enodeid": "30", "direction": 0}, [(10.0, 0.0), (20.0, 0.0)]),
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_gpkg(
+        intersection_gpkg,
+        [
+            {
+                "properties": {"id": "A"},
+                "geometry": Polygon([(-1.0, -1.0), (12.0, -1.0), (12.0, 1.0), (-1.0, 1.0), (-1.0, -1.0)]),
+            }
+        ],
+        crs_text="EPSG:3857",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/t08_tool5_complex_junction_preprocess.py",
+            "--nodes-gpkg",
+            str(nodes_gpkg),
+            "--roads-gpkg",
+            str(roads_gpkg),
+            "--intersection-gpkg",
+            str(intersection_gpkg),
+            "--nodes-output",
+            str(nodes_output),
+            "--roads-output",
+            str(roads_output),
+            "--audit-nodes-output",
+            str(audit_nodes_output),
+            "--summary-output",
+            str(summary_output),
+            "--skip-complex-divmerge",
+        ],
+        cwd=Path(__file__).resolve().parents[3],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    nodes_fix = _read_features(nodes_output)
+    summary = json.loads(summary_output.read_text(encoding="utf-8"))
+
+    assert nodes_fix["10"]["mainnodeid"] == "10"
+    assert nodes_fix["20"]["mainnodeid"] == "20"
+    assert summary["counts"]["node_error_2_detected_group_count"] == 2
+    assert summary["counts"]["one_to_many_merged_intersection_count"] == 0
+    assert summary["one_to_many"]["rows"][0]["skip_reason"] == "not_all_groups_connected"
+    assert summary["params"]["one_to_many_executed"] is True

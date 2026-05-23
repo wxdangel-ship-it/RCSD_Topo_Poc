@@ -27,6 +27,7 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     read_vector,
     resolve_case_insensitive_field_name,
     resolve_field_name,
+    unique_field_names,
     write_gpkg,
     write_json,
 )
@@ -43,7 +44,8 @@ ProgressCallback = Callable[[str], None]
 
 @dataclass(frozen=True)
 class T08JunctionTypeRepairArtifacts:
-    nodes_error_output: Path
+    nodes_output: Path
+    audit_nodes_output: Path
     summary_output: Path
 
 
@@ -121,7 +123,8 @@ def run_t08_junction_type_repair(
     *,
     nodes_gpkg: str | Path,
     roads_gpkg: str | Path,
-    nodes_error_output: str | Path,
+    nodes_output: str | Path,
+    audit_nodes_output: str | Path,
     nodes_layer: str | None = None,
     roads_layer: str | None = None,
     summary_output: str | Path | None = None,
@@ -135,11 +138,12 @@ def run_t08_junction_type_repair(
     stage_timings: dict[str, float] = {}
     nodes_path = ensure_gpkg_path(nodes_gpkg, label="--nodes-gpkg")
     roads_path = ensure_gpkg_path(roads_gpkg, label="--roads-gpkg")
-    output_path = ensure_gpkg_path(nodes_error_output, label="--nodes-error-output")
+    output_nodes_path = ensure_gpkg_path(nodes_output, label="--nodes-output")
+    output_audit_nodes_path = ensure_gpkg_path(audit_nodes_output, label="--audit-nodes-output")
     summary_path = (
         Path(summary_output).expanduser().resolve()
         if summary_output
-        else output_path.with_name("t08_junction_type_repair_summary.json")
+        else output_nodes_path.with_name("t08_junction_type_repair_summary.json")
     )
 
     _emit_progress(progress_callback, f"[T08 Tool4] start nodes={nodes_path} roads={roads_path}")
@@ -155,6 +159,11 @@ def run_t08_junction_type_repair(
     node_feature_count = len(nodes_result.features)
     node_source_crs_text = nodes_result.source_crs.to_string()
     node_crs_source = nodes_result.crs_source
+    node_features = [
+        {"properties": dict(feature.properties), "geometry": feature.geometry}
+        for feature in nodes_result.features
+    ]
+    output_fields_nodes = unique_field_names(nodes_result.field_names)
     stage_timings["read_nodes_seconds"] = _elapsed_since(read_started)
 
     read_started = time.perf_counter()
@@ -212,23 +221,38 @@ def run_t08_junction_type_repair(
     stage_timings["detect_errors_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
-    output_features = _build_error_features(errors)
-    output_fields = (
-        "id",
-        "semantic_node_id",
-        "source_node_id",
-        "kind_2",
-        "error_type",
-        "error_reason",
-        "error_group_id",
-        "in_degree",
-        "out_degree",
-        "related_node_ids",
-        "related_road_ids",
-        "audit_json",
+    repair_rows = _apply_t_junction_repairs(
+        node_features=node_features,
+        errors=errors,
+        node_id_field=node_id_field,
+        node_kind_2_field=node_kind_2_field,
     )
-    _emit_progress(progress_callback, f"[T08 Tool4] writing nodes_error output={output_path}")
-    write_gpkg(output_path, output_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields, geometry_type="Point")
+    audit_features = _build_audit_node_features(
+        final_node_features=node_features,
+        node_id_field=node_id_field,
+        repair_rows=repair_rows,
+    )
+    audit_output_fields = unique_field_names(
+        output_fields_nodes,
+        extra=(
+            "audit_id",
+            "audit_process",
+            "audit_group_id",
+            "audit_role",
+            "audit_mainnodeid",
+            "audit_source_node_id",
+        ),
+    )
+    _emit_progress(progress_callback, f"[T08 Tool4] writing nodes output={output_nodes_path}")
+    write_gpkg(output_nodes_path, node_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields_nodes)
+    _emit_progress(progress_callback, f"[T08 Tool4] writing audit nodes={output_audit_nodes_path}")
+    write_gpkg(
+        output_audit_nodes_path,
+        audit_features,
+        crs_text=f"EPSG:{target_epsg}",
+        empty_fields=audit_output_fields,
+        geometry_type="Point",
+    )
     stage_timings["write_output_seconds"] = _elapsed_since(stage_started)
     elapsed_seconds = _elapsed_since(started)
 
@@ -238,10 +262,14 @@ def run_t08_junction_type_repair(
 
     summary = {
         "tool": "T08 Tool4",
-        "stage": "junction_type_repair_error_detection",
+        "stage": "junction_type_repair",
         "target_epsg": target_epsg,
         "input_paths": {"nodes_gpkg": nodes_path, "roads_gpkg": roads_path},
-        "output_paths": {"nodes_error_output": output_path, "summary_output": summary_path},
+        "output_paths": {
+            "nodes_output": output_nodes_path,
+            "audit_nodes_output": output_audit_nodes_path,
+            "summary_output": summary_path,
+        },
         "input_crs": {
             "nodes": node_source_crs_text,
             "nodes_crs_source": node_crs_source,
@@ -268,6 +296,8 @@ def run_t08_junction_type_repair(
             "semantic_node_count": len(semantic_nodes),
             "road_feature_count": len(parsed_roads),
             "error_feature_count": len(errors),
+            "repaired_semantic_node_count": len(repair_rows),
+            "audit_node_feature_count": len(audit_features),
             "error_count_by_type": dict(sorted(counts_by_type.items())),
             "internal_road_count": topology.internal_road_count,
             "direction_error_count": len(topology.direction_errors),
@@ -277,7 +307,8 @@ def run_t08_junction_type_repair(
         },
         "direction_errors": list(topology.direction_errors),
         "degree_exceptions": degree_exception_rows,
-        "output_bounds": aggregate_bounds(feature["geometry"] for feature in output_features),
+        "output_bounds": aggregate_bounds(feature["geometry"] for feature in node_features),
+        "audit_nodes_bounds": aggregate_bounds(feature["geometry"] for feature in audit_features),
         "performance": {
             "elapsed_seconds": round(elapsed_seconds, 6),
             "semantic_nodes_per_second": _items_per_second(len(semantic_nodes), elapsed_seconds),
@@ -290,6 +321,7 @@ def run_t08_junction_type_repair(
                 "layer_name": roads_audit.layer_name,
             },
         },
+        "repairs": repair_rows,
         "errors": [_summary_error_row(row) for row in errors],
     }
     write_json(summary_path, summary)
@@ -300,7 +332,11 @@ def run_t08_junction_type_repair(
             f"elapsed={elapsed_seconds:.2f}s summary={summary_path}"
         ),
     )
-    return T08JunctionTypeRepairArtifacts(nodes_error_output=output_path, summary_output=summary_path)
+    return T08JunctionTypeRepairArtifacts(
+        nodes_output=output_nodes_path,
+        audit_nodes_output=output_audit_nodes_path,
+        summary_output=summary_path,
+    )
 
 
 def _parse_nodes(
@@ -841,6 +877,7 @@ def _append_error(
             "id": f"{semantic.semantic_id}_{len(errors) + 1}",
             "semantic_node_id": semantic.semantic_id,
             "source_node_id": semantic.representative.node_id,
+            "source_feature_index": semantic.representative.feature_index,
             "kind_2": semantic.representative.kind_2,
             "error_type": error_type,
             "error_reason": error_reason,
@@ -853,6 +890,87 @@ def _append_error(
             "geometry": semantic.representative.geometry,
         }
     )
+
+
+def _apply_t_junction_repairs(
+    *,
+    node_features: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+    node_id_field: str,
+    node_kind_2_field: str,
+) -> list[dict[str, Any]]:
+    repair_rows: list[dict[str, Any]] = []
+    for row in errors:
+        if row.get("error_type") != ERROR_T_JUNCTION:
+            continue
+        feature_index = int(row["source_feature_index"])
+        if feature_index < 0 or feature_index >= len(node_features):
+            continue
+        feature = node_features[feature_index]
+        props = feature["properties"]
+        before_kind_2 = _coerce_int(props.get(node_kind_2_field))
+        in_degree = int(row.get("in_degree", 0))
+        out_degree = int(row.get("out_degree", 0))
+        after_kind_2 = 1 if in_degree == 0 or out_degree == 0 else 4
+        props[node_kind_2_field] = after_kind_2
+        repair_rows.append(
+            {
+                "semantic_node_id": str(row["semantic_node_id"]),
+                "source_node_id": str(row["source_node_id"]),
+                "source_feature_index": feature_index,
+                "node_id": _normalize_id(props.get(node_id_field)),
+                "error_type": row["error_type"],
+                "error_reason": row["error_reason"],
+                "error_group_id": row["error_group_id"],
+                "in_degree": in_degree,
+                "out_degree": out_degree,
+                "before_kind_2": before_kind_2,
+                "after_kind_2": after_kind_2,
+                "repair_rule": "zero_in_or_out_degree_to_kind_1"
+                if after_kind_2 == 1
+                else "nonzero_degree_error_to_kind_4",
+                "related_node_ids": row.get("related_node_ids"),
+                "related_road_ids": row.get("related_road_ids"),
+            }
+        )
+    return repair_rows
+
+
+def _build_audit_node_features(
+    *,
+    final_node_features: list[dict[str, Any]],
+    node_id_field: str,
+    repair_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    node_by_id = {
+        str(feature["properties"].get(node_id_field)): feature
+        for feature in final_node_features
+        if feature["properties"].get(node_id_field) is not None
+    }
+    audit_features: list[dict[str, Any]] = []
+    seen_audit_ids: set[str] = set()
+    for row in repair_rows:
+        source_node_id = str(row["source_node_id"])
+        source_feature = node_by_id.get(source_node_id)
+        if source_feature is None:
+            continue
+        audit_id = f"t_junction_repair:{row['error_group_id']}:{source_node_id}"
+        if audit_id in seen_audit_ids:
+            continue
+        seen_audit_ids.add(audit_id)
+        properties = dict(source_feature["properties"])
+        properties.update(
+            {
+                "audit_id": audit_id,
+                "audit_process": "t_junction_repair",
+                "audit_group_id": str(row["error_group_id"]),
+                "audit_role": "main",
+                "audit_mainnodeid": str(row["semantic_node_id"]),
+                "audit_source_node_id": source_node_id,
+            }
+        )
+        audit_features.append({"properties": properties, "geometry": source_feature["geometry"]})
+    return audit_features
 
 
 def _build_error_features(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:

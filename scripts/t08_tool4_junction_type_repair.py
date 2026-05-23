@@ -16,14 +16,19 @@ def _find_repo_root(start: Path) -> Path | None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="T08 Tool4: detect junction type errors.")
+    parser = argparse.ArgumentParser(description="T08 Tool4: repair T-junction type errors.")
     parser.add_argument("--nodes-gpkg", required=True, help="Input Nodes GPKG with id/kind_2 fields.")
     parser.add_argument(
         "--roads-gpkg",
         required=True,
         help="Input Roads GPKG with id/snodeid/enodeid/direction fields; optional formway/kind enable degree exceptions.",
     )
-    parser.add_argument("--nodes-error-output", required=True, help="Output nodes_error GPKG.")
+    parser.add_argument("--nodes-output", required=True, help="Output repaired full Nodes GPKG.")
+    parser.add_argument(
+        "--audit-nodes-output",
+        required=True,
+        help="Output audit Nodes GPKG for repaired semantic junctions.",
+    )
     parser.add_argument("--nodes-layer", help="Optional Nodes input layer name.")
     parser.add_argument("--roads-layer", help="Optional Roads input layer name.")
     parser.add_argument("--summary-output", help="Optional summary JSON output path.")
@@ -50,7 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         artifacts = run_t08_junction_type_repair(
             nodes_gpkg=Path(args.nodes_gpkg),
             roads_gpkg=Path(args.roads_gpkg),
-            nodes_error_output=Path(args.nodes_error_output),
+            nodes_output=Path(args.nodes_output),
+            audit_nodes_output=Path(args.audit_nodes_output),
             nodes_layer=args.nodes_layer,
             roads_layer=args.roads_layer,
             summary_output=Path(args.summary_output) if args.summary_output else None,

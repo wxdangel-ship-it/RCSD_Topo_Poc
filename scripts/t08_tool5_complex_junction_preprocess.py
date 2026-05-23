@@ -16,14 +16,17 @@ def _find_repo_root(start: Path) -> Path | None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="T08 Tool5: build complex junctions and repair node_error_2 one-to-many junctions.")
+    parser = argparse.ArgumentParser(description="T08 Tool5: build complex junctions and repair one-to-many junctions.")
     parser.add_argument("--nodes-gpkg", required=True, help="Input Nodes GPKG.")
     parser.add_argument("--roads-gpkg", required=True, help="Input Roads GPKG.")
     parser.add_argument("--nodes-output", required=True, help="Output Nodes GPKG.")
     parser.add_argument("--roads-output", required=True, help="Output Roads GPKG.")
     parser.add_argument("--audit-nodes-output", required=True, help="Output audit Nodes GPKG for nodes touched by Tool5 processes.")
-    parser.add_argument("--node-error2-gpkg", help="Optional node_error_2 GPKG for one-to-many repair.")
-    parser.add_argument("--intersection-gpkg", help="Optional RCSDIntersection GPKG for one-to-many repair.")
+    parser.add_argument(
+        "--node-error2-gpkg",
+        help="Optional precomputed node_error_2 GPKG. If omitted, Tool5 generates it from --intersection-gpkg.",
+    )
+    parser.add_argument("--intersection-gpkg", help="Optional RCSDIntersection GPKG for one-to-many detection/repair.")
     parser.add_argument("--nodes-layer", help="Optional Nodes input layer name.")
     parser.add_argument("--roads-layer", help="Optional Roads input layer name.")
     parser.add_argument("--node-error2-layer", help="Optional node_error_2 layer name.")
@@ -35,7 +38,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--node-error2-crs", help="CRS override for node_error_2 input.")
     parser.add_argument("--intersection-crs", help="CRS override for RCSDIntersection input.")
     parser.add_argument("--skip-complex-divmerge", action="store_true", help="Skip complex div/merge junction construction.")
-    parser.add_argument("--skip-one-to-many", action="store_true", help="Skip node_error_2 one-to-many repair.")
+    parser.add_argument("--skip-one-to-many", action="store_true", help="Skip one-to-many detection/repair.")
     parser.add_argument("--progress-interval", type=int, default=10000, help="Print progress every N features. Default: 10000.")
     return parser.parse_args(argv)
 

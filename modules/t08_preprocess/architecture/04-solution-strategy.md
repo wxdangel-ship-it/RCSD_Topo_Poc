@@ -25,11 +25,12 @@ Tool3 命令脚本输出读取、初始化、环岛聚合与写出进度；Nodes
 
 ## Tool4
 
-Tool4 读取 Tool3 之后的 Nodes 与对应 Roads，按语义路口分组计算入度 / 出度并识别类型错误：
+Tool4 读取 Tool3 之后的 Nodes 与对应 Roads，按语义路口分组计算入度 / 出度并修复类型错误：
 
-1. `kind_2 = 2048` 的 T 型路口，若入度或出度任一不为 `2`，输出为错误 T 型路口。
+1. `kind_2 = 2048` 的 T 型路口，若入度或出度任一不为 `2`，识别为错误 T 型路口。
+2. 若错误 T 型路口入度或出度任一为 `0`，代表 node `kind_2` 写为 `1`；其他错误 T 型路口代表 node `kind_2` 写为 `4`。
 
-入度 / 出度按 Road `direction` 计算：`direction in {0,1}` 视为双向，出度和入度各加 `1`；`direction = 2` 为 `snodeid -> enodeid`；`direction = 3` 为 `enodeid -> snodeid`。若 Road 两端属于同一语义路口，则该 Road 既视为进入该语义路口也视为退出该语义路口，入度和出度各加 `1`。Tool4 不回写 Nodes，不重塑 Roads，只输出 `nodes_error.gpkg` 与 summary。
+入度 / 出度按 Road `direction` 计算：`direction in {0,1}` 视为双向，出度和入度各加 `1`；`direction = 2` 为 `snodeid -> enodeid`；`direction = 3` 为 `enodeid -> snodeid`。若 Road 两端属于同一语义路口，则该 Road 既视为进入该语义路口也视为退出该语义路口，入度和出度各加 `1`。Tool4 copy-on-write 输出完整 Nodes/audit Nodes 与 summary，不回写输入，不重塑 Roads。
 
 Tool4 对 `错误T型路口` 候选增加入出度异常豁免：若当前语义路口存在 `formway bit7 = 128` 的提前右转 Road，或 `road.kind` 任一 `|` 分隔 token 后两位为 `0a` 的辅路 Road，则排除这些 Road 后复算入度 / 出度；复算结果为 `in_degree = 2 / out_degree = 2` 时不输出错误，summary 记录 suppressed 审计。
 
@@ -37,13 +38,13 @@ Tool4 对 `错误T型路口` 候选增加入出度异常豁免：若当前语义
 
 Tool5 承接原 Tool3 的 Complex divmerge aggregation：参考 T04/T02 连续分歧 / 合流链路，沿 Road 有向拓扑聚合 representative `kind_2 in {8,16}` 候选，聚合主节点写为 `kind_2 = 128`。
 
-Tool5 的错误 1 对多处理复用 T02 `node_error_2` 离线修复口径：在同一 `RCSDIntersection` 面内识别待合并错误组，过滤代表 `kind_2 = 1` 的组，验证剩余组连通后合并 Nodes，并删除面内合并组之间的内部 Road。Tool5 copy-on-write 输出 Nodes/Roads/audit Nodes 和 summary，不回写输入；audit Nodes 记录复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node，并补充处理过程、分组、角色与 source node id。
+Tool5 的错误 1 对多处理先复用 T02 `node_error_2` 生成口径：以输入 `RCSDIntersection` 面反向包含 / 接触 SWSD 语义路口，若一个面对应多组语义路口，则过滤代表 `kind_2 = 1` 的组，过滤后剩余组数大于 `1` 时生成一对多候选。随后复用 T02 离线修复口径，验证剩余组之间具有 Road 连通性后才合并 Nodes，并删除面内合并组之间的内部 Road。Tool5 copy-on-write 输出 Nodes/Roads/audit Nodes 和 summary，不回写输入；audit Nodes 记录复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node，并补充处理过程、分组、角色与 source node id。
 
 ## 输出策略
 
 - Tool1 输出同目录同名目标格式文件与 summary。
 - Tool2 输出三个 GPKG 与三个 summary，summary 包含阶段性能字段。
 - Tool3 输出一个 copy-on-write Nodes GPKG 与 summary，不输出或改写 Roads，summary 包含阶段性能字段。
-- Tool4 输出 `nodes_error.gpkg` 与 summary，不输出修复后 Nodes/Roads。
+- Tool4 输出 copy-on-write Nodes/audit Nodes GPKG 与 summary，不输出或改写 Roads。
 - Tool5 输出 copy-on-write Nodes/Roads/audit Nodes GPKG 与 summary，summary 包含复杂聚合和错误 1 对多处理审计。
 - 所有路径由命令参数提供。

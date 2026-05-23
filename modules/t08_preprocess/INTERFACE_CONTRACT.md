@@ -49,12 +49,13 @@
 - 输出边界：Tool3 只输出 copy-on-write Nodes，不修改输入文件，不输出或改写 Roads。
 - 所有输入、输出路径必须通过参数提供。
 
-### Tool4：路口类型错误识别
+### Tool4：T 型路口错误修复
 
 - 输入一：Nodes GPKG，依赖字段 `id / kind_2`，可选字段 `mainnodeid`。
 - 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`，可选字段 `formway / kind`。
 - 输出：
-  - `nodes_error.gpkg`
+  - `t08_junction_type_repair_nodes.gpkg`
+  - `t08_junction_type_repair_audit_nodes.gpkg`
   - `t08_junction_type_repair_summary.json`
 - 输出 CRS：`EPSG:3857`。
 - 入度 / 出度定义：
@@ -63,13 +64,16 @@
   - `direction = 3` 表示 `enodeid -> snodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
   - 若 Road 两端属于同一语义路口，则该 Road 既视为进入该语义路口也视为退出该语义路口，`in_degree + 1 / out_degree + 1`；双向 Road 同样只按该 Road 对入度和出度各加 `1`。
 - 错误识别：
-  - `kind_2 = 2048`：若入度或出度任一不为 `2`，输出 `error_type = 错误T型路口`。
+  - `kind_2 = 2048`：若入度或出度任一不为 `2`，识别为 `error_type = 错误T型路口`。
+- 修复策略：
+  - 对识别出的错误 T 型路口代表 node，若入度或出度任一为 `0`，`kind_2` 写为 `1`。
+  - 其他错误 T 型路口代表 node，`kind_2` 写为 `4`。
 - 异常豁免：
   - 若语义路口存在提前右转 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入提前右转 Road；提前右转 Road 以 `formway bit7 = 128` 判定。
   - 若语义路口存在辅路 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入辅路 Road；辅路 Road 以 `road.kind` 任一 `|` 分隔 token 的后两位为 `0a` 判定，大小写不敏感。
   - 对原本将输出的 `错误T型路口` 候选，若排除提前右转 / 辅路后 `in_degree = 2 / out_degree = 2`，则不输出错误，并在 summary `degree_exceptions` 中记录 suppressed 审计。
-- 输出字段至少包含 `id / semantic_node_id / source_node_id / kind_2 / error_type / error_reason / error_group_id / in_degree / out_degree / related_node_ids / related_road_ids / audit_json`。
-- 输出边界：Tool4 只输出错误识别结果，不修改输入 Nodes/Roads，不输出修复后 Nodes/Roads。
+- 审计 Nodes 输出：将被修复的语义路口代表 node 输出为 audit Nodes GPKG，保留最终 Nodes 属性并补充 `audit_id / audit_process / audit_group_id / audit_role / audit_mainnodeid / audit_source_node_id`；修复前后 `kind_2` 与入出度记录在 summary `repairs / errors`。
+- 输出边界：Tool4 copy-on-write 输出完整 Nodes 与 audit Nodes，不修改输入 Nodes/Roads，不输出或改写 Roads。
 - 性能口径：Tool4 Road GPKG 优先使用直接 SQLite 轻量读取，只读取 `id / snodeid / enodeid / direction / formway / kind / geometry`，进入拓扑前仅保留 road 长度、方向向量与异常豁免标记，不长期持有完整 Road 几何；无法识别标准 GPKG 元数据时回退共享 `read_vector`。
 - 所有输入、输出路径必须通过参数提供。
 
@@ -77,8 +81,8 @@
 
 - 输入一：Nodes GPKG，依赖字段 `id / kind / grade / mainnodeid / subnodeid`，可选字段 `kind_2 / grade_2 / has_evd / is_anchor`；若 `kind_2 / grade_2` 缺失，则先从 `kind / grade` 初始化。
 - 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`。
-- 输入三：`node_error_2` GPKG，可选；启用错误 1 对多处理时必填，依赖字段 `id / junction_id`。
-- 输入四：`RCSDIntersection` GPKG，可选；启用错误 1 对多处理时必填。
+- 输入三：`RCSDIntersection` GPKG，可选；启用错误 1 对多识别与处理时必填。
+- 输入四：`node_error_2` GPKG，可选兼容输入，依赖字段 `id / junction_id`；未提供时 Tool5 按 T02 `node_error_2` 生成口径基于 `RCSDIntersection` 即时识别。
 - 输出：
   - `t08_complex_junction_nodes.gpkg`
   - `t08_complex_junction_roads.gpkg`
@@ -86,9 +90,9 @@
   - `t08_complex_junction_preprocess_summary.json`
 - 输出 CRS：`EPSG:3857`。
 - 复杂分歧 / 合流聚合：从 Tool3 移出，参考 T04 full-input 候选与连续链路口口径，对 representative node 的 `kind_2 in {8, 16}` 候选沿 Road 有向拓扑识别连续链，聚合后 mainnode 写 `kind_2 = 128`，成员写 `grade_2 = 0 / kind_2 = 0`，全组 `mainnodeid` 写为 mainnode。若输入存在 `has_evd / is_anchor` 字段，则候选需满足 `has_evd = yes / is_anchor = no`。
-- 错误 1 对多路口处理：参考 T02 `node_error_2` 离线修复逻辑，在同一 `RCSDIntersection` 面内聚合剩余错误组，忽略代表 `kind_2 = 1` 的组；选择最小 junction group 作为 mainnode，mainnode 写 `kind_2 = 4`，成员写 `kind_2 = 0 / grade_2 = 0`，删除 intersection 面内被合并组之间的内部 Road。
+- 错误 1 对多路口处理：参考 T02 `node_error_2` 生成逻辑，先用 `RCSDIntersection` 反向包含 / 接触 SWSD 语义路口；若一个面对应不止一组语义路口，则忽略代表 `kind_2 = 1` 的组，过滤后剩余组数大于 `1` 时生成一对多候选；随后复用 T02 离线修复逻辑，只有剩余组之间具备 Road 连通性时才合并，选择最小 junction group 作为 mainnode，mainnode 写 `kind_2 = 4`，成员写 `kind_2 = 0 / grade_2 = 0`，删除 intersection 面内被合并组之间的内部 Road。
 - 审计 Nodes 输出：将复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node 输出为 audit Nodes GPKG，保留最终 Nodes 属性并补充 `audit_id / audit_process / audit_group_id / audit_role / audit_mainnodeid / audit_source_node_id`。
-- 输出边界：Tool5 copy-on-write 输出 Nodes 与 Roads，不修改输入文件；若未传入 `node_error_2 / RCSDIntersection`，只执行复杂分歧 / 合流聚合并复制输出 Roads。
+- 输出边界：Tool5 copy-on-write 输出 Nodes 与 Roads，不修改输入文件；若未传入 `RCSDIntersection`，只执行复杂分歧 / 合流聚合并复制输出 Roads。
 - 所有输入、输出路径必须通过参数提供。
 
 ## 2. EntryPoints
@@ -137,7 +141,8 @@ Tool4：
 .venv/bin/python scripts/t08_tool4_junction_type_repair.py \
   --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation.gpkg \
   --roads-gpkg /mnt/d/TestData/POC_Data/input/roads.gpkg \
-  --nodes-error-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/nodes_error.gpkg
+  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_nodes.gpkg \
+  --audit-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_audit_nodes.gpkg
 ```
 
 Tool5：
@@ -146,7 +151,6 @@ Tool5：
 .venv/bin/python scripts/t08_tool5_complex_junction_preprocess.py \
   --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation.gpkg \
   --roads-gpkg /mnt/d/TestData/POC_Data/input/roads.gpkg \
-  --node-error2-gpkg /mnt/d/TestData/POC_Data/input/node_error_2.gpkg \
   --intersection-gpkg /mnt/d/TestData/POC_Data/input/RCSDIntersection.gpkg \
   --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_nodes.gpkg \
   --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_roads.gpkg \
@@ -199,13 +203,14 @@ Tool5：
 
 - `--nodes-gpkg`：Nodes 输入 GPKG。
 - `--roads-gpkg`：Roads 拓扑参考输入 GPKG。
-- `--nodes-error-output`：错误语义路口输出 GPKG，推荐文件名 `nodes_error.gpkg`。
+- `--nodes-output`：修复后的完整 Nodes 输出 GPKG。
+- `--audit-nodes-output`：语义路口审计 Nodes 输出 GPKG。
 - `--nodes-layer / --roads-layer`：可选图层名。
 - `--summary-output`：可选 summary JSON 输出路径。
 - `--target-epsg`：最终输出 EPSG，默认 `3857`。
 - `--nodes-default-crs / --roads-default-crs`：输入缺失 CRS 时使用。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个语义路口输出一次。
-- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings / road_read_mode`，用于定位读取、拓扑构建、错误识别与写出耗时，并记录 Road 读取模式；summary 还必须记录 `degree_exceptions`、提前右转 / 辅路 Road 计数与 degree suppressed 计数。
+- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings / road_read_mode`，用于定位读取、拓扑构建、错误识别、修复与写出耗时，并记录 Road 读取模式；summary 还必须记录 `repairs`、`degree_exceptions`、提前右转 / 辅路 Road 计数与 degree suppressed 计数。
 - GPKG 输出写出：复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
 ## 7. Tool5 Params
@@ -215,8 +220,8 @@ Tool5：
 - `--nodes-output`：Nodes 输出 GPKG。
 - `--roads-output`：Roads 输出 GPKG。
 - `--audit-nodes-output`：审计 Nodes 输出 GPKG，记录 Tool5 两个处理过程实际涉及的 node。
-- `--node-error2-gpkg`：可选 `node_error_2` 输入 GPKG；与 `--intersection-gpkg` 成对提供时执行错误 1 对多处理。
-- `--intersection-gpkg`：可选 `RCSDIntersection` 输入 GPKG；与 `--node-error2-gpkg` 成对提供时执行错误 1 对多处理。
+- `--intersection-gpkg`：可选 `RCSDIntersection` 输入 GPKG；提供时 Tool5 先识别一对多候选再处理。
+- `--node-error2-gpkg`：可选预生成 `node_error_2` 输入 GPKG；提供时作为兼容输入使用，但仍需同时提供 `--intersection-gpkg`。
 - `--nodes-layer / --roads-layer / --node-error2-layer / --intersection-layer`：可选图层名。
 - `--summary-output`：可选 summary JSON 输出路径。
 - `--target-epsg`：最终输出 EPSG，默认 `3857`。
@@ -224,7 +229,7 @@ Tool5：
 - `--skip-complex-divmerge`：跳过复杂分歧 / 合流聚合。
 - `--skip-one-to-many`：跳过错误 1 对多处理。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次。
-- summary 性能字段：写入 `performance.elapsed_seconds / nodes_per_second / stage_timings`，用于定位读取、复杂聚合、错误 1 对多处理与写出耗时。
+- summary 性能字段：写入 `performance.elapsed_seconds / nodes_per_second / stage_timings`，用于定位读取、复杂聚合、错误 1 对多识别 / 处理与写出耗时；summary 还必须记录 `node_error_2_detection`。
 
 ## 8. Acceptance
 
@@ -236,11 +241,11 @@ Tool5：
 6. Tool3 输出 Nodes GPKG 且 CRS 为 `EPSG:3857`。
 7. Tool3 保留原始 `kind / grade`，只在 copy-on-write 输出中写入 `kind_2 / grade_2 / mainnodeid / subnodeid`。
 8. Tool3 summary 可追溯环岛组、更新节点数、CRS、字段解析与阶段性能；Tool3 不再构造复杂分歧 / 合流路口。
-9. Tool4 输出 `nodes_error.gpkg` 且 CRS 为 `EPSG:3857`。
-10. Tool4 识别错误 T 型路口 `error_type`。
-11. Tool4 对提前右转与辅路 Road 执行入出度异常豁免；候选错误被豁免时不写入 `nodes_error.gpkg`，必须写入 summary `degree_exceptions`。
-12. Tool4 不修改输入 Nodes/Roads，不输出修复后 Nodes/Roads。
+9. Tool4 输出完整 Nodes / audit Nodes GPKG 且 CRS 为 `EPSG:3857`。
+10. Tool4 识别错误 T 型路口 `error_type` 并按入出度写回代表 node `kind_2`。
+11. Tool4 对提前右转与辅路 Road 执行入出度异常豁免；候选错误被豁免时不写入 audit Nodes，必须写入 summary `degree_exceptions`。
+12. Tool4 不修改输入 Nodes/Roads，不输出或改写 Roads。
 13. Tool5 输出 Nodes / Roads / audit Nodes GPKG 且 CRS 为 `EPSG:3857`。
-14. Tool5 summary 可追溯复杂分歧 / 合流组、错误 1 对多合并组、删除 Road、audit node 数量、CRS、字段解析与阶段性能。
+14. Tool5 summary 可追溯复杂分歧 / 合流组、`node_error_2_detection`、错误 1 对多合并组、删除 Road、audit node 数量、CRS、字段解析与阶段性能。
 15. 所有路径均由参数提供，不写死内网目录。
 16. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。

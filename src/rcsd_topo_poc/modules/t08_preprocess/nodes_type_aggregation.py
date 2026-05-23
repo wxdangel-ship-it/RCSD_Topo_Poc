@@ -110,7 +110,7 @@ def run_t08_nodes_type_aggregation(
     nodes_default_crs_text: str | None = None,
     roads_default_crs_text: str | None = None,
     enable_roundabout: bool = True,
-    enable_complex_divmerge: bool = True,
+    enable_complex_divmerge: bool = False,
     progress_callback: ProgressCallback | None = None,
     progress_interval: int = 10000,
 ) -> T08NodesTypeAggregationArtifacts:
@@ -119,6 +119,9 @@ def run_t08_nodes_type_aggregation(
     nodes_path = ensure_gpkg_path(nodes_gpkg, label="--nodes-gpkg")
     roads_path = ensure_gpkg_path(roads_gpkg, label="--roads-gpkg")
     output_path = ensure_gpkg_path(nodes_output, label="--nodes-output")
+    if enable_complex_divmerge:
+        _emit_progress(progress_callback, "[T08 Tool3] complex_divmerge is disabled; use T08 Tool5 instead")
+        enable_complex_divmerge = False
     summary_path = (
         Path(summary_output).expanduser().resolve()
         if summary_output

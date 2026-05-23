@@ -17,24 +17,30 @@ Tool2 命令脚本输出 Patch join / Kind enrich 阶段进度；Road / Raw Kind
 
 ## Tool3
 
-Tool3 先将 Nodes `kind / grade` 复制到 `kind_2 / grade_2`，再执行两类拓扑聚合：
+Tool3 先将 Nodes `kind / grade` 复制到 `kind_2 / grade_2`，再执行环岛拓扑聚合：
 
 1. Roundabout aggregation：参考 T01，使用 `roadtype bit3` Road 连通组识别环岛，组内最小 Node `id` 作为 mainnode。
-2. Complex divmerge aggregation：参考 T04/T02 连续分歧 / 合流链路，沿 Road 有向拓扑聚合 representative `kind_2 in {8,16}` 候选，聚合主节点写为 `kind_2 = 128`。
 
-Tool3 命令脚本输出读取、初始化、环岛聚合、复杂链聚合与写出进度；复杂链 component 组装使用 node-to-component 索引归集边，避免按组件反复全量扫描链路边；Nodes GPKG 输出复用 T08 共享直接 SQLite GeoPackage 写出路径。
+Tool3 命令脚本输出读取、初始化、环岛聚合与写出进度；Nodes GPKG 输出复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
 ## Tool4
 
-Tool4 读取 Tool3 之后的 Nodes 与对应 Roads，按语义路口分组计算入度 / 出度并识别三类类型错误：
+Tool4 读取 Tool3 之后的 Nodes 与对应 Roads，按语义路口分组计算入度 / 出度并识别两类类型错误：
 
-1. `kind = 2048` 的 T 型路口，若入度或出度任一不为 `2`，输出为错误 T 型路口。
-2. `kind = 4` 的交叉路口，若入度和出度均为 `2`，输出为错误交叉路口。
-3. `kind = 16` 分歧与 `kind = 8` 合流在 `100m` 内构成连续分歧合流且符合 T 型拓扑特征时，输出为错误分歧合流路口。
+1. `kind_2 = 2048` 的 T 型路口，若入度或出度任一不为 `2`，输出为错误 T 型路口。
+2. `kind_2 = 16` 分歧与 `kind_2 = 8` 合流在 `100m` 内构成连续分歧合流且符合 T 型拓扑特征时，输出为错误分歧合流路口。
 
 入度 / 出度按 Road `direction` 计算：`direction in {0,1}` 视为双向，出度和入度各加 `1`；`direction = 2` 为 `snodeid -> enodeid`；`direction = 3` 为 `enodeid -> snodeid`。Tool4 不回写 Nodes，不重塑 Roads，只输出 `nodes_error.gpkg` 与 summary。
 
-连续分歧合流的第一版几何判定不引入未确认上游左右字段：以入向 road 与两个退出 road 的夹角最小者作为横向 / 左侧候选，另一条作为竖向 / 右侧候选，并在 summary 中记录相关 road 与角度参数，便于后续如有明确左右字段时替换。
+连续分歧合流的第一版几何判定不引入未确认上游左右字段：以入向 road 与两个退出 road 的夹角最小者作为横向 / 左侧候选，另一条作为竖向 / 右侧候选；“距离缩短且相对平行”需满足末端距离小于起始距离、末端距离不超过 `20m`、平行夹角不超过 `35` 度，并在 summary 中记录相关 road、距离与角度参数，便于后续如有明确左右字段时替换。
+
+Tool4 对 `错误T型路口` 候选增加入出度异常豁免：若当前语义路口存在 `formway bit7 = 128` 的提前右转 Road，或 `road.kind` 任一 `|` 分隔 token 后两位为 `0a` 的辅路 Road，则排除这些 Road 后复算入度 / 出度；复算结果为 `in_degree = 2 / out_degree = 2` 时不输出错误，summary 记录 suppressed 审计。
+
+## Tool5
+
+Tool5 承接原 Tool3 的 Complex divmerge aggregation：参考 T04/T02 连续分歧 / 合流链路，沿 Road 有向拓扑聚合 representative `kind_2 in {8,16}` 候选，聚合主节点写为 `kind_2 = 128`。
+
+Tool5 的错误 1 对多处理复用 T02 `node_error_2` 离线修复口径：在同一 `RCSDIntersection` 面内识别待合并错误组，过滤代表 `kind_2 = 1` 的组，验证剩余组连通后合并 Nodes，并删除面内合并组之间的内部 Road。Tool5 copy-on-write 输出 Nodes/Roads 和 summary，不回写输入。
 
 ## 输出策略
 
@@ -42,4 +48,5 @@ Tool4 读取 Tool3 之后的 Nodes 与对应 Roads，按语义路口分组计算
 - Tool2 输出三个 GPKG 与三个 summary，summary 包含阶段性能字段。
 - Tool3 输出一个 copy-on-write Nodes GPKG 与 summary，不输出或改写 Roads，summary 包含阶段性能字段。
 - Tool4 输出 `nodes_error.gpkg` 与 summary，不输出修复后 Nodes/Roads。
+- Tool5 输出 copy-on-write Nodes/Roads GPKG 与 summary，summary 包含复杂聚合和错误 1 对多处理审计。
 - 所有路径由命令参数提供。

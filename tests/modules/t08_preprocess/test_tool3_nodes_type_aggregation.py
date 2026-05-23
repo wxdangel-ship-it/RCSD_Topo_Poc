@@ -102,18 +102,18 @@ def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> Non
     assert props_by_id["2"]["mainnodeid"] == "1"
 
     assert props_by_id["200"]["kind"] == 8
-    assert props_by_id["200"]["kind_2"] == 128
+    assert props_by_id["200"]["kind_2"] == 8
     assert props_by_id["200"]["mainnodeid"] == "200"
-    assert props_by_id["200"]["subnodeid"] == "100,200"
+    assert props_by_id["200"]["subnodeid"] is None
     assert props_by_id["100"]["kind"] == 16
-    assert props_by_id["100"]["kind_2"] == 0
-    assert props_by_id["100"]["grade_2"] == 0
-    assert props_by_id["100"]["mainnodeid"] == "200"
+    assert props_by_id["100"]["kind_2"] == 16
+    assert props_by_id["100"]["grade_2"] == 2
+    assert props_by_id["100"]["mainnodeid"] == "100"
 
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
     assert summary["counts"]["roundabout_group_count"] == 1
-    assert summary["counts"]["complex_junction_count"] == 1
-    assert summary["complex_divmerge"]["complex_mainnodeids"] == ["200"]
+    assert summary["counts"]["complex_junction_count"] == 0
+    assert summary["complex_divmerge"]["complex_mainnodeids"] == []
     assert summary["performance"]["elapsed_seconds"] >= 0
     assert summary["performance"]["nodes_per_second"] is not None
-    assert "complex_divmerge_seconds" in summary["performance"]["stage_timings"]
+    assert "complex_divmerge_seconds" not in summary["performance"]["stage_timings"]

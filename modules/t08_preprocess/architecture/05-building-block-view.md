@@ -7,6 +7,7 @@
 - `road_preprocess.py`：Tool2 callable runner。
 - `nodes_type_aggregation.py`：Tool3 callable runner。
 - `junction_type_repair.py`：Tool4 路口类型错误识别 callable runner。
+- `complex_junction_preprocess.py`：Tool5 复杂路口预处理 callable runner。
 
 ## 入口构件
 
@@ -14,6 +15,7 @@
 - `scripts/t08_tool2_road_preprocess.py`
 - `scripts/t08_tool3_nodes_type_aggregation.py`
 - `scripts/t08_tool4_junction_type_repair.py`
+- `scripts/t08_tool5_complex_junction_preprocess.py`
 
 ## 测试构件
 
@@ -21,3 +23,4 @@
 - `tests/modules/t08_preprocess/test_tool2_road_preprocess.py`
 - `tests/modules/t08_preprocess/test_tool3_nodes_type_aggregation.py`
 - `tests/modules/t08_preprocess/test_tool4_junction_type_repair.py`
+- `tests/modules/t08_preprocess/test_tool5_complex_junction_preprocess.py`

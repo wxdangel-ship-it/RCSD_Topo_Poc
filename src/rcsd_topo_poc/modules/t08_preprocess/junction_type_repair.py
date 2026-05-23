@@ -33,16 +33,17 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
 
 
 T_KIND_VALUE = 2048
-CROSS_KIND_VALUE = 4
 DIVERGE_KIND_VALUE = 16
 MERGE_KIND_VALUE = 8
+ADVANCE_RIGHT_TURN_FORMWAY_BIT = 128
+AUXILIARY_ROAD_KIND_SUFFIX = "0a"
 
 ERROR_T_JUNCTION = "错误T型路口"
-ERROR_CROSS_JUNCTION = "错误交叉路口"
 ERROR_DIVMERGE_JUNCTION = "错误分歧合流路口"
 
 DEFAULT_TRACE_DISTANCE_M = 100.0
 DEFAULT_ANGLE_TOLERANCE_DEGREES = 35.0
+DEFAULT_PARALLEL_DISTANCE_THRESHOLD_M = 20.0
 
 ProgressCallback = Callable[[str], None]
 
@@ -58,7 +59,7 @@ class ParsedNode:
     feature_index: int
     node_id: str
     semantic_id: str
-    kind: int | None
+    kind_2: int | None
     geometry: Point
 
 
@@ -76,6 +77,10 @@ class ParsedRoad:
     snodeid: str
     enodeid: str
     direction: int | None
+    kind: str | None
+    formway: int | None
+    is_advance_right_turn: bool
+    is_auxiliary: bool
     length_m: float
     forward_vector: tuple[float, float]
 
@@ -90,6 +95,8 @@ class RoadReadAudit:
     road_snode_field: str
     road_enode_field: str
     road_direction_field: str
+    road_kind_field: str | None
+    road_formway_field: str | None
     reader: str
     selected_fields_only: bool
     geometry_stored: bool
@@ -187,12 +194,12 @@ def run_t08_junction_type_repair(
 
     stage_started = time.perf_counter()
     node_id_field = resolve_field_name(nodes_result.features, ["id"], "nodes input")
-    node_kind_field = resolve_field_name(nodes_result.features, ["kind"], "nodes input")
+    node_kind_2_field = resolve_field_name(nodes_result.features, ["kind_2"], "nodes input")
     node_mainnodeid_field = _optional_field(nodes_result.features, ["mainnodeid"])
     parsed_nodes = _parse_nodes(
         nodes_result.features,
         node_id_field=node_id_field,
-        node_kind_field=node_kind_field,
+        node_kind_2_field=node_kind_2_field,
         node_mainnodeid_field=node_mainnodeid_field,
         progress_callback=progress_callback,
         progress_interval=progress_interval,
@@ -201,15 +208,25 @@ def run_t08_junction_type_repair(
     semantic_nodes = _build_semantic_nodes(parsed_nodes)
     node_to_semantic = {node.node_id: node.semantic_id for node in parsed_nodes}
     topology = _build_topology(parsed_roads, node_to_semantic=node_to_semantic)
+    special_road_indices = {
+        index for index, road in enumerate(parsed_roads) if road.is_advance_right_turn or road.is_auxiliary
+    }
+    degree_exception_topology = _build_topology(
+        parsed_roads,
+        node_to_semantic=node_to_semantic,
+        ignored_road_indices=special_road_indices,
+    )
     stage_timings["build_topology_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
-    errors = _detect_junction_type_errors(
+    errors, degree_exception_rows = _detect_junction_type_errors(
         semantic_nodes=semantic_nodes,
         parsed_roads=parsed_roads,
         topology=topology,
+        degree_exception_topology=degree_exception_topology,
         trace_distance_m=float(trace_distance_m),
         angle_tolerance_degrees=float(angle_tolerance_degrees),
+        parallel_distance_threshold_m=DEFAULT_PARALLEL_DISTANCE_THRESHOLD_M,
         progress_callback=progress_callback,
         progress_interval=progress_interval,
     )
@@ -221,7 +238,7 @@ def run_t08_junction_type_repair(
         "id",
         "semantic_node_id",
         "source_node_id",
-        "kind",
+        "kind_2",
         "error_type",
         "error_reason",
         "error_group_id",
@@ -257,15 +274,18 @@ def run_t08_junction_type_repair(
             "roads_layer": roads_layer,
             "trace_distance_m": float(trace_distance_m),
             "angle_tolerance_degrees": float(angle_tolerance_degrees),
+            "parallel_distance_threshold_m": DEFAULT_PARALLEL_DISTANCE_THRESHOLD_M,
         },
         "field_audit": {
             "node_id_field": node_id_field,
-            "node_kind_field": node_kind_field,
+            "node_kind_2_field": node_kind_2_field,
             "node_mainnodeid_field": node_mainnodeid_field,
             "road_id_field": roads_audit.road_id_field,
             "road_snode_field": roads_audit.road_snode_field,
             "road_enode_field": roads_audit.road_enode_field,
             "road_direction_field": roads_audit.road_direction_field,
+            "road_kind_field": roads_audit.road_kind_field,
+            "road_formway_field": roads_audit.road_formway_field,
         },
         "counts": {
             "node_feature_count": node_feature_count,
@@ -275,8 +295,12 @@ def run_t08_junction_type_repair(
             "error_count_by_type": dict(sorted(counts_by_type.items())),
             "internal_road_count": topology.internal_road_count,
             "direction_error_count": len(topology.direction_errors),
+            "advance_right_turn_road_count": sum(1 for road in parsed_roads if road.is_advance_right_turn),
+            "auxiliary_road_count": sum(1 for road in parsed_roads if road.is_auxiliary),
+            "degree_exception_suppressed_count": sum(1 for row in degree_exception_rows if row["status"] == "suppressed"),
         },
         "direction_errors": list(topology.direction_errors),
+        "degree_exceptions": degree_exception_rows,
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in output_features),
         "performance": {
             "elapsed_seconds": round(elapsed_seconds, 6),
@@ -307,7 +331,7 @@ def _parse_nodes(
     features: list[VectorFeature],
     *,
     node_id_field: str,
-    node_kind_field: str,
+    node_kind_2_field: str,
     node_mainnodeid_field: str | None,
     progress_callback: ProgressCallback | None,
     progress_interval: int,
@@ -330,7 +354,7 @@ def _parse_nodes(
                 feature_index=index,
                 node_id=node_id,
                 semantic_id=semantic_id,
-                kind=_coerce_int(feature.properties.get(node_kind_field)),
+                kind_2=_coerce_int(feature.properties.get(node_kind_2_field)),
                 geometry=Point(float(centroid.x), float(centroid.y)),
             )
         )
@@ -359,9 +383,9 @@ def _choose_representative(semantic_id: str, members: list[ParsedNode]) -> Parse
     exact = [node for node in members if node.node_id == semantic_id]
     if exact:
         return sorted(exact, key=lambda node: node.feature_index)[0]
-    non_zero_kind = [node for node in members if int(node.kind or 0) != 0]
-    if non_zero_kind:
-        return sorted(non_zero_kind, key=lambda node: (_sort_key(node.node_id), node.feature_index))[0]
+    non_zero_kind_2 = [node for node in members if int(node.kind_2 or 0) != 0]
+    if non_zero_kind_2:
+        return sorted(non_zero_kind_2, key=lambda node: (_sort_key(node.node_id), node.feature_index))[0]
     return sorted(members, key=lambda node: (_sort_key(node.node_id), node.feature_index))[0]
 
 
@@ -395,12 +419,16 @@ def _read_roads_for_tool4(
     road_snode_field = resolve_field_name(roads_result.features, ["snodeid"], "roads input")
     road_enode_field = resolve_field_name(roads_result.features, ["enodeid"], "roads input")
     road_direction_field = resolve_field_name(roads_result.features, ["direction"], "roads input")
+    road_kind_field = _optional_field(roads_result.features, ["kind"])
+    road_formway_field = _optional_field(roads_result.features, ["formway"])
     parsed_roads = _parse_roads(
         roads_result.features,
         road_id_field=road_id_field,
         road_snode_field=road_snode_field,
         road_enode_field=road_enode_field,
         road_direction_field=road_direction_field,
+        road_kind_field=road_kind_field,
+        road_formway_field=road_formway_field,
         progress_callback=progress_callback,
         progress_interval=progress_interval,
     )
@@ -413,6 +441,8 @@ def _read_roads_for_tool4(
         road_snode_field=road_snode_field,
         road_enode_field=road_enode_field,
         road_direction_field=road_direction_field,
+        road_kind_field=road_kind_field,
+        road_formway_field=road_formway_field,
         reader="vector_fallback",
         selected_fields_only=False,
         geometry_stored=False,
@@ -441,6 +471,8 @@ def _try_read_roads_light_gpkg(
             road_snode_field = _resolve_required_column(columns, ["snodeid"], "roads input")
             road_enode_field = _resolve_required_column(columns, ["enodeid"], "roads input")
             road_direction_field = _resolve_required_column(columns, ["direction"], "roads input")
+            road_kind_field = _resolve_optional_column(columns, ["kind"])
+            road_formway_field = _resolve_optional_column(columns, ["formway"])
             source_crs, crs_source = _resolve_gpkg_crs(
                 conn,
                 srs_id=srs_id,
@@ -449,6 +481,9 @@ def _try_read_roads_light_gpkg(
             output_crs = CRS.from_epsg(target_epsg)
             transform_func = _build_geometry_transform(source_crs, output_crs)
             property_columns = [road_id_field, road_snode_field, road_enode_field, road_direction_field]
+            for optional_column in (road_kind_field, road_formway_field):
+                if optional_column is not None and optional_column not in property_columns:
+                    property_columns.append(optional_column)
             select_columns = [*property_columns, geometry_column]
             rows = conn.execute(
                 f"SELECT {', '.join(_quote_identifier(column) for column in select_columns)} "
@@ -471,6 +506,8 @@ def _try_read_roads_light_gpkg(
                     raise ValueError(f"Roads input has duplicate id '{road_id}'.")
                 seen_ids.add(road_id)
                 length_m, forward_vector = _line_metrics_from_geometry(geometry)
+                road_kind = _normalize_road_kind(properties.get(road_kind_field)) if road_kind_field else None
+                formway = _coerce_int(properties.get(road_formway_field)) if road_formway_field else None
                 parsed_roads.append(
                     ParsedRoad(
                         feature_index=index,
@@ -478,6 +515,10 @@ def _try_read_roads_light_gpkg(
                         snodeid=_required_id(properties.get(road_snode_field), f"road '{road_id}' snodeid"),
                         enodeid=_required_id(properties.get(road_enode_field), f"road '{road_id}' enodeid"),
                         direction=_coerce_int(properties.get(road_direction_field)),
+                        kind=road_kind,
+                        formway=formway,
+                        is_advance_right_turn=_has_formway_bit(formway, ADVANCE_RIGHT_TURN_FORMWAY_BIT),
+                        is_auxiliary=_is_auxiliary_road_kind(road_kind),
                         length_m=length_m,
                         forward_vector=forward_vector,
                     )
@@ -496,6 +537,8 @@ def _try_read_roads_light_gpkg(
         road_snode_field=road_snode_field,
         road_enode_field=road_enode_field,
         road_direction_field=road_direction_field,
+        road_kind_field=road_kind_field,
+        road_formway_field=road_formway_field,
         reader="gpkg_sqlite_light",
         selected_fields_only=True,
         geometry_stored=False,
@@ -511,6 +554,15 @@ def _resolve_required_column(columns: list[str], candidates: list[str], label: s
     raise ValueError(f"Required field {candidates} not found in {label}")
 
 
+def _resolve_optional_column(columns: list[str], candidates: list[str]) -> str | None:
+    lower_map = {column.lower(): column for column in columns}
+    for candidate in candidates:
+        resolved = lower_map.get(candidate.lower())
+        if resolved is not None:
+            return resolved
+    return None
+
+
 def _parse_roads(
     features: list[VectorFeature],
     *,
@@ -518,6 +570,8 @@ def _parse_roads(
     road_snode_field: str,
     road_enode_field: str,
     road_direction_field: str,
+    road_kind_field: str | None,
+    road_formway_field: str | None,
     progress_callback: ProgressCallback | None,
     progress_interval: int,
 ) -> list[ParsedRoad]:
@@ -529,6 +583,8 @@ def _parse_roads(
             raise ValueError(f"Roads input has duplicate id '{road_id}'.")
         seen_ids.add(road_id)
         length_m, forward_vector = _line_metrics_from_geometry(feature.geometry)
+        road_kind = _normalize_road_kind(feature.properties.get(road_kind_field)) if road_kind_field else None
+        formway = _coerce_int(feature.properties.get(road_formway_field)) if road_formway_field else None
         parsed.append(
             ParsedRoad(
                 feature_index=index,
@@ -536,6 +592,10 @@ def _parse_roads(
                 snodeid=_required_id(feature.properties.get(road_snode_field), f"road '{road_id}' snodeid"),
                 enodeid=_required_id(feature.properties.get(road_enode_field), f"road '{road_id}' enodeid"),
                 direction=_coerce_int(feature.properties.get(road_direction_field)),
+                kind=road_kind,
+                formway=formway,
+                is_advance_right_turn=_has_formway_bit(formway, ADVANCE_RIGHT_TURN_FORMWAY_BIT),
+                is_auxiliary=_is_auxiliary_road_kind(road_kind),
                 length_m=length_m,
                 forward_vector=forward_vector,
             )
@@ -545,7 +605,12 @@ def _parse_roads(
     return parsed
 
 
-def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[str, str]) -> Topology:
+def _build_topology(
+    parsed_roads: list[ParsedRoad],
+    *,
+    node_to_semantic: dict[str, str],
+    ignored_road_indices: set[int] | frozenset[int] = frozenset(),
+) -> Topology:
     in_degree: dict[str, int] = defaultdict(int)
     out_degree: dict[str, int] = defaultdict(int)
     in_edges: dict[str, list[DirectedEdge]] = defaultdict(list)
@@ -556,6 +621,8 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
     internal_road_count = 0
 
     for road_index, road in enumerate(parsed_roads):
+        if road_index in ignored_road_indices:
+            continue
         source_semantic = node_to_semantic.get(road.snodeid)
         target_semantic = node_to_semantic.get(road.enodeid)
         if source_semantic is None or target_semantic is None:
@@ -675,19 +742,38 @@ def _detect_junction_type_errors(
     semantic_nodes: dict[str, SemanticNode],
     parsed_roads: list[ParsedRoad],
     topology: Topology,
+    degree_exception_topology: Topology,
     trace_distance_m: float,
     angle_tolerance_degrees: float,
+    parallel_distance_threshold_m: float,
     progress_callback: ProgressCallback | None,
     progress_interval: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     errors: list[dict[str, Any]] = []
+    degree_exception_rows: list[dict[str, Any]] = []
     seen_error_keys: set[tuple[str, str, str]] = set()
 
     for index, semantic in enumerate(semantic_nodes.values(), start=1):
-        kind = semantic.representative.kind
+        kind_2 = semantic.representative.kind_2
         in_count = int(topology.in_degree.get(semantic.semantic_id, 0))
         out_count = int(topology.out_degree.get(semantic.semantic_id, 0))
-        if kind == T_KIND_VALUE and (in_count != 2 or out_count != 2):
+        degree_exception = _degree_exception_for_semantic(
+            semantic_id=semantic.semantic_id,
+            topology=topology,
+            degree_exception_topology=degree_exception_topology,
+            parsed_roads=parsed_roads,
+        )
+        if kind_2 == T_KIND_VALUE and (in_count != 2 or out_count != 2):
+            if _is_suppressed_by_degree_exception(degree_exception):
+                degree_exception_rows.append(
+                    {
+                        **degree_exception,
+                        "status": "suppressed",
+                        "error_type": ERROR_T_JUNCTION,
+                        "reason": "special_road_excluded_degree_is_2_2",
+                    }
+                )
+                continue
             _append_error(
                 errors,
                 seen_error_keys=seen_error_keys,
@@ -695,25 +781,11 @@ def _detect_junction_type_errors(
                 topology=topology,
                 parsed_roads=parsed_roads,
                 error_type=ERROR_T_JUNCTION,
-                error_reason="kind=2048 requires in_degree=2 and out_degree=2",
+                error_reason="kind_2=2048 requires in_degree=2 and out_degree=2",
                 group_id=f"t_error_{semantic.semantic_id}",
                 related_node_ids=(semantic.semantic_id,),
                 related_road_indices=topology.incident_road_indices.get(semantic.semantic_id, frozenset()),
-                audit={"in_degree": in_count, "out_degree": out_count},
-            )
-        if kind == CROSS_KIND_VALUE and in_count == 2 and out_count == 2:
-            _append_error(
-                errors,
-                seen_error_keys=seen_error_keys,
-                semantic=semantic,
-                topology=topology,
-                parsed_roads=parsed_roads,
-                error_type=ERROR_CROSS_JUNCTION,
-                error_reason="kind=4 has T-junction degree signature in_degree=2 and out_degree=2",
-                group_id=f"cross_error_{semantic.semantic_id}",
-                related_node_ids=(semantic.semantic_id,),
-                related_road_indices=topology.incident_road_indices.get(semantic.semantic_id, frozenset()),
-                audit={"in_degree": in_count, "out_degree": out_count},
+                audit={"in_degree": in_count, "out_degree": out_count, "degree_exception": degree_exception},
             )
         if _should_emit_progress(index, progress_interval):
             _emit_progress(progress_callback, f"[T08 Tool4] checked {index} semantic junction(s)")
@@ -724,6 +796,7 @@ def _detect_junction_type_errors(
         topology=topology,
         trace_distance_m=trace_distance_m,
         angle_tolerance_degrees=angle_tolerance_degrees,
+        parallel_distance_threshold_m=parallel_distance_threshold_m,
     )
     for row in divmerge_rows:
         for semantic_id in row["related_node_ids"]:
@@ -735,14 +808,58 @@ def _detect_junction_type_errors(
                 topology=topology,
                 parsed_roads=parsed_roads,
                 error_type=ERROR_DIVMERGE_JUNCTION,
-                error_reason="kind=16/8 continuous divmerge has T-junction topology signature",
+                error_reason="kind_2=16/8 continuous divmerge has T-junction topology signature",
                 group_id=row["group_id"],
                 related_node_ids=tuple(row["related_node_ids"]),
                 related_road_indices=frozenset(row["related_road_indices"]),
                 audit=row["audit"],
             )
 
-    return sorted(errors, key=lambda row: (_sort_key(str(row["semantic_node_id"])), str(row["error_type"])))
+    return (
+        sorted(errors, key=lambda row: (_sort_key(str(row["semantic_node_id"])), str(row["error_type"]))),
+        sorted(degree_exception_rows, key=lambda row: (_sort_key(str(row["semantic_node_id"])), str(row["error_type"]))),
+    )
+
+
+def _degree_exception_for_semantic(
+    *,
+    semantic_id: str,
+    topology: Topology,
+    degree_exception_topology: Topology,
+    parsed_roads: list[ParsedRoad],
+) -> dict[str, Any] | None:
+    incident_indices = topology.incident_road_indices.get(semantic_id, frozenset())
+    advance_right_turn_indices = [
+        index for index in incident_indices if parsed_roads[index].is_advance_right_turn
+    ]
+    auxiliary_indices = [
+        index for index in incident_indices if parsed_roads[index].is_auxiliary
+    ]
+    excluded_indices = sorted(set(advance_right_turn_indices) | set(auxiliary_indices))
+    if not excluded_indices:
+        return None
+    return {
+        "semantic_node_id": semantic_id,
+        "raw_in_degree": int(topology.in_degree.get(semantic_id, 0)),
+        "raw_out_degree": int(topology.out_degree.get(semantic_id, 0)),
+        "effective_in_degree": int(degree_exception_topology.in_degree.get(semantic_id, 0)),
+        "effective_out_degree": int(degree_exception_topology.out_degree.get(semantic_id, 0)),
+        "excluded_road_ids": [parsed_roads[index].road_id for index in excluded_indices],
+        "excluded_advance_right_turn_road_ids": [
+            parsed_roads[index].road_id for index in sorted(set(advance_right_turn_indices))
+        ],
+        "excluded_auxiliary_road_ids": [
+            parsed_roads[index].road_id for index in sorted(set(auxiliary_indices))
+        ],
+    }
+
+
+def _is_suppressed_by_degree_exception(degree_exception: dict[str, Any] | None) -> bool:
+    return bool(
+        degree_exception is not None
+        and int(degree_exception.get("effective_in_degree", -1)) == 2
+        and int(degree_exception.get("effective_out_degree", -1)) == 2
+    )
 
 
 def _detect_continuous_divmerge_as_t(
@@ -752,11 +869,12 @@ def _detect_continuous_divmerge_as_t(
     topology: Topology,
     trace_distance_m: float,
     angle_tolerance_degrees: float,
+    parallel_distance_threshold_m: float,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen_pairs: set[tuple[str, str]] = set()
     for semantic_id, semantic in sorted(semantic_nodes.items(), key=lambda item: _sort_key(item[0])):
-        if semantic.representative.kind != DIVERGE_KIND_VALUE:
+        if semantic.representative.kind_2 != DIVERGE_KIND_VALUE:
             continue
         if int(topology.out_degree.get(semantic_id, 0)) != 2:
             continue
@@ -778,7 +896,7 @@ def _detect_continuous_divmerge_as_t(
             continue
         merge_id = main_trace.node_id
         merge = semantic_nodes.get(merge_id)
-        if merge is None or merge.representative.kind != MERGE_KIND_VALUE:
+        if merge is None or merge.representative.kind_2 != MERGE_KIND_VALUE:
             continue
         if int(topology.in_degree.get(merge_id, 0)) != 2:
             continue
@@ -842,9 +960,11 @@ def _detect_continuous_divmerge_as_t(
             semantic_nodes[merge_back_trace.node_id].representative.geometry
         )
         vertical_same_node = immediate_same_node or side_trace.node_id == merge_back_trace.node_id
+        vertical_parallel_angle = _angle_between(side_trace.first_vector, merge_back_trace.first_vector)
         vertical_parallel_shortening = (
-            end_distance < start_distance
-            and _angle_between(side_trace.first_vector, merge_back_trace.first_vector) <= angle_tolerance_degrees
+            end_distance <= parallel_distance_threshold_m + 1e-9
+            and end_distance < start_distance
+            and vertical_parallel_angle <= angle_tolerance_degrees
         )
         if not (vertical_same_node or vertical_parallel_shortening):
             continue
@@ -874,6 +994,8 @@ def _detect_continuous_divmerge_as_t(
                     "vertical_parallel_shortening": vertical_parallel_shortening,
                     "start_distance_m": round(float(start_distance), 3),
                     "end_distance_m": round(float(end_distance), 3),
+                    "parallel_distance_threshold_m": float(parallel_distance_threshold_m),
+                    "vertical_parallel_angle_degrees": round(float(vertical_parallel_angle), 3),
                     "angle_tolerance_degrees": float(angle_tolerance_degrees),
                 },
             }
@@ -908,7 +1030,7 @@ def _trace_forward_to_kind(
         incident_road_indices=topology.incident_road_indices,
         max_distance_m=max_distance_m,
         stop_predicate=lambda node_id: semantic_nodes.get(node_id) is not None
-        and semantic_nodes[node_id].representative.kind == target_kind,
+        and semantic_nodes[node_id].representative.kind_2 == target_kind,
     )
 
 
@@ -1021,7 +1143,7 @@ def _append_error(
             "id": f"{semantic.semantic_id}_{len(errors) + 1}",
             "semantic_node_id": semantic.semantic_id,
             "source_node_id": semantic.representative.node_id,
-            "kind": semantic.representative.kind,
+            "kind_2": semantic.representative.kind_2,
             "error_type": error_type,
             "error_reason": error_reason,
             "error_group_id": group_id,
@@ -1140,6 +1262,27 @@ def _valid_mainnodeid(value: Any) -> str | None:
     if normalized in {None, "0", "0.0"}:
         return None
     return normalized
+
+
+def _normalize_road_kind(value: Any) -> str | None:
+    normalized = _normalize_scalar(value)
+    if normalized is None:
+        return None
+    return str(normalized).strip()
+
+
+def _is_auxiliary_road_kind(kind: str | None) -> bool:
+    if kind is None:
+        return False
+    for token in str(kind).split("|"):
+        text = token.strip().lower()
+        if len(text) >= 2 and text[-2:] == AUXILIARY_ROAD_KIND_SUFFIX:
+            return True
+    return False
+
+
+def _has_formway_bit(formway: int | None, bit_value: int) -> bool:
+    return formway is not None and bool(int(formway) & int(bit_value))
 
 
 def _coerce_int(value: Any) -> int | None:

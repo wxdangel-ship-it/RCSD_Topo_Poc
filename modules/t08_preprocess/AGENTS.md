@@ -10,9 +10,10 @@
 
 - Tool1：基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出均写回输入目录下同名文件。
 - Tool2：Road 数据预处理，基于 GPKG 输入补充 `patch_id` 与原始 `kind`，最终输出 `EPSG:3857` GPKG。
-- Tool3：Nodes 类型聚合，基于 GPKG Nodes/Roads 输入补充 `kind_2 / grade_2` 并处理环岛、复杂分歧 / 合流 mainnode，最终输出 `EPSG:3857` Nodes GPKG。
-- Tool4：路口类型错误识别，基于 GPKG Nodes/Roads 输入校验 `kind=2048 / 4 / 16+8` 语义路口类型，输出 `nodes_error.gpkg`，不改写输入 Nodes/Roads。
+- Tool3：Nodes 类型聚合，基于 GPKG Nodes/Roads 输入补充 `kind_2 / grade_2` 并处理环岛 mainnode，最终输出 `EPSG:3857` Nodes GPKG。
+- Tool4：路口类型错误识别，基于 GPKG Nodes/Roads 输入校验 Nodes `kind_2=2048 / 16+8` 语义路口类型，输出 `nodes_error.gpkg`，不改写输入 Nodes/Roads。
 - Tool4 只识别错误并输出审计，不执行自动修复。
+- Tool5：复杂路口预处理，基于 GPKG Nodes/Roads 构建复杂分歧 / 合流路口，并可参考 T02 `node_error_2` 修复逻辑处理错误 1 对多路口，最终 copy-on-write 输出 `EPSG:3857` Nodes/Roads GPKG。
 
 ## 允许改动范围
 
@@ -23,6 +24,7 @@
 - `scripts/t08_tool2_road_preprocess.py`
 - `scripts/t08_tool3_nodes_type_aggregation.py`
 - `scripts/t08_tool4_junction_type_repair.py`
+- `scripts/t08_tool5_complex_junction_preprocess.py`
 - 与 T08 登记、入口登记直接相关的项目级文档
 
 ## 禁做事项
@@ -30,7 +32,7 @@
 - 不在模块根目录新增 `SKILL.md`。
 - 不修改 T00 Tool4 / Tool5 契约。
 - 不根据局部样本反推 Road / Node 字段语义。
-- 不在 Tool4 中自动改写 `kind` 或重塑 Road/Node 拓扑。
+- 不在 Tool4 中自动改写 Nodes `kind_2` 或重塑 Road/Node 拓扑。
 
 ## 必做验证
 

@@ -26,5 +26,5 @@ Tool1 的 GPKG 输出必须使用直接 SQLite GeoPackage 写出路径；GeoJSON
 Tool2 Road / Raw Kind GPKG 读取应优先使用直接 SQLite GeoPackage 快读，并保留 Fiona 回退兼容；Patch join 必须避免读取无用 Patch Road 几何；Kind enrich 必须使用空间索引，并记录空间匹配候选计数、分块查询大小与阶段耗时。
 Tool2 / Tool3 / Tool4 / Tool5 命令脚本必须输出阶段进度，并在 summary 记录耗时与吞吐；GPKG 输出必须复用共享直接 SQLite GeoPackage 写出路径。
 Tool5 复杂分歧 / 合流聚合必须使用 Road 拓扑链路搜索，并记录候选数、链路数、聚合组与更新节点数；复杂链 component 组装不得按组件反复全量扫描链路边。
-Tool4 命令脚本必须输出阶段进度，summary 必须记录语义路口数、错误数、错误类型分布、方向异常数、提前右转 / 辅路豁免 Road 计数、suppressed degree exception、阶段耗时、吞吐与 Road 读取模式；Road GPKG 优先走只读取必要字段的 SQLite 轻量读取，拓扑阶段不得长期持有完整 Road 几何对象。
+Tool4 命令脚本必须输出阶段进度，summary 必须记录语义路口数、错误数、错误类型分布、方向异常数、提前右转 / 辅路 / 出入口 Road 计数、suppressed degree exception、出入口 Road 抑制的分歧合流候选、阶段耗时、吞吐与 Road 读取模式；Road GPKG 优先走只读取必要字段的 SQLite 轻量读取，拓扑阶段不得长期持有完整 Road 几何对象。
 Tool5 错误 1 对多处理必须记录参与 intersection、合并组、忽略 `kind_2 = 1` 组、删除 Road 与跳过原因。

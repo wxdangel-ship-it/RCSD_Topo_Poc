@@ -61,9 +61,10 @@
   - `direction in {0,1}` 表示双向 road，对两端语义路口分别 `in_degree + 1 / out_degree + 1`。
   - `direction = 2` 表示 `snodeid -> enodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
   - `direction = 3` 表示 `enodeid -> snodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
+  - 若 Road 两端属于同一语义路口，则该 Road 既视为进入该语义路口也视为退出该语义路口，`in_degree + 1 / out_degree + 1`；双向 Road 同样只按该 Road 对入度和出度各加 `1`。
 - 错误识别：
   - `kind_2 = 2048`：若入度或出度任一不为 `2`，输出 `error_type = 错误T型路口`。
-  - `kind_2 = 16`：若出度为 `2`，沿横向 / 左侧候选 road 忽略二度连接，在 `100m` 内找到 `kind_2 = 8` 且入度为 `2` 的合流路口，并满足横向与竖向 T 型特征，则分歧与合流代表 node 均输出 `error_type = 错误分歧合流路口`。
+  - `kind_2 = 16`：若出度为 `2`，沿横向 / 左侧候选 road 忽略二度连接，在 `100m` 内找到 `kind_2 = 8` 且入度为 `2` 的合流路口，并满足横向与竖向 T 型特征，则分歧与合流代表 node 均输出 `error_type = 错误分歧合流路口`；若该分歧 / 合流关联 Road 中存在 `road.kind` 任一 token 后两位为 `17` 的出入口 Road，则忽略该候选，不输出错误。
 - 异常豁免：
   - 若语义路口存在提前右转 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入提前右转 Road；提前右转 Road 以 `formway bit7 = 128` 判定。
   - 若语义路口存在辅路 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入辅路 Road；辅路 Road 以 `road.kind` 任一 `|` 分隔 token 的后两位为 `0a` 判定，大小写不敏感。
@@ -71,6 +72,7 @@
 - 连续分歧合流左右候选：
   - 当前输入字段未提供显式 left/right road 标识，第一版使用“入向 road 与两个退出 road 的夹角最小者”为横向 / 左侧候选，另一条为竖向 / 右侧候选。
   - “距离缩短且相对平行”判定需同时满足末端距离小于起始距离、末端距离不超过 `20m`、平行夹角不超过 `35` 度。
+  - 候选相关 Road 中存在出入口 Road 时，summary `divmerge_entrance_exit_suppressed` 记录 suppressed 审计。
   - 若后续上游正式提供左右字段，必须在本契约同轮更新后才能替换该代理规则。
 - 输出字段至少包含 `id / semantic_node_id / source_node_id / kind_2 / error_type / error_reason / error_group_id / in_degree / out_degree / related_node_ids / related_road_ids / audit_json`。
 - 输出边界：Tool4 只输出错误识别结果，不修改输入 Nodes/Roads，不输出修复后 Nodes/Roads。
@@ -209,7 +211,7 @@ Tool5：
 - `--angle-tolerance-degrees`：横向 / 平行几何判定角度容差，默认 `35` 度。
 - 平行距离阈值：固定 `20` 米，不作为 CLI 参数暴露，写入 summary `params.parallel_distance_threshold_m` 与错误 audit。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个语义路口输出一次。
-- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings / road_read_mode`，用于定位读取、拓扑构建、错误识别与写出耗时，并记录 Road 读取模式；summary 还必须记录 `degree_exceptions`、提前右转 / 辅路 Road 计数与 suppressed 计数。
+- summary 性能字段：写入 `performance.elapsed_seconds / semantic_nodes_per_second / stage_timings / road_read_mode`，用于定位读取、拓扑构建、错误识别与写出耗时，并记录 Road 读取模式；summary 还必须记录 `degree_exceptions`、提前右转 / 辅路 / 出入口 Road 计数、degree suppressed 计数与出入口 Road 抑制的分歧合流候选。
 - GPKG 输出写出：复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
 ## 7. Tool5 Params

@@ -12,7 +12,7 @@ from shapely.geometry import LineString, Point
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg
 
 
-def _node(node_id: str, kind_2: int, x: float, y: float) -> dict:
+def _node(node_id: str, kind_2: int, x: float, y: float, *, mainnodeid: str | None = None) -> dict:
     return {
         "properties": {
             "id": node_id,
@@ -20,7 +20,7 @@ def _node(node_id: str, kind_2: int, x: float, y: float) -> dict:
             "kind_2": kind_2,
             "grade": 1,
             "grade_2": 1,
-            "mainnodeid": node_id,
+            "mainnodeid": mainnodeid if mainnodeid is not None else node_id,
         },
         "geometry": Point(x, y),
     }
@@ -185,6 +185,31 @@ def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
     }
 
 
+def test_tool4_counts_internal_road_as_in_and_out_degree(tmp_path: Path) -> None:
+    nodes = [
+        _node("500", 2048, 0.0, 0.0),
+        _node("501", 0, 1.0, 0.0, mainnodeid="500"),
+        _node("510", 1, -10.0, 0.0),
+        _node("520", 1, 10.0, 0.0),
+    ]
+    roads = [
+        _road("r-in", "510", "500", [(-10.0, 0.0), (0.0, 0.0)], direction=2),
+        _road("r-internal", "500", "501", [(0.0, 0.0), (1.0, 0.0)], direction=2),
+        _road("r-out", "501", "520", [(1.0, 0.0), (10.0, 0.0)], direction=2),
+    ]
+
+    rows, summary = _run_tool4_case(
+        tmp_path,
+        case_name="internal_road_degree",
+        nodes=nodes,
+        roads=roads,
+    )
+
+    assert rows == {}
+    assert summary["counts"]["internal_road_count"] == 1
+    assert summary["counts"]["error_feature_count"] == 0
+
+
 def test_tool4_parallel_shortening_requires_20m_end_distance(tmp_path: Path) -> None:
     def build_case(merge_back_node: tuple[float, float]) -> tuple[list[dict], list[dict]]:
         nodes = [
@@ -229,6 +254,39 @@ def test_tool4_parallel_shortening_requires_20m_end_distance(tmp_path: Path) -> 
     )
     assert far_rows == {}
     assert far_summary["counts"]["error_feature_count"] == 0
+
+
+def test_tool4_suppresses_divmerge_error_when_related_road_kind_is_entrance_exit(tmp_path: Path) -> None:
+    nodes = [
+        _node("10", 1, -20.0, 0.0),
+        _node("100", 16, 0.0, 0.0),
+        _node("150", 1, 40.0, 0.0),
+        _node("200", 8, 80.0, 0.0),
+        _node("210", 1, 100.0, 0.0),
+        _node("300", 1, 40.0, -40.0),
+    ]
+    roads = [
+        _road("r-in-div", "10", "100", [(-20.0, 0.0), (0.0, 0.0)], kind="0100"),
+        _road("r-main-1", "100", "150", [(0.0, 0.0), (40.0, 0.0)], kind="0100"),
+        _road("r-main-2", "150", "200", [(40.0, 0.0), (80.0, 0.0)], kind="0100"),
+        _road("r-merge-out", "200", "210", [(80.0, 0.0), (100.0, 0.0)], kind="0100"),
+        _road("r-side-div", "100", "300", [(0.0, 0.0), (40.0, -40.0)], kind="0117"),
+        _road("r-side-merge", "300", "200", [(40.0, -40.0), (80.0, 0.0)], kind="0100"),
+    ]
+
+    rows, summary = _run_tool4_case(
+        tmp_path,
+        case_name="divmerge_entrance_exit_road",
+        nodes=nodes,
+        roads=roads,
+    )
+
+    assert rows == {}
+    assert summary["counts"]["entrance_exit_road_count"] == 1
+    assert summary["counts"]["divmerge_entrance_exit_suppressed_count"] == 1
+    suppressed = summary["divmerge_entrance_exit_suppressed"][0]
+    assert suppressed["reason"] == "related_road_kind_suffix_17"
+    assert suppressed["entrance_exit_road_ids"] == ["r-side-div"]
 
 
 def test_tool4_script_help() -> None:

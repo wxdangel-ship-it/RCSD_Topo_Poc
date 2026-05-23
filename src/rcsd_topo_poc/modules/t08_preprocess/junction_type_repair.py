@@ -37,6 +37,7 @@ DIVERGE_KIND_VALUE = 16
 MERGE_KIND_VALUE = 8
 ADVANCE_RIGHT_TURN_FORMWAY_BIT = 128
 AUXILIARY_ROAD_KIND_SUFFIX = "0a"
+ENTRANCE_EXIT_ROAD_KIND_SUFFIX = "17"
 
 ERROR_T_JUNCTION = "错误T型路口"
 ERROR_DIVMERGE_JUNCTION = "错误分歧合流路口"
@@ -219,7 +220,7 @@ def run_t08_junction_type_repair(
     stage_timings["build_topology_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
-    errors, degree_exception_rows = _detect_junction_type_errors(
+    errors, degree_exception_rows, divmerge_entrance_exit_suppressed_rows = _detect_junction_type_errors(
         semantic_nodes=semantic_nodes,
         parsed_roads=parsed_roads,
         topology=topology,
@@ -297,10 +298,13 @@ def run_t08_junction_type_repair(
             "direction_error_count": len(topology.direction_errors),
             "advance_right_turn_road_count": sum(1 for road in parsed_roads if road.is_advance_right_turn),
             "auxiliary_road_count": sum(1 for road in parsed_roads if road.is_auxiliary),
+            "entrance_exit_road_count": sum(1 for road in parsed_roads if _is_entrance_exit_road_kind(road.kind)),
             "degree_exception_suppressed_count": sum(1 for row in degree_exception_rows if row["status"] == "suppressed"),
+            "divmerge_entrance_exit_suppressed_count": len(divmerge_entrance_exit_suppressed_rows),
         },
         "direction_errors": list(topology.direction_errors),
         "degree_exceptions": degree_exception_rows,
+        "divmerge_entrance_exit_suppressed": divmerge_entrance_exit_suppressed_rows,
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in output_features),
         "performance": {
             "elapsed_seconds": round(elapsed_seconds, 6),
@@ -628,10 +632,15 @@ def _build_topology(
         if source_semantic is None or target_semantic is None:
             missing_node = road.snodeid if source_semantic is None else road.enodeid
             raise ValueError(f"Road '{road.road_id}' references missing node '{missing_node}'.")
+        incident_road_indices[source_semantic].add(road_index)
         if source_semantic == target_semantic:
             internal_road_count += 1
+            if road.direction in {0, 1, 2, 3}:
+                in_degree[source_semantic] += 1
+                out_degree[source_semantic] += 1
+            else:
+                direction_errors.append(f"direction_invalid:road_id={road.road_id}:value={road.direction}")
             continue
-        incident_road_indices[source_semantic].add(road_index)
         incident_road_indices[target_semantic].add(road_index)
         if road.direction in {0, 1}:
             forward_vector = road.forward_vector
@@ -748,7 +757,7 @@ def _detect_junction_type_errors(
     parallel_distance_threshold_m: float,
     progress_callback: ProgressCallback | None,
     progress_interval: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     errors: list[dict[str, Any]] = []
     degree_exception_rows: list[dict[str, Any]] = []
     seen_error_keys: set[tuple[str, str, str]] = set()
@@ -790,7 +799,7 @@ def _detect_junction_type_errors(
         if _should_emit_progress(index, progress_interval):
             _emit_progress(progress_callback, f"[T08 Tool4] checked {index} semantic junction(s)")
 
-    divmerge_rows = _detect_continuous_divmerge_as_t(
+    divmerge_rows, divmerge_entrance_exit_suppressed_rows = _detect_continuous_divmerge_as_t(
         semantic_nodes=semantic_nodes,
         parsed_roads=parsed_roads,
         topology=topology,
@@ -818,6 +827,7 @@ def _detect_junction_type_errors(
     return (
         sorted(errors, key=lambda row: (_sort_key(str(row["semantic_node_id"])), str(row["error_type"]))),
         sorted(degree_exception_rows, key=lambda row: (_sort_key(str(row["semantic_node_id"])), str(row["error_type"]))),
+        divmerge_entrance_exit_suppressed_rows,
     )
 
 
@@ -870,8 +880,9 @@ def _detect_continuous_divmerge_as_t(
     trace_distance_m: float,
     angle_tolerance_degrees: float,
     parallel_distance_threshold_m: float,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
+    entrance_exit_suppressed_rows: list[dict[str, Any]] = []
     seen_pairs: set[tuple[str, str]] = set()
     for semantic_id, semantic in sorted(semantic_nodes.items(), key=lambda item: _sort_key(item[0])):
         if semantic.representative.kind_2 != DIVERGE_KIND_VALUE:
@@ -974,6 +985,26 @@ def _detect_continuous_divmerge_as_t(
         related_road_indices.update(merge_back_trace.path_road_indices)
         related_road_indices.add(incoming_edge.road_idx)
         related_road_indices.add(merge_out.road_idx)
+        entrance_exit_road_ids = _road_ids_with_kind_suffix(
+            parsed_roads,
+            related_road_indices,
+            ENTRANCE_EXIT_ROAD_KIND_SUFFIX,
+        )
+        if entrance_exit_road_ids:
+            entrance_exit_suppressed_rows.append(
+                {
+                    "status": "suppressed",
+                    "reason": "related_road_kind_suffix_17",
+                    "diverge_node_id": semantic_id,
+                    "merge_node_id": merge_id,
+                    "related_road_ids": [
+                        parsed_roads[index].road_id
+                        for index in sorted(related_road_indices, key=lambda item: _sort_key(parsed_roads[item].road_id))
+                    ],
+                    "entrance_exit_road_ids": list(entrance_exit_road_ids),
+                }
+            )
+            continue
         rows.append(
             {
                 "group_id": f"divmerge_as_t_{semantic_id}_{merge_id}",
@@ -1000,7 +1031,7 @@ def _detect_continuous_divmerge_as_t(
                 },
             }
         )
-    return rows
+    return rows, entrance_exit_suppressed_rows
 
 
 def _split_main_and_side_edges(
@@ -1272,11 +1303,32 @@ def _normalize_road_kind(value: Any) -> str | None:
 
 
 def _is_auxiliary_road_kind(kind: str | None) -> bool:
+    return _has_road_kind_suffix(kind, AUXILIARY_ROAD_KIND_SUFFIX)
+
+
+def _is_entrance_exit_road_kind(kind: str | None) -> bool:
+    return _has_road_kind_suffix(kind, ENTRANCE_EXIT_ROAD_KIND_SUFFIX)
+
+
+def _road_ids_with_kind_suffix(
+    parsed_roads: list[ParsedRoad],
+    road_indices: set[int] | frozenset[int] | tuple[int, ...],
+    suffix: str,
+) -> tuple[str, ...]:
+    return tuple(
+        parsed_roads[index].road_id
+        for index in sorted(road_indices, key=lambda item: _sort_key(parsed_roads[item].road_id))
+        if _has_road_kind_suffix(parsed_roads[index].kind, suffix)
+    )
+
+
+def _has_road_kind_suffix(kind: str | None, suffix: str) -> bool:
     if kind is None:
         return False
+    normalized_suffix = suffix.lower()
     for token in str(kind).split("|"):
         text = token.strip().lower()
-        if len(text) >= 2 and text[-2:] == AUXILIARY_ROAD_KIND_SUFFIX:
+        if len(text) >= len(normalized_suffix) and text[-len(normalized_suffix) :] == normalized_suffix:
             return True
     return False
 

@@ -615,6 +615,80 @@ def test_mainnodeid_group_is_handled_as_one_semantic_intersection(tmp_path: Path
     assert "internal_semantic_road" in event_names
 
 
+def test_mainnodeid_group_uses_mainnode_attribute_when_id_has_decimal_alias(tmp_path: Path) -> None:
+    road_path = tmp_path / "mainnode_alias_roads.geojson"
+    node_path = tmp_path / "mainnode_alias_nodes.geojson"
+    _write_geojson(
+        node_path,
+        features=[
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 1,
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 90,
+                    "mainnodeid": "100.0",
+                    "kind": 0,
+                    "grade": 0,
+                    "kind_2": 0,
+                    "grade_2": 0,
+                    "closed_con": 0,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.009, 0.0]},
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "id": 100,
+                    "mainnodeid": "100.0",
+                    "kind": 4,
+                    "grade": 1,
+                    "kind_2": 4,
+                    "grade_2": 1,
+                    "closed_con": 2,
+                },
+                "geometry": {"type": "Point", "coordinates": [0.01, 0.0]},
+            },
+        ],
+    )
+    _write_geojson(
+        road_path,
+        features=[
+            _road_feature("r1_90", 1, 90, 0, [[0.0, 0.0], [0.009, 0.0]]),
+            _road_feature("r90_100", 90, 100, 0, [[0.009, 0.0], [0.01, 0.0]]),
+        ],
+    )
+
+    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    strategy = step1_pair_poc._load_strategy("configs/t01_data_preprocess/step1_pair_s2.json")
+    execution = step1_pair_poc.run_step1_strategy(context, strategy)
+
+    semantic_node = context.semantic_nodes["100.0"]
+    assert semantic_node.representative_node_id == "100"
+    assert semantic_node.kind_2 == 4
+    assert semantic_node.grade_2 == 1
+    assert semantic_node.closed_con == 2
+    assert "100.0" in execution.seed_ids
+    assert "100.0" in execution.terminate_ids
+
+    fallback_events = [
+        event
+        for event in context.graph_audit_events
+        if event["event"] == "mainnodeid_representative_fallback" and event["semantic_node_id"] == "100.0"
+    ]
+    assert fallback_events == []
+
+
 def test_formway_right_turn_lane_is_excluded_from_through_degree(tmp_path: Path) -> None:
     road_path, node_path = _build_formway_turn_lane_dataset(tmp_path)
     out_root = tmp_path / "outputs"

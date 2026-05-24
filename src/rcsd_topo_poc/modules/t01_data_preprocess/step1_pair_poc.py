@@ -478,6 +478,30 @@ def _uses_complex_junction_physical_semantics(node: NodeRecord, complex_mainnode
     return (node.mainnodeid or node.node_id) in complex_mainnode_ids
 
 
+def _mainnodeid_physical_id_alias(value: str) -> Optional[str]:
+    if value.endswith(".0") and value[:-2].isdigit():
+        return value[:-2]
+    return None
+
+
+def _resolve_semantic_representative_node(
+    semantic_node_id: str,
+    sorted_member_ids: tuple[str, ...],
+    physical_nodes: dict[str, NodeRecord],
+) -> tuple[NodeRecord, bool]:
+    representative_node = physical_nodes.get(semantic_node_id)
+    if representative_node is not None and representative_node.node_id in sorted_member_ids:
+        return representative_node, False
+
+    alias_node_id = _mainnodeid_physical_id_alias(semantic_node_id)
+    if alias_node_id is not None:
+        representative_node = physical_nodes.get(alias_node_id)
+        if representative_node is not None and representative_node.node_id in sorted_member_ids:
+            return representative_node, False
+
+    return physical_nodes[sorted_member_ids[0]], True
+
+
 def _build_semantic_nodes(
     physical_nodes: dict[str, NodeRecord],
     audit_events: list[dict[str, Any]],
@@ -499,9 +523,12 @@ def _build_semantic_nodes(
         for member_node_id in sorted_member_ids:
             physical_to_semantic[member_node_id] = semantic_node_id
 
-        representative_node = physical_nodes.get(semantic_node_id)
-        if representative_node is None or representative_node.node_id not in sorted_member_ids:
-            representative_node = physical_nodes[sorted_member_ids[0]]
+        representative_node, used_fallback = _resolve_semantic_representative_node(
+            semantic_node_id,
+            sorted_member_ids,
+            physical_nodes,
+        )
+        if used_fallback:
             audit_events.append(
                 {
                     "event": "mainnodeid_representative_fallback",

@@ -11,6 +11,7 @@
 3. 在 Step1/S2 semantic graph 中识别 `kind_2 = 128` 复杂 mainnode 组：
    - 组内物理 node 使用自身 `node.id`，不使用 `mainnodeid` 聚合。
    - 组内物理 node 使用 raw `kind / grade` 作为有效规则字段。
+   - S2 seed / terminate 对复杂组内物理 node 局部接受 raw `kind=8/16` 作为分歧 / 合流端点，不改变普通节点规则。
 4. 在 `_evaluate_trunk_choices` 内识别复杂穿越 pair：
    - `pair.crosses_kind_2_128`
    - `len(pair.kind_2_128_node_ids)` 达到阈值

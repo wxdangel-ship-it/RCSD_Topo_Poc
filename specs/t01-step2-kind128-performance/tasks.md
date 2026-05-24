@@ -11,3 +11,4 @@
 - [x] T9: 增加局部 corridor validated / rejected 单元测试，并用 XS1 复杂热点区间做性能对比。
 - [x] T10: 在 Step1/S2 中对 `kind_2 = 128` 复杂 mainnode 组启用物理 node 级建图与 raw `kind / grade` 规则恢复。
 - [x] T11: 增加复杂 mainnode 组拆分回归测试，确认组内物理 node 可作为独立分歧 / 合流候选边界。
+- [x] T12: 增加复杂组 raw `kind=8/16` 的 S2 端点匹配修正与回归测试，确认普通节点不被全局放宽。

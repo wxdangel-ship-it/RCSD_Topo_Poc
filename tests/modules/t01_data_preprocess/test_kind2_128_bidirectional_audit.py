@@ -169,6 +169,43 @@ def test_step1_splits_kind_2_128_mainnode_group_to_physical_raw_kind_nodes(tmp_p
     assert any(event["event"] == "complex_kind_2_128_physical_semantics" for event in context.graph_audit_events)
 
 
+def test_step1_accepts_complex_kind_2_128_raw_split_merge_kinds_only_in_complex_group(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+    _write_geojson(
+        node_path,
+        features=[
+            _node(1, 0.0, 0.0, kind_2=4),
+            _node(20, 10.0, 0.0, kind=8, grade=1, kind_2=128, grade_2=2, mainnodeid=20),
+            _node(21, 20.0, 0.0, kind=16, grade=1, kind_2=0, grade_2=0, mainnodeid=20),
+            _node(30, 30.0, 0.0, kind_2=8),
+            _node(3, 40.0, 0.0, kind_2=4),
+        ],
+    )
+    _write_geojson(
+        road_path,
+        features=[
+            _road("r1_20", 1, 20, [[0.0, 0.0], [10.0, 0.0]]),
+            _road("r20_21", 20, 21, [[10.0, 0.0], [20.0, 0.0]]),
+            _road("r21_30", 21, 30, [[20.0, 0.0], [30.0, 0.0]]),
+            _road("r30_3", 30, 3, [[30.0, 0.0], [40.0, 0.0]]),
+        ],
+    )
+
+    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    execution = step1_pair_poc.run_step1_strategy(context, _strategy())
+
+    assert context.semantic_nodes["20"].uses_complex_kind_2_128_physical_semantics is True
+    assert context.semantic_nodes["21"].uses_complex_kind_2_128_physical_semantics is True
+    assert context.semantic_nodes["30"].uses_complex_kind_2_128_physical_semantics is False
+    assert execution.seed_eval["20"].matched is True
+    assert execution.seed_eval["21"].matched is True
+    assert execution.seed_eval["30"].matched is False
+    assert execution.terminate_eval["20"].matched is True
+    assert execution.terminate_eval["21"].matched is True
+    assert execution.terminate_eval["30"].matched is False
+
+
 def _validation(
     pair_id: str,
     *,

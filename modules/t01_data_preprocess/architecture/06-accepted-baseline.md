@@ -151,7 +151,7 @@
 - `grade_2 in {1}`
 - `kind_2 in {4,64}`
 - `closed_con in {2,3}`
-- `kind_2 = 128` 代表复杂分歧 / 合流路口组合；在双向首轮中，该复杂 mainnode 组不按 `mainnodeid` 聚合，而是拆回物理 `node.id` 建图，并以 raw `kind / grade` 作为组内物理 node 的有效规则字段，恢复独立分歧 / 合流语义；Step2 不把复杂组合内部作为全局可枚举路口网处理，而优先按局部分歧 / 合流 port corridor 判定。
+- `kind_2 = 128` 代表复杂分歧 / 合流路口组合；在双向首轮中，该复杂 mainnode 组不按 `mainnodeid` 聚合，而是拆回物理 `node.id` 建图，并以 raw `kind / grade` 作为组内物理 node 的有效规则字段，恢复独立分歧 / 合流语义；S2 seed / terminate 对该复杂组内物理 node 额外接受 raw `kind=8/16` 作为分歧 / 合流端点，不改变普通节点的 `kind_bits_any=[2,6]` 规则；Step2 不把复杂组合内部作为全局可枚举路口网处理，而优先按局部分歧 / 合流 port corridor 判定。
 - `kind_2 = 128` 穿越审计独立于 `through_node_ids`：`through_node_ids` 仍只表达当前 degree-based through 规则命中的节点，不被扩展为复杂路口语义标签。
 
 ## 8. 阶段二：Step2

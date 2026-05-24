@@ -9,7 +9,7 @@ T01 双向 Segment 构建已经正式启用 `kind_2 = 128` 复杂分歧 / 合流
 ## Architecture
 
 - `kind_2 = 128` 复杂 mainnode 组在双向首轮不按 `mainnodeid` 聚合；Step1 使用组内物理 `node.id` 建图。
-- 属于复杂 mainnode 组的物理 node 使用 raw `kind / grade` 作为该轮有效规则字段，恢复独立分歧 / 合流语义。
+- 属于复杂 mainnode 组的物理 node 使用 raw `kind / grade` 作为该轮有效规则字段，恢复独立分歧 / 合流语义；S2 seed / terminate 对该复杂组内物理 node 额外接受 raw `kind=8/16`，该补充不作用于普通节点。
 - Step2 trunk 验证先将复杂 `kind_2 = 128` 组合视为局部分歧 / 合流 port corridor。
 - 对命中可终止复杂组合的 pair，Step2 只基于 Step1 已确认的进入 / 退出支持路径及其局部门禁给出结果，不在复杂路口内部展开全局 simple-path 追溯。
 - 对未形成可终止复杂组合的小型 case，仍允许回退到既有精确判定；兜底预算保护继续防止残余全局枚举失控。
@@ -31,7 +31,7 @@ T01 双向 Segment 构建已经正式启用 `kind_2 = 128` 复杂分歧 / 合流
   - 在既有 `pair_validation_table.csv` 的 `support_info` 中保留预算超限审计信息。
 - `step1_pair_poc.py`
   - 对 `kind_2 = 128` 复杂 mainnode 组启用物理 node 级 semantic graph。
-  - 对复杂组内物理 node 使用 raw `kind / grade` 参与 Step1/S2 seed / terminate 规则。
+  - 对复杂组内物理 node 使用 raw `kind / grade` 参与 Step1/S2 seed / terminate 规则，并局部接受 raw `kind=8/16` 作为复杂分歧 / 合流端点。
 
 不修改：
 
@@ -45,7 +45,7 @@ T01 双向 Segment 构建已经正式启用 `kind_2 = 128` 复杂分歧 / 合流
 
 - 单元测试：构造复杂 `kind_2 = 128` pair，覆盖局部 corridor validated / rejected 且不调用全局 path 枚举。
 - 单元测试：构造复杂 `kind_2 = 128` pair，触发预算超限并返回明确 reject reason。
-- 单元测试：构造 `kind_2 = 128` mainnode 组，验证 Step1 使用物理 `node.id` 与 raw `kind / grade` 恢复组内独立分歧 / 合流节点。
+- 单元测试：构造 `kind_2 = 128` mainnode 组，验证 Step1 使用物理 `node.id` 与 raw `kind / grade` 恢复组内独立分歧 / 合流节点，并验证 raw `kind=8/16` 仅在复杂组内可作为 S2 端点匹配。
 - 回归测试：已有 Step2 trunk 选择测试继续通过。
 - XS 性能验证：XS1 `pair_index=43` 使用 `--assume-working-layers` 不再超时，输出 `trunk_search_budget_exceeded` 或可解释判定。
 

@@ -190,7 +190,7 @@
   - `kind_2 in {4,64}`
   - `closed_con in {2,3}`
 - `kind_2 = 128` 在双向首轮表达复杂分歧 / 合流 mainnode 组；Step1 对该组不使用 `mainnodeid` 聚合，改用各物理 `node.id` 建图。
-- 双向首轮中，属于 `kind_2 = 128` 复杂 mainnode 组的物理 node 使用 raw `kind / grade` 作为有效 `kind_2 / grade_2` 规则字段，以恢复组内独立分歧 / 合流语义。
+- 双向首轮中，属于 `kind_2 = 128` 复杂 mainnode 组的物理 node 使用 raw `kind / grade` 作为有效 `kind_2 / grade_2` 规则字段，以恢复组内独立分歧 / 合流语义；S2 seed / terminate 对该复杂组内物理 node 额外接受 raw `kind=8/16` 作为分歧 / 合流端点，不改变普通节点的 `kind_bits_any=[2,6]` 规则。
 - 复杂 mainnode 组的穿越必须写入 `pair_candidates.csv / pair_table.csv / pair_summary.json` 的 `kind_2_128_*` 审计字段。
 - `kind_2 = 128` 穿越审计不得回写或扩展 `through_node_ids` 语义；`through_node_ids` 继续只表达 degree-based through 规则。
 - 输出：

@@ -29,6 +29,7 @@ REQUIRED_NODE_FIELDS = ("id", "kind", "grade", "kind_2", "grade_2", "closed_con"
 DEFAULT_RUN_ID_PREFIX = "t01_step1_pair_poc_"
 SEARCH_EVENT_SAMPLE_LIMIT_PER_TYPE = 100
 COMPLEX_JUNCTION_KIND_2 = 128
+COMPLEX_JUNCTION_RAW_KIND_BITS_ANY = (3, 4)
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,7 @@ class SemanticNodeRecord:
     closed_con: Optional[int]
     geometry: BaseGeometry
     raw_properties: dict[str, Any]
+    uses_complex_kind_2_128_physical_semantics: bool = False
 
 
 @dataclass(frozen=True)
@@ -551,6 +553,7 @@ def _build_semantic_nodes(
             closed_con=representative_node.closed_con,
             geometry=representative_node.geometry,
             raw_properties=dict(representative_node.raw_properties),
+            uses_complex_kind_2_128_physical_semantics=use_complex_physical_semantics,
         )
 
     return semantic_nodes, physical_to_semantic
@@ -627,12 +630,24 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
     return roads
 
 
+def _rule_kind_bits_any_matched(node: Union[NodeRecord, SemanticNodeRecord], rule: RuleSpec) -> bool:
+    if any(_bit_enabled(node.kind_2, bit_index) for bit_index in rule.kind_bits_any):
+        return True
+    if not isinstance(node, SemanticNodeRecord):
+        return False
+    if not node.uses_complex_kind_2_128_physical_semantics:
+        return False
+    if set(rule.kind_bits_any) != {2, 6}:
+        return False
+    return any(_bit_enabled(node.raw_kind, bit_index) for bit_index in COMPLEX_JUNCTION_RAW_KIND_BITS_ANY)
+
+
 def _evaluate_rule(node: Union[NodeRecord, SemanticNodeRecord], rule: RuleSpec) -> RuleEvaluation:
     reasons: list[str] = []
     for bit_index in rule.kind_bits_all:
         if not _bit_enabled(node.kind_2, bit_index):
             reasons.append(f"kind_missing_bit_{bit_index}")
-    if rule.kind_bits_any and not any(_bit_enabled(node.kind_2, bit_index) for bit_index in rule.kind_bits_any):
+    if rule.kind_bits_any and not _rule_kind_bits_any_matched(node, rule):
         joined = "_".join(str(v) for v in rule.kind_bits_any)
         reasons.append(f"kind_missing_any_bits_{joined}")
     if rule.kind_values_in and node.kind_2 not in rule.kind_values_in:

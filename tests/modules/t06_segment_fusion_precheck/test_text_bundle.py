@@ -237,7 +237,7 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
             {"properties": {"target_id": 3, "base_id": 103, "status": 0}, "geometry": Point(5, 1)},
             {"properties": {"target_id": 10, "base_id": 110, "status": 0}, "geometry": Point(1000, 0)},
         ],
-        crs_text="EPSG:3857",
+        crs_text="CRS84",
     )
     write_vector(
         rcsdnode_path,
@@ -292,5 +292,6 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
     assert [item["properties"]["id"] for item in segment_doc["features"]] == ["s-near"]
     assert {item["properties"]["target_id"] for item in relation_doc["features"]} == {1, 2, 3}
     assert summary["selected_swsd_segment_count"] == 1
+    assert summary["crs_normalized_to"] == "EPSG:3857"
     assert summary["required_swsd_road_ids"] == ["r-near"]
     assert summary["mapped_rcsd_semantic_node_ids"] == ["101", "102", "103"]

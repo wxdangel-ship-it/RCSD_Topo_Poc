@@ -74,6 +74,7 @@ T06_INPUT_SLICE_PROFILE_RADII_M = {
     "M": 5000.0,
 }
 T06_INPUT_SLICE_DEFAULT_PROFILE_ID = "XS"
+T06_INPUT_SLICE_CRS_TEXT = "EPSG:3857"
 
 _OUTPUT_STEMS_BY_STEP_DIR = {
     STEP1_DIR: (STEP1_EVD_STEM, STEP1_FUSION_STEM, STEP1_REJECTED_STEM),
@@ -685,7 +686,7 @@ def _select_t06_input_slice(
         or _intersects_window(feature, window)
     ]
 
-    relation_features = read_features(intersection_match_path)
+    relation_features = read_features(intersection_match_path, crs_override=T06_INPUT_SLICE_CRS_TEXT)
     selected_relations = []
     mapped_rcsd_semantic_node_ids: list[str] = []
     for feature in relation_features:
@@ -740,6 +741,7 @@ def _select_t06_input_slice(
     }
     summary = {
         "selection_mode": "centered_square_window",
+        "crs_normalized_to": T06_INPUT_SLICE_CRS_TEXT,
         "profile_id": selected_profile_id,
         "radius_m": selected_radius_m,
         "center_3857": {"x": float(center_x), "y": float(center_y)},

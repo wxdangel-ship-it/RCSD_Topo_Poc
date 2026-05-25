@@ -673,18 +673,19 @@ def test_mainnodeid_group_uses_mainnode_attribute_when_id_has_decimal_alias(tmp_
     strategy = step1_pair_poc._load_strategy("configs/t01_data_preprocess/step1_pair_s2.json")
     execution = step1_pair_poc.run_step1_strategy(context, strategy)
 
-    semantic_node = context.semantic_nodes["100.0"]
+    semantic_node = context.semantic_nodes["100"]
     assert semantic_node.representative_node_id == "100"
     assert semantic_node.kind_2 == 4
     assert semantic_node.grade_2 == 1
     assert semantic_node.closed_con == 2
-    assert "100.0" in execution.seed_ids
-    assert "100.0" in execution.terminate_ids
+    assert "100" in execution.seed_ids
+    assert "100" in execution.terminate_ids
+    assert "100.0" not in context.semantic_nodes
 
     fallback_events = [
         event
         for event in context.graph_audit_events
-        if event["event"] == "mainnodeid_representative_fallback" and event["semantic_node_id"] == "100.0"
+        if event["event"] == "mainnodeid_representative_fallback" and event["semantic_node_id"] == "100"
     ]
     assert fallback_events == []
 

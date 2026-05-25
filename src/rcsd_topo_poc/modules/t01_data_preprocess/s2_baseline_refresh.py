@@ -29,6 +29,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     _bit_enabled,
     _coerce_int,
     _find_repo_root,
+    _mainnodeid_physical_id_alias,
     _normalize_id,
     _normalize_mainnodeid,
     _sort_key,
@@ -365,8 +366,17 @@ def _build_mainnode_groups(
 
     for mainnode_id, member_ids in groups.items():
         sorted_members = tuple(sorted(member_ids, key=_sort_key))
-        representative_node_id = mainnode_id if mainnode_id in node_by_id else sorted_members[0]
-        if representative_node_id != mainnode_id:
+        used_fallback = False
+        if mainnode_id in node_by_id and mainnode_id in sorted_members:
+            representative_node_id = mainnode_id
+        else:
+            alias_node_id = _mainnodeid_physical_id_alias(mainnode_id)
+            if alias_node_id is not None and alias_node_id in node_by_id and alias_node_id in sorted_members:
+                representative_node_id = alias_node_id
+            else:
+                representative_node_id = sorted_members[0]
+                used_fallback = True
+        if used_fallback:
             representative_fallback_count += 1
 
         representative = node_by_id[representative_node_id]

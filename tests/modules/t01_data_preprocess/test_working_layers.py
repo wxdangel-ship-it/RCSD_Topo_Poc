@@ -56,6 +56,51 @@ def test_initialize_working_layers_creates_runtime_fields(tmp_path: Path) -> Non
     assert "s_grade" not in road_props["r1"]
 
 
+def test_initialize_working_layers_normalizes_integral_decimal_id_text(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes_decimal_ids.geojson"
+    road_path = tmp_path / "roads_decimal_ids.geojson"
+    out_root = tmp_path / "working_decimal_ids"
+
+    write_geojson(
+        node_path,
+        [
+            {
+                "properties": {"id": "90.0", "grade": 0, "kind": 0, "closed_con": 0, "mainnodeid": "100.0"},
+                "geometry": Point(0.0, 0.0),
+            },
+            {
+                "properties": {"id": "100.0", "grade": 1, "kind": 4, "closed_con": 2, "mainnodeid": "100.0"},
+                "geometry": Point(1.0, 0.0),
+            },
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            {
+                "properties": {"id": "200.0", "snodeid": "90.0", "enodeid": "100.0", "direction": 2, "formway": 0},
+                "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
+            }
+        ],
+    )
+
+    artifacts = initialize_working_layers(road_path=road_path, node_path=node_path, out_root=out_root)
+
+    nodes_doc = load_vector_feature_collection(artifacts.nodes_path)
+    roads_doc = load_vector_feature_collection(artifacts.roads_path)
+    node_props = {str(feature["properties"]["id"]): feature["properties"] for feature in nodes_doc["features"]}
+    road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
+
+    assert sorted(node_props) == ["100", "90"]
+    assert str(node_props["90"]["mainnodeid"]) == "100"
+    assert str(node_props["90"]["working_mainnodeid"]) == "100"
+    assert str(node_props["100"]["mainnodeid"]) == "100"
+    assert str(node_props["100"]["working_mainnodeid"]) == "100"
+    assert sorted(road_props) == ["200"]
+    assert str(road_props["200"]["snodeid"]) == "90"
+    assert str(road_props["200"]["enodeid"]) == "100"
+
+
 def test_initialize_working_layers_groups_roundabout_roads_by_shared_nodes(tmp_path: Path) -> None:
     node_path = tmp_path / "roundabout_nodes.geojson"
     road_path = tmp_path / "roundabout_roads.geojson"

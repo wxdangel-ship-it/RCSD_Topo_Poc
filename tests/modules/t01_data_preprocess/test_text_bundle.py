@@ -159,6 +159,7 @@ def test_t01_input_text_bundle_uses_centered_profile_slice(tmp_path: Path) -> No
 
 def test_t01_input_text_bundle_splits_and_decodes_from_part(tmp_path: Path) -> None:
     node_path, road_path = _write_input_layers(tmp_path / "input")
+    max_text_size_bytes = 10_000
 
     artifacts = run_t01_export_input_text_bundle(
         node_path=node_path,
@@ -167,12 +168,12 @@ def test_t01_input_text_bundle_splits_and_decodes_from_part(tmp_path: Path) -> N
         center_x=100_000.0,
         center_y=200_000.0,
         profile_id="XXXS",
-        max_text_size_bytes=25_000,
+        max_text_size_bytes=max_text_size_bytes,
     )
 
     assert artifacts.success is True
     assert len(artifacts.part_txt_paths) > 1
-    assert all(path.stat().st_size <= 25_000 for path in artifacts.part_txt_paths)
+    assert all(path.stat().st_size <= max_text_size_bytes for path in artifacts.part_txt_paths)
 
     decoded = run_t01_decode_text_bundle(bundle_txt=artifacts.part_txt_paths[-1], out_dir=tmp_path / "decoded_split")
     decoded_nodes = read_vector_layer(decoded.out_dir / "nodes.gpkg", layer_name="nodes").features

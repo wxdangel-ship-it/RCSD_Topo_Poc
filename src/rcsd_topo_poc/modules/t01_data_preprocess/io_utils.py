@@ -15,6 +15,7 @@ from shapely.geometry import mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform as shapely_transform
 
+from rcsd_topo_poc.modules.t01_data_preprocess.fast_gpkg_writer import write_gpkg_fast
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     GEOPACKAGE_SUFFIXES,
     prefer_vector_input_path,
@@ -260,8 +261,28 @@ def write_geojson(path: Union[str, Path], features: Iterable[dict[str, Any]]) ->
 
 
 def write_vector(path: Union[str, Path], features: Iterable[dict[str, Any]], *, layer_name: Optional[str] = None) -> None:
+    output_path = Path(path)
+    if output_path.suffix.lower() in GEOPACKAGE_SUFFIXES:
+        records = list(features)
+        try:
+            write_gpkg_fast(
+                output_path,
+                records,
+                crs_text=TARGET_CRS.to_string(),
+                layer_name=layer_name,
+            )
+            return
+        except Exception:
+            _write_vector(
+                output_path,
+                records,
+                crs_text=TARGET_CRS.to_string(),
+                layer_name=layer_name,
+            )
+            return
+
     _write_vector(
-        Path(path),
+        output_path,
         features,
         crs_text=TARGET_CRS.to_string(),
         layer_name=layer_name,

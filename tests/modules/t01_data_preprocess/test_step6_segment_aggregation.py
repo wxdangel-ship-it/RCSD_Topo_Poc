@@ -8,7 +8,15 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     load_vector_feature_collection,
     write_geojson,
 )
-from rcsd_topo_poc.modules.t01_data_preprocess.step6_segment_aggregation import run_step6_segment_aggregation
+from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
+    MainnodeGroup,
+    NodeFeatureRecord,
+    RoadFeatureRecord,
+)
+from rcsd_topo_poc.modules.t01_data_preprocess.step6_segment_aggregation import (
+    run_step6_segment_aggregation,
+    run_step6_segment_aggregation_from_records,
+)
 
 
 def _node_feature(
@@ -354,3 +362,83 @@ def test_step6_keeps_dead_end_leaf_grade_without_promoting_to_zero_zero(tmp_path
     assert segment_props["junc_nodes"] in (None, "")
     assert artifacts.summary["dead_end_segment_count"] == 1
     assert artifacts.summary["sgrade_adjusted_count"] == 0
+
+
+def test_step6_resolves_decimal_alias_pair_node_from_inmemory_groups(tmp_path: Path) -> None:
+    nodes = [
+        NodeFeatureRecord(
+            node_id="698433",
+            mainnodeid=None,
+            semantic_node_id="698433",
+            grade=1,
+            kind=4,
+            properties={
+                "id": "698433",
+                "kind": 4,
+                "grade": 1,
+                "kind_2": 4,
+                "grade_2": 1,
+                "working_mainnodeid": None,
+            },
+            geometry=Point(0.0, 0.0),
+        ),
+        NodeFeatureRecord(
+            node_id="699847",
+            mainnodeid="699847.0",
+            semantic_node_id="699847",
+            grade=1,
+            kind=4,
+            properties={
+                "id": "699847",
+                "kind": 4,
+                "grade": 1,
+                "kind_2": 4,
+                "grade_2": 1,
+                "working_mainnodeid": "699847.0",
+            },
+            geometry=Point(1.0, 0.0),
+        ),
+    ]
+    roads = [
+        RoadFeatureRecord(
+            road_id="r_alias",
+            snodeid="698433",
+            enodeid="699847",
+            direction=2,
+            formway=0,
+            road_kind=2,
+            properties={
+                "id": "r_alias",
+                "snodeid": "698433",
+                "enodeid": "699847",
+                "direction": 2,
+                "formway": 0,
+                "road_kind": 2,
+                "sgrade": "0-1双",
+                "segmentid": "698433_699847.0",
+            },
+            geometry=LineString([(0.0, 0.0), (1.0, 0.0)]),
+        )
+    ]
+    mainnode_groups = {
+        "698433": MainnodeGroup("698433", "698433", ("698433",), 1, 4),
+        "699847": MainnodeGroup("699847", "699847", ("699847",), 1, 4),
+    }
+
+    artifacts = run_step6_segment_aggregation_from_records(
+        nodes=nodes,
+        roads=roads,
+        out_root=tmp_path / "out",
+        node_path=tmp_path / "nodes.gpkg",
+        road_path=tmp_path / "roads.gpkg",
+        run_id="decimal_alias_pair_node",
+        mainnode_groups=mainnode_groups,
+    )
+
+    segment_doc = _load_geojson(artifacts.segment_path)
+    segment_props = segment_doc["features"][0]["properties"]
+    assert segment_props["id"] == "698433_699847.0"
+    assert segment_props["pair_nodes"] == "698433,699847.0"
+    assert segment_props["sgrade"] == "0-0双"
+    assert segment_props["junc_nodes"] in (None, "")
+    assert artifacts.summary["segment_count"] == 1

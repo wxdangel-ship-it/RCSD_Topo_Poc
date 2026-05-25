@@ -17,7 +17,12 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     _load_nodes_and_roads,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json, write_vector
-from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import _coerce_int, _find_repo_root, _sort_key
+from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
+    _coerce_int,
+    _find_repo_root,
+    _mainnodeid_physical_id_alias,
+    _sort_key,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     WORKING_NODE_FIELDS,
     WORKING_ROAD_FIELDS,
@@ -150,6 +155,40 @@ def _parse_segment_pair_nodes(segment_id: str) -> tuple[str, str]:
     if len(parts) == 3 and parts[0] and parts[1] and parts[2].isdigit():
         return parts[0], parts[1]
     raise ValueError(f"Step6 expects segmentid in 'A_B' or 'A_B_N' form, got '{segment_id}'.")
+
+
+def _mainnode_lookup_aliases(node_id: str) -> tuple[str, ...]:
+    aliases = [node_id]
+    physical_alias = _mainnodeid_physical_id_alias(node_id)
+    if physical_alias is not None and physical_alias not in aliases:
+        aliases.append(physical_alias)
+    if node_id.isdigit():
+        decimal_alias = f"{node_id}.0"
+        if decimal_alias not in aliases:
+            aliases.append(decimal_alias)
+    return tuple(aliases)
+
+
+def _resolve_mainnode_group(
+    node_id: str,
+    mainnode_groups: dict[str, MainnodeGroup],
+) -> tuple[Optional[str], Optional[MainnodeGroup]]:
+    for alias in _mainnode_lookup_aliases(node_id):
+        group = mainnode_groups.get(alias)
+        if group is not None:
+            return alias, group
+    return None, None
+
+
+def _resolve_allowed_road_ids(
+    node_id: str,
+    group_to_allowed_road_ids: dict[str, set[str]],
+) -> set[str]:
+    for alias in _mainnode_lookup_aliases(node_id):
+        allowed_road_ids = group_to_allowed_road_ids.get(alias)
+        if allowed_road_ids is not None:
+            return allowed_road_ids
+    return set()
 
 
 def _flatten_lines(geometry: Any) -> list[LineString]:
@@ -300,26 +339,37 @@ def _collect_segment_records(
             covered_group_ids.add(enode.semantic_node_id)
         multiline = MultiLineString(flattened_lines)
 
+        pair_groups: list[MainnodeGroup] = []
+        pair_node_equivalent_ids: set[str] = set()
+        for pair_node_id in pair_nodes:
+            pair_node_equivalent_ids.update(_mainnode_lookup_aliases(pair_node_id))
+            resolved_group_id, group = _resolve_mainnode_group(pair_node_id, mainnode_groups)
+            if group is None or resolved_group_id is None:
+                raise ValueError(f"Step6 segment '{segment_id}' endpoint '{pair_node_id}' does not exist in node groups.")
+            pair_groups.append(group)
+            pair_node_equivalent_ids.add(resolved_group_id)
+            pair_node_equivalent_ids.add(group.mainnode_id)
+
         inner_group_ids: list[str] = []
         junc_nodes: list[str] = []
         road_id_set = set(road_ids)
         for semantic_node_id in sorted(covered_group_ids, key=_sort_key):
-            if semantic_node_id in pair_nodes:
+            if semantic_node_id in pair_node_equivalent_ids:
                 continue
-            allowed_road_ids = group_to_allowed_road_ids.get(semantic_node_id, set())
+            allowed_road_ids = _resolve_allowed_road_ids(semantic_node_id, group_to_allowed_road_ids)
             if allowed_road_ids and allowed_road_ids.issubset(road_id_set):
                 inner_group_ids.append(semantic_node_id)
-                member_ids = mainnode_groups[semantic_node_id].member_node_ids
+                _, inner_group = _resolve_mainnode_group(semantic_node_id, mainnode_groups)
+                if inner_group is None:
+                    raise ValueError(f"Step6 segment '{segment_id}' inner node '{semantic_node_id}' does not exist in node groups.")
+                member_ids = inner_group.member_node_ids
                 for node_id in member_ids:
                     inner_nodes_by_segment[segment_id].append(node_by_id[node_id])
                 continue
             junc_nodes.append(semantic_node_id)
 
         pair_grade_values: list[Optional[int]] = []
-        for pair_node_id in pair_nodes:
-            group = mainnode_groups.get(pair_node_id)
-            if group is None:
-                raise ValueError(f"Step6 segment '{segment_id}' endpoint '{pair_node_id}' does not exist in node groups.")
+        for group in pair_groups:
             representative = node_by_id[group.representative_node_id]
             current_node_props = (
                 representative.properties
@@ -342,7 +392,7 @@ def _collect_segment_records(
         if sgrade_new == STEP6_SEGMENT_GRADE_VALUE:
             conflicting_nodes: list[str] = []
             for semantic_node_id in junc_nodes:
-                group = mainnode_groups.get(semantic_node_id)
+                _, group = _resolve_mainnode_group(semantic_node_id, mainnode_groups)
                 if group is None:
                     continue
                 representative = node_by_id[group.representative_node_id]

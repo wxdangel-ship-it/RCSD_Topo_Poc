@@ -12,6 +12,8 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     write_geojson,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
+    NodeFeatureRecord,
+    _build_mainnode_groups,
     _load_segment_body_assignments,
     refresh_s2_baseline,
 )
@@ -64,6 +66,38 @@ def _load_geojson(path: Path) -> dict:
 def _csv_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as fp:
         return list(csv.DictReader(fp))
+
+
+def test_build_mainnode_groups_uses_decimal_mainnode_alias_representative() -> None:
+    main = NodeFeatureRecord(
+        node_id="55353182",
+        mainnodeid="55353182.0",
+        semantic_node_id="55353182.0",
+        grade=1,
+        kind=8,
+        properties={"id": "55353182", "mainnodeid": "55353182.0"},
+        geometry=Point(0.0, 0.0),
+    )
+    aux = NodeFeatureRecord(
+        node_id="55353181",
+        mainnodeid="55353182.0",
+        semantic_node_id="55353182.0",
+        grade=0,
+        kind=0,
+        properties={"id": "55353181", "mainnodeid": "55353182.0"},
+        geometry=Point(1.0, 0.0),
+    )
+
+    groups, representative_fallback_count = _build_mainnode_groups(
+        {main.node_id: main, aux.node_id: aux},
+        {"55353182.0": [aux.node_id, main.node_id]},
+    )
+
+    group = groups["55353182.0"]
+    assert group.representative_node_id == "55353182"
+    assert group.grade_old == 1
+    assert group.kind_old == 8
+    assert representative_fallback_count == 0
 
 
 def test_refresh_s2_baseline_writes_node_and_road_fields(tmp_path: Path) -> None:

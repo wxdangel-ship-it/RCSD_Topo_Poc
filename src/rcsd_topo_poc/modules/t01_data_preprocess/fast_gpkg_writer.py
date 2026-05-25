@@ -1,0 +1,377 @@
+from __future__ import annotations
+
+import json
+import math
+import re
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+from pyproj import CRS
+from shapely import to_wkb
+from shapely.geometry import shape
+from shapely.geometry.base import BaseGeometry
+
+
+GPKG_APPLICATION_ID = 0x47504B47
+GPKG_USER_VERSION = 10300
+GPKG_FID_COLUMN = "fid"
+GPKG_GEOMETRY_COLUMN = "geom"
+GPKG_BATCH_SIZE = 1000
+
+
+def write_gpkg_fast(
+    path: Path,
+    features: Iterable[dict[str, Any]],
+    *,
+    crs_text: str,
+    layer_name: str | None = None,
+) -> dict[str, Any]:
+    output_path = Path(path)
+    records = [_prepare_record(feature) for feature in features]
+    schema = _build_schema(records)
+    return _write_records(
+        output_path,
+        records=records,
+        crs=CRS.from_user_input(crs_text),
+        layer_name=layer_name or output_path.stem,
+        schema=schema,
+    )
+
+
+def _prepare_record(feature: dict[str, Any]) -> dict[str, Any]:
+    properties: dict[str, Any] = {}
+    lower_seen: set[str] = set()
+    for key, value in (feature.get("properties") or {}).items():
+        text = str(key)
+        lower = text.lower()
+        if lower in lower_seen:
+            continue
+        lower_seen.add(lower)
+        properties[text] = _property_value(value)
+    return {"properties": properties, "geometry": feature.get("geometry")}
+
+
+def _build_schema(records: list[dict[str, Any]]) -> dict[str, str]:
+    field_order: list[str] = []
+    lower_to_field: dict[str, str] = {}
+    values_by_field: dict[str, list[Any]] = {}
+    for record in records:
+        for key, value in record["properties"].items():
+            lower = key.lower()
+            field_name = lower_to_field.get(lower)
+            if field_name is None:
+                lower_to_field[lower] = key
+                field_name = key
+                field_order.append(field_name)
+                values_by_field[field_name] = []
+            values_by_field[field_name].append(value)
+    return {field_name: _sqlite_type(values_by_field[field_name]) for field_name in field_order}
+
+
+def _write_records(
+    output_path: Path,
+    *,
+    records: list[dict[str, Any]],
+    crs: CRS,
+    layer_name: str,
+    schema: dict[str, str],
+) -> dict[str, Any]:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _remove_existing_gpkg(output_path)
+
+    table_name = _sanitize_layer_name(layer_name)
+    field_mapping = _field_mapping(schema.keys())
+    srs_id = _srs_record(crs)[0]
+    geometry_types: set[str] = set()
+    bounds_values: list[tuple[float, float, float, float]] = []
+    has_z = False
+
+    with sqlite3.connect(output_path) as conn:
+        _initialize_gpkg_metadata(conn)
+        insert_sql = _create_feature_table(
+            conn,
+            table_name=table_name,
+            field_mapping=field_mapping,
+            field_types=schema,
+        )
+        batch: list[list[Any]] = []
+        for record_index, record in enumerate(records, start=1):
+            geometry = _geometry_object(record.get("geometry"), record_index=record_index)
+            geometry_types.add(geometry.geom_type.upper())
+            bounds_values.append(tuple(float(value) for value in geometry.bounds))
+            has_z = has_z or bool(getattr(geometry, "has_z", False))
+            row_values = [
+                _sqlite_value(record["properties"].get(original_name))
+                for original_name in field_mapping
+            ]
+            row_values.append(_build_gpkg_geometry_blob(geometry, srs_id))
+            batch.append(row_values)
+            if len(batch) >= GPKG_BATCH_SIZE:
+                conn.executemany(insert_sql, batch)
+                batch.clear()
+        if batch:
+            conn.executemany(insert_sql, batch)
+
+        _insert_gpkg_metadata_rows(
+            conn,
+            table_name=table_name,
+            crs=crs,
+            bounds=_aggregate_bounds(bounds_values),
+            geometry_type_name=_geometry_type_name(geometry_types),
+            has_z=has_z,
+        )
+        conn.commit()
+
+    return {
+        "feature_count": len(records),
+        "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
+    }
+
+
+def _remove_existing_gpkg(path: Path) -> None:
+    for candidate in (path, path.with_name(f"{path.name}-wal"), path.with_name(f"{path.name}-shm"), path.with_name(f"{path.name}-journal")):
+        if candidate.exists():
+            candidate.unlink()
+
+
+def _geometry_object(geometry: Any, *, record_index: int) -> BaseGeometry:
+    if geometry is None:
+        raise ValueError(f"Feature {record_index} has no geometry")
+    geometry_obj = geometry if isinstance(geometry, BaseGeometry) else shape(geometry)
+    if geometry_obj.is_empty:
+        raise ValueError(f"Feature {record_index} has empty geometry")
+    return geometry_obj
+
+
+def _property_value(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return json.dumps([_json_plain(item) for item in value], ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    if isinstance(value, dict):
+        return json.dumps(_json_plain(value), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    return str(value)
+
+
+def _json_plain(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_plain(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def _sqlite_value(value: Any) -> Any:
+    value = _property_value(value)
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def _sqlite_type(values: Iterable[Any]) -> str:
+    non_null = [value for value in values if value is not None]
+    if not non_null:
+        return "TEXT"
+    if all(isinstance(value, bool) for value in non_null):
+        return "BOOLEAN"
+    if all(isinstance(value, int) and not isinstance(value, bool) for value in non_null):
+        return "INTEGER"
+    if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in non_null):
+        return "REAL" if any(isinstance(value, float) for value in non_null) else "INTEGER"
+    return "TEXT"
+
+
+def _sanitize_layer_name(name: str) -> str:
+    sanitized = re.sub(r"[^0-9A-Za-z_]+", "_", str(name)).strip("_")
+    if not sanitized:
+        sanitized = "layer"
+    if sanitized[0].isdigit():
+        sanitized = f"layer_{sanitized}"
+    return sanitized
+
+
+def _quote_identifier(identifier: str) -> str:
+    return '"' + str(identifier).replace('"', '""') + '"'
+
+
+def _field_mapping(field_names: Iterable[str]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    used_lower = {GPKG_FID_COLUMN.lower(), GPKG_GEOMETRY_COLUMN.lower()}
+    for original_name in field_names:
+        base_name = str(original_name).strip() or "field"
+        candidate = base_name
+        suffix_index = 1
+        while candidate.lower() in used_lower:
+            suffix_index += 1
+            candidate = f"{base_name}_{suffix_index}"
+        mapping[str(original_name)] = candidate
+        used_lower.add(candidate.lower())
+    return mapping
+
+
+def _srs_record(crs: CRS) -> tuple[int, str, int, str, str]:
+    epsg = crs.to_epsg()
+    if epsg is not None:
+        return epsg, "EPSG", epsg, crs.to_wkt(), crs.name
+    return 999000, "NONE", 999000, crs.to_wkt(), crs.name or "custom"
+
+
+def _initialize_gpkg_metadata(conn: sqlite3.Connection) -> None:
+    conn.execute(f"PRAGMA application_id = {GPKG_APPLICATION_ID}")
+    conn.execute(f"PRAGMA user_version = {GPKG_USER_VERSION}")
+    conn.execute("PRAGMA journal_mode = OFF")
+    conn.execute("PRAGMA synchronous = OFF")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    conn.execute(
+        """
+        CREATE TABLE gpkg_spatial_ref_sys (
+            srs_name TEXT NOT NULL,
+            srs_id INTEGER NOT NULL PRIMARY KEY,
+            organization TEXT NOT NULL,
+            organization_coordsys_id INTEGER NOT NULL,
+            definition TEXT NOT NULL,
+            description TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE gpkg_contents (
+            table_name TEXT NOT NULL PRIMARY KEY,
+            data_type TEXT NOT NULL,
+            identifier TEXT UNIQUE,
+            description TEXT DEFAULT '',
+            last_change DATETIME NOT NULL,
+            min_x DOUBLE,
+            min_y DOUBLE,
+            max_x DOUBLE,
+            max_y DOUBLE,
+            srs_id INTEGER
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE gpkg_geometry_columns (
+            table_name TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            geometry_type_name TEXT NOT NULL,
+            srs_id INTEGER NOT NULL,
+            z TINYINT NOT NULL,
+            m TINYINT NOT NULL,
+            PRIMARY KEY (table_name, column_name)
+        )
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO gpkg_spatial_ref_sys (
+            srs_name, srs_id, organization, organization_coordsys_id, definition, description
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("Undefined Cartesian SRS", -1, "NONE", -1, "undefined", "undefined cartesian coordinate reference system"),
+            ("Undefined Geographic SRS", 0, "NONE", 0, "undefined", "undefined geographic coordinate reference system"),
+            ("WGS 84", 4326, "EPSG", 4326, CRS.from_epsg(4326).to_wkt(), "longitude/latitude coordinates in decimal degrees on the WGS 84 spheroid"),
+        ],
+    )
+
+
+def _create_feature_table(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str,
+    field_mapping: dict[str, str],
+    field_types: dict[str, str],
+) -> str:
+    column_defs = [f"{_quote_identifier(GPKG_FID_COLUMN)} INTEGER PRIMARY KEY AUTOINCREMENT"]
+    for original_name, output_name in field_mapping.items():
+        column_defs.append(f"{_quote_identifier(output_name)} {field_types.get(original_name, 'TEXT')}")
+    column_defs.append(f"{_quote_identifier(GPKG_GEOMETRY_COLUMN)} BLOB")
+    conn.execute(f"CREATE TABLE {_quote_identifier(table_name)} ({', '.join(column_defs)})")
+    insert_columns = [field_mapping[original_name] for original_name in field_mapping] + [GPKG_GEOMETRY_COLUMN]
+    placeholders = ", ".join("?" for _ in insert_columns)
+    return (
+        f"INSERT INTO {_quote_identifier(table_name)} "
+        f"({', '.join(_quote_identifier(name) for name in insert_columns)}) VALUES ({placeholders})"
+    )
+
+
+def _insert_gpkg_metadata_rows(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str,
+    crs: CRS,
+    bounds: list[float] | None,
+    geometry_type_name: str,
+    has_z: bool,
+) -> None:
+    srs_id, organization, organization_coordsys_id, definition, srs_name = _srs_record(crs)
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO gpkg_spatial_ref_sys (
+            srs_name, srs_id, organization, organization_coordsys_id, definition, description
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (srs_name, srs_id, organization, organization_coordsys_id, definition, srs_name),
+    )
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    conn.execute(
+        """
+        INSERT INTO gpkg_contents (
+            table_name, data_type, identifier, description, last_change,
+            min_x, min_y, max_x, max_y, srs_id
+        ) VALUES (?, 'features', ?, '', ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            table_name,
+            table_name,
+            now_iso,
+            bounds[0] if bounds else None,
+            bounds[1] if bounds else None,
+            bounds[2] if bounds else None,
+            bounds[3] if bounds else None,
+            srs_id,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO gpkg_geometry_columns (
+            table_name, column_name, geometry_type_name, srs_id, z, m
+        ) VALUES (?, ?, ?, ?, ?, 0)
+        """,
+        (table_name, GPKG_GEOMETRY_COLUMN, geometry_type_name, srs_id, 1 if has_z else 0),
+    )
+
+
+def _build_gpkg_geometry_blob(geometry: BaseGeometry, srs_id: int) -> bytes:
+    wkb = to_wkb(geometry, hex=False, byte_order=1)
+    flags = 1
+    return b"GP" + bytes((0, flags)) + int(srs_id).to_bytes(4, "little", signed=True) + wkb
+
+
+def _geometry_type_name(geometry_types: set[str]) -> str:
+    if len(geometry_types) == 1:
+        return next(iter(geometry_types))
+    return "GEOMETRY"
+
+
+def _aggregate_bounds(bounds_values: list[tuple[float, float, float, float]]) -> list[float] | None:
+    if not bounds_values:
+        return None
+    return [
+        min(bounds[0] for bounds in bounds_values),
+        min(bounds[1] for bounds in bounds_values),
+        max(bounds[2] for bounds in bounds_values),
+        max(bounds[3] for bounds in bounds_values),
+    ]

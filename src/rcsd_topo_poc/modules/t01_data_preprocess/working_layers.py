@@ -13,6 +13,12 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     write_json,
     write_vector,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.id_normalization import (
+    normalize_id as _shared_normalize_id,
+    normalize_mainnodeid as _shared_normalize_mainnodeid,
+    normalize_nullable_text as _shared_normalize_nullable_text,
+    normalize_scalar as _shared_normalize_scalar,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.refresh_node_retyping import (
     evaluate_mainnode_bootstrap_retype,
     summarize_mainnode_retype_topology,
@@ -57,12 +63,7 @@ class RoundaboutGroup:
 
 
 def _normalize_scalar(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        stripped = value.strip()
-        return None if stripped == "" else stripped
-    return value
+    return _shared_normalize_scalar(value)
 
 
 def _coerce_int(value: Any) -> Optional[int]:
@@ -79,21 +80,37 @@ def _coerce_int(value: Any) -> Optional[int]:
 
 
 def _normalize_id(value: Any) -> Optional[str]:
-    normalized = _normalize_scalar(value)
+    return _shared_normalize_id(value)
+
+
+def _normalize_mainnodeid(value: Any) -> Optional[str]:
+    return _shared_normalize_mainnodeid(value)
+
+
+def _normalize_id_property_value(value: Any) -> Any:
+    normalized = _normalize_id(value)
     if normalized is None:
         return None
-    if isinstance(normalized, int):
-        return str(normalized)
-    if isinstance(normalized, float) and normalized.is_integer():
-        return str(int(normalized))
-    return str(normalized)
+    if isinstance(value, str):
+        return normalized
+    if isinstance(value, float) and value.is_integer():
+        return int(normalized)
+    return value
+
+
+def _normalize_mainnodeid_property_value(value: Any) -> Any:
+    normalized = _normalize_mainnodeid(value)
+    if normalized is None:
+        return None
+    if isinstance(value, str):
+        return normalized
+    if isinstance(value, float) and value.is_integer():
+        return int(normalized)
+    return value
 
 
 def _normalize_nullable_text(value: Any) -> Optional[str]:
-    normalized = _normalize_scalar(value)
-    if normalized is None:
-        return None
-    return str(normalized)
+    return _shared_normalize_nullable_text(value)
 
 
 def get_road_sgrade(properties: dict[str, Any]) -> Optional[str]:
@@ -182,21 +199,33 @@ def _emit_progress(
 
 def _initialize_node_properties(props: dict[str, Any]) -> dict[str, Any]:
     initialized = dict(props)
+    node_id_value = _normalize_id_property_value(initialized.get("id"))
+    if node_id_value is not None:
+        initialized["id"] = node_id_value
+    mainnodeid_value = _normalize_mainnodeid_property_value(initialized.get("mainnodeid"))
+    if "mainnodeid" in initialized:
+        initialized["mainnodeid"] = mainnodeid_value
     existing_grade_2 = _coerce_int(initialized.get("grade_2"))
     existing_kind_2 = _coerce_int(initialized.get("kind_2"))
-    existing_working_mainnodeid = _normalize_nullable_text(initialized.get("working_mainnodeid"))
+    existing_working_mainnodeid = _normalize_mainnodeid(initialized.get("working_mainnodeid"))
+    existing_working_mainnodeid_value = _normalize_mainnodeid_property_value(initialized.get("working_mainnodeid"))
     initialized["grade_2"] = existing_grade_2 if existing_grade_2 is not None else _coerce_int(initialized.get("grade"))
     initialized["kind_2"] = existing_kind_2 if existing_kind_2 is not None else _coerce_int(initialized.get("kind"))
     initialized["working_mainnodeid"] = (
-        existing_working_mainnodeid
+        existing_working_mainnodeid_value
         if existing_working_mainnodeid is not None
-        else _normalize_nullable_text(initialized.get("mainnodeid"))
+        else mainnodeid_value
     )
     return initialized
 
 
 def _initialize_road_properties(props: dict[str, Any]) -> dict[str, Any]:
-    return canonicalize_road_working_properties(props)
+    initialized = dict(props)
+    for field_name in ("id", "snodeid", "enodeid"):
+        normalized_id_value = _normalize_id_property_value(initialized.get(field_name))
+        if normalized_id_value is not None:
+            initialized[field_name] = normalized_id_value
+    return canonicalize_road_working_properties(initialized)
 
 
 def sanitize_public_node_properties(properties: dict[str, Any]) -> dict[str, Any]:
@@ -494,7 +523,7 @@ def _apply_bootstrap_node_retyping(
         if node_id is None:
             raise ValueError("Working node feature is missing required field 'id'.")
         node_index_by_id[node_id] = index
-        semantic_node_id = _normalize_nullable_text(props.get("working_mainnodeid")) or _normalize_nullable_text(props.get("mainnodeid")) or node_id
+        semantic_node_id = _normalize_mainnodeid(props.get("working_mainnodeid")) or _normalize_mainnodeid(props.get("mainnodeid")) or node_id
         physical_to_semantic[node_id] = semantic_node_id
         semantic_members[semantic_node_id].append(node_id)
 

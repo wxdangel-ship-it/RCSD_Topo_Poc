@@ -4,6 +4,7 @@ import csv
 from pathlib import Path
 from typing import Optional
 
+from rcsd_topo_poc.modules.t01_data_preprocess.id_normalization import normalize_id
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_json, write_vector
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import SemanticNodeRecord, _sort_key
 
@@ -44,8 +45,8 @@ def collect_endpoint_pool_mainnodes(
                 break
             if "node_id" in rows[0]:
                 for row in rows:
-                    node_id = str(row.get("node_id") or "").strip()
-                    if not node_id:
+                    node_id = normalize_id(row.get("node_id"))
+                    if node_id is None:
                         continue
                     raw_tags = str(row.get("source_tags") or "").strip()
                     if raw_tags:
@@ -58,8 +59,8 @@ def collect_endpoint_pool_mainnodes(
             else:
                 for row in rows:
                     for field in ("a_node_id", "b_node_id"):
-                        node_id = str(row.get(field) or "").strip()
-                        if not node_id:
+                        node_id = normalize_id(row.get(field))
+                        if node_id is None:
                             continue
                         merged = set(source_map.get(node_id, ()))
                         merged.add(source_name)

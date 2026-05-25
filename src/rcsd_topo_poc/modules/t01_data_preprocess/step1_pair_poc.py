@@ -18,6 +18,11 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     write_json,
     write_vector,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.id_normalization import (
+    normalize_id as _shared_normalize_id,
+    normalize_mainnodeid as _shared_normalize_mainnodeid,
+    normalize_scalar as _shared_normalize_scalar,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     initialize_working_layers,
     is_allowed_road_kind,
@@ -223,25 +228,11 @@ def _resolve_out_root(
 
 
 def _normalize_scalar(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped == "":
-            return None
-        return stripped
-    return value
+    return _shared_normalize_scalar(value)
 
 
 def _normalize_id(value: Any) -> Optional[str]:
-    normalized = _normalize_scalar(value)
-    if normalized is None:
-        return None
-    if isinstance(normalized, int):
-        return str(normalized)
-    if isinstance(normalized, float) and normalized.is_integer():
-        return str(int(normalized))
-    return str(normalized)
+    return _shared_normalize_id(value)
 
 
 def _coerce_int(value: Any) -> Optional[int]:
@@ -258,10 +249,7 @@ def _coerce_int(value: Any) -> Optional[int]:
 
 
 def _normalize_mainnodeid(value: Any) -> Optional[str]:
-    normalized = _normalize_id(value)
-    if normalized in {None, "0"}:
-        return None
-    return normalized
+    return _shared_normalize_mainnodeid(value)
 
 
 def _resolve_working_mainnodeid(props: dict[str, Any]) -> Optional[str]:
@@ -479,8 +467,9 @@ def _uses_complex_junction_physical_semantics(node: NodeRecord, complex_mainnode
 
 
 def _mainnodeid_physical_id_alias(value: str) -> Optional[str]:
-    if value.endswith(".0") and value[:-2].isdigit():
-        return value[:-2]
+    normalized = _normalize_id(value)
+    if normalized is not None and normalized != value and normalized.isdigit():
+        return normalized
     return None
 
 

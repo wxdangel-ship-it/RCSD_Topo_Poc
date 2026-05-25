@@ -194,7 +194,7 @@
 - 复杂 mainnode 组的穿越必须写入 `pair_candidates.csv / pair_table.csv / pair_summary.json` 的 `kind_2_128_*` 审计字段。
 - `kind_2 = 128` 穿越审计不得回写或扩展 `through_node_ids` 语义；`through_node_ids` 继续只表达 degree-based through 规则。
 - 输出：
-  - `pair_candidates`
+  **- `pair_candidates`**
 
 ### 5.5 Step2
 - 输入 / terminate 规则与首轮 Step1 一致。

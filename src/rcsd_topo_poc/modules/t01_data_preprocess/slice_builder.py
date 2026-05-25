@@ -22,6 +22,11 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     write_json,
     write_vector,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.id_normalization import (
+    normalize_id as _shared_normalize_id,
+    normalize_mainnodeid as _shared_normalize_mainnodeid,
+    normalize_scalar as _shared_normalize_scalar,
+)
 
 
 REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction")
@@ -123,32 +128,15 @@ def _resolve_profile_config(path: Optional[Union[str, Path]], *, cwd: Optional[P
 
 
 def _normalize_scalar(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped == "":
-            return None
-        return stripped
-    return value
+    return _shared_normalize_scalar(value)
 
 
 def _normalize_id(value: Any) -> Optional[str]:
-    normalized = _normalize_scalar(value)
-    if normalized is None:
-        return None
-    if isinstance(normalized, int):
-        return str(normalized)
-    if isinstance(normalized, float) and normalized.is_integer():
-        return str(int(normalized))
-    return str(normalized)
+    return _shared_normalize_id(value)
 
 
 def _normalize_mainnodeid(value: Any) -> Optional[str]:
-    normalized = _normalize_id(value)
-    if normalized in {None, "0"}:
-        return None
-    return normalized
+    return _shared_normalize_mainnodeid(value)
 
 
 def _resolve_working_mainnodeid(properties: Dict[str, Any]) -> Optional[str]:

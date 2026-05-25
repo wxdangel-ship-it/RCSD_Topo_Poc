@@ -47,6 +47,68 @@ artifacts = run_t06_segment_fusion_precheck(
 
 脚本会运行 Step1 + Step2，并在 stdout 打印包含输入路径、输出路径与核心计数的 JSON 摘要。
 
+## 文本证据包 helper（非官方 CLI）
+
+文本证据包 helper 用于内外网之间回传 T06 运行审计结果，不登记为 repo 官方 CLI。默认 compact 包包含 Step1 / Step2 的 summary、JSON / CSV 审计输出、完整输入路径 / 参数 / 文件大小 / SHA256 清单与可复跑命令；默认不带大体量 GPKG 输出，也不带六个原始输入文件。需要输出向量时显式加 `--include-output-vectors`，需要完整输入复现包时显式加 `--include-input-files`。
+
+打包参数保持与内网端到端脚本一致，`--t05-phase2-root` 会自动解析 `intersection_match_all.geojson / rcsdroad_out.gpkg / rcsdnode_out.gpkg`：
+
+```bash
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t06_segment_fusion_precheck.text_bundle import run_t06_export_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" \
+  --swsd-segment /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --swsd-roads /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
+  --swsd-nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
+  --t05-phase2-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment_active_road_fix_2/t05_phase2_full \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck \
+  --run-id t06_innernet_precheck
+```
+
+解包：
+
+```bash
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t06_segment_fusion_precheck.text_bundle import run_t06_decode_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" \
+  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck/t06_innernet_precheck/t06_segment_fusion_precheck_evidence_bundle.txt \
+  --out-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck/t06_innernet_precheck_decoded_bundle
+```
+
+解包目录中 `audit/t06_input_manifest.json` 记录完整输入路径、参数、文件大小与 SHA256，`audit/replay_t06_run_innernet_precheck.sh` 记录可复跑命令，`run/` 下保留 T06 输出相对结构。
+
+### 输入切片包
+
+输入切片包用于按中心点和范围标准抽取局部 SWSD / RCSD / relation 数据。切片选择逻辑：
+
+- 用 `center_x / center_y / radius_m` 构建 EPSG:3857 方形窗口。
+- 选中与窗口相交的 SWSD Segment。
+- 根据选中 Segment 的 `roads / pair_nodes / junc_nodes` 补齐必要 SWSD roads / nodes。
+- 保留窗口内上下文 SWSD roads / nodes。
+- 保留相关 T05 relation，并按 relation 补齐 mapped RCSD semantic nodes。
+- 保留窗口内 RCSDRoad / RCSDNode，以及连接 selected RCSD node 的 RCSDRoad。
+
+默认范围标准：
+
+- `XXXS = 250m`
+- `XXS = 500m`
+- `XS = 1000m`
+- `S = 2000m`
+- `M = 5000m`
+
+可用 `--radius-m` 显式覆盖 profile 半径。
+
+```bash
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t06_segment_fusion_precheck.text_bundle import run_t06_export_input_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" \
+  --swsd-segment /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --swsd-roads /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
+  --swsd-nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
+  --t05-phase2-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment_active_road_fix_2/t05_phase2_full \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck \
+  --run-id t06_innernet_precheck \
+  --center-x <EPSG3857_X> \
+  --center-y <EPSG3857_Y> \
+  --profile-id XS
+```
+
+解包后 `slice/` 下包含 `swsd/segment.geojson`、`swsd/roads.geojson`、`swsd/nodes.geojson`、`t05_phase2/intersection_match_all.geojson`、`t05_phase2/rcsdroad_out.geojson`、`t05_phase2/rcsdnode_out.geojson` 与 `t06_input_slice_summary.json`。
+
 ## 关键规则
 
 - `pair_nodes + junc_nodes` 按语义路口 ID 判定。

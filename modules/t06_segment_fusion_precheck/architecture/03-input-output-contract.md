@@ -27,10 +27,37 @@
 - `t06_rcsd_buffer_segment_rejected.gpkg/csv/json`
 - `t06_step2_summary.json`
 
+## 文本证据包 helper 输出
+
+T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增 repo CLI。默认 compact 包输出：
+
+- `t06_segment_fusion_precheck_evidence_bundle.txt`
+- `t06_segment_fusion_precheck_evidence_bundle_size_report.json`
+
+包内记录：
+
+- `audit/t06_input_manifest.json`：与内网端到端脚本同形的输入路径、T05 Phase 2 根目录、解析后的六个输入文件、参数、文件大小与 SHA256。
+- `audit/replay_t06_run_innernet_precheck.sh`：可复跑命令。
+- `run/step1_identify_fusion_units/` 与 `run/step2_extract_rcsd_segments/`：默认包含 summary、JSON / CSV 审计输出；显式 `--include-output-vectors` 才包含 GPKG。
+- `inputs/`：仅显式 `--include-input-files` 时包含六个原始输入文件副本。
+
+输入切片包额外支持 `center_x / center_y / profile_id / radius_m`，并输出：
+
+- `slice/swsd/segment.geojson`
+- `slice/swsd/roads.geojson`
+- `slice/swsd/nodes.geojson`
+- `slice/t05_phase2/intersection_match_all.geojson`
+- `slice/t05_phase2/rcsdroad_out.geojson`
+- `slice/t05_phase2/rcsdnode_out.geojson`
+- `slice/t06_input_slice_summary.json`
+
+默认 profile 半径为 `XXXS=250m / XXS=500m / XS=1000m / S=2000m / M=5000m`，显式 `--radius-m` 可覆盖。
+
 ## GIS / 拓扑检查项
 
 - CRS 与坐标变换正确性：所有输入通过仓库标准 vector reader 归一到处理 CRS；缺失 CRS 不静默猜测。
 - 拓扑一致性：候选抽取不 silent fix 输入拓扑，连通、穿越、侧向泄漏都进入审计。
 - 几何语义可解释性：几何用于 buffer 候选筛选与趋势硬筛，不替代 relation / direction / required semantic node 规则。
 - 审计可追溯性：summary 记录输入路径、参数、计数、失败原因与输出路径。
+- 文本证据包审计可追溯性：bundle 内必须保留输入路径、解析结果、文件大小、SHA256、参数与复跑命令。
 - 性能可验证性：summary 记录输入规模、candidate 数、replaceable 数和 reject reason 统计。

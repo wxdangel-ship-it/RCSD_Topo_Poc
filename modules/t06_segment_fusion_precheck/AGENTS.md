@@ -13,6 +13,7 @@
 
 - 不新增 repo CLI、`tools/`、`Makefile`、模块 `run.py` 或模块 `__main__.py`。
 - 当前唯一 T06 repo 级脚本入口是 `scripts/t06_run_innernet_precheck.py`，只作为内网 Step1 + Step2 运行包装，底层仍调用模块内 runner。
+- T06 文本证据包压缩 / 解压只允许作为模块内 `text_bundle.py` helper 暴露，通过 `.venv/bin/python -c ...` 调用；不登记为 repo 官方 CLI。
 - 不原地修改 `segment.gpkg`、`nodes.gpkg`、`intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg` 或 `swsd_roads_path`。
 - 不根据局部数据反推上游字段语义；字段语义以 T01 / T05 / T06 契约为准。
 - 不把 `pair_nodes` 顺序或 `segmentid A_B` 顺序当作 SWSD 单向方向。
@@ -23,6 +24,13 @@
   - `run_t06_step1_identify_fusion_units(...)`
   - `run_t06_step2_extract_rcsd_segments(...)`
   - `run_t06_segment_fusion_precheck(...)`
+- 允许模块内非官方文本证据包 helper：
+  - `run_t06_export_text_bundle(...)`
+  - `run_t06_export_input_text_bundle(...)`
+  - `run_t06_decode_text_bundle(...)`
+  - `run_t06_export_text_bundle_from_args(...)`
+  - `run_t06_export_input_text_bundle_from_args(...)`
+  - `run_t06_decode_text_bundle_from_args(...)`
 - 内网执行脚本 `scripts/t06_run_innernet_precheck.py` 只能转发到 `run_t06_segment_fusion_precheck(...)`，不得内置替代业务逻辑。
 - Step1 按 `pair_nodes + junc_nodes` 的语义路口 ID 集合判断 EVD 与 anchor/fallback 资格；其中 `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过，`pair_nodes` 不适用该豁免。
 - Step2 只接受 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id > 0` 的 relation；relation 必检集合为 `pair_nodes + 非 junc_kind2_exempt_nodes 的 junc_nodes`。

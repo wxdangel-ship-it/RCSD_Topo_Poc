@@ -14,6 +14,7 @@
 - `step2_extract_rcsd_segments.py`：Step2 orchestration。
 - `buffer_segment_extraction.py`：Step2 buffer-based RCSDSegment 候选子图、提前右转排除、连通分量覆盖与裁剪。
 - `runner.py`：组合 runner。
+- `text_bundle.py`：非官方文本证据包压缩 / 解压 helper，复用内网运行脚本的输入参数形状，记录输入文件大小 / SHA256、运行参数、summary 与可复跑命令；同时支持中心点 + profile/radius 的输入切片包。
 
 ## 策略
 

@@ -164,6 +164,64 @@ run_t06_step2_extract_rcsd_segments(
 - `t06_rcsd_buffer_segment_rejected.gpkg/csv/json`
 - `t06_step2_summary.json`
 
+### 3.3 文本证据包 helper 输出
+
+T06 文本证据包 helper 不是新的业务阶段，也不登记为 repo 官方 CLI；它用于内外网结果回传、轻量审计取证与可复跑信息归档。
+
+默认打包文件：
+
+- `<run_root>/t06_segment_fusion_precheck_evidence_bundle.txt`
+- `<run_root>/t06_segment_fusion_precheck_evidence_bundle_size_report.json`
+
+包内稳定结构：
+
+- `t06_evidence_manifest.json`
+  - 记录 bundle 版本、source run root、输入清单、Step1 / Step2 summary、输出文件审计、checksum 与编码信息。
+- `t06_evidence_size_report.json`
+  - 记录 bundle 文本体量、压缩 payload 体量、逐文件 raw / compressed size、缺失的可选输出文件。
+- `audit/t06_input_manifest.json`
+  - 记录与 `scripts/t06_run_innernet_precheck.py` 同形的输入参数、解析后的六个输入文件路径、运行参数、文件大小、SHA256 与 mtime。
+- `audit/replay_t06_run_innernet_precheck.sh`
+  - 记录使用同一输入参数复跑 T06 的命令。
+- `run/<step_dir>/...`
+  - 默认包含 Step1 / Step2 summary、JSON / CSV 审计输出。
+  - 显式传入 `--include-output-vectors` 时额外包含 Step1 / Step2 GPKG 输出。
+- `inputs/...`
+  - 仅显式传入 `--include-input-files` 时写入六个原始输入文件副本。
+
+输入切片包使用同一文本容器，但 selection 为 `t06-input-centered-spatial-slice`。稳定结构：
+
+- `slice/swsd/segment.geojson`
+- `slice/swsd/roads.geojson`
+- `slice/swsd/nodes.geojson`
+- `slice/t05_phase2/intersection_match_all.geojson`
+- `slice/t05_phase2/rcsdroad_out.geojson`
+- `slice/t05_phase2/rcsdnode_out.geojson`
+- `slice/t06_input_slice_summary.json`
+
+输入切片选择参数：
+
+- `center_x / center_y`：EPSG:3857 中心点坐标。
+- `profile_id`：默认 `XS`，支持 `XXXS / XXS / XS / S / M`。
+- `radius_m`：可选；显式提供时覆盖 profile 半径。
+
+默认 profile 半径：
+
+- `XXXS = 250m`
+- `XXS = 500m`
+- `XS = 1000m`
+- `S = 2000m`
+- `M = 5000m`
+
+输入切片选择规则：
+
+- 用中心点与半径构建 EPSG:3857 方形窗口。
+- 选中与窗口相交的 SWSD Segment。
+- 根据选中 Segment 的 `roads / pair_nodes / junc_nodes` 补齐必要 SWSD roads / nodes。
+- 同时保留窗口内上下文 SWSD roads / nodes。
+- 保留选中语义节点相关 T05 relation，并按有效 relation 补齐 mapped RCSD semantic nodes。
+- 保留窗口内 RCSDRoad / RCSDNode，以及连接 selected RCSD node 的 RCSDRoad。
+
 `candidates` 稳定字段：
 
 - `swsd_segment_id`
@@ -258,6 +316,41 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (
 ```
 
 脚本默认从 `--t05-phase2-root` 自动发现 `intersection_match_all.geojson`、`rcsdroad_out.gpkg` 与 `rcsdnode_out.gpkg`；三者也可以通过显式参数覆盖。
+
+文本证据包 helper 仅作为模块内非官方 helper 调用，不新增 repo CLI / scripts 入口。打包参数保持与内网端到端脚本一致：
+
+```bash
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t06_segment_fusion_precheck.text_bundle import run_t06_export_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" \
+  --swsd-segment /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --swsd-roads /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
+  --swsd-nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
+  --t05-phase2-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment_active_road_fix_2/t05_phase2_full \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck \
+  --run-id t06_innernet_precheck
+```
+
+输入切片包：
+
+```bash
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t06_segment_fusion_precheck.text_bundle import run_t06_export_input_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" \
+  --swsd-segment /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --swsd-roads /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
+  --swsd-nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
+  --t05-phase2-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment_active_road_fix_2/t05_phase2_full \
+  --out-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck \
+  --run-id t06_innernet_precheck \
+  --center-x <EPSG3857_X> \
+  --center-y <EPSG3857_Y> \
+  --profile-id XS
+```
+
+解包：
+
+```bash
+.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t06_segment_fusion_precheck.text_bundle import run_t06_decode_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" \
+  --bundle-txt /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck/t06_innernet_precheck/t06_segment_fusion_precheck_evidence_bundle.txt \
+  --out-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck/t06_innernet_precheck_decoded_bundle
+```
 
 ## 5. Params
 

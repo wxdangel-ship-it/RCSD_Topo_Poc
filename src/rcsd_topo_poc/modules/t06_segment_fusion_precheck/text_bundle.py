@@ -49,6 +49,7 @@ T06_TEXT_BUNDLE_META = "meta: "
 T06_TEXT_BUNDLE_CHECKSUM = "checksum: "
 T06_TEXT_BUNDLE_END = "END_T06_SEGMENT_FUSION_PRECHECK_BUNDLE"
 T06_TEXT_BUNDLE_LINE_WIDTH = 120
+T06_TEXT_BUNDLE_LIMIT_BYTES = 250 * 1024
 
 T06_TEXT_BUNDLE_NAME = "t06_segment_fusion_precheck_evidence_bundle.txt"
 T06_TEXT_BUNDLE_SIZE_REPORT_NAME = "t06_segment_fusion_precheck_evidence_bundle_size_report.json"
@@ -118,6 +119,8 @@ class T06TextBundleExportArtifacts:
     included_file_count: int = 0
     failure_reason: str | None = None
     failure_detail: str | None = None
+    part_txt_paths: tuple[Path, ...] = ()
+    max_part_size_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -149,6 +152,76 @@ def _build_bundle_text(*, meta: dict[str, Any], payload_bytes: bytes) -> tuple[s
     ]
     text = "\n".join(lines)
     return text, len(text.encode("utf-8"))
+
+
+def _part_txt_paths(out_txt: Path, part_count: int) -> tuple[Path, ...]:
+    if part_count <= 1:
+        return (out_txt,)
+    suffix = out_txt.suffix or ".txt"
+    return tuple(
+        out_txt if index == 1 else out_txt.with_name(f"{out_txt.stem}.part_{index:04d}_of_{part_count:04d}{suffix}")
+        for index in range(1, part_count + 1)
+    )
+
+
+def _remove_existing_bundle_outputs(out_txt: Path) -> None:
+    if out_txt.exists():
+        out_txt.unlink()
+    suffix = out_txt.suffix or ".txt"
+    for path in out_txt.parent.glob(f"{out_txt.stem}.part_*_of_*{suffix}"):
+        if path != out_txt and path.is_file():
+            path.unlink()
+
+
+def _split_payload_bundle_texts(
+    *,
+    out_txt: Path,
+    meta: dict[str, Any],
+    payload_bytes: bytes,
+    max_text_size_bytes: int,
+) -> tuple[tuple[Path, str, int], ...]:
+    if max_text_size_bytes <= 0:
+        raise T06TextBundleError("invalid_max_text_size", "max_text_size_bytes must be > 0.")
+
+    full_payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()
+
+    def build_parts(chunk_size: int) -> tuple[tuple[Path, str, int], ...]:
+        chunks = [payload_bytes[index : index + chunk_size] for index in range(0, len(payload_bytes), chunk_size)]
+        part_paths = _part_txt_paths(out_txt, len(chunks))
+        part_filenames = [path.name for path in part_paths]
+        parts: list[tuple[Path, str, int]] = []
+        for index, chunk in enumerate(chunks, start=1):
+            part_meta = {
+                **meta,
+                "split_bundle": {
+                    "enabled": True,
+                    "bundle_id": full_payload_sha256,
+                    "part_index": index,
+                    "part_count": len(chunks),
+                    "part_filenames": part_filenames,
+                    "full_payload_sha256": full_payload_sha256,
+                },
+            }
+            text, size = _build_bundle_text(meta=part_meta, payload_bytes=chunk)
+            parts.append((part_paths[index - 1], text, size))
+        return tuple(parts)
+
+    low, high = 1, max(1, len(payload_bytes))
+    best: tuple[tuple[Path, str, int], ...] | None = None
+    while low <= high:
+        mid = (low + high) // 2
+        parts = build_parts(mid)
+        if max(size for _, _, size in parts) <= max_text_size_bytes:
+            best = parts
+            low = mid + 1
+        else:
+            high = mid - 1
+    if best is None:
+        raise T06TextBundleError(
+            "bundle_part_too_large",
+            f"Bundle part metadata cannot fit limit {max_text_size_bytes}.",
+        )
+    return best
 
 
 def _parse_text_bundle(bundle_text: str) -> tuple[dict[str, Any], bytes]:
@@ -496,6 +569,7 @@ def _build_size_report(
     skipped_missing_files: list[str],
     include_output_vectors: bool,
     include_input_files: bool,
+    max_text_size_bytes: int,
 ) -> dict[str, Any]:
     evidence_file_names = [
         name
@@ -510,9 +584,12 @@ def _build_size_report(
         "bundle_type": T06_TEXT_BUNDLE_TYPE,
         "total_text_size_bytes": bundle_size_bytes,
         "payload_size_bytes": payload_size_bytes,
+        "within_limit": bundle_size_bytes <= max_text_size_bytes,
+        "limit_bytes": max_text_size_bytes,
         "included_file_count": len(evidence_file_names),
         "include_output_vectors": include_output_vectors,
         "include_input_files": include_input_files,
+        "split_bundle": {"enabled": False, "part_count": 1},
         "dominant_size_source": dominant_size_source,
         "per_file_raw_size_bytes": per_file_raw_size_bytes,
         "per_file_compressed_size_bytes": per_file_compressed_size_bytes,
@@ -527,6 +604,7 @@ def _build_text_bundle(
     include_output_vectors: bool,
     include_input_files: bool,
     extra_relative_paths: Sequence[str | Path],
+    max_text_size_bytes: int,
 ) -> tuple[str, int, dict[str, Any]]:
     files, skipped_missing, output_file_info = _collect_run_outputs(
         run_root=run_root,
@@ -568,6 +646,7 @@ def _build_text_bundle(
             "compression": "deflate",
             "text_encoding": "base85",
             "line_width": T06_TEXT_BUNDLE_LINE_WIDTH,
+            "max_text_size_bytes": max_text_size_bytes,
             "selection": "t06-segment-fusion-precheck-compact-evidence",
             "include_output_vectors": include_output_vectors,
             "include_input_files": include_input_files,
@@ -611,6 +690,7 @@ def _build_text_bundle(
             skipped_missing_files=skipped_missing,
             include_output_vectors=include_output_vectors,
             include_input_files=include_input_files,
+            max_text_size_bytes=max_text_size_bytes,
         )
         if next_report == size_report:
             break
@@ -786,6 +866,7 @@ def _build_input_slice_text_bundle(
     input_manifest: dict[str, Any],
     slice_summary: dict[str, Any],
     include_input_files: bool,
+    max_text_size_bytes: int,
 ) -> tuple[str, int, dict[str, Any]]:
     if include_input_files:
         for key, archive_name in _INPUT_ARCHIVE_NAMES.items():
@@ -812,6 +893,7 @@ def _build_input_slice_text_bundle(
             "compression": "deflate",
             "text_encoding": "base85",
             "line_width": T06_TEXT_BUNDLE_LINE_WIDTH,
+            "max_text_size_bytes": max_text_size_bytes,
             "selection": "t06-input-centered-spatial-slice",
             "include_input_files": include_input_files,
         },
@@ -854,11 +936,50 @@ def _build_input_slice_text_bundle(
             skipped_missing_files=[],
             include_output_vectors=False,
             include_input_files=include_input_files,
+            max_text_size_bytes=max_text_size_bytes,
         )
         if next_report == size_report:
             break
         size_report = next_report
     return bundle_text, bundle_size_bytes, size_report
+
+
+def _write_bundle_outputs(
+    *,
+    out_txt_path: Path,
+    bundle_text: str,
+    size_report: dict[str, Any],
+    max_text_size_bytes: int,
+) -> tuple[tuple[Path, ...], int]:
+    if max_text_size_bytes <= 0:
+        raise T06TextBundleError("invalid_max_text_size", "max_text_size_bytes must be > 0.")
+    _remove_existing_bundle_outputs(out_txt_path)
+    bundle_size_bytes = len(bundle_text.encode("utf-8"))
+    size_report["within_limit"] = bundle_size_bytes <= max_text_size_bytes
+    size_report["limit_bytes"] = max_text_size_bytes
+    if bundle_size_bytes <= max_text_size_bytes:
+        out_txt_path.write_text(bundle_text, encoding="utf-8")
+        size_report["split_bundle"] = {"enabled": False, "part_count": 1, "part_files": [str(out_txt_path)]}
+        return (out_txt_path,), bundle_size_bytes
+
+    meta, payload_bytes = _parse_text_bundle(bundle_text)
+    parts = _split_payload_bundle_texts(
+        out_txt=out_txt_path,
+        meta=meta,
+        payload_bytes=payload_bytes,
+        max_text_size_bytes=max_text_size_bytes,
+    )
+    for path, text, _size in parts:
+        path.write_text(text, encoding="utf-8")
+    split_report = {
+        "enabled": True,
+        "part_count": len(parts),
+        "part_files": [str(path) for path, _text, _size in parts],
+        "part_size_bytes": {path.name: size for path, _text, size in parts},
+        "max_part_size_bytes": max(size for _path, _text, size in parts),
+    }
+    size_report["split_bundle"] = split_report
+    return tuple(path for path, _text, _size in parts), int(split_report["max_part_size_bytes"])
 
 
 def run_t06_export_text_bundle(
@@ -883,6 +1004,7 @@ def run_t06_export_text_bundle(
     include_output_vectors: bool = False,
     include_input_files: bool = False,
     extra_relative_paths: Sequence[str | Path] = (),
+    max_text_size_bytes: int = T06_TEXT_BUNDLE_LIMIT_BYTES,
 ) -> T06TextBundleExportArtifacts:
     out_root_path = Path(out_root)
     run_root = out_root_path / run_id
@@ -921,8 +1043,14 @@ def run_t06_export_text_bundle(
             include_output_vectors=include_output_vectors,
             include_input_files=include_input_files,
             extra_relative_paths=extra_relative_paths,
+            max_text_size_bytes=max_text_size_bytes,
         )
-        out_txt_path.write_text(bundle_text, encoding="utf-8")
+        part_paths, max_part_size_bytes = _write_bundle_outputs(
+            out_txt_path=out_txt_path,
+            bundle_text=bundle_text,
+            size_report=size_report,
+            max_text_size_bytes=max_text_size_bytes,
+        )
         size_report_path.write_text(
             json.dumps(size_report, ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
@@ -933,6 +1061,8 @@ def run_t06_export_text_bundle(
             size_report_path=size_report_path,
             bundle_size_bytes=bundle_size_bytes,
             included_file_count=int(size_report.get("included_file_count") or 0),
+            part_txt_paths=part_paths,
+            max_part_size_bytes=max_part_size_bytes,
         )
     except Exception as exc:
         reason = getattr(exc, "reason", "bundle_export_failed")
@@ -971,6 +1101,7 @@ def run_t06_export_input_text_bundle(
     min_buffer_road_overlap_length_m: float = 1.0,
     advance_right_formway_bit: int = 128,
     include_input_files: bool = False,
+    max_text_size_bytes: int = T06_TEXT_BUNDLE_LIMIT_BYTES,
 ) -> T06TextBundleExportArtifacts:
     out_root_path = Path(out_root)
     out_txt_path = (
@@ -1030,8 +1161,14 @@ def run_t06_export_input_text_bundle(
             input_manifest=input_manifest,
             slice_summary=slice_summary,
             include_input_files=include_input_files,
+            max_text_size_bytes=max_text_size_bytes,
         )
-        out_txt_path.write_text(bundle_text, encoding="utf-8")
+        part_paths, max_part_size_bytes = _write_bundle_outputs(
+            out_txt_path=out_txt_path,
+            bundle_text=bundle_text,
+            size_report=size_report,
+            max_text_size_bytes=max_text_size_bytes,
+        )
         size_report_path.write_text(
             json.dumps(size_report, ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
@@ -1042,6 +1179,8 @@ def run_t06_export_input_text_bundle(
             size_report_path=size_report_path,
             bundle_size_bytes=bundle_size_bytes,
             included_file_count=int(size_report.get("included_file_count") or 0),
+            part_txt_paths=part_paths,
+            max_part_size_bytes=max_part_size_bytes,
         )
     except Exception as exc:
         reason = getattr(exc, "reason", "bundle_export_failed")
@@ -1056,10 +1195,53 @@ def run_t06_export_input_text_bundle(
         )
 
 
-def _extract_and_verify_bundle(bundle_txt: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
+def _bundle_payload_from_text_file(bundle_txt: Path) -> tuple[bytes, dict[str, Any] | None]:
     meta, payload_bytes = _parse_text_bundle(bundle_txt.read_text(encoding="utf-8"))
-    if hashlib.sha256(payload_bytes).hexdigest() != str(meta.get("payload_sha256")):
-        raise T06TextBundleError("checksum_mismatch", "Payload sha256 metadata does not match.")
+    split_meta = meta.get("split_bundle") or {}
+    if not split_meta.get("enabled"):
+        if hashlib.sha256(payload_bytes).hexdigest() != str(meta.get("payload_sha256")):
+            raise T06TextBundleError("checksum_mismatch", "Payload sha256 metadata does not match.")
+        return payload_bytes, None
+
+    part_count = int(split_meta.get("part_count") or 0)
+    part_filenames = [str(name) for name in split_meta.get("part_filenames") or ()]
+    full_payload_sha256 = str(split_meta.get("full_payload_sha256") or split_meta.get("bundle_id") or "")
+    if part_count <= 0 or len(part_filenames) != part_count or not full_payload_sha256:
+        raise T06TextBundleError("invalid_split_bundle", "Split bundle metadata is incomplete.")
+
+    chunks: dict[int, bytes] = {}
+    for filename in part_filenames:
+        part_path = bundle_txt.parent / filename
+        if not part_path.is_file():
+            raise T06TextBundleError("bundle_part_missing", f"Split bundle part missing: {part_path}")
+        part_meta, part_payload = _parse_text_bundle(part_path.read_text(encoding="utf-8"))
+        part_split = part_meta.get("split_bundle") or {}
+        if str(part_split.get("full_payload_sha256") or part_split.get("bundle_id") or "") != full_payload_sha256:
+            raise T06TextBundleError("split_bundle_mismatch", f"Split bundle id mismatch: {part_path}")
+        if int(part_split.get("part_count") or 0) != part_count:
+            raise T06TextBundleError("split_bundle_mismatch", f"Split bundle part count mismatch: {part_path}")
+        part_index = int(part_split.get("part_index") or 0)
+        if part_index < 1 or part_index > part_count or part_index in chunks:
+            raise T06TextBundleError("invalid_split_bundle", f"Invalid split bundle part index: {part_path}")
+        chunks[part_index] = part_payload
+
+    if len(chunks) != part_count:
+        raise T06TextBundleError("bundle_part_missing", "Split bundle parts are incomplete.")
+    full_payload = b"".join(chunks[index] for index in range(1, part_count + 1))
+    if hashlib.sha256(full_payload).hexdigest() != full_payload_sha256:
+        raise T06TextBundleError("checksum_mismatch", "Split bundle full payload checksum validation failed.")
+    split_report = {
+        "enabled": True,
+        "part_count": part_count,
+        "part_files": [str(bundle_txt.parent / filename) for filename in part_filenames],
+        "part_size_bytes": {filename: (bundle_txt.parent / filename).stat().st_size for filename in part_filenames},
+        "max_part_size_bytes": max((bundle_txt.parent / filename).stat().st_size for filename in part_filenames),
+    }
+    return full_payload, split_report
+
+
+def _extract_and_verify_bundle(bundle_txt: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
+    payload_bytes, split_report = _bundle_payload_from_text_file(bundle_txt)
     with zipfile.ZipFile(io.BytesIO(payload_bytes), "r") as zf:
         names = set(zf.namelist())
         for name in names:
@@ -1080,6 +1262,15 @@ def _extract_and_verify_bundle(bundle_txt: Path) -> tuple[dict[str, Any], dict[s
             raise T06TextBundleError("bundle_missing_files", f"Bundle is missing checksummed file: {name}")
         if hashlib.sha256(files[name]).hexdigest() != expected:
             raise T06TextBundleError("checksum_mismatch", f"Checksum mismatch for {name}.")
+    if split_report is not None and T06_INTERNAL_SIZE_REPORT_NAME in files:
+        size_report = json.loads(files[T06_INTERNAL_SIZE_REPORT_NAME])
+        size_report["split_bundle"] = split_report
+        files[T06_INTERNAL_SIZE_REPORT_NAME] = json.dumps(
+            size_report,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8")
     return manifest, files
 
 
@@ -1129,6 +1320,7 @@ def _build_export_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--include-output-vectors", action="store_true")
     parser.add_argument("--include-input-files", action="store_true")
     parser.add_argument("--extra-path", action="append", default=[])
+    parser.add_argument("--max-text-size-bytes", type=int, default=T06_TEXT_BUNDLE_LIMIT_BYTES)
     return parser
 
 
@@ -1163,6 +1355,7 @@ def _build_input_export_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-buffer-road-overlap-length-m", type=float, default=1.0)
     parser.add_argument("--advance-right-formway-bit", type=int, default=128)
     parser.add_argument("--include-input-files", action="store_true")
+    parser.add_argument("--max-text-size-bytes", type=int, default=T06_TEXT_BUNDLE_LIMIT_BYTES)
     return parser
 
 
@@ -1189,6 +1382,7 @@ def run_t06_export_text_bundle_from_args(argv: list[str] | None = None) -> int:
         include_output_vectors=args.include_output_vectors,
         include_input_files=args.include_input_files,
         extra_relative_paths=tuple(args.extra_path or ()),
+        max_text_size_bytes=args.max_text_size_bytes,
     )
     if not artifacts.success:
         print(f"T06 text bundle export failed: {artifacts.failure_detail}", file=sys.stderr)
@@ -1198,6 +1392,11 @@ def run_t06_export_text_bundle_from_args(argv: list[str] | None = None) -> int:
     print(f"T06 text bundle written to: {artifacts.bundle_txt_path}")
     print(f"bundle_size_bytes={artifacts.bundle_size_bytes}")
     print(f"included_file_count={artifacts.included_file_count}")
+    if artifacts.part_txt_paths:
+        print(f"bundle_part_count={len(artifacts.part_txt_paths)}")
+        print(f"max_part_size_bytes={artifacts.max_part_size_bytes}")
+        for path in artifacts.part_txt_paths:
+            print(f"bundle_part={path}")
     if artifacts.size_report_path is not None:
         print(f"size_report={artifacts.size_report_path}")
     return 0
@@ -1236,6 +1435,7 @@ def run_t06_export_input_text_bundle_from_args(argv: list[str] | None = None) ->
         min_buffer_road_overlap_length_m=args.min_buffer_road_overlap_length_m,
         advance_right_formway_bit=args.advance_right_formway_bit,
         include_input_files=args.include_input_files,
+        max_text_size_bytes=args.max_text_size_bytes,
     )
     if not artifacts.success:
         print(f"T06 input text bundle export failed: {artifacts.failure_detail}", file=sys.stderr)
@@ -1245,6 +1445,11 @@ def run_t06_export_input_text_bundle_from_args(argv: list[str] | None = None) ->
     print(f"T06 input text bundle written to: {artifacts.bundle_txt_path}")
     print(f"bundle_size_bytes={artifacts.bundle_size_bytes}")
     print(f"included_file_count={artifacts.included_file_count}")
+    if artifacts.part_txt_paths:
+        print(f"bundle_part_count={len(artifacts.part_txt_paths)}")
+        print(f"max_part_size_bytes={artifacts.max_part_size_bytes}")
+        for path in artifacts.part_txt_paths:
+            print(f"bundle_part={path}")
     if artifacts.size_report_path is not None:
         print(f"size_report={artifacts.size_report_path}")
     return 0

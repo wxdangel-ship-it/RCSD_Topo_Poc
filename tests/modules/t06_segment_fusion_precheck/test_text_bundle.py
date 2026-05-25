@@ -9,6 +9,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.text_bundle import (
     T06_TEXT_BUNDLE_BEGIN,
     run_t06_decode_text_bundle,
+    run_t06_export_input_text_bundle,
     run_t06_export_input_text_bundle_from_args,
     run_t06_export_text_bundle,
     run_t06_export_text_bundle_from_args,
@@ -278,10 +279,13 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
             "0",
             "--radius-m",
             "50",
+            "--max-text-size-bytes",
+            "7000",
         ]
     )
 
     assert exit_code == 0
+    assert list(tmp_path.glob("slice_bundle.part_*_of_*.txt"))
     decoded = run_t06_decode_text_bundle(bundle_txt=out_txt, out_dir=tmp_path / "decoded_slice")
     segment_doc = json.loads((decoded.out_dir / "slice" / "swsd" / "segment.geojson").read_text(encoding="utf-8"))
     relation_doc = json.loads(
@@ -295,3 +299,30 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
     assert summary["crs_normalized_to"] == "EPSG:3857"
     assert summary["required_swsd_road_ids"] == ["r-near"]
     assert summary["mapped_rcsd_semantic_node_ids"] == ["101", "102", "103"]
+
+    split_out_txt = tmp_path / "slice_bundle_split.txt"
+    split_artifacts = run_t06_export_input_text_bundle(
+        swsd_segment_path=segment_path,
+        swsd_roads_path=roads_path,
+        swsd_nodes_path=nodes_path,
+        t05_phase2_root=t05_root,
+        out_root=tmp_path / "out_split",
+        out_txt=split_out_txt,
+        center_x=0,
+        center_y=0,
+        radius_m=50,
+        max_text_size_bytes=7_000,
+    )
+
+    assert split_artifacts.success is True
+    assert len(split_artifacts.part_txt_paths) > 1
+    assert split_artifacts.max_part_size_bytes <= 7_000
+    assert all(path.stat().st_size <= 7_000 for path in split_artifacts.part_txt_paths)
+    split_decoded = run_t06_decode_text_bundle(
+        bundle_txt=split_artifacts.part_txt_paths[-1],
+        out_dir=tmp_path / "decoded_slice_split",
+    )
+    split_size_report = json.loads((split_decoded.out_dir / "t06_evidence_size_report.json").read_text(encoding="utf-8"))
+
+    assert split_size_report["split_bundle"]["enabled"] is True
+    assert split_size_report["split_bundle"]["part_count"] == len(split_artifacts.part_txt_paths)

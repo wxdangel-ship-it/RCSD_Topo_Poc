@@ -51,6 +51,8 @@ artifacts = run_t06_segment_fusion_precheck(
 
 文本证据包 helper 用于内外网之间回传 T06 运行审计结果，不登记为 repo 官方 CLI。默认 compact 包包含 Step1 / Step2 的 summary、JSON / CSV 审计输出、完整输入路径 / 参数 / 文件大小 / SHA256 清单与可复跑命令；默认不带大体量 GPKG 输出，也不带六个原始输入文件。需要输出向量时显式加 `--include-output-vectors`，需要完整输入复现包时显式加 `--include-input-files`。
 
+helper 默认按 T01 输入证据包模式自动分片，单个 `.txt` 分片不超过 `250KB`。主文件仍为 `t06_segment_fusion_precheck_evidence_bundle.txt` 或输入切片包指定的 `--out-txt`，后续分片命名为 `<stem>.part_0002_of_000N.txt`。可用 `--max-text-size-bytes` 覆盖上限；解包时传任意一个分片路径即可自动读取同目录其它分片并校验完整 payload。
+
 打包参数保持与内网端到端脚本一致，`--t05-phase2-root` 会自动解析 `intersection_match_all.geojson / rcsdroad_out.gpkg / rcsdnode_out.gpkg`：
 
 ```bash
@@ -71,7 +73,7 @@ artifacts = run_t06_segment_fusion_precheck(
   --out-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck/t06_innernet_precheck_decoded_bundle
 ```
 
-解包目录中 `audit/t06_input_manifest.json` 记录完整输入路径、参数、文件大小与 SHA256，`audit/replay_t06_run_innernet_precheck.sh` 记录可复跑命令，`run/` 下保留 T06 输出相对结构。
+解包目录中 `audit/t06_input_manifest.json` 记录完整输入路径、参数、文件大小与 SHA256，`audit/replay_t06_run_innernet_precheck.sh` 记录可复跑命令，`run/` 下保留 T06 输出相对结构。`t06_evidence_size_report.json` 会记录 `limit_bytes`、`within_limit` 与 `split_bundle`，用于确认分片数量和每片大小。
 
 ### 输入切片包
 

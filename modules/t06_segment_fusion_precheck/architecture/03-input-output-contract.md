@@ -34,6 +34,8 @@ T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增
 - `t06_segment_fusion_precheck_evidence_bundle.txt`
 - `t06_segment_fusion_precheck_evidence_bundle_size_report.json`
 
+文本包默认自动分片，单个 `.txt` 分片上限为 `250KB`，可通过 `--max-text-size-bytes` 覆盖。第一片使用默认输出名或用户指定的 `--out-txt`，第二片起按 `<stem>.part_0002_of_000N.txt` 命名。解包 helper 接受任意一个分片路径，自动读取同目录其它分片、校验完整 payload SHA256 后还原。
+
 包内记录：
 
 - `audit/t06_input_manifest.json`：与内网端到端脚本同形的输入路径、T05 Phase 2 根目录、解析后的六个输入文件、参数、文件大小与 SHA256。
@@ -52,6 +54,7 @@ T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增
 - `slice/t06_input_slice_summary.json`
 
 默认 profile 半径为 `XXXS=250m / XXS=500m / XS=1000m / S=2000m / M=5000m`，显式 `--radius-m` 可覆盖。
+外部 size report 与解包后的 `t06_evidence_size_report.json` 必须保留 `limit_bytes / within_limit / split_bundle`，用于审计分片上限、分片数量和每片实际大小。
 
 ## GIS / 拓扑检查项
 

@@ -53,6 +53,10 @@ def main() -> int:
         max_main_axis_angle_diff_deg=args.max_main_axis_angle_diff_deg,
         min_coarse_length_ratio=args.min_coarse_length_ratio,
         max_coarse_length_ratio=args.max_coarse_length_ratio,
+        buffer_distance_m=args.buffer_distance_m,
+        min_buffer_road_overlap_ratio=args.min_buffer_road_overlap_ratio,
+        min_buffer_road_overlap_length_m=args.min_buffer_road_overlap_length_m,
+        advance_right_formway_bit=args.advance_right_formway_bit,
         progress=args.progress,
     )
 
@@ -85,6 +89,11 @@ def main() -> int:
                     "replaceable_count": step2_summary.get("replaceable_count"),
                     "rejected_count": step2_summary.get("rejected_count"),
                     "reject_reason_counts": step2_summary.get("reject_reason_counts"),
+                    "buffer_segments": step2_summary.get("outputs", {}).get("buffer_segments_gpkg"),
+                    "buffer_rejected": step2_summary.get("outputs", {}).get("buffer_rejected_gpkg"),
+                    "buffer_segment_count": step2_summary.get("buffer_segment_count"),
+                    "buffer_rejected_count": step2_summary.get("buffer_rejected_count"),
+                    "buffer_reject_reason_counts": step2_summary.get("buffer_reject_reason_counts"),
                 },
             },
             ensure_ascii=False,
@@ -109,6 +118,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-main-axis-angle-diff-deg", type=float, default=60.0)
     parser.add_argument("--min-coarse-length-ratio", type=float, default=0.4)
     parser.add_argument("--max-coarse-length-ratio", type=float, default=2.5)
+    parser.add_argument("--buffer-distance-m", type=float, default=50.0)
+    parser.add_argument("--min-buffer-road-overlap-ratio", type=float, default=0.2)
+    parser.add_argument("--min-buffer-road-overlap-length-m", type=float, default=1.0)
+    parser.add_argument("--advance-right-formway-bit", type=int, default=128)
     parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 

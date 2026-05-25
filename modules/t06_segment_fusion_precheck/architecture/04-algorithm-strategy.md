@@ -12,12 +12,13 @@
 - `rcsd_candidate_extraction.py`：RCSD candidate path 抽取。
 - `trend_filters.py`：directionality、junc、主轴、粗长度与唯一性硬筛。
 - `step2_extract_rcsd_segments.py`：Step2 orchestration。
+- `buffer_segment_extraction.py`：Step2 buffer-based RCSDSegment 候选子图、提前右转排除、连通分量覆盖与裁剪。
 - `runner.py`：组合 runner。
 
 ## 策略
 
 - Step1 先解析 `pair_nodes / junc_nodes / roads`，再做 node eligibility。
-- Step2 先 relation mapping，再做方向推导和 RCSD candidate 抽取。
+- Step2 先 relation mapping，再并行生成 buffer-based RCSDSegment 审查输出，随后做方向推导和既有 RCSD pair-to-pair candidate 抽取。
 - 单向 SWSD 使用 road body directed graph 判断唯一方向。
 - 双向 RCSD candidate 必须正反向可达；单向 RCSD candidate 必须仅同向可达。
 - junc 检查先确认 mapped junc 被覆盖，再确认内部通过和侧向阻断。

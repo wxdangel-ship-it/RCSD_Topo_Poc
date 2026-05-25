@@ -20,6 +20,10 @@ def run_t06_segment_fusion_precheck(
     max_main_axis_angle_diff_deg: float = 60.0,
     min_coarse_length_ratio: float = 0.4,
     max_coarse_length_ratio: float = 2.5,
+    buffer_distance_m: float = 50.0,
+    min_buffer_road_overlap_ratio: float = 0.2,
+    min_buffer_road_overlap_length_m: float = 1.0,
+    advance_right_formway_bit: int = 128,
     progress: bool = False,
 ) -> T06PrecheckArtifacts:
     step1 = run_t06_step1_identify_fusion_units(
@@ -42,6 +46,10 @@ def run_t06_segment_fusion_precheck(
         max_main_axis_angle_diff_deg=max_main_axis_angle_diff_deg,
         min_coarse_length_ratio=min_coarse_length_ratio,
         max_coarse_length_ratio=max_coarse_length_ratio,
+        buffer_distance_m=buffer_distance_m,
+        min_buffer_road_overlap_ratio=min_buffer_road_overlap_ratio,
+        min_buffer_road_overlap_length_m=min_buffer_road_overlap_length_m,
+        advance_right_formway_bit=advance_right_formway_bit,
         progress=progress,
     )
     return T06PrecheckArtifacts(run_id=step1.run_id, run_root=step1.run_root, step1=step1, step2=step2)

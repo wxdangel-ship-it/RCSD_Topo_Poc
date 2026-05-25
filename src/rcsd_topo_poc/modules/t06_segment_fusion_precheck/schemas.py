@@ -18,6 +18,8 @@ STEP1_SUMMARY = "t06_step1_summary.json"
 STEP2_CANDIDATES_STEM = "t06_rcsd_segment_candidates"
 STEP2_REPLACEABLE_STEM = "t06_rcsd_segment_replaceable"
 STEP2_REJECTED_STEM = "t06_rcsd_segment_rejected"
+STEP2_BUFFER_SEGMENTS_STEM = "t06_rcsd_buffer_segments"
+STEP2_BUFFER_REJECTED_STEM = "t06_rcsd_buffer_segment_rejected"
 STEP2_SUMMARY = "t06_step2_summary.json"
 
 FUSION_UNIT_FIELDS = [
@@ -103,6 +105,44 @@ STEP2_REJECTED_FIELDS = [
     "failed_metric_value",
     "threshold_value",
     "notes",
+]
+
+STEP2_BUFFER_SEGMENT_FIELDS = [
+    "swsd_segment_id",
+    "buffer_candidate_id",
+    "buffer_status",
+    "buffer_reason",
+    "required_rcsd_nodes",
+    "optional_allowed_rcsd_nodes",
+    "retained_rcsd_road_ids",
+    "candidate_rcsd_road_ids",
+    "candidate_rcsd_node_ids",
+    "excluded_advance_right_turn_road_ids",
+    "retained_node_ids",
+    "inner_node_ids",
+    "out_node_ids",
+    "selected_component_id",
+    "candidate_road_count",
+    "retained_road_count",
+    "candidate_node_count",
+    "retained_node_count",
+]
+
+STEP2_BUFFER_REJECTED_FIELDS = [
+    "swsd_segment_id",
+    "reject_stage",
+    "reject_reason",
+    "required_rcsd_nodes",
+    "optional_allowed_rcsd_nodes",
+    "missing_required_node_ids",
+    "candidate_rcsd_road_ids",
+    "candidate_rcsd_node_ids",
+    "excluded_advance_right_turn_road_ids",
+    "selected_component_id",
+    "candidate_road_count",
+    "retained_road_count",
+    "candidate_node_count",
+    "retained_node_count",
 ]
 
 

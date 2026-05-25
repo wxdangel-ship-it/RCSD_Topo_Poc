@@ -5,7 +5,7 @@
 本文件是 `t06_segment_fusion_precheck` 的稳定接口契约。T06 当前只覆盖 Segment 替换前置检查：
 
 - Step1：识别可参与融合的 SWSD Segment 单元。
-- Step2：抽取对应 RCSD Segment candidate，并用趋势类硬筛判断是否可进入后续替换阶段。
+- Step2：抽取对应 RCSD Segment candidate，输出 buffer-based RCSDSegment 审查成果，并用趋势类硬筛判断是否可进入后续替换阶段。
 
 本模块不执行 Segment 替换，不重塑路口，不修改 T01 / T05 输出。
 
@@ -19,6 +19,8 @@
 - 将 `is_anchor = fail4_fallback` 视为可融合 anchor。
 - 消费 T05 Phase 2 `intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg`。
 - 基于 relation 映射与 RCSD directed graph 抽取 Segment candidate。
+- 基于 SWSD Segment 50m buffer、RCSDRoad `intersects + 阈值`、RCSDNode `covers/within` 生成 buffer-based RCSDSegment 审查成果。
+- 构建 buffer 候选连通图前，使用 `formway` bit7/128 排除提前右转 road；不得通过几何形态反推提前右转。
 - 支持 SWSD / RCSD 双向 Segment 与单向 Segment。
 - 对 SWSD 单向 Segment 从 `swsd_roads_path` 的 road body 推导方向。
 - 对 RCSD candidate 执行 relation、方向、非豁免 junc、语义路口顺序、主轴、粗长度与唯一性硬筛。
@@ -70,6 +72,10 @@ run_t06_step2_extract_rcsd_segments(
     max_main_axis_angle_diff_deg=60.0,
     min_coarse_length_ratio=0.4,
     max_coarse_length_ratio=2.5,
+    buffer_distance_m=50.0,
+    min_buffer_road_overlap_ratio=0.2,
+    min_buffer_road_overlap_length_m=1.0,
+    advance_right_formway_bit=128,
     progress=False,
 )
 ```
@@ -94,6 +100,8 @@ run_t06_step2_extract_rcsd_segments(
 - `base_id` 必须是 RCSD 语义路口主 node id。
 - `direction in {0,1}` 表示双向；`direction = 2` 表示 `snodeid -> enodeid`；`direction = 3` 表示 `enodeid -> snodeid`。
 - `junc_nodes` 在 RCSD 抽取中是内部通过 + 侧向阻断，不是 hard-stop。
+- buffer-based RCSDSegment 审查中，required semantic nodes 为 `pair_nodes` relation 与非豁免 `junc_nodes` relation；`junc_kind2_exempt_nodes` 若有 relation，仅作为 optional allowed semantic nodes 审计保留。
+- `formway` 为 bit mask；提前右转必须按 `formway & 128 != 0` 判断，不得写成 `formway == 128`。
 
 ## 3. Outputs
 
@@ -152,6 +160,8 @@ run_t06_step2_extract_rcsd_segments(
 - `t06_rcsd_segment_candidates.gpkg/csv/json`
 - `t06_rcsd_segment_replaceable.gpkg/csv/json`
 - `t06_rcsd_segment_rejected.gpkg/csv/json`
+- `t06_rcsd_buffer_segments.gpkg/csv/json`
+- `t06_rcsd_buffer_segment_rejected.gpkg/csv/json`
 - `t06_step2_summary.json`
 
 `candidates` 稳定字段：
@@ -186,6 +196,45 @@ run_t06_step2_extract_rcsd_segments(
 
 `replaceable` 输出保留同名 `swsd_pair_nodes / rcsd_pair_nodes / swsd_junc_nodes / junc_kind2_exempt_nodes / rcsd_junc_nodes / rcsd_road_ids` 字段；`rejected` 输出保留 `failed_pair_nodes / failed_junc_nodes / junc_kind2_exempt_nodes`，用于定位 relation 必检集合与豁免集合。
 
+`t06_rcsd_buffer_segments` 稳定字段：
+
+- `swsd_segment_id`
+- `buffer_candidate_id`
+- `buffer_status`
+- `buffer_reason`
+- `required_rcsd_nodes`
+- `optional_allowed_rcsd_nodes`
+- `retained_rcsd_road_ids`
+- `candidate_rcsd_road_ids`
+- `candidate_rcsd_node_ids`
+- `excluded_advance_right_turn_road_ids`
+- `retained_node_ids`
+- `inner_node_ids`
+- `out_node_ids`
+- `selected_component_id`
+- `candidate_road_count`
+- `retained_road_count`
+- `candidate_node_count`
+- `retained_node_count`
+- `geometry`
+
+`t06_rcsd_buffer_segment_rejected` 稳定字段：
+
+- `swsd_segment_id`
+- `reject_stage`
+- `reject_reason`
+- `required_rcsd_nodes`
+- `optional_allowed_rcsd_nodes`
+- `missing_required_node_ids`
+- `candidate_rcsd_road_ids`
+- `candidate_rcsd_node_ids`
+- `excluded_advance_right_turn_road_ids`
+- `selected_component_id`
+- `candidate_road_count`
+- `retained_road_count`
+- `candidate_node_count`
+- `retained_node_count`
+
 ## 4. EntryPoints
 
 T06 当前不新增 repo CLI。稳定执行面包括模块内 callable runner 与一个已登记的内网运行包装脚本。
@@ -217,11 +266,15 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (
 - `max_main_axis_angle_diff_deg`：主轴趋势最大夹角，默认 `60.0`。
 - `min_coarse_length_ratio`：粗长度比例下限，默认 `0.4`。
 - `max_coarse_length_ratio`：粗长度比例上限，默认 `2.5`。
+- `buffer_distance_m`：buffer-based RCSDSegment 审查缓冲距离，默认 `50.0`。
+- `min_buffer_road_overlap_ratio`：RCSDRoad 与 buffer 相交长度占比阈值，默认 `0.2`。
+- `min_buffer_road_overlap_length_m`：RCSDRoad 与 buffer 相交长度下限，默认 `1.0`。
+- `advance_right_formway_bit`：提前右转 bit mask，默认 `128`。
 
 ## 6. Acceptance
 
 1. Step1 runner 可独立运行并输出 EVD candidates、fusion units、rejected 与 summary。
-2. Step2 runner 可独立运行并输出 RCSD candidates、replaceable、rejected 与 summary。
+2. Step2 runner 可独立运行并输出 RCSD candidates、replaceable、rejected、buffer segments、buffer rejected 与 summary。
 3. `fail4_fallback` 能进入 Step1 final fusion units，但 Step2 对 relation 必检集合仍必须校验 T05 relation。
 4. `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 Step1 `has_evd / is_anchor` 判定，也不进入 Step2 T05 relation 必检映射集合；同值 `pair_nodes` 仍按原规则判定并映射。
 5. SWSD 单向方向从 road body 推导，不依赖 `pair_nodes` 顺序。
@@ -229,3 +282,4 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (
 7. `junc_nodes` 执行内部通过 + 侧向阻断。
 8. 所有解析、映射、方向、几何趋势失败都有明确 reason。
 9. 输入文件不被原地修改。
+10. buffer-based RCSDSegment 审查必须按 `formway` bit7/128 排除提前右转 road，并在 summary / 输出中保留审计。

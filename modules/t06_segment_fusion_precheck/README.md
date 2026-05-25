@@ -5,7 +5,7 @@
 ## 当前范围
 
 - Step1：从 T01 `segment.gpkg` 中识别可参与融合的 SWSD Segment。
-- Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络抽取 RCSD Segment candidate，并执行趋势类硬筛。
+- Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络抽取 RCSD Segment candidate，额外输出 buffer-based RCSDSegment 审查成果，并执行趋势类硬筛。
 
 ## 非目标
 
@@ -53,6 +53,7 @@ artifacts = run_t06_segment_fusion_precheck(
 - `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 Step1 `has_evd / is_anchor` 判定，也不进入 Step2 T05 relation 必检映射集合；`pair_nodes` 不适用该豁免。
 - `is_anchor = fail4_fallback` 视为可融合 anchor。
 - Step2 relation 只接受 `status = 0` 且 `base_id > 0`；必检集合为 `pair_nodes + 非豁免 junc_nodes`。
+- Step2 buffer 审查以 SWSD Segment 50m buffer 筛选 RCSD 候选，RCSDRoad 使用 `intersects + 阈值`，并在构图前按 `formway` bit7/128 排除提前右转 road。
 - `junc_nodes` 是内部通过 + 侧向阻断，不是 hard-stop。
 - SWSD 单向方向从 `swsd_roads_path` 的 road body 推导。
 - SWSD 单向 + RCSD 双向判为不一致。
@@ -71,4 +72,6 @@ Step2 输出：
 - `t06_rcsd_segment_candidates.gpkg/csv/json`
 - `t06_rcsd_segment_replaceable.gpkg/csv/json`
 - `t06_rcsd_segment_rejected.gpkg/csv/json`
+- `t06_rcsd_buffer_segments.gpkg/csv/json`
+- `t06_rcsd_buffer_segment_rejected.gpkg/csv/json`
 - `t06_step2_summary.json`

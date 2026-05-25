@@ -53,10 +53,11 @@
 - `t03_watch_internal_full_input.sh` 当前采用 T02 风格的 formal-first 监控口径，默认关注 `total / completed / running / pending / success / failed`
 - `t04_divmerge_virtual_polygon` 当前作为 Active 正式业务模块进入治理；正式范围已扩展到 `Step1-7`，其中 `Step1-4` 维持既有 `case-package` 输入下的 Step4 review PNG、flat mirror、index 与 summary，`Step5-7` 进入正式研发实现阶段，且默认遵循 SpecKit 的 `Product / Architecture / Development / Testing / QA` 五视角覆盖；internal full-input 通过 repo 级 shell/watch 包装 + T04 私有 runner 交付，不新增 repo 官方 CLI
 - `t05_junction_surface_fusion` 当前作为 Active 正式业务模块进入治理；Phase 1 负责多源路口面融合发布，Phase 2 负责 RCSD junctionization、SWSD-RCSD relation 生产与 copy-on-write `rcsdroad_out.gpkg / rcsdnode_out.gpkg` 输出
-- `t06_segment_fusion_precheck` 当前作为 Active 正式业务模块启动；本轮只覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment 抽取、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换或路口重塑
+- `t06_segment_fusion_precheck` 当前作为 Active 正式业务模块启动；本轮覆盖 Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment 抽取、buffer-based RCSDSegment 审查输出、趋势硬筛、可替换集合和错误分析，不执行 Segment 替换或路口重塑
 - `t07_semantic_junction_anchor` 当前作为 Active 正式业务模块启动；正式范围只覆盖 T02 Step1 / Step2 的语义路口级重构，输出代表 node 的 `has_evd / is_anchor / anchor_reason`，只消费 `nodes / DriveZone / RCSDIntersection`，不处理 Segment；当前提供模块内 callable runner 与 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 内网脚本，不新增 repo 官方 CLI
 - `t08_preprocess` 当前作为 Active 正式预处理模块启动；当前覆盖 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理、Tool3 Nodes 类型聚合、Tool4 路口类型错误识别与 Tool5 复杂路口预处理，Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出均写回输入目录下同名文件，Tool2 补充 `patch_id / kind`，Tool3 补充 `kind_2 / grade_2` 并处理环岛 mainnode，Tool4 输出 `nodes_error.gpkg` 记录错误类型，Tool5 构建复杂分歧 / 合流路口并可处理错误 1 对多路口，输出 `EPSG:3857` GPKG；Tool4 不自动修复
 - T06 正式启用 final `nodes.gpkg.kind_2` 的 junc-node 豁免语义：仅 `junc_nodes` 中 `kind_2 in {1,4096,8192}` 的节点可跳过 Step1 `has_evd / is_anchor` eligibility 判定，并在 Step2 中不作为 T05 relation 必检映射节点；`pair_nodes` 不适用该豁免
+- T06 Step2 以 SWSD Segment 50m buffer 生成 RCSDSegment 审查输出；RCSDRoad 使用 `intersects + 阈值` 筛选，构图前以 `formway` bit7/128 排除提前右转 road，`junc_kind2_exempt_nodes` 只作为 optional allowed 审计节点
 - `p01_arm_build` 当前作为 Active P01 成果模块进入治理；正式范围覆盖 P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 规则级还原，输出 Trace / ThroughDecisionAudit / IssueReport / LogicalArmGroup / RawArmAlignment / ArmBuildFeedback / corrected_final_arms / arm_source_profiles / source_arm_pass_rules / final_generation_decisions / frcsd_road_next_road.geojson / final audit / review PNG / review GPKG / summary / review index，不提供 repo 官方 CLI 或 `scripts/` 常驻命令
 - `_template` 仅是模板目录，不属于模块生命周期盘点对象
 - 模块根目录不放 `SKILL.md`

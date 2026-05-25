@@ -23,6 +23,9 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 - 只接受 `status = 0` 且 `base_id > 0`。
 - `pair_nodes` 和非豁免 `junc_nodes` 都必须映射成功。
 - `junc_kind2_exempt_nodes` 不参与 Step2 relation 必检集合，也不参与后续 mapped junc 覆盖、内部通过与语义顺序检查。
+- buffer-based RCSDSegment 审查以 SWSD Segment 50m buffer 限定 RCSD 候选；RCSDRoad 使用 `intersects + overlap threshold`，RCSDNode 使用 `covers/within`。
+- 构建 buffer 候选连通图前，`formway` bit7/128 的提前右转 road 必须排除并输出审计。
+- buffer 审查的 required semantic nodes 为 `pair_nodes` relation 与非豁免 `junc_nodes` relation；`junc_kind2_exempt_nodes` 只作为 optional allowed 审计节点。
 - RCSD 网络通过 runner 参数传入，不硬编码路径。
 - `junc_nodes` 表示内部通过 + 侧向阻断，不是 hard-stop。
 - SWSD 单向方向必须从 `swsd_roads_path` 的 road body 推导。

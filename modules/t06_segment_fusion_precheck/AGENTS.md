@@ -6,7 +6,7 @@
 
 - 当前模块正式范围仅覆盖 T06 前两步：
   - Step1：识别可参与融合的 SWSD Segment 单元。
-  - Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络抽取 RCSD Segment candidate，并执行趋势类硬筛。
+  - Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络抽取 RCSD Segment candidate，额外输出 buffer-based RCSDSegment 审查成果，并执行趋势类硬筛。
 - 本轮不执行 Segment 替换，不重塑路口，不修改 T01 / T05 输出。
 
 ## 禁止事项
@@ -26,6 +26,7 @@
 - 内网执行脚本 `scripts/t06_run_innernet_precheck.py` 只能转发到 `run_t06_segment_fusion_precheck(...)`，不得内置替代业务逻辑。
 - Step1 按 `pair_nodes + junc_nodes` 的语义路口 ID 集合判断 EVD 与 anchor/fallback 资格；其中 `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过，`pair_nodes` 不适用该豁免。
 - Step2 只接受 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id > 0` 的 relation；relation 必检集合为 `pair_nodes + 非 junc_kind2_exempt_nodes 的 junc_nodes`。
+- Step2 buffer 审查构图前必须按 `formway` bit7/128 排除提前右转 road；不得通过几何形态反推提前右转。
 - `junc_nodes` 在 RCSD 抽取中是内部通过 + 侧向阻断，不是 hard-stop。
 - SWSD 单向方向必须从 `swsd_roads_path` 中 Segment road body 推导。
 - SWSD 单向 + RCSD 双向必须 rejected。

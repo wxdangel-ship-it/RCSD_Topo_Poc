@@ -21,7 +21,7 @@
 - `t03_virtual_junction_anchor` 项目级登记、Step1~Step7 正式业务主链与 internal full-input 交付面
 - `t04_divmerge_virtual_polygon` 项目级登记、Step1~Step7 正式文档面与 internal full-input 交付面
 - `t05_junction_surface_fusion` 项目级登记、Phase 1 路口面融合发布、Phase 2 SWSD-RCSD relation 生产与 copy-on-write RCSD 网络输出
-- `t06_segment_fusion_precheck` 项目级登记、Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取 / 趋势硬筛
+- `t06_segment_fusion_precheck` 项目级登记、Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取 / buffer-based RCSDSegment 审查输出 / 趋势硬筛
 - `t07_semantic_junction_anchor` 项目级登记、T02 Step1 / Step2 语义路口级 `has_evd / is_anchor / anchor_reason` 重构、模块内 callable runner 与内网脚本交付面
 - `t08_preprocess` 项目级登记、Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理、Tool3 Nodes 类型聚合与 Tool4 路口类型错误识别入口、契约与测试
 - `p01_arm_build` 项目级登记、P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 规则级还原文档契约、模块内 callable runner 与 review / final audit 交付面

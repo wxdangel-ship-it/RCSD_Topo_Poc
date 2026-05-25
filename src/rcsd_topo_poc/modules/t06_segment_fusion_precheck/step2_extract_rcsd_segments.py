@@ -4,6 +4,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .buffer_segment_extraction import BufferExtractionConfig, BufferSegmentExtractor, BufferSegmentResult
 from .direction_inference import infer_swsd_oneway_direction
 from .graph_builders import build_road_graph
 from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
@@ -13,6 +14,10 @@ from .relation_mapping import RelationRecord, accepted_base_ids, build_relation_
 from .schemas import (
     STEP2_CANDIDATE_FIELDS,
     STEP2_CANDIDATES_STEM,
+    STEP2_BUFFER_REJECTED_FIELDS,
+    STEP2_BUFFER_REJECTED_STEM,
+    STEP2_BUFFER_SEGMENT_FIELDS,
+    STEP2_BUFFER_SEGMENTS_STEM,
     STEP2_DIR,
     STEP2_REJECTED_FIELDS,
     STEP2_REJECTED_STEM,
@@ -39,6 +44,10 @@ def run_t06_step2_extract_rcsd_segments(
     max_main_axis_angle_diff_deg: float = 60.0,
     min_coarse_length_ratio: float = 0.4,
     max_coarse_length_ratio: float = 2.5,
+    buffer_distance_m: float = 50.0,
+    min_buffer_road_overlap_ratio: float = 0.2,
+    min_buffer_road_overlap_length_m: float = 1.0,
+    advance_right_formway_bit: int = 128,
     progress: bool = False,
 ) -> T06Step2Artifacts:
     resolved_run_id, run_root, step_root = prepare_run_roots(out_root, run_id, STEP2_DIR)
@@ -48,13 +57,23 @@ def run_t06_step2_extract_rcsd_segments(
     swsd_nodes = _node_geometry_index(read_features(swsd_nodes_path))
     relation_map = build_relation_map(read_features(intersection_match_path, crs_override="EPSG:4326"))
     rcsd_roads = read_features(rcsdroad_path)
-    rcsd_nodes = _node_geometry_index(read_features(rcsdnode_path))
+    rcsd_node_features = read_features(rcsdnode_path)
+    rcsd_nodes = _node_geometry_index(rcsd_node_features)
     rcsd_graph = build_road_graph(rcsd_roads)
+    buffer_extractor = BufferSegmentExtractor(rcsd_road_features=rcsd_roads, rcsd_node_features=rcsd_node_features)
+    buffer_config = BufferExtractionConfig(
+        buffer_distance_m=buffer_distance_m,
+        min_road_overlap_ratio=min_buffer_road_overlap_ratio,
+        min_road_overlap_length_m=min_buffer_road_overlap_length_m,
+        advance_right_formway_bit=advance_right_formway_bit,
+    )
     all_base_ids = accepted_base_ids(relation_map)
 
     candidate_rows: list[dict[str, Any]] = []
     replaceable_rows: list[dict[str, Any]] = []
     rejected_rows: list[dict[str, Any]] = []
+    buffer_segment_rows: list[dict[str, Any]] = []
+    buffer_rejected_rows: list[dict[str, Any]] = []
     relation_success_count = 0
     single_input_count = 0
     dual_input_count = 0
@@ -94,6 +113,18 @@ def run_t06_step2_extract_rcsd_segments(
             )
             continue
         relation_success_count += 1
+        optional_allowed_rcsd_nodes = _accepted_base_ids_for_nodes_ordered(junc_kind2_exempt_nodes, relation_map)
+        buffer_result = buffer_extractor.extract(
+            segment_geometry=segment.get("geometry"),
+            relation=relation,
+            optional_allowed_rcsd_nodes=optional_allowed_rcsd_nodes,
+            all_relation_base_ids=all_base_ids_for_segment,
+            config=buffer_config,
+        )
+        if buffer_result.ok:
+            buffer_segment_rows.append(feature(_buffer_segment_row(segment_id, buffer_result), buffer_result.geometry))
+        else:
+            buffer_rejected_rows.append(_buffer_rejected_row(segment_id, buffer_result))
 
         directionality = directionality_from_sgrade(segment_props.get("sgrade") or props.get("sgrade"))
         if directionality is None:
@@ -202,6 +233,8 @@ def run_t06_step2_extract_rcsd_segments(
     candidate_paths = write_feature_triplet(step_root=step_root, stem=STEP2_CANDIDATES_STEM, features=candidate_rows, fieldnames=STEP2_CANDIDATE_FIELDS)
     replaceable_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REPLACEABLE_STEM, features=replaceable_rows, fieldnames=STEP2_REPLACEABLE_FIELDS)
     rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REJECTED_STEM, features=rejected_rows, fieldnames=STEP2_REJECTED_FIELDS)
+    buffer_segment_paths = write_feature_triplet(step_root=step_root, stem=STEP2_BUFFER_SEGMENTS_STEM, features=buffer_segment_rows, fieldnames=STEP2_BUFFER_SEGMENT_FIELDS)
+    buffer_rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_BUFFER_REJECTED_STEM, features=buffer_rejected_rows, fieldnames=STEP2_BUFFER_REJECTED_FIELDS)
     summary_path = step_root / STEP2_SUMMARY
     write_json(
         summary_path,
@@ -220,6 +253,10 @@ def run_t06_step2_extract_rcsd_segments(
                 "max_main_axis_angle_diff_deg": max_main_axis_angle_diff_deg,
                 "min_coarse_length_ratio": min_coarse_length_ratio,
                 "max_coarse_length_ratio": max_coarse_length_ratio,
+                "buffer_distance_m": buffer_distance_m,
+                "min_buffer_road_overlap_ratio": min_buffer_road_overlap_ratio,
+                "min_buffer_road_overlap_length_m": min_buffer_road_overlap_length_m,
+                "advance_right_formway_bit": advance_right_formway_bit,
             },
             "input_fusion_unit_count": len(fusion_units),
             "relation_success_count": relation_success_count,
@@ -235,7 +272,20 @@ def run_t06_step2_extract_rcsd_segments(
             "dual_segment_input_count": dual_input_count,
             "single_segment_replaceable_count": sum(1 for item in replaceable_rows if item["properties"].get("swsd_directionality") == "single"),
             "dual_segment_replaceable_count": sum(1 for item in replaceable_rows if item["properties"].get("swsd_directionality") == "dual"),
-            "outputs": {**{f"candidates_{k}": str(v) for k, v in candidate_paths.items()}, **{f"replaceable_{k}": str(v) for k, v in replaceable_paths.items()}, **{f"rejected_{k}": str(v) for k, v in rejected_paths.items()}},
+            "buffer_segment_count": len(buffer_segment_rows),
+            "buffer_rejected_count": len(buffer_rejected_rows),
+            "buffer_reject_reason_counts": dict(Counter(item["properties"].get("reject_reason") for item in buffer_rejected_rows)),
+            "buffer_retained_road_count_total": sum(len(item["properties"].get("retained_rcsd_road_ids") or []) for item in buffer_segment_rows),
+            "buffer_excluded_advance_right_turn_road_count_total": sum(
+                len(item["properties"].get("excluded_advance_right_turn_road_ids") or []) for item in buffer_segment_rows + buffer_rejected_rows
+            ),
+            "outputs": {
+                **{f"candidates_{k}": str(v) for k, v in candidate_paths.items()},
+                **{f"replaceable_{k}": str(v) for k, v in replaceable_paths.items()},
+                **{f"rejected_{k}": str(v) for k, v in rejected_paths.items()},
+                **{f"buffer_segments_{k}": str(v) for k, v in buffer_segment_paths.items()},
+                **{f"buffer_rejected_{k}": str(v) for k, v in buffer_rejected_paths.items()},
+            },
             "gis_topology_checks": {
                 "crs_normalized_to": "EPSG:3857",
                 "topology_consistency": "connectivity, junc pass-through and semantic-junction crossing are explicit filters",
@@ -305,6 +355,66 @@ def _accepted_base_ids_for_nodes(node_ids: list[str], relation_map: dict[str, Re
             continue
         result.add(str(relation.base_id))
     return result
+
+
+def _accepted_base_ids_for_nodes_ordered(node_ids: list[str], relation_map: dict[str, RelationRecord]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for node_id in node_ids:
+        relation = relation_map.get(node_id)
+        if relation is None or relation.status != 0 or relation.base_id <= 0:
+            continue
+        base_id = str(relation.base_id)
+        if base_id in seen:
+            continue
+        seen.add(base_id)
+        result.append(base_id)
+    return result
+
+
+def _buffer_segment_row(segment_id: str, result: BufferSegmentResult) -> dict[str, Any]:
+    return {
+        "swsd_segment_id": segment_id,
+        "buffer_candidate_id": f"{segment_id}_buffer_segment",
+        "buffer_status": "passed",
+        "buffer_reason": result.reason,
+        "required_rcsd_nodes": result.required_rcsd_nodes,
+        "optional_allowed_rcsd_nodes": result.optional_allowed_rcsd_nodes,
+        "retained_rcsd_road_ids": result.retained_road_ids,
+        "candidate_rcsd_road_ids": result.candidate_road_ids,
+        "candidate_rcsd_node_ids": result.candidate_node_ids,
+        "excluded_advance_right_turn_road_ids": result.excluded_advance_right_turn_road_ids,
+        "retained_node_ids": result.retained_node_ids,
+        "inner_node_ids": result.inner_node_ids,
+        "out_node_ids": result.out_node_ids,
+        "selected_component_id": result.selected_component_id,
+        "candidate_road_count": result.candidate_road_count,
+        "retained_road_count": result.retained_road_count,
+        "candidate_node_count": result.candidate_node_count,
+        "retained_node_count": result.retained_node_count,
+    }
+
+
+def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult) -> dict[str, Any]:
+    return feature(
+        {
+            "swsd_segment_id": segment_id,
+            "reject_stage": "buffer_segment_extraction",
+            "reject_reason": result.reason,
+            "required_rcsd_nodes": result.required_rcsd_nodes,
+            "optional_allowed_rcsd_nodes": result.optional_allowed_rcsd_nodes,
+            "missing_required_node_ids": result.missing_required_node_ids,
+            "candidate_rcsd_road_ids": result.candidate_road_ids,
+            "candidate_rcsd_node_ids": result.candidate_node_ids,
+            "excluded_advance_right_turn_road_ids": result.excluded_advance_right_turn_road_ids,
+            "selected_component_id": result.selected_component_id,
+            "candidate_road_count": result.candidate_road_count,
+            "retained_road_count": result.retained_road_count,
+            "candidate_node_count": result.candidate_node_count,
+            "retained_node_count": result.retained_node_count,
+        },
+        None,
+    )
 
 
 def _candidate_row(segment_id: str, props: dict[str, Any], directionality: str, inference: Any, relation: Any, candidate: Any, trend: Any) -> dict[str, Any]:

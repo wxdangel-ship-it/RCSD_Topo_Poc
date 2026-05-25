@@ -76,6 +76,8 @@ def test_combined_runner_outputs_all_files_and_keeps_inputs_readonly(tmp_path: P
     summary = json.loads(artifacts.step2.summary_path.read_text(encoding="utf-8"))
     assert summary["input_fusion_unit_count"] == 1
     assert summary["replaceable_count"] == 1
+    assert summary["buffer_segment_count"] == 1
+    assert Path(summary["outputs"]["buffer_segments_json"]).exists()
 
 
 def test_step2_skips_junc_kind2_exempt_nodes_when_mapping_relations(tmp_path: Path) -> None:

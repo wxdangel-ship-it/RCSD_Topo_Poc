@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict, deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -112,23 +112,28 @@ class BufferSegmentExtractor:
 
         selected_nodes = components[selected]
         selected_edges = [edge for edge in graph.edges if edge.source in selected_nodes and edge.target in selected_nodes]
-        retained_nodes, retained_edges = _prune_component(selected_nodes, selected_edges, set(required_nodes))
         semantic_nodes = relation_base_ids & selected_nodes
         allowed_nodes = set(required_nodes) | set(optional_nodes)
-        inner_nodes = sorted((semantic_nodes & retained_nodes) - allowed_nodes)
-        out_nodes = sorted((semantic_nodes - retained_nodes) - allowed_nodes)
+        pruned = _prune_component_seed_based(
+            component_nodes=selected_nodes,
+            edges=selected_edges,
+            required_nodes=set(required_nodes),
+            optional_nodes=set(optional_nodes),
+            semantic_nodes=semantic_nodes,
+        )
+        ok, reason = _retained_status(pruned.retained_nodes, pruned.retained_edges, required_nodes)
         return _result(
-            ok=bool(retained_edges),
-            reason="passed" if retained_edges else "buffer_pruned_to_empty",
+            ok=ok,
+            reason=reason,
             required_nodes=required_nodes,
             optional_nodes=optional_nodes,
             candidate_roads=candidate_roads,
             candidate_nodes=candidate_nodes,
-            retained_edges=retained_edges,
+            retained_edges=pruned.retained_edges,
             excluded_roads=excluded_roads,
-            retained_nodes=sorted(retained_nodes),
-            inner_nodes=inner_nodes,
-            out_nodes=out_nodes,
+            retained_nodes=sorted(pruned.retained_nodes),
+            inner_nodes=pruned.inner_nodes,
+            out_nodes=pruned.out_nodes,
             missing_required_nodes=[],
             selected_component_id=selected,
         )
@@ -138,6 +143,21 @@ class BufferSegmentExtractor:
 class _CandidateGraph:
     adjacency: dict[str, set[str]]
     edges: list[Edge]
+
+
+@dataclass(frozen=True)
+class _SeedGroup:
+    seed_nodes: set[str]
+    scope_nodes: set[str]
+    leaves: set[str]
+
+
+@dataclass(frozen=True)
+class _PrunedGraph:
+    retained_nodes: set[str]
+    retained_edges: list[Edge]
+    inner_nodes: list[str]
+    out_nodes: list[str]
 
 
 def _select_candidate_roads(
@@ -220,22 +240,117 @@ def _select_component(components: list[set[str]], required_nodes: list[str]) -> 
     return None
 
 
-def _prune_component(component_nodes: set[str], edges: list[Edge], required_nodes: set[str]) -> tuple[set[str], list[Edge]]:
+def _prune_component_seed_based(
+    *,
+    component_nodes: set[str],
+    edges: list[Edge],
+    required_nodes: set[str],
+    optional_nodes: set[str],
+    semantic_nodes: set[str],
+) -> _PrunedGraph:
+    adjacency = _adjacency_from_edges(edges)
+    allowed_nodes = (required_nodes | optional_nodes) & component_nodes
+    extra_semantic_nodes = (semantic_nodes & component_nodes) - allowed_nodes
+    inner_nodes: set[str] = set()
+    out_nodes: set[str] = set()
+    remove_nodes: set[str] = set()
+    for group in _seed_groups(extra_semantic_nodes, adjacency, allowed_nodes):
+        if group.leaves and group.leaves.issubset(allowed_nodes):
+            inner_nodes.update(group.seed_nodes)
+        else:
+            out_nodes.update(group.seed_nodes)
+            remove_nodes.update(group.scope_nodes)
+
+    candidate_nodes = set(component_nodes) - remove_nodes
+    candidate_edges = [edge for edge in edges if edge.source in candidate_nodes and edge.target in candidate_nodes]
+    protected_nodes = (allowed_nodes | inner_nodes) & candidate_nodes
+    retained_nodes = _trim_unprotected_leaves(candidate_nodes, candidate_edges, protected_nodes)
+    retained_edges = [edge for edge in candidate_edges if edge.source in retained_nodes and edge.target in retained_nodes]
+    return _PrunedGraph(
+        retained_nodes=retained_nodes,
+        retained_edges=retained_edges,
+        inner_nodes=sorted(inner_nodes & retained_nodes),
+        out_nodes=sorted(out_nodes),
+    )
+
+
+def _seed_groups(extra_semantic_nodes: set[str], adjacency: dict[str, set[str]], allowed_nodes: set[str]) -> list[_SeedGroup]:
+    groups: list[_SeedGroup] = []
+    visited_extra: set[str] = set()
+    for seed in sorted(extra_semantic_nodes):
+        if seed in visited_extra:
+            continue
+        queue: deque[str] = deque([seed])
+        scope_nodes = {seed}
+        seed_nodes = {seed}
+        while queue:
+            node = queue.popleft()
+            for neighbor in adjacency.get(node, set()):
+                if neighbor in allowed_nodes or neighbor in scope_nodes:
+                    continue
+                scope_nodes.add(neighbor)
+                queue.append(neighbor)
+                if neighbor in extra_semantic_nodes:
+                    seed_nodes.add(neighbor)
+        visited_extra.update(seed_nodes)
+        groups.append(_SeedGroup(seed_nodes=seed_nodes, scope_nodes=scope_nodes, leaves=_seed_group_leaves(scope_nodes, adjacency, allowed_nodes)))
+    return groups
+
+
+def _seed_group_leaves(scope_nodes: set[str], adjacency: dict[str, set[str]], allowed_nodes: set[str]) -> set[str]:
+    leaves: set[str] = set()
+    for node in scope_nodes:
+        neighbors = adjacency.get(node, set())
+        if len(neighbors) <= 1:
+            leaves.add(node)
+        leaves.update(neighbor for neighbor in neighbors if neighbor in allowed_nodes)
+    return leaves
+
+
+def _trim_unprotected_leaves(component_nodes: set[str], edges: list[Edge], protected_nodes: set[str]) -> set[str]:
     retained = set(component_nodes)
     changed = True
     while changed:
         changed = False
-        degree = Counter()
-        for edge in edges:
-            if edge.source in retained and edge.target in retained:
-                degree[edge.source] += 1
-                degree[edge.target] += 1
+        adjacency = _adjacency_from_edges(edge for edge in edges if edge.source in retained and edge.target in retained)
         for node in list(retained):
-            if node not in required_nodes and degree[node] <= 1:
+            if node not in protected_nodes and len(adjacency.get(node, set())) <= 1:
                 retained.remove(node)
                 changed = True
-    retained_edges = [edge for edge in edges if edge.source in retained and edge.target in retained]
-    return retained, retained_edges
+    return retained
+
+
+def _retained_status(retained_nodes: set[str], retained_edges: list[Edge], required_nodes: list[str]) -> tuple[bool, str]:
+    if not retained_edges:
+        return False, "buffer_pruned_to_empty"
+    if not set(required_nodes).issubset(retained_nodes) or not _required_nodes_connected(retained_edges, required_nodes):
+        return False, "required_semantic_nodes_disconnected_after_pruning"
+    return True, "passed"
+
+
+def _required_nodes_connected(edges: list[Edge], required_nodes: list[str]) -> bool:
+    if not required_nodes:
+        return True
+    adjacency = _adjacency_from_edges(edges)
+    source = required_nodes[0]
+    seen = {source}
+    queue: deque[str] = deque([source])
+    while queue:
+        node = queue.popleft()
+        for neighbor in adjacency.get(node, set()):
+            if neighbor in seen:
+                continue
+            seen.add(neighbor)
+            queue.append(neighbor)
+    return set(required_nodes).issubset(seen)
+
+
+def _adjacency_from_edges(edges: Any) -> dict[str, set[str]]:
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for edge in edges:
+        adjacency[edge.source].add(edge.target)
+        adjacency[edge.target].add(edge.source)
+    return dict(adjacency)
 
 
 def _result(

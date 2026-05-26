@@ -146,6 +146,8 @@ def run_t06_step2_extract_rcsd_segments(
                     "buffer_segment_extraction",
                     buffer_result.reason,
                     junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                    failed_metric_name=_buffer_failed_metric_name(buffer_result),
+                    failed_metric_value=_buffer_failed_metric_value(buffer_result),
                     notes="buffer-based RCSD Segment construction failed",
                 )
             )
@@ -383,9 +385,13 @@ def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult) -> dict[s
             "required_rcsd_nodes": result.required_rcsd_nodes,
             "optional_allowed_rcsd_nodes": result.optional_allowed_rcsd_nodes,
             "missing_required_node_ids": result.missing_required_node_ids,
+            "retained_rcsd_road_ids": result.retained_road_ids,
             "candidate_rcsd_road_ids": result.candidate_road_ids,
             "candidate_rcsd_node_ids": result.candidate_node_ids,
             "excluded_advance_right_turn_road_ids": result.excluded_advance_right_turn_road_ids,
+            "retained_node_ids": result.retained_node_ids,
+            "inner_node_ids": result.inner_node_ids,
+            "out_node_ids": result.out_node_ids,
             "selected_component_id": result.selected_component_id,
             "candidate_road_count": result.candidate_road_count,
             "retained_road_count": result.retained_road_count,
@@ -394,6 +400,22 @@ def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult) -> dict[s
         },
         None,
     )
+
+
+def _buffer_failed_metric_name(result: BufferSegmentResult) -> str | None:
+    if result.out_node_ids:
+        return "out_node_ids"
+    if result.inner_node_ids:
+        return "inner_node_ids"
+    return None
+
+
+def _buffer_failed_metric_value(result: BufferSegmentResult) -> list[str] | None:
+    if result.out_node_ids:
+        return result.out_node_ids
+    if result.inner_node_ids:
+        return result.inner_node_ids
+    return None
 
 
 def _reject(

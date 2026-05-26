@@ -119,6 +119,7 @@ helper 默认按 T01 输入证据包模式自动分片，单个 `.txt` 分片不
 - Step2 relation 只接受 `status = 0` 且 `base_id > 0`；必检集合为 `pair_nodes + 非豁免 junc_nodes`。
 - Step2 RCSD 建图使用 `rcsdnode_out` 的 `mainnodeid / subnodeid` 做语义节点归一化，relation required nodes 与 RCSDRoad `snodeid / enodeid` 使用同一 canonical key 判定连通。
 - Step2 buffer 审查以 SWSD Segment 50m buffer 筛选 RCSD 候选，RCSDRoad 使用 `intersects + 阈值`，并在构图前按 `formway` bit7/128 排除提前右转 road。
+- Step2 buffer 裁剪对额外 T05 mapped semantic nodes 执行 seed-based pruning：叶节点均为 required / optional allowed 的 seed 归为 `inner_nodes` 并允许保留；触达孤立挂接或其它 out leaf 的 seed 归为 `out_nodes` 并剔除。
 - `junc_nodes` 是内部通过 + 侧向阻断，不是 hard-stop。
 - Step2 不再执行 pair-to-pair BFS 路径搜索、方向趋势、主轴趋势、长度趋势或唯一性筛选；`replaceable_count` 等于 buffer 构建成功数。
 

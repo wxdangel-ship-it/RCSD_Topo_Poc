@@ -94,7 +94,54 @@ def test_missing_required_nodes_fail_component_coverage() -> None:
     assert result.missing_required_node_ids == ["30"]
 
 
-def test_pruning_classifies_inner_and_out_semantic_nodes() -> None:
+def test_seed_pruning_keeps_inner_semantic_nodes_between_required_nodes() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("main_a", 10, 30, [(0, 0), (50, 0)]),
+            _road("main_b", 30, 20, [(50, 0), (100, 0)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 50, 0)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30"},
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert result.inner_node_ids == ["30"]
+    assert result.out_node_ids == []
+    assert result.retained_road_ids == ["main_a", "main_b"]
+
+
+def test_seed_pruning_removes_out_semantic_branch_and_keeps_clean_corridor() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("direct", 10, 20, [(0, 0), (100, 0)]),
+            _road("side", 10, 30, [(0, 0), (0, 20)]),
+            _road("side_leaf", 30, 40, [(0, 20), (0, 40)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 0, 20), _node(40, 0, 40)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30", "40"},
+        config=BufferExtractionConfig(buffer_distance_m=45),
+    )
+
+    assert result.ok
+    assert result.inner_node_ids == []
+    assert result.out_node_ids == ["30", "40"]
+    assert result.retained_road_ids == ["direct"]
+
+
+def test_seed_pruning_fails_when_out_semantic_branch_disconnects_required_nodes() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("main_a", 10, 30, [(0, 0), (50, 0)]),
@@ -112,9 +159,31 @@ def test_pruning_classifies_inner_and_out_semantic_nodes() -> None:
         config=BufferExtractionConfig(buffer_distance_m=25),
     )
 
+    assert not result.ok
+    assert result.reason == "buffer_pruned_to_empty"
+    assert result.inner_node_ids == []
+    assert result.out_node_ids == ["30", "40"]
+
+
+def test_optional_allowed_semantic_nodes_can_be_retained() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("main_a", 10, 30, [(0, 0), (50, 0)]),
+            _road("main_b", 30, 20, [(50, 0), (100, 0)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 50, 0)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=["30"],
+        all_relation_base_ids={"10", "20", "30"},
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
     assert result.ok
-    assert result.inner_node_ids == ["30"]
-    assert result.out_node_ids == ["40"]
+    assert result.inner_node_ids == []
     assert result.retained_road_ids == ["main_a", "main_b"]
 
 

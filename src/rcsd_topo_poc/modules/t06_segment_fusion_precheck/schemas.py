@@ -11,7 +11,9 @@ STEP1_DIR = "step1_identify_fusion_units"
 STEP2_DIR = "step2_extract_rcsd_segments"
 
 STEP1_EVD_STEM = "t06_swsd_segment_evd_candidates"
+STEP1_CANDIDATES_STEM = "t06_swsd_segment_candidates"
 STEP1_FUSION_STEM = "t06_swsd_segment_fusion_units"
+STEP1_FINAL_FUSION_STEM = "t06_swsd_segment_final_fusion_units"
 STEP1_REJECTED_STEM = "t06_swsd_segment_rejected"
 STEP1_SUMMARY = "t06_step1_summary.json"
 
@@ -50,46 +52,51 @@ STEP1_REJECTED_FIELDS = [
 STEP2_CANDIDATE_FIELDS = [
     "swsd_segment_id",
     "rcsd_candidate_id",
+    "candidate_strategy",
+    "candidate_status",
+    "candidate_reason",
     "swsd_sgrade",
     "swsd_directionality",
-    "swsd_oneway_source_node",
-    "swsd_oneway_target_node",
-    "swsd_direction_inference",
-    "rcsd_directionality",
     "swsd_pair_nodes",
     "rcsd_pair_nodes",
     "swsd_junc_nodes",
     "junc_kind2_exempt_nodes",
     "rcsd_junc_nodes",
-    "rcsd_road_ids",
-    "rcsd_node_path",
-    "rcsd_forward_reachable",
-    "rcsd_reverse_reachable",
-    "directionality_trend_pass",
-    "oneway_direction_trend_pass",
-    "semantic_junc_order_trend_pass",
-    "main_axis_angle_diff_deg",
-    "main_axis_trend_pass",
-    "length_ratio",
-    "coarse_length_trend_pass",
-    "candidate_status",
-    "candidate_reason",
+    "required_rcsd_nodes",
+    "optional_allowed_rcsd_nodes",
+    "candidate_rcsd_road_ids",
+    "candidate_rcsd_node_ids",
+    "retained_rcsd_road_ids",
+    "retained_node_ids",
+    "inner_node_ids",
+    "out_node_ids",
+    "excluded_advance_right_turn_road_ids",
+    "selected_component_id",
+    "candidate_road_count",
+    "retained_road_count",
+    "candidate_node_count",
+    "retained_node_count",
 ]
 
 STEP2_REPLACEABLE_FIELDS = [
     "swsd_segment_id",
     "rcsd_candidate_id",
     "replacement_ready",
+    "replacement_strategy",
     "swsd_sgrade",
     "swsd_directionality",
-    "rcsd_directionality",
     "swsd_pair_nodes",
     "rcsd_pair_nodes",
     "swsd_junc_nodes",
     "junc_kind2_exempt_nodes",
     "rcsd_junc_nodes",
     "rcsd_road_ids",
-    "trend_filter_passed",
+    "required_rcsd_nodes",
+    "optional_allowed_rcsd_nodes",
+    "retained_node_ids",
+    "inner_node_ids",
+    "out_node_ids",
+    "excluded_advance_right_turn_road_ids",
     "hard_filter_passed",
 ]
 
@@ -155,6 +162,8 @@ class T06Step1Artifacts:
     fusion_units_gpkg_path: Path
     rejected_gpkg_path: Path
     summary_path: Path
+    swsd_candidates_gpkg_path: Path | None = None
+    final_fusion_units_gpkg_path: Path | None = None
 
 
 @dataclass(frozen=True)

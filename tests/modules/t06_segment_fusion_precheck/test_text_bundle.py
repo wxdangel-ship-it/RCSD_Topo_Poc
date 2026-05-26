@@ -54,8 +54,14 @@ def _build_t06_bundle_fixture(tmp_path: Path) -> dict[str, Path | str]:
         step1 / "t06_step1_summary.json",
         {
             "input_segment_count": 2,
+            "swsd_candidate_count": 1,
             "final_fusion_unit_count": 1,
-            "outputs": {"fusion_units_gpkg": str(step1 / "t06_swsd_segment_fusion_units.gpkg")},
+            "swsd_final_fusion_unit_count": 1,
+            "outputs": {
+                "swsd_candidates_gpkg": str(step1 / "t06_swsd_segment_candidates.gpkg"),
+                "fusion_units_gpkg": str(step1 / "t06_swsd_segment_fusion_units.gpkg"),
+                "swsd_final_fusion_units_gpkg": str(step1 / "t06_swsd_segment_final_fusion_units.gpkg"),
+            },
         },
     )
     _write_json(
@@ -68,7 +74,10 @@ def _build_t06_bundle_fixture(tmp_path: Path) -> dict[str, Path | str]:
         },
     )
     for path in (
+        step1 / "t06_swsd_segment_evd_candidates.json",
+        step1 / "t06_swsd_segment_candidates.json",
         step1 / "t06_swsd_segment_fusion_units.json",
+        step1 / "t06_swsd_segment_final_fusion_units.json",
         step1 / "t06_swsd_segment_rejected.json",
         step2 / "t06_rcsd_segment_candidates.json",
         step2 / "t06_rcsd_segment_replaceable.json",
@@ -78,6 +87,8 @@ def _build_t06_bundle_fixture(tmp_path: Path) -> dict[str, Path | str]:
     ):
         _write_json(path, {"row_count": 0, "features": []})
         _write_text(path.with_suffix(".csv"), "swsd_segment_id\n")
+    _write_bytes(step1 / "t06_swsd_segment_candidates.gpkg", b"swsd-candidates-gpkg")
+    _write_bytes(step1 / "t06_swsd_segment_final_fusion_units.gpkg", b"swsd-final-gpkg")
     _write_bytes(step2 / "t06_rcsd_buffer_segments.gpkg", b"buffer-gpkg")
 
     return {

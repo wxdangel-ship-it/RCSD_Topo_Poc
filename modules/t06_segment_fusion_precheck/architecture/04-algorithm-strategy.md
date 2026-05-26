@@ -7,10 +7,7 @@
 - `schemas.py`：稳定字段、失败原因与 artifacts dataclass。
 - `step1_identify_fusion_units.py`：Step1 eligibility。
 - `relation_mapping.py`：T05 relation loader 与 pair/junc mapping 校验。
-- `graph_builders.py`：SWSD / RCSD directed graph。
-- `direction_inference.py`：SWSD 单向方向推导。
-- `rcsd_candidate_extraction.py`：RCSD candidate path 抽取。
-- `trend_filters.py`：directionality、junc、主轴、粗长度与唯一性硬筛。
+- `graph_builders.py`：RCSD semantic node canonicalizer 与 buffer graph edge dataclass。
 - `step2_extract_rcsd_segments.py`：Step2 orchestration。
 - `buffer_segment_extraction.py`：Step2 buffer-based RCSDSegment 候选子图、提前右转排除、连通分量覆盖与裁剪。
 - `runner.py`：组合 runner。
@@ -19,9 +16,8 @@
 ## 策略
 
 - Step1 先解析 `pair_nodes / junc_nodes / roads`，再做 node eligibility。
-- Step2 先 relation mapping，再并行生成 buffer-based RCSDSegment 审查输出，随后做方向推导和既有 RCSD pair-to-pair candidate 抽取。
-- 单向 SWSD 使用 road body directed graph 判断唯一方向。
-- 双向 RCSD candidate 必须正反向可达；单向 RCSD candidate 必须仅同向可达。
-- junc 检查先确认 mapped junc 被覆盖，再确认内部通过和侧向阻断。
-- 主轴与粗长度只作为趋势类硬筛，不做精细拟合。
-- 多个通过硬筛的 candidate 第一版不自动选优，输出 `ambiguous_rcsd_candidates`。
+- Step2 先 relation mapping，再使用 buffer-based 策略构建唯一 RCSD Segment 审查成果。
+- buffer candidate graph 使用 RCSD semantic canonical key，避免 RCSDRoad 挂在 subnode 上时把同一语义路口误判为断连。
+- required semantic nodes 必须落在同一候选连通分量内；不满足时输出 buffer rejected。
+- 裁剪后保留 required semantic nodes、optional allowed nodes 与 inner nodes 间的连通 RCSDRoad，作为正式 RCSDSegment。
+- `t06_rcsd_segment_candidates / replaceable` 是兼容输出，由同一 buffer 成功结果派生；不再执行 pair-to-pair BFS、方向一致性、主轴 / 粗长度趋势或唯一性筛选。

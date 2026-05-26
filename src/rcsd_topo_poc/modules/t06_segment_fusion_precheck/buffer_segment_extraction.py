@@ -9,9 +9,10 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 from shapely.strtree import STRtree
 
-from .graph_builders import Edge
+from .graph_builders import Edge, NodeCanonicalizer
 from .parsing import ParseError, normalize_id
 from .relation_mapping import RelationCheck
+from .road_attributes import is_advance_right_turn_road
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class BufferSegmentExtractor:
     def __init__(self, *, rcsd_road_features: list[dict[str, Any]], rcsd_node_features: list[dict[str, Any]]) -> None:
         self.road_index = SpatialFeatureIndex(rcsd_road_features)
         self.node_index = SpatialFeatureIndex(rcsd_node_features)
+        self.node_canonicalizer = NodeCanonicalizer.from_node_features(rcsd_node_features)
 
     def extract(
         self,
@@ -76,15 +78,16 @@ class BufferSegmentExtractor:
         config: BufferExtractionConfig | None = None,
     ) -> BufferSegmentResult:
         cfg = config or BufferExtractionConfig()
-        required_nodes = _unique_ids([*relation.rcsd_pair_nodes, *relation.rcsd_junc_nodes])
-        optional_nodes = _unique_ids(optional_allowed_rcsd_nodes)
+        required_nodes = _canonical_ids([*relation.rcsd_pair_nodes, *relation.rcsd_junc_nodes], self.node_canonicalizer)
+        optional_nodes = _canonical_ids(optional_allowed_rcsd_nodes, self.node_canonicalizer)
+        relation_base_ids = set(_canonical_ids(list(all_relation_base_ids), self.node_canonicalizer))
         if segment_geometry is None or segment_geometry.is_empty:
             return _empty_result("missing_swsd_geometry", required_nodes, optional_nodes)
 
         buffer_geometry = segment_geometry.buffer(cfg.buffer_distance_m)
         candidate_nodes = _select_candidate_nodes(self.node_index.query(buffer_geometry), buffer_geometry)
         candidate_roads, excluded_roads = _select_candidate_roads(self.road_index.query(buffer_geometry), buffer_geometry, cfg)
-        graph = _build_undirected_graph(candidate_roads)
+        graph = _build_undirected_graph(candidate_roads, node_canonicalizer=self.node_canonicalizer)
         components = _connected_components(graph.adjacency)
         selected = _select_component(components, required_nodes)
         if selected is None:
@@ -110,7 +113,7 @@ class BufferSegmentExtractor:
         selected_nodes = components[selected]
         selected_edges = [edge for edge in graph.edges if edge.source in selected_nodes and edge.target in selected_nodes]
         retained_nodes, retained_edges = _prune_component(selected_nodes, selected_edges, set(required_nodes))
-        semantic_nodes = all_relation_base_ids & selected_nodes
+        semantic_nodes = relation_base_ids & selected_nodes
         allowed_nodes = set(required_nodes) | set(optional_nodes)
         inner_nodes = sorted((semantic_nodes & retained_nodes) - allowed_nodes)
         out_nodes = sorted((semantic_nodes - retained_nodes) - allowed_nodes)
@@ -135,11 +138,6 @@ class BufferSegmentExtractor:
 class _CandidateGraph:
     adjacency: dict[str, set[str]]
     edges: list[Edge]
-
-
-def is_advance_right_turn_road(props: dict[str, Any], *, formway_bit: int = 128) -> bool:
-    value = _parse_int(props.get("formway"))
-    return value is not None and (value & formway_bit) != 0
 
 
 def _select_candidate_roads(
@@ -172,16 +170,18 @@ def _select_candidate_nodes(features: list[dict[str, Any]], buffer_geometry: Bas
     return selected
 
 
-def _build_undirected_graph(features: list[dict[str, Any]]) -> _CandidateGraph:
+def _build_undirected_graph(features: list[dict[str, Any]], *, node_canonicalizer: NodeCanonicalizer) -> _CandidateGraph:
     adjacency: dict[str, set[str]] = defaultdict(set)
     edges: list[Edge] = []
     for feature in features:
         props = dict(feature.get("properties") or {})
         try:
             road_id = normalize_id(_first_present(props, ["id", "road_id", "roadid"]))
-            snode = normalize_id(_first_present(props, ["snodeid", "snode_id", "source", "from_node"]))
-            enode = normalize_id(_first_present(props, ["enodeid", "enode_id", "target", "to_node"]))
+            snode = node_canonicalizer.canonicalize(_first_present(props, ["snodeid", "snode_id", "source", "from_node"]))
+            enode = node_canonicalizer.canonicalize(_first_present(props, ["enodeid", "enode_id", "target", "to_node"]))
         except (KeyError, ParseError):
+            continue
+        if snode == enode:
             continue
         geometry = feature.get("geometry")
         edge = Edge(f"{road_id}:u", road_id, snode, enode, geometry if isinstance(geometry, BaseGeometry) else None, props)
@@ -349,6 +349,20 @@ def _unique_ids(values: Any) -> list[str]:
     return result
 
 
+def _canonical_ids(values: list[str], node_canonicalizer: NodeCanonicalizer) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        try:
+            text = node_canonicalizer.canonicalize(value)
+        except ParseError:
+            continue
+        if text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
 def _endpoint_in_buffer(geometry: BaseGeometry, buffer_geometry: BaseGeometry) -> bool:
     if isinstance(geometry, LineString):
         coords = list(geometry.coords)
@@ -364,10 +378,3 @@ def _first_present(props: dict[str, Any], names: list[str]) -> Any:
         if name in props and props[name] not in (None, ""):
             return props[name]
     raise KeyError(f"missing field: {'/'.join(names)}")
-
-
-def _parse_int(value: Any) -> int | None:
-    try:
-        return int(float(str(value).strip()))
-    except Exception:
-        return None

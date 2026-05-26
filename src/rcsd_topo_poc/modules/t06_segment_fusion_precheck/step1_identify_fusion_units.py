@@ -9,8 +9,10 @@ from .io import prepare_run_roots, read_features, write_feature_triplet, write_j
 from .parsing import ParseError, anchor_eligible, normalize_id, parse_id_list, unique_preserve_order, yes_value
 from .schemas import (
     FUSION_UNIT_FIELDS,
+    STEP1_CANDIDATES_STEM,
     STEP1_DIR,
     STEP1_EVD_STEM,
+    STEP1_FINAL_FUSION_STEM,
     STEP1_FUSION_STEM,
     STEP1_REJECTED_FIELDS,
     STEP1_REJECTED_STEM,
@@ -91,7 +93,9 @@ def run_t06_step1_identify_fusion_units(
         fusion_units.append(feature(row, segment.get("geometry")))
 
     evd_paths = write_feature_triplet(step_root=step_root, stem=STEP1_EVD_STEM, features=evd_candidates, fieldnames=FUSION_UNIT_FIELDS)
+    candidate_paths = write_feature_triplet(step_root=step_root, stem=STEP1_CANDIDATES_STEM, features=evd_candidates, fieldnames=FUSION_UNIT_FIELDS)
     fusion_paths = write_feature_triplet(step_root=step_root, stem=STEP1_FUSION_STEM, features=fusion_units, fieldnames=FUSION_UNIT_FIELDS)
+    final_fusion_paths = write_feature_triplet(step_root=step_root, stem=STEP1_FINAL_FUSION_STEM, features=fusion_units, fieldnames=FUSION_UNIT_FIELDS)
     rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP1_REJECTED_STEM, features=rejected, fieldnames=STEP1_REJECTED_FIELDS)
     reject_counts = Counter((item["properties"].get("reject_reason") for item in rejected))
     summary_path = step_root / STEP1_SUMMARY
@@ -105,12 +109,20 @@ def run_t06_step1_identify_fusion_units(
             "final_fusion_unit_count": len(fusion_units),
             "rejected_before_evd_count": sum(1 for item in rejected if item["properties"].get("reject_stage") == "before_evd"),
             "rejected_after_evd_count": sum(1 for item in rejected if item["properties"].get("reject_stage") == "after_evd"),
+            "swsd_candidate_count": len(evd_candidates),
+            "swsd_final_fusion_unit_count": len(fusion_units),
             "reject_reason_counts": dict(reject_counts),
             "candidate_not_final_segment_ids": candidate_not_final,
             "junc_kind2_exempt_segment_count": sum(1 for item in fusion_units if item["properties"].get("junc_kind2_exempt_nodes")),
             "junc_kind2_exempt_node_count": sum(len(item["properties"].get("junc_kind2_exempt_nodes") or []) for item in fusion_units),
             "has_fail4_fallback_segment_count": sum(1 for item in fusion_units if item["properties"].get("has_fail4_fallback")),
-            "outputs": {**{f"evd_candidates_{k}": str(v) for k, v in evd_paths.items()}, **{f"fusion_units_{k}": str(v) for k, v in fusion_paths.items()}, **{f"rejected_{k}": str(v) for k, v in rejected_paths.items()}},
+            "outputs": {
+                **{f"evd_candidates_{k}": str(v) for k, v in evd_paths.items()},
+                **{f"swsd_candidates_{k}": str(v) for k, v in candidate_paths.items()},
+                **{f"fusion_units_{k}": str(v) for k, v in fusion_paths.items()},
+                **{f"swsd_final_fusion_units_{k}": str(v) for k, v in final_fusion_paths.items()},
+                **{f"rejected_{k}": str(v) for k, v in rejected_paths.items()},
+            },
             "gis_topology_checks": {
                 "crs_normalized_to": "EPSG:3857",
                 "topology_consistency": "input geometries are not silently repaired",
@@ -120,7 +132,17 @@ def run_t06_step1_identify_fusion_units(
             },
         },
     )
-    return T06Step1Artifacts(resolved_run_id, run_root, step_root, evd_paths["gpkg"], fusion_paths["gpkg"], rejected_paths["gpkg"], summary_path)
+    return T06Step1Artifacts(
+        resolved_run_id,
+        run_root,
+        step_root,
+        evd_paths["gpkg"],
+        fusion_paths["gpkg"],
+        rejected_paths["gpkg"],
+        summary_path,
+        candidate_paths["gpkg"],
+        final_fusion_paths["gpkg"],
+    )
 
 
 def _junc_kind2_exempt_nodes(junc_nodes: list[str], node_index: dict[str, dict[str, Any]]) -> list[str]:

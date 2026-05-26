@@ -70,12 +70,16 @@ def main() -> int:
                 "run_root": str(artifacts.run_root),
                 "step1": {
                     "run_root": str(artifacts.step1.step_root),
+                    "swsd_candidates": str(artifacts.step1.swsd_candidates_gpkg_path),
+                    "swsd_final_fusion_units": str(artifacts.step1.final_fusion_units_gpkg_path),
                     "fusion_units": str(artifacts.step1.fusion_units_gpkg_path),
                     "rejected": str(artifacts.step1.rejected_gpkg_path),
                     "summary": str(artifacts.step1.summary_path),
                     "input_segment_count": step1_summary.get("input_segment_count"),
                     "evd_candidate_count": step1_summary.get("evd_candidate_count"),
+                    "swsd_candidate_count": step1_summary.get("swsd_candidate_count"),
                     "final_fusion_unit_count": step1_summary.get("final_fusion_unit_count"),
+                    "swsd_final_fusion_unit_count": step1_summary.get("swsd_final_fusion_unit_count"),
                     "reject_reason_counts": step1_summary.get("reject_reason_counts"),
                 },
                 "step2": {
@@ -107,7 +111,7 @@ def main() -> int:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run T06 Step1 + Step2 segment fusion precheck on innernet outputs.")
     parser.add_argument("--swsd-segment", default=DEFAULT_SWSD_SEGMENT, help="T01 segment.gpkg path.")
-    parser.add_argument("--swsd-roads", default=DEFAULT_SWSD_ROADS, help="SWSD roads.gpkg path used for oneway direction inference.")
+    parser.add_argument("--swsd-roads", default=DEFAULT_SWSD_ROADS, help="SWSD roads.gpkg path kept for end-to-end input completeness.")
     parser.add_argument("--swsd-nodes", default=DEFAULT_SWSD_NODES, help="Final SWSD nodes.gpkg path with has_evd/is_anchor.")
     parser.add_argument("--t05-phase2-root", default=DEFAULT_T05_PHASE2_ROOT, help="T05 Phase 2 run root containing relation and copy-on-write RCSD outputs.")
     parser.add_argument("--intersection-match", default=None, help="Explicit intersection_match_all.geojson path.")

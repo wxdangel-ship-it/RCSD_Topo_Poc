@@ -6,7 +6,7 @@
 
 - 当前模块正式范围仅覆盖 T06 前两步：
   - Step1：识别可参与融合的 SWSD Segment 单元。
-  - Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络抽取 RCSD Segment candidate，额外输出 buffer-based RCSDSegment 审查成果，并执行趋势类硬筛。
+  - Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络，仅使用 buffer-based 策略构建 RCSDSegment 审查成果；兼容 `candidates / replaceable` 输出由 buffer 成功结果派生。
 - 本轮不执行 Segment 替换，不重塑路口，不修改 T01 / T05 输出。
 
 ## 禁止事项
@@ -36,11 +36,10 @@
 - Step2 只接受 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id > 0` 的 relation；relation 必检集合为 `pair_nodes + 非 junc_kind2_exempt_nodes 的 junc_nodes`。
 - Step2 buffer 审查构图前必须按 `formway` bit7/128 排除提前右转 road；不得通过几何形态反推提前右转。
 - `junc_nodes` 在 RCSD 抽取中是内部通过 + 侧向阻断，不是 hard-stop。
-- SWSD 单向方向必须从 `swsd_roads_path` 中 Segment road body 推导。
-- SWSD 单向 + RCSD 双向必须 rejected。
+- Step2 不再执行 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、RCSD 方向一致性、主轴 / 粗长度趋势或唯一性筛选。
 
 ## 必做验证
 
-- 单元测试必须覆盖 Step1 eligibility、relation mapping、SWSD 单向方向推导、RCSD candidate 抽取、junc side blocking、趋势硬筛与 runner 输出。
+- 单元测试必须覆盖 Step1 eligibility、relation mapping、buffer-based RCSDSegment 构建、提前右转 bit mask 排除、RCSD semantic node canonicalization 与 runner 输出。
 - GIS / 拓扑任务必须显式覆盖 CRS、拓扑一致性、几何语义、审计追溯与性能可验证性。
 - 提交前至少执行 T06 测试与 `git diff --check`。

@@ -77,14 +77,22 @@ def test_step1_identifies_evd_fusion_fail4_and_rejections(tmp_path: Path) -> Non
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["input_segment_count"] == 5
     assert summary["evd_candidate_count"] == 3
+    assert summary["swsd_candidate_count"] == 3
     assert summary["final_fusion_unit_count"] == 2
+    assert summary["swsd_final_fusion_unit_count"] == 2
     assert summary["has_fail4_fallback_segment_count"] == 1
     assert summary["reject_reason_counts"]["has_evd_not_yes"] == 1
     assert summary["reject_reason_counts"]["invalid_pair_nodes"] == 1
     assert summary["reject_reason_counts"]["is_anchor_not_eligible"] == 1
+    assert Path(summary["outputs"]["swsd_candidates_gpkg"]).exists()
+    assert Path(summary["outputs"]["swsd_final_fusion_units_gpkg"]).exists()
+    assert artifacts.swsd_candidates_gpkg_path is not None
+    assert artifacts.final_fusion_units_gpkg_path is not None
 
     fusion = read_vector_layer(artifacts.fusion_units_gpkg_path).features
     assert {item.properties["swsd_segment_id"] for item in fusion} == {"eligible", "fail4"}
+    final_fusion = read_vector_layer(artifacts.final_fusion_units_gpkg_path).features
+    assert {item.properties["swsd_segment_id"] for item in final_fusion} == {"eligible", "fail4"}
 
 
 def test_step1_rejects_missing_node_and_missing_fields(tmp_path: Path) -> None:

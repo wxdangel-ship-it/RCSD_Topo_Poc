@@ -24,22 +24,20 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 - `pair_nodes` 和非豁免 `junc_nodes` 都必须映射成功。
 - `junc_kind2_exempt_nodes` 不参与 Step2 relation 必检集合，也不参与后续 mapped junc 覆盖、内部通过与语义顺序检查。
 - buffer-based RCSDSegment 审查以 SWSD Segment 50m buffer 限定 RCSD 候选；RCSDRoad 使用 `intersects + overlap threshold`，RCSDNode 使用 `covers/within`。
+- buffer candidate graph 按 `rcsdnode_out.id/mainnodeid/subnodeid` 归一到 canonical RCSD semantic node id 后再判定连通。
 - 构建 buffer 候选连通图前，`formway` bit7/128 的提前右转 road 必须排除并输出审计。
 - buffer 审查的 required semantic nodes 为 `pair_nodes` relation 与非豁免 `junc_nodes` relation；`junc_kind2_exempt_nodes` 只作为 optional allowed 审计节点。
 - RCSD 网络通过 runner 参数传入，不硬编码路径。
 - `junc_nodes` 表示内部通过 + 侧向阻断，不是 hard-stop。
-- SWSD 单向方向必须从 `swsd_roads_path` 的 road body 推导。
-- SWSD 单向 + RCSD 双向 rejected。
+- Step2 不再执行 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、RCSD 方向一致性、主轴 / 粗长度趋势或唯一性筛选。
+- `t06_rcsd_buffer_segments` 是正式主成果；`t06_rcsd_segment_candidates / replaceable` 仅作为兼容输出，由 buffer 成功结果派生。
 
-## 趋势硬筛顺序
+## Step2 过滤顺序
 
 1. relation mapping filter
-2. SWSD direction inference
-3. RCSD candidate connectivity extraction
-4. directionality trend
-5. oneway direction trend
-6. junc internal pass + side blocking
-7. semantic junc order trend
-8. main axis trend
-9. coarse length trend
-10. uniqueness filter
+2. SWSD Segment buffer candidate selection
+3. advance-right-turn road exclusion by `formway & 128 != 0`
+4. canonical RCSD semantic node graph construction
+5. required semantic node component coverage
+6. inner / out node pruning
+7. retained RCSDRoad output and compatibility replaceable output

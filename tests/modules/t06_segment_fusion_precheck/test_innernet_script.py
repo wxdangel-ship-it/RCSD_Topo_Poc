@@ -105,6 +105,10 @@ def test_innernet_script_runs_t06_precheck_with_explicit_paths(tmp_path: Path) -
     after = {path: (path.stat().st_size, path.stat().st_mtime_ns) for path in [segment, nodes, swsd_roads, relation, rcsdnode, rcsdroad]}
     assert after == before
     payload = json.loads(result.stdout[result.stdout.index("{") :])
+    assert payload["step1"]["swsd_candidate_count"] == 1
     assert payload["step1"]["final_fusion_unit_count"] == 1
+    assert payload["step1"]["swsd_final_fusion_unit_count"] == 1
+    assert Path(payload["step1"]["swsd_candidates"]).is_file()
+    assert Path(payload["step1"]["swsd_final_fusion_units"]).is_file()
     assert payload["step2"]["replaceable_count"] == 1
     assert Path(payload["step2"]["replaceable"]).is_file()

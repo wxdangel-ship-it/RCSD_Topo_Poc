@@ -16,12 +16,16 @@ def _road(road_id: str, snode: int, enode: int, coords: list[tuple[float, float]
     return {"properties": payload, "geometry": LineString(coords)}
 
 
-def _node(node_id: int, x: float, y: float):
-    return {"properties": {"id": node_id, "mainnodeid": 0}, "geometry": Point(x, y)}
+def _node(node_id: int, x: float, y: float, *, mainnodeid: int = 0, subnodeid=None):
+    return {
+        "properties": {"id": node_id, "mainnodeid": mainnodeid, "subnodeid": subnodeid if subnodeid is not None else []},
+        "geometry": Point(x, y),
+    }
 
 
 def test_advance_right_turn_uses_formway_bit() -> None:
     assert is_advance_right_turn_road({"formway": 128})
+    assert is_advance_right_turn_road({"formway": 129})
     assert is_advance_right_turn_road({"formway": 384})
     assert not is_advance_right_turn_road({"formway": 256})
     assert not is_advance_right_turn_road({})
@@ -112,3 +116,23 @@ def test_pruning_classifies_inner_and_out_semantic_nodes() -> None:
     assert result.inner_node_ids == ["30"]
     assert result.out_node_ids == ["40"]
     assert result.retained_road_ids == ["main_a", "main_b"]
+
+
+def test_buffer_graph_canonicalizes_subnodes_to_semantic_mainnode() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[_road("main", 101, 20, [(0, 0), (100, 0)])],
+        rcsd_node_features=[_node(10, 0, 0, mainnodeid=10, subnodeid=[101]), _node(20, 100, 0, mainnodeid=20)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert result.required_rcsd_nodes == ["10", "20"]
+    assert result.retained_node_ids == ["10", "20"]
+    assert result.retained_road_ids == ["main"]

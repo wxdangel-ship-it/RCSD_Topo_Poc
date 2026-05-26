@@ -36,6 +36,7 @@ class BufferSegmentResult:
     retained_node_ids: list[str]
     inner_node_ids: list[str]
     out_node_ids: list[str]
+    unexpected_endpoint_node_ids: list[str]
     missing_required_node_ids: list[str]
     selected_component_id: int | None
     candidate_road_count: int
@@ -78,6 +79,7 @@ class BufferSegmentExtractor:
         config: BufferExtractionConfig | None = None,
     ) -> BufferSegmentResult:
         cfg = config or BufferExtractionConfig()
+        pair_nodes = _canonical_ids(relation.rcsd_pair_nodes, self.node_canonicalizer)
         required_nodes = _canonical_ids([*relation.rcsd_pair_nodes, *relation.rcsd_junc_nodes], self.node_canonicalizer)
         optional_nodes = _canonical_ids(optional_allowed_rcsd_nodes, self.node_canonicalizer)
         relation_base_ids = set(_canonical_ids(list(all_relation_base_ids), self.node_canonicalizer))
@@ -106,6 +108,7 @@ class BufferSegmentExtractor:
                 retained_nodes=[],
                 inner_nodes=[],
                 out_nodes=[],
+                unexpected_endpoint_nodes=[],
                 missing_required_nodes=missing,
                 selected_component_id=None,
             )
@@ -121,7 +124,7 @@ class BufferSegmentExtractor:
             optional_nodes=set(optional_nodes),
             semantic_nodes=semantic_nodes,
         )
-        ok, reason = _retained_status(pruned.retained_nodes, pruned.retained_edges, required_nodes)
+        ok, reason, unexpected_endpoint_nodes = _retained_status(pruned.retained_nodes, pruned.retained_edges, required_nodes, pair_nodes)
         return _result(
             ok=ok,
             reason=reason,
@@ -134,6 +137,7 @@ class BufferSegmentExtractor:
             retained_nodes=sorted(pruned.retained_nodes),
             inner_nodes=pruned.inner_nodes,
             out_nodes=pruned.out_nodes,
+            unexpected_endpoint_nodes=unexpected_endpoint_nodes,
             missing_required_nodes=[],
             selected_component_id=selected,
         )
@@ -320,12 +324,21 @@ def _trim_unprotected_leaves(component_nodes: set[str], edges: list[Edge], prote
     return retained
 
 
-def _retained_status(retained_nodes: set[str], retained_edges: list[Edge], required_nodes: list[str]) -> tuple[bool, str]:
+def _retained_status(retained_nodes: set[str], retained_edges: list[Edge], required_nodes: list[str], pair_nodes: list[str]) -> tuple[bool, str, list[str]]:
     if not retained_edges:
-        return False, "buffer_pruned_to_empty"
+        return False, "buffer_pruned_to_empty", []
     if not set(required_nodes).issubset(retained_nodes) or not _required_nodes_connected(retained_edges, required_nodes):
-        return False, "required_semantic_nodes_disconnected_after_pruning"
-    return True, "passed"
+        return False, "required_semantic_nodes_disconnected_after_pruning", []
+    unexpected_endpoint_nodes = _unexpected_endpoint_nodes(retained_edges, pair_nodes)
+    if unexpected_endpoint_nodes:
+        return False, "unexpected_retained_endpoint_nodes", unexpected_endpoint_nodes
+    return True, "passed", []
+
+
+def _unexpected_endpoint_nodes(edges: list[Edge], pair_nodes: list[str]) -> list[str]:
+    pair_node_set = set(pair_nodes)
+    adjacency = _adjacency_from_edges(edges)
+    return sorted(node for node, neighbors in adjacency.items() if len(neighbors) <= 1 and node not in pair_node_set)
 
 
 def _required_nodes_connected(edges: list[Edge], required_nodes: list[str]) -> bool:
@@ -366,6 +379,7 @@ def _result(
     retained_nodes: list[str],
     inner_nodes: list[str],
     out_nodes: list[str],
+    unexpected_endpoint_nodes: list[str],
     missing_required_nodes: list[str],
     selected_component_id: int | None,
 ) -> BufferSegmentResult:
@@ -385,6 +399,7 @@ def _result(
         retained_node_ids=retained_nodes,
         inner_node_ids=inner_nodes,
         out_node_ids=out_nodes,
+        unexpected_endpoint_node_ids=unexpected_endpoint_nodes or [],
         missing_required_node_ids=missing_required_nodes,
         selected_component_id=selected_component_id,
         candidate_road_count=len(candidate_road_ids),
@@ -408,6 +423,7 @@ def _empty_result(reason: str, required_nodes: list[str], optional_nodes: list[s
         retained_node_ids=[],
         inner_node_ids=[],
         out_node_ids=[],
+        unexpected_endpoint_node_ids=[],
         missing_required_node_ids=list(required_nodes),
         selected_component_id=None,
         candidate_road_count=0,

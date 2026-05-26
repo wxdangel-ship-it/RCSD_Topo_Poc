@@ -112,6 +112,9 @@
 - 初始化：
   - `segmentid = null`
   - `sgrade = null`
+- 已启用的原始业务字段：
+  - `kind`：道路种别；单个 token 使用 `XXXX` 表达，前两位为道路等级、后两位为道路类型，多个 token 用 `|` 分隔。
+  - T01 双向构段仅使用 `kind` 的前两位道路等级做局部续行优先；字段缺失、不可解析或无同等级候选时，不通过几何形态反推道路等级。
 
 ## 4. 预处理契约
 
@@ -184,7 +187,16 @@
 - 更低等级构段不得跨越更高等级轮次中已成立的段边界语义路口。
 - 当前轮 `terminate / hard-stop` 必须并入历史高等级边界 `mainnode`。
 
-### 5.4 Step1
+### 5.4 分歧 / 合流局部续行
+- 作用阶段：
+  - Step1 pair 搜索的内部节点扩张
+  - Step2 trunk simple-path 枚举的内部节点扩张
+- 当某个内部语义路口存在多个可继续追溯出口时，先按进入 road 与退出 road 的 `kind` 前两位道路等级做局部过滤；若存在同等级退出 road，则优先保留同等级出口。
+- 在保留出口的道路等级均与进入 road 一致时，再按进入方向与退出方向夹角选择更顺直的出口；夹角在最优值 `15°` 容差内的出口可同时保留，避免把近似并行分歧误删。
+- 该规则不改变 `seed / terminate / through_node_ids` 的定义，只限制内部穿越时的续行方向。
+- 该规则不得使用缺失 `kind` 的几何反推道路等级；方向角只用于同等级候选的二级消歧。
+
+### 5.5 Step1
 - 输入：
   - 首轮 `grade_2 in {1}`
   - `kind_2 in {4,64}`
@@ -196,7 +208,7 @@
 - 输出：
   **- `pair_candidates`**
 
-### 5.5 Step2
+### 5.6 Step2
 - 输入 / terminate 规则与首轮 Step1 一致。
 - 合法 `seed / terminate` 节点不得被 `through_node` 吞掉。
 - `kind_2 = 128` 复杂 mainnode 组已在 Step1 拆回物理 node 级参与 candidate search；Step2 沿用 Step1 输出的物理 node 级 pair 支持路径，不扩展 `through_node_ids` 语义。
@@ -215,7 +227,7 @@
   - `non-trunk component` 触达其他 terminate（非 A/B）时，不进入 `segment_body`
   - `non-trunk component` 吃到其他 validated pair 的 trunk 时，不进入 `segment_body`
 
-### 5.6 Step3
+### 5.7 Step3
 - Node 刷新优先级：
   1. 当前轮 validated pair 端点：保持当前值
   2. 所有 road 都在一个 segment 中：`grade_2 = -1, kind_2 = 1`
@@ -231,7 +243,7 @@
 - Step2 新构成 road：
   - `sgrade = 0-0双`
 
-### 5.7 Step4
+### 5.8 Step4
 - 输入：
   - `grade_2 in {1,2}`
   - `kind_2 in {4,64,2048}`
@@ -243,7 +255,7 @@
 - Step4 新构成 road：
   - `sgrade = 0-1双`
 
-### 5.8 Step5A / Step5B / Step5C
+### 5.9 Step5A / Step5B / Step5C
 - 三个子阶段按顺序执行。
 - 每个子阶段结束后，都立即刷新 `nodes / roads`。
 - 下一子阶段使用上一子阶段 refreshed 的 `nodes / roads`。
@@ -287,7 +299,7 @@
 - 新构成 road：
   - `sgrade = 0-2双`
 
-### 5.9 Step5 后单向补段
+### 5.10 Step5 后单向补段
 - 执行位置：
   - 在 `Step5C` refreshed `nodes / roads` 之后
   - 在 `Step6` 聚合之前

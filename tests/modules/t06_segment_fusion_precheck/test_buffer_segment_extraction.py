@@ -141,6 +141,29 @@ def test_seed_pruning_removes_out_semantic_branch_and_keeps_clean_corridor() -> 
     assert result.retained_road_ids == ["direct"]
 
 
+def test_required_junc_leaf_endpoint_is_rejected() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("direct", 10, 20, [(0, 0), (100, 0)]),
+            _road("junc_branch", 10, 30, [(0, 0), (0, 20)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 0, 20)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30"},
+        config=BufferExtractionConfig(buffer_distance_m=25),
+    )
+
+    assert not result.ok
+    assert result.reason == "unexpected_retained_endpoint_nodes"
+    assert result.unexpected_endpoint_node_ids == ["30"]
+    assert result.retained_road_ids == ["direct", "junc_branch"]
+
+
 def test_seed_pruning_fails_when_out_semantic_branch_disconnects_required_nodes() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[

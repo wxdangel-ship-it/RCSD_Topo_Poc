@@ -23,6 +23,9 @@ from rcsd_topo_poc.modules.t01_data_preprocess.id_normalization import (
     normalize_mainnodeid as _shared_normalize_mainnodeid,
     normalize_scalar as _shared_normalize_scalar,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.road_kind_continuity import (
+    choose_preferred_continuation_edges,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     initialize_working_layers,
     is_allowed_road_kind,
@@ -941,6 +944,8 @@ def _search_from_seed(
     *,
     directed: dict[str, tuple[TraversalEdge, ...]],
     blocked: dict[str, tuple[TraversalEdge, ...]],
+    roads: dict[str, RoadRecord],
+    physical_to_semantic: dict[str, str],
     through_node_ids: set[str],
     hard_stop_node_ids: set[str],
     seed_eval: dict[str, RuleEvaluation],
@@ -972,10 +977,40 @@ def _search_from_seed(
                 },
             )
 
-        for edge in directed.get(current_node_id, ()):
+        outgoing_edges = tuple(edge for edge in directed.get(current_node_id, ()) if edge.to_node not in visited)
+        previous_node_id = parent_node_ids.get(current_node_id)
+        incoming_road_id = parent_road_ids.get(current_node_id)
+        if previous_node_id is not None and incoming_road_id is not None:
+            decision = choose_preferred_continuation_edges(
+                current_node_id=current_node_id,
+                incoming_from_node_id=previous_node_id,
+                incoming_road_id=incoming_road_id,
+                outgoing_edges=outgoing_edges,
+                roads=roads,
+                physical_to_semantic=physical_to_semantic,
+            )
+            if decision.pruned_edges:
+                _record_search_event(
+                    event_counts,
+                    event_samples,
+                    sample_counts,
+                    {
+                        "event": "road_kind_continuity_pruned",
+                        "seed_node_id": start_node_id,
+                        "node_id": current_node_id,
+                        "incoming_road_id": incoming_road_id,
+                        "kept_road_ids": [edge.road_id for edge in decision.edges],
+                        "pruned_road_ids": [edge.road_id for edge in decision.pruned_edges],
+                        "same_level_applied": decision.same_level_applied,
+                        "angle_applied": decision.angle_applied,
+                        "best_angle_deg": decision.best_angle_deg,
+                        "kept_angle_limit_deg": decision.kept_angle_limit_deg,
+                    },
+                )
+            outgoing_edges = decision.edges
+
+        for edge in outgoing_edges:
             next_node_id = edge.to_node
-            if next_node_id in visited:
-                continue
 
             visited.add(next_node_id)
             parent_node_ids[next_node_id] = current_node_id
@@ -1357,6 +1392,8 @@ def run_step1_strategy(
             seed_id,
             directed=strategy_directed,
             blocked=strategy_blocked,
+            roads=context.roads,
+            physical_to_semantic=context.physical_to_semantic,
             through_node_ids=through_node_ids,
             hard_stop_node_ids=hard_stop_node_ids,
             seed_eval=seed_eval,

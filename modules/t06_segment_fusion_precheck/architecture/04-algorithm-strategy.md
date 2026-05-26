@@ -20,4 +20,5 @@
 - buffer candidate graph 使用 RCSD semantic canonical key，避免 RCSDRoad 挂在 subnode 上时把同一语义路口误判为断连。
 - required semantic nodes 必须落在同一候选连通分量内；不满足时输出 buffer rejected。
 - 裁剪后保留 required semantic nodes、optional allowed nodes 与 inner nodes 间的连通 RCSDRoad，作为正式 RCSDSegment。
+- 裁剪后的 retained graph 必须只以 pair 对应 RCSD semantic nodes 为叶子端点；junc 或其它节点成为叶子端点时输出 buffer rejected。
 - `t06_rcsd_segment_candidates / replaceable` 是兼容输出，由同一 buffer 成功结果派生；不再执行 pair-to-pair BFS、方向一致性、主轴 / 粗长度趋势或唯一性筛选。

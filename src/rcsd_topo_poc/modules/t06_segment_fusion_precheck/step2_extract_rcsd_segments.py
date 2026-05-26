@@ -300,6 +300,7 @@ def _buffer_segment_row(segment_id: str, result: BufferSegmentResult) -> dict[st
         "retained_node_ids": result.retained_node_ids,
         "inner_node_ids": result.inner_node_ids,
         "out_node_ids": result.out_node_ids,
+        "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
         "selected_component_id": result.selected_component_id,
         "candidate_road_count": result.candidate_road_count,
         "retained_road_count": result.retained_road_count,
@@ -339,6 +340,7 @@ def _buffer_candidate_row(
         "retained_node_ids": result.retained_node_ids,
         "inner_node_ids": result.inner_node_ids,
         "out_node_ids": result.out_node_ids,
+        "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
         "excluded_advance_right_turn_road_ids": result.excluded_advance_right_turn_road_ids,
         "selected_component_id": result.selected_component_id,
         "candidate_road_count": result.candidate_road_count,
@@ -369,6 +371,7 @@ def _buffer_replaceable_row(candidate_feature: dict[str, Any]) -> dict[str, Any]
             "retained_node_ids": props.get("retained_node_ids"),
             "inner_node_ids": props.get("inner_node_ids"),
             "out_node_ids": props.get("out_node_ids"),
+            "unexpected_endpoint_node_ids": props.get("unexpected_endpoint_node_ids"),
             "excluded_advance_right_turn_road_ids": props.get("excluded_advance_right_turn_road_ids"),
             "hard_filter_passed": True,
         },
@@ -392,6 +395,7 @@ def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult) -> dict[s
             "retained_node_ids": result.retained_node_ids,
             "inner_node_ids": result.inner_node_ids,
             "out_node_ids": result.out_node_ids,
+            "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
             "selected_component_id": result.selected_component_id,
             "candidate_road_count": result.candidate_road_count,
             "retained_road_count": result.retained_road_count,
@@ -403,6 +407,8 @@ def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult) -> dict[s
 
 
 def _buffer_failed_metric_name(result: BufferSegmentResult) -> str | None:
+    if result.unexpected_endpoint_node_ids:
+        return "unexpected_endpoint_node_ids"
     if result.out_node_ids:
         return "out_node_ids"
     if result.inner_node_ids:
@@ -411,6 +417,8 @@ def _buffer_failed_metric_name(result: BufferSegmentResult) -> str | None:
 
 
 def _buffer_failed_metric_value(result: BufferSegmentResult) -> list[str] | None:
+    if result.unexpected_endpoint_node_ids:
+        return result.unexpected_endpoint_node_ids
     if result.out_node_ids:
         return result.out_node_ids
     if result.inner_node_ids:

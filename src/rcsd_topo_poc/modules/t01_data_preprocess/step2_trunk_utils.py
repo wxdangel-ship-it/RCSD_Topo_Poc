@@ -11,6 +11,9 @@ from shapely.geometry import LineString, MultiLineString, Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge
 
+from rcsd_topo_poc.modules.t01_data_preprocess.road_kind_continuity import (
+    choose_preferred_continuation_edges,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     PairRecord,
     RoadRecord,
@@ -494,6 +497,7 @@ def _enumerate_simple_paths(
     roads: dict[str, RoadRecord],
     start_node_id: str,
     end_node_id: str,
+    physical_to_semantic: Optional[dict[str, str]] = None,
     max_paths: int = MAX_PATHS_PER_DIRECTION,
     max_depth: int = MAX_PATH_DEPTH,
     budget: Optional[_PathSearchBudget] = None,
@@ -530,13 +534,22 @@ def _enumerate_simple_paths(
         if depth >= max_depth:
             continue
 
-        for edge in adjacency.get(current_node_id, ()):
+        outgoing_edges = tuple(edge for edge in adjacency.get(current_node_id, ()) if edge.to_node not in visited_nodes)
+        if road_ids and physical_to_semantic is not None and len(node_ids) >= 2:
+            outgoing_edges = choose_preferred_continuation_edges(
+                current_node_id=current_node_id,
+                incoming_from_node_id=node_ids[-2],
+                incoming_road_id=road_ids[-1],
+                outgoing_edges=outgoing_edges,
+                roads=roads,
+                physical_to_semantic=physical_to_semantic,
+            ).edges
+
+        for edge in outgoing_edges:
             if budget is not None and len(heap) >= budget.max_frontier_size:
                 budget.exhausted = True
                 budget.exhausted_reason = "frontier_size"
                 break
-            if edge.to_node in visited_nodes:
-                continue
             road = roads.get(edge.road_id)
             if road is None:
                 continue
@@ -2061,6 +2074,7 @@ def _evaluate_trunk_choices(
         roads=context.roads,
         start_node_id=pair.a_node_id,
         end_node_id=pair.b_node_id,
+        physical_to_semantic=context.physical_to_semantic,
         budget=base_forward_budget,
     )
     base_reverse_paths = _enumerate_simple_paths(
@@ -2068,6 +2082,7 @@ def _evaluate_trunk_choices(
         roads=context.roads,
         start_node_id=pair.b_node_id,
         end_node_id=pair.a_node_id,
+        physical_to_semantic=context.physical_to_semantic,
         budget=base_reverse_budget,
     )
     base_candidates, base_clockwise_only = _collect_trunk_candidates(
@@ -2111,6 +2126,7 @@ def _evaluate_trunk_choices(
             roads=context.roads,
             start_node_id=pair.a_node_id,
             end_node_id=pair.b_node_id,
+            physical_to_semantic=context.physical_to_semantic,
             budget=strict_forward_budget,
         )
         strict_reverse_paths = _enumerate_simple_paths(
@@ -2118,6 +2134,7 @@ def _evaluate_trunk_choices(
             roads=context.roads,
             start_node_id=pair.b_node_id,
             end_node_id=pair.a_node_id,
+            physical_to_semantic=context.physical_to_semantic,
             budget=strict_reverse_budget,
         )
         strict_candidates, strict_clockwise_only = _collect_trunk_candidates(
@@ -2398,6 +2415,7 @@ def _evaluate_through_collapsed_corridor(
         roads=context.roads,
         start_node_id=pair.a_node_id,
         end_node_id=pair.b_node_id,
+        physical_to_semantic=context.physical_to_semantic,
         max_paths=1,
         max_depth=max(4, len(pair.forward_path_node_ids) + 1),
     )
@@ -2406,6 +2424,7 @@ def _evaluate_through_collapsed_corridor(
         roads=context.roads,
         start_node_id=pair.b_node_id,
         end_node_id=pair.a_node_id,
+        physical_to_semantic=context.physical_to_semantic,
         max_paths=1,
         max_depth=max(4, len(pair.reverse_path_node_ids) + 1),
     )
@@ -2504,6 +2523,7 @@ def _evaluate_step5c_mirrored_one_sided_corridor(
         roads=context.roads,
         start_node_id=pair.a_node_id,
         end_node_id=pair.b_node_id,
+        physical_to_semantic=context.physical_to_semantic,
         max_paths=1,
         max_depth=max(4, len(pair.forward_path_node_ids) + 1),
     )
@@ -2512,6 +2532,7 @@ def _evaluate_step5c_mirrored_one_sided_corridor(
         roads=context.roads,
         start_node_id=pair.b_node_id,
         end_node_id=pair.a_node_id,
+        physical_to_semantic=context.physical_to_semantic,
         max_paths=1,
         max_depth=max(4, len(pair.reverse_path_node_ids) + 1),
     )

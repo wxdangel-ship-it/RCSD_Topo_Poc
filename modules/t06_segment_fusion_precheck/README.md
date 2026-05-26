@@ -121,6 +121,7 @@ helper 默认按 T01 输入证据包模式自动分片，单个 `.txt` 分片不
 - Step2 buffer 审查以 SWSD Segment 50m buffer 筛选 RCSD 候选，RCSDRoad 使用 `intersects + 阈值`，并在构图前按 `formway` bit7/128 排除提前右转 road。
 - Step2 buffer 裁剪对额外 T05 mapped semantic nodes 执行 seed-based pruning：叶节点均为 required / optional allowed 的 seed 归为 `inner_nodes` 并允许保留；触达孤立挂接或其它 out leaf 的 seed 归为 `out_nodes` 并剔除。
 - `junc_nodes` 是内部通过 + 侧向阻断，不是 hard-stop。
+- Step2 retained RCSD graph 的叶子端点只能是 `pair_nodes` 对应的 RCSD semantic nodes；`junc_nodes` 或其它节点成为 retained leaf endpoint 时以 `unexpected_retained_endpoint_nodes` 拒绝。
 - Step2 不再执行 pair-to-pair BFS 路径搜索、方向趋势、主轴趋势、长度趋势或唯一性筛选；`replaceable_count` 等于 buffer 构建成功数。
 
 ## 输出

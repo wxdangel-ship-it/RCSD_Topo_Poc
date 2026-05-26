@@ -29,6 +29,7 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 - buffer 审查的 required semantic nodes 为 `pair_nodes` relation 与非豁免 `junc_nodes` relation；`junc_kind2_exempt_nodes` 只作为 optional allowed 审计节点。
 - 额外 T05 mapped semantic nodes 必须作为 seed group 执行裁剪：叶节点均为 required / optional allowed 的 seed group 归为 `inner_nodes`；触达孤立挂接或 out leaf 的 seed group 归为 `out_nodes` 并从 retained 子图中剔除。
 - 若剔除 `out_nodes` 后 required semantic nodes 不再连通，必须拒绝，不得输出为 replaceable。
+- retained RCSD graph 的叶子端点只能是 `pair_nodes` 对应的 RCSD semantic nodes；非 pair 叶子端点必须以 `unexpected_retained_endpoint_nodes` 拒绝。
 - RCSD 网络通过 runner 参数传入，不硬编码路径。
 - `junc_nodes` 表示内部通过 + 侧向阻断，不是 hard-stop。
 - Step2 不再执行 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、RCSD 方向一致性、主轴 / 粗长度趋势或唯一性筛选。
@@ -43,4 +44,5 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 5. required semantic node component coverage
 6. inner / out node pruning
 7. retained required semantic node connectivity check
-8. retained RCSDRoad output and compatibility replaceable output
+8. retained leaf endpoint check
+9. retained RCSDRoad output and compatibility replaceable output

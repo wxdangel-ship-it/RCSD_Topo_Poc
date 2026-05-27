@@ -20,5 +20,7 @@
 - buffer candidate graph 使用 RCSD semantic canonical key，避免 RCSDRoad 挂在 subnode 上时把同一语义路口误判为断连。
 - required semantic nodes 必须落在同一候选连通分量内；不满足时输出 buffer rejected。
 - 候选连通分量不直接作为正式 RCSDSegment；裁剪后必须基于 required semantic nodes 构建最小 corridor 子图，避免闭环与旁支被错误保留。
+- 双向最小 corridor 的路径权重会惩罚明显短于 SWSD Segment 的 required-to-required connector，避免用路口内短连接替代完整方向 road。
+- 双向 retained corridor 内部若存在 `formway & 1024 != 0` 的调头 road，且两端 node 均已在 retained corridor 内，则保留该调头 road。
 - 裁剪后的 retained graph 必须只以 pair 对应 RCSD semantic nodes 为叶子端点；junc 或其它节点成为叶子端点时输出 buffer rejected。
 - `t06_rcsd_segment_candidates / replaceable` 是兼容输出，由同一 buffer 成功结果派生；不再执行旧 pair-to-pair BFS、主轴 / 粗长度趋势或唯一性筛选；`swsd_directionality=dual` 的 retained graph 需通过 RCSD direction 双向可达审计，`swsd_directionality=single` 必须构建一条覆盖全部 required semantic nodes 的 pair 端到另一端有向 corridor。

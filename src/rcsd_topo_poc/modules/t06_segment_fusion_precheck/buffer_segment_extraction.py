@@ -13,7 +13,7 @@ from shapely.strtree import STRtree
 from .graph_builders import Edge, NodeCanonicalizer
 from .parsing import ParseError, normalize_id
 from .relation_mapping import RelationCheck
-from .road_attributes import is_advance_right_turn_road
+from .road_attributes import is_advance_right_turn_road, is_uturn_road
 
 
 @dataclass(frozen=True)
@@ -140,6 +140,7 @@ class BufferSegmentExtractor:
             pruned.retained_edges,
             required_nodes,
             pair_nodes,
+            reference_geometry=segment_geometry,
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
         )
@@ -413,6 +414,7 @@ def _build_corridor_subgraph(
     required_nodes: list[str],
     pair_nodes: list[str],
     *,
+    reference_geometry: BaseGeometry | None,
     require_directed_pair: bool,
     require_bidirectional: bool,
 ) -> list[Edge]:
@@ -420,31 +422,36 @@ def _build_corridor_subgraph(
         source, target = pair_nodes
         path = _shorter_path(
             edges,
-            _shortest_directed_path_covering_nodes(edges, source, target, required_nodes),
-            _shortest_directed_path_covering_nodes(edges, target, source, required_nodes),
+            _shortest_directed_path_covering_nodes(edges, source, target, required_nodes, reference_geometry=reference_geometry),
+            _shortest_directed_path_covering_nodes(edges, target, source, required_nodes, reference_geometry=reference_geometry),
+            reference_geometry=reference_geometry,
+            required_nodes=set(required_nodes),
         )
         if path is None:
             return []
         return [edge for edge in edges if edge.edge_id in set(path)]
 
     selected_edge_ids: set[str] = set()
-    for path in _minimum_terminal_edge_paths(edges, required_nodes):
+    for path in _minimum_terminal_edge_paths(edges, required_nodes, reference_geometry=reference_geometry):
         selected_edge_ids.update(path)
 
     if len(pair_nodes) == 2:
         source, target = pair_nodes
         if require_bidirectional:
             for path in (
-                _shortest_edge_path(edges, source, target, directed=True),
-                _shortest_edge_path(edges, target, source, directed=True),
+                _shortest_edge_path(edges, source, target, directed=True, reference_geometry=reference_geometry, required_nodes=set(required_nodes)),
+                _shortest_edge_path(edges, target, source, directed=True, reference_geometry=reference_geometry, required_nodes=set(required_nodes)),
             ):
                 if path is not None:
                     selected_edge_ids.update(path)
 
-    return [edge for edge in edges if edge.edge_id in selected_edge_ids]
+    selected_edges = [edge for edge in edges if edge.edge_id in selected_edge_ids]
+    if require_bidirectional:
+        selected_edges = _include_internal_uturn_edges(edges, selected_edges)
+    return selected_edges
 
 
-def _minimum_terminal_edge_paths(edges: list[Edge], terminals: list[str]) -> list[list[str]]:
+def _minimum_terminal_edge_paths(edges: list[Edge], terminals: list[str], *, reference_geometry: BaseGeometry | None) -> list[list[str]]:
     graph_nodes = _nodes_from_edges(edges)
     unique_terminals: list[str] = []
     seen: set[str] = set()
@@ -458,10 +465,10 @@ def _minimum_terminal_edge_paths(edges: list[Edge], terminals: list[str]) -> lis
     pair_paths: list[tuple[float, str, str, list[str]]] = []
     for index, source in enumerate(unique_terminals):
         for target in unique_terminals[index + 1 :]:
-            path = _shortest_edge_path(edges, source, target, directed=False)
+            path = _shortest_edge_path(edges, source, target, directed=False, reference_geometry=reference_geometry, required_nodes=set(terminals))
             if path is None:
                 continue
-            pair_paths.append((_path_weight(edges, path), source, target, path))
+            pair_paths.append((_path_weight(edges, path, reference_geometry=reference_geometry, required_nodes=set(terminals)), source, target, path))
 
     parent = {terminal: terminal for terminal in unique_terminals}
 
@@ -484,8 +491,16 @@ def _minimum_terminal_edge_paths(edges: list[Edge], terminals: list[str]) -> lis
     return selected
 
 
-def _shortest_edge_path(edges: list[Edge], source: str, target: str, *, directed: bool) -> list[str] | None:
-    adjacency = _weighted_adjacency(edges, directed=directed)
+def _shortest_edge_path(
+    edges: list[Edge],
+    source: str,
+    target: str,
+    *,
+    directed: bool,
+    reference_geometry: BaseGeometry | None,
+    required_nodes: set[str],
+) -> list[str] | None:
+    adjacency = _weighted_adjacency(edges, directed=directed, reference_geometry=reference_geometry, required_nodes=required_nodes)
     queue: list[tuple[float, int, str]] = []
     sequence = 0
     heapq.heappush(queue, (0.0, sequence, source))
@@ -520,7 +535,14 @@ def _shortest_edge_path(edges: list[Edge], source: str, target: str, *, directed
     return path
 
 
-def _shortest_directed_path_covering_nodes(edges: list[Edge], source: str, target: str, required_nodes: list[str]) -> list[str] | None:
+def _shortest_directed_path_covering_nodes(
+    edges: list[Edge],
+    source: str,
+    target: str,
+    required_nodes: list[str],
+    *,
+    reference_geometry: BaseGeometry | None,
+) -> list[str] | None:
     graph_nodes = _nodes_from_edges(edges)
     terminals: list[str] = []
     seen_terminals: set[str] = set()
@@ -535,7 +557,7 @@ def _shortest_directed_path_covering_nodes(edges: list[Edge], source: str, targe
     terminal_index = {node: index for index, node in enumerate(terminals)}
     all_mask = (1 << len(terminals)) - 1
     start_mask = _node_mask(source, terminal_index)
-    adjacency = _weighted_adjacency(edges, directed=True)
+    adjacency = _weighted_adjacency(edges, directed=True, reference_geometry=reference_geometry, required_nodes=set(required_nodes))
     queue: list[tuple[float, int, str, int]] = []
     sequence = 0
     heapq.heappush(queue, (0.0, sequence, source, start_mask))
@@ -585,10 +607,16 @@ def _node_mask(node: str, terminal_index: dict[str, int]) -> int:
     return 1 << index
 
 
-def _weighted_adjacency(edges: list[Edge], *, directed: bool) -> dict[str, list[tuple[str, float, str]]]:
+def _weighted_adjacency(
+    edges: list[Edge],
+    *,
+    directed: bool,
+    reference_geometry: BaseGeometry | None,
+    required_nodes: set[str],
+) -> dict[str, list[tuple[str, float, str]]]:
     adjacency: dict[str, list[tuple[str, float, str]]] = defaultdict(list)
     for edge in edges:
-        weight = _edge_weight(edge)
+        weight = _edge_weight(edge, reference_geometry=reference_geometry, required_nodes=required_nodes)
         if not directed:
             adjacency[edge.source].append((edge.target, weight, edge.edge_id))
             adjacency[edge.target].append((edge.source, weight, edge.edge_id))
@@ -601,25 +629,58 @@ def _weighted_adjacency(edges: list[Edge], *, directed: bool) -> dict[str, list[
     return dict(adjacency)
 
 
-def _shorter_path(edges: list[Edge], first: list[str] | None, second: list[str] | None) -> list[str] | None:
+def _shorter_path(
+    edges: list[Edge],
+    first: list[str] | None,
+    second: list[str] | None,
+    *,
+    reference_geometry: BaseGeometry | None,
+    required_nodes: set[str],
+) -> list[str] | None:
     if first is None:
         return second
     if second is None:
         return first
-    return first if _path_weight(edges, first) <= _path_weight(edges, second) else second
+    return first if _path_weight(edges, first, reference_geometry=reference_geometry, required_nodes=required_nodes) <= _path_weight(edges, second, reference_geometry=reference_geometry, required_nodes=required_nodes) else second
 
 
-def _path_weight(edges: list[Edge], path: list[str]) -> float:
-    weights = {edge.edge_id: _edge_weight(edge) for edge in edges}
+def _path_weight(edges: list[Edge], path: list[str], *, reference_geometry: BaseGeometry | None, required_nodes: set[str]) -> float:
+    weights = {edge.edge_id: _edge_weight(edge, reference_geometry=reference_geometry, required_nodes=required_nodes) for edge in edges}
     return sum(weights.get(edge_id, 1.0) for edge_id in path)
 
 
-def _edge_weight(edge: Edge) -> float:
+def _edge_weight(edge: Edge, *, reference_geometry: BaseGeometry | None, required_nodes: set[str]) -> float:
+    length = 1.0
     if edge.geometry is not None and not edge.geometry.is_empty:
-        length = float(edge.geometry.length)
-        if length > 0:
-            return length
-    return 1.0
+        length = max(float(edge.geometry.length), 1.0)
+    if reference_geometry is None or reference_geometry.is_empty:
+        return length
+    shortcut_penalty = _required_shortcut_penalty(edge, length, reference_geometry, required_nodes)
+    return length + shortcut_penalty
+
+
+def _required_shortcut_penalty(edge: Edge, length: float, reference_geometry: BaseGeometry, required_nodes: set[str]) -> float:
+    if edge.source not in required_nodes or edge.target not in required_nodes:
+        return 0.0
+    if not required_nodes or length >= max(8.0, float(reference_geometry.length) * 0.08):
+        return 0.0
+    return max(10000.0, float(reference_geometry.length) * 100.0)
+
+
+def _include_internal_uturn_edges(edges: list[Edge], selected_edges: list[Edge]) -> list[Edge]:
+    retained_nodes = _nodes_from_edges(selected_edges)
+    selected_edge_ids = {edge.edge_id for edge in selected_edges}
+    result = list(selected_edges)
+    for edge in edges:
+        if edge.edge_id in selected_edge_ids:
+            continue
+        if edge.source not in retained_nodes or edge.target not in retained_nodes:
+            continue
+        if not is_uturn_road(edge.properties):
+            continue
+        result.append(edge)
+        selected_edge_ids.add(edge.edge_id)
+    return result
 
 
 def _nodes_from_edges(edges: list[Edge]) -> set[str]:

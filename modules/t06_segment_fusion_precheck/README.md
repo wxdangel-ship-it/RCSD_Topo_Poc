@@ -120,6 +120,8 @@ helper 默认按 T01 输入证据包模式自动分片，单个 `.txt` 分片不
 - Step2 RCSD 建图使用 `rcsdnode_out` 的 `mainnodeid / subnodeid` 做语义节点归一化，relation required nodes 与 RCSDRoad `snodeid / enodeid` 使用同一 canonical key 判定连通。
 - Step2 buffer 审查以 SWSD Segment 50m buffer 筛选 RCSD 候选，RCSDRoad 使用 `intersects + 阈值`，并在构图前按 `formway` bit7/128 识别提前右转 road；提前右转 road 若两端均与非提前右转候选 road 形成二度链接则保留，否则排除。
 - Step2 不把 buffer 候选连通分量直接作为 RCSDSegment；必须先基于 required semantic nodes 构建最小 corridor 子图，再输出 retained roads。
+- Step2 双向 Segment 的 corridor 路径选择会惩罚明显短于 SWSD Segment 的 required-to-required connector，避免用路口内短连接替代完整反向 road。
+- Step2 识别 RCSDRoad `formway & 1024 != 0` 为调头口；当调头 road 两端均属于 retained corridor node 时，作为内部调头 road 保留。
 - Step2 buffer 裁剪对额外 T05 mapped semantic nodes 执行 seed-based pruning：触达孤立挂接或其它 out leaf 的 seed 归为 `out_nodes` 并剔除；retained graph 中若仍存在 required / optional allowed 以外的 mapped semantic node，则以 `unexpected_mapped_semantic_nodes` 拒绝。
 - 同一 RCSD base node 若同时映射到本 Segment 以外 SWSD 语义节点，即使该 base 也是本 Segment required node，也按额外 mapped semantic node 拒绝。
 - `swsd_directionality=dual` 的 retained RCSD graph 必须 pair 两端双向可达，否则以 `rcsd_not_bidirectional_for_swsd_dual` 拒绝。

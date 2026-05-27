@@ -164,6 +164,55 @@ def test_dual_swsd_requires_bidirectional_rcsd_connectivity() -> None:
     assert result.retained_road_ids == ["oneway"]
 
 
+def test_dual_corridor_uses_complete_reverse_road_over_short_required_shortcut() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward", 10, 20, [(0, 0), (100, 0)], direction=2),
+            _road("short_reverse_connector", 20, 10, [(95, 0), (100, 0)], direction=2),
+            _road("full_reverse", 20, 10, [(100, 1), (0, 1)], direction=2),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert result.retained_road_ids == ["forward", "full_reverse"]
+
+
+def test_dual_corridor_retains_internal_uturn_between_retained_nodes() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward_a", 10, 30, [(0, 0), (50, 0)], direction=2),
+            _road("forward_b", 30, 20, [(50, 0), (100, 0)], direction=2),
+            _road("reverse_a", 20, 40, [(100, 2), (50, 2)], direction=2),
+            _road("reverse_b", 40, 10, [(50, 2), (0, 2)], direction=2),
+            _road("middle_uturn", 30, 40, [(50, 0), (50, 2)], direction=2, formway=1024),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 50, 0), _node(40, 50, 2)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {"forward_a", "forward_b", "reverse_a", "reverse_b", "middle_uturn"}
+    assert "middle_uturn" in result.retained_road_ids
+
+
 def test_single_swsd_requires_at_least_one_directed_pair_path() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[

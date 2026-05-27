@@ -20,6 +20,7 @@
 - 消费 T05 Phase 2 `intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg`。
 - 基于 SWSD Segment 50m buffer、RCSDRoad `intersects + 阈值`、RCSDNode `covers/within` 生成 buffer-based RCSDSegment 审查成果，作为 Step2 唯一正式构建策略。
 - 构建 buffer 候选连通图前，使用 `formway` bit7/128 识别提前右转 road；若该 road 两端均与非提前右转候选 road 形成二度链接，则保留参与 Segment 构建并不计入提前右转排除审计，否则排除。
+- `swsd_directionality=dual` 构建最小 corridor 时，极短 required-to-required connector 不得替代完整方向 road；RCSDRoad `formway & 1024 != 0` 的内部调头 road 若两端均属于 retained corridor node，必须保留在 RCSDSegment 中。
 - 不再执行旧 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、主轴 / 粗长度趋势或唯一性筛选；buffer 候选连通分量必须先收缩为覆盖 required semantic nodes 的最小 corridor 子图；`swsd_directionality=dual` 时执行 RCSD retained graph 双向可达硬审计，`swsd_directionality=single` 时必须构建一条覆盖全部 required semantic nodes 的 pair 端到另一端有向 corridor。
 
 ### 1.2 当前非目标
@@ -101,6 +102,8 @@ run_t06_step2_extract_rcsd_segments(
 - buffer-based RCSDSegment 审查中，required semantic nodes 为 `pair_nodes` relation 与非豁免 `junc_nodes` relation；`junc_kind2_exempt_nodes` 若有 relation，仅作为 optional allowed semantic nodes 审计保留。
 - 额外 T05 mapped semantic nodes 必须按 seed-based pruning 判定为 `inner_nodes / out_nodes`；若 retained graph 中仍存在 required / optional allowed 以外的 mapped semantic node，必须以 `unexpected_mapped_semantic_nodes` 拒绝；若某 RCSD base node 同时映射到本 Segment 以外 SWSD 语义节点，也必须作为额外 mapped semantic node 拒绝。
 - `formway` 为 bit mask；提前右转必须按 `formway & 128 != 0` 判断，不得写成 `formway == 128`。提前右转 road 仅在两端均与非提前右转候选 road 存在二度链接关系时保留参与构建。
+- `formway & 1024 != 0` 表示 RCSD 调头口；该字段在 T06 中只用于双向 retained corridor 内部调头 road 保留，前提是该 road 两端均已属于 retained corridor node。
+- Step2 路径权重不得只按 road 几何长度选择 required semantic node 之间的最短直连 edge；当 required-to-required edge 明显短于 SWSD Segment 时，必须加惩罚，避免把路口内短连接误当作完整反向 road。
 
 ## 3. Outputs
 
@@ -393,3 +396,4 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (
 8. 所有解析、映射、buffer 构建失败都有明确 reason。
 9. 输入文件不被原地修改。
 10. buffer-based RCSDSegment 审查必须按 `formway` bit7/128 识别提前右转 road；二度链接保留和排除结果必须在 summary / 输出中可审计。
+11. `swsd_directionality=dual` 不能因短 required-to-required connector 通过双向审计；retained corridor 内部 `formway & 1024 != 0` 调头 road 必须保留。

@@ -135,6 +135,10 @@ class BufferSegmentExtractor:
             required_nodes=set(required_nodes),
             optional_nodes=set(optional_nodes),
             semantic_nodes=semantic_nodes,
+            pair_nodes=pair_nodes,
+            require_directed_pair=require_directed_pair,
+            require_bidirectional=require_bidirectional,
+            reference_geometry=segment_geometry,
         )
         corridor_edges = _build_corridor_subgraph(
             pruned.retained_edges,
@@ -145,7 +149,7 @@ class BufferSegmentExtractor:
             require_bidirectional=require_bidirectional,
         )
         corridor_nodes = _nodes_from_edges(corridor_edges)
-        unexpected_mapped_semantic_nodes = sorted(((semantic_nodes - allowed_nodes) | unexpected_base_ids) & corridor_nodes)
+        unexpected_mapped_semantic_nodes = sorted((unexpected_base_ids - set(pruned.inner_nodes)) & corridor_nodes)
         ok, reason, unexpected_endpoint_nodes = _retained_status(
             corridor_nodes,
             corridor_edges,
@@ -336,10 +340,39 @@ def _prune_component_seed_based(
     required_nodes: set[str],
     optional_nodes: set[str],
     semantic_nodes: set[str],
+    pair_nodes: list[str],
+    require_directed_pair: bool,
+    require_bidirectional: bool,
+    reference_geometry: BaseGeometry | None,
 ) -> _PrunedGraph:
     adjacency = _adjacency_from_edges(edges)
     allowed_nodes = (required_nodes | optional_nodes) & component_nodes
     extra_semantic_nodes = (semantic_nodes & component_nodes) - allowed_nodes
+    corridor_edge_ids = {
+        edge_id
+        for path in _minimum_terminal_edge_paths(edges, sorted(required_nodes), reference_geometry=reference_geometry)
+        for edge_id in path
+    }
+    if len(pair_nodes) == 2:
+        source, target = pair_nodes
+        if require_bidirectional:
+            for path in (
+                _shortest_edge_path(edges, source, target, directed=True, reference_geometry=reference_geometry, required_nodes=required_nodes),
+                _shortest_edge_path(edges, target, source, directed=True, reference_geometry=reference_geometry, required_nodes=required_nodes),
+            ):
+                if path is not None:
+                    corridor_edge_ids.update(path)
+        elif require_directed_pair:
+            path = _shorter_path(
+                edges,
+                _shortest_directed_path_covering_nodes(edges, source, target, sorted(required_nodes), reference_geometry=reference_geometry),
+                _shortest_directed_path_covering_nodes(edges, target, source, sorted(required_nodes), reference_geometry=reference_geometry),
+                reference_geometry=reference_geometry,
+                required_nodes=required_nodes,
+            )
+            if path is not None:
+                corridor_edge_ids.update(path)
+    corridor_nodes = _nodes_from_edges(edge for edge in edges if edge.edge_id in corridor_edge_ids)
     inner_nodes: set[str] = set()
     out_nodes: set[str] = set()
     remove_nodes: set[str] = set()
@@ -347,12 +380,13 @@ def _prune_component_seed_based(
         if group.leaves and group.leaves.issubset(allowed_nodes):
             inner_nodes.update(group.seed_nodes)
         else:
-            out_nodes.update(group.seed_nodes)
-            remove_nodes.update(group.scope_nodes)
+            inner_nodes.update(group.seed_nodes & corridor_nodes)
+            out_nodes.update(group.seed_nodes - corridor_nodes)
+            remove_nodes.update(group.scope_nodes - corridor_nodes)
 
     candidate_nodes = set(component_nodes) - remove_nodes
     candidate_edges = [edge for edge in edges if edge.source in candidate_nodes and edge.target in candidate_nodes]
-    protected_nodes = (allowed_nodes | inner_nodes) & candidate_nodes
+    protected_nodes = (allowed_nodes | inner_nodes | corridor_nodes) & candidate_nodes
     retained_nodes = _trim_unprotected_leaves(candidate_nodes, candidate_edges, protected_nodes)
     retained_edges = [edge for edge in candidate_edges if edge.source in retained_nodes and edge.target in retained_nodes]
     return _PrunedGraph(

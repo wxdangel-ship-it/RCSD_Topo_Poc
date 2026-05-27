@@ -117,7 +117,7 @@ def test_missing_required_nodes_fail_component_coverage() -> None:
     assert result.missing_required_node_ids == ["30"]
 
 
-def test_seed_pruning_rejects_inner_extra_mapped_semantic_nodes() -> None:
+def test_seed_pruning_allows_inner_extra_mapped_semantic_nodes_on_required_corridor() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("main_a", 10, 30, [(0, 0), (50, 0)]),
@@ -131,18 +131,18 @@ def test_seed_pruning_rejects_inner_extra_mapped_semantic_nodes() -> None:
         relation=RelationCheck(True, ["10", "20"], []),
         optional_allowed_rcsd_nodes=[],
         all_relation_base_ids={"10", "20", "30"},
+        unexpected_relation_base_ids={"30"},
         config=BufferExtractionConfig(buffer_distance_m=10),
     )
 
-    assert not result.ok
-    assert result.reason == "unexpected_mapped_semantic_nodes"
+    assert result.ok
     assert result.inner_node_ids == ["30"]
     assert result.out_node_ids == []
     assert result.retained_road_ids == ["main_a", "main_b"]
-    assert result.unexpected_mapped_semantic_node_ids == ["30"]
+    assert result.unexpected_mapped_semantic_node_ids == []
 
 
-def test_global_rcsd_semantic_node_without_relation_is_rejected_when_retained() -> None:
+def test_global_rcsd_semantic_node_without_relation_can_be_internal_corridor() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("main_a", 10, 30, [(0, 0), (50, 0)]),
@@ -159,10 +159,9 @@ def test_global_rcsd_semantic_node_without_relation_is_rejected_when_retained() 
         config=BufferExtractionConfig(buffer_distance_m=10),
     )
 
-    assert not result.ok
-    assert result.reason == "unexpected_mapped_semantic_nodes"
+    assert result.ok
     assert result.inner_node_ids == ["30"]
-    assert result.unexpected_mapped_semantic_node_ids == ["30"]
+    assert result.unexpected_mapped_semantic_node_ids == []
 
 
 def test_dual_swsd_requires_bidirectional_rcsd_connectivity() -> None:
@@ -208,6 +207,39 @@ def test_dual_corridor_uses_complete_reverse_road_over_short_required_shortcut()
 
     assert result.ok
     assert result.retained_road_ids == ["forward", "full_reverse"]
+
+
+def test_dual_pruning_protects_both_directed_pair_corridors() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward_a", 10, 30, [(0, 0), (50, 0)], direction=2),
+            _road("forward_b", 30, 20, [(50, 0), (100, 0)], direction=2),
+            _road("reverse_a", 20, 40, [(100, 2), (50, 2)], direction=2),
+            _road("reverse_b", 40, 10, [(50, 2), (0, 2)], direction=2),
+            _road("side", 30, 50, [(50, 0), (50, 20)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 50, 0, kind=4),
+            _node(40, 50, 2, kind=4),
+            _node(50, 50, 20, kind=4),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=25),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {"forward_a", "forward_b", "reverse_a", "reverse_b"}
+    assert result.inner_node_ids == ["30", "40"]
+    assert result.out_node_ids == ["50"]
 
 
 def test_dual_corridor_retains_internal_uturn_between_retained_nodes() -> None:
@@ -379,7 +411,7 @@ def test_required_junc_leaf_endpoint_is_rejected() -> None:
     assert result.retained_road_ids == ["direct", "junc_branch"]
 
 
-def test_seed_pruning_fails_when_out_semantic_branch_disconnects_required_nodes() -> None:
+def test_seed_pruning_keeps_required_corridor_and_removes_out_branch() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("main_a", 10, 30, [(0, 0), (50, 0)]),
@@ -397,10 +429,10 @@ def test_seed_pruning_fails_when_out_semantic_branch_disconnects_required_nodes(
         config=BufferExtractionConfig(buffer_distance_m=25),
     )
 
-    assert not result.ok
-    assert result.reason == "buffer_pruned_to_empty"
-    assert result.inner_node_ids == []
-    assert result.out_node_ids == ["30", "40"]
+    assert result.ok
+    assert result.inner_node_ids == ["30"]
+    assert result.out_node_ids == ["40"]
+    assert result.retained_road_ids == ["main_a", "main_b"]
 
 
 def test_optional_allowed_semantic_nodes_can_be_retained() -> None:

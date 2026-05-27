@@ -66,7 +66,7 @@ T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增
 
 - CRS 与坐标变换正确性：所有输入通过仓库标准 vector reader 归一到处理 CRS；缺失 CRS 不静默猜测。
 - 拓扑一致性：候选抽取不 silent fix 输入拓扑，required semantic node 连通覆盖、最小 corridor 子图构建与裁剪结果都进入审计。
-- 语义节点裁剪可解释性：额外 T05 mapped semantic nodes 必须按 seed-based pruning 输出 `inner_node_ids / out_node_ids`，并在剔除 out 分支后重新校验 required semantic node 连通性；retained graph 中仍存在 required / optional allowed 以外 mapped semantic nodes 时输出 `unexpected_mapped_semantic_node_ids` 并拒绝；同一 RCSD base node 若同时映射到本 Segment 以外 SWSD 语义节点，也按额外 mapped semantic node 拒绝；retained graph 叶子端点必须限定为 pair 对应 RCSD semantic nodes，非 pair 叶子端点输出 `unexpected_endpoint_node_ids` 并拒绝。
+- 语义节点裁剪可解释性：额外 T05 mapped semantic nodes 必须按 seed-based pruning 输出 `inner_node_ids / out_node_ids`，并在剔除 out 分支后重新校验 required semantic node 连通性；处于 required corridor 内部的额外 mapped semantic node 可作为 `inner_nodes` 保留审计，非 inner 且仍进入 retained graph 时输出 `unexpected_mapped_semantic_node_ids` 并拒绝；retained graph 叶子端点必须限定为 pair 对应 RCSD semantic nodes，非 pair 叶子端点输出 `unexpected_endpoint_node_ids` 并拒绝。
 - 几何语义可解释性：SWSD 几何用于 buffer 窗口，RCSD 几何用于 `intersects + overlap threshold` 候选筛选与最终输出，不替代 relation / required semantic node 规则。
 - 审计可追溯性：summary 记录输入路径、参数、计数、失败原因与输出路径。
 - 文本证据包审计可追溯性：bundle 内必须保留输入路径、解析结果、文件大小、SHA256、参数与复跑命令。

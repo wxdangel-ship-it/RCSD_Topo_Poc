@@ -97,6 +97,7 @@ run_t06_step2_extract_rcsd_segments(
 - `intersection_match_all.geojson` 中只有 `status = 0` 且 `base_id > 0` 的 relation 可用。
 - `base_id` 必须是 RCSD 语义路口主 node id。
 - Step2 构建 buffer candidate graph 时，必须先按 `rcsdnode_path` 的 `mainnodeid / subnodeid` 做语义节点归一化：`id` 若有有效 `mainnodeid` 则归一到 `mainnodeid`，`subnodeid` 列表中的物理节点也归一到所属 `mainnodeid`；relation required nodes 与 RCSDRoad `snodeid / enodeid` 必须使用同一 canonical key 判定连通。
+- 全局 RCSD 语义路口组按有效 `mainnodeid` 聚合，组内所有 node 关联 road 都视为该语义路口的进入 / 退出道路；未映射到当前 Segment 的全局 RCSD 语义路口若进入 retained graph，必须作为额外语义节点参与 seed pruning 与硬审计，不能当普通通过节点。
 - `direction` 用于 RCSD retained graph 有向可达硬审计：`swsd_directionality=dual` 时 pair 两端必须正反向均可达；`swsd_directionality=single` 时必须存在一条覆盖全部 required semantic nodes 的 pair 有向 corridor；component coverage、seed pruning、最小 corridor 子图与 leaf endpoint 仍按 canonical 无向图执行。
 - `junc_nodes` 在 RCSD 抽取中是内部通过 + 侧向阻断，不是 hard-stop；retained RCSD graph 的叶子端点只能是 `pair_nodes` 对应的 RCSD semantic nodes。
 - buffer-based RCSDSegment 审查中，required semantic nodes 为 `pair_nodes` relation 与非豁免 `junc_nodes` relation；`junc_kind2_exempt_nodes` 若有 relation，仅作为 optional allowed semantic nodes 审计保留。
@@ -383,6 +384,7 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (
 - `advance_right_formway_bit`：提前右转 bit mask，默认 `128`；命中该 bit 的 road 仅在两端均与非提前右转候选 road 存在二度链接关系时保留。
 - `max_text_size_bytes`：文本证据包单个 `.txt` 分片体量上限，默认 `250KB`；仅作用于文本包 helper，不影响 Step1 / Step2 业务运行。
 - `rcsd_semantic_node_alias_count`：Step2 summary 审计字段，记录参与 `subnodeid/id -> mainnodeid` 归一化的非恒等 alias 数量。
+- `rcsd_semantic_node_group_count`：Step2 summary 审计字段，记录从 `rcsdnode_path` 识别出的全局 RCSD 语义路口组数量。
 
 ## 6. Acceptance
 

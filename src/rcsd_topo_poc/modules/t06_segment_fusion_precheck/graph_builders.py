@@ -21,10 +21,12 @@ class Edge:
 @dataclass(frozen=True)
 class NodeCanonicalizer:
     aliases: dict[str, str]
+    semantic_node_ids: frozenset[str]
 
     @classmethod
     def from_node_features(cls, features: list[dict[str, Any]]) -> NodeCanonicalizer:
         aliases: dict[str, str] = {}
+        semantic_node_ids: set[str] = set()
         for feature in features:
             props = dict(feature.get("properties") or {})
             try:
@@ -34,9 +36,12 @@ class NodeCanonicalizer:
             mainnodeid = parse_positive_int(props.get("mainnodeid"))
             canonical = str(mainnodeid) if mainnodeid is not None else node_id
             aliases.setdefault(node_id, canonical)
-            for subnode_id in _parse_optional_id_list(props.get("subnodeid")):
+            subnode_ids = _parse_optional_id_list(props.get("subnodeid"))
+            if mainnodeid is not None or subnode_ids or _is_semantic_node_kind(props):
+                semantic_node_ids.add(canonical)
+            for subnode_id in subnode_ids:
                 aliases.setdefault(subnode_id, canonical)
-        return cls(aliases=aliases)
+        return cls(aliases=aliases, semantic_node_ids=frozenset(semantic_node_ids))
 
     def canonicalize(self, value: Any) -> str:
         node_id = normalize_id(value)
@@ -48,3 +53,10 @@ def _parse_optional_id_list(value: Any) -> list[str]:
         return parse_id_list(value, allow_empty=True)
     except ParseError:
         return []
+
+
+def _is_semantic_node_kind(props: dict[str, Any]) -> bool:
+    kind = parse_positive_int(props.get("kind_2"))
+    if kind is None:
+        kind = parse_positive_int(props.get("kind"))
+    return kind is not None and kind > 0

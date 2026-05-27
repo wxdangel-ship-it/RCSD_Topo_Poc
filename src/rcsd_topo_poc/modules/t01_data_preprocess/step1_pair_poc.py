@@ -83,6 +83,7 @@ class ThroughRuleSpec:
     disallow_null_mainnode_singleton_seed_terminate_nodes: bool = False
     retain_seed_node_ids_as_through_node_ids: tuple[str, ...] = ()
     allow_seed_search_when_through: bool = False
+    continue_after_terminal_candidate: bool = False
 
 
 @dataclass(frozen=True)
@@ -321,6 +322,9 @@ def _load_strategy(path: Union[str, Path]) -> StrategySpec:
                 )
             ),
             allow_seed_search_when_through=bool(through_payload.get("allow_seed_search_when_through", False)),
+            continue_after_terminal_candidate=bool(
+                through_payload.get("continue_after_terminal_candidate", False)
+            ),
         ),
         allow_mirrored_one_sided_reverse_confirm_for_force_terminate_nodes=bool(
             doc.get("allow_mirrored_one_sided_reverse_confirm_for_force_terminate_nodes", False)
@@ -950,6 +954,7 @@ def _search_from_seed(
     hard_stop_node_ids: set[str],
     seed_eval: dict[str, RuleEvaluation],
     terminate_eval: dict[str, RuleEvaluation],
+    continue_after_terminal_candidate: bool = False,
 ) -> SearchResult:
     queue: deque[str] = deque([start_node_id])
     visited = {start_node_id}
@@ -1091,6 +1096,19 @@ def _search_from_seed(
                         parent_road_ids=parent_road_ids,
                         through_node_ids=through_node_ids,
                     )
+                    if continue_after_terminal_candidate:
+                        _record_search_event(
+                            event_counts,
+                            event_samples,
+                            sample_counts,
+                            {
+                                "event": "terminal_candidate_continued",
+                                "seed_node_id": start_node_id,
+                                "node_id": next_node_id,
+                                "road_id": edge.road_id,
+                            },
+                        )
+                        queue.append(next_node_id)
                 else:
                     _record_search_event(
                         event_counts,
@@ -1398,6 +1416,7 @@ def run_step1_strategy(
             hard_stop_node_ids=hard_stop_node_ids,
             seed_eval=seed_eval,
             terminate_eval=terminate_eval,
+            continue_after_terminal_candidate=strategy.through_rule.continue_after_terminal_candidate,
         )
         search_results[seed_id] = search_result
         for event_name, count in search_result.event_counts.items():

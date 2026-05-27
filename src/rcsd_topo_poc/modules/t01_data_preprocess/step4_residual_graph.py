@@ -655,6 +655,7 @@ def _build_step4_inputs(
                 "incident_degree_exclude_formway_bits_any": [7],
                 "disallow_seed_terminate_nodes": True,
                 "disallow_null_mainnode_singleton_seed_terminate_nodes": True,
+                "continue_after_terminal_candidate": True,
             },
             "explicit_seed_node_ids": sorted(endpoint_pool_ids, key=_sort_key),
             "explicit_terminate_node_ids": sorted(endpoint_pool_ids, key=_sort_key),

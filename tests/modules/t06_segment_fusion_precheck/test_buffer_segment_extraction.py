@@ -16,9 +16,9 @@ def _road(road_id: str, snode: int, enode: int, coords: list[tuple[float, float]
     return {"properties": payload, "geometry": LineString(coords)}
 
 
-def _node(node_id: int, x: float, y: float, *, mainnodeid: int = 0, subnodeid=None):
+def _node(node_id: int, x: float, y: float, *, mainnodeid: int = 0, subnodeid=None, kind: int = 0):
     return {
-        "properties": {"id": node_id, "mainnodeid": mainnodeid, "subnodeid": subnodeid if subnodeid is not None else []},
+        "properties": {"id": node_id, "mainnodeid": mainnodeid, "subnodeid": subnodeid if subnodeid is not None else [], "kind": kind},
         "geometry": Point(x, y),
     }
 
@@ -139,6 +139,29 @@ def test_seed_pruning_rejects_inner_extra_mapped_semantic_nodes() -> None:
     assert result.inner_node_ids == ["30"]
     assert result.out_node_ids == []
     assert result.retained_road_ids == ["main_a", "main_b"]
+    assert result.unexpected_mapped_semantic_node_ids == ["30"]
+
+
+def test_global_rcsd_semantic_node_without_relation_is_rejected_when_retained() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("main_a", 10, 30, [(0, 0), (50, 0)]),
+            _road("main_b", 30, 20, [(50, 0), (100, 0)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 50, 0, kind=4)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert not result.ok
+    assert result.reason == "unexpected_mapped_semantic_nodes"
+    assert result.inner_node_ids == ["30"]
     assert result.unexpected_mapped_semantic_node_ids == ["30"]
 
 

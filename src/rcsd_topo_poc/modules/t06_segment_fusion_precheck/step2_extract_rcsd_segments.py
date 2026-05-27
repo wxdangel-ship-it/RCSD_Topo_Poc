@@ -208,6 +208,7 @@ def run_t06_step2_extract_rcsd_segments(
                 len(item["properties"].get("excluded_advance_right_turn_road_ids") or []) for item in buffer_segment_rows + buffer_rejected_rows
             ),
             "rcsd_semantic_node_alias_count": sum(1 for raw_id, canonical_id in rcsd_node_canonicalizer.aliases.items() if raw_id != canonical_id),
+            "rcsd_semantic_node_group_count": len(rcsd_node_canonicalizer.semantic_node_ids),
             "outputs": {
                 **{f"candidates_{k}": str(v) for k, v in candidate_paths.items()},
                 **{f"replaceable_{k}": str(v) for k, v in replaceable_paths.items()},

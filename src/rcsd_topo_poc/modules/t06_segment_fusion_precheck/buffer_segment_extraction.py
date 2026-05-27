@@ -127,7 +127,7 @@ class BufferSegmentExtractor:
 
         selected_nodes = components[selected]
         selected_edges = [edge for edge in graph.edges if edge.source in selected_nodes and edge.target in selected_nodes]
-        semantic_nodes = relation_base_ids & selected_nodes
+        semantic_nodes = (relation_base_ids | set(self.node_canonicalizer.semantic_node_ids)) & selected_nodes
         allowed_nodes = set(required_nodes) | set(optional_nodes)
         pruned = _prune_component_seed_based(
             component_nodes=selected_nodes,

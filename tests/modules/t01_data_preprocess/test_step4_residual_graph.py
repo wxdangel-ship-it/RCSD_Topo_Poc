@@ -256,6 +256,7 @@ def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path:
     assert strategy_doc["force_seed_node_ids"] == ["300", "999"]
     assert strategy_doc["force_terminate_node_ids"] == ["300", "999"]
     assert strategy_doc["hard_stop_node_ids"] == ["300", "999"]
+    assert strategy_doc["through_node_rule"]["continue_after_terminal_candidate"] is True
     assert strategy_doc["explicit_seed_node_ids"] == ["1", "300"]
     assert strategy_doc["explicit_terminate_node_ids"] == ["1", "300"]
 

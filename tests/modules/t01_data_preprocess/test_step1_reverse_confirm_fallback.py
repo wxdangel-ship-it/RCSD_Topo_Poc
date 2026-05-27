@@ -75,6 +75,23 @@ def _strategy(*, allow_fallback: bool) -> StrategySpec:
     )
 
 
+def _terminal_continuation_strategy(*, allow_continue: bool) -> StrategySpec:
+    empty_rule = RuleSpec(kind_bits_all=(), kind_bits_any=(), kind_values_in=(), grade_eq=9999, grade_in=(), closed_con_in=())
+    return StrategySpec(
+        strategy_id="STEP4",
+        description="test",
+        seed_rule=empty_rule,
+        terminate_rule=empty_rule,
+        through_rule=ThroughRuleSpec(
+            incident_road_degree_eq=2,
+            disallow_seed_terminate_nodes=True,
+            continue_after_terminal_candidate=allow_continue,
+        ),
+        force_seed_node_ids=("1", "3", "4"),
+        force_terminate_node_ids=("1", "3", "4"),
+    )
+
+
 def test_step1_reverse_confirm_fallback_is_step5c_opt_in(tmp_path: Path) -> None:
     node_path = tmp_path / "nodes.geojson"
     road_path = tmp_path / "roads.geojson"
@@ -107,3 +124,38 @@ def test_step1_reverse_confirm_fallback_is_step5c_opt_in(tmp_path: Path) -> None
     assert pair.forward_path_road_ids == ("r12", "r23")
     assert pair.reverse_path_road_ids == ("r23", "r12")
     assert with_fallback.search_event_counts["reverse_confirm_fallback_mirrored"] == 1
+
+
+def test_step1_terminal_candidate_continuation_is_opt_in(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(2, 1.0, 0.0),
+            _node_feature(3, 2.0, 0.0, grade_2=2, kind_2=2048, closed_con=2),
+            _node_feature(4, 2.0, 1.0, grade_2=2, kind_2=2048, closed_con=2),
+            _node_feature(5, 1.0, 1.0),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r12", 1, 2, 2, [[0.0, 0.0], [1.0, 0.0]]),
+            _road_feature("r23", 2, 3, 2, [[1.0, 0.0], [2.0, 0.0]]),
+            _road_feature("r34", 3, 4, 2, [[2.0, 0.0], [2.0, 1.0]]),
+            _road_feature("r45", 4, 5, 2, [[2.0, 1.0], [1.0, 1.0]]),
+            _road_feature("r51", 5, 1, 2, [[1.0, 1.0], [0.0, 0.0]]),
+        ],
+    )
+    context = build_step1_graph_context(road_path=road_path, node_path=node_path)
+
+    no_continue = run_step1_strategy(context, _terminal_continuation_strategy(allow_continue=False))
+    assert no_continue.pair_candidates == []
+
+    with_continue = run_step1_strategy(context, _terminal_continuation_strategy(allow_continue=True))
+    pair_by_id = {pair.pair_id: pair for pair in with_continue.pair_candidates}
+    assert "STEP4:1__3" in pair_by_id
+    assert pair_by_id["STEP4:1__3"].reverse_path_road_ids == ("r34", "r45", "r51")
+    assert with_continue.search_event_counts["terminal_candidate_continued"] >= 1

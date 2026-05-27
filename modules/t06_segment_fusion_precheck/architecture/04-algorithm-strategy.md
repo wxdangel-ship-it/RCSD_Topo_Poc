@@ -18,6 +18,7 @@
 - Step1 先解析 `pair_nodes / junc_nodes / roads`，再做 node eligibility。
 - Step2 先 relation mapping，再使用 buffer-based 策略构建唯一 RCSD Segment 审查成果。
 - buffer candidate graph 使用 RCSD semantic canonical key，避免 RCSDRoad 挂在 subnode 上时把同一语义路口误判为断连。
+- seed pruning 的语义节点集合来自 T05 relation base nodes 与 `rcsdnode_out` 全局语义路口组，不只依赖当前 Segment 的 mapped nodes。
 - required semantic nodes 必须落在同一候选连通分量内；不满足时输出 buffer rejected。
 - 候选连通分量不直接作为正式 RCSDSegment；裁剪后必须基于 required semantic nodes 构建最小 corridor 子图，避免闭环与旁支被错误保留。
 - 双向最小 corridor 的路径权重会惩罚明显短于 SWSD Segment 的 required-to-required connector，避免用路口内短连接替代完整方向 road。

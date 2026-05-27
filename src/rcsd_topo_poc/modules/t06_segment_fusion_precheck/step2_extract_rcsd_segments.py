@@ -87,9 +87,11 @@ def run_t06_step2_extract_rcsd_segments(
             continue
         relation_junc_nodes = _relation_required_junc_nodes(junc_nodes, junc_kind2_exempt_nodes)
         all_base_ids_for_segment = all_base_ids - _accepted_base_ids_for_nodes(junc_kind2_exempt_nodes, relation_map)
+        unexpected_base_ids_for_segment = _unexpected_base_ids_for_segment([*pair_nodes, *junc_nodes], relation_map)
         if junc_kind2_exempt_nodes:
             junc_kind2_relation_exempt_segment_count += 1
             junc_kind2_relation_exempt_node_count += len(junc_kind2_exempt_nodes)
+        directionality = directionality_from_sgrade(segment_props.get("sgrade") or props.get("sgrade")) or "unknown"
 
         relation = check_segment_relations(pair_nodes=pair_nodes, junc_nodes=relation_junc_nodes, relation_map=relation_map)
         if not relation.ok:
@@ -112,9 +114,11 @@ def run_t06_step2_extract_rcsd_segments(
             relation=relation,
             optional_allowed_rcsd_nodes=optional_allowed_rcsd_nodes,
             all_relation_base_ids=all_base_ids_for_segment,
+            unexpected_relation_base_ids=unexpected_base_ids_for_segment,
+            require_directed_pair=directionality == "single",
+            require_bidirectional=directionality == "dual",
             config=buffer_config,
         )
-        directionality = directionality_from_sgrade(segment_props.get("sgrade") or props.get("sgrade")) or "unknown"
         if directionality == "single":
             single_input_count += 1
         elif directionality == "dual":
@@ -285,6 +289,16 @@ def _accepted_base_ids_for_nodes_ordered(node_ids: list[str], relation_map: dict
     return result
 
 
+def _unexpected_base_ids_for_segment(allowed_node_ids: list[str], relation_map: dict[str, RelationRecord]) -> set[str]:
+    allowed = set(allowed_node_ids)
+    result: set[str] = set()
+    for target_id, relation in relation_map.items():
+        if target_id in allowed or relation.status != 0 or relation.base_id <= 0:
+            continue
+        result.add(str(relation.base_id))
+    return result
+
+
 def _buffer_segment_row(segment_id: str, result: BufferSegmentResult) -> dict[str, Any]:
     return {
         "swsd_segment_id": segment_id,
@@ -301,6 +315,7 @@ def _buffer_segment_row(segment_id: str, result: BufferSegmentResult) -> dict[st
         "inner_node_ids": result.inner_node_ids,
         "out_node_ids": result.out_node_ids,
         "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
+        "unexpected_mapped_semantic_node_ids": result.unexpected_mapped_semantic_node_ids,
         "selected_component_id": result.selected_component_id,
         "candidate_road_count": result.candidate_road_count,
         "retained_road_count": result.retained_road_count,
@@ -341,6 +356,7 @@ def _buffer_candidate_row(
         "inner_node_ids": result.inner_node_ids,
         "out_node_ids": result.out_node_ids,
         "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
+        "unexpected_mapped_semantic_node_ids": result.unexpected_mapped_semantic_node_ids,
         "excluded_advance_right_turn_road_ids": result.excluded_advance_right_turn_road_ids,
         "selected_component_id": result.selected_component_id,
         "candidate_road_count": result.candidate_road_count,
@@ -372,6 +388,7 @@ def _buffer_replaceable_row(candidate_feature: dict[str, Any]) -> dict[str, Any]
             "inner_node_ids": props.get("inner_node_ids"),
             "out_node_ids": props.get("out_node_ids"),
             "unexpected_endpoint_node_ids": props.get("unexpected_endpoint_node_ids"),
+            "unexpected_mapped_semantic_node_ids": props.get("unexpected_mapped_semantic_node_ids"),
             "excluded_advance_right_turn_road_ids": props.get("excluded_advance_right_turn_road_ids"),
             "hard_filter_passed": True,
         },
@@ -396,6 +413,7 @@ def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult) -> dict[s
             "inner_node_ids": result.inner_node_ids,
             "out_node_ids": result.out_node_ids,
             "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
+            "unexpected_mapped_semantic_node_ids": result.unexpected_mapped_semantic_node_ids,
             "selected_component_id": result.selected_component_id,
             "candidate_road_count": result.candidate_road_count,
             "retained_road_count": result.retained_road_count,
@@ -407,8 +425,12 @@ def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult) -> dict[s
 
 
 def _buffer_failed_metric_name(result: BufferSegmentResult) -> str | None:
+    if result.unexpected_mapped_semantic_node_ids:
+        return "unexpected_mapped_semantic_node_ids"
     if result.unexpected_endpoint_node_ids:
         return "unexpected_endpoint_node_ids"
+    if result.reason in {"rcsd_not_bidirectional_for_swsd_dual", "rcsd_directed_path_missing"}:
+        return "rcsd_pair_directionality"
     if result.out_node_ids:
         return "out_node_ids"
     if result.inner_node_ids:
@@ -417,8 +439,12 @@ def _buffer_failed_metric_name(result: BufferSegmentResult) -> str | None:
 
 
 def _buffer_failed_metric_value(result: BufferSegmentResult) -> list[str] | None:
+    if result.unexpected_mapped_semantic_node_ids:
+        return result.unexpected_mapped_semantic_node_ids
     if result.unexpected_endpoint_node_ids:
         return result.unexpected_endpoint_node_ids
+    if result.reason in {"rcsd_not_bidirectional_for_swsd_dual", "rcsd_directed_path_missing"}:
+        return result.required_rcsd_nodes[:2]
     if result.out_node_ids:
         return result.out_node_ids
     if result.inner_node_ids:

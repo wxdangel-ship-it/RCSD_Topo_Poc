@@ -34,9 +34,10 @@
 - 内网执行脚本 `scripts/t06_run_innernet_precheck.py` 只能转发到 `run_t06_segment_fusion_precheck(...)`，不得内置替代业务逻辑。
 - Step1 按 `pair_nodes + junc_nodes` 的语义路口 ID 集合判断 EVD 与 anchor/fallback 资格；其中 `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过，`pair_nodes` 不适用该豁免。
 - Step2 只接受 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id > 0` 的 relation；relation 必检集合为 `pair_nodes + 非 junc_kind2_exempt_nodes 的 junc_nodes`。
-- Step2 buffer 审查构图前必须按 `formway` bit7/128 排除提前右转 road；不得通过几何形态反推提前右转。
+- Step2 buffer 审查构图前必须按 `formway` bit7/128 识别提前右转 road；若该 road 两端均与非提前右转候选 road 形成二度链接，则保留参与 Segment 构建，否则排除。不得通过几何形态反推提前右转。
 - `junc_nodes` 在 RCSD 抽取中是内部通过 + 侧向阻断，不是 hard-stop。
-- Step2 不再执行 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、RCSD 方向一致性、主轴 / 粗长度趋势或唯一性筛选。
+- Step2 不再执行 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、主轴 / 粗长度趋势或唯一性筛选；`swsd_directionality=dual` 时必须执行 RCSD retained graph 双向可达硬审计。
+- retained RCSD graph 不允许存在 required / optional allowed 以外的额外 T05 mapped semantic nodes。
 
 ## 必做验证
 

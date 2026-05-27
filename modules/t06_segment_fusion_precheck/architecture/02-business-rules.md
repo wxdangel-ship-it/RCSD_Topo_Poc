@@ -25,24 +25,30 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 - `junc_kind2_exempt_nodes` 不参与 Step2 relation 必检集合，也不参与后续 mapped junc 覆盖、内部通过与语义顺序检查。
 - buffer-based RCSDSegment 审查以 SWSD Segment 50m buffer 限定 RCSD 候选；RCSDRoad 使用 `intersects + overlap threshold`，RCSDNode 使用 `covers/within`。
 - buffer candidate graph 按 `rcsdnode_out.id/mainnodeid/subnodeid` 归一到 canonical RCSD semantic node id 后再判定连通。
-- 构建 buffer 候选连通图前，`formway` bit7/128 的提前右转 road 必须排除并输出审计。
+- 构建 buffer 候选连通图前，`formway` bit7/128 的提前右转 road 必须识别并输出审计；若该 road 两端均与非提前右转候选 road 形成二度链接，则保留参与 Segment 构建，否则排除。
 - buffer 审查的 required semantic nodes 为 `pair_nodes` relation 与非豁免 `junc_nodes` relation；`junc_kind2_exempt_nodes` 只作为 optional allowed 审计节点。
-- 额外 T05 mapped semantic nodes 必须作为 seed group 执行裁剪：叶节点均为 required / optional allowed 的 seed group 归为 `inner_nodes`；触达孤立挂接或 out leaf 的 seed group 归为 `out_nodes` 并从 retained 子图中剔除。
+- buffer 候选连通分量不能直接输出为 RCSDSegment；必须先基于 required semantic nodes 构建最小 corridor 子图，避免闭环与旁支被错误保留。
+- 额外 T05 mapped semantic nodes 必须作为 seed group 执行裁剪：触达孤立挂接或 out leaf 的 seed group 归为 `out_nodes` 并从 retained 子图中剔除；retained graph 中仍存在 required / optional allowed 以外 mapped semantic nodes 时，必须以 `unexpected_mapped_semantic_nodes` 拒绝。
+- 同一 RCSD base node 若同时映射到本 Segment 以外 SWSD 语义节点，也必须按额外 mapped semantic node 拒绝。
 - 若剔除 `out_nodes` 后 required semantic nodes 不再连通，必须拒绝，不得输出为 replaceable。
 - retained RCSD graph 的叶子端点只能是 `pair_nodes` 对应的 RCSD semantic nodes；非 pair 叶子端点必须以 `unexpected_retained_endpoint_nodes` 拒绝。
+- `swsd_directionality=dual` 的 retained RCSD graph 必须 pair 两端双向可达，否则以 `rcsd_not_bidirectional_for_swsd_dual` 拒绝。
+- `swsd_directionality=single` 必须构建一条覆盖全部 required semantic nodes 的 pair 端到另一端有向 corridor，不得把无向 corridor 与有向 pair path 做并集；不满足时以 `rcsd_directed_path_missing` 拒绝。
 - RCSD 网络通过 runner 参数传入，不硬编码路径。
 - `junc_nodes` 表示内部通过 + 侧向阻断，不是 hard-stop。
-- Step2 不再执行 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、RCSD 方向一致性、主轴 / 粗长度趋势或唯一性筛选。
+- Step2 不再执行旧 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、主轴 / 粗长度趋势或唯一性筛选。
 - `t06_rcsd_buffer_segments` 是正式主成果；`t06_rcsd_segment_candidates / replaceable` 仅作为兼容输出，由 buffer 成功结果派生。
 
 ## Step2 过滤顺序
 
 1. relation mapping filter
 2. SWSD Segment buffer candidate selection
-3. advance-right-turn road exclusion by `formway & 128 != 0`
+3. advance-right-turn road classification by `formway & 128 != 0`, with second-degree non-advance-link retention
 4. canonical RCSD semantic node graph construction
 5. required semantic node component coverage
 6. inner / out node pruning
 7. retained required semantic node connectivity check
-8. retained leaf endpoint check
-9. retained RCSDRoad output and compatibility replaceable output
+8. retained extra mapped semantic node check
+9. retained dual-direction reachability check for `swsd_directionality=dual`
+10. retained leaf endpoint check
+11. retained RCSDRoad output and compatibility replaceable output

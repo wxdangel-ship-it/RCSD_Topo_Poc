@@ -177,20 +177,21 @@ def test_step2_runner_excludes_advance_right_turn_from_rcsd_candidate_graph(tmp_
     )
     rcsd_nodes = _write(
         tmp_path / "rcsdnode_out.gpkg",
-        [
-            {"properties": {"id": 10, "mainnodeid": 0}, "geometry": Point(0, 0)},
-            {"properties": {"id": 30, "mainnodeid": 0}, "geometry": Point(50, 0)},
-            {"properties": {"id": 20, "mainnodeid": 0}, "geometry": Point(100, 0)},
-        ],
-    )
+            [
+                {"properties": {"id": 10, "mainnodeid": 0}, "geometry": Point(0, 0)},
+                {"properties": {"id": 30, "mainnodeid": 0}, "geometry": Point(50, 0)},
+                {"properties": {"id": 20, "mainnodeid": 0}, "geometry": Point(100, 0)},
+                {"properties": {"id": 99, "mainnodeid": 0}, "geometry": Point(0, 20)},
+            ],
+        )
     rcsd_roads = _write(
         tmp_path / "rcsdroad_out.gpkg",
         [
-            {"properties": {"id": "main_a", "snodeid": 10, "enodeid": 30, "direction": 0}, "geometry": LineString([(0, 0), (50, 0)])},
-            {"properties": {"id": "main_b", "snodeid": 30, "enodeid": 20, "direction": 0}, "geometry": LineString([(50, 0), (100, 0)])},
-            {"properties": {"id": "advance_right", "snodeid": 10, "enodeid": 20, "direction": 0, "formway": 129}, "geometry": LineString([(0, 0), (100, 0)])},
-        ],
-    )
+                {"properties": {"id": "main_a", "snodeid": 10, "enodeid": 30, "direction": 0}, "geometry": LineString([(0, 0), (50, 0)])},
+                {"properties": {"id": "main_b", "snodeid": 30, "enodeid": 20, "direction": 0}, "geometry": LineString([(50, 0), (100, 0)])},
+                {"properties": {"id": "advance_right", "snodeid": 10, "enodeid": 99, "direction": 0, "formway": 129}, "geometry": LineString([(0, 0), (0, 20)])},
+            ],
+        )
 
     artifacts = run_t06_segment_fusion_precheck(
         swsd_segment_path=segment,

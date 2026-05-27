@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +38,7 @@ class BufferSegmentResult:
     inner_node_ids: list[str]
     out_node_ids: list[str]
     unexpected_endpoint_node_ids: list[str]
+    unexpected_mapped_semantic_node_ids: list[str]
     missing_required_node_ids: list[str]
     selected_component_id: int | None
     candidate_road_count: int
@@ -76,6 +78,9 @@ class BufferSegmentExtractor:
         relation: RelationCheck,
         optional_allowed_rcsd_nodes: list[str],
         all_relation_base_ids: set[str],
+        unexpected_relation_base_ids: set[str] | None = None,
+        require_directed_pair: bool = False,
+        require_bidirectional: bool = False,
         config: BufferExtractionConfig | None = None,
     ) -> BufferSegmentResult:
         cfg = config or BufferExtractionConfig()
@@ -83,12 +88,18 @@ class BufferSegmentExtractor:
         required_nodes = _canonical_ids([*relation.rcsd_pair_nodes, *relation.rcsd_junc_nodes], self.node_canonicalizer)
         optional_nodes = _canonical_ids(optional_allowed_rcsd_nodes, self.node_canonicalizer)
         relation_base_ids = set(_canonical_ids(list(all_relation_base_ids), self.node_canonicalizer))
+        unexpected_base_ids = set(_canonical_ids(list(unexpected_relation_base_ids or set()), self.node_canonicalizer))
         if segment_geometry is None or segment_geometry.is_empty:
             return _empty_result("missing_swsd_geometry", required_nodes, optional_nodes)
 
         buffer_geometry = segment_geometry.buffer(cfg.buffer_distance_m)
         candidate_nodes = _select_candidate_nodes(self.node_index.query(buffer_geometry), buffer_geometry)
-        candidate_roads, excluded_roads = _select_candidate_roads(self.road_index.query(buffer_geometry), buffer_geometry, cfg)
+        candidate_roads, excluded_roads = _select_candidate_roads(
+            self.road_index.query(buffer_geometry),
+            buffer_geometry,
+            cfg,
+            node_canonicalizer=self.node_canonicalizer,
+        )
         graph = _build_undirected_graph(candidate_roads, node_canonicalizer=self.node_canonicalizer)
         components = _connected_components(graph.adjacency)
         selected = _select_component(components, required_nodes)
@@ -109,6 +120,7 @@ class BufferSegmentExtractor:
                 inner_nodes=[],
                 out_nodes=[],
                 unexpected_endpoint_nodes=[],
+                unexpected_mapped_semantic_nodes=[],
                 missing_required_nodes=missing,
                 selected_component_id=None,
             )
@@ -124,7 +136,24 @@ class BufferSegmentExtractor:
             optional_nodes=set(optional_nodes),
             semantic_nodes=semantic_nodes,
         )
-        ok, reason, unexpected_endpoint_nodes = _retained_status(pruned.retained_nodes, pruned.retained_edges, required_nodes, pair_nodes)
+        corridor_edges = _build_corridor_subgraph(
+            pruned.retained_edges,
+            required_nodes,
+            pair_nodes,
+            require_directed_pair=require_directed_pair,
+            require_bidirectional=require_bidirectional,
+        )
+        corridor_nodes = _nodes_from_edges(corridor_edges)
+        unexpected_mapped_semantic_nodes = sorted(((semantic_nodes - allowed_nodes) | unexpected_base_ids) & corridor_nodes)
+        ok, reason, unexpected_endpoint_nodes = _retained_status(
+            corridor_nodes,
+            corridor_edges,
+            required_nodes,
+            pair_nodes,
+            unexpected_mapped_semantic_nodes=unexpected_mapped_semantic_nodes,
+            require_directed_pair=require_directed_pair,
+            require_bidirectional=require_bidirectional,
+        )
         return _result(
             ok=ok,
             reason=reason,
@@ -132,12 +161,13 @@ class BufferSegmentExtractor:
             optional_nodes=optional_nodes,
             candidate_roads=candidate_roads,
             candidate_nodes=candidate_nodes,
-            retained_edges=pruned.retained_edges,
+            retained_edges=corridor_edges,
             excluded_roads=excluded_roads,
-            retained_nodes=sorted(pruned.retained_nodes),
-            inner_nodes=pruned.inner_nodes,
+            retained_nodes=sorted(corridor_nodes),
+            inner_nodes=sorted(set(pruned.inner_nodes) & corridor_nodes),
             out_nodes=pruned.out_nodes,
             unexpected_endpoint_nodes=unexpected_endpoint_nodes,
+            unexpected_mapped_semantic_nodes=unexpected_mapped_semantic_nodes,
             missing_required_nodes=[],
             selected_component_id=selected,
         )
@@ -165,8 +195,13 @@ class _PrunedGraph:
 
 
 def _select_candidate_roads(
-    features: list[dict[str, Any]], buffer_geometry: BaseGeometry, config: BufferExtractionConfig
+    features: list[dict[str, Any]],
+    buffer_geometry: BaseGeometry,
+    config: BufferExtractionConfig,
+    *,
+    node_canonicalizer: NodeCanonicalizer,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    spatial_candidates: list[dict[str, Any]] = []
     selected: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
     for feature in features:
@@ -174,15 +209,64 @@ def _select_candidate_roads(
         geometry = feature.get("geometry")
         if not isinstance(geometry, BaseGeometry) or geometry.is_empty or not geometry.intersects(buffer_geometry):
             continue
-        if is_advance_right_turn_road(props, formway_bit=config.advance_right_formway_bit):
-            excluded.append(feature)
-            continue
         overlap_length = float(geometry.intersection(buffer_geometry).length)
         road_length = float(geometry.length)
         ratio = overlap_length / road_length if road_length > 0 else 0.0
         if ratio >= config.min_road_overlap_ratio or overlap_length >= config.min_road_overlap_length_m or _endpoint_in_buffer(geometry, buffer_geometry):
+            spatial_candidates.append(feature)
+    non_advance_roads = [
+        feature
+        for feature in spatial_candidates
+        if not is_advance_right_turn_road(dict(feature.get("properties") or {}), formway_bit=config.advance_right_formway_bit)
+    ]
+    non_advance_endpoint_counts = _non_advance_endpoint_counts(non_advance_roads, node_canonicalizer=node_canonicalizer)
+    for feature in spatial_candidates:
+        props = dict(feature.get("properties") or {})
+        if not is_advance_right_turn_road(props, formway_bit=config.advance_right_formway_bit):
             selected.append(feature)
+            continue
+        if _has_second_degree_non_advance_link(feature, non_advance_endpoint_counts, node_canonicalizer=node_canonicalizer):
+            selected.append(feature)
+        else:
+            excluded.append(feature)
     return selected, excluded
+
+
+def _non_advance_endpoint_counts(features: list[dict[str, Any]], *, node_canonicalizer: NodeCanonicalizer) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for feature in features:
+        endpoints = _feature_canonical_endpoints(feature, node_canonicalizer=node_canonicalizer)
+        if endpoints is None:
+            continue
+        source, target = endpoints
+        counts[source] += 1
+        counts[target] += 1
+    return dict(counts)
+
+
+def _has_second_degree_non_advance_link(
+    feature: dict[str, Any],
+    non_advance_endpoint_counts: dict[str, int],
+    *,
+    node_canonicalizer: NodeCanonicalizer,
+) -> bool:
+    endpoints = _feature_canonical_endpoints(feature, node_canonicalizer=node_canonicalizer)
+    if endpoints is None:
+        return False
+    source, target = endpoints
+    if source == target:
+        return False
+    return non_advance_endpoint_counts.get(source, 0) > 0 and non_advance_endpoint_counts.get(target, 0) > 0
+
+
+def _feature_canonical_endpoints(feature: dict[str, Any], *, node_canonicalizer: NodeCanonicalizer) -> tuple[str, str] | None:
+    props = dict(feature.get("properties") or {})
+    try:
+        source = node_canonicalizer.canonicalize(_first_present(props, ["snodeid", "snode_id", "source", "from_node"]))
+        target = node_canonicalizer.canonicalize(_first_present(props, ["enodeid", "enode_id", "target", "to_node"]))
+    except (KeyError, ParseError):
+        return None
+    return source, target
 
 
 def _select_candidate_nodes(features: list[dict[str, Any]], buffer_geometry: BaseGeometry) -> list[dict[str, Any]]:
@@ -324,11 +408,252 @@ def _trim_unprotected_leaves(component_nodes: set[str], edges: list[Edge], prote
     return retained
 
 
-def _retained_status(retained_nodes: set[str], retained_edges: list[Edge], required_nodes: list[str], pair_nodes: list[str]) -> tuple[bool, str, list[str]]:
+def _build_corridor_subgraph(
+    edges: list[Edge],
+    required_nodes: list[str],
+    pair_nodes: list[str],
+    *,
+    require_directed_pair: bool,
+    require_bidirectional: bool,
+) -> list[Edge]:
+    if require_directed_pair and len(pair_nodes) == 2:
+        source, target = pair_nodes
+        path = _shorter_path(
+            edges,
+            _shortest_directed_path_covering_nodes(edges, source, target, required_nodes),
+            _shortest_directed_path_covering_nodes(edges, target, source, required_nodes),
+        )
+        if path is None:
+            return []
+        return [edge for edge in edges if edge.edge_id in set(path)]
+
+    selected_edge_ids: set[str] = set()
+    for path in _minimum_terminal_edge_paths(edges, required_nodes):
+        selected_edge_ids.update(path)
+
+    if len(pair_nodes) == 2:
+        source, target = pair_nodes
+        if require_bidirectional:
+            for path in (
+                _shortest_edge_path(edges, source, target, directed=True),
+                _shortest_edge_path(edges, target, source, directed=True),
+            ):
+                if path is not None:
+                    selected_edge_ids.update(path)
+
+    return [edge for edge in edges if edge.edge_id in selected_edge_ids]
+
+
+def _minimum_terminal_edge_paths(edges: list[Edge], terminals: list[str]) -> list[list[str]]:
+    graph_nodes = _nodes_from_edges(edges)
+    unique_terminals: list[str] = []
+    seen: set[str] = set()
+    for terminal in terminals:
+        if terminal in graph_nodes and terminal not in seen:
+            seen.add(terminal)
+            unique_terminals.append(terminal)
+    if len(unique_terminals) < 2:
+        return []
+
+    pair_paths: list[tuple[float, str, str, list[str]]] = []
+    for index, source in enumerate(unique_terminals):
+        for target in unique_terminals[index + 1 :]:
+            path = _shortest_edge_path(edges, source, target, directed=False)
+            if path is None:
+                continue
+            pair_paths.append((_path_weight(edges, path), source, target, path))
+
+    parent = {terminal: terminal for terminal in unique_terminals}
+
+    def find(node: str) -> str:
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    selected: list[list[str]] = []
+    for _distance, source, target, path in sorted(pair_paths):
+        source_root = find(source)
+        target_root = find(target)
+        if source_root == target_root:
+            continue
+        parent[source_root] = target_root
+        selected.append(path)
+        if len(selected) == len(unique_terminals) - 1:
+            break
+    return selected
+
+
+def _shortest_edge_path(edges: list[Edge], source: str, target: str, *, directed: bool) -> list[str] | None:
+    adjacency = _weighted_adjacency(edges, directed=directed)
+    queue: list[tuple[float, int, str]] = []
+    sequence = 0
+    heapq.heappush(queue, (0.0, sequence, source))
+    distances: dict[str, float] = {source: 0.0}
+    previous: dict[str, tuple[str, str]] = {}
+    while queue:
+        distance, _sequence, node = heapq.heappop(queue)
+        if distance > distances.get(node, float("inf")):
+            continue
+        if node == target:
+            break
+        for neighbor, weight, edge_id in adjacency.get(node, []):
+            next_distance = distance + weight
+            if next_distance >= distances.get(neighbor, float("inf")):
+                continue
+            distances[neighbor] = next_distance
+            previous[neighbor] = (node, edge_id)
+            sequence += 1
+            heapq.heappush(queue, (next_distance, sequence, neighbor))
+    if target not in distances:
+        return None
+
+    path: list[str] = []
+    node = target
+    while node != source:
+        prev = previous.get(node)
+        if prev is None:
+            return None
+        node, edge_id = prev
+        path.append(edge_id)
+    path.reverse()
+    return path
+
+
+def _shortest_directed_path_covering_nodes(edges: list[Edge], source: str, target: str, required_nodes: list[str]) -> list[str] | None:
+    graph_nodes = _nodes_from_edges(edges)
+    terminals: list[str] = []
+    seen_terminals: set[str] = set()
+    for node in required_nodes:
+        if node not in graph_nodes or node in seen_terminals:
+            continue
+        seen_terminals.add(node)
+        terminals.append(node)
+    if source not in graph_nodes or target not in graph_nodes or len(terminals) < len(set(required_nodes)):
+        return None
+
+    terminal_index = {node: index for index, node in enumerate(terminals)}
+    all_mask = (1 << len(terminals)) - 1
+    start_mask = _node_mask(source, terminal_index)
+    adjacency = _weighted_adjacency(edges, directed=True)
+    queue: list[tuple[float, int, str, int]] = []
+    sequence = 0
+    heapq.heappush(queue, (0.0, sequence, source, start_mask))
+    distances: dict[tuple[str, int], float] = {(source, start_mask): 0.0}
+    previous: dict[tuple[str, int], tuple[str, int, str]] = {}
+    goal: tuple[str, int] | None = None
+
+    while queue:
+        distance, _sequence, node, mask = heapq.heappop(queue)
+        state = (node, mask)
+        if distance > distances.get(state, float("inf")):
+            continue
+        if node == target and mask == all_mask:
+            goal = state
+            break
+        for neighbor, weight, edge_id in adjacency.get(node, []):
+            next_mask = mask | _node_mask(neighbor, terminal_index)
+            next_state = (neighbor, next_mask)
+            next_distance = distance + weight
+            if next_distance >= distances.get(next_state, float("inf")):
+                continue
+            distances[next_state] = next_distance
+            previous[next_state] = (node, mask, edge_id)
+            sequence += 1
+            heapq.heappush(queue, (next_distance, sequence, neighbor, next_mask))
+
+    if goal is None:
+        return None
+
+    path: list[str] = []
+    state = goal
+    while state != (source, start_mask):
+        prev = previous.get(state)
+        if prev is None:
+            return None
+        prev_node, prev_mask, edge_id = prev
+        path.append(edge_id)
+        state = (prev_node, prev_mask)
+    path.reverse()
+    return path
+
+
+def _node_mask(node: str, terminal_index: dict[str, int]) -> int:
+    index = terminal_index.get(node)
+    if index is None:
+        return 0
+    return 1 << index
+
+
+def _weighted_adjacency(edges: list[Edge], *, directed: bool) -> dict[str, list[tuple[str, float, str]]]:
+    adjacency: dict[str, list[tuple[str, float, str]]] = defaultdict(list)
+    for edge in edges:
+        weight = _edge_weight(edge)
+        if not directed:
+            adjacency[edge.source].append((edge.target, weight, edge.edge_id))
+            adjacency[edge.target].append((edge.source, weight, edge.edge_id))
+            continue
+        direction = _coerce_int(edge.properties.get("direction")) if edge.properties else None
+        if direction in {0, 1, 2}:
+            adjacency[edge.source].append((edge.target, weight, edge.edge_id))
+        if direction in {0, 1, 3}:
+            adjacency[edge.target].append((edge.source, weight, edge.edge_id))
+    return dict(adjacency)
+
+
+def _shorter_path(edges: list[Edge], first: list[str] | None, second: list[str] | None) -> list[str] | None:
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return first if _path_weight(edges, first) <= _path_weight(edges, second) else second
+
+
+def _path_weight(edges: list[Edge], path: list[str]) -> float:
+    weights = {edge.edge_id: _edge_weight(edge) for edge in edges}
+    return sum(weights.get(edge_id, 1.0) for edge_id in path)
+
+
+def _edge_weight(edge: Edge) -> float:
+    if edge.geometry is not None and not edge.geometry.is_empty:
+        length = float(edge.geometry.length)
+        if length > 0:
+            return length
+    return 1.0
+
+
+def _nodes_from_edges(edges: list[Edge]) -> set[str]:
+    nodes: set[str] = set()
+    for edge in edges:
+        nodes.add(edge.source)
+        nodes.add(edge.target)
+    return nodes
+
+
+def _retained_status(
+    retained_nodes: set[str],
+    retained_edges: list[Edge],
+    required_nodes: list[str],
+    pair_nodes: list[str],
+    *,
+    unexpected_mapped_semantic_nodes: list[str],
+    require_directed_pair: bool,
+    require_bidirectional: bool,
+) -> tuple[bool, str, list[str]]:
     if not retained_edges:
+        if require_directed_pair:
+            return False, "rcsd_directed_path_missing", []
         return False, "buffer_pruned_to_empty", []
+    if require_directed_pair and not _pair_nodes_directionally_reachable(retained_edges, pair_nodes):
+        return False, "rcsd_directed_path_missing", []
     if not set(required_nodes).issubset(retained_nodes) or not _required_nodes_connected(retained_edges, required_nodes):
+        if require_directed_pair:
+            return False, "rcsd_directed_path_missing", []
         return False, "required_semantic_nodes_disconnected_after_pruning", []
+    if unexpected_mapped_semantic_nodes:
+        return False, "unexpected_mapped_semantic_nodes", []
+    if require_bidirectional and not _pair_nodes_bidirectionally_reachable(retained_edges, pair_nodes):
+        return False, "rcsd_not_bidirectional_for_swsd_dual", []
     unexpected_endpoint_nodes = _unexpected_endpoint_nodes(retained_edges, pair_nodes)
     if unexpected_endpoint_nodes:
         return False, "unexpected_retained_endpoint_nodes", unexpected_endpoint_nodes
@@ -358,6 +683,57 @@ def _required_nodes_connected(edges: list[Edge], required_nodes: list[str]) -> b
     return set(required_nodes).issubset(seen)
 
 
+def _pair_nodes_bidirectionally_reachable(edges: list[Edge], pair_nodes: list[str]) -> bool:
+    if len(pair_nodes) != 2:
+        return False
+    source, target = pair_nodes
+    adjacency = _directed_adjacency_from_edges(edges)
+    return _directed_reachable(adjacency, source, target) and _directed_reachable(adjacency, target, source)
+
+
+def _pair_nodes_directionally_reachable(edges: list[Edge], pair_nodes: list[str]) -> bool:
+    if len(pair_nodes) != 2:
+        return False
+    source, target = pair_nodes
+    adjacency = _directed_adjacency_from_edges(edges)
+    return _directed_reachable(adjacency, source, target) or _directed_reachable(adjacency, target, source)
+
+
+def _directed_adjacency_from_edges(edges: list[Edge]) -> dict[str, set[str]]:
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for edge in edges:
+        direction = _coerce_int(edge.properties.get("direction")) if edge.properties else None
+        if direction in {0, 1, 2}:
+            adjacency[edge.source].add(edge.target)
+        if direction in {0, 1, 3}:
+            adjacency[edge.target].add(edge.source)
+    return dict(adjacency)
+
+
+def _directed_reachable(adjacency: dict[str, set[str]], source: str, target: str) -> bool:
+    seen = {source}
+    queue: deque[str] = deque([source])
+    while queue:
+        node = queue.popleft()
+        if node == target:
+            return True
+        for neighbor in adjacency.get(node, set()):
+            if neighbor in seen:
+                continue
+            seen.add(neighbor)
+            queue.append(neighbor)
+    return False
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _adjacency_from_edges(edges: Any) -> dict[str, set[str]]:
     adjacency: dict[str, set[str]] = defaultdict(set)
     for edge in edges:
@@ -380,6 +756,7 @@ def _result(
     inner_nodes: list[str],
     out_nodes: list[str],
     unexpected_endpoint_nodes: list[str],
+    unexpected_mapped_semantic_nodes: list[str],
     missing_required_nodes: list[str],
     selected_component_id: int | None,
 ) -> BufferSegmentResult:
@@ -400,6 +777,7 @@ def _result(
         inner_node_ids=inner_nodes,
         out_node_ids=out_nodes,
         unexpected_endpoint_node_ids=unexpected_endpoint_nodes or [],
+        unexpected_mapped_semantic_node_ids=unexpected_mapped_semantic_nodes or [],
         missing_required_node_ids=missing_required_nodes,
         selected_component_id=selected_component_id,
         candidate_road_count=len(candidate_road_ids),
@@ -424,6 +802,7 @@ def _empty_result(reason: str, required_nodes: list[str], optional_nodes: list[s
         inner_node_ids=[],
         out_node_ids=[],
         unexpected_endpoint_node_ids=[],
+        unexpected_mapped_semantic_node_ids=[],
         missing_required_node_ids=list(required_nodes),
         selected_component_id=None,
         candidate_road_count=0,

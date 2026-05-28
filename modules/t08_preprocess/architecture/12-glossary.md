@@ -4,7 +4,7 @@
 - `Tool1`：基础矢量格式转换工具，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON。
 - `Tool2`：Road 数据预处理工具。
 - `Tool3`：Nodes 类型聚合工具。
-- `Tool4`：T 型路口错误修复工具，输出完整 Nodes 与 audit Nodes。
+- `Tool4`：路口类型修复工具，输出完整 Nodes、可选 Roads 与 audit Nodes。
 - `Tool5`：复杂路口预处理工具，构建复杂分歧 / 合流路口并处理错误 1 对多路口。
 - `Tool6`：Nodes 类型质检工具，输出人工质检 CSV 与 `node_error_tool6.gpkg`，不执行修复。
 - `patch_id`：Patch 归属字段。

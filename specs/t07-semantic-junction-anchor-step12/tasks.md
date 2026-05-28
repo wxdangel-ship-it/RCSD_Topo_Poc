@@ -1,4 +1,4 @@
-# Tasks: T07 Semantic Junction Anchor Step1/Step2
+# Tasks: T07 Semantic Junction Anchor Step1/Step2/Step3
 
 **Input**: `specs/t07-semantic-junction-anchor-step12/spec.md`, `specs/t07-semantic-junction-anchor-step12/plan.md`
 **Prerequisites**: User has confirmed `kind_2`, representative-node gate, and NULL behavior for out-of-scope `kind_2`.
@@ -10,7 +10,7 @@
 **Purpose**: Confirm implementation can start without violating source facts, entrypoint governance, or file-size constraints.
 
 - [x] T001 Confirm whether this round is allowed to register `t07_semantic_junction_anchor` in project/module source facts, or must remain implementation-only under `src/` and `tests/`.
-- [x] T002 Confirm no repo CLI, `tools/`, module `run.py`, or module `__main__.py` will be added in this implementation round; only the approved innernet wrapper script is allowed.
+- [x] T002 Confirm no repo CLI, `tools/`, module `run.py`, or module `__main__.py` will be added in this implementation round; only the approved innernet wrapper scripts are allowed.
 - [x] T003 Before editing any `.py` file, record current file byte size per repository rule.
 - [x] T004 Re-read `docs/repository-metadata/code-boundaries-and-entrypoints.md` before any source or entrypoint-adjacent change.
 
@@ -61,8 +61,8 @@
 
 - [x] T019 [P] [US2] Add Step2 yes/no tests in `tests/modules/t07_semantic_junction_anchor/test_runner.py`.
 - [x] T020 [P] [US2] Add Step2 `fail1 / fail2` tests.
-- [x] T021 [P] [US2] Add `kind_2 = 64` `anchor_reason = roundabout` test.
-- [x] T022 [P] [US2] Add `kind_2 = 2048` `anchor_reason = t` test.
+- [x] T021 [P] [US2] Add `kind_2 = 64 / 128` Step2 `NULL / NULL` and conflict-exclusion tests.
+- [x] T022 [P] [US2] Add `kind_2 = 2048` same-single-`RCSDIntersection` `anchor_reason = t` test and non-matching `NULL / NULL` fallback test.
 - [x] T023 [P] [US2] Add `has_evd != yes` NULL test.
 
 ### Implementation
@@ -93,19 +93,40 @@
 
 **Checkpoint**: T07 is Segment-free and QA-readable.
 
-## Phase 6: Validation And Closeout
+## Phase 6: User Story 4 - T05 Relation 补锚 Step3 (Priority: P1)
+
+**Goal**: 独立消费 Step2 后 `nodes`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode`，对符合条件的 SWSD 语义路口补写 `is_anchor = yes`。
+
+**Independent Test**: Run Step3 tests using synthetic nodes, T05 relation rows, and RCSDNode fixtures.
+
+### Tests
+
+- [x] T033 [P] [US4] Add Step3 candidate识别、成功 relation 与 RCSD `base_id` 存在性测试 in `tests/modules/t07_semantic_junction_anchor/test_step3_intersection_match.py`.
+- [x] T034 [P] [US4] Add Step3 relation missing / failed relation / missing RCSD / `kind_2 = 64` exclusion assertions.
+
+### Implementation
+
+- [x] T035 [US4] Implement independent Step3 callable in `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/step3_intersection_match.py`.
+- [x] T036 [US4] Export Step3 callable from `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/__init__.py`.
+- [x] T037 [US4] Add independent innernet wrapper `scripts/t07_run_step3_intersection_match_innernet.sh`.
+- [x] T038 [US4] Update T07 source facts, module docs, and entrypoint registry for Step3.
+
+**Checkpoint**: Step3 is independent from Step1/Step2 and produces `intersection_match_tool7.geojson`.
+
+## Phase 7: Validation And Closeout
 
 **Purpose**: Verify behavior and document remaining risk.
 
-- [x] T033 Run focused tests: `.venv/bin/python -m pytest tests/modules/t07_semantic_junction_anchor`.
-- [x] T034 Run `git diff --check`.
-- [x] T035 Report GIS checks: CRS correctness, topology consistency, geometry semantic explainability, audit traceability, and performance verifiability.
-- [x] T036 If module registration was authorized, update project/module inventory and source facts in the same round; otherwise explicitly report T07 remains unregistered draft implementation.
+- [x] T039 Run focused tests: `.venv/bin/python -m pytest tests/modules/t07_semantic_junction_anchor`.
+- [x] T040 Run `bash -n` for T07 innernet shell wrappers.
+- [x] T041 Run `git diff --check`.
+- [x] T042 Report GIS checks: CRS correctness, topology consistency, geometry semantic explainability, audit traceability, and performance verifiability.
+- [x] T043 If module registration was authorized, update project/module inventory and source facts in the same round; otherwise explicitly report T07 remains unregistered draft implementation.
 
 ## Coverage Checklist
 
-- [x] Product: confirmed semantic-junction-level Step1/Step2 scope and no Segment processing.
-- [x] Architecture: separated T07 from T02 Segment-bound Step1/Step2 behavior.
+- [x] Product: confirmed semantic-junction-level Step1/Step2/Step3 scope and no Segment processing.
+- [x] Architecture: separated T07 from T02 Segment-bound Step1/Step2 behavior and kept Step3 independent.
 - [x] Development: implementation completed in module-local runner plus approved innernet wrapper.
 - [x] Testing: focused tests passed.
 - [x] QA: CRS/topology/audit/performance checks are represented in runner behavior, tests, summary/audit/perf outputs, and closeout report.

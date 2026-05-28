@@ -1,11 +1,12 @@
 # T07 Semantic Junction Anchor
 
-`t07_semantic_junction_anchor` 是 T02 Step1 / Step2 的语义路口级重构模块。当前只做 `has_evd / is_anchor / anchor_reason`，不处理 Segment。
+`t07_semantic_junction_anchor` 是 T02 Step1 / Step2 的语义路口级重构模块，并提供独立 Step3 relation 补锚。当前只做代表 node 的 `has_evd / is_anchor / anchor_reason`，不处理 Segment。
 
 ## 当前范围
 
 - Step1：基于 `nodes` 与 `DriveZone` 计算代表 node 的 `has_evd`。
 - Step2：基于 `nodes` 与 `RCSDIntersection` 计算代表 node 的 `is_anchor / anchor_reason`。
+- Step3：基于 Step2 后 `nodes`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode`，对候选 SWSD 语义路口补写 `is_anchor = yes`。
 - `kind_2` 只使用代表 node 字段。
 - 仅处理代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}`。
 
@@ -20,7 +21,7 @@
 
 ## 当前入口状态
 
-当前模块提供模块内 callable runner；内网执行通过已登记脚本 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 包装。仓库不新增 repo 官方 CLI。
+当前模块提供模块内 callable runner；Step1 / Step2 内网执行通过已登记脚本 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 包装，Step3 通过独立脚本 `scripts/t07_run_step3_intersection_match_innernet.sh` 包装。仓库不新增 repo 官方 CLI。
 
 Callable runner：
 
@@ -29,6 +30,7 @@ from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
     run_t07_semantic_junction_anchor,
     run_t07_step1_has_evd,
     run_t07_step2_anchor_recognition,
+    run_t07_step3_intersection_match,
 )
 ```
 
@@ -40,6 +42,8 @@ from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
 
 上述路径均可通过同名环境变量覆盖；脚本不接受或读取 Segment 输入。
 
+Step3 内网脚本默认读取最近一次 T07 Step2 `nodes.gpkg`、T05 Phase2 `intersection_match_all.geojson` 与输入 `RCSDNode.gpkg`；可通过 `NODES_PATH / INTERSECTION_MATCH_ALL_PATH / RCSDNODE_PATH` 覆盖。
+
 ## 关键规则
 
 - 语义路口按 `mainnodeid` 聚合；空 `mainnodeid` 退化为 singleton。
@@ -47,9 +51,11 @@ from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
 - `has_evd / is_anchor / anchor_reason` 只写代表 node。
 - `kind_2` 不在 `{4, 8, 16, 64, 128, 2048}` 时，三个业务字段均为 `NULL`。
 - `has_evd = yes` 才进入 Step2。
-- Step2 保留 T02 `fail1 / fail2` 语义，且 `fail2 > fail1`。
-- `kind_2 = 64` 全组命中 `RCSDIntersection` 时 `anchor_reason = roundabout`。
-- `kind_2 = 2048` 全组命中 `RCSDIntersection` 时 `anchor_reason = t`。
+- Step2 对 `kind_2 = 64 / 128` 写 `is_anchor = NULL / anchor_reason = NULL`，且不纳入冲突规则，后续由专项规则处理。
+- Step2 对 `kind_2 = 2048` 仅在该组所有 node 均命中同一个且唯一的 `RCSDIntersection` 时写 `is_anchor = yes / anchor_reason = t`；否则写 `NULL / NULL`，且不纳入冲突规则。
+- 其它处理范围内类型保留 T02 `fail1 / fail2` 语义，且 `fail2 > fail1`。
+- Step3 仅处理代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = NULL / no` 的 SWSD 语义路口。
+- Step3 只接受 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id != 0` 的成功关系；若 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在，则输出该 relation 到 `intersection_match_tool7.geojson`，并把对应 SWSD 代表 node `is_anchor = yes / anchor_reason = NULL`。
 
 ## 输出
 
@@ -68,6 +74,14 @@ Step2 输出：
 - `t07_step2_summary.json`
 - `t07_step2_audit.csv/json`
 - `t07_step2_perf.json`
+
+Step3 输出：
+
+- `nodes.gpkg`
+- `intersection_match_tool7.geojson`
+- `t07_step3_summary.json`
+- `t07_step3_audit.csv/json`
+- `t07_step3_perf.json`
 
 ## 文档
 

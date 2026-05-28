@@ -16,7 +16,7 @@ def _find_repo_root(start: Path) -> Path | None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="T08 Tool4: repair T-junction type errors.")
+    parser = argparse.ArgumentParser(description="T08 Tool4: repair semantic junction type errors.")
     parser.add_argument("--nodes-gpkg", required=True, help="Input Nodes GPKG with id/kind_2 fields.")
     parser.add_argument(
         "--roads-gpkg",
@@ -31,6 +31,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--nodes-layer", help="Optional Nodes input layer name.")
     parser.add_argument("--roads-layer", help="Optional Roads input layer name.")
+    parser.add_argument("--roads-output", help="Optional output Roads GPKG. Required when Tool6 divmerge repair deletes roads.")
+    parser.add_argument("--tool6-node-error-gpkg", help="Optional Tool6 node_error GPKG input.")
+    parser.add_argument("--tool6-node-error-csv", help="Optional Tool6 node_error CSV input with manual 是否修复 values.")
     parser.add_argument("--summary-output", help="Optional summary JSON output path.")
     parser.add_argument("--target-epsg", type=int, default=3857, help="Final target EPSG. Default: 3857.")
     parser.add_argument("--nodes-default-crs", help="Default CRS for Nodes input if missing.")
@@ -57,6 +60,9 @@ def main(argv: list[str] | None = None) -> int:
             roads_gpkg=Path(args.roads_gpkg),
             nodes_output=Path(args.nodes_output),
             audit_nodes_output=Path(args.audit_nodes_output),
+            roads_output=Path(args.roads_output) if args.roads_output else None,
+            tool6_node_error_gpkg=Path(args.tool6_node_error_gpkg) if args.tool6_node_error_gpkg else None,
+            tool6_node_error_csv=Path(args.tool6_node_error_csv) if args.tool6_node_error_csv else None,
             nodes_layer=args.nodes_layer,
             roads_layer=args.roads_layer,
             summary_output=Path(args.summary_output) if args.summary_output else None,
@@ -69,7 +75,13 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    print(json.dumps({key: str(value) for key, value in artifacts.__dict__.items()}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {key: str(value) if value is not None else None for key, value in artifacts.__dict__.items()},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 

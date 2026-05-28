@@ -46,8 +46,8 @@
   - 若 MIF CRS 缺失，必须由调用方通过 `--default-crs` 显式指定
   - 不根据坐标数值或样本位置猜测 CRS
 - Tool11 性能口径：
-  - GeoJSON 写出采用流式 JSON 路径
-  - GPKG 写出采用直接 SQLite GeoPackage 路径
+  - GeoJSON / GPKG 优先采用 GDAL `ogr2ogr` 原生转换路径
+  - `ogr2ogr` 不可用或失败时，GeoJSON 回退流式 JSON 路径，GPKG 回退直接 SQLite GeoPackage 路径
   - 不以 Fiona 逐要素 sink 写出作为主路径
 - 修复口径：只允许最小修复；修复失败则跳过并记录异常
 - 覆盖口径：旧输出已存在时先删除再重建

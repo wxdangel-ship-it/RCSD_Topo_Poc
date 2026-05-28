@@ -564,6 +564,18 @@ def _read_intersections(layer: LoadedLayer) -> list[IntersectionRecord]:
     return records
 
 
+def _same_single_intersection_for_all(node_hits: list[tuple[str, ...]]) -> str | None:
+    if not node_hits:
+        return None
+    first_hits = node_hits[0]
+    if len(first_hits) != 1:
+        return None
+    target = first_hits[0]
+    if all(hits == (target,) for hits in node_hits):
+        return target
+    return None
+
+
 def _write_error_outputs(
     *,
     vector_path: Path,
@@ -674,27 +686,45 @@ def run_t07_step2_anchor_recognition(
             group_results[junction_id] = {"participates": False, "group": group}
             continue
 
+        if kind_2 in {"64", "128"}:
+            representative_props["is_anchor"] = None
+            representative_props["anchor_reason"] = None
+            counts["anchor_null_count"] += 1
+            group_results[junction_id] = {"participates": False, "group": group}
+            continue
+
         counts["stage2_candidate_count"] += 1
         hit_intersection_ids: set[str] = set()
-        every_group_node_hit = True
+        group_node_hits: list[tuple[str, ...]] = []
         for record in group.group_nodes:
             cached = node_hit_cache.get(record.output_index)
             if cached is None:
                 indexes = intersection_tree.query(record.geometry, predicate="intersects")
                 cached = tuple(sorted({intersections[int(index)].intersection_id for index in indexes}))
                 node_hit_cache[record.output_index] = cached
-            if not cached:
-                every_group_node_hit = False
+            group_node_hits.append(cached)
             for intersection_id in cached:
                 hit_intersection_ids.add(intersection_id)
-                intersection_to_junctions.setdefault(intersection_id, set()).add(junction_id)
 
         sorted_hits = sorted(hit_intersection_ids)
+        if kind_2 == "2048":
+            shared_intersection_id = _same_single_intersection_for_all(group_node_hits)
+            if shared_intersection_id is None:
+                representative_props["is_anchor"] = None
+                representative_props["anchor_reason"] = None
+                counts["anchor_null_count"] += 1
+            else:
+                representative_props["is_anchor"] = "yes"
+                representative_props["anchor_reason"] = "t"
+                counts["anchor_yes_count"] += 1
+                counts["t_reason_count"] += 1
+            group_results[junction_id] = {"participates": False, "group": group}
+            continue
+
+        for intersection_id in sorted_hits:
+            intersection_to_junctions.setdefault(intersection_id, set()).add(junction_id)
+
         provisional_reason = None
-        if kind_2 == "64" and every_group_node_hit:
-            provisional_reason = "roundabout"
-        elif kind_2 == "2048" and every_group_node_hit:
-            provisional_reason = "t"
 
         if not sorted_hits:
             provisional_state = "no"

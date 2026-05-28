@@ -2,10 +2,11 @@
 
 ## 定位
 
-本文件是 `t07_semantic_junction_anchor` 的稳定接口契约。T07 当前只覆盖语义路口级 Step1 / Step2：
+本文件是 `t07_semantic_junction_anchor` 的稳定接口契约。T07 当前覆盖语义路口级 Step1 / Step2，并提供独立 Step3 relation 补锚：
 
 - Step1：基于 `nodes` 与 `DriveZone` 判定代表 node 的 `has_evd`。
 - Step2：基于 `nodes` 与 `RCSDIntersection` 判定代表 node 的 `is_anchor / anchor_reason`。
+- Step3：基于 Step2 后 `nodes`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode`，对候选 SWSD 语义路口补写 `is_anchor = yes`。
 
 本模块不处理 Segment，不生成虚拟路口面，不执行最终唯一锚定决策。
 
@@ -13,13 +14,15 @@
 
 ### 1.1 当前正式支持
 
-- 消费 `nodes.gpkg`、`DriveZone.gpkg` 与 `RCSDIntersection.gpkg`。
+- 消费 `nodes.gpkg`、`DriveZone.gpkg`、`RCSDIntersection.gpkg`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode.gpkg`。
 - 按 `nodes.mainnodeid` 组装 SWSD 语义路口；`mainnodeid` 为空时退化为单 node 语义路口。
 - 以语义路口代表 node 的 `kind_2` 作为 Step1 / Step2 类型 gate。
 - 仅对代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 的语义路口处理 `has_evd`。
 - 仅对代表 node `has_evd = yes` 的语义路口处理 `is_anchor / anchor_reason`。
 - 只对代表 node 写 `has_evd / is_anchor / anchor_reason`。
-- 保留 T02 Step2 的空间命中、`fail1 / fail2` 与 `roundabout / t` 原因语义。
+- 保留 T02 Step2 的空间命中与 `fail1 / fail2` 冲突语义；`kind_2 = 64 / 128 / 2048` 采用 T07 专属 Step2 分流规则。
+- Step3 只处理代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = NULL / no` 的 SWSD 语义路口。
+- Step3 只接受 T05 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id != 0` 的成功 relation，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在。
 
 ### 1.2 当前非目标
 
@@ -30,7 +33,7 @@
 - 不执行 T02 Stage3 virtual intersection anchoring。
 - 不执行 T02 Stage4 div/merge virtual polygon。
 - 不新增 repo CLI、`tools`、`Makefile`、模块 `run.py` 或模块 `__main__.py`。
-- 除已登记的 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 外，不新增其它 repo 级脚本入口。
+- 除已登记的 `scripts/t07_run_semantic_junction_anchor_innernet.sh` 与 `scripts/t07_run_step3_intersection_match_innernet.sh` 外，不新增其它 repo 级脚本入口。
 
 ## 2. Inputs
 
@@ -74,6 +77,38 @@
 - 面状 geometry。
 - 可选 `id / intersection_id / intersectionid / fid / objectid / OBJECTID` 作为审计标识。
 
+### 2.3 Step3 输入
+
+必选输入：
+
+- `nodes_path`：Step2 输出或等价字段完备的 SWSD `nodes.gpkg`。
+- `intersection_match_all_path`：T05 Phase2 输出的 `intersection_match_all.geojson`。
+- `rcsdnode_path`：输入 RCSD `RCSDNode.gpkg`。
+- `out_root`：输出根目录。
+
+`nodes` 依赖字段：
+
+- `id`
+- `mainnodeid`
+- `kind_2`
+- `has_evd`
+- `is_anchor`
+- `anchor_reason`
+- geometry
+
+`intersection_match_all.geojson` 依赖字段遵循 T05 规格：
+
+- `target_id`：SWSD 语义路口 id。
+- `base_id`：RCSD 语义路口主 node id；失败关系为 `0`。
+- `status`：`0` 表示成功 relation，`1` 表示失败 relation。
+- `level`
+- `is_highway`
+
+`RCSDNode` 依赖字段：
+
+- `id`
+- 可选 `mainnodeid`
+
 ### 2.3 输入前提
 
 - 所有空间判定必须在统一 CRS 下完成，目标处理 CRS 为 `EPSG:3857`。
@@ -81,6 +116,7 @@
 - 缺失必需字段、缺失 CRS、无法投影或 geometry 不可用时，必须显式失败并留审计，不得转换成业务 `no`。
 - `kind_2` 是当前唯一正式类型字段；不读取 `Kind_2`。
 - `mainnodeid` 按 T02 口径组装：非空值成组，空值按 `id` singleton fallback。若后续需要把 `0` 视为空值，必须另行确认并同步契约。
+- Step3 输出 `intersection_match_tool7.geojson` 采用 T05 relation 输出 CRS `CRS84`；节点处理仍统一到 `EPSG:3857`。
 
 ## 3. Business Rules
 
@@ -120,14 +156,18 @@
   - `is_anchor = yes`
   - `anchor_reason = NULL`
   - 不输出 `node_error_1`
-- `kind_2 = 64` 且组内所有 node 均命中任意 `RCSDIntersection`：
-  - `is_anchor = yes`
-  - `anchor_reason = roundabout`
-  - 不输出 `node_error_1`
-- `kind_2 = 2048` 且组内所有 node 均命中任意 `RCSDIntersection`：
+- `kind_2 = 64 / 128`：
+  - `is_anchor = NULL`
+  - `anchor_reason = NULL`
+  - 不纳入 `fail1 / fail2` 冲突规则，后续由专项规则处理
+- `kind_2 = 2048` 且组内所有 node 均命中同一个且唯一的 `RCSDIntersection`：
   - `is_anchor = yes`
   - `anchor_reason = t`
-  - 不输出 `node_error_1`
+  - 不纳入 `fail1 / fail2` 冲突规则
+- `kind_2 = 2048` 不满足上述条件时：
+  - `is_anchor = NULL`
+  - `anchor_reason = NULL`
+  - 不纳入 `fail1 / fail2` 冲突规则
 - 对未命中上述豁免规则的多节点组，若同一组 node 命中两个及以上不同 `RCSDIntersection`：
   - `is_anchor = fail1`
   - `anchor_reason = NULL`
@@ -139,6 +179,23 @@
 - 优先级：
   - `fail2 > fail1`
   - 被 `fail2` 覆盖时，`anchor_reason = NULL`
+
+### 3.4 Step3 `intersection_match_all` 补锚
+
+- Step3 必须独立运行，不与 Step1 / Step2 合并。
+- Step3 候选 SWSD 语义路口必须同时满足：
+  - 代表 node `kind_2 in {4, 8, 16, 2048}`
+  - 代表 node `has_evd = yes`
+  - 代表 node `is_anchor = NULL / no`
+- 对候选 SWSD 语义路口，在 `intersection_match_all.geojson` 中按 `target_id = SWSD 语义路口 id` 查找 relation。
+- 只有 relation 同时满足 `status = 0` 且 `base_id != 0` 时，才视为成功关联 RCSD 语义路口。
+- 成功 relation 的 `base_id` 必须能在输入 `RCSDNode.id/mainnodeid` 中找到；找不到时不得写锚定成功。
+- 成功通过上述校验后：
+  - 输出该 relation 到 `intersection_match_tool7.geojson`
+  - 将对应 SWSD 代表 node `is_anchor = yes`
+  - 将对应 SWSD 代表 node `anchor_reason = NULL`
+- `kind_2 = 64 / 128` 不进入 Step3，后续由专项规则处理。
+- Step3 不读取、生成或统计 Segment。
 
 ## 4. Outputs
 
@@ -198,13 +255,49 @@ Step2 summary 至少记录：
 - `anchor_fail1_count`
 - `anchor_fail2_count`
 - `anchor_null_count`
-- `roundabout_reason_count`
+- `roundabout_reason_count`（当前固定为 `0`，保留字段兼容）
 - `t_reason_count`
 - `input_paths`
 - `output_paths`
 - `target_crs`
 - `performance.elapsed_seconds`
 - `performance.stage_timings`，至少区分读取、`RCSDIntersection` 空间索引、语义路口准备、候选判定、冲突处理、`nodes.gpkg` 写出、error 输出与审计 / summary 写出。
+
+### 4.3 Step3 输出
+
+目录：
+
+```text
+<out_root>/<run_id>/step3_intersection_match/
+```
+
+文件：
+
+- `nodes.gpkg`
+- `intersection_match_tool7.geojson`
+- `t07_step3_summary.json`
+- `t07_step3_audit.csv/json`
+- `t07_step3_perf.json`
+
+Step3 summary 至少记录：
+
+- `semantic_junction_count`
+- `step3_scope_kind2_count`
+- `candidate_count`
+- `accepted_count`
+- `not_candidate_count`
+- `skipped_kind2_count`
+- `relation_missing_count`
+- `relation_failure_count`
+- `relation_duplicate_count`
+- `rcsd_missing_count`
+- `representative_missing_count`
+- `input_paths`
+- `output_paths`
+- `crs.process`
+- `crs.intersection_match_tool7`
+- `performance.elapsed_seconds`
+- `performance.stage_timings`，至少区分读取、索引准备、候选判定、输出写出与审计 / summary 写出。
 
 ## 5. EntryPoints
 
@@ -217,6 +310,7 @@ from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
     run_t07_step1_has_evd,
     run_t07_step2_anchor_recognition,
     run_t07_semantic_junction_anchor,
+    run_t07_step3_intersection_match,
 )
 ```
 
@@ -224,6 +318,7 @@ from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
 
 ```bash
 scripts/t07_run_semantic_junction_anchor_innernet.sh
+scripts/t07_run_step3_intersection_match_innernet.sh
 ```
 
 说明：
@@ -231,19 +326,21 @@ scripts/t07_run_semantic_junction_anchor_innernet.sh
 - 脚本默认读取内网 `nodes / DriveZone / RCSDIntersection` 路径，可通过 `NODES_PATH / DRIVEZONE_PATH / INTERSECTION_PATH` 覆盖。
 - 脚本可通过 `NODES_LAYER / DRIVEZONE_LAYER / INTERSECTION_LAYER` 与 `NODES_CRS / DRIVEZONE_CRS / INTERSECTION_CRS` 覆盖图层名和 CRS。
 - 脚本不接受 `SEGMENT_PATH`，不读取、不生成、不统计 Segment。
+- Step3 脚本默认从最近一次 T07 Step2 输出发现 `nodes.gpkg`，并读取 T05 Phase2 `intersection_match_all.geojson` 与输入 `RCSDNode.gpkg`；可通过 `NODES_PATH / INTERSECTION_MATCH_ALL_PATH / RCSDNODE_PATH` 覆盖。
 - 若后续要新增 repo CLI、其它 repo 级脚本、`tools/`、模块 `run.py` 或模块 `__main__.py`，必须另行获得用户授权，并同步 `docs/repository-metadata/entrypoint-registry.md`。
 
 ## 5.1 Performance
 
 - T07 GPKG 输出复用 T08 的直接 SQLite GeoPackage 写出路径，避免 Fiona 逐要素 sink 写出。
 - `nodes.gpkg / node_error_1.gpkg / node_error_2.gpkg` 均按 copy-on-write 输出，不修改输入。
+- Step3 `nodes.gpkg` 继续按 copy-on-write 输出，不修改 Step2 输入；`intersection_match_tool7.geojson` 是 T05 relation 主表的成功补锚子集。
 - perf JSON 必须记录 `stage_timings`，用于定位 full-input 下的读取、空间索引、业务处理与写出耗时。
 
 ## 6. Params
 
 - `run_id`：可选运行 ID；为空时自动生成。
-- `nodes_layer / drivezone_layer / intersection_layer`：可选图层名。
-- `nodes_crs / drivezone_crs / intersection_crs`：可选 CRS override。
+- `nodes_layer / drivezone_layer / intersection_layer / rcsdnode_layer`：可选图层名。
+- `nodes_crs / drivezone_crs / intersection_crs / intersection_match_all_crs / rcsdnode_crs`：可选 CRS override。
 
 ## 7. Acceptance
 
@@ -252,6 +349,10 @@ scripts/t07_run_semantic_junction_anchor_innernet.sh
 3. `kind_2` 仅使用代表 node 字段，且仅处理 `{4, 8, 16, 64, 128, 2048}`。
 4. 非处理范围 `kind_2` 的 `has_evd / is_anchor / anchor_reason` 均为 `NULL`。
 5. 从属 node 不写业务状态。
-6. `fail2` 优先于 `fail1`。
-7. 所有 CRS、字段、几何、代表 node 缺失问题都有明确审计。
-8. 输出不包含 Segment 工件或 Segment 视角 summary。
+6. `kind_2 = 64 / 128` 在 Step2 写 `NULL / NULL`，且不纳入冲突规则。
+7. `kind_2 = 2048` 只有全组 node 均命中同一个且唯一的 `RCSDIntersection` 时写 `yes / t`，否则写 `NULL / NULL`，且不纳入冲突规则。
+8. `fail2` 优先于 `fail1`。
+9. Step3 只对 `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = NULL / no` 的候选执行补锚。
+10. Step3 仅在 T05 relation 成功且 RCSD `base_id` 存在时写 `is_anchor = yes` 并输出 `intersection_match_tool7.geojson`。
+11. 所有 CRS、字段、几何、代表 node 缺失问题都有明确审计。
+12. 输出不包含 Segment 工件或 Segment 视角 summary。

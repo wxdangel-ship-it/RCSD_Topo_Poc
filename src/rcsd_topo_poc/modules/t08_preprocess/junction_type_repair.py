@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import sqlite3
 import time
+import csv
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,10 +36,17 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
 
 
 T_KIND_VALUE = 2048
+DIVERGE_KIND_VALUE = 16
+MERGE_KIND_VALUE = 8
 ADVANCE_RIGHT_TURN_FORMWAY_BIT = 128
 AUXILIARY_ROAD_KIND_SUFFIX = "0a"
 
 ERROR_T_JUNCTION = "错误T型路口"
+ERROR_DIVMERGE_ONE_IN_ONE_OUT = "错误分歧合流路口_一入一出"
+TOOL6_ERROR_DIVMERGE = "错误分歧合流路口"
+TOOL6_ERROR_CROSS_T = "错误交叉路口_T型路口"
+TOOL6_ERROR_CROSS_NON_CROSS = "错误交叉路口_非交叉路口"
+TOOL6_MANUAL_FIX_FIELD = "是否修复"
 
 ProgressCallback = Callable[[str], None]
 
@@ -46,6 +54,7 @@ ProgressCallback = Callable[[str], None]
 @dataclass(frozen=True)
 class T08JunctionTypeRepairArtifacts:
     nodes_output: Path
+    roads_output: Path | None
     audit_nodes_output: Path
     summary_output: Path
 
@@ -126,6 +135,9 @@ def run_t08_junction_type_repair(
     roads_gpkg: str | Path,
     nodes_output: str | Path,
     audit_nodes_output: str | Path,
+    roads_output: str | Path | None = None,
+    tool6_node_error_gpkg: str | Path | None = None,
+    tool6_node_error_csv: str | Path | None = None,
     nodes_layer: str | None = None,
     roads_layer: str | None = None,
     summary_output: str | Path | None = None,
@@ -149,6 +161,23 @@ def run_t08_junction_type_repair(
         tool_number=4,
         label="--audit-nodes-output",
     )
+    output_roads_path = (
+        ensure_tool_output_name(
+            ensure_gpkg_path(roads_output, label="--roads-output"),
+            tool_number=4,
+            label="--roads-output",
+        )
+        if roads_output is not None
+        else None
+    )
+    tool6_node_error_gpkg_path = (
+        ensure_gpkg_path(tool6_node_error_gpkg, label="--tool6-node-error-gpkg")
+        if tool6_node_error_gpkg is not None
+        else None
+    )
+    tool6_node_error_csv_path = Path(tool6_node_error_csv) if tool6_node_error_csv is not None else None
+    if tool6_node_error_gpkg_path is not None and tool6_node_error_csv_path is not None:
+        raise ValueError("Provide only one of --tool6-node-error-gpkg or --tool6-node-error-csv.")
     summary_path = (
         ensure_tool_output_name(summary_output, tool_number=4, label="--summary-output")
         if summary_output
@@ -172,7 +201,6 @@ def run_t08_junction_type_repair(
         {"properties": dict(feature.properties), "geometry": feature.geometry}
         for feature in nodes_result.features
     ]
-    output_fields_nodes = unique_field_names(nodes_result.field_names)
     stage_timings["read_nodes_seconds"] = _elapsed_since(read_started)
 
     read_started = time.perf_counter()
@@ -196,6 +224,13 @@ def run_t08_junction_type_repair(
     node_id_field = resolve_field_name(nodes_result.features, ["id"], "nodes input")
     node_kind_2_field = resolve_field_name(nodes_result.features, ["kind_2"], "nodes input")
     node_mainnodeid_field = _optional_field(nodes_result.features, ["mainnodeid"])
+    node_grade_2_field = _optional_field(nodes_result.features, ["grade_2"])
+    output_node_mainnodeid_field = node_mainnodeid_field or "mainnodeid"
+    output_node_grade_2_field = node_grade_2_field or "grade_2"
+    output_fields_nodes = unique_field_names(
+        nodes_result.field_names,
+        extra=(output_node_mainnodeid_field, output_node_grade_2_field),
+    )
     parsed_nodes = _parse_nodes(
         nodes_result.features,
         node_id_field=node_id_field,
@@ -219,6 +254,14 @@ def run_t08_junction_type_repair(
     stage_timings["build_topology_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
+    tool6_rows = _read_tool6_node_error_rows(
+        tool6_node_error_gpkg_path=tool6_node_error_gpkg_path,
+        tool6_node_error_csv_path=tool6_node_error_csv_path,
+        target_epsg=target_epsg,
+    )
+    stage_timings["read_tool6_qc_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
     errors, degree_exception_rows = _detect_junction_type_errors(
         semantic_nodes=semantic_nodes,
         parsed_roads=parsed_roads,
@@ -236,6 +279,19 @@ def run_t08_junction_type_repair(
         node_id_field=node_id_field,
         node_kind_2_field=node_kind_2_field,
     )
+    tool6_repair_rows, deleted_road_indices, tool6_skipped_rows = _apply_tool6_qc_repairs(
+        node_features=node_features,
+        tool6_rows=tool6_rows,
+        node_id_field=node_id_field,
+        node_kind_2_field=node_kind_2_field,
+        node_mainnodeid_field=output_node_mainnodeid_field,
+        node_grade_2_field=output_node_grade_2_field,
+        parsed_roads=parsed_roads,
+        node_to_semantic=node_to_semantic,
+    )
+    repair_rows.extend(tool6_repair_rows)
+    if deleted_road_indices and output_roads_path is None:
+        raise ValueError("--roads-output is required when Tool6 divmerge repairs delete Road features.")
     audit_features = _build_audit_node_features(
         final_node_features=node_features,
         node_id_field=node_id_field,
@@ -254,6 +310,27 @@ def run_t08_junction_type_repair(
     )
     _emit_progress(progress_callback, f"[T08 Tool4] writing nodes output={output_nodes_path}")
     write_gpkg(output_nodes_path, node_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields_nodes)
+    roads_output_feature_count: int | None = None
+    if output_roads_path is not None:
+        _emit_progress(progress_callback, f"[T08 Tool4] writing roads output={output_roads_path}")
+        roads_result = read_vector(
+            roads_path,
+            layer_name=roads_layer,
+            default_crs_text=roads_default_crs_text,
+            target_epsg=target_epsg,
+        )
+        roads_output_features = [
+            {"properties": dict(feature.properties), "geometry": feature.geometry}
+            for index, feature in enumerate(roads_result.features)
+            if index not in deleted_road_indices
+        ]
+        roads_output_feature_count = len(roads_output_features)
+        write_gpkg(
+            output_roads_path,
+            roads_output_features,
+            crs_text=f"EPSG:{target_epsg}",
+            empty_fields=roads_result.field_names,
+        )
     _emit_progress(progress_callback, f"[T08 Tool4] writing audit nodes={output_audit_nodes_path}")
     write_gpkg(
         output_audit_nodes_path,
@@ -266,16 +343,22 @@ def run_t08_junction_type_repair(
     elapsed_seconds = _elapsed_since(started)
 
     counts_by_type: dict[str, int] = defaultdict(int)
-    for row in errors:
+    for row in [*errors, *tool6_repair_rows]:
         counts_by_type[str(row["error_type"])] += 1
 
     summary = {
         "tool": "T08 Tool4",
         "stage": "junction_type_repair",
         "target_epsg": target_epsg,
-        "input_paths": {"nodes_gpkg": nodes_path, "roads_gpkg": roads_path},
+        "input_paths": {
+            "nodes_gpkg": nodes_path,
+            "roads_gpkg": roads_path,
+            "tool6_node_error_gpkg": tool6_node_error_gpkg_path,
+            "tool6_node_error_csv": tool6_node_error_csv_path,
+        },
         "output_paths": {
             "nodes_output": output_nodes_path,
+            "roads_output": output_roads_path,
             "audit_nodes_output": output_audit_nodes_path,
             "summary_output": summary_path,
         },
@@ -293,6 +376,7 @@ def run_t08_junction_type_repair(
             "node_id_field": node_id_field,
             "node_kind_2_field": node_kind_2_field,
             "node_mainnodeid_field": node_mainnodeid_field,
+            "node_grade_2_field": node_grade_2_field,
             "road_id_field": roads_audit.road_id_field,
             "road_snode_field": roads_audit.road_snode_field,
             "road_enode_field": roads_audit.road_enode_field,
@@ -304,9 +388,14 @@ def run_t08_junction_type_repair(
             "node_feature_count": node_feature_count,
             "semantic_node_count": len(semantic_nodes),
             "road_feature_count": len(parsed_roads),
+            "roads_output_feature_count": roads_output_feature_count,
             "error_feature_count": len(errors),
             "repaired_semantic_node_count": len(repair_rows),
             "audit_node_feature_count": len(audit_features),
+            "tool6_qc_feature_count": len(tool6_rows),
+            "tool6_repair_count": len(tool6_repair_rows),
+            "tool6_skipped_count": len(tool6_skipped_rows),
+            "deleted_road_count": len(deleted_road_indices),
             "error_count_by_type": dict(sorted(counts_by_type.items())),
             "internal_road_count": topology.internal_road_count,
             "direction_error_count": len(topology.direction_errors),
@@ -316,6 +405,8 @@ def run_t08_junction_type_repair(
         },
         "direction_errors": list(topology.direction_errors),
         "degree_exceptions": degree_exception_rows,
+        "tool6_skipped": tool6_skipped_rows,
+        "deleted_road_ids": [parsed_roads[index].road_id for index in sorted(deleted_road_indices)],
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in node_features),
         "audit_nodes_bounds": aggregate_bounds(feature["geometry"] for feature in audit_features),
         "performance": {
@@ -343,6 +434,7 @@ def run_t08_junction_type_repair(
     )
     return T08JunctionTypeRepairArtifacts(
         nodes_output=output_nodes_path,
+        roads_output=output_roads_path,
         audit_nodes_output=output_audit_nodes_path,
         summary_output=summary_path,
     )
@@ -810,6 +902,20 @@ def _detect_junction_type_errors(
                 related_road_indices=topology.incident_road_indices.get(semantic.semantic_id, frozenset()),
                 audit={"in_degree": in_count, "out_degree": out_count, "degree_exception": degree_exception},
             )
+        if kind_2 in {DIVERGE_KIND_VALUE, MERGE_KIND_VALUE} and in_count == 1 and out_count == 1:
+            _append_error(
+                errors,
+                seen_error_keys=seen_error_keys,
+                semantic=semantic,
+                topology=topology,
+                parsed_roads=parsed_roads,
+                error_type=ERROR_DIVMERGE_ONE_IN_ONE_OUT,
+                error_reason="kind_2=8 or 16 with in_degree=1 and out_degree=1 should be ordinary junction",
+                group_id=f"divmerge_one_in_one_out_{semantic.semantic_id}",
+                related_node_ids=(semantic.semantic_id,),
+                related_road_indices=topology.incident_road_indices.get(semantic.semantic_id, frozenset()),
+                audit={"in_degree": in_count, "out_degree": out_count},
+            )
         if _should_emit_progress(index, progress_interval):
             _emit_progress(progress_callback, f"[T08 Tool4] checked {index} semantic junction(s)")
 
@@ -901,6 +1007,316 @@ def _append_error(
     )
 
 
+def _read_tool6_node_error_rows(
+    *,
+    tool6_node_error_gpkg_path: Path | None,
+    tool6_node_error_csv_path: Path | None,
+    target_epsg: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if tool6_node_error_csv_path is not None:
+        with tool6_node_error_csv_path.open("r", encoding="utf-8-sig", newline="") as fp:
+            rows.extend({key: value for key, value in row.items()} for row in csv.DictReader(fp))
+    if tool6_node_error_gpkg_path is not None:
+        result = read_vector(tool6_node_error_gpkg_path, target_epsg=target_epsg)
+        rows.extend(dict(feature.properties) for feature in result.features)
+    return rows
+
+
+def _apply_tool6_qc_repairs(
+    *,
+    node_features: list[dict[str, Any]],
+    tool6_rows: list[dict[str, Any]],
+    node_id_field: str,
+    node_kind_2_field: str,
+    node_mainnodeid_field: str,
+    node_grade_2_field: str,
+    parsed_roads: list[ParsedRoad],
+    node_to_semantic: dict[str, str],
+) -> tuple[list[dict[str, Any]], set[int], list[dict[str, Any]]]:
+    if not tool6_rows:
+        return [], set(), []
+
+    node_index_by_id = _node_feature_index_by_id(node_features, node_id_field=node_id_field)
+    repair_rows: list[dict[str, Any]] = []
+    skipped_rows: list[dict[str, Any]] = []
+    deleted_road_indices: set[int] = set()
+
+    rows_by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in tool6_rows:
+        rows_by_group[_tool6_group_id(row)].append(row)
+
+    for group_id, group_rows in sorted(rows_by_group.items(), key=lambda item: _sort_key(item[0])):
+        error_types = {str(row.get("error_type") or "") for row in group_rows}
+        if TOOL6_ERROR_DIVMERGE in error_types:
+            group_repairs, group_deletes, group_skips = _apply_tool6_divmerge_group(
+                group_id=group_id,
+                rows=group_rows,
+                node_features=node_features,
+                node_index_by_id=node_index_by_id,
+                node_id_field=node_id_field,
+                node_kind_2_field=node_kind_2_field,
+                node_mainnodeid_field=node_mainnodeid_field,
+                node_grade_2_field=node_grade_2_field,
+                parsed_roads=parsed_roads,
+                node_to_semantic=node_to_semantic,
+            )
+            repair_rows.extend(group_repairs)
+            deleted_road_indices.update(group_deletes)
+            skipped_rows.extend(group_skips)
+        for row in group_rows:
+            error_type = str(row.get("error_type") or "")
+            if error_type in {TOOL6_ERROR_CROSS_T, TOOL6_ERROR_CROSS_NON_CROSS}:
+                repair = _apply_tool6_cross_row(
+                    row=row,
+                    node_features=node_features,
+                    node_index_by_id=node_index_by_id,
+                    node_id_field=node_id_field,
+                    node_kind_2_field=node_kind_2_field,
+                )
+                if repair is None:
+                    skipped_rows.append(_tool6_skip_row(row, reason="manual_fix_disabled_or_missing_node"))
+                else:
+                    repair_rows.append(repair)
+    return repair_rows, deleted_road_indices, skipped_rows
+
+
+def _apply_tool6_divmerge_group(
+    *,
+    group_id: str,
+    rows: list[dict[str, Any]],
+    node_features: list[dict[str, Any]],
+    node_index_by_id: dict[str, int],
+    node_id_field: str,
+    node_kind_2_field: str,
+    node_mainnodeid_field: str,
+    node_grade_2_field: str,
+    parsed_roads: list[ParsedRoad],
+    node_to_semantic: dict[str, str],
+) -> tuple[list[dict[str, Any]], set[int], list[dict[str, Any]]]:
+    divmerge_rows = [row for row in rows if str(row.get("error_type") or "") == TOOL6_ERROR_DIVMERGE]
+    if not divmerge_rows:
+        return [], set(), []
+    if any(not _manual_fix_enabled(row.get(TOOL6_MANUAL_FIX_FIELD)) for row in divmerge_rows):
+        return [], set(), [_tool6_skip_row(divmerge_rows[0], reason="manual_fix_disabled_in_group")]
+    diverge_row = _first_tool6_role(divmerge_rows, "diverge")
+    merge_row = _first_tool6_role(divmerge_rows, "merge")
+    if diverge_row is None or merge_row is None:
+        return [], set(), [_tool6_skip_row(divmerge_rows[0], reason="missing_diverge_or_merge_row")]
+
+    diverge_node_id = _tool6_source_node_id(diverge_row)
+    merge_node_id = _tool6_source_node_id(merge_row)
+    if diverge_node_id is None or merge_node_id is None:
+        return [], set(), [_tool6_skip_row(divmerge_rows[0], reason="missing_source_node_id")]
+    diverge_index = node_index_by_id.get(diverge_node_id)
+    merge_index = node_index_by_id.get(merge_node_id)
+    if diverge_index is None or merge_index is None:
+        return [], set(), [_tool6_skip_row(divmerge_rows[0], reason="source_node_not_found")]
+
+    related_node_ids = sorted(
+        set(
+            _split_csv_ids(diverge_row.get("related_node_ids"))
+            + _split_csv_ids(merge_row.get("related_node_ids"))
+            + [diverge_node_id, merge_node_id]
+        ),
+        key=_sort_key,
+    )
+    for node_id in related_node_ids:
+        node_index = node_index_by_id.get(node_id)
+        if node_index is not None:
+            node_features[node_index]["properties"][node_mainnodeid_field] = diverge_node_id
+
+    repairs: list[dict[str, Any]] = []
+    repairs.append(
+        _update_node_kind_from_tool6(
+            node_features=node_features,
+            feature_index=diverge_index,
+            node_id_field=node_id_field,
+            node_kind_2_field=node_kind_2_field,
+            after_kind_2=T_KIND_VALUE,
+            error_row=diverge_row,
+            repair_rule="tool6_divmerge_to_t_junction_main",
+            audit_role="main",
+            audit_mainnodeid=diverge_node_id,
+        )
+    )
+    merge_feature = node_features[merge_index]
+    merge_props = merge_feature["properties"]
+    before_grade_2 = _coerce_int(merge_props.get(node_grade_2_field))
+    repairs.append(
+        _update_node_kind_from_tool6(
+            node_features=node_features,
+            feature_index=merge_index,
+            node_id_field=node_id_field,
+            node_kind_2_field=node_kind_2_field,
+            after_kind_2=0,
+            error_row=merge_row,
+            repair_rule="tool6_divmerge_to_t_junction_member",
+            audit_role="member",
+            audit_mainnodeid=diverge_node_id,
+            extra={"before_grade_2": before_grade_2, "after_grade_2": 0},
+        )
+    )
+    merge_props[node_grade_2_field] = 0
+
+    diverge_semantic_id = str(diverge_row.get("semantic_node_id") or diverge_node_id)
+    merge_semantic_id = str(merge_row.get("semantic_node_id") or merge_node_id)
+    deleted_indices = _direct_road_indices_between_semantic_nodes(
+        parsed_roads=parsed_roads,
+        node_to_semantic=node_to_semantic,
+        first_semantic_id=diverge_semantic_id,
+        second_semantic_id=merge_semantic_id,
+    )
+    for repair in repairs:
+        repair["related_node_ids"] = ",".join(related_node_ids)
+        repair["related_road_ids"] = ",".join(parsed_roads[index].road_id for index in sorted(deleted_indices))
+        repair["deleted_road_ids"] = repair["related_road_ids"]
+    return repairs, deleted_indices, []
+
+
+def _apply_tool6_cross_row(
+    *,
+    row: dict[str, Any],
+    node_features: list[dict[str, Any]],
+    node_index_by_id: dict[str, int],
+    node_id_field: str,
+    node_kind_2_field: str,
+) -> dict[str, Any] | None:
+    if not _manual_fix_enabled(row.get(TOOL6_MANUAL_FIX_FIELD)):
+        return None
+    node_id = _tool6_source_node_id(row)
+    if node_id is None:
+        return None
+    feature_index = node_index_by_id.get(node_id)
+    if feature_index is None:
+        return None
+    after_kind_2 = T_KIND_VALUE if str(row.get("error_type") or "") == TOOL6_ERROR_CROSS_T else 1
+    return _update_node_kind_from_tool6(
+        node_features=node_features,
+        feature_index=feature_index,
+        node_id_field=node_id_field,
+        node_kind_2_field=node_kind_2_field,
+        after_kind_2=after_kind_2,
+        error_row=row,
+        repair_rule="tool6_cross_t_to_kind_2048" if after_kind_2 == T_KIND_VALUE else "tool6_cross_non_cross_to_kind_1",
+        audit_role="main",
+        audit_mainnodeid=str(row.get("semantic_node_id") or node_id),
+    )
+
+
+def _update_node_kind_from_tool6(
+    *,
+    node_features: list[dict[str, Any]],
+    feature_index: int,
+    node_id_field: str,
+    node_kind_2_field: str,
+    after_kind_2: int,
+    error_row: dict[str, Any],
+    repair_rule: str,
+    audit_role: str,
+    audit_mainnodeid: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    feature = node_features[feature_index]
+    props = feature["properties"]
+    before_kind_2 = _coerce_int(props.get(node_kind_2_field))
+    props[node_kind_2_field] = after_kind_2
+    node_id = _normalize_id(props.get(node_id_field)) or str(error_row.get("source_node_id") or "")
+    row = {
+        "semantic_node_id": str(error_row.get("semantic_node_id") or node_id),
+        "source_node_id": node_id,
+        "source_feature_index": feature_index,
+        "node_id": node_id,
+        "error_type": str(error_row.get("error_type") or ""),
+        "error_reason": str(error_row.get("reason") or ""),
+        "error_group_id": _tool6_group_id(error_row),
+        "in_degree": _coerce_int(error_row.get("in_degree")),
+        "out_degree": _coerce_int(error_row.get("out_degree")),
+        "before_kind_2": before_kind_2,
+        "after_kind_2": after_kind_2,
+        "repair_rule": repair_rule,
+        "related_node_ids": error_row.get("related_node_ids"),
+        "related_road_ids": error_row.get("related_road_ids"),
+        "audit_process": "tool6_qc_repair",
+        "audit_role": audit_role,
+        "audit_mainnodeid": audit_mainnodeid,
+    }
+    if extra:
+        row.update(extra)
+    return row
+
+
+def _node_feature_index_by_id(node_features: list[dict[str, Any]], *, node_id_field: str) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for index, feature in enumerate(node_features):
+        node_id = _normalize_id(feature["properties"].get(node_id_field))
+        if node_id is not None:
+            result[node_id] = index
+    return result
+
+
+def _tool6_group_id(row: dict[str, Any]) -> str:
+    value = _normalize_id(row.get("error_group_id"))
+    return value or str(row.get("error_id") or row.get("semantic_node_id") or "")
+
+
+def _tool6_source_node_id(row: dict[str, Any]) -> str | None:
+    return _normalize_id(row.get("source_node_id")) or _normalize_id(row.get("semantic_node_id"))
+
+
+def _manual_fix_enabled(value: Any) -> bool:
+    normalized = _normalize_scalar(value)
+    if normalized is None:
+        return False
+    if isinstance(normalized, bool):
+        return bool(normalized)
+    if isinstance(normalized, (int, float)):
+        return int(normalized) == 1
+    return str(normalized).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _first_tool6_role(rows: list[dict[str, Any]], role: str) -> dict[str, Any] | None:
+    for row in rows:
+        if str(row.get("role") or "").strip().lower() == role:
+            return row
+    return None
+
+
+def _split_csv_ids(value: Any) -> list[str]:
+    normalized = _normalize_scalar(value)
+    if normalized is None:
+        return []
+    return [text for item in str(normalized).split(",") if (text := item.strip())]
+
+
+def _tool6_skip_row(row: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    return {
+        "error_group_id": _tool6_group_id(row),
+        "error_type": str(row.get("error_type") or ""),
+        "semantic_node_id": str(row.get("semantic_node_id") or ""),
+        "source_node_id": str(row.get("source_node_id") or ""),
+        "reason": reason,
+    }
+
+
+def _direct_road_indices_between_semantic_nodes(
+    *,
+    parsed_roads: list[ParsedRoad],
+    node_to_semantic: dict[str, str],
+    first_semantic_id: str,
+    second_semantic_id: str,
+) -> set[int]:
+    result: set[int] = set()
+    for index, road in enumerate(parsed_roads):
+        source_semantic = node_to_semantic.get(road.snodeid)
+        target_semantic = node_to_semantic.get(road.enodeid)
+        if source_semantic is None or target_semantic is None:
+            continue
+        if {source_semantic, target_semantic} == {first_semantic_id, second_semantic_id}:
+            result.add(index)
+    return result
+
+
 def _apply_t_junction_repairs(
     *,
     node_features: list[dict[str, Any]],
@@ -910,7 +1326,8 @@ def _apply_t_junction_repairs(
 ) -> list[dict[str, Any]]:
     repair_rows: list[dict[str, Any]] = []
     for row in errors:
-        if row.get("error_type") != ERROR_T_JUNCTION:
+        error_type = str(row.get("error_type"))
+        if error_type not in {ERROR_T_JUNCTION, ERROR_DIVMERGE_ONE_IN_ONE_OUT}:
             continue
         feature_index = int(row["source_feature_index"])
         if feature_index < 0 or feature_index >= len(node_features):
@@ -920,7 +1337,16 @@ def _apply_t_junction_repairs(
         before_kind_2 = _coerce_int(props.get(node_kind_2_field))
         in_degree = int(row.get("in_degree", 0))
         out_degree = int(row.get("out_degree", 0))
-        after_kind_2 = 1 if in_degree == 0 or out_degree == 0 else 4
+        if error_type == ERROR_DIVMERGE_ONE_IN_ONE_OUT:
+            after_kind_2 = 1
+            repair_rule = "divmerge_one_in_one_out_to_kind_1"
+        else:
+            after_kind_2 = 1 if in_degree == 0 or out_degree == 0 else 4
+            repair_rule = (
+                "zero_in_or_out_degree_to_kind_1"
+                if after_kind_2 == 1
+                else "nonzero_degree_error_to_kind_4"
+            )
         props[node_kind_2_field] = after_kind_2
         repair_rows.append(
             {
@@ -928,16 +1354,14 @@ def _apply_t_junction_repairs(
                 "source_node_id": str(row["source_node_id"]),
                 "source_feature_index": feature_index,
                 "node_id": _normalize_id(props.get(node_id_field)),
-                "error_type": row["error_type"],
+                "error_type": error_type,
                 "error_reason": row["error_reason"],
                 "error_group_id": row["error_group_id"],
                 "in_degree": in_degree,
                 "out_degree": out_degree,
                 "before_kind_2": before_kind_2,
                 "after_kind_2": after_kind_2,
-                "repair_rule": "zero_in_or_out_degree_to_kind_1"
-                if after_kind_2 == 1
-                else "nonzero_degree_error_to_kind_4",
+                "repair_rule": repair_rule,
                 "related_node_ids": row.get("related_node_ids"),
                 "related_road_ids": row.get("related_road_ids"),
             }
@@ -968,7 +1392,8 @@ def _build_audit_node_features(
             source_feature = node_by_id.get(source_node_id)
         if source_feature is None:
             continue
-        audit_id = f"t_junction_repair:{row['error_group_id']}:{source_node_id}"
+        audit_process = str(row.get("audit_process") or "t_junction_repair")
+        audit_id = f"{audit_process}:{row['error_group_id']}:{source_node_id}"
         if audit_id in seen_audit_ids:
             continue
         seen_audit_ids.add(audit_id)
@@ -976,10 +1401,10 @@ def _build_audit_node_features(
         properties.update(
             {
                 "audit_id": audit_id,
-                "audit_process": "t_junction_repair",
+                "audit_process": audit_process,
                 "audit_group_id": str(row["error_group_id"]),
-                "audit_role": "main",
-                "audit_mainnodeid": str(row["semantic_node_id"]),
+                "audit_role": str(row.get("audit_role") or "main"),
+                "audit_mainnodeid": str(row.get("audit_mainnodeid") or row["semantic_node_id"]),
                 "audit_source_node_id": source_node_id,
             }
         )

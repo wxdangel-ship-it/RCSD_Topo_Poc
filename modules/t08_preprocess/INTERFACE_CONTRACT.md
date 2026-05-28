@@ -55,12 +55,14 @@
 - 输出边界：Tool3 只输出 copy-on-write Nodes，不修改输入文件，不输出或改写 Roads。
 - 所有输入、输出路径必须通过参数提供。
 
-### Tool4：T 型路口错误修复
+### Tool4：路口类型修复
 
 - 输入一：Nodes GPKG，依赖字段 `id / kind_2`，可选字段 `mainnodeid`。
 - 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`，可选字段 `formway / kind`。
+- 输入三：Tool6 `node_error` CSV/GPKG，可选；未输入时仅执行 Tool4 自身识别与修复。
 - 输出：
   - `t08_junction_type_repair_nodes_tool4.gpkg`
+  - `t08_junction_type_repair_roads_tool4.gpkg`（可选；Tool6 连续分合流修复删除 Road 时必须提供）
   - `t08_junction_type_repair_audit_nodes_tool4.gpkg`
   - `t08_junction_type_repair_summary_tool4.json`
 - 输出 CRS：`EPSG:3857`。
@@ -71,15 +73,20 @@
   - 若 Road 两端属于同一语义路口，则该 Road 既视为进入该语义路口也视为退出该语义路口，`in_degree + 1 / out_degree + 1`；双向 Road 同样只按该 Road 对入度和出度各加 `1`。
 - 错误识别：
   - `kind_2 = 2048`：若入度或出度任一不为 `2`，识别为 `error_type = 错误T型路口`。
+  - `kind_2 in {8,16}`：若入度和出度均为 `1`，识别为 `error_type = 错误分歧合流路口_一入一出`。
 - 修复策略：
   - 对识别出的错误 T 型路口代表 node，若入度或出度任一为 `0`，`kind_2` 写为 `1`。
   - 其他错误 T 型路口代表 node，`kind_2` 写为 `4`。
+  - 对识别出的 `错误分歧合流路口_一入一出` 代表 node，`kind_2` 写为 `1`。
+  - 若输入 Tool6 成果中 `error_type = 错误分歧合流路口` 且同组记录 `是否修复 = 1`，将分歧和合流涉及 node 的 `mainnodeid` 写为原分歧 node id，原分歧 node `kind_2 = 2048`，原合流 node `kind_2 = 0 / grade_2 = 0`，并从 Roads 输出中删除原分歧与合流语义路口之间的直连 Road。
+  - 若输入 Tool6 成果中 `error_type = 错误交叉路口_T型路口` 且 `是否修复 = 1`，对应 mainnode `kind_2 = 2048`。
+  - 若输入 Tool6 成果中 `error_type = 错误交叉路口_非交叉路口` 且 `是否修复 = 1`，对应 mainnode `kind_2 = 1`。
 - 异常豁免：
   - 若语义路口存在提前右转 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入提前右转 Road；提前右转 Road 以 `formway bit7 = 128` 判定。
   - 若语义路口存在辅路 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入辅路 Road；辅路 Road 以 `road.kind` 任一 `|` 分隔 token 的后两位为 `0a` 判定，大小写不敏感。
   - 对原本将输出的 `错误T型路口` 候选，若排除提前右转 / 辅路后 `in_degree = 2 / out_degree = 2`，则不输出错误，并在 summary `degree_exceptions` 中记录 suppressed 审计。
-- 审计 Nodes 输出：将被修复的语义路口代表 node 输出为 audit Nodes GPKG，保留最终 Nodes 属性并补充 `audit_id / audit_process / audit_group_id / audit_role / audit_mainnodeid / audit_source_node_id`；修复前后 `kind_2` 与入出度记录在 summary `repairs / errors`。
-- 输出边界：Tool4 copy-on-write 输出完整 Nodes 与 audit Nodes，不修改输入 Nodes/Roads，不输出或改写 Roads。
+- 审计 Nodes 输出：将被修复的语义路口代表 node 输出为 audit Nodes GPKG，保留最终 Nodes 属性并补充 `audit_id / audit_process / audit_group_id / audit_role / audit_mainnodeid / audit_source_node_id`；修复前后 `kind_2` 与入出度记录在 summary `repairs / errors`，Tool6 触发的修复记录在 `repairs / tool6_skipped / deleted_road_ids`。
+- 输出边界：Tool4 copy-on-write 输出完整 Nodes 与 audit Nodes；仅当提供 `--roads-output` 时输出 copy-on-write Roads，且只删除 Tool6 连续分合流修复确认的直连 Road；不修改输入 Nodes/Roads。
 - 性能口径：Tool4 Road GPKG 优先使用直接 SQLite 轻量读取，只读取 `id / snodeid / enodeid / direction / formway / kind / geometry`，进入拓扑前仅保留 road 长度、方向向量与异常豁免标记，不长期持有完整 Road 几何；无法识别标准 GPKG 元数据时回退共享 `read_vector`。
 - 所有输入、输出路径必须通过参数提供。
 
@@ -111,7 +118,7 @@
   - `node_error_summary_tool6.json`
 - 输出 CRS：`EPSG:3857`。
 - 输出边界：Tool6 只输出质检候选，不改写输入 Nodes/Roads，不执行修复；CSV 最后一列为 `是否修复`，默认值为 `1`，人工确认不需要修复的数据改为 `0` 后供 Tool4 后续修复流程消费。
-- 下游边界：本轮不改变 Tool4 既有入口；Tool4 消费 Tool6 人工确认结果、以及 `错误交叉路口_T型路口 / 错误交叉路口_非交叉路口` 的具体修复目标由后续 Tool4 契约补齐。
+- 下游边界：Tool4 可消费 Tool6 人工确认结果；Tool6 本身不执行修复。
 - 入度 / 出度定义：
   - `direction in {0,1}` 表示双向 road，对两端语义路口分别 `in_degree + 1 / out_degree + 1`。
   - `direction = 2` 表示 `snodeid -> enodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
@@ -183,7 +190,9 @@ Tool4：
 .venv/bin/python scripts/t08_tool4_junction_type_repair.py \
   --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation_tool3.gpkg \
   --roads-gpkg /mnt/d/TestData/POC_Data/input/roads.gpkg \
+  --tool6-node-error-csv /mnt/d/TestData/POC_Data/t08_preprocess/nodes/node_error_tool6.csv \
   --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_nodes_tool4.gpkg \
+  --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_roads_tool4.gpkg \
   --audit-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_audit_nodes_tool4.gpkg
 ```
 
@@ -257,7 +266,9 @@ Tool6：
 - `--nodes-gpkg`：Nodes 输入 GPKG。
 - `--roads-gpkg`：Roads 拓扑参考输入 GPKG。
 - `--nodes-output`：修复后的完整 Nodes 输出 GPKG。
+- `--roads-output`：可选修复后 Roads 输出 GPKG；当 Tool6 连续分合流修复会删除 Road 时必填。
 - `--audit-nodes-output`：语义路口审计 Nodes 输出 GPKG。
+- `--tool6-node-error-csv / --tool6-node-error-gpkg`：可选 Tool6 质检成果输入；均不提供时跳过 Tool6 人工确认修复；两者不可同时提供。
 - `--nodes-layer / --roads-layer`：可选图层名。
 - `--summary-output`：可选 summary JSON 输出路径。
 - `--target-epsg`：最终输出 EPSG，默认 `3857`。
@@ -310,10 +321,10 @@ Tool6：
 6. Tool3 输出 Nodes GPKG 且 CRS 为 `EPSG:3857`。
 7. Tool3 保留原始 `kind / grade`，只在 copy-on-write 输出中写入 `kind_2 / grade_2 / mainnodeid / subnodeid`。
 8. Tool3 summary 可追溯环岛组、更新节点数、CRS、字段解析与阶段性能；Tool3 不再构造复杂分歧 / 合流路口。
-9. Tool4 输出完整 Nodes / audit Nodes GPKG 且 CRS 为 `EPSG:3857`。
-10. Tool4 识别错误 T 型路口 `error_type` 并按入出度写回代表 node `kind_2`。
+9. Tool4 输出完整 Nodes / audit Nodes GPKG 且 CRS 为 `EPSG:3857`；提供 `--roads-output` 时 Roads 输出也必须为 `EPSG:3857`。
+10. Tool4 识别错误 T 型路口与 `kind_2 in {8,16}` 一入一出分合流路口，并按规则写回代表 node `kind_2`。
 11. Tool4 对提前右转与辅路 Road 执行入出度异常豁免；候选错误被豁免时不写入 audit Nodes，必须写入 summary `degree_exceptions`。
-12. Tool4 不修改输入 Nodes/Roads，不输出或改写 Roads。
+12. Tool4 可选消费 Tool6 质检成果；只处理 `是否修复 = 1` 的 `错误分歧合流路口 / 错误交叉路口_T型路口 / 错误交叉路口_非交叉路口`，并在 summary 中记录 Tool6 修复、跳过和删除 Road。
 13. Tool5 输出 Nodes / Roads / audit Nodes GPKG 且 CRS 为 `EPSG:3857`。
 14. Tool5 summary 可追溯复杂分歧 / 合流组、`node_error_2_detection`、错误 1 对多合并组、删除 Road、audit node 数量、CRS、字段解析与阶段性能。
 15. Tool6 输出 `node_error_tool6.csv / node_error_tool6.gpkg` 且 GPKG CRS 为 `EPSG:3857`。

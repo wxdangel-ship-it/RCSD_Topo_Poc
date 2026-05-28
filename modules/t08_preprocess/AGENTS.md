@@ -11,7 +11,7 @@
 - Tool1：基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出均写回输入目录并追加 `_tool1`。
 - Tool2：Road 数据预处理，基于 GPKG 输入补充 `patch_id` 与原始 `kind`，并删除 `kind` 具有 `17` 主辅路出入口属性的 Road，最终输出 `EPSG:3857` GPKG。
 - Tool3：Nodes 类型聚合，基于 GPKG Nodes/Roads 输入补充 `kind_2 / grade_2` 并处理环岛 mainnode，最终输出 `EPSG:3857` Nodes GPKG。
-- Tool4：T 型路口错误修复，基于 GPKG Nodes/Roads 输入校验 Nodes `kind_2=2048` T 型路口类型，copy-on-write 输出完整 Nodes 与 audit Nodes，不改写输入 Nodes/Roads。
+- Tool4：路口类型修复，基于 GPKG Nodes/Roads 输入校验 Nodes `kind_2=2048` T 型路口类型、`kind_2 in {8,16}` 一入一出分合流类型，并可消费 Tool6 人工确认成果，copy-on-write 输出完整 Nodes、可选 Roads 与 audit Nodes，不改写输入 Nodes/Roads。
 - Tool5：复杂路口预处理，基于 GPKG Nodes/Roads 构建复杂分歧 / 合流路口，并可参考 T02 `node_error_2` 生成与修复逻辑从 `RCSDIntersection` 识别和处理错误 1 对多路口，最终 copy-on-write 输出 `EPSG:3857` Nodes/Roads/audit Nodes GPKG。
 - Tool6：Nodes 类型质检，基于语义路口入出度、连续分歧合流 T 型候选与交叉路口候选规则输出人工质检 CSV 与 `node_error_tool6.gpkg`，不改写输入 Nodes/Roads。
 
@@ -33,7 +33,7 @@
 - 不在模块根目录新增 `SKILL.md`。
 - 不修改 T00 Tool4 / Tool5 契约。
 - 不根据局部样本反推 Road / Node 字段语义。
-- 不在 Tool4 中重塑 Road/Node 拓扑；Tool4 只允许按契约修复错误 T 型路口代表 node 的 `kind_2`。
+- 不在 Tool4 中做契约外拓扑重塑；Tool4 仅允许按契约修复路口类型，并在 Tool6 连续分合流确认修复时删除对应直连 Road。
 - T08 成果输出文件名必须在扩展名前以 `_toolX` 结尾。
 
 ## 必做验证

@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `80` 个。
+- 当前真实执行入口共 `81` 个。
 - 分布概览：
-  - repo 级入口文件：`56`（`Makefile` 1 + `scripts/` 54 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`57`（`Makefile` 1 + `scripts/` 55 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`24`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -61,6 +61,7 @@
 | `t06_run_innernet_precheck.py` | `scripts/t06_run_innernet_precheck.py` | repo 级 | T06 内网 Step1 + Step2 运行包装脚本；读取 T01 `segment.gpkg / roads.gpkg`、final `nodes.gpkg` 与 T05 Phase 2 `intersection_match_all.geojson / rcsdroad_out.gpkg / rcsdnode_out.gpkg`，输出 T06 candidates / replaceable / rejected / summary，不修改输入文件 | `active` | 否 |
 | `t06_run_step3_segment_replacement.py` | `scripts/t06_run_step3_segment_replacement.py` | repo 级 | T06 Step3 独立运行脚本；消费既有 T06 run root 的 Step2 `t06_rcsd_segment_replaceable.gpkg`，读取 SWSD Segment/Road/Node 与 T05 Phase 2 copy-on-write RCSDRoad/RCSDNode，输出 F-RCSD Road / Node、替换单元、路口 C 重建与 id 冲突审计，不改变 Step1 + Step2 内网脚本默认行为 | `active` | 否 |
 | `t07_run_semantic_junction_anchor_innernet.sh` | `scripts/t07_run_semantic_junction_anchor_innernet.sh` | repo 级 | T07 内网语义路口级 Step1 / Step2 执行脚本；读取 `nodes / DriveZone / RCSDIntersection`，调用模块内 callable runner 输出代表 node 的 `has_evd / is_anchor / anchor_reason`，不处理 Segment | `active` | 否 |
+| `t07_run_step3_intersection_match_innernet.sh` | `scripts/t07_run_step3_intersection_match_innernet.sh` | repo 级 | T07 Step3 独立内网执行脚本；读取 Step2 后 `nodes.gpkg`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode.gpkg`，输出 `intersection_match_tool7.geojson` 并对符合条件的 SWSD 代表 node 补写 `is_anchor = yes`，不处理 Segment | `active` | 否 |
 | `t04_run_internal_full_input_8workers.sh` | `scripts/t04_run_internal_full_input_8workers.sh` | repo 级 | T04 模块级内网 full-input 全量运行主脚本；输入全局 `nodes/roads/DriveZone/DivStripZone/RCSDRoad/RCSDNode`，执行 preflight / candidate discovery / shared bootstrap / direct Step1-7 case execution / batch closeout，并输出 `divmerge_virtual_anchor_surface*` 正式成果与 `visual_checks/final_*` 最终平铺目视审计入口；不新增 repo 官方 CLI 子命令 | `active` | 否 |
 | `t04_watch_internal_full_input.sh` | `scripts/t04_watch_internal_full_input.sh` | repo 级 | T04 内网 full-input 实时监控脚本；显示 `selected / completed / running / pending / accepted / rejected / runtime_failed / missing_status`、phase/status/message/entered_case_execution 与性能估算，并支持 `CASE_SCAN=auto/on/off` 降扫描 | `active` | 否 |
 | `t04_run_internal_full_input_innernet_flat_review.sh` | `scripts/t04_run_internal_full_input_innernet_flat_review.sh` | repo 级 | T04 内网 full-input 最终平铺目视审计运行包装；默认关闭 debug、启用 resume/retry/perf audit、使用 failed_only snapshot，并转发到 `t04_run_internal_full_input_8workers.sh` | `active` | 否 |
@@ -104,7 +105,7 @@
 | `t08_tool1_vector_convert.py` | `scripts/t08_tool1_vector_convert.py` | repo 级 | T08 Tool1 基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出写回输入目录下并在 stem 后追加 `_tool1`，采用流式转换并输出进度，支持可选目标 EPSG 与 summary 输出 | `active` | 否 |
 | `t08_tool2_road_preprocess.py` | `scripts/t08_tool2_road_preprocess.py` | repo 级 | T08 Tool2 Road GPKG 预处理，补充 `patch_id` 与原始 `kind`，删除 `kind` 具有 `17` 主辅路出入口属性的 Road 并输出 `event_road_0a_tool2.gpkg`，成果输出文件名以 `_tool2` 结尾 | `active` | 否 |
 | `t08_tool3_nodes_type_aggregation.py` | `scripts/t08_tool3_nodes_type_aggregation.py` | repo 级 | T08 Tool3 Nodes 类型聚合，补充 `kind_2 / grade_2` 并处理环岛 mainnode，输出 `EPSG:3857` Nodes GPKG，成果输出文件名以 `_tool3` 结尾 | `active` | 否 |
-| `t08_tool4_junction_type_repair.py` | `scripts/t08_tool4_junction_type_repair.py` | repo 级 | T08 Tool4 T 型路口错误修复，校验 `kind_2=2048` T 型语义路口并 copy-on-write 输出完整 Nodes/audit Nodes GPKG 与 summary，不改写输入 Nodes/Roads，成果输出文件名以 `_tool4` 结尾 | `active` | 否 |
+| `t08_tool4_junction_type_repair.py` | `scripts/t08_tool4_junction_type_repair.py` | repo 级 | T08 Tool4 路口类型修复，校验 `kind_2=2048` T 型语义路口、分合流一入一出类型，并可消费 Tool6 人工确认成果，copy-on-write 输出完整 Nodes、可选 Roads、audit Nodes GPKG 与 summary，不改写输入 Nodes/Roads，成果输出文件名以 `_tool4` 结尾 | `active` | 否 |
 | `t08_tool5_complex_junction_preprocess.py` | `scripts/t08_tool5_complex_junction_preprocess.py` | repo 级 | T08 Tool5 复杂路口预处理，构建复杂分歧 / 合流路口，并可基于 `RCSDIntersection` 识别和处理错误 1 对多路口，copy-on-write 输出 `EPSG:3857` Nodes/Roads/audit Nodes GPKG 与 summary，成果输出文件名以 `_tool5` 结尾 | `active` | 否 |
 | `t08_tool6_nodes_type_qc.py` | `scripts/t08_tool6_nodes_type_qc.py` | repo 级 | T08 Tool6 Nodes 类型质检，基于语义路口入出度、连续分歧合流 T 型候选与交叉路口候选规则输出 `node_error_tool6.csv / node_error_tool6.gpkg / node_error_summary_tool6.json`，CSV 最后一列 `是否修复` 默认 `1`，不改写输入 Nodes/Roads | `active` | 否 |
 

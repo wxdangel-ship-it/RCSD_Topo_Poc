@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -92,28 +94,118 @@ def _progress_to_announce(logger: Any) -> Any:
     return _callback
 
 
+def _crs_command_arg(crs: CRS) -> str:
+    authority = crs.to_authority()
+    if authority:
+        return f"{authority[0]}:{authority[1]}"
+    return crs.to_wkt()
+
+
+def _output_feature_count(path: Path, layer_name: str | None = None) -> int:
+    with fiona.open(str(path), layer=layer_name) as source:
+        return len(source)
+
+
+def _run_ogr2ogr(
+    input_path: Path,
+    output_path: Path,
+    *,
+    driver: str,
+    layer_name: str | None,
+    source_crs: CRS,
+    source_feature_count: int | None,
+    progress_interval: int,
+    logger: Any,
+) -> dict[str, Any]:
+    ogr2ogr_path = shutil.which("ogr2ogr")
+    if ogr2ogr_path is None:
+        raise RuntimeError("ogr2ogr executable not found")
+
+    started = time.perf_counter()
+    remove_existing_output(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        ogr2ogr_path,
+        "-overwrite",
+        "-f",
+        driver,
+        "-a_srs",
+        _crs_command_arg(source_crs),
+    ]
+    if driver == "GeoJSON":
+        cmd.extend(["-lco", "RFC7946=NO"])
+    if driver == "GPKG":
+        cmd.extend(["-lco", "SPATIAL_INDEX=YES"])
+    if layer_name:
+        cmd.extend(["-nln", layer_name])
+    cmd.extend([str(output_path), str(input_path)])
+
+    announce(logger, f"[Tool11 IO] {output_path.name}: start ogr2ogr {driver} conversion")
+    result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if result.returncode != 0:
+        if output_path.exists():
+            output_path.unlink()
+        stderr_tail = "\n".join(result.stderr.strip().splitlines()[-20:])
+        raise RuntimeError(f"ogr2ogr {driver} failed with exit code {result.returncode}: {stderr_tail}")
+
+    elapsed_seconds = time.perf_counter() - started
+    count_layer_name = layer_name if driver == "GPKG" else None
+    feature_count = source_feature_count if source_feature_count is not None else _output_feature_count(output_path, count_layer_name)
+    announce(
+        logger,
+        f"[Tool11 IO] {output_path.name}: completed ogr2ogr {driver} conversion "
+        f"features={feature_count} elapsed={elapsed_seconds:.2f}s",
+    )
+    return {
+        "feature_count": feature_count,
+        "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
+        "write_engine": f"ogr2ogr-{driver.lower()}",
+        "elapsed_seconds": round(elapsed_seconds, 6),
+        "features_per_second": _features_per_second(feature_count, elapsed_seconds),
+        "progress_interval": progress_interval,
+    }
+
+
 def _write_geojson(
     input_path: Path,
     output_path: Path,
     *,
     source_crs: CRS,
+    source_feature_count: int | None,
     progress_interval: int,
     logger: Any,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    remove_existing_output(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with fiona.open(str(input_path)) as source:
-        write_result = write_geojson_from_fiona_collection(
+    try:
+        write_result = _run_ogr2ogr(
+            input_path,
             output_path,
-            source,
-            source_crs=source_crs,
-            output_crs=source_crs,
+            driver="GeoJSON",
             layer_name=input_path.stem,
-            progress_callback=_progress_to_announce(logger),
+            source_crs=source_crs,
+            source_feature_count=source_feature_count,
             progress_interval=progress_interval,
+            logger=logger,
         )
+    except Exception as exc:
+        announce(logger, f"[Tool11 IO] {output_path.name}: ogr2ogr fallback to streaming JSON. reason={exc}")
+        remove_existing_output(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with fiona.open(str(input_path)) as source:
+            write_result = write_geojson_from_fiona_collection(
+                output_path,
+                source,
+                source_crs=source_crs,
+                output_crs=source_crs,
+                layer_name=input_path.stem,
+                progress_callback=_progress_to_announce(logger),
+                progress_interval=progress_interval,
+            )
+        write_result = {
+            **write_result,
+            "write_engine": "streaming-json",
+        }
 
     elapsed_seconds = time.perf_counter() - started
     feature_count = int(write_result["feature_count"])
@@ -126,7 +218,7 @@ def _write_geojson(
         "geometry_type_summary": {},
         "error_reason_summary": {},
         "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
-        "write_engine": "streaming-json",
+        "write_engine": write_result["write_engine"],
         "elapsed_seconds": round(elapsed_seconds, 6),
         "features_per_second": _features_per_second(feature_count, elapsed_seconds),
     }
@@ -137,24 +229,41 @@ def _write_gpkg(
     output_path: Path,
     *,
     source_crs: CRS,
+    source_feature_count: int | None,
     progress_interval: int,
     logger: Any,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    remove_existing_output(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     layer_name = _sanitize_layer_name(input_path.stem)
-
-    with fiona.open(str(input_path)) as source:
-        write_result = write_gpkg_from_fiona_collection(
+    try:
+        write_result = _run_ogr2ogr(
+            input_path,
             output_path,
-            source,
-            source_crs=source_crs,
-            output_crs=source_crs,
+            driver="GPKG",
             layer_name=layer_name,
-            progress_callback=_progress_to_announce(logger),
+            source_crs=source_crs,
+            source_feature_count=source_feature_count,
             progress_interval=progress_interval,
+            logger=logger,
         )
+    except Exception as exc:
+        announce(logger, f"[Tool11 IO] {output_path.name}: ogr2ogr fallback to sqlite GPKG. reason={exc}")
+        remove_existing_output(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with fiona.open(str(input_path)) as source:
+            write_result = write_gpkg_from_fiona_collection(
+                output_path,
+                source,
+                source_crs=source_crs,
+                output_crs=source_crs,
+                layer_name=layer_name,
+                progress_callback=_progress_to_announce(logger),
+                progress_interval=progress_interval,
+            )
+        write_result = {
+            **write_result,
+            "write_engine": "sqlite-gpkg",
+        }
 
     elapsed_seconds = time.perf_counter() - started
     feature_count = int(write_result["feature_count"])
@@ -168,7 +277,7 @@ def _write_gpkg(
         "geometry_type_summary": {},
         "error_reason_summary": {},
         "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
-        "write_engine": "sqlite-gpkg",
+        "write_engine": write_result["write_engine"],
         "elapsed_seconds": round(elapsed_seconds, 6),
         "features_per_second": _features_per_second(feature_count, elapsed_seconds),
     }
@@ -196,6 +305,7 @@ def _convert_single_mif(
         input_path,
         geojson_output_path,
         source_crs=source_crs,
+        source_feature_count=source_feature_count,
         progress_interval=progress_interval,
         logger=logger,
     )
@@ -203,6 +313,7 @@ def _convert_single_mif(
         input_path,
         gpkg_output_path,
         source_crs=source_crs,
+        source_feature_count=source_feature_count,
         progress_interval=progress_interval,
         logger=logger,
     )

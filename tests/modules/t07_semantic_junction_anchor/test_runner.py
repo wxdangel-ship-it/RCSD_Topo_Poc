@@ -110,6 +110,9 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
             _feature({"id": 6, "mainnodeid": 6, "kind_2": 4, "has_evd": "yes"}, Point(500, 0)),
             _feature({"id": 7, "mainnodeid": 7, "kind_2": 4, "has_evd": "yes"}, Point(502, 0)),
             _feature({"id": 8, "mainnodeid": 8, "kind_2": 4, "has_evd": "no"}, Point(0, 100)),
+            _feature({"id": 9, "mainnodeid": 9, "kind_2": 128, "has_evd": "yes"}, Point(504, 0)),
+            _feature({"id": 10, "mainnodeid": 10, "kind_2": 2048, "has_evd": "yes"}, Point(600, 0)),
+            _feature({"id": 1001, "mainnodeid": 10, "kind_2": 0, "has_evd": None}, Point(630, 0)),
         ],
     )
     _write_geojson(
@@ -121,6 +124,8 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
             _feature({"id": "fail1a"}, Polygon([(390, -10), (410, -10), (410, 10), (390, 10), (390, -10)])),
             _feature({"id": "fail1b"}, Polygon([(420, -10), (440, -10), (440, 10), (420, 10), (420, -10)])),
             _feature({"id": "shared"}, Polygon([(490, -10), (510, -10), (510, 10), (490, 10), (490, -10)])),
+            _feature({"id": "t_mismatch_a"}, Polygon([(590, -10), (610, -10), (610, 10), (590, 10), (590, -10)])),
+            _feature({"id": "t_mismatch_b"}, Polygon([(620, -10), (640, -10), (640, 10), (620, 10), (620, -10)])),
         ],
     )
 
@@ -134,23 +139,30 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     props = _read_gpkg_properties_by_id(artifacts.nodes_path)
     assert props["1"]["is_anchor"] == "yes"
     assert props["2"]["is_anchor"] == "no"
-    assert props["3"]["is_anchor"] == "yes"
-    assert props["3"]["anchor_reason"] == "roundabout"
+    assert props["3"]["is_anchor"] is None
+    assert props["3"]["anchor_reason"] is None
     assert props["4"]["is_anchor"] == "yes"
     assert props["4"]["anchor_reason"] == "t"
     assert props["5"]["is_anchor"] == "fail1"
     assert props["6"]["is_anchor"] == "fail2"
     assert props["7"]["is_anchor"] == "fail2"
     assert props["8"]["is_anchor"] is None
+    assert props["9"]["is_anchor"] is None
+    assert props["10"]["is_anchor"] is None
+    assert props["10"]["anchor_reason"] is None
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["anchor_yes_count"] == 3
+    assert summary["anchor_yes_count"] == 2
     assert summary["anchor_no_count"] == 1
     assert summary["anchor_fail1_count"] == 1
     assert summary["anchor_fail2_count"] == 2
-    assert summary["anchor_null_count"] == 1
+    assert summary["anchor_null_count"] == 4
     assert "stage_timings" in summary["performance"]
     assert "build_intersection_index_seconds" in summary["performance"]["stage_timings"]
+
+    error2 = json.loads((artifacts.stage_root / "node_error_2_audit.json").read_text(encoding="utf-8"))
+    assert all(row["junction_id"] != "9" for row in error2["rows"])
+    assert all(row["junction_id"] != "10" for row in error2["rows"])
 
 
 def test_combined_runner_has_no_segment_dependency_or_outputs(tmp_path: Path) -> None:

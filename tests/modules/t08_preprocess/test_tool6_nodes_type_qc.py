@@ -54,6 +54,10 @@ def _read_gpkg_rows(path: Path) -> tuple[int | None, list[dict]]:
         return epsg, [dict(feature["properties"]) for feature in source]
 
 
+def _audit(row: dict[str, str]) -> dict:
+    return json.loads(row["audit_json"])
+
+
 def _run_tool6(
     tmp_path: Path,
     *,
@@ -165,6 +169,20 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
     reason_by_node = {row["semantic_node_id"]: row["reason"] for row in csv_rows}
     assert reason_by_node["cross_ok"] == "only_two_bidirectional_roads"
     assert reason_by_node["noncross"] == "two_parallel_outward_angle_groups_each_has_in_and_out"
+    cross_audit = _audit(next(row for row in csv_rows if row["semantic_node_id"] == "cross"))
+    assert cross_audit["outward_angle_group_count"] == 3
+    assert {member["road_id"] for group in cross_audit["angle_groups"] for member in group["members"]} == {
+        "r-cross-in",
+        "r-cross-out",
+        "r-cross-vertical",
+    }
+    assert all("outward_vector" in member for group in cross_audit["angle_groups"] for member in group["members"])
+    noncross_audit = _audit(next(row for row in csv_rows if row["semantic_node_id"] == "noncross"))
+    assert noncross_audit["outward_angle_group_count"] == 2
+    assert noncross_audit["outward_angle_group_parallel"] is True
+    assert {reason["reason"] for group in noncross_audit["angle_groups"] for reason in group["merge_reasons"]} == {
+        "same_remote_semantic"
+    }
     assert "true_cross" not in {row["semantic_node_id"] for row in csv_rows}
     assert len(gpkg_rows) == 5
     assert summary["counts"]["error_count_by_type"] == {

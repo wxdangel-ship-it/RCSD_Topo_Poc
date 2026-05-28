@@ -32,4 +32,4 @@ Tool2 / Tool3 / Tool4 / Tool5 / Tool6 命令脚本必须输出阶段进度，并
 Tool5 复杂分歧 / 合流聚合必须使用 Road 拓扑链路搜索，并记录候选数、链路数、聚合组与更新节点数；复杂链 component 组装不得按组件反复全量扫描链路边。Tool5 必须输出 audit Nodes，覆盖复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node。
 Tool4 命令脚本必须输出阶段进度，summary 必须记录语义路口数、错误数、修复数、错误类型分布、方向异常数、提前右转 / 辅路 Road 计数、suppressed degree exception、Tool6 输入/修复/跳过计数、删除 Road、audit Nodes 数量、阶段耗时、吞吐与 Road 读取模式；Road GPKG 优先走只读取必要字段的 SQLite 轻量读取，拓扑阶段不得长期持有完整 Road 几何对象；仅在需要输出 Roads 时读取完整 Road 图层用于 copy-on-write 写出。
 Tool5 错误 1 对多处理必须记录 `node_error_2_detection`、参与 intersection、合并组、忽略 `kind_2 = 1` 组、连通性跳过原因与删除 Road。
-Tool6 必须记录 `错误分歧合流路口 / 错误交叉路口_T型路口 / 错误交叉路口_非交叉路口` 计数、CSV `是否修复` 默认值、连续分歧合流 suppressed 候选、交叉路口外侧角度分组判定、字段解析与参数阈值。
+Tool6 必须记录 `错误分歧合流路口 / 错误交叉路口_T型路口 / 错误交叉路口_非交叉路口` 计数、CSV `是否修复` 默认值、连续分歧合流 suppressed 候选、交叉路口外侧角度分组与合并原因、字段解析与参数阈值。

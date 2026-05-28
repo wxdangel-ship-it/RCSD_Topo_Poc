@@ -628,6 +628,7 @@ def _classify_cross_error(
         incident_legs,
         angle_threshold_degrees=horizontal_angle_degrees,
     )
+    angle_audit = _angle_group_audit(angle_groups, angle_threshold_degrees=horizontal_angle_degrees)
     if len(angle_groups) >= 4:
         return None
     if _has_only_two_bidirectional_roads(incident_legs):
@@ -639,6 +640,7 @@ def _classify_cross_error(
             audit_extra={
                 "outward_angle_group_count": len(angle_groups),
                 "incident_road_ids": [leg.road_id for leg in incident_legs],
+                **angle_audit,
             },
         )
     if (
@@ -657,14 +659,7 @@ def _classify_cross_error(
             audit_extra={
                 "outward_angle_group_count": len(angle_groups),
                 "outward_angle_group_parallel": True,
-                "angle_groups": [
-                    {
-                        "road_ids": [leg.road_id for leg in group],
-                        "has_in": _angle_group_has_in(group),
-                        "has_out": _angle_group_has_out(group),
-                    }
-                    for group in angle_groups
-                ],
+                **angle_audit,
             },
         )
 
@@ -685,6 +680,7 @@ def _classify_cross_error(
                 "in_degree": int(topology.in_degree.get(semantic_id, 0)),
                 "out_degree": int(topology.out_degree.get(semantic_id, 0)),
                 "suggested_fix_kind_2": 2048,
+                **angle_audit,
                 **t_pattern["audit"],
             },
         }
@@ -791,6 +787,66 @@ def _same_outward_angle(left: IncidentLeg, right: IncidentLeg, *, angle_threshol
     if set(left.remote_semantic_ids) & set(right.remote_semantic_ids):
         return True
     return _angle_degrees(left.outward_vector, right.outward_vector) <= angle_threshold_degrees
+
+
+def _angle_group_audit(
+    groups: list[list[IncidentLeg]],
+    *,
+    angle_threshold_degrees: float,
+) -> dict[str, Any]:
+    return {
+        "outward_angle_group_count": len(groups),
+        "outward_angle_threshold_degrees": float(angle_threshold_degrees),
+        "angle_groups": [
+            {
+                "group_index": group_index,
+                "road_ids": [leg.road_id for leg in group],
+                "has_in": _angle_group_has_in(group),
+                "has_out": _angle_group_has_out(group),
+                "members": [_incident_leg_audit(leg) for leg in group],
+                "merge_reasons": _angle_group_merge_reasons(group, angle_threshold_degrees=angle_threshold_degrees),
+            }
+            for group_index, group in enumerate(groups)
+        ],
+    }
+
+
+def _incident_leg_audit(leg: IncidentLeg) -> dict[str, Any]:
+    return {
+        "road_id": leg.road_id,
+        "has_in": leg.has_in,
+        "has_out": leg.has_out,
+        "outward_vector": [round(float(leg.outward_vector[0]), 6), round(float(leg.outward_vector[1]), 6)],
+        "remote_semantic_ids": list(leg.remote_semantic_ids),
+    }
+
+
+def _angle_group_merge_reasons(
+    group: list[IncidentLeg],
+    *,
+    angle_threshold_degrees: float,
+) -> list[dict[str, Any]]:
+    reasons: list[dict[str, Any]] = []
+    for left_index, left in enumerate(group):
+        for right in group[left_index + 1 :]:
+            shared_remote_ids = sorted(set(left.remote_semantic_ids) & set(right.remote_semantic_ids), key=_sort_key)
+            angle_degrees = _angle_degrees(left.outward_vector, right.outward_vector)
+            if shared_remote_ids:
+                reason = "same_remote_semantic"
+            elif angle_degrees <= angle_threshold_degrees:
+                reason = "angle_within_threshold"
+            else:
+                reason = "transitive_group_member"
+            reasons.append(
+                {
+                    "left_road_id": left.road_id,
+                    "right_road_id": right.road_id,
+                    "reason": reason,
+                    "angle_degrees": round(float(angle_degrees), 3),
+                    "shared_remote_semantic_ids": shared_remote_ids,
+                }
+            )
+    return reasons
 
 
 def _has_only_two_bidirectional_roads(legs: tuple[IncidentLeg, ...]) -> bool:

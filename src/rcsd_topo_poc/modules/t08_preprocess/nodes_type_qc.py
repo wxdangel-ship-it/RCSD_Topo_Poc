@@ -673,6 +673,7 @@ def _classify_cross_error(
     t_pattern = _find_cross_t_pattern(
         in_edges=in_edges,
         out_edges=out_edges,
+        angle_groups=angle_groups,
         vertical_parallel_angle_degrees=vertical_parallel_angle_degrees,
         horizontal_angle_degrees=horizontal_angle_degrees,
     )
@@ -888,58 +889,129 @@ def _find_cross_t_pattern(
     *,
     in_edges: tuple[DirectedEdge, ...],
     out_edges: tuple[DirectedEdge, ...],
+    angle_groups: list[list[IncidentLeg]],
     vertical_parallel_angle_degrees: float,
     horizontal_angle_degrees: float,
 ) -> dict[str, Any] | None:
-    for horizontal_in in sorted(in_edges, key=lambda edge: (_sort_key(edge.road_id), _sort_key(edge.src))):
-        for horizontal_out in sorted(out_edges, key=lambda edge: (_sort_key(edge.road_id), _sort_key(edge.dst))):
-            if horizontal_in.road_idx == horizontal_out.road_idx:
-                continue
-            horizontal_angle = _angle_degrees(horizontal_in.vector, horizontal_out.vector)
-            if horizontal_angle > horizontal_angle_degrees:
-                continue
-            vertical_in = [edge for edge in in_edges if edge is not horizontal_in]
-            vertical_out = [edge for edge in out_edges if edge is not horizontal_out]
-            if len(vertical_in) != 1 or len(vertical_out) != 1:
-                continue
-            t_pattern = _evaluate_cross_t_vertical(
-                horizontal_in=horizontal_in,
-                horizontal_out=horizontal_out,
-                vertical_in=vertical_in[0],
-                vertical_out=vertical_out[0],
-                vertical_parallel_angle_degrees=vertical_parallel_angle_degrees,
-                horizontal_angle_degrees=horizontal_angle,
-            )
-            if t_pattern is not None:
-                return t_pattern
+    if len(angle_groups) != 3:
+        return None
+    in_by_road_idx = {edge.road_idx: edge for edge in in_edges}
+    out_by_road_idx = {edge.road_idx: edge for edge in out_edges}
+    indexed_groups = list(enumerate(angle_groups))
+    for vertical_group_index, vertical_group in indexed_groups:
+        for vertical_candidate in _cross_t_vertical_candidates(
+            group=vertical_group,
+            vertical_parallel_angle_degrees=vertical_parallel_angle_degrees,
+        ):
+            for horizontal_in_group_index, horizontal_in_group in indexed_groups:
+                if horizontal_in_group_index == vertical_group_index:
+                    continue
+                for horizontal_out_group_index, horizontal_out_group in indexed_groups:
+                    if horizontal_out_group_index in {vertical_group_index, horizontal_in_group_index}:
+                        continue
+                    for horizontal_in_leg in _cross_t_horizontal_in_legs(horizontal_in_group):
+                        horizontal_in = in_by_road_idx.get(horizontal_in_leg.road_idx)
+                        if horizontal_in is None:
+                            continue
+                        for horizontal_out_leg in _cross_t_horizontal_out_legs(horizontal_out_group):
+                            if horizontal_in_leg.road_idx == horizontal_out_leg.road_idx:
+                                continue
+                            horizontal_out = out_by_road_idx.get(horizontal_out_leg.road_idx)
+                            if horizontal_out is None:
+                                continue
+                            t_pattern = _evaluate_cross_t_group_pattern(
+                                horizontal_in=horizontal_in,
+                                horizontal_out=horizontal_out,
+                                horizontal_in_leg=horizontal_in_leg,
+                                horizontal_out_leg=horizontal_out_leg,
+                                vertical_candidate=vertical_candidate,
+                                vertical_group_index=vertical_group_index,
+                                horizontal_in_group_index=horizontal_in_group_index,
+                                horizontal_out_group_index=horizontal_out_group_index,
+                                in_by_road_idx=in_by_road_idx,
+                                out_by_road_idx=out_by_road_idx,
+                                horizontal_angle_degrees=horizontal_angle_degrees,
+                            )
+                            if t_pattern is not None:
+                                return t_pattern
     return None
 
 
-def _evaluate_cross_t_vertical(
+def _cross_t_horizontal_in_legs(group: list[IncidentLeg]) -> list[IncidentLeg]:
+    return sorted((leg for leg in group if leg.has_in and not leg.has_out), key=lambda leg: _sort_key(leg.road_id))
+
+
+def _cross_t_horizontal_out_legs(group: list[IncidentLeg]) -> list[IncidentLeg]:
+    return sorted((leg for leg in group if leg.has_out and not leg.has_in), key=lambda leg: _sort_key(leg.road_id))
+
+
+def _cross_t_vertical_candidates(
+    *,
+    group: list[IncidentLeg],
+    vertical_parallel_angle_degrees: float,
+) -> list[dict[str, Any]]:
+    if len(group) == 1:
+        leg = group[0]
+        if leg.has_in and leg.has_out:
+            return [
+                {
+                    "mode": "bidirectional_road",
+                    "in_leg": leg,
+                    "out_leg": leg,
+                    "vertical_parallel_angle_degrees": 0.0,
+                }
+            ]
+        return []
+    in_only = _cross_t_horizontal_in_legs(group)
+    out_only = _cross_t_horizontal_out_legs(group)
+    if len(group) != 2 or len(in_only) != 1 or len(out_only) != 1:
+        return []
+    vertical_angle = _angle_degrees(in_only[0].outward_vector, out_only[0].outward_vector)
+    if vertical_angle > vertical_parallel_angle_degrees:
+        return []
+    return [
+        {
+            "mode": "parallel_oneway_roads",
+            "in_leg": in_only[0],
+            "out_leg": out_only[0],
+            "vertical_parallel_angle_degrees": vertical_angle,
+        }
+    ]
+
+
+def _evaluate_cross_t_group_pattern(
     *,
     horizontal_in: DirectedEdge,
     horizontal_out: DirectedEdge,
-    vertical_in: DirectedEdge,
-    vertical_out: DirectedEdge,
-    vertical_parallel_angle_degrees: float,
+    horizontal_in_leg: IncidentLeg,
+    horizontal_out_leg: IncidentLeg,
+    vertical_candidate: dict[str, Any],
+    vertical_group_index: int,
+    horizontal_in_group_index: int,
+    horizontal_out_group_index: int,
+    in_by_road_idx: dict[int, DirectedEdge],
+    out_by_road_idx: dict[int, DirectedEdge],
     horizontal_angle_degrees: float,
 ) -> dict[str, Any] | None:
-    vertical_mode: str | None = None
-    vertical_parallel_angle = _parallel_angle_degrees(vertical_in.vector, vertical_out.vector)
-    if vertical_in.road_idx == vertical_out.road_idx:
-        vertical_mode = "bidirectional_road"
-    elif vertical_parallel_angle <= vertical_parallel_angle_degrees:
-        vertical_mode = "parallel_oneway_roads"
-    if vertical_mode is None:
+    vertical_in_leg = vertical_candidate["in_leg"]
+    vertical_out_leg = vertical_candidate["out_leg"]
+    vertical_in = in_by_road_idx.get(vertical_in_leg.road_idx)
+    vertical_out = out_by_road_idx.get(vertical_out_leg.road_idx)
+    if vertical_in is None or vertical_out is None:
         return None
-
+    horizontal_angle = _angle_degrees(
+        (-horizontal_in_leg.outward_vector[0], -horizontal_in_leg.outward_vector[1]),
+        horizontal_out_leg.outward_vector,
+    )
+    if horizontal_angle > horizontal_angle_degrees:
+        return None
     horizontal_vector = _unit_vector(
         (
-            horizontal_in.vector[0] + horizontal_out.vector[0],
-            horizontal_in.vector[1] + horizontal_out.vector[1],
+            -horizontal_in_leg.outward_vector[0] + horizontal_out_leg.outward_vector[0],
+            -horizontal_in_leg.outward_vector[1] + horizontal_out_leg.outward_vector[1],
         )
     )
-    vertical_on_right = _cross(horizontal_vector, vertical_out.vector) < 0
+    vertical_on_right = _cross(horizontal_vector, vertical_out_leg.outward_vector) < 0
     if not vertical_on_right:
         return None
 
@@ -955,10 +1027,14 @@ def _evaluate_cross_t_vertical(
             "horizontal_out_road_id": horizontal_out.road_id,
             "vertical_in_road_id": vertical_in.road_id,
             "vertical_out_road_id": vertical_out.road_id,
-            "vertical_mode": vertical_mode,
+            "vertical_mode": str(vertical_candidate["mode"]),
             "vertical_on_right": True,
+            "t_pattern_source": "outward_angle_groups",
+            "horizontal_in_group_index": horizontal_in_group_index,
+            "horizontal_out_group_index": horizontal_out_group_index,
+            "vertical_group_index": vertical_group_index,
             "horizontal_angle_degrees": round(float(horizontal_angle_degrees), 3),
-            "vertical_parallel_angle_degrees": round(float(vertical_parallel_angle), 3),
+            "vertical_parallel_angle_degrees": round(float(vertical_candidate["vertical_parallel_angle_degrees"]), 3),
         },
     }
 

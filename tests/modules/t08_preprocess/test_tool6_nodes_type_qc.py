@@ -217,6 +217,28 @@ def test_tool6_two_angle_nonparallel_cross_candidate_is_not_error(tmp_path: Path
     assert summary["counts"]["error_feature_count"] == 0
 
 
+def test_tool6_two_angle_in_out_groups_are_not_cross_paired_as_t(tmp_path: Path) -> None:
+    nodes = [
+        _node("cross", 4, 0.0, 0.0),
+        _node("a_in_remote", 1, 0.0, -100.0),
+        _node("a_out_remote", 1, 100.0, 0.0),
+        _node("b_in_remote", 1, 100.0, 0.0),
+        _node("b_out_remote", 1, 0.0, -100.0),
+    ]
+    roads = [
+        _road("r-a-in", "a_in_remote", "cross", [(0.0, 0.0), (-11.0, 17.0), (0.0, -100.0)]),
+        _road("r-a-out", "cross", "a_out_remote", [(0.0, 0.0), (-11.0, 17.0), (100.0, 0.0)]),
+        _road("r-b-in", "b_in_remote", "cross", [(0.0, 0.0), (18.0, 9.0), (100.0, 0.0)]),
+        _road("r-b-out", "cross", "b_out_remote", [(0.0, 0.0), (18.0, 9.0), (0.0, -100.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="two_angle_cross_pair_guard", nodes=nodes, roads=roads)
+
+    assert csv_rows == []
+    assert gpkg_rows == []
+    assert summary["counts"]["error_feature_count"] == 0
+
+
 def test_tool6_angle_groups_use_local_endpoint_geometry(tmp_path: Path) -> None:
     nodes = [
         _node("cross", 4, 0.0, 0.0),

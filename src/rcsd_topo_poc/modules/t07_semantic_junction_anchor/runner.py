@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 import fiona
 import shapefile
 from pyproj import CRS
+from shapely import from_wkb
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
@@ -175,6 +177,146 @@ def _resolve_gpkg_crs(path: Path, layer_name: str, crs_override: str | None) -> 
     )
 
 
+def _quote_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _resolve_gpkg_table_info(path: Path, layer_name: str | None) -> tuple[str, str, int] | None:
+    with sqlite3.connect(str(path)) as conn:
+        rows = conn.execute(
+            """
+            SELECT table_name, column_name, srs_id
+            FROM gpkg_geometry_columns
+            ORDER BY table_name
+            """
+        ).fetchall()
+    if not rows:
+        return None
+    if layer_name:
+        for table_name, column_name, srs_id in rows:
+            if str(table_name).lower() == layer_name.lower():
+                return str(table_name), str(column_name), int(srs_id)
+        return None
+    if len(rows) == 1:
+        table_name, column_name, srs_id = rows[0]
+        return str(table_name), str(column_name), int(srs_id)
+    for table_name, column_name, srs_id in rows:
+        if str(table_name) == path.stem:
+            return str(table_name), str(column_name), int(srs_id)
+    layers = [str(row[0]) for row in rows]
+    raise T07RunError(
+        "missing_required_field",
+        f"GeoPackage '{path}' has multiple layers {layers}; layer name is required.",
+    )
+
+
+def _resolve_gpkg_crs_sqlite(path: Path, *, srs_id: int, crs_override: str | None) -> tuple[CRS, str]:
+    if crs_override:
+        return CRS.from_user_input(crs_override), "override"
+    with sqlite3.connect(str(path)) as conn:
+        row = conn.execute(
+            """
+            SELECT organization, organization_coordsys_id, definition, srs_name
+            FROM gpkg_spatial_ref_sys
+            WHERE srs_id = ?
+            """,
+            (srs_id,),
+        ).fetchone()
+    if row is not None:
+        organization = str(row[0] or "").upper()
+        coordsys_id = int(row[1]) if row[1] is not None else None
+        definition = str(row[2] or "").strip()
+        if organization == "EPSG" and coordsys_id and coordsys_id > 0:
+            return CRS.from_epsg(coordsys_id), "gpkg_spatial_ref_sys"
+        if definition and definition.lower() != "undefined":
+            return CRS.from_user_input(definition), "gpkg_spatial_ref_sys"
+    raise T07RunError(
+        "invalid_crs_or_unprojectable",
+        f"GeoPackage '{path}' has no usable CRS metadata and no CRS override was provided.",
+    )
+
+
+def _gpkg_geometry_from_blob(blob: Any) -> BaseGeometry:
+    payload = bytes(blob)
+    if len(payload) < 8 or payload[:2] != b"GP":
+        return from_wkb(payload)
+    flags = payload[3]
+    envelope_code = (flags >> 1) & 0b111
+    envelope_sizes = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}
+    offset = 8 + envelope_sizes.get(envelope_code, 0)
+    return from_wkb(payload[offset:])
+
+
+def _read_gpkg_layer_sqlite(
+    path: Path,
+    *,
+    layer_name: str | None,
+    crs_override: str | None,
+    allow_null_geometry: bool,
+) -> LoadedLayer | None:
+    try:
+        table_info = _resolve_gpkg_table_info(path, layer_name)
+        if table_info is None:
+            return None
+        table_name, geometry_column, srs_id = table_info
+        source_crs, crs_source = _resolve_gpkg_crs_sqlite(path, srs_id=srs_id, crs_override=crs_override)
+        with sqlite3.connect(str(path)) as conn:
+            table_columns = conn.execute(f"PRAGMA table_info({_quote_identifier(table_name)})").fetchall()
+            property_columns = []
+            geometry_lower = geometry_column.lower()
+            for row in table_columns:
+                column_name = str(row[1])
+                is_pk = int(row[5] or 0) > 0
+                if column_name.lower() == geometry_lower:
+                    continue
+                if is_pk and column_name.lower() in {"fid", "ogc_fid"}:
+                    continue
+                property_columns.append(column_name)
+            select_columns = [*property_columns, geometry_column]
+            rows = conn.execute(
+                "SELECT "
+                + ", ".join(_quote_identifier(column) for column in select_columns)
+                + " FROM "
+                + _quote_identifier(table_name)
+            )
+            features = []
+            for feature_index, row in enumerate(rows):
+                values = list(row)
+                geometry_blob = values[-1]
+                if geometry_blob is None and not allow_null_geometry:
+                    raise T07RunError(
+                        "missing_required_field",
+                        f"{path}:{table_name} feature[{feature_index}] is missing geometry.",
+                    )
+                geometry = None
+                if geometry_blob is not None:
+                    try:
+                        geometry = transform_geometry_to_target(_gpkg_geometry_from_blob(geometry_blob), source_crs, TARGET_CRS)
+                    except Exception as exc:
+                        raise T07RunError(
+                            "invalid_crs_or_unprojectable",
+                            f"{path}:{table_name} feature[{feature_index}] failed to transform to EPSG:3857: {exc}",
+                        ) from exc
+                    if not geometry.is_valid:
+                        raise T07RunError(
+                            "invalid_geometry_topology",
+                            f"{path}:{table_name} feature[{feature_index}] has invalid geometry: {explain_validity(geometry)}",
+                        )
+                features.append(
+                    LoadedFeature(
+                        feature_index=feature_index,
+                        properties={
+                            column: values[column_index]
+                            for column_index, column in enumerate(property_columns)
+                        },
+                        geometry=geometry,
+                    )
+                )
+    except sqlite3.Error:
+        return None
+    return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
+
+
 def _transform_geometry(
     geometry_payload: Any,
     *,
@@ -254,6 +396,14 @@ def _read_vector_layer(
         return LoadedLayer(features=features, source_crs=source_crs, crs_source=crs_source)
 
     if suffix in GEOPACKAGE_SUFFIXES:
+        fast_layer = _read_gpkg_layer_sqlite(
+            layer_path,
+            layer_name=layer_name,
+            crs_override=crs_override,
+            allow_null_geometry=allow_null_geometry,
+        )
+        if fast_layer is not None:
+            return fast_layer
         resolved_layer = _resolve_gpkg_layer(layer_path, layer_name)
         source_crs, crs_source = _resolve_gpkg_crs(layer_path, resolved_layer, crs_override)
         features = []

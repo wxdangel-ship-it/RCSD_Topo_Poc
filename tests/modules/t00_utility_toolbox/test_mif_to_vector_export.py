@@ -57,6 +57,9 @@ def test_tool11_converts_single_mif_to_geojson_and_gpkg(tmp_path: Path) -> None:
     assert summary["failed_file_count"] == 0
     assert summary["total_geojson_feature_count"] == 2
     assert summary["total_gpkg_feature_count"] == 2
+    assert summary["file_results"][0]["features_per_second"] is not None
+    assert summary["file_results"][0]["geojson_output"]["write_engine"] == "streaming-json"
+    assert summary["file_results"][0]["gpkg_output"]["write_engine"] == "sqlite-gpkg"
     assert geojson_path.is_file()
     assert gpkg_path.is_file()
 

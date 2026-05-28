@@ -45,6 +45,10 @@
   - 优先读取 MIF 自带 CRS 并原样写入 GeoJSON / GPKG
   - 若 MIF CRS 缺失，必须由调用方通过 `--default-crs` 显式指定
   - 不根据坐标数值或样本位置猜测 CRS
+- Tool11 性能口径：
+  - GeoJSON 写出采用流式 JSON 路径
+  - GPKG 写出采用直接 SQLite GeoPackage 路径
+  - 不以 Fiona 逐要素 sink 写出作为主路径
 - 修复口径：只允许最小修复；修复失败则跳过并记录异常
 - 覆盖口径：旧输出已存在时先删除再重建
 - 执行体验：命令行必须输出工具开始/结束、阶段级和 Patch / 文件 / 记录级进度；Tool7 / Tool10 / Tool11 允许参数驱动
@@ -286,6 +290,7 @@
   - `default_crs_text`
   - `file_results`
   - `error_reason_summary`
+- 文件级摘要需记录 GeoJSON / GPKG 的写出引擎、耗时与吞吐字段，便于验证性能表现
 
 ## 14. 非范围契约
 

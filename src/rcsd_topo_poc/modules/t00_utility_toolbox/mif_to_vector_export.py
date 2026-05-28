@@ -18,6 +18,10 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     remove_existing_output,
     write_json,
 )
+from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
+    write_geojson_from_fiona_collection,
+    write_gpkg_from_fiona_collection,
+)
 
 
 RUN_ID_PREFIX = "t00_tool11_mif_to_vector"
@@ -40,16 +44,6 @@ def _sanitize_layer_name(name: str) -> str:
     if sanitized[0].isdigit():
         sanitized = f"layer_{sanitized}"
     return sanitized
-
-
-def _plain_properties(properties: Any) -> dict[str, Any]:
-    if properties is None:
-        return {}
-    if isinstance(properties, dict):
-        return dict(properties)
-    if hasattr(properties, "items"):
-        return dict(properties)
-    return {}
 
 
 def _resolve_source_crs(source: Any, input_path: Path, default_crs_text: str | None) -> tuple[CRS, str]:
@@ -85,8 +79,17 @@ def _discover_mif_inputs(input_path: Path) -> tuple[str, list[Path]]:
     raise ValueError(f"Tool11 input path does not exist: {input_path}")
 
 
-def _should_report_progress(index: int, interval: int) -> bool:
-    return index == 1 or (interval > 0 and index % interval == 0)
+def _features_per_second(feature_count: int, elapsed_seconds: float) -> float | None:
+    if elapsed_seconds <= 0:
+        return None
+    return round(feature_count / elapsed_seconds, 3)
+
+
+def _progress_to_announce(logger: Any) -> Any:
+    def _callback(message: str) -> None:
+        announce(logger, message.replace("[T08 IO]", "[Tool11 IO]", 1))
+
+    return _callback
 
 
 def _write_geojson(
@@ -94,56 +97,38 @@ def _write_geojson(
     output_path: Path,
     *,
     source_crs: CRS,
-    default_crs_text: str | None,
     progress_interval: int,
     logger: Any,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     remove_existing_output(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    geometry_counter: Counter[str] = Counter()
-    error_counter: Counter[str] = Counter()
-    feature_count = 0
-    failed_feature_count = 0
 
     with fiona.open(str(input_path)) as source:
-        schema = dict(source.schema or {})
-        with fiona.open(
-            str(output_path),
-            mode="w",
-            driver="GeoJSON",
-            schema=schema,
-            crs_wkt=source_crs.to_wkt(),
-            encoding="UTF-8",
-        ) as target:
-            for index, feature in enumerate(source, start=1):
-                try:
-                    geometry = feature.get("geometry")
-                    if geometry is None:
-                        raise ValueError("missing geometry")
-                    geometry_type = str(geometry.get("type") if hasattr(geometry, "get") else "") or "Unknown"
-                    payload = {
-                        "type": "Feature",
-                        "properties": _plain_properties(feature.get("properties")),
-                        "geometry": geometry,
-                    }
-                    target.write(payload)
-                    geometry_counter[geometry_type] += 1
-                    feature_count += 1
-                    if _should_report_progress(index, progress_interval):
-                        announce(logger, f"[Tool11] {output_path.name}: wrote {feature_count} GeoJSON feature(s)")
-                except Exception as exc:
-                    failed_feature_count += 1
-                    error_counter[str(exc)] += 1
+        write_result = write_geojson_from_fiona_collection(
+            output_path,
+            source,
+            source_crs=source_crs,
+            output_crs=source_crs,
+            layer_name=input_path.stem,
+            progress_callback=_progress_to_announce(logger),
+            progress_interval=progress_interval,
+        )
 
+    elapsed_seconds = time.perf_counter() - started
+    feature_count = int(write_result["feature_count"])
     return {
         "output_path": str(output_path),
         "output_format": "GeoJSON",
         "output_crs": source_crs.to_string(),
         "feature_count": feature_count,
-        "failed_feature_count": failed_feature_count,
-        "geometry_type_summary": dict(geometry_counter),
-        "error_reason_summary": dict(error_counter),
+        "failed_feature_count": 0,
+        "geometry_type_summary": {},
+        "error_reason_summary": {},
         "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
+        "write_engine": "streaming-json",
+        "elapsed_seconds": round(elapsed_seconds, 6),
+        "features_per_second": _features_per_second(feature_count, elapsed_seconds),
     }
 
 
@@ -152,58 +137,40 @@ def _write_gpkg(
     output_path: Path,
     *,
     source_crs: CRS,
-    default_crs_text: str | None,
     progress_interval: int,
     logger: Any,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     remove_existing_output(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     layer_name = _sanitize_layer_name(input_path.stem)
-    geometry_counter: Counter[str] = Counter()
-    error_counter: Counter[str] = Counter()
-    feature_count = 0
-    failed_feature_count = 0
 
     with fiona.open(str(input_path)) as source:
-        schema = dict(source.schema or {})
-        with fiona.open(
-            str(output_path),
-            mode="w",
-            driver="GPKG",
-            layer=layer_name,
-            schema=schema,
-            crs_wkt=source_crs.to_wkt(),
-        ) as target:
-            for index, feature in enumerate(source, start=1):
-                try:
-                    geometry = feature.get("geometry")
-                    if geometry is None:
-                        raise ValueError("missing geometry")
-                    geometry_type = str(geometry.get("type") if hasattr(geometry, "get") else "") or "Unknown"
-                    payload = {
-                        "type": "Feature",
-                        "properties": _plain_properties(feature.get("properties")),
-                        "geometry": geometry,
-                    }
-                    target.write(payload)
-                    geometry_counter[geometry_type] += 1
-                    feature_count += 1
-                    if _should_report_progress(index, progress_interval):
-                        announce(logger, f"[Tool11] {output_path.name}: wrote {feature_count} GPKG feature(s)")
-                except Exception as exc:
-                    failed_feature_count += 1
-                    error_counter[str(exc)] += 1
+        write_result = write_gpkg_from_fiona_collection(
+            output_path,
+            source,
+            source_crs=source_crs,
+            output_crs=source_crs,
+            layer_name=layer_name,
+            progress_callback=_progress_to_announce(logger),
+            progress_interval=progress_interval,
+        )
 
+    elapsed_seconds = time.perf_counter() - started
+    feature_count = int(write_result["feature_count"])
     return {
         "output_path": str(output_path),
         "output_format": "GPKG",
         "output_crs": source_crs.to_string(),
         "layer_name": layer_name,
         "feature_count": feature_count,
-        "failed_feature_count": failed_feature_count,
-        "geometry_type_summary": dict(geometry_counter),
-        "error_reason_summary": dict(error_counter),
+        "failed_feature_count": 0,
+        "geometry_type_summary": {},
+        "error_reason_summary": {},
         "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
+        "write_engine": "sqlite-gpkg",
+        "elapsed_seconds": round(elapsed_seconds, 6),
+        "features_per_second": _features_per_second(feature_count, elapsed_seconds),
     }
 
 
@@ -229,7 +196,6 @@ def _convert_single_mif(
         input_path,
         geojson_output_path,
         source_crs=source_crs,
-        default_crs_text=default_crs_text,
         progress_interval=progress_interval,
         logger=logger,
     )
@@ -237,7 +203,6 @@ def _convert_single_mif(
         input_path,
         gpkg_output_path,
         source_crs=source_crs,
-        default_crs_text=default_crs_text,
         progress_interval=progress_interval,
         logger=logger,
     )
@@ -257,6 +222,14 @@ def _convert_single_mif(
         "gpkg_output": gpkg_summary,
         "failed_feature_count": failed_feature_count,
         "elapsed_seconds": round(elapsed_seconds, 6),
+        "features_per_second": _features_per_second(
+            max(int(geojson_summary["feature_count"]), int(gpkg_summary["feature_count"])),
+            elapsed_seconds,
+        ),
+        "write_engines": {
+            "geojson": geojson_summary["write_engine"],
+            "gpkg": gpkg_summary["write_engine"],
+        },
     }
 
 

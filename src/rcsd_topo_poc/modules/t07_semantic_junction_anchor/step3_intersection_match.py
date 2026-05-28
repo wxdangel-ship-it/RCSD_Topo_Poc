@@ -11,6 +11,7 @@ from typing import Any
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import TARGET_CRS, prefer_vector_input_path, write_json
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_io import write_relation_geojson_crs84
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_models import RELATION_OUTPUT_CRS_NAME
+from rcsd_topo_poc.modules.t08_preprocess.vector_io import ensure_gpkg_ogr_feature_count_metadata
 
 from .runner import (
     T07RunError,
@@ -308,6 +309,7 @@ def _copy_update_gpkg_nodes(
     if output_path.exists():
         output_path.unlink()
     shutil.copy2(source_gpkg, output_path)
+    ensure_gpkg_ogr_feature_count_metadata(output_path, layer_name=resolved_layer)
 
     if not accepted_node_ids:
         return True

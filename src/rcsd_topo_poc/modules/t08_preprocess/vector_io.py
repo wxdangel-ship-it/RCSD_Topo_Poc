@@ -25,6 +25,7 @@ GPKG_APPLICATION_ID = 0x47504B47
 GPKG_USER_VERSION = 10300
 GPKG_FID_COLUMN = "fid"
 GPKG_GEOMETRY_COLUMN = "geom"
+GPKG_OGR_CONTENTS_TABLE = "gpkg_ogr_contents"
 GPKG_BATCH_SIZE = 1000
 STANDARD_WGS84_CRS = CRS.from_epsg(4326)
 
@@ -141,6 +142,28 @@ def write_gpkg(
         layer_name=layer_name or output_path.stem,
         schema=schema,
     )
+
+
+def ensure_gpkg_ogr_feature_count_metadata(
+    path: str | Path,
+    *,
+    layer_name: str | None = None,
+) -> dict[str, Any]:
+    gpkg_path = ensure_gpkg_path(path, label="GPKG path")
+    if not gpkg_path.is_file():
+        raise ValueError(f"GPKG does not exist: {gpkg_path}")
+    with sqlite3.connect(gpkg_path) as conn:
+        table_info = _resolve_gpkg_layer_info(conn, layer_name=layer_name)
+        if table_info is None:
+            raise ValueError(f"GPKG layer not found: {gpkg_path}")
+        table_name = table_info[0]
+        feature_count = int(
+            conn.execute(f"SELECT COUNT(*) FROM {_quote_identifier(table_name)}").fetchone()[0]
+        )
+        _ensure_gpkg_ogr_contents_table(conn)
+        _insert_gpkg_ogr_feature_count(conn, table_name=table_name, feature_count=feature_count)
+        conn.commit()
+    return {"layer_name": table_name, "feature_count": feature_count}
 
 
 def write_geojson(
@@ -673,6 +696,10 @@ def _quote_identifier(identifier: str) -> str:
     return '"' + str(identifier).replace('"', '""') + '"'
 
 
+def _quote_sql_literal(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def _normalize_sqlite_value(value: Any) -> Any:
     value = _vector_property_value(value)
     if isinstance(value, bool):
@@ -784,6 +811,7 @@ def _initialize_gpkg_metadata(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    _ensure_gpkg_ogr_contents_table(conn)
     conn.executemany(
         """
         INSERT INTO gpkg_spatial_ref_sys (
@@ -802,6 +830,17 @@ def _initialize_gpkg_metadata(conn: sqlite3.Connection) -> None:
                 "longitude/latitude coordinates in decimal degrees on the WGS 84 spheroid",
             ),
         ],
+    )
+
+
+def _ensure_gpkg_ogr_contents_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {GPKG_OGR_CONTENTS_TABLE} (
+            table_name TEXT NOT NULL PRIMARY KEY,
+            feature_count INTEGER DEFAULT NULL
+        )
+        """
     )
 
 
@@ -848,6 +887,7 @@ def _insert_gpkg_metadata_rows(
     bounds: list[float] | None,
     geometry_type_name: str,
     has_z: bool,
+    feature_count: int,
 ) -> None:
     srs_id, organization, organization_coordsys_id, definition, srs_name = _srs_record(crs)
     conn.execute(
@@ -884,6 +924,47 @@ def _insert_gpkg_metadata_rows(
         ) VALUES (?, ?, ?, ?, ?, 0)
         """,
         (table_name, GPKG_GEOMETRY_COLUMN, geometry_type_name, srs_id, 1 if has_z else 0),
+    )
+    _insert_gpkg_ogr_feature_count(conn, table_name=table_name, feature_count=feature_count)
+
+
+def _insert_gpkg_ogr_feature_count(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str,
+    feature_count: int,
+) -> None:
+    conn.execute(
+        f"""
+        INSERT OR REPLACE INTO {GPKG_OGR_CONTENTS_TABLE} (table_name, feature_count)
+        VALUES (?, ?)
+        """,
+        (table_name, int(feature_count)),
+    )
+    trigger_suffix = _sanitize_layer_name(table_name)
+    table_identifier = _quote_identifier(table_name)
+    table_literal = _quote_sql_literal(table_name)
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS {_quote_identifier(f"trigger_insert_feature_count_{trigger_suffix}")}
+        AFTER INSERT ON {table_identifier}
+        BEGIN
+            UPDATE {GPKG_OGR_CONTENTS_TABLE}
+            SET feature_count = feature_count + 1
+            WHERE table_name = {table_literal};
+        END
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE TRIGGER IF NOT EXISTS {_quote_identifier(f"trigger_delete_feature_count_{trigger_suffix}")}
+        AFTER DELETE ON {table_identifier}
+        BEGIN
+            UPDATE {GPKG_OGR_CONTENTS_TABLE}
+            SET feature_count = feature_count - 1
+            WHERE table_name = {table_literal};
+        END
+        """
     )
 
 
@@ -945,6 +1026,7 @@ def _write_gpkg_records_sqlite(
             bounds=_aggregate_bounds_from_values(bounds_values),
             geometry_type_name=_gpkg_geometry_type(geometry_types, str(schema.get("geometry") or "GEOMETRY")),
             has_z=has_z,
+            feature_count=len(records),
         )
         conn.commit()
     return {"feature_count": len(records), "size_bytes": output_path.stat().st_size if output_path.exists() else 0}
@@ -1013,6 +1095,7 @@ def _write_gpkg_fiona_sqlite(
             bounds=_aggregate_bounds_from_values(bounds_values),
             geometry_type_name=_gpkg_geometry_type(geometry_types, str(schema.get("geometry") or "GEOMETRY")),
             has_z=has_z,
+            feature_count=feature_count,
         )
         conn.commit()
     return {"feature_count": feature_count, "size_bytes": output_path.stat().st_size if output_path.exists() else 0}

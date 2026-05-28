@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -34,6 +35,48 @@ def _read_gpkg(path: Path) -> tuple[int | None, int]:
 def _read_geojson_count(path: Path) -> int:
     with fiona.open(path) as source:
         return len(source)
+
+
+def test_write_gpkg_adds_qgis_compatible_feature_count_metadata(tmp_path: Path) -> None:
+    gpkg_path = tmp_path / "nodes.gpkg"
+    write_gpkg(
+        gpkg_path,
+        [
+            {"properties": {"id": "a", "kind_2": 4}, "geometry": {"type": "Point", "coordinates": [0.0, 0.0]}},
+            {"properties": {"id": "b", "kind_2": 8}, "geometry": {"type": "Point", "coordinates": [1.0, 1.0]}},
+            {"properties": {"id": "c", "kind_2": 4}, "geometry": {"type": "Point", "coordinates": [2.0, 2.0]}},
+        ],
+        crs_text="EPSG:3857",
+        layer_name="nodes",
+    )
+
+    with sqlite3.connect(gpkg_path) as conn:
+        assert conn.execute("SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = 'nodes'").fetchone() == (3,)
+        trigger_names = {
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'trigger' AND tbl_name = 'nodes'
+                """
+            )
+        }
+        assert trigger_names == {"trigger_insert_feature_count_nodes", "trigger_delete_feature_count_nodes"}
+        assert conn.execute("SELECT COUNT(*) FROM nodes WHERE kind_2 = 4").fetchone() == (2,)
+
+        conn.execute("DELETE FROM nodes WHERE id = 'b'")
+        assert conn.execute("SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = 'nodes'").fetchone() == (2,)
+        conn.execute(
+            """
+            INSERT INTO nodes (id, kind_2, geom)
+            SELECT 'd', 4, geom
+            FROM nodes
+            WHERE id = 'a'
+            LIMIT 1
+            """
+        )
+        assert conn.execute("SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = 'nodes'").fetchone() == (3,)
 
 
 def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) -> None:

@@ -335,7 +335,7 @@ scripts/t07_run_step3_intersection_match_innernet.sh
 - T07 GPKG 输出复用 T08 的直接 SQLite GeoPackage 写出路径，避免 Fiona 逐要素 sink 写出。
 - `nodes.gpkg / node_error_1.gpkg / node_error_2.gpkg` 均按 copy-on-write 输出，不修改输入。
 - Step3 `nodes.gpkg` 继续按 copy-on-write 输出，不修改 Step2 输入；`intersection_match_tool7.geojson` 是 T05 relation 主表的成功补锚子集。
-- Step3 在输入 `nodes.gpkg` 已为 `EPSG:3857` GeoPackage 时，优先复制输入 GPKG 并用 SQLite 只更新命中的代表 node，避免全量重写节点几何。
+- Step3 在输入 `nodes.gpkg` 已为 `EPSG:3857` GeoPackage 时，优先复制输入 GPKG 并用 SQLite 只更新命中的代表 node，避免全量重写节点几何；copy-update 输出必须补齐 `gpkg_ogr_contents` 与增删触发器，避免 QGIS 旧版 OGR provider filter 后显示全量计数。
 - Step3 在 T05 `intersection_match_all.geojson` 为 `CRS84` 时，优先按原始 GeoJSON relation 写出 `intersection_match_tool7.geojson`，避免无业务必要的几何投影。
 - perf JSON 必须记录 `stage_timings`，用于定位 full-input 下的读取、空间索引、业务处理与写出耗时。
 

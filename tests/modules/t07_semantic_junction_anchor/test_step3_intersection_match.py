@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,23 @@ def _read_gpkg_properties_by_id(path: Path) -> dict[str, dict[str, Any]]:
             str(dict(feature["properties"])["id"]): dict(feature["properties"])
             for feature in src
         }
+
+
+def _remove_gpkg_ogr_count_metadata(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        triggers = [
+            str(row[0])
+            for row in conn.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'trigger' AND name LIKE 'trigger_%_feature_count_%'
+                """
+            )
+        ]
+        for trigger_name in triggers:
+            conn.execute(f'DROP TRIGGER "{trigger_name}"')
+        conn.execute("DROP TABLE IF EXISTS gpkg_ogr_contents")
 
 
 def _relation_targets(path: Path) -> set[str]:
@@ -151,8 +169,10 @@ def test_step3_uses_fast_paths_for_gpkg_nodes_and_crs84_relations(tmp_path: Path
         nodes_path,
         [
             _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes", "is_anchor": None, "anchor_reason": None}, Point(0, 0)),
+            _feature({"id": 2, "mainnodeid": 2, "kind_2": 1, "has_evd": "no", "is_anchor": "no", "anchor_reason": None}, Point(2, 0)),
         ],
     )
+    _remove_gpkg_ogr_count_metadata(nodes_path)
     _write_crs84_geojson(
         relations_path,
         [
@@ -181,6 +201,10 @@ def test_step3_uses_fast_paths_for_gpkg_nodes_and_crs84_relations(tmp_path: Path
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["output_strategy"]["nodes_write_mode"] == "copy_update_gpkg"
     assert summary["output_strategy"]["relation_write_mode"] == "raw_crs84"
+
+    with sqlite3.connect(artifacts.nodes_path) as conn:
+        assert conn.execute("SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = 'nodes'").fetchone() == (2,)
+        assert conn.execute("SELECT COUNT(*) FROM nodes WHERE kind_2 = 4").fetchone() == (1,)
 
     relation_payload = json.loads(artifacts.intersection_match_tool7_path.read_text(encoding="utf-8"))
     assert relation_payload["features"][0]["geometry"]["coordinates"] == [[120.0, 30.0], [120.1, 30.1]]

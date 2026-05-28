@@ -28,7 +28,7 @@ summary 必须记录输入、输出、参数、字段解析、CRS、要素计数
 Tool1 的 GPKG 输出必须使用直接 SQLite GeoPackage 写出路径；GeoJSON 输出必须使用流式 JSON 写出路径。summary 必须记录要素数、耗时与吞吐，命令脚本必须输出进度信息。
 Tool2 Road / Raw Kind GPKG 读取应优先使用直接 SQLite GeoPackage 快读，并保留 Fiona 回退兼容；Patch join 必须避免读取无用 Patch Road 几何；Kind enrich 必须使用空间索引，并记录空间匹配候选计数、分块查询大小与阶段耗时。
 Tool2 必须记录 `event_road_0a_count`，事件 Road 输出必须可追溯被删除 Road 的 `id / patch_id / kind` 与几何。
-Tool2 / Tool3 / Tool4 / Tool5 / Tool6 命令脚本必须输出阶段进度，并在 summary 记录耗时与吞吐；GPKG 输出必须复用共享直接 SQLite GeoPackage 写出路径。
+Tool2 / Tool3 / Tool4 / Tool5 / Tool6 命令脚本必须输出阶段进度，并在 summary 记录耗时与吞吐；GPKG 输出必须复用共享直接 SQLite GeoPackage 写出路径，并写入 `gpkg_ogr_contents` 与增删触发器，使 QGIS 旧版 OGR provider filter 后的图层要素计数与实际过滤结果一致。
 Tool5 复杂分歧 / 合流聚合必须使用 Road 拓扑链路搜索，并记录候选数、链路数、聚合组与更新节点数；复杂链 component 组装不得按组件反复全量扫描链路边。Tool5 必须输出 audit Nodes，覆盖复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node。
 Tool4 命令脚本必须输出阶段进度，summary 必须记录语义路口数、错误数、修复数、错误类型分布、方向异常数、提前右转 / 辅路 Road 计数、suppressed degree exception、Tool6 输入/修复/跳过计数、删除 Road、audit Nodes 数量、阶段耗时、吞吐与 Road 读取模式；Road GPKG 优先走只读取必要字段的 SQLite 轻量读取，拓扑阶段不得长期持有完整 Road 几何对象；仅在需要输出 Roads 时读取完整 Road 图层用于 copy-on-write 写出。
 Tool5 错误 1 对多处理必须记录 `node_error_2_detection`、参与 intersection、合并组、忽略 `kind_2 = 1` 组、连通性跳过原因与删除 Road。

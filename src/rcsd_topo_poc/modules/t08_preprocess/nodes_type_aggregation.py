@@ -9,6 +9,7 @@ from typing import Any
 
 from shapely.geometry import Point
 
+from rcsd_topo_poc.modules.t08_preprocess.output_naming import ensure_tool_output_name
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     VectorFeature,
     aggregate_bounds,
@@ -118,14 +119,18 @@ def run_t08_nodes_type_aggregation(
     stage_timings: dict[str, float] = {}
     nodes_path = ensure_gpkg_path(nodes_gpkg, label="--nodes-gpkg")
     roads_path = ensure_gpkg_path(roads_gpkg, label="--roads-gpkg")
-    output_path = ensure_gpkg_path(nodes_output, label="--nodes-output")
+    output_path = ensure_tool_output_name(
+        ensure_gpkg_path(nodes_output, label="--nodes-output"),
+        tool_number=3,
+        label="--nodes-output",
+    )
     if enable_complex_divmerge:
         _emit_progress(progress_callback, "[T08 Tool3] complex_divmerge is disabled; use T08 Tool5 instead")
         enable_complex_divmerge = False
     summary_path = (
-        Path(summary_output).expanduser().resolve()
+        ensure_tool_output_name(summary_output, tool_number=3, label="--summary-output")
         if summary_output
-        else output_path.with_name("t08_nodes_type_aggregation_summary.json")
+        else output_path.with_name("t08_nodes_type_aggregation_summary_tool3.json")
     )
 
     _emit_progress(progress_callback, f"[T08 Tool3] start nodes={nodes_path} roads={roads_path}")

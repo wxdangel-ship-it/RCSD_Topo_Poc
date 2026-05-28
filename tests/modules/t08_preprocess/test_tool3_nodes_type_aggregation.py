@@ -31,8 +31,8 @@ def _read_features(path: Path) -> tuple[int | None, dict[str, dict]]:
 def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> None:
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
-    nodes_output = tmp_path / "out" / "nodes_agg.gpkg"
-    summary_output = tmp_path / "out" / "nodes_agg_summary.json"
+    nodes_output = tmp_path / "out" / "nodes_agg_tool3.gpkg"
+    summary_output = tmp_path / "out" / "nodes_agg_summary_tool3.json"
 
     write_gpkg(
         nodes_gpkg,

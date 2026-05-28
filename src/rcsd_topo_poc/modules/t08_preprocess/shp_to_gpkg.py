@@ -9,6 +9,8 @@ from typing import Any
 import fiona
 from pyproj import CRS
 
+from rcsd_topo_poc.modules.t08_preprocess.output_naming import append_tool_suffix
+from rcsd_topo_poc.modules.t08_preprocess.output_naming import ensure_tool_output_name
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     ensure_geojson_path,
     ensure_gpkg_path,
@@ -60,9 +62,9 @@ def run_t08_tool1_conversions(
     _validate_no_path_collisions(input_specs)
 
     summary_path = (
-        Path(summary_output).expanduser().resolve()
+        ensure_tool_output_name(summary_output, tool_number=1, label="--summary-output")
         if summary_output
-        else input_specs[0]["input_path"].parent / "t08_tool1_conversion_summary.json"
+        else input_specs[0]["input_path"].parent / "t08_tool1_conversion_summary_tool1.json"
     )
 
     file_results: list[dict[str, Any]] = []
@@ -127,7 +129,7 @@ def run_t08_tool1_conversions(
         "total_feature_count": total_feature_count,
         "elapsed_seconds": round(elapsed_seconds, 6),
         "features_per_second": _features_per_second(total_feature_count, elapsed_seconds),
-        "output_rule": "same_directory_same_stem",
+        "output_rule": "same_directory_same_stem_tool1_suffix",
         "summary_output": summary_path,
         "target_epsg": target_epsg,
         "default_crs_text": default_crs_text,
@@ -157,7 +159,7 @@ def run_t08_tool1_shp_to_gpkg(
     progress_interval: int = 10000,
 ) -> dict[str, Any]:
     if out_dir is not None:
-        raise ValueError("Tool1 no longer accepts out_dir; outputs are written next to each input file")
+        raise ValueError("Tool1 no longer accepts out_dir; outputs are written next to each input file with _tool1 suffix")
     return run_t08_tool1_conversions(
         input_shp_paths=input_shp_paths,
         summary_output=summary_output,
@@ -180,7 +182,7 @@ def _build_input_specs(
         specs.append(
             {
                 "input_path": input_path,
-                "output_path": input_path.with_suffix(".gpkg"),
+                "output_path": append_tool_suffix(input_path, 1).with_suffix(".gpkg"),
                 "conversion": "shp_to_gpkg",
             }
         )
@@ -189,7 +191,7 @@ def _build_input_specs(
         specs.append(
             {
                 "input_path": input_path,
-                "output_path": input_path.with_suffix(".gpkg"),
+                "output_path": append_tool_suffix(input_path, 1).with_suffix(".gpkg"),
                 "conversion": "geojson_to_gpkg",
             }
         )
@@ -198,7 +200,7 @@ def _build_input_specs(
         specs.append(
             {
                 "input_path": input_path,
-                "output_path": input_path.with_suffix(".geojson"),
+                "output_path": append_tool_suffix(input_path, 1).with_suffix(".geojson"),
                 "conversion": "gpkg_to_geojson",
             }
         )

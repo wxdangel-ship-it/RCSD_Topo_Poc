@@ -26,6 +26,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--road-patch-output", required=True, help="Output GPKG for Road with patch_id.")
     parser.add_argument("--road-patch-unmatched-output", required=True, help="Output GPKG for unmatched Road records.")
     parser.add_argument("--road-patch-kind-output", required=True, help="Output GPKG for Road with patch_id and kind.")
+    parser.add_argument(
+        "--event-road-0a-17-output",
+        required=True,
+        help="Output GPKG for removed Road records whose kind contains both 0a and 17 road type attributes.",
+    )
     parser.add_argument("--patch-summary-output", help="Optional patch join summary JSON path.")
     parser.add_argument("--kind-summary-output", help="Optional kind enrich summary JSON path.")
     parser.add_argument("--summary-output", help="Optional combined summary JSON path.")
@@ -59,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
             road_patch_output=Path(args.road_patch_output),
             road_patch_unmatched_output=Path(args.road_patch_unmatched_output),
             road_patch_kind_output=Path(args.road_patch_kind_output),
+            event_road_0a_17_output=Path(args.event_road_0a_17_output),
             road_layer=args.road_layer,
             patch_road_layer=args.patch_road_layer,
             raw_kind_road_layer=args.raw_kind_road_layer,

@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+import csv
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import fiona
+from pyproj import CRS
+from shapely.geometry import LineString, Point
+
+from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg
+
+
+def _node(node_id: str, kind_2: int, x: float, y: float) -> dict:
+    return {
+        "properties": {
+            "id": node_id,
+            "kind": kind_2,
+            "kind_2": kind_2,
+            "grade": 1,
+            "grade_2": 1,
+            "mainnodeid": node_id,
+        },
+        "geometry": Point(x, y),
+    }
+
+
+def _road(
+    road_id: str,
+    snodeid: str,
+    enodeid: str,
+    coords: list[tuple[float, float]],
+    *,
+    direction: int = 2,
+    kind: str = "0100",
+) -> dict:
+    return {
+        "properties": {"id": road_id, "snodeid": snodeid, "enodeid": enodeid, "direction": direction, "kind": kind},
+        "geometry": LineString(coords),
+    }
+
+
+def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as fp:
+        return list(csv.DictReader(fp))
+
+
+def _read_gpkg_rows(path: Path) -> tuple[int | None, list[dict]]:
+    with fiona.open(path) as source:
+        crs_value = source.crs_wkt or source.crs
+        epsg = CRS.from_user_input(crs_value).to_epsg() if crs_value else None
+        return epsg, [dict(feature["properties"]) for feature in source]
+
+
+def _run_tool6(
+    tmp_path: Path,
+    *,
+    case_name: str,
+    nodes: list[dict],
+    roads: list[dict],
+) -> tuple[list[dict[str, str]], list[dict], dict]:
+    root = tmp_path / case_name
+    nodes_gpkg = root / "input" / "nodes.gpkg"
+    roads_gpkg = root / "input" / "roads.gpkg"
+    csv_output = root / "out" / "node_error_tool6.csv"
+    error_nodes_output = root / "out" / "node_error_tool6.gpkg"
+    summary_output = root / "out" / "node_error_summary_tool6.json"
+    write_gpkg(nodes_gpkg, nodes, crs_text="EPSG:3857")
+    write_gpkg(roads_gpkg, roads, crs_text="EPSG:3857")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/t08_tool6_nodes_type_qc.py",
+            "--nodes-gpkg",
+            str(nodes_gpkg),
+            "--roads-gpkg",
+            str(roads_gpkg),
+            "--csv-output",
+            str(csv_output),
+            "--error-nodes-output",
+            str(error_nodes_output),
+            "--summary-output",
+            str(summary_output),
+            "--progress-interval",
+            "1",
+        ],
+        cwd=Path(__file__).resolve().parents[3],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "[T08 Tool6]" in result.stderr
+    csv_rows = _read_csv_rows(csv_output)
+    epsg, gpkg_rows = _read_gpkg_rows(error_nodes_output)
+    assert epsg == 3857
+    summary = json.loads(summary_output.read_text(encoding="utf-8"))
+    return csv_rows, gpkg_rows, summary
+
+
+def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
+    nodes = [
+        _node("entry", 1, -20.0, 0.0),
+        _node("div", 16, 0.0, 0.0),
+        _node("merge", 8, 60.0, 0.0),
+        _node("right_join", 1, 30.0, -40.0),
+        _node("right_stub", 1, 30.0, -60.0),
+        _node("exit", 1, 90.0, 0.0),
+        _node("cross", 4, 200.0, 0.0),
+        _node("cin1", 1, 190.0, -10.0),
+        _node("cin2", 1, 190.0, 10.0),
+        _node("cout1", 1, 210.0, -10.0),
+        _node("cout2", 1, 210.0, 10.0),
+    ]
+    roads = [
+        _road("r-entry-div", "entry", "div", [(-20.0, 0.0), (0.0, 0.0)]),
+        _road("r-div-merge", "div", "merge", [(0.0, 0.0), (60.0, 0.0)]),
+        _road("r-div-right", "div", "right_join", [(0.0, 0.0), (30.0, -40.0)]),
+        _road("r-right-merge", "right_join", "merge", [(30.0, -40.0), (60.0, 0.0)]),
+        _road("r-right-stub", "right_join", "right_stub", [(30.0, -40.0), (30.0, -60.0)]),
+        _road("r-merge-exit", "merge", "exit", [(60.0, 0.0), (90.0, 0.0)]),
+        _road("r-cross-in-1", "cin1", "cross", [(190.0, -10.0), (200.0, 0.0)]),
+        _road("r-cross-in-2", "cin2", "cross", [(190.0, 10.0), (200.0, 0.0)]),
+        _road("r-cross-out-1", "cross", "cout1", [(200.0, 0.0), (210.0, -10.0)]),
+        _road("r-cross-out-2", "cross", "cout2", [(200.0, 0.0), (210.0, 10.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="basic_errors", nodes=nodes, roads=roads)
+
+    assert [row["error_type"] for row in csv_rows].count("错误分歧合流路口") == 2
+    assert [row["error_type"] for row in csv_rows].count("错误交叉路口") == 1
+    assert csv_rows[0]["是否修复"] == "0"
+    assert list(csv_rows[0])[-1] == "是否修复"
+    assert {row["semantic_node_id"] for row in csv_rows if row["error_type"] == "错误分歧合流路口"} == {"div", "merge"}
+    assert {row["semantic_node_id"] for row in csv_rows if row["error_type"] == "错误交叉路口"} == {"cross"}
+    assert len(gpkg_rows) == 3
+    assert summary["counts"]["error_count_by_type"] == {"错误交叉路口": 1, "错误分歧合流路口": 2}
+    assert summary["counts"]["divmerge_error_group_count"] == 1
+    assert summary["params"]["vertical_endpoint_distance_m"] == 20.0
+
+
+def test_tool6_suppresses_divmerge_when_associated_road_kind_suffix_17(tmp_path: Path) -> None:
+    nodes = [
+        _node("entry", 1, -20.0, 0.0),
+        _node("div", 16, 0.0, 0.0),
+        _node("merge", 8, 60.0, 0.0),
+        _node("right_join", 1, 30.0, -40.0),
+        _node("right_stub", 1, 30.0, -60.0),
+        _node("exit", 1, 90.0, 0.0),
+    ]
+    roads = [
+        _road("r-entry-div", "entry", "div", [(-20.0, 0.0), (0.0, 0.0)]),
+        _road("r-div-merge", "div", "merge", [(0.0, 0.0), (60.0, 0.0)], kind="0117"),
+        _road("r-div-right", "div", "right_join", [(0.0, 0.0), (30.0, -40.0)]),
+        _road("r-right-merge", "right_join", "merge", [(30.0, -40.0), (60.0, 0.0)]),
+        _road("r-right-stub", "right_join", "right_stub", [(30.0, -40.0), (30.0, -60.0)]),
+        _road("r-merge-exit", "merge", "exit", [(60.0, 0.0), (90.0, 0.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="kind17_suppressed", nodes=nodes, roads=roads)
+
+    assert csv_rows == []
+    assert gpkg_rows == []
+    assert summary["counts"]["error_feature_count"] == 0
+    assert summary["counts"]["divmerge_suppressed_count"] == 1
+    assert summary["divmerge_suppressed"][0]["reason"] == "associated_road_kind_suffix_17"
+
+
+def test_tool6_script_help() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/t08_tool6_nodes_type_qc.py", "--help"],
+        cwd=Path(__file__).resolve().parents[3],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--csv-output" in result.stdout
+    assert "--error-nodes-output" in result.stdout

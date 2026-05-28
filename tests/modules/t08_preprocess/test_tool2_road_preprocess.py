@@ -31,10 +31,11 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
     road_gpkg = tmp_path / "input" / "road.gpkg"
     patch_road_gpkg = tmp_path / "input" / "patch_road.gpkg"
     raw_kind_gpkg = tmp_path / "input" / "raw_kind_road.gpkg"
-    road_patch_output = tmp_path / "out" / "t08_road_patch.gpkg"
-    unmatched_output = tmp_path / "out" / "t08_road_patch_unmatched.gpkg"
-    kind_output = tmp_path / "out" / "t08_road_patch_kind.gpkg"
-    summary_output = tmp_path / "out" / "t08_road_preprocess_summary.json"
+    road_patch_output = tmp_path / "out" / "t08_road_patch_tool2.gpkg"
+    unmatched_output = tmp_path / "out" / "t08_road_patch_unmatched_tool2.gpkg"
+    kind_output = tmp_path / "out" / "t08_road_patch_kind_tool2.gpkg"
+    event_output = tmp_path / "out" / "event_road_0a_17_tool2.gpkg"
+    summary_output = tmp_path / "out" / "t08_road_preprocess_summary_tool2.json"
 
     write_gpkg(
         road_gpkg,
@@ -42,6 +43,7 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
             _feature({"id": "1"}, [(116.3000, 39.9000), (116.3001, 39.9001)]),
             _feature({"id": "2"}, [(116.3100, 39.9000), (116.3101, 39.9001)]),
             _feature({"id": "3"}, [(116.3200, 39.9000), (116.3201, 39.9001)]),
+            _feature({"id": "4"}, [(116.3400, 39.9000), (116.3401, 39.9001)]),
         ],
         crs_text="EPSG:4326",
     )
@@ -51,6 +53,7 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
             _feature({"road_id": "1", "patch_id": "1001"}, [(116.3000, 39.9000), (116.3001, 39.9001)]),
             _feature({"road_id": "2", "patch_id": "1002"}, [(116.3100, 39.9000), (116.3101, 39.9001)]),
             _feature({"road_id": "2", "patch_id": "1003"}, [(116.3100, 39.9000), (116.3101, 39.9001)]),
+            _feature({"road_id": "4", "patch_id": "1004"}, [(116.3400, 39.9000), (116.3401, 39.9001)]),
         ],
         crs_text="EPSG:4326",
     )
@@ -59,6 +62,7 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
         [
             _feature({"Kind": "1201|1202"}, [(116.3000, 39.9000), (116.3001, 39.9001)]),
             _feature({"kind": "1301"}, [(116.3100, 39.9000), (116.3101, 39.9001)]),
+            _feature({"kind": "110a|1217"}, [(116.3400, 39.9000), (116.3401, 39.9001)]),
         ],
         crs_text="EPSG:4326",
     )
@@ -79,6 +83,8 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
             str(unmatched_output),
             "--road-patch-kind-output",
             str(kind_output),
+            "--event-road-0a-17-output",
+            str(event_output),
             "--summary-output",
             str(summary_output),
             "--progress-interval",
@@ -96,40 +102,50 @@ def test_tool2_script_preprocesses_road_gpkg_inputs_to_3857(tmp_path: Path) -> N
     patch_epsg, patch_features = _read_gpkg(road_patch_output)
     unmatched_epsg, unmatched_features = _read_gpkg(unmatched_output)
     kind_epsg, kind_features = _read_gpkg(kind_output)
+    event_epsg, event_features = _read_gpkg(event_output)
 
     assert patch_epsg == 3857
     assert unmatched_epsg == 3857
     assert kind_epsg == 3857
-    assert len(patch_features) == 2
+    assert event_epsg == 3857
+    assert len(patch_features) == 3
     assert len(unmatched_features) == 1
     assert len(kind_features) == 2
+    assert len(event_features) == 1
 
     patch_by_id = {feature["properties"]["id"]: feature for feature in patch_features}
     assert patch_by_id["1"]["properties"]["patch_id"] == "1001"
     assert patch_by_id["2"]["properties"]["patch_id"] == "1002,1003"
+    assert patch_by_id["4"]["properties"]["patch_id"] == "1004"
     assert unmatched_features[0]["properties"]["id"] == "3"
     assert unmatched_features[0]["properties"]["unmatched_reason"] == "no patch road match"
 
     kind_by_id = {feature["properties"]["id"]: feature for feature in kind_features}
     assert set(str(kind_by_id["1"]["properties"]["kind"]).split("|")) == {"1201", "1202"}
     assert kind_by_id["2"]["properties"]["kind"] == "1301"
+    assert "4" not in kind_by_id
+    event_by_id = {feature["properties"]["id"]: feature for feature in event_features}
+    assert event_by_id["4"]["properties"]["kind"] == "110a|1217"
 
     first_coordinate = patch_features[0]["geometry"]["coordinates"][0]
     assert abs(first_coordinate[0]) > 1_000_000
     assert abs(first_coordinate[1]) > 1_000_000
 
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
-    assert summary["counts"]["road_count"] == 3
-    assert summary["counts"]["patch_join_matched_count"] == 2
+    assert summary["counts"]["road_count"] == 4
+    assert summary["counts"]["patch_join_matched_count"] == 3
     assert summary["counts"]["patch_join_unmatched_count"] == 1
-    assert summary["counts"]["kind_matched_count"] == 2
+    assert summary["counts"]["kind_matched_count"] == 3
+    assert summary["counts"]["event_road_0a_17_count"] == 1
+    assert summary["counts"]["kind_output_feature_count"] == 2
     assert summary["performance"]["elapsed_seconds"] >= 0
     assert summary["performance"]["roads_per_second"] is not None
     assert summary["performance"]["spatial_candidate_count"] >= 2
-    patch_summary = json.loads((tmp_path / "out" / "t08_road_patch_summary.json").read_text(encoding="utf-8"))
-    kind_summary = json.loads((tmp_path / "out" / "t08_road_kind_summary.json").read_text(encoding="utf-8"))
+    patch_summary = json.loads((tmp_path / "out" / "t08_road_patch_summary_tool2.json").read_text(encoding="utf-8"))
+    kind_summary = json.loads((tmp_path / "out" / "t08_road_kind_summary_tool2.json").read_text(encoding="utf-8"))
     assert patch_summary["stage_timings"]["read_patch_attributes_seconds"] >= 0
     assert patch_summary["stage_timings"]["join_roads_seconds"] >= 0
     assert kind_summary["stage_timings"]["buffer_build_seconds"] >= 0
     assert kind_summary["stage_timings"]["spatial_query_seconds"] >= 0
     assert kind_summary["spatial_query_chunk_size"] == 5000
+    assert kind_summary["event_road_0a_17_count"] == 1

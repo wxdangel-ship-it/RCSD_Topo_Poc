@@ -6,8 +6,9 @@
 - `shp_to_gpkg.py`：Tool1 基础矢量格式转换 callable runner。
 - `road_preprocess.py`：Tool2 callable runner。
 - `nodes_type_aggregation.py`：Tool3 callable runner。
-- `junction_type_repair.py`：Tool4 路口类型错误识别 callable runner。
+- `junction_type_repair.py`：Tool4 T 型路口错误修复 callable runner。
 - `complex_junction_preprocess.py`：Tool5 复杂路口预处理 callable runner。
+- `nodes_type_qc.py`：Tool6 Nodes 类型质检 callable runner。
 
 ## 入口构件
 
@@ -16,6 +17,7 @@
 - `scripts/t08_tool3_nodes_type_aggregation.py`
 - `scripts/t08_tool4_junction_type_repair.py`
 - `scripts/t08_tool5_complex_junction_preprocess.py`
+- `scripts/t08_tool6_nodes_type_qc.py`
 
 ## 测试构件
 
@@ -24,3 +26,4 @@
 - `tests/modules/t08_preprocess/test_tool3_nodes_type_aggregation.py`
 - `tests/modules/t08_preprocess/test_tool4_junction_type_repair.py`
 - `tests/modules/t08_preprocess/test_tool5_complex_junction_preprocess.py`
+- `tests/modules/t08_preprocess/test_tool6_nodes_type_qc.py`

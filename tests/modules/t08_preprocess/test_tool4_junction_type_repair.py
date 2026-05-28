@@ -61,9 +61,9 @@ def _run_tool4_case(
 ) -> tuple[dict[str, dict], dict[str, dict], dict]:
     nodes_gpkg = tmp_path / case_name / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / case_name / "input" / "roads.gpkg"
-    nodes_output = tmp_path / case_name / "out" / "nodes_fix.gpkg"
-    audit_nodes_output = tmp_path / case_name / "out" / "audit_nodes.gpkg"
-    summary_output = tmp_path / case_name / "out" / "tool4_summary.json"
+    nodes_output = tmp_path / case_name / "out" / "nodes_fix_tool4.gpkg"
+    audit_nodes_output = tmp_path / case_name / "out" / "audit_nodes_tool4.gpkg"
+    summary_output = tmp_path / case_name / "out" / "summary_tool4.json"
     write_gpkg(nodes_gpkg, nodes, crs_text="EPSG:3857")
     write_gpkg(roads_gpkg, roads, crs_text="EPSG:3857")
 
@@ -99,9 +99,9 @@ def _run_tool4_case(
 def test_tool4_detects_junction_type_errors(tmp_path: Path) -> None:
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
-    nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
-    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
-    summary_output = tmp_path / "out" / "tool4_summary.json"
+    nodes_output = tmp_path / "out" / "nodes_fix_tool4.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes_tool4.gpkg"
+    summary_output = tmp_path / "out" / "summary_tool4.json"
 
     nodes = [
         _node("10", 1, -20.0, 0.0),
@@ -280,9 +280,9 @@ def test_tool4_script_help() -> None:
 def test_tool4_suppresses_t_error_when_advance_right_turn_excluded_degree_is_2_2(tmp_path: Path) -> None:
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
-    nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
-    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
-    summary_output = tmp_path / "out" / "tool4_summary.json"
+    nodes_output = tmp_path / "out" / "nodes_fix_tool4.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes_tool4.gpkg"
+    summary_output = tmp_path / "out" / "summary_tool4.json"
 
     nodes = [
         _node("500", 2048, 0.0, 0.0),
@@ -344,9 +344,9 @@ def test_tool4_suppresses_t_error_when_advance_right_turn_excluded_degree_is_2_2
 def test_tool4_suppresses_t_error_when_auxiliary_road_excluded_degree_is_2_2(tmp_path: Path) -> None:
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
-    nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
-    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
-    summary_output = tmp_path / "out" / "tool4_summary.json"
+    nodes_output = tmp_path / "out" / "nodes_fix_tool4.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes_tool4.gpkg"
+    summary_output = tmp_path / "out" / "summary_tool4.json"
 
     nodes = [
         _node("600", 2048, 0.0, 0.0),

@@ -17,7 +17,7 @@ def _find_repo_root(start: Path) -> Path | None:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="T08 Tool1: convert SHP/GeoJSON to GPKG and GPKG to GeoJSON next to each input file."
+        description="T08 Tool1: convert SHP/GeoJSON to GPKG and GPKG to GeoJSON next to each input file with _tool1 suffix."
     )
     parser.add_argument("--input-shp", action="append", default=[], help="Input .shp path. Repeat for multiple inputs.")
     parser.add_argument("--input-geojson", action="append", default=[], help="Input .geojson/.json path. Repeat for multiple inputs.")
@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parse_args(argv)
     if args.out_dir:
-        print("ERROR: --out-dir is no longer supported; Tool1 writes outputs next to each input file.", file=sys.stderr)
+        print("ERROR: --out-dir is no longer supported; Tool1 writes outputs next to each input file with _tool1 suffix.", file=sys.stderr)
         return 2
     try:
         summary = run_t08_tool1_conversions(

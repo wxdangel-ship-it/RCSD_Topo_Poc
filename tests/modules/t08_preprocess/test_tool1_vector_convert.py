@@ -41,7 +41,7 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
     shp_b = tmp_path / "input" / "b_roads.shp"
     geojson_path = tmp_path / "input" / "c_roads.geojson"
     gpkg_path = tmp_path / "input" / "d_roads.gpkg"
-    summary_path = tmp_path / "summary" / "tool1_summary.json"
+    summary_path = tmp_path / "summary" / "conversion_summary_tool1.json"
     _write_polyline_shapefile(shp_a, row_id="a")
     _write_polyline_shapefile(shp_b, row_id="b")
     write_geojson(
@@ -83,20 +83,20 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
 
     assert result.returncode == 0, result.stderr
     assert "[T08 Tool1]" in result.stderr
-    assert (tmp_path / "input" / "a_roads.gpkg").is_file()
-    assert (tmp_path / "input" / "b_roads.gpkg").is_file()
-    assert (tmp_path / "input" / "c_roads.gpkg").is_file()
-    assert (tmp_path / "input" / "d_roads.geojson").is_file()
-    epsg_a, count_a = _read_gpkg(tmp_path / "input" / "a_roads.gpkg")
-    epsg_b, count_b = _read_gpkg(tmp_path / "input" / "b_roads.gpkg")
-    epsg_c, count_c = _read_gpkg(tmp_path / "input" / "c_roads.gpkg")
+    assert (tmp_path / "input" / "a_roads_tool1.gpkg").is_file()
+    assert (tmp_path / "input" / "b_roads_tool1.gpkg").is_file()
+    assert (tmp_path / "input" / "c_roads_tool1.gpkg").is_file()
+    assert (tmp_path / "input" / "d_roads_tool1.geojson").is_file()
+    epsg_a, count_a = _read_gpkg(tmp_path / "input" / "a_roads_tool1.gpkg")
+    epsg_b, count_b = _read_gpkg(tmp_path / "input" / "b_roads_tool1.gpkg")
+    epsg_c, count_c = _read_gpkg(tmp_path / "input" / "c_roads_tool1.gpkg")
     assert epsg_a == 3857
     assert epsg_b == 3857
     assert epsg_c == 3857
     assert count_a == 1
     assert count_b == 1
     assert count_c == 1
-    assert _read_geojson_count(tmp_path / "input" / "d_roads.geojson") == 1
+    assert _read_geojson_count(tmp_path / "input" / "d_roads_tool1.geojson") == 1
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["input_count"] == 4
@@ -114,7 +114,7 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
 
 def test_tool1_rejects_same_run_input_output_collision(tmp_path: Path) -> None:
     geojson_path = tmp_path / "input" / "roads.geojson"
-    gpkg_path = tmp_path / "input" / "roads.gpkg"
+    gpkg_path = tmp_path / "input" / "roads_tool1.gpkg"
     write_geojson(
         geojson_path,
         [{"properties": {"id": "g"}, "geometry": {"type": "LineString", "coordinates": [[116.31, 39.91], [116.32, 39.92]]}}],

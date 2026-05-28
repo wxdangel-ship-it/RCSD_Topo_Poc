@@ -10,6 +10,7 @@ from typing import Any, Iterable
 import fiona
 from shapely.strtree import STRtree
 
+from rcsd_topo_poc.modules.t08_preprocess.output_naming import ensure_tool_output_name
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     PROCESS_CRS_TEXT,
     VectorFeature,
@@ -36,6 +37,7 @@ class T08RoadPreprocessArtifacts:
     road_patch_output: Path
     road_patch_unmatched_output: Path
     road_patch_kind_output: Path
+    event_road_0a_17_output: Path
     patch_summary_output: Path
     kind_summary_output: Path
     summary_output: Path
@@ -61,6 +63,7 @@ def run_t08_road_preprocess(
     road_patch_output: str | Path,
     road_patch_unmatched_output: str | Path,
     road_patch_kind_output: str | Path,
+    event_road_0a_17_output: str | Path,
     road_layer: str | None = None,
     patch_road_layer: str | None = None,
     raw_kind_road_layer: str | None = None,
@@ -80,24 +83,41 @@ def run_t08_road_preprocess(
     road_path = ensure_gpkg_path(road_gpkg, label="--road-gpkg")
     patch_road_path = ensure_gpkg_path(patch_road_gpkg, label="--patch-road-gpkg")
     raw_kind_road_path = ensure_gpkg_path(raw_kind_road_gpkg, label="--raw-kind-road-gpkg")
-    road_patch_path = ensure_gpkg_path(road_patch_output, label="--road-patch-output")
-    unmatched_path = ensure_gpkg_path(road_patch_unmatched_output, label="--road-patch-unmatched-output")
-    kind_path = ensure_gpkg_path(road_patch_kind_output, label="--road-patch-kind-output")
+    road_patch_path = ensure_tool_output_name(
+        ensure_gpkg_path(road_patch_output, label="--road-patch-output"),
+        tool_number=2,
+        label="--road-patch-output",
+    )
+    unmatched_path = ensure_tool_output_name(
+        ensure_gpkg_path(road_patch_unmatched_output, label="--road-patch-unmatched-output"),
+        tool_number=2,
+        label="--road-patch-unmatched-output",
+    )
+    kind_path = ensure_tool_output_name(
+        ensure_gpkg_path(road_patch_kind_output, label="--road-patch-kind-output"),
+        tool_number=2,
+        label="--road-patch-kind-output",
+    )
+    event_road_0a_17_path = ensure_tool_output_name(
+        ensure_gpkg_path(event_road_0a_17_output, label="--event-road-0a-17-output"),
+        tool_number=2,
+        label="--event-road-0a-17-output",
+    )
 
     patch_summary_path = (
-        Path(patch_summary_output).expanduser().resolve()
+        ensure_tool_output_name(patch_summary_output, tool_number=2, label="--patch-summary-output")
         if patch_summary_output
-        else road_patch_path.with_name("t08_road_patch_summary.json")
+        else road_patch_path.with_name("t08_road_patch_summary_tool2.json")
     )
     kind_summary_path = (
-        Path(kind_summary_output).expanduser().resolve()
+        ensure_tool_output_name(kind_summary_output, tool_number=2, label="--kind-summary-output")
         if kind_summary_output
-        else kind_path.with_name("t08_road_kind_summary.json")
+        else kind_path.with_name("t08_road_kind_summary_tool2.json")
     )
     combined_summary_path = (
-        Path(summary_output).expanduser().resolve()
+        ensure_tool_output_name(summary_output, tool_number=2, label="--summary-output")
         if summary_output
-        else kind_path.with_name("t08_road_preprocess_summary.json")
+        else kind_path.with_name("t08_road_preprocess_summary_tool2.json")
     )
 
     _emit_progress(progress_callback, f"[T08 Tool2] start road={road_path} patch={patch_road_path} raw_kind={raw_kind_road_path}")
@@ -120,6 +140,7 @@ def run_t08_road_preprocess(
         road_patch_field_names=patch_summary["field_names"]["road"],
         raw_kind_road_gpkg=raw_kind_road_path,
         road_patch_kind_output=kind_path,
+        event_road_0a_17_output=event_road_0a_17_path,
         summary_output=kind_summary_path,
         raw_kind_road_layer=raw_kind_road_layer,
         target_epsg=target_epsg,
@@ -142,6 +163,7 @@ def run_t08_road_preprocess(
             "road_patch_output": road_patch_path,
             "road_patch_unmatched_output": unmatched_path,
             "road_patch_kind_output": kind_path,
+            "event_road_0a_17_output": event_road_0a_17_path,
             "patch_summary_output": patch_summary_path,
             "kind_summary_output": kind_summary_path,
             "summary_output": combined_summary_path,
@@ -153,6 +175,8 @@ def run_t08_road_preprocess(
             "kind_matched_count": kind_summary["matched_kind_count"],
             "kind_unmatched_count": kind_summary["unmatched_kind_count"],
             "kind_empty_count": kind_summary["empty_kind_count"],
+            "event_road_0a_17_count": kind_summary["event_road_0a_17_count"],
+            "kind_output_feature_count": kind_summary["output_feature_count"],
         },
         "params": {
             "buffer_distance_meters": buffer_distance_meters,
@@ -182,6 +206,7 @@ def run_t08_road_preprocess(
         road_patch_output=road_patch_path,
         road_patch_unmatched_output=unmatched_path,
         road_patch_kind_output=kind_path,
+        event_road_0a_17_output=event_road_0a_17_path,
         patch_summary_output=patch_summary_path,
         kind_summary_output=kind_summary_path,
         summary_output=combined_summary_path,
@@ -324,6 +349,7 @@ def _run_kind_enrich(
     road_patch_field_names: list[str],
     raw_kind_road_gpkg: Path,
     road_patch_kind_output: Path,
+    event_road_0a_17_output: Path,
     summary_output: Path,
     raw_kind_road_layer: str | None,
     target_epsg: int,
@@ -363,6 +389,7 @@ def _run_kind_enrich(
     )
 
     output_features: list[dict[str, Any]] = []
+    event_road_0a_17_features: list[dict[str, Any]] = []
     matched_kind_count = 0
     unmatched_kind_count = 0
     empty_kind_count = 0
@@ -405,14 +432,25 @@ def _run_kind_enrich(
             except Exception as exc:
                 error_counter[str(exc)] += 1
             properties["kind"] = kind_value
-            output_features.append({"properties": properties, "geometry": feature["geometry"]})
+            output_feature = {"properties": properties, "geometry": feature["geometry"]}
+            if _has_0a_and_17_kind_types(kind_value):
+                event_road_0a_17_features.append(output_feature)
+            else:
+                output_features.append(output_feature)
             if _should_emit_progress(index, progress_interval):
                 _emit_progress(progress_callback, f"[T08 Tool2] kind_enrich: processed {index} road feature(s)")
 
     output_fields = unique_field_names(road_patch_field_names, extra=("patch_id", "kind"))
-    _emit_progress(progress_callback, f"[T08 Tool2] kind_enrich: writing output={len(output_features)}")
+    _emit_progress(
+        progress_callback,
+        (
+            f"[T08 Tool2] kind_enrich: writing output={len(output_features)} "
+            f"event_0a_17={len(event_road_0a_17_features)}"
+        ),
+    )
     stage_started = time.perf_counter()
     write_gpkg(road_patch_kind_output, output_features, crs_text=PROCESS_CRS_TEXT, empty_fields=output_fields)
+    write_gpkg(event_road_0a_17_output, event_road_0a_17_features, crs_text=PROCESS_CRS_TEXT, empty_fields=output_fields)
     stage_timings["write_output_seconds"] = _elapsed_since(stage_started)
     elapsed_seconds = time.perf_counter() - started
     stage_timings["buffer_build_seconds"] = buffer_build_seconds
@@ -422,7 +460,10 @@ def _run_kind_enrich(
         "stage": "kind_enrich",
         "target_epsg": target_epsg,
         "input_paths": {"raw_kind_road_gpkg": raw_kind_road_gpkg},
-        "output_paths": {"road_patch_kind_output": road_patch_kind_output},
+        "output_paths": {
+            "road_patch_kind_output": road_patch_kind_output,
+            "event_road_0a_17_output": event_road_0a_17_output,
+        },
         "summary_output": summary_output,
         "input_crs": {
             "raw_kind_road": raw_kind_result.source_crs.to_string(),
@@ -440,7 +481,9 @@ def _run_kind_enrich(
         "unmatched_kind_count": unmatched_kind_count,
         "empty_kind_count": empty_kind_count,
         "output_feature_count": len(output_features),
+        "event_road_0a_17_count": len(event_road_0a_17_features),
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in output_features),
+        "event_road_0a_17_bounds": aggregate_bounds(feature["geometry"] for feature in event_road_0a_17_features),
         "error_reason_summary": dict(error_counter),
         "elapsed_seconds": round(elapsed_seconds, 6),
         "roads_per_second": _items_per_second(len(road_patch_features), elapsed_seconds),
@@ -595,6 +638,11 @@ def _unique_preserve_order(tokens: Iterable[str]) -> list[str]:
             seen.add(token)
             ordered.append(token)
     return ordered
+
+
+def _has_0a_and_17_kind_types(kind_value: Any) -> bool:
+    suffixes = {token.strip().lower()[-2:] for token in _split_kind_tokens(kind_value) if len(token.strip()) >= 2}
+    return "0a" in suffixes and "17" in suffixes
 
 
 def _should_emit_progress(index: int, progress_interval: int) -> bool:

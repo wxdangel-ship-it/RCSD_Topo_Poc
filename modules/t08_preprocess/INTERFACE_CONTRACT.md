@@ -4,16 +4,20 @@
 
 `t08_preprocess` 是项目正式预处理模块。模块内部以工具形式提供能力，但这些工具属于项目正式组成部分，不是一次性实验脚本。
 
+## 0. 成果输出命名约束
+
+除输入文件本身外，T08 所有成果输出文件名必须在扩展名前以 `_toolX` 结尾，`X` 为工具编号。例如 Tool2 的事件 Road 输出为 `event_road_0a_17_tool2.gpkg`。
+
 ## 1. 当前工具
 
 ### Tool1：基础矢量格式转换
 
 - 输入：一个或多个 `.shp / .geojson / .json / .gpkg` 文件，全部通过参数提供。
 - 支持转换：
-  - `.shp -> <input_dir>/<input_stem>.gpkg`
-  - `.geojson / .json -> <input_dir>/<input_stem>.gpkg`
-  - `.gpkg -> <input_dir>/<input_stem>.geojson`
-- 输出边界：所有输出均写回输入文件所在目录下的同名目标格式文件；不合并多个输入，不提供输出目录参数，不提供逐文件自定义输出路径参数；若同一轮输入会导致重复输出或输出覆盖本轮任一输入，必须报错停止。
+  - `.shp -> <input_dir>/<input_stem>_tool1.gpkg`
+  - `.geojson / .json -> <input_dir>/<input_stem>_tool1.gpkg`
+  - `.gpkg -> <input_dir>/<input_stem>_tool1.geojson`
+- 输出边界：所有输出均写回输入文件所在目录下，并在输入 stem 后追加 `_tool1`；不合并多个输入，不提供输出目录参数，不提供逐文件自定义输出路径参数；若同一轮输入会导致重复输出或输出覆盖本轮任一输入，必须报错停止。
 - CRS：
   - 默认保留输入 CRS。
   - 如传入 `--target-epsg`，则输出投影到该 EPSG。
@@ -27,13 +31,15 @@
 - 输入二：Patch Road GPKG，依赖字段 `road_id / patch_id`。
 - 输入三：原始 Road Kind GPKG，依赖字段 `Kind` 或 `kind`。
 - 输出：
-  - `t08_road_patch.gpkg`
-  - `t08_road_patch_unmatched.gpkg`
-  - `t08_road_patch_kind.gpkg`
-  - `t08_road_patch_summary.json`
-  - `t08_road_kind_summary.json`
-  - `t08_road_preprocess_summary.json`
+  - `t08_road_patch_tool2.gpkg`
+  - `t08_road_patch_unmatched_tool2.gpkg`
+  - `t08_road_patch_kind_tool2.gpkg`
+  - `event_road_0a_17_tool2.gpkg`
+  - `t08_road_patch_summary_tool2.json`
+  - `t08_road_kind_summary_tool2.json`
+  - `t08_road_preprocess_summary_tool2.json`
 - 输出 CRS：`EPSG:3857`。
+- 删除规则：Kind enrich 后，若 Road `kind` 任一 `|` 分隔 token 的后两位包含 `0a`，且任一 token 的后两位包含 `17`，则从 `t08_road_patch_kind_tool2.gpkg` 删除该 Road，并将被删除 Road 输出到 `event_road_0a_17_tool2.gpkg`。
 - 所有输入、输出路径必须通过参数提供。
 
 ### Tool3：Nodes 类型聚合
@@ -41,8 +47,8 @@
 - 输入一：Nodes GPKG，依赖字段 `id / kind / grade`，可选字段 `mainnodeid / has_evd / is_anchor / subnodeid`。
 - 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`；环岛聚合使用可选字段 `roadtype`。
 - 输出：
-  - `t08_nodes_type_aggregation.gpkg`
-  - `t08_nodes_type_aggregation_summary.json`
+  - `t08_nodes_type_aggregation_tool3.gpkg`
+  - `t08_nodes_type_aggregation_summary_tool3.json`
 - 输出 CRS：`EPSG:3857`。
 - 类型初始化：新增或覆盖 `kind_2 / grade_2`，初始值分别复制自 `kind / grade`，原始 `kind / grade` 不改写。
 - 环岛聚合：参考 T01 环岛构建，按 `roadtype bit3` 的 Road 连通组聚合；组内最小 Node `id` 为 `mainnode`，mainnode 写 `grade_2 = 1 / kind_2 = 64`，成员写 `grade_2 = 0 / kind_2 = 0`，全组 `mainnodeid` 写为 mainnode。
@@ -54,9 +60,9 @@
 - 输入一：Nodes GPKG，依赖字段 `id / kind_2`，可选字段 `mainnodeid`。
 - 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`，可选字段 `formway / kind`。
 - 输出：
-  - `t08_junction_type_repair_nodes.gpkg`
-  - `t08_junction_type_repair_audit_nodes.gpkg`
-  - `t08_junction_type_repair_summary.json`
+  - `t08_junction_type_repair_nodes_tool4.gpkg`
+  - `t08_junction_type_repair_audit_nodes_tool4.gpkg`
+  - `t08_junction_type_repair_summary_tool4.json`
 - 输出 CRS：`EPSG:3857`。
 - 入度 / 出度定义：
   - `direction in {0,1}` 表示双向 road，对两端语义路口分别 `in_degree + 1 / out_degree + 1`。
@@ -84,15 +90,45 @@
 - 输入三：`RCSDIntersection` GPKG，可选；启用错误 1 对多识别与处理时必填。
 - 输入四：`node_error_2` GPKG，可选兼容输入，依赖字段 `id / junction_id`；未提供时 Tool5 按 T02 `node_error_2` 生成口径基于 `RCSDIntersection` 即时识别。
 - 输出：
-  - `t08_complex_junction_nodes.gpkg`
-  - `t08_complex_junction_roads.gpkg`
-  - `t08_complex_junction_audit_nodes.gpkg`
-  - `t08_complex_junction_preprocess_summary.json`
+  - `t08_complex_junction_nodes_tool5.gpkg`
+  - `t08_complex_junction_roads_tool5.gpkg`
+  - `t08_complex_junction_audit_nodes_tool5.gpkg`
+  - `t08_complex_junction_preprocess_summary_tool5.json`
 - 输出 CRS：`EPSG:3857`。
 - 复杂分歧 / 合流聚合：从 Tool3 移出，参考 T04 full-input 候选与连续链路口口径，对 representative node 的 `kind_2 in {8, 16}` 候选沿 Road 有向拓扑识别连续链，聚合后 mainnode 写 `kind_2 = 128`，成员写 `grade_2 = 0 / kind_2 = 0`，全组 `mainnodeid` 写为 mainnode。若输入存在 `has_evd / is_anchor` 字段，则候选需满足 `has_evd = yes / is_anchor = no`。
 - 错误 1 对多路口处理：参考 T02 `node_error_2` 生成逻辑，先用 `RCSDIntersection` 反向包含 / 接触 SWSD 语义路口；若一个面对应不止一组语义路口，则忽略代表 `kind_2 = 1` 的组，过滤后剩余组数大于 `1` 时生成一对多候选；随后复用 T02 离线修复逻辑，只有剩余组之间具备 Road 连通性时才合并，选择最小 junction group 作为 mainnode，mainnode 写 `kind_2 = 4`，成员写 `kind_2 = 0 / grade_2 = 0`，删除 intersection 面内被合并组之间的内部 Road。
 - 审计 Nodes 输出：将复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node 输出为 audit Nodes GPKG，保留最终 Nodes 属性并补充 `audit_id / audit_process / audit_group_id / audit_role / audit_mainnodeid / audit_source_node_id`。
 - 输出边界：Tool5 copy-on-write 输出 Nodes 与 Roads，不修改输入文件；若未传入 `RCSDIntersection`，只执行复杂分歧 / 合流聚合并复制输出 Roads。
+- 所有输入、输出路径必须通过参数提供。
+
+### Tool6：Nodes 数据类型质检
+
+- 输入一：Nodes GPKG，依赖字段 `id / kind_2`，可选字段 `mainnodeid`；字段名固定使用小写 `kind_2`，不兼容 `Kind_2`。
+- 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`，可选字段 `kind`。
+- 输出：
+  - `node_error_tool6.csv`
+  - `node_error_tool6.gpkg`
+  - `node_error_summary_tool6.json`
+- 输出 CRS：`EPSG:3857`。
+- 输出边界：Tool6 只输出质检候选，不改写输入 Nodes/Roads，不执行修复；CSV 最后一列为 `是否修复`，默认值为 `0`，人工改为 `1` 后供 Tool4 后续修复流程消费。
+- 下游边界：本轮不改变 Tool4 既有入口；Tool4 消费 Tool6 人工确认结果、以及 `错误交叉路口` 的具体修复目标由后续 Tool4 契约补齐。
+- 入度 / 出度定义：
+  - `direction in {0,1}` 表示双向 road，对两端语义路口分别 `in_degree + 1 / out_degree + 1`。
+  - `direction = 2` 表示 `snodeid -> enodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
+  - `direction = 3` 表示 `enodeid -> snodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
+  - 若 Road 两端属于同一语义路口，则该 Road 既视为进入该语义路口也视为退出该语义路口，`in_degree + 1 / out_degree + 1`；双向 Road 同样只按该 Road 对入度和出度各加 `1`。
+- 连续分歧合流类型质检：
+  - 识别 `kind_2 = 16` 且 `out_degree = 2` 的分歧语义路口。
+  - 以进入分歧路口 road 的方向为参考，将两个退出 road 分为左侧 road 与右侧 road；沿左侧 road 前进方向跟踪，忽略二度连接，`100m` 内找到 `kind_2 = 8` 且 `in_degree = 2` 的合流语义路口时形成连续分合流候选。
+  - 进入分歧 road、分歧左侧退出 road、合流退出 road 需构成横方向；默认横向夹角阈值为 `35°`。
+  - 沿分歧右侧退出 road 前进方向跟踪，并沿合流右侧进入 road 的退出方向反向跟踪；若两者跟踪至相同语义路口，或两者末端距离小于起点距离、末端距离 `<20m` 且平行夹角 `<=20°`，则视为具备 T 型竖方向。
+  - 若关联 road 的 `road.kind` 任一 `|` 分隔 token 后两位为 `17`，则 suppress，不输出错误。
+  - 若竖方向道路不在横方向前进方向右侧，则 suppress，不输出错误。
+  - 命中输出 `error_type = 错误分歧合流路口`，同一组连续分合流默认输出 diverge/merge 两条 node 质检记录并共享 `error_group_id`。
+- 交叉路口类型质检：
+  - 识别 `kind_2 = 4` 且 `in_degree = 2 / out_degree = 2` 的语义路口。
+  - 命中输出 `error_type = 错误交叉路口`；本工具不写建议修复目标，修复目标由 Tool4 后续流程确定。
+- summary 必须记录输入、输出、参数、字段解析、CRS、错误类型计数、suppressed 连续分合流候选与性能字段。
 - 所有输入、输出路径必须通过参数提供。
 
 ## 2. EntryPoints
@@ -121,9 +157,10 @@ Tool2：
   --road-gpkg /mnt/d/TestData/POC_Data/input/road.gpkg \
   --patch-road-gpkg /mnt/d/TestData/POC_Data/input/patch_road.gpkg \
   --raw-kind-road-gpkg /mnt/d/TestData/POC_Data/input/raw_kind_road.gpkg \
-  --road-patch-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch.gpkg \
-  --road-patch-unmatched-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_unmatched.gpkg \
-  --road-patch-kind-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_kind.gpkg
+  --road-patch-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_tool2.gpkg \
+  --road-patch-unmatched-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_unmatched_tool2.gpkg \
+  --road-patch-kind-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_kind_tool2.gpkg \
+  --event-road-0a-17-output /mnt/d/TestData/POC_Data/t08_preprocess/road/event_road_0a_17_tool2.gpkg
 ```
 
 Tool3：
@@ -132,41 +169,51 @@ Tool3：
 .venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py \
   --nodes-gpkg /mnt/d/TestData/POC_Data/input/nodes.gpkg \
   --roads-gpkg /mnt/d/TestData/POC_Data/input/roads.gpkg \
-  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation.gpkg
+  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation_tool3.gpkg
 ```
 
 Tool4：
 
 ```bash
 .venv/bin/python scripts/t08_tool4_junction_type_repair.py \
-  --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation.gpkg \
+  --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation_tool3.gpkg \
   --roads-gpkg /mnt/d/TestData/POC_Data/input/roads.gpkg \
-  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_nodes.gpkg \
-  --audit-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_audit_nodes.gpkg
+  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_nodes_tool4.gpkg \
+  --audit-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_audit_nodes_tool4.gpkg
 ```
 
 Tool5：
 
 ```bash
 .venv/bin/python scripts/t08_tool5_complex_junction_preprocess.py \
-  --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation.gpkg \
+  --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_nodes_tool4.gpkg \
   --roads-gpkg /mnt/d/TestData/POC_Data/input/roads.gpkg \
   --intersection-gpkg /mnt/d/TestData/POC_Data/input/RCSDIntersection.gpkg \
-  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_nodes.gpkg \
-  --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_roads.gpkg \
-  --audit-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_audit_nodes.gpkg
+  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_nodes_tool5.gpkg \
+  --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_roads_tool5.gpkg \
+  --audit-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_audit_nodes_tool5.gpkg
+```
+
+Tool6：
+
+```bash
+.venv/bin/python scripts/t08_tool6_nodes_type_qc.py \
+  --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_nodes_tool5.gpkg \
+  --roads-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_roads_tool5.gpkg \
+  --csv-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/node_error_tool6.csv \
+  --error-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/node_error_tool6.gpkg
 ```
 
 ## 3. Tool1 Params
 
-- `--input-shp`：可重复传入多个 Shapefile，输出为输入目录下同名 `.gpkg`。
-- `--input-geojson`：可重复传入多个 GeoJSON，输出为输入目录下同名 `.gpkg`。
-- `--input-gpkg`：可重复传入多个 GPKG，输出为输入目录下同名 `.geojson`。
-- `--summary-output`：可选 summary JSON 输出路径；默认写入首个输入文件所在目录。
+- `--input-shp`：可重复传入多个 Shapefile，输出为输入目录下 `<input_stem>_tool1.gpkg`。
+- `--input-geojson`：可重复传入多个 GeoJSON，输出为输入目录下 `<input_stem>_tool1.gpkg`。
+- `--input-gpkg`：可重复传入多个 GPKG，输出为输入目录下 `<input_stem>_tool1.geojson`。
+- `--summary-output`：可选 summary JSON 输出路径；默认写入首个输入文件所在目录，文件名以 `_tool1` 结尾。
 - `--target-epsg`：可选输出 EPSG；不提供时保留输入 CRS。
 - `--default-crs`：当输入缺失 CRS 时使用。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次；单文件开始、结束、失败与总完成状态均输出进度信息。
-- 覆盖口径：同名输出已存在时先删除再重建。
+- 覆盖口径：目标输出已存在时先删除再重建。
 
 ## 4. Tool2 Params
 
@@ -177,11 +224,12 @@ Tool5：
 - `--road-patch-output`：PatchID 输出 GPKG。
 - `--road-patch-unmatched-output`：PatchID 未匹配输出 GPKG。
 - `--road-patch-kind-output`：Kind 补充输出 GPKG。
+- `--event-road-0a-17-output`：`kind` 同时包含 `0a` 辅路属性与 `17` 主辅路出入口属性的删除 Road 事件输出 GPKG。
 - `--patch-summary-output / --kind-summary-output / --summary-output`：可选 summary 输出路径。
 - `--buffer-distance-meters`：Kind 空间匹配缓冲距离，默认 `1.0`。
 - `--spatial-predicate`：Kind 空间匹配谓词，默认 `covers`。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次；Patch join / Kind enrich 开始、读取、处理、写出与完成状态均输出进度信息。
-- summary 性能字段：总 summary 写入 `performance.elapsed_seconds / roads_per_second / patch_join_elapsed_seconds / kind_enrich_elapsed_seconds / spatial_candidate_count`；阶段 summary 写入阶段耗时与吞吐，并在 `stage_timings` 中细分读取、属性索引、空间查询与写出耗时。
+- summary 性能字段：总 summary 写入 `performance.elapsed_seconds / roads_per_second / patch_join_elapsed_seconds / kind_enrich_elapsed_seconds / spatial_candidate_count`；阶段 summary 写入阶段耗时与吞吐，并在 `stage_timings` 中细分读取、属性索引、空间查询、事件 Road 删除与写出耗时。
 - 读取性能：Road / Raw Kind GPKG 优先使用直接 SQLite GeoPackage 快读；无法识别标准 GPKG 元数据时回退 Fiona 读取。
 - GPKG 输出写出：复用 T08 共享直接 SQLite GeoPackage 写出路径，避免 Fiona 逐要素 sink 写出。
 
@@ -231,13 +279,29 @@ Tool5：
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次。
 - summary 性能字段：写入 `performance.elapsed_seconds / nodes_per_second / stage_timings`，用于定位读取、复杂聚合、错误 1 对多识别 / 处理与写出耗时；summary 还必须记录 `node_error_2_detection`。
 
-## 8. Acceptance
+## 8. Tool6 Params
 
-1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，所有输出均为输入目录下同名目标格式文件。
+- `--nodes-gpkg`：Nodes 输入 GPKG，字段固定使用小写 `kind_2`。
+- `--roads-gpkg`：Roads 输入 GPKG。
+- `--csv-output`：人工质检 CSV 输出路径，文件名必须以 `_tool6.csv` 结尾，最后一列为 `是否修复`。
+- `--error-nodes-output`：目视审查 GPKG 输出路径，文件名必须以 `_tool6.gpkg` 结尾。
+- `--nodes-layer / --roads-layer`：可选图层名。
+- `--summary-output`：可选 summary JSON 输出路径。
+- `--target-epsg`：最终输出 EPSG，默认 `3857`。
+- `--nodes-default-crs / --roads-default-crs`：输入缺失 CRS 时使用。
+- `--divmerge-search-distance-m`：连续分合流左侧追踪与竖方向追踪距离阈值，默认 `100`。
+- `--vertical-parallel-angle-degrees`：竖方向相对平行夹角阈值，默认 `20`。
+- `--vertical-endpoint-distance-m`：竖方向末端距离阈值，默认 `20`。
+- `--horizontal-angle-degrees`：横方向共线夹角阈值，默认 `35`。
+- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次。
+
+## 9. Acceptance
+
+1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，所有输出均为输入目录下追加 `_tool1` 的目标格式文件。
 2. Tool2 只接受 GPKG 输入。
-3. Tool2 三个主输出均为 GPKG 且 CRS 为 `EPSG:3857`。
+3. Tool2 主输出与 `event_road_0a_17_tool2.gpkg` 均为 GPKG 且 CRS 为 `EPSG:3857`。
 4. Tool2 `patch_id` 多值按逗号拼接。
-5. Tool2 `kind` 多值按 `|` 去重拼接。
+5. Tool2 `kind` 多值按 `|` 去重拼接；同时具有 `0a` 与 `17` 道路类型属性的 Road 必须从主 Kind 输出删除，并写入事件 Road 输出。
 6. Tool3 输出 Nodes GPKG 且 CRS 为 `EPSG:3857`。
 7. Tool3 保留原始 `kind / grade`，只在 copy-on-write 输出中写入 `kind_2 / grade_2 / mainnodeid / subnodeid`。
 8. Tool3 summary 可追溯环岛组、更新节点数、CRS、字段解析与阶段性能；Tool3 不再构造复杂分歧 / 合流路口。
@@ -247,5 +311,9 @@ Tool5：
 12. Tool4 不修改输入 Nodes/Roads，不输出或改写 Roads。
 13. Tool5 输出 Nodes / Roads / audit Nodes GPKG 且 CRS 为 `EPSG:3857`。
 14. Tool5 summary 可追溯复杂分歧 / 合流组、`node_error_2_detection`、错误 1 对多合并组、删除 Road、audit node 数量、CRS、字段解析与阶段性能。
-15. 所有路径均由参数提供，不写死内网目录。
-16. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。
+15. Tool6 输出 `node_error_tool6.csv / node_error_tool6.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
+16. Tool6 CSV 最后一列为 `是否修复`，默认值为 `0`；Tool6 不修改输入 Nodes/Roads。
+17. Tool6 可追溯 `错误分歧合流路口 / 错误交叉路口`、入出度、相关 Road、suppressed 原因、CRS 与性能 summary。
+18. 所有路径均由参数提供，不写死内网目录。
+19. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
+20. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。

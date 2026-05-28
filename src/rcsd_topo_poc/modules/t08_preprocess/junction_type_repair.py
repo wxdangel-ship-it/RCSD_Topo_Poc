@@ -13,6 +13,7 @@ from pyproj import CRS
 from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
+from rcsd_topo_poc.modules.t08_preprocess.output_naming import ensure_tool_output_name
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     VectorFeature,
     _build_geometry_transform,
@@ -138,12 +139,20 @@ def run_t08_junction_type_repair(
     stage_timings: dict[str, float] = {}
     nodes_path = ensure_gpkg_path(nodes_gpkg, label="--nodes-gpkg")
     roads_path = ensure_gpkg_path(roads_gpkg, label="--roads-gpkg")
-    output_nodes_path = ensure_gpkg_path(nodes_output, label="--nodes-output")
-    output_audit_nodes_path = ensure_gpkg_path(audit_nodes_output, label="--audit-nodes-output")
+    output_nodes_path = ensure_tool_output_name(
+        ensure_gpkg_path(nodes_output, label="--nodes-output"),
+        tool_number=4,
+        label="--nodes-output",
+    )
+    output_audit_nodes_path = ensure_tool_output_name(
+        ensure_gpkg_path(audit_nodes_output, label="--audit-nodes-output"),
+        tool_number=4,
+        label="--audit-nodes-output",
+    )
     summary_path = (
-        Path(summary_output).expanduser().resolve()
+        ensure_tool_output_name(summary_output, tool_number=4, label="--summary-output")
         if summary_output
-        else output_nodes_path.with_name("t08_junction_type_repair_summary.json")
+        else output_nodes_path.with_name("t08_junction_type_repair_summary_tool4.json")
     )
 
     _emit_progress(progress_callback, f"[T08 Tool4] start nodes={nodes_path} roads={roads_path}")

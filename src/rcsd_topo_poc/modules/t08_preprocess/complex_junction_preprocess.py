@@ -11,6 +11,7 @@ from typing import Any
 from shapely.strtree import STRtree
 
 from rcsd_topo_poc.modules.t02_junction_anchor.fix_node_error_2 import run_t02_fix_node_error_2
+from rcsd_topo_poc.modules.t08_preprocess.output_naming import ensure_tool_output_name
 from rcsd_topo_poc.modules.t08_preprocess.nodes_type_aggregation import (
     _apply_complex_divmerge_aggregation,
     _elapsed_since,
@@ -86,9 +87,21 @@ def run_t08_complex_junction_preprocess(
     stage_timings: dict[str, float] = {}
     nodes_path = ensure_gpkg_path(nodes_gpkg, label="--nodes-gpkg")
     roads_path = ensure_gpkg_path(roads_gpkg, label="--roads-gpkg")
-    output_nodes_path = ensure_gpkg_path(nodes_output, label="--nodes-output")
-    output_roads_path = ensure_gpkg_path(roads_output, label="--roads-output")
-    output_audit_nodes_path = ensure_gpkg_path(audit_nodes_output, label="--audit-nodes-output")
+    output_nodes_path = ensure_tool_output_name(
+        ensure_gpkg_path(nodes_output, label="--nodes-output"),
+        tool_number=5,
+        label="--nodes-output",
+    )
+    output_roads_path = ensure_tool_output_name(
+        ensure_gpkg_path(roads_output, label="--roads-output"),
+        tool_number=5,
+        label="--roads-output",
+    )
+    output_audit_nodes_path = ensure_tool_output_name(
+        ensure_gpkg_path(audit_nodes_output, label="--audit-nodes-output"),
+        tool_number=5,
+        label="--audit-nodes-output",
+    )
     node_error2_path = (
         ensure_gpkg_path(node_error2_gpkg, label="--node-error2-gpkg") if node_error2_gpkg is not None else None
     )
@@ -99,9 +112,9 @@ def run_t08_complex_junction_preprocess(
         raise ValueError("--intersection-gpkg must be provided when --node-error2-gpkg is used")
 
     summary_path = (
-        Path(summary_output).expanduser().resolve()
+        ensure_tool_output_name(summary_output, tool_number=5, label="--summary-output")
         if summary_output
-        else output_nodes_path.with_name("t08_complex_junction_preprocess_summary.json")
+        else output_nodes_path.with_name("t08_complex_junction_preprocess_summary_tool5.json")
     )
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 

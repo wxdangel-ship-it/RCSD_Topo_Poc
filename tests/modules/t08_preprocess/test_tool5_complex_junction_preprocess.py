@@ -45,10 +45,10 @@ def test_tool5_builds_complex_junction_and_repairs_one_to_many(tmp_path: Path) -
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
     intersection_gpkg = tmp_path / "input" / "RCSDIntersection.gpkg"
-    nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
-    roads_output = tmp_path / "out" / "roads_fix.gpkg"
-    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
-    summary_output = tmp_path / "out" / "tool5_summary.json"
+    nodes_output = tmp_path / "out" / "nodes_fix_tool5.gpkg"
+    roads_output = tmp_path / "out" / "roads_fix_tool5.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes_tool5.gpkg"
+    summary_output = tmp_path / "out" / "summary_tool5.json"
 
     base_node = {"mainnodeid": None, "has_evd": "no", "is_anchor": "no", "subnodeid": None}
     write_gpkg(
@@ -177,10 +177,10 @@ def test_tool5_detects_one_to_many_but_skips_disconnected_groups(tmp_path: Path)
     nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
     roads_gpkg = tmp_path / "input" / "roads.gpkg"
     intersection_gpkg = tmp_path / "input" / "RCSDIntersection.gpkg"
-    nodes_output = tmp_path / "out" / "nodes_fix.gpkg"
-    roads_output = tmp_path / "out" / "roads_fix.gpkg"
-    audit_nodes_output = tmp_path / "out" / "audit_nodes.gpkg"
-    summary_output = tmp_path / "out" / "tool5_summary.json"
+    nodes_output = tmp_path / "out" / "nodes_fix_tool5.gpkg"
+    roads_output = tmp_path / "out" / "roads_fix_tool5.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes_tool5.gpkg"
+    summary_output = tmp_path / "out" / "summary_tool5.json"
 
     write_gpkg(
         nodes_gpkg,

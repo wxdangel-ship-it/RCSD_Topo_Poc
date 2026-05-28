@@ -24,6 +24,7 @@
 - Tool7：将指定目录下顶层 `GeoJSON` 批量导出为同名 `GPKG`
 - Tool9：对全量 `DivStripZone` 做逐 Patch 预处理并汇总输出
 - Tool10：将指定 JSON / NDJSON 中的 `data.spots` 上车点导出为单个双图层 `GPKG`
+- Tool11：将单个或目录顶层 `MIF` 转换为同目录 `GeoJSON` 与 `GPKG`
 
 ## 文档角色
 
@@ -45,6 +46,8 @@
 - Tool5 对 `A200_road_patch` 与 SW 允许分别配置默认 CRS
 - Tool7 是经批准的参数驱动例外，目录通过脚本参数给定，且只扫描顶层 `.geojson`
 - Tool10 是经批准的参数驱动入口，输入 JSON 通过脚本参数给定
+- Tool11 是经批准的参数驱动入口，可接收 `.mif` 文件或目录路径，目录模式只扫描顶层 `.mif`
+- Tool11 默认保留 MIF 原 CRS；若源数据 CRS 缺失，必须显式传入 `--default-crs`，不得猜测
 - 输出已存在时先删除再重建
 - 命令行执行过程中必须提供阶段级与 Patch / 记录级进度输出
 
@@ -75,6 +78,14 @@
 - `pickup_spots_recommended` 只包含 `isRecommend` 为真值的候选上车点
 - 几何只取 `spots[i].lon/lat`，直接按原始经纬度写入 GPKG，不使用顶层 `lon/lat` 或 `data.location.lon/lat`
 
+## Tool11 备注
+
+- Tool11 默认内网输入目录为 `D:\TestData\POC_Data\first_layer_road_net_v0\SW\MIF`，WSL 路径为 `/mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/MIF`
+- Tool11 可接收单个 `.mif` 文件，也可接收目录路径
+- 目录模式只转换该目录顶层 `.mif`，不递归子目录
+- 每个 `.mif` 输出同目录同名 `.geojson` 与 `.gpkg`
+- Tool11 保留原始属性与源 CRS；不做业务字段加工或几何语义改写
+
 ## 文档入口
 
 - 规格基线：[`../../specs/t00-utility-toolbox/spec.md`](../../specs/t00-utility-toolbox/spec.md)
@@ -103,6 +114,7 @@ make doctor
 .venv/bin/python scripts/t00_tool7_geojson_to_gpkg.py /mnt/d/TestData/POC_Data/some_directory
 .venv/bin/python scripts/t00_tool9_divstripzone_merge.py
 .venv/bin/python scripts/t00_tool10_json_point_export.py /mnt/d/TestData/poi/beijing_1334198.json
+.venv/bin/python scripts/t00_tool11_mif_to_vector.py /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/MIF
 ```
 
 默认数据根位于：

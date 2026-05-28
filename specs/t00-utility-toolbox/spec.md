@@ -16,7 +16,7 @@
 
 ## 3. 当前范围
 
-当前纳入范围为 Tool1-Tool7、Tool9、Tool10；Tool8 当前未登记：
+当前纳入范围为 Tool1-Tool7、Tool9、Tool10、Tool11；Tool8 当前未登记：
 
 - Tool1：Patch 数据整理脚本
 - Tool2：全量 DriveZone 预处理与合并
@@ -27,6 +27,7 @@
 - Tool7：目录级 GeoJSON 批量转 GPKG 工具
 - Tool9：全量 DivStripZone 预处理与合并
 - Tool10：指定 JSON 上车点导出双图层 GPKG 工具
+- Tool11：MIF 转 GeoJSON 与 GPKG 工具
 
 ## 4. 统一规则
 
@@ -45,6 +46,7 @@
   - `A200_road_patch` 默认 `EPSG:3857`
   - SW 原始路网默认 `EPSG:4326`
 - Tool10 只读取 `data.spots[].lon/lat` 作为点几何，按原始经纬度写出为 `EPSG:4326`
+- Tool11 保留 MIF 自带 CRS；若 MIF CRS 缺失，必须显式传入 `--default-crs`，不得猜测
 - 输入若非目标 CRS，先重投影到目标 CRS
 - 允许最小限度几何修复，仅用于保证流程可执行
 - 不做复杂人工推断式修复
@@ -60,6 +62,7 @@
 - 文件头集中参数
 - Tool7 作为批准后的例外，允许通过脚本参数传入目录路径
 - Tool10 作为批准后的例外，允许通过脚本参数传入输入 JSON 路径与可选输出 GPKG 路径
+- Tool11 作为批准后的例外，允许通过脚本参数传入 `.mif` 文件或目录路径
 - 命令行执行过程中必须提供进度输出
 - 至少体现工具开始/结束、阶段级进度、Patch 或记录级进度
 
@@ -264,11 +267,61 @@
   - `coordinate_source_summary`
   - `error_reason_summary`
 
-## 10. 非范围
+## 10. Tool11 需求基线
+
+### 10.1 目标
+
+将单个 MIF 文件，或指定目录顶层的所有 MIF 文件，转换为同目录同名 `GeoJSON` 与 `GPKG` 文件。
+
+### 10.2 输入与输出
+
+- 输入：脚本参数指定的 `.mif` 文件或目录路径
+- 默认内网输入目录：`D:\TestData\POC_Data\first_layer_road_net_v0\SW\MIF`
+- 默认 WSL 输入目录：`/mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/MIF`
+- 目录扫描范围：仅目录顶层 `.mif`
+- 输出：每个输入 `.mif` 同目录同名 `.geojson` 与 `.gpkg`
+
+### 10.3 处理要求
+
+1. 支持单个 `.mif` 文件输入
+2. 支持目录输入，并只扫描目录顶层 `.mif`
+3. 逐文件读取 MIF / MID 原始属性与几何
+4. 优先保留 MIF 自带 CRS
+5. 若 MIF CRS 缺失，必须由调用方显式传入 `--default-crs`，不得根据坐标值猜测
+6. 不做业务字段加工、不做几何语义改写
+7. 单文件转换失败应记录异常并继续处理其它文件
+8. 同名 `.geojson` 或 `.gpkg` 已存在时先删除再重建
+
+### 10.4 日志、摘要与进度
+
+- 日志与摘要落在输入目录或输入文件父目录
+- 命令行输出至少包含：
+  - Tool11 开始/结束
+  - 输入路径解析阶段
+  - 单文件转换阶段
+  - 当前文件进度 / 总文件数
+  - 单文件要素写出进度
+  - 最终统计
+- 摘要至少包含：
+  - `input_path`
+  - `input_mode`
+  - `scan_scope`
+  - `mif_file_count`
+  - `converted_file_count`
+  - `failed_file_count`
+  - `total_source_feature_count`
+  - `total_geojson_feature_count`
+  - `total_gpkg_feature_count`
+  - `total_failed_feature_count`
+  - `default_crs_text`
+  - `file_results`
+  - `error_reason_summary`
+
+## 11. 非范围
 
 当前非范围包括：
 
-- Tool11+
+- Tool12+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
@@ -276,7 +329,7 @@
 - 为未来扩展提前搭重型框架
 - 对 Tool1 至 Tool5 的无关业务重构
 
-## 11. 风险与边界
+## 12. 风险与边界
 
 - 必须防止 `T00` 从内部工具集合扩张为业务生产模块
 - Tool6 若输入 CRS 缺失，必须明确阻塞，不得静默猜测
@@ -284,12 +337,14 @@
 - Tool7 允许目录参数驱动，但只能接收目录参数，不能顺手演化成复杂批处理框架
 - Tool7 若遇到字段名与 GPKG 保留列冲突，必须显式记录最小重命名映射
 - Tool10 只固化 `data.spots` 上车点导出，不扩大为通用 JSON 数据湖或业务生产模块
+- Tool11 只固化 MIF 到 GeoJSON / GPKG 的格式转换，不扩大为通用空间数据治理或业务生产模块
+- Tool11 不得在 MIF CRS 缺失时根据样本坐标反推 CRS
 
-## 12. 进入后续阶段的门禁
+## 13. 进入后续阶段的门禁
 
 满足以下条件后，可继续进入后续增量实现或扩展：
 
 1. `spec / plan / tasks / README / AGENTS / INTERFACE_CONTRACT / architecture/*` 口径一致
-2. Tool1-Tool7、Tool9、Tool10 的输入、输出、覆盖、异常与摘要语义稳定
+2. Tool1-Tool7、Tool9、Tool10、Tool11 的输入、输出、覆盖、异常与摘要语义稳定
 3. 不改变 `T00` 作为内部工具模块的定位
 4. 新工具进入 `T00` 前，先补规格与契约

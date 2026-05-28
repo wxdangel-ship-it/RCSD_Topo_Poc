@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `78` 个。
+- 当前真实执行入口共 `79` 个。
 - 分布概览：
-  - repo 级入口文件：`54`（`Makefile` 1 + `scripts/` 52 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`55`（`Makefile` 1 + `scripts/` 53 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`24`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -100,6 +100,7 @@
 | `t00_tool7_geojson_to_gpkg.py` | `scripts/t00_tool7_geojson_to_gpkg.py` | repo 级 | T00 Tool7 顶层目录 GeoJSON 批量转 GPKG | `active` | 否 |
 | `t00_tool9_divstripzone_merge.py` | `scripts/t00_tool9_divstripzone_merge.py` | repo 级 | T00 Tool9 DivStripZone 预处理与汇总 | `active` | 否 |
 | `t00_tool10_json_point_export.py` | `scripts/t00_tool10_json_point_export.py` | repo 级 | T00 Tool10 指定 JSON 上车点导出双图层 GPKG | `active` | 否 |
+| `t00_tool11_mif_to_vector.py` | `scripts/t00_tool11_mif_to_vector.py` | repo 级 | T00 Tool11 MIF 批量 / 单文件转 GeoJSON 与 GPKG | `active` | 否 |
 | `t08_tool1_vector_convert.py` | `scripts/t08_tool1_vector_convert.py` | repo 级 | T08 Tool1 基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出写回输入目录下同名文件，采用流式转换并输出进度，支持可选目标 EPSG 与 summary 输出 | `active` | 否 |
 | `t08_tool2_road_preprocess.py` | `scripts/t08_tool2_road_preprocess.py` | repo 级 | T08 Tool2 Road GPKG 预处理，补充 `patch_id` 与原始 `kind` 并输出 `EPSG:3857` GPKG | `active` | 否 |
 | `t08_tool3_nodes_type_aggregation.py` | `scripts/t08_tool3_nodes_type_aggregation.py` | repo 级 | T08 Tool3 Nodes 类型聚合，补充 `kind_2 / grade_2` 并处理环岛 mainnode，输出 `EPSG:3857` Nodes GPKG | `active` | 否 |

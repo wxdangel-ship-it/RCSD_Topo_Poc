@@ -14,6 +14,7 @@
   - Tool7 `目录级 GeoJSON 批量转 GPKG`
   - Tool9 `DivStripZone 预处理与汇总输出`
   - Tool10 `指定 JSON 上车点导出双图层 GPKG`
+  - Tool11 `MIF 转 GeoJSON 与 GPKG`
 
 本文件用于固化 `T00` 当前稳定的输入、输出、覆盖、跳过与摘要语义。
 
@@ -40,9 +41,13 @@
   - 只读取 `data.spots[].lon/lat` 作为点几何
   - 原始经纬度直接按 `EPSG:4326` 写入 GPKG
   - 不使用顶层 `lon/lat` 或 `data.location.lon/lat` 生成几何
+- Tool11 CRS 口径：
+  - 优先读取 MIF 自带 CRS 并原样写入 GeoJSON / GPKG
+  - 若 MIF CRS 缺失，必须由调用方通过 `--default-crs` 显式指定
+  - 不根据坐标数值或样本位置猜测 CRS
 - 修复口径：只允许最小修复；修复失败则跳过并记录异常
 - 覆盖口径：旧输出已存在时先删除再重建
-- 执行体验：命令行必须输出工具开始/结束、阶段级和 Patch / 记录级进度；Tool7 允许目录参数驱动
+- 执行体验：命令行必须输出工具开始/结束、阶段级和 Patch / 文件 / 记录级进度；Tool7 / Tool10 / Tool11 允许参数驱动
 
 ## 2.1 官方入口
 
@@ -58,6 +63,7 @@
 - `.venv/bin/python scripts/t00_tool7_geojson_to_gpkg.py <directory>`
 - `.venv/bin/python scripts/t00_tool9_divstripzone_merge.py`
 - `.venv/bin/python scripts/t00_tool10_json_point_export.py <input-json> [--output <output-gpkg>]`
+- `.venv/bin/python scripts/t00_tool11_mif_to_vector.py [<mif-file-or-directory>] [--default-crs <crs>]`
 
 ## 3. Tool1 契约
 
@@ -168,6 +174,7 @@
 - Tool6：`nodes.geojson` 是正式输出
 - Tool7：指定目录下与每个 `.geojson` 同名的 `.gpkg` 是正式输出
 - Tool10：指定输出路径或输入同目录同名 `.gpkg` 是正式输出
+- Tool11：每个输入 `.mif` 同目录同名 `.geojson` 与 `.gpkg` 是正式输出
 
 ## 10. Tool7 契约
 
@@ -242,18 +249,56 @@
   - `coordinate_source_summary`
   - `error_reason_summary`
 
-## 13. 非范围契约
+## 13. Tool11 契约
+
+- 输入：脚本参数指定的 `.mif` 文件或目录路径；未指定时默认使用内网 MIF 目录
+- 默认内网目录：`D:\TestData\POC_Data\first_layer_road_net_v0\SW\MIF`
+- 默认 WSL 路径：`/mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/MIF`
+- 扫描范围：
+  - 单文件模式只转换该 `.mif`
+  - 目录模式只扫描目录顶层 `.mif`，不递归子目录
+- 输出：每个输入 `.mif` 同目录生成同名 `.geojson` 与 `.gpkg`
+- 输出格式：
+  - `GeoJSON`
+  - `GPKG`
+- GPKG 图层名：默认使用输入文件 stem 的安全化结果
+- CRS 口径：
+  - 优先保留 MIF 自带 CRS
+  - MIF CRS 缺失时必须显式传入 `--default-crs`
+  - 不根据坐标值、文件名或样本范围猜测 CRS
+- 属性口径：保留 MIF / MID 原始属性，不新增业务字段
+- 几何口径：不做业务几何加工或 silent fix；缺失几何、读写失败或驱动异常记录到摘要
+- 覆盖口径：同名 `.geojson` 或 `.gpkg` 已存在时先删除再重建
+- 日志与摘要落点：
+  - 目录模式落在输入目录
+  - 单文件模式落在输入文件父目录
+- 摘要至少包含：
+  - `input_path`
+  - `input_mode`
+  - `scan_scope`
+  - `mif_file_count`
+  - `converted_file_count`
+  - `failed_file_count`
+  - `total_source_feature_count`
+  - `total_geojson_feature_count`
+  - `total_gpkg_feature_count`
+  - `total_failed_feature_count`
+  - `default_crs_text`
+  - `file_results`
+  - `error_reason_summary`
+
+## 14. 非范围契约
 
 当前不承诺以下能力：
 
-- Tool11+
+- Tool12+
 - Tool3 全量重写
 - 复杂 manifest 治理
 - 数据库落仓
 - 重型产线编排
 - 超出当前需求的中间产物正式化治理
 
-## 14. 后续实现注意事项
+## 15. 后续实现注意事项
 
 - 参数名、日志文件名和具体 CLI 形式可继续在脚本层补足
 - 但不得偏离当前契约语义

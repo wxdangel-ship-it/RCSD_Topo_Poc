@@ -34,6 +34,10 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.json_point_to_gpkg_export import 
     JsonPointToGpkgConfig,
     run_json_point_to_gpkg_export,
 )
+from rcsd_topo_poc.modules.t00_utility_toolbox.mif_to_vector_export import (
+    MifToVectorConfig,
+    run_mif_to_vector_export,
+)
 
 __all__ = [
     "PatchBootstrapConfig",
@@ -54,4 +58,6 @@ __all__ = [
     "run_divstripzone_merge",
     "JsonPointToGpkgConfig",
     "run_json_point_to_gpkg_export",
+    "MifToVectorConfig",
+    "run_mif_to_vector_export",
 ]

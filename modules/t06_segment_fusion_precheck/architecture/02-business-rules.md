@@ -53,3 +53,18 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 9. retained dual-direction reachability check for `swsd_directionality=dual`
 10. retained leaf endpoint check
 11. retained RCSDRoad output and compatibility replaceable output
+
+## Step3
+
+- Step3 只消费 Step2 replaceable RCSDSegment，不处理 rejected Segment。
+- 对每个 replaceable Segment，以 `swsd_segment_id` 建立替换单元，记录 SWSD `pair_nodes / junc_nodes / roads` 与 Step2 retained RCSD road / node。
+- 所有 replaceable Segment 的 `pair_nodes + junc_nodes` 组成待重建语义路口集合 C。
+- 每个 C 必须记录其涉及的 Node，并建立 C 与关联替换单元的关系。
+- 被替换 Segment 涉及的 SWSDRoad 必须从 F-RCSD Road 中清除。
+- SWSDNode 仅清除被替换 SWSDRoad 的端点 Node，不清除 C 对应 SWSD 语义路口组下的所有 Node。
+- Step2 retained RCSDRoad / RCSDNode 必须加入 F-RCSD 输出。
+- F-RCSD 输出中 `source=1` 表示 RCSD 数据，`source=2` 表示 SWSD 数据。
+- 对每个 C，若原 main node 仍保留，则继续使用原 main node；若原 main node 已删除，则重新选择一个保留 Node 作为 main node。
+- C 内其余 Node 的 `mainnodeid` 必须替换为新的 main node id。
+- C 内 Node 的 `kind / grade / kind_2 / grade_2 / closed_con` 必须继承原 main node 对应 Node 的属性。
+- Step3 必须输出删除 SWSDRoad、删除 SWSDNode、加入 RCSDRoad、加入 RCSDNode、C 重建关系与 main node 选择过程的审计。

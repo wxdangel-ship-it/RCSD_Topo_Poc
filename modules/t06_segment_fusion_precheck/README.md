@@ -1,19 +1,33 @@
 # T06 Segment Fusion Precheck
 
-`t06_segment_fusion_precheck` 是 SWSD-RCSD Segment 数据融合的前置模块。当前只做 Step1 / Step2，不执行替换。
+`t06_segment_fusion_precheck` 是 SWSD-RCSD Segment 数据融合模块。当前 Step1 / Step2 已实现；Step3 已纳入 T06 正式范围，处于 SpecKit 冻结与实现准备阶段。
 
 ## 当前范围
 
 - Step1：从 T01 `segment.gpkg` 中识别可参与融合的 SWSD Segment。
 - Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络，仅使用 buffer-based 策略构建 RCSDSegment 审查成果；兼容输出 `candidates / replaceable` 由 buffer 成功结果派生。
+- Step3：消费 Step2 可替换 RCSDSegment，按 Segment 单元输出融合后的 F-RCSD Road / Node，并重建涉及的语义路口关系。
 
 ## 非目标
 
-- 不执行 Segment 替换。
-- 不重塑路口。
 - 不修改 T01 / T05 输出。
 - 不新增 repo CLI。
 - 仅保留一个内网运行包装脚本：`scripts/t06_run_innernet_precheck.py`。
+- Step3 不处理 Step2 rejected Segment，不通过几何猜测补救未通过 Step2 的 Segment。
+
+## Step3 状态
+
+Step3 任务书位于 `specs/t06-step3-segment-replacement/`。当前已确认的业务口径：
+
+- 只消费 Step2 replaceable 成果。
+- 删除被替换 SWSD Segment 涉及的 SWSDRoad。
+- SWSDNode 只删除被替换 SWSDRoad 的端点 Node，不删除整个 SWSD 语义路口组。
+- 引入 Step2 retained RCSDSegment 中的 RCSDRoad / RCSDNode。
+- 输出 F-RCSD Road / Node，`source=1` 表示 RCSD，`source=2` 表示 SWSD。
+- 待重建语义路口 C 来自 replaceable Segment 的 `pair_nodes + junc_nodes`。
+- 若 C 的原 main node 被删除，需要重新选择 main node，并让 C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。
+
+Step3 当前提供独立运行脚本，不改变现有 Step1 + Step2 内网脚本默认行为。输出文件名固定为 `t06_frcsd_road.* / t06_frcsd_node.*`；SWSD / RCSD 原始 `id` 冲突时保留原 id，依赖 `source` 区分，并写入 `t06_step3_id_collision_audit.*`；新 main node 选择优先级为原 main node、剩余 SWSD node 最小 id、加入 C 的 RCSD node 最小 id。
 
 ## Callable Runner
 
@@ -46,6 +60,21 @@ artifacts = run_t06_segment_fusion_precheck(
 ```
 
 脚本会运行 Step1 + Step2，并在 stdout 打印包含输入路径、输出路径与核心计数的 JSON 摘要。
+
+## Step3 独立脚本
+
+Step3 脚本消费既有 T06 run root 下的 Step2 replaceable 成果：
+
+```bash
+.venv/bin/python scripts/t06_run_step3_segment_replacement.py \
+  --t06-run-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t06_segment_fusion_precheck/t06_innernet_precheck \
+  --swsd-segment /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg \
+  --swsd-roads /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/roads.gpkg \
+  --swsd-nodes /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg \
+  --t05-phase2-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment/t05_phase2_innernet
+```
+
+默认读取 `<t06-run-root>/step2_extract_rcsd_segments/t06_rcsd_segment_replaceable.gpkg`，并将 Step3 输出写入同一 run root 的 `step3_segment_replacement/`。
 
 ## 文本证据包 helper（非官方 CLI）
 

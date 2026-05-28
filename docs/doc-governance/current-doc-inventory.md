@@ -58,10 +58,11 @@
 | `modules/t05_junction_surface_fusion/INTERFACE_CONTRACT.md` | T05 稳定契约面 | `source_of_truth` | 固化 Phase 1 / Phase 2 callable runner、输入、输出、relation 字段、copy-on-write RCSD 成果与审计契约 |
 | `modules/t05_junction_surface_fusion/README.md` | T05 操作者入口 | `operator_guide` | 说明 Phase 1 / Phase 2 callable runner、内网 handoff / experiment 脚本、输出文件与审计口径 |
 | `modules/t05_junction_surface_fusion/AGENTS.md` | T05 durable guidance | `durable_guidance` | 只保留 T05 Phase 1 / Phase 2 执行边界、输入只读、copy-on-write 输出与入口边界 |
-| `modules/t06_segment_fusion_precheck/architecture/*` | T06 模块长期架构真相 | `source_of_truth` | T06 Step1 / Step2 长期文档主表面；覆盖 SWSD 可融合 Segment 识别、RCSD candidate 抽取与趋势硬筛 |
-| `modules/t06_segment_fusion_precheck/INTERFACE_CONTRACT.md` | T06 稳定契约面 | `source_of_truth` | 固化 Step1 / Step2 callable runner、T01/T05 输入、输出文件、字段、失败原因与验收标准 |
-| `modules/t06_segment_fusion_precheck/README.md` | T06 操作者入口 | `operator_guide` | 说明模块内 runner、内网脚本入口、输入输出、非目标和审计产物 |
-| `modules/t06_segment_fusion_precheck/AGENTS.md` | T06 durable guidance | `durable_guidance` | 只保留 T06 Step1 / Step2 范围、内网脚本包装边界、不回改 T01/T05 输出的模块边界 |
+| `modules/t06_segment_fusion_precheck/architecture/*` | T06 模块长期架构真相 | `source_of_truth` | T06 Step1 / Step2 / Step3 长期文档主表面；覆盖 SWSD 可融合 Segment 识别、buffer-based RCSDSegment 构建、replaceable 集合、F-RCSD 输出与语义路口 C 重建 |
+| `modules/t06_segment_fusion_precheck/INTERFACE_CONTRACT.md` | T06 稳定契约面 | `source_of_truth` | 固化 Step1 / Step2 / Step3 callable runner、T01/T05/Step2 输入、输出文件、字段、失败原因与验收标准 |
+| `modules/t06_segment_fusion_precheck/README.md` | T06 操作者入口 | `operator_guide` | 说明模块内 runner、内网脚本入口、输入输出、Step3 状态、非目标和审计产物 |
+| `modules/t06_segment_fusion_precheck/AGENTS.md` | T06 durable guidance | `durable_guidance` | 只保留 T06 Step1 / Step2 / Step3 范围、内网脚本包装边界、copy-on-write 与不回改 T01/T05/Step2 输入的模块边界 |
+| `specs/t06-buffer-rcsd-segment-extraction/*`、`specs/t06-step3-segment-replacement/*` | T06 变更工件 | `active_change_artifact` | 记录 T06 Step2 buffer-based RCSDSegment 构建与 Step3 Segment 替换输出 / 语义路口重建的规格、计划与任务，不替代模块长期真相 |
 | `modules/t07_semantic_junction_anchor/architecture/*` | T07 模块长期架构真相 | `source_of_truth` | T07 Step1 / Step2 长期文档主表面；覆盖语义路口级 `has_evd / is_anchor / anchor_reason`，不处理 Segment |
 | `modules/t07_semantic_junction_anchor/INTERFACE_CONTRACT.md` | T07 稳定契约面 | `source_of_truth` | 固化 Step1 / Step2 callable runner、`nodes / DriveZone / RCSDIntersection` 输入、字段、输出文件、审计、失败原因与验收标准 |
 | `modules/t07_semantic_junction_anchor/README.md` | T07 操作者入口 | `operator_guide` | 说明模块内 runner、内网脚本入口、输入输出、非目标和审计产物 |

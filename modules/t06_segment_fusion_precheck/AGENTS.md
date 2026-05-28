@@ -4,17 +4,21 @@
 
 ## 当前阶段
 
-- 当前模块正式范围仅覆盖 T06 前两步：
+- 当前模块正式范围已扩展到 T06 三个阶段：
   - Step1：识别可参与融合的 SWSD Segment 单元。
   - Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络，仅使用 buffer-based 策略构建 RCSDSegment 审查成果；兼容 `candidates / replaceable` 输出由 buffer 成功结果派生。
-- 本轮不执行 Segment 替换，不重塑路口，不修改 T01 / T05 输出。
+  - Step3：消费 Step2 可替换 RCSDSegment，按 Segment 单元输出融合后的 F-RCSD Road / Node，并重建涉及的语义路口关系。
+- Step3 已通过 `specs/t06-step3-segment-replacement/` 纳入 T06；当前实现尚未落地，进入实现前必须先冻结该 SpecKit 任务中的剩余待确认项。
+- Step3 仍采用 copy-on-write，不修改 T01 / T05 / Step2 输入成果。
 
 ## 禁止事项
 
 - 不新增 repo CLI、`tools/`、`Makefile`、模块 `run.py` 或模块 `__main__.py`。
-- 当前唯一 T06 repo 级脚本入口是 `scripts/t06_run_innernet_precheck.py`，只作为内网 Step1 + Step2 运行包装，底层仍调用模块内 runner。
+- T06 repo 级脚本入口：
+  - `scripts/t06_run_innernet_precheck.py`：内网 Step1 + Step2 运行包装。
+  - `scripts/t06_run_step3_segment_replacement.py`：独立 Step3 运行脚本，消费 Step2 replaceable 成果。
 - T06 文本证据包压缩 / 解压只允许作为模块内 `text_bundle.py` helper 暴露，通过 `.venv/bin/python -c ...` 调用；不登记为 repo 官方 CLI。
-- 不原地修改 `segment.gpkg`、`nodes.gpkg`、`intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg` 或 `swsd_roads_path`。
+- 不原地修改 `segment.gpkg`、`nodes.gpkg`、`intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg`、Step2 输出或 `swsd_roads_path`。
 - 不根据局部数据反推上游字段语义；字段语义以 T01 / T05 / T06 契约为准。
 - 不把 `pair_nodes` 顺序或 `segmentid A_B` 顺序当作 SWSD 单向方向。
 
@@ -23,6 +27,7 @@
 - 只允许模块内 callable runner：
   - `run_t06_step1_identify_fusion_units(...)`
   - `run_t06_step2_extract_rcsd_segments(...)`
+  - `run_t06_step3_segment_replacement(...)`
   - `run_t06_segment_fusion_precheck(...)`
 - 允许模块内非官方文本证据包 helper：
   - `run_t06_export_text_bundle(...)`
@@ -31,13 +36,15 @@
   - `run_t06_export_text_bundle_from_args(...)`
   - `run_t06_export_input_text_bundle_from_args(...)`
   - `run_t06_decode_text_bundle_from_args(...)`
-- 内网执行脚本 `scripts/t06_run_innernet_precheck.py` 只能转发到 `run_t06_segment_fusion_precheck(...)`，不得内置替代业务逻辑。
+- 内网执行脚本 `scripts/t06_run_innernet_precheck.py` 只能转发到 `run_t06_segment_fusion_precheck(...)`，不得内置替代业务逻辑；`scripts/t06_run_step3_segment_replacement.py` 只能转发到 `run_t06_step3_segment_replacement(...)`。
 - Step1 按 `pair_nodes + junc_nodes` 的语义路口 ID 集合判断 EVD 与 anchor/fallback 资格；其中 `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 `has_evd / is_anchor` 判定并视为通过，`pair_nodes` 不适用该豁免。
 - Step2 只接受 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id > 0` 的 relation；relation 必检集合为 `pair_nodes + 非 junc_kind2_exempt_nodes 的 junc_nodes`。
 - Step2 buffer 审查构图前必须按 `formway` bit7/128 识别提前右转 road；若该 road 两端均与非提前右转候选 road 形成二度链接，则保留参与 Segment 构建，否则排除。不得通过几何形态反推提前右转。
 - `junc_nodes` 在 RCSD 抽取中是内部通过 + 侧向阻断，不是 hard-stop。
 - Step2 不再执行 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、主轴 / 粗长度趋势或唯一性筛选；`swsd_directionality=dual` 时必须执行 RCSD retained graph 双向可达硬审计。
 - retained RCSD graph 不允许存在 required / optional allowed 以外的额外 T05 mapped semantic nodes。
+- Step3 只消费 Step2 replaceable 成果：删除被替换 SWSDRoad 及其端点 SWSDNode，引入 retained RCSDRoad / RCSDNode，输出 `source=1` 的 RCSD 数据与 `source=2` 的 SWSD 数据；不得删除整个 SWSD 语义路口组。
+- Step3 重建的语义路口 C 来自 replaceable Segment 的 `pair_nodes + junc_nodes`；若原 main node 被删除，必须重新选择 main node，并让 C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。
 
 ## 必做验证
 

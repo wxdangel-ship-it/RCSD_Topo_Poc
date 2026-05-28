@@ -10,6 +10,7 @@
 - `graph_builders.py`：RCSD semantic node canonicalizer 与 buffer graph edge dataclass。
 - `step2_extract_rcsd_segments.py`：Step2 orchestration。
 - `buffer_segment_extraction.py`：Step2 buffer-based RCSDSegment 候选子图、提前右转二度链接保留 / 排除、连通分量覆盖、最小 corridor 子图构建、裁剪与硬审计。
+- `step3_segment_replacement.py`：Step3 替换单元解析、SWSD road/node 删除集、RCSD road/node 引入集、junction C 重建与 F-RCSD 输出。当前为计划新增模块。
 - `runner.py`：组合 runner。
 - `text_bundle.py`：非官方文本证据包压缩 / 解压 helper，复用内网运行脚本的输入参数形状，记录输入文件大小 / SHA256、运行参数、summary 与可复跑命令；同时支持中心点 + profile/radius 的输入切片包。
 
@@ -26,3 +27,5 @@
 - 双向 retained corridor 内部若存在 `formway & 1024 != 0` 的调头 road，且两端 node 均已在 retained corridor 内，则保留该调头 road。
 - 裁剪后的 retained graph 必须只以 pair 对应 RCSD semantic nodes 为叶子端点；junc 或其它节点成为叶子端点时输出 buffer rejected。
 - `t06_rcsd_segment_candidates / replaceable` 是兼容输出，由同一 buffer 成功结果派生；不再执行旧 pair-to-pair BFS、主轴 / 粗长度趋势或唯一性筛选；`swsd_directionality=dual` 的 retained graph 需通过 RCSD direction 双向可达审计，`swsd_directionality=single` 必须构建一条覆盖全部 required semantic nodes 的 pair 端到另一端有向 corridor。
+- Step3 以 Step2 replaceable 为唯一替换输入，不重新做 RCSD Segment 搜索；先按 Segment 聚合删除 / 引入集合，再按语义路口 C 聚合重建 mainnodeid 与继承属性，避免逐 Segment 覆盖同一 C 造成不一致。
+- Step3 原始 id 冲突不重写、不拒绝，统一依赖 `source` 字段区分，并输出 id collision audit；新 main node 选择顺序为原 main node、剩余 SWSD node 最小 id、加入 C 的 RCSD node 最小 id。

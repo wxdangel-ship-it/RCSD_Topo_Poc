@@ -6,7 +6,7 @@
 
 ## 0. 成果输出命名约束
 
-除输入文件本身外，T08 所有成果输出文件名必须在扩展名前以 `_toolX` 结尾，`X` 为工具编号。例如 Tool2 的事件 Road 输出为 `event_road_0a_17_tool2.gpkg`。
+除输入文件本身外，T08 所有成果输出文件名必须在扩展名前以 `_toolX` 结尾，`X` 为工具编号。例如 Tool2 的事件 Road 输出为 `event_road_0a_tool2.gpkg`。
 
 ## 1. 当前工具
 
@@ -34,12 +34,12 @@
   - `t08_road_patch_tool2.gpkg`
   - `t08_road_patch_unmatched_tool2.gpkg`
   - `t08_road_patch_kind_tool2.gpkg`
-  - `event_road_0a_17_tool2.gpkg`
+  - `event_road_0a_tool2.gpkg`
   - `t08_road_patch_summary_tool2.json`
   - `t08_road_kind_summary_tool2.json`
   - `t08_road_preprocess_summary_tool2.json`
 - 输出 CRS：`EPSG:3857`。
-- 删除规则：Kind enrich 后，若 Road `kind` 任一 `|` 分隔 token 的后两位包含 `0a`，且任一 token 的后两位包含 `17`，则从 `t08_road_patch_kind_tool2.gpkg` 删除该 Road，并将被删除 Road 输出到 `event_road_0a_17_tool2.gpkg`。
+- 删除规则：Kind enrich 后，若 Road `kind` 任一 `|` 分隔 token 的后两位为 `17`，则从 `t08_road_patch_kind_tool2.gpkg` 删除该 Road，并将被删除 Road 输出到 `event_road_0a_tool2.gpkg`。
 - 所有输入、输出路径必须通过参数提供。
 
 ### Tool3：Nodes 类型聚合
@@ -110,16 +110,16 @@
   - `node_error_tool6.gpkg`
   - `node_error_summary_tool6.json`
 - 输出 CRS：`EPSG:3857`。
-- 输出边界：Tool6 只输出质检候选，不改写输入 Nodes/Roads，不执行修复；CSV 最后一列为 `是否修复`，默认值为 `0`，人工改为 `1` 后供 Tool4 后续修复流程消费。
-- 下游边界：本轮不改变 Tool4 既有入口；Tool4 消费 Tool6 人工确认结果、以及 `错误交叉路口` 的具体修复目标由后续 Tool4 契约补齐。
+- 输出边界：Tool6 只输出质检候选，不改写输入 Nodes/Roads，不执行修复；CSV 最后一列为 `是否修复`，默认值为 `1`，人工确认不需要修复的数据改为 `0` 后供 Tool4 后续修复流程消费。
+- 下游边界：本轮不改变 Tool4 既有入口；Tool4 消费 Tool6 人工确认结果、以及 `错误交叉路口_T型路口 / 错误交叉路口_非交叉路口` 的具体修复目标由后续 Tool4 契约补齐。
 - 入度 / 出度定义：
   - `direction in {0,1}` 表示双向 road，对两端语义路口分别 `in_degree + 1 / out_degree + 1`。
   - `direction = 2` 表示 `snodeid -> enodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
   - `direction = 3` 表示 `enodeid -> snodeid`，source 语义路口 `out_degree + 1`，target 语义路口 `in_degree + 1`。
   - 若 Road 两端属于同一语义路口，则该 Road 既视为进入该语义路口也视为退出该语义路口，`in_degree + 1 / out_degree + 1`；双向 Road 同样只按该 Road 对入度和出度各加 `1`。
 - 连续分歧合流类型质检：
-  - 识别 `kind_2 = 16` 且 `out_degree = 2` 的分歧语义路口。
-  - 以进入分歧路口 road 的方向为参考，将两个退出 road 分为左侧 road 与右侧 road；沿左侧 road 前进方向跟踪，忽略二度连接，`100m` 内找到 `kind_2 = 8` 且 `in_degree = 2` 的合流语义路口时形成连续分合流候选。
+  - 识别 `kind_2 = 16` 且 `in_degree = 1 / out_degree = 2` 的分歧语义路口。
+  - 以进入分歧路口 road 的方向为参考，将两个退出 road 分为左侧 road 与右侧 road；沿左侧 road 前进方向跟踪，忽略二度连接，`100m` 内找到 `kind_2 = 8` 且 `in_degree = 2 / out_degree = 1` 的合流语义路口时形成连续分合流候选；分歧与合流路口之间距离不得超过 `100m`。
   - 进入分歧 road、分歧左侧退出 road、合流退出 road 需构成横方向；默认横向夹角阈值为 `35°`。
   - 沿分歧右侧退出 road 前进方向跟踪，并沿合流右侧进入 road 的退出方向反向跟踪；若两者跟踪至相同语义路口，或两者末端距离小于起点距离、末端距离 `<20m` 且平行夹角 `<=20°`，则视为具备 T 型竖方向。
   - 若关联 road 的 `road.kind` 任一 `|` 分隔 token 后两位为 `17`，则 suppress，不输出错误。
@@ -127,7 +127,9 @@
   - 命中输出 `error_type = 错误分歧合流路口`，同一组连续分合流默认输出 diverge/merge 两条 node 质检记录并共享 `error_group_id`。
 - 交叉路口类型质检：
   - 识别 `kind_2 = 4` 且 `in_degree = 2 / out_degree = 2` 的语义路口。
-  - 命中输出 `error_type = 错误交叉路口`；本工具不写建议修复目标，修复目标由 Tool4 后续流程确定。
+  - 若进入和退出 road 形成四个不同角度方向，则视为真实交叉路口，不输出错误。
+  - 若符合 T 型路口特征：横方向为一条单向进入 road 与一条单向退出 road，竖方向为双向平行单向 road 或一条双向 road，且竖方向 road 位于横方向前进方向右侧，则输出 `error_type = 错误交叉路口_T型路口`。
+  - 其余 `kind_2 = 4 / in_degree = 2 / out_degree = 2` 候选输出 `error_type = 错误交叉路口_非交叉路口`。
 - summary 必须记录输入、输出、参数、字段解析、CRS、错误类型计数、suppressed 连续分合流候选与性能字段。
 - 所有输入、输出路径必须通过参数提供。
 
@@ -160,7 +162,7 @@ Tool2：
   --road-patch-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_tool2.gpkg \
   --road-patch-unmatched-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_unmatched_tool2.gpkg \
   --road-patch-kind-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_kind_tool2.gpkg \
-  --event-road-0a-17-output /mnt/d/TestData/POC_Data/t08_preprocess/road/event_road_0a_17_tool2.gpkg
+  --event-road-0a-output /mnt/d/TestData/POC_Data/t08_preprocess/road/event_road_0a_tool2.gpkg
 ```
 
 Tool3：
@@ -224,7 +226,7 @@ Tool6：
 - `--road-patch-output`：PatchID 输出 GPKG。
 - `--road-patch-unmatched-output`：PatchID 未匹配输出 GPKG。
 - `--road-patch-kind-output`：Kind 补充输出 GPKG。
-- `--event-road-0a-17-output`：`kind` 同时包含 `0a` 辅路属性与 `17` 主辅路出入口属性的删除 Road 事件输出 GPKG。
+- `--event-road-0a-output`：`kind` 包含 `17` 主辅路出入口属性的删除 Road 事件输出 GPKG。
 - `--patch-summary-output / --kind-summary-output / --summary-output`：可选 summary 输出路径。
 - `--buffer-distance-meters`：Kind 空间匹配缓冲距离，默认 `1.0`。
 - `--spatial-predicate`：Kind 空间匹配谓词，默认 `covers`。
@@ -299,9 +301,9 @@ Tool6：
 
 1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，所有输出均为输入目录下追加 `_tool1` 的目标格式文件。
 2. Tool2 只接受 GPKG 输入。
-3. Tool2 主输出与 `event_road_0a_17_tool2.gpkg` 均为 GPKG 且 CRS 为 `EPSG:3857`。
+3. Tool2 主输出与 `event_road_0a_tool2.gpkg` 均为 GPKG 且 CRS 为 `EPSG:3857`。
 4. Tool2 `patch_id` 多值按逗号拼接。
-5. Tool2 `kind` 多值按 `|` 去重拼接；同时具有 `0a` 与 `17` 道路类型属性的 Road 必须从主 Kind 输出删除，并写入事件 Road 输出。
+5. Tool2 `kind` 多值按 `|` 去重拼接；具有 `17` 主辅路出入口属性的 Road 必须从主 Kind 输出删除，并写入事件 Road 输出。
 6. Tool3 输出 Nodes GPKG 且 CRS 为 `EPSG:3857`。
 7. Tool3 保留原始 `kind / grade`，只在 copy-on-write 输出中写入 `kind_2 / grade_2 / mainnodeid / subnodeid`。
 8. Tool3 summary 可追溯环岛组、更新节点数、CRS、字段解析与阶段性能；Tool3 不再构造复杂分歧 / 合流路口。
@@ -312,8 +314,8 @@ Tool6：
 13. Tool5 输出 Nodes / Roads / audit Nodes GPKG 且 CRS 为 `EPSG:3857`。
 14. Tool5 summary 可追溯复杂分歧 / 合流组、`node_error_2_detection`、错误 1 对多合并组、删除 Road、audit node 数量、CRS、字段解析与阶段性能。
 15. Tool6 输出 `node_error_tool6.csv / node_error_tool6.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
-16. Tool6 CSV 最后一列为 `是否修复`，默认值为 `0`；Tool6 不修改输入 Nodes/Roads。
-17. Tool6 可追溯 `错误分歧合流路口 / 错误交叉路口`、入出度、相关 Road、suppressed 原因、CRS 与性能 summary。
+16. Tool6 CSV 最后一列为 `是否修复`，默认值为 `1`；人工确认不需要修复的数据改为 `0`；Tool6 不修改输入 Nodes/Roads。
+17. Tool6 可追溯 `错误分歧合流路口 / 错误交叉路口_T型路口 / 错误交叉路口_非交叉路口`、入出度、相关 Road、suppressed 原因、CRS 与性能 summary。
 18. 所有路径均由参数提供，不写死内网目录。
 19. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
 20. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。

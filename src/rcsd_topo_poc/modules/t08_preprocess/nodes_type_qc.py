@@ -29,8 +29,10 @@ DIVERGE_KIND_2 = 16
 MERGE_KIND_2 = 8
 CROSS_KIND_2 = 4
 ERROR_DIVMERGE = "错误分歧合流路口"
-ERROR_CROSS = "错误交叉路口"
+ERROR_CROSS_T = "错误交叉路口_T型路口"
+ERROR_CROSS_NON_CROSS = "错误交叉路口_非交叉路口"
 MANUAL_FIX_FIELD = "是否修复"
+MANUAL_FIX_DEFAULT = 1
 
 ProgressCallback = Callable[[str], None]
 
@@ -218,6 +220,9 @@ def run_t08_nodes_type_qc(
     cross_rows = _detect_cross_errors(
         semantic_nodes=semantic_nodes,
         topology=topology,
+        parsed_roads=parsed_roads,
+        vertical_parallel_angle_degrees=vertical_parallel_angle_degrees,
+        horizontal_angle_degrees=horizontal_angle_degrees,
     )
     error_rows = sorted(
         [*divmerge_rows, *cross_rows],
@@ -267,7 +272,7 @@ def run_t08_nodes_type_qc(
             "vertical_parallel_angle_degrees": vertical_parallel_angle_degrees,
             "vertical_endpoint_distance_m": vertical_endpoint_distance_m,
             "horizontal_angle_degrees": horizontal_angle_degrees,
-            "manual_fix_default": 0,
+            "manual_fix_default": MANUAL_FIX_DEFAULT,
         },
         "field_audit": {
             "node_id_field": node_id_field,
@@ -332,6 +337,7 @@ def _detect_divmerge_errors(
         semantic
         for semantic in semantic_nodes.values()
         if semantic.representative.kind_2 == DIVERGE_KIND_2
+        and int(topology.in_degree.get(semantic.semantic_id, 0)) == 1
         and int(topology.out_degree.get(semantic.semantic_id, 0)) == 2
     ]
     for index, diverge in enumerate(sorted(candidates, key=lambda item: _sort_key(item.semantic_id)), start=1):
@@ -392,7 +398,10 @@ def _evaluate_divmerge_candidate(
         merge = semantic_nodes.get(merge_trace.end_semantic_id)
         if merge is None or merge.representative.kind_2 != MERGE_KIND_2:
             continue
-        if int(topology.in_degree.get(merge.semantic_id, 0)) != 2:
+        if int(topology.in_degree.get(merge.semantic_id, 0)) != 2 or int(topology.out_degree.get(merge.semantic_id, 0)) != 1:
+            continue
+        start_distance = diverge.representative.geometry.distance(merge.representative.geometry)
+        if start_distance > search_distance_m:
             continue
 
         merge_out = _choose_merge_out_edge(
@@ -447,7 +456,6 @@ def _evaluate_divmerge_candidate(
             max_distance_m=search_distance_m,
         )
         same_endpoint = right_trace.end_semantic_id == merge_side_trace.end_semantic_id
-        start_distance = diverge.representative.geometry.distance(merge.representative.geometry)
         end_distance = right_trace.end_point.distance(merge_side_trace.end_point)
         vertical_parallel_angle = _angle_degrees(_trace_vector(diverge, right_trace), _trace_vector(merge, merge_side_trace))
         vertical_ok = same_endpoint or (
@@ -534,29 +542,173 @@ def _detect_cross_errors(
     *,
     semantic_nodes: dict[str, SemanticNode],
     topology: Topology,
+    parsed_roads: list[ParsedRoad],
+    vertical_parallel_angle_degrees: float,
+    horizontal_angle_degrees: float,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for semantic in semantic_nodes.values():
         in_degree = int(topology.in_degree.get(semantic.semantic_id, 0))
         out_degree = int(topology.out_degree.get(semantic.semantic_id, 0))
         if semantic.representative.kind_2 == CROSS_KIND_2 and in_degree == 2 and out_degree == 2:
-            group_id = f"cross_not_cross_{semantic.semantic_id}"
+            classification = _classify_cross_error(
+                semantic_id=semantic.semantic_id,
+                topology=topology,
+                parsed_roads=parsed_roads,
+                vertical_parallel_angle_degrees=vertical_parallel_angle_degrees,
+                horizontal_angle_degrees=horizontal_angle_degrees,
+            )
+            if classification is None:
+                continue
+            group_id = f"{classification['group_prefix']}_{semantic.semantic_id}"
             rows.append(
                 _error_row(
                     error_id=f"{group_id}:{semantic.semantic_id}",
                     error_group_id=group_id,
-                    error_type=ERROR_CROSS,
+                    error_type=str(classification["error_type"]),
                     semantic=semantic,
-                    role="cross",
+                    role=str(classification["role"]),
                     paired_semantic_node_id="",
                     topology=topology,
                     related_node_ids=semantic.member_node_ids,
-                    related_road_ids=(),
-                    reason="kind_2_4_with_in_degree_2_out_degree_2",
-                    audit={"in_degree": in_degree, "out_degree": out_degree, "suggested_fix_kind_2": None},
+                    related_road_ids=_road_ids(parsed_roads, classification["related_road_indices"]),
+                    reason=str(classification["reason"]),
+                    audit=classification["audit"],
                 )
             )
     return rows
+
+
+def _classify_cross_error(
+    *,
+    semantic_id: str,
+    topology: Topology,
+    parsed_roads: list[ParsedRoad],
+    vertical_parallel_angle_degrees: float,
+    horizontal_angle_degrees: float,
+) -> dict[str, Any] | None:
+    in_edges = tuple(topology.in_edges.get(semantic_id, ()))
+    out_edges = tuple(topology.out_edges.get(semantic_id, ()))
+    related_road_indices = tuple(sorted({edge.road_idx for edge in (*in_edges, *out_edges)}))
+    if _has_four_distinct_edge_directions((*in_edges, *out_edges), angle_threshold_degrees=horizontal_angle_degrees):
+        return None
+
+    t_pattern = _find_cross_t_pattern(
+        in_edges=in_edges,
+        out_edges=out_edges,
+        vertical_parallel_angle_degrees=vertical_parallel_angle_degrees,
+        horizontal_angle_degrees=horizontal_angle_degrees,
+    )
+    if t_pattern is not None:
+        return {
+            "error_type": ERROR_CROSS_T,
+            "group_prefix": "cross_t",
+            "role": "cross_t",
+            "reason": "kind_2_4_matches_t_junction_pattern",
+            "related_road_indices": t_pattern["related_road_indices"],
+            "audit": {
+                "in_degree": int(topology.in_degree.get(semantic_id, 0)),
+                "out_degree": int(topology.out_degree.get(semantic_id, 0)),
+                "suggested_fix_kind_2": 2048,
+                **t_pattern["audit"],
+            },
+        }
+
+    return {
+        "error_type": ERROR_CROSS_NON_CROSS,
+        "group_prefix": "cross_non_cross",
+        "role": "cross_non_cross",
+        "reason": "kind_2_4_with_in_degree_2_out_degree_2_not_cross_pattern",
+        "related_road_indices": related_road_indices,
+        "audit": {
+            "in_degree": int(topology.in_degree.get(semantic_id, 0)),
+            "out_degree": int(topology.out_degree.get(semantic_id, 0)),
+            "suggested_fix_kind_2": None,
+            "in_road_ids": [edge.road_id for edge in in_edges],
+            "out_road_ids": [edge.road_id for edge in out_edges],
+            "four_distinct_direction_pattern": False,
+            "t_junction_pattern": False,
+        },
+    }
+
+
+def _find_cross_t_pattern(
+    *,
+    in_edges: tuple[DirectedEdge, ...],
+    out_edges: tuple[DirectedEdge, ...],
+    vertical_parallel_angle_degrees: float,
+    horizontal_angle_degrees: float,
+) -> dict[str, Any] | None:
+    for horizontal_in in sorted(in_edges, key=lambda edge: (_sort_key(edge.road_id), _sort_key(edge.src))):
+        for horizontal_out in sorted(out_edges, key=lambda edge: (_sort_key(edge.road_id), _sort_key(edge.dst))):
+            if horizontal_in.road_idx == horizontal_out.road_idx:
+                continue
+            horizontal_angle = _angle_degrees(horizontal_in.vector, horizontal_out.vector)
+            if horizontal_angle > horizontal_angle_degrees:
+                continue
+            vertical_in = [edge for edge in in_edges if edge is not horizontal_in]
+            vertical_out = [edge for edge in out_edges if edge is not horizontal_out]
+            if len(vertical_in) != 1 or len(vertical_out) != 1:
+                continue
+            t_pattern = _evaluate_cross_t_vertical(
+                horizontal_in=horizontal_in,
+                horizontal_out=horizontal_out,
+                vertical_in=vertical_in[0],
+                vertical_out=vertical_out[0],
+                vertical_parallel_angle_degrees=vertical_parallel_angle_degrees,
+                horizontal_angle_degrees=horizontal_angle,
+            )
+            if t_pattern is not None:
+                return t_pattern
+    return None
+
+
+def _evaluate_cross_t_vertical(
+    *,
+    horizontal_in: DirectedEdge,
+    horizontal_out: DirectedEdge,
+    vertical_in: DirectedEdge,
+    vertical_out: DirectedEdge,
+    vertical_parallel_angle_degrees: float,
+    horizontal_angle_degrees: float,
+) -> dict[str, Any] | None:
+    vertical_mode: str | None = None
+    vertical_parallel_angle = _parallel_angle_degrees(vertical_in.vector, vertical_out.vector)
+    if vertical_in.road_idx == vertical_out.road_idx:
+        vertical_mode = "bidirectional_road"
+    elif vertical_parallel_angle <= vertical_parallel_angle_degrees:
+        vertical_mode = "parallel_oneway_roads"
+    if vertical_mode is None:
+        return None
+
+    horizontal_vector = _unit_vector(
+        (
+            horizontal_in.vector[0] + horizontal_out.vector[0],
+            horizontal_in.vector[1] + horizontal_out.vector[1],
+        )
+    )
+    vertical_on_right = _cross(horizontal_vector, vertical_out.vector) < 0
+    if not vertical_on_right:
+        return None
+
+    related_road_indices = tuple(
+        sorted({horizontal_in.road_idx, horizontal_out.road_idx, vertical_in.road_idx, vertical_out.road_idx})
+    )
+    return {
+        "related_road_indices": related_road_indices,
+        "audit": {
+            "four_distinct_direction_pattern": False,
+            "t_junction_pattern": True,
+            "horizontal_in_road_id": horizontal_in.road_id,
+            "horizontal_out_road_id": horizontal_out.road_id,
+            "vertical_in_road_id": vertical_in.road_id,
+            "vertical_out_road_id": vertical_out.road_id,
+            "vertical_mode": vertical_mode,
+            "vertical_on_right": True,
+            "horizontal_angle_degrees": round(float(horizontal_angle_degrees), 3),
+            "vertical_parallel_angle_degrees": round(float(vertical_parallel_angle), 3),
+        },
+    }
 
 
 def _parse_nodes(
@@ -952,7 +1104,7 @@ def _error_row(
         "related_road_ids": ",".join(related_road_ids),
         "reason": reason,
         "audit_json": json.dumps(audit, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
-        MANUAL_FIX_FIELD: 0,
+        MANUAL_FIX_FIELD: MANUAL_FIX_DEFAULT,
         "geometry": semantic.representative.geometry,
     }
 
@@ -1014,6 +1166,21 @@ def _angle_degrees(a: tuple[float, float], b: tuple[float, float]) -> float:
     bu = _unit_vector(b)
     dot = max(-1.0, min(1.0, au[0] * bu[0] + au[1] * bu[1]))
     return abs(math.degrees(math.acos(dot)))
+
+
+def _parallel_angle_degrees(a: tuple[float, float], b: tuple[float, float]) -> float:
+    angle = _angle_degrees(a, b)
+    return min(angle, abs(180.0 - angle))
+
+
+def _has_four_distinct_edge_directions(edges: tuple[DirectedEdge, ...], *, angle_threshold_degrees: float) -> bool:
+    if len(edges) != 4:
+        return False
+    for left_index, left in enumerate(edges):
+        for right in edges[left_index + 1 :]:
+            if _angle_degrees(left.vector, right.vector) <= angle_threshold_degrees:
+                return False
+    return True
 
 
 def _signed_angle_degrees(a: tuple[float, float], b: tuple[float, float]) -> float:

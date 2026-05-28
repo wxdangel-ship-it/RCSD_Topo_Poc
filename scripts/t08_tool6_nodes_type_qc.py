@@ -19,7 +19,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="T08 Tool6: QC Nodes semantic junction types without repair.")
     parser.add_argument("--nodes-gpkg", required=True, help="Input Nodes GPKG with id/kind_2 fields.")
     parser.add_argument("--roads-gpkg", required=True, help="Input Roads GPKG with id/snodeid/enodeid/direction fields.")
-    parser.add_argument("--csv-output", required=True, help="Output node error CSV; last column is 是否修复, default 0.")
+    parser.add_argument("--csv-output", required=True, help="Output node error CSV; last column is 是否修复, default 1.")
     parser.add_argument("--error-nodes-output", required=True, help="Output node_error Tool6 GPKG for visual review.")
     parser.add_argument("--nodes-layer", help="Optional Nodes input layer name.")
     parser.add_argument("--roads-layer", help="Optional Roads input layer name.")

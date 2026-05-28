@@ -12,7 +12,7 @@ Tool2 分两步执行：
 
 1. Patch join：按 `road.id = patch_road.road_id` 为 Road 写入 `patch_id`，未命中记录写入 unmatched 图层。
 2. Kind enrich：对 Patch join 输出和原始 Kind Road 统一投影到 `EPSG:3857` 后执行空间匹配，写入 `kind`。
-3. Event Road split：若 Road `kind` 中任一 `|` 分隔 token 的后两位包含 `0a`，且任一 token 的后两位包含 `17`，则从主 Kind 输出删除该 Road，并写入 `event_road_0a_17_tool2.gpkg`。
+3. Event Road split：若 Road `kind` 中任一 `|` 分隔 token 的后两位为 `17`，则从主 Kind 输出删除该 Road，并写入 `event_road_0a_tool2.gpkg`。
 
 Tool2 命令脚本输出 Patch join / Kind enrich 阶段进度；Road / Raw Kind GPKG 优先采用直接 SQLite GeoPackage 快读，无法识别标准 GPKG 元数据时回退 Fiona；Patch join 对 Patch Road 采用属性流式索引，只读取 `road_id / patch_id` 并跳过几何构造与投影；Kind enrich 复用 raw Kind token 缓存与 STRtree 分块批量查询结果，summary 记录阶段耗时、吞吐、空间候选数与事件 Road 删除数；四个 GPKG 输出统一复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
@@ -45,9 +45,9 @@ Tool5 的错误 1 对多处理先复用 T02 `node_error_2` 生成口径：以输
 
 Tool6 读取 Nodes 与 Roads，按语义路口分组计算入度 / 出度，只输出人工质检候选，不改写输入数据。
 
-1. 连续分歧合流质检：识别 `kind_2 = 16 / out_degree = 2` 的分歧路口，沿退出左侧 road 在 `100m` 内追踪 `kind_2 = 8 / in_degree = 2` 的合流路口；再校验横方向共线、竖方向同端点或末端距离 `<20m` 且平行夹角 `<=20°`、竖方向位于横方向右侧。关联 road `kind` 后两位为 `17` 时 suppress。
-2. 交叉路口质检：识别 `kind_2 = 4` 且 `in_degree = 2 / out_degree = 2` 的语义路口。
-3. 输出 `node_error_tool6.csv / node_error_tool6.gpkg / node_error_summary_tool6.json`；CSV 最后一列 `是否修复` 默认 `0`，人工改为 `1` 后由 Tool4 后续修复流程消费。
+1. 连续分歧合流质检：识别 `kind_2 = 16 / in_degree = 1 / out_degree = 2` 的分歧路口，沿退出左侧 road 在 `100m` 内追踪 `kind_2 = 8 / in_degree = 2 / out_degree = 1` 的合流路口，且分歧与合流距离不得超过 `100m`；再校验横方向共线、竖方向同端点或末端距离 `<20m` 且平行夹角 `<=20°`、竖方向位于横方向右侧。关联 road `kind` 后两位为 `17` 时 suppress。
+2. 交叉路口质检：识别 `kind_2 = 4` 且 `in_degree = 2 / out_degree = 2` 的语义路口；四个不同角度方向不输出错误；符合右侧 T 型特征输出 `错误交叉路口_T型路口`，其余输出 `错误交叉路口_非交叉路口`。
+3. 输出 `node_error_tool6.csv / node_error_tool6.gpkg / node_error_summary_tool6.json`；CSV 最后一列 `是否修复` 默认 `1`，人工确认不需要修复的数据改为 `0` 后由 Tool4 后续修复流程消费。
 
 ## 输出策略
 

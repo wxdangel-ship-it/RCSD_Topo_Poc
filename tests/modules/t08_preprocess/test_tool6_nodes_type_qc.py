@@ -112,18 +112,20 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
         _node("right_stub", 1, 30.0, -60.0),
         _node("exit", 1, 90.0, 0.0),
         _node("cross", 4, 200.0, 0.0),
-        _node("cin1", 1, 190.0, -10.0),
-        _node("cin2", 1, 190.0, 10.0),
-        _node("cout1", 1, 210.0, -10.0),
-        _node("cout2", 1, 210.0, 10.0),
+        _node("cross_west", 1, 190.0, 0.0),
+        _node("cross_east", 1, 210.0, 0.0),
+        _node("cross_south", 1, 200.0, -10.0),
         _node("noncross", 4, 300.0, 0.0),
-        _node("nc_in_h", 1, 290.0, 0.0),
-        _node("nc_in_v", 1, 300.0, -10.0),
-        _node("nc_out_h", 1, 310.0, 0.0),
-        _node("nc_out_diag", 1, 310.0, 10.0),
+        _node("nc_west", 1, 290.0, 0.0),
+        _node("nc_south", 1, 300.0, -10.0),
         _node("cross_ok", 4, 400.0, 0.0),
         _node("ok_west", 1, 390.0, 0.0),
         _node("ok_south", 1, 400.0, -10.0),
+        _node("true_cross", 4, 500.0, 0.0),
+        _node("tc_west", 1, 490.0, 0.0),
+        _node("tc_south", 1, 500.0, -10.0),
+        _node("tc_east", 1, 510.0, 0.0),
+        _node("tc_north", 1, 500.0, 10.0),
     ]
     roads = [
         _road("r-entry-div", "entry", "div", [(-20.0, 0.0), (0.0, 0.0)]),
@@ -132,33 +134,42 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
         _road("r-right-merge", "right_join", "merge", [(30.0, -40.0), (60.0, 0.0)]),
         _road("r-right-stub", "right_join", "right_stub", [(30.0, -40.0), (30.0, -60.0)]),
         _road("r-merge-exit", "merge", "exit", [(60.0, 0.0), (90.0, 0.0)]),
-        _road("r-cross-in-1", "cin1", "cross", [(190.0, -10.0), (200.0, 0.0)]),
-        _road("r-cross-in-2", "cin2", "cross", [(190.0, 10.0), (200.0, 0.0)]),
-        _road("r-cross-out-1", "cross", "cout1", [(200.0, 0.0), (210.0, -10.0)]),
-        _road("r-cross-out-2", "cross", "cout2", [(200.0, 0.0), (210.0, 10.0)]),
-        _road("r-nc-in-h", "nc_in_h", "noncross", [(290.0, 0.0), (300.0, 0.0)]),
-        _road("r-nc-in-v", "nc_in_v", "noncross", [(300.0, -10.0), (300.0, 0.0)]),
-        _road("r-nc-out-h", "noncross", "nc_out_h", [(300.0, 0.0), (310.0, 0.0)]),
-        _road("r-nc-out-diag", "noncross", "nc_out_diag", [(300.0, 0.0), (310.0, 10.0)]),
+        _road("r-cross-in", "cross_west", "cross", [(190.0, 0.0), (200.0, 0.0)]),
+        _road("r-cross-out", "cross", "cross_east", [(200.0, 0.0), (210.0, 0.0)]),
+        _road("r-cross-vertical", "cross_south", "cross", [(200.0, -10.0), (200.0, 0.0)], direction=0),
+        _road("r-nc-in-h", "nc_west", "noncross", [(290.0, 0.0), (300.0, 0.0)]),
+        _road("r-nc-out-h", "noncross", "nc_west", [(300.0, 0.0), (290.0, 0.0)]),
+        _road("r-nc-in-v", "nc_south", "noncross", [(300.0, -10.0), (300.0, 0.0)]),
+        _road("r-nc-out-v", "noncross", "nc_south", [(300.0, 0.0), (300.0, -10.0)]),
         _road("r-ok-west", "ok_west", "cross_ok", [(390.0, 0.0), (400.0, 0.0)], direction=0),
         _road("r-ok-south", "ok_south", "cross_ok", [(400.0, -10.0), (400.0, 0.0)], direction=0),
+        _road("r-tc-in-west", "tc_west", "true_cross", [(490.0, 0.0), (500.0, 0.0)]),
+        _road("r-tc-in-south", "tc_south", "true_cross", [(500.0, -10.0), (500.0, 0.0)]),
+        _road("r-tc-out-east", "true_cross", "tc_east", [(500.0, 0.0), (510.0, 0.0)]),
+        _road("r-tc-out-north", "true_cross", "tc_north", [(500.0, 0.0), (500.0, 10.0)]),
     ]
 
     csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="basic_errors", nodes=nodes, roads=roads)
 
     assert [row["error_type"] for row in csv_rows].count("错误分歧合流路口") == 2
     assert [row["error_type"] for row in csv_rows].count("错误交叉路口_T型路口") == 1
-    assert [row["error_type"] for row in csv_rows].count("错误交叉路口_非交叉路口") == 1
+    assert [row["error_type"] for row in csv_rows].count("错误交叉路口_非交叉路口") == 2
     assert csv_rows[0]["是否修复"] == "1"
     assert list(csv_rows[0])[-1] == "是否修复"
     assert {row["semantic_node_id"] for row in csv_rows if row["error_type"] == "错误分歧合流路口"} == {"div", "merge"}
     assert {row["semantic_node_id"] for row in csv_rows if row["error_type"] == "错误交叉路口_T型路口"} == {"cross"}
-    assert {row["semantic_node_id"] for row in csv_rows if row["error_type"] == "错误交叉路口_非交叉路口"} == {"noncross"}
-    assert "cross_ok" not in {row["semantic_node_id"] for row in csv_rows}
-    assert len(gpkg_rows) == 4
+    assert {row["semantic_node_id"] for row in csv_rows if row["error_type"] == "错误交叉路口_非交叉路口"} == {
+        "cross_ok",
+        "noncross",
+    }
+    reason_by_node = {row["semantic_node_id"]: row["reason"] for row in csv_rows}
+    assert reason_by_node["cross_ok"] == "only_two_bidirectional_roads"
+    assert reason_by_node["noncross"] == "two_outward_angle_groups_each_has_in_and_out"
+    assert "true_cross" not in {row["semantic_node_id"] for row in csv_rows}
+    assert len(gpkg_rows) == 5
     assert summary["counts"]["error_count_by_type"] == {
         "错误交叉路口_T型路口": 1,
-        "错误交叉路口_非交叉路口": 1,
+        "错误交叉路口_非交叉路口": 2,
         "错误分歧合流路口": 2,
     }
     assert summary["counts"]["divmerge_error_group_count"] == 1
@@ -191,6 +202,36 @@ def test_tool6_suppresses_divmerge_when_associated_road_kind_suffix_17(tmp_path:
     assert summary["counts"]["error_feature_count"] == 0
     assert summary["counts"]["divmerge_suppressed_count"] == 1
     assert summary["divmerge_suppressed"][0]["reason"] == "associated_road_kind_suffix_17"
+
+
+def test_tool6_suppresses_divmerge_when_oneway_vertical_links_diverge_and_merge(tmp_path: Path) -> None:
+    nodes = [
+        _node("entry", 1, -20.0, 0.0),
+        _node("div", 16, 0.0, 0.0),
+        _node("merge", 8, 60.0, 0.0),
+        _node("right_mid", 1, 30.0, -40.0),
+        _node("exit", 1, 90.0, 0.0),
+    ]
+    roads = [
+        _road("r-entry-div", "entry", "div", [(-20.0, 0.0), (0.0, 0.0)]),
+        _road("r-div-merge", "div", "merge", [(0.0, 0.0), (60.0, 0.0)]),
+        _road("r-div-right-mid", "div", "right_mid", [(0.0, 0.0), (30.0, -40.0)]),
+        _road("r-right-mid-merge", "right_mid", "merge", [(30.0, -40.0), (60.0, 0.0)]),
+        _road("r-merge-exit", "merge", "exit", [(60.0, 0.0), (90.0, 0.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(
+        tmp_path,
+        case_name="oneway_vertical_link_suppressed",
+        nodes=nodes,
+        roads=roads,
+    )
+
+    assert csv_rows == []
+    assert gpkg_rows == []
+    assert summary["counts"]["error_feature_count"] == 0
+    assert summary["counts"]["divmerge_suppressed_count"] == 1
+    assert summary["divmerge_suppressed"][0]["reason"] == "oneway_vertical_connects_diverge_and_merge"
 
 
 def test_tool6_requires_strict_divmerge_degrees_for_qc(tmp_path: Path) -> None:

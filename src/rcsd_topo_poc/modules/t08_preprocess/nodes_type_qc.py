@@ -641,24 +641,6 @@ def _classify_cross_error(
                 "incident_road_ids": [leg.road_id for leg in incident_legs],
             },
         )
-    if len(angle_groups) == 2 and all(_angle_group_has_in_and_out(group) for group in angle_groups):
-        return _cross_non_cross_classification(
-            semantic_id=semantic_id,
-            topology=topology,
-            related_road_indices=related_road_indices,
-            reason="two_outward_angle_groups_each_has_in_and_out",
-            audit_extra={
-                "outward_angle_group_count": len(angle_groups),
-                "angle_groups": [
-                    {
-                        "road_ids": [leg.road_id for leg in group],
-                        "has_in": _angle_group_has_in(group),
-                        "has_out": _angle_group_has_out(group),
-                    }
-                    for group in angle_groups
-                ],
-            },
-        )
 
     t_pattern = _find_cross_t_pattern(
         in_edges=in_edges,
@@ -680,6 +662,25 @@ def _classify_cross_error(
                 **t_pattern["audit"],
             },
         }
+
+    if len(angle_groups) == 2 and all(_angle_group_has_in_and_out(group) for group in angle_groups):
+        return _cross_non_cross_classification(
+            semantic_id=semantic_id,
+            topology=topology,
+            related_road_indices=related_road_indices,
+            reason="two_outward_angle_groups_each_has_in_and_out",
+            audit_extra={
+                "outward_angle_group_count": len(angle_groups),
+                "angle_groups": [
+                    {
+                        "road_ids": [leg.road_id for leg in group],
+                        "has_in": _angle_group_has_in(group),
+                        "has_out": _angle_group_has_out(group),
+                    }
+                    for group in angle_groups
+                ],
+            },
+        )
 
     return _cross_non_cross_classification(
         semantic_id=semantic_id,

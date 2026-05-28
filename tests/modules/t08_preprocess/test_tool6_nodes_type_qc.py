@@ -177,6 +177,29 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
     assert summary["params"]["manual_fix_default"] == 1
 
 
+def test_tool6_cross_t_takes_priority_over_two_angle_non_cross(tmp_path: Path) -> None:
+    nodes = [
+        _node("cross", 4, 0.0, 0.0),
+        _node("west", 1, -10.0, 0.0),
+        _node("east", 1, 10.0, 0.0),
+        _node("side_in", 1, 10.0, 3.0),
+        _node("side_out", 1, -10.0, -3.0),
+    ]
+    roads = [
+        _road("r-horizontal-in", "west", "cross", [(-10.0, 0.0), (0.0, 0.0)]),
+        _road("r-horizontal-out", "cross", "east", [(0.0, 0.0), (10.0, 0.0)]),
+        _road("r-side-in", "side_in", "cross", [(10.0, 3.0), (0.0, 0.0)]),
+        _road("r-side-out", "cross", "side_out", [(0.0, 0.0), (-10.0, -3.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="cross_t_priority", nodes=nodes, roads=roads)
+
+    assert [row["error_type"] for row in csv_rows] == ["错误交叉路口_T型路口"]
+    assert csv_rows[0]["reason"] == "kind_2_4_matches_t_junction_pattern"
+    assert len(gpkg_rows) == 1
+    assert summary["counts"]["error_count_by_type"] == {"错误交叉路口_T型路口": 1}
+
+
 def test_tool6_suppresses_divmerge_when_associated_road_kind_suffix_17(tmp_path: Path) -> None:
     nodes = [
         _node("entry", 1, -20.0, 0.0),

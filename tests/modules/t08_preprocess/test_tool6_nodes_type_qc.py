@@ -117,7 +117,7 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
         _node("cross_south", 1, 200.0, -10.0),
         _node("noncross", 4, 300.0, 0.0),
         _node("nc_west", 1, 290.0, 0.0),
-        _node("nc_south", 1, 300.0, -10.0),
+        _node("nc_east", 1, 310.0, 0.0),
         _node("cross_ok", 4, 400.0, 0.0),
         _node("ok_west", 1, 390.0, 0.0),
         _node("ok_south", 1, 400.0, -10.0),
@@ -139,8 +139,8 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
         _road("r-cross-vertical", "cross_south", "cross", [(200.0, -10.0), (200.0, 0.0)], direction=0),
         _road("r-nc-in-h", "nc_west", "noncross", [(290.0, 0.0), (300.0, 0.0)]),
         _road("r-nc-out-h", "noncross", "nc_west", [(300.0, 0.0), (290.0, 0.0)]),
-        _road("r-nc-in-v", "nc_south", "noncross", [(300.0, -10.0), (300.0, 0.0)]),
-        _road("r-nc-out-v", "noncross", "nc_south", [(300.0, 0.0), (300.0, -10.0)]),
+        _road("r-nc-in-e", "nc_east", "noncross", [(310.0, 0.0), (300.0, 0.0)]),
+        _road("r-nc-out-e", "noncross", "nc_east", [(300.0, 0.0), (310.0, 0.0)]),
         _road("r-ok-west", "ok_west", "cross_ok", [(390.0, 0.0), (400.0, 0.0)], direction=0),
         _road("r-ok-south", "ok_south", "cross_ok", [(400.0, -10.0), (400.0, 0.0)], direction=0),
         _road("r-tc-in-west", "tc_west", "true_cross", [(490.0, 0.0), (500.0, 0.0)]),
@@ -164,7 +164,7 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
     }
     reason_by_node = {row["semantic_node_id"]: row["reason"] for row in csv_rows}
     assert reason_by_node["cross_ok"] == "only_two_bidirectional_roads"
-    assert reason_by_node["noncross"] == "two_outward_angle_groups_each_has_in_and_out"
+    assert reason_by_node["noncross"] == "two_parallel_outward_angle_groups_each_has_in_and_out"
     assert "true_cross" not in {row["semantic_node_id"] for row in csv_rows}
     assert len(gpkg_rows) == 5
     assert summary["counts"]["error_count_by_type"] == {
@@ -177,27 +177,45 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
     assert summary["params"]["manual_fix_default"] == 1
 
 
-def test_tool6_cross_t_takes_priority_over_two_angle_non_cross(tmp_path: Path) -> None:
+def test_tool6_two_angle_nonparallel_cross_candidate_is_not_error(tmp_path: Path) -> None:
     nodes = [
         _node("cross", 4, 0.0, 0.0),
         _node("west", 1, -10.0, 0.0),
-        _node("east", 1, 10.0, 0.0),
-        _node("side_in", 1, 10.0, 3.0),
-        _node("side_out", 1, -10.0, -3.0),
+        _node("south", 1, 0.0, -10.0),
     ]
     roads = [
-        _road("r-horizontal-in", "west", "cross", [(-10.0, 0.0), (0.0, 0.0)]),
-        _road("r-horizontal-out", "cross", "east", [(0.0, 0.0), (10.0, 0.0)]),
-        _road("r-side-in", "side_in", "cross", [(10.0, 3.0), (0.0, 0.0)]),
-        _road("r-side-out", "cross", "side_out", [(0.0, 0.0), (-10.0, -3.0)]),
+        _road("r-west-in", "west", "cross", [(-10.0, 0.0), (0.0, 0.0)]),
+        _road("r-west-out", "cross", "west", [(0.0, 0.0), (-10.0, 0.0)]),
+        _road("r-south-in", "south", "cross", [(0.0, -10.0), (0.0, 0.0)]),
+        _road("r-south-out", "cross", "south", [(0.0, 0.0), (0.0, -10.0)]),
     ]
 
-    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="cross_t_priority", nodes=nodes, roads=roads)
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="two_angle_nonparallel", nodes=nodes, roads=roads)
 
-    assert [row["error_type"] for row in csv_rows] == ["错误交叉路口_T型路口"]
-    assert csv_rows[0]["reason"] == "kind_2_4_matches_t_junction_pattern"
-    assert len(gpkg_rows) == 1
-    assert summary["counts"]["error_count_by_type"] == {"错误交叉路口_T型路口": 1}
+    assert csv_rows == []
+    assert gpkg_rows == []
+    assert summary["counts"]["error_feature_count"] == 0
+
+
+def test_tool6_three_angle_cross_candidate_is_not_error_unless_t(tmp_path: Path) -> None:
+    nodes = [
+        _node("cross", 4, 0.0, 0.0),
+        _node("west", 1, -10.0, 0.0),
+        _node("south", 1, 0.0, -10.0),
+        _node("east", 1, 10.0, 0.0),
+    ]
+    roads = [
+        _road("r-west-in", "west", "cross", [(-10.0, 0.0), (0.0, 0.0)]),
+        _road("r-west-out", "cross", "west", [(0.0, 0.0), (-10.0, 0.0)]),
+        _road("r-south-in", "south", "cross", [(0.0, -10.0), (0.0, 0.0)]),
+        _road("r-east-out", "cross", "east", [(0.0, 0.0), (10.0, 0.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="three_angle_non_t", nodes=nodes, roads=roads)
+
+    assert csv_rows == []
+    assert gpkg_rows == []
+    assert summary["counts"]["error_feature_count"] == 0
 
 
 def test_tool6_suppresses_divmerge_when_associated_road_kind_suffix_17(tmp_path: Path) -> None:

@@ -641,6 +641,32 @@ def _classify_cross_error(
                 "incident_road_ids": [leg.road_id for leg in incident_legs],
             },
         )
+    if (
+        len(angle_groups) == 2
+        and all(_angle_group_has_in_and_out(group) for group in angle_groups)
+        and _angle_groups_are_parallel(
+            angle_groups,
+            parallel_angle_degrees=vertical_parallel_angle_degrees,
+        )
+    ):
+        return _cross_non_cross_classification(
+            semantic_id=semantic_id,
+            topology=topology,
+            related_road_indices=related_road_indices,
+            reason="two_parallel_outward_angle_groups_each_has_in_and_out",
+            audit_extra={
+                "outward_angle_group_count": len(angle_groups),
+                "outward_angle_group_parallel": True,
+                "angle_groups": [
+                    {
+                        "road_ids": [leg.road_id for leg in group],
+                        "has_in": _angle_group_has_in(group),
+                        "has_out": _angle_group_has_out(group),
+                    }
+                    for group in angle_groups
+                ],
+            },
+        )
 
     t_pattern = _find_cross_t_pattern(
         in_edges=in_edges,
@@ -663,35 +689,7 @@ def _classify_cross_error(
             },
         }
 
-    if len(angle_groups) == 2 and all(_angle_group_has_in_and_out(group) for group in angle_groups):
-        return _cross_non_cross_classification(
-            semantic_id=semantic_id,
-            topology=topology,
-            related_road_indices=related_road_indices,
-            reason="two_outward_angle_groups_each_has_in_and_out",
-            audit_extra={
-                "outward_angle_group_count": len(angle_groups),
-                "angle_groups": [
-                    {
-                        "road_ids": [leg.road_id for leg in group],
-                        "has_in": _angle_group_has_in(group),
-                        "has_out": _angle_group_has_out(group),
-                    }
-                    for group in angle_groups
-                ],
-            },
-        )
-
-    return _cross_non_cross_classification(
-        semantic_id=semantic_id,
-        topology=topology,
-        related_road_indices=related_road_indices,
-        reason="kind_2_4_with_in_degree_2_out_degree_2_not_cross_pattern",
-        audit_extra={
-            "outward_angle_group_count": len(angle_groups),
-            "angle_groups": [[leg.road_id for leg in group] for group in angle_groups],
-        },
-    )
+    return None
 
 
 def _cross_non_cross_classification(
@@ -809,6 +807,16 @@ def _angle_group_has_out(group: list[IncidentLeg]) -> bool:
 
 def _angle_group_has_in_and_out(group: list[IncidentLeg]) -> bool:
     return _angle_group_has_in(group) and _angle_group_has_out(group)
+
+
+def _angle_groups_are_parallel(
+    groups: list[list[IncidentLeg]],
+    *,
+    parallel_angle_degrees: float,
+) -> bool:
+    if len(groups) != 2 or any(not group for group in groups):
+        return False
+    return _parallel_angle_degrees(groups[0][0].outward_vector, groups[1][0].outward_vector) <= parallel_angle_degrees
 
 
 def _find_cross_t_pattern(

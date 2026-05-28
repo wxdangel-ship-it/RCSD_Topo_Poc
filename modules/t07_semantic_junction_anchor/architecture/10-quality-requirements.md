@@ -34,5 +34,6 @@
 ## 性能可验证
 
 - GPKG 输出必须复用 T08 的直接 SQLite GeoPackage 写出路径，避免 Fiona 逐要素 sink 写出成为 full-input 主要瓶颈。
+- Step3 在安全条件满足时必须使用 GPKG copy + SQLite 字段更新和 CRS84 relation 原样筛选快路径，避免无业务必要的节点几何重写与 relation 投影。
 - perf 输出至少记录 node 数、语义路口数、处理数、跳过数、候选数、冲突数、总耗时与 `stage_timings`。
 - `stage_timings` 至少区分读取、空间索引、语义路口准备、业务处理、冲突处理和写出阶段。

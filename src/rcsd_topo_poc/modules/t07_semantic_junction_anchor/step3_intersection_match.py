@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import json
+import shutil
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from rcsd_topo_poc.modules.t00_utility_toolbox.common import TARGET_CRS, write_json
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import TARGET_CRS, prefer_vector_input_path, write_json
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_io import write_relation_geojson_crs84
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_models import RELATION_OUTPUT_CRS_NAME
 
 from .runner import (
-    LoadedFeature,
     T07RunError,
     _audit_row,
     _build_node_index,
@@ -18,6 +20,8 @@ from .runner import (
     _elapsed_since,
     _normalize_id,
     _read_vector_layer,
+    _resolve_gpkg_crs,
+    _resolve_gpkg_layer,
     _resolve_group,
     _stage_root,
     _write_csv,
@@ -43,10 +47,12 @@ class T07Step3Artifacts:
 @dataclass(frozen=True)
 class RelationRecord:
     feature_index: int
-    target_id: str
+    target_id: str | None
     base_id: str | None
     status: str | None
-    feature: LoadedFeature
+    properties: dict[str, Any]
+    geometry: Any
+    geometry_mode: str
 
 
 def _is_zero_id(value: str | None) -> bool:
@@ -63,38 +69,26 @@ def _is_success_relation(record: RelationRecord) -> bool:
 
 
 def _build_relations_by_target(
-    relation_features: list[LoadedFeature],
+    relation_features: list[RelationRecord],
     audit_rows: list[dict[str, Any]],
 ) -> tuple[dict[str, list[RelationRecord]], int]:
     relations_by_target: dict[str, list[RelationRecord]] = {}
     invalid_relation_count = 0
-    for feature in relation_features:
-        props = feature.properties
-        target_id = _normalize_id(props.get("target_id"))
-        base_id = _normalize_id(props.get("base_id"))
-        status = _normalize_id(props.get("status"))
-        if target_id is None:
+    for record in relation_features:
+        if record.target_id is None:
             invalid_relation_count += 1
             audit_rows.append(
                 _audit_row(
                     scope="intersection_match_all",
                     status="skipped",
                     reason="missing_target_id",
-                    detail=f"relation feature[{feature.feature_index}] has no target_id.",
-                    base_id=base_id,
-                    relation_status=status,
+                    detail=f"relation feature[{record.feature_index}] has no target_id.",
+                    base_id=record.base_id,
+                    relation_status=record.status,
                 )
             )
             continue
-        relations_by_target.setdefault(target_id, []).append(
-            RelationRecord(
-                feature_index=feature.feature_index,
-                target_id=target_id,
-                base_id=base_id,
-                status=status,
-                feature=feature,
-            )
-        )
+        relations_by_target.setdefault(record.target_id, []).append(record)
     duplicate_count = 0
     for target_id, records in relations_by_target.items():
         if len(records) <= 1:
@@ -113,10 +107,9 @@ def _build_relations_by_target(
     return relations_by_target, invalid_relation_count + duplicate_count
 
 
-def _build_rcsd_semantic_id_set(rcsdnode_features: list[LoadedFeature]) -> set[str]:
+def _build_rcsd_semantic_id_set(rcsdnode_properties: list[dict[str, Any]]) -> set[str]:
     rcsd_ids: set[str] = set()
-    for feature in rcsdnode_features:
-        props = feature.properties
+    for props in rcsdnode_properties:
         node_id = _normalize_id(props.get("id"))
         if node_id is not None and not _is_zero_id(node_id):
             rcsd_ids.add(node_id)
@@ -129,10 +122,231 @@ def _build_rcsd_semantic_id_set(rcsdnode_features: list[LoadedFeature]) -> set[s
 
 
 def _relation_feature_payload(record: RelationRecord) -> dict[str, Any]:
-    return {
-        "properties": dict(record.feature.properties),
-        "geometry": record.feature.geometry,
-    }
+    return {"properties": dict(record.properties), "geometry": record.geometry}
+
+
+def _quote_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _field_name_case_insensitive(field_names: list[str], target: str) -> str | None:
+    target_lower = target.lower()
+    for field_name in field_names:
+        if field_name.lower() == target_lower:
+            return field_name
+    return None
+
+
+def _read_gpkg_property_rows(path: Path, layer_name: str | None) -> list[dict[str, Any]]:
+    resolved_layer = _resolve_gpkg_layer(path, layer_name)
+    with sqlite3.connect(str(path)) as conn:
+        columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({_quote_identifier(resolved_layer)})")]
+        wanted_columns = [
+            column
+            for column in (
+                _field_name_case_insensitive(columns, "id"),
+                _field_name_case_insensitive(columns, "mainnodeid"),
+            )
+            if column is not None
+        ]
+        if not wanted_columns:
+            return []
+        query = "SELECT " + ", ".join(_quote_identifier(column) for column in wanted_columns)
+        query += " FROM " + _quote_identifier(resolved_layer)
+        return [dict(zip(wanted_columns, row)) for row in conn.execute(query)]
+
+
+def _read_geojson_property_rows(path: Path) -> list[dict[str, Any]]:
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    return [dict(feature.get("properties") or {}) for feature in doc.get("features", [])]
+
+
+def _read_rcsdnode_properties(
+    path: str | Path,
+    *,
+    layer_name: str | None,
+    crs_override: str | None,
+) -> list[dict[str, Any]]:
+    layer_path = prefer_vector_input_path(Path(path))
+    if not layer_path.is_file():
+        raise T07RunError("missing_required_field", f"Input layer does not exist: {layer_path}")
+    suffix = layer_path.suffix.lower()
+    if suffix == ".gpkg":
+        return _read_gpkg_property_rows(layer_path, layer_name)
+    if suffix in {".geojson", ".json"}:
+        return _read_geojson_property_rows(layer_path)
+    return [
+        dict(feature.properties)
+        for feature in _read_vector_layer(
+            layer_path,
+            layer_name=layer_name,
+            crs_override=crs_override,
+            allow_null_geometry=True,
+        ).features
+    ]
+
+
+def _geojson_crs_name(doc: dict[str, Any], crs_override: str | None) -> str | None:
+    if crs_override:
+        return crs_override
+    crs_payload = doc.get("crs")
+    if isinstance(crs_payload, dict):
+        name = (crs_payload.get("properties") or {}).get("name")
+        if name:
+            return str(name)
+    return None
+
+
+def _is_crs84_name(crs_name: str | None) -> bool:
+    if crs_name is None:
+        return False
+    normalized = crs_name.strip().upper()
+    return normalized in {"CRS84", "OGC:CRS84", "URN:OGC:DEF:CRS:OGC:1.3:CRS84"}
+
+
+def _read_relation_records(
+    path: str | Path,
+    *,
+    crs_override: str | None,
+) -> list[RelationRecord]:
+    relation_path = prefer_vector_input_path(Path(path))
+    if not relation_path.is_file():
+        raise T07RunError("missing_required_field", f"Input layer does not exist: {relation_path}")
+
+    if relation_path.suffix.lower() in {".geojson", ".json"}:
+        doc = json.loads(relation_path.read_text(encoding="utf-8"))
+        crs_name = _geojson_crs_name(doc, crs_override)
+        if _is_crs84_name(crs_name):
+            records = []
+            for feature_index, feature in enumerate(doc.get("features", [])):
+                props = dict(feature.get("properties") or {})
+                records.append(
+                    RelationRecord(
+                        feature_index=feature_index,
+                        target_id=_normalize_id(props.get("target_id")),
+                        base_id=_normalize_id(props.get("base_id")),
+                        status=_normalize_id(props.get("status")),
+                        properties=props,
+                        geometry=feature.get("geometry"),
+                        geometry_mode="raw_crs84",
+                    )
+                )
+            return records
+
+    layer_data = _read_vector_layer(
+        relation_path,
+        crs_override=crs_override,
+        allow_null_geometry=True,
+    )
+    return [
+        RelationRecord(
+            feature_index=feature.feature_index,
+            target_id=_normalize_id(feature.properties.get("target_id")),
+            base_id=_normalize_id(feature.properties.get("base_id")),
+            status=_normalize_id(feature.properties.get("status")),
+            properties=dict(feature.properties),
+            geometry=feature.geometry,
+            geometry_mode="process",
+        )
+        for feature in layer_data.features
+    ]
+
+
+def _write_relation_output(path: Path, records: list[RelationRecord]) -> None:
+    if all(record.geometry_mode == "raw_crs84" for record in records):
+        write_json(
+            path,
+            {
+                "type": "FeatureCollection",
+                "name": path.stem,
+                "crs": {"type": "name", "properties": {"name": RELATION_OUTPUT_CRS_NAME}},
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": dict(record.properties),
+                        "geometry": record.geometry,
+                    }
+                    for record in records
+                ],
+            },
+        )
+        return
+    write_relation_geojson_crs84(
+        path,
+        (_relation_feature_payload(record) for record in records),
+    )
+
+
+def _copy_update_gpkg_nodes(
+    *,
+    source_path: str | Path,
+    output_path: Path,
+    layer_name: str | None,
+    crs_override: str | None,
+    accepted_node_ids: list[str],
+) -> bool:
+    if crs_override is not None:
+        return False
+    source_gpkg = prefer_vector_input_path(Path(source_path))
+    if source_gpkg.suffix.lower() != ".gpkg" or not source_gpkg.is_file():
+        return False
+
+    resolved_layer = _resolve_gpkg_layer(source_gpkg, layer_name)
+    source_crs, _ = _resolve_gpkg_crs(source_gpkg, resolved_layer, None)
+    if source_crs.to_epsg() != TARGET_CRS.to_epsg():
+        return False
+
+    with sqlite3.connect(str(source_gpkg)) as conn:
+        columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({_quote_identifier(resolved_layer)})")]
+    id_column = _field_name_case_insensitive(columns, "id")
+    is_anchor_column = _field_name_case_insensitive(columns, "is_anchor")
+    anchor_reason_column = _field_name_case_insensitive(columns, "anchor_reason")
+    if id_column is None or is_anchor_column is None or anchor_reason_column is None:
+        return False
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        output_path.unlink()
+    shutil.copy2(source_gpkg, output_path)
+
+    if not accepted_node_ids:
+        return True
+
+    with sqlite3.connect(str(output_path)) as conn:
+        conn.executemany(
+            "UPDATE "
+            + _quote_identifier(resolved_layer)
+            + " SET "
+            + _quote_identifier(is_anchor_column)
+            + " = ?, "
+            + _quote_identifier(anchor_reason_column)
+            + " = NULL WHERE "
+            + _quote_identifier(id_column)
+            + " = ?",
+            [("yes", node_id) for node_id in accepted_node_ids],
+        )
+    return True
+
+
+def _write_step3_nodes(
+    *,
+    output_path: Path,
+    features: list[Any],
+    source_path: str | Path,
+    source_layer: str | None,
+    source_crs: str | None,
+    accepted_node_ids: list[str],
+) -> str:
+    if _copy_update_gpkg_nodes(
+        source_path=source_path,
+        output_path=output_path,
+        layer_name=source_layer,
+        crs_override=source_crs,
+        accepted_node_ids=accepted_node_ids,
+    ):
+        return "copy_update_gpkg"
+    _write_nodes(output_path, features)
+    return "rewrite_gpkg"
 
 
 def run_t07_step3_intersection_match(
@@ -154,6 +368,7 @@ def run_t07_step3_intersection_match(
     stage_root.mkdir(parents=True, exist_ok=True)
     audit_rows: list[dict[str, Any]] = []
 
+    read_inputs_started = time.perf_counter()
     stage_started = time.perf_counter()
     nodes_layer_data = _read_vector_layer(
         nodes_path,
@@ -161,24 +376,29 @@ def run_t07_step3_intersection_match(
         crs_override=nodes_crs,
         allow_null_geometry=True,
     )
-    relation_layer_data = _read_vector_layer(
+    stage_timings["read_nodes_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
+    relation_records = _read_relation_records(
         intersection_match_all_path,
         crs_override=intersection_match_all_crs,
-        allow_null_geometry=True,
     )
-    rcsdnode_layer_data = _read_vector_layer(
+    stage_timings["read_intersection_match_all_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
+    rcsdnode_properties = _read_rcsdnode_properties(
         rcsdnode_path,
         layer_name=rcsdnode_layer,
         crs_override=rcsdnode_crs,
-        allow_null_geometry=True,
     )
-    stage_timings["read_inputs_seconds"] = _elapsed_since(stage_started)
+    stage_timings["read_rcsdnode_ids_seconds"] = _elapsed_since(stage_started)
+    stage_timings["read_inputs_seconds"] = _elapsed_since(read_inputs_started)
 
     stage_started = time.perf_counter()
     by_mainnodeid, singleton_by_id = _build_node_index(nodes_layer_data.features, audit_rows)
     junction_ids = _candidate_junction_ids(by_mainnodeid, singleton_by_id)
-    relations_by_target, invalid_relation_count = _build_relations_by_target(relation_layer_data.features, audit_rows)
-    rcsd_semantic_ids = _build_rcsd_semantic_id_set(rcsdnode_layer_data.features)
+    relations_by_target, invalid_relation_count = _build_relations_by_target(relation_records, audit_rows)
+    rcsd_semantic_ids = _build_rcsd_semantic_id_set(rcsdnode_properties)
     stage_timings["prepare_indices_seconds"] = _elapsed_since(stage_started)
 
     counts = {
@@ -196,6 +416,7 @@ def run_t07_step3_intersection_match(
         "invalid_relation_count": invalid_relation_count,
     }
     accepted_relations: list[RelationRecord] = []
+    accepted_node_ids: list[str] = []
 
     stage_started = time.perf_counter()
     for junction_id in junction_ids:
@@ -322,6 +543,7 @@ def run_t07_step3_intersection_match(
         representative_props["is_anchor"] = "yes"
         representative_props["anchor_reason"] = None
         accepted_relations.append(relation_record)
+        accepted_node_ids.append(group.representative.node_id)
         counts["accepted_count"] += 1
         audit_rows.append(
             _audit_row(
@@ -350,11 +572,15 @@ def run_t07_step3_intersection_match(
     perf_path = stage_root / "t07_step3_perf.json"
 
     stage_started = time.perf_counter()
-    _write_nodes(nodes_output_path, nodes_layer_data.features)
-    write_relation_geojson_crs84(
-        relation_output_path,
-        (_relation_feature_payload(record) for record in accepted_relations),
+    nodes_write_mode = _write_step3_nodes(
+        output_path=nodes_output_path,
+        features=nodes_layer_data.features,
+        source_path=nodes_path,
+        source_layer=nodes_layer,
+        source_crs=nodes_crs,
+        accepted_node_ids=accepted_node_ids,
     )
+    _write_relation_output(relation_output_path, accepted_relations)
     stage_timings["write_outputs_seconds"] = _elapsed_since(stage_started)
 
     summary = {
@@ -368,6 +594,10 @@ def run_t07_step3_intersection_match(
         "output_paths": {
             "nodes": str(nodes_output_path),
             "intersection_match_tool7": str(relation_output_path),
+        },
+        "output_strategy": {
+            "nodes_write_mode": nodes_write_mode,
+            "relation_write_mode": "raw_crs84" if all(record.geometry_mode == "raw_crs84" for record in accepted_relations) else "transform_to_crs84",
         },
         "crs": {
             "process": TARGET_CRS.to_string(),
@@ -409,6 +639,7 @@ def run_t07_step3_intersection_match(
             "run_id": resolved_run_id,
             "elapsed_sec": _elapsed_since(started_at),
             "stage_timings": stage_timings,
+            "nodes_write_mode": nodes_write_mode,
             **counts,
         },
     )

@@ -140,7 +140,7 @@
   - 若忽略道路方向后只有两个外侧角度方向，两个角度方向均具备一进一出关系，且两组方向为平行路关系，则输出 `error_type = 错误交叉路口_非交叉路口`。
   - 若符合 T 型路口特征：横方向为一条单向进入 road 与一条单向退出 road，竖方向为双向平行单向 road 或一条双向 road，且竖方向 road 位于横方向前进方向右侧，则输出 `error_type = 错误交叉路口_T型路口`。
   - 三个外侧角度方向的候选只能输出 `错误交叉路口_T型路口` 或不输出；两个外侧角度方向的候选只能在上述明确条件下输出 `错误交叉路口_T型路口 / 错误交叉路口_非交叉路口`，否则不输出。
-  - 交叉路口错误输出的 `audit_json` 必须包含 `outward_angle_group_count / outward_angle_threshold_degrees / angle_groups`；每个 angle group 必须记录 `road_ids / has_in / has_out / members / merge_reasons`，用于追溯角度方向合并原因。
+  - 交叉路口错误输出的 `audit_json` 必须包含 `outward_angle_group_count / outward_angle_threshold_degrees / outward_vector_source / outward_vector_trace_distance_m / angle_groups`；角度方向使用 road 几何在路口端点向外延伸 `20m` 的局部向量，不直接使用进入 / 退出通行方向；每个 angle group 必须记录 `road_ids / has_in / has_out / members / merge_reasons`，用于追溯角度方向合并原因。
 - summary 必须记录输入、输出、参数、字段解析、CRS、错误类型计数、suppressed 连续分合流候选与性能字段。
 - 所有输入、输出路径必须通过参数提供。
 

@@ -33,6 +33,7 @@ ERROR_CROSS_T = "错误交叉路口_T型路口"
 ERROR_CROSS_NON_CROSS = "错误交叉路口_非交叉路口"
 MANUAL_FIX_FIELD = "是否修复"
 MANUAL_FIX_DEFAULT = 1
+CROSS_ANGLE_TRACE_DISTANCE_M = 20.0
 
 ProgressCallback = Callable[[str], None]
 
@@ -70,6 +71,8 @@ class ParsedRoad:
     kind: str | None
     length_m: float
     forward_vector: tuple[float, float]
+    snode_outward_vector: tuple[float, float]
+    enode_outward_vector: tuple[float, float]
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,8 @@ class DirectedEdge:
     road_id: str
     length_m: float
     vector: tuple[float, float]
+    src_outward_vector: tuple[float, float]
+    dst_outward_vector: tuple[float, float]
 
 
 @dataclass(frozen=True)
@@ -201,6 +206,7 @@ def run_t08_nodes_type_qc(
         progress_callback=progress_callback,
         progress_interval=progress_interval,
     )
+    node_geometries = {node.node_id: node.geometry for node in parsed_nodes}
     parsed_roads = _parse_roads(
         roads_result.features,
         road_id_field=road_id_field,
@@ -208,6 +214,7 @@ def run_t08_nodes_type_qc(
         road_enode_field=road_enode_field,
         road_direction_field=road_direction_field,
         road_kind_field=road_kind_field,
+        node_geometries=node_geometries,
         progress_callback=progress_callback,
         progress_interval=progress_interval,
     )
@@ -725,7 +732,7 @@ def _incident_legs_for_semantic(
             edge.road_idx,
             {
                 "road_id": edge.road_id,
-                "outward_vector": (-edge.vector[0], -edge.vector[1]),
+                "outward_vector": edge.dst_outward_vector,
                 "has_in": False,
                 "has_out": False,
                 "remote_semantic_ids": set(),
@@ -738,14 +745,14 @@ def _incident_legs_for_semantic(
             edge.road_idx,
             {
                 "road_id": edge.road_id,
-                "outward_vector": edge.vector,
+                "outward_vector": edge.src_outward_vector,
                 "has_in": False,
                 "has_out": False,
                 "remote_semantic_ids": set(),
             },
         )
         entry["has_out"] = True
-        entry["outward_vector"] = edge.vector
+        entry["outward_vector"] = edge.src_outward_vector
         entry["remote_semantic_ids"].add(edge.dst)
     return tuple(
         sorted(
@@ -797,6 +804,8 @@ def _angle_group_audit(
     return {
         "outward_angle_group_count": len(groups),
         "outward_angle_threshold_degrees": float(angle_threshold_degrees),
+        "outward_vector_source": "road_endpoint_geometry",
+        "outward_vector_trace_distance_m": CROSS_ANGLE_TRACE_DISTANCE_M,
         "angle_groups": [
             {
                 "group_index": group_index,
@@ -998,6 +1007,7 @@ def _parse_roads(
     road_enode_field: str,
     road_direction_field: str,
     road_kind_field: str | None,
+    node_geometries: dict[str, Point],
     progress_callback: ProgressCallback | None,
     progress_interval: int,
 ) -> list[ParsedRoad]:
@@ -1008,17 +1018,27 @@ def _parse_roads(
         if road_id in seen_ids:
             raise ValueError(f"Roads input has duplicate id '{road_id}'.")
         seen_ids.add(road_id)
+        snodeid = _required_id(feature.properties.get(road_snode_field), f"road '{road_id}' snodeid")
+        enodeid = _required_id(feature.properties.get(road_enode_field), f"road '{road_id}' enodeid")
         forward_vector = _line_forward_vector(feature.geometry)
+        snode_outward_vector, enode_outward_vector = _road_endpoint_outward_vectors(
+            feature.geometry,
+            snode_point=node_geometries.get(snodeid),
+            enode_point=node_geometries.get(enodeid),
+            distance_m=CROSS_ANGLE_TRACE_DISTANCE_M,
+        )
         parsed.append(
             ParsedRoad(
                 feature_index=index,
                 road_id=road_id,
-                snodeid=_required_id(feature.properties.get(road_snode_field), f"road '{road_id}' snodeid"),
-                enodeid=_required_id(feature.properties.get(road_enode_field), f"road '{road_id}' enodeid"),
+                snodeid=snodeid,
+                enodeid=enodeid,
                 direction=_coerce_int(feature.properties.get(road_direction_field)),
                 kind=_normalize_text(feature.properties.get(road_kind_field)) if road_kind_field else None,
                 length_m=float(feature.geometry.length),
                 forward_vector=forward_vector,
+                snode_outward_vector=snode_outward_vector,
+                enode_outward_vector=enode_outward_vector,
             )
         )
         if _should_emit_progress(index + 1, progress_interval):
@@ -1072,6 +1092,8 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
                 source_semantic,
                 target_semantic,
                 road.forward_vector,
+                road.snode_outward_vector,
+                road.enode_outward_vector,
                 in_degree,
                 out_degree,
                 in_edges,
@@ -1083,6 +1105,8 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
                 target_semantic,
                 source_semantic,
                 (-road.forward_vector[0], -road.forward_vector[1]),
+                road.enode_outward_vector,
+                road.snode_outward_vector,
                 in_degree,
                 out_degree,
                 in_edges,
@@ -1095,6 +1119,8 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
                 source_semantic,
                 target_semantic,
                 road.forward_vector,
+                road.snode_outward_vector,
+                road.enode_outward_vector,
                 in_degree,
                 out_degree,
                 in_edges,
@@ -1107,6 +1133,8 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
                 target_semantic,
                 source_semantic,
                 (-road.forward_vector[0], -road.forward_vector[1]),
+                road.enode_outward_vector,
+                road.snode_outward_vector,
                 in_degree,
                 out_degree,
                 in_edges,
@@ -1131,12 +1159,23 @@ def _add_edge(
     src: str,
     dst: str,
     vector: tuple[float, float],
+    src_outward_vector: tuple[float, float],
+    dst_outward_vector: tuple[float, float],
     in_degree: dict[str, int],
     out_degree: dict[str, int],
     in_edges: dict[str, list[DirectedEdge]],
     out_edges: dict[str, list[DirectedEdge]],
 ) -> None:
-    edge = DirectedEdge(src=src, dst=dst, road_idx=road_index, road_id=road.road_id, length_m=road.length_m, vector=vector)
+    edge = DirectedEdge(
+        src=src,
+        dst=dst,
+        road_idx=road_index,
+        road_id=road.road_id,
+        length_m=road.length_m,
+        vector=vector,
+        src_outward_vector=src_outward_vector,
+        dst_outward_vector=dst_outward_vector,
+    )
     out_degree[src] += 1
     in_degree[dst] += 1
     out_edges[src].append(edge)
@@ -1275,6 +1314,8 @@ def _reverse_edge(edge: DirectedEdge) -> DirectedEdge:
         road_id=edge.road_id,
         length_m=edge.length_m,
         vector=(-edge.vector[0], -edge.vector[1]),
+        src_outward_vector=edge.dst_outward_vector,
+        dst_outward_vector=edge.src_outward_vector,
     )
 
 
@@ -1403,20 +1444,102 @@ def _trace_vector(start: SemanticNode, trace: TraceResult) -> tuple[float, float
     return _unit_vector((dx, dy))
 
 
-def _line_forward_vector(geometry: Any) -> tuple[float, float]:
+def _road_endpoint_outward_vectors(
+    geometry: Any,
+    *,
+    snode_point: Point | None,
+    enode_point: Point | None,
+    distance_m: float,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    coords = _line_coords(geometry)
+    if len(coords) < 2:
+        return (1.0, 0.0), (-1.0, 0.0)
+    start_outward = _line_endpoint_outward_vector(geometry, at_start=True, distance_m=distance_m)
+    end_outward = _line_endpoint_outward_vector(geometry, at_start=False, distance_m=distance_m)
+    snode_at_start = _point_closer_to_start(snode_point, coords, default=True)
+    enode_at_start = _point_closer_to_start(enode_point, coords, default=False)
+    if snode_at_start == enode_at_start:
+        snode_at_start = _prefer_snode_at_start(snode_point=snode_point, enode_point=enode_point, coords=coords)
+        enode_at_start = not snode_at_start
+    snode_outward = start_outward if snode_at_start else end_outward
+    enode_outward = start_outward if enode_at_start else end_outward
+    return snode_outward, enode_outward
+
+
+def _point_closer_to_start(point: Point | None, coords: list[tuple[float, float]], *, default: bool) -> bool:
+    if point is None or len(coords) < 2:
+        return default
+    start = coords[0]
+    end = coords[-1]
+    start_distance = math.hypot(float(point.x) - float(start[0]), float(point.y) - float(start[1]))
+    end_distance = math.hypot(float(point.x) - float(end[0]), float(point.y) - float(end[1]))
+    return start_distance <= end_distance
+
+
+def _prefer_snode_at_start(
+    *,
+    snode_point: Point | None,
+    enode_point: Point | None,
+    coords: list[tuple[float, float]],
+) -> bool:
+    if snode_point is None or enode_point is None or len(coords) < 2:
+        return True
+    start = coords[0]
+    end = coords[-1]
+    direct_distance = math.hypot(float(snode_point.x) - float(start[0]), float(snode_point.y) - float(start[1])) + math.hypot(
+        float(enode_point.x) - float(end[0]), float(enode_point.y) - float(end[1])
+    )
+    reverse_distance = math.hypot(float(snode_point.x) - float(end[0]), float(snode_point.y) - float(end[1])) + math.hypot(
+        float(enode_point.x) - float(start[0]), float(enode_point.y) - float(start[1])
+    )
+    return direct_distance <= reverse_distance
+
+
+def _line_endpoint_outward_vector(geometry: Any, *, at_start: bool, distance_m: float) -> tuple[float, float]:
+    coords = _line_coords(geometry)
+    if len(coords) < 2:
+        return (1.0, 0.0)
     try:
-        coords = list(geometry.coords)
+        line = geometry if hasattr(geometry, "interpolate") else LineString(coords)
+        length = float(line.length)
+        distance = min(max(float(distance_m), 0.0), length)
+        if length > 0.0 and distance > 0.0:
+            if at_start:
+                origin = coords[0]
+                target = line.interpolate(distance)
+            else:
+                origin = coords[-1]
+                target = line.interpolate(max(length - distance, 0.0))
+            return _unit_vector((float(target.x) - float(origin[0]), float(target.y) - float(origin[1])))
     except Exception:
-        try:
-            line = geometry.boundary
-            coords = list(line.coords)
-        except Exception:
-            coords = []
+        pass
+    if at_start:
+        start = coords[0]
+        nxt = coords[1]
+        return _unit_vector((float(nxt[0]) - float(start[0]), float(nxt[1]) - float(start[1])))
+    end = coords[-1]
+    prev = coords[-2]
+    return _unit_vector((float(prev[0]) - float(end[0]), float(prev[1]) - float(end[1])))
+
+
+def _line_forward_vector(geometry: Any) -> tuple[float, float]:
+    coords = _line_coords(geometry)
     if len(coords) >= 2:
         start = coords[0]
         end = coords[-1]
         return _unit_vector((float(end[0]) - float(start[0]), float(end[1]) - float(start[1])))
     return (1.0, 0.0)
+
+
+def _line_coords(geometry: Any) -> list[tuple[float, float]]:
+    try:
+        return [(float(coord[0]), float(coord[1])) for coord in geometry.coords]
+    except Exception:
+        try:
+            line = geometry.boundary
+            return [(float(coord[0]), float(coord[1])) for coord in line.coords]
+        except Exception:
+            return []
 
 
 def _cross(a: tuple[float, float], b: tuple[float, float]) -> float:

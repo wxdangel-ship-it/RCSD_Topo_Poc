@@ -171,6 +171,8 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
     assert reason_by_node["noncross"] == "two_parallel_outward_angle_groups_each_has_in_and_out"
     cross_audit = _audit(next(row for row in csv_rows if row["semantic_node_id"] == "cross"))
     assert cross_audit["outward_angle_group_count"] == 3
+    assert cross_audit["outward_vector_source"] == "road_endpoint_geometry"
+    assert cross_audit["outward_vector_trace_distance_m"] == 20.0
     assert {member["road_id"] for group in cross_audit["angle_groups"] for member in group["members"]} == {
         "r-cross-in",
         "r-cross-out",
@@ -209,6 +211,26 @@ def test_tool6_two_angle_nonparallel_cross_candidate_is_not_error(tmp_path: Path
     ]
 
     csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="two_angle_nonparallel", nodes=nodes, roads=roads)
+
+    assert csv_rows == []
+    assert gpkg_rows == []
+    assert summary["counts"]["error_feature_count"] == 0
+
+
+def test_tool6_angle_groups_use_local_endpoint_geometry(tmp_path: Path) -> None:
+    nodes = [
+        _node("cross", 4, 0.0, 0.0),
+        _node("south", 1, 0.0, -20.0),
+        _node("curve_remote", 1, 0.0, 20.0),
+        _node("north", 1, 0.0, 20.0),
+    ]
+    roads = [
+        _road("r-south-bidir", "south", "cross", [(0.0, -20.0), (0.0, 0.0)], direction=0),
+        _road("r-curved-in", "curve_remote", "cross", [(0.0, 20.0), (0.0, 1.0), (20.0, 0.0), (0.0, 0.0)]),
+        _road("r-north-out", "cross", "north", [(0.0, 0.0), (0.0, 20.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="local_endpoint_angle", nodes=nodes, roads=roads)
 
     assert csv_rows == []
     assert gpkg_rows == []

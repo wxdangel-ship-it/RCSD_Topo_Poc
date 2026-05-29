@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import fiona
-from shapely.geometry import LineString, Point, mapping, shape
+from shapely.geometry import LineString, Point, Polygon, mapping, shape
 
 from rcsd_topo_poc.modules.t07_semantic_junction_anchor import run_t07_step3_intersection_match
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg
@@ -132,13 +132,22 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
                 "row_count": 2,
                 "fieldnames": [],
                 "rows": [
-                    {"target_id": "1", "relation_source": "T07_STEP2", "relation_state": "no_existing_rcsdintersection", "status_suggested": 1, "base_id_candidate": -1},
+                    {"target_id": "1", "relation_source": "T07_STEP2", "relation_state": "existing_rcsdintersection_matched", "status_suggested": 0, "base_id_candidate": 800},
                     {"target_id": "8", "relation_source": "T07_STEP2", "relation_state": "no_existing_rcsdintersection", "status_suggested": 1, "base_id_candidate": -1},
                 ],
             },
             ensure_ascii=False,
         ),
         encoding="utf-8",
+    )
+    _write_gpkg(
+        tmp_path / "t07_rcsdintersection_anchor_surface.gpkg",
+        [
+            _feature(
+                {"surface_candidate_id": "step2-surface", "target_id": 1, "source_module": "T07_STEP2"},
+                Polygon([(-1, -1), (1, -1), (1, 1), (-1, 1), (-1, -1)]),
+            )
+        ],
     )
 
     artifacts = run_t07_step3_intersection_match(
@@ -174,10 +183,25 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert summary["skipped_kind2_count"] == 1
     assert summary["crs"]["intersection_match_tool7"] == "CRS84"
     assert summary["relation_evidence_row_count"] == 3
+    assert summary["step2_anchor_count"] == 1
+    assert summary["step3_anchor_count"] == 2
+    assert summary["total_anchor_count"] == 3
+    assert summary["output_strategy"]["anchor_surface_write_mode"] == "copy_step2_surface"
     assert "stage_timings" in summary["performance"]
     assert "evaluate_candidates_seconds" in summary["performance"]["stage_timings"]
 
+    assert artifacts.anchor_surface_path.is_file()
+    with fiona.open(str(artifacts.anchor_surface_path)) as src:
+        surface_rows = [dict(feature["properties"]) for feature in src]
+    assert len(surface_rows) == 1
+    assert surface_rows[0]["source_module"] == "T07_STEP2"
+
     evidence_payload = json.loads(artifacts.relation_evidence_json_path.read_text(encoding="utf-8"))
+    assert evidence_payload["anchor_counts"] == {
+        "step2_anchor_count": 1,
+        "step3_anchor_count": 2,
+        "total_anchor_count": 3,
+    }
     evidence_rows = {str(row["target_id"]): row for row in evidence_payload["rows"]}
     assert evidence_rows["1"]["relation_source"] == "T07_STEP3_INTERSECTION_MATCH"
     assert evidence_rows["1"]["relation_state"] == "intersection_match_tool7_matched"

@@ -81,7 +81,7 @@ run_t06_step2_extract_rcsd_segments(
 
 必选输入：
 
-- `swsd_fusion_units_path`：Step1 输出 `t06_swsd_segment_fusion_units.gpkg`。
+- `swsd_fusion_units_path`：Step1 输出 `t06_swsd_segment_final_fusion_units.gpkg`。
 - `swsd_segment_path`：T01 `segment.gpkg`。
 - `swsd_roads_path`：SWSD road body；Step2 保留该参数以兼容内网端到端脚本输入形态，buffer-based 主链不读取它做方向判断。
 - `swsd_nodes_path`：final `nodes.gpkg`；Step2 保留该参数以兼容内网端到端脚本输入形态，buffer-based 主链不读取它做方向判断。
@@ -122,16 +122,15 @@ run_t06_step2_extract_rcsd_segments(
 
 文件：
 
-- `t06_swsd_segment_evd_candidates.gpkg/csv/json`
 - `t06_swsd_segment_candidates.gpkg/csv/json`
-- `t06_swsd_segment_fusion_units.gpkg/csv/json`
 - `t06_swsd_segment_final_fusion_units.gpkg/csv/json`
 - `t06_swsd_segment_rejected.gpkg/csv/json`
+- `t06_step1_segment_stats.csv`
 - `t06_step1_summary.json`
 
-`t06_swsd_segment_candidates` 为通过 EVD 基础检查后的 SWSD Segment 候选集；`t06_swsd_segment_final_fusion_units` 为通过 anchor / fallback 检查后的 SWSD Segment 最终可融合集合。`t06_swsd_segment_evd_candidates` 与 `t06_swsd_segment_fusion_units` 保留为兼容输出。
+`t06_swsd_segment_candidates` 为通过 EVD 基础检查后的 SWSD Segment 候选集；`t06_swsd_segment_final_fusion_units` 为通过 anchor / fallback 检查后的 SWSD Segment 最终可融合集合。Step1 不再物理输出旧命名 `t06_swsd_segment_evd_candidates` 与 `t06_swsd_segment_fusion_units`，避免同一业务成果重复落盘。
 
-`candidates / final_fusion_units / fusion_units` 稳定字段：
+`candidates / final_fusion_units` 稳定字段：
 
 - `swsd_segment_id`
 - `sgrade`
@@ -144,6 +143,15 @@ run_t06_step2_extract_rcsd_segments(
 - `junc_kind2_exempt_nodes`
 - `has_fail4_fallback`
 - `geometry`
+
+`t06_step1_segment_stats.csv` 稳定字段：
+
+- `sgrade`
+- `total_segment_count`
+- `evd_candidate_count`
+- `final_fusion_unit_count`
+
+其中首行为 `sgrade=__TOTAL__` 的总体统计，其余行按输入 Segment 中 `sgrade` 首次出现顺序输出分组统计。
 
 `rejected` 稳定字段：
 
@@ -429,7 +437,7 @@ Step3 提供独立脚本，消费 Step2 replaceable 成果，不改变 `scripts/
 
 ## 6. Acceptance
 
-1. Step1 runner 可独立运行并输出 SWSD Segment 候选集、最终可融合集合、兼容 EVD candidates / fusion units、rejected 与 summary。
+1. Step1 runner 可独立运行并输出 SWSD Segment 候选集、最终可融合集合、rejected、summary 与按 `sgrade` 分组的统计 CSV，且不重复输出相同业务成果。
 2. Step2 runner 可独立运行并输出 buffer-based RCSDSegment 主成果、兼容 candidates、兼容 replaceable、rejected、buffer rejected 与 summary。
 3. `fail4_fallback` 能进入 Step1 final fusion units，但 Step2 对 relation 必检集合仍必须校验 T05 relation。
 4. `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 Step1 `has_evd / is_anchor` 判定，也不进入 Step2 T05 relation 必检映射集合；同值 `pair_nodes` 仍按原规则判定并映射。

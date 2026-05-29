@@ -76,12 +76,18 @@ def test_combined_runner_outputs_all_files_and_keeps_inputs_readonly(tmp_path: P
     assert artifacts.step1.swsd_candidates_gpkg_path.exists()
     assert artifacts.step1.final_fusion_units_gpkg_path is not None
     assert artifacts.step1.final_fusion_units_gpkg_path.exists()
+    assert artifacts.step1.stats_csv_path is not None
+    assert artifacts.step1.stats_csv_path.exists()
+    assert artifacts.step1.fusion_units_gpkg_path == artifacts.step1.final_fusion_units_gpkg_path
     assert artifacts.step2.candidates_gpkg_path.exists()
     assert artifacts.step2.replaceable_gpkg_path.exists()
     assert artifacts.step2.rejected_gpkg_path.exists()
     step1_summary = json.loads(artifacts.step1.summary_path.read_text(encoding="utf-8"))
     assert Path(step1_summary["outputs"]["swsd_candidates_json"]).exists()
     assert Path(step1_summary["outputs"]["swsd_final_fusion_units_json"]).exists()
+    assert Path(step1_summary["outputs"]["segment_stats_csv"]).exists()
+    assert "evd_candidates_json" not in step1_summary["outputs"]
+    assert "fusion_units_json" not in step1_summary["outputs"]
     summary = json.loads(artifacts.step2.summary_path.read_text(encoding="utf-8"))
     assert summary["input_fusion_unit_count"] == 1
     assert summary["replaceable_count"] == 1

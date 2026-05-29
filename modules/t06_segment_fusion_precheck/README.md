@@ -164,14 +164,13 @@ helper 默认按 T01 输入证据包模式自动分片，单个 `.txt` 分片不
 
 Step1 输出：
 
-- `t06_swsd_segment_evd_candidates.gpkg/csv/json`
 - `t06_swsd_segment_candidates.gpkg/csv/json`
-- `t06_swsd_segment_fusion_units.gpkg/csv/json`
 - `t06_swsd_segment_final_fusion_units.gpkg/csv/json`
 - `t06_swsd_segment_rejected.gpkg/csv/json`
+- `t06_step1_segment_stats.csv`
 - `t06_step1_summary.json`
 
-其中 `t06_swsd_segment_candidates` 是通过 EVD 基础检查后的 SWSD Segment 候选集；`t06_swsd_segment_final_fusion_units` 是通过 anchor / fallback 检查后的 SWSD Segment 最终可融合集合。`evd_candidates` 与 `fusion_units` 继续保留为兼容输出。
+其中 `t06_swsd_segment_candidates` 是通过 EVD 基础检查后的 SWSD Segment 候选集；`t06_swsd_segment_final_fusion_units` 是通过 anchor / fallback 检查后的 SWSD Segment 最终可融合集合。Step1 不再输出旧命名 `evd_candidates` 与 `fusion_units`，避免重复输出相同业务成果。`t06_step1_segment_stats.csv` 输出总体与按 `sgrade` 分组的总量、EVD 候选量、最终可融合集合量。
 
 Step2 输出：
 

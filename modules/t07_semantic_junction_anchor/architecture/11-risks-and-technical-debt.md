@@ -9,6 +9,7 @@
 - Step3 依赖 T05 `intersection_match_all.geojson` 的 `target_id / base_id / status` 规格；若 T05 relation 字段或 CRS 规格变化，必须同步 T07 契约与测试。
 - Step3 只校验 RCSD `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在，不反推 RCSD 语义路口字段含义。
 - Step3 合并 `t07_swsd_rcsd_relation_evidence.json` 时默认从 Step2 `nodes.gpkg` 同目录读取 Step2 evidence；若用户传入非 Step2 目录的 nodes，需要确认合并基准是否存在。
+- Step3 复制 `t07_rcsdintersection_anchor_surface.gpkg` 时同样默认从 Step2 `nodes.gpkg` 同目录取源；若缺失 Step2 surface，只能输出空 surface 并通过 `anchor_surface_write_mode` 暴露。
 
 ## 技术债控制
 

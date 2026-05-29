@@ -13,14 +13,13 @@
 
 ## Step1 输出
 
-- `t06_swsd_segment_evd_candidates.gpkg/csv/json`
 - `t06_swsd_segment_candidates.gpkg/csv/json`
-- `t06_swsd_segment_fusion_units.gpkg/csv/json`
 - `t06_swsd_segment_final_fusion_units.gpkg/csv/json`
 - `t06_swsd_segment_rejected.gpkg/csv/json`
+- `t06_step1_segment_stats.csv`
 - `t06_step1_summary.json`
 
-`t06_swsd_segment_candidates` 是通过 EVD 基础检查后的 SWSD Segment 候选集；`t06_swsd_segment_final_fusion_units` 是通过 anchor / fallback 检查后的最终可融合集合。旧命名 `evd_candidates / fusion_units` 保留为兼容输出。
+`t06_swsd_segment_candidates` 是通过 EVD 基础检查后的 SWSD Segment 候选集；`t06_swsd_segment_final_fusion_units` 是通过 anchor / fallback 检查后的最终可融合集合。旧命名 `evd_candidates / fusion_units` 不再物理输出。`t06_step1_segment_stats.csv` 输出总体与按 `sgrade` 分组的总量、EVD 候选量、最终可融合集合量。
 
 ## Step2 输出
 

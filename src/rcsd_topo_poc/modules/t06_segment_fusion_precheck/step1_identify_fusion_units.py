@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .audit import failed_attrs
-from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
+from .io import prepare_run_roots, read_features, write_csv, write_feature_triplet, write_json
 from .parsing import ParseError, anchor_eligible, normalize_id, parse_id_list, unique_preserve_order, yes_value
 from .schemas import (
     FUSION_UNIT_FIELDS,
@@ -16,6 +16,8 @@ from .schemas import (
     STEP1_FUSION_STEM,
     STEP1_REJECTED_FIELDS,
     STEP1_REJECTED_STEM,
+    STEP1_STATS_CSV,
+    STEP1_STATS_FIELDS,
     STEP1_SUMMARY,
     T06Step1Artifacts,
     feature,
@@ -42,12 +44,20 @@ def run_t06_step1_identify_fusion_units(
     fusion_units: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     candidate_not_final: list[str] = []
+    sgrade_order: list[str] = []
+    total_by_sgrade: Counter[str] = Counter()
+    evd_by_sgrade: Counter[str] = Counter()
+    final_by_sgrade: Counter[str] = Counter()
 
     for index, segment in enumerate(segments, start=1):
         if progress and index % 1000 == 0:
             print(f"[T06 Step1] processed {index}/{len(segments)}", flush=True)
         props = dict(segment.get("properties") or {})
         segment_id = _segment_id(props, index)
+        sgrade_key = _sgrade_key(props.get("sgrade"))
+        if sgrade_key not in total_by_sgrade:
+            sgrade_order.append(sgrade_key)
+        total_by_sgrade[sgrade_key] += 1
         parsed = _parse_segment_lists(segment_id, props, segment.get("geometry"))
         if parsed["reject"] is not None:
             rejected.append(parsed["reject"])
@@ -79,6 +89,7 @@ def run_t06_step1_identify_fusion_units(
             for node_id in semantic_nodes
         )
         evd_candidates.append(feature(row, segment.get("geometry")))
+        evd_by_sgrade[sgrade_key] += 1
 
         anchor_missing = [node_id for node_id in eligibility_nodes if node_index[node_id].get("is_anchor") in (None, "")]
         if anchor_missing:
@@ -91,12 +102,23 @@ def run_t06_step1_identify_fusion_units(
             rejected.append(_rejected(segment_id, "after_evd", "is_anchor_not_eligible", anchor_failed, props, segment.get("geometry"), node_index))
             continue
         fusion_units.append(feature(row, segment.get("geometry")))
+        final_by_sgrade[sgrade_key] += 1
 
-    evd_paths = write_feature_triplet(step_root=step_root, stem=STEP1_EVD_STEM, features=evd_candidates, fieldnames=FUSION_UNIT_FIELDS)
+    _remove_legacy_duplicate_outputs(step_root)
     candidate_paths = write_feature_triplet(step_root=step_root, stem=STEP1_CANDIDATES_STEM, features=evd_candidates, fieldnames=FUSION_UNIT_FIELDS)
-    fusion_paths = write_feature_triplet(step_root=step_root, stem=STEP1_FUSION_STEM, features=fusion_units, fieldnames=FUSION_UNIT_FIELDS)
     final_fusion_paths = write_feature_triplet(step_root=step_root, stem=STEP1_FINAL_FUSION_STEM, features=fusion_units, fieldnames=FUSION_UNIT_FIELDS)
     rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP1_REJECTED_STEM, features=rejected, fieldnames=STEP1_REJECTED_FIELDS)
+    stats_path = step_root / STEP1_STATS_CSV
+    write_csv(
+        stats_path,
+        _stats_rows(
+            sgrade_order=sgrade_order,
+            total_by_sgrade=total_by_sgrade,
+            evd_by_sgrade=evd_by_sgrade,
+            final_by_sgrade=final_by_sgrade,
+        ),
+        STEP1_STATS_FIELDS,
+    )
     reject_counts = Counter((item["properties"].get("reject_reason") for item in rejected))
     summary_path = step_root / STEP1_SUMMARY
     write_json(
@@ -117,11 +139,10 @@ def run_t06_step1_identify_fusion_units(
             "junc_kind2_exempt_node_count": sum(len(item["properties"].get("junc_kind2_exempt_nodes") or []) for item in fusion_units),
             "has_fail4_fallback_segment_count": sum(1 for item in fusion_units if item["properties"].get("has_fail4_fallback")),
             "outputs": {
-                **{f"evd_candidates_{k}": str(v) for k, v in evd_paths.items()},
                 **{f"swsd_candidates_{k}": str(v) for k, v in candidate_paths.items()},
-                **{f"fusion_units_{k}": str(v) for k, v in fusion_paths.items()},
                 **{f"swsd_final_fusion_units_{k}": str(v) for k, v in final_fusion_paths.items()},
                 **{f"rejected_{k}": str(v) for k, v in rejected_paths.items()},
+                "segment_stats_csv": str(stats_path),
             },
             "gis_topology_checks": {
                 "crs_normalized_to": "EPSG:3857",
@@ -136,13 +157,54 @@ def run_t06_step1_identify_fusion_units(
         resolved_run_id,
         run_root,
         step_root,
-        evd_paths["gpkg"],
-        fusion_paths["gpkg"],
+        candidate_paths["gpkg"],
+        final_fusion_paths["gpkg"],
         rejected_paths["gpkg"],
         summary_path,
         candidate_paths["gpkg"],
         final_fusion_paths["gpkg"],
+        stats_path,
     )
+
+
+def _remove_legacy_duplicate_outputs(step_root: Path) -> None:
+    for stem in (STEP1_EVD_STEM, STEP1_FUSION_STEM):
+        for suffix in (".gpkg", ".csv", ".json"):
+            path = step_root / f"{stem}{suffix}"
+            if path.exists():
+                path.unlink()
+
+
+def _sgrade_key(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text else "__MISSING__"
+
+
+def _stats_rows(
+    *,
+    sgrade_order: list[str],
+    total_by_sgrade: Counter[str],
+    evd_by_sgrade: Counter[str],
+    final_by_sgrade: Counter[str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = [
+        {
+            "sgrade": "__TOTAL__",
+            "total_segment_count": sum(total_by_sgrade.values()),
+            "evd_candidate_count": sum(evd_by_sgrade.values()),
+            "final_fusion_unit_count": sum(final_by_sgrade.values()),
+        }
+    ]
+    rows.extend(
+        {
+            "sgrade": sgrade,
+            "total_segment_count": total_by_sgrade[sgrade],
+            "evd_candidate_count": evd_by_sgrade[sgrade],
+            "final_fusion_unit_count": final_by_sgrade[sgrade],
+        }
+        for sgrade in sgrade_order
+    )
+    return rows
 
 
 def _junc_kind2_exempt_nodes(junc_nodes: list[str], node_index: dict[str, dict[str, Any]]) -> list[str]:

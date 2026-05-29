@@ -28,10 +28,9 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.parsing import (
 from .schemas import (
     STEP1_CANDIDATES_STEM,
     STEP1_DIR,
-    STEP1_EVD_STEM,
     STEP1_FINAL_FUSION_STEM,
-    STEP1_FUSION_STEM,
     STEP1_REJECTED_STEM,
+    STEP1_STATS_CSV,
     STEP1_SUMMARY,
     STEP2_BUFFER_REJECTED_STEM,
     STEP2_BUFFER_SEGMENTS_STEM,
@@ -80,7 +79,7 @@ T06_INPUT_SLICE_DEFAULT_PROFILE_ID = "XS"
 T06_INPUT_SLICE_CRS_TEXT = "EPSG:3857"
 
 _OUTPUT_STEMS_BY_STEP_DIR = {
-    STEP1_DIR: (STEP1_EVD_STEM, STEP1_CANDIDATES_STEM, STEP1_FUSION_STEM, STEP1_FINAL_FUSION_STEM, STEP1_REJECTED_STEM),
+    STEP1_DIR: (STEP1_CANDIDATES_STEM, STEP1_FINAL_FUSION_STEM, STEP1_REJECTED_STEM),
     STEP2_DIR: (
         STEP2_CANDIDATES_STEM,
         STEP2_REPLACEABLE_STEM,
@@ -92,6 +91,9 @@ _OUTPUT_STEMS_BY_STEP_DIR = {
 _SUMMARY_BY_STEP_DIR = {
     STEP1_DIR: STEP1_SUMMARY,
     STEP2_DIR: STEP2_SUMMARY,
+}
+_OUTPUT_FILES_BY_STEP_DIR = {
+    STEP1_DIR: (STEP1_STATS_CSV,),
 }
 _COMPACT_OUTPUT_SUFFIXES = (".json", ".csv")
 _VECTOR_OUTPUT_SUFFIXES = (".gpkg",)
@@ -420,6 +422,15 @@ def _collect_run_outputs(
                     output_file_info[archive_name] = _file_info(path)
                 else:
                     skipped_missing.append(archive_name)
+    for step_dir, filenames in _OUTPUT_FILES_BY_STEP_DIR.items():
+        for filename in filenames:
+            path = run_root / step_dir / filename
+            archive_name = f"run/{step_dir}/{filename}"
+            if path.is_file():
+                _add_file(files, archive_name, path)
+                output_file_info[archive_name] = _file_info(path)
+            else:
+                skipped_missing.append(archive_name)
     return files, sorted(skipped_missing), output_file_info
 
 

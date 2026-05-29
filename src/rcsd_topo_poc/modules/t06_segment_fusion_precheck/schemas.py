@@ -17,6 +17,7 @@ STEP1_FUSION_STEM = "t06_swsd_segment_fusion_units"
 STEP1_FINAL_FUSION_STEM = "t06_swsd_segment_final_fusion_units"
 STEP1_REJECTED_STEM = "t06_swsd_segment_rejected"
 STEP1_SUMMARY = "t06_step1_summary.json"
+STEP1_STATS_CSV = "t06_step1_segment_stats.csv"
 
 STEP2_CANDIDATES_STEM = "t06_rcsd_segment_candidates"
 STEP2_REPLACEABLE_STEM = "t06_rcsd_segment_replaceable"
@@ -59,6 +60,13 @@ STEP1_REJECTED_FIELDS = [
     "pair_nodes",
     "junc_nodes",
     "sgrade",
+]
+
+STEP1_STATS_FIELDS = [
+    "sgrade",
+    "total_segment_count",
+    "evd_candidate_count",
+    "final_fusion_unit_count",
 ]
 
 STEP2_CANDIDATE_FIELDS = [
@@ -240,6 +248,7 @@ class T06Step1Artifacts:
     summary_path: Path
     swsd_candidates_gpkg_path: Path | None = None
     final_fusion_units_gpkg_path: Path | None = None
+    stats_csv_path: Path | None = None
 
 
 @dataclass(frozen=True)

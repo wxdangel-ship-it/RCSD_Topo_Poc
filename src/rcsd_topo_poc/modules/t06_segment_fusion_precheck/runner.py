@@ -34,7 +34,7 @@ def run_t06_segment_fusion_precheck(
         progress=progress,
     )
     step2 = run_t06_step2_extract_rcsd_segments(
-        swsd_fusion_units_path=step1.fusion_units_gpkg_path,
+        swsd_fusion_units_path=step1.final_fusion_units_gpkg_path or step1.fusion_units_gpkg_path,
         swsd_segment_path=swsd_segment_path,
         swsd_roads_path=swsd_roads_path,
         swsd_nodes_path=swsd_nodes_path,

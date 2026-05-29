@@ -13,7 +13,7 @@
 - Step3 仅处理代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = no` 的语义路口。
 - Step3 只接受 T05 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0` 的成功 relation，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在。
 - Step3 接受后只写代表 node `is_anchor = yes / anchor_reason = NULL`，并输出 relation 子集 `intersection_match_tool7.geojson`。
-- Step2 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.json`；Step3 输出合并 Step2 evidence 与 Step3 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.json`。
+- Step2 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.json`；Step3 输出复制 Step2 surface 结果的 `t07_rcsdintersection_anchor_surface.gpkg`，并输出合并 Step2 evidence 与 Step3 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.json`。
 
 ## 数据约束
 

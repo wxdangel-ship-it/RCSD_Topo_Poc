@@ -59,8 +59,8 @@ def _build_t06_bundle_fixture(tmp_path: Path) -> dict[str, Path | str]:
             "swsd_final_fusion_unit_count": 1,
             "outputs": {
                 "swsd_candidates_gpkg": str(step1 / "t06_swsd_segment_candidates.gpkg"),
-                "fusion_units_gpkg": str(step1 / "t06_swsd_segment_fusion_units.gpkg"),
                 "swsd_final_fusion_units_gpkg": str(step1 / "t06_swsd_segment_final_fusion_units.gpkg"),
+                "segment_stats_csv": str(step1 / "t06_step1_segment_stats.csv"),
             },
         },
     )
@@ -74,9 +74,7 @@ def _build_t06_bundle_fixture(tmp_path: Path) -> dict[str, Path | str]:
         },
     )
     for path in (
-        step1 / "t06_swsd_segment_evd_candidates.json",
         step1 / "t06_swsd_segment_candidates.json",
-        step1 / "t06_swsd_segment_fusion_units.json",
         step1 / "t06_swsd_segment_final_fusion_units.json",
         step1 / "t06_swsd_segment_rejected.json",
         step2 / "t06_rcsd_segment_candidates.json",
@@ -89,6 +87,7 @@ def _build_t06_bundle_fixture(tmp_path: Path) -> dict[str, Path | str]:
         _write_text(path.with_suffix(".csv"), "swsd_segment_id\n")
     _write_bytes(step1 / "t06_swsd_segment_candidates.gpkg", b"swsd-candidates-gpkg")
     _write_bytes(step1 / "t06_swsd_segment_final_fusion_units.gpkg", b"swsd-final-gpkg")
+    _write_text(step1 / "t06_step1_segment_stats.csv", "sgrade,total_segment_count,evd_candidate_count,final_fusion_unit_count\n")
     _write_bytes(step2 / "t06_rcsd_buffer_segments.gpkg", b"buffer-gpkg")
 
     return {
@@ -128,6 +127,9 @@ def test_t06_text_bundle_round_trips_compact_outputs_and_input_manifest(tmp_path
     assert input_manifest["input_paths"]["swsd_segment_path"] == str(fixture["segment"])
     assert input_manifest["input_files"]["rcsdroad_path"]["sha256"]
     assert (decoded.out_dir / "audit" / "replay_t06_run_innernet_precheck.sh").is_file()
+    assert (decoded.out_dir / "run" / "step1_identify_fusion_units" / "t06_step1_segment_stats.csv").is_file()
+    assert not (decoded.out_dir / "run" / "step1_identify_fusion_units" / "t06_swsd_segment_evd_candidates.json").exists()
+    assert not (decoded.out_dir / "run" / "step1_identify_fusion_units" / "t06_swsd_segment_fusion_units.json").exists()
     assert (decoded.out_dir / "run" / "step2_extract_rcsd_segments" / "t06_step2_summary.json").is_file()
     assert not (decoded.out_dir / "inputs" / "swsd" / "segment.gpkg").exists()
 

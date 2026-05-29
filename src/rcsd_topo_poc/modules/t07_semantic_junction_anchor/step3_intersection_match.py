@@ -15,6 +15,7 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import ensure_gpkg_ogr_featu
 
 from .runner import (
     RELATION_EVIDENCE_FIELDNAMES,
+    SURFACE_CANDIDATE_FIELDNAMES,
     T07RunError,
     _audit_row,
     _build_node_index,
@@ -42,6 +43,7 @@ class T07Step3Artifacts:
     stage_root: Path
     nodes_path: Path
     intersection_match_tool7_path: Path
+    anchor_surface_path: Path
     relation_evidence_json_path: Path
     summary_path: Path
     audit_csv_path: Path
@@ -401,8 +403,15 @@ def _write_merged_relation_evidence_json(
     run_id: str,
     step2_evidence_path: Path,
     step3_rows: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     merged_rows = _load_step2_relation_evidence_rows(step2_evidence_path)
+    step2_anchor_count = sum(
+        1
+        for row in merged_rows
+        if _normalize_id(row.get("relation_source")) == "T07_STEP2"
+        and _normalize_id(row.get("status_suggested")) == "0"
+    )
+    step3_anchor_count = len(step3_rows)
     row_by_target = {_normalize_id(row.get("target_id")): index for index, row in enumerate(merged_rows)}
     for row in step3_rows:
         target_id = _normalize_id(row.get("target_id"))
@@ -421,6 +430,11 @@ def _write_merged_relation_evidence_json(
             "target_crs": TARGET_CRS.to_string(),
             "row_count": len(merged_rows),
             "fieldnames": RELATION_EVIDENCE_FIELDNAMES,
+            "anchor_counts": {
+                "step2_anchor_count": step2_anchor_count,
+                "step3_anchor_count": step3_anchor_count,
+                "total_anchor_count": step2_anchor_count + step3_anchor_count,
+            },
             "merge_sources": {
                 "step2_relation_evidence": str(step2_evidence_path) if step2_evidence_path.is_file() else None,
                 "step3_intersection_match_tool7": "intersection_match_tool7.geojson",
@@ -428,7 +442,34 @@ def _write_merged_relation_evidence_json(
             "rows": merged_rows,
         },
     )
-    return merged_rows
+    return merged_rows, {
+        "step2_anchor_count": step2_anchor_count,
+        "step3_anchor_count": step3_anchor_count,
+        "total_anchor_count": step2_anchor_count + step3_anchor_count,
+    }
+
+
+def _write_step3_anchor_surface(
+    *,
+    output_path: Path,
+    step2_surface_path: Path,
+) -> str:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if step2_surface_path.is_file():
+        if output_path.exists():
+            output_path.unlink()
+        shutil.copy2(step2_surface_path, output_path)
+        return "copy_step2_surface"
+    from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg
+
+    write_gpkg(
+        output_path,
+        [],
+        crs_text=TARGET_CRS.to_string(),
+        empty_fields=SURFACE_CANDIDATE_FIELDNAMES,
+        geometry_type="Polygon",
+    )
+    return "empty_surface_no_step2_source"
 
 
 def run_t07_step3_intersection_match(
@@ -657,6 +698,7 @@ def run_t07_step3_intersection_match(
 
     nodes_output_path = stage_root / "nodes.gpkg"
     relation_output_path = stage_root / "intersection_match_tool7.geojson"
+    surface_output_path = stage_root / "t07_rcsdintersection_anchor_surface.gpkg"
     relation_evidence_json_path = stage_root / "t07_swsd_rcsd_relation_evidence.json"
     summary_path = stage_root / "t07_step3_summary.json"
     audit_csv_path = stage_root / "t07_step3_audit.csv"
@@ -674,7 +716,12 @@ def run_t07_step3_intersection_match(
     )
     _write_relation_output(relation_output_path, accepted_relations)
     step2_relation_evidence_path = prefer_vector_input_path(Path(nodes_path)).parent / "t07_swsd_rcsd_relation_evidence.json"
-    merged_relation_evidence_rows = _write_merged_relation_evidence_json(
+    step2_anchor_surface_path = prefer_vector_input_path(Path(nodes_path)).parent / "t07_rcsdintersection_anchor_surface.gpkg"
+    surface_write_mode = _write_step3_anchor_surface(
+        output_path=surface_output_path,
+        step2_surface_path=step2_anchor_surface_path,
+    )
+    merged_relation_evidence_rows, anchor_counts = _write_merged_relation_evidence_json(
         path=relation_evidence_json_path,
         run_id=resolved_run_id,
         step2_evidence_path=step2_relation_evidence_path,
@@ -693,10 +740,12 @@ def run_t07_step3_intersection_match(
         "output_paths": {
             "nodes": str(nodes_output_path),
             "intersection_match_tool7": str(relation_output_path),
+            "t07_rcsdintersection_anchor_surface": str(surface_output_path),
             "t07_swsd_rcsd_relation_evidence": str(relation_evidence_json_path),
         },
         "output_strategy": {
             "nodes_write_mode": nodes_write_mode,
+            "anchor_surface_write_mode": surface_write_mode,
             "relation_write_mode": "raw_crs84" if all(record.geometry_mode == "raw_crs84" for record in accepted_relations) else "transform_to_crs84",
         },
         "crs": {
@@ -704,6 +753,7 @@ def run_t07_step3_intersection_match(
             "intersection_match_tool7": RELATION_OUTPUT_CRS_NAME,
         },
         "relation_evidence_row_count": len(merged_relation_evidence_rows),
+        **anchor_counts,
         "audit_count": len(audit_rows),
         "performance": {
             "elapsed_seconds": _elapsed_since(started_at),
@@ -750,6 +800,7 @@ def run_t07_step3_intersection_match(
         stage_root=stage_root,
         nodes_path=nodes_output_path,
         intersection_match_tool7_path=relation_output_path,
+        anchor_surface_path=surface_output_path,
         relation_evidence_json_path=relation_evidence_json_path,
         summary_path=summary_path,
         audit_csv_path=audit_csv_path,

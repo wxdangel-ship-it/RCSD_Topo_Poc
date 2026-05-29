@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -66,6 +67,10 @@ def test_step1_identifies_evd_fusion_fail4_and_rejections(tmp_path: Path) -> Non
             _node(5, "yes", "no"),
         ],
     )
+    legacy_root = tmp_path / "out" / "run" / "step1_identify_fusion_units"
+    legacy_root.mkdir(parents=True)
+    (legacy_root / "t06_swsd_segment_evd_candidates.json").write_text("stale", encoding="utf-8")
+    (legacy_root / "t06_swsd_segment_fusion_units.csv").write_text("stale", encoding="utf-8")
 
     artifacts = run_t06_step1_identify_fusion_units(
         swsd_segment_path=segment_path,
@@ -86,13 +91,29 @@ def test_step1_identifies_evd_fusion_fail4_and_rejections(tmp_path: Path) -> Non
     assert summary["reject_reason_counts"]["is_anchor_not_eligible"] == 1
     assert Path(summary["outputs"]["swsd_candidates_gpkg"]).exists()
     assert Path(summary["outputs"]["swsd_final_fusion_units_gpkg"]).exists()
+    assert Path(summary["outputs"]["segment_stats_csv"]).exists()
+    assert "evd_candidates_gpkg" not in summary["outputs"]
+    assert "fusion_units_gpkg" not in summary["outputs"]
     assert artifacts.swsd_candidates_gpkg_path is not None
     assert artifacts.final_fusion_units_gpkg_path is not None
+    assert artifacts.stats_csv_path is not None
+    assert artifacts.evd_candidates_gpkg_path == artifacts.swsd_candidates_gpkg_path
+    assert artifacts.fusion_units_gpkg_path == artifacts.final_fusion_units_gpkg_path
+    assert not (artifacts.step_root / "t06_swsd_segment_evd_candidates.gpkg").exists()
+    assert not (artifacts.step_root / "t06_swsd_segment_evd_candidates.json").exists()
+    assert not (artifacts.step_root / "t06_swsd_segment_fusion_units.gpkg").exists()
+    assert not (artifacts.step_root / "t06_swsd_segment_fusion_units.csv").exists()
 
     fusion = read_vector_layer(artifacts.fusion_units_gpkg_path).features
     assert {item.properties["swsd_segment_id"] for item in fusion} == {"eligible", "fail4"}
     final_fusion = read_vector_layer(artifacts.final_fusion_units_gpkg_path).features
     assert {item.properties["swsd_segment_id"] for item in final_fusion} == {"eligible", "fail4"}
+    with artifacts.stats_csv_path.open("r", encoding="utf-8", newline="") as fp:
+        stats_rows = list(csv.DictReader(fp))
+    assert stats_rows == [
+        {"sgrade": "__TOTAL__", "total_segment_count": "5", "evd_candidate_count": "3", "final_fusion_unit_count": "2"},
+        {"sgrade": "主双", "total_segment_count": "5", "evd_candidate_count": "3", "final_fusion_unit_count": "2"},
+    ]
 
 
 def test_step1_rejects_missing_node_and_missing_fields(tmp_path: Path) -> None:
@@ -109,6 +130,45 @@ def test_step1_rejects_missing_node_and_missing_fields(tmp_path: Path) -> None:
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["reject_reason_counts"]["missing_node_reference"] == 1
     assert summary["reject_reason_counts"]["is_anchor_missing"] == 1
+
+
+def test_step1_stats_csv_groups_by_sgrade(tmp_path: Path) -> None:
+    segment_path = _write(
+        tmp_path / "segment.gpkg",
+        [
+            _seg("dual_final", [1, 2], [], sgrade="0-0双"),
+            _seg("dual_after_evd", [1, 3], [], sgrade="0-0双"),
+            _seg("single_before_evd", [1, 4], [], sgrade="0-1单"),
+            _seg("single_final", [1, 5], [], sgrade="0-1单"),
+        ],
+    )
+    nodes_path = _write(
+        tmp_path / "nodes.gpkg",
+        [
+            _node(1, "yes", "yes"),
+            _node(2, "yes", "yes"),
+            _node(3, "yes", "no"),
+            _node(4, "no", "yes"),
+            _node(5, "yes", "yes"),
+        ],
+    )
+
+    artifacts = run_t06_step1_identify_fusion_units(
+        swsd_segment_path=segment_path,
+        swsd_nodes_path=nodes_path,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    assert artifacts.stats_csv_path is not None
+    with artifacts.stats_csv_path.open("r", encoding="utf-8", newline="") as fp:
+        rows = list(csv.DictReader(fp))
+
+    assert rows == [
+        {"sgrade": "__TOTAL__", "total_segment_count": "4", "evd_candidate_count": "3", "final_fusion_unit_count": "2"},
+        {"sgrade": "0-0双", "total_segment_count": "2", "evd_candidate_count": "2", "final_fusion_unit_count": "1"},
+        {"sgrade": "0-1单", "total_segment_count": "2", "evd_candidate_count": "1", "final_fusion_unit_count": "1"},
+    ]
 
 
 def test_step1_exempts_junc_kind2_nodes_from_evd_and_anchor_checks(tmp_path: Path) -> None:

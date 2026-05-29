@@ -110,5 +110,7 @@ def test_innernet_script_runs_t06_precheck_with_explicit_paths(tmp_path: Path) -
     assert payload["step1"]["swsd_final_fusion_unit_count"] == 1
     assert Path(payload["step1"]["swsd_candidates"]).is_file()
     assert Path(payload["step1"]["swsd_final_fusion_units"]).is_file()
+    assert Path(payload["step1"]["segment_stats"]).is_file()
+    assert "fusion_units" not in payload["step1"]
     assert payload["step2"]["replaceable_count"] == 1
     assert Path(payload["step2"]["replaceable"]).is_file()

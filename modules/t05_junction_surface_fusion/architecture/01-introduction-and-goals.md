@@ -7,7 +7,7 @@ T05 整体分为两个独立阶段：
 - Phase 1：路口面融合发布。
 - Phase 2：RCSD 打断、预处理与 SWSD-RCSD 关系生产。
 
-当前模块实现 Phase 1 与 Phase 2。Phase 1 把已锚定到 SWSD 语义路口的 T02_INPUT / T03 / T04 路口面候选融合成统一发布层 `junction_anchor_surface.gpkg`，并提供可追溯 audit 与 summary；Phase 2 消费 Phase 1 成果、final nodes、原始 RCSDRoad/RCSDNode 与 T02/T03/T04 relation evidence，输出 `intersection_match_all.geojson`、copy-on-write RCSD 网络成果与 junctionization audit。
+当前模块实现 Phase 1 与 Phase 2。Phase 1 把已锚定到 SWSD 语义路口的既有 RCSDIntersection / T03 / T04 路口面候选融合成统一发布层 `junction_anchor_surface.gpkg`，并提供可追溯 audit 与 summary；Phase 2 消费 Phase 1 成果、final nodes、原始 RCSDRoad/RCSDNode 与 T07/T03/T04 relation evidence，输出 `intersection_match_all.geojson`、copy-on-write RCSD 网络成果与 junctionization audit。旧 T02 evidence 仅作为兼容输入保留。
 
 ## 成功判据
 

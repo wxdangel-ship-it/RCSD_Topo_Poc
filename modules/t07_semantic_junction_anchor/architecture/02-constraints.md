@@ -13,6 +13,7 @@
 - Step3 仅处理代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = no` 的语义路口。
 - Step3 只接受 T05 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0` 的成功 relation，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在。
 - Step3 接受后只写代表 node `is_anchor = yes / anchor_reason = NULL`，并输出 relation 子集 `intersection_match_tool7.geojson`。
+- Step2 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.json`；Step3 输出合并 Step2 evidence 与 Step3 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.json`。
 
 ## 数据约束
 
@@ -23,6 +24,7 @@
 - `DriveZone` 与 `RCSDIntersection` 必须是可用于空间命中的面状 geometry。
 - 空间判定必须统一到 `EPSG:3857`。
 - Step3 `intersection_match_tool7.geojson` 输出 CRS 为 `CRS84`。
+- `t07_rcsdintersection_anchor_surface.gpkg` 输出 CRS 为 `EPSG:3857`；`t07_swsd_rcsd_relation_evidence.json` 为非空间 handoff JSON，坐标字段按 `EPSG:3857` 表达。
 - 缺少 CRS、字段或 geometry 时不得 silent fallback。
 
 ## 边界约束

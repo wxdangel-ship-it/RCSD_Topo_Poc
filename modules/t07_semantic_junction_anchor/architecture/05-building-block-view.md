@@ -33,6 +33,7 @@ strict input read -> semantic junction assembly -> representative node selection
 - 判断组内 node 与 `RCSDIntersection` 的空间命中关系。
 - 输出 `is_anchor / anchor_reason`。
 - 输出 `node_error_1 / node_error_2` 审计。
+- 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.json`。
 
 ### Step3
 
@@ -40,10 +41,12 @@ strict input read -> semantic junction assembly -> representative node selection
 - 读取 T05 relation 主表中 `target_id / base_id / status`。
 - 校验成功 relation 的 RCSD `base_id` 是否存在于输入 `RCSDNode.id/mainnodeid`。
 - 输出 `intersection_match_tool7.geojson` 并补写代表 node `is_anchor = yes / anchor_reason = NULL`。
+- 输出合并 Step2 evidence 与 Step3 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.json`。
 
 ### 输出与审计
 
 - 写完整 `nodes.gpkg`。
-- Step3 写 `intersection_match_tool7.geojson`。
+- Step2 写 `t07_rcsdintersection_anchor_surface.gpkg / t07_swsd_rcsd_relation_evidence.json`。
+- Step3 写 `intersection_match_tool7.geojson / t07_swsd_rcsd_relation_evidence.json`。
 - 写 summary / audit / perf。
 - 不写 Segment 工件。

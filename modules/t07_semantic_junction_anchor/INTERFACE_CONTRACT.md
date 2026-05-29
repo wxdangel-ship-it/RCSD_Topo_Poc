@@ -7,6 +7,7 @@
 - Step1：基于 `nodes` 与 `DriveZone` 判定代表 node 的 `has_evd`。
 - Step2：基于 `nodes` 与 `RCSDIntersection` 判定代表 node 的 `is_anchor / anchor_reason`。
 - Step3：基于 Step2 后 `nodes`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode`，对候选 SWSD 语义路口补写 `is_anchor = yes`。
+- Step2 / Step3 同步维护 T07 版 handoff 成果 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.json`。
 
 本模块不处理 Segment，不生成虚拟路口面，不执行最终唯一锚定决策。
 
@@ -21,8 +22,10 @@
 - 仅对代表 node `has_evd = yes` 的语义路口处理 `is_anchor / anchor_reason`。
 - 只对代表 node 写 `has_evd / is_anchor / anchor_reason`。
 - 保留 T02 Step2 的空间命中与 `fail1 / fail2` 冲突语义；`kind_2 = 64 / 128 / 2048` 采用 T07 专属 Step2 分流规则。
+- Step2 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.json`，对应 T02 `t02_rcsdintersection_anchor_surface.gpkg` 与 `t02_swsd_rcsd_relation_evidence.json` 的语义路口级 handoff 口径。
 - Step3 只处理代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = no` 的 SWSD 语义路口。
 - Step3 只接受 T05 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id != 0` 的成功 relation，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在。
+- Step3 输出合并 Step2 evidence 与 Step3 成功补锚 relation 的 `t07_swsd_rcsd_relation_evidence.json`。
 
 ### 1.2 当前非目标
 
@@ -242,6 +245,8 @@ Step1 summary 至少记录：
 - `nodes.gpkg`
 - `node_error_1.gpkg/csv/json`
 - `node_error_2.gpkg/csv/json`
+- `t07_rcsdintersection_anchor_surface.gpkg`
+- `t07_swsd_rcsd_relation_evidence.json`
 - `t07_step2_summary.json`
 - `t07_step2_audit.csv/json`
 - `t07_step2_perf.json`
@@ -257,6 +262,8 @@ Step2 summary 至少记录：
 - `anchor_null_count`
 - `roundabout_reason_count`（当前固定为 `0`，保留字段兼容）
 - `t_reason_count`
+- `relation_evidence_row_count`
+- `surface_candidate_count`
 - `input_paths`
 - `output_paths`
 - `target_crs`
@@ -275,6 +282,7 @@ Step2 summary 至少记录：
 
 - `nodes.gpkg`
 - `intersection_match_tool7.geojson`
+- `t07_swsd_rcsd_relation_evidence.json`
 - `t07_step3_summary.json`
 - `t07_step3_audit.csv/json`
 - `t07_step3_perf.json`
@@ -292,6 +300,7 @@ Step3 summary 至少记录：
 - `relation_duplicate_count`
 - `rcsd_missing_count`
 - `representative_missing_count`
+- `relation_evidence_row_count`
 - `input_paths`
 - `output_paths`
 - `crs.process`
@@ -334,7 +343,8 @@ scripts/t07_run_step3_intersection_match_innernet.sh
 
 - T07 GPKG 输出复用 T08 的直接 SQLite GeoPackage 写出路径，避免 Fiona 逐要素 sink 写出。
 - `nodes.gpkg / node_error_1.gpkg / node_error_2.gpkg` 均按 copy-on-write 输出，不修改输入。
-- Step3 `nodes.gpkg` 继续按 copy-on-write 输出，不修改 Step2 输入；`intersection_match_tool7.geojson` 是 T05 relation 主表的成功补锚子集。
+- Step2 `t07_rcsdintersection_anchor_surface.gpkg` 只发布 Step2 后 `is_anchor = yes` 且可定位 `RCSDIntersection` 的 surface candidate；`t07_swsd_rcsd_relation_evidence.json` 采用 T02 relation evidence 字段族。
+- Step3 `nodes.gpkg` 继续按 copy-on-write 输出，不修改 Step2 输入；`intersection_match_tool7.geojson` 是 T05 relation 主表的成功补锚子集；Step3 `t07_swsd_rcsd_relation_evidence.json` 以 Step2 evidence 为基础，用 Step3 成功 relation 覆盖同 `target_id` 行。
 - Step3 在输入 `nodes.gpkg` 已为 `EPSG:3857` GeoPackage 时，优先复制输入 GPKG 并用 SQLite 只更新命中的代表 node，避免全量重写节点几何；copy-update 输出必须补齐 `gpkg_ogr_contents` 与增删触发器，避免 QGIS 旧版 OGR provider filter 后显示全量计数。
 - Step3 在 T05 `intersection_match_all.geojson` 为 `CRS84` 时，优先按原始 GeoJSON relation 写出 `intersection_match_tool7.geojson`，避免无业务必要的几何投影。
 - perf JSON 必须记录 `stage_timings`，用于定位 full-input 下的读取、空间索引、业务处理与写出耗时。
@@ -356,6 +366,8 @@ scripts/t07_run_step3_intersection_match_innernet.sh
 7. `kind_2 = 2048` 只有全组 node 均命中同一个且唯一的 `RCSDIntersection` 时写 `yes / t`，否则写 `no / NULL`，且不纳入冲突规则。
 8. `fail2` 优先于 `fail1`。
 9. Step3 只对 `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = no` 的候选执行补锚。
-10. Step3 仅在 T05 relation 成功且 RCSD `base_id` 存在时写 `is_anchor = yes` 并输出 `intersection_match_tool7.geojson`。
-11. 所有 CRS、字段、几何、代表 node 缺失问题都有明确审计。
-12. 输出不包含 Segment 工件或 Segment 视角 summary。
+10. Step2 必须输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.json`。
+11. Step3 仅在 T05 relation 成功且 RCSD `base_id` 存在时写 `is_anchor = yes` 并输出 `intersection_match_tool7.geojson`。
+12. Step3 必须输出合并 Step2 与 Step3 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.json`。
+13. 所有 CRS、字段、几何、代表 node 缺失问题都有明确审计。
+14. 输出不包含 Segment 工件或 Segment 视角 summary。

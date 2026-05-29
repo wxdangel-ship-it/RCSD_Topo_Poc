@@ -29,17 +29,21 @@ DEFAULT_RCSDNODE = "/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg"
 DEFAULT_NODES = "/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg"
 DEFAULT_OUT_ROOT = "/mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment"
 T02_ANCHOR_SURFACE_FILENAME = "t02_rcsdintersection_anchor_surface.gpkg"
+T07_ANCHOR_SURFACE_FILENAME = "t07_rcsdintersection_anchor_surface.gpkg"
+T07_RELATION_EVIDENCE_FILENAME = "t07_swsd_rcsd_relation_evidence.csv"
 
 
 def main() -> int:
     args = _parse_args()
     t02_dir = Path(args.t02_dir)
+    t07_dir = Path(args.t07_dir) if args.t07_dir else None
     t03_dir = Path(args.t03_dir)
     t04_dir = Path(args.t04_dir)
     out_root = Path(args.out_root)
 
-    t02_evidence = _resolve_file(args.t02_evidence, t02_dir, "t02_swsd_rcsd_relation_evidence.csv")
-    t02_input = _resolve_file(args.t02_input, t02_dir, T02_ANCHOR_SURFACE_FILENAME)
+    t02_evidence = _resolve_optional_file(args.t02_evidence, t02_dir, ("t02_swsd_rcsd_relation_evidence.csv",))
+    t07_evidence = _resolve_t07_file(args.t07_evidence, t07_dir, T07_RELATION_EVIDENCE_FILENAME)
+    t02_input = _resolve_phase1_input(args=args, t02_dir=t02_dir, t07_dir=t07_dir)
     t03_evidence = _resolve_file(args.t03_evidence, t03_dir, "t03_swsd_rcsd_relation_evidence.csv")
     t04_evidence = _resolve_file(args.t04_evidence, t04_dir, "t04_swsd_rcsd_relation_evidence.csv")
     t03_surface = _resolve_file(args.t03_surface, t03_dir, "virtual_intersection_polygons.gpkg")
@@ -80,6 +84,7 @@ def main() -> int:
         t02_relation_evidence_path=t02_evidence,
         t03_relation_evidence_path=t03_backfill.evidence_csv_path,
         t04_relation_evidence_path=t04_evidence,
+        t07_relation_evidence_path=t07_evidence,
         t04_surface_path=t04_surface,
         t04_summary_path=t04_summary,
         t04_audit_path=t04_audit,
@@ -98,12 +103,15 @@ def main() -> int:
             {
                 "inputs": {
                     "t02_dir": str(t02_dir),
+                    "t07_dir": str(t07_dir) if t07_dir else None,
                     "t03_dir": str(t03_dir),
                     "t04_dir": str(t04_dir),
                     "rcsdroad": str(args.rcsdroad),
                     "rcsdnode": str(args.rcsdnode),
                     "nodes": str(args.nodes),
-                    "t02_input": str(t02_input),
+                    "t05_phase1_existing_intersection_input": str(t02_input),
+                    "t02_evidence": str(t02_evidence) if t02_evidence else None,
+                    "t07_evidence": str(t07_evidence) if t07_evidence else None,
                 },
                 "phase1": {
                     "run_root": str(phase1.run_root),
@@ -135,8 +143,9 @@ def main() -> int:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run T05 Phase 1 and Phase 2 against innernet T02/T03/T04 outputs.")
+    parser = argparse.ArgumentParser(description="Run T05 Phase 1 and Phase 2 against innernet T07/T03/T04 outputs; legacy T02 inputs remain supported.")
     parser.add_argument("--t02-dir", default=DEFAULT_T02_DIR)
+    parser.add_argument("--t07-dir", default=None)
     parser.add_argument("--t03-dir", default=DEFAULT_T03_DIR)
     parser.add_argument("--t04-dir", default=DEFAULT_T04_DIR)
     parser.add_argument("--rcsdroad", default=DEFAULT_RCSDROAD)
@@ -150,8 +159,17 @@ def _parse_args() -> argparse.Namespace:
             f"{T02_ANCHOR_SURFACE_FILENAME} discovered under --t02-dir."
         ),
     )
+    parser.add_argument(
+        "--t07-input",
+        default=None,
+        help=(
+            "Optional explicit T07 existing-intersection surface path. Defaults to "
+            f"{T07_ANCHOR_SURFACE_FILENAME} discovered under --t07-dir when --t07-dir is provided."
+        ),
+    )
     parser.add_argument("--out-root", default=DEFAULT_OUT_ROOT)
     parser.add_argument("--t02-evidence", default=None)
+    parser.add_argument("--t07-evidence", default=None)
     parser.add_argument("--t03-evidence", default=None)
     parser.add_argument("--t04-evidence", default=None)
     parser.add_argument("--t03-surface", default=None)
@@ -180,6 +198,33 @@ def _resolve_file(explicit_path: str | None, root: Path, filename: str) -> Path:
     if matches:
         return matches[0]
     raise FileNotFoundError(f"missing {filename} under {root}")
+
+
+def _resolve_t07_file(explicit_path: str | None, root: Path | None, filename: str) -> Path | None:
+    if explicit_path:
+        path = Path(explicit_path)
+        if path.is_file():
+            return path
+        raise FileNotFoundError(f"configured path does not exist: {path}")
+    if root is None:
+        return None
+    return _resolve_file(None, root, filename)
+
+
+def _resolve_phase1_input(*, args: argparse.Namespace, t02_dir: Path, t07_dir: Path | None) -> Path:
+    if args.t07_input:
+        path = Path(args.t07_input)
+        if path.is_file():
+            return path
+        raise FileNotFoundError(f"configured path does not exist: {path}")
+    if args.t02_input:
+        path = Path(args.t02_input)
+        if path.is_file():
+            return path
+        raise FileNotFoundError(f"configured path does not exist: {path}")
+    if t07_dir is not None:
+        return _resolve_file(None, t07_dir, T07_ANCHOR_SURFACE_FILENAME)
+    return _resolve_file(args.t02_input, t02_dir, T02_ANCHOR_SURFACE_FILENAME)
 
 
 def _resolve_optional_file(explicit_path: str | None, root: Path, filenames: tuple[str, ...]) -> Path | None:

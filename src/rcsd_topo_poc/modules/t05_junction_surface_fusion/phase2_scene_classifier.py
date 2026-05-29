@@ -13,7 +13,11 @@ from .phase2_models import (
 )
 
 
-SOURCE_PRIORITY = {"T02_INPUT": 0, "T03": 1, "T04": 2}
+SOURCE_T07 = "T07"
+SOURCE_T02_INPUT = "T02_INPUT"
+SOURCE_T03 = "T03"
+SOURCE_T04 = "T04"
+SOURCE_PRIORITY = {SOURCE_T07: 0, SOURCE_T02_INPUT: 1, SOURCE_T03: 2, SOURCE_T04: 3}
 T04_FALLBACK_SCENES = {
     "main_evidence_with_rcsdroad_fallback",
     "no_main_evidence_with_rcsdroad_fallback_and_swsd",
@@ -23,11 +27,17 @@ T04_FALLBACK_SCENES = {
 def build_evidence_rows(
     *,
     t02_rows: Iterable[dict[str, Any]],
+    t07_rows: Iterable[dict[str, Any]] = (),
     t03_rows: Iterable[dict[str, Any]],
     t04_rows: Iterable[dict[str, Any]],
 ) -> list[Phase2Evidence]:
     records: list[Phase2Evidence] = []
-    for source_module, rows in (("T02_INPUT", t02_rows), ("T03", t03_rows), ("T04", t04_rows)):
+    for source_module, rows in (
+        (SOURCE_T07, t07_rows),
+        (SOURCE_T02_INPUT, t02_rows),
+        (SOURCE_T03, t03_rows),
+        (SOURCE_T04, t04_rows),
+    ):
         for row in rows:
             target_id = _text(row.get("target_id"))
             if not target_id:
@@ -60,7 +70,7 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
     case_id = evidence.case_id
     source = evidence.source_module
 
-    if source == "T02_INPUT":
+    if source == SOURCE_T02_INPUT:
         if relation_state == "existing_rcsdintersection_matched" and base_ids:
             return SceneDecision(
                 scene=SCENE_DIRECT,
@@ -73,7 +83,7 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
             )
         return _failure_or_no_rcsd(evidence, relation_state or "t02_no_existing_rcsdintersection")
 
-    if source == "T04" and base_ids and status_suggested == "0" and _t04_relation_only_success(row):
+    if source == SOURCE_T04 and base_ids and status_suggested == "0" and _t04_relation_only_success(row):
         return SceneDecision(
             scene=SCENE_DIRECT,
             action="direct_relation",
@@ -114,7 +124,7 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
             multi_base_relation=len(base_ids) > 1,
         )
 
-    if source == "T04" and junction_type == "complex_divmerge" and len(selected_nodes) > 1:
+    if source == SOURCE_T04 and junction_type == "complex_divmerge" and len(selected_nodes) > 1:
         return SceneDecision(
             scene=SCENE_GROUP_EXISTING,
             action="group_existing_rcsd_nodes",
@@ -124,7 +134,7 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
             rcsdnode_ids=selected_nodes,
         )
 
-    if source == "T04" and road_ids and _t04_fallback_scene(row):
+    if source == SOURCE_T04 and road_ids and _t04_fallback_scene(row):
         scene_type = _t04_fallback_scene(row)
         alignment_type = _text(row.get("rcsd_alignment_type"))
         if alignment_type and alignment_type != "rcsdroad_only_alignment":
@@ -176,25 +186,25 @@ def choose_actionable_decisions(decisions: list[SceneDecision]) -> list[SceneDec
 
 
 def _group_reason(source: str, junction_type: str) -> str:
-    if source == "T03":
+    if source == SOURCE_T03:
         return "t03_a_multi_rcsdnode_semantic_core"
-    if source == "T04" and junction_type == "complex_divmerge":
+    if source == SOURCE_T04 and junction_type == "complex_divmerge":
         return "t04_complex_multi_rcsdnode"
     return "multi_rcsdnode_semantic_core"
 
 
 def _road_split_reason(source: str, row: dict[str, Any]) -> str:
-    scene_type = _t04_fallback_scene(row) if source == "T04" else _text(row.get("scene_type"))
-    if source == "T04" and scene_type:
+    scene_type = _t04_fallback_scene(row) if source == SOURCE_T04 else _text(row.get("scene_type"))
+    if source == SOURCE_T04 and scene_type:
         return scene_type
-    if source == "T03":
+    if source == SOURCE_T03:
         return "t03_b2_road_only_support"
     return "rcsdroad_only_alignment"
 
 
 def _reference_mode(source: str, row: dict[str, Any]) -> str:
-    scene_type = _t04_fallback_scene(row) if source == "T04" else _text(row.get("scene_type"))
-    if source == "T04" and scene_type == "main_evidence_with_rcsdroad_fallback":
+    scene_type = _t04_fallback_scene(row) if source == SOURCE_T04 else _text(row.get("scene_type"))
+    if source == SOURCE_T04 and scene_type == "main_evidence_with_rcsdroad_fallback":
         return "fact"
     return "swsd"
 

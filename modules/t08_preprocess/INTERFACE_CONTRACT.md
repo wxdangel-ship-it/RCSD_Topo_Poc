@@ -144,6 +144,24 @@
 - summary 必须记录输入、输出、参数、字段解析、CRS、错误类型计数、suppressed 连续分合流候选与性能字段。
 - 所有输入、输出路径必须通过参数提供。
 
+### Tool7：交通限制显性化
+
+- 输入一：SW C 表 GPKG，依赖字段 `CondType / inLinkID / outLinkID`；C 表可以是非空间 GPKG 表。
+- 输入二：SW Node GPKG，用于输入审计与 CRS / 计数追溯。
+- 输入三：SW Road GPKG，依赖字段 `id` 或 `linkid / LinkID`，必须包含 Link 几何。
+- 输出：
+  - `sw_restriction_tool7.gpkg`
+  - `sw_restriction_summary_tool7.json`
+- 输出 CRS：`EPSG:3857`。
+- 处理规则：
+  - 仅处理 C 表中 `CondType = 1` 的记录。
+  - `inLinkID / outLinkID` 必须同时存在于 SW Road 输入中，否则跳过并写入 summary 计数。
+  - restriction 输出记录全量继承 C 表业务字段，不继承 GPKG 内部 `fid / geom` 字段。
+  - restriction 几何基于 `inLinkID` 与 `outLinkID` 对应 Road 几何构建 LineString；按两条 Link 端点最短距离确定连接端点，将 inLink 定向到连接端点、outLink 从连接端点向外，端点不重叠时在两端点之间追加直线连接。
+- 输出边界：Tool7 只输出显性 restriction GPKG 与 summary，不修改输入 C 表 / SW Node / SW Road。
+- summary 必须记录输入、输出、参数、字段解析、CRS、C 表记录数、`CondType=1` 记录数、Road 命中 / 缺失计数、无效几何计数、restriction 输出计数与性能字段。
+- 所有输入、输出路径必须通过参数提供。
+
 ## 2. EntryPoints
 
 运行前先在 repo root 执行：
@@ -217,6 +235,16 @@ Tool6：
   --roads-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_roads_tool5.gpkg \
   --csv-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/node_error_tool6.csv \
   --error-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/node_error_tool6.gpkg
+```
+
+Tool7：
+
+```bash
+.venv/bin/python scripts/t08_tool7_traffic_restriction.py \
+  --condition-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/MIF/Cguangdong1.gpkg \
+  --swnode-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-node.gpkg \
+  --swroad-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-road.gpkg \
+  --restriction-output /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/sw_restriction_tool7.gpkg
 ```
 
 ## 3. Tool1 Params
@@ -312,7 +340,19 @@ Tool6：
 - `--horizontal-angle-degrees`：横方向共线夹角阈值，默认 `35`。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个要素输出一次。
 
-## 9. Acceptance
+## 9. Tool7 Params
+
+- `--condition-gpkg`：SW C 表输入 GPKG。
+- `--swnode-gpkg`：SW Node 输入 GPKG，用于审计。
+- `--swroad-gpkg`：SW Road 输入 GPKG，用于 Link 存在性校验与 restriction 几何构建。
+- `--restriction-output`：显性 restriction 输出 GPKG，文件名必须以 `_tool7.gpkg` 结尾。
+- `--condition-layer / --swnode-layer / --swroad-layer`：可选输入图层名；C 表为多表 GPKG 且无法按文件 stem 自动定位时必须提供 `--condition-layer`。
+- `--summary-output`：可选 summary JSON 输出路径，文件名必须以 `_tool7.json` 结尾。
+- `--target-epsg`：最终输出 EPSG，默认 `3857`。
+- `--condition-default-crs / --swnode-default-crs / --swroad-default-crs`：输入缺失 CRS 时使用；C 表非空间时仅作为审计字段记录。
+- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 条输出 restriction 记录输出一次。
+
+## 10. Acceptance
 
 1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，所有输出均为输入目录下追加 `_tool1` 的目标格式文件。
 2. Tool2 只接受 GPKG 输入。
@@ -331,6 +371,8 @@ Tool6：
 15. Tool6 输出 `node_error_tool6.csv / node_error_tool6.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
 16. Tool6 CSV 最后一列为 `是否修复`，默认值为 `1`；人工确认不需要修复的数据改为 `0`；Tool6 不修改输入 Nodes/Roads。
 17. Tool6 可追溯 `错误分歧合流路口 / 错误交叉路口_T型路口 / 错误交叉路口_非交叉路口`、入出度、相关 Road、suppressed 原因、CRS 与性能 summary。
-18. 所有路径均由参数提供，不写死内网目录。
-19. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
-20. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。
+18. Tool7 输出 `sw_restriction_tool7.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
+19. Tool7 仅输出 `CondType = 1` 且 in/out Link 均存在于 SW Road 的 restriction，输出记录继承 C 表业务字段，几何能解释 Link 端点重叠与非重叠连接。
+20. 所有路径均由参数提供，不写死内网目录。
+21. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
+22. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。

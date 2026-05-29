@@ -157,6 +157,24 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert summary["anchor_fail1_count"] == 1
     assert summary["anchor_fail2_count"] == 2
     assert summary["anchor_null_count"] == 1
+    assert summary["relation_evidence_row_count"] == 10
+    assert summary["surface_candidate_count"] == 2
+    assert artifacts.relation_evidence_json_path is not None
+    relation_payload = json.loads(artifacts.relation_evidence_json_path.read_text(encoding="utf-8"))
+    relation_rows = {str(row["target_id"]): row for row in relation_payload["rows"]}
+    assert relation_rows["1"]["relation_source"] == "T07_STEP2"
+    assert relation_rows["1"]["relation_state"] == "existing_rcsdintersection_matched"
+    assert relation_rows["1"]["status_suggested"] == 0
+    assert relation_rows["1"]["base_id_candidate"] == "a"
+    assert relation_rows["2"]["relation_state"] == "no_existing_rcsdintersection"
+    assert relation_rows["5"]["relation_state"] == "multiple_intersections_for_group"
+    assert relation_rows["6"]["relation_state"] == "intersection_shared_by_multiple_groups"
+    assert relation_rows["8"]["relation_state"] == "not_evaluated_no_evidence"
+    assert artifacts.anchor_surface_path is not None
+    with fiona.open(str(artifacts.anchor_surface_path)) as src:
+        surface_rows = [dict(feature["properties"]) for feature in src]
+    assert {str(row["target_id"]) for row in surface_rows} == {"1", "4"}
+    assert {row["source_module"] for row in surface_rows} == {"T07_STEP2"}
     assert "stage_timings" in summary["performance"]
     assert "build_intersection_index_seconds" in summary["performance"]["stage_timings"]
 

@@ -124,6 +124,22 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
             _feature({"id": 901, "mainnodeid": 901}, Point(101, 0)),
         ],
     )
+    (tmp_path / "t07_swsd_rcsd_relation_evidence.json").write_text(
+        json.dumps(
+            {
+                "run_id": "step2",
+                "target_crs": "EPSG:3857",
+                "row_count": 2,
+                "fieldnames": [],
+                "rows": [
+                    {"target_id": "1", "relation_source": "T07_STEP2", "relation_state": "no_existing_rcsdintersection", "status_suggested": 1, "base_id_candidate": -1},
+                    {"target_id": "8", "relation_source": "T07_STEP2", "relation_state": "no_existing_rcsdintersection", "status_suggested": 1, "base_id_candidate": -1},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     artifacts = run_t07_step3_intersection_match(
         nodes_path=nodes_path,
@@ -157,8 +173,18 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert summary["rcsd_missing_count"] == 1
     assert summary["skipped_kind2_count"] == 1
     assert summary["crs"]["intersection_match_tool7"] == "CRS84"
+    assert summary["relation_evidence_row_count"] == 3
     assert "stage_timings" in summary["performance"]
     assert "evaluate_candidates_seconds" in summary["performance"]["stage_timings"]
+
+    evidence_payload = json.loads(artifacts.relation_evidence_json_path.read_text(encoding="utf-8"))
+    evidence_rows = {str(row["target_id"]): row for row in evidence_payload["rows"]}
+    assert evidence_rows["1"]["relation_source"] == "T07_STEP3_INTERSECTION_MATCH"
+    assert evidence_rows["1"]["relation_state"] == "intersection_match_tool7_matched"
+    assert evidence_rows["1"]["status_suggested"] == 0
+    assert evidence_rows["1"]["base_id_candidate"] == "900"
+    assert evidence_rows["2"]["base_id_candidate"] == "901"
+    assert evidence_rows["8"]["relation_source"] == "T07_STEP2"
 
 
 def test_step3_uses_fast_paths_for_gpkg_nodes_and_crs84_relations(tmp_path: Path) -> None:

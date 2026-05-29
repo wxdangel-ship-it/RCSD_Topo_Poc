@@ -2,7 +2,7 @@
 
 ## 上下文
 
-T05 Phase 1 位于 T02/T03/T04 surface 成果之后，Phase 2 之前；T05 Phase 2 位于统一路口面发布之后，为 T06 等下游模块提供 SWSD-RCSD 语义路口关系与 copy-on-write RCSD 网络成果。
+T05 Phase 1 位于既有 RCSDIntersection / T03 / T04 surface 成果之后，Phase 2 之前；T05 Phase 2 位于统一路口面发布之后，消费 T07/T03/T04 relation evidence，为 T06 等下游模块提供 SWSD-RCSD 语义路口关系与 copy-on-write RCSD 网络成果。
 
 上游来源：
 
@@ -29,7 +29,7 @@ Phase 2 下游：
 - 按 `mainnodeid` 分组。
 - 执行单源发布、多源 union 或 primary 选择。
 - 写出主图层、audit、summary。
-- Phase 2 读取 Phase 1 surface、fusion audit、final nodes、原始 RCSDRoad/RCSDNode 与 T02/T03/T04 relation evidence。
+- Phase 2 读取 Phase 1 surface、fusion audit、final nodes、原始 RCSDRoad/RCSDNode 与 T07/T03/T04 relation evidence；旧 T02 evidence 仅兼容旧批次。
 - Phase 2 执行场景分流、RCSDNode grouping、必要的 RCSDRoad split、关系发布、blocking error 与 summary 输出。
 
 ## 当前范围外

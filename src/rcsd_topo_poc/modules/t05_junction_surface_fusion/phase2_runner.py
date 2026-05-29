@@ -27,7 +27,15 @@ from .phase2_node_grouping import apply_mainnodeid_grouping, choose_primary_node
 from .phase2_outputs import write_phase2_outputs
 from .phase2_projection import project_points_to_active_roads, projection_points_for_decision
 from .phase2_relation import failure_relation_feature, success_relation_feature
-from .phase2_scene_classifier import build_evidence_rows, choose_actionable_decisions, classify_evidence
+from .phase2_scene_classifier import (
+    SOURCE_T02_INPUT,
+    SOURCE_T03,
+    SOURCE_T04,
+    SOURCE_T07,
+    build_evidence_rows,
+    choose_actionable_decisions,
+    classify_evidence,
+)
 from .phase2_split import split_roads
 
 
@@ -57,6 +65,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     progress: bool = False,
     progress_interval: int = 1000,
     readonly_workers: int = 1,
+    t07_relation_evidence_path: str | Path | None = None,
 ) -> T05Phase2Artifacts:
     run_started = perf_counter()
     timings_sec: dict[str, float] = {}
@@ -90,7 +99,10 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     mark("build_indexes_sec", index_started)
 
     evidence_started = perf_counter()
-    t02_rows = read_table(_required_path(t02_relation_evidence_path, "t02_relation_evidence_path"))
+    if t02_relation_evidence_path is None and t07_relation_evidence_path is None:
+        raise ValueError("Either t07_relation_evidence_path or t02_relation_evidence_path is required for T05 Phase 2.")
+    t02_rows = read_table(_required_path(t02_relation_evidence_path, "t02_relation_evidence_path")) if t02_relation_evidence_path is not None else []
+    t07_rows = read_table(_required_path(t07_relation_evidence_path, "t07_relation_evidence_path")) if t07_relation_evidence_path is not None else []
     t03_rows = read_table(_required_path(t03_relation_evidence_path, "t03_relation_evidence_path"))
     t04_base_rows = read_table(_required_path(t04_relation_evidence_path, "t04_relation_evidence_path"))
     t04_target_case_ids = _target_case_ids(t04_base_rows)
@@ -109,6 +121,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     )
     evidence_rows = build_evidence_rows(
         t02_rows=t02_rows,
+        t07_rows=t07_rows,
         t03_rows=t03_rows,
         t04_rows=t04_rows,
     )
@@ -128,6 +141,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         "rcsdroad_count": len(original_roads),
         "rcsdnode_count": len(original_rcsdnodes),
         "t02_evidence_row_count": len(t02_rows),
+        "t07_evidence_row_count": len(t07_rows),
         "t03_evidence_row_count": len(t03_rows),
         "t04_evidence_row_count": len(t04_rows),
         "t04_supplement_target_count": len(t04_supplements),
@@ -459,9 +473,10 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     module_relation_audit_rows = _module_relation_audit_summary(
         evidence_rows=evidence_rows,
         source_input_counts={
-            "T02_INPUT": len(t02_rows),
-            "T03": len(t03_rows),
-            "T04": len(t04_rows),
+            SOURCE_T07: len(t07_rows),
+            SOURCE_T02_INPUT: len(t02_rows),
+            SOURCE_T03: len(t03_rows),
+            SOURCE_T04: len(t04_rows),
         },
         context_by_target=context_by_target,
         relation_features=relation_features,
@@ -481,6 +496,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
             "rcsdroad_path": str(rcsdroad_path),
             "rcsdnode_path": str(rcsdnode_path),
             "t02_relation_evidence_path": str(t02_relation_evidence_path) if t02_relation_evidence_path else None,
+            "t07_relation_evidence_path": str(t07_relation_evidence_path) if t07_relation_evidence_path else None,
             "t03_relation_evidence_path": str(t03_relation_evidence_path) if t03_relation_evidence_path else None,
             "t04_relation_evidence_path": str(t04_relation_evidence_path) if t04_relation_evidence_path else None,
             "t04_surface_path": str(t04_surface_path) if t04_surface_path else None,
@@ -573,19 +589,21 @@ def _target_contexts(
         )
     known_targets = {context.target_id for context in contexts}
     for evidence in evidence_rows or []:
-        if evidence.target_id in known_targets or not _is_t04_fallback_relation(evidence):
+        if evidence.target_id in known_targets:
+            continue
+        if not (_is_t04_fallback_relation(evidence) or _is_t07_relation_only_success(evidence)):
             continue
         nodes = nodes_by_target.get(evidence.target_id, [])
         representative = _representative_node(nodes, evidence.target_id)
         rep_props = dict(representative.get("properties") or {}) if representative else {}
-        if _text(_field_value(rep_props, "is_anchor")) != "fail4_fallback":
+        if _is_t04_fallback_relation(evidence) and _text(_field_value(rep_props, "is_anchor")) != "fail4_fallback":
             continue
         point = _semantic_point(nodes, None)
         projection_points = tuple(_point_of(node.get("geometry")) for node in nodes if node.get("geometry") is not None)
         contexts.append(
             SwsdTargetContext(
                 target_id=evidence.target_id,
-                surface_id=f"T04_FALLBACK:{evidence.target_id}",
+                surface_id=_relation_only_surface_id(evidence),
                 junction_type=_text(evidence.row.get("junction_type")) or "unknown",
                 point=point,
                 projection_points=projection_points or (point,),
@@ -607,6 +625,28 @@ def _is_t04_fallback_relation(evidence: Any) -> bool:
         and surface_candidate_present in {"0", "false", "False"}
         and _text(row.get("relation_state")).startswith("success_")
     )
+
+
+def _is_t07_relation_only_success(evidence: Any) -> bool:
+    row = getattr(evidence, "row", {}) or {}
+    return (
+        getattr(evidence, "source_module", "") == SOURCE_T07
+        and _text(row.get("status_suggested")) == "0"
+        and _has_nonzero_base_id_candidate(row)
+    )
+
+
+def _relation_only_surface_id(evidence: Any) -> str:
+    if getattr(evidence, "source_module", "") == SOURCE_T07:
+        return f"T07_RELATION:{evidence.target_id}"
+    return f"T04_FALLBACK:{evidence.target_id}"
+
+
+def _has_nonzero_base_id_candidate(row: dict[str, Any]) -> bool:
+    for value in _list_values(row.get("base_id_candidate")):
+        if _text(value) not in {"", "0", "-1"}:
+            return True
+    return False
 
 
 def _required_path(path: str | Path | None, label: str) -> Path:
@@ -788,9 +828,10 @@ def _build_decision_plan(
             "failure_target_count": scene_counts[SCENE_FAILURE],
             "missing_evidence_target_count": scene_counts["missing_relation_evidence"],
             "multi_actionable_target_count": multi_actionable_count,
-            "t02_actionable_count": source_counts["T02_INPUT"],
-            "t03_actionable_count": source_counts["T03"],
-            "t04_actionable_count": source_counts["T04"],
+            "t07_actionable_count": source_counts[SOURCE_T07],
+            "t02_actionable_count": source_counts[SOURCE_T02_INPUT],
+            "t03_actionable_count": source_counts[SOURCE_T03],
+            "t04_actionable_count": source_counts[SOURCE_T04],
             "unique_split_road_candidate_count": len(split_road_ids),
             "unique_group_node_candidate_count": len(grouped_node_ids),
             "readonly_target_count": readonly_target_count,
@@ -889,7 +930,7 @@ def _module_relation_audit_summary(
         "pre_success_rcsdroad_junctionization",
         "pre_success_no_rcsd_overall_failure",
     )
-    source_modules = ("T02_INPUT", "T03", "T04")
+    source_modules = (SOURCE_T07, SOURCE_T02_INPUT, SOURCE_T03, SOURCE_T04)
     classified_counts: Counter[str] = Counter()
     target_input_counts: Counter[str] = Counter()
     counters: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)

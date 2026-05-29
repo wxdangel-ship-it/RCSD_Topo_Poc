@@ -72,7 +72,7 @@ Primary：
 
 Phase 2 使用“读取 Phase 1 surface -> 消费 relation evidence -> 场景分流 -> copy-on-write RCSD 处理 -> 关系发布”的链路：
 
-1. 读取 `junction_anchor_surface.gpkg`、fusion audit、final `nodes.gpkg`、原始 `RCSDRoad.gpkg / RCSDNode.gpkg` 与 T02/T03/T04 relation evidence。
+1. 读取 `junction_anchor_surface.gpkg`、fusion audit、final `nodes.gpkg`、原始 `RCSDRoad.gpkg / RCSDNode.gpkg` 与 T07/T03/T04 relation evidence；旧 T02 evidence 仅作为兼容输入。
 2. 以 Phase 1 surface 的 `mainnodeid` 作为 Phase 2 target 主键。
 3. 预先构建 target 级 decision plan，并统计 direct / grouping / road_split / no_related、只读 target、可变 target 等体量。
 4. 先并行处理无需修改 RCSDRoad / RCSDNode 的只读关系构建分支。
@@ -84,13 +84,14 @@ Phase 2 使用“读取 Phase 1 surface -> 消费 relation evidence -> 场景分
 10. 多个 RCSD 候选可合并时归组为一个 RCSD 语义路口；无法合并时输出 blocking error，不写主表 relation。
 11. 输出 `intersection_match_all.geojson`、copy-on-write RCSDRoad/RCSDNode、增量层、audit、blocking errors、summary 与聚合 performance 打点。
 
-Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gpkg`，不修改 T02/T03/T04 主链，也不原地修改输入 RCSD 文件。
+Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gpkg`，不修改 T07/T03/T04 主链，也不原地修改输入 RCSD 文件。
 
 若 T03 批次级 `t03_swsd_rcsd_relation_evidence.*` 缺少 T05 场景分流所需的 `required_rcsdnode_ids / support_rcsdroad_ids`，先执行 T05 handoff 补齐工具，从 T03 当前已输出的 `cases/<case_id>/step6_status.json` 或 `step6_audit.json.inputs` 读取正式字段，写出独立的 `t03_swsd_rcsd_relation_evidence_backfilled.*`。Phase 2 再消费补齐后的 evidence。
 
 ## 8. Phase 2 场景策略
 
-- T02 existing RCSDIntersection evidence：若提供可用 `base_id_candidate`，直接建立关系。
+- T07 existing RCSDIntersection / 历史路口锚定 evidence：若提供 `status_suggested = 0` 与可用 `base_id_candidate`，直接建立关系；历史锚定 relation-only target 即使没有 Phase 1 surface，也进入 `intersection_match_all.geojson`。
+- T02 existing RCSDIntersection evidence：旧批次兼容路径，若提供可用 `base_id_candidate`，直接建立关系。
 - T03-A：`required_rcsdnode_ids` 为 1 时直接关系；多个时归组，组内所有 node `mainnodeid` 填主 node id。
 - T03 existing role mismatch：只有 `base_id_candidate / required_rcsdnode_ids` 明确指向 RCSD 语义路口时才直接关系；`association_class=B` 不自动等于该场景。
 - T03 road-only：`relation_state = rcsd_present_not_junction` 且存在 support RCSDRoad，同时不存在可用 RCSDNode 语义核心时，按 SWSD 语义点投影 split。

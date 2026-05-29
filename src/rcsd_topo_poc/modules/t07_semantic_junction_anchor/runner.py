@@ -32,6 +32,51 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg as write_g
 
 ALLOWED_KIND2 = {"4", "8", "16", "64", "128", "2048"}
 INTERSECTION_ID_FIELDS = ("id", "intersection_id", "intersectionid", "fid", "objectid", "OBJECTID")
+PATCH_ID_FIELDS = ("patch_id", "patchid", "PATCH_ID", "PATCHID")
+RELATION_EVIDENCE_FIELDNAMES = [
+    "target_id",
+    "representative_node_id",
+    "relation_source",
+    "relation_target_type",
+    "matched_rcsdintersection_ids",
+    "relation_state",
+    "status_suggested",
+    "base_id_candidate",
+    "reason",
+    "level",
+    "is_highway",
+    "swsd_point_x",
+    "swsd_point_y",
+    "rcsd_point_x",
+    "rcsd_point_y",
+]
+SURFACE_CANDIDATE_FIELDNAMES = [
+    "surface_candidate_id",
+    "target_id",
+    "mainnodeid",
+    "representative_node_id",
+    "source_module",
+    "source_surface_type",
+    "source_rcsdintersection_id",
+    "source_surface_id",
+    "matched_rcsdintersection_ids",
+    "junction_type",
+    "kind_2",
+    "grade_2",
+    "patch_id",
+    "patch_id_source",
+    "final_state",
+    "anchor_reason",
+    "base_id_candidate",
+    "relation_state",
+    "status_suggested",
+    "level",
+    "is_highway",
+    "swsd_point_x",
+    "swsd_point_y",
+    "rcsd_point_x",
+    "rcsd_point_y",
+]
 
 
 class T07RunError(ValueError):
@@ -77,6 +122,8 @@ class ResolvedGroup:
 class IntersectionRecord:
     feature_index: int
     intersection_id: str
+    base_id_candidate: str | None
+    properties: dict[str, Any]
     geometry: BaseGeometry
 
 
@@ -89,6 +136,8 @@ class T07StageArtifacts:
     audit_csv_path: Path
     audit_json_path: Path
     perf_json_path: Path
+    relation_evidence_json_path: Path | None = None
+    anchor_surface_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -554,6 +603,266 @@ def _write_nodes(path: Path, features: list[LoadedFeature]) -> None:
     )
 
 
+def _first_text_property(properties: dict[str, Any], field_names: tuple[str, ...]) -> tuple[str | None, str | None]:
+    for field_name in field_names:
+        value = _normalize_id(properties.get(field_name))
+        if value is not None:
+            return value, field_name
+    return None, None
+
+
+def _point_xy(geometry: BaseGeometry | None) -> tuple[float | str, float | str]:
+    if geometry is None or geometry.is_empty:
+        return "", ""
+    point = geometry if geometry.geom_type == "Point" else geometry.representative_point()
+    return float(point.x), float(point.y)
+
+
+def _value_or_minus_one(value: Any) -> Any:
+    text = _normalize_id(value)
+    return text if text is not None else -1
+
+
+def _pipe_join_text(values: list[Any] | tuple[Any, ...]) -> str:
+    return "|".join(str(value) for value in values if str(value or "").strip())
+
+
+def _intersection_points(
+    intersection_ids: list[str],
+    intersection_by_id: dict[str, IntersectionRecord],
+) -> tuple[float | str, float | str]:
+    x_values: list[str] = []
+    y_values: list[str] = []
+    for intersection_id in intersection_ids:
+        record = intersection_by_id.get(intersection_id)
+        if record is None:
+            continue
+        x, y = _point_xy(record.geometry)
+        if x == "" or y == "":
+            continue
+        x_values.append(str(x))
+        y_values.append(str(y))
+    if not x_values:
+        return "", ""
+    if len(x_values) == 1:
+        return float(x_values[0]), float(y_values[0])
+    return "|".join(x_values), "|".join(y_values)
+
+
+def _junction_type_from_kind_2(kind_2: str | None) -> str:
+    if kind_2 == "4":
+        return "center_junction"
+    if kind_2 == "2048":
+        return "single_sided_t_mouth"
+    if kind_2 == "8":
+        return "merge"
+    if kind_2 == "16":
+        return "diverge"
+    if kind_2 == "128":
+        return "complex_divmerge"
+    if kind_2 == "64":
+        return "roundabout"
+    return ""
+
+
+def _stage2_relation_state(
+    *,
+    participates: bool,
+    final_state: str | None,
+    representative_has_evd: str | None,
+    representative_missing: bool,
+) -> str:
+    if representative_missing:
+        return "representative_node_missing"
+    if not participates and representative_has_evd != "yes":
+        return "not_evaluated_no_evidence"
+    if final_state == "yes":
+        return "existing_rcsdintersection_matched"
+    if final_state == "no":
+        return "no_existing_rcsdintersection"
+    if final_state == "fail1":
+        return "multiple_intersections_for_group"
+    if final_state == "fail2":
+        return "intersection_shared_by_multiple_groups"
+    return "not_evaluated_no_evidence"
+
+
+def _write_relation_evidence_json(
+    *,
+    path: Path,
+    run_id: str,
+    nodes_features: list[LoadedFeature],
+    group_results: dict[str, dict[str, Any]],
+    junction_ids: list[str],
+    intersection_by_id: dict[str, IntersectionRecord],
+    fail2_by_junction: dict[str, set[str]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for junction_id in junction_ids:
+        result = group_results.get(junction_id)
+        if result is None:
+            continue
+        group: ResolvedGroup = result["group"]
+        representative_missing = group.representative is None
+        representative_props: dict[str, Any] = {}
+        representative_node_id = ""
+        swsd_point_x: float | str = ""
+        swsd_point_y: float | str = ""
+        if group.representative is not None:
+            representative = group.representative
+            representative_node_id = representative.node_id
+            representative_feature = nodes_features[representative.output_index]
+            representative_props = representative_feature.properties
+            swsd_point_x, swsd_point_y = _point_xy(representative.geometry)
+
+        target_id = _normalize_id(representative_props.get("mainnodeid")) or representative_node_id or junction_id
+        representative_has_evd = _normalize_id(representative_props.get("has_evd"))
+        final_state = _normalize_id(representative_props.get("is_anchor"))
+        relation_state = _stage2_relation_state(
+            participates=bool(result.get("participates")),
+            final_state=final_state,
+            representative_has_evd=representative_has_evd,
+            representative_missing=representative_missing,
+        )
+        if final_state == "fail2":
+            matched_intersection_ids = sorted(fail2_by_junction.get(junction_id, set()))
+        else:
+            matched_intersection_ids = list(result.get("intersection_ids") or [])
+        status_suggested = 0 if relation_state == "existing_rcsdintersection_matched" else 1
+        base_candidates = [
+            record.base_id_candidate
+            for intersection_id in matched_intersection_ids
+            if (record := intersection_by_id.get(intersection_id)) is not None and record.base_id_candidate
+        ]
+        base_id_candidate = _pipe_join_text(base_candidates) if status_suggested == 0 and base_candidates else -1
+        rcsd_point_x, rcsd_point_y = _intersection_points(matched_intersection_ids, intersection_by_id)
+        rows.append(
+            {
+                "target_id": target_id,
+                "representative_node_id": representative_node_id,
+                "relation_source": "T07_STEP2",
+                "relation_target_type": "RCSDIntersection",
+                "matched_rcsdintersection_ids": _pipe_join_text(matched_intersection_ids),
+                "relation_state": relation_state,
+                "status_suggested": status_suggested,
+                "base_id_candidate": base_id_candidate,
+                "reason": relation_state,
+                "level": _value_or_minus_one(representative_props.get("grade")),
+                "is_highway": _value_or_minus_one(representative_props.get("closed_con")),
+                "swsd_point_x": swsd_point_x,
+                "swsd_point_y": swsd_point_y,
+                "rcsd_point_x": rcsd_point_x,
+                "rcsd_point_y": rcsd_point_y,
+            }
+        )
+    write_json(
+        path,
+        {
+            "run_id": run_id,
+            "target_crs": TARGET_CRS.to_string(),
+            "row_count": len(rows),
+            "fieldnames": RELATION_EVIDENCE_FIELDNAMES,
+            "rows": rows,
+        },
+    )
+    return rows
+
+
+def _surface_candidate_id(target_id: str, intersection_id: str) -> str:
+    raw = f"T07_STEP2__{target_id}__{intersection_id}"
+    return "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in raw)
+
+
+def _surface_candidate_row(
+    *,
+    representative_feature: LoadedFeature,
+    representative_node_id: str,
+    target_id: str,
+    matched_intersection_ids: list[str],
+    intersection_record: IntersectionRecord,
+) -> dict[str, Any]:
+    representative_props = representative_feature.properties
+    kind_2 = _normalize_id(representative_props.get("kind_2"))
+    patch_id, patch_id_field = _first_text_property(intersection_record.properties, PATCH_ID_FIELDS)
+    rcsd_point_x, rcsd_point_y = _point_xy(intersection_record.geometry)
+    swsd_point_x, swsd_point_y = _point_xy(representative_feature.geometry)
+    base_id_candidate = intersection_record.base_id_candidate or -1
+    return {
+        "surface_candidate_id": _surface_candidate_id(target_id, intersection_record.intersection_id),
+        "target_id": target_id,
+        "mainnodeid": target_id,
+        "representative_node_id": representative_node_id,
+        "source_module": "T07_STEP2",
+        "source_surface_type": "RCSDIntersection",
+        "source_rcsdintersection_id": intersection_record.intersection_id,
+        "source_surface_id": base_id_candidate,
+        "matched_rcsdintersection_ids": _pipe_join_text(matched_intersection_ids),
+        "junction_type": _junction_type_from_kind_2(kind_2),
+        "kind_2": kind_2 or "",
+        "grade_2": _value_or_minus_one(representative_props.get("grade_2")),
+        "patch_id": patch_id or "",
+        "patch_id_source": f"RCSDIntersection.{patch_id_field}" if patch_id_field else "unresolved",
+        "final_state": "accepted",
+        "anchor_reason": _normalize_id(representative_props.get("anchor_reason")) or "",
+        "base_id_candidate": base_id_candidate,
+        "relation_state": "existing_rcsdintersection_matched",
+        "status_suggested": 0,
+        "level": _value_or_minus_one(representative_props.get("grade")),
+        "is_highway": _value_or_minus_one(representative_props.get("closed_con")),
+        "swsd_point_x": swsd_point_x,
+        "swsd_point_y": swsd_point_y,
+        "rcsd_point_x": rcsd_point_x,
+        "rcsd_point_y": rcsd_point_y,
+    }
+
+
+def _write_surface_candidate_gpkg(
+    *,
+    path: Path,
+    nodes_features: list[LoadedFeature],
+    group_results: dict[str, dict[str, Any]],
+    junction_ids: list[str],
+    intersection_by_id: dict[str, IntersectionRecord],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    surface_features: list[dict[str, Any]] = []
+    for junction_id in junction_ids:
+        result = group_results.get(junction_id)
+        if result is None:
+            continue
+        group: ResolvedGroup = result["group"]
+        if group.representative is None:
+            continue
+        representative_feature = nodes_features[group.representative.output_index]
+        if _normalize_id(representative_feature.properties.get("is_anchor")) != "yes":
+            continue
+        target_id = _normalize_id(representative_feature.properties.get("mainnodeid")) or group.representative.node_id or junction_id
+        matched_intersection_ids = list(result.get("intersection_ids") or [])
+        for intersection_id in matched_intersection_ids:
+            intersection_record = intersection_by_id.get(intersection_id)
+            if intersection_record is None:
+                continue
+            row = _surface_candidate_row(
+                representative_feature=representative_feature,
+                representative_node_id=group.representative.node_id,
+                target_id=target_id,
+                matched_intersection_ids=matched_intersection_ids,
+                intersection_record=intersection_record,
+            )
+            surface_props = dict(intersection_record.properties)
+            surface_props.update(row)
+            surface_features.append({"properties": surface_props, "geometry": intersection_record.geometry})
+            rows.append(row)
+    write_gpkg_sqlite(
+        path,
+        surface_features,
+        crs_text=TARGET_CRS.to_string(),
+        empty_fields=SURFACE_CANDIDATE_FIELDNAMES,
+        geometry_type="Polygon",
+    )
+    return rows
+
+
 def run_t07_step1_has_evd(
     *,
     nodes_path: str | Path,
@@ -706,6 +1015,8 @@ def _read_intersections(layer: LoadedLayer) -> list[IntersectionRecord]:
             IntersectionRecord(
                 feature_index=feature.feature_index,
                 intersection_id=_intersection_identity(feature.properties, feature.feature_index),
+                base_id_candidate=_normalize_id(feature.properties.get("id")),
+                properties=dict(feature.properties),
                 geometry=feature.geometry,
             )
         )
@@ -785,6 +1096,7 @@ def run_t07_step2_anchor_recognition(
 
     stage_started = time.perf_counter()
     intersections = _read_intersections(intersection_layer_data)
+    intersection_by_id = {record.intersection_id: record for record in intersections}
     intersection_tree = STRtree([record.geometry for record in intersections])
     stage_timings["build_intersection_index_seconds"] = _elapsed_since(stage_started)
 
@@ -833,14 +1145,14 @@ def run_t07_step2_anchor_recognition(
             representative_props["is_anchor"] = None
             representative_props["anchor_reason"] = None
             counts["anchor_null_count"] += 1
-            group_results[junction_id] = {"participates": False, "group": group}
+            group_results[junction_id] = {"participates": False, "group": group, "intersection_ids": []}
             continue
 
         if kind_2 in {"64", "128"}:
             representative_props["is_anchor"] = "no"
             representative_props["anchor_reason"] = None
             counts["anchor_no_count"] += 1
-            group_results[junction_id] = {"participates": False, "group": group}
+            group_results[junction_id] = {"participates": False, "group": group, "kind_2": kind_2, "intersection_ids": []}
             continue
 
         counts["stage2_candidate_count"] += 1
@@ -868,7 +1180,12 @@ def run_t07_step2_anchor_recognition(
                 representative_props["anchor_reason"] = "t"
                 counts["anchor_yes_count"] += 1
                 counts["t_reason_count"] += 1
-            group_results[junction_id] = {"participates": False, "group": group}
+            group_results[junction_id] = {
+                "participates": False,
+                "group": group,
+                "kind_2": kind_2,
+                "intersection_ids": [shared_intersection_id] if shared_intersection_id is not None else sorted_hits,
+            }
             continue
 
         for intersection_id in sorted_hits:
@@ -1001,6 +1318,8 @@ def run_t07_step2_anchor_recognition(
     perf_path = stage_root / "t07_step2_perf.json"
     node_error_1_path = stage_root / "node_error_1.gpkg"
     node_error_2_path = stage_root / "node_error_2.gpkg"
+    relation_evidence_json_path = stage_root / "t07_swsd_rcsd_relation_evidence.json"
+    surface_candidates_path = stage_root / "t07_rcsdintersection_anchor_surface.gpkg"
 
     stage_started = time.perf_counter()
     _write_nodes(nodes_output_path, nodes_layer_data.features)
@@ -1027,6 +1346,22 @@ def run_t07_step2_anchor_recognition(
         rows=error2_rows,
         run_id=resolved_run_id,
     )
+    relation_evidence_rows = _write_relation_evidence_json(
+        path=relation_evidence_json_path,
+        run_id=resolved_run_id,
+        nodes_features=nodes_layer_data.features,
+        group_results=group_results,
+        junction_ids=junction_ids,
+        intersection_by_id=intersection_by_id,
+        fail2_by_junction=fail2_by_junction,
+    )
+    surface_candidate_rows = _write_surface_candidate_gpkg(
+        path=surface_candidates_path,
+        nodes_features=nodes_layer_data.features,
+        group_results=group_results,
+        junction_ids=junction_ids,
+        intersection_by_id=intersection_by_id,
+    )
     stage_timings["write_error_outputs_seconds"] = _elapsed_since(stage_started)
     summary = {
         "run_id": resolved_run_id,
@@ -1036,9 +1371,13 @@ def run_t07_step2_anchor_recognition(
             "nodes": str(nodes_output_path),
             "node_error_1": str(node_error_1_path),
             "node_error_2": str(node_error_2_path),
+            "t07_swsd_rcsd_relation_evidence": str(relation_evidence_json_path),
+            "t07_rcsdintersection_anchor_surface": str(surface_candidates_path),
         },
         "target_crs": TARGET_CRS.to_string(),
         "audit_count": len(audit_rows),
+        "relation_evidence_row_count": len(relation_evidence_rows),
+        "surface_candidate_count": len(surface_candidate_rows),
         "performance": {
             "elapsed_seconds": _elapsed_since(started_at),
             "stage_timings": stage_timings,
@@ -1058,7 +1397,17 @@ def run_t07_step2_anchor_recognition(
             **counts,
         },
     )
-    return T07StageArtifacts(run_root, stage_root, nodes_output_path, summary_path, audit_csv_path, audit_json_path, perf_path)
+    return T07StageArtifacts(
+        run_root,
+        stage_root,
+        nodes_output_path,
+        summary_path,
+        audit_csv_path,
+        audit_json_path,
+        perf_path,
+        relation_evidence_json_path=relation_evidence_json_path,
+        anchor_surface_path=surface_candidates_path,
+    )
 
 
 def run_t07_semantic_junction_anchor(

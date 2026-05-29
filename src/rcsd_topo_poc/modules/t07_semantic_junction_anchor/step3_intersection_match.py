@@ -14,17 +14,20 @@ from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_models import RELA
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import ensure_gpkg_ogr_feature_count_metadata
 
 from .runner import (
+    RELATION_EVIDENCE_FIELDNAMES,
     T07RunError,
     _audit_row,
     _build_node_index,
     _candidate_junction_ids,
     _elapsed_since,
     _normalize_id,
+    _point_xy,
     _read_vector_layer,
     _resolve_gpkg_crs,
     _resolve_gpkg_layer,
     _resolve_group,
     _stage_root,
+    _value_or_minus_one,
     _write_csv,
     _write_nodes,
 )
@@ -39,6 +42,7 @@ class T07Step3Artifacts:
     stage_root: Path
     nodes_path: Path
     intersection_match_tool7_path: Path
+    relation_evidence_json_path: Path
     summary_path: Path
     audit_csv_path: Path
     audit_json_path: Path
@@ -351,6 +355,82 @@ def _write_step3_nodes(
     return "rewrite_gpkg"
 
 
+def _load_step2_relation_evidence_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        return []
+    return [dict(row) for row in rows if isinstance(row, dict)]
+
+
+def _step3_relation_evidence_row(
+    *,
+    relation_record: RelationRecord,
+    representative_node_id: str,
+    representative_props: dict[str, Any],
+    representative_geometry: Any,
+) -> dict[str, Any]:
+    swsd_point_x, swsd_point_y = _point_xy(representative_geometry)
+    relation_props = relation_record.properties
+    level_value = relation_props.get("level") if relation_props.get("level") is not None else representative_props.get("grade")
+    is_highway_value = relation_props.get("is_highway") if relation_props.get("is_highway") is not None else representative_props.get("closed_con")
+    return {
+        "target_id": relation_record.target_id or "",
+        "representative_node_id": representative_node_id,
+        "relation_source": "T07_STEP3_INTERSECTION_MATCH",
+        "relation_target_type": "RCSDNode",
+        "matched_rcsdintersection_ids": "",
+        "relation_state": "intersection_match_tool7_matched",
+        "status_suggested": 0,
+        "base_id_candidate": relation_record.base_id or -1,
+        "reason": "intersection_match_tool7_matched",
+        "level": _value_or_minus_one(level_value),
+        "is_highway": _value_or_minus_one(is_highway_value),
+        "swsd_point_x": swsd_point_x,
+        "swsd_point_y": swsd_point_y,
+        "rcsd_point_x": "",
+        "rcsd_point_y": "",
+    }
+
+
+def _write_merged_relation_evidence_json(
+    *,
+    path: Path,
+    run_id: str,
+    step2_evidence_path: Path,
+    step3_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged_rows = _load_step2_relation_evidence_rows(step2_evidence_path)
+    row_by_target = {_normalize_id(row.get("target_id")): index for index, row in enumerate(merged_rows)}
+    for row in step3_rows:
+        target_id = _normalize_id(row.get("target_id"))
+        if target_id is None:
+            continue
+        existing_index = row_by_target.get(target_id)
+        if existing_index is None:
+            row_by_target[target_id] = len(merged_rows)
+            merged_rows.append(row)
+        else:
+            merged_rows[existing_index] = row
+    write_json(
+        path,
+        {
+            "run_id": run_id,
+            "target_crs": TARGET_CRS.to_string(),
+            "row_count": len(merged_rows),
+            "fieldnames": RELATION_EVIDENCE_FIELDNAMES,
+            "merge_sources": {
+                "step2_relation_evidence": str(step2_evidence_path) if step2_evidence_path.is_file() else None,
+                "step3_intersection_match_tool7": "intersection_match_tool7.geojson",
+            },
+            "rows": merged_rows,
+        },
+    )
+    return merged_rows
+
+
 def run_t07_step3_intersection_match(
     *,
     nodes_path: str | Path,
@@ -419,6 +499,7 @@ def run_t07_step3_intersection_match(
     }
     accepted_relations: list[RelationRecord] = []
     accepted_node_ids: list[str] = []
+    accepted_relation_evidence_rows: list[dict[str, Any]] = []
 
     stage_started = time.perf_counter()
     for junction_id in junction_ids:
@@ -546,6 +627,14 @@ def run_t07_step3_intersection_match(
         representative_props["anchor_reason"] = None
         accepted_relations.append(relation_record)
         accepted_node_ids.append(group.representative.node_id)
+        accepted_relation_evidence_rows.append(
+            _step3_relation_evidence_row(
+                relation_record=relation_record,
+                representative_node_id=group.representative.node_id,
+                representative_props=representative_props,
+                representative_geometry=group.representative.geometry,
+            )
+        )
         counts["accepted_count"] += 1
         audit_rows.append(
             _audit_row(
@@ -568,6 +657,7 @@ def run_t07_step3_intersection_match(
 
     nodes_output_path = stage_root / "nodes.gpkg"
     relation_output_path = stage_root / "intersection_match_tool7.geojson"
+    relation_evidence_json_path = stage_root / "t07_swsd_rcsd_relation_evidence.json"
     summary_path = stage_root / "t07_step3_summary.json"
     audit_csv_path = stage_root / "t07_step3_audit.csv"
     audit_json_path = stage_root / "t07_step3_audit.json"
@@ -583,6 +673,13 @@ def run_t07_step3_intersection_match(
         accepted_node_ids=accepted_node_ids,
     )
     _write_relation_output(relation_output_path, accepted_relations)
+    step2_relation_evidence_path = prefer_vector_input_path(Path(nodes_path)).parent / "t07_swsd_rcsd_relation_evidence.json"
+    merged_relation_evidence_rows = _write_merged_relation_evidence_json(
+        path=relation_evidence_json_path,
+        run_id=resolved_run_id,
+        step2_evidence_path=step2_relation_evidence_path,
+        step3_rows=accepted_relation_evidence_rows,
+    )
     stage_timings["write_outputs_seconds"] = _elapsed_since(stage_started)
 
     summary = {
@@ -596,6 +693,7 @@ def run_t07_step3_intersection_match(
         "output_paths": {
             "nodes": str(nodes_output_path),
             "intersection_match_tool7": str(relation_output_path),
+            "t07_swsd_rcsd_relation_evidence": str(relation_evidence_json_path),
         },
         "output_strategy": {
             "nodes_write_mode": nodes_write_mode,
@@ -605,6 +703,7 @@ def run_t07_step3_intersection_match(
             "process": TARGET_CRS.to_string(),
             "intersection_match_tool7": RELATION_OUTPUT_CRS_NAME,
         },
+        "relation_evidence_row_count": len(merged_relation_evidence_rows),
         "audit_count": len(audit_rows),
         "performance": {
             "elapsed_seconds": _elapsed_since(started_at),
@@ -651,6 +750,7 @@ def run_t07_step3_intersection_match(
         stage_root=stage_root,
         nodes_path=nodes_output_path,
         intersection_match_tool7_path=relation_output_path,
+        relation_evidence_json_path=relation_evidence_json_path,
         summary_path=summary_path,
         audit_csv_path=audit_csv_path,
         audit_json_path=audit_json_path,

@@ -63,14 +63,14 @@
 | `modules/t06_segment_fusion_precheck/README.md` | T06 操作者入口 | `operator_guide` | 说明模块内 runner、内网脚本入口、输入输出、Step3 状态、非目标和审计产物 |
 | `modules/t06_segment_fusion_precheck/AGENTS.md` | T06 durable guidance | `durable_guidance` | 只保留 T06 Step1 / Step2 / Step3 范围、内网脚本包装边界、copy-on-write 与不回改 T01/T05/Step2 输入的模块边界 |
 | `specs/t06-buffer-rcsd-segment-extraction/*`、`specs/t06-step3-segment-replacement/*` | T06 变更工件 | `active_change_artifact` | 记录 T06 Step2 buffer-based RCSDSegment 构建与 Step3 Segment 替换输出 / 语义路口重建的规格、计划与任务，不替代模块长期真相 |
-| `modules/t07_semantic_junction_anchor/architecture/*` | T07 模块长期架构真相 | `source_of_truth` | T07 Step1 / Step2 / Step3 长期文档主表面；覆盖语义路口级 `has_evd / is_anchor / anchor_reason` 与 T05 relation 补锚，不处理 Segment |
-| `modules/t07_semantic_junction_anchor/INTERFACE_CONTRACT.md` | T07 稳定契约面 | `source_of_truth` | 固化 Step1 / Step2 / Step3 callable runner、`nodes / DriveZone / RCSDIntersection / intersection_match_all / RCSDNode` 输入、字段、输出文件、审计、失败原因与验收标准 |
+| `modules/t07_semantic_junction_anchor/architecture/*` | T07 模块长期架构真相 | `source_of_truth` | T07 Step1 / Step2 / Step3 长期文档主表面；覆盖语义路口级 `has_evd / is_anchor / anchor_reason`、T07 handoff surface/evidence 与 T05 relation 补锚，不处理 Segment |
+| `modules/t07_semantic_junction_anchor/INTERFACE_CONTRACT.md` | T07 稳定契约面 | `source_of_truth` | 固化 Step1 / Step2 / Step3 callable runner、`nodes / DriveZone / RCSDIntersection / intersection_match_all / RCSDNode` 输入、字段、`t07_rcsdintersection_anchor_surface / t07_swsd_rcsd_relation_evidence` 输出文件、审计、失败原因与验收标准 |
 | `modules/t07_semantic_junction_anchor/README.md` | T07 操作者入口 | `operator_guide` | 说明模块内 runner、内网脚本入口、输入输出、非目标和审计产物 |
 | `modules/t07_semantic_junction_anchor/AGENTS.md` | T07 durable guidance | `durable_guidance` | 只保留 T07 Step1 / Step2 / Step3 范围、内网脚本包装边界、`kind_2` 口径、T05 relation 补锚口径与无 Segment 依赖 |
-| `modules/t08_preprocess/architecture/*` | T08 模块长期架构真相 | `source_of_truth` | T08 正式预处理模块长期文档主表面；当前覆盖 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理、Tool3 Nodes 类型聚合、Tool4 路口类型修复、Tool5 复杂路口预处理与 Tool6 Nodes 类型质检 |
-| `modules/t08_preprocess/INTERFACE_CONTRACT.md` | T08 稳定契约面 | `source_of_truth` | 固化 Tool1 / Tool2 / Tool3 / Tool4 / Tool5 / Tool6 输入、输出、入口、参数、CRS、summary、`_toolX` 输出命名与验收标准 |
-| `modules/t08_preprocess/README.md` | T08 操作者入口 | `operator_guide` | 说明 Tool1 / Tool2 / Tool3 / Tool4 / Tool5 / Tool6 内网脚本、示例路径、输出与主要文档 |
-| `modules/t08_preprocess/AGENTS.md` | T08 durable guidance | `durable_guidance` | 只保留 T08 工具作为正式组成部分、Tool1-Tool6 范围、`_toolX` 输出命名与入口边界 |
+| `modules/t08_preprocess/architecture/*` | T08 模块长期架构真相 | `source_of_truth` | T08 正式预处理模块长期文档主表面；当前覆盖 Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理、Tool3 Nodes 类型聚合、Tool4 路口类型修复、Tool5 复杂路口预处理、Tool6 Nodes 类型质检与 Tool7 交通限制显性化 |
+| `modules/t08_preprocess/INTERFACE_CONTRACT.md` | T08 稳定契约面 | `source_of_truth` | 固化 Tool1 / Tool2 / Tool3 / Tool4 / Tool5 / Tool6 / Tool7 输入、输出、入口、参数、CRS、summary、`_toolX` 输出命名与验收标准 |
+| `modules/t08_preprocess/README.md` | T08 操作者入口 | `operator_guide` | 说明 Tool1 / Tool2 / Tool3 / Tool4 / Tool5 / Tool6 / Tool7 内网脚本、示例路径、输出与主要文档 |
+| `modules/t08_preprocess/AGENTS.md` | T08 durable guidance | `durable_guidance` | 只保留 T08 工具作为正式组成部分、Tool1-Tool7 范围、`_toolX` 输出命名与入口边界 |
 | `modules/p01_arm_build/architecture/*` | P01 模块长期架构真相 | `source_of_truth` | P01 v1.0.0 长期文档主表面；覆盖 A1 Arm 构建、A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 还原 |
 | `modules/p01_arm_build/INTERFACE_CONTRACT.md` | P01 稳定契约面 | `source_of_truth` | 固化 A1 / A2 / P01-Final 输入输出、RoadNextRoad-aware movement、Source exact mapping、final GeoJSON、audit / issue 与无 repo 官方 CLI 的入口状态 |
 | `modules/p01_arm_build/README.md` | P01 操作者入口 | `operator_guide` | 说明 P01-A1/A2/Final 模块定位、边界、模块内 callable runner、dev helper 与主要文档 |

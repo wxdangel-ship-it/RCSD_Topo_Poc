@@ -8,5 +8,5 @@ t04_divmerge_virtual_polygon,modules/t04_divmerge_virtual_polygon,active,formal-
 t05_junction_surface_fusion,modules/t05_junction_surface_fusion,active,formal-module-surface,keep-in-sync-with-phase1-phase2-implementation,phase1-phase2-relation-and-copy-on-write-rcsd-network-no-public-cli
 t06_segment_fusion_precheck,modules/t06_segment_fusion_precheck,active,formal-module-surface,keep-in-sync-with-step1-step2-implementation,step1-step2-segment-fusion-precheck-callable-runners-innernet-script-no-public-cli
 t07_semantic_junction_anchor,modules/t07_semantic_junction_anchor,active,formal-module-surface,keep-in-sync-with-step1-step2-implementation,semantic-junction-step1-step2-no-segment-innernet-script-no-public-cli
-t08_preprocess,modules/t08_preprocess,active,formal-module-surface,keep-in-sync-with-tool1-tool2-tool3-tool4-implementation,tool1-vector-format-conversion-tool2-road-preprocess-tool3-nodes-type-aggregation-tool4-junction-type-error-detection-innernet-scripts
+t08_preprocess,modules/t08_preprocess,active,formal-module-surface,keep-in-sync-with-tool1-tool7-implementation,tool1-vector-format-conversion-through-tool7-traffic-restriction-innernet-scripts
 p01_arm_build,modules/p01_arm_build,active,formal-module-surface,keep-in-sync-with-p01-v1-a1-a2-final-implementation,p01-v1-arm-build-alignment-final-road-next-road-no-public-cli

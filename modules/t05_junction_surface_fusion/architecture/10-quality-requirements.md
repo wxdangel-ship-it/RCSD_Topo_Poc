@@ -62,6 +62,8 @@
 - 新增 RCSDRoad / RCSDNode id 必须全局唯一且稳定递增。
 - T03-A 多 RCSDNode 和 T04 complex 多 RCSDNode 必须先归组再建关系，不打断 road。
 - T03 road-only 与 T04 fallback road-only 才能进入 RCSDRoad split。
+- T07 历史路口锚定 relation evidence 只作为已有 RCSD 语义路口 direct relation，不触发 RCSDRoad split 或 RCSDNode insert。
+- T07 历史锚定 relation-only target 没有 Phase 1 surface 时，仍必须进入 `intersection_match_all.geojson`。
 - Road-only 投影点靠近 RCSDRoad 端点时必须复用已有端点 RCSDNode 或审计失败，不得生成极短 road 段。
 - `target_id` 必须唯一，一个 SWSD 语义路口只输出一条 relation。
 - `level = grade - 1`，缺失、为空或非法时为 `-1`。

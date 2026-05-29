@@ -12,6 +12,7 @@ T00 Tool4 / Tool5 已有 Road `patch_id / kind` 补充能力，但 T00 是工具
 - Tool4：Nodes/Roads GPKG 输入，识别并修复错误 T 型路口、分合流一入一出类型，并可消费 Tool6 人工确认成果，copy-on-write 输出 `EPSG:3857` Nodes/可选 Roads/audit Nodes GPKG。
 - Tool5：Nodes/Roads GPKG 输入，构建复杂分歧 / 合流路口，并可基于 `RCSDIntersection` 识别和处理错误 1 对多路口，copy-on-write 输出 `EPSG:3857` Nodes/Roads/audit Nodes GPKG。
 - Tool6：Nodes/Roads GPKG 输入，执行 Nodes 类型质检，输出人工质检 CSV 与 `node_error_tool6.gpkg`，不改写输入 Nodes/Roads。
+- Tool7：SW C 表 / SW Node / SW Road GPKG 输入，筛选 `CondType=1` 且 in/out Link 均存在于 SW Road 的记录，输出显性 restriction LineString GPKG。
 
 所有 T08 成果输出文件名均在扩展名前以 `_toolX` 结尾，`X` 为工具编号。
 

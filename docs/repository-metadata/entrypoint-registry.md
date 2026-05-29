@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `81` 个。
+- 当前真实执行入口共 `82` 个。
 - 分布概览：
-  - repo 级入口文件：`57`（`Makefile` 1 + `scripts/` 55 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`58`（`Makefile` 1 + `scripts/` 56 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`24`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -108,6 +108,7 @@
 | `t08_tool4_junction_type_repair.py` | `scripts/t08_tool4_junction_type_repair.py` | repo 级 | T08 Tool4 路口类型修复，校验 `kind_2=2048` T 型语义路口、分合流一入一出类型，并可消费 Tool6 人工确认成果，copy-on-write 输出完整 Nodes、可选 Roads、audit Nodes GPKG 与 summary，不改写输入 Nodes/Roads，成果输出文件名以 `_tool4` 结尾 | `active` | 否 |
 | `t08_tool5_complex_junction_preprocess.py` | `scripts/t08_tool5_complex_junction_preprocess.py` | repo 级 | T08 Tool5 复杂路口预处理，构建复杂分歧 / 合流路口，并可基于 `RCSDIntersection` 识别和处理错误 1 对多路口，copy-on-write 输出 `EPSG:3857` Nodes/Roads/audit Nodes GPKG 与 summary，成果输出文件名以 `_tool5` 结尾 | `active` | 否 |
 | `t08_tool6_nodes_type_qc.py` | `scripts/t08_tool6_nodes_type_qc.py` | repo 级 | T08 Tool6 Nodes 类型质检，基于语义路口入出度、连续分歧合流 T 型候选与交叉路口候选规则输出 `node_error_tool6.csv / node_error_tool6.gpkg / node_error_summary_tool6.json`，CSV 最后一列 `是否修复` 默认 `1`，不改写输入 Nodes/Roads | `active` | 否 |
+| `t08_tool7_traffic_restriction.py` | `scripts/t08_tool7_traffic_restriction.py` | repo 级 | T08 Tool7 交通限制显性化，读取 SW C 表、SW Node 与 SW Road，筛选 `CondType=1` 且 in/out Link 均存在于 SW Road 的记录，输出 `sw_restriction_tool7.gpkg` 与 summary，不改写输入 | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

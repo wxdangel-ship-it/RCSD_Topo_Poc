@@ -64,6 +64,7 @@ def _run_phase2(
     rcsd_roads: list[dict],
     rcsd_nodes: list[dict],
     t02_rows: list[dict] | None = None,
+    t07_rows: list[dict] | None = None,
     t03_rows: list[dict] | None = None,
     t04_rows: list[dict] | None = None,
     runner_kwargs: dict | None = None,
@@ -76,6 +77,7 @@ def _run_phase2(
     rcsdroad_path = _write(inputs / "RCSDRoad.gpkg", rcsd_roads)
     rcsdnode_path = _write(inputs / "RCSDNode.gpkg", rcsd_nodes)
     t02_path = _write_csv(inputs / "t02_swsd_rcsd_relation_evidence.csv", t02_rows or [], _T02_FIELDS)
+    t07_path = _write_csv(inputs / "t07_swsd_rcsd_relation_evidence.csv", t07_rows or [], _T07_FIELDS)
     t03_path = _write_csv(inputs / "t03_swsd_rcsd_relation_evidence.csv", t03_rows or [], _T03_FIELDS)
     t04_path = _write_csv(inputs / "t04_swsd_rcsd_relation_evidence.csv", t04_rows or [], _T04_FIELDS)
     before = {path: (path.stat().st_size, path.stat().st_mtime_ns) for path in (surface_path, nodes_path, rcsdroad_path, rcsdnode_path)}
@@ -90,6 +92,7 @@ def _run_phase2(
         t04_relation_evidence_path=t04_path,
         out_root=tmp_path / "out",
         run_id="run",
+        t07_relation_evidence_path=t07_path,
         **(runner_kwargs or {}),
     )
     after = {path: (path.stat().st_size, path.stat().st_mtime_ns) for path in (surface_path, nodes_path, rcsdroad_path, rcsdnode_path)}
@@ -156,6 +159,77 @@ def test_t02_existing_rcsdintersection_uses_evidence_rcsd_point(tmp_path: Path) 
     assert relation["properties"]["base_id"] == 77
     coords = relation["geometry"]["coordinates"]
     assert coords[0] != coords[1]
+
+
+def test_t07_historical_anchor_relation_without_surface_outputs_success(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("999", x=50)],
+        swsd_nodes=[
+            _node(999, 50, 0, mainnodeid="999"),
+            _node(900, 0, 0, mainnodeid="900", grade=2, closed_con=2),
+        ],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0), _node(55, 5, 0)],
+        t07_rows=[
+            {
+                "target_id": "900",
+                "case_id": "900",
+                "junction_type": "center_junction",
+                "relation_source": "T07",
+                "relation_target_type": "RCSDNode",
+                "relation_state": "success_historical_anchor",
+                "status_suggested": 0,
+                "base_id_candidate": 55,
+                "rcsd_point_x": 5,
+                "rcsd_point_y": 0,
+            }
+        ],
+    )
+
+    relations = {feature["properties"]["target_id"]: feature for feature in _relation_features(artifacts.relation_geojson_path)}
+    assert relations["900"]["properties"] == {"target_id": "900", "base_id": 55, "status": 0, "level": 1, "is_highway": 1}
+    audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert {row["target_id"]: row for row in audit_rows}["900"]["source_module"] == "T07"
+    assert _summary(artifacts)["performance"]["data_volume"]["t07_evidence_row_count"] == 1
+
+
+def test_t07_direct_relation_takes_precedence_over_t03_road_only_split(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("901")],
+        swsd_nodes=[_node(901, 0, 1, mainnodeid="901", kind_2=4)],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0), _node(56, 5, 0)],
+        t07_rows=[
+            {
+                "target_id": "901",
+                "case_id": "901",
+                "relation_source": "T07",
+                "relation_target_type": "RCSDNode",
+                "relation_state": "success_historical_anchor",
+                "status_suggested": 0,
+                "base_id_candidate": 56,
+            }
+        ],
+        t03_rows=[
+            {
+                "target_id": "901",
+                "case_id": "901",
+                "junction_type": "center_junction",
+                "association_class": "B",
+                "support_rcsdroad_ids": "1",
+                "step7_state": "accepted",
+                "relation_state": "rcsd_present_not_junction",
+                "status_suggested": 1,
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["status"] == 0
+    assert relation["properties"]["base_id"] == 56
+    assert len(read_vector_layer(artifacts.rcsdroad_split_path).features) == 0
 
 
 def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> None:
@@ -700,4 +774,12 @@ _T02_FIELDS = [
     "swsd_point_y",
     "rcsd_point_x",
     "rcsd_point_y",
+]
+
+_T07_FIELDS = [
+    *_T03_FIELDS,
+    "relation_source",
+    "relation_target_type",
+    "matched_rcsdintersection_ids",
+    "surface_candidate_present",
 ]

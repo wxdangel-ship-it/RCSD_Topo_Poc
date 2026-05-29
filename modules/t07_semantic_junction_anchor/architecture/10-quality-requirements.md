@@ -15,7 +15,9 @@
 - `representative_node_missing`、字段缺失、CRS 缺失、geometry 缺失必须可追溯。
 - `fail1 / fail2` 必须输出涉及语义路口与 `RCSDIntersection` 的审计信息。
 - `kind_2 = 64 / 128 / 2048` 的 Step2 专属分流必须可从 summary / audit / 输出字段解释，不得误进入 `fail1 / fail2`。
+- Step2 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.json` 必须可追溯到 Step2 代表 node 判定与命中的 `RCSDIntersection`。
 - Step3 的 relation 缺失、relation 失败、重复 `target_id`、RCSD `base_id` 不存在必须可从 audit / summary 解释。
+- Step3 `t07_swsd_rcsd_relation_evidence.json` 必须合并 Step2 evidence 与 `intersection_match_tool7.geojson` 成功补锚成果，同一 `target_id` 以 Step3 成功补锚行覆盖。
 
 ## GIS 正确性
 

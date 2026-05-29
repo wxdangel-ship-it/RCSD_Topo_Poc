@@ -37,6 +37,7 @@
 - debug 默认值：
   - `t01-run-skill-v1`、`t01-continue-oneway-segment` 与 `t01-step6-segment-aggregation-poc` 默认 `debug=false`
   - `t01-step1-pair-poc / t01-step2-segment-poc / t01-s2-refresh-node-road / t01-step4-residual-graph / t01-step5-staged-residual-graph` 默认 `debug=true`
+- GPKG 输出兼容性：T01 快速 GeoPackage 写出路径必须写入 `gpkg_ogr_contents` 与增删触发器，使 QGIS 旧版 OGR provider filter 后的图层要素计数与实际过滤结果一致。
 - `debug` 只允许影响：
   - 中间 stage 目录
   - 审计图层

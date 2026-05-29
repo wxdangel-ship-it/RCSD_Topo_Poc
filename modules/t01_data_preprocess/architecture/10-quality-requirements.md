@@ -17,6 +17,7 @@
 ## 可诊断
 - `debug=true` 时必须保留足够的中间产物。
 - trunk gate、side gate、T-junction gate、endpoint pool、same-stage arbitration 都应可审计。
+- GPKG 输出必须写入 `gpkg_ogr_contents` 与增删触发器，使 QGIS 旧版 OGR provider filter 后的图层要素计数与实际过滤结果一致。
 
 ## 可回归
 - 临时最终 Segment 基线应作为当前整改批次的非回退闸门。

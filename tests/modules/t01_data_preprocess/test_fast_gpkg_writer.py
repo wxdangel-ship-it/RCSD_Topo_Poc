@@ -53,7 +53,27 @@ def test_write_vector_fast_gpkg_roundtrips_debug_line_features(tmp_path: Path) -
     with sqlite3.connect(output_path) as conn:
         table_name = conn.execute("SELECT table_name FROM gpkg_contents LIMIT 1").fetchone()[0]
         count = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
+        feature_count = conn.execute(
+            "SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = ?",
+            (table_name,),
+        ).fetchone()[0]
+        trigger_names = {
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'trigger' AND tbl_name = ?
+                """,
+                (table_name,),
+            )
+        }
     assert count == 2
+    assert feature_count == 2
+    assert trigger_names == {
+        "trigger_insert_feature_count_debug_lines",
+        "trigger_delete_feature_count_debug_lines",
+    }
 
 
 def test_write_vector_fast_gpkg_handles_empty_layers(tmp_path: Path) -> None:
@@ -64,3 +84,10 @@ def test_write_vector_fast_gpkg_handles_empty_layers(tmp_path: Path) -> None:
     with fiona.open(output_path) as source:
         assert len(source) == 0
         assert source.crs.to_epsg() == 3857
+    with sqlite3.connect(output_path) as conn:
+        table_name = conn.execute("SELECT table_name FROM gpkg_contents LIMIT 1").fetchone()[0]
+        feature_count = conn.execute(
+            "SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = ?",
+            (table_name,),
+        ).fetchone()[0]
+    assert feature_count == 0

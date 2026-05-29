@@ -9,11 +9,11 @@
 5. Step1 按代表 node `kind_2` 过滤处理范围。
 6. Step1 对处理范围内语义路口执行 `DriveZone` intersects/touches 判定。
 7. Step2 仅对 `has_evd = yes` 的语义路口执行 `RCSDIntersection` 判定。
-8. Step2 先将 `kind_2 = 64 / 128` 写为 `NULL / NULL` 并排除冲突，将 `kind_2 = 2048` 按“全组 node 命中同一个且唯一 `RCSDIntersection`”判定 `yes / t` 或 `NULL / NULL` 并排除冲突。
+8. Step2 先将 `kind_2 = 64 / 128` 写为 `no / NULL` 并排除冲突，将 `kind_2 = 2048` 按“全组 node 命中同一个且唯一 `RCSDIntersection`”判定 `yes / t` 或 `no / NULL` 并排除冲突。
 9. Step2 对其它处理范围内类型先形成 provisional `yes / no / fail1`，再做 `fail2` 反向包含覆盖。
 10. 输出只包含 `nodes`、语义路口级 summary、audit、perf 与 node error 工件。
 11. Step3 独立读取 Step2 后 `nodes`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode`。
-12. Step3 选择代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes`、`is_anchor = NULL / no` 的 SWSD 语义路口作为候选。
+12. Step3 选择代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes`、`is_anchor = no` 的 SWSD 语义路口作为候选。
 13. Step3 只接受 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0` 且 `base_id` 存在于输入 `RCSDNode.id/mainnodeid` 的 relation；接受后写代表 node `is_anchor = yes / anchor_reason = NULL`，并输出 `intersection_match_tool7.geojson`。
 
 ## 当前实现分层

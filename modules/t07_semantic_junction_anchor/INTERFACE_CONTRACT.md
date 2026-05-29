@@ -21,7 +21,7 @@
 - 仅对代表 node `has_evd = yes` 的语义路口处理 `is_anchor / anchor_reason`。
 - 只对代表 node 写 `has_evd / is_anchor / anchor_reason`。
 - 保留 T02 Step2 的空间命中与 `fail1 / fail2` 冲突语义；`kind_2 = 64 / 128 / 2048` 采用 T07 专属 Step2 分流规则。
-- Step3 只处理代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = NULL / no` 的 SWSD 语义路口。
+- Step3 只处理代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = no` 的 SWSD 语义路口。
 - Step3 只接受 T05 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id != 0` 的成功 relation，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在。
 
 ### 1.2 当前非目标
@@ -157,7 +157,7 @@
   - `anchor_reason = NULL`
   - 不输出 `node_error_1`
 - `kind_2 = 64 / 128`：
-  - `is_anchor = NULL`
+  - `is_anchor = no`
   - `anchor_reason = NULL`
   - 不纳入 `fail1 / fail2` 冲突规则，后续由专项规则处理
 - `kind_2 = 2048` 且组内所有 node 均命中同一个且唯一的 `RCSDIntersection`：
@@ -165,7 +165,7 @@
   - `anchor_reason = t`
   - 不纳入 `fail1 / fail2` 冲突规则
 - `kind_2 = 2048` 不满足上述条件时：
-  - `is_anchor = NULL`
+  - `is_anchor = no`
   - `anchor_reason = NULL`
   - 不纳入 `fail1 / fail2` 冲突规则
 - 对未命中上述豁免规则的多节点组，若同一组 node 命中两个及以上不同 `RCSDIntersection`：
@@ -186,7 +186,7 @@
 - Step3 候选 SWSD 语义路口必须同时满足：
   - 代表 node `kind_2 in {4, 8, 16, 2048}`
   - 代表 node `has_evd = yes`
-  - 代表 node `is_anchor = NULL / no`
+  - 代表 node `is_anchor = no`
 - 对候选 SWSD 语义路口，在 `intersection_match_all.geojson` 中按 `target_id = SWSD 语义路口 id` 查找 relation。
 - 只有 relation 同时满足 `status = 0` 且 `base_id != 0` 时，才视为成功关联 RCSD 语义路口。
 - 成功 relation 的 `base_id` 必须能在输入 `RCSDNode.id/mainnodeid` 中找到；找不到时不得写锚定成功。
@@ -352,10 +352,10 @@ scripts/t07_run_step3_intersection_match_innernet.sh
 3. `kind_2` 仅使用代表 node 字段，且仅处理 `{4, 8, 16, 64, 128, 2048}`。
 4. 非处理范围 `kind_2` 的 `has_evd / is_anchor / anchor_reason` 均为 `NULL`。
 5. 从属 node 不写业务状态。
-6. `kind_2 = 64 / 128` 在 Step2 写 `NULL / NULL`，且不纳入冲突规则。
-7. `kind_2 = 2048` 只有全组 node 均命中同一个且唯一的 `RCSDIntersection` 时写 `yes / t`，否则写 `NULL / NULL`，且不纳入冲突规则。
+6. `kind_2 = 64 / 128` 在 Step2 写 `no / NULL`，且不纳入冲突规则。
+7. `kind_2 = 2048` 只有全组 node 均命中同一个且唯一的 `RCSDIntersection` 时写 `yes / t`，否则写 `no / NULL`，且不纳入冲突规则。
 8. `fail2` 优先于 `fail1`。
-9. Step3 只对 `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = NULL / no` 的候选执行补锚。
+9. Step3 只对 `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = no` 的候选执行补锚。
 10. Step3 仅在 T05 relation 成功且 RCSD `base_id` 存在时写 `is_anchor = yes` 并输出 `intersection_match_tool7.geojson`。
 11. 所有 CRS、字段、几何、代表 node 缺失问题都有明确审计。
 12. 输出不包含 Segment 工件或 Segment 视角 summary。

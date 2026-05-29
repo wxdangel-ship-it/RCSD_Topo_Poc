@@ -8,7 +8,7 @@
 ## Context
 
 - 2026-05-23 更新：用户已选择授权路径 `1`，允许登记 `t07_semantic_junction_anchor`、同步项目级 source-of-truth 与入口治理，并新增内网执行脚本。
-- 2026-05-28 更新：用户要求新增独立 Step3，处理代表 node `kind_2 in {4, 8, 16, 2048}`，以 `has_evd = yes` 且 `is_anchor = NULL / no` 的 SWSD 语义路口为候选，基于 T05 `intersection_match_all.geojson` 成功 relation 和输入 `RCSDNode` 存在性补写 `is_anchor = yes`。
+- 2026-05-29 更新：用户修正 Step2 / Step3 口径：`kind_2 = 64 / 128` 在 Step2 写 `no / NULL`；`kind_2 = 2048` 不满足全组同一 `RCSDIntersection` 时写 `no / NULL`；Step3 只以 `has_evd = yes` 且 `is_anchor = no` 的 SWSD 语义路口为候选。
 - T02 当前 Step1/Step2 同时包含语义路口集合与 Segment 引用路口集合，且会输出 `segment.has_evd` 与 Segment 视角 summary。
 - T07 的业务诉求是从 T02 Step1/Step2 中抽取“语义路口级资料 gate + anchor recognition”，并剥离全部 Segment 处理。
 - 用户已确认：
@@ -38,7 +38,7 @@
 
 **Why this priority**: `is_anchor / anchor_reason` 是 T02 Step2 要继承的核心业务输出。
 
-**Independent Test**: 构造多组语义路口与 `RCSDIntersection` 面，覆盖单面命中、未命中、多面命中、同一面多组命中、`kind_2 = 64 / 128` 专项跳过、T 型路口同面命中与 T 型路口不满足条件。
+**Independent Test**: 构造多组语义路口与 `RCSDIntersection` 面，覆盖单面命中、未命中、多面命中、同一面多组命中、`kind_2 = 64 / 128` 专项写 `no` 且跳过冲突、T 型路口同面命中与 T 型路口不满足条件。
 
 **Acceptance Scenarios**:
 
@@ -69,7 +69,7 @@
 
 **Acceptance Scenarios**:
 
-1. **Given** SWSD 代表 node `kind_2 = 4`、`has_evd = yes`、`is_anchor = NULL`，且 T05 relation `status = 0 / base_id != 0`，并且输入 `RCSDNode` 存在该 `base_id`，**When** 执行 Step3，**Then** 输出该 relation 到 `intersection_match_tool7.geojson`，并把 SWSD 代表 node `is_anchor = yes / anchor_reason = NULL`。
+1. **Given** SWSD 代表 node `kind_2 = 4`、`has_evd = yes`、`is_anchor = no`，且 T05 relation `status = 0 / base_id != 0`，并且输入 `RCSDNode` 存在该 `base_id`，**When** 执行 Step3，**Then** 输出该 relation 到 `intersection_match_tool7.geojson`，并把 SWSD 代表 node `is_anchor = yes / anchor_reason = NULL`。
 2. **Given** 候选 SWSD 语义路口存在 T05 relation，但输入 `RCSDNode` 不存在 `base_id`，**When** 执行 Step3，**Then** 不写锚定成功，并在 audit / summary 中记录 `rcsd_junction_missing`。
 3. **Given** 代表 node `kind_2 = 64 / 128`，**When** 执行 Step3，**Then** 不进入补锚规则。
 
@@ -82,7 +82,7 @@
 - `DriveZone` 或 `RCSDIntersection` CRS 缺失、不可投影、几何为空：执行失败并留审计，不得转成业务 `no`。
 - `RCSDIntersection` 边界接触与 T02 一致，视为命中。
 - `fail2` 优先级高于 `fail1`，且覆盖 `anchor_reason`；`kind_2 = 64 / 128 / 2048` 不纳入 `fail1 / fail2` 冲突规则。
-- Step3 候选只包括代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = NULL / no` 的语义路口。
+- Step3 候选只包括代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = no` 的语义路口。
 - `intersection_match_all.geojson` 中失败 relation（`status != 0` 或 `base_id = 0`）不得触发锚定成功。
 - T05 relation 成功但输入 `RCSDNode.id/mainnodeid` 不存在对应 `base_id` 时不得触发锚定成功。
 
@@ -99,14 +99,14 @@
 - **FR-007**: T07 Step2 MUST only process semantic junctions with representative `has_evd = yes`.
 - **FR-008**: T07 Step2 MUST set representative `is_anchor = yes / no / fail1 / fail2 / NULL` and `anchor_reason = t / NULL`.
 - **FR-009**: T07 Step2 MUST preserve T02 conflict semantics only for non-special handled kinds: multi-intersection group conflict is `fail1`, shared intersection across multiple semantic groups is `fail2`, and `fail2 > fail1`.
-- **FR-010**: T07 Step2 MUST set representative `kind_2 = 64 / 128` to `is_anchor = NULL` and `anchor_reason = NULL`, and MUST NOT include these groups in `fail1 / fail2` conflict rules.
-- **FR-011**: T07 Step2 MUST set `anchor_reason = t` only for representative `kind_2 = 2048` when every node in the semantic junction group hits the same single `RCSDIntersection`; otherwise it MUST set `is_anchor = NULL` and `anchor_reason = NULL`. Representative `kind_2 = 2048` MUST NOT be included in `fail1 / fail2` conflict rules.
+- **FR-010**: T07 Step2 MUST set representative `kind_2 = 64 / 128` to `is_anchor = no` and `anchor_reason = NULL`, and MUST NOT include these groups in `fail1 / fail2` conflict rules.
+- **FR-011**: T07 Step2 MUST set `anchor_reason = t` only for representative `kind_2 = 2048` when every node in the semantic junction group hits the same single `RCSDIntersection`; otherwise it MUST set `is_anchor = no` and `anchor_reason = NULL`. Representative `kind_2 = 2048` MUST NOT be included in `fail1 / fail2` conflict rules.
 - **FR-012**: T07 MUST NOT implement T02 Stage3/Stage4 virtual polygon logic in this scope.
 - **FR-013**: T07 MUST NOT add a repo-level CLI, `tools/`, module `run.py`, or module `__main__.py` entrypoint. The approved repo-level scripts are `scripts/t07_run_semantic_junction_anchor_innernet.sh` and `scripts/t07_run_step3_intersection_match_innernet.sh`.
 - **FR-014**: T07 outputs MUST be auditable at semantic-junction level and MUST distinguish business `no` from execution failures.
 - **FR-015**: T07 implementation MUST cover CRS correctness, topology consistency, geometry semantic explainability, audit traceability, and performance verifiability before closeout.
 - **FR-016**: T07 Step3 MUST run as an independent callable/script and MUST NOT be merged into Step1/Step2 execution.
-- **FR-017**: T07 Step3 MUST only process representative `kind_2 in {4, 8, 16, 2048}` where `has_evd = yes` and `is_anchor = NULL / no`.
+- **FR-017**: T07 Step3 MUST only process representative `kind_2 in {4, 8, 16, 2048}` where `has_evd = yes` and `is_anchor = no`.
 - **FR-018**: T07 Step3 MUST only accept T05 relation rows with `target_id = SWSD semantic junction id`, `status = 0`, and non-zero `base_id`.
 - **FR-019**: T07 Step3 MUST verify accepted relation `base_id` exists in input `RCSDNode.id/mainnodeid` before writing `is_anchor = yes`.
 - **FR-020**: T07 Step3 MUST output accepted relation rows to `intersection_match_tool7.geojson` and keep that output aligned with the T05 relation CRS `CRS84`.
@@ -134,7 +134,7 @@
 ### Measurable Outcomes
 
 - **SC-001**: A synthetic Step1 test suite covers all allowed `kind_2` values `{4, 8, 16, 64, 128, 2048}` and at least one disallowed value.
-- **SC-002**: A synthetic Step2 test suite covers `yes / no / fail1 / fail2 / NULL`, including `kind_2 = 64 / 128` conflict exclusion, `kind_2 = 2048` `t` success, and `kind_2 = 2048` NULL fallback.
+- **SC-002**: A synthetic Step2 test suite covers `yes / no / fail1 / fail2 / NULL`, including `kind_2 = 64 / 128` conflict exclusion with `no / NULL`, `kind_2 = 2048` `t` success, and `kind_2 = 2048` `no / NULL` fallback.
 - **SC-003**: T07 can run without any `segment` input and produces no Segment artifact.
 - **SC-004**: Output `nodes.gpkg` writes business fields only on representative nodes.
 - **SC-005**: Audit/summary can count processed, skipped-by-kind, has_evd yes/no/null, anchor yes/no/fail/null, and execution-error groups.

@@ -95,11 +95,11 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     _write_geojson(
         nodes_path,
         [
-            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes", "is_anchor": None}, Point(0, 0)),
+            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(0, 0)),
             _feature({"id": 101, "mainnodeid": 1, "kind_2": 0}, Point(1, 0)),
             _feature({"id": 2, "mainnodeid": 2, "kind_2": 8, "has_evd": "yes", "is_anchor": "no"}, Point(10, 0)),
             _feature({"id": 3, "mainnodeid": 3, "kind_2": 16, "has_evd": "yes", "is_anchor": "yes"}, Point(20, 0)),
-            _feature({"id": 4, "mainnodeid": 4, "kind_2": 2048, "has_evd": "yes", "is_anchor": None}, Point(30, 0)),
+            _feature({"id": 4, "mainnodeid": 4, "kind_2": 2048, "has_evd": "yes", "is_anchor": "no"}, Point(30, 0)),
             _feature({"id": 5, "mainnodeid": 5, "kind_2": 64, "has_evd": "yes", "is_anchor": "no"}, Point(40, 0)),
             _feature({"id": 6, "mainnodeid": 6, "kind_2": 4, "has_evd": "no", "is_anchor": "no"}, Point(50, 0)),
             _feature({"id": 7, "mainnodeid": 7, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(60, 0)),
@@ -139,7 +139,7 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert props["101"]["is_anchor"] is None
     assert props["2"]["is_anchor"] == "yes"
     assert props["3"]["is_anchor"] == "yes"
-    assert props["4"]["is_anchor"] is None
+    assert props["4"]["is_anchor"] == "no"
     assert props["5"]["is_anchor"] == "no"
     assert props["6"]["is_anchor"] == "no"
     assert props["7"]["is_anchor"] == "no"
@@ -168,7 +168,7 @@ def test_step3_uses_fast_paths_for_gpkg_nodes_and_crs84_relations(tmp_path: Path
     _write_gpkg(
         nodes_path,
         [
-            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes", "is_anchor": None, "anchor_reason": None}, Point(0, 0)),
+            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes", "is_anchor": "no", "anchor_reason": None}, Point(0, 0)),
             _feature({"id": 2, "mainnodeid": 2, "kind_2": 1, "has_evd": "no", "is_anchor": "no", "anchor_reason": None}, Point(2, 0)),
         ],
     )

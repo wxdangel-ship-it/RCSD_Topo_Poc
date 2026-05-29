@@ -36,7 +36,7 @@ strict input read -> semantic junction assembly -> representative node selection
 
 ### Step3
 
-- 只处理 `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes`、`is_anchor = NULL / no` 的代表 node。
+- 只处理 `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes`、`is_anchor = no` 的代表 node。
 - 读取 T05 relation 主表中 `target_id / base_id / status`。
 - 校验成功 relation 的 RCSD `base_id` 是否存在于输入 `RCSDNode.id/mainnodeid`。
 - 输出 `intersection_match_tool7.geojson` 并补写代表 node `is_anchor = yes / anchor_reason = NULL`。

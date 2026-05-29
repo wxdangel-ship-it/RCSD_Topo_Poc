@@ -837,9 +837,9 @@ def run_t07_step2_anchor_recognition(
             continue
 
         if kind_2 in {"64", "128"}:
-            representative_props["is_anchor"] = None
+            representative_props["is_anchor"] = "no"
             representative_props["anchor_reason"] = None
-            counts["anchor_null_count"] += 1
+            counts["anchor_no_count"] += 1
             group_results[junction_id] = {"participates": False, "group": group}
             continue
 
@@ -860,9 +860,9 @@ def run_t07_step2_anchor_recognition(
         if kind_2 == "2048":
             shared_intersection_id = _same_single_intersection_for_all(group_node_hits)
             if shared_intersection_id is None:
-                representative_props["is_anchor"] = None
+                representative_props["is_anchor"] = "no"
                 representative_props["anchor_reason"] = None
-                counts["anchor_null_count"] += 1
+                counts["anchor_no_count"] += 1
             else:
                 representative_props["is_anchor"] = "yes"
                 representative_props["anchor_reason"] = "t"

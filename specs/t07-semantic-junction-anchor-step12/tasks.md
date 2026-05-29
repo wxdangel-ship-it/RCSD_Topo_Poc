@@ -61,8 +61,8 @@
 
 - [x] T019 [P] [US2] Add Step2 yes/no tests in `tests/modules/t07_semantic_junction_anchor/test_runner.py`.
 - [x] T020 [P] [US2] Add Step2 `fail1 / fail2` tests.
-- [x] T021 [P] [US2] Add `kind_2 = 64 / 128` Step2 `NULL / NULL` and conflict-exclusion tests.
-- [x] T022 [P] [US2] Add `kind_2 = 2048` same-single-`RCSDIntersection` `anchor_reason = t` test and non-matching `NULL / NULL` fallback test.
+- [x] T021 [P] [US2] Add `kind_2 = 64 / 128` Step2 `no / NULL` and conflict-exclusion tests.
+- [x] T022 [P] [US2] Add `kind_2 = 2048` same-single-`RCSDIntersection` `anchor_reason = t` test and non-matching `no / NULL` fallback test.
 - [x] T023 [P] [US2] Add `has_evd != yes` NULL test.
 
 ### Implementation

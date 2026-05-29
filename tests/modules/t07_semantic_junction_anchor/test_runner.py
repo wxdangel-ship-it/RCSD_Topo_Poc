@@ -139,7 +139,7 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     props = _read_gpkg_properties_by_id(artifacts.nodes_path)
     assert props["1"]["is_anchor"] == "yes"
     assert props["2"]["is_anchor"] == "no"
-    assert props["3"]["is_anchor"] is None
+    assert props["3"]["is_anchor"] == "no"
     assert props["3"]["anchor_reason"] is None
     assert props["4"]["is_anchor"] == "yes"
     assert props["4"]["anchor_reason"] == "t"
@@ -147,16 +147,16 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert props["6"]["is_anchor"] == "fail2"
     assert props["7"]["is_anchor"] == "fail2"
     assert props["8"]["is_anchor"] is None
-    assert props["9"]["is_anchor"] is None
-    assert props["10"]["is_anchor"] is None
+    assert props["9"]["is_anchor"] == "no"
+    assert props["10"]["is_anchor"] == "no"
     assert props["10"]["anchor_reason"] is None
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["anchor_yes_count"] == 2
-    assert summary["anchor_no_count"] == 1
+    assert summary["anchor_no_count"] == 4
     assert summary["anchor_fail1_count"] == 1
     assert summary["anchor_fail2_count"] == 2
-    assert summary["anchor_null_count"] == 4
+    assert summary["anchor_null_count"] == 1
     assert "stage_timings" in summary["performance"]
     assert "build_intersection_index_seconds" in summary["performance"]["stage_timings"]
 

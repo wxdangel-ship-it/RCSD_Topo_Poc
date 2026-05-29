@@ -445,14 +445,14 @@ def run_t07_step3_intersection_match(
             continue
         counts["step3_scope_kind2_count"] += 1
 
-        if has_evd != "yes" or is_anchor not in {None, "no"}:
+        if has_evd != "yes" or is_anchor != "no":
             counts["not_candidate_count"] += 1
             audit_rows.append(
                 _audit_row(
                     scope="semantic_junction",
                     status="skipped",
                     reason="not_step3_candidate",
-                    detail="Step3 only processes has_evd=yes and is_anchor NULL/no representatives.",
+                    detail="Step3 only processes has_evd=yes and is_anchor=no representatives.",
                     junction_id=junction_id,
                     node_id=group.representative.node_id,
                     kind_2=kind_2,

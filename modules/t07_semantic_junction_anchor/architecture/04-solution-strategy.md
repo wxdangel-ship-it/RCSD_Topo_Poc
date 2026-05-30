@@ -11,10 +11,10 @@
 7. Step2 仅对 `has_evd = yes` 的语义路口执行 `RCSDIntersection` 判定。
 8. Step2 先将 `kind_2 = 64 / 128` 写为 `no / NULL` 并排除冲突，将 `kind_2 = 2048` 按“全组 node 命中同一个且唯一 `RCSDIntersection`”判定 `yes / t` 或 `no / NULL` 并排除冲突。
 9. Step2 对其它处理范围内类型先形成 provisional `yes / no / fail1`，再做 `fail2` 反向包含覆盖。
-10. Step2 输出 `nodes`、语义路口级 summary、audit、perf、node error 工件，以及 T07 版 T02 handoff 成果 `t07_rcsdintersection_anchor_surface.gpkg / t07_swsd_rcsd_relation_evidence.json`。
+10. Step2 输出 `nodes`、语义路口级 summary、audit、perf、node error 工件，以及 T07 版 T02 handoff 成果 `t07_rcsdintersection_anchor_surface.gpkg / t07_swsd_rcsd_relation_evidence.csv/json`。
 11. Step3 独立读取 Step2 后 `nodes`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode`。
 12. Step3 选择代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes`、`is_anchor = no` 的 SWSD 语义路口作为候选。
-13. Step3 只接受 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0` 且 `base_id` 存在于输入 `RCSDNode.id/mainnodeid` 的 relation；接受后写代表 node `is_anchor = yes / anchor_reason = NULL`，输出 `intersection_match_tool7.geojson`，复制 Step2 `t07_rcsdintersection_anchor_surface.gpkg`，并合并生成带 Step2 / Step3 锚定数量的 `t07_swsd_rcsd_relation_evidence.json`。
+13. Step3 只接受 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0` 且 `base_id` 存在于输入 `RCSDNode.id/mainnodeid` 的 relation；接受后写代表 node `is_anchor = yes / anchor_reason = NULL`，输出 `intersection_match_tool7.geojson`，复制 Step2 `t07_rcsdintersection_anchor_surface.gpkg`，并合并生成带 Step2 / Step3 锚定数量的 `t07_swsd_rcsd_relation_evidence.csv/json`。
 
 ## 当前实现分层
 

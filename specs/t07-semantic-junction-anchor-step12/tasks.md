@@ -69,7 +69,7 @@
 
 - [x] T024 [US2] Implement Step2 RCSDIntersection hit detection in `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/runner.py`.
 - [x] T025 [US2] Implement `fail1 / fail2` conflict resolution with `fail2 > fail1`.
-- [x] T026 [US2] Output Step2 nodes + audit + summary plus `t07_rcsdintersection_anchor_surface.gpkg` and `t07_swsd_rcsd_relation_evidence.json`.
+- [x] T026 [US2] Output Step2 nodes + audit + summary plus `t07_rcsdintersection_anchor_surface.gpkg` and `t07_swsd_rcsd_relation_evidence.csv/json`.
 
 **Checkpoint**: Step2 value domain and `anchor_reason` behavior match confirmed requirement.
 
@@ -103,7 +103,7 @@
 
 - [x] T033 [P] [US4] Add Step3 candidate识别、成功 relation 与 RCSD `base_id` 存在性测试 in `tests/modules/t07_semantic_junction_anchor/test_step3_intersection_match.py`.
 - [x] T034 [P] [US4] Add Step3 relation missing / failed relation / missing RCSD / `kind_2 = 64` exclusion assertions.
-- [x] T034a [P] [US4] Add Step3 copied `t07_rcsdintersection_anchor_surface.gpkg`, merged `t07_swsd_rcsd_relation_evidence.json`, and Step2 / Step3 anchor count assertions.
+- [x] T034a [P] [US4] Add Step3 copied `t07_rcsdintersection_anchor_surface.gpkg`, merged `t07_swsd_rcsd_relation_evidence.csv/json`, and Step2 / Step3 anchor count assertions.
 
 ### Implementation
 
@@ -112,7 +112,7 @@
 - [x] T037 [US4] Add independent innernet wrapper `scripts/t07_run_step3_intersection_match_innernet.sh`.
 - [x] T038 [US4] Update T07 source facts, module docs, and entrypoint registry for Step3.
 
-**Checkpoint**: Step3 is independent from Step1/Step2 and produces `intersection_match_tool7.geojson`, copied `t07_rcsdintersection_anchor_surface.gpkg`, and merged `t07_swsd_rcsd_relation_evidence.json`.
+**Checkpoint**: Step3 is independent from Step1/Step2 and produces `intersection_match_tool7.geojson`, copied `t07_rcsdintersection_anchor_surface.gpkg`, and merged `t07_swsd_rcsd_relation_evidence.csv/json`.
 
 ## Phase 7: Validation And Closeout
 

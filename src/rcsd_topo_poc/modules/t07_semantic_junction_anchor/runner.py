@@ -136,6 +136,7 @@ class T07StageArtifacts:
     audit_csv_path: Path
     audit_json_path: Path
     perf_json_path: Path
+    relation_evidence_csv_path: Path | None = None
     relation_evidence_json_path: Path | None = None
     anchor_surface_path: Path | None = None
 
@@ -689,7 +690,8 @@ def _stage2_relation_state(
 
 def _write_relation_evidence_json(
     *,
-    path: Path,
+    csv_path: Path,
+    json_path: Path,
     run_id: str,
     nodes_features: list[LoadedFeature],
     group_results: dict[str, dict[str, Any]],
@@ -755,8 +757,9 @@ def _write_relation_evidence_json(
                 "rcsd_point_y": rcsd_point_y,
             }
         )
+    _write_csv(csv_path, rows, RELATION_EVIDENCE_FIELDNAMES)
     write_json(
-        path,
+        json_path,
         {
             "run_id": run_id,
             "target_crs": TARGET_CRS.to_string(),
@@ -1318,6 +1321,7 @@ def run_t07_step2_anchor_recognition(
     perf_path = stage_root / "t07_step2_perf.json"
     node_error_1_path = stage_root / "node_error_1.gpkg"
     node_error_2_path = stage_root / "node_error_2.gpkg"
+    relation_evidence_csv_path = stage_root / "t07_swsd_rcsd_relation_evidence.csv"
     relation_evidence_json_path = stage_root / "t07_swsd_rcsd_relation_evidence.json"
     surface_candidates_path = stage_root / "t07_rcsdintersection_anchor_surface.gpkg"
 
@@ -1347,7 +1351,8 @@ def run_t07_step2_anchor_recognition(
         run_id=resolved_run_id,
     )
     relation_evidence_rows = _write_relation_evidence_json(
-        path=relation_evidence_json_path,
+        csv_path=relation_evidence_csv_path,
+        json_path=relation_evidence_json_path,
         run_id=resolved_run_id,
         nodes_features=nodes_layer_data.features,
         group_results=group_results,
@@ -1371,6 +1376,7 @@ def run_t07_step2_anchor_recognition(
             "nodes": str(nodes_output_path),
             "node_error_1": str(node_error_1_path),
             "node_error_2": str(node_error_2_path),
+            "t07_swsd_rcsd_relation_evidence_csv": str(relation_evidence_csv_path),
             "t07_swsd_rcsd_relation_evidence": str(relation_evidence_json_path),
             "t07_rcsdintersection_anchor_surface": str(surface_candidates_path),
         },
@@ -1405,6 +1411,7 @@ def run_t07_step2_anchor_recognition(
         audit_csv_path,
         audit_json_path,
         perf_path,
+        relation_evidence_csv_path=relation_evidence_csv_path,
         relation_evidence_json_path=relation_evidence_json_path,
         anchor_surface_path=surface_candidates_path,
     )

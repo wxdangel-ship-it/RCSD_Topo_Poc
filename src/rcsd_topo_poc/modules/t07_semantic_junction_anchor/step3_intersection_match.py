@@ -44,6 +44,7 @@ class T07Step3Artifacts:
     nodes_path: Path
     intersection_match_tool7_path: Path
     anchor_surface_path: Path
+    relation_evidence_csv_path: Path
     relation_evidence_json_path: Path
     summary_path: Path
     audit_csv_path: Path
@@ -399,7 +400,8 @@ def _step3_relation_evidence_row(
 
 def _write_merged_relation_evidence_json(
     *,
-    path: Path,
+    csv_path: Path,
+    json_path: Path,
     run_id: str,
     step2_evidence_path: Path,
     step3_rows: list[dict[str, Any]],
@@ -423,8 +425,9 @@ def _write_merged_relation_evidence_json(
             merged_rows.append(row)
         else:
             merged_rows[existing_index] = row
+    _write_csv(csv_path, merged_rows, RELATION_EVIDENCE_FIELDNAMES)
     write_json(
-        path,
+        json_path,
         {
             "run_id": run_id,
             "target_crs": TARGET_CRS.to_string(),
@@ -699,6 +702,7 @@ def run_t07_step3_intersection_match(
     nodes_output_path = stage_root / "nodes.gpkg"
     relation_output_path = stage_root / "intersection_match_tool7.geojson"
     surface_output_path = stage_root / "t07_rcsdintersection_anchor_surface.gpkg"
+    relation_evidence_csv_path = stage_root / "t07_swsd_rcsd_relation_evidence.csv"
     relation_evidence_json_path = stage_root / "t07_swsd_rcsd_relation_evidence.json"
     summary_path = stage_root / "t07_step3_summary.json"
     audit_csv_path = stage_root / "t07_step3_audit.csv"
@@ -722,7 +726,8 @@ def run_t07_step3_intersection_match(
         step2_surface_path=step2_anchor_surface_path,
     )
     merged_relation_evidence_rows, anchor_counts = _write_merged_relation_evidence_json(
-        path=relation_evidence_json_path,
+        csv_path=relation_evidence_csv_path,
+        json_path=relation_evidence_json_path,
         run_id=resolved_run_id,
         step2_evidence_path=step2_relation_evidence_path,
         step3_rows=accepted_relation_evidence_rows,
@@ -741,6 +746,7 @@ def run_t07_step3_intersection_match(
             "nodes": str(nodes_output_path),
             "intersection_match_tool7": str(relation_output_path),
             "t07_rcsdintersection_anchor_surface": str(surface_output_path),
+            "t07_swsd_rcsd_relation_evidence_csv": str(relation_evidence_csv_path),
             "t07_swsd_rcsd_relation_evidence": str(relation_evidence_json_path),
         },
         "output_strategy": {
@@ -801,6 +807,7 @@ def run_t07_step3_intersection_match(
         nodes_path=nodes_output_path,
         intersection_match_tool7_path=relation_output_path,
         anchor_surface_path=surface_output_path,
+        relation_evidence_csv_path=relation_evidence_csv_path,
         relation_evidence_json_path=relation_evidence_json_path,
         summary_path=summary_path,
         audit_csv_path=audit_csv_path,

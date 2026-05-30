@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 from pathlib import Path
 from typing import Any
 
@@ -159,9 +160,14 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert summary["anchor_null_count"] == 1
     assert summary["relation_evidence_row_count"] == 10
     assert summary["surface_candidate_count"] == 2
+    assert artifacts.relation_evidence_csv_path is not None
+    assert artifacts.relation_evidence_csv_path.is_file()
     assert artifacts.relation_evidence_json_path is not None
     relation_payload = json.loads(artifacts.relation_evidence_json_path.read_text(encoding="utf-8"))
     relation_rows = {str(row["target_id"]): row for row in relation_payload["rows"]}
+    with artifacts.relation_evidence_csv_path.open("r", encoding="utf-8", newline="") as handle:
+        csv_rows = list(csv.DictReader(handle))
+    assert len(csv_rows) == relation_payload["row_count"]
     assert relation_rows["1"]["relation_source"] == "T07_STEP2"
     assert relation_rows["1"]["relation_state"] == "existing_rcsdintersection_matched"
     assert relation_rows["1"]["status_suggested"] == 0

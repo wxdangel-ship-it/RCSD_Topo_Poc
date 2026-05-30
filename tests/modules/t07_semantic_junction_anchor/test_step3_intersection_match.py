@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -197,6 +198,10 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert surface_rows[0]["source_module"] == "T07_STEP2"
 
     evidence_payload = json.loads(artifacts.relation_evidence_json_path.read_text(encoding="utf-8"))
+    assert artifacts.relation_evidence_csv_path.is_file()
+    with artifacts.relation_evidence_csv_path.open("r", encoding="utf-8", newline="") as handle:
+        csv_rows = list(csv.DictReader(handle))
+    assert len(csv_rows) == evidence_payload["row_count"]
     assert evidence_payload["anchor_counts"] == {
         "step2_anchor_count": 1,
         "step3_anchor_count": 2,

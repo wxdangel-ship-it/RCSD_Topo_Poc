@@ -15,6 +15,7 @@
 - Tool5：复杂路口预处理，基于 GPKG Nodes/Roads 构建复杂分歧 / 合流路口，并可参考 T02 `node_error_2` 生成与修复逻辑从 `RCSDIntersection` 识别和处理错误 1 对多路口，最终 copy-on-write 输出 `EPSG:3857` Nodes/Roads/audit Nodes GPKG。
 - Tool6：Nodes 类型质检，基于语义路口入出度、连续分歧合流 T 型候选与交叉路口候选规则输出人工质检 CSV 与 `node_error_tool6.gpkg`，不改写输入 Nodes/Roads。
 - Tool7：交通限制显性化，基于 SW C 表 `CondType=1` 与 SW Road `inLinkID / outLinkID` 构建显性 restriction LineString，输出 `EPSG:3857` GPKG。
+- Tool8：Laneinfo 箭头显性化，基于 SW Laneinfo `LinkID / Seq_Nm / Arrow_Dir / Lane_Dir` 与 SW Road `direction` 构建车道级显性 arrow LineString，输出 `EPSG:3857` GPKG。
 
 ## 允许改动范围
 
@@ -28,6 +29,7 @@
 - `scripts/t08_tool5_complex_junction_preprocess.py`
 - `scripts/t08_tool6_nodes_type_qc.py`
 - `scripts/t08_tool7_traffic_restriction.py`
+- `scripts/t08_tool8_lane_arrow.py`
 - 与 T08 登记、入口登记直接相关的项目级文档
 
 ## 禁做事项

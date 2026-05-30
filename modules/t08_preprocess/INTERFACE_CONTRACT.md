@@ -162,6 +162,26 @@
 - summary 必须记录输入、输出、参数、字段解析、CRS、C 表记录数、`CondType=1` 记录数、Road 命中 / 缺失计数、无效几何计数、restriction 输出计数与性能字段。
 - 所有输入、输出路径必须通过参数提供。
 
+### Tool8：Laneinfo 箭头显性化
+
+- 输入一：SW Laneinfo GPKG，依赖字段 `LinkID / Seq_Nm / Arrow_Dir / Lane_Dir`；Laneinfo 可以是非空间 GPKG 表。
+- 输入二：SW Node GPKG，用于输入审计与 CRS / 计数追溯。
+- 输入三：SW Road GPKG，依赖字段 `id` 或 `linkid / LinkID`、`direction`，必须包含 Link 几何。
+- 输出：
+  - `sw_arrow_tool8.gpkg`
+  - `sw_arrow_summary_tool8.json`
+- 输出 CRS：`EPSG:3857`。
+- 处理规则：
+  - 仅处理 `Laneinfo.LinkID` 存在于 SW Road 输入中的 Lane 记录；缺失 Link 写入 summary 计数并跳过。
+  - 按 `LinkID` 分组后以 `Seq_Nm` 升序处理；每条 Lane 记录的 `Arrow_Dir` 按英文逗号 `,` 分割为车道级 arrow 值，每个 arrow 值输出一条 LineString 要素，写入 `arrow` 字段。
+  - arrow 输出字段至少包含 `linkid / lane_index / arrow / seq_nm / lane_dir / source_arrow_dir`。
+  - Link 为单向顺行（`direction = 2`）时，`Lane_Dir = 2` 按 Link 几何方向输出，`Lane_Dir = 3` 按 Link 几何反向输出。
+  - Link 为单向逆向（`direction = 3`）时，`Lane_Dir = 2` 按 Link 几何反向输出，`Lane_Dir = 3` 按 Link 几何方向输出。
+  - Link 为双向（`direction in {0,1}`）时，`Lane_Dir = 2` 按 Link 几何方向输出，`Lane_Dir = 3` 按 Link 几何反向输出。
+- 输出边界：Tool8 只输出显性 arrow GPKG 与 summary，不修改输入 Laneinfo / SW Node / SW Road。
+- summary 必须记录输入、输出、参数、字段解析、CRS、Lane 记录数、SW Road id 索引规模、缺失 Link 数、无效方向 / 几何 / 空 arrow 计数、arrow 输出计数与性能字段。
+- 所有输入、输出路径必须通过参数提供。
+
 ## 2. EntryPoints
 
 运行前先在 repo root 执行：
@@ -245,6 +265,16 @@ Tool7：
   --swnode-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-node.gpkg \
   --swroad-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-road.gpkg \
   --restriction-output /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/sw_restriction_tool7.gpkg
+```
+
+Tool8：
+
+```bash
+.venv/bin/python scripts/t08_tool8_lane_arrow.py \
+  --lane-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/MIF/Laneguangdong1.gpkg \
+  --swnode-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-node.gpkg \
+  --swroad-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-road.gpkg \
+  --arrow-output /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/sw_arrow_tool8.gpkg
 ```
 
 ## 3. Tool1 Params
@@ -352,7 +382,19 @@ Tool7：
 - `--condition-default-crs / --swnode-default-crs / --swroad-default-crs`：输入缺失 CRS 时使用；C 表非空间时仅作为审计字段记录。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 条输出 restriction 记录输出一次。
 
-## 10. Acceptance
+## 10. Tool8 Params
+
+- `--lane-gpkg`：SW Laneinfo 输入 GPKG，字段固定使用 `LinkID / Seq_Nm / Arrow_Dir / Lane_Dir`，大小写不敏感。
+- `--swnode-gpkg`：SW Node 输入 GPKG，用于审计。
+- `--swroad-gpkg`：SW Road 输入 GPKG，用于 Link 存在性校验、方向字段读取与 arrow 几何构建。
+- `--arrow-output`：显性 arrow 输出 GPKG，文件名必须以 `_tool8.gpkg` 结尾。
+- `--lane-layer / --swnode-layer / --swroad-layer`：可选输入图层名；Laneinfo 为多表 GPKG 且无法按文件 stem 自动定位时必须提供 `--lane-layer`。
+- `--summary-output`：可选 summary JSON 输出路径，文件名必须以 `_tool8.json` 结尾。
+- `--target-epsg`：最终输出 EPSG，默认 `3857`。
+- `--swnode-default-crs / --swroad-default-crs`：输入缺失 CRS 时使用；Laneinfo 非空间时不需要 CRS。
+- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 条输出 arrow 记录输出一次。
+
+## 11. Acceptance
 
 1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，所有输出均为输入目录下追加 `_tool1` 的目标格式文件。
 2. Tool2 只接受 GPKG 输入。
@@ -373,6 +415,8 @@ Tool7：
 17. Tool6 可追溯 `错误分歧合流路口 / 错误交叉路口_T型路口 / 错误交叉路口_非交叉路口`、入出度、相关 Road、suppressed 原因、CRS 与性能 summary。
 18. Tool7 输出 `sw_restriction_tool7.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
 19. Tool7 仅输出 `CondType = 1` 且 in/out Link 均存在于 SW Road 的 restriction，输出记录继承 C 表业务字段，几何能解释 Link 端点重叠与非重叠连接。
-20. 所有路径均由参数提供，不写死内网目录。
-21. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
-22. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。
+20. Tool8 输出 `sw_arrow_tool8.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
+21. Tool8 仅输出 `LinkID` 存在于 SW Road 的 Laneinfo 记录；`Arrow_Dir` 按逗号拆分为车道级 `arrow` 字段，几何方向必须符合 `direction / Lane_Dir` 映射规则。
+22. 所有路径均由参数提供，不写死内网目录。
+23. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
+24. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。

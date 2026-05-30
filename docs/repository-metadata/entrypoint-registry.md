@@ -109,6 +109,7 @@
 | `t08_tool5_complex_junction_preprocess.py` | `scripts/t08_tool5_complex_junction_preprocess.py` | repo 级 | T08 Tool5 复杂路口预处理，构建复杂分歧 / 合流路口，并可基于 `RCSDIntersection` 识别和处理错误 1 对多路口，copy-on-write 输出 `EPSG:3857` Nodes/Roads/audit Nodes GPKG 与 summary，成果输出文件名以 `_tool5` 结尾 | `active` | 否 |
 | `t08_tool6_nodes_type_qc.py` | `scripts/t08_tool6_nodes_type_qc.py` | repo 级 | T08 Tool6 Nodes 类型质检，基于语义路口入出度、连续分歧合流 T 型候选与交叉路口候选规则输出 `node_error_tool6.csv / node_error_tool6.gpkg / node_error_summary_tool6.json`，CSV 最后一列 `是否修复` 默认 `1`，不改写输入 Nodes/Roads | `active` | 否 |
 | `t08_tool7_traffic_restriction.py` | `scripts/t08_tool7_traffic_restriction.py` | repo 级 | T08 Tool7 交通限制显性化，读取 SW C 表、SW Node 与 SW Road，筛选 `CondType=1` 且 in/out Link 均存在于 SW Road 的记录，输出 `sw_restriction_tool7.gpkg` 与 summary，不改写输入 | `active` | 否 |
+| `t08_tool8_lane_arrow.py` | `scripts/t08_tool8_lane_arrow.py` | repo 级 | T08 Tool8 Laneinfo 箭头显性化，读取 SW Laneinfo、SW Node 与 SW Road，筛选 `LinkID` 存在于 SW Road 的记录，将 `Arrow_Dir` 拆分为车道级 `arrow`，按 `direction / Lane_Dir` 输出 `sw_arrow_tool8.gpkg` 与 summary，不改写输入 | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

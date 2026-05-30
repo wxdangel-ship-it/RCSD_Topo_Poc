@@ -130,18 +130,20 @@ def run_t08_lane_arrow(
     empty_arrow_value_count = 0
     sequence_gap_group_count = 0
     multipart_geometry_count = 0
+    arrow_value_count = 0
+    lane_direction_group_count = 0
     for link_id, group_records in sorted(lane_groups.items(), key=lambda item: _group_sort_key(item[1])):
-        sorted_records = sorted(group_records, key=lambda record: (_sequence_sort_value(record.properties.get(seq_field)), record.row_index))
-        sequence_values = [_parse_int(record.properties.get(seq_field)) for record in sorted_records]
-        valid_sequence_values = [value for value in sequence_values if value is not None]
-        if valid_sequence_values and valid_sequence_values != list(range(1, len(valid_sequence_values) + 1)):
-            sequence_gap_group_count += 1
-        lane_index = 0
+        sorted_records = sorted(
+            group_records,
+            key=lambda record: (_sequence_sort_value(record.properties.get(seq_field)), record.row_index),
+        )
         road = road_index.roads_by_id[link_id]
         road_direction = _parse_int(road.properties.get(road_direction_field))
         if road_direction not in {0, 1, 2, 3}:
             invalid_road_direction_count += len(sorted_records)
             continue
+
+        direction_groups: dict[int, list[tuple[LaneRecord, list[str]]]] = defaultdict(list)
         for record in sorted_records:
             lane_dir = _parse_int(record.properties.get(lane_dir_field))
             if lane_dir not in {2, 3}:
@@ -151,6 +153,23 @@ def run_t08_lane_arrow(
             if not arrow_values:
                 empty_arrow_value_count += 1
                 continue
+            direction_groups[lane_dir].append((record, arrow_values))
+
+        for lane_dir, direction_records in sorted(
+            direction_groups.items(),
+            key=lambda item: _direction_group_sort_key(item[1]),
+        ):
+            sequence_values = [_parse_int(record.properties.get(seq_field)) for record, _arrow_values in direction_records]
+            valid_sequence_values = [value for value in sequence_values if value is not None]
+            if valid_sequence_values and valid_sequence_values != list(range(1, len(valid_sequence_values) + 1)):
+                sequence_gap_group_count += 1
+            arrow_values_for_direction: list[str] = []
+            source_arrow_dirs: list[str] = []
+            for record, arrow_values in direction_records:
+                arrow_values_for_direction.extend(arrow_values)
+                source_arrow_dir = _normalize_text(record.properties.get(arrow_field))
+                if source_arrow_dir is not None:
+                    source_arrow_dirs.append(source_arrow_dir)
             try:
                 coords, was_multipart = _line_coords(road.geometry)
                 if was_multipart:
@@ -159,30 +178,41 @@ def run_t08_lane_arrow(
             except ValueError:
                 invalid_geometry_count += 1
                 continue
-            for arrow_value in arrow_values:
-                lane_index += 1
-                output_features.append(
-                    {
-                        "properties": {
-                            "linkid": link_id,
-                            "lane_index": lane_index,
-                            "arrow": arrow_value,
-                            "seq_nm": _parse_int(record.properties.get(seq_field)),
-                            "lane_dir": lane_dir,
-                            "source_arrow_dir": _normalize_text(record.properties.get(arrow_field)),
-                        },
-                        "geometry": LineString(oriented_coords),
-                    }
-                )
-                if _should_emit_progress(len(output_features), progress_interval):
-                    _emit_progress(progress_callback, f"[T08 Tool8] built {len(output_features)} arrow feature(s)")
+            lane_direction_group_count += 1
+            arrow_value_count += len(arrow_values_for_direction)
+            output_features.append(
+                {
+                    "properties": {
+                        "linkid": link_id,
+                        "lane_dir": lane_dir,
+                        "road_direction": road_direction,
+                        "arrow": ",".join(arrow_values_for_direction),
+                        "lane_count": len(arrow_values_for_direction),
+                        "seq_start": min(valid_sequence_values) if valid_sequence_values else None,
+                        "seq_end": max(valid_sequence_values) if valid_sequence_values else None,
+                        "source_arrow_dir": "|".join(source_arrow_dirs) if source_arrow_dirs else None,
+                    },
+                    "geometry": LineString(oriented_coords),
+                }
+            )
+            if _should_emit_progress(len(output_features), progress_interval):
+                _emit_progress(progress_callback, f"[T08 Tool8] built {len(output_features)} arrow feature(s)")
 
     write_started = time.perf_counter()
     write_stats = write_gpkg(
         output_path,
         output_features,
         crs_text=f"EPSG:{target_epsg}",
-        empty_fields=("linkid", "lane_index", "arrow", "seq_nm", "lane_dir", "source_arrow_dir"),
+        empty_fields=(
+            "linkid",
+            "lane_dir",
+            "road_direction",
+            "arrow",
+            "lane_count",
+            "seq_start",
+            "seq_end",
+            "source_arrow_dir",
+        ),
         geometry_type="LineString",
     )
     write_seconds = _elapsed_since(write_started)
@@ -237,6 +267,8 @@ def run_t08_lane_arrow(
             "duplicate_swroad_id_count": road_index.duplicate_id_count,
             "missing_link_count": missing_link_count,
             "invalid_link_id_count": invalid_link_id_count,
+            "lane_direction_group_count": lane_direction_group_count,
+            "arrow_value_count": arrow_value_count,
             "invalid_lane_dir_count": invalid_lane_dir_count,
             "invalid_road_direction_count": invalid_road_direction_count,
             "invalid_geometry_count": invalid_geometry_count,
@@ -419,6 +451,10 @@ def _sequence_sort_value(value: Any) -> tuple[int, int]:
 
 def _group_sort_key(records: list[LaneRecord]) -> int:
     return min((record.row_index for record in records), default=0)
+
+
+def _direction_group_sort_key(records: list[tuple[LaneRecord, list[str]]]) -> int:
+    return min((record.row_index for record, _arrow_values in records), default=0)
 
 
 def _resolve_table_name(conn: sqlite3.Connection, *, path: Path, layer_name: str | None) -> str:

@@ -21,7 +21,7 @@
 - Tool5 只在 copy-on-write Nodes/Roads/audit Nodes 输出中执行复杂路口和错误 1 对多处理，不修改输入文件；错误 1 对多必须先基于输入 `RCSDIntersection` 识别候选，Road 删除必须来自 T02 `node_error_2` 面内连通合并逻辑，不允许 silent fix。
 - Tool6 只输出人工质检候选 CSV/GPKG/summary，不改写 Nodes/Roads；连续分歧合流与交叉路口候选必须可追溯入出度、相关 Road 与 suppress 原因，不允许 silent fix。
 - Tool7 只把 C 表交通限制显性化为 restriction LineString，不修改输入 C 表 / SW Node / SW Road；端点不重叠时追加直线连接并通过 summary 追溯过滤与缺失 Link 计数，不允许 silent fix。
-- Tool8 只把 Laneinfo 箭头显性化为 arrow LineString，不修改输入 Laneinfo / SW Node / SW Road；缺失 Link、无效方向、无效几何与空 arrow 必须通过 summary 追溯，不允许 silent fix。
+- Tool8 只把 Laneinfo 箭头显性化为 Road 方向级 arrow LineString，不修改输入 Laneinfo / SW Node / SW Road；缺失 Link、无效方向、无效几何与空 arrow 必须通过 summary 追溯，不允许 silent fix。
 
 ## 审计
 
@@ -38,4 +38,4 @@ Tool4 命令脚本必须输出阶段进度，summary 必须记录语义路口数
 Tool5 错误 1 对多处理必须记录 `node_error_2_detection`、参与 intersection、合并组、忽略 `kind_2 = 1` 组、连通性跳过原因与删除 Road。
 Tool6 必须记录 `错误分歧合流路口 / 错误交叉路口_T型路口 / 错误交叉路口_非交叉路口` 计数、CSV `是否修复` 默认值、连续分歧合流 suppressed 候选、交叉路口外侧角度分组与合并原因、字段解析与参数阈值。
 Tool7 必须记录 C 表记录数、`CondType=1` 记录数、SW Road id 索引规模、缺失 Link 数、无效几何数、restriction 输出数、输出 bounds 与阶段耗时。
-Tool8 必须记录 Laneinfo 记录数、匹配 Link 记录数、SW Road id 索引规模、缺失 Link 数、无效方向 / 几何 / 空 arrow 数、arrow 输出数、输出 bounds 与阶段耗时。
+Tool8 必须记录 Laneinfo 记录数、匹配 Link 记录数、Road 方向分组数、车道级 arrow 值数、SW Road id 索引规模、缺失 Link 数、无效方向 / 几何 / 空 arrow 数、arrow 输出数、输出 bounds 与阶段耗时。

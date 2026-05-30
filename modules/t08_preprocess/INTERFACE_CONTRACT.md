@@ -173,8 +173,9 @@
 - 输出 CRS：`EPSG:3857`。
 - 处理规则：
   - 仅处理 `Laneinfo.LinkID` 存在于 SW Road 输入中的 Lane 记录；缺失 Link 写入 summary 计数并跳过。
-  - 按 `LinkID` 分组后以 `Seq_Nm` 升序处理；每条 Lane 记录的 `Arrow_Dir` 按英文逗号 `,` 分割为车道级 arrow 值，每个 arrow 值输出一条 LineString 要素，写入 `arrow` 字段。
-  - arrow 输出字段至少包含 `linkid / lane_index / arrow / seq_nm / lane_dir / source_arrow_dir`。
+  - 按 `LinkID + Lane_Dir` 分组后以 `Seq_Nm` 升序处理；每条 Lane 记录的 `Arrow_Dir` 按英文逗号 `,` 分割为车道级 arrow 值，同一组只输出一条 LineString 要素。
+  - `arrow` 字段按 `Seq_Nm` 顺序记录该 Road 方向的全部车道级 arrow 值，中间用英文逗号 `,` 分隔。
+  - arrow 输出字段至少包含 `linkid / lane_dir / road_direction / arrow / lane_count / seq_start / seq_end / source_arrow_dir`。
   - Link 为单向顺行（`direction = 2`）时，`Lane_Dir = 2` 按 Link 几何方向输出，`Lane_Dir = 3` 按 Link 几何反向输出。
   - Link 为单向逆向（`direction = 3`）时，`Lane_Dir = 2` 按 Link 几何反向输出，`Lane_Dir = 3` 按 Link 几何方向输出。
   - Link 为双向（`direction in {0,1}`）时，`Lane_Dir = 2` 按 Link 几何方向输出，`Lane_Dir = 3` 按 Link 几何反向输出。
@@ -392,7 +393,7 @@ Tool8：
 - `--summary-output`：可选 summary JSON 输出路径，文件名必须以 `_tool8.json` 结尾。
 - `--target-epsg`：最终输出 EPSG，默认 `3857`。
 - `--swnode-default-crs / --swroad-default-crs`：输入缺失 CRS 时使用；Laneinfo 非空间时不需要 CRS。
-- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 条输出 arrow 记录输出一次。
+- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 条输出 Road 方向 arrow 记录输出一次。
 
 ## 11. Acceptance
 
@@ -416,7 +417,7 @@ Tool8：
 18. Tool7 输出 `sw_restriction_tool7.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
 19. Tool7 仅输出 `CondType = 1` 且 in/out Link 均存在于 SW Road 的 restriction，输出记录继承 C 表业务字段，几何能解释 Link 端点重叠与非重叠连接。
 20. Tool8 输出 `sw_arrow_tool8.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
-21. Tool8 仅输出 `LinkID` 存在于 SW Road 的 Laneinfo 记录；`Arrow_Dir` 按逗号拆分为车道级 `arrow` 字段，几何方向必须符合 `direction / Lane_Dir` 映射规则。
+21. Tool8 仅输出 `LinkID` 存在于 SW Road 的 Laneinfo 记录；同一 `LinkID + Lane_Dir` 只输出一条记录，`Arrow_Dir` 按 `Seq_Nm` 顺序拆分并重新用逗号拼接为 `arrow` 字段，几何方向必须符合 `direction / Lane_Dir` 映射规则。
 22. 所有路径均由参数提供，不写死内网目录。
 23. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
 24. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。

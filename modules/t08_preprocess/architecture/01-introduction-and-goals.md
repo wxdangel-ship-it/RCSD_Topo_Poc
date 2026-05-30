@@ -13,7 +13,7 @@
 5. 提供路口类型修复工具，输出完整 Nodes、可选 Roads 与 audit Nodes，记录错误类型与修复结果。
 6. 提供 Nodes 类型质检工具，输出人工质检 CSV 与目视审查 GPKG。
 7. 提供交通限制显性化工具，把 SW C 表限制转换为显性 restriction LineString。
-8. 提供 Laneinfo 箭头显性化工具，把 `Arrow_Dir` 拆分为车道级 arrow LineString。
+8. 提供 Laneinfo 箭头显性化工具，把同一 `LinkID + Lane_Dir` 的 `Arrow_Dir` 聚合为 Road 方向级 arrow LineString。
 9. 让预处理工具通过参数化脚本运行，避免硬编码内网路径。
 10. 让输出具备 CRS、字段、计数和失败原因审计。
 

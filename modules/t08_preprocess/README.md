@@ -9,7 +9,7 @@
 - Tool5：复杂路口预处理，构建复杂分歧 / 合流路口，并可基于 `RCSDIntersection` 识别和处理错误 1 对多路口，输出 audit Nodes。
 - Tool6：Nodes 类型质检，输出人工质检 CSV 与 `node_error_tool6.gpkg`，不改写输入 Nodes/Roads。
 - Tool7：交通限制显性化，读取 SW C 表与 SW Node/Road，将 `CondType=1` 且 in/out link 均存在的交通限制输出为显性 LineString。
-- Tool8：Laneinfo 箭头显性化，读取 SW Laneinfo 与 SW Node/Road，将 `Arrow_Dir` 拆分为车道级 `arrow` LineString。
+- Tool8：Laneinfo 箭头显性化，读取 SW Laneinfo 与 SW Node/Road，将同一 `LinkID + Lane_Dir` 的 `Arrow_Dir` 聚合为 Road 方向级 `arrow` LineString。
 
 T08 成果输出文件名统一在扩展名前以 `_toolX` 结尾，`X` 为工具编号。
 

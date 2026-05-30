@@ -37,8 +37,9 @@ def _write_lane_table(path: Path) -> None:
         conn.executemany(
             "INSERT INTO Laneguangdong1 (LinkID, Seq_Nm, Arrow_Dir, Lane_Dir) VALUES (?, ?, ?, ?)",
             [
-                (100, 2, "L,R", 3),
+                (100, 2, "L,R", 2),
                 (100, 1, "S", 2),
+                (101, 1, "B", 3),
                 (200, 1, "U", 2),
                 (200, 2, "R", 3),
                 (300, 1, "S,R", 3),
@@ -67,6 +68,7 @@ def test_tool8_builds_lane_level_arrow_lines(tmp_path: Path) -> None:
         swroad_gpkg,
         [
             _road("100", 2, [(0.0, 0.0), (10.0, 0.0)]),
+            _road("101", 2, [(0.0, 5.0), (10.0, 5.0)]),
             _road("200", 3, [(0.0, 10.0), (10.0, 10.0)]),
             _road("300", 1, [(0.0, 20.0), (10.0, 20.0)]),
             _road("400", 2, [(0.0, 30.0), (10.0, 30.0)]),
@@ -104,36 +106,38 @@ def test_tool8_builds_lane_level_arrow_lines(tmp_path: Path) -> None:
         crs_value = source.crs_wkt or source.crs
         assert CRS.from_user_input(crs_value).to_epsg() == 3857
         rows = list(source)
-    assert len(rows) == 8
+    assert len(rows) == 6
 
     arrow_rows = [
-        (feature["properties"]["linkid"], feature["properties"]["lane_index"], feature["properties"]["arrow"])
+        (feature["properties"]["linkid"], feature["properties"]["lane_dir"], feature["properties"]["arrow"])
         for feature in rows
     ]
     assert arrow_rows == [
-        ("100", 1, "S"),
-        ("100", 2, "L"),
-        ("100", 3, "R"),
-        ("200", 1, "U"),
-        ("200", 2, "R"),
-        ("300", 1, "S"),
-        ("300", 2, "R"),
-        ("500", 1, "A"),
+        ("100", 2, "S,L,R"),
+        ("101", 3, "B"),
+        ("200", 2, "U"),
+        ("200", 3, "R"),
+        ("300", 3, "S,R"),
+        ("500", 2, "A"),
     ]
+    assert rows[0]["properties"]["lane_count"] == 3
+    assert rows[0]["properties"]["source_arrow_dir"] == "S|L,R"
     geometries = [shape(feature["geometry"]) for feature in rows]
     assert list(geometries[0].coords) == [(0.0, 0.0), (10.0, 0.0)]
-    assert list(geometries[1].coords) == [(10.0, 0.0), (0.0, 0.0)]
-    assert list(geometries[3].coords) == [(10.0, 10.0), (0.0, 10.0)]
-    assert list(geometries[4].coords) == [(0.0, 10.0), (10.0, 10.0)]
-    assert list(geometries[5].coords) == [(10.0, 20.0), (0.0, 20.0)]
-    assert list(geometries[7].coords) == [(0.0, 40.0), (10.0, 40.0)]
+    assert list(geometries[1].coords) == [(10.0, 5.0), (0.0, 5.0)]
+    assert list(geometries[2].coords) == [(10.0, 10.0), (0.0, 10.0)]
+    assert list(geometries[3].coords) == [(0.0, 10.0), (10.0, 10.0)]
+    assert list(geometries[4].coords) == [(10.0, 20.0), (0.0, 20.0)]
+    assert list(geometries[5].coords) == [(0.0, 40.0), (10.0, 40.0)]
 
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
-    assert summary["counts"]["lane_record_count"] == 8
-    assert summary["counts"]["lane_record_with_matching_link_count"] == 7
+    assert summary["counts"]["lane_record_count"] == 9
+    assert summary["counts"]["lane_record_with_matching_link_count"] == 8
     assert summary["counts"]["missing_link_count"] == 1
     assert summary["counts"]["empty_arrow_value_count"] == 1
-    assert summary["counts"]["arrow_feature_count"] == 8
+    assert summary["counts"]["lane_direction_group_count"] == 6
+    assert summary["counts"]["arrow_value_count"] == 9
+    assert summary["counts"]["arrow_feature_count"] == 6
     assert summary["field_audit"]["link_field"] == "LinkID"
 
     with sqlite3.connect(arrow_output) as conn:
@@ -141,4 +145,4 @@ def test_tool8_builds_lane_level_arrow_lines(tmp_path: Path) -> None:
             "SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = ?",
             (arrow_output.stem,),
         ).fetchone()[0]
-    assert feature_count == 8
+    assert feature_count == 6

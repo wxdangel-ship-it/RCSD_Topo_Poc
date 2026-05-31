@@ -72,7 +72,7 @@ T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增
 - `run/step1_identify_fusion_units/` 与 `run/step2_extract_rcsd_segments/`：默认包含 summary、JSON / CSV 审计输出；显式 `--include-output-vectors` 才包含 GPKG。
 - `inputs/`：仅显式 `--include-input-files` 时包含六个原始输入文件副本。
 
-输入切片包额外支持 `center_x / center_y / profile_id / radius_m`，并输出：
+输入切片包额外支持 `center_x / center_y / profile_id / size_m / radius_m`，并输出：
 
 - `slice/swsd/segment.geojson`
 - `slice/swsd/roads.geojson`
@@ -82,7 +82,7 @@ T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增
 - `slice/t05_phase2/rcsdnode_out.geojson`
 - `slice/t06_input_slice_summary.json`
 
-默认 profile 半径为 `XXXS=250m / XXS=500m / XS=1000m / S=2000m / M=5000m`，显式 `--radius-m` 可覆盖。
+默认 profile 半径为 `XXXS=250m / XXS=500m / XS=1000m / S=2000m / M=5000m`，显式 `--size-m` 可按中心点正方形边长选取范围，显式 `--radius-m` 可覆盖 profile 半径且优先于 `--size-m`。输入切片必须补齐已选 SWSDRoad / RCSDRoad 的 `snodeid / enodeid` 端点 Node，避免 road endpoint 引用缺失。
 外部 size report 与解包后的 `t06_evidence_size_report.json` 必须保留 `limit_bytes / within_limit / split_bundle`，用于审计分片上限、分片数量和每片实际大小。
 
 ## GIS / 拓扑检查项

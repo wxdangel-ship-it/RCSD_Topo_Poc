@@ -30,7 +30,14 @@ DEFAULT_NODES = "/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T04/nodes.gpkg
 DEFAULT_OUT_ROOT = "/mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment"
 T02_ANCHOR_SURFACE_FILENAME = "t02_rcsdintersection_anchor_surface.gpkg"
 T07_ANCHOR_SURFACE_FILENAME = "t07_rcsdintersection_anchor_surface.gpkg"
-T07_RELATION_EVIDENCE_FILENAME = "t07_swsd_rcsd_relation_evidence.csv"
+T02_RELATION_EVIDENCE_FILENAMES = (
+    "t02_swsd_rcsd_relation_evidence.csv",
+    "t02_swsd_rcsd_relation_evidence.json",
+)
+T07_RELATION_EVIDENCE_FILENAMES = (
+    "t07_swsd_rcsd_relation_evidence.csv",
+    "t07_swsd_rcsd_relation_evidence.json",
+)
 
 
 def main() -> int:
@@ -40,9 +47,10 @@ def main() -> int:
     t03_dir = Path(args.t03_dir)
     t04_dir = Path(args.t04_dir)
     out_root = Path(args.out_root)
+    t07_mode = _uses_t07(args)
 
-    t02_evidence = _resolve_optional_file(args.t02_evidence, t02_dir, ("t02_swsd_rcsd_relation_evidence.csv",))
-    t07_evidence = _resolve_t07_file(args.t07_evidence, t07_dir, T07_RELATION_EVIDENCE_FILENAME)
+    t02_evidence = _resolve_t02_evidence(args=args, t02_dir=t02_dir, t07_mode=t07_mode)
+    t07_evidence = _resolve_t07_file(args.t07_evidence, t07_dir, T07_RELATION_EVIDENCE_FILENAMES)
     t02_input = _resolve_phase1_input(args=args, t02_dir=t02_dir, t07_dir=t07_dir)
     t03_evidence = _resolve_file(args.t03_evidence, t03_dir, "t03_swsd_rcsd_relation_evidence.csv")
     t04_evidence = _resolve_file(args.t04_evidence, t04_dir, "t04_swsd_rcsd_relation_evidence.csv")
@@ -170,6 +178,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--out-root", default=DEFAULT_OUT_ROOT)
     parser.add_argument("--t02-evidence", default=None)
     parser.add_argument("--t07-evidence", default=None)
+    parser.add_argument(
+        "--include-legacy-t02-evidence",
+        action="store_true",
+        help=(
+            "Include legacy T02 relation evidence even when T07 inputs are provided. "
+            "By default T07 mode disables automatic T02 evidence discovery."
+        ),
+    )
     parser.add_argument("--t03-evidence", default=None)
     parser.add_argument("--t04-evidence", default=None)
     parser.add_argument("--t03-surface", default=None)
@@ -183,6 +199,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--progress-interval", type=int, default=1000)
     parser.add_argument("--t03-accepted-only", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
+
+
+def _uses_t07(args: argparse.Namespace) -> bool:
+    return bool(args.t07_dir or args.t07_input or args.t07_evidence)
+
+
+def _resolve_t02_evidence(*, args: argparse.Namespace, t02_dir: Path, t07_mode: bool) -> Path | None:
+    if t07_mode and not args.t02_evidence and not args.include_legacy_t02_evidence:
+        return None
+    return _resolve_optional_file(args.t02_evidence, t02_dir, T02_RELATION_EVIDENCE_FILENAMES)
 
 
 def _resolve_file(explicit_path: str | None, root: Path, filename: str) -> Path:
@@ -200,7 +226,7 @@ def _resolve_file(explicit_path: str | None, root: Path, filename: str) -> Path:
     raise FileNotFoundError(f"missing {filename} under {root}")
 
 
-def _resolve_t07_file(explicit_path: str | None, root: Path | None, filename: str) -> Path | None:
+def _resolve_t07_file(explicit_path: str | None, root: Path | None, filenames: tuple[str, ...]) -> Path | None:
     if explicit_path:
         path = Path(explicit_path)
         if path.is_file():
@@ -208,7 +234,10 @@ def _resolve_t07_file(explicit_path: str | None, root: Path | None, filename: st
         raise FileNotFoundError(f"configured path does not exist: {path}")
     if root is None:
         return None
-    return _resolve_file(None, root, filename)
+    resolved = _resolve_optional_file(None, root, filenames)
+    if resolved is not None:
+        return resolved
+    raise FileNotFoundError(f"missing one of {', '.join(filenames)} under {root}")
 
 
 def _resolve_phase1_input(*, args: argparse.Namespace, t02_dir: Path, t07_dir: Path | None) -> Path:

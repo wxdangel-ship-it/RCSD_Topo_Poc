@@ -285,7 +285,7 @@ T05 提供 repo 级内网联合实验入口：
   --progress-interval 1000
 ```
 
-`--t07-dir / --t07-evidence / --t07-input` 用于当前 T07 主流程；默认从 `--t07-dir` 自动发现 `t07_swsd_rcsd_relation_evidence.csv` 与 `t07_rcsdintersection_anchor_surface.gpkg`。`--t02-dir / --t02-evidence / --t02-input` 仅作为旧批次兼容路径保留。
+`--t07-dir / --t07-evidence / --t07-input` 用于当前 T07 主流程；默认从 `--t07-dir` 自动发现 `t07_swsd_rcsd_relation_evidence.csv/json` 与 `t07_rcsdintersection_anchor_surface.gpkg`。进入 T07 模式后默认不再自动读取旧 T02 evidence；`--t02-dir / --t02-evidence / --t02-input` 仅作为旧批次兼容路径保留，需要对比旧 T02 时显式传 `--include-legacy-t02-evidence`。
 
 该入口顺序执行：
 
@@ -293,7 +293,64 @@ T05 提供 repo 级内网联合实验入口：
 2. Phase 1 `junction_anchor_surface.gpkg` 发布。
 3. Phase 2 `intersection_match_all.geojson`、copy-on-write RCSD 输出和审计发布。
 
-## 9. T03 Relation Evidence Backfill
+## 9. T05 Junctionization Evidence Bundle
+
+T05 提供按 SWSD 语义路口 ID 导出的 Phase 2 junctionization 输入证据包工具，用于 RCSDRoad 打断、RCSDNode 归组与新增 RCSDNode 构建问题复现。
+
+模块内 runner：
+
+```python
+run_t05_export_junctionization_bundle(
+    *,
+    target_ids,
+    out_dir,
+    junction_surface_path,
+    nodes_path,
+    rcsdroad_path,
+    rcsdnode_path,
+    fusion_audit_path=None,
+    t02_relation_evidence_path=None,
+    t07_relation_evidence_path=None,
+    t03_relation_evidence_path=None,
+    t04_relation_evidence_path=None,
+    phase2_root=None,
+    context_buffer_m=80.0,
+    max_text_size_bytes=250 * 1024,
+)
+```
+
+使用方式示例：
+
+```python
+from rcsd_topo_poc.modules.t05_junction_surface_fusion import run_t05_export_junctionization_bundle
+
+artifacts = run_t05_export_junctionization_bundle(
+    target_ids=["692772", "1029610"],
+    out_dir="/mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_junctionization_bundles",
+    junction_surface_path="/path/to/junction_anchor_surface.gpkg",
+    fusion_audit_path="/path/to/junction_anchor_surface_fusion_audit.csv",
+    nodes_path="/path/to/final/nodes.gpkg",
+    rcsdroad_path="/path/to/RCSDRoad.gpkg",
+    rcsdnode_path="/path/to/RCSDNode.gpkg",
+    t07_relation_evidence_path="/path/to/t07_swsd_rcsd_relation_evidence.csv",
+    t03_relation_evidence_path="/path/to/t03_swsd_rcsd_relation_evidence_backfilled.csv",
+    t04_relation_evidence_path="/path/to/t04_swsd_rcsd_relation_evidence.csv",
+    phase2_root="/path/to/t05_phase2_full",
+)
+```
+
+该能力仅提供模块内 callable，不新增 repo CLI 或 scripts 入口。
+
+输出规则：
+
+- 默认 `max_text_size_bytes = 250KB`；多 `target_id` 打包超过阈值时自动输出 `t05_junctionization_bundle_partNNN.txt` 分片。
+- 单个 target 自身超过阈值时保留为独立 oversized 分片，并在 `t05_junctionization_bundle_index.json` 标记 `oversized = true`。
+- 每个 bundle payload 是 zip，外层为可复制 txt；每个 target 在 zip 内按 `<target_id>/` 分目录。
+- case 目录包含 `junction_anchor_surface.geojson / nodes.geojson / rcsdroad.geojson / rcsdnode.geojson / relation_evidence.json / fusion_audit.json / phase2_audit.json / manifest.json`。
+- `rcsdroad.geojson` 优先纳入 relation evidence / Phase2 audit 中显式引用的 `support / selected / fallback / required / original` RCSDRoad，并补充目标 surface / SWSD node 周边 `context_buffer_m` 内的 RCSDRoad。
+- `rcsdnode.geojson` 纳入 evidence / audit 显式引用的 RCSDNode、被选 RCSDRoad 的 `snodeid / enodeid`，并补充目标 context 内 RCSDNode。
+
+## 10. T03 Relation Evidence Backfill
 
 T05 提供 T03 -> Phase 2 handoff 补齐工具：
 

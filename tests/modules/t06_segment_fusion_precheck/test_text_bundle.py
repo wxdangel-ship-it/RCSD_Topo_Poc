@@ -259,6 +259,7 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
             {"properties": {"id": 101, "mainnodeid": 0}, "geometry": Point(0, 0)},
             {"properties": {"id": 102, "mainnodeid": 0}, "geometry": Point(10, 0)},
             {"properties": {"id": 103, "mainnodeid": 0}, "geometry": Point(5, 1)},
+            {"properties": {"id": 104, "mainnodeid": 0}, "geometry": Point(60, 0)},
             {"properties": {"id": 110, "mainnodeid": 0}, "geometry": Point(1000, 0)},
         ],
         crs_text="EPSG:3857",
@@ -267,6 +268,7 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
         rcsdroad_path,
         [
             {"properties": {"id": "rr-near", "snodeid": 101, "enodeid": 102}, "geometry": LineString([(0, 0), (10, 0)])},
+            {"properties": {"id": "rr-dependency", "snodeid": 102, "enodeid": 104}, "geometry": LineString([(10, 0), (60, 0)])},
             {"properties": {"id": "rr-far", "snodeid": 110, "enodeid": 111}, "geometry": LineString([(1000, 0), (1010, 0)])},
         ],
         crs_text="EPSG:3857",
@@ -290,8 +292,8 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
             "0",
             "--center-y",
             "0",
-            "--radius-m",
-            "50",
+            "--size-m",
+            "100",
             "--max-text-size-bytes",
             "7000",
         ]
@@ -304,14 +306,19 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
     relation_doc = json.loads(
         (decoded.out_dir / "slice" / "t05_phase2" / "intersection_match_all.geojson").read_text(encoding="utf-8")
     )
+    rcsdnode_doc = json.loads((decoded.out_dir / "slice" / "t05_phase2" / "rcsdnode_out.geojson").read_text(encoding="utf-8"))
     summary = json.loads((decoded.out_dir / "slice" / "t06_input_slice_summary.json").read_text(encoding="utf-8"))
 
     assert [item["properties"]["id"] for item in segment_doc["features"]] == ["s-near"]
     assert {item["properties"]["target_id"] for item in relation_doc["features"]} == {1, 2, 3}
+    assert {item["properties"]["id"] for item in rcsdnode_doc["features"]} == {101, 102, 103, 104}
     assert summary["selected_swsd_segment_count"] == 1
     assert summary["crs_normalized_to"] == "EPSG:3857"
+    assert summary["size_m"] == 100.0
+    assert summary["radius_m"] == 50.0
     assert summary["required_swsd_road_ids"] == ["r-near"]
     assert summary["mapped_rcsd_semantic_node_ids"] == ["101", "102", "103"]
+    assert summary["selected_rcsd_road_endpoint_node_ids"] == ["101", "102", "104"]
 
     split_out_txt = tmp_path / "slice_bundle_split.txt"
     split_artifacts = run_t06_export_input_text_bundle(

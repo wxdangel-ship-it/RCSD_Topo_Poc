@@ -108,12 +108,12 @@ helper 默认按 T01 输入证据包模式自动分片，单个 `.txt` 分片不
 
 输入切片包用于按中心点和范围标准抽取局部 SWSD / RCSD / relation 数据。切片选择逻辑：
 
-- 用 `center_x / center_y / radius_m` 构建 EPSG:3857 方形窗口。
+- 用 `center_x / center_y / size_m` 或 `radius_m` 构建 EPSG:3857 方形窗口；`size_m` 表示正方形边长，`radius_m` 表示中心到边界距离。
 - 选中与窗口相交的 SWSD Segment。
 - 根据选中 Segment 的 `roads / pair_nodes / junc_nodes` 补齐必要 SWSD roads / nodes。
-- 保留窗口内上下文 SWSD roads / nodes。
+- 保留窗口内上下文 SWSD roads / nodes，并补齐已选 SWSDRoad 的端点 Node。
 - 保留相关 T05 relation，并按 relation 补齐 mapped RCSD semantic nodes。
-- 保留窗口内 RCSDRoad / RCSDNode，以及连接 selected RCSD node 的 RCSDRoad。
+- 保留窗口内 RCSDRoad / RCSDNode，以及连接 selected RCSD node 的 RCSDRoad，并补齐已选 RCSDRoad 的端点 RCSDNode。
 
 默认范围标准：
 
@@ -123,7 +123,7 @@ helper 默认按 T01 输入证据包模式自动分片，单个 `.txt` 分片不
 - `S = 2000m`
 - `M = 5000m`
 
-可用 `--radius-m` 显式覆盖 profile 半径。
+可用 `--size-m` 显式指定正方形边长，或用 `--radius-m` 显式覆盖 profile 半径；两者同时提供时 `--radius-m` 优先。
 
 ```bash
 .venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t06_segment_fusion_precheck.text_bundle import run_t06_export_input_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" \
@@ -135,7 +135,7 @@ helper 默认按 T01 输入证据包模式自动分片，单个 `.txt` 分片不
   --run-id t06_innernet_precheck \
   --center-x <EPSG3857_X> \
   --center-y <EPSG3857_Y> \
-  --profile-id XS
+  --size-m 1000
 ```
 
 解包后 `slice/` 下包含 `swsd/segment.geojson`、`swsd/roads.geojson`、`swsd/nodes.geojson`、`t05_phase2/intersection_match_all.geojson`、`t05_phase2/rcsdroad_out.geojson`、`t05_phase2/rcsdnode_out.geojson` 与 `t06_input_slice_summary.json`。

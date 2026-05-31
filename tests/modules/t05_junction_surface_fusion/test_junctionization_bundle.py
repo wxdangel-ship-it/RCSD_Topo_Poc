@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import csv
+import json
+from pathlib import Path
+
+from shapely.geometry import LineString, Point, box
+
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
+from rcsd_topo_poc.modules.t05_junction_surface_fusion.junctionization_bundle import (
+    decode_t05_junctionization_bundle,
+    run_t05_export_junctionization_bundle,
+)
+
+
+def _feature(properties: dict, geometry):
+    return {"properties": properties, "geometry": geometry}
+
+
+def _write(path: Path, features: list[dict]) -> Path:
+    write_vector(path, features, crs_text="EPSG:3857")
+    return path
+
+
+def _write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+    return path
+
+
+def _inputs(tmp_path: Path) -> dict[str, Path]:
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    return {
+        "surface": _write(
+            inputs / "junction_anchor_surface.gpkg",
+            [
+                _feature({"surface_id": "JAS:100", "mainnodeid": "100", "junction_type": "center_junction"}, box(-5, -5, 5, 5)),
+                _feature({"surface_id": "JAS:200", "mainnodeid": "200", "junction_type": "center_junction"}, box(95, -5, 105, 5)),
+            ],
+        ),
+        "nodes": _write(
+            inputs / "nodes.gpkg",
+            [
+                _feature({"id": 100, "mainnodeid": "100", "grade": 2, "closed_con": 2}, Point(0, 0)),
+                _feature({"id": 200, "mainnodeid": "200", "grade": 1, "closed_con": 1}, Point(100, 0)),
+            ],
+        ),
+        "rcsdroad": _write(
+            inputs / "RCSDRoad.gpkg",
+            [
+                _feature({"id": 10, "snodeid": 1, "enodeid": 2, "direction": "B"}, LineString([(0, -20), (0, 20)])),
+                _feature({"id": 20, "snodeid": 3, "enodeid": 4, "direction": "B"}, LineString([(100, -20), (100, 20)])),
+            ],
+        ),
+        "rcsdnode": _write(
+            inputs / "RCSDNode.gpkg",
+            [
+                _feature({"id": 1, "mainnodeid": None}, Point(0, -20)),
+                _feature({"id": 2, "mainnodeid": None}, Point(0, 20)),
+                _feature({"id": 3, "mainnodeid": None}, Point(100, -20)),
+                _feature({"id": 4, "mainnodeid": None}, Point(100, 20)),
+            ],
+        ),
+        "t03": _write_csv(
+            inputs / "t03_swsd_rcsd_relation_evidence.csv",
+            [
+                {"target_id": "100", "case_id": "100", "relation_state": "rcsd_present_not_junction", "support_rcsdroad_ids": "10"},
+                {"target_id": "200", "case_id": "200", "relation_state": "rcsd_present_not_junction", "support_rcsdroad_ids": "20"},
+            ],
+            ["target_id", "case_id", "relation_state", "support_rcsdroad_ids"],
+        ),
+    }
+
+
+def test_export_junctionization_bundle_collects_split_inputs_by_target_id(tmp_path: Path) -> None:
+    paths = _inputs(tmp_path)
+
+    artifacts = run_t05_export_junctionization_bundle(
+        target_ids=["100"],
+        out_dir=tmp_path / "bundle",
+        junction_surface_path=paths["surface"],
+        nodes_path=paths["nodes"],
+        rcsdroad_path=paths["rcsdroad"],
+        rcsdnode_path=paths["rcsdnode"],
+        t03_relation_evidence_path=paths["t03"],
+        max_text_size_bytes=250 * 1024,
+    )
+
+    assert artifacts.success
+    assert [path.name for path in artifacts.bundle_paths] == ["100.txt"]
+    decoded = decode_t05_junctionization_bundle(artifacts.bundle_paths[0], tmp_path / "decoded")
+    manifest = json.loads((decoded / "100" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["target_id"] == "100"
+    assert manifest["feature_counts"]["rcsdroad"] == 1
+    assert manifest["feature_counts"]["rcsdnode"] == 2
+
+    evidence = json.loads((decoded / "100" / "relation_evidence.json").read_text(encoding="utf-8"))
+    assert evidence["rows"][0]["_bundle_source"] == "T03"
+    rcsdroad_geojson = json.loads((decoded / "100" / "rcsdroad.geojson").read_text(encoding="utf-8"))
+    assert rcsdroad_geojson["features"][0]["properties"]["id"] == 10
+
+
+def test_export_junctionization_bundle_auto_splits_multiple_targets(tmp_path: Path) -> None:
+    paths = _inputs(tmp_path)
+
+    artifacts = run_t05_export_junctionization_bundle(
+        target_ids=["100", "200"],
+        out_dir=tmp_path / "bundle",
+        junction_surface_path=paths["surface"],
+        nodes_path=paths["nodes"],
+        rcsdroad_path=paths["rcsdroad"],
+        rcsdnode_path=paths["rcsdnode"],
+        t03_relation_evidence_path=paths["t03"],
+        max_text_size_bytes=1,
+    )
+
+    assert artifacts.success
+    assert [path.name for path in artifacts.bundle_paths] == [
+        "t05_junctionization_bundle_part001.txt",
+        "t05_junctionization_bundle_part002.txt",
+    ]
+    index_payload = json.loads(artifacts.index_path.read_text(encoding="utf-8"))
+    assert index_payload["successful_target_ids"] == ["100", "200"]
+    assert index_payload["shards"][0]["target_ids"] == ["100"]
+    assert index_payload["shards"][1]["target_ids"] == ["200"]

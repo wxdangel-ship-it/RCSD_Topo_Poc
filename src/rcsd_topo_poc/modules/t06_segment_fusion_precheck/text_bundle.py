@@ -354,6 +354,17 @@ def _feature_id(properties: dict[str, Any]) -> str | None:
     return _safe_normalize_id(properties.get("id"))
 
 
+def _road_endpoint_ids(properties: dict[str, Any]) -> list[str]:
+    return [
+        node_id
+        for node_id in (
+            _safe_normalize_id(properties.get("snodeid")),
+            _safe_normalize_id(properties.get("enodeid")),
+        )
+        if node_id is not None
+    ]
+
+
 def _intersects_window(feature: dict[str, Any], window: BaseGeometry) -> bool:
     geometry = feature.get("geometry")
     return bool(geometry is not None and geometry.intersects(window))
@@ -711,15 +722,22 @@ def _build_text_bundle(
     return bundle_text, bundle_size_bytes, size_report
 
 
-def _resolve_slice_radius_m(*, profile_id: str, radius_m: float | None) -> tuple[str, float]:
+def _resolve_slice_size_m(*, profile_id: str, size_m: float | None, radius_m: float | None) -> tuple[str, float, float]:
     selected_profile_id = str(profile_id or T06_INPUT_SLICE_DEFAULT_PROFILE_ID).strip().upper()
     if radius_m is not None:
         if radius_m <= 0:
             raise T06TextBundleError("invalid_radius_m", "radius_m must be > 0.")
-        return selected_profile_id, float(radius_m)
+        selected_radius_m = float(radius_m)
+        return selected_profile_id, selected_radius_m * 2.0, selected_radius_m
+    if size_m is not None:
+        if size_m <= 0:
+            raise T06TextBundleError("invalid_size_m", "size_m must be > 0.")
+        selected_size_m = float(size_m)
+        return selected_profile_id, selected_size_m, selected_size_m / 2.0
     if selected_profile_id not in T06_INPUT_SLICE_PROFILE_RADII_M:
         raise T06TextBundleError("invalid_profile_id", f"Unsupported T06 input slice profile_id: {profile_id}")
-    return selected_profile_id, T06_INPUT_SLICE_PROFILE_RADII_M[selected_profile_id]
+    selected_radius_m = T06_INPUT_SLICE_PROFILE_RADII_M[selected_profile_id]
+    return selected_profile_id, selected_radius_m * 2.0, selected_radius_m
 
 
 def _select_t06_input_slice(
@@ -733,9 +751,14 @@ def _select_t06_input_slice(
     center_x: float,
     center_y: float,
     profile_id: str,
+    size_m: float | None,
     radius_m: float | None,
 ) -> tuple[dict[str, bytes], dict[str, Any]]:
-    selected_profile_id, selected_radius_m = _resolve_slice_radius_m(profile_id=profile_id, radius_m=radius_m)
+    selected_profile_id, selected_size_m, selected_radius_m = _resolve_slice_size_m(
+        profile_id=profile_id,
+        size_m=size_m,
+        radius_m=radius_m,
+    )
     window = box(
         float(center_x) - selected_radius_m,
         float(center_y) - selected_radius_m,
@@ -769,6 +792,10 @@ def _select_t06_input_slice(
         for feature in swsd_roads
         if _feature_id(feature.get("properties") or {}) in required_road_id_set or _intersects_window(feature, window)
     ]
+    required_swsd_road_endpoint_node_ids = unique_preserve_order(
+        node_id for feature in selected_swsd_roads for node_id in _road_endpoint_ids(feature.get("properties") or {})
+    )
+    required_node_id_set.update(required_swsd_road_endpoint_node_ids)
 
     swsd_nodes = read_features(swsd_nodes_path)
     selected_swsd_nodes = [
@@ -820,6 +847,17 @@ def _select_t06_input_slice(
         touches_selected_node = snodeid in selected_rcsd_node_ids or enodeid in selected_rcsd_node_ids
         if touches_selected_node or _intersects_window(feature, window):
             selected_rcsd_roads.append(feature)
+    selected_rcsd_road_endpoint_node_ids = unique_preserve_order(
+        node_id for feature in selected_rcsd_roads for node_id in _road_endpoint_ids(feature.get("properties") or {})
+    )
+    selected_rcsd_node_dependency_id_set = set(selected_rcsd_node_ids).union(selected_rcsd_road_endpoint_node_ids)
+    selected_rcsd_nodes = [
+        feature
+        for feature in rcsd_nodes
+        if _feature_id(feature.get("properties") or {}) in selected_rcsd_node_dependency_id_set
+        or _main_or_id(feature.get("properties") or {}) in selected_rcsd_node_dependency_id_set
+        or _intersects_window(feature, window)
+    ]
 
     files = {
         "slice/swsd/segment.geojson": _feature_collection_bytes("segment", selected_segments),
@@ -836,6 +874,7 @@ def _select_t06_input_slice(
         "selection_mode": "centered_square_window",
         "crs_normalized_to": T06_INPUT_SLICE_CRS_TEXT,
         "profile_id": selected_profile_id,
+        "size_m": selected_size_m,
         "radius_m": selected_radius_m,
         "center_3857": {"x": float(center_x), "y": float(center_y)},
         "bounds_3857": {
@@ -861,7 +900,9 @@ def _select_t06_input_slice(
         "selected_swsd_segment_ids": selected_segment_ids,
         "required_swsd_road_ids": required_swsd_road_ids,
         "required_swsd_semantic_node_ids": required_swsd_semantic_node_ids,
+        "required_swsd_road_endpoint_node_ids": required_swsd_road_endpoint_node_ids,
         "mapped_rcsd_semantic_node_ids": mapped_rcsd_semantic_node_ids,
+        "selected_rcsd_road_endpoint_node_ids": selected_rcsd_road_endpoint_node_ids,
     }
     files[f"slice/{T06_INPUT_SLICE_SUMMARY_NAME}"] = json.dumps(
         summary,
@@ -1102,6 +1143,7 @@ def run_t06_export_input_text_bundle(
     center_x: float,
     center_y: float,
     profile_id: str = T06_INPUT_SLICE_DEFAULT_PROFILE_ID,
+    size_m: float | None = None,
     radius_m: float | None = None,
     intersection_match_path: str | Path | None = None,
     rcsdroad_path: str | Path | None = None,
@@ -1165,6 +1207,7 @@ def run_t06_export_input_text_bundle(
             center_x=center_x,
             center_y=center_y,
             profile_id=profile_id,
+            size_m=size_m,
             radius_m=radius_m,
         )
         input_manifest["input_slice"] = slice_summary
@@ -1359,6 +1402,7 @@ def _build_input_export_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--center-x", required=True, type=float)
     parser.add_argument("--center-y", required=True, type=float)
     parser.add_argument("--profile-id", default=T06_INPUT_SLICE_DEFAULT_PROFILE_ID)
+    parser.add_argument("--size-m", type=float)
     parser.add_argument("--radius-m", type=float)
     parser.add_argument("--max-main-axis-angle-diff-deg", type=float, default=60.0)
     parser.add_argument("--min-coarse-length-ratio", type=float, default=0.4)
@@ -1439,6 +1483,7 @@ def run_t06_export_input_text_bundle_from_args(argv: list[str] | None = None) ->
         center_x=args.center_x,
         center_y=args.center_y,
         profile_id=args.profile_id,
+        size_m=args.size_m,
         radius_m=args.radius_m,
         max_main_axis_angle_diff_deg=args.max_main_axis_angle_diff_deg,
         min_coarse_length_ratio=args.min_coarse_length_ratio,

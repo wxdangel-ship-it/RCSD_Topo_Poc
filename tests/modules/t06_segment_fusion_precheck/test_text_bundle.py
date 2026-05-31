@@ -308,6 +308,8 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
     )
     rcsdnode_doc = json.loads((decoded.out_dir / "slice" / "t05_phase2" / "rcsdnode_out.geojson").read_text(encoding="utf-8"))
     summary = json.loads((decoded.out_dir / "slice" / "t06_input_slice_summary.json").read_text(encoding="utf-8"))
+    case_manifest = json.loads((decoded.out_dir / "audit" / "t06_local_case_manifest.json").read_text(encoding="utf-8"))
+    local_replay = (decoded.out_dir / "audit" / "replay_t06_decoded_precheck.sh").read_text(encoding="utf-8")
 
     assert [item["properties"]["id"] for item in segment_doc["features"]] == ["s-near"]
     assert {item["properties"]["target_id"] for item in relation_doc["features"]} == {1, 2, 3}
@@ -319,6 +321,14 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
     assert summary["required_swsd_road_ids"] == ["r-near"]
     assert summary["mapped_rcsd_semantic_node_ids"] == ["101", "102", "103"]
     assert summary["selected_rcsd_road_endpoint_node_ids"] == ["101", "102", "104"]
+    assert summary["dependency_audit"]["local_case_ready"] is True
+    assert case_manifest["decoded_input_paths"]["swsd_segment_path"] == "slice/swsd/segment.geojson"
+    assert case_manifest["replay_scripts"]["step1_step2"] == "audit/replay_t06_decoded_precheck.sh"
+    assert case_manifest["local_case_ready"] is True
+    assert "--swsd-segment \"$CASE_ROOT/slice/swsd/segment.geojson\"" in local_replay
+    assert "--rcsdroad \"$CASE_ROOT/slice/t05_phase2/rcsdroad_out.geojson\"" in local_replay
+    assert (decoded.out_dir / "audit" / "replay_t06_decoded_step3_segment_replacement.sh").is_file()
+    assert (decoded.out_dir / "README_t06_local_case.md").is_file()
 
     split_out_txt = tmp_path / "slice_bundle_split.txt"
     split_artifacts = run_t06_export_input_text_bundle(

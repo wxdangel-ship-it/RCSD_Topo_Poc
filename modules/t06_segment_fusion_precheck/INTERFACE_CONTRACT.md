@@ -420,6 +420,24 @@ Step3 提供独立脚本，消费 Step2 replaceable 成果，不改变 `scripts/
   --profile-id XS
 ```
 
+输入切片包是面向本地可复现测试用例的包。解包后必须包含下列本地输入文件：
+
+- `slice/swsd/segment.geojson`
+- `slice/swsd/roads.geojson`
+- `slice/swsd/nodes.geojson`
+- `slice/t05_phase2/intersection_match_all.geojson`
+- `slice/t05_phase2/rcsdroad_out.geojson`
+- `slice/t05_phase2/rcsdnode_out.geojson`
+
+同时必须包含：
+
+- `README_t06_local_case.md`
+- `audit/t06_local_case_manifest.json`
+- `audit/replay_t06_decoded_precheck.sh`
+- `audit/replay_t06_decoded_step3_segment_replacement.sh`
+
+`audit/replay_t06_decoded_precheck.sh` 必须只引用解包后的 `slice/` 输入，`audit/replay_t06_decoded_step3_segment_replacement.sh` 必须消费同一解包目录中 Step1 + Step2 复跑产生的 Step2 replaceable 成果。`t06_local_case_manifest.json` 与 `slice/t06_input_slice_summary.json` 必须记录依赖完整性审计，覆盖 SWSD Segment 引用 Road、SWSD 语义节点、Road 端点 Node、T05 relation 映射出的 RCSD 语义节点，以及已选 RCSDRoad 端点 Node。
+
 解包：
 
 ```bash

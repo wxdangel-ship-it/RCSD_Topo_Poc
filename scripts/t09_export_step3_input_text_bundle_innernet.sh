@@ -193,11 +193,17 @@ if not artifacts.success:
     raise SystemExit(1)
 
 decoded = None
+decoded_input_manifest = None
+decoded_testcase_manifest = None
 if os.environ["DECODE_AFTER_EXPORT"] == "1":
     decoded = run_t09_decode_text_bundle(
         bundle_txt=artifacts.part_txt_paths[-1],
         out_dir=os.environ["DECODE_DIR"],
     )
+    input_manifest_path = decoded.out_dir / "audit" / "t09_step3_input_manifest.json"
+    testcase_manifest_path = decoded.out_dir / "audit" / "t09_local_testcase_manifest.json"
+    decoded_input_manifest = json.loads(input_manifest_path.read_text(encoding="utf-8"))
+    decoded_testcase_manifest = json.loads(testcase_manifest_path.read_text(encoding="utf-8"))
 
 print(
     json.dumps(
@@ -212,6 +218,33 @@ print(
             "part_txt_paths": [str(path) for path in artifacts.part_txt_paths],
             "decoded_dir": str(decoded.out_dir) if decoded is not None else None,
             "decoded_manifest": str(decoded.manifest_path) if decoded is not None else None,
+            "decoded_input_manifest": (
+                str(decoded.out_dir / "audit" / "t09_step3_input_manifest.json") if decoded is not None else None
+            ),
+            "decoded_local_testcase_manifest": (
+                str(decoded.out_dir / "audit" / "t09_local_testcase_manifest.json") if decoded is not None else None
+            ),
+            "source_input_paths": (
+                decoded_input_manifest.get("input_paths") if decoded_input_manifest is not None else None
+            ),
+            "local_fixture_paths": (
+                decoded_testcase_manifest.get("fixture_paths") if decoded_testcase_manifest is not None else None
+            ),
+            "pytest_command_from_repo_root": (
+                decoded_testcase_manifest.get("pytest_command_from_repo_root")
+                if decoded_testcase_manifest is not None
+                else None
+            ),
+            "recommended_t09_step1_step2_kwargs": (
+                decoded_testcase_manifest.get("recommended_t09_step1_step2_kwargs")
+                if decoded_testcase_manifest is not None
+                else None
+            ),
+            "recommended_t09_step3_inputs": (
+                decoded_testcase_manifest.get("recommended_t09_step3_inputs")
+                if decoded_testcase_manifest is not None
+                else None
+            ),
         },
         ensure_ascii=False,
         indent=2,

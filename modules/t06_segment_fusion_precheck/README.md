@@ -138,7 +138,22 @@ helper 默认按 T01 输入证据包模式自动分片，单个 `.txt` 分片不
   --size-m 1000
 ```
 
-解包后 `slice/` 下包含 `swsd/segment.geojson`、`swsd/roads.geojson`、`swsd/nodes.geojson`、`t05_phase2/intersection_match_all.geojson`、`t05_phase2/rcsdroad_out.geojson`、`t05_phase2/rcsdnode_out.geojson` 与 `t06_input_slice_summary.json`。
+解包后 `slice/` 下包含 `swsd/segment.geojson`、`swsd/roads.geojson`、`swsd/nodes.geojson`、`t05_phase2/intersection_match_all.geojson`、`t05_phase2/rcsdroad_out.geojson`、`t05_phase2/rcsdnode_out.geojson` 与 `t06_input_slice_summary.json`。该输入切片包的目标是形成少量真实数据本地测试用例，因此还会额外生成：
+
+- `README_t06_local_case.md`：解包目录内的本地用例说明。
+- `audit/t06_local_case_manifest.json`：记录解包后本地输入相对路径、原始来源、选择范围、关键计数、依赖完整性审计和 replay 脚本位置。
+- `audit/replay_t06_decoded_precheck.sh`：在本地仓库上复跑 T06 Step1 + Step2，输入全部指向解包后的 `slice/` 数据。
+- `audit/replay_t06_decoded_step3_segment_replacement.sh`：在 Step1 + Step2 已产生 `t06_rcsd_segment_replaceable.gpkg` 后复跑 Step3。
+
+本地复跑示例：
+
+```bash
+cd /path/to/decoded/t06-case
+REPO_DIR=/path/to/RCSD_Topo_Poc bash audit/replay_t06_decoded_precheck.sh
+REPO_DIR=/path/to/RCSD_Topo_Poc bash audit/replay_t06_decoded_step3_segment_replacement.sh
+```
+
+`slice/t06_input_slice_summary.json` 中的 `dependency_audit` 用于判断包内依赖是否完整：SWSD Segment 引用的 SWSDRoad、SWSD 语义节点、SWSDRoad 端点 Node、T05 映射出的 RCSD 语义节点、已选 RCSDRoad 端点 Node 均会被审计。`source_relation_missing_required_target_ids` 表示原始 relation 数据中缺少对应 target，不属于打包遗漏，而是可复现的业务输入现象。
 
 ## 关键规则
 

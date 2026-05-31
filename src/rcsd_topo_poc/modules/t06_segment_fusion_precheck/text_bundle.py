@@ -58,6 +58,10 @@ T06_INTERNAL_MANIFEST_NAME = "t06_evidence_manifest.json"
 T06_INTERNAL_SIZE_REPORT_NAME = "t06_evidence_size_report.json"
 T06_INPUT_MANIFEST_NAME = "t06_input_manifest.json"
 T06_REPLAY_COMMAND_NAME = "replay_t06_run_innernet_precheck.sh"
+T06_LOCAL_REPLAY_PRECHECK_NAME = "replay_t06_decoded_precheck.sh"
+T06_LOCAL_REPLAY_STEP3_NAME = "replay_t06_decoded_step3_segment_replacement.sh"
+T06_LOCAL_CASE_MANIFEST_NAME = "t06_local_case_manifest.json"
+T06_LOCAL_CASE_README_NAME = "README_t06_local_case.md"
 T06_INPUT_SLICE_SUMMARY_NAME = "t06_input_slice_summary.json"
 T06_INPUT_SLICE_BUNDLE_NAME = "t06_input_slice_bundle.txt"
 T06_INPUT_SLICE_SIZE_REPORT_NAME = "t06_input_slice_bundle_size_report.json"
@@ -365,6 +369,188 @@ def _road_endpoint_ids(properties: dict[str, Any]) -> list[str]:
     ]
 
 
+def _node_identity_ids(properties: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    for field in ("id", "mainnodeid"):
+        node_id = _safe_normalize_id(properties.get(field))
+        if node_id is not None and node_id != "0":
+            ids.append(node_id)
+    ids.extend(_safe_parse_id_list(properties.get("subnodeid")))
+    return unique_preserve_order(ids)
+
+
+def _feature_id_set(features: Sequence[dict[str, Any]]) -> set[str]:
+    return {
+        feature_id
+        for feature_id in (_feature_id(feature.get("properties") or {}) for feature in features)
+        if feature_id is not None
+    }
+
+
+def _node_identity_set(features: Sequence[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for feature in features:
+        result.update(_node_identity_ids(feature.get("properties") or {}))
+    return result
+
+
+def _relation_target_id_set(features: Sequence[dict[str, Any]]) -> set[str]:
+    return {
+        target_id
+        for target_id in (_safe_normalize_id((feature.get("properties") or {}).get("target_id")) for feature in features)
+        if target_id is not None
+    }
+
+
+def _dependency_audit(
+    *,
+    selected_segments: Sequence[dict[str, Any]],
+    selected_swsd_roads: Sequence[dict[str, Any]],
+    selected_swsd_nodes: Sequence[dict[str, Any]],
+    selected_relations: Sequence[dict[str, Any]],
+    selected_rcsd_roads: Sequence[dict[str, Any]],
+    selected_rcsd_nodes: Sequence[dict[str, Any]],
+    required_swsd_road_ids: Sequence[str],
+    required_swsd_semantic_node_ids: Sequence[str],
+    required_swsd_road_endpoint_node_ids: Sequence[str],
+    mapped_rcsd_semantic_node_ids: Sequence[str],
+    selected_rcsd_road_endpoint_node_ids: Sequence[str],
+) -> dict[str, Any]:
+    selected_swsd_road_ids = _feature_id_set(selected_swsd_roads)
+    selected_swsd_node_ids = _node_identity_set(selected_swsd_nodes)
+    selected_relation_target_ids = _relation_target_id_set(selected_relations)
+    selected_rcsd_road_ids = _feature_id_set(selected_rcsd_roads)
+    selected_rcsd_node_ids = _node_identity_set(selected_rcsd_nodes)
+
+    missing_required_swsd_road_ids = [item for item in required_swsd_road_ids if item not in selected_swsd_road_ids]
+    missing_required_swsd_semantic_node_ids = [
+        item for item in required_swsd_semantic_node_ids if item not in selected_swsd_node_ids
+    ]
+    missing_required_swsd_road_endpoint_node_ids = [
+        item for item in required_swsd_road_endpoint_node_ids if item not in selected_swsd_node_ids
+    ]
+    source_relation_missing_required_target_ids = [
+        item for item in required_swsd_semantic_node_ids if item not in selected_relation_target_ids
+    ]
+    missing_mapped_rcsd_semantic_node_ids = [
+        item for item in mapped_rcsd_semantic_node_ids if item not in selected_rcsd_node_ids
+    ]
+    missing_selected_rcsd_road_endpoint_node_ids = [
+        item for item in selected_rcsd_road_endpoint_node_ids if item not in selected_rcsd_node_ids
+    ]
+    packaging_missing_dependencies = {
+        "missing_required_swsd_road_ids": missing_required_swsd_road_ids,
+        "missing_required_swsd_semantic_node_ids": missing_required_swsd_semantic_node_ids,
+        "missing_required_swsd_road_endpoint_node_ids": missing_required_swsd_road_endpoint_node_ids,
+        "missing_mapped_rcsd_semantic_node_ids": missing_mapped_rcsd_semantic_node_ids,
+        "missing_selected_rcsd_road_endpoint_node_ids": missing_selected_rcsd_road_endpoint_node_ids,
+    }
+    packaging_dependency_complete = all(not values for values in packaging_missing_dependencies.values())
+    has_selected_segments = bool(selected_segments)
+    return {
+        "has_selected_segments": has_selected_segments,
+        "packaging_dependency_complete": packaging_dependency_complete,
+        "local_case_ready": has_selected_segments and packaging_dependency_complete,
+        "selected_swsd_road_ids": sorted(selected_swsd_road_ids),
+        "selected_swsd_node_identity_ids": sorted(selected_swsd_node_ids),
+        "selected_relation_target_ids": sorted(selected_relation_target_ids),
+        "selected_rcsd_road_ids": sorted(selected_rcsd_road_ids),
+        "selected_rcsd_node_identity_ids": sorted(selected_rcsd_node_ids),
+        **packaging_missing_dependencies,
+        "source_relation_missing_required_target_ids": source_relation_missing_required_target_ids,
+    }
+
+
+def _build_local_case_manifest(input_manifest: dict[str, Any], slice_summary: dict[str, Any]) -> dict[str, Any]:
+    dependency_audit = dict(slice_summary.get("dependency_audit") or {})
+    return {
+        "case_type": "t06_decoded_input_slice",
+        "purpose": "small real-data local test case for T06 Step1/Step2 and optional Step3 replay",
+        "bundle_version": T06_TEXT_BUNDLE_VERSION,
+        "crs": {
+            "slice_files_normalized_to": T06_INPUT_SLICE_CRS_TEXT,
+            "center_3857": slice_summary.get("center_3857"),
+            "bounds_3857": slice_summary.get("bounds_3857"),
+        },
+        "decoded_input_paths": {
+            "swsd_segment_path": "slice/swsd/segment.geojson",
+            "swsd_roads_path": "slice/swsd/roads.geojson",
+            "swsd_nodes_path": "slice/swsd/nodes.geojson",
+            "intersection_match_path": "slice/t05_phase2/intersection_match_all.geojson",
+            "rcsdroad_path": "slice/t05_phase2/rcsdroad_out.geojson",
+            "rcsdnode_path": "slice/t05_phase2/rcsdnode_out.geojson",
+        },
+        "replay_scripts": {
+            "step1_step2": f"audit/{T06_LOCAL_REPLAY_PRECHECK_NAME}",
+            "step3_after_step1_step2": f"audit/{T06_LOCAL_REPLAY_STEP3_NAME}",
+        },
+        "source_paths": slice_summary.get("source_paths"),
+        "selection": {
+            "mode": slice_summary.get("selection_mode"),
+            "profile_id": slice_summary.get("profile_id"),
+            "size_m": slice_summary.get("size_m"),
+            "radius_m": slice_summary.get("radius_m"),
+            "selected_swsd_segment_count": slice_summary.get("selected_swsd_segment_count"),
+            "selected_swsd_road_count": slice_summary.get("selected_swsd_road_count"),
+            "selected_swsd_node_count": slice_summary.get("selected_swsd_node_count"),
+            "selected_relation_count": slice_summary.get("selected_relation_count"),
+            "selected_rcsdroad_count": slice_summary.get("selected_rcsdroad_count"),
+            "selected_rcsdnode_count": slice_summary.get("selected_rcsdnode_count"),
+        },
+        "params": input_manifest.get("params"),
+        "dependency_audit": dependency_audit,
+        "local_case_ready": bool(dependency_audit.get("local_case_ready")),
+        "known_limits": [
+            "The slice is intentionally small and contains only selected local data plus explicit road/node dependencies.",
+            "source_relation_missing_required_target_ids means the source relation data has no selected target relation; it is not a packaging omission.",
+            "Step3 replay requires Step1/Step2 replay output unless STEP2_REPLACEABLE is provided.",
+        ],
+    }
+
+
+def _build_local_case_readme(slice_summary: dict[str, Any]) -> str:
+    selected_count = slice_summary.get("selected_swsd_segment_count")
+    size_m = slice_summary.get("size_m")
+    center = slice_summary.get("center_3857") or {}
+    return f"""# T06 Local Input Slice Case
+
+This decoded directory is a small real-data test case for T06.
+
+## Inputs
+
+- `slice/swsd/segment.geojson`
+- `slice/swsd/roads.geojson`
+- `slice/swsd/nodes.geojson`
+- `slice/t05_phase2/intersection_match_all.geojson`
+- `slice/t05_phase2/rcsdroad_out.geojson`
+- `slice/t05_phase2/rcsdnode_out.geojson`
+
+## Selection
+
+- CRS: `EPSG:3857`
+- center: `{center.get("x")}, {center.get("y")}`
+- size_m: `{size_m}`
+- selected_swsd_segment_count: `{selected_count}`
+
+## Replay
+
+Run Step1 + Step2 from the repository root or set `REPO_DIR` explicitly:
+
+```bash
+REPO_DIR=/path/to/RCSD_Topo_Poc bash audit/replay_t06_decoded_precheck.sh
+```
+
+Run Step3 after Step1 + Step2:
+
+```bash
+REPO_DIR=/path/to/RCSD_Topo_Poc bash audit/replay_t06_decoded_step3_segment_replacement.sh
+```
+
+Detailed source paths, counts and dependency checks are recorded in
+`audit/t06_local_case_manifest.json` and `slice/t06_input_slice_summary.json`.
+"""
+
+
 def _intersects_window(feature: dict[str, Any], window: BaseGeometry) -> bool:
     geometry = feature.get("geometry")
     return bool(geometry is not None and geometry.intersects(window))
@@ -582,6 +768,86 @@ def _build_replay_command(input_manifest: dict[str, Any]) -> str:
         ]
     )
     return " \\\n  ".join(shlex.quote(part) for part in ordered) + "\n"
+
+
+def _build_decoded_precheck_replay_script(input_manifest: dict[str, Any]) -> str:
+    params = input_manifest["params"]
+    return f"""#!/usr/bin/env bash
+set -euo pipefail
+
+CASE_ROOT="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
+REPO_DIR="${{REPO_DIR:-$(pwd)}}"
+PYTHON_BIN="${{PYTHON_BIN:-$REPO_DIR/.venv/bin/python}}"
+OUT_ROOT="${{OUT_ROOT:-$CASE_ROOT/run_outputs}}"
+RUN_ID="${{RUN_ID:-t06_local_precheck}}"
+
+if [[ ! -f "$REPO_DIR/scripts/t06_run_innernet_precheck.py" ]]; then
+  echo "[BLOCK] Set REPO_DIR to the RCSD_Topo_Poc repository root." >&2
+  exit 2
+fi
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Python runtime not found or not executable: $PYTHON_BIN" >&2
+  exit 2
+fi
+
+"$PYTHON_BIN" "$REPO_DIR/scripts/t06_run_innernet_precheck.py" \\
+  --swsd-segment "$CASE_ROOT/slice/swsd/segment.geojson" \\
+  --swsd-roads "$CASE_ROOT/slice/swsd/roads.geojson" \\
+  --swsd-nodes "$CASE_ROOT/slice/swsd/nodes.geojson" \\
+  --t05-phase2-root "$CASE_ROOT/slice/t05_phase2" \\
+  --intersection-match "$CASE_ROOT/slice/t05_phase2/intersection_match_all.geojson" \\
+  --rcsdroad "$CASE_ROOT/slice/t05_phase2/rcsdroad_out.geojson" \\
+  --rcsdnode "$CASE_ROOT/slice/t05_phase2/rcsdnode_out.geojson" \\
+  --out-root "$OUT_ROOT" \\
+  --run-id "$RUN_ID" \\
+  --max-main-axis-angle-diff-deg {params["max_main_axis_angle_diff_deg"]} \\
+  --min-coarse-length-ratio {params["min_coarse_length_ratio"]} \\
+  --max-coarse-length-ratio {params["max_coarse_length_ratio"]} \\
+  --buffer-distance-m {params["buffer_distance_m"]} \\
+  --min-buffer-road-overlap-ratio {params["min_buffer_road_overlap_ratio"]} \\
+  --min-buffer-road-overlap-length-m {params["min_buffer_road_overlap_length_m"]} \\
+  --advance-right-formway-bit {params["advance_right_formway_bit"]}
+"""
+
+
+def _build_decoded_step3_replay_script() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+CASE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="${REPO_DIR:-$(pwd)}"
+PYTHON_BIN="${PYTHON_BIN:-$REPO_DIR/.venv/bin/python}"
+OUT_ROOT="${OUT_ROOT:-$CASE_ROOT/run_outputs}"
+RUN_ID="${RUN_ID:-t06_local_precheck}"
+T06_RUN_ROOT="${T06_RUN_ROOT:-$OUT_ROOT/$RUN_ID}"
+STEP2_REPLACEABLE="${STEP2_REPLACEABLE:-$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_replaceable.gpkg}"
+
+if [[ ! -f "$REPO_DIR/scripts/t06_run_step3_segment_replacement.py" ]]; then
+  echo "[BLOCK] Set REPO_DIR to the RCSD_Topo_Poc repository root." >&2
+  exit 2
+fi
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "[BLOCK] Python runtime not found or not executable: $PYTHON_BIN" >&2
+  exit 2
+fi
+if [[ ! -f "$STEP2_REPLACEABLE" ]]; then
+  echo "[BLOCK] Step2 replaceable output not found: $STEP2_REPLACEABLE" >&2
+  echo "[TIP] Run audit/replay_t06_decoded_precheck.sh first, or set STEP2_REPLACEABLE." >&2
+  exit 2
+fi
+
+"$PYTHON_BIN" "$REPO_DIR/scripts/t06_run_step3_segment_replacement.py" \\
+  --t06-run-root "$T06_RUN_ROOT" \\
+  --step2-replaceable "$STEP2_REPLACEABLE" \\
+  --swsd-segment "$CASE_ROOT/slice/swsd/segment.geojson" \\
+  --swsd-roads "$CASE_ROOT/slice/swsd/roads.geojson" \\
+  --swsd-nodes "$CASE_ROOT/slice/swsd/nodes.geojson" \\
+  --t05-phase2-root "$CASE_ROOT/slice/t05_phase2" \\
+  --rcsdroad "$CASE_ROOT/slice/t05_phase2/rcsdroad_out.geojson" \\
+  --rcsdnode "$CASE_ROOT/slice/t05_phase2/rcsdnode_out.geojson" \\
+  --out-root "$OUT_ROOT" \\
+  --run-id "$RUN_ID"
+"""
 
 
 def _build_size_report(
@@ -858,6 +1124,19 @@ def _select_t06_input_slice(
         or _main_or_id(feature.get("properties") or {}) in selected_rcsd_node_dependency_id_set
         or _intersects_window(feature, window)
     ]
+    dependency_audit = _dependency_audit(
+        selected_segments=selected_segments,
+        selected_swsd_roads=selected_swsd_roads,
+        selected_swsd_nodes=selected_swsd_nodes,
+        selected_relations=selected_relations,
+        selected_rcsd_roads=selected_rcsd_roads,
+        selected_rcsd_nodes=selected_rcsd_nodes,
+        required_swsd_road_ids=required_swsd_road_ids,
+        required_swsd_semantic_node_ids=required_swsd_semantic_node_ids,
+        required_swsd_road_endpoint_node_ids=required_swsd_road_endpoint_node_ids,
+        mapped_rcsd_semantic_node_ids=mapped_rcsd_semantic_node_ids,
+        selected_rcsd_road_endpoint_node_ids=selected_rcsd_road_endpoint_node_ids,
+    )
 
     files = {
         "slice/swsd/segment.geojson": _feature_collection_bytes("segment", selected_segments),
@@ -903,6 +1182,7 @@ def _select_t06_input_slice(
         "required_swsd_road_endpoint_node_ids": required_swsd_road_endpoint_node_ids,
         "mapped_rcsd_semantic_node_ids": mapped_rcsd_semantic_node_ids,
         "selected_rcsd_road_endpoint_node_ids": selected_rcsd_road_endpoint_node_ids,
+        "dependency_audit": dependency_audit,
     }
     files[f"slice/{T06_INPUT_SLICE_SUMMARY_NAME}"] = json.dumps(
         summary,
@@ -933,6 +1213,18 @@ def _build_input_slice_text_bundle(
         allow_nan=False,
     ).encode("utf-8")
     files[f"audit/{T06_REPLAY_COMMAND_NAME}"] = _build_replay_command(input_manifest).encode("utf-8")
+    files[f"audit/{T06_LOCAL_REPLAY_PRECHECK_NAME}"] = _build_decoded_precheck_replay_script(input_manifest).encode(
+        "utf-8"
+    )
+    files[f"audit/{T06_LOCAL_REPLAY_STEP3_NAME}"] = _build_decoded_step3_replay_script().encode("utf-8")
+    files[f"audit/{T06_LOCAL_CASE_MANIFEST_NAME}"] = json.dumps(
+        _build_local_case_manifest(input_manifest, slice_summary),
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    files[T06_LOCAL_CASE_README_NAME] = _build_local_case_readme(slice_summary).encode("utf-8")
 
     manifest = {
         "bundle_version": T06_TEXT_BUNDLE_VERSION,

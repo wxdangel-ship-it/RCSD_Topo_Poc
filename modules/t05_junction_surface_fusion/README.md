@@ -57,6 +57,8 @@ artifacts = run_t05_phase2_rcsd_junctionization_and_relation(
 )
 ```
 
+`next_road_id_start / next_node_id_start` 是证据包解包后的小样本测试专用参数，用于复现全量运行中的新增 ID；常规全量运行不传。
+
 T03 -> T05 Phase 2 handoff 补齐提供一个内网脚本入口。该脚本只读取现有 T03 run root 中的 `t03_swsd_rcsd_relation_evidence.*` 与 `cases/<case_id>/step6_status.json` / `step6_audit.json`，写出补齐后的 T05 可消费 evidence，不修改 T03 主链或原始输出：
 
 ```bash
@@ -100,11 +102,15 @@ artifacts = run_t05_export_junctionization_bundle(
     t07_relation_evidence_path="/path/to/t07_swsd_rcsd_relation_evidence.csv",
     t03_relation_evidence_path="/path/to/t03_swsd_rcsd_relation_evidence_backfilled.csv",
     t04_relation_evidence_path="/path/to/t04_swsd_rcsd_relation_evidence.csv",
+    t04_surface_path="/path/to/divmerge_virtual_anchor_surface.gpkg",
+    t04_summary_path="/path/to/divmerge_virtual_anchor_surface_summary.csv",
+    t04_audit_path="/path/to/divmerge_virtual_anchor_surface_audit.gpkg",
+    t04_case_root="/path/to/t04/cases",
     phase2_root="/mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t05_innernet_experiment_t07/t05_phase2_full",
 )
 ```
 
-每个 case 目录包含 `junction_anchor_surface.geojson / nodes.geojson / rcsdroad.geojson / rcsdnode.geojson / relation_evidence.json / fusion_audit.json / phase2_audit.json / manifest.json`。输出目录同时写 `t05_junctionization_bundle_index.json`，记录每个分片包含的 target、大小与是否单 case 超限。
+每个 case 目录包含 `README.md / local_test_config.json / junction_anchor_surface.geojson / nodes.geojson / rcsdroad.geojson / rcsdnode.geojson / relation_evidence.json / fusion_audit.json / phase2_audit.json / manifest.json`。同时按模块拆分 relation evidence，补齐 T04 supplement 片段，并在提供 `phase2_root` 时写入 expected output 切片：`expected_intersection_match_all.geojson / expected_rcsdroad_split.geojson / expected_rcsdnode_generated.geojson / expected_rcsdnode_grouped.geojson / expected_rcsdroad_out_slice.geojson / expected_rcsdnode_out_slice.geojson`。`local_test_config.json.runner_kwargs` 会记录本地小样本复现全量新增 ID 所需的 `next_road_id_start / next_node_id_start`。输出目录同时写 `t05_junctionization_bundle_index.json`，记录每个分片包含的 target、大小与是否单 case 超限。
 
 ## 输入
 

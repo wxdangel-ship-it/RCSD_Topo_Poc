@@ -85,6 +85,17 @@ T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增
 默认 profile 半径为 `XXXS=250m / XXS=500m / XS=1000m / S=2000m / M=5000m`，显式 `--size-m` 可按中心点正方形边长选取范围，显式 `--radius-m` 可覆盖 profile 半径且优先于 `--size-m`。输入切片必须补齐已选 SWSDRoad / RCSDRoad 的 `snodeid / enodeid` 端点 Node，避免 road endpoint 引用缺失。
 外部 size report 与解包后的 `t06_evidence_size_report.json` 必须保留 `limit_bytes / within_limit / split_bundle`，用于审计分片上限、分片数量和每片实际大小。
 
+输入切片包的最终业务用途是“少量真实数据本地测试用例”，因此解包内容除六个 T06 输入文件外，还必须包含本地 case manifest、用例 README、Step1+Step2 replay 脚本和 Step3 replay 脚本。replay 脚本不得指向原始内网绝对输入路径，必须以解包目录为 `CASE_ROOT` 引用 `slice/` 下的数据；原始路径仅保留在 manifest 中用于审计追溯。
+
+`slice/t06_input_slice_summary.json` 必须包含 `dependency_audit`，至少覆盖：
+
+- Segment 引用的 SWSDRoad 是否已入包；
+- Segment 引用的 `pair_nodes / junc_nodes` 对应 SWSDNode 是否已入包；
+- 已选 SWSDRoad 的端点 Node 是否已入包；
+- T05 relation 映射出的 RCSD 语义节点是否已入包；
+- 已选 RCSDRoad 的端点 Node 是否已入包；
+- 原始 relation 数据缺失的 required target，用于区分业务输入缺失和打包遗漏。
+
 ## GIS / 拓扑检查项
 
 - CRS 与坐标变换正确性：所有输入通过仓库标准 vector reader 归一到处理 CRS；缺失 CRS 不静默猜测。

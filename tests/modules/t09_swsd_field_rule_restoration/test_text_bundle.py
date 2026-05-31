@@ -1,5 +1,7 @@
 import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from shapely.geometry import LineString, Point
@@ -190,9 +192,14 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
     )
     summary = json.loads((decoded.out_dir / "slice" / "t09_step3_input_slice_summary.json").read_text(encoding="utf-8"))
     size_report = json.loads((decoded.out_dir / "t09_evidence_size_report.json").read_text(encoding="utf-8"))
+    testcase_manifest = json.loads(
+        (decoded.out_dir / "audit" / "t09_local_testcase_manifest.json").read_text(encoding="utf-8")
+    )
 
     assert summary["size_m"] == 100.0
     assert summary["radius_m"] == 50.0
+    assert summary["source_paths"]["swnode_path"] == str(swnode_path)
+    assert summary["source_paths"]["frcsd_road_path"] == str(frcsd_road_path)
     assert summary["selected_swsd_segment_ids"] == ["seg_near"]
     assert summary["selected_restriction_count"] == 1
     assert summary["selected_arrow_count"] == 1
@@ -200,6 +207,17 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
     assert summary["selected_t06_step3_optional_counts"]["t06_step3_replacement_units"] == 1
     assert size_report["split_bundle"]["enabled"] is True
     assert size_report["split_bundle"]["part_count"] == len(artifacts.part_txt_paths)
+    assert testcase_manifest["source_input_paths"]["swnode_path"] == str(swnode_path)
+    assert testcase_manifest["source_input_paths"]["frcsd_node_path"] == str(frcsd_node_path)
+    assert testcase_manifest["fixture_paths"]["swsd_nodes"] == "slice/swsd/nodes.geojson"
+    assert testcase_manifest["fixture_paths"]["frcsd_road"] == "slice/frcsd/frcsd_road.geojson"
+    assert testcase_manifest["fixture_paths"]["pytest_file"] == "local_testcase/test_t09_decoded_bundle.py"
+    assert "--rootdir <decoded_bundle_dir>" in testcase_manifest["pytest_command_from_repo_root"]
+    assert (
+        testcase_manifest["recommended_t09_step1_step2_kwargs"]["restriction_gpkg"]
+        == "slice/t08_tool7/sw_restriction_tool7.geojson"
+    )
+    assert testcase_manifest["recommended_t09_step3_inputs"]["frcsd_node_path"] == "slice/frcsd/frcsd_node.geojson"
 
     assert _feature_ids(decoded.out_dir / "slice" / "frcsd" / "frcsd_road.geojson") == [
         f"fr_{index}" for index in range(79)
@@ -210,3 +228,13 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
         "unit_near"
     ]
     assert (decoded.out_dir / "reference" / "t06_step3" / "t06_step3_summary.json").is_file()
+    generated_test = decoded.out_dir / "local_testcase" / "test_t09_decoded_bundle.py"
+    assert generated_test.is_file()
+    nested = subprocess.run(
+        [sys.executable, "-m", "pytest", "--rootdir", str(decoded.out_dir), str(generated_test), "-q", "-s"],
+        cwd=Path(__file__).resolve().parents[3],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert nested.returncode == 0, nested.stdout + nested.stderr

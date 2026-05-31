@@ -66,6 +66,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     progress_interval: int = 1000,
     readonly_workers: int = 1,
     t07_relation_evidence_path: str | Path | None = None,
+    next_road_id_start: int | None = None,
+    next_node_id_start: int | None = None,
 ) -> T05Phase2Artifacts:
     run_started = perf_counter()
     timings_sec: dict[str, float] = {}
@@ -94,8 +96,16 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     roads_by_id = _features_by_int_id(original_roads, "RCSDRoad")
     node_out_by_id = _features_by_int_id([_copy_feature(feature) for feature in original_rcsdnodes], "RCSDNode")
     node_template = dict((original_rcsdnodes[0].get("properties") or {}) if original_rcsdnodes else {"id": None, "mainnodeid": None})
-    next_road_id = max(roads_by_id.keys(), default=0) + 1
-    next_node_id = max(node_out_by_id.keys(), default=0) + 1
+    next_road_id = _resolve_next_id_start(
+        provided=next_road_id_start,
+        current_max=max(roads_by_id.keys(), default=0),
+        label="next_road_id_start",
+    )
+    next_node_id = _resolve_next_id_start(
+        provided=next_node_id_start,
+        current_max=max(node_out_by_id.keys(), default=0),
+        label="next_node_id_start",
+    )
     mark("build_indexes_sec", index_started)
 
     evidence_started = perf_counter()
@@ -656,6 +666,16 @@ def _required_path(path: str | Path | None, label: str) -> Path:
     if not resolved.is_file():
         raise ValueError(f"{label} does not exist: {resolved}")
     return resolved
+
+
+def _resolve_next_id_start(*, provided: int | None, current_max: int, label: str) -> int:
+    default_next = int(current_max) + 1
+    if provided is None:
+        return default_next
+    next_id = int(provided)
+    if next_id <= int(current_max):
+        raise ValueError(f"{label}={next_id} must be greater than current max id {current_max}.")
+    return next_id
 
 
 def _load_t04_supplements(

@@ -35,21 +35,35 @@ EVIDENCE_ROAD_ID_FIELDS = (
     "fallback_rcsdroad_ids",
     "required_rcsdroad_ids",
     "original_rcsdroad_ids",
+    "new_rcsdroad_ids",
 )
 EVIDENCE_NODE_ID_FIELDS = (
+    "base_id",
     "base_id_candidate",
     "required_rcsdnode_ids",
     "required_rcsd_node_ids",
     "selected_rcsdnode_ids",
     "selected_rcsd_node_ids",
     "original_rcsdnode_ids",
+    "new_rcsdnode_ids",
     "grouped_rcsdnode_ids",
+    "selected_main_rcsdnode_id",
 )
 AUDIT_TABLE_NAMES = (
     "rcsd_junctionization_audit.csv",
     "intersection_match_all_audit.csv",
     "blocking_errors.csv",
 )
+PHASE2_VECTOR_OUTPUTS = (
+    "intersection_match_all.geojson",
+    "rcsdroad_split.gpkg",
+    "rcsdnode_generated.gpkg",
+    "rcsdnode_grouped.gpkg",
+    "rcsdroad_out.gpkg",
+    "rcsdnode_out.gpkg",
+)
+T04_CASE_INCLUDE_SUFFIXES = (".json", ".gpkg", ".geojson")
+T04_CASE_MAX_FILE_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -92,6 +106,10 @@ def run_t05_export_junctionization_bundle(
     t07_relation_evidence_path: str | Path | None = None,
     t03_relation_evidence_path: str | Path | None = None,
     t04_relation_evidence_path: str | Path | None = None,
+    t04_surface_path: str | Path | None = None,
+    t04_summary_path: str | Path | None = None,
+    t04_audit_path: str | Path | None = None,
+    t04_case_root: str | Path | None = None,
     phase2_root: str | Path | None = None,
     context_buffer_m: float = 80.0,
     max_text_size_bytes: int = T05_JUNCTIONIZATION_BUNDLE_LIMIT_BYTES,
@@ -133,6 +151,10 @@ def run_t05_export_junctionization_bundle(
         "t07_relation_evidence_path": None if t07_relation_evidence_path is None else str(t07_relation_evidence_path),
         "t03_relation_evidence_path": None if t03_relation_evidence_path is None else str(t03_relation_evidence_path),
         "t04_relation_evidence_path": None if t04_relation_evidence_path is None else str(t04_relation_evidence_path),
+        "t04_surface_path": None if t04_surface_path is None else str(t04_surface_path),
+        "t04_summary_path": None if t04_summary_path is None else str(t04_summary_path),
+        "t04_audit_path": None if t04_audit_path is None else str(t04_audit_path),
+        "t04_case_root": None if t04_case_root is None else str(t04_case_root),
         "phase2_root": None if phase2_root is None else str(phase2_root),
     }
     inputs = _load_bundle_inputs(
@@ -145,6 +167,10 @@ def run_t05_export_junctionization_bundle(
         t07_relation_evidence_path=t07_relation_evidence_path,
         t03_relation_evidence_path=t03_relation_evidence_path,
         t04_relation_evidence_path=t04_relation_evidence_path,
+        t04_surface_path=t04_surface_path,
+        t04_summary_path=t04_summary_path,
+        t04_audit_path=t04_audit_path,
+        t04_case_root=t04_case_root,
         phase2_root=phase2_root,
     )
 
@@ -215,21 +241,32 @@ def _load_bundle_inputs(
     t07_relation_evidence_path: str | Path | None,
     t03_relation_evidence_path: str | Path | None,
     t04_relation_evidence_path: str | Path | None,
+    t04_surface_path: str | Path | None,
+    t04_summary_path: str | Path | None,
+    t04_audit_path: str | Path | None,
+    t04_case_root: str | Path | None,
     phase2_root: str | Path | None,
 ) -> dict[str, Any]:
+    evidence_by_source = {
+        "T02_INPUT": _tag_rows("T02_INPUT", read_table(t02_relation_evidence_path)),
+        "T07": _tag_rows("T07", read_table(t07_relation_evidence_path)),
+        "T03": _tag_rows("T03", read_table(t03_relation_evidence_path)),
+        "T04": _tag_rows("T04", read_table(t04_relation_evidence_path)),
+    }
     return {
         "surfaces": read_vector_layer(junction_surface_path).features,
         "nodes": read_vector_layer(nodes_path).features,
         "rcsdroad": read_vector_layer(rcsdroad_path).features,
         "rcsdnode": read_vector_layer(rcsdnode_path).features,
         "fusion_audit": _tag_rows("T05_PHASE1_FUSION_AUDIT", read_table(fusion_audit_path)),
-        "evidence": [
-            *_tag_rows("T02_INPUT", read_table(t02_relation_evidence_path)),
-            *_tag_rows("T07", read_table(t07_relation_evidence_path)),
-            *_tag_rows("T03", read_table(t03_relation_evidence_path)),
-            *_tag_rows("T04", read_table(t04_relation_evidence_path)),
-        ],
+        "evidence_by_source": evidence_by_source,
+        "evidence": [row for rows in evidence_by_source.values() for row in rows],
+        "t04_surface": _read_optional_vector(t04_surface_path),
+        "t04_summary": _tag_rows("T04_SUMMARY", read_table(t04_summary_path)),
+        "t04_audit": _read_optional_tagged_vector_or_table(t04_audit_path, "T04_AUDIT"),
+        "t04_case_root": None if t04_case_root is None else Path(t04_case_root),
         "phase2_audits": _read_phase2_audits(phase2_root),
+        "phase2_vectors": _read_phase2_vectors(phase2_root),
     }
 
 
@@ -244,8 +281,15 @@ def _build_case_package(
     surfaces = [feature for feature in inputs["surfaces"] if _surface_matches_target(feature, target_id)]
     swsd_nodes = [feature for feature in inputs["nodes"] if _node_matches_target(feature, target_id)]
     evidence_rows = [row for row in inputs["evidence"] if _row_matches_target(row, target_id)]
+    evidence_rows_by_source = {
+        source: [row for row in rows if _row_matches_target(row, target_id)]
+        for source, rows in inputs["evidence_by_source"].items()
+    }
     fusion_audit_rows = [row for row in inputs["fusion_audit"] if _row_matches_target(row, target_id)]
     phase2_audit_rows = [row for row in inputs["phase2_audits"] if _row_matches_target(row, target_id)]
+    t04_summary_rows = [row for row in inputs["t04_summary"] if _row_matches_target(row, target_id)]
+    t04_audit_rows = [row for row in inputs["t04_audit"] if _row_matches_target(row, target_id)]
+    t04_surface = [feature for feature in inputs["t04_surface"] if _surface_matches_target(feature, target_id)]
 
     road_ids = _ids_from_rows(evidence_rows + phase2_audit_rows, EVIDENCE_ROAD_ID_FIELDS)
     node_ids = _ids_from_rows(evidence_rows + phase2_audit_rows, EVIDENCE_NODE_ID_FIELDS)
@@ -266,6 +310,14 @@ def _build_case_package(
         for feature in inputs["rcsdnode"]
         if _feature_id(feature) in node_ids or _feature_intersects(feature, context_geometry)
     ]
+    expected_vectors = _expected_vectors_for_target(
+        inputs["phase2_vectors"],
+        target_id=target_id,
+        road_ids=road_ids,
+        node_ids=node_ids,
+    )
+    t04_case_files = _read_t04_case_files_for_target(inputs["t04_case_root"], target_id, evidence_rows)
+    id_seed = _id_seed_from_audit(phase2_audit_rows)
 
     manifest = {
         "bundle_version": T05_JUNCTIONIZATION_BUNDLE_VERSION,
@@ -283,23 +335,51 @@ def _build_case_package(
             "relation_evidence_rows": len(evidence_rows),
             "fusion_audit_rows": len(fusion_audit_rows),
             "phase2_audit_rows": len(phase2_audit_rows),
+            "t04_surface": len(t04_surface),
+            "t04_summary_rows": len(t04_summary_rows),
+            "t04_audit_rows": len(t04_audit_rows),
+            "expected_intersection_match_all": len(expected_vectors["intersection_match_all.geojson"]),
+            "expected_rcsdroad_split": len(expected_vectors["rcsdroad_split.gpkg"]),
+            "expected_rcsdnode_generated": len(expected_vectors["rcsdnode_generated.gpkg"]),
+            "expected_rcsdnode_grouped": len(expected_vectors["rcsdnode_grouped.gpkg"]),
         },
         "selected_ids": {
             "rcsdroad_ids": sorted(road_ids),
             "rcsdnode_ids": sorted(node_ids),
         },
+        "local_test": _local_test_config(target_id=target_id, id_seed=id_seed),
         "created_at": _now_text(),
     }
     files = {
         "manifest.json": _json_bytes(manifest),
+        "README.md": _readme_bytes(target_id),
+        "local_test_config.json": _json_bytes(_local_test_config(target_id=target_id, id_seed=id_seed)),
         "junction_anchor_surface.geojson": _geojson_bytes("junction_anchor_surface.geojson", surfaces),
+        "t04_surface.geojson": _geojson_bytes("t04_surface.geojson", t04_surface),
         "nodes.geojson": _geojson_bytes("nodes.geojson", swsd_nodes),
         "rcsdroad.geojson": _geojson_bytes("rcsdroad.geojson", rcsdroad),
         "rcsdnode.geojson": _geojson_bytes("rcsdnode.geojson", rcsdnode),
         "relation_evidence.json": _json_bytes({"rows": evidence_rows}),
+        "t02_swsd_rcsd_relation_evidence.json": _json_bytes({"rows": evidence_rows_by_source["T02_INPUT"]}),
+        "t07_swsd_rcsd_relation_evidence.json": _json_bytes({"rows": evidence_rows_by_source["T07"]}),
+        "t03_swsd_rcsd_relation_evidence.json": _json_bytes({"rows": evidence_rows_by_source["T03"]}),
+        "t04_swsd_rcsd_relation_evidence.json": _json_bytes({"rows": evidence_rows_by_source["T04"]}),
         "fusion_audit.json": _json_bytes({"rows": fusion_audit_rows}),
+        "junction_anchor_surface_fusion_audit.json": _json_bytes({"rows": fusion_audit_rows}),
+        "t04_summary.json": _json_bytes({"rows": t04_summary_rows}),
+        "t04_audit.json": _json_bytes({"rows": t04_audit_rows}),
         "phase2_audit.json": _json_bytes({"rows": phase2_audit_rows}),
+        "expected_intersection_match_all.geojson": _geojson_bytes(
+            "expected_intersection_match_all.geojson",
+            expected_vectors["intersection_match_all.geojson"],
+        ),
+        "expected_rcsdroad_split.geojson": _geojson_bytes("expected_rcsdroad_split.geojson", expected_vectors["rcsdroad_split.gpkg"]),
+        "expected_rcsdnode_generated.geojson": _geojson_bytes("expected_rcsdnode_generated.geojson", expected_vectors["rcsdnode_generated.gpkg"]),
+        "expected_rcsdnode_grouped.geojson": _geojson_bytes("expected_rcsdnode_grouped.geojson", expected_vectors["rcsdnode_grouped.gpkg"]),
+        "expected_rcsdroad_out_slice.geojson": _geojson_bytes("expected_rcsdroad_out_slice.geojson", expected_vectors["rcsdroad_out.gpkg"]),
+        "expected_rcsdnode_out_slice.geojson": _geojson_bytes("expected_rcsdnode_out_slice.geojson", expected_vectors["rcsdnode_out.gpkg"]),
     }
+    files.update(t04_case_files)
     manifest["checksum"] = {name: hashlib.sha256(content).hexdigest() for name, content in files.items() if name != "manifest.json"}
     files["manifest.json"] = _json_bytes(manifest)
     return _CasePackage(target_id=target_id, files=files, manifest=manifest)
@@ -387,6 +467,101 @@ def _read_phase2_audits(phase2_root: str | Path | None) -> list[dict[str, Any]]:
     return rows
 
 
+def _read_phase2_vectors(phase2_root: str | Path | None) -> dict[str, list[LayerFeature]]:
+    vectors: dict[str, list[LayerFeature]] = {name: [] for name in PHASE2_VECTOR_OUTPUTS}
+    if phase2_root is None:
+        return vectors
+    root = Path(phase2_root)
+    for name in PHASE2_VECTOR_OUTPUTS:
+        path = root / name
+        if path.is_file():
+            vectors[name] = read_vector_layer(path).features
+    return vectors
+
+
+def _read_optional_vector(path: str | Path | None) -> list[LayerFeature]:
+    if path is None:
+        return []
+    vector_path = Path(path)
+    if not vector_path.is_file():
+        return []
+    return read_vector_layer(vector_path).features
+
+
+def _read_optional_tagged_vector_or_table(path: str | Path | None, source: str) -> list[dict[str, Any]]:
+    if path is None:
+        return []
+    audit_path = Path(path)
+    if not audit_path.is_file():
+        return []
+    if audit_path.suffix.lower() in {".gpkg", ".gpkt", ".geojson", ".shp"}:
+        return _tag_rows(source, (feature.properties for feature in read_vector_layer(audit_path).features))
+    return _tag_rows(source, read_table(audit_path))
+
+
+def _expected_vectors_for_target(
+    phase2_vectors: dict[str, list[LayerFeature]],
+    *,
+    target_id: str,
+    road_ids: set[str],
+    node_ids: set[str],
+) -> dict[str, list[LayerFeature]]:
+    expected = {name: [] for name in PHASE2_VECTOR_OUTPUTS}
+    expected["intersection_match_all.geojson"] = [
+        feature for feature in phase2_vectors["intersection_match_all.geojson"]
+        if _normalize_id((feature.properties or {}).get("target_id")) == target_id
+    ]
+    expected["rcsdroad_split.gpkg"] = [
+        feature for feature in phase2_vectors["rcsdroad_split.gpkg"]
+        if _feature_id(feature) in road_ids
+    ]
+    expected["rcsdnode_generated.gpkg"] = [
+        feature for feature in phase2_vectors["rcsdnode_generated.gpkg"]
+        if _feature_id(feature) in node_ids
+    ]
+    expected["rcsdnode_grouped.gpkg"] = [
+        feature for feature in phase2_vectors["rcsdnode_grouped.gpkg"]
+        if _feature_id(feature) in node_ids
+    ]
+    expected["rcsdroad_out.gpkg"] = [
+        feature for feature in phase2_vectors["rcsdroad_out.gpkg"]
+        if _feature_id(feature) in road_ids
+    ]
+    expected["rcsdnode_out.gpkg"] = [
+        feature for feature in phase2_vectors["rcsdnode_out.gpkg"]
+        if _feature_id(feature) in node_ids
+    ]
+    return expected
+
+
+def _read_t04_case_files_for_target(
+    t04_case_root: Path | None,
+    target_id: str,
+    evidence_rows: list[dict[str, Any]],
+) -> dict[str, bytes]:
+    if t04_case_root is None or not t04_case_root.is_dir():
+        return {}
+    candidate_case_ids = {target_id}
+    for row in evidence_rows:
+        for key in ("case_id", "source_case_id", "representative_node_id"):
+            value = _normalize_id(row.get(key))
+            if value:
+                candidate_case_ids.add(value)
+    files: dict[str, bytes] = {}
+    for case_id in sorted(candidate_case_ids):
+        case_dir = t04_case_root / case_id
+        if not case_dir.is_dir():
+            continue
+        for path in sorted(case_dir.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in T04_CASE_INCLUDE_SUFFIXES:
+                continue
+            if path.stat().st_size > T04_CASE_MAX_FILE_BYTES:
+                continue
+            relative = Path("t04_case_root") / case_id / path.relative_to(case_dir)
+            files[str(relative)] = path.read_bytes()
+    return files
+
+
 def _tag_rows(source: str, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     tagged: list[dict[str, Any]] = []
     for row in rows:
@@ -438,6 +613,76 @@ def _feature_intersects(feature: LayerFeature, context_geometry: BaseGeometry | 
 
 def _feature_id(feature: LayerFeature) -> str | None:
     return _normalize_id((feature.properties or {}).get("id"))
+
+
+def _local_test_config(*, target_id: str, id_seed: dict[str, int | None]) -> dict[str, Any]:
+    return {
+        "target_id": target_id,
+        "runner": "rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_runner.run_t05_phase2_rcsd_junctionization_and_relation",
+        "runner_kwargs": {
+            "next_road_id_start": id_seed.get("next_road_id_start"),
+            "next_node_id_start": id_seed.get("next_node_id_start"),
+        },
+        "inputs": {
+            "junction_surface_path": "junction_anchor_surface.geojson",
+            "fusion_audit_path": "junction_anchor_surface_fusion_audit.json",
+            "nodes_path": "nodes.geojson",
+            "rcsdroad_path": "rcsdroad.geojson",
+            "rcsdnode_path": "rcsdnode.geojson",
+            "t02_relation_evidence_path": "t02_swsd_rcsd_relation_evidence.json",
+            "t07_relation_evidence_path": "t07_swsd_rcsd_relation_evidence.json",
+            "t03_relation_evidence_path": "t03_swsd_rcsd_relation_evidence.json",
+            "t04_relation_evidence_path": "t04_swsd_rcsd_relation_evidence.json",
+            "t04_surface_path": "t04_surface.geojson",
+            "t04_summary_path": "t04_summary.json",
+            "t04_audit_path": "t04_audit.json",
+            "t04_case_root": "t04_case_root",
+        },
+        "expected": {
+            "intersection_match_all": "expected_intersection_match_all.geojson",
+            "rcsdroad_split": "expected_rcsdroad_split.geojson",
+            "rcsdnode_generated": "expected_rcsdnode_generated.geojson",
+            "rcsdnode_grouped": "expected_rcsdnode_grouped.geojson",
+            "rcsdroad_out_slice": "expected_rcsdroad_out_slice.geojson",
+            "rcsdnode_out_slice": "expected_rcsdnode_out_slice.geojson",
+            "audit_rows": "phase2_audit.json",
+        },
+        "assertion_focus": [
+            "relation target_id/base_id/status",
+            "RCSDRoad split new road ids and endpoint ids",
+            "generated RCSDNode geometry and mainnodeid grouping",
+            "grouped existing RCSDNode mainnodeid",
+        ],
+    }
+
+
+def _id_seed_from_audit(rows: list[dict[str, Any]]) -> dict[str, int | None]:
+    road_ids = _ids_from_rows(rows, ("new_rcsdroad_ids",))
+    node_ids = _ids_from_rows(rows, ("new_rcsdnode_ids",))
+    return {
+        "next_road_id_start": _min_int_or_none(road_ids),
+        "next_node_id_start": _min_int_or_none(node_ids),
+    }
+
+
+def _min_int_or_none(values: set[str]) -> int | None:
+    ints: list[int] = []
+    for value in values:
+        try:
+            ints.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return min(ints) if ints else None
+
+
+def _readme_bytes(target_id: str) -> bytes:
+    text = f"""# T05 junctionization fixture: {target_id}
+
+This bundle is a small real-data fixture for local T05 Phase2 RCSD junctionization tests.
+
+Use `local_test_config.json` for relative input and expected-output paths. The input files are GeoJSON/JSON slices intended to be passed to `run_t05_phase2_rcsd_junctionization_and_relation(...)` from a temporary output directory. Expected files are slices from the original full-data Phase2 outputs and are suitable for assertions around relation status, RCSDRoad split, generated RCSDNode, and RCSDNode grouping.
+"""
+    return text.encode("utf-8")
 
 
 def _ids_from_rows(rows: Iterable[dict[str, Any]], field_names: tuple[str, ...]) -> set[str]:

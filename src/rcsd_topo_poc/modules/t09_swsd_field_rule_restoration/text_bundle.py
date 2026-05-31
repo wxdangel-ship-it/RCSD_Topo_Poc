@@ -36,6 +36,8 @@ T09_INTERNAL_MANIFEST_NAME = "t09_evidence_manifest.json"
 T09_INTERNAL_SIZE_REPORT_NAME = "t09_evidence_size_report.json"
 T09_STEP3_INPUT_MANIFEST_NAME = "t09_step3_input_manifest.json"
 T09_STEP3_INPUT_SLICE_SUMMARY_NAME = "t09_step3_input_slice_summary.json"
+T09_LOCAL_TESTCASE_MANIFEST_NAME = "t09_local_testcase_manifest.json"
+T09_LOCAL_TESTCASE_PY_NAME = "test_t09_decoded_bundle.py"
 
 T06_STEP3_FRCSD_ROAD_NAME = "t06_frcsd_road.gpkg"
 T06_STEP3_FRCSD_NODE_NAME = "t06_frcsd_node.gpkg"
@@ -427,6 +429,20 @@ def _select_t09_step3_input_slice(
         "required_swsd_node_ids": required_swsd_node_ids,
         "selected_frcsd_road_ids": selected_frcsd_road_ids,
         "selected_frcsd_node_ids": selected_frcsd_node_ids,
+        "source_paths": {
+            "swnode_path": str(swnode_path),
+            "swroad_path": str(swroad_path),
+            "segment_path": str(segment_path) if segment_path is not None else None,
+            "restriction_path": str(restriction_path) if restriction_path is not None else None,
+            "arrow_path": str(arrow_path) if arrow_path is not None else None,
+            "frcsd_road_path": str(frcsd_road_path),
+            "frcsd_node_path": str(frcsd_node_path),
+            "replacement_units_path": str(replacement_units_path) if replacement_units_path is not None else None,
+            "junction_rebuild_audit_path": (
+                str(junction_rebuild_audit_path) if junction_rebuild_audit_path is not None else None
+            ),
+            "id_collision_audit_path": str(id_collision_audit_path) if id_collision_audit_path is not None else None,
+        },
         "qa": {
             "crs_transform_executed": "all vector inputs were read through vector_io with target EPSG",
             "topology_silent_fix": False,
@@ -453,8 +469,20 @@ def _build_step3_input_slice_text_bundle(
     include_raw_inputs: bool,
     max_text_size_bytes: int,
 ) -> tuple[str, int, dict[str, Any]]:
+    files[f"local_testcase/{T09_LOCAL_TESTCASE_PY_NAME}"] = _local_testcase_py_bytes()
     files[f"audit/{T09_STEP3_INPUT_MANIFEST_NAME}"] = json.dumps(
         input_manifest,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    files[f"audit/{T09_LOCAL_TESTCASE_MANIFEST_NAME}"] = json.dumps(
+        _local_testcase_manifest(
+            files=files,
+            input_manifest=input_manifest,
+            slice_summary=slice_summary,
+        ),
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
@@ -768,6 +796,120 @@ def _zip_bytes(files: dict[str, bytes]) -> tuple[bytes, dict[str, int]]:
     with zipfile.ZipFile(io.BytesIO(buffer.getvalue()), "r") as zf:
         per_file_compressed = {info.filename: int(info.compress_size) for info in zf.infolist()}
     return buffer.getvalue(), per_file_compressed
+
+
+def _local_testcase_py_bytes() -> bytes:
+    return f'''from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration import run_t09_swsd_field_rule_restoration
+
+
+def _decoded_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _optional_path(root: Path, value: str | None) -> Path | None:
+    return root / value if value else None
+
+
+def test_t09_decoded_bundle_runs_current_module(tmp_path: Path) -> None:
+    root = _decoded_root()
+    testcase_manifest = json.loads((root / "audit" / "{T09_LOCAL_TESTCASE_MANIFEST_NAME}").read_text(encoding="utf-8"))
+    slice_summary = json.loads((root / "slice" / "{T09_STEP3_INPUT_SLICE_SUMMARY_NAME}").read_text(encoding="utf-8"))
+    kwargs = testcase_manifest["recommended_t09_step1_step2_kwargs"]
+
+    swnode_path = root / kwargs["swnode_gpkg"]
+    swroad_path = root / kwargs["swroad_gpkg"]
+    segment_path = _optional_path(root, kwargs.get("segment_gpkg"))
+    restriction_path = _optional_path(root, kwargs.get("restriction_gpkg"))
+    arrow_path = _optional_path(root, kwargs.get("arrow_gpkg"))
+
+    assert swnode_path.is_file()
+    assert swroad_path.is_file()
+    assert slice_summary["selected_swsd_node_count"] > 0
+    assert slice_summary["selected_swsd_road_count"] > 0
+    assert slice_summary["selected_frcsd_node_count"] > 0
+    assert slice_summary["selected_frcsd_road_count"] > 0
+
+    result = run_t09_swsd_field_rule_restoration(
+        swnode_gpkg=swnode_path,
+        swroad_gpkg=swroad_path,
+        segment_gpkg=segment_path,
+        restriction_gpkg=restriction_path,
+        arrow_gpkg=arrow_path,
+        output_dir=tmp_path / "t09_output",
+        run_id="decoded_bundle_case",
+    )
+
+    assert result.artifacts.summary_json.is_file()
+    assert result.result.summary["qa"]["topology_silent_fix"] is False
+    assert result.result.summary["input_audit"]["nodes"]["kind_2_4_junction_count"] >= 1
+'''.encode("utf-8")
+
+
+def _local_testcase_manifest(
+    *,
+    files: dict[str, bytes],
+    input_manifest: dict[str, Any],
+    slice_summary: dict[str, Any],
+) -> dict[str, Any]:
+    fixture_paths = {
+        "swsd_nodes": "slice/swsd/nodes.geojson",
+        "swsd_roads": "slice/swsd/roads.geojson",
+        "frcsd_road": "slice/frcsd/frcsd_road.geojson",
+        "frcsd_node": "slice/frcsd/frcsd_node.geojson",
+        "swsd_segment": "slice/swsd/segment.geojson",
+        "restriction_tool7": "slice/t08_tool7/sw_restriction_tool7.geojson",
+        "arrow_tool8": "slice/t08_tool8/sw_arrow_tool8.geojson",
+        "t06_step3_replacement_units": "slice/t06_step3/t06_step3_replacement_units.geojson",
+        "t06_step3_junction_rebuild_audit": "slice/t06_step3/t06_step3_junction_rebuild_audit.geojson",
+        "t06_step3_id_collision_audit": "slice/t06_step3/t06_step3_id_collision_audit.geojson",
+        "t06_step3_summary": "reference/t06_step3/t06_step3_summary.json",
+        "slice_summary": f"slice/{T09_STEP3_INPUT_SLICE_SUMMARY_NAME}",
+        "input_manifest": f"audit/{T09_STEP3_INPUT_MANIFEST_NAME}",
+        "pytest_file": f"local_testcase/{T09_LOCAL_TESTCASE_PY_NAME}",
+    }
+    existing_fixture_paths = {key: path for key, path in fixture_paths.items() if path in files}
+    return {
+        "purpose": "small real-data local fixture for T09 Step1/2 and later Step3 FRCSD work",
+        "path_semantics": "all fixture paths are relative to the decoded bundle directory",
+        "source_input_paths": dict(input_manifest.get("input_paths") or {}),
+        "source_input_files": input_manifest.get("input_files"),
+        "selection": {
+            "mode": slice_summary.get("selection_mode"),
+            "center": slice_summary.get("center"),
+            "size_m": slice_summary.get("size_m"),
+            "radius_m": slice_summary.get("radius_m"),
+            "bounds": slice_summary.get("bounds"),
+            "crs_normalized_to": slice_summary.get("crs_normalized_to"),
+        },
+        "fixture_paths": existing_fixture_paths,
+        "pytest_command_from_repo_root": (
+            ".venv/bin/python -m pytest --rootdir <decoded_bundle_dir> "
+            f"<decoded_bundle_dir>/local_testcase/{T09_LOCAL_TESTCASE_PY_NAME} -q"
+        ),
+        "recommended_t09_step1_step2_kwargs": {
+            "swnode_gpkg": existing_fixture_paths.get("swsd_nodes"),
+            "swroad_gpkg": existing_fixture_paths.get("swsd_roads"),
+            "segment_gpkg": existing_fixture_paths.get("swsd_segment"),
+            "restriction_gpkg": existing_fixture_paths.get("restriction_tool7"),
+            "arrow_gpkg": existing_fixture_paths.get("arrow_tool8"),
+        },
+        "recommended_t09_step3_inputs": {
+            "frcsd_road_path": existing_fixture_paths.get("frcsd_road"),
+            "frcsd_node_path": existing_fixture_paths.get("frcsd_node"),
+            "t06_step3_replacement_units_path": existing_fixture_paths.get("t06_step3_replacement_units"),
+            "t06_step3_junction_rebuild_audit_path": existing_fixture_paths.get("t06_step3_junction_rebuild_audit"),
+            "t06_step3_id_collision_audit_path": existing_fixture_paths.get("t06_step3_id_collision_audit"),
+        },
+        "handoff": {
+            "provide_to_codex": "send every bundle .txt part from the same directory; decoding any part reconstructs the same fixture",
+            "no_internal_path_required_after_decode": True,
+        },
+    }
 
 
 def _input_manifest(

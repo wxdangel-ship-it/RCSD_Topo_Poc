@@ -218,6 +218,8 @@ run_t05_phase2_rcsd_junctionization_and_relation(
     progress_interval=1000,
     readonly_workers=1,
     t07_relation_evidence_path=None,
+    next_road_id_start=None,
+    next_node_id_start=None,
 )
 ```
 
@@ -250,6 +252,7 @@ T04 fallback 场景可补读 `divmerge_virtual_anchor_surface.gpkg`、summary、
 
 - `progress=True` 时，控制台只输出阶段级进展、输入体量、预分类 plan、只读/可变 target 计数、按 `progress_interval` 稀疏 target 进度和总耗时。
 - `readonly_workers` 只用于并行处理不修改 RCSDRoad / RCSDNode 的关系构建分支；RCSDRoad split、RCSDNode grouping、新增 id 分配当前保持串行。
+- `next_road_id_start / next_node_id_start` 仅用于解包后的小样本本地测试复现全量运行 ID 分配；常规全量运行不传，默认仍使用原始 RCSDRoad / RCSDNode 全局 `max(id)+1`。
 - `summary.performance.data_volume` 记录输入 feature / evidence 体量。
 - `summary.performance.plan` 记录 direct / grouping / road_split / no_related 等预分类计数，以及 unique split road / group node 候选数。
 - `summary.performance.timings_sec` 记录阶段级耗时，不记录 per-target 明细，避免大数据下打点体量失控。
@@ -313,6 +316,10 @@ run_t05_export_junctionization_bundle(
     t07_relation_evidence_path=None,
     t03_relation_evidence_path=None,
     t04_relation_evidence_path=None,
+    t04_surface_path=None,
+    t04_summary_path=None,
+    t04_audit_path=None,
+    t04_case_root=None,
     phase2_root=None,
     context_buffer_m=80.0,
     max_text_size_bytes=250 * 1024,
@@ -335,6 +342,10 @@ artifacts = run_t05_export_junctionization_bundle(
     t07_relation_evidence_path="/path/to/t07_swsd_rcsd_relation_evidence.csv",
     t03_relation_evidence_path="/path/to/t03_swsd_rcsd_relation_evidence_backfilled.csv",
     t04_relation_evidence_path="/path/to/t04_swsd_rcsd_relation_evidence.csv",
+    t04_surface_path="/path/to/divmerge_virtual_anchor_surface.gpkg",
+    t04_summary_path="/path/to/divmerge_virtual_anchor_surface_summary.csv",
+    t04_audit_path="/path/to/divmerge_virtual_anchor_surface_audit.gpkg",
+    t04_case_root="/path/to/t04/cases",
     phase2_root="/path/to/t05_phase2_full",
 )
 ```
@@ -346,7 +357,11 @@ artifacts = run_t05_export_junctionization_bundle(
 - 默认 `max_text_size_bytes = 250KB`；多 `target_id` 打包超过阈值时自动输出 `t05_junctionization_bundle_partNNN.txt` 分片。
 - 单个 target 自身超过阈值时保留为独立 oversized 分片，并在 `t05_junctionization_bundle_index.json` 标记 `oversized = true`。
 - 每个 bundle payload 是 zip，外层为可复制 txt；每个 target 在 zip 内按 `<target_id>/` 分目录。
-- case 目录包含 `junction_anchor_surface.geojson / nodes.geojson / rcsdroad.geojson / rcsdnode.geojson / relation_evidence.json / fusion_audit.json / phase2_audit.json / manifest.json`。
+- case 目录包含 `README.md / local_test_config.json / junction_anchor_surface.geojson / nodes.geojson / rcsdroad.geojson / rcsdnode.geojson / relation_evidence.json / fusion_audit.json / phase2_audit.json / manifest.json`。
+- relation evidence 额外按模块拆分为 `t02_swsd_rcsd_relation_evidence.json / t07_swsd_rcsd_relation_evidence.json / t03_swsd_rcsd_relation_evidence.json / t04_swsd_rcsd_relation_evidence.json`，可直接传给 Phase 2 runner。
+- T04 补读材料输出为 `t04_surface.geojson / t04_summary.json / t04_audit.json / t04_case_root/<case_id>/...`，用于覆盖 fallback 场景的本地复现。
+- 若传入 `phase2_root`，case 目录会包含 `expected_intersection_match_all.geojson / expected_rcsdroad_split.geojson / expected_rcsdnode_generated.geojson / expected_rcsdnode_grouped.geojson / expected_rcsdroad_out_slice.geojson / expected_rcsdnode_out_slice.geojson`，用于本地断言。
+- `local_test_config.json.runner_kwargs` 会记录从 Phase2 audit 推导的 `next_road_id_start / next_node_id_start`，用于小样本运行时复现全量 ID 分配。
 - `rcsdroad.geojson` 优先纳入 relation evidence / Phase2 audit 中显式引用的 `support / selected / fallback / required / original` RCSDRoad，并补充目标 surface / SWSD node 周边 `context_buffer_m` 内的 RCSDRoad。
 - `rcsdnode.geojson` 纳入 evidence / audit 显式引用的 RCSDNode、被选 RCSDRoad 的 `snodeid / enodeid`，并补充目标 context 内 RCSDNode。
 

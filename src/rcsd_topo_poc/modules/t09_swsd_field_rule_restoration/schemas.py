@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from shapely.geometry.base import BaseGeometry
+
 
 class _StrEnum(str, Enum):
     def __str__(self) -> str:
@@ -183,6 +185,7 @@ class RestrictionInput:
     in_link_id: str
     out_link_id: str
     properties: dict[str, Any] = field(default_factory=dict)
+    geometry: BaseGeometry | None = None
 
 
 @dataclass(frozen=True)
@@ -195,6 +198,7 @@ class ArrowInput:
     geometry_match_method: str = "road_id"
     properties: dict[str, Any] = field(default_factory=dict)
     source_feature_id: str | None = None
+    geometry: BaseGeometry | None = None
 
 
 @dataclass(frozen=True)
@@ -215,4 +219,6 @@ def to_jsonable(value: Any) -> Any:
         return [to_jsonable(item) for item in value]
     if isinstance(value, dict):
         return {str(key): to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, BaseGeometry):
+        return value.wkt
     return value

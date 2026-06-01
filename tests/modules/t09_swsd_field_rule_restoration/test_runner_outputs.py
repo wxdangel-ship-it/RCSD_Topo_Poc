@@ -82,7 +82,7 @@ def _write_runner_inputs(root: Path) -> tuple[Path, Path, Path, Path, Path]:
         restriction_gpkg,
         [
             {
-                "properties": {"CondType": 1, "inLinkID": "in_w", "outLinkID": "out_n"},
+                "properties": {"CondType": 1, "inLinkID": "raw_in_w", "outLinkID": "raw_out_n"},
                 "geometry": LineString([(-10.0, 0.0), (0.0, 0.0), (0.0, 10.0)]),
             }
         ],
@@ -93,7 +93,7 @@ def _write_runner_inputs(root: Path) -> tuple[Path, Path, Path, Path, Path]:
         [
             {
                 "properties": {
-                    "linkid": "in_w",
+                    "linkid": "raw_in_w",
                     "lane_dir": 2,
                     "road_direction": 2,
                     "arrow": "b",

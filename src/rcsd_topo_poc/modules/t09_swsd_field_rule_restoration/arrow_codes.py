@@ -52,9 +52,10 @@ ARROW_CODE_DEFINITIONS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 def parse_arrow_code(code: str) -> ParsedArrowCode:
     raw_code = str(code).strip()
-    if raw_code not in ARROW_CODE_DEFINITIONS:
+    lookup_code = raw_code.lower()
+    if lookup_code not in ARROW_CODE_DEFINITIONS:
         raise ValueError(f"Unknown SW arrow code: {code!r}")
-    label_zh, tokens = ARROW_CODE_DEFINITIONS[raw_code]
+    label_zh, tokens = ARROW_CODE_DEFINITIONS[lookup_code]
     return ParsedArrowCode(raw_code=raw_code, label_zh=label_zh, tokens=tokens)
 
 

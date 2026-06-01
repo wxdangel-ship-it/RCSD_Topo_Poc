@@ -63,6 +63,14 @@ def test_digit_zero_and_letter_o_are_distinct() -> None:
     assert letter_o.usable_for_prohibition is False
 
 
+def test_alphabetic_arrow_code_is_case_normalized_with_raw_code_preserved() -> None:
+    parsed = parse_arrow_code("A")
+
+    assert parsed.raw_code == "A"
+    assert parsed.tokens == ("straight",)
+    assert parsed.usable_for_prohibition is True
+
+
 def test_parse_arrow_sequence_keeps_lane_order() -> None:
     parsed = parse_arrow_sequence("a,0,o")
 

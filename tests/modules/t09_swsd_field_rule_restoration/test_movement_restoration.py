@@ -1,5 +1,7 @@
 import json
 
+from shapely.geometry import LineString
+
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration import (
     ArrowInput,
     EvidenceType,
@@ -17,6 +19,10 @@ from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration import (
     restore_field_rules,
     to_jsonable,
 )
+
+
+def _geometry(coords: list[tuple[float, float]]) -> LineString:
+    return LineString(coords)
 
 
 def test_arm_builder_marks_segment_junc_node_internal_split() -> None:
@@ -51,6 +57,55 @@ def test_arm_builder_marks_segment_junc_node_internal_split() -> None:
 
     assert movement.movement_applicability == MovementApplicability.APPLICABLE
     assert movement.candidate_road_pair_count == 1
+
+
+def test_arm_builder_merges_same_direction_multi_segment_arm() -> None:
+    roads = (
+        SWSDRoadInput(road_id="e_in_main", snodeid="n_e1", enodeid="j", direction=2),
+        SWSDRoadInput(road_id="e_out", snodeid="j", enodeid="n_e2", direction=2),
+        SWSDRoadInput(road_id="e_in_aux", snodeid="n_e3", enodeid="j", direction=2),
+        SWSDRoadInput(road_id="n_in", snodeid="n_n1", enodeid="j", direction=2),
+        SWSDRoadInput(road_id="n_out", snodeid="j", enodeid="n_n2", direction=2),
+        SWSDRoadInput(road_id="w_in", snodeid="n_w1", enodeid="j", direction=2),
+        SWSDRoadInput(road_id="w_out", snodeid="j", enodeid="n_w2", direction=2),
+        SWSDRoadInput(road_id="s_in", snodeid="n_s1", enodeid="j", direction=2),
+        SWSDRoadInput(road_id="s_out", snodeid="j", enodeid="n_s2", direction=2),
+    )
+    arms = build_swsd_arms(
+        junction_id="j",
+        member_node_ids=("j",),
+        roads=roads,
+        segments=(
+            SWSDSegmentInput(segment_id="seg_e_main", pair_nodes=("j", "n_e2"), road_ids=("e_in_main", "e_out")),
+            SWSDSegmentInput(segment_id="seg_e_aux", pair_nodes=("j", "n_e3"), road_ids=("e_in_aux",)),
+            SWSDSegmentInput(segment_id="seg_n", pair_nodes=("j", "n_n2"), road_ids=("n_in", "n_out")),
+            SWSDSegmentInput(segment_id="seg_w", pair_nodes=("j", "n_w2"), road_ids=("w_in", "w_out")),
+            SWSDSegmentInput(segment_id="seg_s", pair_nodes=("j", "n_s2"), road_ids=("s_in", "s_out")),
+        ),
+        road_geometries={
+            "e_in_main": _geometry([(10.0, 0.0), (0.0, 0.0)]),
+            "e_out": _geometry([(0.0, 0.0), (10.0, 0.5)]),
+            "e_in_aux": _geometry([(11.0, -0.5), (0.0, 0.0)]),
+            "n_in": _geometry([(0.0, 10.0), (0.0, 0.0)]),
+            "n_out": _geometry([(0.0, 0.0), (0.5, 10.0)]),
+            "w_in": _geometry([(-10.0, 0.0), (0.0, 0.0)]),
+            "w_out": _geometry([(0.0, 0.0), (-10.0, -0.5)]),
+            "s_in": _geometry([(0.0, -10.0), (0.0, 0.0)]),
+            "s_out": _geometry([(0.0, 0.0), (-0.5, -10.0)]),
+        },
+    )
+
+    assert len(arms) == 4
+    east_arm = next(arm for arm in arms if set(arm.seed_road_ids) == {"e_in_aux", "e_in_main", "e_out"})
+    assert set(east_arm.segment_ids) == {"seg_e_aux", "seg_e_main"}
+    assert east_arm.approach_road_ids == ("e_in_aux", "e_in_main")
+    assert east_arm.exit_road_ids == ("e_out",)
+    assert east_arm.terminal_kind == "multi_segment_directional_corridor"
+    assert "multi_segment_directional_arm" in east_arm.risk_flags
+
+    movements = build_arm_movements(junction_id="j", arms=arms)
+    assert len(movements) == 16
+    assert next(item for item in movements if item.from_arm_id == east_arm.arm_id and item.to_arm_id == east_arm.arm_id).candidate_road_pair_count == 2
 
 
 def test_topology_not_applicable_is_not_reported_as_prohibition() -> None:

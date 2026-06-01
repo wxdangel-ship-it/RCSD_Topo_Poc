@@ -175,6 +175,7 @@
   - 仅处理 `Laneinfo.LinkID` 存在于 SW Road 输入中的 Lane 记录；缺失 Link 写入 summary 计数并跳过。
   - 按 `LinkID + Lane_Dir` 分组后以 `Seq_Nm` 升序处理；每条 Lane 记录的 `Arrow_Dir` 按英文逗号 `,` 分割为车道级 arrow 值，同一组只输出一条 LineString 要素。
   - `arrow` 字段按 `Seq_Nm` 顺序记录该 Road 方向的全部车道级 arrow 值，中间用英文逗号 `,` 分隔。
+  - Tool8 不解释或改写 `Arrow_Dir` 字母大小写；下游 T09 消费 `arrow` 字段时按大小写不敏感方式归一到小写箭头码表，已确认 `A` 等同于 `a`。
   - arrow 输出字段至少包含 `linkid / lane_dir / road_direction / arrow / lane_count / seq_start / seq_end / source_arrow_dir`。
   - Link 为单向顺行（`direction = 2`）时，`Lane_Dir = 2` 按 Link 几何方向输出，`Lane_Dir = 3` 按 Link 几何反向输出。
   - Link 为单向逆向（`direction = 3`）时，`Lane_Dir = 2` 按 Link 几何反向输出，`Lane_Dir = 3` 按 Link 几何方向输出。

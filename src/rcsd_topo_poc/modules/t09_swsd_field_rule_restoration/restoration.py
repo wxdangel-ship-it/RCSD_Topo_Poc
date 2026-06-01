@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from shapely.geometry.base import BaseGeometry
+
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.arrow_evidence import (
     evaluate_complete_arrow_exclusion,
 )
@@ -19,6 +21,7 @@ from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.schemas import (
     RestorationResult,
     RestrictionInput,
     RoadAttributes,
+    SWSDRoadInput,
     T09ArmMovement,
     T09EvidenceItem,
     T09RestoredFieldRule,
@@ -37,12 +40,17 @@ def restore_field_rules(
     restrictions: tuple[RestrictionInput, ...] = tuple(),
     arrows: tuple[ArrowInput, ...] = tuple(),
     road_attributes: tuple[RoadAttributes, ...] = tuple(),
+    roads: tuple[SWSDRoadInput, ...] = tuple(),
+    road_geometries: dict[str, BaseGeometry] | None = None,
 ) -> RestorationResult:
     evidence_items: list[T09EvidenceItem] = []
     restored_rules: list[T09RestoredFieldRule] = []
     updated_movements: list[T09ArmMovement] = []
 
     attributes_by_road = {road.road_id: road for road in road_attributes}
+    roads_by_id = {road.road_id: road for road in roads}
+    arms_by_id = {arm.arm_id: arm for arm in arms}
+    road_geometries = road_geometries or {}
     for arm in arms:
         arm_roads = tuple(
             attributes_by_road[road_id]
@@ -76,8 +84,24 @@ def restore_field_rules(
             )
             continue
 
-        restriction_result = match_restriction_evidence(movement, restrictions=restrictions)
-        arrow_result = evaluate_complete_arrow_exclusion(movement, arrows=arrows) if arrows else None
+        restriction_result = match_restriction_evidence(
+            movement,
+            restrictions=restrictions,
+            roads_by_id=roads_by_id,
+            road_geometries=road_geometries,
+            arms_by_id=arms_by_id,
+        )
+        arrow_result = (
+            evaluate_complete_arrow_exclusion(
+                movement,
+                arrows=arrows,
+                roads_by_id=roads_by_id,
+                road_geometries=road_geometries,
+                arms_by_id=arms_by_id,
+            )
+            if arrows
+            else None
+        )
         movement_evidence = list(restriction_result.evidence_items)
         conflicting_evidence: tuple[T09EvidenceItem, ...] = tuple()
 
@@ -134,6 +158,7 @@ def restore_field_rules(
             "restrictions": len(restrictions),
             "arrows": len(arrows),
             "road_attributes": len(road_attributes),
+            "roads": len(roads),
         },
         "output_counts": {
             "evidence_items": len(evidence_items),

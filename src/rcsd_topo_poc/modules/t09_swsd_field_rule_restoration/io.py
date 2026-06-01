@@ -143,10 +143,14 @@ def annotate_arm_angles(
 
     annotated: list[T09SwsdArm] = []
     for arm in arms:
-        seed_id = arm.seed_road_ids[0] if arm.seed_road_ids else None
-        road = roads_by_id.get(seed_id or "")
-        geometry = road_geometries.get(seed_id or "")
-        angle = _arm_outward_angle(road, geometry, set(arm.member_node_ids)) if road and geometry else None
+        angles = []
+        for seed_id in arm.seed_road_ids:
+            road = roads_by_id.get(seed_id)
+            geometry = road_geometries.get(seed_id)
+            angle = _arm_outward_angle(road, geometry, set(arm.member_node_ids)) if road and geometry else None
+            if angle is not None:
+                angles.append(angle)
+        angle = _mean_angle(angles)
         audit_refs = arm.audit_refs + ((f"angle_deg={angle:.6f}" if angle is not None else "angle_missing"),)
         annotated.append(replace(arm, angle_deg=angle, audit_refs=audit_refs))
     return tuple(annotated)
@@ -274,6 +278,7 @@ def _read_tool7_restrictions(result: VectorReadResult) -> tuple[tuple[Restrictio
                 in_link_id=in_link,
                 out_link_id=out_link,
                 properties=dict(feature.properties),
+                geometry=feature.geometry,
             )
         )
     return tuple(restrictions), {
@@ -317,6 +322,7 @@ def _read_tool8_arrows(result: VectorReadResult) -> tuple[tuple[ArrowInput, ...]
                 geometry_match_method="t08_tool8_linkid_directional_geometry",
                 properties=dict(feature.properties),
                 source_feature_id=source_id,
+                geometry=feature.geometry,
             )
         )
     return tuple(arrows), {
@@ -468,6 +474,16 @@ def _arm_outward_angle(
     if abs(dx) <= 1e-9 and abs(dy) <= 1e-9:
         return None
     return math.degrees(math.atan2(dy, dx)) % 360.0
+
+
+def _mean_angle(angles: list[float]) -> float | None:
+    if not angles:
+        return None
+    x = sum(math.cos(math.radians(angle)) for angle in angles)
+    y = sum(math.sin(math.radians(angle)) for angle in angles)
+    if abs(x) <= 1e-12 and abs(y) <= 1e-12:
+        return angles[0]
+    return math.degrees(math.atan2(y, x)) % 360.0
 
 
 def _line_coords(geometry: BaseGeometry) -> list[tuple[float, float]]:

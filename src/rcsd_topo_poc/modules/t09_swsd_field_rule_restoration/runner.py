@@ -71,6 +71,8 @@ def run_t09_swsd_field_rule_restoration(
         restrictions=loaded.restrictions,
         arrows=loaded.arrows,
         road_attributes=loaded.road_attributes,
+        roads=loaded.roads,
+        road_geometries=loaded.road_geometries,
     )
     elapsed_seconds = time.perf_counter() - started
     result = replace(
@@ -113,6 +115,7 @@ def build_t09_arm_universe(loaded: T09LoadedInputs) -> tuple[tuple[T09SwsdArm, .
             member_node_ids=member_node_ids,
             roads=junction_roads,
             segments=loaded.segments,
+            road_geometries=loaded.road_geometries,
         )
         arms = annotate_arm_angles(arms, roads_by_id=roads_by_id, road_geometries=loaded.road_geometries)
         movements = build_arm_movements(junction_id=junction_id, arms=arms)

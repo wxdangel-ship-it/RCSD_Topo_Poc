@@ -395,10 +395,16 @@ def _select_t09_step3_input_slice(
         ),
     }
     optional_counts: dict[str, int] = {}
+    optional_errors: dict[str, str] = {}
     for archive_name, (path, layer_name, output_name) in optional_vector_outputs.items():
         if path is None:
             continue
-        features = _read_feature_dicts(path, layer_name=layer_name, target_epsg=target_epsg)
+        try:
+            features = _read_feature_dicts(path, layer_name=layer_name, target_epsg=target_epsg)
+        except ValueError as exc:
+            optional_counts[output_name] = 0
+            optional_errors[output_name] = str(exc)
+            continue
         selected = [feature for feature in features if _intersects_window(feature, window)]
         files[archive_name] = _feature_collection_bytes(output_name, selected, crs_text=crs_text)
         optional_counts[output_name] = len(selected)
@@ -423,6 +429,7 @@ def _select_t09_step3_input_slice(
         "selected_frcsd_road_count": len(selected_frcsd_roads),
         "selected_frcsd_node_count": len(selected_frcsd_nodes),
         "selected_t06_step3_optional_counts": optional_counts,
+        "selected_t06_step3_optional_errors": optional_errors,
         "selected_swsd_segment_ids": selected_segment_ids,
         "selected_swsd_road_ids": selected_swsd_road_ids,
         "required_swsd_road_ids_from_segment": required_swsd_road_ids,

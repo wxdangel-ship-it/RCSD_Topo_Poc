@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -56,6 +57,7 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
     frcsd_road_path = t06_step3_root / "t06_frcsd_road.gpkg"
     frcsd_node_path = t06_step3_root / "t06_frcsd_node.gpkg"
     replacement_units_path = t06_step3_root / "t06_step3_replacement_units.gpkg"
+    junction_audit_path = t06_step3_root / "t06_step3_junction_rebuild_audit.gpkg"
 
     write_gpkg(
         swnode_path,
@@ -162,6 +164,14 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
         ],
         crs_text="EPSG:3857",
     )
+    write_gpkg(
+        junction_audit_path,
+        [{"properties": {"id": "junction_audit_without_geometry"}, "geometry": Point(0.0, 0.0)}],
+        crs_text="EPSG:3857",
+    )
+    with sqlite3.connect(junction_audit_path) as conn:
+        conn.execute("UPDATE t06_step3_junction_rebuild_audit SET geom = NULL")
+        conn.commit()
     (t06_step3_root / "t06_step3_summary.json").write_text(
         json.dumps({"frcsd_road_count": 80, "frcsd_node_count": 81}),
         encoding="utf-8",
@@ -205,6 +215,8 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
     assert summary["selected_arrow_count"] == 1
     assert summary["selected_frcsd_road_count"] == 79
     assert summary["selected_t06_step3_optional_counts"]["t06_step3_replacement_units"] == 1
+    assert summary["selected_t06_step3_optional_counts"]["t06_step3_junction_rebuild_audit"] == 0
+    assert "has no geometry" in summary["selected_t06_step3_optional_errors"]["t06_step3_junction_rebuild_audit"]
     assert size_report["split_bundle"]["enabled"] is True
     assert size_report["split_bundle"]["part_count"] == len(artifacts.part_txt_paths)
     assert testcase_manifest["source_input_paths"]["swnode_path"] == str(swnode_path)

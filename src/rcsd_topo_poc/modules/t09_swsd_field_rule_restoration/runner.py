@@ -90,6 +90,7 @@ def run_t09_swsd_field_rule_restoration(
         result=result,
         output_dir=Path(output_dir) / effective_run_id,
         road_geometries=loaded.road_geometries,
+        segment_geometries=loaded.segment_geometries,
         crs_text=f"EPSG:{target_epsg}",
     )
     return T09RunResult(result=result, artifacts=artifacts)

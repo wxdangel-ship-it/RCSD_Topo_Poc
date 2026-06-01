@@ -113,6 +113,7 @@ def write_restoration_outputs(
     result: RestorationResult,
     output_dir: str | Path,
     road_geometries: dict[str, BaseGeometry],
+    segment_geometries: dict[str, BaseGeometry] | None = None,
     crs_text: str = "EPSG:3857",
 ) -> T09OutputArtifacts:
     out_dir = Path(output_dir).expanduser().resolve()
@@ -151,7 +152,7 @@ def write_restoration_outputs(
     _write_csv(artifacts.rules_csv, rule_rows, RULE_FIELDS)
     write_gpkg(
         artifacts.arms_gpkg,
-        _arm_features(result.arms, road_geometries),
+        _arm_features(result.arms, road_geometries, segment_geometries or {}),
         crs_text=crs_text,
         empty_fields=ARM_FIELDS,
         geometry_type="LineString",
@@ -199,9 +200,10 @@ def _rule_row(rule: T09RestoredFieldRule) -> dict[str, Any]:
 def _arm_features(
     arms: Iterable[T09SwsdArm],
     road_geometries: dict[str, BaseGeometry],
+    segment_geometries: dict[str, BaseGeometry],
 ) -> list[dict[str, Any]]:
     return [
-        {"properties": _arm_row(arm), "geometry": _geometry_for_arm(arm, road_geometries)}
+        {"properties": _arm_row(arm), "geometry": _geometry_for_arm(arm, road_geometries, segment_geometries)}
         for arm in arms
     ]
 
@@ -257,12 +259,37 @@ def _rule_features(
     ]
 
 
-def _geometry_for_arm(arm: T09SwsdArm, road_geometries: dict[str, BaseGeometry]) -> BaseGeometry:
+def _geometry_for_arm(
+    arm: T09SwsdArm,
+    road_geometries: dict[str, BaseGeometry],
+    segment_geometries: dict[str, BaseGeometry] | None = None,
+) -> BaseGeometry:
+    segment_geometry = _geometry_for_segments(arm.segment_ids, segment_geometries or {})
+    if segment_geometry is not None:
+        return segment_geometry
     for road_id in arm.seed_road_ids + arm.trunk_road_ids + arm.connector_road_ids:
         geometry = road_geometries.get(road_id)
         if geometry is not None:
             return _line_geometry(geometry)
     return _fallback_geometry(road_geometries)
+
+
+def _geometry_for_segments(
+    segment_ids: tuple[str, ...],
+    segment_geometries: dict[str, BaseGeometry],
+) -> BaseGeometry | None:
+    lines: list[LineString] = []
+    for segment_id in segment_ids:
+        geometry = segment_geometries.get(segment_id)
+        if isinstance(geometry, LineString) and len(geometry.coords) >= 2:
+            lines.append(geometry)
+        elif isinstance(geometry, MultiLineString):
+            lines.extend(part for part in geometry.geoms if not part.is_empty and len(part.coords) >= 2)
+    if len(lines) == 1:
+        return lines[0]
+    if len(lines) > 1:
+        return MultiLineString(lines)
+    return None
 
 
 def _geometry_for_movement(

@@ -32,6 +32,7 @@ class T09LoadedInputs:
     roads: tuple[SWSDRoadInput, ...]
     road_attributes: tuple[RoadAttributes, ...]
     segments: tuple[SWSDSegmentInput, ...]
+    segment_geometries: dict[str, BaseGeometry]
     restrictions: tuple[RestrictionInput, ...]
     arrows: tuple[ArrowInput, ...]
     road_geometries: dict[str, BaseGeometry]
@@ -103,7 +104,9 @@ def load_t09_inputs(
 
     junctions, node_audit = _read_kind2_junctions(node_result)
     roads, road_attrs, road_geometries, road_audit = _read_swsd_roads(road_result)
-    segments, segment_audit = _read_segments(segment_result) if segment_result else (tuple(), {})
+    segments, segment_geometries, segment_audit = (
+        _read_segments(segment_result) if segment_result else (tuple(), {}, {})
+    )
     restrictions, restriction_audit = (
         _read_tool7_restrictions(restriction_result) if restriction_result else (tuple(), {})
     )
@@ -118,6 +121,7 @@ def load_t09_inputs(
         roads=roads,
         road_attributes=road_attrs,
         segments=segments,
+        segment_geometries=segment_geometries,
         restrictions=restrictions,
         arrows=arrows,
         road_geometries=road_geometries,
@@ -235,13 +239,16 @@ def _read_swsd_roads(
     }
 
 
-def _read_segments(result: VectorReadResult) -> tuple[tuple[SWSDSegmentInput, ...], dict[str, Any]]:
+def _read_segments(
+    result: VectorReadResult,
+) -> tuple[tuple[SWSDSegmentInput, ...], dict[str, BaseGeometry], dict[str, Any]]:
     id_field = _required_field(result, ["id", "segmentid", "segment_id"], "T01 segment")
     pair_nodes_field = _required_field(result, ["pair_nodes"], "T01 segment")
     junc_nodes_field = _required_field(result, ["junc_nodes"], "T01 segment")
     roads_field = _required_field(result, ["roads", "road_ids"], "T01 segment")
     sgrade_field = _optional_field(result, ["sgrade"])
     segments: list[SWSDSegmentInput] = []
+    geometries: dict[str, BaseGeometry] = {}
     for feature in result.features:
         segment_id = _required_id(feature.properties.get(id_field), f"T01 segment id in {result.path}")
         segments.append(
@@ -253,7 +260,8 @@ def _read_segments(result: VectorReadResult) -> tuple[tuple[SWSDSegmentInput, ..
                 sgrade=_normalize_optional_text(feature.properties.get(sgrade_field)) if sgrade_field else None,
             )
         )
-    return tuple(segments), {
+        geometries[segment_id] = feature.geometry
+    return tuple(segments), geometries, {
         "id_field": id_field,
         "pair_nodes_field": pair_nodes_field,
         "junc_nodes_field": junc_nodes_field,

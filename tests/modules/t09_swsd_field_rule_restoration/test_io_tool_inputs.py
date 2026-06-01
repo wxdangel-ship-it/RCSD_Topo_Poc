@@ -113,6 +113,7 @@ def test_load_t08_tool7_tool8_outputs_as_t09_inputs(tmp_path: Path) -> None:
 
     assert loaded.junction_member_node_ids == {"j1": ("j1", "j1_sub")}
     assert loaded.segments[0].junc_nodes == ("j1", "j1_sub")
+    assert loaded.segment_geometries["seg_1"].equals(LineString([(-10.0, 0.0), (0.0, 0.0), (0.0, 10.0)]))
     assert loaded.restrictions[0].in_link_id == "in_w"
     assert loaded.restrictions[0].out_link_id == "out_n"
     assert loaded.arrows[0].road_id == "in_w"

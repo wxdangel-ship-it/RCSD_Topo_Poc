@@ -4,6 +4,7 @@ from pathlib import Path
 
 import fiona
 from shapely.geometry import LineString, Point
+from shapely.geometry import shape
 
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration import (
@@ -67,13 +68,33 @@ def _write_runner_inputs(root: Path) -> tuple[Path, Path, Path, Path, Path]:
         [
             {
                 "properties": {
-                    "id": "seg_1",
+                    "id": "seg_w",
                     "sgrade": "0-2双",
-                    "pair_nodes": "n_w,n_e",
+                    "pair_nodes": "n_w,j1",
                     "junc_nodes": "j1",
-                    "roads": "in_w,out_e,out_n",
+                    "roads": "in_w",
                 },
-                "geometry": LineString([(-10.0, 0.0), (0.0, 0.0), (10.0, 0.0)]),
+                "geometry": LineString([(-20.0, 0.0), (0.0, 0.0)]),
+            },
+            {
+                "properties": {
+                    "id": "seg_e",
+                    "sgrade": "0-2双",
+                    "pair_nodes": "j1,n_e",
+                    "junc_nodes": "j1",
+                    "roads": "out_e",
+                },
+                "geometry": LineString([(0.0, 0.0), (20.0, 0.0)]),
+            },
+            {
+                "properties": {
+                    "id": "seg_n",
+                    "sgrade": "0-2双",
+                    "pair_nodes": "j1,n_n",
+                    "junc_nodes": "j1",
+                    "roads": "out_n",
+                },
+                "geometry": LineString([(0.0, 0.0), (0.0, 20.0)]),
             }
         ],
         crs_text="EPSG:3857",
@@ -148,6 +169,11 @@ def test_runner_writes_gpkg_csv_json_outputs_from_t08_inputs(tmp_path: Path) -> 
 
     with fiona.open(artifacts.arms_gpkg) as source:
         assert len(source) == len(run.result.arms)
+        arm_by_segment = {
+            tuple(json.loads(feature["properties"]["segment_ids"])): shape(feature["geometry"])
+            for feature in source
+        }
+    assert arm_by_segment[("seg_w",)].equals(LineString([(-20.0, 0.0), (0.0, 0.0)]))
     with fiona.open(artifacts.movements_gpkg) as source:
         assert len(source) == len(run.result.movements)
     with artifacts.movements_csv.open("r", encoding="utf-8", newline="") as fp:

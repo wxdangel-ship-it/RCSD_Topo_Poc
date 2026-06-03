@@ -100,6 +100,13 @@ class BufferSegmentExtractor:
             cfg,
             node_canonicalizer=self.node_canonicalizer,
         )
+        candidate_roads, excluded_roads = _restore_required_corridor_advance_roads(
+            selected_roads=candidate_roads,
+            excluded_roads=excluded_roads,
+            required_nodes=required_nodes,
+            node_canonicalizer=self.node_canonicalizer,
+            reference_geometry=segment_geometry,
+        )
         graph = _build_undirected_graph(candidate_roads, node_canonicalizer=self.node_canonicalizer)
         components = _connected_components(graph.adjacency)
         selected = _select_component(components, required_nodes)
@@ -235,6 +242,54 @@ def _select_candidate_roads(
         else:
             excluded.append(feature)
     return selected, excluded
+
+
+def _restore_required_corridor_advance_roads(
+    *,
+    selected_roads: list[dict[str, Any]],
+    excluded_roads: list[dict[str, Any]],
+    required_nodes: list[str],
+    node_canonicalizer: NodeCanonicalizer,
+    reference_geometry: BaseGeometry | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not excluded_roads or len(set(required_nodes)) < 2:
+        return selected_roads, excluded_roads
+    selected_graph = _build_undirected_graph(selected_roads, node_canonicalizer=node_canonicalizer)
+    if _select_component(_connected_components(selected_graph.adjacency), required_nodes) is not None:
+        return selected_roads, excluded_roads
+
+    combined_roads = [*selected_roads, *excluded_roads]
+    combined_graph = _build_undirected_graph(combined_roads, node_canonicalizer=node_canonicalizer)
+    components = _connected_components(combined_graph.adjacency)
+    selected_component = _select_component(components, required_nodes)
+    if selected_component is None:
+        return selected_roads, excluded_roads
+
+    component_nodes = components[selected_component]
+    component_edges = [
+        edge for edge in combined_graph.edges if edge.source in component_nodes and edge.target in component_nodes
+    ]
+    corridor_edge_ids = {
+        edge_id
+        for path in _minimum_terminal_edge_paths(component_edges, required_nodes, reference_geometry=reference_geometry)
+        for edge_id in path
+    }
+    excluded_road_ids = {road_id for road_id in (_feature_road_id(feature) for feature in excluded_roads) if road_id is not None}
+    restored_road_ids = {
+        edge.road_id for edge in component_edges if edge.edge_id in corridor_edge_ids and edge.road_id in excluded_road_ids
+    }
+    if not restored_road_ids:
+        return selected_roads, excluded_roads
+
+    restored_roads: list[dict[str, Any]] = []
+    remaining_excluded: list[dict[str, Any]] = []
+    for feature in excluded_roads:
+        road_id = _feature_road_id(feature)
+        if road_id in restored_road_ids:
+            restored_roads.append(feature)
+        else:
+            remaining_excluded.append(feature)
+    return [*selected_roads, *restored_roads], remaining_excluded
 
 
 def _non_advance_endpoint_counts(features: list[dict[str, Any]], *, node_canonicalizer: NodeCanonicalizer) -> dict[str, int]:
@@ -919,14 +974,20 @@ def _road_ids(features: list[dict[str, Any]]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for feature in features:
-        try:
-            road_id = normalize_id(_first_present(feature.get("properties") or {}, ["id", "road_id", "roadid"]))
-        except (KeyError, ParseError):
+        road_id = _feature_road_id(feature)
+        if road_id is None:
             continue
         if road_id not in seen:
             seen.add(road_id)
             result.append(road_id)
     return result
+
+
+def _feature_road_id(feature: dict[str, Any]) -> str | None:
+    try:
+        return normalize_id(_first_present(feature.get("properties") or {}, ["id", "road_id", "roadid"]))
+    except (KeyError, ParseError):
+        return None
 
 
 def _node_ids(features: list[dict[str, Any]]) -> list[str]:

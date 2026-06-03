@@ -9,7 +9,7 @@
 - `relation_mapping.py`：T05 relation loader 与 pair/junc mapping 校验。
 - `graph_builders.py`：RCSD semantic node canonicalizer 与 buffer graph edge dataclass。
 - `step2_extract_rcsd_segments.py`：Step2 orchestration。
-- `buffer_segment_extraction.py`：Step2 buffer-based RCSDSegment 候选子图、提前右转二度链接保留 / 排除、连通分量覆盖、最小 corridor 子图构建、裁剪与硬审计。
+- `buffer_segment_extraction.py`：Step2 buffer-based RCSDSegment 候选子图、提前右转二度链接保留 / required corridor 保留 / 排除、连通分量覆盖、最小 corridor 子图构建、裁剪与硬审计。
 - `step3_segment_replacement.py`：Step3 替换单元解析、SWSD road/node 删除集、RCSD road/node 引入集、junction C 重建与 F-RCSD 输出。当前为计划新增模块。
 - `runner.py`：组合 runner。
 - `text_bundle.py`：非官方文本证据包压缩 / 解压 helper，复用内网运行脚本的输入参数形状，记录输入文件大小 / SHA256、运行参数、summary 与可复跑命令；同时支持中心点 + profile/radius 的输入切片包。

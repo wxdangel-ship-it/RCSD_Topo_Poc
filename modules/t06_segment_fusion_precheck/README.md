@@ -163,7 +163,7 @@ REPO_DIR=/path/to/RCSD_Topo_Poc bash audit/replay_t06_decoded_step3_segment_repl
 - Step2 relation 只接受 `status = 0` 且 `base_id > 0`；必检集合为 `pair_nodes + 非豁免 junc_nodes`。
 - Step2 RCSD 建图使用 `rcsdnode_out` 的 `mainnodeid / subnodeid` 做语义节点归一化，relation required nodes 与 RCSDRoad `snodeid / enodeid` 使用同一 canonical key 判定连通。
 - Step2 把 `rcsdnode_out` 中按有效 `mainnodeid` 聚合出的全局 RCSD 语义路口组作为图边界与审计对象；组内所有 node 关联 road 均视为该语义路口的进入 / 退出道路，未映射到当前 Segment 的全局 RCSD 语义路口不能被当成普通通过节点，必须参与 seed pruning。
-- Step2 buffer 审查以 SWSD Segment 50m buffer 筛选 RCSD 候选，RCSDRoad 使用 `intersects + 阈值`，并在构图前按 `formway` bit7/128 识别提前右转 road；提前右转 road 若两端均与非提前右转候选 road 形成二度链接则保留，否则排除。
+- Step2 buffer 审查以 SWSD Segment 50m buffer 筛选 RCSD 候选，RCSDRoad 使用 `intersects + 阈值`，并在构图前按 `formway` bit7/128 识别提前右转 road；提前右转 road 若两端均与非提前右转候选 road 形成二度链接，或属于 required semantic nodes 之间的必要 corridor，则保留参与构建，否则排除。
 - Step2 不把 buffer 候选连通分量直接作为 RCSDSegment；必须先基于 required semantic nodes 构建最小 corridor 子图，再输出 retained roads。
 - Step2 双向 Segment 的 corridor 路径选择会惩罚明显短于 SWSD Segment 的 required-to-required connector，避免用路口内短连接替代完整反向 road。
 - Step2 识别 RCSDRoad `formway & 1024 != 0` 为调头口；当调头 road 两端均属于 retained corridor node 时，作为内部调头 road 保留。

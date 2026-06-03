@@ -20,7 +20,7 @@ Step1 / Step2 / Step3 代码均已提供模块内 callable runner；所有阶段
 - 将 `is_anchor = fail4_fallback` 视为可融合 anchor。
 - 消费 T05 Phase 2 `intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg`。
 - 基于 SWSD Segment 50m buffer、RCSDRoad `intersects + 阈值`、RCSDNode `covers/within` 生成 buffer-based RCSDSegment 审查成果，作为 Step2 唯一正式构建策略。
-- 构建 buffer 候选连通图前，使用 `formway` bit7/128 识别提前右转 road；若该 road 两端均与非提前右转候选 road 形成二度链接，则保留参与 Segment 构建并不计入提前右转排除审计，否则排除。
+- 构建 buffer 候选连通图前，使用 `formway` bit7/128 识别提前右转 road；若该 road 两端均与非提前右转候选 road 形成二度链接，或属于 required semantic nodes 之间的必要 corridor，则保留参与 Segment 构建并不计入提前右转排除审计，否则排除。
 - `swsd_directionality=dual` 构建最小 corridor 时，极短 required-to-required connector 不得替代完整方向 road；RCSDRoad `formway & 1024 != 0` 的内部调头 road 若两端均属于 retained corridor node，必须保留在 RCSDSegment 中。
 - 不再执行旧 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、主轴 / 粗长度趋势或唯一性筛选；buffer 候选连通分量必须先收缩为覆盖 required semantic nodes 的最小 corridor 子图；`swsd_directionality=dual` 时执行 RCSD retained graph 双向可达硬审计，`swsd_directionality=single` 时必须构建一条覆盖全部 required semantic nodes 的 pair 端到另一端有向 corridor。
 - Step3 消费 Step2 replaceable 成果，删除被替换 SWSDRoad 及其端点 SWSDNode，引入 retained RCSDRoad / RCSDNode，输出 `source=1` 的 RCSD 数据与 `source=2` 的 SWSD 数据，并按 `pair_nodes + junc_nodes` 聚合重建语义路口 C。
@@ -103,7 +103,7 @@ run_t06_step2_extract_rcsd_segments(
 - `junc_nodes` 在 RCSD 抽取中是内部通过 + 侧向阻断，不是 hard-stop；retained RCSD graph 的叶子端点只能是 `pair_nodes` 对应的 RCSD semantic nodes。
 - buffer-based RCSDSegment 审查中，required semantic nodes 为 `pair_nodes` relation 与非豁免 `junc_nodes` relation；`junc_kind2_exempt_nodes` 若有 relation，仅作为 optional allowed semantic nodes 审计保留。
 - 额外 T05 mapped semantic nodes 必须按 seed-based pruning 判定为 `inner_nodes / out_nodes`；处于 required corridor 内部的 mapped semantic node 可作为 `inner_nodes` 保留审计；若 retained graph 中仍存在 required / optional allowed 以外且未被判定为 `inner_nodes` 的 mapped semantic node，必须以 `unexpected_mapped_semantic_nodes` 拒绝。
-- `formway` 为 bit mask；提前右转必须按 `formway & 128 != 0` 判断，不得写成 `formway == 128`。提前右转 road 仅在两端均与非提前右转候选 road 存在二度链接关系时保留参与构建。
+- `formway` 为 bit mask；提前右转必须按 `formway & 128 != 0` 判断，不得写成 `formway == 128`。提前右转 road 在两端均与非提前右转候选 road 存在二度链接关系，或属于 required semantic nodes 之间的必要 corridor 时，保留参与构建。
 - `formway & 1024 != 0` 表示 RCSD 调头口；该字段在 T06 中只用于双向 retained corridor 内部调头 road 保留，前提是该 road 两端均已属于 retained corridor node。
 - Step2 路径权重不得只按 road 几何长度选择 required semantic node 之间的最短直连 edge；当 required-to-required edge 明显短于 SWSD Segment 时，必须加惩罚，避免把路口内短连接误当作完整反向 road。
 - Step3 的替换输入必须来自 Step2 replaceable RCSDSegment；Step3 不重新搜索 RCSD Segment，不处理 Step2 rejected Segment。
@@ -475,7 +475,7 @@ Step3 提供独立脚本，消费 Step2 replaceable 成果，不改变 `scripts/
 - `buffer_distance_m`：buffer-based RCSDSegment 审查缓冲距离，默认 `50.0`。
 - `min_buffer_road_overlap_ratio`：RCSDRoad 与 buffer 相交长度占比阈值，默认 `0.2`。
 - `min_buffer_road_overlap_length_m`：RCSDRoad 与 buffer 相交长度下限，默认 `1.0`。
-- `advance_right_formway_bit`：提前右转 bit mask，默认 `128`；命中该 bit 的 road 仅在两端均与非提前右转候选 road 存在二度链接关系时保留。
+- `advance_right_formway_bit`：提前右转 bit mask，默认 `128`；命中该 bit 的 road 在两端均与非提前右转候选 road 存在二度链接关系，或属于 required semantic nodes 之间的必要 corridor 时保留。
 - `max_text_size_bytes`：文本证据包单个 `.txt` 分片体量上限，默认 `250KB`；仅作用于文本包 helper，不影响 Step1 / Step2 业务运行。
 - `rcsd_semantic_node_alias_count`：Step2 summary 审计字段，记录参与 `subnodeid/id -> mainnodeid` 归一化的非恒等 alias 数量。
 - `rcsd_semantic_node_group_count`：Step2 summary 审计字段，记录从 `rcsdnode_path` 识别出的全局 RCSD 语义路口组数量。
@@ -493,7 +493,7 @@ Step3 提供独立脚本，消费 Step2 replaceable 成果，不改变 `scripts/
 7. retained graph 中不得存在 required / optional allowed 以外且未被判定为 required corridor `inner_nodes` 的额外 T05 mapped semantic nodes；出现时必须拒绝并输出 `unexpected_mapped_semantic_node_ids`。
 8. 所有解析、映射、buffer 构建失败都有明确 reason。
 9. 输入文件不被原地修改。
-10. buffer-based RCSDSegment 审查必须按 `formway` bit7/128 识别提前右转 road；二度链接保留和排除结果必须在 summary / 输出中可审计。
+10. buffer-based RCSDSegment 审查必须按 `formway` bit7/128 识别提前右转 road；二度链接保留、required corridor 保留和排除结果必须在 summary / 输出中可审计。
 11. `swsd_directionality=dual` 不能因短 required-to-required connector 通过双向审计；retained corridor 内部 `formway & 1024 != 0` 调头 road 必须保留。
 12. Step3 必须只消费 replaceable Segment，删除被替换 SWSDRoad 与其端点 SWSDNode，保留未替换 SWSD 数据并写 `source=2`，引入 retained RCSD 数据并写 `source=1`。
 13. Step3 必须按 C 聚合重建语义路口关系；若原 main node 被删除，必须重新选择 main node，并让 C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。

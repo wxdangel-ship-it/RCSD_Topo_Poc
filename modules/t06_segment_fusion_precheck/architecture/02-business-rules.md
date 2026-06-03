@@ -26,7 +26,7 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 - buffer-based RCSDSegment 审查以 SWSD Segment 50m buffer 限定 RCSD 候选；RCSDRoad 使用 `intersects + overlap threshold`，RCSDNode 使用 `covers/within`。
 - buffer candidate graph 按 `rcsdnode_out.id/mainnodeid/subnodeid` 归一到 canonical RCSD semantic node id 后再判定连通。
 - 全局 RCSD 语义路口组按有效 `mainnodeid` 聚合，组内所有 node 关联 road 均视为该语义路口的进入 / 退出道路；未映射到当前 Segment 的全局 RCSD 语义路口若进入候选图，必须参与 seed pruning，处于 required corridor 内部时作为 `inner_nodes` 保留，旁支节点归入 `out_nodes` 裁剪。
-- 构建 buffer 候选连通图前，`formway` bit7/128 的提前右转 road 必须识别并输出审计；若该 road 两端均与非提前右转候选 road 形成二度链接，则保留参与 Segment 构建，否则排除。
+- 构建 buffer 候选连通图前，`formway` bit7/128 的提前右转 road 必须识别并输出审计；若该 road 两端均与非提前右转候选 road 形成二度链接，或属于 required semantic nodes 之间的必要 corridor，则保留参与 Segment 构建，否则排除。
 - buffer 审查的 required semantic nodes 为 `pair_nodes` relation 与非豁免 `junc_nodes` relation；`junc_kind2_exempt_nodes` 只作为 optional allowed 审计节点。
 - buffer 候选连通分量不能直接输出为 RCSDSegment；必须先基于 required semantic nodes 构建最小 corridor 子图，避免闭环与旁支被错误保留。
 - 额外 T05 mapped semantic nodes 必须作为 seed group 执行裁剪：required corridor 内部 seed 归为 `inner_nodes` 并可保留审计；触达孤立挂接或 out leaf 且不在 required corridor 内的 seed 归为 `out_nodes` 并从 retained 子图中剔除；retained graph 中仍存在非 inner 的额外 mapped semantic nodes 时，必须以 `unexpected_mapped_semantic_nodes` 拒绝。
@@ -44,7 +44,7 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 
 1. relation mapping filter
 2. SWSD Segment buffer candidate selection
-3. advance-right-turn road classification by `formway & 128 != 0`, with second-degree non-advance-link retention
+3. advance-right-turn road classification by `formway & 128 != 0`, with second-degree non-advance-link retention and required-corridor retention
 4. canonical RCSD semantic node graph construction
 5. required semantic node component coverage
 6. inner / out node pruning

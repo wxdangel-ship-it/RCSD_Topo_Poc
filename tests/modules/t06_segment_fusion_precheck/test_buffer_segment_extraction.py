@@ -79,6 +79,37 @@ def test_buffer_extraction_keeps_advance_right_when_second_degree_linked() -> No
     assert result.excluded_advance_right_turn_road_ids == []
 
 
+def test_buffer_extraction_keeps_advance_right_when_required_corridor_bridge() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("main_a", 10, 30, [(0, 0), (35, 0)], direction=2),
+            _road("advance_a", 30, 40, [(35, 0), (50, 0)], direction=2, formway=128),
+            _road("advance_b", 40, 50, [(50, 0), (65, 0)], direction=2, formway=128),
+            _road("main_b", 50, 20, [(65, 0), (100, 0)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 35, 0),
+            _node(40, 50, 0),
+            _node(50, 65, 0),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {"main_a", "advance_a", "advance_b", "main_b"}
+    assert result.excluded_advance_right_turn_road_ids == []
+
+
 def test_junc_kind2_optional_nodes_are_not_required() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[_road("main", 10, 20, [(0, 0), (100, 0)])],

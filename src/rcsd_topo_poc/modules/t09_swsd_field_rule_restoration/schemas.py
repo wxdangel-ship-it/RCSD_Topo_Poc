@@ -114,6 +114,13 @@ class T09ArmMovement:
     prohibition_status: ProhibitionStatus = ProhibitionStatus.UNKNOWN
     prohibition_reason: ProhibitionReason = ProhibitionReason.INSUFFICIENT_EVIDENCE
     prohibition_confidence: float = 0.0
+    restriction_coverage: str = "unknown"
+    partial_basis: str = "not_applicable"
+    remaining_restriction_status: str = "unknown"
+    arrow_direction_status: str = "no_arrow_evidence"
+    arrow_lane_summary: dict[str, Any] = field(default_factory=dict)
+    advance_left_status: str = "not_applicable"
+    advance_right_status: str = "not_applicable"
     evidence_item_ids: tuple[str, ...] = tuple()
     risk_flags: tuple[str, ...] = tuple()
     carrier_road_pairs: tuple[RoadPair, ...] = tuple()

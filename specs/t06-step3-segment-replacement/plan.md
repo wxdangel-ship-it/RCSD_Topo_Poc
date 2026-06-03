@@ -57,9 +57,11 @@ Step3 输出目录建议：
 - `t06_step3_added_rcsd_roads.csv/json`
 - `t06_step3_added_rcsd_nodes.csv/json`
 - `t06_step3_id_collision_audit.gpkg/csv/json`
+- `t06_step3_swsd_frcsd_segment_relation.gpkg/csv/json`
 - `t06_step3_summary.json`
 
 F-RCSD 主输出文件名固定为 `t06_frcsd_road.* / t06_frcsd_node.*`。
+`t06_step3_swsd_frcsd_segment_relation.*` 是下游关系索引，必须同时覆盖被替换 Segment 与未替换但在 FRCSD 中保留为 `source=2` 的 SWSD Segment。
 
 ## Parameters
 
@@ -92,3 +94,4 @@ F-RCSD 主输出文件名固定为 `t06_frcsd_road.* / t06_frcsd_node.*`。
   - removed / added / retained 数量可解释。
   - `source` 字段完整。
   - C 重建审计与输入 Segment 关系一致。
+  - relation 输出能覆盖 T09 Step3 使用的 SWSD Arm `segment_ids`。

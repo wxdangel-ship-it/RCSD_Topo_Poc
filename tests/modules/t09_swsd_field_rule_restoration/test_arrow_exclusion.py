@@ -29,7 +29,7 @@ def _movement(movement_type: str = "left") -> T09ArmMovement:
     )
 
 
-def test_complete_arrow_exclusion_generates_secondary_prohibition_evidence() -> None:
+def test_complete_arrow_exclusion_records_non_prohibition_evidence() -> None:
     result = evaluate_complete_arrow_exclusion(
         _movement("left"),
         (
@@ -41,10 +41,14 @@ def test_complete_arrow_exclusion_generates_secondary_prohibition_evidence() -> 
         ),
     )
 
-    assert result.prohibition_status == ProhibitionStatus.FULLY_PROHIBITED
-    assert result.prohibition_reason == ProhibitionReason.COMPLETE_ARROW_EXCLUSION
+    assert result.prohibition_status == ProhibitionStatus.NO_PROHIBITION_EVIDENCE
+    assert result.prohibition_reason == ProhibitionReason.INSUFFICIENT_EVIDENCE
+    assert result.arrow_direction_status == "excludes_movement"
+    assert result.arrow_lane_summary["excluding_lane_count"] == 2
+    assert result.arrow_lane_summary["supporting_lane_count"] == 0
     assert result.evidence_items[0].evidence_type == EvidenceType.COMPLETE_ARROW_EXCLUSION
-    assert result.evidence_items[0].supports_prohibition is True
+    assert result.evidence_items[0].evidence_status == "arrow_excludes_movement"
+    assert result.evidence_items[0].supports_prohibition is False
 
 
 @pytest.mark.parametrize("code", ("9", "o"))
@@ -62,6 +66,8 @@ def test_uninvestigated_or_empty_arrow_does_not_generate_strong_prohibition(code
 
     assert result.prohibition_status == ProhibitionStatus.UNKNOWN
     assert result.prohibition_reason == ProhibitionReason.INSUFFICIENT_EVIDENCE
+    assert result.arrow_direction_status == "has_empty_or_uninvestigated_lane"
+    assert result.arrow_lane_summary["lane_count"] == 1
     assert result.evidence_items[0].evidence_type == EvidenceType.ARROW
     assert result.evidence_items[0].supports_prohibition is False
 
@@ -80,6 +86,8 @@ def test_incomplete_arrow_sequence_is_ambiguous_not_prohibition() -> None:
     )
 
     assert result.prohibition_status == ProhibitionStatus.UNKNOWN
+    assert result.arrow_direction_status == "incomplete_or_unknown"
+    assert result.arrow_lane_summary["incomplete_sequence_count"] == 1
     assert result.evidence_items[0].evidence_status == "arrow_incomplete_for_prohibition"
     assert result.evidence_items[0].supports_prohibition is False
 
@@ -98,6 +106,8 @@ def test_arrow_supporting_movement_blocks_arrow_exclusion() -> None:
 
     assert result.prohibition_status == ProhibitionStatus.NO_PROHIBITION_EVIDENCE
     assert result.arrow_supports_movement is True
+    assert result.arrow_direction_status == "supports_movement"
+    assert result.arrow_lane_summary["supporting_lane_count"] == 1
     assert result.evidence_items[0].evidence_status == "arrow_supports_movement"
 
 
@@ -134,9 +144,11 @@ def test_arrow_geometry_maps_raw_sw_link_to_swsd_approach_road() -> None:
         },
     )
 
-    assert result.prohibition_status == ProhibitionStatus.FULLY_PROHIBITED
+    assert result.prohibition_status == ProhibitionStatus.NO_PROHIBITION_EVIDENCE
+    assert result.arrow_direction_status == "excludes_movement"
     evidence = result.evidence_items[0]
-    assert evidence.evidence_status == "prohibited_by_complete_arrow_exclusion"
+    assert evidence.evidence_status == "arrow_excludes_movement"
+    assert evidence.supports_prohibition is False
     assert evidence.provenance.source_id == "arrow_raw"
     match_audit = evidence.provenance.field_audit["approach_road_matches"]["swsd_in_w"]
     assert match_audit["raw_arrow_linkid"] == "raw_in_w"
@@ -155,5 +167,8 @@ def test_uppercase_straight_arrow_code_is_normalized_before_exclusion() -> None:
         ),
     )
 
-    assert result.prohibition_status == ProhibitionStatus.FULLY_PROHIBITED
-    assert result.evidence_items[0].evidence_status == "prohibited_by_complete_arrow_exclusion"
+    assert result.prohibition_status == ProhibitionStatus.NO_PROHIBITION_EVIDENCE
+    assert result.arrow_direction_status == "excludes_movement"
+    assert result.arrow_lane_summary["raw_arrow_sequences"] == ("A,c",)
+    assert result.evidence_items[0].evidence_status == "arrow_excludes_movement"
+    assert result.evidence_items[0].supports_prohibition is False

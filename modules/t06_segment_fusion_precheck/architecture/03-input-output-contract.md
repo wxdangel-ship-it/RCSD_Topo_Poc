@@ -31,6 +31,7 @@
 - `t06_step2_summary.json`
 
 `t06_rcsd_buffer_segments` 是 Step2 正式主成果；`t06_rcsd_segment_candidates` 与 `t06_rcsd_segment_replaceable` 为兼容输出，均由 buffer 成功结果派生，不再表示 pair-to-pair BFS 路径候选。
+`t06_step2_summary.json` 必须记录 RCSDRoad 覆盖统计：全量 RCSDRoad 去重数量 / 长度、最终可替换 Segment 引用的去重 RCSDRoad 数量 / 长度、按引用次数累计的 RCSDRoad 数量 / 长度，以及 replaceable 引用缺失数量。
 
 ## Step3 输出
 
@@ -45,16 +46,46 @@ Step3 输出目录：
 - `t06_frcsd_road.gpkg/csv/json`
 - `t06_frcsd_node.gpkg/csv/json`
 - `t06_step3_replacement_units.gpkg/csv/json`
+- `t06_step3_swsd_frcsd_segment_relation.gpkg/csv/json`
 - `t06_step3_junction_rebuild_audit.gpkg/csv/json`
 - `t06_step3_removed_swsd_roads.csv/json`
 - `t06_step3_removed_swsd_nodes.csv/json`
 - `t06_step3_added_rcsd_roads.csv/json`
 - `t06_step3_added_rcsd_nodes.csv/json`
+- `t06_step3_unreplaced_rcsd_roads.gpkg/csv/json`
 - `t06_step3_id_collision_audit.gpkg/csv/json`
 - `t06_step3_summary.json`
 
 F-RCSD Road / Node 必须包含 `source` 字段：RCSD 来源为 `1`，SWSD 来源为 `2`。
 F-RCSD Road / Node 原始 `id` 冲突不作为拒绝条件，必须写入 `t06_step3_id_collision_audit.*`。
+`t06_step3_unreplaced_rcsd_roads` 保留未进入 replaceable 替换结果的原始 RCSDRoad 几何与属性，并增加未替换状态、审计原因、source 与长度字段，作为 RCSD 视角的遗漏审计结果。
+
+`t06_step3_swsd_frcsd_segment_relation` 是面向下游 T09 的稳定关系证据，用于表达每个 SWSD Segment 在 F-RCSD 中的承载结果，而不是表达 Road 级限制结论。关系状态包括：
+
+- `replaced`：该 SWSD Segment 已由 RCSD corridor 替换，`frcsd_road_ids` 必须指向 `t06_frcsd_road` 中 `source=1` 的 Road。
+- `retained_swsd`：该 SWSD Segment 未被替换，仍由原 SWSD Road 承载，`frcsd_road_ids` 必须指向 `t06_frcsd_road` 中 `source=2` 的 Road。
+- `failed`：该 SWSD Segment 无法建立稳定 F-RCSD 承载关系，必须在 `relation_reason / risk_flags` 中说明原因。
+
+关系输出至少包含：
+
+- `swsd_segment_id`
+- `relation_status`
+- `relation_reason`
+- `swsd_pair_nodes`
+- `swsd_junc_nodes`
+- `junc_kind2_exempt_nodes`
+- `swsd_road_ids`
+- `removed_swsd_road_ids`
+- `frcsd_road_ids`
+- `frcsd_road_source_values`
+- `rcsd_pair_nodes`
+- `rcsd_junc_nodes`
+- `junction_c_ids`
+- `swsd_to_frcsd_node_map`
+- `source_mix`
+- `risk_flags`
+
+下游不得根据同名 Road ID 假设 SWSD 与 F-RCSD 已匹配；必须使用本关系输出中的 `swsd_segment_id + relation_status + frcsd_road_ids + swsd_to_frcsd_node_map` 建立 Arm 级承载关系。
 
 ## 文本证据包 helper 输出
 
@@ -103,7 +134,7 @@ T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增
 - 语义节点裁剪可解释性：额外 T05 mapped semantic nodes 必须按 seed-based pruning 输出 `inner_node_ids / out_node_ids`，并在剔除 out 分支后重新校验 required semantic node 连通性；处于 required corridor 内部的额外 mapped semantic node 可作为 `inner_nodes` 保留审计，非 inner 且仍进入 retained graph 时输出 `unexpected_mapped_semantic_node_ids` 并拒绝；retained graph 叶子端点必须限定为 pair 对应 RCSD semantic nodes，非 pair 叶子端点输出 `unexpected_endpoint_node_ids` 并拒绝。
 - 几何语义可解释性：SWSD 几何用于 buffer 窗口，RCSD 几何用于 `intersects + overlap threshold` 候选筛选与最终输出，不替代 relation / required semantic node 规则。
 - 审计可追溯性：summary 记录输入路径、参数、计数、失败原因与输出路径。
-- Step3 审计可追溯性：summary 必须记录 replaceable Segment 数量、删除 SWSDRoad / SWSDNode 数量、加入 RCSDRoad / RCSDNode 数量、重建 C 数量、main node 重选数量与失败原因。
+- Step3 审计可追溯性：summary 必须记录 replaceable Segment 数量、删除 SWSDRoad / SWSDNode 数量、加入 RCSDRoad / RCSDNode 数量、未替换 RCSDRoad 数量 / 长度、重建 C 数量、main node 重选数量与失败原因。
 - 文本证据包审计可追溯性：bundle 内必须保留输入路径、解析结果、文件大小、SHA256、参数与复跑命令。
 - 性能可验证性：summary 记录输入规模、candidate 数、replaceable 数和 reject reason 统计。
 - 语义节点归一化可追溯性：Step2 summary 记录 `rcsd_semantic_node_alias_count`，并在 `retained_node_ids` 等输出中使用 canonical RCSD semantic node id。

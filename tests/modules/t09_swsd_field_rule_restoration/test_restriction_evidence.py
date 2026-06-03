@@ -45,6 +45,9 @@ def test_restriction_pair_match_generates_explicit_prohibition_evidence() -> Non
     assert result.prohibition_status == ProhibitionStatus.FULLY_PROHIBITED
     assert result.prohibition_reason == ProhibitionReason.EXPLICIT_RESTRICTION
     assert result.confidence == 1.0
+    assert result.restriction_coverage == "all_restricted"
+    assert result.partial_basis == "not_applicable"
+    assert result.remaining_restriction_status == "not_applicable"
     assert len(result.evidence_items) == 1
     assert result.evidence_items[0].evidence_type == EvidenceType.RESTRICTION
     assert result.evidence_items[0].supports_prohibition is True
@@ -72,6 +75,9 @@ def test_single_restriction_does_not_expand_to_full_multi_pair_movement() -> Non
     )
 
     assert result.prohibition_status == ProhibitionStatus.PARTIALLY_PROHIBITED
+    assert result.restriction_coverage == "partial_restricted"
+    assert result.partial_basis == "exit_arm_subset"
+    assert result.remaining_restriction_status == "no_restriction_evidence"
     assert result.confidence == 0.9
     assert tuple(item.road_pair for item in result.evidence_items) == (
         RoadPair("in_1", "out_1"),
@@ -162,4 +168,7 @@ def test_restriction_geometry_rejects_adjacent_junction_on_same_corridor() -> No
     )
 
     assert result.prohibition_status == ProhibitionStatus.NO_PROHIBITION_EVIDENCE
+    assert result.restriction_coverage == "no_restriction_evidence"
+    assert result.partial_basis == "not_applicable"
+    assert result.remaining_restriction_status == "no_restriction_evidence"
     assert result.evidence_items == tuple()

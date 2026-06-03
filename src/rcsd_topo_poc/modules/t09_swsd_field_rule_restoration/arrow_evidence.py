@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from shapely.geometry.base import BaseGeometry
 
@@ -46,6 +46,8 @@ class ArrowEvaluationResult:
     prohibition_reason: ProhibitionReason
     confidence: float
     arrow_supports_movement: bool = False
+    arrow_direction_status: str = "no_arrow_evidence"
+    arrow_lane_summary: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -96,9 +98,11 @@ def evaluate_complete_arrow_exclusion(
         road_geometries=road_geometries,
         arms_by_id=arms_by_id,
     )
+    movement_type = movement.movement_type.strip().lower()
+    arrow_lane_summary = _arrow_lane_summary(movement_type=movement_type, matched_arrows=matched_arrows)
+    arrow_direction_status = _arrow_direction_status(arrow_lane_summary)
     field_audit = _arrow_field_audit(matched_arrows)
     source_id = _arrow_source_id(matched_arrows, fallback=approach_road_ids)
-    movement_type = movement.movement_type.strip().lower()
     if movement_type not in SUPPORTED_ARROW_MOVEMENT_TYPES:
         return ArrowEvaluationResult(
             evidence_items=(
@@ -117,6 +121,8 @@ def evaluate_complete_arrow_exclusion(
             prohibition_status=ProhibitionStatus.UNKNOWN,
             prohibition_reason=ProhibitionReason.INSUFFICIENT_EVIDENCE,
             confidence=0.0,
+            arrow_direction_status=arrow_direction_status,
+            arrow_lane_summary=arrow_lane_summary,
         )
     incomplete_reasons: list[str] = []
     any_lane_supports_movement = False
@@ -163,6 +169,8 @@ def evaluate_complete_arrow_exclusion(
             prohibition_status=ProhibitionStatus.UNKNOWN,
             prohibition_reason=ProhibitionReason.INSUFFICIENT_EVIDENCE,
             confidence=0.0,
+            arrow_direction_status=arrow_direction_status,
+            arrow_lane_summary=arrow_lane_summary,
         )
     if any_lane_supports_movement:
         return ArrowEvaluationResult(
@@ -183,6 +191,8 @@ def evaluate_complete_arrow_exclusion(
             prohibition_reason=ProhibitionReason.INSUFFICIENT_EVIDENCE,
             confidence=0.0,
             arrow_supports_movement=True,
+            arrow_direction_status=arrow_direction_status,
+            arrow_lane_summary=arrow_lane_summary,
         )
     prohibition_confidence = min(0.75, min((item.confidence for item in matched_arrows.values()), default=0.75))
     return ArrowEvaluationResult(
@@ -190,18 +200,21 @@ def evaluate_complete_arrow_exclusion(
             _arrow_evidence(
                 movement,
                 evidence_id=f"{evidence_prefix}:{movement.movement_id}:exclusion",
-                evidence_status="prohibited_by_complete_arrow_exclusion",
+                evidence_status="arrow_excludes_movement",
                 source_id=source_id,
                 reason="complete arrow sequence excludes movement type",
-                supports_prohibition=True,
+                supports_prohibition=False,
                 confidence=prohibition_confidence,
+                evidence_type=EvidenceType.COMPLETE_ARROW_EXCLUSION,
                 field_audit=field_audit,
                 matched_object_ids=(movement.movement_id, *approach_road_ids),
             ),
         ),
-        prohibition_status=ProhibitionStatus.FULLY_PROHIBITED,
-        prohibition_reason=ProhibitionReason.COMPLETE_ARROW_EXCLUSION,
-        confidence=prohibition_confidence,
+        prohibition_status=ProhibitionStatus.NO_PROHIBITION_EVIDENCE,
+        prohibition_reason=ProhibitionReason.INSUFFICIENT_EVIDENCE,
+        confidence=0.0,
+        arrow_direction_status=arrow_direction_status,
+        arrow_lane_summary=arrow_lane_summary,
     )
 
 
@@ -214,12 +227,25 @@ def _arrow_evidence(
     reason: str,
     supports_prohibition: bool,
     confidence: float,
+    evidence_type: EvidenceType | None = None,
     field_audit: dict[str, object] | None = None,
     matched_object_ids: tuple[str, ...] | None = None,
 ) -> T09EvidenceItem:
+    resolved_evidence_type = evidence_type or (
+        EvidenceType.COMPLETE_ARROW_EXCLUSION if supports_prohibition else EvidenceType.ARROW
+    )
+    inference_level = (
+        InferenceLevel.DERIVED
+        if supports_prohibition
+        else (
+            InferenceLevel.WEAK_DERIVED
+            if resolved_evidence_type == EvidenceType.COMPLETE_ARROW_EXCLUSION
+            else InferenceLevel.UNKNOWN
+        )
+    )
     return T09EvidenceItem(
         evidence_id=evidence_id,
-        evidence_type=EvidenceType.COMPLETE_ARROW_EXCLUSION if supports_prohibition else EvidenceType.ARROW,
+        evidence_type=resolved_evidence_type,
         junction_id=movement.junction_id,
         movement_id=movement.movement_id,
         road_pair=None,
@@ -229,7 +255,7 @@ def _arrow_evidence(
             if supports_prohibition
             else ProhibitionReason.INSUFFICIENT_EVIDENCE
         ),
-        inference_level=InferenceLevel.DERIVED if supports_prohibition else InferenceLevel.UNKNOWN,
+        inference_level=inference_level,
         confidence=confidence,
         provenance=EvidenceProvenance(
             source_type="arrow",
@@ -360,6 +386,71 @@ def _arrow_field_audit(matched_arrows: dict[str, _MatchedArrow]) -> dict[str, ob
             road_id: matched_arrow.audit() for road_id, matched_arrow in sorted(matched_arrows.items())
         }
     }
+
+
+def _arrow_lane_summary(*, movement_type: str, matched_arrows: dict[str, _MatchedArrow]) -> dict[str, object]:
+    movement_type_supported = movement_type in SUPPORTED_ARROW_MOVEMENT_TYPES
+    unique_arrows: dict[str, ArrowInput] = {}
+    for matched_arrow in matched_arrows.values():
+        unique_arrows.setdefault(matched_arrow.arrow.arrow_id, matched_arrow.arrow)
+
+    summary: dict[str, object] = {
+        "matched_approach_road_count": len(matched_arrows),
+        "matched_arrow_count": len(unique_arrows),
+        "lane_count": 0,
+        "supporting_lane_count": 0,
+        "excluding_lane_count": 0,
+        "empty_lane_count": 0,
+        "uninvestigated_lane_count": 0,
+        "unknown_code_count": 0,
+        "direction_mismatch_count": 0,
+        "incomplete_sequence_count": 0,
+        "movement_type_supported": movement_type_supported,
+        "matched_arrow_ids": tuple(sorted(unique_arrows)),
+        "raw_arrow_sequences": tuple(",".join(arrow.lane_codes) for arrow in unique_arrows.values()),
+    }
+    for arrow in unique_arrows.values():
+        if not arrow.direction_matched:
+            summary["direction_mismatch_count"] = int(summary["direction_mismatch_count"]) + 1
+        if not arrow.lane_sequence_complete:
+            summary["incomplete_sequence_count"] = int(summary["incomplete_sequence_count"]) + 1
+        for code in arrow.lane_codes:
+            summary["lane_count"] = int(summary["lane_count"]) + 1
+            try:
+                parsed = parse_arrow_code(code)
+            except ValueError:
+                summary["unknown_code_count"] = int(summary["unknown_code_count"]) + 1
+                continue
+            if "empty" in parsed.tokens:
+                summary["empty_lane_count"] = int(summary["empty_lane_count"]) + 1
+            if "uninvestigated" in parsed.tokens:
+                summary["uninvestigated_lane_count"] = int(summary["uninvestigated_lane_count"]) + 1
+            if not parsed.usable_for_prohibition or not movement_type_supported:
+                continue
+            if arrow_tokens_support_movement(parsed.tokens, movement_type):
+                summary["supporting_lane_count"] = int(summary["supporting_lane_count"]) + 1
+            else:
+                summary["excluding_lane_count"] = int(summary["excluding_lane_count"]) + 1
+    return summary
+
+
+def _arrow_direction_status(summary: dict[str, object]) -> str:
+    if int(summary["matched_arrow_count"]) == 0:
+        return "no_arrow_evidence"
+    if (
+        not bool(summary["movement_type_supported"])
+        or int(summary["direction_mismatch_count"]) > 0
+        or int(summary["incomplete_sequence_count"]) > 0
+        or int(summary["unknown_code_count"]) > 0
+    ):
+        return "incomplete_or_unknown"
+    if int(summary["empty_lane_count"]) > 0 or int(summary["uninvestigated_lane_count"]) > 0:
+        return "has_empty_or_uninvestigated_lane"
+    if int(summary["supporting_lane_count"]) > 0:
+        return "supports_movement"
+    if int(summary["excluding_lane_count"]) > 0 and int(summary["lane_count"]) > 0:
+        return "excludes_movement"
+    return "incomplete_or_unknown"
 
 
 def _arrow_source_id(matched_arrows: dict[str, _MatchedArrow], *, fallback: tuple[str, ...]) -> str:

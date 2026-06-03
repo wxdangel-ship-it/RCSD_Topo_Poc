@@ -37,6 +37,8 @@
 - [x] Add Step3 summary and audit outputs.
 - [x] Wire Step3 callable runner.
 - [x] Preserve Step1 / Step2 compatibility.
+- [x] Add `t06_step3_swsd_frcsd_segment_relation.gpkg/csv/json` for downstream T09 Step3.
+- [x] Add relation summary counts for `replaced / retained_swsd / failed`.
 
 ## Test
 
@@ -47,7 +49,9 @@
 - [x] Add unit tests for original mainnode retained.
 - [x] Add unit tests for original mainnode removed and new mainnode selected.
 - [x] Add unit tests for inherited `kind / grade / kind_2 / grade_2 / closed_con`.
-- [ ] Run T06 pytest suite.
+- [x] Add unit tests for replaced Segment relation output.
+- [x] Add unit tests for retained_swsd Segment relation output.
+- [x] Run T06 pytest suite.
 
 ## QA
 
@@ -56,4 +60,6 @@
 - [x] Verify no input file is modified.
 - [x] Verify F-RCSD output has complete `source` values.
 - [x] Verify replacement counts and output counts are reproducible from summary.
+- [x] Verify relation output can locate FRCSD roads by `id + source`.
+- [x] Verify XS1 relation output covers T09 Step3 Arm segment inputs.
 - [x] Verify entrypoint registry remains consistent if any script behavior changes.

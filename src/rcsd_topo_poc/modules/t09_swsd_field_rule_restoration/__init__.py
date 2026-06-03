@@ -5,6 +5,11 @@ from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.arrow_codes import (
     parse_arrow_sequence,
 )
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.arm_builder import build_swsd_arms
+from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.frcsd_restriction import (
+    T09FrcsdRestrictionArtifacts,
+    T09FrcsdRestrictionRunResult,
+    run_t09_frcsd_restriction_modeling,
+)
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.io import (
     T09LoadedInputs,
     load_t09_inputs,
@@ -60,6 +65,8 @@ __all__ = [
     "SWSDSegmentInput",
     "SWSDRoadInput",
     "T09ArmMovement",
+    "T09FrcsdRestrictionArtifacts",
+    "T09FrcsdRestrictionRunResult",
     "T09EvidenceItem",
     "T09LoadedInputs",
     "T09OutputArtifacts",
@@ -78,6 +85,7 @@ __all__ = [
     "restore_field_rules",
     "run_t09_decode_text_bundle",
     "run_t09_export_step3_input_text_bundle",
+    "run_t09_frcsd_restriction_modeling",
     "run_t09_swsd_field_rule_restoration",
     "to_jsonable",
 ]

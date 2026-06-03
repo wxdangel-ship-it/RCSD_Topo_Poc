@@ -42,6 +42,7 @@ T09_LOCAL_TESTCASE_PY_NAME = "test_t09_decoded_bundle.py"
 T06_STEP3_FRCSD_ROAD_NAME = "t06_frcsd_road.gpkg"
 T06_STEP3_FRCSD_NODE_NAME = "t06_frcsd_node.gpkg"
 T06_STEP3_REPLACEMENT_UNITS_NAME = "t06_step3_replacement_units.gpkg"
+T06_STEP3_SEGMENT_RELATION_NAME = "t06_step3_swsd_frcsd_segment_relation.gpkg"
 T06_STEP3_JUNCTION_REBUILD_AUDIT_NAME = "t06_step3_junction_rebuild_audit.gpkg"
 T06_STEP3_ID_COLLISION_AUDIT_NAME = "t06_step3_id_collision_audit.gpkg"
 T06_STEP3_SUMMARY_NAME = "t06_step3_summary.json"
@@ -87,6 +88,7 @@ def run_t09_export_step3_input_text_bundle(
     arrow_path: str | Path | None = None,
     t06_step3_root: str | Path | None = None,
     replacement_units_path: str | Path | None = None,
+    segment_relation_path: str | Path | None = None,
     junction_rebuild_audit_path: str | Path | None = None,
     id_collision_audit_path: str | Path | None = None,
     step3_summary_path: str | Path | None = None,
@@ -104,6 +106,7 @@ def run_t09_export_step3_input_text_bundle(
     frcsd_road_layer: str | None = None,
     frcsd_node_layer: str | None = None,
     replacement_units_layer: str | None = None,
+    segment_relation_layer: str | None = None,
     junction_rebuild_audit_layer: str | None = None,
     id_collision_audit_layer: str | None = None,
     target_epsg: int = 3857,
@@ -134,6 +137,11 @@ def run_t09_export_step3_input_text_bundle(
                 explicit_path=replacement_units_path,
                 t06_step3_root=t06_root,
                 filename=T06_STEP3_REPLACEMENT_UNITS_NAME,
+            ),
+            "segment_relation_path": _resolve_optional_step3_file(
+                explicit_path=segment_relation_path,
+                t06_step3_root=t06_root,
+                filename=T06_STEP3_SEGMENT_RELATION_NAME,
             ),
             "junction_rebuild_audit_path": _resolve_optional_step3_file(
                 explicit_path=junction_rebuild_audit_path,
@@ -166,6 +174,7 @@ def run_t09_export_step3_input_text_bundle(
             frcsd_road_path=resolved_frcsd_road,
             frcsd_node_path=resolved_frcsd_node,
             replacement_units_path=optional_paths["replacement_units_path"],
+            segment_relation_path=optional_paths["segment_relation_path"],
             junction_rebuild_audit_path=optional_paths["junction_rebuild_audit_path"],
             id_collision_audit_path=optional_paths["id_collision_audit_path"],
             center_x=center_x,
@@ -180,6 +189,7 @@ def run_t09_export_step3_input_text_bundle(
             frcsd_road_layer=frcsd_road_layer,
             frcsd_node_layer=frcsd_node_layer,
             replacement_units_layer=replacement_units_layer,
+            segment_relation_layer=segment_relation_layer,
             junction_rebuild_audit_layer=junction_rebuild_audit_layer,
             id_collision_audit_layer=id_collision_audit_layer,
             target_epsg=target_epsg,
@@ -272,6 +282,7 @@ def _select_t09_step3_input_slice(
     frcsd_road_path: Path,
     frcsd_node_path: Path,
     replacement_units_path: Path | None,
+    segment_relation_path: Path | None,
     junction_rebuild_audit_path: Path | None,
     id_collision_audit_path: Path | None,
     center_x: float,
@@ -286,6 +297,7 @@ def _select_t09_step3_input_slice(
     frcsd_road_layer: str | None,
     frcsd_node_layer: str | None,
     replacement_units_layer: str | None,
+    segment_relation_layer: str | None,
     junction_rebuild_audit_layer: str | None,
     id_collision_audit_layer: str | None,
     target_epsg: int,
@@ -383,6 +395,11 @@ def _select_t09_step3_input_slice(
             replacement_units_layer,
             "t06_step3_replacement_units",
         ),
+        "slice/t06_step3/t06_step3_swsd_frcsd_segment_relation.geojson": (
+            segment_relation_path,
+            segment_relation_layer,
+            "t06_step3_swsd_frcsd_segment_relation",
+        ),
         "slice/t06_step3/t06_step3_junction_rebuild_audit.geojson": (
             junction_rebuild_audit_path,
             junction_rebuild_audit_layer,
@@ -445,6 +462,7 @@ def _select_t09_step3_input_slice(
             "frcsd_road_path": str(frcsd_road_path),
             "frcsd_node_path": str(frcsd_node_path),
             "replacement_units_path": str(replacement_units_path) if replacement_units_path is not None else None,
+            "segment_relation_path": str(segment_relation_path) if segment_relation_path is not None else None,
             "junction_rebuild_audit_path": (
                 str(junction_rebuild_audit_path) if junction_rebuild_audit_path is not None else None
             ),
@@ -811,7 +829,10 @@ def _local_testcase_py_bytes() -> bytes:
 import json
 from pathlib import Path
 
-from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration import run_t09_swsd_field_rule_restoration
+from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration import (
+    run_t09_frcsd_restriction_modeling,
+    run_t09_swsd_field_rule_restoration,
+)
 
 
 def _decoded_root() -> Path:
@@ -854,6 +875,24 @@ def test_t09_decoded_bundle_runs_current_module(tmp_path: Path) -> None:
     assert result.artifacts.summary_json.is_file()
     assert result.result.summary["qa"]["topology_silent_fix"] is False
     assert result.result.summary["input_audit"]["nodes"]["kind_2_4_junction_count"] >= 1
+
+    step3_inputs = testcase_manifest.get("recommended_t09_step3_inputs") or {{}}
+    frcsd_road_path = _optional_path(root, step3_inputs.get("frcsd_road_path"))
+    frcsd_node_path = _optional_path(root, step3_inputs.get("frcsd_node_path"))
+    segment_relation_path = _optional_path(root, step3_inputs.get("segment_relation_path"))
+    if frcsd_road_path and frcsd_node_path and segment_relation_path:
+        step3 = run_t09_frcsd_restriction_modeling(
+            arms_path=result.artifacts.arms_json,
+            movements_path=result.artifacts.movements_json,
+            restored_rules_path=result.artifacts.rules_json,
+            frcsd_road_path=frcsd_road_path,
+            frcsd_node_path=frcsd_node_path,
+            segment_relation_path=segment_relation_path,
+            output_dir=tmp_path / "t09_step3_output",
+            run_id="decoded_bundle_step3",
+        )
+        assert step3.artifacts.summary_json.is_file()
+        assert step3.summary["qa"]["topology_silent_fix"] is False
 '''.encode("utf-8")
 
 
@@ -872,6 +911,7 @@ def _local_testcase_manifest(
         "restriction_tool7": "slice/t08_tool7/sw_restriction_tool7.geojson",
         "arrow_tool8": "slice/t08_tool8/sw_arrow_tool8.geojson",
         "t06_step3_replacement_units": "slice/t06_step3/t06_step3_replacement_units.geojson",
+        "t06_step3_swsd_frcsd_segment_relation": "slice/t06_step3/t06_step3_swsd_frcsd_segment_relation.geojson",
         "t06_step3_junction_rebuild_audit": "slice/t06_step3/t06_step3_junction_rebuild_audit.geojson",
         "t06_step3_id_collision_audit": "slice/t06_step3/t06_step3_id_collision_audit.geojson",
         "t06_step3_summary": "reference/t06_step3/t06_step3_summary.json",
@@ -908,6 +948,7 @@ def _local_testcase_manifest(
         "recommended_t09_step3_inputs": {
             "frcsd_road_path": existing_fixture_paths.get("frcsd_road"),
             "frcsd_node_path": existing_fixture_paths.get("frcsd_node"),
+            "segment_relation_path": existing_fixture_paths.get("t06_step3_swsd_frcsd_segment_relation"),
             "t06_step3_replacement_units_path": existing_fixture_paths.get("t06_step3_replacement_units"),
             "t06_step3_junction_rebuild_audit_path": existing_fixture_paths.get("t06_step3_junction_rebuild_audit"),
             "t06_step3_id_collision_audit_path": existing_fixture_paths.get("t06_step3_id_collision_audit"),

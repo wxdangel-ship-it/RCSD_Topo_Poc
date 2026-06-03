@@ -7,7 +7,7 @@ from typing import Any
 from .buffer_segment_extraction import BufferExtractionConfig, BufferSegmentExtractor, BufferSegmentResult
 from .graph_builders import NodeCanonicalizer
 from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
-from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list
+from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
 from .relation_mapping import RelationRecord, accepted_base_ids, build_relation_map, check_segment_relations
 from .schemas import (
     STEP2_CANDIDATE_FIELDS,
@@ -161,6 +161,7 @@ def run_t06_step2_extract_rcsd_segments(
     rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REJECTED_STEM, features=rejected_rows, fieldnames=STEP2_REJECTED_FIELDS)
     buffer_segment_paths = write_feature_triplet(step_root=step_root, stem=STEP2_BUFFER_SEGMENTS_STEM, features=buffer_segment_rows, fieldnames=STEP2_BUFFER_SEGMENT_FIELDS)
     buffer_rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_BUFFER_REJECTED_STEM, features=buffer_rejected_rows, fieldnames=STEP2_BUFFER_REJECTED_FIELDS)
+    rcsd_road_stats = _rcsd_road_coverage_stats(rcsd_roads=rcsd_roads, replaceable_rows=replaceable_rows)
     summary_path = step_root / STEP2_SUMMARY
     write_json(
         summary_path,
@@ -207,6 +208,7 @@ def run_t06_step2_extract_rcsd_segments(
             "buffer_excluded_advance_right_turn_road_count_total": sum(
                 len(item["properties"].get("excluded_advance_right_turn_road_ids") or []) for item in buffer_segment_rows + buffer_rejected_rows
             ),
+            **rcsd_road_stats,
             "rcsd_semantic_node_alias_count": sum(1 for raw_id, canonical_id in rcsd_node_canonicalizer.aliases.items() if raw_id != canonical_id),
             "rcsd_semantic_node_group_count": len(rcsd_node_canonicalizer.semantic_node_ids),
             "outputs": {
@@ -236,6 +238,45 @@ def _segment_index(features: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         except ParseError:
             continue
     return result
+
+
+def _rcsd_road_coverage_stats(*, rcsd_roads: list[dict[str, Any]], replaceable_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    rcsd_road_by_id = _segment_index(rcsd_roads)
+    replaceable_reference_ids: list[str] = []
+    for row in replaceable_rows:
+        props = dict(row.get("properties") or {})
+        try:
+            replaceable_reference_ids.extend(parse_id_list(props.get("rcsd_road_ids"), allow_empty=True))
+        except ParseError:
+            continue
+    replaceable_unique_ids = unique_preserve_order(
+        road_id for road_id in replaceable_reference_ids if road_id in rcsd_road_by_id
+    )
+    return {
+        "rcsd_road_total_count": len(rcsd_road_by_id),
+        "rcsd_road_total_length_m": _round_length(sum(_feature_length(feature) for feature in rcsd_road_by_id.values())),
+        "replaceable_rcsd_road_unique_count": len(replaceable_unique_ids),
+        "replaceable_rcsd_road_unique_length_m": _round_length(
+            sum(_feature_length(rcsd_road_by_id[road_id]) for road_id in replaceable_unique_ids)
+        ),
+        "replaceable_rcsd_road_reference_count": len(replaceable_reference_ids),
+        "replaceable_rcsd_road_reference_length_m": _round_length(
+            sum(_feature_length(rcsd_road_by_id[road_id]) for road_id in replaceable_reference_ids if road_id in rcsd_road_by_id)
+        ),
+        "replaceable_rcsd_road_missing_count": sum(1 for road_id in replaceable_reference_ids if road_id not in rcsd_road_by_id),
+        "rcsd_road_coverage_stats_basis": "unique_count_and_length_from_final_replaceable_rcsd_road_ids",
+    }
+
+
+def _feature_length(feature: dict[str, Any]) -> float:
+    geometry = feature.get("geometry")
+    if geometry is None or getattr(geometry, "is_empty", False):
+        return 0.0
+    return float(getattr(geometry, "length", 0.0) or 0.0)
+
+
+def _round_length(value: float) -> float:
+    return round(float(value), 3)
 
 
 def _parse_unit_lists(props: dict[str, Any], segment_props: dict[str, Any]) -> tuple[list[str], list[str], list[str], list[str], str | None]:

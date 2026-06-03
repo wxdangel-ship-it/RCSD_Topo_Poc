@@ -29,11 +29,13 @@ STEP2_SUMMARY = "t06_step2_summary.json"
 STEP3_FRCSD_ROAD_STEM = "t06_frcsd_road"
 STEP3_FRCSD_NODE_STEM = "t06_frcsd_node"
 STEP3_REPLACEMENT_UNITS_STEM = "t06_step3_replacement_units"
+STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM = "t06_step3_swsd_frcsd_segment_relation"
 STEP3_JUNCTION_REBUILD_AUDIT_STEM = "t06_step3_junction_rebuild_audit"
 STEP3_REMOVED_SWSD_ROADS_STEM = "t06_step3_removed_swsd_roads"
 STEP3_REMOVED_SWSD_NODES_STEM = "t06_step3_removed_swsd_nodes"
 STEP3_ADDED_RCSD_ROADS_STEM = "t06_step3_added_rcsd_roads"
 STEP3_ADDED_RCSD_NODES_STEM = "t06_step3_added_rcsd_nodes"
+STEP3_UNREPLACED_RCSD_ROADS_STEM = "t06_step3_unreplaced_rcsd_roads"
 STEP3_ID_COLLISION_AUDIT_STEM = "t06_step3_id_collision_audit"
 STEP3_SUMMARY = "t06_step3_summary.json"
 
@@ -201,6 +203,25 @@ STEP3_REPLACEMENT_UNIT_FIELDS = [
     "junction_c_ids",
 ]
 
+STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS = [
+    "swsd_segment_id",
+    "relation_status",
+    "relation_reason",
+    "swsd_pair_nodes",
+    "swsd_junc_nodes",
+    "junc_kind2_exempt_nodes",
+    "swsd_road_ids",
+    "removed_swsd_road_ids",
+    "frcsd_road_ids",
+    "frcsd_road_source_values",
+    "rcsd_pair_nodes",
+    "rcsd_junc_nodes",
+    "junction_c_ids",
+    "swsd_to_frcsd_node_map",
+    "source_mix",
+    "risk_flags",
+]
+
 STEP3_JUNCTION_REBUILD_AUDIT_FIELDS = [
     "junction_c_id",
     "replacement_segment_ids",
@@ -226,6 +247,18 @@ STEP3_CHANGE_AUDIT_FIELDS = [
     "source",
     "reason",
     "swsd_segment_ids",
+]
+
+STEP3_UNREPLACED_RCSD_ROAD_FIELDS = [
+    "id",
+    "replacement_status",
+    "audit_reason",
+    "source",
+    "snodeid",
+    "enodeid",
+    "direction",
+    "formway",
+    "length_m",
 ]
 
 STEP3_ID_COLLISION_AUDIT_FIELDS = [
@@ -270,6 +303,7 @@ class T06Step3Artifacts:
     frcsd_road_gpkg_path: Path
     frcsd_node_gpkg_path: Path
     replacement_units_gpkg_path: Path
+    swsd_frcsd_segment_relation_gpkg_path: Path
     junction_rebuild_audit_gpkg_path: Path
     summary_path: Path
 

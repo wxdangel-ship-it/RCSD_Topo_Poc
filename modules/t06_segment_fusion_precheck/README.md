@@ -197,3 +197,12 @@ Step2 输出：
 - `t06_step2_summary.json`
 
 其中 `t06_rcsd_buffer_segments` 是正式主成果；`t06_rcsd_segment_candidates` 与 `t06_rcsd_segment_replaceable` 为兼容输出，内容由同一 buffer 成功结果派生，不再表示 BFS 路径候选。
+`t06_step2_summary.json` 同时记录 RCSD 视角覆盖统计：全量 RCSDRoad 数量 / 长度、最终可替换 Segment 引用的去重 RCSDRoad 数量 / 长度，以及引用次数口径的数量 / 长度。
+
+Step3 输出：
+
+- `t06_frcsd_road.gpkg/csv/json`
+- `t06_frcsd_node.gpkg/csv/json`
+- `t06_step3_unreplaced_rcsd_roads.gpkg/csv/json`
+
+其中 `t06_step3_unreplaced_rcsd_roads` 是 Step3 审计输出，记录输入 RCSDRoad 中未被 Step2 replaceable Segment 使用、也未进入 F-RCSD 替换结果的 Road。

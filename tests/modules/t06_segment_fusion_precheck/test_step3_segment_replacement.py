@@ -48,6 +48,10 @@ def test_step3_replaces_roads_endpoint_nodes_only_rebuilds_c_and_audits_id_colli
             {
                 "properties": {"id": "s1", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["sr1"]},
                 "geometry": LineString([(1, 0), (2, 0)]),
+            },
+            {
+                "properties": {"id": "s2", "sgrade": "主双", "pair_nodes": [3, 4], "junc_nodes": [], "roads": ["sr2"]},
+                "geometry": LineString([(3, 0), (4, 0)]),
             }
         ],
     )
@@ -55,6 +59,7 @@ def test_step3_replaces_roads_endpoint_nodes_only_rebuilds_c_and_audits_id_colli
         tmp_path / "swsd_roads.gpkg",
         [
             _road("sr1", 1, 2),
+            _road("sr2", 3, 4),
             _road("rr1", 11, 3),
         ],
     )
@@ -65,12 +70,14 @@ def test_step3_replaces_roads_endpoint_nodes_only_rebuilds_c_and_audits_id_colli
             _node(11, 1.1, mainnodeid=1),
             _node(2, 2, mainnodeid=2, kind=8, grade=3, kind_2=16, grade_2=6, closed_con=5),
             _node(3, 3, mainnodeid=0, kind=64, grade=1, kind_2=64, grade_2=1, closed_con=0),
+            _node(4, 4, mainnodeid=0, kind=64, grade=1, kind_2=64, grade_2=1, closed_con=0),
         ],
     )
     rcsd_roads = _write(
         tmp_path / "rcsdroad_out.gpkg",
         [
             {"properties": {"id": "rr1", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(1, 0), (2, 0)])},
+            {"properties": {"id": "rr2", "snodeid": 30, "enodeid": 40, "direction": 0}, "geometry": LineString([(30, 0), (32, 0)])},
         ],
     )
     rcsd_nodes = _write(
@@ -79,6 +86,8 @@ def test_step3_replaces_roads_endpoint_nodes_only_rebuilds_c_and_audits_id_colli
             _node(10, 1, mainnodeid=10),
             _node(20, 2, mainnodeid=20),
             _node(201, 2.1, mainnodeid=20),
+            _node(30, 30, mainnodeid=30),
+            _node(40, 32, mainnodeid=40),
         ],
     )
     replaceable = _write(
@@ -116,12 +125,29 @@ def test_step3_replaces_roads_endpoint_nodes_only_rebuilds_c_and_audits_id_colli
     assert summary["removed_swsd_node_count"] == 2
     assert summary["added_rcsd_road_count"] == 1
     assert summary["added_rcsd_node_count"] == 3
+    assert summary["unreplaced_rcsd_road_count"] == 1
+    assert summary["unreplaced_rcsd_road_length_m"] == 2.0
     assert summary["junction_c_count"] == 2
     assert summary["road_id_collision_count"] == 1
+    assert summary["segment_relation_count"] == 2
+    assert summary["segment_relation_replaced_count"] == 1
+    assert summary["segment_relation_retained_swsd_count"] == 1
+    assert summary["segment_relation_failed_count"] == 0
 
     roads = _props(artifacts.frcsd_road_gpkg_path)
     assert ("sr1", 2) not in {(item["id"], item["source"]) for item in roads}
-    assert {("rr1", 2), ("rr1", 1)}.issubset({(item["id"], item["source"]) for item in roads})
+    assert {("rr1", 2), ("rr1", 1), ("sr2", 2)}.issubset({(item["id"], item["source"]) for item in roads})
+
+    relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
+    assert relations["s1"]["relation_status"] == "replaced"
+    assert relations["s1"]["frcsd_road_ids"] == ["rr1"]
+    assert relations["s1"]["frcsd_road_source_values"] == [1]
+    assert relations["s1"]["source_mix"] == "source_1"
+    assert relations["s1"]["swsd_to_frcsd_node_map"][0]["frcsd_node_ids"] == ["10"]
+    assert relations["s2"]["relation_status"] == "retained_swsd"
+    assert relations["s2"]["frcsd_road_ids"] == ["sr2"]
+    assert relations["s2"]["frcsd_road_source_values"] == [2]
+    assert relations["s2"]["swsd_to_frcsd_node_map"][0]["mapping_status"] == "identity"
 
     nodes = _props(artifacts.frcsd_node_gpkg_path)
     by_source_id = {(str(item["source"]), str(item["id"])): item for item in nodes}
@@ -143,3 +169,10 @@ def test_step3_replaces_roads_endpoint_nodes_only_rebuilds_c_and_audits_id_colli
 
     collision_payload = json.loads((artifacts.step_root / "t06_step3_id_collision_audit.json").read_text(encoding="utf-8"))
     assert collision_payload["features"][0]["properties"]["entity_id"] == "rr1"
+
+    unreplaced_payload = json.loads((artifacts.step_root / "t06_step3_unreplaced_rcsd_roads.json").read_text(encoding="utf-8"))
+    unreplaced_props = unreplaced_payload["features"][0]["properties"]
+    assert unreplaced_props["id"] == "rr2"
+    assert unreplaced_props["replacement_status"] == "not_replaced"
+    assert unreplaced_props["length_m"] == 2.0
+    assert Path(summary["outputs"]["unreplaced_rcsd_roads_json"]).exists()

@@ -54,7 +54,10 @@ def test_combined_runner_outputs_all_files_and_keeps_inputs_readonly(tmp_path: P
     )
     rcsd_roads = _write(
         tmp_path / "rcsdroad_out.gpkg",
-        [{"properties": {"id": "rr1", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(1, 0), (2, 0)])}],
+        [
+            {"properties": {"id": "rr1", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(1, 0), (2, 0)])},
+            {"properties": {"id": "rr-unused", "snodeid": 30, "enodeid": 40, "direction": 0}, "geometry": LineString([(10, 0), (12, 0)])},
+        ],
     )
     before = {path: (path.stat().st_size, path.stat().st_mtime_ns) for path in [segment, nodes, swsd_roads, relation, rcsd_nodes, rcsd_roads]}
 
@@ -92,6 +95,12 @@ def test_combined_runner_outputs_all_files_and_keeps_inputs_readonly(tmp_path: P
     assert summary["input_fusion_unit_count"] == 1
     assert summary["replaceable_count"] == 1
     assert summary["buffer_segment_count"] == 1
+    assert summary["rcsd_road_total_count"] == 2
+    assert summary["rcsd_road_total_length_m"] == 3.0
+    assert summary["replaceable_rcsd_road_unique_count"] == 1
+    assert summary["replaceable_rcsd_road_unique_length_m"] == 1.0
+    assert summary["replaceable_rcsd_road_reference_count"] == 1
+    assert summary["replaceable_rcsd_road_reference_length_m"] == 1.0
     assert Path(summary["outputs"]["buffer_segments_json"]).exists()
 
 

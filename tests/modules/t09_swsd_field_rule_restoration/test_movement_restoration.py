@@ -10,10 +10,12 @@ from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration import (
     ProhibitionReason,
     ProhibitionStatus,
     RestrictionInput,
+    RoadAttributes,
     RoadPair,
     SWSDSegmentInput,
     SWSDRoadInput,
     T09ArmMovement,
+    T09SwsdArm,
     build_arm_movements,
     build_swsd_arms,
     restore_field_rules,
@@ -123,6 +125,8 @@ def test_topology_not_applicable_is_not_reported_as_prohibition() -> None:
 
     assert result.movements[0].movement_applicability == MovementApplicability.NOT_APPLICABLE
     assert result.movements[0].prohibition_status == ProhibitionStatus.NOT_A_TRAFFIC_RULE
+    assert result.movements[0].restriction_coverage == "not_applicable"
+    assert result.movements[0].arrow_direction_status == "not_applicable"
     assert result.evidence_items[0].supports_prohibition is False
     assert result.restored_rules[0].field_rule_status == ProhibitionStatus.NOT_A_TRAFFIC_RULE
     assert result.summary["qa"]["topology_silent_fix"] is False
@@ -164,6 +168,8 @@ def test_restriction_priority_with_arrow_conflict_keeps_restriction_rule() -> No
 
     assert result.movements[0].prohibition_status == ProhibitionStatus.FULLY_PROHIBITED
     assert result.movements[0].prohibition_reason == ProhibitionReason.EXPLICIT_RESTRICTION
+    assert result.movements[0].restriction_coverage == "all_restricted"
+    assert result.movements[0].arrow_direction_status == "supports_movement"
     assert evidence_types == {EvidenceType.RESTRICTION, EvidenceType.ARROW, EvidenceType.CONFLICT}
     assert conflict_items
     assert result.restored_rules[0].field_rule_status == ProhibitionStatus.FULLY_PROHIBITED
@@ -171,3 +177,144 @@ def test_restriction_priority_with_arrow_conflict_keeps_restriction_rule() -> No
     assert conflict_items[0].evidence_id in result.restored_rules[0].conflicting_evidence_ids
     assert result.summary["qa"]["crs_transform_executed"] is False
     assert json.loads(json.dumps(to_jsonable(result)))["summary"]["input_counts"]["movements"] == 1
+
+
+def test_arrow_exclusion_without_restriction_does_not_restore_prohibition_rule() -> None:
+    movement = T09ArmMovement(
+        junction_id="j1",
+        movement_id="m_arrow_only",
+        from_arm_id="from",
+        to_arm_id="to",
+        movement_type="left",
+        candidate_road_pair_count=1,
+        carrier_universe_status="available",
+        carrier_road_pairs=(RoadPair("in_1", "out_1"),),
+    )
+
+    result = restore_field_rules(
+        arms=tuple(),
+        movements=(movement,),
+        arrows=(
+            ArrowInput(
+                arrow_id="arr_straight_right",
+                road_id="in_1",
+                lane_codes=("a", "c"),
+            ),
+        ),
+    )
+
+    restored = result.movements[0]
+    assert restored.prohibition_status == ProhibitionStatus.NO_PROHIBITION_EVIDENCE
+    assert restored.prohibition_reason == ProhibitionReason.INSUFFICIENT_EVIDENCE
+    assert restored.arrow_direction_status == "excludes_movement"
+    assert {item.evidence_type for item in result.evidence_items} == {EvidenceType.COMPLETE_ARROW_EXCLUSION}
+    assert all(item.supports_prohibition is False for item in result.evidence_items)
+    assert result.restored_rules == tuple()
+    assert result.summary["business_policy"]["prohibition_source"] == "restriction_only"
+
+
+def test_restoration_populates_movement_level_business_evidence_summary() -> None:
+    movement = T09ArmMovement(
+        junction_id="j1",
+        movement_id="m_summary",
+        from_arm_id="from",
+        to_arm_id="to",
+        movement_type="left",
+        candidate_road_pair_count=1,
+        carrier_universe_status="available",
+        carrier_road_pairs=(RoadPair("in_1", "out_1"),),
+    )
+
+    result = restore_field_rules(
+        arms=(
+            T09SwsdArm(
+                junction_id="j1",
+                arm_id="from",
+                seed_road_ids=("in_1",),
+                advance_left_road_ids=("in_1",),
+            ),
+            T09SwsdArm(junction_id="j1", arm_id="to", seed_road_ids=("out_1",)),
+        ),
+        movements=(movement,),
+        restrictions=(
+            RestrictionInput(
+                restriction_id="rst_1",
+                in_link_id="in_1",
+                out_link_id="out_1",
+            ),
+        ),
+        arrows=(
+            ArrowInput(
+                arrow_id="arr_left",
+                road_id="in_1",
+                lane_codes=("b",),
+            ),
+        ),
+        road_attributes=(RoadAttributes(road_id="in_1", formway=256),),
+    )
+
+    restored = result.movements[0]
+    assert restored.restriction_coverage == "all_restricted"
+    assert restored.partial_basis == "not_applicable"
+    assert restored.remaining_restriction_status == "not_applicable"
+    assert restored.arrow_direction_status == "supports_movement"
+    assert restored.arrow_lane_summary["supporting_lane_count"] == 1
+    assert restored.advance_left_status == "present"
+    assert restored.advance_right_status == "not_applicable"
+
+
+def test_restoration_records_partial_restriction_basis_on_movement() -> None:
+    movement = T09ArmMovement(
+        junction_id="j1",
+        movement_id="m_partial",
+        from_arm_id="from",
+        to_arm_id="to",
+        movement_type="straight",
+        candidate_road_pair_count=2,
+        carrier_universe_status="available",
+        carrier_road_pairs=(
+            RoadPair("in_1", "out_1"),
+            RoadPair("in_1", "out_2"),
+        ),
+    )
+
+    result = restore_field_rules(
+        arms=tuple(),
+        movements=(movement,),
+        restrictions=(
+            RestrictionInput(
+                restriction_id="rst_1",
+                in_link_id="in_1",
+                out_link_id="out_1",
+            ),
+        ),
+    )
+
+    restored = result.movements[0]
+    assert restored.prohibition_status == ProhibitionStatus.PARTIALLY_PROHIBITED
+    assert restored.restriction_coverage == "partial_restricted"
+    assert restored.partial_basis == "exit_arm_subset"
+    assert restored.remaining_restriction_status == "no_restriction_evidence"
+
+
+def test_restoration_records_advance_right_status_on_right_movement() -> None:
+    movement = T09ArmMovement(
+        junction_id="j1",
+        movement_id="m_right",
+        from_arm_id="from",
+        to_arm_id="to",
+        movement_type="right",
+        candidate_road_pair_count=1,
+        carrier_universe_status="available",
+        carrier_road_pairs=(RoadPair("in_1", "out_1"),),
+    )
+
+    result = restore_field_rules(
+        arms=(T09SwsdArm(junction_id="j1", arm_id="from", seed_road_ids=("in_1",)),),
+        movements=(movement,),
+        road_attributes=(RoadAttributes(road_id="in_1", kind="12|0a"),),
+    )
+
+    restored = result.movements[0]
+    assert restored.advance_left_status == "not_applicable"
+    assert restored.advance_right_status == "present_bypass_core_junction"

@@ -1,14 +1,14 @@
-# T09 Step1/2：CodeX 任务书
+# T09 Step1/2/3：CodeX 任务书
 
 - 文档类型：CodeX 实施任务书
 - 适用分支：`spec/t09-swsd-field-rule-restoration`
 - 需求说明书：`specs/t09-swsd-field-rule-restoration/spec.md`
-- 任务范围：T09 Step1 / Step2
+- 任务范围：T09 Step1 / Step2 / Step3
 - 状态：Draft / ready for implementation planning
 
 ## 1. 任务目标
 
-CodeX 需要基于 `specs/t09-swsd-field-rule-restoration/spec.md` 完成 T09 Step1/2 的最小可实现闭环。
+CodeX 需要基于 `specs/t09-swsd-field-rule-restoration/spec.md` 完成 T09 Step1/2 的 SWSD 现场证据还原，并启动 Step3 FRCSD restriction 建模。
 
 本任务书只描述实施任务、边界、验收与工作纪律；业务需求以需求说明书为准，不在本文件重复展开。实现过程中如发现本任务书与需求说明书冲突，以需求说明书为准，并停机回报冲突点。
 
@@ -35,8 +35,13 @@ CodeX 需要基于 `specs/t09-swsd-field-rule-restoration/spec.md` 完成 T09 St
 当前任务允许新增或修改：
 
 - `specs/t09-swsd-field-rule-restoration/**`
+- `specs/t06-step3-segment-replacement/**`
+- `modules/t06_segment_fusion_precheck/INTERFACE_CONTRACT.md`
+- `modules/t06_segment_fusion_precheck/architecture/**`
 - `src/rcsd_topo_poc/modules/t09_swsd_field_rule_restoration/**`
+- `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/**`
 - `tests/modules/t09_swsd_field_rule_restoration/**`
+- `tests/modules/t06_segment_fusion_precheck/**`
 - 必要的模块包初始化文件
 
 ### 3.2 默认禁止改动
@@ -63,6 +68,9 @@ CodeX 需要基于 `specs/t09-swsd-field-rule-restoration/spec.md` 完成 T09 St
 - [ ] P2：确保输出语义对象覆盖需求说明书第 4 章的 `T09SwsdArm / T09ArmMovement / T09EvidenceItem / T09RestoredFieldRule`。
 - [ ] P3：以禁止通行证据为主线，不输出“缺少 allowed evidence 即 prohibited”的结论。
 - [ ] P4：确保特殊 carrier / displacement 不被误表达为整个 Arm-Movement 禁止。
+- [x] P5：实现 T06 Step3 SWSD-FRCSD Segment 关系输出，作为 T09 Step3 的 Arm 映射输入。
+- [x] P6：实现 T09 Step3 `frcsd_restriction.gpkg/csv/json`，表达 FRCSD road-to-road 禁止通行关系。
+- [x] P7：基于 XS1 本地测试用例完成业务审计，重点验证 `1263661` 的 FRCSD restriction 承载是否来自 Step1/2 Movement 证据。
 
 ## 5. 架构视角任务
 
@@ -74,6 +82,10 @@ CodeX 需要基于 `specs/t09-swsd-field-rule-restoration/spec.md` 完成 T09 St
 - [ ] A6：实现 complete arrow exclusion 判定，按需求说明书第 5.5 节执行完整性门槛。
 - [ ] A7：实现 special carrier / displacement evidence 识别，按需求说明书第 5.6 节表达为 carrier，不默认输出 prohibited。
 - [ ] A8：实现 JSON serializable 输出对象；GPKG / review layer 可作为后续增强，不作为本轮最小闭环强制项。
+- [x] A9：T06 Step3 新增 `t06_step3_swsd_frcsd_segment_relation.gpkg/csv/json`，覆盖 replaced 与 retained_swsd 两类 Segment。
+- [x] A10：T09 Step3 基于 T06 Segment relation 建立 SWSD Arm 到 FRCSD Arm 的映射，不采用 FRCSD 独立 Arm 构建作为主策略。
+- [x] A11：T09 Step3 对 fully prohibited Movement 生成 FRCSD `LinkID -> outLinkID` restriction，不对 no evidence / unknown / not applicable 生成禁止。
+- [x] A12：T09 Step3 输出必须包含输入、映射、证据和生成决策审计 summary。
 
 ## 6. 研发视角任务
 
@@ -94,13 +106,17 @@ src/rcsd_topo_poc/modules/t09_swsd_field_rule_restoration/
 
 实施要求：
 
-- [ ] D1：写入任何源码 / 脚本文件前，先记录当前文件字节数，遵守 repo root `AGENTS.md` 的 100KB 硬阈值。
+- [x] D1：写入任何源码 / 脚本文件前，先记录当前文件字节数，遵守 repo root `AGENTS.md` 的 100KB 硬阈值。
 - [ ] D2：实现代码不得依赖内网路径或内网数据。
 - [ ] D3：实现中不得通过局部样本反推未确认字段语义。
 - [ ] D4：所有状态枚举应集中定义，避免字符串散落。
 - [ ] D5：所有 evidence 输出必须带 provenance 字段，支持追溯输入 feature、匹配对象与判定原因。
 - [ ] D6：restriction 与 arrow 冲突时，restriction 优先，同时输出 conflict evidence。
 - [ ] D7：拓扑不可达输出 `not_applicable` 类状态，不输出交通规则禁止。
+- [x] D8：T06 输出增强不得改变既有 `t06_frcsd_road/node`、replacement units、junction audit 的语义与调用方式。
+- [x] D9：T09 Step3 不新增 repo CLI / scripts / Makefile 入口，只提供模块内 callable runner。
+- [x] D10：FRCSD Road `source` 字段只用于区分 RCSD / SWSD 来源，不用于反推交通限制。
+- [x] D11：FRCSD restriction 输出字段至少包含 `LinkID / outLinkID / junction_id / movement_type / restriction_source / evidence`。
 
 ## 7. 测试视角任务
 
@@ -123,11 +139,17 @@ tests/modules/t09_swsd_field_rule_restoration/
 - [ ] T4：`o / empty` 不单独生成强禁止证据。
 - [ ] T5：restriction road-pair 命中生成 `explicit_restriction` 禁止证据。
 - [ ] T6：单条 road-pair restriction 不会误放大为整个 Movement fully prohibited。
-- [ ] T7：完整 arrow exclusion 可生成 `complete_arrow_exclusion` 禁止证据。
+- [x] T7：完整 arrow exclusion 只生成 `complete_arrow_exclusion` 现场证据，不生成 Movement 禁行或 restored rule。
 - [ ] T8：不完整 arrow 只输出 ambiguous / incomplete，不生成强禁止。
 - [ ] T9：辅路提右、非辅路提前右转、提前左转输出 carrier / displacement，不默认输出 prohibited。
 - [ ] T10：拓扑不可达输出 `not_applicable`，不输出 prohibited。
 - [ ] T11：restriction 与 arrow 冲突时 restriction 优先，并生成 conflict evidence。
+- [x] T12：T06 Step3 relation 输出覆盖 replaced Segment，包含 SWSD Segment、FRCSD road、SWSD-to-FRCSD node mapping。
+- [x] T13：T06 Step3 relation 输出覆盖 retained_swsd Segment，包含 FRCSD `source=2` road。
+- [x] T14：T09 Step3 能用 T06 relation 将 SWSD fully prohibited Movement 投影成 FRCSD `LinkID -> outLinkID` restriction。
+- [x] T15：T09 Step3 不为 `no_prohibition_evidence / unknown / not_a_traffic_rule` Movement 生成 restriction。
+- [x] T16：T09 Step3 去重同一 `LinkID + outLinkID + junction_id + movement_type`。
+- [x] T17：XS1 本地证据包可运行 Step1/2 + Step3，并输出 `frcsd_restriction.gpkg`。
 
 ## 8. QA 视角任务
 
@@ -136,8 +158,10 @@ tests/modules/t09_swsd_field_rule_restoration/
 - [ ] Q3：检查几何语义可解释性，所有几何匹配或方向判断必须有 audit reason。
 - [ ] Q4：检查审计可追溯性，所有 restored rule 必须引用 evidence id。
 - [ ] Q5：检查性能可验证性，至少在 summary 或测试中说明核心流程的输入规模统计口径。
-- [ ] Q6：运行定向 pytest。
-- [ ] Q7：运行 `git diff --check`。
+- [x] Q6：运行定向 pytest。
+- [x] Q7：运行 `git diff --check`。
+- [x] Q8：基于 XS1 真实数据审计 `1263661`：说明每条 FRCSD restriction 对应的 SWSD Movement、T06 Segment relation 与证据来源。
+- [x] Q9：检查 Step3 CRS、拓扑一致性、几何语义、审计追溯和性能统计。
 
 ## 9. 建议实施顺序
 

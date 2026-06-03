@@ -51,15 +51,17 @@ def restore_field_rules(
     roads_by_id = {road.road_id: road for road in roads}
     arms_by_id = {arm.arm_id: arm for arm in arms}
     road_geometries = road_geometries or {}
+    special_status_by_arm: dict[str, set[str]] = {}
     for arm in arms:
         arm_roads = tuple(
             attributes_by_road[road_id]
             for road_id in arm.seed_road_ids + arm.connector_road_ids + arm.trunk_road_ids
             if road_id in attributes_by_road
         )
-        evidence_items.extend(
-            detect_special_carrier_evidence(junction_id=arm.junction_id, arm_id=arm.arm_id, roads=arm_roads)
-        )
+        special_items = detect_special_carrier_evidence(junction_id=arm.junction_id, arm_id=arm.arm_id, roads=arm_roads)
+        evidence_items.extend(special_items)
+        for item in special_items:
+            special_status_by_arm.setdefault(arm.arm_id, set()).add(item.evidence_status)
 
     for movement in movements:
         if movement.movement_applicability != MovementApplicability.APPLICABLE or not movement.carrier_road_pairs:
@@ -71,6 +73,13 @@ def restore_field_rules(
                     prohibition_status=ProhibitionStatus.NOT_A_TRAFFIC_RULE,
                     prohibition_reason=ProhibitionReason.TOPOLOGY_NOT_APPLICABLE,
                     prohibition_confidence=1.0,
+                    restriction_coverage="not_applicable",
+                    partial_basis="not_applicable",
+                    remaining_restriction_status="not_applicable",
+                    arrow_direction_status="not_applicable",
+                    arrow_lane_summary=_empty_arrow_lane_summary(),
+                    advance_left_status="not_applicable",
+                    advance_right_status="not_applicable",
                     evidence_item_ids=(topology_evidence.evidence_id,),
                 )
             )
@@ -116,12 +125,6 @@ def restore_field_rules(
             reason = restriction_result.prohibition_reason
             confidence = restriction_result.confidence
             supporting = restriction_result.evidence_items
-        elif arrow_result and arrow_result.prohibition_status == ProhibitionStatus.FULLY_PROHIBITED:
-            movement_evidence.extend(arrow_result.evidence_items)
-            status = arrow_result.prohibition_status
-            reason = arrow_result.prohibition_reason
-            confidence = arrow_result.confidence
-            supporting = arrow_result.evidence_items
         else:
             if arrow_result:
                 movement_evidence.extend(arrow_result.evidence_items)
@@ -131,12 +134,22 @@ def restore_field_rules(
             supporting = tuple()
 
         evidence_items.extend(movement_evidence)
+        from_arm = arms_by_id.get(movement.from_arm_id)
+        arrow_direction_status = arrow_result.arrow_direction_status if arrow_result else "no_arrow_evidence"
+        arrow_lane_summary = arrow_result.arrow_lane_summary if arrow_result else _empty_arrow_lane_summary()
         updated_movements.append(
             replace(
                 movement,
                 prohibition_status=status,
                 prohibition_reason=reason,
                 prohibition_confidence=confidence,
+                restriction_coverage=restriction_result.restriction_coverage,
+                partial_basis=restriction_result.partial_basis,
+                remaining_restriction_status=restriction_result.remaining_restriction_status,
+                arrow_direction_status=arrow_direction_status,
+                arrow_lane_summary=arrow_lane_summary,
+                advance_left_status=_advance_left_status(movement, from_arm, special_status_by_arm),
+                advance_right_status=_advance_right_status(movement, from_arm, special_status_by_arm),
                 evidence_item_ids=tuple(item.evidence_id for item in movement_evidence),
             )
         )
@@ -169,6 +182,10 @@ def restore_field_rules(
             "crs_note": "minimal object-level implementation; no GIS projection was executed",
             "topology_silent_fix": False,
             "performance_counter_scope": "object counts only",
+        },
+        "business_policy": {
+            "prohibition_source": "restriction_only",
+            "arrow_role": "evidence_and_conflict_signal_only",
         },
     }
     return RestorationResult(
@@ -251,14 +268,64 @@ def _rule_from_movement(
     )
 
 
+def _empty_arrow_lane_summary() -> dict[str, object]:
+    return {
+        "matched_approach_road_count": 0,
+        "matched_arrow_count": 0,
+        "lane_count": 0,
+        "supporting_lane_count": 0,
+        "excluding_lane_count": 0,
+        "empty_lane_count": 0,
+        "uninvestigated_lane_count": 0,
+        "unknown_code_count": 0,
+        "direction_mismatch_count": 0,
+        "incomplete_sequence_count": 0,
+        "movement_type_supported": False,
+        "matched_arrow_ids": tuple(),
+        "raw_arrow_sequences": tuple(),
+    }
+
+
+def _advance_left_status(
+    movement: T09ArmMovement,
+    from_arm: T09SwsdArm | None,
+    special_status_by_arm: dict[str, set[str]],
+) -> str:
+    if movement.movement_type.strip().lower() not in {"left", "slight_left"}:
+        return "not_applicable"
+    statuses = special_status_by_arm.get(movement.from_arm_id, set())
+    if "advance_left_carrier_exists" in statuses:
+        return "present"
+    if from_arm is not None and from_arm.advance_left_road_ids:
+        return "present"
+    return "no_advance_left_evidence"
+
+
+def _advance_right_status(
+    movement: T09ArmMovement,
+    from_arm: T09SwsdArm | None,
+    special_status_by_arm: dict[str, set[str]],
+) -> str:
+    if movement.movement_type.strip().lower() not in {"right", "slight_right"}:
+        return "not_applicable"
+    statuses = special_status_by_arm.get(movement.from_arm_id, set())
+    if "auxiliary_right_turn_carrier_exists" in statuses:
+        return "present_bypass_core_junction"
+    if from_arm is not None and from_arm.auxiliary_right_turn_road_ids:
+        return "present_bypass_core_junction"
+    if "pre_junction_non_aux_advance_right_relation" in statuses:
+        return "present_through_core_junction"
+    if from_arm is not None and from_arm.advance_right_turn_relation_ids:
+        return "present_through_core_junction"
+    return "no_advance_right_evidence"
+
+
 def _status_from_evidence(evidence_items: tuple[T09EvidenceItem, ...]) -> ProhibitionStatus:
     if any(item.evidence_type == EvidenceType.TOPOLOGY_NOT_APPLICABLE for item in evidence_items):
         return ProhibitionStatus.NOT_A_TRAFFIC_RULE
     if any(item.evidence_type == EvidenceType.RESTRICTION for item in evidence_items):
         road_pair_count = len({item.road_pair for item in evidence_items if item.road_pair is not None})
         return ProhibitionStatus.FULLY_PROHIBITED if road_pair_count > 1 else ProhibitionStatus.PARTIALLY_PROHIBITED
-    if any(item.evidence_type == EvidenceType.COMPLETE_ARROW_EXCLUSION for item in evidence_items):
-        return ProhibitionStatus.FULLY_PROHIBITED
     return ProhibitionStatus.UNKNOWN
 
 

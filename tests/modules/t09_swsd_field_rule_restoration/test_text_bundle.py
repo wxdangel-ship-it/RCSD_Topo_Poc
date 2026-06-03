@@ -57,6 +57,7 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
     frcsd_road_path = t06_step3_root / "t06_frcsd_road.gpkg"
     frcsd_node_path = t06_step3_root / "t06_frcsd_node.gpkg"
     replacement_units_path = t06_step3_root / "t06_step3_replacement_units.gpkg"
+    segment_relation_path = t06_step3_root / "t06_step3_swsd_frcsd_segment_relation.gpkg"
     junction_audit_path = t06_step3_root / "t06_step3_junction_rebuild_audit.gpkg"
 
     write_gpkg(
@@ -165,6 +166,35 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
         crs_text="EPSG:3857",
     )
     write_gpkg(
+        segment_relation_path,
+        [
+            {
+                "properties": {
+                    "id": "rel_near",
+                    "swsd_segment_id": "seg_near",
+                    "relation_status": "replaced",
+                    "frcsd_road_ids": ["fr_0"],
+                    "frcsd_road_source_values": [1],
+                    "swsd_to_frcsd_node_map": [
+                        {"swsd_node_id": "j1", "frcsd_node_ids": ["fn_0"], "node_role": "junc_node"}
+                    ],
+                },
+                "geometry": LineString([(-10.0, 0.0), (10.0, 0.0)]),
+            },
+            {
+                "properties": {
+                    "id": "rel_far",
+                    "swsd_segment_id": "seg_far",
+                    "relation_status": "retained_swsd",
+                    "frcsd_road_ids": ["fr_far"],
+                    "frcsd_road_source_values": [2],
+                },
+                "geometry": LineString([(1000.0, 0.0), (1010.0, 0.0)]),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_gpkg(
         junction_audit_path,
         [{"properties": {"id": "junction_audit_without_geometry"}, "geometry": Point(0.0, 0.0)}],
         crs_text="EPSG:3857",
@@ -215,6 +245,7 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
     assert summary["selected_arrow_count"] == 1
     assert summary["selected_frcsd_road_count"] == 79
     assert summary["selected_t06_step3_optional_counts"]["t06_step3_replacement_units"] == 1
+    assert summary["selected_t06_step3_optional_counts"]["t06_step3_swsd_frcsd_segment_relation"] == 1
     assert summary["selected_t06_step3_optional_counts"]["t06_step3_junction_rebuild_audit"] == 0
     assert "has no geometry" in summary["selected_t06_step3_optional_errors"]["t06_step3_junction_rebuild_audit"]
     assert size_report["split_bundle"]["enabled"] is True
@@ -223,6 +254,10 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
     assert testcase_manifest["source_input_paths"]["frcsd_node_path"] == str(frcsd_node_path)
     assert testcase_manifest["fixture_paths"]["swsd_nodes"] == "slice/swsd/nodes.geojson"
     assert testcase_manifest["fixture_paths"]["frcsd_road"] == "slice/frcsd/frcsd_road.geojson"
+    assert (
+        testcase_manifest["fixture_paths"]["t06_step3_swsd_frcsd_segment_relation"]
+        == "slice/t06_step3/t06_step3_swsd_frcsd_segment_relation.geojson"
+    )
     assert testcase_manifest["fixture_paths"]["pytest_file"] == "local_testcase/test_t09_decoded_bundle.py"
     assert "--rootdir <decoded_bundle_dir>" in testcase_manifest["pytest_command_from_repo_root"]
     assert (
@@ -230,6 +265,10 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
         == "slice/t08_tool7/sw_restriction_tool7.geojson"
     )
     assert testcase_manifest["recommended_t09_step3_inputs"]["frcsd_node_path"] == "slice/frcsd/frcsd_node.geojson"
+    assert (
+        testcase_manifest["recommended_t09_step3_inputs"]["segment_relation_path"]
+        == "slice/t06_step3/t06_step3_swsd_frcsd_segment_relation.geojson"
+    )
 
     assert _feature_ids(decoded.out_dir / "slice" / "frcsd" / "frcsd_road.geojson") == [
         f"fr_{index}" for index in range(79)
@@ -238,6 +277,9 @@ def test_step3_input_text_bundle_slices_frcsd_and_splits_under_size_limit(tmp_pa
     assert _feature_ids(decoded.out_dir / "slice" / "swsd" / "segment.geojson") == ["seg_near"]
     assert _feature_ids(decoded.out_dir / "slice" / "t06_step3" / "t06_step3_replacement_units.geojson") == [
         "unit_near"
+    ]
+    assert _feature_ids(decoded.out_dir / "slice" / "t06_step3" / "t06_step3_swsd_frcsd_segment_relation.geojson") == [
+        "rel_near"
     ]
     assert (decoded.out_dir / "reference" / "t06_step3" / "t06_step3_summary.json").is_file()
     generated_test = decoded.out_dir / "local_testcase" / "test_t09_decoded_bundle.py"

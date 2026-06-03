@@ -183,6 +183,15 @@ run_t06_step2_extract_rcsd_segments(
 - `t06_rcsd_buffer_segment_rejected.gpkg/csv/json`
 - `t06_step2_summary.json`
 
+`t06_step2_summary.json` 必须包含 RCSD 视角覆盖统计：
+
+- `rcsd_road_total_count`：输入 `rcsdroad_path` 中去重后的全量 RCSDRoad 数量。
+- `rcsd_road_total_length_m`：输入 `rcsdroad_path` 中去重后 RCSDRoad 几何总长度，单位米。
+- `replaceable_rcsd_road_unique_count`：最终可替换 Segment 引用的去重 RCSDRoad 数量。
+- `replaceable_rcsd_road_unique_length_m`：最终可替换 Segment 引用的去重 RCSDRoad 几何总长度，单位米。
+- `replaceable_rcsd_road_reference_count` / `replaceable_rcsd_road_reference_length_m`：按 Segment 引用次数累计的 RCSDRoad 数量 / 长度，用于审计同一 RCSDRoad 被多个可替换 Segment 共享的情况。
+- `replaceable_rcsd_road_missing_count`：replaceable 输出中引用但未能在输入 `rcsdroad_path` 找到的 RCSDRoad 数量。
+
 ### 3.3 Step3 输出
 
 Step3 输出目录：
@@ -201,11 +210,21 @@ Step3 输出目录：
 - `t06_step3_removed_swsd_nodes.csv/json`
 - `t06_step3_added_rcsd_roads.csv/json`
 - `t06_step3_added_rcsd_nodes.csv/json`
+- `t06_step3_unreplaced_rcsd_roads.gpkg/csv/json`
 - `t06_step3_id_collision_audit.gpkg/csv/json`
+- `t06_step3_swsd_frcsd_segment_relation.gpkg/csv/json`
 - `t06_step3_summary.json`
 
 F-RCSD Road / Node 必须包含 `source` 字段：RCSD 来源为 `1`，SWSD 来源为 `2`。
 SWSD 与 RCSD 原始 `id` 冲突时保留原 id，依赖 `source` 区分，并写入 `t06_step3_id_collision_audit.*`。
+`t06_step3_unreplaced_rcsd_roads` 是 RCSD 视角审计输出，保留原始 RCSDRoad 几何与属性，并增加 `replacement_status / audit_reason / source / length_m` 等字段，用于定位未进入最终替换结果的 RCSDRoad。
+`t06_step3_swsd_frcsd_segment_relation` 是下游稳定关系索引，覆盖所有输入 SWSD Segment：
+
+- `relation_status=replaced`：该 Segment 被 Step3 替换，`frcsd_road_ids` 指向 `source=1` 的 FRCSD Road。
+- `relation_status=retained_swsd`：该 Segment 未被替换，`frcsd_road_ids` 指向 FRCSD 中保留的 `source=2` SWSD Road。
+- `relation_status=failed`：该 Segment 关系解析失败或缺少必要承载，必须写明 `relation_reason`。
+
+稳定字段至少包含：`swsd_segment_id / relation_status / relation_reason / swsd_pair_nodes / swsd_junc_nodes / junc_kind2_exempt_nodes / swsd_road_ids / removed_swsd_road_ids / frcsd_road_ids / frcsd_road_source_values / rcsd_pair_nodes / rcsd_junc_nodes / junction_c_ids / swsd_to_frcsd_node_map / source_mix / risk_flags`。
 
 ### 3.4 文本证据包 helper 输出
 
@@ -460,6 +479,7 @@ Step3 提供独立脚本，消费 Step2 replaceable 成果，不改变 `scripts/
 - `max_text_size_bytes`：文本证据包单个 `.txt` 分片体量上限，默认 `250KB`；仅作用于文本包 helper，不影响 Step1 / Step2 业务运行。
 - `rcsd_semantic_node_alias_count`：Step2 summary 审计字段，记录参与 `subnodeid/id -> mainnodeid` 归一化的非恒等 alias 数量。
 - `rcsd_semantic_node_group_count`：Step2 summary 审计字段，记录从 `rcsdnode_path` 识别出的全局 RCSD 语义路口组数量。
+- `rcsd_road_total_count / rcsd_road_total_length_m / replaceable_rcsd_road_unique_count / replaceable_rcsd_road_unique_length_m`：Step2 summary 的 RCSDRoad 覆盖统计字段，长度基于处理 CRS 下的几何长度计算。
 - Step3 参数：`source_field_name="source"`、`rcsd_source_value=1`、`swsd_source_value=2`；`id_collision_policy="keep_original_ids_and_audit_with_source_field"`；新 main node 选择优先级为 `original_mainnode_if_retained -> remaining_swsd_node_min_id -> added_rcsd_node_min_id`。
 
 ## 6. Acceptance

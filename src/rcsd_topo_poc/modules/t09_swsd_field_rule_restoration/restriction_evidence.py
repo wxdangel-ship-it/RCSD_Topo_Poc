@@ -31,6 +31,9 @@ class RestrictionMatchResult:
     prohibition_status: ProhibitionStatus
     prohibition_reason: ProhibitionReason
     confidence: float
+    restriction_coverage: str = "unknown"
+    partial_basis: str = "not_applicable"
+    remaining_restriction_status: str = "unknown"
 
 
 def match_restriction_evidence(
@@ -117,6 +120,9 @@ def match_restriction_evidence(
             prohibition_status=ProhibitionStatus.NO_PROHIBITION_EVIDENCE,
             prohibition_reason=ProhibitionReason.INSUFFICIENT_EVIDENCE,
             confidence=0.0,
+            restriction_coverage="no_restriction_evidence",
+            partial_basis="not_applicable",
+            remaining_restriction_status="no_restriction_evidence",
         )
     if len({item.road_pair for item in evidence_items}) == movement.candidate_road_pair_count:
         return RestrictionMatchResult(
@@ -124,13 +130,38 @@ def match_restriction_evidence(
             prohibition_status=ProhibitionStatus.FULLY_PROHIBITED,
             prohibition_reason=ProhibitionReason.EXPLICIT_RESTRICTION,
             confidence=min(item.confidence for item in evidence_items),
+            restriction_coverage="all_restricted",
+            partial_basis="not_applicable",
+            remaining_restriction_status="not_applicable",
         )
     return RestrictionMatchResult(
         evidence_items=tuple(evidence_items),
         prohibition_status=ProhibitionStatus.PARTIALLY_PROHIBITED,
         prohibition_reason=ProhibitionReason.EXPLICIT_RESTRICTION,
         confidence=min(0.9, max(item.confidence for item in evidence_items)),
+        restriction_coverage="partial_restricted",
+        partial_basis=_partial_basis(movement=movement, evidence_items=tuple(evidence_items)),
+        remaining_restriction_status="no_restriction_evidence",
     )
+
+
+def _partial_basis(*, movement: T09ArmMovement, evidence_items: tuple[T09EvidenceItem, ...]) -> str:
+    candidate_pairs = set(movement.carrier_road_pairs)
+    covered_pairs = {item.road_pair for item in evidence_items if item.road_pair is not None}
+    if not candidate_pairs or not covered_pairs:
+        return "carrier_subset_unresolved"
+    if covered_pairs == candidate_pairs:
+        return "not_applicable"
+
+    candidate_from = {pair.from_road_id for pair in candidate_pairs}
+    candidate_to = {pair.to_road_id for pair in candidate_pairs}
+    covered_from = {pair.from_road_id for pair in covered_pairs}
+    covered_to = {pair.to_road_id for pair in covered_pairs}
+    if covered_from != candidate_from and covered_to == candidate_to:
+        return "entry_arm_subset"
+    if covered_from == candidate_from and covered_to != candidate_to:
+        return "exit_arm_subset"
+    return "carrier_subset_unresolved"
 
 
 def _match_restriction_geometry(

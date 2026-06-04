@@ -1817,8 +1817,13 @@ def build_step6_result(
         component_count = int(shape_metrics["component_count"] or 0)
         compactness = shape_metrics["compactness"]
         bbox_fill_ratio = shape_metrics["bbox_fill_ratio"]
+        support_only_fragmented = (
+            association_case_result.reason == "association_support_only"
+            and component_count >= 3
+        )
         severe_template_misfit = (
-            (compactness is not None and compactness < 0.12)
+            support_only_fragmented
+            or (compactness is not None and compactness < 0.12)
             or (bbox_fill_ratio is not None and bbox_fill_ratio < 0.11)
             or component_count > 3
             or (component_count > 1 and compactness is not None and compactness < 0.16)

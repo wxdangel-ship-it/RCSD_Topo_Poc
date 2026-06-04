@@ -79,5 +79,38 @@ def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_poly
         "5384380731228487",
         "5384380731228527",
     ]
-    assert _rcsd_node_covered(REAL_T03_ROOT, case_id, "5384380731228487", polygon)
-    assert _rcsd_node_covered(REAL_T03_ROOT, case_id, "5384380731228505", polygon)
+    for node_id in [
+        "5384380731228487",
+        "5384380731228505",
+        "5384380731228527",
+        "5384380731228501",
+    ]:
+        assert _rcsd_node_covered(REAL_T03_ROOT, case_id, node_id, polygon)
+
+
+def test_real_case_520394575_support_only_fragmented_surface_stays_rejected(tmp_path: Path) -> None:
+    case_id = "520394575"
+    if not (REAL_T03_ROOT / case_id).is_dir():
+        pytest.skip(f"missing decoded T03 case: {REAL_T03_ROOT / case_id}")
+
+    step3_root = tmp_path / "step3"
+    _write_step3_for_case(REAL_T03_ROOT, step3_root, case_id)
+    specs, _ = load_association_case_specs(
+        case_root=REAL_T03_ROOT,
+        case_ids=[case_id],
+        exclude_case_ids=[],
+    )
+    association_context = load_association_context(case_spec=specs[0], step3_root=step3_root)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
+    )
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
+
+    assert association_case_result.reason == "association_support_only"
+    assert step6_result.geometry_established is False
+    assert step6_result.reason == "step6_single_sided_shape_artifact"
+    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] >= 3
+    assert step7_result.step7_state == "rejected"

@@ -1033,6 +1033,28 @@ def _single_sided_horizontal_trace_decisions(
     return decision_map
 
 
+def _single_sided_strong_node_keep_geometry(
+    finalization_context: FinalizationContext,
+) -> BaseGeometry | None:
+    association_case_result = finalization_context.association_case_result
+    if (
+        association_case_result.template_class != "single_sided_t_mouth"
+        or association_case_result.association_class != "A"
+    ):
+        return None
+    strong_node_ids = set(association_case_result.extra_status_fields.get("t_mouth_strong_related_rcsdnode_ids") or [])
+    if not strong_node_ids:
+        return None
+    return _point_buffers(
+        (
+            node
+            for node in finalization_context.association_context.step1_context.rcsd_nodes
+            if node.node_id in strong_node_ids
+        ),
+        REQUIRED_NODE_BUFFER_M,
+    )
+
+
 def _build_directional_cut_geometry(
     finalization_context: FinalizationContext,
     allowed_space: BaseGeometry | None,
@@ -1169,6 +1191,9 @@ def _build_directional_cut_geometry(
         bridge_geometry = _step3_two_node_t_bridge_geometry(finalization_context, allowed_space)
     if bridge_geometry is not None:
         direction_clip_geometry = _union_geometries([direction_clip_geometry, bridge_geometry])
+    strong_node_keep_geometry = _single_sided_strong_node_keep_geometry(finalization_context)
+    if strong_node_keep_geometry is not None:
+        direction_clip_geometry = _union_geometries([direction_clip_geometry, strong_node_keep_geometry])
     selected_core_geometry = _union_geometries(
         branch.core_geometry for branch in branch_windows if branch.core_geometry is not None
     )
@@ -1317,6 +1342,7 @@ def build_step6_result(
         geometry_cache=geometry_cache,
         step3_two_node_t_bridge_geometry=step3_two_node_t_bridge_geometry,
     )
+    strong_node_keep_geometry = _single_sided_strong_node_keep_geometry(finalization_context)
     polygon_seed_geometry = _clean_geometry(
         allowed_space.intersection(direction_clip_geometry) if direction_clip_geometry is not None else None
     )
@@ -1608,6 +1634,12 @@ def build_step6_result(
             "direction_clip_metrics": direction_clip_metrics,
             "step3_two_node_t_bridge_inherited": step3_two_node_t_bridge_geometry is not None,
             "step3_two_node_t_bridge_metrics": bridge_metrics,
+            "single_sided_strong_node_keep_applied": strong_node_keep_geometry is not None,
+            "single_sided_strong_node_keep_buffer_m": REQUIRED_NODE_BUFFER_M,
+            "single_sided_strong_node_keep_metrics": _cached_shape_metrics(
+                strong_node_keep_geometry,
+                geometry_cache=geometry_cache,
+            ),
             "support_only_seam_bridge_applied": support_only_seam_bridge_geometry is not None,
             "support_only_seam_bridge_buffer_m": SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M,
             "support_only_seam_bridge_metrics": support_only_seam_bridge_metrics,

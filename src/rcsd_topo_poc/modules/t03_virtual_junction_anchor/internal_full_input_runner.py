@@ -160,6 +160,7 @@ def run_t03_internal_full_input(
     rcsdnode_path: str | Path,
     out_root: str | Path,
     run_id: str,
+    intersection_match_t07_path: str | Path | None = None,
     workers: int = 1,
     max_cases: int | None = None,
     buffer_m: float = 100.0,
@@ -184,6 +185,11 @@ def run_t03_internal_full_input(
     resolved_drivezone_path = normalize_runtime_path(drivezone_path)
     resolved_rcsdroad_path = normalize_runtime_path(rcsdroad_path)
     resolved_rcsdnode_path = normalize_runtime_path(rcsdnode_path)
+    resolved_intersection_match_t07_path = (
+        normalize_runtime_path(intersection_match_t07_path)
+        if intersection_match_t07_path is not None
+        else None
+    )
     resolved_out_root = normalize_runtime_path(out_root)
     resolved_visual_check_dir = (
         normalize_runtime_path(visual_check_dir)
@@ -244,6 +250,8 @@ def run_t03_internal_full_input(
         "rcsdroad_path": resolved_rcsdroad_path,
         "rcsdnode_path": resolved_rcsdnode_path,
     }
+    if resolved_intersection_match_t07_path is not None:
+        input_paths["intersection_match_t07_path"] = resolved_intersection_match_t07_path
     run_started_at = _now_text()
     run_started_perf = perf_counter()
     progress_lock = Lock()
@@ -1159,6 +1167,7 @@ def run_t03_internal_full_input(
             streamed_results=closeout_case_results,
             failed_case_ids=failed_case_ids,
             input_nodes_path=input_paths["nodes_path"],
+            intersection_match_t07_path=resolved_intersection_match_t07_path,
         )
         _record_stage_timer("nodes_update", perf_counter() - nodes_update_started_perf)
         _record_stage_timer("output_write", perf_counter() - output_write_started_perf)
@@ -1177,6 +1186,7 @@ def run_t03_internal_full_input(
                 "nodes_output_path": str(nodes_outputs["nodes_path"]),
                 "nodes_anchor_update_audit_csv": str(nodes_outputs["audit_csv_path"]),
                 "nodes_anchor_update_audit_json": str(nodes_outputs["audit_json_path"]),
+                "intersection_match_t03_path": str(nodes_outputs["intersection_match_t03_path"]),
             },
         )
         with progress_lock:

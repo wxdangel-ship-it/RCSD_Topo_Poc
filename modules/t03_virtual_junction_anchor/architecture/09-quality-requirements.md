@@ -21,6 +21,7 @@
 - 可批量：Anchor61 必须按 `61 raw / 58 default formal` 稳定落盘。
 - 可发布：`virtual_intersection_polygons.gpkg` 是 batch / full-input 正式聚合成果层。
 - 可发布：`nodes.gpkg` 只能更新当前批次 selected / effective case 的代表 node `is_anchor`；`accepted => yes`、`rejected / runtime_failed => fail3`，非代表 node 与未选中 node 必须保持输入值不变。
+- 可发布：`intersection_match_t03.geojson` 只能包含通过 SWSD-RCSD 1:1 校验的 T03 最终语义路口 relation。
 - 可一致：`nodes_anchor_update_audit.csv / nodes_anchor_update_audit.json` 的行集、计数与 `nodes.gpkg` 实际写值必须一致。
 - 可兼容：现有 `association_*` 与 `step7_*` 输出文件名继续作为当前兼容契约保留，不因文档主结构切换而重命名。
 

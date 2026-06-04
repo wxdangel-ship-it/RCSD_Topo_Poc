@@ -297,7 +297,7 @@ def write_internal_manifest(
     resume_effective: bool = False,
     retry_failed_effective: bool = False,
     polygons_path: Path | None = None,
-    nodes_outputs: dict[str, Path] | None = None,
+    nodes_outputs: dict[str, Any] | None = None,
 ) -> None:
     paths = internal_observability_paths(internal_root)
     payload = {
@@ -307,6 +307,11 @@ def write_internal_manifest(
         "drivezone_path": str(input_paths["drivezone_path"]),
         "rcsdroad_path": str(input_paths["rcsdroad_path"]),
         "rcsdnode_path": str(input_paths["rcsdnode_path"]),
+        "intersection_match_t07_path": (
+            str(input_paths["intersection_match_t07_path"])
+            if input_paths.get("intersection_match_t07_path") is not None
+            else None
+        ),
         "out_root": str(out_root),
         "run_root": str(run_root),
         "case_root": str(case_root),
@@ -362,6 +367,8 @@ def write_internal_manifest(
         payload["nodes_output_path"] = str(nodes_outputs["nodes_path"])
         payload["nodes_anchor_update_audit_csv"] = str(nodes_outputs["audit_csv_path"])
         payload["nodes_anchor_update_audit_json"] = str(nodes_outputs["audit_json_path"])
+        if nodes_outputs.get("intersection_match_t03_path") is not None:
+            payload["intersection_match_t03_path"] = str(nodes_outputs["intersection_match_t03_path"])
     write_json_atomic(paths["manifest"], payload)
 
 

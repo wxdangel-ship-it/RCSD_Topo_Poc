@@ -11,6 +11,9 @@ from shapely.ops import nearest_points, substring, unary_union
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import NodeRecord, RoadRecord
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id, stable_id_key
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step5_foreign_filter import build_association_foreign_result
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_direction_gate import (
+    build_single_sided_direction_gate_audit,
+)
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import (
     AssociationCaseResult,
     AssociationContext,
@@ -940,6 +943,7 @@ def _apply_required_rcsdnode_template_gate(
     context: AssociationContext,
     required_node_ids: set[str],
     grouped_candidate_nodes: dict[str, list[NodeRecord]],
+    candidate_roads: list[RoadRecord],
     node_degree_map: dict[str, int],
 ) -> tuple[set[str], dict[str, dict[str, Any]], list[str]]:
     gate_audit: dict[str, dict[str, Any]] = {}
@@ -966,6 +970,7 @@ def _apply_required_rcsdnode_template_gate(
             "effective_degree": max((int(node_degree_map.get(node.node_id, 0)) for node in group_nodes), default=0),
             "group_span_m": round(group_span_m, 6),
             "group_max_span_m": COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M,
+            "compact_group_member_count": len(group_nodes),
             "compact_multi_node_semantic_group": len(group_nodes) > 1
             and group_span_m <= COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M,
             "intersects_current_swsd_surface": bool(
@@ -998,6 +1003,7 @@ def _apply_required_rcsdnode_template_gate(
         )
         has_compact_offset_core = any(
             row["compact_multi_node_semantic_group"]
+            and row["compact_group_member_count"] >= 3
             and row["effective_degree"] >= CENTER_COMPACT_OFFSET_CORE_MIN_DEGREE
             and row["min_distance_to_representative_m"] <= CENTER_COMPACT_OFFSET_CORE_DISTANCE_M
             for row in gate_audit.values()
@@ -1014,6 +1020,35 @@ def _apply_required_rcsdnode_template_gate(
         return set(), gate_audit, _sorted_ids(required_node_ids)
 
     if template_class == "single_sided_t_mouth":
+        pre_dropped_required_ids: set[str] = set()
+        if len(required_groups) == 1:
+            for group_id, group_required_ids in list(required_groups.items()):
+                row = gate_audit[group_id]
+                if not row["compact_multi_node_semantic_group"] and row["effective_degree"] < 3:
+                    row["gate_decision"] = "dropped"
+                    row["gate_reason"] = "single_sided_required_core_singleton_degree_below_semantic_threshold"
+                    pre_dropped_required_ids.update(group_required_ids)
+                    continue
+                if not row["compact_multi_node_semantic_group"]:
+                    direction_audit = build_single_sided_direction_gate_audit(
+                        context=context,
+                        group_nodes=grouped_candidate_nodes[group_id],
+                        candidate_roads=candidate_roads,
+                    )
+                    row.update(direction_audit)
+                    if not direction_audit["direction_gate_passed"]:
+                        row["gate_decision"] = "dropped"
+                        row["gate_reason"] = "single_sided_required_core_direction_signature_mismatch"
+                        pre_dropped_required_ids.update(group_required_ids)
+        if pre_dropped_required_ids:
+            required_node_ids -= pre_dropped_required_ids
+            required_groups = {
+                group_id: group_ids - pre_dropped_required_ids
+                for group_id, group_ids in required_groups.items()
+                if group_ids - pre_dropped_required_ids
+            }
+            if not required_groups:
+                return set(), gate_audit, _sorted_ids(pre_dropped_required_ids)
         has_required_pair = len(required_groups) >= 2
         has_anchor_singleton = any(
             not row["compact_multi_node_semantic_group"]
@@ -1033,12 +1068,14 @@ def _apply_required_rcsdnode_template_gate(
         )
         if has_required_pair or has_anchor_singleton or has_anchor_compact_group or has_allowed_only_compact_group:
             for row in gate_audit.values():
-                row["gate_reason"] = "single_sided_required_core_pair_anchor_or_allowed_only_compact_group"
-            return required_node_ids, gate_audit, []
+                if row.get("gate_decision") != "dropped":
+                    row["gate_reason"] = "single_sided_required_core_pair_anchor_or_allowed_only_compact_group"
+            return required_node_ids, gate_audit, _sorted_ids(pre_dropped_required_ids)
         for row in gate_audit.values():
-            row["gate_decision"] = "dropped"
-            row["gate_reason"] = "single_sided_required_core_missing_pair_anchor_or_allowed_only_compact_group"
-        return set(), gate_audit, _sorted_ids(required_node_ids)
+            if row.get("gate_decision") != "dropped":
+                row["gate_decision"] = "dropped"
+                row["gate_reason"] = "single_sided_required_core_missing_pair_anchor_or_allowed_only_compact_group"
+        return set(), gate_audit, _sorted_ids(set(required_node_ids) | pre_dropped_required_ids)
 
     return required_node_ids, gate_audit, []
 
@@ -1654,6 +1691,7 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
         context=context,
         required_node_ids=required_node_ids,
         grouped_candidate_nodes=grouped_candidate_nodes,
+        candidate_roads=candidate_roads,
         node_degree_map=node_degree_map,
     )
     required_nodes = [node for node in candidate_nodes if node.node_id in required_node_ids]
@@ -1785,6 +1823,21 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
     ]
     if support_road_ids:
         hook_shrunk_road_ids = [road_id for road_id in hook_shrunk_road_ids if road_id in support_road_ids]
+    forced_no_support_only_due_direction_mismatch = (
+        template_result.template_class == "single_sided_t_mouth"
+        and not required_node_ids
+        and any(
+            row.get("gate_reason") == "single_sided_required_core_direction_signature_mismatch"
+            and float(row.get("min_distance_to_representative_m", float("inf")))
+            <= SINGLE_SIDED_REQUIRED_CORE_ANCHOR_DISTANCE_M
+            for row in required_rcsdnode_gate_audit.values()
+        )
+    )
+    if forced_no_support_only_due_direction_mismatch:
+        support_road_ids.clear()
+        support_roads = []
+        support_fragments = []
+        hook_shrunk_road_ids = []
 
     if required_node_ids:
         association_class = "A"
@@ -1804,6 +1857,8 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
         if node.node_id in t_mouth_strong_related_overflow_rcsdnode_ids:
             continue
         if node.node_id in degree2_connector_candidate_node_ids:
+            continue
+        if node.node_id in set(required_rcsdnode_gate_dropped_ids):
             continue
         if node_degree_map.get(node.node_id, 0) <= 0:
             continue

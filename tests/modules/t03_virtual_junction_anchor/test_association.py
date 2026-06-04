@@ -313,8 +313,152 @@ def test_association_single_sided_support_prunes_parallel_duplicate_by_vertical_
 
     assert result.association_class == "A"
     assert result.extra_status_fields["support_rcsdroad_ids"] == ["rc_support_exit_side"]
-    assert result.extra_status_fields["related_rcsdroad_ids"] == ["rc_required"]
+    assert "rc_required" in result.extra_status_fields["related_rcsdroad_ids"]
     assert "rc_support_exit_side" not in result.extra_status_fields["related_rcsdroad_ids"]
     assert "rc_support_exit_side" not in result.extra_status_fields["foreign_mask_source_rcsdroad_ids"]
     assert result.extra_status_fields["parallel_support_duplicate_dropped_rcsdroad_ids"] == ["rc_support_parallel"]
     assert result.audit_doc["step4"]["parallel_support_duplicate_dropped_rcsdroad_ids"] == ["rc_support_parallel"]
+
+
+def test_association_center_two_node_offset_group_stays_support_only(tmp_path: Path) -> None:
+    case_root = tmp_path / "cases"
+    step3_root = tmp_path / "step3"
+    case_id = "100014"
+    roads = [
+        road_feature("road_h", case_id, "n2", [(-40.0, 0.0), (40.0, 0.0)]),
+        road_feature("road_v", "n3", case_id, [(0.0, -30.0), (0.0, 30.0)]),
+    ]
+    rcsd_nodes = [
+        node_feature("rc_pair_a", 12.0, 4.0, mainnodeid="rc_pair", kind_2=4),
+        node_feature("rc_pair_b", 15.0, 4.0, mainnodeid="rc_pair", kind_2=4),
+    ]
+    rcsd_roads = [
+        road_feature("rc_pair_left", "rc_left", "rc_pair_a", [(-8.0, 4.0), (12.0, 4.0)]),
+        road_feature("rc_pair_mid", "rc_pair_a", "rc_pair_b", [(12.0, 4.0), (15.0, 4.0)]),
+        road_feature("rc_pair_right", "rc_pair_b", "rc_right", [(15.0, 4.0), (32.0, 4.0)]),
+        road_feature("rc_pair_vertical", "rc_pair_a", "rc_v", [(12.0, -12.0), (12.0, 18.0)]),
+        road_feature("rc_pair_diag", "rc_pair_b", "rc_diag", [(15.0, 4.0), (24.0, 13.0)]),
+    ]
+    write_association_case_package(case_root / case_id, case_id, roads=roads, rcsd_nodes=rcsd_nodes, rcsd_roads=rcsd_roads)
+    write_step3_prerequisite(
+        step3_root,
+        case_id,
+        template_class="center_junction",
+        selected_road_ids=["road_h", "road_v"],
+        allowed_geometry=box(-20.0, -16.0, 34.0, 20.0),
+    )
+
+    result = _run_case(case_root, step3_root, case_id)
+
+    assert result.association_class == "B"
+    assert result.association_state == "review"
+    assert result.extra_status_fields["required_rcsdnode_ids"] == []
+    assert result.extra_status_fields["support_rcsdnode_ids"] == []
+    assert result.key_metrics["support_rcsdroad_count"] > 0
+    gate_rows = result.audit_doc["step4"]["required_rcsdnode_gate_audit"]
+    assert gate_rows["rc_pair"]["compact_group_member_count"] == 2
+    assert gate_rows["rc_pair"]["gate_reason"] == "center_required_core_missing_anchor_local_semantic_group"
+
+
+def test_association_single_sided_degree1_node_stays_support_only(tmp_path: Path) -> None:
+    case_root = tmp_path / "cases"
+    step3_root = tmp_path / "step3"
+    case_id = "100015"
+    roads = [
+        road_feature("road_h_left", case_id, "left_far", [(-20.0, 0.0), (0.0, 0.0)]),
+        road_feature("road_h_right", "pair_b", "right_far", [(10.0, 0.0), (25.0, 0.0)]),
+        road_feature("road_v_inner", case_id, "v_mid", [(0.0, 0.0), (0.0, 18.0)]),
+        road_feature("road_v_outer", "v_mid", "v_far", [(0.0, 18.0), (0.0, 35.0)]),
+    ]
+    extra_nodes = [
+        node_feature("pair_b", 10.0, 0.0, mainnodeid=case_id, kind_2=2048),
+    ]
+    rcsd_nodes = [
+        node_feature("rc_degree1", -8.0, 0.0, mainnodeid="rc_degree1", kind_2=4),
+    ]
+    rcsd_roads = [
+        road_feature("rc_degree1_road", "rc_far", "rc_degree1", [(-18.0, 0.0), (-8.0, 0.0)]),
+        road_feature("rc_support_exit_side", "rc_exit_a", "rc_exit_b", [(0.0, 0.0), (0.0, 28.0)]),
+    ]
+    write_association_case_package(
+        case_root / case_id,
+        case_id,
+        kind_2=2048,
+        roads=roads,
+        extra_nodes=extra_nodes,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_roads=rcsd_roads,
+        drivezone_geometry=box(-30.0, -10.0, 30.0, 40.0),
+    )
+    write_step3_prerequisite(
+        step3_root,
+        case_id,
+        template_class="single_sided_t_mouth",
+        selected_road_ids=["road_h_left", "road_h_right", "road_v_inner", "road_v_outer"],
+        allowed_geometry=box(-18.0, -8.0, 10.0, 30.0),
+    )
+
+    result = _run_case(case_root, step3_root, case_id)
+
+    assert result.association_class == "B"
+    assert result.association_state == "review"
+    assert result.extra_status_fields["required_rcsdnode_ids"] == []
+    assert result.extra_status_fields["support_rcsdnode_ids"] == []
+    assert set(result.extra_status_fields["support_rcsdroad_ids"]) == {"rc_degree1_road", "rc_support_exit_side"}
+    gate_rows = result.audit_doc["step4"]["required_rcsdnode_gate_audit"]
+    assert (
+        gate_rows["rc_degree1"]["gate_reason"]
+        == "single_sided_required_core_singleton_degree_below_semantic_threshold"
+    )
+
+
+def test_association_single_sided_direction_mismatch_fails_without_support_fallback(tmp_path: Path) -> None:
+    case_root = tmp_path / "cases"
+    step3_root = tmp_path / "step3"
+    case_id = "100016"
+    roads = [
+        road_feature("road_h_left", case_id, "left_far", [(-20.0, 0.0), (0.0, 0.0)]),
+        road_feature("road_h_right", "pair_b", "right_far", [(10.0, 0.0), (25.0, 0.0)]),
+        road_feature("road_v_inner", case_id, "v_mid", [(0.0, 0.0), (0.0, 18.0)]),
+        road_feature("road_v_outer", "v_mid", "v_far", [(0.0, 18.0), (0.0, 35.0)]),
+    ]
+    extra_nodes = [
+        node_feature("pair_b", 10.0, 0.0, mainnodeid=case_id, kind_2=2048),
+    ]
+    rcsd_nodes = [
+        node_feature("rc_horizontal_only", 8.0, 0.0, mainnodeid="rc_horizontal_only", kind_2=4),
+    ]
+    rcsd_roads = [
+        road_feature("rc_h_left", "rc_left", "rc_horizontal_only", [(-14.0, 0.0), (8.0, 0.0)]),
+        road_feature("rc_h_right", "rc_horizontal_only", "rc_right", [(8.0, 0.0), (26.0, 0.0)]),
+        road_feature("rc_h_tail", "rc_horizontal_only", "rc_tail", [(8.0, 1.0), (26.0, 1.0)]),
+    ]
+    write_association_case_package(
+        case_root / case_id,
+        case_id,
+        kind_2=2048,
+        roads=roads,
+        extra_nodes=extra_nodes,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_roads=rcsd_roads,
+        drivezone_geometry=box(-30.0, -10.0, 30.0, 40.0),
+    )
+    write_step3_prerequisite(
+        step3_root,
+        case_id,
+        template_class="single_sided_t_mouth",
+        selected_road_ids=["road_h_left", "road_h_right", "road_v_inner", "road_v_outer"],
+        allowed_geometry=box(-18.0, -8.0, 30.0, 30.0),
+    )
+
+    result = _run_case(case_root, step3_root, case_id)
+
+    assert result.association_class == "C"
+    assert result.extra_status_fields["required_rcsdnode_ids"] == []
+    assert result.extra_status_fields["support_rcsdnode_ids"] == []
+    assert result.extra_status_fields["support_rcsdroad_ids"] == []
+    gate_rows = result.audit_doc["step4"]["required_rcsdnode_gate_audit"]
+    assert (
+        gate_rows["rc_horizontal_only"]["gate_reason"]
+        == "single_sided_required_core_direction_signature_mismatch"
+    )

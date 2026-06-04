@@ -37,6 +37,6 @@ T03 当前正式业务主链固定按 `Step1~Step7` 理解：
 
 - 正式状态以 `Step7` 机器状态为准：`accepted / rejected`；批量运行还需区分 `runtime_failed`。
 - 视觉等级 `V1~V5` 只属于 review-only 层，不得反向覆盖正式状态。
-- `virtual_intersection_polygons.gpkg`、`nodes.gpkg` 与 `nodes_anchor_update_audit.*` 是 batch / full-input 正式成果。
+- `virtual_intersection_polygons.gpkg`、`nodes.gpkg`、`nodes_anchor_update_audit.*` 与 `intersection_match_t03.geojson` 是 batch / full-input 正式成果。
 - `step7_review.png`、`t03_review_*` 与 `visual_checks/` 是 review-only 产物。
 - `terminal_case_records/<case_id>.json` 是 internal full-input 的 authoritative terminal state；`t03_streamed_case_results.jsonl` 是 append log，不作为唯一准真值。

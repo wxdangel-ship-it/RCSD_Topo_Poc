@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections import Counter, defaultdict
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+
+from shapely.geometry import LineString
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     sort_patch_key,
@@ -32,6 +35,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
     FinalizationReviewIndexRow,
 )
+from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_io import write_relation_geojson_crs84
 
 
 T03_REVIEW_ACCEPTED_DIRNAME = "t03_review_accepted"
@@ -66,6 +70,10 @@ REVIEW_SUMMARY_VISUAL_CLASSES = (
 
 RELATION_EVIDENCE_CSV_NAME = "t03_swsd_rcsd_relation_evidence.csv"
 RELATION_EVIDENCE_JSON_NAME = "t03_swsd_rcsd_relation_evidence.json"
+INTERSECTION_MATCH_T03_NAME = "intersection_match_t03.geojson"
+INTERSECTION_MATCH_T03_SUMMARY_NAME = "intersection_match_t03_summary.json"
+INTERSECTION_MATCH_T03_CARDINALITY_CSV_NAME = "intersection_match_t03_cardinality_errors.csv"
+INTERSECTION_MATCH_T03_CARDINALITY_JSON_NAME = "intersection_match_t03_cardinality_errors.json"
 RELATION_EVIDENCE_FIELDNAMES = [
     "target_id",
     "case_id",
@@ -93,6 +101,17 @@ RELATION_EVIDENCE_FIELDNAMES = [
     "swsd_point_y",
     "rcsd_point_x",
     "rcsd_point_y",
+]
+INTERSECTION_MATCH_T03_CARDINALITY_FIELDS = [
+    "error_type",
+    "target_id",
+    "base_id",
+    "related_target_ids",
+    "introduced_by_module",
+    "source_modules",
+    "source_case_ids",
+    "scenes",
+    "reasons",
 ]
 
 
@@ -198,6 +217,341 @@ def _t03_relation_state(
     if association_class == "C":
         return "no_related_rcsd", 1, -1
     return "ambiguous_review", 1, -1
+
+
+def _split_id_parts(value: Any) -> list[str]:
+    if value in (None, "", [], {}, ()):
+        return []
+    parts = str(value).replace(",", "|").split("|")
+    normalized_parts: list[str] = []
+    for part in parts:
+        normalized = normalize_id(part)
+        if normalized is None or normalized in {"", "-1"} or _is_zero_id(normalized):
+            continue
+        normalized_parts.append(normalized)
+    return normalized_parts
+
+
+def _is_zero_id(value: Any) -> bool:
+    text = normalize_id(value)
+    if text is None:
+        return False
+    try:
+        return float(text) == 0
+    except ValueError:
+        return text == "0"
+
+
+def _is_success_status(value: Any) -> bool:
+    text = normalize_id(value)
+    if text is None:
+        return False
+    try:
+        return float(text) == 0
+    except ValueError:
+        return text == "0"
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _line_from_evidence_row(row: dict[str, Any]) -> LineString | None:
+    swsd_x = _float_or_none(row.get("swsd_point_x"))
+    swsd_y = _float_or_none(row.get("swsd_point_y"))
+    rcsd_x = _float_or_none(row.get("rcsd_point_x"))
+    rcsd_y = _float_or_none(row.get("rcsd_point_y"))
+    if None in {swsd_x, swsd_y, rcsd_x, rcsd_y}:
+        return None
+    return LineString([(swsd_x, swsd_y), (rcsd_x, rcsd_y)])
+
+
+def _sort_relation_id(value: str) -> tuple[int, int | str]:
+    try:
+        return (0, int(value))
+    except (TypeError, ValueError):
+        return (1, value)
+
+
+def _read_relation_evidence_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    rows = payload.get("rows") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [dict(row) for row in rows if isinstance(row, dict)]
+
+
+def _t03_relation_records_from_evidence_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if not _is_success_status(row.get("status_suggested")):
+            continue
+        target_id = normalize_id(row.get("target_id"))
+        base_ids = _split_id_parts(row.get("base_id_candidate"))
+        if target_id is None or not base_ids:
+            continue
+        for base_id in base_ids:
+            properties = {
+                "target_id": target_id,
+                "base_id": base_id,
+                "status": 0,
+                "level": row.get("level", -1),
+                "is_highway": row.get("is_highway", -1),
+                "source_module": "T03",
+                "source_case_id": row.get("case_id", ""),
+                "relation_source": "T03_INTERSECTION_MATCH",
+                "relation_state": row.get("relation_state", "success_required_rcsd_junction"),
+                "reason": row.get("reason", "success_required_rcsd_junction"),
+            }
+            records.append(
+                {
+                    "feature_index": index,
+                    "target_id": target_id,
+                    "base_id": base_id,
+                    "source_module": "T03",
+                    "source_case_id": str(row.get("case_id") or target_id),
+                    "relation_state": str(row.get("relation_state") or ""),
+                    "reason": str(row.get("reason") or ""),
+                    "representative_node_id": str(row.get("case_id") or target_id),
+                    "step7_state": str(row.get("step7_state") or ""),
+                    "properties": properties,
+                    "geometry": _line_from_evidence_row(row),
+                }
+            )
+    return records
+
+
+def _read_intersection_match_t07_records(path: Path | None) -> list[dict[str, Any]]:
+    if path is None:
+        return []
+    if not path.is_file():
+        raise FileNotFoundError(f"intersection_match_t07.geojson does not exist: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    features = payload.get("features") if isinstance(payload, dict) else None
+    if not isinstance(features, list):
+        return []
+    records: list[dict[str, Any]] = []
+    for index, feature in enumerate(features):
+        if not isinstance(feature, dict):
+            continue
+        props = dict(feature.get("properties") or {})
+        target_id = normalize_id(props.get("target_id"))
+        base_id = normalize_id(props.get("base_id"))
+        if target_id is None or base_id is None or not _is_success_status(props.get("status")) or _is_zero_id(base_id):
+            continue
+        records.append(
+            {
+                "feature_index": index,
+                "target_id": target_id,
+                "base_id": base_id,
+                "source_module": "T07",
+                "source_case_id": str(props.get("source_case_id") or props.get("case_id") or ""),
+                "relation_state": str(props.get("relation_state") or "intersection_match_t07_matched"),
+                "reason": str(props.get("reason") or "intersection_match_t07_matched"),
+                "representative_node_id": str(props.get("representative_node_id") or target_id),
+                "step7_state": "",
+                "properties": props,
+                "geometry": feature.get("geometry"),
+            }
+        )
+    return records
+
+
+def _relation_error_row(
+    *,
+    error_type: str,
+    target_ids: list[str],
+    base_ids: list[str],
+    records: list[dict[str, Any]],
+) -> dict[str, str]:
+    source_modules = {str(record.get("source_module") or "") for record in records if record.get("source_module")}
+    source_case_ids = {str(record.get("source_case_id") or "") for record in records if record.get("source_case_id")}
+    scenes = {str(record.get("relation_state") or "") for record in records if record.get("relation_state")}
+    reasons = {error_type}
+    reasons.update(str(record.get("reason") or "") for record in records if record.get("reason"))
+    source_module_text = "|".join(sorted(source_modules, key=_sort_relation_id))
+    return {
+        "error_type": error_type,
+        "target_id": "|".join(target_ids),
+        "base_id": "|".join(base_ids),
+        "related_target_ids": "|".join(target_ids),
+        "introduced_by_module": source_module_text or "T03_INTERSECTION_MATCH",
+        "source_modules": source_module_text,
+        "source_case_ids": "|".join(sorted(source_case_ids, key=_sort_relation_id)),
+        "scenes": "|".join(sorted(scenes, key=_sort_relation_id)),
+        "reasons": "|".join(sorted({reason for reason in reasons if reason}, key=_sort_relation_id)),
+    }
+
+
+def _build_intersection_match_cardinality_errors(records: list[dict[str, Any]]) -> list[dict[str, str]]:
+    pair_records: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        target_id = record.get("target_id")
+        base_id = record.get("base_id")
+        if target_id is None or base_id is None:
+            continue
+        pair_records[(str(target_id), str(base_id))].append(record)
+
+    target_to_base: dict[str, set[str]] = defaultdict(set)
+    base_to_target: dict[str, set[str]] = defaultdict(set)
+    records_by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    records_by_base: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for (target_id, base_id), grouped_records in pair_records.items():
+        target_to_base[target_id].add(base_id)
+        base_to_target[base_id].add(target_id)
+        records_by_target[target_id].extend(grouped_records)
+        records_by_base[base_id].extend(grouped_records)
+
+    errors: list[dict[str, str]] = []
+    for target_id, base_ids in sorted(target_to_base.items(), key=lambda item: _sort_relation_id(item[0])):
+        if len(base_ids) <= 1:
+            continue
+        errors.append(
+            _relation_error_row(
+                error_type="one_target_to_many_base",
+                target_ids=[target_id],
+                base_ids=sorted(base_ids, key=_sort_relation_id),
+                records=records_by_target[target_id],
+            )
+        )
+    for base_id, target_ids in sorted(base_to_target.items(), key=lambda item: _sort_relation_id(item[0])):
+        if len(target_ids) <= 1:
+            continue
+        sorted_target_ids = sorted(target_ids, key=_sort_relation_id)
+        errors.append(
+            _relation_error_row(
+                error_type="many_target_to_one_base",
+                target_ids=sorted_target_ids,
+                base_ids=[base_id],
+                records=records_by_base[base_id],
+            )
+        )
+    return errors
+
+
+def _relation_error_counts(error_rows: list[dict[str, str]]) -> dict[str, Any]:
+    counts = Counter(row.get("error_type", "") for row in error_rows)
+    return {
+        "relation_cardinality_error_count": len(error_rows),
+        "one_target_to_many_base_count": int(counts["one_target_to_many_base"]),
+        "many_target_to_one_base_count": int(counts["many_target_to_one_base"]),
+        "relation_cardinality_passed": not error_rows,
+    }
+
+
+def _error_target_ids(error_rows: list[dict[str, str]]) -> set[str]:
+    return {
+        target_id
+        for row in error_rows
+        for target_id in _split_id_parts(row.get("target_id"))
+    }
+
+
+def _one_to_many_target_ids(error_rows: list[dict[str, str]]) -> set[str]:
+    return {
+        target_id
+        for row in error_rows
+        if row.get("error_type") == "one_target_to_many_base"
+        for target_id in _split_id_parts(row.get("target_id"))
+    }
+
+
+def _update_t03_summary_with_intersection_match(
+    *,
+    run_root: Path,
+    summary: dict[str, Any],
+) -> None:
+    summary_path = run_root / "summary.json"
+    if not summary_path.is_file():
+        return
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    payload["intersection_match_t03"] = summary
+    write_json(summary_path, payload)
+
+
+def write_intersection_match_t03(
+    *,
+    run_root: Path,
+    relation_evidence_json_path: Path,
+    intersection_match_t07_path: Path | str | None = None,
+) -> dict[str, Any]:
+    t07_path = Path(intersection_match_t07_path) if intersection_match_t07_path is not None else None
+    t03_records = _t03_relation_records_from_evidence_rows(_read_relation_evidence_rows(relation_evidence_json_path))
+    t07_records = _read_intersection_match_t07_records(t07_path)
+    error_rows = _build_intersection_match_cardinality_errors(t03_records + t07_records)
+    error_counts = _relation_error_counts(error_rows)
+    suppressed_target_ids = _error_target_ids(error_rows)
+    rollback_target_ids = _one_to_many_target_ids(error_rows)
+    t03_success_target_ids = {str(record["target_id"]) for record in t03_records}
+    rollback_rows: list[dict[str, Any]] = []
+    for record in t03_records:
+        target_id = str(record["target_id"])
+        if target_id not in rollback_target_ids or target_id not in t03_success_target_ids:
+            continue
+        rollback_rows.append(
+            {
+                "target_id": target_id,
+                "case_id": record.get("source_case_id") or target_id,
+                "representative_node_id": record.get("representative_node_id") or target_id,
+                "step7_state": record.get("step7_state") or "",
+                "reason": "intersection_match_t03_one_target_to_many_base",
+            }
+        )
+    deduped_rollback_rows = list({str(row["representative_node_id"]): row for row in rollback_rows}.values())
+    output_records = [
+        record
+        for record in t03_records
+        if str(record["target_id"]) not in suppressed_target_ids
+    ]
+
+    match_path = run_root / INTERSECTION_MATCH_T03_NAME
+    error_csv_path = run_root / INTERSECTION_MATCH_T03_CARDINALITY_CSV_NAME
+    error_json_path = run_root / INTERSECTION_MATCH_T03_CARDINALITY_JSON_NAME
+    summary_path = run_root / INTERSECTION_MATCH_T03_SUMMARY_NAME
+    write_relation_geojson_crs84(
+        match_path,
+        ({"properties": record["properties"], "geometry": record["geometry"]} for record in output_records),
+    )
+    write_csv(error_csv_path, error_rows, INTERSECTION_MATCH_T03_CARDINALITY_FIELDS)
+    write_json(
+        error_json_path,
+        {
+            "row_count": len(error_rows),
+            "fieldnames": INTERSECTION_MATCH_T03_CARDINALITY_FIELDS,
+            "rows": error_rows,
+        },
+    )
+    summary = {
+        "intersection_match_t03_path": str(match_path),
+        "intersection_match_t07_path": str(t07_path) if t07_path is not None else "",
+        "t07_validation_enabled": t07_path is not None,
+        "target_crs": "CRS84",
+        "t03_candidate_relation_count": len(t03_records),
+        "t07_validation_relation_count": len(t07_records),
+        "published_relation_count": len(output_records),
+        "suppressed_target_ids": sorted(suppressed_target_ids, key=_sort_relation_id),
+        "rollback_target_ids": sorted({str(row["target_id"]) for row in deduped_rollback_rows}, key=_sort_relation_id),
+        **error_counts,
+        "cardinality_errors_csv": str(error_csv_path),
+        "cardinality_errors_json": str(error_json_path),
+    }
+    write_json(summary_path, summary)
+    _update_t03_summary_with_intersection_match(run_root=run_root, summary=summary)
+    return {
+        "intersection_match_t03_path": match_path,
+        "intersection_match_t03_summary_path": summary_path,
+        "intersection_match_t03_cardinality_errors_csv_path": error_csv_path,
+        "intersection_match_t03_cardinality_errors_json_path": error_json_path,
+        "intersection_match_t03_summary": summary,
+        "intersection_match_t03_rollback_rows": deduped_rollback_rows,
+    }
 
 
 def _update_t03_summary_with_relation_evidence(
@@ -682,6 +1036,84 @@ def write_t03_relation_evidence(
     return {"relation_evidence_csv_path": csv_path, "relation_evidence_json_path": json_path}
 
 
+def _write_nodes_audit_outputs(*, audit_csv_path: Path, audit_json_path: Path, rows: list[dict[str, Any]], payload: dict[str, Any]) -> None:
+    write_csv(
+        audit_csv_path,
+        rows,
+        [
+            "case_id",
+            "representative_node_id",
+            "previous_is_anchor",
+            "new_is_anchor",
+            "step7_state",
+            "reason",
+        ],
+    )
+    payload["total_update_count"] = len(rows)
+    payload["updated_to_yes_count"] = sum(1 for row in rows if row["new_is_anchor"] == "yes")
+    payload["updated_to_fail3_count"] = sum(1 for row in rows if row["new_is_anchor"] == "fail3")
+    payload["updated_to_no_count"] = sum(1 for row in rows if row["new_is_anchor"] == "no")
+    payload["rows"] = rows
+    write_json(audit_json_path, payload)
+
+
+def _apply_intersection_match_t03_node_rollbacks(
+    *,
+    nodes_output_path: Path,
+    audit_csv_path: Path,
+    audit_json_path: Path,
+    rollback_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not rollback_rows:
+        return {"requested_update_count": 0, "sqlite_changed_row_count": 0}
+    audit_payload = json.loads(audit_json_path.read_text(encoding="utf-8")) if audit_json_path.is_file() else {}
+    audit_rows = [dict(row) for row in audit_payload.get("rows", []) if isinstance(row, dict)]
+    previous_value_by_node_id = {
+        str(row.get("representative_node_id")): row.get("new_is_anchor")
+        for row in audit_rows
+        if row.get("representative_node_id") not in (None, "")
+    }
+    updates_by_node_id = {
+        str(row["representative_node_id"]): "no"
+        for row in rollback_rows
+        if str(row.get("representative_node_id") or "").strip()
+    }
+    temp_nodes_path = nodes_output_path.with_name(f".{nodes_output_path.stem}.intersection_match_t03_tmp{nodes_output_path.suffix}")
+    shutil.copy2(nodes_output_path, temp_nodes_path)
+    try:
+        rollback_update_result = copy_gpkg_and_update_field_by_id(
+            source_path=temp_nodes_path,
+            output_path=nodes_output_path,
+            updates_by_id=updates_by_node_id,
+            id_field="id",
+            update_field="is_anchor",
+        )
+    finally:
+        if temp_nodes_path.exists():
+            temp_nodes_path.unlink()
+
+    for row in rollback_rows:
+        representative_node_id = str(row.get("representative_node_id") or "")
+        audit_rows.append(
+            {
+                "case_id": row.get("case_id") or row.get("target_id") or representative_node_id,
+                "representative_node_id": representative_node_id,
+                "previous_is_anchor": previous_value_by_node_id.get(representative_node_id, ""),
+                "new_is_anchor": "no",
+                "step7_state": row.get("step7_state") or "",
+                "reason": row.get("reason") or "intersection_match_t03_one_target_to_many_base",
+            }
+        )
+    audit_payload["intersection_match_t03_rollback_result"] = rollback_update_result
+    _write_nodes_audit_outputs(
+        audit_csv_path=audit_csv_path,
+        audit_json_path=audit_json_path,
+        rows=audit_rows,
+        payload=audit_payload,
+    )
+    return rollback_update_result
+
+
 def write_updated_nodes_outputs(
     *,
     run_root: Path,
@@ -690,7 +1122,8 @@ def write_updated_nodes_outputs(
     streamed_results: dict[str, T03StreamedCaseResult],
     failed_case_ids: list[str],
     input_nodes_path: Path | str | None = None,
-) -> dict[str, Path]:
+    intersection_match_t07_path: Path | str | None = None,
+) -> dict[str, Any]:
     updates_by_node_id: dict[str, str] = {}
     audit_rows: list[dict[str, Any]] = []
     failed_case_id_set = {str(case_id) for case_id in failed_case_ids}
@@ -749,27 +1182,11 @@ def write_updated_nodes_outputs(
             "requested_update_count": len(updates_by_node_id),
             "sqlite_changed_row_count": "",
         }
-    write_csv(
-        audit_csv_path,
-        audit_rows,
-        [
-            "case_id",
-            "representative_node_id",
-            "previous_is_anchor",
-            "new_is_anchor",
-            "step7_state",
-            "reason",
-        ],
-    )
-    write_json(
-        audit_json_path,
-        {
-            "total_update_count": len(audit_rows),
-            "updated_to_yes_count": sum(1 for row in audit_rows if row["new_is_anchor"] == "yes"),
-            "updated_to_fail3_count": sum(1 for row in audit_rows if row["new_is_anchor"] == "fail3"),
-            "nodes_update_result": nodes_update_result,
-            "rows": audit_rows,
-        },
+    _write_nodes_audit_outputs(
+        audit_csv_path=audit_csv_path,
+        audit_json_path=audit_json_path,
+        rows=audit_rows,
+        payload={"nodes_update_result": nodes_update_result},
     )
     relation_outputs = write_t03_relation_evidence(
         run_root=run_root,
@@ -778,12 +1195,25 @@ def write_updated_nodes_outputs(
         streamed_results=streamed_results,
         failed_case_ids=failed_case_ids,
     )
+    intersection_match_outputs = write_intersection_match_t03(
+        run_root=run_root,
+        relation_evidence_json_path=relation_outputs["relation_evidence_json_path"],
+        intersection_match_t07_path=intersection_match_t07_path,
+    )
+    rollback_update_result = _apply_intersection_match_t03_node_rollbacks(
+        nodes_output_path=nodes_output_path,
+        audit_csv_path=audit_csv_path,
+        audit_json_path=audit_json_path,
+        rollback_rows=intersection_match_outputs["intersection_match_t03_rollback_rows"],
+    )
     return {
         "nodes_path": nodes_output_path,
         "audit_csv_path": audit_csv_path,
         "audit_json_path": audit_json_path,
         "nodes_update_result": nodes_update_result,
         **relation_outputs,
+        **intersection_match_outputs,
+        "intersection_match_t03_rollback_result": rollback_update_result,
     }
 
 
@@ -802,6 +1232,7 @@ __all__ = [
     "write_t03_review_index",
     "write_t03_review_summary",
     "write_t03_summary",
+    "write_intersection_match_t03",
     "write_t03_relation_evidence",
     "write_updated_nodes_outputs",
     "write_virtual_intersection_polygons",

@@ -274,6 +274,8 @@ def build_single_sided_parallel_support_case(case_root: Path, step3_root: Path, 
     ]
     rcsd_roads = [
         road_feature("rc_required", "rc_far", "rc_core", [(-18.0, 0.0), (-8.0, 0.0)]),
+        road_feature("rc_required_vertical", "rc_core", "rc_required_v_far", [(-8.0, 0.0), (-8.0, 16.0)]),
+        road_feature("rc_required_diag", "rc_core", "rc_required_diag_far", [(-8.0, 0.0), (-16.0, -8.0)]),
         road_feature("rc_support_exit_side", "rc_exit_a", "rc_exit_b", [(0.0, 0.0), (0.0, 28.0)]),
         road_feature("rc_support_parallel", "rc_parallel_a", "rc_parallel_b", [(2.0, 0.0), (2.0, 28.0)]),
     ]

@@ -9,5 +9,5 @@
 - `fail1`：同一语义路口组命中多个 `RCSDIntersection` 的冲突。
 - `fail2`：同一个 `RCSDIntersection` 对应多个语义路口的冲突，优先级高于 `fail1`。
 - `intersection_match_all.geojson`：T05 Phase2 输出的 SWSD-RCSD 语义路口 relation 主表，字段为 `target_id / base_id / status / level / is_highway`。
-- `intersection_match_t07.geojson`：T07 Step3 输出的 T05 relation 子集，只包含候选 SWSD 语义路口、T05 relation 成功且输入 RCSD 中存在 `base_id` 的记录。
+- `intersection_match_t07.geojson`：T07 Step3 输出的 SWSD-RCSD 语义路口成功关系，包含 Step2 surface 1V1 推导关系与 T05 relation 补充关系。
 - `Segment-free`：T07 不读取、不生成、不统计 T01 `segment`。

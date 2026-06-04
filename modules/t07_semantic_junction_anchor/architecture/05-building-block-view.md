@@ -37,10 +37,12 @@ strict input read -> semantic junction assembly -> representative node selection
 
 ### Step3
 
-- 只处理 `kind_2 in {4, 8, 16}`、`has_evd = yes`、`is_anchor = no` 的代表 node。
-- 读取 T05 relation 主表中 `target_id / base_id / status`。
-- 校验成功 relation 的 RCSD `base_id` 是否存在于输入 `RCSDNode.id/mainnodeid`。
+- 处理 `kind_2 in {4, 8, 16, 2048}` 的代表 node。
+- 先读取 Step2 surface，用 `RCSDIntersection` 面查询输入 `RCSDNode` 语义路口，形成 Step2 surface 1V1 关系或 `RCSDNode_error.gpkg`。
+- 再读取 T05 relation 主表中 `target_id / base_id / status`，对 `has_evd = yes / is_anchor = no` 的候选补充关系。
+- 校验成功 relation 的 RCSD `base_id` 是否存在于输入 `RCSDNode.id/mainnodeid` 且未被 Step2 surface 1V1 阶段占用。
 - 输出 `intersection_match_t07.geojson` 并补写代表 node `is_anchor = yes / anchor_reason = NULL`。
+- 若最终出现 SWSD 1:N，则移除该 SWSD 的关系并回写 `is_anchor = no`。
 - 输出复制 Step2 结果的 `t07_rcsdintersection_anchor_surface.gpkg`。
 - 输出合并 Step2 evidence 与 Step3 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.csv/json`，并记录 Step2 / Step3 锚定数量。
 
@@ -48,6 +50,6 @@ strict input read -> semantic junction assembly -> representative node selection
 
 - 写完整 `nodes.gpkg`。
 - Step2 写 `t07_rcsdintersection_anchor_surface.gpkg / t07_swsd_rcsd_relation_evidence.csv/json`。
-- Step3 写 `intersection_match_t07.geojson / t07_rcsdintersection_anchor_surface.gpkg / t07_swsd_rcsd_relation_evidence.csv/json`。
+- Step3 写 `intersection_match_t07.geojson / RCSDNode_error.gpkg / t07_rcsdintersection_anchor_surface.gpkg / t07_swsd_rcsd_relation_evidence.csv/json`。
 - 写 summary / audit / perf。
 - 不写 Segment 工件。

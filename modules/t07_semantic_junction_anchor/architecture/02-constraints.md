@@ -10,10 +10,10 @@
 - Step2 中 `kind_2 = 64 / 128` 基础判定写 `is_anchor = no / anchor_reason = NULL`；若同一个 `RCSDIntersection` 面对应多个 SWSD 语义路口，仍被 `fail2` 覆盖。
 - Step2 中 `kind_2 = 2048` 仅当组内所有 node 均命中同一个且唯一的 `RCSDIntersection` 时基础判定写 `is_anchor = yes / anchor_reason = t`，否则写 `is_anchor = no / anchor_reason = NULL`；若同一个 `RCSDIntersection` 面对应多个 SWSD 语义路口，仍被 `fail2` 覆盖。
 - 对处理范围内类型，`fail2` 优先于 `fail1` 与基础 `yes / no / t` 判定。
-- Step3 仅处理代表 node `kind_2 in {4, 8, 16}`、`has_evd = yes` 且 `is_anchor = no` 的语义路口。
-- Step3 只接受 T05 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0` 的成功 relation，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在。
+- Step3 处理代表 node `kind_2 in {4, 8, 16, 2048}` 的语义路口，先用 Step2 surface 1V1 推导关系，再对 `has_evd = yes / is_anchor = no` 的候选使用 T05 relation 补充关系。
+- Step3 relation 补充只接受 T05 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0` 的成功 relation，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在且未被 Step2 surface 1V1 阶段占用。
 - Step3 接受后只写代表 node `is_anchor = yes / anchor_reason = NULL`，并输出 relation 子集 `intersection_match_t07.geojson`。
-- Step3 对候选成功 relation 做 T05 同口径基数质检，1:N、N:1 与重复 success target 输出 `relation_cardinality_errors.csv/json`。
+- Step3 输出 `RCSDNode_error.gpkg` 记录 Step2 surface 面内多个 RCSD 语义路口错误；对最终候选成功 relation 做 T05 同口径基数质检，1:N、N:1 与重复 success target 输出 `relation_cardinality_errors.csv/json`；SWSD 1:N 必须取消该 SWSD 关系并回写 `is_anchor = no`。
 - Step2 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json`；Step3 输出复制 Step2 surface 结果的 `t07_rcsdintersection_anchor_surface.gpkg`，并输出合并 Step2 evidence 与 Step3 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.csv/json`。
 
 ## 数据约束

@@ -10,7 +10,7 @@
 - 2026-05-23 更新：用户已选择授权路径 `1`，允许登记 `t07_semantic_junction_anchor`、同步项目级 source-of-truth 与入口治理，并新增内网执行脚本。
 - 2026-05-29 更新：用户修正 Step2 / Step3 口径：`kind_2 = 64 / 128` 在 Step2 写 `no / NULL`；`kind_2 = 2048` 不满足全组同一 `RCSDIntersection` 时写 `no / NULL`；Step3 只以 `has_evd = yes` 且 `is_anchor = no` 的 SWSD 语义路口为候选。
 - 2026-06-04 更新：用户修正 Step2 一面多 SWSD 语义路口口径：若同一个 `RCSDIntersection` 面包含多个 SWSD 语义路口，代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 均记录为 `fail2`。
-- 2026-06-04 更新：用户修正 Step3 处理范围，Step3 仅处理代表 node `kind_2 in {4, 8, 16}`，不再处理 `kind_2 = 2048`。
+- 2026-06-04 更新：用户重新梳理 Step3 口径，Step3 处理范围恢复为代表 node `kind_2 in {4, 8, 16, 2048}`；先基于 Step2 surface 1V1 推导 SWSD-RCSD 语义路口关系，再基于 T05 `intersection_match_all.geojson` 补充候选关系。
 - 2026-05-29 更新：用户要求 T07 对齐 T02/T03/T04 handoff 成果，Step2 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json`；Step3 输出复制 Step2 surface 的 `t07_rcsdintersection_anchor_surface.gpkg`，以及合并 `intersection_match_t07.geojson` 成功补锚成果、并记录 Step2 / Step3 锚定数量的 `t07_swsd_rcsd_relation_evidence.csv/json`。
 - T02 当前 Step1/Step2 同时包含语义路口集合与 Segment 引用路口集合，且会输出 `segment.has_evd` 与 Segment 视角 summary。
 - T07 的业务诉求是从 T02 Step1/Step2 中抽取“语义路口级资料 gate + anchor recognition”，并剥离全部 Segment 处理。
@@ -69,15 +69,16 @@
 
 **Why this priority**: Step3 是用户新增的正式业务口径，且要求不与 Step1/Step2 合并。
 
-**Independent Test**: 构造 Step2 后 `nodes`、T05 relation 主表和输入 `RCSDNode`，覆盖成功 relation、relation 失败、relation 缺失、RCSD `base_id` 不存在、`kind_2 = 64` 不进入 Step3。
+**Independent Test**: 构造 Step2 后 `nodes`、Step2 surface、T05 relation 主表和输入 `RCSDNode`，覆盖 Step2 surface 1V1 成功、surface 多 RCSD 错误、成功 relation、relation 失败、relation 缺失、RCSD `base_id` 不存在、`kind_2 = 64` 不进入 Step3、SWSD 1:N 取消关系。
 
 **Acceptance Scenarios**:
 
-1. **Given** SWSD 代表 node `kind_2 = 4`、`has_evd = yes`、`is_anchor = no`，且 T05 relation `status = 0 / base_id != 0`，并且输入 `RCSDNode` 存在该 `base_id`，**When** 执行 Step3，**Then** 输出该 relation 到 `intersection_match_t07.geojson`，并把 SWSD 代表 node `is_anchor = yes / anchor_reason = NULL`。
+1. **Given** Step2 surface 中 SWSD 语义路口与一个 `RCSDIntersection` surface 1V1，且该 surface 内仅覆盖一个 RCSD 语义路口，**When** 执行 Step3，**Then** 输出该 SWSD-RCSD 关系到 `intersection_match_t07.geojson`。
 2. **Given** 候选 SWSD 语义路口存在 T05 relation，但输入 `RCSDNode` 不存在 `base_id`，**When** 执行 Step3，**Then** 不写锚定成功，并在 audit / summary 中记录 `rcsd_junction_missing`。
 3. **Given** 代表 node `kind_2 = 64 / 128`，**When** 执行 Step3，**Then** 不进入补锚规则。
 4. **Given** Step2 evidence 与 Step3 成功 relation 同时存在，**When** 执行 Step3，**Then** 输出合并后的 `t07_swsd_rcsd_relation_evidence.csv/json`，同一 `target_id` 以 Step3 成功 relation 行覆盖 Step2 原失败行，并在顶层记录 Step2 / Step3 锚定数量。
-5. **Given** Step2 输出目录存在 `t07_rcsdintersection_anchor_surface.gpkg`，**When** 执行 Step3，**Then** Step3 输出目录也必须存在同名 surface，内容复制 Step2 结果。
+5. **Given** Step2 surface 内覆盖多个 RCSD 语义路口，**When** 执行 Step3，**Then** 不输出成功关系，并输出 `RCSDNode_error.gpkg`。
+6. **Given** 最终成功关系中同一 SWSD 语义路口关联多个 RCSD 语义路口，**When** 执行 Step3，**Then** 从 `intersection_match_t07.geojson` 移除该 SWSD 的所有关系，并将该 SWSD 代表 node `is_anchor = no / anchor_reason = NULL`。
 
 ## Edge Cases
 
@@ -88,7 +89,7 @@
 - `DriveZone` 或 `RCSDIntersection` CRS 缺失、不可投影、几何为空：执行失败并留审计，不得转成业务 `no`。
 - `RCSDIntersection` 边界接触与 T02 一致，视为命中。
 - `fail2` 优先级高于 `fail1` 与基础 `yes / no / t` 判定，且覆盖 `anchor_reason`；一面多 SWSD 语义路口场景覆盖代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}`。
-- Step3 候选只包括代表 node `kind_2 in {4, 8, 16}`、`has_evd = yes` 且 `is_anchor = no` 的语义路口。
+- Step3 处理范围包括代表 node `kind_2 in {4, 8, 16, 2048}`；T05 relation 补充候选只包括 `has_evd = yes` 且 `is_anchor = no` 的语义路口。
 - `intersection_match_all.geojson` 中失败 relation（`status != 0` 或 `base_id = 0`）不得触发锚定成功。
 - T05 relation 成功但输入 `RCSDNode.id/mainnodeid` 不存在对应 `base_id` 时不得触发锚定成功。
 
@@ -112,15 +113,18 @@
 - **FR-014**: T07 outputs MUST be auditable at semantic-junction level and MUST distinguish business `no` from execution failures.
 - **FR-015**: T07 implementation MUST cover CRS correctness, topology consistency, geometry semantic explainability, audit traceability, and performance verifiability before closeout.
 - **FR-016**: T07 Step3 MUST run as an independent callable/script and MUST NOT be merged into Step1/Step2 execution.
-- **FR-017**: T07 Step3 MUST only process representative `kind_2 in {4, 8, 16}` where `has_evd = yes` and `is_anchor = no`.
+- **FR-017**: T07 Step3 MUST process representative `kind_2 in {4, 8, 16, 2048}`.
 - **FR-018**: T07 Step3 MUST only accept T05 relation rows with `target_id = SWSD semantic junction id`, `status = 0`, and non-zero `base_id`.
 - **FR-019**: T07 Step3 MUST verify accepted relation `base_id` exists in input `RCSDNode.id/mainnodeid` before writing `is_anchor = yes`.
-- **FR-020**: T07 Step3 MUST run T05-style relation cardinality QC for candidate successful relations and output `relation_cardinality_errors.csv/json` for one target to many base ids, many targets to one base id, and duplicate success targets.
-- **FR-020**: T07 Step3 MUST output accepted relation rows to `intersection_match_t07.geojson` and keep that output aligned with the T05 relation CRS `CRS84`.
-- **FR-021**: T07 Step2 MUST output `t07_rcsdintersection_anchor_surface.gpkg` using Step2 accepted `RCSDIntersection` surface candidates.
-- **FR-022**: T07 Step2 MUST output `t07_swsd_rcsd_relation_evidence.csv/json` using the T02 relation evidence field family.
-- **FR-023**: T07 Step3 MUST output `t07_rcsdintersection_anchor_surface.gpkg` by copying Step2 surface results.
-- **FR-024**: T07 Step3 MUST output `t07_swsd_rcsd_relation_evidence.csv/json` by merging Step2 evidence with successful `intersection_match_t07.geojson` backfill rows, and MUST expose Step2 / Step3 anchor counts.
+- **FR-020**: T07 Step3 MUST build direct SWSD-RCSD relations from Step2 surface 1V1 results when the matched `RCSDIntersection` surface contains exactly one RCSD semantic junction.
+- **FR-021**: T07 Step3 MUST output `RCSDNode_error.gpkg` when a Step2 surface contains multiple RCSD semantic junctions, and MUST only audit the zero-RCSD case.
+- **FR-022**: T07 Step3 MUST run T05-style relation cardinality QC for candidate successful relations and output `relation_cardinality_errors.csv/json` for one target to many base ids, many targets to one base id, and duplicate success targets.
+- **FR-023**: T07 Step3 MUST remove all final relations for SWSD targets with `one_target_to_many_base` and write their representative node back to `is_anchor = no / anchor_reason = NULL`.
+- **FR-024**: T07 Step3 MUST output accepted relation rows to `intersection_match_t07.geojson` and keep that output aligned with the T05 relation CRS `CRS84`.
+- **FR-025**: T07 Step2 MUST output `t07_rcsdintersection_anchor_surface.gpkg` using Step2 accepted `RCSDIntersection` surface candidates.
+- **FR-026**: T07 Step2 MUST output `t07_swsd_rcsd_relation_evidence.csv/json` using the T02 relation evidence field family.
+- **FR-027**: T07 Step3 MUST output `t07_rcsdintersection_anchor_surface.gpkg` by copying Step2 surface results.
+- **FR-028**: T07 Step3 MUST output `t07_swsd_rcsd_relation_evidence.csv/json` by merging Step2 evidence with successful `intersection_match_t07.geojson` rows, and MUST expose Step2 / Step3 anchor counts.
 
 ### Non-Goals
 

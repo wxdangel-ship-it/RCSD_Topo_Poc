@@ -96,7 +96,7 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     _write_geojson(
         nodes_path,
         [
-            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(0, 0)),
+            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes", "is_anchor": "yes"}, Point(0, 0)),
             _feature({"id": 101, "mainnodeid": 1, "kind_2": 0}, Point(1, 0)),
             _feature({"id": 2, "mainnodeid": 2, "kind_2": 8, "has_evd": "yes", "is_anchor": "no"}, Point(10, 0)),
             _feature({"id": 3, "mainnodeid": 3, "kind_2": 16, "has_evd": "yes", "is_anchor": "yes"}, Point(20, 0)),
@@ -105,6 +105,7 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
             _feature({"id": 6, "mainnodeid": 6, "kind_2": 4, "has_evd": "no", "is_anchor": "no"}, Point(50, 0)),
             _feature({"id": 7, "mainnodeid": 7, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(60, 0)),
             _feature({"id": 8, "mainnodeid": 8, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(70, 0)),
+            _feature({"id": 9, "mainnodeid": 9, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(80, 0)),
         ],
     )
     _write_geojson(
@@ -116,11 +117,13 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
             _feature({"target_id": 4, "base_id": 999, "status": 0, "level": 1, "is_highway": 0}, LineString([(30, 0), (30, 1)])),
             _feature({"target_id": 5, "base_id": 900, "status": 0, "level": 1, "is_highway": 0}, LineString([(40, 0), (40, 1)])),
             _feature({"target_id": 7, "base_id": 0, "status": 1, "level": 1, "is_highway": 0}, LineString([(60, 0), (60, 1)])),
+            _feature({"target_id": 9, "base_id": 800, "status": 0, "level": 1, "is_highway": 0}, LineString([(80, 0), (80, 1)])),
         ],
     )
     _write_geojson(
         rcsdnode_path,
         [
+            _feature({"id": 800, "mainnodeid": None}, Point(99, 0)),
             _feature({"id": 900, "mainnodeid": None}, Point(100, 0)),
             _feature({"id": 901, "mainnodeid": 901}, Point(101, 0)),
         ],
@@ -145,8 +148,8 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
         tmp_path / "t07_rcsdintersection_anchor_surface.gpkg",
         [
             _feature(
-                {"surface_candidate_id": "step2-surface", "target_id": 1, "source_module": "T07_STEP2"},
-                Polygon([(-1, -1), (1, -1), (1, 1), (-1, 1), (-1, -1)]),
+                {"surface_candidate_id": "step2-surface", "target_id": 1, "source_module": "T07_STEP2", "kind_2": 4},
+                Polygon([(98, -1), (99.5, -1), (99.5, 1), (98, 1), (98, -1)]),
             )
         ],
     )
@@ -170,18 +173,24 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert props["6"]["is_anchor"] == "no"
     assert props["7"]["is_anchor"] == "no"
     assert props["8"]["is_anchor"] == "no"
+    assert props["9"]["is_anchor"] == "no"
 
     assert _relation_targets(artifacts.intersection_match_t07_path) == {"1", "2"}
     relation_payload = json.loads(artifacts.intersection_match_t07_path.read_text(encoding="utf-8"))
     assert relation_payload["crs"]["properties"]["name"] == "CRS84"
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["candidate_count"] == 4
+    assert summary["candidate_count"] == 5
     assert summary["accepted_count"] == 2
+    assert summary["step2_surface_1v1_relation_count"] == 1
+    assert summary["intersection_match_backfill_relation_count"] == 1
     assert summary["relation_missing_count"] == 1
     assert summary["relation_failure_count"] == 1
-    assert summary["rcsd_missing_count"] == 0
-    assert summary["skipped_kind2_count"] == 2
+    assert summary["rcsd_missing_count"] == 1
+    assert summary["already_linked_base_skip_count"] == 1
+    assert summary["rcsdnode_error_count"] == 0
+    assert summary["swsd_multi_rcsd_error_count"] == 0
+    assert summary["skipped_kind2_count"] == 1
     assert summary["crs"]["intersection_match_t07"] == "CRS84"
     assert summary["relation_evidence_row_count"] == 3
     assert summary["step2_anchor_count"] == 1
@@ -210,15 +219,18 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
         "total_anchor_count": 3,
     }
     evidence_rows = {str(row["target_id"]): row for row in evidence_payload["rows"]}
-    assert evidence_rows["1"]["relation_source"] == "T07_STEP3_INTERSECTION_MATCH"
-    assert evidence_rows["1"]["relation_state"] == "intersection_match_t07_matched"
+    assert evidence_rows["1"]["relation_source"] == "T07_STEP3_STEP2_SURFACE"
+    assert evidence_rows["1"]["relation_state"] == "step2_surface_1v1_rcsdnode_matched"
     assert evidence_rows["1"]["status_suggested"] == 0
-    assert evidence_rows["1"]["base_id_candidate"] == "900"
+    assert evidence_rows["1"]["base_id_candidate"] == "800"
     assert evidence_rows["2"]["base_id_candidate"] == "901"
     assert evidence_rows["8"]["relation_source"] == "T07_STEP2"
     assert artifacts.relation_cardinality_errors_csv_path.is_file()
     cardinality_payload = json.loads(artifacts.relation_cardinality_errors_json_path.read_text(encoding="utf-8"))
     assert cardinality_payload["rows"] == []
+    audit_payload = json.loads(artifacts.audit_json_path.read_text(encoding="utf-8"))
+    audit_rows = {str(row.get("junction_id")): row for row in audit_payload["rows"]}
+    assert audit_rows["9"]["reason"] == "rcsd_junction_already_linked"
 
 
 def test_step3_relation_cardinality_qc_reports_one_to_many_and_many_to_one(tmp_path: Path) -> None:
@@ -259,6 +271,12 @@ def test_step3_relation_cardinality_qc_reports_one_to_many_and_many_to_one(tmp_p
         run_id="case",
     )
 
+    props = _read_gpkg_properties_by_id(artifacts.nodes_path)
+    assert props["1"]["is_anchor"] == "yes"
+    assert props["2"]["is_anchor"] == "yes"
+    assert props["3"]["is_anchor"] == "no"
+    assert _relation_targets(artifacts.intersection_match_t07_path) == {"1", "2"}
+
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["accepted_count"] == 2
     assert summary["relation_duplicate_count"] == 1
@@ -266,6 +284,7 @@ def test_step3_relation_cardinality_qc_reports_one_to_many_and_many_to_one(tmp_p
     assert summary["one_target_to_many_base_count"] == 1
     assert summary["many_target_to_one_base_count"] == 1
     assert summary["duplicate_target_rows_count"] == 1
+    assert summary["swsd_multi_rcsd_error_count"] == 1
     assert summary["relation_cardinality_passed"] is False
 
     cardinality_payload = json.loads(artifacts.relation_cardinality_errors_json_path.read_text(encoding="utf-8"))
@@ -276,6 +295,52 @@ def test_step3_relation_cardinality_qc_reports_one_to_many_and_many_to_one(tmp_p
     assert rows["many_target_to_one_base"]["base_id"] == "900"
     assert rows["duplicate_target_rows"]["target_id"] == "3"
     assert "target_id duplicated 2 success rows" in rows["duplicate_target_rows"]["reasons"]
+
+
+def test_step3_step2_surface_with_multiple_rcsd_junctions_outputs_rcsdnode_error(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    relations_path = tmp_path / "intersection_match_all.geojson"
+    rcsdnode_path = tmp_path / "rcsdnode.geojson"
+    _write_geojson(
+        nodes_path,
+        [_feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes", "is_anchor": "yes"}, Point(0, 0))],
+    )
+    _write_geojson(relations_path, [])
+    _write_geojson(
+        rcsdnode_path,
+        [
+            _feature({"id": 800, "mainnodeid": None}, Point(10, 0)),
+            _feature({"id": 801, "mainnodeid": None}, Point(12, 0)),
+        ],
+    )
+    _write_gpkg(
+        tmp_path / "t07_rcsdintersection_anchor_surface.gpkg",
+        [
+            _feature(
+                {"surface_candidate_id": "step2-surface", "target_id": 1, "source_module": "T07_STEP2", "kind_2": 4},
+                Polygon([(9, -1), (13, -1), (13, 1), (9, 1), (9, -1)]),
+            )
+        ],
+    )
+
+    artifacts = run_t07_step3_intersection_match(
+        nodes_path=nodes_path,
+        intersection_match_all_path=relations_path,
+        rcsdnode_path=rcsdnode_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    assert _relation_targets(artifacts.intersection_match_t07_path) == set()
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["step2_surface_1v1_relation_count"] == 0
+    assert summary["rcsdnode_error_surface_count"] == 1
+    assert summary["rcsdnode_error_count"] == 2
+
+    with fiona.open(str(artifacts.rcsdnode_error_path)) as src:
+        error_rows = [dict(feature["properties"]) for feature in src]
+    assert {str(row["rcsd_semantic_id"]) for row in error_rows} == {"800", "801"}
+    assert {row["error_type"] for row in error_rows} == {"multiple_rcsd_junctions_in_step2_surface"}
 
 
 def test_step3_uses_fast_paths_for_gpkg_nodes_and_crs84_relations(tmp_path: Path) -> None:

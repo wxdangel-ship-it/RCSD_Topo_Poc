@@ -13,7 +13,7 @@ T07 当前目标是在 T02 Step1 / Step2 已确认业务口径基础上，形成
 
 - Step1 不依赖 `segment.gpkg` 即可输出代表 node `has_evd`。
 - Step2 不依赖 `segment.gpkg` 即可输出代表 node `is_anchor / anchor_reason`。
-- Step3 不依赖 `segment.gpkg`，只消费 Step2 后 `nodes`、T05 relation 主表和输入 `RCSDNode`。
+- Step3 不依赖 `segment.gpkg`，只消费 Step2 后 `nodes`、Step2 surface、T05 relation 主表和输入 `RCSDNode`。
 - `kind_2` 过滤只使用代表 node。
 - 非目标 `kind_2` 的三个业务字段均为 `NULL`。
 - 从属 node 不写业务状态。

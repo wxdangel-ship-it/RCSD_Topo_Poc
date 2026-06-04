@@ -29,14 +29,15 @@
 - Step1 仅处理代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 的语义路口。
 - 不在上述集合内的语义路口，代表 node 的 `has_evd / is_anchor / anchor_reason` 均保持或写为 `NULL`。
 - `has_evd / is_anchor / anchor_reason` 只写代表 node；从属 node 空值不是失败或未处理结果。
-- Step3 仅处理代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes` 且 `is_anchor = no` 的语义路口。
+- Step3 仅处理代表 node `kind_2 in {4, 8, 16}`、`has_evd = yes` 且 `is_anchor = no` 的语义路口。
 - Step3 只接受 T05 relation 主表中 `target_id = SWSD 语义路口 id`、`status = 0`、`base_id != 0` 的成功关系，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在。
-- Step3 接受后只写代表 node `is_anchor = yes`，`anchor_reason` 保持 `NULL`；同时输出 relation 子集 `intersection_match_tool7.geojson`。
-- Step2 必须输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json`；Step3 必须输出复制 Step2 surface 结果的 `t07_rcsdintersection_anchor_surface.gpkg`，以及合并 Step2 evidence 与 `intersection_match_tool7.geojson` 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.csv/json`，并记录 Step2 / Step3 锚定数量。
+- Step3 必须对候选成功 relation 做 T05 同口径基数质检，并输出 `relation_cardinality_errors.csv/json`，覆盖 1:N、N:1 与重复 success target。
+- Step3 接受后只写代表 node `is_anchor = yes`，`anchor_reason` 保持 `NULL`；同时输出 relation 子集 `intersection_match_t07.geojson`。
+- Step2 必须输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json`；Step3 必须输出复制 Step2 surface 结果的 `t07_rcsdintersection_anchor_surface.gpkg`，以及合并 Step2 evidence 与 `intersection_match_t07.geojson` 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.csv/json`，并记录 Step2 / Step3 锚定数量。
 - 当前无 repo 官方 CLI；正式执行面为模块内 callable runner，并由两个已登记内网脚本做包装。
 
 ## 必做验证
 
-- 单元测试必须覆盖 Step1 allowed / disallowed `kind_2`、代表 node 写值、多节点组、singleton、Step2 `yes / no / fail1 / fail2 / NULL`、`kind_2 = 64 / 128` 专项规则写 `no` 且跳过冲突、`kind_2 = 2048` 同面命中写 `yes / t` 与不满足条件写 `no / NULL`、Step2 handoff surface/evidence 输出、Step3 候选识别 / relation 成功 / RCSD 存在性校验 / `intersection_match_tool7.geojson` 与合并 evidence 输出、无 Segment 依赖。
+- 单元测试必须覆盖 Step1 allowed / disallowed `kind_2`、代表 node 写值、多节点组、singleton、Step2 `yes / no / fail1 / fail2 / NULL`、`kind_2 = 64 / 128` 专项基础规则写 `no`、`kind_2 = 2048` 同面命中写 `yes / t` 与不满足条件写 `no / NULL`、`kind_2 in {4, 8, 16, 64, 128, 2048}` 一面多 SWSD 语义路口时统一 `fail2` 覆盖、Step2 handoff surface/evidence 输出、Step3 候选识别 / relation 成功 / RCSD 存在性校验 / `intersection_match_t07.geojson` 与合并 evidence 输出、Step3 relation 1:N / N:1 基数质检、无 Segment 依赖。
 - GIS / 拓扑任务必须显式覆盖 CRS、拓扑一致性、几何语义、审计追溯与性能可验证性。
 - 提交前至少执行 T07 相关测试与 `git diff --check`。

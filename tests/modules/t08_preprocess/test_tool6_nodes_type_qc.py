@@ -197,6 +197,36 @@ def test_tool6_outputs_divmerge_and_cross_qc_rows(tmp_path: Path) -> None:
     assert summary["params"]["manual_fix_default"] == 1
 
 
+def test_tool6_flags_cross_with_one_or_two_incident_roads_as_non_cross(tmp_path: Path) -> None:
+    nodes = [
+        _node("one_road_cross", 4, 0.0, 0.0),
+        _node("one_remote", 1, 10.0, 0.0),
+        _node("two_road_cross", 4, 100.0, 0.0),
+        _node("two_in", 1, 90.0, 0.0),
+        _node("two_out", 1, 110.0, 0.0),
+    ]
+    roads = [
+        _road("r-one", "one_road_cross", "one_remote", [(0.0, 0.0), (10.0, 0.0)], direction=0),
+        _road("r-two-in", "two_in", "two_road_cross", [(90.0, 0.0), (100.0, 0.0)]),
+        _road("r-two-out", "two_road_cross", "two_out", [(100.0, 0.0), (110.0, 0.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="low_incident_cross", nodes=nodes, roads=roads)
+
+    assert {row["semantic_node_id"] for row in csv_rows} == {"one_road_cross", "two_road_cross"}
+    assert {row["error_type"] for row in csv_rows} == {"错误交叉路口_非交叉路口"}
+    reason_by_node = {row["semantic_node_id"]: row["reason"] for row in csv_rows}
+    assert reason_by_node["one_road_cross"] == "only_one_incident_road"
+    assert reason_by_node["two_road_cross"] == "only_two_incident_roads"
+    audit_by_node = {row["semantic_node_id"]: _audit(row) for row in csv_rows}
+    assert audit_by_node["one_road_cross"]["incident_road_count"] == 1
+    assert audit_by_node["one_road_cross"]["incident_road_ids"] == ["r-one"]
+    assert audit_by_node["two_road_cross"]["incident_road_count"] == 2
+    assert audit_by_node["two_road_cross"]["incident_road_ids"] == ["r-two-in", "r-two-out"]
+    assert len(gpkg_rows) == 2
+    assert summary["counts"]["error_count_by_type"] == {"错误交叉路口_非交叉路口": 2}
+
+
 def test_tool6_two_angle_nonparallel_cross_candidate_is_not_error(tmp_path: Path) -> None:
     nodes = [
         _node("cross", 4, 0.0, 0.0),

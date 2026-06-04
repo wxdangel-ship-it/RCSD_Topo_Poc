@@ -3,7 +3,7 @@
 **Feature Branch**: `codex/t01-oneway-highway-deadend-speckit`  
 **Created**: 2026-05-21  
 **Status**: Draft - requirements confirmed by user  
-**Input**: 用户确认 T01 需要在单向 Segment 中放开 `road_kind=1`，将 `kind_2=128` 作为复杂分歧合流路口纳入单向 terminate，并允许断头路以 leaf node 形式构成 Segment。
+**Input**: 用户确认 T01 需要在单向 Segment 中放开 `road_kind=1`，将 `kind_2=128` 作为复杂分歧合流路口纳入单向 terminate，允许断头路以 leaf node 形式构成 Segment，并在最终兜底阶段让剩余可发布单向 road 至少形成单 road Segment。
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -66,13 +66,29 @@
 1. **Given** 单向候选 road 因无下游 terminate 失败，**When** 检查审计输出，**Then** 应标记为 trace 类失败，而不是笼统 `unsegmented`。
 2. **Given** `road_kind=1` 单向 road 成功构段，**When** 检查审计摘要，**Then** 应统计 `road_kind_1_oneway_built_count`。
 
+---
+
+### User Story 5 - 最终单向兜底覆盖 (Priority: P1)
+
+内网操作者希望 T01 在常规单向 terminate-to-terminate 与 dead-end leaf 补段之后，对仍未构段且未被排除的单向 road 做最终发布兜底，避免可发布单向 road 继续遗留为 `oneway_trace_failed_or_no_terminate`。
+
+**Why this priority**: 本地 XS 审计显示剩余未构段 road 绝大多数并非拓扑缺 node，而是当前 phase terminate 口径不闭合；最终发布目标要求这些普通单向 road 至少以单 road Segment 形式输出。
+
+**Independent Test**: 构造一条两端不属于同一单向 phase 的 `direction=2` road，以及一条两端落入同一 semantic group 的 `direction=2` road。运行 Step5 后单向补段，应在 final fallback 阶段生成 `0-2单` 单 road Segment，并写入 `segment_build_source=oneway_single_road_fallback`。
+
+**Acceptance Scenarios**:
+
+1. **Given** 常规单向 phase trace 和 dead-end leaf 后仍存在未构段 `direction in {2,3}` road，且该 road 不属于 `formway=128` 或 right-turn-only，**When** 执行最终兜底，**Then** 该 road 应形成单 road Segment。
+2. **Given** 单向 road 两端的 phase terminate 口径不一致，**When** 执行最终兜底，**Then** 不强行放宽 phase 规则，而是在 final fallback 阶段以 `0-2单` 发布。
+3. **Given** 单向 road 两端落入同一 semantic group，**When** 执行最终兜底，**Then** 仍应生成可追溯的单 road fallback Segment，避免最终未构段。
+
 ### Edge Cases
 
 - `road_kind=1` 只在单向补段阶段放开，双向阶段继续保持 `road_kind != 1`。
 - `kind_2=128` 只加入 `0-1单 / 0-2单`，不加入 `0-0单`，除非后续另行确认一级封闭连通口径。
 - `formway=128` 与 right-turn-only road 仍不得参与 T01 Segment 构建。
 - leaf node 只能表达断头端，不得被误当作普通语义路口 through。
-- dead-end leaf Segment 仅允许单条双向 road 或两条方向互补的单向 road bundle；单条未成对单向 road 暂不作为 dead-end Segment 构建。
+- dead-end leaf Segment 仅允许单条双向 road 或两条方向互补的单向 road bundle；单条未成对单向 road 不作为 dead-end Segment 构建，但可在最终单向兜底阶段以 `0-2单` 单 road Segment 发布。
 - geometry 坐标方向与 `snodeid -> enodeid` 不一致时，审计必须标记风险，不得 silent fix。
 
 ## Requirements *(mandatory)*
@@ -89,18 +105,21 @@
 - **FR-008**: The module source-of-truth documents MUST be updated in the same implementation round as code changes.
 - **FR-009**: The implementation MUST not add a new repo-level CLI or script entrypoint.
 - **FR-010**: Existing active freeze baseline MUST NOT be refreshed automatically.
+- **FR-011**: After terminate-to-terminate single-way phases and dead-end leaf completion, T01 MUST build a final single-road fallback Segment for every remaining unsegmented `direction in {2,3}` road that is not `formway=128`, not right-turn-only, and has resolvable semantic endpoints.
+- **FR-012**: Final fallback Segment roads MUST use `sgrade=0-2单` and `segment_build_source=oneway_single_road_fallback`, and summary output MUST include final fallback segment/road counts.
 
 ### Key Entities
 
 - **Oneway Candidate Road**: Unsegmented Step5-refreshed road eligible for single-way trace, now including `road_kind=1` while still excluding `formway=128` and right-turn-only.
 - **Complex Diverge/Merge Terminate**: Semantic node represented by `kind_2=128`, eligible as `0-1单 / 0-2单` terminate when `closed_con / grade_2` also match.
 - **Dead-End Segment**: Segment with one valid semantic endpoint and one leaf node endpoint, built from either a single bidirectional road or a reciprocal two-road one-way bundle.
+- **Final Oneway Fallback Segment**: A single-road `0-2单` Segment generated after controlled single-way trace and dead-end leaf completion for otherwise publishable residual one-way roads.
 - **Road Audit Record**: Per-road explanation record linking original SWSD/T01 road id to filter, trace, construction, and publish status.
 
 ## Role Coverage *(mandatory for this repository)*
 
 - **Product**: Prioritize recall for highway/complex diverge-merge single-way Segment gaps while preserving accepted dual-way baseline.
-- **Architecture**: Keep dual-way and single-way semantics separated; introduce dead-end Segment as explicit sub-mode, not implicit fallback.
+- **Architecture**: Keep dual-way and single-way semantics separated; introduce dead-end Segment and final one-way fallback as explicit sub-modes, not implicit changes to earlier trace rules.
 - **Development**: Implement in existing T01 modules without new entrypoints; prefer small helper functions and tests.
 - **Testing**: Add focused unit tests for `road_kind=1`, `kind_2=128`, dead-end leaf, and Step6 publication.
 - **QA**: Require GIS/topology audit checks and innernet full-input comparison before declaring accepted.
@@ -114,3 +133,4 @@
 - **SC-003**: A local dead-end fixture produces one Segment with no leaf-node misclassification in `junc_nodes`.
 - **SC-004**: Existing T01 single-way and Step6 local tests continue to pass.
 - **SC-005**: Innernet audit can report counts for `road_kind=1` candidates, `kind_2=128` terminates, dead-end built roads, and remaining unsegmented reasons.
+- **SC-006**: Local mixed XS audit has no residual non-excluded single-way road when endpoint nodes exist; remaining unsegmented road count is limited to configured exclusion classes or unsupported topology.

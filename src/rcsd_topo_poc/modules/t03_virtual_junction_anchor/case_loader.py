@@ -6,6 +6,7 @@ from typing import Any
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import normalize_runtime_path, sort_patch_key
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import CaseSpec
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id
 
 
 REQUIRED_CASE_FILES = (
@@ -67,9 +68,9 @@ def load_case_specs(
     if not resolved_case_root.is_dir():
         raise ValueError(f"case root does not exist: {resolved_case_root}")
 
-    selected_case_ids = {str(case_id) for case_id in case_ids or []}
+    selected_case_ids = {normalize_id(case_id) or str(case_id) for case_id in case_ids or []}
     explicit_case_selection = bool(selected_case_ids)
-    default_excluded_case_ids = {str(case_id) for case_id in exclude_case_ids or []}
+    default_excluded_case_ids = {normalize_id(case_id) or str(case_id) for case_id in exclude_case_ids or []}
     raw_case_dirs = [
         path
         for path in resolved_case_root.iterdir()
@@ -107,7 +108,7 @@ def load_case_specs(
         specs.append(
             CaseSpec(
                 case_id=case_id,
-                mainnodeid=str(manifest.get("mainnodeid") or case_id),
+                mainnodeid=normalize_id(manifest.get("mainnodeid")) or case_id,
                 case_root=case_dir,
                 manifest=manifest,
                 size_report=size_report,

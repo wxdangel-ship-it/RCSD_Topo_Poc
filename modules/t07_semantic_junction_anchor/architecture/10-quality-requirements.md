@@ -14,16 +14,17 @@
 
 - `representative_node_missing`、字段缺失、CRS 缺失、geometry 缺失必须可追溯。
 - `fail1 / fail2` 必须输出涉及语义路口与 `RCSDIntersection` 的审计信息。
-- `kind_2 = 64 / 128 / 2048` 的 Step2 专属分流必须可从 summary / audit / 输出字段解释，不得误进入 `fail1 / fail2`。
+- `kind_2 = 64 / 128 / 2048` 的 Step2 专属基础分流必须可从 summary / audit / 输出字段解释；一面多 SWSD 语义路口场景必须进入 `fail2` 并可追溯。
 - Step2 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json` 必须可追溯到 Step2 代表 node 判定与命中的 `RCSDIntersection`。
 - Step3 的 relation 缺失、relation 失败、重复 `target_id`、RCSD `base_id` 不存在必须可从 audit / summary 解释。
-- Step3 `t07_rcsdintersection_anchor_surface.gpkg` 必须复制 Step2 surface 结果；Step3 `t07_swsd_rcsd_relation_evidence.csv/json` 必须合并 Step2 evidence 与 `intersection_match_tool7.geojson` 成功补锚成果，同一 `target_id` 以 Step3 成功补锚行覆盖，并显式记录 Step2 / Step3 锚定数量。
+- Step3 `t07_rcsdintersection_anchor_surface.gpkg` 必须复制 Step2 surface 结果；Step3 `t07_swsd_rcsd_relation_evidence.csv/json` 必须合并 Step2 evidence 与 `intersection_match_t07.geojson` 成功补锚成果，同一 `target_id` 以 Step3 成功补锚行覆盖，并显式记录 Step2 / Step3 锚定数量。
+- Step3 候选成功 relation 的 1:N、N:1 与重复 success target 必须输出 `relation_cardinality_errors.csv/json`，并在 summary 中提供分类计数。
 
 ## GIS 正确性
 
 - CRS 变换必须明确、可解释、可复现。
 - `DriveZone` 与 `RCSDIntersection` 空间判定必须在同一 CRS 下完成。
-- Step3 relation 输出 `intersection_match_tool7.geojson` 必须保持 T05 relation 输出 CRS `CRS84`。
+- Step3 relation 输出 `intersection_match_t07.geojson` 必须保持 T05 relation 输出 CRS `CRS84`。
 - 不允许用隐式 CRS 默认值或几何猜测掩盖输入问题。
 
 ## 可治理

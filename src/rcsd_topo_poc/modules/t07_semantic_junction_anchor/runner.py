@@ -1151,14 +1151,6 @@ def run_t07_step2_anchor_recognition(
             group_results[junction_id] = {"participates": False, "group": group, "intersection_ids": []}
             continue
 
-        if kind_2 in {"64", "128"}:
-            representative_props["is_anchor"] = "no"
-            representative_props["anchor_reason"] = None
-            counts["anchor_no_count"] += 1
-            group_results[junction_id] = {"participates": False, "group": group, "kind_2": kind_2, "intersection_ids": []}
-            continue
-
-        counts["stage2_candidate_count"] += 1
         hit_intersection_ids: set[str] = set()
         group_node_hits: list[tuple[str, ...]] = []
         for record in group.group_nodes:
@@ -1172,6 +1164,23 @@ def run_t07_step2_anchor_recognition(
                 hit_intersection_ids.add(intersection_id)
 
         sorted_hits = sorted(hit_intersection_ids)
+        for intersection_id in sorted_hits:
+            intersection_to_junctions.setdefault(intersection_id, set()).add(junction_id)
+
+        if kind_2 in {"64", "128"}:
+            representative_props["is_anchor"] = "no"
+            representative_props["anchor_reason"] = None
+            counts["anchor_no_count"] += 1
+            group_results[junction_id] = {
+                "participates": False,
+                "fail2_eligible": True,
+                "group": group,
+                "kind_2": kind_2,
+                "intersection_ids": sorted_hits,
+            }
+            continue
+
+        counts["stage2_candidate_count"] += 1
         if kind_2 == "2048":
             shared_intersection_id = _same_single_intersection_for_all(group_node_hits)
             if shared_intersection_id is None:
@@ -1185,14 +1194,12 @@ def run_t07_step2_anchor_recognition(
                 counts["t_reason_count"] += 1
             group_results[junction_id] = {
                 "participates": False,
+                "fail2_eligible": True,
                 "group": group,
                 "kind_2": kind_2,
                 "intersection_ids": [shared_intersection_id] if shared_intersection_id is not None else sorted_hits,
             }
             continue
-
-        for intersection_id in sorted_hits:
-            intersection_to_junctions.setdefault(intersection_id, set()).add(junction_id)
 
         provisional_reason = None
 
@@ -1228,6 +1235,7 @@ def run_t07_step2_anchor_recognition(
 
         group_results[junction_id] = {
             "participates": True,
+            "fail2_eligible": True,
             "group": group,
             "kind_2": kind_2,
             "provisional_state": provisional_state,
@@ -1242,7 +1250,7 @@ def run_t07_step2_anchor_recognition(
         filtered = []
         for junction_id in sorted(linked_junction_ids):
             result = group_results.get(junction_id)
-            if not result or not result.get("participates"):
+            if not result or not result.get("fail2_eligible"):
                 continue
             if result.get("kind_2") == "1":
                 continue
@@ -1281,13 +1289,24 @@ def run_t07_step2_anchor_recognition(
             }
 
     for junction_id, result in group_results.items():
-        if not result.get("participates"):
+        if not result.get("participates") and junction_id not in fail2_by_junction:
             continue
         group = result["group"]
         representative_props = nodes_layer_data.features[group.representative.output_index].properties
         if junction_id in fail2_by_junction:
             final_state = "fail2"
             final_reason = None
+            if not result.get("participates"):
+                previous_state = _normalize_id(representative_props.get("is_anchor"))
+                previous_reason = _normalize_id(representative_props.get("anchor_reason"))
+                if previous_state == "yes":
+                    counts["anchor_yes_count"] -= 1
+                elif previous_state == "no":
+                    counts["anchor_no_count"] -= 1
+                if previous_reason == "t":
+                    counts["t_reason_count"] -= 1
+                elif previous_reason == "roundabout":
+                    counts["roundabout_reason_count"] -= 1
         elif result["provisional_state"] == "fail1":
             final_state = "fail1"
             final_reason = None

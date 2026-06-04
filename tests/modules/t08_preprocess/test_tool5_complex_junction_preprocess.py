@@ -246,3 +246,102 @@ def test_tool5_detects_one_to_many_but_skips_disconnected_groups(tmp_path: Path)
     assert summary["counts"]["one_to_many_merged_intersection_count"] == 0
     assert summary["one_to_many"]["rows"][0]["skip_reason"] == "not_all_groups_connected"
     assert summary["params"]["one_to_many_executed"] is True
+
+
+def test_tool5_merges_disconnected_t_pair_when_horizontal_roads_are_opposite_parallel(tmp_path: Path) -> None:
+    nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
+    roads_gpkg = tmp_path / "input" / "roads.gpkg"
+    intersection_gpkg = tmp_path / "input" / "RCSDIntersection.gpkg"
+    nodes_output = tmp_path / "out" / "nodes_fix_tool5.gpkg"
+    roads_output = tmp_path / "out" / "roads_fix_tool5.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes_tool5.gpkg"
+    summary_output = tmp_path / "out" / "summary_tool5.json"
+
+    write_gpkg(
+        nodes_gpkg,
+        [
+            _node({"id": "10", "kind": 2048, "grade": 1, "mainnodeid": "10", "subnodeid": None}, 0.0, 0.0),
+            _node({"id": "20", "kind": 2048, "grade": 1, "mainnodeid": "20", "subnodeid": None}, 50.0, 0.0),
+            _node({"id": "11", "kind": 1, "grade": 1, "mainnodeid": "11", "subnodeid": None}, -10.0, 0.0),
+            _node({"id": "12", "kind": 1, "grade": 1, "mainnodeid": "12", "subnodeid": None}, 10.0, 0.0),
+            _node({"id": "13", "kind": 1, "grade": 1, "mainnodeid": "13", "subnodeid": None}, 0.0, -10.0),
+            _node({"id": "21", "kind": 1, "grade": 1, "mainnodeid": "21", "subnodeid": None}, 40.0, 0.0),
+            _node({"id": "22", "kind": 1, "grade": 1, "mainnodeid": "22", "subnodeid": None}, 60.0, 0.0),
+            _node({"id": "23", "kind": 1, "grade": 1, "mainnodeid": "23", "subnodeid": None}, 50.0, -10.0),
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_gpkg(
+        roads_gpkg,
+        [
+            _road({"id": "r-11-10", "snodeid": "11", "enodeid": "10", "direction": 2, "kind": "0101"}, [(-10.0, 0.0), (0.0, 0.0)]),
+            _road({"id": "r-10-12", "snodeid": "10", "enodeid": "12", "direction": 2, "kind": "0101"}, [(0.0, 0.0), (10.0, 0.0)]),
+            _road({"id": "r-10-13", "snodeid": "10", "enodeid": "13", "direction": 0, "kind": "0201"}, [(0.0, 0.0), (0.0, -10.0)]),
+            _road({"id": "r-22-20", "snodeid": "22", "enodeid": "20", "direction": 2, "kind": "0101"}, [(60.0, 0.0), (50.0, 0.0)]),
+            _road({"id": "r-20-21", "snodeid": "20", "enodeid": "21", "direction": 2, "kind": "0101"}, [(50.0, 0.0), (40.0, 0.0)]),
+            _road({"id": "r-20-23", "snodeid": "20", "enodeid": "23", "direction": 0, "kind": "0201"}, [(50.0, 0.0), (50.0, -10.0)]),
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_gpkg(
+        intersection_gpkg,
+        [
+            {
+                "properties": {"id": "A"},
+                "geometry": Polygon([(-1.0, -1.0), (51.0, -1.0), (51.0, 1.0), (-1.0, 1.0), (-1.0, -1.0)]),
+            }
+        ],
+        crs_text="EPSG:3857",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/t08_tool5_complex_junction_preprocess.py",
+            "--nodes-gpkg",
+            str(nodes_gpkg),
+            "--roads-gpkg",
+            str(roads_gpkg),
+            "--intersection-gpkg",
+            str(intersection_gpkg),
+            "--nodes-output",
+            str(nodes_output),
+            "--roads-output",
+            str(roads_output),
+            "--audit-nodes-output",
+            str(audit_nodes_output),
+            "--summary-output",
+            str(summary_output),
+            "--skip-complex-divmerge",
+        ],
+        cwd=Path(__file__).resolve().parents[3],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    nodes_fix = _read_features(nodes_output)
+    roads_fix_ids = _read_ids(roads_output)
+    audit_nodes = _read_features_by_field(audit_nodes_output, "audit_id")
+    summary = json.loads(summary_output.read_text(encoding="utf-8"))
+    one_to_many_row = summary["one_to_many"]["rows"][0]
+    fallback = summary["one_to_many"]["tool5_t_pair_virtual_connectivity"]
+
+    assert nodes_fix["10"]["kind_2"] == 4
+    assert nodes_fix["10"]["mainnodeid"] == "10"
+    assert nodes_fix["10"]["subnodeid"] == "20"
+    assert nodes_fix["20"]["kind_2"] == 0
+    assert nodes_fix["20"]["grade_2"] == 0
+    assert nodes_fix["20"]["mainnodeid"] == "10"
+    assert roads_fix_ids == {"r-11-10", "r-10-12", "r-10-13", "r-22-20", "r-20-21", "r-20-23"}
+    assert set(audit_nodes) == {"one_to_many:id:A:10", "one_to_many:id:A:20"}
+    assert summary["counts"]["one_to_many_merged_intersection_count"] == 1
+    assert summary["counts"]["one_to_many_deleted_road_count"] == 0
+    assert one_to_many_row["previous_skip_reason"] == "not_all_groups_connected"
+    assert one_to_many_row["repair_rule"] == "tool5_t_pair_virtual_connectivity"
+    assert one_to_many_row["merged_group_ids"] == ["10", "20"]
+    assert fallback["status"] == "applied"
+    assert fallback["merged_intersection_count"] == 1
+    assert fallback["rows"][0]["virtual_connections"][0]["kind"] == "0101"

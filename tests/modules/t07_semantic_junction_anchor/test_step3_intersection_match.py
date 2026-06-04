@@ -171,22 +171,24 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert props["7"]["is_anchor"] == "no"
     assert props["8"]["is_anchor"] == "no"
 
-    assert _relation_targets(artifacts.intersection_match_tool7_path) == {"1", "2"}
-    relation_payload = json.loads(artifacts.intersection_match_tool7_path.read_text(encoding="utf-8"))
+    assert _relation_targets(artifacts.intersection_match_t07_path) == {"1", "2"}
+    relation_payload = json.loads(artifacts.intersection_match_t07_path.read_text(encoding="utf-8"))
     assert relation_payload["crs"]["properties"]["name"] == "CRS84"
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["candidate_count"] == 5
+    assert summary["candidate_count"] == 4
     assert summary["accepted_count"] == 2
     assert summary["relation_missing_count"] == 1
     assert summary["relation_failure_count"] == 1
-    assert summary["rcsd_missing_count"] == 1
-    assert summary["skipped_kind2_count"] == 1
-    assert summary["crs"]["intersection_match_tool7"] == "CRS84"
+    assert summary["rcsd_missing_count"] == 0
+    assert summary["skipped_kind2_count"] == 2
+    assert summary["crs"]["intersection_match_t07"] == "CRS84"
     assert summary["relation_evidence_row_count"] == 3
     assert summary["step2_anchor_count"] == 1
     assert summary["step3_anchor_count"] == 2
     assert summary["total_anchor_count"] == 3
+    assert summary["relation_cardinality_error_count"] == 0
+    assert summary["relation_cardinality_passed"] is True
     assert summary["output_strategy"]["anchor_surface_write_mode"] == "copy_step2_surface"
     assert "stage_timings" in summary["performance"]
     assert "evaluate_candidates_seconds" in summary["performance"]["stage_timings"]
@@ -209,11 +211,71 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     }
     evidence_rows = {str(row["target_id"]): row for row in evidence_payload["rows"]}
     assert evidence_rows["1"]["relation_source"] == "T07_STEP3_INTERSECTION_MATCH"
-    assert evidence_rows["1"]["relation_state"] == "intersection_match_tool7_matched"
+    assert evidence_rows["1"]["relation_state"] == "intersection_match_t07_matched"
     assert evidence_rows["1"]["status_suggested"] == 0
     assert evidence_rows["1"]["base_id_candidate"] == "900"
     assert evidence_rows["2"]["base_id_candidate"] == "901"
     assert evidence_rows["8"]["relation_source"] == "T07_STEP2"
+    assert artifacts.relation_cardinality_errors_csv_path.is_file()
+    cardinality_payload = json.loads(artifacts.relation_cardinality_errors_json_path.read_text(encoding="utf-8"))
+    assert cardinality_payload["rows"] == []
+
+
+def test_step3_relation_cardinality_qc_reports_one_to_many_and_many_to_one(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    relations_path = tmp_path / "intersection_match_all.geojson"
+    rcsdnode_path = tmp_path / "rcsdnode.geojson"
+    _write_geojson(
+        nodes_path,
+        [
+            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(0, 0)),
+            _feature({"id": 2, "mainnodeid": 2, "kind_2": 8, "has_evd": "yes", "is_anchor": "no"}, Point(10, 0)),
+            _feature({"id": 3, "mainnodeid": 3, "kind_2": 16, "has_evd": "yes", "is_anchor": "no"}, Point(20, 0)),
+        ],
+    )
+    _write_geojson(
+        relations_path,
+        [
+            _feature({"target_id": 1, "base_id": 900, "status": 0}, LineString([(0, 0), (0, 1)])),
+            _feature({"target_id": 2, "base_id": 900, "status": 0}, LineString([(10, 0), (10, 1)])),
+            _feature({"target_id": 3, "base_id": 901, "status": 0}, LineString([(20, 0), (20, 1)])),
+            _feature({"target_id": 3, "base_id": 902, "status": 0}, LineString([(20, 0), (20, 2)])),
+        ],
+    )
+    _write_geojson(
+        rcsdnode_path,
+        [
+            _feature({"id": 900, "mainnodeid": None}, Point(100, 0)),
+            _feature({"id": 901, "mainnodeid": None}, Point(101, 0)),
+            _feature({"id": 902, "mainnodeid": None}, Point(102, 0)),
+        ],
+    )
+
+    artifacts = run_t07_step3_intersection_match(
+        nodes_path=nodes_path,
+        intersection_match_all_path=relations_path,
+        rcsdnode_path=rcsdnode_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["accepted_count"] == 2
+    assert summary["relation_duplicate_count"] == 1
+    assert summary["relation_cardinality_error_count"] == 3
+    assert summary["one_target_to_many_base_count"] == 1
+    assert summary["many_target_to_one_base_count"] == 1
+    assert summary["duplicate_target_rows_count"] == 1
+    assert summary["relation_cardinality_passed"] is False
+
+    cardinality_payload = json.loads(artifacts.relation_cardinality_errors_json_path.read_text(encoding="utf-8"))
+    rows = {row["error_type"]: row for row in cardinality_payload["rows"]}
+    assert rows["one_target_to_many_base"]["target_id"] == "3"
+    assert rows["one_target_to_many_base"]["base_id"] == "901|902"
+    assert rows["many_target_to_one_base"]["target_id"] == "1|2"
+    assert rows["many_target_to_one_base"]["base_id"] == "900"
+    assert rows["duplicate_target_rows"]["target_id"] == "3"
+    assert "target_id duplicated 2 success rows" in rows["duplicate_target_rows"]["reasons"]
 
 
 def test_step3_uses_fast_paths_for_gpkg_nodes_and_crs84_relations(tmp_path: Path) -> None:
@@ -261,5 +323,5 @@ def test_step3_uses_fast_paths_for_gpkg_nodes_and_crs84_relations(tmp_path: Path
         assert conn.execute("SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = 'nodes'").fetchone() == (2,)
         assert conn.execute("SELECT COUNT(*) FROM nodes WHERE kind_2 = 4").fetchone() == (1,)
 
-    relation_payload = json.loads(artifacts.intersection_match_tool7_path.read_text(encoding="utf-8"))
+    relation_payload = json.loads(artifacts.intersection_match_t07_path.read_text(encoding="utf-8"))
     assert relation_payload["features"][0]["geometry"]["coordinates"] == [[120.0, 30.0], [120.1, 30.1]]

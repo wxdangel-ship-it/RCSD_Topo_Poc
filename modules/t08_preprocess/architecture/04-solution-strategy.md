@@ -20,7 +20,7 @@ Tool2 命令脚本输出 Patch join / Kind enrich 阶段进度；Road / Raw Kind
 
 Tool3 先将 Nodes `kind / grade` 复制到 `kind_2 / grade_2`，再执行环岛拓扑聚合：
 
-1. Roundabout aggregation：参考 T01，使用 `roadtype bit3` Road 连通组识别环岛，组内最小 Node `id` 作为 mainnode。
+1. Roundabout aggregation：参考 T01，使用 `roadtype bit3` Road 连通组识别环岛，组内最小 Node `id` 作为 mainnode；多 node 环岛组才将 mainnode 写为 `kind_2 = 64`，单 node 环岛组保留初始化后的原 `kind / grade` 到 `kind_2 / grade_2`。
 
 Tool3 命令脚本输出读取、初始化、环岛聚合与写出进度；Nodes GPKG 输出复用 T08 共享直接 SQLite GeoPackage 写出路径。
 
@@ -41,14 +41,14 @@ Tool4 对 `错误T型路口` 候选增加入出度异常豁免：若当前语义
 
 Tool5 承接原 Tool3 的 Complex divmerge aggregation：参考 T04/T02 连续分歧 / 合流链路，沿 Road 有向拓扑聚合 representative `kind_2 in {8,16}` 候选，聚合主节点写为 `kind_2 = 128`。
 
-Tool5 的错误 1 对多处理先复用 T02 `node_error_2` 生成口径：以输入 `RCSDIntersection` 面反向包含 / 接触 SWSD 语义路口，若一个面对应多组语义路口，则过滤代表 `kind_2 = 1` 的组，过滤后剩余组数大于 `1` 时生成一对多候选。随后复用 T02 离线修复口径，验证剩余组之间具有 Road 连通性后才合并 Nodes，并删除面内合并组之间的内部 Road。Tool5 copy-on-write 输出 Nodes/Roads/audit Nodes 和 summary，不回写输入；audit Nodes 记录复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node，并补充处理过程、分组、角色与 source node id。
+Tool5 的错误 1 对多处理先复用 T02 `node_error_2` 生成口径：以输入 `RCSDIntersection` 面反向包含 / 接触 SWSD 语义路口，若一个面对应多组语义路口，则过滤代表 `kind_2 = 1` 的组，过滤后剩余组数大于 `1` 时生成一对多候选。随后复用 T02 离线修复口径，验证剩余组之间具有 Road 连通性后才合并 Nodes，并删除面内合并组之间的内部 Road。对 T02 判定为 `not_all_groups_connected` 的候选，Tool5 增加 T-pair 虚拟连通补充：两个 `kind_2 = 2048` 的 T 型路口若横方向一进一出 Road 的 `kind` 一致、各自横向夹角 `<=35°`、两组横向行驶方向相反且平行夹角 `<=20°`，则作为虚拟连通边参与本面剩余组连通判定，连通后按同一 1 对多口径合并。Tool5 copy-on-write 输出 Nodes/Roads/audit Nodes 和 summary，不回写输入；audit Nodes 记录复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node，并补充处理过程、分组、角色与 source node id。
 
 ## Tool6
 
 Tool6 读取 Nodes 与 Roads，按语义路口分组计算入度 / 出度，只输出人工质检候选，不改写输入数据。
 
 1. 连续分歧合流质检：识别 `kind_2 = 16 / in_degree = 1 / out_degree = 2` 的分歧路口，沿退出左侧 road 在 `100m` 内追踪 `kind_2 = 8 / in_degree = 2 / out_degree = 1` 的合流路口，且分歧与合流距离不得超过 `100m`；再校验横方向共线、竖方向同端点或末端距离 `<20m` 且平行夹角 `<=20°`、竖方向位于横方向右侧。关联 road `kind` 后两位为 `17`，或竖方向为单向 road 且忽略二度连接后连通分歧 / 合流时 suppress。
-2. 交叉路口质检：识别 `kind_2 = 4` 且 `in_degree = 2 / out_degree = 2` 的语义路口；忽略道路方向后四个外侧角度方向不输出错误；仅两条双向 road 输出 `错误交叉路口_非交叉路口`；两个外侧角度方向均一进一出且为平行路关系时输出 `错误交叉路口_非交叉路口`；剩余候选符合右侧 T 型特征时输出 `错误交叉路口_T型路口`，否则不输出。
+2. 交叉路口质检：识别所有 `kind_2 = 4` 的语义路口，若关联 Road 数为 `1` 或 `2`，优先输出 `错误交叉路口_非交叉路口`；其余候选继续要求 `in_degree = 2 / out_degree = 2`，忽略道路方向后四个外侧角度方向不输出错误，仅两条双向 road 输出 `错误交叉路口_非交叉路口`，两个外侧角度方向均一进一出且为平行路关系时输出 `错误交叉路口_非交叉路口`，剩余候选符合右侧 T 型特征时输出 `错误交叉路口_T型路口`，否则不输出。
 3. 输出 `node_error_tool6.csv / node_error_tool6.gpkg / node_error_summary_tool6.json`；CSV 最后一列 `是否修复` 默认 `1`，人工确认不需要修复的数据改为 `0` 后由 Tool4 后续修复流程消费。
 
 ## Tool7

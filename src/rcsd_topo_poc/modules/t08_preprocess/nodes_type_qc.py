@@ -588,6 +588,31 @@ def _detect_cross_errors(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for semantic in semantic_nodes.values():
+        if semantic.representative.kind_2 == CROSS_KIND_2:
+            low_incident_classification = _classify_low_incident_cross_error(
+                semantic_id=semantic.semantic_id,
+                topology=topology,
+                parsed_roads=parsed_roads,
+                horizontal_angle_degrees=horizontal_angle_degrees,
+            )
+            if low_incident_classification is not None:
+                group_id = f"{low_incident_classification['group_prefix']}_{semantic.semantic_id}"
+                rows.append(
+                    _error_row(
+                        error_id=f"{group_id}:{semantic.semantic_id}",
+                        error_group_id=group_id,
+                        error_type=str(low_incident_classification["error_type"]),
+                        semantic=semantic,
+                        role=str(low_incident_classification["role"]),
+                        paired_semantic_node_id="",
+                        topology=topology,
+                        related_node_ids=semantic.member_node_ids,
+                        related_road_ids=_road_ids(parsed_roads, low_incident_classification["related_road_indices"]),
+                        reason=str(low_incident_classification["reason"]),
+                        audit=low_incident_classification["audit"],
+                    )
+                )
+                continue
         in_degree = int(topology.in_degree.get(semantic.semantic_id, 0))
         out_degree = int(topology.out_degree.get(semantic.semantic_id, 0))
         if semantic.representative.kind_2 == CROSS_KIND_2 and in_degree == 2 and out_degree == 2:
@@ -617,6 +642,46 @@ def _detect_cross_errors(
                 )
             )
     return rows
+
+
+def _classify_low_incident_cross_error(
+    *,
+    semantic_id: str,
+    topology: Topology,
+    parsed_roads: list[ParsedRoad],
+    horizontal_angle_degrees: float,
+) -> dict[str, Any] | None:
+    related_road_indices = tuple(sorted(topology.incident_road_indices.get(semantic_id, frozenset())))
+    incident_road_count = len(related_road_indices)
+    if incident_road_count not in {1, 2}:
+        return None
+
+    in_edges = tuple(topology.in_edges.get(semantic_id, ()))
+    out_edges = tuple(topology.out_edges.get(semantic_id, ()))
+    incident_legs = _incident_legs_for_semantic(semantic_id=semantic_id, in_edges=in_edges, out_edges=out_edges)
+    angle_groups = _group_incident_legs_by_outward_angle(
+        incident_legs,
+        angle_threshold_degrees=horizontal_angle_degrees,
+    )
+    angle_audit = _angle_group_audit(angle_groups, angle_threshold_degrees=horizontal_angle_degrees)
+    if incident_road_count == 1:
+        reason = "only_one_incident_road"
+    elif _has_only_two_bidirectional_roads(incident_legs):
+        reason = "only_two_bidirectional_roads"
+    else:
+        reason = "only_two_incident_roads"
+    return _cross_non_cross_classification(
+        semantic_id=semantic_id,
+        topology=topology,
+        related_road_indices=related_road_indices,
+        reason=reason,
+        audit_extra={
+            "incident_road_count": incident_road_count,
+            "incident_road_ids": _road_ids(parsed_roads, related_road_indices),
+            "outward_angle_group_count": len(angle_groups),
+            **angle_audit,
+        },
+    )
 
 
 def _classify_cross_error(

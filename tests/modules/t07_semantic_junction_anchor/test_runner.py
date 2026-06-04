@@ -148,15 +148,16 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert props["6"]["is_anchor"] == "fail2"
     assert props["7"]["is_anchor"] == "fail2"
     assert props["8"]["is_anchor"] is None
-    assert props["9"]["is_anchor"] == "no"
+    assert props["9"]["is_anchor"] == "fail2"
+    assert props["9"]["anchor_reason"] is None
     assert props["10"]["is_anchor"] == "no"
     assert props["10"]["anchor_reason"] is None
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["anchor_yes_count"] == 2
-    assert summary["anchor_no_count"] == 4
+    assert summary["anchor_no_count"] == 3
     assert summary["anchor_fail1_count"] == 1
-    assert summary["anchor_fail2_count"] == 2
+    assert summary["anchor_fail2_count"] == 3
     assert summary["anchor_null_count"] == 1
     assert summary["relation_evidence_row_count"] == 10
     assert summary["surface_candidate_count"] == 2
@@ -176,6 +177,7 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert relation_rows["5"]["relation_state"] == "multiple_intersections_for_group"
     assert relation_rows["6"]["relation_state"] == "intersection_shared_by_multiple_groups"
     assert relation_rows["8"]["relation_state"] == "not_evaluated_no_evidence"
+    assert relation_rows["9"]["relation_state"] == "intersection_shared_by_multiple_groups"
     assert artifacts.anchor_surface_path is not None
     with fiona.open(str(artifacts.anchor_surface_path)) as src:
         surface_rows = [dict(feature["properties"]) for feature in src]
@@ -185,8 +187,51 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert "build_intersection_index_seconds" in summary["performance"]["stage_timings"]
 
     error2 = json.loads((artifacts.stage_root / "node_error_2_audit.json").read_text(encoding="utf-8"))
-    assert all(row["junction_id"] != "9" for row in error2["rows"])
+    assert "9" in {row["junction_id"] for row in error2["rows"]}
     assert all(row["junction_id"] != "10" for row in error2["rows"])
+
+
+def test_step2_shared_intersection_fail2_applies_to_all_handled_kind2(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    intersections_path = tmp_path / "intersections.geojson"
+    _write_geojson(
+        nodes_path,
+        [
+            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes"}, Point(0, 0)),
+            _feature({"id": 2, "mainnodeid": 2, "kind_2": 8, "has_evd": "yes"}, Point(1, 0)),
+            _feature({"id": 3, "mainnodeid": 3, "kind_2": 16, "has_evd": "yes"}, Point(2, 0)),
+            _feature({"id": 4, "mainnodeid": 4, "kind_2": 64, "has_evd": "yes"}, Point(3, 0)),
+            _feature({"id": 5, "mainnodeid": 5, "kind_2": 128, "has_evd": "yes"}, Point(4, 0)),
+            _feature({"id": 6, "mainnodeid": 6, "kind_2": 2048, "has_evd": "yes"}, Point(5, 0)),
+            _feature({"id": 601, "mainnodeid": 6, "kind_2": 0, "has_evd": None}, Point(6, 0)),
+        ],
+    )
+    _write_geojson(
+        intersections_path,
+        [_feature({"id": "shared"}, Polygon([(-1, -1), (7, -1), (7, 1), (-1, 1), (-1, -1)]))],
+    )
+
+    artifacts = run_t07_step2_anchor_recognition(
+        nodes_path=nodes_path,
+        intersection_path=intersections_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    props = _read_gpkg_properties_by_id(artifacts.nodes_path)
+    for junction_id in ["1", "2", "3", "4", "5", "6"]:
+        assert props[junction_id]["is_anchor"] == "fail2"
+        assert props[junction_id]["anchor_reason"] is None
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["anchor_yes_count"] == 0
+    assert summary["anchor_no_count"] == 0
+    assert summary["anchor_fail1_count"] == 0
+    assert summary["anchor_fail2_count"] == 6
+    assert summary["anchor_null_count"] == 0
+
+    error2 = json.loads((artifacts.stage_root / "node_error_2_audit.json").read_text(encoding="utf-8"))
+    assert {row["junction_id"] for row in error2["rows"]} == {"1", "2", "3", "4", "5", "6"}
 
 
 def test_combined_runner_has_no_segment_dependency_or_outputs(tmp_path: Path) -> None:

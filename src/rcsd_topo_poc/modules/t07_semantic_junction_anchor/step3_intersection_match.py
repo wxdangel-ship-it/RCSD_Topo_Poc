@@ -4,6 +4,7 @@ import json
 import shutil
 import sqlite3
 import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,7 +35,7 @@ from .runner import (
 )
 
 
-STEP3_KIND2 = {"4", "8", "16", "2048"}
+STEP3_KIND2 = {"4", "8", "16"}
 
 
 @dataclass(frozen=True)
@@ -42,10 +43,12 @@ class T07Step3Artifacts:
     run_root: Path
     stage_root: Path
     nodes_path: Path
-    intersection_match_tool7_path: Path
+    intersection_match_t07_path: Path
     anchor_surface_path: Path
     relation_evidence_csv_path: Path
     relation_evidence_json_path: Path
+    relation_cardinality_errors_csv_path: Path
+    relation_cardinality_errors_json_path: Path
     summary_path: Path
     audit_csv_path: Path
     audit_json_path: Path
@@ -63,6 +66,19 @@ class RelationRecord:
     geometry_mode: str
 
 
+RELATION_CARDINALITY_ERROR_FIELDS = [
+    "error_type",
+    "target_id",
+    "base_id",
+    "related_target_ids",
+    "introduced_by_module",
+    "source_modules",
+    "source_case_ids",
+    "scenes",
+    "reasons",
+]
+
+
 def _is_zero_id(value: str | None) -> bool:
     if value is None:
         return False
@@ -74,6 +90,126 @@ def _is_zero_id(value: str | None) -> bool:
 
 def _is_success_relation(record: RelationRecord) -> bool:
     return _is_zero_id(record.status) and record.base_id is not None and not _is_zero_id(record.base_id)
+
+
+def _sort_key(value: str) -> tuple[int, int | str]:
+    try:
+        return (0, int(value))
+    except (TypeError, ValueError):
+        return (1, value)
+
+
+def _parts(value: Any) -> set[str]:
+    return {part for part in str(value or "").replace(",", "|").split("|") if part}
+
+
+def _record_parts(record: RelationRecord, keys: tuple[str, ...]) -> set[str]:
+    result: set[str] = set()
+    for key in keys:
+        result.update(_parts(record.properties.get(key)))
+    return result
+
+
+def _relation_cardinality_error_row(
+    *,
+    error_type: str,
+    target_ids: list[str],
+    base_ids: list[str],
+    records: list[RelationRecord],
+) -> dict[str, str]:
+    source_modules: set[str] = set()
+    source_case_ids: set[str] = set()
+    scenes: set[str] = set()
+    reasons: set[str] = {error_type}
+    for record in records:
+        source_modules.update(_record_parts(record, ("source_module", "source_modules", "relation_source")))
+        source_case_ids.update(_record_parts(record, ("source_case_id", "source_case_ids", "case_id")))
+        scenes.update(_record_parts(record, ("scene", "scenes", "relation_state")))
+        reasons.update(_record_parts(record, ("reason", "reasons", "relation_state")))
+    source_module_text = "|".join(sorted(source_modules, key=_sort_key))
+    return {
+        "error_type": error_type,
+        "target_id": "|".join(target_ids),
+        "base_id": "|".join(base_ids),
+        "related_target_ids": "|".join(target_ids),
+        "introduced_by_module": source_module_text or "T05_INTERSECTION_MATCH_ALL",
+        "source_modules": source_module_text,
+        "source_case_ids": "|".join(sorted(source_case_ids, key=_sort_key)),
+        "scenes": "|".join(sorted(scenes, key=_sort_key)),
+        "reasons": "|".join(sorted(reasons, key=_sort_key)),
+    }
+
+
+def _build_relation_cardinality_errors(
+    *,
+    relations_by_target: dict[str, list[RelationRecord]],
+    candidate_target_ids: set[str],
+) -> list[dict[str, str]]:
+    target_to_base: dict[str, set[str]] = defaultdict(set)
+    base_to_target: dict[str, set[str]] = defaultdict(set)
+    target_counter: Counter[str] = Counter()
+    records_by_target: dict[str, list[RelationRecord]] = defaultdict(list)
+    records_by_base: dict[str, list[RelationRecord]] = defaultdict(list)
+
+    for target_id in candidate_target_ids:
+        for record in relations_by_target.get(target_id, []):
+            if not _is_success_relation(record) or record.target_id is None or record.base_id is None:
+                continue
+            target_counter[target_id] += 1
+            target_to_base[target_id].add(record.base_id)
+            base_to_target[record.base_id].add(target_id)
+            records_by_target[target_id].append(record)
+            records_by_base[record.base_id].append(record)
+
+    errors: list[dict[str, str]] = []
+    for target_id, base_ids in sorted(target_to_base.items(), key=lambda item: _sort_key(item[0])):
+        if len(base_ids) <= 1:
+            continue
+        errors.append(
+            _relation_cardinality_error_row(
+                error_type="one_target_to_many_base",
+                target_ids=[target_id],
+                base_ids=sorted(base_ids, key=_sort_key),
+                records=records_by_target[target_id],
+            )
+        )
+    for base_id, target_ids in sorted(base_to_target.items(), key=lambda item: _sort_key(item[0])):
+        if len(target_ids) <= 1:
+            continue
+        sorted_target_ids = sorted(target_ids, key=_sort_key)
+        errors.append(
+            _relation_cardinality_error_row(
+                error_type="many_target_to_one_base",
+                target_ids=sorted_target_ids,
+                base_ids=[base_id],
+                records=records_by_base[base_id],
+            )
+        )
+    for target_id, count in sorted(target_counter.items(), key=lambda item: _sort_key(item[0])):
+        if count <= 1:
+            continue
+        row = _relation_cardinality_error_row(
+            error_type="duplicate_target_rows",
+            target_ids=[target_id],
+            base_ids=sorted(target_to_base.get(target_id, set()), key=_sort_key),
+            records=records_by_target[target_id],
+        )
+        row["reasons"] = "|".join(
+            sorted({*row["reasons"].split("|"), f"target_id duplicated {count} success rows"} - {""}, key=_sort_key)
+        )
+        errors.append(row)
+    return errors
+
+
+def _relation_cardinality_summary(error_rows: list[dict[str, str]]) -> dict[str, Any]:
+    counts = Counter(row.get("error_type", "") for row in error_rows)
+    return {
+        "relation_cardinality_error_count": len(error_rows),
+        "one_target_to_many_base_count": int(counts["one_target_to_many_base"]),
+        "many_target_to_one_base_count": int(counts["many_target_to_one_base"]),
+        "duplicate_target_rows_count": int(counts["duplicate_target_rows"]),
+        "relation_cardinality_passed": not error_rows,
+    }
 
 
 def _build_relations_by_target(
@@ -385,10 +521,10 @@ def _step3_relation_evidence_row(
         "relation_source": "T07_STEP3_INTERSECTION_MATCH",
         "relation_target_type": "RCSDNode",
         "matched_rcsdintersection_ids": "",
-        "relation_state": "intersection_match_tool7_matched",
+        "relation_state": "intersection_match_t07_matched",
         "status_suggested": 0,
         "base_id_candidate": relation_record.base_id or -1,
-        "reason": "intersection_match_tool7_matched",
+        "reason": "intersection_match_t07_matched",
         "level": _value_or_minus_one(level_value),
         "is_highway": _value_or_minus_one(is_highway_value),
         "swsd_point_x": swsd_point_x,
@@ -440,7 +576,7 @@ def _write_merged_relation_evidence_json(
             },
             "merge_sources": {
                 "step2_relation_evidence": str(step2_evidence_path) if step2_evidence_path.is_file() else None,
-                "step3_intersection_match_tool7": "intersection_match_tool7.geojson",
+                "step3_intersection_match_t07": "intersection_match_t07.geojson",
             },
             "rows": merged_rows,
         },
@@ -544,6 +680,7 @@ def run_t07_step3_intersection_match(
     accepted_relations: list[RelationRecord] = []
     accepted_node_ids: list[str] = []
     accepted_relation_evidence_rows: list[dict[str, Any]] = []
+    candidate_target_ids: set[str] = set()
 
     stage_started = time.perf_counter()
     for junction_id in junction_ids:
@@ -588,6 +725,7 @@ def run_t07_step3_intersection_match(
             continue
 
         counts["candidate_count"] += 1
+        candidate_target_ids.add(junction_id)
         relation_records = relations_by_target.get(junction_id, [])
         if not relation_records:
             counts["relation_missing_count"] += 1
@@ -699,11 +837,19 @@ def run_t07_step3_intersection_match(
         )
     stage_timings["evaluate_candidates_seconds"] = _elapsed_since(stage_started)
 
+    relation_cardinality_errors = _build_relation_cardinality_errors(
+        relations_by_target=relations_by_target,
+        candidate_target_ids=candidate_target_ids,
+    )
+    relation_cardinality_counts = _relation_cardinality_summary(relation_cardinality_errors)
+
     nodes_output_path = stage_root / "nodes.gpkg"
-    relation_output_path = stage_root / "intersection_match_tool7.geojson"
+    relation_output_path = stage_root / "intersection_match_t07.geojson"
     surface_output_path = stage_root / "t07_rcsdintersection_anchor_surface.gpkg"
     relation_evidence_csv_path = stage_root / "t07_swsd_rcsd_relation_evidence.csv"
     relation_evidence_json_path = stage_root / "t07_swsd_rcsd_relation_evidence.json"
+    relation_cardinality_errors_csv_path = stage_root / "relation_cardinality_errors.csv"
+    relation_cardinality_errors_json_path = stage_root / "relation_cardinality_errors.json"
     summary_path = stage_root / "t07_step3_summary.json"
     audit_csv_path = stage_root / "t07_step3_audit.csv"
     audit_json_path = stage_root / "t07_step3_audit.json"
@@ -719,6 +865,16 @@ def run_t07_step3_intersection_match(
         accepted_node_ids=accepted_node_ids,
     )
     _write_relation_output(relation_output_path, accepted_relations)
+    _write_csv(relation_cardinality_errors_csv_path, relation_cardinality_errors, RELATION_CARDINALITY_ERROR_FIELDS)
+    write_json(
+        relation_cardinality_errors_json_path,
+        {
+            "run_id": resolved_run_id,
+            **relation_cardinality_counts,
+            "fieldnames": RELATION_CARDINALITY_ERROR_FIELDS,
+            "rows": relation_cardinality_errors,
+        },
+    )
     step2_relation_evidence_path = prefer_vector_input_path(Path(nodes_path)).parent / "t07_swsd_rcsd_relation_evidence.json"
     step2_anchor_surface_path = prefer_vector_input_path(Path(nodes_path)).parent / "t07_rcsdintersection_anchor_surface.gpkg"
     surface_write_mode = _write_step3_anchor_surface(
@@ -744,10 +900,12 @@ def run_t07_step3_intersection_match(
         },
         "output_paths": {
             "nodes": str(nodes_output_path),
-            "intersection_match_tool7": str(relation_output_path),
+            "intersection_match_t07": str(relation_output_path),
             "t07_rcsdintersection_anchor_surface": str(surface_output_path),
             "t07_swsd_rcsd_relation_evidence_csv": str(relation_evidence_csv_path),
             "t07_swsd_rcsd_relation_evidence": str(relation_evidence_json_path),
+            "relation_cardinality_errors_csv": str(relation_cardinality_errors_csv_path),
+            "relation_cardinality_errors": str(relation_cardinality_errors_json_path),
         },
         "output_strategy": {
             "nodes_write_mode": nodes_write_mode,
@@ -756,10 +914,11 @@ def run_t07_step3_intersection_match(
         },
         "crs": {
             "process": TARGET_CRS.to_string(),
-            "intersection_match_tool7": RELATION_OUTPUT_CRS_NAME,
+            "intersection_match_t07": RELATION_OUTPUT_CRS_NAME,
         },
         "relation_evidence_row_count": len(merged_relation_evidence_rows),
         **anchor_counts,
+        **relation_cardinality_counts,
         "audit_count": len(audit_rows),
         "performance": {
             "elapsed_seconds": _elapsed_since(started_at),
@@ -798,6 +957,7 @@ def run_t07_step3_intersection_match(
             "stage_timings": stage_timings,
             "nodes_write_mode": nodes_write_mode,
             **counts,
+            **relation_cardinality_counts,
         },
     )
 
@@ -805,10 +965,12 @@ def run_t07_step3_intersection_match(
         run_root=run_root,
         stage_root=stage_root,
         nodes_path=nodes_output_path,
-        intersection_match_tool7_path=relation_output_path,
+        intersection_match_t07_path=relation_output_path,
         anchor_surface_path=surface_output_path,
         relation_evidence_csv_path=relation_evidence_csv_path,
         relation_evidence_json_path=relation_evidence_json_path,
+        relation_cardinality_errors_csv_path=relation_cardinality_errors_csv_path,
+        relation_cardinality_errors_json_path=relation_cardinality_errors_json_path,
         summary_path=summary_path,
         audit_csv_path=audit_csv_path,
         audit_json_path=audit_json_path,

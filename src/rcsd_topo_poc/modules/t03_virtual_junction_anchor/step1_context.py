@@ -13,20 +13,21 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import (
     SemanticGroup,
     Step1Context,
 )
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id
 
 
 def _normalize_text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
+    return normalize_id(value)
 
 
 def _coerce_int(value: object) -> int | None:
     if value is None or value == "":
         return None
+    normalized = normalize_id(value)
+    if normalized is None:
+        return None
     try:
-        return int(value)
+        return int(float(normalized))
     except (TypeError, ValueError):
         return None
 

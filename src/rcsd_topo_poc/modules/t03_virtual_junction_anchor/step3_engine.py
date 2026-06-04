@@ -26,6 +26,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import (
     Step3CaseResult,
     Step3NegativeMasks,
 )
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id
 
 
 ROAD_BUFFER_M = 8.0
@@ -85,7 +86,7 @@ def _accumulate_step3_stage_timer(
 def _sorted_string_key(values: Iterable[str] | None) -> tuple[str, ...] | None:
     if values is None:
         return None
-    return tuple(sorted(str(value) for value in values))
+    return tuple(sorted(normalized for value in values if (normalized := normalize_id(value)) is not None))
 
 
 def _geometry_cache_token(geometry: BaseGeometry | None) -> str | None:

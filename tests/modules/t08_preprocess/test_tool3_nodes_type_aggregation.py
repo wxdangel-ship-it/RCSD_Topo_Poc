@@ -40,6 +40,7 @@ def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> Non
             _node({"id": "1", "kind": 1, "grade": 9, "mainnodeid": None, "has_evd": "no", "is_anchor": "no", "subnodeid": None}, 0.0, 100.0),
             _node({"id": "2", "kind": 1, "grade": 9, "mainnodeid": None, "has_evd": "no", "is_anchor": "no", "subnodeid": None}, 10.0, 100.0),
             _node({"id": "3", "kind": 1, "grade": 9, "mainnodeid": None, "has_evd": "no", "is_anchor": "no", "subnodeid": None}, 20.0, 100.0),
+            _node({"id": "9", "kind": 4, "grade": 3, "mainnodeid": None, "has_evd": "no", "is_anchor": "no", "subnodeid": None}, 100.0, 100.0),
             _node({"id": "100", "kind": 16, "grade": 2, "mainnodeid": "100", "has_evd": "yes", "is_anchor": "no", "subnodeid": None}, 0.0, 0.0),
             _node({"id": "200", "kind": 8, "grade": 1, "mainnodeid": "200", "has_evd": "yes", "is_anchor": "no", "subnodeid": None}, 60.0, 0.0),
             _node({"id": "101", "kind": 1, "grade": 0, "mainnodeid": None, "has_evd": "no", "is_anchor": "no", "subnodeid": None}, 20.0, 0.0),
@@ -56,6 +57,7 @@ def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> Non
         [
             _road({"id": "rr1", "snodeid": "1", "enodeid": "2", "direction": 2, "roadtype": 8}, [(0.0, 100.0), (10.0, 100.0)]),
             _road({"id": "rr2", "snodeid": "2", "enodeid": "3", "direction": 2, "roadtype": 8}, [(10.0, 100.0), (20.0, 100.0)]),
+            _road({"id": "rr-single", "snodeid": "9", "enodeid": "9", "direction": 2, "roadtype": 8}, [(100.0, 100.0), (105.0, 105.0), (100.0, 100.0)]),
             _road({"id": "r-main-1", "snodeid": "100", "enodeid": "101", "direction": 2, "roadtype": 0}, [(0.0, 0.0), (20.0, 0.0)]),
             _road({"id": "r-main-2", "snodeid": "101", "enodeid": "102", "direction": 2, "roadtype": 0}, [(20.0, 0.0), (40.0, 0.0)]),
             _road({"id": "r-main-3", "snodeid": "102", "enodeid": "200", "direction": 2, "roadtype": 0}, [(40.0, 0.0), (60.0, 0.0)]),
@@ -100,6 +102,9 @@ def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> Non
     assert props_by_id["2"]["kind_2"] == 0
     assert props_by_id["2"]["grade_2"] == 0
     assert props_by_id["2"]["mainnodeid"] == "1"
+    assert props_by_id["9"]["kind_2"] == 4
+    assert props_by_id["9"]["grade_2"] == 3
+    assert props_by_id["9"]["mainnodeid"] == "9"
 
     assert props_by_id["200"]["kind"] == 8
     assert props_by_id["200"]["kind_2"] == 8
@@ -111,7 +116,9 @@ def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> Non
     assert props_by_id["100"]["mainnodeid"] == "100"
 
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
-    assert summary["counts"]["roundabout_group_count"] == 1
+    assert summary["counts"]["roundabout_group_count"] == 2
+    assert summary["counts"]["roundabout_single_node_group_count"] == 1
+    assert summary["roundabout"]["roundabout_single_node_preserved_node_count"] == 1
     assert summary["counts"]["complex_junction_count"] == 0
     assert summary["complex_divmerge"]["complex_mainnodeids"] == []
     assert summary["performance"]["elapsed_seconds"] >= 0

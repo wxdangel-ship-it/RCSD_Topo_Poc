@@ -13,7 +13,13 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_loader import (
 )
 
 
-def _write_case_package(case_root: Path, case_id: str, *, file_list: list[str] | None = None) -> None:
+def _write_case_package(
+    case_root: Path,
+    case_id: str,
+    *,
+    file_list: list[str] | None = None,
+    manifest_mainnodeid=None,
+) -> None:
     case_root.mkdir(parents=True, exist_ok=True)
     write_vector(
         case_root / "nodes.gpkg",
@@ -37,7 +43,7 @@ def _write_case_package(case_root: Path, case_id: str, *, file_list: list[str] |
     write_vector(case_root / "drivezone.gpkg", [{"properties": {"id": "dz"}, "geometry": box(-50.0, -50.0, 50.0, 50.0)}])
     manifest = {
         "bundle_version": 1,
-        "mainnodeid": case_id,
+        "mainnodeid": case_id if manifest_mainnodeid is None else manifest_mainnodeid,
         "epsg": 3857,
         "file_list": file_list
         or [
@@ -77,6 +83,15 @@ def test_case_loader_ignores_out_and_renders_dirs(tmp_path: Path) -> None:
     assert preflight["effective_case_ids"] == ["100001"]
     assert all(row["case_id"] == "100001" for row in preflight["rows"])
     assert preflight["applied_excluded_case_ids"] == []
+
+
+def test_case_loader_normalizes_integral_float_manifest_mainnodeid(tmp_path: Path) -> None:
+    _write_case_package(tmp_path / "603308301", "603308301", manifest_mainnodeid=603308301.0)
+
+    specs, _preflight = load_case_specs(case_root=tmp_path)
+
+    assert specs[0].case_id == "603308301"
+    assert specs[0].mainnodeid == "603308301"
 
 
 def test_case_loader_rejects_manifest_missing_required_file_list_entry(tmp_path: Path) -> None:

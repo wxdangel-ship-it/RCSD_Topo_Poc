@@ -9,6 +9,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points, substring, unary_union
 
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import NodeRecord, RoadRecord
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id, stable_id_key
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step5_foreign_filter import build_association_foreign_result
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import (
     AssociationCaseResult,
@@ -50,7 +51,8 @@ def _u_turn_detection_mode(active_rcsd_roads: Iterable[RoadRecord]) -> str:
 
 
 def _sorted_ids(values: Iterable[str]) -> list[str]:
-    return sorted(set(values), key=lambda item: (0, int(item)) if item.isdigit() else (1, item))
+    ids = [normalized for value in values if (normalized := normalize_id(value)) is not None]
+    return sorted(set(ids), key=stable_id_key)
 
 
 def _clean_geometry(geometry: BaseGeometry | None) -> BaseGeometry | None:
@@ -213,8 +215,8 @@ def _nearest_exit_point(geometry: BaseGeometry | None, vertical_exit_geometry: B
 
 
 def _normalize_group_id(node: NodeRecord) -> str:
-    mainnodeid = None if node.mainnodeid in {None, "", "0"} else node.mainnodeid
-    return str(mainnodeid or node.node_id)
+    mainnodeid = None if node.mainnodeid in {None, "", "0"} else normalize_id(node.mainnodeid)
+    return normalize_id(mainnodeid or node.node_id) or str(node.node_id)
 
 
 def _max_node_group_span_m(nodes: Iterable[NodeRecord]) -> float:

@@ -70,7 +70,45 @@ RUN_ID=t03_innernet_full_$(date +%Y%m%d_%H%M%S) \
 - `scripts/t03_run_internal_full_input_8workers.sh` 是 T03 internal full-input 主运行脚本。
 - `scripts/t03_watch_internal_full_input.sh` 是对应主监控脚本。
 - 历史 finalization wrapper 已退役；当前只保留上述主脚本与内网包装脚本。
-- 本轮不新增 repo 官方 CLI，不改变入口签名。
+
+### 3.4 T03/T04-ready 单文件文本证据包
+
+T03 提供 T03/T04 共用文本证据包入口，按 SWSD 语义路口 `mainnodeid` 导出标准 case-package。证据包包含 T04 所需的 `DivStripZone`：
+
+```bash
+.venv/bin/python -m rcsd_topo_poc t03-export-text-bundle \
+  --nodes-path nodes.gpkg \
+  --roads-path roads.gpkg \
+  --drivezone-path DriveZone.gpkg \
+  --divstripzone-path DivStripZone.gpkg \
+  --rcsdroad-path RCSDRoad.gpkg \
+  --rcsdnode-path RCSDNode.gpkg \
+  --mainnodeid 706389 707476 \
+  --out-txt outputs/_work/t03_text_bundle/cases.txt
+
+.venv/bin/python -m rcsd_topo_poc t03-decode-text-bundle \
+  --bundle-txt outputs/_work/t03_text_bundle/cases.txt \
+  --out-dir outputs/_work/t03_text_bundle/decoded
+```
+
+当文本证据包超过默认 `250KB` 时，导出会自动写出 `*.part_XXXX_of_YYYY.txt` 分片；解包时传入第 1 个 part 即可自动拼接。脚本包装入口：
+
+- `scripts/t03_export_text_bundle_internal_multi_mainnodeids.sh`
+- `scripts/t04_export_text_bundle_internal_multi_mainnodeids.sh`
+
+内网脚本支持位置参数或 `--mainnodeid` 传多个语义路口 ID，并支持用命令参数覆盖所有输入文件路径：
+
+```bash
+scripts/t03_export_text_bundle_internal_multi_mainnodeids.sh \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --divstripzone-path /mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
+  --out-txt /mnt/d/TestData/POC_Data/T03/t03_bundle.txt \
+  --mainnodeid 706389 707476
+```
 
 ## 4. 主要输出
 

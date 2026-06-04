@@ -9,17 +9,18 @@
 5. Step1 按代表 node `kind_2` 过滤处理范围。
 6. Step1 对处理范围内语义路口执行 `DriveZone` intersects/touches 判定。
 7. Step2 仅对 `has_evd = yes` 的语义路口执行 `RCSDIntersection` 判定。
-8. Step2 先将 `kind_2 = 64 / 128` 写为 `no / NULL` 并排除冲突，将 `kind_2 = 2048` 按“全组 node 命中同一个且唯一 `RCSDIntersection`”判定 `yes / t` 或 `no / NULL` 并排除冲突。
-9. Step2 对其它处理范围内类型先形成 provisional `yes / no / fail1`，再做 `fail2` 反向包含覆盖。
+8. Step2 先将 `kind_2 = 64 / 128` 写为基础 `no / NULL`，将 `kind_2 = 2048` 按“全组 node 命中同一个且唯一 `RCSDIntersection`”判定基础 `yes / t` 或 `no / NULL`。
+9. Step2 对处理范围内类型形成 `RCSDIntersection -> SWSD 语义路口` 反向索引；同一面对应多个 SWSD 语义路口时，对代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 统一做 `fail2` 覆盖。
 10. Step2 输出 `nodes`、语义路口级 summary、audit、perf、node error 工件，以及 T07 版 T02 handoff 成果 `t07_rcsdintersection_anchor_surface.gpkg / t07_swsd_rcsd_relation_evidence.csv/json`。
 11. Step3 独立读取 Step2 后 `nodes`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode`。
-12. Step3 选择代表 node `kind_2 in {4, 8, 16, 2048}`、`has_evd = yes`、`is_anchor = no` 的 SWSD 语义路口作为候选。
-13. Step3 只接受 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0` 且 `base_id` 存在于输入 `RCSDNode.id/mainnodeid` 的 relation；接受后写代表 node `is_anchor = yes / anchor_reason = NULL`，输出 `intersection_match_tool7.geojson`，复制 Step2 `t07_rcsdintersection_anchor_surface.gpkg`，并合并生成带 Step2 / Step3 锚定数量的 `t07_swsd_rcsd_relation_evidence.csv/json`。
+12. Step3 选择代表 node `kind_2 in {4, 8, 16}`、`has_evd = yes`、`is_anchor = no` 的 SWSD 语义路口作为候选。
+13. Step3 只接受 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0` 且 `base_id` 存在于输入 `RCSDNode.id/mainnodeid` 的 relation；接受后写代表 node `is_anchor = yes / anchor_reason = NULL`，输出 `intersection_match_t07.geojson`，复制 Step2 `t07_rcsdintersection_anchor_surface.gpkg`，并合并生成带 Step2 / Step3 锚定数量的 `t07_swsd_rcsd_relation_evidence.csv/json`。
+14. Step3 对候选成功 relation 执行 T05 同口径基数质检，1:N、N:1 与重复 success target 写入 `relation_cardinality_errors.csv/json`，并在 summary 记录通过状态与分类计数。
 
 ## 当前实现分层
 
 - `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/runner.py`：承载严格输入读取、语义路口组装、Step1、Step2、Step2 handoff surface/evidence、summary / audit / perf 与组合 runner。
-- `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/step3_intersection_match.py`：承载独立 Step3 relation 补锚、`RCSDNode` 存在性校验、`intersection_match_tool7.geojson`、合并 evidence 与 Step3 audit / summary / perf。
+- `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/step3_intersection_match.py`：承载独立 Step3 relation 补锚、`RCSDNode` 存在性校验、`intersection_match_t07.geojson`、合并 evidence 与 Step3 audit / summary / perf。
 - `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/__init__.py`：导出稳定 callable runner。
 - `scripts/t07_run_semantic_junction_anchor_innernet.sh`：内网执行包装；只负责路径、环境变量、repo `.venv` 与 runner 调用，不承载业务规则。
 - `scripts/t07_run_step3_intersection_match_innernet.sh`：Step3 独立内网执行包装；可自动发现最近一次 T07 Step2 `nodes.gpkg`，也可显式覆盖输入路径。

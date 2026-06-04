@@ -108,7 +108,7 @@ print(
         {
             "run_root": str(artifacts.run_root),
             "nodes": str(artifacts.nodes_path),
-            "intersection_match_tool7": str(artifacts.intersection_match_tool7_path),
+            "intersection_match_t07": str(artifacts.intersection_match_t07_path),
             "candidate_count": summary.get("candidate_count"),
             "accepted_count": summary.get("accepted_count"),
             "relation_missing_count": summary.get("relation_missing_count"),

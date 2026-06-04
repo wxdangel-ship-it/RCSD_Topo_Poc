@@ -51,7 +51,7 @@
   - `t08_nodes_type_aggregation_summary_tool3.json`
 - 输出 CRS：`EPSG:3857`。
 - 类型初始化：新增或覆盖 `kind_2 / grade_2`，初始值分别复制自 `kind / grade`，原始 `kind / grade` 不改写。
-- 环岛聚合：参考 T01 环岛构建，按 `roadtype bit3` 的 Road 连通组聚合；组内最小 Node `id` 为 `mainnode`，mainnode 写 `grade_2 = 1 / kind_2 = 64`，成员写 `grade_2 = 0 / kind_2 = 0`，全组 `mainnodeid` 写为 mainnode。
+- 环岛聚合：参考 T01 环岛构建，按 `roadtype bit3` 的 Road 连通组聚合；组内最小 Node `id` 为 `mainnode`，全组 `mainnodeid` 写为 mainnode。若聚合后环岛语义路口包含多个 node，mainnode 写 `grade_2 = 1 / kind_2 = 64`，成员写 `grade_2 = 0 / kind_2 = 0`；若聚合后环岛语义路口只有一个 node，则该 node 继承初始化后的原 `kind / grade` 到 `kind_2 / grade_2`，不变更为环岛类型。
 - 输出边界：Tool3 只输出 copy-on-write Nodes，不修改输入文件，不输出或改写 Roads。
 - 所有输入、输出路径必须通过参数提供。
 
@@ -93,7 +93,7 @@
 ### Tool5：复杂路口预处理
 
 - 输入一：Nodes GPKG，依赖字段 `id / kind / grade / mainnodeid / subnodeid`，可选字段 `kind_2 / grade_2 / has_evd / is_anchor`；若 `kind_2 / grade_2` 缺失，则先从 `kind / grade` 初始化。
-- 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`。
+- 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`，可选字段 `kind`；错误 1 对多 T-pair 虚拟连通补充判定依赖 `kind`，缺失时不执行该补充判定。
 - 输入三：`RCSDIntersection` GPKG，可选；启用错误 1 对多识别与处理时必填。
 - 输入四：`node_error_2` GPKG，可选兼容输入，依赖字段 `id / junction_id`；未提供时 Tool5 按 T02 `node_error_2` 生成口径基于 `RCSDIntersection` 即时识别。
 - 输出：
@@ -103,7 +103,7 @@
   - `t08_complex_junction_preprocess_summary_tool5.json`
 - 输出 CRS：`EPSG:3857`。
 - 复杂分歧 / 合流聚合：从 Tool3 移出，参考 T04 full-input 候选与连续链路口口径，对 representative node 的 `kind_2 in {8, 16}` 候选沿 Road 有向拓扑识别连续链，聚合后 mainnode 写 `kind_2 = 128`，成员写 `grade_2 = 0 / kind_2 = 0`，全组 `mainnodeid` 写为 mainnode。若输入存在 `has_evd / is_anchor` 字段，则候选需满足 `has_evd = yes / is_anchor = no`。
-- 错误 1 对多路口处理：参考 T02 `node_error_2` 生成逻辑，先用 `RCSDIntersection` 反向包含 / 接触 SWSD 语义路口；若一个面对应不止一组语义路口，则忽略代表 `kind_2 = 1` 的组，过滤后剩余组数大于 `1` 时生成一对多候选；随后复用 T02 离线修复逻辑，只有剩余组之间具备 Road 连通性时才合并，选择最小 junction group 作为 mainnode，mainnode 写 `kind_2 = 4`，成员写 `kind_2 = 0 / grade_2 = 0`，删除 intersection 面内被合并组之间的内部 Road。
+- 错误 1 对多路口处理：参考 T02 `node_error_2` 生成逻辑，先用 `RCSDIntersection` 反向包含 / 接触 SWSD 语义路口；若一个面对应不止一组语义路口，则忽略代表 `kind_2 = 1` 的组，过滤后剩余组数大于 `1` 时生成一对多候选；随后复用 T02 离线修复逻辑，只有剩余组之间具备 Road 连通性时才合并，选择最小 junction group 作为 mainnode，mainnode 写 `kind_2 = 4`，成员写 `kind_2 = 0 / grade_2 = 0`，删除 intersection 面内被合并组之间的内部 Road。若 T02 连通性判定为 `not_all_groups_connected`，Tool5 额外对候选中任意两个 `kind_2 = 2048` 的 T 型路口执行横方向 Road 判定：两者横向一进一出 Road 的 `kind` 规范化后相同、各自横向夹角 `<=35°`、两组横向行驶方向相反且平行夹角 `<=20°` 时，将该 T-pair 视为虚拟连通边；虚拟连通边与真实 Road 连通性共同使剩余组全连通时，按同一 1 对多修复口径合并。
 - 审计 Nodes 输出：将复杂分歧 / 合流聚合与错误 1 对多处理实际涉及的 node 输出为 audit Nodes GPKG，保留最终 Nodes 属性并补充 `audit_id / audit_process / audit_group_id / audit_role / audit_mainnodeid / audit_source_node_id`。
 - 输出边界：Tool5 copy-on-write 输出 Nodes 与 Roads，不修改输入文件；若未传入 `RCSDIntersection`，只执行复杂分歧 / 合流聚合并复制输出 Roads。
 - 所有输入、输出路径必须通过参数提供。
@@ -134,7 +134,8 @@
   - 若 T 型竖方向为单向道路，且忽略二度连接后该竖方向直接连通分歧与合流语义路口，则 suppress，不输出错误。
   - 命中输出 `error_type = 错误分歧合流路口`，同一组连续分合流默认输出 diverge/merge 两条 node 质检记录并共享 `error_group_id`。
 - 交叉路口类型质检：
-  - 识别 `kind_2 = 4` 且 `in_degree = 2 / out_degree = 2` 的语义路口。
+  - 识别所有 `kind_2 = 4` 的语义路口；若该语义路口关联 Road 数为 `1` 或 `2`，优先输出 `error_type = 错误交叉路口_非交叉路口`。
+  - 其余交叉路口候选继续要求 `in_degree = 2 / out_degree = 2`。
   - 若进入和退出 road 在路口处忽略道路方向后形成四个不同外侧角度方向，则视为真实交叉路口，不输出错误。
   - 若关联 road 只有两条双向 road，则输出 `error_type = 错误交叉路口_非交叉路口`。
   - 若忽略道路方向后只有两个外侧角度方向，两个角度方向均具备一进一出关系，且两组方向为平行路关系，则输出 `error_type = 错误交叉路口_非交叉路口`。
@@ -405,13 +406,13 @@ Tool8：
 5. Tool2 `kind` 多值按 `|` 去重拼接；具有 `17` 主辅路出入口属性的 Road 必须从主 Kind 输出删除，并写入事件 Road 输出。
 6. Tool3 输出 Nodes GPKG 且 CRS 为 `EPSG:3857`。
 7. Tool3 保留原始 `kind / grade`，只在 copy-on-write 输出中写入 `kind_2 / grade_2 / mainnodeid / subnodeid`。
-8. Tool3 summary 可追溯环岛组、更新节点数、CRS、字段解析与阶段性能；Tool3 不再构造复杂分歧 / 合流路口。
+8. Tool3 summary 可追溯环岛组、单节点环岛保留数量、更新节点数、CRS、字段解析与阶段性能；Tool3 不再构造复杂分歧 / 合流路口。
 9. Tool4 输出完整 Nodes / audit Nodes GPKG 且 CRS 为 `EPSG:3857`；提供 `--roads-output` 时 Roads 输出也必须为 `EPSG:3857`。
 10. Tool4 识别错误 T 型路口与 `kind_2 in {8,16}` 一入一出分合流路口，并按规则写回代表 node `kind_2`。
 11. Tool4 对提前右转与辅路 Road 执行入出度异常豁免；候选错误被豁免时不写入 audit Nodes，必须写入 summary `degree_exceptions`。
 12. Tool4 可选消费 Tool6 质检成果；只处理 `是否修复 = 1` 的 `错误分歧合流路口 / 错误交叉路口_T型路口 / 错误交叉路口_非交叉路口`，并在 summary 中记录 Tool6 修复、跳过和删除 Road。
 13. Tool5 输出 Nodes / Roads / audit Nodes GPKG 且 CRS 为 `EPSG:3857`。
-14. Tool5 summary 可追溯复杂分歧 / 合流组、`node_error_2_detection`、错误 1 对多合并组、删除 Road、audit node 数量、CRS、字段解析与阶段性能。
+14. Tool5 summary 可追溯复杂分歧 / 合流组、`node_error_2_detection`、错误 1 对多合并组、Tool5 T-pair 虚拟连通边、删除 Road、audit node 数量、CRS、字段解析与阶段性能。
 15. Tool6 输出 `node_error_tool6.csv / node_error_tool6.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
 16. Tool6 CSV 最后一列为 `是否修复`，默认值为 `1`；人工确认不需要修复的数据改为 `0`；Tool6 不修改输入 Nodes/Roads。
 17. Tool6 可追溯 `错误分歧合流路口 / 错误交叉路口_T型路口 / 错误交叉路口_非交叉路口`、入出度、相关 Road、suppressed 原因、CRS 与性能 summary。

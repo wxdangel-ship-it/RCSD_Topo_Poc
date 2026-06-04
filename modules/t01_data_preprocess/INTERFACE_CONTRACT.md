@@ -343,6 +343,15 @@
     - `segment_build_source = dead_end_leaf`
     - `leaf_node_id = <leaf semantic node id>`
     - `dead_end_bundle_type in {bidirectional, reciprocal_oneway}`
+- final one-way fallback：
+  - 在常规单向 terminate-to-terminate 与 dead-end leaf 补段之后、`Step6` 之前执行
+  - 只处理仍未构段、`direction in {2,3}`、非 `formway = 128`、非右转专用道，且两端可解析到 semantic endpoint 的 road
+  - 不放宽前序 phase terminate 规则；phase 不闭合、端点 phase 不一致或同 semantic group 的 residual 单向 road 只在本阶段兜底
+  - 每条 road 形成一个单 road Segment
+  - 新构成 road：`sgrade = 0-2单`
+  - 新构成 road 写入审计 / 发布保护字段：
+    - `segment_build_source = oneway_single_road_fallback`
+  - `oneway_segment_summary.json` 必须输出 `final_fallback_segment_count` 与 `final_fallback_road_count`
 - 新增 runner 对外产物：
   - `oneway_segment_roads.gpkg`
   - `oneway_segment_build_table.csv`

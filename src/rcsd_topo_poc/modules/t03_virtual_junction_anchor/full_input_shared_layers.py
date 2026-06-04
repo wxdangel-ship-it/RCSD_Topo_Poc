@@ -14,6 +14,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     LayerFeature,
     read_vector_layer,
 )
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id
 
 
 ALLOWED_KIND_2_VALUES = frozenset({4, 2048})
@@ -53,21 +54,21 @@ class SharedFullInputLayers:
 
 
 def stable_case_ids(case_ids: list[str]) -> list[str]:
-    return sorted({str(case_id) for case_id in case_ids}, key=sort_patch_key)
+    return sorted({normalize_id(case_id) or str(case_id) for case_id in case_ids}, key=sort_patch_key)
 
 
 def normalize_text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
+    return normalize_id(value)
 
 
 def coerce_int(value: object) -> int | None:
     if value in {None, ""}:
         return None
+    normalized = normalize_id(value)
+    if normalized is None:
+        return None
     try:
-        return int(value)
+        return int(float(normalized))
     except (TypeError, ValueError):
         return None
 

@@ -16,6 +16,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import build
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step2_template import classify_step2_template
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import AssociationContext
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import Step1Context, Step2TemplateResult, Step3CaseResult
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id, stable_id_key
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import ROAD_BUFFER_M
 
 
@@ -59,8 +60,8 @@ def _build_current_swsd_surface_geometry(step1_context, selected_road_ids: tuple
 
 
 def _stable_ids(values: Any) -> tuple[str, ...]:
-    ids = [str(value) for value in (values or []) if value is not None and str(value) != ""]
-    return tuple(sorted(set(ids), key=lambda item: (0, int(item)) if item.isdigit() else (1, item)))
+    ids = [normalized for value in (values or []) if (normalized := normalize_id(value)) is not None]
+    return tuple(sorted(set(ids), key=stable_id_key))
 
 
 def _stable_issue_codes(values: list[str]) -> tuple[str, ...]:

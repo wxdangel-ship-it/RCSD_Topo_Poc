@@ -28,6 +28,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers 
     feature_mainnodeid,
     resolve_representative_feature,
 )
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import (
     FinalizationReviewIndexRow,
 )
@@ -144,8 +145,8 @@ def _pipe_join(values: Any) -> str:
     if values is None:
         return ""
     if isinstance(values, str):
-        return values
-    return "|".join(str(value) for value in values if str(value or "").strip())
+        return normalize_id(values) or values
+    return "|".join(normalized for value in values if (normalized := normalize_id(value)) is not None)
 
 
 def _node_level(properties: dict[str, Any]) -> Any:

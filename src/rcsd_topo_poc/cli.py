@@ -330,6 +330,34 @@ def _cmd_t02_decode_text_bundle(args: argparse.Namespace) -> int:
     return run_t02_decode_text_bundle_cli(args)
 
 
+def _cmd_t03_export_text_bundle(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t03_virtual_junction_anchor.text_bundle import run_t03_export_text_bundle_cli
+
+    args.module_name = "t03"
+    return run_t03_export_text_bundle_cli(args)
+
+
+def _cmd_t03_decode_text_bundle(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t03_virtual_junction_anchor.text_bundle import run_t03_decode_text_bundle_cli
+
+    args.module_name = "t03"
+    return run_t03_decode_text_bundle_cli(args)
+
+
+def _cmd_t04_export_text_bundle(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t03_virtual_junction_anchor.text_bundle import run_t04_export_text_bundle_cli
+
+    args.module_name = "t04"
+    return run_t04_export_text_bundle_cli(args)
+
+
+def _cmd_t04_decode_text_bundle(args: argparse.Namespace) -> int:
+    from rcsd_topo_poc.modules.t03_virtual_junction_anchor.text_bundle import run_t04_decode_text_bundle_cli
+
+    args.module_name = "t04"
+    return run_t04_decode_text_bundle_cli(args)
+
+
 def _cmd_t02_stage2_anchor_recognition(args: argparse.Namespace) -> int:
     from rcsd_topo_poc.modules.t02_junction_anchor.stage2_anchor_recognition import (
         run_t02_stage2_anchor_recognition_cli,
@@ -1282,6 +1310,50 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_t02_decode.add_argument("--bundle-txt", "--bundle_txt", required=True, dest="bundle_txt", help="Input bundle txt path.")
     p_t02_decode.add_argument("--out-dir", "--out_dir", dest="out_dir", help="Optional output directory for decoded bundle files. If omitted, single-case bundles decode to a sibling directory named after the bundle file, while multi-case bundles decode into the current working directory.")
     p_t02_decode.set_defaults(func=_cmd_t02_decode_text_bundle)
+
+    def add_t03_t04_text_bundle_parsers(module_name: str, export_func, decode_func) -> None:
+        upper = module_name.upper()
+        export_parser = sub.add_parser(
+            f"{module_name}-export-text-bundle",
+            help=f"Export a single- or multi-mainnodeid {upper} text bundle with T04-ready inputs and automatic splitting.",
+        )
+        export_parser.add_argument("--nodes-path", "--nodes_path", required=True, dest="nodes_path", help="Path to SWSD nodes GeoPackage/GeoJSON/Shapefile.")
+        export_parser.add_argument("--nodes-layer", help="Optional nodes layer name.")
+        export_parser.add_argument("--nodes-crs", help="Optional nodes CRS override, e.g. EPSG:4326.")
+        export_parser.add_argument("--roads-path", "--roads_path", required=True, dest="roads_path", help="Path to SWSD roads GeoPackage/GeoJSON/Shapefile.")
+        export_parser.add_argument("--roads-layer", help="Optional roads layer name.")
+        export_parser.add_argument("--roads-crs", help="Optional roads CRS override, e.g. EPSG:4326.")
+        export_parser.add_argument("--drivezone-path", "--drivezone_path", required=True, dest="drivezone_path", help="Path to DriveZone GeoPackage/GeoJSON/Shapefile.")
+        export_parser.add_argument("--drivezone-layer", help="Optional DriveZone layer name.")
+        export_parser.add_argument("--drivezone-crs", help="Optional DriveZone CRS override, e.g. EPSG:4326.")
+        export_parser.add_argument("--divstripzone-path", "--divstripzone_path", required=True, dest="divstripzone_path", help="Path to DivStripZone GeoPackage/GeoJSON/Shapefile; required so the bundle is T04-ready.")
+        export_parser.add_argument("--divstripzone-layer", help="Optional DivStripZone layer name.")
+        export_parser.add_argument("--divstripzone-crs", help="Optional DivStripZone CRS override, e.g. EPSG:4326.")
+        export_parser.add_argument("--rcsdroad-path", "--rcsdroad_path", required=True, dest="rcsdroad_path", help="Path to RCSDRoad GeoPackage/GeoJSON/Shapefile.")
+        export_parser.add_argument("--rcsdroad-layer", help="Optional RCSDRoad layer name.")
+        export_parser.add_argument("--rcsdroad-crs", help="Optional RCSDRoad CRS override, e.g. EPSG:4326.")
+        export_parser.add_argument("--rcsdnode-path", "--rcsdnode_path", required=True, dest="rcsdnode_path", help="Path to RCSDNode GeoPackage/GeoJSON/Shapefile.")
+        export_parser.add_argument("--rcsdnode-layer", help="Optional RCSDNode layer name.")
+        export_parser.add_argument("--rcsdnode-crs", help="Optional RCSDNode CRS override, e.g. EPSG:4326.")
+        export_parser.add_argument("--mainnodeid", required=True, nargs="+", help="One or more target SWSD semantic junction IDs.")
+        export_parser.add_argument("--out-txt", "--out_txt", required=True, dest="out_txt", help="Text bundle output path. If split, this is part 1.")
+        export_parser.add_argument("--buffer-m", type=float, default=100.0, help="Local query buffer in meters. Default: 100.")
+        export_parser.add_argument("--patch-size-m", type=float, default=200.0, help="North-up patch size in meters. Default: 200.")
+        export_parser.add_argument("--resolution-m", type=float, default=0.2, help="Raster resolution in meters. Default: 0.2.")
+        export_parser.add_argument("--max-text-size-bytes", type=int, default=250 * 1024, help="Maximum text size per bundle part. Default: 256000 bytes.")
+        export_parser.add_argument("--allow-partial-cases", action="store_true", help="For multi-ID export, keep successful cases when some IDs fail.")
+        export_parser.set_defaults(func=export_func)
+
+        decode_parser = sub.add_parser(
+            f"{module_name}-decode-text-bundle",
+            help=f"Decode a {upper} text bundle, including split bundles, into case-package directories.",
+        )
+        decode_parser.add_argument("--bundle-txt", "--bundle_txt", required=True, dest="bundle_txt", help="Input bundle txt path. For split bundles, pass part 1.")
+        decode_parser.add_argument("--out-dir", "--out_dir", dest="out_dir", help="Optional output directory for decoded bundle files.")
+        decode_parser.set_defaults(func=decode_func)
+
+    add_t03_t04_text_bundle_parsers("t03", _cmd_t03_export_text_bundle, _cmd_t03_decode_text_bundle)
+    add_t03_t04_text_bundle_parsers("t04", _cmd_t04_export_text_bundle, _cmd_t04_decode_text_bundle)
 
     args = parser.parse_args(argv)
     try:

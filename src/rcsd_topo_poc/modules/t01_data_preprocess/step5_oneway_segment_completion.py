@@ -53,6 +53,9 @@ DEAD_END_SEGMENT_GRADE = "0-2双"
 DEAD_END_BUILD_SOURCE = "dead_end_leaf"
 DEAD_END_BIDIRECTIONAL_BUNDLE_TYPE = "bidirectional"
 DEAD_END_ONEWAY_PAIR_BUNDLE_TYPE = "reciprocal_oneway"
+FINAL_FALLBACK_PHASE_ID = "oneway-single-road-fallback"
+FINAL_FALLBACK_SEGMENT_GRADE = "0-2单"
+FINAL_FALLBACK_BUILD_SOURCE = "oneway_single_road_fallback"
 DEAD_END_ANCHOR_KIND_VALUES = frozenset({4, 64, 128, 2048})
 DEAD_END_ANCHOR_GRADE_VALUES = frozenset({1, 2, 3})
 DEAD_END_ANCHOR_CLOSED_CON_VALUES = frozenset({2, 3})
@@ -636,6 +639,21 @@ def _directed_semantic_pairs(
     return pairs
 
 
+def _directed_oneway_semantic_endpoints(
+    road: RoadFeatureRecord,
+    physical_to_semantic: dict[str, str],
+) -> Optional[tuple[str, str]]:
+    snode_group = physical_to_semantic.get(road.snodeid)
+    enode_group = physical_to_semantic.get(road.enodeid)
+    if snode_group is None or enode_group is None:
+        return None
+    if road.direction == 2:
+        return snode_group, enode_group
+    if road.direction == 3:
+        return enode_group, snode_group
+    return None
+
+
 def _resolve_dead_end_bundle_type(
     *,
     endpoint_pair: tuple[str, str],
@@ -767,6 +785,68 @@ def _run_dead_end_leaf_completion(
         ),
         "skipped_invalid_bundle_count": skipped_invalid_bundle_count,
         "skipped_non_leaf_bundle_count": skipped_non_leaf_bundle_count,
+    }
+
+
+def _run_final_oneway_fallback(
+    *,
+    roads: list[RoadFeatureRecord],
+    road_properties_map: dict[str, dict[str, Any]],
+    physical_to_semantic: dict[str, str],
+    used_segmentids: set[str],
+) -> tuple[list[OnewayBuiltSegment], dict[str, Any]]:
+    candidate_road_ids = _collect_phase_candidate_road_ids(
+        roads=roads,
+        road_properties_map=road_properties_map,
+    )
+    built_segments: list[OnewayBuiltSegment] = []
+    assigned_road_ids: set[str] = set()
+    skipped_missing_endpoint_count = 0
+
+    for road in sorted(roads, key=lambda item: _sort_key(item.road_id)):
+        if road.road_id not in candidate_road_ids:
+            continue
+        endpoints = _directed_oneway_semantic_endpoints(road, physical_to_semantic)
+        if endpoints is None:
+            skipped_missing_endpoint_count += 1
+            continue
+        start_node_id, end_node_id = endpoints
+        segmentid = _allocate_unique_segmentid(
+            a_node_id=start_node_id,
+            b_node_id=end_node_id,
+            used_segmentids=used_segmentids,
+            force_suffix=False,
+        )
+        props = road_properties_map[road.road_id]
+        set_road_segmentid(props, segmentid)
+        set_road_sgrade(props, FINAL_FALLBACK_SEGMENT_GRADE)
+        props["segment_build_source"] = FINAL_FALLBACK_BUILD_SOURCE
+        assigned_road_ids.add(road.road_id)
+        built_segments.append(
+            OnewayBuiltSegment(
+                phase_id=FINAL_FALLBACK_PHASE_ID,
+                sgrade=FINAL_FALLBACK_SEGMENT_GRADE,
+                start_node_id=start_node_id,
+                end_node_id=end_node_id,
+                segmentid=segmentid,
+                road_ids=(road.road_id,),
+                through_node_ids=(),
+                segment_build_source=FINAL_FALLBACK_BUILD_SOURCE,
+            )
+        )
+
+    return built_segments, {
+        "phase_id": FINAL_FALLBACK_PHASE_ID,
+        "sgrade": FINAL_FALLBACK_SEGMENT_GRADE,
+        "candidate_road_count": len(candidate_road_ids),
+        "built_segment_count": len(built_segments),
+        "new_segment_road_count": len(assigned_road_ids),
+        "road_kind_1_built_road_count": sum(
+            1
+            for road_id in assigned_road_ids
+            if _coerce_int(road_properties_map[road_id].get("road_kind")) == 1
+        ),
+        "skipped_missing_endpoint_count": skipped_missing_endpoint_count,
     }
 
 
@@ -1068,6 +1148,14 @@ def run_step5_oneway_segment_completion(
     )
     all_built_segments.extend(dead_end_segments)
 
+    final_fallback_segments, final_fallback_summary = _run_final_oneway_fallback(
+        roads=roads,
+        road_properties_map=road_properties_map,
+        physical_to_semantic=physical_to_semantic,
+        used_segmentids=used_segmentids,
+    )
+    all_built_segments.extend(final_fallback_segments)
+
     group_to_allowed_road_ids = _build_group_to_allowed_road_ids(
         roads=roads,
         road_properties_map=road_properties_map,
@@ -1150,17 +1238,21 @@ def run_step5_oneway_segment_completion(
         "input_road_path": str(Path(step5_artifacts.refreshed_roads_path).resolve()),
         "phase_summaries": phase_summaries,
         "dead_end_summary": dead_end_summary,
+        "final_fallback_summary": final_fallback_summary,
         "built_segment_count": len(all_built_segments),
         "built_segment_road_count": sum(len(segment.road_ids) for segment in all_built_segments),
         "road_kind_1_built_road_count": sum(
             phase_summary["road_kind_1_built_road_count"] for phase_summary in phase_summaries
         )
-        + dead_end_summary["road_kind_1_built_road_count"],
+        + dead_end_summary["road_kind_1_built_road_count"]
+        + final_fallback_summary["road_kind_1_built_road_count"],
         "kind_2_128_terminate_count": len(kind_2_128_terminate_node_ids),
         "dead_end_segment_count": dead_end_summary["built_segment_count"],
         "dead_end_road_count": dead_end_summary["new_segment_road_count"],
         "dead_end_bidirectional_segment_count": dead_end_summary["bidirectional_segment_count"],
         "dead_end_oneway_pair_segment_count": dead_end_summary["oneway_pair_segment_count"],
+        "final_fallback_segment_count": final_fallback_summary["built_segment_count"],
+        "final_fallback_road_count": final_fallback_summary["new_segment_road_count"],
         "unsegmented_road_count": unsegmented_summary["unsegmented_road_count"],
         "unsegmented_excluded_formway_128_count": unsegmented_summary["excluded_formway_128_count"],
         "unsegmented_formway_bit7_or_bit8_count": unsegmented_summary[

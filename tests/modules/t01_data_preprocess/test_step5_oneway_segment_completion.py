@@ -233,17 +233,19 @@ def test_oneway_completion_respects_through_branch_choice_and_existing_segmentid
     assert road_props["r1"]["sgrade"] == "0-1单"
     assert road_props["r2"]["segmentid"] == segment_id
     assert road_props["r3"]["segmentid"] == segment_id
-    assert road_props["r4"]["segmentid"] is None
+    assert road_props["r4"]["sgrade"] == "0-2单"
+    assert road_props["r4"]["segment_build_source"] == "oneway_single_road_fallback"
     assert road_props["prot"]["segmentid"] == "6_3"
     assert road_props["prot"]["sgrade"] == "0-1双"
 
-    unsegmented_rows = _read_csv_rows(artifacts.unsegmented_csv_path)
-    assert [row["road_id"] for row in unsegmented_rows] == ["r4"]
+    assert _read_csv_rows(artifacts.unsegmented_csv_path) == []
 
     build_rows = _read_csv_rows(artifacts.build_table_path)
-    assert len(build_rows) == 1
+    assert len(build_rows) == 2
     assert build_rows[0]["road_ids"] == "r1,r2,r3"
     assert build_rows[0]["through_node_ids"] == "2,3"
+    assert build_rows[1]["road_ids"] == "r4"
+    assert build_rows[1]["segment_build_source"] == "oneway_single_road_fallback"
 
 
 def test_step6_keeps_oneway_zero_zero_grade_without_promoting_to_dual(tmp_path: Path) -> None:
@@ -316,20 +318,17 @@ def test_oneway_completion_excludes_right_turn_only_roads(tmp_path: Path) -> Non
     road_props = _road_props_by_id(artifacts.refreshed_roads_path)
     assert road_props["rt_only"]["segmentid"] is None
     assert road_props["rt_only"]["sgrade"] is None
-    assert road_props["main"]["segmentid"] is None
+    assert road_props["main"]["sgrade"] == "0-2单"
+    assert road_props["main"]["segment_build_source"] == "oneway_single_road_fallback"
 
     unsegmented_rows = _read_csv_rows(artifacts.unsegmented_csv_path)
-    assert [row["road_id"] for row in unsegmented_rows] == ["rt_only", "main"]
+    assert [row["road_id"] for row in unsegmented_rows] == ["rt_only"]
     row_by_id = {row["road_id"]: row for row in unsegmented_rows}
     assert row_by_id["rt_only"]["formway_has_bit7_or_bit8"] == "true"
     assert row_by_id["rt_only"]["audit_reason"] == "formway_bit7_or_bit8"
-    assert row_by_id["main"]["formway_has_bit7_or_bit8"] == "false"
-    assert row_by_id["main"]["audit_reason"] == "oneway_trace_failed_or_no_terminate"
     assert artifacts.summary["unsegmented_formway_bit7_or_bit8_count"] == 1
-    assert artifacts.summary["unsegmented_non_formway_bit7_or_bit8_count"] == 1
-    assert artifacts.summary["unsegmented_non_formway_bit7_or_bit8_reason_counts"] == {
-        "oneway_trace_failed_or_no_terminate": 1
-    }
+    assert artifacts.summary["unsegmented_non_formway_bit7_or_bit8_count"] == 0
+    assert artifacts.summary["unsegmented_non_formway_bit7_or_bit8_reason_counts"] == {}
 
 
 def test_oneway_completion_allows_road_kind_1_and_kind_128_terminate(tmp_path: Path) -> None:
@@ -400,10 +399,55 @@ def test_oneway_completion_does_not_use_kind_128_for_zero_zero_phase(tmp_path: P
     )
 
     road_props = _road_props_by_id(artifacts.refreshed_roads_path)
-    assert road_props["r1"]["segmentid"] is None
-    assert road_props["r2"]["segmentid"] is None
+    assert road_props["r1"]["sgrade"] == "0-2单"
+    assert road_props["r2"]["sgrade"] == "0-2单"
+    assert road_props["r1"]["segment_build_source"] == "oneway_single_road_fallback"
+    assert road_props["r2"]["segment_build_source"] == "oneway_single_road_fallback"
     phase_00 = next(item for item in artifacts.summary["phase_summaries"] if item["phase_id"] == "0-0单")
     assert phase_00["terminate_node_count"] == 1
+    assert artifacts.summary["final_fallback_road_count"] == 2
+
+
+def test_oneway_completion_final_fallback_handles_phase_mismatch_and_same_group(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+    out_root = tmp_path / "out"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=4, grade_2=1, closed_con=3),
+            _node_feature(2, 1.0, 0.0, kind_2=8, grade_2=1, closed_con=1),
+            _node_feature(31, 0.0, 1.0, kind_2=4, grade_2=3, closed_con=2, mainnodeid=30),
+            _node_feature(32, 1.0, 1.0, kind_2=4, grade_2=3, closed_con=2, mainnodeid=30),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("phase_mismatch", 1, 2, [(0.0, 0.0), (1.0, 0.0)], road_kind=1),
+            _road_feature("same_group", 31, 32, [(0.0, 1.0), (1.0, 1.0)], road_kind=3),
+        ],
+    )
+
+    artifacts = run_step5_oneway_segment_completion(
+        step5_artifacts=_build_step5_artifacts(node_path, road_path),
+        out_root=out_root,
+        run_id="oneway_final_fallback",
+        debug=False,
+    )
+
+    road_props = _road_props_by_id(artifacts.refreshed_roads_path)
+    assert road_props["phase_mismatch"]["segmentid"] == "1_2"
+    assert road_props["phase_mismatch"]["sgrade"] == "0-2单"
+    assert road_props["phase_mismatch"]["segment_build_source"] == "oneway_single_road_fallback"
+    assert road_props["same_group"]["segmentid"] == "30_30"
+    assert road_props["same_group"]["sgrade"] == "0-2单"
+    assert road_props["same_group"]["segment_build_source"] == "oneway_single_road_fallback"
+    assert artifacts.summary["final_fallback_segment_count"] == 2
+    assert artifacts.summary["final_fallback_road_count"] == 2
+    assert artifacts.summary["road_kind_1_built_road_count"] == 1
+    assert artifacts.summary["unsegmented_road_count"] == 0
 
 
 def test_oneway_completion_builds_bidirectional_dead_end_leaf_segment(tmp_path: Path) -> None:
@@ -482,7 +526,7 @@ def test_oneway_completion_builds_reciprocal_oneway_dead_end_leaf_segment(tmp_pa
     assert artifacts.summary["unsegmented_road_count"] == 0
 
 
-def test_oneway_completion_does_not_build_unpaired_oneway_dead_end(tmp_path: Path) -> None:
+def test_oneway_completion_builds_unpaired_oneway_with_final_fallback(tmp_path: Path) -> None:
     node_path = tmp_path / "nodes.geojson"
     road_path = tmp_path / "roads.geojson"
     out_root = tmp_path / "out"
@@ -509,9 +553,13 @@ def test_oneway_completion_does_not_build_unpaired_oneway_dead_end(tmp_path: Pat
     )
 
     road_props = _road_props_by_id(artifacts.refreshed_roads_path)
-    assert road_props["oneway_only"]["segmentid"] is None
+    assert road_props["oneway_only"]["segmentid"] == "1_2"
+    assert road_props["oneway_only"]["sgrade"] == "0-2单"
+    assert road_props["oneway_only"]["segment_build_source"] == "oneway_single_road_fallback"
     assert artifacts.summary["dead_end_segment_count"] == 0
-    assert artifacts.summary["unsegmented_road_count"] == 1
+    assert artifacts.summary["final_fallback_segment_count"] == 1
+    assert artifacts.summary["final_fallback_road_count"] == 1
+    assert artifacts.summary["unsegmented_road_count"] == 0
 
 
 def test_oneway_completion_excludes_dead_end_leaf_formway_128_and_right_turn_only(tmp_path: Path) -> None:

@@ -112,7 +112,7 @@
 - [x] T037 [US4] Add independent innernet wrapper `scripts/t07_run_step3_intersection_match_innernet.sh`.
 - [x] T038 [US4] Update T07 source facts, module docs, and entrypoint registry for Step3.
 
-**Checkpoint**: Step3 is independent from Step1/Step2 and produces `intersection_match_tool7.geojson`, copied `t07_rcsdintersection_anchor_surface.gpkg`, and merged `t07_swsd_rcsd_relation_evidence.csv/json`.
+**Checkpoint**: Step3 is independent from Step1/Step2 and produces `intersection_match_t07.geojson`, copied `t07_rcsdintersection_anchor_surface.gpkg`, and merged `t07_swsd_rcsd_relation_evidence.csv/json`.
 
 ## Phase 7: Validation And Closeout
 

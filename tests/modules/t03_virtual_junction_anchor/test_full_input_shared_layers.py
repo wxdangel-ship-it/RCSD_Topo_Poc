@@ -5,6 +5,7 @@ from pathlib import Path
 from shapely.geometry import LineString, Point, box
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers import (
     SharedFullInputLayers,
     collect_case_features,
@@ -20,6 +21,22 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers 
     resolve_representative_feature,
     selection_window,
 )
+
+
+def test_feature_ids_normalize_integral_float_values() -> None:
+    node = LayerFeature(
+        properties={"id": 603308301.0, "mainnodeid": 603308301.0},
+        geometry=Point(0.0, 0.0),
+    )
+    road = LayerFeature(
+        properties={"snodeid": 603308301.0, "enodeid": "603308302.0"},
+        geometry=LineString([(0.0, 0.0), (1.0, 0.0)]),
+    )
+
+    assert feature_id(node) == "603308301"
+    assert feature_mainnodeid(node) == "603308301"
+    assert feature_snodeid(road) == "603308301"
+    assert feature_enodeid(road) == "603308302"
 
 
 def _write_shared_layer_fixture(root: Path) -> tuple[Path, Path, Path, Path, Path]:

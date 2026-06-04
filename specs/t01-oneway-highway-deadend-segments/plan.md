@@ -5,7 +5,7 @@
 
 ## Summary
 
-本变更把 T01 已确认的内网需求正式化：单向补段阶段放开 `road_kind=1` 封闭式/高速 road，`0-1单 / 0-2单` 纳入 `kind_2=128` 复杂分歧合流路口作为 terminate，并以独立子模式支持断头 road bundle 通过 leaf node 构成 Segment。断头 bundle 覆盖单条双向 road 与两条方向互补单向 road 两种表达。实施顺序必须先完成低风险单向补段，再处理会改变双向构段与 Step6 语义的 dead-end Segment。
+本变更把 T01 已确认的内网需求正式化：单向补段阶段放开 `road_kind=1` 封闭式/高速 road，`0-1单 / 0-2单` 纳入 `kind_2=128` 复杂分歧合流路口作为 terminate，并以独立子模式支持断头 road bundle 通过 leaf node 构成 Segment。断头 bundle 覆盖单条双向 road 与两条方向互补单向 road 两种表达。常规单向与断头补段之后，新增 final one-way fallback，对仍未构段且未被排除的单向 road 生成单 road `0-2单` Segment。
 
 ## Technical Context
 
@@ -97,6 +97,15 @@ modules/t01_data_preprocess/
   - Step6 publish mismatch
 - Run local tests and innernet latest T01 output audit.
 
+### Phase D - Final one-way fallback
+
+- Execute after terminate-to-terminate single-way phases and dead-end leaf completion, before Step6.
+- Reuse existing single-way filters: skip existing `segmentid`, `formway=128`, right-turn-only, and non-single-way `direction`.
+- For every remaining eligible `direction in {2,3}` road with resolvable semantic endpoints, build exactly one single-road Segment.
+- Set `sgrade=0-2单` and `segment_build_source=oneway_single_road_fallback`.
+- Do not relax earlier phase terminate rules; phase mismatch is handled only by this explicit fallback.
+- Report final fallback segment/road counts in `oneway_segment_summary.json`.
+
 ## Risk Analysis
 
 - **Business semantics risk**: `road_kind=1` is still excluded from dual-way accepted baseline; accidental global helper changes could silently alter Step2/4/5 behavior.
@@ -113,6 +122,7 @@ modules/t01_data_preprocess/
   - `0-0单` does not accidentally include `kind_2=128`.
   - dead-end bidirectional road builds with leaf endpoint.
   - dead-end reciprocal one-way road bundle builds with leaf endpoint and a two-node semantic junction endpoint.
+  - final one-way fallback builds phase-mismatch and same-semantic-group single-road segments.
   - Step6 publishes dead-end and single-way grades correctly.
 - Regression tests:
   - Existing T01 single-way and Step6 tests.

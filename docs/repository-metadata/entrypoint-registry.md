@@ -6,10 +6,10 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `84` 个。
+- 当前真实执行入口共 `90` 个。
 - 分布概览：
-  - repo 级入口文件：`60`（`Makefile` 1 + `scripts/` 58 + `.venv/bin/python -m rcsd_topo_poc` 1）
-  - CLI 稳定子命令：`24`
+  - repo 级入口文件：`62`（`Makefile` 1 + `scripts/` 60 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - CLI 稳定子命令：`28`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
   - 脚本入口以 `scripts/` 下纳入版本管理的文件为准。
@@ -56,15 +56,17 @@
 | `t03_run_internal_full_input_innernet_flat_review.sh` | `scripts/t03_run_internal_full_input_innernet_flat_review.sh` | repo 级 | T03 internal full-input 内网 flat-review 运行包装脚本，写入 latest run id 并转发到 `t03_run_internal_full_input_8workers.sh` | `active` | 否 |
 | `t03_watch_internal_full_input_innernet.sh` | `scripts/t03_watch_internal_full_input_innernet.sh` | repo 级 | T03 internal full-input 内网监控包装脚本，设置默认监控参数后转发到 `t03_watch_internal_full_input.sh` | `active` | 否 |
 | `t03_watch_internal_full_input_innernet_flat_review.sh` | `scripts/t03_watch_internal_full_input_innernet_flat_review.sh` | repo 级 | T03 internal full-input 内网 flat-review 监控包装脚本，从 latest run id 文件发现 RUN_ID 后转发到 `t03_watch_internal_full_input.sh` | `active` | 否 |
+| `t03_export_text_bundle_internal_multi_mainnodeids.sh` | `scripts/t03_export_text_bundle_internal_multi_mainnodeids.sh` | repo 级 | T03 内网多 mainnodeid 单文件文本证据包导出脚本；复用 T03/T04 共用文本包模块，支持命令参数或环境变量覆盖 SWSD/RCSD/DriveZone/DivStripZone 输入路径，超过阈值自动分片 | `active` | 否 |
 | `t05_backfill_t03_relation_evidence_innernet.py` | `scripts/t05_backfill_t03_relation_evidence_innernet.py` | repo 级 | T05 Phase 2 内网 handoff 补齐脚本；读取 T03 run root 的批次 relation evidence 与 case 级 `step6_status/step6_audit`，输出补齐后的 `t03_swsd_rcsd_relation_evidence_backfilled.*`、audit 与 summary，不修改 T03 主链或原始输出 | `active` | 否 |
 | `t05_innernet_experiment.py` | `scripts/t05_innernet_experiment.py` | repo 级 | T05 内网 Phase 1 + Phase 2 联合实验入口；以 T02/T03/T04 成果目录、原始 RCSDRoad/RCSDNode、final nodes 与 RCSDIntersection 为参数，先执行 T03 evidence handoff 补齐，再运行 junction surface fusion 与 one-to-one relation 发布 | `active` | 否 |
 | `t06_run_innernet_precheck.py` | `scripts/t06_run_innernet_precheck.py` | repo 级 | T06 内网 Step1 + Step2 运行包装脚本；读取 T01 `segment.gpkg / roads.gpkg`、final `nodes.gpkg` 与 T05 Phase 2 `intersection_match_all.geojson / rcsdroad_out.gpkg / rcsdnode_out.gpkg`，输出 T06 candidates / replaceable / rejected / summary，不修改输入文件 | `active` | 否 |
 | `t06_run_step3_segment_replacement.py` | `scripts/t06_run_step3_segment_replacement.py` | repo 级 | T06 Step3 独立运行脚本；消费既有 T06 run root 的 Step2 `t06_rcsd_segment_replaceable.gpkg`，读取 SWSD Segment/Road/Node 与 T05 Phase 2 copy-on-write RCSDRoad/RCSDNode，输出 F-RCSD Road / Node、替换单元、路口 C 重建与 id 冲突审计，不改变 Step1 + Step2 内网脚本默认行为 | `active` | 否 |
 | `t07_run_semantic_junction_anchor_innernet.sh` | `scripts/t07_run_semantic_junction_anchor_innernet.sh` | repo 级 | T07 内网语义路口级 Step1 / Step2 执行脚本；读取 `nodes / DriveZone / RCSDIntersection`，调用模块内 callable runner 输出代表 node 的 `has_evd / is_anchor / anchor_reason`，不处理 Segment | `active` | 否 |
 | `t07_run_step3_intersection_match_innernet.sh` | `scripts/t07_run_step3_intersection_match_innernet.sh` | repo 级 | T07 Step3 独立内网执行脚本；读取 Step2 后 `nodes.gpkg`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode.gpkg`，输出 `intersection_match_tool7.geojson` 并对符合条件的 SWSD 代表 node 补写 `is_anchor = yes`，不处理 Segment | `active` | 否 |
-| `t04_run_internal_full_input_8workers.sh` | `scripts/t04_run_internal_full_input_8workers.sh` | repo 级 | T04 模块级内网 full-input 全量运行主脚本；输入全局 `nodes/roads/DriveZone/DivStripZone/RCSDRoad/RCSDNode`，执行 preflight / candidate discovery / shared bootstrap / direct Step1-7 case execution / batch closeout，并输出 `divmerge_virtual_anchor_surface*` 正式成果与 `visual_checks/final_*` 最终平铺目视审计入口；不新增 repo 官方 CLI 子命令 | `active` | 否 |
+| `t04_run_internal_full_input_8workers.sh` | `scripts/t04_run_internal_full_input_8workers.sh` | repo 级 | T04 模块级内网 full-input 全量运行主脚本；输入全局 `nodes/roads/DriveZone/DivStripZone/RCSDRoad/RCSDNode`，执行 preflight / candidate discovery / shared bootstrap / direct Step1-7 case execution / batch closeout，并输出 `divmerge_virtual_anchor_surface*` 正式成果与 `visual_checks/final_*` 最终平铺目视审计入口；full-input 不通过 repo CLI 子命令承载 | `active` | 否 |
 | `t04_watch_internal_full_input.sh` | `scripts/t04_watch_internal_full_input.sh` | repo 级 | T04 内网 full-input 实时监控脚本；显示 `selected / completed / running / pending / accepted / rejected / runtime_failed / missing_status`、phase/status/message/entered_case_execution 与性能估算，并支持 `CASE_SCAN=auto/on/off` 降扫描 | `active` | 否 |
 | `t04_run_internal_full_input_innernet_flat_review.sh` | `scripts/t04_run_internal_full_input_innernet_flat_review.sh` | repo 级 | T04 内网 full-input 最终平铺目视审计运行包装；默认关闭 debug、启用 resume/retry/perf audit、使用 failed_only snapshot，并转发到 `t04_run_internal_full_input_8workers.sh` | `active` | 否 |
+| `t04_export_text_bundle_internal_multi_mainnodeids.sh` | `scripts/t04_export_text_bundle_internal_multi_mainnodeids.sh` | repo 级 | T04 内网多 mainnodeid 单文件文本证据包导出脚本；复用 T03/T04 共用文本包模块，支持命令参数或环境变量覆盖 SWSD/RCSD/DriveZone/DivStripZone 输入路径，超过阈值自动分片 | `active` | 否 |
 | `t04_fallback_postprocess_existing.sh` | `scripts/t04_fallback_postprocess_existing.sh` | repo 级 | T04 补充策略 postprocess-existing 内网脚本；以既有 T04 run root 为参数，补齐 fallback SWSD-RCSD relation evidence 并把成功 fallback 的代表 node 写为 `fail4_fallback`，不重跑 Step1-7、不生产新路口面 | `active` | 否 |
 | `t04_probe_706243_706247_innernet.py` | `scripts/t04_probe_706243_706247_innernet.py` | repo 级 | T04 内网专项诊断脚本；只读分析或重跑 `706243 / 706247`，输出 Step3/4/5/6/7、RCSD audit、候选与 GPKG 几何摘要，用于定位内网 full-input 与最新基线差异 | `active` | 是 |
 | `.venv/bin/python -m rcsd_topo_poc` | `src/rcsd_topo_poc/__main__.py` | repo 级 | Python 包入口 | `active` | 否 |
@@ -90,6 +92,10 @@
 | `t02-fix-node-error-2` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 `node_error_2` 独立离线修复工具，输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json` | `active` | 否 |
 | `t02-export-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 单 / 多 mainnodeid 文本证据包导出入口 | `active` | 否 |
 | `t02-decode-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 单 / 多 mainnodeid 文本证据包解包入口 | `active` | 否 |
+| `t03-export-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T03 单 / 多 mainnodeid 文本证据包导出入口；T03/T04-ready 输入包含 `nodes/roads/DriveZone/DivStripZone/RCSDRoad/RCSDNode`，超过阈值自动分片 | `active` | 否 |
+| `t03-decode-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T03 单 / 多 mainnodeid 文本证据包解包入口；支持自动拼接 T03 分片证据包 | `active` | 否 |
+| `t04-export-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T04 单 / 多 mainnodeid 文本证据包导出入口；底层复用 T03/T04-ready 共用文本包模块 | `active` | 否 |
+| `t04-decode-text-bundle` | `src/rcsd_topo_poc/cli.py` | repo 级 | T04 单 / 多 mainnodeid 文本证据包解包入口；支持自动拼接 T04 分片证据包 | `active` | 否 |
 | `t02-stage4-divmerge-virtual-polygon` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 stage4 单 case div/merge 虚拟路口面独立入口 | `active` | 否 |
 | `t02-aggregate-continuous-divmerge` | `src/rcsd_topo_poc/cli.py` | repo 级 | T02 连续分歧 / 合流复杂路口聚合离线工具，按 T04 continuous chain 规则改写 `nodes / roads` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / continuous_divmerge_report.json` | `active` | 否 |
 | `t00_tool1_patch_directory_bootstrap.py` | `scripts/t00_tool1_patch_directory_bootstrap.py` | repo 级 | T00 Tool1 固定脚本 | `active` | 否 |

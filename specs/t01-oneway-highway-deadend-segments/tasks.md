@@ -8,6 +8,7 @@
 
 - Phase A single-way highway / `kind_2=128` implementation is complete.
 - Dead-end leaf Segment implementation is complete locally and supports both a single bidirectional road and a reciprocal two-road one-way bundle.
+- Final one-way fallback implementation is complete locally and converts remaining non-excluded single-way roads into single-road `0-2单` Segment.
 - Innernet QA remains pending because latest innernet output was not provided in this implementation round.
 
 ## Phase 1: Setup and Governance
@@ -103,7 +104,28 @@
 
 ---
 
-## Phase 6: User Story 4 - Audit and Innernet QA (Priority: P2)
+## Phase 6: User Story 5 - Final One-Way Fallback (Priority: P1)
+
+**Goal**: Ensure every remaining publishable single-way road forms at least one Segment after controlled single-way trace and dead-end leaf completion.
+
+**Independent Test**: Phase-mismatch and same-semantic-group single-way roads are built as single-road `0-2单` fallback Segment.
+
+### Tests
+
+- [x] T028A [P] [US5] Add final fallback test for phase-mismatch and same-semantic-group one-way roads.
+- [x] T028B [P] [US5] Update prior residual one-way tests so non-excluded single-way roads are expected to be built by final fallback.
+
+### Implementation
+
+- [x] T030A [US5] Add final fallback after dead-end leaf completion and before Step6.
+- [x] T030B [US5] Write `segment_build_source=oneway_single_road_fallback` and `sgrade=0-2单` on fallback roads.
+- [x] T030C [US5] Add final fallback segment/road counts to `oneway_segment_summary.json`.
+
+**Checkpoint**: Ordinary residual single-way roads no longer remain unsegmented solely because phase terminate rules did not close.
+
+---
+
+## Phase 7: User Story 4 - Audit and Innernet QA (Priority: P2)
 
 **Goal**: Make every remaining unsegmented road explainable.
 
@@ -111,12 +133,12 @@
 
 ### Tests
 
-- [ ] T028 [P] [US4] Add test coverage for one-way summary counters and unsegmented reasons.
+- [x] T028 [P] [US4] Add test coverage for one-way summary counters and unsegmented reasons.
 - [ ] T029 [P] [US4] Add test coverage for dead-end summary counters.
 
 ### Implementation
 
-- [ ] T030 [US4] Extend existing summary/audit outputs without adding a new CLI entrypoint.
+- [x] T030 [US4] Extend existing summary/audit outputs without adding a new CLI entrypoint.
 - [x] T031 [US4] Ensure `unsegmented_roads.csv` or companion summary distinguishes filter and trace failure classes.
 - [ ] T032 [US4] Run innernet latest T01 output and compare original SWSD vs T01 outputs for CRS/topology/geometry/audit/performance checks.
 
@@ -124,7 +146,7 @@
 
 ---
 
-## Phase 7: Regression and Closeout
+## Phase 8: Regression and Closeout
 
 - [x] T033 Run `.venv/bin/python -m pytest tests/modules/t01_data_preprocess/test_step5_oneway_segment_completion.py`.
 - [x] T034 Run `.venv/bin/python -m pytest tests/modules/t01_data_preprocess/test_step6_segment_aggregation.py`.
@@ -140,7 +162,8 @@
 - Phase 3 and Phase 4 can be implemented together after Phase 2, but tests remain independently verifiable.
 - Phase 5 depends on Phase 2 and should be kept separate from Phase 3/4 commits if possible.
 - Phase 6 depends on implemented behavior from Phase 3/4/5.
-- Phase 7 closes the implementation round.
+- Phase 7 depends on implemented behavior from Phase 3/4/5/6.
+- Phase 8 closes the implementation round.
 
 ## Role Checklist
 

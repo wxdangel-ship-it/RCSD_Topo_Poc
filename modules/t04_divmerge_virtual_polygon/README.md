@@ -28,14 +28,13 @@ T04 的正式几何主产物仍是 `divmerge_virtual_anchor_surface*`；`nodes.g
 
 当前非目标：
 
-- 不新增 repo 官方 CLI。
 - 不推进 T03/T04 成果统一命名；T04 surface 主产物不改名。
 - 不把 Step4 的 `STEP4_REVIEW` 重新解释为 Step7 最终第三态。
 - 不把 `857993 = rejected` 当作待修成 `accepted` 的缺陷。
 
 ## 3. 当前入口状态
 
-当前没有 repo 官方 CLI。稳定执行面是模块内 Python runner：
+稳定执行面是模块内 Python runner：
 
 - `run_t04_step14_batch(...)`
 - `run_t04_step14_case(...)`
@@ -48,6 +47,40 @@ internal full-input repo 级脚本入口：
 - `scripts/t04_run_internal_full_input_innernet_flat_review.sh`
 
 这些脚本是已登记的包装入口，不是新的 CLI 子命令；执行语义仍由 T04 私有 orchestration 管理。
+
+单文件文本证据包提供 repo CLI，底层复用 T03 模块中的 T03/T04 共用打包模块，输入按 SWSD 语义路口 `mainnodeid`：
+
+```bash
+.venv/bin/python -m rcsd_topo_poc t04-export-text-bundle \
+  --nodes-path nodes.gpkg \
+  --roads-path roads.gpkg \
+  --drivezone-path DriveZone.gpkg \
+  --divstripzone-path DivStripZone.gpkg \
+  --rcsdroad-path RCSDRoad.gpkg \
+  --rcsdnode-path RCSDNode.gpkg \
+  --mainnodeid 699870 760598 \
+  --out-txt outputs/_work/t04_text_bundle/cases.txt
+
+.venv/bin/python -m rcsd_topo_poc t04-decode-text-bundle \
+  --bundle-txt outputs/_work/t04_text_bundle/cases.txt \
+  --out-dir outputs/_work/t04_text_bundle/decoded
+```
+
+超过默认 `250KB` 时会自动生成 `*.part_XXXX_of_YYYY.txt` 分片；解包传入第 1 个 part 即可恢复完整 case-package。
+
+内网脚本支持位置参数或 `--mainnodeid` 传多个语义路口 ID，并支持用命令参数覆盖所有输入文件路径：
+
+```bash
+scripts/t04_export_text_bundle_internal_multi_mainnodeids.sh \
+  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
+  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
+  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
+  --divstripzone-path /mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg \
+  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
+  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
+  --out-txt /mnt/d/TestData/POC_Data/T04/t04_bundle.txt \
+  --mainnodeid 706389 707476
+```
 
 ## 4. 输入与输出概览
 

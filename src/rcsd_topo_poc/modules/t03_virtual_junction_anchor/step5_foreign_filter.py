@@ -8,6 +8,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_models import AssociationContext, AssociationForeignResult
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id, stable_id_key
 
 
 FOREIGN_MASK_NORMALIZATION_MODE = "road_like_1m_mask_in_step6"
@@ -15,12 +16,13 @@ COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M = 9.0
 
 
 def _sorted_ids(values: Iterable[str]) -> list[str]:
-    return sorted(set(values), key=lambda item: (0, int(item)) if item.isdigit() else (1, item))
+    ids = [normalized for value in values if (normalized := normalize_id(value)) is not None]
+    return sorted(set(ids), key=stable_id_key)
 
 
 def _normalize_node_group_id(node) -> str:
-    mainnodeid = None if node.mainnodeid in {None, "", "0"} else node.mainnodeid
-    return str(mainnodeid or node.node_id)
+    mainnodeid = None if node.mainnodeid in {None, "", "0"} else normalize_id(node.mainnodeid)
+    return normalize_id(mainnodeid or node.node_id) or str(node.node_id)
 
 
 def _max_node_group_span_m(nodes: Iterable) -> float:

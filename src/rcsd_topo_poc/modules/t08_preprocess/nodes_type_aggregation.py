@@ -283,6 +283,7 @@ def run_t08_nodes_type_aggregation(
             "node_feature_count": len(node_features),
             "road_feature_count": len(road_features),
             "roundabout_group_count": roundabout_summary["roundabout_group_count"],
+            "roundabout_single_node_group_count": roundabout_summary["roundabout_single_node_group_count"],
             "roundabout_updated_node_count": roundabout_summary["roundabout_updated_node_count"],
             "complex_junction_count": complex_summary["complex_junction_count"],
             "complex_updated_node_count": complex_summary["updated_node_count"],
@@ -351,12 +352,16 @@ def _apply_roundabout_aggregation(
         for index, feature in enumerate(node_features)
     }
     updated_node_ids: set[str] = set()
+    single_node_preserved_ids: set[str] = set()
     for group_index, group in enumerate(groups, start=1):
+        is_single_node_group = len(group.node_ids) == 1
         for node_id in group.node_ids:
             index = node_index_by_id[node_id]
             props = node_features[index]["properties"]
             props["mainnodeid"] = group.mainnode_id
-            if node_id == group.mainnode_id:
+            if is_single_node_group:
+                single_node_preserved_ids.add(node_id)
+            elif node_id == group.mainnode_id:
                 props["grade_2"] = _typed_like(grade_sample, 1)
                 props["kind_2"] = _typed_like(kind_sample, ROUNDABOUT_KIND_VALUE)
             else:
@@ -368,6 +373,8 @@ def _apply_roundabout_aggregation(
 
     return {
         **base_summary,
+        "roundabout_single_node_group_count": len(single_node_preserved_ids),
+        "roundabout_single_node_preserved_node_count": len(single_node_preserved_ids),
         "roundabout_updated_node_count": len(updated_node_ids),
         "group_ids": [group.group_id for group in groups],
         "groups": [
@@ -480,6 +487,8 @@ def _build_roundabout_groups(
         "roundabout_group_count": len(groups),
         "roundabout_mainnode_count": len(groups),
         "roundabout_member_node_count": sum(max(0, len(group.node_ids) - 1) for group in groups),
+        "roundabout_single_node_group_count": sum(1 for group in groups if len(group.node_ids) == 1),
+        "roundabout_single_node_preserved_node_count": sum(1 for group in groups if len(group.node_ids) == 1),
         "roadtype_missing_count": missing_count,
         "roadtype_empty_count": empty_count,
         "roadtype_invalid_count": invalid_count,
@@ -969,6 +978,8 @@ def _empty_roundabout_summary() -> dict[str, Any]:
         "roundabout_group_count": 0,
         "roundabout_mainnode_count": 0,
         "roundabout_member_node_count": 0,
+        "roundabout_single_node_group_count": 0,
+        "roundabout_single_node_preserved_node_count": 0,
         "roundabout_updated_node_count": 0,
         "roadtype_missing_count": 0,
         "roadtype_empty_count": 0,

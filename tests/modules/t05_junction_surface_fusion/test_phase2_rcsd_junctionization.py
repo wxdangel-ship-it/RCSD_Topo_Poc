@@ -762,6 +762,59 @@ def test_multiple_existing_candidates_are_grouped_to_one_relation(tmp_path: Path
     assert _summary(artifacts)["consistency"]["target_id_unique"]
 
 
+def test_relation_cardinality_qc_reports_many_targets_to_one_base(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("810"), _surface("811", x=20)],
+        swsd_nodes=[
+            _node(810, 0, 0, mainnodeid="810"),
+            _node(811, 20, 0, mainnodeid="811"),
+        ],
+        rcsd_roads=[_road(1, (-10, 0), (30, 0))],
+        rcsd_nodes=[_node(1, -10, 0), _node(2, 30, 0), _node(50, 5, 0)],
+        t03_rows=[
+            {
+                "target_id": "810",
+                "case_id": "810",
+                "association_class": "A",
+                "required_rcsdnode_ids": "50",
+                "step7_state": "accepted",
+                "relation_state": "success_required_rcsd_junction",
+                "status_suggested": 0,
+            },
+            {
+                "target_id": "811",
+                "case_id": "811",
+                "association_class": "A",
+                "required_rcsdnode_ids": "50",
+                "step7_state": "accepted",
+                "relation_state": "success_required_rcsd_junction",
+                "status_suggested": 0,
+            },
+        ],
+    )
+
+    summary = _summary(artifacts)
+    assert summary["relation_cardinality_error_count"] == 1
+    assert summary["many_target_to_one_base_count"] == 1
+    assert summary["consistency"]["relation_cardinality_passed"] is False
+    assert summary["passed"] is False
+    error_rows = json.loads(artifacts.relation_cardinality_errors_json_path.read_text(encoding="utf-8"))["rows"]
+    assert error_rows == [
+        {
+            "error_type": "many_target_to_one_base",
+            "target_id": "810|811",
+            "base_id": "50",
+            "related_target_ids": "810|811",
+            "introduced_by_module": "T03",
+            "source_modules": "T03",
+            "source_case_ids": "810|811",
+            "scenes": "direct_existing_rcsd_junction",
+            "reasons": "success_required_rcsd_junction",
+        }
+    ]
+
+
 def test_multiple_unmergeable_base_ids_block_without_relation(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,

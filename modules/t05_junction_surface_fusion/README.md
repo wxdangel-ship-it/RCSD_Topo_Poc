@@ -158,11 +158,14 @@ artifacts = run_t05_export_junctionization_bundle(
 - `intersection_match_all_audit.csv/json`
 - `blocking_errors.csv/json`
 - `module_relation_audit_summary.csv/json`
+- `relation_cardinality_errors.csv/json`
 - `summary.json`
 
 失败关系统一 `base_id = 0`。如果同一 SWSD 路口只生成 1 个 RCSDNode，则 `mainnodeid = null`；如果生成或归组多个 RCSDNode，则组内所有 RCSDNode 包括主节点自己 `mainnodeid` 都填主节点 id。
 
 `intersection_match_all.geojson` 中 `target_id` 必须唯一，一个 SWSD 语义路口只输出一条 relation。多个 RCSD 候选可合并时先归组；无法合并时写 `blocking_errors.*`，不在主表中输出该 `target_id`。`level` 使用 final nodes 的 `grade - 1`，`is_highway` 使用 `closed_con - 1`；缺失或非法时填 `-1`。
+
+Phase 2 内置最终 relation 基数质检。若成功关系中存在同一 `target_id` 对多个 `base_id`、多个 `target_id` 对同一 `base_id`，或重复 success target，模块会输出 `relation_cardinality_errors.csv/json`。错误行包含 `introduced_by_module / source_modules / source_case_ids / scenes / reasons`，用于判断是 T07/T03/T04 evidence 引入，还是 T05 聚合逻辑引入；存在错误时 `summary.passed = false`。
 
 Road-only 场景中，若投影点距离 RCSDRoad 起终点小于 `min_endpoint_gap_m`，Phase 2 不生成极短 split 段，改为复用对应 `snodeid / enodeid` 的已有 RCSDNode；多个端点节点命中同一 SWSD 路口时先归组，再输出唯一 relation。
 

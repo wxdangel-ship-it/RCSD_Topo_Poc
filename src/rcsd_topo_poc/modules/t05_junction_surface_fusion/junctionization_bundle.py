@@ -53,6 +53,7 @@ AUDIT_TABLE_NAMES = (
     "rcsd_junctionization_audit.csv",
     "intersection_match_all_audit.csv",
     "blocking_errors.csv",
+    "relation_cardinality_errors.csv",
 )
 PHASE2_VECTOR_OUTPUTS = (
     "intersection_match_all.geojson",
@@ -577,8 +578,9 @@ def _row_matches_target(row: dict[str, Any], target_id: str) -> bool:
         row.get("mainnodeid"),
         row.get("case_id"),
         row.get("representative_node_id"),
+        row.get("related_target_ids"),
     )
-    return target_id in {_normalize_id(value) for value in target_values}
+    return target_id in {item for value in target_values for item in _split_values(value)}
 
 
 def _surface_matches_target(feature: LayerFeature, target_id: str) -> bool:

@@ -15,6 +15,11 @@ from .phase2_models import (
     STATUS_SUCCESS,
 )
 from .phase2_relation import relation_properties
+from .phase2_relation_cardinality import (
+    RELATION_CARDINALITY_ERROR_FIELDS,
+    build_relation_cardinality_errors,
+    relation_cardinality_summary,
+)
 
 
 RELATION_FILENAME = "intersection_match_all.geojson"
@@ -31,6 +36,8 @@ BLOCKING_ERRORS_CSV = "blocking_errors.csv"
 BLOCKING_ERRORS_JSON = "blocking_errors.json"
 MODULE_RELATION_AUDIT_CSV = "module_relation_audit_summary.csv"
 MODULE_RELATION_AUDIT_JSON = "module_relation_audit_summary.json"
+RELATION_CARDINALITY_ERRORS_CSV = "relation_cardinality_errors.csv"
+RELATION_CARDINALITY_ERRORS_JSON = "relation_cardinality_errors.json"
 SUMMARY_FILENAME = "summary.json"
 
 
@@ -67,12 +74,18 @@ def write_phase2_outputs(
     blocking_errors_json_path = run_root / BLOCKING_ERRORS_JSON
     module_relation_audit_csv_path = run_root / MODULE_RELATION_AUDIT_CSV
     module_relation_audit_json_path = run_root / MODULE_RELATION_AUDIT_JSON
+    relation_cardinality_errors_csv_path = run_root / RELATION_CARDINALITY_ERRORS_CSV
+    relation_cardinality_errors_json_path = run_root / RELATION_CARDINALITY_ERRORS_JSON
     summary_path = run_root / SUMMARY_FILENAME
 
     relation_output_features = [
         {"properties": relation_properties(feature), "geometry": feature.get("geometry")}
         for feature in relation_features
     ]
+    relation_cardinality_errors = build_relation_cardinality_errors(
+        relation_features=relation_output_features,
+        audit_rows=audit_rows,
+    )
     performance_data = dict(performance or {})
     output_timings_sec: dict[str, float] = dict(performance_data.get("output_timings_sec") or {})
     output_sizes_bytes: dict[str, int] = dict(performance_data.get("output_sizes_bytes") or {})
@@ -206,6 +219,31 @@ def write_phase2_outputs(
         output_timings_sec=output_timings_sec,
         output_sizes_bytes=output_sizes_bytes,
     )
+    _write_with_timing(
+        "relation_cardinality_errors_csv",
+        relation_cardinality_errors_csv_path,
+        len(relation_cardinality_errors),
+        lambda: write_csv(
+            relation_cardinality_errors_csv_path,
+            relation_cardinality_errors,
+            RELATION_CARDINALITY_ERROR_FIELDS,
+        ),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "relation_cardinality_errors_json",
+        relation_cardinality_errors_json_path,
+        len(relation_cardinality_errors),
+        lambda: write_json(
+            relation_cardinality_errors_json_path,
+            {"row_count": len(relation_cardinality_errors), "rows": relation_cardinality_errors},
+        ),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
     performance_data["output_timings_sec"] = output_timings_sec
     performance_data["output_sizes_bytes"] = output_sizes_bytes
 
@@ -222,6 +260,7 @@ def write_phase2_outputs(
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
         module_relation_audit_rows=module_relation_audit_rows,
+        relation_cardinality_errors=relation_cardinality_errors,
         original_split_road_ids=original_split_road_ids,
         performance=performance_data,
         output_paths={
@@ -239,6 +278,8 @@ def write_phase2_outputs(
             "blocking_errors_json": str(blocking_errors_json_path),
             "module_relation_audit_summary_csv": str(module_relation_audit_csv_path),
             "module_relation_audit_summary_json": str(module_relation_audit_json_path),
+            "relation_cardinality_errors_csv": str(relation_cardinality_errors_csv_path),
+            "relation_cardinality_errors_json": str(relation_cardinality_errors_json_path),
             "summary": str(summary_path),
         },
     )
@@ -258,6 +299,8 @@ def write_phase2_outputs(
         "blocking_errors_json_path": blocking_errors_json_path,
         "module_relation_audit_csv_path": module_relation_audit_csv_path,
         "module_relation_audit_json_path": module_relation_audit_json_path,
+        "relation_cardinality_errors_csv_path": relation_cardinality_errors_csv_path,
+        "relation_cardinality_errors_json_path": relation_cardinality_errors_json_path,
         "summary_path": summary_path,
         "summary": summary,
     }
@@ -300,6 +343,7 @@ def _summary(
     audit_rows: list[dict[str, Any]],
     blocking_errors: list[dict[str, Any]],
     module_relation_audit_rows: list[dict[str, Any]],
+    relation_cardinality_errors: list[dict[str, str]],
     original_split_road_ids: set[int],
     performance: dict[str, Any],
 ) -> dict[str, Any]:
@@ -314,8 +358,10 @@ def _summary(
         generated_node_features=generated_node_features,
         grouped_node_features=grouped_node_features,
         blocking_errors=blocking_errors,
+        relation_cardinality_errors=relation_cardinality_errors,
         original_split_road_ids=original_split_road_ids,
     )
+    cardinality_summary = relation_cardinality_summary(relation_cardinality_errors)
     return {
         "run_id": run_id,
         "produced_at": produced_at,
@@ -331,6 +377,7 @@ def _summary(
         "rcsdnode_grouped_count": len(grouped_node_features),
         "audit_row_count": len(audit_rows),
         "blocking_error_count": len(blocking_errors),
+        **cardinality_summary,
         "module_relation_audit_summary": module_relation_audit_rows,
         "passed": consistency["passed"],
         "crs": {"process": "EPSG:3857", "intersection_match_all": "CRS84"},
@@ -348,6 +395,7 @@ def _consistency(
     generated_node_features: list[dict[str, Any]],
     grouped_node_features: list[dict[str, Any]],
     blocking_errors: list[dict[str, Any]],
+    relation_cardinality_errors: list[dict[str, str]],
     original_split_road_ids: set[int],
 ) -> dict[str, Any]:
     new_node_ids = [_feature_id(feature) for feature in generated_node_features]
@@ -378,6 +426,7 @@ def _consistency(
         "copy_on_write_inputs_not_modified": True,
         "multiple_base_id_unmergeable_absent": not blocking_errors,
         "blocking_errors_force_summary_failure": not blocking_errors,
+        "relation_cardinality_passed": not relation_cardinality_errors,
     }
     checks["passed"] = all(value for key, value in checks.items() if key != "duplicate_target_ids")
     return checks

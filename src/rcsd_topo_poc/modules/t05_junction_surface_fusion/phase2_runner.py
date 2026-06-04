@@ -611,6 +611,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         blocking_errors_json_path=outputs["blocking_errors_json_path"],
         module_relation_audit_csv_path=outputs["module_relation_audit_csv_path"],
         module_relation_audit_json_path=outputs["module_relation_audit_json_path"],
+        relation_cardinality_errors_csv_path=outputs["relation_cardinality_errors_csv_path"],
+        relation_cardinality_errors_json_path=outputs["relation_cardinality_errors_json_path"],
         summary_path=outputs["summary_path"],
         relation_count=summary["intersection_match_all_feature_count"],
         success_count=summary["status_0_count"],

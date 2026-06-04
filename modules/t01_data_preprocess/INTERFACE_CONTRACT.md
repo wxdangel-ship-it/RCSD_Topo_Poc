@@ -176,6 +176,7 @@
 - gates：
   - `MAX_DUAL_CARRIAGEWAY_SEPARATION_M = 50.0`
   - `MAX_SIDE_ACCESS_DISTANCE_M = 50.0`
+- `MAX_DUAL_CARRIAGEWAY_SEPARATION_M` 作用于双向主干 road-body 间距；测距前剔除 forward / reverse path 两端 `5m` 短挂接区，避免 T 型路口端点八字挂接误触发主干超距；剔除后仍超过 `50m` 时返回 `dual_carriageway_separation_exceeded`。
 
 ### 5.2 T 型路口竖向阻断
 - 仅对应 `kind_2 = 2048`

@@ -176,3 +176,114 @@ def test_step3_replaces_roads_endpoint_nodes_only_rebuilds_c_and_audits_id_colli
     assert unreplaced_props["replacement_status"] == "not_replaced"
     assert unreplaced_props["length_m"] == 2.0
     assert Path(summary["outputs"]["unreplaced_rcsd_roads_json"]).exists()
+
+
+def test_step3_adds_passed_special_junction_internal_rcsd_entities(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "s1", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [3], "roads": ["sr1"]},
+                "geometry": LineString([(1, 0), (2, 0)]),
+            }
+        ],
+    )
+    swsd_roads = _write(
+        tmp_path / "swsd_roads.gpkg",
+        [_road("sr1", 1, 2)],
+    )
+    swsd_nodes = _write(
+        tmp_path / "swsd_nodes.gpkg",
+        [
+            _node(1, 1, mainnodeid=1, kind=4, grade=1, kind_2=4, grade_2=1, closed_con=0),
+            _node(2, 2, mainnodeid=2, kind=4, grade=1, kind_2=4, grade_2=1, closed_con=0),
+            _node(3, 3, mainnodeid=3, kind=64, grade=2, kind_2=64, grade_2=2, closed_con=0),
+        ],
+    )
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [
+            {"properties": {"id": "rr1", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(1, 0), (2, 0)])},
+            {"properties": {"id": "rr_internal", "snodeid": 30, "enodeid": 31, "direction": 0}, "geometry": LineString([(3, 0), (3.1, 0)])},
+        ],
+    )
+    rcsd_nodes = _write(
+        tmp_path / "rcsdnode_out.gpkg",
+        [
+            _node(10, 1, mainnodeid=10),
+            _node(20, 2, mainnodeid=20),
+            _node(30, 3, mainnodeid=30),
+            _node(31, 3.1, mainnodeid=30),
+        ],
+    )
+    replaceable = _write(
+        tmp_path / "t06_rcsd_segment_replaceable.gpkg",
+        [
+            {
+                "properties": {
+                    "swsd_segment_id": "s1",
+                    "swsd_pair_nodes": [1, 2],
+                    "swsd_junc_nodes": [3],
+                    "rcsd_pair_nodes": [10, 20],
+                    "rcsd_junc_nodes": [30],
+                    "rcsd_road_ids": ["rr1"],
+                    "retained_node_ids": [10, 20],
+                    "hard_filter_passed": True,
+                },
+                "geometry": LineString([(1, 0), (2, 0)]),
+            }
+        ],
+    )
+    (tmp_path / "t06_special_junction_group_audit.json").write_text(
+        json.dumps(
+            {
+                "row_count": 1,
+                "features": [
+                    {
+                        "properties": {
+                            "special_junction_id": "3",
+                            "special_junction_type": "roundabout",
+                            "gate_status": "passed",
+                            "associated_segment_ids": ["s1"],
+                            "replaceable_segment_ids": ["s1"],
+                            "rcsd_junction_id": "30",
+                            "rcsd_junction_node_ids": [30, 31],
+                            "rcsd_junction_road_ids": ["rr_internal"],
+                        },
+                        "geometry": None,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    artifacts = run_t06_step3_segment_replacement(
+        step2_replaceable_path=replaceable,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=swsd_nodes,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["special_junction_group_consumed_count"] == 1
+    assert summary["special_junction_added_rcsd_road_count"] == 1
+    assert summary["special_junction_added_rcsd_node_count"] == 2
+    assert summary["added_rcsd_road_count"] == 2
+    assert summary["added_rcsd_node_count"] == 4
+    assert summary["unreplaced_rcsd_road_count"] == 0
+
+    roads = {(item["id"], item["source"]) for item in _props(artifacts.frcsd_road_gpkg_path)}
+    assert ("rr1", 1) in roads
+    assert ("rr_internal", 1) in roads
+
+    nodes = {(str(item["id"]), item["source"]) for item in _props(artifacts.frcsd_node_gpkg_path)}
+    assert {("10", 1), ("20", 1), ("30", 1), ("31", 1)}.issubset(nodes)
+
+    junctions = {item["junction_c_id"]: item for item in _props(artifacts.junction_rebuild_audit_gpkg_path)}
+    assert set(junctions["3"]["added_rcsd_node_ids"]) == {"30", "31"}

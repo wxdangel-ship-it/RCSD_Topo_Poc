@@ -26,6 +26,6 @@
 - 双向最小 corridor 的路径权重会惩罚明显短于 SWSD Segment 的 required-to-required connector，避免用路口内短连接替代完整方向 road。
 - 双向 retained corridor 内部若存在 `formway & 1024 != 0` 的调头 road，且两端 node 均已在 retained corridor 内，则保留该调头 road。
 - 裁剪后的 retained graph 必须只以 pair 对应 RCSD semantic nodes 为叶子端点；junc 或其它节点成为叶子端点时输出 buffer rejected。
-- `t06_rcsd_segment_candidates / replaceable` 是兼容输出，由同一 buffer 成功结果派生；不再执行旧 pair-to-pair BFS、主轴 / 粗长度趋势或唯一性筛选；`swsd_directionality=dual` 的 retained graph 需通过 RCSD direction 双向可达审计，`swsd_directionality=single` 必须构建一条覆盖全部 required semantic nodes 的 pair 端到另一端有向 corridor。
-- Step3 以 Step2 replaceable 为唯一替换输入，不重新做 RCSD Segment 搜索；先按 Segment 聚合删除 / 引入集合，再按语义路口 C 聚合重建 mainnodeid 与继承属性，避免逐 Segment 覆盖同一 C 造成不一致。
+- `t06_rcsd_segment_candidates` 是 buffer 成功构建的候选，`t06_rcsd_segment_replaceable` 是经过全部硬审计与特殊路口组门控后的最终可替换集合；不再执行旧 pair-to-pair BFS、主轴 / 粗长度趋势或唯一性筛选；`swsd_directionality=single` 先按 SWSDRoad `snodeid / enodeid / direction` 推导 pair source/target，再构建覆盖全部 required semantic nodes 的同向 RCSD corridor；`swsd_directionality=dual` 的 retained graph 需通过 RCSD direction 双向可达审计；`kind_2=64/128` 特殊路口按关联 Segment 全组通过后才允许进入 replaceable。
+- Step3 以 Step2 replaceable 为唯一替换白名单，不重新做 RCSD Segment 搜索或特殊组放行判定；先按 Segment 聚合删除 / 引入集合，再消费 Step2 passed 特殊路口组审计中的内部 RCSDRoad / RCSDNode 作为组级补充，最后按语义路口 C 聚合重建 mainnodeid 与继承属性，避免逐 Segment 覆盖同一 C 造成不一致。
 - Step3 原始 id 冲突不重写、不拒绝，统一依赖 `source` 字段区分，并输出 id collision audit；新 main node 选择顺序为原 main node、剩余 SWSD node 最小 id、加入 C 的 RCSD node 最小 id。

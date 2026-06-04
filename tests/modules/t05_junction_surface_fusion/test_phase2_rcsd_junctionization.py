@@ -34,9 +34,11 @@ def _node(node_id: int, x: float, y: float, **props):
     return {"properties": properties, "geometry": Point(x, y)}
 
 
-def _road(road_id: int, start: tuple[float, float], end: tuple[float, float], snodeid: int = 1, enodeid: int = 2):
+def _road(road_id: int, start: tuple[float, float], end: tuple[float, float], snodeid: int = 1, enodeid: int = 2, **props):
+    properties = {"id": road_id, "snodeid": snodeid, "enodeid": enodeid, "direction": "B"}
+    properties.update(props)
     return {
-        "properties": {"id": road_id, "snodeid": snodeid, "enodeid": enodeid, "direction": "B"},
+        "properties": properties,
         "geometry": LineString([start, end]),
     }
 
@@ -600,6 +602,99 @@ def test_t04_surface_scenario_fallback_splits_even_when_evidence_state_is_no_rel
     relation = _relation_features(artifacts.relation_geojson_path)[0]
     assert relation["properties"]["status"] == 0
     assert relation["properties"]["base_id"] == 3
+
+
+def test_kind_64_roundabout_groups_connected_rcsd_semantic_junctions(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[
+            {
+                "properties": {
+                    "surface_id": "JAS:900",
+                    "mainnodeid": "900",
+                    "patch_id": "P1",
+                    "junction_type": "unknown",
+                    "kind_2": 64,
+                    "surface_sources": "T07",
+                    "is_multi_source_merged": 0,
+                },
+                "geometry": box(-5, -5, 5, 5),
+            },
+            {
+                "properties": {
+                    "surface_id": "support:900:2",
+                    "mainnodeid": "",
+                    "patch_id": "P1",
+                    "junction_type": "center_junction",
+                    "kind_2": 4,
+                    "surface_sources": "T03",
+                    "is_multi_source_merged": 0,
+                },
+                "geometry": box(9, -5, 15, 5),
+            },
+        ],
+        swsd_nodes=[
+            _node(900, 0, 0, mainnodeid="900", kind_2=64, grade=2, closed_con=2),
+            _node(901, 12, 0, mainnodeid="900", kind_2=64),
+        ],
+        rcsd_roads=[
+            _road(100, (-2, 0), (12, 0), snodeid=10, enodeid=20, roadtype=8),
+        ],
+        rcsd_nodes=[
+            _node(10, -2, 0, mainnodeid=10),
+            _node(11, -1, 0, mainnodeid=10),
+            _node(20, 12, 0, mainnodeid=20),
+            _node(21, 13, 0, mainnodeid=20),
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["status"] == 0
+    assert relation["properties"]["base_id"] in {10, 11, 20, 21}
+    out_nodes = {row["id"]: row for row in _layer_props(artifacts.rcsdnode_out_path)}
+    assert {out_nodes[node_id]["mainnodeid"] for node_id in (10, 11, 20, 21)} == {relation["properties"]["base_id"]}
+    audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert audit_rows[0]["scene"] == "roundabout_rcsd_semantic_grouping"
+    assert audit_rows[0]["original_rcsdroad_ids"] == "100"
+    assert audit_rows[0]["reason"] == "kind_2_64_roundabout_connected_rcsd_junctions"
+    assert _summary(artifacts)["performance"]["plan"]["roundabout_target_count"] == 1
+
+
+def test_kind_64_roundabout_requires_roadtype_8_connectivity(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[
+            {
+                "properties": {
+                    "surface_id": "JAS:910",
+                    "mainnodeid": "910",
+                    "patch_id": "P1",
+                    "junction_type": "unknown",
+                    "kind_2": 64,
+                    "surface_sources": "T07",
+                    "is_multi_source_merged": 0,
+                },
+                "geometry": box(-5, -5, 15, 5),
+            }
+        ],
+        swsd_nodes=[
+            _node(910, 0, 0, mainnodeid="910", kind_2=64),
+            _node(911, 12, 0, mainnodeid="910", kind_2=64),
+        ],
+        rcsd_roads=[
+            _road(100, (-2, 0), (12, 0), snodeid=10, enodeid=20, roadtype=1),
+        ],
+        rcsd_nodes=[
+            _node(10, -2, 0, mainnodeid=10),
+            _node(20, 12, 0, mainnodeid=20),
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["status"] == 1
+    assert relation["properties"]["base_id"] == 0
+    assert len(read_vector_layer(artifacts.rcsdnode_grouped_path).features) == 0
+    assert _summary(artifacts)["performance"]["plan"]["roundabout_target_count"] == 0
 
 
 def test_missing_grade_and_closed_con_stay_minus_one(tmp_path: Path) -> None:

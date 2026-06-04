@@ -24,6 +24,7 @@ STEP2_REPLACEABLE_STEM = "t06_rcsd_segment_replaceable"
 STEP2_REJECTED_STEM = "t06_rcsd_segment_rejected"
 STEP2_BUFFER_SEGMENTS_STEM = "t06_rcsd_buffer_segments"
 STEP2_BUFFER_REJECTED_STEM = "t06_rcsd_buffer_segment_rejected"
+STEP2_SPECIAL_JUNCTION_GROUPS_STEM = "t06_special_junction_group_audit"
 STEP2_SUMMARY = "t06_step2_summary.json"
 
 STEP3_FRCSD_ROAD_STEM = "t06_frcsd_road"
@@ -80,7 +81,13 @@ STEP2_CANDIDATE_FIELDS = [
     "swsd_sgrade",
     "swsd_directionality",
     "swsd_pair_nodes",
+    "directed_swsd_pair_nodes",
     "rcsd_pair_nodes",
+    "directed_rcsd_pair_nodes",
+    "special_junction_group_ids",
+    "special_junction_group_types",
+    "special_junction_gate_status",
+    "special_junction_blocking_group_ids",
     "swsd_junc_nodes",
     "junc_kind2_exempt_nodes",
     "rcsd_junc_nodes",
@@ -110,7 +117,13 @@ STEP2_REPLACEABLE_FIELDS = [
     "swsd_sgrade",
     "swsd_directionality",
     "swsd_pair_nodes",
+    "directed_swsd_pair_nodes",
     "rcsd_pair_nodes",
+    "directed_rcsd_pair_nodes",
+    "special_junction_group_ids",
+    "special_junction_group_types",
+    "special_junction_gate_status",
+    "special_junction_blocking_group_ids",
     "swsd_junc_nodes",
     "junc_kind2_exempt_nodes",
     "rcsd_junc_nodes",
@@ -147,6 +160,7 @@ STEP2_BUFFER_SEGMENT_FIELDS = [
     "buffer_reason",
     "required_rcsd_nodes",
     "optional_allowed_rcsd_nodes",
+    "directed_rcsd_pair_nodes",
     "retained_rcsd_road_ids",
     "candidate_rcsd_road_ids",
     "candidate_rcsd_node_ids",
@@ -169,6 +183,7 @@ STEP2_BUFFER_REJECTED_FIELDS = [
     "reject_reason",
     "required_rcsd_nodes",
     "optional_allowed_rcsd_nodes",
+    "directed_rcsd_pair_nodes",
     "missing_required_node_ids",
     "retained_rcsd_road_ids",
     "candidate_rcsd_road_ids",
@@ -184,6 +199,23 @@ STEP2_BUFFER_REJECTED_FIELDS = [
     "retained_road_count",
     "candidate_node_count",
     "retained_node_count",
+]
+
+STEP2_SPECIAL_JUNCTION_GROUP_FIELDS = [
+    "special_junction_id",
+    "special_junction_type",
+    "gate_status",
+    "relation_status",
+    "rcsd_junction_id",
+    "associated_segment_ids",
+    "associated_segment_count",
+    "replaceable_segment_ids",
+    "replaceable_segment_count",
+    "missing_replaceable_segment_ids",
+    "removed_replaceable_segment_ids",
+    "rcsd_junction_node_ids",
+    "rcsd_junction_road_ids",
+    "notes",
 ]
 
 STEP3_REPLACEMENT_UNIT_FIELDS = [

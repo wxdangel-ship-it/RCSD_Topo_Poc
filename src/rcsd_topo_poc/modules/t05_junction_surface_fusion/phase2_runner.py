@@ -18,8 +18,10 @@ from .phase2_models import (
     SCENE_GROUP_EXISTING,
     SCENE_NO_RCSD,
     SCENE_ROAD_SPLIT,
+    SCENE_ROUNDABOUT,
     STATUS_FAILURE,
     STATUS_SUCCESS,
+    SceneDecision,
     SwsdTargetContext,
     T05Phase2Artifacts,
 )
@@ -27,6 +29,7 @@ from .phase2_node_grouping import apply_mainnodeid_grouping, choose_primary_node
 from .phase2_outputs import write_phase2_outputs
 from .phase2_projection import project_points_to_active_roads, projection_points_for_decision
 from .phase2_relation import failure_relation_feature, success_relation_feature
+from .phase2_roundabout import build_roundabout_aggregations
 from .phase2_scene_classifier import (
     SOURCE_T02_INPUT,
     SOURCE_T03,
@@ -143,7 +146,18 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     plan_started = perf_counter()
     contexts = _target_contexts(surfaces, swsd_nodes, evidence_rows=evidence_rows)
     sorted_contexts = sorted(contexts, key=lambda item: item.target_id)
-    decision_plan, plan_stats = _build_decision_plan(sorted_contexts, evidence_by_target)
+    roundabout_aggregations = build_roundabout_aggregations(
+        contexts=sorted_contexts,
+        surfaces=surfaces,
+        swsd_nodes=swsd_nodes,
+        roads_by_id=roads_by_id,
+        rcsdnode_features_by_id=node_out_by_id,
+    )
+    decision_plan, plan_stats = _build_decision_plan(
+        sorted_contexts,
+        evidence_by_target,
+        roundabout_aggregations=roundabout_aggregations,
+    )
     mark("build_plan_sec", plan_started)
     data_volume = {
         "surface_count": len(surfaces),
@@ -209,6 +223,48 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
             relation = failure_relation_feature(context=context)
             relation_features.append(relation)
             audit_rows.append(_audit_row(context=context, decision=None, relation=relation, reason="missing_relation_evidence"))
+            continue
+        if len(actionable) == 1 and actionable[0].scene == SCENE_ROUNDABOUT:
+            decision = actionable[0]
+            missing = [node_id for node_id in decision.rcsdnode_ids if node_id not in node_out_by_id]
+            if missing:
+                relation = failure_relation_feature(context=context)
+                relation_features.append(relation)
+                audit_rows.append(
+                    _audit_row(
+                        context=context,
+                        decision=decision,
+                        relation=relation,
+                        reason=f"missing_rcsdnode_ids:{missing}",
+                        skipped_reason="roundabout_rcsdnode_grouping_failed",
+                    )
+                )
+                continue
+            primary = choose_primary_node_id(
+                list(decision.rcsdnode_ids),
+                nodes_by_id=node_out_by_id,
+                reference_point=context.point,
+                preferred_ids=list(decision.base_id_candidates or decision.rcsdnode_ids),
+            )
+            grouped = apply_mainnodeid_grouping(
+                node_ids=list(decision.rcsdnode_ids),
+                primary_node_id=primary,
+                node_features_by_id=node_out_by_id,
+            )
+            grouped_node_features.extend(_copy_feature(feature) for feature in grouped)
+            relation = success_relation_feature(context=context, base_id=primary, rcsd_point=_node_point(node_out_by_id[primary]))
+            relation_features.append(relation)
+            audit_rows.append(
+                _audit_row(
+                    context=context,
+                    decision=decision,
+                    relation=relation,
+                    original_road_ids=list(decision.rcsdroad_ids),
+                    original_node_ids=list(decision.rcsdnode_ids),
+                    grouped_node_ids=list(decision.rcsdnode_ids),
+                    selected_main_node_id=primary,
+                )
+            )
             continue
         multi_candidate_ids = _candidate_ids(actionable)
         if len(actionable) > 1 or len(multi_candidate_ids) > 1:
@@ -807,6 +863,8 @@ def _merge_t04_supplements(rows: list[dict[str, Any]], supplements: dict[str, di
 def _build_decision_plan(
     contexts: list[SwsdTargetContext],
     evidence_by_target: dict[str, list[Any]],
+    *,
+    roundabout_aggregations: dict[str, Any] | None = None,
 ) -> tuple[dict[str, tuple[list[Any], list[Any]]], dict[str, int]]:
     plan: dict[str, tuple[list[Any], list[Any]]] = {}
     scene_counts: Counter[str] = Counter()
@@ -816,11 +874,27 @@ def _build_decision_plan(
     multi_actionable_count = 0
     readonly_target_count = 0
     for context in contexts:
-        decisions = [
-            classify_evidence(evidence, junction_type=context.junction_type)
-            for evidence in evidence_by_target.get(context.target_id, [])
-        ]
-        actionable = choose_actionable_decisions(decisions)
+        roundabout = (roundabout_aggregations or {}).get(context.target_id)
+        if roundabout is not None:
+            decisions = [
+                SceneDecision(
+                    scene=SCENE_ROUNDABOUT,
+                    action="group_roundabout_rcsd_junctions",
+                    reason=roundabout.reason,
+                    source_module="T05",
+                    source_case_id=context.target_id,
+                    rcsdnode_ids=roundabout.rcsdnode_ids,
+                    rcsdroad_ids=roundabout.rcsdroad_ids,
+                    base_id_candidates=roundabout.semantic_group_ids,
+                )
+            ]
+            actionable = list(decisions)
+        else:
+            decisions = [
+                classify_evidence(evidence, junction_type=context.junction_type)
+                for evidence in evidence_by_target.get(context.target_id, [])
+            ]
+            actionable = choose_actionable_decisions(decisions)
         plan[context.target_id] = (decisions, actionable)
         if _is_readonly_plan(decisions, actionable):
             readonly_target_count += 1
@@ -837,6 +911,8 @@ def _build_decision_plan(
                 split_road_ids.update(decision.rcsdroad_ids)
             if decision.scene == SCENE_GROUP_EXISTING:
                 grouped_node_ids.update(decision.rcsdnode_ids)
+            if decision.scene == SCENE_ROUNDABOUT:
+                grouped_node_ids.update(decision.rcsdnode_ids)
     return (
         plan,
         {
@@ -844,6 +920,7 @@ def _build_decision_plan(
             "direct_target_count": scene_counts[SCENE_DIRECT],
             "group_existing_target_count": scene_counts[SCENE_GROUP_EXISTING],
             "road_split_target_count": scene_counts[SCENE_ROAD_SPLIT],
+            "roundabout_target_count": scene_counts[SCENE_ROUNDABOUT],
             "no_related_target_count": scene_counts[SCENE_NO_RCSD],
             "failure_target_count": scene_counts[SCENE_FAILURE],
             "missing_evidence_target_count": scene_counts["missing_relation_evidence"],

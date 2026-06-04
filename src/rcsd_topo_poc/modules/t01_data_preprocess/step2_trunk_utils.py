@@ -9,7 +9,7 @@ from typing import Any, Iterable, Optional
 
 from shapely.geometry import LineString, MultiLineString, Point
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import linemerge
+from shapely.ops import linemerge, substring
 
 from rcsd_topo_poc.modules.t01_data_preprocess.road_kind_continuity import (
     choose_preferred_continuation_edges,
@@ -145,6 +145,19 @@ def _max_nearest_distance_m(
     return float(source_geometry.hausdorff_distance(target_geometry))
 
 
+def _dual_carriageway_body_geometry(geometry: Optional[BaseGeometry]) -> Optional[BaseGeometry]:
+    if geometry is None or geometry.is_empty:
+        return geometry
+    line = _line_geometry_from_coords(_geometry_coords(geometry))
+    if line is None:
+        return geometry
+    trim_m = MAX_DIRECT_ONEWAY_TAIL_RELAXATION_M
+    length_m = _geometry_length(line)
+    if length_m <= trim_m * 2.0:
+        return line
+    return substring(line, trim_m, length_m - trim_m)
+
+
 def _iter_sample_points(geometry: Optional[BaseGeometry]) -> Iterable[Point]:
     if geometry is None or geometry.is_empty:
         return
@@ -241,6 +254,11 @@ def _dual_carriageway_separation_m(
     forward_geometry = _line_geometry_from_road_ids(forward_path.road_ids, roads=roads)
     reverse_geometry = _line_geometry_from_road_ids(reverse_path.road_ids, roads=roads)
     raw_distance_m = _max_nearest_distance_m(forward_geometry, reverse_geometry) or 0.0
+    body_distance_m = _max_nearest_distance_m(
+        _dual_carriageway_body_geometry(forward_geometry),
+        _dual_carriageway_body_geometry(reverse_geometry),
+    )
+    distance_m = min(raw_distance_m, body_distance_m) if body_distance_m is not None else raw_distance_m
 
     special_case_distance_m = _single_road_direct_oneway_pair_sampled_separation_m(
         forward_path=forward_path,
@@ -251,9 +269,9 @@ def _dual_carriageway_separation_m(
         special_case_distance_m is not None
         and raw_distance_m - special_case_distance_m <= MAX_DIRECT_ONEWAY_TAIL_RELAXATION_M
     ):
-        return special_case_distance_m
+        return min(distance_m, special_case_distance_m)
 
-    return raw_distance_m
+    return distance_m
 
 
 def _road_matches_formway_bit(road: RoadRecord, bit_index: int) -> bool:

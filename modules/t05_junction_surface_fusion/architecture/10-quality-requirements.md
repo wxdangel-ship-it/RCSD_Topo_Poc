@@ -64,6 +64,8 @@
 - T03 road-only 与 T04 fallback road-only 才能进入 RCSDRoad split。
 - T07 历史路口锚定 relation evidence 只作为已有 RCSD 语义路口 direct relation，不触发 RCSDRoad split 或 RCSDNode insert。
 - T07 历史锚定 relation-only target 没有 Phase 1 surface 时，仍必须进入 `intersection_match_all.geojson`。
+- `kind_2 = 64` 环岛场景必须验证所有 SWSD 子 node 均被路口面覆盖，RCSD 候选语义路口全组 node 均被环岛面覆盖，并且候选语义路口之间通过 `RCSDRoad.roadtype = 8` 连通。
+- `kind_2 = 64` 环岛场景只能归组已有 RCSDNode，不得 split RCSDRoad 或新增 RCSDNode。
 - Road-only 投影点靠近 RCSDRoad 端点时必须复用已有端点 RCSDNode 或审计失败，不得生成极短 road 段。
 - `target_id` 必须唯一，一个 SWSD 语义路口只输出一条 relation。
 - `level = grade - 1`，缺失、为空或非法时为 `-1`。
@@ -98,3 +100,4 @@
 - 输入文件未被原地修改。
 - 如果存在 `multiple_base_id_unmergeable`，`summary.passed` 必须为 `false`。
 - T03 handoff 补齐后的 evidence 能驱动 Phase 2 中 T03-A RCSDNode grouping 与 T03 road-only RCSDRoad split。
+- `kind_2 = 64` 环岛能基于覆盖面和 `roadtype = 8` 连通性归组多个 RCSD 语义路口，并拒绝非 `roadtype = 8` 的伪连通。

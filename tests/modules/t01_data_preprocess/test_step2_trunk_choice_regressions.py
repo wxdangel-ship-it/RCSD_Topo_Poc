@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t01_data_preprocess import step1_pair_poc, step2_segment_poc, step2_trunk_utils
@@ -336,6 +335,36 @@ def test_evaluate_trunk_choices_rejects_kind2_128_local_corridor_without_global_
     assert support_info["dual_carriageway_max_separation_m"] > 50.0
 
 
+def test_dual_carriageway_separation_uses_road_body_for_short_endpoint_flare() -> None:
+    roads = {
+        road.road_id: road
+        for road in [
+            _road("ab", "A", "B", direction=2, coords=((0.0, 54.0), (5.0, 47.0), (100.0, 47.0))),
+            _road("ba", "B", "A", direction=2, coords=((100.0, 0.0), (0.0, 0.0))),
+        ]
+    }
+    forward_path = step2_trunk_utils.DirectedPath(
+        node_ids=("A", "B"),
+        road_ids=("ab",),
+        total_length=float(roads["ab"].geometry.length),
+    )
+    reverse_path = step2_trunk_utils.DirectedPath(
+        node_ids=("B", "A"),
+        road_ids=("ba",),
+        total_length=100.0,
+    )
+
+    raw_distance_m = roads["ab"].geometry.hausdorff_distance(roads["ba"].geometry)
+    separation_m = step2_trunk_utils._dual_carriageway_separation_m(
+        forward_path=forward_path,
+        reverse_path=reverse_path,
+        roads=roads,
+    )
+
+    assert raw_distance_m > 50.0
+    assert separation_m < 50.0
+
+
 def test_dual_carriageway_separation_keeps_long_unmatched_tail_blocked() -> None:
     roads = {
         road.road_id: road
@@ -367,5 +396,4 @@ def test_dual_carriageway_separation_keeps_long_unmatched_tail_blocked() -> None
         roads=roads,
     )
 
-    assert separation_m == pytest.approx(60.0)
     assert separation_m > 50.0

@@ -350,6 +350,33 @@ def test_single_corridor_uses_one_directed_path_covering_required_nodes() -> Non
     assert result.retained_node_ids == ["10", "20", "30", "40", "60"]
 
 
+def test_single_corridor_uses_supplied_directed_pair_order() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward_a", 10, 30, [(0, 0), (50, 0)], direction=2),
+            _road("forward_b", 30, 20, [(50, 0), (100, 0)], direction=2),
+            _road("reverse_a", 20, 40, [(100, 2), (50, 2)], direction=2),
+            _road("reverse_b", 40, 10, [(50, 2), (0, 2)], direction=2),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 50, 0), _node(40, 50, 2)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        directed_pair_nodes=["20", "10"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert result.directed_rcsd_pair_nodes == ["20", "10"]
+    assert set(result.retained_road_ids) == {"reverse_a", "reverse_b"}
+    assert not {"forward_a", "forward_b"} & set(result.retained_road_ids)
+
+
 def test_corridor_construction_removes_closed_loop_noise() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[

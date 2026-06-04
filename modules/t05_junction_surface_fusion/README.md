@@ -166,6 +166,8 @@ artifacts = run_t05_export_junctionization_bundle(
 
 Road-only 场景中，若投影点距离 RCSDRoad 起终点小于 `min_endpoint_gap_m`，Phase 2 不生成极短 split 段，改为复用对应 `snodeid / enodeid` 的已有 RCSDNode；多个端点节点命中同一 SWSD 路口时先归组，再输出唯一 relation。
 
+`kind_2 = 64` 的 SWSD 环岛语义路口走独立 Phase 2 分支。模块先检查该语义路口下所有 SWSD node 是否都被 Phase 1 路口面覆盖；再把这些面与 `RCSDRoad.roadtype = 8` 的环岛 road `10m` buffer 合并为环岛候选面；随后筛选完全落在该面内、且彼此通过 `roadtype = 8` RCSDRoad 连通的 RCSD 语义路口。符合条件的 RCSDNode 被归组为一个 RCSD 语义路口，主 node 作为唯一 `base_id` 输出 relation。该分支只更新 copy-on-write `RCSDNode.mainnodeid`，不 split road、不新增 node。
+
 全量运行可设置 `progress=True`。runner 会在控制台输出稀疏进展：输入数据体量、预分类 plan、只读/可变 target 计数、每 `progress_interval` 个 target 的处理进度和总耗时；summary 的 `performance` 字段记录聚合打点，不写 per-target 明细。
 
 `readonly_workers` 仅并行处理不修改 RCSDRoad / RCSDNode 的只读关系分支，包括已有单一 RCSD 语义路口直接关联、无 RCSD 普通失败、缺少 evidence 普通失败等。RCSDNode grouping 与 RCSDRoad split 当前仍串行执行，以保持新增 id 分配和 copy-on-write 拓扑更新稳定。

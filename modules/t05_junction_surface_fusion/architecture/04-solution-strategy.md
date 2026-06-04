@@ -76,13 +76,14 @@ Phase 2 使用“读取 Phase 1 surface -> 消费 relation evidence -> 场景分
 2. 以 Phase 1 surface 的 `mainnodeid` 作为 Phase 2 target 主键。
 3. 预先构建 target 级 decision plan，并统计 direct / grouping / road_split / no_related、只读 target、可变 target 等体量。
 4. 先并行处理无需修改 RCSDRoad / RCSDNode 的只读关系构建分支。
-5. 再串行处理 T03-A 多 RCSDNode、T04 complex 多 RCSDNode、T03/T04 road-only 等会修改 copy-on-write RCSD 状态的分支。
+5. 再串行处理 T03-A 多 RCSDNode、T04 complex 多 RCSDNode、T03/T04 road-only、`kind_2 = 64` 环岛聚合等会修改 copy-on-write RCSD 状态的分支。
 6. 已有 RCSD 语义路口直接输出关系。
 7. T03-A 多 RCSDNode 与 T04 complex 多 RCSDNode 执行 RCSDNode grouping，不打断 road。
 8. T03 road-only 与 T04 fallback road-only 进入 RCSDRoad split，生成 RCSDNode，再建立关系。
-9. 完全无 RCSD 或 split/grouping 失败时输出失败关系，统一 `status = 1 / base_id = 0`。
-10. 多个 RCSD 候选可合并时归组为一个 RCSD 语义路口；无法合并时输出 blocking error，不写主表 relation。
-11. 输出 `intersection_match_all.geojson`、copy-on-write RCSDRoad/RCSDNode、增量层、audit、blocking errors、summary 与聚合 performance 打点。
+9. `kind_2 = 64` 环岛不依赖 road-only split，而是基于 SWSD node 覆盖面、`roadtype = 8` 环岛 road buffer 和 RCSDNode 连通性筛选，归组已有 RCSDNode 后建立关系。
+10. 完全无 RCSD 或 split/grouping 失败时输出失败关系，统一 `status = 1 / base_id = 0`。
+11. 多个 RCSD 候选可合并时归组为一个 RCSD 语义路口；无法合并时输出 blocking error，不写主表 relation。
+12. 输出 `intersection_match_all.geojson`、copy-on-write RCSDRoad/RCSDNode、增量层、audit、blocking errors、summary 与聚合 performance 打点。
 
 Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gpkg`，不修改 T07/T03/T04 主链，也不原地修改输入 RCSD 文件。
 
@@ -101,6 +102,7 @@ Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gp
 - T04 `main_evidence_with_rcsdroad_fallback`：优先使用 `fact_reference_point` 投影 split。
 - T04 `no_main_evidence_with_rcsdroad_fallback_and_swsd`：使用 SWSD semantic point 投影 split。
 - T04 fallback 若 relation evidence 缺少场景字段，可从 accepted layer、summary、audit 或 case-level audit 补读；补读失败不得 silent fallback。
+- SWSD 环岛 `kind_2 = 64`：所有 SWSD 子 node 必须被 Phase 1 路口面覆盖；覆盖面与 `RCSDRoad.roadtype = 8` 的 road `10m` buffer 合并后形成环岛候选面；候选 RCSD 语义路口必须全组 node 都在该面内，且候选语义路口之间通过 `roadtype = 8` 的 RCSDRoad 连通，才进入 RCSDNode grouping。
 
 ## 9. Phase 2 拓扑策略
 
@@ -113,5 +115,6 @@ Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gp
 - `intersection_match_all.geojson` 中 `target_id` 必须唯一，一个 SWSD 语义路口只允许输出一条 relation。
 - `level = grade - 1`，`is_highway = closed_con - 1`；缺失或非法时为 `-1`。
 - 多 `base_id` 无法合并时写 `blocking_errors.csv/json` 并令 `summary.passed = false`。
+- `kind_2 = 64` 环岛聚合只更新已有 RCSDNode 的 `mainnodeid`，不 split RCSDRoad、不新增 RCSDNode；主 RCSDNode 按距离 SWSD 环岛语义点最近、再按 id 最小选择。
 - 全量运行时以 `progress_interval` 控制控制台输出频率，summary 只记录阶段级耗时和聚合体量，不记录 per-target 打点。
 - `readonly_workers` 只并行直接关系、无 RCSD 普通失败、缺少 evidence 普通失败等只读分支；RCSDRoad split 与 RCSDNode grouping 当前保持串行，避免新增 id 与拓扑状态更新并发冲突。

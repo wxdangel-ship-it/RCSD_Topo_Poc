@@ -30,6 +30,7 @@ class BufferSegmentResult:
     reason: str
     required_rcsd_nodes: list[str]
     optional_allowed_rcsd_nodes: list[str]
+    directed_rcsd_pair_nodes: list[str]
     candidate_road_ids: list[str]
     candidate_node_ids: list[str]
     retained_road_ids: list[str]
@@ -79,12 +80,14 @@ class BufferSegmentExtractor:
         optional_allowed_rcsd_nodes: list[str],
         all_relation_base_ids: set[str],
         unexpected_relation_base_ids: set[str] | None = None,
+        directed_pair_nodes: list[str] | None = None,
         require_directed_pair: bool = False,
         require_bidirectional: bool = False,
         config: BufferExtractionConfig | None = None,
     ) -> BufferSegmentResult:
         cfg = config or BufferExtractionConfig()
         pair_nodes = _canonical_ids(relation.rcsd_pair_nodes, self.node_canonicalizer)
+        directed_nodes = _effective_directed_pair_nodes(pair_nodes, _canonical_ids(directed_pair_nodes or [], self.node_canonicalizer))
         required_nodes = _canonical_ids([*relation.rcsd_pair_nodes, *relation.rcsd_junc_nodes], self.node_canonicalizer)
         optional_nodes = _canonical_ids(optional_allowed_rcsd_nodes, self.node_canonicalizer)
         relation_base_ids = set(_canonical_ids(list(all_relation_base_ids), self.node_canonicalizer))
@@ -104,6 +107,8 @@ class BufferSegmentExtractor:
             selected_roads=candidate_roads,
             excluded_roads=excluded_roads,
             required_nodes=required_nodes,
+            directed_pair_nodes=directed_nodes,
+            require_directed_pair=require_directed_pair,
             node_canonicalizer=self.node_canonicalizer,
             reference_geometry=segment_geometry,
         )
@@ -119,6 +124,7 @@ class BufferSegmentExtractor:
                 reason=reason,
                 required_nodes=required_nodes,
                 optional_nodes=optional_nodes,
+                directed_nodes=directed_nodes if require_directed_pair else [],
                 candidate_roads=candidate_roads,
                 candidate_nodes=candidate_nodes,
                 retained_edges=[],
@@ -143,6 +149,7 @@ class BufferSegmentExtractor:
             optional_nodes=set(optional_nodes),
             semantic_nodes=semantic_nodes,
             pair_nodes=pair_nodes,
+            directed_pair_nodes=directed_nodes,
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
             reference_geometry=segment_geometry,
@@ -151,6 +158,7 @@ class BufferSegmentExtractor:
             pruned.retained_edges,
             required_nodes,
             pair_nodes,
+            directed_nodes,
             reference_geometry=segment_geometry,
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
@@ -162,6 +170,7 @@ class BufferSegmentExtractor:
             corridor_edges,
             required_nodes,
             pair_nodes,
+            directed_nodes,
             unexpected_mapped_semantic_nodes=unexpected_mapped_semantic_nodes,
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
@@ -171,6 +180,7 @@ class BufferSegmentExtractor:
             reason=reason,
             required_nodes=required_nodes,
             optional_nodes=optional_nodes,
+            directed_nodes=directed_nodes if require_directed_pair else [],
             candidate_roads=candidate_roads,
             candidate_nodes=candidate_nodes,
             retained_edges=corridor_edges,
@@ -249,13 +259,21 @@ def _restore_required_corridor_advance_roads(
     selected_roads: list[dict[str, Any]],
     excluded_roads: list[dict[str, Any]],
     required_nodes: list[str],
+    directed_pair_nodes: list[str],
+    require_directed_pair: bool,
     node_canonicalizer: NodeCanonicalizer,
     reference_geometry: BaseGeometry | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not excluded_roads or len(set(required_nodes)) < 2:
         return selected_roads, excluded_roads
     selected_graph = _build_undirected_graph(selected_roads, node_canonicalizer=node_canonicalizer)
-    if _select_component(_connected_components(selected_graph.adjacency), required_nodes) is not None:
+    if _selected_graph_satisfies_required_corridor(
+        selected_graph.edges,
+        required_nodes,
+        directed_pair_nodes=directed_pair_nodes,
+        require_directed_pair=require_directed_pair,
+        reference_geometry=reference_geometry,
+    ):
         return selected_roads, excluded_roads
 
     combined_roads = [*selected_roads, *excluded_roads]
@@ -269,11 +287,21 @@ def _restore_required_corridor_advance_roads(
     component_edges = [
         edge for edge in combined_graph.edges if edge.source in component_nodes and edge.target in component_nodes
     ]
-    corridor_edge_ids = {
-        edge_id
-        for path in _minimum_terminal_edge_paths(component_edges, required_nodes, reference_geometry=reference_geometry)
-        for edge_id in path
-    }
+    if require_directed_pair and len(directed_pair_nodes) == 2:
+        corridor_path = _shortest_directed_path_covering_nodes(
+            component_edges,
+            directed_pair_nodes[0],
+            directed_pair_nodes[1],
+            required_nodes,
+            reference_geometry=reference_geometry,
+        )
+        corridor_edge_ids = set(corridor_path or [])
+    else:
+        corridor_edge_ids = {
+            edge_id
+            for path in _minimum_terminal_edge_paths(component_edges, required_nodes, reference_geometry=reference_geometry)
+            for edge_id in path
+        }
     excluded_road_ids = {road_id for road_id in (_feature_road_id(feature) for feature in excluded_roads) if road_id is not None}
     restored_road_ids = {
         edge.road_id for edge in component_edges if edge.edge_id in corridor_edge_ids and edge.road_id in excluded_road_ids
@@ -317,6 +345,33 @@ def _has_second_degree_non_advance_link(
     if source == target:
         return False
     return non_advance_endpoint_counts.get(source, 0) > 0 and non_advance_endpoint_counts.get(target, 0) > 0
+
+
+def _selected_graph_satisfies_required_corridor(
+    edges: list[Edge],
+    required_nodes: list[str],
+    *,
+    directed_pair_nodes: list[str],
+    require_directed_pair: bool,
+    reference_geometry: BaseGeometry | None,
+) -> bool:
+    components = _connected_components(_adjacency_from_edges(edges))
+    if _select_component(components, required_nodes) is None:
+        return False
+    if not require_directed_pair:
+        return True
+    if len(directed_pair_nodes) != 2:
+        return False
+    return (
+        _shortest_directed_path_covering_nodes(
+            edges,
+            directed_pair_nodes[0],
+            directed_pair_nodes[1],
+            required_nodes,
+            reference_geometry=reference_geometry,
+        )
+        is not None
+    )
 
 
 def _feature_canonical_endpoints(feature: dict[str, Any], *, node_canonicalizer: NodeCanonicalizer) -> tuple[str, str] | None:
@@ -396,6 +451,7 @@ def _prune_component_seed_based(
     optional_nodes: set[str],
     semantic_nodes: set[str],
     pair_nodes: list[str],
+    directed_pair_nodes: list[str],
     require_directed_pair: bool,
     require_bidirectional: bool,
     reference_geometry: BaseGeometry | None,
@@ -418,12 +474,13 @@ def _prune_component_seed_based(
                 if path is not None:
                     corridor_edge_ids.update(path)
         elif require_directed_pair:
-            path = _shorter_path(
+            directed_source, directed_target = _effective_directed_pair_nodes(pair_nodes, directed_pair_nodes)
+            path = _shortest_directed_path_covering_nodes(
                 edges,
-                _shortest_directed_path_covering_nodes(edges, source, target, sorted(required_nodes), reference_geometry=reference_geometry),
-                _shortest_directed_path_covering_nodes(edges, target, source, sorted(required_nodes), reference_geometry=reference_geometry),
+                directed_source,
+                directed_target,
+                sorted(required_nodes),
                 reference_geometry=reference_geometry,
-                required_nodes=required_nodes,
             )
             if path is not None:
                 corridor_edge_ids.update(path)
@@ -502,19 +559,20 @@ def _build_corridor_subgraph(
     edges: list[Edge],
     required_nodes: list[str],
     pair_nodes: list[str],
+    directed_pair_nodes: list[str],
     *,
     reference_geometry: BaseGeometry | None,
     require_directed_pair: bool,
     require_bidirectional: bool,
 ) -> list[Edge]:
     if require_directed_pair and len(pair_nodes) == 2:
-        source, target = pair_nodes
-        path = _shorter_path(
+        source, target = _effective_directed_pair_nodes(pair_nodes, directed_pair_nodes)
+        path = _shortest_directed_path_covering_nodes(
             edges,
-            _shortest_directed_path_covering_nodes(edges, source, target, required_nodes, reference_geometry=reference_geometry),
-            _shortest_directed_path_covering_nodes(edges, target, source, required_nodes, reference_geometry=reference_geometry),
+            source,
+            target,
+            required_nodes,
             reference_geometry=reference_geometry,
-            required_nodes=set(required_nodes),
         )
         if path is None:
             return []
@@ -718,21 +776,6 @@ def _weighted_adjacency(
     return dict(adjacency)
 
 
-def _shorter_path(
-    edges: list[Edge],
-    first: list[str] | None,
-    second: list[str] | None,
-    *,
-    reference_geometry: BaseGeometry | None,
-    required_nodes: set[str],
-) -> list[str] | None:
-    if first is None:
-        return second
-    if second is None:
-        return first
-    return first if _path_weight(edges, first, reference_geometry=reference_geometry, required_nodes=required_nodes) <= _path_weight(edges, second, reference_geometry=reference_geometry, required_nodes=required_nodes) else second
-
-
 def _path_weight(edges: list[Edge], path: list[str], *, reference_geometry: BaseGeometry | None, required_nodes: set[str]) -> float:
     weights = {edge.edge_id: _edge_weight(edge, reference_geometry=reference_geometry, required_nodes=required_nodes) for edge in edges}
     return sum(weights.get(edge_id, 1.0) for edge_id in path)
@@ -785,6 +828,7 @@ def _retained_status(
     retained_edges: list[Edge],
     required_nodes: list[str],
     pair_nodes: list[str],
+    directed_pair_nodes: list[str],
     *,
     unexpected_mapped_semantic_nodes: list[str],
     require_directed_pair: bool,
@@ -794,7 +838,7 @@ def _retained_status(
         if require_directed_pair:
             return False, "rcsd_directed_path_missing", []
         return False, "buffer_pruned_to_empty", []
-    if require_directed_pair and not _pair_nodes_directionally_reachable(retained_edges, pair_nodes):
+    if require_directed_pair and not _pair_nodes_reachable_in_order(retained_edges, _effective_directed_pair_nodes(pair_nodes, directed_pair_nodes)):
         return False, "rcsd_directed_path_missing", []
     if not set(required_nodes).issubset(retained_nodes) or not _required_nodes_connected(retained_edges, required_nodes):
         if require_directed_pair:
@@ -841,12 +885,20 @@ def _pair_nodes_bidirectionally_reachable(edges: list[Edge], pair_nodes: list[st
     return _directed_reachable(adjacency, source, target) and _directed_reachable(adjacency, target, source)
 
 
-def _pair_nodes_directionally_reachable(edges: list[Edge], pair_nodes: list[str]) -> bool:
+def _pair_nodes_reachable_in_order(edges: list[Edge], pair_nodes: list[str]) -> bool:
     if len(pair_nodes) != 2:
         return False
     source, target = pair_nodes
     adjacency = _directed_adjacency_from_edges(edges)
-    return _directed_reachable(adjacency, source, target) or _directed_reachable(adjacency, target, source)
+    return _directed_reachable(adjacency, source, target)
+
+
+def _effective_directed_pair_nodes(pair_nodes: list[str], directed_pair_nodes: list[str]) -> list[str]:
+    if len(directed_pair_nodes) == 2:
+        return directed_pair_nodes
+    if len(pair_nodes) == 2:
+        return pair_nodes
+    return []
 
 
 def _directed_adjacency_from_edges(edges: list[Edge]) -> dict[str, set[str]]:
@@ -898,6 +950,7 @@ def _result(
     reason: str,
     required_nodes: list[str],
     optional_nodes: list[str],
+    directed_nodes: list[str],
     candidate_roads: list[dict[str, Any]],
     candidate_nodes: list[dict[str, Any]],
     retained_edges: list[Edge],
@@ -919,6 +972,7 @@ def _result(
         reason=reason,
         required_rcsd_nodes=required_nodes,
         optional_allowed_rcsd_nodes=optional_nodes,
+        directed_rcsd_pair_nodes=directed_nodes,
         candidate_road_ids=candidate_road_ids,
         candidate_node_ids=candidate_node_ids,
         retained_road_ids=retained_road_ids,
@@ -944,6 +998,7 @@ def _empty_result(reason: str, required_nodes: list[str], optional_nodes: list[s
         reason=reason,
         required_rcsd_nodes=required_nodes,
         optional_allowed_rcsd_nodes=optional_nodes,
+        directed_rcsd_pair_nodes=[],
         candidate_road_ids=[],
         candidate_node_ids=[],
         retained_road_ids=[],

@@ -34,11 +34,13 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 - 若剔除 `out_nodes` 后 required semantic nodes 不再连通，必须拒绝，不得输出为 replaceable。
 - retained RCSD graph 的叶子端点只能是 `pair_nodes` 对应的 RCSD semantic nodes；非 pair 叶子端点必须以 `unexpected_retained_endpoint_nodes` 拒绝。
 - `swsd_directionality=dual` 的 retained RCSD graph 必须 pair 两端双向可达，否则以 `rcsd_not_bidirectional_for_swsd_dual` 拒绝。
-- `swsd_directionality=single` 必须构建一条覆盖全部 required semantic nodes 的 pair 端到另一端有向 corridor，不得把无向 corridor 与有向 pair path 做并集；不满足时以 `rcsd_directed_path_missing` 拒绝。
+- `swsd_directionality=single` 必须由 SWSDRoad `snodeid / enodeid / direction` 推导 pair source/target，并按该方向构建覆盖全部 required semantic nodes 的 RCSD 有向 corridor，不得把无向 corridor、反向可达或 `pair_nodes / segmentid` 顺序作为兜底；不满足时以 `rcsd_directed_path_missing` 或 `swsd_single_direction_*` 拒绝。
+- `kind_2=64` 环岛路口与 `kind_2=128` 复杂路口执行特殊组门控：按 Step2 输入融合单元中 `pair_nodes + junc_nodes` 包含该语义路口识别关联 Segment；若关联 Segment 未全部进入可替换集合，则该特殊组所有原本可替换 Segment 均移出 `replaceable`，并以 `special_junction_group_not_fully_replaceable` 输出拒绝。
+- 特殊组审计必须记录 SWSD 特殊路口映射到 RCSD 后的 `rcsd_junction_id`、RCSD 语义组内 Node，以及端点同归一到该 RCSD 语义组的内部 RCSDRoad，供 Step3 统一替换审计。
 - RCSD 网络通过 runner 参数传入，不硬编码路径。
 - `junc_nodes` 表示内部通过 + 侧向阻断，不是 hard-stop。
-- Step2 不再执行旧 pair-to-pair BFS 路径搜索、SWSD 单向方向推导、主轴 / 粗长度趋势或唯一性筛选。
-- `t06_rcsd_buffer_segments` 是正式主成果；`t06_rcsd_segment_candidates / replaceable` 仅作为兼容输出，由 buffer 成功结果派生。
+- Step2 不再执行旧 pair-to-pair BFS 路径搜索、主轴 / 粗长度趋势或唯一性筛选；单向方向仅按 SWSDRoad directed graph 推导。
+- `t06_rcsd_buffer_segments` 是 buffer 构建成果；`t06_rcsd_segment_candidates` 是 buffer 成功构建的候选；`t06_rcsd_segment_replaceable` 是经过全部硬审计与特殊路口组门控后的最终可替换集合。
 
 ## Step2 过滤顺序
 
@@ -58,6 +60,7 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 
 - Step3 只消费 Step2 replaceable RCSDSegment，不处理 rejected Segment。
 - 对每个 replaceable Segment，以 `swsd_segment_id` 建立替换单元，记录 SWSD `pair_nodes / junc_nodes / roads` 与 Step2 retained RCSD road / node。
+- Step3 不重新判定特殊路口组是否可替换；若 Step2 输出 passed 特殊路口组审计，则将组内 RCSD 语义路口内部 Node/Road 作为组级替换实体统一加入 F-RCSD。
 - 所有 replaceable Segment 的 `pair_nodes + junc_nodes` 组成待重建语义路口集合 C。
 - 每个 C 必须记录其涉及的 Node，并建立 C 与关联替换单元的关系。
 - 被替换 Segment 涉及的 SWSDRoad 必须从 F-RCSD Road 中清除。

@@ -16,6 +16,7 @@ STATUS_FAILURE = 1
 SCENE_DIRECT = "direct_existing_rcsd_junction"
 SCENE_GROUP_EXISTING = "group_existing_rcsd_nodes"
 SCENE_ROAD_SPLIT = "road_only_split"
+SCENE_ROUNDABOUT = "roundabout_rcsd_semantic_grouping"
 SCENE_NO_RCSD = "no_related_rcsd"
 SCENE_FAILURE = "failure"
 

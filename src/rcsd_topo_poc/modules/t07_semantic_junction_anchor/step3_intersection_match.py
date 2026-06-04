@@ -9,11 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from shapely.geometry import LineString
+from pyproj import Transformer
+from shapely.geometry import LineString, mapping, shape
+from shapely.geometry.base import BaseGeometry
 from shapely.strtree import STRtree
+from shapely.ops import transform as shapely_transform
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import TARGET_CRS, prefer_vector_input_path, write_json
-from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_io import write_relation_geojson_crs84
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_models import RELATION_OUTPUT_CRS_NAME
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import ensure_gpkg_ogr_feature_count_metadata, write_gpkg
 
@@ -356,10 +358,6 @@ def _line_between_geometries(start_geometry: Any, end_geometry: Any) -> LineStri
     return LineString([(float(start_x), float(start_y)), (float(end_x), float(end_y))])
 
 
-def _relation_feature_payload(record: RelationRecord) -> dict[str, Any]:
-    return {"properties": dict(record.properties), "geometry": record.geometry}
-
-
 def _quote_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
@@ -506,9 +504,31 @@ def _write_relation_output(path: Path, records: list[RelationRecord]) -> None:
             },
         )
         return
-    write_relation_geojson_crs84(
+
+    transformer = Transformer.from_crs(TARGET_CRS, "EPSG:4326", always_xy=True)
+    features = []
+    for record in records:
+        geometry = record.geometry
+        if geometry is not None and record.geometry_mode != "raw_crs84":
+            geometry_obj = geometry if isinstance(geometry, BaseGeometry) else shape(geometry)
+            geometry = mapping(shapely_transform(transformer.transform, geometry_obj))
+        elif isinstance(geometry, BaseGeometry):
+            geometry = mapping(geometry)
+        features.append(
+            {
+                "type": "Feature",
+                "properties": dict(record.properties),
+                "geometry": geometry,
+            }
+        )
+    write_json(
         path,
-        (_relation_feature_payload(record) for record in records),
+        {
+            "type": "FeatureCollection",
+            "name": path.stem,
+            "crs": {"type": "name", "properties": {"name": RELATION_OUTPUT_CRS_NAME}},
+            "features": features,
+        },
     )
 
 
@@ -614,7 +634,7 @@ def _copy_update_gpkg_nodes(
     output_path: Path,
     layer_name: str | None,
     crs_override: str | None,
-    accepted_node_ids: list[str],
+    node_anchor_updates: dict[str, str],
 ) -> bool:
     if crs_override is not None:
         return False
@@ -641,21 +661,38 @@ def _copy_update_gpkg_nodes(
     shutil.copy2(source_gpkg, output_path)
     ensure_gpkg_ogr_feature_count_metadata(output_path, layer_name=resolved_layer)
 
-    if not accepted_node_ids:
+    if not node_anchor_updates:
         return True
 
     with sqlite3.connect(str(output_path)) as conn:
+        table_identifier = _quote_identifier(resolved_layer)
+        id_identifier = _quote_identifier(id_column)
+        id_expr = f"{table_identifier}.{id_identifier}"
+        conn.execute("CREATE TEMP TABLE t07_node_anchor_updates(node_id TEXT PRIMARY KEY, is_anchor TEXT)")
         conn.executemany(
+            "INSERT OR REPLACE INTO t07_node_anchor_updates(node_id, is_anchor) VALUES (?, ?)",
+            sorted(node_anchor_updates.items(), key=lambda item: _sort_key(item[0])),
+        )
+        conn.execute(
             "UPDATE "
-            + _quote_identifier(resolved_layer)
+            + table_identifier
             + " SET "
             + _quote_identifier(is_anchor_column)
-            + " = ?, "
+            + " = ("
+            + "SELECT updates.is_anchor FROM t07_node_anchor_updates AS updates "
+            + "WHERE updates.node_id = "
+            + id_expr
+            + " OR updates.node_id = CAST("
+            + id_expr
+            + " AS TEXT) LIMIT 1), "
             + _quote_identifier(anchor_reason_column)
-            + " = NULL WHERE "
-            + _quote_identifier(id_column)
-            + " = ?",
-            [("yes", node_id) for node_id in accepted_node_ids],
+            + " = NULL WHERE EXISTS ("
+            + "SELECT 1 FROM t07_node_anchor_updates AS updates "
+            + "WHERE updates.node_id = "
+            + id_expr
+            + " OR updates.node_id = CAST("
+            + id_expr
+            + " AS TEXT))"
         )
     return True
 
@@ -667,14 +704,14 @@ def _write_step3_nodes(
     source_path: str | Path,
     source_layer: str | None,
     source_crs: str | None,
-    accepted_node_ids: list[str],
+    node_anchor_updates: dict[str, str],
 ) -> str:
     if _copy_update_gpkg_nodes(
         source_path=source_path,
         output_path=output_path,
         layer_name=source_layer,
         crs_override=source_crs,
-        accepted_node_ids=accepted_node_ids,
+        node_anchor_updates=node_anchor_updates,
     ):
         return "copy_update_gpkg"
     _write_nodes(output_path, features)
@@ -1211,6 +1248,7 @@ def run_t07_step3_intersection_match(
 
     relation_cardinality_errors = _build_relation_cardinality_errors_from_records(tentative_relations)
     one_to_many_target_ids = _one_to_many_target_ids(relation_cardinality_errors)
+    reset_node_ids: list[str] = []
     if one_to_many_target_ids:
         for target_id in sorted(one_to_many_target_ids, key=_sort_key):
             group = _resolve_group(target_id, by_mainnodeid=by_mainnodeid, singleton_by_id=singleton_by_id)
@@ -1218,6 +1256,7 @@ def run_t07_step3_intersection_match(
                 representative_props = nodes_layer_data.features[group.representative.output_index].properties
                 representative_props["is_anchor"] = "no"
                 representative_props["anchor_reason"] = None
+                reset_node_ids.append(group.representative.node_id)
             audit_rows.append(
                 _audit_row(
                     scope="relation_cardinality",
@@ -1237,14 +1276,17 @@ def run_t07_step3_intersection_match(
         for row in tentative_relation_evidence_rows
         if _normalize_id(row.get("target_id")) not in one_to_many_target_ids
     ]
-    accepted_node_ids = sorted(
+    newly_accepted_node_ids = sorted(
         {
             node_id
             for row in accepted_relation_evidence_rows
             if (node_id := _normalize_id(row.get("representative_node_id"))) is not None
+            and _normalize_id(row.get("relation_source")) != "T07_STEP3_STEP2_SURFACE"
         },
         key=_sort_key,
     )
+    node_anchor_updates = {node_id: "yes" for node_id in newly_accepted_node_ids}
+    node_anchor_updates.update({node_id: "no" for node_id in reset_node_ids})
     counts["accepted_count"] = len(accepted_relations)
     counts["step2_surface_1v1_relation_count"] = sum(
         1 for record in accepted_relations if _normalize_id(record.properties.get("relation_source")) == "T07_STEP3_STEP2_SURFACE"
@@ -1269,6 +1311,7 @@ def run_t07_step3_intersection_match(
     audit_json_path = stage_root / "t07_step3_audit.json"
     perf_path = stage_root / "t07_step3_perf.json"
 
+    write_outputs_started = time.perf_counter()
     stage_started = time.perf_counter()
     nodes_write_mode = _write_step3_nodes(
         output_path=nodes_output_path,
@@ -1276,10 +1319,19 @@ def run_t07_step3_intersection_match(
         source_path=nodes_path,
         source_layer=nodes_layer,
         source_crs=nodes_crs,
-        accepted_node_ids=accepted_node_ids,
+        node_anchor_updates=node_anchor_updates,
     )
+    stage_timings["write_nodes_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
     _write_relation_output(relation_output_path, accepted_relations)
+    stage_timings["write_relation_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
     _write_rcsdnode_error_output(rcsdnode_error_path, rcsdnode_error_rows)
+    stage_timings["write_rcsdnode_error_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
     _write_csv(relation_cardinality_errors_csv_path, relation_cardinality_errors, RELATION_CARDINALITY_ERROR_FIELDS)
     write_json(
         relation_cardinality_errors_json_path,
@@ -1290,11 +1342,17 @@ def run_t07_step3_intersection_match(
             "rows": relation_cardinality_errors,
         },
     )
+    stage_timings["write_relation_cardinality_errors_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
     step2_anchor_surface_path = prefer_vector_input_path(Path(nodes_path)).parent / "t07_rcsdintersection_anchor_surface.gpkg"
     surface_write_mode = _write_step3_anchor_surface(
         output_path=surface_output_path,
         step2_surface_path=step2_anchor_surface_path,
     )
+    stage_timings["write_anchor_surface_seconds"] = _elapsed_since(stage_started)
+
+    stage_started = time.perf_counter()
     merged_relation_evidence_rows, anchor_counts = _write_merged_relation_evidence_json(
         csv_path=relation_evidence_csv_path,
         json_path=relation_evidence_json_path,
@@ -1302,7 +1360,8 @@ def run_t07_step3_intersection_match(
         step2_evidence_path=step2_relation_evidence_path,
         step3_rows=accepted_relation_evidence_rows,
     )
-    stage_timings["write_outputs_seconds"] = _elapsed_since(stage_started)
+    stage_timings["write_relation_evidence_seconds"] = _elapsed_since(stage_started)
+    stage_timings["write_outputs_seconds"] = _elapsed_since(write_outputs_started)
 
     summary = {
         "run_id": resolved_run_id,

@@ -108,7 +108,7 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
             _feature({"id": 9, "mainnodeid": 9, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(80, 0)),
         ],
     )
-    _write_geojson(
+    _write_crs84_geojson(
         relations_path,
         [
             _feature({"target_id": 1, "base_id": 900, "status": 0, "level": 1, "is_highway": 0}, LineString([(0, 0), (0, 1)])),
@@ -178,6 +178,8 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert _relation_targets(artifacts.intersection_match_t07_path) == {"1", "2"}
     relation_payload = json.loads(artifacts.intersection_match_t07_path.read_text(encoding="utf-8"))
     assert relation_payload["crs"]["properties"]["name"] == "CRS84"
+    relation_features = {str(feature["properties"]["target_id"]): feature for feature in relation_payload["features"]}
+    assert relation_features["2"]["geometry"]["coordinates"] == [[10.0, 0.0], [10.0, 1.0]]
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["candidate_count"] == 5
@@ -201,6 +203,9 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert summary["output_strategy"]["anchor_surface_write_mode"] == "copy_step2_surface"
     assert "stage_timings" in summary["performance"]
     assert "evaluate_candidates_seconds" in summary["performance"]["stage_timings"]
+    assert "write_nodes_seconds" in summary["performance"]["stage_timings"]
+    assert "write_relation_seconds" in summary["performance"]["stage_timings"]
+    assert "write_relation_evidence_seconds" in summary["performance"]["stage_timings"]
 
     assert artifacts.anchor_surface_path.is_file()
     with fiona.open(str(artifacts.anchor_surface_path)) as src:
@@ -383,6 +388,7 @@ def test_step3_uses_fast_paths_for_gpkg_nodes_and_crs84_relations(tmp_path: Path
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["output_strategy"]["nodes_write_mode"] == "copy_update_gpkg"
     assert summary["output_strategy"]["relation_write_mode"] == "raw_crs84"
+    assert "write_nodes_seconds" in summary["performance"]["stage_timings"]
 
     with sqlite3.connect(artifacts.nodes_path) as conn:
         assert conn.execute("SELECT feature_count FROM gpkg_ogr_contents WHERE table_name = 'nodes'").fetchone() == (2,)

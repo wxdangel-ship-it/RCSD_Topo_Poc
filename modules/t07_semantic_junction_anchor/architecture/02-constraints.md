@@ -6,6 +6,7 @@
 - `kind_2` 范围判断以代表 node 为准。
 - 仅处理代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}`。
 - 非处理范围的语义路口，`has_evd / is_anchor / anchor_reason` 均为 `NULL`。
+- Step1 对处理范围内语义路口，必须组内所有 node 均落入或接触 `DriveZone` 才写 `has_evd = yes`；任一组内 node 未命中则写 `has_evd = no`。
 - Step2 仅处理 `has_evd = yes` 的语义路口。
 - Step2 中 `kind_2 = 64 / 128` 基础判定写 `is_anchor = no / anchor_reason = NULL`；若同一个 `RCSDIntersection` 面对应多个 SWSD 语义路口，仍被 `fail2` 覆盖。
 - Step2 中 `kind_2 = 2048` 仅当组内所有 node 均命中同一个且唯一的 `RCSDIntersection` 时基础判定写 `is_anchor = yes / anchor_reason = t`，否则写 `is_anchor = no / anchor_reason = NULL`；若同一个 `RCSDIntersection` 面对应多个 SWSD 语义路口，仍被 `fail2` 覆盖。

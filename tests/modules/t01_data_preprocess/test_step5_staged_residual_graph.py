@@ -423,6 +423,10 @@ def test_step5_historical_boundary_is_injected_into_step5a_seed_and_terminate(tm
         "pair_id,a_node_id,b_node_id\nS2:300__999,300,999\n",
         encoding="utf-8",
     )
+    (s2_dir / "endpoint_pool.csv").write_text(
+        "node_id,source_tags\n300,S2\n888,S2\n999,S2\n",
+        encoding="utf-8",
+    )
 
     node_path = input_dir / "nodes.geojson"
     road_path = input_dir / "roads.geojson"
@@ -455,6 +459,7 @@ def test_step5_historical_boundary_is_injected_into_step5a_seed_and_terminate(tm
     assert step5a_strategy["force_seed_node_ids"] == ["300", "999"]
     assert step5a_strategy["force_terminate_node_ids"] == ["300", "999"]
     assert step5a_strategy["hard_stop_node_ids"] == ["300", "999"]
+    assert "888" not in step5a_strategy["force_seed_node_ids"]
     assert step5a_strategy["explicit_seed_node_ids"] == ["110", "300"]
     assert step5a_strategy["explicit_terminate_node_ids"] == ["110", "300"]
 

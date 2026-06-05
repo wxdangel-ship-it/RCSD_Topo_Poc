@@ -58,8 +58,10 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
         [
             _feature({"id": 1, "mainnodeid": 1, "kind_2": 4}, Point(0, 0)),
             _feature({"id": 101, "mainnodeid": 1, "kind_2": 0}, Point(1, 0)),
-            _feature({"id": 2, "mainnodeid": 2, "kind_2": 8}, Point(100, 0)),
-            _feature({"id": 3, "mainnodeid": 3, "kind_2": 1}, Point(0, 0)),
+            _feature({"id": 2, "mainnodeid": 2, "kind_2": 8}, Point(0, 0)),
+            _feature({"id": 201, "mainnodeid": 2, "kind_2": 0}, Point(100, 0)),
+            _feature({"id": 3, "mainnodeid": 3, "kind_2": 16}, Point(100, 0)),
+            _feature({"id": 4, "mainnodeid": 4, "kind_2": 1}, Point(0, 0)),
         ],
     )
     _write_geojson(
@@ -78,13 +80,15 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
     assert props["1"]["has_evd"] == "yes"
     assert props["101"]["has_evd"] is None
     assert props["2"]["has_evd"] == "no"
-    assert props["3"]["has_evd"] is None
+    assert props["201"]["has_evd"] is None
+    assert props["3"]["has_evd"] == "no"
+    assert props["4"]["has_evd"] is None
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["processed_kind2_count"] == 2
+    assert summary["processed_kind2_count"] == 3
     assert summary["skipped_kind2_count"] == 1
     assert summary["has_evd_yes_count"] == 1
-    assert summary["has_evd_no_count"] == 1
+    assert summary["has_evd_no_count"] == 2
     assert summary["has_evd_null_count"] == 1
     assert "stage_timings" in summary["performance"]
     assert "write_nodes_seconds" in summary["performance"]["stage_timings"]

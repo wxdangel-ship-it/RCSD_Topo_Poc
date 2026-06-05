@@ -22,7 +22,11 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step4_association import 
     build_association_case_result,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry import build_step6_result
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step7_acceptance import build_step7_result
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step7_acceptance import (
+    VISUAL_V1,
+    VISUAL_V2,
+    build_step7_result,
+)
 
 
 REAL_T03_ROOT = Path("/mnt/e/TestData/POC_Data/T03")
@@ -44,6 +48,28 @@ def _rcsd_node_covered(case_root: Path, case_id: str, node_id: str, polygon) -> 
                 continue
             return bool(polygon is not None and polygon.buffer(1.0).contains(shape(feature["geometry"])))
     raise AssertionError(f"missing RCSDNode {node_id}")
+
+
+def _run_real_case_finalization(case_id: str, tmp_path: Path):
+    if not (REAL_T03_ROOT / case_id).is_dir():
+        pytest.skip(f"missing decoded T03 case: {REAL_T03_ROOT / case_id}")
+
+    step3_root = tmp_path / "step3"
+    _write_step3_for_case(REAL_T03_ROOT, step3_root, case_id)
+    specs, _ = load_association_case_specs(
+        case_root=REAL_T03_ROOT,
+        case_ids=[case_id],
+        exclude_case_ids=[],
+    )
+    association_context = load_association_context(case_spec=specs[0], step3_root=step3_root)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
+    )
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
+    return association_context, association_case_result, step6_result, step7_result
 
 
 def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_polygon(tmp_path: Path) -> None:
@@ -86,6 +112,58 @@ def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_poly
         "5384380731228501",
     ]:
         assert _rcsd_node_covered(REAL_T03_ROOT, case_id, node_id, polygon)
+
+
+def test_real_case_698542_support_only_far_support_lobe_is_filtered(tmp_path: Path) -> None:
+    _association_context, association_case_result, step6_result, step7_result = _run_real_case_finalization(
+        "698542",
+        tmp_path,
+    )
+
+    assert association_case_result.association_class == "B"
+    assert association_case_result.reason == "association_support_only"
+    assert step6_result.geometry_established is True
+    assert step6_result.audit_doc["assembly"]["support_only_seam_bridge_applied"] is True
+    assert step6_result.audit_doc["assembly"]["support_only_seam_bridge_metrics"]["component_count"] == 1
+    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 1
+    assert step6_result.extra_status_fields["max_component_target_distance_m"] == 0.0
+    assert step7_result.step7_state == "accepted"
+    assert step7_result.visual_review_class == VISUAL_V1
+
+
+def test_real_case_948240_support_only_two_lobe_single_sided_is_visual_audit(tmp_path: Path) -> None:
+    _association_context, association_case_result, step6_result, step7_result = _run_real_case_finalization(
+        "948240",
+        tmp_path,
+    )
+
+    assert association_case_result.association_class == "B"
+    assert association_case_result.reason == "association_support_only"
+    assert step6_result.geometry_established is True
+    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 2
+    assert step6_result.extra_status_fields["max_component_target_distance_m"] <= 9.0
+    assert step6_result.extra_status_fields["foreign_exclusion_ok"] is True
+    assert "polygon_multicomponent" in step6_result.review_signals
+    assert step7_result.step7_state == "accepted"
+    assert step7_result.visual_review_class == VISUAL_V2
+
+
+def test_real_case_956407_center_two_node_bridge_is_inherited_by_step6(tmp_path: Path) -> None:
+    association_context, association_case_result, step6_result, step7_result = _run_real_case_finalization(
+        "956407",
+        tmp_path,
+    )
+
+    assert association_case_result.association_class == "A"
+    assert association_case_result.reason == "association_established"
+    assert association_context.step3_status_doc["two_node_t_bridge_applied"] is True
+    assert step6_result.geometry_established is True
+    assert step6_result.audit_doc["assembly"]["step3_two_node_t_bridge_inherited"] is True
+    assert step6_result.audit_doc["assembly"]["target_node_connection_bridge_applied"] is True
+    assert step6_result.extra_status_fields["target_node_connection_cover_ratio"] == 1.0
+    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 1
+    assert step7_result.step7_state == "accepted"
+    assert step7_result.visual_review_class == VISUAL_V1
 
 
 def test_real_case_520394575_support_only_fragmented_surface_stays_rejected(tmp_path: Path) -> None:

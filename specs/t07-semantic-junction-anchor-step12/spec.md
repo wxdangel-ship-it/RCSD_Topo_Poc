@@ -31,8 +31,8 @@
 
 **Acceptance Scenarios**:
 
-1. **Given** 代表 node `kind_2 = 4` 且组内任一 node 落入或接触 `DriveZone`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = yes`。
-2. **Given** 代表 node `kind_2 = 8` 且组内所有 node 均未命中 `DriveZone`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = no`。
+1. **Given** 代表 node `kind_2 = 4` 且组内所有 node 均落入或接触 `DriveZone`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = yes`。
+2. **Given** 代表 node `kind_2 = 8` 且组内任一 node 未命中 `DriveZone`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = no`。
 3. **Given** 代表 node `kind_2 = 1`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = NULL`，且该语义路口不进入 Step2。
 
 ### User Story 2 - 语义路口级 anchor recognition (Priority: P1)
@@ -101,7 +101,7 @@
 - **FR-002**: T07 Step1 MUST build semantic junction groups from `nodes.mainnodeid`; non-empty `mainnodeid` groups nodes together, and missing/empty `mainnodeid` falls back to singleton node groups.
 - **FR-003**: T07 Step1 MUST use the representative node's `kind_2` as the only kind filter.
 - **FR-004**: T07 Step1 MUST only process representative `kind_2 in {4, 8, 16, 64, 128, 2048}`.
-- **FR-005**: T07 Step1 MUST set representative `has_evd = yes` when any group node intersects or touches `DriveZone`, and `has_evd = no` when all group nodes miss `DriveZone`.
+- **FR-005**: T07 Step1 MUST set representative `has_evd = yes` only when all group nodes intersect or touch `DriveZone`, and `has_evd = no` when any group node misses `DriveZone`.
 - **FR-006**: T07 Step1 MUST set or keep representative `has_evd = NULL` for all representative `kind_2` outside `{4, 8, 16, 64, 128, 2048}`.
 - **FR-007**: T07 Step2 MUST only process semantic junctions with representative `has_evd = yes`.
 - **FR-008**: T07 Step2 MUST set representative `is_anchor = yes / no / fail1 / fail2 / NULL` and `anchor_reason = t / NULL`.

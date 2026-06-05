@@ -168,6 +168,68 @@ def test_step6_builds_segment_inner_nodes_and_error_outputs(tmp_path: Path) -> N
     assert len(sgrade_conflict_doc["features"]) == 0
 
 
+def test_step6_waives_grade_kind_conflict_for_step4_high_grade_demotion_source(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind=4, grade=1, kind_2=4, grade_2=1),
+            _node_feature(2, 1.0, 0.0, kind=4, grade=1, kind_2=4, grade_2=1),
+            _node_feature(3, 2.0, 0.0, kind=4, grade=1, kind_2=4, grade_2=1),
+            _node_feature(4, 1.0, 1.0, kind=0, grade=0, kind_2=0, grade_2=0),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature(
+                "r1",
+                1,
+                2,
+                [(0.0, 0.0), (1.0, 0.0)],
+                sgrade="0-0双",
+                segmentid="1_3",
+                segment_build_source="step4_high_grade_terminal_demotion",
+            ),
+            _road_feature(
+                "r2",
+                2,
+                3,
+                [(1.0, 0.0), (2.0, 0.0)],
+                sgrade="0-0双",
+                segmentid="1_3",
+                segment_build_source="step4_high_grade_terminal_demotion",
+            ),
+            _road_feature("side", 2, 4, [(1.0, 0.0), (1.0, 1.0)]),
+        ],
+    )
+
+    artifacts = run_step6_segment_aggregation(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=tmp_path / "out",
+        run_id="step4_high_grade_demotion_waiver",
+    )
+
+    segment_doc = _load_geojson(artifacts.segment_path)
+    segment_props = segment_doc["features"][0]["properties"]
+    assert segment_props["id"] == "1_3"
+    assert segment_props["sgrade"] == "0-0双"
+    assert segment_props["junc_nodes"] == "2"
+
+    assert artifacts.summary["segment_error_count"] == 0
+    assert artifacts.summary["grade_kind_conflict_count"] == 0
+    assert artifacts.summary["grade_kind_conflict_waived_count"] == 1
+    error_doc = _load_geojson(artifacts.segment_error_path)
+    assert error_doc["features"] == []
+
+    build_rows = artifacts.segment_build_table_path.read_text(encoding="utf-8")
+    assert "grade_kind_conflict_waived" in build_rows
+    assert "2" in build_rows
+
+
 def test_step6_pair_nodes_follow_segmentid_order(tmp_path: Path) -> None:
     node_path = tmp_path / "nodes.geojson"
     road_path = tmp_path / "roads.geojson"

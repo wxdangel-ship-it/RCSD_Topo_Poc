@@ -67,6 +67,8 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
 
 DEFAULT_RUN_ID_PREFIX = "t01_step4_residual_graph_"
 STEP4_NEW_SEGMENT_GRADE = "0-1\u53cc"
+STEP4_HIGH_GRADE_SEGMENT_GRADE = "0-0\u53cc"
+STEP4_HIGH_GRADE_DEMOTION_BUILD_SOURCE = "step4_high_grade_terminal_demotion"
 STEP4_STRATEGY_ID = "STEP4"
 STEP4_TARGET_CASES = (
     "785324__502866811",
@@ -269,9 +271,10 @@ def _parse_segment_body_assignments(
     path: Path,
     *,
     reserved_segmentids: Optional[set[str]] = None,
-) -> tuple[dict[str, str], dict[str, tuple[str, str]], int]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, tuple[str, str]], int]:
     payload = load_vector_feature_collection(path)
     road_to_segmentid: dict[str, str] = {}
+    road_to_pair_id: dict[str, str] = {}
     pair_endpoints: dict[str, tuple[str, str]] = {}
     pending_rows: list[tuple[str, str, str, tuple[str, ...]]] = []
     base_segmentid_counts: dict[str, int] = {}
@@ -315,8 +318,9 @@ def _parse_segment_body_assignments(
 
     for road_id, claims in road_claims.items():
         if len(claims) == 1:
-            _, segmentid = claims[0]
+            pair_id, segmentid = claims[0]
             road_to_segmentid[road_id] = segmentid
+            road_to_pair_id[road_id] = pair_id
             continue
 
         winner_pair_id, winner_segmentid = max(
@@ -328,9 +332,10 @@ def _parse_segment_body_assignments(
             ),
         )
         road_to_segmentid[road_id] = winner_segmentid
+        road_to_pair_id[road_id] = winner_pair_id
         overlap_resolution_count += 1
 
-    return road_to_segmentid, pair_endpoints, overlap_resolution_count
+    return road_to_segmentid, road_to_pair_id, pair_endpoints, overlap_resolution_count
 
 
 def _current_grade_2(node: NodeFeatureRecord) -> Optional[int]:
@@ -804,6 +809,7 @@ def _refresh_after_step4(
     roads: list[RoadFeatureRecord],
     step4_validated_pairs: list[dict[str, str]],
     new_road_to_segmentid: dict[str, str],
+    new_road_to_pair_id: dict[str, str],
     overlap_resolution_count: int,
     out_root: Path,
     step4_dir: Path,
@@ -830,6 +836,26 @@ def _refresh_after_step4(
         if b_node_id is not None:
             validated_endpoint_ids.add(b_node_id)
 
+    pair_sgrade_by_pair_id: dict[str, str] = {}
+    for row in step4_validated_pairs:
+        pair_id = str(row.get("pair_id") or "").strip()
+        a_node_id = _normalize_id(row.get("a_node_id"))
+        b_node_id = _normalize_id(row.get("b_node_id"))
+        if not pair_id or a_node_id is None or b_node_id is None:
+            continue
+        a_group = mainnode_groups.get(a_node_id)
+        b_group = mainnode_groups.get(b_node_id)
+        if a_group is None or b_group is None:
+            pair_sgrade_by_pair_id[pair_id] = STEP4_NEW_SEGMENT_GRADE
+            continue
+        a_grade = _current_grade_2(node_by_id[a_group.representative_node_id])
+        b_grade = _current_grade_2(node_by_id[b_group.representative_node_id])
+        pair_sgrade_by_pair_id[pair_id] = (
+            STEP4_HIGH_GRADE_SEGMENT_GRADE
+            if a_grade == 1 and b_grade == 1
+            else STEP4_NEW_SEGMENT_GRADE
+        )
+
     road_properties_map: dict[str, dict[str, Any]] = {}
     for road in roads:
         props = canonicalize_road_working_properties(road.properties)
@@ -841,7 +867,11 @@ def _refresh_after_step4(
             set_road_sgrade(props, existing_sgrade)
         elif new_segmentid is not None:
             set_road_segmentid(props, new_segmentid)
-            set_road_sgrade(props, STEP4_NEW_SEGMENT_GRADE)
+            pair_id = new_road_to_pair_id.get(road.road_id)
+            assigned_sgrade = pair_sgrade_by_pair_id.get(pair_id or "", STEP4_NEW_SEGMENT_GRADE)
+            set_road_sgrade(props, assigned_sgrade)
+            if assigned_sgrade == STEP4_HIGH_GRADE_SEGMENT_GRADE:
+                props["segment_build_source"] = STEP4_HIGH_GRADE_DEMOTION_BUILD_SOURCE
         else:
             set_road_segmentid(props, get_road_segmentid(props))
             set_road_sgrade(props, get_road_sgrade(props))
@@ -1044,7 +1074,7 @@ def run_step4_residual_graph(
     input_parent = Path(node_path).resolve().parent
     historical_boundary_ids, historical_boundary_source_map = collect_endpoint_pool_mainnodes(
         base_dir=input_parent,
-        source_specs=(("S2", ("S2/endpoint_pool.csv", "S2/validated_pairs.csv")),),
+        source_specs=(("S2", ("S2/validated_pairs.csv", "S2/endpoint_pool.csv")),),
     )
 
     working_nodes_path, working_roads_path, strategy_path, input_audit, _endpoint_pool_source_map = _build_step4_inputs(
@@ -1095,7 +1125,7 @@ def run_step4_residual_graph(
     segment_body_path = first_existing_vector_path(step4_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson")
     if segment_body_path is None:
         raise ValueError(f"Step4 segment body output is missing under '{step4_dir}'.")
-    new_road_to_segmentid, _pair_endpoints, overlap_resolution_count = _parse_segment_body_assignments(
+    new_road_to_segmentid, new_road_to_pair_id, _pair_endpoints, overlap_resolution_count = _parse_segment_body_assignments(
         segment_body_path,
         reserved_segmentids=existing_segmentids,
     )
@@ -1120,6 +1150,7 @@ def run_step4_residual_graph(
         roads=roads,
         step4_validated_pairs=validated_pairs,
         new_road_to_segmentid=new_road_to_segmentid,
+        new_road_to_pair_id=new_road_to_pair_id,
         overlap_resolution_count=overlap_resolution_count,
         out_root=resolved_out_root,
         step4_dir=step4_dir,

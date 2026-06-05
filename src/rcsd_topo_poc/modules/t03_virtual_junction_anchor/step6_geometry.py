@@ -37,12 +37,14 @@ TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M = 10.0
 LINE_COVER_BUFFER_M = 2.0
 LINE_COVER_MIN_RATIO = 0.68
 SELECTED_ROAD_CORE_MIN_RATIO = 0.45
+TARGET_NODE_CONNECTION_MIN_RATIO = 0.98
 FOREIGN_OVERLAP_TOLERANCE_M2 = 0.05
 FINAL_CLOSE_M = 1.6
 DIRECTIONAL_CUT_DISTANCE_M = 20.0
 DIRECTIONAL_WINDOW_MIN_HALF_WIDTH_M = 60.0
 DIRECTIONAL_WINDOW_EXTENSION_FACTOR = 2.0
 STEP3_TWO_NODE_T_BRIDGE_BUFFER_M = 8.0
+CENTER_TWO_NODE_T_BRIDGE_MAX_LENGTH_M = 90.0
 BRANCH_CLIP_HALF_WIDTH_M = 10.0
 BRANCH_SPECIAL_CLIP_HALF_WIDTH_M = 6.0
 BRANCH_CLIP_CENTER_RADIUS_M = 14.0
@@ -430,7 +432,11 @@ def _step3_two_node_t_bridge_geometry(
     allowed_space: BaseGeometry | None,
 ) -> BaseGeometry | None:
     association_context = finalization_context.association_context
-    if association_context.template_result.template_class != "single_sided_t_mouth":
+    association_case_result = finalization_context.association_case_result
+    if (
+        association_case_result.association_class != "A"
+        and association_case_result.template_class != "single_sided_t_mouth"
+    ):
         return None
     if not bool(association_context.step3_status_doc.get("two_node_t_bridge_applied")):
         return None
@@ -445,6 +451,11 @@ def _step3_two_node_t_bridge_geometry(
     start_point = target_nodes[0].geometry
     end_point = target_nodes[1].geometry
     raw_line = LineString([start_point, end_point])
+    if (
+        association_case_result.template_class != "single_sided_t_mouth"
+        and raw_line.length > CENTER_TWO_NODE_T_BRIDGE_MAX_LENGTH_M
+    ):
+        return None
     return _clean_geometry(
         raw_line.buffer(
             STEP3_TWO_NODE_T_BRIDGE_BUFFER_M,
@@ -452,6 +463,62 @@ def _step3_two_node_t_bridge_geometry(
             join_style=2,
         ).intersection(allowed_space)
     )
+
+
+def _target_node_connection_line_geometry(finalization_context: FinalizationContext) -> BaseGeometry | None:
+    target_nodes = tuple(
+        sorted(
+            finalization_context.association_context.step1_context.target_group.nodes,
+            key=lambda item: item.node_id,
+        )
+    )
+    if len(target_nodes) < 2:
+        return None
+    points = [node.geometry for node in target_nodes if isinstance(node.geometry, Point)]
+    if len(points) < 2:
+        return None
+    if len(points) == 2:
+        line = LineString(points)
+        return line if line.length > 1e-6 else None
+
+    visited = {0}
+    remaining = set(range(1, len(points)))
+    edges: list[LineString] = []
+    while remaining:
+        best_pair: tuple[int, int] | None = None
+        best_distance = float("inf")
+        for left_index in visited:
+            for right_index in remaining:
+                distance = points[left_index].distance(points[right_index])
+                if distance < best_distance:
+                    best_distance = distance
+                    best_pair = (left_index, right_index)
+        if best_pair is None:
+            break
+        left_index, right_index = best_pair
+        line = LineString([points[left_index], points[right_index]])
+        if line.length > 1e-6:
+            edges.append(line)
+        visited.add(right_index)
+        remaining.remove(right_index)
+    return _union_geometries(edges)
+
+
+def _support_only_seam_bridge_geometry(
+    finalization_context: FinalizationContext,
+    allowed_space_tolerance_geometry: BaseGeometry | None,
+    *,
+    geometry_cache: _Step6GeometryCache | None = None,
+) -> BaseGeometry | None:
+    if finalization_context.association_case_result.association_class != "B":
+        return None
+    bridge_geometry = _point_buffers(
+        finalization_context.association_context.step1_context.target_group.nodes,
+        SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M,
+    )
+    if bridge_geometry is not None and allowed_space_tolerance_geometry is not None:
+        bridge_geometry = _clean_geometry(bridge_geometry.intersection(allowed_space_tolerance_geometry))
+    return bridge_geometry
 
 
 def _road_directional_branches(
@@ -1320,18 +1387,23 @@ def build_step6_result(
         geometry_cache=geometry_cache,
     )
     target_cover_geometry = _point_buffers(step1.target_group.nodes, TARGET_NODE_BUFFER_M)
-    support_only_seam_bridge_geometry = (
-        _point_buffers(step1.target_group.nodes, SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M)
-        if association_case_result.association_class == "B"
-        else None
+    step3_two_node_t_bridge_geometry = _step3_two_node_t_bridge_geometry(
+        finalization_context,
+        allowed_space,
+    )
+    target_node_connection_line_geometry = _target_node_connection_line_geometry(finalization_context)
+    target_node_connection_required = step3_two_node_t_bridge_geometry is not None
+    target_node_connection_bridge_geometry = (
+        step3_two_node_t_bridge_geometry if target_node_connection_required else None
+    )
+    support_only_seam_bridge_geometry = _support_only_seam_bridge_geometry(
+        finalization_context,
+        allowed_space_tolerance_geometry,
+        geometry_cache=geometry_cache,
     )
     foreign_mask_geometry, foreign_mask_sources = _build_foreign_mask_geometry(
         finalization_context,
         geometry_cache=geometry_cache,
-    )
-    step3_two_node_t_bridge_geometry = _step3_two_node_t_bridge_geometry(
-        finalization_context,
-        allowed_space,
     )
     _accumulate_stage_timer(stage_timers, "step6_mask_prep", perf_counter() - mask_prep_started_perf)
 
@@ -1388,7 +1460,13 @@ def build_step6_result(
                 polygon_seed_geometry=None,
                 polygon_final_geometry=None,
                 foreign_mask_geometry=foreign_mask_geometry,
-                must_cover_geometry=target_cover_geometry,
+                must_cover_geometry=_union_geometries(
+                    [
+                        target_cover_geometry,
+                        target_node_connection_bridge_geometry,
+                        step3_two_node_t_bridge_geometry,
+                    ]
+                ),
             ),
         )
 
@@ -1409,10 +1487,13 @@ def build_step6_result(
         return result
 
     cleanup_started_perf = perf_counter()
-    direction_boundary_geometry = (
-        _union_geometries([polygon_seed_geometry, support_only_seam_bridge_geometry])
-        if support_only_seam_bridge_geometry is not None
-        else polygon_seed_geometry
+    direction_boundary_geometry = _union_geometries(
+        [
+            polygon_seed_geometry,
+            target_node_connection_bridge_geometry,
+            step3_two_node_t_bridge_geometry,
+            support_only_seam_bridge_geometry,
+        ]
     )
     local_required_nodes = _local_required_node_records(
         finalization_context,
@@ -1438,6 +1519,8 @@ def build_step6_result(
     must_cover_geometry = _union_geometries(
         [
             target_cover_geometry,
+            target_node_connection_bridge_geometry,
+            step3_two_node_t_bridge_geometry,
             support_only_seam_bridge_geometry,
             required_node_cover_geometry,
             required_road_cover_geometry,
@@ -1445,6 +1528,8 @@ def build_step6_result(
     )
     anchor_geometries = [
         target_cover_geometry,
+        target_node_connection_bridge_geometry,
+        step3_two_node_t_bridge_geometry,
         support_only_seam_bridge_geometry,
         required_node_cover_geometry,
         required_road_cover_geometry,
@@ -1461,6 +1546,8 @@ def build_step6_result(
             [
                 polygon_seed_geometry,
                 target_cover_geometry,
+                target_node_connection_bridge_geometry,
+                step3_two_node_t_bridge_geometry,
                 support_only_seam_bridge_geometry,
                 required_node_cover_geometry,
                 required_road_cover_geometry,
@@ -1536,8 +1623,16 @@ def build_step6_result(
         selected_road_core_geometry,
         final_line_cover_geometry,
     )
+    target_node_connection_cover_ratio = _line_coverage_ratio_with_cover_geometry(
+        target_node_connection_line_geometry,
+        final_line_cover_geometry,
+    )
     semantic_junction_cover_ok = (
         target_node_cover_ratio >= 1.0
+        and (
+            not target_node_connection_required
+            or target_node_connection_cover_ratio >= TARGET_NODE_CONNECTION_MIN_RATIO
+        )
         and selected_core_cover_ratio >= SELECTED_ROAD_CORE_MIN_RATIO
     )
     required_rc_node_cover_ratio = _node_cover_ratio_with_cover_geometry(
@@ -1572,12 +1667,27 @@ def build_step6_result(
         local_required_road_geometry,
         raw_line_cover_geometry,
     )
+    raw_target_node_connection_cover_ratio = _line_coverage_ratio_with_cover_geometry(
+        target_node_connection_line_geometry,
+        raw_line_cover_geometry,
+    )
     review_signals: list[str] = []
     shape_metrics = _cached_shape_metrics(final_polygon, geometry_cache=geometry_cache)
+    target_anchor_geometry = _target_anchor_geometry(finalization_context, geometry_cache=geometry_cache)
+    component_target_distances_m = [
+        polygon.distance(target_anchor_geometry)
+        for polygon in _iter_polygons(final_polygon)
+        if target_anchor_geometry is not None
+    ]
+    max_component_target_distance_m = max(component_target_distances_m, default=0.0)
     polygon_seed_metrics = _cached_shape_metrics(polygon_seed_geometry, geometry_cache=geometry_cache)
     pre_cleanup_metrics = _cached_shape_metrics(pre_cleanup_polygon, geometry_cache=geometry_cache)
     direction_clip_metrics = _cached_shape_metrics(direction_clip_geometry, geometry_cache=geometry_cache)
     bridge_metrics = _cached_shape_metrics(step3_two_node_t_bridge_geometry, geometry_cache=geometry_cache)
+    target_node_connection_bridge_metrics = _cached_shape_metrics(
+        target_node_connection_bridge_geometry,
+        geometry_cache=geometry_cache,
+    )
     support_only_seam_bridge_metrics = _cached_shape_metrics(
         support_only_seam_bridge_geometry,
         geometry_cache=geometry_cache,
@@ -1634,6 +1744,14 @@ def build_step6_result(
             "direction_clip_metrics": direction_clip_metrics,
             "step3_two_node_t_bridge_inherited": step3_two_node_t_bridge_geometry is not None,
             "step3_two_node_t_bridge_metrics": bridge_metrics,
+            "target_node_connection_bridge_applied": target_node_connection_bridge_geometry is not None,
+            "target_node_connection_required": target_node_connection_required,
+            "target_node_connection_bridge_buffer_m": STEP3_TWO_NODE_T_BRIDGE_BUFFER_M,
+            "target_node_connection_bridge_metrics": target_node_connection_bridge_metrics,
+            "target_node_connection_length_m": round(
+                sum(line.length for line in _iter_lines(target_node_connection_line_geometry)),
+                6,
+            ),
             "single_sided_strong_node_keep_applied": strong_node_keep_geometry is not None,
             "single_sided_strong_node_keep_buffer_m": REQUIRED_NODE_BUFFER_M,
             "single_sided_strong_node_keep_metrics": _cached_shape_metrics(
@@ -1659,6 +1777,9 @@ def build_step6_result(
         "validation": {
             "semantic_junction_cover_ok": semantic_junction_cover_ok,
             "target_node_cover_ratio": round(target_node_cover_ratio, 6),
+            "target_node_connection_cover_ratio": round(target_node_connection_cover_ratio, 6),
+            "target_node_connection_required": target_node_connection_required,
+            "target_node_connection_min_ratio": TARGET_NODE_CONNECTION_MIN_RATIO,
             "selected_road_core_cover_ratio": round(selected_core_cover_ratio, 6),
             "required_rc_cover_ok": required_rc_cover_ok,
             "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
@@ -1667,7 +1788,9 @@ def build_step6_result(
             "within_direction_boundary_ok": within_direction_boundary_ok,
             "foreign_exclusion_ok": foreign_exclusion_ok,
             "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
+            "max_component_target_distance_m": round(max_component_target_distance_m, 6),
             "raw_target_node_cover_ratio": round(raw_target_cover_ratio, 6),
+            "raw_target_node_connection_cover_ratio": round(raw_target_node_connection_cover_ratio, 6),
             "raw_required_rc_line_cover_ratio": round(raw_required_rc_cover_ratio, 6),
             "required_rc_cover_mode": "local_required_rc_within_direction_boundary",
         },
@@ -1682,10 +1805,13 @@ def build_step6_result(
     key_metrics = {
         **shape_metrics,
         "target_node_cover_ratio": round(target_node_cover_ratio, 6),
+        "target_node_connection_cover_ratio": round(target_node_connection_cover_ratio, 6),
+        "target_node_connection_required": target_node_connection_required,
         "selected_road_core_cover_ratio": round(selected_core_cover_ratio, 6),
         "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
         "required_rc_line_cover_ratio": round(required_rc_line_cover_ratio, 6),
         "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
+        "max_component_target_distance_m": round(max_component_target_distance_m, 6),
     }
     extra_status_fields = {
         "semantic_junction_cover_ok": semantic_junction_cover_ok,
@@ -1694,10 +1820,13 @@ def build_step6_result(
         "within_direction_boundary_ok": within_direction_boundary_ok,
         "foreign_exclusion_ok": foreign_exclusion_ok,
         "target_node_cover_ratio": round(target_node_cover_ratio, 6),
+        "target_node_connection_cover_ratio": round(target_node_connection_cover_ratio, 6),
+        "target_node_connection_required": target_node_connection_required,
         "selected_road_core_cover_ratio": round(selected_core_cover_ratio, 6),
         "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
         "required_rc_line_cover_ratio": round(required_rc_line_cover_ratio, 6),
         "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
+        "max_component_target_distance_m": round(max_component_target_distance_m, 6),
         "required_rcsdnode_ids": list(association_case_result.extra_status_fields.get("required_rcsdnode_ids") or []),
         "required_rcsdroad_ids": list(association_case_result.extra_status_fields.get("required_rcsdroad_ids") or []),
         "support_rcsdnode_ids": list(association_case_result.extra_status_fields.get("support_rcsdnode_ids") or []),
@@ -1759,6 +1888,10 @@ def build_step6_result(
         secondary = (
             SECONDARY_CLEANUP_OVERTRIM
             if raw_target_cover_ratio >= 1.0
+            and (
+                not target_node_connection_required
+                or raw_target_node_connection_cover_ratio >= TARGET_NODE_CONNECTION_MIN_RATIO
+            )
             else SECONDARY_STEP1_STEP3_CONFLICT
         )
         primary = (
@@ -1816,17 +1949,37 @@ def build_step6_result(
         # to represent a stable business geometry.
         component_count = int(shape_metrics["component_count"] or 0)
         compactness = shape_metrics["compactness"]
+        aspect_ratio = shape_metrics["aspect_ratio"]
         bbox_fill_ratio = shape_metrics["bbox_fill_ratio"]
         support_only_fragmented = (
             association_case_result.reason == "association_support_only"
             and component_count >= 3
         )
+        support_only_two_lobe_review = (
+            association_case_result.reason == "association_support_only"
+            and component_count == 2
+            and max_component_target_distance_m <= SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M
+            and aspect_ratio is not None
+            and aspect_ratio >= 2.5
+            and bbox_fill_ratio is not None
+            and bbox_fill_ratio >= 0.4
+            and semantic_junction_cover_ok
+            and required_rc_cover_ok
+            and within_legal_space_ok
+            and within_direction_boundary_ok
+            and foreign_exclusion_ok
+        )
         severe_template_misfit = (
             support_only_fragmented
-            or (compactness is not None and compactness < 0.12)
-            or (bbox_fill_ratio is not None and bbox_fill_ratio < 0.11)
+            or (
+                not support_only_two_lobe_review
+                and (
+                    (compactness is not None and compactness < 0.12)
+                    or (bbox_fill_ratio is not None and bbox_fill_ratio < 0.11)
+                    or (component_count > 1 and compactness is not None and compactness < 0.16)
+                )
+            )
             or component_count > 3
-            or (component_count > 1 and compactness is not None and compactness < 0.16)
         )
         severe_reason = "step6_single_sided_shape_artifact" if severe_template_misfit else None
     else:

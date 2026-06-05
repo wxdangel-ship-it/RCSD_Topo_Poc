@@ -46,6 +46,8 @@ ERROR_DIVMERGE_ONE_IN_ONE_OUT = "错误分歧合流路口_一入一出"
 TOOL6_ERROR_DIVMERGE = "错误分歧合流路口"
 TOOL6_ERROR_CROSS_T = "错误交叉路口_T型路口"
 TOOL6_ERROR_CROSS_NON_CROSS = "错误交叉路口_非交叉路口"
+TOOL6_ERROR_CROSS_DIVERGE = "错误交叉路口_分歧路口"
+TOOL6_ERROR_CROSS_MERGE = "错误交叉路口_合流路口"
 TOOL6_MANUAL_FIX_FIELD = "是否修复"
 
 ProgressCallback = Callable[[str], None]
@@ -1066,7 +1068,12 @@ def _apply_tool6_qc_repairs(
             skipped_rows.extend(group_skips)
         for row in group_rows:
             error_type = str(row.get("error_type") or "")
-            if error_type in {TOOL6_ERROR_CROSS_T, TOOL6_ERROR_CROSS_NON_CROSS}:
+            if error_type in {
+                TOOL6_ERROR_CROSS_T,
+                TOOL6_ERROR_CROSS_NON_CROSS,
+                TOOL6_ERROR_CROSS_DIVERGE,
+                TOOL6_ERROR_CROSS_MERGE,
+            }:
                 repair = _apply_tool6_cross_row(
                     row=row,
                     node_features=node_features,
@@ -1190,7 +1197,19 @@ def _apply_tool6_cross_row(
     feature_index = node_index_by_id.get(node_id)
     if feature_index is None:
         return None
-    after_kind_2 = T_KIND_VALUE if str(row.get("error_type") or "") == TOOL6_ERROR_CROSS_T else 1
+    error_type = str(row.get("error_type") or "")
+    if error_type == TOOL6_ERROR_CROSS_T:
+        after_kind_2 = T_KIND_VALUE
+        repair_rule = "tool6_cross_t_to_kind_2048"
+    elif error_type == TOOL6_ERROR_CROSS_DIVERGE:
+        after_kind_2 = DIVERGE_KIND_VALUE
+        repair_rule = "tool6_cross_diverge_to_kind_16"
+    elif error_type == TOOL6_ERROR_CROSS_MERGE:
+        after_kind_2 = MERGE_KIND_VALUE
+        repair_rule = "tool6_cross_merge_to_kind_8"
+    else:
+        after_kind_2 = 1
+        repair_rule = "tool6_cross_non_cross_to_kind_1"
     return _update_node_kind_from_tool6(
         node_features=node_features,
         feature_index=feature_index,
@@ -1198,7 +1217,7 @@ def _apply_tool6_cross_row(
         node_kind_2_field=node_kind_2_field,
         after_kind_2=after_kind_2,
         error_row=row,
-        repair_rule="tool6_cross_t_to_kind_2048" if after_kind_2 == T_KIND_VALUE else "tool6_cross_non_cross_to_kind_1",
+        repair_rule=repair_rule,
         audit_role="main",
         audit_mainnodeid=str(row.get("semantic_node_id") or node_id),
     )

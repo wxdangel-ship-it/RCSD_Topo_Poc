@@ -114,8 +114,8 @@
   - `road_kind != 1`
   - `formway != 128`
 - 双线路段最小闭环上下行 road-body 最大垂距门控：
-  - `50m`
-  - 计算主干体间距时剔除 forward / reverse path 两端 `5m` 短挂接区；端点路口八字挂接不作为主干体超距，剔除后仍超过 `50m` 才拒绝该 candidate。
+  - 有效门限为 `max(50m, pair 两端语义路口内部成员节点最大距离)`
+  - 计算主干体间距时剔除 forward / reverse path 两端 `5m` 短挂接区；端点路口八字挂接不作为主干体超距，剔除后仍超过有效门限才拒绝该 candidate。
 - 侧向旁路并入主路最大侧向距离门控：
   - `50m`
 
@@ -242,6 +242,8 @@
 ### 10.2 terminate / hard-stop
 - 当前轮合法 terminate 集合与当前轮输入集合一致。
 - 并入历史高等级边界端点。
+- 历史高等级边界优先来自上一轮 `validated_pairs.csv` 的已成立 Segment 端点；仅为兼容旧产物缺失 `validated_pairs.csv` 的场景，才回退读取 `endpoint_pool.csv`。
+- 仅出现在上一轮 `endpoint_pool.csv`、但未出现在上一轮 validated pair 端点中的潜在 seed / terminate，不作为当前轮 hard-stop；它仍可按当前轮输入规则成为普通 seed / terminate，并允许在 `continue_after_terminal_candidate` 逻辑下继续向后搜索。
 - 当前轮合法 `seed / terminate` 节点，不得被 `through_node` 吞掉。
 
 ### 10.3 工作图
@@ -270,7 +272,10 @@
   4. 唯一 segment + 其余非segment road 同时存在 `in/out` 时，执行与 Step3 相同的 family-based retyping
   5. 否则保持当前值
 - 环岛 `mainnode` 不参与 generic 刷新。
-- Step4 新构成 road：`sgrade = 0-1双`
+- Step4 新构成 road：
+  - 默认 `sgrade = 0-1双`
+  - 若 validated pair 两端代表语义路口 `grade_2` 均为 `1`，直接写 `sgrade = 0-0双`，避免 Step6 再做高等级提级并产生 grade-kind conflict
+  - 上述高等级 Step4 road 同时写 `segment_build_source = step4_high_grade_terminal_demotion`，供 Step6 区分“允许穿越的中间分歧 / 合流语义节点”和普通 `0-0双` 冲突
 
 ## 11. 阶段五：Step5
 
@@ -290,7 +295,7 @@
     - `kind_2 in {4,64}` 且 `grade_2 = 3`
 - terminate / hard-stop：
   - 当前轮合法 terminate 集合与当前轮输入集合一致
-  - 并入 `S2 + Step4` 历史高等级边界端点
+  - 并入 `S2 + Step4` 历史高等级边界端点；历史边界优先来自对应阶段 `validated_pairs.csv`，仅在旧产物缺失 validated 文件时回退到 `endpoint_pool.csv`
 - 工作图：
   - 在 Step4 refreshed roads 基础上
   - 去掉历史已有 `segmentid` 的 road
@@ -314,7 +319,7 @@
   - `grade_2 in {1,2,3}`
 - terminate / hard-stop：
   - 当前轮合法 terminate 集合与当前轮输入集合一致
-  - 并入 `S2 + Step4` 历史高等级边界端点
+  - 并入 `S2 + Step4` 历史高等级边界端点；历史边界优先来自对应阶段 `validated_pairs.csv`，仅在旧产物缺失 validated 文件时回退到 `endpoint_pool.csv`
   - Step5A 新端点只做 hard-stop，不回注入 Step5B 的 `seed / terminate`
 - 工作图：
   - 在 Step5A 工作图上
@@ -405,15 +410,29 @@
     - `segment_build_source = dead_end_leaf`
     - `leaf_node_id = <leaf semantic node id>`
     - `dead_end_bundle_type in {bidirectional, reciprocal_oneway}`
-- final one-way fallback：
+- final single-road fallback：
   - 在常规单向 terminate-to-terminate 与 dead-end leaf 补段之后、`Step6` 之前执行
-  - 只处理仍未构段、`direction in {2,3}`、非 `formway = 128`、非右转专用道，且两端可解析到 semantic endpoint 的 road
-  - 不放宽前序 phase terminate 规则；phase 不闭合、端点 phase 不一致或同 semantic group 的 residual 单向 road 只在本阶段兜底
+  - 处理仍未构段、`direction in {0,1,2,3}`、非 `formway = 128`、非右转专用道，且两端可解析到 semantic endpoint 的 road
+  - 不放宽前序 phase terminate 规则；phase 不闭合、端点 phase 不一致、同 semantic group 的 residual road，或不满足 dead-end leaf 的双向 residual road，只在本阶段兜底
   - 每条 road 形成一个单 road Segment
-  - 新构成 road：`sgrade = 0-2单`
+  - 新构成单向 road：`sgrade = 0-2单`
+  - 新构成双向 road：`sgrade = 0-2双`
   - 新构成 road 写入审计 / 发布保护字段：
     - `segment_build_source = oneway_single_road_fallback`
-  - `oneway_segment_summary.json` 输出 `final_fallback_segment_count` 与 `final_fallback_road_count`
+  - `oneway_segment_summary.json` 输出 `final_fallback_segment_count`、`final_fallback_road_count`、`oneway_built_road_count` 与 `bidirectional_built_road_count`
+- final side-attachment merge：
+  - 在 final single-road fallback 之后、`Step6` 之前执行
+  - 只面向当前已构成的 `sgrade = 0-0双` 主 Segment
+  - 候选 Segment 必须已经构段，且至少一个 pair node 挂接到主 Segment 覆盖的语义节点
+  - 候选 Segment 自身几何到主 Segment 几何的最大采样距离必须 `<= MAX_SIDE_ACCESS_DISTANCE_M`
+  - 满足条件时，将候选 Segment road 改写到主 Segment，写入：
+    - `segmentid = <main segmentid>`
+    - `sgrade = 0-0双`
+    - `segment_build_source = side_attachment_merge`
+    - `pre_merge_segmentid / pre_merge_sgrade / pre_merge_segment_build_source`
+    - `side_attachment_merged_into_segmentid / side_attachment_merge_distance_m / side_attachment_merge_nodes`
+  - 普通 `0-0双` 候选 Segment 不作为被并入对象，避免跨主走廊级联合并
+  - `oneway_segment_summary.json` 输出 `side_attachment_merge_summary`、`side_attachment_merged_segment_count` 与 `side_attachment_merged_road_count`
 - 未构段 road 审计：
   - `unsegmented_roads.csv` 输出 `formway_has_bit7_or_bit8` 与 `audit_reason`
   - `unsegmented_roads_summary.json` 统计最终仍未构段且 `formway` 不含 bit7 / bit8 的 road 数量
@@ -463,6 +482,8 @@
     - `grade_2 = 1`
     - 且 `kind_2 = 4`
   - 若存在，则输出到 `segment_error.gpkg`
+  - 例外：若 Segment road 来源包含 `segment_build_source = step4_high_grade_terminal_demotion`，说明该段是 Step4 在两端高等级语义端点之间形成的完整走廊；其中间 `grade_2 = 1, kind_2 = 4` 的 `junc_nodes` 作为可穿越分歧 / 合流节点处理，不输出 `grade_kind_conflict`
+  - 上述例外必须输出审计：`segment_summary.json` 记录 `grade_kind_conflict_waived_count`，`segment_build_table.csv` 记录 `grade_kind_conflict_waived` 与 `grade_kind_conflict_waived_nodes`
   - 并按错误类型拆分输出到：
     - `segment_error_s_grade_conflict.gpkg`
     - `segment_error_grade_kind_conflict.gpkg`
